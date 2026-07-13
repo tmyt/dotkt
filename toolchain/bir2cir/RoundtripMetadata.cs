@@ -22,9 +22,9 @@ using DotKt.Bir;
 //
 // ATTR ORDER (per emitted member) reproduces ilemit's old stamp order verbatim, so a metadata dump stays equivalent:
 //   type:   [NullableContext, …user, KotlinFileClass?/KotlinFunInterface?, KotlinSealed?, KotlinValue?]
-//   method: [ …user, KotlinFunction?, KotlinInline? ]      ret: [ Nullable?, KotlinSuspendFunctionType?, KotlinNothing? ]
-//   param:  [ Nullable?, KotlinSuspendFunctionType?, …user ]
-//   field:  [ KotlinReadOnly?, KotlinSuspendFunctionType?, …user ]
+//   method: [ …user, KotlinFunction?, KotlinInline? ]      ret: [ Nullable?, KotlinSuspendFunctionType?, KotlinExtensionFunctionType?, KotlinNothing? ]
+//   param:  [ Nullable?, KotlinSuspendFunctionType?, …user, KotlinExtensionFunctionType? ]
+//   field:  [ KotlinReadOnly?, KotlinSuspendFunctionType?, …user, KotlinExtensionFunctionType? ]
 static class RoundtripMetadata
 {
     const string Ns = "DotKt.Runtime.CompilerServices.";
@@ -37,6 +37,7 @@ static class RoundtripMetadata
     const string AKSealed       = Ns + "KotlinSealedAttribute";
     const string AKValue        = Ns + "KotlinValueAttribute";
     const string AKSuspendFn    = Ns + "KotlinSuspendFunctionTypeAttribute";
+    const string AKExtFn        = Ns + "KotlinExtensionFunctionTypeAttribute";
     const string AKNothing      = Ns + "KotlinNothingAttribute";
     const string ANullable      = ClrNs + "NullableAttribute";
     const string ANullableCtx   = ClrNs + "NullableContextAttribute";
@@ -108,6 +109,10 @@ static class RoundtripMetadata
         var ret = new JsonArray();
         if (mo["retNullableFlags"] is JsonArray rnf && NullableAttr(rnf) is JsonObject rna) ret.Add(rna);
         if (mo["retSuspendFnType"] is JsonNode rsf) ret.Add(SuspendFnAttr(rsf));
+        // [KotlinExtensionFunctionType] (#145) — a bare marker: a method returning `P.() -> R`. Unlike suspend, the
+        // delegate is NOT erased (the receiver rides DelegateParams as the first CLR type arg), so no shape is carried —
+        // facadegen reads the marker and moves the delegate's first arg back into the fn's receiver.
+        if (HasRecvFn(mo["ret"])) ret.Add(Marker(AKExtFn));
         if ((mo["retNothing"] as JsonValue)?.GetValue<bool>() == true) ret.Add(Marker(AKNothing));
         if (ret.Count > 0) mo["retAttrs"] = ret;
 
@@ -122,6 +127,9 @@ static class RoundtripMetadata
             // Prepend [Nullable, KotlinSuspendFunctionType] BEFORE any user param attr (ilemit's old order).
             if (po["suspendFnType"] is JsonNode sf) Prepend(po, SuspendFnAttr(sf));
             if (po["nullableFlags"] is JsonArray nf && NullableAttr(nf) is JsonObject na) Prepend(po, na);
+            // [KotlinExtensionFunctionType] (#145) — a `block: P.() -> R` param; the bare marker rides after any user
+            // attr (order-independent — facadegen reads it by presence). The delegate keeps `P` as its first arg.
+            if (HasRecvFn(po["type"])) Append(po, Marker(AKExtFn));
         }
     }
 
@@ -134,6 +142,7 @@ static class RoundtripMetadata
             // file-class static field never carried it (byte-equivalence with the old file-class field path).
             if (fo["suspendFnType"] is JsonNode sf) Prepend(fo, SuspendFnAttr(sf));
             if (!topLevel && (fo["readOnly"] as JsonValue)?.GetValue<bool>() == true) Prepend(fo, Marker(AKReadOnly));
+            if (HasRecvFn(fo["type"])) Append(fo, Marker(AKExtFn));   // a `val handler: P.() -> R` field (#145)
         }
     }
 
@@ -142,9 +151,22 @@ static class RoundtripMetadata
         if (props is not JsonArray a) return;
         // A `val/var x: suspend (…) -> T` property carries the pre-erasure shape; ilemit stamped only [KotlinSuspendFunctionType]
         // on properties (never [Nullable]), so reproduce exactly that.
-        foreach (var p in a) if (p is JsonObject po && po["suspendFnType"] is JsonNode sf)
-            Prepend(po, SuspendFnAttr(sf));
+        foreach (var p in a) if (p is JsonObject po)
+        {
+            if (po["suspendFnType"] is JsonNode sf) Prepend(po, SuspendFnAttr(sf));
+            if (HasRecvFn(po["type"])) Append(po, Marker(AKExtFn));   // a `val p: P.() -> R` property (#145)
+        }
     }
+
+    // #145 — true iff a `type`/`ret` slot holds a NON-suspend receiver function type (`fn` with a `recv`). bir2cir
+    // keeps such a slot as a faithful CLR delegate (LowerFnDelegate preserves `recv`; ilemit's DelegateParams prepends
+    // it as the first arg), so — unlike the suspend carrier — there is NO shape to record: the bare marker plus the
+    // delegate's own type args fully reconstruct `P.() -> R`. (A SUSPEND receiver fn is erased to `object` and rides the
+    // suspendFnType carrier instead, so it never reaches here.)
+    static bool HasRecvFn(JsonNode slot) =>
+        slot is JsonObject o && o["t"] is JsonValue tv && tv.TryGetValue<string>(out var s) && s == "fn"
+        && o["recv"] is JsonObject
+        && !((o["suspend"] as JsonValue)?.GetValue<bool>() == true);
 
     // ---------------------------------------------------------------------------------------------------------------
     // RUNTIME build: strip EVERY applied `attrs`/`retAttrs` (this is what ilemit's deleted `_stripMetadata` did — its
@@ -254,6 +276,7 @@ static class RoundtripMetadata
             AttrClass(AKSealed, Ctor()),
             AttrClass(AKValue, Ctor()),
             AttrClass(AKSuspendFn, Ctor(Param("System.String"), Param(ByteArrayType()))),
+            AttrClass(AKExtFn, Ctor()),     // #145 — bare marker: a `P.() -> R` receiver function-type position
             AttrClass(AKNothing, Ctor()),   // #133 case3 — bare marker on a Kotlin `Nothing` return
             // NullableAttribute — csc's DUAL ctor: (byte) FIRST, (byte[]) SECOND (declaration order preserved so the
             // MethodDef rows and BuildCab's arity fallback stay deterministic).

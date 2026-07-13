@@ -148,7 +148,7 @@ static class CharSeqStringLowering
     // (newDelegate) or, on a newClosure, a legacy `func:<ret>:<args>` string.
     static bool FuncTypeHasCharSeqParam(JsonNode ftNode)
     {
-        if (TypeJson.Read(ftNode) is TypeNode.Fn fn) return fn.Params.Any(IsCharSeqT);
+        if (TypeJson.Read(ftNode) is TypeNode.Fn fn) return fn.DelegateParams.Any(IsCharSeqT);   // incl. a `CharSequence.() -> X` receiver (#145)
         if (Str(ftNode) is not string ft || !ft.StartsWith("func:", StringComparison.Ordinal)) return false;
         var rest = ft["func:".Length..];
         var ci = TopLevelColon(rest);

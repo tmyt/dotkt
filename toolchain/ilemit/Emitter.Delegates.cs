@@ -130,7 +130,7 @@ sealed partial class Emitter
 
     List<Type> FuncArgTypes(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object && DotKt.Bir.TypeNode.Read(e) is DotKt.Bir.TypeNode.Fn fn
-            ? fn.Params.Select(MapType).ToList()
+            ? fn.DelegateParams.Select(MapType).ToList()
             : FuncArgSpecs(e.GetString()).Select(MapType).ToList();
 
     Type FuncRetType(string t)

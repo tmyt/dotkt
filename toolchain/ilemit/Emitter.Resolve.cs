@@ -476,7 +476,7 @@ sealed partial class Emitter
     {
         DotKt.Bir.TypeNode.Fqn f => f.Args == null ? f.Name : f.Name + "[" + string.Join(",", f.Args.Select(SigTokenOf)) + "]",
         DotKt.Bir.TypeNode.Tv => "gp:T",
-        DotKt.Bir.TypeNode.Fn fn => (fn.Suspend ? "sfunc:" : "func:") + SigTokenOf(fn.Ret) + ":" + string.Join(",", fn.Params.Select(SigTokenOf)),
+        DotKt.Bir.TypeNode.Fn fn => (fn.Suspend ? "sfunc:" : "func:") + SigTokenOf(fn.Ret) + ":" + string.Join(",", fn.DelegateParams.Select(SigTokenOf)),
         DotKt.Bir.TypeNode.Nullable n => "nullable:" + SigTokenOf(n.Of),
         DotKt.Bir.TypeNode.Array a => "array:" + SigTokenOf(a.Elem),
         DotKt.Bir.TypeNode.ByRef b => "byref:" + SigTokenOf(b.Of),

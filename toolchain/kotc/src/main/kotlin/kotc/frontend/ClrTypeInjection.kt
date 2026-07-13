@@ -41,6 +41,8 @@ import org.jetbrains.kotlin.fir.types.ConeKotlinType
 import org.jetbrains.kotlin.fir.types.coneType
 import org.jetbrains.kotlin.fir.types.ConeFlexibleType
 import org.jetbrains.kotlin.fir.types.ConeRigidType
+import org.jetbrains.kotlin.fir.types.ConeAttributes
+import org.jetbrains.kotlin.fir.types.CompilerConeAttributes
 import org.jetbrains.kotlin.fir.types.constructType
 import org.jetbrains.kotlin.fir.types.typeContext
 import org.jetbrains.kotlin.fir.types.withNullability
@@ -1002,6 +1004,21 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		return sym.constructType(args, false)
 	}
 
+	/** #145: a Kotlin RECEIVER function type `P.() -> R` = `kotlin.Function{N+1}<P, params…, R>` carrying the
+	 *  `ExtensionFunctionType` cone attribute (so `apply1 { … }` gives the lambda an implicit `this: P` and the body's
+	 *  unqualified `margin` resolves to `Panel.margin`). facadegen restores `fn.recv` from the DotKt assembly's bare
+	 *  [KotlinExtensionFunctionType] marker (bir2cir did NOT erase the delegate — the receiver rode as its first CLR
+	 *  type arg). The receiver heads the type args, mirroring the frontend's own representation. Falls back to a plain
+	 *  function type if the synthetic FunctionN symbol can't be resolved (never a crash). */
+	private fun coneExtensionFunctionType(recv: ConeKotlinType, params: List<ConeKotlinType>, ret: ConeKotlinType): ConeKotlinType {
+		val cid = ClassId(FqName("kotlin"), Name.identifier("Function${params.size + 1}"))
+		val sym = session.symbolProvider.getClassLikeSymbolByClassId(cid) ?: return coneFunctionType(listOf(recv) + params, ret)
+		@Suppress("UNCHECKED_CAST")
+		val args = (listOf(recv) + params + ret).toTypedArray() as Array<org.jetbrains.kotlin.fir.types.ConeTypeProjection>
+		val attrs = ConeAttributes.create(listOf(CompilerConeAttributes.ExtensionFunctionType))
+		return sym.constructType(args, false, attrs)
+	}
+
 	/** Map a metadata type name to a ConeKotlinType: primitives, the owner itself, another injected type, else Any?. */
 	/** The intrinsic `ClrRef<arg>` cone type (the surfaced form of a .NET out/ref param or ref return). */
 	private fun clrRefOf(arg: ConeKotlinType): ConeKotlinType =
@@ -1089,7 +1106,9 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			// A .NET delegate / a `suspend (…) -> T` position -> a Kotlin (suspend) function type, so a lambda binds and
 			// overloads disambiguate. A suspend fn makes a passed lambda a SUSPEND lambda (the H2 round-trip).
 			is TypeNode.Fn ->
-				if (node.suspend) coneSuspendFunctionType(node.params.map { coneOf(it, owner, methodTps) }, coneOf(node.ret, owner, methodTps))
+				if (node.recv != null && !node.suspend)
+					coneExtensionFunctionType(coneOf(node.recv, owner, methodTps), node.params.map { coneOf(it, owner, methodTps) }, coneOf(node.ret, owner, methodTps))
+				else if (node.suspend) coneSuspendFunctionType(node.params.map { coneOf(it, owner, methodTps) }, coneOf(node.ret, owner, methodTps))
 				else coneFunctionType(node.params.map { coneOf(it, owner, methodTps) }, coneOf(node.ret, owner, methodTps))
 			// A positional type variable: scope "method" -> the method's own type param `methodTps[i]`; scope "type" ->
 			// the owner's i-th type parameter. (The `gp:`-name remap is gone — spec §1.)

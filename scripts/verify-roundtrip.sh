@@ -466,6 +466,54 @@ hfexpected="$(printf '5!\n6!\n7!\n8!\n9!\n42')"
 run_app hfactual "$HF/appil/KApp.dll"
 check_output roundtrip-generic-hof "$hfexpected" "$hfactual" "generic user types nested in a lambda parameter: top-level/member/extension/infix/operator/inline"
 
+# ----- RECEIVER-LAMBDA parameter `P.() -> Unit` consumed cross-module as Kotlin (#145, Avalonia report E(b)) -----
+# A `block: Panel.() -> Unit` param is a Kotlin RECEIVER function type: the lambda body gets an implicit `this: Panel`,
+# so `apply1 { margin = 4 }` resolves `margin` to `Panel.margin`. Kotlin lowers `P.()->Unit` to `Function1<P,Unit>`
+# carrying the `kotlin.ExtensionFunctionType` annotation, then flattens the receiver to the first CLR delegate arg
+# (`KAction`1[Panel]`) — erasing the "was a receiver" bit. kotc now carries it in the BIR `fn.recv`; bir2cir stamps a
+# bare `[KotlinExtensionFunctionType]` on the delegate param; facadegen moves the delegate's first arg back into the
+# fn receiver; ClrTypeInjection restores `Panel.() -> Unit` (an ExtensionFunctionType cone) so the consumer's lambda
+# gets `this: Panel`. Without the round-trip the injected param degrades to a receiver-less `(Panel)->Unit` and the
+# consumer fails with `unresolved reference 'margin'`. Also covers a member `Panel.() -> Unit` and multi-param mix.
+RL="$ROOT/build/roundtrip-receiver-lambda"; rm -rf "$RL"; mkdir -p "$RL/lib" "$RL/app" "$RL/libbir" "$RL/libil" "$RL/appbir" "$RL/appil"
+cat > "$RL/lib/lib.kt" <<'EOF'
+package ui
+class Panel { var margin: Int = 0; var pad: Int = 0 }
+fun apply1(block: Panel.() -> Unit): Panel { val p = Panel(); p.block(); return p }
+fun column(configure: Panel.() -> Unit, build: () -> Unit): Int { val p = Panel(); p.configure(); build(); return p.margin }
+class Builder(val base: Int) {
+    fun make(setup: Panel.() -> Unit): Int { val p = Panel(); p.setup(); return p.margin + base }   // member receiver-lambda param
+    val preset: Panel.() -> Unit = { margin = 8 }   // member property typed P.() -> Unit (property-position marker)
+}
+val defaultInit: Panel.() -> Unit = { margin = 9 }  // top-level val typed P.() -> Unit (field-position marker)
+EOF
+cat > "$RL/app/app.kt" <<'EOF'
+import ui.Panel
+import ui.apply1
+import ui.column
+import ui.Builder
+import ui.defaultInit
+fun main() {
+    val p = apply1 { margin = 4; pad = 1 }        // implicit this: Panel -> margin/pad resolve
+    println(p.margin)                              // 4
+    println(column({ margin = 7 }, { }))           // 7   receiver half + plain-lambda half
+    println(Builder(100).make { margin = 5 })      // 105 member receiver-lambda param
+    val q = Panel(); defaultInit.invoke(q); println(q.margin)          // 9   top-level receiver-typed val restored
+    val r = Panel(); Builder(0).preset.invoke(r); println(r.margin)    // 8   member receiver-typed property restored
+}
+EOF
+CLR_TYPES_METADATA="" "$LAUNCHER" "$RL/lib" -no-stdlib -classpath "$CP" -d "$RL/libbir" >/dev/null 2>&1 || true
+emit_il "$RL/libil" UiLib "$RL/libbir"/*.bir.json
+dotnet "$RETARGET_DLL" "$RL/libil/UiLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
+"$LAUNCHER" --scan-imports --output "$RL/imports.txt" "$RL/app"/*.kt >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$RL/meta" --refs "$REFS$RL/libil/UiLib.dll" --import-list "$RL/imports.txt" >/dev/null 2>&1 || true
+CLR_TYPES_METADATA="$RL/meta" "$LAUNCHER" "$RL/app" -no-stdlib -classpath "$CP" -d "$RL/appbir" >/dev/null 2>&1 || true
+emit_il "$RL/appil" UiApp --ref "$RL/libil/UiLib.dll" "$RL/appbir"/*.bir.json
+cp "$RL/libil/UiLib.dll" "$RL/appil/" 2>/dev/null || true
+rlexpected="$(printf '4\n7\n105\n9\n8')"
+run_app rlactual "$RL/appil/UiApp.dll"
+check_output roundtrip-receiver-lambda "$rlexpected" "$rlactual" "receiver-lambda P.() -> Unit restored cross-module: param (top-level/member/multi) + top-level-val + member-property positions #145"
+
 # ----- MEMBER-declared extension functions: `class C { fun T.f() }` consumed via `with(c) { x.f() }` -----
 # Covers the cross-product: plain / infix / operator / inline+generic-method / protected, on a generic user receiver.
 # Restored via the `,ext` marker (the first param `__self` becomes the extension receiver); the consumer dispatches on

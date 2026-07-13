@@ -168,7 +168,9 @@ sealed partial class Emitter
     // Structured function type -> the CLR delegate (Action/Func or a synthetic for arity > 16).
     Type FuncType(DotKt.Bir.TypeNode.Fn fn)
     {
-        var args = fn.Params.Select(MapType).ToArray();
+        // DelegateParams prepends an extension receiver (`P.() -> R` = `Func<P,R>`/`KAction`1[P]`) so a restored
+        // receiver-lambda param type builds the SAME CLR delegate as the flat lambda-value closure bound to it.
+        var args = fn.DelegateParams.Select(MapType).ToArray();
         var ret = MapType(fn.Ret);
         return BuildFuncType(args, ret);
     }

@@ -410,7 +410,8 @@ static class FacadeGen
             o["mods"] = Mods(("vararg", true));
             return o;
         }
-        o["type"] = Ty(ApplyNrt(MapT(p.ParameterType, self), p.ParameterType, attrs, p.Member as MemberInfo));
+        var pt = ApplyNrt(MapT(p.ParameterType, self), p.ParameterType, attrs, p.Member as MemberInfo);
+        o["type"] = Ty(HasExtFnMarker(attrs) ? WithExtRecv(pt) : pt);   // #145: `block: P.() -> R` -> restore the receiver
         if (HasDefault(p)) o["default"] = DefaultObj(p, self);
         return o;
     }
@@ -555,7 +556,7 @@ static class FacadeGen
                 {
                     if (p.GetIndexParameters().Length > 0 || !Supported(p.PropertyType) || !p.CanRead || !iseen.Add("prop:" + p.Name)) continue;
                     var pclr = p.GetMethod != null ? ClrAttrName(p.GetMethod) : null;   // member substitution: size -> Count
-                    props.Add(PropObj(p.Name, ApplyNrt(MapT(p.PropertyType, t), p.PropertyType, CustomAttributeData.GetCustomAttributes(p), p),
+                    props.Add(PropObj(p.Name, PropTypeN(p, t),
                         p.CanWrite, Mods(("abstract", true)), "public", pclr, null));
                 }
                 // (N6) INTERFACE instance events -> a `ClrEvent<T>` member.
@@ -653,7 +654,7 @@ static class FacadeGen
                     var get = p.GetMethod;
                     var virt = (get?.IsVirtual ?? false) && !(get?.IsFinal ?? false);
                     var (pm, pv) = ModVis(prot.Value, get?.IsAbstract ?? false, virt);
-                    props.Add(PropObj(p.Name, ApplyNrt(MapT(p.PropertyType, t), p.PropertyType, CustomAttributeData.GetCustomAttributes(p), p),
+                    props.Add(PropObj(p.Name, PropTypeN(p, t),
                         p.CanWrite, pm, pv, null, null));
                 }
                 // DotKt round-trip: a Kotlin property's BACKING FIELD -> a plain public field; a CUSTOM-ACCESSOR property
@@ -723,7 +724,7 @@ static class FacadeGen
                         staticProps.Add(PropObj(f.Name, FieldTypeN(f, t), false, new JsonObject(), "public", null, null));
                 foreach (var p in t.GetProperties(BindingFlags.Public | BindingFlags.Static))
                     if (p.GetIndexParameters().Length == 0 && Supported(p.PropertyType) && p.CanRead && seen.Add("sprop:" + p.Name))
-                        staticProps.Add(PropObj(p.Name, ApplyNrt(MapT(p.PropertyType, t), p.PropertyType, CustomAttributeData.GetCustomAttributes(p), p),
+                        staticProps.Add(PropObj(p.Name, PropTypeN(p, t),
                             p.CanWrite, new JsonObject(), "public", null, null));
                 foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Static))
                 {
@@ -759,7 +760,7 @@ static class FacadeGen
                 foreach (var p in t.GetProperties(BindingFlags.Public | BindingFlags.Static))
                 {
                     if (p.GetIndexParameters().Length > 0 || !Supported(p.PropertyType) || !p.CanRead || !seen.Add("sprop:" + p.Name)) continue;
-                    props.Add(PropObj(p.Name, ApplyNrt(MapT(p.PropertyType, t), p.PropertyType, CustomAttributeData.GetCustomAttributes(p), p),
+                    props.Add(PropObj(p.Name, PropTypeN(p, t),
                         p.CanWrite, new JsonObject(), "public", null, null));
                 }
                 // (N6) Public STATIC events of a STATIC class (`Console.CancelKeyPress`) -> a `ClrEvent<T>` member of the object.
@@ -873,7 +874,7 @@ static class FacadeGen
                 {
                     if (p.GetIndexParameters().Length > 0 || !p.CanRead || !Supported(p.PropertyType)) continue;
                     if (pubProps.Contains(p.Name) || !seen.Add("prop:" + p.Name)) continue;
-                    props.Add(PropObj(p.Name, ApplyNrt(MapT(p.PropertyType, t), p.PropertyType, CustomAttributeData.GetCustomAttributes(p), p),
+                    props.Add(PropObj(p.Name, PropTypeN(p, t),
                         p.CanWrite, new JsonObject(), "public", null, null));
                 }
                 foreach (var m in i.GetMethods())
@@ -1327,7 +1328,14 @@ static class FacadeGen
 
     // H2: a FIELD typed `suspend (…) -> T` -> restore the suspend function type from [KotlinSuspendFunctionType],
     // else the plain mapped field type.
-    static TN FieldTypeN(FieldInfo f, Type self) => SuspendFnNode(f.GetCustomAttributesData()) ?? MapT(f.FieldType, self);
+    static TN FieldTypeN(FieldInfo f, Type self)
+    {
+        var attrs = f.GetCustomAttributesData();
+        var sfn = SuspendFnNode(attrs);
+        if (sfn != null) return sfn;
+        var t = MapT(f.FieldType, self);
+        return HasExtFnMarker(attrs) ? WithExtRecv(t) : t;   // #145: a `val handler: P.() -> R` field
+    }
     // H2: a non-suspend method / property getter that RETURNS a `suspend (…) -> T` value -> restore it from the return
     // parameter's [KotlinSuspendFunctionType], else the plain mapped return type. (A `suspend fun` itself returns
     // Task/Task<T> and is restored via SuspendRetToken — a different path, untouched.)
@@ -1347,7 +1355,39 @@ static class FacadeGen
         // a `suspend fun`'s Task<T> result (SuspendRetNode) and a companion-static fun that bypass RetTypeSfxN are not
         // yet wired — extend them when the bir2cir marker producer lands if those positions need it.
         if (HasNothingMarker(attrs)) return ApplyNrt(new TN.Fqn("Nothing"), m.ReturnType, attrs, m);
-        return ApplyNrt(MapRetT(m.ReturnType, self), m.ReturnType, attrs, m);
+        var rt = ApplyNrt(MapRetT(m.ReturnType, self), m.ReturnType, attrs, m);
+        return HasExtFnMarker(attrs) ? WithExtRecv(rt) : rt;   // #145: a method returning `P.() -> R`
+    }
+
+    // #145: the bare marker `[KotlinExtensionFunctionType]` -> the delegate at this position was a Kotlin RECEIVER
+    // function type `P.() -> R`. bir2cir did NOT erase it (unlike suspend): the receiver rides as the delegate's FIRST
+    // CLR type arg. So restore `P.() -> R` by moving the mapped delegate's first param into the fn's receiver — the
+    // consumer's ClrTypeInjection then builds an EXTENSION function type, giving the passed lambda an implicit `this: P`.
+    const string KExtFnAttr = "DotKt.Runtime.CompilerServices.KotlinExtensionFunctionTypeAttribute";
+    static bool HasExtFnMarker(IList<CustomAttributeData> attrs)
+    {
+        foreach (var cad in attrs)
+            if (cad.AttributeType.FullName == KExtFnAttr) return true;
+        return false;
+    }
+    // Move a mapped delegate's FIRST arg into the fn receiver (through a nullable/oblivious wrapper). A non-delegate or
+    // an argless delegate is returned unchanged (defensive — the marker only rides genuine `P.() -> R` positions).
+    static TN WithExtRecv(TN t) => t switch
+    {
+        TN.Fn { Params.Length: > 0 } f => new TN.Fn(f.Suspend, f.Ret, f.Params.Skip(1).ToArray(), f.Params[0]),
+        TN.Nullable n => new TN.Nullable(WithExtRecv(n.Of)),
+        TN.Oblivious o => new TN.Oblivious(WithExtRecv(o.Of)),
+        _ => t,
+    };
+
+    // A DotKt property's Kotlin TypeNode: the mapped (NRT-folded) property type, restoring a `val/var p: P.() -> R`
+    // receiver function type from the [KotlinExtensionFunctionType] marker landed on the PropertyDef (#145). Shared by
+    // every property-surfacing loop (instance/interface/static/companion) so the receiver restore is uniform.
+    static TN PropTypeN(PropertyInfo p, Type self)
+    {
+        var attrs = CustomAttributeData.GetCustomAttributes(p);
+        var t = ApplyNrt(MapT(p.PropertyType, self), p.PropertyType, attrs, p);
+        return HasExtFnMarker(attrs) ? WithExtRecv(t) : t;
     }
 
     // #133: the bare marker `[KotlinNothing]` on a return parameter -> the erased `object` return was a Kotlin `Nothing`.

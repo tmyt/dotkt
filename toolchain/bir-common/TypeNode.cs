@@ -47,6 +47,25 @@ public abstract record TypeNode
         public bool Equals(Fn? o) =>
             o is not null && Suspend == o.Suspend && Ret == o.Ret && SeqEq(Params, o.Params) && Recv == o.Recv;
         public override int GetHashCode() => System.HashCode.Combine(Suspend, Ret, Params.Length, Recv);
+
+        /// <summary>
+        /// The delegate ARG list: an extension receiver (`P.() -> R`) is the delegate's FIRST argument on the CLR
+        /// (`P.() -> R` = `KAction`1[P]` / `Func&lt;P,R&gt;`), so <c>Recv</c> — when present — is prepended to
+        /// <c>Params</c>. Every delegate-shape reader (ilemit FuncType/SigTokenOf/FuncArity, mentions-tv) uses this
+        /// so the emitted delegate + overload token match whether kotc kept the receiver in <c>Recv</c> (a restored
+        /// `P.() -> R` param type) or flat in <c>Params</c> (a lambda-value closure). Non-receiver fn -> just Params.
+        /// </summary>
+        public TypeNode[] DelegateParams
+        {
+            get
+            {
+                if (Recv is null) return Params;
+                var all = new TypeNode[Params.Length + 1];
+                all[0] = Recv;
+                System.Array.Copy(Params, 0, all, 1, Params.Length);
+                return all;
+            }
+        }
     }
 
     /// <summary>`nullable`: <c>T?</c> (NullableAttribute=2).</summary>

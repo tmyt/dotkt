@@ -66,12 +66,13 @@ static class HighArityFunctionFilter
 
     static int HighArity(TypeNode t) => t switch
     {
-        // A function-type value (Kotlin FunctionN / SuspendFunctionN) — the direct >16-param case.
+        // A function-type value (Kotlin FunctionN / SuspendFunctionN) — the direct >16-param case. DelegateParams
+        // counts an extension receiver as the first delegate arg, so a `P.(a1..a16) -> R` (arity 17) is caught.
         TypeNode.Fn fn => Max4(
-            fn.Params.Length > 16 ? fn.Params.Length : 0,
+            fn.DelegateParams.Length > 16 ? fn.DelegateParams.Length : 0,
             HighArity(fn.Ret),
-            fn.Params.Length == 0 ? 0 : fn.Params.Max(HighArity),
-            fn.Recv is not null ? HighArity(fn.Recv) : 0),
+            fn.DelegateParams.Length == 0 ? 0 : fn.DelegateParams.Max(HighArity),
+            0),
         // A KFunctionN with type args is already folded to a `fn` node by kotc's birType, so this Fqn arm is a defensive
         // guard for a raw/argless KFunction token (N params + 1 return = N+1 args), never the primary path.
         TypeNode.Fqn f => Math.Max(

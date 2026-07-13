@@ -36,6 +36,25 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **A receiver-lambda parameter `P.() -> Unit` keeps its receiver when a DotKt library is consumed AS KOTLIN
+  cross-module** (#145, Avalonia report E(b)). A `fun apply1(block: Panel.() -> Unit)` param is a Kotlin RECEIVER
+  function type — the lambda body gets an implicit `this: Panel`, so `apply1 { margin = 4 }` resolves `margin` to
+  `Panel.margin`. Kotlin lowers `P.() -> Unit` to `Function1<P,Unit>` carrying the `kotlin.ExtensionFunctionType`
+  annotation, then flattens the receiver to the delegate's first CLR arg (`KAction`1[Panel]`) — erasing the
+  "was a receiver" bit, so a re-consuming assembly saw a receiver-less `(Panel) -> Unit` and the lambda body failed
+  with `unresolved reference 'margin'`. Fixed end-to-end by carrying the bit the same way the suspend-fn-type carrier
+  (#28) does: kotc records it in the BIR `fn.recv` (detected off the IR `kotlin.ExtensionFunctionType` annotation,
+  non-suspend only); bir2cir stamps a bare `[KotlinExtensionFunctionType]` marker on the delegate in every position
+  (param/return/field/property) — the delegate itself is NOT erased (the receiver rides as its first CLR type arg, so
+  no shape is carried, unlike suspend); facadegen moves the delegate's first arg back into `fn.recv` at each read site
+  (param / getter-return / field / the shared property loops); and `ClrTypeInjection` restores
+  `P.() -> R` as an `ExtensionFunctionType` cone so the consumer's lambda regains `this: P`. ilemit's delegate-shape
+  readers (FuncType/SigToken/arity/mentions-tv) and the three pre-lowering bir2cir walkers (inline-splice HasTvType,
+  value-type collection/array/nullable, CharSequence) now read the shared `TypeNode.Fn.DelegateParams` (receiver
+  prepended) so the emitted delegate + overload token stay identical whether the receiver is kept in `recv` (a restored
+  param type) or flat in `params` (a lambda-value closure) — the stdlib `apply`/`run`/`with` inline hot path is
+  covered. New `roundtrip-receiver-lambda` gate section (top-level + member + multi-param mix).
+
 - **A native/unmanaged `.dll` in the `--ref` set no longer aborts the bir2cir build** (#138, Avalonia report D).
   When an app copy-locals an unmanaged PE (Avalonia's `libSkiaSharp.dll` / `av_libglesv2.dll` /
   `libHarfBuzzSharp.dll` under `runtimes/<rid>/native/`), bir2cir's reference loader called

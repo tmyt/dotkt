@@ -835,7 +835,7 @@ sealed partial class Emitter
         DotKt.Bir.TypeNode.Nullable n => MentionsTv(n.Of, pos),
         DotKt.Bir.TypeNode.Array ar => MentionsTv(ar.Elem, pos),
         DotKt.Bir.TypeNode.ByRef b => MentionsTv(b.Of, pos),
-        DotKt.Bir.TypeNode.Fn fn => MentionsTv(fn.Ret, pos) || fn.Params.Any(p => MentionsTv(p, pos)),
+        DotKt.Bir.TypeNode.Fn fn => MentionsTv(fn.Ret, pos) || fn.DelegateParams.Any(p => MentionsTv(p, pos)),
         _ => false,
     };
 

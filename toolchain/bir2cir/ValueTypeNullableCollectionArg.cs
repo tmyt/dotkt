@@ -91,7 +91,7 @@ static class ValueTypeNullableCollectionArg
         TypeNode.Nullable n => HasKotlinCollections(n.Of),
         TypeNode.Array a => HasKotlinCollections(a.Elem),
         TypeNode.ByRef b => HasKotlinCollections(b.Of),
-        TypeNode.Fn fn => HasKotlinCollections(fn.Ret) || fn.Params.Any(HasKotlinCollections),
+        TypeNode.Fn fn => HasKotlinCollections(fn.Ret) || fn.DelegateParams.Any(HasKotlinCollections),   // incl. a `T.() -> R` receiver (#145)
         _ => false,
     };
 
@@ -104,7 +104,7 @@ static class ValueTypeNullableCollectionArg
         TypeNode.Nullable n => HasNullableTvDirectArg(n.Of),
         TypeNode.Array a => HasNullableTvDirectArg(a.Elem),
         TypeNode.ByRef b => HasNullableTvDirectArg(b.Of),
-        TypeNode.Fn fn => HasNullableTvDirectArg(fn.Ret) || fn.Params.Any(HasNullableTvDirectArg),
+        TypeNode.Fn fn => HasNullableTvDirectArg(fn.Ret) || fn.DelegateParams.Any(HasNullableTvDirectArg),   // incl. a `T.() -> R` receiver (#145)
         _ => false,
     };
 
@@ -115,7 +115,7 @@ static class ValueTypeNullableCollectionArg
         TypeNode.Fqn f => f.Args?.Any(HasArray) ?? false,
         TypeNode.Nullable n => HasArray(n.Of),
         TypeNode.ByRef b => HasArray(b.Of),
-        TypeNode.Fn fn => HasArray(fn.Ret) || fn.Params.Any(HasArray),
+        TypeNode.Fn fn => HasArray(fn.Ret) || fn.DelegateParams.Any(HasArray),   // incl. a `T.() -> R` receiver (#145)
         _ => false,
     };
 

@@ -1362,7 +1362,7 @@ static class InlineSplice
         TypeNode.Oblivious ob => HasTvType(ob.Of),
         TypeNode.Array a => HasTvType(a.Elem),
         TypeNode.ByRef b => HasTvType(b.Of),
-        TypeNode.Fn fn => HasTvType(fn.Ret) || fn.Params.Any(HasTvType),
+        TypeNode.Fn fn => HasTvType(fn.Ret) || fn.DelegateParams.Any(HasTvType),   // DelegateParams incl. a `T.() -> R` receiver (#145: stdlib apply/run/with)
         TypeNode.Fqn f => f.Args != null && f.Args.Any(HasTvType),
         _ => false,
     };

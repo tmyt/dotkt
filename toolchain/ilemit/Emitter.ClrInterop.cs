@@ -295,9 +295,10 @@ sealed partial class Emitter
 
     // Delegate arity of a `funcType` slot — a structured `{t:"fn",params:[...]}` node (funcType is ALWAYS an `fn`
     // node now, #37 #49; the `func:`/`sfunc:` string form is retired). Matches how FuncType builds the CLR delegate
-    // (from `fn.Params`), so the score compares against the same arity the emitted delegate's Invoke carries.
+    // (from `fn.DelegateParams` — an extension receiver counts as the first arg), so the score compares against the
+    // same arity the emitted delegate's Invoke carries.
     static int FuncArityOf(JsonElement ft) =>
-        ft.ValueKind == JsonValueKind.Object && DotKt.Bir.TypeNode.Read(ft) is DotKt.Bir.TypeNode.Fn fn ? fn.Params.Length
+        ft.ValueKind == JsonValueKind.Object && DotKt.Bir.TypeNode.Read(ft) is DotKt.Bir.TypeNode.Fn fn ? fn.DelegateParams.Length
         : 0;
 
     // Does a candidate overload's parameter accept the resolved arg type? A null (un-resolvable) arg or an open generic
