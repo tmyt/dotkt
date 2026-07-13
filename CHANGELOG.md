@@ -65,6 +65,27 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   the BIR (`virtual` present), the reshaped `clrInstance` path, and the raw-`callInstance`-into-ilemit fallback +
   ilverify.
 
+- **`import System.X` BCL-injection coverage + NRT fidelity: `ThreadLocal<T>.Value` now surfaces as a platform type,
+  and static `RuntimeHelpers.GetHashCode(object)` injects (#143).** (facadegen) Two gaps the coroutines/atomicfu port
+  hit. (a) NRT fidelity: `ThreadLocal<T>.Value` was injected as a non-null `T` even though its getter carries
+  `[MaybeNull]` (it returns `default(T)`=null when unset) — a consumer's `if (x == null)` was flagged 'always false',
+  a latent NPE. facadegen now folds an OUTPUT-position `[MaybeNull]`/`[NotNull]` flow contract: `[MaybeNull]` demotes a
+  non-null node to a platform type `T!` (value-type-safe — `ThreadLocal<Int>.Value` is `default(int)`=0, never null —
+  where a forced `T?` would be wrong), read from BOTH the property and its getter's return parameter (the BCL uses both
+  placements); the contract is applied at return/property positions ONLY, never flipping a param's input type. (b) The
+  over-broad `OBJECT_MEMBERS` name-skip dropped `RuntimeHelpers.GetHashCode(object)` — a distinct public STATIC method —
+  because its name matches Kotlin `Any`'s instance member; the skip now applies to instance members only (a static
+  method never collides with `Any`), with the inherited `System.Object` statics still dropped by declaring type, and the
+  same narrowing mirrored into the FIR-injection closure walk so a newly-surfaced static's referenced types are enqueued.
+- **A companion-static `fun f(): Nothing` return now round-trips (does not widen to `Any?`) when consuming a DotKt
+  assembly as Kotlin (#135, extends #133).** (facadegen) The `[KotlinNothing]` reader covered only the plain
+  method/getter return; the companion-static loop read returns via raw `MapRetT` (`kotlin.Nothing` erased to `object` →
+  `Any?`), so a consumer's `val r: String = if (c) x else Boom.boom()` widened to `Any?` and failed to compile. The
+  companion-static loop now routes returns through the same `RetTypeSfxN` reader (restoring `Nothing` + folding NRT) the
+  instance/interface/top-level loops use, and `SuspendRetNode` is extended to read the marker before the `Task` unwrap
+  (the reader half of the suspend-return path; the suspend-return end-to-end round-trip additionally needs the bir2cir
+  producer to stamp `[KotlinNothing]` on the suspend Task-bridge — tracked as the `roundtrip-nothing-suspend` XFAIL).
+
 - **A NON-CONSTANT default parameter (`= {}` / a simple expression) is now preserved across the DotKt-as-Kotlin
   cross-module round-trip (#146, Avalonia report E(a); extends #134 to non-const defaults).** Consuming a DotKt
   library as Kotlin, a library function with an empty-lambda default — `fun column(configure: Panel.() -> Unit = {},

@@ -735,12 +735,17 @@ static class FacadeGen
                 {
                     // A generic METHOD DEFINITION (`Task.FromResult<T>`/`Task.Run<T>`) is surfaced so Kotlin can BUILD a
                     // `Task<T>` (async interop §②); a CONSTRUCTED generic static is skipped.
-                    if (m.IsSpecialName || OBJECT_MEMBERS.Contains(m.Name) || (m.IsGenericMethod && !m.IsGenericMethodDefinition)) continue;
+                    // #143: skip the INHERITED System.Object statics (ReferenceEquals, Equals(o,o)) by declaring type,
+                    // NOT by name — a type that DECLARES its own static `GetHashCode(object)` (RuntimeHelpers) is distinct.
+                    if (m.IsSpecialName || m.DeclaringType?.FullName == "System.Object" || (m.IsGenericMethod && !m.IsGenericMethodDefinition)) continue;
                     var sgp = m.IsGenericMethodDefinition ? m.GetGenericArguments().Select(g => g.Name).ToList() : new List<string>();
                     var sps = m.GetParameters();
                     if (!sps.All(p => Supported(p.ParameterType)) || !Supported(m.ReturnType)) continue;
                     if (!seen.Add("sm:" + m.Name + "<" + string.Join(",", sgp) + ">(" + Sig(sps, t) + ")")) continue;
-                    staticFuns.Add(FunObj(m.Name, MapRetT(m.ReturnType, t), new JsonObject(), "public", null,
+                    // #135: route the return through RetTypeSfxN (Nothing marker + NRT + ext-recv restore) — the same
+                    // reader the instance/interface/top-level loops use — instead of raw MapRetT, so a companion-static
+                    // `fun g(): Nothing` round-trips and NRT folds on companion statics.
+                    staticFuns.Add(FunObj(m.Name, RetTypeSfxN(m, t), new JsonObject(), "public", null,
                         m.IsGenericMethodDefinition ? TypeParamsArr(m.GetGenericArguments(), t, false, false) : null,
                         ParamsArr(sps, t)));
                 }
@@ -783,7 +788,10 @@ static class FacadeGen
             {
                 if (m.IsSpecialName) continue;
                 if (accessorMembers.Contains(m.Name)) continue;   // already surfaced as a `prop`
-                if (OBJECT_MEMBERS.Contains(m.Name)) continue;
+                // #143: the OBJECT_MEMBERS name-skip is for the Kotlin `Any` INSTANCE members (equals/hashCode/toString).
+                // A STATIC method never collides with those — e.g. `RuntimeHelpers.GetHashCode(object)` must surface; the
+                // inherited Object STATICS (ReferenceEquals, Equals(o,o)) are dropped by the DeclaringType guard below.
+                if (!m.IsStatic && OBJECT_MEMBERS.Contains(m.Name)) continue;
                 if (m.DeclaringType?.FullName == "System.Object") continue;
                 if (Covered(m)) continue;                 // arrives via an injected supertype
                 var prot = Vis(m); if (prot == null) continue;   // skip private/internal; keep public + protected
@@ -930,7 +938,10 @@ static class FacadeGen
         MethodInfo[] ms; try { ms = t.GetMethods(PUB); } catch { ms = Array.Empty<MethodInfo>(); }
         foreach (var m in ms)
         {
-            if (m.IsSpecialName || OBJECT_MEMBERS.Contains(m.Name) || m.DeclaringType?.FullName == "System.Object") continue;
+            // #143: mirror the emission narrowing (line 786) — a STATIC member (e.g. RuntimeHelpers.GetHashCode) now
+            // surfaces, so its referenced types MUST be enqueued here too, else the closure omits a type reachable ONLY
+            // through it -> the "unresolved reference" class this fix targets, reintroduced one layer down.
+            if (m.IsSpecialName || (!m.IsStatic && OBJECT_MEMBERS.Contains(m.Name)) || m.DeclaringType?.FullName == "System.Object") continue;
             yield return m.ReturnType;
             foreach (var p in m.GetParameters()) yield return p.ParameterType;
         }
@@ -1277,6 +1288,31 @@ static class FacadeGen
         if (b == 255) b = NrtContextOf(ctx);
         return b == 2 ? new TN.Nullable(node) : b == 0 ? new TN.Oblivious(node) : node;
     }
+    // #143: fold an OUTPUT-position `[MaybeNull]`/`[NotNull]` flow contract (System.Diagnostics.CodeAnalysis) over an
+    // NRT-wrapped node. `[MaybeNull]` (e.g. `ThreadLocal<T>.Value`, which returns `default(T)`=null when unset) demotes a
+    // non-null node to a PLATFORM type `T!` (Oblivious), NOT hard `T?`: the position is typically an UNCONSTRAINED generic
+    // `T`, so a value-type instantiation (`ThreadLocal<Int>`) returns `default(int)`=0 and is never null — forcing `T?`
+    // there would be wrong. Platform `T!` is value-type-safe, matches .NET's own use of `[MaybeNull]` ("maybe null IF T is
+    // a reference type"), and stops the consumer's FIR flagging `x == null` as 'always false'. `[NotNull]` conversely
+    // re-asserts non-null over a nullable node. This is applied ONLY at return/property (getter) positions — a param's
+    // `[MaybeNull]`/`[NotNull]` is an ON-EXIT (ref/out) contract and must NOT flip its input type, so ApplyNrt (shared
+    // with the param call site) stays contract-agnostic.
+    static TN ApplyFlowContract(TN node, Type t, IList<CustomAttributeData> attrs)
+    {
+        if (t.IsValueType || t.IsByRef || t.IsPointer) return node;
+        if (HasMaybeNull(attrs) && node is not (TN.Nullable or TN.Oblivious)) return new TN.Oblivious(node);
+        if (HasNotNull(attrs) && node is TN.Nullable nn) return nn.Of;
+        return node;
+    }
+    // Exact-name match — must NOT catch the CONDITIONAL siblings (MaybeNullWhen/NotNullWhen/NotNullIfNotNull), whose
+    // param-position semantics are unrelated to an unconditional output contract.
+    static bool HasMaybeNull(IList<CustomAttributeData> attrs) => HasAttr(attrs, "System.Diagnostics.CodeAnalysis.MaybeNullAttribute");
+    static bool HasNotNull(IList<CustomAttributeData> attrs) => HasAttr(attrs, "System.Diagnostics.CodeAnalysis.NotNullAttribute");
+    static bool HasAttr(IList<CustomAttributeData> attrs, string fullName)
+    {
+        foreach (var c in attrs) if (c.AttributeType.FullName == fullName) return true;
+        return false;
+    }
 
     const string KInlineAttr = "DotKt.Runtime.CompilerServices.KotlinInlineAttribute";
     // The carried BIR body of an inline+lambda fn ([KotlinInline]), or null. Splice-able by a consuming module.
@@ -1356,11 +1392,11 @@ static class FacadeGen
         // riding the same retAttrs channel as [Nullable]/[KotlinSuspendFunctionType]) restores it, so the consumer's FIR
         // sees `kotlin.Nothing` and an `if/else` with a Nothing branch keeps the non-Nothing type instead of widening to
         // Any?. NRT composes on top: a `Nothing?` return rides the nullability byte. (kotc's coneOf resolves the bare
-        // `Nothing` type node to bt.nothingType.) Scope: this covers the top-level/member method + getter return path;
-        // a `suspend fun`'s Task<T> result (SuspendRetNode) and a companion-static fun that bypass RetTypeSfxN are not
-        // yet wired — extend them when the bir2cir marker producer lands if those positions need it.
+        // `Nothing` type node to bt.nothingType.) This covers the top-level/member method + getter return path AND the
+        // companion-static return (the companion-static loop calls RetTypeSfxN here); the suspend-return position reads
+        // the same marker via SuspendRetNode (#135).
         if (HasNothingMarker(attrs)) return ApplyNrt(new TN.Fqn("Nothing"), m.ReturnType, attrs, m);
-        var rt = ApplyNrt(MapRetT(m.ReturnType, self), m.ReturnType, attrs, m);
+        var rt = ApplyFlowContract(ApplyNrt(MapRetT(m.ReturnType, self), m.ReturnType, attrs, m), m.ReturnType, attrs);
         return HasExtFnMarker(attrs) ? WithExtRecv(rt) : rt;   // #145: a method returning `P.() -> R`
     }
 
@@ -1392,6 +1428,11 @@ static class FacadeGen
     {
         var attrs = CustomAttributeData.GetCustomAttributes(p);
         var t = ApplyNrt(MapT(p.PropertyType, self), p.PropertyType, attrs, p);
+        // #143: a property's `[MaybeNull]`/`[NotNull]` flow contract may ride the PropertyDef OR its GETTER's return
+        // parameter (`[return: MaybeNull] get`) — the BCL uses both placements (e.g. `ThreadLocal<T>.Value` on the getter
+        // return). Fold from both attribute sets. Demotes `ThreadLocal<T>.Value` to a platform `T!`.
+        t = ApplyFlowContract(t, p.PropertyType, attrs);
+        if (p.GetMethod != null) t = ApplyFlowContract(t, p.PropertyType, CustomAttributeData.GetCustomAttributes(p.GetMethod.ReturnParameter));
         return HasExtFnMarker(attrs) ? WithExtRecv(t) : t;
     }
 
@@ -1414,11 +1455,21 @@ static class FacadeGen
     // no NRT slot -> no wrapper.
     static TN SuspendRetNode(MethodInfo m, Type self)
     {
+        var attrs = CustomAttributeData.GetCustomAttributes(m.ReturnParameter);
+        // #135: a `suspend fun f(): Nothing` — the Kotlin `Nothing` result is erased (Task<object> / Task); the
+        // [KotlinNothing] marker (stamped by bir2cir on the SAME retAttrs channel) restores it. Check BEFORE the Task
+        // unwrap so a non-generic `Task` return doesn't collapse to Unit. NRT (index 1, the result slot) folds on top.
+        if (HasNothingMarker(attrs))
+        {
+            byte nb = NrtByteAt(attrs, 1);
+            if (nb == 255) nb = NrtContextOf(m);
+            var nn = (TN)new TN.Fqn("Nothing");
+            return nb == 2 ? new TN.Nullable(nn) : nb == 0 ? new TN.Oblivious(nn) : nn;
+        }
         if (!IsTask1(m.ReturnType)) return new TN.Fqn("Unit");
         var inner = m.ReturnType.GetGenericArguments()[0];
         var node = MapRetT(inner, self);
         if (inner.IsValueType || node is TN.Nullable || node is TN.Oblivious) return node;
-        var attrs = CustomAttributeData.GetCustomAttributes(m.ReturnParameter);
         byte b = NrtByteAt(attrs, 1);
         if (b == 255) b = NrtContextOf(m);
         return b == 2 ? new TN.Nullable(node) : b == 0 ? new TN.Oblivious(node) : node;

@@ -276,6 +276,11 @@ il_check_imports alias Alias "$ROOT/cases/il-alias" "$(printf 'hello, alias\n12'
 # dual-rep: the imported .NET view + the stdlib kotlin.text.StringBuilder coexist as two typed views of one CLR
 # type; an explicit cast crosses them (rule in docs/dotkt-semantics.md).
 il_check_imports dualrep DualRep "$ROOT/cases/il-dualrep" "$(printf 'net\n3\nkt\nnet')"
+# bclinject (#143): BCL-injection coverage + NRT fidelity — the generic `ThreadLocal<T>` value-factory ctor injects;
+# `ThreadLocal<T>.Value` surfaces as a PLATFORM type (`String!`, its getter carries [MaybeNull]) so `v == null` is legal
+# (not 'always false') and true when unset; and static `RuntimeHelpers.GetHashCode(object)` injects (the OBJECT_MEMBERS
+# name-skip no longer drops a distinct static method).
+il_check_imports bclinject AppKt "$ROOT/cases/il-bclinject" "$(printf 'hi\nTrue\nTrue')"
 # taskfam: a same-name .NET arity family — non-generic `Task` and `Task<TResult>` (Kotlin `Task1`) coexist in one
 # file; `generic:Task1[T]` cross-refs resolve to the arity-1 definition (docs/dotkt-semantics.md §8d).
 il_check_imports taskfam Tf "$ROOT/cases/il-taskfam" "$(printf 'plain=True\ngeneric=42')"
