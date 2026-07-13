@@ -36,6 +36,15 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **A `suspend fun f(): Nothing` now round-trips its Nothing return through a re-consumed DotKt assembly (#151).**
+  bir2cir's `SuspendColdLowering.BuildBridge()` builds the `Task<Nothing>` async bridge from `suspendRet` (= `kotlin.Nothing`),
+  but the inner Nothing erases to `object` (Nothing has no CLR analog), so `BirTypeLowering`'s own bare-Fqn `IsNothingRet`
+  check could not see it on the `Task<...>` return and `RoundtripMetadata` never stamped `[KotlinNothing]`. `BuildBridge`
+  now carries the pre-erasure `retNothing` fact onto the bridge return (both the abstract-member signature and the concrete
+  TCS-driven body), so `RoundtripMetadata` emits `[KotlinNothing]` and the merged facadegen reader (#135) restores the
+  `suspend fun f(): Nothing` return on re-consumption — `blockOn { if (c) x else sfail() }` keeps the lambda `suspend () -> Int`
+  instead of widening to `Any?`. (`verify-roundtrip.sh` section `roundtrip-nothing-suspend`, previously RT_XFAIL, now GREEN.)
+
 - **Two same-name/same-arity top-level extensions on DIFFERENT receiver types (parallel `*Extensions` static classes in
   one namespace) now each bind to their OWN receiver's class — no silent mis-bind to the first candidate (#144).** A
   facadegen-injected C#-origin `[Extension]` method surfaces as a Kotlin top-level extension fun keyed by

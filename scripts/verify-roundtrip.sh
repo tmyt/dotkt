@@ -37,11 +37,9 @@ declare -A RT_XFAIL=(
 	# (#34b FIXED 2026-07-06: a top-level `val`/`var` fully round-trips — facadegen surfaces it as a `tlprop` meta
 	# token, kotc's ClrTypeInjection restores a non-extension top-level property and BirEmitter routes its read/write
 	# to `staticField`/`staticFieldSet` of the referenced file class; a top-level `val` is stamped `readOnly`.)
-	# #135 — the facadegen READER for a `suspend fun f(): Nothing` return is in place (SuspendRetNode reads
-	# [KotlinNothing]), but the PRODUCER doesn't stamp it: bir2cir SuspendColdLowering.BuildBridge() builds the
-	# Task<object> bridge from `suspendRet` (= kotlin.Nothing) but never derives retNothing onto it, so the marker
-	# never reaches the emitted return param. Flips to FIXED once bir2cir stamps retNothing on the suspend bridge.
-	[roundtrip-nothing-suspend]="#135 producer gap: bir2cir SuspendColdLowering.BuildBridge does not stamp [KotlinNothing] on the Task-bridge return"
+	# (#151 FIXED: bir2cir SuspendColdLowering.BuildBridge() now stamps retNothing on the Task<Nothing> bridge return
+	# (both the abstract and concrete shapes), so RoundtripMetadata emits [KotlinNothing] and facadegen restores the
+	# `suspend fun f(): Nothing` return — the `roundtrip-nothing-suspend` section verifies it.)
 )
 
 # ---- section result collection (no section may abort the script) -----------------------------------
@@ -291,10 +289,10 @@ noexpected="kept"
 run_app noactual "$NO/appil/NothingApp.dll"
 check_output roundtrip-nothing "$noexpected" "$noactual" "companion-static + top-level fun f(): Nothing round-trips (does not widen to Any?) #135"
 
-# ----- SUSPEND `Nothing` return round-trip (#135, XFAIL): `suspend fun f(): Nothing` (see RT_XFAIL) -----
-# The facadegen READER is ready (SuspendRetNode reads [KotlinNothing] before the Task unwrap); this is XFAIL on the
-# bir2cir PRODUCER gap (SuspendColdLowering.BuildBridge doesn't stamp retNothing on the Task-bridge return). When the
-# producer stamps it, `sfail()` stops widening to Any?, the lambda types as `suspend () -> Int`, and this flips FIXED.
+# ----- SUSPEND `Nothing` return round-trip (#135/#151): `suspend fun f(): Nothing` -----
+# The facadegen READER reads [KotlinNothing] before the Task unwrap; bir2cir's SuspendColdLowering.BuildBridge stamps
+# retNothing on the Task<Nothing> bridge return (#151), so RoundtripMetadata emits [KotlinNothing] and facadegen
+# restores the Nothing return: `sfail()` does NOT widen to Any?, so the lambda types as `suspend () -> Int` and `z: Int`.
 NS="$ROOT/build/roundtrip-nothing-suspend"; rm -rf "$NS"; mkdir -p "$NS/lib" "$NS/app" "$NS/libbir" "$NS/libil" "$NS/appbir" "$NS/appil"
 cat > "$NS/lib/lib.kt" <<'EOF'
 suspend fun sfail(): Nothing = throw RuntimeException("sfail")
@@ -315,7 +313,7 @@ CLR_TYPES_METADATA="$NS/meta" "$LAUNCHER" "$NS/app" -no-stdlib -classpath "$CP" 
 emit_il "$NS/appil" SNothingApp --ref "$NS/libil/SNothingLib.dll" "$NS/appbir"/*.bir.json
 cp "$NS/libil/SNothingLib.dll" "$NS/appil/" 2>/dev/null || true
 run_app nsactual "$NS/appil/SNothingApp.dll"
-check_output roundtrip-nothing-suspend "7" "$nsactual" "suspend fun f(): Nothing round-trips (reader ready; XFAIL on bir2cir producer) #135"
+check_output roundtrip-nothing-suspend "7" "$nsactual" "suspend fun f(): Nothing round-trips (bir2cir stamps [KotlinNothing] on the Task-bridge return) #135/#151"
 
 R="$ROOT/build/roundtrip"; rm -rf "$R"; mkdir -p "$R/lib" "$R/app" "$R/libbir" "$R/libil" "$R/appbir" "$R/appil"
 

@@ -70,6 +70,10 @@ static class SuspendColdLowering
     static JsonNode ContUnit() => TypeJson.Write(ContUnitTn);
     static bool IsUnitTn(TypeNode t) => t is TypeNode.Fqn { Args: null, Name: "void" or "kotlin.Unit" };
     static bool IsAnyTn(TypeNode t) => t is TypeNode.Fqn { Args: null, Name: "kotlin.Any" };
+    // #151 — the suspend RESULT type is `kotlin.Nothing` (`suspend fun f(): Nothing`, incl. `Nothing?` — the outer `?`
+    // is peeled onto _resultNullable, leaving a bare `kotlin.Nothing`). The Task<Nothing> bridge return must carry the
+    // pre-erasure Nothing fact (retNothing) so RoundtripMetadata stamps [KotlinNothing] and facadegen restores it (#135).
+    static bool IsNothingTn(TypeNode t) => t is TypeNode.Fqn { Args: null, Name: "kotlin.Nothing" };
 
     const string ContinuationImplFqn = "kotlin.coroutines.clr.internal.ContinuationImpl";
     const string SuspendLambdaFqn = "kotlin.coroutines.clr.internal.SuspendLambda";
@@ -2706,6 +2710,10 @@ static class SuspendColdLowering
                     am["typeParams"] = tp;
                 }
                 if (TaskReturnNullableFlags() is JsonArray arnf) am["retNullableFlags"] = arnf;
+                // #151 — a `suspend fun f(): Nothing` bridge (Task<Nothing>): carry the pre-erasure Nothing fact so
+                // RoundtripMetadata stamps [KotlinNothing] on the return (BirTypeLowering erases the inner Nothing to
+                // object, so its own bare-Fqn IsNothingRet check can't see it on the Task<...> return — set it here).
+                if (IsNothingTn(_resultType)) am["retNothing"] = true;
                 return am;
             }
 
@@ -2803,6 +2811,10 @@ static class SuspendColdLowering
             // inner `?` — the scalar retNullable can't express a nullability that rides an INNER type arg. Emit the
             // flattened NullableAttribute byte walk (ilemit stamps it verbatim on the return; facadegen reads it back).
             if (TaskReturnNullableFlags() is JsonArray rnf) method["retNullableFlags"] = rnf;
+            // #151 — a `suspend fun f(): Nothing` bridge (Task<Nothing>): carry the pre-erasure Nothing fact so
+            // RoundtripMetadata stamps [KotlinNothing] on the return (BirTypeLowering erases the inner Nothing to
+            // object, so its own bare-Fqn IsNothingRet check can't see it on the Task<...> return — set it here).
+            if (IsNothingTn(_resultType)) method["retNothing"] = true;
             return method;
         }
 
