@@ -53,6 +53,13 @@ sealed class ReferenceMetadataIndex
     readonly Dictionary<string, string> _arrayFactories = new(StringComparer.Ordinal);       // @ClrArrayFactory fun name -> "vararg"/"sized"
     readonly Dictionary<string, string> _arrayFactoryElemHints = new(StringComparer.Ordinal);// array factory name -> concrete elem FQN (empty-call fallback)
     readonly Dictionary<string, Dictionary<int, string>> _kotlinDefaults = new(StringComparer.Ordinal); // "owner|name|paramCount" -> (argPos -> default BIR)
+    // #146: OWNERLESS default-arg index "name|paramCount" -> defaults. DefaultArgSplice now runs at PHASE 1 (before
+    // MemberCallSubstitution attributes the owner), so the omitted call is still `owner:null method:col2 sig:[…]`.
+    // Built from _kotlinDefaults: a key with a SINGLE owner, or several owners whose defaults AGREE, maps to those
+    // defaults; owners that DISAGREE mark it AMBIGUOUS (the splice loud-refuses rather than guess) — mirrors kotc's
+    // ClrTypeInjection.defaultsForArity.
+    readonly Dictionary<string, Dictionary<int, string>> _kotlinDefaultsOwnerless = new(StringComparer.Ordinal);
+    readonly HashSet<string> _kotlinDefaultsAmbiguous = new(StringComparer.Ordinal);
     // [KotlinInline] raw-BIR payloads (#71/#75): "owner|name|pc|ga" -> the CANDIDATE decoded carrier JSONs (one per overload
     // sharing that key; the raw pre-lowering decl facts InlineBirStash stashed). Read cross-module by InlineSplice, which
     // picks the UNIQUE candidate matching the call's `paramSig` (§4.2), then splices its body at the call site (so it
@@ -137,7 +144,20 @@ sealed class ReferenceMetadataIndex
                     _topLevelStatics[kv.Key] = lst = new List<(string, string)>();
                 lst.AddRange(kv.Value);
             }
-            foreach (var kv in asm.DotKt.KotlinDefaults) _kotlinDefaults.TryAdd(kv.Key, kv.Value);
+            foreach (var kv in asm.DotKt.KotlinDefaults)
+            {
+                _kotlinDefaults.TryAdd(kv.Key, kv.Value);
+                // OWNERLESS fold "owner|name|pc" -> "name|pc" (#146). Method/owner names carry no '|', so the split is exact.
+                var parts = kv.Key.Split('|');
+                if (parts.Length != 3) continue;
+                var np = parts[1] + "|" + parts[2];
+                if (_kotlinDefaultsAmbiguous.Contains(np)) continue;
+                if (_kotlinDefaultsOwnerless.TryGetValue(np, out var have))
+                {
+                    if (!SameDefaults(have, kv.Value)) { _kotlinDefaultsOwnerless.Remove(np); _kotlinDefaultsAmbiguous.Add(np); }
+                }
+                else _kotlinDefaultsOwnerless[np] = kv.Value;
+            }
             foreach (var kv in asm.DotKt.CollectionFactories) _collectionFactories.TryAdd(kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.ArrayFactories) _arrayFactories.TryAdd(kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.ArrayFactoryElemHints) _arrayFactoryElemHints.TryAdd(kv.Key, kv.Value);
@@ -195,11 +215,22 @@ sealed class ReferenceMetadataIndex
     // The concrete element FQN for an array factory (empty-call fallback for `intArrayOf()`), or null.
     public string ArrayFactoryElemHint(string funName) => _arrayFactoryElemHints.GetValueOrDefault(funName);
 
-    // The @KotlinDefault BIR splice map for a call's callee — (argPosition -> default-expression BIR-json). Matched by
-    // owner FQN + method name + total parameter count (the emitted-call arity, extension receiver included). Null when
-    // the callee carries no @KotlinDefault (a function with only metadata-representable defaults).
-    public Dictionary<int, string> KotlinDefaultsFor(string owner, string method, int paramCount) =>
-        _kotlinDefaults.TryGetValue(owner + "|" + method + "|" + paramCount, out var m) ? m : null;
+    // The @KotlinDefault BIR splice map for a call's callee — (argPosition -> default-expression BIR-json). #146:
+    // OWNERLESS (method name + total emitted-call arity, extension receiver included) because DefaultArgSplice runs at
+    // PHASE 1, before the owner is attributed. Null when no callee carries @KotlinDefault at this name|arity, OR when
+    // several owners at that key DISAGREE on defaults (ambiguous — the splice loud-refuses, see [KotlinDefaultsAmbiguous]).
+    public Dictionary<int, string> KotlinDefaultsFor(string method, int paramCount) =>
+        method != null && _kotlinDefaultsOwnerless.TryGetValue(method + "|" + paramCount, out var m) ? m : null;
+    // True when name|arity is carried by >1 owner with CONFLICTING defaults (the splice must refuse, not guess).
+    public bool KotlinDefaultsAmbiguous(string method, int paramCount) =>
+        method != null && _kotlinDefaultsAmbiguous.Contains(method + "|" + paramCount);
+
+    static bool SameDefaults(Dictionary<int, string> a, Dictionary<int, string> b)
+    {
+        if (a.Count != b.Count) return false;
+        foreach (var kv in a) if (!b.TryGetValue(kv.Key, out var v) || v != kv.Value) return false;
+        return true;
+    }
 
     // Cross-assembly suspend-call resolution (bundle-6 P3 wave 2a): does the referenced owner declare a suspend
     // member of this name? The cold entry is the naming-convention linkage (`<name>$dotkt_suspend` on the same

@@ -189,14 +189,7 @@ internal fun BirEmitter.filledArgExprs(call: org.jetbrains.kotlin.ir.expressions
 	// omitted default arg ANYWHERE (named-middle `f(c=9)` / reordered — a trailing omit falls back to ilemit's
 	// [DefaultParameterValue] backfill either way). Null for a same-module callee (its default is a real IrConst in IR).
 	val regCount = callee.parameters.count { it.kind == IrParameterKind.Regular }
-	val metaDefaults: List<kotc.frontend.ClrConstDefault?>? = when (callee) {
-		is org.jetbrains.kotlin.ir.declarations.IrConstructor ->
-			(callee.parent as? IrClass)?.classId?.let { kotc.frontend.clrInjectedCtorParamDefaults(it, regCount) }
-		is org.jetbrains.kotlin.ir.declarations.IrSimpleFunction ->
-			(callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)
-				?.let { kotc.frontend.clrInjectedTopLevelParamDefaults(org.jetbrains.kotlin.name.CallableId(it.packageFqName, callee.name), regCount) }
-		else -> null
-	}
+	val metaDefaults = injectedMetaDefaults(callee, regCount)
 	val out = ArrayList<IrExpression>()
 	var regIdx = -1
 	callee.parameters.forEachIndexed { i, p ->
@@ -237,6 +230,56 @@ internal fun BirEmitter.filledArgExprs(call: org.jetbrains.kotlin.ir.expressions
 				"which the .NET backend cannot evaluate at the call site; pass the argument explicitly")
 			out.add(def)
 		}
+	}
+	return out
+}
+
+/** The facadegen metadata's per-regular-parameter constant defaults for `callee` (ctor by IR ClassId, or top-level
+ *  function by resolved CallableId), matched by regular-param count. Null for a same-module callee or one with no such
+ *  overload / ambiguous defaults. Shared by [filledArgExprs] (#134 const inline) and [filledInjectedArgs] (#146). */
+internal fun BirEmitter.injectedMetaDefaults(callee: org.jetbrains.kotlin.ir.declarations.IrFunction, regCount: Int): List<kotc.frontend.ClrConstDefault?>? =
+	when (callee) {
+		is org.jetbrains.kotlin.ir.declarations.IrConstructor ->
+			(callee.parent as? IrClass)?.classId?.let { kotc.frontend.clrInjectedCtorParamDefaults(it, regCount) }
+		is org.jetbrains.kotlin.ir.declarations.IrSimpleFunction ->
+			(callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)
+				?.let { kotc.frontend.clrInjectedTopLevelParamDefaults(org.jetbrains.kotlin.name.CallableId(it.packageFqName, callee.name), regCount) }
+		else -> null
+	}
+
+/** #146: the regular-arg BIR STRINGS for a call to a facadegen-injected TOP-LEVEL function, filling an OMITTED default:
+ *  a metadata-representable CONSTANT is synthesized inline (#134, [metaConstArg]); a NON-CONSTANT default (`= {}`, a
+ *  call, any expr the metadata can't carry) becomes a POSITIONAL `defaultArg` placeholder — bir2cir's DefaultArgSplice
+ *  fills it from the callee's ref.dll `[kotlin.clr.KotlinDefault]` BIR sub-tree. Positional so a later provided arg keeps
+ *  its slot (`col2(build = {...})` omitting a leading `configure`). A slot with neither a constant NOR a @KotlinDefault
+ *  is dropped when purely trailing (ilemit's [DefaultParameterValue] backfill), else refused loudly (arg-shift guard).
+ *  The extension receiver is prepended by the caller; the @KotlinDefault index counts it first, matching the final args
+ *  array's positions. */
+internal fun BirEmitter.filledInjectedArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): List<String> {
+	val callee = (call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction) ?: return emptyList()
+	val regCount = callee.parameters.count { it.kind == IrParameterKind.Regular }
+	val metaDefaults = injectedMetaDefaults(callee, regCount)
+	val carries = (callee as? org.jetbrains.kotlin.ir.declarations.IrSimpleFunction)?.let { carriesKotlinDefault(it) } ?: false
+	val out = ArrayList<String>()
+	var regIdx = -1
+	callee.parameters.forEachIndexed { i, p ->
+		if (p.kind != IrParameterKind.Regular) return@forEachIndexed
+		regIdx++
+		val arg = if (i < call.arguments.size) call.arguments[i] else null
+		if (arg != null) { out.add(expr(arg)); return@forEachIndexed }
+		val def = p.defaultValue?.expression ?: return@forEachIndexed
+		if (def is org.jetbrains.kotlin.ir.expressions.IrErrorExpression) {
+			metaDefaults?.getOrNull(regIdx)?.let { metaConstArg(it, p.type) }?.let { out.add(expr(it)); return@forEachIndexed }
+			if (carries) { out.add(defaultArgPlaceholder); return@forEachIndexed }
+			val laterArgProvided = (i + 1 until call.arguments.size).any { j ->
+				call.arguments[j] != null && callee.parameters[j].kind == IrParameterKind.Regular
+			}
+			if (laterArgProvided) unsupported(call, "omitting a cross-module default argument the metadata does not carry",
+				"the default value of parameter '${p.name.asString()}' is not available in the referenced assembly's " +
+				"metadata (no constant and no @KotlinDefault); pass the argument explicitly")
+			return@forEachIndexed
+		}
+		out.add(expr(def))
 	}
 	return out
 }
@@ -1309,14 +1352,14 @@ internal fun BirEmitter.call(call: IrCall): String {
  * real generic method the JIT inlines) as well as every ordinary non-inline top-level fun.
  */
 internal fun BirEmitter.plainInjectedTopLevelCall(call: IrCall, callee: IrSimpleFunction, fileClass: String, name: String, extRecv: IrExpression?): String {
-	// An extension fun: its receiver is the .NET method's first param (`__self`), so prepend it to the args.
-	val a = listOfNotNull(extRecv) + filledArgExprs(call)   // fill omitted default args (trailing/named-middle/reordered)
 	// A GENERIC top-level fun (e.g. a `reified` inline restored as a generic method) -> a generic static
 	// call carrying the type args, so ilemit MakeGenericMethods it (the reified `typeof(T)`/`is T` body
 	// then sees the concrete type). CLR generics are reified, so no inlining is needed across assemblies.
 	if (callee.typeParameters.isNotEmpty()) {
 		val targs = callee.typeParameters.indices.map { call.typeArguments.getOrNull(it) }
 		if (targs.all { it != null }) {
+			// An extension fun: its receiver is the .NET method's first param (`__self`), so prepend it to the args.
+			val a = listOfNotNull(extRecv) + filledArgExprs(call)   // fill omitted default args (trailing/named-middle/reordered)
 			val taJson = targs.joinToString(",") { birType(it!!).toJson() }
 			// `shapeTypes` must line up with `a` (= extension receiver, then regular args), so a GENERIC extension
 			// fun's `__self` receiver type is included — else bir2cir's by-shape overload pick finds 0 params.
@@ -1331,7 +1374,16 @@ internal fun BirEmitter.plainInjectedTopLevelCall(call: IrCall, callee: IrSimple
 	// A2 (#61): a PLAIN static call by identity to the referenced .NET file class; bir2cir's NetInteropBinding
 	// shapes it to clrStatic. A `suspend` callee is flagged by `suspendCallTag` (Task/await lowering deferred).
 	val ret = birType(callee.returnType)
-	return """{"k":"callStatic","ownerType":${str(fileClass)},"method":${str(name)},"argTypes":[${a.joinToString(",") { birType(it.type).toJson() }}],"ret":${str(ret)},"args":[${a.joinToString(",") { expr(it) }}]${suspendCallTag(callee)}}"""
+	// #146: build the regular args as STRINGS so an omitted NON-CONST default emits a `defaultArg` placeholder (bir2cir's
+	// DefaultArgSplice fills it from the callee's ref.dll @KotlinDefault). The extension receiver (arg[0] = `__self`) is
+	// prepended; each arg's type is its PARAMETER's type (a placeholder carries no expr type). `sig` (the callee's full
+	// .NET signature) drives DefaultArgSplice's arg-count match against the ref.dll @KotlinDefault key.
+	val regArgs = filledInjectedArgs(call)
+	val extStr = extRecv?.let { expr(it) }
+	val argStrs = (listOfNotNull(extStr) + regArgs).joinToString(",")
+	val extParamType = callee.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }?.let { birType(it.type) }
+	val argTypeNodes = (listOfNotNull(extParamType) + regularParams(callee).map { birType(it.type) }.take(regArgs.size)).joinToString(",") { it.toJson() }
+	return """{"k":"callStatic","ownerType":${str(fileClass)},"method":${str(name)}${overloadSigField(callee)},"argTypes":[$argTypeNodes],"ret":${str(ret)},"args":[$argStrs]${suspendCallTag(callee)}}"""
 }
 
 /**

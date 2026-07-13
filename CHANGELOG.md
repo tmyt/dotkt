@@ -36,6 +36,22 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **A NON-CONSTANT default parameter (`= {}` / a simple expression) is now preserved across the DotKt-as-Kotlin
+  cross-module round-trip (#146, Avalonia report E(a); extends #134 to non-const defaults).** Consuming a DotKt
+  library as Kotlin, a library function with an empty-lambda default — `fun column(configure: Panel.() -> Unit = {},
+  build: Panel.() -> Unit)` (THE Avalonia DSL idiom, composed with #145's receiver lambda) — called `column(build =
+  {…})` failed the consumer's kotc frontend with `no value passed for parameter 'configure'`: #134 carried only a
+  CONSTANT default value, so a `= {}` / `= emptyList()` default surfaced as a required param. Now the SAME
+  `@KotlinDefault` mechanism carries a non-const default as a CLOSED BIR sub-tree — a non-capturing lambda's lifted
+  method rides a `defaultCarrier` envelope so it is self-contained cross-module; facadegen marks the injected param
+  OPTIONAL (a `nonConst` default) so the frontend accepts the omission; and bir2cir's `DefaultArgSplice` now runs at
+  PHASE 1 (right after `InlineSplice`, before owner attribution/type lowering) and fills the omitted slot ownerlessly
+  (by name+arity), RE-HOISTING a carried lambda into the consumer's file class under a fresh name so ilemit's
+  assembly-local `ldftn` resolves it and it re-lowers in the app's context. The empty-lambda default fills to `{}`.
+  Covered: an empty receiver/plain lambda `= {}`, a simple-expression default (`= emptyList()`); a capturing / SAM /
+  suspend-lambda default is refused loudly (a `defaultUnsupported` poison carrier) rather than miscompiled. New gate
+  section `roundtrip-nonconst-default`.
+
 - **`String.split`/`replace`/`substring` on a COMPUTED (non-const/local) receiver no longer crashes with
   `EntryPointNotFoundException` at `dotkt$CharSequence.subSequence` (#148, the residual of #92).** A `kotlin.text`
   CharSequence extension (`split`/`replace`/`substring`/…) on a `String` receiver requires bir2cir to adapter-wrap

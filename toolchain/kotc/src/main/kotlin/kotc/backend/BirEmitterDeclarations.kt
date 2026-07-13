@@ -967,6 +967,30 @@ internal fun BirEmitter.carriesKotlinDefault(fn: org.jetbrains.kotlin.ir.declara
 internal fun BirEmitter.isDataClassCopy(fn: org.jetbrains.kotlin.ir.declarations.IrSimpleFunction): Boolean =
 	fn.name.asString() == "copy" && (fn.parent as? IrClass)?.isData == true
 
+/** #146: the @KotlinDefault carrier BIR for a default expression, made CLOSED so bir2cir can re-emit it at a
+ *  cross-module omitted call site. A constant / simple call (`= emptyList()`) emits NO lifted method, so its BIR is
+ *  carried verbatim (byte-identical to the #134 constant carrier). A NON-CAPTURING lambda default (`= {}`, the
+ *  Avalonia `configure: Panel.() -> Unit = {}` idiom) lifts a `__lambdaN` static method into THIS file's `liftedMethods`
+ *  and returns a `newDelegate` referencing it — an OPEN term (the method is library-local). Detach that lift DELTA from
+ *  this library's file class (it is dead here — only the default's call sites materialize it) and wrap it with its
+ *  `newDelegate` in a `defaultCarrier` envelope; bir2cir's DefaultArgSplice re-hoists the carried method app-local (fresh
+ *  name) at the consumer. A CAPTURING closure / SAM / suspend lambda default cannot be positionally reconstructed
+ *  cross-module → a `defaultUnsupported` poison carrier the consumer's splice refuses on (a precise diagnostic, not a
+ *  miscompile). */
+internal fun BirEmitter.defaultCarrierBir(def: org.jetbrains.kotlin.ir.expressions.IrExpression): String {
+	val before = liftedMethods.size
+	val bir = expr(def)
+	val delta = if (liftedMethods.size > before) {
+		val d = ArrayList(liftedMethods.subList(before, liftedMethods.size))
+		while (liftedMethods.size > before) liftedMethods.removeAt(liftedMethods.size - 1)
+		d
+	} else emptyList()
+	if (bir.contains(""""k":"newClosure"""") || bir.contains(""""k":"newSam"""") || bir.contains(""""k":"newSuspendLambda""""))
+		return """{"k":"defaultUnsupported","reason":${str("a capturing / SAM / suspend lambda default cannot be filled at a cross-module call site — pass the argument explicitly")}}"""
+	if (delta.isEmpty()) return bir
+	return """{"k":"defaultCarrier","expr":$bir,"lifted":[${delta.joinToString(",")}]}"""
+}
+
 internal fun BirEmitter.paramsJsonList(params: List<org.jetbrains.kotlin.ir.declarations.IrValueParameter>,
 		ownerFn: org.jetbrains.kotlin.ir.declarations.IrSimpleFunction? = null): List<String> {
 	// A `@KotlinDefault(index, bir)` on each defaulted param of a qualifying function: `index` = the param's position
@@ -1001,7 +1025,7 @@ internal fun BirEmitter.paramsJsonList(params: List<org.jetbrains.kotlin.ir.decl
 			// build (`--build-stdlib=runtime`), so param attrs ride only the ref.dll — exactly bir2cir's read surface.
 			val srcAttrs = attrsJson(it.annotations)
 			val kotlinDefault = if (emitKotlinDefault) it.defaultValue?.expression?.let { def ->
-				val bir = expr(def)   // BIR of the default expression (real IR here — the callee's own build)
+				val bir = defaultCarrierBir(def)   // BIR of the default (real IR — the callee's own build), CLOSED for cross-module splice
 				"""{"attr":"kotlin.clr.KotlinDefault","argTypes":[${fqnJson("kotlin.Int")},${fqnJson("kotlin.String")}],"args":[{"k":"const","type":${fqnJson("kotlin.Int")},"value":${regIdx + extOffset}},{"k":"const","type":${fqnJson("kotlin.String")},"value":${str(bir)}}]}"""
 			} else null
 			val allAttrs = listOfNotNull(srcAttrs.takeIf { s -> s.isNotEmpty() }, kotlinDefault).joinToString(",")

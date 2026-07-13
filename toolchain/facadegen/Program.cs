@@ -412,7 +412,12 @@ static class FacadeGen
         }
         var pt = ApplyNrt(MapT(p.ParameterType, self), p.ParameterType, attrs, p.Member as MemberInfo);
         o["type"] = Ty(HasExtFnMarker(attrs) ? WithExtRecv(pt) : pt);   // #145: `block: P.() -> R` -> restore the receiver
+        // #146: a NON-CONST default (`= {}` / a call / any non-metadata-representable expr) carries no CLR
+        // [Optional]+[DefaultParameterValue] — it rides `[kotlin.clr.KotlinDefault]` (the BIR sub-tree bir2cir splices
+        // at the omitted call site). Surface it as a `{"nonConst":true}` default so the consumer marks the param
+        // OPTIONAL (accepts the omission); the real value is filled from @KotlinDefault at BIR->CIR, not from this meta.
         if (HasDefault(p)) o["default"] = DefaultObj(p, self);
+        else if (HasKotlinDefault(attrs)) o["default"] = new JsonObject { ["nonConst"] = true };
         return o;
     }
 
@@ -1523,6 +1528,9 @@ static class FacadeGen
         m == null ? null : m.IsPublic ? false : (m.IsFamily || m.IsFamilyOrAssembly) ? true : (bool?)null;
 
     static bool HasDefault(ParameterInfo p) { try { return p.HasDefaultValue && !p.IsOut; } catch { return false; } }
+    // #146: a non-const default arg the library exports as `[kotlin.clr.KotlinDefault]` (BIR sub-tree spliced at BIR->CIR).
+    static bool HasKotlinDefault(IList<CustomAttributeData> attrs) =>
+        attrs.Any(a => a.AttributeType.FullName == "kotlin.clr.KotlinDefault");
     static bool IsParamArray(ParameterInfo p)
     {
         try { return p.GetCustomAttributesData().Any(c => c.AttributeType.FullName == "System.ParamArrayAttribute"); }

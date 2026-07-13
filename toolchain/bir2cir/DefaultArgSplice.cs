@@ -1,63 +1,70 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// STRING -> CharSequence adapter bridge. `kotlin.String` is @ClrTypeAlias("System.String") — a SEALED BCL type whose
-// CharSequence face is bound in-place (@ClrIntrinsic Length/get_Chars). `kotlin.CharSequence` has NO BCL equivalent, so
-// bir2cir's SharedSyntheticSynthesis synthesizes the monomorphic interface `dotkt$CharSequence` (get_length/get/subSequence). A `System.String`
-// (sealed) cannot implement that interface, so a bare String flowing into a `@dotkt$CharSequence` slot crashes
-// (InvalidProgram / InvalidCast). This pass MATERIALIZES the coercion: wherever a value whose STATIC type is String
-// flows into a CharSequence slot, it inserts `new dotkt$StringCharSequence(theString)` — an App-local adapter class
-// this pass ALSO injects, modeled on the proven user `class S : CharSequence` shape (String-backed length/get/
-// subSequence delegating to get_Length/get_Chars/Substring). Five sites — a call's CharSequence-typed arg (covers an
-// extension receiver, which is arg[0] + sig[0], AND an ordinary CharSequence param), a return into a CharSequence
-// return type, a store into a CharSequence-typed local, and an `as CharSequence` cast. It wraps ONLY when the value is
-// POSITIVELY a bare String (const string literal, a String-typed local/param read, a String cast, or a String-returning
-// call) — never when the value is already a dotkt$CharSequence (StringBuilder / a user CharSequence / another
-// wrapper), so it is purely additive: genuine intra-assembly polymorphism (`val cs: CharSequence = "abc"; cs.length`)
-// now works, and no existing statically-String-receiver path (kotc's STRING_OPS lowering, which dispatches on the
-// String directly) is touched.
+// CROSS-MODULE DEFAULT-ARGUMENT SPLICE (#134/#146).
 //
-// WHY app-LOCAL (not a stdlib class): the synthetic `dotkt$CharSequence` is emitted PER-ASSEMBLY — the app defines
-// its OWN copy, distinct from the one in the rt stdlib dll. A stdlib adapter would implement the rt-dll copy, which the
-// app's interface dispatch (`callvirt <app>::dotkt$CharSequence::get_length`) can't find on it -> EntryPointNotFound.
-// So the adapter MUST implement the app's own synthetic -> it is injected into the app assembly, exactly where kotc
-// injects the synthetic interface. (This same per-assembly boundary is why calling a *stdlib* CharSequence-extension
-// with an app value is a SEPARATE, deeper blocker for the retire-B follow-up — see docs/master-task-inventory.md 4-A.)
+// A call that OMITS a defaulted argument reaches bir2cir with a POSITIONAL `{"k":"defaultArg"}` placeholder (kotc emits
+// one for every omitted default whose VALUE the frontend dropped to an IrErrorExpression — the cross-module case — so a
+// later provided arg keeps its slot). For a callee whose defaulted params carry `[kotlin.clr.KotlinDefault(index, bir)]`
+// on the referenced .dll, this pass reads the default-expression BIR and SPLICES it into each placeholder / trailing
+// omitted slot.
 //
-// APP builds ONLY (gated on attributeTopLevelOwner at the call site — StdlibMode == App), so the ref/rt stdlib
-// self-builds stay byte-identical. Runs AFTER MemberCallSubstitution (its emitted `new` is never re-substituted — the
-// adapter is not @ClrTypeAlias) and BEFORE BirTypeLowering (so it still sees the kotlin.* / @dotkt$CharSequence type
-// vocabulary; the injected type's kotlin.* signature tokens and the wrap node's `type`/`argTypes` are lowered
-// afterwards — the injected method bodies are already in CLR-call form, exactly as kotc emits them for `class S`).
-// CROSS-MODULE DEFAULT-ARGUMENT SPLICE. A call that OMITS a defaulted argument reaches bir2cir with fewer args than
-// the callee's signature (kotc emitted only the provided args — correct). For a callee whose defaulted params carry
-// @KotlinDefault (a non-null object/CharSequence default the frontend jar dropped + .NET [DefaultParameterValue]
-// metadata cannot carry), this pass reads the default-expression BIR from the ref.dll and SPLICES it as each trailing
-// omitted argument. Runs in the app build AFTER MemberCallSubstitution (owner attributed, so the ref.dll callee is
-// identifiable) and BEFORE StringCharSequenceBridge + BirTypeLowering (so a spliced String default is CharSequence-
-// coerced and type-lowered exactly like an explicit argument). Mirrors the [KotlinInline] body-splice mechanism, but
-// for default arguments. Callees with only metadata-representable defaults carry no @KotlinDefault -> untouched (their
-// omitted args still ride ilemit's [DefaultParameterValue] backfill). Omission is TRAILING (kotc emits positional
-// cross-module calls); a default expression that references earlier params is out of scope (the stdlib RC1 defaults
-// are all self-contained constants) — a mixed/gap map bails, leaving the call unchanged.
+// PHASE 1 (#146): runs immediately AFTER InlineSplice — BEFORE ObjectSlotRename/ClosureSynthesis/MemberCallSubstitution/
+// BirTypeLowering — so the spliced RAW payload re-lowers IN THIS app's context (owner attribution for a payload's own
+// `callStatic owner:null`, @ClrIntrinsic binding, generic resolution), exactly like InlineSplice's body splice. Because
+// the owner is NOT yet attributed here, the callee is resolved OWNERLESS by `method name | emitted-arity`
+// (ReferenceMetadataIndex.KotlinDefaultsFor) — a name+arity carried by several owners with conflicting defaults is
+// AMBIGUOUS and refused loudly rather than guessed.
+//
+// CLOSED CARRIER (#146): a NON-CONSTANT default that lifts a helper — a non-capturing lambda `= {}` (the Avalonia
+// `configure: Panel.() -> Unit = {}` idiom) whose `newDelegate` points at a library-local `__lambdaN` — is carried as a
+// `{"k":"defaultCarrier","expr":<newDelegate>,"lifted":[<method decls>]}` envelope (kotc BirEmitterDeclarations
+// .defaultCarrierBir). At the splice we RE-HOIST each carried method into THIS file's file-class methods under a fresh
+// per-splice name and rewrite the `newDelegate.method` reference, so ilemit's assembly-local `FindStatic` resolves it —
+// no cross-assembly `ldftn` and no ilemit change. A constant / simple-call default (`= emptyList()`) carries its BIR
+// verbatim (no envelope). A `{"k":"defaultUnsupported"}` poison carrier (a capturing/SAM/suspend lambda default kotc
+// could not close) is refused loudly here.
+//
+// A `= this` (an extension receiver) default rides a `{k:this}` token -> the call's arg[0]; a default reading an EARLIER
+// param rides `{k:defaultArgParam, idx}` -> the call's arg[idx] (Kotlin defaults reference only earlier params; lower
+// indices fill first). Unconditional across builds (a ref/rt stdlib self-build simply carries no cross-module omission).
 static class DefaultArgSplice
 {
-    public static void Apply(JsonNode root, ReferenceMetadataIndex refs) => Walk(root, refs);
+    static int _counter;   // global unique id for fresh re-hoisted lifted-method names (per splice instance)
 
-    static void Walk(JsonNode node, ReferenceMetadataIndex refs)
+    // `root` is the CIR file object (has `methods` = the file-class methods a carrier's lifted decls re-hoist into).
+    public static void Apply(JsonNode root, ReferenceMetadataIndex refs)
+    {
+        var hoist = new JsonArray();
+        Walk(root, refs, hoist);
+        if (hoist.Count > 0)
+        {
+            // A carrier re-hoisted a lifted default lambda but this file has no file-class `methods` array to place it in
+            // (kotc ALWAYS emits `methods` on a file root, so this is an internal invariant break, never a silent drop).
+            if (root is not JsonObject fo || fo["methods"] is not JsonArray methods)
+                throw new InvalidOperationException("bir2cir: DefaultArgSplice re-hoisted a carried default lambda but the file root has no `methods` array");
+            foreach (var h in hoist.ToList()) { hoist.Remove(h); methods.Add(h); }
+        }
+        // CHOKEPOINT: kotc emits a `defaultArg` only for a cross-module omission it expects a @KotlinDefault to fill, and
+        // ilemit cannot emit a raw placeholder — a survivor is a fill failure. Fail here with the callee, not opaquely there.
+        AssertNoPlaceholder(root);
+    }
+
+    static void Walk(JsonNode node, ReferenceMetadataIndex refs, JsonArray hoist)
     {
         if (node is JsonObject obj)
         {
-            foreach (var kv in obj) if (kv.Value != null) Walk(kv.Value, refs);
-            TrySplice(obj, refs);
+            foreach (var kv in obj.ToList()) if (kv.Value != null) Walk(kv.Value, refs, hoist);
+            TrySplice(obj, refs, hoist);
         }
-        else if (node is JsonArray arr) foreach (var it in arr) if (it != null) Walk(it, refs);
+        else if (node is JsonArray arr) foreach (var it in arr.ToList()) if (it != null) Walk(it, refs, hoist);
     }
 
-    static void TrySplice(JsonObject node, ReferenceMetadataIndex refs)
+    static void TrySplice(JsonObject node, ReferenceMetadataIndex refs, JsonArray hoist)
     {
         var k = Str(node["k"]);
         if (k != "callStatic" && k != "callInstance") return;
@@ -65,47 +72,106 @@ static class DefaultArgSplice
         var sigCount = sig.Count;
         var hasPlaceholder = false;
         for (var j = 0; j < args.Count; j++) if (IsPlaceholder(args[j])) { hasPlaceholder = true; break; }
-        if (!hasPlaceholder && args.Count >= sigCount) return;           // no omitted arg to fill
-        var owner = TypeJson.OwnerName(node["owner"]) ?? TypeJson.OwnerName(node["ownerType"]);
+        // ONLY a POSITIONAL `defaultArg` placeholder marks a cross-module omission to fill. kotc emits a placeholder for
+        // EVERY omitted arg of a @KotlinDefault-carrying callee (never a bare trailing DROP), so `args.Count == sig.Count`
+        // here — a call merely SHORT of `sig` (a same-module trailing omit ilemit backfills, or any non-defaulted call
+        // carrying `sig`) must NOT be touched: appending a default off an ownerless name match would corrupt it. This is
+        // essential now the splice runs at phase 1 on EVERY build (a stdlib self-build call short of `sig` is not an omission).
+        if (!hasPlaceholder) return;
         var method = Str(node["method"]);
-        if (owner == null || method == null) return;
-        var defaults = refs.KotlinDefaultsFor(owner, method, sigCount);
-        if (defaults == null) return;
-        // An extension receiver rides args[0] (the `__self` first arg of an emitted extension fun). A `= this` default
-        // (substringAfter's missingDelimiterValue, a data-class copy) references it — bind the callee's `this` to it.
+        if (method == null) return;
+        var defaults = refs.KotlinDefaultsFor(method, sigCount);
+        if (defaults == null)
+        {
+            if (hasPlaceholder && refs.KotlinDefaultsAmbiguous(method, sigCount))
+                throw new InvalidOperationException(
+                    $"bir2cir: cannot fill an omitted default argument of '{method}' (arity {sigCount}) — the name+arity is " +
+                    "carried by several referenced functions whose defaults disagree; pass the argument explicitly");
+            return;
+        }
+        // An extension receiver rides args[0] (the emitted extension fun's `__self`). A `= this` default binds to it.
         var receiver = args.Count > 0 ? args[0] : null;
-        // 1) Replace POSITIONAL `defaultArg` placeholders in place (kotc keeps a later provided arg's slot). Fill by array
-        //    index — which equals the @KotlinDefault index (extension receiver counted first, matching kotc's stamp).
-        //    A default reading an EARLIER param (`b = a * 10`) rides a `{param N}` token → this call's already-filled args[N]
-        //    (Kotlin defaults reference only earlier params, and the loop fills lower indices first, so args[N] is resolved).
+        // 1) Replace POSITIONAL placeholders in place (a later provided arg keeps its slot). Fill by array index = the
+        //    @KotlinDefault index (extension receiver counted first, matching kotc's stamp).
         for (var j = 0; j < args.Count; j++)
         {
             if (!IsPlaceholder(args[j])) continue;
-            if (!defaults.TryGetValue(j, out var bir)) continue;         // no @KotlinDefault at this slot -> leave it (loud downstream)
-            if (SpliceOne(bir, receiver, args) is JsonNode fill) args[j] = fill;
+            if (!defaults.TryGetValue(j, out var bir)) continue;         // no @KotlinDefault at this slot -> caught by the chokepoint
+            if (SpliceOne(bir, receiver, args, hoist, refs, method, j) is JsonNode fill) { args[j] = fill; Walk(fill, refs, hoist); }
         }
         // 2) Append any purely-TRAILING omitted args (callee carries @KotlinDefault but kotc dropped the tail).
         for (var pos = args.Count; pos < sigCount; pos++)
         {
             if (!defaults.TryGetValue(pos, out var bir)) return;         // gap -> bail (leave the call unchanged)
-            if (SpliceOne(bir, receiver, args) is JsonNode fill) args.Add(fill); else return;
+            if (SpliceOne(bir, receiver, args, hoist, refs, method, pos) is JsonNode fill) { args.Add(fill); Walk(fill, refs, hoist); } else return;
         }
     }
 
     static bool IsPlaceholder(JsonNode n) => n is JsonObject o && Str(o["k"]) == "defaultArg";
 
-    // Parse a @KotlinDefault BIR-json string and bind the callee's default-expression tokens to THIS call's args: `{this}`
-    // (an extension receiver) -> the call's receiver, and `{param N}` (a read of another value param) -> the call's arg at
-    // index N. A fresh deep clone per occurrence, so each filled value is a self-contained subtree.
-    static JsonNode SpliceOne(string bir, JsonNode receiver, JsonArray args)
+    // Parse a @KotlinDefault BIR-json string, unwrap a `defaultCarrier` (re-hoisting its lifted methods app-local), and
+    // bind the callee's default-expression tokens (`{this}` / `{defaultArgParam idx}`) to THIS call's args. A deep-fresh
+    // subtree per occurrence.
+    static JsonNode SpliceOne(string bir, JsonNode receiver, JsonArray args, JsonArray hoist, ReferenceMetadataIndex refs, string method, int slot)
     {
         JsonNode parsed; try { parsed = JsonNode.Parse(bir, documentOptions: BirJson.DocOptions); } catch { return null; }
+        if (parsed is JsonObject env)
+        {
+            var envK = Str(env["k"]);
+            if (envK == "defaultUnsupported")
+                throw new InvalidOperationException(
+                    $"bir2cir: cannot fill the omitted default argument at slot {slot} of '{method}': " +
+                    (Str(env["reason"]) ?? "the default is not representable at a cross-module call site"));
+            if (envK == "defaultCarrier")
+                parsed = UnwrapCarrier(env, hoist, refs);
+        }
         return SubstituteTokens(parsed, receiver, args);
     }
 
+    // A `defaultCarrier` envelope: RE-HOIST each carried lifted method into this file (fresh per-splice name), rewrite the
+    // `newDelegate.method` references (in the expr AND across the lifted bodies) to the fresh names, and return the expr.
+    static JsonNode UnwrapCarrier(JsonObject env, JsonArray hoist, ReferenceMetadataIndex refs)
+    {
+        var expr = env["expr"];
+        var lifted = env["lifted"] as JsonArray;
+        if (expr == null || lifted == null) return expr;
+        var rename = new Dictionary<string, string>(StringComparer.Ordinal);
+        var clones = new List<JsonObject>();
+        foreach (var m in lifted)
+        {
+            if (m is not JsonObject mo) continue;
+            var old = Str(mo["name"]); if (old == null) continue;
+            rename[old] = "__dflt$lambda$" + Interlocked.Increment(ref _counter);
+            clones.Add((JsonObject)mo.DeepClone());
+        }
+        foreach (var c in clones)
+        {
+            if (Str(c["name"]) is string on && rename.TryGetValue(on, out var nn)) c["name"] = nn;
+            RewriteDelegateNames(c, rename);
+            // The carried lifted body may ITSELF contain a `defaultArg` placeholder (a default `= { crossModuleFn() }`
+            // whose call omits a non-const default) — fill it before the method is hoisted (the clone is unparented here).
+            Walk(c, refs, hoist);
+            hoist.Add(c);
+        }
+        var exprClone = expr.DeepClone();
+        RewriteDelegateNames(exprClone, rename);
+        return exprClone;
+    }
+
+    // Rewrite every `{"k":"newDelegate","method":<old>}` whose method is in `map` to the renamed method.
+    static void RewriteDelegateNames(JsonNode node, Dictionary<string, string> map)
+    {
+        if (node is JsonObject obj)
+        {
+            if (Str(obj["k"]) == "newDelegate" && Str(obj["method"]) is string m && map.TryGetValue(m, out var nn))
+                obj["method"] = nn;
+            foreach (var kv in obj.ToList()) if (kv.Value != null) RewriteDelegateNames(kv.Value, map);
+        }
+        else if (node is JsonArray arr) foreach (var it in arr.ToList()) if (it != null) RewriteDelegateNames(it, map);
+    }
+
     // Rebuild `node`, replacing every `{"k":"this"}` with a deep clone of `receiver` and every
-    // `{"k":"defaultArgParam","idx":N}` with a deep clone of `args[N]` (the callee's default-scope reads, resolved to this
-    // call's values). Rebuilds fresh so no node is attached to two parents.
+    // `{"k":"defaultArgParam","idx":N}` with a deep clone of `args[N]`. Rebuilds fresh so no node is double-parented.
     static JsonNode SubstituteTokens(JsonNode node, JsonNode receiver, JsonArray args)
     {
         switch (node)
@@ -133,6 +199,19 @@ static class DefaultArgSplice
         }
     }
 
+    static void AssertNoPlaceholder(JsonNode node)
+    {
+        if (node is JsonObject obj)
+        {
+            if (Str(obj["k"]) == "defaultArg")
+                throw new InvalidOperationException(
+                    "bir2cir: an omitted cross-module default argument was not filled — no [kotlin.clr.KotlinDefault] " +
+                    "carrier was found for its callee on the referenced assembly; the reference may be stale or the " +
+                    "default not carryable. Pass the argument explicitly.");
+            foreach (var kv in obj) if (kv.Value != null) AssertNoPlaceholder(kv.Value);
+        }
+        else if (node is JsonArray arr) foreach (var it in arr) if (it != null) AssertNoPlaceholder(it);
+    }
+
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
 }
-

@@ -61,7 +61,10 @@ object ClrGeneratedKey : GeneratedDeclarationKey()
 
 // A restored default-arg value (`{valueType, value}`): `valueType` = the primitive kind (Int/Long/String/…) the
 // consumer builds a FirLiteralExpression of; `value` = the literal as a string, or NULL for a `null` default.
-private class ClrDefault(val valueType: String, val value: String?)
+// #146: `nonConst` = the default is a NON-const expression (`= {}` / a call) with no metadata-representable value —
+// the param is only marked OPTIONAL here (a placeholder default); the real value is spliced from the callee's
+// `[kotlin.clr.KotlinDefault]` BIR sub-tree at BIR->CIR (bir2cir's DefaultArgSplice), not from this meta.
+private class ClrDefault(val valueType: String, val value: String?, val nonConst: Boolean = false)
 // `type` is a structured TypeNode (spec §1); `vararg` -> the param is a vararg whose ELEMENT type is `type`.
 private class ClrParam(val name: String, val type: TypeNode, val vararg: Boolean = false, val default: ClrDefault? = null)
 // A generic type parameter: its name, declaration-site `variance` (interfaces), and upper `bounds` (`<T : Comparable<T>>`).
@@ -173,7 +176,7 @@ internal fun clrInjectedTopLevelFileClass(callableId: CallableId, arity: Int): S
  * to an IrErrorExpression (the value is dropped), so the real value must come from the metadata, not the callee's IR.
  */
 internal class ClrConstDefault(val valueType: String, val value: String?)
-private fun ClrParam.constDefault(): ClrConstDefault? = default?.let { ClrConstDefault(it.valueType, it.value) }
+private fun ClrParam.constDefault(): ClrConstDefault? = default?.takeIf { !it.nonConst }?.let { ClrConstDefault(it.valueType, it.value) }
 
 /** Resolve the ONE default list for the overloads of the given arity, or null when it is ambiguous. Overloads share a
  *  key (ctor owner / top-level CallableId) and are matched by param count alone (FIR already picked the exact callee, but
@@ -265,7 +268,7 @@ private object ClrMetadataHolder {
 
 	@Suppress("UNCHECKED_CAST")
 	private fun readParam(o: Map<String, Any?>): ClrParam {
-		val default = (o["default"] as? Map<String, Any?>)?.let { ClrDefault(it["valueType"] as? String ?: "", it["value"] as? String) }
+		val default = (o["default"] as? Map<String, Any?>)?.let { ClrDefault(it["valueType"] as? String ?: "", it["value"] as? String, it["nonConst"] == true) }
 		return ClrParam(o["name"] as String, typeOf(o["type"]), "vararg" in modsOf(o["mods"]), default)
 	}
 	@Suppress("UNCHECKED_CAST")
@@ -1046,6 +1049,11 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	 *  the null default; an unbuildable `valueType` (enum/struct) -> null (the caller falls back to @JvmOverloads arities). */
 	private fun optDefault(d: ClrDefault?): FirExpression? {
 		if (d == null) return null
+		// #146: a NON-const default has no metadata-representable value — inject a null-literal PLACEHOLDER purely so the
+		// param reads OPTIONAL (the frontend accepts the omission). fir2ir converts this dependency-decl default to an
+		// IrErrorExpression regardless (the value is dropped for a bodies-skipped injected decl); the backend fills the
+		// real value from the callee's `[kotlin.clr.KotlinDefault]` BIR sub-tree (bir2cir's DefaultArgSplice).
+		if (d.nonConst) return buildLiteralExpression(null, ConstantValueKind.Null, null, setType = true)
 		if (d.value == null) return buildLiteralExpression(null, ConstantValueKind.Null, null, setType = true)
 		val v = d.value
 		val (kind, value) = when (d.valueType) {

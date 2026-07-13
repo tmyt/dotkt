@@ -251,6 +251,17 @@ sealed class Pipeline
             // returns, hygiene) into a value-producing valueBlock — which then re-lowers IN THIS app's context. Runs here
             // (before ClosureSynthesis, like RepeatInlineLowering) so nested closures in the spliced body synthesize once.
             InlineSplice.Apply(bir.Root, refs);
+            // CROSS-MODULE DEFAULT-ARG SPLICE (#146): fill a call's OMITTED defaulted args (kotc's `defaultArg`
+            // placeholders) from the callee's `[kotlin.clr.KotlinDefault]` BIR on the referenced .dll. Runs HERE — phase 1,
+            // right after InlineSplice, before ObjectSlotRename/ClosureSynthesis/MemberCallSubstitution/BirTypeLowering —
+            // so the spliced RAW default expression (a `newDelegate` re-hoisted app-local, a `callStatic owner:null`, a
+            // const) re-lowers IN THIS app's context, exactly like an inline-body splice. Ownerless (name|arity), because
+            // the owner is not yet attributed. APP builds only (user libraries build in App mode too — Metadata/Runtime are
+            // stdlib-self-build flags): a `defaultArg` placeholder is born ONLY on a call to a facadegen-INJECTED callee
+            // (the cross-module IrErrorExpression path), and the ref/rt stdlib self-builds reference no DotKt assembly, so no
+            // injected callee — hence no placeholder — exists there. The gate is not merely "harmless off": running on a
+            // self-build would also disturb its byte-stable RefBodySquash/RoundtripMetadata decl set for zero benefit.
+            if (attributeTopLevelOwner) DefaultArgSplice.Apply(bir.Root, refs);
             // RE-NORMALIZE the just-spliced RAW payload bodies: InlineSplice runs AFTER ObjectSlotRename (219), so a
             // cross-module inline body carries kotc's raw `objMethod toString`/`hashCode`/`equals` (and `anySlot` calls)
             // un-renamed — ilemit's EmitObjMethod keys on the BCL spelling (`ToString`), so an un-renamed `toString`
@@ -439,10 +450,6 @@ sealed class Pipeline
             // var + its synthetic hasNext/next owner at the REAL referenced kotlin.collections.Iterator<E> (app build
             // only; the stdlib self-build emits Iterator itself, so it is left synthetic there).
             if (attributeTopLevelOwner) IteratorConsumerNormalization.Apply(substituted);
-            // Cross-module default-argument splice: fill a call's OMITTED defaulted args from the callee's @KotlinDefault
-            // BIR (ref.dll), for a non-null object/CharSequence default the metadata backfill can't carry. Runs before the
-            // CharSequence bridge + type lowering so a spliced String default is coerced/lowered like an explicit arg.
-            if (attributeTopLevelOwner) DefaultArgSplice.Apply(substituted, refs);
             // String -> CharSequence adapter bridge: materialize a bare `System.String` flowing into a synthetic
             // `dotkt$CharSequence` slot as `new dotkt$StringCharSequence(str)` (String is sealed, can't implement
             // the synthetic interface). Runs on EVERY non-ref build — app AND the RT stdlib self-build. The RT build
@@ -601,6 +608,10 @@ sealed class Pipeline
             // the job ilemit's deleted `_stripMetadata` did. DotKt.Stdlib.dll is the shipping runtime assembly (never
             // metadata-read); keep it lean, matching the old strip.
             else RoundtripMetadata.StripRuntimeAttrs(lowered);
+            // #146: an APP/user-library build only REFERENCES kotlin.clr.KotlinDefault (defined in the stdlib) — re-point
+            // its applied attr to the clr:-imported form so ilemit stamps it from the referenced stdlib rather than
+            // skipping it. The stdlib self-build DEFINES the type locally, so it is left as the bare-FQN local stamp.
+            if (_options.StdlibMode == BuildStdlibMode.App) KotlinDefaultAttrRef.Apply(lowered);
             // A file whose ENTIRE content was @ClrTypeAlias types (e.g. Primitives.kt, Comparable.kt) is now empty after
             // AliasHelperHoist dropped them — emit no CIR file for it (an empty file-class would be a pointless empty
             // static type in the assembly). Skips only when types AND methods AND fields are all empty; never in ref.

@@ -651,6 +651,46 @@ daexpected="$(printf 'Hi, A!\nYo, B!\nHi, C?\nHey, E!\n123\n129\n527\nTrue/x y\n
 run_app daactual "$DA/appil/KApp.dll"
 check_output roundtrip-defargs "$daexpected" "$daactual" "default args: trailing/named-middle/reordered omission, on functions + constructors"
 
+# ----- NON-CONST default args (#146): `= {}` / an expression default filled cross-module -----
+# #134 carried a CONSTANT default as a metadata value. #146 extends the SAME @KotlinDefault mechanism to a NON-CONST
+# default — an empty lambda `= {}` (THE Avalonia DSL idiom `configure: Panel.() -> Unit = {}`, composed with #145's
+# receiver lambda), a plain empty lambda, and a simple-expression default `= emptyList()`. kotc carries the default as a
+# CLOSED BIR sub-tree in `[kotlin.clr.KotlinDefault]` (a non-capturing lambda's lifted method rides a `defaultCarrier`
+# envelope); facadegen marks the injected param OPTIONAL (nonConst) so the consumer frontend accepts the omission; and
+# bir2cir's DefaultArgSplice (now PHASE 1) fills the omitted slot, re-hoisting a carried lambda app-local (fresh name) so
+# it re-lowers in THIS app's context. The empty-lambda default fills to `{}`. See docs/dotkt-semantics.md §10.
+NC="$ROOT/build/roundtrip-nonconst-default"; rm -rf "$NC"; mkdir -p "$NC/lib" "$NC/app" "$NC/libbir" "$NC/libil" "$NC/appbir" "$NC/appil"
+cat > "$NC/lib/lib.kt" <<'EOF'
+package ui
+class Panel { var margin: Int = 0; fun add(s: String): Int { margin += s.length; return margin } }
+fun column(configure: Panel.() -> Unit = {}, build: Panel.() -> Unit): Int { val p = Panel(); p.configure(); p.build(); return p.margin }
+fun run2(pre: () -> Unit = {}, body: () -> Unit): String { pre(); body(); return "ok" }
+fun tagged(name: String, items: List<String> = emptyList()): String = "$name=${items.size}"
+EOF
+cat > "$NC/app/app.kt" <<'EOF'
+import ui.Panel
+import ui.column
+import ui.run2
+import ui.tagged
+fun main() {
+    println(column(build = { add("hi") }))                          // 2   configure defaults to {} (empty receiver lambda)
+    println(column(configure = { add("ab") }, build = { add("c") })) // 3   both provided (no fill)
+    println(run2(body = { print("") }))                             // ok  pre defaults to {} (empty plain lambda)
+    println(tagged("z"))                                            // z=0 items defaults to emptyList() (simple-expr default)
+}
+EOF
+CLR_TYPES_METADATA="" "$LAUNCHER" "$NC/lib" -no-stdlib -classpath "$CP" -d "$NC/libbir" >/dev/null 2>&1 || true
+emit_il "$NC/libil" UiLib "$NC/libbir"/*.bir.json
+dotnet "$RETARGET_DLL" "$NC/libil/UiLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
+"$LAUNCHER" --scan-imports --output "$NC/imports.txt" "$NC/app"/*.kt >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$NC/meta" --refs "$REFS$NC/libil/UiLib.dll" --import-list "$NC/imports.txt" >/dev/null 2>&1 || true
+CLR_TYPES_METADATA="$NC/meta" "$LAUNCHER" "$NC/app" -no-stdlib -classpath "$CP" -d "$NC/appbir" >/dev/null 2>&1 || true
+emit_il "$NC/appil" UiApp --ref "$NC/libil/UiLib.dll" "$NC/appbir"/*.bir.json
+cp "$NC/libil/UiLib.dll" "$NC/appil/" 2>/dev/null || true
+ncexpected="$(printf '2\n3\nok\nz=0')"
+run_app ncactual "$NC/appil/UiApp.dll"
+check_output roundtrip-nonconst-default "$ncexpected" "$ncactual" "non-const default args (#146): empty receiver/plain lambda = {} + simple-expr = emptyList() filled cross-module"
+
 # ----- SUSPEND FUNCTION-TYPE round-trip (H2): a `suspend (…) -> T` PARAMETER survives re-consumption -----
 # A library exports `fun runBlock(block: suspend () -> Int)` — bir2cir erases the CLR parameter SLOT to `object` (a
 # suspend-lambda VALUE is a Continuation state-machine, not a Func), so WITHOUT the position metadata the consumer

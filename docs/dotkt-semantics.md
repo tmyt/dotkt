@@ -436,27 +436,42 @@ default-omission works **everywhere** — trailing, named-middle, reordered, and
   Works for named-middle and reordered omission (`greet("C", punct = "?")`, `box(1, c = 9)`, `Pt(y = 4)`).
 - **Tier 2 — NO (a carried BIR expression).** The prime cases are a `String` const on a `CharSequence`/interface-typed
   param (a string constant cannot sit in a `[DefaultParameterValue]` on an interface type) and **any non-constant
-  default**. Such a parameter is emitted **REQUIRED** (no `[Optional]`) and its default EXPRESSION is carried as embedded
-  BIR on a `@kotlin.clr.KotlinDefault(index, birJson)` attribute (ref.dll-only, mirroring `[KotlinInline]`). For a
-  CROSS-MODULE call, kotc emits a POSITIONAL `{"k":"defaultArg"}` placeholder for each omitted arg of such a callee (so a
-  later provided arg keeps its slot), and a **kcc** consumer's `bir2cir.DefaultArgSplice` replaces each placeholder in
-  place — by array index, matching the `@KotlinDefault` stamp index — with the carried default expression, run before the
-  CharSequence bridge + type-lowering so a String default is coerced/lowered exactly like an explicit arg. A default that
-  reads the RECEIVER (`missingDelimiterValue = this`) carries `{"k":"this"}`, which the splice rewrites to the call's
-  receiver. For a SAME-MODULE call kotc has the real default IR and inlines it directly (a receiver-referencing default —
-  a data-class `copy`'s `y = this.y` — is inlined with `this` rewritten to the call's receiver at the JSON level). A **C#**
-  consumer sees a required parameter and passes it explicitly (accepted: a Tier-2 default is not natively omittable from
-  C#). A function with ≥1 Tier-2 parameter carries `@KotlinDefault` on ALL its defaulted parameters, so a run of omitted
-  params that interleaves Tier-1 and Tier-2 fills contiguously from one source. Example — `Iterable.joinToString`:
-  `limit: Int = -1` is Tier 1; `separator`/`prefix`/`postfix`/`truncated` (`CharSequence = "…"`) and `transform (…)? = null`
-  are Tier 2, so `list.joinToString("-") { … }` fills the omitted CharSequence defaults by positional splice (kcc) —
-  keeping the trailing `transform` lambda in its own slot — or requires them (C#).
+  default** — a call (`= emptyList()`), an empty lambda (`= {}`, the Avalonia `configure: Panel.() -> Unit = {}` idiom),
+  a receiver-reading default (`= this`). Such a parameter is emitted **REQUIRED** for a C# consumer (no `[Optional]`); a
+  **kcc** consumer instead sees it OPTIONAL, because facadegen surfaces the `@kotlin.clr.KotlinDefault`-carrying param
+  with a `nonConst` default marker so the frontend accepts the omission (#146). The default EXPRESSION is carried as a
+  **CLOSED** BIR sub-tree on the `@kotlin.clr.KotlinDefault(index, birJson)` attribute (mirroring `[KotlinInline]`): a
+  non-capturing lambda default, whose `newDelegate` would point at a library-LOCAL lifted method, is carried as a
+  `{"k":"defaultCarrier","expr":…,"lifted":[…]}` envelope embedding that method so it is self-contained (kotc detaches
+  the dead method from the library dll). A capturing / SAM / suspend lambda default cannot be reconstructed positionally
+  cross-module → a `{"k":"defaultUnsupported"}` poison carrier the consumer's splice refuses on (a precise diagnostic,
+  never a miscompile). For a CROSS-MODULE call kotc emits a POSITIONAL `{"k":"defaultArg"}` placeholder for each omitted
+  arg of such a callee (so a later provided arg keeps its slot), and `bir2cir.DefaultArgSplice` — run at **PHASE 1**
+  (right after `InlineSplice`, before owner attribution / the CharSequence bridge / type-lowering, so the spliced RAW
+  expression re-lowers in THIS app's context) — resolves the callee OWNERLESSLY (by method name + emitted arity, the
+  owner not yet attributed) and replaces each placeholder in place by array index (matching the `@KotlinDefault` stamp
+  index), RE-HOISTING a `defaultCarrier`'s lifted method into the consumer's file class under a fresh per-splice name.
+  A `= this` default carries `{"k":"this"}` → the call's receiver; a default reading an earlier value param carries
+  `{"k":"defaultArgParam","idx":N}` → the call's arg N. For a SAME-MODULE call kotc has the real default IR and inlines
+  it directly. A **C#** consumer sees a required parameter and passes it explicitly. A function with ≥1 Tier-2 parameter
+  carries `@KotlinDefault` on ALL its defaulted parameters, so a run of omitted params that interleaves Tier-1 and Tier-2
+  fills contiguously from one source. Example — `Iterable.joinToString`: `limit: Int = -1` is Tier 1;
+  `separator`/`prefix`/`postfix`/`truncated` (`CharSequence = "…"`) and `transform (…)? = null` are Tier 2, so
+  `list.joinToString("-") { … }` fills the omitted CharSequence defaults by positional splice (kcc) — keeping the
+  trailing `transform` lambda in its own slot — or requires them (C#).
 
 **Known edge (single-eval):** the call-site receiver-rewrite duplicates the receiver EXPRESSION into the spliced default,
 so a receiver with side effects that is read by a `= this` default is evaluated more than once (a data-class `copy` or
 `substringAfter` on a plain variable/literal — the common case — is unaffected). The remaining unhandled case is a
 SAME-MODULE default that references another VALUE parameter (`b: Int = a * 10`): it still needs the callee's own scope and
 is rejected at the omitting call (a real `$default` synthetic would lift it — a documented follow-up).
+
+**#146 known gaps (named, not silent):** a non-const default that references a PRIVATE/internal library symbol
+(`= privateHelper()`) is NOT poison-detected at stamp time — it is carried, then fails LOUDLY (imprecise) at the
+consumer's re-lower (the private symbol is absent from the public ref surface → an unresolved `callStatic`/`FindStatic`),
+not with a precise stamp-time diagnostic; a stamp-time IR-walk detection is a cheap later add. And a GENERIC injected
+top-level function's non-const default still loud-refuses (the generic call path keeps `filledArgExprs`, which has no
+`defaultArg` placeholder). Both are authoring-time refusals, never a miscompile.
 
 ## 8. Reverse / cross-assembly interop
 
