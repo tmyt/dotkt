@@ -682,6 +682,14 @@ static class SuspendColdLowering
         const string TaskFqn = "System.Threading.Tasks.Task";
         const string TaskAwaiterFqn = "System.Runtime.CompilerServices.TaskAwaiter";
         const string ActionFqn = "System.Action";
+        // #3: `await(captureContext = false)` opt-out — the ConfigureAwait(false) awaiter family (no SynchronizationContext
+        // capture in OnCompleted). `ConfigureAwait(false)` returns a `ConfiguredTaskAwaitable[`1]`, whose `GetAwaiter()`
+        // yields the NESTED `ConfiguredTaskAwaiter` struct (CLR metadata '+' separator; the generic arity rides the OUTER
+        // type, hence the `+` name for the generic awaiter). Same await-pattern shape as TaskAwaiter (IsCompleted /
+        // OnCompleted(Action) / GetResult).
+        const string ConfiguredAwaitableFqn = "System.Runtime.CompilerServices.ConfiguredTaskAwaitable";
+        const string ConfiguredAwaiterNonGenericFqn = "System.Runtime.CompilerServices.ConfiguredTaskAwaitable+ConfiguredTaskAwaiter";
+        const string ConfiguredAwaiterGenericFqn = "System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1+ConfiguredTaskAwaiter";
 
         readonly JsonObject _m;
         readonly string _name;
@@ -1765,18 +1773,38 @@ static class SuspendColdLowering
             // A2 (#61): generic await is now signaled by `typeArgs` presence (kotc emits a plain callStatic carrying the
             // type-arg fact), not the pre-A2 `clrGenericStatic` k-tag.
             var generic = awaitNode["typeArgs"] is JsonArray ga && ga.Count > 0;
+            // #3: `await(captureContext = false)` opt-out. The await marker is an extension fun `Task<T>.await(captureContext)`
+            // — args[0] is the task (ext receiver), args[1] the captureContext value. A LITERAL `false` selects the
+            // ConfigureAwait(false) awaiter (OnCompleted does NOT capture the SynchronizationContext); `true`/absent/dynamic
+            // keeps the SynchronizationContext-capturing TaskAwaiter (the historical + default behavior).
+            JsonObject ccArgNode = (awaitNode["args"] as JsonArray) is JsonArray callArgs && callArgs.Count > 1
+                ? callArgs[1] as JsonObject : null;
+            // captureContext must be a COMPILE-TIME constant: a bool `const` (the omitted default is filled as one). A
+            // dynamic arg (`await(captureContext = someBool)`) can't statically select the awaiter type, and — since args[1]
+            // is never Rewrite'd here — would also drop any side effect un-evaluated. Refuse loudly rather than miscompile.
+            if (ccArgNode != null && Str(ccArgNode["k"]) != "const")
+                throw new NotSupportedException("await(captureContext = …) requires a compile-time constant Boolean (a dynamic captureContext is not supported)");
+            var noCapture = ccArgNode != null && ccArgNode["value"] is JsonValue ccVal
+                && ccVal.TryGetValue<bool>(out var ccBool) && ccBool == false;
             TypeNode resultTok = UnitTn, taskType, awaiterType;
+            // The awaitable that GetAwaiter() is called on (and the receiver-building of `task.ConfigureAwait(false)`) — only
+            // used on the noCapture path; the capturing path calls GetAwaiter directly on the task.
+            TypeNode awaitableType = null;
             if (generic)
             {
                 resultTok = ((awaitNode["typeArgs"] as JsonArray)?.FirstOrDefault() is JsonNode ta0
                     ? TypeJson.Read(ta0) : null) ?? AnyTn;
                 taskType = new TypeNode.Fqn(TaskFqn, new[] { resultTok });
-                awaiterType = new TypeNode.Fqn(TaskAwaiterFqn, new[] { resultTok });
+                awaiterType = noCapture
+                    ? new TypeNode.Fqn(ConfiguredAwaiterGenericFqn, new[] { resultTok })
+                    : new TypeNode.Fqn(TaskAwaiterFqn, new[] { resultTok });
+                if (noCapture) awaitableType = new TypeNode.Fqn(ConfiguredAwaitableFqn, new[] { resultTok });
             }
             else
             {
                 taskType = new TypeNode.Fqn(TaskFqn);
-                awaiterType = new TypeNode.Fqn(TaskAwaiterFqn);
+                awaiterType = noCapture ? new TypeNode.Fqn(ConfiguredAwaiterNonGenericFqn) : new TypeNode.Fqn(TaskAwaiterFqn);
+                if (noCapture) awaitableType = new TypeNode.Fqn(ConfiguredAwaitableFqn);
             }
 
             var task = Rewrite((awaitNode["args"] as JsonArray)?[0], outp);
@@ -1788,11 +1816,26 @@ static class SuspendColdLowering
             var awField = "__awaiter$" + state;
             AddFieldTyped(awField, awaiterType);
 
-            // this.<aw> = ((Task<T>)task).GetAwaiter();
+            // this.<aw> = task.GetAwaiter();   (capturing path)
+            //   or, on the #3 no-capture path, this.<aw> = task.ConfigureAwait(false).GetAwaiter();
+            JsonNode getAwaiterRecv = task;
+            TypeNode getAwaiterOwner = taskType;
+            if (noCapture)
+            {
+                getAwaiterRecv = new JsonObject
+                {
+                    ["k"] = "clrInstance", ["type"] = Tw(taskType), ["method"] = "ConfigureAwait",
+                    ["recv"] = task,
+                    ["argTypes"] = new JsonArray { Tw(BoolTn) },
+                    ["args"] = new JsonArray { BoolConst(false) },
+                    ["ret"] = Tw(awaitableType),
+                };
+                getAwaiterOwner = awaitableType;
+            }
             outp.Add(SetField(awField, new JsonObject
             {
-                ["k"] = "clrInstance", ["type"] = Tw(taskType), ["method"] = "GetAwaiter",
-                ["recv"] = task, ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(),
+                ["k"] = "clrInstance", ["type"] = Tw(getAwaiterOwner), ["method"] = "GetAwaiter",
+                ["recv"] = getAwaiterRecv, ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(),
                 ["ret"] = Tw(awaiterType),
             }));
             // if (this.<aw>.IsCompleted) goto L_state;   (sync fast path — no suspension)

@@ -44,6 +44,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   member overloaded on two adjacent-arity delegates (`Thread(ThreadStart)` = `() -> Unit` /
   `Thread(ParameterizedThreadStart)` = `(Any?) -> Unit`) now needs an explicit lambda arity — `Thread({ -> … })` vs
   `Thread({ x -> … })` — since a no-arrow `{ … }` matches both (docs/dotkt-semantics.md §8e). Gate: `cases/il-delegobj`.
+- **`Task<T>.await(captureContext: Boolean = true)` — opt out of `SynchronizationContext` capture (#3, Part A).**
+  `await(captureContext = false)` now lowers to `task.ConfigureAwait(false).GetAwaiter()` (the
+  `ConfiguredTaskAwaitable[`1].ConfiguredTaskAwaiter` awaiter, whose `OnCompleted` does NOT capture the
+  `SynchronizationContext`); `await()` / `await(captureContext = true)` keep the historical capturing `TaskAwaiter` path.
+  facadegen surfaces the const-default param on both await overloads; bir2cir's `EmitAwaitPoint` reads the literal and
+  selects the awaiter family (a dynamic, non-const `captureContext` is refused loudly). Gate: `cases/il-cfgawait`
+  (non-generic, sync fast path). The generic `Task<T>.await(captureContext = false)` awaiter is a nested-generic type
+  (arity on the outer) that additionally needs an ilemit `ConstructGeneric` fix — tracked as a follow-up.
 - **`Array(size){ mk<T?>(null) }` inside a generic class is now ilverify-clean — no spurious `[DelegateCtor]
   Unrecognized arguments` (#142).** When an `Array(size){…}` init-lambda inside a generic class returns a
   CONSTRUCTED-generic whose type-arg is a nullable type-var (`Ref<T?>`), bir2cir's `NullableGenericReturnErasure`

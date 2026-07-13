@@ -322,6 +322,12 @@ il_check_imports taskfam Tf "$ROOT/cases/il-taskfam" "$(printf 'plain=True\ngene
 # lowered to the cold-core awaiter dance (GetAwaiter/IsCompleted/OnCompleted/GetResult TaskAwaiter STRUCT
 # calls). SYNC FAST PATH (already-completed tasks): generic Task<Int>.await() + non-generic Task.await():Unit.
 il_check_imports taskawait TaskAwait "$ROOT/cases/il-taskawait" "$(printf '43\n7')"
+# cfgawait (#3): `await(captureContext = false)` opt-out — bir2cir lowers the await marker to the
+# `task.ConfigureAwait(false).GetAwaiter()` awaiter dance (ConfiguredTaskAwaitable.ConfiguredTaskAwaiter STRUCT calls,
+# no SynchronizationContext capture). SYNC FAST PATH (non-generic, already-completed Task). The GENERIC
+# `Task<T>.await(captureContext = false)` awaiter is a nested-generic type (arity on the outer) that additionally
+# needs an ilemit ConstructGeneric fix — tracked separately; this case covers the non-generic path end-to-end.
+il_check_imports cfgawait CfgAwait "$ROOT/cases/il-cfgawait" "5"
 # taskgen: a GENERIC .NET static factory (Task.FromResult<TResult>) — the seam that lets Kotlin BUILD a
 # Task<T> (async interop). kotc's companion generic-static builder declares the method type parameter and
 # resolves the return/param against it, so `Task.FromResult(42)` binds as `FromResult<Int>(42): Task<Int>`

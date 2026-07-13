@@ -271,18 +271,29 @@ static class FacadeGen
         var hasNonGeneric = injected.Contains(TaskNonGeneric);
         if (!hasGeneric && !hasNonGeneric) return;
         var funs = new JsonArray();
-        // `suspend fun <T> Task<T>.await(): T` — receiver Task1<T>, T = the method's own type param 0.
+        // #3: `captureContext: Boolean = true` opt-out param. The default `true` IS the current runtime behavior
+        // (TaskAwaiter.OnCompleted captures the SynchronizationContext); passing `false` makes bir2cir emit the
+        // `ConfigureAwait(false)` awaiter (no context capture). The const bool default rides the DefaultObj path
+        // (`{valueType, value}`); the await marker is bir2cir-lowered before ilemit, so the operative consumer of that
+        // default is kotc's metaDefaults fill (an omitted call gets a real const `true` arg) — args[1] at the await site.
+        JsonObject CaptureCtxParam() => new JsonObject
+        {
+            ["name"] = "captureContext",
+            ["type"] = Ty(new TN.Fqn("Boolean")),
+            ["default"] = new JsonObject { ["valueType"] = "Boolean", ["value"] = "true" },
+        };
+        // `suspend fun <T> Task<T>.await(captureContext: Boolean = true): T` — receiver Task1<T>, T = method type param 0.
         if (hasGeneric)
         {
             var tp = new JsonArray { new JsonObject { ["name"] = "T" } };
             var ps = new JsonArray { new JsonObject { ["name"] = "__self",
-                ["type"] = Ty(new TN.Fqn("Task1", new TN[] { new TN.Tv("method", 0) })) } };
+                ["type"] = Ty(new TN.Fqn("Task1", new TN[] { new TN.Tv("method", 0) })) }, CaptureCtxParam() };
             funs.Add(FunObj("await", new TN.Tv("method", 0), Mods(("ext", true), ("suspend", true)), "public", null, tp, ps));
         }
-        // `suspend fun Task.await(): Unit` — non-generic Task receiver.
+        // `suspend fun Task.await(captureContext: Boolean = true): Unit` — non-generic Task receiver.
         if (hasNonGeneric)
         {
-            var ps = new JsonArray { new JsonObject { ["name"] = "__self", ["type"] = Ty(new TN.Fqn("Task")) } };
+            var ps = new JsonArray { new JsonObject { ["name"] = "__self", ["type"] = Ty(new TN.Fqn("Task")) }, CaptureCtxParam() };
             funs.Add(FunObj("await", new TN.Fqn("Unit"), Mods(("ext", true), ("suspend", true)), "public", null, null, ps));
         }
         files.Add(new JsonObject { ["pkg"] = "kotlin.clr", ["fileClass"] = "kotlin.clr.CoroutinesKt", ["funs"] = funs });
