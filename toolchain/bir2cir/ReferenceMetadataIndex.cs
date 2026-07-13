@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Reflection.PortableExecutable;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -647,6 +648,20 @@ sealed class ReferenceMetadataIndex
         "dotkt$ClrH_" + System.Text.RegularExpressions.Regex.Replace(ownerFqn, "[^A-Za-z0-9]", "_");
 
 
+    // True iff `path` is a MANAGED PE — one carrying a CLI/CorHeader (managed metadata). A native/unmanaged DLL
+    // (libSkiaSharp.dll, av_libglesv2.dll, …) has no CorHeader; loading it as an assembly throws
+    // BadImageFormatException. Pre-checking here lets Build SKIP a stray native --ref instead of aborting the build.
+    static bool IsManagedAssembly(string path)
+    {
+        try
+        {
+            using var fs = File.OpenRead(path);
+            using var pe = new PEReader(fs);
+            return pe.HasMetadata && pe.PEHeaders.CorHeader != null;
+        }
+        catch { return false; }
+    }
+
     public static ReferenceMetadataIndex Build(IReadOnlyList<string> refs)
     {
         var assemblies = new List<ReferenceAssembly>();
@@ -654,6 +669,16 @@ sealed class ReferenceMetadataIndex
         {
             if (!File.Exists(reference))
                 throw new UsageException($"bir2cir: reference not found: {reference}");
+
+            // A native/unmanaged PE in the --ref set (a copy-local libSkiaSharp.dll / av_libglesv2.dll, etc.) carries
+            // no CLI metadata: AssemblyName.GetAssemblyName / MetadataLoadContext throw BadImageFormatException
+            // ("PE image does not have metadata.") on it and would abort the WHOLE build. Skip it — a native dll has no
+            // managed types to bind, so skipping is always correct.
+            if (!IsManagedAssembly(reference))
+            {
+                Console.Error.WriteLine($"bir2cir: skipping non-managed --ref {Path.GetFileName(reference)}");
+                continue;
+            }
 
             var identity = AssemblyName.GetAssemblyName(reference);
             assemblies.Add(new ReferenceAssembly(

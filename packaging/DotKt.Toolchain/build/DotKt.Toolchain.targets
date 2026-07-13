@@ -96,7 +96,14 @@
            resolves the BCL by runtime reflection. Reading @(ReferencePath) (not @(ReferenceCopyLocalPaths)) is what
            reaches a Library's transitive PackageReference dlls: for OutputType=Library a package runtime dll is NOT
            copy-local (the consuming app pulls it), so it never appears in the copy-local set (#132). -->
-      <_DotKtBir2CirRef Include="@(ReferencePath)" Condition="'%(ReferencePath.FrameworkReferenceName)' == ''" />
+      <!-- Exclude NATIVE runtime assets (a package's runtimes/<rid>/native/*.dll — libSkiaSharp.dll, av_libglesv2.dll,
+           …). They carry no CLI metadata, so binding them is meaningless; bir2cir would try to load them as managed
+           assemblies (task #138, Avalonia). %(AssetType)=='native' catches copy-local native items; the
+           runtimes/<rid>/native/ path check (both segments required, backslash-normalized for Windows) catches any that
+           reach @(ReferencePath) via a package's custom RID targets — anchored on /runtimes/ so a legit managed ref
+           merely sitting under a directory named `native` is NOT dropped. bir2cir's ref loader ALSO skips a non-managed
+           PE defensively — this just keeps them off the command line. -->
+      <_DotKtBir2CirRef Include="@(ReferencePath)" Condition="'%(ReferencePath.FrameworkReferenceName)' == '' and '%(ReferencePath.AssetType)' != 'native' and !($([System.String]::Copy('%(ReferencePath.FullPath)').Replace('\','/').Contains('/runtimes/')) and $([System.String]::Copy('%(ReferencePath.FullPath)').Replace('\','/').Contains('/native/')))" />
     </ItemGroup>
     <RemoveDir Directories="$(DotKtCirOut)" />
     <MakeDir Directories="$(DotKtCirOut)" />
@@ -117,7 +124,11 @@
            never copy-local and never reaches ilemit — correct: its throw-stub bodies are a pure metadata surface for
            bir2cir. Framework/targeting-pack assemblies (System.*) are never copy-local either — ilemit resolves the BCL
            by runtime reflection. CopyLocalLockFileAssemblies=true (set above) makes this set complete for a Library. -->
-      <_DotKtRef Include="@(ReferenceCopyLocalPaths)" Condition="'%(Extension)' == '.dll'" />
+      <!-- NATIVE runtime assets (runtimes/<rid>/native/*.dll) copy local but carry no managed metadata; keep them off
+           ilemit's reference list (task #138). %(AssetType)=='native' is the canonical discriminator for the copy-local
+           set; the runtimes/<rid>/native/ path check (both segments required) is belt-and-suspenders — anchored on
+           /runtimes/ so a legit managed ref under a directory named `native` is not dropped. -->
+      <_DotKtRef Include="@(ReferenceCopyLocalPaths)" Condition="'%(Extension)' == '.dll' and '%(ReferenceCopyLocalPaths.AssetType)' != 'native' and !($([System.String]::Copy('%(FullPath)').Replace('\','/').Contains('/runtimes/')) and $([System.String]::Copy('%(FullPath)').Replace('\','/').Contains('/native/')))" />
       <!-- The [Kotlin*] round-trip metadata attributes ilemit stamps so this library round-trips (is consumable AS
            KOTLIN by another .ktproj — [KotlinFileClass] restores a file facade's statics as top-level functions,
            [KotlinFunction] restores infix/operator/suspend, etc.) are SYNTHESIZED PER-ASSEMBLY by ilemit (embedded

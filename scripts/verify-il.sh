@@ -125,6 +125,34 @@ dotnet "$FACADEGEN_DLL" --meta "$GMMETA" System.Runtime.CompilerServices.Unsafe 
 # run phase); the REFERENCE assembly is bir2cir's @Clr-metadata input. Build if missing, reuse if present.
 need_stdlib_ref; need_stdlib_rt
 
+# ---- #138 native-ref guard: a NON-managed PE in the --ref set must never abort bir2cir ----
+# An unmanaged/native Windows .dll (libSkiaSharp.dll etc.) copy-locals into an Avalonia app's --ref set; bir2cir's
+# ref loader must SKIP it (it carries no CLI metadata), not crash. This asserts the loader guard on a REAL native PE
+# (the SDK-shipped msdia140.dll — a PE32+ with no CLI header), producing a trivial BIR and lowering it with the
+# native dll --ref'd. If no native PE is present in this environment the check SKIPs (documented — the loader guard is
+# still exercised end-to-end by the triage repro `dotkt.sh --ref <native.dll> --run foo.kt`).
+find_native_pe() {
+	local c
+	for c in /usr/share/dotnet/sdk/*/TestHostNetFramework/*/msdia140.dll /usr/share/dotnet/sdk/*/TestHost*/*/*.dll; do
+		[[ -f "$c" ]] || continue
+		if file "$c" 2>/dev/null | grep -q 'PE32' && ! file "$c" 2>/dev/null | grep -qi 'Mono/\.Net'; then echo "$c"; return 0; fi
+	done
+	return 1
+}
+if NATIVE_PE="$(find_native_pe)"; then
+	nbir="$ROOT/build/bir-nativeref"; ncir="$ROOT/build/cir-nativeref"; rm -rf "$nbir" "$ncir"; mkdir -p "$nbir" "$ncir"
+	printf 'fun main() { println("ok") }\n' > "$ROOT/build/nativeref.kt"
+	if ! "$LAUNCHER" "$ROOT/build/nativeref.kt" -no-stdlib -classpath "$CP" -d "$nbir" >/dev/null 2>&1; then
+		echo "IL GATE RED — #138 native-ref guard: could not produce probe BIR"; exit 1; fi
+	nrc=0; nerr="$(dotnet "$BIR2CIR_DLL" "$ncir" --ref "$STDLIB_REF_DLL" --ref "$NATIVE_PE" "$nbir"/*.bir.json 2>&1)" || nrc=$?
+	if (( nrc != 0 )) || ! grep -q 'skipping non-managed --ref' <<<"$nerr"; then
+		echo "IL GATE RED — #138 native-ref guard FAILED (rc=$nrc): bir2cir did not skip native --ref $(basename "$NATIVE_PE")"
+		printf '%s\n' "$nerr"; exit 1; fi
+	echo "GUARD   nativeref (bir2cir skipped non-managed --ref $(basename "$NATIVE_PE"))"
+else
+	echo "GUARD   nativeref SKIP (no native PE found in this environment; loader guard still covered by dotkt.sh triage repro)"
+fi
+
 # Build a sample's <srcDir>/runtime.cs into a referenced .NET assembly (name from <runtimeAsm>); echo its path.
 build_runtime() { # <srcDir> <runtimeAsm>
 	local srcdir="$1" rasm="$2" rt="$ROOT/build/rt-$rasm"

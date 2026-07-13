@@ -36,6 +36,17 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **A native/unmanaged `.dll` in the `--ref` set no longer aborts the bir2cir build** (#138, Avalonia report D).
+  When an app copy-locals an unmanaged PE (Avalonia's `libSkiaSharp.dll` / `av_libglesv2.dll` /
+  `libHarfBuzzSharp.dll` under `runtimes/<rid>/native/`), bir2cir's reference loader called
+  `AssemblyName.GetAssemblyName` on it at the top level and hard-crashed the whole build with
+  `bir2cir: PE image does not have metadata.`. The loader (`ReferenceMetadataIndex.Build`) now pre-checks each
+  `--ref` for a CLI/CorHeader via `PEReader` (`IsManagedAssembly`) and SKIPs a non-managed PE with a one-line
+  `bir2cir: skipping non-managed --ref <name>` diagnostic — a native dll carries no managed types, so skipping is
+  always correct. ilemit's `--ref` load was already tolerant (`Assembly.LoadFrom` in try/catch). The packaging
+  targets additionally keep native runtime assets off the `--ref` command line (`%(AssetType) != 'native'` plus a
+  `/native/` path filter on both the bir2cir and ilemit ref item groups). A native-ref guard in `verify-il.sh`
+  asserts the loader skips a real native PE and lowers successfully.
 - **facadegen now surfaces C#-origin `[Extension]` methods as top-level Kotlin extension functions** (#137,
   Avalonia report B). A C# extension method (`public static int Twice(this W w)` in a static class `NS.Ext`)
   was only reachable via a per-member import (`import NS.Ext.Twice`, the `using static` analog); a
