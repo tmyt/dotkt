@@ -165,6 +165,45 @@ internal fun clrInjectedTopLevelFileClass(callableId: CallableId, arity: Int): S
 }
 
 /**
+ * #134: a restored constant default-arg value carried in the facadegen metadata (the `valueType` primitive kind + raw
+ * string, exactly as `applyDefaults` reads it). The backend synthesizes an IrConst from this to fill an omitted default
+ * arg at a CROSS-MODULE call site — fir2ir converts the injected FIR default of a bodies-skipped dependency declaration
+ * to an IrErrorExpression (the value is dropped), so the real value must come from the metadata, not the callee's IR.
+ */
+internal class ClrConstDefault(val valueType: String, val value: String?)
+private fun ClrParam.constDefault(): ClrConstDefault? = default?.let { ClrConstDefault(it.valueType, it.value) }
+
+/** Resolve the ONE default list for the overloads of the given arity, or null when it is ambiguous. Overloads share a
+ *  key (ctor owner / top-level CallableId) and are matched by param count alone (FIR already picked the exact callee, but
+ *  that identity is not carried to the backend), so two same-arity overloads with DIFFERENT defaults (`f(Int=1)` vs
+ *  `f(String="")`) cannot be told apart here — filling either's constant would risk a kind/type-inconsistent value. In
+ *  that (rare) case return null so the caller omits the arg (loud gap guard / ilemit backfill) rather than guess. */
+private fun List<List<ClrParam>>.defaultsForArity(paramCount: Int): List<ClrConstDefault?>? {
+	val candidates = filter { it.size == paramCount }.map { ps -> ps.map { it.constDefault() } }
+	if (candidates.isEmpty()) return null
+	val first = candidates[0]
+	if (candidates.any { c -> c.size != first.size || c.indices.any { i -> c[i]?.valueType != first[i]?.valueType || c[i]?.value != first[i]?.value } })
+		return null   // ambiguous: same-arity overloads disagree on defaults
+	return first
+}
+
+/**
+ * #134: the per-regular-parameter constant defaults of a facadegen-injected CONSTRUCTOR (its owner resolved by IR
+ * `ClassId`, the overload matched by regular-param count), or null if the owner isn't injected / has no such ctor (or
+ * same-arity ctors disagree on defaults — see [defaultsForArity]). Each element is that parameter's default (null when
+ * the parameter has none).
+ */
+internal fun clrInjectedCtorParamDefaults(classId: ClassId, paramCount: Int): List<ClrConstDefault?>? =
+	ClrMetadataHolder.byClassId[classId]?.ctors?.defaultsForArity(paramCount)
+
+/**
+ * #134: the per-value-parameter constant defaults of a facadegen-injected TOP-LEVEL function (keyed by resolved IR
+ * `CallableId`, the overload matched by value-param count), or null if not injected / no such overload (or ambiguous).
+ */
+internal fun clrInjectedTopLevelParamDefaults(callableId: CallableId, paramCount: Int): List<ClrConstDefault?>? =
+	ClrMetadataHolder.topLevelParamsByCallableId[callableId]?.defaultsForArity(paramCount)
+
+/**
  * A2 keystone (interop-no-registry, stage 3): the backend reads a restored DotKt TOP-LEVEL EXTENSION PROPERTY's .NET
  * file-facade class (its `get_`/`set_<name>` statics live there) off its resolved IR `CallableId` (`package` + name) —
  * facadegen's metadata keyed structurally.
@@ -321,6 +360,19 @@ private object ClrMetadataHolder {
 				val trailingOpt = vps.reversed().takeWhile { it.default != null }.count()
 				getOrPut(CallableId(tl.pkg, Name.identifier(tl.fn.name))) { ArrayList() }
 					.add(TopLevelSig(stripClrFileClass(tl.fileClassDotNet), vps.size - trailingOpt, vps.size))
+			}
+		}
+	}
+	// #134: a restored DotKt top-level function's value-parameter list (dropping an `ext` fun's leading `__self`) keyed by
+	// its resolved IR `CallableId` — the backend reads each param's constant DEFAULT from here to fill an omitted default
+	// arg at a CROSS-MODULE call site. fir2ir converts the injected FIR default of a bodies-skipped dependency declaration
+	// to an IrErrorExpression (the value is dropped), so the real value must come from the metadata. Overloads share a
+	// CallableId, so the accessor matches by value-param count.
+	val topLevelParamsByCallableId: Map<CallableId, List<List<ClrParam>>> by lazy {
+		buildMap<CallableId, MutableList<List<ClrParam>>> {
+			for (tl in module?.topLevel.orEmpty()) {
+				val vps = if (tl.fn.ext && tl.fn.params.isNotEmpty()) tl.fn.params.drop(1) else tl.fn.params
+				getOrPut(CallableId(tl.pkg, Name.identifier(tl.fn.name))) { ArrayList() }.add(vps)
 			}
 		}
 	}

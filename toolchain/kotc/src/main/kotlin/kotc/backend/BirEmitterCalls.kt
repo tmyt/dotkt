@@ -183,18 +183,49 @@ internal fun BirEmitter.filledArgs(call: org.jetbrains.kotlin.ir.expressions.IrF
 internal fun BirEmitter.filledArgExprs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): List<IrExpression> {
 	val callee = (call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction) ?: return emptyList()
 	val calleeLocals = callee.parameters.map { it.symbol }.toHashSet()
+	// #134: the facadegen metadata's constant defaults for this callee's regular params, keyed by resolved IR identity —
+	// a CROSS-MODULE facadegen constructor/top-level function's injected default deserializes as an IrErrorExpression
+	// (fir2ir drops the VALUE for a bodies-skipped dependency declaration), so the real value is read from here to fill an
+	// omitted default arg ANYWHERE (named-middle `f(c=9)` / reordered — a trailing omit falls back to ilemit's
+	// [DefaultParameterValue] backfill either way). Null for a same-module callee (its default is a real IrConst in IR).
+	val regCount = callee.parameters.count { it.kind == IrParameterKind.Regular }
+	val metaDefaults: List<kotc.frontend.ClrConstDefault?>? = when (callee) {
+		is org.jetbrains.kotlin.ir.declarations.IrConstructor ->
+			(callee.parent as? IrClass)?.classId?.let { kotc.frontend.clrInjectedCtorParamDefaults(it, regCount) }
+		is org.jetbrains.kotlin.ir.declarations.IrSimpleFunction ->
+			(callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)
+				?.let { kotc.frontend.clrInjectedTopLevelParamDefaults(org.jetbrains.kotlin.name.CallableId(it.packageFqName, callee.name), regCount) }
+		else -> null
+	}
 	val out = ArrayList<IrExpression>()
+	var regIdx = -1
 	callee.parameters.forEachIndexed { i, p ->
 		if (p.kind != IrParameterKind.Regular) return@forEachIndexed
+		regIdx++
 		val arg = if (i < call.arguments.size) call.arguments[i] else null
 		if (arg != null) out.add(arg)
 		else (p.defaultValue?.expression)?.let { def ->
 			// A CROSS-MODULE callee's default value does NOT deserialize from the jar/metadata as a real IR expression:
-			// the frontend hands back an IrErrorExpression placeholder. Inlining it would reach ilemit as "IrError-
-			// Expression has no .NET lowering". Instead, OMIT the (trailing) arg — ilemit's call path then fills it from
-			// the callee's .NET [DefaultParameterValue] metadata (EmitCallArgs), which carries the REAL constant default
-			// (e.g. Regex.find's startIndex=0). This is the intended "constant default -> metadata -> ilemit fill" path.
-			if (def is org.jetbrains.kotlin.ir.expressions.IrErrorExpression) return@let
+			// the frontend hands back an IrErrorExpression placeholder. #134: fill it from the facadegen metadata's REAL
+			// constant default (synthesized as an IrConst) so a named-middle / reordered omission is correct. If the
+			// metadata has no value for this slot, OMIT the (trailing) arg — ilemit's call path then fills it from the
+			// callee's .NET [DefaultParameterValue] metadata (EmitCallArgs), the intended "constant default -> metadata
+			// -> ilemit fill" path (e.g. Regex.find's startIndex=0).
+			if (def is org.jetbrains.kotlin.ir.expressions.IrErrorExpression) {
+				val filled = metaDefaults?.getOrNull(regIdx)?.let { metaConstArg(it, p.type) }
+				if (filled != null) { out.add(filled); return@let }
+				// The metadata carries no constant for this omitted slot. A purely TRAILING omit is safe (ilemit's
+				// [DefaultParameterValue] backfill fills it). But if a LATER arg is provided, silently omitting THIS slot
+				// would slide that arg into the wrong parameter (the joinToString/substringAfter miscompile class) — refuse
+				// loudly instead of miscompiling.
+				val laterArgProvided = (i + 1 until call.arguments.size).any { j ->
+					call.arguments[j] != null && callee.parameters[j].kind == IrParameterKind.Regular
+				}
+				if (laterArgProvided) unsupported(call, "omitting a cross-module default argument the metadata does not carry",
+					"the default value of parameter '${p.name.asString()}' is not available as a constant in the referenced " +
+					"assembly's metadata; pass the argument explicitly")
+				return@let
+			}
 			// Filling an OMITTED default inlines the callee's default expression at THIS call site — fine for a
 			// constant/global, but a default that reads the callee's OWN parameters/receiver (`b: Int = a * 10`, or a
 			// data class `copy`'s `x = this.x`) must be evaluated in the callee's scope (cf. Kotlin/JVM's `$default`),
@@ -208,6 +239,33 @@ internal fun BirEmitter.filledArgExprs(call: org.jetbrains.kotlin.ir.expressions
 		}
 	}
 	return out
+}
+
+/** #134: synthesize an IrConst for a facadegen-metadata constant default (`ClrConstDefault`), typed with the omitted
+ *  parameter's IR type, so `expr()` renders the ordinary `{"k":"const",…}` node a same-module default would produce.
+ *  Mirrors ClrTypeInjection.optDefault's value parse (the SAME metadata the FIR injection reads). A null value or an
+ *  unparseable/unhandled kind -> null (the arg is omitted; ilemit's [DefaultParameterValue] backfill covers a trailing
+ *  slot). */
+private fun metaConstArg(d: kotc.frontend.ClrConstDefault, type: IrType): IrExpression? {
+	val so = org.jetbrains.kotlin.ir.util.SYNTHETIC_OFFSET
+	val C = org.jetbrains.kotlin.ir.expressions.impl.IrConstImpl
+	// A null default value (`= null`) -> the null literal, mirroring ClrTypeInjection.optDefault (which builds it
+	// UNCONDITIONALLY). A null default only sits on a reference/nullable param — the param's own IR type carries the
+	// (possibly flexible/oblivious `T!`) nullability, so keep it as the const's type rather than gating on isMarkedNullable
+	// (an oblivious `String!` reads non-null but still legitimately accepts a null default the frontend already admitted).
+	val v = d.value ?: return C.constNull(so, so, type)
+	return when (d.valueType) {
+		"Int" -> C.int(so, so, type, v.toIntOrNull() ?: return null)
+		"Long" -> C.long(so, so, type, v.toLongOrNull() ?: return null)
+		"Short" -> C.short(so, so, type, v.toShortOrNull() ?: return null)
+		"Byte" -> C.byte(so, so, type, v.toByteOrNull() ?: return null)
+		"Boolean" -> C.boolean(so, so, type, v == "true")
+		"Double" -> C.double(so, so, type, v.toDoubleOrNull() ?: return null)
+		"Float" -> C.float(so, so, type, v.toFloatOrNull() ?: return null)
+		"Char" -> C.char(so, so, type, v.firstOrNull() ?: return null)
+		"String" -> C.string(so, so, type, v)
+		else -> null
+	}
 }
 
 /** True if `expr` reads any of `locals` — detects a default-arg expression that references the callee's own

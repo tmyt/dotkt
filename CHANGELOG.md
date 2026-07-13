@@ -5,6 +5,20 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Fixed
+
+- **Consume-as-Kotlin round-trip: an omitted cross-module DEFAULT argument is now filled from the facadegen
+  metadata** (#134). Consuming a DotKt library as Kotlin, omitting a defaulted parameter anywhere but the
+  trailing tail — a constructor `Pt(y = 4)` (omitting `x`) or a named-middle call `box(1, c = 9)` (omitting
+  `b`) — dropped the omitted slot, so a later provided arg slid into the wrong parameter (or ilemit reported
+  `no matching constructor … with 1 arg(s)`). fir2ir converts a facadegen-injected (bodies-skipped dependency)
+  declaration's default value to an `IrErrorExpression`, so kotc had no value to fill. It now reads the real
+  constant default from the facadegen metadata (`ClrMetadataHolder`, the same source the FIR injection's
+  `applyDefaults` reads) and synthesizes an `IrConst` at the call site — for both constructors and top-level
+  functions, keyed by resolved IR identity (owner `ClassId` / `CallableId` + regular-param count). A trailing
+  omission still falls back to ilemit's `[DefaultParameterValue]` backfill. Gated by `verify-roundtrip.sh`
+  `roundtrip-defargs` (now PASS: `greet`/`box`/`flags` named-middle + reordered, and `Pt(y=4)`/`Pt(x=7)`).
+
 ### Added
 
 - **Consume-as-Kotlin round-trip: three generic-fidelity gaps fixed** (#133, surfaced by the atomicfu CLR port).

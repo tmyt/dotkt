@@ -31,7 +31,6 @@ done
 # bare `kotlin.coroutines.Continuation` at emit; they surface the REMAINING *cross-module* coroutine gaps
 # (below). This gate is the coroutine bundle's cross-module E2E check: when these flip to FIXED, prune them.
 declare -A RT_XFAIL=(
-	[roundtrip-defargs]="#134: pre-existing cross-module constructor default-arg regression — kotc doesn't fill the omitted ctor default; unrelated to #133"
 	# (#11 FIXED 2026-07-05: a suspend call inside an INLINE scope function used as a sub-expression —
 	# `doFetch = with(lib){ b.fetch() }` — no longer refuses in kotc; kotc emits the inlined valueBlock verbatim
 	# and bir2cir's SuspendColdLowering flattens it, segmenting the suspend call as an ordinary suspension point.)
@@ -570,6 +569,9 @@ cat > "$DA/lib/lib.kt" <<'EOF'
 fun greet(name: String, greeting: String = "Hi", punct: String = "!"): String = "$greeting, $name$punct"
 fun box(a: Int, b: Int = 2, c: Int = 3): Int = a * 100 + b * 10 + c
 fun flags(on: Boolean = true, label: String = "x y"): String = "$on/$label"
+// non-Int kinds + a NULLABLE (`= null`) default, to lock every metaConstArg kind + the null-literal path
+fun kinds(tag: String, n: Long = 5L, r: Double = 1.5, ch: Char = 'z', note: String? = null): String =
+    "$tag/$n/$r/$ch/${note ?: "none"}"
 class Pt(val x: Int = 0, val y: Int = 0) { override fun toString(): String = "($x,$y)" }
 EOF
 cat > "$DA/app/app.kt" <<'EOF'
@@ -583,6 +585,9 @@ fun main() {
     println(box(a = 5, c = 7))                    // 527      named middle omission
     println(flags())                              // True/x y string default with a space
     println(flags(label = "z"))                   // True/z   named middle omission
+    println(kinds("a"))                           // a/5/1.5/z/none      all defaults (Long/Double/Char/null)
+    println(kinds("b", ch = 'q'))                 // b/5/1.5/q/none      NAMED MIDDLE omit skipping Long+Double
+    println(kinds("c", note = "hi"))              // c/5/1.5/z/hi        NAMED-MIDDLE omit filling the null-default slot
     println(Pt(y = 4))                            // (0,4)    ctor named middle omission
     println(Pt(x = 7))                            // (7,0)    ctor named
 }
@@ -594,7 +599,7 @@ dotnet "$FACADEGEN_DLL" --meta "$DA/k.meta" --refs "$REFS$DA/libil/KLib.dll" Pt 
 CLR_TYPES_METADATA="$DA/k.meta" "$LAUNCHER" "$DA/app" -no-stdlib -classpath "$CP" -d "$DA/appbir" >/dev/null 2>&1 || true
 emit_il "$DA/appil" KApp --ref "$DA/libil/KLib.dll" "$DA/appbir"/*.bir.json
 cp "$DA/libil/KLib.dll" "$DA/appil/" 2>/dev/null || true
-daexpected="$(printf 'Hi, A!\nYo, B!\nHi, C?\nHey, E!\n123\n129\n527\nTrue/x y\nTrue/z\n(0,4)\n(7,0)')"
+daexpected="$(printf 'Hi, A!\nYo, B!\nHi, C?\nHey, E!\n123\n129\n527\nTrue/x y\nTrue/z\na/5/1.5/z/none\nb/5/1.5/q/none\nc/5/1.5/z/hi\n(0,4)\n(7,0)')"
 run_app daactual "$DA/appil/KApp.dll"
 check_output roundtrip-defargs "$daexpected" "$daactual" "default args: trailing/named-middle/reordered omission, on functions + constructors"
 
