@@ -559,6 +559,17 @@ System.Threading.Tasks.Task1` also works (facadegen maps the trailing digits bac
 In the injection metadata the .NET-name token is the **true CLR name** (`System.Threading.Tasks.Task``1`), so
 the wire format itself is collision-free.
 
+**Implementing an arity-family generic interface uses the arity-qualified name + the VERBATIM .NET member surface.**
+`class Ver : IComparable1<Ver> { override fun CompareTo(other: Ver?): Int }` — the classifier is `IComparable1`
+(the generic member of the `System.IComparable` family), and its member is the .NET name `CompareTo` with an
+NRT-oblivious `Ver?` parameter, NOT the Kotlin operator `compareTo`. (facadegen surfaces .NET members verbatim — it
+does not camelCase or operator-map them; the `compareTo`/operator restoration applies only to **round-tripped DotKt**
+assemblies, whose members are already Kotlin-named.) The natural spelling `IComparable<Ver>` does **not** resolve to
+the generic — `IComparable` is the non-generic (arity-0) member, so it errors *"no type arguments expected"*; this is
+the arity hard-limit above, not a bug. **For Kotlin comparability, implement `kotlin.Comparable<T>` instead** — it
+gives the `operator compareTo` / `<` and emits BOTH CLR faces (`System.IComparable``1<T>` and the non-generic
+`System.IComparable` cast-and-forward bridge), so a BCL consumer's natural-ordering dispatch works.
+
 **Nested generic types are not injected** (`List<T>.Enumerator` — no CLR-addressable open name in the meta
 grammar); members referencing them degrade to `Any?`. Iteration is unaffected (`for (x in list)` rides the
 injected `IEnumerable<T>` iterator marker, and the backend enumerates via `GetEnumerator/MoveNext/Current`).

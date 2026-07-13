@@ -410,7 +410,7 @@ static class FacadeGen
             o["mods"] = Mods(("vararg", true));
             return o;
         }
-        var pt = ApplyNrt(MapT(p.ParameterType, self), p.ParameterType, attrs, p.Member as MemberInfo);
+        var pt = ApplyNrt(MapTFn(p.ParameterType, self, attrs, p.Member as MemberInfo), p.ParameterType, attrs, p.Member as MemberInfo);  // #150: NRT-threaded (delegate args)
         o["type"] = Ty(HasExtFnMarker(attrs) ? WithExtRecv(pt) : pt);   // #145: `block: P.() -> R` -> restore the receiver
         // #146: a NON-CONST default (`= {}` / a call / any non-metadata-representable expr) carries no CLR
         // [Optional]+[DefaultParameterValue] — it rides `[kotlin.clr.KotlinDefault]` (the BIR sub-tree bir2cir splices
@@ -1396,7 +1396,10 @@ static class FacadeGen
         // companion-static return (the companion-static loop calls RetTypeSfxN here); the suspend-return position reads
         // the same marker via SuspendRetNode (#135).
         if (HasNothingMarker(attrs)) return ApplyNrt(new TN.Fqn("Nothing"), m.ReturnType, attrs, m);
-        var rt = ApplyFlowContract(ApplyNrt(MapRetT(m.ReturnType, self), m.ReturnType, attrs, m), m.ReturnType, attrs);
+        // #150: thread NRT so a `Func<string?>`-returning method surfaces the delegate return as `String?`. MapTFn maps
+        // the (byref-stripped) return from array index 0; the outer ApplyNrt/ApplyFlowContract still fold the outer slot.
+        var mapped = MapTFn(m.ReturnType.IsByRef ? m.ReturnType.GetElementType() : m.ReturnType, self, attrs, m);
+        var rt = ApplyFlowContract(ApplyNrt(mapped, m.ReturnType, attrs, m), m.ReturnType, attrs);
         return HasExtFnMarker(attrs) ? WithExtRecv(rt) : rt;   // #145: a method returning `P.() -> R`
     }
 
@@ -1427,7 +1430,7 @@ static class FacadeGen
     static TN PropTypeN(PropertyInfo p, Type self)
     {
         var attrs = CustomAttributeData.GetCustomAttributes(p);
-        var t = ApplyNrt(MapT(p.PropertyType, self), p.PropertyType, attrs, p);
+        var t = ApplyNrt(MapTFn(p.PropertyType, self, attrs, p), p.PropertyType, attrs, p);  // #150: NRT-threaded (delegate-typed property)
         // #143: a property's `[MaybeNull]`/`[NotNull]` flow contract may ride the PropertyDef OR its GETTER's return
         // parameter (`[return: MaybeNull] get`) — the BCL uses both placements (e.g. `ThreadLocal<T>.Value` on the getter
         // return). Fold from both attribute sets. Demotes `ThreadLocal<T>.Value` to a platform `T!`.
@@ -1714,6 +1717,148 @@ static class FacadeGen
         if (fqn != null && fqn.All(c => char.IsLetterOrDigit(c) || c == '_' || c == '.')) return new TN.Fqn(fqn);
         var n = t.Name;
         return n.All(c => char.IsLetterOrDigit(c) || c == '_') ? new TN.Fqn(n) : DegradeToAny(t, "name is not a resolvable identifier");
+    }
+
+    // ====================================================================================================
+    // #150: NRT-threaded delegate mapping. `MapT`/`ApplyNrt` fold nullability only over the OUTER member type
+    // (index 0 of the flattened [Nullable] byte array); a DELEGATE type arg (`Action<string?>` / `Func<string?>`)
+    // dropped its nested byte -> a delegate lambda's param/return always surfaced FORCED non-null. `MapTN` walks the
+    // type in Roslyn's exact preorder, advancing a cursor over every flattened-array slot, and applies NRT to a
+    // delegate's fn params/return (the contravariant sibling of #143's covariant ThreadLocal.Value). Non-delegate
+    // positions keep MapT's bare structure (wrap=false) — their outer NRT is still applied by the caller's ApplyNrt —
+    // so only delegate internals change. Entry from the param/return/property call sites via MapTFn (pos=0).
+    // ----------------------------------------------------------------------------------------------------
+    // A type occurrence gets a byte in the flattened [Nullable] array iff it is a reference type, a type parameter,
+    // an array, or a CONSTRUCTED GENERIC value type (ValueTuple<>/a custom struct<T>) — but NOT `Nullable<T>` (`X?`)
+    // and NOT a simple (non-generic) value type (int/enum/DateTime). Confirmed empirically against Roslyn's encoder:
+    // `Func<string?,int,string>`->[1,2,1] (int no slot), `ValueTuple<int,string?>`->[0,2] (struct=0, int no slot),
+    // `Func<GS<string?>,string>`->[1,0,2,1] (generic struct=0 + recurse). Value-type slots are 0 (never NRT-wrapped).
+    static bool ConsumesNrtSlot(Type t)
+    {
+        if (t.IsByRef || t.IsPointer) return false;
+        if (t.IsArray || t.IsGenericParameter) return true;
+        if (!t.IsValueType) return true;                                             // reference type
+        if (t.IsGenericType && t.GetGenericTypeDefinition().FullName == "System.Nullable`1") return false;  // X?
+        return t.IsGenericType;                                                      // generic struct -> slot; simple value -> none
+    }
+
+    // Wrap `node` in the NRT nullability of the reference-type position at flattened index `pos`. Value-type / byref
+    // positions (and pos < 0 = no slot) and a node already carrying nullability take no wrapper; wrap=false is a no-op
+    // (the outer position is wrapped by the caller's ApplyNrt). Reuses the shared NrtByteAt/NrtContextOf decode.
+    static TN WrapNrt(TN node, Type t, IList<CustomAttributeData> attrs, MemberInfo ctx, int pos, bool wrap)
+    {
+        if (!wrap || pos < 0 || t.IsValueType || t.IsByRef || t.IsPointer) return node;
+        if (node is TN.Nullable || node is TN.Oblivious) return node;
+        byte b = NrtByteAt(attrs, pos);
+        if (b == 255) b = NrtContextOf(ctx);
+        return b == 2 ? new TN.Nullable(node) : b == 0 ? new TN.Oblivious(node) : node;
+    }
+
+    // The param/return/property entry point: map `t` threading the member's flattened [Nullable] byte array from
+    // position 0, WITHOUT wrapping the outer node (the caller's ApplyNrt does that) — only nested delegate fn
+    // params/return gain their own byte.
+    static TN MapTFn(Type t, Type self, IList<CustomAttributeData> attrs, MemberInfo ctx)
+    { int pos = 0; return MapTN(t, self, attrs, ctx, ref pos, false); }
+
+    // The threaded walk (mirrors MapT's structure). `pos` advances over every flattened-array slot in Roslyn preorder;
+    // `wrap` gates NRT application (true once inside a delegate's args, so nested delegates/generics honor their bytes).
+    static TN MapTN(Type t, Type self, IList<CustomAttributeData> attrs, MemberInfo ctx, ref int pos, bool wrap)
+    {
+        if (t.IsByRef) return new TN.ByRef(MapTN(t.GetElementType(), self, attrs, ctx, ref pos, wrap));  // byref: no own slot
+        if (t.FullName == "System.Void") return new TN.Fqn("Unit");
+        // `Nullable<X>` (`X?`): structural TN.Nullable, consumes NO slot (neither the Nullable nor its value-type inner).
+        if (t.IsGenericType && t.GetGenericTypeDefinition().FullName == "System.Nullable`1")
+        {
+            var inner = MapTN(t.GetGenericArguments()[0], self, attrs, ctx, ref pos, wrap);
+            return IsAnyQ(inner) ? AnyQ() : new TN.Nullable(inner);
+        }
+        int my = ConsumesNrtSlot(t) ? pos++ : -1;
+        if (t.IsGenericParameter)
+            return WrapNrt(new TN.Tv(t.DeclaringMethod != null ? "method" : "type", t.GenericParameterPosition), t, attrs, ctx, my, wrap);
+        if (t.IsGenericType && t.GetGenericTypeDefinition().FullName == "System.Span`1")
+            return WrapNrt(new TN.Fqn("kotlin.clr.Span", new[] { MapTN(t.GetGenericArguments()[0], self, attrs, ctx, ref pos, wrap) }), t, attrs, ctx, my, wrap);
+        if (MetaMode && IsDelegate(t))
+            return MapDelegateN(t, self, attrs, ctx, my, ref pos, wrap);
+        if (t.FullName != null && t.FullName == self.FullName)
+            return WrapNrt(new TN.Fqn(KotlinName(self)), t, attrs, ctx, my, wrap);
+        switch (t.FullName)
+        {
+            case "System.Int32": return new TN.Fqn("Int");
+            case "System.Int64": return new TN.Fqn("Long");
+            case "System.Int16": return new TN.Fqn("Short");
+            case "System.UInt32": return new TN.Fqn("UInt");
+            case "System.UInt64": return new TN.Fqn("ULong");
+            case "System.UInt16": return new TN.Fqn("UShort");
+            case "System.SByte": return new TN.Fqn("Byte");
+            case "System.Byte": return new TN.Fqn("UByte");
+            case "System.Boolean": return new TN.Fqn("Boolean");
+            case "System.Double": return new TN.Fqn("Double");
+            case "System.Single": return new TN.Fqn("Float");
+            case "System.Char": return new TN.Fqn("Char");
+            case "System.String": return WrapNrt(new TN.Fqn("String"), t, attrs, ctx, my, wrap);
+            case "System.Object": return AnyQ();
+            default: return MetaMode ? CrossTypeTN(t, attrs, ctx, my, ref pos, wrap) : AnyQ();
+        }
+    }
+
+    // A delegate -> a Kotlin `fn` node, honoring the flattened byte array. For the Action`n/Func`n families the
+    // delegate's GENERIC ARGUMENTS ARE its Invoke shape (params..., [return]) in order, so map each generic arg with the
+    // threaded cursor (NRT applied) — this is the #150 fix. A custom/non-generic delegate keeps the current Invoke-based
+    // bare mapping (its Invoke params' NRT rides the delegate's OWN metadata, not this member's array); its own
+    // generic-arg slots are still walked to keep the cursor aligned for any following sibling.
+    static TN MapDelegateN(Type t, Type self, IList<CustomAttributeData> attrs, MemberInfo ctx, int my, ref int pos, bool wrap)
+    {
+        var inv = t.GetMethod("Invoke");
+        if (inv != null && inv.GetParameters().All(p => Supported(p.ParameterType)) && Supported(inv.ReturnType))
+        {
+            var open = t.IsGenericType ? t.GetGenericTypeDefinition().FullName : null;
+            bool isActionFunc = open != null && (open.StartsWith("System.Action`") || open.StartsWith("System.Func`"));
+            if (isActionFunc)
+            {
+                var gargs = t.GetGenericArguments();
+                var mapped = new TN[gargs.Length];
+                for (int i = 0; i < gargs.Length; i++) mapped[i] = MapTN(gargs[i], self, attrs, ctx, ref pos, true);
+                bool voidRet = inv.ReturnType.FullName == "System.Void";
+                TN dret = voidRet ? new TN.Fqn("Unit") : mapped[^1];
+                TN[] dps = voidRet ? mapped : mapped[..^1];
+                if (!IsAnyQ(dret) && dps.All(a => !IsAnyQ(a)))
+                    return WrapNrt(new TN.Fn(false, dret, dps), t, attrs, ctx, my, wrap);
+                return AnyQ();
+            }
+            foreach (var g in t.GetGenericArguments()) MapTN(g, self, attrs, ctx, ref pos, false);  // advance cursor only
+            var dret2 = MapRetT(inv.ReturnType, self);
+            var dps2 = inv.GetParameters().Select(p => MapT(p.ParameterType, self)).ToArray();
+            if (!IsAnyQ(dret2) && dps2.All(a => !IsAnyQ(a)))
+                return WrapNrt(new TN.Fn(false, dret2, dps2), t, attrs, ctx, my, wrap);
+        }
+        return AnyQ();
+    }
+
+    // Cursor-threaded mirror of CrossTypeT (a reference to another .NET type). Advances `pos` over the array element /
+    // generic args in preorder and applies NRT via `wrap`. Same degrade decisions/structure as CrossTypeT — INCLUDING
+    // its `self` REBASE: children recurse with `t` (the cross type) as the new self, so a nested self-reference resolves
+    // as CrossTypeT does (a dotted Fqn), never MapTN's simple-name self-match branch.
+    static TN CrossTypeTN(Type t, IList<CustomAttributeData> attrs, MemberInfo ctx, int my, ref int pos, bool wrap)
+    {
+        if (t.IsArray) { var e = MapTN(t.GetElementType(), t, attrs, ctx, ref pos, wrap); return IsAnyQ(e) ? AnyQ() : WrapNrt(new TN.Array(e), t, attrs, ctx, my, wrap); }
+        if (t.IsByRef || t.IsPointer || t.IsGenericParameter || (string.IsNullOrEmpty(t.Namespace) && !t.IsGenericType)) return AnyQ();
+        if (t.IsGenericType)
+        {
+            var open = t.GetGenericTypeDefinition();
+            if (open.IsNested) return DegradeToAny(t, "nested generic definition — no CLR-addressable open name");
+            var openName = KotlinName(open);
+            if (NO_INJECT.Contains(open.FullName ?? "") || !openName.All(c => char.IsLetterOrDigit(c) || c == '_'))
+                return DegradeToAny(t, "generic open def not injectable / not a simple identifier");
+            var ga = t.GetGenericArguments();
+            var args = new TN[ga.Length];
+            for (int i = 0; i < ga.Length; i++) args[i] = MapTN(ga[i], t, attrs, ctx, ref pos, wrap);
+            if (args.Any(IsAnyQ)) return DegradeToAny(t, "a generic type argument was unresolvable");
+            return WrapNrt(new TN.Fqn(openName, args), t, attrs, ctx, my, wrap);
+        }
+        var fqn = t.FullName;
+        if (fqn != null && fqn.All(c => char.IsLetterOrDigit(c) || c == '_' || c == '.')) return WrapNrt(new TN.Fqn(fqn), t, attrs, ctx, my, wrap);
+        var n = t.Name;
+        return n.All(c => char.IsLetterOrDigit(c) || c == '_') ? WrapNrt(new TN.Fqn(n), t, attrs, ctx, my, wrap) : DegradeToAny(t, "name is not a resolvable identifier");
     }
 
     // Map a CLR generic-parameter CONSTRAINT type to a Kotlin bound TypeNode. ilemit lowers a Kotlin `Comparable<T>`

@@ -73,6 +73,29 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `BirTypeLowering` now lowers a `TypeNode.Oblivious` node to the bare inner (the consuming half — inert until kotc emits
   `Oblivious` for `@FlexibleNullability`). The kotc producer half + gate (`cases/il-genextval`) are pending coordinator routing.
 
+- **A delegate type-arg's nullability now survives into the injected Kotlin lambda param/return (#150).** facadegen
+  built a delegate's `fn` node (`Action<T>`/`Func<T>`) with a plain `MapT` per type arg — no access to the member's
+  flattened `[Nullable]` byte array — so an `Action<string?>` param surfaced its lambda arg as forced non-null and a
+  `Func<string?>`-returning method surfaced its lambda return as non-null (a lambda returning null would not compile).
+  This is the contravariant sibling of #143 (`ThreadLocal<T>.Value`, a covariant/return position). facadegen now
+  threads the member's `[Nullable]` byte array with a preorder POSITION cursor (`MapTN`) that matches Roslyn's exact
+  flattening — reference/type-param/array/generic-struct positions consume a slot, simple value types and `Nullable<T>`
+  do not — and applies the tri-state NRT wrapper (`T`/`T?`/platform `T!`) to each `Action`n`/`Func`n` type arg, at any
+  nesting depth (`Func<Func<string?>>`, `Func<string?,int,string>`). An unannotated arg in an oblivious assembly
+  surfaces platform `T!`; a `[Nullable]=2` arg surfaces `T?`. Non-delegate positions keep their existing bare
+  structure (the outer NRT is still folded by the caller's `ApplyNrt`), so the change is confined to delegate
+  internals. New gate `il-delegnull` (`il_check_inject_nrt` builds the sample's runtime.cs with C# NRT enabled).
+- **The `System.IComparable` arity clash + base-interface-chain value-type slots (#129) are confirmed by-design and
+  now gated + documented.** Investigation (paired with the design reviewer) established there is no facadegen (or kotc)
+  code fix warranted: a Kotlin classifier cannot be arity-overloaded (K2 hard limit, `docs/dotkt-semantics.md` §8d),
+  so `import System.IComparable` + the natural `IComparable<Ver>` spelling resolving to the non-generic (arity-0) member
+  is the documented projection, not a bug. Implementing the generic member uses the arity-qualified `IComparable1<T>`
+  with the VERBATIM .NET surface (`override fun CompareTo(other: Ver?): Int`); for Kotlin comparability the idiom is
+  `kotlin.Comparable<T>` (it emits both CLR IComparable faces via bir2cir's ComparableBridgeSynthesis). The
+  base-interface-chain value-type case (`class Cell : IMid<Int>` inheriting `Get(): Int` through `IBase<T>`) already
+  works via #128's value-type-slot bridge across the transitively-inherited link. Two new gates lock both paths
+  (`il-icmparity`: the arity-family generic-interface implement + upcast dispatch; `il-ifacechainvt`: the value-type
+  base-interface chain); `docs/dotkt-semantics.md` §8d gains the implement-an-injected-interface guidance.
 - **Two same-name/same-arity top-level extensions on DIFFERENT receiver types (parallel `*Extensions` static classes in
   one namespace) now each bind to their OWN receiver's class — no silent mis-bind to the first candidate (#144).** A
   facadegen-injected C#-origin `[Extension]` method surfaces as a Kotlin top-level extension fun keyed by
