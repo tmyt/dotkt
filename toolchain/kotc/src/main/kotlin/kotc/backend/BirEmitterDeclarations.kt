@@ -93,9 +93,10 @@ internal fun BirEmitter.interfaceDef(iface: IrClass): String {
 		// emits a CLR default interface method; an implementer that doesn't override it then INHERITS the default
 		// instead of failing to load ("does not have an implementation", e.g. CoroutineContext.plus, ClosedRange.contains).
 		val hasDefault = fn.body != null && fn.modality != Modality.ABSTRACT
-		// #6 non-null parameter PRECONDITIONS for a default interface method body (an abstract slot has no body to guard).
+		// #6 non-null parameter PRECONDITIONS + return POSTCONDITION for a default interface method body (an abstract slot
+		// has no body to guard).
 		val body = if (hasDefault) {
-			val stmts = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
+			val stmts = withReturnPostcondition(fn) { (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
 			(preconditionChecks(fn) + listOfNotNull(stmts.takeIf { it.isNotEmpty() })).joinToString(",")
 		} else ""
 		// A generic interface method (`fun <E> get(...)`, `<R> fold(...)`) must carry its own type params, else
@@ -422,9 +423,9 @@ internal fun BirEmitter.topLevelAccessorMethod(acc: IrSimpleFunction, propName: 
 	if (extRecv != null) selfSubst[extRecv] = """{"k":"local","name":"__self"}"""
 	val savedRefCells = refCellVars
 	refCellVars = refCellVars + computeRefCells(acc)
-	val bodyStmts = (acc.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
-	// #6 non-null parameter PRECONDITIONS (gates on the accessor's REAL IR visibility, not the hardcoded emitted
-	// "public" — a private top-level property's accessor is emitted public but is not the public surface).
+	// #6 non-null parameter PRECONDITIONS + getter return POSTCONDITION (gates on the accessor's REAL IR visibility, not
+	// the hardcoded emitted "public" — a private top-level property's accessor is emitted public but is not the surface).
+	val bodyStmts = withReturnPostcondition(acc) { (acc.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
 	val body = (preconditionChecks(acc) + listOfNotNull(bodyStmts.takeIf { it.isNotEmpty() })).joinToString(",")
 	refCellVars = savedRefCells
 	if (extRecv != null) selfSubst.remove(extRecv)
@@ -445,8 +446,9 @@ internal fun BirEmitter.accessorMethod(acc: IrSimpleFunction, propName: String, 
 	val selfParam = extRecv?.let { """{"name":"__self","type":${birType(it.type).toJson()}}""" }
 	val ps = (listOfNotNull(selfParam) + acc.parameters.filter { it.kind == IrParameterKind.Regular }
 		.map { """{"name":${str(it.name.asString())},"type":${birType(it.type).toJson()}}""" }).joinToString(",")
-	val bodyStmts = (acc.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
-	// #6 non-null parameter PRECONDITIONS (a setter's `value` param + an extension-property `__self`) at entry.
+	// #6 non-null parameter PRECONDITIONS (a setter's `value` param) at entry + a getter's non-null return POSTCONDITION
+	// (a setter returns Unit -> naturally out of scope).
+	val bodyStmts = withReturnPostcondition(acc) { (acc.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
 	val body = (preconditionChecks(acc) + listOfNotNull(bodyStmts.takeIf { it.isNotEmpty() })).joinToString(",")
 	if (extRecv != null) selfSubst.remove(extRecv)
 	val ret = if (isGetter) birType(acc.returnType) else TypeNode.Fqn("kotlin.Unit")
@@ -815,7 +817,9 @@ internal fun BirEmitter.method(fn: IrSimpleFunction, static: Boolean): String {
 		val tc = collectTailRecursionCalls(fn, { false }, { false }).ir
 		if (tc.isNotEmpty()) cfgFresh().also { tailrecCtx = BirEmitter.TailrecCtx(tc, it, fn) } else null
 	} else null
-	val bodyStmts = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
+	// #6 the return POSTCONDITION (if any) is registered on fn's return-target symbol for the body emission, so a
+	// genuine `return v` wraps v in a non-null bind-check-throw (BirEmitterStatements.kt IrReturn).
+	val bodyStmts = withReturnPostcondition(fn) { (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
 	tailrecCtx = savedTailrec
 	val coreBody = if (tailrecStart != null) """{"k":"label","id":$tailrecStart}${if (bodyStmts.isNotEmpty()) ",$bodyStmts" else ""}""" else bodyStmts
 	// #6 non-null parameter PRECONDITIONS run at entry, BEFORE the tailrec label so a self-tail-jump does not re-check.

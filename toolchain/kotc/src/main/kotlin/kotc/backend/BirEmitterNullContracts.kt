@@ -108,3 +108,38 @@ internal fun BirEmitter.preconditionChecks(fn: IrFunction): List<String> {
 	}
 	return out
 }
+
+/**
+ * The NPE message JSON for `fn`'s NON-NULL REFERENCE return POSTCONDITION, or null when `fn` is out of scope. A
+ * postcondition is a deliberate DotKt addition beyond JVM Kotlin — it guards a null leaking OUT of a public member via
+ * a platform type / an unsound generic. Registered on `fn`'s return-target symbol around body emission (see
+ * `withReturnPostcondition`); `stmt(IrReturn)` then wraps a genuine return value in a bind-check-throw valueBlock.
+ * SUSPEND functions are excluded: kotc emits their body plainly and bir2cir builds the Continuation state machine, so
+ * wrapping the return value would collide with the shape that lowering rewrites. Inline is excluded for the same
+ * splice-inconsistency reason as preconditions.
+ */
+internal fun BirEmitter.returnCheckMessage(fn: IrSimpleFunction): String? {
+	if (!isPublicSurface(fn) || !ownerIsNamed(fn) || fn.isInline || fn.isSuspend) return null
+	if (!needsNonNullCheck(fn.returnType)) return null
+	val ownerMethod = fn.fqNameWhenAvailable?.asString() ?: fn.name.asString()
+	return str("$ownerMethod, non-null return value is null")
+}
+
+/** Registers `fn`'s return postcondition (if any) for the duration of `emit`, then removes it. */
+internal fun <T> BirEmitter.withReturnPostcondition(fn: IrSimpleFunction, emit: () -> T): T {
+	val msg = returnCheckMessage(fn) ?: return emit()
+	postconditionReturns[fn.symbol] = msg
+	try { return emit() } finally { postconditionReturns.remove(fn.symbol) }
+}
+
+/**
+ * Wrap a genuine return VALUE in the non-null return POSTCONDITION: bind it to a fresh temp of the (non-null
+ * reference) return type, yield it when non-null, else `throw NullPointerException(<msg>)` — the same
+ * bind-check-throw shape as a reference `x!!`. `retType` is `fn.returnType`; `msgJson` is the registered message.
+ */
+internal fun BirEmitter.wrapReturnNonNull(valueJson: String, retType: IrType, msgJson: String): String {
+	val nv = "__nn${scopeCounter++}"
+	val nvLoc = """{"k":"local","name":${str(nv)}}"""
+	val throwNpe = throwExpr(newExc("kotlin.NullPointerException", msgJson))
+	return """{"k":"valueBlock","stmts":[{"k":"var","name":${str(nv)},"type":${birType(retType).toJson()},"init":$valueJson}],"result":{"k":"cond","cond":{"k":"unaryOp","op":"!","e":{"k":"objEq","lhs":$nvLoc,"rhs":${nullConstJson()}}},"then":$nvLoc,"else":$throwNpe}}"""
+}

@@ -676,8 +676,14 @@ facts); kotc names no CLR type — `kotlin.NullPointerException` resolves to the
   entry: `if (p == null) throw NullPointerException("Parameter specified as non-null is null: <owner>.<method>,
   parameter <p>")`. A null crossing a boundary (a platform `T!`, an unsound cast, reflection ignoring NRT) into such a
   param fails fast at the entry with a Kotlin-messaged NPE instead of propagating to a later, mis-sited `NullReferenceException`.
+- **Return postconditions (a DotKt addition beyond JVM Kotlin).** A NON-NULL REFERENCE return of a public/protected
+  member (top-level/member fun, property getter, default interface method) is checked at each `return`: the value is
+  bound to a temp, yielded when non-null, else `throw NullPointerException("<owner>.<method>, non-null return value is
+  null")`. This guards a null leaking OUT via a platform type or an unsound generic — the callee promised non-null.
+  SUSPEND functions are excluded (kotc emits their body plainly; bir2cir's Continuation state-machine rewrites the
+  returns, and wrapping would collide with that shape).
 
-Scope discriminator, and the deliberate deviations from JVM Kotlin:
+Scope discriminator, and the deliberate deviations from JVM Kotlin (both directions share the same discriminator):
 - **Value types are skipped** — a primitive/unsigned (`Int`/`UInt`/…) or a Kotlin `value`/inline class is a CLR value
   type, never null; a null-check would be ill-typed. Nullable `T?`, `Unit`, and `Nothing` are skipped too.
 - **Type-parameter-typed params are skipped ENTIRELY.** On the CLR generics are REIFIED, so a bare `T` may instantiate
