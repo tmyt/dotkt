@@ -166,6 +166,12 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null) {
 	// method returns (the splice is a valueBlock INSIDE the caller). Maps the return target -> (result local or
 	// null-for-unit, end label id); stmt(IrReturn) rewrites to `res = v; goto end`. See spliceBodyWithReturns.
 	internal val inlineReturnSubst = HashMap<org.jetbrains.kotlin.ir.symbols.IrReturnTargetSymbol, Pair<String?, Int>>()
+	// #6 non-null RETURN POSTCONDITIONS: while emitting a public/protected fn whose non-null reference return is
+	// contract-checked, its return-target symbol -> the NPE message JSON. stmt(IrReturn) wraps a genuine (non-spliced)
+	// return VALUE targeting a registered symbol in a bind-check-throw valueBlock. A nested lambda's return targets its
+	// OWN (unregistered) symbol; a non-local return targeting a registered caller is (correctly) checked. See
+	// BirEmitterNullContracts.kt (returnCheckMessage) and BirEmitterStatements.kt (the IrReturn case).
+	internal val postconditionReturns = HashMap<org.jetbrains.kotlin.ir.symbols.IrReturnTargetSymbol, String>()
 	// While splicing an `inline fun` body: its type PARAM (the IrTypeParameter itself, NOT its name — a name-keyed
 	// map cross-captured an OUTER function's same-named param: let<T,R:=Unit> spliced inside mapNotNullTo<T,R>
 	// rewrote the OUTER `R` to kotlin.Unit) -> the call's substituted type-argument BIR (see birType).

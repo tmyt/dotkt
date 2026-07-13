@@ -65,6 +65,7 @@ import org.jetbrains.kotlin.ir.types.IrType
 import org.jetbrains.kotlin.ir.types.classFqName
 import org.jetbrains.kotlin.ir.types.classifierOrNull
 import org.jetbrains.kotlin.ir.types.isUnit
+import org.jetbrains.kotlin.ir.types.isNothing
 import org.jetbrains.kotlin.ir.types.isMarkedNullable
 import org.jetbrains.kotlin.ir.util.fqNameWhenAvailable
 import org.jetbrains.kotlin.ir.IrFileEntry
@@ -147,7 +148,12 @@ internal fun BirEmitter.stmt(node: org.jetbrains.kotlin.ir.IrElement): String = 
 		// UNWRAP `Nullable<T>.Value` to match the return slot — the JVM `Integer.intValue()` coercion has no IR node (C1).
 		else if (!node.value.type.isUnit()) {
 			val retType = (node.returnTargetSymbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction)?.returnType
-			val v = if (retType != null) coerceValue(node.value, retType) else expr(node.value)
+			val v0 = if (retType != null) coerceValue(node.value, retType) else expr(node.value)
+			// #6 non-null RETURN POSTCONDITION: a genuine return targeting a registered public/protected fn wraps the
+			// value in a bind-check-throw (skip a Nothing value — `return TODO()` already throws). Inline splices took
+			// the branch above, so they never reach here.
+			val postMsg = postconditionReturns[node.returnTargetSymbol]
+			val v = if (postMsg != null && retType != null && !node.value.type.isNothing()) wrapReturnNonNull(v0, retType, postMsg) else v0
 			"""{"k":"return","value":$v}"""
 		}
 		else if (node.value is IrGetObjectValue) """{"k":"return"}"""

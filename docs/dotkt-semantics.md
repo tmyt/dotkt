@@ -661,25 +661,59 @@ doc-comment). This settles the null-legitimacy question:
   boundary — a `T!` value assigned to a `T` local, passed to a `T` parameter, or returned as a declared `T` is a plain
   copy of the reference. Inserting a check here would *violate* platform-type laxity (the developer has taken
   responsibility), so its absence is correct, not a gap.
-- **A genuinely-null `T!` therefore flows UNCHECKED until a real dereference**, where the CLR raises
+- **A genuinely-null `T!` used LOCALLY flows UNCHECKED until a real dereference**, where the CLR raises
   **`NullReferenceException`** — the CLR analogue of the JVM's NPE. The throw lands at the **use site** (the member
-  access / call on the null receiver), not at the assignment/parameter/return boundary that first admitted the null.
-- **This is faithful to Kotlin's *language* semantics.** It is exactly the behavior of Kotlin/JVM compiled with
-  `-Xno-call-assertions -Xno-param-assertions` (a supported mode): the null simply flows to the dereference. The JVM's
-  *default* eager `Intrinsics.checkNotNullExpressionValue` / `checkNotNullParameter` boundary assertion — which turns a
-  null platform value into an NPE *at the boundary* with a descriptive message — is an **optional diagnostic/QoL
-  feature, not a language-semantic requirement** (it is disable-able precisely because it is not mandated). DotKt does
-  not reproduce it (there is no JVM null-assertion IR lowering in the `Fir2Ir → ClrBackendPhase` path, §3), so the
-  failure is later (at deref) and its exception is CLR-native (`NullReferenceException`, no Kotlin message) rather than
-  eager and JVM-messaged. Both eventually throw on the same null; the difference is *when* and *which exception type*.
+  access / call on the null receiver), not at the assignment/return boundary that first admitted the null. kotc inserts
+  nothing at this CALLER-side implicit boundary — a `T!` assigned to a `T` local or returned as a declared `T` is a
+  plain copy of the reference; a check here would violate platform-type laxity (the developer took responsibility).
+- **But if the null is PASSED INTO a public/protected function's non-null parameter, it fails fast at that CALLEE
+  entry** with a Kotlin-messaged `NullPointerException` — the public-surface parameter precondition (§9c). So the
+  CALLER-side boundary stays lax (this bullet), while the CALLEE's own declared non-null contract is enforced. This is
+  the one place the JVM's eager `checkNotNullParameter` assertion IS reproduced (deliberately, as a contract).
 - **`?.` and smart-casts behave normally.** A safe-call `t?.member` on a `T!` receiver null-gates in the frontend
   (returns `null`, never throws / never asserts). A flow smart-cast (`if (t != null) t.member`) works: the frontend
   proves non-null-ness by control flow and picks the lower bound, needing no runtime assertion.
 
 Practical upshot for interop: treat a `T!` from an un-annotated .NET assembly as you would an un-annotated Java value —
-if you use it as non-null and it is actually null, you get a `NullReferenceException` at the point you dereference it,
-not a Kotlin NPE at the point you accepted it. Prefer `T?` + a null check (or `?:`) at the boundary when the .NET API
-can legitimately return null.
+if you use it as non-null LOCALLY and it is actually null, you get a `NullReferenceException` at the point you
+dereference it; if you pass it to a public Kotlin non-null parameter, you get a Kotlin `NullPointerException` at that
+call's entry (§9c). Prefer `T?` + a null check (or `?:`) at the boundary when the .NET API can legitimately return null.
+
+### 9c. Non-null CONTRACTS on the public surface — fail-fast at the callee boundary (#6)
+
+Independent of platform-type laxity (§9a is a CALLER-side fact), DotKt synthesizes JVM-Kotlin-style design-by-contract
+checks on the CALLEE side of the PUBLIC/PROTECTED surface, reproducing (and slightly extending)
+`Intrinsics.checkNotNullParameter`. These are ordinary BIR emitted by kotc (visibility + nullability are frontend
+facts); kotc names no CLR type — `kotlin.NullPointerException` resolves to the BCL exception via the same
+`@ClrTypeAlias` path a user `throw NullPointerException(...)` uses.
+
+- **Parameter preconditions.** Every PUBLIC or PROTECTED member (top-level fun, member fun, constructor, property
+  setter, default interface method, and `@PublishedApi internal`) checks each NON-NULL REFERENCE **value parameter** at
+  entry: `if (p == null) throw NullPointerException("Parameter specified as non-null is null: <owner>.<method>,
+  parameter <p>")`. A null crossing a boundary (a platform `T!`, an unsound cast, reflection ignoring NRT) into such a
+  param fails fast at the entry with a Kotlin-messaged NPE instead of propagating to a later, mis-sited `NullReferenceException`.
+- **Return postconditions (a DotKt addition beyond JVM Kotlin).** A NON-NULL REFERENCE return of a public/protected
+  member (top-level/member fun, property getter, default interface method) is checked at each `return`: the value is
+  bound to a temp, yielded when non-null, else `throw NullPointerException("<owner>.<method>, non-null return value is
+  null")`. This guards a null leaking OUT via a platform type or an unsound generic — the callee promised non-null.
+  SUSPEND functions are excluded (kotc emits their body plainly; bir2cir's Continuation state-machine rewrites the
+  returns, and wrapping would collide with that shape).
+
+Scope discriminator, and the deliberate deviations from JVM Kotlin (both directions share the same discriminator):
+- **Value types are skipped** — a primitive/unsigned (`Int`/`UInt`/…) or a Kotlin `value`/inline class is a CLR value
+  type, never null; a null-check would be ill-typed. Nullable `T?`, `Unit`, and `Nothing` are skipped too.
+- **Type-parameter-typed params are skipped ENTIRELY.** On the CLR generics are REIFIED, so a bare `T` may instantiate
+  to a value type; a null-check would force a box and be meaningless. Stricter than JVM (which erases `<T : Any>` to
+  `Object` and DOES check it) — a `clr-all-type-args-reified` deviation.
+- **Receivers are NOT checked** (dispatch or extension), only value parameters. A dispatch receiver can never be null;
+  an extension receiver can be LEGITIMATELY null on the CLR — a Kotlin extension on a companion object
+  (`fun String.Companion.format(...)`) lowers to a static method whose receiver is a null singleton (companion-object
+  elision), so asserting it fires spuriously. JVM asserts the extension receiver; DotKt does not.
+- **private/internal/local/inline members are skipped** — trusted within the module; and an `inline` body travels as a
+  splice payload, so a check would apply inconsistently (cross-module vs same-module splices).
+- **Constructor preconditions land AFTER the base/`this` ctor delegation** (the delegation rides a separate BIR field),
+  not before `super()` as on the JVM — so a null user param first dereferenced by a base-ctor argument NREs before the
+  friendly NPE. An accepted ordering deviation.
 
 ## 9b. `System.Byte` is UNSIGNED — it maps to `kotlin.UByte`, not `kotlin.Byte` (STRICT, #53)
 
