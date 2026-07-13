@@ -160,12 +160,14 @@ project `<Project Sdk="DotKt.Sdk.Mpp">` with a `common/` `expect` + `clr/` `actu
 (`lowered 2 BIR file(s)`). This is the packaged-SDK layer's first real end-to-end coverage (the base `DotKt.Sdk` had
 none — it was exercised only at pack time).
 
-**Remaining gap (honest, small, shared with the base SDK):** the smoke test is a **manual** local-feed run, not yet a
-`verify-*.sh` CI gate. Wiring a standing local-feed-restore gate that builds `Sdk="DotKt.Sdk.Mpp"` (and, transitively,
-`Sdk="DotKt.Sdk"`) against `build/nuget-feed` on every run is a follow-up that would give **both** packaged SDKs their
-first automated coverage. Until then the property-gated slice (`cases/ktproj-mpp/`, via the in-repo dev entry) remains
-the gated proof of the MPP *mechanism*, and the packaged composition is proven by the reproducible manual smoke test
-above.
+**Automated coverage (done, #130):** `scripts/verify-packaged-sdk.sh` is the standing local-feed-restore gate. It
+packs the 5 nupkgs to `build/nuget-feed` and, from that feed only (isolated `globalPackagesFolder` + a local-only
+`nuget.config`, so a stale published version can't mask the fresh pack), builds `Sdk="DotKt.Sdk.Mpp"` (transitively
+`Sdk="DotKt.Sdk"`, pinned via `global.json`) with a `common/` `expect` + `clr/` `actual`+entry — **restores → builds →
+runs → asserts `Hello from the CLR actual`** — alongside a plain `Sdk="DotKt.Sdk"` Exe and a Library that
+PackageReferences a second DotKt library. This is **both** packaged SDKs' first automated end-to-end coverage; the
+property-gated slice (`cases/ktproj-mpp/`, via the in-repo dev entry, in `verify-ktproj.sh`) remains the gated proof of
+the MPP *mechanism*.
 
 ## 6. First real consumer — the kotlinx.coroutines port
 
@@ -188,6 +190,3 @@ splat, #123 external-generic `new` over a free type-var) are fixed. See
   the #84 diagnostics work).
 - **#129 — facadegen generic-interface import edges.** Some `.NET` generic-interface imports from a common fragment hit
   facadegen edges; tracked separately.
-- **A standing local-feed-restore CI gate** for the packaged SDKs. The `DotKt.Sdk.Mpp` SDK itself is shipped and
-  smoke-tested end-to-end (§5); what remains is turning that manual smoke test into a `verify-*.sh` gate — coverage the
-  base `DotKt.Sdk` also lacks.
