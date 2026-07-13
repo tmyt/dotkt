@@ -45,6 +45,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `suspend fun f(): Nothing` return on re-consumption — `blockOn { if (c) x else sfail() }` keeps the lambda `suspend () -> Int`
   instead of widening to `Any?`. (`verify-roundtrip.sh` section `roundtrip-nothing-suspend`, previously RT_XFAIL, now GREEN.)
 
+- **A genuinely-nullable `String?` value passed unwrapped into a `CharSequence?`-receiver slot is now ilverify-clean (#156).**
+  On the STRICT nullable-slot path, bir2cir's `StringCharSequenceBridge` deliberately left a `String? = null` value RAW to
+  preserve null (`z.isNullOrEmpty()`), but a raw `String` assigned into a `dotkt$CharSequence` interface slot is
+  ilverify-unsound (String does not implement the synthetic adapter interface) — it only ran because a null short-circuits
+  `isNullOrEmpty`. The bridge now emits a runtime-conditional wrap on that path — `v == null ? (dotkt$CharSequence)null :
+  new dotkt$StringCharSequence(v)` (bindOnce: a side-effecting subject is bound to a temp so it runs exactly once) — so the
+  slot receives a genuine adapter or a typed null: ilverify-clean and null-preserving. (Gate: `cases/il-nullcs`.)
+
 - **Two same-name/same-arity top-level extensions on DIFFERENT receiver types (parallel `*Extensions` static classes in
   one namespace) now each bind to their OWN receiver's class — no silent mis-bind to the first candidate (#144).** A
   facadegen-injected C#-origin `[Extension]` method surfaces as a Kotlin top-level extension fun keyed by
