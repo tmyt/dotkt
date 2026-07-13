@@ -38,6 +38,12 @@ sealed class ReferenceMetadataIndex
     // struct-ness ORACLE for a type variable (#37/#48 nullability fold): a struct-constrained `T?` is `Nullable<T>`,
     // a class/unconstrained `T?` is a bare reference (nullability rides an NRT byte).
     readonly Dictionary<string, string[]> _ownerTypeParamConstraints = new(StringComparer.Ordinal);
+    // Per owner-FQN (DOTTED, nested-`+`-normalized to match kotc's dotted vocabulary), the declared type-BOUND of each
+    // type-param position as a structured TypeNode (or null when unconstrained / the bound is objectish / a
+    // self-referential F-bound). Drives StarProjectionBoundLowering: a `Key<*>` erased to `Key<object>` violates
+    // `E : Element`, so the objectish arg is replaced with the concrete bound (`Key<Element>`). An F-bound
+    // (`E : Enum<E>`) stores null — no closed generic to substitute to — so its `<*>` arg is left unchanged.
+    readonly Dictionary<string, TypeNode[]> _ownerTypeParamBounds = new(StringComparer.Ordinal);
     readonly HashSet<string> _helperTypes = new(StringComparer.Ordinal);             // emitted "dotkt$ClrH_*"
     readonly HashSet<string> _restrictsSuspension = new(StringComparer.Ordinal);     // @RestrictsSuspension owners
     readonly Dictionary<string, List<MemberBinding>> _membersByOwner = new(StringComparer.Ordinal);
@@ -123,6 +129,7 @@ sealed class ReferenceMetadataIndex
             foreach (var kv in asm.DotKt.TypeParamNames) _ownerTypeParams[kv.Key] = kv.Value;
             foreach (var kv in asm.DotKt.CtorParamTypes) _ownerCtorParams[kv.Key] = kv.Value;
             foreach (var kv in asm.DotKt.TypeParamConstraints) _ownerTypeParamConstraints[kv.Key] = kv.Value;
+            foreach (var kv in asm.DotKt.TypeParamBounds) _ownerTypeParamBounds[kv.Key] = kv.Value;
             foreach (var h in asm.DotKt.HelperTypes) _helperTypes.Add(h);
             foreach (var s in asm.DotKt.RestrictsSuspensionTypes) _restrictsSuspension.Add(s);
             foreach (var m in asm.DotKt.MemberBindings)
@@ -387,6 +394,16 @@ sealed class ReferenceMetadataIndex
     {
         if (ownerFqn == null) return null;
         var arr = _ownerTypeParamConstraints.GetValueOrDefault(StripGenericArity(ownerFqn));
+        return arr != null && i >= 0 && i < arr.Length ? arr[i] : null;
+    }
+
+    // The declared type-BOUND of a REFERENCED generic's type param at flattened index `i` (`Key<E : Element>` -> Element
+    // for i=0), keyed by the DOTTED FQN kotc emits. Null when the owner is a local type / unconstrained / the bound is
+    // objectish. Drives StarProjectionBoundLowering's `Key<object>` -> `Key<Element>` repointing for a referenced owner.
+    public TypeNode TvBound(string ownerFqn, int i)
+    {
+        if (ownerFqn == null) return null;
+        var arr = _ownerTypeParamBounds.GetValueOrDefault(StripGenericArity(ownerFqn));
         return arr != null && i >= 0 && i < arr.Length ? arr[i] : null;
     }
 
@@ -771,6 +788,10 @@ sealed class ReferenceMetadataIndex
                         // The struct-ness ORACLE for a TYPE VARIABLE (#37/#48): record each type-param's CLR constraint
                         // class from GenericParameterAttributes so a `T?` on a struct-constrained param stays Nullable<T>.
                         metadata.TypeParamConstraints[ownerFqn] = gargs.Select(GenericParamConstraintClass).ToArray();
+                        // The declared type-BOUND of each type param (`E : Element` -> Element), keyed by the DOTTED FQN
+                        // (nested `+` -> `.`) so bir2cir's dotted lookup (StarProjectionBoundLowering) matches. A star
+                        // projection `Key<*>` erased to `Key<object>` violates this bound and is repointed to `Key<Element>`.
+                        metadata.TypeParamBounds[DottedFqn(ownerFqn)] = gargs.Select(GenericParamBound).ToArray();
                     }
                     var classAlias = ClrAliasOf(type.GetCustomAttributesData());
                     if (classAlias != null) metadata.Aliases[ownerFqn] = classAlias;
@@ -1222,6 +1243,40 @@ sealed class ReferenceMetadataIndex
         var idx = value.IndexOf('`');
         return idx >= 0 ? value[..idx] : value;
     }
+
+    // The nested-type separator normalizer: a reflected FullName uses `+` between an enclosing type and its nested type
+    // (`kotlin.coroutines.CoroutineContext+Key`), while kotc/bir2cir speak dots everywhere. Converge onto dots so a
+    // bound-index lookup keyed by kotc's `kotlin.coroutines.CoroutineContext.Key` matches.
+    static string DottedFqn(string value) => value.Replace('+', '.');
+
+    // The declared type-BOUND of a generic parameter as a structured TypeNode (`E : Element` -> Fqn(Element)), or null
+    // when unconstrained / the sole bound is objectish (System.Object -> no useful restriction) / the bound is a
+    // self-referential F-bound. A gp-dependent constraint (`E : Enum<E>`, or a sibling-var bound) has no valid closed
+    // generic to substitute a `<*>` arg to, so it returns null — the objectish arg is left unchanged (symmetric with
+    // StarProjectionBoundLowering's local ContainsTypeVar skip). The special class/struct/new() constraints are
+    // irrelevant here (not a type identity a `<*>` arg can be repointed to). Nested `+` separators are normalized to dots.
+    static TypeNode GenericParamBound(Type gp)
+    {
+        foreach (var c in gp.GetGenericParameterConstraints())
+        {
+            if (c.IsGenericParameter) continue;                       // a bare sibling type-var bound: no type identity
+            if (c.IsConstructedGenericType && c.GetGenericArguments().Any(a => a.IsGenericParameter)) continue;  // F-bound / gp-dependent: no closed form
+            if (TypeNodeOf(c) is not TypeNode node) continue;
+            if (node is TypeNode.Fqn { Args: null } f && (f.Name is "object" or "System.Object" || DottedFqn(f.Name) == "kotlin.Any")) continue;
+            return NormalizeNestedNames(node);
+        }
+        return null;
+    }
+
+    // Recursively converge every Fqn name in a TypeNode onto dotted form (a nested-type bound like Element carries a `+`).
+    static TypeNode NormalizeNestedNames(TypeNode t) => t switch
+    {
+        TypeNode.Fqn f => new TypeNode.Fqn(DottedFqn(f.Name), f.Args?.Select(NormalizeNestedNames).ToArray()),
+        TypeNode.Nullable n => new TypeNode.Nullable(NormalizeNestedNames(n.Of)),
+        TypeNode.Array a => new TypeNode.Array(NormalizeNestedNames(a.Elem)),
+        TypeNode.ByRef b => new TypeNode.ByRef(NormalizeNestedNames(b.Of)),
+        _ => t,
+    };
 }
 
 sealed record ReferenceAssembly(string Path, string Name, string Version, ReferenceDotKtMetadata DotKt);
@@ -1239,6 +1294,7 @@ sealed class ReferenceDotKtMetadata
     public readonly Dictionary<string, string[]> TypeParamNames = new(StringComparer.Ordinal); // ownerFqn -> generic param names
     public readonly Dictionary<string, string[]> CtorParamTypes = new(StringComparer.Ordinal); // ownerFqn -> (first) ctor param type names
     public readonly Dictionary<string, string[]> TypeParamConstraints = new(StringComparer.Ordinal); // ownerFqn -> per-param "struct"/"class"/"unconstrained"
+    public readonly Dictionary<string, TypeNode[]> TypeParamBounds = new(StringComparer.Ordinal); // DOTTED ownerFqn -> per-param declared bound TypeNode (null when unconstrained/objectish)
     public readonly HashSet<string> HelperTypes = new(StringComparer.Ordinal);            // emitted "dotkt$ClrH_*" rule-3 helpers
     // Types carrying @kotlin.coroutines.RestrictsSuspension (BINARY-retained, so present on the ref.dll). A suspend
     // lambda whose RECEIVER is such a scope (e.g. SequenceScope) gets the RestrictedSuspendLambda SM base (bundle-6 P5).

@@ -30,6 +30,12 @@ done
 # lowering lands (MEMORY coroutine-lowering-layer-deferred); the ilverify names are formal-verification
 # findings, not run failures.
 declare -A XFAIL_RUN=(
+	# GitHub #2 — the bir2cir star-projection BOUND fix (Key<object> -> Key<Element>) landed; both cases now compile
+	# PAST the constraint violation. The remaining run/load failure is the ILEMIT lane (#2 part-2): the inherited
+	# GENERIC default-interface-method `get<E : Element>(key: Key<E>)` is forwarded/implemented with the METHOD type
+	# param E erased to object, re-introducing an illegal `Key<object>`. Prune both once ilemit forwards generic DIMs.
+	[coctxkey]="GitHub #2 part-2 (ilemit): generic default-interface-method get<E:Element> DIM forwarding erases E -> Key<object> on the AbstractCoroutineContextElement subclass"
+	[cointercept]="GitHub #2 part-2 (ilemit): generic default-interface-method get<E:Element> not implemented on the ContinuationInterceptor impl (MissingMethod at load)"
 )
 declare -A XFAIL_ILVERIFY=(
 )
@@ -346,6 +352,14 @@ il_check_imports taskwhen Tw "$ROOT/cases/il-taskwhen" "$(printf '10\n6')"
 # from straight-line (P2) to control flow across suspension (if/when via cond-lowering, while/for already
 # flat), try/catch with the suspension in the try body (two-level dispatch), a suspend extension fun, and
 # the GENERIC SM spike (a generic `suspend fun <T>` -> a generic SM). Sync-completion drain via `main`.
+# coctxkey / cointercept: GitHub #2 — a self-ref-bounded `CoroutineContext.Key<E : Element>` star-projected to
+# `Key<*>` was lowered by kotc to `Key<object>`, which violates `E : Element` on the CLR. bir2cir's
+# StarProjectionBoundLowering repoints `Key<object>` -> `Key<Element>` (get_key methodimpl + the app override
+# now match). Currently XFAIL_RUN: full run-green ALSO needs an ilemit fix — the inherited GENERIC
+# default-interface-method `get<E : Element>(key: Key<E>)` is forwarded/implemented with E erased to object
+# (`Key<object>` again), failing the loader on the subclass / the impl (GitHub #2 part-2, ilemit lane).
+il_check coctxkey AppKt "$ROOT/cases/il-coctxkey" "$(printf 'True\nTrue')"
+il_check cointercept AppKt "$ROOT/cases/il-cointercept" "True"
 il_check coldcf ColdCf "$ROOT/cases/il-coldcf" "$(printf '11\n12\n3\n1\n2\n99\n32\n101\n-1\n42')"
 il_check coforarray CoForArray "$ROOT/cases/il-coforarray" "$(printf '63\n63\n9')"
 il_check coldgen ColdGen "$ROOT/cases/il-coldgen" "$(printf '7\nyo\n8\nhi')"

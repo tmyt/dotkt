@@ -52,6 +52,23 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   selects the awaiter family (a dynamic, non-const `captureContext` is refused loudly). Gate: `cases/il-cfgawait`
   (non-generic, sync fast path). The generic `Task<T>.await(captureContext = false)` awaiter is a nested-generic type
   (arity on the outer) that additionally needs an ilemit `ConstructGeneric` fix — tracked as a follow-up.
+- **A star projection `Key<*>` of a self-ref-bounded generic (`interface Key<E : Element>`) no longer lowers to the
+  constraint-violating `Key<System.Object>` (#2).** kotc's star-projection rule discards the bound (`at == null ->
+  OBJ`, `kotlin.Any`), so `Key<*>` reached bir2cir as `Key<kotlin.Any>` → `Key<System.Object>` — but `System.Object`
+  does not satisfy `E : Element`, an illegal reified CLR instantiation (the stdlib `get_key(): Key<*>` methodimpl no
+  longer matched its interface declaration when an app subclassed `AbstractCoroutineContextElement` and forced the
+  loader; an app `override val key: CoroutineContext.Key<*>` emitted the constraint-violating `Key<object>` directly).
+  A new bir2cir pass `StarProjectionBoundLowering` (pre-BirTypeLowering, ALL builds) reads the type-param CONSTRAINT
+  metadata — bir2cir's lane — and repoints the objectish arg to the type-param BOUND: `Key<*>` -> `Key<Element>`. It
+  resolves the bound for a REFERENCED owner via `ReferenceMetadataIndex.TvBound` (the ref.dll generic-parameter
+  constraints, newly captured and keyed by the dotted FQN with nested `+`->`.` normalization) AND for the stdlib's own
+  in-assembly owner via the type declarations' `typeParams[].constraints` (collected across all staged BIR roots).
+  `Key<Any>` is never valid Kotlin on a bounded param, so an objectish arg there unambiguously came from a star
+  projection — the rewrite is safe (an unconstrained `List<Any>` is untouched). A self-referential F-bound
+  (`E : Enum<E>`) is left unsubstituted (no valid closed generic; finite by construction). This makes the ref.dll,
+  rt.dll, and app views of the signature agree. (Full run-green for the `il-coctxkey`/`il-cointercept` gate cases
+  additionally needs an ilemit fix — the inherited GENERIC default-interface-method `get<E : Element>(key: Key<E>)`
+  is forwarded/implemented with E erased to `object`, re-introducing `Key<object>`; tracked XFAIL_RUN as #2 part-2.)
 - **`Array(size){ mk<T?>(null) }` inside a generic class is now ilverify-clean — no spurious `[DelegateCtor]
   Unrecognized arguments` (#142).** When an `Array(size){…}` init-lambda inside a generic class returns a
   CONSTRUCTED-generic whose type-arg is a nullable type-var (`Ref<T?>`), bir2cir's `NullableGenericReturnErasure`
