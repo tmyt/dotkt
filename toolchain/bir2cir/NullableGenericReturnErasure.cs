@@ -544,8 +544,15 @@ static class NullableGenericReturnErasure
     }
 
     // Replace every `Nullable(Tv)` (a value-type-nullable type variable) with `object`, recursively. LEAVES a func
-    // RETURN nullable-tv (`Fn.Ret`) for NullableFuncReturnErasure (erasing it here would blind that pass); a func
-    // param/receiver nullable-tv is erased.
+    // return that is a TOP-LEVEL `T?` (`Fn.Ret` = `Nullable(Tv)`) for NullableFuncReturnErasure (erasing it here would
+    // blind that pass); a func param/receiver nullable-tv — and a NESTED nullable-tv inside a CONSTRUCTED-generic return
+    // (`AtomicRef<T?>`, a `Fqn` with a `Nullable(Tv)` arg) — is erased. #142: the old blanket `fn.Ret` verbatim carve-out
+    // let `AtomicRef<Nullable(Tv)>` survive in the `newDelegate.funcType.ret` position ONLY (a `Fqn`, so NullableFunc-
+    // ReturnErasure — which only fires on a top-level `Nullable(Tv)` ret — skips it too), while the SAME type erased to
+    // `AtomicRef<object>` in the method-return/array-elem positions; ReferenceNullableStrip then stripped the surviving
+    // `Nullable(Tv)` arg to a bare `tv`, leaving the funcType.ret `AtomicRef<!T>` internally inconsistent with the
+    // `__lambda0` method signature `AtomicRef<object>` → ilverify DelegateCtor "Unrecognized arguments". Narrowing the
+    // carve-out to the top-level `Nullable(Tv)` return makes funcType / method-signature / array-elem agree end-to-end.
     internal static TypeNode EraseNullableTv(TypeNode t) => t switch
     {
         TypeNode.Nullable { Of: TypeNode.Tv } => new TypeNode.Fqn("object"),
@@ -554,7 +561,9 @@ static class NullableGenericReturnErasure
         TypeNode.Fqn f => new TypeNode.Fqn(f.Name, f.Args.Select(EraseNullableTv).ToArray()),
         TypeNode.Array a => new TypeNode.Array(EraseNullableTv(a.Elem)),
         TypeNode.ByRef b => new TypeNode.ByRef(EraseNullableTv(b.Of)),
-        TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, fn.Ret, fn.Params.Select(EraseNullableTv).ToArray(),
+        TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend,
+            fn.Ret is TypeNode.Nullable { Of: TypeNode.Tv } ? fn.Ret : EraseNullableTv(fn.Ret),
+            fn.Params.Select(EraseNullableTv).ToArray(),
             fn.Recv == null ? null : EraseNullableTv(fn.Recv)),
         _ => t,
     };

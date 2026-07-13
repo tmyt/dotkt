@@ -36,6 +36,18 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **`Array(size){ mk<T?>(null) }` inside a generic class is now ilverify-clean — no spurious `[DelegateCtor]
+  Unrecognized arguments` (#142).** When an `Array(size){…}` init-lambda inside a generic class returns a
+  CONSTRUCTED-generic whose type-arg is a nullable type-var (`Ref<T?>`), bir2cir's `NullableGenericReturnErasure`
+  erases `Nullable(Tv)` to `object` in the method-return and array-element positions — but `EraseNullableTv`'s
+  `Fn` arm passed the function-type RETURN (`fn.Ret`) VERBATIM, an over-broad carve-out meant only for the
+  top-level `(...)->T?` hand-off to `NullableFuncReturnErasure`. A nested `Ref<Nullable(Tv)>` return is an `Fqn`,
+  so it survived that carve-out ONLY in the `newDelegate.funcType.ret` position; `ReferenceNullableStrip` then
+  stripped the surviving `Nullable(Tv)` to a bare `!T`, leaving the delegate funcType.ret `Ref<!T>` internally
+  contradictory with the `__lambda0` ldftn-target signature `Ref<object>` → ilverify `[DelegateCtor]` in the
+  generic class ctor. The carve-out is now narrowed to a TOP-LEVEL `Nullable(Tv)` return only, so a nested
+  constructed-generic return erases to `Ref<object>` consistently and funcType / method-signature / array-element
+  agree end-to-end. New gate case `il-genarrlam` (run + ilverify).
 - **A value-returning infinite loop (`fun f(): Int { while(true){ … return x } }`) is now ilverify-clean — no
   spurious `ReturnMissing` (#141).** bir2cir CFG-lowers `while(true)` to a `brfalse end` on a constant-true
   condition, so the loop-exit label stays STATICALLY reachable. ilemit's method-body emitter unconditionally
