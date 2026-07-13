@@ -226,6 +226,13 @@ static class StringCharSequenceBridge
         if (a is not JsonObject o) return a;
         if (IsStaticString(a, env, allowNullable: nonNullSlot || IsNotNullAssertion(a))) return WrapAdapter(a);
         if (IsStaticStringBuilder(a, env)) return WrapStringBuilder(a);
+        // #156 — a genuinely-nullable String value (`z: String? = null`) into a NULLABLE `CharSequence?` slot (the strict
+        // path, nonNullSlot=false): the checks above deliberately leave it RAW to preserve null, but a raw `String` into a
+        // `dotkt$CharSequence` interface slot is ilverify-UNSOUND (String does not implement the synthetic adapter iface) —
+        // it only runs because a null short-circuits (isNullOrEmpty). Emit a runtime-conditional wrap
+        // `v == null ? (dotkt$CharSequence)null : new dotkt$StringCharSequence(v)`: the slot receives a genuine adapter or
+        // a typed null, ilverify-clean, null-preserving. The non-null-String and `!!`/elvis cases already wrapped above.
+        if (!nonNullSlot && IsStaticNullableString(a, env)) return WrapAdapterNullable(a, env);
         // The slot is CharSequence (every caller gates on IsCharSeqT), so a `cond` reaching here unifies String/CharSeq
         // branches — coerce each. `!!`/elvis desugars are a valueBlock (handled above), never a bare `cond`, so this
         // only descends a genuine `if/else`.
@@ -347,6 +354,50 @@ static class StringCharSequenceBridge
             ["args"] = new JsonArray { strExpr.DeepClone() },
         };
     }
+
+    // #156 — the value's recovered static type is a NULLABLE String (`String?`): a `Nullable`-wrapped String token. The
+    // genuine-null value the strict `CharSequence?`-slot path keeps unwrapped; it gets the runtime-conditional adapter wrap.
+    static bool IsStaticNullableString(JsonNode n, Env env)
+        => n is JsonObject
+           && StaticType.Surface(n, BirScope.FromVars(env.Vars)) is TypeNode.Nullable nn && IsStringTokT(nn.Of);
+
+    // #156 — the runtime-conditional adapter wrap for a nullable String into a `CharSequence?` slot:
+    //   v == null ? (dotkt$CharSequence)null : new dotkt$StringCharSequence(v)
+    // bindOnce (mirrors RangeMembershipLowering): a stable subject (const/local/this — side-effect-free) is read in both
+    // legs directly; anything else is bound to a temp via a valueBlock so a side-effecting value runs exactly once. The
+    // temp's declared type is the value's own static type (a `String?` -> the nullable token, stripped downstream).
+    static JsonNode WrapAdapterNullable(JsonNode v, Env env)
+    {
+        var subjKind = Str((v as JsonObject)?["k"]);
+        var stable = subjKind is "const" or "local" or "this";
+        JsonNode read; JsonNode tempStmt = null;
+        if (stable) read = v;
+        else
+        {
+            var name = "__cswrap$" + System.Threading.Interlocked.Increment(ref _counter);
+            var vType = StaticType.Surface(v, BirScope.FromVars(env.Vars)) is TypeNode vt
+                ? TypeNode.Write(vt) : TypeJson.Fqn("kotlin.String");
+            tempStmt = new JsonObject { ["k"] = "var", ["name"] = name, ["type"] = vType, ["init"] = v.DeepClone() };
+            read = new JsonObject { ["k"] = "local", ["name"] = name };
+        }
+        var core = new JsonObject
+        {
+            ["k"] = "cond",
+            ["type"] = TypeJson.Fqn(CharSeq),
+            ["cond"] = new JsonObject
+            {
+                ["k"] = "objEq", ["lhs"] = read.DeepClone(),
+                ["rhs"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn(CharSeq), ["value"] = null },
+            },
+            ["then"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn(CharSeq), ["value"] = null },
+            ["else"] = WrapAdapter(read),
+        };
+        return tempStmt == null
+            ? core
+            : new JsonObject { ["k"] = "valueBlock", ["stmts"] = new JsonArray { tempStmt }, ["result"] = core };
+    }
+
+    static int _counter;
 
     // POSITIVE static-String detection: only an expression whose recovered static type is provably a bare String. The
     // static type comes from the SHARED StaticType.Surface resolver (#59) — so EVERY String origin is covered uniformly:
