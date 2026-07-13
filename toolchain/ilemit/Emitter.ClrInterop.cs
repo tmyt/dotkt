@@ -176,7 +176,20 @@ sealed partial class Emitter
                 // arity + structural assignability (IReadOnlyCollection IS IEnumerable).
                 ?? PickOpenCtor(openDef, argTypes, args.GetArrayLength())
                 ?? throw new NotSupportedException($"no matching ctor on the open def of {type.FullName} with {args.GetArrayLength()} arg(s)");
-            EmitArgs(args, openCtor.GetParameters());
+            // The openCtor's param types are the OPEN definition's own type-vars (`Func<T>` for `ThreadLocal<T>`'s
+            // valueFactory). Passing those raw to EmitArg leaves a delegate `want` mentioning an open param, so the
+            // lambda-arg rewrap (case 4) is SKIPPED and a Kotlin lambda self-builds as the internal `KFunc`1<Box>`
+            // instead of the target `System.Func`1<Box>` -> ilverify StackUnexpected. Substitute the constructed
+            // instantiation's concrete args (T -> Box) so `want` is the closed `Func<Box>` (a TypeBuilder CLASS arg,
+            // still rewrappable via TypeBuilder.GetX). Non-generic params (an `int` capacity) pass through unchanged;
+            // a still-open `classArgs` (a generic FUNCTION's `new ThreadLocal<R>(f)`) yields an open `want` that falls
+            // back to the prior skip-rewrap behavior. Trailing optional defaults are backfilled from the open params
+            // (parity with EmitArgs) — the substituted arity equals the arg arity for the ctors we bind here.
+            var classArgs = type.GetGenericArguments();
+            var openPs = openCtor.GetParameters();
+            int ai = 0;
+            foreach (var a in args.EnumerateArray()) { EmitArg(a, SubstituteIfaceArgs(openPs[ai].ParameterType, classArgs)); ai++; }
+            for (; ai < openPs.Length; ai++) EmitDefaultArg(openPs[ai]);
             _il.Emit(OpCodes.Newobj, TypeBuilder.GetConstructor(type, openCtor));
             return type;
         }

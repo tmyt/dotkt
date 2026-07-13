@@ -36,6 +36,20 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **A Kotlin lambda passed to a GENERIC BCL delegate ctor param over a user type now materializes as the target
+  delegate** (#140, report P3). `System.Threading.ThreadLocal<Box>({ Box(42) })` — where `Box` is an app-emitted
+  class — passes the lambda to `System.Func`1<Box>`, but the value on the stack stayed the internal
+  `DotKt.Runtime.CompilerServices.KFunc`1<Box>` -> `ilverify StackUnexpected`. Root cause: because `Box` is a same-
+  assembly TypeBuilder, the constructed `ThreadLocal<Box>` is a TypeBuilderInstantiation whose ctor ilemit resolves on
+  the OPEN definition, then emitted the delegate arg against the OPEN param `Func<T>`; a `want` still mentioning an
+  open generic parameter skips the lambda->delegate rewrap (there is no concrete ctor to bind), so the lambda self-
+  built as its own `KFunc`1`. Fixed by substituting the instantiation's concrete type args (`T -> Box`) onto the open
+  ctor's param types before emitting the args, so the delegate target is the closed `Func`1<Box>` (a TypeBuilder CLASS
+  arg, still rewrappable via `TypeBuilder.GetX`) and the rewrap fires. Covers the whole generic-BCL-delegate family
+  (`Func<T>`, `Action<T>`, and multi-arg shapes) since the substitution is arity-generic; the non-generic and BCL-typed-
+  arg cases were already correct (no TypeBuilderInstantiation, so the closed ctor param was used directly). New
+  `il-gendelegate` gate sample (ThreadLocal = Func<T>, Progress = Action<T>): run + ilverify-clean.
+
 - **A receiver-lambda parameter `P.() -> Unit` keeps its receiver when a DotKt library is consumed AS KOTLIN
   cross-module** (#145, Avalonia report E(b)). A `fun apply1(block: Panel.() -> Unit)` param is a Kotlin RECEIVER
   function type — the lambda body gets an implicit `this: Panel`, so `apply1 { margin = 4 }` resolves `margin` to
