@@ -1,0 +1,285 @@
+#!/usr/bin/env bash
+# The PACKAGED-SDK gate: the ONLY gate that exercises the shipping nupkg-resolution path — a project that
+# resolves `DotKt.Sdk` / `DotKt.Sdk.Mpp` + the implicit `DotKt.Toolchain` / `DotKt.Stdlib` PackageReferences
+# from real .nupkgs in a NuGet feed. `verify-ktproj.sh` uses the IN-REPO dev entry (cases/KotlinClr.targets,
+# hard-coded tool paths) and never restores a nupkg, so packaging-only bugs slip past it — 0.9.5 shipped
+# broken twice for exactly this reason (#131 stale SDK version, #132 a Library's non-copy-local reference
+# never reaching bir2cir/ilemit). This gate packs the 5 nupkgs to a local feed and drives THREE throwaway
+# projects through `dotnet build`/`dotnet run` from that feed only:
+#   exe      — a plain `Sdk="DotKt.Sdk"` Exe: build + RUN, assert stdout.
+#   library  — a `Library` that PackageReferences a SECOND DotKt library (packed as its own nupkg) and calls
+#              into it. A package runtime dll is NOT copy-local for OutputType=Library, so under the old
+#              copy-local-glob targets that reference never reached ilemit -> the emit FAILED (#132-general).
+#              This is the case the gate exists to hold: build succeeds + the emitted dll carries the call.
+#   mpp      — a `Sdk="DotKt.Sdk.Mpp"` multiplatform Exe (common `expect` + clr `actual`): the MPP SDK path
+#              end-to-end through nupkg resolution. build + RUN, assert stdout.
+#
+# Isolation (defeats the cache-masking landmine): a per-run nuget.config with <clear/> + the local feed ONLY,
+# and an isolated <globalPackagesFolder> under the scratch dir — a stale published 0.9.5 in the user's
+# ~/.nuget cache can never mask the freshly-packed one, and the user's global cache is never touched. Green =
+# every fail name is in the XFAIL_PKG baseline below (exit 0); any name outside it prints NEW-FAIL, exit 1.
+source "$(dirname "$0")/lib.sh"
+
+usage() { cat <<EOF
+usage: $SCRIPT_NAME
+Packs the 5 nupkgs to build/nuget-feed and drives 3 packaged projects (exe/library/mpp) from that feed only.
+Green (exit 0) = no fail name outside the XFAIL_PKG baseline declared in this script.
+EOF
+}
+while (( $# )); do
+	case "$1" in
+		-h|--help) usage; exit 0 ;;
+		*) usage_error "unknown argument '$1'" ;;
+	esac
+done
+
+# The authoritative XFAIL baseline (fail name -> reason). Empty: all three packaged cases must pass. A listed
+# name that starts passing prints "FIXED — remove it" WITHOUT reddening the gate; any name NOT listed that
+# fails prints NEW-FAIL and reddens. Computed by lib.sh xfail_diff at the bottom.
+declare -A XFAIL_PKG=(
+)
+
+# The package version the pack stamps (single-sourced in DotKt.Versions.props). The Sdk="DotKt.Sdk/$VER"
+# reference, the second library's PackageReference, and the MPP global.json all pin THIS version, so a
+# version skew between the props and the SDK's embedded DotKtVersion (the #131 class of bug) surfaces here as
+# a restore failure rather than a silent stale-toolchain pull.
+VER="$(grep -oP '<DotKtVersionPrefix>\K[^<]+' "$ROOT/packaging/DotKt.Versions.props")"
+[[ -n "$VER" ]] || die "could not read DotKtVersionPrefix from packaging/DotKt.Versions.props"
+FEED="$ROOT/build/nuget-feed"
+
+# 1. Pack the 5 nupkgs FRESH from the current sources (rebuilds the tools + re-copies the shipped targets into
+#    DotKt.Toolchain). Uses the cached stdlib dlls when present — correct for an MSBuild/targets-only change;
+#    a stdlib/kotc/bir2cir source change is gated by verify-il, not here.
+info "packing 5 nupkgs (version $VER) -> $FEED"
+bash "$ROOT/scripts/pack-nuget.sh" >/dev/null || die "pack-nuget.sh failed"
+
+# 2. Scratch workspace: an isolated globalPackagesFolder + a local-only feed, so restore can ONLY see the
+#    freshly-packed nupkgs (no cache masking, no touching the user's ~/.nuget).
+WS="$ROOT/build/verify-packaged-sdk"
+rm -rf "$WS"; mkdir -p "$WS/pkgs"
+RESULTS="$WS/results"; mkdir -p "$RESULTS"
+NUGET_CONFIG="$WS/nuget.config"
+cat > "$NUGET_CONFIG" <<EOF
+<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <config>
+    <add key="globalPackagesFolder" value="$WS/pkgs" />
+  </config>
+  <packageSources>
+    <clear />
+    <add key="local" value="$FEED" />
+  </packageSources>
+</configuration>
+EOF
+
+# One atomic result record per case + a fail-name list for the verdict.
+declare -a FAILS=()
+pass() { # <name>
+	echo "PASS  pkgsdk:$1"; echo "PASS  pkgsdk:$1" > "$RESULTS/$1.tmp"; mv -f "$RESULTS/$1.tmp" "$RESULTS/$1"
+}
+fail() { # <name> <reason> [detail]
+	echo "FAIL  pkgsdk:$1 ($2)"
+	{ echo "FAIL  pkgsdk:$1 ($2)"; [[ -n "${3:-}" ]] && printf '%s\n' "$3"; } > "$RESULTS/$1.tmp"; mv -f "$RESULTS/$1.tmp" "$RESULTS/$1"
+	FAILS+=("$1")
+}
+# Strip the compiler's own stderr chatter from a run's stdout so the assert compares only program output.
+run_out() { grep -vE 'kotlin/clr:|duplicate source root' || true; }
+
+# A tiny metadata-only reflection checker (does the emitted dll declare owner.member?) — built ONCE with the
+# DEFAULT NuGet config (it needs System.Reflection.MetadataLoadContext from nuget.org; it is a build-time
+# tool, NOT part of the isolated SDK-resolution test). Lives OUTSIDE $WS so the isolated local-only
+# nuget.config there does not govern its restore, and is cached across runs.
+REFCHECK="$ROOT/build/verify-packaged-sdk-tool"
+build_refcheck() {
+	mkdir -p "$REFCHECK/src"
+	cat > "$REFCHECK/src/refcheck.csproj" <<'EOF'
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><Nullable>disable</Nullable><ImplicitUsings>disable</ImplicitUsings><AssemblyName>refcheck</AssemblyName></PropertyGroup>
+  <ItemGroup><PackageReference Include="System.Reflection.MetadataLoadContext" Version="9.0.0" /></ItemGroup>
+</Project>
+EOF
+	cat > "$REFCHECK/src/Program.cs" <<'EOF'
+using System; using System.Linq; using System.Reflection; using System.Runtime.InteropServices;
+// refcheck <dll> <ownerFqn> <memberName> -> exit 0 iff the dll declares ownerFqn with a member named memberName.
+class P {
+    static int Main(string[] a) {
+        var dll = System.IO.Path.GetFullPath(a[0]);
+        var paths = System.IO.Directory.GetFiles(RuntimeEnvironment.GetRuntimeDirectory(), "*.dll").ToList();
+        var dir = System.IO.Path.GetDirectoryName(dll);
+        paths.AddRange(System.IO.Directory.GetFiles(dir, "*.dll"));
+        paths.Add(dll);
+        using var mlc = new MetadataLoadContext(new PathAssemblyResolver(paths.Distinct()));
+        var asm = mlc.LoadFromAssemblyPath(dll);
+        Type[] ts; try { ts = asm.GetTypes(); } catch (ReflectionTypeLoadException e) { ts = e.Types.Where(t => t != null).ToArray(); }
+        var owner = ts.FirstOrDefault(t => t.FullName == a[1]);
+        if (owner == null) { Console.Error.WriteLine($"refcheck: type {a[1]} not found"); return 1; }
+        var m = owner.GetMembers(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+                     .FirstOrDefault(x => x.Name == a[2]);
+        if (m == null) { Console.Error.WriteLine($"refcheck: {a[1]}.{a[2]} not found"); return 1; }
+        return 0;
+    }
+}
+EOF
+	dotnet build "$REFCHECK/src" -c Release -o "$REFCHECK/bin" -v q --nologo >/dev/null 2>&1 || return 1
+}
+
+if [[ -f "$REFCHECK/bin/refcheck.dll" ]]; then
+	info "reflection checker cached"
+else
+	info "building reflection checker"
+	build_refcheck || warn "refcheck build failed — library case will assert build-success only"
+fi
+
+# ---------------------------------------------------------------------------------------------------------
+# Case: exe — a plain packaged Exe, build + run.
+# ---------------------------------------------------------------------------------------------------------
+case_exe() {
+	local d="$WS/exe"; mkdir -p "$d"; cp "$NUGET_CONFIG" "$d/nuget.config"
+	cat > "$d/App.ktproj" <<EOF
+<Project Sdk="DotKt.Sdk/$VER">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+</Project>
+EOF
+	cat > "$d/app.kt" <<'EOF'
+fun main() { println("packaged exe ok: " + (2 + 3)) }
+EOF
+	local expected="packaged exe ok: 5" actual
+	actual="$(cd "$d" && dotnet run -v q --nologo 2>/dev/null | run_out)"
+	if [[ "$actual" == "$expected" ]]; then pass exe
+	else fail exe "output mismatch" "$(printf -- '--- expected ---\n%s\n--- actual ---\n%s' "$expected" "$actual")"; fi
+}
+
+# ---------------------------------------------------------------------------------------------------------
+# Case: library — the #132-general reproducer. A `Library` that PackageReferences a SECOND DotKt library
+# (packed as its own nupkg) and calls into it. The second library's runtime dll is NOT copy-local for a
+# Library, so the OLD copy-local-glob targets starved ilemit of it and the emit FAILED. Under the general
+# @(ReferencePath) rule it flows through. Assert: consumer builds AND the emitted dll declares the call.
+# ---------------------------------------------------------------------------------------------------------
+case_library() {
+	# (a) build the second DotKt library.
+	local lib="$WS/lib"; mkdir -p "$lib"; cp "$NUGET_CONFIG" "$lib/nuget.config"
+	cat > "$lib/MyDotKtLib.ktproj" <<EOF
+<Project Sdk="DotKt.Sdk/$VER">
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+</Project>
+EOF
+	cat > "$lib/lib.kt" <<'EOF'
+package mylib
+fun libValue(): Int = 42
+class Doubler { fun twice(n: Int): Int = n * 2 }
+EOF
+	if ! (cd "$lib" && dotnet build -v q --nologo >"$lib/build.log" 2>&1); then
+		fail library "second-library build failed" "$(tail -20 "$lib/build.log")"; return
+	fi
+	local libdll; libdll="$(find "$lib/bin" -name 'MyDotKtLib.dll' | head -1)"
+	[[ -f "$libdll" ]] || { fail library "second-library dll not emitted"; return; }
+
+	# (b) pack the emitted dll as a NuGet package into the feed (build-time only, default config is fine).
+	local pw="$WS/packwrap"; mkdir -p "$pw"
+	cat > "$pw/PackWrap.csproj" <<EOF
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <PackageId>MyDotKtLib</PackageId>
+    <Version>$VER</Version>
+    <NoWarn>NU5128;NU5127</NoWarn>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="$libdll" Pack="true" PackagePath="lib/net10.0/" />
+  </ItemGroup>
+</Project>
+EOF
+	if ! (cd "$pw" && dotnet pack -o "$FEED" -v q --nologo >"$pw/pack.log" 2>&1); then
+		fail library "packing the second library failed" "$(tail -20 "$pw/pack.log")"; return
+	fi
+	# The consumer restores it fresh into the isolated packages folder (nothing cached there yet).
+	rm -rf "$WS/pkgs/mydotktlib"
+
+	# (c) the consuming Library — PackageReference into the packed second library.
+	local con="$WS/consumer"; mkdir -p "$con"; cp "$NUGET_CONFIG" "$con/nuget.config"
+	cat > "$con/Consumer.ktproj" <<EOF
+<Project Sdk="DotKt.Sdk/$VER">
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="MyDotKtLib" Version="$VER" />
+  </ItemGroup>
+</Project>
+EOF
+	cat > "$con/consumer.kt" <<'EOF'
+package consumer
+import mylib.libValue
+import mylib.Doubler
+fun compute(): Int = libValue() + Doubler().twice(10)
+EOF
+	if ! (cd "$con" && dotnet build -v q --nologo >"$con/build.log" 2>&1); then
+		fail library "consumer Library build failed (the #132-general gap)" "$(tail -25 "$con/build.log")"; return
+	fi
+	local condll; condll="$(find "$con/bin" -name 'Consumer.dll' | head -1)"
+	[[ -f "$condll" ]] || { fail library "consumer dll not emitted"; return; }
+	# The emitted dll must declare the call — proves the cross-package reference resolved through bir2cir+ilemit.
+	if [[ -x "$REFCHECK/bin/refcheck" || -f "$REFCHECK/bin/refcheck.dll" ]]; then
+		if ! dotnet "$REFCHECK/bin/refcheck.dll" "$condll" "consumer.ConsumerKt" "compute" >"$con/refcheck.log" 2>&1; then
+			fail library "emitted Consumer.dll missing consumer.ConsumerKt.compute" "$(cat "$con/refcheck.log")"; return
+		fi
+	fi
+	pass library
+}
+
+# ---------------------------------------------------------------------------------------------------------
+# Case: mpp — a packaged MULTIPLATFORM Exe via Sdk="DotKt.Sdk.Mpp" (common `expect` + clr `actual`). The Mpp
+# SDK nests a version-LESS import of the base DotKt.Sdk, whose version the NuGet SDK resolver reads ONLY from
+# global.json's msbuild-sdks — so a global.json pinning both is REQUIRED (and part of what this covers).
+# ---------------------------------------------------------------------------------------------------------
+case_mpp() {
+	local d="$WS/mpp"; mkdir -p "$d/common" "$d/clr"; cp "$NUGET_CONFIG" "$d/nuget.config"
+	cat > "$d/global.json" <<EOF
+{ "msbuild-sdks": { "DotKt.Sdk.Mpp": "$VER", "DotKt.Sdk": "$VER" } }
+EOF
+	cat > "$d/App.ktproj" <<'EOF'
+<Project Sdk="DotKt.Sdk.Mpp">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+</Project>
+EOF
+	cat > "$d/common/Greeter.kt" <<'EOF'
+package mpp.greeter
+expect class Greeter { fun say(): String }
+EOF
+	cat > "$d/clr/Greeter.kt" <<'EOF'
+package mpp.greeter
+actual class Greeter { actual fun say(): String = "Hello from the CLR actual (packaged MPP SDK)" }
+EOF
+	cat > "$d/clr/Main.kt" <<'EOF'
+package mpp.greeter
+fun main() { println(Greeter().say()) }
+EOF
+	local expected="Hello from the CLR actual (packaged MPP SDK)" actual
+	actual="$(cd "$d" && dotnet run -v q --nologo 2>/dev/null | run_out)"
+	if [[ "$actual" == "$expected" ]]; then pass mpp
+	else fail mpp "output mismatch" "$(printf -- '--- expected ---\n%s\n--- actual ---\n%s' "$expected" "$actual")"; fi
+}
+
+case_exe
+case_library
+case_mpp
+
+echo "------------------------------------"
+xfail_diff pkgsdk XFAIL_PKG "${FAILS[@]}"
+if (( ${#XFAIL_NEW[@]} == 0 )); then echo "PACKAGED-SDK OK"; else echo "PACKAGED-SDK FAIL"; exit 1; fi

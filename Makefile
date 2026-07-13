@@ -39,7 +39,7 @@ tool_src    = $(shell find toolchain/$(1) toolchain/bir-common -name '*.cs' -o -
 # Aggregate targets
 # ==================================================================================================
 .PHONY: all toolchain kotc $(TOOLS) stdlib stdlib-klib stdlib-ref stdlib-rt pack \
-        verify verify-il verify-ktproj verify-roundtrip verify-differential verify-widedelegates \
+        verify verify-il verify-ktproj verify-packaged-sdk verify-roundtrip verify-differential verify-widedelegates \
         dev facades clean clean-tools clean-stdlib clean-pack help
 
 all: pack ## one-shot: toolchain -> stdlib -> the 5 NuGet packages in build/nuget-feed
@@ -95,7 +95,7 @@ pack: toolchain stdlib ## the 5 NuGet packages (Sdk/Sdk.Mpp/Toolchain/Stdlib/Tem
 # ==================================================================================================
 # Verification gates (the scripts are called VERBATIM; behavior is identical to invoking them)
 # ==================================================================================================
-verify: verify-il verify-schema verify-sanity verify-ktproj verify-roundtrip verify-differential verify-widedelegates ## run ALL gates
+verify: verify-il verify-schema verify-sanity verify-ktproj verify-packaged-sdk verify-roundtrip verify-differential verify-widedelegates ## run ALL gates
 
 verify-il: ## the canonical IL gate (compile -> IL -> run -> assert -> ilverify)
 	bash scripts/verify-il.sh
@@ -108,6 +108,9 @@ verify-sanity: ## the offline IR-sanity gate (#112 P4 — semantic invariants ov
 
 verify-ktproj: ## MSBuild / .ktproj end-to-end
 	bash scripts/verify-ktproj.sh
+
+verify-packaged-sdk: ## packaged nupkg-resolution gate (DotKt.Sdk/.Mpp + implicit Toolchain/Stdlib from a feed)
+	bash scripts/verify-packaged-sdk.sh
 
 verify-roundtrip: ## Kotlin<->CLR round-trip (consume a DotKt dll as Kotlin)
 	bash scripts/verify-roundtrip.sh
