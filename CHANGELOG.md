@@ -32,6 +32,15 @@ JVM-oracle differential.
   Verified end-to-end against a local `build/nuget-feed` (restore → build → run → "Hello from the CLR actual").
   See `docs/design-ktproj-mpp.md` §5.
 
+### Packaging
+
+- **`DotKt.Sdk` now pins the CURRENT toolchain version** (`#131` hotfix). The base SDK's `Sdk.props` hardcoded
+  `<DotKtVersion>0.9.3</DotKtVersion>` (drives the implicit `DotKt.Toolchain` + `DotKt.Stdlib` PackageReferences)
+  and was never bumped, so `Sdk="DotKt.Sdk/0.9.5"` silently pulled the **0.9.3** compiler (pre-2.4.0, pre-§8c
+  implicit-companion) — a user project calling a `.NET` static (e.g. `Application.Start`) failed with
+  `unresolved reference`. Bumped to 0.9.5; the `dotkt-cli` template's `Sdk="DotKt.Sdk/0.9.3"` was likewise
+  corrected. (`#131` tracks stamping it from `DotKt.Versions.props` at pack time so it can never go stale again.)
+
 ### Toolchain
 
 - **`try { value } catch { null }` in VALUE position on a value-type result now materializes its temp as

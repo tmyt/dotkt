@@ -5,7 +5,11 @@
   <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
 
   <PropertyGroup>
-    <DotKtVersion Condition="'$(DotKtVersion)' == ''">0.9.3</DotKtVersion>
+    <!-- MUST track the release version (drives the implicit DotKt.Toolchain + DotKt.Stdlib PackageReferences below).
+         This is copied verbatim into the package (nuspec `$version$` does NOT reach it), so a stale value silently
+         pulls an OLD toolchain — the 0.9.5 release shipped with 0.9.3 here and pulled the pre-2.4.0 compiler.
+         FOLLOW-UP #131: stamp this from DotKt.Versions.props at pack time so it never goes stale again. -->
+    <DotKtVersion Condition="'$(DotKtVersion)' == ''">0.9.5</DotKtVersion>
     <!-- We generate the assembly ourselves (kt -> BIR -> CIL); don't let the .NET SDK glob .cs and don't infer
          a language from the project file. -->
     <EnableDefaultCompileItems Condition="'$(EnableDefaultCompileItems)' == ''">false</EnableDefaultCompileItems>
