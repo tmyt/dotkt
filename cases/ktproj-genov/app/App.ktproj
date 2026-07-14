@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- #25: a Kotlin APP referencing the `genov` Kotlin LIBRARY through <ProjectReference>. `dotnet build` builds
+       Lib.ktproj first; its emitted Lib.dll lands on @(ReferencePath), the app's import-scan + facadegen inject
+       `genov.*`, and bir2cir stamps the resolved sig on the generic `atomic`/`arrOf` cross-module calls so ilemit
+       binds the correct overload. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <StartupObject>AppKt</StartupObject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../lib/Lib.ktproj" />
+  </ItemGroup>
+
+  <Import Project="../../KotlinClr.targets" />
+
+</Project>

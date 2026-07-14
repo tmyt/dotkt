@@ -3,6 +3,26 @@
 All notable changes to DotKt (Kotlin → .NET/CLR). Package versions carry the embedded
 Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
+## Unreleased
+
+### Fixed
+
+- **bir2cir (#25): a cross-module GENERIC top-level fun among a same-name OVERLOAD SET now binds the correct
+  overload.** A generic top-level function consumed cross-module from a re-imported `kotlinx.*`/DotKt Kotlin library
+  (facadegen ProjectReference round-trip) lowered to a `callStatic` carrying `typeArgs`+`shapeTypes` but NO resolved
+  `sig`/`argTypes` (kotc emits the pure-Kotlin overload-matching *shape* for a generic call instead of the concrete
+  `sig` a non-generic call gets). Because the owner FQN is `kotlinx.*`, `NetInteropBinding` leaves it a plain
+  `callStatic` (never a `clrGeneric*` node), so ilemit's `callStatic` overload resolution — which selects via `sig`
+  (`FindReflectedMethodBySig`) *before* `MakeGenericMethod` — dropped to a name-only arity pick and MIS-BOUND: e.g. the
+  atomicfu-shaped `atomic<String?>(null)` bound to its arity-2 defaulted sibling `atomic(T, trace: TraceBase = None)`
+  (the non-const default `None` then passed as null → `NullReferenceException`), and the sole-generic
+  `arrOf<T>(n)`/`atomicArrayOfNulls<T>(size)` reported `ilemit: static method not found`. Fix (bir2cir-side, general —
+  no atomicfu special-casing): when `MemberCallSubstitution` owner-attributes such a generic top-level call, it now
+  promotes `shapeTypes`→`sig` (kept OPEN — a method type-var stays `gp:T` so it matches the OPEN generic method def)
+  and stamps the concrete `argTypes` (the call's `typeArgs` substituted for the method type-vars), exactly parallel to
+  the non-generic path — so ilemit selects the arity-1 generic overload and finds the sole-generic factory. Unblocks
+  the kotlinx-atomicfu CLR port. Gate: `ktproj-genov` in `verify-ktproj.sh`.
+
 ## 0.9.6-rc2 — 2026-07-15
 
 ### Fixed
