@@ -649,8 +649,13 @@ sealed partial class Emitter
 
     // Resolve a method by name on an already-RESOLVED (referenced .NET / baked) type, walking the standard CLR member
     // lookup: the type's own members + its base CLASS chain (reflection's `GetMethod` already includes inherited base
-    // members for a class), and — because `GetMethod` on an INTERFACE type does NOT surface base-interface members —
-    // the transitively-inherited interface chain too. Pure CLR resolution; no Kotlin/BCL name mapping. Null if absent.
+    // members for a class). Then the implemented-interface chain: `GetMethod`/`GetMethods` surface only a type's OWN
+    // slots (an interface's own methods, a class's own+inherited-class methods) — NOT the interface methods a type
+    // implements, whose class-side impl is a private explicit override (e.g. `dotkt$dimfwd$`) invisible by name — so
+    // fall back to the transitively-implemented interfaces for BOTH a class and an interface receiver (`GetInterfaces`
+    // returns the full flattened set for either). This is what lets an emitted class's inherited GENERIC interface
+    // method (`AbstractCoroutineContextElement`'s `get<E>`) resolve at a `callInstance` call site. Pure CLR resolution;
+    // no Kotlin/BCL name mapping. Null if absent.
     static MethodInfo FindReflectedMethod(Type t, string name, int argCount = -1)
     {
         var bf = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance;
@@ -662,15 +667,14 @@ sealed partial class Emitter
         if (ByArity(t) is { } am) return am;
         try { var m = t.GetMethod(name, bf); if (m != null) return m; }
         catch (AmbiguousMatchException) { var m = t.GetMethods(bf).FirstOrDefault(mm => mm.Name == name); if (m != null) return m; }
-        // Interface members are inherited but `GetMethod`/`GetMethods` on an interface only reports the interface's own
-        // slots — search the (flattened) base interfaces. (`GetInterfaces` returns the full transitive set.)
-        if (t.IsInterface)
-            foreach (var bi in t.GetInterfaces())
-            {
-                if (ByArity(bi) is { } bam) return bam;
-                try { var m = bi.GetMethod(name, bf); if (m != null) return m; }
-                catch (AmbiguousMatchException) { var m = bi.GetMethods(bf).FirstOrDefault(mm => mm.Name == name); if (m != null) return m; }
-            }
+        // Implemented-interface fallback (last resort — the type's own surface is exhausted above): find an interface
+        // method the type binds but implements via a name-invisible private explicit override.
+        foreach (var bi in t.GetInterfaces())
+        {
+            if (ByArity(bi) is { } bam) return bam;
+            try { var m = bi.GetMethod(name, bf); if (m != null) return m; }
+            catch (AmbiguousMatchException) { var m = bi.GetMethods(bf).FirstOrDefault(mm => mm.Name == name); if (m != null) return m; }
+        }
         return null;
     }
 

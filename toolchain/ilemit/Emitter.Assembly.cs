@@ -444,9 +444,17 @@ sealed partial class Emitter
                     && bb.ValueKind == JsonValueKind.Array && bb.GetArrayLength() > 0)
                     bodied.Add(bn.GetString());
             if (bodied.Count == 0) continue;
+            // De-dup across a diamond (`I : A, B` with `A, B : C`): one methodimpl per (baseOwner :: subSig).
+            var dimImplSeen = new HashSet<string>();
             foreach (var ib in extIbs.EnumerateArray())
             {
-                if (ReadFqn(ib) is not DotKt.Bir.TypeNode.Fqn ibF || _types.ContainsKey(ibF.Name)) continue;   // only REFERENCED (.NET) bases
+                if (ReadFqn(ib) is not DotKt.Bir.TypeNode.Fqn ibF) continue;
+                // An EMITTED (same-assembly) base interface whose method THIS interface DEFAULTS (a DIM override) needs
+                // the same explicit methodimpl an external base gets — the CLR does NOT implicitly wire a derived-
+                // interface DIM to its base-interface slot (each `newslot` re-declaration is a DISTINCT slot), so without
+                // it every IMPLEMENTER of this interface fails to LOAD ("Method 'get' ... does not have an
+                // implementation"). Handled by a dedicated pass (the REFERENCED/.NET base path stays below, byte-identical).
+                if (_types.ContainsKey(ibF.Name)) { EmitEmittedBaseDimImpls(ti, ibF, bodied, dimImplSeen); continue; }
                 var itype = MapType(ibF);
                 // A generic instantiation over an EMITTED TypeBuilder arg can't GetMethods() — enumerate the OPEN
                 // definition and re-anchor each slot onto the instantiation (same pattern as the class wiring).
@@ -916,22 +924,72 @@ sealed partial class Emitter
     void TryEmitDimForwardBridge(TypeInfo ti, JsonElement imDef, DotKt.Bir.TypeNode[] specArgs, string subSig, Type constructed, MethodBuilder ifaceBuilder)
     {
         if (ti.Def.ValueKind != JsonValueKind.Object || !ti.Def.TryGetProperty("interfaces", out var dirIfs)) return;
+        // A GENERIC default-interface-method (`get<E : Element>(key: Key<E>)`) must be forwarded by a GENERIC bridge of
+        // the SAME arity+constraints — an erased-to-object bridge is a NON-generic body over a generic declaration, which
+        // both fails the CLR's methodimpl signature match (a generic-arity mismatch, TypeLoadException) AND collapses
+        // `Key<E>` to `Key<object>`. The DIM's method type params come straight off the interface method DEF.
+        var genTps = imDef.TryGetProperty("typeParams", out var mtp) && mtp.GetArrayLength() > 0 ? (JsonElement?)mtp : null;
         foreach (var di in dirIfs.EnumerateArray())
         {
             if (ReadFqn(di) is not DotKt.Bir.TypeNode.Fqn diF) continue;
             var (dopen, _) = ParseOwnerT(diF);
             if (!_types.TryGetValue(dopen, out var diTi) || !diTi.MethodsBySig.TryGetValue(subSig, out var dim)) continue;
             if (dim.Attributes.HasFlag(MethodAttributes.Abstract)) continue;   // need an actual DEFAULT (bodied) method
-            Type ifaceRet; try { ifaceRet = imDef.TryGetProperty("ret", out var rt) ? MapType(SubstTv(DotKt.Bir.TypeNode.Read(rt), specArgs)) : typeof(void); } catch { return; }
-            Type[] paramTypes; try { paramTypes = imDef.GetProperty("params").EnumerateArray().Select(p => MapType(SubstTv(DotKt.Bir.TypeNode.Read(p.GetProperty("type")), specArgs))).ToArray(); } catch { return; }
-            var bridge = ti.TB.DefineMethod("dotkt$dimfwd$" + (_covarBridge++),
-                MethodAttributes.Private | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.NewSlot | MethodAttributes.HideBySig,
-                ifaceRet, paramTypes);
+            // If the found DEFAULT is the very slot we are trying to fill (a direct interface that both DECLARES and
+            // DEFAULTS this method — e.g. `Element` for its own `get`), the DIM already implements its own slot: a
+            // self-forwarding override would only re-dispatch through `this` straight back into the bridge (infinite
+            // recursion). The base-interface slot that genuinely needs filling (`CoroutineContext.get`) is a DIFFERENT
+            // `ifaceBuilder`, so its bridge (which callvirts THIS `dim`) resolves to the inherited DIM, not to itself.
+            if (ReferenceEquals(dim, ifaceBuilder)) return;
+            MethodBuilder bridge; MethodInfo dimCall;
+            Type ifaceRet; Type[] paramTypes;
+            if (genTps != null)
+            {
+                // Generic arm: the bridge's params reference its OWN method type vars, so the builder + its generic
+                // params must exist BEFORE MapType runs (they anchor a method-scope tv). Mirror the DIM's constraints
+                // (concrete on the coroutine `get<E : Element>`), then instantiate the DIM target with the bridge's own
+                // type params for the callvirt. On a resolve failure give the already-defined bridge a throwing body and
+                // skip the methodimpl — a bodyless orphan would fail the whole-assembly bake.
+                bridge = ti.TB.DefineMethod("dotkt$dimfwd$" + (_covarBridge++),
+                    MethodAttributes.Private | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.NewSlot | MethodAttributes.HideBySig);
+                var genNames = TpNames(genTps.Value);
+                var gps = bridge.DefineGenericParameters(genNames);
+                var map = new Dictionary<string, GenericTypeParameterBuilder>();
+                for (int gi = 0; gi < genNames.Length; gi++) map[genNames[gi]] = gps[gi];
+                _methodTypeParams[bridge] = map;
+                var savedMp = _curMethodParams; _curMethodParams = map;
+                ApplyConstraints(genTps.Value, map, false);
+                try
+                {
+                    ifaceRet = imDef.TryGetProperty("ret", out var rt) ? MapType(SubstTv(DotKt.Bir.TypeNode.Read(rt), specArgs)) : typeof(void);
+                    paramTypes = imDef.GetProperty("params").EnumerateArray().Select(p => MapType(SubstTv(DotKt.Bir.TypeNode.Read(p.GetProperty("type")), specArgs))).ToArray();
+                }
+                catch { _curMethodParams = savedMp; bridge.GetILGenerator().ThrowException(typeof(NotSupportedException)); return; }
+                bridge.SetReturnType(ifaceRet);
+                bridge.SetParameters(paramTypes);
+                _curMethodParams = savedMp;
+                dimCall = dim.MakeGenericMethod(gps.Cast<Type>().ToArray());
+            }
+            else
+            {
+                // Non-generic arm: resolve the signature BEFORE defining the bridge, so a MapType failure is a clean
+                // skip (no orphan bodyless method to crash the bake).
+                try
+                {
+                    ifaceRet = imDef.TryGetProperty("ret", out var rt) ? MapType(SubstTv(DotKt.Bir.TypeNode.Read(rt), specArgs)) : typeof(void);
+                    paramTypes = imDef.GetProperty("params").EnumerateArray().Select(p => MapType(SubstTv(DotKt.Bir.TypeNode.Read(p.GetProperty("type")), specArgs))).ToArray();
+                }
+                catch { return; }
+                bridge = ti.TB.DefineMethod("dotkt$dimfwd$" + (_covarBridge++),
+                    MethodAttributes.Private | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.NewSlot | MethodAttributes.HideBySig,
+                    ifaceRet, paramTypes);
+                dimCall = dim;
+            }
             StampCompilerGenerated(bridge);   // #68: ilemit-authored generated member
             var il = bridge.GetILGenerator();
             il.Emit(OpCodes.Ldarg_0);
             for (int i = 0; i < paramTypes.Length; i++) il.Emit(OpCodes.Ldarg, i + 1);
-            il.Emit(OpCodes.Callvirt, dim);   // dispatches to the DIM inherited by `this`
+            il.Emit(OpCodes.Callvirt, dimCall);   // dispatches to the DIM inherited by `this`
             il.Emit(OpCodes.Ret);
             var ifaceMethod = constructed != null ? TypeBuilder.GetMethod(constructed, ifaceBuilder) : (MethodInfo)ifaceBuilder;
             ti.TB.DefineMethodOverride(bridge, ifaceMethod);
