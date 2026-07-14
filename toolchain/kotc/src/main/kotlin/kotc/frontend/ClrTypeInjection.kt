@@ -34,9 +34,13 @@ import org.jetbrains.kotlin.fir.symbols.impl.FirClassSymbol
 import org.jetbrains.kotlin.fir.symbols.impl.FirConstructorSymbol
 import org.jetbrains.kotlin.fir.symbols.impl.FirNamedFunctionSymbol
 import org.jetbrains.kotlin.fir.symbols.impl.FirPropertySymbol
+import org.jetbrains.kotlin.fir.declarations.FirDeclaration
 import org.jetbrains.kotlin.fir.declarations.FirFunction
 import org.jetbrains.kotlin.fir.expressions.FirExpression
+import org.jetbrains.kotlin.fir.expressions.builder.buildAnnotation
 import org.jetbrains.kotlin.fir.expressions.builder.buildLiteralExpression
+import org.jetbrains.kotlin.fir.expressions.impl.FirEmptyAnnotationArgumentMapping
+import org.jetbrains.kotlin.fir.types.builder.buildResolvedTypeRef
 import org.jetbrains.kotlin.types.ConstantValueKind
 import org.jetbrains.kotlin.fir.types.ConeKotlinType
 import org.jetbrains.kotlin.fir.types.coneType
@@ -73,8 +77,10 @@ private class ClrTypeParam(val name: String, val variance: String? = null, val b
 // `open`/`abstract` = .NET virtual/abstract (Kotlin OPEN/ABSTRACT modality); `protected` = .NET Family/FamORAssem.
 // `infix`/`operator`/`suspend`/`inline`/`ext` = Kotlin modifiers restored from the `mods` object. For a `suspend` fun
 // the returnType is already the unwrapped result T (facadegen unwrapped the emitted Task<T>).
+// #19: `lowPriority` = facadegen marked this a Pareto-dominated delegate-typed overload -> stamp
+// `@kotlin.internal.LowPriorityInOverloadResolution` so a bare lambda `{ ... }` binds the PREFERRED sibling, not an ambiguity.
 private class ClrMethod(val name: String, val returnType: TypeNode, val open: Boolean, val abstract: Boolean, val protected: Boolean, val params: List<ClrParam>, val typeParams: List<ClrTypeParam> = emptyList(),
-	val infix: Boolean = false, val operator: Boolean = false, val suspend: Boolean = false, val inline: Boolean = false, val ext: Boolean = false)
+	val infix: Boolean = false, val operator: Boolean = false, val suspend: Boolean = false, val inline: Boolean = false, val ext: Boolean = false, val lowPriority: Boolean = false)
 // A restored top-level Kotlin function: its package, the .NET file-facade class to call, and the function itself.
 private class ClrTopLevel(val pkg: FqName, val fileClassDotNet: String, val fn: ClrMethod)
 // N5: one file-class candidate for a top-level CallableId (`.NET file class` + the value-param arity range it covers +
@@ -113,6 +119,9 @@ private class ClrMemberExtProp(val name: String, val type: TypeNode, val mutable
 private class ClrEvent(val name: String, val handlerReturn: TypeNode, val handlerParams: List<ClrParam>)
 // A `this[i]` indexer -> Kotlin `operator fun get/set` (`set` only when mutable).
 private class ClrIndexer(val indexType: TypeNode, val valueType: TypeNode, val mutable: Boolean)
+// A constructor: its value params + (#19) whether facadegen marked it a Pareto-dominated delegate-typed overload
+// (`@kotlin.internal.LowPriorityInOverloadResolution` -> a bare lambda `Thread({ ... })` binds the preferred sibling ctor).
+private class ClrCtor(val params: List<ClrParam>, val lowPriority: Boolean = false)
 private class ClrType(
 	val kotlinName: String,
 	val dotNetName: String,
@@ -123,7 +132,7 @@ private class ClrType(
 	val typeParams: List<ClrTypeParam>,// generic type parameters (name + variance + bounds)
 	val superTypes: List<TypeNode>,    // injectable base class + interfaces — wired by ClrSupertypeInjector
 	val methods: List<ClrMethod>,
-	val ctors: List<List<ClrParam>>,
+	val ctors: List<ClrCtor>,
 	val properties: List<ClrProperty>,
 	val events: List<ClrEvent>,
 	val indexer: ClrIndexer?,
@@ -233,7 +242,7 @@ private fun List<List<ClrParam>>.defaultsForArity(paramCount: Int): List<ClrCons
  */
 internal fun clrInjectedCtorParamDefaults(classId: ClassId, paramCount: Int): List<ClrConstDefault?>? =
 	if (classId in ClrMetadataHolder.sourceShadowedClassIds) null   // #15: source ctor wins — its defaults come from source
-	else ClrMetadataHolder.byClassId[classId]?.ctors?.defaultsForArity(paramCount)
+	else ClrMetadataHolder.byClassId[classId]?.ctors?.map { it.params }?.defaultsForArity(paramCount)
 
 /**
  * #134: the per-value-parameter constant defaults of a facadegen-injected TOP-LEVEL function (keyed by resolved IR
@@ -327,7 +336,7 @@ private object ClrMetadataHolder {
 		val mods = modsOf(o["mods"]); val vis = o["vis"] as? String ?: "public"
 		return ClrMethod(o["name"] as String, typeOf(o["ret"]), "open" in mods, "abstract" in mods, vis == "protected",
 			readParams(o["params"]), readTypeParams(o["typeParams"]),
-			"infix" in mods, "operator" in mods, "suspend" in mods, "inline" in mods, "ext" in mods)
+			"infix" in mods, "operator" in mods, "suspend" in mods, "inline" in mods, "ext" in mods, "lowPriority" in mods)
 	}
 	@Suppress("UNCHECKED_CAST")
 	private fun readProp(o: Map<String, Any?>): ClrProperty {
@@ -348,7 +357,7 @@ private object ClrMetadataHolder {
 			val p = it as Map<String, Any?>
 			ClrMemberExtProp(p["name"] as String, typeOf(p["type"]), p["rw"] == true, typeOf(p["recv"]), (p["vis"] as? String) == "protected")
 		}
-		val ctors = (o["ctors"] as? List<Any?>).orEmpty().map { readParams((it as Map<String, Any?>)["params"]) }
+		val ctors = (o["ctors"] as? List<Any?>).orEmpty().map { val c = it as Map<String, Any?>; ClrCtor(readParams(c["params"]), c["lowPriority"] == true) }
 		val indexer = (o["indexer"] as? Map<String, Any?>)?.let { ClrIndexer(typeOf(it["indexType"]), typeOf(it["valueType"]), it["rw"] == true) }
 		return ClrType(
 			o["name"] as String, o["dotNet"] as String,
@@ -781,15 +790,16 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	override fun generateConstructors(context: MemberGenerationContext): List<FirConstructorSymbol> {
 		val type = injectedType(context.owner.classId) ?: return emptyList()
 		if (type.isObject) return emptyList()
-		val ctors = type.ctors.ifEmpty { listOf(emptyList()) }   // a class with no listed ctor still needs one
-		return ctors.mapIndexed { i, params ->
+		val ctors = type.ctors.ifEmpty { listOf(ClrCtor(emptyList())) }   // a class with no listed ctor still needs one
+		return ctors.mapIndexed { i, ctor ->
+			val params = ctor.params
 			// Only synthesize a `: super()` delegating call when the base actually has a no-arg ctor; a base linked
 			// purely for assignability (e.g. WinUI UIElement, SafeHandle) has none, and the façade ctor is never
 			// lowered (construction is native newClr) so the missing delegation is harmless.
 			val real = realDefaults(params)   // all-buildable ctor defaults -> real defaults (`Pt(y = 4)` omits x); else required
 			createConstructor(context.owner, ClrGeneratedKey, i == 0, type.baseNoArgCtor) {
 				for (p in params) valueParameter(Name.identifier(p.name), coneOf(p.type, context.owner, paramPos = true), hasDefaultValue = real && p.default != null)
-			}.also { if (real) applyDefaults(it, params) }.symbol
+			}.also { if (real) applyDefaults(it, params); if (ctor.lowPriority) applyLowPriority(it) }.symbol
 		}
 	}
 
@@ -901,7 +911,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 				if (m.typeParams.isEmpty())
 					createMemberFunction(owner, ClrGeneratedKey, callableId.callableName, coneOf(m.returnType, owner)) {
 						for (p in m.params) valueParameter(Name.identifier(p.name), coneOf(p.type, owner, paramPos = true))
-					}.symbol
+					}.also { if (m.lowPriority) applyLowPriority(it) }.symbol
 				else
 					// A GENERIC static (`Task.FromResult<TResult>(TResult): Task<TResult>`, `Task.Run<TResult>`): declare the
 					// method's own type parameters, then resolve the return type and any T-typed params against THEM (via the
@@ -915,7 +925,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 						for (p in m.params)
 							if (p.vararg) valueParameter(Name.identifier(p.name), { tps -> coneOf(TypeNode.Array(p.type), owner, tps, paramPos = true) }, isVararg = true)
 							else valueParameter(Name.identifier(p.name), { tps -> coneOf(p.type, owner, tps, paramPos = true) })
-					}.symbol
+					}.also { if (m.lowPriority) applyLowPriority(it) }.symbol
 			}
 		}
 		val type = injectedType(owner.classId) ?: return emptyList()
@@ -978,7 +988,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 					for (p in vps.take(arity))
 						if (p.vararg) valueParameter(Name.identifier(p.name), coneOf(TypeNode.Array(p.type), owner, paramPos = true), isVararg = true)
 						else valueParameter(Name.identifier(p.name), coneOf(p.type, owner, paramPos = true), hasDefaultValue = real && p.default != null)
-				}.also { if (real) applyDefaults(it, vps) }.symbol
+				}.also { if (real) applyDefaults(it, vps); if (m.lowPriority) applyLowPriority(it) }.symbol
 				}
 			} else listOf(
 				// A generic .NET method (`SizeOf<T>()`, `As<T>(o): T`). Declare its method type parameters, then resolve
@@ -1000,7 +1010,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 					for (p in vps)
 						if (p.vararg) valueParameter(Name.identifier(p.name), { tps -> coneOf(TypeNode.Array(p.type), owner, tps, paramPos = true) }, isVararg = true)
 						else valueParameter(Name.identifier(p.name), { tps -> coneOf(p.type, owner, tps, paramPos = true) }, hasDefaultValue = realDefaults(vps) && p.default != null)
-				}.also { if (realDefaults(vps)) applyDefaults(it, vps) }.symbol
+				}.also { if (realDefaults(vps)) applyDefaults(it, vps); if (m.lowPriority) applyLowPriority(it) }.symbol
 			)
 		}
 	}
@@ -1191,6 +1201,24 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	 *  buildable -> @JvmOverloads fallback (trailing-omission arities). The two strategies must not mix on one function. */
 	private fun realDefaults(params: List<ClrParam>): Boolean =
 		params.all { it.default == null || optDefault(it.default) != null }
+
+	// #19: the `@kotlin.internal.LowPriorityInOverloadResolution` ClassId. facadegen's `MarkLowPriorityDelegateOverloads`
+	// marks each Pareto-dominated delegate-typed ctor/member (a wider `(Any?)->Unit` / value-returning delegate sibling);
+	// stamping this annotation makes a BARE lambda `{ ... }` bind the PREFERRED narrower/Unit sibling instead of an
+	// overload-resolution ambiguity, while an explicit `{ x -> }` / method reference still reaches the wider one (it stays
+	// the sole applicable candidate). NOT `@OverloadResolutionByLambdaReturnType` — K2 bails on an arity mismatch there.
+	private val lowPriorityClassId = ClassId(FqName("kotlin.internal"), Name.identifier("LowPriorityInOverloadResolution"))
+
+	/** #19: attach `@kotlin.internal.LowPriorityInOverloadResolution` (a no-argument marker) to a generated ctor/member.
+	 *  The FIR `CheckLowPriorityInOverloadResolution` stage reads it for both FirSimpleFunction and FirConstructor. */
+	private fun applyLowPriority(decl: FirDeclaration) {
+		val cone = ConeClassLikeTypeImpl(ConeClassLikeLookupTagImpl(lowPriorityClassId), emptyArray(), false)
+		val annotation = buildAnnotation {
+			annotationTypeRef = buildResolvedTypeRef { coneType = cone }
+			argumentMapping = FirEmptyAnnotationArgumentMapping
+		}
+		decl.replaceAnnotations(decl.annotations + annotation)
+	}
 
 	/** Resolve a structured TypeNode (spec §1) to a ConeKotlinType. `methodTps` = the enclosing method's declared type
 	 *  parameters, so a `Tv(scope="method", i)` binds to `methodTps[i]`; a `Tv(scope="type", i)` binds to the owner's

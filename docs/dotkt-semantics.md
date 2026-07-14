@@ -688,13 +688,18 @@ the delegate's `Invoke` has an `object`/`Any?` param or return** (#1): `SendOrPo
 `(Any?) -> Unit`, so `class MyCtx : SynchronizationContext() { override fun Post(cb: (Any?) -> Unit, state: Any?) }`
 resolves. (Previously such a delegate collapsed to a bare `Any?`, and the override matched *nothing*.)
 
-- **Consequence — overload-arity ambiguity with a no-arrow lambda.** When a .NET type overloads a member on two
-  delegates of adjacent arity — the canonical case is `Thread(ThreadStart)` = `() -> Unit` **and**
-  `Thread(ParameterizedThreadStart)` = `(Any?) -> Unit` — a **bare `{ … }` lambda has ambiguous arity** (0, or 1 via
-  the implicit `it`) and matches BOTH candidates → *overload resolution ambiguity*. Pin the arity explicitly:
-  `Thread({ -> … })` selects `ThreadStart`; `Thread({ x -> … })` selects `ParameterizedThreadStart`. This is ordinary
-  Kotlin overload resolution over the now-faithfully-surfaced delegate types (an explicitly-typed lambda param never
-  ambiguates). It is the honest tradeoff for making an `object`-param delegate usable at all.
+- **Overload on delegate-typed params — a bare lambda binds the preferred sibling (#19).** When a .NET type overloads
+  a member on two delegates that differ only at their function positions — by adjacent **arity**
+  (`Thread(ThreadStart)` = `() -> Unit` **and** `Thread(ParameterizedThreadStart)` = `(Any?) -> Unit`) or by a
+  Unit-vs-value **return** (`Task.Run(Action)` = `() -> Unit` **and** `Task.Run(Func<T>)` = `() -> T`) — a bare no-arrow
+  `{ … }` lambda would be an *overload resolution ambiguity* (its arity/return is unspecified, matching both). facadegen
+  — the only layer that sees the whole overload group — marks the **Pareto-dominated** sibling (the wider-arity /
+  value-returning one) `lowPriority`, and kotc stamps `@kotlin.internal.LowPriorityInOverloadResolution` on the
+  synthesized declaration. So a bare `Thread({ … })` binds `ThreadStart` and `Task.Run({ … })` binds `Action` with **no
+  ambiguity**, while an explicit `Thread({ x -> … })` (or a method reference) still reaches the wider
+  `ParameterizedThreadStart` — it is then the sole applicable candidate. Preference order (lower = preferred): fewer
+  function params first (arity 0 before 1), then a Unit-returning delegate before a value-returning one; two
+  equally-preferred delegates tie and neither is deprioritized. Gate: `cases/il-threadlambda`, `cases/il-monitordrain`.
 
 ## 8f. A SOURCE declaration wins over a facadegen-injected copy of the same identity (#15)
 

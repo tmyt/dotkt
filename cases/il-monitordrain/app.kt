@@ -16,11 +16,10 @@ class Sink {
 
 fun main() {
     val sink = Sink()
-    // Explicit zero-arity lambda (`{ -> }`): the .NET `Thread` ctor is overloaded on `ThreadStart` (`() -> Unit`) and
-    // `ParameterizedThreadStart` (`(Any?) -> Unit`, from a delegate whose Invoke takes `object` — #1). A bare no-arrow
-    // `{ ... }` lambda has ambiguous arity (0, or 1 via implicit `it`) and matches BOTH → overload-resolution ambiguity;
-    // `{ -> ... }` pins arity 0 → the `ThreadStart` overload. (docs/dotkt-semantics.md — .NET delegate overload arity.)
-    val worker = Thread({ ->
+    // A bare lambda `{ ... }` binds the .NET `Thread` ctor's preferred `ThreadStart` (`() -> Unit`) overload: facadegen
+    // marks the Pareto-dominated `ParameterizedThreadStart` (`(Any?) -> Unit`) sibling `lowPriority` and kotc stamps
+    // `@kotlin.internal.LowPriorityInOverloadResolution` on it, so no explicit `{ -> }` arity pin is needed (#19).
+    val worker = Thread({
         Thread.Sleep(100)
         Monitor.Enter(sink)
         try {
