@@ -26,6 +26,7 @@ import org.jetbrains.kotlin.ir.expressions.IrExpression
 import org.jetbrains.kotlin.ir.expressions.IrExpressionBody
 import org.jetbrains.kotlin.ir.declarations.IrEnumEntry
 import org.jetbrains.kotlin.ir.expressions.IrGetEnumValue
+import org.jetbrains.kotlin.ir.expressions.IrGetValue
 import org.jetbrains.kotlin.ir.expressions.IrGetField
 import org.jetbrains.kotlin.ir.expressions.IrGetObjectValue
 import org.jetbrains.kotlin.ir.expressions.IrInstanceInitializerCall
@@ -98,6 +99,25 @@ internal fun BirEmitter.bodyStatements(body: org.jetbrains.kotlin.ir.IrElement?)
 	else -> emptyList()
 }
 
+/** True iff [callee]'s body references its DISPATCH receiver — a member fn's enclosing-class/companion `this` — by an
+ *  IrGetValue of the dispatch-receiver parameter, anywhere (descending into nested lambdas, whose companion refs are
+ *  equally the enclosing dispatch `this`). A member-EXTENSION inline fn's extension receiver rides `__self` (a
+ *  `{k:local,name:__self}` body ref), so the ONLY `{k:this}` a spliced body can carry is this dispatch receiver; when the
+ *  body never touches it (the pure-extension idiom), the splice needs no dispatch binding and is sound via the extension
+ *  path. Used by `inlineSpliceCallSameModule`'s #20 gate. A pure Kotlin-frontend fact (which receiver the IR body reads). */
+internal fun BirEmitter.bodyReferencesDispatch(callee: IrSimpleFunction): Boolean {
+	val dispatch = callee.parameters.firstOrNull { it.kind == IrParameterKind.DispatchReceiver } ?: return false
+	var found = false
+	callee.body?.acceptVoid(object : IrVisitorVoid() {
+		override fun visitElement(element: org.jetbrains.kotlin.ir.IrElement) {
+			if (found) return
+			if (element is IrGetValue && element.symbol == dispatch.symbol) { found = true; return }
+			element.acceptChildrenVoid(this)
+		}
+	})
+	return found
+}
+
 /** SAME-MODULE inline (#75): a call to a user/stdlib-self-build `inline fun` (body present in THIS run) taking ANY
  *  lambda arg (AXIS ①). Retires mechanism-1 (the old `inlineCall` splicer): instead of splicing the body HERE, kotc
  *  emits the SAME generic `callInline` node the cross-module emitters do (`inlineSpliceCall`/
@@ -118,15 +138,20 @@ internal fun BirEmitter.inlineSpliceCallSameModule(call: IrCall): String {
 	val extParam = callee.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
 	val extRecv = extensionReceiver(call)
 	val dispatchArg = dispatchReceiver(call)
-	// A MEMBER extension inline fn (`class C { inline fun T.f(block) }`) has BOTH a dispatch AND an extension
-	// receiver, but the stash's `recv` classification is single-valued and `extensionParam` shadows `dispatch`
-	// (InlineBirStash), so the engine would bind only the extension receiver and the payload's dispatch `{k:this}`
-	// refs (C's members) would rebind to the CALLER's `this` — a silent miscompile. FAIL LOUD rather than degrade.
-	// Mirrors the facadegen gate's `extRecv != null` refusal. A member-EXTENSION inline fn with a lambda arg is not in
-	// the stdlib.
-	if (extParam != null && dispatchArg != null) return unsupported(call,
-		"a same-module member-extension inline call with a lambda",
-		"the member-extension dispatch+extension receiver splice shape is not yet supported")
+	// A MEMBER extension inline fn (`class C { inline fun T.f(block) }`, #20) has BOTH a dispatch (the enclosing
+	// class/companion) AND an extension receiver. The extension receiver rides the leading `__self` param (recvs.extension
+	// -> InlineBirStash classifies it `recv=extensionParam`), so the extension splices exactly like a top-level extension.
+	// The dispatch receiver is the ONLY `{k:this}` a spliced member-ext body can carry (the extension `this` renders as
+	// `{k:local,name:__self}` via selfSubst, never `{k:this}`). InlineBirStash's `recv` is single-valued (extensionParam
+	// shadows dispatch), so bir2cir binds only the extension and IGNORES recvs.dispatch — sound WHEN the body never touches
+	// the dispatch receiver (the common pure-extension idiom: `Long.withState` decoding only the Long `this`; the
+	// kotlinx.coroutines `LockFreeTaskQueueCore.withState` real-world case). If the body DOES reference the dispatch
+	// receiver (`{k:this}` in the payload), that `{k:this}` would rebind to the CALLER's `this` at splice time — a silent
+	// miscompile — so FAIL LOUD there: co-binding a spliced member-ext's dispatch AND extension receiver is a bir2cir
+	// follow-up (decouple the InlineSplice dispatch bind from `recv==dispatch`).
+	if (extParam != null && dispatchArg != null && bodyReferencesDispatch(callee)) return unsupported(call,
+		"a same-module member-extension inline call whose body uses the dispatch (enclosing-class) receiver",
+		"co-binding a spliced member-extension's dispatch AND extension receiver is not yet supported (the pure-extension form, whose body never references the enclosing class, splices)")
 	val params = callee.parameters.filter { it.kind == IrParameterKind.Regular }
 	// One arg per Regular param, INDEX-ALIGNED with `params` (an omitted-default slot stays null): `regularArgs` drops
 	// omitted-default nulls, which — now that ANY inline+lambda call splices (AXIS ①) — would shift the lambda into the
@@ -151,6 +176,12 @@ internal fun BirEmitter.inlineSpliceCallSameModule(call: IrCall): String {
 	}
 	// Receivers: an extension receiver -> `recvs.extension` (payload param[0] == `__self`); a member dispatch receiver
 	// -> `recvs.dispatch` (the payload's own `{k:this}` refs bind to it, §4.3). Both are carried when present.
+	// NOTE (#20): a PLAIN companion is FLATTENED to static methods of the enclosing class (BirEmitterDeclarations §630),
+	// so for a companion callee `expr(dispatchArg)` renders a `Queue.INSTANCE` staticField that does NOT exist — a
+	// DANGLING token. It is INERT today: bir2cir reads `recvs.dispatch` ONLY when the stash classifies `recv==dispatch`
+	// (a real-instance member), never for the `recv==extensionParam` (member-extension) or `recv==none` (flattened
+	// companion) case — the extension/plain call binds without it. A future dual-receiver decoupling MUST gate on the
+	// payload being a real instance member, not on "recvs.dispatch carried", or it would materialize this dangle.
 	val recvParts = ArrayList<String>()
 	extRecv?.let { recvParts.add(""""extension":${expr(it)}""") }
 	dispatchArg?.let { recvParts.add(""""dispatch":${expr(it)}""") }

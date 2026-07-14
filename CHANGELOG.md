@@ -7,6 +7,18 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **kotc (#20): an inline MEMBER-extension fn called with a lambda now splices.** kotc rejected any call to an
+  `inline fun` that is BOTH a member (e.g. of a companion) AND an extension — `class Queue { companion object { inline
+  fun <T> Long.withState(block) {…} } }` called via `state.withState { … }` — because such a callee carries BOTH a
+  dispatch (enclosing-class) and an extension receiver, and `inlineSpliceCallSameModule` blanket-failed the shape. But
+  the extension receiver already rides the leading `__self` param (`InlineBirStash` classifies it `recv=extensionParam`),
+  so the splice binds it exactly like a top-level extension; the ONLY `{k:this}` a spliced member-ext body can carry is
+  the dispatch receiver (the extension `this` renders as `{k:local,name:__self}` via `selfSubst`). The blanket guard is
+  narrowed to fail loud ONLY when the callee body actually references the dispatch receiver (new `bodyReferencesDispatch`
+  IR scan) — the pure-extension idiom (a `Long`-decoder that never touches the enclosing class) splices, keeping the
+  non-local `return` through the lambda inline. Co-binding both receivers when the companion IS used is a deferred
+  bir2cir follow-up. Unblocks the kotlinx.coroutines CLR port (`LockFreeTaskQueueCore.withState`, 7 call sites, all
+  companion-unused). Gate: `il-memberextinline` in `verify-il.sh`.
 - **kotc (#16): top-level functions in a dotted-filename file class (`api.common.kt` → `Api_commonKt`) now round-trip
   cross-module.** `BirEmitter.fileClassName` derived the file-facade class from the raw filename stem without sanitizing
   it, so `api.common.kt` became file class `demo.Api.commonKt` — and ilemit's `DefineType` reads that dot as a namespace
