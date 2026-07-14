@@ -36,6 +36,24 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `Task.Run({ … })` binds `Action`, while an explicit `{ x -> … }` / a method reference still reaches the wider sibling.
   The `cases/il-monitordrain` `Thread({ -> … })` arity-pin band-aid is removed (natural `Thread({ … })` now resolves).
   Gate: `cases/il-threadlambda`. Semantics: `docs/dotkt-semantics.md` §8e.
+- **bir2cir (#22): a `suspend inline fun` with a `crossinline` lambda (the `suspendCancellableCoroutine` shape) is now
+  cold-lowered instead of reaching ilemit un-lowered / failing the inline splice.** The crossinline `block` is invoked
+  INSIDE the `suspendCoroutineUninterceptedOrReturn { … }` intrinsic's block, so InlineSplice materializes the carrier
+  as a `newClosure` VALUE the intrinsic block captures (`§4.4ii`) — but four interacting gaps then blocked the cold
+  core: (1) `SuspendColdLowering` excluded ALL `inline` suspend funs, so the wrapper's standalone body reached ilemit
+  un-lowered — the exclusion is now lifted in APP builds only (a stdlib build's only inline suspend funs are the
+  `suspendCoroutine`/`suspendCoroutineUninterceptedOrReturn` primitives, which stay stubbed); (2) the shape gate refused
+  a body holding any `newClosure`, so the non-inline caller whose spliced body carries the materialized closure was
+  never lowered — a PLAIN closure VALUE (no suspension inside) is now admitted as a spillable local; (3) the intrinsic-
+  block closure class the cold lowering reconstructs INLINE was still emitted (dead) and mis-resolved a direct
+  `COROUTINE_SUSPENDED` block-return to the enclosing file class — the dead class is now pruned and the sentinel
+  canonicalized to the SM's `Suspended()` marker; (4) the unintercepted form passed the SM itself as the raw
+  continuation, so a synchronous `cont.resume(v)` re-entered before the state label was armed and recursed unboundedly —
+  the label is now set BEFORE the block (mirroring the JVM CPS), so the re-entry lands at the resume point. The
+  `contract { callsInPlace(block, …) }` needs no handling: Fir2Ir drops `FirContractCallBlock`, so it never reaches BIR.
+  Gate: `cases/il-coinline` (two sync-resume suspensions sequenced in one `suspend fun main` SM → `42`). Unblocks
+  emitting kotlinx.coroutines-core's `suspendCancellableCoroutine` family.
+
 - **kotc (#14): a `super.X()` call from an override no longer infinite-recurses — it now emits a NON-virtual `call` to
   the resolved base slot.** kotc never read `IrCall.superQualifierSymbol`, so it emitted `super.greet()` identically to
   `this.greet()` — a `callInstance` with `virtual:true` → ilemit `callvirt Base::greet`, which re-dispatches by the
