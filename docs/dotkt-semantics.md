@@ -163,6 +163,30 @@ This is a user-stated foundational deviation, not an implementation detail.
 - Deep dives: `docs/coroutine-abi.md` (the ABI contract), `docs/design-coroutines-clr.md` (design + Track-2 plan),
   `docs/coroutine-stdlib-port-plan.md` (the live implementation plan), memory `coroutine-abi-decision`.
 
+## 4a. `Task.await()` resume precedence — interceptor > captured SynchronizationContext > inline (#3/#7)
+
+When a `Task<T>.await()` (the `kotlin.clr.await` marker) genuinely SUSPENDS, the resume thread/context is chosen
+by this precedence, mirroring Kotlin/JVM's "the interceptor owns dispatch, SyncContext capture is only the default
+policy":
+
+1. **`ContinuationInterceptor` present** in the coroutine context → the resume routes through
+   `ContinuationInterceptor.interceptContinuation` (the interceptor-wrapped continuation's `resumeWith` decides the
+   resume). This is Kotlin's dispatcher mechanism (e.g. a UI dispatcher) and it takes PRECEDENCE. The cold-core
+   `ContinuationImpl.intercepted()` performs the lookup+wrap (cached, JVM parity); bir2cir routes the await-point
+   `OnCompleted` callback through `this.intercepted().resumeWith(...)`.
+2. **No interceptor, `await(captureContext = true)` (the default)** → the CLR `TaskAwaiter` captures
+   `SynchronizationContext.Current` and `Post`s the resume onto it (mirrors .NET
+   `ConfigureAwaitOptions.ContinueOnCapturedContext`).
+3. **No interceptor, `await(captureContext = false)`** → `ConfigureAwait(false)` awaiter, resume runs inline on the
+   completing thread (no SyncContext capture).
+- The coroutine context propagates DOWN the cold-entry call chain: a nested `suspend fun`'s state machine inherits its
+  completion's context, so an interceptor installed at the coroutine root is honored at a nested-fun await too.
+- Caveat (double-hop, an accepted follow-up): with an interceptor AND the default capturing awaiter, the awaiter's
+  `OnCompleted` still runs on the captured SynchronizationContext, which then re-dispatches to the interceptor — so the
+  interceptor owns the FINAL resume (precedence holds) but the SyncContext remains on the delivery path (a blocked
+  SyncContext pump would starve delivery). Suppressing the SyncContext capture when an interceptor is present (a
+  runtime branch, ideally a stdlib `taskinterop` await-registration helper) is the cleaner consolidation, deferred.
+
 ## 4b. The default `lazy { }` is thread-safe (a Monitor lock, matching Kotlin/JVM and `System.Lazy`)
 
 `lazy { }` on DotKt is thread-safe by default, exactly as on Kotlin/JVM (and matching .NET's own

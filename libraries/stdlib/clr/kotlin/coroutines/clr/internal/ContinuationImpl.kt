@@ -18,13 +18,19 @@
 //  - Everything is `public`: the generated SMs live in OTHER assemblies (app dlls), so the bases must be
 //    CLR-public (the JVM uses `@PublishedApi internal`, a JVM-module notion with no CLR equivalent). The
 //    `.clr.internal` package name carries the "not user API" contract.
-//  - JVM-isms skipped: releaseIntercepted (interceptors are v1-identity), Serializable, DebugMetadata,
-//    CoroutineStackFrame, probeCoroutine* debug probes, and the FunctionBase/arity toString plumbing.
+//  - Interceptor dispatch IS implemented (#7 Part B): [ContinuationImpl.intercepted] consults
+//    context[ContinuationInterceptor] and wraps `this` via interceptContinuation (cached), and
+//    [BaseContinuationImpl.resumeWith] calls [releaseIntercepted] on SM termination — the real JVM protocol.
+//    An installed interceptor OWNS resume dispatch, so it takes PRECEDENCE over the raw SynchronizationContext
+//    capture at a `Task.await` resume point (SuspendColdLowering routes those resumes through intercepted()).
+//  - JVM-isms skipped: Serializable, DebugMetadata, CoroutineStackFrame, probeCoroutine* debug probes, and
+//    the FunctionBase/arity toString plumbing.
 @file:Suppress("UNCHECKED_CAST")
 
 package kotlin.coroutines.clr.internal
 
 import kotlin.coroutines.Continuation
+import kotlin.coroutines.ContinuationInterceptor
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.coroutines.SafeContinuation
@@ -56,6 +62,7 @@ public abstract class BaseContinuationImpl(
             } catch (exception: Throwable) {
                 outcome = createFailure(exception) // the raw failure box (kotlin.Result.Failure)
             }
+            current.releaseIntercepted() // this SM instance is terminating — release its intercepted continuation
             if (completion is BaseContinuationImpl) {
                 // unroll recursion via the loop
                 current = completion
@@ -74,6 +81,14 @@ public abstract class BaseContinuationImpl(
      * or [COROUTINE_SUSPENDED].
      */
     public abstract fun invokeSuspend(result: Any?): Any?
+
+    /**
+     * Releases the intercepted continuation when this state machine terminates. No-op on the base
+     * ([RestrictedContinuationImpl] pins EmptyCoroutineContext, no interceptor); [ContinuationImpl]
+     * overrides it to call the interceptor's [ContinuationInterceptor.releaseInterceptedContinuation].
+     * Invoked by [resumeWith] once [invokeSuspend] returns a real (non-suspended) outcome.
+     */
+    public open fun releaseIntercepted() {}
 
     /**
      * Instantiates a fresh copy of this (cold) state machine bound to [completion]. Overridden by
@@ -128,8 +143,34 @@ public abstract class ContinuationImpl(
     public override val context: CoroutineContext
         get() = _context ?: EmptyCoroutineContext
 
-    /** v1: interceptor dispatch is out of scope (§11 v1 limits) — the identity continuation. */
-    public open fun intercepted(): Continuation<Any?> = this
+    // The cached intercepted continuation (JVM parity: interceptContinuation results are cached per SM so
+    // every resume of THIS state machine routes through the same intercepted instance).
+    private var intercepted: Continuation<Any?>? = null
+
+    /**
+     * #7 Part B — the interceptor protocol: consult `context[ContinuationInterceptor]` and wrap `this` via
+     * [ContinuationInterceptor.interceptContinuation], caching the result. When an interceptor is installed it
+     * OWNS resume dispatch (its intercepted continuation's `resumeWith` decides the resume thread/context), so a
+     * `Task.await` resume — routed through `intercepted()` by SuspendColdLowering — goes through the interceptor,
+     * taking PRECEDENCE over the raw SynchronizationContext capture. Absent an interceptor this is the identity
+     * continuation and the captured-SyncContext (or inline) fallback stands.
+     */
+    public open fun intercepted(): Continuation<Any?> =
+        intercepted
+            ?: (context[ContinuationInterceptor]?.interceptContinuation(this) ?: this)
+                .also { intercepted = it }
+
+    /**
+     * Releases the intercepted continuation on termination (see [BaseContinuationImpl.releaseIntercepted]) —
+     * the JVM releaseIntercepted protocol. Only calls back into the interceptor if it actually wrapped `this`.
+     */
+    public override fun releaseIntercepted() {
+        val intercepted = intercepted
+        if (intercepted != null && intercepted !== this) {
+            context[ContinuationInterceptor]!!.releaseInterceptedContinuation(intercepted)
+        }
+        this.intercepted = this // mark released — any further intercepted() returns identity (JVM CompletedContinuation intent)
+    }
 }
 
 /** Base for generated suspend-LAMBDA state machines ([BaseContinuationImpl.create] is their protocol). */

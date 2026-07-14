@@ -5,7 +5,8 @@
 //   startCoroutineUninterceptedOrReturn = sm.create(...).invokeSuspend(Unit)  [REAL for all arities: 0/1
 //     use the fixed create() fast paths; arity >= 2 uses the general create(args, completion) protocol via
 //     startSuspendUninterceptedOrReturnN(fn, arrayOf(args...), completion)]
-//   intercepted                   = identity (v1 — §11: no interceptor dispatch)
+//   intercepted                   = ContinuationImpl.intercepted() — real interceptor dispatch (#7 Part B):
+//                                    context[ContinuationInterceptor]?.interceptContinuation(this) ?: this
 // Until P3 lands, suspend values are NOT SMs, so create/start throw a precise NotImplementedError
 // (from clr.internal.notAStateMachine) instead of silently misbehaving.
 @file:Suppress("ACTUAL_WITHOUT_EXPECT", "NO_ACTUAL_FOR_EXPECT", "UNCHECKED_CAST", "NOTHING_TO_INLINE", "NO_ACTUAL_CLASS_MEMBER_FOR_EXPECTED_CLASS")
