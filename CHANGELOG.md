@@ -51,6 +51,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   facadegen surfaces the const-default param on both await overloads; bir2cir's `EmitAwaitPoint` reads the literal and
   selects the awaiter family (a dynamic, non-const `captureContext` is refused loudly). Gate: `cases/il-cfgawait`
   (non-generic, sync fast path).
+- **The GENERIC `Task<T>.await(captureContext = false)` path now resolves its nested-generic awaiter (#3).** The
+  ConfigureAwait(false) awaiter for a `Task<T>` is the nested struct
+  `System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1+ConfiguredTaskAwaiter`, whose generic arity backtick rides
+  the OUTER type — so the FQN already carries a `` ` ``. ilemit's `ConstructGeneric` unconditionally appended a SECOND
+  arity suffix, yielding `…ConfiguredTaskAwaiter`1`, which `ResolveType` could not find (`cannot resolve .NET type`).
+  It now skips the append when the name already contains a backtick (the name is already arity-complete). Gate:
+  `cases/il-cfgawaitgen` (generic `Task<Int>.await(captureContext = false)`, sync fast path).
 - **A star projection `Key<*>` of a self-ref-bounded generic (`interface Key<E : Element>`) no longer lowers to the
   constraint-violating `Key<System.Object>` (#2).** kotc's star-projection rule discards the bound (`at == null ->
   OBJ`, `kotlin.Any`), so `Key<*>` reached bir2cir as `Key<kotlin.Any>` → `Key<System.Object>` — but `System.Object`
