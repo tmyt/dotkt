@@ -3,7 +3,7 @@
 > **状態 (2026-07-13, #125)**: 能力は**出荷済み** — kotc のアプリパイプライン（`ClrAppFrontendPipelinePhase`）が
 > common→platform のモジュール分割を行い（`b793c0f`, #119）、`.ktproj` は `<DotKtMultiplatform>true</DotKtMultiplatform>`
 > でオプトインする（`017a85c`, #119、`packaging/DotKt.Toolchain/build/DotKt.Toolchain.targets`）。動作サンプルは
-> `cases/ktproj-mpp/`（verify-ktproj 全通過）、最小再現は `experiments/mpp-greeter/`。本ドキュメントはその**確定した設計**の
+> `cases/ktproj-mpp/`（verify-ktproj 全通過。最小再現も兼ねる）。本ドキュメントはその**確定した設計**の
 > 正典。パッケージングは property-gated 方式（0.9.5 のメカニズム）に加え、独立した合成 SDK `DotKt.Sdk.Mpp`
 > が **出荷済み**（`packaging/DotKt.Sdk.Mpp/`、`scripts/pack-nuget.sh` で 5 番目のパッケージとして pack、
 > ローカルフィード restore による E2E スモークテスト済み — 本文 §5）。

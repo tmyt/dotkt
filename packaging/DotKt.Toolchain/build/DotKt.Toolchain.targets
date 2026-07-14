@@ -59,7 +59,7 @@
     <Message Importance="high" Text="DotKt: compiling @(KotlinCompile->Count()) .kt file(s) -> BIR" />
     <!-- MPP (#119): when common sources are present, mark them with -Xcommon-sources and enable the common→platform
          module split (-Xmulti-platform) + cross-module expect/actual (-Xexpect-actual-classes) — the exact
-         invocation experiments/mpp-greeter/build.sh proved. All sources still pass POSITIONALLY (in @(KotlinCompile));
+         invocation the cases/ktproj-mpp gate (verify-ktproj) exercises. All sources still pass POSITIONALLY (in @(KotlinCompile));
          -Xcommon-sources only tags which of them are common. Empty DotKtCommon => empty flags => unchanged compile. -->
     <PropertyGroup Condition="'@(DotKtCommon)' != ''">
       <DotKtMppFlags>-Xmulti-platform -Xexpect-actual-classes -Xcommon-sources=&quot;@(DotKtCommon->'%(FullPath)', ',')&quot;</DotKtMppFlags>
