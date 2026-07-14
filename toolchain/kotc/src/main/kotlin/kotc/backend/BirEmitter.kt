@@ -231,6 +231,12 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null) {
 		// suffix so the actual lands in the common's class (ilemit then MERGES the two same-file-class inputs). Without
 		// this, `actual inline fun maxOf(Int,Int)` lands in _ComparisonsClrKt while the call targets _ComparisonsKt.
 		if (stem.endsWith("Clr")) stem = stem.dropLast(3)
+		// A dotted MPP filename stem (`api.common.kt` → stem `api.common`) must NOT leak its dots into the file-class
+		// name: ilemit's DefineType reads a dot as a namespace separator, so `Api.commonKt` would emit as
+		// Namespace=<pkg>.Api / Name=commonKt and facadegen scanning <pkg> would never surface its top-level funcs
+		// (cross-module `unresolved reference`, #16). Sanitize non-identifier chars to `_` (stock Kotlin does the
+		// same: `AtomicFU.common.kt` → `AtomicFU_commonKt`) BEFORE capitalize+"Kt". Mirrors `synthScope`.
+		stem = stem.replace(Regex("[^A-Za-z0-9]"), "_")
 		val base = stem.replaceFirstChar { it.uppercaseChar() } + "Kt"
 		val pkg = f.packageFqName.asString()
 		return if (pkg.isEmpty()) base else "$pkg.$base"

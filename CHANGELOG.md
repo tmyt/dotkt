@@ -7,6 +7,24 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **kotc (#16): top-level functions in a dotted-filename file class (`api.common.kt` → `Api_commonKt`) now round-trip
+  cross-module.** `BirEmitter.fileClassName` derived the file-facade class from the raw filename stem without sanitizing
+  it, so `api.common.kt` became file class `demo.Api.commonKt` — and ilemit's `DefineType` reads that dot as a namespace
+  separator (real type: Namespace=`demo.Api` / Name=`commonKt`), so facadegen scanning package `demo` never surfaced its
+  top-level functions and a cross-module consumer got `unresolved reference` (top-level *classes* round-tripped either
+  way — they carry their own type name). The stem's non-identifier characters are now replaced with `_` before
+  capitalize+`Kt` (`Api_commonKt`), exactly as stock Kotlin derives the file class (`AtomicFU.common.kt` →
+  `AtomicFU_commonKt`). Surfaced by the kotlinx-atomicfu CLR port (`update`/`getAndUpdate`/`loop` in `AtomicFU.common.kt`
+  were invisible). Gate: `roundtrip-dotfile` in `verify-roundtrip.sh`.
+- **kotc (#21): a bound reference to a top-level extension property (`this::extProp`) now lowers.** kotc rejected any
+  property reference whose accessor carried an extension receiver with "an extension-receiver property reference
+  (KProperty2) has no supported lowering yet"; only the property *value* (`this.extProp`) worked. A top-level extension
+  property reference is now lowered like the member-property reference path: a `KProperty0`/`KProperty1` lift whose
+  `get`/`set`/`invoke` invoke the static extension accessor with the ext receiver — captured in a `__recv` field for a
+  BOUND ref (`obj::extProp` → `KProperty0<V>`), or passed as the leading param for an UNBOUND ref (`Type::extProp` →
+  `KProperty1<T,V>`). Only a genuine `KProperty2` (a member extension property with both a dispatch AND an extension
+  receiver, inexpressible as a plain Kotlin callable) stays unsupported. Blocked the kotlinx.coroutines CLR port
+  (`LockFreeLinkedList.toString()` uses `this::classSimpleName`). Gate: `cases/il-extpropref`.
 - **kotc (#14): a `super.X()` call from an override no longer infinite-recurses — it now emits a NON-virtual `call` to
   the resolved base slot.** kotc never read `IrCall.superQualifierSymbol`, so it emitted `super.greet()` identically to
   `this.greet()` — a `callInstance` with `virtual:true` → ilemit `callvirt Base::greet`, which re-dispatches by the

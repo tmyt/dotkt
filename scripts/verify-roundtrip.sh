@@ -1201,6 +1201,39 @@ vd_ok=0
 section_result roundtrip-virtual-dispatch "$vd_ok" "open/override instance method of a DotKt lib dispatches virtually as Kotlin; BIR carries virtual; reshaped + raw-callInstance paths; ilverify (#139)" \
 	"$(printf -- 'bir_ok=%s (has=%s missing=%s) ilv_ok=%s\n--- expected ---\n%s\n--- reshaped(clrInstance) ---\n%s\n--- raw callInstance->ilemit ---\n%s' "$vd_bir_ok" "$vd_has_virtual" "$vd_missing_virtual" "$vd_ilv_ok" "$vdexpected" "$vdactual1" "$vdactual2")"
 
+# ----- DOTTED FILENAME (#16): top-level funcs in a `*.common.kt` file class round-trip cross-module -----------
+# A source file whose stem contains a dot (`api.common.kt`, the standard MPP common-fragment convention) compiles to
+# a file-facade class. kotc must sanitize the stem's non-identifier chars to `_` (stock Kotlin: `Api_commonKt`)
+# BEFORE it derives the class name — else the raw `Api.commonKt` is read by ilemit's DefineType as
+# Namespace=demo.Api / Name=commonKt, so facadegen scanning package `demo` never surfaces its TOP-LEVEL functions
+# (top-level CLASSES round-trip fine either way — they carry their own type name) -> a cross-module `unresolved
+# reference` on `commonOnly`. After the fix the file class is `demo.Api_commonKt` and its top-level fun resolves.
+DF="$ROOT/build/roundtrip-dotfile"; rm -rf "$DF"; mkdir -p "$DF/lib" "$DF/app" "$DF/libbir" "$DF/libil" "$DF/appbir" "$DF/appil"
+cat > "$DF/lib/api.common.kt" <<'EOF'
+package demo
+fun commonOnly(x: Int): Int = x + 1     // top-level fun in a DOTTED-name file (the #16 regression surface)
+class Box(var v: Int)                    // top-level class in the same file (round-trips either way)
+EOF
+cat > "$DF/app/app.kt" <<'EOF'
+import demo.commonOnly
+import demo.Box
+fun main() {
+    println(commonOnly(1))   // 2   top-level fun from the dotted-name file class (was `unresolved reference`)
+    println(Box(2).v)        // 2   top-level class from the same file
+}
+EOF
+CLR_TYPES_METADATA="" "$LAUNCHER" "$DF/lib" -no-stdlib -classpath "$CP" -d "$DF/libbir" >/dev/null 2>&1 || true
+emit_il "$DF/libil" DemoLib "$DF/libbir"/*.bir.json
+dotnet "$RETARGET_DLL" "$DF/libil/DemoLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
+"$LAUNCHER" --scan-imports --output "$DF/imports.txt" "$DF/app"/*.kt >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$DF/meta" --refs "$REFS$DF/libil/DemoLib.dll" --import-list "$DF/imports.txt" >/dev/null 2>&1 || true
+CLR_TYPES_METADATA="$DF/meta" "$LAUNCHER" "$DF/app" -no-stdlib -classpath "$CP" -d "$DF/appbir" >/dev/null 2>&1 || true
+emit_il "$DF/appil" DemoApp --ref "$DF/libil/DemoLib.dll" "$DF/appbir"/*.bir.json
+cp "$DF/libil/DemoLib.dll" "$DF/appil/" 2>/dev/null || true
+dfexpected="$(printf '2\n2')"
+run_app dfactual "$DF/appil/DemoApp.dll"
+check_output roundtrip-dotfile "$dfexpected" "$dfactual" "#16: top-level fun in a dotted-name file class (api.common.kt -> demo.Api_commonKt) resolves cross-module"
+
 # ---- verdict --------------------------------------------------------------------------------------
 echo "------------------------------------"
 printf '%s\n' "${SUMMARY[@]}"
