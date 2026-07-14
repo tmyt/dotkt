@@ -36,6 +36,22 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Reading a value-type nullable array element back across a generic class boundary no longer fails ilverify
+  (#4).** A generic `class Box<T>` whose field is `Array<Ref<T?>>` (with `class Ref<X>(val v: X)`) has its
+  `Nullable(Tv)` element erased to `Ref<object>` on the declaration side (`object` is the only uniform CLR storage
+  carrying a real null for both a reference and a value `T` — the #142 design). But kotc stamps a CALL across the
+  boundary (`Box<Int>().a[0]`) with `T` already substituted → `Ref<Nullable(Int)>`, which lowered to the
+  irreconcilable `Ref<Nullable<int32>>` where the member actually returns `Ref<object>` (the two are unrelated
+  invariant reified generics — no `castclass` reconciles them), so the element read / slot store failed with
+  `ilverify StackUnexpected [found ref 'Ref`1<object>'][expected ref 'Ref`1<Nullable`1<int32>>']`. A new bir2cir
+  pass (`NullableTvErasureCallRealign`) re-derives each such call's return by substituting the owner's type-args
+  into the `EraseNullableTv`-applied declaration — gated to the exact object-erasure boundary, so a directly-written
+  `Ref<Int?> = Ref(7)` (whose `Ref` declaration has no `Nullable(Tv)`) is untouched — and flows the corrected
+  `Ref<object>` receiver through a per-method type-env so a chained `…[i].v` re-stamps `get_v`'s owner (`Ref<object>`)
+  and return (`object`) too; a value-typed consumer (`val x: Int? = …[i].v`) gets an `unbox.any` `cast` back to
+  `Nullable<int32>`. Part of the value-type-array-nullability read family (#113/#117/#120/#142). Gate:
+  `cases/il-genarrlam` extended to read the element value for both a value-type (`Box<Int>`) and a reference
+  (`Box<String>`) element.
 - **Overriding a .NET virtual whose delegate parameter has an `object`/`Any?` `Invoke` no longer fails with
   `overrides nothing` (#1).** facadegen mapped a delegate whose `Invoke` takes/returns `object` (e.g.
   `SendOrPostCallback.Invoke(object)`) to a bare `Any?` — so a natural Kotlin override

@@ -183,6 +183,12 @@ sealed class Pipeline
         // MapVarianceRealign needs the callee's declared type-param order to map a sig's `gp:NAME` to its typeArg index.
         var calleeTypeParams = MapVarianceRealign.CollectCalleeTypeParams(birFiles.Select(f => f.Root));
 
+        // Snapshot every LOCAL generic type's declared member returns BEFORE the per-file DEF-side EraseNullableTv
+        // (NullableGenericReturnErasure runs inside the transform loop, mutating declarations in place). Feeds
+        // NullableTvErasureCallRealign so a `Box<Int>.get_a()` call across the generic boundary re-derives its
+        // return from the (erased) declaration instead of kotc's over-substituted `Ref<Nullable<Int>>` (#4).
+        var nullableTvDeclRets = NullableTvErasureCallRealign.CollectDeclaredMemberRets(birFiles.Select(f => f.Root));
+
         // The local RICH-enum type names (a `kind:"class"` decl carrying the faithful `enumRich:true` marker), across
         // ALL input files: EnumIntrinsicLowering lowers `enumValues<RichEnum>()` to the synthesized static values()
         // (not the System.Enum-reflection semantic node — a rich enum is a plain singleton class).
@@ -390,6 +396,15 @@ sealed class Pipeline
             // Rewrite the return to `object`; ilemit boxes value returns and the CALL boundary converts object ->
             // the caller's Nullable<V> / reference type. Runs BEFORE the rest so type-lowering/substitution see it.
             NullableGenericReturnErasure.Apply(bir.Root);
+            // GENERIC-BOUNDARY nullable-Tv READ realignment (#4; #113/#117/#120/#142 read side). The DEF-side erasure
+            // above turns a member's `…Ref<T?>…` into `…Ref<object>…`, but a CALL site kotc emitted with T already
+            // substituted carries the concrete `…Ref<Nullable(kotlin.Int)>…` (no bare `Tv` for the sweep to catch),
+            // which lowers to the irreconcilable `Ref<Nullable<int32>>` where the member actually returns `Ref<object>`
+            // (ilverify StackUnexpected). Re-derive each such call's return by substituting the owner's type-args into
+            // the EraseNullableTv-applied declaration, gated to the exact object-erasure boundary, and flow the corrected
+            // receiver type through so a chained read re-stamps `get_v`'s owner/return too. Each rewrite is gated to
+            // the exact object-erasure boundary (IsObjectErasureOf); LOCAL generic owners only. BEFORE BirTypeLowering.
+            NullableTvErasureCallRealign.Apply(bir.Root, nullableTvDeclRets);
             // FUNC-SLOT nullable-return erasure (ALL builds — the transform-side twin of the pass above): a function
             // TYPE with a nullable return (`(T) -> R?`) is kotc-tokenized `func:nullable:<ret>:<args>` (the open
             // generic view `nullable:gp:R`; a value instantiation `nullable:int`). Its only CLR rep that agrees
