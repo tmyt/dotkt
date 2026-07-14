@@ -51,6 +51,10 @@ STR_OK = {
                                                  # (base64(BirCarrier.EncodeBody(raw decl))) bir2cir InlineBirStash stamps on
                                                  # an inline method decl; ilemit emits it verbatim as the carrier bytes. A
                                                  # metadata payload, NOT a type slot (§3 opaque, like smName/closureName).
+    "nullableGenericRet",                        # #18: the PRE-erasure `Holder<T?>` return TypeNode, stashed as an OPAQUE
+                                                 # canonical-JSON string by bir2cir NullableGenericReturnErasure (before the
+                                                 # nested `Nullable(Tv)` is object-erased); RoundtripMetadata carrier-encodes
+                                                 # it into [KotlinNullableGeneric] for facadegen. A payload, NOT a type slot.
     "bytes",                                     # #71 S2: a base64 attribute-arg VALUE (RoundtripMetadata) — the carrier
                                                  # payload for [KotlinInline]/[KotlinSuspendFunctionType] and the nested
                                                  # NullableAttribute(byte[]) form; ilemit's ConstArgValue decodes it to a

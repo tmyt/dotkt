@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- #18: a Kotlin APP referencing the `genq` Kotlin LIBRARY through <ProjectReference>. `dotnet build` builds
+       Holder.ktproj first; its emitted Holder.dll lands on @(ReferencePath), the app's import-scan + facadegen inject
+       `genq.Holder` + `genq.holderOf`, and the [KotlinNullableGeneric] round-trip restores `holderOf`'s return to
+       `Holder<T?>` (instead of degrading it to `Any?`), so the app's `h.size` / `h[0]` resolve. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <StartupObject>AppKt</StartupObject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../lib/Holder.ktproj" />
+  </ItemGroup>
+
+  <Import Project="../../KotlinClr.targets" />
+
+</Project>
