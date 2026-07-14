@@ -18,6 +18,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   property, a `ThreadLocal<Int?>` slot, and reference slots (`ThreadLocal<String>`) are untouched. Gate: the extended
   `cases/il-tlvalint` (write `5`, write `Int? = 7` → coerced to 7, and the `String?` reference-slot twin). Semantics:
   `docs/dotkt-semantics.md` §9a-bis.
+- **gate infra (#13): the cached CLR stdlib artifacts now rebuild on a TOOLCHAIN-FINGERPRINT mismatch, not only
+  when missing — killing a class of false-RED and (worse) silent stale-GREEN.** `scripts/lib.sh`'s
+  `need_fe_klib`/`need_stdlib_ref`/`need_stdlib_rt` used to reuse an existing
+  `kotlin-stdlib-clr-frontend.klib` / `DotKt.Private.Stdlib.dll` / `DotKt.Stdlib.dll` unconditionally, so an artifact
+  baked by an OLDER toolchain (or left by another branch's build) was silently consumed by a NEWER compile — the source
+  of an intermittent `AbstractCoroutineContextElement` methodimpl false-RED, and the more dangerous silent stale-GREEN
+  (a case passing against a stale bake, regressing on the next fresh one). Each artifact is now stamped with a
+  fingerprint (a `mtime+size+path` hash over its build inputs) in a sidecar `<artifact>.toolstamp`, and `need_*`
+  rebuilds when the artifact is missing OR the sidecar is missing OR the recomputed fingerprint differs. Inputs per
+  artifact: **klib** = installed kotc + `libraries/stdlib/` (a klib has no IL, so the tool dlls are irrelevant);
+  **ref** = kotc + `bir2cir.dll` + `ilemit.dll` + `retarget.dll` + sources; **rt** = kotc + `bir2cir.dll` +
+  `ilemit.dll` + the ref dll it consumes + sources. An unchanged toolchain leaves every input untouched, so the stamp
+  matches and the build-only-if-needed fast path is preserved (no per-gate rebuild). Also hardened
+  `scripts/build-stdlib-rt.sh` to `die` (was: silently proceed with no `--ref`) when the reference dll is absent.
+
 - **facadegen/bir2cir (#10): `await` generalized from Task-only to the .NET AWAITABLE PATTERN (GetAwaiter) — Task,
   ValueTask, WinRT `IAsyncOperation<T>`, and custom awaitables, with zero per-type compiler support.** Previously
   facadegen injected `.await()` only for the BCL Task family and bir2cir hardcoded the `TaskAwaiter` dance. Now a type is
