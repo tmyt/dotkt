@@ -676,6 +676,25 @@ resolves. (Previously such a delegate collapsed to a bare `Any?`, and the overri
   Kotlin overload resolution over the now-faithfully-surfaced delegate types (an explicitly-typed lambda param never
   ambiguates). It is the honest tradeoff for making an `object`-param delegate usable at all.
 
+## 8f. A SOURCE declaration wins over a facadegen-injected copy of the same identity (#15)
+
+If the SAME top-level type or function is BOTH declared in the compiled Kotlin **source** AND injected by facadegen
+from a referenced .NET/DotKt assembly, the **source declaration wins** and the injected copy is suppressed. This
+arises from a project **mislayout** — the app's `**/*.kt` glob reaches a `<ProjectReference>`'d library's *own source
+files*, so the app compiles `class Plain` / `fun hello()` from source while facadegen *also* injects `demo.Plain` /
+`demo.hello` from the referenced dll. Before #15 the injected copy collided with the source (`overload resolution
+ambiguity` at the use site + `conflicting overloads/declarations` at the source decl site) — only when the name was
+actually used. Now the source declaration is authoritative and emits as a plain local type/call.
+
+- **Granularity is package + name, not signature.** Suppression is per (package, name) and per *kind* (a source `val
+  hello` does not suppress an injected `fun hello`, and vice versa), but a source top-level function of a **different
+  signature** (`fun hello(s: String)`) still suppresses the referenced dll's `fun hello(): Int` overload — so that
+  referenced overload becomes unreferenceable (a **loud** unresolved-reference, never a silent miswire). The fix for
+  this is to not compile the referenced library's source into the app (correct the glob / project layout); the
+  source-wins rule only guarantees the compiler no longer *doubles* the declaration.
+- **MPP residual.** The shadow query sees only the current module's source, so a **common-module** source declaration
+  does not suppress a **platform-session** injection of the same identity.
+
 ## 9. Reference-type nullability ⇔ .NET NRT; un-annotated .NET types are PLATFORM types
 
 A Kotlin value-type `X?` is the structural `System.Nullable<X>` (§ value types). The **not-null assertion**

@@ -7,6 +7,20 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **kotc (#15): a declaration whose identity is BOTH declared in the compiled source AND facadegen-injected from a
+  `<ProjectReference>`'d assembly is no longer materialized TWICE.** When an app's `**/*.kt` glob reaches a referenced
+  library's *own source files*, the app compiled `class Plain` / `fun hello()` from source while facadegen *also*
+  injected `demo.Plain` / `demo.hello` from the referenced dll — the FIR injection extension produced a second,
+  identical copy, so *using* (not merely referencing) the name gave `overload resolution ambiguity` at the call site and
+  `conflicting overloads/declarations` at the source decl site (only TYPES/ctors and TOP-LEVEL functions doubled). The
+  injector (`ClrTypeInjection.kt`) now consults the SOURCE FIR provider (`session.firProvider`, non-recursive) and
+  SUPPRESSES any injection whose ClassId/CallableId the compiled source already declares — the source declaration wins
+  and emits as a plain local type/call (the backend accessors exclude the shadowed identity so it is never clr-routed to
+  the referenced dll). Suppression is per (package, name) and per kind; a source overload of a different signature still
+  shadows the referenced same-name one (a loud unresolved-reference — the real remedy is to not compile the referenced
+  library's source into the app). Gate: `cases/il-injectdedup` (source + injection of the same `demo.Plain`/`demo.hello`
+  via the metadata alone) in `scripts/verify-il.sh`. Semantics: `docs/dotkt-semantics.md` §8f.
+
 - **packaging (#131 durable): the `DotKt.Sdk` / `DotKt.Sdk.Mpp` `Sdk.props` `DotKtVersion` default is now guarded at
   pack time.** That default is copied verbatim into the SDK package (the nuspec `$version$` never reaches it) and pins
   the implicit `DotKt.Toolchain` / `DotKt.Stdlib` PackageReferences — a stale value silently pulls an OLD toolchain

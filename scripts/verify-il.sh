@@ -282,6 +282,12 @@ il_check_imports() { # <name> <asm> <srcDir> <expected>
 }
 
 il_check m0    M0Kt  "$ROOT/cases/m0/M0.kt"  "$(printf 'sum = 5\nzero\nn=1\nn=2')"
+# injectdedup (#15): a declaration whose identity is BOTH in the compiled SOURCE (Demo.kt: `class Plain` +
+# top-level `fun hello`) AND in the facadegen injection metadata (demo.meta — as if injected from a
+# <ProjectReference>'d dll that exports it). The FIR injector must SUPPRESS the injected copy so the SOURCE
+# declaration wins (else `overload resolution ambiguity` + `conflicting overloads/declarations` — the #15
+# double). Uses the meta ALONE (no conflicting --ref), so the source type lowers/emits LOCALLY end-to-end.
+il_check injectdedup App "$ROOT/cases/il-injectdedup" "$(printf '42\nplain')" "$ROOT/cases/il-injectdedup/demo.meta"
 il_check mc1   MC1   "$ROOT/cases/m-c1"      "$(printf 'c = (4, 6)\na.d2 = 25\nrect area=30')"
 il_check iface Iface "$ROOT/cases/il-iface"  "$(printf 'Hello\nKonnichiwa')"
 il_check overrideprop OverridePropKt "$ROOT/cases/il-overrideprop" "$(printf '21\n42\n7')"   # `override val` accessor fills the base CLASS abstract slot (not a fresh NewSlot) — else concrete subclass TypeLoad-fails
