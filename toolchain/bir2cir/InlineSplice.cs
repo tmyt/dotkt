@@ -621,10 +621,17 @@ static class InlineSplice
         else
             invBody.Add(new JsonObject { ["k"] = "return", ["value"] = lamResult ?? UnitConst() });
 
-        // A NESTED lambda/closure ANYWHERE (body or result) could capture an enclosing local/`this` that our field rewrite
-        // does not reach (RewriteCapturesToFields/HasStrayLocal stop at a nested-closure boundary). Refuse rather than risk a
-        // silently-mis-captured nested closure — fail loud (conservative; §4.4ii carriers rarely nest a closure).
-        if (HasNestedClosure(invBody)) return null;
+        // A NESTED `newClosure`/`newSam` in the carrier is materializable AS-IS: kotc emits it self-contained (its
+        // `synthClass` is its OWN frame; already-field/param refs) with its CAPTURE VALUES (ctor args) living in THIS
+        // carrier's scope. The sibling scans below (RewriteCapturesToFields, HasStrayLocal, the this-guard, CollectTvKeys/
+        // RenumberTvs) all DESCEND into those capture values (skipping the nested `synthClass`), so a nested closure that
+        // captures an invoke param (`cont`), a carrier capture (-> `this.<field>`), or a carrier local is bound correctly,
+        // and one capturing anything else fails loud via HasStrayLocal. This is the `suspendCancellableCoroutine { cont ->
+        // … cont.invokeOnCancellation { … } }` pattern (#22). But a nested `newSuspendLambda` (its SM ctor binds captures
+        // by DESCRIPTOR NAME, which the splice's field/this rewrites do not touch -> field vs body-ref skew, FINDING 1), a
+        // `newDelegate` (an origin-file `__lambdaN` type token that dangles, §4.6), or an un-spliced `inlineLambda` (a
+        // nested inline-call lambda arg, only handled at STEP 8's fixpoint) cannot be wrapped verbatim — refuse those.
+        if (HasUnmaterializableNested(invBody)) return null;
 
         // Consume kotc's carrier `captures`: one closure FIELD each (verbatim {name,type}); ctor arg = the enclosing local
         // (`{k:local,name}`) or, for `outer:true`, the enclosing `{k:this}`. Field + ctor-arg order match (positional ctor).
@@ -643,10 +650,11 @@ static class InlineSplice
             }
         // A bare `{k:this}` (the enclosing receiver — a lambda has no `this` of its own) with NO `outer:true` capture listed
         // is an UNLISTED enclosing-`this` capture: fail loud (symmetric to the stray-local check; else the `{k:this}` would
-        // survive into the invoke body and resolve to the CLOSURE instance — a silent miscompile). Checked BEFORE the field
-        // rewrite introduces legitimate `field.recv:{k:this}` nodes; the nested-closure guard above ensures no closure-owned
-        // `this` is present.
-        if (outerName == null && HasNodeNonClosure(invBody, "this")) return null;
+        // survive into the invoke body and resolve to the CLOSURE instance — a silent miscompile). Scans the carrier's OWN
+        // frame — the top-level body AND a nested closure's CAPTURE VALUES (a nested closure that captured the enclosing
+        // receiver), skipping only a nested `synthClass` (its `this` is its own instance). Checked BEFORE the field rewrite
+        // introduces legitimate `field.recv:{k:this}` nodes.
+        if (outerName == null && HasThisOutsideSynthClass(invBody)) return null;
         RewriteCapturesToFields(invBody, capNames, outerName, cname);
         // Any residual `{k:local}` that is neither an invoke param NOR one of the carrier's OWN declared locals is a capture
         // kotc did not list -> fail loud rather than leak an unbound local to ilemit.
@@ -730,16 +738,19 @@ static class InlineSplice
             return;
         }
         if (node is not JsonObject o) return;
-        // Skip the WHOLE nested-closure node (incl. its captures). Safe ONLY because MaterializeCarrier gates on
-        // HasNestedClosure FIRST — a carrier containing any of these fails loud at §4.4ii, so this scan never actually
-        // meets one. If that refusal is ever relaxed these must instead skip only the `synthClass` key and DESCEND into
-        // the node's `captures`/`args` (as RewriteThis/RewriteLocalRefs do), else a nested closure capturing a
-        // carrier-captured local silently misses its field rewrite. (Same note applies to the three siblings below.)
-        if (Str(o["k"]) is "inlineLambda" or "newClosure" or "newDelegate" or "newSuspendLambda" or "newSam") return;
+        // A nested closure/SAM's `synthClass` is its OWN frame — its `{k:local}`/`{k:this}` are already field/param refs of
+        // that frame, so must NOT be rewritten. But DESCEND into the node's OTHER keys (notably `captures` — the ctor-arg
+        // VALUES evaluate in THIS carrier's scope, so a value capturing an outer-carrier capture / the enclosing `this`
+        // must be rewritten to `this.<field>` here, exactly as at the carrier's top level; #22). The materialized closure's
+        // sibling scans stay consistent with this same skip-synthClass/descend-captures boundary.
+        bool nested = Str(o["k"]) is "inlineLambda" or "newClosure" or "newDelegate" or "newSuspendLambda" or "newSam";
         foreach (var key in new List<string>(((IDictionary<string, JsonNode>)o).Keys))
+        {
+            if (nested && key == "synthClass") continue;
             if (IsCapLocal(o[key])) o[key] = FieldOf(Str(((JsonObject)o[key])["name"]));
             else if (IsOuterThis(o[key])) o[key] = FieldOf(outerName);
             else if (o[key] != null) RewriteCapturesToFields(o[key], capNames, outerName, cname);
+        }
     }
 
     // True if the subtree still holds a `{k:local,name:X}` with X ∉ `allowed` (a capture kotc did not list) — not descending
@@ -749,8 +760,11 @@ static class InlineSplice
         if (node is JsonObject o)
         {
             if (Str(o["k"]) == "local") return Str(o["name"]) is string ln && !allowed.Contains(ln);
-            if (Str(o["k"]) is "inlineLambda" or "newClosure" or "newDelegate" or "newSuspendLambda" or "newSam") return false;
-            foreach (var kv in o) if (kv.Value != null && HasStrayLocal(kv.Value, allowed)) return true;
+            // Descend into a nested closure's CAPTURE VALUES (they resolve in THIS carrier's scope — a stray there is a
+            // genuine unlisted capture, e.g. a nested closure grabbing an enclosing-suspend-fn local kotc didn't list on
+            // the carrier) but NOT its `synthClass` body (its locals are its own frame).
+            bool nested = Str(o["k"]) is "inlineLambda" or "newClosure" or "newDelegate" or "newSuspendLambda" or "newSam";
+            foreach (var kv in o) if (kv.Value != null && (!nested || kv.Key != "synthClass") && HasStrayLocal(kv.Value, allowed)) return true;
         }
         else if (node is JsonArray a) foreach (var c in a) if (c != null && HasStrayLocal(c, allowed)) return true;
         return false;
@@ -769,15 +783,35 @@ static class InlineSplice
         else if (node is JsonArray a) foreach (var c in a) if (c != null) CollectDeclaredLocals(c, set);
     }
 
-    // True if the subtree contains a nested lambda/closure node.
-    static bool HasNestedClosure(JsonNode node)
+    // True if the carrier's OWN frame (skipping any nested `synthClass` — that is the nested closure's own frame) holds a
+    // nested-fn node that cannot be wrapped verbatim into the materialized closure (§4.4ii): a `newSuspendLambda` (SM ctor
+    // binds captures by descriptor name — the splice's field/this rewrites would skew it), a `newDelegate` (dangling
+    // origin-file lambda type token), or an un-spliced `inlineLambda` (a nested inline-call lambda arg, only resolved at
+    // STEP 8's fixpoint). A plain `newClosure`/`newSam` is materializable — its captures are handled by the descending
+    // sibling scans (RewriteCapturesToFields / HasStrayLocal / HasThisOutsideSynthClass / CollectTvKeys).
+    static bool HasUnmaterializableNested(JsonNode node)
     {
         if (node is JsonObject o)
         {
-            if (Str(o["k"]) is "inlineLambda" or "newClosure" or "newDelegate" or "newSuspendLambda" or "newSam") return true;
-            foreach (var kv in o) if (kv.Value != null && HasNestedClosure(kv.Value)) return true;
+            if (Str(o["k"]) is "newSuspendLambda" or "newDelegate" or "inlineLambda") return true;
+            foreach (var kv in o) if (kv.Key != "synthClass" && kv.Value != null && HasUnmaterializableNested(kv.Value)) return true;
         }
-        else if (node is JsonArray a) foreach (var c in a) if (c != null && HasNestedClosure(c)) return true;
+        else if (node is JsonArray a) foreach (var c in a) if (c != null && HasUnmaterializableNested(c)) return true;
+        return false;
+    }
+
+    // True if a `{k:this}` survives at the carrier's OWN frame level — the top-level body OR a nested closure's CAPTURE
+    // value (a nested closure that captured the enclosing receiver) — skipping a nested `synthClass` (its `this` is its
+    // own instance). Used as the unlisted-enclosing-`this` guard when the carrier lists no `outer:true` capture.
+    static bool HasThisOutsideSynthClass(JsonNode node)
+    {
+        if (node is JsonObject o)
+        {
+            if (Str(o["k"]) == "this") return true;
+            bool nested = Str(o["k"]) is "inlineLambda" or "newClosure" or "newDelegate" or "newSuspendLambda" or "newSam";
+            foreach (var kv in o) if (kv.Value != null && (!nested || kv.Key != "synthClass") && HasThisOutsideSynthClass(kv.Value)) return true;
+        }
+        else if (node is JsonArray a) foreach (var c in a) if (c != null && HasThisOutsideSynthClass(c)) return true;
         return false;
     }
 
@@ -788,7 +822,10 @@ static class InlineSplice
         if (node is JsonObject o)
         {
             if (Str(o["t"]) == "tv") keys.Add((Str(o["scope"]) ?? "method", Int(o["i"])));
-            foreach (var kv in o) if (kv.Value != null) CollectTvKeys(kv.Value, keys);
+            // Skip a nested closure's `synthClass`: its typeParams live in that frame's OWN 0-based space and its body's
+            // `tv{…}` resolve positionally against them — collecting/renumbering them into the outer frame would corrupt
+            // the nested class. Its `captures`/`funcType`/`typeArgs` (outer-frame tv refs) ARE descended (#22).
+            foreach (var kv in o) if (kv.Value != null && kv.Key != "synthClass") CollectTvKeys(kv.Value, keys);
         }
         else if (node is JsonArray a) foreach (var c in a) if (c != null) CollectTvKeys(c, keys);
     }
@@ -801,7 +838,9 @@ static class InlineSplice
         {
             if (Str(o["t"]) == "tv" && o["i"] is JsonValue iv && iv.TryGetValue<int>(out var i)
                 && remap.TryGetValue((Str(o["scope"]) ?? "method", i), out var ni)) o["i"] = ni;
-            foreach (var kv in o) if (kv.Value != null) RenumberTvs(kv.Value, remap);
+            // Skip a nested closure's `synthClass` (its tvs are its own frame — see CollectTvKeys); its outer-frame tv
+            // refs on `captures`/`funcType`/`typeArgs` ARE renumbered into the materialized closure's param space (#22).
+            foreach (var kv in o) if (kv.Value != null && kv.Key != "synthClass") RenumberTvs(kv.Value, remap);
         }
         else if (node is JsonArray a) foreach (var c in a) if (c != null) RenumberTvs(c, remap);
     }

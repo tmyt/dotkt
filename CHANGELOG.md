@@ -7,6 +7,16 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir (#22): an inline-splice carrier whose body NESTS a lambda capturing an enclosing binding now
+  materializes.** `MaterializeCarrier` (§4.4ii, `InlineSplice.cs`) refused any carrier containing a nested closure and
+  failed loud — but a `suspend inline fun` with a `crossinline` block that nests a lambda (the
+  `suspendCancellableCoroutine { cont -> cont.invokeOnCancellation { … } }` shape every cancellable-coroutine block
+  uses) always hit that refusal, blocking the kotlinx.coroutines-core port. The blanket `HasNestedClosure` guard is
+  replaced by `HasUnmaterializableNested` (refuses only a nested `newSuspendLambda`/`newDelegate`/un-spliced
+  `inlineLambda`), and the four sibling scans (capture-rewrite, stray-local, this-guard, tv-collection) now DESCEND into
+  a nested closure's CAPTURE VALUES while skipping its own `synthClass` frame — so a nested closure capturing the
+  block's invoke param (`cont`), a carrier capture (rewritten to `this.<field>`), or a carrier local is bound
+  correctly, and a genuinely-unlisted capture still fails loud. Gate: `il-suspendnestedcapture` in `verify-il.sh`.
 - **kotc (#20): an inline MEMBER-extension fn called with a lambda now splices.** kotc rejected any call to an
   `inline fun` that is BOTH a member (e.g. of a companion) AND an extension — `class Queue { companion object { inline
   fun <T> Long.withState(block) {…} } }` called via `state.withState { … }` — because such a callee carries BOTH a
