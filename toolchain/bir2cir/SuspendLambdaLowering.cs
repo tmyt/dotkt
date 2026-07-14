@@ -193,7 +193,7 @@ static class SuspendLambdaLowering
         var effBaseIsLocal = restricted ? _restrictedBaseIsLocal : baseIsLocal;
 
         var sm = SuspendColdLowering.BuildLambdaSm(
-            smName, arity, captures, lambdaParams, body, resultType, typeArgs, effBaseIsLocal, _calleeRet, restricted);
+            smName, arity, captures, lambdaParams, body, resultType, typeArgs, effBaseIsLocal, _calleeRet, restricted, _refs);
         if (sm == null) return node;   // arity < 0 (never) -> keep the node; arbitrary N is now expressible
 
         newTypes.Add(sm);

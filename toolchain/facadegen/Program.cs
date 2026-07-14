@@ -216,7 +216,7 @@ static class FacadeGen
             if (fam.Count == 0) { Console.Error.WriteLine($"warning: .NET import resolved to no type (injected nothing): {typeName}"); continue; }
             // BINDING INVARIANT: a resolved seed that lands in `kotlin.*` is dropped — the stdlib comes from the
             // frontend JAR, never facadegen (see IsKotlinStdlibSymbol). The `kotlin.clr.await` bridge is exempt: it
-            // resolves to no type here and is surfaced textually by EmitTaskAwait. Defense-in-depth / output-neutral.
+            // resolves to no type here and is surfaced textually by EmitAwaitables. Defense-in-depth / output-neutral.
             fam.RemoveAll(s => IsKotlinStdlibSymbol(s));
             if (fam.Count == 0) { Console.Error.WriteLine($"warning: .NET import is a kotlin.* stdlib symbol (owned by the JAR, not facadegen; injected nothing): {typeName}"); continue; }
             seeds++; foreach (var seed in fam) Enqueue(seed);
@@ -239,66 +239,169 @@ static class FacadeGen
             if (done.Count >= CAP) { Console.Error.WriteLine($"warning: injection closure hit cap {CAP}; truncating reachable set"); break; }
         }
         Console.WriteLine($"closure: {seeds} seed(s) -> {done.Count} injected type(s)");
-        // bundle-6 P4 — Task.await CLR platform extension. When the injection closure surfaced the BCL Task family
-        // (an `import System.Threading.Tasks.Task`, or a .NET API returning a Task that the closure reached), ALSO
-        // inject the Kotlin-facing `suspend fun Task.await()` extensions in package `kotlin.clr` — the sole frontend
-        // surfacing of the CLR async boundary (the extension is deliberately EXCLUDED from the frontend stdlib jar,
-        // design-coroutine-cold-core-task-bridge.md §5/§12). facadegen only SURFACES the symbol so kotc resolves
-        // `task.await()` in a suspend context and emits it as a suspend call; the BODY is bir2cir-lowered at the call
-        // site to the TaskAwaiter + Continuation bridge — facadegen binds NO intrinsic here.
-        EmitTaskAwait(done, files);
+        // #10 — the `.await()` CLR platform extensions. For EVERY surfaced .NET type that matches the AWAITABLE PATTERN
+        // (a conforming GetAwaiter — member, or a referenced [Extension]), inject the Kotlin-facing `suspend fun X.await()`
+        // in package `kotlin.clr` — the sole frontend surfacing of the CLR async boundary (deliberately EXCLUDED from the
+        // frontend stdlib jar, design-coroutine-cold-core-task-bridge.md §5/§12). facadegen only SURFACES the symbol so
+        // kotc resolves `x.await()` in a suspend context and emits it as a suspend call; the BODY is bir2cir-lowered at
+        // the call site to the awaiter + Continuation bridge — facadegen binds NO intrinsic here.
+        EmitAwaitables(done, files);
         var doc = new JsonObject { ["types"] = types, ["files"] = files };
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outFile))!);
         File.WriteAllText(outFile, doc.ToJsonString(new JsonSerializerOptions { WriteIndented = false }));
         return 0;
     }
 
-    // The BCL Task-family type names whose surfacing triggers the `kotlin.clr.await` extension injection.
-    const string TaskGeneric = "System.Threading.Tasks.Task`1";
-    const string TaskNonGeneric = "System.Threading.Tasks.Task";
-
-    // Inject the `kotlin.clr.await` suspend extensions as a top-level [KotlinFile] section, keyed off whichever Task
-    // arity the closure actually surfaced. The `file`'s .NET class token is `kotlin.clr.CoroutinesKt` — where the real
+    // #10 — inject a `.await()` suspend extension for EVERY surfaced .NET type matching the AWAITABLE PATTERN, as one
+    // top-level [KotlinFile] section. The `file`'s .NET class token is `kotlin.clr.CoroutinesKt` — where the real
     // (bir2cir-lowered / TODO-bodied) declaration lives in `libraries/stdlib/clr/taskinterop/kotlin/clr/Coroutines.kt`;
-    // it is the marker bir2cir keys on (type == "kotlin.clr.CoroutinesKt", method == "await") to lower the call site.
-    // Receiver tokens use the facadegen-surfaced BCL Task's Kotlin names: the generic `Task`1` -> arity-qualified
-    // `Task1` (ALWAYS arity-clashes in the BCL, so KotlinName is stable), the non-generic `Task` -> plain `Task`.
-    // So `import System.Threading.Tasks.Task; import kotlin.clr.await; task.await()` resolves on the ONE
-    // facadegen-surfaced Task (design §12 "removes the two Tasks").
-    static void EmitTaskAwait(HashSet<string> injected, JsonArray files)
+    // it is the marker bir2cir keys on (owner == "kotlin.clr.CoroutinesKt", method == "await") to lower the call site.
+    // A type is awaitable iff it has a conforming GetAwaiter — a MEMBER (Task/ValueTask) or a referenced [Extension]
+    // (WinRT IAsyncOperation<T> via WindowsRuntimeSystemExtensions, or any custom extension awaitable). Receiver tokens
+    // use the facadegen-surfaced Kotlin name (arity-qualified `Task1`/`ValueTask1`, plain `Task`), so
+    // `import …; x.await()` resolves on the ONE facadegen-surfaced awaitable.
+    static void EmitAwaitables(HashSet<string> done, JsonArray files)
     {
-        var hasGeneric = injected.Contains(TaskGeneric);
-        var hasNonGeneric = injected.Contains(TaskNonGeneric);
-        if (!hasGeneric && !hasNonGeneric) return;
         var funs = new JsonArray();
-        // #3: `captureContext: Boolean = true` opt-out param. The default `true` IS the current runtime behavior
-        // (TaskAwaiter.OnCompleted captures the SynchronizationContext); passing `false` makes bir2cir emit the
-        // `ConfigureAwait(false)` awaiter (no context capture). The const bool default rides the DefaultObj path
-        // (`{valueType, value}`); the await marker is bir2cir-lowered before ilemit, so the operative consumer of that
-        // default is kotc's metaDefaults fill (an omitted call gets a real const `true` arg) — args[1] at the await site.
+        var seen = new HashSet<string>(StringComparer.Ordinal);   // by receiver Kotlin name — de-dup overloaded await
+        // #3: `captureContext: Boolean = true` opt-out param — injected ONLY for a Task-LIKE awaitable that exposes a
+        // `ConfigureAwait(bool)` member. The default `true` IS the current runtime behavior (OnCompleted captures the
+        // SynchronizationContext); passing `false` makes bir2cir emit the ConfigureAwait(false) awaiter. The const bool
+        // default rides the DefaultObj path; the marker is bir2cir-lowered before ilemit, so the operative consumer is
+        // kotc's metaDefaults fill (an omitted call gets a real const `true` arg) — args[1] at the await site.
         JsonObject CaptureCtxParam() => new JsonObject
         {
             ["name"] = "captureContext",
             ["type"] = Ty(new TN.Fqn("Boolean")),
             ["default"] = new JsonObject { ["valueType"] = "Boolean", ["value"] = "true" },
         };
-        // `suspend fun <T> Task<T>.await(captureContext: Boolean = true): T` — receiver Task1<T>, T = method type param 0.
-        if (hasGeneric)
+        // DETERMINISTIC order: `done` is a HashSet, so iterate sorted — the injected await set (and, on a simple-name
+        // collision across namespaces, WHICH type wins the receiver token) is then reproducible build-to-build.
+        foreach (var fn in done.OrderBy(x => x, StringComparer.Ordinal))
         {
-            var tp = new JsonArray { new JsonObject { ["name"] = "T" } };
-            var ps = new JsonArray { new JsonObject { ["name"] = "__self",
-                ["type"] = Ty(new TN.Fqn("Task1", new TN[] { new TN.Tv("method", 0) })) }, CaptureCtxParam() };
-            funs.Add(FunObj("await", new TN.Tv("method", 0), Mods(("ext", true), ("suspend", true)), "public", null, tp, ps));
+            // Per-type guard (mirrors the EmitOneType closure guard): one awaitable whose GetAwaiter/awaiter signature
+            // references an MLC-unresolvable type must not abort the whole facadegen run — skip it with a warning.
+            try
+            {
+            var t = Resolve(fn);
+            if (t == null) continue;
+            var awaiterRet = AwaitableAwaiterReturn(t);
+            if (awaiterRet == null || !AwaiterConforms(awaiterRet)) continue;
+            var kname = KotlinName(t);
+            if (!seen.Add(kname)) continue;
+            var voidResult = GetResultReturnType(awaiterRet)?.FullName == "System.Void";
+            var wantCfg = HasConfigureAwaitBool(t);
+            // The result type the lowering emits is dictated by the marker: non-generic → Unit (void GetResult),
+            // generic arity-1 → the receiver's type arg T. GATE injection to awaitables whose awaiter genuinely matches
+            // that shape (else bir2cir would type-confuse the resume value): a non-generic awaitable must have a
+            // NON-generic awaiter, and a generic one's GetResult must return exactly the type parameter.
+            if (!t.IsGenericTypeDefinition && voidResult && !awaiterRet.IsGenericType)
+            {
+                // `suspend fun X.await([captureContext]): Unit` — non-generic void awaitable (Task, IAsyncAction).
+                var ps = new JsonArray { new JsonObject { ["name"] = "__self", ["type"] = Ty(new TN.Fqn(kname)) } };
+                if (wantCfg) ps.Add(CaptureCtxParam());
+                funs.Add(FunObj("await", new TN.Fqn("Unit"), Mods(("ext", true), ("suspend", true)), "public", null, null, ps));
+            }
+            else if (t.IsGenericTypeDefinition && t.GetGenericArguments().Length == 1 && !voidResult
+                     && GetResultReturnType(awaiterRet) is { IsGenericParameter: true })
+            {
+                // `suspend fun <T> X<T>.await([captureContext]): T` — arity-1 generic awaitable whose GetResult yields
+                // its type arg (Task<T>, ValueTask<T>, IAsyncOperation<T>, a custom MyOp<T>). T = method type param 0.
+                var tp = new JsonArray { new JsonObject { ["name"] = "T" } };
+                var ps = new JsonArray { new JsonObject { ["name"] = "__self",
+                    ["type"] = Ty(new TN.Fqn(kname, new TN[] { new TN.Tv("method", 0) })) } };
+                if (wantCfg) ps.Add(CaptureCtxParam());
+                funs.Add(FunObj("await", new TN.Tv("method", 0), Mods(("ext", true), ("suspend", true)), "public", null, tp, ps));
+            }
+            else
+            {
+                seen.Remove(kname);   // not an injectable arity/result shape — let a later arity of the same name try
+            }
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"warning: skipped awaitable {fn}: {ex.GetType().Name}: {ex.Message}"); }
         }
-        // `suspend fun Task.await(captureContext: Boolean = true): Unit` — non-generic Task receiver.
-        if (hasNonGeneric)
-        {
-            var ps = new JsonArray { new JsonObject { ["name"] = "__self", ["type"] = Ty(new TN.Fqn("Task")) }, CaptureCtxParam() };
-            funs.Add(FunObj("await", new TN.Fqn("Unit"), Mods(("ext", true), ("suspend", true)), "public", null, null, ps));
-        }
+        if (funs.Count == 0) return;
         files.Add(new JsonObject { ["pkg"] = "kotlin.clr", ["fileClass"] = "kotlin.clr.CoroutinesKt", ["funs"] = funs });
-        Console.WriteLine("meta: kotlin.clr.await (Task.await CLR platform suspend extension — bir2cir-lowered)");
+        Console.WriteLine($"meta: kotlin.clr.await ({funs.Count} .await() CLR platform suspend extension(s) — bir2cir-lowered)");
     }
+
+    // The awaiter type an awaitable's GetAwaiter yields: a public parameterless instance MEMBER first (Task/ValueTask),
+    // then a referenced `[Extension] GetAwaiter(this X)` (WinRT/custom). Null when the type is not awaitable.
+    static Type AwaitableAwaiterReturn(Type t)
+    {
+        var m = t.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+            .FirstOrDefault(x => x.Name == "GetAwaiter" && !x.IsGenericMethodDefinition && x.GetParameters().Length == 0);
+        if (m != null) return m.ReturnType;
+        var def = t.IsGenericType && !t.IsGenericTypeDefinition ? t.GetGenericTypeDefinition() : t;
+        return GetAwaiterExtIndex().TryGetValue(def.FullName ?? t.Name, out var ext) ? ext.ReturnType : null;
+    }
+
+    // Index (built once) of every referenced `[Extension] static GetAwaiter(this <recv>)`, keyed by the receiver's
+    // type-definition FullName — an open generic receiver `IAsyncOperation<TResult>` keys on `IAsyncOperation`1`.
+    static Dictionary<string, MethodInfo> _getAwaiterExtIndex;
+    static Dictionary<string, MethodInfo> GetAwaiterExtIndex()
+    {
+        if (_getAwaiterExtIndex != null) return _getAwaiterExtIndex;
+        var idx = new Dictionary<string, MethodInfo>(StringComparer.Ordinal);
+        if (Mlc != null)
+            foreach (var asm in Mlc.GetAssemblies())
+                foreach (var t in SafeTypes(asm))
+                {
+                    if (!t.IsAbstract || !t.IsSealed) continue;   // a static class
+                    // Per-type guard: a static class whose method signatures reference an MLC-unresolvable type would
+                    // otherwise abort the whole scan (this index is built on the first non-awaitable type) — skip it.
+                    try
+                    {
+                        foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Static))
+                        {
+                            if (m.Name != "GetAwaiter" || !IsExtensionMethod(m)) continue;
+                            var ps = m.GetParameters();
+                            if (ps.Length != 1) continue;
+                            var recv = ps[0].ParameterType;
+                            var recvDef = recv.IsGenericType ? recv.GetGenericTypeDefinition() : recv;
+                            idx.TryAdd(recvDef.FullName ?? recv.Name, m);
+                        }
+                    }
+                    catch { /* unreflectable static class — skip */ }
+                }
+        return _getAwaiterExtIndex = idx;
+    }
+
+    static IEnumerable<Type> SafeTypes(Assembly asm)
+    {
+        try { return asm.GetTypes(); }
+        catch (ReflectionTypeLoadException e) { return e.Types.Where(t => t != null)!; }
+        catch { return Array.Empty<Type>(); }
+    }
+
+    // A conforming awaiter: PUBLIC `bool IsCompleted { get; }`, a public parameterless `GetResult()`, and a PUBLIC
+    // `OnCompleted(Action)` — the members the bir2cir lowering binds by direct instance call (so this MUST agree with
+    // ReferenceMetadataIndex.AwaiterConforms). We require the public OnCompleted method, NOT merely an INotifyCompletion
+    // impl: an explicit-interface-only awaiter has no public member for the direct call, so it is rejected here (no
+    // `.await()` injected — an honest frontend miss rather than a loud ilemit failure). Awaiter may be generic.
+    static bool AwaiterConforms(Type awaiter)
+    {
+        if (awaiter == null) return false;
+        var def = awaiter.IsGenericType ? awaiter.GetGenericTypeDefinition() : awaiter;
+        var hasIsCompleted = def.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Any(p => p.Name == "IsCompleted" && p.PropertyType.FullName == "System.Boolean" && p.CanRead);
+        var hasGetResult = GetResultReturnType(def) != null;
+        var hasOnCompleted = def.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+            .Any(m => m.Name == "OnCompleted" && m.GetParameters().Length == 1);
+        return hasIsCompleted && hasGetResult && hasOnCompleted;
+    }
+
+    static Type GetResultReturnType(Type awaiter)
+    {
+        var def = awaiter.IsGenericType && !awaiter.IsGenericTypeDefinition ? awaiter.GetGenericTypeDefinition() : awaiter;
+        return def.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+            .FirstOrDefault(m => m.Name == "GetResult" && m.GetParameters().Length == 0)?.ReturnType;
+    }
+
+    static bool HasConfigureAwaitBool(Type t) =>
+        t.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+            .Any(m => m.Name == "ConfigureAwait" && m.GetParameters() is { Length: 1 } ps
+                && ps[0].ParameterType.FullName == "System.Boolean");
 
     // Emit one type's FIR-injection metadata (enum/interface/annotation/object/class + members).
     // A `[ClrIntrinsic]`/`[ClrTypeAlias]` binding on a ref-assembly type/member (when facadegen reflects a DotKt
@@ -992,8 +1095,8 @@ static class FacadeGen
     // never enters a seed/closure; this predicate makes the guarantee live IN the owning layer (defense-in-depth,
     // output-neutral) rather than relying only on that plus the downstream `ClrTypeInjection.kt` filter (which
     // covers injected classes/interfaces but NOT top-level functions).
-    // WHITELIST: the deliberate `kotlin.clr.await` CLR-async bridge is surfaced textually by EmitTaskAwait (keyed off
-    // the BCL Task family), never through this type-injection path (`import kotlin.clr.await` resolves to no type here),
+    // WHITELIST: the deliberate `kotlin.clr.await` CLR-async bridge is surfaced textually by EmitAwaitables (keyed off
+    // the awaitable PATTERN), never through this type-injection path (`import kotlin.clr.await` resolves to no type here),
     // so it is naturally exempt — this predicate only gates types that flow through Enqueue/ShouldInject/seed-resolve.
     static bool IsKotlinStdlibSymbol(Type t)
     {

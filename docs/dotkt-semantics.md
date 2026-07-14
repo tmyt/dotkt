@@ -187,6 +187,35 @@ policy":
   SyncContext pump would starve delivery). Suppressing the SyncContext capture when an interceptor is present (a
   runtime branch, ideally a stdlib `taskinterop` await-registration helper) is the cleaner consolidation, deferred.
 
+## 4c. `.await()` binds to the .NET AWAITABLE PATTERN (GetAwaiter), not to Task (#10)
+
+`await` is NOT Task-specific — it binds to the same **awaitable pattern** the C# compiler uses, so ANY .NET awaitable is
+awaitable from Kotlin with zero per-type compiler support. A type `X` is awaitable IFF it has a `GetAwaiter()` — a public
+parameterless instance MEMBER, **or** a referenced `[Extension] static GetAwaiter(this X)` — returning an *awaiter* that
+has `bool IsCompleted { get; }`, `T GetResult()`, and implements `INotifyCompletion` (its `OnCompleted(Action)` is what the
+cold-core resume binds). This is the await analog of the `@ClrIntrinsic`/facadegen philosophy: bind by signature/metadata,
+embed no dialect.
+
+- **What this covers:** `Task`/`Task<T>` (member `GetAwaiter` → `TaskAwaiter[<T>]`), `ValueTask`/`ValueTask<T>` (member
+  → `ValueTaskAwaiter[<T>]`, no `.AsTask()`), a WinRT `IAsyncOperation<T>` (a GENERIC *extension* GetAwaiter, awaitable only
+  when the projection/support assembly providing it is referenced — a LIBRARY fact, not a compiler dialect), and any
+  custom awaitable. The result type is the awaiter's `GetResult()` return (`void` → `Unit`).
+- **Where it lives (layer split):** **facadegen** pattern-detects each surfaced .NET awaitable and injects a
+  `suspend fun X.await(): <Result>` platform extension in `kotlin.clr` (only when a conforming GetAwaiter exists).
+  **bir2cir** (`SuspendColdLowering.EmitAwaitPoint`, via `ReferenceMetadataIndex.ResolveAwaitable`) discovers the awaiter
+  type + members from ref metadata and lowers the marker to the awaiter dance (`GetAwaiter` → spill → `IsCompleted`
+  fast-path → `OnCompleted(resume)` + return SUSPENDED → `GetResult`). **ilemit** has no await knowledge. A member
+  GetAwaiter emits `clrInstance`; a generic extension GetAwaiter emits `MyExt.GetAwaiter<TResult>(x)` (`clrGenericStatic`),
+  the method type arg unified from the concrete receiver (`X<Int>` binds `TResult=Int`).
+- **We bind `OnCompleted` (INotifyCompletion), not `UnsafeOnCompleted` (ICriticalNotifyCompletion):** the cold core carries
+  no ExecutionContext-flowing state-machine box, so `OnCompleted` (which flows EC) is correct; `UnsafeOnCompleted` would drop
+  `AsyncLocal` flow across every await. UnsafeOnCompleted is a future optimization gated on SM-level EC capture.
+- **`ConfigureAwait`/`captureContext` stays Task-like:** the `await(captureContext = false)` opt-out (§4a) is offered ONLY
+  for an awaitable that exposes a `ConfigureAwait(bool)` member (Task, ValueTask). A generic awaitable without it uses
+  GetAwaiter directly; requesting `captureContext = false` on such a type is a compile-time error.
+- Gate: `cases/il-valueawait` (ValueTask<T>, member GetAwaiter — non-Task BCL) and `cases/il-extawait` (a generic-extension
+  custom awaitable mirroring the WinRT shape, both the sync fast path and a genuine suspend+resume).
+
 ## 4b. The default `lazy { }` is thread-safe (a Monitor lock, matching Kotlin/JVM and `System.Lazy`)
 
 `lazy { }` on DotKt is thread-safe by default, exactly as on Kotlin/JVM (and matching .NET's own
