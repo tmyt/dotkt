@@ -114,6 +114,15 @@ kt ktproj-injectemit "cases/ktproj-injectemit/App.ktproj" \
 kt ktproj-reprop "cases/ktproj-reprop/app/App.ktproj" \
 	"$(printf '10\n42\n84')"
 
+# #26: a cross-module Kotlin LIBRARY whose package FQN STARTS WITH `dotkt` (`dotktx.foo.bar`) but is a USER
+# package, NOT the compiler's own `dotkt`/`dotkt$…` synthetic vocabulary. The app captures a local of the lib's
+# `State<Int>` inside a lambda stored as a delegate and fired later cross-module. Before the fix, bir2cir's
+# ResolveNetType matched the owner FQN with a bare `StartsWith("dotkt")`, so `dotktx.foo.bar.State` was wrongly
+# skipped as "not a .NET/reference type" → the captured cross-module local was mishandled → runtime NRE/
+# InvalidProgram (compile clean). The guard now matches `dotkt` only as a full segment (`dotkt`/`dotkt.`/`dotkt$`).
+kt ktproj-dotktpkg "cases/ktproj-dotktpkg/app/App.ktproj" \
+	"2"
+
 # #18: a re-imported cross-module GENERIC factory `fun <T> holderOf(n): Holder<T?>`. bir2cir object-erases the nested
 # `Nullable(Tv)` to `Holder<object>`; the [KotlinNullableGeneric] round-trip attribute (stamped by RoundtripMetadata,
 # restored by facadegen) recovers `Holder<T?>` so the app's `h.size` + `h[0]` resolve. Before the fix `h` degraded to
@@ -151,6 +160,7 @@ rm -rf "$ROOT"/cases/ktproj/bin "$ROOT"/cases/ktproj/obj \
        "$ROOT"/cases/ktproj-injectemit/bin "$ROOT"/cases/ktproj-injectemit/obj \
        "$ROOT"/cases/ktproj-injectemit/lib/bin "$ROOT"/cases/ktproj-injectemit/lib/obj \
        "$ROOT"/cases/ktproj-reprop/*/bin "$ROOT"/cases/ktproj-reprop/*/obj \
+       "$ROOT"/cases/ktproj-dotktpkg/*/bin "$ROOT"/cases/ktproj-dotktpkg/*/obj \
        "$ROOT"/cases/ktproj-genq/*/bin "$ROOT"/cases/ktproj-genq/*/obj \
        "$ROOT"/cases/ktproj-inject/bin "$ROOT"/cases/ktproj-inject/obj \
        "$ROOT"/cases/ktproj-import/bin "$ROOT"/cases/ktproj-import/obj \

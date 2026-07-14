@@ -306,8 +306,9 @@ sealed partial class ReferenceMetadataIndex
     }
 
     // Resolve a facadegen-injected .NET owner FQN to its metadata-only reflection Type (A2 / #61), or null when the
-    // owner is NOT a reachable .NET type — i.e. a `kotlin.*`/`kotlinx.*`/`dotkt*` stdlib owner (bound by
-    // MemberCallSubstitution off the ref.dll, NOT here), a local app-emitted type, or anything the loaded refs +
+    // owner is NOT a reachable .NET type — i.e. a `kotlin.*`/`kotlinx.*` stdlib owner (bound by MemberCallSubstitution
+    // off the ref.dll, NOT here) or the compiler's own `dotkt`/`dotkt.`/`dotkt$…` synthetic vocabulary, a local
+    // app-emitted type, or anything the loaded refs +
     // framework dir don't contain. `genericArity` lets a constructed generic owner ("System.Collections.Generic.List"
     // + args) resolve its open definition (`List`1`). Consumed by NetInteropBinding to shape the call. Cached.
     public Type ResolveNetType(string fqn, int genericArity = 0)
@@ -319,9 +320,15 @@ sealed partial class ReferenceMetadataIndex
         // `kotlin.clr.ClrRef`, the `kotlin.clr.byref` marker — which have NO definition in any reference assembly and are
         // fully lowered by kotc itself (kotc's own dialect extension). They must never be resolved here (they don't
         // exist); their pre-lowered nodes (an event `clrPropGet`, a ref-passing form) flow through this pass opaquely.
+        // #26: match `dotkt` ONLY as a complete leading segment/marker — `dotkt` itself, a `dotkt.`-namespaced
+        // internal, or a `dotkt$…` mangled synthetic (dotkt$obj*/dotkt$ClrH_*/dotkt$CharSequence/…). NEVER as a bare
+        // prefix of a longer identifier: a user library package like `dotktx.ui.avalonia` STARTS WITH "dotkt" but is a
+        // real cross-module .NET type that MUST resolve here (an over-broad StartsWith("dotkt") mis-skipped it → the
+        // captured cross-module local was mishandled → runtime NRE/InvalidProgram, compile clean).
         if (fqn == "kotlin" || fqn.StartsWith("kotlin.", StringComparison.Ordinal)
             || fqn.StartsWith("kotlinx.", StringComparison.Ordinal)
-            || fqn.StartsWith("dotkt", StringComparison.Ordinal)) return null;
+            || fqn == "dotkt" || fqn.StartsWith("dotkt.", StringComparison.Ordinal)
+            || fqn.StartsWith("dotkt$", StringComparison.Ordinal)) return null;
         // LOCAL-OVER-REF (#15): a type DECLARED in this compilation is this-assembly-emitted and is the authority for
         // its identity — never resolve it as an EXTERNAL .NET type off the refs, even when a referenced dll exports the
         // same FQN (the ProjectReference-source-glob layout). Source wins: leave the node routing to the emitted type.

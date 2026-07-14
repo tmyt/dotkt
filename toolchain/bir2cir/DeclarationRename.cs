@@ -163,7 +163,7 @@ static class DeclarationRename
             return kind switch { "getter" => "get_" + intr, "setter" => "set_" + intr, _ => intr };
         }
         // FACADEGEN-INJECTED .NET interface/base (A2 step 5): the override owner resolves to a REAL .NET Type off the
-        // refs (NOT a stdlib ref.dll alias — ResolveNetType skips kotlin.*/kotlinx.*/dotkt* and every local type). A
+        // refs (NOT a stdlib ref.dll alias — ResolveNetType skips kotlin.*/kotlinx.*/dotkt(./$) and every local type). A
         // Kotlin class implementing/overriding such a member binds the .NET slot HERE (kotc no longer bakes it). Because
         // facadegen injects the Kotlin member identity EQUAL to the .NET name, the slot is the identity: a method ->
         // `member`; a property accessor -> get_/set_ + the .NET property name (confirmed to be a real .NET property/

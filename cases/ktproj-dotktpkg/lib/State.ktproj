@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- #26 LIBRARY: a Kotlin lib whose package is `dotktx.foo.bar` (STARTS WITH `dotkt` but is a user package, NOT the
+       compiler's `dotkt`/`dotkt$` vocabulary). OutputType=Library emits State.dll with the [Kotlin*] round-trip
+       metadata; the app references it and re-imports `dotktx.foo.bar.State`/`state`/`register`/`fire` AS KOTLIN. -->
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+
+  <Import Project="../../KotlinClr.targets" />
+
+</Project>

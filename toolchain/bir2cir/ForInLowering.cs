@@ -95,7 +95,7 @@ static class ForInLowering
     // The kotc-retired `forInEnumerable` gate, moved here (#73-w3): a for-loop source enumerates via GetEnumerator
     // (`forEachInline`) when its static type is EXACTLY `kotlin.sequences.Sequence`, OR it resolves to a referenced
     // .NET type (a facadegen-injected `@Clr` owner — the faithful equivalent of kotc's old `clrName(src) != null`,
-    // since ResolveNetType returns null for every kotlin.*/kotlinx.*/dotkt*/app-local FQN and non-null exactly for a
+    // since ResolveNetType returns null for every kotlin.*/kotlinx.*/dotkt(./$)/app-local FQN and non-null exactly for a
     // reachable .NET type). Applies in ALL builds (the gate was build-agnostic). A concrete `Sequence`-implementing
     // class is NOT matched here (its FQN is not `Sequence`) — it reaches `forEachInline` via the stdlib supertype walk.
     static bool IsNetOrSequenceEnumerable(JsonNode srcType, ReferenceMetadataIndex refs)
