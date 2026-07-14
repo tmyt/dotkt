@@ -7,6 +7,18 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **facadegen (#19, half): a .NET member overloaded on delegate params of adjacent arity / Unit-vs-value return now
+  stamps a `lowPriority` marker on the deprioritized overload, so a bare Kotlin lambda disambiguates.** Passing `{ ... }`
+  to `Thread(ThreadStart)` / `Thread(ParameterizedThreadStart)` (or `Task.Run(Action)` / `Task.Run(Func<T>)`) regressed
+  to an overload-resolution ambiguity after the #1 delegate-faithfulness fix (the object-param delegate now surfaces as
+  `(Any?) -> Unit` instead of collapsing to `Any?`, so a no-arrow lambda — arity unspecified — matched both candidates).
+  The delegate types are already faithful, so the ambiguity is inherent to Kotlin overload resolution and cannot be
+  fixed by shape. facadegen (the only layer that sees the full .NET overload group) now runs a per-group Pareto analysis
+  (`MarkLowPriorityDelegateOverloads`) and marks the less-preferred sibling — the higher-arity delegate (`Thread`) or the
+  value-returning `Func` (`Task.Run`). **Cross-layer, not yet end-to-end:** the marker is inert until kotc's
+  `ClrTypeInjection` maps it to the FIR `kotlin.internal.LowPriorityInOverloadResolution` annotation (reported to the
+  coordinator for the kotc half + the `il-monitordrain` band-aid removal + `docs/dotkt-semantics.md` §8e rewrite).
+
 - **packaging (#131 durable): the `DotKt.Sdk` / `DotKt.Sdk.Mpp` `Sdk.props` `DotKtVersion` default is now guarded at
   pack time.** That default is copied verbatim into the SDK package (the nuspec `$version$` never reaches it) and pins
   the implicit `DotKt.Toolchain` / `DotKt.Stdlib` PackageReferences — a stale value silently pulls an OLD toolchain

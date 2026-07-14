@@ -592,6 +592,69 @@ static class FacadeGen
         return arr;
     }
 
+    // #19: A .NET member overloaded on delegate params of ADJACENT arity (`Thread(ThreadStart)` = `() -> Unit` /
+    // `Thread(ParameterizedThreadStart)` = `(Any?) -> Unit`) or on a Unit-vs-value delegate RETURN (`Task.Run(Action)` /
+    // `Task.Run(Func<T>)`) is an overload-resolution AMBIGUITY for a bare Kotlin lambda `{ ... }` — a no-arrow lambda's
+    // arity is unspecified (matches both arity-0 and arity-1 via implicit `it`), and an Action vs Func return coerce.
+    // The delegate TYPES are ALREADY faithful (`() -> Unit` vs `(Any?) -> Unit`); the ambiguity is inherent to Kotlin
+    // overload resolution and CANNOT be fixed by a metadata SHAPE. facadegen — the only layer that sees the whole .NET
+    // overload group — DECIDES which overload is less preferred and stamps a `lowPriority` marker; kotc maps it to the
+    // FIR `kotlin.internal.LowPriorityInOverloadResolution` annotation, so a bare `{ ... }` binds the preferred sibling
+    // while an explicit `{ x -> ... }` / a method reference still reaches the wider one (it stays the sole applicable
+    // candidate). Preference (LOWER = preferred): fewer fn params first (arity 0 before 1), then a Unit-returning
+    // delegate before a value-returning one. A decl is deprioritized iff a SIBLING (identical signature except at fn
+    // positions) is preferred-or-equal at EVERY fn position and STRICTLY preferred at ≥1 — a Pareto dominance, so a tie
+    // (two equally-preferred delegates) marks neither.
+    static void MarkLowPriorityDelegateOverloads(JsonArray decls, bool areCtors)
+    {
+        // A param type node's (isFn, rank): ()->Unit=0 < ()->T=1 < (x)->Unit=2 < (x)->T=3. Non-fn -> (false, 0).
+        static (bool isFn, int rank) FnInfo(JsonNode tn)
+        {
+            if (tn is not JsonObject o || (o["t"] as JsonValue)?.GetValue<string>() != "fn") return (false, 0);
+            var arity = (o["params"] as JsonArray)?.Count ?? 0;
+            var ret = o["ret"] as JsonObject;
+            var retUnit = (ret?["t"] as JsonValue)?.GetValue<string>() == "fqn" && (ret?["name"] as JsonValue)?.GetValue<string>() == "Unit";
+            return (true, arity * 2 + (retUnit ? 0 : 1));
+        }
+        static JsonArray Ps(JsonObject d) => d["params"] as JsonArray ?? new JsonArray();
+        // Family shape: param types with every fn position replaced by "fn" — only fn-vs-fn differences are compared.
+        static string Shape(JsonObject d)
+        {
+            var sb = new System.Text.StringBuilder();
+            foreach (var p in Ps(d)) { var tn = (p as JsonObject)?["type"]; sb.Append(FnInfo(tn).isFn ? "fn|" : (tn?.ToJsonString() ?? "?") + "|"); }
+            return sb.ToString();
+        }
+        static bool Dominates(int[] y, int[] x)
+        {
+            bool strict = false;
+            for (int i = 0; i < x.Length; i++) { if (y[i] > x[i]) return false; if (y[i] < x[i]) strict = true; }
+            return strict;
+        }
+        var byFamily = new Dictionary<string, List<JsonObject>>();
+        foreach (var n in decls)
+            if (n is JsonObject d)
+            {
+                var name = areCtors ? "" : ((d["name"] as JsonValue)?.GetValue<string>() ?? "");
+                var key = name + " " + Shape(d);
+                (byFamily.TryGetValue(key, out var l) ? l : (byFamily[key] = new())).Add(d);
+            }
+        foreach (var fam in byFamily.Values)
+        {
+            if (fam.Count < 2) continue;
+            var ps0 = Ps(fam[0]);
+            var fnPos = Enumerable.Range(0, ps0.Count).Where(i => FnInfo((ps0[i] as JsonObject)?["type"]).isFn).ToList();
+            if (fnPos.Count == 0) continue;
+            int[] Ranks(JsonObject d) { var pr = Ps(d); return fnPos.Select(i => FnInfo((pr[i] as JsonObject)?["type"]).rank).ToArray(); }
+            foreach (var x in fam)
+            {
+                var rx = Ranks(x);
+                if (!fam.Any(y => !ReferenceEquals(y, x) && Dominates(Ranks(y), rx))) continue;
+                if (areCtors) x["lowPriority"] = true;
+                else { if (x["mods"] is not JsonObject m) x["mods"] = m = new JsonObject(); m["lowPriority"] = true; }
+            }
+        }
+    }
+
     static void EmitOneType(Type t, JsonArray types, JsonArray files)
     {
         var typeObj = new JsonObject();
@@ -964,6 +1027,11 @@ static class FacadeGen
             // (explicit impl) Concrete stubs for in-scope members of the generic interfaces this class implements but
             // doesn't expose PUBLICLY, so the injected class satisfies `ICollection<T>`/`IList<T>` with no abstract member left.
             if (!isStatic) EmitExplicitInterfaceStubs(t, props, funs, seen);
+            // #19: deprioritize a bare-lambda-ambiguous delegate overload (Thread ctors / Task.Run statics / instance
+            // members) so kotc's LowPriorityInOverloadResolution lets `{ ... }` bind the narrower sibling — see the method doc.
+            MarkLowPriorityDelegateOverloads(ctors, areCtors: true);
+            MarkLowPriorityDelegateOverloads(funs, areCtors: false);
+            MarkLowPriorityDelegateOverloads(staticFuns, areCtors: false);
             // Commit the type: attach only the non-empty sub-arrays (the consumer defaults absent = empty).
             if (ctors.Count > 0) typeObj["ctors"] = ctors;
             if (props.Count > 0) typeObj["props"] = props;
