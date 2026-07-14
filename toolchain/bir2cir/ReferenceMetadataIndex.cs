@@ -94,6 +94,22 @@ sealed partial class ReferenceMetadataIndex
     readonly Dictionary<string, Type> _netTypeCache = new(StringComparer.Ordinal);
     bool _netInit;
 
+    // The bare FQNs of every type DECLARED in THIS compilation (this run's BIR `types`). A local declaration is the
+    // AUTHORITY for its identity — it wins over a referenced .NET/Kotlin dll that exports the SAME FQN (the #15
+    // pathological layout: an app whose `**/*.kt` glob pulls in a nested ProjectReference lib's SOURCE — so it compiles
+    // `demo.Plain` locally — AND references that lib's dll, which also exports `demo.Plain`). This mirrors the frontend
+    // "source wins" fix: ResolveNetType refuses to bind a locally-emitted FQN to the ref, so every sibling resolution
+    // routes to the this-assembly-emitted type — `new` stays a local `new` (not `newClr`), and a
+    // callInstance/callStatic/field/boundDelegate stays owner-local (NetInteropBinding leaves it for the emitted-type
+    // path) instead of reshaping to a `clr*` node against the ref. Set once by the Driver before the transform loop.
+    // SCOPE: this filters the ResolveNetType axis ONLY. The ref.dll's DotKt sidecar indexes (TypeKinds/IsValueTypeFqn,
+    // owner arity, ctor param types) are NOT filtered by this set — in the #15 layout they are populated from the SAME
+    // source that produced the local decl, so they agree; a genuinely divergent stale-dll is out of scope (source-wins
+    // is still the right precedence there, matching Roslyn CS0436). `@ClrTypeAlias`/`@ClrIntrinsic` maps are empty for a
+    // user lib, so TryResolveClrOwner never mis-binds a local user type.
+    IReadOnlySet<string> _localEmittedTypes = new HashSet<string>(StringComparer.Ordinal);
+    public void SetLocalEmittedTypes(IReadOnlySet<string> fqns) => _localEmittedTypes = fqns;
+
     // Foundational REFERENCE-type aliases known to bir2cir directly (the same principle as the foundational
     // kotlin.* -> CLR type map already hardcoded in this file). Listed here so member-call / construction
     // substitution works even before kotc preserves the class @ClrTypeAlias attribute on the ref.dll. Only the
@@ -306,6 +322,10 @@ sealed partial class ReferenceMetadataIndex
         if (fqn == "kotlin" || fqn.StartsWith("kotlin.", StringComparison.Ordinal)
             || fqn.StartsWith("kotlinx.", StringComparison.Ordinal)
             || fqn.StartsWith("dotkt", StringComparison.Ordinal)) return null;
+        // LOCAL-OVER-REF (#15): a type DECLARED in this compilation is this-assembly-emitted and is the authority for
+        // its identity — never resolve it as an EXTERNAL .NET type off the refs, even when a referenced dll exports the
+        // same FQN (the ProjectReference-source-glob layout). Source wins: leave the node routing to the emitted type.
+        if (_localEmittedTypes.Contains(BareOwnerFqn(fqn))) return null;
         if (_netTypeCache.TryGetValue(fqn, out var cached)) return cached;
         EnsureNetMlc();
         Type found = null;
