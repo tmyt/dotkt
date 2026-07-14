@@ -30,6 +30,15 @@ done
 # lowering lands (MEMORY coroutine-lowering-layer-deferred); the ilverify names are formal-verification
 # findings, not run failures.
 declare -A XFAIL_RUN=(
+	# GitHub #14, Object-slot variant. kotc correctly emits the faithful NON-virtual call for `super.toString()`/
+	# `super.hashCode()`/`super.equals()` to the kotlin.Any slot (callInstance ownerType kotlin.Any, virtual:false,
+	# anySlot:true). The residual is DOWNSTREAM: bir2cir substitutes the @ClrTypeAlias(System.Object) owner to a
+	# `clrInstance System.Object::ToString` and DROPS the non-virtual intent, and ilemit's EmitInstanceCall
+	# (Emitter.Bodies.cs) emits an unconditional `callvirt` for a reference owner -> re-dispatch to the override ->
+	# infinite recursion. Fix: bir2cir carries a non-virtual/super marker onto the clrInstance node + ilemit's
+	# EmitClrCall honors it (emit `call` for a reference owner). The non-Object super path (user base classes,
+	# properties, N-level chains) is fully fixed in kotc — see il-supercall (GREEN).
+	[superobj]="GitHub #14 Object-slot super: bir2cir drops non-virtual on @ClrTypeAlias->clrInstance + ilemit callvirt-only; kotc half correct (faithful virtual:false callInstance). bir2cir+ilemit residual"
 )
 declare -A XFAIL_ILVERIFY=(
 	# GitHub #2 — FORMAL-ONLY covariance finding from the bir2cir `Key<*>` -> `Key<Element>` lowering, NOT the ilemit
@@ -285,6 +294,8 @@ il_check m0    M0Kt  "$ROOT/cases/m0/M0.kt"  "$(printf 'sum = 5\nzero\nn=1\nn=2'
 il_check mc1   MC1   "$ROOT/cases/m-c1"      "$(printf 'c = (4, 6)\na.d2 = 25\nrect area=30')"
 il_check iface Iface "$ROOT/cases/il-iface"  "$(printf 'Hello\nKonnichiwa')"
 il_check overrideprop OverridePropKt "$ROOT/cases/il-overrideprop" "$(printf '21\n42\n7')"   # `override val` accessor fills the base CLASS abstract slot (not a fresh NewSlot) — else concrete subclass TypeLoad-fails
+il_check supercall SuperCall "$ROOT/cases/il-supercall/app.kt" "$(printf 'derived+base\n21\nderived[base-tag]\nDerived<Base>\nABC\ndog>animal\nimpl+hi-default\nderived+base\n11')"   # #14: super.X() from an override is a non-virtual `call` to the resolved base slot (else callvirt re-dispatches → infinite recursion); covers method/prop/3-level chain/user-base toString/interface-DIM + a virtual-dispatch non-regression
+il_check superobj SuperObj "$ROOT/cases/il-superobj/app.kt" "true"   # #14 Object-slot variant (XFAIL_RUN): super.toString() to kotlin.Any — bir2cir must carry the non-virtual flag onto clrInstance + ilemit honor it (else callvirt re-dispatches → stack overflow)
 il_check xfaceimpl XFace "$ROOT/cases/il-xfaceimpl" "1"   # cross-file + namespaced interface impl/dispatch (FindMethod key regression)
 il_check genhof XHof "$ROOT/cases/il-genhof/app.kt" "$(printf '1\n2\n3')"   # generic fn: (T)->Unit over List<T> (TypeBuilderInstantiation.GetMethod regression)
 il_check genclosure GenClo "$ROOT/cases/il-genclosure/app.kt" "$(printf '1\nfn:2\n3\n4\nret:5\nlf:6')"   # closure in a generic fn capturing T-typed values (generic closure class regression)

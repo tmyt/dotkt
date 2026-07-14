@@ -7,6 +7,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **kotc (#14): a `super.X()` call from an override no longer infinite-recurses — it now emits a NON-virtual `call` to
+  the resolved base slot.** kotc never read `IrCall.superQualifierSymbol`, so it emitted `super.greet()` identically to
+  `this.greet()` — a `callInstance` with `virtual:true` → ilemit `callvirt Base::greet`, which re-dispatches by the
+  receiver's runtime type back to the override → stack overflow. A shared `isVirtualInstanceCall(call, callee)` helper
+  now folds `call.superQualifierSymbol == null` into every instance-call virtual-flag computation (the primary
+  instance-method, member-extension, property get/set accessor, .NET-interop, and index get/set sites), so a
+  super-qualified call is a plain `call` to the base member — exactly like C#'s `base.M()`. A normal virtual dispatch
+  through a base-typed variable is unchanged (still `callvirt` to the override). Also fixes `super.<prop>`, N-level
+  `super` chains (A/B/C), `super` to a user base's `toString()`, and `super<IFace>.foo()` to a Kotlin interface default
+  (DIM). Gate: `cases/il-supercall`. **Known residual (`cases/il-superobj`, XFAIL):** `super.toString()`/`hashCode()`/
+  `equals()` whose immediate super is `kotlin.Any` still re-dispatches — kotc's BIR is faithful (`callInstance
+  kotlin.Any virtual:false anySlot:true`), but bir2cir substitutes the `@ClrTypeAlias(System.Object)` owner to a
+  `clrInstance System.Object::ToString` and drops the non-virtual intent, and ilemit's `EmitInstanceCall` emits an
+  unconditional `callvirt` for a reference owner; the same drop affects a super call to any facadegen-injected .NET base
+  or `@ClrTypeAlias`-bound stdlib base — a bir2cir+ilemit follow-up. Semantics: `docs/dotkt-semantics.md`.
 - **packaging (#131 durable): the `DotKt.Sdk` / `DotKt.Sdk.Mpp` `Sdk.props` `DotKtVersion` default is now guarded at
   pack time.** That default is copied verbatim into the SDK package (the nuspec `$version$` never reaches it) and pins
   the implicit `DotKt.Toolchain` / `DotKt.Stdlib` PackageReferences — a stale value silently pulls an OLD toolchain
