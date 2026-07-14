@@ -25,6 +25,17 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `KProperty1<T,V>`). Only a genuine `KProperty2` (a member extension property with both a dispatch AND an extension
   receiver, inexpressible as a plain Kotlin callable) stays unsupported. Blocked the kotlinx.coroutines CLR port
   (`LockFreeLinkedList.toString()` uses `this::classSimpleName`). Gate: `cases/il-extpropref`.
+- **kotc (#19): a bare lambda `{ … }` into a .NET member overloaded on delegate-typed params resolves again — no
+  overload-resolution ambiguity.** `Thread({ … })` (`ThreadStart` / `ParameterizedThreadStart`) and `Task.Run({ … })`
+  (`Action` / `Func<T>`) regressed to an ambiguity once the delegate types surfaced faithfully (`() -> Unit` vs
+  `(Any?) -> Unit` / `() -> T`), because a no-arrow lambda's arity/return is unspecified and matched both candidates.
+  facadegen's `MarkLowPriorityDelegateOverloads` marks the Pareto-dominated (wider-arity / value-returning) sibling
+  `lowPriority`; kotc's `ClrTypeInjection` now maps that marker onto the synthesized ctor/member (and companion-static)
+  FIR declaration as `@kotlin.internal.LowPriorityInOverloadResolution` (read by the `CheckLowPriorityInOverloadResolution`
+  stage for both `FirSimpleFunction` and `FirConstructor`). So a bare `Thread({ … })` binds `ThreadStart` and
+  `Task.Run({ … })` binds `Action`, while an explicit `{ x -> … }` / a method reference still reaches the wider sibling.
+  The `cases/il-monitordrain` `Thread({ -> … })` arity-pin band-aid is removed (natural `Thread({ … })` now resolves).
+  Gate: `cases/il-threadlambda`. Semantics: `docs/dotkt-semantics.md` §8e.
 - **kotc (#14): a `super.X()` call from an override no longer infinite-recurses — it now emits a NON-virtual `call` to
   the resolved base slot.** kotc never read `IrCall.superQualifierSymbol`, so it emitted `super.greet()` identically to
   `this.greet()` — a `callInstance` with `virtual:true` → ilemit `callvirt Base::greet`, which re-dispatches by the
