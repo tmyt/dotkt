@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- #17: a Kotlin APP referencing the `kotlinx.cell` Kotlin LIBRARY through <ProjectReference>. `dotnet build`
+       builds Cell.ktproj first; its emitted Cell.dll lands on @(ReferencePath), the app's import-scan + facadegen
+       inject `kotlinx.cell.Cell`, and bir2cir lowers the direct property get/set to the get_value/set_value
+       accessor call (the owner is skipped by NetInteropBinding's ResolveNetType due to its `kotlinx.` prefix). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <StartupObject>AppKt</StartupObject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../lib/Cell.ktproj" />
+  </ItemGroup>
+
+  <Import Project="../../KotlinClr.targets" />
+
+</Project>

@@ -645,15 +645,24 @@ static class MemberCallSubstitution
 
         if (!refs.TryResolveClrOwner(ownerToken, out var bcl, out var kind))
         {
-            // #78: a companion STATIC property-accessor call (the "owner"-keyed stdlib axis) whose enclosing type
-            // carries NO @ClrTypeAlias binding at all — the overwhelmingly common case (an ordinary user or stdlib
-            // companion computed property with no CLR binding). kotc emits the bare property IDENTITY + a
-            // `"prop":"get"/"set"` marker instead of baking the accessor slot name (mirrors the instance-axis A2
-            // convention kotc already uses elsewhere); reconstruct kotc's OWN get_/set_<name> declaration-side
-            // convention (the CLR property model — every property's accessor is CIL-named that way regardless of
-            // CLR-boundness) so the call still resolves to the real emitted accessor, byte-identical to the
-            // pre-#78 baked emission. The marker itself is stripped either way — it is not BIR/CIR vocabulary.
-            if (!instance && (node["prop"] as JsonValue)?.GetValue<string>() is ("get" or "set") and var uProp
+            // A property-accessor call whose enclosing type carries NO @ClrTypeAlias binding at all — the
+            // overwhelmingly common case (an ordinary user or stdlib property with no CLR binding). kotc emits the
+            // bare property IDENTITY + a `"prop":"get"/"set"` marker (the accessor KIND) instead of baking the
+            // `get_`/`set_` slot name, on BOTH axes: the STATIC companion axis (#78) AND the INSTANCE axis
+            // (`callInstance ownerType=… method=<p> prop=get/set`). Reconstruct kotc's OWN `get_`/`set_<name>`
+            // declaration-side convention (the CLR property model — every Kotlin property's accessor is CIL-named
+            // that way regardless of CLR-boundness) so the call resolves to the REAL emitted accessor:
+            //   • SAME-module owner -> ilemit's `_types` FindMethod finds the emitted `get_<p>`/`set_<p>`.
+            //   • RE-IMPORTED cross-module Kotlin owner (#17: a `--ref` Kotlin assembly whose type is skipped by
+            //     NetInteropBinding's ResolveNetType because its FQN starts with `kotlin.`/`kotlinx.`/`dotkt`, e.g. a
+            //     `kotlinx.atomicfu.AtomicInt` port) -> ilemit's EXTERNAL-owner ResolveMethod reflects the public
+            //     `get_<p>`/`set_<p>` accessor off the referenced dll. Without this the bare `method:"<p>",prop:"get"`
+            //     reaches ilemit and its ResolveMethod looks for a literal method `<p>` -> "method …value() not found".
+            // A normally-packaged cross-module Kotlin owner (`shapes.Rectangle.area`) never reaches here — NetInterop-
+            // Binding already reshaped it to clrPropGet/clrPropSet. A get/set marker is CONSUMED here (renamed to the
+            // accessor slot); it is not BIR/CIR vocabulary. (An `index-get`/`index-set` marker is NetInteropBinding's
+            // domain and never reaches this get/set-only reconstruction.)
+            if ((node["prop"] as JsonValue)?.GetValue<string>() is ("get" or "set") and var uProp
                 && (node["method"] as JsonValue)?.GetValue<string>() is string uMember)
             {
                 node.Remove("prop");
