@@ -121,6 +121,16 @@ kt ktproj-reprop "cases/ktproj-reprop/app/App.ktproj" \
 kt ktproj-genq "cases/ktproj-genq/app/App.ktproj" \
 	"$(printf '3\nempty\ncell-null')"
 
+# #25: a re-imported cross-module GENERIC top-level fun among a same-name OVERLOAD SET (the reduced kotlinx-atomicfu
+# `atomic` shape: non-generic `atomic(Int/Long/Boolean/Double)` + generic `atomic(T)` + a defaulted-sibling
+# `atomic(T, trace=None)` + a sole-generic `arrOf<T>(n)`). kotc emits a generic call as `callStatic shapeTypes=[…]`
+# with NO `sig`; because the owner is `kotlinx.*` NetInteropBinding leaves it a plain callStatic, so ilemit's
+# overload resolution needs `sig`. bir2cir now promotes `shapeTypes`->`sig` so `atomic<String?>(null)` binds to the
+# ARITY-1 `atomic(T)` (tag "gen1", NOT the arity-2 defaulted sibling -> NRE) and `arrOf<String>(3)` is found (was
+# "static method not found"). Regression guard for the atomicfu-port cross-module generic-overload blocker.
+kt ktproj-genov "cases/ktproj-genov/app/App.ktproj" \
+	"$(printf '3\ngen1\nint')"
+
 # PRACTICAL COLLECTIONS app consuming the real CLR stdlib (DotKt.Stdlib.dll): a List held as an app local (resolves as
 # the referenced IReadOnlyList), member access (size/indexing), TOP-LEVEL stdlib funs (first/getOrElse/contains/indexOf/
 # count/isEmpty/take) which kotc emits as `callStatic owner=null` and bir2cir attributes to their file-class owner
@@ -152,6 +162,7 @@ rm -rf "$ROOT"/cases/ktproj/bin "$ROOT"/cases/ktproj/obj \
        "$ROOT"/cases/ktproj-injectemit/lib/bin "$ROOT"/cases/ktproj-injectemit/lib/obj \
        "$ROOT"/cases/ktproj-reprop/*/bin "$ROOT"/cases/ktproj-reprop/*/obj \
        "$ROOT"/cases/ktproj-genq/*/bin "$ROOT"/cases/ktproj-genq/*/obj \
+       "$ROOT"/cases/ktproj-genov/*/bin "$ROOT"/cases/ktproj-genov/*/obj \
        "$ROOT"/cases/ktproj-inject/bin "$ROOT"/cases/ktproj-inject/obj \
        "$ROOT"/cases/ktproj-import/bin "$ROOT"/cases/ktproj-import/obj \
        "$ROOT"/cases/ktproj-refrt/bin "$ROOT"/cases/ktproj-refrt/obj \

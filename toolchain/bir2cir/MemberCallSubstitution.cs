@@ -589,6 +589,7 @@ static class MemberCallSubstitution
                 if (refs.TryResolveTopLevelStatic(fn, recvKey, out var fileClassOwner))
                 {
                     node["owner"] = TypeJson.Fqn(fileClassOwner);   // owner is a birType-emitted (structured Fqn) slot
+                    PromoteGenericShapeToSig(node);
                     return node;
                 }
             }
@@ -1156,6 +1157,48 @@ static class MemberCallSubstitution
                 if (TypeJson.Read(el) is TypeNode tn) result.Add(tn);
         return result;
     }
+
+    // A GENERIC top-level call carries its declared parameter SHAPE in `shapeTypes` (the method-type-var-relative
+    // param types) INSTEAD of the concrete `sig`/`argTypes`/`ret` a non-generic sibling gets — kotc emits only the
+    // pure-Kotlin overload-matching shape for a generic call. Once such a call is owner-attributed to a referenced
+    // file-class (a re-imported cross-module `kotlinx.*`/DotKt Kotlin lib that NetInteropBinding leaves as a plain
+    // callStatic, so it never became a `clrGeneric*` node), ilemit's callStatic path resolves the overload via `sig`
+    // (SigString -> FindReflectedMethodBySig) and only THEN MakeGenericMethod's it with `typeArgs`. With NO `sig` it
+    // drops to the name-only arity pick and MIS-BINDS among a same-name overload set — an arity-2 defaulted sibling
+    // (whose non-const default is then passed null), or a sole-generic factory reported "static method not found".
+    // Promote `shapeTypes` to `sig` (kept OPEN: a `gp:T` param must match the OPEN generic method, NOT the
+    // substituted concrete type), and stamp the concrete `argTypes` (typeArgs substituted for the method type-vars).
+    // The call-RESULT type (`ret`) is NOT stamped: ilemit derives it off the resolved+MakeGenericMethod'd method
+    // (ApplyTypeArgs), and the ref.dll's declared return for a same-name overload set can't be matched by name+arity
+    // alone (an object-erased generic return would mislead). No-op when `sig` is already present or `shapeTypes` absent.
+    // Only reached for a REFERENCED (non-local) top-level fun — the caller's `!_localTopLevelFns.Contains(fn)` gate
+    // excludes this-module lift-thunk callStatics, which also carry `shapeTypes` but no `typeArgs` (so `methodArgs`
+    // would be null); a null `methodArgs` still leaves any `Tv` open, so `argTypes` is harmless even if one slipped in.
+    static void PromoteGenericShapeToSig(JsonObject node)
+    {
+        if (node["sig"] != null || node["shapeTypes"] is not JsonArray shapeTypes) return;
+        var methodArgs = (node["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray();
+        node["sig"] = shapeTypes.DeepClone();   // OPEN param shapes verbatim (a method-tv stays `gp:T`)
+        var argTypes = new JsonArray();
+        foreach (var st in shapeTypes)
+            if (TypeJson.Read(st) is TypeNode t) argTypes.Add(TypeJson.Write(SubstMethodTv(t, methodArgs)));
+        node["argTypes"] = argTypes;            // concrete arg types (method type-vars substituted)
+        node.Remove("shapeTypes");              // consumed into sig/argTypes — drop the transient shape carrier
+    }
+
+    // Substitute a method-scope type variable `Tv{method,i}` -> `methodArgs[i]` (the call's i-th type argument),
+    // recursively through the structured TypeNode. A class-scope tv / an out-of-range index / a null arg is left as-is.
+    static TypeNode SubstMethodTv(TypeNode t, TypeNode[] methodArgs) => t switch
+    {
+        TypeNode.Tv { Scope: "method" } tv when methodArgs != null && tv.I >= 0 && tv.I < methodArgs.Length && methodArgs[tv.I] != null => methodArgs[tv.I],
+        TypeNode.Fqn { Args: { } fa } f => new TypeNode.Fqn(f.Name, fa.Select(a => SubstMethodTv(a, methodArgs)).ToArray()),
+        TypeNode.Nullable n => new TypeNode.Nullable(SubstMethodTv(n.Of, methodArgs)),
+        TypeNode.Oblivious o => new TypeNode.Oblivious(SubstMethodTv(o.Of, methodArgs)),
+        TypeNode.Array a => new TypeNode.Array(SubstMethodTv(a.Elem, methodArgs)),
+        TypeNode.ByRef b => new TypeNode.ByRef(SubstMethodTv(b.Of, methodArgs)),
+        TypeNode.Fn fnv => new TypeNode.Fn(fnv.Suspend, SubstMethodTv(fnv.Ret, methodArgs), fnv.Params.Select(p => SubstMethodTv(p, methodArgs)).ToArray(), fnv.Recv == null ? null : SubstMethodTv(fnv.Recv, methodArgs)),
+        _ => t,
+    };
 
     // The receiver-type key of a call's first-arg type (mirrors ReferenceMetadataIndex.RecvKey on the ref.dll side).
     static string RecvKeyOf(TypeNode sig0) => sig0 switch
