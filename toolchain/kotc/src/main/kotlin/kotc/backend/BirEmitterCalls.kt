@@ -370,6 +370,13 @@ internal fun BirEmitter.propRefDispatchReceiver(node: IrPropertyReference): IrEx
 	return if (idx in 0 until node.arguments.size) node.arguments[idx] else null
 }
 
+/** Whether an instance call dispatches VIRTUALLY (callvirt) or is a plain non-virtual `call`.
+ *  A `super.X()` call (IrCall.superQualifierSymbol != null) MUST be non-virtual: the callee already points at the
+ *  RESOLVED super-class slot, so a `callvirt` would re-dispatch by the receiver's runtime type back to the OVERRIDE
+ *  and infinite-loop (issue #14). Otherwise virtual iff the callee is open/overriding. */
+internal fun isVirtualInstanceCall(call: IrCall, callee: IrSimpleFunction): Boolean =
+	call.superQualifierSymbol == null && (callee.modality != Modality.FINAL || callee.overriddenSymbols.isNotEmpty())
+
 internal fun BirEmitter.call(call: IrCall): String {
 	// A `tailrec` self-tail-call -> a back-jump to the method entry (TCO, §2b) instead of a recursive call. Matched
 	// by IR identity against the frontend-validated tail-call set installed by `method()`.
@@ -709,7 +716,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 			// `virtual` for the fallback where bir2cir cannot resolve the owner and the raw `method:"get"/"set"` node
 			// reaches ilemit (an open/override operator get/set must callvirt) — same rationale as the .NET-interop
 			// callInstance path below (#139). bir2cir drops it when it reshapes the indexer to a clrInstance accessor.
-			val ixVirtual = callee.modality != Modality.FINAL || callee.overriddenSymbols.isNotEmpty()
+			val ixVirtual = isVirtualInstanceCall(call, callee)
 			return if (name == "get")
 				"""{"k":"callInstance","virtual":$ixVirtual,"ownerType":${str(mt)},"method":"get","prop":"index-get","argTypes":[${birType(a[0].type).toJson()}],"ret":${str(retH)},"recv":${expr(recv)},"args":[${expr(a[0])}]}"""
 			else
@@ -738,7 +745,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// reaches ilemit as a raw `callInstance`; ilemit reads `virtual` to pick call vs callvirt. So stamp it here
 		// exactly like the plain Kotlin member-call path: virtual unless FINAL and not an override. Without it ilemit
 		// would default to a non-virtual `call`, mis-dispatching an `open`/`override` member (#139).
-		val clrCallVirtual = callee.modality != Modality.FINAL || callee.overriddenSymbols.isNotEmpty()
+		val clrCallVirtual = isVirtualInstanceCall(call, callee)
 		// Address the member on the CONSTRUCTED .NET type (`clrg:Collection[int]`) so a member of a generic
 		// instantiation resolves. Two cases: (1) the receiver's own type IS the .NET type; (2) the member is
 		// INHERITED from a .NET base (receiver is a Kotlin subclass) -> use the subclass's .NET supertype,
@@ -1118,7 +1125,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// routes through the get_/set_ method, not the backing field. The Kotlin<->CLR slot-name binding (get_length
 		// -> the synthetic dotkt_CharSequence slot / a @ClrIntrinsic member) is bir2cir's, off the `overrides` marker.
 		if (!property.isLateinit && !isClrField(property)) {   // route through get_/set_ accessor (CLR property model); @ClrField reads/writes the plain field
-			val virtual = callee.modality != Modality.FINAL || callee.overriddenSymbols.isNotEmpty()
+			val virtual = isVirtualInstanceCall(call, callee)
 			// A MEMBER extension property (`class C { val T.p get() }`): dispatch on the enclosing C, but its `get_p`/
 			// `set_p` method takes the extension receiver as a leading `__self` arg -> prepend it.
 			val pExt = extensionReceiver(call)?.let { expr(it) }
@@ -1154,7 +1161,15 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// non-existent `kotlin.Any.toString` and NRE). Hence the explicit kotlin.Any exclusion beside isFakeOverride.
 		val declaresOwn = !callee.isFakeOverride && declaringClass?.fqNameWhenAvailable?.asString() != "kotlin.Any"
 		val primitive = dispatchReceiver(call)!!.type.isPrimitiveOrUnsigned()
-		val fallThrough = when (name) {
+		// A `super.toString()`/`super.hashCode()`/`super.equals()` (issue #14) resolving to the kotlin.Any slot must NOT
+		// become an `objMethod` — that is UNCONDITIONALLY a `callvirt object::…` in ilemit, which re-dispatches by the
+		// receiver's runtime type back to THIS class's override and infinite-loops. Fall through to the ordinary
+		// member-call path, which emits a NON-virtual `callInstance` (isVirtualInstanceCall → virtual:false) carrying
+		// `anySlot:true`; bir2cir renames the slot + resolves the kotlin.Any owner to System.Object, ilemit's `call`
+		// reaches the base slot exactly like C#'s `base.ToString()`. The receiver of a super call is always `this` (a
+		// reference class), never a primitive, so this never disturbs the value-type objMethod routing.
+		val isSuper = call.superQualifierSymbol != null
+		val fallThrough = isSuper || when (name) {
 			"hashCode" -> declaresOwn                      // Int/Long/Char/Boolean inherit Any.hashCode → stays objMethod
 			"toString", "equals" -> declaresOwn && !primitive
 			else -> false
@@ -1345,7 +1360,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 		val all = (listOf(expr(extRecv)) + filledArgs(call)).joinToString(",")
 		if (recv != null) {
 			val ownerStr = ownerSpec(declaringClass, recv.type)
-			val virtual = callee.modality != Modality.FINAL || callee.overriddenSymbols.isNotEmpty()
+			val virtual = isVirtualInstanceCall(call, callee)
 			return """{"k":"callInstance","ownerType":${ownerStr.toJson()},"virtual":$virtual,"recv":${expr(recv)},"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty() || (ownerStr as? TypeNode.Fqn)?.args != null, effRet)},"args":[$all]${suspendCallTag(callee)}}"""
 		}
 		return """{"k":"callStatic","owner":null,"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$all]${suspendCallTag(callee)}}"""
@@ -1356,7 +1371,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// generic identity via ownerSpec below (`kotlin.collections.Iterator[int]` / `Iterable[int]`) — bir2cir
 		// substitutes/normalizes them (no monomorphized synthetic; #58).
 		val ownerStr = ownerSpec(declaringClass, recv.type)
-		val virtual = callee.modality != Modality.FINAL || callee.overriddenSymbols.isNotEmpty()
+		val virtual = isVirtualInstanceCall(call, callee)
 		// An override of kotlin.Any's universal method (toString/equals/hashCode) carries `anySlot:true` — a pure-
 		// Kotlin fact; bir2cir renames it to the System.Object slot. The Kotlin<->CLR name binding for any other
 		// interface member is bir2cir's too.

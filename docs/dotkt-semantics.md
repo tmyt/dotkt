@@ -88,6 +88,26 @@ reproduce it.* (Memory `clr-not-jvm-discard-jvmisms`.)
 - Gate: `cases/il-tailrec` (verify-il + JVM-oracle PURE). (The `tailrec` **modifier** itself is still compile-time
   only and does not round-trip as a declaration fact — §566 — but the behavior now matches.)
 
+## 2c. `super.X()` from an override is a NON-virtual `call` to the base slot (matches Kotlin/JVM, #14)
+
+- **Kotlin/JVM:** a `super.method()`/`super.prop` call is statically bound (`invokespecial`) to the **super-class
+  slot** — it never re-dispatches to the calling class's override. `override fun greet() = "d+" + super.greet()`
+  reaches the base body exactly once.
+- **DotKt (2026-07-14):** kotc now reads `IrCall.superQualifierSymbol` and emits a super-qualified instance call as a
+  **non-virtual `call`** (the shared `isVirtualInstanceCall` helper forces `virtual:false` for every super call —
+  method, member-extension, property get/set, index, and .NET-interop sites). This is the `base.M()` shape C# emits.
+  Before the fix kotc emitted `super.greet()` identically to `this.greet()` (`callvirt`), so the call re-dispatched by
+  the receiver's runtime type back to the override → **infinite recursion / stack overflow**. A normal virtual call
+  through a base-typed variable (`(b: Base).greet()`) is unchanged — still `callvirt` to the override. Covers
+  `super.<prop>`, N-level `super` chains, `super` to a user base's `toString()`, and `super<IFace>.foo()` to a Kotlin
+  interface default (DIM). Gate: `cases/il-supercall`.
+- **Residual (XFAIL, `cases/il-superobj`):** `super.toString()`/`super.hashCode()`/`super.equals()` whose *immediate*
+  super is `kotlin.Any` (or a super call to any facadegen-injected .NET base / `@ClrTypeAlias`-bound stdlib base) still
+  re-dispatches. kotc's BIR is faithful (`callInstance kotlin.Any virtual:false anySlot:true`), but bir2cir rewrites the
+  `@ClrTypeAlias(System.Object)` owner to a `clrInstance System.Object::ToString` and drops the non-virtual intent, and
+  ilemit's `EmitInstanceCall` emits an unconditional `callvirt` for a reference owner. Fixing it is a bir2cir (carry the
+  non-virtual/super fact onto the reshaped `clrInstance`/`clrPropGet`) + ilemit (honor it — emit `call`) follow-up.
+
 ## 3. `inline` happens at EMIT time, and is decoration unless a lambda literal is passed
 
 This is the single most surprising deviation, so it gets the most detail.
