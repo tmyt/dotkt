@@ -10,7 +10,7 @@
          pulls an OLD toolchain — the 0.9.5 release shipped with 0.9.3 here and pulled the pre-2.4.0 compiler.
          GUARD (#131 durable): scripts/pack-nuget.sh dies if this default != DotKtVersionPrefix
          (packaging/DotKt.Versions.props), so a stale value can never silently ship — bump both together. -->
-    <DotKtVersion Condition="'$(DotKtVersion)' == ''">0.9.6</DotKtVersion>
+    <DotKtVersion Condition="'$(DotKtVersion)' == ''">0.9.6-rc1</DotKtVersion>
     <!-- We generate the assembly ourselves (kt -> BIR -> CIL); don't let the .NET SDK glob .cs and don't infer
          a language from the project file. -->
     <EnableDefaultCompileItems Condition="'$(EnableDefaultCompileItems)' == ''">false</EnableDefaultCompileItems>

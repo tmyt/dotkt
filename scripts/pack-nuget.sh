@@ -30,9 +30,11 @@ FEED="$ROOT/build/nuget-feed"; rm -rf "$FEED"; mkdir -p "$FEED"
 # $version$ does NOT reach it) that pins the implicit Toolchain/Stdlib PackageReferences. A stale value silently
 # pulls an OLD toolchain (0.9.5 shipped pulling 0.9.3). Refuse to pack a mismatch — bump Sdk.props with the release.
 VERPREFIX="$(grep -oE '<DotKtVersionPrefix>[^<]+' "$ROOT/packaging/DotKt.Versions.props" | sed 's/.*>//')"
+VERSUFFIX="$(grep -oE '<DotKtVersionSuffix>[^<]*' "$ROOT/packaging/DotKt.Versions.props" | sed 's/.*>//')"
+VERCORE="$VERPREFIX"; [[ -n "$VERSUFFIX" ]] && VERCORE="$VERPREFIX-$VERSUFFIX"
 for sp in packaging/DotKt.Sdk/Sdk/Sdk.props packaging/DotKt.Sdk.Mpp/Sdk/Sdk.props; do
 	sv="$(grep -oE "<DotKtVersion Condition[^>]*>[^<]+" "$ROOT/$sp" | sed 's/.*>//')"
-	[[ "$sv" == "$VERPREFIX" ]] || die "$sp DotKtVersion default ($sv) != release DotKtVersionPrefix ($VERPREFIX) — bump it (else the SDK ships pulling a stale toolchain, GitHub #131)"
+	[[ "$sv" == "$VERCORE" ]] || die "$sp DotKtVersion default ($sv) != release version core ($VERCORE) — bump it (else the SDK ships pulling a stale toolchain, GitHub #131)"
 done
 
 info "build compiler (installDist) + tools"

@@ -11,9 +11,15 @@
 <Project>
   <PropertyGroup>
     <DotKtVersionPrefix>0.9.6</DotKtVersionPrefix>
+    <!-- SemVer pre-release tag (e.g. rc1 -> package version 0.9.6-rc1). EMPTY for a final release. Kept OUT of
+         DotKtVersionPrefix so AssemblyVersion/FileVersion stay numeric (0.9.6.0 — a pre-release string is illegal there). -->
+    <DotKtVersionSuffix>rc1</DotKtVersionSuffix>
     <DotKtKotlinVersion>2.4.0</DotKtKotlinVersion>
-    <Version>$(DotKtVersionPrefix)+kotlin-$(DotKtKotlinVersion)</Version>
-    <InformationalVersion>$(DotKtVersionPrefix)+kotlin-$(DotKtKotlinVersion)</InformationalVersion>
+    <!-- The SemVer CORE (prefix, plus -suffix when pre-release); the +kotlin build metadata is appended below. -->
+    <DotKtVersionCore>$(DotKtVersionPrefix)</DotKtVersionCore>
+    <DotKtVersionCore Condition="'$(DotKtVersionSuffix)' != ''">$(DotKtVersionPrefix)-$(DotKtVersionSuffix)</DotKtVersionCore>
+    <Version>$(DotKtVersionCore)+kotlin-$(DotKtKotlinVersion)</Version>
+    <InformationalVersion>$(DotKtVersionCore)+kotlin-$(DotKtKotlinVersion)</InformationalVersion>
     <PackageTags>kotlin clr dotnet kotlin-$(DotKtKotlinVersion)</PackageTags>
     <AssemblyVersion>$(DotKtVersionPrefix).0</AssemblyVersion>
     <FileVersion>$(DotKtVersionPrefix).0</FileVersion>
