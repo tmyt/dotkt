@@ -67,10 +67,16 @@ Notes:
     decides null-safety per use, exactly as Kotlin treats un-annotated Java. `oblivious` is the CLR/Roslyn term
     for `NullableAttribute`=0, NOT the Kotlin-consumer "platform" name — the node states the .NET metadata's
     actual annotation, not how a consumer treats it.
-  This is ONE tri-state model shared by BIR and META: **kotc BIR emits only not-null + nullable** (`oblivious`
-  is frontend-only — resolved to a concrete nullability BEFORE the backend, so `{t:"oblivious"}` never appears
-  in a BIR/CIR the backend produces; bir2cir/ilemit's `TypeNode.Read` accepts it for round-trip but never
-  encounters it); **facadegen META emits all three** (a `.NET` member with NO `NullableAttribute` → `oblivious`).
+  This is ONE tri-state model shared by BIR and META: **kotc BIR emits not-null + nullable + oblivious** —
+  `{t:"oblivious"}` IS produced for a platform/flexible type `T!` (`(T..T?)`), i.e. a facadegen-injected
+  `[MaybeNull]`/un-annotated .NET member (`ThreadLocal<Int>.Value`, #8). Fir2Ir attaches the
+  `@kotlin.internal.ir.FlexibleNullability` marker onto the flexible IR type (kotc installs the
+  `JvmIrSpecialAnnotationSymbolProvider` — see `ClrCliPipeline`), and `BirEmitterTypes.birType` reads it to emit
+  `{t:"oblivious"}` instead of collapsing the flexible type to a plain `{t:"nullable"}`. **bir2cir lowers it to the
+  BARE inner** (a value `Int!` → bare `int32`, default `0`; a reference `String!` → a bare NRT-oblivious ref) —
+  NEVER a `Nullable<T>` wrapper; ilemit has no oblivious case, so the wrapper must not survive bir2cir. A genuine
+  user `Int?` (no marker) stays `{t:"nullable"}` → `Nullable<Int32>`. **facadegen META emits all three** (a `.NET`
+  member with NO `NullableAttribute` → `oblivious`).
   `oblivious` is a coherent sibling node (each state names itself), NOT a `nullable`-node refinement flag —
   additive per principle 3. **STATUS (#48): FOLDED — landed.** The old duplicate nullability encodings — the type
   wrapper AND the separate decl-level `"nullable":true` / `"retNullable":true` flags — have collapsed onto the Type

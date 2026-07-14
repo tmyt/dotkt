@@ -5,6 +5,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Fixed
+
+- **bir2cir/kotc (#8): an oblivious VALUE-type platform member no longer collapses to `Nullable<T>`.** A
+  facadegen-injected `[MaybeNull]` value getter (`ThreadLocal<Int>.Value`) is a platform type `Int!`
+  (`ConeFlexibleType(Int, Int?)`), but on Kotlin 2.4.0 the `@kotlin.internal.ir.FlexibleNullability` IR marker only
+  survives when Fir2Ir is given a non-null `specialAnnotationsProvider` — kotc passed `null`, so the flexible type
+  collapsed to a plain `Int?` indistinguishable from a genuine user `Int?` and lowered to `System.Nullable<Int32>`
+  (wrong: reading unset garbage / invalid IL). kotc now installs `JvmIrSpecialAnnotationSymbolProvider` on the app
+  Fir2Ir path so the marker rides the flexible IR type; `BirEmitterTypes.birType` reads it to emit `{t:oblivious}`
+  (and excludes it from the `Nullable<T>.Value` unwrap); and `bir2cir`'s re-landed `TypeNode.Oblivious` case lowers it
+  to the BARE inner (value `Int!` → `int32` default `0`; reference `String!` → a bare NRT-oblivious ref) in every
+  build. So `ThreadLocal<Int>().Value` reads `0` when unset (a value-type platform default — see
+  `docs/dotkt-semantics.md §9a-bis`), `== null` is statically false, and the reference twin (`ThreadLocal<String>`,
+  #143) is unchanged. The klib metadata path keeps `specialAnnotationsProvider = null` (no interop markers there).
+
 ### Packaging
 
 - **Any non-stdlib DotKt reference now reaches bir2cir/ilemit in a `Library` project** (#132-general), and a new

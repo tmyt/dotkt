@@ -651,11 +651,16 @@ possibly-null .NET value into a Kotlin non-null type.
 
 ### 9a. Platform-type `T!` null-legitimacy — a null flows to the dereference (no eager boundary assertion)
 
-The flexibility of `T!` is a **frontend-only** fact: `facadegen` emits a `TypeNode.Oblivious` for an NRT-oblivious .NET
-member (`NrtByteOf == 0`, `Program.cs:ApplyNrt`), `kotc`'s `ClrTypeInjection.coneOf` maps it to a `ConeFlexibleType(T, T?)`,
-and the frontend **resolves that flexible type to a concrete `T`/`T?` per use** before any BIR is emitted — so
-`bir2cir`/`ilemit` never see a platform type (`TypeNode.Oblivious` is Read-transparently but never emitted, per its
-doc-comment). This settles the null-legitimacy question:
+The flexibility of `T!` is settled between the frontend and `bir2cir`: `facadegen` emits a `TypeNode.Oblivious` for an
+NRT-oblivious .NET member (`NrtByteOf == 0`, `Program.cs:ApplyNrt`), and `kotc`'s `ClrTypeInjection.coneOf` maps it to a
+`ConeFlexibleType(T, T?)` in an OUTPUT position (a getter/return) — where it stays flexible so a `[MaybeNull] T` keeps
+its platform-type null-checkability — while an INPUT/param `T!` type-variable collapses to the bare `T` (#157). Fir2Ir
+attaches the `@kotlin.internal.ir.FlexibleNullability` marker onto the flexible IR type (kotc installs the
+`JvmIrSpecialAnnotationSymbolProvider` — see `ClrCliPipeline`), so `kotc`'s `BirEmitterTypes.birType` **emits
+`TypeNode.Oblivious`** for it rather than collapsing it to a plain `nullable`. `bir2cir` then **lowers `Oblivious` to the
+bare inner** (a value `Int!` → bare `int32`; a reference `String!` → a bare NRT-oblivious ref) — never a `Nullable<T>`
+wrapper — so **`ilemit` never sees a platform type** (it has no oblivious case). This settles the null-legitimacy
+question:
 
 - **No spurious null-check is inserted when a `T!` is used as a non-null `T`.** kotc emits nothing at the implicit
   boundary — a `T!` value assigned to a `T` local, passed to a `T` parameter, or returned as a declared `T` is a plain
@@ -678,6 +683,31 @@ Practical upshot for interop: treat a `T!` from an un-annotated .NET assembly as
 if you use it as non-null LOCALLY and it is actually null, you get a `NullReferenceException` at the point you
 dereference it; if you pass it to a public Kotlin non-null parameter, you get a Kotlin `NullPointerException` at that
 call's entry (§9c). Prefer `T?` + a null check (or `?:`) at the boundary when the .NET API can legitimately return null.
+
+### 9a-bis. A VALUE-type platform `T!` has NO null state — it is the CLR default (`0`), and `== null` is statically false (#8)
+
+§9a is written for REFERENCE platform types (a reference is always null-capable in IL). A VALUE-type platform member —
+a facadegen-injected `[MaybeNull]`/un-annotated .NET member whose type is a value type, e.g. `ThreadLocal<Int>.Value` —
+behaves differently, because a CLR value type has no null representation:
+
+- The oblivious `Int!` lowers to a **bare `int32`**, NOT `System.Nullable<Int32>`. Reading `ThreadLocal<Int>().Value`
+  when the slot was never set yields the CLR **default `0`**, whereas the SAME code on Kotlin/JVM (where `ThreadLocal`'s
+  `T` is a boxed `Integer` and `.get()` is `@Nullable`) yields `null`. This is a deliberate divergence: DotKt reifies
+  the type argument to the value type `int32`, so the .NET runtime's own default applies. (Contrast the reference twin
+  `ThreadLocal<String>().Value`, which IS `null` when unset — a reference platform type keeps a real null.)
+- Because the value has no null state, a `threadLocalInt.Value == null` comparison is **statically false**, and a
+  `threadLocalInt.Value ?: fallback` elvis always yields the value (the fallback is dead). No `Nullable<T>.HasValue`
+  test or `.Value` unwrap is emitted — there is no wrapper struct to unwrap.
+
+This falls out of the reification rule (§2, `clr-all-type-args-reified`): a platform `T` reified to a value type takes
+that value type's null-lessness. If you need a genuine "unset vs 0" distinction over a value type, use an explicit
+Kotlin `Int?` (which IS `Nullable<Int32>`), not the platform default.
+
+**Writing** a bare value works (`threadLocalInt.Value = 5`). A value-type platform slot has no null state, so storing a
+NULLABLE source into it (`threadLocalInt.Value = someIntQ`, or `= null` — both compile-legal under platform laxity) is
+**unsupported** on the CLR (there is no `Nullable<Int32>` slot to hold it — the setter is a bare `int32`). Use an
+explicit Kotlin `Int?`-typed property/variable when you need nullable value storage. (Residual: a genuinely-null write
+into a value platform property is not yet coerced/diagnosed at the `clrPropSet` boundary.)
 
 ### 9c. Non-null CONTRACTS on the public surface — fail-fast at the callee boundary (#6)
 
