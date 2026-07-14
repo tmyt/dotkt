@@ -59,6 +59,25 @@ static class SuspendColdLowering
     // entry points); FunGen (nested) reads it. ApplyAll runs before the lambda phase, so it is always populated by then.
     static ReferenceMetadataIndex _refs;
 
+    // APP-build gate for cold-lowering an `inline suspend fun`'s STANDALONE body. In an app build an inline suspend fun
+    // is a user/kotlinx WRAPPER (e.g. `suspendCancellableCoroutine`, or the issue-#22 `mySuspend`) whose standalone body
+    // is a real coroutine that must be cold-lowered (InlineSplice splices its call sites, but the emitted standalone
+    // method still reaches ilemit). In a STDLIB build the ONLY inline suspend funs are the coroutine PRIMITIVES
+    // (`suspendCoroutine`/`suspendCoroutineUninterceptedOrReturn`) — intrinsics whose call sites are reconstructed inline
+    // (EmitSuspendCoroutineCall) and whose standalone bodies must stay un-lowered for the ilemit throw-stub. So the inline
+    // shape gate is lifted ONLY in app builds; stdlib builds keep excluding inline funs (current behavior).
+    static bool _appBuild;
+
+    // #22 — names of the top-level intrinsic-block CLOSURE classes consumed (reconstructed INLINE) by
+    // EmitSuspendCoroutineCall. A `suspendCoroutineUninterceptedOrReturn`/`suspendCoroutine` block that CAPTURES an
+    // enclosing local (e.g. the crossinline `block` param of the issue-#22 `mySuspend`/`suspendCancellableCoroutine`)
+    // is materialized by kotc/ClosureSynthesis as a `newClosure` top-level class; the cold lowering splices that
+    // class's invoke body into the SM, leaving the class DEAD. It is not merely wasteful: its verbatim invoke body
+    // carries a `COROUTINE_SUSPENDED` read whose owner MemberCallSubstitution mis-resolves to the enclosing file class
+    // (the SM's own reconstructed `Suspended()` uses the correct IntrinsicsKt owner). So the dead class is pruned after
+    // the transform loop. (The non-capturing `newDelegate`/__lambdaN block form is left untouched — it emits cleanly.)
+    static HashSet<string> _consumedIntrinsicClosures;
+
     // Structured type-node helpers for the SM synthesis (all SM type slots are structured TypeNode). `Tn` = a bare-FQN
     // slot; `Gen` = a constructed generic slot; `ContAny`/`ContUnit` = Continuation<Any?>/<Unit>. Each returns a FRESH
     // JsonNode (a JSON node has a single parent, so a shared instance cannot be reused across slots).
@@ -187,9 +206,11 @@ static class SuspendColdLowering
     // Returns the callee-return-type map (cold-entry name -> Kotlin resultType), so the SEPARATE
     // SuspendLambdaLowering phase can type a suspend-lambda's awaited value the SAME way (else a
     // lambda's `h()` await falls back to kotlin.Any and the value is never unboxed -> `object + int`).
-    public static IReadOnlyDictionary<string, TypeNode> ApplyAll(IReadOnlyList<JsonNode> roots, ReferenceMetadataIndex refs, IReadOnlySet<string> localTypeFqns)
+    public static IReadOnlyDictionary<string, TypeNode> ApplyAll(IReadOnlyList<JsonNode> roots, ReferenceMetadataIndex refs, IReadOnlySet<string> localTypeFqns, bool appBuild)
     {
         _refs = refs;   // #10: EmitAwaitPoint reads it to resolve the .NET awaitable pattern for each `.await()`.
+        _appBuild = appBuild;
+        _consumedIntrinsicClosures = new HashSet<string>(StringComparer.Ordinal);
         // 1. Global registry of shape-eligible suspend funs across every input file.
         var entries = new Dictionary<FunKey, Entry>();
         // Closure-class registry (for the suspendCoroutine intrinsic inliner): kotc materializes the intrinsic's
@@ -385,6 +406,20 @@ static class SuspendColdLowering
             // leaks nothing to the public surface.
             if (e.TypeNode != null) WidenPrivatesAccessedBySm(e.TypeNode, newTypes);
         }
+
+        // #22 — prune the intrinsic-block closure classes the cold lowering reconstructed inline (now dead; see
+        // _consumedIntrinsicClosures). Only the SM-consumed closure NAMES are removed, so a `newClosure` used
+        // anywhere else survives. GATED on `!baseIsLocal`: an rt-stdlib build (baseIsLocal) RETAINS the original
+        // suspend method (above) alongside the cold entry, and that retained body still holds the raw `newClosure`
+        // intrinsic-block arg — pruning its class there would dangle the ref. In an app build the original is
+        // replaced by the SM, so the closure is genuinely dead. (Vacuous for the current stdlib — its intrinsic
+        // blocks are non-capturing — but defensive against a future capturing stdlib primitive.)
+        if (!baseIsLocal && _consumedIntrinsicClosures.Count > 0)
+            foreach (var r in roots)
+                if (r is JsonObject file && file["types"] is JsonArray ts)
+                    for (var i = ts.Count - 1; i >= 0; i--)
+                        if (ts[i] is JsonObject to && Str(to["name"]) is string tn && _consumedIntrinsicClosures.Contains(tn))
+                            ts.RemoveAt(i);
         return calleeRet;
     }
 
@@ -505,7 +540,8 @@ static class SuspendColdLowering
     {
         if (!Mod(m, "suspend")) return false;
         if (!Bool(m["static"])) return false;                       // top-level statics + extensions (kotc: __self param)
-        if (Mod(m, "inline") || Bool(m["abstract"])) return false;
+        if (Bool(m["abstract"])) return false;
+        if (Mod(m, "inline") && !_appBuild) return false;           // #22: cold-lower an inline suspend WRAPPER's standalone body in app builds; stdlib intrinsics stay stubbed
         if (m.ContainsKey("steps") || m.ContainsKey("coClass")) return false;  // old CPS / sequence path
         if (m["body"] is not JsonArray body) return false;
         return SuspensionsSupported(body, inHandler: false, tryDepth: 0);
@@ -520,7 +556,7 @@ static class SuspendColdLowering
     {
         if (!Mod(m, "suspend")) return false;
         if (Bool(m["static"])) return false;                        // a static member fun -> deferred
-        if (Mod(m, "inline")) return false;
+        if (Mod(m, "inline") && !_appBuild) return false;           // #22: as IsShapeEligible — inline suspend member wrapper lowers in app builds
         if (m.ContainsKey("steps") || m.ContainsKey("coClass")) return false;
         // A member that is BOTH generic on its own (its own type params) AND on a generic class is deferred v1:
         // the SM would need to thread the union of both param lists (e.g. DeepRecursiveScope<T,R>'s
@@ -559,6 +595,14 @@ static class SuspendColdLowering
                 // SM field, `__outer` -> the member SM's `$this`). Do NOT descend into its body (that is the
                 // lambda's own scope, validated by its own FunGen build) — descending would trip the refusal below.
                 if (k == "newSuspendLambda") return true;
+                // #22 — a PLAIN closure/delegate VALUE (no suspension inside) is a spillable local, not a suspend
+                // lambda: the cold SM holds it in a field across the suspension. This arises when InlineSplice
+                // MATERIALIZES a crossinline lambda param (`§4.4ii`) as a `newClosure` bound to a temp that a nested
+                // suspend-intrinsic closure captures (the issue-#22 `suspendCancellableCoroutine`/`mySuspend` shape).
+                // Admit it (do NOT descend — its body is its own scope, and HasSuspension already proved it holds no
+                // suspension). A genuine SUSPEND lambda is `newSuspendLambda` (above); a `newClosure` that DOES wrap a
+                // suspension stays refused (SuspendLambdaLowering territory).
+                if ((k == "newClosure" || k == "newDelegate") && !HasSuspension(o)) return true;
                 // ANY OTHER lambda/closure/sequence node -> unsupported (genuine suspend lambdas, which emit a
                 // `newClosure` and are NOT flagged `suspendCall`, are handled separately by SuspendLambdaLowering).
                 // Left untouched.
@@ -1651,11 +1695,21 @@ static class SuspendColdLowering
                         t = last["value"] ?? NullConst(AnyTn);
                     else
                         pre.Add(invBody[i]);
+                // #22 — the UNINTERCEPTED form passes the SM ITSELF (smSelf) as the raw continuation, so a block that
+                // SYNCHRONOUSLY `cont.resume(v)`s re-enters this same invokeSuspend before it returns. The state label
+                // must therefore be armed to `state` BEFORE the block runs (mirroring the JVM CPS, which sets
+                // `this.label = N` before the suspend call) — otherwise the re-entry finds label 0 and restarts the
+                // block from the top (unbounded recursion). The wrapper form buffers through SafeContinuation, so its
+                // label-set stays AFTER the block (below), keeping that path byte-identical.
+                // INVARIANT: the intrinsic block is a PLAIN (non-suspend) lambda, so its pre-stmts carry no nested
+                // suspension that would re-arm the label to a later state — arming `state` here is the sole write in
+                // this segment.
+                outp.Add(SetField("label", IntConst(state)));
                 foreach (var s in pre) EmitStmt(SubstBlock(s, capMap, cParam, cBinding, closureType), outp);
                 tail = SubstBlock(t, capMap, cParam, cBinding, closureType);
             }
 
-            outp.Add(SetField("label", IntConst(state)));
+            if (wrapper) outp.Add(SetField("label", IntConst(state)));
             outp.Add(new JsonObject { ["k"] = "setLocal", ["name"] = "result", ["value"] = Rewrite(tail, outp) });
             outp.Add(BrIf(new JsonObject
             {
@@ -1687,6 +1741,7 @@ static class SuspendColdLowering
                 closureType = TypeJson.OwnerName(arg["closureType"]);
                 if (closureType == null || !_closures.TryGetValue(closureType, out var cls))
                     return (null, null, null, null);
+                _consumedIntrinsicClosures?.Add(closureType);   // #22: this class is reconstructed INLINE below -> now dead; pruned by ApplyAll
                 invoke = (cls["methods"] as JsonArray)?.OfType<JsonObject>().FirstOrDefault(m => Str(m["name"]) == "invoke");
                 if (cls["fields"] is JsonArray flds && arg["captures"] is JsonArray caps)
                     for (var i = 0; i < flds.Count && i < caps.Count; i++)
@@ -1713,6 +1768,15 @@ static class SuspendColdLowering
             if (node is JsonObject o)
             {
                 var k = Str(o["k"]);
+                // #22 — canonicalize a `COROUTINE_SUSPENDED` read to the SM's own `Suspended()` marker. kotc emits the
+                // top-level `kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED` val, but MemberCallSubstitution
+                // mis-resolves its owner to the ENCLOSING file class (`InlineSpliceKt`) rather than IntrinsicsKt (a
+                // top-level-val resolution gap that only surfaces when a `suspendCoroutineUninterceptedOrReturn` block
+                // returns COROUTINE_SUSPENDED directly, as in the issue-#22 shape). The suspended sentinel is a
+                // coroutine intrinsic bir2cir owns, so bind it to the canonical owner here regardless of the read's
+                // resolved owner (a correctly-resolved read normalizes to the identical node).
+                if (k == "callStatic" && Str(o["method"]) is "COROUTINE_SUSPENDED" or "get_COROUTINE_SUSPENDED")
+                    return Suspended();
                 if (k == "field" && closureType != null && TypeJson.OwnerName(o["ownerType"]) == closureType && Str(o["name"]) is string fn
                     && capMap.TryGetValue(fn, out var cap))
                     return cap.DeepClone();
