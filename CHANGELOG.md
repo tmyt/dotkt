@@ -7,6 +7,17 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir (#11): a nullable/`null` source written into a value-type platform slot is now coerced at the `clrPropSet`
+  boundary — the WRITE twin of #8's oblivious read.** A facadegen-injected value-type platform property (e.g.
+  `ThreadLocal<Int>.Value`, a bare `int32` setter) assigned a genuine Kotlin `Int?` (`ti.Value = someIntQ`) previously
+  produced an `InvalidProgramException` — a `Nullable<Int32>` value flowed unchanged into the bare `int32` slot. New pass
+  `ValueSlotNullableWrite` (runs right after `NetInteropBinding`, non-ref builds) reflects the setter slot; when it is a
+  bare (non-`Nullable<>`) value type it **unwraps** a `Nullable<V>` source via the existing `nullableValue`
+  (`Nullable<V>.get_Value()`), and it **fails loud** at emit time on a literal-`null` write (`ti.Value = null`) — a CLR
+  value type has no null representation, so a silent `default(V)` would mask a user bug. A genuine `Nullable<V>` .NET
+  property, a `ThreadLocal<Int?>` slot, and reference slots (`ThreadLocal<String>`) are untouched. Gate: the extended
+  `cases/il-tlvalint` (write `5`, write `Int? = 7` → coerced to 7, and the `String?` reference-slot twin). Semantics:
+  `docs/dotkt-semantics.md` §9a-bis.
 - **facadegen/bir2cir (#10): `await` generalized from Task-only to the .NET AWAITABLE PATTERN (GetAwaiter) — Task,
   ValueTask, WinRT `IAsyncOperation<T>`, and custom awaitables, with zero per-type compiler support.** Previously
   facadegen injected `.await()` only for the BCL Task family and bir2cir hardcoded the `TaskAwaiter` dance. Now a type is
