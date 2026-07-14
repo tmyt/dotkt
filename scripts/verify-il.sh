@@ -331,11 +331,14 @@ il_check_imports dualrep DualRep "$ROOT/cases/il-dualrep" "$(printf 'net\n3\nkt\
 # (not 'always false') and true when unset; and static `RuntimeHelpers.GetHashCode(object)` injects (the OBJECT_MEMBERS
 # name-skip no longer drops a distinct static method).
 il_check_imports bclinject AppKt "$ROOT/cases/il-bclinject" "$(printf 'hi\nTrue\nTrue')"
-# tlvalint (#8): the VALUE-type twin of bclinject — `ThreadLocal<Int>.Value` is a `[MaybeNull]` oblivious platform type
-# `Int!`, so it lowers to a BARE `int32` (default `0` when unset), NEVER `Nullable<Int32>`. Reading into a non-null `Int`
-# yields 0; the `== null` is statically false; the `?:` elvis returns the bare value. The `ThreadLocal<String>` twin
-# proves the reference-oblivious path (#143) still gives a real runtime null check.
-il_check_imports tlvalint AppKt "$ROOT/cases/il-tlvalint" "$(printf '0\nFalse\n0\nTrue')"
+# tlvalint (#8/#11): the VALUE-type twin of bclinject — `ThreadLocal<Int>.Value` is a `[MaybeNull]` oblivious platform
+# type `Int!`, so it lowers to a BARE `int32` (default `0` when unset), NEVER `Nullable<Int32>`. READ (#8): into a
+# non-null `Int` yields 0; the `== null` is statically false; the `?:` elvis returns the bare value; the
+# `ThreadLocal<String>` twin proves the reference-oblivious path (#143) still gives a real runtime null check. WRITE
+# (#11): a bare `5` writes; a `Nullable<Int32>` source (`Int? = 7`) is coerced/unwrapped to the bare slot (-> 7); the
+# `String?` reference-slot write needs no coercion (-> hi). (A literal-`null` value write is a loud bir2cir error, not a
+# run sample — §9a-bis.)
+il_check_imports tlvalint AppKt "$ROOT/cases/il-tlvalint" "$(printf '0\nFalse\n0\nTrue\n5\n7\nhi')"
 # taskfam: a same-name .NET arity family — non-generic `Task` and `Task<TResult>` (Kotlin `Task1`) coexist in one
 # file; `generic:Task1[T]` cross-refs resolve to the arity-1 definition (docs/dotkt-semantics.md §8d).
 il_check_imports taskfam Tf "$ROOT/cases/il-taskfam" "$(printf 'plain=True\ngeneric=42')"

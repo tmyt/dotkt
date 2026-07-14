@@ -756,11 +756,21 @@ This falls out of the reification rule (§2, `clr-all-type-args-reified`): a pla
 that value type's null-lessness. If you need a genuine "unset vs 0" distinction over a value type, use an explicit
 Kotlin `Int?` (which IS `Nullable<Int32>`), not the platform default.
 
-**Writing** a bare value works (`threadLocalInt.Value = 5`). A value-type platform slot has no null state, so storing a
-NULLABLE source into it (`threadLocalInt.Value = someIntQ`, or `= null` — both compile-legal under platform laxity) is
-**unsupported** on the CLR (there is no `Nullable<Int32>` slot to hold it — the setter is a bare `int32`). Use an
-explicit Kotlin `Int?`-typed property/variable when you need nullable value storage. (Residual: a genuinely-null write
-into a value platform property is not yet coerced/diagnosed at the `clrPropSet` boundary.)
+**Writing** a bare value works (`threadLocalInt.Value = 5`). A value-type platform slot has no null state, so a source
+that carries one is coerced at the `clrPropSet` boundary (`ValueSlotNullableWrite`, bir2cir — the WRITE twin of the #8
+read side), NOT stored as a `Nullable<Int32>` (the setter is a bare `int32`):
+
+- A `Nullable<V>` source — a genuine Kotlin `Int?` (`threadLocalInt.Value = someIntQ`) — is **unwrapped** to the bare
+  `V` the slot expects (bir2cir emits the `nullableValue` = `Nullable<V>.get_Value()`). If the source is dynamically
+  `null` at runtime, `get_Value()` throws `InvalidOperationException` — the faithful "there is no value to store into a
+  null-less slot" outcome (contrast Kotlin/JVM, where the boxed slot would just hold `null`).
+- A **literal `null`** source (`threadLocalInt.Value = null`, compile-legal under platform laxity) is a **loud bir2cir
+  emit-time error** — a CLR value type has no null representation, so a silent `default(V)` (0) would mask a user bug.
+  Use an explicit Kotlin `Int?`-typed property/variable when you need nullable value storage.
+
+Only a **bare** value slot triggers this: a genuine `Nullable<V>` .NET property (a real `int?` slot) or a
+`ThreadLocal<Int?>` (a `Nullable<Int32>` slot) keeps the source verbatim, and a reference slot (`ThreadLocal<String>`)
+is untouched — a `String!` platform reference has a real null.
 
 ### 9c. Non-null CONTRACTS on the public surface — fail-fast at the callee boundary (#6)
 

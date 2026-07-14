@@ -364,6 +364,12 @@ sealed class Pipeline
             // kotc lowers itself (ClrEvent<T>/ClrRef<T>/byref — they don't exist in any ref, so they never resolve here).
             // Non-ref only (the stdlib self-build injects no facadegen .NET interop).
             if (!_options.RefBuild) NetInteropBinding.Apply(bir.Root, refs);
+            // #11 — VALUE-TYPE PLATFORM SLOT WRITE COERCION: a `Nullable<V>`/`null` source assigned to a bare value-type
+            // platform property/field slot (`ThreadLocal<Int>.Value = someIntQ`) — the WRITE twin of #8's oblivious read.
+            // Unwrap a `Nullable<V>` source to the bare `V` the setter expects (`nullableValue`), and fail loud on a
+            // literal `null` into a null-less value slot. Runs right after NetInteropBinding (consumes its `clrPropSet`
+            // nodes) and before BirTypeLowering (owner args + the wrap's elem are still `kotlin.*`). Non-ref only.
+            if (!_options.RefBuild) ValueSlotNullableWrite.Apply(bir.Root, refs);
             // #55 §4 — DERIVE the `clrGeneric*` overload-matcher `shapes` from kotc's pure-Kotlin `shapeTypes` (the
             // DECLARED parameter identities) via the @ClrTypeAlias index. kotc no longer knows the .NET shape names
             // (Int64/SByte/…) — that CLR knowledge lives HERE. Runs FIRST in the per-file loop, before ANY type-erasing
