@@ -50,8 +50,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `SynchronizationContext`); `await()` / `await(captureContext = true)` keep the historical capturing `TaskAwaiter` path.
   facadegen surfaces the const-default param on both await overloads; bir2cir's `EmitAwaitPoint` reads the literal and
   selects the awaiter family (a dynamic, non-const `captureContext` is refused loudly). Gate: `cases/il-cfgawait`
-  (non-generic, sync fast path). The generic `Task<T>.await(captureContext = false)` awaiter is a nested-generic type
-  (arity on the outer) that additionally needs an ilemit `ConstructGeneric` fix — tracked as a follow-up.
+  (non-generic, sync fast path).
 - **A star projection `Key<*>` of a self-ref-bounded generic (`interface Key<E : Element>`) no longer lowers to the
   constraint-violating `Key<System.Object>` (#2).** kotc's star-projection rule discards the bound (`at == null ->
   OBJ`, `kotlin.Any`), so `Key<*>` reached bir2cir as `Key<kotlin.Any>` → `Key<System.Object>` — but `System.Object`
@@ -66,9 +65,24 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `Key<Any>` is never valid Kotlin on a bounded param, so an objectish arg there unambiguously came from a star
   projection — the rewrite is safe (an unconstrained `List<Any>` is untouched). A self-referential F-bound
   (`E : Enum<E>`) is left unsubstituted (no valid closed generic; finite by construction). This makes the ref.dll,
-  rt.dll, and app views of the signature agree. (Full run-green for the `il-coctxkey`/`il-cointercept` gate cases
-  additionally needs an ilemit fix — the inherited GENERIC default-interface-method `get<E : Element>(key: Key<E>)`
-  is forwarded/implemented with E erased to `object`, re-introducing `Key<object>`; tracked XFAIL_RUN as #2 part-2.)
+  rt.dll, and app views of the signature agree.
+- **ilemit now forwards/implements a GENERIC default-interface-method without erasing its method type parameter, so
+  the coroutine-context hierarchy loads and dispatches (#2 part-2).** The inherited generic DIM
+  `get<E : Element>(key: Key<E>): E?` was handled three ways that each broke a `CoroutineContext` subclass/impl, all
+  fixed in the CLR codegen lane:
+  - The class DIM-forward bridge (`TryEmitDimForwardBridge`) emitted a NON-generic body (E erased to `object` →
+    `Key<object>` + a generic-arity methodimpl mismatch → `TypeLoadException`). It now emits a GENERIC bridge
+    (`DefineGenericParameters` mirroring the DIM's arity + constraints, `MakeGenericMethod` on the forwarded target),
+    and skips the redundant self-forwarder when the found default IS the very slot being filled (which would recurse).
+  - An emitted interface whose DIM overrides an EMITTED base-interface method (`ContinuationInterceptor.get` over
+    `Element::get`/`CoroutineContext::get`) carried no methodimpl on the base slots, so every implementer failed to
+    load (`Method 'get' … does not have an implementation`). A new pass (`Emitter.DimImpl.cs`) emits a private-final
+    methodimpl bridge for each inherited emitted-base slot (transitively; signature sourced from the BASE decl so a
+    covariant/constrained override stays legal), mirroring the existing external-base path.
+  - A `callInstance` to an interface method inherited through an emitted class's EXTERNAL base
+    (`e[key]` → `AbstractCoroutineContextElement`'s `get<E>`) was unresolved because the reflected lookup searched
+    only a class's own members, not its implemented interfaces. `FindReflectedMethod` now falls back to the
+    transitively-implemented interfaces for a class receiver too. Gates: `cases/il-coctxkey`, `cases/il-cointercept`.
 - **`Array(size){ mk<T?>(null) }` inside a generic class is now ilverify-clean — no spurious `[DelegateCtor]
   Unrecognized arguments` (#142).** When an `Array(size){…}` init-lambda inside a generic class returns a
   CONSTRUCTED-generic whose type-arg is a nullable type-var (`Ref<T?>`), bir2cir's `NullableGenericReturnErasure`
