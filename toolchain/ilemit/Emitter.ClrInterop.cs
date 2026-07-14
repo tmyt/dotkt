@@ -446,7 +446,9 @@ sealed partial class Emitter
             else { EmitExpr(e.GetProperty("recv")); if (arrayCloneFallback && !typeof(System.Array).IsAssignableFrom(type)) _il.Emit(OpCodes.Castclass, typeof(System.Array)); }
         }
         EmitArgs(e.GetProperty("args"), mi.GetParameters());
-        EmitInstanceCall(mi, instance, type);
+        // A `super.M()` to a CLR-bound base (issue #14) rides in as `"super":true` — force a non-virtual `call` to the
+        // resolved base slot (else the callvirt re-dispatches to THIS class's override -> stack overflow).
+        EmitInstanceCall(mi, instance, type, superCall: e.TryGetProperty("super", out var supFlag) && supFlag.GetBoolean());
         // A `ref T`-returning method used as a value -> dereference the managed pointer (value copy). The live-ref
         // form (`byrefOf(m())`, behind `var x by byref(m())`) passes deref:false to keep the pointer.
         if (mi.ReturnType.IsByRef)
@@ -540,6 +542,8 @@ sealed partial class Emitter
         var propName = e.GetProperty("name").GetString();
         var type = ClrRef(e.GetProperty("type"));
         var isStatic = e.GetProperty("static").GetBoolean();
+        // `super.prop` to a CLR-bound base (issue #14) -> a non-virtual `call` to the base accessor slot (else callvirt re-dispatch).
+        var superCall = e.TryGetProperty("super", out var supG) && supG.GetBoolean();
         var getter = PropAccessor(type, propName, getter: true);
         if (getter == null)
         {
@@ -564,7 +568,7 @@ sealed partial class Emitter
             if (gm != null)
             {
                 if (!isStatic && !gm.IsStatic) { if (type.IsValueType) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
-                EmitInstanceCall(gm, !isStatic && !gm.IsStatic, type);   // routes `constrained.` for a virtual value-type accessor (else CallVirtOnValueType)
+                EmitInstanceCall(gm, !isStatic && !gm.IsStatic, type, superCall);   // routes `constrained.` for a virtual value-type accessor (else CallVirtOnValueType)
                 return gm.ReturnType;
             }
             // A .NET FIELD surfaced as a Kotlin property (facadegen records static/const fields, public instance fields,
@@ -601,7 +605,7 @@ sealed partial class Emitter
         {
             if (type.IsValueType) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv"));
         }
-        EmitInstanceCall(getter, !isStatic, type);   // routes `constrained.` for a virtual value-type accessor (else CallVirtOnValueType)
+        EmitInstanceCall(getter, !isStatic, type, superCall);   // routes `constrained.` for a virtual value-type accessor (else CallVirtOnValueType)
         return getter.ReturnType;
     }
 
@@ -611,6 +615,8 @@ sealed partial class Emitter
         var propName = e.GetProperty("name").GetString();
         var type = ClrRef(e.GetProperty("type"));
         var isStatic = e.GetProperty("static").GetBoolean();
+        // `super.prop = v` to a CLR-bound base (issue #14) -> a non-virtual `call` to the base setter slot.
+        var superCall = e.TryGetProperty("super", out var supS) && supS.GetBoolean();
         var setter = PropAccessor(type, propName, getter: false);
         if (setter == null)
         {
@@ -623,7 +629,7 @@ sealed partial class Emitter
                 // lands on the real struct (an addressable lvalue), not a spilled copy. Mirrors the getter path.
                 if (!isStatic && !sm.IsStatic) { if (type.IsValueType) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
                 EmitArgs2(new[] { e.GetProperty("value") }, sm.GetParameters());
-                EmitInstanceCall(sm, !isStatic && !sm.IsStatic, type);   // routes `constrained.` for a virtual value-type accessor (else CallVirtOnValueType)
+                EmitInstanceCall(sm, !isStatic && !sm.IsStatic, type, superCall);   // routes `constrained.` for a virtual value-type accessor (else CallVirtOnValueType)
                 return typeof(void);
             }
             // A writable .NET FIELD surfaced as a Kotlin (mutable) property -> field store.
@@ -638,7 +644,7 @@ sealed partial class Emitter
         // A property setter on a VALUE type takes `this` by managed pointer -> load the receiver ADDRESS.
         if (!isStatic) { if (type.IsValueType) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
         EmitArgs2(new[] { e.GetProperty("value") }, setter.GetParameters());
-        EmitInstanceCall(setter, !isStatic, type);   // routes `constrained.` for a virtual value-type accessor (else CallVirtOnValueType)
+        EmitInstanceCall(setter, !isStatic, type, superCall);   // routes `constrained.` for a virtual value-type accessor (else CallVirtOnValueType)
         return typeof(void);
     }
 

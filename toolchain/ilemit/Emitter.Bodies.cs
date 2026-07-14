@@ -603,9 +603,13 @@ sealed partial class Emitter
     //   - virtual NON-final method inherited by the value type   -> `constrained. <VT>; callvirt` (e.g. object.ToString
     //       on a struct that doesn't override it — the prefix lets the JIT box/dispatch)
     // A bare `callvirt` on a value-type receiver is CallVirtOnValueType (ilverify-rejected though JIT-tolerated).
-    void EmitInstanceCall(MethodInfo mi, bool instance, Type recvType)
+    //   - `superCall` (issue #14: a `super.M()` whose base is CLR-bound) forces a NON-virtual `call` on a REFERENCE
+    //       receiver — the callee already names the resolved base slot, so `callvirt` would re-dispatch by the
+    //       receiver's runtime type back to THIS class's override (infinite recursion). This is exactly C#'s `base.M()`.
+    void EmitInstanceCall(MethodInfo mi, bool instance, Type recvType, bool superCall = false)
     {
         if (!(instance && mi.IsVirtual)) { _il.Emit(OpCodes.Call, mi); return; }
+        if (superCall && !recvType.IsValueType) { _il.Emit(OpCodes.Call, mi); return; }   // base-slot dispatch (C# `base.M()`)
         if (!recvType.IsValueType) { _il.Emit(OpCodes.Callvirt, mi); return; }
         if (mi.IsFinal) { _il.Emit(OpCodes.Call, mi); return; }   // value type's own sealed impl -> direct call on the address
         _il.Emit(OpCodes.Constrained, recvType);

@@ -7,6 +7,20 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **kotc/bir2cir/ilemit (#14): `super.X()` to a CLR-bound base is now a non-virtual `call` to the base slot (no more
+  infinite recursion).** The #14 core already made a user-class `super.X()` non-virtual (`virtual:false`), but when the
+  super-call's base is CLR-bound the non-virtual intent was LOST downstream: bir2cir reshapes the `callInstance` into a
+  `clrInstance`/`clrPropGet` (dropping `virtual`) and ilemit `callvirt`s an unconditional virtual on the reference
+  receiver — so `super.toString()`/`equals()`/`hashCode()` (→ `System.Object`), a `super.<m>()` to a facadegen-injected
+  .NET base, and a `super.<m>()` to a `@ClrTypeAlias` stdlib base all re-dispatched by the receiver's runtime type back
+  to THIS class's override → stack overflow. Fix (one contract across three layers): kotc stamps a `"super":true` marker
+  on the `super`-qualified `callInstance` (new `superTag`); bir2cir propagates it onto the produced `clrInstance`/
+  `clrPropGet`/`clrPropSet`/`clrGenericInstance` (both the `@ClrTypeAlias` `MemberCallSubstitution` route and the
+  facadegen `NetInteropBinding` route); ilemit's `EmitInstanceCall`/`EmitClrCall`/`EmitClrPropGet`/`EmitClrPropSet`
+  (and the generic-instance path) honor it, emitting `OpCodes.Call` for a reference owner — exactly C#'s `base.M()` IL.
+  Gates: `il-superobj` (R1: `super.toString()`/`hashCode()`/`equals()` → the `System.Object` slot) and the new
+  `il-supernet` (R2: `super.Next()` to facadegen-injected `System.Random`) in `verify-il.sh`; the `superobj` `XFAIL_RUN`
+  entry is pruned. `il-supercall` (user-class super) stays green.
 - **kotc (#16): top-level functions in a dotted-filename file class (`api.common.kt` → `Api_commonKt`) now round-trip
   cross-module.** `BirEmitter.fileClassName` derived the file-facade class from the raw filename stem without sanitizing
   it, so `api.common.kt` became file class `demo.Api.commonKt` — and ilemit's `DefineType` reads that dot as a namespace
