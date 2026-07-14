@@ -592,6 +592,24 @@ static class MemberCallSubstitution
                     PromoteGenericShapeToSig(node);
                     return node;
                 }
+                // #25 RESIDUAL: a GENERIC top-level call carries `shapeTypes` (no concrete `sig`), so its recovered
+                // receiver-key is EMPTY — and TryResolveTopLevelStatic then can NOT disambiguate the owner whenever the
+                // bare fun name lives under more than one file-class in the ref index (two referenced libs, or a
+                // common-fragment `*CommonKt` file class stamped asymmetrically from its actual sibling — the reporter's
+                // atomicfu `atomicArrayOfNulls`). But kotc ALREADY carried the facadegen-injected file class in
+                // `ownerType`: every top-level path that emits `shapeTypes` (plainInjectedTopLevelCall + its
+                // lift-forwarder mirrors) stamps a non-empty referenced `ownerType` alongside it, so it is always
+                // present here — adopt it as the owner and promote `shapeTypes`->`sig`, so ilemit resolves the
+                // overload by sig then MakeGenericMethod instead of dropping to the name-only pick that reported
+                // "static method not found". Gated on the generic fingerprint (`shapeTypes` + no `sig`) so a non-generic
+                // owner-null call the index simply doesn't know is left untouched (its owner stays null).
+                if (node["shapeTypes"] is JsonArray && node["sig"] == null
+                    && TypeJson.OwnerName(node["ownerType"]) is string injectedOwner && injectedOwner.Length > 0)
+                {
+                    node["owner"] = TypeJson.Fqn(injectedOwner);
+                    PromoteGenericShapeToSig(node);
+                    return node;
+                }
             }
             return null;
         }

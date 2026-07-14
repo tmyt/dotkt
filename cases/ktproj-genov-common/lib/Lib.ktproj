@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- #25 RESIDUAL LIBRARY: a MULTIPLATFORM Kotlin lib. common/ carries a generic top-level factory
+       (`arrOfNulls<T>` in GenovCommon.kt -> the `GenovCommonKt` file class); clr/ is the platform fragment.
+       <DotKtMultiplatform>true</DotKtMultiplatform> makes the shared targets tag common/ with -Xcommon-sources
+       (+ -Xmulti-platform -Xexpect-actual-classes). OutputType=Library emits Lib.dll with the [Kotlin*] round-trip
+       metadata (including the [KotlinFileClass] on GenovCommonKt); the app references it and re-imports `genovc.*`. -->
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <DotKtMultiplatform>true</DotKtMultiplatform>
+  </PropertyGroup>
+
+  <Import Project="../../KotlinClr.targets" />
+
+</Project>

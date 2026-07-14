@@ -21,7 +21,15 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   promotes `shapeTypes`→`sig` (kept OPEN — a method type-var stays `gp:T` so it matches the OPEN generic method def)
   and stamps the concrete `argTypes` (the call's `typeArgs` substituted for the method type-vars), exactly parallel to
   the non-generic path — so ilemit selects the arity-1 generic overload and finds the sole-generic factory. Unblocks
-  the kotlinx-atomicfu CLR port. Gate: `ktproj-genov` in `verify-ktproj.sh`.
+  the kotlinx-atomicfu CLR port. Gate: `ktproj-genov` in `verify-ktproj.sh`. **RESIDUAL follow-up:** the promotion also
+  now fires when the generic factory's file class is a MULTIPLATFORM **common fragment** (`*CommonKt`) — the reporter's
+  `atomicArrayOfNulls<String>(3)` case. A sig-less generic call recovers an EMPTY receiver-key, so
+  `TryResolveTopLevelStatic` could not disambiguate the owner once the bare fun name lived under more than one
+  file-class in the ref index (a `*CommonKt` common fragment stamped asymmetrically from its `*Kt` actual sibling), and
+  the owner-attribution — hence the `shapeTypes`→`sig` promotion — was skipped, leaving `ilemit: static method not
+  found`. `MemberCallSubstitution` now falls back to kotc's facadegen-injected `ownerType` (the file class the frontend
+  already resolved) as the owner and promotes, gated on the generic fingerprint (`shapeTypes` present, no `sig`). Gate:
+  `ktproj-genov-common` (an MPP-library common-fragment generic factory) in `verify-ktproj.sh`.
 
 - **bir2cir (#22): an inline-splice carrier whose body NESTS a lambda capturing an enclosing binding now
   materializes.** `MaterializeCarrier` (§4.4ii, `InlineSplice.cs`) refused any carrier containing a nested closure and
