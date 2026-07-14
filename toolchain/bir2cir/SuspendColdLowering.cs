@@ -1762,12 +1762,18 @@ static class SuspendColdLowering
         //   return COROUTINE_SUSPENDED
         //   L_state: <value> = this.<aw>.GetResult()          // throws on a faulted/canceled task
         //
-        // The Action callback (a synthesized SM instance method) re-drives THIS SM: `this.resumeWith(Result(null))`.
-        // The resumed `result` is only a WAKE TOKEN (Codex-verified Option B): the real value / fault comes from
-        // GetResult() at L_state — a fault THROWS there, propagating up through invokeSuspend into
-        // BaseContinuationImpl.resumeWith's catch → the completion (exactly the JVM Task.await semantics). So NO
-        // throwOnFailure and NO try/catch in the callback are needed. TaskAwaiter is a readonly struct over a task
-        // reference, so the field spill/copy is safe (Codex-confirmed).
+        // The Action callback (a synthesized SM instance method) re-drives THIS SM through the INTERCEPTED
+        // continuation: `this.intercepted().resumeWith(Result(null))` (#7 Part B). When the coroutine context
+        // carries a ContinuationInterceptor, `intercepted()` returns the interceptor-wrapped continuation whose
+        // resumeWith dispatches on the interceptor's chosen thread — so the interceptor takes PRECEDENCE over the
+        // captured SynchronizationContext (the awaiter's OnCompleted still ran on the SyncContext, but the wrapper
+        // re-dispatches to the interceptor, which owns the final resume). Absent an interceptor `intercepted()` is
+        // the identity continuation (cached) → `this.resumeWith(...)`, so the #3 captured-SyncContext / inline
+        // fallback is unchanged. The resumed `result` is only a WAKE TOKEN (Codex-verified Option B): the real
+        // value / fault comes from GetResult() at L_state — a fault THROWS there, propagating up through
+        // invokeSuspend into BaseContinuationImpl.resumeWith's catch → the completion (exactly the JVM Task.await
+        // semantics). So NO throwOnFailure and NO try/catch in the callback are needed. TaskAwaiter is a readonly
+        // struct over a task reference, so the field spill/copy is safe (Codex-confirmed).
         JsonNode EmitAwaitPoint(JsonObject awaitNode, List<JsonNode> outp)
         {
             // A2 (#61): generic await is now signaled by `typeArgs` presence (kotc emits a plain callStatic carrying the
@@ -1891,10 +1897,13 @@ static class SuspendColdLowering
             return NullConst(UnitTn);
         }
 
-        // void $awaitOnDone$state() { this.resumeWith(Result(null)); } — the OnCompleted Action target that
-        // re-drives THIS SM (Option B WAKE TOKEN; the value/fault flows from GetResult at the resume label). The
-        // resumeWith call mirrors the rt-stdlib BaseContinuationImpl form (Continuation<object>.resumeWith,
-        // Result(object) construction); ContinuationErasure then normalizes both to the Result<object> slot.
+        // void $awaitOnDone$state() { this.intercepted().resumeWith(Result(null)); } — the OnCompleted Action target
+        // that re-drives THIS SM through the interceptor-aware continuation (#7 Part B; Option B WAKE TOKEN, the
+        // value/fault flows from GetResult at the resume label). `this.intercepted()` (ContinuationImpl.intercepted)
+        // yields the ContinuationInterceptor-wrapped continuation when the context has one — that wrapper's resumeWith
+        // owns the resume dispatch (interceptor > captured SyncContext) — else the identity `this`. The resumeWith
+        // call mirrors the rt-stdlib BaseContinuationImpl form (Continuation<object>.resumeWith, Result(object)
+        // construction); ContinuationErasure then normalizes both to the Result<object> slot.
         JsonObject AwaitResumeMethod(string name)
         {
             var resumeCall = new JsonObject
@@ -1902,7 +1911,18 @@ static class SuspendColdLowering
                 ["k"] = "callInstance",
                 ["ownerType"] = ContAny(),
                 ["virtual"] = true,
-                ["recv"] = new JsonObject { ["k"] = "this" },
+                // this.intercepted(): the interceptor decides the resume thread/context (precedence over SyncContext).
+                ["recv"] = new JsonObject
+                {
+                    ["k"] = "callInstance",
+                    ["ownerType"] = Tn(ContinuationImplFqn),
+                    ["virtual"] = true,
+                    ["recv"] = new JsonObject { ["k"] = "this" },
+                    ["method"] = "intercepted",
+                    ["sig"] = new JsonArray(),
+                    ["ret"] = ContAny(),
+                    ["args"] = new JsonArray(),
+                },
                 ["method"] = "resumeWith",
                 ["sig"] = new JsonArray { Tw(new TypeNode.Fqn("kotlin.Result", new TypeNode[] { AnyTn })) },
                 ["ret"] = Tw(VoidTn),
@@ -2237,10 +2257,15 @@ static class SuspendColdLowering
                     new JsonObject
                     {
                         ["params"] = ctorParams,
+                        // Call the 1-arg ContinuationImpl(completion) base ctor, which threads _context =
+                        // completion?.context (#7 Part B). The old 2-arg form pinned _context = null (context =
+                        // EmptyCoroutineContext), so a named-fun cold-entry SM never inherited its completion's
+                        // context — context[ContinuationInterceptor] would always miss and the interceptor could
+                        // not take precedence at a nested-fun await. Threading the completion context propagates
+                        // the interceptor (and any other context element) down the cold-entry call chain.
                         ["baseArgs"] = new JsonArray
                         {
                             new JsonObject { ["k"] = "local", ["name"] = "completion" },
-                            NullConst(new TypeNode.Fqn("kotlin.coroutines.CoroutineContext")),
                         },
                         ["thisArgs"] = null,
                         ["vis"] = "public",

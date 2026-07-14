@@ -7,6 +7,22 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir/stdlib (#7): `Task.await()` resume now honors a `ContinuationInterceptor` — interceptor > captured
+  SynchronizationContext > inline.** Part B of the await-resume precedence work (Part A was #3's
+  `await(captureContext)` SyncContext capture). The stdlib cold-core `ContinuationImpl.intercepted()` (formerly a v1
+  identity stub) now implements the real JVM protocol: it consults `context[ContinuationInterceptor]` and wraps `this`
+  via `interceptContinuation` (cached per SM), and `BaseContinuationImpl.resumeWith` calls the new
+  `releaseIntercepted()` on state-machine termination. bir2cir's `SuspendColdLowering` routes the await-point
+  `OnCompleted` callback through `this.intercepted().resumeWith(...)`, so an installed interceptor (a Kotlin dispatcher,
+  e.g. a UI dispatcher) OWNS the resume dispatch and takes precedence over the raw SynchronizationContext capture;
+  absent an interceptor the #3 captured-SyncContext (or `captureContext=false` inline) fallback is unchanged. Also
+  fixed a context-propagation gap: a named-fun cold-entry state machine now threads `_context = completion?.context`
+  (via the 1-arg `ContinuationImpl(completion)` base ctor, replacing a pinned-`null` 2-arg form that made every
+  named-fun SM's context `EmptyCoroutineContext`), so an interceptor at the coroutine root is honored at a nested-fun
+  await too. New gate case `cases/il-awaitintercept` (interceptor precedence + the two non-interceptor fallbacks);
+  contract in `docs/dotkt-semantics.md §4a`. (The interceptor impl's `get_key()` carries the pre-existing GitHub #2
+  formal-only `Key<Element>` covariance ilverify finding — runtime-safe, the run lane passes.)
+
 - **bir2cir/kotc (#8): an oblivious VALUE-type platform member no longer collapses to `Nullable<T>`.** A
   facadegen-injected `[MaybeNull]` value getter (`ThreadLocal<Int>.Value`) is a platform type `Int!`
   (`ConeFlexibleType(Int, Int?)`), but on Kotlin 2.4.0 the `@kotlin.internal.ir.FlexibleNullability` IR marker only
