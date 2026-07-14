@@ -3,7 +3,7 @@
 All notable changes to DotKt (Kotlin → .NET/CLR). Package versions carry the embedded
 Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
-## Unreleased
+## 0.9.6 — 2026-07-14
 
 ### Fixed
 
