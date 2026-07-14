@@ -36,6 +36,16 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   library's source into the app). Gate: `cases/il-injectdedup` (source + injection of the same `demo.Plain`/`demo.hello`
   via the metadata alone) in `scripts/verify-il.sh`. Semantics: `docs/dotkt-semantics.md` §8f.
 
+- **bir2cir (#17): a direct property get/set on a re-imported cross-module Kotlin type now lowers to the
+  `get_<p>`/`set_<p>` accessor call.** A `--ref` Kotlin assembly whose type FQN starts with `kotlin.`/`kotlinx.`/
+  `dotkt` (e.g. a `kotlinx.atomicfu.AtomicInt` port) is deliberately SKIPPED by `NetInteropBinding.ResolveNetType`
+  (that prefix is reserved for stdlib binding), so its property access never reached the `clrPropGet`/`clrPropSet`
+  reshape. `MemberCallSubstitution` then returned the node untouched — leaving kotc's bare `callInstance{method:"value",
+  prop:"get"}` marker for ilemit, whose external-owner `ResolveMethod` looked for a literal method `value` and failed
+  (`method kotlinx.atomicfu.AtomicInt.value() not found`). The non-CLR-bound reconstruction (which already rebuilt the
+  `get_`/`set_<name>` accessor on the STATIC axis) now covers the INSTANCE axis too, so the call resolves against the
+  referenced dll's public `get_value`/`set_value` accessor. Regression gate: `cases/ktproj-reprop` (a `kotlinx.cell`
+  Library re-imported via `<ProjectReference>` with a `var value` read AND written).
 - **packaging (#131 durable): the `DotKt.Sdk` / `DotKt.Sdk.Mpp` `Sdk.props` `DotKtVersion` default is now guarded at
   pack time.** That default is copied verbatim into the SDK package (the nuspec `$version$` never reaches it) and pins
   the implicit `DotKt.Toolchain` / `DotKt.Stdlib` PackageReferences — a stale value silently pulls an OLD toolchain

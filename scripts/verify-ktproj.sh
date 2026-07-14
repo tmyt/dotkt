@@ -96,6 +96,14 @@ kt ktproj-roundtrip "cases/ktproj-roundtrip/app/App.ktproj" \
 kt ktproj-applib "cases/ktproj-applib/app/App.ktproj" \
 	"$(printf 'Rectangle 3x4 area=12\n48\nPoint(x=-2, y=5)\n7\nBLUE')"
 
+# #17: a DIRECT property get/set on a re-imported cross-module Kotlin type whose package starts with `kotlinx.`
+# (the atomicfu-port shape). App.ktproj references the `kotlinx.cell` Library and reads/writes `c.value`. The
+# `kotlinx.` FQN makes bir2cir's NetInteropBinding skip the owner, so MemberCallSubstitution must lower the
+# property access to the get_value/set_value accessor call — else ilemit's external ResolveMethod fails with
+# "method kotlinx.cell.Cell.value() not found". Regression guard for the #17 instance-property-marker reconstruct.
+kt ktproj-reprop "cases/ktproj-reprop/app/App.ktproj" \
+	"$(printf '10\n42\n84')"
+
 # PRACTICAL COLLECTIONS app consuming the real CLR stdlib (DotKt.Stdlib.dll): a List held as an app local (resolves as
 # the referenced IReadOnlyList), member access (size/indexing), TOP-LEVEL stdlib funs (first/getOrElse/contains/indexOf/
 # count/isEmpty/take) which kotc emits as `callStatic owner=null` and bir2cir attributes to their file-class owner
@@ -123,6 +131,7 @@ rm -rf "$ROOT"/cases/ktproj/bin "$ROOT"/cases/ktproj/obj \
        "$ROOT"/cases/ktproj-il/bin "$ROOT"/cases/ktproj-il/obj \
        "$ROOT"/cases/ktproj-roundtrip/*/bin "$ROOT"/cases/ktproj-roundtrip/*/obj \
        "$ROOT"/cases/ktproj-applib/*/bin "$ROOT"/cases/ktproj-applib/*/obj \
+       "$ROOT"/cases/ktproj-reprop/*/bin "$ROOT"/cases/ktproj-reprop/*/obj \
        "$ROOT"/cases/ktproj-inject/bin "$ROOT"/cases/ktproj-inject/obj \
        "$ROOT"/cases/ktproj-import/bin "$ROOT"/cases/ktproj-import/obj \
        "$ROOT"/cases/ktproj-refrt/bin "$ROOT"/cases/ktproj-refrt/obj \
