@@ -92,6 +92,11 @@
   from a HEAD that already contains any in-flight main-direct work (wait for a legacy non-isolated agent to commit
   first, else the merges conflict on shared files). Serialize (one mutating agent owns main+gate) ONLY when a task is
   truly unsplittable; **default to worktree-isolated parallelism.** (Elaboration: MEMORY `parallel-agents-isolate-or-serialize`.)
+- **Respond in ENGLISH on any turn that contains a tool call (2026-07-14, user-directed).** Japanese prose in the SAME
+  turn as a `<invoke>` block intermittently CORRUPTS the tool call (malformed/unparseable — wasted turns). So: a
+  tool-bearing turn → the accompanying assistant text is **English and short**; **Japanese only on tool-FREE turns**
+  (the normal end-of-work user-facing report). This is the narrow, practical override of the "final report in Japanese"
+  rule for turns that invoke tools. (MEMORY `respond-in-english-when-tool-calling`.)
 - **When ≥3 specialist round-trips fail to resolve ONE problem, escalate to a holistic Fable+Opus root-cause pass (2026-07-12, user-directed).**
   A "round-trip" = dispatch a single-layer specialist → it closes one seam → a NEW seam of the **same root** surfaces.
   The tell is whack-a-mole: the fault keeps **moving/renaming** (a new IL offset, a new store/pass site of the same
