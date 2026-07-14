@@ -602,6 +602,17 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 	if (overridesCharSeqLength)
 		return unsupported(node, "this property reference",
 			"a property overriding a .NET-mapped interface member has no supported lowering yet")
+	// A top-level extension-property reference is lowered below ONLY for a SAME-MODULE, NON-GENERIC accessor:
+	//  - an INJECTED (referenced-assembly) ext accessor — `getterFn.body == null`, the codebase's cross-module/
+	//    deserialized-stub signal (mirrors the function-ref injected gate in `call()`) — needs the argTypes/ret
+	//    .NET-interop call shape the value-read path emits so bir2cir's NetInteropBinding can attribute it; a plain
+	//    `prop:get` owner:null call would not resolve cross-module. And
+	//  - a GENERIC ext accessor (`val <T> List<T>.lastIndex`) needs its resolved typeArgs threaded onto the accessor
+	//    call, else the call hits the uninstantiated generic method ("type is not fully instantiated").
+	// Neither is wired here yet, so defer cleanly — a diagnostic beats a mis-shaped emit (#21).
+	if (hasExtRecv && (getterFn.body == null || getterFn.typeParameters.isNotEmpty()))
+		return unsupported(node, "this property reference",
+			"a cross-module or generic extension-property reference has no supported lowering yet")
 	val setterFn = if (prop.isVar) (node.setter?.owner ?: prop.setter) else null
 	val declClass = getterFn.parent as? IrClass
 	val name = prop.name.asString()
@@ -644,22 +655,21 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 		else -> OBJ
 	}
 	// A top-level EXTENSION property: its getter/setter is a static `<name>` accessor (a `prop:get`/`prop:set` marker
-	// carrying the ext receiver as its leading arg), NOT an instance `get_/set_` slot — the SAME shape the value-read
-	// path in `call()` emits. bir2cir binds it off the stdlib/facade metadata (or the get_/set_<name> convention). An
-	// INJECTED (referenced-assembly) ext property resolves to its .NET file-facade class; a same-module one stays
-	// owner:null for ilemit's FindStatic. `getterFn.body == null` = a deserialized/injected stub.
-	val extInjectedFileClass: String? = if (hasExtRecv && getterFn.body == null)
-		(prop.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)
-			?.let { kotc.frontend.clrInjectedTopLevelPropFileClass(CallableId(it.packageFqName, prop.name)) }
-	else null
+	// carrying the ext receiver as its leading arg), NOT an instance `get_/set_` slot — the SAME `owner:null` shape the
+	// same-module ext-property value-read path in `call()` emits. kotc stays .NET-agnostic (no injected file class is
+	// baked here — a cross-module/injected ext-property reference is deferred above); bir2cir binds the accessor off the
+	// stdlib/facade metadata (or the get_/set_<name> convention).
 	fun extAccessorCall(isSetter: Boolean, valueArg: String?): String {
 		val kind = if (isSetter) "set" else "get"
 		val recvArg = if (bound)
 			"""{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":"__recv"}"""
 		else """{"k":"local","name":"receiver"}"""
 		val args = listOfNotNull(recvArg, valueArg).joinToString(",")
-		val ownerField = if (extInjectedFileClass != null) """"ownerType":${str(extInjectedFileClass)}""" else """"owner":null"""
-		return """{"k":"callStatic",$ownerField,"method":${str(name)},"prop":${str(kind)}${overloadSigField(getterFn)},"args":[$args]}"""
+		// The `sig` overload key MUST match the accessor being called: the setter's param list is [recv, value], the
+		// getter's is [recv]. Using the getter's sig for `prop:set` would key a same-name `var`-ext-property overload
+		// to the wrong slot.
+		val sigFn = if (isSetter) setterFn!! else getterFn
+		return """{"k":"callStatic","owner":null,"method":${str(name)},"prop":${str(kind)}${overloadSigField(sigFn)},"args":[$args]}"""
 	}
 	fun accessorCall(isSetter: Boolean, extraArg: String?): String {
 		val fn = if (isSetter) setterFn!! else getterFn
