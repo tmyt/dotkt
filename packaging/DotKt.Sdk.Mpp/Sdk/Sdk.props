@@ -9,7 +9,7 @@
        DotKt.Sdk defaults it to an older value; we set it here (before importing the base) so the whole DotKt
        package set resolves at one version. A consumer may override it (<DotKtVersion>x.y.z</DotKtVersion>). -->
   <PropertyGroup>
-    <DotKtVersion Condition="'$(DotKtVersion)' == ''">0.9.5</DotKtVersion>
+    <DotKtVersion Condition="'$(DotKtVersion)' == ''">0.9.6</DotKtVersion>
   </PropertyGroup>
 
   <!-- Import the base SDK. This nested import is version-LESS on purpose: the NuGet MSBuild-SDK resolver reads

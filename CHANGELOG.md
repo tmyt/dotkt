@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **packaging (#131 durable): the `DotKt.Sdk` / `DotKt.Sdk.Mpp` `Sdk.props` `DotKtVersion` default is now guarded at
+  pack time.** That default is copied verbatim into the SDK package (the nuspec `$version$` never reaches it) and pins
+  the implicit `DotKt.Toolchain` / `DotKt.Stdlib` PackageReferences — a stale value silently pulls an OLD toolchain
+  (the 0.9.5 SDK shipped pinned to 0.9.3, pulling the pre-2.4.0 compiler). `scripts/pack-nuget.sh` now refuses to pack
+  when the `Sdk.props` default drifts from `DotKtVersionPrefix`, so a stale pin can never ship again.
 - **bir2cir (#11): a nullable/`null` source written into a value-type platform slot is now coerced at the `clrPropSet`
   boundary — the WRITE twin of #8's oblivious read.** A facadegen-injected value-type platform property (e.g.
   `ThreadLocal<Int>.Value`, a bare `int32` setter) assigned a genuine Kotlin `Int?` (`ti.Value = someIntQ`) previously
