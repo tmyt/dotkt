@@ -265,6 +265,17 @@ static class BirTypeLowering
                 return new TypeNode.Array(LowerType(a.Elem, refBuild, force, typeArg: false));
             case TypeNode.ByRef b:
                 return new TypeNode.ByRef(LowerType(b.Of, refBuild, force, typeArg: false));
+            case TypeNode.Oblivious ob:
+                // #8 — an NRT-OBLIVIOUS `T!` (a facadegen-injected `[MaybeNull]`/platform-flexible type: a value-type
+                // arg OR a reference) lowers to the BARE lowered inner in EVERY build — NEVER a `Nullable<T>` wrapper. It
+                // is a pure nullability ANNOTATION (NullableAttribute=0), not a container: the inner keeps THIS node's
+                // position (typeArg propagated, unlike Nullable which is a value-position container). Distinct from `T?`
+                // (TypeNode.Nullable): a GENUINE `Int?` stays `Nullable<int32>`, but an oblivious `Int!`
+                // (`ThreadLocal<Int>.Value`, a `[MaybeNull]` value getter) becomes bare `int32` — reads `0` when unset,
+                // and the `== null` branch is statically false. A reference inner (`String!`) becomes a bare NRT-oblivious
+                // ref (its `?`-vs-not is a benign NullableFlags byte). ilemit has NO oblivious case, so the wrapper MUST
+                // NOT survive here (kotc emits Oblivious for `@kotlin.internal.ir.FlexibleNullability` — see bir-cir-spec §1).
+                return LowerType(ob.Of, refBuild, force, typeArg);
             default:
                 return t;
         }

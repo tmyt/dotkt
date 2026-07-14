@@ -1156,8 +1156,10 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 				// An oblivious wrapper around a bare TYPE-VARIABLE (`T!`) in an INPUT/param position (`paramPos`) resolves
 				// to the BARE type variable — NOT a `ConeFlexibleType(T, T?)` (#157). A type variable carries no inherent
 				// nullability; a `(T..T?)` flexible PARAM would bias inference of `Cell(40)` (over a facadegen-injected
-				// `Cell(T v)`) toward the STRICT nullable upper bound `Cell<Int?>` (its `@FlexibleNullability` erased before
-				// the backend), constructing a `Cell<Nullable<Int32>>` that is layout-incompatible with a
+				// `Cell(T v)`) toward the STRICT nullable upper bound `Cell<Int?>` (whose `@FlexibleNullability` marker now
+				// SURVIVES onto the IR type — kotc installs the JvmIrSpecialAnnotationSymbolProvider, #8 — so an OUTPUT `T!`
+				// re-emits as `TypeNode.Oblivious`; but for THIS input/param position we still want the bare `T`),
+				// constructing a `Cell<Nullable<Int32>>` that is layout-incompatible with a
 				// `Peek(this Cell<int>)` slot. A bare `T` infers `Cell<Int>` — the value arg reified invariantly, matching
 				// the .NET member's slot. In an OUTPUT position (return/getter, `!paramPos`), an oblivious `T!` STAYS
 				// flexible so a `[MaybeNull] T` return keeps its platform-type null-checkability (#143). A REFERENCE

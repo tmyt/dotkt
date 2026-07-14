@@ -307,7 +307,10 @@ internal fun BirEmitter.bindOnce(init: IrExpression, type: IrType, prefix: Strin
 	// ref-typed (objEq null-check / objMethod / ref member).
 	val bt = birType(type)
 	// A nullable generic-param subject now surfaces as `{t:nullable,of:tv}` (uniform birType) — erase THAT to object.
-	val vt = if (bt is TypeNode.Nullable && bt.of is TypeNode.Tv) OBJ else bt
+	// A flexible/platform generic-param subject `T!` (`{t:oblivious,of:tv}`, a .NET generic's un-annotated member, #8)
+	// is ref-used at every site just like the nullable one — erase it to object too, else its isinst-ref result would
+	// land in a bare `!T` slot (the same unverifiable [found ref 'T'][expected value 'T'] miscompile).
+	val vt = if ((bt is TypeNode.Nullable && bt.of is TypeNode.Tv) || (bt is TypeNode.Oblivious && bt.of is TypeNode.Tv)) OBJ else bt
 	return """{"k":"var","name":${str(tv)},"type":${vt.toJson()},"init":${expr(init)}}""" to
 		"""{"k":"local","name":${str(tv)}}"""
 }
