@@ -27,6 +27,7 @@ import org.jetbrains.kotlin.fir.plugin.createMemberProperty
 import org.jetbrains.kotlin.fir.plugin.createTopLevelProperty
 import org.jetbrains.kotlin.fir.plugin.createTopLevelClass
 import org.jetbrains.kotlin.fir.plugin.createTopLevelFunction
+import org.jetbrains.kotlin.fir.resolve.providers.firProvider
 import org.jetbrains.kotlin.fir.resolve.providers.symbolProvider
 import org.jetbrains.kotlin.fir.symbols.impl.FirClassLikeSymbol
 import org.jetbrains.kotlin.fir.symbols.impl.FirClassSymbol
@@ -150,7 +151,8 @@ private val ClrType.hasStatics: Boolean get() = staticMethods.isNotEmpty() || st
  * Null for a non-injected class (user Kotlin type / stdlib). File-top-level so
  * it can reach the file-private [ClrMetadataHolder] while exposing only public types across the module boundary.
  */
-internal fun clrInjectedDotNetName(classId: ClassId): String? = ClrMetadataHolder.dotNetNameByClassId[classId]
+internal fun clrInjectedDotNetName(classId: ClassId): String? =
+	if (classId in ClrMetadataHolder.sourceShadowedClassIds) null else ClrMetadataHolder.dotNetNameByClassId[classId]
 
 // A2 step 5 (interop member-slot -> bir2cir): the backend no longer reads an injected .NET MEMBER's slot name here. A
 // Kotlin member overriding a facadegen-injected .NET interface/base binds its slot in bir2cir's DeclarationRename, which
@@ -183,6 +185,7 @@ internal fun clrInjectedDotNetName(classId: ClassId): String? = ClrMetadataHolde
 // (metadata: `receiverClassifierClassId`; backend: the resolved IrType's `classId`), so it matches across facadegen's
 // name vocabulary (bare `String`, namespace-less generic `Box`, primitive-array element) — a raw-name compare would not.
 internal fun clrInjectedTopLevelFileClass(callableId: CallableId, arity: Int, receiverKey: String?): String? {
+	if (callableId in ClrMetadataHolder.sourceShadowedCallableIds) return null   // #15: a source-declared top-level fun wins
 	val sigs = ClrMetadataHolder.topLevelSigByCallableId[callableId] ?: return null
 	// A2 byte-identical: a UNIQUE restored overload for this (package,name) -> its file class directly (the common
 	// case; a single `tlfun` spans an arity RANGE across its default-arg variants, but there is one file class either way).
@@ -229,14 +232,16 @@ private fun List<List<ClrParam>>.defaultsForArity(paramCount: Int): List<ClrCons
  * the parameter has none).
  */
 internal fun clrInjectedCtorParamDefaults(classId: ClassId, paramCount: Int): List<ClrConstDefault?>? =
-	ClrMetadataHolder.byClassId[classId]?.ctors?.defaultsForArity(paramCount)
+	if (classId in ClrMetadataHolder.sourceShadowedClassIds) null   // #15: source ctor wins — its defaults come from source
+	else ClrMetadataHolder.byClassId[classId]?.ctors?.defaultsForArity(paramCount)
 
 /**
  * #134: the per-value-parameter constant defaults of a facadegen-injected TOP-LEVEL function (keyed by resolved IR
  * `CallableId`, the overload matched by value-param count), or null if not injected / no such overload (or ambiguous).
  */
 internal fun clrInjectedTopLevelParamDefaults(callableId: CallableId, paramCount: Int): List<ClrConstDefault?>? =
-	ClrMetadataHolder.topLevelParamsByCallableId[callableId]?.defaultsForArity(paramCount)
+	if (callableId in ClrMetadataHolder.sourceShadowedCallableIds) null   // #15: source fun wins
+	else ClrMetadataHolder.topLevelParamsByCallableId[callableId]?.defaultsForArity(paramCount)
 
 /**
  * A2 keystone (interop-no-registry, stage 3): the backend reads a restored DotKt TOP-LEVEL EXTENSION PROPERTY's .NET
@@ -244,7 +249,8 @@ internal fun clrInjectedTopLevelParamDefaults(callableId: CallableId, paramCount
  * facadegen's metadata keyed structurally.
  * Null for a non-restored top-level property.
  */
-internal fun clrInjectedTopLevelPropFileClass(callableId: CallableId): String? = ClrMetadataHolder.fileClassByTopLevelPropCallableId[callableId]
+internal fun clrInjectedTopLevelPropFileClass(callableId: CallableId): String? =
+	if (callableId in ClrMetadataHolder.sourceShadowedCallableIds) null else ClrMetadataHolder.fileClassByTopLevelPropCallableId[callableId]
 
 /**
  * #103: whether a restored DotKt top-level property has a CUSTOM getter/setter (`get_`/`set_<name>` on the file class)
@@ -252,7 +258,8 @@ internal fun clrInjectedTopLevelPropFileClass(callableId: CallableId): String? =
  * non-restored property. The backend must INVOKE the custom accessor cross-module, not read/write the raw static field.
  */
 internal fun clrInjectedTopLevelPropCustomAccessor(callableId: CallableId): Pair<Boolean, Boolean> =
-	ClrMetadataHolder.customAccessorByTopLevelPropCallableId[callableId] ?: (false to false)
+	if (callableId in ClrMetadataHolder.sourceShadowedCallableIds) (false to false)
+	else ClrMetadataHolder.customAccessorByTopLevelPropCallableId[callableId] ?: (false to false)
 
 /**
  * Loads the .NET type metadata to inject, once per process. The path comes from `CLR_TYPES_METADATA`
@@ -265,6 +272,12 @@ internal fun clrInjectedTopLevelPropCustomAccessor(callableId: CallableId): Pair
  */
 private object ClrMetadataHolder {
 	val module: ClrModule? by lazy { System.getenv("CLR_TYPES_METADATA")?.let { load(File(it)) } }
+
+	// #15: meta identities SHADOWED by a source declaration in the current compile. The injector records a meta
+	// ClassId/CallableId here as it suppresses its injection (source wins); the backend accessors below exclude these so
+	// a source-declared type/fun is emitted as a plain LOCAL type/call, never clr-routed to the referenced dll.
+	val sourceShadowedClassIds: MutableSet<ClassId> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+	val sourceShadowedCallableIds: MutableSet<CallableId> = java.util.concurrent.ConcurrentHashMap.newKeySet()
 
 	// The injection metadata is now a structured JSON document (spec §5b): `{ "types": [...], "files": [...] }`,
 	// reusing the BIR TypeNode / mods / decl vocabulary. The walk below reconstructs the ClrType/ClrTopLevel model;
@@ -505,6 +518,43 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		((module?.topLevel ?: emptyList()).map { it.pkg } + (module?.topLevelProps ?: emptyList()).map { it.pkg }).toSet()
 	private val classIdByName: Map<String, ClassId> = ClrMetadataHolder.classIdByName
 
+	// #15: a SOURCE declaration WINS over a facadegen-injected copy of the SAME identity. When the app compile
+	// includes the SOURCE of a type/top-level fun (e.g. a `**/*.kt` glob that reaches a ProjectReference'd lib's own
+	// sources) AND facadegen ALSO injects that SAME identity from the referenced dll, the injected copy collides with
+	// the source declaration — `conflicting overloads/declarations` at the source decl site + `overload resolution
+	// ambiguity` at the use site. The injector must SUPPRESS an injection whose ClassId/CallableId the compiled source
+	// already declares. The SOURCE provider (`session.firProvider` = FirProviderImpl) indexes ONLY this module's source
+	// FIR — not the generated-declaration or dependency providers — so these queries are NON-RECURSIVE (Codex-confirmed
+	// on the 2.4.0 jar). Query inside the callbacks, NOT the constructor (source FIR is not yet recorded there).
+	//
+	// A positive result is RECORDED in ClrMetadataHolder's shadow sets so the BACKEND accessors (same kotc process,
+	// frontend phase fully precedes the backend phase) ALSO skip a source-shadowed meta identity. Why the record is
+	// COMPLETE for every source-shadowed identity the backend can emit: FIR's conflict/override checkers build the
+	// declared-member scope of EVERY source class (-> the member-generation callbacks below run for it, hitting
+	// `injectedType` -> `sourceDeclaresClass`) and aggregate ALL providers for each top-level CallableId (-> the
+	// top-level guards run) — so recording does not hinge on a symbol being USED, it is driven by the checkers that
+	// run on every compile. For a TOP-LEVEL fun/prop the backend ALSO gates its facade routing by `callee.body == null`
+	// (BirEmitterCalls/Lifts), so those accessor exclusions are defense-in-depth; the CLASS side (clrName /
+	// clrInjectedDotNetName + the ctor-default backfill, which have NO body-gate) is what genuinely needs the record.
+	// NOTE: this name-keyed shadow side-channel is the same shape A2 (#61) is retiring; when kotc's clr-routing itself
+	// moves to bir2cir, a provenance gate (resolved decl `body == null` / plugin origin) dissolves it entirely.
+	private fun sourceDeclaresClass(classId: ClassId): Boolean =
+		(session.firProvider.getFirClassifierByFqName(classId) != null).also { if (it && classId in byClassId) ClrMetadataHolder.sourceShadowedClassIds.add(classId) }
+	// Kind-specific so a source `val hello` does NOT suppress an injected `fun hello` (and vice versa). Resolution stays
+	// at package+name granularity (Kotlin permits same-name top-level overloads / a val+fun pair), so a source overload
+	// of a DIFFERENT signature also suppresses the injected same-name one — a source-wins-per-name limitation of this
+	// mislayout recovery (docs/dotkt-semantics.md); the failure is loud (unresolved). MPP: `session.firProvider` sees
+	// only THIS module's source, so a COMMON-module source decl does not shadow a platform-session injection (residual).
+	private fun sourceDeclaresTopLevelFunction(callableId: CallableId): Boolean =
+		session.firProvider.symbolProvider.getTopLevelFunctionSymbols(callableId.packageName, callableId.callableName).isNotEmpty()
+			.also { if (it && callableId in topLevelByCallable) ClrMetadataHolder.sourceShadowedCallableIds.add(callableId) }
+	private fun sourceDeclaresTopLevelProperty(callableId: CallableId): Boolean =
+		session.firProvider.symbolProvider.getTopLevelPropertySymbols(callableId.packageName, callableId.callableName).isNotEmpty()
+			.also { if (it && callableId in topLevelPropByCallable) ClrMetadataHolder.sourceShadowedCallableIds.add(callableId) }
+	/** The injected ClrType for a ClassId, UNLESS the compiled source already declares that class — then the source
+	 *  declaration is authoritative and NO injected member (ctor/companion/method/property) may be added to it (#15). */
+	private fun injectedType(classId: ClassId): ClrType? = byClassId[classId]?.takeUnless { sourceDeclaresClass(classId) }
+
 	// `byref(x)`: an intrinsic marking a call arg as a .NET out/ref parameter. It returns `ClrRef<T>` (the surfaced type
 	// of any .NET byref param), so the signature is self-documenting. The backend reads the marker and passes the
 	// lvalue's address; a `ClrRef<T>` param maps to `byref:T`. byref/ClrRef live in the `kotlin.clr` namespace (the CLR-
@@ -564,7 +614,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		if (classId == clrRefClassId || classId == stackBufferClassId || classId == spanClassId || classId == clrEventClassId) return createTopLevelClass(classId, ClrGeneratedKey, ClassKind.CLASS) {
 			typeParameter(Name.identifier("T"), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey)
 		}.symbol
-		val type = byClassId[classId] ?: return null
+		val type = injectedType(classId) ?: return null
 		val kind = when { type.isAnnotation -> ClassKind.ANNOTATION_CLASS; type.isObject -> ClassKind.OBJECT; type.isInterface -> ClassKind.INTERFACE; else -> ClassKind.CLASS }
 		// A non-sealed .NET class is `open` so Kotlin can inherit it (the basis of framework-direct UI).
 		val klass = createTopLevelClass(classId, ClrGeneratedKey, kind) {
@@ -617,13 +667,13 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	/** The owner ClrType of a companion symbol (its static members live here), or null if not a companion-with-statics. */
 	private fun companionOwnerType(classId: ClassId): ClrType? =
 		if (classId.shortClassName == SpecialNames.DEFAULT_NAME_FOR_COMPANION_OBJECT)
-			classId.outerClassId?.let { byClassId[it] }?.takeIf { it.hasStatics }
+			classId.outerClassId?.let { injectedType(it) }?.takeIf { it.hasStatics }
 		else null
 
 	// A normal class with public STATIC members gets a synthesized companion object holding them, so `App.Start(..)`/
 	// `App.Current` resolve (Kotlin has no bare statics). The backend emits .NET static calls for these.
 	override fun getNestedClassifiersNames(classSymbol: FirClassSymbol<*>, context: NestedClassGenerationContext): Set<Name> {
-		val type = byClassId[classSymbol.classId] ?: return emptySet()
+		val type = injectedType(classSymbol.classId) ?: return emptySet()
 		return if (type.hasStatics)
 			setOf(SpecialNames.DEFAULT_NAME_FOR_COMPANION_OBJECT) else emptySet()
 	}
@@ -634,7 +684,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		// THE companion for this ClassId — never create a second one. (Reached only if the framework's early return on
 		// the linked companionObjectSymbol — FirGeneratedScopes.kt:245-248 — didn't already answer the lookup.)
 		eagerCompanions[owner.classId.createNestedClassId(name)]?.let { return it.symbol }
-		val type = byClassId[owner.classId] ?: return null
+		val type = injectedType(owner.classId) ?: return null
 		if (!type.hasStatics) return null
 		return createCompanionObject(owner, ClrGeneratedKey).symbol
 	}
@@ -656,7 +706,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			ct.staticEvents.forEach { n.add(Name.identifier(it.name)) }   // (N6) static .NET event -> companion ClrEvent<T> property
 			return n
 		}
-		val type = byClassId[classSymbol.classId] ?: return emptySet()
+		val type = injectedType(classSymbol.classId) ?: return emptySet()
 		val names = type.methods.mapTo(HashSet()) { Name.identifier(it.name) }
 		type.properties.forEach { names.add(Name.identifier(it.name)) }
 		type.memberExtProps.forEach { names.add(Name.identifier(it.name)) }
@@ -674,7 +724,8 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		// no owner; the backend routes `x.p` to the file class's get_/set_<p>(__self) statics. A plain NON-extension
 		// property (`val greeting`, empty `receiver`) has no extension receiver: the backend routes reads/writes to a
 		// STATIC FIELD of the referenced .NET file class (#34b). `isVar = tp.mutable` (rw -> var, ro -> val).
-		topLevelPropByCallable[callableId]?.let { tp ->
+		// #15: a source-declared top-level property of the same identity wins — do not inject a colliding copy.
+		if (context?.owner == null && !sourceDeclaresTopLevelProperty(callableId)) topLevelPropByCallable[callableId]?.let { tp ->
 			return listOf(createTopLevelProperty(ClrGeneratedKey, callableId, coneOf(tp.type, null), !tp.mutable, false) {
 				tp.receiver?.let { extensionReceiverType(coneOf(it, null)) }
 			}.symbol)
@@ -694,7 +745,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			val sp = ct.staticProps.firstOrNull { it.name == callableId.callableName.asString() } ?: return emptyList()
 			return listOf(createMemberProperty(owner, ClrGeneratedKey, callableId.callableName, coneOf(sp.type, owner), !sp.mutable, false).symbol)
 		}
-		val type = byClassId[owner.classId] ?: return emptyList()
+		val type = injectedType(owner.classId) ?: return emptyList()
 		// A MEMBER extension property (`class C { val T.p }`): a member property of C with an extension receiver; the
 		// backend routes `x.p` (inside `with(c)`) to C's get_/set_<p>(__self) method (dispatch on C, receiver as __self).
 		type.memberExtProps.firstOrNull { it.name == callableId.callableName.asString() }?.let { mp ->
@@ -728,7 +779,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	}
 
 	override fun generateConstructors(context: MemberGenerationContext): List<FirConstructorSymbol> {
-		val type = byClassId[context.owner.classId] ?: return emptyList()
+		val type = injectedType(context.owner.classId) ?: return emptyList()
 		if (type.isObject) return emptyList()
 		val ctors = type.ctors.ifEmpty { listOf(emptyList()) }   // a class with no listed ctor still needs one
 		return ctors.mapIndexed { i, params ->
@@ -769,6 +820,8 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			}
 			// DotKt round-trip: top-level functions restored from a [KotlinFile] facade. infix/operator are member-only,
 			// so a top-level fun carries at most `suspend`; the backend emits the static call.
+			// #15: a source-declared top-level fun of the same identity wins — do not inject a colliding overload.
+			if (sourceDeclaresTopLevelFunction(callableId)) return emptyList()
 			topLevelByCallable[callableId]?.let { tls ->
 				return tls.flatMap { tl ->
 					val m = tl.fn
@@ -865,7 +918,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 					}.symbol
 			}
 		}
-		val type = byClassId[owner.classId] ?: return emptyList()
+		val type = injectedType(owner.classId) ?: return emptyList()
 		val callName = callableId.callableName.asString()
 
 		// Indexer `this[i]` -> `operator fun get(index): V` / `operator fun set(index, value): Unit`.
