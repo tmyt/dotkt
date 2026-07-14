@@ -23,10 +23,6 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   the non-generic path — so ilemit selects the arity-1 generic overload and finds the sole-generic factory. Unblocks
   the kotlinx-atomicfu CLR port. Gate: `ktproj-genov` in `verify-ktproj.sh`.
 
-## 0.9.6-rc2 — 2026-07-15
-
-### Fixed
-
 - **bir2cir (#22): an inline-splice carrier whose body NESTS a lambda capturing an enclosing binding now
   materializes.** `MaterializeCarrier` (§4.4ii, `InlineSplice.cs`) refused any carrier containing a nested closure and
   failed loud — but a `suspend inline fun` with a `crossinline` block that nests a lambda (the
@@ -37,6 +33,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   a nested closure's CAPTURE VALUES while skipping its own `synthClass` frame — so a nested closure capturing the
   block's invoke param (`cont`), a carrier capture (rewritten to `this.<field>`), or a carrier local is bound
   correctly, and a genuinely-unlisted capture still fails loud. Gate: `il-suspendnestedcapture` in `verify-il.sh`.
+
+- **bir2cir (#26): a cross-module library whose package FQN merely STARTS WITH `dotkt` (e.g. `dotktx.ui.avalonia`) no
+  longer has its reference types mis-resolved.** `ReferenceMetadataIndex.ResolveNetType` classified any owner FQN with a
+  bare `StartsWith("dotkt")` as "not a .NET/reference type" (intended only to skip the compiler's own `dotkt`/`dotkt$…`
+  synthetic vocabulary + `kotlin.*`/`kotlinx.*` stdlib). That prefix ALSO matched real user packages like `dotktx.*`, so
+  a cross-module type from such a library was skipped instead of resolved → a captured cross-module local read back
+  null / the app hit `InvalidProgramException` at runtime (compile stayed clean). The reporter's `avalonia`↔`Avalonia`
+  case-collision framing was a red herring; A/B proof: identical code under package `dotktx.foo.bar` failed while
+  `myappx.foo.bar` ran correctly. The guard now matches `dotkt` only as a complete leading segment — `dotkt`, `dotkt.`,
+  or `dotkt$` — never as a prefix of a longer identifier. Gate: `ktproj-dotktpkg` in `verify-ktproj.sh`.
+
+## 0.9.6-rc2 — 2026-07-15
+
+### Fixed
+
 - **kotc (#20): an inline MEMBER-extension fn called with a lambda now splices.** kotc rejected any call to an
   `inline fun` that is BOTH a member (e.g. of a companion) AND an extension — `class Queue { companion object { inline
   fun <T> Long.withState(block) {…} } }` called via `state.withState { … }` — because such a callee carries BOTH a

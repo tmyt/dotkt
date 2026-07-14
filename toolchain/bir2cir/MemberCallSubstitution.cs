@@ -655,7 +655,7 @@ static class MemberCallSubstitution
             // that way regardless of CLR-boundness) so the call resolves to the REAL emitted accessor:
             //   • SAME-module owner -> ilemit's `_types` FindMethod finds the emitted `get_<p>`/`set_<p>`.
             //   • RE-IMPORTED cross-module Kotlin owner (#17: a `--ref` Kotlin assembly whose type is skipped by
-            //     NetInteropBinding's ResolveNetType because its FQN starts with `kotlin.`/`kotlinx.`/`dotkt`, e.g. a
+            //     NetInteropBinding's ResolveNetType because its FQN starts with `kotlin.`/`kotlinx.`/`dotkt`(`.`/`$`), e.g. a
             //     `kotlinx.atomicfu.AtomicInt` port) -> ilemit's EXTERNAL-owner ResolveMethod reflects the public
             //     `get_<p>`/`set_<p>` accessor off the referenced dll. Without this the bare `method:"<p>",prop:"get"`
             //     reaches ilemit and its ResolveMethod looks for a literal method `<p>` -> "method …value() not found".

@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- #26: a Kotlin APP referencing the `dotktx.foo.bar` Kotlin LIBRARY through <ProjectReference>. `dotnet build`
+       builds State.ktproj first; its emitted State.dll lands on @(ReferencePath), the app's import-scan + facadegen
+       inject `dotktx.foo.bar.*`, and bir2cir resolves the cross-module `State<Int>` owner correctly (the #26 guard
+       no longer mis-skips a `dotktx.*` user package). The captured local must survive through the stored delegate. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <StartupObject>AppKt</StartupObject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../lib/State.ktproj" />
+  </ItemGroup>
+
+  <Import Project="../../KotlinClr.targets" />
+
+</Project>
