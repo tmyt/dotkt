@@ -3,7 +3,7 @@
 All notable changes to DotKt (Kotlin → .NET/CLR). Package versions carry the embedded
 Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
-## 0.9.6-rc1 — 2026-07-14
+## 0.9.6-rc2 — 2026-07-15
 
 ### Fixed
 
@@ -153,6 +153,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   value-returning `Func` (`Task.Run`). **Cross-layer, not yet end-to-end:** the marker is inert until kotc's
   `ClrTypeInjection` maps it to the FIR `kotlin.internal.LowPriorityInOverloadResolution` annotation (reported to the
   coordinator for the kotc half + the `il-monitordrain` band-aid removal + `docs/dotkt-semantics.md` §8e rewrite).
+
+## 0.9.6-rc1 — 2026-07-14
+
+### Fixed
 
 - **packaging (#131 durable): the `DotKt.Sdk` / `DotKt.Sdk.Mpp` `Sdk.props` `DotKtVersion` default is now guarded at
   pack time.** That default is copied verbatim into the SDK package (the nuspec `$version$` never reaches it) and pins
