@@ -136,6 +136,10 @@ sealed class Pipeline
                 foreach (var t in ts)
                     if (t is JsonObject to && (to["name"] as JsonValue)?.GetValue<string>() is string tn)
                         localTypeFqns.Add(tn);
+        // LOCAL-OVER-REF (#15): tell the refs index which FQNs are this-assembly-emitted, so ResolveNetType refuses to
+        // bind a locally-declared type to a referenced dll of the same identity — `new`/callInstance/callStatic/field
+        // on a source-compiled `demo.Plain` route to the emitted type, not `newClr`/`clr*` against the ref copy.
+        refs.SetLocalEmittedTypes(localTypeFqns);
         // The DIRECT supertypes (base + interfaces, by FQN) of each type DECLARED in this compilation, aggregated
         // across all input files. ForInLowering walks it to decide whether a stdlib self-build for-loop source is a
         // kotlin.collections iterable (a concrete subtype such as ArrayList : MutableList matches even though its own

@@ -96,6 +96,16 @@ kt ktproj-roundtrip "cases/ktproj-roundtrip/app/App.ktproj" \
 kt ktproj-applib "cases/ktproj-applib/app/App.ktproj" \
 	"$(printf 'Rectangle 3x4 area=12\n48\nPoint(x=-2, y=5)\n7\nBLUE')"
 
+# #15 EMIT-HALF: the pathological layout where the app's recursive `**/*.kt` glob pulls in a NESTED
+# <ProjectReference> lib's SOURCE (App.kt + lib/Demo.kt) AND references that lib's dll — so `demo.Plain`/
+# `demo.hello` are BOTH compiled LOCALLY and exported by the referenced Demo.dll. The frontend "source wins"
+# fix (#15 core) suppresses the injected copy; bir2cir must then PREFER the local BIR type over the referenced
+# dll of the same FQN — emitting a local `new demo.Plain` (this-assembly-emitted), NOT a `newClr` against
+# Demo.dll (which made the app both emit `demo.Plain` locally AND newClr the ref copy → ilemit conflict).
+# Before the fix: bir2cir/ilemit error. Regression guard for the local-over-ref resolution in ResolveNetType.
+kt ktproj-injectemit "cases/ktproj-injectemit/App.ktproj" \
+	"$(printf '42\nplain')"
+
 # #17: a DIRECT property get/set on a re-imported cross-module Kotlin type whose package starts with `kotlinx.`
 # (the atomicfu-port shape). App.ktproj references the `kotlinx.cell` Library and reads/writes `c.value`. The
 # `kotlinx.` FQN makes bir2cir's NetInteropBinding skip the owner, so MemberCallSubstitution must lower the
@@ -138,6 +148,8 @@ rm -rf "$ROOT"/cases/ktproj/bin "$ROOT"/cases/ktproj/obj \
        "$ROOT"/cases/ktproj-il/bin "$ROOT"/cases/ktproj-il/obj \
        "$ROOT"/cases/ktproj-roundtrip/*/bin "$ROOT"/cases/ktproj-roundtrip/*/obj \
        "$ROOT"/cases/ktproj-applib/*/bin "$ROOT"/cases/ktproj-applib/*/obj \
+       "$ROOT"/cases/ktproj-injectemit/bin "$ROOT"/cases/ktproj-injectemit/obj \
+       "$ROOT"/cases/ktproj-injectemit/lib/bin "$ROOT"/cases/ktproj-injectemit/lib/obj \
        "$ROOT"/cases/ktproj-reprop/*/bin "$ROOT"/cases/ktproj-reprop/*/obj \
        "$ROOT"/cases/ktproj-genq/*/bin "$ROOT"/cases/ktproj-genq/*/obj \
        "$ROOT"/cases/ktproj-inject/bin "$ROOT"/cases/ktproj-inject/obj \

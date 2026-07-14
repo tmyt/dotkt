@@ -120,6 +120,17 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   shadows the referenced same-name one (a loud unresolved-reference — the real remedy is to not compile the referenced
   library's source into the app). Gate: `cases/il-injectdedup` (source + injection of the same `demo.Plain`/`demo.hello`
   via the metadata alone) in `scripts/verify-il.sh`. Semantics: `docs/dotkt-semantics.md` §8f.
+- **bir2cir (#15): a type declared in THIS compilation now WINS over a referenced dll of the same identity — the
+  emit half of the #15 ProjectReference-source-glob layout.** After the frontend "source wins" fix, the app compiles
+  `demo.Plain`/`demo.hello` into a LOCAL BIR type, but bir2cir still resolved `demo.Plain` against the referenced
+  `Demo.dll` and emitted `newClr`/`clr*` — so the app both emitted `demo.Plain` locally *and* `newClr`'d the ref's
+  copy, and ilemit errored. `ReferenceMetadataIndex.ResolveNetType` now refuses to bind a locally-emitted FQN to the
+  refs (a new `_localEmittedTypes` set, the union of every input file's BIR `types`, populated before the transform
+  loop) — the single chokepoint through which `TransformNew`'s injected-owner fallback and `NetInteropBinding`'s
+  call/field/bound-delegate reshapes all resolve. A local `new demo.Plain` (this-assembly-emitted) and a local
+  `hello()` result; a type present ONLY in the ref is unchanged. This mirrors the frontend "source wins" and makes
+  the long-standing "ResolveNetType skips every local type" comments true. Gate: `cases/ktproj-injectemit` (the app's
+  recursive glob pulls in a nested ProjectReference lib's source AND references its dll) in `scripts/verify-ktproj.sh`.
 
 - **bir2cir (#17): a direct property get/set on a re-imported cross-module Kotlin type now lowers to the
   `get_<p>`/`set_<p>` accessor call.** A `--ref` Kotlin assembly whose type FQN starts with `kotlin.`/`kotlinx.`/
