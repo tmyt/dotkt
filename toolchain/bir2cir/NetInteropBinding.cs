@@ -88,6 +88,12 @@ static class NetInteropBinding
         JsonNode Take(string key) => v.TryGetValue(key, out var x) ? x : null;
         var owner = Take("ownerType");
         var args = Take("args") as JsonArray ?? new JsonArray();
+        // A `super.X()` (issue #14) rides in as `"super":true` on the callInstance. kotc already forced this call
+        // non-virtual, but that intent is dropped when we reshape to a CLR node. Carry the flag onto the produced
+        // clrInstance/clrPropGet/clrPropSet/clrGenericInstance so ilemit emits a non-virtual `call` (a base-slot
+        // dispatch like C#'s `base.M()`) instead of a `callvirt` that would re-dispatch to THIS class's override.
+        var superNode = Take("super");
+        void CarrySuper() { if (superNode != null) node["super"] = superNode; }
 
         // GENERIC .NET method: the presence of `typeArgs` (a frontend fact) is the signal. ilemit MakeGenericMethods it;
         // ShapeSynthesis (which runs right after this pass) derives the overload-matcher `shapes` from `shapeTypes`.
@@ -101,6 +107,7 @@ static class NetInteropBinding
             if (!isStatic) node["recv"] = Take("recv");
             node["args"] = args;
             if (Take("suspendCall") is JsonNode sc1) node["suspendCall"] = sc1;
+            if (!isStatic) CarrySuper();
             return;
         }
 
@@ -161,6 +168,7 @@ static class NetInteropBinding
                     node["ret"] = Take("ret");
                     node["static"] = isStatic;
                     node["recv"] = isStatic ? null : Take("recv");
+                    if (!isStatic) CarrySuper();
                     return;
                 }
                 node["k"] = "clrPropSet";
@@ -171,6 +179,7 @@ static class NetInteropBinding
                 JsonNode setVal = null;
                 if (args.Count > 0) { setVal = args[0]; args.RemoveAt(0); }
                 node["value"] = setVal;
+                if (!isStatic) CarrySuper();
                 return;
             }
             // No matching .NET property/field -> a synthetic accessor METHOD: apply the get_/set_ convention and fall
@@ -194,6 +203,7 @@ static class NetInteropBinding
                 node["ret"] = Take("ret");
                 node["static"] = isStatic;
                 node["recv"] = isStatic ? null : Take("recv");
+                if (!isStatic) CarrySuper();
                 return;
             }
             node["k"] = "clrPropSet";
@@ -204,6 +214,7 @@ static class NetInteropBinding
             JsonNode value = null;
             if (args.Count > 0) { value = args[0]; args.RemoveAt(0); }   // detach args[0] from the (already-detached) array
             node["value"] = value;
+            if (!isStatic) CarrySuper();
             return;
         }
 
@@ -243,6 +254,7 @@ static class NetInteropBinding
         if (!isStatic) node["recv"] = Take("recv");
         node["args"] = args;
         if (Take("suspendCall") is JsonNode sc2) node["suspendCall"] = sc2;
+        if (!isStatic) CarrySuper();
     }
 
     // #73 M4-b — bind a `field`/`setField` on a facadegen-injected .NET owner to clrPropGet/clrPropSet. Resolves the

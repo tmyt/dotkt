@@ -378,7 +378,10 @@ sealed partial class Emitter
                 EmitExpr(e.GetProperty("recv"));
                 for (int i = 0; i < argEls.Count; i++) EmitArg(argEls[i], ps[i].ParameterType);
                 for (int i = argEls.Count; i < ps.Length; i++) EmitDefaultArg(ps[i]);   // fill omitted trailing default/params args
-                _il.Emit(mi.IsVirtual ? OpCodes.Callvirt : OpCodes.Call, mi);
+                // A `super.M<T>(...)` to a CLR-bound base (issue #14) forces a non-virtual `call` to the base slot on the
+                // (reference) `this` receiver — else the callvirt re-dispatches to THIS class's override -> recursion.
+                var genSuper = e.TryGetProperty("super", out var supGi) && supGi.GetBoolean() && !type.IsValueType;
+                _il.Emit(mi.IsVirtual && !genSuper ? OpCodes.Callvirt : OpCodes.Call, mi);
                 return mi.ReturnType;
             }
             case "newArray": return EmitNewArray(e);

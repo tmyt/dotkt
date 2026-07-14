@@ -1270,6 +1270,9 @@ static class MemberCallSubstitution
         if (!write && RetToken(node) is JsonNode ret) pg["ret"] = ret;
         // WRITE value = the LAST arg (past a leading `__self` on the extension axis); args[0] on the instance/plain axis.
         if (write && args.Count >= 1) pg["value"] = (extRecv != null ? args[^1] : args[0]).DeepClone();
+        // Carry the `super` (non-virtual) marker (issue #14) onto the substituted accessor so ilemit emits a
+        // non-virtual `call` to the base accessor slot — an INSTANCE super.prop only (a static prop has no `super`).
+        if (node["super"] is JsonNode supProp && (propMarker == null || extRecv != null)) pg["super"] = supProp.DeepClone();
         return pg;
     }
 
@@ -1320,6 +1323,10 @@ static class MemberCallSubstitution
         if (ret != null) call["ret"] = ret;
         if (instance) call["recv"] = node["recv"]?.DeepClone();
         call["args"] = args.DeepClone();
+        // Carry the `super` (non-virtual) marker (issue #14) onto the substituted clrInstance so ilemit emits a
+        // non-virtual `call` to the base slot (like C#'s `base.M()`) instead of a `callvirt` that would re-dispatch to
+        // THIS class's override -> infinite recursion. A super call is always instance; never stamp it on a clrStatic.
+        if (instance && node["super"] is JsonNode superFlag) call["super"] = superFlag.DeepClone();
         // Thread the source call's generic type arguments onto the substituted clr call. A generic Kotlin
         // @ClrIntrinsic method (`fun <T> Array<T>.nativeFill(...)`) binds to a generic BCL method
         // (`System.Array.Fill<T>(T[],T,int,int)`); ilemit needs the type args to MakeGenericMethod the resolved
