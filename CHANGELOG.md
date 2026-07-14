@@ -7,6 +7,23 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **facadegen/bir2cir (#10): `await` generalized from Task-only to the .NET AWAITABLE PATTERN (GetAwaiter) — Task,
+  ValueTask, WinRT `IAsyncOperation<T>`, and custom awaitables, with zero per-type compiler support.** Previously
+  facadegen injected `.await()` only for the BCL Task family and bir2cir hardcoded the `TaskAwaiter` dance. Now a type is
+  awaitable IFF it has a conforming `GetAwaiter()` — a public parameterless instance MEMBER **or** a referenced
+  `[Extension] static GetAwaiter(this X)` — returning an awaiter with `bool IsCompleted`, `T GetResult()`, and
+  `INotifyCompletion`. **facadegen** (`EmitAwaitables`) pattern-detects every surfaced .NET awaitable and injects
+  `suspend fun X.await(): <Result>` (result = the awaiter's `GetResult()` return, `void`→`Unit`; the `captureContext`
+  opt-out param only for a Task-like awaitable exposing `ConfigureAwait(bool)`). **bir2cir**
+  (`SuspendColdLowering.EmitAwaitPoint` via the new `ReferenceMetadataIndex.ResolveAwaitable`) discovers the awaiter type
+  + members from ref metadata and emits the SAME awaiter dance generically — a member GetAwaiter as `clrInstance`, a
+  GENERIC extension GetAwaiter (the WinRT shape) as `MyExt.GetAwaiter<TResult>(x)` (`clrGenericStatic`, the method type
+  arg unified from the concrete receiver). ilemit gains no await knowledge. The Task/`ConfigureAwait` (§4a #3/#7) paths
+  are preserved as one instance of the pattern; `OnCompleted` (INotifyCompletion) is bound rather than
+  `UnsafeOnCompleted` (the cold core flows ExecutionContext via OnCompleted). New gate cases `cases/il-valueawait`
+  (ValueTask<T>, member GetAwaiter) and `cases/il-extawait` (a generic-extension custom awaitable — sync fast path +
+  genuine suspend/resume). Contract in `docs/dotkt-semantics.md §4c`.
+
 - **bir2cir/stdlib (#7): `Task.await()` resume now honors a `ContinuationInterceptor` — interceptor > captured
   SynchronizationContext > inline.** Part B of the await-resume precedence work (Part A was #3's
   `await(captureContext)` SyncContext capture). The stdlib cold-core `ContinuationImpl.intercepted()` (formerly a v1
