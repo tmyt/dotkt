@@ -7,6 +7,19 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir/facadegen (#18): a cross-module generic factory `fun <T> holderOf(): Holder<T?>` no longer degrades to
+  `Any?` on re-import — every member of the generic result (the `size` property, the `get` indexer) now surfaces.**
+  bir2cir's `NullableGenericReturnErasure` object-erases the nested `Nullable(Tv)` of such a return to the one uniform
+  CLR carrier (`Holder<object>`, #142-mandatory), but facadegen then could not read the erased arg back and collapsed
+  the whole re-imported return to `Any?` — so `val h = holderOf<String>(3)` was typed `Any?` and `h.size` / `h[0]`
+  were unresolved (`h[0]` even mis-resolved to `MatchGroupCollection.get` → `MatchGroup?`). The erasure now RECORDS the
+  pre-erasure return TypeNode (`Holder<T?>`) as a `nullableGenericRet` fact; `RoundtripMetadata` carrier-encodes it into
+  a new `[KotlinNullableGeneric]` return attribute (same round-trip channel as `[KotlinSuspendFunctionType]` /
+  `[KotlinNothing]`); and facadegen restores `Holder<T?>` from it — keeping its own open-name derivation for the outer
+  type and only re-injecting the recorded `Nullable(Tv)` where `object` was erased. The erasure itself is unchanged
+  (only the erased fact is saved and restored). Unblocks the kotlinx.coroutines CLR port (`atomicArrayOfNulls<T>():
+  AtomicArray<T?>`). New gate case `cases/ktproj-genq` (registered in `verify-ktproj.sh`).
+
 - **kotc (#14): a `super.X()` call from an override no longer infinite-recurses — it now emits a NON-virtual `call` to
   the resolved base slot.** kotc never read `IrCall.superQualifierSymbol`, so it emitted `super.greet()` identically to
   `this.greet()` — a `callInstance` with `virtual:true` → ilemit `callvirt Base::greet`, which re-dispatches by the

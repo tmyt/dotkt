@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- #18 LIBRARY: a Kotlin lib exporting a generic class + a `fun <T> holderOf(n): Holder<T?>` factory.
+       OutputType=Library emits Holder.dll with the [Kotlin*] round-trip metadata (incl. the new
+       [KotlinNullableGeneric] on holderOf's return); the app references it and re-imports `genq.*` AS KOTLIN. -->
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+
+  <Import Project="../../KotlinClr.targets" />
+
+</Project>

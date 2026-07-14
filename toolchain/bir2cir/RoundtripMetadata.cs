@@ -39,6 +39,7 @@ static class RoundtripMetadata
     const string AKSuspendFn    = Ns + "KotlinSuspendFunctionTypeAttribute";
     const string AKExtFn        = Ns + "KotlinExtensionFunctionTypeAttribute";
     const string AKNothing      = Ns + "KotlinNothingAttribute";
+    const string AKNullableGen  = Ns + "KotlinNullableGenericAttribute";
     const string ANullable      = ClrNs + "NullableAttribute";
     const string ANullableCtx   = ClrNs + "NullableContextAttribute";
 
@@ -114,6 +115,11 @@ static class RoundtripMetadata
         // facadegen reads the marker and moves the delegate's first arg back into the fn's receiver.
         if (HasRecvFn(mo["ret"])) ret.Add(Marker(AKExtFn));
         if ((mo["retNothing"] as JsonValue)?.GetValue<bool>() == true) ret.Add(Marker(AKNothing));
+        // [KotlinNullableGeneric(version, bytes)] (#18) — a `fun <T> …(): Holder<T?>` whose nested `Nullable(Tv)` arg
+        // NullableGenericReturnErasure object-erased to `Holder<object>`. The carrier holds the PRE-erasure return
+        // TypeNode (recorded as the opaque `nullableGenericRet` string) so facadegen restores `Holder<T?>` instead of
+        // degrading the re-imported factory/member return to `Any?`. Rides the SAME retAttrs channel as [Nullable]/[Nothing].
+        if ((mo["nullableGenericRet"] as JsonValue)?.GetValue<string>() is string ngr) ret.Add(NullableGenAttr(ngr));
         if (ret.Count > 0) mo["retAttrs"] = ret;
 
         StampParams(mo["params"]);
@@ -222,6 +228,16 @@ static class RoundtripMetadata
         return Marker(AKSuspendFn, StringArg(BirCarrier.JsonV1), BytesArg(Convert.ToBase64String(content)));
     }
 
+    // [KotlinNullableGeneric(version, bytes)] (#18) — the pre-erasure return TypeNode, carrier-encoded (same envelope as
+    // KotlinSuspendFunctionType). `nullableGenericRet` was stashed as a canonical TypeNode JSON STRING (opaque to the
+    // intervening type-rewriting passes); parse it back to a JsonNode so the carrier payload is the structured node
+    // facadegen's TypeNode.Parse reads.
+    static JsonObject NullableGenAttr(string typeJson)
+    {
+        byte[] content = BirCarrier.EncodeBody(BirCarrier.JsonV1, JsonNode.Parse(typeJson));
+        return Marker(AKNullableGen, StringArg(BirCarrier.JsonV1), BytesArg(Convert.ToBase64String(content)));
+    }
+
     static JsonObject Marker(string attr, params JsonObject[] args)
     {
         var arr = new JsonArray();
@@ -278,6 +294,7 @@ static class RoundtripMetadata
             AttrClass(AKSuspendFn, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKExtFn, Ctor()),     // #145 — bare marker: a `P.() -> R` receiver function-type position
             AttrClass(AKNothing, Ctor()),   // #133 case3 — bare marker on a Kotlin `Nothing` return
+            AttrClass(AKNullableGen, Ctor(Param("System.String"), Param(ByteArrayType()))),  // #18 — carrier of a pre-erasure `Holder<T?>` return
             // NullableAttribute — csc's DUAL ctor: (byte) FIRST, (byte[]) SECOND (declaration order preserved so the
             // MethodDef rows and BuildCab's arity fallback stay deterministic).
             AttrClass(ANullable, Ctor(Param("System.Byte")), Ctor(Param(ByteArrayType()))),

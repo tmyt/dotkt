@@ -104,6 +104,13 @@ kt ktproj-applib "cases/ktproj-applib/app/App.ktproj" \
 kt ktproj-reprop "cases/ktproj-reprop/app/App.ktproj" \
 	"$(printf '10\n42\n84')"
 
+# #18: a re-imported cross-module GENERIC factory `fun <T> holderOf(n): Holder<T?>`. bir2cir object-erases the nested
+# `Nullable(Tv)` to `Holder<object>`; the [KotlinNullableGeneric] round-trip attribute (stamped by RoundtripMetadata,
+# restored by facadegen) recovers `Holder<T?>` so the app's `h.size` + `h[0]` resolve. Before the fix `h` degraded to
+# `Any?` and the app FAILED TO COMPILE (unresolved `size`/indexer). Regression guard for the coroutines-port blocker.
+kt ktproj-genq "cases/ktproj-genq/app/App.ktproj" \
+	"$(printf '3\nempty\ncell-null')"
+
 # PRACTICAL COLLECTIONS app consuming the real CLR stdlib (DotKt.Stdlib.dll): a List held as an app local (resolves as
 # the referenced IReadOnlyList), member access (size/indexing), TOP-LEVEL stdlib funs (first/getOrElse/contains/indexOf/
 # count/isEmpty/take) which kotc emits as `callStatic owner=null` and bir2cir attributes to their file-class owner
@@ -132,6 +139,7 @@ rm -rf "$ROOT"/cases/ktproj/bin "$ROOT"/cases/ktproj/obj \
        "$ROOT"/cases/ktproj-roundtrip/*/bin "$ROOT"/cases/ktproj-roundtrip/*/obj \
        "$ROOT"/cases/ktproj-applib/*/bin "$ROOT"/cases/ktproj-applib/*/obj \
        "$ROOT"/cases/ktproj-reprop/*/bin "$ROOT"/cases/ktproj-reprop/*/obj \
+       "$ROOT"/cases/ktproj-genq/*/bin "$ROOT"/cases/ktproj-genq/*/obj \
        "$ROOT"/cases/ktproj-inject/bin "$ROOT"/cases/ktproj-inject/obj \
        "$ROOT"/cases/ktproj-import/bin "$ROOT"/cases/ktproj-import/obj \
        "$ROOT"/cases/ktproj-refrt/bin "$ROOT"/cases/ktproj-refrt/obj \

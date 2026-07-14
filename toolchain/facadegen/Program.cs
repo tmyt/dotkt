@@ -1578,9 +1578,18 @@ static class FacadeGen
         // companion-static return (the companion-static loop calls RetTypeSfxN here); the suspend-return position reads
         // the same marker via SuspendRetNode (#135).
         if (HasNothingMarker(attrs)) return ApplyNrt(new TN.Fqn("Nothing"), m.ReturnType, attrs, m);
+        // #18: a `fun <T> …(): Holder<T?>` whose nested `Nullable(Tv)` arg bir2cir object-erased to `Holder<object>`. The
+        // emitted IL return reads back as `Holder<object>` which MapTFn degrades to `Any?` (the object arg is Any?, so the
+        // whole constructed generic collapses), hiding every member of the re-imported result. The [KotlinNullableGeneric]
+        // carrier holds the PRE-erasure return TypeNode; restore `Holder<T?>` from it, keeping facadegen's own open-name
+        // derivation for the outer type (so it matches the injector's registration) and only re-injecting the recorded
+        // `Nullable(Tv)` where `object` was erased. NRT still folds the OUTER slot below (ApplyNrt).
+        var ng = NullableGenericNode(attrs);
         // #150: thread NRT so a `Func<string?>`-returning method surfaces the delegate return as `String?`. MapTFn maps
         // the (byref-stripped) return from array index 0; the outer ApplyNrt/ApplyFlowContract still fold the outer slot.
-        var mapped = MapTFn(m.ReturnType.IsByRef ? m.ReturnType.GetElementType() : m.ReturnType, self, attrs, m);
+        var mapped = ng != null
+            ? RestoreNullableGeneric(m.ReturnType.IsByRef ? m.ReturnType.GetElementType() : m.ReturnType, self, ng)
+            : MapTFn(m.ReturnType.IsByRef ? m.ReturnType.GetElementType() : m.ReturnType, self, attrs, m);
         var rt = ApplyFlowContract(ApplyNrt(mapped, m.ReturnType, attrs, m), m.ReturnType, attrs);
         return HasExtFnMarker(attrs) ? WithExtRecv(rt) : rt;   // #145: a method returning `P.() -> R`
     }
@@ -1628,6 +1637,67 @@ static class FacadeGen
         foreach (var cad in attrs)
             if (cad.AttributeType.FullName == KNothingAttr) return true;
         return false;
+    }
+
+    // #18: the pre-erasure return TypeNode carried in [KotlinNullableGeneric] (a `Holder<T?>` whose `Nullable(Tv)` arg
+    // bir2cir object-erased). Decoded via the shared carrier + TypeNode.Parse (same envelope as [KotlinSuspendFunctionType]).
+    // Null when absent/malformed -> the caller keeps the plain (degraded) mapping.
+    const string KNullableGenAttr = "DotKt.Runtime.CompilerServices.KotlinNullableGenericAttribute";
+    static TN NullableGenericNode(IList<CustomAttributeData> attrs)
+    {
+        string shape = null;
+        foreach (var cad in attrs)
+            if (cad.AttributeType.FullName == KNullableGenAttr && cad.ConstructorArguments.Count == 2)
+            { shape = DecodeCarrier(cad); break; }
+        if (string.IsNullOrEmpty(shape)) return null;
+        try { return TN.Parse(shape); } catch { return null; }
+    }
+
+    // #18: rebuild the pre-erasure return type by walking the emitted IL type `t` in parallel with the recorded
+    // pre-erasure node `pre`. Where `pre` marks a position as `Nullable(Tv)` (the arg bir2cir object-erased), trust the
+    // recorded node — its tv scope/index already match facadegen's positional convention (a method type-param is
+    // `tv(method,i)`, a type param is `tv(type,i)`). Everywhere else, reuse facadegen's OWN mapping (KotlinName + the
+    // NO_INJECT / injectability guards) so the restored outer name matches the injector's registration for the
+    // re-imported type. A shape divergence between `t` and `pre` falls back to the plain mapping (safe).
+    static TN RestoreNullableGeneric(Type t, Type self, TN pre) => RestoreNullableGeneric(t, self, pre, outer: true);
+
+    // The recorded pre-erasure node `pre` is captured in bir2cir BEFORE ReferenceNullableStrip, so it carries the FULL
+    // nullability structure as `{t:nullable}` wrappers — it is the source of truth for the erased-and-nearby positions
+    // (no [Nullable]-byte threading needed). `outer` distinguishes the top-level slot (whose nullability the member's
+    // [Nullable] byte re-adds via ApplyNrt in the caller, so an outer `T?`-around-structure wrapper is dropped here) from
+    // NESTED slots (whose `?` must be preserved — `Pair<T?, String?>`'s second arg has no outer byte).
+    static TN RestoreNullableGeneric(Type t, Type self, TN pre, bool outer)
+    {
+        // The erased leaf: `object` was a `Nullable(Tv)`. Restore it verbatim (keeps the value-nullability no outer byte
+        // tracks). Self-verifying: only trust it when the IL position IS the erased `System.Object` — any other IL type
+        // means a later bir2cir pass reshaped the slot, so fall through to the faithful plain mapping.
+        if (pre is TN.Nullable { Of: TN.Tv } && t.FullName == "System.Object") return pre;
+        if (pre is TN.Nullable pn)
+            // Outermost: drop the wrapper (ApplyNrt re-adds it). Nested: keep the `?` (recurse into the IL/pre inner).
+            return outer ? RestoreNullableGeneric(t, self, pn.Of, outer: true)
+                         : new TN.Nullable(RestoreNullableGeneric(t, self, pn.Of, outer: false));
+        if (t.IsArray && pre is TN.Array pa)
+        {
+            var e = RestoreNullableGeneric(t.GetElementType(), t, pa.Elem, outer: false);
+            return IsAnyQ(e) ? AnyQ() : new TN.Array(e);
+        }
+        if (t.IsByRef && pre is TN.ByRef pb)
+            return new TN.ByRef(RestoreNullableGeneric(t.GetElementType(), self, pb.Of, outer: false));
+        if (t.IsGenericType && pre is TN.Fqn { Args: { } pargs } && t.GetGenericArguments().Length == pargs.Length)
+        {
+            var open = t.GetGenericTypeDefinition();
+            if (open.IsNested) return DegradeToAny(t, "nested generic definition — no CLR-addressable open name");
+            var openName = KotlinName(open);
+            if (NO_INJECT.Contains(open.FullName ?? "") || !openName.All(c => char.IsLetterOrDigit(c) || c == '_'))
+                return DegradeToAny(t, "generic open def not injectable / not a simple identifier");
+            var gargs = t.GetGenericArguments();
+            var args = new TN[gargs.Length];
+            for (int i = 0; i < gargs.Length; i++) args[i] = RestoreNullableGeneric(gargs[i], t, pargs[i], outer: false);
+            if (args.Any(IsAnyQ)) return DegradeToAny(t, "a generic type argument was unresolvable");
+            return new TN.Fqn(openName, args);
+        }
+        // No erasure at this position (or a shape mismatch): the plain mapping is faithful.
+        return MapT(t, self);
     }
 
     // A `suspend fun` is emitted returning Task / Task<T>; restore the Kotlin result type and gate Supported on it.
