@@ -678,6 +678,7 @@ il_check deleg Deleg "$ROOT/cases/il-deleg"   "$(printf 'set count = 7\nget coun
 # #70: a genuine `::x`/`obj::p`/`Type::p` callable reference -> a lifted class implementing the REAL stdlib
 # KProperty0/KMutableProperty0/KProperty1 (name/get/set/invoke), not the retired `dotkt$KProperty` synthetic.
 il_check propref AppKt "$ROOT/cases/il-propref/app.kt" "$(printf 'x\n1\n99\n99\n7\n7\n99\ng\nt2\npay')"
+il_check extpropref AppKt "$ROOT/cases/il-extpropref/app.kt" "$(printf 'mySimpleName:Foo\nmySimpleName=Foo')"   # #21: bound (`this::extProp` -> KProperty0) + unbound (`String::extProp` -> KProperty1) reference to a top-level EXTENSION property; get() invokes the static ext getter with the captured/passed receiver (was "KProperty2 has no lowering")
 il_check rwp   Rwp   "$ROOT/cases/il-rwp"     "$(printf 'set n = 5\nget n\n5')"
 il_check bymap Bm    "$ROOT/cases/il-bymap"   "$(printf 'Alice\n30')"
 il_check mapforin MapForin "$ROOT/cases/il-mapforin" "$(printf 'a=1\nb=2\nc=3\nd=4\n7\nc:3\nd:4')"

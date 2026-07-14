@@ -571,16 +571,18 @@ internal fun BirEmitter.kPropertyStub(name: String): String =
 internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 	if (node.origin == IrStatementOrigin.PROPERTY_REFERENCE_FOR_DELEGATE)
 		return kPropertyStub(node.symbol.owner.name.asString())
-	// An extension-receiver property reference (`String::someExtProp`, KProperty2) has no supported lowering yet.
-	// Test the accessor's PARAMETER SHAPE, not the bound ARGUMENT: a bound-argument test is null for an UNBOUND
-	// top-level ext-property ref (no receiver argument present), so it would slip past this guard and emit a
-	// 0-arg `callStatic get_<name>` for an interface slot that actually needs `get(receiver)` (a param-count-
-	// mismatched override -> TypeLoad/miscompile). The getter/setter parameter list carries the ext receiver
-	// regardless of whether the reference is bound.
+	// A TOP-LEVEL extension property reference (`obj::extProp` bound, or `Type::extProp` unbound) IS supported: it
+	// lowers below through a static `<name>` accessor call carrying the ext receiver as the leading arg, MIRRORING
+	// the top-level ext-property value-read path in `call()` (#21). Only a genuine KProperty2 — a MEMBER extension
+	// property with BOTH a dispatch AND an extension receiver, inexpressible as a plain callable in Kotlin — stays
+	// unsupported. Test the accessor's PARAMETER SHAPE, not the bound ARGUMENT (a bound test is null for an UNBOUND
+	// ref, so it would misclassify an unbound top-level ext ref).
 	val extAccessor = node.getter?.owner ?: node.setter?.owner
-	if (extAccessor?.parameters?.any { it.kind == IrParameterKind.ExtensionReceiver } == true)
+	val hasExtRecv = extAccessor?.parameters?.any { it.kind == IrParameterKind.ExtensionReceiver } == true
+	val hasDispatchRecv = extAccessor?.parameters?.any { it.kind == IrParameterKind.DispatchReceiver } == true
+	if (hasExtRecv && hasDispatchRecv)
 		return unsupported(node, "this property reference",
-			"an extension-receiver property reference (KProperty2) has no supported lowering yet")
+			"a member extension-receiver property reference (KProperty2) has no supported lowering yet")
 	val prop = node.symbol.owner
 	if (prop.isLateinit || isClrField(prop))
 		return unsupported(node, "this property reference",
@@ -604,6 +606,17 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 	val declClass = getterFn.parent as? IrClass
 	val name = prop.name.asString()
 	val boundRecv = propRefDispatchReceiver(node)
+	// The bound EXTENSION receiver of a top-level ext-property reference (`obj::extProp`) — null when UNBOUND
+	// (`Type::extProp`). Indexed off the getter/setter's ExtensionReceiver parameter slot (mirrors
+	// propRefDispatchReceiver, one receiver-kind over).
+	val extBoundRecv: IrExpression? = if (hasExtRecv) run {
+		val params = (node.getter?.owner ?: node.setter?.owner)?.parameters
+		val idx = params?.indexOfFirst { it.kind == IrParameterKind.ExtensionReceiver } ?: -1
+		if (idx in 0 until node.arguments.size) node.arguments[idx] else null
+	} else null
+	// The receiver captured into the lift's `__recv` field for a BOUND reference: the dispatch receiver (a member
+	// property) or the extension receiver (a top-level ext property). Only one is ever present.
+	val capturedRecv = boundRecv ?: extBoundRecv
 
 	val ifaceSpec = birType(node.type) as? TypeNode.Fqn
 		?: return unsupported(node, "this property reference",
@@ -613,8 +626,11 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 	val vType = ifaceArgs.lastOrNull() ?: OBJ
 	val recvTypeNode = ifaceArgs.getOrNull(0).takeIf { !arity0 }   // KProperty1/KMutableProperty1's T (unbound only)
 
-	val bound = declClass != null && arity0 && boundRecv != null
-	val unbound = declClass != null && !arity0
+	// BOUND (KProperty0, receiver captured in `__recv`) vs UNBOUND (KProperty1, receiver = the get/set's leading
+	// param), for BOTH a member property (`declClass != null`) and a top-level extension property (`hasExtRecv`).
+	// A top-level NON-ext property (`::x`) is neither — it stays the plain static-field/get_ path below.
+	val bound = arity0 && capturedRecv != null && (declClass != null || hasExtRecv)
+	val unbound = !arity0 && (declClass != null || hasExtRecv)
 	val cname = "dotkt\$${synthScope}\$PropRef${closureCounter++}"
 
 	fun recvExprIn(): String = when {
@@ -623,9 +639,27 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 		else -> """{"k":"this"}"""
 	}
 	val memberOwner: TypeNode = when {
-		bound -> ownerSpec(declClass, boundRecv!!.type)
-		unbound -> recvTypeNode ?: OBJ
+		bound && declClass != null -> ownerSpec(declClass, boundRecv!!.type)
+		unbound && declClass != null -> recvTypeNode ?: OBJ
 		else -> OBJ
+	}
+	// A top-level EXTENSION property: its getter/setter is a static `<name>` accessor (a `prop:get`/`prop:set` marker
+	// carrying the ext receiver as its leading arg), NOT an instance `get_/set_` slot — the SAME shape the value-read
+	// path in `call()` emits. bir2cir binds it off the stdlib/facade metadata (or the get_/set_<name> convention). An
+	// INJECTED (referenced-assembly) ext property resolves to its .NET file-facade class; a same-module one stays
+	// owner:null for ilemit's FindStatic. `getterFn.body == null` = a deserialized/injected stub.
+	val extInjectedFileClass: String? = if (hasExtRecv && getterFn.body == null)
+		(prop.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)
+			?.let { kotc.frontend.clrInjectedTopLevelPropFileClass(CallableId(it.packageFqName, prop.name)) }
+	else null
+	fun extAccessorCall(isSetter: Boolean, valueArg: String?): String {
+		val kind = if (isSetter) "set" else "get"
+		val recvArg = if (bound)
+			"""{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":"__recv"}"""
+		else """{"k":"local","name":"receiver"}"""
+		val args = listOfNotNull(recvArg, valueArg).joinToString(",")
+		val ownerField = if (extInjectedFileClass != null) """"ownerType":${str(extInjectedFileClass)}""" else """"owner":null"""
+		return """{"k":"callStatic",$ownerField,"method":${str(name)},"prop":${str(kind)}${overloadSigField(getterFn)},"args":[$args]}"""
 	}
 	fun accessorCall(isSetter: Boolean, extraArg: String?): String {
 		val fn = if (isSetter) setterFn!! else getterFn
@@ -635,14 +669,18 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 		return """{"k":"callInstance","ownerType":${memberOwner.toJson()},"virtual":$virtual,"recv":${recvExprIn()},"method":$method,"args":[$args]}"""
 	}
 
-	val readBody: String = if (declClass == null) {
-		// Top-level property: mirrors the ordinary top-level property-read path (a plain val/var is a static
-		// field; a computed one — no backing field — is a get_<name>() static).
-		val owner = fileClassOf(prop)
-		if (prop.backingField == null)
-			"""{"k":"return","value":{"k":"callStatic","owner":${fqnJson(owner)},"method":${str("get_$name")},"args":[]}}"""
-		else """{"k":"return","value":{"k":"staticField","ownerType":${fqnJson(owner)},"name":${str(name)}}}"""
-	} else """{"k":"return","value":${accessorCall(false, null)}}"""
+	val readBody: String = when {
+		hasExtRecv -> """{"k":"return","value":${extAccessorCall(false, null)}}"""
+		declClass == null -> {
+			// Top-level property: mirrors the ordinary top-level property-read path (a plain val/var is a static
+			// field; a computed one — no backing field — is a get_<name>() static).
+			val owner = fileClassOf(prop)
+			if (prop.backingField == null)
+				"""{"k":"return","value":{"k":"callStatic","owner":${fqnJson(owner)},"method":${str("get_$name")},"args":[]}}"""
+			else """{"k":"return","value":{"k":"staticField","ownerType":${fqnJson(owner)},"name":${str(name)}}}"""
+		}
+		else -> """{"k":"return","value":${accessorCall(false, null)}}"""
+	}
 	val readParams = if (unbound) """{"name":"receiver","type":${str(recvTypeNode ?: OBJ)}}""" else ""
 	val getMethod = """{"name":"get","static":false,"override":true,"virtual":true,"params":[$readParams],"ret":${str(vType)},"body":[$readBody]}"""
 	// KProperty0/KProperty1's declared supertype `() -> V`/`(T) -> V` gives them a REAL fake-overridden `invoke`
@@ -653,12 +691,16 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 	val invokeMethod = """{"name":"invoke","static":false,"override":true,"virtual":true,"params":[$readParams],"ret":${str(vType)},"body":[$readBody]}"""
 
 	val setMethod: String? = setterFn?.let {
-		val setBody = if (declClass == null) {
-			val owner = fileClassOf(prop)
-			if (prop.backingField == null)
-				"""{"k":"exprStmt","expr":{"k":"callStatic","owner":${fqnJson(owner)},"method":${str("set_$name")},"args":[{"k":"local","name":"value"}]}}"""
-			else """{"k":"exprStmt","expr":{"k":"staticFieldSet","ownerType":${fqnJson(owner)},"name":${str(name)},"value":{"k":"local","name":"value"}}}"""
-		} else """{"k":"exprStmt","expr":${accessorCall(true, """{"k":"local","name":"value"}""")}}"""
+		val setBody = when {
+			hasExtRecv -> """{"k":"exprStmt","expr":${extAccessorCall(true, """{"k":"local","name":"value"}""")}}"""
+			declClass == null -> {
+				val owner = fileClassOf(prop)
+				if (prop.backingField == null)
+					"""{"k":"exprStmt","expr":{"k":"callStatic","owner":${fqnJson(owner)},"method":${str("set_$name")},"args":[{"k":"local","name":"value"}]}}"""
+				else """{"k":"exprStmt","expr":{"k":"staticFieldSet","ownerType":${fqnJson(owner)},"name":${str(name)},"value":{"k":"local","name":"value"}}}"""
+			}
+			else -> """{"k":"exprStmt","expr":${accessorCall(true, """{"k":"local","name":"value"}""")}}"""
+		}
 		val setParams = (if (unbound) """{"name":"receiver","type":${str(recvTypeNode ?: OBJ)}},""" else "") +
 			"""{"name":"value","type":${str(vType)}}"""
 		"""{"name":"set","static":false,"override":true,"virtual":true,"params":[$setParams],"ret":${str(TypeNode.Fqn("kotlin.Unit"))},"body":[$setBody]}"""
@@ -672,17 +714,17 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 	val stubBase = TypeNode.Fqn("kotlin.reflect.ClrPropertyStub", listOf(vType))
 	val stubBaseArg = """{"k":"const","type":${fqnJson("kotlin.String")},"value":${str(name)}}"""
 
-	val recvFieldType = if (bound) birType(boundRecv!!.type) else null
+	val recvFieldType = if (bound) birType(capturedRecv!!.type) else null
 	val fields = if (bound) """{"name":"__recv","type":${str(recvFieldType!!)}}""" else ""
 	val ctorParams = if (bound) """{"name":"__recv","type":${str(recvFieldType!!)}}""" else ""
 	val ctorBody = if (bound) """{"k":"setField","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":"__recv","value":{"k":"local","name":"__recv"}}""" else ""
 
-	val freeTps = freeTypeParams(listOf(node.type) + listOfNotNull(boundRecv?.type))
+	val freeTps = freeTypeParams(listOf(node.type) + listOfNotNull(capturedRecv?.type))
 	val methods = listOfNotNull(getMethod, invokeMethod, setMethod).joinToString(",")
 	liftedTypes.add("""{"name":${str(cname)},"kind":"class","generated":true${typeParamsJson(freeTps)},"base":${stubBase.toJson()},"interfaces":[${ifaceSpec.toJson()}],"fields":[$fields],"ctors":[{"params":[$ctorParams],"baseArgs":[$stubBaseArg],"body":[$ctorBody]}],"methods":[$methods]}""")
 
 	val classType = if (freeTps.isEmpty()) TypeNode.Fqn(cname) else TypeNode.Fqn(cname, freeTps.map { tvOf(it) })
-	val ctorArgs = if (bound) expr(boundRecv!!) else ""
+	val ctorArgs = if (bound) expr(capturedRecv!!) else ""
 	return """{"k":"new","type":${classType.toJson()},"args":[$ctorArgs]}"""
 }
 
