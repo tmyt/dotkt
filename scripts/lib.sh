@@ -72,11 +72,50 @@ need_tool() { # <name> — ensure build/<name>-bin/<name>.dll exists (ilemit|bir
 build_tool() { # <name> — UNCONDITIONAL build (the verify gates use this: they must test the CURRENT sources)
 	dotnet build "$ROOT/toolchain/$1" -c Release -o "$ROOT/build/$1-bin" -v q --nologo >/dev/null
 }
-need_fe_klib() { # the CLR frontend stdlib KLIB (kotc -classpath input); consumes the kotc install's lib jars
-	[[ -e "$FE_KLIB" ]] || { info "building CLR frontend stdlib klib" >&2; bash "$ROOT/scripts/build-stdlib-klib.sh" >/dev/null 2>&1; }
+# --- toolchain fingerprint: rebuild a stdlib artifact when the toolchain that BAKED it changed --------
+# (GitHub #13) need_fe_klib/need_stdlib_ref/need_stdlib_rt used to rebuild ONLY when the artifact was
+# MISSING — so a kotlin-stdlib-clr-frontend.klib / DotKt.Private.Stdlib.dll / DotKt.Stdlib.dll baked by an
+# OLDER toolchain (or left by another branch's build) was silently reused against a NEWER compile: a
+# false-RED, and — worse — a silent stale-GREEN (a case passing against a stale bake, breaking on the next
+# fresh one). Each of the three artifacts is a deterministic function of its INPUTS (the installed kotc, the
+# relevant native tool dlls, and the stdlib source tree); we hash those inputs into a sidecar
+# '<artifact>.toolstamp' and rebuild on MISMATCH, not just absence. The hash is mtime+size+path (cheap; the
+# build tools are incremental, so an unchanged toolchain leaves every input untouched -> stamp matches -> no
+# spurious rebuild, preserving the build-only-if-needed fast path).
+KOTC_INSTALL_DIR="$ROOT/toolchain/kotc/build/install/kotc"
+STDLIB_SRC_DIR="$ROOT/libraries/stdlib"
+
+# _toolstamp <path>... — fingerprint the given input files/dirs. Missing paths contribute nothing (a build
+# that truly lacks an input fails loudly on its own); deterministic (sort before hashing).
+_toolstamp() { find "$@" -type f -printf '%T@ %s %p\n' 2>/dev/null | LC_ALL=C sort | sha256sum | awk '{print $1}'; }
+# Per-artifact input sets. klib: kotc + stdlib sources (a klib has no IL -> ilemit/bir2cir are irrelevant to
+# its bytes). ref: kotc + bir2cir + ilemit + retarget + sources. rt: kotc + bir2cir + ilemit + the REF dll it
+# consumes (bir2cir --ref) + sources.
+_toolstamp_klib() { _toolstamp "$KOTC_INSTALL_DIR" "$STDLIB_SRC_DIR"; }
+_toolstamp_ref()  { _toolstamp "$KOTC_INSTALL_DIR" "$BIR2CIR_DLL" "$ILEMIT_DLL" "$RETARGET_DLL" "$STDLIB_SRC_DIR"; }
+_toolstamp_rt()   { _toolstamp "$KOTC_INSTALL_DIR" "$BIR2CIR_DLL" "$ILEMIT_DLL" "$STDLIB_REF_DLL" "$STDLIB_SRC_DIR"; }
+# _stamp_fresh <artifact> <fingerprint>: true iff the artifact exists AND its sidecar records this fingerprint.
+_stamp_fresh() { [[ -e "$1" && -f "$1.toolstamp" && "$(cat "$1.toolstamp" 2>/dev/null)" == "$2" ]]; }
+
+need_fe_klib() { # the CLR frontend stdlib KLIB (kotc -classpath input); rebuild if missing OR toolchain changed
+	_stamp_fresh "$FE_KLIB" "$(_toolstamp_klib)" && return 0
+	info "building CLR frontend stdlib klib (missing or toolchain fingerprint changed)" >&2
+	bash "$ROOT/scripts/build-stdlib-klib.sh" >/dev/null 2>&1
+	# Recompute post-build: build-stdlib-klib.sh may itself build kotc (need_kotc), moving input mtimes.
+	_toolstamp_klib > "$FE_KLIB.toolstamp"
 }
-need_stdlib_ref() { [[ -f "$STDLIB_REF_DLL" ]] || { info "building stdlib REFERENCE dll" >&2; bash "$ROOT/scripts/build-stdlib-ref.sh" --emit >/dev/null 2>&1; }; }
-need_stdlib_rt()  { [[ -f "$STDLIB_RT_DLL"  ]] || { info "building stdlib RUNTIME dll"   >&2; bash "$ROOT/scripts/build-stdlib-rt.sh"  --emit >/dev/null 2>&1; }; }
+need_stdlib_ref() { # the stdlib REFERENCE dll; rebuild if missing OR toolchain changed
+	_stamp_fresh "$STDLIB_REF_DLL" "$(_toolstamp_ref)" && return 0
+	info "building stdlib REFERENCE dll (missing or toolchain fingerprint changed)" >&2
+	bash "$ROOT/scripts/build-stdlib-ref.sh" --emit >/dev/null 2>&1
+	_toolstamp_ref > "$STDLIB_REF_DLL.toolstamp"
+}
+need_stdlib_rt() { # the stdlib RUNTIME dll; rebuild if missing OR toolchain changed (the ref dll is an input)
+	_stamp_fresh "$STDLIB_RT_DLL" "$(_toolstamp_rt)" && return 0
+	info "building stdlib RUNTIME dll (missing or toolchain fingerprint changed)" >&2
+	bash "$ROOT/scripts/build-stdlib-rt.sh" --emit >/dev/null 2>&1
+	_toolstamp_rt > "$STDLIB_RT_DLL.toolstamp"
+}
 
 # --- stdlib source sets (shared by build-stdlib-ref.sh / build-stdlib-rt.sh) -----------------------
 # Sets the arrays STDLIB_COMMON/STDLIB_SRC/STDLIB_UNSIGNED/STDLIB_CLR and STDLIB_COMMON_CSV.

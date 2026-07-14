@@ -53,7 +53,8 @@ if (( do_emit )); then
 	info "bir2cir (substitute) -> CIR"
 	# bir2cir reads the REFERENCE assembly for the @ClrTypeAlias/@ClrIntrinsic call-substitution labels
 	# (member calls on CLR-bound owners -> plain BCL calls). Must exist — build the ref first.
-	refarg=(); [[ -f "$STDLIB_REF_DLL" ]] && refarg=(--ref "$STDLIB_REF_DLL")
+	[[ -f "$STDLIB_REF_DLL" ]] || die "reference stdlib dll not found at $STDLIB_REF_DLL — run 'build-stdlib-ref.sh --emit' first (the runtime build reads it for the @ClrTypeAlias/@ClrIntrinsic labels)"
+	refarg=(--ref "$STDLIB_REF_DLL")
 	{ dotnet "$BIR2CIR_DLL" "$CIR" "${refarg[@]}" --build-stdlib=runtime "$BIR"/*.bir.json 2>"$OUT/bir2cir.err" || true; } | tail -1
 	info "ilemit (substitute) -> DotKt.Stdlib.dll"
 	{ dotnet "$ILEMIT_DLL" "$DLL" DotKt.Stdlib --build-stdlib=runtime "$CIR"/*.cir.json 2>"$OUT/ilemit.err" || true; } | tail -2
