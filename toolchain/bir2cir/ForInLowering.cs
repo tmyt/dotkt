@@ -102,6 +102,7 @@ static class ForInLowering
     {
         var t = TypeJson.Read(srcType);
         while (t is TypeNode.Nullable nu) t = nu.Of;   // a for-in source is non-null in valid Kotlin; unwrap defensively
+        while (t is TypeNode.Oblivious ob) t = ob.Of;  // a flexible/platform `netArray!`/`netIterable!` source (#8): peel like Nullable
         if (t is not TypeNode.Fqn f) return false;
         var fqn = ReferenceMetadataIndex.BareOwnerFqn(f.Name);
         if (fqn == "kotlin.sequences.Sequence") return true;
@@ -121,6 +122,7 @@ static class ForInLowering
     {
         var t = TypeJson.Read(srcType);
         while (t is TypeNode.Nullable nu) t = nu.Of;   // a for-in source is non-null in valid Kotlin; unwrap defensively
+        while (t is TypeNode.Oblivious ob) t = ob.Of;  // a flexible/platform `netArray!`/`netIterable!` source (#8): peel like Nullable
         if (t is not TypeNode.Fqn f) return false;
         var seen = new HashSet<string>(StringComparer.Ordinal);
         bool Walk(string name)

@@ -118,7 +118,12 @@ object ClrCommonFir2IrPipelinePhase : PipelinePhase<MetadataFrontendPipelineArti
 			visibilityConverter = Fir2IrVisibilityConverter.Default,
 			kotlinBuiltIns = DefaultBuiltIns.Instance,
 			typeSystemContextProvider = ::IrTypeSystemContextImpl,
-			specialAnnotationsProvider = null,
+			// Install the special-annotations provider so Fir2Ir attaches the `@kotlin.internal.ir.FlexibleNullability`
+			// marker onto a platform/flexible IR type `T!` (`(T..T?)`). Without it the flexible upper bound collapses to
+			// a plain `T?` indistinguishable from a genuine user `Int?`, so a facadegen-injected `[MaybeNull]` value-type
+			// getter (`ThreadLocal<Int>.Value`) would serialize as `nullable(kotlin.Int)` → bir2cir `Nullable<Int32>`
+			// instead of the correct bare `int32` (#8). BirEmitterTypes reads the marker to emit `{t:oblivious}`.
+			specialAnnotationsProvider = org.jetbrains.kotlin.backend.jvm.JvmIrSpecialAnnotationSymbolProvider,
 			extraActualDeclarationExtractorsInitializer = { emptyList() },
 		)
 		return ClrFir2IrPipelineArtifact(fir2IrResult, input.configuration)

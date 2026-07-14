@@ -127,6 +127,10 @@ static class ArrayConstructionLowering
     {
         TypeNode.Array a => a.Elem,
         TypeNode.Nullable n => ArrayElementOf(n.Of),
+        // A flexible/platform array `int[]!` (a facadegen-injected NRT-oblivious .NET array return, #8) — peel the
+        // oblivious wrapper exactly like Nullable, else the arrayGet/arraySet/forArray `elem` stamp is dropped and
+        // ilemit KeyNotFounds on the missing `elem`.
+        TypeNode.Oblivious o => ArrayElementOf(o.Of),
         // A signed primitive array identity (`kotlin.IntArray`) -> its element; a reference `kotlin.Array<E>` -> E.
         TypeNode.Fqn f when BirTypeLowering.PrimArrayElem.TryGetValue(f.Name, out var e) => new TypeNode.Fqn(e),
         TypeNode.Fqn { Name: "kotlin.Array", Args: { Length: 1 } fa } => fa[0],

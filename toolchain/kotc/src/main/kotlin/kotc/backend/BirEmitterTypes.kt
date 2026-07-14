@@ -92,7 +92,16 @@ internal fun BirEmitter.birType(t: IrType): TypeNode {
 	// type node only, and the decl-level `nullable`/`retNullable` flags are RETIRED. bir2cir DERIVES the CLR form
 	// (value `Nullable<T>` vs reference NRT byte) from this node. Wrapping the non-null core makes every early-return
 	// special case below (ClrRef/Span/array/fn/Comparator/charSeq/coroutine-fn/type-parameter) apply to the core.
-	if (t.isMarkedNullable()) return TypeNode.Nullable(birType(t.makeNotNull()))
+	if (t.isMarkedNullable()) {
+		// A platform/flexible type `T!` (`(T..T?)`) surfaces in IR as the nullable upper bound carrying the
+		// `@kotlin.internal.ir.FlexibleNullability` marker (attached by Fir2Ir's specialAnnotationsProvider — see
+		// ClrCliPipeline). It is a pure nullability ANNOTATION, not a genuine `T?`: emit `{t:oblivious}` so bir2cir
+		// lowers a VALUE inner to the BARE `int32` (a facadegen-injected `[MaybeNull]` `ThreadLocal<Int>.Value` reads
+		// `0` when unset, NOT `Nullable<int32>` — #8) and a REFERENCE inner to an NRT-oblivious ref. A genuine user
+		// `T?` has no marker and stays `{t:nullable}` (→ `Nullable<int32>` / a `?`-marked reference).
+		if (t.hasFlexibleNullability()) return TypeNode.Oblivious(birType(t.makeNotNull()))
+		return TypeNode.Nullable(birType(t.makeNotNull()))
+	}
 	// A type parameter `T` -> a positional `tv` (resolved in IL context). On the CLR generics are reified, so
 	// even `reified T` rides on this (no inlining) — see [[clr-not-jvm-discard-jvmisms]].
 	(t.classifierOrNull as? org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol)?.let { tp ->
@@ -276,7 +285,7 @@ internal fun BirEmitter.hasTv(t: TypeNode): Boolean = when (t) {
 	is TypeNode.Fqn -> t.args?.any { hasTv(it) } == true
 	is TypeNode.Fn -> hasTv(t.ret) || t.params.any { hasTv(it) } || (t.recv?.let { hasTv(it) } == true)
 	is TypeNode.Nullable -> hasTv(t.of)
-	is TypeNode.Oblivious -> hasTv(t.of)   // frontend-only, but keep the match exhaustive
+	is TypeNode.Oblivious -> hasTv(t.of)   // a flexible/platform `T!` (#8) — recurse into its inner like Nullable
 	is TypeNode.Array -> hasTv(t.elem)
 	is TypeNode.ByRef -> hasTv(t.of)
 }
@@ -289,7 +298,7 @@ internal fun BirEmitter.containsTv(t: TypeNode): Boolean = when (t) {
 	is TypeNode.Fqn -> t.args?.any { containsTv(it) } == true
 	is TypeNode.Fn -> containsTv(t.ret) || t.params.any { containsTv(it) } || (t.recv?.let { containsTv(it) } == true)
 	is TypeNode.Nullable -> containsTv(t.of)
-	is TypeNode.Oblivious -> containsTv(t.of)   // frontend-only, but keep the match exhaustive
+	is TypeNode.Oblivious -> containsTv(t.of)   // a flexible/platform `T!` (#8) — recurse into its inner like Nullable
 	is TypeNode.Array -> containsTv(t.elem)
 	is TypeNode.ByRef -> containsTv(t.of)
 }
@@ -350,7 +359,18 @@ internal fun BirEmitter.arrayElemType(t: IrType): TypeNode {
  *  STRUCT where the use site wants the bare value (#118). bir2cir lowers the `kotlin.UInt` elem to `System.UInt32`
  *  exactly as it does `kotlin.Int` -> `System.Int32` (#76 native-unsigned). */
 internal fun BirEmitter.nullableElem(t: IrType): TypeNode? =
-	if (t.isMarkedNullable() && t.isPrimitiveOrUnsigned()) t.classFqName?.asString()?.let { TypeNode.Fqn(it) } else null
+	// EXCLUDE a flexible-marked primitive (`Int!`, a `[MaybeNull]` platform value): birType emits it as `{t:oblivious}`
+	// which bir2cir lowers to a BARE `int32` — there is no `Nullable<T>` STRUCT to unwrap, so emitting a `.get_Value`
+	// read over it would be invalid IL (#8). Only a GENUINE `Int?` (`Nullable<int32>`) needs the HasValue/Value unwrap.
+	if (t.isMarkedNullable() && !t.hasFlexibleNullability() && t.isPrimitiveOrUnsigned()) t.classFqName?.asString()?.let { TypeNode.Fqn(it) } else null
+
+/** True if [t] is a platform/flexible type `T!` — its IR carries the `@kotlin.internal.ir.FlexibleNullability` marker
+ *  that Fir2Ir attaches (only when a non-null specialAnnotationsProvider is installed — see ClrCliPipeline). It
+ *  distinguishes an oblivious `T!` (a `[MaybeNull]`/platform nullable) from a GENUINE user `T?`: the former lowers to a
+ *  bare value / NRT-oblivious reference (#8), the latter to `Nullable<T>` / a `?`-marked reference. Reads the type-node
+ *  annotations the same way the ExtensionFunctionType check above does. */
+internal fun IrType.hasFlexibleNullability(): Boolean =
+	(this as? IrSimpleType)?.annotations?.any { it.type.classFqName?.asString() == "kotlin.internal.ir.FlexibleNullability" } == true
 
 /** A value-type-nullable source (`Int?` = `Nullable<T>` on the CLR) narrowed/cast to its NON-null value
  *  (`Int`) must read `Nullable<T>.get_Value` — a bare load / `unbox.any` over a `Nullable<T>` STRUCT reads
@@ -358,7 +378,10 @@ internal fun BirEmitter.nullableElem(t: IrType): TypeNode? =
  *  type, returns the element to wrap in a `nullableValue` unwrap, else null. */
 internal fun BirEmitter.nullableValueUnwrapElem(srcType: IrType, useType: IrType): TypeNode? {
 	val elem = nullableElem(srcType) ?: return null          // source is Int?/Long?/Double?/UInt?…
-	if (useType.isMarkedNullable()) return null              // target is still nullable -> no unwrap
+	// Target still nullable -> no unwrap. EXCEPT a flexible/platform `Int!` target (a `[MaybeNull]` value setter slot,
+	// #8): it lowers to a BARE `int32`, so a genuine `Int?` source assigned into it MUST be `.Value`-unwrapped exactly
+	// like a bare-`Int` target — a raw `Nullable<Int32>` into a bare `int32` slot is InvalidProgram.
+	if (useType.isMarkedNullable() && !useType.hasFlexibleNullability()) return null
 	val tgt = useType.classFqName?.asString()?.takeIf { useType.isPrimitiveOrUnsigned() } ?: return null
 	return if (elem is TypeNode.Fqn && tgt == elem.name) elem else null
 }
