@@ -140,6 +140,17 @@ kt ktproj-genq "cases/ktproj-genq/app/App.ktproj" \
 kt ktproj-genov "cases/ktproj-genov/app/App.ktproj" \
 	"$(printf '3\ngen1\nint')"
 
+# #25 RESIDUAL: a GENERIC top-level factory declared in a MULTIPLATFORM library's COMMON fragment (file class
+# `GenovCommonKt`), consumed cross-module. kotc emits the generic call as `callStatic ownerType=…GenovCommonKt
+# typeArgs=[…] shapeTypes=[…]` with NO `sig`; the sig-less generic call yields an EMPTY receiver-key, so bir2cir's
+# TryResolveTopLevelStatic can't disambiguate the owner once the bare fun name lives under >1 file-class in the ref
+# index (here `arrOfNulls` also exists in the sibling package `GenovAltKt`) — the first #25 fix's owner-attribution
+# was skipped, leaving the call un-promoted -> ilemit "static method not found: arrOfNulls". bir2cir now adopts
+# kotc's facadegen-injected `ownerType` as the owner and promotes `shapeTypes`->`sig`. Regression guard for the
+# common-fragment (`*CommonKt`) arm of the atomicfu-port cross-module generic-factory blocker.
+kt ktproj-genov-common "cases/ktproj-genov-common/app/App.ktproj" \
+	"3"
+
 # PRACTICAL COLLECTIONS app consuming the real CLR stdlib (DotKt.Stdlib.dll): a List held as an app local (resolves as
 # the referenced IReadOnlyList), member access (size/indexing), TOP-LEVEL stdlib funs (first/getOrElse/contains/indexOf/
 # count/isEmpty/take) which kotc emits as `callStatic owner=null` and bir2cir attributes to their file-class owner
@@ -173,6 +184,7 @@ rm -rf "$ROOT"/cases/ktproj/bin "$ROOT"/cases/ktproj/obj \
        "$ROOT"/cases/ktproj-dotktpkg/*/bin "$ROOT"/cases/ktproj-dotktpkg/*/obj \
        "$ROOT"/cases/ktproj-genq/*/bin "$ROOT"/cases/ktproj-genq/*/obj \
        "$ROOT"/cases/ktproj-genov/*/bin "$ROOT"/cases/ktproj-genov/*/obj \
+       "$ROOT"/cases/ktproj-genov-common/*/bin "$ROOT"/cases/ktproj-genov-common/*/obj \
        "$ROOT"/cases/ktproj-inject/bin "$ROOT"/cases/ktproj-inject/obj \
        "$ROOT"/cases/ktproj-import/bin "$ROOT"/cases/ktproj-import/obj \
        "$ROOT"/cases/ktproj-refrt/bin "$ROOT"/cases/ktproj-refrt/obj \
