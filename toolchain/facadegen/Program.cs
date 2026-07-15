@@ -524,7 +524,11 @@ static class FacadeGen
             o["mods"] = Mods(("vararg", true));
             return o;
         }
-        var pt = ApplyNrt(MapTFn(p.ParameterType, self, attrs, p.Member as MemberInfo), p.ParameterType, attrs, p.Member as MemberInfo);  // #150: NRT-threaded (delegate args)
+        // #29: a param nesting a collapsed read-only collection carries the pre-collapse Kotlin type; restore `List` vs
+        // `MutableList` from it. Absent -> the plain MapTFn (BCL reverse-map) keeps a genuine `MutableList` as MutableList.
+        var ci = CollectionIdentityNode(attrs);
+        var plainP = MapTFn(p.ParameterType, self, attrs, p.Member as MemberInfo);  // #150: NRT-threaded (delegate args)
+        var pt = ApplyNrt(ci != null ? FoldCollectionIdentity(plainP, ci) : plainP, p.ParameterType, attrs, p.Member as MemberInfo);
         o["type"] = Ty(HasExtFnMarker(attrs) ? WithExtRecv(pt) : pt);   // #145: `block: P.() -> R` -> restore the receiver
         // #146: a NON-CONST default (`= {}` / a call / any non-metadata-representable expr) carries no CLR
         // [Optional]+[DefaultParameterValue] — it rides `[kotlin.clr.KotlinDefault]` (the BIR sub-tree bir2cir splices
@@ -1575,7 +1579,10 @@ static class FacadeGen
         var attrs = f.GetCustomAttributesData();
         var sfn = SuspendFnNode(attrs);
         if (sfn != null) return sfn;
-        var t = MapT(f.FieldType, self);
+        // #29: a field nesting a collapsed read-only collection carries the pre-collapse Kotlin type.
+        var ci = CollectionIdentityNode(attrs);
+        var plain = MapT(f.FieldType, self);
+        var t = ci != null ? FoldCollectionIdentity(plain, ci) : plain;
         return HasExtFnMarker(attrs) ? WithExtRecv(t) : t;   // #145: a `val handler: P.() -> R` field
     }
     // H2: a non-suspend method / property getter that RETURNS a `suspend (…) -> T` value -> restore it from the return
@@ -1604,11 +1611,17 @@ static class FacadeGen
         // derivation for the outer type (so it matches the injector's registration) and only re-injecting the recorded
         // `Nullable(Tv)` where `object` was erased. NRT still folds the OUTER slot below (ApplyNrt).
         var ng = NullableGenericNode(attrs);
+        // #29: a return nesting a collapsed read-only collection carries the pre-collapse Kotlin type; restore `List` vs
+        // `MutableList` at every nested position from it (bypassing the BCL reverse-map for this slot).
+        var ci = CollectionIdentityNode(attrs);
         // #150: thread NRT so a `Func<string?>`-returning method surfaces the delegate return as `String?`. MapTFn maps
         // the (byref-stripped) return from array index 0; the outer ApplyNrt/ApplyFlowContract still fold the outer slot.
+        var retT = m.ReturnType.IsByRef ? m.ReturnType.GetElementType() : m.ReturnType;
         var mapped = ng != null
-            ? RestoreNullableGeneric(m.ReturnType.IsByRef ? m.ReturnType.GetElementType() : m.ReturnType, self, ng)
-            : MapTFn(m.ReturnType.IsByRef ? m.ReturnType.GetElementType() : m.ReturnType, self, attrs, m);
+            ? RestoreNullableGeneric(retT, self, ng)
+            : ci != null
+                ? FoldCollectionIdentity(MapTFn(retT, self, attrs, m), ci)
+                : MapTFn(retT, self, attrs, m);
         var rt = ApplyFlowContract(ApplyNrt(mapped, m.ReturnType, attrs, m), m.ReturnType, attrs);
         return HasExtFnMarker(attrs) ? WithExtRecv(rt) : rt;   // #145: a method returning `P.() -> R`
     }
@@ -1640,7 +1653,10 @@ static class FacadeGen
     static TN PropTypeN(PropertyInfo p, Type self)
     {
         var attrs = CustomAttributeData.GetCustomAttributes(p);
-        var t = ApplyNrt(MapTFn(p.PropertyType, self, attrs, p), p.PropertyType, attrs, p);  // #150: NRT-threaded (delegate-typed property)
+        // #29: a property nesting a collapsed read-only collection carries the pre-collapse Kotlin type.
+        var ci = CollectionIdentityNode(attrs);
+        var plainT = MapTFn(p.PropertyType, self, attrs, p);
+        var t = ApplyNrt(ci != null ? FoldCollectionIdentity(plainT, ci) : plainT, p.PropertyType, attrs, p);  // #150: NRT-threaded (delegate-typed property)
         // #143: a property's `[MaybeNull]`/`[NotNull]` flow contract may ride the PropertyDef OR its GETTER's return
         // parameter (`[return: MaybeNull] get`) — the BCL uses both placements (e.g. `ThreadLocal<T>.Value` on the getter
         // return). Fold from both attribute sets. Demotes `ThreadLocal<T>.Value` to a platform `T!`.
@@ -1710,8 +1726,14 @@ static class FacadeGen
             // IL is `IReadOnlyList<object>`) is a THIRD generic mapper alongside MapT/CrossTypeTN — it needs the same
             // BCL-collection reverse (gated; the attribute is a DotKt round-trip stamp so `self` is always a DotKt type)
             // or the restored `List<T?>` would surface as the raw `IReadOnlyList<T?>` and reintroduce #27 on this shape.
-            var openName = IsDotKtEmittedAssembly(self.Assembly)
-                && BCL_COLLECTION_REVERSE.TryGetValue(open.FullName ?? "", out var kcoll) ? kcoll : KotlinName(open);
+            // #29 (compose): when `pre` here names a `kotlin.collections.*` identity it is AUTHORITATIVE — a `Box<List<T?>>`
+            // return carries BOTH [KotlinNullableGeneric] (which wins, to restore the erased `T?`) and the collapsed IL
+            // `IList` at this nested slot; trust pre's read-only-vs-mutable name so the compose doesn't reverse-map the
+            // collapsed `IList` back to `MutableList` and resurrect #29 on the nullable-generic shape.
+            var preFqn = pre as TN.Fqn;
+            var openName = preFqn != null && IsKotlinCollectionName(preFqn.Name) ? preFqn.Name
+                : IsDotKtEmittedAssembly(self.Assembly)
+                    && BCL_COLLECTION_REVERSE.TryGetValue(open.FullName ?? "", out var kcoll) ? kcoll : KotlinName(open);
             if (NO_INJECT.Contains(open.FullName ?? "") || !openName.All(c => char.IsLetterOrDigit(c) || c == '_' || c == '.'))
                 return DegradeToAny(t, "generic open def not injectable / not a simple identifier");
             var gargs = t.GetGenericArguments();
@@ -1722,6 +1744,77 @@ static class FacadeGen
         }
         // No erasure at this position (or a shape mismatch): the plain mapping is faithful.
         return MapT(t, self);
+    }
+
+    // #29: the pre-collapse Kotlin TypeNode carried in [KotlinCollectionIdentity] (a slot nesting a read-only
+    // `List/Set/Collection` whose Root-V variance collapse to `IList`/`ICollection` at generic-arg depth >= 1 erased
+    // the read-only-vs-mutable identity). Decoded via the shared carrier + TypeNode.Parse (same envelope as
+    // [KotlinNullableGeneric]). Null when absent/malformed -> the caller keeps the plain (BCL-reverse) mapping, so a
+    // genuinely-`MutableList` nested arg (stamped-absent, since it wasn't collapsed from a read-only type) still
+    // surfaces as `MutableList` — the read/write split is preserved.
+    const string KCollIdentityAttr = "DotKt.Runtime.CompilerServices.KotlinCollectionIdentityAttribute";
+    static TN CollectionIdentityNode(IList<CustomAttributeData> attrs)
+    {
+        string shape = null;
+        foreach (var cad in attrs)
+            if (cad.AttributeType.FullName == KCollIdentityAttr && cad.ConstructorArguments.Count == 2)
+            { shape = DecodeCarrier(cad); break; }
+        if (string.IsNullOrEmpty(shape)) return null;
+        try { return TN.Parse(shape); } catch { return null; }
+    }
+
+    // A `kotlin.collections.*` identity (List/MutableList/Set/MutableSet/Collection/MutableCollection/Iterable/
+    // MutableIterable/Map/MutableMap) — the tokens whose collapsed CLR sibling (IList/ICollection/IEnumerable/
+    // IDictionary) no longer distinguishes read-only from mutable. Where `pre` names one, it is AUTHORITATIVE.
+    static bool IsKotlinCollectionName(string name) =>
+        name != null && name.StartsWith("kotlin.collections.", StringComparison.Ordinal);
+
+    // #29: restore the read-only-vs-mutable collection identity that BirTypeLowering's arg-position variance collapse
+    // (List/Set/Collection -> IList/ICollection at generic-arg depth >= 1) erased. FOLDS the recorded PRE-collapse Kotlin
+    // node `pre` (from [KotlinCollectionIdentity]) onto the PLAIN-MAPPED node `plain` (facadegen's own MapTFn/MapT of the
+    // emitted IL slot) — flipping ONLY a nested `kotlin.collections.*` name where `pre` proves the read-only-vs-mutable
+    // identity (the sole thing the collapsed `IList`/`ICollection` no longer distinguishes). Every other facet — nested
+    // NRT threading (#150), delegate `fn` shapes, Span, the outer name that matches the injector registration — is
+    // carried by `plain` unchanged, by construction (we never re-derive it from the IL Type). `pre` was recorded AFTER
+    // ReferenceNullableStrip so it carries no reference nullable wrappers; `plain` carries the real nullability, so we
+    // WALK `plain`'s structure and only CONSULT `pre` (unwrapping any stray pre wrapper) for the collection name. A
+    // structural divergence keeps `plain` (safe). General over ALL nested positions — not Box/mylib-specific.
+    static TN FoldCollectionIdentity(TN plain, TN pre)
+    {
+        // Consult `pre` at the position matching `plain`, seeing THROUGH pre's own nullable/oblivious wrappers (pre
+        // rarely carries them post-strip, but a nested value-`Nullable` / `Oblivious` survives — they annotate the same
+        // position, so peel them to reach the collection Fqn without perturbing `plain`'s structure).
+        static TN UnwrapPre(TN p) => p switch
+        {
+            TN.Nullable n => UnwrapPre(n.Of),
+            TN.Oblivious o => UnwrapPre(o.Of),
+            _ => p,
+        };
+        switch (plain)
+        {
+            // Nullability / byref / array wrappers ride `plain`; recurse the inner against the SAME pre position.
+            case TN.Nullable pn: return new TN.Nullable(FoldCollectionIdentity(pn.Of, pre));
+            case TN.Oblivious po: return new TN.Oblivious(FoldCollectionIdentity(po.Of, pre));
+            case TN.ByRef pbr when UnwrapPre(pre) is TN.ByRef pb: return new TN.ByRef(FoldCollectionIdentity(pbr.Of, pb.Of));
+            case TN.Array pa when UnwrapPre(pre) is TN.Array pra: return new TN.Array(FoldCollectionIdentity(pa.Elem, pra.Elem));
+            case TN.Fn pf when UnwrapPre(pre) is TN.Fn prf && pf.Params.Length == prf.Params.Length:
+                var np = new TN[pf.Params.Length];
+                for (int i = 0; i < np.Length; i++) np[i] = FoldCollectionIdentity(pf.Params[i], prf.Params[i]);
+                var nrecv = pf.Recv != null && prf.Recv != null ? FoldCollectionIdentity(pf.Recv, prf.Recv) : pf.Recv;
+                return new TN.Fn(pf.Suspend, FoldCollectionIdentity(pf.Ret, prf.Ret), np, nrecv);
+            case TN.Fqn pq when UnwrapPre(pre) is TN.Fqn prq:
+                // The collapsed collection is here iff `pre` names a `kotlin.collections.*` identity — trust it (the plain
+                // node has the collapsed sibling, e.g. `MutableList` for a read-only `List`). A non-collection name keeps
+                // plain's (injector-registration-matched) name. Recurse args in parallel when arities agree.
+                var name = IsKotlinCollectionName(prq.Name) ? prq.Name : pq.Name;
+                if (pq.Args is not { } qargs || prq.Args is not { } prargs || qargs.Length != prargs.Length)
+                    return name == pq.Name ? plain : new TN.Fqn(name, pq.Args);
+                var fa = new TN[qargs.Length];
+                for (int i = 0; i < fa.Length; i++) fa[i] = FoldCollectionIdentity(qargs[i], prargs[i]);
+                return new TN.Fqn(name, fa);
+            default:
+                return plain;   // tv / leaf / shape divergence — plain is authoritative
+        }
     }
 
     // A `suspend fun` is emitted returning Task / Task<T>; restore the Kotlin result type and gate Supported on it.

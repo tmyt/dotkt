@@ -610,6 +610,14 @@ sealed class Pipeline
             // self-build) or refs.TvBound (a referenced owner). ALL builds, BEFORE BirTypeLowering (still kotlin.Any /
             // dotted Kotlin FQNs here), so ref.dll + rt.dll + app agree on the corrected signature.
             StarProjectionBoundLowering.Apply(substituted, starProjBounds, refs);
+            // #29 ROUND-TRIP RECORD: before the type transform collapses a nested read-only `kotlin.collections.List/
+            // Set/Collection` (Root V) to its invariant sibling `IList`/`ICollection` — colliding with the mutable
+            // sibling's own alias and losing the Kotlin read-only-vs-mutable identity — stash the PRE-collapse Kotlin
+            // type of each affected decl-surface slot as an opaque string. RoundtripMetadata reads it into
+            // [KotlinCollectionIdentity] so facadegen restores `List` vs `MutableList` cross-module. APP builds only
+            // (the collapse is non-ref; only an app-emitted library is facadegen-re-consumed). Mirrors the #18
+            // [KotlinNullableGeneric] pre-erasure record. Runs on kotlin.* names (BEFORE BirTypeLowering).
+            if (attributeTopLevelOwner) CollectionIdentityRecord.Apply(substituted);
             // The type transform: lower the Kotlin type vocabulary into ilemit's CLR-codegen vocabulary, emitting a
             // BIR-SHAPED CIR (same node shape; only type strings change). No verbatim/envelope track. The ref.dll
             // @ClrTypeAlias index lowers EVERY CLR-bound type (collections/StringBuilder/Regex/... not just the
@@ -646,7 +654,7 @@ sealed class Pipeline
             // knowledge left in ilemit). Runs on the fully-lowered decls so the materialized facts (nullableFlags,
             // suspendFnType, inlineBir, mods, suspendBridge, readOnly) are all present. SKIPPED in the runtime build
             // (`!SubstituteStdlibBuild`) — the gate that REPLACES ilemit's deleted `_stripMetadata`. Placed after
-            // RefBodySquash so the squash (bodies only) does not disturb the stamped attrs. The 9 attribute-class DEFS
+            // RefBodySquash so the squash (bodies only) does not disturb the stamped attrs. The attribute-class DEFS
             // are emitted ONCE below (SynthDefsFile), not per-file.
             if (!_options.SubstituteStdlibBuild) RoundtripMetadata.Stamp(lowered);
             // RUNTIME build: strip every applied user annotation (kotc's kotlin.Deprecated/SinceKotlin/InlineOnly/…) —
@@ -664,7 +672,7 @@ sealed class Pipeline
             files.Add(new CirFile(outputName, lowered.ToJsonString(JsonOptions.Indented)));
         }
 
-        // #71 S2: emit the 9 embedded round-trip attribute-class defs ONCE per assembly, as a dedicated synthetic CIR
+        // #71 S2: emit the embedded round-trip attribute-class defs ONCE per assembly, as a dedicated synthetic CIR
         // file (glob-sorted first via the `000-` prefix so its TypeDefs precede the user types, minimizing dump churn).
         // ilemit defines them like any type (no EnsureKotlinAttrs). Ref + app only — the runtime build stamps nothing.
         if (!_options.SubstituteStdlibBuild)

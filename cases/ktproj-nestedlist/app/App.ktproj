@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- A Kotlin APP that references the Kotlin LIBRARY through <ProjectReference> (#27). Lib.ktproj builds first;
+       its Lib.dll lands on the app's @(ReferencePath), where facadegen (meta mode) reads the lib's collection-typed
+       signatures and reverse-maps the BCL interfaces back to kotlin.collections.* so listOf/mapOf args unify. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <StartupObject>AppKt</StartupObject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../lib/Lib.ktproj" />
+  </ItemGroup>
+
+  <Import Project="../../KotlinClr.targets" />
+
+</Project>

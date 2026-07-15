@@ -105,6 +105,15 @@ kt ktproj-applib "cases/ktproj-applib/app/App.ktproj" \
 kt ktproj-listparam "cases/ktproj-listparam/app/App.ktproj" \
 	"$(printf '2\n3\n2\n2')"
 
+# #29: a cross-module Kotlin LIBRARY nesting kotlin.collections.* INSIDE a user generic (`Box<List<T>>`, `State<List<T>>`).
+# bir2cir's Root-V variance collapse lowers the nested read-only `List<T>` to the invariant `IList<T>` (load-bearing for
+# reified-generic inhabitance), which collided with `MutableList`'s IList alias -> facadegen surfaced `Box<MutableList<T>>`
+# and REJECTED the app's `Box<List<String>>` value. bir2cir now stamps [KotlinCollectionIdentity] (the pre-collapse Kotlin
+# type) on each collapsed slot; facadegen restores List vs MutableList from it. A nested MutableList slot (unstamped) must
+# still surface as MutableList (read/write split). Regression guard for #29.
+kt ktproj-nestedlist "cases/ktproj-nestedlist/app/App.ktproj" \
+	"$(printf '2\n3\n3\n[10, 20, 10]')"
+
 # #15 EMIT-HALF: the pathological layout where the app's recursive `**/*.kt` glob pulls in a NESTED
 # <ProjectReference> lib's SOURCE (App.kt + lib/Demo.kt) AND references that lib's dll — so `demo.Plain`/
 # `demo.hello` are BOTH compiled LOCALLY and exported by the referenced Demo.dll. The frontend "source wins"
@@ -188,6 +197,7 @@ rm -rf "$ROOT"/cases/ktproj/bin "$ROOT"/cases/ktproj/obj \
        "$ROOT"/cases/ktproj-roundtrip/*/bin "$ROOT"/cases/ktproj-roundtrip/*/obj \
        "$ROOT"/cases/ktproj-applib/*/bin "$ROOT"/cases/ktproj-applib/*/obj \
        "$ROOT"/cases/ktproj-listparam/*/bin "$ROOT"/cases/ktproj-listparam/*/obj \
+       "$ROOT"/cases/ktproj-nestedlist/*/bin "$ROOT"/cases/ktproj-nestedlist/*/obj \
        "$ROOT"/cases/ktproj-injectemit/bin "$ROOT"/cases/ktproj-injectemit/obj \
        "$ROOT"/cases/ktproj-injectemit/lib/bin "$ROOT"/cases/ktproj-injectemit/lib/obj \
        "$ROOT"/cases/ktproj-reprop/*/bin "$ROOT"/cases/ktproj-reprop/*/obj \

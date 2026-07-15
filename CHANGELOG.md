@@ -34,6 +34,31 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `cases/il-inlinereturnexpr` (elvis RHS / if-as-value / when-as-value, each exercising BOTH the early expr-position
   return and the fall-through statement return).
 
+- **bir2cir (#29, bir2cir half): a nested read-only `List<T>` inside a user generic (`Box<List<T>>`) no longer loses its
+  Kotlin read-only identity cross-module.** At generic-arg depth ≥ 1 bir2cir's Root-V variance collapse lowers a nested
+  read-only `kotlin.collections.List/Set/Collection` to its invariant CLR sibling `IList`/`ICollection` — this collapse is
+  **load-bearing for reified-generic inhabitance** (a single `T := List<Int>` type variable must have ONE
+  context-independent CLR lowering, else no consistent `MakeGenericMethod` instantiation exists, so it must NOT be
+  narrowed), but the collapsed `IList` collides with `MutableList`'s own alias, so facadegen reverse-mapped it back to
+  `MutableList` and surfaced `Box<MutableList<T>>` — rejecting the app's `Box<List<String>>` value. Fix (mirrors the #18
+  `[KotlinNullableGeneric]` pre-erasure record): a new `CollectionIdentityRecord` pass stamps the pre-collapse Kotlin type
+  as `[KotlinCollectionIdentity]` (carrier-encoded, via `RoundtripMetadata`) on each affected return/param/property/field,
+  so facadegen restores `List` vs `MutableList` at every nested position from the recorded truth. The runtime collapse
+  vocabulary is **untouched** (verify-il/schema/roundtrip/differential byte-inert). App builds only; a nested `MutableList`
+  slot is unstamped and reverse-maps correctly (read/write split preserved).
+- **facadegen (#29, facadegen restore half): restore `List`/`MutableList`/`Set`/… at every nested position from the
+  `[KotlinCollectionIdentity]` stamp.** A new `FoldCollectionIdentity` folds the decoded pre-collapse Kotlin `TypeNode`
+  (carrier-decoded exactly like #18 `[KotlinNullableGeneric]` — `DecodeCarrier` → `TypeNode.Parse`) onto facadegen's own
+  plain-mapped node, flipping ONLY a nested `kotlin.collections.*` name where the stamp proves the read-only-vs-mutable
+  identity the collapsed `IList`/`ICollection` erased; all other facets (nested NRT threading, delegate `fn` shapes, the
+  outer name that matches the injector registration) are carried by the plain node unchanged. Wired at all four slot kinds
+  (return via `retAttrs`, param, property, field); a slot WITHOUT the stamp keeps the plain BCL reverse-map, so a genuine
+  `MutableList` still surfaces as `MutableList`. The #18 `[KotlinNullableGeneric]` restore now also trusts a stamped
+  `kotlin.collections.*` name so a `Box<List<T?>>` return composes both restores instead of resurfacing `MutableList`.
+  With this, `cases/ktproj-nestedlist`'s read-only round-trip (`Box<List<String>>` accepted, `State<List<Int>>`) is
+  GREEN; the case's cross-module `println(mutableList)` `[…]` formatting is a SEPARATE bir2cir `StaticTypeResolver` gap
+  (a generic property-get's `ret: tv(type,i)` is not substituted against `ownerType.args` before `FaithfulHintRecognition`
+  classifies the collection) — tracked as #33.
 - **bir2cir (#28): a `List<T?>` (nullable GENERIC element) collection no longer throws `EntryPointNotFoundException` on
   any member call.** `fun <T> boxes(x: T): List<T?>` erases its element to `IReadOnlyList<object>` in the producer's
   return, but the consumer reconstructed the concrete element (`IReadOnlyList<String>`) from the Kotlin type args. Since
