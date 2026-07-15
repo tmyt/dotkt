@@ -22,9 +22,10 @@ using DotKt.Bir;
 // is an ilverify StackUnexpected (found `Ref`1<object>` expected `Ref`1<Nullable`1<int32>>`) at the element
 // read / slot store.
 //
-// This pass re-derives each call's return by SUBSTITUTING the owner's type-args into the member's
+// This pass re-derives each local generic call's return by SUBSTITUTING its class/method type-args into the
 // EraseNullableTv-applied declaration — the callsite return then equals what the emitted method actually
-// returns, BY CONSTRUCTION. A rewrite fires ONLY when the derived type is the object-ERASURE of the
+// returns, BY CONSTRUCTION. This includes ownerless top-level generic functions such as #28's
+// `fun <T> boxes(x: T): List<T?>`. A rewrite fires ONLY when the derived type is the object-ERASURE of the
 // stamped type (IsObjectErasureOf) — i.e. it differs solely by `object` appearing where the callsite has a
 // `Nullable(value)`/concrete arg. This is precisely the erasure boundary and nothing else: a directly-written
 // `Ref<Int?>` (whose `Ref` declaration has NO `Nullable(Tv)`, so the derived type equals the stamped one)
@@ -36,35 +37,41 @@ using DotKt.Bir;
 // reconciles a boxed value / genuine null). Runs in BIR-space (kotlin.* names) right after the DEF-side
 // EraseNullableTv, before BirTypeLowering. Body-only, so naturally inert in the ref build.
 //
-// SCOPE (v1, GitHub #4): the READ positions — a member read into a `var`, a chained `…[i].v` receiver, and a
-// value-typed consumer (`val x: Int? = …`). A LOCAL generic owner only (the user's own generic class); a
-// REFERENCED (stdlib) owner is out of scope — the ref.dll surface already names `object` (not a bare `Tv`), so
-// a reflected member return cannot be re-derived here without risking a wrong rewrite, and #4 is the app-side
-// user class. STORE-side and join positions of the SAME erasure family are NOT yet handled (a documented
+// SCOPE (GitHub #4/#28): the READ positions — a local generic call into a `var`, a chained `…[i].v`
+// receiver, collection member dispatch (`List<T?>.size` / iterator), and a value-typed consumer
+// (`val x: Int? = …`). Referenced declarations are not indexed (their ref.dll surface has already erased the
+// original `Nullable(Tv)`), but a referenced generic member's owner/return is realigned from the corrected
+// receiver args. STORE-side and join positions of the SAME erasure family are NOT yet handled (a documented
 // follow-up): reassigning an erased read into a direct-written slot, `return`ing / passing / `setField`ing an
 // erased value into a `Ref<T?>`-typed target, and an `if/else` value-join whose branches are erased. The
-// verify-il gate (cases/il-genarrlam) is the arbiter for the covered set.
+// verify-il gate (cases/il-genarrlam + cases/il-nullable-generic-list) is the arbiter for the covered set.
 static class NullableTvErasureCallRealign
 {
-    // owner FQN -> ("member|argCount" -> declared return TypeNode), captured across ALL roots BEFORE the
-    // per-file DEF-side EraseNullableTv mutates the declarations in place. ALL members are stored (not only
+    // Local owner/top-level call key -> declared return TypeNode, captured across ALL roots BEFORE the per-file
+    // DEF-side EraseNullableTv mutates declarations in place. ALL generic-owner members are stored (not only
     // erasure-affected ones): re-deriving `get_v` on a rewritten `Ref<object>` receiver needs the plain
-    // `tv{type,0}` declaration too.
+    // `tv{type,0}` declaration too. Ambiguous same-name/same-arity returns are poisoned to null.
     public sealed class DeclIndex
     {
         public readonly Dictionary<string, Dictionary<string, TypeNode>> ByOwner = new(StringComparer.Ordinal);
+        public readonly Dictionary<string, TypeNode> TopLevel = new(StringComparer.Ordinal);
     }
 
     public static DeclIndex CollectDeclaredMemberRets(IEnumerable<JsonNode> roots)
     {
         var idx = new DeclIndex();
-        foreach (var r in roots) CollectFrom(r, idx);
+        foreach (var r in roots) CollectFrom(r, idx, topLevel: true);
         return idx;
     }
 
-    static void CollectFrom(JsonNode node, DeclIndex idx)
+    static void CollectFrom(JsonNode node, DeclIndex idx, bool topLevel)
     {
         if (node is not JsonObject o) return;
+        if (topLevel && o["methods"] is JsonArray topMethods)
+            foreach (var m in topMethods)
+                if (m is JsonObject mo && mo["typeParams"] is JsonArray mtps && mtps.Count > 0
+                    && Str(mo["name"]) is string mn && TypeJson.Read(mo["ret"]) is TypeNode rt)
+                    AddUnambiguous(idx.TopLevel, mn + "|" + ((mo["params"] as JsonArray)?.Count ?? 0), rt);
         if (o["types"] is JsonArray types)
             foreach (var t in types)
                 if (t is JsonObject to)
@@ -83,16 +90,21 @@ static class NullableTvErasureCallRealign
                                     // (`g(Int): Ref<T?>` vs `g(String): Ref<T>`) would otherwise collapse first-wins and
                                     // could derive the WRONG return for a call — manufacturing the very mismatch this pass
                                     // fixes. A conflicting key is poisoned to `null` (LookupDeclRet then skips it).
-                                    if (rets.TryGetValue(key, out var prior))
-                                    {
-                                        if (prior != null && !prior.Equals(rt)) rets[key] = null;
-                                    }
-                                    else rets[key] = rt;
+                                    AddUnambiguous(rets, key, rt);
                                 }
                         idx.ByOwner[nm] = rets;
                     }
-                    CollectFrom(to, idx);   // nested types
+                    CollectFrom(to, idx, topLevel: false);   // nested types
                 }
+    }
+
+    static void AddUnambiguous(Dictionary<string, TypeNode> entries, string key, TypeNode type)
+    {
+        if (entries.TryGetValue(key, out var prior))
+        {
+            if (prior != null && !prior.Equals(type)) entries[key] = null;
+        }
+        else entries[key] = type;
     }
 
     public static void Apply(JsonNode root, DeclIndex idx)
@@ -151,8 +163,7 @@ static class NullableTvErasureCallRealign
                 if (obj["e"] != null) Eval(obj["e"], env, idx);
                 return TypeJson.Read(obj["type"]);
             case "callStatic":
-                EvalChildrenOf(obj, "args", env, idx);
-                return TypeJson.Read(obj["dynRet"]) ?? TypeJson.Read(obj["ret"]);
+                return EvalCallStatic(obj, env, idx);
             case "arrayGet":
             {
                 var arrType = obj["array"] != null ? Eval(obj["array"], env, idx) : null;
@@ -232,6 +243,24 @@ static class NullableTvErasureCallRealign
         var owner = recvType as TypeNode.Fqn ?? nodeOwner as TypeNode.Fqn;
         if (owner == null) return stampedRet;
 
+        // A value returned through an object-erased generic boundary carries the erased instantiation in the
+        // receiver flow. Keep every subsequent member dispatch on that same instantiation. For a generic member
+        // return (Iterator<T>.next(): T, List<T>.iterator(): Iterator<T>, etc.), substitute the corrected receiver
+        // args into the stamped return too; the exact object-erasure gate prevents ordinary widening/narrowing.
+        if (nodeOwner is TypeNode.Fqn stampedOwner && !owner.Equals(stampedOwner)
+            && IsObjectErasureOf(owner, stampedOwner))
+        {
+            obj["ownerType"] = TypeJson.Write(owner);
+            if (stampedRet != null
+                && DeriveKnownReceiverReturn(stampedRet, stampedOwner, owner, method) is TypeNode recvDerived
+                && !recvDerived.Equals(stampedRet) && IsObjectErasureOf(recvDerived, stampedRet))
+            {
+                if (obj["ret"] != null) obj["ret"] = TypeJson.Write(recvDerived);
+                if (obj["dynRet"] != null) obj["dynRet"] = TypeJson.Write(recvDerived);
+                stampedRet = recvDerived;
+            }
+        }
+
         var argCount = (obj["args"] as JsonArray)?.Count ?? 0;
         var declRet = LookupDeclRet(owner.Name, method, argCount, idx);
         if (declRet == null) return stampedRet;
@@ -239,11 +268,6 @@ static class NullableTvErasureCallRealign
         var methodArgs = (obj["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray();
         var derived = Subst(NullableGenericReturnErasure.EraseNullableTv(declRet), owner.Args, methodArgs);
         if (derived == null) return stampedRet;
-
-        // Re-stamp the owner when the flowed receiver type is the object-erasure of the stamped owner (a chained
-        // read through an already-corrected `Ref<object>` receiver): ilemit must resolve `get_v` on `Ref<object>`.
-        if (nodeOwner != null && !owner.Equals(nodeOwner) && IsObjectErasureOf(owner, nodeOwner))
-            obj["ownerType"] = TypeJson.Write(owner);
 
         // Rewrite the return ONLY when `derived` is the object-erasure of the stamped return — the exact erasure
         // boundary, never a genuine widen/narrow. Keeps a direct-write `Ref<Int?>` (derived == stamped) untouched.
@@ -253,6 +277,72 @@ static class NullableTvErasureCallRealign
             if (obj["dynRet"] != null) obj["dynRet"] = TypeJson.Write(derived);
             return derived;
         }
+        return stampedRet;
+    }
+
+    static TypeNode EvalCallStatic(JsonObject obj, Dictionary<string, TypeNode> env, DeclIndex idx)
+    {
+        EvalChildrenOf(obj, "args", env, idx);
+        var stampedRet = TypeJson.Read(obj["dynRet"]) ?? TypeJson.Read(obj["ret"]);
+        // A same-module top-level call has no owner at this stage. Re-derive a generic function's return from its
+        // pre-erasure declaration, just as EvalCallInstance does for a generic class member.
+        if (obj["owner"] != null || Str(obj["method"]) is not string method) return stampedRet;
+        var key = method + "|" + ((obj["args"] as JsonArray)?.Count ?? 0);
+        if (!idx.TopLevel.TryGetValue(key, out var declRet) || declRet == null) return stampedRet;
+        var methodArgs = (obj["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray();
+        var derived = Subst(NullableGenericReturnErasure.EraseNullableTv(declRet), null, methodArgs);
+        if (stampedRet != null && derived != null && !derived.Equals(stampedRet) && IsObjectErasureOf(derived, stampedRet))
+        {
+            if (obj["ret"] != null) obj["ret"] = TypeJson.Write(derived);
+            if (obj["dynRet"] != null) obj["dynRet"] = TypeJson.Write(derived);
+            return derived;
+        }
+        return stampedRet;
+    }
+
+    static readonly HashSet<string> CollectionOwners = new(StringComparer.Ordinal)
+    {
+        "kotlin.collections.Iterable", "kotlin.collections.MutableIterable",
+        "kotlin.collections.Collection", "kotlin.collections.MutableCollection",
+        "kotlin.collections.List", "kotlin.collections.MutableList",
+        "kotlin.collections.Set", "kotlin.collections.MutableSet",
+    };
+
+    static readonly HashSet<string> IteratorOwners = new(StringComparer.Ordinal)
+    {
+        "kotlin.collections.Iterator", "kotlin.collections.MutableIterator",
+        "kotlin.collections.ListIterator", "kotlin.collections.MutableListIterator",
+    };
+
+    // Referenced declarations cannot generally be re-derived here: the ref metadata's structured return intentionally
+    // drops unresolved generic parameters. Avoid guessing that every occurrence equal to an owner arg came from that
+    // arg (a member could independently return String on Owner<String>). Propagate only for Kotlin collection members
+    // whose declared owner-arg relationship is fixed and checked structurally below. Local generic owners use their
+    // actual pre-erasure declarations through LookupDeclRet instead.
+    static TypeNode DeriveKnownReceiverReturn(TypeNode stampedRet, TypeNode.Fqn stampedOwner,
+        TypeNode.Fqn correctedOwner, string method)
+    {
+        if (stampedOwner.Args is not { Length: 1 } fromArgs
+            || correctedOwner.Args is not { Length: 1 } toArgs) return stampedRet;
+        var from = fromArgs[0];
+        var to = toArgs[0];
+
+        // Iterable<E>.iterator(): Iterator<E> (and the mutable/list iterator variants).
+        if ((method == "iterator" || method == "listIterator") && CollectionOwners.Contains(stampedOwner.Name)
+            && stampedRet is TypeNode.Fqn { Args: { Length: 1 } retArgs } ret
+            && IteratorOwners.Contains(ret.Name) && retArgs[0].Equals(from))
+            return new TypeNode.Fqn(ret.Name, new[] { to });
+
+        // Iterator<E>.next()/ListIterator<E>.previous(): E.
+        if ((method == "next" || method == "previous") && IteratorOwners.Contains(stampedOwner.Name)
+            && stampedRet.Equals(from))
+            return to;
+
+        // List<E>.get(index): E.
+        if (method == "get" && stampedOwner.Name is "kotlin.collections.List" or "kotlin.collections.MutableList"
+            && stampedRet.Equals(from))
+            return to;
+
         return stampedRet;
     }
 

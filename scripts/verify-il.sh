@@ -32,7 +32,8 @@ done
 declare -A XFAIL_RUN=(
 )
 declare -A XFAIL_ILVERIFY=(
-	# GitHub #2 — FORMAL-ONLY covariance finding from the bir2cir `Key<*>` -> `Key<Element>` lowering, NOT the ilemit
+	# GitHub #12 (the OPEN formal-only covariance follow-up; #2, its runtime-unsafe root, is CLOSED) — a FORMAL-ONLY
+	# covariance finding from the bir2cir `Key<*>` -> `Key<Element>` lowering, NOT the ilemit
 	# codegen. `CoroutineContext.Key<E : Element>` is INVARIANT; a specific element's companion is a `Key<Self>`
 	# (`MyElem.Key : Key<MyElem>`) used through the star projection `Key<*>` (Kotlin use-site variance, which the CLR
 	# has no equivalent for). bir2cir lowers the projection to the type-param BOUND `Key<Element>` (the parameter/return
@@ -40,14 +41,15 @@ declare -A XFAIL_ILVERIFY=(
 	# `Key<Element>` is formally expected — StackUnexpected. Runtime-SAFE (the reference is only stored/compared, never
 	# variance-cast + no `Key<Element>`-specific member is invoked on it) — both cases RUN green. Fixing the formal finding
 	# is a bir2cir/representation follow-up (emit the companion as `Key<Element>` or model the projection as covariant),
-	# NOT an ilemit codegen change. Kept in ASMS (no silent gap); the run lane is the behavioral gate.
-	[coctxkey]="GitHub #2: formal-only covariance (invariant Key<Element> <- Key<Self> companion via star projection); runtime-safe, bir2cir representation follow-up"
-	[cointercept]="GitHub #2: formal-only covariance (invariant Key<Element> <- Key<Self> companion via star projection); runtime-safe, bir2cir representation follow-up"
+	# NOT an ilemit codegen change. TRACKED as the OPEN issue #12 (repointed from the now-CLOSED root #2). Kept in ASMS
+	# (no silent gap); the run lane is the behavioral gate.
+	[coctxkey]="GitHub #12 (formal-only follow-up of closed #2): invariant Key<Element> <- Key<Self> companion via star projection; runtime-safe, bir2cir representation follow-up"
+	[cointercept]="GitHub #12 (formal-only follow-up of closed #2): invariant Key<Element> <- Key<Self> companion via star projection; runtime-safe, bir2cir representation follow-up"
 	# awaitintercept (#7 Part B) carries the SAME GitHub #2 formal-only finding: its ContinuationInterceptor impl's
 	# get_key() returns the Key<Self> companion where invariant Key<Element> is formally expected (StackUnexpected).
 	# Runtime-SAFE — the RUN lane PASSES (interceptor precedence at the await resume verified: A:resumes=1). The #7
 	# behavior does NOT depend on the #2 fix; only this formal ilverify finding does (same bir2cir/representation follow-up).
-	[awaitintercept]="GitHub #2: formal-only covariance (interceptor get_key() Key<Self> <- invariant Key<Element>); runtime-safe, RUN green, #7 precedence verified"
+	[awaitintercept]="GitHub #12 (formal-only follow-up of closed #2): interceptor get_key() Key<Self> <- invariant Key<Element>; runtime-safe, RUN green, #7 precedence verified"
 )
 
 # The CLR stdlib (kotlin.*) is supplied to kotc via the FRONTEND KLIB (scripts/build-stdlib-klib.sh) on
@@ -509,6 +511,7 @@ il_check coerce Coerce "$ROOT/cases/il-coerce" "$(printf '7\n5\n5\n2\n1\n5\n7')"
 il_check blank Blank  "$ROOT/cases/il-blank"   "$(printf 'True\nTrue\nFalse\nTrue\nTrue')"  # isBlank/isNotBlank -> pure-Kotlin index-loop body (no kotc IsNullOrWhiteSpace lowering)
 il_check infloopret InfLoopRet "$ROOT/cases/il-infloopret" "$(printf '30\nok4')"  # #141: value-returning while(true){…return x} -> ilemit appends default(ret)+ret so the unreachable fall-through terminator is ilverify-clean (ReturnMissing gone)
 il_check genarrlam GenArrLam "$ROOT/cases/il-genarrlam" "$(printf '2\nnull\nnull\nnull\nnull\n3\nnull\nnull')"  # #142: `Array(size){ mk<T?>(null) }` in a generic class — nested constructed-generic `Ref<T?>` erased to `Ref<object>` CONSISTENTLY across method-sig/array-elem/newDelegate.funcType.ret; DelegateCtor gone. #4 (read side): reading the erased element back across the Box<Int>/Box<String> boundary (`b.a[0].v`/`b.elem(i).v`/retyped local/`val x: Int?=…`) re-derives `Ref<object>` from the erased decl (NullableTvErasureCallRealign) — was ilverify StackUnexpected `Ref`1<object>` vs `Ref`1<Nullable`1<int32>>`
+il_check nullgenlist NullGenList "$ROOT/cases/il-nullable-generic-list" "$(printf '2\na\na\nnull\n2\n7\n7\nnull\n1\n2')"  # GitHub #28: List<T?> uses the declaration's object-erased interface consistently at member reads (Count + get_Item + GetEnumerator), for reference and value instantiations.
 il_check toplateinit TopLateinit "$ROOT/cases/il-toplateinit" "$(printf 'caught: uninitialized\nhello\n5')"  # #104: top-level `lateinit var` (ref type) static field carries `"init": null` — must NOT hit the .cctor null-coercion store (crash); default-null + lateinitGet throw-before-init
 il_check samcmp SamCmp "$ROOT/cases/il-samcmp" "$(printf '1,1,2,3,4,5,6,9\n9,6,5,4,3,2,1,1')"  # explicit Comparator{} SAM conversion (plain fun interface; no kotc @ClrTypeAlias read)
 il_check strnum StrNum "$ROOT/cases/il-strnum" "$(printf '42\n-7\n100\nnfe\niae\n3.14\n2.5\ncomma\nnfd')"

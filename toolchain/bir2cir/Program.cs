@@ -413,7 +413,8 @@ sealed class Pipeline
             // (ilverify StackUnexpected). Re-derive each such call's return by substituting the owner's type-args into
             // the EraseNullableTv-applied declaration, gated to the exact object-erasure boundary, and flow the corrected
             // receiver type through so a chained read re-stamps `get_v`'s owner/return too. Each rewrite is gated to
-            // the exact object-erasure boundary (IsObjectErasureOf); LOCAL generic owners only. BEFORE BirTypeLowering.
+            // the exact object-erasure boundary (IsObjectErasureOf); local generic declarations plus member flow from
+            // a corrected receiver. BEFORE BirTypeLowering.
             NullableTvErasureCallRealign.Apply(bir.Root, nullableTvDeclRets);
             // FUNC-SLOT nullable-return erasure (ALL builds — the transform-side twin of the pass above): a function
             // TYPE with a nullable return (`(T) -> R?`) is kotc-tokenized `func:nullable:<ret>:<args>` (the open

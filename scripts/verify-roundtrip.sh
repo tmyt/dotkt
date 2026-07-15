@@ -31,15 +31,6 @@ done
 # bare `kotlin.coroutines.Continuation` at emit; they surface the REMAINING *cross-module* coroutine gaps
 # (below). This gate is the coroutine bundle's cross-module E2E check: when these flip to FIXED, prune them.
 declare -A RT_XFAIL=(
-	# (#11 FIXED 2026-07-05: a suspend call inside an INLINE scope function used as a sub-expression —
-	# `doFetch = with(lib){ b.fetch() }` — no longer refuses in kotc; kotc emits the inlined valueBlock verbatim
-	# and bir2cir's SuspendColdLowering flattens it, segmenting the suspend call as an ordinary suspension point.)
-	# (#34b FIXED 2026-07-06: a top-level `val`/`var` fully round-trips — facadegen surfaces it as a `tlprop` meta
-	# token, kotc's ClrTypeInjection restores a non-extension top-level property and BirEmitter routes its read/write
-	# to `staticField`/`staticFieldSet` of the referenced file class; a top-level `val` is stamped `readOnly`.)
-	# (#151 FIXED: bir2cir SuspendColdLowering.BuildBridge() now stamps retNothing on the Task<Nothing> bridge return
-	# (both the abstract and concrete shapes), so RoundtripMetadata emits [KotlinNothing] and facadegen restores the
-	# `suspend fun f(): Nothing` return — the `roundtrip-nothing-suspend` section verifies it.)
 )
 
 # ---- section result collection (no section may abort the script) -----------------------------------
