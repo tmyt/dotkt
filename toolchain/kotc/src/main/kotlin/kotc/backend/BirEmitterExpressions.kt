@@ -248,7 +248,30 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 	is IrThrow -> throwExpr(expr(node.value))
 	// `return` used in expression position (`val x = if (c) a else return`; `x ?: return -1`). Like throwExpr,
 	// it transfers control so no value reaches the surrounding merge.
-	is IrReturn -> if (node.value.type.isUnit()) """{"k":"returnExpr"}""" else """{"k":"returnExpr","value":${expr(node.value)}}"""
+	is IrReturn -> {
+		// A `return` targeting a kotc-SPLICED inline fn/lambda (target in inlineReturnSubst) is a lambda-LOCAL return,
+		// NOT a caller return: route it to the splice's result-local + end-label, wrapped as an expression-position
+		// control transfer via breakContinueExpr — the SAME routing the statement-position arm does
+		// (BirEmitterStatements, `spliced`). A raw `{"k":"returnExpr"}` here would leak into the inline lambda carrier,
+		// indistinguishable from a genuine non-local return, and bir2cir's MaterializeCarrier rejects it fail-loud.
+		val spliced = inlineReturnSubst[node.returnTargetSymbol]
+		if (spliced != null) {
+			val (res, end) = spliced
+			val goto = """{"k":"goto","id":$end}"""
+			val xfer = if (res != null) """{"k":"setLocal","name":${str(res)},"value":${expr(node.value)}},$goto"""
+				else if (node.value is IrGetObjectValue) goto
+				// Unit splice: evaluate a side-effecting return value for its effect, then jump.
+				else """{"k":"exprStmt","expr":${expr(node.value)}},$goto"""
+			breakContinueExpr(xfer)
+		}
+		// A genuine NON-LOCAL return stays a raw returnExpr (bir2cir routes it at splice time). A Unit-typed return
+		// VALUE can still be a SIDE-EFFECTING call (`x ?: return unitFn()`): evaluate it, then transfer — a bare
+		// `{"k":"returnExpr"}` (the old behavior) silently DROPPED the call. A plain Unit ref (IrGetObjectValue) has
+		// nothing to evaluate. Mirrors the statement-position arm's Unit-return handling.
+		else if (!node.value.type.isUnit()) """{"k":"returnExpr","value":${expr(node.value)}}"""
+		else if (node.value is IrGetObjectValue) """{"k":"returnExpr"}"""
+		else breakContinueExpr("""{"k":"exprStmt","expr":${expr(node.value)}},{"k":"return"}""")
+	}
 	// `break`/`continue` used in expression position (`val end = if (c) x else break`, stdlib CharSequence.windowed's
 	// coercedEnd). Kotlin types them `Nothing`: they transfer control, so no value reaches the surrounding merge. We
 	// have no bare control-transfer EXPRESSION node (goto/break are statements), so emit the SAME control transfer as

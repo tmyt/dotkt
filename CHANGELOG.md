@@ -7,6 +7,33 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **kotc (#31): the EXPRESSION-position `IrReturn` arm now consults `inlineReturnSubst` and no longer drops a
+  Unit-typed return value — fixing two defects at one site** (`BirEmitterExpressions.kt`, the value-position `return`).
+  The statement-position arm already routed a lambda-local return and evaluated a side-effecting Unit return; the
+  expression-position twin did neither. (1) A lambda-LOCAL labeled `return@label expr` in expression position (an elvis
+  RHS / `if`/`when` used as a value) leaked as a raw `{k:returnExpr}` into the inline lambda carrier — indistinguishable
+  from a genuine non-local return — so bir2cir's `MaterializeCarrier` rejected the (crossinline) carrier fail-loud
+  (`lambda param … in a non-invoke position could not be materialized`). It now routes through the splice result-local
+  + end-label wrapped by `breakContinueExpr`, exactly as the statement-position arm does. (2) `x ?: return unitFn()`
+  (an expression-position `return` of a side-effecting Unit call) hit the `isUnit()` branch and emitted a bare
+  `{k:returnExpr}`, silently DROPPING the call; it now evaluates the value for its side effect, then transfers. New
+  gates: `cases/il-inlinereturnunit` (the silent Unit call-drop, elvis RHS + if-as-value) and
+  `cases/il-inlinereturnlocal` (lambda-local labeled return in expression position — a crossinline materialized carrier
+  + a direct-invoke carrier). Builds on #30.
+
+- **bir2cir (#30): an inline function with an EXPRESSION-position `return` that calls one of its lambda params now
+  splices** — previously `bir2cir: inline splice: … callee-body returnExpr (expression-position return) — not yet
+  routed` hard-failed the build. A statement-position `return onClosed()` already spliced; only the value-position form
+  (`val x = maybe() ?: return onClosed()`, an `if`/`when` used as a value with a `return` branch) bailed. The inline
+  splicer routes an origin-fn `{k:return}` statement to the splice's result-local + end-label (`setLocal res; goto
+  end`); the fix routes a `{k:returnExpr}` the SAME way, lifting it to a value-position `valueBlock{ setLocal res; goto
+  end; result:throwExpr }` (the identical "wrap a control transfer to sit in an expr slot" shape kotc's
+  `breakContinueExpr` uses) so the surrounding elvis/if/when merge keeps the live branch's type and the `goto` diverges
+  before the enclosing store, exactly as the raw `returnExpr`'s `ret` did. Unblocks kotlinx.coroutines-core
+  `BufferedChannel.sendImpl`'s `findSegmentSend(...) ?: if (closed) { return onClosed() } else { continue }`. New gate:
+  `cases/il-inlinereturnexpr` (elvis RHS / if-as-value / when-as-value, each exercising BOTH the early expr-position
+  return and the fall-through statement return).
+
 - **bir2cir (#28): a `List<T?>` (nullable GENERIC element) collection no longer throws `EntryPointNotFoundException` on
   any member call.** `fun <T> boxes(x: T): List<T?>` erases its element to `IReadOnlyList<object>` in the producer's
   return, but the consumer reconstructed the concrete element (`IReadOnlyList<String>`) from the Kotlin type args. Since
