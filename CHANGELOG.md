@@ -3,7 +3,7 @@
 All notable changes to DotKt (Kotlin → .NET/CLR). Package versions carry the embedded
 Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
-## 0.9.6-rc4 — 2026-07-15
+## 0.9.6-rc5 — 2026-07-15
 
 ### Fixed
 
@@ -82,7 +82,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   With this, `cases/ktproj-nestedlist`'s read-only round-trip (`Box<List<String>>` accepted, `State<List<Int>>`) is
   GREEN; the case's cross-module `println(mutableList)` `[…]` formatting is a SEPARATE bir2cir `StaticTypeResolver` gap
   (a generic property-get's `ret: tv(type,i)` is not substituted against `ownerType.args` before `FaithfulHintRecognition`
-  classifies the collection) — tracked as #33.
+  classifies the collection) — fixed separately in #33 (above).
+
+## 0.9.6-rc4 — 2026-07-15
+
+### Fixed
+
 - **bir2cir (#28): a `List<T?>` (nullable GENERIC element) collection no longer throws `EntryPointNotFoundException` on
   any member call.** `fun <T> boxes(x: T): List<T?>` erases its element to `IReadOnlyList<object>` in the producer's
   return, but the consumer reconstructed the concrete element (`IReadOnlyList<String>`) from the Kotlin type args. Since
