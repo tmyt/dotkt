@@ -128,9 +128,6 @@ static class InlineSplice
         // type token dangles when spliced into another file. Legal same-module (the class is in this file); across a
         // ref.dll edge it is a hard error (engine-side zero-capture synthesis is a future follow-up, never a kotc hack).
         if (!sameModule && HasNode(pBody, "newDelegate")) { FailLoud(o, owner, name, pc, ga, "cross-module payload carries a newDelegate (origin-file __lambdaN) — dangles when spliced (§4.6)"); return; }
-        // D1: a callee-body return in EXPRESSION position (`x ?: return v`) is a distinct kind whose routing is not yet
-        // implemented — splicing it verbatim would emit a raw caller-frame `ret` with the callee's value. Fail loud.
-        if (HasNodeNonClosure(pBody, "returnExpr")) { FailLoud(o, owner, name, pc, ga, "callee-body returnExpr (expression-position return) — not yet routed"); return; }
         // FINDING 1 (#75 holistic, silent-miscompile guard): a capturing `newSuspendLambda` in the payload — the SM
         // ctor binds args by DESCRIPTOR NAME, which the splice's local-prefix/`{k:this}` rewrites do not touch, so the SM
         // field and the invokeSuspend body ref diverge and the ctor arg latches a caller-frame local/`this`. Rare; fail
@@ -586,9 +583,13 @@ static class InlineSplice
         var lamBody = (carrier["body"] as JsonArray)?.DeepClone() as JsonArray ?? new JsonArray();
         var lamResult = carrier["result"]?.DeepClone();
 
-        // A bare `{k:return}` (non-local return, targeting the enclosing caller) in the body OR the `result` cannot survive
-        // as a closure invoke body.
-        if (HasNodeNonClosure(lamBody, "return") || (lamResult != null && HasNodeNonClosure(lamResult, "return"))) return null;
+        // A bare `{k:return}` OR expression-position `{k:returnExpr}` in the body OR the `result` cannot survive as a
+        // closure invoke body — refuse (caller fails loud). bir2cir cannot prove from the node alone whether such a
+        // return is non-local (targets the enclosing fn) or lambda-local: kotc's expr-position IrReturn does not yet
+        // route through inlineReturnSubst, so a lambda-local labeled return can leak here as a raw `returnExpr`. Refusing
+        // both is correct — fail-loud beats a silent caller-frame `ret` in the non-local case (the common one).
+        if (HasNodeNonClosure(lamBody, "return") || HasNodeNonClosure(lamBody, "returnExpr")
+            || (lamResult != null && (HasNodeNonClosure(lamResult, "return") || HasNodeNonClosure(lamResult, "returnExpr")))) return null;
 
         int n = Interlocked.Increment(ref _counter);
         var cname = "dotkt$inlmat" + n + "$Closure";
@@ -908,15 +909,27 @@ static class InlineSplice
         return result;
     }
 
-    // Rewrite every origin `{k:return}` (top-level of the body, non-descending into closures) into the routed form.
+    // Rewrite every origin `{k:return}`/`{k:returnExpr}` (top-level of the body, non-descending into closures) into the
+    // routed form. A statement-position `{k:return}` (an array element) becomes `setLocal res; goto end`; an EXPRESSION-
+    // position `{k:returnExpr}` (a value slot — an elvis RHS, an if/when-as-value branch) becomes a value-position
+    // `valueBlock{ setLocal res; goto end; result:throwExpr }` — the same "wrap a control transfer to sit in an expr
+    // slot" shape kotc's breakContinueExpr uses (§ BirEmitterControlFlow), so the surrounding merge keeps only the live
+    // branch's type and the goto diverges before the enclosing store, exactly as the raw `returnExpr`'s `ret` did.
     static void RewriteReturns(JsonNode node, string res, int end)
     {
         if (node is JsonArray a)
         {
             for (int i = 0; i < a.Count; i++)
             {
-                if (a[i] is JsonObject ro && Str(ro["k"]) == "return")
+                // Both a statement-position `{k:return}` and (defensively) a bare `{k:returnExpr}` element lift to the
+                // SAME flat `setLocal res; goto end`. Route any control transfer NESTED in (or directly being) the value
+                // FIRST — the expression-body `= input ?: return onClosed()` (kotc emits one tail `{k:return, value:elvis{
+                // …,returnExpr}}`), or a pathological `return (x ?: return y)` — so the INNER return's `goto` fires while
+                // evaluating this store's value and the inner return wins (matching Kotlin), never leaking a raw
+                // `returnExpr` into the cloned `setLocal` value (that would emit a caller-frame `ret`).
+                if (a[i] is JsonObject ro && Str(ro["k"]) is "return" or "returnExpr")
                 {
+                    if (ro["value"] != null) ro["value"] = RouteValue(ro["value"], res, end);
                     var repl = new JsonArray();
                     if (res != null && ro["value"] is JsonNode rv)
                         repl.Add(new JsonObject { ["k"] = "setLocal", ["name"] = res, ["value"] = rv.DeepClone() });
@@ -935,8 +948,42 @@ static class InlineSplice
         else if (node is JsonObject o)
         {
             if (IsClosureBoundary(o)) return;
-            foreach (var kv in o) if (kv.Value != null) RewriteReturns(kv.Value, res, end);
+            foreach (var key in new List<string>(((IDictionary<string, JsonNode>)o).Keys))
+                if (o[key] != null) o[key] = RouteValue(o[key], res, end);
         }
+    }
+
+    // Route a VALUE-position node: an expression-position `{k:returnExpr}` lifts to a value-position `valueBlock` (below);
+    // anything else recurses in place (its own nested returns/returnExprs route where they sit). Returns the (possibly
+    // replaced) node — the single choke point so a `returnExpr` is handled identically whether it is an object value, an
+    // array element, or the direct value of another return.
+    static JsonNode RouteValue(JsonNode v, string res, int end)
+    {
+        if (v is JsonObject o && Str(o["k"]) == "returnExpr") return RouteReturnExpr(o, res, end);
+        RewriteReturns(v, res, end);
+        return v;
+    }
+
+    // Lift an expression-position `{k:returnExpr,value?}` to a value-position `valueBlock` that performs the same routed
+    // control transfer (setLocal res + goto end) then a never-reached `throwExpr` result — the shape kotc's
+    // breakContinueExpr uses. Routes the value FIRST (a nested/direct control transfer inside it wins). Unit splice
+    // (res == null) evaluates a non-const value for its side effect, then jumps.
+    static JsonNode RouteReturnExpr(JsonObject reo, string res, int end)
+    {
+        var val = reo["value"];
+        if (val != null) val = RouteValue(val, res, end);
+        var stmts = new JsonArray();
+        if (res != null && val is JsonNode rv)
+            stmts.Add(new JsonObject { ["k"] = "setLocal", ["name"] = res, ["value"] = rv.DeepClone() });
+        else if (res == null && val is JsonObject uv && Str(uv["k"]) != "const")
+            stmts.Add(new JsonObject { ["k"] = "exprStmt", ["expr"] = uv.DeepClone() });
+        stmts.Add(new JsonObject { ["k"] = "goto", ["id"] = end });
+        return new JsonObject
+        {
+            ["k"] = "valueBlock",
+            ["stmts"] = stmts,
+            ["result"] = new JsonObject { ["k"] = "throwExpr", ["value"] = UnitConst() },
+        };
     }
 
     static bool HasEarlyReturn(JsonNode node)
@@ -949,6 +996,10 @@ static class InlineSplice
             else if (nn is JsonObject o)
             {
                 if (IsClosureBoundary(o)) return;
+                // An EXPRESSION-position return (`x ?: return v`, an if/when-as-value branch) is ALWAYS a control
+                // transfer nested inside a value slot — never a foldable tail statement — so it always forces the
+                // result-local + end-label routing path (RewriteReturns lifts it to a `valueBlock{setLocal;goto}`).
+                if (Str(o["k"]) == "returnExpr") { found = true; return; }
                 if (Str(o["k"]) == "return")
                 {
                     // A tail return as the LAST top-level statement folds into the value (not "early").
