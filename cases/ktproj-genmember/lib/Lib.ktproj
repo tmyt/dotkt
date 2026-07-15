@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- A Kotlin LIBRARY whose generic types expose members returning an OPEN owner type variable (`Pair2<A,B>.b`,
+       `Wrap<X>.items`). OutputType=Library emits Lib.dll carrying the [Kotlin*] round-trip metadata; the app reads
+       it via facadegen (meta mode) and a DIRECT member read must surface the CONCRETE instantiation (#33). -->
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+
+  <Import Project="../../KotlinClr.targets" />
+
+</Project>
