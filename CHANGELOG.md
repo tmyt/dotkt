@@ -41,6 +41,15 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   a nested closure's CAPTURE VALUES while skipping its own `synthClass` frame — so a nested closure capturing the
   block's invoke param (`cont`), a carrier capture (rewritten to `this.<field>`), or a carrier local is bound
   correctly, and a genuinely-unlisted capture still fails loud. Gate: `il-suspendnestedcapture` in `verify-il.sh`.
+  RESIDUAL: the `cont` capture reaching the block through an inner inline-EXTENSION iterator
+  (`arr.forEach { … cont … }` / `map` / `forEachIndexed`, receiver `Array<T>`/`List<T>`) still failed — that iterator
+  splices (bottom-up, before the outer carrier materializes) to a `forArray`/`forIn` loop whose element binds in the
+  node's `"var"` FIELD (not a `{k:var}` statement) and then flows into the lambda-param temp, so `CollectDeclaredLocals`
+  (the §4.4ii `allowed`-set scan) missed the loop binder and `HasStrayLocal` flagged the element ref as an unlisted
+  stray capture. `CollectDeclaredLocals` now also collects the loop/iterator `"var"` binders and try-catch `"var"`
+  binders — identical to the `CollectDeclared` PrefixLocals-hygiene set — so the element counts as a declared local.
+  (Plain `for (x in arr)` only worked before because its loop var was unused.) Gate extended with
+  `capFE`/`capMap`/`capFEI`/`capList`/`capTry` (forEach/map/forEachIndexed + a `List` forIn + a catch binder).
 
 - **bir2cir (#26): a cross-module library whose package FQN merely STARTS WITH `dotkt` (e.g. `dotktx.ui.avalonia`) no
   longer has its reference types mis-resolved.** `ReferenceMetadataIndex.ResolveNetType` classified any owner FQN with a
