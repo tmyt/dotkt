@@ -17,9 +17,8 @@ fun main() {
     // mutable nested list still surfaces as MutableList<T> (read/write split preserved).
     val mb: Box<MutableList<Int>> = boxOfMutable(mutableListOf(10, 20))
     println(useNestedMutable(mb))         // 3   (add duplicates v[0] -> [10, 20, 10])
-    // NB: a DIRECT `println(mb.v)` mis-prints the BCL List`1 (a separate cross-module generic-member
-    // surface-type gap, tracked as #33). Assigning through the typed local surfaces MutableList<Int> and
-    // Kotlin-formats correctly — which is what #29 (the read/write identity round-trip) asserts here.
-    val mv: MutableList<Int> = mb.v
-    println(mv)                           // [10, 20, 10]
+    // a DIRECT read of the cross-module generic member `mb.v` — its declared return is the open type
+    // variable X of Box, so bir2cir's StaticTypeResolver.Surface substitutes tv(type,0) against the
+    // receiver's concrete instantiation Box<MutableList<Int>> and Kotlin-formats the collection (#33).
+    println(mb.v)                         // [10, 20, 10]
 }

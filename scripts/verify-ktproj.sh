@@ -114,6 +114,13 @@ kt ktproj-listparam "cases/ktproj-listparam/app/App.ktproj" \
 kt ktproj-nestedlist "cases/ktproj-nestedlist/app/App.ktproj" \
 	"$(printf '2\n3\n3\n[10, 20, 10]')"
 
+# #33: a DIRECT read of a cross-module generic member whose declared return is the OWNER's type variable
+# (`Pair2<Int, MutableList<Int>>.b` = the open B; `Wrap<Int>.items` = List<X>). bir2cir's StaticTypeResolver.Surface
+# left the return as a bare `tv`, so the println collection-wrap misfired and printed the raw BCL `List`1`. Surface now
+# substitutes tv(type,i) against the receiver's concrete instantiation (index 1 + nested List<X> exercised). Guard for #33.
+kt ktproj-genmember "cases/ktproj-genmember/app/App.ktproj" \
+	"$(printf '7\n[1, 2]\n[9, 8, 7]')"
+
 # #15 EMIT-HALF: the pathological layout where the app's recursive `**/*.kt` glob pulls in a NESTED
 # <ProjectReference> lib's SOURCE (App.kt + lib/Demo.kt) AND references that lib's dll — so `demo.Plain`/
 # `demo.hello` are BOTH compiled LOCALLY and exported by the referenced Demo.dll. The frontend "source wins"
@@ -198,6 +205,7 @@ rm -rf "$ROOT"/cases/ktproj/bin "$ROOT"/cases/ktproj/obj \
        "$ROOT"/cases/ktproj-applib/*/bin "$ROOT"/cases/ktproj-applib/*/obj \
        "$ROOT"/cases/ktproj-listparam/*/bin "$ROOT"/cases/ktproj-listparam/*/obj \
        "$ROOT"/cases/ktproj-nestedlist/*/bin "$ROOT"/cases/ktproj-nestedlist/*/obj \
+       "$ROOT"/cases/ktproj-genmember/*/bin "$ROOT"/cases/ktproj-genmember/*/obj \
        "$ROOT"/cases/ktproj-injectemit/bin "$ROOT"/cases/ktproj-injectemit/obj \
        "$ROOT"/cases/ktproj-injectemit/lib/bin "$ROOT"/cases/ktproj-injectemit/lib/obj \
        "$ROOT"/cases/ktproj-reprop/*/bin "$ROOT"/cases/ktproj-reprop/*/obj \

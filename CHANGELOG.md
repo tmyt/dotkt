@@ -15,6 +15,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   prevents a laundered null from bypassing the public return contract merely because the return occurs in value
   position. Extended gates: `cases/il-nullableprim` (expression-position smart-cast nullable return) and
   `cases/il-nncontract` (expression-position non-null return postcondition).
+- **bir2cir (#33): a DIRECT read of a cross-module generic member whose declared return is the owner's OPEN type
+  variable now surfaces the owner's concrete argument instead of a bare `tv`** (`StaticTypeResolver.cs`, `Surface`).
+  For `class Box<X>(val v: X)` and `mb: Box<MutableList<Int>>`, the read `mb.v` is a `callInstance` property getter whose
+  `ownerType` carries `Box<MutableList<Int>>` but whose `ret` is `tv(scope:"type", 0)`. `Surface` returned that open
+  `tv` verbatim, so `FaithfulHintRecognition.ClassifyColl` saw a bare `tv`, did NOT route `println(mb.v)` to
+  `clrCollToString`, and printed the raw BCL `System.Collections.Generic.List`1[System.Int32]` instead of Kotlin
+  `[10, 20, 10]`. (Assigning through a typed local — `val v: MutableList<Int> = mb.v` — already worked, proving the
+  member binding was fine and only the direct-access expression's inferred type was open.) `Surface` now substitutes,
+  for the `callStatic`/`callInstance`/`clrPropGet`/`field`/`lateinitGet`/`staticField` cases, each `tv(type,i)` against
+  the owner's concrete arg `i` (sourced from the node's `ownerType`/`owner` token, or the surfaced receiver's args when
+  it names the same owner) and each `tv(method,i)` against the call's `typeArgs[i]`, recursively through nested
+  `Fqn`/`Nullable`/`Array`/`ByRef`/`Fn`. Gated precisely: an already-concrete `ret` is untouched, an unresolvable `tv`
+  (no concrete owner args, or index out of range) is left open. New gate `cases/ktproj-genmember` (a non-collection
+  member, a collection member at type-arg index 1, and a member returning a nested `List<X>`); the `ktproj-nestedlist`
+  app restores the direct `println(mb.v)` form.
 
 - **kotc (#31): the EXPRESSION-position `IrReturn` arm now consults `inlineReturnSubst` and no longer drops a
   Unit-typed return value — fixing two defects at one site** (`BirEmitterExpressions.kt`, the value-position `return`).

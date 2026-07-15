@@ -235,12 +235,14 @@ static class StaticType
                     && scope.VarTypes.TryGetValue(vn, out var vt) ? vt : null;
             case "clrInstance" or "clrStatic": return TypeJson.Read(o["ret"]);
             // A call carries `ret` only when GENERIC; a non-generic call lacks it -> resolve from the ref.dll (#59).
-            case "callStatic" or "callInstance": return TypeJson.Read(o["ret"]) ?? ResolveCallReturn(o);
+            // A generic member read surfaces the member's DECLARED return, which may be an OPEN type variable of the
+            // owner (`Box<MutableList<Int>>.v` where `val v: X` -> ret = tv(type,0)); SubstMemberTv concretizes it.
+            case "callStatic" or "callInstance": return SubstMemberTv(TypeJson.Read(o["ret"]) ?? ResolveCallReturn(o), o, scope);
             // A property/field read carries no type slot -> resolve the property getter's return type from the ref.dll.
-            case "clrPropGet": return TypeJson.Read(o["ret"]) ?? ResolveFieldType(o);
+            case "clrPropGet": return SubstMemberTv(TypeJson.Read(o["ret"]) ?? ResolveFieldType(o), o, scope);
             // A field read carries an explicit `ret` only when its owner is GENERIC (kotc's retHint) — a property read on
             // a generic owner instantiated at a concrete type (`Box<String>.item`); prefer it, else resolve the getter.
-            case "field" or "lateinitGet" or "staticField": return TypeJson.Read(o["ret"]) ?? ResolveFieldType(o);
+            case "field" or "lateinitGet" or "staticField": return SubstMemberTv(TypeJson.Read(o["ret"]) ?? ResolveFieldType(o), o, scope);
             case "new" or "newClr": return TypeJson.Read(o["type"]);
             case "newArray" or "newArrayInit" or "newArraySized":            // an array factory / sized ctor -> Array<elem>
                 return TypeJson.Read(o["elem"]) is TypeNode ae ? new TypeNode.Fqn("kotlin.Array", new[] { ae }) : null;
@@ -322,6 +324,58 @@ static class StaticType
             ?? Refs?.TryMemberReturn(ownerFqn, "get_" + name, 0) ?? Refs?.TryMemberReturn(ownerFqn, name, 0)
             ?? Refs?.TryFieldType(ownerFqn, name);
     }
+
+    // A generic member's resolved return type may be an OPEN type variable of the owner (a generic member read on a
+    // CONCRETELY-instantiated owner: `Box<MutableList<Int>>.v` where `val v: X` surfaces `ret = tv(type,0)`). Left as
+    // a bare `tv`, downstream recognizers (ClassifyColl, the println collection-wrap) misfire — they key on the CONCRETE
+    // type. Substitute each tv against the concrete instantiation: tv(scope="type", i) -> the owner's concrete arg i,
+    // tv(scope="method", i) -> the call's own typeArgs[i]; recursively through nested Fqn/Nullable/Array/ByRef/Fn.
+    // GATED precisely — an already-concrete `ret` (no tv anywhere) is returned untouched; an UNRESOLVABLE tv (no
+    // concrete owner args, or index out of range) is left untouched, and a tv whose concrete arg is ITSELF open stays
+    // open (tv-for-tv) — never a concrete guess.
+    static TypeNode SubstMemberTv(TypeNode ret, JsonObject o, BirScope scope)
+    {
+        if (ret == null || !ContainsTv(ret)) return ret;
+        // Owner concrete args: prefer the DECLARING owner's token (`ownerType`/`owner` — the exact owner class, so its
+        // args line up 1:1 with the member's tv(type,*) indices). Fall back to the SURFACED receiver's args ONLY when
+        // it names the SAME owner class (a bare/argless base token paired with a differently-parameterized subclass
+        // receiver must NOT borrow the subclass's args against the base member's tv indices).
+        var ownerTok = TypeJson.Read(o["ownerType"] ?? o["owner"]) as TypeNode.Fqn;
+        var ownerArgs = ownerTok?.Args
+                        ?? (Surface(o["recv"], scope) is TypeNode.Fqn rf
+                            && (ownerTok == null
+                                || ReferenceMetadataIndex.BareOwnerFqn(rf.Name) == ReferenceMetadataIndex.BareOwnerFqn(ownerTok.Name))
+                            ? rf.Args : null);
+        // Method type args: the generic call's own typeArgs (kotc's `typeArgs` slot).
+        var methodArgs = (o["typeArgs"] as JsonArray)?.Select(a => TypeJson.Read(a)).Where(t => t != null).ToArray();
+        return Subst(ret, ownerArgs, methodArgs);
+    }
+
+    static bool ContainsTv(TypeNode t) => t switch
+    {
+        TypeNode.Tv => true,
+        TypeNode.Fqn { Args: { } a } => a.Any(ContainsTv),
+        TypeNode.Nullable n => ContainsTv(n.Of),
+        TypeNode.Oblivious ob => ContainsTv(ob.Of),
+        TypeNode.Array ar => ContainsTv(ar.Elem),
+        TypeNode.ByRef b => ContainsTv(b.Of),
+        TypeNode.Fn fn => ContainsTv(fn.Ret) || fn.Params.Any(ContainsTv) || (fn.Recv != null && ContainsTv(fn.Recv)),
+        _ => false,
+    };
+
+    static TypeNode Subst(TypeNode t, TypeNode[] ownerArgs, TypeNode[] methodArgs) => t switch
+    {
+        TypeNode.Tv { Scope: "type", I: var i } => ownerArgs != null && i >= 0 && i < ownerArgs.Length ? ownerArgs[i] : t,
+        TypeNode.Tv { Scope: "method", I: var i } => methodArgs != null && i >= 0 && i < methodArgs.Length ? methodArgs[i] : t,
+        TypeNode.Fqn { Args: { } a } f => new TypeNode.Fqn(f.Name, a.Select(x => Subst(x, ownerArgs, methodArgs)).ToArray()),
+        TypeNode.Nullable n => new TypeNode.Nullable(Subst(n.Of, ownerArgs, methodArgs)),
+        TypeNode.Oblivious ob => new TypeNode.Oblivious(Subst(ob.Of, ownerArgs, methodArgs)),
+        TypeNode.Array ar => new TypeNode.Array(Subst(ar.Elem, ownerArgs, methodArgs)),
+        TypeNode.ByRef b => new TypeNode.ByRef(Subst(b.Of, ownerArgs, methodArgs)),
+        TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, Subst(fn.Ret, ownerArgs, methodArgs),
+            fn.Params.Select(p => Subst(p, ownerArgs, methodArgs)).ToArray(), fn.Recv == null ? null : Subst(fn.Recv, ownerArgs, methodArgs)),
+        _ => t,
+    };
 
     // The operand's UNDERLYING value type: peel a `cast` (a compiler boxing/narrowing OR explicit `as`; the BIR does
     // not distinguish them, so this peels both — the CLR twin of kotc's `stripCast`) and the value-nullable unwrap,
