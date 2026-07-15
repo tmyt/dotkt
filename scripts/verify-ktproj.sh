@@ -96,6 +96,15 @@ kt ktproj-roundtrip "cases/ktproj-roundtrip/app/App.ktproj" \
 kt ktproj-applib "cases/ktproj-applib/app/App.ktproj" \
 	"$(printf 'Rectangle 3x4 area=12\n48\nPoint(x=-2, y=5)\n7\nBLUE')"
 
+# #27: a cross-module Kotlin LIBRARY whose public API takes kotlin.collections.* params — the params compile to their
+# BCL @ClrTypeAlias interfaces in Lib.dll (List->IReadOnlyList, MutableList->IList, Map->IDictionary). The app
+# references Lib.ktproj and calls those funs with listOf/mutableListOf/mapOf. Before the fix facadegen surfaced the
+# raw IReadOnlyList/IList/IDictionary, so the frontend REJECTED the kotlin.collections.* args ("argument type mismatch"
+# + "cannot infer type parameter T"). facadegen's reverse map now surfaces them back as kotlin.collections.*, and the
+# generic `makeHolder(listOf(...))` inference + `h.items.size` member resolution succeed. Regression guard for #27.
+kt ktproj-listparam "cases/ktproj-listparam/app/App.ktproj" \
+	"$(printf '2\n3\n2\n2')"
+
 # #15 EMIT-HALF: the pathological layout where the app's recursive `**/*.kt` glob pulls in a NESTED
 # <ProjectReference> lib's SOURCE (App.kt + lib/Demo.kt) AND references that lib's dll — so `demo.Plain`/
 # `demo.hello` are BOTH compiled LOCALLY and exported by the referenced Demo.dll. The frontend "source wins"
@@ -178,6 +187,7 @@ rm -rf "$ROOT"/cases/ktproj/bin "$ROOT"/cases/ktproj/obj \
        "$ROOT"/cases/ktproj-il/bin "$ROOT"/cases/ktproj-il/obj \
        "$ROOT"/cases/ktproj-roundtrip/*/bin "$ROOT"/cases/ktproj-roundtrip/*/obj \
        "$ROOT"/cases/ktproj-applib/*/bin "$ROOT"/cases/ktproj-applib/*/obj \
+       "$ROOT"/cases/ktproj-listparam/*/bin "$ROOT"/cases/ktproj-listparam/*/obj \
        "$ROOT"/cases/ktproj-injectemit/bin "$ROOT"/cases/ktproj-injectemit/obj \
        "$ROOT"/cases/ktproj-injectemit/lib/bin "$ROOT"/cases/ktproj-injectemit/lib/obj \
        "$ROOT"/cases/ktproj-reprop/*/bin "$ROOT"/cases/ktproj-reprop/*/obj \

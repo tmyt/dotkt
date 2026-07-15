@@ -7,6 +7,22 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **facadegen (#27): a cross-module `kotlin.collections.*` parameter/return now surfaces as Kotlin, not the raw BCL
+  interface.** A DotKt library's `fun takesList(xs: List<String>)` compiles its param to
+  `System.Collections.Generic.IReadOnlyList<String>` in the emitted assembly; when a consumer referenced that library
+  (`<ProjectReference>`) facadegen surfaced the param back as the raw `IReadOnlyList<String>`, so the frontend REJECTED
+  a `kotlin.collections.List<String>` argument (`listOf(...)`) with *"argument type mismatch: actual `List<String>`,
+  expected `IReadOnlyList<String>`"* + *"cannot infer type parameter T"* + a cascade of unresolved `size`. Same code
+  source-included (same-module) compiled fine. Fix (facadegen-side): the type mapper now REVERSE-maps the well-known
+  BCL collection interfaces back to their `kotlin.collections.*` identity — the inverse of the forward `@ClrTypeAlias`
+  table (`IReadOnlyList→List`, `IList→MutableList`, `IReadOnlyCollection→Collection`, `ICollection→MutableCollection`,
+  `IEnumerable→Iterable`, `IDictionary→Map`; many-to-one forward → read-only supertype inverse). This is **DotKt-gated**
+  (only an assembly emitting `DotKt.Runtime.CompilerServices` attributes reverse-maps): a genuine C# assembly's
+  `IReadOnlyList<T>`/`IList<T>` was never a Kotlin collection and keeps its BCL member surface (`.Add`/`.Count`) for
+  façade-free interop. Applied at all three generic mapper sites (params/returns/properties, indexer/iterator/Sig, and
+  the `[KotlinNullableGeneric]` restore). Generic inference (`makeHolder(listOf(...))`) and element-member resolution
+  (`h.items.size`) now work exactly as same-module. New gate case `ktproj-listparam`; behavior recorded in
+  `docs/dotkt-semantics.md` §5c-quater.
 - **bir2cir (#25): a cross-module GENERIC top-level fun among a same-name OVERLOAD SET now binds the correct
   overload.** A generic top-level function consumed cross-module from a re-imported `kotlinx.*`/DotKt Kotlin library
   (facadegen ProjectReference round-trip) lowered to a `callStatic` carrying `typeArgs`+`shapeTypes` but NO resolved

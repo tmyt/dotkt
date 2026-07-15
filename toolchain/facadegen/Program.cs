@@ -1407,6 +1407,25 @@ static class FacadeGen
         catch { return false; }
     }
 
+    // #27: was this referenced assembly EMITTED BY kotc (a DotKt library), or is it a genuine 3rd-party/BCL assembly?
+    // Discriminator: a kotc-emitted assembly EMBEDS its round-trip attribute set in `DotKt.Runtime.CompilerServices`
+    // (KotlinFunctionAttribute/KotlinFileClassAttribute/…; metadata-attrs-embedded-nrt-nullability), so it DEFINES at
+    // least one type in that namespace; a C#/BCL assembly does not. This gates the collection reverse map: only a
+    // DotKt lib's `IReadOnlyList<T>` WAS a `kotlin.collections.List<T>` (the forward @ClrTypeAlias produced it), so only
+    // its signatures are restored. A genuine C# `IList<T>`/`IEnumerable<T>` was NEVER a Kotlin collection and stays a
+    // BCL interface, so façade-free interop keeps direct BCL member access (`.Add`/`.Count`/`.IndexOf` — il-clriface/
+    // il-netgen2/il-transinj). Cached per assembly.
+    static readonly Dictionary<Assembly, bool> s_dotktAsm = new();
+    static bool IsDotKtEmittedAssembly(Assembly a)
+    {
+        if (a == null) return false;
+        if (s_dotktAsm.TryGetValue(a, out var v)) return v;
+        bool dotkt;
+        try { dotkt = a.GetTypes().Any(t => t.Namespace == "DotKt.Runtime.CompilerServices"); }
+        catch (Exception e) { dotkt = false; Console.Error.WriteLine($"note: could not classify assembly provenance ({a.GetName().Name}: {e.GetType().Name}); treating as non-DotKt (collection reverse map off)"); }
+        return s_dotktAsm[a] = dotkt;
+    }
+
     // Class-nature round-trip markers: [KotlinFunInterface] on a `fun interface` (SAM), [KotlinSealed] on a `sealed`
     // class/interface. Read back so the injector restores the Kotlin nature the CLR shape (plain interface / abstract
     // class) dropped. Absent (a genuine .NET type, or an un-stamped assembly) -> the plain shape, as before.
@@ -1687,8 +1706,13 @@ static class FacadeGen
         {
             var open = t.GetGenericTypeDefinition();
             if (open.IsNested) return DegradeToAny(t, "nested generic definition — no CLR-addressable open name");
-            var openName = KotlinName(open);
-            if (NO_INJECT.Contains(open.FullName ?? "") || !openName.All(c => char.IsLetterOrDigit(c) || c == '_'))
+            // #27: this [KotlinNullableGeneric] restore path (a DotKt member's pre-erasure return, e.g. `List<T?>` whose
+            // IL is `IReadOnlyList<object>`) is a THIRD generic mapper alongside MapT/CrossTypeTN — it needs the same
+            // BCL-collection reverse (gated; the attribute is a DotKt round-trip stamp so `self` is always a DotKt type)
+            // or the restored `List<T?>` would surface as the raw `IReadOnlyList<T?>` and reintroduce #27 on this shape.
+            var openName = IsDotKtEmittedAssembly(self.Assembly)
+                && BCL_COLLECTION_REVERSE.TryGetValue(open.FullName ?? "", out var kcoll) ? kcoll : KotlinName(open);
+            if (NO_INJECT.Contains(open.FullName ?? "") || !openName.All(c => char.IsLetterOrDigit(c) || c == '_' || c == '.'))
                 return DegradeToAny(t, "generic open def not injectable / not a simple identifier");
             var gargs = t.GetGenericArguments();
             var args = new TN[gargs.Length];
@@ -1828,6 +1852,32 @@ static class FacadeGen
       "MutableIterable", "Pair", "Triple", "HashMap", "LinkedHashMap", "HashSet", "LinkedHashSet", "ArrayList", "Sequence" };
     static bool IsStdlibCollectionFqn(TN t) => t is TN.Fqn { Args: not null } f && STDLIB_COLLECTION_NAMES.Contains(f.Name);
 
+    // #27: the INVERSE of the stdlib's forward @ClrTypeAlias collection table (libraries/stdlib/clr/builtins/
+    // Collections.kt). A DotKt library's BCL collection interface -> the `kotlin.collections.*` token the frontend
+    // unifies with a consumer's `listOf(...)`/`mapOf(...)` value. Keys are exact arity-qualified FullNames — EXACTLY the
+    // SIX interfaces kotc actually emits from a kotlin.collections type (verified against Collections.kt). Where the
+    // forward table is many-to-one the inverse targets the read-only SUPERTYPE (widest acceptance — accepts both the
+    // read-only and mutable consumer value):
+    //   IEnumerable`1         <- {Iterable, MutableIterable, Sequence}  -> Iterable
+    //   IReadOnlyCollection`1 <- {Collection, Set}                      -> Collection
+    //   ICollection`1         <- {MutableCollection, MutableSet}        -> MutableCollection
+    //   IReadOnlyList`1       <- {List}                                 -> List
+    //   IList`1               <- {MutableList}                          -> MutableList
+    //   IDictionary`2         <- {Map, MutableMap}                      -> Map  (dotkt-semantics §5c: both -> IDictionary)
+    // NOTE: `IReadOnlySet`/`ISet`/`IReadOnlyDictionary` are DELIBERATELY ABSENT — kotc never emits them from a Kotlin
+    // type (Set->IReadOnlyCollection, MutableSet->ICollection). They can appear in a DotKt assembly ONLY via explicit
+    // façade-free `import System.Collections.Generic.ISet` — a signature whose author CHOSE the BCL surface, which (per
+    // the same rationale as a genuine C# assembly) must be left as-is, not rewritten to a Kotlin collection.
+    static readonly Dictionary<string, string> BCL_COLLECTION_REVERSE = new()
+    {
+        ["System.Collections.Generic.IEnumerable`1"]         = "kotlin.collections.Iterable",
+        ["System.Collections.Generic.IReadOnlyCollection`1"] = "kotlin.collections.Collection",
+        ["System.Collections.Generic.ICollection`1"]         = "kotlin.collections.MutableCollection",
+        ["System.Collections.Generic.IReadOnlyList`1"]       = "kotlin.collections.List",
+        ["System.Collections.Generic.IList`1"]               = "kotlin.collections.MutableList",
+        ["System.Collections.Generic.IDictionary`2"]         = "kotlin.collections.Map",
+    };
+
     // null => skip (private/internal); false => public; true => protected (Family / protected-internal). Frameworks
     // (WinUI/WPF/Avalonia) override protected virtual lifecycle methods, so these MUST be injected (item 2).
     static bool? Vis(MethodBase m) =>
@@ -1887,6 +1937,30 @@ static class FacadeGen
         {
             var inner = MapT(t.GetGenericArguments()[0], self);
             return IsAnyQ(inner) ? AnyQ() : new TN.Nullable(inner);
+        }
+        // #27 (reverse of the @ClrTypeAlias forward mapping): a well-known BCL collection INTERFACE surfaced from a
+        // DotKt-emitted library maps BACK to its `kotlin.collections.*` identity. A DotKt library's `fun f(xs:
+        // List<String>)` compiles its param to `IReadOnlyList<String>`; without this the consumer's `listOf(...)` (a
+        // `kotlin.collections.List`) is REJECTED against the raw `IReadOnlyList`. DotKt-GATED (IsDotKtEmittedAssembly),
+        // NOT universal: only a DotKt lib's interface WAS produced by the forward @ClrTypeAlias, so only there is the
+        // restore correct; a genuine C# `IReadOnlyList<T>` was never a Kotlin `List` and keeps its BCL surface so
+        // façade-free interop can call `.Count`/`.Add` (il-clriface/il-netgen2/il-transinj). Unlike the UNIVERSAL
+        // `System.Int32 -> kotlin.Int` (identical CLR value type, same member surface), a Kotlin collection has a
+        // DIFFERENT member surface (`.size`/`.add` vs `.Count`/`.Add`) than the BCL interface, so the view is only valid
+        // when the original really was Kotlin. Applied to EXACT interface identities only (not implementations:
+        // `List`1`/`Dictionary`2` CLASSES are untouched). Naming `kotlin.collections.List` as a signature TOKEN is NOT a
+        // stdlib-symbol INJECTION (the frontend resolves it from the klib, exactly as same-module does) — the binding
+        // invariant forbids injecting the TYPE, not naming it. Args recurse through MapT, so `IReadOnlyList<IReadOnlyList
+        // <Int>>` -> `List<List<Int>>`. The reverse targets mirror the ACTUAL forward table (libraries/stdlib/clr/
+        // builtins/Collections.kt): where the forward map is many-to-one (`Collection`+`Set` -> IReadOnlyCollection;
+        // `Map`+`MutableMap` -> IDictionary, dotkt-semantics §5c) the inverse picks the read-only SUPERTYPE — the most
+        // permissive param type, accepting both the read-only and mutable consumer values (a `Map`-typed param accepts
+        // `mapOf(...)` AND `mutableMapOf(...)`).
+        if (MetaMode && t.IsGenericType && !t.IsGenericTypeDefinition && IsDotKtEmittedAssembly(self.Assembly)
+            && BCL_COLLECTION_REVERSE.TryGetValue(t.GetGenericTypeDefinition().FullName ?? "", out var kcoll))
+        {
+            var kargs = t.GetGenericArguments().Select(a => MapT(a, self)).ToArray();
+            if (!kargs.Any(IsAnyQ)) return new TN.Fqn(kcoll, kargs);
         }
         // (4) A .NET delegate -> a Kotlin function type `fn`. A lambda then binds to the delegate parameter and overloads
         // disambiguate by arity; the backend builds the SPECIFIC delegate from the call-site param type.
@@ -2101,8 +2175,14 @@ static class FacadeGen
         {
             var open = t.GetGenericTypeDefinition();
             if (open.IsNested) return DegradeToAny(t, "nested generic definition — no CLR-addressable open name");
-            var openName = KotlinName(open);
-            if (NO_INJECT.Contains(open.FullName ?? "") || !openName.All(c => char.IsLetterOrDigit(c) || c == '_'))
+            // #27: a BCL collection interface reverse-maps to its kotlin.collections.* identity (see BCL_COLLECTION_REVERSE
+            // / MapT), but ONLY for a DotKt-emitted library (IsDotKtEmittedAssembly) — where the forward @ClrTypeAlias
+            // produced it; a genuine C# `IList<T>` keeps its BCL surface. This is the PRIMARY param/return/property path
+            // (MapTFn->MapTN->here), so it — not the MapT copy — surfaces `fun f(xs: List<String>)`'s param. The cursor
+            // still advances over every arg slot below. `ctx.DeclaringType` is the signature's declaring (DotKt) type.
+            var openName = IsDotKtEmittedAssembly(ctx?.DeclaringType?.Assembly)
+                && BCL_COLLECTION_REVERSE.TryGetValue(open.FullName ?? "", out var kcoll) ? kcoll : KotlinName(open);
+            if (NO_INJECT.Contains(open.FullName ?? "") || !openName.All(c => char.IsLetterOrDigit(c) || c == '_' || c == '.'))
                 return DegradeToAny(t, "generic open def not injectable / not a simple identifier");
             var ga = t.GetGenericArguments();
             var args = new TN[ga.Length];
