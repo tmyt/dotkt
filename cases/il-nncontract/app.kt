@@ -19,6 +19,11 @@ class Box(val name: String) {                    // public ctor: param precondit
 
 fun leak(): String = forceNull()                 // public top-level fun: return postcondition
 
+fun leakExpr(): String {                         // expression-position return needs the same postcondition
+    val unreachable: String = if (false) "ok" else return forceNull()
+    return unreachable
+}
+
 fun leakInTry(): String {                        // return POSTCONDITION wrap evaluated INSIDE a try region
     try { return forceNull() } finally { println("fin") }   // NPE thrown in-try -> finally runs, then propagates
 }
@@ -36,6 +41,7 @@ fun main() {
 
     // POSTCONDITIONS: a null leaking OUT of a non-null return -> NullPointerException at the return
     try { leak() } catch (e: NullPointerException) { println("npe-ret") }
+    try { leakExpr() } catch (e: NullPointerException) { println("npe-retexpr") }
     try { Box("b").leakM() } catch (e: NullPointerException) { println("npe-retm") }
     try { Box("b").leakyProp } catch (e: NullPointerException) { println("npe-getter") }
     try { leakInTry() } catch (e: NullPointerException) { println("npe-trret") }   // finally runs first ("fin"), then the postcondition NPE propagates

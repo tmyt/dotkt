@@ -64,6 +64,7 @@ import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
 import org.jetbrains.kotlin.ir.types.IrType
 import org.jetbrains.kotlin.ir.types.classFqName
 import org.jetbrains.kotlin.ir.types.classifierOrNull
+import org.jetbrains.kotlin.ir.types.isNothing
 import org.jetbrains.kotlin.ir.types.isUnit
 import org.jetbrains.kotlin.ir.types.isMarkedNullable
 import org.jetbrains.kotlin.ir.util.fqNameWhenAvailable
@@ -268,7 +269,16 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		// VALUE can still be a SIDE-EFFECTING call (`x ?: return unitFn()`): evaluate it, then transfer — a bare
 		// `{"k":"returnExpr"}` (the old behavior) silently DROPPED the call. A plain Unit ref (IrGetObjectValue) has
 		// nothing to evaluate. Mirrors the statement-position arm's Unit-return handling.
-		else if (!node.value.type.isUnit()) """{"k":"returnExpr","value":${expr(node.value)}}"""
+		else if (!node.value.type.isUnit()) {
+			val retType = (node.returnTargetSymbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction)?.returnType
+			val v0 = if (retType != null) coerceValue(node.value, retType) else expr(node.value)
+			// #6 non-null RETURN POSTCONDITION: expression-position returns need the same bind-check-throw as
+			// statement-position returns. Skip Nothing values (`return TODO()` already throws) and inline splices,
+			// which took the branch above.
+			val postMsg = postconditionReturns[node.returnTargetSymbol]
+			val v = if (postMsg != null && retType != null && !node.value.type.isNothing()) wrapReturnNonNull(v0, retType, postMsg) else v0
+			"""{"k":"returnExpr","value":$v}"""
+		}
 		else if (node.value is IrGetObjectValue) """{"k":"returnExpr"}"""
 		else breakContinueExpr("""{"k":"exprStmt","expr":${expr(node.value)}},{"k":"return"}""")
 	}

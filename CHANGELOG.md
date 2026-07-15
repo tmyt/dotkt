@@ -7,6 +7,15 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **kotc (#32): expression-position `return` now applies the declared return-slot coercion and non-null
+  postcondition.** The `IrReturn` arm used for an elvis/`if`/`when` branch emitted its value directly, unlike the
+  statement-position arm. It now runs the value through `coerceValue` (including `Nullable<T>.Value` unwrapping when a
+  non-null value slot requires bare `T`) and `wrapReturnNonNull` for registered public/protected return contracts before
+  emitting `returnExpr`. This prevents invalid IL from a nullable value struct reaching a non-null return slot and
+  prevents a laundered null from bypassing the public return contract merely because the return occurs in value
+  position. Extended gates: `cases/il-nullableprim` (expression-position smart-cast nullable return) and
+  `cases/il-nncontract` (expression-position non-null return postcondition).
+
 - **kotc (#31): the EXPRESSION-position `IrReturn` arm now consults `inlineReturnSubst` and no longer drops a
   Unit-typed return value — fixing two defects at one site** (`BirEmitterExpressions.kt`, the value-position `return`).
   The statement-position arm already routed a lambda-local return and evaluated a side-effecting Unit return; the

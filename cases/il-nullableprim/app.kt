@@ -3,6 +3,10 @@
 // Covers: assignment (val z: Int = n), arithmetic operands, comparison, function args, and return.
 fun addOne(x: Int): Int = x + 1
 fun firstOr(n: Int?, d: Int): Int { if (n != null) return n; return d }
+fun firstOrExpr(n: Int?, d: Int): Int {
+    val x: Int = if (n == null) d else return n // return in expression position must also unwrap Nullable<T>.Value
+    return x
+}
 fun main() {
     val n: Int? = 7
     if (n != null) {
@@ -17,6 +21,8 @@ fun main() {
     if (n != null && n > 5) println("big") else println("small")
     println(firstOr(7, -1))
     println(firstOr(null, -1))
+    println(firstOrExpr(8, -2))
+    println(firstOrExpr(null, -2))
 
     val l: Long? = 100L
     if (l != null) {
