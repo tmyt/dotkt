@@ -114,6 +114,16 @@ static class DefaultArgSplice
     // subtree per occurrence.
     static JsonNode SpliceOne(string bir, JsonNode receiver, JsonArray args, JsonArray hoist, ReferenceMetadataIndex refs, string method, int slot)
     {
+        var parsed = MaterializeDefault(bir, hoist, refs, method, slot);
+        return parsed == null ? null : SubstituteTokens(parsed, receiver, args);
+    }
+
+    // SHARED with InlineSplice (#34 — omitted defaulted param of an inline callee): parse a @KotlinDefault BIR string,
+    // refuse a `defaultUnsupported` poison loudly, unwrap a `defaultCarrier` (re-hoisting its lifted methods into `hoist`),
+    // and return the raw default EXPR (still carrying `{this}` / `{defaultArgParam idx}` tokens — the caller binds them to
+    // its own arg/param frame via SubstituteTokens). Returns null on an unparseable string.
+    internal static JsonNode MaterializeDefault(string bir, JsonArray hoist, ReferenceMetadataIndex refs, string method, int slot)
+    {
         JsonNode parsed; try { parsed = JsonNode.Parse(bir, documentOptions: BirJson.DocOptions); } catch { return null; }
         if (parsed is JsonObject env)
         {
@@ -125,7 +135,7 @@ static class DefaultArgSplice
             if (envK == "defaultCarrier")
                 parsed = UnwrapCarrier(env, hoist, refs);
         }
-        return SubstituteTokens(parsed, receiver, args);
+        return parsed;
     }
 
     // A `defaultCarrier` envelope: RE-HOIST each carried lifted method into this file (fresh per-splice name), rewrite the
@@ -172,7 +182,9 @@ static class DefaultArgSplice
 
     // Rebuild `node`, replacing every `{"k":"this"}` with a deep clone of `receiver` and every
     // `{"k":"defaultArgParam","idx":N}` with a deep clone of `args[N]`. Rebuilds fresh so no node is double-parented.
-    static JsonNode SubstituteTokens(JsonNode node, JsonNode receiver, JsonArray args)
+    // Shared with InlineSplice (#34): there `args[N]` = the bound temp for the emitted-position-N param, `receiver` = the
+    // bound extension/dispatch temp.
+    internal static JsonNode SubstituteTokens(JsonNode node, JsonNode receiver, JsonArray args)
     {
         switch (node)
         {
