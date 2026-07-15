@@ -445,6 +445,33 @@ narrow, and closing either would add per-call reconciliation for an idiom that i
   collection or a foreign **`IList`-only** C# collection crossing such a slot. **Disposition: internal + reconciled,
   documented, not fixed** — they are body-level emit artifacts, not an exported ABI shape.
 
+## 5c-quater. Cross-module collection surfacing: DotKt `kotlin.collections.*` restores; genuine C# BCL stays BCL (#27)
+
+When a Kotlin program consumes a **referenced assembly** as Kotlin (a `<ProjectReference>` / `<Reference>` to a
+DotKt library, or a façade-free `import` of a .NET type), facadegen reads each member signature's .NET types and
+maps them to Kotlin tokens. The BCL collection interfaces the forward `@ClrTypeAlias` table emits are **reverse-mapped
+back** to `kotlin.collections.*` — but **only for a DotKt-emitted library**, detected by the embedded
+`DotKt.Runtime.CompilerServices` attribute set (`IsDotKtEmittedAssembly`). Consequences:
+
+- **A DotKt library's `fun f(xs: List<String>)`** compiled its param to `IReadOnlyList<String>`; a consumer's
+  `listOf(...)` (a `kotlin.collections.List`) now **unifies** with it, and generic inference / element-member
+  resolution (`h.items.size`) work exactly as same-module. The reverse targets are the inverse of the forward table:
+  `IReadOnlyList→List`, `IList→MutableList`, `IReadOnlyCollection→Collection`, `ICollection→MutableCollection`,
+  `IEnumerable→Iterable`, `IDictionary→Map`. Where the forward map is many-to-one (`{Collection,Set}→IReadOnlyCollection`;
+  `{Map,MutableMap}→IDictionary`, §5c) the inverse picks the read-only **supertype** — the most permissive param type
+  (a `Map`-typed param accepts both `mapOf(...)` and `mutableMapOf(...)`).
+- **A genuine C# assembly's `IReadOnlyList<T>` / `IList<T>` / `IEnumerable<T>` stays a BCL interface** — it was never a
+  Kotlin `List`, and it has a DIFFERENT member surface (`.Count`/`.Add`/`.IndexOf` vs Kotlin `.size`/`.add`), so
+  façade-free interop keeps direct BCL member access. This is why the reverse map is DotKt-gated and **not** universal
+  like `System.Int32→kotlin.Int` (which is safe universally because the CLR type and member surface are identical).
+- **Deliberate lossiness (accepted).** Because the forward map is many-to-one, the reverse cannot recover the original
+  in the collapsed families: a DotKt `fun g(m: MutableMap<K,V>)` surfaces cross-module as a `Map<K,V>` param (and a
+  `MutableMap`/`Set`/`MutableSet` **return** surfaces widened to `Map`/`Collection`/`MutableCollection`). This mirrors
+  Kotlin/JVM's own `MutableMap`→`java.util.Map` erasure hole; the frontend's read-only mutability gate is not
+  reconstructed cross-module. **Disposition: documented, not fixed** — the exact restore would need a per-signature
+  round-trip stamp of the original Kotlin collection identity (a bir2cir `RoundtripMetadata` follow-up). `List`,
+  `MutableList`, and `Map` — the common cases — round-trip precisely.
+
 ## 5d. `Appendable` is `System.Text.StringBuilder`
 
 `kotlin.text.Appendable` is a JVM-ism (`java.lang.Appendable`) with **no distinct .NET representation** —
