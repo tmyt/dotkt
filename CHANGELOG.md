@@ -3,10 +3,22 @@
 All notable changes to DotKt (Kotlin → .NET/CLR). Package versions carry the embedded
 Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
-## 0.9.6-rc3 — 2026-07-15
+## 0.9.6-rc4 — 2026-07-15
 
 ### Fixed
 
+- **bir2cir (#28): a `List<T?>` (nullable GENERIC element) collection no longer throws `EntryPointNotFoundException` on
+  any member call.** `fun <T> boxes(x: T): List<T?>` erases its element to `IReadOnlyList<object>` in the producer's
+  return, but the consumer reconstructed the concrete element (`IReadOnlyList<String>`) from the Kotlin type args. Since
+  `IReadOnly{List,Collection}<out T>` are **covariant**, invoking a member (`get_Count` for `.size`, `GetEnumerator` for
+  iteration) through the `<String>` instantiation on the `<object>` runtime object has no entry point → runtime
+  `EntryPointNotFoundException` (compile stayed clean). Plain `List<T>` (reified) and concrete `List<String?>` both work —
+  only the non-reifiable nullable-generic element `T?` erases inconsistently. Fix: extend `NullableTvErasureCallRealign`
+  to (a) index + re-derive ownerless **top-level** generic functions (`EvalCallStatic` + `DeclIndex.TopLevel`) so the
+  callsite return equals the object-erased declaration, and (b) flow the corrected object-erased receiver into collection
+  member dispatch (`DeriveKnownReceiverReturn`, whitelisted + structurally-checked Kotlin collection members only —
+  `iterator`/`listIterator`/`next`/`previous`/`get`), gated to the exact object-erasure boundary (`IsObjectErasureOf`).
+  Gate: `il-nullable-generic-list`.
 - **facadegen (#27): a cross-module `kotlin.collections.*` parameter/return now surfaces as Kotlin, not the raw BCL
   interface.** A DotKt library's `fun takesList(xs: List<String>)` compiles its param to
   `System.Collections.Generic.IReadOnlyList<String>` in the emitted assembly; when a consumer referenced that library
