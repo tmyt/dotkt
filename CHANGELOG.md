@@ -7,6 +7,19 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir (#29, bir2cir half): a nested read-only `List<T>` inside a user generic (`Box<List<T>>`) no longer loses its
+  Kotlin read-only identity cross-module.** At generic-arg depth ≥ 1 bir2cir's Root-V variance collapse lowers a nested
+  read-only `kotlin.collections.List/Set/Collection` to its invariant CLR sibling `IList`/`ICollection` — this collapse is
+  **load-bearing for reified-generic inhabitance** (a single `T := List<Int>` type variable must have ONE
+  context-independent CLR lowering, else no consistent `MakeGenericMethod` instantiation exists, so it must NOT be
+  narrowed), but the collapsed `IList` collides with `MutableList`'s own alias, so facadegen reverse-mapped it back to
+  `MutableList` and surfaced `Box<MutableList<T>>` — rejecting the app's `Box<List<String>>` value. Fix (mirrors the #18
+  `[KotlinNullableGeneric]` pre-erasure record): a new `CollectionIdentityRecord` pass stamps the pre-collapse Kotlin type
+  as `[KotlinCollectionIdentity]` (carrier-encoded, via `RoundtripMetadata`) on each affected return/param/property/field,
+  so facadegen restores `List` vs `MutableList` at every nested position from the recorded truth. The runtime collapse
+  vocabulary is **untouched** (verify-il/schema/roundtrip/differential byte-inert). App builds only; a nested `MutableList`
+  slot is unstamped and reverse-maps correctly (read/write split preserved). **The facadegen restore half is a separate
+  change** — until it lands, `cases/ktproj-nestedlist` is the RED E2E repro.
 - **bir2cir (#28): a `List<T?>` (nullable GENERIC element) collection no longer throws `EntryPointNotFoundException` on
   any member call.** `fun <T> boxes(x: T): List<T?>` erases its element to `IReadOnlyList<object>` in the producer's
   return, but the consumer reconstructed the concrete element (`IReadOnlyList<String>`) from the Kotlin type args. Since

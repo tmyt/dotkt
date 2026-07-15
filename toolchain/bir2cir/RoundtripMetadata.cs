@@ -15,7 +15,7 @@ using DotKt.Bir;
 // retNullableFlags/nullableFlags (DeclNullableFlags), retSuspendFnType/suspendFnType (BirTypeLowering's suspend-fn-type
 // erasure records the pre-erasure shape as this fact), readOnly, and the S1 `inlineBir` carrier string.
 //
-// The 10 attribute-class defs (8 DotKt.Runtime.CompilerServices.* + System.Runtime.CompilerServices.Nullable{,Context})
+// The embedded attribute-class defs (the DotKt.Runtime.CompilerServices.* set + System.Runtime.CompilerServices.Nullable{,Context})
 // are emitted ONCE per assembly as a DEDICATED synthetic CIR file (SynthDefsFile) — `internal sealed : System.Attribute`
 // with base-chaining ctors — so ilemit defines them like any type (no EnsureKotlinAttrs). NullableAttribute carries the
 // csc DUAL ctor: (byte) scalar + (byte[]) nested; the two overloads are disambiguated by BuildCab's runtime-type match.
@@ -40,6 +40,7 @@ static class RoundtripMetadata
     const string AKExtFn        = Ns + "KotlinExtensionFunctionTypeAttribute";
     const string AKNothing      = Ns + "KotlinNothingAttribute";
     const string AKNullableGen  = Ns + "KotlinNullableGenericAttribute";
+    const string AKCollIdentity = Ns + "KotlinCollectionIdentityAttribute";
     const string ANullable      = ClrNs + "NullableAttribute";
     const string ANullableCtx   = ClrNs + "NullableContextAttribute";
 
@@ -120,6 +121,11 @@ static class RoundtripMetadata
         // TypeNode (recorded as the opaque `nullableGenericRet` string) so facadegen restores `Holder<T?>` instead of
         // degrading the re-imported factory/member return to `Any?`. Rides the SAME retAttrs channel as [Nullable]/[Nothing].
         if ((mo["nullableGenericRet"] as JsonValue)?.GetValue<string>() is string ngr) ret.Add(NullableGenAttr(ngr));
+        // [KotlinCollectionIdentity(version, bytes)] (#29) — a return that nests a read-only `List/Set/Collection`
+        // whose Root-V collapse to `IList`/`ICollection` erased the read-only-vs-mutable identity. Carries the
+        // PRE-collapse Kotlin TypeNode (recorded as the opaque `collIdentityRet` string) so facadegen restores
+        // `List` vs `MutableList` at every nested position. Rides the retAttrs channel like [Nullable]/[Nothing].
+        if ((mo["collIdentityRet"] as JsonValue)?.GetValue<string>() is string cir) ret.Add(CollIdentityAttr(cir));
         if (ret.Count > 0) mo["retAttrs"] = ret;
 
         StampParams(mo["params"]);
@@ -136,6 +142,8 @@ static class RoundtripMetadata
             // [KotlinExtensionFunctionType] (#145) — a `block: P.() -> R` param; the bare marker rides after any user
             // attr (order-independent — facadegen reads it by presence). The delegate keeps `P` as its first arg.
             if (HasRecvFn(po["type"])) Append(po, Marker(AKExtFn));
+            // [KotlinCollectionIdentity] (#29) — a param nesting a collapsed read-only collection.
+            if ((po["collIdentity"] as JsonValue)?.GetValue<string>() is string ci) Append(po, CollIdentityAttr(ci));
         }
     }
 
@@ -149,6 +157,7 @@ static class RoundtripMetadata
             if (fo["suspendFnType"] is JsonNode sf) Prepend(fo, SuspendFnAttr(sf));
             if (!topLevel && (fo["readOnly"] as JsonValue)?.GetValue<bool>() == true) Prepend(fo, Marker(AKReadOnly));
             if (HasRecvFn(fo["type"])) Append(fo, Marker(AKExtFn));   // a `val handler: P.() -> R` field (#145)
+            if ((fo["collIdentity"] as JsonValue)?.GetValue<string>() is string ci) Append(fo, CollIdentityAttr(ci));  // #29
         }
     }
 
@@ -161,6 +170,7 @@ static class RoundtripMetadata
         {
             if (po["suspendFnType"] is JsonNode sf) Prepend(po, SuspendFnAttr(sf));
             if (HasRecvFn(po["type"])) Append(po, Marker(AKExtFn));   // a `val p: P.() -> R` property (#145)
+            if ((po["collIdentity"] as JsonValue)?.GetValue<string>() is string ci) Append(po, CollIdentityAttr(ci));  // #29
         }
     }
 
@@ -238,6 +248,16 @@ static class RoundtripMetadata
         return Marker(AKNullableGen, StringArg(BirCarrier.JsonV1), BytesArg(Convert.ToBase64String(content)));
     }
 
+    // [KotlinCollectionIdentity(version, bytes)] (#29) — the PRE-collapse Kotlin TypeNode, carrier-encoded (same
+    // envelope as KotlinNullableGeneric). `collIdentity`/`collIdentityRet` was stashed as a canonical TypeNode JSON
+    // STRING (opaque to the intervening type-rewriting passes); parse it back to a JsonNode so the carrier payload is
+    // the structured node facadegen's TypeNode.Parse reads to restore `List` vs `MutableList` at each nested position.
+    static JsonObject CollIdentityAttr(string typeJson)
+    {
+        byte[] content = BirCarrier.EncodeBody(BirCarrier.JsonV1, JsonNode.Parse(typeJson));
+        return Marker(AKCollIdentity, StringArg(BirCarrier.JsonV1), BytesArg(Convert.ToBase64String(content)));
+    }
+
     static JsonObject Marker(string attr, params JsonObject[] args)
     {
         var arr = new JsonArray();
@@ -275,7 +295,7 @@ static class RoundtripMetadata
         obj["mods"] is JsonObject m && (m[name] as JsonValue)?.GetValue<bool>() == true;
 
     // ---------------------------------------------------------------------------------------------------------------
-    // The 10 embedded attribute-class defs, emitted ONCE as a dedicated synthetic CIR file. Each is `internal sealed :
+    // The embedded attribute-class defs, emitted ONCE as a dedicated synthetic CIR file. Each is `internal sealed :
     // System.Attribute` with the same ctor overloads ilemit's DefineEmbeddedAttr{,N} used to synthesize. `final:true`
     // -> TypeAttributes.Sealed (matching the old NotPublic|Sealed|Class). Ctor params carry NO name (a named ctor param
     // would mint Param rows the embedded attrs never had); the empty body chains to Attribute()'s protected ctor.
@@ -295,6 +315,7 @@ static class RoundtripMetadata
             AttrClass(AKExtFn, Ctor()),     // #145 — bare marker: a `P.() -> R` receiver function-type position
             AttrClass(AKNothing, Ctor()),   // #133 case3 — bare marker on a Kotlin `Nothing` return
             AttrClass(AKNullableGen, Ctor(Param("System.String"), Param(ByteArrayType()))),  // #18 — carrier of a pre-erasure `Holder<T?>` return
+            AttrClass(AKCollIdentity, Ctor(Param("System.String"), Param(ByteArrayType()))), // #29 — carrier of a pre-collapse `Box<List<T>>` collection identity
             // NullableAttribute — csc's DUAL ctor: (byte) FIRST, (byte[]) SECOND (declaration order preserved so the
             // MethodDef rows and BuildCab's arity fallback stay deterministic).
             AttrClass(ANullable, Ctor(Param("System.Byte")), Ctor(Param(ByteArrayType()))),
