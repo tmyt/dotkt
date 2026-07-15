@@ -770,14 +770,25 @@ static class InlineSplice
         return false;
     }
 
-    // Add every `var`-declared name in the subtree to `set` (the carrier's OWN locals — valid `{k:local}` targets). Does not
-    // descend into a nested lambda/closure (its locals are its own scope).
+    // Add every name a subtree BINDS into `set` (the carrier's OWN locals — valid `{k:local}` targets). Beyond a `{k:var}`
+    // declaration, a LOOP/ITERATOR node binds its element in a `"var"` field, NOT a `{k:var}` statement — a spliced inner
+    // inline-EXTENSION iterator (`arr.forEach { … }`) lowers to a `forArray`/`forIn` whose `"var"` element then flows into
+    // the lambda-param temp (`var __it = __element`), so the `{k:local,name:__element}` ref must count as a declared local
+    // (else MaterializeCarrier's HasStrayLocal wrongly reports it as an unlisted capture — the #22 forEach residual). The
+    // binder set is kept IDENTICAL to CollectDeclared (the PrefixLocals-hygiene scanner) — a binder PrefixLocals renames
+    // must be an accepted local here, and vice versa: `forIn`/`forArray`/`repeatInline`/`callInline` `"var"` + try-catch
+    // `"var"` (the only binders kotc/pre-InlineSplice passes emit; `for`/`forRange`/`forEachInline` are minted only by the
+    // LATER lowering passes). Does not descend into a nested lambda/closure (its locals are its own scope).
     static void CollectDeclaredLocals(JsonNode node, HashSet<string> set)
     {
         if (node is JsonObject o)
         {
-            if (Str(o["k"]) is "inlineLambda" or "newClosure" or "newDelegate" or "newSuspendLambda" or "newSam") return;
-            if (Str(o["k"]) == "var" && Str(o["name"]) is string vn) set.Add(vn);
+            var k = Str(o["k"]);
+            if (k is "inlineLambda" or "newClosure" or "newDelegate" or "newSuspendLambda" or "newSam") return;
+            if (k == "var" && Str(o["name"]) is string vn) set.Add(vn);
+            if ((k is "forIn" or "forArray" or "repeatInline" or "callInline") && Str(o["var"]) is string fv) set.Add(fv);
+            if (k == "try" && o["catches"] is JsonArray cs)
+                foreach (var c in cs) if (c is JsonObject co && Str(co["var"]) is string cv) set.Add(cv);
             foreach (var kv in o) if (kv.Value != null) CollectDeclaredLocals(kv.Value, set);
         }
         else if (node is JsonArray a) foreach (var c in a) if (c != null) CollectDeclaredLocals(c, set);

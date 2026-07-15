@@ -31,9 +31,40 @@ suspend fun <T> capG(v: T): T = mySuspend { cont ->
     register { cont.resume(local) }
 }
 
+// #22 RESIDUAL — the nested closure capturing `cont` reaches the block through an inner inline-EXTENSION
+// iterator (`forEach`/`map`/`forEachIndexed`, receiver `Array<T>`). That iterator splices to a `forArray`
+// loop whose element binder rides the node's `"var"` field (not a `{k:var}` stmt) and flows into the
+// lambda-param temp; MaterializeCarrier's declared-locals scan missed the loop binder, so the temp's
+// element ref read as an unlisted stray capture and the carrier failed §4.4ii. Single-element arrays ->
+// each resumes `cont` exactly once. (Real `awaitAll` uses `nodes.forEach { … cont … }` + `Array(n){ … }`.)
+suspend fun capFE(): Int = mySuspend { cont ->
+    arrayOf(7).forEach { register { cont.resume(it) } }
+}
+suspend fun capMap(): Int = mySuspend { cont ->
+    arrayOf(50).map { register { cont.resume(it) }; it }
+}
+suspend fun capFEI(): Int = mySuspend { cont ->
+    arrayOf(100).forEachIndexed { idx, v -> register { cont.resume(idx + v) } }
+}
+// forIn variant: a NON-array receiver (`List`) — the inline `forEach` splices to a `forIn` (iterator) loop
+// whose element binds in the node's `"var"` field, the sibling binder kind to `forArray`.
+suspend fun capList(): Int = mySuspend { cont ->
+    listOf(70).forEach { register { cont.resume(it) } }
+}
+// try-catch binder variant: the carrier's own `catch (e: …)` binds `e` in the try node's `"var"` field (not a
+// `{k:var}`); referencing it inside the nested closure was equally an unlisted-stray before the fix.
+suspend fun capTry(): Int = mySuspend { cont ->
+    try { throw RuntimeException("80") } catch (e: RuntimeException) { register { cont.resume(e.message!!.toInt()) } }
+}
+
 fun main() {
     println(blockOn { cap0() })          // 5
     println(blockOn { cap1(41) })        // 42
     println(blockOn { capG("hi") })      // hi
     println(blockOn { capG(7) })         // 7
+    println(blockOn { capFE() })         // 7
+    println(blockOn { capMap() })        // 50
+    println(blockOn { capFEI() })        // 100
+    println(blockOn { capList() })       // 70
+    println(blockOn { capTry() })        // 80
 }

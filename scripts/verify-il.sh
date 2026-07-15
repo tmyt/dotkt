@@ -815,8 +815,11 @@ il_check_imports inlsuspend InlSuspend "$ROOT/cases/il-inline-suspend" "21"
 # enclosing binding (the `suspendCancellableCoroutine { cont -> cont.invokeOnCancellation { … } }` shape). bir2cir's
 # §4.4ii MaterializeCarrier now allows a nested `newClosure`/`newSam` in the carrier (its captures — an invoke param
 # `cont` / a carrier capture `h` -> `this.field` — are rewritten by the descending sibling scans), instead of the old
-# blanket HasNestedClosure fail-loud that blocked the kotlinx.coroutines-core port.
-il_check_imports suspendnestedcapture SuspendNestedCapture "$ROOT/cases/il-suspendnestedcapture" "$(printf '5\n42\nhi\n7')"
+# blanket HasNestedClosure fail-loud that blocked the kotlinx.coroutines-core port. RESIDUAL (capFE/capMap/capFEI): the
+# `cont` capture reaching the block through an inner inline-EXTENSION iterator (`forEach`/`map`/`forEachIndexed`, receiver
+# `Array<T>`) — which splices to a `forArray` loop whose element binds in the node's `"var"` field — now counts that loop
+# binder as a declared local (CollectDeclaredLocals), so the element ref is no longer flagged an unlisted stray capture.
+il_check_imports suspendnestedcapture SuspendNestedCapture "$ROOT/cases/il-suspendnestedcapture" "$(printf '5\n42\nhi\n7\n7\n50\n100\n70\n80')"
 # comaindrain: bundle-6 ① BUG 4 — a GENUINELY-suspending `suspend fun main` (awaits Task.Delay). bir2cir's
 # DrainMain now drives the cold body under a REAL RootContinuation<Unit>/TaskCompletionSource<Unit> and
 # BLOCKS on tcs.Task until the threadpool resume completes (the old null completion NRE'd on resume). RUNS
