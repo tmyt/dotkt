@@ -7,6 +7,20 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir (#34): inline splice now fills an OMITTED defaulted parameter from the callee's default value — including a
+  LAMBDA default** (`InlineSplice.cs`, STEP 5 param binding). When splicing an `inline fun`, a null (omitted-default) arg
+  slot was filled only from a Tier-1 metadata-representable constant carried on the param's `default` field; a Tier-2
+  default (any non-const expression — notably a lambda default `= { error("unexpected") }`) has no `default` field, so
+  the splice hit the `missing (non-defaulted) arg for param …` fail-loud. The default value for such params in fact
+  rides the param's `[kotlin.clr.KotlinDefault(index, bir)]` attribute — the SAME carrier source the cross-module
+  `DefaultArgSplice` reads — so the fix reads that carrier here: parse it, refuse a `defaultUnsupported` poison
+  (capturing/SAM/suspend lambda default) loudly, unwrap a `defaultCarrier` (re-hoisting its lifted non-capturing
+  `__lambdaN` into this file under a fresh name), and bind its `{defaultArgParam idx}` / `{this}` tokens to the
+  already-bound earlier-param temps via the shared `DefaultArgSplice` machinery, then substitute the call's type args
+  into the resulting expression like the body. Unblocks kotlinx.coroutines `BufferedChannel.sendImpl`'s
+  `onNoWaiterSuspend = { … }` omitted-default lambda (the next inline-splice stop after #30). New gate
+  `cases/il-inlinedefaultlambda` covers a lambda default, a const default, and a default reading an earlier param —
+  each on the take-default and the override path.
 - **kotc (#32): expression-position `return` now applies the declared return-slot coercion and non-null
   postcondition.** The `IrReturn` arm used for an elvis/`if`/`when` branch emitted its value directly, unlike the
   statement-position arm. It now runs the value through `coerceValue` (including `Nullable<T>.Value` unwrapping when a

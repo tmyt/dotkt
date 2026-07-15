@@ -34,12 +34,31 @@ static class InlineSplice
     static int _counter;                       // global unique splice-instance id (local-prefix minting)
     static int _nextLabelId;                    // per-file fresh cfg label id (set at Apply entry)
     static ReferenceMetadataIndex _refs;
+    static JsonArray _hoist;                    // #34: lifted default-lambda methods re-hoisted from a `defaultCarrier`
 
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs)
     {
         _refs = refs;
         _nextLabelId = MaxLabelId(root) + 1;
+        _hoist = new JsonArray();
         Walk(root, 0);
+        // #34: a `defaultCarrier` default (a non-capturing lambda default `= { error(...) }`) re-hoists its lifted
+        // `__lambdaN` helper into THIS file's file-class methods (fresh name), exactly like DefaultArgSplice's cross-module
+        // path — do it BEFORE the post-passes so they normalize the hoisted bodies too.
+        if (_hoist.Count > 0)
+        {
+            if (root is not JsonObject fo || fo["methods"] is not JsonArray methods)
+                throw new InvalidOperationException("bir2cir: InlineSplice re-hoisted a carried default lambda but the file root has no `methods` array");
+            // DRAIN: a re-hoisted default-lambda body may ITSELF contain a `callInline` (a nested inline call in the
+            // default, e.g. `= { listOf(1,2).count { it > 0 } }`) — splice it through InlineSplice BEFORE the method lands
+            // (an un-spliced callInline reaching ilemit is a hard break), and that splice may enqueue further carriers.
+            while (_hoist.Count > 0)
+            {
+                var h = _hoist[0]; _hoist.RemoveAt(0);
+                Walk(h, 0);
+                methods.Add(h);
+            }
+        }
         // POST-PASS: an IMPLICIT `Nullable<VT> -> VT` flow left by SubstTv concretizing a payload's generic `V?` to a
         // concrete `Nullable<VT>` struct, then flowing that local into a non-nullable value-type slot WITHOUT a cast
         // node — a cond branch (`getOrPut`'s `else value`), a var init (a `?.let` receiver `__self = tmp0_safe_receiver`),
@@ -206,6 +225,11 @@ static class InlineSplice
         var callArgs = o["args"] as JsonArray ?? new JsonArray();
         bool ext = Str(payload["recv"]) == "extensionParam";
         var recvs = o["recvs"] as JsonObject;
+        // #34: emitted-position i -> the temp its param bound to, so a TIER-2 default carrier's `{defaultArgParam idx}`
+        // token (a default reading an EARLIER param) resolves to that param's already-bound temp. `defaultThisRecv` binds a
+        // `{this}` token in a default (a `= this` extension-receiver default / a dispatch-receiver read).
+        var boundArgs = new JsonArray();
+        JsonNode defaultThisRecv = Str(payload["recv"]) == "dispatch" ? new JsonObject { ["k"] = "local", ["name"] = prefix + "this" } : null;
 
         // §4.3 — DISPATCH RECEIVER (member inline fn): the payload's `this` refs are the callee's dispatch receiver, not
         // the CALLER's `this`. Bind kotc's carried `recvs.dispatch` to a fresh temp and rewrite the payload body's own
@@ -249,28 +273,45 @@ static class InlineSplice
                 lambdaMap[lname] = ao;   // spliced at its invoke sites (step 6) / forwarded (§4.4), no temp
                 if (ptype != null) lambdaFuncType[lname] = ptype;   // §4.4ii: the delegate/funcType for a materialized carrier
                 subst[pn] = new JsonObject { ["k"] = "local", ["name"] = lname };
+                RecordBound(boundArgs, i, lname);
                 continue;
             }
             // A null arg slot = an OMITTED DEFAULT (splice-all: kotc emits a `null` in the defaulted param's slot). Fill it
-            // with the payload param's own default expr (SubstTv'd into the call's type frame like the body). An un-carried
-            // extension receiver, or a null slot with NO default, is a real error -> fail loud (no fallback under #95).
-            // (DefaultArgSplice covers only app-build callStatic/callInstance, AFTER InlineSplice — so the splice fills its
-            // own default slots here. A default referencing an earlier param is out of scope, as for DefaultArgSplice.)
+            // from the callee's own default value. TIER-1 (a metadata-representable const) rides `p["default"]`; a TIER-2
+            // default (a NON-const expr — notably a lambda default `= { error(...) }`, #34) rides the param's `@KotlinDefault`
+            // carrier attr — the SAME default-value source DefaultArgSplice reads cross-module. Both are SubstTv'd into the
+            // call's type frame like the body. An un-carried extension receiver, or a null slot with NO carried default, is
+            // a real error -> fail loud (no fallback under #95).
             if (argNode == null)
             {
                 if (ext && i == 0) { FailLoud(o, owner, name, pc, ga, "extension receiver not carried"); return; }
-                if (p["default"] is not JsonNode pdef) { FailLoud(o, owner, name, pc, ga, $"missing (non-defaulted) arg for param {pn}"); return; }
-                argNode = pdef.DeepClone();
+                if (p["default"] is JsonNode pdef)
+                {
+                    argNode = pdef.DeepClone();
+                    RewriteLocalRefs(argNode, subst);   // a default that references an EARLIER param -> its already-bound temp
+                }
+                else if (KotlinDefaultCarrier(p) is string carrierBir)
+                {
+                    // Parse the carrier (refuse a `defaultUnsupported` poison — a capturing/SAM/suspend lambda default; unwrap
+                    // a `defaultCarrier`, re-hoisting its lifted `__lambdaN` into this file via `_hoist`), then bind its
+                    // `{defaultArgParam idx}` / `{this}` tokens to the ALREADY-bound earlier-param temps (Kotlin defaults
+                    // reference only earlier params) — the shared DefaultArgSplice machinery.
+                    var raw = DefaultArgSplice.MaterializeDefault(carrierBir, _hoist, _refs, name, i);
+                    if (raw == null) { FailLoud(o, owner, name, pc, ga, $"param '{pn}' default carrier BIR is unparseable"); return; }
+                    var recvForTokens = defaultThisRecv ?? (ext ? boundArgs.ElementAtOrDefault(0) : null);
+                    argNode = DefaultArgSplice.SubstituteTokens(raw, recvForTokens, boundArgs);
+                }
+                else { FailLoud(o, owner, name, pc, ga, $"missing (non-defaulted) arg for param {pn}"); return; }
                 SubstTvIn(argNode, typeArgs, ga, dispatchTypeArgs);
-                RewriteLocalRefs(argNode, subst);   // a default that references an EARLIER param -> its already-bound temp
-                // FINDING 1 (default-expr, #75 holistic): the default expr is RewriteLocalRefs'd (earlier-param refs
-                // renamed) but lives OUTSIDE pBody, so the payload-side suspend guard never scanned it. A capturing
-                // newSuspendLambda built inside a param default is the same descriptor-skew unsoundness — fail loud.
+                // FINDING 1 (default-expr, #75 holistic): the default expr lives OUTSIDE pBody, so the payload-side suspend
+                // guard never scanned it. A capturing newSuspendLambda built inside a param default is the same descriptor-
+                // skew unsoundness — fail loud. (A `defaultCarrier`'s capturing/SAM/suspend form is already refused above.)
                 if (HasCapturingSuspendLambda(argNode)) { FailLoud(o, owner, name, pc, ga, "param default expr builds a capturing newSuspendLambda — SM capture descriptors are not splice-rewritten (silent-miscompile guard, #75)"); return; }
             }
             string temp = prefix + pn;
             stmts.Add(new JsonObject { ["k"] = "var", ["name"] = temp, ["type"] = ptype?.DeepClone(), ["init"] = argNode.DeepClone() });
             subst[pn] = new JsonObject { ["k"] = "local", ["name"] = temp };
+            RecordBound(boundArgs, i, temp);
         }
         RewriteLocalRefs(pBody, subst);
         RewriteLocalRefs(result, subst);   // D2: a tail-folded `result` (`= action(x)`) keeps raw param refs otherwise
@@ -325,6 +366,28 @@ static class InlineSplice
         throw new NotSupportedException(
             $"inline splice: cannot splice {owner}.{name} (pc={pc} ga={ga}): {reason} — "
             + "under splice-all a callInline arrives for every inline+lambda call, so there is no fallback; fix the splice shape or the kotc gate.");
+
+    // #34: record that emitted-position param `i` bound to local `name`, so a later param's TIER-2 default carrier token
+    // `{defaultArgParam idx=i}` (a default reading this earlier param) resolves to it.
+    static void RecordBound(JsonArray boundArgs, int i, string name)
+    {
+        while (boundArgs.Count <= i) boundArgs.Add(null);
+        boundArgs[i] = new JsonObject { ["k"] = "local", ["name"] = name };
+    }
+
+    // #34: the TIER-2 default-value BIR string a param carries in its `@KotlinDefault(index, bir)` attr (kotc stamps it on
+    // every non-const defaulted param of a qualifying fn — the SAME carrier DefaultArgSplice reads cross-module), or null.
+    static string KotlinDefaultCarrier(JsonObject p)
+    {
+        if (p["attrs"] is not JsonArray attrs) return null;
+        foreach (var a in attrs)
+            if (a is JsonObject ao && Str(ao["attr"]) == "kotlin.clr.KotlinDefault"
+                && ao["args"] is JsonArray args && args.Count >= 2
+                && args[1] is JsonObject bv && Str(bv["k"]) == "const"
+                && (bv["value"] as JsonValue)?.TryGetValue<string>(out var bir) == true)
+                return bir;
+        return null;
+    }
 
     // §4.2 (#75 S4b) — RESOLVE the callee's raw-BIR payload by the overload key owner|name|pc|ga, disambiguating same-name
     // inline OVERLOADS by a STRUCTURAL match of each candidate's declared param types against the call's `paramSig`
