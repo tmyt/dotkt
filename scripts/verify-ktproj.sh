@@ -197,6 +197,22 @@ kt ktproj-refrt "cases/ktproj-refrt/app.ktproj" \
 kt ktproj-refrt-pr "cases/ktproj-refrt-pr/app/App.ktproj" \
 	"$(printf 'Hello, WORLD!\n55\n3\nHello, Z!')"
 
+# #37 finding 1 (RID-aware identity selection): a PackageReference (System.IO.Ports) whose copy-local set carries
+# BOTH lib/<tfm>/Foo.dll and runtimes/<rid>/lib/<tfm>/Foo.dll for ONE identity. ilemit's runtime catalog used to
+# hard-fail at emit on the duplicate simple name; it now dedups by identity and selects the host-RID asset. On Linux
+# the runtimes/unix/lib build is the REAL impl (the plain lib asset is a PlatformNotSupported placeholder), so
+# GetPortNames() returning a count (0 here) — not throwing — proves the RID-correct asset was selected (keep-first
+# would have picked the placeholder). Regression guard for #37 finding 1.
+kt ktproj-runtimetargets "cases/ktproj-runtimetargets/app.ktproj" \
+	"ports 0"
+
+# #37 finding 3 (catalog-first, TPA-fallback): framework/inbox types NOT copy-local (absent from the runtime
+# catalog) — System.Text.Json.JsonSerializerOptions + System.Net.Http.HttpClient — must resolve via the fallback
+# onto ilemit's own host framework (TPA). Before the fix these hard-failed "cannot resolve .NET type". Regression
+# guard for #37 finding 3.
+kt ktproj-inbox "cases/ktproj-inbox/app.ktproj" \
+	"$(printf 'indented False\ntimeout 100')"
+
 # Clean each sample's build output.
 rm -rf "$ROOT"/cases/ktproj/bin "$ROOT"/cases/ktproj/obj \
        "$ROOT"/cases/ktproj-mpp/bin "$ROOT"/cases/ktproj-mpp/obj \
@@ -221,6 +237,8 @@ rm -rf "$ROOT"/cases/ktproj/bin "$ROOT"/cases/ktproj/obj \
        "$ROOT"/cases/ktproj-extlib/extlib/bin "$ROOT"/cases/ktproj-extlib/extlib/obj \
        "$ROOT"/cases/ktproj-bidir/*/bin "$ROOT"/cases/ktproj-bidir/*/obj \
        "$ROOT"/cases/ktproj-coll/bin "$ROOT"/cases/ktproj-coll/obj \
+       "$ROOT"/cases/ktproj-runtimetargets/bin "$ROOT"/cases/ktproj-runtimetargets/obj \
+       "$ROOT"/cases/ktproj-inbox/bin "$ROOT"/cases/ktproj-inbox/obj \
        "$ROOT"/cases/ktproj-avalonia/bin "$ROOT"/cases/ktproj-avalonia/obj
 
 echo "------------------------------------"
