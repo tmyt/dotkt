@@ -259,6 +259,12 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		if (spliced != null) {
 			val (res, end) = spliced
 			val goto = """{"k":"goto","id":$end}"""
+			// Unlike the NON-spliced arm below, the value stored into the splice result-local needs NO return-site
+			// coerceValue/wrapReturnNonNull: a `return@lambda <value-type-nullable>` into a bare-value slot is only
+			// well-typed via a smart-cast, which Fir2Ir always materializes as a narrowed IrGetValue or an IMPLICIT_CAST
+			// — both already `nullableValue`-unwrapped by expr()'s leaf arms — so node.value is already the bare `Int`;
+			// and a splice target is always a LAMBDA literal, never a postcondition-registered public fn. Verified a
+			// pure no-op across the value-nullable/smart-cast/generic battery (cases/il-inlineretcoerce).
 			val xfer = if (res != null) """{"k":"setLocal","name":${str(res)},"value":${expr(node.value)}},$goto"""
 				else if (node.value is IrGetObjectValue) goto
 				// Unit splice: evaluate a side-effecting return value for its effect, then jump.

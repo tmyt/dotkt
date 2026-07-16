@@ -36,6 +36,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `blockOn`), `cases/il-inlsuspendobj` (the former silent-miscompile cell — a crossinline suspend lambda captured by an
   `object :` and driven end-to-end), and `cases/il-inlsuspendlaunch` (a coroutine-builder suspend lambda capturing an
   inline-call lambda arg's own local); each asserts the suspend body runs and returns the correct value.
+- **kotc (Batch C, holistic inline-splice item 21): documented + regression-locked the spliced-return value-nullable
+  parity — no behavior change (the residual is unreachable).** #32 added `coerceValue` + `wrapReturnNonNull` to the
+  NON-spliced `IrReturn` arms; the SPLICED arms (the `inlineReturnSubst`-routed `setLocal __inlRetN`, in
+  `BirEmitterStatements.kt` / `BirEmitterExpressions.kt`) did not mirror it. Investigation (Fable cross-layer consult +
+  a byte-identical BIR battery across param/property/local smart-cast, elvis/`if`/`when`, `!!`/`as`, `UInt?`, and
+  generic `T=Int`) proved the mirror would be a pure no-op: a `return@lambda <value-type-nullable>` into a bare-value
+  splice slot is well-typed only via a smart-cast, which Fir2Ir always materializes as a narrowed `IrGetValue` or an
+  `IMPLICIT_CAST` — both already `nullableValue`-unwrapped by `expr()`'s LEAF arms before the value reaches the
+  `setLocal`; and a splice target is always a LAMBDA literal (never a postcondition-registered public fn, so
+  `wrapReturnNonNull` is dead there). Rather than land dead code that asserts a false invariant, the spliced arms now
+  carry a comment stating the leaf-unwrap invariant (so item 21 is not re-flagged), and a new gate
+  `cases/il-inlineretcoerce` locks the leaf coverage in across those shapes. (Separately surfaced by the battery, NOT
+  in this change: a ref-cell value-nullable read/write representation bug — `var q: Int?` captured+smart-cast in an
+  inline lambda `InvalidProgramException`s because the `isRefCell` read leaves a raw `Nullable<int>` and the write
+  stores a bare `int` into the `Nullable<int>` cell field; reported for a dedicated kotc fix.)
 - **bir2cir (#34): inline splice now fills an OMITTED defaulted parameter from the callee's default value — including a
   LAMBDA default** (`InlineSplice.cs`, STEP 5 param binding). When splicing an `inline fun`, a null (omitted-default) arg
   slot was filled only from a Tier-1 metadata-representable constant carried on the param's `default` field; a Tier-2
