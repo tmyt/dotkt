@@ -35,7 +35,7 @@ static class InlineSplice
     static int _nextLabelId;                    // per-file fresh cfg label id (set at Apply entry)
     static ReferenceMetadataIndex _refs;
     static JsonArray _hoist;                    // #34: lifted default-lambda methods re-hoisted from a `defaultCarrier`
-    static HashSet<string> _appLocalMethods;   // #43: file-class method names a same-module `newDelegate` can `ldftn` — the file's own file-class methods + every drained re-hoist (a PENDING re-hoist is checked live via `_hoist`). Provenance oracle for the §4.4ii materialization-side newDelegate guard, the materialization-side counterpart of the §4.6 `!sameModule` payload-side guard in RewriteGeneric.
+    static HashSet<string> _appLocalMethods;   // #43/#63: file-class method names a `newDelegate` can `ldftn` — MODULE-WIDE (every input file's file-class methods, seeded from Program.cs) + every drained re-hoist (a PENDING re-hoist is checked live via `_hoist`). Provenance oracle for the §4.4ii materialization-side newDelegate guard, the materialization-side counterpart of the §4.6 `!sameModule` payload-side guard in RewriteGeneric.
     // §4.4ii ref-cell write-through: a MATERIALIZED carrier that WRITES a captured enclosing `var` (a bare `setLocal` to a
     // capture kotc did NOT ref-cell-box — a cross-module inline body's callee-local, etc.) must promote that var to a shared
     // heap cell so the closure's write is visible in the enclosing scope. `_refCellNames` dedups one `dotkt$…$Ref$…` class
@@ -44,15 +44,18 @@ static class InlineSplice
     static Dictionary<string, string> _refCellNames;          // elem-type JSON -> ref-cell class name (per file)
     static List<(string varName, string refName, JsonNode elem)> _boxRequests;   // DISTINCT (enclosing var, ref class, elem) box requests — keyed by cell, NOT bare name, so two same-named-but-different-typed captures both survive (BoxMaterializedCaptures scopes each by its own cell)
 
-    public static void Apply(JsonNode root, ReferenceMetadataIndex refs)
+    public static void Apply(JsonNode root, ReferenceMetadataIndex refs, IReadOnlyCollection<string> moduleWideAppLocalMethods)
     {
         _refs = refs;
         _nextLabelId = MaxLabelId(root) + 1;
         _hoist = new JsonArray();
-        _appLocalMethods = new HashSet<string>(StringComparer.Ordinal);
+        // #63 (F4): SEED module-wide (every input file's file-class methods), NOT just this file's — ilemit FindStatic
+        // resolves a `newDelegate` target by bare name against ALL IsFileClass types module-wide, and the inline stash
+        // spans all files, so a carrier materializing a SIBLING file's lifted `__lambdaN` IS app-local. Copy into a fresh
+        // per-file set so drained #34 re-hoists (added below) never leak across files.
+        _appLocalMethods = new HashSet<string>(moduleWideAppLocalMethods, StringComparer.Ordinal);
         _refCellNames = new Dictionary<string, string>(StringComparer.Ordinal);
         _boxRequests = new List<(string, string, JsonNode)>();
-        CollectAppLocalMethodNames(root);
         Walk(root, 0);
         // #34: a `defaultCarrier` default (a non-capturing lambda default `= { error(...) }`) re-hoists its lifted
         // `__lambdaN` helper into THIS file's file-class methods (fresh name), exactly like DefaultArgSplice's cross-module
@@ -94,15 +97,20 @@ static class InlineSplice
         AssertNoUnsplicedInline(root);
     }
 
-    // #43: the FILE-CLASS method names declared on the root — the exact set a `newDelegate` target `ldftn`-resolves
-    // against (ilemit's FindStatic binds a delegate method by bare name against `IsFileClass` types ONLY; a lifted
-    // lambda / non-capturing default helper is always a file-class static). Nested-TYPE member methods are deliberately
-    // excluded — a bare-name match there would ACCEPT here then fail loud in ilemit's ldftn, so keeping the set exactly
-    // ilemit's universe fails such a mismatch at THIS layer instead. Re-hoisted #34 defaults fold in as they drain.
-    static void CollectAppLocalMethodNames(JsonNode root)
+    // #43/#63: the FILE-CLASS method names a `newDelegate` target `ldftn`-resolves against — collected MODULE-WIDE across
+    // EVERY input file (ilemit's FindStatic binds a delegate method by bare name against ALL `IsFileClass` types in the
+    // module, and the inline stash spans all files, so a materialized carrier splicing a SIBLING file's lifted `__lambdaN`
+    // is app-local too — #63/F4). Nested-TYPE member methods are deliberately excluded — a bare-name match there would
+    // ACCEPT here then fail loud in ilemit's ldftn, so keeping the set exactly ilemit's file-class universe fails such a
+    // mismatch at THIS layer instead. Pre-collected once by Program.cs before the per-file Apply loop; re-hoisted #34
+    // defaults then fold into the per-file working set live as they drain.
+    public static HashSet<string> CollectAppLocalMethodNames(IEnumerable<JsonNode> roots)
     {
-        if (root is JsonObject ro && ro["methods"] is JsonArray a)
-            foreach (var m in a) if (m is JsonObject mo && Str(mo["name"]) is string mn) _appLocalMethods.Add(mn);
+        var set = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var root in roots)
+            if (root is JsonObject ro && ro["methods"] is JsonArray a)
+                foreach (var m in a) if (m is JsonObject mo && Str(mo["name"]) is string mn) set.Add(mn);
+        return set;
     }
 
     static void Walk(JsonNode node, int depth)
@@ -1073,6 +1081,21 @@ static class InlineSplice
         return inner;
     }
 
+    // F2 (#61) — an `inlineLambda` carrier's OWN param names (its regular params + a leading extension-receiver param).
+    // A frame renamer (subst / prefix declared-set) must SUBTRACT these before descending the carrier's `body`/`result`:
+    // kotc emits the carrier body's refs to its own params as BARE `{k:local,name:<param>}` (emitInlineLambdaCarrier
+    // deliberately shadows them out of the enclosing valSubst), so an OUTER callee param / splice-declared local that
+    // shares a name would else be rebound to the outer temp / prefixed — destroying the inner param ref (bound at the
+    // NESTED splice, BuildLambdaSplice). Unlike a `newSuspendLambda`, the carrier has no field-ified capture slot: free
+    // refs live inline in `body`, so the boundary is purely "params of this carrier" (no capture-descriptor lockstep).
+    static HashSet<string> InlineLambdaParamNames(JsonObject il)
+    {
+        var ps = new HashSet<string>(StringComparer.Ordinal);
+        if (il["params"] is JsonArray pa)
+            foreach (var p in pa.OfType<JsonObject>()) if (Str(p["name"]) is string pn) ps.Add(pn);
+        return ps;
+    }
+
     // BATCH B (#75): a `newSuspendLambda` capture that CANNOT be soundly splice-rewritten (fail-loud, never silent):
     //  - a capture named `__outer` when `refuseOuter` (a PAYLOAD suspend lambda that captured the enclosing dispatch/
     //    extension receiver): post-splice SuspendLambdaLowering would bind its construction value to the CALLER's `this`/
@@ -1457,6 +1480,16 @@ static class InlineSplice
             // BATCH B (#75): a `newSuspendLambda`'s inner vars are the SM's OWN scope (its `captures[].name` are enclosing
             // names handled JOINTLY by ApplyPrefix below, not declared-set members). Skip it whole, like a typeDef.
             if (Str(o["k"]) == "newSuspendLambda") return;
+            // F2 (#61) SCOPE BOUNDARY (symmetric with ApplyPrefix/RewriteLocalRefs): a nested `inlineLambda` carrier's
+            // OWN params are NOT splice-declared locals (they bind at BuildLambdaSplice), so they never enter `declared`;
+            // its `body`/`result` DO declare real locals that still need hygiene prefixing, so descend them. `params`/
+            // `captures` descriptors declare nothing collectable — descending only body/result is byte-identical.
+            if (Str(o["k"]) == "inlineLambda")
+            {
+                if (o["body"] is JsonNode ib) CollectDeclared(ib, declared);
+                if (o["result"] is JsonNode ir) CollectDeclared(ir, declared);
+                return;
+            }
             var k = Str(o["k"]);
             if (k == "var" && Str(o["name"]) is string vn) declared.Add(vn);
             if ((k == "forIn" || k == "forArray" || k == "repeatInline" || k == "callInline") && Str(o["var"]) is string fv) declared.Add(fv);
@@ -1487,6 +1520,23 @@ static class InlineSplice
                 var bodyDeclared = new HashSet<string>(declared, StringComparer.Ordinal);
                 bodyDeclared.ExceptWith(inner);
                 if (bodyDeclared.Count > 0 && o["body"] is JsonNode nb) ApplyPrefix(nb, bodyDeclared, prefix);
+                return;
+            }
+            // F2 (#61) SCOPE BOUNDARY: descend a nested `inlineLambda` carrier's `body`/`result` with the declared-set
+            // MINUS this carrier's OWN params, so a splice-declared local sharing a name with a carrier param does NOT
+            // prefix the carrier's bare `{k:local,name:<param>}` body ref (which would strand it from the un-prefixed
+            // `params[]` descriptor at BuildLambdaSplice). Body-declared locals of the carrier stay in the set and are
+            // still prefixed for hygiene. `params`/`captures` hold no rewritable local ref (byte-identical to skip).
+            if (Str(o["k"]) == "inlineLambda")
+            {
+                var lamParams = InlineLambdaParamNames(o);
+                var bodyDeclared = new HashSet<string>(declared, StringComparer.Ordinal);
+                bodyDeclared.ExceptWith(lamParams);
+                if (bodyDeclared.Count > 0)
+                {
+                    if (o["body"] is JsonNode ib) ApplyPrefix(ib, bodyDeclared, prefix);
+                    if (o["result"] is JsonNode ir) ApplyPrefix(ir, bodyDeclared, prefix);
+                }
                 return;
             }
             var k = Str(o["k"]);
@@ -1536,6 +1586,20 @@ static class InlineSplice
                         : subst.Where(kv => !inner.Contains(kv.Key)).ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
                     RewriteLocalRefs(nb, bodySubst);
                 }
+                return;
+            }
+            // F2 (#61) SCOPE BOUNDARY: a nested `inlineLambda` carrier's OWN params shadow same-named outer callee params.
+            // Descend its `body`/`result` with `subst` MINUS this carrier's params so an inner param ref keeps its bare
+            // name (bound later at BuildLambdaSplice), never rebound to the outer temp. `params`/`captures` descriptors
+            // hold no `{k:local}` ref, so skipping them is byte-identical to the generic descent (only body/result carry
+            // rewritable refs). Nested carriers recurse through this same case.
+            if (Str(o["k"]) == "inlineLambda")
+            {
+                var lamParams = InlineLambdaParamNames(o);
+                var bodySubst = lamParams.Count == 0 ? subst
+                    : subst.Where(kv => !lamParams.Contains(kv.Key)).ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
+                if (o["body"] is JsonNode ib) RewriteLocalRefs(ib, bodySubst);
+                if (o["result"] is JsonNode ir) RewriteLocalRefs(ir, bodySubst);
                 return;
             }
             foreach (var kv in o) if (kv.Value != null && kv.Key != "synthClass") RewriteLocalRefs(kv.Value, subst);
@@ -1983,12 +2047,14 @@ static class InlineSplice
         return false;
     }
 
-    // #43: is a `{k:newDelegate, method:<name>}` target resolvable app-locally (its static `__lambdaN`/`__dflt$lambda$N`
-    // lives in THIS file, so `ldftn` binds) vs a dangling cross-module origin-file token (§4.6)? Resolvable = the target
-    // name is a declared FILE-CLASS method OR a PENDING #34 re-hoist still in `_hoist` (a nested member-inline default
-    // fill mints it during the SAME pass, BEFORE the outer §4.4ii materialization sees it — the #43 seam). The
-    // materialization-side counterpart of the §4.6 `!sameModule` payload-side guard (that one is module-wide; this is
-    // strictly file-local, matching ilemit FindStatic's file-class-only ldftn universe — a stricter match fails loud).
+    // #43/#63: is a `{k:newDelegate, method:<name>}` target resolvable app-locally (its static `__lambdaN`/`__dflt$lambda$N`
+    // lives in a MODULE file-class, so `ldftn` binds) vs a dangling cross-MODULE origin-file token (§4.6)? Resolvable = the
+    // target name is a declared file-class method ANYWHERE in the module (`_appLocalMethods` is seeded module-wide, #63/F4)
+    // OR a PENDING #34 re-hoist still in `_hoist` (a nested member-inline default fill mints it during the SAME pass,
+    // BEFORE the outer §4.4ii materialization sees it — the #43 seam). The materialization-side counterpart of the §4.6
+    // `!sameModule` payload-side guard; this now matches ilemit FindStatic's module-wide file-class ldftn universe exactly
+    // (a cross-module dangling token still fails loud). NOTE: a bare-name cross-file collision inherits ilemit's pre-existing
+    // sig-less first-file-class-match ambiguity — durable fix is provenance-by-signature (Set B, #46).
     static bool IsAppLocalDelegate(JsonObject nd)
     {
         if (Str(nd["method"]) is not string m) return false;

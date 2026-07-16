@@ -206,6 +206,14 @@ sealed class Pipeline
         // `kotlin.*` enum arrives from kotc already as an `objMethod`; neither reaches this local `callInstance` gap.
         var localBasicEnums = EnumMemberBinding.CollectBasicEnums(birFiles.Select(f => f.Root));
 
+        // #63 (F4): the app-local file-class method names a `newDelegate` target `ldftn`-resolves against, collected
+        // MODULE-WIDE across every input file — ilemit's FindStatic binds a delegate method by bare name against ALL
+        // IsFileClass types in the module (and the inline stash spans all files), so a carrier materializing a SIBLING
+        // file's lifted `__lambdaN` is app-local. Pre-collect ONCE (InlineSplice.Apply runs per file) and pass in, so a
+        // cross-file materialization is not mis-judged non-app-local and refused loud. Nested-TYPE member methods stay
+        // excluded (ilemit's file-class-only ldftn universe) — only the FILE scope was wrong (regression from 923a820).
+        var appLocalFileClassMethods = InlineSplice.CollectAppLocalMethodNames(birFiles.Select(f => f.Root));
+
         // INLINE-BIR STASH (#71/#75 S1): BEFORE any lowering pass runs, capture every `mods.inline` method's RAW
         // pre-lowering body into an OPAQUE `inlineBir` base64 string (ilemit stamps it verbatim as the raw-BIR
         // [KotlinInline] carrier) + an in-memory `owner|name|pc|ga -> raw decl` index (dormant same-module infra).
@@ -267,7 +275,7 @@ sealed class Pipeline
             // same-module index) and SPLICES it (positional tv-subst, temp-bound params, lambda-invoke splicing, routed
             // returns, hygiene) into a value-producing valueBlock — which then re-lowers IN THIS app's context. Runs here
             // (before ClosureSynthesis, like RepeatInlineLowering) so nested closures in the spliced body synthesize once.
-            InlineSplice.Apply(bir.Root, refs);
+            InlineSplice.Apply(bir.Root, refs, appLocalFileClassMethods);
             // CROSS-MODULE DEFAULT-ARG SPLICE (#146): fill a call's OMITTED defaulted args (kotc's `defaultArg`
             // placeholders) from the callee's `[kotlin.clr.KotlinDefault]` BIR on the referenced .dll. Runs HERE — phase 1,
             // right after InlineSplice, before ObjectSlotRename/ClosureSynthesis/MemberCallSubstitution/BirTypeLowering —
