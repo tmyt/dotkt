@@ -50,6 +50,15 @@ declare -A XFAIL_ILVERIFY=(
 	# Runtime-SAFE — the RUN lane PASSES (interceptor precedence at the await resume verified: A:resumes=1). The #7
 	# behavior does NOT depend on the #2 fix; only this formal ilverify finding does (same bir2cir/representation follow-up).
 	[awaitintercept]="GitHub #12 (formal-only follow-up of closed #2): interceptor get_key() Key<Self> <- invariant Key<Element>; runtime-safe, RUN green, #7 precedence verified"
+	# sort (F3 #62): the transitive-forward widening moved compareBy/sortedBy/sortedByDescending onto the splice engine,
+	# so the compareValuesBy selector is now INLINED into the synthesized comparator SAM (ComparisonsKt$Sam102/Sam104
+	# ::compare). The selector returns Int (boxed to `object`) and flows to the compareValues helper whose param is
+	# Comparable (mapped to System.IComparable) — StackUnexpected `found object expected IComparable`. Runtime-SAFE: the
+	# boxed Int32 DOES implement IComparable, so CLR interface dispatch executes correctly (RUN green: sorted output
+	# correct); ILVerify only rejects the ERASED static stack type. Same covariance-erasure class as the #12 entries
+	# above — a bir2cir representation follow-up (carry the selector's concrete Comparable type / provenance), TRACKED as
+	# the Set B representation work #46.
+	[sort]="F3 #62 / #46 (Set B representation): compareValuesBy selector inlined into the comparator SAM boxes Int to object where IComparable is expected — runtime-safe covariance-erasure (RUN green), same class as #12"
 )
 
 # The CLR stdlib (kotlin.*) is supplied to kotc via the FRONTEND KLIB (scripts/build-stdlib-klib.sh) on
@@ -689,6 +698,7 @@ il_check inlnlbreak    InlNlBreak    "$ROOT/cases/il-inline-nlbreak/app.kt"    "
 il_check inlownlabel   InlOwnLabel   "$ROOT/cases/il-inline-ownlabel/app.kt"   "9"                           # §8.4 forEach{ return@forEach } — MUST take the delegate path
 il_check inlmutcap     InlMutCap     "$ROOT/cases/il-inline-mutcapture/app.kt" "$(printf '60\n3')"            # §8.5 var write-through on the delegate path (ref-cell)
 il_check inlforward    InlForward    "$ROOT/cases/il-inline-forward/app.kt"    "$(printf '2,4\nneg')"        # §8.6 filter→filterTo forwarding (§4.4i) + escaping return
+il_check inlcompose    InlCompose    "$ROOT/cases/il-inlcompose/app.kt"        "$(printf '11\n99')"          # F3 (#62) transitive forwarding of an inline PARAM through a user top-level inline (outer(b)=inner(b)) + escaping non-local return
 il_check inlretexpr    InlRetExpr    "$ROOT/cases/il-inlinereturnexpr/app.kt"  "$(printf '5\nelvis-body hi\n6\n7\nif-body 1\n8\n9\nwhen-body 10\n11\n12\n4')" # #30 EXPRESSION-position return (elvis RHS / if-as-value / when-as-value / nested in an expr-body tail return) calling a lambda param — routed to the splice result-local + end-label; each call exercises BOTH the early expr-position return and the fall-through statement return
 il_check inlretunit    InlRetUnit    "$ROOT/cases/il-inlinereturnunit/app.kt"  "$(printf 'counter=1\nblk2\nelvis-body hi\ncounter=1\ncounter=2\nblk4\nif-body 1\ncounter=2')" # #31 EXPRESSION-position `return unitFn()` (elvis RHS / if-as-value, Unit-typed) must EVALUATE the side-effecting call — the old arm dropped it (silent miscompile: counter stayed 0)
 il_check inlretlocal   InlRetLocal   "$ROOT/cases/il-inlinereturnlocal/app.kt" "$(printf '10\n-1\ngot-hi\nwas-null')" # #31 lambda-LOCAL labeled `return@label expr` in EXPRESSION position routes via inlineReturnSubst (breakContinueExpr), not a raw returnExpr — a crossinline materialized carrier + a direct-invoke carrier; leaking a returnExpr made bir2cir MaterializeCarrier reject fail-loud

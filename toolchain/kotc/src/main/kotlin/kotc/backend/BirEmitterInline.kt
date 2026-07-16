@@ -88,8 +88,23 @@ internal fun BirEmitter.hasLambdaArg(call: IrCall): Boolean {
 	val ps = call.symbol.owner.parameters
 	return call.arguments.withIndex().any { (i, a) ->
 		val p = ps.getOrNull(i) ?: return@any false
-		p.kind == IrParameterKind.Regular && a is IrFunctionExpression && birType(p.type) is TypeNode.Fn
+		p.kind == IrParameterKind.Regular && birType(p.type) is TypeNode.Fn &&
+			(a is IrFunctionExpression || isForwardedInlineParam(a))
 	}
+}
+
+/** F3 (#62): TRUE iff [arg] is a bare `IrGetValue` FORWARDING one of the enclosing INLINE fn's own inline value-
+ *  parameters into a function-typed slot — the `inline fun outer(block)=inner(block)` composition shape. Widens
+ *  `hasLambdaArg`'s splice trigger so `outer` becomes a `callInline` (the forwarded carrier ESCAPES into `inner`,
+ *  which must also splice). Gate STRICTLY: the arg is `IrGetValue` of an `IrValueParameter` whose declaring function
+ *  is `inline`, and that param is itself an inline lambda param (function-typed, NOT `noinline` — a noinline param is
+ *  a real delegate value, forwarded as an ordinary arg, never spliced). A literal lambda is the `IrFunctionExpression`
+ *  path (already handled) — this predicate deliberately excludes it so we never double-wrap. */
+internal fun BirEmitter.isForwardedInlineParam(arg: IrExpression?): Boolean {
+	if (arg !is IrGetValue) return false
+	val vp = arg.symbol.owner as? IrValueParameter ?: return false
+	val owner = vp.parent as? IrFunction ?: return false
+	return owner.isInline && !vp.isNoinline && birType(vp.type) is TypeNode.Fn
 }
 
 /** Statements of a function/lambda body (block body, or a single-expression `= expr` body). */

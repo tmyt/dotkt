@@ -531,22 +531,40 @@ static class InlineSplice
                         && Str(ao["name"]) is string ln && lambdaMap.TryGetValue(ln, out var lam))
                         cargs[i] = lam.DeepClone();
             }
-            else if (k == "callStatic" && o["owner"] is not JsonObject && Str(o["owner"]) == null
+            // F3 (#62): a lambda param forwarded BY NAME into a nested inline call kotc emitted as a PLAIN call — an
+            // owner-less kotlin.* `callStatic` (map->mapTo), an owner-FUL `callStatic` (a facadegen-injected / user
+            // top-level inline fn), or a `callInstance` (a member inline fn — carries `recv` as the dispatch receiver).
+            // Convert it into a `callInline` so STEP 8's fixpoint splices it; an unresolvable target is LEFT as-is
+            // (D3-remainder / §4.4ii materialize handles a non-inline forward — never a silent drop).
+            else if ((k == "callStatic" || k == "callInstance")
                      && o["args"] is JsonArray sargs
                      && sargs.Any(a => a is JsonObject so && Str(so["k"]) == "local" && Str(so["name"]) is string n && lambdaMap.ContainsKey(n)))
-                TryForwardCallStatic(o, lambdaMap);
+                TryForwardCall(o, k, lambdaMap);
             foreach (var kv in o) if (kv.Value != null) ForwardLambdaArgs(kv.Value, lambdaMap);
         }
         else if (node is JsonArray a) foreach (var c in a) if (c != null) ForwardLambdaArgs(c, lambdaMap);
     }
 
-    // Convert an owner-less `callStatic` to a stdlib inline fn (that a lambda param is forwarded into) into an owner-less
-    // `callInline`, mirroring kotc's inlineSpliceCallOwnerless shape so RewriteGeneric can splice it at the fixpoint. pc =
-    // arg count, ga = typeArg count. The overload is disambiguated by the call's `sig` — the callee's DECLARED param type
-    // nodes (kotc emits `sig` from `birType(param.type)`, identical to the payload's declared `params[i].type`), which
-    // become the new callInline's `paramSig` (§4.2). An extension callee (recv==extensionParam) takes args[0] as
-    // recvs.extension; the remaining args become regular args, with a forwarded lambda local swapped for the caller's carrier.
-    static void TryForwardCallStatic(JsonObject o, Dictionary<string, JsonObject> lambdaMap)
+    // F3 (#62): convert a PLAIN nested call (a lambda param forwarded into it) into a `callInline`, mirroring kotc's inline
+    // node shape so RewriteGeneric splices it at STEP 8's fixpoint. `k` selects the source shape:
+    //   - `callStatic`, no owner     — an owner-less `kotlin.*` stdlib inline fn (apply/let/also/run/with, or map->mapTo):
+    //     resolve across kotlin.* hosts via ResolveOwnerless (SAME-MODULE stash first, then the ref.dll), stay owner-less
+    //     (RewriteGeneric re-resolves by paramSig at the fixpoint). A user top-level inline forward (`outer(b)=inner(b)`)
+    //     is owner-less too (kotc emits its `owner` as the file-facade class only when named; a same-module top-level
+    //     inline forward resolves owner-less by name via the stash).
+    //   - `callStatic`, owner present — an owner-FUL static call (a companion/object/enum member flattened to a static,
+    //     whose `owner` is a STRUCTURED Fqn): resolve via the OWNER-FUL ResolveInlinePayload (NOT the kotlin.*-gated
+    //     ResolveOwnerless), keep the owner. `TypeJson.OwnerName` reads the Fqn (or a legacy string) uniformly.
+    //   - `callInstance`             — a MEMBER inline fn: owner = the receiver's type name; carry the node's dispatch
+    //     receiver (`recv`) as `recvs.dispatch` so RewriteGeneric §4.3 rebinds the payload's `{k:this}` (rides F1). A
+    //     member-EXTENSION (#23) payload is left untouched (see the dispatch-drop guard below).
+    // The overload is disambiguated by the call's `sig` — the callee's DECLARED param type nodes (kotc emits `sig` from
+    // `birType(param.type)`, identical to the payload's declared `params[i].type`), which become the new callInline's
+    // `paramSig` (§4.2). pc = arg count, ga = typeArg count. An extension callee (recv==extensionParam) takes args[0] as
+    // recvs.extension; the remaining args become regular args, with a forwarded lambda local swapped for the caller's
+    // carrier. A target that does not resolve to a UNIQUE inline payload is LEFT untouched (§4.4ii materializes a real
+    // delegate for a non-inline forward; a genuinely-unspliceable inline shape falls to the D3-remainder fail-loud).
+    static void TryForwardCall(JsonObject o, string k, Dictionary<string, JsonObject> lambdaMap)
     {
         var name = Str(o["method"]);
         var sargs = o["args"] as JsonArray;
@@ -555,17 +573,46 @@ static class InlineSplice
         var typeArgs = o["typeArgs"] as JsonArray;
         int pc = sargs.Count;
         int ga = typeArgs?.Count ?? 0;
-        // Owner-less (a `kotlin.*` stdlib inline fn — e.g. apply/let/also/run/with forwarding a lambda param, or map->mapTo):
-        // resolve across kotlin.* hosts, SAME-MODULE stash first (stdlib self-build) then the ref.dll (app build), by the
-        // call's `sig` (the callee's declared type nodes — the same source as `paramSig`). The rebuilt callInline stays
-        // owner-less (RewriteGeneric's owner-less branch re-resolves it by paramSig at the fixpoint, same-module or cross).
-        if (ResolveOwnerless(name, pc, ga, sig).hit is not JsonObject payload) return;  // not a resolvable/unique inline fn -> leave; D3-remainder fails loud
+
+        JsonObject payload;
+        string ownerOut;
+        if (k == "callInstance")
+        {
+            var ownerName = TypeJson.OwnerName(o["ownerType"]);
+            if (ownerName == null) return;
+            if (ResolveInlinePayload(ownerName, name, pc, ga, sig).payload is not JsonObject mp) return;
+            payload = mp; ownerOut = ownerName;
+        }
+        // An owner-FUL callStatic carries its owner as a STRUCTURED Fqn (companion/object/enum member flattened to a
+        // static; `TypeJson.OwnerName` reads both an Fqn object AND a legacy string, and yields null for the genuinely
+        // owner-LESS kotlin.* scope-fn shape (`"owner":null`)). Keying on `Str(o["owner"])` alone would miss the Fqn
+        // object -> mis-route a companion/object call into the owner-less kotlin.*-only resolver (a wrong-owner splice
+        // by name coincidence). So: owner-ful iff OwnerName is non-null.
+        else if (TypeJson.OwnerName(o["owner"]) is string owner)   // owner-FUL callStatic
+        {
+            if (ResolveInlinePayload(owner, name, pc, ga, sig).payload is not JsonObject op) return;
+            payload = op; ownerOut = owner;
+        }
+        else   // owner-LESS callStatic (kotlin.* stdlib inline fn)
+        {
+            if (ResolveOwnerless(name, pc, ga, sig).hit is not JsonObject lp) return;
+            payload = lp; ownerOut = null;
+        }
         var recv = Str(payload["recv"]);
+
+        // #23 guard: a member-EXTENSION callInstance carries BOTH a dispatch receiver (`o["recv"]`) and the extension
+        // receiver (`args[0]`), but the stash classifies its payload `recv=="extensionParam"` (extension SHADOWS dispatch,
+        // InlineBirStash.StashMethod) — so converting here would bind the extension and SILENTLY DROP the dispatch receiver
+        // (RewriteGeneric §4.3 binds a dispatch temp only for `recv=="dispatch"`). If the payload body reads that dispatch
+        // `this`, the drop is a silent miscompile. Leave it untouched (§4.4ii materializes a sound real delegate) — the
+        // consumer twin of kotc's producer `bodyReferencesDispatch` fail-loud, pending the #23 2-slot receiver model.
+        if (k == "callInstance" && recv == "extensionParam" && o["recv"] != null && HasNode(payload["body"], "this")) return;
 
         var recvs = new JsonObject();
         var callArgs = new JsonArray();
         int start = 0;
         if (recv == "extensionParam") { recvs["extension"] = sargs[0]?.DeepClone(); start = 1; }
+        else if (recv == "dispatch" && o["recv"] is JsonNode disp) recvs["dispatch"] = disp.DeepClone();
         for (int i = start; i < sargs.Count; i++)
         {
             if (sargs[i] is JsonObject ao && Str(ao["k"]) == "local" && Str(ao["name"]) is string ln && lambdaMap.TryGetValue(ln, out var lam))
@@ -576,7 +623,7 @@ static class InlineSplice
         {
             ["k"] = "callInline",
             ["callee"] = name,
-            ["owner"] = null,
+            ["owner"] = ownerOut,
             ["pc"] = pc,
             ["ga"] = ga,
             ["paramSig"] = sig?.DeepClone() ?? new JsonArray(),

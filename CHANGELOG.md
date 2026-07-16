@@ -23,6 +23,30 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   body to know whether it reads the dispatch receiver, and a body-blind splice would break the sound pure-extension
   idiom (`inline fun Box.mapped(f) = f(get())`); a non-local return through that shape stays the pre-existing #23 gap.
   New `verify-roundtrip.sh` section `roundtrip-inline-member` gates it.
+- **kotc + bir2cir (#62, F3): TRANSITIVE forwarding of an inline PARAM now splices — `inline fun outer(b)=inner(b)`
+  no longer fails loud (P1 composition-breaker).** Producer: `hasLambdaArg` fired only for a literal
+  `IrFunctionExpression`, so an inline fn forwarding its own inline lambda param by name (`outer` passes `b`, an
+  `IrGetValue` of a param) emitted a PLAIN call — `callNeedsSplice` was false — and the escaping non-local return fell
+  to the D3-remainder fail-loud. `hasLambdaArg` now ALSO fires for a function-typed arg that is an `IrGetValue` of one
+  of the enclosing INLINE fn's own inline lambda params (`isForwardedInlineParam`: gated on the declaring fn being
+  `inline` AND the param being a non-`noinline` function-typed param — never a literal lambda, so no double-wrap).
+  Consumer: `ForwardLambdaArgs`/`TryForwardCall` (was `TryForwardCallStatic`) now also convert an owner-FUL
+  `callStatic` (a facadegen-injected / user top-level inline fn — resolved via the owner-ful `ResolveInlinePayload`,
+  not the `kotlin.*`-gated `ResolveOwnerless`) and a `callInstance` MEMBER forward (owner = the receiver type, carrying
+  the node's dispatch receiver as `recvs.dispatch`, riding F1's §4.3) into a `callInline`, so STEP 8's fixpoint splices
+  the forwarded carrier through the whole chain. A target that does not resolve to a unique inline payload is left
+  untouched (§4.4ii materializes a non-inline forward as a real delegate; a genuinely-unspliceable inline shape stays
+  the D3-remainder fail-loud). Two consumer guards (Fable review): an owner-FUL callStatic's owner is read via
+  `TypeJson.OwnerName` (a companion/object/enum-member static carries a STRUCTURED Fqn owner, not a string — keying on
+  the string alone would mis-route it into the kotlin.*-only owner-less resolver); and a member-EXTENSION `callInstance`
+  forward (payload `recv=="extensionParam"`, whose dispatch receiver this conversion would silently drop) is left
+  untouched when the payload body reads `this` — the consumer twin of kotc's producer `bodyReferencesDispatch`
+  fail-loud, pending the #23 2-slot receiver model. New gate case `cases/il-inlcompose` (two-level top-level inline forward + escaping
+  return). The widening moved `compareBy`/`sortedBy`/`sortedByDescending` onto the splice engine, INLINING the
+  `compareValuesBy` selector into the synthesized comparator SAM; the selector's boxed-`Int` result reaches the
+  `compareValues` helper where `System.IComparable` is formally expected — a runtime-safe covariance-erasure
+  (StackUnexpected, RUN green) of the same class as the #12 findings, xfail'd as `ilverify:sort` pending the Set B
+  representation follow-up (#46).
 - **bir2cir (#43): the §4.4ii carrier-materialization newDelegate refusal is narrowed to CROSS-MODULE only — the
   Batch A × Batch B integration seam.** `InlineSplice`'s §4.4ii materialization refused ANY nested `newDelegate` in
   both arms (non-suspend `HasUnmaterializableNested`, suspend `MaterializeSuspendCarrier`), but the #34 default-fill's
