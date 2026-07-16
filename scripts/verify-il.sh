@@ -976,9 +976,10 @@ il_check_imports inlsuspendlaunch AppKt "$ROOT/cases/il-inlsuspendlaunch" "$(pri
 # construction-typeArgs channel (mirroring the newClosure arm) instantiates `new SM<origTvs…>(…)`. Exercised top-level
 # + from a generic METHOD (method-scope free var) + a generic CLASS member (type-scope free var). inlsuspendouter: an
 # extension `inline fun T.op` whose payload newSuspendLambda captures `this@op` (__outer), rebound to the splice's
-# `__self` temp by 2B. Both drive end-to-end via blockOn (value MUST be correct).
+# `__self` temp by 2B — incl. the DOMINANT placement (op spliced INSIDE a `suspend fun`, where GAP 2 must preserve the
+# 2B override, not clobber it). Both drive end-to-end via blockOn (value MUST be correct).
 il_check_imports inlsuspendflow AppKt "$ROOT/cases/il-inlsuspendflow" "$(printf '42\n42\n42')"
-il_check_imports inlsuspendouter AppKt "$ROOT/cases/il-inlsuspendouter" "$(printf '42\n7')"
+il_check_imports inlsuspendouter AppKt "$ROOT/cases/il-inlsuspendouter" "$(printf '42\n7\n20')"
 # #43 — Batch A × Batch B integration seam. A crossinline SUSPEND carrier materialized §4.4ii (like inlsuspendcarrier)
 # whose body nests a MEMBER-inline call omitting a lambda default: the inner splice (walked first) fills it via the #34
 # member-inline default carriage, re-hoisting a `__dflt$lambda` app-local + minting a `newDelegate` INSIDE the carrier.

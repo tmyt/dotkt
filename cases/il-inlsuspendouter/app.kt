@@ -14,7 +14,14 @@ suspend fun addA(a: Int, b: Int): Int = a + b
 // (= __outer, the extension receiver) alongside the crossinline suspend carrier `f`.
 inline fun <T> T.op(crossinline f: suspend (T) -> Int): Int = blockOn { f(this@op) }
 
+// F1 (Fable HIGH) — the DOMINANT flow placement: the inline fn is spliced INSIDE a `suspend fun`, so the
+// payload's __outer-capturing newSuspendLambda is walked by SuspendColdLowering's cold transform (GAP 2). GAP 2
+// must PRESERVE the 2B `__outer` capValues override (resolved into SM vocabulary), not clobber it with the
+// descriptor-name synthesis (which re-derives the CALLER SM's receiver -> mis-bind). Drives via blockOn.
+suspend fun opInSuspend(base: Int): Int = base.op { addA(it, 5) }
+
 fun main() {
-    println(20.op { addA(it, 22) })   // f(20) = addA(20, 22) = 42
-    println(0.op { addA(it, 7) })     // f(0)  = addA(0, 7)   = 7
+    println(20.op { addA(it, 22) })          // f(20) = addA(20, 22) = 42
+    println(0.op { addA(it, 7) })            // f(0)  = addA(0, 7)   = 7
+    println(blockOn { opInSuspend(15) })     // op spliced in a SUSPEND caller: addA(15, 5) = 20
 }

@@ -1039,6 +1039,16 @@ static class InlineSplice
             ctorTypeArgs.Add(new JsonObject { ["t"] = "tv", ["scope"] = key.scope, ["i"] = key.i });
             typeParams.Add("Tsm" + ni);
         }
+        // F3 CONTAINMENT (Fable): a NESTED kotc-emitted `newSuspendLambda` inside this carrier body keeps its OWN
+        // `typeParams` with NO construction `typeArgs`, so SuspendLambdaLowering resolves its body tvs POSITIONALLY
+        // against its own param list. But RenumberTvs descends into it (it has no `synthClass` shield — its body/tvs
+        // ride plain keys) and shifts those indices into THIS SM's dense space. When the remap is NON-IDENTITY
+        // (some key's dense index != its original index — precisely the multi-scope / non-prefix shapes the deleted
+        // guard used to exclude), the nested SM's positional resolution silently drifts to `object`. None of the 52
+        // flow sites nest an SM in the carrier body; refuse LOUD rather than silently object-erase (the real fix rides
+        // #74/#46 resolved-identity carriage). An IDENTITY remap (single-scope 0..N-1 prefix) leaves indices intact.
+        bool remapShiftsIndex = remap.Any(kv => kv.Value != kv.Key.Item2);
+        if (remapShiftsIndex && HasNode(invBody, "newSuspendLambda")) return null;
         if (remap.Count > 0)
         {
             RenumberTvs(invBody, remap); RenumberTvs(invParams, remap); RenumberTvs(invSuspendRet, remap); RenumberTvs(captures, remap);
@@ -1237,7 +1247,9 @@ static class InlineSplice
                 }
                 return;   // its body is its OWN frame — a nested __outer belongs to it, not this payload
             }
-            foreach (var kv in o) if (kv.Value != null) BindOuterCapValues(kv.Value, outerVal);
+            // Skip a nested closure/SAM `synthClass` (its own frame; never prefixed, so a `<prefix>__self`/`<prefix>this`
+            // stamp there would name a non-existent local) — symmetric with RewriteThis/RewriteLocalRefs/ApplyPrefix.
+            foreach (var kv in o) if (kv.Key != "synthClass" && kv.Value != null) BindOuterCapValues(kv.Value, outerVal);
         }
         else if (node is JsonArray a) foreach (var c in a) if (c != null) BindOuterCapValues(c, outerVal);
     }

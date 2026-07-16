@@ -23,8 +23,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   extension/dispatch receiver, e.g. `flow { this@transform }`) rebinds its `__outer` construction value to the splice's
   bound receiver temp via a `capValues` override, and treats the body's `local __self` reference as a capture-linked
   inner-scope name so the frame renamers leave it literal for `SuspendColdLowering`'s `__self`→`this.__outer` mapping.
-  New gates `cases/il-inlsuspendflow` (generic + receiver + suspend-member, top-level / generic-method / generic-class
-  enclosing) and `cases/il-inlsuspendouter` (`__outer` extension-receiver rebind). One latent residual (a genuine
+  When the inline fn is spliced INSIDE a `suspend fun` (the dominant flow placement), `SuspendColdLowering`'s GAP 2
+  (`RewriteSuspendLambdaNew`) now PRESERVES the 2B `capValues` override — resolving the rebound receiver temp into the
+  cold SM's vocabulary (a spilled temp → its SM field) instead of clobbering it with descriptor-name synthesis (which
+  re-derived the caller SM's own receiver → `InvalidProgramException`). New gates `cases/il-inlsuspendflow` (generic +
+  receiver + suspend-member, top-level / generic-method / generic-class enclosing) and `cases/il-inlsuspendouter`
+  (`__outer` extension-receiver rebind, incl. the suspend-`fun`-caller GAP-2 path). One latent residual (a genuine
   enclosing `tv{type,0}` conflated with a member-sig `tv{type,0}` when they denote different types — none of the 52
   sites hit it; the `newClosure` arm carries the identical latent limitation) is filed as #74, to be closed by #46's
   resolved-identity carriage.
