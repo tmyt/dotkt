@@ -931,15 +931,13 @@ sealed partial class Emitter
     static Type ResolveType(string name)
     {
         if (_typeCache.TryGetValue(name, out var c)) return c;
-        var t = Type.GetType(name)
-            ?? Type.GetType(name + ", System.Runtime")
-            ?? Type.GetType(name + ", System.Private.CoreLib")
-            ?? Type.GetType(name + ", System.Linq")
-            ?? Type.GetType(name + ", System.Collections")
-            ?? Type.GetType(name + ", System.ObjectModel")
-            ?? Type.GetType(name + ", System.Text.RegularExpressions")
-            ?? Type.GetType(name + ", System.Console")
-            ?? RuntimeReferences.ResolveType(name);
+        // Precedence: (1) the app's resolved runtime catalog is AUTHORITATIVE — it wins even over a TPA-named
+        // assembly so an app that pins a version emits against it; (2) ilemit's host core (CoreLib/mscorlib types);
+        // (3) a TPA fallback for framework/inbox types the app does not copy-local (System.Text.Json, System.Net.Http,
+        // System.Text.RegularExpressions, System.Console, …).  No hardcoded per-assembly probe list — (3) scans TPA.
+        var t = RuntimeReferences.ResolveType(name)
+            ?? Type.GetType(name)
+            ?? RuntimeReferences.ResolveFromHostFramework(name);
         // A dotted FQN may denote a NESTED type: CLR metadata separates nesting with '+' (Outer+Inner) while the
         // producer's spec is dotted (`kotlin.time.Clock.System` -> `kotlin.time.Clock+System`). Probe by replacing
         // the LAST '.' with '+' and re-resolving; the recursion (via TryResolveType) walks deeper nesting levels

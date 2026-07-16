@@ -22,6 +22,25 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   token can only bind to args[0], never to an enclosing instance, across both `InlineSplice` and `DefaultArgSplice`
   consumers — a precise diagnostic, never a miscompile (an EXTENSION-receiver `= this` DOES bind to args[0], so it keeps
   round-tripping). New gate case `cases/il-inlinememberdefault`.
+- **ilemit/ref-common (#37, #35 macro-review follow-up): the RUNTIME reference set now reproduces the .NET loader's
+  RID + TPA semantics instead of hard-failing.** Three divergences the unified reference-set refactor left in the
+  `@(ReferenceCopyLocalPaths)` path (`ManagedReferenceCatalog`, `RuntimeReferences`, `Emitter.Resolve`):
+  (1) **RID-aware identity selection** — copy-local legitimately carries BOTH `lib/<tfm>/Foo.dll` and
+  `runtimes/<rid>/lib/<tfm>/Foo.dll` for one identity (a RID-impl package, e.g. `System.IO.Ports`,
+  `System.Text.Encoding.CodePages`); the catalog threw on the duplicate simple name. The runtime catalog
+  (`Create(..., runtimeSelection: true)`) now dedups by FULL identity and selects the asset the host would load via
+  the portable RID fallback chain (`exact > os > unix-family > any > base`, then the RID-neutral `lib` asset) — NOT
+  keep-first, because for a RID-impl package the `lib` asset is a `PlatformNotSupported` placeholder. It still throws
+  only on same simple name + CONFLICTING identity, preserving the compile-set's strict duplicate-identity detection
+  and the shared-dependency dedup win. The COMPILE set (`facadegen`/`bir2cir`/`retarget`, `runtimeSelection: false`)
+  is unchanged. (2)+(3) **catalog-first, TPA-fallback precedence** — the app's resolved runtime set is authoritative
+  (a copy-local assembly's path is loaded even when its simple name is one of ilemit's own Trusted Platform
+  Assemblies, so an app that pins a different version emits against ITS version), and ilemit's host framework (TPA)
+  is a fallback ONLY for framework/inbox types the app does not copy-local (`System.Text.Json`, `System.Net.Http`),
+  which were previously unresolvable ("cannot resolve .NET type") after the `AppDomain.GetAssemblies()` fallback was
+  removed. New gates `cases/ktproj-runtimetargets` (a `lib`+`runtimes/<rid>/lib` package built + run, asserting the
+  RID-correct impl is selected) and `cases/ktproj-inbox` (inbox `System.Text.Json`/`System.Net.Http` types resolved
+  end-to-end).
 - **Toolchain-wide managed dependency resolution now consumes explicit compile/runtime reference sets instead of
   treating an assembly's directory as a search universe.** MSBuild resolves the graph once and passes
   `@(ReferencePath)` to metadata consumers (`facadegen`, `bir2cir`, `retarget`) and
