@@ -15,19 +15,35 @@ sealed class ManagedReferenceCatalog
 {
     readonly Dictionary<string, Entry> _bySimpleName = new(StringComparer.OrdinalIgnoreCase);
 
+    // The ref/runtime stdlib split (docs/design-clr-stdlib-ref-runtime-split.md): the REFERENCE stdlib
+    // (metadata twin, kept by ref-READERS bir2cir+facadegen) and the RUNTIME stdlib (shipped, loaded by
+    // ilemit) define the SAME `kotlin.clr.*` type shapes; only the assembly name differs.
+    const string RefStdlibName = "DotKt.Private.Stdlib";
+    const string RuntimeStdlibName = "DotKt.Stdlib";
+
     public sealed record Entry(string Path, AssemblyName Identity);
 
     public IReadOnlyList<Entry> Entries { get; }
     public IReadOnlyList<string> Paths { get; }
 
-    ManagedReferenceCatalog(List<Entry> entries)
+    ManagedReferenceCatalog(List<Entry> entries, bool refStdlibAliasesRuntime)
     {
         Entries = entries;
         Paths = entries.Select(e => e.Path).ToArray();
         foreach (var entry in entries) _bySimpleName.Add(entry.Identity.Name!, entry);
+        // Ref-READER alias: a consumed cross-module DotKt library was emitted by ilemit against the RUNTIME
+        // stdlib, so its `[kotlin.clr.*]` round-trip attribute types are scoped to `DotKt.Stdlib`. A ref-reader
+        // (bir2cir/facadegen) carries only the REFERENCE twin `DotKt.Private.Stdlib`, so resolve a `DotKt.Stdlib`
+        // reference to it (same type shapes — verified). This is a single, documented, stdlib-specific mapping,
+        // NOT a fuzzy name match. ilemit does NOT set this flag: it legitimately loads the real `DotKt.Stdlib`.
+        if (refStdlibAliasesRuntime
+            && _bySimpleName.TryGetValue(RefStdlibName, out var refStdlib)
+            && !_bySimpleName.ContainsKey(RuntimeStdlibName))
+            _bySimpleName.Add(RuntimeStdlibName, refStdlib);
     }
 
-    public static ManagedReferenceCatalog Create(IEnumerable<string> paths, string toolName)
+    public static ManagedReferenceCatalog Create(IEnumerable<string> paths, string toolName,
+        bool refStdlibAliasesRuntime = false)
     {
         var entries = new List<Entry>();
         var seenPaths = new HashSet<string>(PathComparer);
@@ -64,7 +80,7 @@ sealed class ManagedReferenceCatalog
             byName.Add(identity.Name, entry);
             entries.Add(entry);
         }
-        return new ManagedReferenceCatalog(entries);
+        return new ManagedReferenceCatalog(entries, refStdlibAliasesRuntime);
     }
 
     public bool TryGet(AssemblyName requested, out Entry entry)

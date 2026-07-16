@@ -722,7 +722,10 @@ sealed partial class ReferenceMetadataIndex
 
     public static ReferenceMetadataIndex Build(IReadOnlyList<string> refs)
     {
-        var catalog = ManagedReferenceCatalog.Create(refs, "bir2cir");
+        // bir2cir is a ref-READER: a consumed cross-module DotKt library references the RUNTIME stdlib
+        // (DotKt.Stdlib) in its `[kotlin.clr.*]` round-trip metadata, but bir2cir carries only the REFERENCE
+        // twin — alias so that reference resolves to DotKt.Private.Stdlib (same type shapes).
+        var catalog = ManagedReferenceCatalog.Create(refs, "bir2cir", refStdlibAliasesRuntime: true);
         var assemblies = new List<ReferenceAssembly>();
         if (catalog.Entries.Count == 0) return new ReferenceMetadataIndex(assemblies, catalog);
         using var mlc = catalog.CreateMetadataLoadContext();
