@@ -2112,10 +2112,27 @@ static class SuspendColdLowering
         JsonObject RewriteSuspendLambdaNew(JsonObject o)
         {
             var copy = (JsonObject)o.DeepClone();
+            // A pre-stamped `capValues` override (InlineSplice 2B — a spliced payload lambda's `__outer` rebound to the
+            // splice's receiver TEMP) names a CALLER-frame local, NOT the descriptor name. GAP 2 must RESOLVE that temp
+            // into THIS cold SM's vocabulary (a spilled temp -> its SM field), not clobber it with the descriptor-name
+            // synthesis (which would re-derive the caller SM's own receiver -> a silent __outer mis-bind / InvalidProgram
+            // when the inline fn was spliced inside a `suspend fun`). Merge per-slot: override present -> resolve the
+            // named local; absent (null slot) -> the current name-derived synthesis.
+            var overrides = o["capValues"] as JsonArray;
             var capValues = new JsonArray();
             if (o["captures"] is JsonArray caps)
+            {
+                int i = 0;
                 foreach (var c in caps.OfType<JsonObject>())
-                    capValues.Add(CaptureValueInSm(Str(c["name"]), Str(c["type"])));
+                {
+                    if (overrides != null && i < overrides.Count && overrides[i] is JsonObject ov
+                        && Str(ov["k"]) == "local" && Str(ov["name"]) is string on)
+                        capValues.Add(_fields.Contains(on) ? FieldOf(on, FieldType(on)) : new JsonObject { ["k"] = "local", ["name"] = on });
+                    else
+                        capValues.Add(CaptureValueInSm(Str(c["name"]), Str(c["type"])));
+                    i++;
+                }
+            }
             copy["capValues"] = capValues;
             return copy;
         }

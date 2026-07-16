@@ -7,6 +7,32 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir (#75 Batch B): the kotlinx.coroutines `flow{}` inline-splice family (generic element type + receiver
+  function type) now compiles — completing the suspend-carrier materialization for the two dimensions its gates never
+  exercised.** An `inline fun` whose `crossinline suspend` RECEIVER lambda (`suspend FlowCollector<T>.() -> Unit`) is
+  captured into an `object :` literal, and whose carrier body invokes a suspend MEMBER on the generic receiver, made
+  `InlineSplice.MaterializeSuspendCarrier`'s `CollectTvKeys` yield a MULTI-scope tv key set (e.g. `{(method,0),(type,0)}`
+  — the `type,0` is the receiver interface's own decl param from the `emit` call's signature). The former
+  single-scope-`0..N-1`-prefix guard fail-loud'd on exactly that. Fix (2A): `MaterializeSuspendCarrier` now renumbers the
+  enclosing tvs to a dense 0-based SM param space and passes the ORIGINALS as a `newSuspendLambda` construction-`typeArgs`
+  channel — the SAME mechanism the non-suspend `newClosure` arm already uses; `SuspendLambdaLowering` consumes `typeArgs`
+  to instantiate `new smName<origTvs…>(…)` (positional `smName<tv{type,0..N-1}>` fallback retained, so kotc's own
+  source-lambda emission stays byte-identical — `roundtrip-suspendfn*` unchanged). The member-sig `tv{type,0}` resolves
+  to `object` at the non-generic construction site but is never consulted (ilemit re-resolves the receiver call against
+  the field's static type; ilverify-clean). Fix (2B): a payload `newSuspendLambda` capturing `__outer` (an enclosing
+  extension/dispatch receiver, e.g. `flow { this@transform }`) rebinds its `__outer` construction value to the splice's
+  bound receiver temp via a `capValues` override, and treats the body's `local __self` reference as a capture-linked
+  inner-scope name so the frame renamers leave it literal for `SuspendColdLowering`'s `__self`→`this.__outer` mapping.
+  When the inline fn is spliced INSIDE a `suspend fun` (the dominant flow placement), `SuspendColdLowering`'s GAP 2
+  (`RewriteSuspendLambdaNew`) now PRESERVES the 2B `capValues` override — resolving the rebound receiver temp into the
+  cold SM's vocabulary (a spilled temp → its SM field) instead of clobbering it with descriptor-name synthesis (which
+  re-derived the caller SM's own receiver → `InvalidProgramException`). New gates `cases/il-inlsuspendflow` (generic +
+  receiver + suspend-member, top-level / generic-method / generic-class enclosing) and `cases/il-inlsuspendouter`
+  (`__outer` extension-receiver rebind, incl. the suspend-`fun`-caller GAP-2 path). One latent residual (a genuine
+  enclosing `tv{type,0}` conflated with a member-sig `tv{type,0}` when they denote different types — none of the 52
+  sites hit it; the `newClosure` arm carries the identical latent limitation) is filed as #74, to be closed by #46's
+  resolved-identity carriage.
+
 - **facadegen/bir2cir (#73): a consumed cross-module type whose members reference `kotlin.*` is injected again — the
   atomicfu `AtomicInt`/`AtomicLong`/`AtomicBoolean`/`AtomicRef` types no longer vanish (rc5→rc6 regression, rc6 release
   blocker).** A real MSBuild consumer of a DotKt library puts BOTH stdlib twins on the ref-reader compile set (`@(ReferencePath)`):

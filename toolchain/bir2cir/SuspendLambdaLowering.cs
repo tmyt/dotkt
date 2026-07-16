@@ -198,9 +198,19 @@ static class SuspendLambdaLowering
 
         newTypes.Add(sm);
 
-        TypeNode smInst = typeArgs.Count == 0
-            ? new TypeNode.Fqn(smName)
-            : new TypeNode.Fqn(smName, Enumerable.Range(0, typeArgs.Count).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray());
+        // CONSTRUCTION type args (#75 Batch B, 2A): a materialized suspend carrier renumbers its enclosing tvs to a
+        // dense 0-based SM param space and carries the ORIGINAL enclosing tvs (any scope/index) on `typeArgs` — the
+        // construction channel, distinct from `typeParams` (the SM's own name declarations). Instantiate the open SM
+        // with THOSE originals. When absent (kotc's own source-lambda emission), fall back to the positional
+        // `smName<tv{type,0..N-1}>` — keeping source-lambda output BYTE-IDENTICAL.
+        var ctorTypeArgs = node["typeArgs"] as JsonArray;
+        TypeNode smInst;
+        if (typeArgs.Count == 0)
+            smInst = new TypeNode.Fqn(smName);
+        else if (ctorTypeArgs != null && ctorTypeArgs.Count == typeArgs.Count)
+            smInst = new TypeNode.Fqn(smName, ctorTypeArgs.Select(ta => TypeJson.Read(ta) ?? AnyTn).ToArray());
+        else
+            smInst = new TypeNode.Fqn(smName, Enumerable.Range(0, typeArgs.Count).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray());
 
         // The lambda VALUE: `new SM(captureVals..., null)` — captures read at the emit site, a null completion (a
         // cold, unstarted lambda; create() rebinds the completion when a builder starts it).

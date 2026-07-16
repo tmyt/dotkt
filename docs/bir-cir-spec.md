@@ -371,7 +371,14 @@ bare-FQN strings the wire format forbids):
 - Synthetic `<>dotkt_KProperty` interface refs (kotc `synthDelegate`/`kPropertyDefs`) — `str(iface)`/literal → `fqnJson`.
 - `newSuspendLambda`'s free-type-param list — a type-param NAME-declaration list, not a type-usage slot: renamed
   `typeArgs` → `typeParams` (the name-shorthand, consistent with the other lambda paths; kotc emit + bir2cir
-  `SuspendLambdaLowering` read).
+  `SuspendLambdaLowering` read). A DISTINCT, OPTIONAL `typeArgs` (a type-USAGE list) was RE-introduced (#75 Batch B,
+  2A) as the SM **construction channel**: `InlineSplice.MaterializeSuspendCarrier`, when it renumbers a materialized
+  suspend carrier's enclosing tvs to a dense SM param space, carries the ORIGINAL enclosing tvs here so
+  `SuspendLambdaLowering` instantiates `new smName<typeArgs…>(…)` instead of the positional
+  `smName<tv{type,0..N-1}>` fallback. Absent on kotc's own source-lambda emission (which keeps the positional
+  fallback, byte-identical). The optional `capValues` (per-capture construction-value overrides, positional with
+  `captures`) carries an SM-vocabulary spill (`SuspendColdLowering` GAP 2) or an `__outer` rebound to the splice's
+  receiver temp (InlineSplice 2B).
 - The `StringCharSequenceBridge` adapter (bir2cir `AdapterTypeJson` literal + `WrapAdapter`) — every `type`/`ret`/
   `elem`/`argTypes`/`interfaces`/`ownerType` slot rewritten to `{t:"fqn",…}`; the retired `@<name>` this-assembly
   marker dropped (bir2cir/ilemit derive local-vs-referenced from the FQN via `_types`).

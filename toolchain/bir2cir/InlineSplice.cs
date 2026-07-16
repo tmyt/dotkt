@@ -193,9 +193,14 @@ static class InlineSplice
         // BATCH B (#75): a capturing `newSuspendLambda` in the payload is now a first-class HYGIENE citizen — its
         // `captures[].name` descriptors are renamed JOINTLY with the frame by ApplyPrefix/RewriteLocalRefs (skipping the
         // SM's own inner scope), and a captured lambda-param is materialized into a real suspend SM value (§4.4ii suspend
-        // arm). The broad fail-loud guard is NARROWED to the two shapes still unsound under splice-rewrite: a captured
-        // `__outer` (post-splice receiver mis-bind) and a capture-name that collides with the SM's own inner scope.
-        if (SuspendCaptureHazard(pBody, refuseOuter: true) is string suspHazard)
+        // arm). The broad fail-loud guard is NARROWED to a capture-name that collides with the SM's own inner scope, PLUS
+        // a captured `__outer` ONLY when the payload is NEITHER an extension NOR a dispatch member — i.e. a genuinely
+        // unbindable enclosing `this`. For an extension/dispatch payload the enclosing receiver IS bound to a splice temp
+        // (STEP 5 `__self` / §4.3 dispatch `this`), so 2B rebinds each payload `newSuspendLambda`'s `__outer` construction
+        // value to that temp (BindOuterCapValues) instead of refusing.
+        bool payloadExt = Str(payload["recv"]) == "extensionParam";
+        bool payloadDispatch = Str(payload["recv"]) == "dispatch";
+        if (SuspendCaptureHazard(pBody, refuseOuter: !(payloadExt || payloadDispatch)) is string suspHazard)
         { FailLoud(o, owner, name, pc, ga, $"payload newSuspendLambda capture '{suspHazard}' cannot be splice-rewritten (captured enclosing receiver, or a name colliding with the SM's own scope) — #75 Batch B"); return; }
 
         var pRet = payload["ret"]?.DeepClone();
@@ -361,6 +366,17 @@ static class InlineSplice
         }
         RewriteLocalRefs(pBody, subst);
         RewriteLocalRefs(result, subst);   // D2: a tail-folded `result` (`= action(x)`) keeps raw param refs otherwise
+
+        // 2B (#75 Batch B) — a PAYLOAD `newSuspendLambda` that captured `__outer` (the enclosing dispatch/extension
+        // receiver of the inline fn being spliced, e.g. `flow { … this@transform … }` in an extension `transform`) has
+        // its construction value synthesized LATER by SuspendLambdaLowering from the descriptor NAME `__outer`, which its
+        // fallback resolves to the CALLER's `this`/`__self` — the wrong receiver. Rebind each payload-frame `__outer`
+        // construction value to the splice's bound receiver temp: extension -> `<prefix>__self` (STEP 5), dispatch ->
+        // `<prefix>this` (§4.3). SuspendLambdaLowering consumes the `capValues` override verbatim.
+        if (payloadDispatch)
+            { var ov = new JsonObject { ["k"] = "local", ["name"] = prefix + "this" }; BindOuterCapValues(pBody, ov); BindOuterCapValues(result, ov); }
+        else if (ext)
+            { var ov = new JsonObject { ["k"] = "local", ["name"] = prefix + "__self" }; BindOuterCapValues(pBody, ov); BindOuterCapValues(result, ov); }
 
         // B3 (#75 holistic) — a `{k:typeDef}` (a named local class in the payload — an `object :` literal) is a SCOPE
         // BOUNDARY that RewriteLocalRefs/PrefixLocals skip WHOLE, so an ORIGINAL (unprefixed) lambda-param `{k:local}` ref
@@ -1000,35 +1016,56 @@ static class InlineSplice
             if (written.Count > 0) return null;
         }
 
-        // typeParams: one placeholder name per distinct enclosing tv key the SM references (captures/params/ret/body).
-        // Faithful to kotc's freeTypeParams (names are pure cosmetics — ilemit/SuspendLambdaLowering resolve tvs by
-        // POSITION). GUARD (T2-a): the open-SM instantiation (`smName<tv{type,0..N-1}>`, SuspendLambdaLowering) + the
-        // un-renumbered body tvs align ONLY when the residual keys are a SINGLE-scope 0..N-1 prefix of the enclosing
-        // frame; a non-prefix / mixed-scope subset would object-erase or (duplicate index) collapse onto one SM param.
-        // Refuse anything but empty-or-prefix (loud beats a wrong-type reified instantiation); the real fix — an explicit
-        // construction-typeArgs channel on newSuspendLambda — is a cross-layer follow-up out of Batch B.
+        // TV FRAME (#75 Batch B, 2A): renumber every enclosing tv the SM references to a DENSE 0-based space, declare
+        // that many placeholder typeParams, and pass the ORIGINAL enclosing tvs (ANY scope/index) as construction
+        // `typeArgs` — the SAME mechanism the non-suspend newClosure arm (MaterializeCarrier :885-922) already uses.
+        // This DISSOLVES the former single-scope-0..N-1-prefix limitation: SuspendLambdaLowering consumes `typeArgs`
+        // to instantiate `new smName<origTvs…>(…)` instead of the positional `smName<tv{type,0..N-1}>` fallback. A
+        // member-sig tv (e.g. `FlowCollector<T>`'s `tv{type,0}` on an `emit` call) is renumbered + carried as a
+        // construction typeArg that resolves to `object` at the (non-generic) construction site but is NEVER consulted
+        // — ilemit re-resolves the receiver call against the field's static type. IDENTICAL soundness to newClosure.
+        // Names are cosmetic — ilemit/SuspendLambdaLowering resolve tvs POSITIONALLY (ResolveTv is by index).
+        var invParams = (JsonArray)lamParams.DeepClone();
+        var invSuspendRet = ft["ret"]?.DeepClone() ?? TypeJson.Fqn("kotlin.Unit");
         var keys = new SortedSet<(string scope, int i)>();
-        CollectTvKeys(invBody, keys); CollectTvKeys(lamParams, keys); CollectTvKeys(ft["ret"], keys); CollectTvKeys(captures, keys);
-        if (keys.Count > 0)
-        {
-            var scopes = keys.Select(k => k.scope).Distinct().ToList();
-            if (scopes.Count != 1 || !keys.Select(k => k.i).OrderBy(x => x).SequenceEqual(Enumerable.Range(0, keys.Count)))
-                return null;   // not a single-scope 0..N-1 prefix -> unsound open-SM instantiation, fail loud upstream
-        }
+        CollectTvKeys(invBody, keys); CollectTvKeys(invParams, keys); CollectTvKeys(invSuspendRet, keys); CollectTvKeys(captures, keys);
+        var remap = new Dictionary<(string, int), int>();
+        var ctorTypeArgs = new JsonArray();
         var typeParams = new JsonArray();
-        for (int tpi = 0; tpi < keys.Count; tpi++) typeParams.Add("Tsm" + tpi);
+        foreach (var key in keys)
+        {
+            int ni = remap.Count;
+            remap[key] = ni;
+            ctorTypeArgs.Add(new JsonObject { ["t"] = "tv", ["scope"] = key.scope, ["i"] = key.i });
+            typeParams.Add("Tsm" + ni);
+        }
+        // F3 CONTAINMENT (Fable): a NESTED kotc-emitted `newSuspendLambda` inside this carrier body keeps its OWN
+        // `typeParams` with NO construction `typeArgs`, so SuspendLambdaLowering resolves its body tvs POSITIONALLY
+        // against its own param list. But RenumberTvs descends into it (it has no `synthClass` shield — its body/tvs
+        // ride plain keys) and shifts those indices into THIS SM's dense space. When the remap is NON-IDENTITY
+        // (some key's dense index != its original index — precisely the multi-scope / non-prefix shapes the deleted
+        // guard used to exclude), the nested SM's positional resolution silently drifts to `object`. None of the 52
+        // flow sites nest an SM in the carrier body; refuse LOUD rather than silently object-erase (the real fix rides
+        // #74/#46 resolved-identity carriage). An IDENTITY remap (single-scope 0..N-1 prefix) leaves indices intact.
+        bool remapShiftsIndex = remap.Any(kv => kv.Value != kv.Key.Item2);
+        if (remapShiftsIndex && HasNode(invBody, "newSuspendLambda")) return null;
+        if (remap.Count > 0)
+        {
+            RenumberTvs(invBody, remap); RenumberTvs(invParams, remap); RenumberTvs(invSuspendRet, remap); RenumberTvs(captures, remap);
+        }
 
         var newSuspendLambda = new JsonObject
         {
             ["k"] = "newSuspendLambda",
             ["arity"] = lamParams.Count,
             ["captures"] = captures,
-            ["params"] = lamParams.DeepClone(),
-            ["suspendRet"] = ft["ret"]?.DeepClone() ?? TypeJson.Fqn("kotlin.Unit"),
+            ["params"] = invParams,
+            ["suspendRet"] = invSuspendRet,
             ["typeParams"] = typeParams,
             ["body"] = invBody,
             ["funcType"] = ft.DeepClone(),
         };
+        if (ctorTypeArgs.Count > 0) newSuspendLambda["typeArgs"] = ctorTypeArgs;
 
         var matTemp = "__inlmat" + n;
         stmts.Add(new JsonObject { ["k"] = "var", ["name"] = matTemp, ["type"] = ft.DeepClone(), ["init"] = newSuspendLambda });
@@ -1125,6 +1162,17 @@ static class InlineSplice
         if (nsl["params"] is JsonArray ps)
             foreach (var p in ps.OfType<JsonObject>()) if (Str(p["name"]) is string pn) inner.Add(pn);
         if (nsl["body"] is JsonNode b) CollectDeclaredLocals(b, inner);
+        // BATCH B (#75) 2B — kotc names a suspend lambda's captured enclosing extension receiver `__outer` in the
+        // capture DESCRIPTOR, yet references it in the BODY as a plain `local __self` (SuspendColdLowering maps that
+        // body `__self` -> the `__outer` field). So `__self` is a CAPTURE-LINKED inner name, NOT a frame local — the
+        // splice's frame renamers (subst/prefix) must SKIP it, leaving it literal for the SM lowering; its construction
+        // value is rebound to the splice receiver temp via BindOuterCapValues. Only when an `__outer` descriptor is
+        // present AND there is no real `__self` descriptor (which would be an ordinary joint-renamed capture).
+        if (nsl["captures"] is JsonArray caps)
+        {
+            var names = caps.OfType<JsonObject>().Select(c => Str(c["name"])).Where(n => n != null).ToHashSet(StringComparer.Ordinal);
+            if (names.Contains("__outer") && !names.Contains("__self")) inner.Add("__self");
+        }
         return inner;
     }
 
@@ -1170,6 +1218,40 @@ static class InlineSplice
         }
         else if (node is JsonArray a) foreach (var c in a) if (c != null && SuspendCaptureHazard(c, refuseOuter) is string h) return h;
         return null;
+    }
+
+    // BATCH B (#75) 2B — set a `capValues` override for the `__outer` slot on every PAYLOAD-FRAME `newSuspendLambda`
+    // (the enclosing dispatch/extension receiver, rebound to the splice's receiver temp `outerVal`). A `newSuspendLambda`
+    // is a SCOPE BOUNDARY: its `captures` construction values evaluate in THIS (payload) frame, but a `__outer` NESTED
+    // INSIDE its body denotes ITS OWN enclosing (this lambda's instance), NOT the payload receiver — so we rebind at this
+    // frame and do NOT descend into the lambda's body. Leaves other capture slots null so their fallback (a prefixed
+    // local) applies. Skips a `typeDef` (its own scope).
+    static void BindOuterCapValues(JsonNode node, JsonNode outerVal)
+    {
+        if (node is JsonObject o)
+        {
+            if (Str(o["k"]) == "typeDef") return;
+            if (Str(o["k"]) == "newSuspendLambda")
+            {
+                if (o["captures"] is JsonArray caps)
+                {
+                    int idx = -1;
+                    for (int i = 0; i < caps.Count; i++)
+                        if (caps[i] is JsonObject c && Str(c["name"]) == "__outer") { idx = i; break; }
+                    if (idx >= 0)
+                    {
+                        if (o["capValues"] is not JsonArray cv) { cv = new JsonArray(); o["capValues"] = cv; }
+                        while (cv.Count < caps.Count) cv.Add(null);
+                        cv[idx] = outerVal.DeepClone();
+                    }
+                }
+                return;   // its body is its OWN frame — a nested __outer belongs to it, not this payload
+            }
+            // Skip a nested closure/SAM `synthClass` (its own frame; never prefixed, so a `<prefix>__self`/`<prefix>this`
+            // stamp there would name a non-existent local) — symmetric with RewriteThis/RewriteLocalRefs/ApplyPrefix.
+            foreach (var kv in o) if (kv.Key != "synthClass" && kv.Value != null) BindOuterCapValues(kv.Value, outerVal);
+        }
+        else if (node is JsonArray a) foreach (var c in a) if (c != null) BindOuterCapValues(c, outerVal);
     }
 
     // BATCH B (#75) B3 — the first ORIGINAL (unprefixed) lambda-param `{k:local}` ref that dangles INSIDE a payload
