@@ -23,6 +23,28 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   body to know whether it reads the dispatch receiver, and a body-blind splice would break the sound pure-extension
   idiom (`inline fun Box.mapped(f) = f(get())`); a non-local return through that shape stays the pre-existing #23 gap.
   New `verify-roundtrip.sh` section `roundtrip-inline-member` gates it.
+- **bir2cir (#61, F2): a nested `inlineLambda` carrier param that SHADOWS an outer inline callee param by name no
+  longer clobbers the inner ref (SILENT P1).** `InlineSplice.RewriteGeneric` STEP 5 builds `subst` (outer callee param
+  name → bound temp) and the STEP-3 prefix builds a `declared` set, both applied whole-tree — but the walkers
+  `RewriteLocalRefs` / `ApplyPrefix` / `CollectDeclared` had scope boundaries for `typeDef` and `newSuspendLambda`,
+  NONE for `inlineLambda`. When a payload body nested a `callInline` whose lambda-arg carrier declared a param sharing a
+  name with an outer callee param, the outer subst/prefix descended into the carrier and rewrote the INNER param ref to
+  the outer temp; the nested splice (`BuildLambdaSplice`) then bound the carrier param but the ref no longer matched —
+  a silent miscompile (types match). Fixed by giving all three walkers an `inlineLambda` boundary that subtracts the
+  carrier's OWN `params[].name` before descending its `body`/`result` (mirroring the `newSuspendLambda` subtraction; an
+  `inlineLambda` has no field-ified capture slot, so the boundary is purely "params of this carrier"). Byte-identical
+  in the non-collision case. New gate case `cases/il-inlnestparamshadow` (fail-before 1050 / pass-after 1060).
+- **bir2cir (#63, F4): `newDelegate` app-local provenance is now judged MODULE-WIDE, not root-file-only (regression
+  from 923a820).** `_appLocalMethods` (the oracle for the §4.4ii materialization-side `newDelegate` app-local guard,
+  `IsAppLocalDelegate`) was collected from the ROOT file's `methods` only, but ilemit `FindStatic` resolves a delegate
+  target by bare name against ALL `IsFileClass` types module-wide and the inline stash spans all files — so a legal
+  nested-carrier materialization that splices a SIBLING `.kt`'s inline fn (whose capture-less `__lambdaN` lifted into
+  that sibling's file class) was mis-judged non-app-local and refused loud. Fixed by pre-collecting file-class method
+  names MODULE-WIDE across all input files (Program.cs, mirroring the `calleeTypeParams`/`localBasicEnums` pre-collects)
+  and passing the set into `InlineSplice.Apply`; nested-TYPE member methods stay excluded (ilemit's file-class-only
+  `ldftn` universe — only the FILE scope was wrong). A bare-name cross-file `__lambdaN`/`::ref` collision inherits
+  ilemit's pre-existing sig-less first-match ambiguity (durable fix = provenance-by-signature, #46). New 2-file gate
+  case `cases/il-inlsiblingdelegate` (fail-before §4.4ii fail-loud / pass-after `107,5`).
 - **bir2cir (#43): the §4.4ii carrier-materialization newDelegate refusal is narrowed to CROSS-MODULE only — the
   Batch A × Batch B integration seam.** `InlineSplice`'s §4.4ii materialization refused ANY nested `newDelegate` in
   both arms (non-suspend `HasUnmaterializableNested`, suspend `MaterializeSuspendCarrier`), but the #34 default-fill's
