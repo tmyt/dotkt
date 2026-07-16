@@ -114,7 +114,7 @@ for s in $PURE; do
 	    pkg="$(grep -hE '^package ' "$mainfile" 2>/dev/null | head -1 | awk '{print $2}' || true)"
 	    jvmmain="${pkg:+$pkg.}$mainclass"
 	    # (a) kotlin/jvm oracle
-	    jout="/tmp/diff-jvm-$s"; rm -rf "$jout"; mkdir -p "$jout"
+	    jout="$ROOT/build/diff-jvm-$s"; rm -rf "$jout"; mkdir -p "$jout"   # worktree-scoped ($ROOT/build), NOT a shared /tmp path — else two worktree gates clobber each other (false-RED)
 	    "$JAVA" -cp "$CCP" org.jetbrains.kotlin.cli.jvm.K2JVMCompiler "$src"/*.kt -no-stdlib -classpath "$STDLIBJ" -d "$jout" >/dev/null 2>&1 || true
 	    jvm="$("$JAVA" -cp "$jout:$STDLIBJ" "$jvmmain" 2>/dev/null || true)"
 	    # (b) kotlin/clr via the SHIPPING IL backend: kotc (frontend klib) -> BIR -> bir2cir -> CIR -> ilemit -> dll, run.
