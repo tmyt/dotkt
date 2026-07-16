@@ -3,6 +3,32 @@
 All notable changes to DotKt (Kotlin → .NET/CLR). Package versions carry the embedded
 Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
+## Unreleased
+
+### Fixed
+
+- **facadegen/bir2cir (#73): a consumed cross-module type whose members reference `kotlin.*` is injected again — the
+  atomicfu `AtomicInt`/`AtomicLong`/`AtomicBoolean`/`AtomicRef` types no longer vanish (rc5→rc6 regression, rc6 release
+  blocker).** A real MSBuild consumer of a DotKt library puts BOTH stdlib twins on the ref-reader compile set (`@(ReferencePath)`):
+  the REFERENCE twin `DotKt.Private.Stdlib` (the pure-Kotlin-shape metadata a ref-reader is meant to read) AND the RUNTIME
+  twin `DotKt.Stdlib` (which the library was emitted against, copy-local). After the #35/#37 reference-set rework, facadegen
+  loaded BOTH into one `MetadataLoadContext`, so every `kotlin.*` type resolved to TWO defining assemblies; facadegen's
+  use-site duplicate-definition guard then threw `type '…' is defined by multiple compile references` while emitting a
+  consumed type whose public members reference a `kotlin.*` type (`kotlin.reflect.KProperty` via the `getValue`/`setValue`
+  delegate operators; `kotlin.concurrent.atomics.AtomicReference` as `AtomicRef`'s backing field). The throw propagated out
+  of `EmitOneType`, whose per-type `try/catch` SKIPS the type — so the atomic wrapper class metadata was never emitted and
+  the consumer got `unresolved reference` on every member (`value`, `incrementAndGet`, `compareAndSet`, …). The library's
+  lock types (`SynchronizedObject` etc.) were unaffected because their members touch only `System.Threading`, a single BCL
+  definition. Fix: `ManagedReferenceCatalog` (shared by both ref-readers facadegen + bir2cir) now COLLAPSES the stdlib twin
+  pair — when a ref-reader's set carries the reference twin, the redundant runtime twin is dropped (the runtime twin is the
+  metadata-STRIPPED substitute build, so it is not merely redundant but the wrong source for a ref-reader), and the existing
+  #35 alias resolves any `DotKt.Stdlib` assembly reference to the reference twin. This realizes the invariant "a ref-reader
+  functions with the REFERENCE stdlib ALONE" and does NOT reintroduce the #35 bug (a `DotKt.Stdlib` reference still resolves,
+  via the alias — `roundtrip-nonconst-default`/`roundtrip-pkg` stay green). ilemit is untouched (it legitimately loads the
+  runtime stdlib; the ref twin is compile-only, never on its runtime set). New `verify-roundtrip.sh` section
+  `roundtrip-atomic-twin` reproduces the four colliding-name atomic wrappers backed by `kotlin.concurrent.atomics.*` with
+  BOTH twins on facadegen's compile set, and gates the fix.
+
 ## 0.9.6-rc6 — 2026-07-16
 
 ### Fixed

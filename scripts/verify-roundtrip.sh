@@ -251,6 +251,103 @@ ceexpected="$(printf 'RED\nFalse\n0')"
 run_app ceactual "$CE/appil/PaletteApp.dll"
 check_output roundtrip-enum "$ceexpected" "$ceactual" "cross-assembly basic-enum inherited System.Enum members (toString/==/hashCode) #105"
 
+# ----- CONSUMED-TYPE members reference kotlin.* (BOTH stdlib twins on the ref-reader set) round-trip (#73) -----
+# A faithful minimal reduction of the atomicfu cross-module regression: a library declares four wrapper classes with
+# simple names that COLLIDE with kotlin.concurrent.atomics.* (AtomicInt/AtomicLong/AtomicBoolean/AtomicRef), each
+# backed by a `kotlin.concurrent.atomics.*` field and exposing the `getValue`/`setValue` property-delegate operators
+# (which reference `kotlin.reflect.KProperty`). The consumer imports the `atomic(...)` factory + the types and touches
+# their members. REGRESSION TARGET for #73: a real MSBuild consumer puts BOTH stdlib twins on facadegen's compile set
+# — the REFERENCE twin `DotKt.Private.Stdlib` (what a ref-reader reads) AND the RUNTIME twin `DotKt.Stdlib` (which the
+# consumed lib was emitted against, copy-local). So THIS section's facadegen call passes BOTH twins (unlike the other
+# sections, which pass only the runtime twin). Pre-fix (#35/#37): every `kotlin.*` type resolved to TWO defining
+# assemblies -> facadegen's use-site duplicate-definition check threw -> EmitOneType skipped each atomic type -> the
+# consumer got `unresolved reference` on every member (`value`, `incrementAndGet`, `compareAndSet`, ...). The lock-style
+# types were unaffected because their members touch only `System.Threading` (a single BCL definition). Fix: a ref-reader
+# collapses the twin pair to the reference twin (ManagedReferenceCatalog), so `kotlin.*` resolves once. If the atomic
+# types fail to inject, the app fails to compile -> no dll -> empty output -> section FAIL.
+AT="$ROOT/build/roundtrip-atomic-twin"; rm -rf "$AT"; mkdir -p "$AT/lib" "$AT/app" "$AT/libbir" "$AT/libil" "$AT/appbir" "$AT/appil"
+cat > "$AT/lib/lib.kt" <<'EOF'
+@file:OptIn(ExperimentalAtomicApi::class)
+package atomicport
+
+import kotlin.concurrent.atomics.AtomicInt as KAtomicInt
+import kotlin.concurrent.atomics.AtomicLong as KAtomicLong
+import kotlin.concurrent.atomics.AtomicBoolean as KAtomicBoolean
+import kotlin.concurrent.atomics.AtomicReference as KAtomicRef
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.reflect.KProperty
+
+class AtomicInt internal constructor(@PublishedApi internal val a: KAtomicInt) {
+    var value: Int
+        get() = a.load()
+        set(v) { a.store(v) }
+    operator fun getValue(thisRef: Any?, property: KProperty<*>): Int = value
+    operator fun setValue(thisRef: Any?, property: KProperty<*>, value: Int) { this.value = value }
+    fun incrementAndGet(): Int { val n = a.load() + 1; a.store(n); return n }
+    fun compareAndSet(expect: Int, update: Int): Boolean = a.compareAndSet(expect, update)
+}
+class AtomicLong internal constructor(@PublishedApi internal val a: KAtomicLong) {
+    var value: Long
+        get() = a.load()
+        set(v) { a.store(v) }
+    operator fun getValue(thisRef: Any?, property: KProperty<*>): Long = value
+    operator fun setValue(thisRef: Any?, property: KProperty<*>, value: Long) { this.value = value }
+    fun addAndGet(delta: Long): Long { val n = a.load() + delta; a.store(n); return n }
+}
+class AtomicBoolean internal constructor(@PublishedApi internal val a: KAtomicBoolean) {
+    var value: Boolean
+        get() = a.load()
+        set(v) { a.store(v) }
+    operator fun getValue(thisRef: Any?, property: KProperty<*>): Boolean = value
+    operator fun setValue(thisRef: Any?, property: KProperty<*>, value: Boolean) { this.value = value }
+    fun compareAndSet(expect: Boolean, update: Boolean): Boolean = a.compareAndSet(expect, update)
+}
+class AtomicRef<T> internal constructor(@PublishedApi internal val a: KAtomicRef<T>) {
+    var value: T
+        get() = a.load()
+        set(v) { a.store(v) }
+    operator fun getValue(thisRef: Any?, property: KProperty<*>): T = value
+    operator fun setValue(thisRef: Any?, property: KProperty<*>, value: T) { this.value = value }
+    fun compareAndSet(expect: T, update: T): Boolean = a.compareAndSet(expect, update)
+}
+
+fun atomic(initial: Int): AtomicInt = AtomicInt(KAtomicInt(initial))
+fun atomic(initial: Long): AtomicLong = AtomicLong(KAtomicLong(initial))
+fun atomic(initial: Boolean): AtomicBoolean = AtomicBoolean(KAtomicBoolean(initial))
+fun <T> atomic(initial: T): AtomicRef<T> = AtomicRef(KAtomicRef(initial))
+EOF
+cat > "$AT/app/app.kt" <<'EOF'
+import atomicport.atomic
+import atomicport.AtomicInt
+import atomicport.AtomicBoolean
+import atomicport.AtomicRef
+fun main() {
+    val n = atomic(0)
+    println(n.incrementAndGet())            // 1   member on re-imported AtomicInt
+    n.value = 41                            // direct property SET
+    println(n.value + 1)                    // 42
+    val b = atomic(false)
+    println(b.compareAndSet(false, true))   // True  AtomicBoolean member (CLR System.Boolean.ToString)
+    val r = atomic<String?>(null)
+    println(r.compareAndSet(null, "hi"))    // True  generic AtomicRef member
+    println(r.value)                        // hi
+}
+EOF
+CLR_TYPES_METADATA="" "$LAUNCHER" "$AT/lib" -no-stdlib -classpath "$CP" -opt-in=kotlin.concurrent.atomics.ExperimentalAtomicApi -d "$AT/libbir" >/dev/null 2>&1 || true
+emit_il "$AT/libil" AtomicLib "$AT/libbir"/*.bir.json
+dotnet "$RETARGET_DLL" "$AT/libil/AtomicLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
+"$LAUNCHER" --scan-imports --output "$AT/imports.txt" "$AT/app"/*.kt >/dev/null 2>&1 || true
+# #73 TRIGGER: pass BOTH stdlib twins (REFERENCE + RUNTIME) on facadegen's compile set, exactly as a real MSBuild
+# consumer's @(ReferencePath) does — this is what the other sections do NOT do (they pass only the runtime twin).
+AT_TWIN_REFS="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL" "$STDLIB_RT_DLL");"
+dotnet "$FACADEGEN_DLL" --meta "$AT/meta" --compile-refs "$AT_TWIN_REFS$AT/libil/AtomicLib.dll" --import-list "$AT/imports.txt" >/dev/null 2>&1 || true
+CLR_TYPES_METADATA="$AT/meta" "$LAUNCHER" "$AT/app" -no-stdlib -classpath "$CP" -opt-in=kotlin.concurrent.atomics.ExperimentalAtomicApi -d "$AT/appbir" >/dev/null 2>&1 || true
+emit_il "$AT/appil" AtomicApp --ref "$AT/libil/AtomicLib.dll" "$AT/appbir"/*.bir.json
+cp "$AT/libil/AtomicLib.dll" "$AT/appil/" 2>/dev/null || true
+atexpected="$(printf '1\n42\nTrue\nTrue\nhi')"
+run_app atactual "$AT/appil/AtomicApp.dll"
+check_output roundtrip-atomic-twin "$atexpected" "$atactual" "consumed types whose members reference kotlin.* re-import with BOTH stdlib twins on the ref-reader set #73"
+
 # ----- KOTLIN `Nothing` RETURN round-trip (#135): companion-static + top-level `fun f(): Nothing` -----
 # A `fun f(): Nothing` erases to a CLR `object` return (Nothing has no CLR analog); bir2cir stamps [KotlinNothing]
 # on the return, facadegen restores `kotlin.Nothing`, so a consumer's `val r: String = if (c) x else f()` keeps x's

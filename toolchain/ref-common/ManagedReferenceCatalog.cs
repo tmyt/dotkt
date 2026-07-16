@@ -32,11 +32,11 @@ sealed class ManagedReferenceCatalog
         Entries = entries;
         Paths = entries.Select(e => e.Path).ToArray();
         foreach (var entry in entries) _bySimpleName.Add(entry.Identity.Name!, entry);
-        // Ref-READER alias: a consumed cross-module DotKt library was emitted by ilemit against the RUNTIME
-        // stdlib, so its `[kotlin.clr.*]` round-trip attribute types are scoped to `DotKt.Stdlib`. A ref-reader
-        // (bir2cir/facadegen) carries only the REFERENCE twin `DotKt.Private.Stdlib`, so resolve a `DotKt.Stdlib`
-        // reference to it (same type shapes — verified). This is a single, documented, stdlib-specific mapping,
-        // NOT a fuzzy name match. ilemit does NOT set this flag: it legitimately loads the real `DotKt.Stdlib`.
+        // Ref-READER alias: a consumed cross-module DotKt library references the RUNTIME stdlib (`DotKt.Stdlib`) in
+        // its `[kotlin.clr.*]` round-trip metadata (and via any `kotlin.*` member type). A ref-reader carries only
+        // the REFERENCE twin `DotKt.Private.Stdlib` (the runtime twin, if it was on the set, was dropped in Create —
+        // see the twin-collapse below), so resolve a `DotKt.Stdlib` reference to it. A single, documented,
+        // stdlib-specific mapping, NOT a fuzzy name match. ilemit does NOT set this flag: it loads the real runtime.
         if (refStdlibAliasesRuntime
             && _bySimpleName.TryGetValue(RefStdlibName, out var refStdlib)
             && !_bySimpleName.ContainsKey(RuntimeStdlibName))
@@ -59,11 +59,13 @@ sealed class ManagedReferenceCatalog
     /// preserves the duplicate-identity detection and the shared-dependency dedup win.</item>
     /// </list>
     /// <para><paramref name="refStdlibAliasesRuntime"/> (ref-readers bir2cir/facadegen ONLY): a consumed DotKt
-    /// library's <c>[kotlin.clr.*]</c> round-trip attribute types are scoped to the RUNTIME stdlib assembly
-    /// (<c>DotKt.Stdlib</c>) — ilemit emits the library against the runtime stdlib. A ref-reader holds only the
-    /// ref twin (<c>DotKt.Private.Stdlib</c>, same <c>kotlin.clr.*</c> shapes), so this aliases a <c>DotKt.Stdlib</c>
-    /// request to the Private.Stdlib entry, keeping the ref-reader ref.dll-only. NEVER set for ilemit (it loads the
-    /// real runtime stdlib).</para>
+    /// library is emitted by ilemit against the RUNTIME stdlib (<c>DotKt.Stdlib</c>), so its members / round-trip
+    /// <c>[kotlin.clr.*]</c> attributes reference <c>kotlin.*</c> types scoped to that assembly. A ref-reader holds
+    /// the REFERENCE twin (<c>DotKt.Private.Stdlib</c>), the correct pure-Kotlin-shape metadata source. When BOTH
+    /// twins land on the set (copy-local), this DROPS the runtime twin (so <c>kotlin.*</c> resolves to one assembly,
+    /// not two — see the twin-collapse in <see cref="Create"/>) and the constructor aliases a <c>DotKt.Stdlib</c>
+    /// request to the ref twin — keeping the ref-reader ref.dll-only. NEVER set for ilemit (it loads the real
+    /// runtime stdlib).</para>
     /// </summary>
     public static ManagedReferenceCatalog Create(IEnumerable<string> paths, string toolName,
         bool runtimeSelection = false, bool refStdlibAliasesRuntime = false)
@@ -130,6 +132,33 @@ sealed class ManagedReferenceCatalog
                     $"{toolName}: conflicting references with assembly name '{name}': " +
                     string.Join(" and ", list.Select(e => e.Path)));
             entries.Add(SelectRuntimeAsset(name, list, toolName));
+        }
+
+        // Ref-READER twin collapse (#73): a consumed cross-module DotKt library is emitted by ilemit against the
+        // RUNTIME stdlib, so a copy-local build puts BOTH stdlib twins on a ref-reader's compile set — the REFERENCE
+        // twin `DotKt.Private.Stdlib` (which bir2cir/facadegen are meant to read) AND the RUNTIME twin `DotKt.Stdlib`.
+        // The runtime twin is the SUBSTITUTE build (its @Clr-bound types are dropped/BCL-substituted and its
+        // `[Kotlin*]`/`[Clr]` metadata stripped — docs/design-clr-stdlib-ref-runtime-split.md), so for a ref-reader it
+        // is not just redundant but an actively WRONG metadata source. Worse, loading BOTH into one MetadataLoadContext
+        // makes every `kotlin.*` type (e.g. `kotlin.reflect.KProperty`, `kotlin.concurrent.atomics.AtomicReference`)
+        // resolve to TWO defining assemblies, so a ref-reader's use-site duplicate-definition check throws and a
+        // consumed type whose members reference `kotlin.*` is silently skipped (the atomicfu AtomicInt/Long/Boolean/Ref
+        // regression). So DROP the runtime twin here (the constructor's alias then resolves a `DotKt.Stdlib` reference
+        // to the ref twin) — realizing the invariant "ref-readers function with the REFERENCE stdlib ALONE". Done AFTER
+        // phase 2 so a genuine same-name conflict (two physical `DotKt.Stdlib` files) still throws first. ilemit never
+        // sets the flag; its runtime set carries only `DotKt.Stdlib` (the ref twin is compile-only) so this is inert.
+        if (refStdlibAliasesRuntime
+            && entries.Any(e => string.Equals(e.Identity.Name, RefStdlibName, StringComparison.OrdinalIgnoreCase)))
+        {
+            var runtimeTwin = entries.FirstOrDefault(
+                e => string.Equals(e.Identity.Name, RuntimeStdlibName, StringComparison.OrdinalIgnoreCase));
+            if (runtimeTwin != null)
+            {
+                Console.Error.WriteLine(
+                    $"{toolName}: ref-reader collapse — dropping runtime stdlib twin {RuntimeStdlibName} " +
+                    $"({runtimeTwin.Path}); a {RuntimeStdlibName} reference resolves to the reference twin {RefStdlibName}");
+                entries.Remove(runtimeTwin);
+            }
         }
         return new ManagedReferenceCatalog(entries, refStdlibAliasesRuntime);
     }
