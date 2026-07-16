@@ -41,6 +41,17 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   removed. New gates `cases/ktproj-runtimetargets` (a `lib`+`runtimes/<rid>/lib` package built + run, asserting the
   RID-correct impl is selected) and `cases/ktproj-inbox` (inbox `System.Text.Json`/`System.Net.Http` types resolved
   end-to-end).
+- **bir2cir/facadegen (the ref-readers) resolve a consumed cross-module DotKt library's `[kotlin.clr.*]`
+  round-trip metadata using the REFERENCE stdlib ONLY — never the runtime stdlib.** A consumed library
+  (e.g. `UiLib.dll`) is emitted by ilemit against `DotKt.Stdlib` (runtime), so its round-trip attribute
+  types (e.g. `[KotlinDefault]`, read for a non-const cross-module default) are scoped to that assembly.
+  A ref-reader carries only the metadata twin `DotKt.Private.Stdlib`, so loading the lib's types threw
+  `FileNotFoundException` and the substitution scan silently skipped the library — `roundtrip-nonconst-default`
+  / `roundtrip-pkg` produced no app dll. `ManagedReferenceCatalog` now aliases a `DotKt.Stdlib` reference to
+  the `DotKt.Private.Stdlib` entry (same `kotlin.clr.*` type shapes) for the ref-readers only (a single,
+  documented, stdlib-specific mapping via `refStdlibAliasesRuntime`); ilemit keeps loading the real runtime
+  stdlib. This restores the layer invariant (bir2cir functions with the ref.dll alone) and reverts the wrong
+  gate workaround that had added the runtime stdlib to bir2cir's `--compile-refs`.
 - **Toolchain-wide managed dependency resolution now consumes explicit compile/runtime reference sets instead of
   treating an assembly's directory as a search universe.** MSBuild resolves the graph once and passes
   `@(ReferencePath)` to metadata consumers (`facadegen`, `bir2cir`, `retarget`) and

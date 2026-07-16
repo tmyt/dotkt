@@ -104,18 +104,16 @@ emit_il() {
 	local refs=() birs=() usrrefs=()
 	while (( $# )); do
 		# A user `--ref X` (a retargeted DotKt library) goes to ilemit AND — A2 (#61) — to bir2cir, which RESOLVES
-		# the facadegen-injected owner FQN against it to bind the .NET call SHAPE (clrStatic/clrInstance/…).
+		# the facadegen-injected owner FQN against it to bind the .NET call SHAPE (clrStatic/clrInstance/…). Mirrors
+		# verify-il's il_emit: the RUNTIME stdlib (added below) is ilemit-only (bir2cir reads the REFERENCE stdlib).
 		if [[ "$1" == --ref ]]; then refs+=("$2"); usrrefs+=("$2"); shift 2; else birs+=("$1"); shift; fi
 	done
 	[[ -f "$STDLIB_RT_DLL" ]] && refs+=("$STDLIB_RT_DLL")
 	local cir="$out.cir"; rm -rf "$cir"; mkdir -p "$cir"
-	# bir2cir SUBSTITUTES @ClrTypeAlias/@ClrIntrinsic via the REFERENCE stdlib (DotKt.Private.Stdlib), but a consumed
-	# cross-module DotKt library REFERENCES the RUNTIME stdlib (DotKt.Stdlib) in its metadata — its `[kotlin.clr.*]`
-	# round-trip attribute types (e.g. [KotlinDefault], read for a non-const cross-module default) are scoped there. So
-	# the runtime stdlib must ALSO be on bir2cir's --compile-refs, or loading the lib's types throws FileNotFoundException
-	# and the substitution scan silently skips it. The real MSBuild path gets this for free (the app PackageReferences
-	# DotKt.Stdlib, so @(ReferencePath) carries it); this mirrors that exact set.
-	local compile_refs; compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL" "$STDLIB_RT_DLL" "$(refset_join "${usrrefs[@]}")")"
+	# bir2cir reads the REFERENCE stdlib ONLY (DotKt.Private.Stdlib). A consumed cross-module DotKt library references
+	# the RUNTIME stdlib (DotKt.Stdlib) in its `[kotlin.clr.*]` round-trip metadata, but bir2cir's ManagedReferenceCatalog
+	# ALIASES that reference to the ref twin (same type shapes) — so the runtime stdlib is NOT on --compile-refs here.
+	local compile_refs; compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL" "$(refset_join "${usrrefs[@]}")")"
 	dotnet "$BIR2CIR_DLL" "$cir" --compile-refs "$compile_refs" "${birs[@]}" >/dev/null 2>&1 || true
 	dotnet "$ILEMIT_DLL" "$out" "$asm" --runtime-refs "$(refset_join "${refs[@]}")" "$cir"/*.cir.json >/dev/null 2>&1 || true
 	[[ -f "$STDLIB_RT_DLL" ]] && cp "$STDLIB_RT_DLL" "$out/" 2>/dev/null || true

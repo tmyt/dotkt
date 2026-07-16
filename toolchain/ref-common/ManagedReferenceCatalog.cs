@@ -16,16 +16,31 @@ sealed class ManagedReferenceCatalog
 {
     readonly Dictionary<string, Entry> _bySimpleName = new(StringComparer.OrdinalIgnoreCase);
 
+    // The ref/runtime stdlib split (docs/design-clr-stdlib-ref-runtime-split.md): the REFERENCE stdlib
+    // (metadata twin, kept by ref-READERS bir2cir+facadegen) and the RUNTIME stdlib (shipped, loaded by
+    // ilemit) define the SAME `kotlin.clr.*` type shapes; only the assembly name differs.
+    const string RefStdlibName = "DotKt.Private.Stdlib";
+    const string RuntimeStdlibName = "DotKt.Stdlib";
+
     public sealed record Entry(string Path, AssemblyName Identity);
 
     public IReadOnlyList<Entry> Entries { get; }
     public IReadOnlyList<string> Paths { get; }
 
-    ManagedReferenceCatalog(List<Entry> entries)
+    ManagedReferenceCatalog(List<Entry> entries, bool refStdlibAliasesRuntime)
     {
         Entries = entries;
         Paths = entries.Select(e => e.Path).ToArray();
         foreach (var entry in entries) _bySimpleName.Add(entry.Identity.Name!, entry);
+        // Ref-READER alias: a consumed cross-module DotKt library was emitted by ilemit against the RUNTIME
+        // stdlib, so its `[kotlin.clr.*]` round-trip attribute types are scoped to `DotKt.Stdlib`. A ref-reader
+        // (bir2cir/facadegen) carries only the REFERENCE twin `DotKt.Private.Stdlib`, so resolve a `DotKt.Stdlib`
+        // reference to it (same type shapes — verified). This is a single, documented, stdlib-specific mapping,
+        // NOT a fuzzy name match. ilemit does NOT set this flag: it legitimately loads the real `DotKt.Stdlib`.
+        if (refStdlibAliasesRuntime
+            && _bySimpleName.TryGetValue(RefStdlibName, out var refStdlib)
+            && !_bySimpleName.ContainsKey(RuntimeStdlibName))
+            _bySimpleName.Add(RuntimeStdlibName, refStdlib);
     }
 
     /// <summary>
@@ -43,8 +58,15 @@ sealed class ManagedReferenceCatalog
     /// else the RID-neutral <c>lib</c> asset). Throw ONLY on same simple name + CONFLICTING identity — that
     /// preserves the duplicate-identity detection and the shared-dependency dedup win.</item>
     /// </list>
+    /// <para><paramref name="refStdlibAliasesRuntime"/> (ref-readers bir2cir/facadegen ONLY): a consumed DotKt
+    /// library's <c>[kotlin.clr.*]</c> round-trip attribute types are scoped to the RUNTIME stdlib assembly
+    /// (<c>DotKt.Stdlib</c>) — ilemit emits the library against the runtime stdlib. A ref-reader holds only the
+    /// ref twin (<c>DotKt.Private.Stdlib</c>, same <c>kotlin.clr.*</c> shapes), so this aliases a <c>DotKt.Stdlib</c>
+    /// request to the Private.Stdlib entry, keeping the ref-reader ref.dll-only. NEVER set for ilemit (it loads the
+    /// real runtime stdlib).</para>
     /// </summary>
-    public static ManagedReferenceCatalog Create(IEnumerable<string> paths, string toolName, bool runtimeSelection = false)
+    public static ManagedReferenceCatalog Create(IEnumerable<string> paths, string toolName,
+        bool runtimeSelection = false, bool refStdlibAliasesRuntime = false)
     {
         // Phase 1: normalise the raw paths to (path, identity) candidates, dropping duplicates / non-managed /
         // satellite assemblies.  Identity-level conflict handling differs between the two sets, so it happens
@@ -109,7 +131,7 @@ sealed class ManagedReferenceCatalog
                     string.Join(" and ", list.Select(e => e.Path)));
             entries.Add(SelectRuntimeAsset(name, list, toolName));
         }
-        return new ManagedReferenceCatalog(entries);
+        return new ManagedReferenceCatalog(entries, refStdlibAliasesRuntime);
     }
 
     // Given several physical files that all share ONE full identity (the lib + runtimes/<rid>/lib builds of a

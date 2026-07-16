@@ -69,7 +69,10 @@ static class FacadeGen
     static void LoadRefs(string[] paths)
     {
         if (paths.Length == 0) return;
-        var catalog = ManagedReferenceCatalog.Create(paths, "facadegen");
+        // facadegen is a ref-READER (same as bir2cir): a consumed cross-module DotKt library references the
+        // RUNTIME stdlib (DotKt.Stdlib) in its `[kotlin.clr.*]` round-trip metadata; alias it to the REFERENCE
+        // twin DotKt.Private.Stdlib (same type shapes) so reading the lib's attrs doesn't FileNotFoundException.
+        var catalog = ManagedReferenceCatalog.Create(paths, "facadegen", refStdlibAliasesRuntime: true);
         Mlc = catalog.CreateMetadataLoadContext();
         foreach (var p in catalog.Paths)
             try { Mlc.LoadFromAssemblyPath(p); } catch { /* skip unloadable */ }
