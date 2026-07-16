@@ -135,6 +135,11 @@ internal fun BirEmitter.stmt(node: org.jetbrains.kotlin.ir.IrElement): String = 
 		if (spliced != null) {
 			val (res, end) = spliced
 			val goto = """{"k":"goto","id":$end}"""
+			// No return-site coerceValue/wrapReturnNonNull here (unlike the non-spliced arm below): a spliced
+			// `return@lambda <value-type-nullable>` into a bare-value result-local is well-typed only via a smart-cast,
+			// which Fir2Ir materializes as a narrowed IrGetValue / IMPLICIT_CAST — already `nullableValue`-unwrapped by
+			// expr()'s leaf arms — and a splice target is always a LAMBDA literal (never a postcondition-registered fn).
+			// Verified a pure no-op across the value-nullable/smart-cast/generic battery (cases/il-inlineretcoerce).
 			if (res != null) """{"k":"setLocal","name":${str(res)},"value":${expr(node.value)}},$goto"""
 			// Unit splice: evaluate a side-effecting return value, then jump; a plain `return` just jumps.
 			else if (node.value is IrGetObjectValue) goto
