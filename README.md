@@ -42,7 +42,7 @@ both retired and removed.)
 
 ## The stdlib is real Kotlin, compiled for the CLR
 
-`runtime/stdlib/` holds the Kotlin standard library built as a genuine CLR assembly — not a
+`libraries/stdlib/` holds the Kotlin standard library built as a genuine CLR assembly — not a
 hand-written compiler mapping. It ships as three artifacts: a **frontend klib**
 (`kotlin-stdlib-clr-frontend.klib`, what kotc resolves `kotlin.*` against), a **reference dll**
 (`DotKt.Private.Stdlib.dll`, compile-time metadata carrying the `@Clr*` bindings), and the
@@ -147,7 +147,7 @@ See `cases/ktproj-il/` and `docs/user/getting-started.md`.
 | `toolchain/ilemit/` | **CIR (JSON) → CIL** via `System.Reflection.Emit` |
 | `toolchain/facadegen/` | .NET metadata → FIR-injection metadata (façade-free `import System.X`) |
 | `toolchain/retarget/` | repoint emitted BCL refs so a C# project can `<Reference>` the dll at compile time |
-| `runtime/stdlib/` | the **CLR Kotlin stdlib** sources (common Kotlin + `clr/` actuals + `@Clr*` bindings) |
+| `libraries/stdlib/` | the **CLR Kotlin stdlib** sources (common Kotlin + `clr/` actuals + `@Clr*` bindings) |
 | `packaging/` | NuGet packages: `DotKt.Sdk`, `DotKt.Toolchain`, `DotKt.Stdlib`, `DotKt.Templates` |
 | `cases/` | `il-*` (IL-backend samples = the gate corpus), `m-*` (language/interop), `ktproj-*` (MSBuild) |
 | `scripts/` | the gates (`verify-il.sh`, `verify-ktproj.sh`, `verify-roundtrip.sh`), `dotkt.sh`, the three `build-stdlib-*.sh` |

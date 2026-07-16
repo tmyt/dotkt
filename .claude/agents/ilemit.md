@@ -23,7 +23,7 @@ Read `CLAUDE.md` and `docs/ship-tasks.md` §0. Your layer's contract is **bindin
 ## Scope (files you own)
 - `toolchain/ilemit/Program.cs`
 - `toolchain/ilemit/Emitter.{Expressions,Statements,Coroutines,Metadata,CompilerServices,ReverseBridge}.cs`, `TypeInfo.cs`
-- Do NOT edit `toolchain/kotc/`, `toolchain/bir2cir/`, `toolchain/facadegen/`, or `runtime/stdlib/`.
+- Do NOT edit `toolchain/kotc/`, `toolchain/bir2cir/`, `toolchain/facadegen/`, or `libraries/stdlib/`.
 
 ## Build & test
 - Build: `dotnet build toolchain/ilemit -c Release -o build/ilemit-bin`

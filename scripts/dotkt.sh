@@ -53,7 +53,7 @@ done
 # --- bootstrap the toolchain if missing -------------------------------------------------------------
 need_kotc; need_tool ilemit; need_tool bir2cir; need_tool facadegen
 # kotc -classpath: the CLR FRONTEND klib built FROM our CLR stdlib sources (scripts/build-stdlib-klib.sh).
-# kotlin.* resolves from THIS klib (full Kotlin semantics), never from facadegen --scan-asm — the
+# kotlin.* resolves from THIS klib (full Kotlin semantics), never from facadegen — the
 # binding verify-il invariant.
 need_fe_klib
 # The CLR stdlib ref/rt assemblies are the canonical CACHED builds (scripts/build-stdlib-{ref,rt}.sh
@@ -88,9 +88,9 @@ if (( use_stdlib )); then
 fi
 
 # 1. .NET type injection: scan the sources' .NET imports (PSI) -> facadegen generates ONLY .NET-space facades.
-#    kotlin.* (the WHOLE stdlib) is supplied to kotc via the JAR (-classpath), which carries full Kotlin semantics
+#    kotlin.* (the WHOLE stdlib) is supplied to kotc via the KLIB (-classpath), which carries full Kotlin semantics
 #    (inline/reified/operator/...). facadegen must NEVER inject kotlin.* -- it cannot restore those semantics, and a
-#    facadegen-produced kotlin.* symbol collides with the jar's (e.g. non-reified vs reified arrayOf -> ambiguity).
+#    facadegen-produced kotlin.* symbol collides with the klib's (e.g. non-reified vs reified arrayOf -> ambiguity).
 meta="$work/clrtypes.meta"; implist="$work/imports.txt"
 "$KOTC" --scan-imports --output "$implist" "${kts[@]}" >/dev/null 2>&1 || true
 dotnet "$FACADEGEN_DLL" --meta "$meta" --compile-refs "$facade_compile_refs" --import-list "$implist" >/dev/null 2>&1 || true

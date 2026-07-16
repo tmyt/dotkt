@@ -21,7 +21,7 @@ hope.
 | **kotc** | FIR → BIR | stdlib.klib + facadegen meta | symbol resolution → BIR | any CLR knowledge |
 | **bir2cir** | BIR → CIR | stdlib.ref.dll | inline/type-substitute/suspend lowering; **consumes** `@ClrIntrinsic` | passing `@ClrIntrinsic` to CIR/ilemit |
 | **ilemit** | CIR → CIL | stdlib.rt.dll | CIL codegen, ilverify-clean | any Kotlin knowledge |
-| **stdlib** | the `kotlin.*` library | — | `@Clr`/`@ClrIntrinsic` bindings in `runtime/stdlib/` | compiler special-casing |
+| **stdlib** | the `kotlin.*` library | — | `@Clr`/`@ClrIntrinsic` bindings in `libraries/stdlib/` | compiler special-casing |
 
 ## The invariant every agent shares
 

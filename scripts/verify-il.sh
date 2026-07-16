@@ -55,7 +55,7 @@ declare -A XFAIL_ILVERIFY=(
 # The CLR stdlib (kotlin.*) is supplied to kotc via the FRONTEND KLIB (scripts/build-stdlib-klib.sh) on
 # -classpath, REPLACING the old JVM frontend jar (which itself replaced the JVM kotlin-stdlib.jar that
 # leaked java.util.* typealiases). This preserves full Kotlin semantics and is the BINDING invariant:
-# kotlin.* comes from the KLIB, never from facadegen --scan-asm. (legacy coroutines jar dropped
+# kotlin.* comes from the KLIB, never from facadegen. (legacy coroutines jar dropped
 # 2026-07-03: the stdlib cold-core surface is kotlin.clr.await ONLY; blockOn/delay were dropped from the
 # stdlib and re-homed to the test harness — cases/*/harness.kt = dotkt.support.)
 CP="$FE_KLIB"

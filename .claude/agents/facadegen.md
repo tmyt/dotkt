@@ -23,7 +23,7 @@ Read `CLAUDE.md`, `docs/ship-tasks.md` §0 + §4, and `docs/future-work-interop.
 ## Scope (files you own)
 - `toolchain/facadegen/Program.cs`
 - Adjacent (reverse-interop packaging): `toolchain/retarget/Program.cs` — repoints emitted BCL refs so a C# project can `<Reference>` the dll. Touch only when the task is explicitly about reverse `<Reference>`/retargeting.
-- Do NOT edit `toolchain/kotc/`, `toolchain/bir2cir/`, `toolchain/ilemit/`, or `runtime/stdlib/`.
+- Do NOT edit `toolchain/kotc/`, `toolchain/bir2cir/`, `toolchain/ilemit/`, or `libraries/stdlib/`.
 
 ## Build & test
 - Build: `dotnet build toolchain/facadegen -c Release -o build/facadegen-bin`

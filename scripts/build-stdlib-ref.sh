@@ -60,7 +60,7 @@ if (( do_emit )); then
 	grep -vE '^\s+at ' "$OUT/ilemit.err" | grep -iE 'exception|KeyNot|unresolved|no matching' | head -3 || true
 	[[ -f "$DLL/DotKt.Private.Stdlib.dll" ]] || die "DotKt.Private.Stdlib.dll was not emitted (see $OUT/ilemit.err)"
 	# Retarget: the emitted dll references the IMPLEMENTATION core (System.Private.CoreLib); repoint those refs at
-	# the REFERENCE assemblies (+ self) so a downstream MetadataLoadContext reader — facadegen --scan-asm, ilverify —
+	# the REFERENCE assemblies (+ self) so a downstream MetadataLoadContext reader — facadegen, ilverify —
 	# can resolve its types. Self-contained (no DotKt.Runtime ref), so retarget against the BCL ref pack only.
 	need_tool retarget
 	info "retarget: repoint CoreLib refs (so facadegen/ilverify can read it back)"

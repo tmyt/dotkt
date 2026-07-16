@@ -25,7 +25,7 @@ Read `CLAUDE.md` and `docs/ship-tasks.md` §0 before acting. Your layer's contra
 - `toolchain/kotc/src/main/kotlin/kotc/backend/BirEmitter*.kt`, `BirMappings.kt`, `ClrBackendPhase.kt` — IR → BIR
 - `toolchain/kotc/src/main/kotlin/kotc/frontend/ClrTypeInjection.kt` — FIR injection of .NET types (façade-free)
 - `toolchain/kotc/src/main/kotlin/kotc/ClrTypeRegistry.kt`
-- Do NOT edit `toolchain/bir2cir/`, `toolchain/ilemit/`, `toolchain/facadegen/`, or `runtime/stdlib/`.
+- Do NOT edit `toolchain/bir2cir/`, `toolchain/ilemit/`, `toolchain/facadegen/`, or `libraries/stdlib/`.
 
 ## Build & test
 - Build the launcher: `./gradlew -q :kotc:installDist` → `toolchain/kotc/build/install/kotc/bin/kotc`

@@ -48,7 +48,7 @@ The authoritative layer table and invariants are `docs/ship-tasks.md` §0 and
 
 Binding invariants every finding is judged against:
 1. `@ClrIntrinsic`: sourced from ref.dll → consumed by bir2cir → **never reaches ilemit**.
-2. `kotlin.*` comes from the frontend **klib**, never from facadegen `--scan-asm`.
+2. `kotlin.*` comes from the frontend **klib**, never from facadegen.
 3. The cardinal rule: a stdlib problem is fixed **stdlib-side**, never by a compiler
    special-case/denylist/stub. A kotc hardcode that shadows a working stdlib actual is itself a bug.
 4. NO compat shims / dual-track paths — legacy code kept "just in case" is a finding, not a courtesy.

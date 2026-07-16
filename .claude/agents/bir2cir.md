@@ -24,7 +24,7 @@ Implement `@ClrIntrinsic` substitution **here**: when `ReferenceMetadataIndex` r
 
 ## Scope (files you own)
 - `toolchain/bir2cir/Program.cs` (and any new files you add under `toolchain/bir2cir/`).
-- Do NOT edit `toolchain/kotc/`, `toolchain/ilemit/`, `toolchain/facadegen/`, or `runtime/stdlib/`. (Moving legacy lowering OUT of kotc/ilemit means *receiving* it here — coordinate with those agents via the orchestrator; you author the bir2cir side.)
+- Do NOT edit `toolchain/kotc/`, `toolchain/ilemit/`, `toolchain/facadegen/`, or `libraries/stdlib/`. (Moving legacy lowering OUT of kotc/ilemit means *receiving* it here — coordinate with those agents via the orchestrator; you author the bir2cir side.)
 
 ## Build & test
 - Build: `dotnet build toolchain/bir2cir -c Release -o build/bir2cir-bin`
