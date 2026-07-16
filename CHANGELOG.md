@@ -7,6 +7,19 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **kotc (#34 residual): a MEMBER (or suspend) `inline` fn's non-const defaulted arg is now CARRIED so an
+  omitting inline splice can fill it** (`BirEmitterDeclarations.kt`, `BirEmitterInline.kt`). `carriesKotlinDefault`
+  previously excluded ANY fn with a dispatch receiver (member) and ANY suspend fn, so a member inline fn's Tier-2
+  default was emitted NEITHER in the `[KotlinInline]` payload's `p["default"]` (kotc only puts CONST defaults there)
+  NOR as a `@KotlinDefault` carrier → bir2cir `InlineSplice` STEP 5 fail-loud `missing (non-defaulted) arg` — the
+  kotlinx.coroutines `BufferedChannel.sendImpl(... onNoWaiterSuspend = { _,_,_,_ -> error("unexpected") })` blocker.
+  Fixed by extending the carrier to ANY `inline` fn (member/suspend included), reading the SAME `@KotlinDefault`
+  carrier the top-level/extension path already emits (no bir2cir change). The expansion is gated to `inline` (a
+  non-inline member/suspend fn's default stays uncarried — carrying every non-inline suspend coroutine decl regressed
+  the runtime stdlib emit), and a default that reads the DISPATCH receiver is poisoned (`defaultUnsupported`) via an
+  IR-symbol scan (`defaultReadsDispatch`) because a `{k:this}` dispatch read cannot be bound safely from the one
+  uniform carrier across both `InlineSplice` and `DefaultArgSplice` consumers — a precise diagnostic, never a
+  miscompile. New gate case `cases/il-inlinememberdefault`.
 - **Toolchain-wide managed dependency resolution now consumes explicit compile/runtime reference sets instead of
   treating an assembly's directory as a search universe.** MSBuild resolves the graph once and passes
   `@(ReferencePath)` to metadata consumers (`facadegen`, `bir2cir`, `retarget`) and

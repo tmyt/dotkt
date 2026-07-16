@@ -118,6 +118,27 @@ internal fun BirEmitter.bodyReferencesDispatch(callee: IrSimpleFunction): Boolea
 	return found
 }
 
+/** True iff a default-value EXPRESSION [def] of [fn] reads [fn]'s DISPATCH receiver (a member fn's `this@Owner`) —
+ *  an IrGetValue of the dispatch-receiver param symbol, anywhere (descending into nested lambdas). Used by
+ *  [defaultCarrierBir] to POISON such a default: a `{k:this}` dispatch read cannot be filled from the uniform
+ *  `@KotlinDefault` carrier (DefaultArgSplice binds `{k:this}` to args[0] = the first regular arg on a `callInstance`,
+ *  and a member-extension InlineSplice binds it to the extension receiver — never the dispatch receiver). A pure
+ *  extension fn has no dispatch receiver, so its `this` (the extension receiver, which DOES bind to args[0]) is never
+ *  matched here — extension `= this` defaults keep carrying. Symbol-aware, NOT a JSON substring: a nested object/lambda
+ *  `this` is a different receiver and is correctly ignored. */
+internal fun BirEmitter.defaultReadsDispatch(fn: IrSimpleFunction, def: IrExpression): Boolean {
+	val dispatch = fn.parameters.firstOrNull { it.kind == IrParameterKind.DispatchReceiver } ?: return false
+	var found = false
+	def.acceptVoid(object : IrVisitorVoid() {
+		override fun visitElement(element: org.jetbrains.kotlin.ir.IrElement) {
+			if (found) return
+			if (element is IrGetValue && element.symbol == dispatch.symbol) { found = true; return }
+			element.acceptChildrenVoid(this)
+		}
+	})
+	return found
+}
+
 /** SAME-MODULE inline (#75): a call to a user/stdlib-self-build `inline fun` (body present in THIS run) taking ANY
  *  lambda arg (AXIS ①). Retires mechanism-1 (the old `inlineCall` splicer): instead of splicing the body HERE, kotc
  *  emits the SAME generic `callInline` node the cross-module emitters do (`inlineSpliceCall`/

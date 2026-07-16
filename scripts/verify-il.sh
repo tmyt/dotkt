@@ -679,6 +679,7 @@ il_check memberextinline MemberExtInline "$ROOT/cases/il-memberextinline/app.kt"
 il_check inline2 Inl2 "$ROOT/cases/il-inline2" "$(printf '4\n42\n3')"
 il_check xinline XInl "$ROOT/cases/il-xinline" "$(printf '20\n42\n105')"
 il_check inldeflam InlDefLam "$ROOT/cases/il-inlinedefaultlambda/app.kt" "$(printf '105\n6\n6\n20\n22\n7\n3\n10')"   # #34: inline splice fills an OMITTED defaulted param — a LAMBDA default (`= { 100 }`, Tier-2 @KotlinDefault defaultCarrier re-hoisted), a CONST default (Tier-1 p["default"]), a default reading an EARLIER param (defaultArgParam token), and a default lambda whose body has a NESTED inline call (`count{}`, re-walked at the hoist); each on the take-default AND override path
+il_check inlmemdef InlMemDef "$ROOT/cases/il-inlinememberdefault/app.kt" "$(printf '5\n-1\n0\n3\n9\n21')"   # #34 residual: a MEMBER inline fn's non-const defaulted param is now carried (@KotlinDefault) so InlineSplice fills it — the kotlinx.coroutines `BufferedChannel.sendImpl(... onNoWaiterSuspend={ ... })` shape: a non-capturing LAMBDA default, a simple-expr `= emptyList()` default, and a Tier-1 CONST default, each on the take-default AND override path
 # #75 S4a — escape-analysis narrowing samples. Cross-module stdlib inline ops (forEach/map/run) route through the
 # bir2cir InlineSplice engine ONLY when a lambda arg escapes (non-local return/break, or arm-c suspension); the
 # non-escaping majority takes the plain delegate call. See docs/design-inline-s4-narrowing-95.md §8.
