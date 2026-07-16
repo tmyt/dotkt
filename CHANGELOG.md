@@ -3,7 +3,7 @@
 All notable changes to DotKt (Kotlin → .NET/CLR). Package versions carry the embedded
 Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
-## 0.9.6-rc5 — 2026-07-15
+## 0.9.6-rc6 — 2026-07-16
 
 ### Fixed
 
@@ -110,6 +110,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `onNoWaiterSuspend = { … }` omitted-default lambda (the next inline-splice stop after #30). New gate
   `cases/il-inlinedefaultlambda` covers a lambda default, a const default, and a default reading an earlier param —
   each on the take-default and the override path.
+## 0.9.6-rc5 — 2026-07-15
+
+### Fixed
+
 - **kotc (#32): expression-position `return` now applies the declared return-slot coercion and non-null
   postcondition.** The `IrReturn` arm used for an elvis/`if`/`when` branch emitted its value directly, unlike the
   statement-position arm. It now runs the value through `coerceValue` (including `Nullable<T>.Value` unwrapping when a
