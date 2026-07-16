@@ -118,21 +118,33 @@ internal fun BirEmitter.bodyReferencesDispatch(callee: IrSimpleFunction): Boolea
 	return found
 }
 
-/** True iff a default-value EXPRESSION [def] of [fn] reads [fn]'s DISPATCH receiver (a member fn's `this@Owner`) —
- *  an IrGetValue of the dispatch-receiver param symbol, anywhere (descending into nested lambdas). Used by
- *  [defaultCarrierBir] to POISON such a default: a `{k:this}` dispatch read cannot be filled from the uniform
- *  `@KotlinDefault` carrier (DefaultArgSplice binds `{k:this}` to args[0] = the first regular arg on a `callInstance`,
- *  and a member-extension InlineSplice binds it to the extension receiver — never the dispatch receiver). A pure
+/** True iff a default-value EXPRESSION [def] of [fn] reads an ENCLOSING-INSTANCE receiver — [fn]'s own DISPATCH
+ *  receiver (a member fn's `this@Owner`) OR any OUTER class's `thisReceiver` (an inner-class member's `this@Outer`) —
+ *  by an IrGetValue of that receiver's symbol, anywhere (descending into nested lambdas). Used by [defaultCarrierBir]
+ *  to POISON such a default: any of these renders as (or, for an outer `this@Outer`, capture-substitutes via
+ *  `innerClassDef` into a `__outer` field ON) a `{k:this}` token, which cannot be filled from the uniform
+ *  `@KotlinDefault` carrier — DefaultArgSplice binds `{k:this}` to args[0] = the first regular arg on a `callInstance`,
+ *  and a member-extension InlineSplice binds it to the extension receiver, never an enclosing instance. A pure
  *  extension fn has no dispatch receiver, so its `this` (the extension receiver, which DOES bind to args[0]) is never
  *  matched here — extension `= this` defaults keep carrying. Symbol-aware, NOT a JSON substring: a nested object/lambda
  *  `this` is a different receiver and is correctly ignored. */
 internal fun BirEmitter.defaultReadsDispatch(fn: IrSimpleFunction, def: IrExpression): Boolean {
-	val dispatch = fn.parameters.firstOrNull { it.kind == IrParameterKind.DispatchReceiver } ?: return false
+	val receiverSyms = HashSet<org.jetbrains.kotlin.ir.symbols.IrValueSymbol>()
+	fn.parameters.firstOrNull { it.kind == IrParameterKind.DispatchReceiver }?.let { receiverSyms += it.symbol }
+	// Every enclosing class's `thisReceiver`: an inner-class member reads its outer instance as `this@Outer`, which
+	// binds to the OUTER class's thisReceiver (NOT fn's dispatch param) and `innerClassDef` rewrites to a `{k:this}`
+	// field access — equally unfillable from the positional carrier.
+	var p: org.jetbrains.kotlin.ir.declarations.IrDeclarationParent? = fn.parent
+	while (p != null) {
+		if (p is org.jetbrains.kotlin.ir.declarations.IrClass) p.thisReceiver?.let { receiverSyms += it.symbol }
+		p = (p as? org.jetbrains.kotlin.ir.declarations.IrDeclaration)?.parent
+	}
+	if (receiverSyms.isEmpty()) return false
 	var found = false
 	def.acceptVoid(object : IrVisitorVoid() {
 		override fun visitElement(element: org.jetbrains.kotlin.ir.IrElement) {
 			if (found) return
-			if (element is IrGetValue && element.symbol == dispatch.symbol) { found = true; return }
+			if (element is IrGetValue && element.symbol in receiverSyms) { found = true; return }
 			element.acceptChildrenVoid(this)
 		}
 	})

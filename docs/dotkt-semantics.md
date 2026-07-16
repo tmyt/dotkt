@@ -548,15 +548,19 @@ default-omission works **everywhere** — trailing, named-middle, reordered, and
   **CLOSED** BIR sub-tree on the `@kotlin.clr.KotlinDefault(index, birJson)` attribute (mirroring `[KotlinInline]`): a
   non-capturing lambda default, whose `newDelegate` would point at a library-LOCAL lifted method, is carried as a
   `{"k":"defaultCarrier","expr":…,"lifted":[…]}` envelope embedding that method so it is self-contained (kotc detaches
-  the dead method from the library dll). A capturing / SAM / suspend lambda default cannot be reconstructed positionally
-  cross-module → a `{"k":"defaultUnsupported"}` poison carrier the consumer's splice refuses on (a precise diagnostic,
-  never a miscompile). For a CROSS-MODULE call kotc emits a POSITIONAL `{"k":"defaultArg"}` placeholder for each omitted
+  the dead method from the library dll). A capturing / SAM / suspend lambda default, OR a default that reads its
+  **enclosing-instance receiver** — a member fn's own dispatch `this@Owner` or an inner-class member's outer
+  `this@Outer` (detected by an IR-symbol scan of the dispatch-receiver param + every enclosing class `thisReceiver`) —
+  cannot be reconstructed positionally cross-module → a `{"k":"defaultUnsupported"}` poison carrier the consumer's
+  splice refuses on (a precise diagnostic, never a miscompile: the one uniform carrier binds `{"k":"this"}` to args[0],
+  never to an enclosing instance). An EXTENSION-receiver `= this` is NOT this case — the extension receiver DOES bind to
+  args[0], so it round-trips (below). For a CROSS-MODULE call kotc emits a POSITIONAL `{"k":"defaultArg"}` placeholder for each omitted
   arg of such a callee (so a later provided arg keeps its slot), and `bir2cir.DefaultArgSplice` — run at **PHASE 1**
   (right after `InlineSplice`, before owner attribution / the CharSequence bridge / type-lowering, so the spliced RAW
   expression re-lowers in THIS app's context) — resolves the callee OWNERLESSLY (by method name + emitted arity, the
   owner not yet attributed) and replaces each placeholder in place by array index (matching the `@KotlinDefault` stamp
   index), RE-HOISTING a `defaultCarrier`'s lifted method into the consumer's file class under a fresh per-splice name.
-  A `= this` default carries `{"k":"this"}` → the call's receiver; a default reading an earlier value param carries
+  An EXTENSION-receiver `= this` default carries `{"k":"this"}` → the call's receiver (args[0]); a default reading an earlier value param carries
   `{"k":"defaultArgParam","idx":N}` → the call's arg N. For a SAME-MODULE call kotc has the real default IR and inlines
   it directly. A **C#** consumer sees a required parameter and passes it explicitly. A function with ≥1 Tier-2 parameter
   carries `@KotlinDefault` on ALL its defaulted parameters, so a run of omitted params that interleaves Tier-1 and Tier-2

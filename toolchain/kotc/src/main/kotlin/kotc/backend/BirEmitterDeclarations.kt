@@ -983,10 +983,13 @@ internal fun BirEmitter.isMetadataRepresentableDefault(p: org.jetbrains.kotlin.i
  *  fn. The inline branch is the #34 residual: a MEMBER or suspend `inline` fn's omitted non-const default is read by
  *  InlineSplice STEP 5 from THIS carrier (previously a member/suspend fn carried nothing → InlineSplice fail-loud
  *  "missing (non-defaulted) arg", e.g. kotlinx.coroutines `BufferedChannel.sendImpl(... onNoWaiterSuspend = { ... })`).
- *  The carrier travels only in an inline fn's `[KotlinInline]` payload (member/suspend inline bodies splice), so the
- *  member/suspend expansion is gated to `inline` — a NON-inline member/suspend fn stays uncarried (its cross-module
- *  default is a separate, DefaultArgSplice-receiver-binding concern, and carrying every non-inline suspend coroutine
- *  decl regressed the runtime stdlib emit). The one genuinely-unsafe default SHAPE — one that reads the dispatch
+ *  The carrier always rides the ref.dll param attribute (both consumers read it there — a cross-module member
+ *  `callInstance` fills via DefaultArgSplice too), so the member/suspend expansion being gated to `inline` is NOT a
+ *  mechanism limit but an EMPIRICAL firewall: carrying every NON-inline suspend coroutine decl regressed the runtime
+ *  stdlib emit ("ilemit: cannot resolve .NET type kotlin.Unit"), root-cause unestablished, so a non-inline
+ *  member/suspend fn stays uncarried for now (its cross-module default is a separate, pre-existing gap — a Tier-2
+ *  default drops to a null/zero backfill; see docs/dotkt-semantics.md §10.2). The one genuinely-unsafe default SHAPE
+ *  that a carrier CANNOT represent even for an inline fn — one that reads an enclosing-instance (dispatch or outer)
  *  receiver — is poisoned per-expression in [defaultCarrierBir] (a `{k:this}` dispatch read binds correctly ONLY in
  *  InlineSplice's `recv==dispatch` path, not for a member-EXTENSION splice nor DefaultArgSplice — since the SAME carrier
  *  feeds all consumers, it is refused rather than risk a miscompile). */
@@ -1007,17 +1010,18 @@ internal fun BirEmitter.isDataClassCopy(fn: org.jetbrains.kotlin.ir.declarations
  *  `newDelegate` in a `defaultCarrier` envelope; bir2cir's DefaultArgSplice re-hoists the carried method app-local (fresh
  *  name) at the consumer. A CAPTURING closure / SAM / suspend lambda default cannot be positionally reconstructed
  *  cross-module → a `defaultUnsupported` poison carrier the consumer's splice refuses on (a precise diagnostic, not a
- *  miscompile). A default that reads `ownerFn`'s DISPATCH receiver (a member fn's `this@Owner`) is EQUALLY poisoned:
- *  the carrier is consumed by BOTH InlineSplice (which binds a `{k:this}` to the dispatch temp only when
- *  `recv==dispatch` — NOT for a member-extension splice) AND DefaultArgSplice (which binds `{k:this}` to args[0] = the
- *  first regular arg on a `callInstance`, never the dispatch receiver), so a dispatch read cannot be filled safely
- *  from one uniform carrier. Detected by an IR-symbol scan of the dispatch-receiver param (NOT a `{k:this}` substring —
- *  a nested object/lambda `this` is a different receiver, and a pure-extension `this` is the extension receiver, which
- *  binds correctly to args[0]). */
+ *  miscompile). A default that reads `ownerFn`'s ENCLOSING-INSTANCE receiver — its own DISPATCH receiver (`this@Owner`)
+ *  OR an OUTER class's `this@Outer` (inner-class member) — is EQUALLY poisoned: the carrier is consumed by BOTH
+ *  InlineSplice (which binds a `{k:this}` to the dispatch temp only when `recv==dispatch` — NOT for a member-extension
+ *  splice) AND DefaultArgSplice (which binds `{k:this}` to args[0] = the first regular arg on a `callInstance`, never an
+ *  enclosing instance), so such a read cannot be filled safely from one uniform carrier. Detected by an IR-symbol scan
+ *  of the dispatch-receiver param AND every enclosing class thisReceiver ([defaultReadsDispatch], NOT a `{k:this}`
+ *  substring — a nested object/lambda `this` is a different receiver, and a pure-extension `this` is the extension
+ *  receiver, which binds correctly to args[0]). */
 internal fun BirEmitter.defaultCarrierBir(def: org.jetbrains.kotlin.ir.expressions.IrExpression,
 		ownerFn: org.jetbrains.kotlin.ir.declarations.IrSimpleFunction? = null): String {
 	if (ownerFn != null && defaultReadsDispatch(ownerFn, def))
-		return """{"k":"defaultUnsupported","reason":${str("a default that reads the dispatch (enclosing-class) receiver cannot be filled at an omitting call site — pass the argument explicitly")}}"""
+		return """{"k":"defaultUnsupported","reason":${str("a default that reads an enclosing-instance (dispatch or outer-class) receiver cannot be filled at an omitting call site — pass the argument explicitly")}}"""
 	val before = liftedMethods.size
 	val bir = expr(def)
 	val delta = if (liftedMethods.size > before) {
