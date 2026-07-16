@@ -7,6 +7,7 @@
     <AssemblyName>facadegen</AssemblyName>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../ref-common/ManagedReferenceCatalog.cs" Link="ManagedReferenceCatalog.cs" />
     <!-- Shared single-source Type read/write helper of the BIR/CIR freeze (#37). Linked (not a project ref)
          so all three C# tools compile the SAME contract with no build-order dependency. -->
     <Compile Include="../bir-common/TypeNode.cs" Link="TypeNode.cs" />

@@ -45,7 +45,7 @@ build_tool ilemit; build_tool bir2cir
 # bir2cir then reads the REFERENCE assembly for the @Clr labels, and ilemit references the RUNTIME
 # assembly so a stdlib op resolves to its real Kotlin body — exactly the canonical ref/rt stdlib that
 # dotkt.sh / verify-il use. kotlin.* comes from the klib, never a facadegen reconstruction.
-need_fe_klib; need_stdlib_ref; need_stdlib_rt
+need_fe_klib; need_stdlib_ref; need_stdlib_rt; need_dotnet_reference_sets
 
 # The XFAIL baseline — MACHINE-READABLE (DIFFing sample -> reason), same mechanism as verify-il's
 # XFAIL_RUN. The coroutine names mirror verify-il's run-XFAILs. (The m-b6/m-b9/m-b10 entries from the
@@ -121,9 +121,9 @@ for s in $PURE; do
 	    cout="$ROOT/build/diff-clr-$s"; rm -rf "$cout"; mkdir -p "$cout"
 	    ccir="$ROOT/build/diff-cir-$s"; rm -rf "$ccir"; mkdir -p "$ccir"
 	    "$KOTC" $src -no-stdlib -classpath "$FE_KLIB" -d $cout >/dev/null 2>&1 || true
-	    refarg=(); [[ -f "$STDLIB_REF_DLL" ]] && refarg=(--ref "$STDLIB_REF_DLL")
-	    dotnet "$BIR2CIR_DLL" "$ccir" "${refarg[@]}" "$cout"/*.bir.json >/dev/null 2>&1 || true
-	    dotnet "$ILEMIT_DLL" "$cout" "$mainclass" --ref "$STDLIB_RT_DLL" "$ccir"/*.cir.json >/dev/null 2>&1 || true
+	    compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL")"
+	    dotnet "$BIR2CIR_DLL" "$ccir" --compile-refs "$compile_refs" "$cout"/*.bir.json >/dev/null 2>&1 || true
+	    dotnet "$ILEMIT_DLL" "$cout" "$mainclass" --runtime-refs "$STDLIB_RT_DLL" "$ccir"/*.cir.json >/dev/null 2>&1 || true
 	    cp "$STDLIB_RT_DLL" "$cout/"
 	    clr="$(dotnet "$cout/$mainclass.dll" 2>/dev/null || true)"
 	    # A MATCH requires BOTH the jvm oracle and the clr side to have produced REAL, non-empty output.

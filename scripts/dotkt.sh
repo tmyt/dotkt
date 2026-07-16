@@ -72,13 +72,20 @@ cp="$FE_KLIB"
 # Reference assemblies. Mirroring verify-il, the two backend stages take DIFFERENT stdlib refs: bir2cir
 # reads the @Clr-metadata REFERENCE stdlib (for @ClrTypeAlias/@ClrIntrinsic substitution), ilemit gets
 # the RUNTIME stdlib (the real Kotlin bodies). The [Kotlin*] round-trip attributes are SYNTHESIZED
-# per-assembly by ilemit (no DotKt.Runtime). ilemit resolves the BCL itself by runtime reflection, so
-# the ref-pack is only for facadegen's .NET-type resolution (and retarget).
-refpack="$(dirname "$(find /usr/share/dotnet/packs/Microsoft.NETCore.App.Ref -name 'System.Runtime.dll' -path '*net10.0*' 2>/dev/null | head -1)")"
-declare -a bir2cir_refs=() ilemit_refs=()
-refs_semi="$(ls "$refpack"/*.dll 2>/dev/null | tr '\n' ';')"
-(( use_stdlib )) && { bir2cir_refs+=(--ref "$STDLIB_REF_DLL"); ilemit_refs+=(--ref "$STDLIB_RT_DLL"); refs_semi="$refs_semi;$STDLIB_RT_DLL"; }
-for r in "${extra_refs[@]}"; do bir2cir_refs+=(--ref "$r"); ilemit_refs+=(--ref "$r"); refs_semi="$refs_semi;$r"; done
+# per-assembly by ilemit (no DotKt.Runtime). The targeting pack is the compile universe for facadegen,
+# bir2cir, and retarget; ilemit resolves platform types from the runtime host and receives only implementation refs.
+need_dotnet_reference_sets
+extra_refset="$(refset_join "${extra_refs[@]}")"
+bir_compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$extra_refset")"
+facade_compile_refs="$bir_compile_refs"
+runtime_refs="$extra_refset"
+retarget_compile_refs="$bir_compile_refs"
+if (( use_stdlib )); then
+	bir_compile_refs="$(refset_join "$bir_compile_refs" "$STDLIB_REF_DLL")"
+	facade_compile_refs="$(refset_join "$facade_compile_refs" "$STDLIB_RT_DLL")"
+	runtime_refs="$(refset_join "$runtime_refs" "$STDLIB_RT_DLL")"
+	retarget_compile_refs="$(refset_join "$retarget_compile_refs" "$STDLIB_RT_DLL")"
+fi
 
 # 1. .NET type injection: scan the sources' .NET imports (PSI) -> facadegen generates ONLY .NET-space facades.
 #    kotlin.* (the WHOLE stdlib) is supplied to kotc via the JAR (-classpath), which carries full Kotlin semantics
@@ -86,7 +93,7 @@ for r in "${extra_refs[@]}"; do bir2cir_refs+=(--ref "$r"); ilemit_refs+=(--ref 
 #    facadegen-produced kotlin.* symbol collides with the jar's (e.g. non-reified vs reified arrayOf -> ambiguity).
 meta="$work/clrtypes.meta"; implist="$work/imports.txt"
 "$KOTC" --scan-imports --output "$implist" "${kts[@]}" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" --meta "$meta" --refs "$refs_semi" --import-list "$implist" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$meta" --compile-refs "$facade_compile_refs" --import-list "$implist" >/dev/null 2>&1 || true
 
 # 2. kotc: .kt -> BIR.
 info "compiling ${#kts[@]} file(s) -> BIR" >&2
@@ -95,14 +102,14 @@ CLR_TYPES_METADATA="$meta" "$KOTC" "${kts[@]}" -no-stdlib -classpath "$cp" -d "$
 # 3. bir2cir: BIR -> CIR (the single type-lowering path; mode is env-gated, not a flag). Reads the
 #    @Clr-metadata REFERENCE stdlib for the @ClrTypeAlias/@ClrIntrinsic substitution.
 info "lowering BIR -> CIR" >&2
-dotnet "$BIR2CIR_DLL" "$cir" "${bir2cir_refs[@]}" "$bir"/*.bir.json >/dev/null
+dotnet "$BIR2CIR_DLL" "$cir" --compile-refs "$bir_compile_refs" "$bir"/*.bir.json >/dev/null
 
 # 4. ilemit: CIR -> CIL. Gets the RUNTIME stdlib (real Kotlin bodies); [Kotlin*] attrs synthesized per-assembly.
 info "emitting $out_name.dll" >&2
-dotnet "$ILEMIT_DLL" "$out_dir" "$out_name" "${ilemit_refs[@]}" "$cir"/*.cir.json
+dotnet "$ILEMIT_DLL" "$out_dir" "$out_name" --runtime-refs "$runtime_refs" "$cir"/*.cir.json
 
 # 5. optional retarget (for compile-time C# <Reference>).
-(( do_retarget )) && dotnet "$RETARGET_DLL" "$out_dir/$out_name.dll" --refs "$refs_semi" >/dev/null
+(( do_retarget )) && dotnet "$RETARGET_DLL" "$out_dir/$out_name.dll" --compile-refs "$retarget_compile_refs" >/dev/null
 
 # 6. exe scaffolding: copy copy-local refs + write a runtimeconfig so `dotnet <name>.dll` runs.
 if (( make_exe )); then

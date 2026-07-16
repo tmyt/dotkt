@@ -81,13 +81,12 @@ CP="$FE_KLIB"
 LAUNCHER="$KOTC"
 need_fe_klib
 build_tool ilemit; build_tool facadegen; build_tool retarget
-REFPACK="$(ls -d /usr/share/dotnet/packs/Microsoft.NETCore.App.Ref/*/ref/net10.0 2>/dev/null | sort -V | tail -1)"
-REFS="$(ls "$REFPACK"/*.dll | tr '\n' ';')"
+need_dotnet_reference_sets
 # The RUNTIME stdlib joins the reference set: a suspend-carrying DotKt lib references the coroutine runtime
 # (DotKt.Stdlib's kotlin.coroutines.Continuation) in its emitted CPS signatures, so retarget/facadegen must be
 # able to LOAD it to walk KLib's type surface (else facadegen skips every seed type -> empty meta -> the
 # consumer can't resolve the library). Harmless for the non-suspend sections (they reference no stdlib type).
-REFS="$REFS$STDLIB_RT_DLL;"
+REFS="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_RT_DLL");"
 
 # kotc emits bare kotlin.* type tokens (the frontend klib resolves the stdlib to our real kotlin.* declarations); bir2cir
 # lowers them to the CLR-codegen vocabulary ilemit consumes. So route every emit through bir2cir (mirrors verify-il) —
@@ -107,13 +106,13 @@ emit_il() {
 		# A user `--ref X` (a retargeted DotKt library) goes to ilemit AND — A2 (#61) — to bir2cir, which RESOLVES
 		# the facadegen-injected owner FQN against it to bind the .NET call SHAPE (clrStatic/clrInstance/…). Mirrors
 		# verify-il's il_emit: the RUNTIME stdlib (added below) is ilemit-only (bir2cir reads the REFERENCE stdlib).
-		if [[ "$1" == --ref ]]; then refs+=(--ref "$2"); usrrefs+=(--ref "$2"); shift 2; else birs+=("$1"); shift; fi
+		if [[ "$1" == --ref ]]; then refs+=("$2"); usrrefs+=("$2"); shift 2; else birs+=("$1"); shift; fi
 	done
-	[[ -f "$STDLIB_RT_DLL" ]] && refs+=(--ref "$STDLIB_RT_DLL")
+	[[ -f "$STDLIB_RT_DLL" ]] && refs+=("$STDLIB_RT_DLL")
 	local cir="$out.cir"; rm -rf "$cir"; mkdir -p "$cir"
-	local refarg=(); [[ -f "$STDLIB_REF_DLL" ]] && refarg=(--ref "$STDLIB_REF_DLL")
-	dotnet "$BIR2CIR_DLL" "$cir" "${refarg[@]}" ${usrrefs[@]+"${usrrefs[@]}"} "${birs[@]}" >/dev/null 2>&1 || true
-	dotnet "$ILEMIT_DLL" "$out" "$asm" "${refs[@]}" "$cir"/*.cir.json >/dev/null 2>&1 || true
+	local compile_refs; compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL" "$(refset_join "${usrrefs[@]}")")"
+	dotnet "$BIR2CIR_DLL" "$cir" --compile-refs "$compile_refs" "${birs[@]}" >/dev/null 2>&1 || true
+	dotnet "$ILEMIT_DLL" "$out" "$asm" --runtime-refs "$(refset_join "${refs[@]}")" "$cir"/*.cir.json >/dev/null 2>&1 || true
 	[[ -f "$STDLIB_RT_DLL" ]] && cp "$STDLIB_RT_DLL" "$out/" 2>/dev/null || true
 }
 
@@ -194,9 +193,9 @@ fun main() {
 EOF
 CLR_TYPES_METADATA="" "$LAUNCHER" "$M/lib" -no-stdlib -classpath "$CP" -d "$M/libbir" >/dev/null 2>&1 || true
 emit_il "$M/libil" MarkLib "$M/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$M/libil/MarkLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$RETARGET_DLL" "$M/libil/MarkLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
 "$LAUNCHER" --scan-imports --output "$M/imports.txt" "$M/app"/*.kt >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" --meta "$M/meta" --refs "$REFS$M/libil/MarkLib.dll" --import-list "$M/imports.txt" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$M/meta" --compile-refs "$REFS$M/libil/MarkLib.dll" --import-list "$M/imports.txt" >/dev/null 2>&1 || true
 CLR_TYPES_METADATA="$M/meta" "$LAUNCHER" "$M/app" -no-stdlib -classpath "$CP" -d "$M/appbir" >/dev/null 2>&1 || true
 emit_il "$M/appil" MarkApp --ref "$M/libil/MarkLib.dll" "$M/appbir"/*.bir.json
 cp "$M/libil/MarkLib.dll" "$M/appil/" 2>/dev/null || true
@@ -239,9 +238,9 @@ fun main() {
 EOF
 CLR_TYPES_METADATA="" "$LAUNCHER" "$CE/lib" -no-stdlib -classpath "$CP" -d "$CE/libbir" >/dev/null 2>&1 || true
 emit_il "$CE/libil" PaletteLib "$CE/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$CE/libil/PaletteLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$RETARGET_DLL" "$CE/libil/PaletteLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
 "$LAUNCHER" --scan-imports --output "$CE/imports.txt" "$CE/app"/*.kt >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" --meta "$CE/meta" --refs "$REFS$CE/libil/PaletteLib.dll" --import-list "$CE/imports.txt" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$CE/meta" --compile-refs "$REFS$CE/libil/PaletteLib.dll" --import-list "$CE/imports.txt" >/dev/null 2>&1 || true
 CLR_TYPES_METADATA="$CE/meta" "$LAUNCHER" "$CE/app" -no-stdlib -classpath "$CP" -d "$CE/appbir" >/dev/null 2>&1 || true
 emit_il "$CE/appil" PaletteApp --ref "$CE/libil/PaletteLib.dll" "$CE/appbir"/*.bir.json
 cp "$CE/libil/PaletteLib.dll" "$CE/appil/" 2>/dev/null || true
@@ -271,8 +270,8 @@ fun main() { println(pick(1)) }
 EOF
 CLR_TYPES_METADATA="" "$LAUNCHER" "$NO/lib" -no-stdlib -classpath "$CP" -d "$NO/libbir" >/dev/null 2>&1 || true
 emit_il "$NO/libil" NothingLib "$NO/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$NO/libil/NothingLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" --meta "$NO/meta" --refs "$REFS$NO/libil/NothingLib.dll" Boom LibKt >/dev/null 2>&1 || true
+dotnet "$RETARGET_DLL" "$NO/libil/NothingLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$NO/meta" --compile-refs "$REFS$NO/libil/NothingLib.dll" Boom LibKt >/dev/null 2>&1 || true
 CLR_TYPES_METADATA="$NO/meta" "$LAUNCHER" "$NO/app" -no-stdlib -classpath "$CP" -d "$NO/appbir" >/dev/null 2>&1 || true
 emit_il "$NO/appil" NothingApp --ref "$NO/libil/NothingLib.dll" "$NO/appbir"/*.bir.json
 cp "$NO/libil/NothingLib.dll" "$NO/appil/" 2>/dev/null || true
@@ -297,8 +296,8 @@ fun main() {
 EOF
 CLR_TYPES_METADATA="" "$LAUNCHER" "$NS/lib" -no-stdlib -classpath "$CP" -d "$NS/libbir" >/dev/null 2>&1 || true
 emit_il "$NS/libil" SNothingLib "$NS/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$NS/libil/SNothingLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" --meta "$NS/meta" --refs "$REFS$NS/libil/SNothingLib.dll" LibKt System.Threading.Monitor >/dev/null 2>&1 || true
+dotnet "$RETARGET_DLL" "$NS/libil/SNothingLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$NS/meta" --compile-refs "$REFS$NS/libil/SNothingLib.dll" LibKt System.Threading.Monitor >/dev/null 2>&1 || true
 write_coharness "$NS/app"
 CLR_TYPES_METADATA="$NS/meta" "$LAUNCHER" "$NS/app" -no-stdlib -classpath "$CP" -d "$NS/appbir" >/dev/null 2>&1 || true
 emit_il "$NS/appil" SNothingApp --ref "$NS/libil/SNothingLib.dll" "$NS/appbir"/*.bir.json
@@ -337,9 +336,9 @@ EOF
 # 1. compile + emit + retarget the library (the emit stamps [KotlinFunction]/[KotlinFileClass]).
 CLR_TYPES_METADATA="" "$LAUNCHER" "$R/lib" -no-stdlib -classpath "$CP" -d "$R/libbir" >/dev/null 2>&1 || true
 emit_il "$R/libil" KLib "$R/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$R/libil/KLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$RETARGET_DLL" "$R/libil/KLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
 # 2. facadegen --meta reads the attributes back into the injection metadata.
-dotnet "$FACADEGEN_DLL" --meta "$R/k.meta" --refs "$REFS$R/libil/KLib.dll" Vec LibKt System.Threading.Monitor >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$R/k.meta" --compile-refs "$REFS$R/libil/KLib.dll" Vec LibKt System.Threading.Monitor >/dev/null 2>&1 || true
 write_coharness "$R/app"
 # 3. compile the consumer WITH the metadata (the injector restores infix/operator/suspend/top-level on FIR).
 CLR_TYPES_METADATA="$R/k.meta" "$LAUNCHER" "$R/app" -no-stdlib -classpath "$CP" -d "$R/appbir" >/dev/null 2>&1 || true
@@ -406,9 +405,9 @@ fun main() {
 EOF
 CLR_TYPES_METADATA="" "$LAUNCHER" "$G/lib" -no-stdlib -classpath "$CP" -d "$G/libbir" >/dev/null 2>&1 || true
 emit_il "$G/libil" GeomLib "$G/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$G/libil/GeomLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$RETARGET_DLL" "$G/libil/GeomLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
 "$LAUNCHER" --scan-imports --output "$G/imports.txt" "$G/app"/*.kt >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" --meta "$G/meta" --refs "$REFS$G/libil/GeomLib.dll" --import-list "$G/imports.txt" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$G/meta" --compile-refs "$REFS$G/libil/GeomLib.dll" --import-list "$G/imports.txt" >/dev/null 2>&1 || true
 CLR_TYPES_METADATA="$G/meta" "$LAUNCHER" "$G/app" -no-stdlib -classpath "$CP" -d "$G/appbir" >/dev/null 2>&1 || true
 emit_il "$G/appil" GeomApp --ref "$G/libil/GeomLib.dll" "$G/appbir"/*.bir.json
 cp "$G/libil/GeomLib.dll" "$G/appil/" 2>/dev/null || true
@@ -471,8 +470,8 @@ fun main() {
 EOF
 CLR_TYPES_METADATA="" "$LAUNCHER" "$GG/lib" -no-stdlib -classpath "$CP" -d "$GG/libbir" >/dev/null 2>&1 || true
 emit_il "$GG/libil" KLib "$GG/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$GG/libil/KLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" --meta "$GG/k.meta" --refs "$REFS$GG/libil/KLib.dll" Box Pair2 Holder LibKt System.Threading.Monitor >/dev/null 2>&1 || true
+dotnet "$RETARGET_DLL" "$GG/libil/KLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$GG/k.meta" --compile-refs "$REFS$GG/libil/KLib.dll" Box Pair2 Holder LibKt System.Threading.Monitor >/dev/null 2>&1 || true
 write_coharness "$GG/app"
 CLR_TYPES_METADATA="$GG/k.meta" "$LAUNCHER" "$GG/app" -no-stdlib -classpath "$CP" -d "$GG/appbir" >/dev/null 2>&1 || true
 emit_il "$GG/appil" KApp --ref "$GG/libil/KLib.dll" "$GG/appbir"/*.bir.json
@@ -508,8 +507,8 @@ fun main() {
 EOF
 CLR_TYPES_METADATA="" "$LAUNCHER" "$HF/lib" -no-stdlib -classpath "$CP" -d "$HF/libbir" >/dev/null 2>&1 || true
 emit_il "$HF/libil" KLib "$HF/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$HF/libil/KLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" --meta "$HF/k.meta" --refs "$REFS$HF/libil/KLib.dll" Box Wrap LibKt >/dev/null 2>&1 || true
+dotnet "$RETARGET_DLL" "$HF/libil/KLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$HF/k.meta" --compile-refs "$REFS$HF/libil/KLib.dll" Box Wrap LibKt >/dev/null 2>&1 || true
 CLR_TYPES_METADATA="$HF/k.meta" "$LAUNCHER" "$HF/app" -no-stdlib -classpath "$CP" -d "$HF/appbir" >/dev/null 2>&1 || true
 emit_il "$HF/appil" KApp --ref "$HF/libil/KLib.dll" "$HF/appbir"/*.bir.json
 cp "$HF/libil/KLib.dll" "$HF/appil/" 2>/dev/null || true
@@ -555,9 +554,9 @@ fun main() {
 EOF
 CLR_TYPES_METADATA="" "$LAUNCHER" "$RL/lib" -no-stdlib -classpath "$CP" -d "$RL/libbir" >/dev/null 2>&1 || true
 emit_il "$RL/libil" UiLib "$RL/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$RL/libil/UiLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$RETARGET_DLL" "$RL/libil/UiLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
 "$LAUNCHER" --scan-imports --output "$RL/imports.txt" "$RL/app"/*.kt >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" --meta "$RL/meta" --refs "$REFS$RL/libil/UiLib.dll" --import-list "$RL/imports.txt" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$RL/meta" --compile-refs "$REFS$RL/libil/UiLib.dll" --import-list "$RL/imports.txt" >/dev/null 2>&1 || true
 CLR_TYPES_METADATA="$RL/meta" "$LAUNCHER" "$RL/app" -no-stdlib -classpath "$CP" -d "$RL/appbir" >/dev/null 2>&1 || true
 emit_il "$RL/appil" UiApp --ref "$RL/libil/UiLib.dll" "$RL/appbir"/*.bir.json
 cp "$RL/libil/UiLib.dll" "$RL/appil/" 2>/dev/null || true
@@ -596,8 +595,8 @@ fun main() {
 EOF
 CLR_TYPES_METADATA="" "$LAUNCHER" "$ME/lib" -no-stdlib -classpath "$CP" -d "$ME/libbir" >/dev/null 2>&1 || true
 emit_il "$ME/libil" KLib "$ME/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$ME/libil/KLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" --meta "$ME/k.meta" --refs "$REFS$ME/libil/KLib.dll" Box Lib >/dev/null 2>&1 || true
+dotnet "$RETARGET_DLL" "$ME/libil/KLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$ME/k.meta" --compile-refs "$REFS$ME/libil/KLib.dll" Box Lib >/dev/null 2>&1 || true
 CLR_TYPES_METADATA="$ME/k.meta" "$LAUNCHER" "$ME/app" -no-stdlib -classpath "$CP" -d "$ME/appbir" >/dev/null 2>&1 || true
 emit_il "$ME/appil" KApp --ref "$ME/libil/KLib.dll" "$ME/appbir"/*.bir.json
 cp "$ME/libil/KLib.dll" "$ME/appil/" 2>/dev/null || true
@@ -647,8 +646,8 @@ fun main() {
 EOF
 CLR_TYPES_METADATA="" "$LAUNCHER" "$MP/lib" -no-stdlib -classpath "$CP" -d "$MP/libbir" >/dev/null 2>&1 || true
 emit_il "$MP/libil" KLib "$MP/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$MP/libil/KLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" --meta "$MP/k.meta" --refs "$REFS$MP/libil/KLib.dll" Box Lib System.Threading.Monitor >/dev/null 2>&1 || true
+dotnet "$RETARGET_DLL" "$MP/libil/KLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$MP/k.meta" --compile-refs "$REFS$MP/libil/KLib.dll" Box Lib System.Threading.Monitor >/dev/null 2>&1 || true
 write_coharness "$MP/app"
 CLR_TYPES_METADATA="$MP/k.meta" "$LAUNCHER" "$MP/app" -no-stdlib -classpath "$CP" -d "$MP/appbir" >/dev/null 2>&1 || true
 emit_il "$MP/appil" KApp --ref "$MP/libil/KLib.dll" "$MP/appbir"/*.bir.json
@@ -693,8 +692,8 @@ fun main() {
 EOF
 CLR_TYPES_METADATA="" "$LAUNCHER" "$DA/lib" -no-stdlib -classpath "$CP" -d "$DA/libbir" >/dev/null 2>&1 || true
 emit_il "$DA/libil" KLib "$DA/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$DA/libil/KLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" --meta "$DA/k.meta" --refs "$REFS$DA/libil/KLib.dll" Pt LibKt >/dev/null 2>&1 || true
+dotnet "$RETARGET_DLL" "$DA/libil/KLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$DA/k.meta" --compile-refs "$REFS$DA/libil/KLib.dll" Pt LibKt >/dev/null 2>&1 || true
 CLR_TYPES_METADATA="$DA/k.meta" "$LAUNCHER" "$DA/app" -no-stdlib -classpath "$CP" -d "$DA/appbir" >/dev/null 2>&1 || true
 emit_il "$DA/appil" KApp --ref "$DA/libil/KLib.dll" "$DA/appbir"/*.bir.json
 cp "$DA/libil/KLib.dll" "$DA/appil/" 2>/dev/null || true
@@ -732,9 +731,9 @@ fun main() {
 EOF
 CLR_TYPES_METADATA="" "$LAUNCHER" "$NC/lib" -no-stdlib -classpath "$CP" -d "$NC/libbir" >/dev/null 2>&1 || true
 emit_il "$NC/libil" UiLib "$NC/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$NC/libil/UiLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$RETARGET_DLL" "$NC/libil/UiLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
 "$LAUNCHER" --scan-imports --output "$NC/imports.txt" "$NC/app"/*.kt >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" --meta "$NC/meta" --refs "$REFS$NC/libil/UiLib.dll" --import-list "$NC/imports.txt" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$NC/meta" --compile-refs "$REFS$NC/libil/UiLib.dll" --import-list "$NC/imports.txt" >/dev/null 2>&1 || true
 CLR_TYPES_METADATA="$NC/meta" "$LAUNCHER" "$NC/app" -no-stdlib -classpath "$CP" -d "$NC/appbir" >/dev/null 2>&1 || true
 emit_il "$NC/appil" UiApp --ref "$NC/libil/UiLib.dll" "$NC/appbir"/*.bir.json
 cp "$NC/libil/UiLib.dll" "$NC/appil/" 2>/dev/null || true
@@ -782,8 +781,8 @@ fun main() {
 EOF
 CLR_TYPES_METADATA="" "$LAUNCHER" "$SF/lib" -no-stdlib -classpath "$CP" -d "$SF/libbir" >/dev/null 2>&1 || true
 emit_il "$SF/libil" HofLib "$SF/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$SF/libil/HofLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" --meta "$SF/k.meta" --refs "$REFS$SF/libil/HofLib.dll" hof.LibKt >/dev/null 2>&1 || true
+dotnet "$RETARGET_DLL" "$SF/libil/HofLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$SF/k.meta" --compile-refs "$REFS$SF/libil/HofLib.dll" hof.LibKt >/dev/null 2>&1 || true
 CLR_TYPES_METADATA="$SF/k.meta" "$LAUNCHER" "$SF/app" -no-stdlib -classpath "$CP" -d "$SF/appbir" >/dev/null 2>&1 || true
 emit_il "$SF/appil" HofApp --ref "$SF/libil/HofLib.dll" "$SF/appbir"/*.bir.json
 cp "$SF/libil/HofLib.dll" "$SF/appil/" 2>/dev/null || true
@@ -841,8 +840,8 @@ fun main() {
 EOF
 CLR_TYPES_METADATA="" "$LAUNCHER" "$SR/lib" -no-stdlib -classpath "$CP" -d "$SR/libbir" >/dev/null 2>&1 || true
 emit_il "$SR/libil" Hof2Lib "$SR/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$SR/libil/Hof2Lib.dll" --refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" --meta "$SR/k.meta" --refs "$REFS$SR/libil/Hof2Lib.dll" hof2.LibKt >/dev/null 2>&1 || true
+dotnet "$RETARGET_DLL" "$SR/libil/Hof2Lib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$SR/k.meta" --compile-refs "$REFS$SR/libil/Hof2Lib.dll" hof2.LibKt >/dev/null 2>&1 || true
 CLR_TYPES_METADATA="$SR/k.meta" "$LAUNCHER" "$SR/app" -no-stdlib -classpath "$CP" -d "$SR/appbir" >/dev/null 2>&1 || true
 emit_il "$SR/appil" Hof2App --ref "$SR/libil/Hof2Lib.dll" "$SR/appbir"/*.bir.json
 cp "$SR/libil/Hof2Lib.dll" "$SR/appil/" 2>/dev/null || true
@@ -879,8 +878,8 @@ fun main() {
 EOF
 CLR_TYPES_METADATA="" "$LAUNCHER" "$SV/lib" -no-stdlib -classpath "$CP" -d "$SV/libbir" >/dev/null 2>&1 || true
 emit_il "$SV/libil" TlvalLib "$SV/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$SV/libil/TlvalLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" --meta "$SV/k.meta" --refs "$REFS$SV/libil/TlvalLib.dll" tlval.LibKt tlval.Point >/dev/null 2>&1 || true
+dotnet "$RETARGET_DLL" "$SV/libil/TlvalLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$SV/k.meta" --compile-refs "$REFS$SV/libil/TlvalLib.dll" tlval.LibKt tlval.Point >/dev/null 2>&1 || true
 CLR_TYPES_METADATA="$SV/k.meta" "$LAUNCHER" "$SV/app" -no-stdlib -classpath "$CP" -d "$SV/appbir" >/dev/null 2>&1 || true
 emit_il "$SV/appil" TlvalApp --ref "$SV/libil/TlvalLib.dll" "$SV/appbir"/*.bir.json
 cp "$SV/libil/TlvalLib.dll" "$SV/appil/" 2>/dev/null || true
@@ -936,8 +935,8 @@ fun main() {
 EOF
 CLR_TYPES_METADATA="" "$LAUNCHER" "$CA/lib" -no-stdlib -classpath "$CP" -d "$CA/libbir" >/dev/null 2>&1 || true
 emit_il "$CA/libil" CpropLib "$CA/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$CA/libil/CpropLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" --meta "$CA/k.meta" --refs "$REFS$CA/libil/CpropLib.dll" cprop.LibKt cprop.Host >/dev/null 2>&1 || true
+dotnet "$RETARGET_DLL" "$CA/libil/CpropLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$CA/k.meta" --compile-refs "$REFS$CA/libil/CpropLib.dll" cprop.LibKt cprop.Host >/dev/null 2>&1 || true
 CLR_TYPES_METADATA="$CA/k.meta" "$LAUNCHER" "$CA/app" -no-stdlib -classpath "$CP" -d "$CA/appbir" >/dev/null 2>&1 || true
 emit_il "$CA/appil" CpropApp --ref "$CA/libil/CpropLib.dll" "$CA/appbir"/*.bir.json
 cp "$CA/libil/CpropLib.dll" "$CA/appil/" 2>/dev/null || true
@@ -983,8 +982,8 @@ fun main() {
 EOF
 CLR_TYPES_METADATA="" "$LAUNCHER" "$NRT/lib" -no-stdlib -classpath "$CP" -d "$NRT/libbir" >/dev/null 2>&1 || true
 emit_il "$NRT/libil" NrtLib "$NRT/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$NRT/libil/NrtLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" --meta "$NRT/k.meta" --refs "$REFS$NRT/libil/NrtLib.dll" LibKt >/dev/null 2>&1 || true
+dotnet "$RETARGET_DLL" "$NRT/libil/NrtLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$NRT/k.meta" --compile-refs "$REFS$NRT/libil/NrtLib.dll" LibKt >/dev/null 2>&1 || true
 CLR_TYPES_METADATA="$NRT/k.meta" "$LAUNCHER" "$NRT/app" -no-stdlib -classpath "$CP" -d "$NRT/appbir" >/dev/null 2>&1 || true
 emit_il "$NRT/appil" NrtApp --ref "$NRT/libil/NrtLib.dll" "$NRT/appbir"/*.bir.json
 cp "$NRT/libil/NrtLib.dll" "$NRT/appil/" 2>/dev/null || true
@@ -1016,8 +1015,8 @@ fun main() {
 EOF
 CLR_TYPES_METADATA="" "$LAUNCHER" "$UB/lib" -no-stdlib -classpath "$CP" -d "$UB/libbir" >/dev/null 2>&1 || true
 emit_il "$UB/libil" UbLib "$UB/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$UB/libil/UbLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" --meta "$UB/k.meta" --refs "$REFS$UB/libil/UbLib.dll" LibKt >/dev/null 2>&1 || true
+dotnet "$RETARGET_DLL" "$UB/libil/UbLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$UB/k.meta" --compile-refs "$REFS$UB/libil/UbLib.dll" LibKt >/dev/null 2>&1 || true
 CLR_TYPES_METADATA="$UB/k.meta" "$LAUNCHER" "$UB/app" -no-stdlib -classpath "$CP" -d "$UB/appbir" >/dev/null 2>&1 || true
 emit_il "$UB/appil" UbApp --ref "$UB/libil/UbLib.dll" "$UB/appbir"/*.bir.json
 cp "$UB/libil/UbLib.dll" "$UB/appil/" 2>/dev/null || true
@@ -1049,8 +1048,8 @@ fun main() {
 EOF
 CLR_TYPES_METADATA="" "$LAUNCHER" "$GIE/lib" -no-stdlib -classpath "$CP" -d "$GIE/libbir" >/dev/null 2>&1 || true
 emit_il "$GIE/libil" KLib "$GIE/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$GIE/libil/KLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" --meta "$GIE/k.meta" --refs "$REFS$GIE/libil/KLib.dll" Cell LibKt >/dev/null 2>&1 || true
+dotnet "$RETARGET_DLL" "$GIE/libil/KLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$GIE/k.meta" --compile-refs "$REFS$GIE/libil/KLib.dll" Cell LibKt >/dev/null 2>&1 || true
 CLR_TYPES_METADATA="$GIE/k.meta" "$LAUNCHER" "$GIE/app" -no-stdlib -classpath "$CP" -d "$GIE/appbir" >/dev/null 2>&1 || true
 emit_il "$GIE/appil" KApp --ref "$GIE/libil/KLib.dll" "$GIE/appbir"/*.bir.json
 cp "$GIE/libil/KLib.dll" "$GIE/appil/" 2>/dev/null || true
@@ -1078,8 +1077,8 @@ fun main() {
 EOF
 CLR_TYPES_METADATA="" "$LAUNCHER" "$GOP/lib" -no-stdlib -classpath "$CP" -d "$GOP/libbir" >/dev/null 2>&1 || true
 emit_il "$GOP/libil" KLib "$GOP/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$GOP/libil/KLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" --meta "$GOP/k.meta" --refs "$REFS$GOP/libil/KLib.dll" Arr LibKt >/dev/null 2>&1 || true
+dotnet "$RETARGET_DLL" "$GOP/libil/KLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$GOP/k.meta" --compile-refs "$REFS$GOP/libil/KLib.dll" Arr LibKt >/dev/null 2>&1 || true
 CLR_TYPES_METADATA="$GOP/k.meta" "$LAUNCHER" "$GOP/app" -no-stdlib -classpath "$CP" -d "$GOP/appbir" >/dev/null 2>&1 || true
 emit_il "$GOP/appil" KApp --ref "$GOP/libil/KLib.dll" "$GOP/appbir"/*.bir.json
 cp "$GOP/libil/KLib.dll" "$GOP/appil/" 2>/dev/null || true
@@ -1107,8 +1106,8 @@ fun main() {
 EOF
 CLR_TYPES_METADATA="" "$LAUNCHER" "$NR/lib" -no-stdlib -classpath "$CP" -d "$NR/libbir" >/dev/null 2>&1 || true
 emit_il "$NR/libil" NothLib "$NR/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$NR/libil/NothLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" --meta "$NR/k.meta" --refs "$REFS$NR/libil/NothLib.dll" fx.LibKt >/dev/null 2>&1 || true
+dotnet "$RETARGET_DLL" "$NR/libil/NothLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$NR/k.meta" --compile-refs "$REFS$NR/libil/NothLib.dll" fx.LibKt >/dev/null 2>&1 || true
 CLR_TYPES_METADATA="$NR/k.meta" "$LAUNCHER" "$NR/app" -no-stdlib -classpath "$CP" -d "$NR/appbir" >/dev/null 2>&1 || true
 emit_il "$NR/appil" NothApp --ref "$NR/libil/NothLib.dll" "$NR/appbir"/*.bir.json
 cp "$NR/libil/NothLib.dll" "$NR/appil/" 2>/dev/null || true
@@ -1152,9 +1151,9 @@ fun main() {
 EOF
 CLR_TYPES_METADATA="" "$LAUNCHER" "$VD/lib" -no-stdlib -classpath "$CP" -d "$VD/libbir" >/dev/null 2>&1 || true
 emit_il "$VD/libil" AnimalLib "$VD/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$VD/libil/AnimalLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$RETARGET_DLL" "$VD/libil/AnimalLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
 "$LAUNCHER" --scan-imports --output "$VD/imports.txt" "$VD/app"/*.kt >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" --meta "$VD/meta" --refs "$REFS$VD/libil/AnimalLib.dll" --import-list "$VD/imports.txt" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$VD/meta" --compile-refs "$REFS$VD/libil/AnimalLib.dll" --import-list "$VD/imports.txt" >/dev/null 2>&1 || true
 CLR_TYPES_METADATA="$VD/meta" "$LAUNCHER" "$VD/app" -no-stdlib -classpath "$CP" -d "$VD/appbir" >/dev/null 2>&1 || true
 # ROOT-fix guard: every callInstance on the reinjected dispatch.Animal owner carries a `virtual` flag (kotc #139).
 # A node WITH the flag serializes as `{"k":"callInstance","virtual":<b>,"ownerType":{...dispatch.Animal}}`; a
@@ -1170,17 +1169,15 @@ run_app vdactual1 "$VD/appil/AnimalApp.dll"
 # (2) FALLBACK path: bir2cir NOT given the DotKt --ref, so it CANNOT reshape the callInstance -> the raw node reaches
 # ilemit (which still resolves the owner off its own --ref). This is the exact #139 crash path, now correct via `virtual`.
 cir2="$VD/appil2.cir"; rm -rf "$cir2"; mkdir -p "$cir2"
-vd_refarg=(); [[ -f "$STDLIB_REF_DLL" ]] && vd_refarg=(--ref "$STDLIB_REF_DLL")
-dotnet "$BIR2CIR_DLL" "$cir2" "${vd_refarg[@]}" "$VD/appbir"/*.bir.json >/dev/null 2>&1 || true
-vd_ilref=(); [[ -f "$STDLIB_RT_DLL" ]] && vd_ilref=(--ref "$STDLIB_RT_DLL")
-dotnet "$ILEMIT_DLL" "$VD/appil2" AnimalApp "${vd_ilref[@]}" --ref "$VD/libil/AnimalLib.dll" "$cir2"/*.cir.json >/dev/null 2>&1 || true
+dotnet "$BIR2CIR_DLL" "$cir2" --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL")" "$VD/appbir"/*.bir.json >/dev/null 2>&1 || true
+dotnet "$ILEMIT_DLL" "$VD/appil2" AnimalApp --runtime-refs "$(refset_join "$STDLIB_RT_DLL" "$VD/libil/AnimalLib.dll")" "$cir2"/*.cir.json >/dev/null 2>&1 || true
 [[ -f "$STDLIB_RT_DLL" ]] && cp "$STDLIB_RT_DLL" "$VD/appil2/" 2>/dev/null || true
 cp "$VD/libil/AnimalLib.dll" "$VD/appil2/" 2>/dev/null || true
 run_app vdactual2 "$VD/appil2/AnimalApp.dll"
 # ilverify both emitted assemblies (formal call/callvirt-selection verification).
 vd_ilv_ok=1
 VD_ILV="$(find "$HOME/.dotnet" -name 'ILVerify.dll' 2>/dev/null | head -1)"
-VD_REFDIR="$(dirname "$(find /usr/share/dotnet/shared/Microsoft.NETCore.App -name System.Private.CoreLib.dll 2>/dev/null | sort | tail -1)")"
+VD_REFDIR="$DOTNET_RUNTIME_DIR"
 if [[ -n "$VD_ILV" && -d "$VD_REFDIR" ]]; then
 	for dll in "$VD/appil/AnimalApp.dll" "$VD/appil2/AnimalApp.dll"; do
 		[[ -f "$dll" ]] || { vd_ilv_ok=0; continue; }
@@ -1215,9 +1212,9 @@ fun main() {
 EOF
 CLR_TYPES_METADATA="" "$LAUNCHER" "$DF/lib" -no-stdlib -classpath "$CP" -d "$DF/libbir" >/dev/null 2>&1 || true
 emit_il "$DF/libil" DemoLib "$DF/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$DF/libil/DemoLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$RETARGET_DLL" "$DF/libil/DemoLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
 "$LAUNCHER" --scan-imports --output "$DF/imports.txt" "$DF/app"/*.kt >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" --meta "$DF/meta" --refs "$REFS$DF/libil/DemoLib.dll" --import-list "$DF/imports.txt" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$DF/meta" --compile-refs "$REFS$DF/libil/DemoLib.dll" --import-list "$DF/imports.txt" >/dev/null 2>&1 || true
 CLR_TYPES_METADATA="$DF/meta" "$LAUNCHER" "$DF/app" -no-stdlib -classpath "$CP" -d "$DF/appbir" >/dev/null 2>&1 || true
 emit_il "$DF/appil" DemoApp --ref "$DF/libil/DemoLib.dll" "$DF/appbir"/*.bir.json
 cp "$DF/libil/DemoLib.dll" "$DF/appil/" 2>/dev/null || true

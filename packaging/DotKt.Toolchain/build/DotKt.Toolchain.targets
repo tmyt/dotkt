@@ -19,6 +19,21 @@
     <CopyLocalLockFileAssemblies Condition="'$(CopyLocalLockFileAssemblies)' == ''">true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
 
+  <!-- Resolve references ONCE.  MSBuild/RAR owns selection and conflict resolution; the DotKt tools consume these
+       exact files and never reconstruct the graph by scanning neighbouring directories.  The runtime set is
+       narrowed only to DLL-shaped assets to avoid passing pdb/json files; managed-vs-native is decided from the PE
+       CLI header by the shared tool-side reference catalog. -->
+  <Target Name="DotKtResolveReferenceSets" DependsOnTargets="ResolveReferences">
+    <ItemGroup>
+      <_DotKtCompileReference Include="@(ReferencePath)" />
+      <_DotKtRuntimeReference Include="@(ReferenceCopyLocalPaths)" Condition="'%(Extension)' == '.dll'" />
+    </ItemGroup>
+    <PropertyGroup>
+      <_DotKtCompileReferences>@(_DotKtCompileReference->'%(FullPath)', ';')</_DotKtCompileReferences>
+      <_DotKtRuntimeReferences>@(_DotKtRuntimeReference->'%(FullPath)', ';')</_DotKtRuntimeReferences>
+    </PropertyGroup>
+  </Target>
+
   <!-- MPP (#119): opt-in multiplatform (common `expect` + CLR `actual`) for an ordinary user project.
        When <DotKtMultiplatform>true</DotKtMultiplatform>, sources under a `common/` directory are the
        common (expect-carrying, platform-agnostic) fragment — matching both the greeter experiment's
@@ -37,7 +52,7 @@
   <!-- C-2: import-driven, façade-FREE .NET type injection. The .kt sources' imports are extracted with the real
        Kotlin parser (PSI) and those .NET types injected straight into FIR (no .kt produced). @(ReferencePath)
        (BCL + PackageReference/Reference) makes any referenced assembly's types injectable. -->
-  <Target Name="DotKtInjectTypes" BeforeTargets="KotlinCompile" DependsOnTargets="ResolveReferences"
+  <Target Name="DotKtInjectTypes" BeforeTargets="KotlinCompile" DependsOnTargets="DotKtResolveReferenceSets"
           Condition="'@(KotlinCompile)' != ''">
     <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(DotKtTypeMeta)'))" />
     <!-- 1. Extract .NET imports via the compiler's PSI pass (robust where the old regex was not — item 5). -->
@@ -49,7 +64,7 @@
          operator, infix — that facadegen cannot fully restore. Feeding stdlib.dll to facadegen produced degraded and
          DUPLICATE kotlin.* symbols (e.g. a non-reified arrayOf colliding with the klib's reified one -> ambiguity). -->
     <Message Importance="high" Text="DotKt: resolving .NET types (import list + @(DotKtImport))" />
-    <Exec Command="dotnet &quot;$(DotKtFacadeGen)&quot; --meta &quot;$(DotKtTypeMeta)&quot; --refs &quot;@(ReferencePath->'%(FullPath)', ';')&quot; @(DotKtImport->'%(Identity)', ' ') --import-list &quot;$(DotKtImportList)&quot;" />
+    <Exec Command="dotnet &quot;$(DotKtFacadeGen)&quot; --meta &quot;$(DotKtTypeMeta)&quot; --compile-refs &quot;$(_DotKtCompileReferences)&quot; @(DotKtImport->'%(Identity)', ' ') --import-list &quot;$(DotKtImportList)&quot;" />
   </Target>
 
   <!-- Compile every .kt to BIR. CLR_TYPES_METADATA tells the FIR injector which façade-free .NET types to synthesize. -->
@@ -88,27 +103,12 @@
   <Target Name="DotKtBir2Cir" BeforeTargets="DotKtIlEmit" DependsOnTargets="KotlinCompile">
     <ItemGroup>
       <_DotKtBir Include="$(DotKtOut)/*.bir.json" />
-      <!-- Every NON-framework compile reference, taken from @(ReferencePath): the @Clr-metadata REFERENCE stdlib
-           (DotKt.Private.Stdlib — bir2cir reads its @ClrTypeAlias/@ClrIntrinsic labels to lower kotlin.*, the same ref
-           scripts/verify-il.sh hands it), the runtime stdlib, AND every user PackageReference / ProjectReference /
-           explicit <Reference> a call may cross into (an MPP/kotlinx-style DotKt library, a .NET package). Framework /
-           targeting-pack assemblies (System.*, %(FrameworkReferenceName)=Microsoft.NETCore.App) are excluded — bir2cir
-           resolves the BCL by runtime reflection. Reading @(ReferencePath) (not @(ReferenceCopyLocalPaths)) is what
-           reaches a Library's transitive PackageReference dlls: for OutputType=Library a package runtime dll is NOT
-           copy-local (the consuming app pulls it), so it never appears in the copy-local set (#132). -->
-      <!-- Exclude NATIVE runtime assets (a package's runtimes/<rid>/native/*.dll — libSkiaSharp.dll, av_libglesv2.dll,
-           …). They carry no CLI metadata, so binding them is meaningless; bir2cir would try to load them as managed
-           assemblies (task #138, Avalonia). %(AssetType)=='native' catches copy-local native items; the
-           runtimes/<rid>/native/ path check (both segments required, backslash-normalized for Windows) catches any that
-           reach @(ReferencePath) via a package's custom RID targets — anchored on /runtimes/ so a legit managed ref
-           merely sitting under a directory named `native` is NOT dropped. bir2cir's ref loader ALSO skips a non-managed
-           PE defensively — this just keeps them off the command line. -->
-      <_DotKtBir2CirRef Include="@(ReferencePath)" Condition="'%(ReferencePath.FrameworkReferenceName)' == '' and '%(ReferencePath.AssetType)' != 'native' and !($([System.String]::Copy('%(ReferencePath.FullPath)').Replace('\','/').Contains('/runtimes/')) and $([System.String]::Copy('%(ReferencePath.FullPath)').Replace('\','/').Contains('/native/')))" />
+      <!-- Inputs only.  The exact compile-reference universe was materialized by DotKtResolveReferenceSets. -->
     </ItemGroup>
     <RemoveDir Directories="$(DotKtCirOut)" />
     <MakeDir Directories="$(DotKtCirOut)" />
     <Message Importance="high" Text="DotKt: lowering BIR -> CIR" />
-    <Exec Command="dotnet &quot;$(DotKtBir2Cir)&quot; &quot;$(DotKtCirOut)&quot; @(_DotKtBir2CirRef->'--ref &quot;%(FullPath)&quot;', ' ') @(_DotKtBir->'&quot;%(FullPath)&quot;', ' ')" />
+    <Exec Command="dotnet &quot;$(DotKtBir2Cir)&quot; &quot;$(DotKtCirOut)&quot; --compile-refs &quot;$(_DotKtCompileReferences)&quot; @(_DotKtBir->'&quot;%(FullPath)&quot;', ' ')" />
   </Target>
 
   <!-- After CoreCompile, overwrite csc's (placeholder) assembly with one emitted directly as CIL from CIR. The
@@ -124,11 +124,6 @@
            never copy-local and never reaches ilemit — correct: its throw-stub bodies are a pure metadata surface for
            bir2cir. Framework/targeting-pack assemblies (System.*) are never copy-local either — ilemit resolves the BCL
            by runtime reflection. CopyLocalLockFileAssemblies=true (set above) makes this set complete for a Library. -->
-      <!-- NATIVE runtime assets (runtimes/<rid>/native/*.dll) copy local but carry no managed metadata; keep them off
-           ilemit's reference list (task #138). %(AssetType)=='native' is the canonical discriminator for the copy-local
-           set; the runtimes/<rid>/native/ path check (both segments required) is belt-and-suspenders — anchored on
-           /runtimes/ so a legit managed ref under a directory named `native` is not dropped. -->
-      <_DotKtRef Include="@(ReferenceCopyLocalPaths)" Condition="'%(Extension)' == '.dll' and '%(ReferenceCopyLocalPaths.AssetType)' != 'native' and !($([System.String]::Copy('%(FullPath)').Replace('\','/').Contains('/runtimes/')) and $([System.String]::Copy('%(FullPath)').Replace('\','/').Contains('/native/')))" />
       <!-- The [Kotlin*] round-trip metadata attributes ilemit stamps so this library round-trips (is consumable AS
            KOTLIN by another .ktproj — [KotlinFileClass] restores a file facade's statics as top-level functions,
            [KotlinFunction] restores infix/operator/suspend, etc.) are SYNTHESIZED PER-ASSEMBLY by ilemit (embedded
@@ -137,7 +132,7 @@
            DotKt.Runtime reference is needed (that pre-stdlib runtime DLL is retired). -->
     </ItemGroup>
     <Message Importance="high" Text="DotKt: emitting CIL from CIR -> $(TargetName)$(TargetExt)" />
-    <Exec Command="dotnet &quot;$(DotKtIlEmit)&quot; &quot;$(IntermediateOutputPath.TrimEnd('/').TrimEnd('\'))&quot; &quot;$(TargetName)&quot; @(_DotKtRef->'--ref &quot;%(FullPath)&quot;', ' ') @(_DotKtCir->'&quot;%(FullPath)&quot;', ' ')" />
+    <Exec Command="dotnet &quot;$(DotKtIlEmit)&quot; &quot;$(IntermediateOutputPath.TrimEnd('/').TrimEnd('\'))&quot; &quot;$(TargetName)&quot; --runtime-refs &quot;$(_DotKtRuntimeReferences)&quot; @(_DotKtCir->'&quot;%(FullPath)&quot;', ' ')" />
   </Target>
 
   <!-- REVERSE interop (R-1): repoint the emitted dll's BCL TypeRefs off the single System.Private.CoreLib onto the
@@ -147,6 +142,6 @@
   <Target Name="DotKtRetarget" AfterTargets="DotKtIlEmit"
           Condition="'$(DotKtRetarget)' != 'false'">
     <Message Importance="high" Text="DotKt: retargeting BCL refs for compile-time &lt;Reference&gt; -> $(TargetName)$(TargetExt)" />
-    <Exec Command="dotnet &quot;$(DotKtRetargetTool)&quot; &quot;$(IntermediateOutputPath)$(TargetName)$(TargetExt)&quot; --refs &quot;@(ReferencePath->'%(FullPath)', ';')&quot;" />
+    <Exec Command="dotnet &quot;$(DotKtRetargetTool)&quot; &quot;$(IntermediateOutputPath)$(TargetName)$(TargetExt)&quot; --compile-refs &quot;$(_DotKtCompileReferences)&quot;" />
   </Target>
 </Project>

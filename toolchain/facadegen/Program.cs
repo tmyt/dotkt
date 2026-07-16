@@ -2,34 +2,49 @@
 // call those .NET types FAÇADE-FREE (`import System.X` resolves directly; the compiler's FIR injector consumes the
 // metadata).
 //
-//   facadegen --meta <outFile> [--refs a.dll;b.dll;...] <Type.Full.Name>... [--import-list <file>]
+//   facadegen --meta <outFile> [--compile-refs a.dll;b.dll;...] <Type.Full.Name>... [--import-list <file>]
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using DotKt.Toolchain;
 using TN = DotKt.Bir.TypeNode;
 
 static class FacadeGen
 {
     static int Main(string[] args)
     {
+        try { return Run(args); }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(ex.Message);
+            return 1;
+        }
+    }
+
+    static int Run(string[] args)
+    {
         if (args.Length < 2)
         {
-            Console.Error.WriteLine("usage: facadegen --meta <outFile> [--refs a.dll;...] <TypeFullName>... [--import-list <file>]");
+            Console.Error.WriteLine("usage: facadegen --meta <outFile> [--compile-refs a.dll;...] <TypeFullName>... [--import-list <file>]");
             return 1;
         }
         // S5 generalization: emit a compact metadata file consumed by the compiler's FIR injector,
         // so .NET types resolve façade-free. Same reflection as the .kt path, different sink.
-        // I2: `--refs <a.dll;b.dll;...>` lets types resolve from arbitrary referenced assemblies
-        // (Avalonia/WPF/NuGet), not just the BCL — fed by MSBuild's @(ReferencePath).
+        // I2: `--compile-refs <a.dll;b.dll;...>` is the exact compile-time reference set already resolved by
+        // MSBuild/RAR (or assembled by scripts/lib.sh for a direct run).
+        // It therefore covers any Reference/PackageReference/ProjectReference, not just UI frameworks or the BCL.
         if (args[0] == "--meta")
         {
             var rest = args.Skip(2).ToList();
-            if (rest.Count >= 2 && rest[0] == "--refs")
+            var refsAt = rest.IndexOf("--compile-refs");
+            if (refsAt >= 0)
             {
-                LoadRefs(rest[1].Split(';', StringSplitOptions.RemoveEmptyEntries));
-                rest = rest.Skip(2).ToList();
+                if (refsAt + 1 >= rest.Count) throw new ArgumentException("facadegen: --compile-refs requires a semicolon-separated path list");
+                LoadRefs(ManagedReferenceCatalog.Split(rest[refsAt + 1]));
+                rest.RemoveRange(refsAt, 2);
             }
+            if (rest.Contains("--refs")) throw new ArgumentException("facadegen: --refs was replaced by --compile-refs");
             // C-2: explicit type names, then optionally `--import-list <file>` — the type list produced by the
             // compiler's `kotc --scan-imports` PSI pass (a real parser, not a regex: handles aliases, `.*`,
             // multi-line, comments, backtick identifiers — interop feedback item 5). Merge both; EmitMeta warns
@@ -54,28 +69,9 @@ static class FacadeGen
     static void LoadRefs(string[] paths)
     {
         if (paths.Length == 0) return;
-        // The core assembly (System.Private.CoreLib / System.Runtime) must be in the path set. Chosen from the CALLER's
-        // paths (before the CoreLib backfill below), so the ref-pack's System.Runtime stays the core when present.
-        var core = new[] { "System.Private.CoreLib", "System.Runtime", "mscorlib", "netstandard" }
-            .FirstOrDefault(n => paths.Any(p => Path.GetFileNameWithoutExtension(p).Equals(n, StringComparison.OrdinalIgnoreCase)))
-            ?? "System.Runtime";
-        // Bug ⑥ (wiring): a DotKt assembly emitted against the runtime (e.g. an un-retargeted DotKt.Stdlib.dll) references
-        // System.Private.CoreLib — and the ref-pack's System.Runtime carries TYPE FORWARDERS to it. If that CoreLib is
-        // absent from the resolver's path set, reflecting ANY member whose signature touches a stdlib type throws
-        // FileNotFoundException, and EmitMeta's per-type guard then SKIPS the whole owning type — so a user-library
-        // function with a stdlib-typed signature (e.g. `fun makePair(): Pair<Int,Int>`) SILENTLY vanishes from the meta.
-        // Backfill the running runtime's System.Private.CoreLib so those refs (and the forwarders to them) resolve.
-        // Types are compared by FullName throughout facadegen (not identity), so a ref-pack System.Object and this
-        // runtime System.Object coexisting is already the anticipated case (see Map's I2 note). Harmless when the caller
-        // already retargeted everything to System.Runtime (the path is just unused).
-        var pathList = paths.ToList();
-        if (!pathList.Any(p => Path.GetFileNameWithoutExtension(p).Equals("System.Private.CoreLib", StringComparison.OrdinalIgnoreCase)))
-        {
-            var coreLib = typeof(object).Assembly.Location;
-            if (!string.IsNullOrEmpty(coreLib) && File.Exists(coreLib)) pathList.Add(coreLib);
-        }
-        Mlc = new System.Reflection.MetadataLoadContext(new System.Reflection.PathAssemblyResolver(pathList), core);
-        foreach (var p in pathList)
+        var catalog = ManagedReferenceCatalog.Create(paths, "facadegen");
+        Mlc = catalog.CreateMetadataLoadContext();
+        foreach (var p in catalog.Paths)
             try { Mlc.LoadFromAssemblyPath(p); } catch { /* skip unloadable */ }
     }
 
@@ -83,9 +79,24 @@ static class FacadeGen
     {
         if (Mlc != null)
         {
+            var matches = new Dictionary<string, Type>(StringComparer.Ordinal);
             foreach (var asm in Mlc.GetAssemblies())
-                try { var mt = asm.GetType(name); if (mt != null) return mt; } catch { }
-            return null;
+            {
+                try
+                {
+                    var mt = asm.GetType(name);
+                    if (mt != null)
+                        // A facade/forwarder can return the same defining Type from several assemblies.  Collapse
+                        // that case, but reject two real definitions just as a C# use-site would report CS0433.
+                        matches.TryAdd(mt.Assembly.GetName().FullName ?? mt.Assembly.GetName().Name!, mt);
+                }
+                catch { }
+            }
+            if (matches.Count > 1)
+                throw new InvalidOperationException(
+                    $"facadegen: type '{name}' is defined by multiple compile references: " +
+                    string.Join(", ", matches.Keys.OrderBy(x => x, StringComparer.Ordinal)));
+            return matches.Values.SingleOrDefault();
         }
         var t = Type.GetType(name);
         if (t != null) return t;

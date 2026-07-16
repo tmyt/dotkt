@@ -2,11 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
-using System.Reflection.PortableExecutable;
-using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Toolchain;
 
 sealed partial class ReferenceMetadataIndex
 {
@@ -22,6 +21,7 @@ sealed partial class ReferenceMetadataIndex
     const int KotlinFunctionSuspendFlag = 4;
 
     readonly List<ReferenceAssembly> _assemblies;
+    readonly ManagedReferenceCatalog _compileRefs;
 
     // Aggregate CALL-SUBSTITUTION index across all reference assemblies.
     readonly Dictionary<string, string> _ownerAlias = new(StringComparer.Ordinal);   // Kotlin FQN -> BCL alias
@@ -81,16 +81,15 @@ sealed partial class ReferenceMetadataIndex
     // inline fn sharing a name|pc|ga cannot leak in.
     readonly Dictionary<string, List<string>> _ownerlessInlineCandidates = new(StringComparer.Ordinal);
 
-    // ---- .NET-interop resolution (A2 / #61): the LONG-LIVED metadata universe over the loaded .NET references +
-    // the running framework's reference dir. NetInteropBinding resolves a facadegen-injected owner FQN
+    // ---- .NET-interop resolution (A2 / #61): the LONG-LIVED metadata universe over the exact compile references.
+    // NetInteropBinding resolves a facadegen-injected owner FQN
     // ("System.Console", "Kfc.App") to a metadata-only System.Reflection.Type here and reflects its member SHAPE
     // (static/instance/property/field/indexer/generic) to bind the plain callStatic/callInstance kotc emitted by
     // identity into the CLR-codegen `clr*` vocabulary. kotc no longer decides the .NET call shape (layer purity —
     // this is the SAME "emit the identity, bind in bir2cir" pattern as the stdlib ref.dll, one axis over). The MLC is
     // kept ALIVE for the whole run (Type handles are per-MLC; disposed in Driver.Run) and populated lazily.
     MetadataLoadContext _netMlc;
-    List<Assembly> _netRefAsms;       // the explicit --ref .NET assemblies (user libs, e.g. Kfc)
-    List<Assembly> _netRuntimeAsms;   // the running framework's reference dir (System.* et al.)
+    List<Assembly> _netRefAsms;       // the explicit --compile-refs assemblies (framework + user references)
     readonly Dictionary<string, Type> _netTypeCache = new(StringComparer.Ordinal);
     bool _netInit;
 
@@ -134,9 +133,10 @@ sealed partial class ReferenceMetadataIndex
         "int", "long", "short", "sbyte", "double", "float", "bool", "char", "uint", "ulong", "ushort", "byte",
     };
 
-    ReferenceMetadataIndex(List<ReferenceAssembly> assemblies)
+    ReferenceMetadataIndex(List<ReferenceAssembly> assemblies, ManagedReferenceCatalog compileRefs)
     {
         _assemblies = assemblies;
+        _compileRefs = compileRefs;
         foreach (var asm in assemblies)
         {
             foreach (var kv in asm.DotKt.Aliases) _ownerAlias[kv.Key] = kv.Value;
@@ -308,8 +308,8 @@ sealed partial class ReferenceMetadataIndex
     // Resolve a facadegen-injected .NET owner FQN to its metadata-only reflection Type (A2 / #61), or null when the
     // owner is NOT a reachable .NET type — i.e. a `kotlin.*`/`kotlinx.*` stdlib owner (bound by MemberCallSubstitution
     // off the ref.dll, NOT here) or the compiler's own `dotkt`/`dotkt.`/`dotkt$…` synthetic vocabulary, a local
-    // app-emitted type, or anything the loaded refs +
-    // framework dir don't contain. `genericArity` lets a constructed generic owner ("System.Collections.Generic.List"
+    // app-emitted type, or anything the compile-reference set does not contain. `genericArity` lets a constructed
+    // generic owner ("System.Collections.Generic.List"
     // + args) resolve its open definition (`List`1`). Consumed by NetInteropBinding to shape the call. Cached.
     public Type ResolveNetType(string fqn, int genericArity = 0)
     {
@@ -340,9 +340,20 @@ sealed partial class ReferenceMetadataIndex
         {
             foreach (var candidate in NetTypeCandidates(fqn, genericArity))
             {
-                foreach (var asm in _netRefAsms) { found = SafeGetType(asm, candidate); if (found != null) break; }
-                if (found == null)
-                    foreach (var asm in _netRuntimeAsms) { found = SafeGetType(asm, candidate); if (found != null) break; }
+                var matches = new Dictionary<string, Type>(StringComparer.Ordinal);
+                foreach (var asm in _netRefAsms)
+                {
+                    var match = SafeGetType(asm, candidate);
+                    if (match != null)
+                        // Collapse type forwarders that resolve to the same defining assembly, but never pick an
+                        // arbitrary winner when two selected references really define the same FQN.
+                        matches.TryAdd(match.Assembly.GetName().FullName ?? match.Assembly.GetName().Name!, match);
+                }
+                if (matches.Count > 1)
+                    throw new InvalidOperationException(
+                        $"bir2cir: type '{candidate}' is defined by multiple compile references: " +
+                        string.Join(", ", matches.Keys.OrderBy(x => x, StringComparer.Ordinal)));
+                found = matches.Values.SingleOrDefault();
                 if (found != null) break;
             }
         }
@@ -367,25 +378,11 @@ sealed partial class ReferenceMetadataIndex
         _netInit = true;
         try
         {
-            var runtimeDir = RuntimeEnvironment.GetRuntimeDirectory();
-            var paths = new List<string>(Directory.GetFiles(runtimeDir, "*.dll"));
-            foreach (var a in _assemblies)
-            {
-                var full = Path.GetFullPath(a.Path);
-                paths.Add(full);
-                var dir = Path.GetDirectoryName(full);
-                if (dir != null) paths.AddRange(Directory.GetFiles(dir, "*.dll"));
-            }
-            _netMlc = new MetadataLoadContext(new PathAssemblyResolver(paths.Distinct(StringComparer.Ordinal)));
+            _netMlc = _compileRefs.CreateMetadataLoadContext();
             _netRefAsms = new List<Assembly>();
-            foreach (var a in _assemblies)
+            foreach (var a in _compileRefs.Entries)
             {
-                try { _netRefAsms.Add(_netMlc.LoadFromAssemblyPath(Path.GetFullPath(a.Path))); } catch { }
-            }
-            _netRuntimeAsms = new List<Assembly>();
-            foreach (var p in Directory.GetFiles(runtimeDir, "*.dll"))
-            {
-                try { _netRuntimeAsms.Add(_netMlc.LoadFromAssemblyPath(p)); } catch { }
+                try { _netRefAsms.Add(_netMlc.LoadFromAssemblyPath(a.Path)); } catch { }
             }
         }
         catch { _netMlc = null; }
@@ -723,50 +720,27 @@ sealed partial class ReferenceMetadataIndex
         "dotkt$ClrH_" + System.Text.RegularExpressions.Regex.Replace(ownerFqn, "[^A-Za-z0-9]", "_");
 
 
-    // True iff `path` is a MANAGED PE — one carrying a CLI/CorHeader (managed metadata). A native/unmanaged DLL
-    // (libSkiaSharp.dll, av_libglesv2.dll, …) has no CorHeader; loading it as an assembly throws
-    // BadImageFormatException. Pre-checking here lets Build SKIP a stray native --ref instead of aborting the build.
-    static bool IsManagedAssembly(string path)
-    {
-        try
-        {
-            using var fs = File.OpenRead(path);
-            using var pe = new PEReader(fs);
-            return pe.HasMetadata && pe.PEHeaders.CorHeader != null;
-        }
-        catch { return false; }
-    }
-
     public static ReferenceMetadataIndex Build(IReadOnlyList<string> refs)
     {
+        var catalog = ManagedReferenceCatalog.Create(refs, "bir2cir");
         var assemblies = new List<ReferenceAssembly>();
-        foreach (var reference in refs)
+        if (catalog.Entries.Count == 0) return new ReferenceMetadataIndex(assemblies, catalog);
+        using var mlc = catalog.CreateMetadataLoadContext();
+        foreach (var entry in catalog.Entries)
         {
-            if (!File.Exists(reference))
-                throw new UsageException($"bir2cir: reference not found: {reference}");
-
-            // A native/unmanaged PE in the --ref set (a copy-local libSkiaSharp.dll / av_libglesv2.dll, etc.) carries
-            // no CLI metadata: AssemblyName.GetAssemblyName / MetadataLoadContext throw BadImageFormatException
-            // ("PE image does not have metadata.") on it and would abort the WHOLE build. Skip it — a native dll has no
-            // managed types to bind, so skipping is always correct.
-            if (!IsManagedAssembly(reference))
-            {
-                Console.Error.WriteLine($"bir2cir: skipping non-managed --ref {Path.GetFileName(reference)}");
-                continue;
-            }
-
-            var identity = AssemblyName.GetAssemblyName(reference);
+            var reference = entry.Path;
+            var identity = entry.Identity;
             assemblies.Add(new ReferenceAssembly(
                 reference,
                 identity.Name ?? Path.GetFileNameWithoutExtension(reference),
                 identity.Version?.ToString() ?? "",
-                ReadDotKtMetadata(reference)));
+                ReadDotKtMetadata(reference, mlc)));
         }
 
-        return new ReferenceMetadataIndex(assemblies);
+        return new ReferenceMetadataIndex(assemblies, catalog);
     }
 
-    static ReferenceDotKtMetadata ReadDotKtMetadata(string reference)
+    static ReferenceDotKtMetadata ReadDotKtMetadata(string reference, MetadataLoadContext mlc)
     {
         var metadata = new ReferenceDotKtMetadata();
         // The substitution index via MetadataLoadContext (a metadata-only reflection read) is the SOLE scan. A former
@@ -775,24 +749,18 @@ sealed partial class ReferenceMetadataIndex
         // spurious "metadata scan failed: TypeLoadException Type: 'kotlin.String'" on every build — and aborted early,
         // and its output fed ONLY dead resolution paths (the unreferenced Resolve(CallSite)/Resolve(TypeSite)/
         // ResolveClrProperty). The live @ClrTypeAlias/@ClrIntrinsic/rule-3 substitution reads exclusively from here.
-        ScanSubstitutionMetadata(reference, metadata);
+        ScanSubstitutionMetadata(reference, metadata, mlc);
         return metadata;
     }
 
     // Populate the substitution index (Aliases / TypeKinds / HelperTypes / MemberBindings) from the ref.dll using a
     // MetadataLoadContext so the metadata-only assembly reads cleanly. Per-type try/catch: one malformed type is
     // skipped, never aborting the whole scan (the failure mode that left Assembly.LoadFrom's index empty).
-    static void ScanSubstitutionMetadata(string reference, ReferenceDotKtMetadata metadata)
+    static void ScanSubstitutionMetadata(string reference, ReferenceDotKtMetadata metadata, MetadataLoadContext mlc)
     {
         try
         {
-            var full = Path.GetFullPath(reference);
-            var paths = new List<string>(Directory.GetFiles(RuntimeEnvironment.GetRuntimeDirectory(), "*.dll"));
-            var dir = Path.GetDirectoryName(full);
-            if (dir != null) paths.AddRange(Directory.GetFiles(dir, "*.dll"));
-            paths.Add(full);
-            using var mlc = new MetadataLoadContext(new PathAssemblyResolver(paths.Distinct(StringComparer.Ordinal)));
-            var asm = mlc.LoadFromAssemblyPath(full);
+            var asm = mlc.LoadFromAssemblyPath(Path.GetFullPath(reference));
 
             Type[] types;
             try { types = asm.GetTypes(); }
@@ -1375,4 +1343,3 @@ sealed class ReferenceDotKtMetadata
 // a cross-module call site must know "is this referenced callee suspend?" (its CLR shape is the Task<T> kickoff).
 // NO consumer reads it yet — bundle 6 wires it.
 sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, string[] ParamTypes = null, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, string ConvTo = null, TypeNode ReturnType = null);
-

@@ -43,7 +43,9 @@ declare -A XFAIL_PKG=(
 # reference, the second library's PackageReference, and the MPP global.json all pin THIS version, so a
 # version skew between the props and the SDK's embedded DotKtVersion (the #131 class of bug) surfaces here as
 # a restore failure rather than a silent stale-toolchain pull.
-VER="$(grep -oP '<DotKtVersionPrefix>\K[^<]+' "$ROOT/packaging/DotKt.Versions.props")"
+VER_PREFIX="$(grep -oP '<DotKtVersionPrefix>\K[^<]+' "$ROOT/packaging/DotKt.Versions.props")"
+VER_SUFFIX="$(grep -oP '<DotKtVersionSuffix>\K[^<]*' "$ROOT/packaging/DotKt.Versions.props")"
+VER="$VER_PREFIX${VER_SUFFIX:+-$VER_SUFFIX}"
 [[ -n "$VER" ]] || die "could not read DotKtVersionPrefix from packaging/DotKt.Versions.props"
 FEED="$ROOT/build/nuget-feed"
 
@@ -99,14 +101,16 @@ build_refcheck() {
 </Project>
 EOF
 	cat > "$REFCHECK/src/Program.cs" <<'EOF'
-using System; using System.Linq; using System.Reflection; using System.Runtime.InteropServices;
-// refcheck <dll> <ownerFqn> <memberName> -> exit 0 iff the dll declares ownerFqn with a member named memberName.
+using System; using System.Linq; using System.Reflection;
+// refcheck <dll> <ownerFqn> <memberName> [exactRefs] -> exit 0 iff the dll declares the requested member.
 class P {
     static int Main(string[] a) {
         var dll = System.IO.Path.GetFullPath(a[0]);
-        var paths = System.IO.Directory.GetFiles(RuntimeEnvironment.GetRuntimeDirectory(), "*.dll").ToList();
-        var dir = System.IO.Path.GetDirectoryName(dll);
-        paths.AddRange(System.IO.Directory.GetFiles(dir, "*.dll"));
+        // The TPA list is the runtime host's resolved platform set. Non-platform dependencies are explicit; never
+        // turn the input assembly's parent directory into an implicit reference universe.
+        var paths = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES"))
+            .Split(System.IO.Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries).ToList();
+        if (a.Length > 3) paths.AddRange(a[3].Split(';', StringSplitOptions.RemoveEmptyEntries));
         paths.Add(dll);
         using var mlc = new MetadataLoadContext(new PathAssemblyResolver(paths.Distinct()));
         var asm = mlc.LoadFromAssemblyPath(dll);
@@ -148,7 +152,7 @@ EOF
 fun main() { println("packaged exe ok: " + (2 + 3)) }
 EOF
 	local expected="packaged exe ok: 5" actual
-	actual="$(cd "$d" && dotnet run -v q --nologo 2>/dev/null | run_out)"
+	actual="$(cd "$d" && { dotnet run -v q --nologo 2>/dev/null | run_out || true; })"
 	if [[ "$actual" == "$expected" ]]; then pass exe
 	else fail exe "output mismatch" "$(printf -- '--- expected ---\n%s\n--- actual ---\n%s' "$expected" "$actual")"; fi
 }
@@ -232,7 +236,7 @@ EOF
 	[[ -f "$condll" ]] || { fail library "consumer dll not emitted"; return; }
 	# The emitted dll must declare the call — proves the cross-package reference resolved through bir2cir+ilemit.
 	if [[ -x "$REFCHECK/bin/refcheck" || -f "$REFCHECK/bin/refcheck.dll" ]]; then
-		if ! dotnet "$REFCHECK/bin/refcheck.dll" "$condll" "consumer.ConsumerKt" "compute" >"$con/refcheck.log" 2>&1; then
+		if ! dotnet "$REFCHECK/bin/refcheck.dll" "$condll" "consumer.ConsumerKt" "compute" "$libdll" >"$con/refcheck.log" 2>&1; then
 			fail library "emitted Consumer.dll missing consumer.ConsumerKt.compute" "$(cat "$con/refcheck.log")"; return
 		fi
 	fi
@@ -271,7 +275,7 @@ package mpp.greeter
 fun main() { println(Greeter().say()) }
 EOF
 	local expected="Hello from the CLR actual (packaged MPP SDK)" actual
-	actual="$(cd "$d" && dotnet run -v q --nologo 2>/dev/null | run_out)"
+	actual="$(cd "$d" && { dotnet run -v q --nologo 2>/dev/null | run_out || true; })"
 	if [[ "$actual" == "$expected" ]]; then pass mpp
 	else fail mpp "output mismatch" "$(printf -- '--- expected ---\n%s\n--- actual ---\n%s' "$expected" "$actual")"; fi
 }

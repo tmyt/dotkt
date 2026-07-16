@@ -7,6 +7,7 @@
     <AssemblyName>retarget</AssemblyName>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../ref-common/ManagedReferenceCatalog.cs" Link="ManagedReferenceCatalog.cs" />
     <!-- Cecil does the metadata rebuild on Write(); we only repoint TypeReference scopes. -->
     <PackageReference Include="Mono.Cecil" Version="0.11.5" />
     <!-- Reflect the reference pack without executing it (same as facadegen's forward path). -->

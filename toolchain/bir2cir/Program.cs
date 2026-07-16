@@ -4,10 +4,10 @@
 // vocabulary in the BIR into the CLR-codegen vocabulary ilemit consumes, emitting a BIR-SHAPED CIR (same node
 // shape; only type strings change). There is no verbatim-copy / envelope alternative — that dual track is retired.
 using System.Reflection;
-using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Toolchain;
 
 static class Bir2Cir
 {
@@ -22,7 +22,7 @@ static class Bir2Cir
         catch (UsageException ex)
         {
             Console.Error.WriteLine(ex.Message);
-            Console.Error.WriteLine("usage: bir2cir <out-dir> [--ref <dll>]... <file.bir.json>...");
+            Console.Error.WriteLine("usage: bir2cir <out-dir> [--compile-refs <dll;dll;...>] <file.bir.json>...");
             return 1;
         }
         catch (Exception ex)
@@ -44,7 +44,7 @@ sealed class Pipeline
         Directory.CreateDirectory(_options.OutDir);
 
         var birFiles = LoadBirFiles(_options.Inputs);
-        var refs = ReferenceMetadataIndex.Build(_options.References);
+        var refs = ReferenceMetadataIndex.Build(_options.CompileReferences);
         // Fail-loud: a ref.dll scan swallows load/type failures into Diagnostics (so ONE malformed type never aborts the
         // whole scan). Surface them here — a silent ref-scan miss otherwise surfaces as a distant EntryPointNotFound/NRE
         // with no "ref scan failed" signal. An empty Diagnostics stays silent (the happy path prints nothing).
@@ -774,7 +774,7 @@ sealed class Pipeline
 // SUBSTITUTE-set — was never a real mode; the flag makes it unrepresentable.)
 enum BuildStdlibMode { App, Metadata, Runtime }
 
-sealed record DriverOptions(string OutDir, IReadOnlyList<string> References, IReadOnlyList<string> Inputs, BuildStdlibMode StdlibMode)
+sealed record DriverOptions(string OutDir, IReadOnlyList<string> CompileReferences, IReadOnlyList<string> Inputs, BuildStdlibMode StdlibMode)
 {
     // The pure-Kotlin REFERENCE stdlib surface (`--build-stdlib=metadata` -> DotKt.Private.Stdlib.dll) keeps kotlin.*
     // type tokens verbatim and squashes bodies to a throw; EVERY other invocation — the runtime stdlib build and all
@@ -802,11 +802,13 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> References, IRe
         {
             switch (args[i])
             {
-                case "--ref" when i + 1 < args.Length:
-                    refs.Add(Path.GetFullPath(args[++i]));
+                case "--compile-refs" when i + 1 < args.Length:
+                    refs.AddRange(ManagedReferenceCatalog.Split(args[++i]));
                     break;
+                case "--compile-refs":
+                    throw new UsageException("bir2cir: --compile-refs requires a semicolon-separated path list");
                 case "--ref":
-                    throw new UsageException("bir2cir: --ref requires a DLL path");
+                    throw new UsageException("bir2cir: --ref was replaced by --compile-refs");
                 case "--build-stdlib=metadata":
                     mode = BuildStdlibMode.Metadata;
                     break;

@@ -35,7 +35,8 @@ need_kotc
 rm -rf "$BIR"; mkdir -p "$BIR"
 
 collect_stdlib_sources
-FLAGS=(-no-stdlib -Xallow-kotlin-package -Xexpect-actual-classes -Xstdlib-compilation -Xcontext-parameters -Xcommon-sources="$STDLIB_COMMON_CSV" $STDLIB_OPTIN)
+stdlib_fragment_args
+FLAGS=(-no-stdlib -Xallow-kotlin-package -Xexpect-actual-classes -Xstdlib-compilation -Xcontext-parameters -Xreturn-value-checker=check -XXLanguage:+UnnamedLocalVariables -Xcommon-sources="$STDLIB_COMMON_CSV" $STDLIB_OPTIN)
 
 # ONE frontend run — substitute-independent (kotc ignores SUBSTITUTE/STRIP since #66). This single BIR feeds BOTH the
 # ref and rt emits below.
@@ -43,7 +44,7 @@ info "kotc (ONE run): ${#STDLIB_COMMON[@]} common + ${#STDLIB_SRC[@]} src + ${#S
 # kotc exits nonzero when there are frontend errors; this script's job is to REPORT them, so tolerate it.
 CLR_TYPES_METADATA="" "$KOTC" \
 	"${STDLIB_COMMON[@]}" "${STDLIB_SRC[@]}" "${STDLIB_UNSIGNED[@]}" "${STDLIB_CLR[@]}" \
-	"${FLAGS[@]}" -d "$BIR" 2>"$SHARED/kotc.err" || true
+	"${FLAGS[@]}" "${STDLIB_FRAGMENT_ARGS[@]}" -d "$BIR" 2>"$SHARED/kotc.err" || true
 bir_count="$(ls "$BIR"/*.bir.json 2>/dev/null | wc -l)"
 echo "frontend errors: $(grep -c ': error:' "$SHARED/kotc.err")   BIR files: $bir_count"
 echo "--- top error kinds ---"
@@ -52,35 +53,37 @@ grep ': error:' "$SHARED/kotc.err" | sed -E 's/^.*: error: //; s/'"'"'[^'"'"']*'
 
 if (( do_emit )); then
 	need_tool bir2cir; need_tool ilemit
+	need_dotnet_reference_sets
 
 	# --- REFERENCE assembly (DotKt.Private.Stdlib.dll): bir2cir refBuild (kotlin.* verbatim + @Clr metadata, bodies
 	#     squashed to `throw`) -> ilemit -> retarget. Self-contained (no runtime ref).
 	rm -rf "$REF_CIR" "$REF_DLL"; mkdir -p "$REF_CIR" "$REF_DLL"
 	info "REF: bir2cir -> CIR"
-	dotnet "$BIR2CIR_DLL" "$REF_CIR" --build-stdlib=metadata "$BIR"/*.bir.json 2>"$REF_OUT/bir2cir.err" || true
+	dotnet "$BIR2CIR_DLL" "$REF_CIR" --compile-refs "$FRAMEWORK_COMPILE_REFS" --build-stdlib=metadata "$BIR"/*.bir.json 2>"$REF_OUT/bir2cir.err" || true
 	echo "REF CIR files: $(ls "$REF_CIR"/*.cir.json 2>/dev/null | wc -l)"
 	info "REF: ilemit -> DotKt.Private.Stdlib.dll"
-	{ dotnet "$ILEMIT_DLL" "$REF_DLL" DotKt.Private.Stdlib --build-stdlib=metadata "$REF_CIR"/*.cir.json 2>"$REF_OUT/ilemit.err" || true; } | tail -2
+	{ dotnet "$ILEMIT_DLL" "$REF_DLL" DotKt.Private.Stdlib --runtime-refs "" --build-stdlib=metadata "$REF_CIR"/*.cir.json 2>"$REF_OUT/ilemit.err" || true; } | tail -2
 	grep -vE '^\s+at ' "$REF_OUT/ilemit.err" | grep -iE 'exception|KeyNot|unresolved|no matching' | head -3 || true
 	[[ -f "$REF_DLL/DotKt.Private.Stdlib.dll" ]] || die "DotKt.Private.Stdlib.dll was not emitted (see $REF_OUT/ilemit.err)"
 	need_tool retarget
-	REFPACK="$(dirname "$(find /usr/share/dotnet/packs/Microsoft.NETCore.App.Ref -name 'System.Runtime.dll' -path '*net10.0*' | head -1)")"
 	info "REF: retarget (so facadegen/ilverify can read it back)"
-	dotnet "$RETARGET_DLL" "$REF_DLL/DotKt.Private.Stdlib.dll" --refs "$(ls "$REFPACK"/*.dll | tr '\n' ';')" 2>&1 | tail -1
+	dotnet "$RETARGET_DLL" "$REF_DLL/DotKt.Private.Stdlib.dll" --compile-refs "$FRAMEWORK_COMPILE_REFS" 2>&1 | tail -1
 	info "*** DotKt.Private.Stdlib.dll emitted ***"
 
 	# --- RUNTIME assembly (DotKt.Stdlib.dll): bir2cir substitute (@Clr ACTIVE — BCL substitution, Comparable-bound +
 	#     `in`-variance drops), reading the JUST-BUILT ref.dll for the @ClrTypeAlias/@ClrIntrinsic labels -> ilemit
 	#     (metadata-stripped). Same SHARED BIR as the ref emit above.
 	rm -rf "$RT_CIR" "$RT_DLL"; mkdir -p "$RT_CIR" "$RT_DLL"
-	refarg=(); [[ -f "$STDLIB_REF_DLL" ]] && refarg=(--ref "$STDLIB_REF_DLL")
+	rt_compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL")"
 	info "RT: bir2cir (substitute) -> CIR"
-	{ dotnet "$BIR2CIR_DLL" "$RT_CIR" "${refarg[@]}" --build-stdlib=runtime "$BIR"/*.bir.json 2>"$RT_OUT/bir2cir.err" || true; } | tail -1
+	{ dotnet "$BIR2CIR_DLL" "$RT_CIR" --compile-refs "$rt_compile_refs" --build-stdlib=runtime "$BIR"/*.bir.json 2>"$RT_OUT/bir2cir.err" || true; } | tail -1
 	echo "RT CIR files: $(ls "$RT_CIR"/*.cir.json 2>/dev/null | wc -l)"
 	info "RT: ilemit (substitute) -> DotKt.Stdlib.dll"
-	{ dotnet "$ILEMIT_DLL" "$RT_DLL" DotKt.Stdlib --build-stdlib=runtime "$RT_CIR"/*.cir.json 2>"$RT_OUT/ilemit.err" || true; } | tail -2
+	{ dotnet "$ILEMIT_DLL" "$RT_DLL" DotKt.Stdlib --runtime-refs "" --build-stdlib=runtime "$RT_CIR"/*.cir.json 2>"$RT_OUT/ilemit.err" || true; } | tail -2
 	grep -vE '^\s+at ' "$RT_OUT/ilemit.err" | grep -iE 'exception|error|unresolved|no matching|not found|cannot' | head -3 || true
 	[[ -f "$RT_DLL/DotKt.Stdlib.dll" ]] || die "DotKt.Stdlib.dll was not emitted (see $RT_OUT/ilemit.err)"
+	info "RT: retarget (so facadegen can consume the runtime surface as a compile reference)"
+	dotnet "$RETARGET_DLL" "$RT_DLL/DotKt.Stdlib.dll" --compile-refs "$FRAMEWORK_COMPILE_REFS" >/dev/null
 	info "*** DotKt.Stdlib.dll emitted ***"
 	info "*** unified stdlib build complete (ONE kotc run -> ref + rt) ***"
 fi

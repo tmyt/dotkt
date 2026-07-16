@@ -7,6 +7,15 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Toolchain-wide managed dependency resolution now consumes explicit compile/runtime reference sets instead of
+  treating an assembly's directory as a search universe.** MSBuild resolves the graph once and passes
+  `@(ReferencePath)` to metadata consumers (`facadegen`, `bir2cir`, `retarget`) and
+  `@(ReferenceCopyLocalPaths)` to `ilemit`; all four tools share validation, exact simple-name lookup, duplicate
+  identity diagnostics, and native/satellite skipping. Direct stdlib and verification scripts construct the same
+  compile set from the installed `Microsoft.NETCore.App.Ref` targeting pack and keep the runtime set separate. The
+  obsolete tool flags (`--refs` / `--ref`) are replaced by `--compile-refs` / `--runtime-refs`. Duplicate type
+  definitions now fail at the use site instead of selecting the first assembly, and regression guards cover an
+  unlisted neighbouring DLL, duplicate identities, duplicate FQNs, and native assets.
 - **bir2cir (#34): inline splice now fills an OMITTED defaulted parameter from the callee's default value — including a
   LAMBDA default** (`InlineSplice.cs`, STEP 5 param binding). When splicing an `inline fun`, a null (omitted-default) arg
   slot was filled only from a Tier-1 metadata-representable constant carried on the param's `default` field; a Tier-2

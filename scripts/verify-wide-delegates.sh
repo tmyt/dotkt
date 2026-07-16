@@ -27,14 +27,15 @@ rm -rf "$OUT"; mkdir -p "$OUT/bir" "$OUT/cir" "$OUT/il"
 # the frontend KLIB is kotc's -classpath (kotlin.* comes from the klib, never facadegen), the REFERENCE
 # dll feeds bir2cir's @Clr labels, the RUNTIME dll backs println at run time.
 "$ROOT/gradlew" -q :kotc:installDist >/dev/null 2>&1
-build_tool ilemit; build_tool bir2cir; build_tool facadegen
+build_tool ilemit; build_tool bir2cir; build_tool facadegen; build_tool retarget
 need_fe_klib; need_stdlib_ref; need_stdlib_rt
+need_dotnet_reference_sets
 
 "$KOTC" "$ROOT/cases/il-widedeleg" -no-stdlib -classpath "$FE_KLIB" -d "$OUT/bir" >/dev/null 2>&1 \
 	|| die "kotc failed on cases/il-widedeleg"
-dotnet "$BIR2CIR_DLL" "$OUT/cir" --ref "$STDLIB_REF_DLL" "$OUT/bir"/*.bir.json >/dev/null 2>&1 \
+dotnet "$BIR2CIR_DLL" "$OUT/cir" --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL")" "$OUT/bir"/*.bir.json >/dev/null 2>&1 \
 	|| die "bir2cir failed"
-dotnet "$ILEMIT_DLL" "$OUT/il" Wide --ref "$STDLIB_RT_DLL" "$OUT/cir"/*.cir.json >/dev/null 2>&1 \
+dotnet "$ILEMIT_DLL" "$OUT/il" Wide --runtime-refs "$STDLIB_RT_DLL" "$OUT/cir"/*.cir.json >/dev/null 2>&1 \
 	|| die "ilemit failed"
 cp "$STDLIB_RT_DLL" "$OUT/il/"
 
@@ -60,10 +61,10 @@ fi
 # facadegen reads the delegate's Invoke signature (17 params + Int return) directly, regardless of arity
 # or the [CompilerGenerated] stamp, and emits it as the JSON function-type node `{"t":"fn",...}` in the
 # FIR-injection meta. Assert `accept`'s `cb` param is that fn node with 17 Int params and an Int return.
-REFPACK="$(ls -d /usr/share/dotnet/packs/Microsoft.NETCore.App.Ref/*/ref/net10.0 2>/dev/null | sort -V | tail -1)"
-RUNTIMEPACK="$(ls -d /usr/share/dotnet/shared/Microsoft.NETCore.App/* 2>/dev/null | sort -V | tail -1)"
-REFS="$(ls "$REFPACK"/*.dll "$RUNTIMEPACK"/*.dll | tr '\n' ';')$STDLIB_RT_DLL;$OUT/il/Wide.dll"
-dotnet "$FACADEGEN_DLL" --meta "$OUT/wide.meta" --refs "$REFS" WideKt >/dev/null 2>&1 \
+compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_RT_DLL")"
+dotnet "$RETARGET_DLL" "$OUT/il/Wide.dll" --compile-refs "$compile_refs" >/dev/null 2>&1 \
+	|| die "retarget failed"
+dotnet "$FACADEGEN_DLL" --meta "$OUT/wide.meta" --compile-refs "$(refset_join "$compile_refs" "$OUT/il/Wide.dll")" WideKt >/dev/null 2>&1 \
 	|| die "facadegen failed"
 int='{"t":"fqn","name":"Int"}'
 ints="$int"; for _ in $(seq 2 17); do ints+=",$int"; done

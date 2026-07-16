@@ -65,6 +65,7 @@ CP="$FE_KLIB"
 "$ROOT/gradlew" -q :kotc:installDist >/dev/null 2>&1
 LAUNCHER="$KOTC"
 need_fe_klib
+need_dotnet_reference_sets
 
 # Result records (one per sample) + the refdll handoff to the ilverify phase live here.
 RESULTS="$ROOT/build/verify-il"
@@ -109,45 +110,47 @@ il_emit() { # <name> <ildir> <asm> <birdir> [extra ilemit args...]
 	local cirdir="$ROOT/build/cir-$name"; rm -rf "$cirdir"; mkdir -p "$cirdir"
 	# bir2cir reads the REFERENCE stdlib for the @ClrTypeAlias/@ClrIntrinsic labels: app-build collection/
 	# StringBuilder/Regex type tokens and member calls lower from it (bir2cir is the single substitution home).
-	local refarg=(); [[ -f "$STDLIB_REF_DLL" ]] && refarg=(--ref "$STDLIB_REF_DLL")
+	local compile_parts=("$FRAMEWORK_COMPILE_REFS") runtime_parts=()
+	[[ -f "$STDLIB_REF_DLL" ]] && compile_parts+=("$STDLIB_REF_DLL")
 	# A2 (#61): bir2cir binds a facadegen-injected .NET member call to its CLR shape by RESOLVING the owner FQN
 	# against the loaded .NET reference assemblies (its long-lived MetadataLoadContext), so it needs the SAME
-	# app .NET refs ilemit gets — the sample's own runtime.cs dll etc. Forward every extra `--ref` (in "$@")
+	# app .NET refs ilemit gets — the sample's own runtime.cs dll etc. Classify every script-level `--ref` (in "$@")
 	# to bir2cir too, EXCEPT the RUNTIME stdlib (bir2cir reads the REFERENCE stdlib, added above). System.* owners
-	# resolve from the running framework's reference dir with no explicit --ref.
+	# resolve from FRAMEWORK_COMPILE_REFS; no runtime-directory probing occurs.
 	local il_args=("$@") ai=0
 	while (( ai < ${#il_args[@]} )); do
 		if [[ "${il_args[ai]}" == "--ref" ]]; then
 			local r="${il_args[ai+1]}"
-			[[ "$r" != "$STDLIB_RT_DLL" ]] && refarg+=(--ref "$r")
+			runtime_parts+=("$r")
+			[[ "$r" != "$STDLIB_RT_DLL" ]] && compile_parts+=("$r")
 			ai=$((ai+2))
 		else ai=$((ai+1)); fi
 	done
-	dotnet "$BIR2CIR_DLL" "$cirdir" "${refarg[@]}" "$birdir"/*.bir.json >/dev/null 2>&1 || return 1
-	dotnet "$ILEMIT_DLL" "$ildir" "$asm" "$@" "$cirdir"/*.cir.json >/dev/null 2>&1
+	dotnet "$BIR2CIR_DLL" "$cirdir" --compile-refs "$(refset_join "${compile_parts[@]}")" "$birdir"/*.bir.json >/dev/null 2>&1 || return 1
+	dotnet "$ILEMIT_DLL" "$ildir" "$asm" --runtime-refs "$(refset_join "${runtime_parts[@]}")" "$cirdir"/*.cir.json >/dev/null 2>&1
 }
 
 # S5 FIR-injection metadata for samples that inherit a real .NET base type (façade-free).
 build_tool facadegen
 EXCMETA="$ROOT/build/exc.meta"
-dotnet "$FACADEGEN_DLL" --meta "$EXCMETA" System.Exception System.Console >/dev/null 2>&1
+dotnet "$FACADEGEN_DLL" --meta "$EXCMETA" --compile-refs "$FRAMEWORK_COMPILE_REFS" System.Exception System.Console >/dev/null 2>&1
 COLLMETA="$ROOT/build/coll.meta"
-dotnet "$FACADEGEN_DLL" --meta "$COLLMETA" System.Collections.ObjectModel.Collection >/dev/null 2>&1
+dotnet "$FACADEGEN_DLL" --meta "$COLLMETA" --compile-refs "$FRAMEWORK_COMPILE_REFS" System.Collections.ObjectModel.Collection >/dev/null 2>&1
 OBSCOLLMETA="$ROOT/build/obscoll.meta"
-dotnet "$FACADEGEN_DLL" --meta "$OBSCOLLMETA" System.Collections.ObjectModel.ObservableCollection >/dev/null 2>&1
+dotnet "$FACADEGEN_DLL" --meta "$OBSCOLLMETA" --compile-refs "$FRAMEWORK_COMPILE_REFS" System.Collections.ObjectModel.ObservableCollection >/dev/null 2>&1
 GMMETA="$ROOT/build/gm.meta"
-dotnet "$FACADEGEN_DLL" --meta "$GMMETA" System.Runtime.CompilerServices.Unsafe System.Runtime.CompilerServices.RuntimeHelpers System.Collections.ObjectModel.Collection >/dev/null 2>&1
+dotnet "$FACADEGEN_DLL" --meta "$GMMETA" --compile-refs "$FRAMEWORK_COMPILE_REFS" System.Runtime.CompilerServices.Unsafe System.Runtime.CompilerServices.RuntimeHelpers System.Collections.ObjectModel.Collection >/dev/null 2>&1
 
 # CLR stdlib (the canonical build under libraries/stdlib/): the RUNTIME assembly is --ref'd into every
 # emitted case so a stdlib op resolves to its real Kotlin body (and copied next to each output for the
 # run phase); the REFERENCE assembly is bir2cir's @Clr-metadata input. Build if missing, reuse if present.
 need_stdlib_ref; need_stdlib_rt
 
-# ---- #138 native-ref guard: a NON-managed PE in the --ref set must never abort bir2cir ----
-# An unmanaged/native Windows .dll (libSkiaSharp.dll etc.) copy-locals into an Avalonia app's --ref set; bir2cir's
+# ---- #138 native-ref guard: a NON-managed PE in the compile set must never abort bir2cir ----
+# An unmanaged/native Windows .dll (libSkiaSharp.dll etc.) can reach a resolved reference set; bir2cir's
 # ref loader must SKIP it (it carries no CLI metadata), not crash. This asserts the loader guard on a REAL native PE
 # (the SDK-shipped msdia140.dll — a PE32+ with no CLI header), producing a trivial BIR and lowering it with the
-# native dll --ref'd. If no native PE is present in this environment the check SKIPs (documented — the loader guard is
+# native dll included. If no native PE is present in this environment the check SKIPs (documented — the loader guard is
 # still exercised end-to-end by the triage repro `dotkt.sh --ref <native.dll> --run foo.kt`).
 find_native_pe() {
 	local c
@@ -162,11 +165,11 @@ if NATIVE_PE="$(find_native_pe)"; then
 	printf 'fun main() { println("ok") }\n' > "$ROOT/build/nativeref.kt"
 	if ! "$LAUNCHER" "$ROOT/build/nativeref.kt" -no-stdlib -classpath "$CP" -d "$nbir" >/dev/null 2>&1; then
 		echo "IL GATE RED — #138 native-ref guard: could not produce probe BIR"; exit 1; fi
-	nrc=0; nerr="$(dotnet "$BIR2CIR_DLL" "$ncir" --ref "$STDLIB_REF_DLL" --ref "$NATIVE_PE" "$nbir"/*.bir.json 2>&1)" || nrc=$?
-	if (( nrc != 0 )) || ! grep -q 'skipping non-managed --ref' <<<"$nerr"; then
-		echo "IL GATE RED — #138 native-ref guard FAILED (rc=$nrc): bir2cir did not skip native --ref $(basename "$NATIVE_PE")"
+	nrc=0; nerr="$(dotnet "$BIR2CIR_DLL" "$ncir" --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL" "$NATIVE_PE")" "$nbir"/*.bir.json 2>&1)" || nrc=$?
+	if (( nrc != 0 )) || ! grep -q 'skipping non-managed reference' <<<"$nerr"; then
+		echo "IL GATE RED — #138 native-ref guard FAILED (rc=$nrc): bir2cir did not skip native reference $(basename "$NATIVE_PE")"
 		printf '%s\n' "$nerr"; exit 1; fi
-	echo "GUARD   nativeref (bir2cir skipped non-managed --ref $(basename "$NATIVE_PE"))"
+	echo "GUARD   nativeref (bir2cir skipped non-managed reference $(basename "$NATIVE_PE"))"
 else
 	echo "GUARD   nativeref SKIP (no native PE found in this environment; loader guard still covered by dotkt.sh triage repro)"
 fi
@@ -183,8 +186,41 @@ build_runtime() { # <srcDir> <runtimeAsm> [nullableMode]
 	echo "$rt/out/$rasm.dll"
 }
 
+# ---- resolved-reference-set guards ---------------------------------------------------------------
+# Keep the tools honest about the boundary established above: a directory is never a reference universe, duplicate
+# assembly identities fail loudly, and two selected assemblies defining one FQN are never resolved by list order.
+REF_GUARD="$ROOT/build/ref-resolution-guard"
+rm -rf "$REF_GUARD"; mkdir -p "$REF_GUARD/a" "$REF_GUARD/b" "$REF_GUARD/only-a"
+printf '%s\n' 'namespace RefGuard { public class Dupe { } public class OnlyA { } }' > "$REF_GUARD/a/Types.cs"
+printf '%s\n' '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework><AssemblyName>RefGuardA</AssemblyName></PropertyGroup></Project>' > "$REF_GUARD/a/A.csproj"
+printf '%s\n' 'namespace RefGuard { public class Dupe { } public class OnlyB { } }' > "$REF_GUARD/b/Types.cs"
+printf '%s\n' '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework><AssemblyName>RefGuardB</AssemblyName></PropertyGroup></Project>' > "$REF_GUARD/b/B.csproj"
+dotnet build "$REF_GUARD/a/A.csproj" -c Release -o "$REF_GUARD/only-a" -v q --nologo >/dev/null
+dotnet build "$REF_GUARD/b/B.csproj" -c Release -o "$REF_GUARD/only-a" -v q --nologo >/dev/null
+A_DLL="$REF_GUARD/only-a/RefGuardA.dll"; B_DLL="$REF_GUARD/only-a/RefGuardB.dll"
+
+# RefGuardB.dll is deliberately adjacent to A. Passing A alone must not make OnlyB visible.
+poison_err="$(dotnet "$FACADEGEN_DLL" --meta "$REF_GUARD/poison.meta" --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$A_DLL")" RefGuard.OnlyB 2>&1)"
+if ! grep -q 'resolved to no type' <<<"$poison_err" || grep -q 'RefGuard.OnlyB' "$REF_GUARD/poison.meta"; then
+	echo "IL GATE RED — exact-reference guard FAILED: facadegen discovered an unlisted neighbouring DLL"; exit 1
+fi
+echo "GUARD   exactrefs (unlisted neighbouring DLL ignored)"
+
+cp "$A_DLL" "$REF_GUARD/RefGuardA-copy.dll"
+dup_rc=0; dup_err="$(dotnet "$FACADEGEN_DLL" --meta "$REF_GUARD/dup.meta" --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$A_DLL" "$REF_GUARD/RefGuardA-copy.dll")" RefGuard.OnlyA 2>&1)" || dup_rc=$?
+if (( dup_rc == 0 )) || ! grep -q "conflicting references with assembly name 'RefGuardA'" <<<"$dup_err"; then
+	echo "IL GATE RED — duplicate-identity guard FAILED"; printf '%s\n' "$dup_err"; exit 1
+fi
+echo "GUARD   refidentity (duplicate assembly simple name rejected)"
+
+amb_rc=0; amb_err="$(dotnet "$FACADEGEN_DLL" --meta "$REF_GUARD/amb.meta" --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$A_DLL" "$B_DLL")" RefGuard.Dupe 2>&1)" || amb_rc=$?
+if (( amb_rc == 0 )) || ! grep -q "type 'RefGuard.Dupe' is defined by multiple compile references" <<<"$amb_err"; then
+	echo "IL GATE RED — duplicate-type guard FAILED"; printf '%s\n' "$amb_err"; exit 1
+fi
+echo "GUARD   reftype (duplicate FQN rejected)"
+
 # Inject (façade-free) a sample's own runtime types AND reference the runtime dll: build runtime.cs, scan the
-# .kt imports into a metadata file (facadegen --meta --scan), compile with it, then ilemit with --ref.
+# .kt imports into a metadata file, compile with it, then classify that exact assembly into compile/runtime sets.
 il_check_inject() { # <name> <asm> <srcDir> <expected> <runtimeAsm>
 	gate
 	(
@@ -192,10 +228,9 @@ il_check_inject() { # <name> <asm> <srcDir> <expected> <runtimeAsm>
 		name="$1"; asm="$2"; src="$3"; expected="$4"; rasm="$5"
 		birdir="$ROOT/build/bir-$name"; ildir="$ROOT/build/il-$name"; meta="$ROOT/build/$name.meta"
 		refdll="$(build_runtime "$src" "$rasm")"; echo "$refdll" > "$RESULTS/refdll-$name"
-		RD="$(ls -d /usr/share/dotnet/shared/Microsoft.NETCore.App/*/ | tail -1)"
 		implist="$ROOT/build/$name.imports"
 		"$LAUNCHER" --scan-imports --output "$implist" "$src"/*.kt >/dev/null 2>&1 || true
-		dotnet "$FACADEGEN_DLL" --meta "$meta" --refs "$(ls ${RD}*.dll | tr '\n' ';');$refdll" --import-list "$implist" >/dev/null 2>&1 || true
+		dotnet "$FACADEGEN_DLL" --meta "$meta" --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$refdll")" --import-list "$implist" >/dev/null 2>&1 || true
 		rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
 		if ! CLR_TYPES_METADATA="$meta" "$LAUNCHER" $src -no-stdlib -classpath "$CP" -d $birdir >/dev/null 2>&1; then
 			reason="compile error"; exit 0; fi
@@ -219,10 +254,9 @@ il_check_inject_nrt() { # <name> <asm> <srcDir> <expected> <runtimeAsm>
 		name="$1"; asm="$2"; src="$3"; expected="$4"; rasm="$5"
 		birdir="$ROOT/build/bir-$name"; ildir="$ROOT/build/il-$name"; meta="$ROOT/build/$name.meta"
 		refdll="$(build_runtime "$src" "$rasm" enable)"; echo "$refdll" > "$RESULTS/refdll-$name"
-		RD="$(ls -d /usr/share/dotnet/shared/Microsoft.NETCore.App/*/ | tail -1)"
 		implist="$ROOT/build/$name.imports"
 		"$LAUNCHER" --scan-imports --output "$implist" "$src"/*.kt >/dev/null 2>&1 || true
-		dotnet "$FACADEGEN_DLL" --meta "$meta" --refs "$(ls ${RD}*.dll | tr '\n' ';');$refdll" --import-list "$implist" >/dev/null 2>&1 || true
+		dotnet "$FACADEGEN_DLL" --meta "$meta" --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$refdll")" --import-list "$implist" >/dev/null 2>&1 || true
 		rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
 		if ! CLR_TYPES_METADATA="$meta" "$LAUNCHER" $src -no-stdlib -classpath "$CP" -d $birdir >/dev/null 2>&1; then
 			reason="compile error"; exit 0; fi
@@ -267,10 +301,9 @@ il_check_imports() { # <name> <asm> <srcDir> <expected>
 		sample_guard "$1"
 		name="$1"; asm="$2"; src="$3"; expected="$4"
 		birdir="$ROOT/build/bir-$name"; ildir="$ROOT/build/il-$name"; meta="$ROOT/build/$name.meta"
-		RD="$(ls -d /usr/share/dotnet/shared/Microsoft.NETCore.App/*/ | tail -1)"
 		implist="$ROOT/build/$name.imports"
 		"$LAUNCHER" --scan-imports --output "$implist" "$src"/*.kt >/dev/null 2>&1 || true
-		dotnet "$FACADEGEN_DLL" --meta "$meta" --refs "$(ls ${RD}*.dll | tr '\n' ';')" --import-list "$implist" >/dev/null 2>&1 || true
+		dotnet "$FACADEGEN_DLL" --meta "$meta" --compile-refs "$FRAMEWORK_COMPILE_REFS" --import-list "$implist" >/dev/null 2>&1 || true
 		rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
 		if ! CLR_TYPES_METADATA="$meta" "$LAUNCHER" $src -no-stdlib -classpath "$CP" -d $birdir >/dev/null 2>&1; then
 			reason="compile error"; exit 0; fi
@@ -706,7 +739,7 @@ il_check loopjump LjT "$ROOT/cases/il-loopjump" "$(printf 'break at 3\nsumOdd=9\
 il_check netgen3 Ng3 "$ROOT/cases/il-netgen3" "$(printf '4\n8\n8\nFalse\nTrue\n20\n99\n3')" "$GMMETA"
 
 # Reverse interop via an injected C# host: `il_check_inject` builds the sample's runtime.cs into a referenced .NET
-# assembly, scans the .kt imports through facadegen, and --refs it (the same façade-free `import Kfc.X` path the other
+# assembly, scans the .kt imports through facadegen, and references it (the same façade-free `import Kfc.X` path the other
 # injected-runtime samples use). fieldvis: a .NET host reflects a DotKt-emitted property's CLR accessor visibility.
 il_check_inject fieldvis FieldVis "$ROOT/cases/il-fieldvis" "$(printf '150\nme\nPrivate\nPublic')" KfcFv
 il_check_inject delegatearg Dlg "$ROOT/cases/il-delegatearg" "$(printf '42\n20\n81')" KfcDel
@@ -994,7 +1027,7 @@ for f in "$RESULTS"/refdll-*; do [[ -e "$f" ]] || continue; REFDLL["$(basename "
 # ---- formal IL verification (ilverify), if the tool is available ----
 verify_pass=0; declare -a verify_fails=()
 ILV="$(find "$HOME/.dotnet" -name 'ILVerify.dll' 2>/dev/null | head -1)"
-REFDIR="$(dirname "$(find /usr/share/dotnet/shared/Microsoft.NETCore.App -name System.Private.CoreLib.dll 2>/dev/null | sort | tail -1)")"
+REFDIR="$DOTNET_RUNTIME_DIR"
 if [[ -n "$ILV" && -d "$REFDIR" ]]; then
 	echo "--- ilverify ---"
 	declare -A ASMS=( [m0]=M0Kt [mc1]=MC1 [iface]=Iface [enum]=Enum [m2]=M2 [mi1]=MI1 [for]=ForT [exc]=Exc [ops]=Ops [math]=MathT [str]=Str [cp]=Cp [ext]=Ext [arr]=Arr [lam]=Lam [clo]=Clo [scope]=Sc [coll]=Coll [coll2]=Coll2 [coll3]=Coll3 [seq]=Seq [seqforin]=SeqForin [char]=Char [sort]=Sort [funref]=Funref [getcls]=GetClass [forin]=Forin [ldeleg]=LocalDeleg [langf]=LangFeat [mapdes]=MapDes [valcls]=ValCls [ctorref]=CtorRef [unsgn]=Unsigned [regex]=Regex [regexgroups]=RegexGroups [groupvalues]=GroupValues [result]=Result [bmore]=BMore [chunk]=Chunk  [collmore]=CollMore  [tryexpr]=TryExpr  [localclass]=LocalClass [collops2]=CollOps2 [genseq]=GenSeq [genseq2]=GenSeq2 [refcell]=RefCell [annot]=Annot [props]=Props [propref]=AppKt [pair]=Pair [null]=Null [nullv]=MS1 [op]=OpT [dataq]=Dq [inline]=InlF [inlnestnlr]=InlNestNlr [inlouterlabel]=InlOuterLabel [inlnlbreak]=InlNlBreak [inlownlabel]=InlOwnLabel [inlmutcap]=InlMutCap [inlforward]=InlForward [inlretexpr]=InlRetExpr [inlsuspend]=InlSuspend [ctor]=CtorT [objex]=Oe [nest]=Nst [scast]=Sc2 [vis]=VisT [throwx]=Tx [enumr]=Er [reqnn]=Rn [reif]=Rf [iter]=Iter [inner]=Inner [lazy]=Lazy [volatile]=Volatile [deleg]=Deleg [rwp]=Rwp [bymap]=Bm [del2]=D2 [gen]=Gen [genctor]=GenCtor [gen2]=Gen2 [gen3]=Gen3 [gen4]=Gen4 [gen5]=Gen5 [gen6]=Gen6 [netbase]=Nb [netbase2]=Nb2 [netgen]=Ng [netgen2]=Ng2 [event]=Ev [netgen3]=Ng3 [loopjump]=LjT [inline2]=Inl2  [c1net]=C1Net [firgap]=FirGap [fmt]=Fmt [cobuild]=Cob [dsl]=Dsl [object]=TObj [gfac]=TGfac [xprop]=Xprop [arrops]=Arro [langtail]=LangTail [enumbody]=EnumBody [fieldvis]=FieldVis [bytearg]=ByteArg [iterable]=Iterable [customexc]=CustomExc [comparator]=Comparator [use]=Use [comparable]=Comparable [charseq]=CS [charseqx]=CSX [charseqs]=CSStr [charseqxfile]=CSXFile [charseqmore]=CSMore [substr]=Substr [injbase]=InjBase [injfqn]=InjFqn [injstatic]=InjStatic [mfclosure]=MfClosure [mflambda]=MFL [injuint]=InjUint [exprbody]=EB [overload]=OV [collrealkt]=CollRealKt [mutcoll]=MutColl [mapfilter]=MapF [nan]=Nan [nestedtry]=NestedTry [trynullable]=TryNullable [setlocalbox]=SetLocalBox [nancmp]=NanCmp [mapgen]=MapGen [taskfam]=Tf [taskwhen]=Tw [whensubj]=WhenSubj [safecallnv]=SafeCallNv [rangein]=RangeIn [userrange]=UserRange [duration]=Duration [coldcf]=ColdCf [coforarray]=CoForArray [coarrayorder]=CoArrayOrder [coldgen]=ColdGen [coldinst]=ColdInst [coldvirt]=ColdVirt [coexc]=CoExc [cocancel]=CoCancel [corestrict]=CoRestrict [suspendco]=SuspendCo [lam1]=Lam1Kt [lam2]=Lam2Kt [suspendcapture]=SuspendCapture [suspendnestedcapture]=SuspendNestedCapture [suspendvalue]=AppKt [suspendval2]=Sv2Kt [taskawait]=TaskAwait [monitordrain]=MonitorDrainKt [threadlambda]=AppKt [genstatic]=GenStatic [genasync]=GenAsync [genbase]=GenBaseKt [strnum]=StrNum [mapof1]=Mo1 [emptymap]=EmptyMap [seqyieldall]=SeqYieldAll [charminus]=Cm [digittoint]=Dti [printlnnull]=PrintlnNull [maptostr]=Mts [comaindrain]=ComainDrain [colstr]=Cstr [cmpord]=CmpOrd [mutset]=MutSet [hashset2]=HashSet2 [iscoll]=IsColl [excmap]=ExcMap [tryexprop]=TryExprOp [mapforin]=MapForin [nestedstr]=NestedStr [pairnest]=PairNest [mapmerge]=MapMerge [triple]=Triple [typealias]=TypeAlias [atomics]=Atomics [mapvalues]=MapValues [indicesv]=IndicesV [tailrec]=Tailrec [copydef]=CopyDef [equalscall]=EqualsCall [collrevview]=CollRevView [nullcollarg]=NullCollArg [infloopret]=InfLoopRet [nullcs]=NullCs [genarrlam]=GenArrLam [coctxkey]=AppKt [cointercept]=AppKt [cfgawaitgen]=CfgAwaitGen [awaitintercept]=AppKt [valueawait]=ValueAwait [extawait]=ExtAwait )

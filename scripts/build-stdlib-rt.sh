@@ -49,17 +49,20 @@ grep ': error:' "$OUT/kotc.err" | sed -E 's/^.*: error: //; s/'"'"'[^'"'"']*'"'"
 (( bir_count > 0 )) || die "frontend produced no BIR (see $OUT/kotc.err)"
 
 if (( do_emit )); then
-	need_tool bir2cir; need_tool ilemit
+	need_tool bir2cir; need_tool ilemit; need_tool retarget
+	need_dotnet_reference_sets
 	info "bir2cir (substitute) -> CIR"
 	# bir2cir reads the REFERENCE assembly for the @ClrTypeAlias/@ClrIntrinsic call-substitution labels
 	# (member calls on CLR-bound owners -> plain BCL calls). Must exist — build the ref first.
 	[[ -f "$STDLIB_REF_DLL" ]] || die "reference stdlib dll not found at $STDLIB_REF_DLL — run 'build-stdlib-ref.sh --emit' first (the runtime build reads it for the @ClrTypeAlias/@ClrIntrinsic labels)"
-	refarg=(--ref "$STDLIB_REF_DLL")
-	{ dotnet "$BIR2CIR_DLL" "$CIR" "${refarg[@]}" --build-stdlib=runtime "$BIR"/*.bir.json 2>"$OUT/bir2cir.err" || true; } | tail -1
+	compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL")"
+	{ dotnet "$BIR2CIR_DLL" "$CIR" --compile-refs "$compile_refs" --build-stdlib=runtime "$BIR"/*.bir.json 2>"$OUT/bir2cir.err" || true; } | tail -1
 	info "ilemit (substitute) -> DotKt.Stdlib.dll"
-	{ dotnet "$ILEMIT_DLL" "$DLL" DotKt.Stdlib --build-stdlib=runtime "$CIR"/*.cir.json 2>"$OUT/ilemit.err" || true; } | tail -2
+	{ dotnet "$ILEMIT_DLL" "$DLL" DotKt.Stdlib --runtime-refs "" --build-stdlib=runtime "$CIR"/*.cir.json 2>"$OUT/ilemit.err" || true; } | tail -2
 	# Report (but do not fail on) interesting emitter noise; the REAL success signal is the dll below.
 	grep -vE '^\s+at ' "$OUT/ilemit.err" | grep -iE 'exception|error|unresolved|no matching|not found|cannot' | head -3 || true
 	[[ -f "$DLL/DotKt.Stdlib.dll" ]] || die "DotKt.Stdlib.dll was not emitted (see $OUT/ilemit.err)"
+	info "retarget: make DotKt.Stdlib.dll a clean compile-time reference"
+	dotnet "$RETARGET_DLL" "$DLL/DotKt.Stdlib.dll" --compile-refs "$FRAMEWORK_COMPILE_REFS" >/dev/null
 	info "*** DotKt.Stdlib.dll emitted ***"
 fi

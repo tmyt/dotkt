@@ -921,10 +921,10 @@ sealed partial class Emitter
         mb.SetCustomAttribute(new CustomAttributeBuilder(
             typeof(System.Runtime.CompilerServices.CompilerGeneratedAttribute).GetConstructor(Type.EmptyTypes), new object[0]));
 
-    // True when `name` is already defined by a REFERENCED (--ref, Assembly.LoadFrom'd) assembly. The module under
+    // True when `name` is already defined by an exact --runtime-refs assembly. The module under
     // construction is a PersistedAssemblyBuilder (not a loaded AppDomain assembly), so it never self-matches.
     static bool ResolvesExternally(string name) =>
-        AppDomain.CurrentDomain.GetAssemblies().Any(a => { try { return a.GetType(name) != null; } catch { return false; } });
+        RuntimeReferences.Assemblies.Any(a => { try { return a.GetType(name) != null; } catch { return false; } });
 
     static readonly Dictionary<string, Type> _typeCache = new();
 
@@ -939,7 +939,7 @@ sealed partial class Emitter
             ?? Type.GetType(name + ", System.ObjectModel")
             ?? Type.GetType(name + ", System.Text.RegularExpressions")
             ?? Type.GetType(name + ", System.Console")
-            ?? AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetType(name)).FirstOrDefault(x => x != null);
+            ?? RuntimeReferences.ResolveType(name);
         // A dotted FQN may denote a NESTED type: CLR metadata separates nesting with '+' (Outer+Inner) while the
         // producer's spec is dotted (`kotlin.time.Clock.System` -> `kotlin.time.Clock+System`). Probe by replacing
         // the LAST '.' with '+' and re-resolving; the recursion (via TryResolveType) walks deeper nesting levels

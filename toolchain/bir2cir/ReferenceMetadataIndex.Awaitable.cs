@@ -118,15 +118,15 @@ partial class ReferenceMetadataIndex
     // A referenced `[Extension] static GetAwaiter(this <awaitable>)` — the WinRT IAsyncOperation<T> shape
     // (WindowsRuntimeSystemExtensions.GetAwaiter<TResult>) or any 3rd-party/custom extension awaitable. The receiver's
     // type-CONSTRUCTOR must match the awaitable's (a generic extension's open receiver `IAsyncOperation<TResult>`
-    // unifies with the concrete `IAsyncOperation<Int>` by generic-type-definition identity). User --ref libs are scanned
-    // first (cheap, includes a gate support dll), then the framework assemblies.
+    // unifies with the concrete `IAsyncOperation<Int>` by generic-type-definition identity). The already-resolved
+    // compile set includes both user and framework assemblies; no ambient runtime directory is searched.
     MethodInfo FindGetAwaiterExtension(Type awaitable)
     {
         EnsureNetMlc();
         if (_netMlc == null) return null;
         var awDef = awaitable.IsGenericType ? awaitable.GetGenericTypeDefinition() : awaitable;
         var awName = awDef.FullName;
-        foreach (var asm in _netRefAsms.Concat(_netRuntimeAsms))
+        foreach (var asm in _netRefAsms)
         {
             foreach (var t in SafeExportedTypes(asm))
             {

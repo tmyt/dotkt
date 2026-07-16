@@ -26,6 +26,41 @@ RETARGET_DLL="$ROOT/build/retarget-bin/retarget.dll"
 FE_KLIB="$ROOT/build/clr-stdlib-frontend-klib/kotlin-stdlib-clr-frontend.klib"
 STDLIB_REF_DLL="$ROOT/build/clr-stdlib/dll/DotKt.Private.Stdlib.dll"
 STDLIB_RT_DLL="$ROOT/build/clr-stdlib-rt/dll/DotKt.Stdlib.dll"
+DOTKT_TFM="${DOTKT_TFM:-net10.0}"
+
+# The direct-run scripts do not receive MSBuild's @(ReferencePath), so construct the equivalent framework compile
+# set from the installed Microsoft.NETCore.App.Ref targeting pack.  This is an authoritative pack enumeration, not
+# a probe of an arbitrary referenced assembly's neighbouring directory.
+need_dotnet_reference_sets() {
+	[[ -n "${DOTNET_REFPACK_DIR:-}" && -n "${FRAMEWORK_COMPILE_REFS:-}" ]] && return 0
+	local sdk_root dotnet_root
+	sdk_root="$(dotnet --list-sdks | sed -n 's/^.*\[\(.*\)\]$/\1/p' | tail -1)"
+	[[ -n "$sdk_root" ]] || die "could not locate the dotnet SDK root"
+	dotnet_root="$(dirname "$sdk_root")"
+	DOTNET_REFPACK_DIR="$(find "$dotnet_root/packs/Microsoft.NETCore.App.Ref" -type d -path "*/ref/$DOTKT_TFM" 2>/dev/null | sort -V | tail -1)"
+	[[ -d "$DOTNET_REFPACK_DIR" ]] || die "Microsoft.NETCore.App.Ref for $DOTKT_TFM is not installed under $dotnet_root/packs"
+	mapfile -t FRAMEWORK_COMPILE_REF_PATHS < <(find "$DOTNET_REFPACK_DIR" -maxdepth 1 -type f -name '*.dll' | LC_ALL=C sort)
+	FRAMEWORK_COMPILE_REFS="$(refset_join "${FRAMEWORK_COMPILE_REF_PATHS[@]}")"
+
+	local major="${DOTKT_TFM#net}"; major="${major%%.*}"
+	local runtime_line runtime_base runtime_ver
+	runtime_line="$(dotnet --list-runtimes | awk -v m="$major." '$1=="Microsoft.NETCore.App" && index($2,m)==1' | sort -V | tail -1)"
+	runtime_ver="$(awk '{print $2}' <<<"$runtime_line")"
+	runtime_base="$(sed -n 's/^.*\[\(.*\)\]$/\1/p' <<<"$runtime_line")"
+	DOTNET_RUNTIME_DIR="$runtime_base/$runtime_ver"
+	[[ -d "$DOTNET_RUNTIME_DIR" ]] || die "Microsoft.NETCore.App runtime for $DOTKT_TFM is not installed"
+}
+
+refset_join() { # <path-or-semicolon-set>... -> one normalized semicolon list
+	local result="" part
+	for part in "$@"; do
+		[[ -n "$part" ]] || continue
+		part="${part#;}"; part="${part%;}"
+		[[ -n "$part" ]] || continue
+		result+="${result:+;}$part"
+	done
+	printf '%s' "$result"
+}
 
 # --- logging ---------------------------------------------------------------------------------------
 info() { echo "$SCRIPT_NAME: $*"; }
@@ -89,11 +124,11 @@ STDLIB_SRC_DIR="$ROOT/libraries/stdlib"
 # that truly lacks an input fails loudly on its own); deterministic (sort before hashing).
 _toolstamp() { find "$@" -type f -printf '%T@ %s %p\n' 2>/dev/null | LC_ALL=C sort | sha256sum | awk '{print $1}'; }
 # Per-artifact input sets. klib: kotc + stdlib sources (a klib has no IL -> ilemit/bir2cir are irrelevant to
-# its bytes). ref: kotc + bir2cir + ilemit + retarget + sources. rt: kotc + bir2cir + ilemit + the REF dll it
-# consumes (bir2cir --ref) + sources.
+# its bytes). ref: kotc + bir2cir + ilemit + retarget + targeting pack + sources. rt: the same plus the REF dll it
+# consumes through bir2cir's compile-reference set.
 _toolstamp_klib() { _toolstamp "$KOTC_INSTALL_DIR" "$STDLIB_SRC_DIR"; }
-_toolstamp_ref()  { _toolstamp "$KOTC_INSTALL_DIR" "$BIR2CIR_DLL" "$ILEMIT_DLL" "$RETARGET_DLL" "$STDLIB_SRC_DIR"; }
-_toolstamp_rt()   { _toolstamp "$KOTC_INSTALL_DIR" "$BIR2CIR_DLL" "$ILEMIT_DLL" "$STDLIB_REF_DLL" "$STDLIB_SRC_DIR"; }
+_toolstamp_ref()  { need_dotnet_reference_sets; _toolstamp "$KOTC_INSTALL_DIR" "$BIR2CIR_DLL" "$ILEMIT_DLL" "$RETARGET_DLL" "$DOTNET_REFPACK_DIR" "$STDLIB_SRC_DIR"; }
+_toolstamp_rt()   { need_dotnet_reference_sets; _toolstamp "$KOTC_INSTALL_DIR" "$BIR2CIR_DLL" "$ILEMIT_DLL" "$RETARGET_DLL" "$STDLIB_REF_DLL" "$DOTNET_REFPACK_DIR" "$STDLIB_SRC_DIR"; }
 # _stamp_fresh <artifact> <fingerprint>: true iff the artifact exists AND its sidecar records this fingerprint.
 _stamp_fresh() { [[ -e "$1" && -f "$1.toolstamp" && "$(cat "$1.toolstamp" 2>/dev/null)" == "$2" ]]; }
 

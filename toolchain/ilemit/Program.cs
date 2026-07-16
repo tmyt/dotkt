@@ -1,6 +1,6 @@
 // ilemit — emit a runnable .NET assembly directly as CIL from Backend IR (BIR) JSON. No C#, no csc.
 //
-//   ilemit <output-dir> <assemblyName> <file1.bir.json> [<file2.bir.json> ...]
+//   ilemit <output-dir> <assemblyName> [--runtime-refs a.dll;b.dll;...] <file1.cir.json>...
 //
 // All BIR files compile into ONE assembly (so multi-file Kotlin cross-references resolve).
 // D1.2 = M0 subset; D1.4 = user classes (fields, ctors, methods, inheritance, virtual/override).
@@ -10,26 +10,29 @@ using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
 using System.Text.Json;
+using DotKt.Toolchain;
 
 static class IlEmit
 {
     static int Main(string[] args)
     {
-        if (args.Length < 3) { Console.Error.WriteLine("usage: ilemit <out-dir> <asmName> [--build-stdlib=metadata|runtime] [--ref <dll>]... <file.bir.json>..."); return 1; }
+        if (args.Length < 3) { Console.Error.WriteLine("usage: ilemit <out-dir> <asmName> [--build-stdlib=metadata|runtime] [--runtime-refs <dll;dll;...>] <file.cir.json>..."); return 1; }
         var outDir = args[0];
         var asmName = args[1];
         Directory.CreateDirectory(outDir);
-        // `--ref <dll>`: preload an external .NET assembly (e.g. a coroutine runtime, a framework like Avalonia)
-        // so its types resolve at emit time; the runtime dll must sit beside the emitted assembly to run.
+        // `--runtime-refs <dll;...>`: the exact implementation-assembly set selected by MSBuild (or a direct
+        // script). It is used only for emit-time reflection; deployment still copies those files beside the output.
         // `--build-stdlib=metadata|runtime`: the stdlib self-build mode (the SAME flag bir2cir parses). It drives the
         // StdlibStub knob (either mode — stub un-emittable methods instead of aborting). Round-trip metadata is no longer
         // ilemit's concern (#71 S2: bir2cir generates it and skips it in the runtime build). Absent = an app build.
         var bir = new List<string>();
+        var runtimeRefs = new List<string>();
         var mode = Emitter.BuildStdlibMode.App;
         var rest = args.Skip(2).ToList();
         for (int i = 0; i < rest.Count; i++)
         {
-            if (rest[i] == "--ref" && i + 1 < rest.Count) { var rp = Path.GetFullPath(rest[++i]); Emitter.T($"ref: {rp}"); try { Assembly.LoadFrom(rp); } catch { } }
+            if (rest[i] == "--runtime-refs" && i + 1 < rest.Count) runtimeRefs.AddRange(ManagedReferenceCatalog.Split(rest[++i]));
+            else if (rest[i] == "--ref") { Console.Error.WriteLine("ilemit: --ref was replaced by --runtime-refs"); return 1; }
             else if (rest[i] == "--build-stdlib=metadata") mode = Emitter.BuildStdlibMode.Metadata;
             else if (rest[i] == "--build-stdlib=runtime") mode = Emitter.BuildStdlibMode.Runtime;
             else bir.Add(rest[i]);
@@ -40,6 +43,7 @@ static class IlEmit
         // full stack for debugging (rethrow), matching the existing crash-localizer flag (Emitter.Trace).
         try
         {
+            RuntimeReferences.Load(runtimeRefs);
             var files = bir.Select(LoadInputDocument).ToList();
             new Emitter(outDir, asmName, mode).EmitAssembly(MergeByFileClass(files));
             return 0;
