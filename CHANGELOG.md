@@ -20,12 +20,27 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `_hoist` re-hoist) — the materialization-side counterpart of the §4.6 `!sameModule` payload-side guard, matching
   ilemit `FindStatic`'s file-class-only `ldftn` universe. A cross-module dangling `__lambdaN` still fails loud. Two
   further hardenings in the same change: (a) a `setLocal` WRITING a captured enclosing var in a materialized carrier
-  (a capture-write the `{k:local}`-READ scans miss) is now refused loud at the bir2cir boundary instead of dying as
-  ilemit "store unknown var" (a defensive guard — kotc ref-cell-boxes mutated captures, so the shape is off the
-  materialized path; the no-false-positive regression `cases/il-inlmatsetcap` pins the ref-cell path keeps passing);
+  (a capture-write the `{k:local}`-READ scans miss) is handled by ref-cell write-through (see the next entry);
   (b) an `AssertNoUnsplicedInline` chokepoint at end of `Apply` fails loud if any `callInline` survives (notably a
   `pc`-less one `Rewrite` silently skips), mirroring `DefaultArgSplice.AssertNoPlaceholder`. New gate case
   `cases/il-inlsuspenddefault`.
+- **bir2cir (§4.4ii): ref-cell WRITE-THROUGH for a materialized carrier that WRITES a captured enclosing `var`.**
+  When `InlineSplice` must MATERIALIZE an inline lambda into a real `newClosure` carrier (§4.4ii) and the carrier body
+  WRITES a captured enclosing `var` (a bare `{k:setLocal}` to a capture — the kotlinx.coroutines `subscriptionCount`
+  shape), the write reaches bir2cir un-boxed because kotc's ref-cell boxing (`computeRefCells`, a per-compiled-function
+  analysis) never saw it — e.g. a cross-module inline body's callee-local. `MaterializeCarrier` now PROMOTES each such
+  written capture to a shared heap cell (`dotkt$inlmatref$Ref$<elem>{ var v }`): the closure captures the CELL (field
+  typed as the Ref class), the carrier body's reads/writes route through `this.<cap>.v`, and a whole-method post-pass
+  (`BoxMaterializedCaptures`) boxes the enclosing `var`'s decl + all in-method reads/writes to `.v` and registers the
+  cell in the file `refTypes` registry (`SharedSyntheticSynthesis` assembles the class). The SAME ref-cell machinery
+  kotc uses (`BirEmitterStatements`), one axis over — replacing the Phase-1 loud refusal with the actual lowering. The
+  `newDelegate`/`inlineLambda`/dispatch materialization guards are unchanged; only the setLocal-to-capture refusal
+  became support. Boxing is scoped by the minted CELL, not the bare var name, so a same-named var in another method —
+  including one kotc already ref-cell-boxed — is never touched; the shapes a name-based rewrite cannot safely handle
+  stay LOUD (a written capture whose element type carries a free type variable; a second closure/suspend-lambda
+  capturing the same var; in-method shadowing; and — unchanged — a SUSPEND carrier that writes a capture, whose SM
+  copy-writes its own field, so real suspend-arm write-through is a follow-up). `cases/il-inlmatsetcap` pins the
+  enclosing-scope write-through is visible (prints 10).
 - **kotc (#34 residual): a MEMBER (or suspend) `inline` fn's non-const defaulted arg is now CARRIED so an
   omitting inline splice can fill it** (`BirEmitterDeclarations.kt`, `BirEmitterInline.kt`). `carriesKotlinDefault`
   previously excluded ANY fn with a dispatch receiver (member) and ANY suspend fn, so a member inline fn's Tier-2
