@@ -912,6 +912,16 @@ il_check_imports suspendvalue AppKt "$ROOT/cases/il-suspendvalue" "$(printf '42\
 # `startSuspendUninterceptedOrReturnN` -> the SM's create(args, completion) override. Covers arity-2 param/local
 # values (run2/local2) + an arity-3 capturing lambda (run3).
 il_check_imports suspendval2 Sv2Kt "$ROOT/cases/il-suspendval2" "$(printf '42\n42\n42')"
+# BATCH B (#75) — the SUSPEND carrier-value contract for the inline splicer. inlsuspendcarrier: an inline fn with a
+# crossinline SUSPEND param builds a capturing suspend lambda (referencing the param + a value param) passed to a
+# NON-inline fn (blockOn) — retires the payload-newSuspendLambda fail-loud guard + exercises joint-hygiene descriptor
+# rewrite. inlsuspendobj: the FORMER SILENT-MISCOMPILE cell — a crossinline SUSPEND lambda captured by an `object :`
+# literal, materialized by MaterializeCarrier's suspend arm into a real newSuspendLambda VALUE (was a plain newClosure
+# delegate). inlsuspendlaunch: a coroutine-builder suspend lambda inside an inline-call lambda arg capturing that arg's
+# own local — retires the carrier-side descriptor guard. All drive the suspend body end-to-end (value MUST be correct).
+il_check_imports inlsuspendcarrier AppKt "$ROOT/cases/il-inlsuspendcarrier" "$(printf '42\n42\n7')"
+il_check_imports inlsuspendobj AppKt "$ROOT/cases/il-inlsuspendobj" "$(printf 'True\nFalse\nTrue')"
+il_check_imports inlsuspendlaunch AppKt "$ROOT/cases/il-inlsuspendlaunch" "$(printf '42\n10')"
 il_check dsl Dsl "$ROOT/cases/il-dsl" "a[Pb]c"
 il_check object TObj "$ROOT/cases/il-object" "3"
 il_check gfac TGfac "$ROOT/cases/il-gfac" "$(printf '42\nhi')"

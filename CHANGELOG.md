@@ -7,6 +7,26 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir (#75 Batch B): the inline splicer now completes the CARRIER-VALUE contract for SUSPEND carriers**
+  (`InlineSplice.cs`). A lambda-param reference surviving in a NON-INVOKE position must become the correct runtime
+  VALUE for its funcType; this was implemented for a plain `fn` (→ `newClosure`) but was a total hole for `fn suspend` —
+  `MaterializeCarrier` minted a plain `newClosure` even for a `{t:fn,suspend:true}` carrier, so a suspend-typed carrier
+  captured in a non-invoke position became a plain delegate where the SM / `startSuspendUninterceptedOrReturn` protocol
+  expects a suspend lambda (a SILENT MISCOMPILE hitting the whole kotlinx Flow operator + terminal-op family). Fixed:
+  (B1) a SUSPEND arm in `MaterializeCarrier` mints a real `newSuspendLambda` VALUE — captures verbatim (the SM builder
+  field-ifies the body itself, so no `RewriteCapturesToFields`), invoke body + trailing `return`, typeParams faithful to
+  kotc's `freeTypeParams` (single-scope 0..N-1 prefix, else fail loud) — flowing through `SuspendLambdaLowering`
+  identically to a source suspend-lambda literal. (B2) `newSuspendLambda` is now a first-class HYGIENE citizen:
+  `CollectDeclared`/`ApplyPrefix`/`RewriteLocalRefs` rewrite `captures[].name` descriptors JOINTLY with the frame
+  (skipping the SM's own inner scope) and `SpliceLambdaInvokes`/`ForwardLambdaArgs` treat the node as a boundary (a
+  captured-and-invoked param is materialized, not spliced into the SM's execution context), retiring three fail-loud
+  guards (payload / param-default / carrier-side). A narrowed guard remains only for the two still-unsound shapes (a
+  captured `__outer` receiver mis-bind, a capture-name colliding with the SM's own scope). (B3) a new loud guard fails
+  on a lambda-param `{k:local}` referenced directly inside a payload `{k:typeDef}` (an `object :` literal), converting a
+  silent hole to a build break. New gates `cases/il-inlsuspendcarrier` (crossinline suspend lambda → non-inline
+  `blockOn`), `cases/il-inlsuspendobj` (the former silent-miscompile cell — a crossinline suspend lambda captured by an
+  `object :` and driven end-to-end), and `cases/il-inlsuspendlaunch` (a coroutine-builder suspend lambda capturing an
+  inline-call lambda arg's own local); each asserts the suspend body runs and returns the correct value.
 - **bir2cir (#34): inline splice now fills an OMITTED defaulted parameter from the callee's default value — including a
   LAMBDA default** (`InlineSplice.cs`, STEP 5 param binding). When splicing an `inline fun`, a null (omitted-default) arg
   slot was filled only from a Tier-1 metadata-representable constant carried on the param's `default` field; a Tier-2
