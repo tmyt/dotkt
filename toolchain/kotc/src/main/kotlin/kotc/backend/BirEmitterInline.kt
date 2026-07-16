@@ -167,9 +167,7 @@ internal fun BirEmitter.defaultReadsDispatch(fn: IrSimpleFunction, def: IrExpres
  *  inlines it). */
 internal fun BirEmitter.inlineSpliceCallSameModule(call: IrCall): String {
 	val callee = call.symbol.owner
-	val name = callee.name.asString()
 	val extParam = callee.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
-	val extRecv = extensionReceiver(call)
 	val dispatchArg = dispatchReceiver(call)
 	// A MEMBER extension inline fn (`class C { inline fun T.f(block) }`, #20) has BOTH a dispatch (the enclosing
 	// class/companion) AND an extension receiver. The extension receiver rides the leading `__self` param (recvs.extension
@@ -185,6 +183,48 @@ internal fun BirEmitter.inlineSpliceCallSameModule(call: IrCall): String {
 	if (extParam != null && dispatchArg != null && bodyReferencesDispatch(callee)) return unsupported(call,
 		"a same-module member-extension inline call whose body uses the dispatch (enclosing-class) receiver",
 		"co-binding a spliced member-extension's dispatch AND extension receiver is not yet supported (the pure-extension form, whose body never references the enclosing class, splices)")
+	return emitOwnerfulInlineNode(call)
+}
+
+/** F1 (#60): CROSS-MODULE inline of a facadegen-injected MEMBER (`class C { inline fun pick(block) }` restored from a
+ *  referenced DotKt assembly — `isInline=true`, `body==null`, a DISPATCH receiver present) taking ANY lambda arg
+ *  (AXIS ①). Without this the member falls to the ordinary `callInstance` path (BirEmitterCalls) + a REAL delegate for
+ *  the block, so a non-local `return` inside the block returns from the DELEGATE, not the caller — a SILENT miscompile.
+ *  kotc emits the SAME owner-ful `callInline` shape the same-module member emitter does (owner = `typeName(enclosingClass)`,
+ *  `recvs.dispatch` + F2A `dispatchTypeArgs`); bir2cir resolves the `[KotlinInline]` payload off the ref.dll via the
+ *  owner-ful `ResolveInlinePayload`/`InlineCandidates` (keyed `owner|name|pc|ga`) and its §4.3 binds `recvs.dispatch`,
+ *  rebinding the payload's `{k:this}` refs to the caller-provided receiver.
+ *
+ *  #23 boundary: the member-EXTENSION dual-receiver shape (BOTH a dispatch AND an extension receiver) is EXCLUDED by the
+ *  call-site gate (`extensionReceiver(call) == null`) — it falls through to the status-quo delegate path there, because
+ *  kotc cannot inspect the cross-module body to prove the payload does not read the dispatch receiver, and a body-blind
+ *  splice/fail-loud would wrongly break the SOUND pure-extension idiom. The guard below is DEFENSE-IN-DEPTH for that
+ *  invariant (should never fire given the gate): if a dual-receiver ever reaches here it FAILS LOUD, never silently
+ *  rebinds `{k:this}` to the caller's `this`. Narrowing #23 to the actually-unsound subset (scan the decoded payload
+ *  body for `{k:this}`) is a bir2cir follow-up. */
+internal fun BirEmitter.inlineSpliceCallMember(call: IrCall): String {
+	val callee = call.symbol.owner
+	val extParam = callee.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
+	val dispatchArg = dispatchReceiver(call)
+	if (extParam != null && dispatchArg != null) return unsupported(call,
+		"a cross-module member-extension inline call (dispatch + extension receiver, #23 shape) reached inlineSpliceCallMember",
+		"the call-site gate should route the dual-receiver shape to the delegate path; co-binding a spliced member-extension's dispatch AND extension receiver is not yet supported")
+	return emitOwnerfulInlineNode(call)
+}
+
+/** The shared OWNER-FUL `callInline` node builder for an inline call whose hosting .NET type kotc CAN name — used by
+ *  BOTH the same-module member/top-level splice (`inlineSpliceCallSameModule`, body present) and the cross-module
+ *  facadegen-injected member (`inlineSpliceCallMember`, body on the ref.dll, §4.3 in bir2cir). Callers apply their OWN
+ *  dual-receiver risk guard (#20 same-module / #23 cross-module) BEFORE calling. The emitted shape — `owner`, `pc`, `ga`,
+ *  `typeArgs`, `recvs` (dispatch/extension + F2A `dispatchTypeArgs`), the per-Regular-param `args`, `retType`, `paramSig`
+ *  — is IDENTICAL for both callers, so bir2cir's InlineSplice consumes them the same whether the payload is same-module
+ *  (`InlineBirStash.Index`) or cross-module (ref.dll `InlineCandidates`). */
+internal fun BirEmitter.emitOwnerfulInlineNode(call: IrCall): String {
+	val callee = call.symbol.owner
+	val name = callee.name.asString()
+	val extParam = callee.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
+	val extRecv = extensionReceiver(call)
+	val dispatchArg = dispatchReceiver(call)
 	val params = callee.parameters.filter { it.kind == IrParameterKind.Regular }
 	// One arg per Regular param, INDEX-ALIGNED with `params` (an omitted-default slot stays null): `regularArgs` drops
 	// omitted-default nulls, which — now that ANY inline+lambda call splices (AXIS ①) — would shift the lambda into the
@@ -197,7 +237,9 @@ internal fun BirEmitter.inlineSpliceCallSameModule(call: IrCall): String {
 		.map { call.arguments.getOrNull(it.index) }
 	// owner = kotc's OWN name for the hosting .NET type: the enclosing type name for a member inline fun, else the
 	// top-level fun's file-facade class. Matches the stash key (a member is stashed under its type's `name`, a
-	// top-level fun under the file's `fileClass` = `fileClassName`, which `fileClassOf` reproduces cross-file).
+	// top-level fun under the file's `fileClass` = `fileClassName`, which `fileClassOf` reproduces cross-file); the
+	// cross-module member's `typeName(enclosingClass)` = the injected class's Kotlin FQN = the ref.dll's reflected
+	// `ownerFqn`, so `InlineCandidates` keys match.
 	val owner = (callee.parent as? IrClass)?.let { typeName(it) } ?: fileClassOf(callee)
 	// pc = emitted param count (extension receiver counted as a leading `__self`); ga = type-param arity. The
 	// `owner|name|pc|ga` key selects a candidate LIST; bir2cir picks the unique one whose `params[i].type` structurally
@@ -207,14 +249,33 @@ internal fun BirEmitter.inlineSpliceCallSameModule(call: IrCall): String {
 	val typeArgs = callee.typeParameters.indices.joinToString(",") { i ->
 		(call.typeArguments.getOrNull(i)?.let { birType(it) } ?: OBJ).toJson()
 	}
-	// Receivers: an extension receiver -> `recvs.extension` (payload param[0] == `__self`); a member dispatch receiver
-	// -> `recvs.dispatch` (the payload's own `{k:this}` refs bind to it, §4.3). Both are carried when present.
-	// NOTE (#20): a PLAIN companion is FLATTENED to static methods of the enclosing class (BirEmitterDeclarations §630),
-	// so for a companion callee `expr(dispatchArg)` renders a `Queue.INSTANCE` staticField that does NOT exist — a
-	// DANGLING token. It is INERT today: bir2cir reads `recvs.dispatch` ONLY when the stash classifies `recv==dispatch`
-	// (a real-instance member), never for the `recv==extensionParam` (member-extension) or `recv==none` (flattened
-	// companion) case — the extension/plain call binds without it. A future dual-receiver decoupling MUST gate on the
-	// payload being a real instance member, not on "recvs.dispatch carried", or it would materialize this dangle.
+	val recvs = inlineReceiverParts(callee, extRecv, dispatchArg)
+	// One entry per REGULAR param, in order: a literal lambda -> an `inlineLambda` carrier; any other arg -> its expr.
+	val argsJson = params.indices.joinToString(",") { i ->
+		val arg = args.getOrNull(i)
+		// AXIS ②: a NOINLINE lambda arg is a REAL delegate value (emit via `expr` -> newDelegate/newClosure), NOT a
+		// splice carrier -> inside the spliced body its `param()` becomes a delegate INVOKE on the bound temp. A normal
+		// or CROSSINLINE lambda rides as an `inlineLambda` carrier bir2cir splices at its invoke sites. `params[i]` and
+		// `args[i]` are the i-th Regular param/arg (index-aligned above), so the noinline flag is read off the RIGHT param.
+		if (arg is IrFunctionExpression && !params[i].isNoinline) emitInlineLambdaCarrier(arg)
+		else if (arg != null) expr(arg)
+		else "null"
+	}
+	val retType = birType(callee.returnType).toJson()
+	return """{"k":"callInline","callee":${str(callee.fqNameWhenAvailable?.asString() ?: name)},"owner":${str(owner)},"pc":$pc,"ga":$ga,"typeArgs":[$typeArgs],"recvs":$recvs,"args":[$argsJson],"retType":$retType,"paramSig":[${paramSigOf(callee)}]}"""
+}
+
+/** Build the `recvs` object for an owner-ful inline `callInline` node: an extension receiver -> `recvs.extension`
+ *  (payload param[0] == `__self`); a member dispatch receiver -> `recvs.dispatch` (the payload's own `{k:this}` refs bind
+ *  to it, §4.3). Both are carried when present. Shared by `emitOwnerfulInlineNode` (same-module + cross-module member) so
+ *  the receiver shape bir2cir's InlineSplice §4.3 consumes is emitted identically on both paths.
+ *  NOTE (#20): a PLAIN companion is FLATTENED to static methods of the enclosing class (BirEmitterDeclarations §630),
+ *  so for a companion callee `expr(dispatchArg)` renders a `Queue.INSTANCE` staticField that does NOT exist — a
+ *  DANGLING token. It is INERT today: bir2cir reads `recvs.dispatch` ONLY when the stash classifies `recv==dispatch`
+ *  (a real-instance member), never for the `recv==extensionParam` (member-extension) or `recv==none` (flattened
+ *  companion) case — the extension/plain call binds without it. A future dual-receiver decoupling MUST gate on the
+ *  payload being a real instance member, not on "recvs.dispatch carried", or it would materialize this dangle. */
+internal fun BirEmitter.inlineReceiverParts(callee: IrSimpleFunction, extRecv: IrExpression?, dispatchArg: IrExpression?): String {
 	val recvParts = ArrayList<String>()
 	extRecv?.let { recvParts.add(""""extension":${expr(it)}""") }
 	dispatchArg?.let { recvParts.add(""""dispatch":${expr(it)}""") }
@@ -244,20 +305,7 @@ internal fun BirEmitter.inlineSpliceCallSameModule(call: IrCall): String {
 				recvParts.add(""""dispatchTypeArgs":[${dta.joinToString(",") { it.toJson() }}]""")
 		}
 	}
-	val recvs = "{${recvParts.joinToString(",")}}"
-	// One entry per REGULAR param, in order: a literal lambda -> an `inlineLambda` carrier; any other arg -> its expr.
-	val argsJson = params.indices.joinToString(",") { i ->
-		val arg = args.getOrNull(i)
-		// AXIS ②: a NOINLINE lambda arg is a REAL delegate value (emit via `expr` -> newDelegate/newClosure), NOT a
-		// splice carrier -> inside the spliced body its `param()` becomes a delegate INVOKE on the bound temp. A normal
-		// or CROSSINLINE lambda rides as an `inlineLambda` carrier bir2cir splices at its invoke sites. `params[i]` and
-		// `args[i]` are the i-th Regular param/arg (index-aligned above), so the noinline flag is read off the RIGHT param.
-		if (arg is IrFunctionExpression && !params[i].isNoinline) emitInlineLambdaCarrier(arg)
-		else if (arg != null) expr(arg)
-		else "null"
-	}
-	val retType = birType(callee.returnType).toJson()
-	return """{"k":"callInline","callee":${str(callee.fqNameWhenAvailable?.asString() ?: name)},"owner":${str(owner)},"pc":$pc,"ga":$ga,"typeArgs":[$typeArgs],"recvs":$recvs,"args":[$argsJson],"retType":$retType,"paramSig":[${paramSigOf(callee)}]}"""
+	return "{${recvParts.joinToString(",")}}"
 }
 
 /** CROSS-MODULE inline: a call to a facadegen-injected `inline fun` taking ANY lambda arg (AXIS ①; its `[KotlinInline]`

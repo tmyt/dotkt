@@ -419,6 +419,56 @@ run_app pkgactual "$G/appil/GeomApp.dll"
 check_output roundtrip-pkg "$pkgexpected" "$pkgactual" "namespace; reified inline; non-local return; properties; ext operator/property; vararg; default arg; nullable"
 
 
+# ----- CROSS-MODULE inline MEMBER + non-local return (F1 / #60) -----
+# roundtrip-pkg (above) proved a cross-module inline TOP-LEVEL fn splices a non-local return. This proves the MEMBER
+# case: `class C { inline fun pick(block) }` restored from a DotKt assembly (isInline=true, body==null, a DISPATCH
+# receiver). Before F1 the member failed kotc's `dispatchReceiver(call) == null` cross-module gate and fell to the plain
+# `callInstance` path + a REAL delegate for the block, so a non-local `return` inside the block returned from the
+# DELEGATE, not the caller — a SILENT miscompile (`caller()` fell through to -1 instead of returning 99). kotc now emits
+# a member-aware `callInline` carrying `recvs.dispatch`; bir2cir's InlineSplice §4.3 binds it (the payload's `{k:this}`
+# member-field reads rebind to the caller-provided receiver) and routes the non-local return to the CALLER. NOT in
+# RT_XFAIL — it must pass. `matched()` also exercises the dispatch-receiver `this.c` field read in the spliced body.
+IM="$ROOT/build/roundtrip-inline-member"; rm -rf "$IM"; mkdir -p "$IM/lib" "$IM/app" "$IM/libbir" "$IM/libil" "$IM/appbir" "$IM/appil"
+cat > "$IM/lib/lib.kt" <<'EOF'
+package picker
+class C(val a: Int, val b: Int, val c: Int) {
+    inline fun pick(block: (Int) -> Boolean): Int {
+        if (block(a)) return a      // dispatch-receiver `this.a` read inside a spliced inline member body
+        if (block(b)) return b
+        if (block(c)) return c
+        return -1
+    }
+}
+EOF
+cat > "$IM/app/app.kt" <<'EOF'
+import picker.C
+fun caller(): Int {
+    val c = C(10, 20, 30)
+    c.pick { x -> if (x == 20) return 99; false }   // NON-LOCAL return from caller() through the CROSS-MODULE inline MEMBER
+    return -1                                        // must NOT be reached: pick sees 20 -> the block returns 99 from caller()
+}
+fun matched(): Int {
+    val c = C(10, 20, 30)
+    return c.pick { x -> x == 30 }                   // pick's own early `return c` (dispatch-receiver read) yields 30
+}
+fun main() {
+    println(caller())    // 99 — the non-local return escapes the CALLER, not the delegate
+    println(matched())   // 30 — inline-member body early-return + `this.c` field read
+}
+EOF
+CLR_TYPES_METADATA="" "$LAUNCHER" "$IM/lib" -no-stdlib -classpath "$CP" -d "$IM/libbir" >/dev/null 2>&1 || true
+emit_il "$IM/libil" PickLib "$IM/libbir"/*.bir.json
+dotnet "$RETARGET_DLL" "$IM/libil/PickLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
+"$LAUNCHER" --scan-imports --output "$IM/imports.txt" "$IM/app"/*.kt >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$IM/meta" --compile-refs "$REFS$IM/libil/PickLib.dll" --import-list "$IM/imports.txt" >/dev/null 2>&1 || true
+CLR_TYPES_METADATA="$IM/meta" "$LAUNCHER" "$IM/app" -no-stdlib -classpath "$CP" -d "$IM/appbir" >/dev/null 2>&1 || true
+emit_il "$IM/appil" PickApp --ref "$IM/libil/PickLib.dll" "$IM/appbir"/*.bir.json
+cp "$IM/libil/PickLib.dll" "$IM/appil/" 2>/dev/null || true
+imexpected="$(printf '99\n30')"
+run_app imactual "$IM/appil/PickApp.dll"
+check_output roundtrip-inline-member "$imexpected" "$imactual" "cross-module inline MEMBER + non-local return from the caller + dispatch-receiver field read in the spliced body (F1 #60)"
+
+
 # ----- GENERIC round-trip, COMBINED with every other round-tripping feature, consumed as Kotlin -----
 # Exercises user generics in every POSITION (class type param, member, return, parameter, two type params, generic
 # method on a generic class) AND combined with each restored modifier (operator, infix, extension, extension operator,

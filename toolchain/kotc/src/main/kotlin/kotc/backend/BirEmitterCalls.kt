@@ -1307,6 +1307,24 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// coerces the CharSequence ctor arg to String so `StringBuilder(String)` binds. No CLR lowering in kotc.
 	}
 
+	// F1 (#60): a facadegen-injected cross-module inline MEMBER (`class C { inline fun pick(block) }` restored from a
+	// referenced DotKt assembly — `isInline`, `body==null`, a DISPATCH receiver present, NO extension receiver) taking
+	// ANY lambda arg (AXIS ①) MUST be source-inlined. It has a dispatch receiver, so it fails the
+	// `dispatchReceiver(call) == null` gate below and would fall to the ordinary `callInstance` path + a REAL delegate
+	// whose non-local `return` returns from the DELEGATE, not the caller — a SILENT miscompile. Emit a member-aware
+	// `callInline` carrying `recvs.dispatch`; bir2cir resolves the `[KotlinInline]` payload off the ref.dll (owner-ful
+	// `InlineCandidates`) and its §4.3 rebinds the payload's `{k:this}` to the caller-provided receiver.
+	//  - Gate on the enclosing type being FACADEGEN-injected (`clrInjectedDotNetName`), so a klib stdlib member (not
+	//    facadegen-injected) is untouched.
+	//  - EXCLUDE the member-EXTENSION dual-receiver (#23) shape (`extensionReceiver(call) != null`): kotc cannot inspect
+	//    the cross-module body to know whether it reads the dispatch receiver, and a body-BLIND splice OR fail-loud would
+	//    wrongly break the SOUND pure-extension idiom (`class Lib { inline fun Box.mapped(f) = f(get()) }`) that the
+	//    delegate path below handles correctly. So the dual-receiver shape falls THROUGH to the status-quo delegate path
+	//    (unchanged; a non-local return through it stays the pre-existing #23 gap — decoupling the dispatch bind from the
+	//    extension bind by scanning the decoded payload body for `{k:this}` is bir2cir's #23 follow-up).
+	if (callee.body == null && callNeedsSplice(call) && dispatchReceiver(call) != null && extensionReceiver(call) == null
+			&& (callee.parent as? IrClass)?.classId?.let { kotc.frontend.clrInjectedDotNetName(it) } != null)
+		return inlineSpliceCallMember(call)
 	// DotKt round-trip: a call to a top-level function restored from a [KotlinFile] facade in a referenced
 	// assembly -> a .NET static call on that file-facade class. `body == null` distinguishes the injected symbol
 	// from a same-named local top-level fun. (A suspend top-level fun awaits via the coroutine path, not here.)

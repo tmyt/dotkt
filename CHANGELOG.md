@@ -7,6 +7,22 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **kotc (#60, F1): a cross-module inline MEMBER is now source-spliced — non-local `return` no longer miscompiles
+  (SILENT P1).** A facadegen-injected inline member (`class C { inline fun pick(block) }` restored from a referenced
+  DotKt assembly: `isInline=true`, `body==null`, a DISPATCH receiver) failed kotc's cross-module splice gate — which
+  only fired for owner-less/top-level shapes (`dispatchReceiver(call) == null`) — and fell through to the ordinary
+  `callInstance` path plus a REAL delegate for the block. A non-local `return` inside the block then returned from the
+  DELEGATE, not the caller: a silent control-flow miscompile (ilverify-clean). kotc now emits a member-aware
+  `callInline` carrying `recvs.dispatch` (+ F2A `dispatchTypeArgs`), owner = `typeName(enclosingClass)`, so bir2cir's
+  dormant `InlineSplice` §4.3 binds the dispatch receiver and rebinds the payload's `{k:this}` member reads to the
+  caller-provided receiver — a PURE producer gap (no BIR-contract change; the consumer was already ready). The
+  same-module (`inlineSpliceCallSameModule`) and new cross-module (`inlineSpliceCallMember`) member emitters now share
+  one `emitOwnerfulInlineNode` + `inlineReceiverParts` builder (same-module output byte-identical). Scoped to the PURE
+  member shape (dispatch receiver, NO extension receiver): the member-EXTENSION dual-receiver (#23) shape is excluded by
+  the call-site gate and falls through UNCHANGED to the status-quo delegate path — kotc cannot inspect the cross-module
+  body to know whether it reads the dispatch receiver, and a body-blind splice would break the sound pure-extension
+  idiom (`inline fun Box.mapped(f) = f(get())`); a non-local return through that shape stays the pre-existing #23 gap.
+  New `verify-roundtrip.sh` section `roundtrip-inline-member` gates it.
 - **bir2cir (#43): the §4.4ii carrier-materialization newDelegate refusal is narrowed to CROSS-MODULE only — the
   Batch A × Batch B integration seam.** `InlineSplice`'s §4.4ii materialization refused ANY nested `newDelegate` in
   both arms (non-suspend `HasUnmaterializableNested`, suspend `MaterializeSuspendCarrier`), but the #34 default-fill's
