@@ -17,11 +17,19 @@
 - **Think in English; write the user-facing report in Japanese.** Reasoning, code, comments,
   identifiers, commit messages, and subagent (Agent tool) prompts stay English — they are
   instructions to agents; only the final report to the user is Japanese.
-- **A tool-bearing turn carries NO prose — none (2026-07-14, user-directed, HARD).** Emit the
-  `<invoke>` block(s) alone, with no assistant text before or around them; report in a SEPARATE
-  tool-free turn (in Japanese, per the rule above). Prose sharing a turn with a tool call
-  intermittently CORRUPTS the call (stray tokens, dropped `antml:` prefix → malformed, wasted
-  turns). Incident record: MEMORY `respond-in-english-when-tool-calling`.
+- **Tool turns: work FIRST, report LAST — never announce-then-stop (2026-07-17, supersedes the
+  2026-07-14 HARD no-prose rule).** A prose-only message ENDS the turn, so a message that says
+  "I will now do X" and stops means X never happens. Run the tool calls first; the user-facing
+  report (Japanese) is the FINAL, tool-free message of the turn — never a preamble, never a
+  promise of pending work.
+  - **On Opus 4.8 only, keep tool-bearing turns 100% prose-free:** on that model, prose sharing
+    a turn with a tool call intermittently CORRUPTS the call (stray tokens, dropped `antml:`
+    prefix → malformed, wasted turns). Incident record: MEMORY
+    `respond-in-english-when-tool-calling`.
+  - **On Fable 5 (current default) and other models:** the corruption has not been reproduced;
+    a one-line pre-tool status note is allowed when it helps. If call corruption is EVER observed
+    on a model, treat that model as Opus-4.8-class: go fully prose-free there and record the
+    model name here.
 
 ## Use what's already written
 - **The answer is usually already written down — this repo over-documents.** Before any non-trivial
