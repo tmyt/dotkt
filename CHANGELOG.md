@@ -7,6 +7,25 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir (#43): the §4.4ii carrier-materialization newDelegate refusal is narrowed to CROSS-MODULE only — the
+  Batch A × Batch B integration seam.** `InlineSplice`'s §4.4ii materialization refused ANY nested `newDelegate` in
+  both arms (non-suspend `HasUnmaterializableNested`, suspend `MaterializeSuspendCarrier`), but the #34 default-fill's
+  output vocabulary now includes an app-local `newDelegate`: a member-inline call omitting a lambda default, nested
+  inside a materialized carrier, splices first (post-order `Walk`) and re-hoists a `__dflt$lambda$N` app-local PLUS a
+  `newDelegate` INSIDE the carrier — same-file, fully resolvable — which the blanket guard then refused (the
+  `suspendCancellableCoroutineReusable` FailLoud that gated the kotlinx.coroutines port; also `BufferedChannel`
+  `sendOnNoWaiterSuspend`/`sendBroadcast`/`receiveOnNoWaiterSuspend`/`receiveCatchingOnNoWaiterSuspend` and
+  `BufferedChannelIterator.hasNextOnNoWaiterSuspend`). Fixed by refusing only a `newDelegate` whose target `method`
+  does NOT resolve app-locally (`IsAppLocalDelegate`: the target name is a declared file-class method or a pending
+  `_hoist` re-hoist) — the materialization-side counterpart of the §4.6 `!sameModule` payload-side guard, matching
+  ilemit `FindStatic`'s file-class-only `ldftn` universe. A cross-module dangling `__lambdaN` still fails loud. Two
+  further hardenings in the same change: (a) a `setLocal` WRITING a captured enclosing var in a materialized carrier
+  (a capture-write the `{k:local}`-READ scans miss) is now refused loud at the bir2cir boundary instead of dying as
+  ilemit "store unknown var" (a defensive guard — kotc ref-cell-boxes mutated captures, so the shape is off the
+  materialized path; the no-false-positive regression `cases/il-inlmatsetcap` pins the ref-cell path keeps passing);
+  (b) an `AssertNoUnsplicedInline` chokepoint at end of `Apply` fails loud if any `callInline` survives (notably a
+  `pc`-less one `Rewrite` silently skips), mirroring `DefaultArgSplice.AssertNoPlaceholder`. New gate case
+  `cases/il-inlsuspenddefault`.
 - **kotc (#34 residual): a MEMBER (or suspend) `inline` fn's non-const defaulted arg is now CARRIED so an
   omitting inline splice can fill it** (`BirEmitterDeclarations.kt`, `BirEmitterInline.kt`). `carriesKotlinDefault`
   previously excluded ANY fn with a dispatch receiver (member) and ANY suspend fn, so a member inline fn's Tier-2

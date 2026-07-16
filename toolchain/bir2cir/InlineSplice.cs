@@ -35,12 +35,15 @@ static class InlineSplice
     static int _nextLabelId;                    // per-file fresh cfg label id (set at Apply entry)
     static ReferenceMetadataIndex _refs;
     static JsonArray _hoist;                    // #34: lifted default-lambda methods re-hoisted from a `defaultCarrier`
+    static HashSet<string> _appLocalMethods;   // #43: file-class method names a same-module `newDelegate` can `ldftn` — the file's own file-class methods + every drained re-hoist (a PENDING re-hoist is checked live via `_hoist`). Provenance oracle for the §4.4ii materialization-side newDelegate guard, the materialization-side counterpart of the §4.6 `!sameModule` payload-side guard in RewriteGeneric.
 
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs)
     {
         _refs = refs;
         _nextLabelId = MaxLabelId(root) + 1;
         _hoist = new JsonArray();
+        _appLocalMethods = new HashSet<string>(StringComparer.Ordinal);
+        CollectAppLocalMethodNames(root);
         Walk(root, 0);
         // #34: a `defaultCarrier` default (a non-capturing lambda default `= { error(...) }`) re-hoists its lifted
         // `__lambdaN` helper into THIS file's file-class methods (fresh name), exactly like DefaultArgSplice's cross-module
@@ -56,6 +59,7 @@ static class InlineSplice
             {
                 var h = _hoist[0]; _hoist.RemoveAt(0);
                 Walk(h, 0);
+                if (h is JsonObject ho && Str(ho["name"]) is string hn) _appLocalMethods.Add(hn);   // #43: a drained re-hoist is now `ldftn`-resolvable app-local
                 methods.Add(h);
             }
         }
@@ -68,6 +72,22 @@ static class InlineSplice
         NormalizeImplicitNullableUnwrap(root);
         WidenCovariantConstruction(root);
         RetypeReceiverToConcrete(root);
+        // CHOKEPOINT (§4.5, mirrors DefaultArgSplice.AssertNoPlaceholder): every `callInline` kotc emits under
+        // splice-all must be consumed by this pass. A survivor — notably one kotc emitted WITHOUT a `pc` (silently
+        // skipped by Rewrite at the `o.ContainsKey("pc")` gate) — would reach ilemit, which cannot emit a callInline
+        // (it fails opaquely there). Fail loud HERE with the callee so the un-spliced site is identifiable.
+        AssertNoUnsplicedInline(root);
+    }
+
+    // #43: the FILE-CLASS method names declared on the root — the exact set a `newDelegate` target `ldftn`-resolves
+    // against (ilemit's FindStatic binds a delegate method by bare name against `IsFileClass` types ONLY; a lifted
+    // lambda / non-capturing default helper is always a file-class static). Nested-TYPE member methods are deliberately
+    // excluded — a bare-name match there would ACCEPT here then fail loud in ilemit's ldftn, so keeping the set exactly
+    // ilemit's universe fails such a mismatch at THIS layer instead. Re-hoisted #34 defaults fold in as they drain.
+    static void CollectAppLocalMethodNames(JsonNode root)
+    {
+        if (root is JsonObject ro && ro["methods"] is JsonArray a)
+            foreach (var m in a) if (m is JsonObject mo && Str(mo["name"]) is string mn) _appLocalMethods.Add(mn);
     }
 
     static void Walk(JsonNode node, int depth)
@@ -718,8 +738,9 @@ static class InlineSplice
         // and one capturing anything else fails loud via HasStrayLocal. This is the `suspendCancellableCoroutine { cont ->
         // … cont.invokeOnCancellation { … } }` pattern (#22). But a nested `newSuspendLambda` (its SM ctor binds captures
         // by DESCRIPTOR NAME, which the splice's field/this rewrites do not touch -> field vs body-ref skew, FINDING 1), a
-        // `newDelegate` (an origin-file `__lambdaN` type token that dangles, §4.6), or an un-spliced `inlineLambda` (a
-        // nested inline-call lambda arg, only handled at STEP 8's fixpoint) cannot be wrapped verbatim — refuse those.
+        // CROSS-MODULE `newDelegate` (a dangling origin-file `__lambdaN` type token, §4.6 — an APP-LOCAL one, e.g. a #34
+        // re-hoisted `__dflt$lambda$N`, IS wrapped verbatim, #43), or an un-spliced `inlineLambda` (a nested inline-call
+        // lambda arg, only handled at STEP 8's fixpoint) cannot be wrapped verbatim — refuse those.
         if (HasUnmaterializableNested(invBody)) return null;
 
         // Consume kotc's carrier `captures`: one closure FIELD each (verbatim {name,type}); ctor arg = the enclosing local
@@ -744,6 +765,14 @@ static class InlineSplice
         // receiver), skipping only a nested `synthClass` (its `this` is its own instance). Checked BEFORE the field rewrite
         // introduces legitimate `field.recv:{k:this}` nodes.
         if (outerName == null && HasThisOutsideSynthClass(invBody)) return null;
+        // FIX (silent hole): a `setLocal` WRITING a captured enclosing var (X ∈ capNames) is a `{k:setLocal}` WRITE, not a
+        // `{k:local}` READ, so RewriteCapturesToFields/HasStrayLocal never see it — it would survive naming a var absent
+        // from the closure frame and die opaquely in ilemit ("store unknown var", Emitter.Statements.cs). Ref-cell
+        // write-through for a MATERIALIZED carrier is unimplemented/untested, so refuse it LOUD at this bir2cir boundary.
+        if (SetLocalToCapture(invBody, capNames) is string wcap)
+            throw new NotSupportedException(
+                $"inline splice §4.4ii: materialized carrier '{cname}' WRITES captured enclosing var '{wcap}' "
+                + "(setLocal-to-capture) — ref-cell write-through for a materialized lambda is unimplemented; fix the splice shape.");
         RewriteCapturesToFields(invBody, capNames, outerName, cname);
         // Any residual `{k:local}` that is neither an invoke param NOR one of the carrier's OWN declared locals is a capture
         // kotc did not list -> fail loud rather than leak an unbound local to ilemit.
@@ -845,9 +874,11 @@ static class InlineSplice
 
         // A nested `newSuspendLambda` / `newClosure` / `newSam` in the body is materializable AS-IS (the SM lowering
         // recurses bottom-up over nested suspend lambdas; a nested closure is self-contained; a nested `inlineLambda`
-        // rides under a `callInline` that STEP 8's fixpoint splices INSIDE the SM frame). Only a `newDelegate` — a
-        // dangling origin-file `__lambdaN` type token (§4.6) — cannot be wrapped verbatim -> refuse (caller fails loud).
-        if (HasNode(invBody, "newDelegate")) return null;
+        // rides under a `callInline` that STEP 8's fixpoint splices INSIDE the SM frame). A `newDelegate` is refused
+        // ONLY when it dangles cross-module (§4.6, #43): a same-module target — e.g. a __dflt$lambda$N a nested
+        // member-inline default-fill re-hoisted app-local — is a capture-less static that wraps verbatim (this is what
+        // unblocks the `suspendCancellableCoroutineReusable` §4.4ii suspend carriers). A cross-module token fails loud.
+        if (HasNonAppLocalDelegate(invBody)) return null;
 
         // Captures verbatim (drop the carrier's `outer` flag — the name `__outer` is itself the enclosing-`this` signal
         // SuspendLambdaLowering keys on; a carrier `__outer` is SOUND at THIS materialization site — the carrier's
@@ -1080,7 +1111,12 @@ static class InlineSplice
     {
         if (node is JsonObject o)
         {
-            if (Str(o["k"]) is "newSuspendLambda" or "newDelegate" or "inlineLambda") return true;
+            var k = Str(o["k"]);
+            if (k is "newSuspendLambda" or "inlineLambda") return true;
+            // #43: a `newDelegate` is unmaterializable ONLY if it dangles cross-module (§4.6). A same-module target —
+            // notably a __dflt$lambda$N a nested member-inline default-fill just re-hoisted app-local — IS materializable
+            // verbatim (the delegate is capture-less; its static method `ldftn`-resolves in THIS assembly).
+            if (k == "newDelegate" && !IsAppLocalDelegate(o)) return true;
             foreach (var kv in o) if (kv.Key != "synthClass" && kv.Value != null && HasUnmaterializableNested(kv.Value)) return true;
         }
         else if (node is JsonArray a) foreach (var c in a) if (c != null && HasUnmaterializableNested(c)) return true;
@@ -1895,6 +1931,67 @@ static class InlineSplice
         }
         else if (node is JsonArray a) foreach (var c in a) if (c != null && HasNode(c, kinds)) return true;
         return false;
+    }
+
+    // #43: is a `{k:newDelegate, method:<name>}` target resolvable app-locally (its static `__lambdaN`/`__dflt$lambda$N`
+    // lives in THIS file, so `ldftn` binds) vs a dangling cross-module origin-file token (§4.6)? Resolvable = the target
+    // name is a declared FILE-CLASS method OR a PENDING #34 re-hoist still in `_hoist` (a nested member-inline default
+    // fill mints it during the SAME pass, BEFORE the outer §4.4ii materialization sees it — the #43 seam). The
+    // materialization-side counterpart of the §4.6 `!sameModule` payload-side guard (that one is module-wide; this is
+    // strictly file-local, matching ilemit FindStatic's file-class-only ldftn universe — a stricter match fails loud).
+    static bool IsAppLocalDelegate(JsonObject nd)
+    {
+        if (Str(nd["method"]) is not string m) return false;
+        if (_appLocalMethods.Contains(m)) return true;
+        foreach (var h in _hoist) if (h is JsonObject ho && Str(ho["name"]) == m) return true;
+        return false;
+    }
+
+    // #43: does the subtree hold a `newDelegate` that does NOT resolve app-locally (a dangling origin-file `__lambdaN`,
+    // §4.6)? Used by the SUSPEND §4.4ii arm — a same-module re-hoisted delegate is materializable verbatim; only a
+    // cross-module token must still be refused loud.
+    static bool HasNonAppLocalDelegate(JsonNode node)
+    {
+        if (node is JsonObject o)
+        {
+            if (Str(o["k"]) == "newDelegate" && !IsAppLocalDelegate(o)) return true;
+            foreach (var kv in o) if (kv.Value != null && HasNonAppLocalDelegate(kv.Value)) return true;
+        }
+        else if (node is JsonArray a) foreach (var c in a) if (c != null && HasNonAppLocalDelegate(c)) return true;
+        return false;
+    }
+
+    // FIX (silent hole): the first `{k:setLocal,name:X}` WRITING a captured enclosing var (X ∈ `capNames`) at the
+    // carrier's OWN frame — skipping a nested `synthClass`. RewriteCapturesToFields/HasStrayLocal match only `{k:local}`
+    // READS, so a WRITE-through to a capture slips every scan and dies opaquely in ilemit ("store unknown var"); ref-cell
+    // write-through for a materialized carrier is unimplemented, so MaterializeCarrier refuses this shape loud.
+    static string SetLocalToCapture(JsonNode node, HashSet<string> capNames)
+    {
+        if (node is JsonObject o)
+        {
+            if (Str(o["k"]) == "setLocal" && Str(o["name"]) is string sn && capNames.Contains(sn)) return sn;
+            bool nested = Str(o["k"]) is "inlineLambda" or "newClosure" or "newDelegate" or "newSuspendLambda" or "newSam";
+            foreach (var kv in o) if (kv.Value != null && (!nested || kv.Key != "synthClass") && SetLocalToCapture(kv.Value, capNames) is string h) return h;
+        }
+        else if (node is JsonArray a) foreach (var c in a) if (c != null && SetLocalToCapture(c, capNames) is string h) return h;
+        return null;
+    }
+
+    // FIX 3 chokepoint: throw if any `callInline` survived the pass. Under splice-all every callInline must be consumed;
+    // a survivor (e.g. kotc emitted it WITHOUT a `pc`, so Rewrite's `ContainsKey("pc")` gate skipped it silently) would
+    // reach ilemit un-emittable. Fail with the callee + whether it lacked a `pc`, mirroring DefaultArgSplice.
+    static void AssertNoUnsplicedInline(JsonNode node)
+    {
+        if (node is JsonObject o)
+        {
+            if (Str(o["k"]) == "callInline")
+                throw new NotSupportedException(
+                    $"inline splice: a `callInline` (callee={Str(o["callee"])}) survived the pass un-spliced"
+                    + (o.ContainsKey("pc") ? "" : " — it carries NO `pc`, so Rewrite silently skipped it")
+                    + "; ilemit cannot emit a callInline. Fix the kotc emission or the splice gate.");
+            foreach (var kv in o) if (kv.Value != null) AssertNoUnsplicedInline(kv.Value);
+        }
+        else if (node is JsonArray a) foreach (var c in a) if (c != null) AssertNoUnsplicedInline(c);
     }
 
 
