@@ -479,9 +479,18 @@ internal fun BirEmitter.call(call: IrCall): String {
 	// A call to a lifted local function -> static call with captured values (incl. enclosing `this`) prepended.
 	localFns[callee]?.let { (lname, caps, tps) ->
 		val capArgs = caps.map { capValueExpr(it) }
+		// The lift emits the callee's OWN value params in declaration order (receivers before regulars, see liftLocalFn),
+		// so a receiver-bearing local (a local extension fun called as `x.f()`) must pass its dispatch/extension receiver
+		// value in that SAME slot, between the captures and the regular args. (A plain local fn has no receiver params →
+		// empty → byte-identical to before.)
+		val recvArgs = callee.parameters.filter {
+			it.kind == IrParameterKind.DispatchReceiver || it.kind == IrParameterKind.ExtensionReceiver
+		}.mapNotNull { p ->
+			(if (p.kind == IrParameterKind.DispatchReceiver) dispatchReceiver(call) else extensionReceiver(call))?.let { expr(it) }
+		}
 		// If the lifted method is generic (captured enclosing type params), pass them as type arguments.
 		val typeArgs = if (tps.isEmpty()) "" else ""","typeArgs":[${tps.joinToString(",") { tvOf(it).toJson() }}]"""
-		return """{"k":"callStatic","owner":null,"method":${str(lname)},"args":[${(capArgs + filledArgs(call)).joinToString(",")}]$typeArgs}"""
+		return """{"k":"callStatic","owner":null,"method":${str(lname)},"args":[${(capArgs + recvArgs + filledArgs(call)).joinToString(",")}]$typeArgs}"""
 	}
 
 	// Inlining (lambda-param inline funs only; lambda-less inline = JIT's job — see [[clr-not-jvm-discard-jvmisms]]).
