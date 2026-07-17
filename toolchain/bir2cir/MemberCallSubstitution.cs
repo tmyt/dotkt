@@ -528,6 +528,19 @@ static class MemberCallSubstitution
                 fn = (tlProp == "set" ? "set_" : "get_") + fn;
                 node["method"] = fn;
             }
+            // #80 — the top-level val `COROUTINE_SUSPENDED` (kotlin.coroutines.intrinsics) read: kotc emits it owner-null,
+            // and TryResolveTopLevelStatic below mis-owns it to the ENCLOSING file class (it is a val, absent from the
+            // top-level-FUN index) → ilemit sees an unresolvable `<FileClass>.get_COROUTINE_SUSPENDED`. Bind it to the
+            // canonical IntrinsicsKt owner HERE so it resolves in EVERY fun — including the port's NON-suspend readers
+            // (`getResult(): Any?` in CancellableContinuationImpl/Builders), which never reach SuspendColdLowering's
+            // SM-body canonicalization. Argless-guarded so a user fn of the same name is not swallowed.
+            if (fn is "COROUTINE_SUSPENDED" or "get_COROUTINE_SUSPENDED"
+                && (node["args"] is not JsonArray csArgs || csArgs.Count == 0))
+            {
+                node["owner"] = TypeJson.Fqn("kotlin.coroutines.intrinsics.IntrinsicsKt");
+                node["method"] = "get_COROUTINE_SUSPENDED";
+                return node;
+            }
             // Collection/array FACTORY (`listOf`/`setOf`/`mapOf`/`arrayOf`/`intArrayOf`/`arrayOfNulls`): a
             // @ClrCollectionFactory/@ClrArrayFactory marker on the ref.dll top-level fun -> re-emit the
             // newList/newSet/newMap/newArray/newArraySized CONSTRUCTION node (the recognition kotc used to do via its

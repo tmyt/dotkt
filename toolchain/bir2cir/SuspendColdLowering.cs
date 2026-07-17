@@ -52,7 +52,7 @@
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-static class SuspendColdLowering
+static partial class SuspendColdLowering
 {
     // The ref.dll + .NET-refs metadata index — read by EmitAwaitPoint to resolve the .NET AWAITABLE PATTERN (#10:
     // GetAwaiter/awaiter shape) for whatever awaitable a `.await()` targets. Set by ApplyAll / BuildLambdaSm (the two
@@ -676,10 +676,16 @@ static class SuspendColdLowering
                 // suspension). A genuine SUSPEND lambda is `newSuspendLambda` (above); a `newClosure` that DOES wrap a
                 // suspension stays refused (SuspendLambdaLowering territory).
                 if ((k == "newClosure" || k == "newDelegate") && !HasSuspension(o)) return true;
+                // #82 — a `forEachInline` (GetEnumerator collection loop) whose BODY spans a suspension is FLATTENED to
+                // flat CFG by FlattenSuspendingLoops (like the always-admitted `forArray`), so it IS supported: exempt it
+                // from the LambdaKinds refusal below and fall through to the generic child recursion, which validates its
+                // body's suspensions (inHandler:false). A suspension-free forEachInline stays structured (also admitted
+                // now — previously refused wholesale). `repeatInline`/`for`/`forRange` are NOT flattened, so a body
+                // suspension in those stays refused (repeatInline via LambdaKinds; for/forRange were already admitted but
+                // are only sound suspension-free — a body suspension there is caught loud by the post-Build local assert).
                 // ANY OTHER lambda/closure/sequence node -> unsupported (genuine suspend lambdas, which emit a
                 // `newClosure` and are NOT flagged `suspendCall`, are handled separately by SuspendLambdaLowering).
-                // Left untouched.
-                if (k != null && LambdaKinds.Contains(k))
+                if (k != null && k != "forEachInline" && LambdaKinds.Contains(k))
                     return false;
                 if (o.ContainsKey("suspendCall") && Bool(o["suspendCall"]))
                 {
@@ -691,9 +697,15 @@ static class SuspendColdLowering
                     if (bodyHasSusp && tryDepth > 0) return false;      // nested suspending try -> unsupported (v1)
                     if (!SuspensionsSupported(o["body"] ?? JsonValue.Create(0), inHandler, bodyHasSusp ? tryDepth + 1 : tryDepth))
                         return false;
+                    // #78 — a suspension inside a CATCH handler is supported when the try is HOISTABLE (finally-free):
+                    // HoistSuspendingCatches lifts the handler OUT of the CLR catch clause into gated straight-line code
+                    // the SM can segment. Recurse the catch body with the try's OWN `inHandler` (the handler runs OUTSIDE
+                    // this try once hoisted), not the hardcoded `true`. A try WITH a finally is NOT hoistable (finally
+                    // ordering would flip) — its catch stays `inHandler:true` (suspension refused).
+                    var catchInHandler = IsHoistableTry(o) ? inHandler : true;
                     if (o["catches"] is JsonArray cs)
                         foreach (var c in cs)
-                            if (c is JsonObject co && !SuspensionsSupported(co["body"] ?? JsonValue.Create(0), inHandler: true, tryDepth))
+                            if (c is JsonObject co && !SuspensionsSupported(co["body"] ?? JsonValue.Create(0), catchInHandler, tryDepth))
                                 return false;
                     if (o["finally"] != null && !SuspensionsSupported(o["finally"], inHandler: true, tryDepth))
                         return false;
@@ -815,7 +827,7 @@ static class SuspendColdLowering
 
     // --- per-fun code generation -----------------------------------------------------------------------
 
-    sealed class FunGen
+    sealed partial class FunGen
     {
         const string ThisField = "$this";
         // BUG 1 (try/finally across a suspension): a boolean SM field gating a suspending-try's finally. Set true
@@ -884,6 +896,8 @@ static class SuspendColdLowering
         int _label;                              // label id allocator (above kotc's low ids)
         int _condCounter;
         int _ordCounter;                         // eval-order spill temp-field counter (BUG 2)
+        int _loopCounter;                        // #82 — fresh splice-loop temp counter (FlattenSuspendingLoops)
+        int _excCounter;                         // #78 — fresh catch-hoist capture-var counter (HoistSuspendingCatches)
         bool _needSuspendGuard;                  // fun has a suspending try/finally -> emit the $suspending gate (BUG 1)
         readonly List<(int state, int label)> _dispatch = new();
         readonly Stack<(List<(int state, int label)> inner, int tryEntry)> _tryStack = new();
@@ -998,13 +1012,28 @@ static class SuspendColdLowering
             }
 
             var body = _isLambda ? _lambdaBody : ((_m["body"] as JsonArray) ?? new JsonArray());
+            var hasSuspension = HasSuspension(body);
+            // #78/#82 — normalize a suspending body BEFORE segmentation so a suspension in a POSITION the straight-line
+            // SM cannot segment is lifted into one it can: a structured collection loop whose body spans a suspension is
+            // flattened to label/brIf/goto CFG (FlattenSuspendingLoops — its implicit loop vars become real `{k:var}` so
+            // CollectVarFields spills them), and a suspending catch handler is hoisted OUT of the CLR catch clause (a
+            // `leave`-in / resume-into a catch is illegal IL) into gated straight-line code (HoistSuspendingCatches).
+            // Both clone-on-change (never mutate the shared/retained rt-stdlib original) and skip nested lambda scopes.
+            // They allocate fresh label ids via NextLabel(), so seed the allocator first. Runs BEFORE DisambiguateShadowedVars
+            // (a flattened loop's `{k:var}` loop temp / a hoisted handler's moved locals must be seen by the shadow-rename).
+            if (hasSuspension)
+            {
+                _label = MaxLabelId(body) + 1000;
+                body = FlattenSuspendingLoops(body);
+                body = HoistSuspendingCatches(body);
+            }
             // Pre-pass: alpha-rename shadowed same-name locals of DIFFERENT types (see DisambiguateShadowedVars)
             // so each distinct declaration gets its OWN correctly-typed SM field. Returns the input unchanged
             // when there is no type clash; a renamed CLONE otherwise (never mutates the shared/retained body).
             body = DisambiguateShadowedVars(body);
-            var hasSuspension = HasSuspension(body);
             // BUG 1: does the body contain a try whose finally spans a suspension? If so, the finally must be
             // gated (see SuspendingField) so it does not run on the suspend-return unwind and re-run at exit.
+            // Computed POST-flatten so a suspension that was inside a (now-flattened) loop is visible here.
             _needSuspendGuard = hasSuspension && HasSuspendingFinally(body);
 
             if (!_isLambda && !hasSuspension)
@@ -1019,7 +1048,9 @@ static class SuspendColdLowering
                 return;
             }
 
-            _label = MaxLabelId(body) + 1000;
+            // A no-suspension LAMBDA still becomes an SM (its VALUE is the SM instance) but skipped the flatten/hoist
+            // block above — seed the label allocator here.
+            if (!hasSuspension) _label = MaxLabelId(body) + 1000;
 
             AddField("label", IntTn);
             if (_needSuspendGuard) AddField(SuspendingField, BoolTn);   // BUG 1: the finally gate flag
@@ -1043,6 +1074,12 @@ static class SuspendColdLowering
             foreach (var (state, label) in _dispatch)
                 invoke.Add(BrIf(BinEq(FieldOf("label", IntTn), IntConst(state)), true, label));
             foreach (var st in bodyOut) invoke.Add(st);
+
+            // #82 — tripwire: every `{k:local}`/`{k:setLocal}` in the emitted invokeSuspend must resolve to the `result`
+            // param, an SM `{k:var}`, a catch/loop var, or (as a `{k:field}`) an SM field. A residual bare local that was
+            // NOT spilled (a splice-generated local crossing a resume, the #82 root) would reach ilemit as `load unknown
+            // var` — surface it HERE as a bir2cir build error naming the SM/fun/local instead.
+            AssertLocalsResolved(invoke);
 
             if (_isLambda)
             {
@@ -1259,7 +1296,10 @@ static class SuspendColdLowering
                 {
                     var nm = Str(o["name"]);
                     var init = o["init"];
-                    var val = init == null ? NullConst(TypeJson.Read(o["type"]) ?? AnyTn) : Rewrite(init, outp);
+                    // An init-less `var` (e.g. kotc's tryExpr `var dotkt_tryvalN`, assigned in the try/catch) default-inits:
+                    // `{k:default}` is the zero value for BOTH a reference (ldnull) and a VALUE type (initobj) — a bare
+                    // NullConst(valueType) would emit a null Int32 (ilemit: "requires Number, target is Null").
+                    var val = init == null ? DefaultOf(TypeJson.Read(o["type"]) ?? AnyTn) : Rewrite(init, outp);
                     if (_fields.Contains(nm)) outp.Add(SetField(nm, val));
                     else outp.Add(new JsonObject { ["k"] = "var", ["name"] = nm, ["type"] = o["type"]?.DeepClone(), ["init"] = val });
                     break;
@@ -1387,6 +1427,15 @@ static class SuspendColdLowering
             if (node is JsonObject o)
             {
                 if (Str(o["k"]) == "smSelf") return new JsonObject { ["k"] = "this" };
+                // #80 — canonicalize ANY `COROUTINE_SUSPENDED`/`get_COROUTINE_SUSPENDED` top-level-val read to the SM's
+                // own `Suspended()` marker, regardless of the owner MemberCallSubstitution resolved it to (it mis-owns a
+                // top-level val to the ENCLOSING file class, so a bare `<FileClass>.get_COROUTINE_SUSPENDED` would reach
+                // ilemit unresolved). Lifted out of the F2-only SubstBlock so EVERY SM-body path (incl. this suspension-
+                // free subtree) is covered. Argless-guarded so a hypothetical user `COROUTINE_SUSPENDED(x)` fn isn't
+                // swallowed. A correctly-owned IntrinsicsKt read normalizes to the identical node.
+                if (Str(o["k"]) == "callStatic" && Str(o["method"]) is "COROUTINE_SUSPENDED" or "get_COROUTINE_SUSPENDED"
+                    && (o["args"] is not JsonArray csa0 || csa0.Count == 0))
+                    return Suspended();
                 if (Str(o["k"]) == "local" && Str(o["name"]) is string ln && _fields.Contains(ln))
                     return FieldOf(ln, FieldType(ln));
                 if (Str(o["k"]) == "local" && Str(o["name"]) == "__self" && CapturedSelfField() is JsonNode sf0)
@@ -1395,7 +1444,7 @@ static class SuspendColdLowering
                     return SetField(sln, RewriteNoSpill(o["value"]));
                 if (Str(o["k"]) == "var" && Str(o["name"]) is string vln && _fields.Contains(vln))
                     return SetField(vln, o["init"] == null
-                        ? NullConst(TypeJson.Read(o["type"]) ?? AnyTn) : RewriteNoSpill(o["init"]));
+                        ? DefaultOf(TypeJson.Read(o["type"]) ?? AnyTn) : RewriteNoSpill(o["init"]));
                 if (_isMember && Str(o["k"]) == "this")
                     return FieldOf(ThisField, new TypeNode.Fqn(_ownerClass));
                 if (Str(o["k"]) == "this" && CapturedOuterField() is JsonNode of0)
@@ -1428,6 +1477,16 @@ static class SuspendColdLowering
                 // the `this`->`$this` member rewrite (a captured `this` means the ENCLOSING receiver -> $this; `c` means
                 // the SM itself).
                 if (k == "smSelf") return new JsonObject { ["k"] = "this" };
+                // #80 — canonicalize ANY `COROUTINE_SUSPENDED`/`get_COROUTINE_SUSPENDED` top-level-val read to the SM's
+                // own `Suspended()` marker, regardless of the owner MemberCallSubstitution resolved it to (it mis-owns a
+                // top-level val to the ENCLOSING file class → a bare `<FileClass>.get_COROUTINE_SUSPENDED` reaching ilemit
+                // unresolved). Lifted out of the F2-only SubstBlock so EVERY suspending SM-body path is covered — incl. a
+                // direct user `suspendCoroutineUninterceptedOrReturn { … ; COROUTINE_SUSPENDED }` tail that flows through
+                // here, not SubstBlock. Argless-guarded so a hypothetical user `COROUTINE_SUSPENDED(x)` fn isn't swallowed.
+                // A correctly-owned IntrinsicsKt read normalizes to the identical node.
+                if (k == "callStatic" && Str(o["method"]) is "COROUTINE_SUSPENDED" or "get_COROUTINE_SUSPENDED"
+                    && (o["args"] is not JsonArray csa1 || csa1.Count == 0))
+                    return Suspended();
                 if (k == "local" && Str(o["name"]) is string ln && _fields.Contains(ln))
                     return FieldOf(ln, FieldType(ln));
                 if (k == "local" && Str(o["name"]) == "__self" && CapturedSelfField() is JsonNode sf1)
@@ -1440,7 +1499,7 @@ static class SuspendColdLowering
                     return SetField(sln, Rewrite(o["value"], outp));
                 if (k == "var" && Str(o["name"]) is string vln && _fields.Contains(vln))
                     return SetField(vln, o["init"] == null
-                        ? NullConst(TypeJson.Read(o["type"]) ?? AnyTn) : Rewrite(o["init"], outp));
+                        ? DefaultOf(TypeJson.Read(o["type"]) ?? AnyTn) : Rewrite(o["init"], outp));
                 if (_isMember && k == "this")
                     return FieldOf(ThisField, new TypeNode.Fqn(_ownerClass));
                 if (k == "this" && CapturedOuterField() is JsonNode of1)
@@ -1871,15 +1930,9 @@ static class SuspendColdLowering
             if (node is JsonObject o)
             {
                 var k = Str(o["k"]);
-                // #22 — canonicalize a `COROUTINE_SUSPENDED` read to the SM's own `Suspended()` marker. kotc emits the
-                // top-level `kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED` val, but MemberCallSubstitution
-                // mis-resolves its owner to the ENCLOSING file class (`InlineSpliceKt`) rather than IntrinsicsKt (a
-                // top-level-val resolution gap that only surfaces when a `suspendCoroutineUninterceptedOrReturn` block
-                // returns COROUTINE_SUSPENDED directly, as in the issue-#22 shape). The suspended sentinel is a
-                // coroutine intrinsic bir2cir owns, so bind it to the canonical owner here regardless of the read's
-                // resolved owner (a correctly-resolved read normalizes to the identical node).
-                if (k == "callStatic" && Str(o["method"]) is "COROUTINE_SUSPENDED" or "get_COROUTINE_SUSPENDED")
-                    return Suspended();
+                // (#80) — the `COROUTINE_SUSPENDED`->`Suspended()` canonicalization was LIFTED out of here into
+                // Rewrite/RewriteNoSpill (which every SubstBlock output flows through), so it now covers every SM-body
+                // path, not just this F2 block. No canonicalization is needed here.
                 if (k == "field" && closureType != null && TypeJson.OwnerName(o["ownerType"]) == closureType && Str(o["name"]) is string fn
                     && capMap.TryGetValue(fn, out var cap))
                     return cap.DeepClone();
@@ -3325,6 +3378,9 @@ static class SuspendColdLowering
         static JsonObject IntConst(int v) => new() { ["k"] = "const", ["type"] = TypeJson.Write(IntTn), ["value"] = v };
         static JsonObject BoolConst(bool v) => new() { ["k"] = "const", ["type"] = TypeJson.Write(BoolTn), ["value"] = v };
         static JsonObject NullConst(TypeNode type) => new() { ["k"] = "const", ["type"] = TypeJson.Write(type), ["value"] = null };
+        // The zero value of a type (ldnull for a ref, initobj for a value type) — the correct init-less-`var` default,
+        // unlike NullConst which emits a null literal that ilemit rejects for a value type.
+        static JsonObject DefaultOf(TypeNode type) => new() { ["k"] = "default", ["type"] = TypeJson.Write(type) };
         static JsonObject Label(int id) => new() { ["k"] = "label", ["id"] = id };
         static JsonObject Goto(int id) => new() { ["k"] = "goto", ["id"] = id };
         static JsonObject BrIf(JsonNode cond, bool on, int id) => new()
