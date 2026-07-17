@@ -16,6 +16,29 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir (#78, area:bir2cir): a suspend call to a member declared on a SUPERTYPE now cold-lowers (the
+  supertype-walk resolvability fix).** `SuspendColdLowering.IsResolvable` matched a suspend `callInstance` only on the
+  call site's exact static-receiver owner, but kotc emits `ownerType=<subclass>` — so a member declared on a base
+  class / super-interface (the kotlinx `DeferredCoroutine.await → JobSupport.awaitInternal` and
+  `ChannelCoroutine.receiveOrNull → ReceiveChannel` shapes) was mis-classified unresolvable and the transformability
+  fixpoint dropped the caller to ilemit un-lowered. It now walks the receiver owner's transitive supertypes on both
+  axes — the same-assembly registry (`typeSupers` threaded from `Program.cs`) and the ref.dll
+  (`ReferenceMetadataIndex.HasSuspendMemberInHierarchy`, a reflected `BaseType`/`GetInterfaces` walk). On the real
+  kotlinx.coroutines port the suspend-lowering drops fell 10 → 7 (all three Defect-A drops gone; the residual 7 are
+  the select-family cascade from a catch-handler-suspension shape refusal, tracked separately). New gate case
+  `il-coldsuper`. Also split `HasSuspension` into a lambda-blind `HasOwnSuspension` at the try/valueBlock/cond/eval-order
+  gates (a nested lambda's suspensions belong to its own SM), killing false-positive nested-suspending-try refusals.
+- **bir2cir (#79, area:bir2cir): the `suspend inline val coroutineContext` read is now bound.** Its stdlib getter is
+  intentionally `throw NotImplementedError("Implemented as intrinsic")`, so resolution alone can never make it work;
+  it reached ilemit as a bogus `<fileclass>.get_coroutineContext` (method-not-found). `SuspendColdLowering` now lowers
+  the read to `<current-continuation>.get_context()` — the SM itself in an SM body, the `completion` param in a no-SM
+  body-direct cold entry (mirroring JVM's `<cont>.getContext`). New gate case `il-coroutinectx` (SM / body-direct /
+  suspending-member shapes).
+- **bir2cir (#55, area:bir2cir): a missing Task ABI is now a hard compile error in app builds, not a silent
+  degradation.** When the stdlib ref.dll lacks the `kotlin.clr.Task`/`TaskCompletionSource` aliases an app build's
+  suspend bridge silently fell back to the known-broken null-completion scheme (a genuinely-suspending `main`
+  dereferenced null on resume). `ApplyAll` now hard-errors on a missing alias in an app build, and per the no-dual-track
+  rule the null-completion fallback is deleted from `DrainMain` and the `WantsBridge` silent-skip.
 - **bir2cir ([tmyt/dotkt#24], area:bir2cir): a property OVERRIDE (`override val message`) on a class extending a
   `@ClrTypeAlias` stdlib base (`kotlin.Exception` → `System.Exception`) is now DISPATCHED — reads return the override,
   not the base value.** The CALL side already resolved (`MemberCallSubstitution` Rule 2p-inherited walks the `overrides`
