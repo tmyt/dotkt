@@ -5,6 +5,15 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Docs
+
+- **docs ([tmyt/dotkt#54], area:docs): the supported-features matrix no longer advertises `Regex` as fully
+  supported.** `Regex` is split out of the `Strings` row and marked ❌: the core BCL binding
+  `nativeMatch` (`System.Text.RegularExpressions.Regex.Match`) in `libraries/stdlib/clr/kotlin/text/regex/RegexClr.kt`
+  is still a `TODO()` (24 `TODO()` throws in that file), so runtime `Regex` operations
+  (`find`/`matchEntire`/`matchAt`/`containsMatchIn`/`findAll`/`replace`/`split`/`escape` and every `MatchResult`/group
+  accessor) throw. `Strings` stays ✅. Docs-only — the actual binding work is a separate effort.
+
 ### Fixed
 
 - **bir2cir ([tmyt/dotkt#24], area:bir2cir): a property OVERRIDE (`override val message`) on a class extending a
