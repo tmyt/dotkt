@@ -7,6 +7,24 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **kotc ([tmyt/dotkt#75], area:kotc): a callable-reference ADAPTER / receiver-bearing local function lifted to a
+  file-class static no longer drops its receiver parameter — fixing the "references undeclared local 'receiver'"
+  IrSanity fault that blocked the real kotlinx.coroutines `flow` port (`Channels_commonKt.__local313_add`).** kotc
+  consumes RAW fir2ir (before backend-common `UpgradeCallableReferences` flattens receivers to `Regular`), so an
+  `ADAPTER_FOR_CALLABLE_REFERENCE` (e.g. a coerced `::add` written inside a `buildList { }` inline lambda, binding the
+  member to the enclosing implicit receiver) is a local function whose bound receiver is an `ExtensionReceiver` value
+  parameter named `receiver`; its body references `receiver` by that name. `BirEmitter.liftLocalFn` emitted only the
+  `Regular` params, so the receiver was dropped and the lifted static's `receiver.f(p0)` body dangled → bir2cir
+  IrSanity. Fix: `liftLocalFn` now emits ALL of `fn.parameters` (receivers precede regulars, in declaration order) by
+  their own names, and the lifted-call site (`BirEmitterCalls`) passes the call's dispatch/extension receiver in that
+  same slot for a genuinely-called receiver-bearing local. Additionally, `newSuspendLambda` now carries a null-tolerant
+  per-slot `capValues` override (the same `capValueExpr` resolution `newClosure` already applies) for captures that
+  resolve to an enclosing SYNTHETIC-class FIELD via `captureSubst` — a suspend lambda NESTED inside a SAM `emit`/closure
+  `invoke` capturing that method's field (e.g. `second`), which bir2cir's name-based fallback (`{k:local,name:second}`)
+  could not recover in the synthetic scope (a second "references undeclared local" fault). New gate
+  `cases/il-capref-inline`; verify-il + verify-roundtrip green. (Real port now advances past both `receiver` and
+  `second`; the next blocker is a separate bir2cir cold-SM `__recv40` inline-receiver spill, tracked separately.)
+
 - **bir2cir (#75 Batch B): the kotlinx.coroutines `flow{}` inline-splice family (generic element type + receiver
   function type) now compiles — completing the suspend-carrier materialization for the two dimensions its gates never
   exercised.** An `inline fun` whose `crossinline suspend` RECEIVER lambda (`suspend FlowCollector<T>.() -> Unit`) is

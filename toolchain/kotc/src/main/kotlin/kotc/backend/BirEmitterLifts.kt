@@ -152,6 +152,28 @@ private fun BirEmitter.suspendLambda(node: IrFunctionExpression): String? {
 	val capturesJson = captures.joinToString(",") { d ->
 		"""{"name":${str(captureFieldName(d))},"type":${str(captureFieldType(d))}}"""
 	}
+	// Per-slot capture VALUE overrides (`capValues`), the SAME field resolution `newClosure` applies via `capValueExpr`
+	// — a slot is stamped ONLY when the capture resolves to an enclosing SYNTHETIC-class FIELD, i.e. `captureSubst[d]` is
+	// a `{"k":"field",…}` binding (a `newSuspendLambda` NESTED inside a SAM `emit` / closure `invoke` capturing that
+	// method's FIELD, e.g. `second`). bir2cir has NO other way to recover a field capture: its fallback treats the
+	// descriptor name as an enclosing LOCAL (`{k:local,name:second}`), which dangles in the synthetic method -> the
+	// "references undeclared local" IrSanity fault. The FIELD-shape guard is deliberate: captureSubst can also hold a
+	// non-field binding (`{k:local}` from a lifted local fn's body emission, a `{k:defaultArgParam}`/filled-arg
+	// expression from same-module default handling) that must NOT be pinned into an SM ctor arg — those keep bir2cir's
+	// name-based path. Also NOT stamped: a `selfSubst` rename (inline-lambda receiver `$this$unsafeFlow`->`__recv40`) or
+	// a `valSubst` inline substitution — those stay a LOCAL by some name, and bir2cir's cold-SM lowering already resolves
+	// the DESCRIPTOR name into the SM's spill vocabulary; a renamed-local override would instead force a name the cold SM
+	// does not know (a fresh `__recv40` dangling-local fault). Null slots keep bir2cir's resolution (incl. `__outer`->
+	// `this`/`__self`) BYTE-IDENTICAL; the whole array is omitted when every slot is default (the common case unchanged).
+	// KNOWN GAP (cross-layer): a `{k:field}` stamp is still DROPPED at a COLD-SM construction site — bir2cir's
+	// SuspendColdLowering.RewriteSuspendLambdaNew honors only `{k:local}` overrides — so the `second`-class fix is
+	// hot-path-only; the cold twin (a nested suspend lambda inside a cold-transformed suspend SAM `emit`) is a bir2cir
+	// follow-up, adjacent to the `__recv40` blocker.
+	val capValueSlots = captures.map { d ->
+		val sub = captureSubst[d]
+		if (sub != null && sub.startsWith("""{"k":"field"""")) capValueExpr(d) else "null"
+	}
+	val capValuesJson = if (capValueSlots.all { it == "null" }) "" else ""","capValues":[${capValueSlots.joinToString(",")}]"""
 	val paramsJson = lambdaParamsJson(ownParams)
 	val resultType = birType(fn.returnType)
 	// Enclosing generic type params referenced by the SM (captures/params/return/body operands) -> open SM
@@ -162,7 +184,7 @@ private fun BirEmitter.suspendLambda(node: IrFunctionExpression): String? {
 	// type-USAGE slot, so it rides as the `typeParams` name shorthand (§2.5), consistent with the other lambda paths.
 	val typeParamsBare = freeTps.joinToString(",") { str(it.name.asString()) }
 	val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
-	return """{"k":"newSuspendLambda","arity":${ownParams.size},"captures":[$capturesJson],"params":[$paramsJson],"suspendRet":${str(resultType)},"typeParams":[$typeParamsBare],"body":[$body],"funcType":${funcTypeOf(fn).toJson()}}"""
+	return """{"k":"newSuspendLambda","arity":${ownParams.size},"captures":[$capturesJson]$capValuesJson,"params":[$paramsJson],"suspendRet":${str(resultType)},"typeParams":[$typeParamsBare],"body":[$body],"funcType":${funcTypeOf(fn).toJson()}}"""
 }
 
 /** SHADOW the lambda's own regular params in `valSubst` while emitting its body: an enclosing lambda carrier
@@ -868,11 +890,23 @@ internal fun BirEmitter.liftLocalFn(fn: IrSimpleFunction) {
 	// Captured vars (incl. the enclosing `this`) become leading params; the call site prepends their values.
 	val captures = capturedVars(fn, includeThis = true)
 	val lname = "__local${scopeCounter++}_${fn.name.asString()}"
-	// A local fn referencing an enclosing type parameter (in a capture, its own params, or its return) becomes a
-	// GENERIC static method — reified CLR generics, same as a capturing closure class. The call site (callStatic)
+	// A local fn's OWN value parameters = its regular params PLUS its dispatch/extension receiver. A callable-reference
+	// ADAPTER (`ADAPTER_FOR_CALLABLE_REFERENCE`) whose bound receiver is an ExtensionReceiver param `receiver` references
+	// that param by name in its body, so it MUST be emitted as a leading method param, in declaration order (receivers
+	// precede regulars); filtering to Regular alone drops it and orphans a `receiver.f(p0)` body ref — the dangling-
+	// `receiver` IrSanity fault (kotc consumes the RAW fir2ir form, before UpgradeCallableReferences would flatten
+	// receivers to Regular). Captures are DISTINCT (outer decls, prepended before these). NOTE the still-unhandled
+	// sibling: a genuine local EXTENSION fun `fun T.f()` names its receiver `<this>` and its body reads it as `{k:this}`
+	// (exprInner), which is invalid in this STATIC lift — that needs a `__self`-style rename + selfSubst binding and is
+	// out of scope here (it was equally broken before — the param was simply dropped). Context parameters are excluded:
+	// neither the call site nor filledArgs supplies them, so emitting them would misalign the lifted arg positions.
+	val ownValueParams = fn.parameters.filter {
+		it.kind == IrParameterKind.Regular || it.kind == IrParameterKind.DispatchReceiver || it.kind == IrParameterKind.ExtensionReceiver
+	}
+	// A local fn referencing an enclosing type parameter (in a capture, its own params/receivers, or its return) becomes
+	// a GENERIC static method — reified CLR generics, same as a capturing closure class. The call site (callStatic)
 	// passes the enclosing type params as type arguments.
-	val ownRegParams = fn.parameters.filter { it.kind == IrParameterKind.Regular }
-	val freeTps = freeTypeParams(captures.map { it.type } + ownRegParams.map { it.type } + listOf(fn.returnType))
+	val freeTps = freeTypeParams(captures.map { it.type } + ownValueParams.map { it.type } + listOf(fn.returnType))
 	localFns[fn] = Triple(lname, captures, freeTps)
 	fun pj(name: String, t: IrType) = """{"name":${str(name)},"type":${birType(t).toJson()}}"""
 	val capPairs = captures.map { it to captureFieldName(it) }
@@ -881,7 +915,7 @@ internal fun BirEmitter.liftLocalFn(fn: IrSimpleFunction) {
 	// leak a caller-local (`__lam<N>`) into the lifted method body.
 	capPairs.forEach { (decl, fname) -> captureSubst[decl] = """{"k":"local","name":${str(fname)}}""" }
 	val capParams = capPairs.map { (decl, fname) -> """{"name":${str(fname)},"type":${str(captureFieldType(decl))}}""" }
-	val ownParams = fn.parameters.filter { it.kind == IrParameterKind.Regular }.map { pj(it.name.asString(), it.type) }
+	val ownParams = ownValueParams.map { pj(it.name.asString(), it.type) }
 	val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
 	capPairs.forEach { (decl, _) -> captureSubst.remove(decl) }
 	val ret = birType(fn.returnType)
