@@ -12,8 +12,10 @@ Next steps after this page:
 
 ## 1. Prerequisites
 
-- **.NET SDK 10** (`dotnet --version` ≥ 10). That's it — the Kotlin compiler ships inside the
-  DotKt packages; no JDK or Gradle needed to *use* DotKt.
+- **.NET SDK 10** (`dotnet --version` ≥ 10).
+- **A Java runtime on your `PATH`** — a JDK or JRE, **version 21 or newer** (`java -version`). The
+  DotKt Kotlin compiler front-end (`kotc`) runs on the JVM, so a Java runtime is required to *build*
+  a DotKt project. (Nothing Java is needed to *run* the emitted assembly — it is plain .NET IL.)
 
 ## 2. Install
 
@@ -44,7 +46,7 @@ dotnet run
 That template is just two files. The project file:
 
 ```xml
-<Project Sdk="DotKt.Sdk/0.9.3">
+<Project Sdk="DotKt.Sdk/0.9.6-rc6">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>

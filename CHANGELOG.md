@@ -73,6 +73,20 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   (build a two-file project, then MOVE a `class` into `App.kt` + DELETE its original file and rebuild on the SAME `obj/`)
   reproduces the pre-fix duplicate-type `ilemit` failure and asserts both builds succeed. All changes confined to the one
   targets file (+ the gate).
+- **distribution ([tmyt/dotkt#53], area:docs, area:packaging): version / template / doc / nuspec-tag strings no longer
+  drift out of sync, and the packaged-SDK gate now scaffolds a real `dotnet new` project.** Everything now single-sources
+  off `packaging/DotKt.Versions.props`: (1) the `dotnet new dotkt-cli` template project file carries a
+  `DotKt.Sdk/DOTKT_SDK_VERSION` placeholder that `pack-nuget.sh` substitutes to the release version core at pack time
+  (was hardcoded to a stale `0.9.5`); (2) the three standalone nuspecs' Kotlin tag is now the nuspec token
+  `kotlin-$kotlinVersion$` (fed from `DotKtKotlinVersion` via each pack `.csproj`'s `NuspecProperties`) instead of a
+  hardcoded `kotlin-2.2.0` (frontend is 2.4.0 as of #111); (3) the README + `docs/user/getting-started.md`
+  `DotKt.Sdk/<ver>` examples were bumped `0.9.3` → the release core; (4) `getting-started.md` prerequisites now state the
+  truth — `kotc` is a JVM launcher, so a Java runtime (JDK/JRE 21+) must be on `PATH` — deleting the false "no JDK
+  needed" claim. The `pack-nuget.sh` #131 version guard is extended to also fail the pack on a drifted template
+  placeholder, a hardcoded nuspec kotlin tag, or a stale doc SDK-version fragment; and `verify-packaged-sdk.sh` gains a
+  `template` case that installs the packed `DotKt.Templates`, runs `dotnet new dotkt-cli`, and builds+runs the result so
+  a stale template fails the gate.
+
 - **bir2cir + ilemit ([tmyt/dotkt#77], area:bir2cir, area:ilemit): a CONCRETE Kotlin collection class (e.g.
   `kotlin.collections.ArrayDeque<E>`) used as a field/owner type now RESOLVES — closing the `ilemit: cannot resolve .NET
   type kotlin.collections.ArrayDeque`1` blocker of the kotlinx.coroutines port (the `EventLoop.common` unconfined queue).**

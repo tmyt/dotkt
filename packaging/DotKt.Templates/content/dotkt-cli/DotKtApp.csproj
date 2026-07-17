@@ -1,4 +1,4 @@
-<Project Sdk="DotKt.Sdk/0.9.5">
+<Project Sdk="DotKt.Sdk/DOTKT_SDK_VERSION">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>

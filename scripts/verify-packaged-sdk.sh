@@ -280,9 +280,44 @@ EOF
 	else fail mpp "output mismatch" "$(printf -- '--- expected ---\n%s\n--- actual ---\n%s' "$expected" "$actual")"; fi
 }
 
+# ---------------------------------------------------------------------------------------------------------
+# Case: template — the #53 reproducer. Install the packed DotKt.Templates via `dotnet new install`, scaffold a
+# project with `dotnet new dotkt-cli`, and build+run it from the isolated feed. A stale template Sdk pin (the
+# 0.9.5-while-release-is-0.9.6 drift) makes restore pull a version the feed does not carry -> this fails. The
+# generated project file must pin the RELEASE version (proves the pack-time Sdk-version substitution worked).
+# NB `dotnet new install/uninstall` touches the machine-global template store (unavoidable for `dotnet new`);
+# installed from the exact packed nupkg with --force and uninstalled in a trap so a failure still cleans up.
+# ---------------------------------------------------------------------------------------------------------
+case_template() {
+	local d="$WS/template"; mkdir -p "$d"
+	local nupkg; nupkg="$(find "$FEED" -maxdepth 1 -name "DotKt.Templates.$VER.nupkg" | head -1)"
+	[[ -f "$nupkg" ]] || { fail template "DotKt.Templates.$VER.nupkg not packed"; return; }
+	# Uninstall on any exit from this case so the global template store is never left dirty.
+	trap 'dotnet new uninstall DotKt.Templates >/dev/null 2>&1 || true' RETURN
+	if ! dotnet new install "$nupkg" --force >"$d/install.log" 2>&1; then
+		fail template "dotnet new install failed" "$(tail -20 "$d/install.log")"; return
+	fi
+	local proj="$d/hello"; rm -rf "$proj"
+	if ! dotnet new dotkt-cli -o "$proj" >"$d/new.log" 2>&1; then
+		fail template "dotnet new dotkt-cli failed" "$(tail -20 "$d/new.log")"; return
+	fi
+	cp "$NUGET_CONFIG" "$proj/nuget.config"
+	# The scaffolded project must pin the release SDK version (the #53 drift shipped it pinned to a stale one).
+	if ! grep -q "Sdk=\"DotKt.Sdk/$VER\"" "$proj"/*.csproj 2>/dev/null; then
+		fail template "generated project does not pin DotKt.Sdk/$VER" "$(cat "$proj"/*.csproj 2>/dev/null)"; return
+	fi
+	# NB no `--nologo` here: this template's main echoes args.firstOrNull(), and `dotnet run` forwards any
+	# trailing token to the app — so `--nologo` would leak in as the greeted name. (DOTNET_NOLOGO=1 is exported.)
+	local expected="Hello, World, from DotKt — Kotlin on .NET!" actual
+	actual="$(cd "$proj" && { dotnet run -v q 2>/dev/null | run_out || true; })"
+	if [[ "$actual" == "$expected" ]]; then pass template
+	else fail template "output mismatch" "$(printf -- '--- expected ---\n%s\n--- actual ---\n%s' "$expected" "$actual")"; fi
+}
+
 case_exe
 case_library
 case_mpp
+case_template
 
 echo "------------------------------------"
 xfail_diff pkgsdk XFAIL_PKG "${FAILS[@]}"

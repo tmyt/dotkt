@@ -32,9 +32,30 @@ FEED="$ROOT/build/nuget-feed"; rm -rf "$FEED"; mkdir -p "$FEED"
 VERPREFIX="$(grep -oE '<DotKtVersionPrefix>[^<]+' "$ROOT/packaging/DotKt.Versions.props" | sed 's/.*>//')"
 VERSUFFIX="$(grep -oE '<DotKtVersionSuffix>[^<]*' "$ROOT/packaging/DotKt.Versions.props" | sed 's/.*>//')"
 VERCORE="$VERPREFIX"; [[ -n "$VERSUFFIX" ]] && VERCORE="$VERPREFIX-$VERSUFFIX"
+KOTLINVER="$(grep -oE '<DotKtKotlinVersion>[^<]+' "$ROOT/packaging/DotKt.Versions.props" | sed 's/.*>//')"
+[[ -n "$KOTLINVER" ]] || die "could not read DotKtKotlinVersion from packaging/DotKt.Versions.props"
 for sp in packaging/DotKt.Sdk/Sdk/Sdk.props packaging/DotKt.Sdk.Mpp/Sdk/Sdk.props; do
 	sv="$(grep -oE "<DotKtVersion Condition[^>]*>[^<]+" "$ROOT/$sp" | sed 's/.*>//')"
 	[[ "$sv" == "$VERCORE" ]] || die "$sp DotKtVersion default ($sv) != release version core ($VERCORE) — bump it (else the SDK ships pulling a stale toolchain, GitHub #131)"
+done
+
+# GUARD (#53): the version/Kotlin-version strings scattered across templates, docs, and nuspec tags drift after a
+# release/Kotlin bump because they were hardcoded and ungated. Everything single-sources off DotKt.Versions.props;
+# refuse to pack a mismatch. (Template Sdk pin + nuspec kotlin tag are SUBSTITUTED below/at pack; here we assert
+# the substitution tokens survive and the un-substitutable DOC fragments are current.)
+# (a) The `dotnet new` template project file must keep the DOTKT_SDK_VERSION placeholder (substituted at pack time).
+TPL_CSPROJ="packaging/DotKt.Templates/content/dotkt-cli/DotKtApp.csproj"
+grep -q 'DotKt\.Sdk/DOTKT_SDK_VERSION' "$ROOT/$TPL_CSPROJ" || die "$TPL_CSPROJ lost its 'DotKt.Sdk/DOTKT_SDK_VERSION' placeholder — restore it (it is substituted to the release version at pack time, GitHub #53)"
+# (b) The nuspec kotlin tag must be the substitution token, never a hardcoded kotlin-<ver>.
+for ns in packaging/DotKt.Toolchain/DotKt.Toolchain.nuspec packaging/DotKt.Stdlib/DotKt.Stdlib.nuspec packaging/DotKt.Sdk/DotKt.Sdk.nuspec packaging/DotKt.Sdk.Mpp/DotKt.Sdk.Mpp.nuspec; do
+	grep -q 'kotlin-\$kotlinVersion\$' "$ROOT/$ns" || die "$ns: kotlin tag must be 'kotlin-\$kotlinVersion\$' (nuspec-substituted from DotKtKotlinVersion), not a hardcoded version (GitHub #53)"
+	if grep -qE 'kotlin-[0-9]' "$ROOT/$ns"; then die "$ns: hardcoded 'kotlin-<ver>' tag — use 'kotlin-\$kotlinVersion\$' (GitHub #53)"; fi
+done
+# (c) The doc `DotKt.Sdk/<ver>` examples cannot be substituted (docs are not packed) — they must match VERCORE.
+for doc in README.md docs/user/getting-started.md; do
+	grep -q "DotKt\.Sdk/$VERCORE" "$ROOT/$doc" || die "$doc: no 'DotKt.Sdk/$VERCORE' example — its SDK-version fragment drifted from the release core ($VERCORE); bump it (GitHub #53)"
+	stale="$(grep -oE "DotKt\.Sdk/[0-9][^\"< )]*" "$ROOT/$doc" | grep -vFx "DotKt.Sdk/$VERCORE" || true)"
+	[[ -z "$stale" ]] || die "$doc: stale SDK-version fragment(s) [$stale] — expected DotKt.Sdk/$VERCORE (GitHub #53)"
 done
 
 info "build compiler (installDist) + tools"
@@ -74,11 +95,20 @@ info "assemble DotKt.Stdlib/lib"
 SL="$ROOT/packaging/DotKt.Stdlib/lib/net10.0"; rm -rf "$ROOT/packaging/DotKt.Stdlib/lib"; mkdir -p "$SL"
 cp "$STDLIB_RT_DLL" "$SL/DotKt.Stdlib.dll"
 
+# Stage the templates with the release SDK version substituted into the `dotnet new` project file (single-sourced
+# from DotKt.Versions.props) so the generated project pins the shipping version — never a drifting hardcode (#53).
+# Staged as a SIBLING of a copied DotKt.Versions.props so the csproj's `../DotKt.Versions.props` import still resolves.
+info "stage DotKt.Templates (substitute Sdk version $VERCORE)"
+TPLSTAGE="$ROOT/build/templates-staged"; rm -rf "$TPLSTAGE"; mkdir -p "$TPLSTAGE/DotKt.Templates"
+cp "$ROOT/packaging/DotKt.Versions.props" "$TPLSTAGE/DotKt.Versions.props"
+cp -r "$ROOT/packaging/DotKt.Templates/." "$TPLSTAGE/DotKt.Templates/"
+sed -i "s|DotKt\.Sdk/DOTKT_SDK_VERSION|DotKt.Sdk/$VERCORE|g" "$TPLSTAGE/DotKt.Templates/content/dotkt-cli/DotKtApp.csproj"
+
 info "pack DotKt.Toolchain + DotKt.Sdk + DotKt.Sdk.Mpp + DotKt.Stdlib + DotKt.Templates"
 dotnet pack "$ROOT/packaging/DotKt.Toolchain/DotKt.Toolchain.pack.csproj" -o "$FEED" -v q --nologo
 dotnet pack "$ROOT/packaging/DotKt.Sdk/DotKt.Sdk.pack.csproj" -o "$FEED" -v q --nologo
 dotnet pack "$ROOT/packaging/DotKt.Sdk.Mpp/DotKt.Sdk.Mpp.pack.csproj" -o "$FEED" -v q --nologo
 dotnet pack "$ROOT/packaging/DotKt.Stdlib/DotKt.Stdlib.pack.csproj" -o "$FEED" -v q --nologo
-dotnet pack "$ROOT/packaging/DotKt.Templates/DotKt.Templates.csproj" -o "$FEED" -v q --nologo
+dotnet pack "$TPLSTAGE/DotKt.Templates/DotKt.Templates.csproj" -o "$FEED" -v q --nologo
 
 info "feed:"; ls -1 "$FEED"
