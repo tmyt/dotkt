@@ -7,6 +7,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir ([tmyt/dotkt#24], area:bir2cir): a property OVERRIDE (`override val message`) on a class extending a
+  `@ClrTypeAlias` stdlib base (`kotlin.Exception` → `System.Exception`) is now DISPATCHED — reads return the override,
+  not the base value.** The CALL side already resolved (`MemberCallSubstitution` Rule 2p-inherited walks the `overrides`
+  marker to the CLR-bound ancestor `kotlin.Throwable.message` — `@ClrProperty(READ,"Message")` — and rewrites the read
+  to `callvirt System.Exception.get_Message`), but the DECLARATION side (`DeclarationRename`) never wired the user's
+  override accessor to that BCL slot: it resolved slots only via `@ClrIntrinsic` or a facadegen `.NET`-type fallback
+  (which skips `kotlin.*` aliases), so `message` — bound by `@ClrProperty`, on the `kotlin.*` alias owner — missed BOTH.
+  The `get_message` accessor stayed newslot with no `clrOverride`, so ilemit emitted a fresh slot and the substituted
+  `callvirt` bound the base value ("boom"). Fix (symmetric to the CALL-side rule, all in `DeclarationRename.cs`): a
+  `@ClrProperty` fallback in `ResolveBareIntrinsic` (property-record `get`/`set` rename) and `ResolveSlot` (accessor
+  decl name rename) — walk the override closure to the `@ClrTypeAlias` ancestor and return its BCL property slot; and a
+  `@ClrProperty` branch in `ResolveNetClassOwner` returning the aliased BCL owner (`System.Exception`) so the Walk caller
+  stamps `clrOverride` and ilemit's `DefineMethodOverride` binds `get_message` → `System.Exception.get_Message`. Reuses
+  existing `TryResolveClrOwner`/`TryMemberProperty`; no ilemit change. New gate case `cases/il-overridemsg` (override
+  `val message` on a `kotlin.Exception` subclass, read directly, through the alias base type, and caught-as-base).
 - **bir2cir + ilemit ([tmyt/dotkt#77], area:bir2cir, area:ilemit): a CONCRETE Kotlin collection class (e.g.
   `kotlin.collections.ArrayDeque<E>`) used as a field/owner type now RESOLVES — closing the `ilemit: cannot resolve .NET
   type kotlin.collections.ArrayDeque`1` blocker of the kotlinx.coroutines port (the `EventLoop.common` unconfined queue).**
