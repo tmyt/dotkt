@@ -240,9 +240,11 @@ sealed partial class Emitter
             }
             else
             {
-                if (!ti.IsInterface)
-                    foreach (var f in ti.Def.GetProperty("fields").EnumerateArray())
+                // A class emits instance + static fields; an INTERFACE carries ONLY hoisted companion STATICS (a CLR
+                // interface may hold static fields but never instance state), so skip any non-static field there (#83).
+                foreach (var f in ti.Def.GetProperty("fields").EnumerateArray())
                     {
+                        if (ti.IsInterface && !(f.TryGetProperty("static", out var ifst) && ifst.GetBoolean())) continue;
                         // A property's visibility maps to the field's CLR access. True CLR-private is now correct
                         // because `inner`/`nested` classes are emitted as real nested types, which retain access to the
                         // enclosing type's privates. (internal -> Assembly, protected -> FamORAssem so same-assembly
@@ -570,10 +572,11 @@ sealed partial class Emitter
                 }
         }
 
-        // Pass 4b: static-field initializers (companion `val`s) -> a type initializer (.cctor).
+        // Pass 4b: static-field initializers (companion `val`s) -> a type initializer (.cctor). An INTERFACE with a
+        // flattened companion (#83) also gets a .cctor for its static fields — a CLR interface legally has one.
         foreach (var ti in _types.Values)
         {
-            if (ti.IsInterface || !ti.Def.TryGetProperty("fields", out var fs)) continue;
+            if (!ti.Def.TryGetProperty("fields", out var fs)) continue;
             // A `lateinit` (or otherwise initializer-less) static field carries `"init": null` — the key is PRESENT
             // but its value is JSON null, so a bare TryGetProperty("init", …) sees "has init" and would feed a null
             // element to EmitStoreCoerced -> EmitExpr (crash). Such a field needs no .cctor store: a static reference
@@ -743,12 +746,16 @@ sealed partial class Emitter
         // An interface method with a DEFAULT body -> a CLR default interface method (Virtual|NewSlot, real IL body in
         // Pass 4); a bare slot (no body) stays Virtual|Abstract|NewSlot. (A Kotlin interface default impl, e.g.
         // CoroutineContext.plus, must carry its body so non-overriding implementers inherit it instead of failing load.)
-        if (ti.IsInterface)
+        // A flattened companion method on an interface (#83) is STATIC — it takes no slot, so it must NOT be marked
+        // Virtual/NewSlot/Abstract (a static abstract interface method would demand an implementer). Only genuine
+        // instance interface members become virtual slots / abstract DIMs.
+        if (ti.IsInterface && !isStatic)
         {
             attrs |= MethodAttributes.Virtual | MethodAttributes.NewSlot;
             if (!(m.TryGetProperty("body", out var ifb) && ifb.ValueKind == JsonValueKind.Array && ifb.GetArrayLength() > 0))
                 attrs |= MethodAttributes.Abstract;
         }
+        else if (ti.IsInterface && isStatic) attrs |= MethodAttributes.Static;
         else if (isStatic) attrs |= MethodAttributes.Static;
         // `ToString`/`Equals`/`GetHashCode` and .NET base overrides reuse the base slot (Virtual, no NewSlot).
         else if (objOverride || clrOverride != null) attrs |= MethodAttributes.Virtual | MethodAttributes.HideBySig;

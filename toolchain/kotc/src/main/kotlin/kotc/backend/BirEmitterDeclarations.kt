@@ -124,7 +124,32 @@ internal fun BirEmitter.interfaceDef(iface: IrClass): String {
 		.map { ifaceMethod(it) }
 	val propMethods = iface.declarations.filterIsInstance<IrProperty>()
 		.flatMap { p -> listOfNotNull(p.getter?.let { ifaceMethod(it, p) }, p.setter?.let { ifaceMethod(it, p) }) }
-	val methods = (funMethods + propMethods).distinct().joinToString(",")
+	// An interface's PLAIN companion object flattens to the interface's own statics — identical to the class path
+	// (BirEmitter.kt companionObjectTypeName / classDef statFields). A CLR interface legally carries static fields
+	// (run in the interface's .cctor) and static methods, so `interface I { companion object { val X = f() } }` and
+	// its access `I.X` (a staticField on I) resolve, instead of the companion members being silently dropped (#83:
+	// SharingStarted.Eagerly). A SUPER-TYPED companion is a separate lifted singleton, not flattened here.
+	val companion = if (superTypedCompanion(iface) != null) null
+		else iface.declarations.filterIsInstance<IrClass>().firstOrNull { it.isCompanion }
+	// Companion non-const `val`/`var` -> static fields (initializer run in the .cctor); `const` is inlined at use.
+	val statFields = companion?.declarations?.filterIsInstance<IrProperty>()?.mapNotNull { p ->
+		val bf = p.backingField ?: return@mapNotNull null
+		if (p.isConst) return@mapNotNull null
+		val init = (bf.initializer as? IrExpressionBody)?.expression?.let { expr(it) } ?: "null"
+		"""{"name":${str(bf.name.asString())},"type":${birType(bf.type).toJson()},"static":true,"init":$init${volatileFieldFlag(p)}}"""
+	}.orEmpty()
+	// Companion methods -> static methods of the interface; a companion property's CUSTOM accessor -> a static
+	// get_/set_ on the interface (both mirror classDef's statMethods/companionAccessors).
+	val statMethods = companion?.declarations?.filterIsInstance<IrSimpleFunction>()
+		?.filter { it.correspondingPropertySymbol == null && !it.isFakeOverride && it.body != null }
+		?.map { method(it, static = true) }.orEmpty()
+	val companionAccessors = companion?.declarations?.filterIsInstance<IrProperty>()
+		?.flatMap { p ->
+			listOfNotNull(
+				p.getter?.takeIf { fieldRoutedProperty(p) && !hasDefaultGetter(p) }?.let { topLevelAccessorMethod(it, p.name.asString(), true) },
+				p.setter?.takeIf { fieldRoutedProperty(p) && !hasDefaultSetter(p) }?.let { topLevelAccessorMethod(it, p.name.asString(), false) })
+		}.orEmpty()
+	val methods = (funMethods + propMethods + statMethods + companionAccessors).distinct().joinToString(",")
 	// 2B layer 1: a Kotlin interface property -> a REAL CLR property (PropertyBuilder over its get_/set_ interface
 	// methods), so a consumer (facadegen restoring the ref assembly) sees `size` as a PROPERTY, not a bare get_size
 	// method. The accessor methods are already emitted (propMethods) named get_<n>/set_<n>; wire the property over them.
@@ -152,7 +177,7 @@ internal fun BirEmitter.interfaceDef(iface: IrClass): String {
 	// `sealed` — carried so a re-consuming Kotlin module can restore them (ilemit stamps [KotlinFunInterface]/
 	// [KotlinSealed]; a plain CLR interface loses both).
 	val funSealed = classModsJson(fnIface = iface.isFun, sealed = iface.modality == Modality.SEALED)
-	return """{"name":${str(typeName(iface))},"kind":"interface"$nestedIn$funSealed${typeParamsJson(iface.typeParameters)},"base":null,"interfaces":[$ifaces],"fields":[],"ctors":[],"methods":[$methods],"properties":[$ifaceProps],"attrs":[${attrsJson(iface.annotations)}]}"""
+	return """{"name":${str(typeName(iface))},"kind":"interface"$nestedIn$funSealed${typeParamsJson(iface.typeParameters)},"base":null,"interfaces":[$ifaces],"fields":[${statFields.joinToString(",")}],"ctors":[],"methods":[$methods],"properties":[$ifaceProps],"attrs":[${attrsJson(iface.annotations)}]}"""
 }
 
 /** A Kotlin `enum class` -> a real .NET enum (ilemit DefineEnum + literals). */
