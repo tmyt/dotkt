@@ -213,6 +213,39 @@ kt ktproj-runtimetargets "cases/ktproj-runtimetargets/app.ktproj" \
 kt ktproj-inbox "cases/ktproj-inbox/app.ktproj" \
 	"$(printf 'indented False\ntimeout 100')"
 
+# #50: INCREMENTAL deletion-safety + staleness through MSBuild. A single dir is built TWICE with the SAME obj/ (no
+# clean) — the incremental path the shared targets guard. Between the builds a top-level `class Shape` is MOVED out of
+# its own Shape.kt into App.kt and Shape.kt is DELETED. Pre-#50 the BIR was globbed from $(DotKtOut), which was never
+# cleaned, so the deleted Shape.kt left a stale Shape.bir.json behind → Shape was emitted TWICE (App.cir.json's moved
+# copy + the orphan Shape.cir.json) → ilemit "type already defined" → the second build FAILED. The fix wipes
+# $(DotKtOut) on every recompile, so the stale artifact cannot survive. This case reproduces that exact failure and
+# asserts BOTH builds run "12" (the deleted source is gone from the emitted dll). The dir is generated + removed here
+# (not a committed sample) because the assertion is a stateful two-build mutation, not a single `dotnet run`.
+incr="$ROOT/cases/ktproj-incr"
+rm -rf "$incr"; mkdir -p "$incr"
+cat > "$incr/app.ktproj" <<'KTPROJ'
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+  <Import Project="../KotlinClr.targets" />
+</Project>
+KTPROJ
+# STATE 1: `class Shape` lives in its own file.
+printf 'fun main() { println(Shape(3, 4).area()) }\n' > "$incr/App.kt"
+printf 'class Shape(val w: Int, val h: Int) { fun area() = w * h }\n' > "$incr/Shape.kt"
+incr1="$(dotnet run --project "$incr/app.ktproj" -v q --nologo 2>/dev/null | grep -vE 'kotlin/clr:|duplicate source root' || true)"
+# STATE 2: MOVE `class Shape` into App.kt and DELETE Shape.kt — rebuild on the SAME obj/ (incremental).
+rm -f "$incr/Shape.kt"
+printf 'class Shape(val w: Int, val h: Int) { fun area() = w * h }\nfun main() { println(Shape(3, 4).area()) }\n' > "$incr/App.kt"
+incr2="$(dotnet run --project "$incr/app.ktproj" -v q --nologo 2>/dev/null | grep -vE 'kotlin/clr:|duplicate source root' || true)"
+if [[ "$incr1" == "12" && "$incr2" == "12" ]]; then echo "PASS  ktproj-incr"; else
+	echo "FAIL  ktproj-incr"; printf -- '--- build1 (want 12) ---\n%s\n--- build2 incremental after delete (want 12) ---\n%s\n' "$incr1" "$incr2"; fail=1
+fi
+rm -rf "$incr"
+
 # Clean each sample's build output.
 rm -rf "$ROOT"/cases/ktproj/bin "$ROOT"/cases/ktproj/obj \
        "$ROOT"/cases/ktproj-mpp/bin "$ROOT"/cases/ktproj-mpp/obj \

@@ -9,6 +9,9 @@
     <DotKtTypeMeta>$(BaseIntermediateOutputPath)dotkt-clrtypes.meta</DotKtTypeMeta>
     <!-- The .NET import list extracted from the .kt sources by the kotc scan-imports pass (PSI parser, not regex). -->
     <DotKtImportList>$(BaseIntermediateOutputPath)dotkt-clrimports.txt</DotKtImportList>
+    <!-- Non-file compile options (raw kotc flags + MPP config) hashed into a manifest file so a change to an OPTION
+         (not a source) still flips a timestamp and retriggers the incremental KotlinCompile (#50). -->
+    <DotKtOptionsManifest>$(BaseIntermediateOutputPath)dotkt-compile-options.txt</DotKtOptionsManifest>
     <!-- ilemit emits real CIL (Reflection.Emit) and must load each referenced type's RUNTIME (implementation)
          assembly — it takes its refs from @(ReferenceCopyLocalPaths) (the runtime set), NOT @(ReferencePath) (which
          resolves to a package's ref/ reference assembly — method-body-less; deriving a class from one fails with
@@ -49,11 +52,26 @@
     <DotKtCommon Include="common/**/*.kt" />
   </ItemGroup>
 
+  <!-- KLIB as an incremental input (#50): the frontend klib is an unpacked DIRECTORY (both the in-repo build and the
+       shipped tools/kotlin-stdlib-clr-frontend.klib), and MSBuild's Inputs timestamp check treats a directory path as
+       a MISSING file — which would force KotlinCompile to rebuild every single build. So key the input off a stable
+       FILE inside the klib (default/manifest, rewritten on every klib build) instead of the directory path; fall back
+       to the path itself should a future klib ship packed as one .klib file. Referenced as @(_DotKtStdlibInput) below. -->
+  <ItemGroup>
+    <_DotKtStdlibInput Include="$(DotKtStdlib)/default/manifest" Condition="Exists('$(DotKtStdlib)/default/manifest')" />
+    <_DotKtStdlibInput Include="$(DotKtStdlib)" Condition="!Exists('$(DotKtStdlib)/default/manifest') and Exists('$(DotKtStdlib)')" />
+  </ItemGroup>
+
   <!-- C-2: import-driven, façade-FREE .NET type injection. The .kt sources' imports are extracted with the real
        Kotlin parser (PSI) and those .NET types injected straight into FIR (no .kt produced). @(ReferencePath)
        (BCL + PackageReference/Reference) makes any referenced assembly's types injectable. -->
+  <!-- Incremental: the injection metadata is a pure function of the .kt sources (their imports), the resolved
+       compile references, and the compiler version (binary mtime). Guarding on those keeps $(DotKtTypeMeta) BYTE- and
+       TIMESTAMP-stable across a no-op rebuild, so it can serve as a precise KotlinCompile input below (#50) instead of
+       bumping every build and forcing an unconditional recompile. -->
   <Target Name="DotKtInjectTypes" BeforeTargets="KotlinCompile" DependsOnTargets="DotKtResolveReferenceSets"
-          Condition="'@(KotlinCompile)' != ''">
+          Condition="'@(KotlinCompile)' != ''"
+          Inputs="@(KotlinCompile);@(_DotKtCompileReference);$(DotKtCompiler)" Outputs="$(DotKtTypeMeta)">
     <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(DotKtTypeMeta)'))" />
     <!-- 1. Extract .NET imports via the compiler's PSI pass (robust where the old regex was not — item 5). -->
     <Message Importance="high" Text="DotKt: scanning .NET imports from @(KotlinCompile->Count()) .kt file(s) (PSI parser)" />
@@ -67,11 +85,11 @@
     <Exec Command="dotnet &quot;$(DotKtFacadeGen)&quot; --meta &quot;$(DotKtTypeMeta)&quot; --compile-refs &quot;$(_DotKtCompileReferences)&quot; @(DotKtImport->'%(Identity)', ' ') --import-list &quot;$(DotKtImportList)&quot;" />
   </Target>
 
-  <!-- Compile every .kt to BIR. CLR_TYPES_METADATA tells the FIR injector which façade-free .NET types to synthesize. -->
-  <Target Name="KotlinCompile" BeforeTargets="CoreCompile" DependsOnTargets="DotKtInjectTypes"
-          Inputs="@(KotlinCompile)" Outputs="$(DotKtOut)/.stamp">
-    <MakeDir Directories="$(DotKtOut)" />
-    <Message Importance="high" Text="DotKt: compiling @(KotlinCompile->Count()) .kt file(s) -> BIR" />
+  <!-- Materialize the non-file compile options into $(DotKtOptionsManifest) BEFORE KotlinCompile's incremental check so
+       the manifest is a valid Input there (#50). The MPP flags are computed here (not in the compile body) so both the
+       manifest and the compile Exec see the same $(DotKtMppFlags). WriteOnlyWhenDifferent keeps the file's timestamp
+       stable when the options are unchanged (no spurious recompile) and flips it the instant any option changes. -->
+  <Target Name="DotKtComputeCompileOptions" Condition="'@(KotlinCompile)' != ''">
     <!-- MPP (#119): when common sources are present, mark them with -Xcommon-sources and enable the common→platform
          module split (-Xmulti-platform) + cross-module expect/actual (-Xexpect-actual-classes) — the exact
          invocation the cases/ktproj-mpp gate (verify-ktproj) exercises. All sources still pass POSITIONALLY (in @(KotlinCompile));
@@ -79,8 +97,31 @@
     <PropertyGroup Condition="'@(DotKtCommon)' != ''">
       <DotKtMppFlags>-Xmulti-platform -Xexpect-actual-classes -Xcommon-sources=&quot;@(DotKtCommon->'%(FullPath)', ',')&quot;</DotKtMppFlags>
     </PropertyGroup>
+    <WriteLinesToFile File="$(DotKtOptionsManifest)" Overwrite="true" WriteOnlyWhenDifferent="true"
+                      Lines="$(DotKtKotcOptions);$(DotKtMppFlags);@(DotKtCommon->'%(FullPath)')" />
+  </Target>
+
+  <!-- Compile every .kt to BIR. CLR_TYPES_METADATA tells the FIR injector which façade-free .NET types to synthesize.
+       Incremental inputs (#50): besides the .kt sources, a recompile must also retrigger when the COMPILER changes
+       ($(DotKtCompiler) mtime = version proxy), the frontend KLIB changes ($(DotKtStdlib)), the injected .NET type
+       metadata changes ($(DotKtTypeMeta)), any resolved reference DLL changes (@(_DotKtCompileReference)/
+       @(_DotKtRuntimeReference)), or a non-file compile OPTION changes ($(DotKtOptionsManifest)). DotKtResolveReferenceSets
+       is a direct dependency so the @(_DotKt*Reference) items exist when these Inputs are evaluated. -->
+  <Target Name="KotlinCompile" BeforeTargets="CoreCompile"
+          DependsOnTargets="DotKtInjectTypes;DotKtResolveReferenceSets;DotKtComputeCompileOptions"
+          Inputs="@(KotlinCompile);$(DotKtCompiler);@(_DotKtStdlibInput);$(DotKtTypeMeta);$(DotKtOptionsManifest);@(_DotKtCompileReference);@(_DotKtRuntimeReference)"
+          Outputs="$(DotKtOut)/.stamp">
+    <!-- Deletion-safety (#50): the BIR is globbed from $(DotKtOut), which was never cleaned, so a deleted/renamed .kt
+         left a stale *.bir.json behind → the deleted class/function survived into the emitted DLL. Wiping the dir on
+         every (already-deemed-necessary) recompile guarantees a fresh BIR set with no orphan artifact. This body only
+         runs when the Inputs/Outputs check above deems a rebuild needed; the .stamp is recreated at the end and the
+         csc placeholder by DotKtIlPlaceholder afterward, so incremental is preserved. -->
+    <RemoveDir Directories="$(DotKtOut)" />
+    <MakeDir Directories="$(DotKtOut)" />
+    <Message Importance="high" Text="DotKt: compiling @(KotlinCompile->Count()) .kt file(s) -> BIR" />
     <!-- $(DotKtKotcOptions): extra raw kotc flags a project may pass through (e.g. compiling the stdlib ITSELF needs
-         -Xallow-kotlin-package -opt-in=... ). Space-separated; appended verbatim to the compile command. -->
+         -Xallow-kotlin-package -opt-in=... ). Space-separated; appended verbatim to the compile command.
+         $(DotKtMppFlags) is computed by DotKtComputeCompileOptions above. -->
     <Exec Command="&quot;$(DotKtCompiler)&quot; @(KotlinCompile->'&quot;%(FullPath)&quot;', ' ') -no-stdlib -classpath &quot;$(DotKtStdlib)&quot; -d &quot;$(DotKtOut)&quot; $(DotKtMppFlags) $(DotKtKotcOptions)"
           EnvironmentVariables="CLR_TYPES_METADATA=$(DotKtTypeMeta)" />
     <Touch Files="$(DotKtOut)/.stamp" AlwaysCreate="true" />
