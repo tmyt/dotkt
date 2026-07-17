@@ -33,6 +33,27 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   sites hit it; the `newClosure` arm carries the identical latent limitation) is filed as #74, to be closed by #46's
   resolved-identity carriage.
 
+- **bir2cir (#75 Batch B, nested-SM completion): the REAL kotlinx.coroutines `flow` subsystem now materializes — a
+  §4.4ii-materialized SUSPEND carrier whose body NESTS a `newSuspendLambda` (the `unsafeFlow { … combineInternal(…) { … } }`
+  / combine / zip / combineTransform family) no longer fail-loud's.** The prior 2A fix was validated only against a
+  hand-crafted gate; against the real port every flow carrier died at `MaterializeSuspendCarrier` because the F3 guard
+  `remapShiftsIndex && HasNode(newSuspendLambda)` refused ANY carrier nesting a suspend lambda under a non-identity remap
+  (all 6+ Zip/Combine/FlowCoroutine carriers mix `method`+`type` scope tvs, so the remap always shifts). Fix: a nested
+  `newSuspendLambda` is a tv SCOPE BOUNDARY — `CollectTvKeys`/`RenumberTvs` now SHIELD its own frame (`body`/`params`/
+  `suspendRet`/`typeParams`) exactly like a `synthClass`, descending only into its outer-frame refs
+  (`captures`/`typeArgs`/`funcType`), so the nested SM's positional tv resolution is left intact while the outer SM still
+  binds the enclosing tvs from the nested captures. The blanket F3 refusal is replaced by two NARROW invariant guards that
+  keep a genuinely-unsound future shape loud rather than silently mis-reifying: `MSC:nested-sm-nonprefix` (the nested
+  positional body needs a contiguous `(method,0..N-1)` prefix) and `MSC:nested-sm-bare-tv-capture-shift` (a BARE `{t:tv}`
+  capture whose index the outer remap shifts — a shift buried inside a COMPOSITE reference capture (`fn`/`fqn<…>`, every
+  rc6 flow capture) erases representation-preservingly and is allowed, verified ilverify-clean). New gate
+  `cases/il-inlsuspendnest` (a materialized suspend carrier nesting a suspend lambda under the multi-scope shifting remap,
+  top-level + generic-method). NOTE: the real flow subsystem's FULL compilation additionally needs a KOTC capture-naming
+  fix (a nested suspend lambda / SAM / local-fun that captures the enclosing inline-lambda's receiver or an enclosing
+  local emits the capture descriptor under a source name — `$this$mkFlow`, `second`, `receiver` — that mismatches the
+  synthetic body reference `__recv0`, so bir2cir lowers a field whose body ref is an undeclared local); that is a kotc
+  layer seam, tracked separately.
+
 - **facadegen/bir2cir (#73): a consumed cross-module type whose members reference `kotlin.*` is injected again — the
   atomicfu `AtomicInt`/`AtomicLong`/`AtomicBoolean`/`AtomicRef` types no longer vanish (rc5→rc6 regression, rc6 release
   blocker).** A real MSBuild consumer of a DotKt library puts BOTH stdlib twins on the ref-reader compile set (`@(ReferencePath)`):

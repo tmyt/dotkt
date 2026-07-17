@@ -409,7 +409,7 @@ static class InlineSplice
             if (matTemp == null)
                 // Un-materializable (a NON-LOCAL-return carrier can't be a delegate; or a `{k:local}` capture kotc did not
                 // list on the carrier) — fail loud (no fallback under #95; never a silent miscompile).
-                { FailLoud(o, owner, name, pc, ga, $"lambda param '{lname}' in a non-invoke position could not be materialized (§4.4ii) — non-local-return or unlisted-capture carrier"); return; }
+                { FailLoud(o, owner, name, pc, ga, $"lambda param '{lname}' in a non-invoke position could not be materialized (§4.4ii) — non-local-return or unlisted-capture carrier [reason={_matReason}]"); return; }
             var rebind = new Dictionary<string, JsonNode>(StringComparer.Ordinal) { [lname] = new JsonObject { ["k"] = "local", ["name"] = matTemp } };
             RewriteLocalRefs(pBody, rebind);
             RewriteLocalRefs(result, rebind);
@@ -763,9 +763,12 @@ static class InlineSplice
     // site, in the ENCLOSING scope) is the enclosing `{k:local,name:X}` / `{k:this}`. So the generic-class-member case is
     // handled by construction — no scope reconstruction. NON-MATERIALIZABLE (returns null -> caller fails loud): a
     // NON-LOCAL-return carrier (cannot be a delegate); a residual `{k:local}` kotc did not list (e.g. a nested-closure capture).
+    [ThreadStatic] static string _matReason;
+    static string MatNull(string code) { _matReason = code; return null; }
+
     static string MaterializeCarrier(JsonObject carrier, JsonNode funcType, JsonArray stmts)
     {
-        if (funcType is not JsonObject ft || Str(ft["t"]) != "fn") return null;   // no delegate type to build the closure against
+        if (funcType is not JsonObject ft || Str(ft["t"]) != "fn") return MatNull("MC:funcType-not-fn");   // no delegate type to build the closure against
         var lamParams = carrier["params"] as JsonArray ?? new JsonArray();
         var lamBody = (carrier["body"] as JsonArray)?.DeepClone() as JsonArray ?? new JsonArray();
         var lamResult = carrier["result"]?.DeepClone();
@@ -776,7 +779,7 @@ static class InlineSplice
         // route through inlineReturnSubst, so a lambda-local labeled return can leak here as a raw `returnExpr`. Refusing
         // both is correct — fail-loud beats a silent caller-frame `ret` in the non-local case (the common one).
         if (HasNodeNonClosure(lamBody, "return") || HasNodeNonClosure(lamBody, "returnExpr")
-            || (lamResult != null && (HasNodeNonClosure(lamResult, "return") || HasNodeNonClosure(lamResult, "returnExpr")))) return null;
+            || (lamResult != null && (HasNodeNonClosure(lamResult, "return") || HasNodeNonClosure(lamResult, "returnExpr")))) return MatNull("MC:return-in-body");
 
         // BATCH B (#75 holistic) — SUSPEND carrier: a `{t:fn,suspend:true}` carrier in a non-invoke position must become
         // a real `newSuspendLambda` VALUE (a cold SM instance), NOT a plain `newClosure` delegate. The SM /
@@ -827,7 +830,7 @@ static class InlineSplice
         // CROSS-MODULE `newDelegate` (a dangling origin-file `__lambdaN` type token, §4.6 — an APP-LOCAL one, e.g. a #34
         // re-hoisted `__dflt$lambda$N`, IS wrapped verbatim, #43), or an un-spliced `inlineLambda` (a nested inline-call
         // lambda arg, only handled at STEP 8's fixpoint) cannot be wrapped verbatim — refuse those.
-        if (HasUnmaterializableNested(invBody)) return null;
+        if (HasUnmaterializableNested(invBody)) return MatNull("MC:unmaterializable-nested");
 
         // Consume kotc's carrier `captures`: one closure FIELD each (verbatim {name,type}); ctor arg = the enclosing local
         // (`{k:local,name}`) or, for `outer:true`, the enclosing `{k:this}`. Field + ctor-arg order match (positional ctor).
@@ -838,7 +841,7 @@ static class InlineSplice
         if (carrier["captures"] is JsonArray caps)
             foreach (var c in caps.OfType<JsonObject>())
             {
-                if (Str(c["name"]) is not string cn || c["type"] is not JsonNode ct) return null;
+                if (Str(c["name"]) is not string cn || c["type"] is not JsonNode ct) return MatNull("MC:capture-no-name-type");
                 fields.Add(new JsonObject { ["name"] = cn, ["type"] = ct.DeepClone() });
                 if (c["outer"] is JsonValue ov && ov.TryGetValue<bool>(out var ob) && ob)
                 { outerName = cn; captures.Add(new JsonObject { ["k"] = "this" }); }   // enclosing `this`
@@ -850,7 +853,7 @@ static class InlineSplice
         // frame — the top-level body AND a nested closure's CAPTURE VALUES (a nested closure that captured the enclosing
         // receiver), skipping only a nested `synthClass` (its `this` is its own instance). Checked BEFORE the field rewrite
         // introduces legitimate `field.recv:{k:this}` nodes.
-        if (outerName == null && HasThisOutsideSynthClass(invBody)) return null;
+        if (outerName == null && HasThisOutsideSynthClass(invBody)) return MatNull("MC:this-outside-synthclass");
         // §4.4ii REF-CELL WRITE-THROUGH: a `setLocal` WRITING a captured enclosing var (X ∈ capNames) is a `{k:setLocal}`
         // WRITE that the `{k:local}`-READ scans miss. kotc ref-cell-boxes a mutated capture BEFORE it reaches here, so this
         // shape only survives when kotc did NOT box (e.g. a cross-module inline body's callee-local). Promote each such X to
@@ -863,7 +866,7 @@ static class InlineSplice
         // non-generic Ref cell's field (a BadImageFormat, the same hazard the closure-frame tv scan guards) — refuse loud.
         if (boxedCaps.Count > 0)
             foreach (var f in fields.OfType<JsonObject>())
-                if (Str(f["name"]) is string fn && boxedCaps.Contains(fn) && HasTv(f["type"])) return null;
+                if (Str(f["name"]) is string fn && boxedCaps.Contains(fn) && HasTv(f["type"])) return MatNull("MC:boxed-cap-has-tv");
         // Non-boxed caps first (B1): RewriteCapturesToFields rewrites a bare enclosing `{k:this}` to `this.__outer` when
         // outerName!=null — it MUST run BEFORE the boxed rewrite, else it would also rewrite the closure-instance `{k:this}`
         // the boxed `this.<X>.v` recv carries (turning it into `this.__outer.<X>.v`). Boxed names are excluded here.
@@ -888,7 +891,7 @@ static class InlineSplice
         // kotc did not list -> fail loud rather than leak an unbound local to ilemit.
         var allowed = new HashSet<string>(lamParams.OfType<JsonObject>().Select(p => Str(p["name"])).Where(x => x != null), StringComparer.Ordinal);
         CollectDeclaredLocals(invBody, allowed);
-        if (HasStrayLocal(invBody, allowed)) return null;
+        if (HasStrayLocal(invBody, allowed)) return MatNull("MC:stray-local");
 
         // Generic-ness: the closure must be generic over every tv its funcType/params/ret/body/FIELDS reference (reified CLR
         // generics — an unresolved tv is a BadImageFormat). Key tvs by (SCOPE, index): kotc numbers method type-params
@@ -988,7 +991,7 @@ static class InlineSplice
         // ONLY when it dangles cross-module (§4.6, #43): a same-module target — e.g. a __dflt$lambda$N a nested
         // member-inline default-fill re-hoisted app-local — is a capture-less static that wraps verbatim (this is what
         // unblocks the `suspendCancellableCoroutineReusable` §4.4ii suspend carriers). A cross-module token fails loud.
-        if (HasNonAppLocalDelegate(invBody)) return null;
+        if (HasNonAppLocalDelegate(invBody)) return MatNull("MSC:non-applocal-delegate");
 
         // Captures verbatim (drop the carrier's `outer` flag — the name `__outer` is itself the enclosing-`this` signal
         // SuspendLambdaLowering keys on; a carrier `__outer` is SOUND at THIS materialization site — the carrier's
@@ -1000,8 +1003,8 @@ static class InlineSplice
         if (carrier["captures"] is JsonArray caps)
             foreach (var c in caps.OfType<JsonObject>())
             {
-                if (Str(c["name"]) is not string cn || c["type"] is not JsonNode ct) return null;
-                if (innerScope.Contains(cn)) return null;   // FunGen name-conflation (a capture colliding with the SM's own scope)
+                if (Str(c["name"]) is not string cn || c["type"] is not JsonNode ct) return MatNull("MSC:capture-no-name-type");
+                if (innerScope.Contains(cn)) return MatNull("MSC:innerscope-collide");   // FunGen name-conflation (a capture colliding with the SM's own scope)
                 captures.Add(new JsonObject { ["name"] = cn, ["type"] = ct.DeepClone() });
             }
 
@@ -1013,7 +1016,7 @@ static class InlineSplice
             var suspendCapNames = new HashSet<string>(captures.OfType<JsonObject>().Select(c => Str(c["name"])).Where(n => n != null), StringComparer.Ordinal);
             var written = new HashSet<string>(StringComparer.Ordinal);
             CollectWrittenCaptures(invBody, suspendCapNames, written);
-            if (written.Count > 0) return null;
+            if (written.Count > 0) return MatNull("MSC:written-capture");
         }
 
         // TV FRAME (#75 Batch B, 2A): renumber every enclosing tv the SM references to a DENSE 0-based space, declare
@@ -1039,16 +1042,44 @@ static class InlineSplice
             ctorTypeArgs.Add(new JsonObject { ["t"] = "tv", ["scope"] = key.scope, ["i"] = key.i });
             typeParams.Add("Tsm" + ni);
         }
-        // F3 CONTAINMENT (Fable): a NESTED kotc-emitted `newSuspendLambda` inside this carrier body keeps its OWN
-        // `typeParams` with NO construction `typeArgs`, so SuspendLambdaLowering resolves its body tvs POSITIONALLY
-        // against its own param list. But RenumberTvs descends into it (it has no `synthClass` shield — its body/tvs
-        // ride plain keys) and shifts those indices into THIS SM's dense space. When the remap is NON-IDENTITY
-        // (some key's dense index != its original index — precisely the multi-scope / non-prefix shapes the deleted
-        // guard used to exclude), the nested SM's positional resolution silently drifts to `object`. None of the 52
-        // flow sites nest an SM in the carrier body; refuse LOUD rather than silently object-erase (the real fix rides
-        // #74/#46 resolved-identity carriage). An IDENTITY remap (single-scope 0..N-1 prefix) leaves indices intact.
-        bool remapShiftsIndex = remap.Any(kv => kv.Value != kv.Key.Item2);
-        if (remapShiftsIndex && HasNode(invBody, "newSuspendLambda")) return null;
+        // A NESTED kotc-emitted `newSuspendLambda` inside this carrier body keeps its OWN `typeParams` and resolves its
+        // body tvs POSITIONALLY against them — so CollectTvKeys/RenumberTvs SHIELD its own frame (body/params/suspendRet/
+        // typeParams) exactly like a `synthClass`, descending only into its outer-frame refs (captures/typeArgs/funcType).
+        // Its body indices are thereby left intact (no positional drift), and the outer SM still collects the enclosing
+        // tvs it needs from the nested captures' types — so a non-identity outer remap is sound for the flow shapes.
+        //
+        // Soundness is NOT unconditional, so replace the old blanket F3 refusal (Fable #75) with TWO narrow invariant
+        // guards. A kotc-emitted nested NSL (no explicit ctor `typeArgs`) is instantiated by SuspendLambdaLowering via the
+        // POSITIONAL fallback `nestedSM<tv{type,0..N-1}>` in THIS SM's frame, binding nested param i to this SM's param
+        // i = the i-th smallest key.
+        //   (i) BODY resolution: the nested body/typeParams (positional) get the right enclosing tv ONLY if `(method,
+        //       0..N-1)` are all present (SortedSet order then pins dense slots 0..N-1 to them). A gapped/non-prefix set
+        //       would bind a nested body tv to the wrong reified type -> refuse LOUD (MSC:nested-sm-nonprefix).
+        //   (ii) A BARE-tv capture (`{t:tv}` VERBATIM as the field type) that the outer remap SHIFTS would make the
+        //       nested SM's field/ctor-param type — resolved positionally against ITS own typeParams — a wrong reified
+        //       (possibly VALUE) type -> refuse LOUD (MSC:nested-sm-bare-tv-capture-shift). A shift buried inside a
+        //       NON-bare (composite) capture — `fn`/`fqn<…>`/`array`/`nullable` — is only ever fed to ilemit's
+        //       positional `ResolveTv`, whose out-of-range fallback is `object` (check-i pins slots 0..N-1 to (method,
+        //       0..N-1), so a shift necessarily lands >= N). So the nested field degrades to the monomorphic erasure
+        //       `Comp<…,object,…>`, NEVER a wrong in-range reified type: it is either uniformly `object` on BOTH sides
+        //       (a suspend-`fn` slot — BirTypeLowering erases `sfunc:`→object — so the construction and field agree,
+        //       ilverify-clean; the rc6 case, incl. the gapped `[(m,0),(m,1),(m,3)]` combineTransform carrier whose only
+        //       shift `(m,3)` rides inside a suspend-`fn`) OR a reference/value mismatch that ilverify REJECTS LOUD at
+        //       the nested `newobj` (a NEW-FAIL, never a silent miscompile). (Fable #75: a future reified-composite shift
+        //       thus redlines the ilverify lane — it must NOT be waived into the #12/#46 covariance-erasure XFAIL class
+        //       without the #74/#46 resolved-identity representation fix, which its value-binding variants also need.)
+        foreach (var nsm in FirstLevelNestedSuspendLambdas(invBody))
+        {
+            if (nsm["typeArgs"] is JsonArray) continue;   // an InlineSplice-materialized nested NSL carries explicit ctorTypeArgs — always fine
+            int nN = (nsm["typeParams"] as JsonArray)?.Count ?? 0;
+            for (int i = 0; i < nN; i++)
+                if (!keys.Contains(("method", i))) return MatNull("MSC:nested-sm-nonprefix");
+            if (nsm["captures"] is JsonArray ncaps)
+                foreach (var c in ncaps.OfType<JsonObject>())
+                    if (Str(c["type"]?["t"]) == "tv" && c["type"] is JsonObject ctv
+                        && remap.TryGetValue((Str(ctv["scope"]) ?? "method", Int(ctv["i"])), out var ni2) && ni2 != Int(ctv["i"]))
+                        return MatNull("MSC:nested-sm-bare-tv-capture-shift");
+        }
         if (remap.Count > 0)
         {
             RenumberTvs(invBody, remap); RenumberTvs(invParams, remap); RenumberTvs(invSuspendRet, remap); RenumberTvs(captures, remap);
@@ -1340,6 +1371,25 @@ static class InlineSplice
         return false;
     }
 
+    // The own-frame keys of a nested `newSuspendLambda` — the SM lowering resolves its `body`/`params`/`suspendRet` tvs
+    // POSITIONALLY against its OWN `typeParams`, so an enclosing frame's tv collect/renumber must NOT descend into them
+    // (exactly the `synthClass` shield rationale, one node-kind over). Its OUTER-frame refs — `captures` (ctor-arg types),
+    // `typeArgs` (construction args), `funcType`, `capValues` — ARE descended.
+    static readonly HashSet<string> SuspendLambdaOwnFrame = new(StringComparer.Ordinal) { "body", "params", "suspendRet", "typeParams", "arity", "k" };
+
+    // The TOP-MOST `newSuspendLambda` nodes in the subtree — descent STOPS at each one (a doubly-nested NSL rides under a
+    // first-level NSL's shielded body, so the outer remap never touches it). Used by the nested-SM invariant guard.
+    static IEnumerable<JsonObject> FirstLevelNestedSuspendLambdas(JsonNode node)
+    {
+        if (node is JsonObject o)
+        {
+            if (Str(o["k"]) == "newSuspendLambda") { yield return o; yield break; }
+            foreach (var kv in o) if (kv.Value != null) foreach (var n in FirstLevelNestedSuspendLambdas(kv.Value)) yield return n;
+        }
+        else if (node is JsonArray a)
+            foreach (var c in a) if (c != null) foreach (var n in FirstLevelNestedSuspendLambdas(c)) yield return n;
+    }
+
     // Collect the distinct `{t:tv}` (scope, index) KEYS in the subtree. kotc numbers method type-params independently of
     // type (class) type-params, so scope is part of a tv's identity.
     static void CollectTvKeys(JsonNode node, SortedSet<(string scope, int i)> keys)
@@ -1349,8 +1399,12 @@ static class InlineSplice
             if (Str(o["t"]) == "tv") keys.Add((Str(o["scope"]) ?? "method", Int(o["i"])));
             // Skip a nested closure's `synthClass`: its typeParams live in that frame's OWN 0-based space and its body's
             // `tv{…}` resolve positionally against them — collecting/renumbering them into the outer frame would corrupt
-            // the nested class. Its `captures`/`funcType`/`typeArgs` (outer-frame tv refs) ARE descended (#22).
-            foreach (var kv in o) if (kv.Value != null && kv.Key != "synthClass") CollectTvKeys(kv.Value, keys);
+            // the nested class. Its `captures`/`funcType`/`typeArgs` (outer-frame tv refs) ARE descended (#22). A nested
+            // `newSuspendLambda` is the SAME kind of tv scope boundary — shield its own frame, descend its outer refs.
+            bool nestedSm = Str(o["k"]) == "newSuspendLambda";
+            foreach (var kv in o)
+                if (kv.Value != null && kv.Key != "synthClass" && !(nestedSm && SuspendLambdaOwnFrame.Contains(kv.Key)))
+                    CollectTvKeys(kv.Value, keys);
         }
         else if (node is JsonArray a) foreach (var c in a) if (c != null) CollectTvKeys(c, keys);
     }
@@ -1365,7 +1419,11 @@ static class InlineSplice
                 && remap.TryGetValue((Str(o["scope"]) ?? "method", i), out var ni)) o["i"] = ni;
             // Skip a nested closure's `synthClass` (its tvs are its own frame — see CollectTvKeys); its outer-frame tv
             // refs on `captures`/`funcType`/`typeArgs` ARE renumbered into the materialized closure's param space (#22).
-            foreach (var kv in o) if (kv.Value != null && kv.Key != "synthClass") RenumberTvs(kv.Value, remap);
+            // A nested `newSuspendLambda`'s own frame is shielded identically — only its outer-frame refs are renumbered.
+            bool nestedSm = Str(o["k"]) == "newSuspendLambda";
+            foreach (var kv in o)
+                if (kv.Value != null && kv.Key != "synthClass" && !(nestedSm && SuspendLambdaOwnFrame.Contains(kv.Key)))
+                    RenumberTvs(kv.Value, remap);
         }
         else if (node is JsonArray a) foreach (var c in a) if (c != null) RenumberTvs(c, remap);
     }
