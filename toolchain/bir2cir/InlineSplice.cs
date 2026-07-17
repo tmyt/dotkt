@@ -397,6 +397,20 @@ static class InlineSplice
         ForwardLambdaArgs(pBody, lambdaMap);
         ForwardLambdaArgs(result, lambdaMap);
 
+        // §4.4(iii) — RETIRE a nested inlineLambda carrier's capture DESCRIPTOR whose lambda-param STEP 6 (invoke-splice)
+        // / §4.4(i) (forwarding) already fully consumed, i.e. a descriptor-only survivor: the carrier body no longer
+        // reads it, so the field a later MaterializeCarrier / MaterializeSuspendCarrier would mint for it is provably
+        // dead (RewriteCapturesToFields + FunGen bind fields ONLY via surviving body refs), while the descriptor still
+        // forces a name-synthesized `{k:local,name}` ctor arg that no `var` declares — the dangling-capture IrSanity
+        // fault (e.g. `filter { it is R }`: `predicate` invoked+inlined, but the unsafeTransform carrier still lists it).
+        // This is STEP 6's DUAL (E5 keeps descriptors in lockstep with refs; once refs are gone, the descriptor is splice
+        // residue). Only inlineLambda descriptors are pruned — a newSuspendLambda's capValues are POSITIONAL (pruning one
+        // slot would skew the rest) and its STEP-6 SM boundary means an SM capture always keeps a `{k:local}` body ref, so
+        // it is never descriptor-only. Restricted to `lambdaMap` keys (globally-unique minted param names) so a genuine
+        // user capture is untouchable. Runs BEFORE §4.4ii so a now-unreferenced carrier is not spuriously materialized.
+        PruneConsumedCarrierCaptures(pBody, lambdaMap);
+        PruneConsumedCarrierCaptures(result, lambdaMap);
+
         // §4.4(ii) — MATERIALIZE any lambda-param carrier still referenced in a NON-INVOKE position (captured in a
         // `newClosure`, e.g. `AtomicArray(size, init) = AtomicArray(Array(size){ init(it) })` where `init` is a capture of
         // the `{ init(it) }` closure; or forwarded to a non-inline call) as a real `newClosure` VALUE bound to a fresh
@@ -418,6 +432,11 @@ static class InlineSplice
         // D3 remainder: any lambda-param ref STILL present after §4.4ii materialization is a dangling local — fail loud.
         if (HasLocalIn(pBody, lambdaMap.Keys) || HasLocalIn(result, lambdaMap.Keys))
         { FailLoud(o, owner, name, pc, ga, "lambda param aliased to a non-invoke position (not directly invoked) — not materialized (§4.4ii remainder)"); return; }
+        // §4.4(iii) tripwire: a lambda-param surviving ONLY as a nested carrier's capture DESCRIPTOR after the retire +
+        // §4.4ii rebind is an un-consumed hole (the prune's CarrierStillReferences kept it, yet §4.4ii found no `{k:local}`
+        // to materialize) — convert to a loud splice-site diagnosis rather than a downstream dangling-capture fault.
+        if (lambdaMap.Keys.Any(k => HasCaptureDescIn(pBody, k) || HasCaptureDescIn(result, k)))
+        { FailLoud(o, owner, name, pc, ga, "lambda param survives only as a nested carrier's capture descriptor after §4.4(iii) retire + §4.4(ii) rebind"); return; }
 
         // STEP 7 — assemble the value-producing valueBlock, swap it in-place.
         foreach (var st in pBody) if (st != null) stmts.Add(st.DeepClone());
@@ -663,7 +682,7 @@ static class InlineSplice
     // Splice invocations of a lambda param: `{k:callInstance, method:invoke, recv:{k:local,name:<lamParam>}}` where
     // <lamParam> is a registered lambda -> the carried lambda body, freshened+prefixed PER INVOCATION, with the lambda's
     // own param(s) bound to temps initialized from the invoke args. A bare `{k:return}` inside stays the caller's NLR.
-    static void SpliceLambdaInvokes(JsonNode node, Dictionary<string, JsonObject> lambdaMap)
+    static void SpliceLambdaInvokes(JsonNode node, Dictionary<string, JsonObject> lambdaMap, JsonObject hostCarrier = null)
     {
         if (node is JsonObject o)
         {
@@ -672,11 +691,17 @@ static class InlineSplice
             // dangle caller-frame locals. Leaving the invoke un-spliced lets the §4.4ii materialize loop turn the
             // surviving capture into a real suspend SM value (the correct crossinline semantics).
             if (Str(o["k"]) == "newSuspendLambda") return;
-            foreach (var kv in o) if (kv.Value != null) SpliceLambdaInvokes(kv.Value, lambdaMap);
+            // E7: track the NEAREST-ENCLOSING inlineLambda carrier as the host for capture propagation below.
+            if (Str(o["k"]) == "inlineLambda") hostCarrier = o;
+            foreach (var kv in o) if (kv.Value != null) SpliceLambdaInvokes(kv.Value, lambdaMap, hostCarrier);
             if (Str(o["k"]) == "callInstance" && Str(o["method"]) == "invoke"
                 && o["recv"] is JsonObject rc && Str(rc["k"]) == "local"
                 && Str(rc["name"]) is string ln && lambdaMap.TryGetValue(ln, out var lam))
             {
+                // E7: a captured carrier spliced INSIDE a host inlineLambda frees ITS OWN captures into the host frame —
+                // propagate them (verbatim descriptors) to the host's `captures` BEFORE the splice (lam's body is still
+                // intact here), or they dangle when the host is later materialized (§4.4ii / MaterializeSuspendCarrier).
+                if (hostCarrier != null) PropagateSplicedCaptures(lam, hostCarrier);
                 var repl = BuildLambdaSplice(lam, o["args"] as JsonArray ?? new JsonArray());
                 foreach (var key in new List<string>(((IDictionary<string, JsonNode>)o).Keys)) o.Remove(key);
                 foreach (var kv in repl) o[kv.Key] = kv.Value?.DeepClone();
@@ -684,7 +709,54 @@ static class InlineSplice
         }
         else if (node is JsonArray a)
         {
-            foreach (var c in a) if (c != null) SpliceLambdaInvokes(c, lambdaMap);
+            foreach (var c in a) if (c != null) SpliceLambdaInvokes(c, lambdaMap, hostCarrier);
+        }
+    }
+
+    // E7 — the splice counterpart of the E5 descriptor↔ref lockstep. STEP 6 REPLACES a `<lamParam>()` invoke with the
+    // carrier body wholesale, injecting the carrier's OWN captured refs (a genuine value capture like `klass` in
+    // `filter { klass.isInstance(it) }`) into the HOST inlineLambda frame with NO matching host descriptor — so once the
+    // host is lifted (a `newClosure` / suspend SM) they dangle (`references undeclared local`). Restore the invariant:
+    // copy each spliced-carrier capture descriptor VERBATIM (name+type, tvs in the shared flattened frame) onto the host
+    // `captures`, gated on the capture actually SURVIVING in the spliced body (a descriptor-only residue frees nothing —
+    // keeps green shapes byte-identical) and dedup'd against the host's existing captures. A name the host ALREADY binds
+    // (its own param/local) is SKIPPED: the freed ref resolves to that binding — the exact pre-E7 behavior. A type
+    // conflict against a same-named host capture is the one unrepresentable case -> fail loud (#95 doctrine).
+    static void PropagateSplicedCaptures(JsonObject lam, JsonObject host)
+    {
+        if (lam["captures"] is not JsonArray lamCaps || lamCaps.Count == 0) return;
+        HashSet<string> hostScope = null;   // lazily built: host params + host-declared locals
+        foreach (var c in lamCaps.OfType<JsonObject>())
+        {
+            if (Str(c["name"]) is not string cn || c["type"] is null) continue;
+            bool outer = c["outer"] is JsonValue ov && ov.TryGetValue<bool>(out var ob) && ob;
+            // Gate: only a capture the spliced body still references frees anything at this site (an `outer` capture's
+            // freed ref is a bare `{k:this}`, so scan for that; a named capture -> a surviving `{k:local}`/write/desc).
+            if (outer ? !(HasThisOutsideSynthClass(lam["body"]) || HasThisOutsideSynthClass(lam["result"]))
+                      : !CarrierStillReferences(lam, cn)) continue;
+            var hostCaps = host["captures"] as JsonArray;
+            var existing = hostCaps?.OfType<JsonObject>().FirstOrDefault(h =>
+                outer ? (h["outer"] is JsonValue hv && hv.TryGetValue<bool>(out var hb) && hb)
+                      : Str(h["name"]) == cn);
+            if (existing != null)
+            {
+                if (!outer && !JsonNode.DeepEquals(existing["type"], c["type"]))
+                    throw new NotSupportedException($"inline splice: spliced carrier capture '{cn}' type-conflicts with the host carrier's same-named capture (E7)");
+                continue;   // same enclosing entity in the flattened frame — already listed
+            }
+            if (!outer)
+            {
+                // The host already BINDS this name (its own param or a declared local): the freed body ref resolves to
+                // that binding directly — the exact pre-E7 behavior (no propagation existed), which is correct when the
+                // carrier captured that same host variable (the common flattened-frame case: e.g. a stdlib `index`
+                // carried through a `forEachIndexed`-style host whose own loop var is `index`). SKIP — adding a
+                // descriptor would double-bind it. (A genuine same-name-DIFFERENT-var collision is a pre-existing
+                // hygiene concern, unchanged by E7 — the prefix pass disambiguates distinct splice-locals.)
+                if (hostScope == null) { hostScope = InlineLambdaParamNames(host); CollectDeclaredLocals(host["body"], hostScope); }
+                if (hostScope.Contains(cn)) continue;
+            }
+            if (hostCaps == null) { hostCaps = new JsonArray(); host["captures"] = hostCaps; }
+            hostCaps.Add((JsonObject)c.DeepClone());
         }
     }
 
@@ -1212,8 +1284,9 @@ static class InlineSplice
     // kotc emits the carrier body's refs to its own params as BARE `{k:local,name:<param>}` (emitInlineLambdaCarrier
     // deliberately shadows them out of the enclosing valSubst), so an OUTER callee param / splice-declared local that
     // shares a name would else be rebound to the outer temp / prefixed — destroying the inner param ref (bound at the
-    // NESTED splice, BuildLambdaSplice). Unlike a `newSuspendLambda`, the carrier has no field-ified capture slot: free
-    // refs live inline in `body`, so the boundary is purely "params of this carrier" (no capture-descriptor lockstep).
+    // NESTED splice, BuildLambdaSplice). The carrier's `captures[].name` descriptors ALSO need lockstep renaming (a later
+    // §4.4ii materialization reads them back as ctor-arg values) — the renamers do that in the same `inlineLambda` case,
+    // excluding these params (a param is bound, never a free capture).
     static HashSet<string> InlineLambdaParamNames(JsonObject il)
     {
         var ps = new HashSet<string>(StringComparer.Ordinal);
@@ -1707,16 +1780,28 @@ static class InlineSplice
                 var bodyDeclared = new HashSet<string>(declared, StringComparer.Ordinal);
                 bodyDeclared.ExceptWith(inner);
                 if (bodyDeclared.Count > 0 && o["body"] is JsonNode nb) ApplyPrefix(nb, bodyDeclared, prefix);
+                // `capValues` are the captures' construction VALUES in the ENCLOSING (splice) frame — outer-frame refs like
+                // `captures`/`typeArgs`, NOT the SM's inner scope — so prefix them with the FULL `declared` set (STEP-8
+                // walker: "capValues ARE descended"). Skipped by the generic descent below (early return), so do it here.
+                if (o["capValues"] is JsonNode ncv) ApplyPrefix(ncv, declared, prefix);
                 return;
             }
             // F2 (#61) SCOPE BOUNDARY: descend a nested `inlineLambda` carrier's `body`/`result` with the declared-set
             // MINUS this carrier's OWN params, so a splice-declared local sharing a name with a carrier param does NOT
             // prefix the carrier's bare `{k:local,name:<param>}` body ref (which would strand it from the un-prefixed
             // `params[]` descriptor at BuildLambdaSplice). Body-declared locals of the carrier stay in the set and are
-            // still prefixed for hygiene. `params`/`captures` hold no rewritable local ref (byte-identical to skip).
+            // still prefixed for hygiene.
             if (Str(o["k"]) == "inlineLambda")
             {
                 var lamParams = InlineLambdaParamNames(o);
+                // JOINT lockstep (symmetric with RewriteLocalRefs): prefix a capture descriptor naming a splice-declared
+                // local together with its body refs, so the later MaterializeCarrier / MaterializeSuspendCarrier ctor-arg
+                // read targets the PREFIXED local, not the hygiene-renamed-away one. Skip own params + `outer:true`.
+                if (o["captures"] is JsonArray ilCaps)
+                    foreach (var c in ilCaps.OfType<JsonObject>())
+                        if (Str(c["name"]) is string cn && declared.Contains(cn) && !lamParams.Contains(cn)
+                            && !(c["outer"] is JsonValue ov && ov.TryGetValue<bool>(out var ob) && ob))
+                            c["name"] = prefix + cn;
                 var bodyDeclared = new HashSet<string>(declared, StringComparer.Ordinal);
                 bodyDeclared.ExceptWith(lamParams);
                 if (bodyDeclared.Count > 0)
@@ -1773,16 +1858,37 @@ static class InlineSplice
                         : subst.Where(kv => !inner.Contains(kv.Key)).ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
                     RewriteLocalRefs(nb, bodySubst);
                 }
+                // `capValues` are the captures' construction VALUES in the ENCLOSING (splice) frame — outer-frame refs, so
+                // rewrite them with the FULL `subst` (not the inner-scope-minus body subst). Skipped by the generic descent
+                // below (early return); descend explicitly here so a spliced payload's capValue local is rebound in lockstep.
+                if (o["capValues"] is JsonNode ncv) RewriteLocalRefs(ncv, subst);
                 return;
             }
             // F2 (#61) SCOPE BOUNDARY: a nested `inlineLambda` carrier's OWN params shadow same-named outer callee params.
             // Descend its `body`/`result` with `subst` MINUS this carrier's params so an inner param ref keeps its bare
-            // name (bound later at BuildLambdaSplice), never rebound to the outer temp. `params`/`captures` descriptors
-            // hold no `{k:local}` ref, so skipping them is byte-identical to the generic descent (only body/result carry
-            // rewritable refs). Nested carriers recurse through this same case.
+            // name (bound later at BuildLambdaSplice), never rebound to the outer temp. Nested carriers recurse through
+            // this same case.
             if (Str(o["k"]) == "inlineLambda")
             {
                 var lamParams = InlineLambdaParamNames(o);
+                // JOINT lockstep: the carrier's `captures[].name` are ENCLOSING-frame names that a later §4.4ii
+                // materialization reads back as `{k:local,name}` ctor-arg VALUES (MaterializeCarrier / MaterializeSuspend
+                // Carrier), and the suspend arm's FunGen field-ifies the SM body's refs BY that name. So a descriptor
+                // whose name THIS frame's subst rebinds MUST be renamed in lockstep with the body descent below — else the
+                // ctor arg dangles as a stale `{k:local,name:X}` (the nested-inline-splice `transform` fault) and, in the
+                // suspend arm, the body field-ref skews from the descriptor. Same doctrine as the newSuspendLambda case
+                // above. Skip the carrier's OWN params (bound, not free) and an `outer:true` capture (its value is the
+                // enclosing `{k:this}`, not a name-keyed local — MaterializeCarrier emits `{k:this}` for it).
+                if (o["captures"] is JsonArray ilCaps)
+                    foreach (var c in ilCaps.OfType<JsonObject>())
+                        if (Str(c["name"]) is string cn && !lamParams.Contains(cn)
+                            && !(c["outer"] is JsonValue ov && ov.TryGetValue<bool>(out var ob) && ob)
+                            && subst.TryGetValue(cn, out var cb))
+                        {
+                            if (cb is JsonObject cbo && Str(cbo["k"]) == "local" && Str(cbo["name"]) is string tn) c["name"] = tn;
+                            else throw new NotSupportedException(
+                                $"inline splice: a nested inlineLambda carrier captures '{cn}' but the splice binds it to a non-local expression — a carrier capture descriptor can only name a local/temp");
+                        }
                 var bodySubst = lamParams.Count == 0 ? subst
                     : subst.Where(kv => !lamParams.Contains(kv.Key)).ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
                 if (o["body"] is JsonNode ib) RewriteLocalRefs(ib, bodySubst);
@@ -2580,6 +2686,69 @@ static class InlineSplice
             return false;
         }
         return Rec(node);
+    }
+
+    // §4.4(iii) — retire a nested `inlineLambda` carrier's capture DESCRIPTOR whose lambda-param (a `lambdaMap` key) is no
+    // longer referenced in that carrier — dead splice residue that would otherwise mint a dangling name-synthesized ctor
+    // arg. POST-ORDER (recurse first) so a doubly-nested carrier chain retires bottom-up before its enclosing carrier is
+    // tested. Skips the standard boundary set (a nested `synthClass` KEY, a `typeDef` node whole). Only `inlineLambda`
+    // descriptors are pruned (never a `newSuspendLambda`'s — positional capValues).
+    static void PruneConsumedCarrierCaptures(JsonNode node, Dictionary<string, JsonObject> lambdaMap)
+    {
+        if (node is JsonObject o)
+        {
+            if (Str(o["k"]) == "typeDef") return;
+            foreach (var kv in o) if (kv.Value != null && kv.Key != "synthClass") PruneConsumedCarrierCaptures(kv.Value, lambdaMap);
+            if (Str(o["k"]) == "inlineLambda" && o["captures"] is JsonArray caps)
+            {
+                var lamParams = InlineLambdaParamNames(o);
+                for (int i = caps.Count - 1; i >= 0; i--)
+                    if (caps[i] is JsonObject c && Str(c["name"]) is string cn && lambdaMap.ContainsKey(cn)
+                        && !lamParams.Contains(cn)
+                        && !(c["outer"] is JsonValue ov && ov.TryGetValue<bool>(out var ob) && ob)
+                        && !CarrierStillReferences(o, cn))
+                        caps.RemoveAt(i);
+            }
+        }
+        else if (node is JsonArray a) foreach (var c in a) if (c != null) PruneConsumedCarrierCaptures(c, lambdaMap);
+    }
+
+    // True if an `inlineLambda` carrier still references `cn` in its body/result — a read (`{k:local}`), a write
+    // (`{k:setLocal}`), or a TRANSITIVE nested-carrier capture descriptor. Its own `captures`/`params` are excluded (the
+    // descriptor under test). Over-approximation is SAFE: keeping a descriptor degrades to the loud IrSanity backstop.
+    static bool CarrierStillReferences(JsonObject carrier, string cn)
+    {
+        var names = new[] { cn };
+        return HasLocalIn(carrier["body"], names) || HasLocalIn(carrier["result"], names)
+            || HasSetLocalIn(carrier["body"], cn) || HasSetLocalIn(carrier["result"], cn)
+            || HasCaptureDescIn(carrier["body"], cn) || HasCaptureDescIn(carrier["result"], cn);
+    }
+
+    // Any `{k:setLocal,name:name}` in the subtree — the write-ref complement of HasLocalIn (which sees only reads).
+    static bool HasSetLocalIn(JsonNode node, string name)
+    {
+        if (node is JsonObject o)
+        {
+            if (Str(o["k"]) == "setLocal" && Str(o["name"]) == name) return true;
+            foreach (var kv in o) if (kv.Value != null && HasSetLocalIn(kv.Value, name)) return true;
+        }
+        else if (node is JsonArray a) foreach (var c in a) if (c != null && HasSetLocalIn(c, name)) return true;
+        return false;
+    }
+
+    // The blindness-complement of HasLocalIn: any `inlineLambda`/`newSuspendLambda` whose `captures[].name == name` (a
+    // DESCRIPTOR-style capture, invisible to HasLocalIn's `{k:local}` scan). newSam/newClosure captures are VALUE exprs
+    // (`{k:local}`/`{k:field}`), already covered by HasLocalIn, so they are not scanned here.
+    static bool HasCaptureDescIn(JsonNode node, string name)
+    {
+        if (node is JsonObject o)
+        {
+            if ((Str(o["k"]) == "inlineLambda" || Str(o["k"]) == "newSuspendLambda") && o["captures"] is JsonArray caps)
+                foreach (var c in caps.OfType<JsonObject>()) if (Str(c["name"]) == name) return true;
+            foreach (var kv in o) if (kv.Value != null && HasCaptureDescIn(kv.Value, name)) return true;
+        }
+        else if (node is JsonArray a) foreach (var c in a) if (c != null && HasCaptureDescIn(c, name)) return true;
+        return false;
     }
 
     // Seeds _nextLabelId (Apply entry). Scans label||goto||brIf DELIBERATELY WIDE (asymmetric with CollectIds's label-only
