@@ -201,36 +201,14 @@ internal fun BirEmitter.inlineSpliceCallSameModule(call: IrCall): String {
 	return emitOwnerfulInlineNode(call)
 }
 
-/** F1 (#60): CROSS-MODULE inline of a facadegen-injected MEMBER (`class C { inline fun pick(block) }` restored from a
- *  referenced DotKt assembly — `isInline=true`, `body==null`, a DISPATCH receiver present) taking ANY lambda arg
- *  (AXIS ①). Without this the member falls to the ordinary `callInstance` path (BirEmitterCalls) + a REAL delegate for
- *  the block, so a non-local `return` inside the block returns from the DELEGATE, not the caller — a SILENT miscompile.
- *  kotc emits the SAME owner-ful `callInline` shape the same-module member emitter does (owner = `typeName(enclosingClass)`,
- *  `recvs.dispatch` + F2A `dispatchTypeArgs`); bir2cir resolves the `[KotlinInline]` payload off the ref.dll via the
- *  owner-ful `ResolveInlinePayload`/`InlineCandidates` (keyed `owner|name|pc|ga`) and its §4.3 binds `recvs.dispatch`,
- *  rebinding the payload's `{k:this}` refs to the caller-provided receiver.
- *
- *  #23 boundary: the member-EXTENSION dual-receiver shape (BOTH a dispatch AND an extension receiver) is EXCLUDED by the
- *  call-site gate (`extensionReceiver(call) == null`) — it falls through to the status-quo delegate path there, because
- *  kotc cannot inspect the cross-module body to prove the payload does not read the dispatch receiver, and a body-blind
- *  splice/fail-loud would wrongly break the SOUND pure-extension idiom. The guard below is DEFENSE-IN-DEPTH for that
- *  invariant (should never fire given the gate): if a dual-receiver ever reaches here it FAILS LOUD, never silently
- *  rebinds `{k:this}` to the caller's `this`. Narrowing #23 to the actually-unsound subset (scan the decoded payload
- *  body for `{k:this}`) is a bir2cir follow-up. */
-internal fun BirEmitter.inlineSpliceCallMember(call: IrCall): String {
-	val callee = call.symbol.owner
-	val extParam = callee.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
-	val dispatchArg = dispatchReceiver(call)
-	if (extParam != null && dispatchArg != null) return unsupported(call,
-		"a cross-module member-extension inline call (dispatch + extension receiver, #23 shape) reached inlineSpliceCallMember",
-		"the call-site gate should route the dual-receiver shape to the delegate path; co-binding a spliced member-extension's dispatch AND extension receiver is not yet supported")
-	return emitOwnerfulInlineNode(call)
-}
-
 /** The shared OWNER-FUL `callInline` node builder for an inline call whose hosting .NET type kotc CAN name — used by
- *  BOTH the same-module member/top-level splice (`inlineSpliceCallSameModule`, body present) and the cross-module
- *  facadegen-injected member (`inlineSpliceCallMember`, body on the ref.dll, §4.3 in bir2cir). Callers apply their OWN
- *  dual-receiver risk guard (#20 same-module / #23 cross-module) BEFORE calling. The emitted shape — `owner`, `pc`, `ga`,
+ *  BOTH the same-module member/top-level splice (`inlineSpliceCallSameModule`, body present) and the CROSS-MODULE inline
+ *  MEMBER call (#60/W1: `body==null`, a dispatch receiver present — a facadegen-injected DotKt member OR a klib stdlib
+ *  member; the call-site gate in BirEmitterCalls invokes this DIRECTLY, unconditionally, because kotc is body-blind and
+ *  bir2cir owns the splice-or-fail-loud decision off the ref.dll `[KotlinInline]` payload). The same-module caller
+ *  applies its OWN #20 dual-receiver risk guard first; the cross-module caller does NOT (kotc cannot inspect the body) —
+ *  bir2cir's §4.3 splices the pure-extension idiom and FAILS LOUD on a dual-receiver body that reads the dispatch
+ *  `{k:this}` (#23, until W2). The emitted shape — `owner`, `pc`, `ga`,
  *  `typeArgs`, `recvs` (dispatch/extension + F2A `dispatchTypeArgs`), the per-Regular-param `args`, `retType`, `paramSig`
  *  — is IDENTICAL for both callers, so bir2cir's InlineSplice consumes them the same whether the payload is same-module
  *  (`InlineBirStash.Index`) or cross-module (ref.dll `InlineCandidates`). */

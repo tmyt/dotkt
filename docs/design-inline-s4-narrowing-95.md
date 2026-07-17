@@ -49,3 +49,46 @@ same-module stash, `ReferenceMetadataIndex.cs` for the cross-module `[KotlinInli
 `ClosureSynthesis.cs`, `SuspendColdLowering.cs`): overload selection by full param-signature, capture /
 `__outer` / `__self` receiver materialization, closure synthesis, `tv{scope:type}` substitution from the
 `dispatchTypeArgs` carry, and a fail-loud guard on every descriptor-skew path (no silent fallback slot).
+
+## §4.x section map (the code's `§4.x` labels have no other textual definition)
+
+`InlineSplice.cs` comments key on a `§4.x` numbering carried over from the retired #95 spec; this is the
+authoritative map:
+
+- **§4.2 — overload disambiguation.** `owner|name|pc|ga` selects a candidate LIST; the unique candidate
+  whose `params[i].type` DeepEquals the node's `paramSig[i]` wins (`ResolveInlinePayload` / `paramSigOf`).
+- **§4.3 — dispatch (member) receiver bind.** For a payload classified `recv=="dispatch"`, `recvs.dispatch`
+  binds to a fresh `<prefix>this` temp and `RewriteThis` rebinds the payload's own `{k:this}` (not descending
+  into nested closures/type-defs — their `this` is their own).
+- **§4.4i — lambda-arg forwarding.** A lambda param passed BY NAME into a nested stdlib inline call is
+  converted to a nested `callInline` (`ForwardLambdaArgs` / `TryForwardCall`) and spliced at the fixpoint.
+- **§4.4ii — carrier materialization.** A lambda param surviving in a non-invoke position (stored, returned,
+  captured) is materialized into a real closure/SM value; a carrier that a fail-loud invariant forbids
+  materializing (non-local-return, unlisted capture) refuses loudly.
+- **§4.4iii — dead carrier-capture retire.** A nested carrier's capture descriptor whose lambda-param is no
+  longer referenced is pruned before it mints a dangling ctor arg.
+- **§4.6 — cross-module `newDelegate` refusal.** A cross-module payload carrying an origin-file lifted
+  `__lambdaN` (`newDelegate`) is producer-private → fail loud (the W3 hidden-ABI export dissolves this).
+
+## Cross-module inline MEMBER (#60 / W1) — kotc emits `callInline` unconditionally, bir2cir owns eligibility
+
+kotc is **body-blind** at a cross-module member call: the klib is metadata-only, so it cannot inspect the
+callee body to decide splice-eligibility, and a body-blind gate MISS is SILENT (the lambda becomes a real
+delegate and its non-local `return` returns from the delegate frame). So the call-site gate in
+`BirEmitterCalls.kt` emits an **owner-ful `callInline` for EVERY** cross-module inline member with a lambda
+arg (`callee.body == null && callNeedsSplice(call) && dispatchReceiver(call) != null` → `emitOwnerfulInlineNode`)
+— a facadegen-injected DotKt member AND a klib-stdlib member alike (the former `clrInjectedDotNetName != null`
+and `extensionReceiver == null` gate conditions are DELETED). All remaining eligibility decisions move to
+bir2cir's `RewriteGeneric`, which holds the `[KotlinInline]` payload and always **splices or fail-louds**
+(`AssertNoUnsplicedInline`) — converting every residual gate-shape hole from silent-wrong to loud.
+
+- **klib-stdlib member (dispatch receiver, `recv=="dispatch"`)** splices via §4.3 (gate case
+  `il-inline-klibmember-nlr`: `Duration.toComponents { … return … }` returns from the caller).
+- **member-EXTENSION dual-receiver (#23, `recv=="extensionParam"`)** rides through too. `InlineBirStash`'s
+  single-valued `recv` lets `__self` SHADOW dispatch, so §4.3 never binds the dispatch and STEP 5 binds only
+  the extension. A **pure-extension** body (reads only the extension `this` = `__self`, never `{k:this}`)
+  splices soundly. A body that READS the dispatch receiver leaves a payload-frame `{k:this}` that would
+  rebind to the caller's `this` — a silent miscompile — so `RewriteGeneric` **fails loud** when
+  `payloadExt && recvs.dispatch != null && HasPayloadFrameThis(pBody)` (a `{k:this}` detector that mirrors
+  `RewriteThis`'s descent: skips `typeDef`/`newSuspendLambda` whole and the `synthClass` key). Co-binding
+  BOTH receivers (making #23 splice instead of refuse) is **W2**, out of scope for W1.
