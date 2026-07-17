@@ -55,6 +55,24 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `{k:this}` to the caller) when its body reads the dispatch receiver — converting the residual #23 gap from silent to loud
   until W2 co-binds both receivers. Gate case: `il-inline-klibmember-nlr` (`Duration.toComponents { … return … }`).
 
+- **packaging ([tmyt/dotkt#50], area:packaging): the MSBuild incremental build is no longer stale-prone or
+  deletion-unsafe.** `DotKt.Toolchain.targets`' `KotlinCompile` used to incremental-check only the `.kt` sources
+  (`Inputs="@(KotlinCompile)"` → `.stamp`), so a change to any OTHER real input silently did not retrigger, and its BIR
+  was globbed from an output dir that was never cleaned, so a deleted/renamed `.kt` left a stale `*.bir.json` behind and
+  the removed class/function survived into the emitted dll. **(A staleness)** `KotlinCompile` now also takes the compiler
+  binary (`$(DotKtCompiler)`, mtime = version proxy), the frontend KLIB (`@(_DotKtStdlibInput)`), the injected
+  `dotkt-clrtypes.meta`, the resolved reference DLLs (`@(_DotKtCompileReference)`/`@(_DotKtRuntimeReference)`), and an
+  options-manifest (`$(DotKtOptionsManifest)`, written `WriteOnlyWhenDifferent` from `$(DotKtKotcOptions)`+MPP flags+
+  `@(DotKtCommon)`) as inputs, with `DotKtResolveReferenceSets` a direct dependency so the reference items exist when the
+  Inputs are evaluated; `DotKtInjectTypes` gained a matching incremental guard so its generated meta stays
+  timestamp-stable across a no-op rebuild instead of forcing a recompile every build. The KLIB is an unpacked DIRECTORY
+  (which MSBuild's timestamp check treats as a missing file → always-rebuild), so it is keyed off the stable
+  `default/manifest` file inside it. **(B deletion-safety)** `KotlinCompile` now `RemoveDir`+`MakeDir`s `$(DotKtOut)`
+  before invoking kotc, so every compile starts from a fresh BIR dir and no orphan artifact can survive (the `.stamp` and
+  csc placeholder are recreated afterward, preserving incremental). New gate case `ktproj-incr` in `verify-ktproj.sh`
+  (build a two-file project, then MOVE a `class` into `App.kt` + DELETE its original file and rebuild on the SAME `obj/`)
+  reproduces the pre-fix duplicate-type `ilemit` failure and asserts both builds succeed. All changes confined to the one
+  targets file (+ the gate).
 - **bir2cir + ilemit ([tmyt/dotkt#77], area:bir2cir, area:ilemit): a CONCRETE Kotlin collection class (e.g.
   `kotlin.collections.ArrayDeque<E>`) used as a field/owner type now RESOLVES — closing the `ilemit: cannot resolve .NET
   type kotlin.collections.ArrayDeque`1` blocker of the kotlinx.coroutines port (the `EventLoop.common` unconfined queue).**
