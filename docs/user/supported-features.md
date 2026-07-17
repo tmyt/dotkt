@@ -26,7 +26,8 @@ Status legend: ✅ works today (exercised by the test gates) · 🚧 in progress
 | Area | Status |
 |---|---|
 | Collections (`listOf`/`mapOf`/…, `map`/`filter`/`fold`/`groupBy`/`joinToString`/`sorted*`/…) | ✅ |
-| Strings & `Regex` (a few ops like `trim`/`padStart` still route through interim lowerings) | ✅ |
+| Strings (`trim`/`padStart`/`split`/templates/… — a few ops still route through interim lowerings) | ✅ |
+| `Regex` | ❌ (core `System.Text.RegularExpressions.Regex.Match` binding is still a `TODO()`, so `find`/`matchEntire`/`matchAt`/`containsMatchIn`/`findAll`/`replace`/`split`/`escape` and every `MatchResult`/group accessor throw at runtime) |
 | `kotlin.math`, ranges, `Pair`/`Triple`, scope functions, unsigned types, `Array<T>` ops | ✅ |
 | `Result`/`runCatching`, atomics, exceptions (bound to `System.*`) | ✅ |
 | Lazy `Sequence` chains (`asSequence().map{…}`) | 🚧 (coroutine-machinery-gated) |
