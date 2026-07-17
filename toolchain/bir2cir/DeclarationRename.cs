@@ -108,6 +108,20 @@ static class DeclarationRename
             if (!NetInteropBinding.MemberIsPropertyOrField(nt, member)) continue;
             return bare;
         }
+        // @ClrProperty on a @ClrTypeAlias base (issue #24): the override's ancestor is a kotlin.* alias (kotlin.Throwable)
+        // that ResolveNetType above deliberately SKIPS, yet it binds a real BCL CLASS property via @ClrProperty (message
+        // -> System.Exception.get_Message). Return the ALIASED BCL owner so ilemit's DefineMethodOverride reuses the base
+        // virtual slot instead of emitting a fresh newslot (else the substituted callvirt binds the base value). Class
+        // only (an interface member binds by name at type-load, needing no clrOverride), mirroring the IsClass gate above.
+        foreach (var o in ovs)
+        {
+            if (o is not JsonObject oo) continue;
+            if (TypeJson.OwnerName(oo["owner"]) is not string owner) continue;
+            if ((oo["member"] as JsonValue)?.GetValue<string>() is not string member) continue;
+            if (refs.TryResolveClrOwner(owner, out var bcl, out var kind) && kind == "class"
+                && refs.TryMemberProperty(ReferenceMetadataIndex.BareOwnerFqn(owner), "get_" + member, 0, out _, out _))
+                return bcl;
+        }
         return null;
     }
 
@@ -122,6 +136,19 @@ static class DeclarationRename
             if (TypeJson.OwnerName(oo["owner"]) is not string owner) continue;
             if ((oo["member"] as JsonValue)?.GetValue<string>() is not string member) continue;
             if (refs.TryMemberIntrinsicExact(owner, "get_" + member, 0, out var intr)) return intr;
+        }
+        // @ClrProperty fallback (issue #24): the property-record's overridden accessor carries no @ClrIntrinsic but an
+        // explicit @ClrProperty binding on a @ClrTypeAlias ancestor (kotlin.Throwable.message -> "Message"). Return the
+        // bare BCL property name (the caller re-applies get_/set_) so the record's `get`/`set` rename to the BCL slot.
+        // Same walk as MemberCallSubstitution Rule 2p-inherited; the @ClrProperty lives on the get_<name> accessor.
+        foreach (var o in ovs)
+        {
+            if (o is not JsonObject oo) continue;
+            if (TypeJson.OwnerName(oo["owner"]) is not string owner) continue;
+            if ((oo["member"] as JsonValue)?.GetValue<string>() is not string member) continue;
+            if (refs.TryResolveClrOwner(owner, out _, out _)
+                && refs.TryMemberProperty(ReferenceMetadataIndex.BareOwnerFqn(owner), "get_" + member, 0, out _, out var bclPropName))
+                return bclPropName;
         }
         // FACADEGEN-INJECTED .NET interface/base (A2 step 5): the override owner resolves to a REAL .NET Type (not a
         // stdlib ref.dll alias). facadegen injects the Kotlin property identity EQUAL to the .NET property name, so the
@@ -161,6 +188,26 @@ static class DeclarationRename
             var lookupName = isAccessor ? "get_" + member : member;
             if (!refs.TryMemberIntrinsicExact(owner, lookupName, isAccessor ? 0 : arity, out var intr)) continue;
             return kind switch { "getter" => "get_" + intr, "setter" => "set_" + intr, _ => intr };
+        }
+        // @ClrProperty fallback (issue #24) — SYMMETRIC to MemberCallSubstitution's Rule 2p-inherited on the CALL side.
+        // A property override whose CLR-bound ancestor binds the slot via @ClrProperty (not @ClrIntrinsic): the base is a
+        // @ClrTypeAlias owner (kotlin.Throwable) whose `message` accessor carries @ClrProperty(READ,"Message"). Walk the
+        // override closure to that ancestor and return its BCL accessor slot, so the override DECLARATION `get_message`
+        // renames to `get_Message` and the Walk caller stamps `clrOverride` (via ResolveNetClassOwner) — without which
+        // ilemit emits a fresh newslot and the substituted `callvirt System.Exception.get_Message` binds the base value.
+        // The @ClrProperty lives on the get_<name> accessor (arity 0) in the ref.dll for BOTH accessors; a setter
+        // re-prefixes set_. Runs AFTER @ClrIntrinsic (a direct intrinsic wins) and BEFORE the facadegen .NET fallback
+        // (which would miss anyway — ResolveNetType skips kotlin.* aliases).
+        foreach (var o in ovs)
+        {
+            if (o is not JsonObject oo) continue;
+            if (TypeJson.OwnerName(oo["owner"]) is not string owner) continue;
+            if ((oo["member"] as JsonValue)?.GetValue<string>() is not string member) continue;
+            var kind = (oo["kind"] as JsonValue)?.GetValue<string>();
+            if (kind is not ("getter" or "setter")) continue;
+            if (refs.TryResolveClrOwner(owner, out _, out _)
+                && refs.TryMemberProperty(ReferenceMetadataIndex.BareOwnerFqn(owner), "get_" + member, 0, out _, out var bclPropName))
+                return (kind == "getter" ? "get_" : "set_") + bclPropName;
         }
         // FACADEGEN-INJECTED .NET interface/base (A2 step 5): the override owner resolves to a REAL .NET Type off the
         // refs (NOT a stdlib ref.dll alias — ResolveNetType skips kotlin.*/kotlinx.*/dotkt(./$) and every local type). A
