@@ -263,6 +263,41 @@ sealed partial class ReferenceMetadataIndex
         owner != null && _membersByOwner.TryGetValue(owner, out var list)
         && list.Any(m => m.Suspend && string.Equals(m.Name, name, StringComparison.Ordinal));
 
+    // #78 Defect A (cross-assembly axis) — the exact-owner HasSuspendMember above misses a suspend member declared on a
+    // SUPERTYPE of the call site's referenced static-receiver (e.g. a local subclass extending a referenced coroutine
+    // base, or a referenced interface whose suspend member is declared on a super-interface). Walk the reflected owner's
+    // BaseType + interface chain across the compile-reference set (metadata-only), checking the flat member index at each
+    // super. Best-effort and non-throwing: an unresolvable owner (a purely local type, or a name absent from the refs)
+    // falls back to the flat exact-owner result — the same-assembly hierarchy is covered by SuspendColdLowering.AllSupers.
+    public bool HasSuspendMemberInHierarchy(string owner, string name)
+    {
+        if (owner == null) return false;
+        if (HasSuspendMember(owner, name)) return true;
+        try
+        {
+            EnsureNetMlc();
+            if (_netMlc == null || _netRefAsms == null) return false;
+            Type start = null;
+            foreach (var asm in _netRefAsms) { start = SafeGetType(asm, owner); if (start != null) break; }
+            if (start == null) return false;
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var work = new Queue<Type>();
+            work.Enqueue(start);
+            while (work.Count > 0)
+            {
+                var cur = work.Dequeue();
+                var def = cur.IsGenericType && !cur.IsGenericTypeDefinition ? cur.GetGenericTypeDefinition() : cur;
+                var curFqn = StripGenericArity(((def.Namespace is string ns && ns.Length > 0 ? ns + "." : "") + def.Name).Replace('+', '.'));
+                if (!seen.Add(curFqn)) continue;
+                if (!ReferenceEquals(cur, start) && HasSuspendMember(curFqn, name)) return true;
+                if (cur.BaseType != null) work.Enqueue(cur.BaseType);
+                try { foreach (var i in cur.GetInterfaces()) work.Enqueue(i); } catch { }
+            }
+        }
+        catch { }
+        return false;
+    }
+
     // Does this owner type carry @kotlin.coroutines.RestrictsSuspension (a restricted-suspension scope, e.g.
     // SequenceScope)? A suspend lambda with such a receiver gets the RestrictedSuspendLambda SM base (bundle-6 P5).
     public bool HasRestrictsSuspension(string ownerToken) =>
