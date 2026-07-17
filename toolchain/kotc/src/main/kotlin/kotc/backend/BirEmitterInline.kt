@@ -181,7 +181,9 @@ internal fun BirEmitter.defaultReadsDispatch(fn: IrSimpleFunction, def: IrExpres
  *  never reaches here — it falls through to the ordinary member-call path (a real emitted generic method; the JIT
  *  inlines it). */
 internal fun BirEmitter.inlineSpliceCallSameModule(call: IrCall): String {
-	val callee = call.symbol.owner
+	// #87: resolve the fake override so the #20 dual-receiver guard inspects the REAL declaration's body (an inherited
+	// inline member is a fake override with a null body). emitOwnerfulInlineNode resolves independently for its facts.
+	val callee = call.symbol.owner.let { if (it.isFakeOverride) it.resolveFakeOverride() ?: it else it }
 	val extParam = callee.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
 	val dispatchArg = dispatchReceiver(call)
 	// A MEMBER extension inline fn (`class C { inline fun T.f(block) }`, #20) has BOTH a dispatch (the enclosing
@@ -213,7 +215,17 @@ internal fun BirEmitter.inlineSpliceCallSameModule(call: IrCall): String {
  *  — is IDENTICAL for both callers, so bir2cir's InlineSplice consumes them the same whether the payload is same-module
  *  (`InlineBirStash.Index`) or cross-module (ref.dll `InlineCandidates`). */
 internal fun BirEmitter.emitOwnerfulInlineNode(call: IrCall): String {
-	val callee = call.symbol.owner
+	// #87: an INHERITED inline member (declared on a superclass, called through a subclass receiver) resolves to a
+	// FAKE OVERRIDE whose `parent` is the subclass and whose `body` is null. The [KotlinInline] payload is stashed
+	// (bir2cir InlineBirStash) — or carried on the ref.dll — under the REAL DECLARING class, so the callInline `owner`
+	// (the stash/ref key) MUST name that class, and `params`/`paramSig`/`typeParams`/`retType` must come from the real
+	// declaration's OWN type-param frame (a fake override substitutes the subclass's type args, which would not match
+	// the stashed decl-fact signature). Resolve the fake override for ALL declaration-derived facts; the call-derived
+	// facts (receiver values, type args, argument expressions) stay from `call`. This mirrors the ordinary member-call
+	// owner resolution (BirEmitterCalls `resolveFakeOverride` at the CLR-interop/indexer paths); the inline path
+	// previously used `callee.parent` verbatim, so an inherited member inline fn keyed under the subclass and bir2cir
+	// InlineSplice failed loud with "no [KotlinInline] payload found".
+	val callee = call.symbol.owner.let { if (it.isFakeOverride) it.resolveFakeOverride() ?: it else it }
 	val name = callee.name.asString()
 	val extParam = callee.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
 	val extRecv = extensionReceiver(call)

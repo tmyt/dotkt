@@ -513,7 +513,14 @@ internal fun BirEmitter.call(call: IrCall): String {
 	// lambda -> a spliceable carrier, a noinline lambda -> a real delegate temp. No escape analysis. Gated via
 	// `callNeedsSplice` so the suspendCoroutine* intrinsic carve-out is respected here too. (A lambda-less inline call —
 	// or a carved-out intrinsic — falls through to the ordinary member-call path.)
-	if (callee.body != null && callNeedsSplice(call)) return inlineSpliceCallSameModule(call)
+	// #87: route inline-splice on the RESOLVED declaration. An INHERITED inline member is a fake override with
+	// `body == null`, so a raw `callee.body != null` test would misroute a SAME-module inherited inline call to the
+	// cross-module member path below (747). The real declaration carries the body iff it is same-module (kotc holds
+	// bodies only for this-run decls; a cross-module base's real decl is also body-less), so routing on `inlineDecl`
+	// sends a same-module inherited inline fn to the same-module splice path and a cross-module one to the cross-module
+	// path — each matching where emitOwnerfulInlineNode now keys the [KotlinInline] owner (the real declaring class).
+	val inlineDecl = callee.let { if (it.isFakeOverride) it.resolveFakeOverride() ?: it else it }
+	if (inlineDecl.body != null && callNeedsSplice(call)) return inlineSpliceCallSameModule(call)
 
 	// `Delegates.observable/vetoable/notNull(…)` is NOT intercepted: it resolves to the REAL stdlib
 	// `Delegates.observable`/`vetoable`/`notNull` (emitted into DotKt.Stdlib.dll — each returns a real
@@ -744,7 +751,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 	// The member-EXTENSION dual-receiver (#23) shape rides through too (both receivers carried): bir2cir splices the
 	// SOUND pure-extension idiom (body reads only the extension `this`) and FAILS LOUD on a body that reads the dispatch
 	// receiver (a `{k:this}`) — converting the old silent #23 gap to loud until W2 co-binds both receivers.
-	if (callee.body == null && callNeedsSplice(call) && dispatchReceiver(call) != null)
+	if (inlineDecl.body == null && callNeedsSplice(call) && dispatchReceiver(call) != null)
 		return emitOwnerfulInlineNode(call)
 
 	// BCL interop: a call whose declaring class is a .NET type (`@Clr` or injected) resolves to a real .NET
