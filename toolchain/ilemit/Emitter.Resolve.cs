@@ -71,7 +71,21 @@ sealed partial class Emitter
         }
         var mb = FindMethod(open, name, sig)
             ?? throw new NotSupportedException($"method {open}.{name}({sig}) not found (external owner did not resolve or lacks the member)");
-        if (constructed == null) { retType = mb.ReturnType; return mb; }
+        if (constructed == null)
+        {
+            retType = mb.ReturnType;
+            // A NON-generic subclass (`class Sub : Base<Int>`, `class C : Seg<C>`) calling a method INHERITED from a
+            // GENERIC base: FindMethod walked the base chain and returned the OPEN `Base`1::m` MethodBuilder, whose bare
+            // operand is "not fully instantiated" at the call site (the #84 I generic-base fault). Anchor it onto the
+            // owner's CONSTRUCTED base instantiation (`Base<Int>` / `Seg<C>`, set as the owner TypeBuilder's parent),
+            // walking the base chain via AnchorInheritedOnBase — the same re-anchoring the constructed-owner path does.
+            if (mb.DeclaringType is { IsGenericTypeDefinition: true }
+                && _types.TryGetValue(open, out var oti) && oti.TB is { } ownerTb
+                && !ReferenceEquals(mb.DeclaringType, ownerTb)
+                && AnchorInheritedOnBase(ownerTb, mb, out var brt) is { } anchored)
+            { retType = brt; return anchored; }
+            return mb;
+        }
         // The owner constructed with its OWN class type parameters (`RingBuffer<T>` referenced from inside
         // RingBuffer<T>) is the self instantiation. A call must reference the method on that self-instantiation
         // (`C<!0>::m`), NOT the open type def (`C`1::m`) — the open form is "not fully instantiated" at runtime (any

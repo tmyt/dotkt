@@ -16,6 +16,27 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **kotc ([tmyt/dotkt#84] G, area:kotc): a COERCED member callable reference (`s::add` / `::add`, where the referent's
+  return type is adapted to the expected function type — e.g. `MutableCollection.add` returns `Boolean` but `forEach`
+  wants `(T) -> Unit`) passed to an INLINE higher-order function is now lowered to a faithful `callInstance`, not a
+  bogus top-level `callStatic owner:null` (`ilemit: … static method not found: add`).** fir2ir models such a reference
+  as an `ADAPTER_FOR_CALLABLE_REFERENCE` fn that re-presents the bound instance as an *extension*-receiver param, so the
+  bound-ext-ref path (`boundExtFnRef`) forwarded it as a top-level extension call — but `add` is an instance member with
+  no such static. New `adapterRef` (`BirEmitterLifts.kt`) detects the adapter origin and replays the adapter's OWN body
+  (already the correct member call + return coercion) as a lambda/closure — capturing bound receivers, prepending
+  unbound ones as leading `invoke` params. It also declares the closure's captured enclosing type parameters in
+  original-index order, so a capture whose type is a later-declared param (`C` in `fun <E, C : MutableCollection<E>>`)
+  no longer lands at the wrong closure position (the `C violates the constraint of type parameter C` `TypeLoadException`).
+  This was the kotlinx.coroutines `consumeEach(collection::add)` / `buildList { consumeEach(::add) }` blocker.
+- **ilemit ([tmyt/dotkt#84] I, area:ilemit): calling a method INHERITED from a GENERIC base on a NON-generic subclass
+  (`class IntHolder : Holder<Int>()`.get(), and a self-referentially-bounded `class Segment<S : Segment<S>>`) no longer
+  emits the OPEN base operand (`Holder`1::get`), which the JIT rejects as "the method itself or the containing type is
+  not fully instantiated" at runtime.** `FindMethod` walked the base chain and returned the open base `MethodBuilder`;
+  the `constructed == null` (non-generic-owner) branch of `ResolveMethod` returned it verbatim. It now anchors an
+  inherited generic-base method onto the owner's CONSTRUCTED base instantiation (`Holder<Int>` / `Segment<Seg>`, the
+  TypeBuilder's parent) via `AnchorInheritedOnBase` — the same re-anchoring the constructed-owner path already does.
+  This was the kotlinx.coroutines `ConcurrentLinkedListNode<N : ConcurrentLinkedListNode<N>>` / `Segment<S : Segment<S>>`
+  blocker.
 - **bir2cir ([tmyt/dotkt#24], area:bir2cir): a property OVERRIDE (`override val message`) on a class extending a
   `@ClrTypeAlias` stdlib base (`kotlin.Exception` → `System.Exception`) is now DISPATCHED — reads return the override,
   not the base value.** The CALL side already resolved (`MemberCallSubstitution` Rule 2p-inherited walks the `overrides`

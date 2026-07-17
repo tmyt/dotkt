@@ -382,6 +382,15 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 	}
 	val fn = node.symbol.owner as? IrSimpleFunction
 		?: return unsupported(node, "this function reference", "only references to plain (simple) functions are supported")
+	// An ADAPTER reference (`obj::member` / `::member` whose signature needs coercing to the expected function type —
+	// e.g. `MutableCollection<E>.add` (returns Boolean) referenced where a `(E) -> Unit` is expected): the frontend
+	// synthesizes an adapter fn with origin ADAPTER_FOR_CALLABLE_REFERENCE, a REAL body that calls the reflection target
+	// with the correct receiver + return coercion, and presents the bound instance as an EXTENSION-receiver param. The
+	// naive `hasExt` branches below treat that as a TOP-LEVEL extension (`callStatic owner:null method:add`), which has
+	// no such static — the `static method not found: add` ilemit fault (#84 G). Emit the adapter's own body instead
+	// (like a lambda), so its faithful member `callInstance` + coercion survive.
+	if (fn.origin == org.jetbrains.kotlin.ir.declarations.IrDeclarationOrigin.ADAPTER_FOR_CALLABLE_REFERENCE && fn.body != null)
+		return adapterRef(node, fn)
 	val dispatchIdx = fn.parameters.indexOfFirst { it.kind == IrParameterKind.DispatchReceiver }
 	val hasExt = fn.parameters.any { it.kind == IrParameterKind.ExtensionReceiver }
 	// `::topLevelFun` — no receiver: a delegate over the static file-class method (FindStatic resolves it).
@@ -586,6 +595,71 @@ internal fun BirEmitter.boundExtFnRef(node: IrFunctionReference, fn: IrSimpleFun
 	val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
 	val synthClass = """{"name":${str(cname)},"fields":[{"name":"__recv","type":${str(selfT)}}],"params":[$invokeParams],"ret":${str(retT)},"body":[$forwardBody]${typeParamsJson(freeTps)}}"""
 	return """{"k":"newClosure","closureType":${fqnJson(cname)},"captures":[${expr(boundExt)}],"method":"invoke","funcType":${str(fnType)}$typeArgs,"synthClass":$synthClass}"""
+}
+
+/**
+ * An ADAPTER callable reference (`ADAPTER_FOR_CALLABLE_REFERENCE`): the frontend has already synthesized a fn with a
+ * REAL body that forwards to the reflection target with the correct receiver + return coercion (`MutableCollection.add`
+ * referenced as `(E) -> Unit` -> `{ receiver.add(p0) }`, the Boolean result discarded to Unit). We emit that body
+ * VERBATIM as a lambda/closure — the SAME shape `lambda()` produces for an `IrFunctionExpression` — so the faithful
+ * member `callInstance` and its coercion survive, instead of the naive `hasExt` branches misreading the adapter's
+ * synthesized extension receiver as a top-level extension (`callStatic owner:null`, the #84 G `static method not found`).
+ * The adapter presents its bound instance as a receiver param: a BOUND receiver (its `node.arguments[idx]` is present)
+ * is captured into a field; an UNBOUND receiver becomes a leading `invoke` param. Regular params are the remaining
+ * `invoke` params. This subsumes bound/unbound member/extension adapters uniformly (the frontend already resolved the
+ * inner call shape in the body).
+ */
+internal fun BirEmitter.adapterRef(node: IrFunctionReference, fn: IrSimpleFunction): String {
+	val recvParams = fn.parameters.withIndex()
+		.filter { it.value.kind == IrParameterKind.DispatchReceiver || it.value.kind == IrParameterKind.ExtensionReceiver }
+	val boundCaps = ArrayList<Pair<IrValueParameter, IrExpression>>()   // adapter receiver param -> its bound value expr
+	val leadingParams = ArrayList<IrValueParameter>()                   // unbound receiver params -> leading invoke params
+	for ((idx, p) in recvParams) {
+		val boundArg = node.arguments.getOrNull(idx)
+		if (boundArg != null) boundCaps.add(p to boundArg) else leadingParams.add(p)
+	}
+	val regParams = fn.parameters.filter { it.kind == IrParameterKind.Regular }
+	val invokeDecls = leadingParams + regParams
+	val ret = birType(fn.returnType)
+	// The call-site-resolved delegate type (`node.type` = the adapted `(E) -> Unit`), NOT `funcTypeOf(fn)` which would
+	// carry the adapter's own receiver param.
+	val fnType = (birType(node.type) as? TypeNode.Fn) ?: funcTypeOf(fn)
+	val invokeParamsJson = invokeDecls.joinToString(",") { p ->
+		val ty = if (p.type.isUnit()) TypeNode.Fqn("kotlin.Unit") else birTypeDeleg(p.type)
+		"""{"name":${str(p.name.asString())},"type":${ty.toJson()}}"""
+	}
+	// The tv tokens baked into the synthClass (field/param/body/constraint types) carry their ORIGINAL scope+index
+	// (`tvOf`: a method param -> `tv method <param.index>`, an enclosing-class param -> `tv type <flattened idx>`).
+	// ilemit's ResolveTv maps a tv to the closure's OWN type param by matching that index against the declared
+	// POSITION, so freeTps MUST be declared in original-index order — else a capture whose type is a later-declared
+	// param (`C` in `fun <E, C : MutableCollection<E>>`) lands at the wrong position and its constraint resolves against
+	// the wrong sibling (the `C violates the constraint of type parameter C` TypeLoadException). Type-scope params
+	// precede method-scope (matching the flattened enclosing-first convention).
+	val freeTps = freeTypeParams(boundCaps.map { it.first.type } + invokeDecls.map { it.type } + listOf(fn.returnType) + bodyTypeOperands(fn))
+		.sortedWith(compareBy({ if (tvOf(it).scope == "type") 0 else 1 }, { tvOf(it).i }))
+	val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
+	// No captured receiver (`Type::member` fully unbound) -> a lifted static delegate; the leading receiver param(s) ride
+	// as the forwarder's own params (referenced by name in the body).
+	if (boundCaps.isEmpty()) {
+		val lname = "__mref${lambdaCounter++}"
+		val body = withLambdaParamShadow(fn) { (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
+		liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$invokeParamsJson],"ret":${str(ret)},"body":[$body]}""")
+		return """{"k":"newDelegate","method":${str(lname)},"funcType":${str(fnType)}$typeArgs}"""
+	}
+	// Bound receiver(s) -> a capture-class closure (mirrors `lambda()`'s capturing branch); the bound value(s) are the
+	// capture exprs, and the adapter body's receiver-param reads rewrite to the capture fields via `captureSubst`.
+	val cname = "dotkt\$${synthScope}\$Closure${closureCounter++}"
+	val capPairs = boundCaps.map { (p, _) -> p to captureFieldName(p) }
+	val savedSubst = capPairs.associate { (decl, _) -> decl to captureSubst[decl] }
+	capPairs.forEach { (decl, fname) ->
+		captureSubst[decl] = """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":${str(fname)}}"""
+	}
+	val body = withLambdaParamShadow(fn) { (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
+	capPairs.forEach { (decl, _) -> val prev = savedSubst[decl]; if (prev != null) captureSubst[decl] = prev else captureSubst.remove(decl) }
+	val fields = capPairs.joinToString(",") { (decl, fname) -> """{"name":${str(fname)},"type":${captureFieldType(decl).toJson()}}""" }
+	val capExprs = boundCaps.joinToString(",") { (_, valueExpr) -> expr(valueExpr) }
+	val synthClass = """{"name":${str(cname)},"fields":[$fields],"params":[$invokeParamsJson],"ret":${str(ret)},"body":[$body]${typeParamsJson(freeTps)}}"""
+	return """{"k":"newClosure","closureType":${fqnJson(cname)},"captures":[$capExprs],"method":"invoke","funcType":${str(fnType)}$typeArgs,"synthClass":$synthClass}"""
 }
 
 /**
