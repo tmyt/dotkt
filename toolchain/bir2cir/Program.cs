@@ -206,6 +206,13 @@ sealed class Pipeline
         // `kotlin.*` enum arrives from kotc already as an `objMethod`; neither reaches this local `callInstance` gap.
         var localBasicEnums = EnumMemberBinding.CollectBasicEnums(birFiles.Select(f => f.Root));
 
+        // The local reference TYPES (classes + interfaces) module-wide (name -> declared universal slots + base) —
+        // AnySlotRebind rebinds a dead-ending `callInstance <UserType>.GetHashCode/ToString/Equals` (a fake override
+        // inherited from the implicit kotlin.Any, which ilemit cannot resolve because the base field is absent) to an
+        // `objMethod`, exactly as EnumMemberBinding does for value-type enums (#96). Module-wide because the call site
+        // may live in a different .bir.json than the type declaration, while ilemit's emitted-type table is assembly-wide.
+        var localRefTypes = AnySlotRebind.CollectLocalTypes(birFiles.Select(f => f.Root));
+
         // #63 (F4): the app-local file-class method names a `newDelegate` target `ldftn`-resolves against, collected
         // MODULE-WIDE across every input file — ilemit's FindStatic binds a delegate method by bare name against ALL
         // IsFileClass types in the module (and the inline stash spans all files), so a carrier materializing a SIBLING
@@ -405,6 +412,12 @@ sealed class Pipeline
             // (kotc lowers a CONCRETE enum receiver directly, but a generic `gp:T` receiver falls through to a
             // `callInstance kotlin.Enum.get_name` that TypeLoadExceptions — `kotlin.Enum` lives only in the stdlib).
             if (!_options.RefBuild) EnumMemberBinding.Apply(bir.Root, localBasicEnums);
+            // INHERITED kotlin.Any universal-method rebind for REFERENCE types (#96): the reference-type sibling of
+            // EnumMemberBinding. A `callInstance <UserType>.GetHashCode/ToString/Equals` on a class/interface that neither
+            // declares the slot nor has a resolvable base (its base is the implicit kotlin.Any) dead-ends in ilemit ->
+            // rebind to an `objMethod` (virtual dispatch to the runtime slot). Fires ONLY where FindMethod would throw, so
+            // a type declaring its own override is untouched. Runs AFTER ObjectSlotRename (call `method` is BCL here).
+            if (!_options.RefBuild) AnySlotRebind.Apply(bir.Root, localRefTypes);
             // NULLABLE-GENERIC-RETURN erasure (ALL builds, so ref.dll + rt.dll signatures agree): a Kotlin method
             // declaring a nullable generic-parameter return (`fun <T> …(): T?`) has its nullability erased by kotc to
             // a bare `gp:T` return (Nullable<T> is inexpressible for an unconstrained T). That is CORRECT for a
