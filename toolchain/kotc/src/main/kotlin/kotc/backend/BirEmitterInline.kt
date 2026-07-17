@@ -58,8 +58,13 @@ import org.jetbrains.kotlin.ir.declarations.IrTypeParameter
 import org.jetbrains.kotlin.ir.symbols.IrReturnTargetSymbol
 import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
 import org.jetbrains.kotlin.ir.types.IrType
+import org.jetbrains.kotlin.ir.types.IrSimpleType
+import org.jetbrains.kotlin.ir.types.IrTypeProjection
+import org.jetbrains.kotlin.ir.types.IrTypeSystemContextImpl
+import org.jetbrains.kotlin.ir.types.impl.IrCapturedType
 import org.jetbrains.kotlin.ir.types.classFqName
 import org.jetbrains.kotlin.ir.types.classifierOrNull
+import org.jetbrains.kotlin.types.AbstractTypeChecker
 import org.jetbrains.kotlin.ir.types.isUnit
 import org.jetbrains.kotlin.ir.types.isMarkedNullable
 import org.jetbrains.kotlin.ir.types.isBoxedArray
@@ -292,25 +297,59 @@ internal fun BirEmitter.inlineReceiverParts(callee: IrSimpleFunction, extRecv: I
 	// REUSE `birType` (not raw `IrSimpleType.arguments`) so the args are BYTE-CONSISTENT with every other type on the
 	// wire: star -> `kotlin.Any`, nullable markers preserved, and the FLATTENED enclosing+own type-param order that
 	// `tvOf`'s scope:type index (`innerEnclosingTypeParams(owner).size + param.index`) expects.
+	// The type whose args we render = the owner-class INSTANTIATION as seen through the dispatch receiver:
+	//  - receiver's static class IS the owning class -> the receiver type itself (the common SAME-class splice);
+	//  - an INHERITED member inline fn (owner is a GENERIC SUPERtype of the receiver, `Derived : Base<Int>` calling a
+	//    `Base` inline member) -> the corresponding supertype instantiation `Base<Int>` (transitive + substitution-aware,
+	//    #88). Without this the payload's `tv{scope:type,i}` stays OPEN -> ilemit types the dispatch temp as the bare open
+	//    generic (`Node`) -> BadImageFormatException. Was a documented F2A follow-up; NOW carried.
 	// Guards (fail -> OMIT the key, leaving the existing corpus byte-identical + the status-quo positional bind):
-	//  - the receiver's static class must BE the callee's owning class (a `Derived : Base<Int>` receiver carries
-	//    Derived's args, not Base's — supertype substitution is a documented follow-up, not F2A);
-	//  - a nullable receiver type unwraps to its Fqn core; a type-parameter-typed receiver renders as `tv` (not Fqn) and
-	//    correctly omits;
+	//  - a nullable receiver type unwraps to its Fqn core; a type-parameter-typed receiver with no fixed supertype
+	//    renders as `tv` (not Fqn) and correctly omits;
 	//  - the rendered arg count must equal the owner's flattened type-param arity — a raw/star-projected USER generic
 	//    receiver renders with NO args (birType falls through argument-less), and a short array would misalign the
 	//    positional scope:type substitution.
 	dispatchArg?.let { d ->
 		val ownerClass = callee.parent as? IrClass
-		if (ownerClass != null && d.type.classifierOrNull?.owner === ownerClass) {
-			val core = birType(d.type).let { if (it is TypeNode.Nullable) it.of else it }
-			val dta = (core as? TypeNode.Fqn)?.args
-			val arity = innerEnclosingTypeParams(ownerClass).size + ownerClass.typeParameters.size
-			if (dta != null && dta.size == arity && arity > 0)
-				recvParts.add(""""dispatchTypeArgs":[${dta.joinToString(",") { it.toJson() }}]""")
+		if (ownerClass != null) {
+			val ownerType =
+				if (d.type.classifierOrNull?.owner === ownerClass) d.type
+				else correspondingSupertypeInstantiation(d.type, ownerClass)
+			if (ownerType != null) {
+				val core = birType(ownerType).let { if (it is TypeNode.Nullable) it.of else it }
+				val dta = (core as? TypeNode.Fqn)?.args
+				val arity = innerEnclosingTypeParams(ownerClass).size + ownerClass.typeParameters.size
+				if (dta != null && dta.size == arity && arity > 0)
+					recvParts.add(""""dispatchTypeArgs":[${dta.joinToString(",") { it.toJson() }}]""")
+			}
 		}
 	}
 	return "{${recvParts.joinToString(",")}}"
+}
+
+/** The instantiation of [ownerClass] as seen through [recvType] — for a `Derived : Base<Int>` receiver and owner
+ *  `Base<E>`, the supertype `Base<Int>` (substitution-aware + TRANSITIVE via AbstractTypeChecker.findCorrespondingSuper-
+ *  types). F2A uses it to carry an INHERITED member inline fn's owning-class type args (#88). Null when [recvType] is not
+ *  a simple type, has no corresponding supertype for [ownerClass], or [irBuiltIns] is unavailable (bare-constructed
+ *  emitter) — the caller then omits `dispatchTypeArgs`, preserving the pre-#88 status quo. */
+internal fun BirEmitter.correspondingSupertypeInstantiation(recvType: IrType, ownerClass: IrClass): IrType? {
+	val recvSimple = recvType as? IrSimpleType ?: return null
+	val builtIns = irBuiltIns ?: return null
+	val ctx = IrTypeSystemContextImpl(builtIns)
+	val state = ctx.newTypeCheckerState(errorTypesEqualToAnything = true, stubTypesEqualToAnything = true)
+	val superType = AbstractTypeChecker.findCorrespondingSupertypes(state, recvSimple, ownerClass.symbol)
+		.firstOrNull() as? IrSimpleType ?: return null
+	// findCorrespondingSupertypes CAPTURES a projected/star owner arg (`Derived<*> : Base<E>` -> `Base<captured>`,
+	// or a star-projected BOUND `S : Slot<*>` -> `Slot<captured>`). birType silently renders an IrCapturedType — and a
+	// bare star — as `kotlin.Any`, and the downstream arity guard can't tell that from a GENUINE `Any` arg. Carrying it
+	// would type the dispatch temp at the INVARIANT `Base<Any>` while the runtime value inhabits `Base<something>` (a
+	// castclass/verify hazard; value-type instantiations erased to Any). OMIT such an instantiation (return null) so the
+	// caller falls back to the status-quo positional bind — the correct erased answer for an unknown/star owner arg. Only
+	// the owner's OWN top-level args are checked; a concrete arg CONTAINING a nested capture (`Base<List<*>>`) is fine
+	// (birType renders the concrete `List<Any>`). Port-relevant shape: kotlinx.coroutines `AbstractSharedFlow<S :
+	// AbstractSharedFlowSlot<*>>`.
+	if (superType.arguments.any { it !is IrTypeProjection || it.type is IrCapturedType }) return null
+	return superType
 }
 
 /** CROSS-MODULE inline: a call to a facadegen-injected `inline fun` taking ANY lambda arg (AXIS ①; its `[KotlinInline]`

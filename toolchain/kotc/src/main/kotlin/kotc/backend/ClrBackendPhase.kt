@@ -50,7 +50,7 @@ private fun emit(result: Fir2IrActualizedResult, configuration: CompilerConfigur
 
 		val messageCollector = configuration?.get(
 			org.jetbrains.kotlin.config.CommonConfigurationKeys.MESSAGE_COLLECTOR_KEY)
-		val bir = BirEmitter(messageCollector)
+		val bir = BirEmitter(messageCollector, result.irBuiltIns)
 		// The BIR file name is derived from the source file's BASENAME — but the stdlib has several same-named files in
 		// different dirs (3x Collections.kt: src/kotlin, src/kotlin/collections, clr/builtins). Disambiguate with a
 		// per-basename counter so they don't OVERWRITE each other (clr/builtins/Collections.kt's interface defs were lost).
