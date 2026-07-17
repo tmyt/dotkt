@@ -200,6 +200,13 @@ sealed partial class Emitter
             case "short" or "kotlin.Short": _il.Emit(OpCodes.Conv_I2); return typeof(short);
             case "sbyte" or "kotlin.Byte": _il.Emit(OpCodes.Conv_I1); return typeof(sbyte);
             case "char" or "kotlin.Char": _il.Emit(OpCodes.Conv_U2); return typeof(char);
+            // Unsigned targets (#71): zero-extending/truncating conversions. `byte` = Kotlin UByte (System.Byte),
+            // `ushort` = UShort, `uint` = UInt, `ulong` = ULong — the shorthand/alias split is PrimShorthandName's.
+            // Needed by the #93 narrow-widening conv (UByte/UShort arith -> UInt) and any `.toUByte()/.toUInt()`.
+            case "byte" or "kotlin.UByte": _il.Emit(OpCodes.Conv_U1); return typeof(byte);
+            case "ushort" or "kotlin.UShort": _il.Emit(OpCodes.Conv_U2); return typeof(ushort);
+            case "uint" or "kotlin.UInt": _il.Emit(OpCodes.Conv_U4); return typeof(uint);
+            case "ulong" or "kotlin.ULong": _il.Emit(OpCodes.Conv_U8); return typeof(ulong);
             default: throw new NotSupportedException("conv " + to);
         }
     }

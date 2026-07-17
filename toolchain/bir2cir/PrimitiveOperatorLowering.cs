@@ -50,13 +50,35 @@ static class PrimitiveOperatorLowering
     };
     // The IR-intrinsic marker owner kotc stamps on the comparison/equality intrinsic calls.
     const string IntrinsicOwner = "kotlin.internal.ir";
-    // Value primitives whose `==` is CIL `ceq` (the former kotc PRIMITIVE_EQ_FQ — the SIGNED set + bool + char,
-    // NOT the unsigned inline classes). Any other operand static type (nullable, reference, unsigned) makes `==`
-    // the null-safe `Object.Equals`. bir2cir reads the EQEQ intrinsic's `argTypes` off this set.
-    static readonly HashSet<string> PrimitiveEqFq = new(StringComparer.Ordinal)
+    // The value primitives whose Kotlin type has a VALUE `<`/`>`/`<=`/`>=` compare (the signed integrals + Double/Float
+    // + bool/char, NOT the unsigned inline classes). ShapeCompareOperand reads this to detect a value-nullable operand
+    // (`Int?`/`Double?` smart-cast into a compare) that must surface `Nullable<T>.Value` — Double/Float ARE included
+    // here (a `Double?` compare needs the unwrap). This is a COMPARE-operand set only; the EQEQ fast-path uses the
+    // narrower EqEqPrimFq (Double/Float excluded — see #95).
+    static readonly HashSet<string> ComparePrimFq = new(StringComparer.Ordinal)
     {
         "kotlin.Int", "kotlin.Long", "kotlin.Short", "kotlin.Byte",
         "kotlin.Double", "kotlin.Float", "kotlin.Boolean", "kotlin.Char",
+    };
+    // The EQEQ fast-path (a direct primitive `==` -> CIL `ceq`) EXCLUDES Double/Float. A STRUCTURAL EQEQ over two
+    // Double/Float (the frontend-generated data-class `equals`) needs Kotlin's TOTAL-ORDER equality — `NaN == NaN`
+    // is TRUE, `+0.0 != -0.0` — consistent with the bit-based hashCode; `ceq` gives IEEE (NaN != NaN, +0.0 == -0.0),
+    // disagreeing with hashCode and breaking hashSet/data-class semantics (#95). A DIRECT float `a == b` never
+    // reaches EQEQ: the frontend emits the `ieee754equals` intrinsic for it (kept IEEE `ceq` below). So dropping
+    // Double/Float here reroutes ONLY the structural case to clrDoubleEquals/clrFloatEquals (the total-order helper).
+    static readonly HashSet<string> EqEqPrimFq = new(StringComparer.Ordinal)
+    {
+        "kotlin.Int", "kotlin.Long", "kotlin.Short", "kotlin.Byte", "kotlin.Boolean", "kotlin.Char",
+    };
+    // Value primitives whose OPERATOR result is DECLARED wider-or-different than ilemit's natural typing (ilemit types
+    // a bin/unary result as the narrow left operand, and promotes a narrow operand to int in a mixed op). Kotlin
+    // DECLARES: Byte/Short arith -> Int; UByte/UShort arith -> UInt; Char.plus/minus(Int) -> Char, Char.minus(Char) ->
+    // Int; inc/dec -> the receiver's own narrow type (but the `+1` desugaring runs at int width). For these owners the
+    // bare op truncates on box / narrow store, so wrap it in a `conv` to the frontend-resolved return type (`dynRet`).
+    // The full-width owners (Int/Long/Double/Float/UInt/ULong) are left bare — their result already matches ilemit.
+    static readonly HashSet<string> NarrowResultFq = new(StringComparer.Ordinal)
+    {
+        "kotlin.Char", "kotlin.Byte", "kotlin.Short", "kotlin.UByte", "kotlin.UShort",
     };
 
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs = null)
@@ -132,31 +154,26 @@ static class PrimitiveOperatorLowering
 
         if (args.Count == 1 && ArithOp.TryGetValue(member, out var aop))
         {
+            // #94: unsigned `shr` is LOGICAL (zero-filling) — Kotlin's `UInt.shr`/`ULong.shr` zero-fill, unlike the
+            // sign-propagating arithmetic `>>`. Route it to `>>>` (ilemit `Shr_Un`). `shl` is bit-identical for
+            // signed/unsigned, and the narrow unsigned types (UByte/UShort) have no shift operator, so only UInt/ULong
+            // reach here.
+            if (member == "shr" && (ownerFqn == "kotlin.UInt" || ownerFqn == "kotlin.ULong")) aop = ">>>";
             var bin = new JsonObject { ["k"] = "binOp", ["op"] = aop, ["lhs"] = o["recv"]?.DeepClone(), ["rhs"] = args[0]?.DeepClone() };
-            // Char arithmetic result typing: `Char.plus(Int):Char`, `Char.minus(Int):Char`, `Char.minus(Char):Int`.
-            // ilemit types a bin result as its LEFT operand (Char, uint16) and promotes Char->Int in a mixed op, so a
-            // bare result renders as the wrong glyph/number. Force the operator's DECLARED Kotlin return type via a
-            // `conv` (Int/Char), derived from the member + the arg type in `sig` — the SAME wrap the former kotc
-            // Char-arith path emitted.
-            if (ownerFqn == "kotlin.Char" && (member == "plus" || member == "minus"))
-            {
-                var to = (member == "minus" && FirstSigIsChar(o)) ? "kotlin.Int" : "kotlin.Char";
-                return new JsonObject { ["k"] = "conv", ["to"] = TypeJson.Fqn(to), ["e"] = bin };
-            }
-            return bin;
+            return WrapDeclaredReturn(o, ownerFqn, bin);
         }
         if (args.Count == 0 && UnaryOp.TryGetValue(member, out var uop))
-            return new JsonObject { ["k"] = "unaryOp", ["op"] = uop, ["e"] = o["recv"]?.DeepClone() };
-        // inc/dec (the `i++`/`i--` desugaring) -> `(recv + 1)`/`(recv - 1)`. The `const 1` is typed `kotlin.Int`
-        // for EVERY primitive (matching the retired kotc literal, even for Long/Double — ilemit widens it), so the
-        // CIR stays byte-identical.
+            return WrapDeclaredReturn(o, ownerFqn, new JsonObject { ["k"] = "unaryOp", ["op"] = uop, ["e"] = o["recv"]?.DeepClone() });
+        // inc/dec (the `i++`/`i--` desugaring) -> `(recv + 1)`/`(recv - 1)`. The `const 1` is typed `kotlin.Int` for
+        // EVERY primitive (ilemit widens it), so a narrow receiver's `+1` runs at int width and MUST be converted back
+        // to the receiver's own narrow type (`dynRet`) — else `(127.toByte()).inc()` yields int 128, not Byte -128.
         if (args.Count == 0 && (member == "inc" || member == "dec"))
-            return new JsonObject
+            return WrapDeclaredReturn(o, ownerFqn, new JsonObject
             {
                 ["k"] = "binOp", ["op"] = member == "inc" ? "+" : "-",
                 ["lhs"] = o["recv"]?.DeepClone(),
                 ["rhs"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Int"), ["value"] = 1 },
-            };
+            });
         return null;
     }
 
@@ -183,9 +200,11 @@ static class PrimitiveOperatorLowering
         // types) drive the prim/ref split; the cast-stripped `argValueTypes` drive the Kotlin-SEMANTIC recognition
         // (collection structural `==`, Double/Float total-order `==`) that kotc's former collEqRoute/floatTotalEqRoute
         // did. Order reproduces kotc's precedence exactly:
-        //   1. BOTH argTypes non-null primitives (PrimitiveEqFq) -> CIL `ceq` (`binOp ==`). [direct primitive, incl direct Double]
+        //   1. BOTH argTypes non-null primitives (EqEqPrimFq — the integral set + bool/char, NOT Double/Float) -> CIL
+        //      `ceq` (`binOp ==`). [direct integral primitive; a DIRECT float `==` arrives as `ieee754equals`, not here]
         //   2. else BOTH argValueTypes the SAME collection kind -> the struct-eq helper (`listOf(1)==setOf(1)` differs in kind -> falls through).
-        //   3. else BOTH argValueTypes a non-null Double / non-null Float -> the float-equals helper.
+        //   3. else BOTH argValueTypes a non-null Double / non-null Float -> the total-order float-equals helper
+        //      (this is where a STRUCTURAL Double/Float EQEQ — data-class `equals` — lands: NaN==NaN true, -0.0!=0.0; #95).
         //   4. else the null-safe `Object.Equals` (`objEq`).
         // Operands passed to the collection/float HELPER are cast-stripped (an IMPLICIT_CAST-to-Any renders as a `cast`
         // node — matching kotc's former collEqRoute/floatTotalEqRoute `expr(unwrapped)`). The primitive fast-path AND the
@@ -198,8 +217,8 @@ static class PrimitiveOperatorLowering
             // drives the prim fast-path; VALUE (the former cast-stripped `argValueTypes`) drives collection/float.
             var ls = StaticType.Surface(args[0], scope);
             var rs = StaticType.Surface(args[1], scope);
-            if (ls is TypeNode.Fqn lsf && PrimitiveEqFq.Contains(lsf.Name)
-                && rs is TypeNode.Fqn rsf && PrimitiveEqFq.Contains(rsf.Name))
+            if (ls is TypeNode.Fqn lsf && EqEqPrimFq.Contains(lsf.Name)
+                && rs is TypeNode.Fqn rsf && EqEqPrimFq.Contains(rsf.Name))
                 return new JsonObject { ["k"] = "binOp", ["op"] = "==", ["lhs"] = args[0]?.DeepClone(), ["rhs"] = args[1]?.DeepClone() };
             var lt = StaticType.Value(args[0], scope);
             var rt = StaticType.Value(args[1], scope);
@@ -237,7 +256,7 @@ static class PrimitiveOperatorLowering
     static JsonNode ShapeCompareOperand(JsonNode operand, JsonNode other, BirScope scope)
     {
         var s = StaticType.Surface(operand, scope);
-        if (s is TypeNode.Nullable ns && ns.Of is TypeNode.Fqn nf && PrimitiveEqFq.Contains(nf.Name))
+        if (s is TypeNode.Nullable ns && ns.Of is TypeNode.Fqn nf && ComparePrimFq.Contains(nf.Name))
             return new JsonObject { ["k"] = "nullableValue", ["elem"] = TypeNode.Write(ns.Of), ["e"] = operand?.DeepClone() };
         if (s is TypeNode.Fqn sf && sf.Name == "kotlin.Any")
         {
@@ -251,6 +270,16 @@ static class PrimitiveOperatorLowering
     static string OwnerFqn(JsonNode t) =>
         TypeJson.Read(t) is TypeNode.Fqn f ? ReferenceMetadataIndex.BareOwnerFqn(f.Name) : null;
 
-    static bool FirstSigIsChar(JsonObject o) =>
-        o["sig"] is JsonArray s && s.Count >= 1 && TypeJson.Read(s[0]) is TypeNode.Fqn f && f.Name == "kotlin.Char";
+    // Wrap a lowered narrow/char operator (`bare`) in a `conv` to its DECLARED Kotlin return type, carried on the
+    // call as the frontend-resolved `dynRet`. Consumes what kotc already resolved (no re-derivation of Kotlin's
+    // operator-typing rules here). A full-width owner (not in NarrowResultFq) is left bare — ilemit's natural typing
+    // already matches. See NarrowResultFq for the truncation rationale (#93). kotc stamps `dynRet` UNCONDITIONALLY on
+    // every member callInstance (BirEmitterCalls, `birType(call.type)`), so the missing/non-Fqn fallback is defensive
+    // and believed-unreachable for a NarrowResultFq owner (a bare fallback would silently reintroduce truncation).
+    static JsonNode WrapDeclaredReturn(JsonObject o, string ownerFqn, JsonNode bare)
+    {
+        if (!NarrowResultFq.Contains(ownerFqn)) return bare;
+        if (TypeJson.Read(o["dynRet"]) is not TypeNode.Fqn ret) return bare;
+        return new JsonObject { ["k"] = "conv", ["to"] = TypeJson.Fqn(ret.Name), ["e"] = bare };
+    }
 }
