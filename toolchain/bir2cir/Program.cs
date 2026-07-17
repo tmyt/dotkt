@@ -646,6 +646,14 @@ sealed class Pipeline
             // stdlib body sorting it hits EntryPointNotFound/InvalidCast on `IComparable.CompareTo(object)`. Add the
             // missing interface + a `CompareTo(object)` bridge that casts and forwards to the generic CompareTo.
             if (!_options.RefBuild) ComparableBridgeSynthesis.Apply(lowered);
+            // BCL-only collection slots (non-ref builds): a CONCRETE Kotlin class implementing @ClrTypeAlias'd
+            // `MutableCollection`/`MutableList` (ICollection<E>/IList<E>) is missing the BCL members Kotlin's collection
+            // interfaces lack — `Contains`/`CopyTo`/`get_IsReadOnly` (ICollection) and `IndexOf` (IList) — so the concrete
+            // type (kotlin.collections.ArrayDeque, the AbstractMutable* bases, a MutableMap keys/values view) fails to LOAD
+            // ("... does not have an implementation"), surfacing at the referencing app as "cannot resolve .NET type". Fill
+            // each missing slot with an ordinary public forwarding member (wired by name by ilemit's interface loop). The
+            // return-DROPPING slots (Add/set_Item/RemoveAt) are the separate family ilemit's void-drop bridge handles.
+            if (!_options.RefBuild) CollectionBclSlotSynthesis.Apply(lowered);
             // #128: a Kotlin class implementing a facadegen-injected .NET generic interface instantiated with a
             // VALUE-TYPE arg (`class C : IComparer<Int>`) declares its override with the injected member's `T?` params,
             // which lower to `Compare(Nullable<int32>,…)` — but the CONSTRUCTED CLR slot wants BARE `int32`. Synthesize a

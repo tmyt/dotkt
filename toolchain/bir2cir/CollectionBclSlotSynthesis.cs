@@ -1,0 +1,187 @@
+using System.Linq;
+using System.Text.Json.Nodes;
+using DotKt.Bir;
+
+// BCL-only collection-interface slots. A Kotlin `MutableCollection<E>` is `@ClrTypeAlias("System.Collections.Generic.
+// ICollection")` and `MutableList<E>` is `IList` — but `ICollection<T>`/`IList<T>` carry members Kotlin's collection
+// interfaces do NOT: `Contains`, `CopyTo`, `IsReadOnly` (ICollection) and `IndexOf` (IList). Kotlin has the
+// value-returning `contains`/`indexOf` under LOWERCASE names (not @ClrIntrinsic-renamed → DeclarationRename leaves them
+// lowercase), and has NO equivalent for `CopyTo`/`IsReadOnly` at all. So a Kotlin class DIRECTLY implementing the aliased
+// interface (kotlin.collections.AbstractMutable{Collection,List,Set}, a MutableMap keys/values view, a user class) is
+// missing those BCL slots → the CLR loader rejects any CONCRETE type in the hierarchy ("Method 'Contains' ... does not
+// have an implementation" → TypeLoadException), which ilemit's ResolveType swallows and reports as "cannot resolve .NET
+// type kotlin.collections.ArrayDeque`1". (Latent until ArrayDeque: every other runnable concrete collection is a BCL type
+// — mutableListOf → List<T>, mutableMapOf → Dictionary<K,V> — never the Kotlin class.)
+//
+// Fill each missing slot with an ordinary public forwarding member (wired by name by ilemit's normal interface loop),
+// keyed on the DIRECTLY-listed alias — matching ilemit's per-interface wiring (IList<T>.GetMethods() does NOT include the
+// inherited ICollection<T> members, so an IList face needs only IndexOf; the ICollection face comes from a base or the
+// direct ICollection listing). Contains→`contains` / IndexOf→`indexOf` self-forward (the alias mandates the class declare
+// them). CopyTo iterates via ClrIteratorBridgeKt.iteratorOverEnumerable(this) — a static resolvable regardless of whether
+// THIS class declares iterator() (AbstractMutableSet inherits it). IsReadOnly returns false. The return-DROPPING slots
+// (Add/set_Item/RemoveAt) are the SEPARATE family ilemit's void-drop methodimpl bridge handles. Non-ref builds only
+// (the ref surface stays pure Kotlin). Modeled on ComparableBridgeSynthesis.
+static class CollectionBclSlotSynthesis
+{
+    const string ICollection = "System.Collections.Generic.ICollection";
+    const string IList = "System.Collections.Generic.IList";
+    const string IteratorBridge = "kotlin.collections.ClrIteratorBridgeKt";
+
+    public static void Apply(JsonNode root)
+    {
+        if (root is not JsonObject o || o["types"] is not JsonArray types) return;
+        foreach (var t in types)
+        {
+            if (t is not JsonObject to) continue;
+            if ((to["kind"] as JsonValue)?.GetValue<string>() != "class") continue;   // interfaces carry no bodies
+            var owner = (to["name"] as JsonValue)?.GetValue<string>();
+            if (string.IsNullOrEmpty(owner)) continue;
+            if (to["interfaces"] is not JsonArray ifaces) continue;
+
+            // The element type = the FIRST type-arg of a DIRECTLY-listed ICollection<E> / IList<E>.
+            JsonNode collElem = null, listElem = null;
+            foreach (var i in ifaces)
+            {
+                if (TypeJson.Read(i) is not TypeNode.Fqn f || f.Args is not { Length: 1 }) continue;
+                if (f.Name == IList) listElem ??= ArgNode(i);
+                else if (f.Name == ICollection) collElem ??= ArgNode(i);
+            }
+            if (collElem == null && listElem == null) continue;
+
+            if (to["methods"] is not JsonArray methods) { methods = new JsonArray(); to["methods"] = methods; }
+            bool Has(string name) => methods.OfType<JsonObject>().Any(m => (m["name"] as JsonValue)?.GetValue<string>() == name);
+
+            // The CLR stdlib's mutable-collection abstract classes are FLAT (`AbstractMutableList : MutableList`, base
+            // Object — NOT `: AbstractMutableCollection`), so an IList<E> implementer does NOT inherit the ICollection<E>
+            // face from a base. `IList<T>.GetMethods()` returns only IList's OWN members, so ilemit's per-interface wiring
+            // never bridges `ICollection.Add` (Boolean→void) on it. List ICollection<E> EXPLICITLY so ilemit wires that
+            // face too — its `Add` void-drop bridge, `Remove`/`Clear`/`Count` (the class's own renamed members), and the
+            // synthesized `Contains`/`CopyTo`/`IsReadOnly`. (Redundant-but-legal: IList already implies ICollection.)
+            var elem = listElem ?? collElem;
+            if (listElem != null && !ifaces.Any(i => TypeJson.Read(i) is TypeNode.Fqn { Name: ICollection }))
+                ifaces.Add(new JsonObject { ["t"] = "fqn", ["name"] = ICollection, ["args"] = new JsonArray(Clone(elem)) });
+
+            // ICollection<E> face: Contains / CopyTo / get_IsReadOnly.
+            if (!Has("Contains")) methods.Add(SelfForward("Contains", elem, "System.Boolean", "contains", owner));
+            if (!Has("get_IsReadOnly")) methods.Add(ConstBoolGetter("get_IsReadOnly"));
+            if (!Has("CopyTo")) methods.Add(CopyTo(elem, owner));
+            // IList<E> face additionally needs IndexOf.
+            if (listElem != null && !Has("IndexOf"))
+                methods.Add(SelfForward("IndexOf", listElem, "System.Int32", "indexOf", owner));
+        }
+    }
+
+    // The interface node's first type-arg, cloned as a fresh JsonNode (so it can be attached under several slots).
+    static JsonNode ArgNode(JsonNode ifaceNode) =>
+        (ifaceNode as JsonObject)?["args"] is JsonArray a && a.Count == 1 ? Clone(a[0]) : null;
+
+    static JsonNode Clone(JsonNode n) => n == null ? null : JsonNode.Parse(n.ToJsonString());
+
+    static JsonObject Method(string name, JsonArray parameters, JsonNode ret, JsonArray body) => new()
+    {
+        ["name"] = name,
+        ["static"] = false,
+        ["override"] = false,
+        ["virtual"] = true,
+        ["abstract"] = false,
+        ["objectOverride"] = false,
+        ["vis"] = "public",
+        ["params"] = parameters,
+        ["ret"] = ret,
+        ["body"] = body,
+    };
+
+    static JsonObject This() => new() { ["k"] = "this" };
+    static JsonObject Local(string name) => new() { ["k"] = "local", ["name"] = name };
+
+    // `return this.<target>(element)` — Contains→contains, IndexOf→indexOf. Virtual dispatch covers a base impl.
+    static JsonObject SelfForward(string name, JsonNode elem, string ret, string target, string owner) =>
+        Method(name,
+            new JsonArray(new JsonObject { ["name"] = "element", ["type"] = Clone(elem) }),
+            TypeJson.Fqn(ret),
+            new JsonArray(new JsonObject
+            {
+                ["k"] = "return",
+                ["value"] = new JsonObject
+                {
+                    ["k"] = "callInstance",
+                    ["ownerType"] = TypeJson.Fqn(owner),
+                    ["virtual"] = true,
+                    ["recv"] = This(),
+                    ["method"] = target,
+                    ["sig"] = new JsonArray(Clone(elem)),
+                    ["ret"] = TypeJson.Fqn(ret),
+                    ["args"] = new JsonArray(Local("element")),
+                },
+            }));
+
+    static JsonObject ConstBoolGetter(string name) =>
+        Method(name, new JsonArray(), TypeJson.Fqn("System.Boolean"),
+            new JsonArray(new JsonObject
+            {
+                ["k"] = "return",
+                ["value"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("System.Boolean"), ["value"] = false },
+            }));
+
+    // `CopyTo(array: E[], arrayIndex: Int)` = `var it = iteratorOverEnumerable(this); var i = arrayIndex;
+    // while (it.hasNext()) { array[i] = it.next(); i = i + 1 }`. iteratorOverEnumerable is the stdlib's own IEnumerable->
+    // Kotlin-iterator bridge (a static resolvable from any assembly, unlike a virtual iterator() this class may inherit).
+    // It returns the BASE kotlin.collections.Iterator<T> (NOT MutableIterator) — typing the local as the exact return keeps
+    // the `stloc` verifiable; hasNext()/next() are Iterator's own members (remove() is never used).
+    static JsonObject CopyTo(JsonNode elem, string owner)
+    {
+        JsonObject IterType() => new() { ["t"] = "fqn", ["name"] = "kotlin.collections.Iterator", ["args"] = new JsonArray(Clone(elem)) };
+        var body = new JsonArray
+        {
+            new JsonObject
+            {
+                ["k"] = "var", ["name"] = "it", ["type"] = IterType(),
+                ["init"] = new JsonObject
+                {
+                    ["k"] = "callStatic", ["owner"] = TypeJson.Fqn(IteratorBridge), ["method"] = "iteratorOverEnumerable",
+                    ["args"] = new JsonArray(This()), ["typeArgs"] = new JsonArray(Clone(elem)),
+                },
+            },
+            new JsonObject { ["k"] = "var", ["name"] = "i", ["type"] = TypeJson.Fqn("System.Int32"), ["init"] = Local("arrayIndex") },
+            new JsonObject
+            {
+                ["k"] = "while",
+                ["cond"] = new JsonObject
+                {
+                    ["k"] = "callInstance", ["ownerType"] = IterType(), ["virtual"] = true,
+                    ["recv"] = Local("it"), ["method"] = "hasNext", ["sig"] = new JsonArray(), ["ret"] = TypeJson.Fqn("System.Boolean"), ["args"] = new JsonArray(),
+                },
+                ["body"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["k"] = "exprStmt",
+                        ["expr"] = new JsonObject
+                        {
+                            ["k"] = "arraySet", ["array"] = Local("array"), ["index"] = Local("i"), ["elem"] = Clone(elem),
+                            ["value"] = new JsonObject
+                            {
+                                ["k"] = "callInstance", ["ownerType"] = IterType(), ["virtual"] = true,
+                                ["recv"] = Local("it"), ["method"] = "next", ["sig"] = new JsonArray(), ["ret"] = Clone(elem), ["args"] = new JsonArray(),
+                            },
+                        },
+                    },
+                    new JsonObject
+                    {
+                        ["k"] = "setLocal", ["name"] = "i",
+                        ["value"] = new JsonObject
+                        {
+                            ["k"] = "binOp", ["op"] = "+", ["lhs"] = Local("i"),
+                            ["rhs"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("System.Int32"), ["value"] = 1 },
+                        },
+                    },
+                },
+            },
+        };
+        return Method("CopyTo",
+            new JsonArray(
+                new JsonObject { ["name"] = "array", ["type"] = new JsonObject { ["t"] = "array", ["elem"] = Clone(elem) } },
+                new JsonObject { ["name"] = "arrayIndex", ["type"] = TypeJson.Fqn("System.Int32") }),
+            TypeJson.Fqn("void"), body);
+    }
+}
