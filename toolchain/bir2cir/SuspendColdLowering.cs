@@ -205,6 +205,22 @@ static class SuspendColdLowering
         Str(o["k"]) == "callInstance" && Bool(o["suspendCall"]) && Str(o["method"]) == "invoke"
         && (BareOwner(TypeJson.OwnerName(o["ownerType"]))?.StartsWith(SuspendFunctionPrefix, StringComparison.Ordinal) ?? false);
 
+    // #79 — the top-level `suspend inline val coroutineContext` read (Continuation.kt:157). Its getter is
+    // intentionally `throw NotImplementedError("Implemented as intrinsic")`, so RESOLUTION can never make it work — a
+    // real binding is required, and it lives HERE (the only layer that knows the current-continuation identity). kotc
+    // emits the read as a top-level `callStatic method=coroutineContext prop=get` (NOT stamped suspendCall — a context
+    // read is not a suspension point); MemberCallSubstitution mis-owns it to the enclosing file class and reconstructs
+    // the accessor to `get_coroutineContext` before this pass. Recognized by k=callStatic + the (get_)coroutineContext
+    // method name (both spellings) + no args. EXCLUDES kotlinx's own `CoroutineScope.coroutineContext` (a callInstance
+    // member property), which stays untouched. Lowered to `<current continuation>.get_context` (JVM's <cont>.getContext).
+    static bool IsCoroutineContextRead(JsonObject o) =>
+        Str(o["k"]) == "callStatic"
+        && Str(o["method"]) is "coroutineContext" or "get_coroutineContext"
+        && (o["args"] is not JsonArray ar || ar.Count == 0);
+
+    const string CoroutineContextFqn = "kotlin.coroutines.CoroutineContext";
+    const string ContinuationFqn = "kotlin.coroutines.Continuation";
+
     // A suspend fun's identity: Owner=null for a top-level file-class static, else the enclosing class FQN. Sig
     // is the joined param-type list — it discriminates OVERLOADS that share (Owner, Name) (e.g. SequenceScope
     // has three `yieldAll` overloads differing only by param type: Iterator/Iterable/Sequence). Without it the
@@ -1384,6 +1400,8 @@ static class SuspendColdLowering
                     return FieldOf(ThisField, new TypeNode.Fqn(_ownerClass));
                 if (Str(o["k"]) == "this" && CapturedOuterField() is JsonNode of0)
                     return of0;
+                if (IsCoroutineContextRead(o))          // #79 — <cont>.get_context (the SM itself, in an SM subtree)
+                    return CoroutineContextValue(smPath: true);
                 var copy = new JsonObject();
                 foreach (var kv in o) copy[kv.Key] = kv.Value == null ? null : RewriteNoSpill(kv.Value);
                 return copy;
@@ -1436,6 +1454,8 @@ static class SuspendColdLowering
                 // which would wrongly denote the SM here rather than the captured enclosing instance.
                 if (k == "newSuspendLambda")
                     return RewriteSuspendLambdaNew(o);
+                if (IsCoroutineContextRead(o))          // #79 — <cont>.get_context; here the SM (invokeSuspend's `this`)
+                    return CoroutineContextValue(smPath: true);
                 if (IsSuspendCoroutineCall(o))
                     return EmitSuspendCoroutineCall(o, outp);
                 // #11 — a `valueBlock` whose stmts/result span a suspension (e.g. an INLINE scope function
@@ -2760,8 +2780,9 @@ static class SuspendColdLowering
         JsonObject ColdEntryDirect(JsonArray body)
         {
             // For an instance member the cold entry stays an instance method — `this` in the cloned body remains
-            // valid. For a top-level fun the body has no `this`. Either way no rewrite is needed (no suspension).
-            var cloned = (JsonArray)body.DeepClone();
+            // valid. For a top-level fun the body has no `this`. Either way no rewrite is needed (no suspension) —
+            // EXCEPT #79: a `coroutineContext` read must bind to the `completion` param's context here (no SM to hold it).
+            var cloned = (JsonArray)ReplaceCoroutineContextDirect(body.DeepClone());
             // The cold entry returns kotlin.Any (so a value return boxes). A void/Unit-returning suspend fn body
             // may fall off the end with no explicit `return` (e.g. `{ items.add(v) }`) — the SM (suspension) branch
             // appends the trailing `return Unit` at Build() (bodyOut); the direct (no-suspension) branch must do the
@@ -3218,6 +3239,49 @@ static class SuspendColdLowering
         };
 
         static JsonObject Local(string name) => new() { ["k"] = "local", ["name"] = name };
+
+        // #79 — build the `coroutineContext` value as `<current continuation>.get_context()`. In an SM the current
+        // continuation is the SM ITSELF (invokeSuspend's `this`, a ContinuationImpl subtype whose `override val context`
+        // is `get_context`); in the no-SM cold entry it is the `completion` param (a Continuation<Any?>). The receiver
+        // node is returned final (not re-Rewritten), so a raw `this` denotes the SM and survives the this->$this member
+        // rewrite by construction. ret = kotlin.coroutines.CoroutineContext.
+        JsonObject CoroutineContextValue(bool smPath) => new()
+        {
+            ["k"] = "callInstance",
+            ["ownerType"] = Tw(new TypeNode.Fqn(smPath ? ContinuationImplFqn : ContinuationFqn)),
+            ["method"] = "get_context",
+            // `context` is a VIRTUAL Kotlin property (override on ContinuationImpl; declared on the Continuation
+            // interface for the completion path). A callInstance defaults to a plain `call`, which is INVALID IL for
+            // an interface method (Continuation) — so mark it virtual (a callvirt also dispatches to the SM's override).
+            ["virtual"] = true,
+            ["recv"] = smPath ? new JsonObject { ["k"] = "this" } : Local("completion"),
+            ["argTypes"] = new JsonArray(),
+            ["args"] = new JsonArray(),
+            ["ret"] = Tw(new TypeNode.Fqn(CoroutineContextFqn)),
+        };
+
+        // #79 — recursively replace every `coroutineContext` read in a NO-SM (body-direct) cold entry with
+        // `completion.get_context()`. ColdEntryDirect emits the body verbatim (no Rewrite pass), so the read would
+        // otherwise reach ilemit as the bogus `<fileclass>.get_coroutineContext`. Descends into nested lambdas too:
+        // a `coroutineContext` read there is still resolved against THIS cold entry's completion (the lambda captures
+        // the enclosing continuation) — matching kotc's inline-val semantics.
+        JsonNode ReplaceCoroutineContextDirect(JsonNode node)
+        {
+            if (node is JsonObject o)
+            {
+                if (IsCoroutineContextRead(o)) return CoroutineContextValue(smPath: false);
+                var copy = new JsonObject();
+                foreach (var kv in o) copy[kv.Key] = kv.Value == null ? null : ReplaceCoroutineContextDirect(kv.Value);
+                return copy;
+            }
+            if (node is JsonArray a)
+            {
+                var copy = new JsonArray();
+                foreach (var it in a) copy.Add(it == null ? null : ReplaceCoroutineContextDirect(it));
+                return copy;
+            }
+            return node?.DeepClone();
+        }
 
         // ---- small node builders ----
 

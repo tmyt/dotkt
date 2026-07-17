@@ -488,6 +488,12 @@ il_check coldvirt ColdVirt "$ROOT/cases/il-coldvirt" "$(printf '42\nhi')"
 # the caller (Derived.await / ChannelImpl.consume) to ilemit un-lowered. Also guards a MUTUALLY-recursive suspend pair
 # (ping/pong) staying whole in the transformable set. Runs -> 11,42,5.
 il_check coldsuper ColdSuper "$ROOT/cases/il-coldsuper" "$(printf '11\n42\n5')"
+# coroutinectx: bir2cir SuspendColdLowering #79 — the `suspend inline val coroutineContext` read (a stdlib
+# throw-only intrinsic getter) bound to `<current continuation>.get_context()`: the SM itself in an SM body, the
+# `completion` param in a no-SM body-direct cold entry, and the SM (not `$this`) in a suspending instance member.
+# Before the binding it reached ilemit as the bogus `<fileclass>.get_coroutineContext` (method-not-found). Runs ->
+# the three contexts' EmptyCoroutineContext toString + the appended ints.
+il_check coroutinectx CoroutineCtx "$ROOT/cases/il-coroutinectx" "$(printf 'EmptyCoroutineContext1\nEmptyCoroutineContext\nEmptyCoroutineContext2')"
 # coldabstract: bundle-6 ① BUG 3 — an abstract-CLASS suspend member's full vtable. Base emits an abstract cold
 # entry + an abstract Task<Int> bridge ([KotlinFunction(Suspend)]); Impl overrides both in lockstep; `b.poll()`
 # (b: Base) dispatches virtually through the cold entry. Runs sync -> 42 (no await, so ilverify-clean).
