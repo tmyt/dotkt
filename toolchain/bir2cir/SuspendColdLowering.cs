@@ -2112,12 +2112,15 @@ static class SuspendColdLowering
         JsonObject RewriteSuspendLambdaNew(JsonObject o)
         {
             var copy = (JsonObject)o.DeepClone();
-            // A pre-stamped `capValues` override (InlineSplice 2B — a spliced payload lambda's `__outer` rebound to the
-            // splice's receiver TEMP) names a CALLER-frame local, NOT the descriptor name. GAP 2 must RESOLVE that temp
-            // into THIS cold SM's vocabulary (a spilled temp -> its SM field), not clobber it with the descriptor-name
-            // synthesis (which would re-derive the caller SM's own receiver -> a silent __outer mis-bind / InvalidProgram
-            // when the inline fn was spliced inside a `suspend fun`). Merge per-slot: override present -> resolve the
-            // named local; absent (null slot) -> the current name-derived synthesis.
+            // A pre-stamped `capValues` override (kotc E1 "one value channel", or InlineSplice 2B — a spliced payload
+            // lambda's `__outer` rebound to the splice's receiver TEMP) is the capture's construction VALUE in the
+            // ENCLOSING frame's vocabulary: a `{k:local,name:X}` naming an enclosing local (a selfSubst inline-receiver
+            // rename `__recv40`, a spilled temp), a `{k:field,recv:{k:this},…}` naming an enclosing SAM/closure field
+            // (`second`), or `{k:this}`. GAP 2 must RESOLVE it into THIS cold SM's vocabulary — a spilled local -> its SM
+            // field, `this`/`__self` -> the member SM's `$this`/`__outer` — which is EXACTLY RewriteNoSpill's suspension-free
+            // subtree rewrite. Do NOT clobber it with the descriptor-name synthesis (which would re-derive the caller SM's
+            // own receiver -> a silent __outer mis-bind / InvalidProgram). Merge per-slot: override present -> RewriteNoSpill;
+            // absent (null slot) -> the name-derived synthesis.
             var overrides = o["capValues"] as JsonArray;
             var capValues = new JsonArray();
             if (o["captures"] is JsonArray caps)
@@ -2125,9 +2128,8 @@ static class SuspendColdLowering
                 int i = 0;
                 foreach (var c in caps.OfType<JsonObject>())
                 {
-                    if (overrides != null && i < overrides.Count && overrides[i] is JsonObject ov
-                        && Str(ov["k"]) == "local" && Str(ov["name"]) is string on)
-                        capValues.Add(_fields.Contains(on) ? FieldOf(on, FieldType(on)) : new JsonObject { ["k"] = "local", ["name"] = on });
+                    if (overrides != null && i < overrides.Count && overrides[i] is JsonNode ov)
+                        capValues.Add(RewriteNoSpill(ov.DeepClone()));
                     else
                         capValues.Add(CaptureValueInSm(Str(c["name"]), Str(c["type"])));
                     i++;

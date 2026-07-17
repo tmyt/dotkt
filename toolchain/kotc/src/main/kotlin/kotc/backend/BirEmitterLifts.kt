@@ -134,10 +134,11 @@ internal fun BirEmitter.bodyTypeOperands(fn: org.jetbrains.kotlin.ir.declaration
  * `sequence { }`/`iterator { }`'s `SequenceScope`) flow through THIS path too — bir2cir picks the
  * `RestrictedSuspendLambda` base from the scope's annotation. kotc has no `sequence`/`yield` knowledge.
  * Captures/params reuse the SAME machinery as the closure path (`capturedVars(includeThis=true)` / `captureFieldName`
- * / `captureFieldType`). NOTE: unlike newClosure, the body is emitted WITHOUT installing `captureSubst` — bir2cir's
- * SM builder rewrites captured-var reads (plain `{"k":"local"}`) into SM field reads itself. typeArgs are the BARE
- * enclosing type-param names (bir2cir prepends `gp:` when it instantiates the open SM), NOT the `gp:`-prefixed form
- * newClosure emits for ilemit.
+ * / `captureFieldType`). The body is emitted with each captured decl SHADOWED to its bare DESCRIPTOR name
+ * `{"k":"local","name":D}` (the (B) shadow below) — the ONE name the SM body uses — so bir2cir's SM builder rewrites
+ * those captured-var reads into SM field reads by name; the construction VALUE rides a SEPARATE `capValues` channel in
+ * the enclosing frame's vocabulary. typeArgs are the BARE enclosing type-param names (bir2cir prepends `gp:` when it
+ * instantiates the open SM), NOT the `gp:`-prefixed form newClosure emits for ilemit.
  */
 private fun BirEmitter.suspendLambda(node: IrFunctionExpression): String? {
 	val fn = node.function
@@ -152,26 +153,27 @@ private fun BirEmitter.suspendLambda(node: IrFunctionExpression): String? {
 	val capturesJson = captures.joinToString(",") { d ->
 		"""{"name":${str(captureFieldName(d))},"type":${str(captureFieldType(d))}}"""
 	}
-	// Per-slot capture VALUE overrides (`capValues`), the SAME field resolution `newClosure` applies via `capValueExpr`
-	// — a slot is stamped ONLY when the capture resolves to an enclosing SYNTHETIC-class FIELD, i.e. `captureSubst[d]` is
-	// a `{"k":"field",…}` binding (a `newSuspendLambda` NESTED inside a SAM `emit` / closure `invoke` capturing that
-	// method's FIELD, e.g. `second`). bir2cir has NO other way to recover a field capture: its fallback treats the
-	// descriptor name as an enclosing LOCAL (`{k:local,name:second}`), which dangles in the synthetic method -> the
-	// "references undeclared local" IrSanity fault. The FIELD-shape guard is deliberate: captureSubst can also hold a
-	// non-field binding (`{k:local}` from a lifted local fn's body emission, a `{k:defaultArgParam}`/filled-arg
-	// expression from same-module default handling) that must NOT be pinned into an SM ctor arg — those keep bir2cir's
-	// name-based path. Also NOT stamped: a `selfSubst` rename (inline-lambda receiver `$this$unsafeFlow`->`__recv40`) or
-	// a `valSubst` inline substitution — those stay a LOCAL by some name, and bir2cir's cold-SM lowering already resolves
-	// the DESCRIPTOR name into the SM's spill vocabulary; a renamed-local override would instead force a name the cold SM
-	// does not know (a fresh `__recv40` dangling-local fault). Null slots keep bir2cir's resolution (incl. `__outer`->
-	// `this`/`__self`) BYTE-IDENTICAL; the whole array is omitted when every slot is default (the common case unchanged).
-	// KNOWN GAP (cross-layer): a `{k:field}` stamp is still DROPPED at a COLD-SM construction site — bir2cir's
-	// SuspendColdLowering.RewriteSuspendLambdaNew honors only `{k:local}` overrides — so the `second`-class fix is
-	// hot-path-only; the cold twin (a nested suspend lambda inside a cold-transformed suspend SAM `emit`) is a bir2cir
-	// follow-up, adjacent to the `__recv40` blocker.
+	// Per-slot capture VALUE overrides (`capValues`) + the descriptor-name body shadow — "one frame, one name; one value
+	// channel". For each captured decl the DESCRIPTOR name D = captureFieldName(d) is the ONLY name the SM body may use;
+	// bir2cir's name-keyed spill rewrite (hot SuspendLambdaLowering + cold SuspendColdLowering) field-ifies D. The
+	// construction VALUE is capValueExpr(d) in the ENCLOSING frame's vocabulary — computed HERE, BEFORE the (B) body
+	// shadow — and is STAMPED into capValues[i] whenever it differs from a plain `{k:local,name:D}`: a selfSubst
+	// inline-receiver rename (`$this$unsafeFlow`->`__recv40`), a valSubst inline substitution, a `{k:field}` enclosing
+	// SAM/closure capture (e.g. `second`), or a lifted-local-fn `{k:local}` rename. A null slot keeps bir2cir's
+	// name-derived resolution BYTE-IDENTICAL; the whole array is omitted when every slot is default. The `<this>` capture
+	// is SKIPPED (its `__outer`/`{k:this}` handling — stamp iff an enclosing `{k:field}` binding, no body shadow — stays
+	// byte-identical). Consumers: hot uses the stamp verbatim at construction; cold resolves it through RewriteNoSpill
+	// into the constructing cold SM's field vocabulary (SuspendColdLowering.RewriteSuspendLambdaNew).
 	val capValueSlots = captures.map { d ->
-		val sub = captureSubst[d]
-		if (sub != null && sub.startsWith("""{"k":"field"""")) capValueExpr(d) else "null"
+		val value = capValueExpr(d)   // enclosing-frame vocabulary — MUST precede the (B) body shadow below
+		when {
+			d.name.asString() == "<this>" -> {
+				val sub = captureSubst[d]
+				if (sub != null && sub.startsWith("""{"k":"field"""")) value else "null"
+			}
+			value != """{"k":"local","name":${str(captureFieldName(d))}}""" -> value
+			else -> "null"
+		}
 	}
 	val capValuesJson = if (capValueSlots.all { it == "null" }) "" else ""","capValues":[${capValueSlots.joinToString(",")}]"""
 	val paramsJson = lambdaParamsJson(ownParams)
@@ -183,7 +185,26 @@ private fun BirEmitter.suspendLambda(node: IrFunctionExpression): String? {
 	// generic over) — a type-param DECLARATION list (bir2cir names the SM's params + instantiates `!i`), NOT a
 	// type-USAGE slot, so it rides as the `typeParams` name shorthand (§2.5), consistent with the other lambda paths.
 	val typeParamsBare = freeTps.joinToString(",") { str(it.name.asString()) }
+	// (B) body shadow: emit the SM body with each captured decl bound to its DESCRIPTOR name `{k:local,name:D}` in
+	// whichever subst map is active (captureSubst/selfSubst/valSubst — the SAME lookup order exprInner's IrGetValue
+	// uses), so the body names the capture EXACTLY as the descriptor declares it (the name bir2cir's spill rewrite
+	// keys on). Saved + restored around the emission, mirroring samConversion. `<this>` is skipped so its enclosing
+	// `{k:field}`/`{k:this}` body resolution — and thus bir2cir's `__outer` handling — stays byte-identical.
+	val shadowCap = java.util.IdentityHashMap<IrValueDeclaration, String?>()
+	val shadowSelf = java.util.IdentityHashMap<IrValueDeclaration, String?>()
+	val shadowVal = HashMap<String, String?>()
+	for (d in captures) {
+		if (d.name.asString() == "<this>") continue
+		val local = """{"k":"local","name":${str(captureFieldName(d))}}"""
+		if (captureSubst.containsKey(d)) { shadowCap[d] = captureSubst[d]; captureSubst[d] = local }
+		if (selfSubst.containsKey(d)) { shadowSelf[d] = selfSubst[d]; selfSubst[d] = local }
+		val nm = d.name.asString()
+		if (valSubst.containsKey(nm) && !shadowVal.containsKey(nm)) { shadowVal[nm] = valSubst[nm]; valSubst[nm] = local }
+	}
 	val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
+	shadowCap.forEach { (d, prev) -> if (prev != null) captureSubst[d] = prev else captureSubst.remove(d) }
+	shadowSelf.forEach { (d, prev) -> if (prev != null) selfSubst[d] = prev else selfSubst.remove(d) }
+	shadowVal.forEach { (nm, prev) -> if (prev != null) valSubst[nm] = prev else valSubst.remove(nm) }
 	return """{"k":"newSuspendLambda","arity":${ownParams.size},"captures":[$capturesJson]$capValuesJson,"params":[$paramsJson],"suspendRet":${str(resultType)},"typeParams":[$typeParamsBare],"body":[$body],"funcType":${funcTypeOf(fn).toJson()}}"""
 }
 
@@ -286,7 +307,13 @@ internal fun BirEmitter.samConversion(node: IrTypeOperatorCall): String {
 	capPairs.forEach { (decl, fname) -> savedSubst[decl] = captureSubst[decl]; captureSubst[decl] = """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":${str(fname)}}""" }
 	val samParams = lambdaParamsJson(fn.parameters)
 	val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
-	val samMethod = """{"name":${str(samName)},"static":false,"override":true,"virtual":true,"params":[$samParams],"ret":${str(ret)},"body":[$body]}"""
+	// A `suspend fun interface` (e.g. FlowCollector { emit(...) }) — the SAM method carries the pure suspend FACT via
+	// `mods.suspend`, the discriminator bir2cir's SuspendColdLowering.IsMemberShapeEligible gates on. Without it a
+	// suspend SAM `emit` body keeps its raw `suspendCall`-tagged nodes (never cold-transformed) — the whole flow
+	// operator surface (the FlowCollector{} SAM emits: Combine/Merge/Transform/…) would dangle in ilemit. kotc reads
+	// only `sam.isSuspend` (a pure Kotlin fact); the coroutine ABI lowering is entirely downstream.
+	val samMods = if (sam.isSuspend) ""","mods":{"suspend":true}""" else ""
+	val samMethod = """{"name":${str(samName)},"static":false,"override":true,"virtual":true,"params":[$samParams],"ret":${str(ret)}$samMods,"body":[$body]}"""
 	savedSubst.forEach { (decl, prev) -> if (prev != null) captureSubst[decl] = prev else captureSubst.remove(decl) }
 	val fields = capPairs.joinToString(",") { (decl, fname) -> """{"name":${str(fname)},"type":${str(captureFieldType(decl))}}""" }
 	val ctorBody = capPairs.joinToString(",") { (_, fname) -> """{"k":"setField","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":${str(fname)},"value":{"k":"local","name":${str(fname)}}}""" }

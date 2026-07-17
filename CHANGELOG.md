@@ -7,6 +7,33 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **kotc + bir2cir ([tmyt/dotkt#75], area:kotc, area:bir2cir): the cold-SM nested-closure capture family that blocked
+  the kotlinx.coroutines `flow` port is dissolved — a captured declaration is no longer serialized under two divergent
+  names, so every real flow-operator shape (`unsafeFlow`/`transform`/`filter`/`filterIsInstance`/… the whole
+  `FlowCollector{}` surface) lowers cleanly through bir2cir into ilemit.** Root cause: a lifted `newSuspendLambda`
+  emitted its capture DESCRIPTOR with the raw `captureFieldName` while its body/value used the selfSubst-aware
+  `capValueExpr`, so the descriptor said `$this$unsafeFlow` while the nested body said `__recv40` (an inline-splice
+  rename) — an alias recorded NOWHERE in the BIR, which the name-keyed cold-SM spill rewrite could not bridge. The
+  unified fix ("one frame, one name; one value channel"):
+  - **kotc `suspendLambda()`** now emits the SM body with each captured decl SHADOWED to its bare DESCRIPTOR name
+    `{k:local,name:D}` (in whichever of captureSubst/selfSubst/valSubst is active), and stamps the construction VALUE
+    (in the enclosing frame's vocabulary) into `capValues[i]` whenever it differs from `local D` — a separate value
+    channel, generalized from the former `{k:field}`-only guard to any selfSubst/valSubst rename.
+  - **kotc `samConversion()`** carries `mods.suspend` on a `suspend fun interface` SAM method (e.g. `FlowCollector`),
+    so bir2cir cold-transforms its `emit` body instead of leaving a raw `suspendCall` (the 33-SAM seam).
+  - **bir2cir `SuspendColdLowering.RewriteSuspendLambdaNew`** resolves a stamped `capValues` override through
+    `RewriteNoSpill` into the constructing cold SM's field vocabulary (a `{k:field}`/spilled-local value → its SM
+    field), not only a `{k:local}` slot.
+  - **bir2cir `InlineSplice`** — the two `newSuspendLambda` scope-boundary renamers now descend `capValues`; the
+    `inlineLambda` renamers rename a carrier's capture DESCRIPTOR in lockstep with its body refs; a new §4.4iii pass
+    retires a nested carrier's dead capture descriptor once its lambda-param is invoke-spliced away; and
+    `SpliceLambdaInvokes` propagates a spliced carrier's OWN captures (a genuine value capture like `filterIsInstance`'s
+    `klass`) to the host carrier so they do not dangle when the host is lifted.
+  New gate `cases/il-flowtransform` (a self-contained mini cold Flow exercising all of the above end-to-end via
+  `blockOn`); verify-il green. The real kotlinx.coroutines flow port now clears bir2cir `CheckCirSanity` with zero
+  undeclared-local faults and advances into ilemit (stopping on a separate, unrelated stdlib type-surface gap,
+  `kotlin.coroutines.AbstractCoroutineContextKey`, tracked separately).
+
 - **kotc ([tmyt/dotkt#75], area:kotc): a callable-reference ADAPTER / receiver-bearing local function lifted to a
   file-class static no longer drops its receiver parameter — fixing the "references undeclared local 'receiver'"
   IrSanity fault that blocked the real kotlinx.coroutines `flow` port (`Channels_commonKt.__local313_add`).** kotc
