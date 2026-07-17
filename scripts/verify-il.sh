@@ -741,6 +741,7 @@ il_check inner Inner "$ROOT/cases/il-inner"   "$(printf '110\n120\nT2\n5')"
 il_check lazy  Lazy  "$ROOT/cases/il-lazy"    "$(printf 'before\ncomputing...\nVALUE\nVALUE\n42\n42\nFalse\ncomputed\ncomputed\nTrue\n1\n42\n42\nsync\nsync\n1\npub\n1\nnone\n1\nFalse\nguarded\nTrue\n1')"
 il_check volatile Volatile "$ROOT/cases/il-volatile" "$(printf '0\n41\n42\nready\nTrue')"   # @kotlin.concurrent.Volatile -> a real CLR volatile field: modreq(IsVolatile) + `volatile.` prefix (the C# volatile shape) on value-type/ref-type instance fields + a top-level static field
 il_check deleg Deleg "$ROOT/cases/il-deleg"   "$(printf 'set count = 7\nget count\n7')"
+il_check classdeleg AppKt "$ROOT/cases/il-classdeleg/app.kt" "$(printf 'p1\n1\np2\nc[p2]\n2\np40\n40\n3\nc')"   # #81: CLASS delegation `class Foo : Bar by baz` — the frontend's synthetic `$$delegate_0` IrField + its ctor initializer must be emitted (single/two/expr/generic delegates)
 # #70: a genuine `::x`/`obj::p`/`Type::p` callable reference -> a lifted class implementing the REAL stdlib
 # KProperty0/KMutableProperty0/KProperty1 (name/get/set/invoke), not the retired `dotkt$KProperty` synthetic.
 il_check propref AppKt "$ROOT/cases/il-propref/app.kt" "$(printf 'x\n1\n99\n99\n7\n7\n99\ng\nt2\npay')"

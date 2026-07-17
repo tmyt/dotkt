@@ -16,6 +16,18 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **kotc ([tmyt/dotkt#81], area:kotc): Kotlin CLASS delegation (`class Foo : Bar by baz`) now generates the
+  `$$delegate_0` backing field.** For interface delegation the frontend synthesizes a standalone `IrField` named
+  `$$delegate_0` (origin `DELEGATE`, no corresponding property) holding the delegate, plus `DELEGATED_MEMBER`
+  forwarders that read it via `GET_FIELD`. kotc's class emitter collected instance fields ONLY from `IrProperty`
+  backing fields, so the synthetic field — and its `EXPRESSION_BODY` initializer (the delegate expression, run via
+  the `IrInstanceInitializerCall` path like a property backing field) — were both dropped; the forwarders then
+  referenced a non-existent field and ilemit failed with `field Foo.$$delegate_0 not found`. Fix
+  (`BirEmitterDeclarations.kt`): collect standalone non-static `IrField` declarations with no
+  `correspondingPropertySymbol` as instance fields, and run their initializer as a `setField` store in the
+  constructor. Covers single/multiple (`$$delegate_0`/`$$delegate_1`), non-param-expression, and generic delegation.
+  Gate: `cases/il-classdeleg`.
+
 - **bir2cir ([tmyt/dotkt#24], area:bir2cir): a property OVERRIDE (`override val message`) on a class extending a
   `@ClrTypeAlias` stdlib base (`kotlin.Exception` → `System.Exception`) is now DISPATCHED — reads return the override,
   not the base value.** The CALL side already resolved (`MemberCallSubstitution` Rule 2p-inherited walks the `overrides`
