@@ -451,72 +451,90 @@ public actual inline fun CharArray?.contentToString(): String {
     return sb.toString()
 }
 
+// copyInto MUST be overlap-safe: ArrayDeque shifts in place via `elementData.copyInto(elementData, ...)`
+// (self-copy, dest may be > or < src), so a naive forward element loop clobbers source slots before
+// reading them (#97). System.Array.Copy is memmove (handles overlap in either direction) — the same
+// @ClrIntrinsic("System.Array.Copy") helper copyOfRange already uses. One typed helper per array type
+// so the receiver flows to Array.Copy's `System.Array sourceArray` with no cast (each primitive array
+// type derives from System.Array).
+@kotlin.clr.ClrIntrinsic("System.Array.Copy")
+private fun ByteArray.nativeArrayCopy(sourceIndex: Int, dest: ByteArray, destIndex: Int, length: Int): Unit = TODO("clr binding should be implemented")
+@kotlin.clr.ClrIntrinsic("System.Array.Copy")
+private fun ShortArray.nativeArrayCopy(sourceIndex: Int, dest: ShortArray, destIndex: Int, length: Int): Unit = TODO("clr binding should be implemented")
+@kotlin.clr.ClrIntrinsic("System.Array.Copy")
+private fun IntArray.nativeArrayCopy(sourceIndex: Int, dest: IntArray, destIndex: Int, length: Int): Unit = TODO("clr binding should be implemented")
+@kotlin.clr.ClrIntrinsic("System.Array.Copy")
+private fun LongArray.nativeArrayCopy(sourceIndex: Int, dest: LongArray, destIndex: Int, length: Int): Unit = TODO("clr binding should be implemented")
+@kotlin.clr.ClrIntrinsic("System.Array.Copy")
+private fun FloatArray.nativeArrayCopy(sourceIndex: Int, dest: FloatArray, destIndex: Int, length: Int): Unit = TODO("clr binding should be implemented")
+@kotlin.clr.ClrIntrinsic("System.Array.Copy")
+private fun DoubleArray.nativeArrayCopy(sourceIndex: Int, dest: DoubleArray, destIndex: Int, length: Int): Unit = TODO("clr binding should be implemented")
+@kotlin.clr.ClrIntrinsic("System.Array.Copy")
+private fun BooleanArray.nativeArrayCopy(sourceIndex: Int, dest: BooleanArray, destIndex: Int, length: Int): Unit = TODO("clr binding should be implemented")
+@kotlin.clr.ClrIntrinsic("System.Array.Copy")
+private fun CharArray.nativeArrayCopy(sourceIndex: Int, dest: CharArray, destIndex: Int, length: Int): Unit = TODO("clr binding should be implemented")
+
 @SinceKotlin("1.3")
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun <T> Array<out T>.copyInto(destination: Array<T>, destinationOffset: Int = 0, startIndex: Int = 0, endIndex: Int = size): Array<T> {
-    var i = startIndex
-    var j = destinationOffset
-    while (i < endIndex) {
-        destination[j] = this[i]
-        i++
-        j++
-    }
+    @Suppress("UNCHECKED_CAST")
+    (this as Array<T>).nativeArrayCopy(startIndex, destination, destinationOffset, endIndex - startIndex)
     return destination
 }
 
 @SinceKotlin("1.3")
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun ByteArray.copyInto(destination: ByteArray, destinationOffset: Int = 0, startIndex: Int = 0, endIndex: Int = size): ByteArray {
-    for (i in startIndex until endIndex) destination[destinationOffset + (i - startIndex)] = this[i]
+    this.nativeArrayCopy(startIndex, destination, destinationOffset, endIndex - startIndex)
     return destination
 }
 
 @SinceKotlin("1.3")
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun ShortArray.copyInto(destination: ShortArray, destinationOffset: Int = 0, startIndex: Int = 0, endIndex: Int = size): ShortArray {
-    for (i in startIndex until endIndex) destination[destinationOffset + (i - startIndex)] = this[i]
+    this.nativeArrayCopy(startIndex, destination, destinationOffset, endIndex - startIndex)
     return destination
 }
 
 @SinceKotlin("1.3")
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun IntArray.copyInto(destination: IntArray, destinationOffset: Int = 0, startIndex: Int = 0, endIndex: Int = size): IntArray {
-    for (i in startIndex until endIndex) destination[destinationOffset + (i - startIndex)] = this[i]
+    this.nativeArrayCopy(startIndex, destination, destinationOffset, endIndex - startIndex)
     return destination
 }
 
 @SinceKotlin("1.3")
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun LongArray.copyInto(destination: LongArray, destinationOffset: Int = 0, startIndex: Int = 0, endIndex: Int = size): LongArray {
-    for (i in startIndex until endIndex) destination[destinationOffset + (i - startIndex)] = this[i]
+    this.nativeArrayCopy(startIndex, destination, destinationOffset, endIndex - startIndex)
     return destination
 }
 
 @SinceKotlin("1.3")
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun FloatArray.copyInto(destination: FloatArray, destinationOffset: Int = 0, startIndex: Int = 0, endIndex: Int = size): FloatArray {
-    for (i in startIndex until endIndex) destination[destinationOffset + (i - startIndex)] = this[i]
+    this.nativeArrayCopy(startIndex, destination, destinationOffset, endIndex - startIndex)
     return destination
 }
 
 @SinceKotlin("1.3")
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun DoubleArray.copyInto(destination: DoubleArray, destinationOffset: Int = 0, startIndex: Int = 0, endIndex: Int = size): DoubleArray {
-    for (i in startIndex until endIndex) destination[destinationOffset + (i - startIndex)] = this[i]
+    this.nativeArrayCopy(startIndex, destination, destinationOffset, endIndex - startIndex)
     return destination
 }
 
 @SinceKotlin("1.3")
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun BooleanArray.copyInto(destination: BooleanArray, destinationOffset: Int = 0, startIndex: Int = 0, endIndex: Int = size): BooleanArray {
-    for (i in startIndex until endIndex) destination[destinationOffset + (i - startIndex)] = this[i]
+    this.nativeArrayCopy(startIndex, destination, destinationOffset, endIndex - startIndex)
     return destination
 }
 
 @SinceKotlin("1.3")
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun CharArray.copyInto(destination: CharArray, destinationOffset: Int = 0, startIndex: Int = 0, endIndex: Int = size): CharArray {
-    for (i in startIndex until endIndex) destination[destinationOffset + (i - startIndex)] = this[i]
+    this.nativeArrayCopy(startIndex, destination, destinationOffset, endIndex - startIndex)
     return destination
 }
 
@@ -572,8 +590,9 @@ public actual inline fun DoubleArray.copyOf(newSize: Int): DoubleArray = DoubleA
 @kotlin.internal.InlineOnly
 public actual inline fun BooleanArray.copyOf(newSize: Int): BooleanArray = BooleanArray(newSize) { if (it < this.size) this[it] else false }
 
+// Kotlin pads a grown CharArray with the NULL char '\u0000' (matches JVM Arrays.copyOf zero-fill), not a space (#128).
 @kotlin.internal.InlineOnly
-public actual inline fun CharArray.copyOf(newSize: Int): CharArray = CharArray(newSize) { if (it < this.size) this[it] else ' ' }
+public actual inline fun CharArray.copyOf(newSize: Int): CharArray = CharArray(newSize) { if (it < this.size) this[it] else '\u0000' }
 
 // copyOf(newSize) HONESTLY returns `Array<T?>` (extra slots are null). For a value-type T the canonical runtime
 // representation of `Array<T?>` is `Nullable<T>[]` (#113). This GENERIC body cannot allocate `Nullable<!T>[]`

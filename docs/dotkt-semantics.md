@@ -322,6 +322,22 @@ The **primitive** operators stay IEEE (matching Kotlin, and `il-nancmp`-green): 
 `Double.NaN == Double.NaN` → `false`, and direct `<`/`>`/`<=`/`>=` (which desugar to the IEEE compare intrinsics, not
 `.compareTo`) are unaffected. Gates: `cases/il-negzero`, `cases/il-listeq`, `cases/il-equalscall` (JVM-oracle PURE).
 
+## 5a-bis. `Double/Float.roundToInt`/`roundToLong` round half-up via `floor(x + 0.5)` — two pathological ulp deviations from JVM
+
+`roundToInt`/`roundToLong` implement Kotlin's contract "ties are rounded towards positive infinity" as
+`floor(x + 0.5)` (`0.5 → 1`, `2.5 → 3`, `-2.5 → -2`, `-0.5 → 0`; NaN throws `IllegalArgumentException`; out of
+`Int`/`Long` range saturates to `MIN`/`MAX`). `kotlin.math.round` itself stays ties-to-**even** (`System.Math.Round`),
+matching Kotlin. `Float` rounds through `Double` (lossless), so it is EXACT for every float input.
+
+Kotlin/JVM's `Double.roundToInt`/`roundToLong` delegate to `java.lang.Math.round`, whose bit-manipulation avoids two
+sub-ulp cases that a `floor(x + 0.5)` formulation hits — the only inputs where the CLR result differs:
+- **`0.49999999999999994` (the largest `double` < 0.5)** → CLR `1`, JVM `0` (the `+ 0.5` addition rounds up to `1.0`).
+- **odd integral doubles in `[2^52 + 1, 2^53)`** (in `Int`/`Long` range, so not clamped) → CLR is off by one for
+  `roundToLong` (`x + 0.5` rounds to `x + 1` under ties-to-even).
+
+Both are pathological (no realistic numeric code rounds these) and are precedented on non-JVM Kotlin backends. Gate:
+`cases/il-roundhalfup`.
+
 ## 5b. `CharSequence` is `string` on the CLR — an immutable snapshot, not a live view
 
 `kotlin.CharSequence` is a JVM-shaped polymorphic char view with **no faithful .NET equivalent** (`System.String` is

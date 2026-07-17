@@ -602,6 +602,8 @@ il_check coll  Coll  "$ROOT/cases/il-coll"    "$(printf '5\n5\n3\n2\n3\nTrue\nTr
 il_check coll2 Coll2 "$ROOT/cases/il-coll2"   "$(printf '10\n1-2-3-4\n1, 2, 3, 4\n100')"
 il_check coll3 Coll3 "$ROOT/cases/il-coll3"   "$(printf '60\n6')"
 il_check arraydeque AppKt "$ROOT/cases/il-arraydeque" "$(printf 'z\nb\nc\n1\nA')"   # concrete generic stdlib class ArrayDeque<E>:AbstractMutableList<E> as a field/owner forces ilemit to resolve kotlin.collections.ArrayDeque`1 from the rt dll — exercises the ICollection/IList void-drop methodimpl bridge (ilemit) + the BCL-only slot synthesis Contains/CopyTo/IsReadOnly/IndexOf (bir2cir)
+il_check copyintoverlap AppKt "$ROOT/cases/il-copyintoverlap/app.kt" "$(printf '1,1,2,3,4\n2,3,4,5,5\na,b,a,b,c\na,b,X,c,d')"   # #97: copyInto must be overlap-safe (System.Array.Copy = memmove); a forward element loop clobbers overlapping self-copies -> silently corrupts ArrayDeque.add(index,elem). Generic Array<T> path (the ArrayDeque victim); the 8 primitive copyInto actuals are fixed identically but not app-callable (pre-existing primitive-array-receiver resolution gap)
+il_check roundhalfup AppKt "$ROOT/cases/il-roundhalfup/app.kt" "$(printf '3\n-2\n1\n0\n4\n2\n3\n3\n-2\n3\n-2\n3\n2147483647\n-2147483648\nNaN-throws')"   # #103: roundToInt/roundToLong = round-half-UP toward +inf (floor(x+0.5)), NaN throws, out-of-range saturates — NOT banker's ToEven
 il_check seq   Seq   "$ROOT/cases/il-seq"     "$(printf '6,12\n16\n3\n27\n10-20-30\n1,2,3\n4,5,6\n3')"
 il_check seqforin SeqForin "$ROOT/cases/il-seqforin" "$(printf 'a\nb')"
 il_check char  Char  "$ROOT/cases/il-char"    "$(printf 'True\nTrue\nTrue\nTrue\nA\nz\nTrue\nTrue\n97\nb')"
@@ -1143,6 +1145,8 @@ if [[ -n "$ILV" && -d "$REFDIR" ]]; then
 	# Gate-hygiene (final-review 2026-07-05): 44 run-only cases that were RUN-verified but had NO ilverify
 	# formal coverage — now wired in (a latent unverifiable-IL could otherwise pass the run check silently).
 	ASMS+=( [alias]=Alias [blank]=Blank [cbk]=Cbk [clrasm]=ClrAsm [clriface]=ClrIface [clrimpl]=ClrImpl [coerce]=Coerce [coevalorder]=CoEvalOrder [cofieldorder]=CoFieldOrder [cofinally]=CoFinally [coinline]=CoInline [coldabstract]=ColdAbstract [ifacesuspend]=IfaceSuspend [counit]=CoUnit [delegatearg]=Dlg [dualrep]=DualRep [eventext]=EventExt [genclosure]=GenClo [geninlinearg]=GenInlineArg [genextnew]=GenExtNew [gencolladd]=GenCollAdd [genhof]=XHof [genim]=GenIM [geninj]=GenInj [ifaceevent]=AppKt [inherit]=Inherit [interpnull]=InterpNull [mref]=Mr [netattr]=NetAttr [netenum]=NetEnum [netinterop]=NetInterop [ntostr]=NToStr [nulltostr]=NullToStr [objgen]=OGen [outref]=Outref [overrideprop]=OverridePropKt [regexreplace]=RegexReplace [revinterop]=KotlinLib [samcmp]=SamCmp [selfref]=SelfRef [seqfilter]=SeqFilter [subseq]=SubSeq [taskgen]=Tg [tloverload]=TlOverload [transinj]=TransInj [vtprop]=VtProp [xfaceimpl]=XFace [xinline]=XInl [strops]=StrOps [nullbang]=NullBang [tryval]=TryVal [starproj]=StarProj [toplateinit]=TopLateinit [gendelegate]=AppKt [csextrecv]=CsExtRecv [genextval]=GenExtVal [inlklibmembernlr]=InlKlibMemberNlr )
+		# stdlib miscompile regressions (#97 copyInto overlap [generic Array<T> path], #103 roundToInt/roundToLong half-up)
+		ASMS+=( [copyintoverlap]=AppKt [roundhalfup]=AppKt )
 	# DOCUMENTED ilverify EXCLUSIONS (deliberately NOT in ASMS — no silent gap):
 	#   • stackalloc — the emitted `localloc` (stackalloc/Span) is UNVERIFIABLE by ECMA-335 (like C# `unsafe`);
 	#     it can NEVER pass ilverify. Permanent, by-design exclusion — not a defect.

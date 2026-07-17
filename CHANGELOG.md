@@ -5,6 +5,19 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Fixed
+
+- **stdlib: `copyInto` is now overlap-safe (#97).** All nine `copyInto` actuals (generic `Array<T>` +
+  the 8 primitive arrays) bind to `System.Array.Copy` (memmove) instead of a naive forward element
+  loop, which clobbered source slots on an overlapping self-copy with `destinationOffset > startIndex`.
+  This silently corrupted `ArrayDeque.add(index, elem)` (an in-place right shift). (`_ArraysClr.kt`)
+- **stdlib: `Double/Float.roundToInt`/`roundToLong` round half-up toward +inf (#103).** They now
+  implement `floor(x + 0.5)` (ties: `2.5→3`, `-2.5→-2`, `0.5→1`, `-0.5→0`) instead of delegating to
+  `kotlin.math.round` (banker's ties-to-even). NaN throws `IllegalArgumentException`; out-of-range
+  saturates to `Int`/`Long` `MIN`/`MAX`. `kotlin.math.round` itself stays ties-to-even. (`MathClr.kt`)
+- **stdlib: `CharArray.copyOf(newSize)` zero-fills grown slots with the null char `'\u0000'` (#128),**
+  not a space (`U+0020`), matching Kotlin/JVM. (`_ArraysClr.kt`)
+
 ## 0.9.6-rc7 (2026-07-18)
 
 A large compiler-correctness release. The kotlinx.coroutines CLR port now compiles through the
