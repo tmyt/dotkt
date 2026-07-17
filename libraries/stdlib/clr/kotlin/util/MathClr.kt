@@ -204,11 +204,24 @@ public actual inline fun Double.nextTowards(to: Double): Double = when {
     else -> this.nextDown()
 }
 
+// roundToInt/roundToLong are round-half-UP toward +inf (0.5->1, 2.5->3, -2.5->-2, -0.5->0) via floor(x+0.5),
+// NOT banker's rounding — kotlin.math.round IS ties-to-even (System.Math.Round) and stays as-is, but these
+// wrappers must NOT delegate to it (#103). NaN throws; out-of-range saturates to Int/Long MIN/MAX per contract.
 @SinceKotlin("1.2")
-public actual fun Double.roundToInt(): Int = round(this).toInt()
+public actual fun Double.roundToInt(): Int = when {
+    this.isNaN() -> throw IllegalArgumentException("Cannot round NaN value.")
+    this > Int.MAX_VALUE.toDouble() -> Int.MAX_VALUE
+    this < Int.MIN_VALUE.toDouble() -> Int.MIN_VALUE
+    else -> floor(this + 0.5).toInt()
+}
 
 @SinceKotlin("1.2")
-public actual fun Double.roundToLong(): Long = round(this).toLong()
+public actual fun Double.roundToLong(): Long = when {
+    this.isNaN() -> throw IllegalArgumentException("Cannot round NaN value.")
+    this > Long.MAX_VALUE.toDouble() -> Long.MAX_VALUE
+    this < Long.MIN_VALUE.toDouble() -> Long.MIN_VALUE
+    else -> floor(this + 0.5).toLong()
+}
 
 // endregion
 
@@ -385,11 +398,14 @@ public actual fun Float.withSign(sign: Float): Float = TODO("clr binding should 
 @SinceKotlin("1.2")
 public actual fun Float.withSign(sign: Int): Float = this.withSign(sign.toFloat())
 
+// Float rounds through Double (#103): Float->Double is lossless, so Double.roundToInt (floor(x+0.5)) is EXACT for
+// every float input and matches Kotlin/JVM (which defines Float.roundToLong = toDouble().roundToLong()), while
+// float-precision floor(x+0.5f) would round odd integral floats in [2^23, 2^24) off by one. NaN throws; clamps inside.
 @SinceKotlin("1.2")
-public actual fun Float.roundToInt(): Int = round(this).toInt()
+public actual fun Float.roundToInt(): Int = this.toDouble().roundToInt()
 
 @SinceKotlin("1.2")
-public actual fun Float.roundToLong(): Long = round(this).toLong()
+public actual fun Float.roundToLong(): Long = this.toDouble().roundToLong()
 
 // endregion
 
