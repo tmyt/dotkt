@@ -7,6 +7,19 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **kotc + bir2cir ([tmyt/dotkt#60], area:kotc, area:bir2cir): a CROSS-MODULE inline MEMBER of the klib stdlib called with a
+  lambda (a DISPATCH receiver present) now SPLICES instead of silently delegating — a non-local `return` inside the lambda
+  returns from the CALLER, not from a real delegate.** kotc is body-blind at a cross-module member call (the klib is
+  metadata-only), so the call-site gate in `BirEmitterCalls.kt` now emits an owner-ful `callInline` for EVERY such call
+  unconditionally (the former `clrInjectedDotNetName != null` and `extensionReceiver == null` gate conditions are DELETED —
+  they excluded the klib-stdlib member and the dual-receiver shape, both of which fell to a plain `callInstance` + a REAL
+  delegate whose non-local `return` returned from the delegate frame — a SILENT control-flow miscompile, no ilverify error
+  for `Unit`/`T` shapes). All remaining splice-eligibility now lives in bir2cir's `RewriteGeneric`, which holds the
+  `[KotlinInline]` payload and always splices-or-fail-louds: the klib-stdlib member (`recv=="dispatch"`) splices via §4.3,
+  and the member-EXTENSION dual-receiver (#23) shape splices when pure-extension but now FAILS LOUD (never silently rebinds
+  `{k:this}` to the caller) when its body reads the dispatch receiver — converting the residual #23 gap from silent to loud
+  until W2 co-binds both receivers. Gate case: `il-inline-klibmember-nlr` (`Duration.toComponents { … return … }`).
+
 - **bir2cir + ilemit ([tmyt/dotkt#77], area:bir2cir, area:ilemit): a CONCRETE Kotlin collection class (e.g.
   `kotlin.collections.ArrayDeque<E>`) used as a field/owner type now RESOLVES — closing the `ilemit: cannot resolve .NET
   type kotlin.collections.ArrayDeque`1` blocker of the kotlinx.coroutines port (the `EventLoop.common` unconfined queue).**

@@ -203,6 +203,16 @@ static class InlineSplice
         if (SuspendCaptureHazard(pBody, refuseOuter: !(payloadExt || payloadDispatch)) is string suspHazard)
         { FailLoud(o, owner, name, pc, ga, $"payload newSuspendLambda capture '{suspHazard}' cannot be splice-rewritten (captured enclosing receiver, or a name colliding with the SM's own scope) — #75 Batch B"); return; }
 
+        // #23 boundary (W1 silent->loud, #60): a cross-module member-EXTENSION payload classifies `recv==extensionParam`
+        // (InlineBirStash's single-valued `recv` — the extension `__self` SHADOWS dispatch), so §4.3's dispatch RewriteThis
+        // never runs and STEP 5 binds only the extension. A payload-frame `{k:this}` here is therefore a read of the
+        // DISPATCH (enclosing-class) receiver that would rebind to the CALLER's `this` at splice time = a SILENT miscompile.
+        // kotc now emits this dual-receiver shape unconditionally (BirEmitterCalls member gate) carrying `recvs.dispatch`;
+        // co-binding BOTH receivers is #23/W2. Until then FAIL LOUD (never silently rebind). The SOUND pure-extension idiom
+        // (body reads only the extension `this` = `__self`, never `{k:this}`) has no payload-frame `this` and splices on.
+        if (payloadExt && (o["recvs"] as JsonObject)?["dispatch"] != null && HasPayloadFrameThis(pBody))
+        { FailLoud(o, owner, name, pc, ga, "cross-module member-extension inline whose body reads the dispatch (enclosing-class) receiver — co-binding dispatch + extension receiver is not yet supported (#23); the pure-extension form splices"); return; }
+
         var pRet = payload["ret"]?.DeepClone();
 
         // STEP 2 — positional type-param subst (payload tv{scope:method,i} -> the call's typeArgs[i]).
@@ -2658,6 +2668,25 @@ static class InlineSplice
 
 
     // Like HasNode, but does NOT descend into a nested-fn boundary (a `returnExpr` inside a closure is the closure's).
+    // True for exactly the `{k:this}` nodes RewriteThis (§4.3) WOULD rebind to the dispatch temp: a payload-FRAME `this`
+    // (top-level or a nested closure's CAPTURE VALUE), but NOT a nested closure/type-def/state-machine's OWN `this`. Mirrors
+    // RewriteThis's descent precisely — skip `typeDef`/`newSuspendLambda` WHOLE (their `this` is their own scope), skip the
+    // `synthClass` KEY of a `newClosure`/`newSam` (its SAM/invoke `this` is the closure's) but STILL descend its captures.
+    // Used by the #23 member-extension guard (a member-extension binds only `__self`, so any surviving payload-frame `this`
+    // is an unbound dispatch read). `HasNodeNonClosure` is WRONG here: it stops at the whole closure node, missing a capture
+    // value `{k:this}` (the enclosing dispatch receiver), and its `IsClosureBoundary` omits `typeDef`.
+    static bool HasPayloadFrameThis(JsonNode node)
+    {
+        if (node is JsonObject o)
+        {
+            if (Str(o["k"]) is "typeDef" or "newSuspendLambda") return false;
+            if (Str(o["k"]) == "this") return true;
+            foreach (var kv in o) if (kv.Key != "synthClass" && kv.Value != null && HasPayloadFrameThis(kv.Value)) return true;
+        }
+        else if (node is JsonArray a) foreach (var c in a) if (c != null && HasPayloadFrameThis(c)) return true;
+        return false;
+    }
+
     static bool HasNodeNonClosure(JsonNode node, string kind)
     {
         if (node is JsonObject o)

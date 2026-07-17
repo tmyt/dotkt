@@ -733,25 +733,19 @@ internal fun BirEmitter.call(call: IrCall): String {
 		}
 	}
 
-	// F1 (#60): a facadegen-injected cross-module inline MEMBER (`class C { inline fun pick(block) }` restored from a
-	// referenced DotKt assembly — `isInline`, `body==null`, a DISPATCH receiver present, NO extension receiver) taking
-	// ANY lambda arg (AXIS ①) MUST be source-inlined. This MUST be checked BEFORE the CLR-interop member block below:
-	// that block fires for ANY injected .NET owner (`clrName(declaringClass) != null`) and would emit a plain
-	// `callInstance` + a REAL delegate for the block, whose non-local `return` returns from the DELEGATE, not the
-	// caller — a SILENT miscompile. Emit a member-aware `callInline` carrying `recvs.dispatch`; bir2cir resolves the
-	// `[KotlinInline]` payload off the ref.dll (owner-ful `InlineCandidates`) and its §4.3 rebinds the payload's
-	// `{k:this}` to the caller-provided receiver.
-	//  - Gate on the enclosing type being FACADEGEN-injected (`clrInjectedDotNetName`), so a klib stdlib member (not
-	//    facadegen-injected) is untouched.
-	//  - EXCLUDE the member-EXTENSION dual-receiver (#23) shape (`extensionReceiver(call) != null`): kotc cannot inspect
-	//    the cross-module body to know whether it reads the dispatch receiver, and a body-BLIND splice OR fail-loud would
-	//    wrongly break the SOUND pure-extension idiom (`class Lib { inline fun Box.mapped(f) = f(get()) }`) that the
-	//    interop delegate path below handles correctly. So the dual-receiver shape falls THROUGH to that path (unchanged;
-	//    a non-local return through it stays the pre-existing #23 gap — narrowing #23 by scanning the decoded payload
-	//    body for `{k:this}` is bir2cir's follow-up).
-	if (callee.body == null && callNeedsSplice(call) && dispatchReceiver(call) != null && extensionReceiver(call) == null
-			&& (callee.parent as? IrClass)?.classId?.let { kotc.frontend.clrInjectedDotNetName(it) } != null)
-		return inlineSpliceCallMember(call)
+	// #60 (W1): a cross-module inline MEMBER (`body==null`, a DISPATCH receiver present) taking ANY lambda arg (AXIS ①)
+	// MUST be source-inlined — a facadegen-injected DotKt member AND a klib stdlib member alike. kotc is body-BLIND here
+	// (the klib is metadata-only; the [KotlinInline] payload lives on the ref.dll), so it emits the owner-ful `callInline`
+	// UNCONDITIONALLY and bir2cir — which holds the payload — makes the splice-or-fail-loud eligibility decision (it
+	// resolves the payload off the ref.dll `InlineCandidates`, and its §4.3 rebinds the payload's `{k:this}` to the
+	// caller-provided `recvs.dispatch`). This MUST run BEFORE the CLR-interop member block below: that block fires for ANY
+	// injected .NET owner (`clrName(declaringClass) != null`) and would otherwise emit a plain `callInstance` + a REAL
+	// delegate for the block, whose non-local `return` returns from the DELEGATE, not the caller — a SILENT miscompile.
+	// The member-EXTENSION dual-receiver (#23) shape rides through too (both receivers carried): bir2cir splices the
+	// SOUND pure-extension idiom (body reads only the extension `this`) and FAILS LOUD on a body that reads the dispatch
+	// receiver (a `{k:this}`) — converting the old silent #23 gap to loud until W2 co-binds both receivers.
+	if (callee.body == null && callNeedsSplice(call) && dispatchReceiver(call) != null)
+		return emitOwnerfulInlineNode(call)
 
 	// BCL interop: a call whose declaring class is a .NET type (`@Clr` or injected) resolves to a real .NET
 	// member. An INHERITED .NET member (e.g. `appError.Message`) is a fake-override whose `parent` is the
