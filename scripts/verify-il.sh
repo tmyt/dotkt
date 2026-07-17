@@ -481,6 +481,13 @@ il_check coldinst ColdInst "$ROOT/cases/il-coldinst" "$(printf '11\n12\n10\n42\n
 # `Box_getTwice$sm[T]` is generic over the enclosing T, its `$this` field is the constructed self, and the awaited
 # value crosses the suspension typed in T. Drained by the synthesized plain `main` (sync completion). Runs -> 42,hi.
 il_check coldvirt ColdVirt "$ROOT/cases/il-coldvirt" "$(printf '42\nhi')"
+# coldsuper: bir2cir SuspendColdLowering #78 Defect A — a suspend `callInstance` keyed on a SUBCLASS static receiver
+# (kotc emits ownerType=Derived / ownerType=ChannelImpl) must resolve against a suspend member declared on a SUPERTYPE
+# (Base.awaitInternal — the JobSupport.awaitInternal shape; ChannelBase/Source.receiveOrNull — the ReceiveChannel
+# super-interface shape). Before the IsResolvable supertype walk the exact-owner lookup missed and the fixpoint dropped
+# the caller (Derived.await / ChannelImpl.consume) to ilemit un-lowered. Also guards a MUTUALLY-recursive suspend pair
+# (ping/pong) staying whole in the transformable set. Runs -> 11,42,5.
+il_check coldsuper ColdSuper "$ROOT/cases/il-coldsuper" "$(printf '11\n42\n5')"
 # coldabstract: bundle-6 ① BUG 3 — an abstract-CLASS suspend member's full vtable. Base emits an abstract cold
 # entry + an abstract Task<Int> bridge ([KotlinFunction(Suspend)]); Impl overrides both in lockstep; `b.poll()`
 # (b: Base) dispatches virtually through the cold entry. Runs sync -> 42 (no await, so ilverify-clean).

@@ -59,6 +59,34 @@ static class SuspendColdLowering
     // entry points); FunGen (nested) reads it. ApplyAll runs before the lambda phase, so it is always populated by then.
     static ReferenceMetadataIndex _refs;
 
+    // #78 Defect A — direct-supertype map (local type FQN -> base + interfaces) threaded from Program.cs. Used by
+    // IsResolvable to walk a suspend call's static-receiver owner up its hierarchy (both the same-assembly registry
+    // and the cross-assembly ref.dll axis), so a call keyed on a subclass resolves against a super-declared cold entry.
+    static IReadOnlyDictionary<string, List<string>> _typeSupers = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+
+    // The transitive supertype closure of a local type FQN (itself EXCLUDED), following the declared base + interfaces
+    // through every super that is itself locally declared; a super that is NOT in the local map is still yielded (it may
+    // be a referenced base whose ref.dll axis carries the suspend member), but its own supers are not walked (unknown).
+    static IEnumerable<string> AllSupers(string owner)
+    {
+        if (owner == null) yield break;
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var work = new Queue<string>();
+        work.Enqueue(owner);
+        seen.Add(owner);
+        while (work.Count > 0)
+        {
+            var cur = work.Dequeue();
+            if (!_typeSupers.TryGetValue(cur, out var sups)) continue;
+            foreach (var s in sups)
+                if (s != null && seen.Add(s))
+                {
+                    yield return s;
+                    work.Enqueue(s);
+                }
+        }
+    }
+
     // APP-build gate for cold-lowering an `inline suspend fun`'s STANDALONE body. In an app build an inline suspend fun
     // is a user/kotlinx WRAPPER (e.g. `suspendCancellableCoroutine`, or the issue-#22 `mySuspend`) whose standalone body
     // is a real coroutine that must be cold-lowered (InlineSplice splices its call sites, but the emitted standalone
@@ -206,10 +234,17 @@ static class SuspendColdLowering
     // Returns the callee-return-type map (cold-entry name -> Kotlin resultType), so the SEPARATE
     // SuspendLambdaLowering phase can type a suspend-lambda's awaited value the SAME way (else a
     // lambda's `h()` await falls back to kotlin.Any and the value is never unboxed -> `object + int`).
-    public static IReadOnlyDictionary<string, TypeNode> ApplyAll(IReadOnlyList<JsonNode> roots, ReferenceMetadataIndex refs, IReadOnlySet<string> localTypeFqns, bool appBuild)
+    public static IReadOnlyDictionary<string, TypeNode> ApplyAll(IReadOnlyList<JsonNode> roots, ReferenceMetadataIndex refs, IReadOnlySet<string> localTypeFqns, bool appBuild,
+        IReadOnlyDictionary<string, List<string>> typeSupers = null)
     {
         _refs = refs;   // #10: EmitAwaitPoint reads it to resolve the .NET awaitable pattern for each `.await()`.
         _appBuild = appBuild;
+        // #78 Defect A — the direct-supertype map (local type FQN -> its declared base + interfaces), threaded from
+        // Program.cs so IsResolvable can walk the hierarchy: a suspend `callInstance` keyed on a SUBCLASS static
+        // receiver (DeferredCoroutine.awaitInternal, declared on the base JobSupport; Channel.receiveOrNull, declared
+        // on the super-interface ReceiveChannel) resolves against the DECLARING super's cold entry, which the subtype
+        // inherits. Without this walk the exact-owner lookup misses and the fun is (falsely) dropped from the set.
+        _typeSupers = typeSupers ?? new Dictionary<string, List<string>>(StringComparer.Ordinal);
         _consumedIntrinsicClosures = new HashSet<string>(StringComparer.Ordinal);
         // 1. Global registry of shape-eligible suspend funs across every input file.
         var entries = new Dictionary<FunKey, Entry>();
@@ -320,11 +355,21 @@ static class SuspendColdLowering
 
         // The public Task<R> bridge (bundle-6 P4, design §11): resolve the Task-family BCL owners from the ref.dll
         // @ClrTypeAlias index (the SAME ref.dll-sourced substitution the member-call pass reads). `TaskCompletionSource`
-        // is the sink the RootContinuation completes; `Task` is the hot public return. When either alias is absent from
-        // the ref.dll (a build whose stdlib predates the taskinterop set), the bridge is skipped — the cold entry still
-        // emits (Kotlin->Kotlin suspend calls are unaffected), only the cross-language Task ABI is dropped.
+        // is the sink the RootContinuation completes; `Task` is the hot public return.
         var tcsBcl = refs.TryResolveClrOwner("kotlin.clr.TaskCompletionSource", out var tb, out _) ? tb : null;
         var taskBcl = refs.TryResolveClrOwner("kotlin.clr.Task", out var kb, out _) ? kb : null;
+        // #55 — in an APP build the Task ABI is MANDATORY: a suspend fun's public shape is `Task<R>` and its
+        // main-drain blocks on `tcs.Task`. If the ref.dll lacks the kotlin.clr.Task/TaskCompletionSource aliases
+        // (a stdlib predating the taskinterop set) the bridge would silently degrade to the known-broken
+        // null-completion scheme (a genuinely-suspending main dereferences null on resume — NRE/lost result). Per
+        // the no-dual-track rule the null-completion fallback is DELETED, so a missing alias is a hard compile error
+        // here, not a silent skip. rt-stdlib builds (baseIsLocal — no `main`, aliases legitimately absent) are exempt.
+        if (appBuild && !baseIsLocal && (tcsBcl == null || taskBcl == null))
+            throw new NotSupportedException(
+                "bir2cir: suspend-lowering: the stdlib ref.dll lacks the kotlin.clr.Task / "
+                + "kotlin.clr.TaskCompletionSource @ClrTypeAlias bindings (a stdlib predating taskinterop) — "
+                + "refusing to emit the known-broken null-completion suspend ABI. Rebuild the stdlib with the "
+                + "taskinterop sources present.");
 
         // SM-type-name disambiguation for OVERLOADED members (same Owner+Name, differing only by param type):
         // each overload needs a UNIQUE SM class name (the cold-entry NAME stays `<name>$dotkt_suspend` — they are
@@ -526,12 +571,24 @@ static class SuspendColdLowering
         // callee is resolvable if ANY overload with that owner+name is transformable (its cold entry gets
         // synthesized). Cross-assembly: the ref.dll Suspend flag + the `<name>$dotkt_suspend` convention.
         bool LocalMatch(string owner) => transformable.Any(k => k.Owner == owner && k.Name == call.Name);
+        // #78 Defect A — a suspend member declared on a SUPERTYPE is inherited by the call site's static-receiver
+        // subclass, so its cold entry is resolvable through the subclass. Walk the receiver owner's transitive supers
+        // on BOTH axes: the same-assembly registry (a super whose suspend member is a transformable entry) and the
+        // cross-assembly ref.dll (a super the refs flag with a Suspend member — HasSuspendMemberInHierarchy already
+        // walks the reflected super chain, and AllSupers additionally crosses local subclass -> referenced super).
+        bool MatchWithSupers(string owner)
+        {
+            if (LocalMatch(owner) || refs.HasSuspendMemberInHierarchy(owner, call.Name)) return true;
+            foreach (var s in AllSupers(owner))
+                if (LocalMatch(s) || refs.HasSuspendMemberInHierarchy(s, call.Name)) return true;
+            return false;
+        }
         if (call.Instance)
-            return LocalMatch(call.Owner) || refs.HasSuspendMember(call.Owner, call.Name);
+            return MatchWithSupers(call.Owner);
         // callStatic: owner==null -> same-assembly top-level (possibly cross-file, keyed by name);
         // owner set -> a cross-assembly file-class static (ref.dll flag).
         if (call.Owner == null) return LocalMatch(null);
-        return LocalMatch(call.Owner) || refs.HasSuspendMember(call.Owner, call.Name);
+        return MatchWithSupers(call.Owner);
     }
 
     // --- shape gate ------------------------------------------------------------------------------------
@@ -614,7 +671,7 @@ static class SuspendColdLowering
                 }
                 if (k == "try")
                 {
-                    var bodyHasSusp = o["body"] != null && HasSuspension(o["body"]);
+                    var bodyHasSusp = o["body"] != null && HasOwnSuspension(o["body"]);
                     if (bodyHasSusp && tryDepth > 0) return false;      // nested suspending try -> unsupported (v1)
                     if (!SuspensionsSupported(o["body"] ?? JsonValue.Create(0), inHandler, bodyHasSusp ? tryDepth + 1 : tryDepth))
                         return false;
@@ -696,6 +753,29 @@ static class SuspendColdLowering
         }
     }
 
+    // #78 Step 3a — like HasSuspension, but does NOT descend into a nested lambda/closure/suspend-lambda subtree
+    // (LambdaKinds): a suspension inside such a value belongs to THAT value's own SM, not the enclosing fun. Used by
+    // the try/eval-order gates so a try/when whose only suspensions live inside a nested suspend-lambda VALUE reads as
+    // NON-suspending here (it needs no SM segmentation) — killing the false-positive "suspending try" refusals and the
+    // needless splitting of plain trys. The DEEP HasSuspension is kept ONLY where the closure interior must be
+    // inspected (the newClosure/newDelegate classification at SuspensionsSupported).
+    static bool HasOwnSuspension(JsonNode node)
+    {
+        switch (node)
+        {
+            case JsonObject o:
+                if (Str(o["k"]) is string k && LambdaKinds.Contains(k)) return false;   // nested lambda -> its own SM
+                if (o.ContainsKey("suspendCall") && Bool(o["suspendCall"])) return true;
+                foreach (var kv in o) if (kv.Value != null && HasOwnSuspension(kv.Value)) return true;
+                return false;
+            case JsonArray a:
+                foreach (var it in a) if (it != null && HasOwnSuspension(it)) return true;
+                return false;
+            default:
+                return false;
+        }
+    }
+
     // BUG 1: does the subtree contain a `try` whose finally is non-empty AND whose body spans a suspension?
     // Such a finally needs the $suspending gate (it would otherwise run on the suspend-return leave and again at
     // exit). SuspensionsSupported guarantees at most one such level (nested suspending try is left untransformed).
@@ -705,7 +785,7 @@ static class SuspendColdLowering
         {
             case JsonObject o:
                 if (Str(o["k"]) == "try" && o["finally"] is JsonArray fin && fin.Count > 0
-                    && o["body"] != null && HasSuspension(o["body"]))
+                    && o["body"] != null && HasOwnSuspension(o["body"]))
                     return true;
                 foreach (var kv in o) if (kv.Value != null && HasSuspendingFinally(kv.Value)) return true;
                 return false;
@@ -971,7 +1051,10 @@ static class SuspendColdLowering
         // the cold entry (abstract -> an abstract signature; open -> virtual; override -> override), so an interface
         // `suspend fun` round-trips (its [KotlinFunction(Suspend)] trigger lives on the bridge) and its concrete
         // overrides fill both the bridge and the cold-entry slots.
-        bool WantsBridge => !_isLambda && _name != "main" && _tcsBcl != null && _taskBcl != null && !_baseIsLocal;
+        // #55 — an app build (!_baseIsLocal) is guaranteed the Task aliases (ApplyAll hard-errors otherwise), so the
+        // former `_tcsBcl != null && _taskBcl != null` silent-skip is gone: every non-main non-lambda cold entry in an
+        // app build gets the public Task bridge. rt-stdlib self-builds (_baseIsLocal) keep NO bridge (internal machinery).
+        bool WantsBridge => !_isLambda && _name != "main" && !_baseIsLocal;
 
         static int MaxLabelId(JsonNode node)
         {
@@ -1209,7 +1292,7 @@ static class SuspendColdLowering
 
         void EmitTry(JsonObject o, List<JsonNode> outp)
         {
-            var bodyHasSusp = o["body"] != null && HasSuspension(o["body"]);
+            var bodyHasSusp = o["body"] != null && HasOwnSuspension(o["body"]);
             if (!bodyHasSusp)
             {
                 outp.Add(RewriteTryPlain(o));
@@ -1363,7 +1446,7 @@ static class SuspendColdLowering
                 // rewrite the result expression — a suspend call in the result becomes a normal suspension point
                 // owned by this pass. A suspension-FREE valueBlock (e.g. an `index++` post-increment) is left
                 // intact (the default copy below) for ilemit's inline emission — output stays byte-identical.
-                if (k == "valueBlock" && HasSuspension(o))
+                if (k == "valueBlock" && HasOwnSuspension(o))
                 {
                     if (o["stmts"] is JsonArray vbStmts) foreach (var s in vbStmts) EmitStmt(s, outp);
                     if (o["body"] is JsonArray vbBody) foreach (var s in vbBody) EmitStmt(s, outp);
@@ -1392,13 +1475,13 @@ static class SuspendColdLowering
                 if ((k == "clrStatic" || k == "clrInstance" || k == "clrGenericStatic" || k == "clrGenericInstance")
                     && Bool(o["suspendCall"]))
                     return EmitSuspensionPoint(o, outp);
-                if (k == "cond" && HasSuspension(o))
+                if (k == "cond" && HasOwnSuspension(o))
                     return EmitCondValue(o, outp);
                 // BUG 2 (left-to-right evaluation order across a suspension): when an ordered-eval node contains a
                 // suspension in a LATER operand, any impure earlier operand must be evaluated + SPILLED into a temp
                 // SM field BEFORE the suspension's segments are appended (else its side effects run after the
                 // suspension resumes). Applies to `bin` (l,r) and call/new arg lists (recv,args...).
-                if (HasSuspension(o))
+                if (HasOwnSuspension(o))
                 {
                     if (k == "binOp")
                     {
@@ -1436,14 +1519,14 @@ static class SuspendColdLowering
         {
             var lastSusp = -1;
             for (var i = 0; i < kids.Count; i++)
-                if (kids[i] != null && HasSuspension(kids[i])) lastSusp = i;
+                if (kids[i] != null && HasOwnSuspension(kids[i])) lastSusp = i;
             var res = new List<JsonNode>(kids.Count);
             for (var i = 0; i < kids.Count; i++)
             {
                 var child = kids[i];
                 if (child == null) { res.Add(null); continue; }
                 var rw = Rewrite(child, outp);
-                if (i < lastSusp && !HasSuspension(child) && !IsPureExpr(child))
+                if (i < lastSusp && !HasOwnSuspension(child) && !IsPureExpr(child))
                 {
                     var ty = TypeOfExpr(child);
                     var tmp = "__ord$" + (++_ordCounter);
@@ -2760,90 +2843,67 @@ static class SuspendColdLowering
         // still propagates because there is no try/catch on the sync path). A GENUINELY-suspending main (e.g. it awaits
         // an incomplete Task) returns COROUTINE_SUSPENDED; the eventual resume lands in RootContinuation.resumeWith on a
         // threadpool thread and completes the TCS, so main must BLOCK on `tcs.Task` until then (`Task.Wait()`) — with a
-        // null completion the resume dereferenced null (NRE / lost result). When the Task-family aliases are absent (a
-        // stdlib predating taskinterop) fall back to the old null-completion drive (correct for the synchronous case).
+        // null completion the resume dereferenced null (NRE / lost result). #55: the Task aliases are GUARANTEED present
+        // in an app build (ApplyAll hard-errors otherwise), so the old null-completion fallback is DELETED (no dual-track).
         JsonObject DrainMain()
         {
             var ps = new JsonArray();
             foreach (var p in _params) ps.Add(p.DeepClone());
 
-            JsonArray body;
-            if (_tcsBcl == null || _taskBcl == null)
-            {
-                // No Task aliases: the legacy null-completion drive (a synchronous main completes inline).
-                var fwd = new JsonArray();
-                foreach (var p in _params) fwd.Add(new JsonObject { ["k"] = "local", ["name"] = Str(p["name"]) });
-                fwd.Add(NullConst(ContAnyTn));
-                body = new JsonArray
-                {
-                    new JsonObject
-                    {
-                        ["k"] = "exprStmt",
-                        ["expr"] = new JsonObject
-                        {
-                            ["k"] = "callStatic", ["owner"] = null, ["method"] = _coldName,
-                            ["args"] = fwd, ["ret"] = Tw(AnyTn),
-                        },
-                    },
-                };
-            }
-            else
-            {
-                // main returns Unit, so the root sink is typed over Unit.
-                var tcsType = new TypeNode.Fqn(_tcsBcl, new[] { UnitTn });
-                var taskType = new TypeNode.Fqn(_taskBcl, new[] { UnitTn });
-                var rootType = new TypeNode.Fqn(RootContinuationFqn, new[] { UnitTn });
+            // main returns Unit, so the root sink is typed over Unit.
+            var tcsType = new TypeNode.Fqn(_tcsBcl, new[] { UnitTn });
+            var taskType = new TypeNode.Fqn(_taskBcl, new[] { UnitTn });
+            var rootType = new TypeNode.Fqn(RootContinuationFqn, new[] { UnitTn });
 
-                var coldArgs = new JsonArray();
-                foreach (var p in _params) coldArgs.Add(new JsonObject { ["k"] = "local", ["name"] = Str(p["name"]) });
-                coldArgs.Add(new JsonObject { ["k"] = "cast", ["type"] = ContAny(), ["e"] = Local("__root") });
+            var coldArgs = new JsonArray();
+            foreach (var p in _params) coldArgs.Add(new JsonObject { ["k"] = "local", ["name"] = Str(p["name"]) });
+            coldArgs.Add(new JsonObject { ["k"] = "cast", ["type"] = ContAny(), ["e"] = Local("__root") });
 
-                body = new JsonArray
+            var body = new JsonArray
+            {
+                new JsonObject
                 {
-                    new JsonObject
-                    {
-                        ["k"] = "var", ["name"] = "__tcs", ["type"] = Tw(tcsType),
-                        ["init"] = new JsonObject { ["k"] = "newClr", ["type"] = Tw(tcsType), ["argTypes"] = new JsonArray(), ["args"] = new JsonArray() },
-                    },
-                    new JsonObject
-                    {
-                        ["k"] = "var", ["name"] = "__root", ["type"] = Tw(rootType),
-                        ["init"] = new JsonObject
-                        {
-                            ["k"] = "newClr", ["type"] = Tw(rootType),
-                            ["argTypes"] = new JsonArray { Tw(tcsType) }, ["args"] = new JsonArray { Local("__tcs") },
-                        },
-                    },
-                    // r = main$dotkt_suspend(args..., (Continuation)root)   — a synchronous throw propagates RAW.
-                    new JsonObject
-                    {
-                        ["k"] = "var", ["name"] = "__r", ["type"] = Tw(AnyTn),
-                        ["init"] = new JsonObject
-                        {
-                            ["k"] = "callStatic", ["owner"] = null, ["method"] = _coldName,
-                            ["args"] = coldArgs, ["ret"] = Tw(AnyTn),
-                        },
-                    },
-                };
-                // if (r !== COROUTINE_SUSPENDED) return;   else  tcs.Task.Wait();   (block for the async resume)
-                var skipL = NextLabel();
-                body.Add(BrIf(new JsonObject { ["k"] = "objEq", ["lhs"] = Local("__r"), ["rhs"] = Suspended() }, false, skipL));
-                body.Add(new JsonObject
+                    ["k"] = "var", ["name"] = "__tcs", ["type"] = Tw(tcsType),
+                    ["init"] = new JsonObject { ["k"] = "newClr", ["type"] = Tw(tcsType), ["argTypes"] = new JsonArray(), ["args"] = new JsonArray() },
+                },
+                new JsonObject
                 {
-                    ["k"] = "exprStmt",
-                    ["expr"] = new JsonObject
+                    ["k"] = "var", ["name"] = "__root", ["type"] = Tw(rootType),
+                    ["init"] = new JsonObject
                     {
-                        ["k"] = "clrInstance", ["type"] = Tw(taskType), ["method"] = "Wait",
-                        ["recv"] = new JsonObject
-                        {
-                            ["k"] = "clrPropGet", ["type"] = Tw(tcsType), ["name"] = "Task", ["static"] = false,
-                            ["recv"] = Local("__tcs"), ["ret"] = Tw(taskType),
-                        },
-                        ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(), ["ret"] = Tw(VoidTn),
+                        ["k"] = "newClr", ["type"] = Tw(rootType),
+                        ["argTypes"] = new JsonArray { Tw(tcsType) }, ["args"] = new JsonArray { Local("__tcs") },
                     },
-                });
-                body.Add(Label(skipL));
-            }
+                },
+                // r = main$dotkt_suspend(args..., (Continuation)root)   — a synchronous throw propagates RAW.
+                new JsonObject
+                {
+                    ["k"] = "var", ["name"] = "__r", ["type"] = Tw(AnyTn),
+                    ["init"] = new JsonObject
+                    {
+                        ["k"] = "callStatic", ["owner"] = null, ["method"] = _coldName,
+                        ["args"] = coldArgs, ["ret"] = Tw(AnyTn),
+                    },
+                },
+            };
+            // if (r !== COROUTINE_SUSPENDED) return;   else  tcs.Task.Wait();   (block for the async resume)
+            var skipL = NextLabel();
+            body.Add(BrIf(new JsonObject { ["k"] = "objEq", ["lhs"] = Local("__r"), ["rhs"] = Suspended() }, false, skipL));
+            body.Add(new JsonObject
+            {
+                ["k"] = "exprStmt",
+                ["expr"] = new JsonObject
+                {
+                    ["k"] = "clrInstance", ["type"] = Tw(taskType), ["method"] = "Wait",
+                    ["recv"] = new JsonObject
+                    {
+                        ["k"] = "clrPropGet", ["type"] = Tw(tcsType), ["name"] = "Task", ["static"] = false,
+                        ["recv"] = Local("__tcs"), ["ret"] = Tw(taskType),
+                    },
+                    ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(), ["ret"] = Tw(VoidTn),
+                },
+            });
+            body.Add(Label(skipL));
 
             return new JsonObject
             {
