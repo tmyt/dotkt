@@ -373,6 +373,7 @@ il_check_imports icmparity IcmpArity "$ROOT/cases/il-icmparity" "$(printf -- '-2
 # System.Action`1<Box>, not the internal KFunc`1<Box> (ilverify StackUnexpected). Covers both delegate
 # positions (return-var via Func, input-var via Action).
 il_check_imports gendelegate AppKt "$ROOT/cases/il-gendelegate" "$(printf '42\nTrue')"
+il_check_imports jsongeneric AppKt "$ROOT/cases/il-jsongeneric" "$(printf '42\n"hi"')"   # #44: a generic .NET method (JsonSerializer.Serialize<T>) with a facadegen-injected interop SIBLING param (JsonSerializerOptions) — ShapeSynthesis resolves the leaf off the refs to its .NET simple name so the overload-matcher shapes match ilemit's reflected shapes (was: "Object" erasure -> zero candidates -> ilemit "Sequence contains no elements")
 # m2 / mi1 consume BCL types via `import System.X` (System.Math, System.Text.StringBuilder) -> the facadegen import
 # scan (il_check_imports), NOT a bare il_check (which injects nothing, so the import would not resolve). No runtime.cs.
 il_check_imports m2  M2    "$ROOT/cases/m2"         "$(printf 'max(3, 7) = 7\nmin(3, 7) = 3\nabs(-9) = 9')"

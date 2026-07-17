@@ -387,7 +387,7 @@ sealed class Pipeline
             // (Int64/SByte/…) — that CLR knowledge lives HERE. Runs FIRST in the per-file loop, before ANY type-erasing
             // pass (NullableGenericReturnErasure sweeps a `nullable:gp` shapeType to `object`) and before the suspend
             // passes that read the resulting `shapes`. Pure identity in -> reflection-island string out; drops shapeTypes.
-            ShapeSynthesis.Apply(bir.Root, refs.Aliases, _options.RefBuild);
+            ShapeSynthesis.Apply(bir.Root, refs, _options.RefBuild);
             // VALUE-TYPE NULLABLE-COLLECTION receiver boxing (bundle-6 BUG-1 Part A): a value-type-element collection
             // (`List<Int?>`) passed to a nullable-generic collection extension (`Iterable<T?>.filterNotNull()`) is NOT
             // covariantly `IEnumerable<object>` on the CLR — wrap the receiver in `Enumerable.Cast<object>` so it boxes

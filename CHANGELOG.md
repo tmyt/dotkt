@@ -32,6 +32,16 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   of the cell (`if (q != null) … q …` inside an inline lambda, whose use-site is the bare `T`) now unwraps
   `Nullable<T>.Value`, keyed on the cell element type rather than the smart-cast-narrowed use type. Gated by
   `cases/il-refcell-nullable`.
+- **bir2cir ([tmyt/dotkt#44], area:bir2cir): a generic .NET method whose SIBLING parameter is a facadegen-injected
+  interop type — e.g. `JsonSerializer.Serialize<TValue>(TValue, JsonSerializerOptions?)` — now resolves its overload
+  instead of failing at emit with `ilemit: … [clrGenericStatic]: Sequence contains no elements`.** `ShapeSynthesis`
+  derives the `clrGeneric*` overload-matcher `shapes` from kotc's pure-Kotlin `shapeTypes`; a leaf that is neither an
+  aliased stdlib type nor a primitive was erased to `"Object"`, so the shape string `["gp","Object"]` mismatched
+  ilemit's reflected `["gp","JsonSerializerOptions"]` (ilemit's `Shape(Type)` returns `p.Name` for a reference param),
+  and the prefix-equality overload filter yielded zero candidates. `ShapeSynthesis.ShapeName` now resolves such a leaf
+  off the reference assemblies (`ReferenceMetadataIndex.ResolveNetType`) to its .NET simple name — the exact token
+  ilemit produces — so the shapes match; anything still unresolved keeps the `"Object"` fallback. Non-ref builds only
+  (the ref stdlib build emits no `clrGeneric*` nodes). Gate: `cases/il-jsongeneric`.
 - **bir2cir + ilemit ([tmyt/dotkt#77], area:bir2cir, area:ilemit): a CONCRETE Kotlin collection class (e.g.
   `kotlin.collections.ArrayDeque<E>`) used as a field/owner type now RESOLVES — closing the `ilemit: cannot resolve .NET
   type kotlin.collections.ArrayDeque`1` blocker of the kotlinx.coroutines port (the `EventLoop.common` unconfined queue).**
