@@ -83,8 +83,17 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		val owner = node.symbol.owner
 		val name = owner.name.asString()
 		when {
-			// A ref-cell var read `x` -> `x.v` (the heap cell, reached via the capture field inside a closure).
-			isRefCell(owner) -> """{"k":"field","ownerType":${fqnJson(refTypeName(owner))},"recv":${refBase(owner)},"name":"v"}"""
+			// A ref-cell var read `x` -> `x.v` (the heap cell, reached via the capture field inside a closure). The cell
+			// field `v` holds the FULL element type (`owner.type`); when that is a value-type nullable (`Int?` = `Nullable<T>`)
+			// read at a use-site narrowed to the bare value (an inline-closure smart-cast `if (q != null) … q …`, whose
+			// IrGetValue.type is the bare `Int`), UNWRAP `Nullable<T>.Value` — mirroring the plain-local read arm below, and
+			// keyed on the cell element type `owner.type` (NOT the smart-cast-narrowed `node.type`, which alone would defeat
+			// the leaf coerceValue). Consumed as `Nullable<T>` (no narrowing) -> the raw field. (#36)
+			isRefCell(owner) -> {
+				val raw = """{"k":"field","ownerType":${fqnJson(refTypeName(owner))},"recv":${refBase(owner)},"name":"v"}"""
+				val vElem = nullableValueUnwrapElem(owner.type, node.type)
+				if (vElem != null) """{"k":"nullableValue","elem":${vElem.toJson()},"e":$raw}""" else raw
+			}
 			captureSubst.containsKey(owner) -> captureSubst[owner]!!
 			selfSubst.containsKey(owner) -> selfSubst[owner]!!   // extension `__self` (by identity, before name-based `<this>`)
 			valSubst.containsKey(name) -> valSubst[name]!!
