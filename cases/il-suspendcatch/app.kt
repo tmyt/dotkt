@@ -26,7 +26,23 @@ suspend fun recover(x: Int): Int =
         fallback(x)
     }
 
+// MULTI-CATCH — two catch clauses, BOTH handlers suspend (each hoisted with its own capture). The try body also
+// throws distinct types + suspends, exercising the per-clause record + gated-dispatch ordering.
+suspend fun classify(x: Int): Int =
+    try {
+        if (x == 1) throw IllegalStateException("a")
+        if (x == 2) throw IllegalArgumentException("b")
+        fallback(x)                       // suspends; returns 100 + x
+    } catch (e: IllegalStateException) {
+        fallback(100)                     // suspend handler 1 -> 200
+    } catch (e: IllegalArgumentException) {
+        fallback(200)                     // suspend handler 2 -> 300
+    }
+
 fun main() {
-    println(blockOn { recover(5) })     // 10  (mayFail: 5*2)
-    println(blockOn { recover(-1) })    // 99  (mayFail throws -> fallback: 100 + (-1))
+    println(blockOn { recover(5) })      // 10  (mayFail: 5*2)
+    println(blockOn { recover(-1) })     // 99  (mayFail throws -> fallback: 100 + (-1))
+    println(blockOn { classify(3) })     // 103 (no throw -> fallback: 100 + 3)
+    println(blockOn { classify(1) })     // 200 (ISE -> fallback(100))
+    println(blockOn { classify(2) })     // 300 (IAE -> fallback(200))
 }

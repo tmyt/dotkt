@@ -34,9 +34,12 @@ static partial class SuspendColdLowering
     static readonly HashSet<string> NestedScopeKinds = new(System.StringComparer.Ordinal)
         { "newClosure", "newDelegate", "lambda", "newSuspendLambda" };
 
-    // Structured loop node kinds (ilemit emits each as a native IL loop). Used to scope break/continue rewriting.
+    // Structured loop node kinds (ilemit emits each as a native IL loop with its own break/continue frame). Used to
+    // scope break/continue rewriting (an unlabeled break/continue inside a still-structured nested loop belongs to it).
+    // Includes `while`/`dowhile` defensively: kotc lowers Kotlin whiles to flat CFG, but a future pre-SM pass could
+    // wrap statements in a structured while whose own break/continue must not be hijacked into a flattened loop.
     static readonly HashSet<string> LoopKinds = new(System.StringComparer.Ordinal)
-        { "forArray", "forEachInline", "for", "forRange", "repeatInline" };
+        { "forArray", "forEachInline", "for", "forRange", "repeatInline", "while", "dowhile" };
 
     // Statement-list-valued keys (elements are statements, not operand expressions).
     static readonly HashSet<string> StmtListKeys = new(System.StringComparer.Ordinal)
@@ -318,16 +321,22 @@ static partial class SuspendColdLowering
                     var kc = ++_excCounter;
                     var excName = "__exc$" + kc;
                     var catchVar = Str(co["var"]);
+                    // The recording clause binds the exception to a FRESH `$`-infixed catch var, never the source name:
+                    // a source catch var (`e`) colliding with a spilled outer SM field of the same name would make the
+                    // recorder's `local(e)` rewrite to `FieldOf(e)` (catch vars aren't modeled by DisambiguateShadowedVars)
+                    // → it would record the wrong object into the control-flow-load-bearing `__exc$K`. `__caught$K` cannot
+                    // collide (no field uses that name). The hoisted handler rebinds the SOURCE name to `__exc$K` below.
+                    var caughtName = "__caught$" + kc;
                     var excTn = TypeJson.Read(co["excType"]) ?? AnyTn;      // exceptions are reference types (nullable ref == ref)
                     var nullableExc = Tw(new TypeNode.Nullable(excTn));
                     // Capture var (an SM field via CollectVarFields) declared BEFORE the try.
                     result.Add(new JsonObject { ["k"] = "var", ["name"] = excName, ["type"] = nullableExc, ["init"] = NullConst(new TypeNode.Nullable(excTn)) });
-                    // The real catch only records the exception.
+                    // The real catch only records the exception (via the fresh, collision-proof catch var).
                     newCatches.Add(new JsonObject
                     {
                         ["excType"] = co["excType"]?.DeepClone(),
-                        ["var"] = catchVar,
-                        ["body"] = new JsonArray { new JsonObject { ["k"] = "setLocal", ["name"] = excName, ["value"] = LocalOf(catchVar) } },
+                        ["var"] = caughtName,
+                        ["body"] = new JsonArray { new JsonObject { ["k"] = "setLocal", ["name"] = excName, ["value"] = LocalOf(caughtName) } },
                     });
                     // The hoisted handler, gated on the capture being non-null; catch-var refs -> __exc$K. Each stmt is a
                     // fresh DeepClone (a parentless node) so re-parenting it into the enclosing statement list is legal.

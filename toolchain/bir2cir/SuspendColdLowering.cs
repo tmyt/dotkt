@@ -677,15 +677,16 @@ static partial class SuspendColdLowering
                 // suspension stays refused (SuspendLambdaLowering territory).
                 if ((k == "newClosure" || k == "newDelegate") && !HasSuspension(o)) return true;
                 // #82 — a `forEachInline` (GetEnumerator collection loop) whose BODY spans a suspension is FLATTENED to
-                // flat CFG by FlattenSuspendingLoops (like the always-admitted `forArray`), so it IS supported: exempt it
-                // from the LambdaKinds refusal below and fall through to the generic child recursion, which validates its
-                // body's suspensions (inHandler:false). A suspension-free forEachInline stays structured (also admitted
-                // now — previously refused wholesale). `repeatInline`/`for`/`forRange` are NOT flattened, so a body
-                // suspension in those stays refused (repeatInline via LambdaKinds; for/forRange were already admitted but
-                // are only sound suspension-free — a body suspension there is caught loud by the post-Build local assert).
+                // flat CFG by FlattenSuspendingLoops (like the always-admitted `forArray`), so ONLY that shape is exempted
+                // from the LambdaKinds refusal below (falling through to the generic child recursion, which validates its
+                // body). A SUSPENSION-FREE forEachInline stays REFUSED: it would reach Build as a structured loop whose
+                // LambdaKinds subtree CollectVarFields/DisambiguateShadowedVars SKIP but Rewrite DESCENDS — a loop-interior
+                // name colliding with a spilled outer var would silently miscompile, so it stays on the un-lowered path.
+                // `repeatInline`/`for`/`forRange` with a body suspension stay refused too (not flattened).
                 // ANY OTHER lambda/closure/sequence node -> unsupported (genuine suspend lambdas, which emit a
                 // `newClosure` and are NOT flagged `suspendCall`, are handled separately by SuspendLambdaLowering).
-                if (k != null && k != "forEachInline" && LambdaKinds.Contains(k))
+                if (k != null && LambdaKinds.Contains(k)
+                    && !(k == "forEachInline" && o["body"] is JsonNode feBody && HasOwnSuspension(feBody)))
                     return false;
                 if (o.ContainsKey("suspendCall") && Bool(o["suspendCall"]))
                 {
@@ -693,7 +694,11 @@ static partial class SuspendColdLowering
                 }
                 if (k == "try")
                 {
-                    var bodyHasSusp = o["body"] != null && HasOwnSuspension(o["body"]);
+                    // Loop-aware: HasOwnSuspension is forEachInline-BLIND (LambdaKinds), so a try whose body's only
+                    // suspension lives inside a (flattenable) forEachInline would read as non-suspending here — the
+                    // nested-suspending-try refusal would then be bypassed and Build would emit a branch INTO the outer
+                    // protected region (InvalidProgramException). HasLoopBorneSuspension sees through forEachInline.
+                    var bodyHasSusp = o["body"] != null && HasLoopBorneSuspension(o["body"]);
                     if (bodyHasSusp && tryDepth > 0) return false;      // nested suspending try -> unsupported (v1)
                     if (!SuspensionsSupported(o["body"] ?? JsonValue.Create(0), inHandler, bodyHasSusp ? tryDepth + 1 : tryDepth))
                         return false;
@@ -798,6 +803,28 @@ static partial class SuspendColdLowering
                 return false;
             case JsonArray a:
                 foreach (var it in a) if (it != null && HasOwnSuspension(it)) return true;
+                return false;
+            default:
+                return false;
+        }
+    }
+
+    // #82 — like HasOwnSuspension, but ALSO descends into a `forEachInline` body. FlattenSuspendingLoops lifts a
+    // forEachInline-body suspension into the ENCLOSING SM's CFG (a loop is not a separate SM scope), so for the try/
+    // eval-order gate the suspension IS the enclosing fun's — HasOwnSuspension's LambdaKinds skip would hide it and
+    // mis-account the try nesting (a nested-suspending-try bypass → branch-into-try → InvalidProgramException). Every
+    // OTHER LambdaKinds node (genuine lambda/closure, repeatInline) stays skipped (its suspension is its own SM's).
+    static bool HasLoopBorneSuspension(JsonNode node)
+    {
+        switch (node)
+        {
+            case JsonObject o:
+                if (Str(o["k"]) is string k && k != "forEachInline" && LambdaKinds.Contains(k)) return false;
+                if (o.ContainsKey("suspendCall") && Bool(o["suspendCall"])) return true;
+                foreach (var kv in o) if (kv.Value != null && HasLoopBorneSuspension(kv.Value)) return true;
+                return false;
+            case JsonArray a:
+                foreach (var it in a) if (it != null && HasLoopBorneSuspension(it)) return true;
                 return false;
             default:
                 return false;

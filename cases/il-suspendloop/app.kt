@@ -31,7 +31,20 @@ suspend fun sumList(xs: List<Int>): Int {
     return acc
 }
 
+// break/continue crossing the resume: a suspending forArray loop with `continue` (skip 0) and `break` (stop at
+// first negative), exercising RewriteBreakContinue's goto rewrite to the flattened loop's cont/end labels.
+suspend fun sumUntilNeg(xs: IntArray): Int {
+    var acc = 0
+    for (x in xs) {
+        if (x == 0) continue
+        if (x < 0) break
+        acc += awaitDouble(x)
+    }
+    return acc
+}
+
 fun main() {
-    println(blockOn { sumArray(intArrayOf(1, 2, 3)) })   // 12  (2 + 4 + 6)
-    println(blockOn { sumList(listOf(4, 5)) })           // 18  (8 + 10)
+    println(blockOn { sumArray(intArrayOf(1, 2, 3)) })          // 12  (2 + 4 + 6)
+    println(blockOn { sumList(listOf(4, 5)) })                  // 18  (8 + 10)
+    println(blockOn { sumUntilNeg(intArrayOf(1, 0, 2, -1, 9)) }) // 6   (2 + skip + 4 + break)
 }
