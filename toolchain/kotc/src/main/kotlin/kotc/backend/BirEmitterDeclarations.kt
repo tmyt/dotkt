@@ -540,29 +540,30 @@ internal fun BirEmitter.attrsJson(anns: List<IrConstructorCall>): String {
 	}.joinToString(",")
 }
 
-internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDeclaration, String>> = emptyList(), isObject: Boolean = false, liftedAnon: Boolean = false, generated: Boolean = false): String {
+internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDeclaration, String>> = emptyList(), isObject: Boolean = false, captureEnclosingGenerics: Boolean = false, generated: Boolean = false): String {
 	val baseType = klass.superTypes
 		.firstOrNull { val k = it.classifierOrNull?.owner as? IrClass; k != null && k.kind == ClassKind.CLASS && k.fqNameWhenAvailable?.asString() != "kotlin.Any" }
 	val base = baseType?.classifierOrNull?.owner as? IrClass
-	// A lifted anonymous-object class that CAPTURES enclosing generic type parameters (reified CLR generics —
-	// `object : Box<T>`, or an inlined `object` whose supertype/captures resolve to the enclosing `T`) must be GENERIC
-	// over them itself: on the CLR a `tv` referenced by its members is unresolved unless the flattened class DECLARES
-	// the param and the construction site instantiates it with the enclosing arg (mirrors newClosure/newSam). This runs
-	// ONLY for the lifted object-literal path (`liftedAnon`) — a normal named declaration owns all of its params — and
-	// derives the captured set STRUCTURALLY from the class's real type positions (supertypes, own type-param bounds,
-	// captured-var field types, ctor/member parameter + return + body-operand types). It deliberately does NOT scan a
-	// member's CALL nodes: a `tv` inside a call's `sig` metadata is the CALLEE's own param (e.g. `clrCollAddAll<T>`),
-	// NOT an enclosing capture — that over-captured, giving a normal `ArrayList<E>` a spurious `T` (arity-2, rt break).
+	// A LIFTED anonymous/local class that CAPTURES enclosing generic type parameters (reified CLR generics —
+	// `object : Box<T>`, an inlined `object` whose supertype/captures resolve to the enclosing `T`, or a function-local
+	// `class L { val x: T = t }`) must be GENERIC over them itself: on the CLR a `tv` referenced by its members is
+	// unresolved unless the flattened class DECLARES the param and the construction site instantiates it with the
+	// enclosing arg (mirrors newClosure/newSam). This runs ONLY for the LIFTED object-literal / local-class paths
+	// (`captureEnclosingGenerics`) — a normal top-level/nested named declaration owns all of its params — and derives the
+	// captured set STRUCTURALLY from the class's real type positions (supertypes, own type-param bounds, captured-var
+	// field types, ctor/member parameter + return + body-operand types). It deliberately does NOT scan a member's CALL
+	// nodes: a `tv` inside a call's `sig` metadata is the CALLEE's own param (e.g. `clrCollAddAll<T>`), NOT an enclosing
+	// capture — that over-captured, giving a normal `ArrayList<E>` a spurious `T` (arity-2, rt break).
 	//
 	// CRITICAL (the flip): the captured param `T` is declared on the ENCLOSING function/type, so birType renders every
-	// member use of it as a scope="method"/"type" `tv` of that ENCLOSING owner — which is unresolvable once the anon is
-	// flattened to a standalone generic class. So the scan+install runs BEFORE the members are rendered, and installs a
+	// member use of it as a scope="method"/"type" `tv` of that ENCLOSING owner — which is unresolvable once the class is
+	// flattened to a standalone generic type. So the scan+install runs BEFORE the members are rendered, and installs a
 	// typeArgSubst remapping each captured param onto THIS class's own generic space (scope="type", the flattened index
-	// AFTER the anon's own params). Rendering members then honors the remap → resolvable `{tv,type,i}`; restored at end.
+	// AFTER the class's own params). Rendering members then honors the remap → resolvable `{tv,type,i}`; restored at end.
 	val ownTps = innerEnclosingTypeParams(klass) + klass.typeParameters
 	val ownNames = ownTps.map { it.name.asString() }.toHashSet()
 	val capturedTpParams = LinkedHashSet<org.jetbrains.kotlin.ir.declarations.IrTypeParameter>()
-	if (liftedAnon) {
+	if (captureEnclosingGenerics) {
 		fun scan(t: IrType, excluded: Set<String>) {
 			val cls = t.classifierOrNull
 			if (cls is org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol) {

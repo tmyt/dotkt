@@ -393,6 +393,13 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 		return adapterRef(node, fn)
 	val dispatchIdx = fn.parameters.indexOfFirst { it.kind == IrParameterKind.DispatchReceiver }
 	val hasExt = fn.parameters.any { it.kind == IrParameterKind.ExtensionReceiver }
+	// A suspend function reference (`::suspendFn`, typed KSuspendFunctionN) -> a `newSuspendLambda` ADAPTER: the
+	// suspend lambda `{ args -> target(args) }` whose body is a suspendCall to the target. A plain `newDelegate`
+	// cannot carry the cold-suspend protocol (bir2cir has no suspend-delegate lowering; it DOES build a SuspendLambda
+	// SM from `newSuspendLambda`). kotc emits ONLY the pure suspend FACTS (the `sfunc:`/suspend-`fn` funcType +
+	// `suspendCall:true` on the inner call); bir2cir owns the SM transform. Covers top-level, bound and unbound MEMBER
+	// references; an ext-receiver suspend ref (rarer) falls through to the clean deferral below.
+	if (fn.isSuspend && !hasExt) return suspendFunctionRef(node, fn, dispatchIdx)
 	// `::topLevelFun` — no receiver: a delegate over the static file-class method (FindStatic resolves it).
 	if (dispatchIdx < 0 && !hasExt)
 		return """{"k":"newDelegate","method":${str(fn.name.asString())},"funcType":${funcTypeOf(fn).toJson()}}"""
@@ -538,6 +545,66 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 	}
 	return unsupported(node, "a method reference to a .NET method (`::${fn.name}`)",
 		"wrap the call in a lambda instead, e.g. `{ a -> x.${fn.name}(a) }`")
+}
+
+/**
+ * A suspend function reference (`::suspendFn` / `obj::suspendMethod` / `Type::suspendMethod`, typed KSuspendFunctionN)
+ * -> a `newSuspendLambda` ADAPTER: the suspend lambda `{ a1..an -> target(a1..an) }` whose body is a single
+ * `suspendCall`-tagged call to the referenced function. kotc emits ONLY pure Kotlin facts (the suspend `fn` funcType +
+ * `suspendCall:true`); bir2cir's SuspendLambdaLowering builds the SuspendLambda state machine from this node — a plain
+ * suspend `newDelegate` has no cold-suspend lowering. The lambda's params come from the reference's RESOLVED type
+ * (`birType(node.type)` as a suspend `Fn`, receiver-FIRST for an unbound member ref). A BOUND receiver is captured into
+ * a `__recv` field (evaluated once, eagerly, at reference-creation time) through the `capValues` channel
+ * SuspendLambdaLowering consumes; an UNBOUND member's receiver is the lambda's leading param. Only user/stdlib targets
+ * (top-level, bound/unbound MEMBER); an ext-receiver or .NET-owned suspend ref is a clean deferral in the caller.
+ */
+internal fun BirEmitter.suspendFunctionRef(node: IrFunctionReference, fn: IrSimpleFunction, dispatchIdx: Int): String {
+	val fnType = birType(node.type) as? TypeNode.Fn
+		?: return unsupported(node, "a suspend function reference",
+			"its inferred type was not a resolvable suspend function type")
+	val boundRecv = if (dispatchIdx >= 0) node.arguments.getOrNull(dispatchIdx) else null
+	val ownerClass = fn.parent as? IrClass
+	val member = fn.name.asString()
+	val ret = fnType.ret
+	val virtual = fn.modality != Modality.FINAL || fn.overriddenSymbols.isNotEmpty()
+	val anySlotTag = if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""
+	// The lambda's OWN params = the reference type's params (receiver-first for an unbound member ref), named __p0..__pn.
+	val paramNames = fnType.params.indices.map { "__p$it" }
+	val paramsJson = fnType.params.mapIndexed { i, t -> """{"name":${str(paramNames[i])},"type":${t.toJson()}}""" }.joinToString(",")
+	fun localArg(name: String) = """{"k":"local","name":${str(name)}}"""
+	// Build (captures, capValues, bodyCall) by reference kind. The inner call MIRRORS the direct-call shape for this
+	// callee so bir2cir attributes it identically; `suspendCall:true` is the fact SuspendColdLowering's FunGen segments on.
+	val captures: String; val capValues: String?; val bodyCall: String
+	when {
+		dispatchIdx >= 0 && boundRecv != null && ownerClass != null && !isExternalNetType(ownerClass) -> {
+			// Bound member `obj::m` — receiver captured into `__recv`; all lambda params are the target's regular args.
+			val args = paramNames.joinToString(",") { localArg(it) }
+			captures = """{"name":"__recv","type":${birType(boundRecv.type).toJson()}}"""
+			capValues = expr(boundRecv)
+			bodyCall = """{"k":"callInstance","ownerType":${fqnJson(typeName(ownerClass))},"virtual":$virtual,"recv":${localArg("__recv")},"method":${str(member)}${overloadSigField(fn)},"args":[$args]$anySlotTag,"suspendCall":true}"""
+		}
+		dispatchIdx >= 0 && boundRecv == null && ownerClass != null && !isExternalNetType(ownerClass) -> {
+			// Unbound member `Type::m` — the leading lambda param is the receiver, the rest are the target's regular args.
+			val args = paramNames.drop(1).joinToString(",") { localArg(it) }
+			captures = ""; capValues = null
+			bodyCall = """{"k":"callInstance","ownerType":${fqnJson(typeName(ownerClass))},"virtual":$virtual,"recv":${localArg(paramNames.first())},"method":${str(member)}${overloadSigField(fn)},"args":[$args]$anySlotTag,"suspendCall":true}"""
+		}
+		dispatchIdx < 0 -> {
+			// Top-level `::fn` — all lambda params are the target's regular args; an owner:null static call.
+			val args = paramNames.joinToString(",") { localArg(it) }
+			captures = ""; capValues = null
+			bodyCall = """{"k":"callStatic","owner":null,"method":${str(member)}${overloadSigField(fn)},"args":[$args],"suspendCall":true}"""
+		}
+		else -> return unsupported(node, "a suspend function reference",
+			"its receiver could not be resolved to a supported (top-level or user-member) suspend target")
+	}
+	val body = if (ret == TypeNode.Fqn("kotlin.Unit")) """{"k":"exprStmt","expr":$bodyCall}""" else """{"k":"return","value":$bodyCall}"""
+	val capValuesJson = if (capValues == null) "" else ""","capValues":[$capValues]"""
+	// The SM must be generic over any enclosing type params in the reference's signature (reified CLR generics); bare
+	// names (bir2cir prepends `gp:`), consistent with suspendLambda().
+	val freeTps = freeTypeParams(fn.parameters.map { it.type } + listOf(fn.returnType))
+	val typeParamsBare = freeTps.joinToString(",") { str(it.name.asString()) }
+	return """{"k":"newSuspendLambda","arity":${fnType.params.size},"captures":[$captures]$capValuesJson,"params":[$paramsJson],"suspendRet":${ret.toJson()},"typeParams":[$typeParamsBare],"body":[$body],"funcType":${fnType.toJson()}}"""
 }
 
 /**
@@ -707,9 +774,11 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 		return unsupported(node, "this property reference",
 			"a member extension-receiver property reference (KProperty2) has no supported lowering yet")
 	val prop = node.symbol.owner
-	if (prop.isLateinit || isClrField(prop))
-		return unsupported(node, "this property reference",
-			"a lateinit/@ClrField property reference has no supported lowering yet")
+	// A `lateinit var` / `@ClrField` member property has PLAIN-BACKING-FIELD storage (no get_/set_ accessor slot) —
+	// its get/set below read/write the field directly (`lateinitGet`/`field`/`setFieldExpr`), the SAME nodes the
+	// ordinary member-property access path emits for these (BirEmitterCalls). `fieldBacked` gates that in readBody/
+	// setMethod; everything else (interface identity, receiver capture, generics) is shared with the accessor path.
+	val fieldBacked = prop.isLateinit || isClrField(prop)
 	val getterFn = node.getter?.owner ?: prop.getter
 		?: return unsupported(node, "this property reference", "the referenced property has no getter")
 	// A reference to a property DIRECTLY overriding kotlin.CharSequence.length is a clean deferral: its accessor
@@ -801,9 +870,20 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 		val method = str((if (isSetter) "set_" else "get_") + name)
 		return """{"k":"callInstance","ownerType":${memberOwner.toJson()},"virtual":$virtual,"recv":${recvExprIn()},"method":$method,"args":[$args]}"""
 	}
+	// A field-backed member property (`lateinit var`/`@ClrField`) reads/writes its backing field directly — the SAME
+	// `lateinitGet`/`field`/`setFieldExpr` shapes the ordinary member-access path emits — over the lift's receiver
+	// (bound = the captured `__recv` field, unbound = the `receiver` param).
+	fun fieldAccess(isSetter: Boolean, valueArg: String?): String = when {
+		isSetter -> """{"k":"setFieldExpr","ownerType":${memberOwner.toJson()},"recv":${recvExprIn()},"name":${str(name)},"value":$valueArg}"""
+		prop.isLateinit -> """{"k":"lateinitGet","ownerType":${memberOwner.toJson()},"recv":${recvExprIn()},"name":${str(name)}}"""
+		// A field read carries the constructed-generic ret hint (a `tv`-typed field on `B<T>`) — parity with the
+		// ordinary member field-read path (BirEmitterCalls).
+		else -> """{"k":"field","ownerType":${memberOwner.toJson()},"recv":${recvExprIn()},"name":${str(name)}${retHint((memberOwner as? TypeNode.Fqn)?.args != null, getterFn.returnType)}}"""
+	}
 
 	val readBody: String = when {
 		hasExtRecv -> """{"k":"return","value":${extAccessorCall(false, null)}}"""
+		declClass != null && fieldBacked -> """{"k":"return","value":${fieldAccess(false, null)}}"""
 		declClass == null -> {
 			// Top-level property: mirrors the ordinary top-level property-read path (a plain val/var is a static
 			// field; a computed one — no backing field — is a get_<name>() static).
@@ -826,6 +906,7 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 	val setMethod: String? = setterFn?.let {
 		val setBody = when {
 			hasExtRecv -> """{"k":"exprStmt","expr":${extAccessorCall(true, """{"k":"local","name":"value"}""")}}"""
+			declClass != null && fieldBacked -> """{"k":"exprStmt","expr":${fieldAccess(true, """{"k":"local","name":"value"}""")}}"""
 			declClass == null -> {
 				val owner = fileClassOf(prop)
 				if (prop.backingField == null)
@@ -1033,20 +1114,24 @@ internal fun BirEmitter.liftLocalClass(klass: IrClass): String {
 	val cname = "dotkt\$${klass.name.asString()}\$${scopeCounter++}"
 	anonNames[klass] = cname
 	val captured = capturedVarsForObject(klass)
-	// Writing a captured outer local from the class needs heap ref-cells (same as the object-literal case).
+	// Writing a captured outer local from the class is heap ref-celled the SAME way the lambda/object path is:
+	// `computeRefCells` (run over the enclosing fn in `method`) promotes a mutated captured `var` to a shared
+	// `dotkt$Ref<T>` BEFORE we get here, so `isRefCell(it)` is true and the class reads/writes the shared cell. The
+	// guard below only fires on a mutated capture that is NOT a value declaration (unreachable for valid IR — only a
+	// `var` local is both captured and mutable) — kept as a defensive invariant-assert, not a real limitation.
 	if (captured.any { it in mutatedIn(klass) && !isRefCell(it) })
 		return unsupported(klass, "a local class that writes to a captured outer variable",
 			"read-only capture works; pass the value in by constructor, or use a class field")
-	// Capturing an enclosing type parameter isn't supported for a local class yet (it would need a generic lift +
-	// constructed type uses) — a clear error beats invalid IL. A capturing lambda or local fun does support it.
-	if (freeTypeParams(captured.map { it.type }).isNotEmpty())
-		return unsupported(klass, "a local class that captures an enclosing generic type parameter",
-			"move the logic into a (capturing) lambda or a local fun, which do support it")
 	val capPairs = captured.map { it to captureFieldName(it) }
 	capPairs.forEach { (decl, fname) ->
 		captureSubst[decl] = """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":${str(fname)}}"""
 	}
-	liftedTypes.add(typeDef(klass, capPairs, generated = true))
+	// A local class that references an enclosing type parameter (in a capture field, its supertype/bounds, or a member
+	// signature/body operand) is lifted GENERICALLY over those params — reified CLR generics, exactly as the lifted
+	// object-literal path (blockExpr) does. `captureEnclosingGenerics` runs typeDef's structural scan, which records
+	// `liftedTypeArgParams[klass]`; each `new L()` site (IrConstructorCall) instantiates the flattened class with the
+	// enclosing args from that record. A non-generic local class captures nothing and lifts unchanged.
+	liftedTypes.add(typeDef(klass, capPairs, captureEnclosingGenerics = true, generated = true))
 	capPairs.forEach { (decl, _) -> captureSubst.remove(decl) }
 	localClassCaptures[klass] = captured
 	return """{"k":"block","body":[]}"""
