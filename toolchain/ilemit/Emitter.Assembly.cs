@@ -151,11 +151,11 @@ sealed partial class Emitter
                 if (ti.BaseName.StartsWith("clr:") || ti.BaseName.StartsWith("clrg:")) ti.TB.SetParent(ti.ClrBase = MapType(ti.BaseName));
                 else
                 {
-                    // A constructed user base (`...IteratorImpl[gp:E]` — an inner extending an inner) is INSTANTIATED via
-                    // ParseOwner. A user base emitted OPEN (`AbstractCollection` for `AbstractList<E> : AbstractCollection
-                    // <E>`) must NOT stay an un-instantiated open generic ("could not load" at type-load) — instantiate it
-                    // with this type's leading generic params POSITIONALLY (the BIR keeps the open name so FindMethod still
-                    // walks the base chain by bare name for inherited members like AbstractIterator.setNext).
+                    // A constructed user base (`AbstractList[tv E]` / `AbstractCoroutineContextKey[..concrete..]`) carries its
+                    // ACTUAL resolved type args in the CIR — the emitting layer (kotc `ownerSpec`) always supplies them, so
+                    // ilemit INSTANTIATES it via ParseOwner (`MakeGenericType` on the carried args) and does NOT re-derive
+                    // them. The BIR keeps the bare open name in `BaseName` so FindMethod still walks the base chain by bare
+                    // name for inherited members (e.g. AbstractIterator.setNext).
                     var (bopen, bconstructed) = ti.BaseFqn != null ? ParseOwnerT(ti.BaseFqn) : ParseOwner(ti.BaseName);
                     if (bconstructed != null)
                     {
@@ -168,8 +168,17 @@ sealed partial class Emitter
                     {
                         var baseTb = baseTi.TB;
                         var bArity = baseTb.IsGenericTypeDefinition ? baseTb.GetGenericArguments().Length : 0;
-                        var myArgs = ti.TB.IsGenericTypeDefinition ? ti.TB.GetGenericArguments() : Type.EmptyTypes;
-                        ti.TB.SetParent(bArity > 0 && myArgs.Length >= bArity ? baseTb.MakeGenericType(myArgs.Take(bArity).ToArray()) : (Type)baseTb);
+                        // A generic base MUST arrive with its type args carried (bconstructed != null above). If it reaches
+                        // here arg-less with arity>0, the emitting layer (bir2cir/kotc) dropped them — ilemit does NOT infer
+                        // base args from the subclass's own params (that positional inference silently mis-constructed a base
+                        // whose args differ from the subclass's tv, e.g. AbstractCoroutineContextKey). Fail loud so the
+                        // missed producer is diagnosable, not silently mis-built into an open-generic parent (invalid: the
+                        // CLR rejects an un-instantiated generic definition as a parent at type-load — TypeLoadException).
+                        if (bArity > 0)
+                            throw new InvalidOperationException(
+                                $"generic base '{bopen}' (arity {bArity}) emitted without type args on '{ti.TB.Name}' — " +
+                                "the emitting layer dropped them; ilemit does not infer base args");
+                        ti.TB.SetParent(baseTb);
                     }
                     // A bare external .NET base (kotc's pure-FQN output for a non-`clr:`-marked .NET supertype, e.g.
                     // `System.Exception` via facadegen `import`): not in `_types`, so resolve it by reflection. Record it

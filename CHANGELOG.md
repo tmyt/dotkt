@@ -21,6 +21,18 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   (external generic base + concrete args) alongside `cases/il-genbase` (generic-subclass tv-flow). The real
   `coroutines.ktproj` now clears kotc + bir2cir entirely and advances past this to a separate `kotlin.collections.ArrayDeque`
   ilemit-resolution blocker.
+- **ilemit (area:ilemit): retired the dead SetParent positional-arg inference for generic user bases — ilemit no longer
+  RE-RESOLVES base type args an earlier layer already resolved.** With kotc ([tmyt/dotkt#76]) now always carrying a
+  generic base's frontend-resolved type args, the old fallback in `Emitter.Assembly.cs` — instantiate an arg-less
+  in-`_types` generic base by positionally flowing the *subclass's own* leading type params into it
+  (`baseTb.MakeGenericType(myArgs.Take(bArity))`) — is unreachable and was a layer violation: it only worked when
+  subclass-tv == base-args and silently mis-built the base when they differ (the `AbstractCoroutineContextKey` concrete-args
+  bug). Removed; replaced with a LOUD `InvalidOperationException` if a generic base (arity>0) ever arrives without type args
+  ("the emitting layer dropped them; ilemit does not infer base args"), so any missed producer is immediately diagnosable
+  rather than silently mis-constructed into an invalid open-generic parent (the CLR rejects an un-instantiated generic
+  definition as a parent at type-load). The non-generic in-`_types` base path (arity 0 → `SetParent(baseTb)`) is preserved.
+  Gate GREEN; `il-genbase` (tv-flow) + `il-genbaseext` (concrete args) both stay RUN-green through the carried args; the
+  `coroutines.ktproj` port still reaches the same separate ArrayDeque blocker with no base-class regression.
 - **kotc + bir2cir ([tmyt/dotkt#75], area:kotc, area:bir2cir): the cold-SM nested-closure capture family that blocked
   the kotlinx.coroutines `flow` port is dissolved — a captured declaration is no longer serialized under two divergent
   names, so every real flow-operator shape (`unsafeFlow`/`transform`/`filter`/`filterIsInstance`/… the whole
