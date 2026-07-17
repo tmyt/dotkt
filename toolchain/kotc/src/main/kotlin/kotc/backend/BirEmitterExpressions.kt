@@ -205,6 +205,10 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 			val ctorArgTypes = node.symbol.owner.parameters
 				.filter { it.kind == IrParameterKind.Regular }
 				.joinToString(",") { birType(it.type).toJson() }
+			// `ownerSpec` names a lifted generic-capturing LOCAL CLASS as its CONSTRUCTED `L<T>` (own args from
+			// `node.type` + the enclosing captured params it recorded in `liftedTypeArgParams`), so a
+			// `fun <T> f(){ class L{ val x:T=t }; L() }` instantiates `L<T>` at each `new` site. A non-generic local
+			// class / any other type keeps the plain identity.
 			"""{"k":"new","type":${(klass?.let { ownerSpec(it, node.type) } ?: OBJ).toJson()},"argTypes":[$ctorArgTypes],"args":[$args]}"""
 		}
 		}

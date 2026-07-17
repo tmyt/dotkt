@@ -146,15 +146,16 @@ internal fun BirEmitter.birType(t: IrType): TypeNode {
 	// the same bare Fqn — it is non-generic with no clrName); bir2cir SUBSTITUTES it to the synthesized
 	// `dotkt_CharSequence` interface (no faithful .NET equivalent), exactly as it substitutes `kotlin.String`.
 	// A function type as a value (e.g. a `(P)->R` parameter): `kotlin.FunctionN` -> `fn` (Func/Action shape). A
-	// `kotlin.coroutines.SuspendFunctionN` (a `suspend (P)->R` value) sets `fn.suspend=true` — the SAME delegate
+	// `kotlin.coroutines.SuspendFunctionN` (a `suspend (P)->R` value) — and its callable-REFERENCE twin
+	// `kotlin.reflect.KSuspendFunctionN` (the inferred type of `::suspendFn`) — set `fn.suspend=true`, the SAME delegate
 	// shape carrying the suspend FACT (which the newSuspendLambda SM builder needs). bir2cir ERASES a suspend `fn`
 	// to `object` wherever it lands in a TYPE slot (only the `funcType` node key keeps it), so kotc bakes no
-	// coroutine ABI here — behavior-preserving.
-	if (fqp != null && (fqp.startsWith("kotlin.coroutines.SuspendFunction") || fqp.startsWith("kotlin.Function"))) {
+	// coroutine ABI here — behavior-preserving. (Mirrors the non-suspend `KFunctionN`->`fn` erasure further below.)
+	if (fqp != null && (fqp.startsWith("kotlin.coroutines.SuspendFunction") || fqp.startsWith("kotlin.reflect.KSuspendFunction") || fqp.startsWith("kotlin.Function"))) {
 		val args = (t as? IrSimpleType)?.arguments.orEmpty().mapNotNull { (it as? IrTypeProjection)?.type }
 		if (args.isNotEmpty()) {
 			val ret = args.last(); val ps = args.dropLast(1)
-			val suspend = fqp.startsWith("kotlin.coroutines.SuspendFunction")
+			val suspend = fqp.startsWith("kotlin.coroutines.SuspendFunction") || fqp.startsWith("kotlin.reflect.KSuspendFunction")
 			// A RECEIVER function type `P.() -> R` is `FunctionN<P,…,R>` carrying the `kotlin.ExtensionFunctionType`
 			// annotation (a frontend fact). Kotlin flattens the receiver to the first delegate arg on the CLR, but that
 			// erases the "this was a receiver" bit — so a re-consuming DotKt assembly loses the implicit `this: P` in a
@@ -239,6 +240,10 @@ internal fun BirEmitter.birType(t: IrType): TypeNode {
 	if (klass != null && (klass.kind == ClassKind.CLASS || klass.kind == ClassKind.INTERFACE)) {
 		// An `inner class` re-declares its enclosing class(es)' type params; reference it WITH those (as `tv`).
 		val enclArgs = innerEnclosingTypeParams(klass).map { tvOf(it) }
+		// A LIFTED local class made generic over enclosing type params (liftLocalClass) is DENOTABLE — a `val l: L`
+		// slot / member access `l.x` must name the CONSTRUCTED `L<T>`. Append the captured params (flattened LAST).
+		// Empty for a non-generic local class and every other type (byte-identical). See liftedCaptureArgs.
+		val liftedCaps = liftedCaptureArgs(klass)
 		if (klass.typeParameters.isNotEmpty()) {
 			val sargs = (t as? IrSimpleType)?.arguments
 			if (!sargs.isNullOrEmpty()) {
@@ -253,10 +258,11 @@ internal fun BirEmitter.birType(t: IrType): TypeNode {
 						else -> argElemNullable(at)
 					}
 				}
-				return TypeNode.Fqn(typeName(klass), enclArgs + ownArgs)
+				return TypeNode.Fqn(typeName(klass), enclArgs + ownArgs + liftedCaps)
 			}
 		}
-		if (enclArgs.isNotEmpty()) return TypeNode.Fqn(typeName(klass), enclArgs)
+		val head = enclArgs + liftedCaps
+		if (head.isNotEmpty()) return TypeNode.Fqn(typeName(klass), head)
 		return TypeNode.Fqn(typeName(klass))
 	}
 	return OBJ
@@ -420,13 +426,25 @@ internal fun BirEmitter.visOf(d: IrDeclarationWithVisibility): String = when (d.
  * the type's own parameters) -> bare name, so members resolve against the open FieldBuilder/MethodBuilder
  * directly (the correct `!0`-typed reference), not a self-instantiation.
  */
+/** For a LIFTED local/object class made generic over enclosing type params (liftLocalClass/blockExpr), the captured
+ *  type args to append to its constructed identity — resolved in the CURRENT scope (an active inline `typeArgSubst`,
+ *  else the enclosing `tv`). Empty for every other class (`liftedTypeArgParams` is populated ONLY for those lifts, and
+ *  is an EMPTY list for a non-generic lift → byte-identical for all pre-existing types). Centralizes the "a local class
+ *  is DENOTABLE" append so the var-slot birType, member-access ownerSpec, and the `new` site all name the SAME `L<T>`. */
+internal fun BirEmitter.liftedCaptureArgs(klass: IrClass): List<TypeNode> =
+	liftedTypeArgParams[klass]?.map { typeArgSubst[it] ?: tvOf(it) }.orEmpty()
+
 internal fun BirEmitter.ownerSpec(klass: IrClass?, recvType: IrType?): TypeNode {
 	klass ?: return TypeNode.Fqn("?")
 	val name = typeName(klass)
 	// An `inner class` re-declares its enclosing type params; construct it WITH them (as `tv`). See innerEnclosingTypeParams.
 	val enclArgs = innerEnclosingTypeParams(klass).map { tvOf(it) }
-	if (klass.typeParameters.isEmpty())
-		return if (enclArgs.isNotEmpty()) TypeNode.Fqn(name, enclArgs) else TypeNode.Fqn(name)
+	// A lifted generic-capturing local/object class: its captured enclosing params come LAST (the flattened order).
+	val liftedCaps = liftedCaptureArgs(klass)
+	if (klass.typeParameters.isEmpty()) {
+		val head = enclArgs + liftedCaps
+		return if (head.isNotEmpty()) TypeNode.Fqn(name, head) else TypeNode.Fqn(name)
+	}
 	// A type-parameter argument keeps its `tv` form (resolvable in the enclosing generic context), NOT the open type.
 	// A `Unit` TYPE-ARG stays the real Unit identity; a STAR projection -> Any (mirroring birType).
 	val args = (recvType as? IrSimpleType)?.arguments?.map { a ->
@@ -437,7 +455,7 @@ internal fun BirEmitter.ownerSpec(klass: IrClass?, recvType: IrType?): TypeNode 
 			else -> birType(at)
 		}
 	}
-	val all = enclArgs + (args ?: emptyList())
+	val all = enclArgs + (args ?: emptyList()) + liftedCaps
 	return if (all.isEmpty()) TypeNode.Fqn(name) else TypeNode.Fqn(name, all)
 }
 

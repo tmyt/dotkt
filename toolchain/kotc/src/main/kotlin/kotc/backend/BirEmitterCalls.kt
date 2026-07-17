@@ -1007,6 +1007,61 @@ internal fun BirEmitter.call(call: IrCall): String {
 	// looks for `<ReferencingFile>Kt.prop` and fails (`field XKt.prop not found`; feedback item 11).
 	(callee.correspondingPropertySymbol?.owner)?.let { p ->
 		if (declaringClass == null) {
+			// A TOP-LEVEL delegated property (`val x by Provider()`): its storage is a STATIC `x$delegate` field on the
+			// file class; the access routes to the delegate's getValue/setValue with a NULL thisRef (no enclosing
+			// instance) + a materialized KProperty. Mirrors the member delegated path (declaringClass != null) with a
+			// static delegate field and a `null` thisRef. bir2cir/ilemit resolve the real getValue/setValue — no CLR
+			// knowledge here. A plain top-level property (no delegate) falls through to the static-field/accessor path.
+			if (p.isDelegated) {
+				val bf = p.backingField
+				val fileClass = fileClassOf(p)
+				val delegate = bf?.let { """{"k":"staticField","ownerType":${fqnJson(fileClass)},"name":${str(it.name.asString())}}""" }
+				// The delegate convention's `thisRef` (getValue/setValue's 1st arg): a plain top-level property has NO
+				// enclosing instance -> a `null` Any? const; a top-level EXTENSION delegated property passes its extension
+				// RECEIVER as thisRef (never silently dropped — that would run getValue with the wrong receiver).
+				val thisRef = extensionReceiver(call)?.let { expr(it) } ?: """{"k":"const","type":${OBJ.toJson()},"value":null}"""
+				// `by lazy` (top-level): a real kotlin.Lazy<T> -> read its `value` getter, dropping thisRef/KProperty
+				// (mirrors the member `by lazy` inline).
+				if (callee === p.getter && delegate != null && bf?.type?.classFqName?.asString() == "kotlin.Lazy") {
+					val owner = ownerSpec(bf.type.classifierOrNull?.owner as? IrClass, bf.type)
+					return """{"k":"callInstance","ownerType":${owner.toJson()},"virtual":true,"recv":$delegate,"method":"get_value","args":[]${retHint((owner as? TypeNode.Fqn)?.args != null, callee.returnType)}}"""
+				}
+				val delegateClass = bf?.type?.classifierOrNull?.owner as? IrClass
+				val isUserDelegate = delegateClass != null && !isExternalNetType(delegateClass) &&
+					delegateClass.fqNameWhenAvailable?.asString()?.startsWith("kotlin") != true
+				val bfFq = bf?.type?.classFqName?.asString()
+				val (owner, ownerGeneric) = when {
+					isUserDelegate -> str(typeName(delegateClass!!)) to false
+					bf != null && (bfFq == "kotlin.properties.ReadWriteProperty" || bfFq == "kotlin.properties.ReadOnlyProperty") -> {
+						val os = ownerSpec(bf.type.classifierOrNull?.owner as? IrClass, bf.type)
+						os.toJson() to ((os as? TypeNode.Fqn)?.args != null)
+					}
+					else -> null to false
+				}
+				if (delegate != null && owner != null) {
+					val kprop = kPropertyStub(p.name.asString())
+					return if (callee === p.setter)
+						"""{"k":"callInstance","ownerType":$owner,"virtual":true,"recv":$delegate,"method":"setValue","args":[$thisRef,$kprop,${expr(regularArgs(call).first())}]}"""
+					else """{"k":"callInstance","ownerType":$owner,"virtual":true,"recv":$delegate,"method":"getValue","args":[$thisRef,$kprop]${retHint(ownerGeneric, callee.returnType)}}"""
+				}
+				// `val x by map` (top-level, extension-convention delegate): FIR resolved the accessor to the stdlib
+				// getValue/setValue extension — re-emit it as the owner-null static call the general top-level-extension
+				// path produces (thisRef null, receiver-first args + typeArgs). Mirrors the member Map fallthrough.
+				run {
+					val accessor = callee as? IrSimpleFunction ?: return@run
+					val stmts = (accessor.body as? IrBlockBody)?.statements ?: return@run
+					val bodyCall = stmts.mapNotNull { st -> (st as? IrReturn)?.value as? IrCall ?: st as? IrCall }.singleOrNull() ?: return@run
+					val target = bodyCall.symbol.owner
+					if (delegate == null || target.parent is IrClass) return@run
+					if (target.name.asString() != "getValue" && target.name.asString() != "setValue") return@run
+					val kprop = kPropertyStub(p.name.asString())
+					val ta = typeArgsJson(bodyCall)
+					val setArg = if (callee === p.setter) ",${expr(regularArgs(call).first())}" else ""
+					return """{"k":"callStatic","owner":null,"method":${str(target.name.asString())}${overloadSigField(target)}$ta${retHintStr(ta.isNotEmpty(), birType(callee.returnType))},"args":[$delegate,$thisRef,$kprop$setArg]}"""
+				}
+				return unsupported(call, "this top-level delegated property",
+					"its delegate type could not be resolved to a supported form (lazy, a custom getValue/setValue, or a Map)")
+			}
 			val ext = extensionReceiver(call)
 			// C7: a TOP-LEVEL EXTENSION property (`val List<T>.lastIndex`, `val Int.absoluteValue`, `val
 			// CharSequence.indices`) has NO real static field — its value is an accessor emitted by the property's

@@ -343,15 +343,15 @@ internal fun BirEmitter.blockExpr(block: IrBlock): String {
 			capPairs.forEach { (decl, fname) ->
 				captureSubst[decl] = """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":${str(fname)}}"""
 			}
-			liftedTypes.add(typeDef(anon, capPairs, liftedAnon = true, generated = true))
+			liftedTypes.add(typeDef(anon, capPairs, captureEnclosingGenerics = true, generated = true))
 			capPairs.forEach { (decl, _) -> val prev = savedSubst[decl]; if (prev != null) captureSubst[decl] = prev else captureSubst.remove(decl) }
-			// Instantiate the flattened generic anon with the captured params rendered in THIS (enclosing) scope:
-			// birType honors any active inline `typeArgSubst` and otherwise yields the enclosing `tv` (method/type).
-			val tpParams = liftedTypeArgParams[anon].orEmpty()
+			// Instantiate the flattened generic anon with the captured params rendered in THIS (enclosing) scope
+			// (`liftedCaptureArgs` honors any active inline `typeArgSubst`, else the enclosing `tv`) — shared with the
+			// var-slot birType / member-access ownerSpec so all three name the SAME `dotkt$objN<T>`.
+			val liftedCaps = liftedCaptureArgs(anon)
 			// Capture values are evaluated in the OUTER context (this frame's captureSubst restored above).
 			val capArgs = captured.joinToString(",") { capValueExpr(it) }
-			val newType = if (tpParams.isEmpty()) TypeNode.Fqn(cname)
-				else TypeNode.Fqn(cname, tpParams.map { typeArgSubst[it] ?: tvOf(it) })
+			val newType = if (liftedCaps.isEmpty()) TypeNode.Fqn(cname) else TypeNode.Fqn(cname, liftedCaps)
 			return """{"k":"new","type":${newType.toJson()},"args":[$capArgs]}"""
 		}
 	}

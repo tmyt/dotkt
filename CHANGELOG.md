@@ -5,6 +5,27 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Fixed
+
+- **kotc ([tmyt/dotkt#66]/[#67]/[#68]/[#69]/[#70], umbrella [#72], area:kotc): lower five fail-loud
+  callable-reference / capture / delegate shapes the frontend accepts (stop aborting the compile).**
+  Each was a whole-compile abort on frontend-accepted IR; all now lower to pure Kotlin BIR facts (bir2cir
+  owns any CLR/coroutine transform). (#66) a callable reference to a `lateinit var` / `@ClrField` property
+  (`b::name`, `Box::name`) — the lifted `KProperty` class now reads/writes the plain backing field
+  (`lateinitGet`/`field`/`setFieldExpr`) instead of a non-existent `get_/set_` accessor slot. (#67) a
+  reference to a `suspend` function (`::work`, `d::apply`) is emitted as a `newSuspendLambda` adapter (the
+  suspend lambda `{ a -> target(a) }` with a `suspendCall`-tagged body; bir2cir builds the `SuspendLambda`
+  SM), and `kotlin.reflect.KSuspendFunctionN` now erases to a suspend `fn` type like `KFunctionN` — a plain
+  suspend `newDelegate` had no cold-suspend lowering and the reflect type-token leaked to ilemit. (#68) a
+  local class / object expression that WRITES a captured outer `var` now shares the enclosing frame's heap
+  ref-cell (the mutated capture is promoted by `computeRefCells` before the lift). (#69) a local class
+  capturing an enclosing TYPE PARAMETER is lifted GENERICALLY (reified CLR generics) — the object-literal
+  generic-capture scan is reused, and a local class being DENOTABLE (`val l: L`, member access `l.x`),
+  `ownerSpec`/birType now name the constructed `L<T>`. (#70) a TOP-LEVEL delegated property with an
+  arbitrary `getValue`/`setValue` provider (`val x by Provider()`) routes through the static
+  `x$delegate.getValue/setValue` with a null thisRef (only member/local delegated properties were routed
+  before). Regression cases: `cases/il-{lateinitref,suspendref,writecapture,genlocalclass,topdeleg}`.
+
 ## 0.9.6-rc7 (2026-07-18)
 
 A large compiler-correctness release. The kotlinx.coroutines CLR port now compiles through the
