@@ -5,7 +5,7 @@
     <version>$version$</version>
     <authors>DotKt</authors>
     <description>The Kotlin/CLR standard library RUNTIME assembly (DotKt.Stdlib.dll): the real pure-Kotlin stdlib bodies apps link and ship against (copy-local). The compile-time @Clr-metadata reference face (DotKt.Private.Stdlib.dll) ships with the compiler in DotKt.Toolchain instead. DotKt.Sdk references this package implicitly.</description>
-    <tags>kotlin clr dotnet stdlib runtime kotlin-2.2.0</tags>
+    <tags>kotlin clr dotnet stdlib runtime kotlin-$kotlinVersion$</tags>
     <dependencies>
       <group targetFramework="net10.0" />
     </dependencies>

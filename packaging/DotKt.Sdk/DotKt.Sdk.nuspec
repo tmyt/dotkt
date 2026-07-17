@@ -5,7 +5,7 @@
     <version>$version$</version>
     <authors>DotKt</authors>
     <description>DotKt MSBuild SDK: build Kotlin (.kt) projects to .NET assemblies. Pulls in DotKt.Toolchain (compiler, build-only) and DotKt.Stdlib (the runtime stdlib).</description>
-    <tags>kotlin clr dotnet msbuild sdk kotlin-2.2.0</tags>
+    <tags>kotlin clr dotnet msbuild sdk kotlin-$kotlinVersion$</tags>
     <packageTypes><packageType name="MSBuildSdk" /></packageTypes>
   </metadata>
   <files>

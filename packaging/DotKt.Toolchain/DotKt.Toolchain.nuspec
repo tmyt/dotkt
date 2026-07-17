@@ -4,8 +4,8 @@
     <id>DotKt.Toolchain</id>
     <version>$version$</version>
     <authors>DotKt</authors>
-    <description>DotKt compiler toolchain: the Kotlin-&gt;CLR compiler (kotc; JVM, requires a JRE), bir2cir, ilemit, facadegen, retarget, the CLR frontend stdlib jar, and the compile-time stdlib reference assembly (DotKt.Private.Stdlib.dll). The runtime stdlib ships separately as DotKt.Stdlib.</description>
-    <tags>kotlin clr dotnet compiler kotlin-2.2.0</tags>
+    <description>DotKt compiler toolchain: the Kotlin-&gt;CLR compiler (kotc; JVM, requires a JRE), bir2cir, ilemit, facadegen, retarget, the CLR frontend stdlib klib, and the compile-time stdlib reference assembly (DotKt.Private.Stdlib.dll). The runtime stdlib ships separately as DotKt.Stdlib.</description>
+    <tags>kotlin clr dotnet compiler kotlin-$kotlinVersion$</tags>
   </metadata>
   <files>
     <file src="tools/**" target="tools" />
