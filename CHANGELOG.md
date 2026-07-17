@@ -7,6 +7,20 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **kotc ([tmyt/dotkt#76], area:kotc): a generic base class now carries its CONCRETE type arguments when the subclass is
+  non-generic — unblocking the kotlinx.coroutines `CoroutineDispatcher.Key` shape.** `typeDef()` emitted a Kotlin/stdlib
+  base as an OPEN bare name, relying on ilemit to positionally flow the *subclass's own* type params into it. That holds
+  only for a generic subclass whose params ARE the base args (`ArrayList<E> : AbstractList<E>`); for a NON-generic
+  `object`/`class` whose base args are CONCRETE (`object Key : AbstractCoroutineContextKey<ContinuationInterceptor,
+  CoroutineDispatcher>`) the args were silently dropped, so ilemit looked the base up by bare name (no arity), never
+  matched `AbstractCoroutineContextKey`2`, and errored `cannot resolve .NET type kotlin.coroutines.AbstractCoroutineContextKey`.
+  Fix: emit the base's ACTUAL constructed type arguments via `ownerSpec(base, baseType)` (the helper the interface
+  supertypes already use) — the subclass's own `tv` when the base is over them, the concrete types when supplied. kotc
+  emits only the pure Kotlin FQN + args (no CLR arity/backtick); bir2cir passes it through as an FQN identity + args;
+  ilemit resolves `AbstractCoroutineContextKey`2` and `MakeGenericType`s it. New gate case `cases/il-genbaseext`
+  (external generic base + concrete args) alongside `cases/il-genbase` (generic-subclass tv-flow). The real
+  `coroutines.ktproj` now clears kotc + bir2cir entirely and advances past this to a separate `kotlin.collections.ArrayDeque`
+  ilemit-resolution blocker.
 - **kotc + bir2cir ([tmyt/dotkt#75], area:kotc, area:bir2cir): the cold-SM nested-closure capture family that blocked
   the kotlinx.coroutines `flow` port is dissolved — a captured declaration is no longer serialized under two divergent
   names, so every real flow-operator shape (`unsafeFlow`/`transform`/`filter`/`filterIsInstance`/… the whole

@@ -676,17 +676,20 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 	}
 	val methods = (instMethods + statMethods + companionAccessors + userAccessors).joinToString(",")
 	// A .NET base class (`: System.Exception(...)`, incl. a generic `: Collection<Int>()`) -> a `clr:`/`clrg:`
-	// type spec (via birType) that ilemit resolves by reflection; a Kotlin-user base stays a bare type name.
+	// type spec (via birType) that ilemit resolves by reflection; a Kotlin-user base emits its bare FQN identity
+	// carrying its ACTUAL constructed type arguments.
 	val baseJson = base?.let {
 		// A .NET-injected base carries its full constructed identity (birType). A Kotlin-user/stdlib base emits its
-		// IDENTITY: an inner-class base carries the enclosing args (`tv`) so the nested generic base is INSTANTIATED;
-		// a non-inner generic base stays the OPEN name — ilemit walks the base chain by bare name and instantiates the
-		// open generic base with this type's params positionally at SetParent. (bir2cir substitutes stdlib bases.)
+		// IDENTITY via `ownerSpec` — the base supertype's OWN resolved type arguments: the subclass's type params as
+		// `tv` when the base is over them (`ArrayList<E> : AbstractList<E>` -> `AbstractList<tv E>`), the enclosing
+		// args for an inner-class base, AND CONCRETE types when the subclass supplies them (a non-generic `object Key :
+		// AbstractCoroutineContextKey<ContinuationInterceptor, CoroutineDispatcher>` -> the base carries both concrete
+		// args). ilemit constructs the generic base via `MakeGenericType` — a positional-params-only emission would
+		// SILENTLY DROP concrete base args (an external generic stdlib base then failed to resolve by bare name).
+		// BaseName stays the bare FQN (SlotName reads `.name`) so the base-chain walk still keys by bare name.
+		// (bir2cir substitutes stdlib bases.)
 		if (isExternalNetType(it)) birType(baseType!!).toJson()
-		else {
-			val enclArgs = innerEnclosingTypeParams(it).map { tp -> tvOf(tp) }
-			(if (enclArgs.isNotEmpty()) TypeNode.Fqn(typeName(it), enclArgs) else TypeNode.Fqn(typeName(it))).toJson()
-		}
+		else ownerSpec(it, baseType).toJson()
 	} ?: "null"
 	// Stdlib interface supertypes (Iterator, Iterable, Read(Write)Property) -> the REAL generic identity;
 	// a user generic interface `Container<Int>` -> the constructed spec `Container[int]` (ownerSpec).
