@@ -36,24 +36,24 @@ static class ShapeSynthesis
         ["kotlin.UByte"] = "Byte", ["kotlin.UShort"] = "UInt16", ["kotlin.UInt"] = "UInt32", ["kotlin.ULong"] = "UInt64",
     };
 
-    public static void Apply(JsonNode root, IReadOnlyDictionary<string, string> aliases, bool refBuild) =>
-        Walk(root, aliases, refBuild);
+    public static void Apply(JsonNode root, ReferenceMetadataIndex refs, bool refBuild) =>
+        Walk(root, refs, refBuild);
 
-    static void Walk(JsonNode node, IReadOnlyDictionary<string, string> aliases, bool refBuild)
+    static void Walk(JsonNode node, ReferenceMetadataIndex refs, bool refBuild)
     {
         switch (node)
         {
             case JsonObject obj:
-                MaybeSynth(obj, aliases, refBuild);
-                foreach (var kv in obj) Walk(kv.Value, aliases, refBuild);
+                MaybeSynth(obj, refs, refBuild);
+                foreach (var kv in obj) Walk(kv.Value, refs, refBuild);
                 break;
             case JsonArray arr:
-                foreach (var it in arr) Walk(it, aliases, refBuild);
+                foreach (var it in arr) Walk(it, refs, refBuild);
                 break;
         }
     }
 
-    static void MaybeSynth(JsonObject node, IReadOnlyDictionary<string, string> aliases, bool refBuild)
+    static void MaybeSynth(JsonObject node, ReferenceMetadataIndex refs, bool refBuild)
     {
         var k = (node["k"] as JsonValue)?.TryGetValue<string>(out var kv) == true ? kv : null;
         if (k != "clrGenericStatic" && k != "clrGenericInstance") return;
@@ -62,7 +62,7 @@ static class ShapeSynthesis
         foreach (var st in shapeTypes)
         {
             var t = TypeJson.Read(st) ?? throw new FormatException($"shapeTypes entry is not a Type node: {st?.ToJsonString()}");
-            shapes.Add(Shape(t, aliases, refBuild));
+            shapes.Add(Shape(t, refs, refBuild));
         }
         node["shapes"] = shapes;
         node.Remove("shapeTypes");
@@ -70,7 +70,7 @@ static class ShapeSynthesis
 
     // Mirror of ilemit's `Shape(Type)` over a structured Kotlin `TypeNode` (pre-lowering). Nullability is IGNORED
     // (kotc's clrMethodShape read `classFqName` through the `?`), so unwrap Nullable/Oblivious first.
-    static string Shape(TypeNode t, IReadOnlyDictionary<string, string> aliases, bool refBuild)
+    static string Shape(TypeNode t, ReferenceMetadataIndex refs, bool refBuild)
     {
         t = t switch { TypeNode.Nullable n => n.Of, TypeNode.Oblivious o => o.Of, _ => t };
         switch (t)
@@ -102,7 +102,7 @@ static class ShapeSynthesis
                 // Any other parameterized generic .NET type (Task<T>, Continuation<T>, …) -> ilemit's IsGenericType default.
                 if (f.Args is { Length: > 0 })
                     return "generic";
-                return ShapeName(f.Name, aliases);
+                return ShapeName(f.Name, refs, refBuild);
             default:
                 return "Object";
         }
@@ -110,12 +110,22 @@ static class ShapeSynthesis
 
     // The .NET SIMPLE NAME of a leaf type, matching ilemit `Shape(Type).Name`. PRIMARY source = the ref.dll
     // @ClrTypeAlias index (kotlin.Long -> System.Int64 -> "Int64"; kotlin.Any -> System.Object -> "Object"); the
-    // primitive fallback covers the ref build (no ref.dll). A reference / user type with no CLR binding erases to
-    // "Object" (ilemit's fallback shape for a reference param).
-    static string ShapeName(string fqn, IReadOnlyDictionary<string, string> aliases)
+    // primitive fallback covers the ref build (no ref.dll). A leaf that is NEITHER an aliased stdlib type NOR a
+    // primitive but IS a facadegen-injected .NET interop type (issue #44: `JsonSerializerOptions` as a SIBLING param
+    // of a generic method like `JsonSerializer.Serialize<T>(T, JsonSerializerOptions?)`) resolves off the refs to its
+    // reflection Type — its `.Name` is EXACTLY what ilemit's `Shape(Type)` returns for that reference param
+    // (`p.Name`), so the shape string matches and ResolveGenericMethod finds the overload. The refBuild carries no
+    // facadegen interop (and no ref.dll to resolve against), so it stays on the alias/primitive path only. Anything
+    // still unresolved erases to "Object" (ilemit's fallback shape for a reference param).
+    static string ShapeName(string fqn, ReferenceMetadataIndex refs, bool refBuild)
     {
-        if (aliases.TryGetValue(fqn, out var bcl)) return LastSegment(bcl);
+        if (refs.Aliases.TryGetValue(fqn, out var bcl)) return LastSegment(bcl);
         if (PrimShapeName.TryGetValue(fqn, out var prim)) return prim;
+        if (!refBuild)
+        {
+            var netType = refs.ResolveNetType(ReferenceMetadataIndex.BareOwnerFqn(fqn));
+            if (netType != null) return netType.Name;
+        }
         return "Object";
     }
 
