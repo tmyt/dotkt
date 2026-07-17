@@ -979,6 +979,11 @@ il_check_imports inlsuspendlaunch AppKt "$ROOT/cases/il-inlsuspendlaunch" "$(pri
 # `__self` temp by 2B — incl. the DOMINANT placement (op spliced INSIDE a `suspend fun`, where GAP 2 must preserve the
 # 2B override, not clobber it). Both drive end-to-end via blockOn (value MUST be correct).
 il_check_imports inlsuspendflow AppKt "$ROOT/cases/il-inlsuspendflow" "$(printf '42\n42\n42')"
+# #75 Batch B — a §4.4ii-materialized SUSPEND carrier whose body NESTS a `newSuspendLambda` under a GAPPED / multi-scope
+# enclosing tv remap (the real unsafeFlow/combineTransform flow shape the prior 2A fix missed). The nested SM's own tv
+# frame is SHIELDED (like synthClass) from the outer carrier's CollectTvKeys/RenumberTvs; the shifting method-3 tv rides
+# inside a reference-typed suspend-`fn` capture (permitted by the narrowed guard). Drives end-to-end via blockOn.
+il_check_imports inlsuspendnest AppKt "$ROOT/cases/il-inlsuspendnest" "$(printf '42\n42')"
 il_check_imports inlsuspendouter AppKt "$ROOT/cases/il-inlsuspendouter" "$(printf '42\n7\n20')"
 # #43 — Batch A × Batch B integration seam. A crossinline SUSPEND carrier materialized §4.4ii (like inlsuspendcarrier)
 # whose body nests a MEMBER-inline call omitting a lambda default: the inner splice (walked first) fills it via the #34
