@@ -83,6 +83,7 @@ import org.jetbrains.kotlin.ir.IrFileEntry
 import org.jetbrains.kotlin.cli.common.messages.MessageCollector
 import org.jetbrains.kotlin.cli.common.messages.CompilerMessageSeverity
 import org.jetbrains.kotlin.cli.common.messages.CompilerMessageLocation
+import org.jetbrains.kotlin.ir.IrBuiltIns
 import java.io.File
 
 /**
@@ -95,7 +96,10 @@ import java.io.File
  * while/if. Classes & interop are later milestones (D1.4+).
  */
 @OptIn(UnsafeDuringIrConstructionAPI::class)
-class BirEmitter(internal val messageCollector: MessageCollector? = null) {
+// [irBuiltIns] is the module's IrBuiltIns (from Fir2IrActualizedResult) — needed by the type system to compute an
+// inherited member inline fn's owning-class instantiation for F2A (correspondingSupertypeInstantiation). Nullable
+// so a bare `BirEmitter()` still constructs; the F2A supertype path no-ops (falls back to the status-quo omit) when null.
+class BirEmitter(internal val messageCollector: MessageCollector? = null, internal val irBuiltIns: IrBuiltIns? = null) {
 
 	// Diagnostics: a construct the .NET backend can't lower yet is a COMPILE-TIME error with source location
 	// (file:line:col) — never a silent BIR node that crashes ilemit later. `hadError` fails the build.
