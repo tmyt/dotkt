@@ -7,6 +7,17 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **kotc ([tmyt/dotkt#36], area:kotc): a `var` of a value-type nullable (`Int?`/`Long?`/`Double?`…) CAPTURED-and-mutated
+  by a lambda no longer emits invalid IL (`InvalidProgramException`).** Such a var is promoted to a heap ref-cell
+  `dotkt$Ref{ var v }` whose field `v` holds the FULL `Nullable<T>` element type, but the cell's INITIALIZER emitted
+  `new Ref(<bare T>)` — pushing a bare `int32` into the synthesized `Nullable<int32>` ctor slot — so construction was an
+  invalid program. kotc now carries the cell element type as the ctor's `argTypes`, letting ilemit coerce the initializer
+  (bare `T` → `Nullable<T>`, `null` → `default(Nullable<T>)`) exactly as it already does for a plain-local var
+  initializer and a `setField` value. The ref-cell READ arm is also aligned with the plain-local read: a smart-cast read
+  of the cell (`if (q != null) … q …` inside an inline lambda, whose use-site is the bare `T`) now unwraps
+  `Nullable<T>.Value`, keyed on the cell element type rather than the smart-cast-narrowed use type. Gated by
+  `cases/il-refcell-nullable`.
+
 - **bir2cir + ilemit ([tmyt/dotkt#77], area:bir2cir, area:ilemit): a CONCRETE Kotlin collection class (e.g.
   `kotlin.collections.ArrayDeque<E>`) used as a field/owner type now RESOLVES — closing the `ilemit: cannot resolve .NET
   type kotlin.collections.ArrayDeque`1` blocker of the kotlinx.coroutines port (the `EventLoop.common` unconfined queue).**

@@ -83,11 +83,17 @@ internal fun BirEmitter.stmt(node: org.jetbrains.kotlin.ir.IrElement): String = 
 		val init = inner?.let { """{"k":"byrefOf","inner":${expr(it)}}""" } ?: "null"
 		"""{"k":"var","name":${str(node.name.asString())},"type":${birType(node.type).toJson()},"init":$init}"""
 	}
-	// A ref-cell var: `var x = init` -> `val x = new dotkt$Ref_<elem>(init)` (the heap cell).
+	// A ref-cell var: `var x = init` -> `val x = new dotkt$Ref_<elem>(init)` (the heap cell). The cell's `v` field —
+	// and thus the synthesized ctor param — is the FULL element type `birType(node.type)`; when that is a value-type
+	// nullable (`Int?` = `Nullable<T>`) the bare initializer (`= 5`, a `kotlin.Int`) must be wrapped to the `Nullable<T>`
+	// the ctor expects. Carry the element type as the ctor's `argTypes` so ilemit coerces the arg (bare `T` -> `Nullable<T>`,
+	// `null` -> `default(Nullable<T>)`) exactly as it coerces a plain-local var initializer / a `setField` value — without
+	// it the `new Ref(5)` pushed a bare `int32` into a `Nullable<int32>` ctor slot -> InvalidProgram (#36).
 	else if (isRefCell(node)) {
 		val rt = refTypeName(node)
-		val init = node.initializer?.let { expr(it) } ?: """{"k":"default","type":${birType(node.type).toJson()}}"""
-		"""{"k":"var","name":${str(node.name.asString())},"type":${fqnJson(rt)},"init":{"k":"new","type":${fqnJson(rt)},"args":[$init]}}"""
+		val elem = birType(node.type)
+		val init = node.initializer?.let { expr(it) } ?: """{"k":"default","type":${elem.toJson()}}"""
+		"""{"k":"var","name":${str(node.name.asString())},"type":${fqnJson(rt)},"init":{"k":"new","type":${fqnJson(rt)},"args":[$init],"argTypes":[${elem.toJson()}]}}"""
 	} else {
 		// Evaluate the initializer FIRST so an object-expr init registers its synthetic name before the var's
 		// type is read (`val x = object {}` whose type IS that anonymous class). A value-type-nullable initializer
