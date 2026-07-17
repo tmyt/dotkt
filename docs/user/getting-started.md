@@ -46,7 +46,7 @@ dotnet run
 That template is just two files. The project file:
 
 ```xml
-<Project Sdk="DotKt.Sdk/0.9.6-rc6">
+<Project Sdk="DotKt.Sdk/0.9.6-rc7">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>

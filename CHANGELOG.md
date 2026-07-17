@@ -5,6 +5,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.6-rc7 (2026-07-18)
+
+A large compiler-correctness release. The kotlinx.coroutines CLR port now compiles through the
+Kotlin frontend + the entire bir2cir layer (cold-core suspend lowering fires; all 108 CIR files
+emit) and advances into ilemit; the remaining ilemit-stage work to make it fully compile+run
+(abstract/interface/cross-member suspend cold-lowering completion + the covariance/variance-erasure
+representation) is tracked under #85 and moved to 0.9.7. Highlights of what landed: the inline-splice
+family (Set A #60–#63, the §4.4ii suspend-carrier + cold-SM nested-closure capture families, member
+inline fake-override splicing #87); suspend cold-lowering (Defect A/B, #78/#80/#82, catch-hoist,
+COROUTINE_SUSPENDED + coroutineContext binding, splice-local spill); #73 atomic-wrapper cross-module
+re-import; #76 generic-base type-arg carriage; #77 concrete-collection loadability (ArrayDeque et al.);
+#81 class delegation `$$delegate_0`; #83 interface companion members; #24/#36/#44 correctness; plus
+packaging/docs (#50/#53/#54). The nullable value-type generic representation design is settled in #86
+(object-erasure) for 0.9.7.
+
 ### Fixed
 
 - **bir2cir ([tmyt/dotkt#80] residual, area:bir2cir): an ALREADY-OWNER'd `COROUTINE_SUSPENDED` read now canonicalizes.**

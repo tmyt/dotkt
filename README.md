@@ -126,7 +126,7 @@ Building the CLR stdlib (three artifacts — see `CLAUDE.md` for details):
 A Kotlin.NET project builds with plain `dotnet build` / `dotnet run` (and thus in Visual Studio):
 
 ```xml
-<Project Sdk="DotKt.Sdk/0.9.6-rc6">
+<Project Sdk="DotKt.Sdk/0.9.6-rc7">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
