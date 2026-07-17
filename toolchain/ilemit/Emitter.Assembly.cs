@@ -338,19 +338,37 @@ sealed partial class Emitter
                             // is a TypeLoad "signature ... do not match". Disambiguate by the interface method's
                             // (instantiation-substituted) parameter types against each overload's recorded params.
                             var body = ti.Methods[im.Name];
+                            // The interface method's (instantiation-substituted) param + return types — used both to
+                            // disambiguate an overloaded body AND to decide whether the body needs a return-adapting bridge.
+                            var ips = im.GetParameters().Select(p => reanchor
+                                ? SubstituteIfaceArgs(p.ParameterType, itype.GetGenericArguments())
+                                : p.ParameterType).ToArray();
                             var cands = ti.MethodsBySig.Values.Where(b => b.Name == im.Name).Distinct().ToList();
                             if (cands.Count > 1)
                             {
-                                var ips = im.GetParameters().Select(p => reanchor
-                                    ? SubstituteIfaceArgs(p.ParameterType, itype.GetGenericArguments())
-                                    : p.ParameterType).ToArray();
                                 var match = cands.FirstOrDefault(b => _mparams.TryGetValue(b, out var bps)
                                     && bps.Length == ips.Length
                                     && bps.Zip(ips, SlotParamMatches).All(x => x));
                                 if (match == null) continue;   // no exact overload -> skip rather than mis-wire
                                 body = match;
                             }
-                            ti.TB.DefineMethodOverride(body, reanchor ? TypeBuilder.GetMethod(itype, im) : im);
+                            var ifaceM = reanchor ? TypeBuilder.GetMethod(itype, im) : im;
+                            // A @ClrTypeAlias'd (referenced) interface slot whose return type the Kotlin body DROPS: the
+                            // Kotlin member returns a value but the BCL slot is void (MutableCollection.add():Boolean ->
+                            // ICollection.Add():void; MutableList.set/removeAt:E -> IList.set_Item/RemoveAt():void). A DIRECT
+                            // methodimpl then fails the CLR's exact-signature rule ("Signature of the body and declaration in a
+                            // method implementation do not match" -> the whole type, and every subclass like ArrayDeque, is
+                            // UNLOADABLE, surfacing at the referencing app as "cannot resolve .NET type"). Emit a void bridge
+                            // that calls the body and pops the dropped return, and carry the methodimpl on it — the referenced-
+                            // interface twin of EmitCovariantBridge (which already handles this in the emitted-interface path).
+                            // Guarded to the void-DROP case only (the confirmed family); a generic body directly overrides its
+                            // generic slot (never a bridge), and same-return slots keep the direct, byte-identical override.
+                            // `void` is substitution-invariant, so the slot's return needs no SubstituteIfaceArgs re-anchor.
+                            bool bodyIsGeneric = body is MethodBuilder gmb && _methodTypeParams.ContainsKey(gmb);
+                            if (!bodyIsGeneric && im.ReturnType == typeof(void) && body.ReturnType != typeof(void))
+                                EmitVoidDropBridge(ti, im.Name, ips, body, ifaceM);
+                            else
+                                ti.TB.DefineMethodOverride(body, ifaceM);
                         }
                         continue;
                     }
@@ -894,6 +912,27 @@ sealed partial class Emitter
     static string OwnerOpen(string spec) { var br = spec.IndexOf('['); return br < 0 ? spec : spec.Substring(0, br); }
 
     int _covarBridge = 0;
+
+    // The referenced-interface (@ClrTypeAlias'd / clr:) twin of EmitCovariantBridge, working from a REFLECTED interface
+    // method rather than a BIR imDef: the BCL slot is VOID but the Kotlin body returns a value it drops (add():Boolean ->
+    // ICollection.Add():void, set/removeAt:E -> IList.set_Item/RemoveAt():void). Emit a private/final void bridge with the
+    // slot's signature that callvirts the body, pops the dropped return, and carry the MethodImpl on the bridge. (Same IL
+    // shape as the dimimpl bridge; `paramTypes` are the slot's substituted params, which the body's own params match.)
+    void EmitVoidDropBridge(TypeInfo ti, string name, Type[] paramTypes, MethodBuilder body, MethodInfo ifaceMethod)
+    {
+        var bridge = ti.TB.DefineMethod("dotkt$covar$" + name + "$" + (_covarBridge++),
+            MethodAttributes.Private | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.NewSlot | MethodAttributes.HideBySig,
+            typeof(void), paramTypes);
+        StampCompilerGenerated(bridge);   // #68: ilemit-authored generated member
+        var il = bridge.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        for (int i = 0; i < paramTypes.Length; i++) il.Emit(OpCodes.Ldarg, i + 1);
+        var bodyCall = ti.IsGeneric ? TypeBuilder.GetMethod(ti.TB.MakeGenericType(ti.TB.GetGenericArguments()), body) : (MethodInfo)body;
+        il.Emit(OpCodes.Callvirt, bodyCall);
+        il.Emit(OpCodes.Pop);   // the BCL slot drops the Kotlin return
+        il.Emit(OpCodes.Ret);
+        ti.TB.DefineMethodOverride(bridge, ifaceMethod);
+    }
 
     // Emit a covariant-return bridge: a private explicit-interface-impl method with the iface's (base) return type +
     // params, calling the narrow body method on `this` and returning it (a ref upcast); the MethodImpl goes on the bridge.

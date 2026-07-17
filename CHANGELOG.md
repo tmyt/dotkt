@@ -7,6 +7,27 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir + ilemit ([tmyt/dotkt#77], area:bir2cir, area:ilemit): a CONCRETE Kotlin collection class (e.g.
+  `kotlin.collections.ArrayDeque<E>`) used as a field/owner type now RESOLVES — closing the `ilemit: cannot resolve .NET
+  type kotlin.collections.ArrayDeque`1` blocker of the kotlinx.coroutines port (the `EventLoop.common` unconfined queue).**
+  The message was a masked downstream symptom: `ArrayDeque`1` IS emitted in the rt dll, but its whole type failed to LOAD
+  (`TypeLoadException`), which ilemit's `RuntimeReferences.ResolveType` swallowed (`catch { continue; }`) and reported as
+  "cannot resolve". Two distinct emission defects made every concrete Kotlin `MutableList`/`MutableCollection` class
+  unloadable — latent until ArrayDeque, since every other runnable concrete collection is a BCL type (`mutableListOf` →
+  `List<T>`, `mutableMapOf` → `Dictionary<K,V>`): **(A, ilemit)** Kotlin `MutableCollection.add():Boolean` /
+  `MutableList.set`/`removeAt():E` are `@ClrTypeAlias`/`@ClrIntrinsic`-bound to the VOID BCL slots `ICollection<T>.Add` /
+  `IList<T>.set_Item`/`RemoveAt`, but the referenced-interface wiring emitted a DIRECT `DefineMethodOverride` whose
+  body/decl return types disagree → illegal methodimpl → `TypeLoadException`. ilemit now emits a void-drop bridge
+  (`EmitVoidDropBridge`, the referenced-interface twin of the existing `EmitCovariantBridge`) that calls the body, pops the
+  dropped return, and carries the methodimpl. **(B, bir2cir)** `ICollection<T>`/`IList<T>` carry BCL-only members Kotlin's
+  interfaces lack — `Contains`/`CopyTo`/`IsReadOnly` and `IndexOf` — with no implementation on the concrete class; a new
+  `CollectionBclSlotSynthesis` pass fills each with a public forwarding member (Contains→`contains`, IndexOf→`indexOf`,
+  `IsReadOnly`→`false`, CopyTo→an `iteratorOverEnumerable` copy loop). Because the CLR stdlib's mutable-collection abstract
+  classes are FLAT (`AbstractMutableList : MutableList`, base `Object` — not `: AbstractMutableCollection`), an `IList<E>`
+  implementer does not inherit the `ICollection<E>` face, so the pass also lists `ICollection<E>` explicitly on it (making
+  ilemit wire that face, incl. the `Add` void-bridge). New gate case `cases/il-arraydeque` (ArrayDeque field + owner +
+  `set`/`removeAt`/`add`). The real `coroutines.ktproj` now clears this and advances through kotc + bir2cir into ilemit,
+  where it meets a separate suspend/inline-splice blocker in `AwaitKt.joinAll`.
 - **kotc ([tmyt/dotkt#76], area:kotc): a generic base class now carries its CONCRETE type arguments when the subclass is
   non-generic — unblocking the kotlinx.coroutines `CoroutineDispatcher.Key` shape.** `typeDef()` emitted a Kotlin/stdlib
   base as an OPEN bare name, relying on ilemit to positionally flow the *subclass's own* type params into it. That holds
