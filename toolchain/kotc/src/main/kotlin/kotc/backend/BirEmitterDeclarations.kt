@@ -9,6 +9,7 @@ import org.jetbrains.kotlin.ir.declarations.IrDeclarationWithVisibility
 import org.jetbrains.kotlin.ir.declarations.IrAnonymousInitializer
 import org.jetbrains.kotlin.ir.declarations.IrClass
 import org.jetbrains.kotlin.ir.declarations.IrConstructor
+import org.jetbrains.kotlin.ir.declarations.IrField
 import org.jetbrains.kotlin.ir.declarations.IrFile
 import org.jetbrains.kotlin.ir.declarations.IrParameterKind
 import org.jetbrains.kotlin.ir.declarations.IrProperty
@@ -606,6 +607,18 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 		val ro = if (!routed && (!p.isVar || (p.setter != null && visOf(p.setter!!) != "public"))) ""","readOnly":true""" else ""
 		"""{"name":${str(bf.name.asString())},"type":${birType(bf.type).toJson()}$visJson$ro${volatileFieldFlag(p)}}"""
 	}
+	// Standalone (non-property) instance fields the FRONTEND synthesized — chiefly the class-delegation backing
+	// field `$$delegate_0` (origin DELEGATE) for `class Foo : Bar by baz`: an IrField with NO corresponding
+	// property whose forwarding members (`DELEGATED_MEMBER`) read it via GET_FIELD. It carries an EXPRESSION_BODY
+	// initializer (the delegate expression, usually a ctor param) run through the IrInstanceInitializerCall path
+	// in `ctor` below, exactly like a property backing field. Emit it as a plain instance field so those reads resolve.
+	val synthFields = klass.declarations.filterIsInstance<IrField>()
+		.filter { it.correspondingPropertySymbol == null && !it.isStatic }
+		.map { f ->
+			val v = visOf(f); val visJson = if (v != "public") ""","vis":${str(v)}""" else ""
+			val ro = if (f.isFinal) ""","readOnly":true""" else ""
+			"""{"name":${str(f.name.asString())},"type":${birType(f.type).toJson()}$visJson$ro}"""
+		}
 	// Companion non-const `val`/`var` -> static fields (with initializer run in a static ctor); const is inlined.
 	val statFields = companion?.declarations?.filterIsInstance<IrProperty>()?.mapNotNull { p ->
 		val bf = p.backingField ?: return@mapNotNull null
@@ -620,7 +633,7 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 	val instanceField = if (isObject)
 		listOf("""{"name":"INSTANCE","type":${fqnJson(typeName(klass))},"static":true,"init":{"k":"new","type":${fqnJson(typeName(klass))},"args":[]}}""")
 	else emptyList()
-	val fields = (instFields + statFields + capFields + instanceField).joinToString(",")
+	val fields = (instFields + synthFields + statFields + capFields + instanceField).joinToString(",")
 	val ctors = klass.declarations.filterIsInstance<IrConstructor>().joinToString(",") { ctor(klass, it, captures) }
 	val instMethods = klass.declarations.filterIsInstance<IrSimpleFunction>()
 		// Include `abstract fun`s (body == null): they emit as CLR abstract methods so subclass overrides bind
@@ -773,6 +786,12 @@ internal fun BirEmitter.ctor(klass: IrClass, ctor: IrConstructor, captures: List
 						// Use the backing-field name (a delegated property's field is `<name>$delegate`).
 						stmts.add("""{"k":"setField","ownerType":${fqnJson(typeName(klass))},"recv":{"k":"this"},"name":${str(bf.name.asString())},"value":${expr((it as IrExpressionBody).expression)}}""")
 					} }
+					// A standalone synthetic field (class-delegation `$$delegate_0`) initializes here too: its
+					// EXPRESSION_BODY (the delegate expr — typically the ctor param) stores into the field, exactly
+					// like a property backing field. Static synthetic fields run in the .cctor, not here.
+					is IrField -> if (d.correspondingPropertySymbol == null && !d.isStatic) d.initializer?.let {
+						stmts.add("""{"k":"setField","ownerType":${fqnJson(typeName(klass))},"recv":{"k":"this"},"name":${str(d.name.asString())},"value":${expr((it as IrExpressionBody).expression)}}""")
+					}
 					is IrAnonymousInitializer -> (d.body as? IrBlockBody)?.statements?.forEach { stmts.add(stmt(it)) }
 					else -> {}
 				}
