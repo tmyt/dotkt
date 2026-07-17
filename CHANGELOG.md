@@ -16,7 +16,18 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
-- **bir2cir ([tmyt/dotkt#24], area:bir2cir): a property OVERRIDE (`override val message`) on a class extending a
+- **kotc + ilemit ([tmyt/dotkt#83], area:ilemit): an interface's PLAIN companion object now flattens to the
+  interface's own statics, so its members resolve at emit** (`SharingStarted.Eagerly`/`Lazily`, the
+  `Channel.Factory` const/val cluster — kotlinx.coroutines compile-blockers). Previously kotc's `interfaceDef`
+  hard-coded `"fields":[]`/`"ctors":[]` and never hoisted the companion (the class path already did), and ilemit
+  skipped field-definition and the `.cctor` for interface types, so the access `SharingStarted.Eagerly` (a
+  `staticField` on the interface) reported `field SharingStarted.Eagerly not found`. Fix, at the owning layers:
+  (1) kotc `interfaceDef` hoists the plain companion's non-const `val`/`var` → static fields (init run in the
+  `.cctor`), its methods → static methods, and its custom accessors → static `get_`/`set_` — mirroring `classDef`;
+  a super-typed companion stays a separate lifted singleton. (2) ilemit defines the interface's static fields and
+  emits its `.cctor` (a CLR interface legally carries both), and does NOT mark a hoisted static companion method
+  Virtual/NewSlot/Abstract. `const val` was already inlined at the use site so it never regressed. Gate case
+  `cases/il-ifacecompanion` (interface companion field/const/static-fn + a named-companion `Factory` non-regression).
   `@ClrTypeAlias` stdlib base (`kotlin.Exception` → `System.Exception`) is now DISPATCHED — reads return the override,
   not the base value.** The CALL side already resolved (`MemberCallSubstitution` Rule 2p-inherited walks the `overrides`
   marker to the CLR-bound ancestor `kotlin.Throwable.message` — `@ClrProperty(READ,"Message")` — and rewrites the read
