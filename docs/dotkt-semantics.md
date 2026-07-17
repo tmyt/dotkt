@@ -70,6 +70,22 @@ reproduce it.* (Memory `clr-not-jvm-discard-jvmisms`.)
   `IEnumerable`, which every value-type-arg BCL collection implements; `println` of such an erased value renders via
   the runtime-detecting `clrElemToString`. (A `<*>` value can only be used non-generically anyway.) This is the same
   invariance that forces §5c (`Map`/`MutableMap` both → `IDictionary<K,V>`). #60.
+- **Corollary — an UNCHECKED generic cast (`as T`, incl. `@Suppress("UNCHECKED_CAST")`) is checked
+  EAGERLY at the cast site, not erased.** kotc emits every `x as T` (including a smart-cast) as a
+  plain `cast` BIR node regardless of whether `T` is reified (`BirEmitterExpressions.kt:226-229`);
+  ilemit lowers it to `unbox.any`/`castclass !!T` at that exact IL offset
+  (`Emitter.Expressions.cs:539-558`) — because CLR generics are reified, that instruction is a REAL,
+  immediate check. On the JVM the same cast is ERASED: it is either a no-op (`(List<String>)
+  listOf(1, 2, 3)` succeeds silently; a `ClassCastException` fires only when an element is later USED
+  as `String`) or, inside a generic function, performs **no check in the callee at all**
+  (`fun <T> f(x: Any?) = x as T` never faults on the cast itself). On DotKt both throw
+  `InvalidCastException` **immediately** — `listOf(1, 2, 3) as List<String>` throws on the cast line,
+  and `f<String>(42)` throws INSIDE `f`, not at `f`'s call site. Code that relied on JVM
+  erasure/heap-pollution tolerance (a common `@Suppress("UNCHECKED_CAST")` pattern) fails earlier and
+  in a different place on the CLR. **Edge case:** a non-null `String` variable holding `null` via an
+  unchecked cast still renders as `""` in string concatenation (`String.Concat` treats a null
+  reference as empty), whereas a genuinely-nullable `String?` holding `null` renders `"null"` — same
+  value, different textual result, depending on how the null got there.
 - Deep dive: §3 (inline), `docs/design-il-generics.md`, memory `function-inlining-spike`.
 
 ## 2b. `tailrec` IS tail-call optimized — deep tail recursion runs in constant stack (matches Kotlin/JVM)
@@ -297,6 +313,18 @@ encoding, which the JIT honors and which a single-threaded run cannot itself obs
   .NET composite format (`"{0} items"`, `"{0:D5}"`, `"{0,-4}"`), not Java printf (`"%d"`)** — the same
   host-convention family as the stringification above. Both shapes are provided (`String.format(fmt, args...)`
   and `"fmt".format(args...)`), bound to `System.String.Format` (stdlib `@ClrIntrinsic`, no compiler lowering).
+- **`Any.toString()`'s DEFAULT rendering (no user override) is the bare .NET type name, not the JVM's
+  `Type@hexhash` identity form.** `class Box(val n: Int)` (no `toString` override, not a `data class`)
+  → `println("[$bx]")` prints `[Box]` (namespace-qualified for a packaged class, e.g. `pkg.Box`),
+  where Kotlin/JVM prints `[Box@1b6d3586]` (`getClass().getName() + '@' + Integer.toHexString(hashCode())`).
+  kotc never emits a `toString` method for a class that doesn't declare one, so the call routes
+  through the `objMethod`/virtual-dispatch path straight to the inherited **`System.Object.ToString()`**
+  slot (`BirEmitterCalls.kt:1190-1214` — `declaresOwn` is `false`, so the call is NOT short-circuited
+  and falls through to the plain virtual `toString` `objMethod`, which bir2cir/ilemit resolve to the
+  .NET base slot), and `Object.ToString()`'s default body is the type name — it has no per-instance
+  hash component. Consequence: two distinct `Box` instances with no override render **identically**
+  (`[Box]` / `[Box]`), where JVM's default form would visibly differ by hash. Same class of
+  unspecified-behavior host-convention divergence as the rest of this section — accepted, document only.
 
 ## 5a. `Double`/`Float` boxed structural equality & `compareTo` follow Kotlin's total order
 
@@ -321,6 +349,34 @@ largest value with `NaN == NaN` structurally and `NaN.compareTo(NaN) == 0`. On t
 The **primitive** operators stay IEEE (matching Kotlin, and `il-nancmp`-green): `-0.0 == 0.0` → `true`,
 `Double.NaN == Double.NaN` → `false`, and direct `<`/`>`/`<=`/`>=` (which desugar to the IEEE compare intrinsics, not
 `.compareTo`) are unaffected. Gates: `cases/il-negzero`, `cases/il-listeq`, `cases/il-equalscall` (JVM-oracle PURE).
+
+## 5a-bis. Referential identity `===` on primitive/boxed/enum values deviates from Kotlin/JVM
+
+`===` (`EQEQEQ`) lowers **unconditionally** to `binOp ==` → IL `ceq`, with **no representation
+check** (`PrimitiveOperatorLowering.cs:221-223`) — unlike structural `==`/`.equals()` (§5a), which
+routes through type-classifying helpers. Because CLR generics are **reified** (§2) and a basic
+`enum class` is a real CLR value-type `enum` (`BirEmitter.kt:514-515`), that single `ceq` lowering
+produces three JVM-diverging outcomes:
+
+- **A generic type parameter instantiated over a primitive compares by VALUE, not identity.**
+  `fun <T> ident(a: T, b: T) = a === b; ident(1000, 1000)` → **`true`** on DotKt. At the CLR the
+  generic method is JIT-specialized per value-type instantiation, so `T = Int` is an unboxed
+  `System.Int32`; `ceq` on the raw values IS a value compare. On the JVM, `T` erases to `Object`, so
+  `a`/`b` are two separately autoboxed `Integer`s outside the `-128..127` cache → **`false`**.
+- **A boxed primitive has no identity cache.** `val a: Any = 1; val b: Any = 1; a === b` → **`false`**
+  on DotKt (each widening to `Any` boxes fresh; `ceq` is a genuine reference compare here), where the
+  JVM returns **`true`** for values in `-128..127` (`Integer.valueOf` cache). DotKt has no such
+  cache — arguably more principled, since Kotlin never *guarantees* boxed-primitive identity, but the
+  observed result differs.
+- **A boxed enum loses its singleton identity — this one breaks a Kotlin guarantee, not just an
+  unspecified boxing detail.** A basic `enum class` lowers to a real CLR value-type `enum`
+  (`BirEmitter.kt:514-515`); widening it to `Any` boxes a **fresh** object each time. `val e1: Any =
+  Color.RED; val e2: Any = Color.RED; e1 === e2` → **`false`** on DotKt, whereas Kotlin/JVM enum
+  entries are singletons and `===` is **always `true`**, boxed or not. A *directly*-typed compare
+  (`Color.RED === Color.RED`, no widening to `Any`) stays a value-type `ceq` on the same constant and
+  is correctly `true` — only the `Any`-boxed path diverges.
+
+Accepted deviation (no code fix planned) — record only.
 
 ## 5b. `CharSequence` is `string` on the CLR — an immutable snapshot, not a live view
 
@@ -938,6 +994,18 @@ sealed contract: the modality, **cross-module inheritance enforcement** (a rogue
 rejected), **and exhaustive `when`** with no `else` — the closed inheritor set is rediscovered because the sealed
 type's subtypes are themselves injected into the consumer's session via their `super` edges (importing
 `Circle`/`Square` alongside `Shape` makes `when (s) { is Circle -> …; is Square -> … }` exhaustive).
+**Function types with a receiver (`A.() -> B`, #145) and suspend function types (H2) also round-trip
+faithfully, not as a plain delegate:** the CLR signature slot itself either keeps the delegate with the
+receiver riding as its first type argument (receiver types — `bir2cir` does NOT erase it) or erases fully
+to `object` (suspend types — a suspend-lambda value is a `Continuation`-based state machine, not a
+`Func`), so in both cases `bir2cir`'s `RoundtripMetadata` stamps a carrier — a bare
+`[KotlinExtensionFunctionType]` marker, or a `[KotlinSuspendFunctionType(shape)]` pre-erasure TypeNode —
+across every param/return/field/property position. `facadegen` reads both back (`SuspendFnNode` /
+`HasExtFnMarker`+`WithExtRecv`) and `kotc`'s `ClrTypeInjection` reconstructs the real cone type: a genuine
+`kotlin.coroutines.SuspendFunctionN` (so a passed lambda re-binds as an actual suspend lambda), or a
+`FunctionN` carrying the `ExtensionFunctionType` cone attribute (so the lambda gets a real implicit
+`this: P` and its body's unqualified members resolve against the receiver) — not an ordinary `Func<>`
+that has lost the distinction.
 
 ### 10.2 Partially restored (in metadata, but degraded on reconstruction)
 
@@ -962,7 +1030,6 @@ type's subtypes are themselves injected into the consumer's session via their `s
 | **`typealias`** | the expanded type | The alias name is not visible cross-module (it is expanded at use). |
 | **Contracts** (`@ExperimentalContracts`) | — | `callsInPlace`/returns-implies smart-cast facts are gone → consumer loses the smart-casts. |
 | **`Nothing`** (bottom type) | erased to `object` | The bottom-type semantics (unreachable, `List<Nothing>` covariance) have no CLR analog. **The RETURN position now round-trips (#133, FIXED):** a `fun f(): Nothing` return carries a `[KotlinNothing]` marker — `bir2cir` records the pre-erasure fact (`BirTypeLowering`, alongside the `object` erasure) and stamps the marker (`RoundtripMetadata`), `facadegen` reads it (`RetTypeSfxN`) and surfaces `kotlin.Nothing`, and `kotc`'s `coneOf` resolves the bare `Nothing` node to `bt.nothingType`. So a consumer's `val y: String = if (c) "ok" else f()` keeps `String` instead of widening to `Any?` (`roundtrip-nothing-return`). Nested occurrences (`List<Nothing>`, parameter positions, a `suspend fun`'s Task-wrapped result) stay lost. |
-| **Function types with receiver** (`A.() -> B`) and **suspend function types** | a delegate / `Func<>` | The receiver-vs-argument distinction and the suspend-function-type identity degrade to an ordinary delegate. |
 | **`lateinit`** | a non-null `var` field | The definite-init contract / `isInitialized` is lost (restored as a plain non-null `var`). |
 | **`inner` class** | a nested type | The `inner` modifier (implicit outer `this` capture) is not marked vs. a plain nested class. |
 | **`const val`, `tailrec`, `crossinline`/`noinline`, property delegation `by`** | literal field / plain method / accessors | Compile-time-only facts: the value/behavior survives but the modifier/relationship is not a restorable declaration fact. (Mostly harmless — these don't change the callable API surface.) |
@@ -1053,4 +1120,4 @@ residual is the **`object` singleton `.INSTANCE`** round-trip (#2), not implicit
 - Two same-simple-named classes in different packages coexist (packages are namespaces now). §1.
 - A reference type from a .NET assembly built WITHOUT `<Nullable>enable</Nullable>` arrives as a platform type `String!`, not `String`. §9.
 - A null platform-type `String!` used as non-null does **not** throw at the boundary — no assertion is inserted; the null flows to the first dereference, where the CLR throws `NullReferenceException` (faithful to Kotlin, = JVM with call/param assertions off). §9a.
-- Re-consuming a DotKt `.dll` as Kotlin now **restores** generic **bounds/interface variance** (gap ①), **`sealed`** (gap ⑤ — modality, cross-module enforcement, exhaustive `when`), and the **`fun interface` nature** (gap ③ — usable, though a bare lambda still won't SAM-convert under the pinned 2.4.0 compiler), and a re-consumed **companion resolves implicitly** (`50c2c9f`); `enum class` and top-level **`object` singletons** still restore as a plain `class` (the `.INSTANCE` singleton sugar is lost). §10.
+- Re-consuming a DotKt `.dll` as Kotlin now **restores** generic **bounds/interface variance** (gap ①), **`sealed`** (gap ⑤ — modality, cross-module enforcement, exhaustive `when`), the **`fun interface` nature** (gap ③ — usable, though a bare lambda still won't SAM-convert under the pinned 2.4.0 compiler), and **receiver function types / suspend function types** (`A.() -> B`, #145; `suspend (…) -> T`, H2 — a passed lambda gets a real implicit receiver / re-binds as a genuine suspend lambda, not a plain `Func<>`); a re-consumed **companion resolves implicitly** (`50c2c9f`); `enum class` and top-level **`object` singletons** still restore as a plain `class` (the `.INSTANCE` singleton sugar is lost). §10.

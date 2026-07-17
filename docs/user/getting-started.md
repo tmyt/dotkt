@@ -28,11 +28,17 @@ DotKt ships as four NuGet packages:
 | `DotKt.Stdlib` | the Kotlin standard library compiled for the CLR |
 | `DotKt.Templates` | `dotnet new` project templates |
 
-Install the templates once:
+Install the templates once. **Pin the version** — `dotnet new install` resolves the latest *stable*
+package by default, but DotKt is pre-1.0 and only publishes **pre-release** versions (e.g.
+`0.9.6-rc7`); an unversioned install cannot resolve against a feed that carries no stable release
+and fails with "package not found":
 
 ```bash
-dotnet new install DotKt.Templates
+dotnet new install DotKt.Templates::0.9.6-rc7
 ```
+
+(Check `packaging/DotKt.Versions.props` in the repo for the current shipping version if this page
+is out of date — `DotKtVersionPrefix` + `DotKtVersionSuffix`.)
 
 ## 3. Hello world
 
