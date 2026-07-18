@@ -479,7 +479,7 @@ il_check coldgen ColdGen "$ROOT/cases/il-coldgen" "$(printf '7\nyo\n8\nhi')"
 # coldinst: bir2cir SuspendColdLowering P3 wave-2a — INSTANCE suspend members (the SM carries a `$this`
 # field; the cold entry is an instance `<name>$dotkt_suspend` on the class) + MEMBER/cross-file suspend
 # CALLS (a `callInstance` suspendCall / a same-assembly cross-file top-level suspend call, rewritten to
-# the callee's cold shape via the global transformability fixpoint). INST1 (Counter.bump) + INST2
+# the callee's cold shape — resolvable by construction under R1's unconditional cold-entry declaration). INST1 (Counter.bump) + INST2
 # (Svc.chain -> this.helper()) + INSTGEN (generic Box<T>.get) + MCALL1 (topUse -> c.bump()) + MCALL2
 # (crossFileVal, a suspend fun in a second source file). Sync-completion drain via `main`.
 il_check coldinst ColdInst "$ROOT/cases/il-coldinst" "$(printf '11\n12\n10\n42\nhi\n101\n7')"
@@ -487,12 +487,12 @@ il_check coldinst ColdInst "$ROOT/cases/il-coldinst" "$(printf '11\n12\n10\n42\n
 # `Box_getTwice$sm[T]` is generic over the enclosing T, its `$this` field is the constructed self, and the awaited
 # value crosses the suspension typed in T. Drained by the synthesized plain `main` (sync completion). Runs -> 42,hi.
 il_check coldvirt ColdVirt "$ROOT/cases/il-coldvirt" "$(printf '42\nhi')"
-# coldsuper: bir2cir SuspendColdLowering #78 Defect A — a suspend `callInstance` keyed on a SUBCLASS static receiver
-# (kotc emits ownerType=Derived / ownerType=ChannelImpl) must resolve against a suspend member declared on a SUPERTYPE
+# coldsuper: bir2cir SuspendColdLowering (#78/#90) — a suspend `callInstance` keyed on a SUBCLASS static receiver
+# (kotc emits ownerType=Derived / ownerType=ChannelImpl) resolves against a suspend member declared on a SUPERTYPE
 # (Base.awaitInternal — the JobSupport.awaitInternal shape; ChannelBase/Source.receiveOrNull — the ReceiveChannel
-# super-interface shape). Before the IsResolvable supertype walk the exact-owner lookup missed and the fixpoint dropped
-# the caller (Derived.await / ChannelImpl.consume) to ilemit un-lowered. Also guards a MUTUALLY-recursive suspend pair
-# (ping/pong) staying whole in the transformable set. Runs -> 11,42,5.
+# super-interface shape). Under R1 every super-declared suspend member has a virtual cold entry, so native virtual
+# dispatch through the cold slot resolves the inherited call (no bir2cir hierarchy walk). Also guards a MUTUALLY-recursive
+# suspend pair (ping/pong) — both cold entries exist by unconditional declaration. Runs -> 11,42,5.
 il_check coldsuper ColdSuper "$ROOT/cases/il-coldsuper" "$(printf '11\n42\n5')"
 # coroutinectx: bir2cir SuspendColdLowering #79 — the `suspend inline val coroutineContext` read (a stdlib
 # throw-only intrinsic getter) bound to `<current continuation>.get_context()`: the SM itself in an SM body, the

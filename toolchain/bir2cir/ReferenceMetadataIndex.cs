@@ -278,8 +278,16 @@ sealed partial class ReferenceMetadataIndex
         {
             EnsureNetMlc();
             if (_netMlc == null || _netRefAsms == null) return false;
+            // Probe the GENERIC-arity spellings too: a `clr*` owner token is the bare FQN (`lib.Sub`), but the
+            // reflected CLR type of a generic subtype is `lib.Sub`1` — a plain GetType(asm, "lib.Sub") misses it,
+            // so the hierarchy walk (and thus R1b's cold-ABI existence guard) would false-negative on a suspend
+            // member inherited from a super through a GENERIC referenced subtype. Try the plain name then `n`1..8`.
             Type start = null;
-            foreach (var asm in _netRefAsms) { start = SafeGetType(asm, owner); if (start != null) break; }
+            foreach (var cand in NetTypeCandidates(owner, 0))
+            {
+                foreach (var asm in _netRefAsms) { start = SafeGetType(asm, cand); if (start != null) break; }
+                if (start != null) break;
+            }
             if (start == null) return false;
             var seen = new HashSet<string>(StringComparer.Ordinal);
             var work = new Queue<Type>();
