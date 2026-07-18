@@ -127,6 +127,11 @@ public actual fun String.replaceFirst(oldValue: String, newValue: String, ignore
 @kotlin.clr.ClrIntrinsic("ToUpper")
 public actual fun String.toUpperCase(): String = TODO("clr binding should be implemented")
 
+// CLR-native 1:1 case mapping — see docs/dotkt-semantics.md §5g. .NET's ToUpperInvariant/ToLowerInvariant
+// do simple 1:1 code-point mapping and deliberately do NOT perform the Unicode one-to-many full-mapping
+// expansions ('ß' -> "SS", ligatures, ...) that Kotlin/JVM/Native/JS do. kotlin/clr takes the platform
+// form: there is no binary interop with other Kotlin backends, so string-value parity is unneeded, and
+// 1:1 mapping keeps Char/String case consistency + round-trip (the .NET platform choice).
 @SinceKotlin("1.5")
 @kotlin.clr.ClrIntrinsic("ToUpperInvariant")
 public actual fun String.uppercase(): String = TODO("@Clr System.String.ToUpperInvariant")
@@ -167,10 +172,13 @@ public actual fun String.toCharArray(startIndex: Int = 0, endIndex: Int = this.l
 
 // UTF-8 transcoding via a constructed `System.Text.UTF8Encoding` instance (the proven Regex/StringBuilder
 // @ClrIntrinsic-class pattern). The class is `internal` (NOT private) so its constructor substitution is valid.
-// Note: `throwOnInvalidSequence` is approximated — the default UTF8Encoding uses replacement, not throwing.
+// The no-arg ctor is replacement-based (malformed -> U+FFFD); the (Boolean, Boolean) ctor binds
+// UTF8Encoding(encoderShouldEmitBOM, throwOnInvalidBytes) whose throwing fallbacks raise
+// DecoderFallbackException/EncoderFallbackException on malformed input — used for throwOnInvalidSequence=true.
 @kotlin.clr.ClrTypeAlias("System.Text.UTF8Encoding")
 internal class DotktUtf8 {
     constructor()
+    constructor(encoderShouldEmitBOM: Boolean, throwOnInvalidBytes: Boolean)
 
     @kotlin.clr.ClrIntrinsic("GetString")
     fun getString(bytes: ByteArray): String = TODO("@Clr System.Text.UTF8Encoding.GetString(byte[])")
@@ -188,7 +196,23 @@ public actual fun ByteArray.decodeToString(
     startIndex: Int = 0,
     endIndex: Int = this.size,
     throwOnInvalidSequence: Boolean = false
-): String = DotktUtf8().getString(if (startIndex == 0 && endIndex == this.size) this else this.copyOfRange(startIndex, endIndex))
+): String {
+    val slice = if (startIndex == 0 && endIndex == this.size) this else this.copyOfRange(startIndex, endIndex)
+    // throwOnInvalidSequence=true: use a throwing UTF8Encoding and surface a CharacterCodingException
+    // (per the Kotlin contract) on malformed UTF-8, instead of silently substituting U+FFFD.
+    return if (throwOnInvalidSequence) {
+        try {
+            DotktUtf8(false, true).getString(slice)
+        } catch (e: IllegalArgumentException) {
+            // System.Text.Decoder/EncoderFallbackException both derive from System.ArgumentException
+            // (= kotlin.IllegalArgumentException); a narrow catch lets an unrelated fault (OOM, a
+            // miscompiled intrinsic path) propagate instead of being masked as CharacterCodingException.
+            throw CharacterCodingException()
+        }
+    } else {
+        DotktUtf8().getString(slice)
+    }
+}
 
 @SinceKotlin("1.4")
 public actual fun String.encodeToByteArray(): ByteArray = DotktUtf8().getBytes(this)
@@ -199,7 +223,23 @@ public actual fun String.encodeToByteArray(
     startIndex: Int = 0,
     endIndex: Int = this.length,
     throwOnInvalidSequence: Boolean = false
-): ByteArray = DotktUtf8().getBytes(if (startIndex == 0 && endIndex == this.length) this else this.substring(startIndex, endIndex))
+): ByteArray {
+    val slice = if (startIndex == 0 && endIndex == this.length) this else this.substring(startIndex, endIndex)
+    // throwOnInvalidSequence=true: throw a CharacterCodingException (per the Kotlin contract) on an
+    // unpaired surrogate, instead of encoding it as the U+FFFD replacement.
+    return if (throwOnInvalidSequence) {
+        try {
+            DotktUtf8(false, true).getBytes(slice)
+        } catch (e: IllegalArgumentException) {
+            // System.Text.Decoder/EncoderFallbackException both derive from System.ArgumentException
+            // (= kotlin.IllegalArgumentException); a narrow catch lets an unrelated fault (OOM, a
+            // miscompiled intrinsic path) propagate instead of being masked as CharacterCodingException.
+            throw CharacterCodingException()
+        }
+    } else {
+        DotktUtf8().getBytes(slice)
+    }
+}
 
 @kotlin.clr.ClrIntrinsic("ToCharArray")
 public actual fun String.toCharArray(): CharArray = TODO("clr binding should be implemented")

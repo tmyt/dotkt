@@ -633,6 +633,24 @@ mangled `-impl` statics, no .NET `struct`. Structural equality survives; what is
 (identityless-ness is not enforced). The frontend still *requires* the `@JvmInline` annotation (a pinned-frontend
 checker); the attribute itself is not emitted. See §10.3 for the round-trip view.
 
+## 5g. `String`/`Char` `uppercase()`/`lowercase()` are CLR-native 1:1 — no Unicode one-to-many expansion (deliberate deviation, #144)
+
+`String.uppercase()`/`lowercase()` bind directly to .NET's `System.String.ToUpperInvariant`/`ToLowerInvariant`
+(`StringsClr.kt`, `@ClrIntrinsic`), which do **1:1 code-point mapping** with the invariant culture. They **deliberately do
+NOT** perform the Unicode **one-to-many** full-mapping expansions that Kotlin/JVM/Native/JS do:
+`"ß".uppercase() == "ß"` (not `"SS"`), `"ﬀ".uppercase() == "ﬀ"` (not `"FF"`), `"İ".lowercase() == "i"` (not `i̇`).
+`Char.uppercase(): String`/`lowercase(): String` route through the `String` forms, so they too are non-expanding
+(`'ß'.uppercase() == "ß"`); `Char.uppercaseChar()`/`lowercaseChar()` are 1:1 by nature.
+
+**Why this is correct, not a bug (deliberate CLR-native choice).** kotlin/clr recompiles Kotlin **source** to CLR and has
+**no binary/klib interop** with any other Kotlin backend, so matching another backend's *string value* (`"ß"→"SS"`) has no
+functional payoff — a CLR-recompiled library just runs on CLR with CLR semantics. .NET intentionally uses 1:1 no-expansion
+for `Char`/`String` case-mapping consistency and round-trip stability, and the entire .NET platform relies on it; kotlin/clr
+takes that platform form. The Kotlin KDoc does not pin specific expanded values as a hard contract, so this falls under the
+"where Kotlin leaves it unspecified, take the CLR-native form" doctrine. Culture-invariance itself matches Kotlin
+(`Locale.ROOT`/invariant, not current-culture). Case *comparison* (`equals(ignoreCase = true)`, `String.uppercase()`-based
+folding) stays self-consistent on the CLR mapping.
+
 ## 6. Consuming a DotKt assembly AS KOTLIN — what rides metadata vs. needs an attribute
 
 When another `.ktproj` consumes a DotKt assembly, the Kotlin facts with **no native .NET representation** are carried

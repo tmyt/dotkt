@@ -70,8 +70,11 @@ public actual fun acosh(x: Double): Double = TODO("clr binding should be impleme
 @kotlin.clr.ClrIntrinsic("System.Math.Atanh")
 public actual fun atanh(x: Double): Double = TODO("clr binding should be implemented")
 
+// Binds System.Double.Hypot (net10): numerically correct for large magnitudes where sqrt(x*x+y*y) overflows.
 @SinceKotlin("1.2")
-public actual fun hypot(x: Double, y: Double): Double = sqrt(x * x + y * y)
+@InlineOnly
+@kotlin.clr.ClrIntrinsic("System.Double.Hypot")
+public actual fun hypot(x: Double, y: Double): Double = TODO("clr binding should be implemented")
 
 @SinceKotlin("1.2")
 @InlineOnly
@@ -83,8 +86,11 @@ public actual fun sqrt(x: Double): Double = TODO("clr binding should be implemen
 @kotlin.clr.ClrIntrinsic("System.Math.Exp")
 public actual fun exp(x: Double): Double = TODO("clr binding should be implemented")
 
+// Binds System.Double.ExpM1 (net10): retains precision near 0 where exp(x)-1 loses it to cancellation.
 @SinceKotlin("1.2")
-public actual fun expm1(x: Double): Double = exp(x) - 1.0
+@InlineOnly
+@kotlin.clr.ClrIntrinsic("System.Double.ExpM1")
+public actual fun expm1(x: Double): Double = TODO("clr binding should be implemented")
 
 @SinceKotlin("1.2")
 @kotlin.clr.ClrIntrinsic("System.Math.Log")
@@ -104,8 +110,11 @@ public actual fun log10(x: Double): Double = TODO("clr binding should be impleme
 @kotlin.clr.ClrIntrinsic("System.Math.Log2")
 public actual fun log2(x: Double): Double = TODO("clr binding should be implemented")
 
+// Binds System.Double.LogP1 (net10): retains precision near 0 where ln(1+x) loses it to cancellation.
 @SinceKotlin("1.2")
-public actual fun ln1p(x: Double): Double = ln(1.0 + x)
+@InlineOnly
+@kotlin.clr.ClrIntrinsic("System.Double.LogP1")
+public actual fun ln1p(x: Double): Double = TODO("clr binding should be implemented")
 
 @SinceKotlin("1.2")
 @InlineOnly
@@ -293,7 +302,9 @@ public actual fun acosh(x: Float): Float = TODO("clr binding should be implement
 public actual fun atanh(x: Float): Float = TODO("clr binding should be implemented")
 
 @SinceKotlin("1.2")
-public actual fun hypot(x: Float, y: Float): Float = sqrt(x * x + y * y)
+@InlineOnly
+@kotlin.clr.ClrIntrinsic("System.Single.Hypot")
+public actual fun hypot(x: Float, y: Float): Float = TODO("clr binding should be implemented")
 
 @SinceKotlin("1.2")
 @InlineOnly
@@ -306,7 +317,9 @@ public actual fun sqrt(x: Float): Float = TODO("clr binding should be implemente
 public actual fun exp(x: Float): Float = TODO("clr binding should be implemented")
 
 @SinceKotlin("1.2")
-public actual fun expm1(x: Float): Float = exp(x) - 1.0f
+@InlineOnly
+@kotlin.clr.ClrIntrinsic("System.Single.ExpM1")
+public actual fun expm1(x: Float): Float = TODO("clr binding should be implemented")
 
 @SinceKotlin("1.2")
 @kotlin.clr.ClrIntrinsic("System.MathF.Log")
@@ -327,7 +340,9 @@ public actual fun log10(x: Float): Float = TODO("clr binding should be implement
 public actual fun log2(x: Float): Float = TODO("clr binding should be implemented")
 
 @SinceKotlin("1.2")
-public actual fun ln1p(x: Float): Float = ln(1.0f + x)
+@InlineOnly
+@kotlin.clr.ClrIntrinsic("System.Single.LogP1")
+public actual fun ln1p(x: Float): Float = TODO("clr binding should be implemented")
 
 @SinceKotlin("1.2")
 @InlineOnly

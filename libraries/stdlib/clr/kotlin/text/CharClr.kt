@@ -86,8 +86,9 @@ public actual fun Char.toUpperCase(): Char = TODO("clr binding should be impleme
 @kotlin.clr.ClrIntrinsic("System.Char.ToUpperInvariant")
 public actual fun Char.uppercaseChar(): Char = TODO("clr binding should be implemented")
 
-// Annotation-bug fix: System.Char.ToUpperInvariant returns Char, but this returns String.
-// Route through String.uppercase() (BCL ToUpperInvariant). Note: loses the 'ß'->"SS" special-casing.
+// Returns String (Kotlin's signature permits a one-to-many mapping) but routes through
+// String.uppercase(), which is CLR-native 1:1 ToUpperInvariant and does NOT expand — so
+// 'ß'.uppercase() == "ß" (not "SS"). Deliberate CLR-native deviation; see docs/dotkt-semantics.md §5g.
 @SinceKotlin("1.5")
 public actual fun Char.uppercase(): String = this.toString().uppercase()
 
