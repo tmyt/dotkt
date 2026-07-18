@@ -5,6 +5,28 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Fixed
+
+- **stdlib ([tmyt/dotkt#129]/[tmyt/dotkt#130]/[tmyt/dotkt#142], area:stdlib): concurrency-correctness in the atomics + coroutine primitives.**
+  Three memory-model/locking defects fixed stdlib-side (CLR-native Interlocked/Volatile/Monitor bindings, no compiler
+  special-casing). **#129**: the `AtomicIntArray`/`AtomicLongArray`/`AtomicArray` element ops did a bare
+  `monitorEnter/…/monitorExit` around `array[index]`, whose bounds check throws mid-critical-section and leaked the
+  monitor (a reentrant lock the throwing thread never notices but every OTHER thread on that instance deadlocks on);
+  each section is now wrapped in `try { … } finally { monitorExit(lock) }`. **#130**: scalar `AtomicInt`/`AtomicLong`/
+  `AtomicBoolean`/`AtomicReference` `load()`/`store()` were plain field access outside the memory model. The lock-free
+  scalars (`AtomicInt`/`AtomicLong`) now bind `System.Threading.Volatile.Read/Write(ref …)` (byref, ordered and
+  non-tearing for `long` on every platform); the monitor-backed `AtomicBoolean`/`AtomicReference` keep a `@Volatile`
+  field for the unlocked acquire `load()` but route `store()` through the SAME monitor as their RMW ops — a lock-free
+  store would slip inside the monitor's read-modify-write gap and be lost (non-linearizable). `toString()` now reads
+  via `load()` so `AtomicLong` cannot tear. Separately, the `AtomicIntArray`/`AtomicLongArray`/`AtomicArray`
+  array-adopting constructors now defensively `copyOf()` the argument (per the expect KDoc; aliasing left an
+  unsynchronized side door into the monitor-guarded storage). **#142**:
+  `SafeContinuation`'s `UNDECIDED→result` / `UNDECIDED→COROUTINE_SUSPENDED` state transition was a non-atomic
+  check-then-store that races under a multithreaded dispatcher; it is now a lock-free CAS loop over a `@Volatile`
+  field via `Interlocked.CompareExchange(ref object,…)`, faithful to the JVM `AtomicReferenceFieldUpdater` version.
+  New gate cases `il-atomicarraytry` (cross-thread lock-release), `il-volatileatomic` (volatile round-trip), and
+  `il-safecontresume` (async cross-thread `suspendCoroutine` resume).
+
 ### Changed
 
 - **stdlib ([tmyt/dotkt#167]/[tmyt/dotkt#168], area:stdlib): String/Float/Double `hashCode()` bind to CLR-native `GetHashCode`.**
