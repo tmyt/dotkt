@@ -710,6 +710,11 @@ il_check regexreplace RegexReplace "$ROOT/cases/il-regexreplace" "$(printf 'bXna
 # match.groups` (POLISH family-6 coverage). il-regex never touches .groups; this pinned + fixed a TypeLoad on the
 # AbstractCollection base + a missing `contains` (ClrMatchGroupCollection now implements the collection directly).
 il_check regexgroups RegexGroups "$ROOT/cases/il-regexgroups" "$(printf '3\n12-34\n12\n34\n12-34,12,34,\nTrue\nFalse\nTrue\n2026')"
+# regexseq (#104): the Sequence-returning members findAll/splitToSequence + the options getter, which used to ship as
+# TODO() runtime stubs that threw NotImplementedError. findAll = generateSequence over find()/MatchResult.next()
+# (every non-overlapping match L-to-R, startIndex-honored); splitToSequence = split().asSequence(); options decodes the
+# compiled System...RegexOptions [Flags] bitmask (default Regex -> empty set, no longer throws).
+il_check regexseq RegexSeq "$ROOT/cases/il-regexseq" "$(printf '1,22,333\n0\n2,3\na|b|c\nTrue\na|b c d\nTrue')"
 il_check groupvalues GroupValues "$ROOT/cases/il-groupvalues" "$(printf 'abc,a,b,c\n12 34')"
 # gencolladd: non-inlined GENERIC collection building via `.map`/`.add`/`.size` — the stdlib `clrCollAdd<T>`
 # reads `c.size` (ICollection<!!T>.get_Count) on an OPEN method type-param. Locks the bymap/maxOrNull dispatch

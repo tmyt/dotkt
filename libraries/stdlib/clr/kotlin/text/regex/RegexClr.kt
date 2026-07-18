@@ -76,9 +76,26 @@ public actual class Regex {
         get() = toString()
 
     /** The set of options that were used to create this regular expression.  */
-    // TODO(clr): decode Regex.Options (System...RegexOptions [Flags] enum) -> Set<RegexOption>; needs a BCL enum->Int binding.
+    // Decode the compiled System...RegexOptions [Flags] bitmask into the Kotlin RegexOption set. The [Flags] enum reduces to
+    // its Int32 underlying value, so [nativeOptionsBits] reads it as a plain Int (same technique as CharClr.nativeUnicodeCategory).
+    // Only the four RegexOption values with a direct System...RegexOptions bit can appear here; LITERAL/UNIX_LINES/CANON_EQ have
+    // no .NET RegexOptions bit (deliberate CLR choice — they are unrepresentable in a compiled .NET Regex, so never round-trip).
     public actual val options: Set<RegexOption>
-        get() = TODO("clr binding should be implemented")
+        get() {
+            val bits = nativeOptionsBits
+            val result = LinkedHashSet<RegexOption>()
+            if (bits and 1 != 0) result.add(RegexOption.IGNORE_CASE)       // RegexOptions.IgnoreCase
+            if (bits and 2 != 0) result.add(RegexOption.MULTILINE)         // RegexOptions.Multiline
+            if (bits and 16 != 0) result.add(RegexOption.DOT_MATCHES_ALL)  // RegexOptions.Singleline
+            if (bits and 32 != 0) result.add(RegexOption.COMMENTS)         // RegexOptions.IgnorePatternWhitespace
+            return result
+        }
+
+    // The compiled RegexOptions read as its raw Int32 bitmask (System...Regex.Options; the [Flags] enum IS its Int32 value).
+    // A second binding to get_Options alongside [nativeOptions]: matchEntire forwards the opaque handle for overload resolution,
+    // while [options] decodes the bits — same BCL getter, two Kotlin views.
+    @kotlin.clr.ClrIntrinsic("Options")
+    private val nativeOptionsBits: Int get() = TODO("clr binding should be implemented")
 
     /** Indicates whether the regular expression matches the entire [input]. */
     // Annotation-bug fix: dropped @ClrIntrinsic("IsMatch") — IsMatch is a *partial* match, but Kotlin `matches` is a full
@@ -96,9 +113,18 @@ public actual class Regex {
         return if (match.success) ClrMatchResult(match) else null
     }
 
-    // All matches as a lazy sequence, advancing via System...Match.NextMatch() (which also steps past zero-width matches).
+    // All matches as a lazy sequence (Kotlin contract: every non-overlapping match, left-to-right). Realized exactly like
+    // the common stdlib — generateSequence over find()/MatchResult.next(); each next() advances via System...Match.NextMatch(),
+    // which also steps past zero-width matches. Uses ordinary Sequence machinery (no coroutine sequence{} builder needed).
     @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
-    public actual fun findAll(input: CharSequence, startIndex: Int = 0): Sequence<MatchResult> = TODO("clr binding should be implemented") // blocked: Sequence runtime (coroutine port) not yet wired
+    public actual fun findAll(input: CharSequence, startIndex: Int = 0): Sequence<MatchResult> {
+        // CLR: materialize once for the bounds check — a synthetic CharSequence has no dispatchable length on a String-at-runtime value.
+        val length = input.toString().length
+        if (startIndex < 0 || startIndex > length) {
+            throw IndexOutOfBoundsException("Start index out of bounds: $startIndex, input length: $length")
+        }
+        return generateSequence({ find(input, startIndex) }, { match -> match.next() })
+    }
 
     // #162: a TRUE anchored full match — NOT a leftmost search filtered by span. A leftmost `Regex.Match` accepts the
     // FIRST match found, which for an alternation like `a|ab` over "ab" is the shorter `a`; the old span filter then
@@ -116,8 +142,9 @@ public actual class Regex {
     }
 
     // The compiled BCL RegexOptions of this instance (System...Regex.Options), read as the opaque [ClrRegexOptions]
-    // handle so it feeds the static anchored-match overload below WITHOUT a RegexOptions->Int decode (which the public
-    // `options` property still needs — see its TODO). Reproducing the ORIGINAL options on the anchored re-match preserves
+    // handle so it feeds the static anchored-match overload below WITHOUT a RegexOptions->Int decode — this handle is
+    // only forwarded, never inspected (the public [options] property reads the SAME get_Options as an Int via
+    // [nativeOptionsBits] to decode the bitmask). Reproducing the ORIGINAL options on the anchored re-match preserves
     // IGNORE_CASE / MULTILINE / etc. that governed this regex.
     @kotlin.clr.ClrIntrinsic("Options")
     private val nativeOptions: ClrRegexOptions get() = TODO("clr binding should be implemented")
@@ -216,10 +243,13 @@ public actual class Regex {
         return result
     }
 
-    // CLR realization: eager [split] result viewed as a sequence (same elements; not lazy unlike Kotlin/JVM).
+    // CLR realization: the eager [split] result viewed as a sequence (identical elements; deliberate CLR choice — the split
+    // walk over System...Match is already eager, so materializing once then `.asSequence()` avoids re-walking the engine and
+    // keeps `limit` semantics identical to [split]. Not lazy element-by-element unlike the common stdlib, same observable order.)
     @SinceKotlin("1.6")
     @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
-    public actual fun splitToSequence(input: CharSequence, limit: Int = 0): Sequence<String> = TODO("clr binding should be implemented") // blocked: Sequence runtime not yet wired
+    public actual fun splitToSequence(input: CharSequence, limit: Int = 0): Sequence<String> =
+        split(input, limit).asSequence()
 
     @kotlin.clr.ClrIntrinsic("ToString")
     public override fun toString(): String = TODO("clr binding should be implemented")
