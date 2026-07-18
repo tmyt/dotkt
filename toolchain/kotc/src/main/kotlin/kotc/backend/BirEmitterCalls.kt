@@ -1245,12 +1245,13 @@ internal fun BirEmitter.call(call: IrCall): String {
 	//    or a bare List/Set/Map.toString (emitted as objMethod ToString with a `recvType` hint; bir2cir routes it
 	//    Kotlin-style), or Any/generic; and
 	//  - a PRIMITIVE value type's toString/equals — those are declared but bodyless (no Kotlin body to hoist, no
-	//    @ClrIntrinsic), so bir2cir has nothing to route to and the BCL value type's ToString/Equals IS correct.
-	// When the receiver TYPE declares its OWN routable override — String's polynomial hashCode / Double|Float's
-	// deterministic bit-hash (a real Kotlin body → C5), a Pair|Triple|data-class toString and String's
-	// @ClrIntrinsic toString/equals (→ C11) — the call must REACH that member, so FALL THROUGH to the ordinary
+	//    @ClrIntrinsic), so bir2cir has nothing to route to and the BCL value type's ToString/Equals IS correct;
+	//    and Int/Long/Char/Boolean/Float/Double's hashCode, which the CLR stdlib does NOT declare (it inherits the
+	//    kotlin.Any slot), so it stays objMethod → the BCL value type's GetHashCode (#167/#168).
+	// When the receiver TYPE declares its OWN routable override — String's @ClrIntrinsic hashCode/toString/equals,
+	// a Pair|Triple|data-class toString (→ C11) — the call must REACH that member, so FALL THROUGH to the ordinary
 	// member-call path (bir2cir routes it: a real body → rule-3 helper, an @ClrIntrinsic → its BCL slot). Routing a
-	// declared override to System.Object here shadows the correct Kotlin body — the C5/C11 miscompiles.
+	// declared override to System.Object here shadows the correct Kotlin body — the C11 miscompiles.
 	if (isBuiltin && dispatchReceiver(call) != null) {
 		// The receiver TYPE declares its OWN override iff the resolved callee is a real (non-fake-override) member of a
 		// type OTHER than kotlin.Any. A call resolved DIRECTLY to `kotlin.Any.hashCode/toString/equals` — e.g.
@@ -1268,7 +1269,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// reference class), never a primitive, so this never disturbs the value-type objMethod routing.
 		val isSuper = call.superQualifierSymbol != null
 		val fallThrough = isSuper || when (name) {
-			"hashCode" -> declaresOwn                      // Int/Long/Char/Boolean inherit Any.hashCode → stays objMethod
+			"hashCode" -> declaresOwn                      // Int/Long/Char/Boolean/Float/Double inherit Any.hashCode → stays objMethod (String's @ClrIntrinsic hashCode falls through)
 			"toString", "equals" -> declaresOwn && !primitive
 			else -> false
 		}

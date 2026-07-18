@@ -570,8 +570,8 @@ il_check interpnull InterpNull "$ROOT/cases/il-interpnull" "$(printf '[null]\nn=
 il_check math  MathT "$ROOT/cases/il-math"    "$(printf '9\n7\n3\n4')"
 il_check mathabs MathAbs "$ROOT/cases/il-mathabs" "$(printf -- '-2147483648\n-9223372036854775808\n5\n5\n0\n2147483647')"  # C9: kotlin.math.abs WRAPS at MIN_VALUE (unchecked neg), does NOT throw like System.Math.Abs
 il_check radix Radix "$ROOT/cases/il-radix" "$(printf -- '-ff\nff\n-80000000\nz\nff\n-ff\n1010')"  # C4: Int/Long.toString(radix) -> stdlib actual (sign + arbitrary base), NOT System.Convert.ToString (two's-complement / base-36 crash)
-il_check strhash StrHash "$ROOT/cases/il-strhash" "$(printf '2112\n0\n99162322\n-2147483648\n0\n-2147483648\n5\nTrue\n5\n-7\n2a')"  # C5: deterministic String/Double/Float hashCode() (gate the universal-method intercept); primitive Int toString/equals/hashCode stay correct
-il_check pairtostr PairToStr "$ROOT/cases/il-pairtostr" "$(printf '[1, 2, 3]\n[1, 2, 3]\n(1, 2)\n(1, 2, 3)\nRec(name=k, n=9)\nTrue\n2112')"  # C5/C11 gate regression guard: collection/tuple/data-class toString + reproducible String.hashCode
+il_check strhash StrHash "$ROOT/cases/il-strhash" "$(printf 'True\nTrue\nTrue\nTrue\nTrue\nTrue\n5\nTrue\n5\n-7\n2a')"  # #167/#168: String/Double/Float hashCode() bind CLR-native GetHashCode — asserts equals-consistency + hash-set membership (contract), NOT a pinned value; primitive Int toString/equals/hashCode stay correct
+il_check pairtostr PairToStr "$ROOT/cases/il-pairtostr" "$(printf '[1, 2, 3]\n[1, 2, 3]\n(1, 2)\n(1, 2, 3)\nRec(name=k, n=9)\nTrue')"  # C11 gate regression guard: collection/tuple/data-class toString + String.hashCode within-run consistency (#167)
 # pairnest: a nested collection/map INSIDE Pair/Triple.toString (C11) renders Kotlin-style — the tuple component's
 # erased generic static type used to reach the raw .NET `List`1[...]` ToString; now routed through the runtime
 # collection-aware stdlib stringifier (clrRenderTupleElement -> clrElemToString), matching the top-level nestedstr path.
