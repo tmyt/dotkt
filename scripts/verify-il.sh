@@ -68,10 +68,11 @@ declare -A XFAIL_ILVERIFY=(
 	# — StackUnexpected at `C::.ctor`. Runtime-SAFE (both are MulticastDelegate with the identical Invoke signature, so
 	# the CLR binds them; RUN green — the delegate-property output is correct); ILVerify only rejects the erased static
 	# stack type. This is a CROSS-MODULE lifted-artifact delegate-representation ABI mismatch (a stdlib-emitted inline
-	# artifact's Kotlin-delegate ABI vs the app's BCL-delegate materialization) — the #60 W3 hidden-ABI / dual-representation
-	# follow-up, NOT the #60 SILENT non-local-return miscompile (which is fixed; a crossinline lambda has no non-local
-	# return). Kept in ASMS (no silent gap); the run lane is the behavioral gate.
-	[del2]="#60 W1: splice-all widening routed Delegates.observable/vetoable (crossinline lambda -> stdlib-emitted object-literal) onto the splice engine; §4.4ii materializes a BCL System.Action/Func where the stdlib ctor bakes the Kotlin KAction/KFunc — runtime-safe cross-module delegate-representation ABI mismatch (RUN green), #60 W3/dual-representation follow-up"
+	# artifact's Kotlin-delegate ABI vs the app's BCL-delegate materialization). LIVE TRACKER: #123 (OPEN — the
+	# delegate-representation ABI / §4.4ii materialization follow-up); the splice-widening ORIGIN is #60 W1 (CLOSED), NOT
+	# the #60 SILENT non-local-return miscompile (also fixed; a crossinline lambda has no non-local return). Kept in ASMS
+	# (no silent gap); the run lane is the behavioral gate.
+	[del2]="#123 (OPEN delegate-representation ABI follow-up; splice origin #60 W1, closed): splice-all widening routed Delegates.observable/vetoable (crossinline lambda -> stdlib-emitted object-literal) onto the splice engine; §4.4ii materializes a BCL System.Action/Func where the stdlib ctor bakes the Kotlin KAction/KFunc — runtime-safe cross-module delegate-representation ABI mismatch (RUN green)"
 	# ---- newly EXPOSED by the #99 run-derived-ASMS coverage work (these run-only samples had NO ilverify coverage
 	# before; each RUNS green — a runtime-safe formal-only finding attributed to a live tracking issue) ----
 	# boxgen: SAME class as sort above (#62/#46). compareBy/sortedBy/sortedByDescending selectors are inlined into the

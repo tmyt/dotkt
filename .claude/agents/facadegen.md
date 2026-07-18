@@ -27,7 +27,7 @@ Read `CLAUDE.md`, `docs/ship-tasks.md` §0 + §4, and `docs/future-work-interop.
 
 ## Build & test
 - Build: `dotnet build toolchain/facadegen -c Release -o build/facadegen-bin`
-- Generate metadata: `dotnet build/facadegen-bin/facadegen.dll --meta <out> System.Exception System.Console …`
+- Generate metadata: `dotnet build/facadegen-bin/facadegen.dll <outFile> [--compile-refs a.dll;…] System.Exception System.Console … [--import-list <file>]`
 - Round-trip gate: `./scripts/verify-roundtrip.sh` (consume a DotKt assembly as Kotlin)
 - MSBuild ref/inject paths: `./scripts/verify-ktproj.sh` (cases `ktproj-ref`, `ktproj-inject`, `ktproj-bidir`)
 
