@@ -1141,6 +1141,21 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		return sym.constructType(args, false, attrs)
 	}
 
+	/** #47: a Kotlin SUSPEND RECEIVER function type `suspend R.() -> T` = `kotlin.coroutines.SuspendFunction{N+1}<R,
+	 *  params…, T>` carrying the `ExtensionFunctionType` cone attribute — the composition of the suspend kind (so a
+	 *  passed lambda is a SUSPEND lambda) and the extension receiver (so the lambda body gets an implicit `this: R`).
+	 *  facadegen's SuspendFnNode restores `fn.recv` on the carried suspend `fn` node; without this arm the suspend
+	 *  branch dropped the receiver, degrading `suspend R.() -> T` to a plain `suspend () -> T`. Falls back to a plain
+	 *  suspend function type if the synthetic SuspendFunctionN symbol can't be resolved (never a crash). */
+	private fun coneSuspendExtensionFunctionType(recv: ConeKotlinType, params: List<ConeKotlinType>, ret: ConeKotlinType): ConeKotlinType {
+		val cid = ClassId(FqName("kotlin.coroutines"), Name.identifier("SuspendFunction${params.size + 1}"))
+		val sym = session.symbolProvider.getClassLikeSymbolByClassId(cid) ?: return coneSuspendFunctionType(listOf(recv) + params, ret)
+		@Suppress("UNCHECKED_CAST")
+		val args = (listOf(recv) + params + ret).toTypedArray() as Array<org.jetbrains.kotlin.fir.types.ConeTypeProjection>
+		val attrs = ConeAttributes.create(listOf(CompilerConeAttributes.ExtensionFunctionType))
+		return sym.constructType(args, false, attrs)
+	}
+
 	/** Map a metadata type name to a ConeKotlinType: primitives, the owner itself, another injected type, else Any?. */
 	/** The intrinsic `ClrRef<arg>` cone type (the surfaced form of a .NET out/ref param or ref return). */
 	private fun clrRefOf(arg: ConeKotlinType): ConeKotlinType =
@@ -1267,7 +1282,9 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			// A .NET delegate / a `suspend (…) -> T` position -> a Kotlin (suspend) function type, so a lambda binds and
 			// overloads disambiguate. A suspend fn makes a passed lambda a SUSPEND lambda (the H2 round-trip).
 			is TypeNode.Fn ->
-				if (node.recv != null && !node.suspend)
+				if (node.recv != null && node.suspend)   // #47: `suspend R.() -> T` — compose suspend kind + ext receiver
+					coneSuspendExtensionFunctionType(coneOf(node.recv, owner, methodTps, paramPos), node.params.map { coneOf(it, owner, methodTps, paramPos) }, coneOf(node.ret, owner, methodTps, paramPos))
+				else if (node.recv != null)
 					coneExtensionFunctionType(coneOf(node.recv, owner, methodTps, paramPos), node.params.map { coneOf(it, owner, methodTps, paramPos) }, coneOf(node.ret, owner, methodTps, paramPos))
 				else if (node.suspend) coneSuspendFunctionType(node.params.map { coneOf(it, owner, methodTps, paramPos) }, coneOf(node.ret, owner, methodTps, paramPos))
 				else coneFunctionType(node.params.map { coneOf(it, owner, methodTps, paramPos) }, coneOf(node.ret, owner, methodTps, paramPos))

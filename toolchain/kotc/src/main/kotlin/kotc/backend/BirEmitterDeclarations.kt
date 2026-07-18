@@ -527,9 +527,10 @@ internal fun BirEmitter.annotationDef(klass: IrClass): String {
  *  downstream (its `: System.Attribute` type or an arg type being unresolvable at ilemit), that is a bir2cir/ilemit
  *  concern, NOT a reason to re-introduce a kotc filter. */
 internal fun BirEmitter.attrsJson(anns: List<IrConstructorCall>): String {
-	// kotc emits ONE BIR for every build: the roundtrip metadata ([Kotlin*]/[Clr]) rides EVERY
-	// build's BIR verbatim — the rt-build metadata strip is downstream (ilemit skips ALL attrs under
-	// `--build-stdlib=runtime`), so the rt.dll carries none while the ref/app BIR are byte-identical here.
+	// kotc emits ONE BIR for every build: annotations ride EVERY build's BIR verbatim (ref/app/rt identical here).
+	// The rt-build strip is downstream in bir2cir (RoundtripMetadata.StripRuntimeAttrs) and is SELECTIVE — it drops
+	// the compile-time-only carriers (`DotKt.Runtime.CompilerServices.*` round-trip attrs / `kotlin.clr.*` @Clr binding
+	// / NRT) but KEEPS the user's own annotations (kotlin.Deprecated / SinceKotlin / …) on the shipping rt.dll (#47).
 	return anns.mapNotNull { ann ->
 		val ac = ann.symbol.owner.parent as? IrClass ?: return@mapNotNull null
 		if (ac.kind != ClassKind.ANNOTATION_CLASS) return@mapNotNull null
