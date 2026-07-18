@@ -6,6 +6,13 @@
   <PropertyGroup>
     <DotKtOut>$(BaseIntermediateOutputPath)dotkt-bir</DotKtOut>
     <DotKtCirOut>$(BaseIntermediateOutputPath)dotkt-cir</DotKtCirOut>
+    <!-- Incremental stamps for the back-half (#134). The BIR/CIR dirs are glob OUTPUTS (a variable file set), so
+         each back-half target keys its Inputs/Outputs off a stable .stamp instead of the dir glob: KotlinCompile's
+         $(DotKtOut)/.stamp bumps ONLY on a real recompile, so the whole chain (bir2cir -> ilemit -> retarget)
+         cascades exactly when the frontend produced new BIR and no-ops otherwise. RetargetStamp lives outside the
+         wiped CIR/BIR dirs because retarget rewrites the emitted dll IN PLACE (output == input), so it needs its
+         own out-of-band completion marker. -->
+    <DotKtRetargetStamp>$(BaseIntermediateOutputPath)dotkt-retarget.stamp</DotKtRetargetStamp>
     <DotKtTypeMeta>$(BaseIntermediateOutputPath)dotkt-clrtypes.meta</DotKtTypeMeta>
     <!-- The .NET import list extracted from the .kt sources by the kotc scan-imports pass (PSI parser, not regex). -->
     <DotKtImportList>$(BaseIntermediateOutputPath)dotkt-clrimports.txt</DotKtImportList>
@@ -154,14 +161,23 @@
       <StartupObject Condition="'$(StartupObject)' != '' or '$(OutputType)' == 'Exe'">_DotKtPlaceholder</StartupObject>
     </PropertyGroup>
     <MakeDir Directories="$(DotKtOut)" />
-    <WriteLinesToFile File="$(DotKtOut)/_DotKtPlaceholder.cs" Overwrite="true"
+    <!-- WriteOnlyWhenDifferent (#134): the placeholder body is a CONSTANT, so keep its mtime stable across no-op
+         builds — otherwise its bumped timestamp forces CoreCompile (csc) to recompile every single build, defeating
+         the whole incremental chain. It flips only if the constant itself ever changes. -->
+    <WriteLinesToFile File="$(DotKtOut)/_DotKtPlaceholder.cs" Overwrite="true" WriteOnlyWhenDifferent="true"
                       Lines="public static class _DotKtPlaceholder { public static void Main(string[] a) { } }" />
     <ItemGroup>
       <Compile Include="$(DotKtOut)/_DotKtPlaceholder.cs" />
     </ItemGroup>
   </Target>
 
-  <Target Name="DotKtBir2Cir" BeforeTargets="DotKtIlEmit" DependsOnTargets="KotlinCompile">
+  <!-- Incremental (#134): re-lower ONLY when the frontend recompiled ($(DotKtOut)/.stamp bumps) or the bir2cir tool
+       itself changed (version proxy). A reference-set change already retriggers KotlinCompile (its Inputs include the
+       resolved refs) and thus the .stamp, so the cascade covers it. Keyed off the .stamp — not the *.bir.json glob —
+       because target-body items don't exist when MSBuild evaluates the Inputs, and the .stamp is the compile's
+       single stable up-to-date marker. Output is $(DotKtCirOut)/.stamp, Touch'd after a successful lowering. -->
+  <Target Name="DotKtBir2Cir" BeforeTargets="DotKtIlEmit" DependsOnTargets="KotlinCompile;DotKtResolveReferenceSets"
+          Inputs="$(DotKtOut)/.stamp;$(DotKtBir2Cir)" Outputs="$(DotKtCirOut)/.stamp">
     <ItemGroup>
       <_DotKtBir Include="$(DotKtOut)/*.bir.json" />
       <!-- Inputs only.  The exact compile-reference universe was materialized by DotKtResolveReferenceSets. -->
@@ -170,12 +186,21 @@
     <MakeDir Directories="$(DotKtCirOut)" />
     <Message Importance="high" Text="DotKt: lowering BIR -> CIR" />
     <Exec Command="dotnet &quot;$(DotKtBir2Cir)&quot; &quot;$(DotKtCirOut)&quot; --compile-refs &quot;$(_DotKtCompileReferences)&quot; @(_DotKtBir->'&quot;%(FullPath)&quot;', ' ')" />
+    <Touch Files="$(DotKtCirOut)/.stamp" AlwaysCreate="true" />
   </Target>
 
   <!-- After CoreCompile, overwrite csc's (placeholder) assembly with one emitted directly as CIL from CIR. The
        copy-local references (the project's package/project references, NOT the BCL, which ilemit resolves by runtime
        reflection) are preloaded into ilemit as references. -->
-  <Target Name="DotKtIlEmit" AfterTargets="CoreCompile" DependsOnTargets="DotKtBir2Cir">
+  <!-- Incremental (#134): re-emit ONLY when the CIR changed ($(DotKtCirOut)/.stamp), the ilemit tool changed, or a
+       runtime reference dll changed (a cross-into dependency's new build). Output is the emitted assembly in obj/;
+       on a no-op build CoreCompile leaves it untouched (the placeholder .cs is now WriteOnlyWhenDifferent) so it
+       stays newer than the CIR stamp and ilemit skips — the emitted dll's timestamp no longer churns every build,
+       so a downstream C# ProjectReference stops rebuilding. DotKtResolveReferenceSets is a dependency so the
+       @(_DotKtRuntimeReference) items exist when these Inputs are evaluated. -->
+  <Target Name="DotKtIlEmit" AfterTargets="CoreCompile" DependsOnTargets="DotKtBir2Cir;DotKtResolveReferenceSets"
+          Inputs="$(DotKtCirOut)/.stamp;$(DotKtIlEmit);@(_DotKtRuntimeReference)"
+          Outputs="$(IntermediateOutputPath)$(TargetName)$(TargetExt)">
     <ItemGroup>
       <_DotKtCir Include="$(DotKtCirOut)/*.cir.json" />
       <!-- ilemit's refs are the RUNTIME (implementation) assemblies from the copy-local set: the runtime stdlib
@@ -200,10 +225,17 @@
        real contract assemblies (Object/Task->System.Runtime, List/Dictionary->System.Collections, …) so a C# project
        can <ProjectReference>/<Reference> it at compile time (otherwise CS0012). Uses the same @(ReferencePath) the
        forward path resolves from; runtime is unaffected. Opt out with <DotKtRetarget>false</DotKtRetarget>. -->
+  <!-- Incremental (#134): retarget rewrites the emitted dll IN PLACE, so its output can't be the dll (input == output).
+       Gate on the dll's timestamp vs an out-of-band $(DotKtRetargetStamp): when ilemit re-emits (dll mtime bumps) this
+       re-runs; on a no-op build the dll is untouched and the stamp (Touch'd last, after the in-place rewrite) stays
+       newer, so retarget skips and the shipping dll's timestamp is stable across no-op builds. -->
   <Target Name="DotKtRetarget" AfterTargets="DotKtIlEmit"
-          Condition="'$(DotKtRetarget)' != 'false'">
+          Condition="'$(DotKtRetarget)' != 'false'"
+          Inputs="$(IntermediateOutputPath)$(TargetName)$(TargetExt);$(DotKtRetargetTool)"
+          Outputs="$(DotKtRetargetStamp)">
     <Message Importance="high" Text="DotKt: retargeting BCL refs for compile-time &lt;Reference&gt; -> $(TargetName)$(TargetExt)" />
     <Exec Command="dotnet &quot;$(DotKtRetargetTool)&quot; &quot;$(IntermediateOutputPath)$(TargetName)$(TargetExt)&quot; --compile-refs &quot;$(_DotKtCompileReferences)&quot;" />
+    <Touch Files="$(DotKtRetargetStamp)" AlwaysCreate="true" />
   </Target>
 
   <!-- `dotnet clean` (#161): the DotKt pipeline state under $(BaseIntermediateOutputPath) (the BIR/CIR dirs and the
@@ -213,6 +245,6 @@
        truly resets the DotKt state and the next build regenerates injection from scratch. -->
   <Target Name="DotKtClean" BeforeTargets="CoreClean">
     <RemoveDir Directories="$(DotKtOut);$(DotKtCirOut)" />
-    <Delete Files="$(DotKtTypeMeta);$(DotKtImportList);$(DotKtOptionsManifest);$(DotKtImportManifest)" />
+    <Delete Files="$(DotKtTypeMeta);$(DotKtImportList);$(DotKtOptionsManifest);$(DotKtImportManifest);$(DotKtRetargetStamp)" />
   </Target>
 </Project>

@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "DotKt",
+  "classifications": [ "Console", "Kotlin", "DotKt", "Multiplatform" ],
+  "identity": "DotKt.Templates.Mpp",
+  "name": "DotKt Multiplatform Application",
+  "description": "A Kotlin multiplatform (common `expect` + CLR `actual`) application built to .NET via the DotKt.Sdk.Mpp SDK. Ships the global.json the nested-SDK resolver needs, so it builds out of the box.",
+  "shortName": "dotkt-mpp",
+  "tags": { "language": "Kotlin", "type": "project" },
+  "sourceName": "DotKtApp",
+  "preferNameDirectory": true,
+  "symbols": {
+    "Framework": {
+      "type": "parameter",
+      "description": "The target framework for the project.",
+      "datatype": "choice",
+      "choices": [ { "choice": "net10.0", "description": ".NET 10" } ],
+      "defaultValue": "net10.0",
+      "replaces": "net10.0"
+    }
+  }
+}

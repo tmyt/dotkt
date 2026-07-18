@@ -72,6 +72,24 @@ fun main(args: Array<String>) {
 Every `.kt` file under the project directory is compiled automatically (like `.cs` in a C#
 project). There is no required Kotlin-specific configuration.
 
+### Multiplatform (`expect`/`actual`)
+
+For a Kotlin multiplatform project (a common `expect` fragment under `common/` + a CLR `actual`
+fragment) use the `dotkt-mpp` template:
+
+```bash
+dotnet new dotkt-mpp -o hello-mpp
+cd hello-mpp
+dotnet run
+# Hello, World, from a DotKt multiplatform app on .NET!
+```
+
+It uses `<Project Sdk="DotKt.Sdk.Mpp">` and ships a `global.json` next to the project. The
+`global.json` is **required**: the MPP SDK imports the base `DotKt.Sdk` through a version-less
+nested import, and the NuGet MSBuild-SDK resolver reads that nested SDK's version *only* from
+`global.json`'s `msbuild-sdks` map — so both `DotKt.Sdk.Mpp` and `DotKt.Sdk` are pinned there. The
+template generates it for you, so the project builds out of the box.
+
 ## 4. Build and run
 
 ```bash
