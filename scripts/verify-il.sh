@@ -72,6 +72,29 @@ declare -A XFAIL_ILVERIFY=(
 	# follow-up, NOT the #60 SILENT non-local-return miscompile (which is fixed; a crossinline lambda has no non-local
 	# return). Kept in ASMS (no silent gap); the run lane is the behavioral gate.
 	[del2]="#60 W1: splice-all widening routed Delegates.observable/vetoable (crossinline lambda -> stdlib-emitted object-literal) onto the splice engine; §4.4ii materializes a BCL System.Action/Func where the stdlib ctor bakes the Kotlin KAction/KFunc — runtime-safe cross-module delegate-representation ABI mismatch (RUN green), #60 W3/dual-representation follow-up"
+	# ---- newly EXPOSED by the #99 run-derived-ASMS coverage work (these run-only samples had NO ilverify coverage
+	# before; each RUNS green — a runtime-safe formal-only finding attributed to a live tracking issue) ----
+	# boxgen: SAME class as sort above (#62/#46). compareBy/sortedBy/sortedByDescending selectors are inlined into the
+	# ComparisonsKt$Sam102/$Sam104 comparator, boxing the Int/Pair selector result to object where IComparable is
+	# formally expected. Runtime-safe (the boxed value implements IComparable; RUN green — sorted output correct).
+	[boxgen]="#62/#46 (same covariance-erasure class as sort): compareBy/sortedBy selector inlined into the comparator SAM boxes Int/Pair to object where IComparable is expected — runtime-safe (RUN green)"
+	# classdeleg (#174): a class-delegation (#81) forwarder `Tracked<T> : MutableList<T> by backing` narrows the
+	# iterator()/listIterator() return to the READ-ONLY Iterator/ListIterator where the Mutable* slot is formally
+	# expected. Runtime-safe (the backing MutableList returns a real Mutable* iterator; RUN green), same erased-static
+	# -return-type class as #12/#46 — a bir2cir/representation follow-up.
+	[classdeleg]="#174: class-delegation (#81) forwarder narrows MutableList iterator()/listIterator() return to read-only Iterator/ListIterator where Mutable* is expected — runtime-safe covariance-erasure (RUN green)"
+	# copyofnull (#127/#86): the write/return axis of the nullable value-type OBJECT-erasure family. copyOf/arrayOfNulls
+	# honestly yields Array<T?> (#124); for a value elem the array is materialized as object[] where Nullable<int32>[]
+	# is formally expected at the callsite. Runtime-safe (RUN green — null tail + prefix read back correctly).
+	[copyofnull]="#127/#86: nullable value-type array (copyOf -> Array<T?>, #124) materialized as object[] where Nullable<T>[] is formally expected — the object-erasure write/return axis, runtime-safe (RUN green)"
+	# defargs / delegnull / linkedorder: the formal-only DelegateCtor 'Unrecognized arguments for delegate .ctor' class
+	# (#170, whose title names il-linkedorder exactly; root mechanism #150). A synthetic delegate for a joinToString{}
+	# trailing lambda / data-class copy default-arg (defargs), a Func<string?>/Action<string?> lambda (delegnull), or a
+	# joinToString{} lambda over map entries (linkedorder) constructs a delegate ilverify rejects the ctor args of.
+	# All three RUN green — a formal-only ilemit delegate-construction finding.
+	[defargs]="#170/#150: formal-only DelegateCtor 'Unrecognized arguments for delegate .ctor' on a joinToString{}/copy default-arg synthetic delegate — runtime-safe (RUN green)"
+	[delegnull]="#170/#150: formal-only DelegateCtor 'Unrecognized arguments for delegate .ctor' on a Func<string?>/Action<string?> lambda-to-delegate construction — runtime-safe (RUN green)"
+	[linkedorder]="#170: formal-only DelegateCtor 'Unrecognized arguments for delegate .ctor' on a joinToString{} lambda over map entries (the exact sample #170 names) — runtime-safe (RUN green)"
 )
 
 # The CLR stdlib (kotlin.*) is supplied to kotc via the FRONTEND KLIB (scripts/build-stdlib-klib.sh) on
@@ -118,6 +141,27 @@ sample_guard() { # <name>
 mismatch() { # <expected> <actual> — fill reason/detail for an output comparison failure
 	reason="output mismatch"
 	detail="$(printf -- '--- expected ---\n%s\n--- actual ---\n%s' "$1" "$2")"
+}
+# Per-sample RUN timeout (#108): a coroutine resume/pulse-drop regression can DEADLOCK a blocking-drain
+# sample (il-monitordrain does Monitor.Wait until a cross-thread Pulse; il-comaindrain blocks a suspend
+# main until it drains). Without a hard bound ONE hung sample wedges the ENTIRE gate — CI then kills the
+# whole job on its outer timeout with NO NEW-FAIL diff. timeout(1) SIGTERMs at the deadline (exit 124; if
+# still alive after -k, SIGKILL -> 137); either is classified as a distinct, loud "run timeout" FAIL so a
+# deadlock surfaces as a clean gate record instead of an indefinite hang. Override via DOTKT_RUN_TIMEOUT.
+RUN_TIMEOUT="${DOTKT_RUN_TIMEOUT:-60}"
+# run_and_compare <dll> <expected> — run an emitted sample under the #108 timeout and set ok / reason+detail
+# for the run+stdout compare. Single home for the four il_check* run tails (was duplicated verbatim).
+run_and_compare() { # <dll> <expected>
+	local dll="$1" exp="$2" out rc=0
+	out="$(timeout -k 5 "${RUN_TIMEOUT}s" dotnet "$dll" 2>/dev/null)" || rc=$?
+	if (( rc == 124 || rc == 137 )); then
+		reason="run timeout (>${RUN_TIMEOUT}s; possible coroutine resume/pulse-drop deadlock — #108)"
+		detail="$(printf -- '--- expected ---\n%s\n--- actual (before timeout) ---\n%s' "$exp" "$out")"; return
+	fi
+	if (( rc != 0 )); then
+		reason="run crash"; detail="$(printf -- '--- expected ---\n%s\n--- actual (before crash) ---\n%s' "$exp" "$out")"; return
+	fi
+	if [[ "$out" == "$exp" ]]; then ok=1; else mismatch "$exp" "$out"; fi
 }
 
 # UNCONDITIONAL tool builds: the gate tests the CURRENT sources.
@@ -248,6 +292,7 @@ il_check_inject() { # <name> <asm> <srcDir> <expected> <runtimeAsm>
 	(
 		sample_guard "$1"
 		name="$1"; asm="$2"; src="$3"; expected="$4"; rasm="$5"
+		echo "$asm" > "$RESULTS/asm-$name"
 		birdir="$ROOT/build/bir-$name"; ildir="$ROOT/build/il-$name"; meta="$ROOT/build/$name.meta"
 		refdll="$(build_runtime "$src" "$rasm")"; echo "$refdll" > "$RESULTS/refdll-$name"
 		implist="$ROOT/build/$name.imports"
@@ -259,9 +304,7 @@ il_check_inject() { # <name> <asm> <srcDir> <expected> <runtimeAsm>
 		if ! il_emit "$name" "$ildir" "$asm" "$birdir" --ref "$refdll" --ref "$STDLIB_RT_DLL"; then
 			reason="ilemit error"; exit 0; fi
 		cp "$refdll" "$ildir/"; cp "$STDLIB_RT_DLL" "$ildir/"
-		if ! actual="$(dotnet "$ildir/$asm.dll" 2>/dev/null)"; then
-			reason="run crash"; detail="$(printf -- '--- expected ---\n%s\n--- actual (before crash) ---\n%s' "$expected" "$actual")"; exit 0; fi
-		if [[ "$actual" == "$expected" ]]; then ok=1; else mismatch "$expected" "$actual"; fi
+		run_and_compare "$ildir/$asm.dll" "$expected"
 	) &
 }
 
@@ -274,6 +317,7 @@ il_check_inject_nrt() { # <name> <asm> <srcDir> <expected> <runtimeAsm>
 	(
 		sample_guard "$1"
 		name="$1"; asm="$2"; src="$3"; expected="$4"; rasm="$5"
+		echo "$asm" > "$RESULTS/asm-$name"
 		birdir="$ROOT/build/bir-$name"; ildir="$ROOT/build/il-$name"; meta="$ROOT/build/$name.meta"
 		refdll="$(build_runtime "$src" "$rasm" enable)"; echo "$refdll" > "$RESULTS/refdll-$name"
 		implist="$ROOT/build/$name.imports"
@@ -285,9 +329,7 @@ il_check_inject_nrt() { # <name> <asm> <srcDir> <expected> <runtimeAsm>
 		if ! il_emit "$name" "$ildir" "$asm" "$birdir" --ref "$refdll" --ref "$STDLIB_RT_DLL"; then
 			reason="ilemit error"; exit 0; fi
 		cp "$refdll" "$ildir/"; cp "$STDLIB_RT_DLL" "$ildir/"
-		if ! actual="$(dotnet "$ildir/$asm.dll" 2>/dev/null)"; then
-			reason="run crash"; detail="$(printf -- '--- expected ---\n%s\n--- actual (before crash) ---\n%s' "$expected" "$actual")"; exit 0; fi
-		if [[ "$actual" == "$expected" ]]; then ok=1; else mismatch "$expected" "$actual"; fi
+		run_and_compare "$ildir/$asm.dll" "$expected"
 	) &
 }
 
@@ -296,6 +338,7 @@ il_check() { # <name> <asm> <srcArg> <expected> [metadataFile]
 	(
 		sample_guard "$1"
 		name="$1"; asm="$2"; src="$3"; expected="$4"; meta="${5:-}"
+		echo "$asm" > "$RESULTS/asm-$name"
 		birdir="$ROOT/build/bir-$name"; ildir="$ROOT/build/il-$name"
 		rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
 		# The case's .NET-space facade metadata (EXCMETA/COLLMETA/... — System.* injection) ONLY, if any. The stdlib
@@ -306,9 +349,7 @@ il_check() { # <name> <asm> <srcArg> <expected> [metadataFile]
 		if ! il_emit "$name" "$ildir" "$asm" "$birdir" --ref "$STDLIB_RT_DLL"; then
 			reason="ilemit error"; exit 0; fi
 		cp "$STDLIB_RT_DLL" "$ildir/"
-		if ! actual="$(dotnet "$ildir/$asm.dll" 2>/dev/null)"; then
-			reason="run crash"; detail="$(printf -- '--- expected ---\n%s\n--- actual (before crash) ---\n%s' "$expected" "$actual")"; exit 0; fi
-		if [[ "$actual" == "$expected" ]]; then ok=1; else mismatch "$expected" "$actual"; fi
+		run_and_compare "$ildir/$asm.dll" "$expected"
 	) &
 }
 
@@ -322,6 +363,7 @@ il_check_imports() { # <name> <asm> <srcDir> <expected>
 	(
 		sample_guard "$1"
 		name="$1"; asm="$2"; src="$3"; expected="$4"
+		echo "$asm" > "$RESULTS/asm-$name"
 		birdir="$ROOT/build/bir-$name"; ildir="$ROOT/build/il-$name"; meta="$ROOT/build/$name.meta"
 		implist="$ROOT/build/$name.imports"
 		"$LAUNCHER" --scan-imports --output "$implist" "$src"/*.kt >/dev/null 2>&1 || true
@@ -332,9 +374,7 @@ il_check_imports() { # <name> <asm> <srcDir> <expected>
 		if ! il_emit "$name" "$ildir" "$asm" "$birdir" --ref "$STDLIB_RT_DLL"; then
 			reason="ilemit error"; exit 0; fi
 		cp "$STDLIB_RT_DLL" "$ildir/"
-		if ! actual="$(dotnet "$ildir/$asm.dll" 2>/dev/null)"; then
-			reason="run crash"; detail="$(printf -- '--- expected ---\n%s\n--- actual (before crash) ---\n%s' "$expected" "$actual")"; exit 0; fi
-		if [[ "$actual" == "$expected" ]]; then ok=1; else mismatch "$expected" "$actual"; fi
+		run_and_compare "$ildir/$asm.dll" "$expected"
 	) &
 }
 
@@ -1153,6 +1193,7 @@ il_revinterop() {
 	(
 		sample_guard revinterop
 		local asm=KotlinLib src="$ROOT/cases/il-revinterop"
+		echo "$asm" > "$RESULTS/asm-revinterop"
 		local birdir="$ROOT/build/bir-revinterop" ildir="$ROOT/build/il-revinterop"
 		rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
 		if ! "$LAUNCHER" $src/lib.kt -no-stdlib -classpath "$CP" -d $birdir >/dev/null 2>&1; then
@@ -1169,7 +1210,8 @@ EOF
 		# Capture the C# host's stdout AND its exit status INDEPENDENTLY (issue #163): the run status is no longer
 		# lost to the grep pipe / `|| true` that let a consumer print the expected text and THEN throw / return
 		# non-zero pass. A non-zero `dotnet run` (build OR execution) is a run crash BEFORE any output compare.
-		actual="$(dotnet run --project "$ildir/consumer.csproj" -v q -- "$ildir/$asm.dll" 2>"$ildir/run.err")" || rc=$?
+		# #108: bound the consumer run+build too (SIGTERM at the deadline -> exit 124/137, folded into the run-crash record).
+		actual="$(timeout -k 5 "${RUN_TIMEOUT}s" dotnet run --project "$ildir/consumer.csproj" -v q -- "$ildir/$asm.dll" 2>"$ildir/run.err")" || rc=$?
 		actual="$(printf '%s' "$actual" | grep -vE 'warning|error |\.cs\(' || true)"
 		if (( rc != 0 )); then
 			reason="run crash (exit $rc)"; detail="$(printf -- '--- expected ---\n%s\n--- actual (before crash) ---\n%s\n--- stderr ---\n%s' "$expected" "$actual" "$(tail -20 "$ildir/run.err" 2>/dev/null)")"; exit 0; fi
@@ -1213,49 +1255,50 @@ done
 declare -A REFDLL=()
 for f in "$RESULTS"/refdll-*; do [[ -e "$f" ]] || continue; REFDLL["$(basename "$f" | sed 's/^refdll-//')"]="$(cat "$f")"; done
 
-# ---- formal IL verification (ilverify), if the tool is available ----
+# ---- formal IL verification (ilverify) ----
 verify_pass=0; declare -a verify_fails=()
 ILV="$(find "$HOME/.dotnet" -name 'ILVerify.dll' 2>/dev/null | head -1)"
 REFDIR="$DOTNET_RUNTIME_DIR"
-if [[ -n "$ILV" && -d "$REFDIR" ]]; then
-	echo "--- ilverify ---"
-	declare -A ASMS=( [m0]=M0Kt [mc1]=MC1 [iface]=Iface [enum]=Enum [m2]=M2 [mi1]=MI1 [for]=ForT [exc]=Exc [ops]=Ops [math]=MathT [str]=Str [cp]=Cp [ext]=Ext [arr]=Arr [lam]=Lam [clo]=Clo [scope]=Sc [coll]=Coll [coll2]=Coll2 [coll3]=Coll3 [seq]=Seq [seqforin]=SeqForin [char]=Char [sort]=Sort [funref]=Funref [getcls]=GetClass [forin]=Forin [ldeleg]=LocalDeleg [langf]=LangFeat [mapdes]=MapDes [valcls]=ValCls [ctorref]=CtorRef [unsgn]=Unsigned [regex]=Regex [regexgroups]=RegexGroups [groupvalues]=GroupValues [result]=Result [bmore]=BMore [chunk]=Chunk  [collmore]=CollMore  [tryexpr]=TryExpr  [localclass]=LocalClass [collops2]=CollOps2 [genseq]=GenSeq [genseq2]=GenSeq2 [refcell]=RefCell [annot]=Annot [props]=Props [propref]=AppKt [pair]=Pair [null]=Null [nullv]=MS1 [op]=OpT [dataq]=Dq [inline]=InlF [inlnestnlr]=InlNestNlr [inlouterlabel]=InlOuterLabel [inlnlbreak]=InlNlBreak [inlownlabel]=InlOwnLabel [inlmutcap]=InlMutCap [inlforward]=InlForward [inlretexpr]=InlRetExpr [inlsuspend]=InlSuspend [ctor]=CtorT [objex]=Oe [nest]=Nst [scast]=Sc2 [vis]=VisT [throwx]=Tx [enumr]=Er [reqnn]=Rn [reif]=Rf [iter]=Iter [inner]=Inner [lazy]=Lazy [volatile]=Volatile [deleg]=Deleg [rwp]=Rwp [bymap]=Bm [del2]=D2 [gen]=Gen [genctor]=GenCtor [gen2]=Gen2 [gen3]=Gen3 [gen4]=Gen4 [gen5]=Gen5 [gen6]=Gen6 [netbase]=Nb [netbase2]=Nb2 [netgen]=Ng [netgen2]=Ng2 [event]=Ev [netgen3]=Ng3 [loopjump]=LjT [inline2]=Inl2  [c1net]=C1Net [firgap]=FirGap [fmt]=Fmt [cobuild]=Cob [dsl]=Dsl [object]=TObj [gfac]=TGfac [xprop]=Xprop [arrops]=Arro [langtail]=LangTail [enumbody]=EnumBody [fieldvis]=FieldVis [bytearg]=ByteArg [iterable]=Iterable [customexc]=CustomExc [comparator]=Comparator [use]=Use [comparable]=Comparable [charseq]=CS [charseqx]=CSX [charseqs]=CSStr [charseqxfile]=CSXFile [charseqmore]=CSMore [substr]=Substr [injbase]=InjBase [injfqn]=InjFqn [injstatic]=InjStatic [mfclosure]=MfClosure [mflambda]=MFL [injuint]=InjUint [exprbody]=EB [overload]=OV [collrealkt]=CollRealKt [mutcoll]=MutColl [mapfilter]=MapF [nan]=Nan [nestedtry]=NestedTry [trynullable]=TryNullable [setlocalbox]=SetLocalBox [nancmp]=NanCmp [mapgen]=MapGen [taskfam]=Tf [taskwhen]=Tw [whensubj]=WhenSubj [safecallnv]=SafeCallNv [rangein]=RangeIn [userrange]=UserRange [duration]=Duration [coldcf]=ColdCf [coforarray]=CoForArray [coarrayorder]=CoArrayOrder [coldgen]=ColdGen [coldinst]=ColdInst [coldvirt]=ColdVirt [coexc]=CoExc [cocancel]=CoCancel [cocancelkt]=CoCancelKt [corestrict]=CoRestrict [suspendco]=SuspendCo [lam1]=Lam1Kt [lam2]=Lam2Kt [suspendcapture]=SuspendCapture [suspendnestedcapture]=SuspendNestedCapture [suspendvalue]=AppKt [suspendval2]=Sv2Kt [taskawait]=TaskAwait [monitordrain]=MonitorDrainKt [threadlambda]=AppKt [genstatic]=GenStatic [genasync]=GenAsync [genbase]=GenBaseKt [geninherit]=AppKt [genfield]=AppKt [usermember]=AppKt [genbaseext]=AppKt [strnum]=StrNum [mapof1]=Mo1 [emptymap]=EmptyMap [seqyieldall]=SeqYieldAll [charminus]=Cm [digittoint]=Dti [printlnnull]=PrintlnNull [maptostr]=Mts [comaindrain]=ComainDrain [colstr]=Cstr [cmpord]=CmpOrd [mutset]=MutSet [hashset2]=HashSet2 [iscoll]=IsColl [excmap]=ExcMap [tryexprop]=TryExprOp [mapforin]=MapForin [nestedstr]=NestedStr [pairnest]=PairNest [mapmerge]=MapMerge [triple]=Triple [typealias]=TypeAlias [atomics]=Atomics [mapvalues]=MapValues [indicesv]=IndicesV [tailrec]=Tailrec [copydef]=CopyDef [equalscall]=EqualsCall [collrevview]=CollRevView [nullcollarg]=NullCollArg [infloopret]=InfLoopRet [nullcs]=NullCs [genarrlam]=GenArrLam [coctxkey]=AppKt [cointercept]=AppKt [cfgawaitgen]=CfgAwaitGen [awaitintercept]=AppKt [valueawait]=ValueAwait [extawait]=ExtAwait [inlsuspenddefault]=AppKt [inlmatsetcap]=AppKt [inlsuspendflow]=AppKt [inlsuspendouter]=AppKt [flowtransform]=AppKt [bytewiden]=AppKt [unsignedshr]=AppKt [structfloateq]=AppKt )
-	# Gate-hygiene (final-review 2026-07-05): 44 run-only cases that were RUN-verified but had NO ilverify
-	# formal coverage — now wired in (a latent unverifiable-IL could otherwise pass the run check silently).
-	ASMS+=( [alias]=Alias [blank]=Blank [cbk]=Cbk [clrasm]=ClrAsm [clriface]=ClrIface [clrimpl]=ClrImpl [coerce]=Coerce [coevalorder]=CoEvalOrder [cofieldorder]=CoFieldOrder [cofinally]=CoFinally [coinline]=CoInline [coldabstract]=ColdAbstract [ifacesuspend]=IfaceSuspend [coldsubiface]=ColdSubIface [coldbaseinherit]=ColdBaseInherit [coldstaticmember]=ColdStaticMember [colddimgen]=ColdDimGen [counit]=CoUnit [delegatearg]=Dlg [dualrep]=DualRep [eventext]=EventExt [genclosure]=GenClo [geninlinearg]=GenInlineArg [genextnew]=GenExtNew [gencolladd]=GenCollAdd [genhof]=XHof [genim]=GenIM [geninj]=GenInj [ifaceevent]=AppKt [inherit]=Inherit [interpnull]=InterpNull [mref]=Mr [netattr]=NetAttr [netenum]=NetEnum [netinterop]=NetInterop [ntostr]=NToStr [nulltostr]=NullToStr [objgen]=OGen [outref]=Outref [overrideprop]=OverridePropKt [regexreplace]=RegexReplace [revinterop]=KotlinLib [samcmp]=SamCmp [selfref]=SelfRef [seqfilter]=SeqFilter [subseq]=SubSeq [taskgen]=Tg [tloverload]=TlOverload [transinj]=TransInj [vtprop]=VtProp [xfaceimpl]=XFace [xinline]=XInl [strops]=StrOps [nullbang]=NullBang [tryval]=TryVal [starproj]=StarProj [toplateinit]=TopLateinit [gendelegate]=AppKt [csextrecv]=CsExtRecv [genextval]=GenExtVal [inlklibmembernlr]=InlKlibMemberNlr [writecapture]=AppKt [genlocalclass]=AppKt [lateinitref]=AppKt [topdeleg]=AppKt [suspendref]=AppKt )
-		# stdlib miscompile regressions (#97 copyInto overlap [generic Array<T> path], #103 roundToInt/roundToLong half-up)
-		ASMS+=( [copyintoverlap]=AppKt [roundhalfup]=AppKt )
-		# kotc frontend regressions: #40 @InlineOnly @ClrIntrinsic carriage, #89 cross-module top-level val owner attribution,
-		# #57 transitive/owner-keyed length-reference deferral (user CharSequence implementer)
-		ASMS+=( [inlonlyintr]=AppKt [xmodtopval]=AppKt [charseqlenref]=AppKt )
-		# #169 concrete-LinkedHashSet regression (setOf/distinct/toMutableSet/retainAll + app-side iterator().remove()).
-		ASMS+=( [linkedset]=LinkedSet )
-	# DOCUMENTED ilverify EXCLUSIONS (deliberately NOT in ASMS — no silent gap):
-	#   • stackalloc — the emitted `localloc` (stackalloc/Span) is UNVERIFIABLE by ECMA-335 (like C# `unsafe`);
-	#     it can NEVER pass ilverify. Permanent, by-design exclusion — not a defect.
-	#   • ifacesuspend — NOT an exclusion any more: it is wired into ASMS above and verifies clean. The former
-	#     CallAbstract finding in the synthesized interface-suspend bridge `Fetcher::fetch()` (a `call` on an
-	#     abstract member) has been resolved, so ifacesuspend is now formally verified like every other run-case.
-	#     (COV6 reconcile, 2026-07-06: this bullet previously claimed "deliberately NOT in ASMS, REAL latent
-	#     finding" while the ASMS+= line already listed it — a code/comment contradiction; corrected here.)
-	#   • strops — FIXED (2026-07-05): the `char[]` build site emitted the generic TOKEN opcode
-	#     `stelem <System.Char>` instead of the ECMA-335-required specialized `stelem.i2`. ilemit now selects the
-	#     specialized primitive stelem/ldelem opcode (shared EmitStelem/EmitLdelem helper, Program.cs); strops is
-	#     now wired into ASMS above and verifies clean.
-	for n in $(printf '%s\n' "${!ASMS[@]}" | sort); do
-		dll="$ROOT/build/il-$n/${ASMS[$n]}.dll"
-		[[ -f "$dll" ]] || continue
-		# A sample that references an external runtime dll needs it on ilverify's resolve path too.
-		refarg=(); [[ -n "${REFDLL[$n]:-}" ]] && refarg=(-r "${REFDLL[$n]}")
-		if dotnet "$ILV" "$dll" -r "$REFDIR/*.dll" -r "$STDLIB_RT_DLL" "${refarg[@]}" 2>&1 | grep -qi 'Verified\.'; then
-			echo "VERIFY  $n"; verify_pass=$((verify_pass+1))
-		else
-			echo "VERIFY FAIL  $n"; verify_fails+=("$n")
-		fi
-	done
-else
-	echo "(ilverify not installed; skipping formal verification — 'dotnet tool install -g dotnet-ilverify')"
+# #107: FAIL LOUD when the formal-verification lane cannot run. Skipping it (the old `else: skipping` branch)
+# left verify_fails empty -> the gate exited 0 GREEN with ZERO IL coverage, and worse, xfail_diff then printed
+# "FIXED — remove it" for every legitimate XFAIL_ILVERIFY baseline entry (never actually checked). A gate that
+# cannot verify MUST SAY SO and exit nonzero — never degrade silently to run-only with a misleading green.
+if [[ -z "$ILV" || ! -d "$REFDIR" ]]; then
+	echo "IL GATE RED — #107: cannot run the formal-verification (ilverify) lane; refusing to report green with ZERO IL coverage."
+	[[ -z "$ILV" ]]    && echo "  ILVerify.dll not found under \$HOME/.dotnet — install it: 'dotnet tool install -g dotnet-ilverify'"
+	[[ -d "$REFDIR" ]] || echo "  runtime reference directory missing: REFDIR='$REFDIR'"
+	exit 1
 fi
+echo "--- ilverify ---"
+# #99: the ilverify assembly set is DERIVED from the run set, never hand-maintained. Every il_check* worker wrote
+# its emitted assembly name to $RESULTS/asm-<name>; we read them all back here so a run sample can NEVER silently
+# escape formal verification. (The former hand-copied ASMS map drifted badly — 78+ run-only samples, incl. the
+# highest-risk state-machine / generic-field / super-dispatch shapes, had NO ilverify coverage; a sample that ran
+# on the current CLR but emitted formally-invalid IL passed green. Deriving from the run set closes that class
+# permanently: adding a run sample AUTOMATICALLY adds its ilverify coverage.)
+declare -A ASMS=()
+for f in "$RESULTS"/asm-*; do [[ -e "$f" ]] || continue; ASMS["$(basename "$f" | sed 's/^asm-//')"]="$(cat "$f")"; done
+# DOCUMENTED ilverify EXCLUSIONS — samples whose emitted IL is LEGITIMATELY unverifiable by ECMA-335 (NOT a defect).
+# Made LOUD (printed VERIFY-SKIP with a concrete reason), never a silent gap. A runtime-safe finding that DOES reach
+# ilverify and fails belongs in XFAIL_ILVERIFY (top of file), NOT here — this map is only for IL ilverify CANNOT check.
+declare -A ILVERIFY_EXCLUDE=(
+	[stackalloc]="emitted localloc (stackalloc/Span) is UNVERIFIABLE by ECMA-335, like C# unsafe — never passes ilverify (permanent by-design exclusion)"
+)
+for n in $(printf '%s\n' "${!ILVERIFY_EXCLUDE[@]}" | sort); do
+	unset 'ASMS[$n]'; echo "VERIFY-SKIP $n (${ILVERIFY_EXCLUDE[$n]})"
+done
+for n in $(printf '%s\n' "${!ASMS[@]}" | sort); do
+	dll="$ROOT/build/il-$n/${ASMS[$n]}.dll"
+	# No dll = the sample failed to compile/emit; that is already a run-lane FAIL, not a hidden ilverify gap.
+	[[ -f "$dll" ]] || continue
+	# A sample that references an external runtime dll needs it on ilverify's resolve path too.
+	refarg=(); [[ -n "${REFDLL[$n]:-}" ]] && refarg=(-r "${REFDLL[$n]}")
+	if dotnet "$ILV" "$dll" -r "$REFDIR/*.dll" -r "$STDLIB_RT_DLL" "${refarg[@]}" 2>&1 | grep -qi 'Verified\.'; then
+		echo "VERIFY  $n"; verify_pass=$((verify_pass+1))
+	else
+		echo "VERIFY FAIL  $n"; verify_fails+=("$n")
+	fi
+done
 
 # ---- verdict: diff the actual fail sets against the XFAIL baseline (lib.sh xfail_diff) ----
 echo "--- baseline diff (XFAIL = expected fail; NEW-FAIL = regression; FIXED = prune the xfail entry) ---"
