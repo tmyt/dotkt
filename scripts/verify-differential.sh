@@ -87,13 +87,79 @@ il-triple il-typealias il-atomics il-tailrec il-copydef il-equalscall il-enumint
 # il-boxgen were silently un-tested. Consolidated into the union above (kcc review C3, 2026-07-06).
 
 # Run samples concurrently (each does a JVM oracle compile+run plus a CLR compile+run — all independent).
-# Every fallible command inside the backgrounded subshell carries `|| true` so a broken sample still
-# reports its own DIFF line instead of dying silently under `set -e`.
+# Each stage in diff_eval captures its own exit status (`|| <stage>=…`) so a broken sample reports its own DIFF
+# line — with the failing stage + stderr — instead of dying under `set -e` OR silently comparing empty stdout.
 JOBS="$(nproc 2>/dev/null || echo 4)"; (( JOBS > 6 )) && JOBS=6
 gate() { while (( $(jobs -rp | wc -l) >= JOBS )); do wait -n 2>/dev/null || true; done; }
 # Kotlin.NET primitive formatting is CLR-native by design; normalize platform-cosmetic differences
 # (boolean case true/True, double trailing `.0`) so the harness validates LOGIC, not host formatting.
 norm() { sed -E 's/\bTrue\b/true/g; s/\bFalse\b/false/g; s/([0-9])\.0\b/\1/g'; }
+
+# diff_eval <name> — run ONE pure sample on both oracles, capturing STDOUT *and* the exit status of EVERY stage
+# (issue #163). A nonzero status at any stage (jvm compile/run, kotc, bir2cir, ilemit, clr run) is a DIFF with
+# the failing stage + its stderr recorded — NEVER a silent empty-stdout compare. Before the fix every stage
+# carried `|| true` and only non-empty stdout was compared, so a program that printed all the expected output and
+# THEN threw / returned non-zero was reported MATCH (its exception went to the now-captured stderr). Sets
+# DIFF_VERDICT (the MATCH/DIFF/SKIP line) and DIFF_DET (optional detail). Called from the parallel loop AND the
+# self-test, so both drive the identical verdict logic.
+diff_eval() {
+	local s="$1" src="$ROOT/cases/$1"; DIFF_VERDICT="SKIP  $s (no main)"; DIFF_DET=""
+	local mainfile; mainfile="$(grep -lE '^fun main' "$src"/*.kt 2>/dev/null | head -1 || true)"
+	[[ -n "$mainfile" ]] || return 0
+	local base; base="$(basename "$mainfile" .kt)"; local mainclass="${base^}Kt"
+	# A `package p` decl puts the JVM main class at `p.<Base>Kt` (the CLR side runs the bare assembly name, so only
+	# the JVM `java <class>` invocation needs the FQN — else ClassNotFound). `|| true`: grep exits 1 with no
+	# `package` decl and pipefail (lib.sh) would otherwise fail the substitution under `set -e`.
+	local pkg; pkg="$(grep -hE '^package ' "$mainfile" 2>/dev/null | head -1 | awk '{print $2}' || true)"
+	local jvmmain="${pkg:+$pkg.}$mainclass"
+
+	# (a) kotlin/jvm oracle — compile, then run. Each stage's status is captured independently (stderr -> a log).
+	local jout="$ROOT/build/diff-jvm-$s"; rm -rf "$jout"; mkdir -p "$jout"   # worktree-scoped ($ROOT/build), NOT a shared /tmp path — else two worktree gates clobber each other (false-RED)
+	local jvm="" jstage=""
+	"$JAVA" -cp "$CCP" org.jetbrains.kotlin.cli.jvm.K2JVMCompiler "$src"/*.kt -no-stdlib -classpath "$STDLIBJ" -d "$jout" >"$jout/compile.err" 2>&1 || jstage="jvm-compile"
+	[[ -n "$jstage" ]] || jvm="$("$JAVA" -cp "$jout:$STDLIBJ" "$jvmmain" 2>"$jout/run.err")" || jstage="jvm-run"
+
+	# (b) kotlin/clr via the SHIPPING IL backend: kotc (frontend klib) -> BIR -> bir2cir -> CIR -> ilemit -> dll, run.
+	local cout="$ROOT/build/diff-clr-$s"; rm -rf "$cout"; mkdir -p "$cout"
+	local ccir="$ROOT/build/diff-cir-$s"; rm -rf "$ccir"; mkdir -p "$ccir"
+	local clr="" cstage=""
+	"$KOTC" $src -no-stdlib -classpath "$FE_KLIB" -d "$cout" >"$cout/kotc.err" 2>&1 || cstage="clr-kotc"
+	if [[ -z "$cstage" ]]; then
+		local compile_refs; compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL")"
+		dotnet "$BIR2CIR_DLL" "$ccir" --compile-refs "$compile_refs" "$cout"/*.bir.json >"$cout/bir2cir.err" 2>&1 || cstage="clr-bir2cir"
+	fi
+	[[ -n "$cstage" ]] || dotnet "$ILEMIT_DLL" "$cout" "$mainclass" --runtime-refs "$STDLIB_RT_DLL" "$ccir"/*.cir.json >"$cout/ilemit.err" 2>&1 || cstage="clr-ilemit"
+	if [[ -z "$cstage" ]]; then
+		cp "$STDLIB_RT_DLL" "$cout/"
+		clr="$(dotnet "$cout/$mainclass.dll" 2>"$cout/run.err")" || cstage="clr-run"
+	fi
+
+	# Verdict. A nonzero stage on EITHER oracle is a DIFF (record the stage + its stderr). Otherwise both sides
+	# must have produced REAL, non-empty stdout AND match after cosmetic normalization; empty-on-either stays a DIFF.
+	if [[ -n "$jstage" || -n "$cstage" ]]; then
+		local errlog=""; [[ -n "$jstage" ]] && errlog="$jout/${jstage#jvm-}.err"; [[ -n "$cstage" ]] && errlog="$cout/${cstage#clr-}.err"
+		DIFF_VERDICT="DIFF  $s"
+		DIFF_DET="$(printf -- 'stage-fail: jvm=%s clr=%s\n--- jvm stdout ---\n%s\n--- clr stdout ---\n%s\n--- stderr (%s) ---\n%s' "${jstage:-ok}" "${cstage:-ok}" "$jvm" "$clr" "${jstage:-$cstage}" "$(tail -20 "$errlog" 2>/dev/null)")"
+	elif [[ -n "$jvm" && -n "$clr" && "$(norm <<<"$jvm")" == "$(norm <<<"$clr")" ]]; then
+		DIFF_VERDICT="MATCH $s"
+	else
+		DIFF_VERDICT="DIFF  $s"; DIFF_DET="$(printf -- '--- jvm ---\n%s\n--- clr ---\n%s' "$jvm" "$clr")"
+	fi
+}
+
+# ---- issue #163 self-test: a sample that prints the EXPECTED text then throws MUST be classified DIFF (never
+# MATCH). This drives the REAL diff_eval verdict logic, so it fails loudly if the exit-code hole ever reopens. ----
+diff_selftest() {
+	local d="$ROOT/cases/diff-selftest"; rm -rf "$d"; mkdir -p "$d"
+	printf 'fun main() { println("SELFTEST-EXPECTED"); throw RuntimeException("boom after print") }\n' > "$d/St.kt"
+	diff_eval diff-selftest
+	rm -rf "$d"
+	if [[ "$DIFF_VERDICT" != DIFF* ]]; then
+		echo "DIFFERENTIAL GATE RED — #163 self-test FAILED: a print-then-crash sample was classified '$DIFF_VERDICT' (must be DIFF; the exit-code hole is open)"; exit 1
+	fi
+	echo "SELFTEST diff-selftest (print-then-crash correctly classified DIFF, not MATCH)"
+}
+diff_selftest
 
 # One atomic result record per sample under $RESULTS/res-<name> (MATCH/DIFF/SKIP + optional detail), mv'd into
 # place. The old design echoed MATCH/DIFF straight from the parallel `{ } &` subshells to the shared, redirected
@@ -103,37 +169,8 @@ norm() { sed -E 's/\bTrue\b/true/g; s/\bFalse\b/false/g; s/([0-9])\.0\b/\1/g'; }
 RESULTS="$ROOT/build/verify-differential"; rm -rf "$RESULTS"; mkdir -p "$RESULTS"
 for s in $PURE; do
 	gate
-	{ src="$ROOT/cases/$s"; rec="$RESULTS/res-$s"; verdict="SKIP  $s (no main)"; det=""
-	  mainfile="$(grep -lE '^fun main' "$src"/*.kt 2>/dev/null | head -1 || true)"
-	  if [[ -n "$mainfile" ]]; then
-	    base="$(basename "$mainfile" .kt)"; mainclass="${base^}Kt"
-	    # A `package p` decl puts the JVM main class at `p.<Base>Kt` (the CLR side runs the bare assembly name,
-	    # so only the JVM `java <class>` invocation needs the FQN — else ClassNotFound -> empty JVM stdout -> false DIFF).
-	    # `|| true`: grep exits 1 when there is no `package` decl, and `set -o pipefail` (lib.sh) would then
-	    # make this whole substitution fail under `set -e`, killing the background job before it writes its record.
-	    pkg="$(grep -hE '^package ' "$mainfile" 2>/dev/null | head -1 | awk '{print $2}' || true)"
-	    jvmmain="${pkg:+$pkg.}$mainclass"
-	    # (a) kotlin/jvm oracle
-	    jout="$ROOT/build/diff-jvm-$s"; rm -rf "$jout"; mkdir -p "$jout"   # worktree-scoped ($ROOT/build), NOT a shared /tmp path — else two worktree gates clobber each other (false-RED)
-	    "$JAVA" -cp "$CCP" org.jetbrains.kotlin.cli.jvm.K2JVMCompiler "$src"/*.kt -no-stdlib -classpath "$STDLIBJ" -d "$jout" >/dev/null 2>&1 || true
-	    jvm="$("$JAVA" -cp "$jout:$STDLIBJ" "$jvmmain" 2>/dev/null || true)"
-	    # (b) kotlin/clr via the SHIPPING IL backend: kotc (frontend klib) -> BIR -> bir2cir -> CIR -> ilemit -> dll, run.
-	    cout="$ROOT/build/diff-clr-$s"; rm -rf "$cout"; mkdir -p "$cout"
-	    ccir="$ROOT/build/diff-cir-$s"; rm -rf "$ccir"; mkdir -p "$ccir"
-	    "$KOTC" $src -no-stdlib -classpath "$FE_KLIB" -d $cout >/dev/null 2>&1 || true
-	    compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL")"
-	    dotnet "$BIR2CIR_DLL" "$ccir" --compile-refs "$compile_refs" "$cout"/*.bir.json >/dev/null 2>&1 || true
-	    dotnet "$ILEMIT_DLL" "$cout" "$mainclass" --runtime-refs "$STDLIB_RT_DLL" "$ccir"/*.cir.json >/dev/null 2>&1 || true
-	    cp "$STDLIB_RT_DLL" "$cout/"
-	    clr="$(dotnet "$cout/$mainclass.dll" 2>/dev/null || true)"
-	    # A MATCH requires BOTH the jvm oracle and the clr side to have produced REAL, non-empty output.
-	    # Every fallible command above carries `|| true`, so a sample that fails to compile/run yields an
-	    # EMPTY stdout; without this guard two empty outputs compare equal -> a FALSE "MATCH" that silently
-	    # passes a broken sample (the latent empty==empty hole). Empty on EITHER side is therefore a FAIL.
-	    if [[ -n "$jvm" && -n "$clr" && "$(norm <<<"$jvm")" == "$(norm <<<"$clr")" ]]; then verdict="MATCH $s"; else
-	      verdict="DIFF  $s"; det="$(printf -- '--- jvm ---\n%s\n--- clr ---\n%s' "$jvm" "$clr")"; fi
-	  fi
-	  { echo "$verdict"; [[ -n "$det" ]] && printf '%s\n' "$det"; } > "$rec.tmp"; mv -f "$rec.tmp" "$rec"
+	{ diff_eval "$s"; rec="$RESULTS/res-$s"
+	  { echo "$DIFF_VERDICT"; [[ -n "$DIFF_DET" ]] && printf '%s\n' "$DIFF_DET"; } > "$rec.tmp"; mv -f "$rec.tmp" "$rec"
 	} &
 done
 wait
