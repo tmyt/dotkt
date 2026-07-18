@@ -12,6 +12,12 @@
     <!-- Non-file compile options (raw kotc flags + MPP config) hashed into a manifest file so a change to an OPTION
          (not a source) still flips a timestamp and retriggers the incremental KotlinCompile (#50). -->
     <DotKtOptionsManifest>$(BaseIntermediateOutputPath)dotkt-compile-options.txt</DotKtOptionsManifest>
+    <!-- The EXPLICIT, ordered @(DotKtImport) list materialized into a manifest file so adding/removing/reordering a
+         <DotKtImport> flips a timestamp and retriggers DotKtInjectTypes below (#161). @(DotKtImport) is a non-file
+         item and cannot itself be a target Input, so without this a removed import left STALE injection metadata
+         ($(DotKtTypeMeta)) — a build that referenced the dropped .NET type kept succeeding until an unrelated .kt
+         edit finally forced a recompile. -->
+    <DotKtImportManifest>$(BaseIntermediateOutputPath)dotkt-clrimports-explicit.txt</DotKtImportManifest>
     <!-- ilemit emits real CIL (Reflection.Emit) and must load each referenced type's RUNTIME (implementation)
          assembly — it takes its refs from @(ReferenceCopyLocalPaths) (the runtime set), NOT @(ReferencePath) (which
          resolves to a package's ref/ reference assembly — method-body-less; deriving a class from one fails with
@@ -62,16 +68,30 @@
     <_DotKtStdlibInput Include="$(DotKtStdlib)" Condition="!Exists('$(DotKtStdlib)/default/manifest') and Exists('$(DotKtStdlib)')" />
   </ItemGroup>
 
+  <!-- Materialize the ordered EXPLICIT @(DotKtImport) set into $(DotKtImportManifest) BEFORE DotKtInjectTypes'
+       incremental check (it is a DependsOnTargets of it), so the manifest is a valid Input there (#161).
+       WriteOnlyWhenDifferent keeps the timestamp stable when the imports are unchanged (no spurious re-injection)
+       and flips it the instant one is added/removed/reordered — which is exactly what makes a removed <DotKtImport>
+       re-run injection instead of leaving stale metadata. An empty @(DotKtImport) writes an empty manifest (still a
+       real file), so going non-empty -> empty also flips the timestamp. -->
+  <Target Name="DotKtComputeImportManifest" Condition="'@(KotlinCompile)' != ''">
+    <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(DotKtImportManifest)'))" />
+    <WriteLinesToFile File="$(DotKtImportManifest)" Overwrite="true" WriteOnlyWhenDifferent="true"
+                      Lines="@(DotKtImport->'%(Identity)')" />
+  </Target>
+
   <!-- C-2: import-driven, façade-FREE .NET type injection. The .kt sources' imports are extracted with the real
        Kotlin parser (PSI) and those .NET types injected straight into FIR (no .kt produced). @(ReferencePath)
        (BCL + PackageReference/Reference) makes any referenced assembly's types injectable. -->
-  <!-- Incremental: the injection metadata is a pure function of the .kt sources (their imports), the resolved
-       compile references, and the compiler version (binary mtime). Guarding on those keeps $(DotKtTypeMeta) BYTE- and
-       TIMESTAMP-stable across a no-op rebuild, so it can serve as a precise KotlinCompile input below (#50) instead of
-       bumping every build and forcing an unconditional recompile. -->
-  <Target Name="DotKtInjectTypes" BeforeTargets="KotlinCompile" DependsOnTargets="DotKtResolveReferenceSets"
+  <!-- Incremental: the injection metadata is a pure function of the .kt sources (their imports), the EXPLICIT
+       @(DotKtImport) set (via $(DotKtImportManifest), materialized by DotKtComputeImportManifest below — #161), the
+       resolved compile references, and the compiler version (binary mtime). Guarding on those keeps $(DotKtTypeMeta)
+       BYTE- and TIMESTAMP-stable across a no-op rebuild, so it can serve as a precise KotlinCompile input below (#50)
+       instead of bumping every build and forcing an unconditional recompile. -->
+  <Target Name="DotKtInjectTypes" BeforeTargets="KotlinCompile"
+          DependsOnTargets="DotKtResolveReferenceSets;DotKtComputeImportManifest"
           Condition="'@(KotlinCompile)' != ''"
-          Inputs="@(KotlinCompile);@(_DotKtCompileReference);$(DotKtCompiler)" Outputs="$(DotKtTypeMeta)">
+          Inputs="@(KotlinCompile);@(_DotKtCompileReference);$(DotKtCompiler);$(DotKtImportManifest)" Outputs="$(DotKtTypeMeta)">
     <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(DotKtTypeMeta)'))" />
     <!-- 1. Extract .NET imports via the compiler's PSI pass (robust where the old regex was not — item 5). -->
     <Message Importance="high" Text="DotKt: scanning .NET imports from @(KotlinCompile->Count()) .kt file(s) (PSI parser)" />
@@ -184,5 +204,15 @@
           Condition="'$(DotKtRetarget)' != 'false'">
     <Message Importance="high" Text="DotKt: retargeting BCL refs for compile-time &lt;Reference&gt; -> $(TargetName)$(TargetExt)" />
     <Exec Command="dotnet &quot;$(DotKtRetargetTool)&quot; &quot;$(IntermediateOutputPath)$(TargetName)$(TargetExt)&quot; --compile-refs &quot;$(_DotKtCompileReferences)&quot;" />
+  </Target>
+
+  <!-- `dotnet clean` (#161): the DotKt pipeline state under $(BaseIntermediateOutputPath) (the BIR/CIR dirs and the
+       injection-metadata / import-list / options / import manifest files) is written by our Exec/WriteLinesToFile
+       steps, NOT tracked in @(FileWrites), so CoreClean never removed it — a `dotnet clean` left stale $(DotKtTypeMeta)
+       behind and a rebuild reused the stale injection metadata. Wipe all of it before CoreClean so `dotnet clean`
+       truly resets the DotKt state and the next build regenerates injection from scratch. -->
+  <Target Name="DotKtClean" BeforeTargets="CoreClean">
+    <RemoveDir Directories="$(DotKtOut);$(DotKtCirOut)" />
+    <Delete Files="$(DotKtTypeMeta);$(DotKtImportList);$(DotKtOptionsManifest);$(DotKtImportManifest)" />
   </Target>
 </Project>

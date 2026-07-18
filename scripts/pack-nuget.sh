@@ -8,7 +8,8 @@
 #   DotKt.Templates — `dotnet new` templates
 # (There is no separate runtime package.) Version is single-sourced in
 # packaging/DotKt.Versions.props (imported by every pack .csproj). Orchestrated by `make pack` (which
-# builds the prerequisites first); standalone it builds what's missing. Output: build/nuget-feed (wiped).
+# builds the prerequisites first); standalone it builds what is missing OR stale (fingerprint-aware need_*,
+# so a klib/stdlib baked by an older toolchain is never shipped, #106). Output: build/nuget-feed (wiped).
 source "$(dirname "$0")/lib.sh"
 
 usage() {
@@ -65,16 +66,18 @@ dotnet build "$ROOT/toolchain/bir2cir"   -c Release -o "$ROOT/build/bir2cir-bin"
 dotnet build "$ROOT/toolchain/facadegen" -c Release -o "$ROOT/build/facadegen-bin" -v q --nologo
 dotnet build "$ROOT/toolchain/retarget"  -c Release -o "$ROOT/build/retarget-bin"  -v q --nologo
 
-# The CLR FRONTEND stdlib KLIB (kotc -classpath): built FROM our CLR stdlib sources for the common frontend.
-info "ensure CLR frontend stdlib klib"
-[[ -e "$FE_KLIB" ]] || bash "$ROOT/scripts/build-stdlib-klib.sh"
-
-# The CLR stdlib dll pair — REQUIRED package contents (the shipped DotKt.Toolchain.targets needs both: the ref feeds
-# bir2cir's @ClrTypeAlias/@ClrIntrinsic substitution, the rt is the app's copy-local runtime). Build if missing;
-# the build scripts exit nonzero themselves when the dll is not produced (no compensating '|| true' any more).
-info "ensure CLR stdlib (ref + rt)"
-[[ -f "$STDLIB_REF_DLL" ]] || bash "$ROOT/scripts/build-stdlib-ref.sh" --emit
-[[ -f "$STDLIB_RT_DLL"  ]] || bash "$ROOT/scripts/build-stdlib-rt.sh" --emit
+# The CLR FRONTEND stdlib KLIB (kotc -classpath) + the stdlib dll pair are REQUIRED package contents (the shipped
+# DotKt.Toolchain.targets needs both dlls: the ref feeds bir2cir's @ClrTypeAlias/@ClrIntrinsic substitution, the rt is
+# the app's copy-local runtime). Use the FINGERPRINT-AWARE need_* builders (scripts/lib.sh), NOT a build-if-missing
+# guard: the tools were just rebuilt above, so a klib/stdlib baked by an OLDER toolchain must be REBUILT before it
+# ships — else pack would package a STALE stdlib against fresh tools (silently-broken user apps, or a false-green
+# packaged-SDK gate). need_* hash the tool+source inputs into a sidecar .toolstamp and rebuild on mismatch OR absence,
+# preserving the build-only-when-needed fast path (#106/#13).
+info "ensure CLR frontend stdlib klib (fingerprint-aware)"
+need_fe_klib
+info "ensure CLR stdlib (ref + rt) (fingerprint-aware)"
+need_stdlib_ref
+need_stdlib_rt
 [[ -f "$STDLIB_REF_DLL" ]] || die "missing $STDLIB_REF_DLL (scripts/build-stdlib-ref.sh --emit failed?)"
 [[ -f "$STDLIB_RT_DLL"  ]] || die "missing $STDLIB_RT_DLL (scripts/build-stdlib-rt.sh --emit failed?)"
 
