@@ -7,6 +7,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **stdlib ([tmyt/dotkt#104], area:stdlib): `Regex.findAll`/`splitToSequence` and the `Regex.options` getter no longer
+  throw `NotImplementedError`.** All three shipped as `TODO()` runtime stubs. Now implemented in pure Kotlin over the
+  existing bindings: `findAll` = `generateSequence` over `find()`/`MatchResult.next()` (every non-overlapping match,
+  left-to-right, `startIndex`-honored, via ordinary `Sequence` machinery — no coroutine `sequence{}` builder needed);
+  `splitToSequence` = `split(input, limit).asSequence()`; `options` decodes the compiled `System...RegexOptions`
+  `[Flags]` bitmask (`IgnoreCase`/`Multiline`/`Singleline`/`IgnorePatternWhitespace` → the matching `RegexOption`;
+  `LITERAL`/`UNIX_LINES`/`CANON_EQ` have no .NET bit). Gate: `il-regexseq`.
 - **stdlib ([tmyt/dotkt#141], area:stdlib): `hypot`/`expm1`/`ln1p` (Double & Float) bind the numerically-correct
   net10 BCL primitives.** The old bodies (`sqrt(x*x+y*y)`, `exp(x)-1`, `ln(1+x)`) overflowed for large magnitudes
   (`hypot(1e308,1e308)` → `Infinity`) and lost all precision to cancellation near 0. Now bound as `@ClrIntrinsic`

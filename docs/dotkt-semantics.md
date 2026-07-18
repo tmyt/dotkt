@@ -471,6 +471,17 @@ alternation and preserves the user's capture-group NUMBERS — with the instance
 engine backtracks to a full-input match when one exists (alternation branch order, lazy quantifiers, `(?i)` options,
 and coexisting `^…$` anchors all behave as Kotlin/JVM). `matches` delegates to `matchEntire != null`.
 
+## 5b-quater. `Regex.options` decodes the compiled `RegexOptions`; three `RegexOption`s have no CLR bit (deliberate CLR choice)
+
+`Regex.options` reads the instance's compiled `System.Text.RegularExpressions.RegexOptions` `[Flags]` bitmask (the enum
+reduces to its `Int32` value) and decodes the four flags that have a Kotlin counterpart: `IgnoreCase`→`IGNORE_CASE`,
+`Multiline`→`MULTILINE`, `Singleline`→`DOT_MATCHES_ALL`, `IgnorePatternWhitespace`→`COMMENTS`. The remaining three
+Kotlin `RegexOption`s have **no** `System...RegexOptions` bit and therefore never round-trip (deliberate CLR choice —
+they are unrepresentable in a compiled .NET `Regex`): `LITERAL` (.NET realizes literal matching via `Regex.Escape`, not
+an option), `UNIX_LINES` (no .NET line-terminator mode), and `CANON_EQ` (no .NET canonical-equivalence flag). A default
+`Regex` decodes to an empty set. (The inverse — the `Regex(pattern, options)` constructor's `Set<RegexOption>`→
+`RegexOptions` encode — is a separate bir2cir ctor-argument gap; when wired it must mirror this decode table.)
+
 ## 5b-ter. Case mapping is CLR one-to-one — `"ß".uppercase()` stays `"ß"` (interop-first deviation)
 
 - Kotlin's KDoc for `uppercase()` specifies the **Unicode standard full case mapping**, under which one-to-many
