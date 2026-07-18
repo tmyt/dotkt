@@ -102,7 +102,7 @@
          operator, infix — that facadegen cannot fully restore. Feeding stdlib.dll to facadegen produced degraded and
          DUPLICATE kotlin.* symbols (e.g. a non-reified arrayOf colliding with the klib's reified one -> ambiguity). -->
     <Message Importance="high" Text="DotKt: resolving .NET types (import list + @(DotKtImport))" />
-    <Exec Command="dotnet &quot;$(DotKtFacadeGen)&quot; --meta &quot;$(DotKtTypeMeta)&quot; --compile-refs &quot;$(_DotKtCompileReferences)&quot; @(DotKtImport->'%(Identity)', ' ') --import-list &quot;$(DotKtImportList)&quot;" />
+    <Exec Command="dotnet &quot;$(DotKtFacadeGen)&quot; &quot;$(DotKtTypeMeta)&quot; --compile-refs &quot;$(_DotKtCompileReferences)&quot; @(DotKtImport->'%(Identity)', ' ') --import-list &quot;$(DotKtImportList)&quot;" />
   </Target>
 
   <!-- Materialize the non-file compile options into $(DotKtOptionsManifest) BEFORE KotlinCompile's incremental check so

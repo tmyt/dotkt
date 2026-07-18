@@ -2,7 +2,7 @@
 // call those .NET types FAÇADE-FREE (`import System.X` resolves directly; the compiler's FIR injector consumes the
 // metadata).
 //
-//   facadegen --meta <outFile> [--compile-refs a.dll;b.dll;...] <Type.Full.Name>... [--import-list <file>]
+//   facadegen <outFile> [--compile-refs a.dll;b.dll;...] <Type.Full.Name>... [--import-list <file>]
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
@@ -24,39 +24,32 @@ static class FacadeGen
 
     static int Run(string[] args)
     {
-        if (args.Length < 2)
+        if (args.Length < 1)
         {
-            Console.Error.WriteLine("usage: facadegen --meta <outFile> [--compile-refs a.dll;...] <TypeFullName>... [--import-list <file>]");
+            Console.Error.WriteLine("usage: facadegen <outFile> [--compile-refs a.dll;...] <TypeFullName>... [--import-list <file>]");
             return 1;
         }
-        // S5 generalization: emit a compact metadata file consumed by the compiler's FIR injector,
-        // so .NET types resolve façade-free. Same reflection as the .kt path, different sink.
+        // Emit a compact metadata file consumed by the compiler's FIR injector, so .NET types resolve
+        // façade-free. The first positional arg is the output file; the rest is the flag/type list.
         // I2: `--compile-refs <a.dll;b.dll;...>` is the exact compile-time reference set already resolved by
         // MSBuild/RAR (or assembled by scripts/lib.sh for a direct run).
         // It therefore covers any Reference/PackageReference/ProjectReference, not just UI frameworks or the BCL.
-        if (args[0] == "--meta")
+        var rest = args.Skip(1).ToList();
+        var refsAt = rest.IndexOf("--compile-refs");
+        if (refsAt >= 0)
         {
-            var rest = args.Skip(2).ToList();
-            var refsAt = rest.IndexOf("--compile-refs");
-            if (refsAt >= 0)
-            {
-                if (refsAt + 1 >= rest.Count) throw new ArgumentException("facadegen: --compile-refs requires a semicolon-separated path list");
-                LoadRefs(ManagedReferenceCatalog.Split(rest[refsAt + 1]));
-                rest.RemoveRange(refsAt, 2);
-            }
-            if (rest.Contains("--refs")) throw new ArgumentException("facadegen: --refs was replaced by --compile-refs");
-            // C-2: explicit type names, then optionally `--import-list <file>` — the type list produced by the
-            // compiler's `kotc --scan-imports` PSI pass (a real parser, not a regex: handles aliases, `.*`,
-            // multi-line, comments, backtick identifiers — interop feedback item 5). Merge both; EmitMeta warns
-            // on any .NET-looking name that resolves to nothing (no silent drop).
-            var listAt = rest.IndexOf("--import-list");
-            var explicitTypes = listAt < 0 ? rest : rest.Take(listAt).ToList();
-            var imported = listAt < 0 || listAt + 1 >= rest.Count ? Enumerable.Empty<string>() : ReadImportList(rest[listAt + 1]);
-            return EmitMeta(args[1], explicitTypes.Concat(imported).Distinct());
+            if (refsAt + 1 >= rest.Count) throw new ArgumentException("facadegen: --compile-refs requires a semicolon-separated path list");
+            LoadRefs(ManagedReferenceCatalog.Split(rest[refsAt + 1]));
+            rest.RemoveRange(refsAt, 2);
         }
-        // .NET interop is façade-free via `--meta` (the FIR injector consumes the metadata directly). There is no other mode.
-        Console.Error.WriteLine("facadegen: only `--meta` mode is supported (façade-free .NET injection); see usage above.");
-        return 1;
+        // C-2: explicit type names, then optionally `--import-list <file>` — the type list produced by the
+        // compiler's `kotc --scan-imports` PSI pass (a real parser, not a regex: handles aliases, `.*`,
+        // multi-line, comments, backtick identifiers — interop feedback item 5). Merge both; EmitMeta warns
+        // on any .NET-looking name that resolves to nothing (no silent drop).
+        var listAt = rest.IndexOf("--import-list");
+        var explicitTypes = listAt < 0 ? rest : rest.Take(listAt).ToList();
+        var imported = listAt < 0 || listAt + 1 >= rest.Count ? Enumerable.Empty<string>() : ReadImportList(rest[listAt + 1]);
+        return EmitMeta(args[0], explicitTypes.Concat(imported).Distinct());
     }
 
     static readonly string[] PROBE_ASSEMBLIES =
@@ -421,7 +414,7 @@ static class FacadeGen
     // A `[ClrIntrinsic]`/`[ClrTypeAlias]` binding on a ref-assembly type/member (when facadegen reflects a DotKt
     // library) registers the Kotlin type's dotNet name AS THE BCL TARGET, so the app binds it
     // (kotlin.collections.List -> System.Collections.Generic.IReadOnlyList). docs/design-clr-stdlib-ref-runtime-split.md.
-    // NOTE (M3): in the PRODUCTION import-scan path (`--meta ... --import-list`, no DotKt ref.dll scanned) this always
+    // NOTE (M3): in the PRODUCTION import-scan path (`--import-list`, no DotKt ref.dll scanned) this always
     // returns null — no injected .NET type carries these stdlib-binding attributes. It is kept because the ref/runtime-
     // split round-trip design (reflecting a DotKt library's ref.dll) depends on it and its removal is bir2cir-owner
     // territory; do NOT delete without confirming that consumer. Its only live effect today is via GenuineNet's
@@ -2018,7 +2011,7 @@ static class FacadeGen
 
     // A bare generic parameter (T) is fine as a Kotlin type parameter; constructed generics
     // containing parameters (List<T>) are not yet emittable -> Any?.
-    // Array/cross-type member support is for the FIR-injection (--meta) path only. The legacy façade-.kt path
+    // Array/cross-type member support is for the FIR-injection path only. The legacy façade-.kt path
     // (GenerateType) needs valid Kotlin source, so it keeps the conservative behavior (arrays skipped, cross-type
     // -> Any?). MetaMode is set true while EmitMeta runs.
     static bool MetaMode = false;

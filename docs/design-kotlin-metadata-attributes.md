@@ -40,7 +40,7 @@ ELIMINATED; the real CLR stdlib superseded it). They are metadata-only, never ex
             -> ilemit stamps [KotlinFunction(flags)] / [KotlinFileClass] / [KotlinInline(body)] /
                [KotlinReadOnly] / .NET NRT [Nullable*]
   retarget: dotkt-retarget repoints BCL refs (also needed so facadegen can MLC-load the dll)
-  read:   facadegen --meta reads the attributes -> meta tokens
+  read:   facadegen reads the attributes -> meta tokens
             `fun <name> <ret> final,infix|operator|suspend ...`   (suspend: Task<T> unwrapped to T)
             CLR `op_*` methods map back to Kotlin operator names through the standard operator table
             CLR events restore as CLREvent<T> endpoints from EventInfo + delegate Invoke

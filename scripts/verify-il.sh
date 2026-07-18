@@ -155,13 +155,13 @@ il_emit() { # <name> <ildir> <asm> <birdir> [extra ilemit args...]
 # S5 FIR-injection metadata for samples that inherit a real .NET base type (façade-free).
 build_tool facadegen
 EXCMETA="$ROOT/build/exc.meta"
-dotnet "$FACADEGEN_DLL" --meta "$EXCMETA" --compile-refs "$FRAMEWORK_COMPILE_REFS" System.Exception System.Console >/dev/null 2>&1
+dotnet "$FACADEGEN_DLL" "$EXCMETA" --compile-refs "$FRAMEWORK_COMPILE_REFS" System.Exception System.Console >/dev/null 2>&1
 COLLMETA="$ROOT/build/coll.meta"
-dotnet "$FACADEGEN_DLL" --meta "$COLLMETA" --compile-refs "$FRAMEWORK_COMPILE_REFS" System.Collections.ObjectModel.Collection >/dev/null 2>&1
+dotnet "$FACADEGEN_DLL" "$COLLMETA" --compile-refs "$FRAMEWORK_COMPILE_REFS" System.Collections.ObjectModel.Collection >/dev/null 2>&1
 OBSCOLLMETA="$ROOT/build/obscoll.meta"
-dotnet "$FACADEGEN_DLL" --meta "$OBSCOLLMETA" --compile-refs "$FRAMEWORK_COMPILE_REFS" System.Collections.ObjectModel.ObservableCollection >/dev/null 2>&1
+dotnet "$FACADEGEN_DLL" "$OBSCOLLMETA" --compile-refs "$FRAMEWORK_COMPILE_REFS" System.Collections.ObjectModel.ObservableCollection >/dev/null 2>&1
 GMMETA="$ROOT/build/gm.meta"
-dotnet "$FACADEGEN_DLL" --meta "$GMMETA" --compile-refs "$FRAMEWORK_COMPILE_REFS" System.Runtime.CompilerServices.Unsafe System.Runtime.CompilerServices.RuntimeHelpers System.Collections.ObjectModel.Collection >/dev/null 2>&1
+dotnet "$FACADEGEN_DLL" "$GMMETA" --compile-refs "$FRAMEWORK_COMPILE_REFS" System.Runtime.CompilerServices.Unsafe System.Runtime.CompilerServices.RuntimeHelpers System.Collections.ObjectModel.Collection >/dev/null 2>&1
 
 # CLR stdlib (the canonical build under libraries/stdlib/): the RUNTIME assembly is --ref'd into every
 # emitted case so a stdlib op resolves to its real Kotlin body (and copied next to each output for the
@@ -222,20 +222,20 @@ dotnet build "$REF_GUARD/b/B.csproj" -c Release -o "$REF_GUARD/only-a" -v q --no
 A_DLL="$REF_GUARD/only-a/RefGuardA.dll"; B_DLL="$REF_GUARD/only-a/RefGuardB.dll"
 
 # RefGuardB.dll is deliberately adjacent to A. Passing A alone must not make OnlyB visible.
-poison_err="$(dotnet "$FACADEGEN_DLL" --meta "$REF_GUARD/poison.meta" --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$A_DLL")" RefGuard.OnlyB 2>&1)"
+poison_err="$(dotnet "$FACADEGEN_DLL" "$REF_GUARD/poison.meta" --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$A_DLL")" RefGuard.OnlyB 2>&1)"
 if ! grep -q 'resolved to no type' <<<"$poison_err" || grep -q 'RefGuard.OnlyB' "$REF_GUARD/poison.meta"; then
 	echo "IL GATE RED — exact-reference guard FAILED: facadegen discovered an unlisted neighbouring DLL"; exit 1
 fi
 echo "GUARD   exactrefs (unlisted neighbouring DLL ignored)"
 
 cp "$A_DLL" "$REF_GUARD/RefGuardA-copy.dll"
-dup_rc=0; dup_err="$(dotnet "$FACADEGEN_DLL" --meta "$REF_GUARD/dup.meta" --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$A_DLL" "$REF_GUARD/RefGuardA-copy.dll")" RefGuard.OnlyA 2>&1)" || dup_rc=$?
+dup_rc=0; dup_err="$(dotnet "$FACADEGEN_DLL" "$REF_GUARD/dup.meta" --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$A_DLL" "$REF_GUARD/RefGuardA-copy.dll")" RefGuard.OnlyA 2>&1)" || dup_rc=$?
 if (( dup_rc == 0 )) || ! grep -q "conflicting references with assembly name 'RefGuardA'" <<<"$dup_err"; then
 	echo "IL GATE RED — duplicate-identity guard FAILED"; printf '%s\n' "$dup_err"; exit 1
 fi
 echo "GUARD   refidentity (duplicate assembly simple name rejected)"
 
-amb_rc=0; amb_err="$(dotnet "$FACADEGEN_DLL" --meta "$REF_GUARD/amb.meta" --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$A_DLL" "$B_DLL")" RefGuard.Dupe 2>&1)" || amb_rc=$?
+amb_rc=0; amb_err="$(dotnet "$FACADEGEN_DLL" "$REF_GUARD/amb.meta" --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$A_DLL" "$B_DLL")" RefGuard.Dupe 2>&1)" || amb_rc=$?
 if (( amb_rc == 0 )) || ! grep -q "type 'RefGuard.Dupe' is defined by multiple compile references" <<<"$amb_err"; then
 	echo "IL GATE RED — duplicate-type guard FAILED"; printf '%s\n' "$amb_err"; exit 1
 fi
@@ -252,7 +252,7 @@ il_check_inject() { # <name> <asm> <srcDir> <expected> <runtimeAsm>
 		refdll="$(build_runtime "$src" "$rasm")"; echo "$refdll" > "$RESULTS/refdll-$name"
 		implist="$ROOT/build/$name.imports"
 		"$LAUNCHER" --scan-imports --output "$implist" "$src"/*.kt >/dev/null 2>&1 || true
-		dotnet "$FACADEGEN_DLL" --meta "$meta" --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$refdll")" --import-list "$implist" >/dev/null 2>&1 || true
+		dotnet "$FACADEGEN_DLL" "$meta" --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$refdll")" --import-list "$implist" >/dev/null 2>&1 || true
 		rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
 		if ! CLR_TYPES_METADATA="$meta" "$LAUNCHER" $src -no-stdlib -classpath "$CP" -d $birdir >/dev/null 2>&1; then
 			reason="compile error"; exit 0; fi
@@ -278,7 +278,7 @@ il_check_inject_nrt() { # <name> <asm> <srcDir> <expected> <runtimeAsm>
 		refdll="$(build_runtime "$src" "$rasm" enable)"; echo "$refdll" > "$RESULTS/refdll-$name"
 		implist="$ROOT/build/$name.imports"
 		"$LAUNCHER" --scan-imports --output "$implist" "$src"/*.kt >/dev/null 2>&1 || true
-		dotnet "$FACADEGEN_DLL" --meta "$meta" --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$refdll")" --import-list "$implist" >/dev/null 2>&1 || true
+		dotnet "$FACADEGEN_DLL" "$meta" --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$refdll")" --import-list "$implist" >/dev/null 2>&1 || true
 		rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
 		if ! CLR_TYPES_METADATA="$meta" "$LAUNCHER" $src -no-stdlib -classpath "$CP" -d $birdir >/dev/null 2>&1; then
 			reason="compile error"; exit 0; fi
@@ -325,7 +325,7 @@ il_check_imports() { # <name> <asm> <srcDir> <expected>
 		birdir="$ROOT/build/bir-$name"; ildir="$ROOT/build/il-$name"; meta="$ROOT/build/$name.meta"
 		implist="$ROOT/build/$name.imports"
 		"$LAUNCHER" --scan-imports --output "$implist" "$src"/*.kt >/dev/null 2>&1 || true
-		dotnet "$FACADEGEN_DLL" --meta "$meta" --compile-refs "$FRAMEWORK_COMPILE_REFS" --import-list "$implist" >/dev/null 2>&1 || true
+		dotnet "$FACADEGEN_DLL" "$meta" --compile-refs "$FRAMEWORK_COMPILE_REFS" --import-list "$implist" >/dev/null 2>&1 || true
 		rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
 		if ! CLR_TYPES_METADATA="$meta" "$LAUNCHER" $src -no-stdlib -classpath "$CP" -d $birdir >/dev/null 2>&1; then
 			reason="compile error"; exit 0; fi

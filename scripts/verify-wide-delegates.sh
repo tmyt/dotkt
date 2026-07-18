@@ -64,7 +64,7 @@ fi
 compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_RT_DLL")"
 dotnet "$RETARGET_DLL" "$OUT/il/Wide.dll" --compile-refs "$compile_refs" >/dev/null 2>&1 \
 	|| die "retarget failed"
-dotnet "$FACADEGEN_DLL" --meta "$OUT/wide.meta" --compile-refs "$(refset_join "$compile_refs" "$OUT/il/Wide.dll")" WideKt >/dev/null 2>&1 \
+dotnet "$FACADEGEN_DLL" "$OUT/wide.meta" --compile-refs "$(refset_join "$compile_refs" "$OUT/il/Wide.dll")" WideKt >/dev/null 2>&1 \
 	|| die "facadegen failed"
 int='{"t":"fqn","name":"Int"}'
 ints="$int"; for _ in $(seq 2 17); do ints+=",$int"; done

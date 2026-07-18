@@ -98,7 +98,7 @@ kt ktproj-inject "cases/ktproj-inject/inject.ktproj" \
 	"no-facade via import scan; abs(-5)=5"
 
 # Import-driven .NET resolution: plain `import System.Text.StringBuilder` / `import System.Math`, no <KotlinClrFacade>,
-# no facade — the facadegen --meta import scan injects the types. Fluent StringBuilder.Append chaining + Math.Max.
+# no facade — the facadegen import scan injects the types. Fluent StringBuilder.Append chaining + Math.Max.
 # Wired here (COV6, 2026-07-06): was UNWIRED (previously no gate covered the bare-import ktproj path).
 kt ktproj-import "cases/ktproj-import/import.ktproj" \
 	"dotkt imports just work: 40"
