@@ -2096,14 +2096,20 @@ static partial class SuspendColdLowering
             {
                 var extOwner = new TypeNode.Fqn(plan.GetAwaiterExtOwner);
                 if (plan.GetAwaiterExtGeneric)
-                    // clrGenericStatic ExtClass.GetAwaiter<resultTok>(awaitable). The receiver-param shape is "generic"
-                    // (a constructed generic type) — the ilemit overload matcher (Shape) uses it to pick the def.
+                {
+                    // clrGenericStatic ExtClass.GetAwaiter<resultTok>(awaitable). W1-S1 (#46): carry the resolved
+                    // member descriptor `memberSig` = the OPEN declared receiver param `Awaitable<T>` (the awaitable
+                    // constructor over the method type-var), so ilemit exact-matches the `GetAwaiter<T>` extension def.
+                    var openAwaitable = awaitableType is TypeNode.Fqn af
+                        ? new TypeNode.Fqn(af.Name, new TypeNode[] { new TypeNode.Tv("method", 0) })
+                        : awaitableType;
                     return new JsonObject
                     {
                         ["k"] = "clrGenericStatic", ["type"] = Tw(extOwner), ["method"] = "GetAwaiter",
-                        ["typeArgs"] = new JsonArray { Tw(resultTok) }, ["shapes"] = new JsonArray { "generic" },
+                        ["typeArgs"] = new JsonArray { Tw(resultTok) }, ["memberSig"] = new JsonArray { TypeJson.Write(openAwaitable) },
                         ["args"] = new JsonArray { task }, ["ret"] = Tw(awaiterType),
                     };
+                }
                 return new JsonObject
                 {
                     ["k"] = "clrStatic", ["type"] = Tw(extOwner), ["method"] = "GetAwaiter",
@@ -2330,13 +2336,13 @@ static partial class SuspendColdLowering
                 if (isInstance) clr["recv"] = recvRw;
                 if (isGeneric)
                 {
-                    // clrGeneric* resolves by (typeArgs, param SHAPES). Preserve typeArgs; append the completion's shape
-                    // ("generic" — Continuation<Any> is a constructed generic type) so the cold entry's trailing
-                    // completion param is matched instead of required to be optional.
+                    // clrGeneric* resolves by the structured `memberSig` descriptor (W1-S1 #46). Preserve typeArgs; append
+                    // the cold entry's trailing completion param `Continuation<Any>` to the hot callee's declared params so
+                    // ilemit exact-matches the cold entry (which has one extra trailing param), not the hot signature.
                     if (callNode["typeArgs"] is JsonArray gta) clr["typeArgs"] = gta.DeepClone();
-                    var shapes = (callNode["shapes"] as JsonArray)?.DeepClone() as JsonArray ?? new JsonArray();
-                    shapes.Add("generic");
-                    clr["shapes"] = shapes;
+                    var ms = (callNode["memberSig"] as JsonArray)?.DeepClone() as JsonArray ?? new JsonArray();
+                    ms.Add(ContAny());
+                    clr["memberSig"] = ms;
                 }
                 else
                 {

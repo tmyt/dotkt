@@ -389,12 +389,10 @@ sealed class Pipeline
             // literal `null` into a null-less value slot. Runs right after NetInteropBinding (consumes its `clrPropSet`
             // nodes) and before BirTypeLowering (owner args + the wrap's elem are still `kotlin.*`). Non-ref only.
             if (!_options.RefBuild) ValueSlotNullableWrite.Apply(bir.Root, refs);
-            // #55 §4 — DERIVE the `clrGeneric*` overload-matcher `shapes` from kotc's pure-Kotlin `shapeTypes` (the
-            // DECLARED parameter identities) via the @ClrTypeAlias index. kotc no longer knows the .NET shape names
-            // (Int64/SByte/…) — that CLR knowledge lives HERE. Runs FIRST in the per-file loop, before ANY type-erasing
-            // pass (NullableGenericReturnErasure sweeps a `nullable:gp` shapeType to `object`) and before the suspend
-            // passes that read the resulting `shapes`. Pure identity in -> reflection-island string out; drops shapeTypes.
-            ShapeSynthesis.Apply(bir.Root, refs, _options.RefBuild);
+            // W1-S1 (#46/#44): the `clrGeneric*` overload-matcher is now the STRUCTURED `memberSig` descriptor
+            // NetInteropBinding carries (the callee's declared param TypeNodes) — BirTypeLowering lowers it and ilemit
+            // exact-matches it. The retired ShapeSynthesis pass (lossy `shapes` string derived off the @ClrTypeAlias
+            // index) is DELETED; ilemit no longer re-resolves the overload by name/arity/shape-string.
             // VALUE-TYPE NULLABLE-COLLECTION receiver boxing (bundle-6 BUG-1 Part A): a value-type-element collection
             // (`List<Int?>`) passed to a nullable-generic collection extension (`Iterable<T?>.filterNotNull()`) is NOT
             // covariantly `IEnumerable<object>` on the CLR — wrap the receiver in `Enumerable.Cast<object>` so it boxes

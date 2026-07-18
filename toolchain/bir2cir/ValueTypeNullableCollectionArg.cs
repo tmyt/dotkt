@@ -75,10 +75,11 @@ static class ValueTypeNullableCollectionArg
             ["k"] = "clrGenericStatic",
             ["type"] = "System.Linq.Enumerable",
             ["method"] = "Cast",
-            // typeArgs is a document type slot (ilemit MapType-resolves it) -> a structured `{t:fqn}` node; `shapes`
-            // stays a raw string (the SIG-KEY reflection island, §2.2.1 — ilemit reads it verbatim for MethodInfo match).
+            // typeArgs is a document type slot (ilemit MapType-resolves it) -> a structured `{t:fqn}` node. `memberSig`
+            // (W1-S1 #46) is the FIR-resolved member descriptor: `Enumerable.Cast<TResult>(this IEnumerable source)`'s
+            // DECLARED param is the non-generic `System.Collections.IEnumerable` — a structured TypeNode ilemit exact-matches.
             ["typeArgs"] = new JsonArray { new JsonObject { ["t"] = "fqn", ["name"] = "object" } },
-            ["shapes"] = new JsonArray { "IEnumerable" },
+            ["memberSig"] = new JsonArray { new JsonObject { ["t"] = "fqn", ["name"] = "System.Collections.IEnumerable" } },
             ["args"] = new JsonArray { args[0].DeepClone() },
         };
     }

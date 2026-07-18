@@ -97,6 +97,9 @@ static class BirTypeLowering
         "dynRet", "funcType", "typeArgs", "constraints", "recvType", "iface", "excType",
         "keyType", "valType", "iterType", "accessOwner", "elem", "to", "owner",
         "samType", "closureType",
+        // W1-S1 (#46): the clrGeneric* FIR-resolved member descriptor — the callee's DECLARED param types (OPEN,
+        // method-tv positional), lowered to the CLR vocabulary so ilemit exact-matches them (replaces `shapes`).
+        "memberSig",
         // additional type-reference keys ilemit reads (absent in today's BIR but lowered for robustness)
         "elemType", "accType", "clrType", "tupleType", "parameterTypes",
     };

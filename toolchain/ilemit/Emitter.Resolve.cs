@@ -1056,44 +1056,134 @@ sealed partial class Emitter
         catch { return "?"; }
     }
 
-    // A parameter-shape token used to pick the EXACT intended overload deterministically (no heuristic):
-    // the Kotlin op is uniquely named, so the caller knows precisely which .NET method it maps to.
-    static string Shape(Type p)
+    // W1-S1 (#46/#44) — CONSUME-ONLY generic-method linking. bir2cir holds the winning MethodInfo (ReferenceMetadataIndex
+    // / MetadataLoadContext) and carries the FIR-resolved reference as the `memberSig` descriptor: the callee's DECLARED
+    // parameter types (OPEN — a method type-var is `{t:tv,scope:method}`, a constructed generic keeps its args). ilemit
+    // resolves the owner, enumerates the name-matching generic-method DEFINITIONS of the right generic-arity + param-count,
+    // and matches each declared param STRUCTURALLY under positional-tv equality. It requires EXACTLY ONE hit — 0 is a hard
+    // ABI-mismatch error, >1 a malformed-descriptor error, each printing the full descriptor. NO shape-string, no
+    // name/arity first-pick, no assignability scoring: ilemit makes no overload choice (the retired ResolveGenericMethod
+    // shapes-match `?? cands.First()` and its `Shape(Type)` helper are deleted).
+    MethodInfo ResolveGenericMethod(Type type, string name, Type[] typeArgs, JsonElement e, bool instance = false)
     {
-        if (p.IsByRef) p = p.GetElementType();
-        if (p.IsArray) return "array";
-        if (p.IsGenericParameter) return "gp";
-        if (p == typeof(string)) return "string";
-        if (p == typeof(char)) return "char";
-        if (p == typeof(int)) return "int";
-        if (p.IsGenericType)
-        {
-            var d = p.GetGenericTypeDefinition();
-            if (d == typeof(System.Collections.Generic.IEnumerable<>)) return "ienum";
-            // The synthetic `KFunc`/`KAction` delegates (a Kotlin function type over a TypeBuilder generic-param, which
-            // System.Func/Action can't encode) shape-match the same `func:N` as their BCL counterparts.
-            if (d.Name.StartsWith("Func`") || d.Name.StartsWith("Action`")
-                || d.Name.StartsWith("KFunc`") || d.Name.StartsWith("KAction`")) return "func:" + p.GetGenericArguments().Length;
-            return "generic";
-        }
-        return p.Name;
+        if (!e.TryGetProperty("memberSig", out var sigEl) || sigEl.ValueKind != JsonValueKind.Array)
+            throw new InvalidOperationException(
+                $"ilemit: clrGeneric* call to {type?.FullName}.{name}<{typeArgs.Length}> is missing its `memberSig` descriptor " +
+                "(bir2cir must carry the FIR-resolved parameter signature — W1-S1 #46)");
+        var declParams = sigEl.EnumerateArray().Select(DotKt.Bir.TypeNode.Read).ToArray();
+        // A generic INSTANCE method reflected off a CONSTRUCTED receiver (`Box<Int>`) has its enclosing-type type-vars
+        // already SUBSTITUTED on each candidate param (`Func<Int32,R>`), while memberSig carries the OPEN `tv(type,i)`.
+        // Resolve a type-scope tv against the constructed owner's type args so the two line up.
+        var ownerArgs = type != null && type.IsGenericType ? type.GetGenericArguments() : null;
+        var flags = BindingFlags.Public | (instance ? BindingFlags.Instance : BindingFlags.Static);
+        var cands = type.GetMethods(flags)
+            .Where(m => m.Name == name && m.IsGenericMethodDefinition
+                     && m.GetGenericArguments().Length == typeArgs.Length
+                     && m.GetParameters().Length == declParams.Length)
+            .ToList();
+        var hits = cands
+            .Where(m => m.GetParameters().Select((p, i) => GenericParamMatches(declParams[i], p.ParameterType, ownerArgs)).All(x => x))
+            .ToList();
+        if (hits.Count == 1) return hits[0].MakeGenericMethod(typeArgs);
+        var desc = $"{type?.FullName}.{name}<{typeArgs.Length}>{sigEl}";
+        if (hits.Count == 0)
+            throw new InvalidOperationException(
+                $"ilemit: no {(instance ? "instance" : "static")} generic method matches the resolved descriptor {desc} " +
+                $"(ABI mismatch; {cands.Count} same-name/arity/param-count candidate(s): {string.Join("; ", cands.Select(m => m.ToString()))})");
+        throw new InvalidOperationException(
+            $"ilemit: resolved generic descriptor {desc} is AMBIGUOUS — {hits.Count} methods match (malformed memberSig): " +
+            string.Join("; ", hits.Select(m => m.ToString())));
     }
 
-    // Resolve a generic static method by name + type-arity + exact parameter shapes, then instantiate it.
-    MethodInfo ResolveGenericMethod(Type type, string name, int typeArgCount, string[] shapes, Type[] typeArgs, bool instance = false)
+    // True iff a structured TypeNode mentions a type variable anywhere — the split between a fully-CONCRETE declared
+    // param (resolvable by MapType, matched by exact identity) and a var-bearing one (matched structurally, positional).
+    static bool ContainsTv(DotKt.Bir.TypeNode t) => t switch
     {
-        // The caller may omit TRAILING default/params args (a generic fn restored @JvmOverloads-style supplies fewer
-        // shapes than the single .NET method has params); accept >= shapes, match shapes over the provided prefix, and
-        // require the extra trailing params to be optional (the emit path fills them via EmitDefaultArg).
-        var cands = type.GetMethods(BindingFlags.Public | (instance ? BindingFlags.Instance : BindingFlags.Static))
-            .Where(m => m.Name == name && m.IsGenericMethodDefinition
-                     && m.GetGenericArguments().Length == typeArgCount
-                     && m.GetParameters().Length >= shapes.Length
-                     && m.GetParameters().Take(shapes.Length).Select((p, i) => Shape(p.ParameterType) == shapes[i]).All(x => x)
-                     && m.GetParameters().Skip(shapes.Length).All(p => p.HasDefaultValue || p.IsDefined(typeof(ParamArrayAttribute), false)))
-            .ToList();
-        // Prefer an exact-arity match over one that needs default-filling.
-        return (cands.FirstOrDefault(m => m.GetParameters().Length == shapes.Length) ?? cands.First()).MakeGenericMethod(typeArgs);
+        DotKt.Bir.TypeNode.Tv => true,
+        DotKt.Bir.TypeNode.Array a => ContainsTv(a.Elem),
+        DotKt.Bir.TypeNode.ByRef b => ContainsTv(b.Of),
+        DotKt.Bir.TypeNode.Nullable n => ContainsTv(n.Of),
+        DotKt.Bir.TypeNode.Oblivious o => ContainsTv(o.Of),
+        DotKt.Bir.TypeNode.Fn fn => ContainsTv(fn.Ret) || fn.DelegateParams.Any(ContainsTv),
+        DotKt.Bir.TypeNode.Fqn f => f.Args != null && f.Args.Any(ContainsTv),
+        _ => false,
+    };
+
+    // Structural equality between a carried (CLR-lowered) DECLARED parameter TypeNode and the parameter type of a
+    // candidate generic-method definition, under positional type-variable equality. A fully-concrete node resolves via
+    // MapType and requires EXACT identity (no assignability scoring); a var-bearing node recurses structurally so a
+    // `{t:tv,scope:method,i}` matches the candidate's i-th method generic parameter (`Box<T>` matches `Box`1[!!0]`).
+    // `ownerArgs` = the constructed receiver's type args (null when the owner is non-generic / an open def): a
+    // `{t:tv,scope:type,i}` matches whatever those args substituted into the candidate's param at that position.
+    bool GenericParamMatches(DotKt.Bir.TypeNode node, Type p, Type[] ownerArgs)
+    {
+        if (!ContainsTv(node))
+        {
+            try { return MapType(node) == p; } catch { return false; }
+        }
+        switch (node)
+        {
+            case DotKt.Bir.TypeNode.Tv { Scope: "type" } ttv:
+                // The enclosing-type type-var. On a CONSTRUCTED owner it is already substituted on the candidate param
+                // (compare against the owner's i-th arg); on an open owner/def it stays a GenericTypeParameter (positional).
+                if (ownerArgs != null && ttv.I >= 0 && ttv.I < ownerArgs.Length) return ownerArgs[ttv.I] == p;
+                return p.IsGenericParameter && p.GenericParameterPosition == ttv.I && p.DeclaringMethod == null;
+            case DotKt.Bir.TypeNode.Tv mtv:   // scope "method"
+                return p.IsGenericParameter && p.GenericParameterPosition == mtv.I && p.DeclaringMethod != null;
+            case DotKt.Bir.TypeNode.Array a:
+                return p.IsArray && GenericParamMatches(a.Elem, p.GetElementType(), ownerArgs);
+            case DotKt.Bir.TypeNode.ByRef b:
+                return p.IsByRef && GenericParamMatches(b.Of, p.GetElementType(), ownerArgs);
+            case DotKt.Bir.TypeNode.Nullable n:
+                return p.IsGenericType && p.GetGenericTypeDefinition() == typeof(Nullable<>)
+                       && GenericParamMatches(n.Of, p.GetGenericArguments()[0], ownerArgs);
+            case DotKt.Bir.TypeNode.Oblivious o:
+                return GenericParamMatches(o.Of, p, ownerArgs);
+            case DotKt.Bir.TypeNode.Fn fn:
+                return GenericDelegateMatches(fn, p, ownerArgs);
+            case DotKt.Bir.TypeNode.Fqn f:   // f.Args != null (ContainsTv implies a var-bearing arg)
+                if (!p.IsGenericType) return false;
+                var pa = p.GetGenericArguments();
+                if (pa.Length != f.Args.Length) return false;
+                Type candDef; try { candDef = p.GetGenericTypeDefinition(); } catch { return false; }
+                if (SameGenericDef(f.Name, f.Args.Length) != candDef) return false;
+                for (int i = 0; i < pa.Length; i++) if (!GenericParamMatches(f.Args[i], pa[i], ownerArgs)) return false;
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    // The generic type DEFINITION of a carried (CLR-lowered) name: an emitted open type (this assembly) or a referenced
+    // .NET generic by arity-suffixed FQN. Null when unresolvable (a non-match, never a silent object-degrade).
+    Type SameGenericDef(string name, int arity)
+    {
+        if (_types.TryGetValue(name, out var oti)) return oti.AsType;
+        try { return ResolveType(name.Contains('`') ? name : name + "`" + arity); } catch { return null; }
+    }
+
+    // A var-bearing function-type declared param (`Func<T,R>` / `Action<T>`) against the candidate's delegate param.
+    // The candidate may be a BCL `System.Func`/`Action` OR the synthetic `KFunc`/`KAction` a DotKt library bakes when
+    // the function type is over generic user types (unencodable as a BCL delegate) — both shape-match identically
+    // (KFunc/KAction mirror Func/Action's generic-arg layout: params[..] + ret for Func-like, params[..] for Action-like).
+    bool GenericDelegateMatches(DotKt.Bir.TypeNode.Fn fn, Type p, Type[] ownerArgs)
+    {
+        if (!p.IsGenericType) return false;
+        var dn = p.GetGenericTypeDefinition().Name;
+        var ga = p.GetGenericArguments();
+        var dp = fn.DelegateParams;
+        bool isVoid = fn.Ret is DotKt.Bir.TypeNode.Fqn { Name: "void" or "System.Void", Args: null };
+        if (isVoid)
+        {
+            if (!(dn.StartsWith("Action`", StringComparison.Ordinal) || dn.StartsWith("KAction`", StringComparison.Ordinal))
+                || ga.Length != dp.Length) return false;
+            for (int i = 0; i < dp.Length; i++) if (!GenericParamMatches(dp[i], ga[i], ownerArgs)) return false;
+            return true;
+        }
+        if (!(dn.StartsWith("Func`", StringComparison.Ordinal) || dn.StartsWith("KFunc`", StringComparison.Ordinal))
+            || ga.Length != dp.Length + 1) return false;
+        for (int i = 0; i < dp.Length; i++) if (!GenericParamMatches(dp[i], ga[i], ownerArgs)) return false;
+        return GenericParamMatches(fn.Ret, ga[^1], ownerArgs);
     }
 
 }
