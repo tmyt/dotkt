@@ -651,6 +651,10 @@ il_check regexanchor RegexAnchor "$ROOT/cases/il-regexanchor" "$(printf 'ab\nTru
 # linkedorder (#169): LinkedHashMap/LinkedHashSet (and mapOf/setOf) preserve insertion order across a MIDDLE removal —
 # LinkedHashMap is backed by the insertion-ordered System...OrderedDictionary; LinkedHashSet by a pure-Kotlin set over it.
 il_check linkedorder LinkedOrder "$ROOT/cases/il-linkedorder" "$(printf 'a,c,d,e\na=1,c=3,d=4,e=5\n1,3,4,5\nx,z,w,q\n4\nTrue\nFalse\none,two,three\np,d,b,a')"
+# linkedset (#169 regression): setOf/distinct()/toMutableSet() build the CONCRETE LinkedHashSet — was InvalidProgram
+# (arity-only ctor pick routed `new LinkedHashSet(coll)` to the (Int) ctor; the self iterator()/ICollection Contains
+# slot referenced the open generic self). Locks the crash-free build AND insertion order across a MIDDLE removal + retainAll.
+il_check linkedset LinkedSet "$ROOT/cases/il-linkedset" "$(printf '3,1,2,4\n4\n3\na,b,c\nx,z,w,q\n4\nTrue\nFalse\n2,4,5\n10,30,40')"
 # regexreplace: Regex.replaceFirst / replace(String,String) marshaling (final-review N1). replaceFirst mis-bound the
 # 3-arg System...Regex.Replace(string,string,int) — returned the input unchanged + AccessViolationException on a
 # CharSequence-typed input; the fix materializes the CharSequence to a String at the call site. Also pins toString()
@@ -1224,6 +1228,8 @@ if [[ -n "$ILV" && -d "$REFDIR" ]]; then
 		# kotc frontend regressions: #40 @InlineOnly @ClrIntrinsic carriage, #89 cross-module top-level val owner attribution,
 		# #57 transitive/owner-keyed length-reference deferral (user CharSequence implementer)
 		ASMS+=( [inlonlyintr]=AppKt [xmodtopval]=AppKt [charseqlenref]=AppKt )
+		# #169 concrete-LinkedHashSet regression (setOf/distinct/toMutableSet/retainAll + app-side iterator().remove()).
+		ASMS+=( [linkedset]=LinkedSet )
 	# DOCUMENTED ilverify EXCLUSIONS (deliberately NOT in ASMS — no silent gap):
 	#   • stackalloc — the emitted `localloc` (stackalloc/Span) is UNVERIFIABLE by ECMA-335 (like C# `unsafe`);
 	#     it can NEVER pass ilverify. Permanent, by-design exclusion — not a defect.

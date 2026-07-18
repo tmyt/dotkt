@@ -197,7 +197,7 @@ sealed partial class Emitter
                     _il.Emit(OpCodes.Newobj, ctorE);
                     return ext;
                 }
-                var ctor = SelectCtor(ti, nargs.GetArrayLength());
+                var ctor = SelectCtor(ti, nargs.GetArrayLength(), e);
                 // Pass the constructed instantiation's generic args so a value ctor arg is targeted at its CONCRETE
                 // type (`Box<int>::.ctor(int)`), not boxed to the ResolveTv `object` fallback in a non-generic caller.
                 EmitNewArgs(e, nargs, constructed is { IsGenericType: true } ? constructed.GetGenericArguments() : null);

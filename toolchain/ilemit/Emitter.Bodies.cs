@@ -80,11 +80,33 @@ sealed partial class Emitter
     }
 
     // Pick the ctor (primary or secondary) whose parameter count matches the delegating/`new` arg count.
-    ConstructorBuilder SelectCtor(TypeInfo ti, int argCount)
+    ConstructorBuilder SelectCtor(TypeInfo ti, int argCount, JsonElement newNode = default)
     {
+        // Arity is the fallback, but SEVERAL ctors can share an arg count (LinkedHashSet has `(Int)` AND
+        // `(Collection<E>)`, both 1-arg) — a plain count pick routes `new LinkedHashSet(coll)` to the `(Int)` ctor
+        // (ilverify StackUnexpected [found IReadOnlyCollection][expected Int32] -> runtime InvalidProgram). Refine to an
+        // EXACT param-signature match against the `new` node's declared `argTypes` (the resolved ctor's own param types,
+        // rendered with the same SigTokenOf grammar as the def side) when present; keep the first same-arity ctor as fallback.
+        string[] want = null;
+        if (newNode.ValueKind == JsonValueKind.Object
+            && newNode.TryGetProperty("argTypes", out var at) && at.ValueKind == JsonValueKind.Array
+            && at.GetArrayLength() == argCount)
+            // A `new` node may carry PLACEHOLDER argTypes for untyped closure-capture args (`{}` — a state-machine
+            // `create`), which SigTokenOf/TypeNode.Read cannot read; abandon the signature match (arity fallback) then.
+            try { want = at.EnumerateArray().Select(SigTokenOf).ToArray(); } catch { want = null; }
+        ConstructorBuilder firstArity = null;
         for (int i = 0; i < ti.Ctors.Count; i++)
-            if (ti.CtorDefs[i].GetProperty("params").GetArrayLength() == argCount) return ti.Ctors[i];
-        return ti.Ctor;
+        {
+            var ps = ti.CtorDefs[i].GetProperty("params");
+            if (ps.GetArrayLength() != argCount) continue;
+            firstArity ??= ti.Ctors[i];
+            if (want == null) break;   // no sig info -> the first same-arity ctor (legacy behavior)
+            int j = 0; bool exact = true;
+            foreach (var p in ps.EnumerateArray())
+                if (SigTokenOf(p.GetProperty("type")) != want[j++]) { exact = false; break; }
+            if (exact) return ti.Ctors[i];
+        }
+        return firstArity ?? ti.Ctor;
     }
 
     void EmitMethodBody(TypeInfo ti, JsonElement m)
