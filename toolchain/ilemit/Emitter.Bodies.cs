@@ -93,13 +93,14 @@ sealed partial class Emitter
         // bir2cir-bug class #84 targets) is attributed to THIS type, not the previously-emitted method. Refined to the
         // method name once resolved below.
         _ctxType = ti.TB?.Name; _ctxMethod = "?"; _ctxNode = null; _ctxPos = PosOf(m);   // #112 P2: decl source pos
-        // An abstract method has no IL body (subclasses provide it); GetILGenerator would throw.
-        if (m.TryGetProperty("abstract", out var amb) && amb.GetBoolean()) return;
         var mname = m.GetProperty("name").GetString();
         _ctxMethod = mname;
         // A DUPLICATE (name, params) def was define-phase-mangled to `name$dupN` (see DeclareMethod); body emission
         // walks the same def array in the same order, so consume the occurrences symmetrically — without this, both
-        // bodies would be written into ONE MethodBuilder (concatenated IL -> BadImageFormatException).
+        // bodies would be written into ONE MethodBuilder (concatenated IL -> BadImageFormatException). A CLASS abstract
+        // slot is DECLARED (holds a MethodBuilder) and DeclareMethod counts it for its $dupN mangling, so the body phase
+        // counts it here too (BEFORE the abstract-skip below) to stay in lockstep. (An INTERFACE bare slot is the one
+        // uncounted population: the pass-4 body driver skips it before EmitMethodBody — see Emitter.Assembly.cs.)
         var dupCount = _bodyDupSeen.TryGetValue((ti, SigKey(mname, m)), out var seen) ? seen : 0;
         _bodyDupSeen[(ti, SigKey(mname, m))] = dupCount + 1;
         if (dupCount > 0) mname = mname + "$dup" + (dupCount + 1);
@@ -107,6 +108,24 @@ sealed partial class Emitter
         // last, so emitting by name alone routes a body into the wrong overload — the WinUI `text(String)` /
         // `text(()->String)` bug).
         var mb = ti.MethodsBySig.TryGetValue(SigKey(mname, m), out var bm) ? bm : ti.Methods[mname];
+        // Abstract-slot body invariant (#92): a MethodBuilder DECLARED Abstract has NO IL body — GetILGenerator would
+        // throw "Method body should not exist". Trust the DECLARED attribute (mb.IsAbstract, the single source of
+        // truth), NOT the CIR `abstract` flag: a def that DEFEATS the declare/body pairing (an abstract slot that still
+        // carries a body, or whose `abstract` flag went absent — e.g. an abstract fun-interface SAM) is SKIPPED here
+        // instead of crashing emit. Pure emitter-internal consistency: skipping can never drop a body a working slot
+        // needed, since ANY abstract MethodBuilder reaching GetILGenerator crashes regardless. WARN when the skip is
+        // UNEXPECTED (the def looked concrete — a body present, or the abstract flag absent) so the producing-layer
+        // defect stays VISIBLE: the root cause is upstream (a bir2cir/kotc pass writing a body onto an abstract slot)
+        // and re-checks once R1/#90 lands. (Replaced the prior `m.abstract`-flag re-derivation, which the SAM defeated.)
+        if (mb.IsAbstract)
+        {
+            var hasBody = m.TryGetProperty("body", out var abody) && abody.ValueKind == JsonValueKind.Array && abody.GetArrayLength() > 0;
+            var flagAbstract = m.TryGetProperty("abstract", out var af) && af.GetBoolean();
+            if (hasBody || !flagAbstract)
+                Console.Error.WriteLine($"ilemit: WARNING: abstract-slot body invariant — '{ti.TB?.Name}.{mname}' is declared "
+                    + $"abstract but its CIR def {(hasBody ? "carries a body" : "lacks the abstract flag")}; skipping body emission (upstream bir2cir/kotc defect, #92).");
+            return;
+        }
         _methodRetType = mb.ReturnType;
         _curTypeParams = EffectiveTps(ti);
         _curMethodParams = _methodTypeParams.TryGetValue(mb, out var mp) ? mp : null;
