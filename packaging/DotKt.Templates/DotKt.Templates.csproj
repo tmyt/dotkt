@@ -6,6 +6,12 @@
     <Title>DotKt project templates</Title>
     <Description>`dotnet new` templates for DotKt (Kotlin -&gt; .NET). Includes dotkt-cli.</Description>
     <Authors>DotKt</Authors>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/tmyt/dotkt</PackageProjectUrl>
+    <RepositoryType>git</RepositoryType>
+    <RepositoryUrl>https://github.com/tmyt/dotkt.git</RepositoryUrl>
+    <RepositoryCommit>$(RepoCommit)</RepositoryCommit>
+    <PackageReadmeFile>DotKt.README.md</PackageReadmeFile>
     <TargetFramework>net10.0</TargetFramework>
     <IncludeContentInPack>true</IncludeContentInPack>
     <IncludeBuildOutput>false</IncludeBuildOutput>
@@ -16,5 +22,8 @@
   <ItemGroup>
     <Content Include="content/**/*" Exclude="content/**/bin/**;content/**/obj/**" />
     <Compile Remove="**/*" />
+    <!-- Packaged NuGet readme (rendered on the gallery page). Staged as a sibling of this csproj by
+         scripts/pack-nuget.sh, alongside the DotKt.Versions.props import above. -->
+    <None Include="$(MSBuildThisFileDirectory)../DotKt.README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 </Project>

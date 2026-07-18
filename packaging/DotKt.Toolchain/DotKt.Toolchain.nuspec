@@ -4,10 +4,16 @@
     <id>DotKt.Toolchain</id>
     <version>$version$</version>
     <authors>DotKt</authors>
-    <description>DotKt compiler toolchain: the Kotlin-&gt;CLR compiler (kotc; JVM, requires a JRE), bir2cir, ilemit, facadegen, retarget, the CLR frontend stdlib klib, and the compile-time stdlib reference assembly (DotKt.Private.Stdlib.dll). The runtime stdlib ships separately as DotKt.Stdlib.</description>
+    <license type="expression">Apache-2.0</license>
+    <readme>DotKt.README.md</readme>
+    <projectUrl>https://github.com/tmyt/dotkt</projectUrl>
+    <description>DotKt compiler toolchain: the Kotlin-&gt;CLR compiler (kotc; JVM, requires a JRE), bir2cir, ilemit, facadegen, retarget, the CLR frontend stdlib klib, and the compile-time stdlib reference assembly (DotKt.Private.Stdlib.dll). The runtime stdlib ships separately as DotKt.Stdlib. Redistributes third-party components (Kotlin compiler/runtime, kotlinx-coroutines, JetBrains annotations, Mono.Cecil, System.Reflection.MetadataLoadContext) — see THIRD-PARTY-NOTICES.md.</description>
     <tags>kotlin clr dotnet compiler kotlin-$kotlinVersion$</tags>
+    <repository type="git" url="https://github.com/tmyt/dotkt.git" commit="$repoCommit$" />
   </metadata>
   <files>
+    <file src="../DotKt.README.md" target="" />
+    <file src="../../THIRD-PARTY-NOTICES.md" target="" />
     <file src="tools/**" target="tools" />
     <file src="build/DotKt.Toolchain.props" target="build/DotKt.Toolchain.props" />
     <file src="build/DotKt.Toolchain.targets" target="build/DotKt.Toolchain.targets" />

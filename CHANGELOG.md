@@ -17,7 +17,27 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   universal-method routing to the BCL slot); Float/Double drop the declaration entirely and inherit the `kotlin.Any`
   slot like Int/Long (routing to the native value-type `GetHashCode`). The `il-strhash`/`il-pairtostr` gate cases now
   assert equals-consistency + hash-set membership instead of a pinned integer.
-
+- **CI: run the COMPLETE canonical gate set + a distinct packaged-SDK job + Windows coverage ([tmyt/dotkt#160], area:packaging).**
+  `.github/workflows/verify.yml` previously ran only IL/differential/ktproj/round-trip/wide-delegate on a
+  single `ubuntu-latest` job — it silently skipped `verify-schema`, `verify-sanity`, and (release-critically)
+  `verify-packaged-sdk`, the only gate that restores + consumes the 5 real nupkgs. The workflow now invokes the
+  Makefile aggregates (gate list single-sourced there, not copied into YAML): a `verify` job runs
+  `make verify-core` (the canonical set), a distinct release-blocking `packaged-sdk` job runs
+  `make verify-packaged-sdk`, and a `windows` job covers the Windows surface (kotc.bat install, nupkg restore,
+  packaged build/run, `verify-ktproj`, `dotnet new` template creation). New `make verify-core` target =
+  `make verify` minus the packaged-SDK gate.
+- **NuGet packages carry provenance metadata + third-party notices ([tmyt/dotkt#166], area:packaging).**
+  All 5 packages now declare an SPDX `Apache-2.0` license, `projectUrl`, and a `<repository>` with the source
+  commit (stamped by `pack-nuget.sh`), and ship a packaged readme (`packaging/DotKt.README.md`). `DotKt.Toolchain`
+  additionally ships `THIRD-PARTY-NOTICES.md` listing the redistributed components (Kotlin compiler/runtime,
+  kotlinx-coroutines, JetBrains annotations, Mono.Cecil, `System.Reflection.MetadataLoadContext`) and their licenses.
+- **docs: README + support matrix reconciled with actual behavior; JVM-framing cleanup ([tmyt/dotkt#164], area:docs).**
+  The README "no bundled libraries" line now states DotKt ships no UI/framework abstraction but DOES ship its CLR
+  Kotlin stdlib; the hardcoded corpus/pass counts are softened to point at the gates' XFAIL maps. The
+  `supported-features.md` Regex row is regenerated method-by-method (`find`/`matchEntire`/`matches`/`replace`/`split`/
+  group accessors work; `findAll`/`splitToSequence`/`options` pending). Recorded the correctness bar in
+  `docs/dotkt-semantics.md` and `CLAUDE.md`: the bar is the Kotlin spec/KDoc contract, JVM is a reader reference
+  (not a compat target), unspecified behavior takes the CLR-native form.
 ### Fixed
 
 - **stdlib ([tmyt/dotkt#162]/[tmyt/dotkt#169], area:stdlib): two Kotlin-contract fixes in text/collections.**
@@ -113,7 +133,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `kotlin.math.round` (banker's ties-to-even). NaN throws `IllegalArgumentException`; out-of-range
   saturates to `Int`/`Long` `MIN`/`MAX`. `kotlin.math.round` itself stays ties-to-even. (`MathClr.kt`)
 - **stdlib: `CharArray.copyOf(newSize)` zero-fills grown slots with the null char `'\u0000'` (#128),**
-  not a space (`U+0020`), matching Kotlin/JVM. (`_ArraysClr.kt`)
+  not a space (`U+0020`) — the Kotlin contract fills grown slots with the element type's default
+  value (the null char for `Char`). (`_ArraysClr.kt`)
 - **kotc ([tmyt/dotkt#66]/[#67]/[#68]/[#69]/[#70], umbrella [#72], area:kotc): lower five fail-loud
   callable-reference / capture / delegate shapes the frontend accepts (stop aborting the compile).**
   Each was a whole-compile abort on frontend-accepted IR; all now lower to pure Kotlin BIR facts (bir2cir

@@ -6,7 +6,7 @@
     <NuspecFile>DotKt.Toolchain.nuspec</NuspecFile>
     <!-- Version + Kotlin version are single-sourced in packaging/DotKt.Versions.props (imported above);
          the nuspec's $version$ / $kotlinVersion$ tokens are substituted from here. -->
-    <NuspecProperties>version=$(Version);kotlinVersion=$(DotKtKotlinVersion)</NuspecProperties>
+    <NuspecProperties>version=$(Version);kotlinVersion=$(DotKtKotlinVersion);repoCommit=$(RepoCommit)</NuspecProperties>
     <NoWarn>NU5128;NU5100</NoWarn>
   </PropertyGroup>
 </Project>

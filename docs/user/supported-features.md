@@ -27,7 +27,7 @@ Status legend: ✅ works today (exercised by the test gates) · 🚧 in progress
 |---|---|
 | Collections (`listOf`/`mapOf`/…, `map`/`filter`/`fold`/`groupBy`/`joinToString`/`sorted*`/…) | ✅ |
 | Strings (`trim`/`padStart`/`split`/templates/… — a few ops still route through interim lowerings) | ✅ |
-| `Regex` | ❌ (core `System.Text.RegularExpressions.Regex.Match` binding is still a `TODO()`, so `find`/`matchEntire`/`matchAt`/`containsMatchIn`/`findAll`/`replace`/`split`/`escape` and every `MatchResult`/group accessor throw at runtime) |
+| `Regex` | 🚧 `find`/`matchEntire`/`matches`/`matchAt`/`matchesAt`/`containsMatchIn`/`replace`/`replaceFirst`/`split`/`escape`/`escapeReplacement`/`fromLiteral` + the `MatchResult`/group surface (`value`/`range`/`groups`/`groupValues`, by-index & by-name groups) all work (gates: `il-regex`, `il-regexgroups`, `il-regexreplace`). `findAll`/`splitToSequence`/`options` are still pending (the first two are gated on the lazy-`Sequence` runtime). `matchEntire` does not re-anchor an alternation (`a\|ab` over `"ab"`), a deliberate CLR deviation being tightened in #162. |
 | `kotlin.math`, ranges, `Pair`/`Triple`, scope functions, unsigned types, `Array<T>` ops | ✅ |
 | `Result`/`runCatching`, atomics, exceptions (bound to `System.*`) | ✅ |
 | Lazy `Sequence` chains (`asSequence().map{…}`) | 🚧 (coroutine-machinery-gated) |

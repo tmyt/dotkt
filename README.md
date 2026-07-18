@@ -8,9 +8,10 @@ runs on `dotnet`.
 Long-term goal: production grade. Mid-term goal: CLR windowing (drive Avalonia/WPF/WinUI from
 Kotlin via their real .NET types).
 
-> **Pure .NET binding — no bundled libraries.** kotlin/clr is *only* a Kotlin→.NET binding; it
-> ships no library of its own. You reference real .NET assemblies and call their types directly
-> from Kotlin. A Kotlin-idiomatic UI DSL would be a separate downstream product.
+> **Pure .NET binding — no framework of its own.** kotlin/clr ships the Kotlin standard library
+> compiled for the CLR (`DotKt.Stdlib`), but *no* UI toolkit or framework abstraction layer. You
+> reference real .NET assemblies and call their types directly from Kotlin. A Kotlin-idiomatic UI
+> DSL would be a separate downstream product.
 
 ## New here? (user documentation)
 
@@ -53,9 +54,11 @@ bir2cir at app-emit — the compiler itself stays generic.
 
 ## What works today
 
-The gates: `scripts/verify-il.sh` (compile → IL → run → assert → `ilverify` over the ~140-sample
-`cases/il-*` corpus; **0 run-failures**, with a small documented tail of ilverify-strictness
-noise and coroutine-deferred samples) and `scripts/verify-ktproj.sh` (MSBuild end-to-end, 9/9).
+The gates: `scripts/verify-il.sh` (compile → IL → run → assert → `ilverify` over the full
+`cases/il-*` corpus; **0 run-failures** outside the documented XFAIL baseline — a small tail of
+ilverify-strictness findings and coroutine-deferred samples) and `scripts/verify-ktproj.sh`
+(MSBuild end-to-end over the `cases/ktproj*` projects). Run the gates for the authoritative pass
+set — the truth lives in the scripts' XFAIL maps, not in a number copied here.
 
 **Language**
 - Top-level functions; primitives; arithmetic, comparison, bitwise; control flow (`if`/`when`
