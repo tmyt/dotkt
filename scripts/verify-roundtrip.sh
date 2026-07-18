@@ -39,6 +39,12 @@ declare -A RT_XFAIL=(
 	# CONCRETE cross-module value-type manifestation of #86 (invisible to every other gate, which drives only T=String);
 	# when #86/#147 land the param/field nullability, this section starts compiling+running (7/3/9/4/x) -> prune it.
 	[roundtrip-nullable-vt-generic]="#109/#86 (+#147/#127): cross-module nullable value-type generic T? in param/field position restores as bare non-null T -> consumer fails to compile (NBox<Int>(null): null cannot be a value of a non-null type 'Int'); the value-type axis of #86, exposed on purpose"
+	# #179 RESIDUAL (facadegen surface done + guarded green by roundtrip-comparable-meta): a re-consumed `class C :
+	# Comparable<C>` resolves `<`/sorted() in the frontend, but kotc emits the plain `callInstance geo.Ver.compareTo`
+	# and the CALL BINDING compareTo -> the DotKt owner's PascalCase `CompareTo` slot is bir2cir NetInteropBinding's job
+	# (the instance-slot analog of its `plus`->`op_Addition` rule) — blocked behind the #46 bir2cir restructure. Flips to
+	# FIXED when that rule lands; the meta section already asserts the facadegen half.
+	[roundtrip-comparable]="#179 residual: cross-module `class C : Comparable<C>` call binds the Kotlin name `compareTo` but the DotKt slot is `CompareTo`; the compareTo->CompareTo slot bind on the facadegen-injected owner is a bir2cir NetInteropBinding change (behind #46). facadegen symbol surface is done + guarded by roundtrip-comparable-meta"
 )
 
 # ---- section result collection (no section may abort the script) -----------------------------------
@@ -1585,6 +1591,71 @@ cp "$OP/libil/MoneyLib.dll" "$OP/appil/" 2>/dev/null || true
 opexpected="$(printf 'True\nTrue\n5')"
 run_app opactual "$OP/appil/MoneyApp.dll"
 check_output roundtrip-operator-flag "$opexpected" "$opactual" "operator compareTo (via </>) + infix restored from the REAL [KotlinFunction] flag, name-hack removed #146"
+
+# ----- `class C : Comparable<C>` round-trip (#179): PascalCase IComparable<T>.CompareTo -> operator compareTo -----
+# A Kotlin `class C : Comparable<C>` lowers `compareTo` to the CLR `System.IComparable<C>.CompareTo` PascalCase slot
+# (bir2cir DeclarationRename) and its supertype to `System.IComparable<C>` (+ a non-generic bridge). Pre-fix facadegen
+# left BOTH un-restored: the PascalCase `CompareTo` never became the lowercase `operator compareTo`, and the supertype
+# stayed `IComparable`, so a consumer's `c1 < c2` / `sorted()` was UNRESOLVED on re-import. facadegen now (a) renames the
+# DotKt IComparable<X> self slot `CompareTo` -> `compareTo` + forces the operator flag (so the FRONTEND resolves `<` to
+# C's own operator), and (b) restores the `IComparable<X>` supertype as `kotlin.Comparable<X>` (dropping the non-generic
+# bridge) so `sorted()`'s `Comparable<C>` constraint is satisfied. That is the SYMBOL-SURFACE half (facadegen's); the
+# section is split accordingly:
+#   * roundtrip-comparable-meta  — the facadegen surface, asserted DIRECTLY on the generated metadata. GREEN today; a
+#                                  regression guard for the restore.
+#   * roundtrip-comparable       — the END-TO-END run. Still RT_XFAIL: kotc emits the plain `callInstance geo.Ver.compareTo`
+#                                  (member clrName is not a kotc channel), and the CALL BINDING compareTo->CompareTo on the
+#                                  facadegen-injected DotKt owner is bir2cir NetInteropBinding's job (the #179 residual,
+#                                  blocked behind the #46 bir2cir restructure). Flips to FIXED when that rule lands.
+CM="$ROOT/build/roundtrip-comparable"; rm -rf "$CM"; mkdir -p "$CM/lib" "$CM/app" "$CM/libbir" "$CM/libil" "$CM/appbir" "$CM/appil"
+cat > "$CM/lib/lib.kt" <<'EOF'
+package geo
+class Ver(val n: Int) : Comparable<Ver> {
+    override fun compareTo(other: Ver): Int = n - other.n
+}
+EOF
+cat > "$CM/app/app.kt" <<'EOF'
+import geo.Ver
+fun main() {
+    println(Ver(3) < Ver(5))                              // True   `<`  -> restored operator compareTo
+    println(Ver(9) > Ver(2))                              // True   `>`
+    println(Ver(4) <= Ver(4))                             // True   `<=`
+    println(Ver(7) >= Ver(8))                             // False  `>=`
+    val xs = listOf(Ver(3), Ver(1), Ver(2)).sorted()      // sorted() needs Ver : Comparable<Ver> (supertype restored)
+    println(xs[0].n)                                      // 1      smallest first
+    println(xs[2].n)                                      // 3      largest last
+}
+EOF
+CLR_TYPES_METADATA="" "$LAUNCHER" "$CM/lib" -no-stdlib -classpath "$CP" -d "$CM/libbir" >/dev/null 2>&1 || true
+emit_il "$CM/libil" VerLib "$CM/libbir"/*.bir.json
+dotnet "$RETARGET_DLL" "$CM/libil/VerLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
+"$LAUNCHER" --scan-imports --output "$CM/imports.txt" "$CM/app"/*.kt >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" "$CM/meta" --compile-refs "$REFS$CM/libil/VerLib.dll" --import-list "$CM/imports.txt" >/dev/null 2>&1 || true
+CLR_TYPES_METADATA="$CM/meta" "$LAUNCHER" "$CM/app" -no-stdlib -classpath "$CP" -d "$CM/appbir" >/dev/null 2>&1 || true
+emit_il "$CM/appil" VerApp --ref "$CM/libil/VerLib.dll" "$CM/appbir"/*.bir.json
+cp "$CM/libil/VerLib.dll" "$CM/appil/" 2>/dev/null || true
+# facadegen SURFACE (must stay GREEN): the injected `Ver` carries an `operator compareTo` fun (clrName CompareTo) AND a
+# `kotlin.Comparable` supertype (the non-generic `System.IComparable` bridge dropped).
+cm_meta=$(python3 - "$CM/meta" <<'PY'
+import json,sys
+try:
+    d=json.load(open(sys.argv[1])); ok=0
+    for t in d.get("types",[]):
+        if t.get("name")!="Ver": continue
+        op=any(f.get("name")=="compareTo" and f.get("mods",{}).get("operator") and f.get("clrName")=="CompareTo"
+               for f in t.get("funs",[]))
+        sup=any(s.get("t")=="fqn" and s.get("name")=="kotlin.Comparable" for s in t.get("supers",[]))
+        noicmp=not any(s.get("t")=="fqn" and s.get("name")=="System.IComparable" for s in t.get("supers",[]))
+        if op and sup and noicmp: ok=1
+    print(ok)
+except Exception: print(0)
+PY
+)
+check_output roundtrip-comparable-meta "1" "$cm_meta" "facadegen surface: Ver gains operator compareTo (clrName CompareTo) + kotlin.Comparable<Ver> supertype, non-generic IComparable bridge dropped #179"
+# END-TO-END run (RT_XFAIL — bir2cir NetInteropBinding compareTo->CompareTo binding is the #179 residual, behind #46).
+cmexpected="$(printf 'True\nTrue\nTrue\nFalse\n1\n3')"
+run_app cmactual "$CM/appil/VerApp.dll"
+check_output roundtrip-comparable "$cmexpected" "$cmactual" "class C : Comparable<C> </>/<=/>=/sorted() resolve+run cross-module (needs bir2cir compareTo->CompareTo slot bind) #179"
 
 # ---- verdict --------------------------------------------------------------------------------------
 echo "------------------------------------"

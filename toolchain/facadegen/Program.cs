@@ -1046,9 +1046,25 @@ static class FacadeGen
                 // analog). `inline` carries the spliceable body (composes with suspend/generic).
                 var csExt = ps.Length > 0 && ps[0].Name != "__self" && IsExtensionMethod(m);
                 var isExt = ps.Length > 0 && (ps[0].Name == "__self" || csExt);
-                var (mm, mv) = ModVis(prot.Value, m.IsAbstract, virt, infix: k.infix, op: k.op, suspend: k.suspend,
+                // #179 round-trip (SYMBOL SURFACE — facadegen's half): a DotKt `class C : Comparable<X>` lowered its
+                // `operator fun compareTo` to the PascalCase `System.IComparable<X>.CompareTo(X)` slot (bir2cir
+                // DeclarationRename at lib emit). Restore the lowercase Kotlin operator name + `operator` flag so the
+                // frontend RESOLVES a consumer's `c1 < c2` / `sorted()` to C's own `compareTo` (ClrTypeInjection reads
+                // this `operator` mod -> status.isOperator). Gated to a DotKt assembly + the IComparable<X> SELF slot: a
+                // GENUINE .NET IComparable keeps its verbatim PascalCase `CompareTo` (il-icmparity #129); the non-generic
+                // `CompareTo(object)` bridge (arg not X) is untouched.
+                //   NB the CALL BINDING is bir2cir's half, NOT completed here: kotc emits the plain `callInstance
+                //   geo.C.compareTo` (member-level `clrName` is NOT consumed by kotc — ClrTypeInjection retired the
+                //   member-slot channel), and bir2cir NetInteropBinding must map that `compareTo` on the injected DotKt
+                //   owner to the reflected `CompareTo` slot (the instance-slot analog of its `plus`->`op_Addition` rule).
+                //   Tracked as the #179 residual (blocked behind the #46 bir2cir restructure); see verify-roundtrip.sh.
+                bool isCmpSlot = IsDotKtEmittedAssembly(t.Assembly) && m.Name == "CompareTo" && ps.Length == 1
+                    && ComparableSelfArg(t) is Type ca && ps[0].ParameterType.FullName == ca.FullName;
+                var kName = isCmpSlot ? "compareTo" : m.Name;
+                var kOp = k.op || isCmpSlot;
+                var (mm, mv) = ModVis(prot.Value, m.IsAbstract, virt, infix: k.infix, op: kOp, suspend: k.suspend,
                     inline: KotlinInlineBody(m) != null, ext: isExt);
-                funs.Add(FunObj(m.Name, retNode, mm, mv, GenuineNet(t) ? m.Name : null,   // identity BCL-member binding
+                funs.Add(FunObj(kName, retNode, mm, mv, GenuineNet(t) ? m.Name : null,   // identity BCL-member binding
                     Tps(), ParamsArr(ps, t)));
                 // A C#-origin `[Extension]` static ALSO surfaces as a TOP-LEVEL extension fun in a `file` decl (below),
                 // so `import NS.*` (the Kotlin analog of C# `using NS;`) brings it into scope — the whole Avalonia fluent
@@ -1351,13 +1367,35 @@ static class FacadeGen
         var implied = new HashSet<Type>();
         foreach (var i in all) { try { foreach (var sub in i.GetInterfaces()) implied.Add(sub); } catch { } }
         var supers = new List<TN>(); var seen = new HashSet<string>();
+        bool dotkt = IsDotKtEmittedAssembly(t.Assembly);
         foreach (var i in all)
         {
             if (implied.Contains(i) || !i.IsGenericType) continue;   // direct + generic only
-            var node = MapT(i, t);                                    // a constructed generic -> Fqn with args
+            // #179: a DotKt `interface I : Comparable<X>` restores its `IComparable<X>` face as `kotlin.Comparable<X>`
+            // (fully-qualified for the injector's supertype resolver), mirroring the class path in ClassInterfaceSuperTypes.
+            var node = dotkt && i.GetGenericTypeDefinition().FullName == "System.IComparable`1"
+                ? new TN.Fqn("kotlin.Comparable", new[] { MapT(i.GetGenericArguments()[0], t) })
+                : MapT(i, t);                                         // a constructed generic -> Fqn with args
             if (IsGenericFqn(node) && seen.Add(TN.ToJson(node))) supers.Add(node);
         }
         return supers;
+    }
+
+    // #179: the self-type argument X of the single `System.IComparable<X>` this type implements (the generic Kotlin
+    // `Comparable<X>` face), or null when absent / ambiguous (multiple distinct IComparable<> — leave the CLR surface
+    // untouched). The non-generic `System.IComparable` bridge is ignored (it carries no type argument).
+    static Type ComparableSelfArg(Type t)
+    {
+        Type[] ifaces; try { ifaces = t.GetInterfaces(); } catch { return null; }
+        Type found = null;
+        foreach (var i in ifaces)
+        {
+            if (!i.IsGenericType || i.GetGenericTypeDefinition().FullName != "System.IComparable`1") continue;
+            var a = i.GetGenericArguments()[0];
+            if (found != null && found.FullName != a.FullName) return null;   // ambiguous multi-Comparable
+            found = a;
+        }
+        return found;
     }
 
     // Interface supertypes a CLASS can safely declare: each DIRECT interface whose entire (transitive) member set is
@@ -1397,10 +1435,23 @@ static class FacadeGen
         var implied = new HashSet<Type>();
         foreach (var i in sat) { try { foreach (var s in i.GetInterfaces()) implied.Add(s); } catch { } }
         var supers = new List<TN>(); var seen = new HashSet<string>();
+        bool dotkt = IsDotKtEmittedAssembly(c.Assembly);
         foreach (var i in sat)
         {
             if (implied.Contains(i)) continue;
-            var node = i.IsGenericType ? MapT(i, c) : new TN.Fqn(SimpleName(i));
+            // #179 round-trip: a DotKt `class C : Comparable<X>` lowered to CLR `System.IComparable<X>` plus a
+            // non-generic `System.IComparable` bridge (bir2cir ComparableBridgeSynthesis). Restore the generic face
+            // as `kotlin.Comparable<X>` so the re-imported type is SEEN as Comparable (enabling `<`/`>`/`sorted()`),
+            // and drop the non-generic bridge (a CLR dispatch artifact with no Kotlin identity). FULLY-qualified
+            // `kotlin.Comparable`: the injector's supertype resolver (superClassId) needs a dotted FQ to reach the
+            // klib symbol — a bare `Comparable` resolves only in the type-BOUND path. A GENUINE .NET IComparable
+            // keeps its BCL surface (il-icmparity #129), so this is DotKt-gated.
+            if (dotkt && !i.IsGenericType && i.FullName == "System.IComparable") continue;
+            TN node;
+            if (dotkt && i.IsGenericType && i.GetGenericTypeDefinition().FullName == "System.IComparable`1")
+                node = new TN.Fqn("kotlin.Comparable", new[] { MapT(i.GetGenericArguments()[0], c) });
+            else
+                node = i.IsGenericType ? MapT(i, c) : new TN.Fqn(SimpleName(i));
             if (IsAnyQ(node) || (i.IsGenericType && !IsGenericFqn(node))) continue;
             if (seen.Add(TN.ToJson(node))) supers.Add(node);
         }
