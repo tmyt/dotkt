@@ -100,17 +100,27 @@ public actual class Regex {
     @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
     public actual fun findAll(input: CharSequence, startIndex: Int = 0): Sequence<MatchResult> = TODO("clr binding should be implemented") // blocked: Sequence runtime (coroutine port) not yet wired
 
-    // Anchored full match over the System...Match adapter: the leftmost match must start at 0 and span the whole input.
-    // CLR deviation vs Kotlin/JVM: this does not re-anchor/force backtracking, so a pattern whose leftmost match is shorter
-    // than the full input (e.g. an alternation `a|ab` over "ab") yields null even though an anchored full match exists.
+    // #162: a TRUE anchored full match — NOT a leftmost search filtered by span. A leftmost `Regex.Match` accepts the
+    // FIRST match found, which for an alternation like `a|ab` over "ab" is the shorter `a`; the old span filter then
+    // returned null even though the full-input match `ab` exists (and lazy quantifiers hit the same class). Anchor the
+    // engine instead: wrap the pattern as `\A(?:<pattern>)\z` (the non-capturing group scopes a top-level alternation and
+    // preserves the user's capture-group NUMBERS — `(?:...)` captures nothing) and match with the SAME compiled options,
+    // so the regex engine backtracks to a full-input match when one exists. On success the match spans the whole input by
+    // construction, so no index/length span re-check is needed.
     public actual fun matchEntire(input: CharSequence): MatchResult? {
         // CLR: `CharSequence` has no BCL length (System.String does NOT implement the synthetic CharSequence interface),
-        // so materialize the input to a String ONCE and use its length — `input.length` on a String-at-runtime CharSequence
-        // has no dispatchable slot.
+        // so materialize the input to a String ONCE — `input.length` on a String-at-runtime CharSequence has no slot.
         val text = input.toString()
-        val match = nativeMatch(text)
-        return if (match.success && match.index == 0 && match.length == text.length) ClrMatchResult(match) else null
+        val match = nativeAnchoredMatch(text, "\\A(?:" + pattern + ")\\z", nativeOptions)
+        return if (match.success) ClrMatchResult(match) else null
     }
+
+    // The compiled BCL RegexOptions of this instance (System...Regex.Options), read as the opaque [ClrRegexOptions]
+    // handle so it feeds the static anchored-match overload below WITHOUT a RegexOptions->Int decode (which the public
+    // `options` property still needs — see its TODO). Reproducing the ORIGINAL options on the anchored re-match preserves
+    // IGNORE_CASE / MULTILINE / etc. that governed this regex.
+    @kotlin.clr.ClrIntrinsic("Options")
+    private val nativeOptions: ClrRegexOptions get() = TODO("clr binding should be implemented")
 
     // System...Regex.Match(input, index) searches forward from [index] over the full string (lookbehind transparent, `^`
     // not anchored to index) — a faithful realization of matchAt; require the match to start exactly at [index].
@@ -234,8 +244,21 @@ public actual class Regex {
          */
         // In .NET replacement strings only `$` is special (e.g. `$1`, `$$`); escape it to `$$` for a literal replacement.
         public actual fun escapeReplacement(literal: String): String = literal.replace("\$", "\$\$", false)
+
+        // #162: the STATIC 3-arg overload System...Regex.Match(string input, string pattern, RegexOptions options) — used
+        // by [matchEntire] to run an anchored `\A(?:...)\z` re-match with the instance's own compiled options. Static (a
+        // companion member, like [escape]); the (String, String, RegexOptions) arg types pin this overload uniquely.
+        @kotlin.clr.ClrIntrinsic("Match")
+        internal fun nativeAnchoredMatch(input: String, pattern: String, options: ClrRegexOptions): ClrMatch =
+            TODO("@Clr System.Text.RegularExpressions.Regex.Match(string,string,RegexOptions)")
     }
 }
+
+/** Opaque handle to System...RegexOptions (the [Flags] enum). Bound as a @ClrTypeAlias so a Regex's compiled `.Options`
+ *  can be read and fed straight into the static Match(string,string,RegexOptions) overload WITHOUT a RegexOptions->Int
+ *  decode — the value is never inspected in Kotlin, only forwarded. */
+@kotlin.clr.ClrTypeAlias("System.Text.RegularExpressions.RegexOptions")
+internal class ClrRegexOptions
 
 // === System.Text.RegularExpressions adapters ===
 // These @ClrIntrinsic classes ARE the BCL types (Match/Group/GroupCollection); their members are metadata-only TODO stubs

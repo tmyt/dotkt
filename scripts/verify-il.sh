@@ -644,6 +644,13 @@ il_check unsgn Unsigned "$ROOT/cases/il-unsigned" "$(printf '4000000100\n4000000
 # reinterpret between SByte[] (signed) and Byte[] (unsigned) — 250 unsigned reads as -6 signed and back.
 il_check ubytearr UByteArr "$ROOT/cases/il-ubytearr" "$(printf '3\n250\n-6\n250\n200')"
 il_check regex Regex "$ROOT/cases/il-regex" "$(printf 'True\nFalse\na#b#c#\na_b_c\nTrue\nFalse\n42\nnull')"
+# regexanchor (#162): matchEntire/matches do a TRUE anchored `\A(?:...)\z` match, not a leftmost search filtered by span
+# — so a shorter alternation branch (`a` in `a|ab`) or a lazy quantifier still yields the full-input match; compiled
+# options (?i) and existing anchors coexist; capture-group numbers are preserved by the non-capturing wrapper group.
+il_check regexanchor RegexAnchor "$ROOT/cases/il-regexanchor" "$(printf 'ab\nTrue\na\naaa\nTrue\n12-34,12,34\nab\nTrue\nFalse\nnull')"
+# linkedorder (#169): LinkedHashMap/LinkedHashSet (and mapOf/setOf) preserve insertion order across a MIDDLE removal —
+# LinkedHashMap is backed by the insertion-ordered System...OrderedDictionary; LinkedHashSet by a pure-Kotlin set over it.
+il_check linkedorder LinkedOrder "$ROOT/cases/il-linkedorder" "$(printf 'a,c,d,e\na=1,c=3,d=4,e=5\n1,3,4,5\nx,z,w,q\n4\nTrue\nFalse\none,two,three\np,d,b,a')"
 # regexreplace: Regex.replaceFirst / replace(String,String) marshaling (final-review N1). replaceFirst mis-bound the
 # 3-arg System...Regex.Replace(string,string,int) — returned the input unchanged + AccessViolationException on a
 # CharSequence-typed input; the fix materializes the CharSequence to a String at the call site. Also pins toString()

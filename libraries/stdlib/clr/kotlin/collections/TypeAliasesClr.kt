@@ -249,8 +249,14 @@ public actual class HashMap<K, V> : MutableMap<K, V> {
 }
 
 
+// #169: LinkedHashMap CONTRACTS insertion-order iteration (and mapOf/mutableMapOf return LinkedHashMap, so they inherit
+// it). .NET's `Dictionary<K,V>` only preserves insertion order incidentally and LOSES it after a removal — a real
+// Kotlin-contract violation. `System.Collections.Generic.OrderedDictionary<K,V>` (.NET 9+) is an insertion-ordered
+// dictionary that keeps order across removals; it implements the SAME non-generic `IDictionary`/`ICollection` facades
+// the ClrMapDefaults helpers use (verified) and the SAME intrinsic members (Count/ContainsKey/ContainsValue/get_Item/
+// set_Item/Remove/Clear/Keys/Values) + ctors, so this is a pure alias swap — no member changes.
 @SinceKotlin("1.1")
-@kotlin.clr.ClrTypeAlias("System.Collections.Generic.Dictionary")
+@kotlin.clr.ClrTypeAlias("System.Collections.Generic.OrderedDictionary")
 public actual class LinkedHashMap<K, V> : MutableMap<K, V> {
     public actual constructor()
     public actual constructor(initialCapacity: Int)
@@ -298,8 +304,9 @@ public actual class LinkedHashMap<K, V> : MutableMap<K, V> {
     @kotlin.clr.ClrIntrinsic("Clear")
     actual override fun clear() { TODO("clr binding should be implemented") }
 
-    // CAVEAT: plain Dictionary does not preserve insertion order, so this LinkedHashMap actual does not either.
-    // Keys/Values bind directly (the lowered ICollection slots); entries -> the ClrMapDefaults live-entry snapshot.
+    // OrderedDictionary preserves insertion order (incl. across removals). Keys/Values bind directly (the lowered
+    // ICollection slots — OrderedDictionary.KeyCollection/ValueCollection, ordered); entries -> the ClrMapDefaults
+    // live-entry snapshot, whose non-generic IDictionaryEnumerator also yields entries in insertion order.
     @kotlin.clr.ClrIntrinsic("Keys")
     actual override val keys: MutableSet<K> get() = TODO("clr binding should be implemented")
     @kotlin.clr.ClrIntrinsic("Values")
@@ -382,28 +389,38 @@ public actual class HashSet<E> : MutableSet<E> {
 }
 
 
+// #169: LinkedHashSet CONTRACTS insertion-order iteration (and setOf/mutableSetOf return LinkedHashSet, so they inherit
+// it). .NET has NO insertion-ordered GENERIC set (`HashSet<E>` loses order after a removal), so — exactly as Kotlin/JVM
+// backs LinkedHashSet with a LinkedHashMap — this is a REAL pure-Kotlin class backed by the (now insertion-ordered)
+// [LinkedHashMap]. It DIRECTLY implements MutableSet<E> (= the aliased ICollection<E>), so CollectionBclSlotSynthesis
+// fills the BCL ICollection slots (Contains/CopyTo/IsReadOnly + the Boolean->void Add bridge) and ilemit's reverse
+// GetEnumerator bridge wraps iterator() — the SAME machinery AbstractMutableSet/ClrMatchGroupCollection rely on.
 @SinceKotlin("1.1")
-@kotlin.clr.ClrTypeAlias("System.Collections.Generic.HashSet")
 public actual class LinkedHashSet<E> : MutableSet<E> {
-    public actual constructor()
-    public actual constructor(initialCapacity: Int)
-    public actual constructor(initialCapacity: Int, loadFactor: Float)
-    public actual constructor(elements: Collection<E>)
+    // Backing insertion-ordered map: keys are the set elements (order-preserving via OrderedDictionary); the value is an
+    // unused placeholder. Reading the value never happens, so the V?-local landmine (ClrMapDefaults) is not in play.
+    private val map: LinkedHashMap<E, Boolean>
+
+    public actual constructor() { map = LinkedHashMap() }
+    public actual constructor(initialCapacity: Int) { map = LinkedHashMap(initialCapacity) }
+    public actual constructor(initialCapacity: Int, loadFactor: Float) { map = LinkedHashMap(initialCapacity, loadFactor) }
+    public actual constructor(elements: Collection<E>) { map = LinkedHashMap(); addAll(elements) }
 
     // From Set
-    // CAVEAT: plain HashSet does not preserve insertion order, so this LinkedHashSet actual does not either.
 
-    @kotlin.clr.ClrIntrinsic("Count")
-    actual override val size: Int get() = TODO("clr binding should be implemented")
-    actual override fun isEmpty(): Boolean = size == 0
-    @kotlin.clr.ClrIntrinsic("Contains")
-    actual override fun contains(element: E): Boolean = TODO("clr binding should be implemented")
+    actual override val size: Int get() = map.size
+    actual override fun isEmpty(): Boolean = map.isEmpty()
+    actual override fun contains(element: E): Boolean = map.containsKey(element)
     actual override fun containsAll(elements: Collection<E>): Boolean = clrCollContainsAll(this, elements)
 
     // From MutableSet
 
+    // Insertion-ordered iterator: snapshot the backing map's (ordered) keys, then delete via the live set on remove().
+    // NB the snapshot is built by iterating map.keys DIRECTLY (not clrSetSnapshot(this), which would re-enter this
+    // set's own GetEnumerator bridge -> infinite recursion).
     actual override fun iterator(): MutableIterator<E> {
-        val snapshot = clrSetSnapshot(this)
+        val snapshot = ArrayList<E>(map.size)
+        for (k in map.keys) snapshot.add(k)
         return object : MutableIterator<E> {
             private var index = 0
             private var lastEl: E? = null
@@ -424,10 +441,16 @@ public actual class LinkedHashSet<E> : MutableSet<E> {
             }
         }
     }
-    @kotlin.clr.ClrIntrinsic("Add")
-    actual override fun add(element: E): Boolean = TODO("clr binding should be implemented")
-    @kotlin.clr.ClrIntrinsic("Remove")
-    actual override fun remove(element: E): Boolean = TODO("clr binding should be implemented")
+    actual override fun add(element: E): Boolean {
+        if (map.containsKey(element)) return false
+        map.put(element, true)
+        return true
+    }
+    actual override fun remove(element: E): Boolean {
+        if (!map.containsKey(element)) return false
+        map.remove(element)
+        return true
+    }
     actual override fun addAll(elements: Collection<E>): Boolean {
         var modified = false
         for (element in elements) { if (add(element)) modified = true }
@@ -449,8 +472,7 @@ public actual class LinkedHashSet<E> : MutableSet<E> {
         for (e in toRemove) { if (remove(e)) modified = true }
         return modified
     }
-    @kotlin.clr.ClrIntrinsic("Clear")
-    actual override fun clear() { TODO("clr binding should be implemented") }
+    actual override fun clear() { map.clear() }
 }
 
 /** Snapshot a CLR-backed set's elements into an ArrayList by enumerating the BCL IEnumerable directly (the bridge),
