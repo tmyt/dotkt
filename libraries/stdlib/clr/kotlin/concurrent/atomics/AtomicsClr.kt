@@ -5,6 +5,7 @@
 
 package kotlin.concurrent.atomics
 
+import kotlin.clr.ClrRefArgument
 import kotlin.internal.InlineOnly
 
 // System.Threading.Monitor lock helpers (@ClrIntrinsic-bound). They take an OBJECT, so no byref is
@@ -16,6 +17,14 @@ import kotlin.internal.InlineOnly
 internal fun monitorEnter(lock: Any): Unit = TODO("clr binding should be implemented")
 @kotlin.clr.ClrIntrinsic("System.Threading.Monitor.Exit")
 internal fun monitorExit(lock: Any): Unit = TODO("clr binding should be implemented")
+
+// Object compare-and-swap: binds to the non-generic System.Threading.Interlocked.CompareExchange(ref object, object,
+// object) overload (@ClrRefArgument makes `location` byref -> ldflda). Declared HERE (non-builtin, real bytecode) for
+// the same reason as monitorEnter/Exit: SafeContinuation (kotlin/coroutines/SafeContinuationClr.kt) — a normally-
+// codegen'd body — calls it for its lock-free state transition (#142), and the JVM backend cannot codegen a call to a
+// no-bytecode builtin. Returns the value found at `location` (CAS succeeds iff that === comparand).
+@kotlin.clr.ClrIntrinsic("System.Threading.Interlocked.CompareExchange")
+internal fun interlockedCompareExchangeRef(@ClrRefArgument location: Any?, value: Any?, comparand: Any?): Any? = TODO("clr binding should be implemented")
 
 @SinceKotlin("2.2")
 @ExperimentalAtomicApi

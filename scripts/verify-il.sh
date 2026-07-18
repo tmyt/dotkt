@@ -784,6 +784,11 @@ il_check pair  Pair  "$ROOT/cases/il-pair"    "$(printf '3\n4\nx\n10\n11')"
 il_check triple Triple "$ROOT/cases/il-triple" "$(printf '1\ntwo\n3\n(1, two, 3)\n(1, two, 3)\n1|two|3\n1\ntwo\n3\n(1, TWO, 3)\nTrue\nFalse\n(3, two, 1)\n([1, 2], x, {k=9})')"   # COV4: Triple ctor/destructure/componentN/full-arg copy/toString (partial-copy-with-defaults omitted — cross-module default-arg bug)
 il_check typealias TypeAlias "$ROOT/cases/il-typealias" "$(printf 'a,b,c\n3\n12\n42\n9\n-1')"   # COV3: typealias over stdlib generic / function type / user class, used across a fn boundary
 il_check atomics Atomics "$ROOT/cases/il-atomics" "$(printf '11\n11\n16\nTrue\nFalse\n16\n16\n100\n55\n1001\n1001\n1000\n1000\n42')"   # COV2: kotlin.concurrent.atomics AtomicInt/AtomicLong exercising the @ClrRefArgument Interlocked byref binding
+il_check volatileatomic AppKt "$ROOT/cases/il-volatileatomic" "$(printf '42\n9000000000\nTrue\nb')"   # #130: scalar atomics load()/store() volatile round-trip (Volatile.Read/Write byref for int/long/bool; @Volatile field for AtomicReference)
+# #129: an AtomicIntArray element op whose bounds check THROWS mid-critical-section must still release the monitor
+# (try/finally). A worker thread then acquires the same instance's monitor (loadAt); pre-fix the leaked lock made
+# worker.Join(2000) time out -> "DEADLOCK". Needs facadegen for System.Threading.Thread, so il_check_imports.
+il_check_imports atomicarraytry AppKt "$ROOT/cases/il-atomicarraytry" "$(printf 'True\n20\n100')"
 il_check null  Null  "$ROOT/cases/il-null"    "$(printf 'none\nHI\nfallback\nABC\n5')"
 il_check nullableprim NullablePrim "$ROOT/cases/il-nullableprim" "$(printf '7\n107\n8\n8\n14\ngt5\nbig\n7\n-1\n8\n-2\n101\n50\nlgt\n2.5\n2.75\ndlt')"
 il_check refcellnullable AppKt "$ROOT/cases/il-refcell-nullable/app.kt" "$(printf '5\n6\n105\n25\n2.5\nnull')"   # #36: a captured-and-mutated `var Int?`/`Long?`/`Double?` -> heap ref-cell whose `v` field is Nullable<T>; the INIT ctor arg (bare T -> Nullable<T>), the inline smart-cast READ (Nullable<T>.Value), and the WRITE must all agree — was `new Ref(bare int)` into a Nullable<int> ctor slot -> InvalidProgramException
@@ -1050,6 +1055,11 @@ il_check corestrict CoRestrict "$ROOT/cases/il-corestrict" "$(printf '1,2,3,4,5\
 # SYNC resume's `cur === UNDECIDED` identity check holds (else it wrongly throws "Already resumed"). resume(42)
 # -> 42; resumeWithException -> getOrThrow rethrows at the sync point, caught. Sync-completion drain via `main`.
 il_check suspendco SuspendCo "$ROOT/cases/il-suspendco" "$(printf '42\ncaught:boom')"
+# #142: a suspendCoroutine whose SafeContinuation is resumed ASYNCHRONOUSLY from a worker thread — the
+# UNDECIDED->SUSPENDED (getOrThrow) and SUSPENDED->RESUMED (resumeWith) transitions genuinely race across threads,
+# which the fix's Interlocked.CompareExchange CAS over the @Volatile state field makes atomic. blockOn drives the
+# cold core; 42 is only observed if the cross-thread resume lands through the CAS. Uses the dotkt.support harness.
+il_check_imports safecontresume AppKt "$ROOT/cases/il-safecontresume" "42"
 # coinline (#22): a `suspend inline fun` with a `crossinline` lambda invoked inside `suspendCoroutineUninterceptedOrReturn`
 # (the kotlinx `suspendCancellableCoroutine` shape). InlineSplice materializes the crossinline carrier as a newClosure the
 # intrinsic block captures; the cold lowering cold-transforms the inline WRAPPER's standalone body (app-build gate) + the
