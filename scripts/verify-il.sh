@@ -650,6 +650,7 @@ il_check strnum StrNum "$ROOT/cases/il-strnum" "$(printf '42\n-7\n100\nnfe\niae\
 il_check ntostr NToStr "$ROOT/cases/il-ntostr" "$(printf '5\nnull\n7\n5\nnull')"   # value-type-nullable/value arg BOXED into a REFERENCED method's object param (EmitCallArgs pt==null path)
 il_check cp    Cp    "$ROOT/cases/il-cp"      "$(printf '50\n3.5\nTrue\nTrue\nX')"
 il_check ext   Ext   "$ROOT/cases/il-ext"     "$(printf '21\nHI')"
+il_check companionext CompanionExt "$ROOT/cases/il-companionext" "$(printf '5\n14\n21')"   # #177: an extension fun in a companion object lowers to a static method whose first param is the extension receiver — the call site must pass that receiver as the LEADING arg (was dropped -> arity miscompile)
 il_check arr   Arr   "$ROOT/cases/il-arr"     "$(printf '10\n30\n99\n3\n139\n139')"
 il_check lam   Lam   "$ROOT/cases/il-lambda"  "$(printf '42\n12')"
 il_check clo   Clo   "$ROOT/cases/il-closure" "$(printf '15\n105\n17')"
