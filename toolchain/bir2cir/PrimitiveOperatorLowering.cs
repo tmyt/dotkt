@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
+using System.Threading;
 using DotKt.Bir;
 
 // PRIMITIVE OPERATOR LOWERING (#52 Phase 5): recognize the primitive value-type OPERATORS that kotc used to
@@ -205,7 +206,10 @@ static class PrimitiveOperatorLowering
         //   2. else BOTH argValueTypes the SAME collection kind -> the struct-eq helper (`listOf(1)==setOf(1)` differs in kind -> falls through).
         //   3. else BOTH argValueTypes a non-null Double / non-null Float -> the total-order float-equals helper
         //      (this is where a STRUCTURAL Double/Float EQEQ — data-class `equals` — lands: NaN==NaN true, -0.0!=0.0; #95).
-        //   4. else the null-safe `Object.Equals` (`objEq`).
+        //   4. else BOTH argValueTypes a raw value-nullable `Double?` / `Float?` -> null-safe total-order bit-equality
+        //      (the #152 twin of step 3: a STRUCTURAL EQEQ over a NULLABLE Double/Float field — null==null true, one null
+        //      false, both present -> clr{Double,Float}Equals; else the boxed `objEq` gives IEEE `Double.Equals`).
+        //   5. else the null-safe `Object.Equals` (`objEq`).
         // Operands passed to the collection/float HELPER are cast-stripped (an IMPLICIT_CAST-to-Any renders as a `cast`
         // node — matching kotc's former collEqRoute/floatTotalEqRoute `expr(unwrapped)`). The primitive fast-path AND the
         // `objEq` fallback keep the ORIGINAL operands (kotc's former reference EQEQ emitted `expr(operands[i])`, NOT
@@ -234,6 +238,19 @@ static class PrimitiveOperatorLowering
                     return FaithfulHints.FloatCall("clrDoubleEquals", lu, ru);
                 if (FaithfulHints.IsNonNullFqn(lt, "kotlin.Float") && FaithfulHints.IsNonNullFqn(rt, "kotlin.Float"))
                     return FaithfulHints.FloatCall("clrFloatEquals", lu, ru);
+                // #152: STRUCTURAL EQEQ over two value-nullable Double/Float (`Double?`/`Float?` — a data-class `equals`
+                // field, or a `==` routed to the structural path). Both VALUE types are raw `Nullable<T>` (not boxed Any):
+                // the non-null arms above miss them, and the `objEq` fallback boxes both -> `Double.Equals`, which uses
+                // IEEE `==` for the value compare (`(-0.0).Equals(0.0)==true`) — violating Kotlin's TOTAL-ORDER structural
+                // equals (`-0.0 != 0.0`, `NaN == NaN`) that #95 adopted for the non-null case and that the bit-based
+                // hashCode requires. Synthesize null-safe bit-equality off `nullableHasValue`/`nullableValue` +
+                // clrDoubleEquals/clrFloatEquals: null==null -> true, exactly one null -> false, both present -> the
+                // total-order helper on the unwrapped values. (A DIRECT `a == b` on `Double?` is IEEE per #95 and is
+                // routed to the `ieee754equals` arm above — it never reaches this EQEQ arm.) The RAW `args[i]` (not the
+                // cast-stripped `lu`/`ru`) are hoisted: StripAnyCast only peels a bare-`Any` box, and the var init's
+                // `object -> Nullable<T>` coercion is the correct unbox — feeding the raw nullable operand is deliberate.
+                if (NullableFloatElem(lt) is string lfe && NullableFloatElem(rt) is string rfe && lfe == rfe)
+                    return NullableFloatEquals(args[0], args[1], lfe);
             }
             return new JsonObject { ["k"] = "objEq", ["lhs"] = args[0]?.DeepClone(), ["rhs"] = args[1]?.DeepClone() };
         }
@@ -265,6 +282,56 @@ static class PrimitiveOperatorLowering
                 return new JsonObject { ["k"] = "cast", ["type"] = TypeNode.Write(os), ["e"] = operand?.DeepClone() };
         }
         return operand?.DeepClone();
+    }
+
+    // The value-nullable float element FQN (`kotlin.Double`/`kotlin.Float`) iff the type is raw `Nullable<T>` over a
+    // bare Double/Float — the #152 gate. A boxed-Any operand (StaticType.Value = kotlin.Any) or a non-float nullable
+    // fails, so ONLY a `Double?`/`Float?` structural EQEQ reaches the null-safe bit-equality synthesis.
+    static string NullableFloatElem(TypeNode t) =>
+        t is TypeNode.Nullable n && n.Of is TypeNode.Fqn { Args: null } f
+            && (f.Name == "kotlin.Double" || f.Name == "kotlin.Float") ? f.Name : null;
+
+    // Distinct temp-name counter for the #152 hoisted operands (mirrors PreconditionLowering's `__rn$`).
+    static int _neCounter;
+
+    // Null-safe TOTAL-ORDER equality over two value-nullable `Double?`/`Float?` operands (#152). Hoists each raw
+    // `Nullable<T>` operand into a temp (so a side-effecting operand is evaluated ONCE, not per HasValue/Value read),
+    // then builds `null==null -> true / one null -> false / both present -> clr{Double,Float}Equals(a.Value, b.Value)`
+    // as nested `cond` (no `&&`/`||` node kind in CIR). The float helper does `toBits()==toBits()` — `-0.0 != 0.0`,
+    // `NaN == NaN` — matching the bit-based hashCode.
+    static JsonNode NullableFloatEquals(JsonNode a, JsonNode b, string elemFqn)
+    {
+        var floatEq = elemFqn == "kotlin.Double" ? "clrDoubleEquals" : "clrFloatEquals";
+        var na = "__ne$" + Interlocked.Increment(ref _neCounter);
+        var nb = "__ne$" + Interlocked.Increment(ref _neCounter);
+        JsonObject NullableType() => new() { ["t"] = "nullable", ["of"] = TypeJson.Fqn(elemFqn) };
+        JsonObject Local(string name) => new() { ["k"] = "local", ["name"] = name };
+        JsonObject Var(string name, JsonNode init) => new() { ["k"] = "var", ["name"] = name, ["type"] = NullableType(), ["init"] = init.DeepClone() };
+        JsonObject HasValue(string name) => new() { ["k"] = "nullableHasValue", ["elem"] = TypeJson.Fqn(elemFqn), ["e"] = Local(name) };
+        JsonObject Value(string name) => new() { ["k"] = "nullableValue", ["elem"] = TypeJson.Fqn(elemFqn), ["e"] = Local(name) };
+        JsonObject Bool(bool v) => new() { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Boolean"), ["value"] = v };
+        // both present -> the total-order float helper on the unwrapped values; both null -> true.
+        var whenSameNullness = new JsonObject
+        {
+            ["k"] = "cond",
+            ["cond"] = HasValue(na),
+            ["then"] = FaithfulHints.FloatCall(floatEq, Value(na), Value(nb)),
+            ["else"] = Bool(true),
+        };
+        // hasValue(a) == hasValue(b) ? (above) : false  — exactly one null is unequal.
+        var result = new JsonObject
+        {
+            ["k"] = "cond",
+            ["cond"] = new JsonObject { ["k"] = "binOp", ["op"] = "==", ["lhs"] = HasValue(na), ["rhs"] = HasValue(nb) },
+            ["then"] = whenSameNullness,
+            ["else"] = Bool(false),
+        };
+        return new JsonObject
+        {
+            ["k"] = "valueBlock",
+            ["stmts"] = new JsonArray { Var(na, a), Var(nb, b) },
+            ["result"] = result,
+        };
     }
 
     static string OwnerFqn(JsonNode t) =>
