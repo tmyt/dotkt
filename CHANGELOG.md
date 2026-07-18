@@ -50,6 +50,17 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   already-DotKt-classified assembly is surfaced LOUD instead of swallowed. The unconditional `if (name=="compareTo")
   op=true` hack — which force-flagged ANY method named `compareTo` and masked a genuinely-missing operator flag — is
   removed; kotc stamps the real `isOperator` (inherited by keyword-less overrides). Gate: `roundtrip-operator-flag`.
+- **facadegen ([tmyt/dotkt#179], area:facadegen): a re-consumed `class C : Comparable<C>` regains its Kotlin operator
+  surface.** At lib emit a Kotlin `class C : Comparable<C>` lowers `compareTo` to the PascalCase
+  `System.IComparable<C>.CompareTo` slot and its supertype to `System.IComparable<C>` (+ a non-generic bridge), so on
+  re-import facadegen surfaced neither the lowercase `operator fun compareTo` nor the `Comparable<C>` supertype — a
+  consumer's `c1 < c2` / `sorted()` was unresolved. facadegen now (a) restores the `System.IComparable<X>` supertype as
+  fully-qualified `kotlin.Comparable<X>` (dropping the non-generic bridge) so the type is seen as `Comparable` and
+  `sorted()`'s constraint holds, and (b) renames the DotKt `IComparable<X>`-self-slot `CompareTo` to the lowercase
+  `compareTo` + forces the `operator` flag so the FRONTEND resolves `<`/`>`/`<=`/`>=`. A genuine .NET `IComparable`
+  keeps its verbatim PascalCase `CompareTo` (`il-icmparity`). Gate: `roundtrip-comparable-meta` (the facadegen surface,
+  green). The end-to-end run (`roundtrip-comparable`, RT_XFAIL) awaits the residual bir2cir `NetInteropBinding` slot
+  bind (`compareTo` → the DotKt owner's `CompareTo`), tracked behind the #46 restructure.
 - **bir2cir ([tmyt/dotkt#152], area:bir2cir): nullable `Double?`/`Float?` structural equality uses total-order
   bit-equality, not boxed `Double.Equals`.** A data-class / structural `==` over a `Double?`/`Float?` field fell
   through to a boxed `System.Double.Equals` (IEEE: `-0.0 == 0.0` true), violating the total-order equals/hashCode
