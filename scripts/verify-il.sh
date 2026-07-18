@@ -1122,6 +1122,18 @@ il_check duration Duration "$ROOT/cases/il-duration" "$(printf -- '5s\n2s\n-1s\n
 # #156: a genuinely-nullable String (String? = null) UNWRAPPED into a CharSequence?-receiver slot (isNullOrEmpty) — the
 # strict nullable-slot path now emits a runtime-conditional adapter wrap so String->dotkt$CharSequence is ilverify-clean.
 il_check nullcs NullCs "$ROOT/cases/il-nullcs" "$(printf 'Z:empty\nV:hi\nE:empty')"
+# #40 (guard): a CROSS-MODULE @InlineOnly + @ClrIntrinsic stdlib fn keeps its @ClrIntrinsic binding across the assembly
+# boundary — kotc carries the annotation as OPAQUE ref.dll metadata (attrsJson is unconditional, NOT dropped for
+# @InlineOnly) and bir2cir substitutes the plain call to the bound BCL member (`sb[0]='X'` -> set_Chars, Char.is* -> System.Char.Is*).
+il_check inlonlyintr AppKt "$ROOT/cases/il-inlonlyintr/app.kt" "$(printf 'Xbc\nTrue\nTrue\nTrue')"
+# #89: a CROSS-MODULE top-level `val` read (COROUTINE_SUSPENDED, a computed val deserialized from the metadata klib whose
+# parent is a package fragment, not an IrFile) is attributed owner:null by kotc — NOT the READING file's class — so bir2cir
+# binds the true declaring IntrinsicsKt off the ref.dll instead of an unresolvable <ReaderFile>Kt.get_COROUTINE_SUSPENDED.
+il_check xmodtopval AppKt "$ROOT/cases/il-xmodtopval/app.kt" "$(printf 'True\nTrue')"
+# #57: a `length` property reference on a USER CharSequence implementer lifts faithfully (its accessor resolves on the
+# class's OWN emitted get_length slot) — DIRECT (A) and INHERITED-through-A (B), bound + unbound. The deferral keys on the
+# accessor's resolved declaring owner (getterFn.parent), replacing the override-chain walk that over-deferred direct + missed indirect.
+il_check charseqlenref AppKt "$ROOT/cases/il-charseqlenref/app.kt" "$(printf '5\n6\n5\n6\nlength')"
 
 # Reverse interop: a .NET (C#) host loads the IL-emitted Kotlin assembly and calls a Kotlin class + top-level
 # fun. Proves the IL output is a consumable .NET assembly. (Compile-time <Reference> needs per-type contract-
@@ -1176,6 +1188,9 @@ if [[ -n "$ILV" && -d "$REFDIR" ]]; then
 	ASMS+=( [alias]=Alias [blank]=Blank [cbk]=Cbk [clrasm]=ClrAsm [clriface]=ClrIface [clrimpl]=ClrImpl [coerce]=Coerce [coevalorder]=CoEvalOrder [cofieldorder]=CoFieldOrder [cofinally]=CoFinally [coinline]=CoInline [coldabstract]=ColdAbstract [ifacesuspend]=IfaceSuspend [coldsubiface]=ColdSubIface [coldbaseinherit]=ColdBaseInherit [coldstaticmember]=ColdStaticMember [colddimgen]=ColdDimGen [counit]=CoUnit [delegatearg]=Dlg [dualrep]=DualRep [eventext]=EventExt [genclosure]=GenClo [geninlinearg]=GenInlineArg [genextnew]=GenExtNew [gencolladd]=GenCollAdd [genhof]=XHof [genim]=GenIM [geninj]=GenInj [ifaceevent]=AppKt [inherit]=Inherit [interpnull]=InterpNull [mref]=Mr [netattr]=NetAttr [netenum]=NetEnum [netinterop]=NetInterop [ntostr]=NToStr [nulltostr]=NullToStr [objgen]=OGen [outref]=Outref [overrideprop]=OverridePropKt [regexreplace]=RegexReplace [revinterop]=KotlinLib [samcmp]=SamCmp [selfref]=SelfRef [seqfilter]=SeqFilter [subseq]=SubSeq [taskgen]=Tg [tloverload]=TlOverload [transinj]=TransInj [vtprop]=VtProp [xfaceimpl]=XFace [xinline]=XInl [strops]=StrOps [nullbang]=NullBang [tryval]=TryVal [starproj]=StarProj [toplateinit]=TopLateinit [gendelegate]=AppKt [csextrecv]=CsExtRecv [genextval]=GenExtVal [inlklibmembernlr]=InlKlibMemberNlr [writecapture]=AppKt [genlocalclass]=AppKt [lateinitref]=AppKt [topdeleg]=AppKt [suspendref]=AppKt )
 		# stdlib miscompile regressions (#97 copyInto overlap [generic Array<T> path], #103 roundToInt/roundToLong half-up)
 		ASMS+=( [copyintoverlap]=AppKt [roundhalfup]=AppKt )
+		# kotc frontend regressions: #40 @InlineOnly @ClrIntrinsic carriage, #89 cross-module top-level val owner attribution,
+		# #57 transitive/owner-keyed length-reference deferral (user CharSequence implementer)
+		ASMS+=( [inlonlyintr]=AppKt [xmodtopval]=AppKt [charseqlenref]=AppKt )
 	# DOCUMENTED ilverify EXCLUSIONS (deliberately NOT in ASMS — no silent gap):
 	#   • stackalloc — the emitted `localloc` (stackalloc/Span) is UNVERIFIABLE by ECMA-335 (like C# `unsafe`);
 	#     it can NEVER pass ilverify. Permanent, by-design exclusion — not a defect.

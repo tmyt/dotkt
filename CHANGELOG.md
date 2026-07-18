@@ -22,6 +22,26 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
     making the `Method body should not exist` emit-crash impossible while WARNING (naming the def) when the skip is
     unexpected — so an upstream defect (a body written onto an abstract slot) stays visible. The dup-`$dupN` counter now
     runs for class abstract slots too, keeping the body phase in lockstep with declare.
+- **kotc ([tmyt/dotkt#57]/[tmyt/dotkt#89]/[tmyt/dotkt#40], area:kotc): three frontend symbol-resolution fixes.**
+  - **#57 the `length`-reference deferral is OWNER-keyed, not override-chain-keyed.** A property reference to
+    `length` on a USER class implementing `CharSequence` now lifts faithfully — its accessor resolves on the
+    class's OWN emitted `get_length` slot — for a DIRECT override AND one INHERITED through an intermediate
+    (`B : A`, `A : CharSequence`). The retired override-chain walk over-deferred the direct case (a compile
+    error on a liftable reference) while missing the indirect one (both should behave alike). The deferral now
+    keys on the accessor's RESOLVED declaring owner (`getterFn.parent`): only a .NET-mapped CharSequence owner
+    (`String`/`StringBuilder`/the polymorphic `kotlin.CharSequence`, whose slot bir2cir renames/collapses) stays
+    deferred. (`BirEmitterLifts.kt`)
+  - **#89 a CROSS-MODULE top-level `val` read is attributed `owner:null`, not the READING file's class.** A
+    computed top-level val deserialized from the frontend metadata klib is PACKAGE-keyed (its parent is a package
+    fragment, not an `IrFile`), so kotc cannot name its declaring file class and no longer mis-owns it to
+    `<ReaderFile>Kt` (the #80 `COROUTINE_SUSPENDED` root). It emits the same "unresolved owner" fact it already
+    emits for a cross-module top-level FUNCTION; bir2cir binds the true declaring file class off the ref.dll.
+    (`BirEmitterCalls.kt`)
+  - **#40 verified already-resolved on current main; regression guard added.** A cross-module `@InlineOnly` +
+    `@ClrIntrinsic` stdlib function keeps its `@ClrIntrinsic` binding across the assembly boundary — kotc carries
+    the annotation as UNCONDITIONAL, opaque ref.dll metadata (`attrsJson` is not gated on `@InlineOnly`), and
+    bir2cir substitutes the plain call to the bound BCL member. No code change.
+  - Regression cases: `cases/il-charseqlenref`, `cases/il-xmodtopval`, `cases/il-inlonlyintr`.
 - **bir2cir/ilemit ([tmyt/dotkt#93]/[tmyt/dotkt#71]/[tmyt/dotkt#94]/[tmyt/dotkt#95], area:bir2cir/ilemit): a family of numeric/equality miscompiles.**
   - **#93 numeric widening** — `Byte`/`Short`/`UByte`/`UShort` arithmetic (and `inc`/`dec`/`unaryMinus`) dropped the
     operator's DECLARED return type, so the value truncated to the narrow left operand on box/narrow-store

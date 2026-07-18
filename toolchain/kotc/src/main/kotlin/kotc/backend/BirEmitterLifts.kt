@@ -752,7 +752,8 @@ internal fun BirEmitter.kPropertyStub(name: String): String =
  * v1 scope: a TOP-LEVEL property (`::x`), or a MEMBER property either BOUND (`obj::p`, receiver captured in a
  * field) or UNBOUND (`Type::p`, receiver becomes the `get`/`set`'s own leading param) — mirrors `functionRef`'s
  * ctor-ref/bound/unbound split. An EXTENSION-receiver property reference (`KProperty2`), a `lateinit var`, a
- * `@ClrField` property, and a property overriding a .NET-mapped interface member (kotlin.CharSequence.length) are
+ * `@ClrField` property, and a `length` reference RESOLVED on a .NET-mapped CharSequence owner (String/StringBuilder/
+ * the polymorphic kotlin.CharSequence — bir2cir renames its slot; a USER CharSequence implementer is faithful) are
  * clean deferrals (their access shape differs from the plain get_/set_ accessor convention used below). The
  * compiler-synthesized KProperty argument of a delegate's
  * getValue/setValue/provideDelegate is NOT this path — those call sites materialize `kPropertyStub` directly
@@ -781,19 +782,21 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 	val fieldBacked = prop.isLateinit || isClrField(prop)
 	val getterFn = node.getter?.owner ?: prop.getter
 		?: return unsupported(node, "this property reference", "the referenced property has no getter")
-	// A reference to a property DIRECTLY overriding kotlin.CharSequence.length is a clean deferral: its accessor
-	// binds the .NET-mapped interface slot (get_length routes to System.String's get_Length via bir2cir), whose
-	// lift-through the plain get_/set_ accessor convention below cannot faithfully name — the blocker is the
-	// interface-slot rename, owned by bir2cir, not a shape kotc can emit here. Walks only the direct override
-	// chain (non-transitive, matching the retired clrIfaceMemberName helper): a `class B : A` where
-	// `A : CharSequence` re-overrides through A, so `B::length` takes the plain lift.
-	val overridesCharSeqLength = (sequenceOf(getterFn) + getterFn.overriddenSymbols.asSequence().map { it.owner }).any { owner ->
-		(owner.parent as? IrClass)?.fqNameWhenAvailable?.asString() == "kotlin.CharSequence"
-			&& owner.correspondingPropertySymbol?.owner?.name?.asString() == "length"
-	}
-	if (overridesCharSeqLength)
+	// #57: a `length` reference whose accessor is RESOLVED on a .NET-MAPPED CharSequence owner is a clean deferral —
+	// its slot is renamed/collapsed by bir2cir (`get_length` -> System.String/StringBuilder `get_Length`, or the
+	// polymorphic kotlin.CharSequence face), a bir2cir-owned rewrite the lift's plain get_/set_ accessor call cannot
+	// express. The discriminator is the ACCESSOR's RESOLVED declaring owner (`getterFn.parent`), NOT an
+	// override-chain walk: fir2ir materializes a per-class fake override, so a user `class B : A`, `A : CharSequence`
+	// resolves `B::length`'s getter in B (owner = B) — a user class whose OWN emitted `get_length` slot (its
+	// synthesized `dotkt$CharSequence` implementation) the lift names faithfully, DIRECT or INHERITED. A `String`/
+	// `StringBuilder`/bare-`CharSequence` receiver resolves the getter in the .NET-mapped owner itself, where the
+	// rename bites. (The retired override-chain walk conflated the two — every user override transitively reaches
+	// kotlin.CharSequence — so it over-deferred the direct user-class case while missing the indirect one.)
+	val declOwnerFq = (getterFn.parent as? IrClass)?.fqNameWhenAvailable?.asString()
+	if (prop.name.asString() == "length"
+		&& declOwnerFq in setOf("kotlin.CharSequence", "kotlin.String", "kotlin.text.StringBuilder"))
 		return unsupported(node, "this property reference",
-			"a property overriding a .NET-mapped interface member has no supported lowering yet")
+			"a length reference addressed at a .NET-mapped CharSequence owner has no supported lowering yet")
 	// A top-level extension-property reference is lowered below ONLY for a SAME-MODULE, NON-GENERIC accessor:
 	//  - an INJECTED (referenced-assembly) ext accessor — `getterFn.body == null`, the codebase's cross-module/
 	//    deserialized-stub signal (mirrors the function-ref injected gate in `call()`) — needs the argTypes/ret
