@@ -5,6 +5,29 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Fixed
+
+- **stdlib ([tmyt/dotkt#141], area:stdlib): `hypot`/`expm1`/`ln1p` (Double & Float) bind the numerically-correct
+  net10 BCL primitives.** The old bodies (`sqrt(x*x+y*y)`, `exp(x)-1`, `ln(1+x)`) overflowed for large magnitudes
+  (`hypot(1e308,1e308)` → `Infinity`) and lost all precision to cancellation near 0. Now bound as `@ClrIntrinsic`
+  to `System.Double.Hypot`/`ExpM1`/`LogP1` and `System.Single.Hypot`/`ExpM1`/`LogP1`. Gate: `il-mathnumerics`.
+- **stdlib ([tmyt/dotkt#143], area:stdlib): `decodeToString`/`encodeToByteArray` honor `throwOnInvalidSequence=true`.**
+  The 3-arg overloads previously ignored the flag and silently substituted U+FFFD. They now transcode through a
+  throwing `UTF8Encoding(false, true)` and surface a `CharacterCodingException` (Kotlin contract) on malformed
+  UTF-8 / unpaired surrogates; the default (`false`) path keeps replacement. Gate: `il-utf8throw`.
+- **stdlib ([tmyt/dotkt#144], area:stdlib): `String`/`Char` `uppercase()`/`lowercase()` documented as CLR-native
+  1:1 mapping — NOT a JVM one-to-many bug.** `#144` was re-triaged (not a defect): kotlin/clr has no binary interop
+  with other Kotlin backends, so string-value parity (`"ß".uppercase() == "SS"`) has no functional value, and .NET's
+  deliberate 1:1 no-expansion (`ToUpperInvariant`/`ToLowerInvariant`) is a valid platform choice. The public forms
+  bind directly to `System.String.ToUpperInvariant`/`ToLowerInvariant` (`@ClrIntrinsic`); `"ß".uppercase() == "ß"`.
+  The deliberate deviation from Kotlin/JVM/Native/JS one-to-many expansion is recorded in `docs/dotkt-semantics.md`
+  §5g. Gate: `il-caseinvariant`.
+- **stdlib ([tmyt/dotkt#145], area:stdlib): array `fill(element, fromIndex, toIndex)` validates its range.**
+  A `fromIndex > toIndex` call silently no-op'd; the generic + all 8 primitive `fill` actuals now throw
+  `IllegalArgumentException` on an inverted range and `IndexOutOfBoundsException` out of bounds (Kotlin contract).
+  Gate: `il-fillrange` (generic path; the primitive actuals carry the identical guard but remain blocked from app
+  calls by the pre-existing primitive-array-receiver resolution gap).
+
 ### Changed
 
 - **docs/process (area:semantics): the behavior-choice acceptance test is now stated as "consistent, documented,

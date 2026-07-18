@@ -692,6 +692,16 @@ public actual inline fun BooleanArray.copyOfRange(fromIndex: Int, toIndex: Int):
 @kotlin.internal.InlineOnly
 public actual inline fun CharArray.copyOfRange(fromIndex: Int, toIndex: Int): CharArray = CharArray(toIndex - fromIndex) { this[fromIndex + it] }
 
+// Kotlin's fill contract: throw IndexOutOfBoundsException when [fromIndex] < 0 or [toIndex] > size,
+// and IllegalArgumentException when [fromIndex] > [toIndex]. The primitive fills below use a manual
+// loop that would otherwise silently no-op on an inverted range, so every fill validates first.
+private fun checkFillRangeIndexes(fromIndex: Int, toIndex: Int, size: Int) {
+    if (fromIndex < 0 || toIndex > size)
+        throw IndexOutOfBoundsException("fromIndex: $fromIndex, toIndex: $toIndex, size: $size")
+    if (fromIndex > toIndex)
+        throw IllegalArgumentException("fromIndex: $fromIndex > toIndex: $toIndex")
+}
+
 // Thin wrapper: Kotlin fill(element, fromIndex, toIndex) has an exclusive end index, while
 // .NET System.Array.Fill(array, value, startIndex, count) takes a count. Adapt by subtracting.
 @kotlin.clr.ClrIntrinsic("System.Array.Fill")
@@ -699,46 +709,55 @@ private fun <T> Array<T>.nativeFill(element: T, startIndex: Int, count: Int): Un
 
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun <T> Array<T>.fill(element: T, fromIndex: Int = 0, toIndex: Int = size): Unit {
+    checkFillRangeIndexes(fromIndex, toIndex, size)
     nativeFill(element, fromIndex, toIndex - fromIndex)
 }
 
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun ByteArray.fill(element: Byte, fromIndex: Int = 0, toIndex: Int = size): Unit {
+    checkFillRangeIndexes(fromIndex, toIndex, size)
     for (i in fromIndex until toIndex) this[i] = element
 }
 
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun ShortArray.fill(element: Short, fromIndex: Int = 0, toIndex: Int = size): Unit {
+    checkFillRangeIndexes(fromIndex, toIndex, size)
     for (i in fromIndex until toIndex) this[i] = element
 }
 
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun IntArray.fill(element: Int, fromIndex: Int = 0, toIndex: Int = size): Unit {
+    checkFillRangeIndexes(fromIndex, toIndex, size)
     for (i in fromIndex until toIndex) this[i] = element
 }
 
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun LongArray.fill(element: Long, fromIndex: Int = 0, toIndex: Int = size): Unit {
+    checkFillRangeIndexes(fromIndex, toIndex, size)
     for (i in fromIndex until toIndex) this[i] = element
 }
 
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun FloatArray.fill(element: Float, fromIndex: Int = 0, toIndex: Int = size): Unit {
+    checkFillRangeIndexes(fromIndex, toIndex, size)
     for (i in fromIndex until toIndex) this[i] = element
 }
 
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun DoubleArray.fill(element: Double, fromIndex: Int = 0, toIndex: Int = size): Unit {
+    checkFillRangeIndexes(fromIndex, toIndex, size)
     for (i in fromIndex until toIndex) this[i] = element
 }
 
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun BooleanArray.fill(element: Boolean, fromIndex: Int = 0, toIndex: Int = size): Unit {
+    checkFillRangeIndexes(fromIndex, toIndex, size)
     for (i in fromIndex until toIndex) this[i] = element
 }
 
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
 public actual fun CharArray.fill(element: Char, fromIndex: Int = 0, toIndex: Int = size): Unit {
+    checkFillRangeIndexes(fromIndex, toIndex, size)
     for (i in fromIndex until toIndex) this[i] = element
 }
 
