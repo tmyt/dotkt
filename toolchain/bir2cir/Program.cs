@@ -238,7 +238,7 @@ sealed class Pipeline
 
         // PHASE 1: per-file transforms up through the CharSequence bridge. Collect the staged roots so the
         // suspend cold lowering can run GLOBALLY (a same-assembly cross-file suspend call keeps `owner:null`,
-        // so its cold-entry callee may live in another file — the transformability fixpoint spans all files).
+        // so its cold-entry callee may live in another file — the suspend-member registry spans all files).
         var staged = new List<(JsonNode Root, string OutputName)>();
         foreach (var bir in birFiles)
         {
@@ -540,24 +540,23 @@ sealed class Pipeline
             staged.Add((substituted, outputName));
         }
 
-        // PHASE 1.5 — SUSPEND COLD LOWERING (bundle-6 P2/P3/P3-wave2a): rewrite eligible `suspend fun`s (top-level
-        // statics, extensions, INSTANCE members) into the cold Continuation state-machine shape (SM class +
-        // `f$dotkt_suspend` cold entry + suspend-main drain), and rewrite member/cross-file/cross-assembly suspend
-        // CALLS to the callee's cold shape. Runs GLOBALLY across all files (a same-assembly cross-file suspend call
-        // keeps `owner:null`, so the transformability fixpoint must span every input file). After call substitution
-        // (its synthesized calls are already-final sibling/BCL shapes) and before type lowering (its kotlin.* type
-        // tokens flow through BirTypeLowering). Non-v1 suspend funs are left untouched (they keep `"suspend":true`
-        // for the existing ilemit throw-stub path).
+        // PHASE 1.5 — SUSPEND COLD LOWERING (R1 classifier): rewrite EVERY declared `suspend fun` (top-level statics,
+        // extensions, instance members, static/companion members, abstract/interface members) into the cold
+        // Continuation shape (SM class + `f$dotkt_suspend` cold entry + Task bridge + suspend-main drain), and rewrite
+        // member/cross-file/cross-assembly suspend CALLS to the callee's cold shape. Runs GLOBALLY across all files (a
+        // same-assembly cross-file suspend call keeps `owner:null`, so the registry spans every input file). After call
+        // substitution (its synthesized calls are already-final sibling/BCL shapes) and before type lowering (its
+        // kotlin.* type tokens flow through BirTypeLowering). Declaration is UNCONDITIONAL: a non-segmentable v1 shape
+        // gets a call-time-throw cold entry, not a drop — no `suspend:true` survives to ilemit in app builds.
         //
-        // GATE (bundle-6 P5, Codex-confirmed): runs in BOTH the app build AND the rt-stdlib build — the real
-        // SequenceBuilder cold coroutine code is stdlib code that must be cold-transformed in the rt build (else its
-        // suspend members stay `suspend:true` -> ilemit throw-stub). Skipped ONLY in the REFERENCE build (metadata-
-        // only; its bodies are body-squashed). The rt-stdlib's CLR-interop suspend fns (kotlin.clr.await/delay) are
-        // NOT genuine cold bodies and are excluded INSIDE ApplyAll (InteropBridgeFileClass), so this does not corrupt
-        // their ABI. (yield/yieldAll are generic-class override members, still correctly deferred by the v1 shape gate.)
+        // GATE: runs in BOTH the app build AND the rt-stdlib build — the real SequenceBuilder cold coroutine code is
+        // stdlib code that must be cold-transformed in the rt build. Skipped ONLY in the REFERENCE build (metadata-
+        // only; its bodies are body-squashed — so the ref.dll carries the [KotlinFunction(Suspend)] flag but no cold
+        // entry, which is what R1b's cross-assembly guard consults). The rt-stdlib's CLR-interop suspend fns
+        // (kotlin.clr.await) are NOT genuine cold bodies and are excluded INSIDE ApplyAll (InteropBridgeFileClass).
         IReadOnlyDictionary<string, DotKt.Bir.TypeNode> suspendCalleeRet = null;
         if (!_options.RefBuild)
-            suspendCalleeRet = SuspendColdLowering.ApplyAll(staged.Select(s => s.Root).ToList(), refs, localTypeFqns, attributeTopLevelOwner, typeSupers);
+            suspendCalleeRet = SuspendColdLowering.ApplyAll(staged.Select(s => s.Root).ToList(), refs, localTypeFqns, attributeTopLevelOwner);
 
         // PHASE 1.6 — SUSPEND LAMBDA LOWERING (bundle-6 P3 wave-2b, LIVE): replace each `newSuspendLambda`
         // node with `new <mangled>_lambdaN$sm(captures..., null)` + synthesize its SuspendLambda state machine

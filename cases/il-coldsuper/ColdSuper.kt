@@ -1,12 +1,10 @@
-// bir2cir SuspendColdLowering #78 Defect A — a suspend call keyed on a SUBCLASS static receiver must resolve
-// against a suspend member declared on a SUPERTYPE (the cold entry the subclass inherits). This is the exact
-// shape the exact-owner resolvability lookup dropped in the kotlinx port: DeferredCoroutine.await ->
-// JobSupport.awaitInternal (declared on a BASE class) and ChannelCoroutine.receiveOrNull -> ReceiveChannel
-// (declared on a super-INTERFACE). Before the fix the fixpoint mis-classified the caller as making an
-// unresolvable suspend call and dropped it from the cold set (-> reached ilemit un-lowered). The supertype
-// walk in IsResolvable (both the same-assembly registry and the ref.dll axis) resolves the inherited cold
-// entry through the subclass. Also exercises MUTUAL recursion (ping/pong) — the transformability set must
-// keep a mutually-recursive suspend pair whole.
+// bir2cir SuspendColdLowering (#78/#90) — a suspend call keyed on a SUBCLASS static receiver resolves against a
+// suspend member declared on a SUPERTYPE (the cold entry the subclass inherits). This is the exact shape that
+// dropped in the kotlinx port: DeferredCoroutine.await -> JobSupport.awaitInternal (declared on a BASE class) and
+// ChannelCoroutine.receiveOrNull -> ReceiveChannel (declared on a super-INTERFACE). Under R1 every super-declared
+// suspend member has a virtual cold entry by unconditional declaration, so native VIRTUAL DISPATCH through the cold
+// slot resolves the inherited call — no bir2cir hierarchy walk. Also exercises MUTUAL recursion (ping/pong): both
+// cold entries exist by construction, so neither caller can be dropped.
 
 suspend fun echo(x: Int): Int = x            // a shared generic-free cold entry (the suspension target)
 

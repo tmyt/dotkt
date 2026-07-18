@@ -268,7 +268,8 @@ sealed partial class ReferenceMetadataIndex
     // base, or a referenced interface whose suspend member is declared on a super-interface). Walk the reflected owner's
     // BaseType + interface chain across the compile-reference set (metadata-only), checking the flat member index at each
     // super. Best-effort and non-throwing: an unresolvable owner (a purely local type, or a name absent from the refs)
-    // falls back to the flat exact-owner result — the same-assembly hierarchy is covered by SuspendColdLowering.AllSupers.
+    // falls back to the flat exact-owner result. Same-assembly members no longer need a hierarchy walk (R1 declares a
+    // cold entry for every same-assembly suspend member unconditionally; virtual dispatch resolves inherited/overridden).
     public bool HasSuspendMemberInHierarchy(string owner, string name)
     {
         if (owner == null) return false;
@@ -277,8 +278,16 @@ sealed partial class ReferenceMetadataIndex
         {
             EnsureNetMlc();
             if (_netMlc == null || _netRefAsms == null) return false;
+            // Probe the GENERIC-arity spellings too: a `clr*` owner token is the bare FQN (`lib.Sub`), but the
+            // reflected CLR type of a generic subtype is `lib.Sub`1` — a plain GetType(asm, "lib.Sub") misses it,
+            // so the hierarchy walk (and thus R1b's cold-ABI existence guard) would false-negative on a suspend
+            // member inherited from a super through a GENERIC referenced subtype. Try the plain name then `n`1..8`.
             Type start = null;
-            foreach (var asm in _netRefAsms) { start = SafeGetType(asm, owner); if (start != null) break; }
+            foreach (var cand in NetTypeCandidates(owner, 0))
+            {
+                foreach (var asm in _netRefAsms) { start = SafeGetType(asm, cand); if (start != null) break; }
+                if (start != null) break;
+            }
             if (start == null) return false;
             var seen = new HashSet<string>(StringComparer.Ordinal);
             var work = new Queue<Type>();
