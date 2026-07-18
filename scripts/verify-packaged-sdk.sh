@@ -87,6 +87,18 @@ fail() { # <name> <reason> [detail]
 # Strip the compiler's own stderr chatter from a run's stdout so the assert compares only program output.
 run_out() { grep -vE 'kotlin/clr:|duplicate source root' || true; }
 
+# run_project <dir> <stderr-logfile> [extra `dotnet run` args...]  — build+run a packaged project in <dir>; echo
+# its noise-filtered stdout; RETURN the run's exit status (0 iff build AND execution succeeded). Status and stdout
+# are captured INDEPENDENTLY (issue #163): the process status is no longer lost to the `2>/dev/null | run_out ||
+# true` pipe that used to accept a project which printed the expected text and THEN threw / returned non-zero.
+run_project() { # <dir> <stderr-logfile> [extra args...]
+	local dir="$1" log="$2"; shift 2
+	local rc=0 raw
+	raw="$(cd "$dir" && dotnet run -v q "$@" 2>"$log")" || rc=$?
+	printf '%s' "$raw" | run_out
+	return $rc
+}
+
 # A tiny metadata-only reflection checker (does the emitted dll declare owner.member?) — built ONCE with the
 # DEFAULT NuGet config (it needs System.Reflection.MetadataLoadContext from nuget.org; it is a build-time
 # tool, NOT part of the isolated SDK-resolution test). Lives OUTSIDE $WS so the isolated local-only
@@ -151,9 +163,10 @@ EOF
 	cat > "$d/app.kt" <<'EOF'
 fun main() { println("packaged exe ok: " + (2 + 3)) }
 EOF
-	local expected="packaged exe ok: 5" actual
-	actual="$(cd "$d" && { dotnet run -v q --nologo 2>/dev/null | run_out || true; })"
-	if [[ "$actual" == "$expected" ]]; then pass exe
+	local expected="packaged exe ok: 5" actual rc=0
+	actual="$(run_project "$d" "$d/run.err" --nologo)" || rc=$?
+	if (( rc != 0 )); then fail exe "run exit $rc" "$(printf -- '--- expected ---\n%s\n--- stdout ---\n%s\n--- stderr ---\n%s' "$expected" "$actual" "$(tail -30 "$d/run.err" 2>/dev/null)")"
+	elif [[ "$actual" == "$expected" ]]; then pass exe
 	else fail exe "output mismatch" "$(printf -- '--- expected ---\n%s\n--- actual ---\n%s' "$expected" "$actual")"; fi
 }
 
@@ -274,9 +287,10 @@ EOF
 package mpp.greeter
 fun main() { println(Greeter().say()) }
 EOF
-	local expected="Hello from the CLR actual (packaged MPP SDK)" actual
-	actual="$(cd "$d" && { dotnet run -v q --nologo 2>/dev/null | run_out || true; })"
-	if [[ "$actual" == "$expected" ]]; then pass mpp
+	local expected="Hello from the CLR actual (packaged MPP SDK)" actual rc=0
+	actual="$(run_project "$d" "$d/run.err" --nologo)" || rc=$?
+	if (( rc != 0 )); then fail mpp "run exit $rc" "$(printf -- '--- expected ---\n%s\n--- stdout ---\n%s\n--- stderr ---\n%s' "$expected" "$actual" "$(tail -30 "$d/run.err" 2>/dev/null)")"
+	elif [[ "$actual" == "$expected" ]]; then pass mpp
 	else fail mpp "output mismatch" "$(printf -- '--- expected ---\n%s\n--- actual ---\n%s' "$expected" "$actual")"; fi
 }
 
@@ -308,11 +322,31 @@ case_template() {
 	fi
 	# NB no `--nologo` here: this template's main echoes args.firstOrNull(), and `dotnet run` forwards any
 	# trailing token to the app — so `--nologo` would leak in as the greeted name. (DOTNET_NOLOGO=1 is exported.)
-	local expected="Hello, World, from DotKt — Kotlin on .NET!" actual
-	actual="$(cd "$proj" && { dotnet run -v q 2>/dev/null | run_out || true; })"
-	if [[ "$actual" == "$expected" ]]; then pass template
+	local expected="Hello, World, from DotKt — Kotlin on .NET!" actual rc=0
+	actual="$(run_project "$proj" "$proj/run.err")" || rc=$?
+	if (( rc != 0 )); then fail template "run exit $rc" "$(printf -- '--- expected ---\n%s\n--- stdout ---\n%s\n--- stderr ---\n%s' "$expected" "$actual" "$(tail -30 "$proj/run.err" 2>/dev/null)")"
+	elif [[ "$actual" == "$expected" ]]; then pass template
 	else fail template "output mismatch" "$(printf -- '--- expected ---\n%s\n--- actual ---\n%s' "$expected" "$actual")"; fi
 }
+
+# ---- issue #163 self-test: a packaged Exe whose main prints the EXPECTED text then throws MUST be REJECTED.
+# Drives the real run_project capture path from the isolated feed and asserts a non-zero status is observed. ----
+selftest() {
+	local d="$WS/selftest"; mkdir -p "$d"; cp "$NUGET_CONFIG" "$d/nuget.config"
+	cat > "$d/App.ktproj" <<EOF
+<Project Sdk="DotKt.Sdk/$VER">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><Nullable>disable</Nullable></PropertyGroup>
+</Project>
+EOF
+	printf 'fun main() { println("SELFTEST-EXPECTED"); throw RuntimeException("boom after print") }\n' > "$d/app.kt"
+	local rc=0
+	run_project "$d" "$d/run.err" --nologo >/dev/null || rc=$?
+	if (( rc == 0 )); then
+		echo "PACKAGED-SDK GATE RED — #163 self-test FAILED: a print-then-crash packaged exe was accepted (exit-code hole open)"; exit 1
+	fi
+	info "self-test OK: a print-then-crash packaged exe is REJECTED (run exit $rc)"
+}
+selftest
 
 case_exe
 case_library

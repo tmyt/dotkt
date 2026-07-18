@@ -1154,13 +1154,39 @@ il_revinterop() {
 <Nullable>disable</Nullable><ImplicitUsings>disable</ImplicitUsings><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup>
 <ItemGroup><Compile Include="Program.cs" /></ItemGroup></Project>
 EOF
-		local actual expected; expected="$(printf 'Hi, World\n5')"
-		actual="$(dotnet run --project "$ildir/consumer.csproj" -v q -- "$ildir/$asm.dll" 2>/dev/null | grep -vE 'warning|error |\.cs\(' || true)"
+		local actual expected rc=0; expected="$(printf 'Hi, World\n5')"
+		# Capture the C# host's stdout AND its exit status INDEPENDENTLY (issue #163): the run status is no longer
+		# lost to the grep pipe / `|| true` that let a consumer print the expected text and THEN throw / return
+		# non-zero pass. A non-zero `dotnet run` (build OR execution) is a run crash BEFORE any output compare.
+		actual="$(dotnet run --project "$ildir/consumer.csproj" -v q -- "$ildir/$asm.dll" 2>"$ildir/run.err")" || rc=$?
+		actual="$(printf '%s' "$actual" | grep -vE 'warning|error |\.cs\(' || true)"
+		if (( rc != 0 )); then
+			reason="run crash (exit $rc)"; detail="$(printf -- '--- expected ---\n%s\n--- actual (before crash) ---\n%s\n--- stderr ---\n%s' "$expected" "$actual" "$(tail -20 "$ildir/run.err" 2>/dev/null)")"; exit 0; fi
 		if [[ "$actual" == "$expected" ]]; then ok=1; else mismatch "$expected" "$actual"; fi
 	)
 }
 
+# ---- issue #163 self-test: the reverse-interop run capture MUST reject a C# host that prints the EXPECTED text
+# then returns non-zero. Mirrors il_revinterop's exact capture idiom; a green (exit 0) means the hole is open. ----
+il_revinterop_selftest() {
+	local d="$ROOT/build/il-revinterop-selftest"; rm -rf "$d"; mkdir -p "$d"
+	cat > "$d/Program.cs" <<'EOF'
+using System;
+class P { static int Main() { Console.WriteLine("SELFTEST-EXPECTED"); throw new Exception("boom after print"); } }
+EOF
+	cat > "$d/st.csproj" <<'EOF'
+<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><Nullable>disable</Nullable><ImplicitUsings>disable</ImplicitUsings></PropertyGroup></Project>
+EOF
+	local rc=0
+	dotnet run --project "$d/st.csproj" -v q 2>"$d/run.err" >/dev/null || rc=$?
+	rm -rf "$d"
+	if (( rc == 0 )); then
+		echo "IL GATE RED — #163 reverse-interop self-test FAILED: a print-then-crash consumer was accepted (exit-code hole open)"; exit 1; fi
+	echo "SELFTEST revinterop (print-then-crash consumer correctly REJECTED, run exit $rc)"
+}
+
 wait   # let every backgrounded sample finish; each has left exactly one result record
+il_revinterop_selftest   # after the parallel samples drain (isolated build dir; no contention with in-flight jobs)
 il_revinterop   # synchronous; writes its own record like the rest
 
 # ---- aggregate the records: one PASS/FAIL line per sample (sorted), details after the FAIL line ----
