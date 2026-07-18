@@ -31,6 +31,14 @@ done
 # bare `kotlin.coroutines.Continuation` at emit; they surface the REMAINING *cross-module* coroutine gaps
 # (below). This gate is the coroutine bundle's cross-module E2E check: when these flip to FIXED, prune them.
 declare -A RT_XFAIL=(
+	# #109/#86: the cross-module nullable VALUE-TYPE generic gap this section was ADDED to expose. The lib's `T?` in
+	# PARAM position (firstOr<T>(x: T?, …)) and FIELD position (NBox<T>(val value: T?)) is kept as bare non-null `T`
+	# for the round-trip (#86) and the nullable-generic re-import carrier [KotlinNullableGeneric] is method-RETURN-only
+	# (#147/#127) — so on re-import the ctor/param restores as `Int`, not `Int?`. The consumer then FAILS TO COMPILE:
+	# `NBox<Int>(null)` / `firstOr<Int>(null, …)` -> "null cannot be a value of a non-null type 'Int'". This is the
+	# CONCRETE cross-module value-type manifestation of #86 (invisible to every other gate, which drives only T=String);
+	# when #86/#147 land the param/field nullability, this section starts compiling+running (7/3/9/4/x) -> prune it.
+	[roundtrip-nullable-vt-generic]="#109/#86 (+#147/#127): cross-module nullable value-type generic T? in param/field position restores as bare non-null T -> consumer fails to compile (NBox<Int>(null): null cannot be a value of a non-null type 'Int'); the value-type axis of #86, exposed on purpose"
 )
 
 # ---- section result collection (no section may abort the script) -----------------------------------
@@ -629,6 +637,44 @@ cp "$GG/libil/KLib.dll" "$GG/appil/" 2>/dev/null || true
 gexpected="$(printf '3\n4\n10\n5\n1/z\n99\n8\n6\n7\nhi\nnone\nset\n4')"
 run_app gactual "$GG/appil/KApp.dll"
 check_output roundtrip-generic "$gexpected" "$gactual" "user generics in every position × operator/infix/extension/suspend/nullable/default/vararg"
+
+# ----- NULLABLE VALUE-TYPE generic, CROSS-MODULE (#109) -----------------------------------------------
+# #86 is a CROSS-MODULE representation defect: a `T?` param/field kept as bare `T` so it can survive the facadegen
+# round-trip is unsound at VALUE-TYPE instantiations (a bare struct T cannot hold null). But every existing cross-module
+# gate exercises this family only at T=String — roundtrip-generic drives `orDefault<String>` (a reference type, where
+# bare-T is trivially sound), the MSBuild nullable-generic sample consumes `holderOf<String>`, and the same-compilation
+# IL lane (il-nullable-generic-list / il-genarrlam) never crosses the module boundary where #86 lives. So a regression in
+# cross-module bare-T handling at a value type would be INVISIBLE to every gate. This section closes that axis: a lib
+# declares a nullable-value-type generic PARAM (`firstOr<T>(x: T?, d: T)`) and FIELD (`NBox<T>(value: T?)`), compiled
+# SEPARATELY, then consumed by an app that instantiates BOTH at T=Int (a value type) with a null argument crossing the
+# boundary — plus a T=String non-regression. If #86's bare-T representation is unsound at T=Int this section FAILs
+# (documented in RT_XFAIL against #86); today it is driven live so a fix flips it to FIXED.
+NV="$ROOT/build/roundtrip-nullable-vt-generic"; rm -rf "$NV"; mkdir -p "$NV/lib" "$NV/app" "$NV/libbir" "$NV/libil" "$NV/appbir" "$NV/appil"
+cat > "$NV/lib/lib.kt" <<'EOF'
+class NBox<T>(val value: T?) {          // nullable value-type generic FIELD (the bare-T-for-T? representation, #86)
+    fun orElse(d: T): T = value ?: d    // reads the nullable generic field across the module boundary
+}
+fun <T> firstOr(x: T?, d: T): T = x ?: d   // top-level nullable value-type generic PARAM, consumed cross-module
+EOF
+cat > "$NV/app/app.kt" <<'EOF'
+fun main() {
+    println(firstOr<Int>(null, 7))       // 7   value-type T=Int, null crosses the module boundary
+    println(firstOr(3, 7))               // 3   value-type T=Int, present
+    println(NBox<Int>(null).orElse(9))   // 9   nullable value-type generic FIELD, null, read cross-module
+    println(NBox(4).orElse(9))           // 4   nullable value-type generic FIELD, present
+    println(firstOr<String>(null, "x"))  // x   reference-type non-regression
+}
+EOF
+CLR_TYPES_METADATA="" "$LAUNCHER" "$NV/lib" -no-stdlib -classpath "$CP" -d "$NV/libbir" >/dev/null 2>&1 || true
+emit_il "$NV/libil" NvLib "$NV/libbir"/*.bir.json
+dotnet "$RETARGET_DLL" "$NV/libil/NvLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$NV/nv.meta" --compile-refs "$REFS$NV/libil/NvLib.dll" NBox LibKt >/dev/null 2>&1 || true
+CLR_TYPES_METADATA="$NV/nv.meta" "$LAUNCHER" "$NV/app" -no-stdlib -classpath "$CP" -d "$NV/appbir" >/dev/null 2>&1 || true
+emit_il "$NV/appil" NvApp --ref "$NV/libil/NvLib.dll" "$NV/appbir"/*.bir.json
+cp "$NV/libil/NvLib.dll" "$NV/appil/" 2>/dev/null || true
+nvexpected="$(printf '7\n3\n9\n4\nx')"
+run_app nvactual "$NV/appil/NvApp.dll"
+check_output roundtrip-nullable-vt-generic "$nvexpected" "$nvactual" "cross-module nullable VALUE-TYPE generic (T? param + field) instantiated at T=Int (#109/#86)"
 
 # ----- HIGHER-ORDER generics: a function-type parameter whose ARG/RETURN is a generic user type (`(Box<U>)->Box<V>`) -----
 # The metadata type grammar is a recursive structured type-node tree (an `fn` node's `ret`/`params` are themselves type
