@@ -55,7 +55,6 @@ static class Retarget
             {
                 case "--out": outPath = argv[++i]; break;
                 case "--compile-refs": refPaths.AddRange(ManagedReferenceCatalog.Split(argv[++i])); break;
-                case "--refs": Console.Error.WriteLine("retarget: --refs was replaced by --compile-refs"); return 2;
                 case "-v": case "--verbose": verbose = true; break;
                 default: Console.Error.WriteLine($"retarget: unknown arg '{argv[i]}'"); return 2;
             }
