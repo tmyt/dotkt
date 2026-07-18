@@ -7,6 +7,15 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- **docs/process (area:semantics): the behavior-choice acceptance test is now stated as "consistent, documented,
+  convincingly explainable"** (CLAUDE.md Design doctrine + `docs/dotkt-semantics.md` guiding principle): ① Kotlin
+  contract by default, ② CLR-native where unspecified, ③ *interop-first deviation* may override even the KDoc letter
+  when CLR/mscorlib consistency convincingly wins. Recorded the #144 case-mapping deviation as `docs/dotkt-semantics.md`
+  §5b-ter (`"ß".uppercase()` stays `"ß"`, no Unicode one-to-many expansion — previously only a `CharClr.kt` comment).
+  A new PostToolUse hook (`scripts/hooks/check-jvm-emulation.sh`, wired in `.claude/settings.json`) auto-injects this
+  self-check whenever newly-written toolchain/stdlib text pattern-matches JVM-emulation intent ("matches JVM",
+  "JVM parity", the hashCode 31-polynomial), so agents re-verify the judgment at write time instead of after review.
+
 - **gates ([tmyt/dotkt#107]/[tmyt/dotkt#108]/[tmyt/dotkt#99]/[tmyt/dotkt#109], area:gates): hardened the verification harness.**
   `verify-il.sh` now (#107) FAILS LOUD when the ilverify lane cannot run (ILVerify.dll absent / runtime ref dir
   missing) instead of silently reporting green with zero IL coverage and printing spurious `FIXED` for every real

@@ -9,12 +9,16 @@ deep dives are linked per section.
 Guiding principle: *Kotlin carries JVM accidental complexity; on the CLR, identify it and discard it — don't
 reproduce it.* (Memory `clr-not-jvm-discard-jvmisms`.)
 
-**The correctness bar is the Kotlin spec / KDoc contract — not Kotlin/JVM.** Kotlin/JVM behavior is
-cited throughout this page only as a *reader reference* (what a Kotlin/JVM developer would expect),
-never as a compatibility target. Where the contract fixes a behavior, DotKt honors it (① *Kotlin
-contract*); where Kotlin leaves it unspecified, DotKt takes the CLR-native form (② *deliberate CLR
-choice*, with the reason stated) — it does not hand-force the JVM value as a correctness claim. Every
-such deviation is recorded here.
+**The acceptance test for every behavior choice is: *consistent, documented, convincingly
+explainable* — never "matches JVM".** Kotlin/JVM behavior is cited throughout this page only as a
+*reader reference* (what a Kotlin/JVM developer would expect), never as a compatibility target.
+Resolution order: ① where the Kotlin spec/KDoc contract fixes a behavior, DotKt honors it by default
+(*Kotlin contract* — e.g. §5a float total order); ② where Kotlin leaves it unspecified, DotKt takes
+the CLR-native form (*deliberate CLR choice*, with the reason stated); ③ where CLR/interop
+consistency convincingly outweighs the KDoc letter, DotKt may deviate even from the contract
+(*interop-first deviation* — exemplar: §5b-ter case mapping, `"ß".uppercase()` stays `"ß"`). A
+deviation is acceptable iff it passes all three conditions of the test; hand-forcing a JVM value with
+"matches JVM" as the justification passes none of them. Every deviation is recorded here.
 
 > Looking for the friendly tour instead of the canonical reference? Read
 > [`docs/user/kotlin-on-clr-differences.md`](user/kotlin-on-clr-differences.md) first.
@@ -466,6 +470,19 @@ the FIRST result) is NOT a full match: `Regex("a|ab").matchEntire("ab")` finds `
 alternation and preserves the user's capture-group NUMBERS — with the instance's OWN compiled `RegexOptions`, so the
 engine backtracks to a full-input match when one exists (alternation branch order, lazy quantifiers, `(?i)` options,
 and coexisting `^…$` anchors all behave as Kotlin/JVM). `matches` delegates to `matchEntire != null`.
+
+## 5b-ter. Case mapping is CLR one-to-one — `"ß".uppercase()` stays `"ß"` (interop-first deviation)
+
+- Kotlin's KDoc for `uppercase()` specifies the **Unicode standard full case mapping**, under which one-to-many
+  expansions apply: `"ß".uppercase()` → `"SS"` on Kotlin/JVM (and per the KDoc letter).
+- DotKt binds case mapping to the BCL (`ToUpperInvariant`/`ToLowerInvariant`), which is strictly **one-to-one**:
+  `"ß".uppercase()` → `"ß"`, and `Char.uppercase()` never expands to a multi-char string (#144,
+  `libraries/stdlib/clr/kotlin/text/CharClr.kt`).
+- **Why this deviates even from the KDoc letter** — the ③ *interop-first* case of the acceptance test: a DotKt
+  string IS a .NET string, and every mscorlib API the program interops with (`String.ToUpper`, comparers, the
+  whole .NET ecosystem) uses the one-to-one mapping. Honoring the KDoc here would make Kotlin-side case mapping
+  disagree with the CLR world around it — the *less* consistent, harder-to-explain behavior. The deviation is
+  consistent (mscorlib-general), documented (here), and convincingly explainable — it passes the test.
 
 ## 5c. `Map`/`MutableMap` BOTH erase to `IDictionary<K,V>` — read-only-ness is frontend-enforced
 

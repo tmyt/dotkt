@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/scripts/hooks/check-jvm-emulation.sh 2>/dev/null || true",
+            "timeout": 15,
+            "statusMessage": "JVM-emulation self-check"
+          }
+        ]
+      }
+    ]
+  }
+}
