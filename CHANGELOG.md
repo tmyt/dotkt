@@ -36,6 +36,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `splitToSequence` = `split(input, limit).asSequence()`; `options` decodes the compiled `System...RegexOptions`
   `[Flags]` bitmask (`IgnoreCase`/`Multiline`/`Singleline`/`IgnorePatternWhitespace` → the matching `RegexOption`;
   `LITERAL`/`UNIX_LINES`/`CANON_EQ` have no .NET bit). Gate: `il-regexseq`.
+- **facadegen ([tmyt/dotkt#132], area:facadegen): interface-companion statics survive the round-trip.** kotc flattens an
+  interface's plain `companion object` to the interface's OWN static fields/methods (the `SharingStarted.Eagerly` #83
+  path), but facadegen's interface branch enumerated only `Public|Instance` members and dropped every flattened static —
+  so a consumer re-importing the DotKt library could not resolve `I.X`/`I.f()`. facadegen now surfaces an interface's
+  `Public|Static` fields/props/methods/events as companion members (`staticProps`/`staticFuns`/`staticEvents`), reached
+  via `I.Companion`; a C#11 static-abstract/static-virtual interface member (invokable only through a constrained type
+  parameter) is excluded so no uncallable companion slot is advertised. Gate: `roundtrip-iface-companion`.
+- **facadegen ([tmyt/dotkt#146], area:facadegen): `KotlinFun()` no longer silently demotes infix/operator/suspend.** The
+  blanket `catch` around the `[KotlinFunction]` read erased a method's Kotlin vocabulary whenever an UNRELATED user
+  attribute referenced a type outside the resolver set (materializing one attribute forces the whole set). The read is
+  now guarded per-attribute (a bad sibling never blocks `[KotlinFunction]`); a genuine enumeration failure on an
+  already-DotKt-classified assembly is surfaced LOUD instead of swallowed. The unconditional `if (name=="compareTo")
+  op=true` hack — which force-flagged ANY method named `compareTo` and masked a genuinely-missing operator flag — is
+  removed; kotc stamps the real `isOperator` (inherited by keyword-less overrides). Gate: `roundtrip-operator-flag`.
+
 - **stdlib ([tmyt/dotkt#141], area:stdlib): `hypot`/`expm1`/`ln1p` (Double & Float) bind the numerically-correct
   net10 BCL primitives.** The old bodies (`sqrt(x*x+y*y)`, `exp(x)-1`, `ln(1+x)`) overflowed for large magnitudes
   (`hypot(1e308,1e308)` → `Infinity`) and lost all precision to cancellation near 0. Now bound as `@ClrIntrinsic`
