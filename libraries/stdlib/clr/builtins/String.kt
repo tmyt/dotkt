@@ -68,11 +68,11 @@ public actual class String : Comparable<String>, CharSequence {
     // whereas Kotlin/JVM contracts a DETERMINISTIC polynomial hash `s[0]*31^(n-1) + ... + s[n-1]` (0 for the
     // empty string). Rule-3 real body over the intrinsic siblings (length / get) + primitive Char/Int arithmetic;
     // the `* 31` and `+` wrap on Int overflow (unchecked), matching JVM.
-    // NOTE (2026-07-06): this correct body is currently SHADOWED by kotc's universal-method intercept
-    // (BirEmitter.kt ~3853: `isBuiltin && name=="hashCode"` -> objMethod GetHashCode), which routes every
-    // `.hashCode()` on a builtin (kotlin.*) receiver straight to System.Object/String.GetHashCode BEFORE the
-    // call can reach this member. Until that intercept is gated (fall through when the receiver TYPE declares
-    // its own hashCode), C5 stays broken at the call site despite this binding being right.
+    // A `.hashCode()` call on a `String` receiver dispatches to THIS deterministic body: kotc's universal-method
+    // routing falls through to the declared override when the receiver TYPE declares its own routable hashCode
+    // (BirEmitterCalls.kt `fallThrough = declaresOwn` gate). So DotKt `String.hashCode()` is deterministic and
+    // matches Kotlin/JVM's polynomial contract across runs — a stable interop guarantee (unlike
+    // System.String.GetHashCode, which is per-process randomized).
     public actual override fun hashCode(): Int {
         var h = 0
         val n = this.length

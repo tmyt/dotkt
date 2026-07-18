@@ -1174,12 +1174,11 @@ ubexpected="$(printf '200\n3\n250\n200')"
 run_app ubactual "$UB/appil/UbApp.dll"
 check_output roundtrip-ubyte "$ubexpected" "$ubactual" "UByte/UByteArray strict-mapping fidelity: System.Byte->UByte + System.Byte[]->UByteArray via consumer compile-dependency + value 200"
 
-# ----- #133 GENERIC-FIDELITY gaps (atomicfu CLR port): three RT_XFAIL reproducers, one per owning layer ----------
-# The atomicfu port reported that a DotKt lib consumed AS KOTLIN loses fidelity for (1) a generic INLINE EXTENSION on a
-# generic receiver, (2) an OPERATOR on a generic type, (3) a Kotlin `Nothing` return. Reproduced in-repo: in ALL three
-# the facadegen META is CORRECT (verified: inline+ext+typeParams+receiver-generic Cell<T> for (1); operator bit +
-# clrName:get for (2); the Nothing reader is landed for (3)). The failures are DOWNSTREAM of facadegen — each section is
-# a ready reproducer that flips to FIXED when its owning layer (kotc / bir2cir / bir2cir+kotc) lands. See RT_XFAIL above.
+# ----- #133 GENERIC-FIDELITY regressions (atomicfu CLR port): three cases, all FIXED (now plain passing checks) --------
+# The atomicfu port reported that a DotKt lib consumed AS KOTLIN lost fidelity for (1) a generic INLINE EXTENSION on a
+# generic receiver, (2) an OPERATOR on a generic type, (3) a Kotlin `Nothing` return. All three were FIXED by 299ba89
+# (#133) in their owning layers (kotc / bir2cir / bir2cir+kotc); the RT_XFAIL map is now empty, so these sections run
+# through plain check_output and RED on any regression — kept as permanent round-trip regression guards.
 
 # (1) GENERIC INLINE EXTENSION on a generic receiver — `c.update { it + 1 }` must infer T=Int from `c: Cell<Int>`. FIR
 # DOES infer it (facadegen's __self: Cell<T> meta is correct); kotc's facadegen inline-splice path refuses the lambda +
