@@ -955,7 +955,13 @@ internal fun BirEmitter.call(call: IrCall): String {
 		}
 		// A generic companion fun (`Result.Companion.success<T>`) carries its resolved type args — without them
 		// the emitted call references the uninstantiated generic method (invalid IL on a generic enclosing class).
-		return """{"k":"callStatic","owner":${fqnJson(enclosing)},"method":${str(name)}${overloadSigField(callee)}${typeArgsJson(call)},"args":[${filledArgs(call).joinToString(",")}]}"""
+		// A companion EXTENSION fun (`fun String.f()` inside a companion object) lowers to a static method whose
+		// first param `__self` is the extension receiver (BirEmitterDeclarations extRecv path). The call must pass
+		// that receiver as the LEADING arg — matching the declaration signature — else the receiver is dropped and
+		// the call arity mismatches the method (#177). Mirrors the member extension-fun path above (~line 903).
+		val compExt = extensionReceiver(call)
+		val compArgs = (if (compExt != null) listOf(expr(compExt)) else emptyList()) + filledArgs(call)
+		return """{"k":"callStatic","owner":${fqnJson(enclosing)},"method":${str(name)}${overloadSigField(callee)}${typeArgsJson(call)},"args":[${compArgs.joinToString(",")}]}"""
 	}
 
 		// An INJECTED top-level property (from a DotKt assembly) -> the referenced .NET file class holds it. An
