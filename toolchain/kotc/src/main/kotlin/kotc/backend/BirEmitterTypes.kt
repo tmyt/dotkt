@@ -161,14 +161,15 @@ internal fun BirEmitter.birType(t: IrType): TypeNode {
 			// erases the "this was a receiver" bit — so a re-consuming DotKt assembly loses the implicit `this: P` in a
 			// `apply1 { … }` lambda (#145). Carry it in `fn.recv` (the FIRST type arg, dropped from params): the CLR
 			// delegate is unchanged (DelegateParams re-prepends recv), and bir2cir stamps [KotlinExtensionFunctionType]
-			// off recv so facadegen/ClrTypeInjection restore `P.() -> R`. Non-ext function type keeps the flat shape.
-			// Guard to NON-suspend (#145 phase 1): a `suspend P.() -> R` stays flattened as today. bir2cir erases a
-			// suspend fn to `object` and rides the pre-erasure shape on [KotlinSuspendFunctionType], whose facadegen
-			// gate requires `recv == null` — recv-izing the suspend arm would degrade suspend restore, and a recv-bearing
-			// suspend fn would perturb the SequenceScope hot path in SuspendColdLowering. Non-suspend only.
-			val isExt = !suspend && (t as? IrSimpleType)?.annotations?.any { it.type.classFqName?.asString() == "kotlin.ExtensionFunctionType" } == true
+			// (non-suspend) / rides recv on [KotlinSuspendFunctionType] (suspend) so facadegen/ClrTypeInjection restore
+			// `P.() -> R`. This covers `suspend P.() -> R` too (#47): the suspend arm keeps the recv in the erased
+			// carrier's `fn` node, and facadegen (recv-tolerant) + ClrTypeInjection.coneSuspendExtensionFunctionType
+			// restore the suspend EXTENSION function type. Non-ext function type keeps the flat shape. bir2cir still
+			// erases the suspend fn slot to `object` (SuspendFnSlot ignores recv) — the SequenceScope hot path routes
+			// SequenceScope.yield/yieldAll BY NAME, not by the fn-type recv, so recv is inert there.
+			val isExt = (t as? IrSimpleType)?.annotations?.any { it.type.classFqName?.asString() == "kotlin.ExtensionFunctionType" } == true
 			return if (isExt && ps.isNotEmpty())
-				TypeNode.Fn(false, funcRetTypeOf(ret), ps.drop(1).map { birTypeDeleg(it) }, birTypeDeleg(ps.first()))
+				TypeNode.Fn(suspend, funcRetTypeOf(ret), ps.drop(1).map { birTypeDeleg(it) }, birTypeDeleg(ps.first()))
 			else
 				TypeNode.Fn(suspend, funcRetTypeOf(ret), ps.map { birTypeDeleg(it) })
 		}

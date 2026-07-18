@@ -1371,6 +1371,77 @@ dfexpected="$(printf '2\n2')"
 run_app dfactual "$DF/appil/DemoApp.dll"
 check_output roundtrip-dotfile "$dfexpected" "$dfactual" "#16: top-level fun in a dotted-name file class (api.common.kt -> demo.Api_commonKt) resolves cross-module"
 
+# ----- PROPERTY-TYPE round-trip (#47): a property's nullability + suspend-fn-type restored on re-import -----
+# The OLD gate drove stored values through internal harness fns and NEVER re-imported the PROPERTY TYPE itself, so
+# a `text: String?` degrading to non-null / a `block: suspend () -> T` degrading to `Any?` regressed SILENTLY. This
+# section re-imports the PROPERTIES DIRECTLY off a DotKt class and relies on the RESTORED property type:
+#   * text: String? (var)          — the consumer WRITES `h.text = null`, which COMPILES ONLY IF the property restored
+#                                    nullable; a degraded non-null `String` -> "null can not be a value of a non-null
+#                                    type String" -> the consumer never compiles -> empty output -> section FAIL. (A
+#                                    nullable READ can't be a sharp compile signal since String <: String?, so the
+#                                    nullable-WRITE is the sharp signal — cf. roundtrip-nrt's `takeNullable(null)`.)
+#   * block: suspend () -> Int      — passed DIRECTLY to `blockOn(h.block)` (whose param is `suspend () -> T`); a degraded
+#                                    `Any?` slot is not assignable there -> the consumer fails to compile -> FAIL.
+#   * ext:   suspend Int.() -> Int  — assigned to a typed local `val f: suspend Int.() -> Int = h.ext`, which type-checks
+#                                    ONLY IF ext restored as a suspend fn-type of arity 1 (a degraded `Any?` / arity-0
+#                                    `suspend () -> T` would not assign -> compile FAIL). The RECEIVER preservation (the
+#                                    #47 combined suspend+extension cone) is separately asserted by grepping the facadegen
+#                                    meta for ext's `fn` node carrying `recv`. (ext is NOT driven at runtime: driving a
+#                                    suspend EXTENSION lambda VALUE via the receiver-form startCoroutine hits a pre-existing
+#                                    bir2cir coroutine-lowering gap — reproducible SAME-module, unrelated to this
+#                                    symbol-surface fix — so the restored TYPE is asserted by compile-dependency + meta.)
+# bir2cir: RoundtripMetadata StampProps emits [Nullable] (from DeclNullableFlags) + [KotlinSuspendFunctionType];
+# kotc BirEmitterTypes keeps recv on a suspend ext fn; facadegen PropTypeN reads the suspend carrier + ApplyNrt the
+# nullable byte (recv-tolerant); kotc coneOf composes coneSuspendExtensionFunctionType.
+PR="$ROOT/build/roundtrip-property-type"; rm -rf "$PR"; mkdir -p "$PR/lib" "$PR/app" "$PR/libbir" "$PR/libil" "$PR/appbir" "$PR/appil"
+cat > "$PR/lib/lib.kt" <<'EOF'
+package rtprops
+class Holder {
+    var text: String? = "init"                     // nullable reference property (#47)
+    val block: suspend () -> Int = { 7 }            // suspend function-type property (#47)
+    val ext: suspend Int.() -> Int = { this + 1 }   // suspend EXTENSION function-type property (#47 combined cone)
+}
+EOF
+cat > "$PR/app/app.kt" <<'EOF'
+import dotkt.support.blockOn
+import rtprops.Holder
+fun main() {
+    val h = Holder()
+    h.text = null                          // compiles ONLY IF text restored nullable (String?); a non-null degrade -> compile FAIL
+    println(h.text ?: "was-null")          // was-null  — the null read back through the restored String? property
+    println(blockOn(h.block))              // 7         — block restored as suspend () -> Int, DRIVEN via startCoroutine
+    val f: suspend Int.() -> Int = h.ext   // type-checks ONLY IF ext restored as suspend Int.() -> Int (a degraded Any?
+    println(if (f === h.ext) "ext-ok" else "ext-bad")  //             or arity-0 suspend () -> Int would not assign -> FAIL)
+}
+EOF
+CLR_TYPES_METADATA="" "$LAUNCHER" "$PR/lib" -no-stdlib -classpath "$CP" -d "$PR/libbir" >/dev/null 2>&1 || true
+emit_il "$PR/libil" PropLib "$PR/libbir"/*.bir.json
+dotnet "$RETARGET_DLL" "$PR/libil/PropLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$PR/meta" --compile-refs "$REFS$PR/libil/PropLib.dll" rtprops.Holder System.Threading.Monitor >/dev/null 2>&1 || true
+write_coharness "$PR/app"
+CLR_TYPES_METADATA="$PR/meta" "$LAUNCHER" "$PR/app" -no-stdlib -classpath "$CP" -d "$PR/appbir" >/dev/null 2>&1 || true
+emit_il "$PR/appil" PropApp --ref "$PR/libil/PropLib.dll" "$PR/appbir"/*.bir.json
+cp "$PR/libil/PropLib.dll" "$PR/appil/" 2>/dev/null || true
+prexpected="$(printf 'was-null\n7\next-ok')"
+run_app practual "$PR/appil/PropApp.dll"
+# #47 receiver-preservation: ext's restored property type is a suspend `fn` node carrying `recv` (the extension receiver)
+# — a flattened `suspend (Int)->Int` (pre-fix kotc) would carry no recv. Assert the combined suspend+extension cone survived.
+pr_ext_recv=$(python3 - "$PR/meta" <<'PY'
+import json,sys
+try:
+    d=json.load(open(sys.argv[1])); ok=0
+    for t in d.get("types",[]):
+        for p in t.get("props",[]):
+            ty=p.get("type",{})
+            if p.get("name")=="ext" and ty.get("t")=="fn" and ty.get("suspend") and "recv" in ty: ok=1
+    print(ok)
+except Exception: print(0)
+PY
+)
+pr_ok=0; [[ "$practual" == "$prexpected" && "$pr_ext_recv" -ge 1 ]] && pr_ok=1
+section_result roundtrip-property-type "$pr_ok" "a property's nullability (String?) + suspend-fn-type (suspend ()->T, suspend R.()->T incl. restored receiver) re-import directly as the property type #47" \
+	"$(printf -- 'ext_recv_in_meta=%s\n--- expected ---\n%s\n--- actual ---\n%s' "$pr_ext_recv" "$prexpected" "$practual")"
+
 # ---- verdict --------------------------------------------------------------------------------------
 echo "------------------------------------"
 printf '%s\n' "${SUMMARY[@]}"

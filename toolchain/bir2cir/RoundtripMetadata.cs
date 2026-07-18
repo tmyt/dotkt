@@ -24,7 +24,8 @@ using DotKt.Bir;
 //   type:   [NullableContext, …user, KotlinFileClass?/KotlinFunInterface?, KotlinSealed?, KotlinValue?]
 //   method: [ …user, KotlinFunction?, KotlinInline? ]      ret: [ Nullable?, KotlinSuspendFunctionType?, KotlinExtensionFunctionType?, KotlinNothing? ]
 //   param:  [ Nullable?, KotlinSuspendFunctionType?, …user, KotlinExtensionFunctionType? ]
-//   field:  [ KotlinReadOnly?, KotlinSuspendFunctionType?, …user, KotlinExtensionFunctionType? ]
+//   field:  [ Nullable?, KotlinReadOnly?, KotlinSuspendFunctionType?, …user, KotlinExtensionFunctionType? ]   (#47 Nullable)
+//   prop:   [ Nullable?, KotlinSuspendFunctionType?, …user, KotlinExtensionFunctionType? ]                    (#47 Nullable)
 static class RoundtripMetadata
 {
     const string Ns = "DotKt.Runtime.CompilerServices.";
@@ -152,10 +153,13 @@ static class RoundtripMetadata
         if (fs is not JsonArray a) return;
         foreach (var f in a) if (f is JsonObject fo)
         {
-            // Prepend [KotlinReadOnly, KotlinSuspendFunctionType]. [KotlinReadOnly] is INSTANCE-field only — a top-level
-            // file-class static field never carried it (byte-equivalence with the old file-class field path).
+            // Prepend [Nullable, KotlinReadOnly, KotlinSuspendFunctionType] (Nullable outermost). [KotlinReadOnly] is
+            // INSTANCE-field only — a top-level file-class static field never carried it (byte-equivalence with the old
+            // file-class field path). #47: the `nullableFlags` NRT byte (DeclNullableFlags) rides here regardless of
+            // topLevel, so a nullable field surfaces as `T?` on re-import (facadegen's FieldTypeN reads it via ApplyNrt).
             if (fo["suspendFnType"] is JsonNode sf) Prepend(fo, SuspendFnAttr(sf));
             if (!topLevel && (fo["readOnly"] as JsonValue)?.GetValue<bool>() == true) Prepend(fo, Marker(AKReadOnly));
+            if (fo["nullableFlags"] is JsonArray nf && NullableAttr(nf) is JsonObject na) Prepend(fo, na);
             if (HasRecvFn(fo["type"])) Append(fo, Marker(AKExtFn));   // a `val handler: P.() -> R` field (#145)
             if ((fo["collIdentity"] as JsonValue)?.GetValue<string>() is string ci) Append(fo, CollIdentityAttr(ci));  // #29
         }
@@ -164,11 +168,15 @@ static class RoundtripMetadata
     static void StampProps(JsonNode props)
     {
         if (props is not JsonArray a) return;
-        // A `val/var x: suspend (…) -> T` property carries the pre-erasure shape; ilemit stamped only [KotlinSuspendFunctionType]
-        // on properties (never [Nullable]), so reproduce exactly that.
         foreach (var p in a) if (p is JsonObject po)
         {
+            // Prepend [Nullable, KotlinSuspendFunctionType] (Nullable outermost — same order as params). #47: a
+            // `val/var x: T?` property carries its NRT byte here (from DeclNullableFlags' nullableFlags); facadegen's
+            // PropTypeN reads it via ApplyNrt, so `val text: String?` re-imports nullable instead of degrading to
+            // non-null. A `val/var x: suspend (…) -> T` carries the pre-erasure `fn` shape (incl. an extension recv)
+            // restored by facadegen's SuspendFnNode.
             if (po["suspendFnType"] is JsonNode sf) Prepend(po, SuspendFnAttr(sf));
+            if (po["nullableFlags"] is JsonArray nf && NullableAttr(nf) is JsonObject na) Prepend(po, na);
             if (HasRecvFn(po["type"])) Append(po, Marker(AKExtFn));   // a `val p: P.() -> R` property (#145)
             if ((po["collIdentity"] as JsonValue)?.GetValue<string>() is string ci) Append(po, CollIdentityAttr(ci));  // #29
         }
@@ -185,16 +193,18 @@ static class RoundtripMetadata
         && !((o["suspend"] as JsonValue)?.GetValue<bool>() == true);
 
     // ---------------------------------------------------------------------------------------------------------------
-    // RUNTIME build: strip EVERY applied `attrs`/`retAttrs` (this is what ilemit's deleted `_stripMetadata` did — its
-    // `if (_stripMetadata) continue` skipped the whole pass-4 block, dropping the kotc user annotations kotlin.Deprecated/
-    // SinceKotlin/InlineOnly/… too, and its param-attr gate dropped [ClrRefArgument]). RoundtripMetadata itself never
-    // runs in the rt build, so there are no round-trip attrs to strip — only kotc's verbatim user annotations. Keeps
-    // DotKt.Stdlib.dll (the shipping runtime assembly, never metadata-read) lean and byte-equivalent to the old strip.
+    // RUNTIME build: strip the COMPILE-TIME-ONLY carriers from `attrs`/`retAttrs`, KEEPING genuine USER annotations
+    // (#47). RoundtripMetadata itself never runs in the rt build, so the attrs present are kotc's verbatim annotations:
+    // the @Clr* binding surface (`kotlin.clr.*`) + the round-trip carriers (`DotKt.Runtime.CompilerServices.*` / NRT
+    // `System.Runtime.CompilerServices.Nullable{,Context}`) — both compile-time-only, ref-side facts that must NOT ship
+    // on DotKt.Stdlib.dll (the never-metadata-read runtime assembly, substituted away at app-emit) — AND the user's own
+    // annotations (kotlin.Deprecated / SinceKotlin / InlineOnly / PublishedApi / …). The old strip dropped EVERYTHING,
+    // silently losing the user annotations (this bug); now the predicate keeps them and drops only the internal carriers.
     // ---------------------------------------------------------------------------------------------------------------
     public static void StripRuntimeAttrs(JsonNode root)
     {
         if (root is not JsonObject o) return;
-        o.Remove("attrs");
+        StripAttrs(o, "attrs");
         StripDecls(o["methods"], hasParams: true);
         StripDecls(o["fields"]);
         StripDecls(o["properties"]);
@@ -208,11 +218,33 @@ static class RoundtripMetadata
         if (arr is not JsonArray a) return;
         foreach (var d in a) if (d is JsonObject po)
         {
-            po.Remove("attrs");
-            po.Remove("retAttrs");
+            StripAttrs(po, "attrs");
+            StripAttrs(po, "retAttrs");
             if (hasParams) StripDecls(po["params"]);
         }
     }
+
+    // Remove ONLY the compile-time-only carriers from a decl's `attrs`/`retAttrs` array, leaving user annotations. An
+    // array that empties out is removed entirely (byte-equivalence with a decl that never had the key).
+    static void StripAttrs(JsonObject decl, string key)
+    {
+        if (decl[key] is not JsonArray a) return;
+        for (int i = a.Count - 1; i >= 0; i--)
+            if (a[i] is JsonObject ao && (ao["attr"] as JsonValue)?.GetValue<string>() is string fqn && IsRuntimeStrippable(fqn))
+                a.RemoveAt(i);
+        if (a.Count == 0) decl.Remove(key);
+    }
+
+    // A compile-time-only carrier (round-trip surface / @Clr* binding / NRT) — dropped from the shipping runtime dll.
+    // Everything else survives: the user's own annotations (kotlin.Deprecated/SinceKotlin/PublishedApi/Volatile), and —
+    // matching the app/ref builds, which keep them too (kotc serializes every annotation verbatim, no retention filter)
+    // — the compiler-internal resolution hints (kotlin.Suppress, kotlin.internal.*). Those hints are inert on the rt.dll
+    // (never metadata-read), so keeping them costs nothing and keeps rt consistent with app/ref; a retention-aware filter
+    // (SOURCE-retention annotations should ship on NO binary) is a broader downstream policy, deliberately NOT folded here.
+    static bool IsRuntimeStrippable(string fqn) =>
+        fqn.StartsWith(Ns, StringComparison.Ordinal)          // DotKt.Runtime.CompilerServices.* round-trip carriers
+        || fqn.StartsWith("kotlin.clr.", StringComparison.Ordinal)  // @Clr* binding surface (ref-side only)
+        || fqn == ANullable || fqn == ANullableCtx;           // NRT [Nullable]/[NullableContext]
 
     // ---------------------------------------------------------------------------------------------------------------
     // ATTRIBUTE-INSTANCE builders (a CIR `attrs` entry {attr, args:[…]} routed through ilemit's generic BuildCab).
