@@ -1088,7 +1088,20 @@ internal fun BirEmitter.call(call: IrCall): String {
 			// A plain top-level property (parent is the file/package, not a class) -> a static field of ITS DEFINING
 			// file's class. Use the property's own file, NOT the file currently being emitted — else a cross-file
 			// reference looks for `<ReferencingFile>Kt.prop` and fails (`field XKt.prop not found`; feedback item 11).
+			// #89: fileClassOf returns the DECLARING file class only when the property is SAME-MODULE (its parent is a
+			// real IrFile). A CROSS-MODULE property is a lazy declaration deserialized from a dependency (the frontend
+			// metadata klib, which is PACKAGE-keyed — the file grouping survives ONLY in the ref.dll bir2cir reads), so
+			// its parent is a package fragment, NOT an IrFile, and fileClassOf falls back to the READING file's class —
+			// mis-attributing e.g. a cross-module `COROUTINE_SUSPENDED` read to `<ReaderFile>Kt` (the #80 root that
+			// forced a bir2cir owner-rebind band-aid). kotc genuinely CANNOT name the declaring file class here (it is
+			// CLR/ref knowledge), so for the ACCESSOR (`prop:get`/`prop:set`) emission it declares the owner UNRESOLVED
+			// (`owner:null`) — the SAME honest fact it emits for a cross-module top-level FUNCTION — and bir2cir binds
+			// the true declaring file class off the ref.dll (its owner-null top-level resolver), no wrong-owner rebind.
+			// (A raw cross-module static FIELD read cannot be owner-null-resolved and has no reachable case — every such
+			// top-level val is a computed accessor — so the staticField branches keep the fileClassOf owner.)
+			val crossModule = p.parent !is IrFile
 			val owner = fileClassOf(p)
+			val accessorOwner = if (crossModule) "null" else fqnJson(owner)
 			// A COMPUTED top-level property (`val foo: T get() = ...`, no backing field) OR one that has a backing
 			// field (initializer) but ALSO a CUSTOM accessor (`val foo = 41; get() = field + 1`, #89) -> a static
 			// call by the property's OWN bare Kotlin identity + a `"prop":"get"/"set"` marker (#78/#81), NOT the
@@ -1098,12 +1111,12 @@ internal fun BirEmitter.call(call: IrCall): String {
 			// `var` may pair a default getter (field read) with a custom setter (accessor call), or vice versa.
 			return if (callee === p.setter) {
 				if (!writesAsStaticField(p))
-					"""{"k":"callStatic","owner":${fqnJson(owner)},"method":${str(p.name.asString())},"prop":"set","args":[${regularArgs(call).joinToString(",") { expr(it) }}]}"""
+					"""{"k":"callStatic","owner":$accessorOwner,"method":${str(p.name.asString())},"prop":"set","args":[${regularArgs(call).joinToString(",") { expr(it) }}]}"""
 				else
 					"""{"k":"staticFieldSet","ownerType":${fqnJson(owner)},"name":${str(p.name.asString())},"value":${expr(regularArgs(call).first())}}"""
 			} else {
 				if (!readsAsStaticField(p))
-					"""{"k":"callStatic","owner":${fqnJson(owner)},"method":${str(p.name.asString())},"prop":"get","args":[]${retHint(false, call.type)}}"""
+					"""{"k":"callStatic","owner":$accessorOwner,"method":${str(p.name.asString())},"prop":"get","args":[]${retHint(false, call.type)}}"""
 				else
 					"""{"k":"staticField","ownerType":${fqnJson(owner)},"name":${str(p.name.asString())}}"""
 			}
