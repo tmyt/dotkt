@@ -82,10 +82,9 @@ CLR_OWNER_KINDS = {
 # Keys that legitimately hold an ARRAY containing bare strings: only the type-PARAMETER
 # name-declaration shorthand (typeParams may be ["T"] instead of [{name:"T"}]). A type-param
 # DECLARATION names a variable; references to it use positional tv{scope,i} nodes (§1), so this
-# is a decl-name list, NOT a type-usage slot. `shapes` is the SIG-KEY reflection island (§2.2.1) — the
-# clrGeneric* param-SHAPE tokens rendered type->string SOLELY to match a reflected MethodInfo, never a
-# document type slot.
-STRARR_OK = {"typeParams", "shapes"}
+# is a decl-name list, NOT a type-usage slot. (The clrGeneric* overload key is now the STRUCTURED `memberSig`
+# TypeNode array — W1-S1 #46 — walked as ordinary type nodes; the retired lossy `shapes` string island is gone.)
+STRARR_OK = {"typeParams"}
 
 MOD_KEYS = {
     "inline", "infix", "operator", "tailrec", "external", "ext", "override", "abstract",

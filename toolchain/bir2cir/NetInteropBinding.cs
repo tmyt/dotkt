@@ -95,15 +95,19 @@ static class NetInteropBinding
         var superNode = Take("super");
         void CarrySuper() { if (superNode != null) node["super"] = superNode; }
 
-        // GENERIC .NET method: the presence of `typeArgs` (a frontend fact) is the signal. ilemit MakeGenericMethods it;
-        // ShapeSynthesis (which runs right after this pass) derives the overload-matcher `shapes` from `shapeTypes`.
+        // GENERIC .NET method: the presence of `typeArgs` (a frontend fact) is the signal. ilemit MakeGenericMethods it.
+        // W1-S1 (#46/#44): carry the FIR-RESOLVED member reference into CIR as `memberSig` — the callee's DECLARED
+        // parameter types (kotc's pure-Kotlin `shapeTypes`), kept as STRUCTURED TypeNodes (OPEN: a method type-var stays
+        // `{t:tv,scope:method}`). BirTypeLowering lowers each to the CLR vocabulary (added to TypeKeys), and ilemit does a
+        // deterministic exact structural match (name + generic-arity + param-count + positional-tv equality), requiring
+        // EXACTLY ONE candidate — no lossy `shapes` string, no first-pick. This replaces the retired ShapeSynthesis pass.
         if (hasTypeArgs)
         {
             node["k"] = isStatic ? "clrGenericStatic" : "clrGenericInstance";
             node["type"] = owner;
             node["method"] = method;
             node["typeArgs"] = Take("typeArgs");
-            node["shapeTypes"] = Take("shapeTypes") ?? new JsonArray();
+            node["memberSig"] = NormalizeMemberSig(Take("shapeTypes") as JsonArray);
             if (!isStatic) node["recv"] = Take("recv");
             node["args"] = args;
             if (Take("suspendCall") is JsonNode sc1) node["suspendCall"] = sc1;
@@ -309,6 +313,34 @@ static class NetInteropBinding
         node["recv"] = Take("recv");
         node["funcType"] = Take("funcType");
     }
+
+    // W1-S1 (#46): the clrGeneric* `memberSig` = the callee's declared param types, matched STRUCTURALLY by ilemit
+    // against the reflected .NET method DEFINITION. Normalize each entry to how reflection presents the OPEN param:
+    // a nullability ANNOTATION over a type-var (`T?`, `T!`) reflects as the bare open param `T` (there is no `T?` Type),
+    // so unwrap `nullable`/`oblivious` around a `tv` at any depth. Without this the later NullableGenericReturnErasure
+    // pass object-erases a `nullable(tv)` entry (the boxed value rep) to `object`, which then fails to match the open
+    // `T` param. A `nullable(value)` (`Int?` = `Nullable<Int32>`) is a real reflected type and is KEPT.
+    static JsonNode NormalizeMemberSig(JsonArray shapeTypes)
+    {
+        var result = new JsonArray();
+        if (shapeTypes != null)
+            foreach (var st in shapeTypes)
+                result.Add(TypeJson.Read(st) is TypeNode t ? TypeJson.Write(NormSigTv(t)) : st?.DeepClone());
+        return result;
+    }
+
+    static TypeNode NormSigTv(TypeNode t) => t switch
+    {
+        TypeNode.Oblivious o => NormSigTv(o.Of),                          // annotation-only wrapper: always unwrap
+        TypeNode.Nullable n => NormSigTv(n.Of) is TypeNode.Tv tv ? tv     // `T?` reflects as bare `T`
+                               : new TypeNode.Nullable(NormSigTv(n.Of)),  // `Int?` stays Nullable<Int32>
+        TypeNode.Fqn { Args: { } fa } f => new TypeNode.Fqn(f.Name, fa.Select(NormSigTv).ToArray()),
+        TypeNode.Array a => new TypeNode.Array(NormSigTv(a.Elem)),
+        TypeNode.ByRef b => new TypeNode.ByRef(NormSigTv(b.Of)),
+        TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, NormSigTv(fn.Ret), fn.Params.Select(NormSigTv).ToArray(),
+                                          fn.Recv == null ? null : NormSigTv(fn.Recv)),
+        _ => t,
+    };
 
     // Peel Nullable/Oblivious/ByRef wrappers off an owner type slot to reach the underlying .NET Fqn (name + type-args),
     // so a `List<Item>?`/`T!`/byref receiver resolves its open .NET definition. Also accepts a LEGACY STRING owner token

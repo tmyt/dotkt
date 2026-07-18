@@ -353,12 +353,12 @@ sealed partial class Emitter
             }
             case "clrGenericStatic":
             {
-                // Generic static call (LINQ): pick the exact overload by parameter shapes, MakeGenericMethod, call.
+                // Generic static call (LINQ): CONSUME the FIR-resolved `memberSig` descriptor — exact structural match,
+                // MakeGenericMethod, call. ilemit picks NO overload (0 or >1 = hard link error; see ResolveGenericMethod).
                 var type = ClrRef(e.GetProperty("type"));
                 var typeArgs = e.GetProperty("typeArgs").EnumerateArray().Select(a => MapType(a)).ToArray();
-                var shapes = e.GetProperty("shapes").EnumerateArray().Select(a => a.GetString()).ToArray();
                 var argEls = e.GetProperty("args").EnumerateArray().ToList();
-                var mi = ResolveGenericMethod(type, e.GetProperty("method").GetString(), typeArgs.Length, shapes, typeArgs, instance: false);
+                var mi = ResolveGenericMethod(type, e.GetProperty("method").GetString(), typeArgs, e, instance: false);
                 var ps = mi.GetParameters();
                 for (int i = 0; i < argEls.Count; i++) EmitArg(argEls[i], ps[i].ParameterType);
                 for (int i = argEls.Count; i < ps.Length; i++) EmitDefaultArg(ps[i]);   // fill omitted trailing default/params args
@@ -367,13 +367,12 @@ sealed partial class Emitter
             }
             case "clrGenericInstance":
             {
-                // Generic instance call (`obj.M<T>(...)`): same overload resolution as the static path, but address
-                // the constructed receiver type and `callvirt`. (Shares ResolveGenericMethod's MakeGenericMethod core.)
+                // Generic instance call (`obj.M<T>(...)`): same CONSUME-ONLY memberSig match as the static path, but
+                // address the constructed receiver type and `callvirt`. (Shares ResolveGenericMethod's MakeGenericMethod core.)
                 var type = ClrRef(e.GetProperty("type"));
                 var typeArgs = e.GetProperty("typeArgs").EnumerateArray().Select(a => MapType(a)).ToArray();
-                var shapes = e.GetProperty("shapes").EnumerateArray().Select(a => a.GetString()).ToArray();
                 var argEls = e.GetProperty("args").EnumerateArray().ToList();
-                var mi = ResolveGenericMethod(type, e.GetProperty("method").GetString(), typeArgs.Length, shapes, typeArgs, instance: true);
+                var mi = ResolveGenericMethod(type, e.GetProperty("method").GetString(), typeArgs, e, instance: true);
                 var ps = mi.GetParameters();
                 EmitExpr(e.GetProperty("recv"));
                 for (int i = 0; i < argEls.Count; i++) EmitArg(argEls[i], ps[i].ParameterType);
