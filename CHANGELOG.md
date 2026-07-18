@@ -50,6 +50,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   already-DotKt-classified assembly is surfaced LOUD instead of swallowed. The unconditional `if (name=="compareTo")
   op=true` hack — which force-flagged ANY method named `compareTo` and masked a genuinely-missing operator flag — is
   removed; kotc stamps the real `isOperator` (inherited by keyword-less overrides). Gate: `roundtrip-operator-flag`.
+- **bir2cir ([tmyt/dotkt#152], area:bir2cir): nullable `Double?`/`Float?` structural equality uses total-order
+  bit-equality, not boxed `Double.Equals`.** A data-class / structural `==` over a `Double?`/`Float?` field fell
+  through to a boxed `System.Double.Equals` (IEEE: `-0.0 == 0.0` true), violating the total-order equals/hashCode
+  contract #95 adopted for the non-null case. The `EQEQ` lowering now, before the `objEq` fallback, emits null-safe
+  bit-equality (`clrDoubleEquals`/`clrFloatEquals`) so `D(-0.0) != D(0.0)`, `D(NaN) == D(NaN)`, and hashSet
+  membership is consistent; direct operator `==` stays IEEE per #95. Gate: `il-structfloateqnull`. Follow-up: #180
+  (direct/mixed nullable `ieee754equals`).
 
 - **stdlib ([tmyt/dotkt#141], area:stdlib): `hypot`/`expm1`/`ln1p` (Double & Float) bind the numerically-correct
   net10 BCL primitives.** The old bodies (`sqrt(x*x+y*y)`, `exp(x)-1`, `ln(1+x)`) overflowed for large magnitudes
