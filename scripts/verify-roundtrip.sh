@@ -1488,6 +1488,104 @@ pr_ok=0; [[ "$practual" == "$prexpected" && "$pr_ext_recv" -ge 1 ]] && pr_ok=1
 section_result roundtrip-property-type "$pr_ok" "a property's nullability (String?) + suspend-fn-type (suspend ()->T, suspend R.()->T incl. restored receiver) re-import directly as the property type #47" \
 	"$(printf -- 'ext_recv_in_meta=%s\n--- expected ---\n%s\n--- actual ---\n%s' "$pr_ext_recv" "$prexpected" "$practual")"
 
+# ----- INTERFACE-COMPANION statics round-trip (#132): `interface I { companion object { val X; fun f() } }` -----
+# kotc FLATTENS an interface's plain companion object to the interface's OWN static fields/methods (BirEmitterDeclarations
+# statFields/statMethods — the #83 SharingStarted.Eagerly path). Pre-fix, facadegen's interface branch enumerated ONLY
+# Public|Instance members and returned — so the flattened statics were SILENTLY DROPPED: a consumer re-importing the lib
+# could not resolve `I.X`/`I.f()` (round-trip asymmetry — emit had them, read dropped them). facadegen now surfaces the
+# interface's Public|Static fields/props/methods/events as companion members (staticProps/staticFuns/staticEvents), and
+# the injector materializes the interface companion. Reached via `.Companion` (injected-static-members-need-companion).
+# LOAD-BEARING: if the statics were still dropped, the app would fail to compile (unresolved `Greeter.Companion.DEFAULT`).
+IC="$ROOT/build/roundtrip-iface-companion"; rm -rf "$IC"; mkdir -p "$IC/lib" "$IC/app" "$IC/libbir" "$IC/libil" "$IC/appbir" "$IC/appil"
+cat > "$IC/lib/lib.kt" <<'EOF'
+package svc
+interface Greeter {
+    fun greet(name: String): String
+    companion object {
+        val DEFAULT: String = "Anon"                                   // companion `val` -> static field on the interface
+        fun create(): Greeter = object : Greeter {                     // companion `fun` -> static method on the interface
+            override fun greet(name: String): String = "Hi, " + name
+        }
+    }
+}
+EOF
+cat > "$IC/app/app.kt" <<'EOF'
+import svc.Greeter
+fun main() {
+    println(Greeter.Companion.DEFAULT)                     // Anon    interface-companion static val (#132)
+    val g = Greeter.Companion.create()                     //         interface-companion static fun (#132)
+    println(g.greet("Vec"))                                // Hi, Vec  instance member on the created impl
+    println(Greeter.Companion.create().greet(Greeter.Companion.DEFAULT))  // Hi, Anon  both statics in one expr
+}
+EOF
+CLR_TYPES_METADATA="" "$LAUNCHER" "$IC/lib" -no-stdlib -classpath "$CP" -d "$IC/libbir" >/dev/null 2>&1 || true
+emit_il "$IC/libil" GreeterLib "$IC/libbir"/*.bir.json
+dotnet "$RETARGET_DLL" "$IC/libil/GreeterLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
+"$LAUNCHER" --scan-imports --output "$IC/imports.txt" "$IC/app"/*.kt >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" "$IC/meta" --compile-refs "$REFS$IC/libil/GreeterLib.dll" --import-list "$IC/imports.txt" >/dev/null 2>&1 || true
+CLR_TYPES_METADATA="$IC/meta" "$LAUNCHER" "$IC/app" -no-stdlib -classpath "$CP" -d "$IC/appbir" >/dev/null 2>&1 || true
+emit_il "$IC/appil" GreeterApp --ref "$IC/libil/GreeterLib.dll" "$IC/appbir"/*.bir.json
+cp "$IC/libil/GreeterLib.dll" "$IC/appil/" 2>/dev/null || true
+# facadegen META assertion: the injected `Greeter` interface now carries staticProps(DEFAULT) + staticFuns(create).
+ic_statics=$(python3 - "$IC/meta" <<'PY'
+import json,sys
+try:
+    d=json.load(open(sys.argv[1])); ok=0
+    for t in d.get("types",[]):
+        if t.get("kind")=="interface" and t.get("name")=="Greeter":
+            sp={p.get("name") for p in t.get("staticProps",[])}
+            sf={f.get("name") for f in t.get("staticFuns",[])}
+            if "DEFAULT" in sp and "create" in sf: ok=1
+    print(ok)
+except Exception: print(0)
+PY
+)
+icexpected="$(printf 'Anon\nHi, Vec\nHi, Anon')"
+run_app icactual "$IC/appil/GreeterApp.dll"
+ic_ok=0; [[ "$icactual" == "$icexpected" && "$ic_statics" -ge 1 ]] && ic_ok=1
+section_result roundtrip-iface-companion "$ic_ok" "interface-companion statics (val+fun) surfaced by facadegen + injected as an interface companion, resolved cross-module #132" \
+	"$(printf -- 'statics_in_meta=%s\n--- expected ---\n%s\n--- actual ---\n%s' "$ic_statics" "$icexpected" "$icactual")"
+
+# ----- OPERATOR/INFIX restored from the REAL [KotlinFunction] flag (#146): compareTo carries operator, no name-hack -----
+# facadegen's KotlinFun USED to force `operator` onto ANY method literally named `compareTo` (masking a genuinely-missing
+# flag + mis-flagging a coincidental compareTo) and wrapped the whole attribute read in a BLANKET catch that silently
+# DEMOTED infix/operator/suspend on any materialization error. #146 removed the name-hack (the real isOperator flag kotc
+# stamps is authoritative) and narrowed the catch (per-attribute guard; a DotKt-assembly enumeration failure is now LOUD).
+# This section proves `operator fun compareTo` round-trips from the REAL flag: `<`/`>` on `Money` resolve to the restored
+# operator compareTo — if the read had regressed, the consumer would fail to compile ("operator modifier required").
+OP="$ROOT/build/roundtrip-operator-flag"; rm -rf "$OP"; mkdir -p "$OP/lib" "$OP/app" "$OP/libbir" "$OP/libil" "$OP/appbir" "$OP/appil"
+# A NON-Comparable class carrying an explicit `operator fun compareTo` (a standalone comparable-by-value type, NOT
+# `: Comparable<T>`): kotc keeps the LOWERCASE `compareTo` name and stamps the operator flag, so `<`/`>` resolve on the
+# re-imported facade purely from the [KotlinFunction] flag. (A `class C : Comparable<C>` is a DIFFERENT, pre-existing
+# round-trip gap — its compareTo lowers to the CLR `IComparable<T>.CompareTo` PascalCase slot, which the removed name-hack
+# never touched either; that gap is tracked separately, not by this #146 section.)
+cat > "$OP/lib/lib.kt" <<'EOF'
+package money
+class Money(val cents: Int) {
+    operator fun compareTo(o: Money): Int = cents - o.cents   // real `operator` flag (kotc isOperator), NOT the removed name-hack
+    infix fun combine(o: Money): Money = Money(cents + o.cents)
+}
+EOF
+cat > "$OP/app/app.kt" <<'EOF'
+import money.Money
+fun main() {
+    println(Money(5) < Money(9))                 // True   compareTo restored from the REAL [KotlinFunction] operator flag
+    println(Money(9) > Money(5))                 // True
+    println((Money(2) combine Money(3)).cents)   // 5      infix restored
+}
+EOF
+CLR_TYPES_METADATA="" "$LAUNCHER" "$OP/lib" -no-stdlib -classpath "$CP" -d "$OP/libbir" >/dev/null 2>&1 || true
+emit_il "$OP/libil" MoneyLib "$OP/libbir"/*.bir.json
+dotnet "$RETARGET_DLL" "$OP/libil/MoneyLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
+"$LAUNCHER" --scan-imports --output "$OP/imports.txt" "$OP/app"/*.kt >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" "$OP/meta" --compile-refs "$REFS$OP/libil/MoneyLib.dll" --import-list "$OP/imports.txt" >/dev/null 2>&1 || true
+CLR_TYPES_METADATA="$OP/meta" "$LAUNCHER" "$OP/app" -no-stdlib -classpath "$CP" -d "$OP/appbir" >/dev/null 2>&1 || true
+emit_il "$OP/appil" MoneyApp --ref "$OP/libil/MoneyLib.dll" "$OP/appbir"/*.bir.json
+cp "$OP/libil/MoneyLib.dll" "$OP/appil/" 2>/dev/null || true
+opexpected="$(printf 'True\nTrue\n5')"
+run_app opactual "$OP/appil/MoneyApp.dll"
+check_output roundtrip-operator-flag "$opexpected" "$opactual" "operator compareTo (via </>) + infix restored from the REAL [KotlinFunction] flag, name-hack removed #146"
+
 # ---- verdict --------------------------------------------------------------------------------------
 echo "------------------------------------"
 printf '%s\n' "${SUMMARY[@]}"

@@ -769,9 +769,53 @@ static class FacadeGen
                         ["indexType"] = Ty(MapT(iix.GetIndexParameters()[0].ParameterType, t)),
                         ["valueType"] = Ty(MapT(iix.PropertyType, t)),
                         ["rw"] = iix.CanWrite };
+                // #132: an interface's PLAIN companion object FLATTENS (kotc BirEmitterDeclarations statFields/statMethods/
+                // companionAccessors — the #83 SharingStarted.Eagerly path) to the interface's OWN static fields/props/
+                // methods/events. Surface them as companion members (staticProps/staticFuns/staticEvents) — the SAME shape
+                // the normal-class companion path emits — so a consumer re-importing the DotKt lib resolves `I.X`/`I.f()`
+                // through the injected companion, instead of the flattened statics being silently dropped (round-trip
+                // asymmetry: emit HAS them, read dropped them). Statics are declared on THIS interface (no Object base).
+                // A C#11 static-ABSTRACT/static-VIRTUAL interface member (`INumberBase<T>.Abs`, IParsable.Parse) is
+                // EXCLUDED — unlike a class, an interface CAN carry those, and they are legally invokable ONLY through a
+                // constrained type parameter, never `I.M(...)`; surfacing one advertises a companion slot no consumer can
+                // call. A kotc-flattened companion static is a PLAIN non-virtual static, so the fix's own case is unaffected.
+                foreach (var sf in t.GetFields(BindingFlags.Public | BindingFlags.Static))
+                    if (Supported(sf.FieldType) && iseen.Add("sfield:" + sf.Name))
+                        staticProps.Add(PropObj(sf.Name, FieldTypeN(sf, t), false, new JsonObject(), "public", null, null));
+                foreach (var sp in t.GetProperties(BindingFlags.Public | BindingFlags.Static))
+                {
+                    var spg = sp.GetMethod;
+                    if (sp.GetIndexParameters().Length != 0 || !Supported(sp.PropertyType) || !sp.CanRead) continue;
+                    if (spg == null || spg.IsAbstract || spg.IsVirtual) continue;   // skip static-abstract/virtual interface props
+                    if (!iseen.Add("sprop:" + sp.Name)) continue;
+                    staticProps.Add(PropObj(sp.Name, PropTypeN(sp, t), sp.CanWrite, new JsonObject(), "public", null, null));
+                }
+                foreach (var sm in t.GetMethods(BindingFlags.Public | BindingFlags.Static))
+                {
+                    if (sm.IsSpecialName || sm.IsAbstract || sm.IsVirtual || sm.DeclaringType?.FullName == "System.Object" || (sm.IsGenericMethod && !sm.IsGenericMethodDefinition)) continue;
+                    var smgp = sm.IsGenericMethodDefinition ? sm.GetGenericArguments().Select(g => g.Name).ToList() : new List<string>();
+                    var smps = sm.GetParameters();
+                    if (!smps.All(p => Supported(p.ParameterType)) || !Supported(sm.ReturnType)) continue;
+                    if (!iseen.Add("sm:" + sm.Name + "<" + string.Join(",", smgp) + ">(" + Sig(smps, t) + ")")) continue;
+                    staticFuns.Add(FunObj(sm.Name, RetTypeSfxN(sm, t), new JsonObject(), "public", null,
+                        sm.IsGenericMethodDefinition ? TypeParamsArr(sm.GetGenericArguments(), t, false, false) : null,
+                        ParamsArr(smps, t)));
+                }
+                foreach (var sev in t.GetEvents(BindingFlags.Public | BindingFlags.Static))
+                {
+                    var inv = sev.EventHandlerType?.GetMethod("Invoke");
+                    if (inv == null || (sev.AddMethod?.IsAbstract ?? false) || (sev.AddMethod?.IsVirtual ?? false) || !iseen.Add("sevent:" + sev.Name)) continue;
+                    var eps = inv.GetParameters();
+                    if (!eps.All(p => Supported(p.ParameterType)) || !Supported(inv.ReturnType)) continue;
+                    staticEvents.Add(EventObj(sev, inv, t));
+                }
+                MarkLowPriorityDelegateOverloads(staticFuns, areCtors: false);   // parity with the class companion path
                 if (props.Count > 0) typeObj["props"] = props;
                 if (funs.Count > 0) typeObj["funs"] = funs;
                 if (events.Count > 0) typeObj["events"] = events;
+                if (staticFuns.Count > 0) typeObj["staticFuns"] = staticFuns;
+                if (staticProps.Count > 0) typeObj["staticProps"] = staticProps;
+                if (staticEvents.Count > 0) typeObj["staticEvents"] = staticEvents;
                 types.Add(typeObj);
                 Console.WriteLine($"meta: {t.FullName} (interface)");
                 return;
@@ -1393,22 +1437,39 @@ static class FacadeGen
     const string KFileAttr = "DotKt.Runtime.CompilerServices.KotlinFileClassAttribute";
 
     // The KotlinFunctionFlags carried by a method's [KotlinFunction] (Infix=1, Operator=2, Suspend=4), or 0/none.
+    // #146: the [KotlinFunction] classes are EMBEDDED per-assembly (RoundtripMetadata.SynthDefsFile), so they are ALWAYS
+    // resolvable — a throw while reading them is NOT "DotKt.Runtime isn't in the resolver set". It is an UNRELATED custom
+    // attribute on the method (a user annotation referencing a type outside --compile-refs) whose materialization fails.
+    // A blanket catch there would ERASE this method's infix/operator/suspend, silently demoting a genuine Kotlin operator
+    // to a plain method. So we guard PER-ATTRIBUTE (a bad sibling never blocks reading [KotlinFunction]); only a failure
+    // of the enumeration ITSELF is caught, and for a DotKt-emitted assembly that is surfaced LOUD, never swallowed.
     static (bool infix, bool op, bool suspend) KotlinFun(MethodInfo m)
     {
         bool infix = false, op = false, suspend = false;
         try
         {
             foreach (var cad in m.GetCustomAttributesData())
-                if (cad.AttributeType.FullName == KFuncAttr && cad.ConstructorArguments.Count == 1)
+            {
+                try
                 {
-                    var f = Convert.ToInt32(cad.ConstructorArguments[0].Value);
-                    infix = (f & 1) != 0; op = (f & 2) != 0; suspend = (f & 4) != 0;
+                    if (cad.AttributeType.FullName == KFuncAttr && cad.ConstructorArguments.Count == 1)
+                    {
+                        var f = Convert.ToInt32(cad.ConstructorArguments[0].Value);
+                        infix = (f & 1) != 0; op = (f & 2) != 0; suspend = (f & 4) != 0;
+                    }
                 }
+                catch { /* an UNRELATED attribute whose type isn't in the resolver set — skip it, keep scanning for [KotlinFunction] */ }
+            }
         }
-        catch { /* DotKt.Runtime not in the resolver set -> no Kotlin modifiers to restore */ }
-        // compareTo is ALWAYS an operator (Comparable.compareTo); some metadata carries it as infix-only, which makes a
-        // consumer's `a > b` (-> a.compareTo(b)) fail with "operator modifier required". Force it for the known name.
-        if (m.Name == "compareTo") op = true;
+        catch (Exception e)
+        {
+            // The attribute ENUMERATION itself failed. For a DotKt-emitted assembly this WOULD erase real Kotlin vocab,
+            // so fail loud (routing hint: add the referenced assembly to --compile-refs) instead of a silent demotion.
+            if (IsDotKtEmittedAssembly(m.DeclaringType?.Assembly))
+                throw new InvalidOperationException(
+                    $"facadegen: cannot read [KotlinFunction] modifiers on {m.DeclaringType?.FullName}.{m.Name} — a custom attribute references a type outside the resolver set; add it to --compile-refs so infix/operator/suspend are not silently erased.", e);
+            /* a genuine non-DotKt/BCL method: no Kotlin modifiers to restore */
+        }
         return (infix, op, suspend);
     }
 
