@@ -760,6 +760,15 @@ sealed partial class ReferenceMetadataIndex
         _membersByOwner.TryGetValue(ownerFqn, out var list) &&
         list.Any(m => m.Name == memberName && m.Intrinsic == null && m.PropertyName == null && !m.Conv && !m.IsAbstract);
 
+    // Whether the ref.dll owner DECLARES its own concrete (non-abstract, nullary, instance) `iterator()` — a real slot a
+    // `this.iterator()`/`x.iterator()` binds to directly, so MemberCallSubstitution must NOT reroute it to the base-Iterator
+    // ClrIteratorBridge (which would drop the `MutableIterator` remove()/set() members). The post-#169 concrete
+    // LinkedHashSet is the case an APP sees non-locally; the AbstractMutable{Collection,Set} bases keep iterator() ABSTRACT
+    // (IsAbstract) so they still reroute. Mirrors the local-decl scan MemberCallSubstitution does for same-file owners.
+    public bool DeclaresConcreteIterator(string ownerToken) =>
+        ownerToken != null && _membersByOwner.TryGetValue(BareOwnerFqn(ownerToken), out var list)
+        && list.Any(m => m.Name == "iterator" && m.ParamCount == 0 && !m.IsAbstract && !m.IsStatic);
+
     public static string HelperTypeName(string ownerFqn) =>
         "dotkt$ClrH_" + System.Text.RegularExpressions.Regex.Replace(ownerFqn, "[^A-Za-z0-9]", "_");
 

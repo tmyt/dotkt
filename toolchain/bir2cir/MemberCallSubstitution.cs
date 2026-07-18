@@ -13,6 +13,11 @@ static class MemberCallSubstitution
     // Whether to attribute referenced top-level stdlib funs to their file-class owner (APP build only; OFF for the
     // stdlib self-build, where every such fun is local — see the StdlibMode == App gate at the call site in the Driver).
     static bool _attributeTopLevelOwner;
+    // FQNs of local types that declare their OWN concrete (non-abstract, nullary) `iterator()` — e.g. the concrete
+    // `kotlin.collections.LinkedHashSet`. A `this.iterator()` on such a type binds to that real slot and must NOT be
+    // rerouted to the ClrIteratorBridge (which returns the base `Iterator`, not the declared `MutableIterator`). The
+    // reroute is ONLY for the AbstractMutable* bases whose abstract iterator() slot vanished onto the BCL IEnumerable face.
+    static HashSet<string> _typesWithConcreteIterator = new(StringComparer.Ordinal);
 
     // #76: the four unsigned specialized array value classes -> their SIGNED backing-array element FQN. kotc emits
     // `kotlin.U*Array` as a faithful array identity (like signed IntArray) and STOPS emitting/decomposing the value
@@ -46,7 +51,25 @@ static class MemberCallSubstitution
     {
         _localTopLevelFns = localTopLevelFns;
         _attributeTopLevelOwner = attributeTopLevelOwner;
+        _typesWithConcreteIterator = CollectConcreteIteratorTypes(root);
         return Rewrite(root, refs, new SubstCtx());
+    }
+
+    // Local type FQNs that DECLARE a concrete nullary `iterator()` of their own (a real slot, so a self-call binds to it
+    // instead of the ClrIteratorBridge reroute below). A concrete generic collection class (LinkedHashSet) is the case.
+    static HashSet<string> CollectConcreteIteratorTypes(JsonNode root)
+    {
+        var set = new HashSet<string>(StringComparer.Ordinal);
+        if (root is JsonObject o && o["types"] is JsonArray types)
+            foreach (var t in types)
+                if (t is JsonObject to && (to["name"] as JsonValue)?.GetValue<string>() is string name
+                    && to["methods"] is JsonArray ms
+                    && ms.OfType<JsonObject>().Any(m =>
+                        (m["name"] as JsonValue)?.GetValue<string>() == "iterator"
+                        && (m["abstract"] as JsonValue)?.GetValue<bool>() != true
+                        && (m["params"] as JsonArray) is { Count: 0 }))
+                    set.Add(name);
+        return set;
     }
 
     // Lexical type environment carried DOWN the walk: a name->type-token map for the enclosing decl's params, and a
@@ -678,11 +701,17 @@ static class MemberCallSubstitution
         // AbstractMutable*` self-call: its abstract iterator() slot vanished when its collection supertype substituted
         // to the BCL IEnumerable face, so `this.iterator()` finds no slot. Route it to the ClrIteratorBridge over the
         // receiver (the exact target the @ClrTypeAlias-interface path — Rule 5 — uses; here the owner is a CLASS not in
-        // the alias table, so that rule never reaches it). Element type = the owner's first type-arg.
+        // the alias table, so that rule never reaches it). Element type = the owner's first type-arg. GUARD: a type that
+        // DECLARES its own concrete iterator() keeps a real slot — leave its `.iterator()` call alone so it binds to the
+        // declared `MutableIterator`-returning method (the bridge returns the base `Iterator`, dropping remove()/set()).
+        // Covers BOTH a same-file declarer (the stdlib self-build's concrete LinkedHashSet, via the local scan) AND a
+        // NON-local one (an APP's `linkedSetOf(..).iterator().remove()`, via the ref.dll — EntryPointNotFound otherwise).
         if (instance && ownerToken.StartsWith("kotlin.collections.", StringComparison.Ordinal)
             && (node["method"] as JsonValue)?.GetValue<string>() == "iterator"
             && node["args"] is JsonArray itArgs && itArgs.Count == 0
-            && ownerFqnNode != null && !refs.TryResolveClrOwner(ownerToken, out _, out _))
+            && ownerFqnNode != null && !refs.TryResolveClrOwner(ownerToken, out _, out _)
+            && !_typesWithConcreteIterator.Contains(ReferenceMetadataIndex.BareOwnerFqn(ownerToken))
+            && !refs.DeclaresConcreteIterator(ownerToken))
             return CollDefaultCall(node, "kotlin.collections.ClrIteratorBridgeKt", "iteratorOverEnumerable",
                 OwnerElemArg(ownerFqnNode), itArgs);
 
