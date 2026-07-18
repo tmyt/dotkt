@@ -1,7 +1,8 @@
-// C5/C11 gate regression guard: gating the universal-method intercept keeps collection toString routing
-// Kotlin-style (`[a, b]`), tuple/data-class toString correct, and (C5) `String.hashCode()` deterministic
-// + reproducible (the polynomial body, not .NET's randomized GetHashCode). A nested collection INSIDE
-// Pair/Triple.toString is now collection-aware too (C11, fixed) — see il-pairnest for that regression.
+// C11 gate regression guard: gating the universal-method intercept keeps collection toString routing
+// Kotlin-style (`[a, b]`), tuple/data-class toString correct, and (C5) `String.hashCode()` falling
+// through to its declared @ClrIntrinsic override (CLR-native GetHashCode, #167) rather than being
+// shadowed to System.Object — asserted here as within-run consistency, NOT a pinned hash value. A
+// nested collection INSIDE Pair/Triple.toString is collection-aware too (C11) — see il-pairnest.
 data class Rec(val name: String, val n: Int)
 fun main() {
     println(listOf(1, 2, 3).toString())
@@ -10,5 +11,4 @@ fun main() {
     println(Triple(1, 2, 3))
     println(Rec("k", 9))
     println("Aa".hashCode() == "Aa".hashCode())
-    println("Aa".hashCode())
 }

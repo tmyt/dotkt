@@ -5,6 +5,19 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Changed
+
+- **stdlib ([tmyt/dotkt#167]/[tmyt/dotkt#168], area:stdlib): String/Float/Double `hashCode()` bind to CLR-native `GetHashCode`.**
+  Removed the hand-rolled JVM-forced hash bodies — String's `s[0]*31^(n-1)+…` polynomial and Float/Double's
+  `toBits()` bit-hash. The Kotlin `hashCode` contract requires only within-run consistency + equals-consistency
+  ("need not remain consistent from one execution to another"), not a specific value or across-run determinism;
+  kotlin/clr consumes no JVM artifacts, so no interop needs the JVM value. `System.String/Single/Double.GetHashCode`
+  already satisfy the contract (per-process consistent, NaN/zero normalized to be equals-consistent with the
+  total-order structural equality). String binds via `@ClrIntrinsic("GetHashCode")` (falls through kotc's
+  universal-method routing to the BCL slot); Float/Double drop the declaration entirely and inherit the `kotlin.Any`
+  slot like Int/Long (routing to the native value-type `GetHashCode`). The `il-strhash`/`il-pairtostr` gate cases now
+  assert equals-consistency + hash-set membership instead of a pinned integer.
+
 ### Fixed
 
 - **ilemit ([tmyt/dotkt#91]/[tmyt/dotkt#92], area:ilemit): generic-field token anchoring + the abstract-slot body invariant.**

@@ -1951,13 +1951,12 @@ public actual class Float private constructor() : Number(), Comparable<Float> {
     @kotlin.internal.IntrinsicConstEvaluation
     public actual override fun equals(other: Any?): Boolean
 
-    // No @ClrIntrinsic (would bind System.Single.GetHashCode): Kotlin contracts the deterministic bit-based
-    // hash `floatToIntBits(this)` (NaN canonicalized to a single value). `toBits()` performs that
-    // NaN-canonicalizing conversion, matching JVM Float.hashCode exactly.
-    // NOTE (2026-07-06): currently SHADOWED by kotc's universal-method intercept (BirEmitter.kt ~3853), same
-    // as String.hashCode — see String.kt. System.Single.GetHashCode happens to use the same bit formula for
-    // ordinary values so common cases agree, but -0.0f and NaN edges differ until the intercept is gated.
-    public actual override fun hashCode(): Int = this.toBits()
+    // hashCode is intentionally NOT declared here (#168): like Int/Long, Float inherits the kotlin.Any universal
+    // method, so a `.hashCode()` call routes through kotc's universal-method path to the CLR-native
+    // System.Single.GetHashCode. The Kotlin contract needs only within-run + equals-consistency, not a specific
+    // bit-based value; .NET Core 3+ normalizes all NaNs to one hash and both zeros together, so it is
+    // equals-consistent with Kotlin's total-order structural equality (clrFloatEquals) — the legal -0.0f/+0.0f
+    // hash collision compares unequal, which HashSet resolves correctly.
 }
 
 /**
@@ -2302,15 +2301,10 @@ public actual class Double private constructor() : Number(), Comparable<Double> 
     @kotlin.internal.IntrinsicConstEvaluation
     public actual override fun equals(other: Any?): Boolean
 
-    // No @ClrIntrinsic (would bind System.Double.GetHashCode): Kotlin contracts the deterministic bit-based
-    // hash `(bits xor (bits ushr 32)).toInt()` where `bits = doubleToLongBits(this)` (NaN canonicalized).
-    // `toBits()` performs the NaN-canonicalizing conversion, matching JVM Double.hashCode exactly.
-    // NOTE (2026-07-06): currently SHADOWED by kotc's universal-method intercept (BirEmitter.kt ~3853), same
-    // as String.hashCode — see String.kt. System.Double.GetHashCode happens to use the same bit formula for
-    // ordinary values so common cases agree, but -0.0 (GetHashCode returns 0, Kotlin returns Int.MIN_VALUE)
-    // and NaN edges differ until the intercept is gated.
-    public actual override fun hashCode(): Int {
-        val bits = this.toBits()
-        return (bits xor (bits ushr 32)).toInt()
-    }
+    // hashCode is intentionally NOT declared here (#168): like Int/Long, Double inherits the kotlin.Any universal
+    // method, so a `.hashCode()` call routes through kotc's universal-method path to the CLR-native
+    // System.Double.GetHashCode. The Kotlin contract needs only within-run + equals-consistency, not a specific
+    // bit-based value; .NET Core 3+ normalizes all NaNs to one hash and both zeros together, so it is
+    // equals-consistent with Kotlin's total-order structural equality (clrDoubleEquals) — the legal -0.0/+0.0
+    // hash collision compares unequal, which HashSet resolves correctly.
 }

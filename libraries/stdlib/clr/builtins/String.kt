@@ -47,8 +47,8 @@ public actual class String : Comparable<String>, CharSequence {
     public actual override fun subSequence(startIndex: Int, endIndex: Int): CharSequence = substring(startIndex, endIndex)
 
     // No @ClrIntrinsic: System.String.CompareTo(String) is CULTURE-sensitive (StringComparison.CurrentCulture),
-    // whereas Kotlin/JVM String.compareTo is ORDINAL (lexicographic by UTF-16 code unit). A rule-3 real body does the
-    // ordinal comparison using only the intrinsic siblings (length / get) + primitive Char arithmetic, matching JVM.
+    // whereas the Kotlin contract for String.compareTo is ORDINAL (lexicographic by UTF-16 code unit). A rule-3 real
+    // body does the ordinal comparison using only the intrinsic siblings (length / get) + primitive Char arithmetic.
     @kotlin.internal.IntrinsicConstEvaluation
     public actual override fun compareTo(other: String): Int {
         val thisLength = this.length
@@ -64,25 +64,15 @@ public actual class String : Comparable<String>, CharSequence {
         return thisLength - otherLength
     }
 
-    // No @ClrIntrinsic: System.String.GetHashCode is RANDOMIZED per process (non-deterministic across runs),
-    // whereas Kotlin/JVM contracts a DETERMINISTIC polynomial hash `s[0]*31^(n-1) + ... + s[n-1]` (0 for the
-    // empty string). Rule-3 real body over the intrinsic siblings (length / get) + primitive Char/Int arithmetic;
-    // the `* 31` and `+` wrap on Int overflow (unchecked), matching JVM.
-    // A `.hashCode()` call on a `String` receiver dispatches to THIS deterministic body: kotc's universal-method
-    // routing falls through to the declared override when the receiver TYPE declares its own routable hashCode
-    // (BirEmitterCalls.kt `fallThrough = declaresOwn` gate). So DotKt `String.hashCode()` is deterministic and
-    // matches Kotlin/JVM's polynomial contract across runs — a stable interop guarantee (unlike
-    // System.String.GetHashCode, which is per-process randomized).
-    public actual override fun hashCode(): Int {
-        var h = 0
-        val n = this.length
-        var i = 0
-        while (i < n) {
-            h = h * 31 + this[i].code
-            i++
-        }
-        return h
-    }
+    // Bound to the CLR-native System.String.GetHashCode (#167). The Kotlin hashCode contract requires only
+    // within-run consistency + equals-consistency ("need not remain consistent from one execution to another") —
+    // NOT a specific value or across-run determinism, and kotlin/clr consumes no JVM artifacts, so there is no
+    // interop scenario needing the JVM polynomial VALUE. System.String.GetHashCode is per-process-consistent and
+    // equals-consistent, so it already satisfies the contract (and keeps .NET's hash-flooding DoS mitigation).
+    // `.hashCode()` on a String receiver falls through to this declared @ClrIntrinsic override (kotc's universal-
+    // method routing, BirEmitterCalls.kt `fallThrough = declaresOwn`); bir2cir substitutes it to the BCL slot.
+    @kotlin.clr.ClrIntrinsic("GetHashCode")
+    public actual override fun hashCode(): Int = TODO("clr binding should be implemented")
 
     /**
      * Indicates if [other] object is equal to this [String].
