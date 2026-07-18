@@ -450,6 +450,16 @@ stringification above):
   StringBuilder returned as `CharSequence`) captures the content at that point — a later `sb.append(...)` is NOT
   observed through `cs`. Same immutable-snapshot rule as the `= string` model above, applied at the adapter boundary.
 
+## 5b-bis. `Regex.matchEntire`/`matches` are a TRUE anchored full match (matches Kotlin/JVM)
+
+`Regex` is `@ClrTypeAlias` → `System.Text.RegularExpressions.Regex`, but a leftmost `Regex.Match` (a SEARCH accepting
+the FIRST result) is NOT a full match: `Regex("a|ab").matchEntire("ab")` finds `a` first, and a naive
+"first-match-must-span-the-input" filter then wrongly returns `null`. DotKt instead anchors the ENGINE (#162):
+`matchEntire` re-matches the pattern wrapped as `\A(?:<pattern>)\z` — the non-capturing group scopes a top-level
+alternation and preserves the user's capture-group NUMBERS — with the instance's OWN compiled `RegexOptions`, so the
+engine backtracks to a full-input match when one exists (alternation branch order, lazy quantifiers, `(?i)` options,
+and coexisting `^…$` anchors all behave as Kotlin/JVM). `matches` delegates to `matchEntire != null`.
+
 ## 5c. `Map`/`MutableMap` BOTH erase to `IDictionary<K,V>` — read-only-ness is frontend-enforced
 
 Kotlin's `MutableMap : Map` subtype relation does **not** exist between the BCL's dictionary interfaces
@@ -486,6 +496,22 @@ Consequences (deliberate, declared):
   `EntryPointNotFoundException`. Consequence: delegating through a `Map<Any, V>` receiver (legal for `Map<in
   String, V>` and fine under JVM erasure) `castclass`-fails on the CLR, because that value is an
   `IDictionary<object,V>`. Use a `Map<String, …>`-typed map for `by`-delegation.
+
+## 5c-ter. `LinkedHashMap`/`LinkedHashSet` (and `mapOf`/`setOf`) DO preserve insertion order — matching Kotlin/JVM
+
+Kotlin CONTRACTS insertion-order iteration for `LinkedHashMap`/`LinkedHashSet`, and `mapOf`/`mutableMapOf`/`setOf`/
+`mutableSetOf` return those `LinkedHash*` types — so they are insertion-ordered too. Naively aliasing them to .NET
+`Dictionary<K,V>`/`HashSet<E>` broke this: those preserve insertion order only INCIDENTALLY and lose it after a
+removal (no guarantee). DotKt binds them to insertion-ordered containers instead (#169):
+
+- **`LinkedHashMap<K,V>` is `@ClrTypeAlias` → `System.Collections.Generic.OrderedDictionary<K,V>`** (.NET 9+), which
+  keeps insertion order across removals and exposes the same non-generic `IDictionary`/`ICollection` facades and
+  intrinsic members (`Count`/`ContainsKey`/`ContainsValue`/indexer/`Remove`/`Clear`/`Keys`/`Values`) the
+  `ClrMapDefaults` helpers rely on — a transparent swap for all of §5c's map behavior, now ordered.
+- **`LinkedHashSet<E>` is a pure-Kotlin `MutableSet`** backed by that `LinkedHashMap` (exactly as Kotlin/JVM backs it
+  with a `LinkedHashMap`), since .NET has no ordered GENERIC set. It gets the `CollectionBclSlotSynthesis` `ICollection`
+  slots + the reverse `GetEnumerator` bridge, so it flows through `Set`/`MutableSet` slots like any BCL set.
+- **Plain `HashMap`/`HashSet` stay UNORDERED** (`Dictionary`/`HashSet`) — Kotlin contracts no order for them.
 
 ## 5c-bis. Nested collection type-arguments collapse to their INVARIANT CLR sibling (`List`→`IList` at depth ≥ 1)
 
