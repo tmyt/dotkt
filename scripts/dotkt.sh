@@ -93,7 +93,7 @@ fi
 #    facadegen-produced kotlin.* symbol collides with the klib's (e.g. non-reified vs reified arrayOf -> ambiguity).
 meta="$work/clrtypes.meta"; implist="$work/imports.txt"
 "$KOTC" --scan-imports --output "$implist" "${kts[@]}" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" --meta "$meta" --compile-refs "$facade_compile_refs" --import-list "$implist" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" "$meta" --compile-refs "$facade_compile_refs" --import-list "$implist" >/dev/null 2>&1 || true
 
 # 2. kotc: .kt -> BIR.
 info "compiling ${#kts[@]} file(s) -> BIR" >&2

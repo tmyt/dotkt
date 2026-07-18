@@ -16,5 +16,5 @@ EOF
 
 OUT="$1"; shift
 need_tool facadegen
-dotnet "$FACADEGEN_DLL" --meta "$OUT" "$@"
+dotnet "$FACADEGEN_DLL" "$OUT" "$@"
 info "wrote $OUT"
