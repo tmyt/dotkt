@@ -68,6 +68,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   bit-equality (`clrDoubleEquals`/`clrFloatEquals`) so `D(-0.0) != D(0.0)`, `D(NaN) == D(NaN)`, and hashSet
   membership is consistent; direct operator `==` stays IEEE per #95. Gate: `il-structfloateqnull`. Follow-up: #180
   (direct/mixed nullable `ieee754equals`).
+- **kotc ([tmyt/dotkt#177], area:kotc): a `companion object` extension fun passes its extension receiver.** A
+  `fun Receiver.ext()` declared inside a `companion object` lowered to a static with a leading `__self` param, but the
+  call site emitted only the regular args — dropping the receiver → an arity miscompile. The companion-extension emit
+  now prepends the extension receiver as the first arg (consistent with member/top-level extension emit). Gate:
+  `il-companionext`.
 
 - **stdlib ([tmyt/dotkt#141], area:stdlib): `hypot`/`expm1`/`ln1p` (Double & Float) bind the numerically-correct
   net10 BCL primitives.** The old bodies (`sqrt(x*x+y*y)`, `exp(x)-1`, `ln(1+x)`) overflowed for large magnitudes
