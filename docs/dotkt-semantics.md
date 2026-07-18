@@ -223,6 +223,31 @@ policy":
   SyncContext pump would starve delivery). Suppressing the SyncContext capture when an interceptor is present (a
   runtime branch, ideally a stdlib `taskinterop` await-registration helper) is the cleaner consolidation, deferred.
 
+## 4a-bis. Cancellation-exception fidelity across the Task bridge is ONE-WAY (Kotlin→.NET fixed; .NET→Kotlin is a 0.9.8/Track-2 gap)
+
+Cancellation crosses the suspend↔`Task` boundary as an EXCEPTION, and the two exception vocabularies differ: Kotlin
+signals cancellation with `kotlin.coroutines.cancellation.CancellationException` (which extends `IllegalStateException`
+on the CLR — `CancellationExceptionClr.kt`), while .NET signals it with `System.OperationCanceledException` (and its
+`TaskCanceledException` subtype) plus the type-signaled `Task.IsCanceled` protocol. These are DISJOINT type hierarchies
+(a Kotlin CE is NOT an OCE), so the bridge maps them explicitly, and only the **Kotlin→.NET** direction is mapped:
+
+- **Kotlin→.NET (FIXED, #105).** When a coroutine completes by throwing — either kind of cancellation — `RootContinuation`
+  (the Task-bridge sink) completes the bridge `Task` as **CANCELED** (`TrySetCanceled` → `IsCanceled == true`), not
+  FAULTED. Both a .NET `OperationCanceledException` (its originating `CancellationToken` carried through, #116) AND a
+  Kotlin `CancellationException` (no token — .NET's canceled-Task protocol is type-signaled, so the CE object is NOT
+  preserved into the .NET exception; carrying it via `TrySetException` would leave `IsCanceled == false` and break every
+  .NET structured-concurrency consumer) route to a CANCELED Task. A .NET consumer of a Kotlin `suspend fun` therefore
+  observes idiomatic cancellation (`TaskCanceledException` on `await`, `Task.IsCanceled`).
+- **.NET→Kotlin (DELIBERATE GAP, 0.9.8/Track-2).** The REVERSE is NOT bridged: a plain `.await()` of a canceled .NET
+  `Task` resumes the Kotlin coroutine with a `TaskCanceledException` (an `OperationCanceledException`), which is NOT a
+  `kotlin.coroutines.cancellation.CancellationException` — so a Kotlin `catch (e: CancellationException)` does NOT catch
+  it, and Kotlin structured-concurrency (`Job` cancellation, `NonCancellable`, cancellation-aware `finally`) does not
+  recognize it as cancellation. `.await()` deliberately does NOT auto-insert an inbound OCE→CE mapping (matching the
+  #86 "nothing auto-inserted" principle); the planned fix is an OPT-IN interop adapter `Task.awaitCancellable()`
+  (OCE→CancellationException) shipped with the structured-concurrency track (it is meaningless without `Job`/
+  `CoroutineScope`). See `docs/design-kotlinx-coroutines-port.md` §4 (the P7 adapter) and §7 (the CE↔OCE both-directions
+  boundary).
+
 ## 4c. `.await()` binds to the .NET AWAITABLE PATTERN (GetAwaiter), not to Task (#10)
 
 `await` is NOT Task-specific — it binds to the same **awaitable pattern** the C# compiler uses, so ANY .NET awaitable is

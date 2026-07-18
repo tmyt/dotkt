@@ -6,8 +6,11 @@
 //   tcs = TaskCompletionSource<T>(); root = RootContinuation(tcs); r = f$dotkt_suspend(args, root)
 //   if (r !== COROUTINE_SUSPENDED) complete tcs with r; return tcs.task
 // and when the body suspends, the eventual resume lands here and completes the TCS: success ->
-// TrySetResult, a CANCELLED failure (OperationCanceledException) -> TrySetCanceled (a CANCELED Task, .NET
-// convention), any other failure -> TrySetException. Public: instantiated by generated code in APP assemblies.
+// TrySetResult, a CANCELLED failure -> TrySetCanceled (a CANCELED Task, .NET convention), any other failure
+// -> TrySetException. A cancellation is EITHER a .NET `OperationCanceledException` (a Task the body awaited was
+// canceled) OR Kotlin's own `kotlin.coroutines.cancellation.CancellationException` (which extends
+// IllegalStateException on CLR, so it is NOT an OCE — a distinct clause, #105); both map to a CANCELED Task.
+// Public: instantiated by generated code in APP assemblies.
 @file:Suppress("UNCHECKED_CAST")
 
 package kotlin.coroutines.clr.internal
@@ -34,6 +37,12 @@ public class RootContinuation<T>(
             // Pass the OCE's originating CancellationToken through (as AsyncTaskMethodBuilder does), so the
             // canceled Task carries the token that raised it (#116).
             exception is OperationCanceledException -> tcs.trySetCanceled(exception.cancellationToken)
+            // Kotlin's own CancellationException extends IllegalStateException on CLR (NOT an OCE), so it is a
+            // DISTINCT clause: a coroutine that completes by throwing Kotlin CE must yield a CANCELED Task, not
+            // a FAULTED one (#105). No token — .NET's canceled-task protocol is type-signaled; awaiters observe
+            // TaskCanceledException / IsCanceled == true. (Carrying the CE via TrySetException would leave
+            // IsCanceled == false and break every .NET structured-concurrency consumer — design §3.)
+            exception is kotlin.coroutines.cancellation.CancellationException -> tcs.trySetCanceled()
             else -> tcs.trySetException(exception)
         }
     }
