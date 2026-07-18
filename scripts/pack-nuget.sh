@@ -48,9 +48,13 @@ done
 # release/Kotlin bump because they were hardcoded and ungated. Everything single-sources off DotKt.Versions.props;
 # refuse to pack a mismatch. (Template Sdk pin + nuspec kotlin tag are SUBSTITUTED below/at pack; here we assert
 # the substitution tokens survive and the un-substitutable DOC fragments are current.)
-# (a) The `dotnet new` template project file must keep the DOTKT_SDK_VERSION placeholder (substituted at pack time).
+# (a) The `dotnet new` template project files must keep the DOTKT_SDK_VERSION placeholder (substituted at pack time).
 TPL_CSPROJ="packaging/DotKt.Templates/content/dotkt-cli/DotKtApp.csproj"
 grep -q 'DotKt\.Sdk/DOTKT_SDK_VERSION' "$ROOT/$TPL_CSPROJ" || die "$TPL_CSPROJ lost its 'DotKt.Sdk/DOTKT_SDK_VERSION' placeholder — restore it (it is substituted to the release version at pack time, GitHub #53)"
+# The MPP template (#133) ships a global.json pinning BOTH DotKt.Sdk.Mpp and its nested DotKt.Sdk — the only place the
+# NuGet nested-SDK resolver reads the base version from, so the scaffolded project builds without hand-writing one.
+TPL_MPP_GJ="packaging/DotKt.Templates/content/dotkt-mpp/global.json"
+grep -q 'DOTKT_SDK_VERSION' "$ROOT/$TPL_MPP_GJ" || die "$TPL_MPP_GJ lost its 'DOTKT_SDK_VERSION' placeholder — restore it (both SDK pins are substituted to the release version at pack time, GitHub #133)"
 # (b) The nuspec kotlin tag must be the substitution token, never a hardcoded kotlin-<ver>.
 for ns in packaging/DotKt.Toolchain/DotKt.Toolchain.nuspec packaging/DotKt.Stdlib/DotKt.Stdlib.nuspec packaging/DotKt.Sdk/DotKt.Sdk.nuspec packaging/DotKt.Sdk.Mpp/DotKt.Sdk.Mpp.nuspec; do
 	grep -q 'kotlin-\$kotlinVersion\$' "$ROOT/$ns" || die "$ns: kotlin tag must be 'kotlin-\$kotlinVersion\$' (nuspec-substituted from DotKtKotlinVersion), not a hardcoded version (GitHub #53)"
@@ -113,6 +117,8 @@ cp "$ROOT/packaging/DotKt.Versions.props" "$TPLSTAGE/DotKt.Versions.props"
 cp "$ROOT/packaging/DotKt.README.md" "$TPLSTAGE/DotKt.README.md"
 cp -r "$ROOT/packaging/DotKt.Templates/." "$TPLSTAGE/DotKt.Templates/"
 sed -i "s|DotKt\.Sdk/DOTKT_SDK_VERSION|DotKt.Sdk/$VERCORE|g" "$TPLSTAGE/DotKt.Templates/content/dotkt-cli/DotKtApp.csproj"
+# The MPP template's global.json pins both SDKs to the release version (#133).
+sed -i "s|DOTKT_SDK_VERSION|$VERCORE|g" "$TPLSTAGE/DotKt.Templates/content/dotkt-mpp/global.json"
 
 info "pack DotKt.Toolchain + DotKt.Sdk + DotKt.Sdk.Mpp + DotKt.Stdlib + DotKt.Templates"
 dotnet pack "$ROOT/packaging/DotKt.Toolchain/DotKt.Toolchain.pack.csproj" -o "$FEED" -v q --nologo -p:RepoCommit="$COMMIT"

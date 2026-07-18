@@ -1,0 +1,7 @@
+{
+  "//": "REQUIRED for Sdk=\"DotKt.Sdk.Mpp\": the Mpp SDK imports the base DotKt.Sdk via a version-LESS nested import, and the NuGet MSBuild-SDK resolver reads a nested SDK's version ONLY from this msbuild-sdks map (it ignores the nuspec dependency and any inline Sdk=\"Name/Version\"). Both must be pinned to the same version. Substituted to the shipping release at pack time.",
+  "msbuild-sdks": {
+    "DotKt.Sdk.Mpp": "DOTKT_SDK_VERSION",
+    "DotKt.Sdk": "DOTKT_SDK_VERSION"
+  }
+}

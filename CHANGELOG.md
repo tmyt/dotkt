@@ -7,6 +7,28 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **packaging ([tmyt/dotkt#133], area:packaging): the MPP SDK (`DotKt.Sdk.Mpp`) builds out of the box — a new
+  `dotkt-mpp` `dotnet new` template.** `Sdk="DotKt.Sdk.Mpp"` needs a `global.json` pinning both `DotKt.Sdk.Mpp`
+  and the nested `DotKt.Sdk` (the NuGet resolver reads a nested SDK's version *only* from `global.json`), and
+  nothing scaffolded it. The `dotkt-mpp` template now ships that `global.json` (both pins substituted to the
+  release version at pack) alongside a common `expect` / CLR `actual` sample, so `dotnet new dotkt-mpp && dotnet
+  run` works with no hand-written boilerplate. New gate case: `verify-packaged-sdk.sh` `mpp-template`.
+- **packaging ([tmyt/dotkt#134], area:packaging): the DotKt build back-half is now incremental — a no-op build
+  skips it.** `DotKtBir2Cir`/`DotKtIlEmit`/`DotKtRetarget` had no `Inputs`/`Outputs`, so every `dotnet build`
+  re-lowered, re-emitted and re-retargeted, rewriting the output dll's timestamp and forcing every downstream C#
+  `ProjectReference` to rebuild. Each target now keys `Inputs`/`Outputs` off a stable `.stamp` (the compile's
+  `$(DotKtOut)/.stamp` cascades through `$(DotKtCirOut)/.stamp` to the emitted dll and a retarget stamp), and the
+  `_DotKtPlaceholder.cs` write became `WriteOnlyWhenDifferent` (it was bumping its mtime every build and forcing
+  `CoreCompile` to recompile). A no-op build now converges.
+- **packaging ([tmyt/dotkt#135], area:packaging): the Windows compiler launcher is selected by OS.**
+  `$(DotKtCompiler)` was hardcoded to the extension-less UNIX `kotc` script, leaving Windows to rely on cmd.exe's
+  PATHEXT resolving a pathed extension-less command. It now selects the shipped `kotc.bat` when `$(OS)` is
+  `Windows_NT` (both launchers ride in the package from the Gradle `installDist`), falling back to `kotc` elsewhere.
+- **packaging ([tmyt/dotkt#151], area:packaging): corrected the `DotKt.Sdk` `Sdk.props` guard comment.** It said
+  the pack guard compares the `DotKtVersion` default to `DotKtVersionPrefix`; it actually compares to the version
+  CORE (prefix, plus `-suffix` when pre-release, e.g. `0.9.6-rc7`). Following the old comment during an RC would
+  trip the (fail-safe) guard.
+
 - **stdlib ([tmyt/dotkt#141], area:stdlib): `hypot`/`expm1`/`ln1p` (Double & Float) bind the numerically-correct
   net10 BCL primitives.** The old bodies (`sqrt(x*x+y*y)`, `exp(x)-1`, `ln(1+x)`) overflowed for large magnitudes
   (`hypot(1e308,1e308)` → `Infinity`) and lost all precision to cancellation near 0. Now bound as `@ClrIntrinsic`

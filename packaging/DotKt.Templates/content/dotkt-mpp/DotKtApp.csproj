@@ -1,0 +1,10 @@
+<!-- Version-LESS Sdk attribute on purpose: DotKt.Sdk.Mpp (and the base DotKt.Sdk it nests) are pinned in the
+     sibling global.json, which is the only place the NuGet nested-SDK resolver reads the version from. -->
+<Project Sdk="DotKt.Sdk.Mpp">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+
+</Project>

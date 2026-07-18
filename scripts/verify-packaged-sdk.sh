@@ -329,6 +329,39 @@ case_template() {
 	else fail template "output mismatch" "$(printf -- '--- expected ---\n%s\n--- actual ---\n%s' "$expected" "$actual")"; fi
 }
 
+# ---------------------------------------------------------------------------------------------------------
+# Case: mpp-template — the #133 reproducer. Install DotKt.Templates, scaffold `dotnet new dotkt-mpp`, and
+# build+run it WITHOUT hand-writing a global.json. The MPP SDK nests a version-LESS import of the base
+# DotKt.Sdk whose version the NuGet resolver reads ONLY from global.json — so before #133 a scaffolded MPP
+# project failed to resolve the nested SDK. The template now ships that global.json (pinning both SDKs to the
+# release version, substituted at pack), so this must build + run out of the box. Distinct from case_mpp
+# (which hand-writes the global.json): this proves the SHIPPED template carries it.
+# ---------------------------------------------------------------------------------------------------------
+case_mpp_template() {
+	local d="$WS/mpp-template"; mkdir -p "$d"
+	local nupkg; nupkg="$(find "$FEED" -maxdepth 1 -name "DotKt.Templates.$VER.nupkg" | head -1)"
+	[[ -f "$nupkg" ]] || { fail mpp-template "DotKt.Templates.$VER.nupkg not packed"; return; }
+	trap 'dotnet new uninstall DotKt.Templates >/dev/null 2>&1 || true' RETURN
+	if ! dotnet new install "$nupkg" --force >"$d/install.log" 2>&1; then
+		fail mpp-template "dotnet new install failed" "$(tail -20 "$d/install.log")"; return
+	fi
+	local proj="$d/hello-mpp"; rm -rf "$proj"
+	if ! dotnet new dotkt-mpp -o "$proj" >"$d/new.log" 2>&1; then
+		fail mpp-template "dotnet new dotkt-mpp failed" "$(tail -20 "$d/new.log")"; return
+	fi
+	cp "$NUGET_CONFIG" "$proj/nuget.config"
+	# The scaffolded MPP project must ship the global.json pinning both SDKs to the release version (the #133 fix).
+	if ! grep -q "\"DotKt.Sdk.Mpp\": \"$VER\"" "$proj/global.json" 2>/dev/null || ! grep -q "\"DotKt.Sdk\": \"$VER\"" "$proj/global.json" 2>/dev/null; then
+		fail mpp-template "scaffolded global.json does not pin both SDKs to $VER" "$(cat "$proj/global.json" 2>/dev/null)"; return
+	fi
+	# NB no `--nologo`: main echoes args.firstOrNull(), and `dotnet run` forwards trailing tokens to the app.
+	local expected="Hello, World, from a DotKt multiplatform app on .NET!" actual rc=0
+	actual="$(run_project "$proj" "$proj/run.err")" || rc=$?
+	if (( rc != 0 )); then fail mpp-template "run exit $rc" "$(printf -- '--- expected ---\n%s\n--- stdout ---\n%s\n--- stderr ---\n%s' "$expected" "$actual" "$(tail -30 "$proj/run.err" 2>/dev/null)")"
+	elif [[ "$actual" == "$expected" ]]; then pass mpp-template
+	else fail mpp-template "output mismatch" "$(printf -- '--- expected ---\n%s\n--- actual ---\n%s' "$expected" "$actual")"; fi
+}
+
 # ---- issue #163 self-test: a packaged Exe whose main prints the EXPECTED text then throws MUST be REJECTED.
 # Drives the real run_project capture path from the isolated feed and asserts a non-zero status is observed. ----
 selftest() {
@@ -352,6 +385,7 @@ case_exe
 case_library
 case_mpp
 case_template
+case_mpp_template
 
 echo "------------------------------------"
 xfail_diff pkgsdk XFAIL_PKG "${FAILS[@]}"
