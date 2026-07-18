@@ -28,9 +28,52 @@ sealed partial class Emitter
             return rf;
         }
         var fb = FindField(open, name);
-        if (constructed == null) { fieldType = fb.FieldType; return fb; }
+        if (constructed == null)
+        {
+            fieldType = fb.FieldType;
+            // Mirror of ResolveMethod's #84-I generic-base fix, FIELD side: a NON-generic subclass
+            // (`class IntBox : Base<Int>`) reading a FIELD INHERITED from a GENERIC base. FindField walked the base
+            // chain and returned the OPEN `Base`1::slot` FieldBuilder, whose bare operand is "not fully instantiated"
+            // at the access site (ilverify: get_GenericParameters IndexOutOfRange). Anchor it onto the owner's
+            // CONSTRUCTED base instantiation (`Base<Int>`, set as the owner TypeBuilder's parent) via
+            // AnchorInheritedFieldOnBase — the same re-anchoring the constructed-owner path does below.
+            if (fb.DeclaringType is { IsGenericTypeDefinition: true }
+                && _types.TryGetValue(open, out var oti) && oti.TB is { } ownerTb
+                && !ReferenceEquals(fb.DeclaringType, ownerTb)
+                && AnchorInheritedFieldOnBase(ownerTb, fb, out var bft) is { } anchoredF)
+            { fieldType = bft; return anchoredF; }
+            return fb;
+        }
         fieldType = Subst(fb.FieldType, constructed.GetGenericArguments());
-        return TypeBuilder.GetField(constructed, fb);
+        // A field DECLARED on `constructed`'s own generic def anchors directly (`Cell<!T>`'s own `item`, or an
+        // external `Sub<String>`'s own field). An INHERITED field — `fb` declared on a generic BASE, not on
+        // `constructed`'s def — makes TypeBuilder.GetField throw "field must be declared on the generic type
+        // definition" (the #91 fault: `Wrap<T> : Base<T>` reading `this.slot` self-instantiated, or `Sub<String>.slot`
+        // via a constructed receiver). Anchor it onto the constructed base instantiation (`Base<!T>` / `Base<String>`),
+        // mirroring ResolveMethod's inherited-method path. Self-references reach here as `def.MakeGenericType(def's own
+        // GenericTypeParameterBuilders)` (never the bare def), so the own-field anchoring and base-walk are both valid.
+        try { return TypeBuilder.GetField(constructed, fb); }
+        catch (ArgumentException) { return AnchorInheritedFieldOnBase(constructed, fb, out fieldType) ?? fb; }
+    }
+
+    // `fb` is INHERITED — declared on a generic BASE class, not on `constructed`'s own generic def. A field access must
+    // reference it on the constructed base instantiation (`class Sub<T> : Base<T>` -> `Base<!T>::slot`, or `Sub<String>`
+    // -> `Base<String>::slot`), NOT the open `Base`1` (a bare `Base`1::slot` operand is "not fully instantiated" -> the
+    // JIT raises InvalidProgram, and ilverify crashes in get_GenericParameters). Walk the constructed receiver's
+    // base-CLASS chain for the instantiation whose generic def is fb's declaring type, then anchor via
+    // TypeBuilder.GetField. Mirrors AnchorInheritedOnBase (method side). Returns null when no such base instantiation
+    // exists — the caller keeps the open FieldBuilder.
+    FieldInfo AnchorInheritedFieldOnBase(Type constructed, FieldInfo fb, out Type fieldType)
+    {
+        fieldType = fb.FieldType;
+        var targetDef = fb.DeclaringType;
+        for (var bt = constructed.BaseType; bt != null; bt = bt.BaseType)
+            if (bt.IsGenericType && !bt.IsGenericTypeDefinition && ReferenceEquals(bt.GetGenericTypeDefinition(), targetDef))
+            {
+                try { var anchored = TypeBuilder.GetField(bt, fb); fieldType = Subst(fb.FieldType, bt.GetGenericArguments()); return anchored; }
+                catch (ArgumentException) { return null; }
+            }
+        return null;
     }
 
     // Resolve a field by name on an already-RESOLVED (referenced .NET / baked) type, walking its base-class chain
