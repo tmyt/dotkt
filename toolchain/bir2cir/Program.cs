@@ -557,7 +557,7 @@ sealed class Pipeline
         // their ABI. (yield/yieldAll are generic-class override members, still correctly deferred by the v1 shape gate.)
         IReadOnlyDictionary<string, DotKt.Bir.TypeNode> suspendCalleeRet = null;
         if (!_options.RefBuild)
-            suspendCalleeRet = SuspendColdLowering.ApplyAll(staged.Select(s => s.Root).ToList(), refs, localTypeFqns, attributeTopLevelOwner, typeSupers);
+            suspendCalleeRet = SuspendColdLowering.ApplyAll(staged.Select(s => s.Root).ToList(), refs, localTypeFqns, attributeTopLevelOwner);
 
         // PHASE 1.6 — SUSPEND LAMBDA LOWERING (bundle-6 P3 wave-2b, LIVE): replace each `newSuspendLambda`
         // node with `new <mangled>_lambdaN$sm(captures..., null)` + synthesize its SuspendLambda state machine

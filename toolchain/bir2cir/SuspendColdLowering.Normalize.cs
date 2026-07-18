@@ -46,7 +46,7 @@ static partial class SuspendColdLowering
         { "body", "stmts", "finally" };
 
     // A try is HOISTABLE iff it has no (non-empty) finally AND at least one catch handler spans a suspension.
-    // Shared by SuspensionsSupported (the gate admits the shape) and HoistSuspendingCatches (it performs the hoist).
+    // Shared by SuspensionRefusalReason (the gate admits the shape) and HoistSuspendingCatches (it performs the hoist).
     static bool IsHoistableTry(JsonObject o)
     {
         if (Str(o["k"]) != "try") return false;

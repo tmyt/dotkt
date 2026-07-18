@@ -527,3 +527,60 @@ Harness location: a shared `cases/support/`-style Kotlin file compiled with the 
 roundtrip heredocs get their own inline copy). `cobuild`/roundtrip/the LAM rungs import it. Sequencing:
 harness `blockOn` needs only `startCoroutine` (available after wave-2b lambda SMs); harness `delay` needs
 `await` (P4) — so `delay`-using tests wait on P4, `blockOn`-using tests land right after wave-2b.
+
+## 14. R1 — "Declaration is unconditional": the cold-entry ABI is an invariant, not a proof (#90/#100/#101)
+
+The original `SuspendColdLowering` treated "a suspend callee has a cold entry" as a property to be PROVEN
+by an allow-list FIXPOINT over shape-eligible bodies: a shape gate (`IsShapeEligible`/`IsMemberShapeEligible`)
+first FILTERED the registry to segmentable funs, then a fixpoint DROPPED any fun whose suspend callee could
+not be resolved to a same-assembly transformable entry or a ref.dll Suspend-flagged member. Every resolvability
+miss (an interface/base member, a static member, a shape-refused body, a `clr*` referenced call) cascaded into
+a DROP — and a dropped fun kept `suspend:true`, reaching ilemit un-lowered → a hard emit-time ICE (the #101
+contradiction of this doc's §11 "never an emit crash"; the #90 "~10 fns broken IL"; the #100 unguarded clr*
+rewrite). Kotlin/JVM parity is the opposite model: EVERY `suspend fun` (abstract/interface/concrete)
+UNCONDITIONALLY compiles to the continuation-passing form.
+
+**R1 replaces the eligibility FILTER with a CLASSIFIER.** Every suspend member declared in the compilation
+gets a cold-entry slot `<name>$dotkt_suspend(params…, Continuation<Any?>): Any?` + a lockstep Task bridge
+UNCONDITIONALLY. The classifier assigns each admitted member one of three shapes:
+
+| Classification | Shape emitted |
+|---|---|
+| abstract member / interface-no-body | abstract cold entry + abstract Task bridge (no SM) |
+| concrete + segmentable (`SuspensionRefusalReason == null`) | SM class + cold entry + bridge (the full transform) |
+| concrete + NOT segmentable (v1 limit, or M4 own-generic-on-generic-class) | a call-time `throw NotSupportedException(reason)` cold entry + bridge, and a bir2cir WARNING naming the fun + the refusal site |
+
+The only members NOT admitted are the stdlib carve-outs: the interop-bridge `await` marker
+(`kotlin.clr.CoroutinesKt`), the old kotc CPS/sequence path (`steps`/`coClass`), and stdlib inline coroutine
+intrinsics (`suspendCoroutine*`, un-lowered in stdlib builds for the ilemit `_stdlibStub`).
+
+**Consequences (all deletions land in the same change):**
+
+- **The resolvability fixpoint, `IsResolvable`, the `AllSupers` hierarchy walk, and the L3 drop warning are
+  DELETED.** Same-assembly resolvability holds BY CONSTRUCTION — the callee's cold entry always exists
+  (concrete or abstract, but always a callable slot). Call-site rewrite (`callStatic`/`callInstance`/`clr*`)
+  is UNCONDITIONAL. An inherited or overridden suspend member is resolved by NATIVE virtual dispatch through
+  the virtual/override-lockstep cold slot — no hierarchy analysis in bir2cir.
+- **The v1-non-segmentable set** (suspension in a catch/finally, a nested suspending try, a suspension in a
+  disallowed lambda position, M4) now COMPILES with a call-time throw rather than an emit ICE. Both call
+  paths observe the throw: a Kotlin→Kotlin cold call propagates it synchronously; the public Task bridge
+  catches it and faults the Task (`RootContinuation.resumeWith` → `TrySetException`, NSE is not OCE so
+  faulted, not canceled). A C# caller that drops the returned faulted Task never observes the NSE — the
+  standard .NET async contract, accepted as Kotlin-faithful.
+- **M3 (static/companion members) enter the classifier.** kotc promotes a `companion object` suspend fun to a
+  `static` method on the outer class; its cold entry/bridge stay static (no `$this`), the SM is top-level-shaped,
+  and the bridge's cold call targets the enclosing class owner (not `owner:null` = the file class).
+
+**R1b — the cross-assembly `clr*` existence guard (#100).** A `clr*` suspend call is rewritten to the cold
+entry on the REFERENCED owner. bir2cir reads the ref.dll (`DotKt.Private.Stdlib.dll`), which — because the
+transform is skipped in the ref build — carries the `[KotlinFunction(Suspend)]` flag (`MemberBinding.Suspend`)
+but NO cold-entry method; the cold entry lives in the rt.dll, resolved by ilemit against the naming convention.
+So the R1b existence check consults the SUSPEND FLAG through the referenced owner's reflected hierarchy
+(`HasSuspendMemberInHierarchy`), NOT a literal `$dotkt_suspend` method probe (which would false-negative on
+every stdlib call). Flag present ⇒ the cold ABI exists by R1's invariant ⇒ rewrite. Flag ABSENT ⇒ a hard,
+actionable bir2cir error (the referenced assembly predates the cold ABI or is a hand-written .NET assembly) —
+no dual-track fallback. The `await` marker and `suspendCoroutine*` intrinsics are intercepted upstream and
+never reach the guard. NB the flag check proves "a suspend member of an assembly", not "an assembly built
+post-cold-ABI"; a stale third-party DotKt dll (flag present, no cold entry) would pass the guard and fail
+downstream — safe for the stdlib (ref/rt ship in lockstep), a 0.9.8 assembly-level ABI-version attribute if
+third-party staleness ever matters.

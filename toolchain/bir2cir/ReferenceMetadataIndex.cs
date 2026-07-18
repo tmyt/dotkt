@@ -268,7 +268,8 @@ sealed partial class ReferenceMetadataIndex
     // base, or a referenced interface whose suspend member is declared on a super-interface). Walk the reflected owner's
     // BaseType + interface chain across the compile-reference set (metadata-only), checking the flat member index at each
     // super. Best-effort and non-throwing: an unresolvable owner (a purely local type, or a name absent from the refs)
-    // falls back to the flat exact-owner result — the same-assembly hierarchy is covered by SuspendColdLowering.AllSupers.
+    // falls back to the flat exact-owner result. Same-assembly members no longer need a hierarchy walk (R1 declares a
+    // cold entry for every same-assembly suspend member unconditionally; virtual dispatch resolves inherited/overridden).
     public bool HasSuspendMemberInHierarchy(string owner, string name)
     {
         if (owner == null) return false;

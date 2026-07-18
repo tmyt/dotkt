@@ -1,9 +1,7 @@
-// bir2cir — SuspendColdLowering (bundle-6 P2 straight-line + P3 control-flow/generics/try + P3 wave-2a
-// instance-members/member-calls): the cold-core suspend -> state-machine transform.
+// bir2cir — SuspendColdLowering: the cold-core suspend -> state-machine transform.
 //
-// Per docs/design-coroutine-cold-core-task-bridge.md §11 (the LOCKED contract) + the approved plan
-// (functional-nibbling-pearl.md "The bir2cir transform"). This pass lowers a Kotlin `suspend fun` into
-// the COLD Continuation shape:
+// Per docs/design-coroutine-cold-core-task-bridge.md §11 (the LOCKED contract) + §14 (the R1 classifier
+// addendum). This pass lowers a Kotlin `suspend fun` into the COLD Continuation shape:
 //
 //   suspend fun f(a): R           (top-level file-class static; extension = leading `__self` param)
 //     -- SM class:   <Owner>_f$sm[<tp>] : kotlin.coroutines.clr.internal.ContinuationImpl
@@ -13,11 +11,11 @@
 //                      { val sm = new <Owner>_f$sm[<tp>]([this,] a, completion); return sm.invokeSuspend(null) }
 //     -- suspend main additionally gets a synthesized PLAIN `fun main()` that drains the cold body.
 //
-// The blueprint is kotc's LIVE CPS engine (BirEmitter.kt:1412-1744 collectCpsVars/spillExpr/emitWhenCps/
-// emitWhileCps/emitTryCps), re-implemented over BIR JSON targeting the cold shape. CRITICAL OBSERVATION:
-// kotc already FLATTENS `while`/`for`/`do-while` into structured `block`/`label`/`brIf`/`goto` BIR, so
-// loops need no re-segmentation here — only `if`/`when` survive as `cond` (ternary) EXPRESSIONS, which
-// this pass lowers to label/brIf/goto control flow when they contain a suspension (mirroring emitWhenCps).
+// The blueprint is kotc's LIVE CPS engine (BirEmitter.kt collectCpsVars/spillExpr/emitWhenCps/emitWhileCps/
+// emitTryCps), re-implemented over BIR JSON targeting the cold shape. CRITICAL OBSERVATION: kotc already
+// FLATTENS `while`/`for`/`do-while` into structured `block`/`label`/`brIf`/`goto` BIR, so loops need no
+// re-segmentation here — only `if`/`when` survive as `cond` (ternary) EXPRESSIONS, which this pass lowers to
+// label/brIf/goto control flow when they contain a suspension (mirroring emitWhenCps).
 //
 // The SM resume protocol matches Kotlin/JVM's ContinuationImpl lowering: a single `result` carrier (the
 // invokeSuspend parameter), label dispatch that jumps to each post-suspend merge point, a
@@ -25,29 +23,38 @@
 // point (the SM-prologue rethrow that surfaces a failed async resume — the CLR analog of the JVM SM's
 // `ResultKt.throwOnFailure($result)`).
 //
-// SUPPORTED: straight-line + control flow across suspension (if/when via cond-lowering, while/for/do-while
-// already flat), try/catch where the suspension is in the TRY BODY (two-level dispatch), generic suspend
-// funs (`suspend fun <T> f(x): T` -> a generic SM `f$sm<T>`), extension suspend funs (kotc lowers the
-// receiver to a `__self` param), INSTANCE suspend MEMBERS (`class C { suspend fun m() }` — the SM carries a
-// `$this` field of type C; `this`/implicit-receiver reads become `SM.$this`; the cold entry is an INSTANCE
-// method on C so a member direct/no-suspension body keeps `this` verbatim), and MEMBER + cross-file/
-// cross-assembly suspend CALLS (`x.g()` callInstance / an owner'd top-level callStatic — rewritten to the
-// callee's `<name>$dotkt_suspend` cold shape on the correct receiver; cross-assembly resolved via the
-// ref.dll MemberBinding.Suspend flag + the naming convention).
+// R1 — DECLARATION IS UNCONDITIONAL (the cold-entry ABI is an INVARIANT, not a property to be proven).
+// EVERY suspend member declared in the compilation gets a cold-entry slot `<name>$dotkt_suspend` + a public
+// Task bridge, no exceptions. There is NO resolvability fixpoint and NO eligibility FILTER — a CLASSIFIER
+// (see the collection loop + FunGen.Build) assigns each declared suspend member one of three shapes:
+//   * abstract / interface-no-body       -> abstract cold entry + abstract bridge (no SM).
+//   * concrete + segmentable             -> SM class + cold entry + bridge (the full transform).
+//   * concrete + NOT segmentable (v1)    -> a call-time-throw cold entry (`throw NotSupportedException(reason)`)
+//                                           + bridge, and a bir2cir WARNING naming the fun + the refusal site.
+// The v1-non-segmentable set is: a suspension in a catch/finally, a nested suspending try, a suspend lambda
+// body reached in a disallowed position, and the M4 own-generic-on-a-generic-class combination. Because the
+// cold entry ALWAYS exists (concrete, callable), same-assembly call-site rewrite is UNCONDITIONAL for
+// callStatic/callInstance/clr* alike (resolvability holds by construction), and virtual dispatch through the
+// virtual/override-lockstep cold slot resolves inherited/overridden members natively — no hierarchy walk.
 //
-// The whole analysis is GLOBAL across the compilation's files (ApplyAll) because a same-assembly cross-file
-// suspend call keeps `owner:null` (kotc emits it identically to a same-file call) and a cold entry it names
-// may live in another file — so the transformability fixpoint spans every input file.
+// SUPPORTED segmentable shapes: straight-line + control flow across suspension (if/when via cond-lowering,
+// while/for/do-while already flat), try/catch where the suspension is in the TRY BODY (two-level dispatch),
+// generic suspend funs (`suspend fun <T> f(x): T` -> a generic SM `f$sm<T>`), extension suspend funs (kotc
+// lowers the receiver to a `__self` param), INSTANCE suspend MEMBERS (`class C { suspend fun m() }` — the SM
+// carries a `$this` field of type C), STATIC members (a companion suspend fun kotc promotes to a `static`
+// method on the outer class — cold entry/bridge stay static, no `$this`), and MEMBER + cross-file/
+// cross-assembly suspend CALLS (`x.g()` callInstance / an owner'd top-level callStatic / a `clr*` referenced
+// call — rewritten to the callee's `<name>$dotkt_suspend` cold shape; cross-assembly resolved via the ref.dll
+// MemberBinding.Suspend flag + the naming convention, with the R1b existence guard in ColdCall).
 //
-// LEFT UNTOUCHED (rides the existing ilemit throw-stub, zero regression): suspension inside a
-// catch/finally block, a nested suspending try, suspend lambdas / closures, a suspending member of a GENERIC
-// class (the generic-class SM needs the enclosing class type params threaded — deferred), a static member
-// suspend fun inside a class, and any suspend call whose callee cold shape can't be resolved (same-assembly
-// non-transformable or a cross-assembly member without a ref.dll Suspend flag). Those keep `"suspend":true`.
+// The whole analysis is GLOBAL across the compilation's files (ApplyAll): a same-assembly cross-file suspend
+// call keeps `owner:null` (kotc emits it identically to a same-file call) and the cold entry it names may
+// live in another file.
 //
-// Runs AFTER MemberCallSubstitution and BEFORE BirTypeLowering, in app builds only (gated in Pipeline via
-// attributeTopLevelOwner; skipped in the ref AND rt-stdlib builds). Its synthesized nodes are emitted in
-// the SUBSTITUTED call form but in the kotlin.* TYPE vocabulary, so they flow through BirTypeLowering.
+// Runs AFTER MemberCallSubstitution and BEFORE BirTypeLowering. Active in app AND rt-stdlib builds; SKIPPED
+// only in the REF build (RefBuild — ref suspend fns stay metadata-only, the ref.dll carries the Suspend flag
+// but no cold entry). Its synthesized nodes are emitted in the SUBSTITUTED call form but in the kotlin.* TYPE
+// vocabulary, so they flow through BirTypeLowering.
 
 using System.Text.Json.Nodes;
 using DotKt.Bir;
@@ -58,34 +65,6 @@ static partial class SuspendColdLowering
     // GetAwaiter/awaiter shape) for whatever awaitable a `.await()` targets. Set by ApplyAll / BuildLambdaSm (the two
     // entry points); FunGen (nested) reads it. ApplyAll runs before the lambda phase, so it is always populated by then.
     static ReferenceMetadataIndex _refs;
-
-    // #78 Defect A — direct-supertype map (local type FQN -> base + interfaces) threaded from Program.cs. Used by
-    // IsResolvable to walk a suspend call's static-receiver owner up its hierarchy (both the same-assembly registry
-    // and the cross-assembly ref.dll axis), so a call keyed on a subclass resolves against a super-declared cold entry.
-    static IReadOnlyDictionary<string, List<string>> _typeSupers = new Dictionary<string, List<string>>(StringComparer.Ordinal);
-
-    // The transitive supertype closure of a local type FQN (itself EXCLUDED), following the declared base + interfaces
-    // through every super that is itself locally declared; a super that is NOT in the local map is still yielded (it may
-    // be a referenced base whose ref.dll axis carries the suspend member), but its own supers are not walked (unknown).
-    static IEnumerable<string> AllSupers(string owner)
-    {
-        if (owner == null) yield break;
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        var work = new Queue<string>();
-        work.Enqueue(owner);
-        seen.Add(owner);
-        while (work.Count > 0)
-        {
-            var cur = work.Dequeue();
-            if (!_typeSupers.TryGetValue(cur, out var sups)) continue;
-            foreach (var s in sups)
-                if (s != null && seen.Add(s))
-                {
-                    yield return s;
-                    work.Enqueue(s);
-                }
-        }
-    }
 
     // APP-build gate for cold-lowering an `inline suspend fun`'s STANDALONE body. In an app build an inline suspend fun
     // is a user/kotlinx WRAPPER (e.g. `suspendCancellableCoroutine`, or the issue-#22 `mySuspend`) whose standalone body
@@ -154,7 +133,7 @@ static partial class SuspendColdLowering
         "newClosure", "newDelegate", "lambda", "forEachInline", "repeatInline",
         // A suspend-lambda VALUE built inside a suspend fun. Kept here so the SUBTREE-SKIPPING analyses
         // (CollectVarFields / DisambiguateShadowedVars) do not descend into the lambda's own body (its vars are
-        // the lambda SM's, not the enclosing SM's). SuspensionsSupported and Rewrite SPECIAL-CASE it (GAP 2): the
+        // the lambda SM's, not the enclosing SM's). SuspensionRefusalReason and Rewrite SPECIAL-CASE it (GAP 2): the
         // enclosing fun IS cold-transformed, the lambda copied opaquely with SM-vocabulary `capValues`.
         "newSuspendLambda",
     };
@@ -241,28 +220,21 @@ static partial class SuspendColdLowering
                 TypeJson.Read(p["type"]) is TypeNode t ? TypeNode.ToJson(t) : (Str(p["type"]) ?? "")))
             : "";
 
-    // A shape-eligible suspend fun + where it lives (for cold-entry/SM splicing).
+    // A declared suspend fun + where it lives (for cold-entry/SM splicing).
     sealed record Entry(JsonObject Method, JsonObject Root, JsonObject TypeNode, string Owner, string FileClass);
-
-    // A suspend CALL site descriptor (for the resolvability fixpoint).
-    readonly record struct CallRef(bool Instance, string Owner, string Name);
 
     // Returns the callee-return-type map (cold-entry name -> Kotlin resultType), so the SEPARATE
     // SuspendLambdaLowering phase can type a suspend-lambda's awaited value the SAME way (else a
     // lambda's `h()` await falls back to kotlin.Any and the value is never unboxed -> `object + int`).
-    public static IReadOnlyDictionary<string, TypeNode> ApplyAll(IReadOnlyList<JsonNode> roots, ReferenceMetadataIndex refs, IReadOnlySet<string> localTypeFqns, bool appBuild,
-        IReadOnlyDictionary<string, List<string>> typeSupers = null)
+    public static IReadOnlyDictionary<string, TypeNode> ApplyAll(IReadOnlyList<JsonNode> roots, ReferenceMetadataIndex refs, IReadOnlySet<string> localTypeFqns, bool appBuild)
     {
         _refs = refs;   // #10: EmitAwaitPoint reads it to resolve the .NET awaitable pattern for each `.await()`.
         _appBuild = appBuild;
-        // #78 Defect A — the direct-supertype map (local type FQN -> its declared base + interfaces), threaded from
-        // Program.cs so IsResolvable can walk the hierarchy: a suspend `callInstance` keyed on a SUBCLASS static
-        // receiver (DeferredCoroutine.awaitInternal, declared on the base JobSupport; Channel.receiveOrNull, declared
-        // on the super-interface ReceiveChannel) resolves against the DECLARING super's cold entry, which the subtype
-        // inherits. Without this walk the exact-owner lookup misses and the fun is (falsely) dropped from the set.
-        _typeSupers = typeSupers ?? new Dictionary<string, List<string>>(StringComparer.Ordinal);
         _consumedIntrinsicClosures = new HashSet<string>(StringComparer.Ordinal);
-        // 1. Global registry of shape-eligible suspend funs across every input file.
+        // 1. R1 — the UNCONDITIONAL registry of EVERY declared suspend fun across every input file. This is a
+        //    CLASSIFIER, not a filter: nothing is dropped for shape or resolvability. The only exclusions are the
+        //    stdlib carve-outs (the interop-bridge await marker, the old CPS/sequence path, stdlib inline intrinsics);
+        //    each admitted member is classified into abstract / segmentable / call-time-throw by FunGen.
         var entries = new Dictionary<FunKey, Entry>();
         // Closure-class registry (for the suspendCoroutine intrinsic inliner): kotc materializes the intrinsic's
         // `{ c -> … }` block as a top-level closure class; the inliner resolves its `invoke` body by name here.
@@ -281,13 +253,13 @@ static partial class SuspendColdLowering
             var isInteropBridge = fileClass == InteropBridgeFileClass;
             if (file["methods"] is JsonArray methods && !isInteropBridge)
                 foreach (var m in methods)
-                    if (m is JsonObject mo && Str(mo["name"]) is string name && IsShapeEligible(mo))
+                    if (m is JsonObject mo && Str(mo["name"]) is string name && IsColdCandidate(mo))
                         entries[new FunKey(null, name, SigOf(mo))] = new Entry(mo, file, null, null, fileClass);
             if (file["types"] is JsonArray types)
                 foreach (var t in types)
                     if (t is JsonObject to && Str(to["name"]) is string owner && to["methods"] is JsonArray tms)
                         foreach (var m in tms)
-                            if (m is JsonObject mo && Str(mo["name"]) is string name && IsMemberShapeEligible(mo, to))
+                            if (m is JsonObject mo && Str(mo["name"]) is string name && IsMemberColdCandidate(mo))
                                 entries[new FunKey(owner, name, SigOf(mo))] = new Entry(mo, file, to, owner, fileClass);
         }
         // callee-return-type fallback for await-temp field typing when a call node carries no instantiated
@@ -335,37 +307,11 @@ static partial class SuspendColdLowering
 
         if (entries.Count == 0) return calleeRet;
 
-        // 2. Fixpoint: a fun stays transformable only if EVERY suspend call it makes is RESOLVABLE — a
-        //    same-assembly transformable callee (its cold entry will be synthesized) OR a cross-assembly
-        //    callee whose ref.dll MemberBinding.Suspend flag + the naming convention give the cold entry.
-        var transformable = new HashSet<FunKey>(entries.Keys);
-        bool changed = true;
-        while (changed)
-        {
-            changed = false;
-            foreach (var key in transformable.ToList())
-                foreach (var call in SuspendCalls(entries[key].Method))
-                    if (!IsResolvable(call, transformable, refs))
-                    {
-                        // L3 (make-it-loud): a shape-eligible suspend fun is dropped from the cold-transform set
-                        // because ONE of its suspend calls can't be resolved to a cold entry (no same-assembly
-                        // transformable callee AND no ref.dll Suspend-flagged member). Left silent, the fun stays
-                        // `suspend:true` and only trips the DISTANT "suspend method reached codegen un-lowered"
-                        // NotSupportedException at the ilemit boundary — pointing at the surviving method, not the
-                        // root call. Emit the ROOT here: which fun, which unresolvable call (kind/owner/name).
-                        var callKind = call.Instance ? "callInstance" : "callStatic";
-                        var callOwner = call.Owner ?? "<top-level>";
-                        var funDesc = (key.Owner ?? "<top-level>") + "." + key.Name + (string.IsNullOrEmpty(key.Sig) ? "" : "(" + key.Sig + ")");
-                        Console.Error.WriteLine(
-                            $"bir2cir: WARNING suspend-lowering: dropped '{funDesc}' from the cold-transform set — "
-                            + $"unresolvable suspend {callKind} '{callOwner}.{call.Name}' (no same-assembly cold entry "
-                            + "and no ref.dll Suspend-flagged member). This fun will reach ilemit un-lowered.");
-                        transformable.Remove(key);
-                        changed = true;
-                        break;
-                    }
-        }
-        if (transformable.Count == 0) return calleeRet;
+        // R1 — NO fixpoint. Every declared suspend member is transformed unconditionally (its cold entry always
+        // exists — concrete/abstract, but always callable), so a suspend call it makes always resolves to a cold
+        // entry by construction: same-assembly by declaration, cross-assembly by the ref.dll Suspend flag + naming
+        // convention (guarded in ColdCall / R1b). The old resolvability fixpoint + its L3 drop warning are deleted;
+        // the diagnostic quality moved into the classifier (FunGen names the ROOT non-segmentable shape).
 
         var baseIsLocal = localTypeFqns.Contains(ContinuationImplFqn);
 
@@ -403,17 +349,22 @@ static partial class SuspendColdLowering
                 smSuffix[members[i]] = "_" + (unique ? cands[i] : "ov" + i);
         }
 
-        // 3. Transform each transformable fun, splicing the cold entry (into its declaring container) and the
+        // 2. Transform each declared suspend fun, splicing the cold entry (into its declaring container) and the
         //    SM type (into its file's top-level types).
-        foreach (var key in transformable)
+        foreach (var key in entries.Keys)
         {
             var e = entries[key];
-            // The ENCLOSING class's type-param names (for an instance member on a generic class): the SM is made
+            // M3 — a `static` member (a companion suspend fun kotc promotes to a static method on the OUTER class):
+            // no `$this`, the cold entry/bridge stay static in the class (like a top-level fun, but the container is
+            // the class). An instance member is `owner != null && !static`.
+            var staticMember = e.TypeNode != null && Bool(e.Method["static"]);
+            // The ENCLOSING class's type-param names (for an INSTANCE member on a generic class): the SM is made
             // generic over them, `$this` is typed as the CONSTRUCTED self `Box[gp:T]`, and the bridge's self
             // cold-call targets that constructed self (not the open `Box`), or `this` (Box<T>) mismatches the
-            // callee's declaring type at verification (StackUnexpected).
+            // callee's declaring type at verification (StackUnexpected). A static member does NOT see the class type
+            // params (it is not generic over them), so its ownerTps stay empty.
             var ownerTps = new List<string>();
-            if (e.TypeNode?["typeParams"] is JsonArray otps)
+            if (!staticMember && e.TypeNode?["typeParams"] is JsonArray otps)
                 foreach (var t in otps)
                     if (t is JsonValue tv2 && tv2.TryGetValue<string>(out var s2)) ownerTps.Add(s2);
                     else if (t is JsonObject to2 && Str(to2["name"]) is string n2) ownerTps.Add(n2);
@@ -431,7 +382,7 @@ static partial class SuspendColdLowering
             // `call` to the (interface-abstract) cold entry is unverifiable (ilverify CallAbstract). Concrete
             // implementations in classes fill both slots — ilemit's interface-impl pass binds them by name/sig.
             var ownerIsInterface = e.TypeNode != null && Str(e.TypeNode["kind"]) == "interface";
-            var gen = new FunGen(e.Method, key.Name, e.FileClass, e.Owner, calleeRet, baseIsLocal, tcsBcl, taskBcl, ownerTps, closures, smSuffix[key], methodRets, fieldTypes, fileLambdas, ownerIsInterface);
+            var gen = new FunGen(e.Method, key.Name, e.FileClass, e.Owner, calleeRet, baseIsLocal, tcsBcl, taskBcl, ownerTps, closures, smSuffix[key], methodRets, fieldTypes, fileLambdas, ownerIsInterface, staticMember);
             var newMethods = new List<JsonNode>();
             var newTypes = new List<JsonNode>();
             gen.Build(newMethods, newTypes);
@@ -578,79 +529,40 @@ static partial class SuspendColdLowering
         return types.Count > 0 ? (JsonObject)types[0] : null;
     }
 
-    // Can a suspend call site be rewritten to a cold entry? Same-assembly: the callee is in `transformable`
-    // (its cold entry gets synthesized here). Cross-assembly: the ref.dll flags the member `suspend`, so the
-    // `<name>$dotkt_suspend` convention names the cold entry.
-    static bool IsResolvable(CallRef call, HashSet<FunKey> transformable, ReferenceMetadataIndex refs)
-    {
-        // Match by (owner, name) — the call site carries no resolved overload signature, so a same-assembly
-        // callee is resolvable if ANY overload with that owner+name is transformable (its cold entry gets
-        // synthesized). Cross-assembly: the ref.dll Suspend flag + the `<name>$dotkt_suspend` convention.
-        bool LocalMatch(string owner) => transformable.Any(k => k.Owner == owner && k.Name == call.Name);
-        // #78 Defect A — a suspend member declared on a SUPERTYPE is inherited by the call site's static-receiver
-        // subclass, so its cold entry is resolvable through the subclass. Walk the receiver owner's transitive supers
-        // on BOTH axes: the same-assembly registry (a super whose suspend member is a transformable entry) and the
-        // cross-assembly ref.dll (a super the refs flag with a Suspend member — HasSuspendMemberInHierarchy already
-        // walks the reflected super chain, and AllSupers additionally crosses local subclass -> referenced super).
-        bool MatchWithSupers(string owner)
-        {
-            if (LocalMatch(owner) || refs.HasSuspendMemberInHierarchy(owner, call.Name)) return true;
-            foreach (var s in AllSupers(owner))
-                if (LocalMatch(s) || refs.HasSuspendMemberInHierarchy(s, call.Name)) return true;
-            return false;
-        }
-        if (call.Instance)
-            return MatchWithSupers(call.Owner);
-        // callStatic: owner==null -> same-assembly top-level (possibly cross-file, keyed by name);
-        // owner set -> a cross-assembly file-class static (ref.dll flag).
-        if (call.Owner == null) return LocalMatch(null);
-        return MatchWithSupers(call.Owner);
-    }
+    // --- R1 classifier: ADMIT gate --------------------------------------------------------------------
+    // Nothing is refused here for shape — the collection admits EVERY declared suspend member (top-level or
+    // member, abstract or concrete, static or instance, generic or not). The only exclusions are the stdlib
+    // carve-outs. FunGen then classifies each admitted member into abstract / segmentable / call-time-throw.
 
-    // --- shape gate ------------------------------------------------------------------------------------
-
-    static bool IsShapeEligible(JsonObject m)
+    // A TOP-LEVEL suspend fun (kotc emits top-level funs + extension funs as `static`).
+    static bool IsColdCandidate(JsonObject m)
     {
         if (!Mod(m, "suspend")) return false;
         if (!Bool(m["static"])) return false;                       // top-level statics + extensions (kotc: __self param)
-        if (Bool(m["abstract"])) return false;
-        if (Mod(m, "inline") && !_appBuild) return false;           // #22: cold-lower an inline suspend WRAPPER's standalone body in app builds; stdlib intrinsics stay stubbed
-        if (m.ContainsKey("steps") || m.ContainsKey("coClass")) return false;  // old CPS / sequence path
-        if (m["body"] is not JsonArray body) return false;
-        return SuspensionsSupported(body, inHandler: false, tryDepth: 0);
+        if (Mod(m, "inline") && !_appBuild) return false;           // #22: cold-lower an inline suspend WRAPPER's standalone body in app builds; stdlib intrinsics (suspendCoroutine*) stay stubbed
+        if (m.ContainsKey("steps") || m.ContainsKey("coClass")) return false;  // old CPS / sequence path (kotc-owned)
+        return true;
     }
 
-    // An INSTANCE suspend member (static==false, lives inside a class). Same structural gate as a top-level
-    // fun, minus the static requirement. Now ADMITS (bundle-6 P5 A1b): generic-class members (the SM is threaded
-    // the enclosing class type params — `$this` typed as the constructed self, the SM generic over them), and
-    // abstract / open / override / virtual members (the cold entry is emitted abstract / virtual / override in
-    // lockstep with the original so a virtual `x.g()` resolves to the right override at runtime).
-    static bool IsMemberShapeEligible(JsonObject m, JsonObject typeNode)
+    // A suspend member of a class (instance, static/companion, abstract, interface, or generic). All shapes are
+    // admitted — a non-segmentable one (the M4 own-generic-on-generic-class combination, a suspension in a
+    // catch/finally, …) still gets a call-time-throw cold entry from FunGen, never a drop.
+    static bool IsMemberColdCandidate(JsonObject m)
     {
         if (!Mod(m, "suspend")) return false;
-        if (Bool(m["static"])) return false;                        // a static member fun -> deferred
-        if (Mod(m, "inline") && !_appBuild) return false;           // #22: as IsShapeEligible — inline suspend member wrapper lowers in app builds
+        if (Mod(m, "inline") && !_appBuild) return false;           // #22: as IsColdCandidate — inline suspend member wrapper lowers in app builds
         if (m.ContainsKey("steps") || m.ContainsKey("coClass")) return false;
-        // A member that is BOTH generic on its own (its own type params) AND on a generic class is deferred v1:
-        // the SM would need to thread the union of both param lists (e.g. DeepRecursiveScope<T,R>'s
-        // `<U,S> ...callRecursive`), an untested combination not needed for the sequence path. yield/yieldAll
-        // (no own type params, only the class's) transform. Kept for abstract members too so a deferred
-        // abstract slot and its (equally deferred) overrides stay consistent.
-        var ownGeneric = m["typeParams"] is JsonArray mtp && mtp.Count > 0;
-        var genericClass = typeNode["typeParams"] is JsonArray tps && tps.Count > 0;
-        if (ownGeneric && genericClass) return false;
-        // An ABSTRACT suspend member (no body) -> an abstract cold entry `<name>$dotkt_suspend` (Virtual|Abstract,
-        // no SM); its concrete overrides fill the slot. Admitted here (no body to structurally validate).
-        if (Bool(m["abstract"])) return true;
-        if (m["body"] is not JsonArray body) return false;
-        return SuspensionsSupported(body, inHandler: false, tryDepth: 0);
+        return true;
     }
 
-    // Validate that every suspension point is in a position this pass can lower. Rejects: suspension in a
-    // catch/finally handler, inside a lambda/closure, and a suspending try nested inside another suspending
-    // try (the two-level dispatch is single-level v1). Member/cross-assembly suspend CALLS are now allowed —
-    // their cold-shape resolvability is decided by the fixpoint, not here.
-    static bool SuspensionsSupported(JsonNode node, bool inHandler, int tryDepth)
+    // --- segmentability ------------------------------------------------------------------------------
+    // Is every suspension point in a position the straight-line SM can lower? Returns null when YES (segmentable),
+    // else a short human-readable REFUSAL REASON naming the first unsupported shape (the classifier stubs the fun
+    // with a call-time throw carrying this reason + warns). Refuses: suspension in a catch/finally handler, a
+    // suspending try nested inside another suspending try (the two-level dispatch is single-level v1), and a
+    // suspension buried in a disallowed lambda/closure position. Member/cross-assembly suspend CALLS are always
+    // allowed — their cold-shape resolvability holds by construction (R1), not by a check here.
+    static string SuspensionRefusalReason(JsonNode node, bool inHandler, int tryDepth)
     {
         switch (node)
         {
@@ -660,14 +572,14 @@ static partial class SuspendColdLowering
                 // F2 — a suspendCoroutine/suspendCoroutineUninterceptedOrReturn call IS a supported cold suspension
                 // point; do NOT descend into its embedded newClosure/newDelegate block arg (which would trip the
                 // LambdaKinds refusal below).
-                if (IsSuspendCoroutineCall(o)) return true;
+                if (IsSuspendCoroutineCall(o)) return null;
                 // GAP 2 — a `newSuspendLambda` VALUE built inside a suspend fun (e.g. a member `suspend fun go() =
                 // run1 { … }` that constructs a `this`-capturing suspend lambda and drives it via a suspend-value
                 // call) is SUPPORTED: the lambda is an opaque value whose OWN suspensions become a SEPARATE SM
                 // (SuspendLambdaLowering), and its captures resolve in the enclosing cold SM (a spilled local -> an
                 // SM field, `__outer` -> the member SM's `$this`). Do NOT descend into its body (that is the
                 // lambda's own scope, validated by its own FunGen build) — descending would trip the refusal below.
-                if (k == "newSuspendLambda") return true;
+                if (k == "newSuspendLambda") return null;
                 // #22 — a PLAIN closure/delegate VALUE (no suspension inside) is a spillable local, not a suspend
                 // lambda: the cold SM holds it in a field across the suspension. This arises when InlineSplice
                 // MATERIALIZES a crossinline lambda param (`§4.4ii`) as a `newClosure` bound to a temp that a nested
@@ -675,7 +587,7 @@ static partial class SuspendColdLowering
                 // Admit it (do NOT descend — its body is its own scope, and HasSuspension already proved it holds no
                 // suspension). A genuine SUSPEND lambda is `newSuspendLambda` (above); a `newClosure` that DOES wrap a
                 // suspension stays refused (SuspendLambdaLowering territory).
-                if ((k == "newClosure" || k == "newDelegate") && !HasSuspension(o)) return true;
+                if ((k == "newClosure" || k == "newDelegate") && !HasSuspension(o)) return null;
                 // #82 — a `forEachInline` (GetEnumerator collection loop) whose BODY spans a suspension is FLATTENED to
                 // flat CFG by FlattenSuspendingLoops (like the always-admitted `forArray`), so ONLY that shape is exempted
                 // from the LambdaKinds refusal below (falling through to the generic child recursion, which validates its
@@ -687,10 +599,10 @@ static partial class SuspendColdLowering
                 // `newClosure` and are NOT flagged `suspendCall`, are handled separately by SuspendLambdaLowering).
                 if (k != null && LambdaKinds.Contains(k)
                     && !(k == "forEachInline" && o["body"] is JsonNode feBody && HasOwnSuspension(feBody)))
-                    return false;
+                    return $"suspension buried in an unsupported '{k}' lambda/closure position";
                 if (o.ContainsKey("suspendCall") && Bool(o["suspendCall"]))
                 {
-                    if (inHandler) return false;                        // suspension in catch/finally -> unsupported
+                    if (inHandler) return "suspension inside a catch/finally handler (v1)";
                 }
                 if (k == "try")
                 {
@@ -699,9 +611,9 @@ static partial class SuspendColdLowering
                     // nested-suspending-try refusal would then be bypassed and Build would emit a branch INTO the outer
                     // protected region (InvalidProgramException). HasLoopBorneSuspension sees through forEachInline.
                     var bodyHasSusp = o["body"] != null && HasLoopBorneSuspension(o["body"]);
-                    if (bodyHasSusp && tryDepth > 0) return false;      // nested suspending try -> unsupported (v1)
-                    if (!SuspensionsSupported(o["body"] ?? JsonValue.Create(0), inHandler, bodyHasSusp ? tryDepth + 1 : tryDepth))
-                        return false;
+                    if (bodyHasSusp && tryDepth > 0) return "a suspending try nested inside another suspending try (v1)";
+                    if (SuspensionRefusalReason(o["body"] ?? JsonValue.Create(0), inHandler, bodyHasSusp ? tryDepth + 1 : tryDepth) is string tbr)
+                        return tbr;
                     // #78 — a suspension inside a CATCH handler is supported when the try is HOISTABLE (finally-free):
                     // HoistSuspendingCatches lifts the handler OUT of the CLR catch clause into gated straight-line code
                     // the SM can segment. Recurse the catch body with the try's OWN `inHandler` (the handler runs OUTSIDE
@@ -710,53 +622,22 @@ static partial class SuspendColdLowering
                     var catchInHandler = IsHoistableTry(o) ? inHandler : true;
                     if (o["catches"] is JsonArray cs)
                         foreach (var c in cs)
-                            if (c is JsonObject co && !SuspensionsSupported(co["body"] ?? JsonValue.Create(0), catchInHandler, tryDepth))
-                                return false;
-                    if (o["finally"] != null && !SuspensionsSupported(o["finally"], inHandler: true, tryDepth))
-                        return false;
-                    return true;
+                            if (c is JsonObject co && SuspensionRefusalReason(co["body"] ?? JsonValue.Create(0), catchInHandler, tryDepth) is string cbr)
+                                return cbr;
+                    if (o["finally"] != null && SuspensionRefusalReason(o["finally"], inHandler: true, tryDepth) is string fbr)
+                        return fbr;
+                    return null;
                 }
                 foreach (var kv in o)
-                    if (kv.Value != null && !SuspensionsSupported(kv.Value, inHandler, tryDepth)) return false;
-                return true;
+                    if (kv.Value != null && SuspensionRefusalReason(kv.Value, inHandler, tryDepth) is string cr) return cr;
+                return null;
             }
             case JsonArray a:
-                foreach (var it in a) if (it != null && !SuspensionsSupported(it, inHandler, tryDepth)) return false;
-                return true;
+                foreach (var it in a) if (it != null && SuspensionRefusalReason(it, inHandler, tryDepth) is string ar) return ar;
+                return null;
             default:
-                return true;
+                return null;
         }
-    }
-
-    // Every suspend call this method makes, as a CallRef (kind + owner + callee name).
-    static IEnumerable<CallRef> SuspendCalls(JsonObject method)
-    {
-        var seen = new HashSet<CallRef>();
-        void Walk(JsonNode n)
-        {
-            if (n is JsonObject o)
-            {
-                // F2: a cross-module suspendCoroutine call is lowered INLINE (its block reconstructed in the SM),
-                // not routed to a cold entry — so it is NOT a resolvability constraint. Skip it (and its block arg).
-                if (IsSuspendCoroutineCall(o)) return;
-                // GAP 1: a suspend-VALUE invoke is lowered inline to the cold-invoke helper (no named cold entry to
-                // resolve), so it must NOT add a resolvability constraint — but DO descend (a nested suspension may
-                // sit in the receiver/args). Guard only the CallRef add below.
-                if (Bool(o["suspendCall"]) && !IsSuspendValueCall(o) && Str(o["method"]) is string mn)
-                {
-                    var k = Str(o["k"]);
-                    if (k == "callInstance")
-                        seen.Add(new CallRef(true, BareOwner(TypeJson.OwnerName(o["ownerType"])), mn));
-                    else if (k == "callStatic")
-                        seen.Add(new CallRef(false, BareOwner(TypeJson.OwnerName(o["owner"])), mn));
-                }
-                foreach (var kv in o) if (kv.Value != null) Walk(kv.Value);
-            }
-            else if (n is JsonArray a)
-                foreach (var it in a) if (it != null) Walk(it);
-        }
-        if (method["body"] is JsonArray body) Walk(body);
-        return seen;
     }
 
     // Strip a generic instantiation suffix from an owner token so a call site's instantiated ownerType
@@ -791,7 +672,7 @@ static partial class SuspendColdLowering
     // the try/eval-order gates so a try/when whose only suspensions live inside a nested suspend-lambda VALUE reads as
     // NON-suspending here (it needs no SM segmentation) — killing the false-positive "suspending try" refusals and the
     // needless splitting of plain trys. The DEEP HasSuspension is kept ONLY where the closure interior must be
-    // inspected (the newClosure/newDelegate classification at SuspensionsSupported).
+    // inspected (the newClosure/newDelegate classification at SuspensionRefusalReason).
     static bool HasOwnSuspension(JsonNode node)
     {
         switch (node)
@@ -833,7 +714,7 @@ static partial class SuspendColdLowering
 
     // BUG 1: does the subtree contain a `try` whose finally is non-empty AND whose body spans a suspension?
     // Such a finally needs the $suspending gate (it would otherwise run on the suspend-return leave and again at
-    // exit). SuspensionsSupported guarantees at most one such level (nested suspending try is left untransformed).
+    // exit). SuspensionRefusalReason guarantees at most one such level (nested suspending try is left untransformed).
     static bool HasSuspendingFinally(JsonNode node)
     {
         switch (node)
@@ -862,7 +743,7 @@ static partial class SuspendColdLowering
         // finally runs its real body only when it is false — so it is SKIPPED on the suspend-return unwind (when
         // the CLR runs the finally on the `leave`) and RUNS EXACTLY ONCE on the post-resume normal/exception exit.
         // This mirrors the C#/JVM state-gated finally (a per-label finally-route table collapsed to one flag,
-        // valid because SuspensionsSupported admits only a SINGLE level of suspending try).
+        // valid because SuspensionRefusalReason admits only a SINGLE level of suspending try).
         const string SuspendingField = "$suspending";
         // The Task-bridge root sink (a real emitted stdlib class, referenced cross-assembly like ContinuationImpl).
         const string RootContinuationFqn = "kotlin.coroutines.clr.internal.RootContinuation";
@@ -877,8 +758,13 @@ static partial class SuspendColdLowering
         readonly JsonObject _m;
         readonly string _name;
         readonly string _fileClass;
-        readonly string _ownerClass;             // enclosing class FQN for an instance member, else null
-        readonly bool _isMember;
+        readonly string _ownerClass;             // enclosing class FQN for a member (instance OR static), else null
+        readonly bool _isMember;                 // an INSTANCE member (owner != null && !static): carries a `$this` field
+        readonly bool _staticMember;             // M3 — a `static` member (companion suspend fun): cold entry/bridge stay static in the class, no `$this`
+        // R1 classifier — non-null when this concrete member cannot be segmented (a v1-unsupported suspension
+        // position, or M4 own-generic-on-generic-class): the cold entry becomes a call-time `throw NotSupportedException`
+        // carrying this reason (design §11 policy). null for a segmentable or an abstract member.
+        readonly string _stubReason;
         readonly Dictionary<string, TypeNode> _calleeRet;
         readonly bool _baseIsLocal;
         // The public Task<R> bridge BCL owners (from the ref.dll @ClrTypeAlias index); null -> no bridge (see ApplyAll).
@@ -935,10 +821,11 @@ static partial class SuspendColdLowering
             string smNameSuffix = "", Dictionary<string, TypeNode> methodRets = null,
             Dictionary<string, TypeNode> fieldTypes = null,
             IReadOnlyDictionary<string, JsonObject> lambdaMethods = null,
-            bool ownerIsInterface = false)
+            bool ownerIsInterface = false, bool staticMember = false)
         {
             _m = m; _name = name; _fileClass = fileClass; _ownerClass = ownerClass;
-            _isMember = ownerClass != null;
+            _staticMember = staticMember;
+            _isMember = ownerClass != null && !staticMember;   // an INSTANCE member (static/companion members are top-level-shaped)
             _calleeRet = calleeRet; _baseIsLocal = baseIsLocal;
             _methodRets = methodRets ?? new Dictionary<string, TypeNode>(StringComparer.Ordinal);
             _fieldTypes = fieldTypes ?? new Dictionary<string, TypeNode>(StringComparer.Ordinal);
@@ -949,7 +836,8 @@ static partial class SuspendColdLowering
             // Virtuality of the source member (kept in lockstep on the cold entry): an abstract member -> an abstract
             // cold entry (no SM); an override/open member -> an override/virtual cold entry (fills/opens the slot).
             // An interface member with no body is abstract (see the ownerIsInterface note at the call site): its
-            // cold entry + Task bridge are emitted abstract, mirroring an abstract-class member.
+            // cold entry + Task bridge are emitted abstract, mirroring an abstract-class member. A static/companion
+            // member is never virtual/abstract/override.
             var interfaceAbstract = ownerIsInterface
                 && (m["body"] is not JsonArray ib || ib.Count == 0);
             _memberAbstract = _isMember && (Bool(m["abstract"]) || interfaceAbstract);
@@ -973,6 +861,17 @@ static partial class SuspendColdLowering
                 : _ownerTypeParams.Count == 0 ? new TypeNode.Fqn(_ownerClass)
                 : new TypeNode.Fqn(_ownerClass, TypeTvs(_ownerTypeParams.Count));
             _smTypeInst = _smAllTps.Count == 0 ? new TypeNode.Fqn(_smType) : new TypeNode.Fqn(_smType, TypeTvs(_smAllTps.Count));
+            // R1 classifier — decide the segmentable-vs-call-time-throw shape for a CONCRETE member (an abstract
+            // member has no body and is handled by the `_memberAbstract` branch). M4: a member generic on its OWN
+            // type params AND on a generic class needs the SM to thread the union of both param lists (deferred v1).
+            // Otherwise the body must have every suspension in a segmentable position (SuspensionRefusalReason).
+            if (!_memberAbstract)
+            {
+                if (_typeParams.Count > 0 && _ownerTypeParams.Count > 0)
+                    _stubReason = "a generic suspend method on a generic class (v1)";
+                else if ((m["body"] as JsonArray) is JsonArray b0)
+                    _stubReason = SuspensionRefusalReason(b0, inHandler: false, tryDepth: 0);
+            }
         }
 
         // The first `n` type-scope generic params by flattened index (Tv{type,0..n-1}).
@@ -1038,6 +937,24 @@ static partial class SuspendColdLowering
                 return;
             }
 
+            // R1 — a concrete but NOT-segmentable member (a v1-unsupported suspension position, or M4
+            // own-generic-on-generic-class) still gets its cold-entry + bridge slot UNCONDITIONALLY, with a
+            // CALL-TIME throw body (design §11: "call-time NotSupportedException, never an emit crash"). Both call
+            // paths observe the throw: a Kotlin->Kotlin cold call propagates it synchronously; the public Task
+            // bridge catches it (its try/catch) and faults the Task. Warn once here, naming the fun + the root
+            // refusal (this REPLACES the deleted fixpoint's L3 drop warning).
+            if (!_isLambda && _stubReason is string reason)
+            {
+                Console.Error.WriteLine(
+                    $"bir2cir: WARNING suspend-lowering: '{(_ownerClass ?? _fileClass)}.{_name}' is not segmentable "
+                    + $"({reason}) — emitting a call-time-throw cold entry (v1 limitation). The suspend fun COMPILES; "
+                    + "invoking it throws NotSupportedException.");
+                newMethods.Add(ColdEntryStub(reason));
+                if (_name == "main" && _ownerClass == null) newMethods.Add(DrainMain());
+                if (WantsBridge) newMethods.Add(BuildBridge());
+                return;
+            }
+
             var body = _isLambda ? _lambdaBody : ((_m["body"] as JsonArray) ?? new JsonArray());
             var hasSuspension = HasSuspension(body);
             // #78/#82 — normalize a suspending body BEFORE segmentation so a suspension in a POSITION the straight-line
@@ -1070,7 +987,7 @@ static partial class SuspendColdLowering
                 // stays an INSTANCE method on the class, so a `this`/receiver in the body remains valid.
                 // (A suspend LAMBDA always becomes an SM even without suspension — its VALUE is the SM instance.)
                 newMethods.Add(ColdEntryDirect(body));
-                if (_name == "main" && !_isMember) newMethods.Add(DrainMain());
+                if (_name == "main" && _ownerClass == null) newMethods.Add(DrainMain());
                 if (WantsBridge) newMethods.Add(BuildBridge());
                 return;
             }
@@ -1116,7 +1033,7 @@ static partial class SuspendColdLowering
 
             newTypes.Add(SmType(invoke));
             newMethods.Add(ColdEntrySm());
-            if (_name == "main" && !_isMember) newMethods.Add(DrainMain());
+            if (_name == "main" && _ownerClass == null) newMethods.Add(DrainMain());
             if (WantsBridge) newMethods.Add(BuildBridge());
         }
 
@@ -2379,6 +2296,26 @@ static partial class SuspendColdLowering
 
             if (isClr)
             {
+                // R1b (#100) — the clr* rewrite assumes the referenced owner exposes a `<name>$dotkt_suspend` cold
+                // entry. Under R1's unconditional-declaration invariant that holds for any DotKt assembly built with
+                // the cold ABI, advertised on the ref.dll via the [KotlinFunction(Suspend)] flag (MemberBinding.Suspend)
+                // — the metadata linkage; the cold-entry NAME is a convention ilemit resolves against the rt.dll (the
+                // ref.dll itself carries NO cold entry — the transform is skipped in the ref build). Consult that flag
+                // through the referenced owner's reflected hierarchy (a suspend member declared on a super is inherited).
+                // ABSENT => the callee is not a cold-ABI Kotlin suspend member (a pre-cold-ABI DotKt lib, or a
+                // hand-written assembly): a HARD actionable error, not a silent rewrite to a nonexistent method (the
+                // #100 emit-time resolution failure this guard replaces). The facadegen await marker + suspendCoroutine
+                // intrinsics are intercepted upstream in Rewrite and a suspend functional VALUE is diverted at the top
+                // of ColdCall, so a flag-absent owner HERE is a genuine named cross-assembly suspend callee.
+                var refOwner = BareOwner(TypeJson.OwnerName(callNode["type"]));
+                var calleeName = Str(callNode["method"]);
+                if (refOwner != null && calleeName != null && !_refs.HasSuspendMemberInHierarchy(refOwner, calleeName))
+                    throw new NotSupportedException(
+                        $"bir2cir: suspend-lowering: the referenced owner '{refOwner}' exposes a suspend call target "
+                        + $"'{calleeName}' without the cold-entry ABI ([KotlinFunction(Suspend)] absent on the ref.dll). "
+                        + "The referenced assembly predates the cold-entry ABI (or is a hand-written .NET assembly that "
+                        + "is not a Kotlin suspend member). Rebuild it with a cold-ABI DotKt toolchain — there is no "
+                        + "dual-track fallback.");
                 // A referenced suspend callee: keep the `clr*` node kind + referenced `type` owner, retarget the method
                 // to the cold entry, append the completion. ilemit's EmitClrCall/ResolveGenericMethod resolves the cold
                 // entry on the referenced assembly by name (uniquely named) + arg/shape — no fileClass sig lookup.
@@ -2905,6 +2842,32 @@ static partial class SuspendColdLowering
             return method;
         }
 
+        // R1 — the call-time-throw cold entry for a concrete-but-NOT-segmentable member (design §11 v1 policy). An
+        // ORDINARY ColdMethod whose body is a single `throw new System.NotSupportedException(reason)` — NOT routed
+        // through ColdEntryDirect (whose Unit-return check would append an unreachable trailing return). Goes through
+        // ColdMethod so the virtuality lockstep (_memberOverride/_memberVirtual/static) is preserved: a stubbed
+        // concrete base whose override IS segmentable keeps virtual dispatch — only the stubbed slot throws.
+        JsonObject ColdEntryStub(string reason)
+        {
+            var msg = $"{(_ownerClass ?? _fileClass)}.{_name}: {reason} — this suspend fun is not supported by "
+                + "bir2cir's v1 cold-lowering (docs/design-coroutine-cold-core-task-bridge.md §11/§14).";
+            var body = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["k"] = "throw",
+                    ["value"] = new JsonObject
+                    {
+                        ["k"] = "newClr",
+                        ["type"] = TypeJson.Fqn("System.NotSupportedException"),
+                        ["argTypes"] = new JsonArray { Tw(new TypeNode.Fqn("kotlin.String")) },
+                        ["args"] = new JsonArray { new JsonObject { ["k"] = "const", ["type"] = Tw(new TypeNode.Fqn("kotlin.String")), ["value"] = msg } },
+                    },
+                },
+            };
+            return ColdMethod(body);
+        }
+
         // An abstract member's cold entry: `<name>$dotkt_suspend(params..., completion): Any?`, Virtual|Abstract,
         // no body/SM. Concrete overrides emit an `override:true` ColdMethod filling this slot. On a generic class
         // the params keep the class type params verbatim (the cold entry is an instance method of that class).
@@ -3254,10 +3217,12 @@ static partial class SuspendColdLowering
                     ["ret"] = Tw(AnyTn),
                 };
             else
+                // A top-level fun's cold entry lives in the file class (owner:null); a STATIC member's cold entry is a
+                // static method on the enclosing class, so target THAT owner (owner:null would resolve to the file class).
                 call = new JsonObject
                 {
                     ["k"] = "callStatic",
-                    ["owner"] = null,
+                    ["owner"] = _staticMember && _ownerClass != null ? Tn(_ownerClass) : null,
                     ["method"] = _coldName,
                     ["args"] = args,
                     ["ret"] = Tw(AnyTn),
