@@ -4,8 +4,12 @@
     <id>DotKt.Sdk.Mpp</id>
     <version>$version$</version>
     <authors>DotKt</authors>
+    <license type="expression">Apache-2.0</license>
+    <readme>DotKt.README.md</readme>
+    <projectUrl>https://github.com/tmyt/dotkt</projectUrl>
     <description>DotKt MSBuild SDK for multiplatform projects: `Sdk="DotKt.Sdk.Mpp"` is the base DotKt.Sdk with the common/actual source-set split (expect/actual in one CLR compilation) turned on. Imports DotKt.Sdk and sets DotKtMultiplatform=true.</description>
     <tags>kotlin clr dotnet msbuild sdk multiplatform mpp kotlin-$kotlinVersion$</tags>
+    <repository type="git" url="https://github.com/tmyt/dotkt.git" commit="$repoCommit$" />
     <packageTypes><packageType name="MSBuildSdk" /></packageTypes>
     <dependencies>
       <!-- Composition: this SDK imports the base DotKt.Sdk (same version), so restore must pull it in. -->
@@ -13,6 +17,7 @@
     </dependencies>
   </metadata>
   <files>
+    <file src="../DotKt.README.md" target="" />
     <file src="Sdk/**" target="Sdk" />
   </files>
 </package>

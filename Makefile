@@ -39,7 +39,8 @@ tool_src    = $(shell find toolchain/$(1) toolchain/bir-common -name '*.cs' -o -
 # Aggregate targets
 # ==================================================================================================
 .PHONY: all toolchain kotc $(TOOLS) stdlib stdlib-klib stdlib-ref stdlib-rt pack \
-        verify verify-il verify-ktproj verify-packaged-sdk verify-roundtrip verify-differential verify-widedelegates \
+        verify verify-core verify-il verify-schema verify-sanity verify-ktproj verify-packaged-sdk \
+        verify-roundtrip verify-differential verify-widedelegates \
         dev facades clean clean-tools clean-stdlib clean-pack help
 
 all: pack ## one-shot: toolchain -> stdlib -> the 5 NuGet packages in build/nuget-feed
@@ -95,7 +96,12 @@ pack: toolchain stdlib ## the 5 NuGet packages (Sdk/Sdk.Mpp/Toolchain/Stdlib/Tem
 # ==================================================================================================
 # Verification gates (the scripts are called VERBATIM; behavior is identical to invoking them)
 # ==================================================================================================
-verify: verify-il verify-schema verify-sanity verify-ktproj verify-packaged-sdk verify-roundtrip verify-differential verify-widedelegates ## run ALL gates
+verify: verify-core verify-packaged-sdk ## run ALL gates (the canonical set + the packaged-SDK release gate)
+
+# The canonical gate set EXCEPT the packaged-SDK gate. CI runs verify-core in the main job and
+# verify-packaged-sdk as a DISTINCT release-blocking job (GitHub #160), so the split lives here — not
+# copied into the workflow YAML. `make verify` still runs the complete set (verify-core + packaged-sdk).
+verify-core: verify-il verify-schema verify-sanity verify-ktproj verify-roundtrip verify-differential verify-widedelegates ## every gate except the packaged-SDK release gate
 
 verify-il: ## the canonical IL gate (compile -> IL -> run -> assert -> ilverify)
 	bash scripts/verify-il.sh

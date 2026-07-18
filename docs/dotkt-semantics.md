@@ -9,6 +9,13 @@ deep dives are linked per section.
 Guiding principle: *Kotlin carries JVM accidental complexity; on the CLR, identify it and discard it — don't
 reproduce it.* (Memory `clr-not-jvm-discard-jvmisms`.)
 
+**The correctness bar is the Kotlin spec / KDoc contract — not Kotlin/JVM.** Kotlin/JVM behavior is
+cited throughout this page only as a *reader reference* (what a Kotlin/JVM developer would expect),
+never as a compatibility target. Where the contract fixes a behavior, DotKt honors it (① *Kotlin
+contract*); where Kotlin leaves it unspecified, DotKt takes the CLR-native form (② *deliberate CLR
+choice*, with the reason stated) — it does not hand-force the JVM value as a correctness claim. Every
+such deviation is recorded here.
+
 > Looking for the friendly tour instead of the canonical reference? Read
 > [`docs/user/kotlin-on-clr-differences.md`](user/kotlin-on-clr-differences.md) first.
 

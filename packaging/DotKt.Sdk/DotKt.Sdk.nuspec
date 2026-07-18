@@ -4,11 +4,16 @@
     <id>DotKt.Sdk</id>
     <version>$version$</version>
     <authors>DotKt</authors>
+    <license type="expression">Apache-2.0</license>
+    <readme>DotKt.README.md</readme>
+    <projectUrl>https://github.com/tmyt/dotkt</projectUrl>
     <description>DotKt MSBuild SDK: build Kotlin (.kt) projects to .NET assemblies. Pulls in DotKt.Toolchain (compiler, build-only) and DotKt.Stdlib (the runtime stdlib).</description>
     <tags>kotlin clr dotnet msbuild sdk kotlin-$kotlinVersion$</tags>
+    <repository type="git" url="https://github.com/tmyt/dotkt.git" commit="$repoCommit$" />
     <packageTypes><packageType name="MSBuildSdk" /></packageTypes>
   </metadata>
   <files>
+    <file src="../DotKt.README.md" target="" />
     <file src="Sdk/**" target="Sdk" />
   </files>
 </package>

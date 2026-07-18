@@ -46,6 +46,11 @@
     semantics never go in ilemit. "Which layer?" is not a real fork — see **Layer boundaries** below.
 
 ## Design doctrine
+- **The correctness bar is the Kotlin spec/KDoc CONTRACT — JVM is a reader reference, not a compat target (2026-07-18, user-directed).**
+  Where the contract fixes behavior, honor it (frame it "Kotlin contract"); where Kotlin leaves it
+  unspecified, take the CLR-native form (frame it "deliberate CLR choice (reason)") — NEVER hand-force
+  the JVM value/behavior and NEVER cite "matches JVM" as a correctness claim. Canonical statement +
+  the recorded deviations: `docs/dotkt-semantics.md`.
 - **Unpublished project: cleanest design over backward compatibility. Break freely.**
 - **NO compat shims. NO dual-track. Delete the legacy path in the SAME change (2026-06-30, binding, user-directed).**
   Keeping an old path alive behind a `compat`/legacy flag is the proven root cause of blurred layer

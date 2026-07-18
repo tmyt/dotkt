@@ -34,6 +34,10 @@ VERSUFFIX="$(grep -oE '<DotKtVersionSuffix>[^<]*' "$ROOT/packaging/DotKt.Version
 VERCORE="$VERPREFIX"; [[ -n "$VERSUFFIX" ]] && VERCORE="$VERPREFIX-$VERSUFFIX"
 KOTLINVER="$(grep -oE '<DotKtKotlinVersion>[^<]+' "$ROOT/packaging/DotKt.Versions.props" | sed 's/.*>//')"
 [[ -n "$KOTLINVER" ]] || die "could not read DotKtKotlinVersion from packaging/DotKt.Versions.props"
+# Provenance (#166): stamp the source commit into every package's <repository>/RepositoryCommit. MSBuild reads
+# RepoCommit off the `-p:` below; the nuspec $repoCommit$ token and the Templates csproj RepositoryCommit both
+# resolve from it. `unknown` when not in a git checkout (a shallow/exported tree) — never blocks the pack.
+COMMIT="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
 for sp in packaging/DotKt.Sdk/Sdk/Sdk.props packaging/DotKt.Sdk.Mpp/Sdk/Sdk.props; do
 	sv="$(grep -oE "<DotKtVersion Condition[^>]*>[^<]+" "$ROOT/$sp" | sed 's/.*>//')"
 	[[ "$sv" == "$VERCORE" ]] || die "$sp DotKtVersion default ($sv) != release version core ($VERCORE) — bump it (else the SDK ships pulling a stale toolchain, GitHub #131)"
@@ -101,14 +105,17 @@ cp "$STDLIB_RT_DLL" "$SL/DotKt.Stdlib.dll"
 info "stage DotKt.Templates (substitute Sdk version $VERCORE)"
 TPLSTAGE="$ROOT/build/templates-staged"; rm -rf "$TPLSTAGE"; mkdir -p "$TPLSTAGE/DotKt.Templates"
 cp "$ROOT/packaging/DotKt.Versions.props" "$TPLSTAGE/DotKt.Versions.props"
+# The packaged NuGet readme is imported by the Templates csproj as `../DotKt.README.md` (a sibling of the csproj's
+# parent) — stage it next to DotKt.Versions.props so that relative reference resolves in the staged layout too.
+cp "$ROOT/packaging/DotKt.README.md" "$TPLSTAGE/DotKt.README.md"
 cp -r "$ROOT/packaging/DotKt.Templates/." "$TPLSTAGE/DotKt.Templates/"
 sed -i "s|DotKt\.Sdk/DOTKT_SDK_VERSION|DotKt.Sdk/$VERCORE|g" "$TPLSTAGE/DotKt.Templates/content/dotkt-cli/DotKtApp.csproj"
 
 info "pack DotKt.Toolchain + DotKt.Sdk + DotKt.Sdk.Mpp + DotKt.Stdlib + DotKt.Templates"
-dotnet pack "$ROOT/packaging/DotKt.Toolchain/DotKt.Toolchain.pack.csproj" -o "$FEED" -v q --nologo
-dotnet pack "$ROOT/packaging/DotKt.Sdk/DotKt.Sdk.pack.csproj" -o "$FEED" -v q --nologo
-dotnet pack "$ROOT/packaging/DotKt.Sdk.Mpp/DotKt.Sdk.Mpp.pack.csproj" -o "$FEED" -v q --nologo
-dotnet pack "$ROOT/packaging/DotKt.Stdlib/DotKt.Stdlib.pack.csproj" -o "$FEED" -v q --nologo
-dotnet pack "$TPLSTAGE/DotKt.Templates/DotKt.Templates.csproj" -o "$FEED" -v q --nologo
+dotnet pack "$ROOT/packaging/DotKt.Toolchain/DotKt.Toolchain.pack.csproj" -o "$FEED" -v q --nologo -p:RepoCommit="$COMMIT"
+dotnet pack "$ROOT/packaging/DotKt.Sdk/DotKt.Sdk.pack.csproj" -o "$FEED" -v q --nologo -p:RepoCommit="$COMMIT"
+dotnet pack "$ROOT/packaging/DotKt.Sdk.Mpp/DotKt.Sdk.Mpp.pack.csproj" -o "$FEED" -v q --nologo -p:RepoCommit="$COMMIT"
+dotnet pack "$ROOT/packaging/DotKt.Stdlib/DotKt.Stdlib.pack.csproj" -o "$FEED" -v q --nologo -p:RepoCommit="$COMMIT"
+dotnet pack "$TPLSTAGE/DotKt.Templates/DotKt.Templates.csproj" -o "$FEED" -v q --nologo -p:RepoCommit="$COMMIT"
 
 info "feed:"; ls -1 "$FEED"
