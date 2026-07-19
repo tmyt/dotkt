@@ -7,6 +7,15 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir/ilemit ([tmyt/dotkt#46], area:bir2cir, area:ilemit): CLOSED — ilemit re-resolves NOTHING on any clr*
+  member axis (W1-S5 finishes the arc).** W1-S5 carries the `newBoundClrDelegate` target (Site 3 — a bound
+  `netObj::method` reference) via a new `ResolveBoundClrDelegate` + `memberSig`, and deletes ilemit's LAST name-only
+  first-pick (`Emitter.Expressions.cs`'s `type.GetMethod(name, argTypes) ?? type.GetMethod(name)` → the consume-only
+  `LinkClrMethod`). After the full arc — S1 (#44, generic calls) → S2 (plain calls / ctors / dispatch) → S3
+  (properties / fields / events) → S4 (override base-slot) → S5 (bound delegate) — ilemit's only remaining
+  `GetMethod`/`ResolveMethod` are fixed BCL gets, the by-design Site-2 `callInstance` linker for MLC-unresolvable
+  local-emitted owners (instrumented: 0 arbitrary-overload / dynamic-escape firings), and the deterministic
+  `InterfaceMethodOn` single-abstract-method SAM lookup — none is an overload/arity/name first-pick. `MATCH 188 / DIFF 0`.
 - **bir2cir/ilemit ([tmyt/dotkt#46], [tmyt/dotkt#183], area:bir2cir, area:ilemit): W1-S4 — declaration-side override
   base-slot memberRef carry.** A method DECLARATION overriding a .NET base-CLASS virtual (a property accessor such as
   `override val message` -> System.Exception.get_Message; the coroutine SM `create`/`invokeSuspend` overrides of
