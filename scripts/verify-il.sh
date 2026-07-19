@@ -88,14 +88,12 @@ declare -A XFAIL_ILVERIFY=(
 	# honestly yields Array<T?> (#124); for a value elem the array is materialized as object[] where Nullable<int32>[]
 	# is formally expected at the callsite. Runtime-safe (RUN green — null tail + prefix read back correctly).
 	[copyofnull]="#127/#86: nullable value-type array (copyOf -> Array<T?>, #124) materialized as object[] where Nullable<T>[] is formally expected — the object-erasure write/return axis, runtime-safe (RUN green)"
-	# defargs / delegnull / linkedorder: the formal-only DelegateCtor 'Unrecognized arguments for delegate .ctor' class
-	# (#170, whose title names il-linkedorder exactly; root mechanism #150). A synthetic delegate for a joinToString{}
-	# trailing lambda / data-class copy default-arg (defargs), a Func<string?>/Action<string?> lambda (delegnull), or a
-	# joinToString{} lambda over map entries (linkedorder) constructs a delegate ilverify rejects the ctor args of.
-	# All three RUN green — a formal-only ilemit delegate-construction finding.
-	[defargs]="#170/#150: formal-only DelegateCtor 'Unrecognized arguments for delegate .ctor' on a joinToString{}/copy default-arg synthetic delegate — runtime-safe (RUN green)"
-	[delegnull]="#170/#150: formal-only DelegateCtor 'Unrecognized arguments for delegate .ctor' on a Func<string?>/Action<string?> lambda-to-delegate construction — runtime-safe (RUN green)"
-	[linkedorder]="#170: formal-only DelegateCtor 'Unrecognized arguments for delegate .ctor' on a joinToString{} lambda over map entries (the exact sample #170 names) — runtime-safe (RUN green)"
+	# delegnull: a formal-only DelegateCtor 'Unrecognized arguments for delegate .ctor'. A Func<string?>/Action<string?>
+	# lambda-to-delegate construction — a nullable/NRT-erasure axis (a lifted lambda returns `object` where the delegate
+	# Invoke expects a `string?`), DISTINCT from the #170 String->CharSequence delegate-return fix (which retyped the
+	# lifted lambda's ret + adapter-wrapped its returns to match the KFunc<…,dotkt$CharSequence> ilemit rewraps into —
+	# that closed defargs + linkedorder). RUN green — a separate bir2cir invocation-adapter follow-up.
+	[delegnull]="#150: formal-only DelegateCtor 'Unrecognized arguments for delegate .ctor' on a Func<string?>/Action<string?> lambda-to-delegate construction (nullable/NRT axis, distinct from #170) — runtime-safe (RUN green)"
 )
 
 # The CLR stdlib (kotlin.*) is supplied to kotc via the FRONTEND KLIB (scripts/build-stdlib-klib.sh) on
