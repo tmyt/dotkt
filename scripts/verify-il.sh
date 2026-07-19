@@ -118,7 +118,7 @@ RESULTS="$ROOT/build/verify-il"
 rm -rf "$RESULTS"; mkdir -p "$RESULTS"
 
 # Run samples concurrently (each compile is an independent ~2s JVM startup). A job pool caps parallelism.
-JOBS="$(nproc 2>/dev/null || echo 4)"; (( JOBS > 6 )) && JOBS=6
+JOBS="$(nproc 2>/dev/null || echo 4)"; (( JOBS > 2 )) && JOBS=$(( JOBS - 2 ))   # use the box (24c): leave 2 cores headroom. Was capped at 6 (stale — /tmp leak is fixed; MEMORY dev-box-resources-parallelize-aggressively)
 gate() { while (( $(jobs -rp | wc -l) >= JOBS )); do wait -n 2>/dev/null || true; done; }
 
 # Every sample worker calls sample_guard FIRST: it arms an EXIT trap that writes EXACTLY ONE result

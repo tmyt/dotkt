@@ -89,7 +89,7 @@ il-triple il-typealias il-atomics il-tailrec il-copydef il-equalscall il-enumint
 # Run samples concurrently (each does a JVM oracle compile+run plus a CLR compile+run — all independent).
 # Each stage in diff_eval captures its own exit status (`|| <stage>=…`) so a broken sample reports its own DIFF
 # line — with the failing stage + stderr — instead of dying under `set -e` OR silently comparing empty stdout.
-JOBS="$(nproc 2>/dev/null || echo 4)"; (( JOBS > 6 )) && JOBS=6
+JOBS="$(nproc 2>/dev/null || echo 4)"; (( JOBS > 2 )) && JOBS=$(( JOBS - 2 ))   # use the box (24c): leave 2 cores headroom. Was capped at 6 (stale — /tmp leak is fixed; MEMORY dev-box-resources-parallelize-aggressively)
 gate() { while (( $(jobs -rp | wc -l) >= JOBS )); do wait -n 2>/dev/null || true; done; }
 # Kotlin.NET primitive formatting is CLR-native by design; normalize platform-cosmetic differences
 # (boolean case true/True, double trailing `.0`) so the harness validates LOGIC, not host formatting.
