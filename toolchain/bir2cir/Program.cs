@@ -251,11 +251,6 @@ sealed class Pipeline
             // charSeqIfaceDefs / kPropertyDefs / refDefs used to be — and, crucially, before Phase-1.5
             // SuspendColdLowering builds its `closures` lookup from `types`. ClosureSynthesis first so a closure invoke
             // body that references KProperty is in `types` when SharedSyntheticSynthesis scans for it.
-            // HIGH-ARITY FUNCTION-TYPE DECL FILTER (#72): drop (stdlib) / reject (app) any decl whose signature mentions
-            // a function type with >16 params — no System.Func/Action exists for it. Runs BEFORE ClosureSynthesis so a
-            // dropped body's lambdas are never synthesized into orphan closure types (moved here from kotc, which now
-            // emits every decl faithfully; the Func/Action 16-cap is a CLR-representation fact).
-            HighArityFunctionFilter.Apply(bir.Root, _options.StdlibMode);
             // OBJECT-SLOT RENAME (#73 M5): restore the System.Object BCL slot names (ToString/GetHashCode/Equals) that
             // kotc stopped emitting — it now emits the Kotlin names (toString/hashCode/equals) + the pure-Kotlin facts
             // `objectOverride:true` (decl) / `anySlot:true` (call). Runs FIRST and UNCONDITIONALLY (ref + rt + app): the

@@ -5,6 +5,19 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Fixed
+
+- **stdlib/bir2cir ([tmyt/dotkt#56], area:bir2cir): high-arity (17–22) function-type declarations no longer
+  silently dropped during the stdlib build.** bir2cir's `HighArityFunctionFilter` dropped (with only a stderr
+  warning) any stdlib declaration whose signature mentioned a function type with >16 params — a silent-drop
+  landmine (its "context() overloads are arity 17-22" premise was stale; those overloads are arity 1-6, so the
+  filter guarded nothing that exists). Deleted the filter entirely: ilemit's module-local `KFunc`N`/`KAction`N`
+  delegate synthesis is arity-driven and mode-INDEPENDENT, so the stdlib build now emits wide function-type
+  declarations exactly like an app build (verified: ref+rt builds emit `KFunc`23`/`KAction`22` for a 22-arg
+  probe). The Func/Action 16-param cap is now owned solely by ilemit's `BuildFuncType`; no bir2cir arity filter
+  remains. Aligns with the cardinal rule (never drop/special-case a stdlib decl) and the frontend-resolved ⇒
+  backend-must-compile invariant.
+
 ### Changed
 
 - **bir2cir/ilemit ([tmyt/dotkt#48], area:bir2cir, area:ilemit): the legacy string-token type grammar is DELETED —
