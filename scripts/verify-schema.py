@@ -45,10 +45,10 @@ STR_OK = {
                                                 # clrPropGet/clrPropSet (get/set) or the default-indexed-property accessor
                                                 # (index-get/index-set), so it never survives to CIR. A marker, not a type slot.
     "local",                                    # a byref*/delegate node's local-VARIABLE-NAME reference
-    "attr", "nestedIn",                         # attribute-type name / enclosing-type name (owner-FQN island — §2.2.1).
-                                                # `attr` is a bare-FQN string; bir2cir AttrExternalNormalize strips kotc's
-                                                # legacy `clr:` imported-.NET prefix to a bare FQN + an `attrExternal` bool
-                                                # sibling flagging a referenced-.NET attribute type (#48, ex-`clr:` prefix)
+    "nestedIn",                                 # enclosing-type name (owner-FQN island — §2.2.1). (The applied-attribute
+                                                # `attr` type is now a structured `{t:fqn}` node — #48; kotc flags an
+                                                # imported .NET attr with `attrClr:true`, which bir2cir AttrExternalNormalize
+                                                # consumes into the `attrExternal` bool. No `clr:` prefix, no attr string.)
     "fileClass", "fileClassFQN", "pkg",         # file-class / package identifiers
     "f",                                        # #112 P2: the decl-level source-position FILE path (pos.{f,l,c});
                                                 # `l`/`c` are ints. A diagnostics-only breadcrumb, NOT a type slot.
@@ -69,14 +69,11 @@ STR_OK = {
                                                  # payload for [KotlinInline]/[KotlinSuspendFunctionType] and the nested
                                                  # NullableAttribute(byte[]) form; ilemit's ConstArgValue decodes it to a
                                                  # real byte[] fixed argument. An opaque payload, NOT a type slot.
-    # OWNER-FQN string islands (§2.2.1 — a type IDENTITY used as a resolution key, NOT a document value-type slot).
-    # Only the KOTC-emitted callInline dispatch keys remain string here; every bir2cir/ilemit owner slot (`ownerType`,
-    # `clrOverride`, `accessOwner`, clr* `type`) is now a structured `{t:fqn}` node (#48 S4). callInline is consumed by
-    # bir2cir InlineSplice and never reaches CIR — its owner/callee strings live only in BIR.
-    "owner",                                    # callStatic owner (a structured node) AND callInline.owner — a file-class
-                                                # FQN string, OR JSON-null for the S3 owner-less stdlib scope-fn arm
-    "callee",                                   # callInline (#75): the inline fn's Kotlin FQN identity ("kotlin.repeat"),
-                                                # a dispatch key consumed by bir2cir InlineSplice — never survives to CIR
+    # OWNER-FQN string island (§2.2.1 — a type IDENTITY used as a resolution key, NOT a document value-type slot).
+    # Only `ownerType` remains string here: every OTHER owner slot (`owner` — callStatic AND callInline.owner/callee,
+    # `clrOverride`, `accessOwner`, clr* `type`) is now a structured `{t:fqn}` node (#48). callInline.owner/callee were
+    # the last KOTC-emitted owner-FQN strings; they are structured nodes as of #48 (owner may be JSON-null for the
+    # owner-less stdlib scope-fn arm), consumed by bir2cir InlineSplice via TypeJson.OwnerName — never reaching CIR.
     "ownerType",                                # callInstance/field/setField owner — kotc emits it as a bare-FQN string
                                                 # for class-delegation forwarders + interop-extension owners (a resolution
                                                 # identity, not a value type); the bir2cir/ilemit-side owners are nodes (#48)

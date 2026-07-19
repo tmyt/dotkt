@@ -45,7 +45,7 @@ sealed partial class Emitter
     // semantics we could preserve anyway, so we skip it with a diagnostic rather than abort the whole emit.
     CustomAttributeBuilder BuildCab(JsonElement a)
     {
-        var attr = a.GetProperty("attr").GetString();
+        var attr = SlotName(a.GetProperty("attr"));   // `attr` is a structured `{t:fqn}` identity node (#48)
         var args = a.GetProperty("args").EnumerateArray().Select(ConstArgValue).ToArray();
         if (a.TryGetProperty("attrExternal", out var extF) && extF.GetBoolean())
         {
@@ -104,7 +104,7 @@ sealed partial class Emitter
         if (!decl.TryGetProperty("attrs", out var attrs) || attrs.ValueKind != JsonValueKind.Array) return;
         foreach (var a in attrs.EnumerateArray())
         {
-            var an = a.GetProperty("attr").GetString();
+            var an = SlotName(a.GetProperty("attr"));   // structured `{t:fqn}` identity node (#48)
             var anExternal = a.TryGetProperty("attrExternal", out var anExt) && anExt.GetBoolean();
             if (!anExternal && !_types.ContainsKey(an)) continue;
             var cab = BuildCab(a); if (cab != null) set(cab);
@@ -189,7 +189,7 @@ sealed partial class Emitter
             if (hasAttrs)
                 foreach (var a in pattrs.EnumerateArray())
                 {
-                    var an = a.GetProperty("attr").GetString();
+                    var an = SlotName(a.GetProperty("attr"));   // structured `{t:fqn}` identity node (#48)
                     var anExternal = a.TryGetProperty("attrExternal", out var anExt) && anExt.GetBoolean();
                     if (!anExternal && !_types.ContainsKey(an)) continue;
                     var cab = BuildCab(a); if (cab != null) pb.SetCustomAttribute(cab);

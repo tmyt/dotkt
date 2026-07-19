@@ -230,7 +230,7 @@ static class RoundtripMetadata
     {
         if (decl[key] is not JsonArray a) return;
         for (int i = a.Count - 1; i >= 0; i--)
-            if (a[i] is JsonObject ao && (ao["attr"] as JsonValue)?.GetValue<string>() is string fqn && IsRuntimeStrippable(fqn))
+            if (a[i] is JsonObject ao && TypeJson.OwnerName(ao["attr"]) is string fqn && IsRuntimeStrippable(fqn))
                 a.RemoveAt(i);
         if (a.Count == 0) decl.Remove(key);
     }
@@ -294,7 +294,7 @@ static class RoundtripMetadata
     {
         var arr = new JsonArray();
         foreach (var a in args) arr.Add(a);
-        return new JsonObject { ["attr"] = attr, ["args"] = arr };
+        return new JsonObject { ["attr"] = TypeJson.Fqn(attr), ["args"] = arr };   // `attr` is a structured `{t:fqn}` node (#48)
     }
 
     static JsonObject ByteMarker(string attr, int v) => Marker(attr, ByteArg(v));

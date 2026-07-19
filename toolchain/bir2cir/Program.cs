@@ -682,10 +682,10 @@ sealed class Pipeline
             // the job ilemit's deleted `_stripMetadata` did. DotKt.Stdlib.dll is the shipping runtime assembly (never
             // metadata-read); keep it lean, matching the old strip.
             else RoundtripMetadata.StripRuntimeAttrs(lowered);
-            // #48/#146: normalize every applied-attribute owner to a bare-FQN identity + `attrExternal` bool — strip
-            // kotc's legacy `clr:`-imported .NET attr prefix (all builds), and mark the cross-module @KotlinDefault
-            // external in APP/user-library builds (it only REFERENCES the stdlib-defined type; the ref/rt self-build
-            // defines it locally in `_types` and stays a bare-FQN local stamp).
+            // #48/#146: mint the ilemit-facing `attrExternal` bool from an applied-attribute's `{t:fqn}` type node —
+            // consume kotc's `attrClr` origin flag for an imported .NET attr (all builds), and mark the cross-module
+            // @KotlinDefault external in APP/user-library builds (it only REFERENCES the stdlib-defined type; the ref/rt
+            // self-build defines it locally in `_types` and stays a bare-FQN local stamp).
             AttrExternalNormalize.Apply(lowered, _options.StdlibMode == BuildStdlibMode.App);
             // W1-S2 (#46): RESOLVED-CLR-IR carry — resolve every clrStatic/clrInstance/newClr against the ref.dll MLC and
             // stamp the winning member's DECLARED param signature as `memberSig` (+ `dispatch` on clrInstance), deleting the

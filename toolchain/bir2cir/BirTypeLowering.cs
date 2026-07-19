@@ -109,9 +109,9 @@ static class BirTypeLowering
     // convention -> CLR `void` (a Unit-returning fun is a void method; the entry point `fun main(): Unit` MUST be
     // void or the CLR rejects the program). This is UNIFORM across ref AND substitute/app — a Unit-returning method
     // is void in both, matching the prior behaviour — so it is NOT mode-gated. A kotlin.Unit VALUE (a field, a
-    // generic arg like Sequence<Unit>, a receiver) keeps the emitted Unit type (you cannot have a `void` field), and
-    // an already-decorated `@kotlin.Unit` type-arg passes through unchanged. (Mirrors kotc birTypeDeleg's
-    // "kotlin.Unit -> void in return, @kotlin.Unit in type-arg" split.) The numeric primitives are NOT
+    // generic arg like Sequence<Unit>, a receiver) keeps the emitted Unit type (you cannot have a `void` field) — it
+    // rides as a structured `{t:fqn,name:"kotlin.Unit"}` node and passes through unchanged. (Mirrors kotc birTypeDeleg's
+    // "kotlin.Unit -> void in return, kotlin.Unit in type-arg" split.) The numeric primitives are NOT
     // position-dependent — they lower uniformly everywhere via their @ClrTypeAlias (the AliasBcl path, #55).
     // RETURN-POSITION type keys, grouped by a SHARED PROPERTY (a return-slot type, where kotlin.Unit lowers to
     // `void` via LowerReturnValued) — NOT synonyms. The members are DISTINCT ROLES that can coexist on one node:
@@ -576,19 +576,16 @@ static class BirTypeLowering
             var inner = t[(br + 1)..^1];
             var args = string.Join(",", SplitTopLevel(inner).Select(a => LowerTypeString(a, refBuild, force)));
             // A @ClrTypeAlias GENERIC type used as a type constructor (supertype/interface/type-arg/field), e.g.
-            // kotlin.collections.Collection[E] -> clrg:System.Collections.Generic.IReadOnlyCollection[E]. kotc may carry
-            // an `@` (this-assembly-emitted) marker even on a substituted type (a CLR-resolution marker that belongs
-            // below kotc) — strip it for the alias lookup and DROP it when the type is BCL-aliased; a non-alias `@`
-            // head is a genuine emitted type and keeps its `@`. ilemit builds the generic by arg count. The foundational
-            // primitives never appear as a generic head, so the primitive-alias path need not gate here.
-            var bareHead = head.StartsWith("@", StringComparison.Ordinal) ? head[1..] : head;
+            // kotlin.collections.Collection[E] -> System.Collections.Generic.IReadOnlyCollection[E]. ilemit builds the
+            // generic by arg count. The foundational primitives never appear as a generic head, so the primitive-alias
+            // path need not gate here. No `@`-decorated head reaches this string path (#48: type-args are structured nodes).
             // `kotlin.Enum<E>` -> the NON-generic `System.Enum` (C2): a Kotlin `enum class` is emitted as a real CLR
             // `System.Enum`-backed enum (ilemit `DefineEnum`), which does NOT extend the stdlib's generic `kotlin.Enum<E>`
-            // class. So a `fun <T : Enum<T>> …` self-referential bound (`@kotlin.Enum[gp:T]`) must lower to `System.Enum`
+            // class. So a `fun <T : Enum<T>> …` self-referential bound (`kotlin.Enum[gp:T]`) must lower to `System.Enum`
             // (the CLR `where T : Enum` idiom) or a real enum type argument violates the constraint (VerificationException).
             // Drop the self-referential type arg — System.Enum is non-generic.
-            if (bareHead == "kotlin.Enum") return "System.Enum";
-            if (!head.StartsWith("clr", StringComparison.Ordinal) && AliasBcl(bareHead) is string genericBcl)
+            if (head == "kotlin.Enum") return "System.Enum";
+            if (!head.StartsWith("clr", StringComparison.Ordinal) && AliasBcl(head) is string genericBcl)
             {
                 // `Comparable<*>` / `Comparable<Any?>` (the star / Any-projected comparable — kotc token
                 // `kotlin.Comparable[object]`) -> the NON-generic `System.IComparable`, NOT `IComparable<object>` (C2).
@@ -612,21 +609,15 @@ static class BirTypeLowering
     {
         // A bare kotlin.* foundational leaf (numeric/bool/char + String/Any + the unsigned set) lowers to its BARE BCL
         // FQN via the active map; all other leaves (CLR shorthand, the position-dependent kotlin.Unit value, user/stdlib
-        // FQNs like kotlin.collections.List) pass through. No legacy `clrg:` prefix is recognized/emitted (#48).
-        // An `@`-decorated PRIMITIVE is the dual-representation type-arg form (Comparable<@kotlin.Int>) and MUST stay
-        // verbatim — never lowered to the bare CLR primitive. A bare primitive lowers to its @ClrTypeAlias BCL form.
-        var decorated = t.StartsWith("@", StringComparison.Ordinal);
-        var bare = decorated ? t[1..] : t;
+        // FQNs like kotlin.collections.List) pass through. No legacy `clrg:`/`@` grammar is recognized/emitted (#48) —
+        // type-args travel as structured `{t:fqn}` nodes, so the `@`-decorated dual-representation STRING form is gone.
         // The attribute-blob force path keeps the hardcoded KotlinAllToClr map (no ref.dll in the ref build). #55: the
         // non-force `KotlinToClr` shadow was deleted, so a bare primitive falls to AliasBcl (its ref.dll @ClrTypeAlias).
-        if (force && KotlinAllToClr.TryGetValue(bare, out var clr)) return decorated ? t : clr;
-        // A decorated (dual-representation) primitive type-arg stays verbatim in the non-force path — @kotlin.Int keeps
-        // its boxed form and is never lowered to the CLR value type.
-        if (decorated) return t;
+        if (force && KotlinAllToClr.TryGetValue(t, out var clr)) return clr;
         // A @ClrTypeAlias type used bare — a foundational primitive (kotlin.Int -> System.Int32) OR a non-generic
         // BCL (StringBuilder/Regex/Match/IComparable/TextWriter/...) -> the BARE <bcl> FQN (no legacy `clr:` prefix —
         // ilemit derives resolution from the name; #48), read from the ref.dll alias index.
-        if (AliasBcl(bare) is string bcl) return bcl;
+        if (AliasBcl(t) is string bcl) return bcl;
         return t;
     }
 

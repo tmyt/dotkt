@@ -233,7 +233,7 @@ the SAME vocabulary but with local rules: `birTypeDeleg` (`:2840`, KProperty→o
 | primitive shorthand | `int`,`long`,`short`,`byte`,`double`,`float`,`bool`,`char` | `BirMappings VALUE_PRIM_BIR / PRIMITIVE_ARRAY_ELEM` | only in ELEMENT/const/conv slots — **NOT** from `birType` top-level (see Drift D1) |
 | `object` | `object` | `:4935,4919,4896` | Any?/erased/star-projection fallback |
 | `void` | (params never; return special-cased) | — | Unit as return → NOT emitted by kotc (`kotlin.Unit` kept); shorthand only appears in hand-written synthetics |
-| `stackptr` | `stackptr` | `:2664` | a stackalloc pointer local type (hand-written, not from birType) |
+| `dotkt$stackptr` | `dotkt$stackptr` | `:2664` | a stackalloc pointer local type (hand-written synthetic identity, not from birType) |
 
 ### 2b. COMPOUND tokens (need parsing/splitting to read back)
 
