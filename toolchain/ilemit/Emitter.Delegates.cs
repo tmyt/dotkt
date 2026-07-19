@@ -85,15 +85,22 @@ sealed partial class Emitter
     ConstructorInfo DelegateCtor(Type ft)
     {
         var sig = new[] { typeof(object), typeof(IntPtr) };
-        if (ft.IsGenericType && ft.GetGenericTypeDefinition() is TypeBuilder dtb && _syntheticDelegateCtors.TryGetValue(dtb, out var dctor))
+        // #150: key the synthetic-delegate ctor fast-path on IsGenericInst (GetGenericArguments-based), SYMMETRIC with
+        // InvokeOf/ContainsTypeBuilder. `IsGenericType` is UNRELIABLE for a TypeBuilderInstantiation across Reflection.Emit
+        // versions (see IsGenericInst) — was `ft.IsGenericType`, which only fires because this SDK happens to report True;
+        // a version reporting False would skip this branch and hit `ft.GetConstructor(sig)` on the un-baked builder
+        // instantiation -> NotSupportedException. GetGenericArguments().Length is always populated, so this is robust.
+        if (IsGenericInst(ft) && ft.GetGenericTypeDefinition() is TypeBuilder dtb && _syntheticDelegateCtors.TryGetValue(dtb, out var dctor))
             return TypeBuilder.GetConstructor(ft, dctor);
         return (IsGenericInst(ft) && (ContainsTypeBuilder(ft) || IsTypeBuilderBackedGeneric(ft)))
             ? TypeBuilder.GetConstructor(ft, ft.GetGenericTypeDefinition().GetConstructor(sig))
             : ft.GetConstructor(sig);
     }
 
-    // A generic INSTANTIATION test that survives the new Reflection.Emit (where a TypeBuilderInstantiation reports
-    // IsGenericType=false): its generic-arg list is still populated.
+    // A generic INSTANTIATION test that does NOT depend on `IsGenericType`, whose value for a TypeBuilderInstantiation is
+    // version-dependent and unreliable (SDK 10.0.101 empirically reports IsGenericType=TRUE for a synthetic KFunc`2<int,
+    // string>; older Reflection.Emit reported FALSE) — the generic-arg list, by contrast, is ALWAYS populated. All
+    // TypeBuilder-instantiation branching here keys on this, never on IsGenericType.
     static bool IsGenericInst(Type t) => !t.IsGenericParameter && t.GetGenericArguments().Length > 0;
 
     // The delegate's `Invoke` method, bridged via TypeBuilder.GetMethod for a TypeBuilder-involving instantiation.

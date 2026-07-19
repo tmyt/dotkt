@@ -805,9 +805,10 @@ sealed partial class Emitter
         // that fails the `is`-check yet still needs TypeBuilder.GetX to encode (e.g. `Func<E[]>` in a generic method).
         if (t is TypeBuilder || t is GenericTypeParameterBuilder || t.IsGenericParameter) return true;
         if (t.HasElementType) return ContainsTypeBuilder(t.GetElementType());
-        // `GetGenericArguments().Length > 0`, NOT `IsGenericType`: the new Reflection.Emit reports IsGenericType=false
-        // for a TypeBuilderInstantiation (a runtime-def generic like `Func<E[]>` instantiated over builder args), which
-        // would skip the recursion that finds the nested builder/param.
+        // `GetGenericArguments().Length > 0`, NOT `IsGenericType`: IsGenericType is UNRELIABLE for a TypeBuilderInstantiation
+        // (a runtime-def generic like `Func<E[]>` instantiated over builder args) — version-dependent across Reflection.Emit
+        // (SDK 10.0.101 reports TRUE, older builds reported FALSE), so keying on it would intermittently skip the recursion
+        // that finds the nested builder/param. The generic-arg list is always populated, so it is the robust discriminator.
         if (!t.IsGenericParameter && t.GetGenericArguments().Length > 0)
         {
             // A CONSTRUCTED generic whose open definition is a TypeBuilder (e.g. `Iterator<int>` while Iterator is being
