@@ -724,14 +724,13 @@ sealed partial class Emitter
             }
             case "newBoundClrDelegate":
             {
-                // `netObj::method` -> a delegate bound to a .NET instance method (resolved by reflection).
+                // `netObj::method` -> a delegate bound to a .NET instance method. W1-S5 (#46/#183): CONSUME the FIR-
+                // resolved `memberSig` descriptor bir2cir carried (ClrMemberResolution.ResolveBoundClrDelegate) — LINK
+                // the UNIQUE instance target (0 = hard ABI error, >1 = malformed), never a name-only first-pick.
                 var ft = MapType(e.GetProperty("funcType"));
                 // `clrType` is a STRUCTURED TypeNode post type-flip (was a bare string); ClrRef(JsonElement) dispatches both.
                 var type = ClrRef(e.GetProperty("clrType"));
-                var argTypes = e.GetProperty("argTypes").EnumerateArray().Select(a => ClrRef(a)).ToArray();
-                var mi = type.GetMethod(e.GetProperty("method").GetString(),
-                    BindingFlags.Public | BindingFlags.Instance, null, argTypes, null)
-                    ?? type.GetMethod(e.GetProperty("method").GetString());
+                var mi = LinkClrMethod(type, e.GetProperty("method").GetString(), e, instance: true);
                 EmitExpr(e.GetProperty("recv"));
                 if (IsVirtual(e)) { _il.Emit(OpCodes.Dup); _il.Emit(OpCodes.Ldvirtftn, mi); }
                 else _il.Emit(OpCodes.Ldftn, mi);

@@ -56,6 +56,7 @@ static partial class ClrMemberResolution
             case "newClr": ResolveCtor(node); break;
             case "clrStatic": ResolveCall(node, instance: false); break;
             case "clrInstance": ResolveCall(node, instance: true); break;
+            case "newBoundClrDelegate": ResolveBoundClrDelegate(node); break;
             case "clrPropGet": ResolveProp(node, write: false); break;
             case "clrPropSet": ResolveProp(node, write: true); break;
             case "clrEventAdd": ResolveEvent(node); break;
@@ -140,6 +141,34 @@ static partial class ClrMemberResolution
         node.Remove("argTypes");
         if (instance)
             node["dispatch"] = Dispatch(win, open, (node["super"] as JsonValue)?.GetValue<bool>() ?? false);
+    }
+
+    // ---- bound .NET method-reference (newBoundClrDelegate) --------------------------------------
+
+    // W1-S5 (#46/#183) — RESOLVED-CLR-IR carry for a BOUND .NET method-reference (`netObj::method`, produced by
+    // NetInteropBinding.ReshapeBoundDelegate). The target is ALWAYS a public INSTANCE method on the owner `clrType`
+    // (Codex-confirmed: the bound receiver comes from an IR dispatch receiver — statics have none, extensions are
+    // excluded). Until now ilemit resolved it with `type.GetMethod(name, argTypes) ?? type.GetMethod(name)` — a
+    // name+params match with a NAME-ONLY first-pick fallback (exactly the class #46 removes). This carries the winning
+    // method's DECLARED param signature as `memberSig` so ilemit LINKS the unique target (0 = hard ABI error, >1 =
+    // malformed). The ldftn-vs-ldvirtftn choice stays driven by the node's existing `virtual` field — memberSig only
+    // identifies the overload, so no `dispatch` is needed.
+    static void ResolveBoundClrDelegate(JsonObject node)
+    {
+        if (ReadOwnerNode(node["clrType"]) is not TypeNode.Fqn ownerFqn) return;
+        var open = ResolveOwnerType(ownerFqn);
+        if (open == null)
+            throw new InvalidOperationException($"bir2cir: newBoundClrDelegate owner '{ownerFqn.Name}' does not resolve to a .NET type (#46/#183 memberSig carry)");
+        var name = (node["method"] as JsonValue)?.GetValue<string>();
+        var argNodes = ReadArgTypes(node);
+        // A bound method-ref carries no `typeArgs` (no `netObj::method<T>` form in the corpus) — exclude generic-method
+        // DEFINITIONS, mirroring ResolveCall's no-typeArgs branch; a generic target would fail loud here (greppable).
+        var cands = Candidates(open, name, argNodes, ownerFqn.Args, BindingFlags.Public | BindingFlags.Instance)
+            .Where(m => !m.IsGenericMethodDefinition).ToList();
+        var win = PickUnique(cands, m => m.GetParameters(), argNodes, ownerFqn.Args,
+            $"newBoundClrDelegate owner={TypeNode.ToJson(ownerFqn)} .{name}({DescArgs(argNodes)})");
+        node["memberSig"] = MemberSig(win.GetParameters());
+        node.Remove("argTypes");
     }
 
     // ---- shared resolution ---------------------------------------------------------------------
