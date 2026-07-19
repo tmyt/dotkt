@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reflection;
 using System.Reflection.PortableExecutable;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 
 namespace DotKt.Toolchain;
 
@@ -66,9 +67,19 @@ sealed class ManagedReferenceCatalog
     /// not two — see the twin-collapse in <see cref="Create"/>) and the constructor aliases a <c>DotKt.Stdlib</c>
     /// request to the ref twin — keeping the ref-reader ref.dll-only. NEVER set for ilemit (it loads the real
     /// runtime stdlib).</para>
+    /// <para><paramref name="targetRid"/> / <paramref name="ridGraphPath"/> (runtime set only, #51): the RID the app
+    /// is being compiled FOR, and the .NET/NuGet portable RID fallback graph used to rank RID-impl assets. When
+    /// <paramref name="targetRid"/> is null the HOST RID is assumed — correct for a host-targeted or direct-script run,
+    /// but a cross-target build (Linux host → <c>win-x64</c>) MUST pass its <c>$(RuntimeIdentifier)</c> or asset
+    /// selection picks the host's asset (a RID-neutral PlatformNotSupported placeholder). <paramref name="ridGraphPath"/>
+    /// is MSBuild's <c>$(RuntimeIdentifierGraphPath)</c> (<c>PortableRuntimeIdentifierGraph.json</c>); when null it is
+    /// auto-discovered from the running SDK, and if no graph is found a minimal built-in family chain is the last
+    /// resort. The fallback chain is the graph's transitive <c>#import</c> closure (most specific first), NOT a
+    /// hand-rolled family table.</para>
     /// </summary>
     public static ManagedReferenceCatalog Create(IEnumerable<string> paths, string toolName,
-        bool runtimeSelection = false, bool refStdlibAliasesRuntime = false)
+        bool runtimeSelection = false, bool refStdlibAliasesRuntime = false,
+        string targetRid = null, string ridGraphPath = null)
     {
         // Phase 1: normalise the raw paths to (path, identity) candidates, dropping duplicates / non-managed /
         // satellite assemblies.  Identity-level conflict handling differs between the two sets, so it happens
@@ -102,6 +113,12 @@ sealed class ManagedReferenceCatalog
             candidates.Add(new Entry(full, identity));
         }
 
+        // The TARGET RID (#51): the RID being COMPILED FOR. Defaults to the HOST RID when the caller passed none (a
+        // host-targeted or direct-script run). Its ordered fallback chain is computed LAZILY — only a runtime set that
+        // actually carries a RID-impl duplicate group reaches SelectRuntimeAsset.
+        var effectiveRid = targetRid ?? RuntimeInformation.RuntimeIdentifier;
+        var ridChain = new Lazy<IReadOnlyList<string>>(() => RidFallbackChain(effectiveRid, ridGraphPath));
+
         // Phase 2: resolve to at most one entry per simple name, preserving first-encounter order.
         var entries = new List<Entry>();
         var order = new List<string>();
@@ -131,7 +148,7 @@ sealed class ManagedReferenceCatalog
                 throw new ArgumentException(
                     $"{toolName}: conflicting references with assembly name '{name}': " +
                     string.Join(" and ", list.Select(e => e.Path)));
-            entries.Add(SelectRuntimeAsset(name, list, toolName));
+            entries.Add(SelectRuntimeAsset(name, list, toolName, effectiveRid, ridChain.Value));
         }
 
         // Ref-READER twin collapse (#73): a consumed cross-module DotKt library is emitted by ilemit against the
@@ -164,19 +181,21 @@ sealed class ManagedReferenceCatalog
     }
 
     // Given several physical files that all share ONE full identity (the lib + runtimes/<rid>/lib builds of a
-    // RID-impl package), pick the one the runtime host would actually load.  Priority = the host RID's ordered
-    // fallback chain (exact > os > unix-family > any > base), then the RID-neutral `lib` asset as a last resort.
-    // keep-first is wrong: for RID-impl packages the `lib` asset is a PlatformNotSupported placeholder.
-    static Entry SelectRuntimeAsset(string name, List<Entry> candidates, string toolName)
+    // RID-impl package), pick the one the TARGET runtime would actually load (#51).  Priority = the TARGET RID's
+    // ordered fallback chain (the portable RID graph's transitive #import closure, most specific first), then the
+    // RID-neutral `lib` asset as a last resort.  keep-first is wrong: for RID-impl packages the `lib` asset is a
+    // PlatformNotSupported placeholder.  `targetRid`/`chain` are the RID being COMPILED FOR (host RID when the caller
+    // passed none) — NOT the machine ilemit happens to run on, so a cross-target build selects the right asset.
+    static Entry SelectRuntimeAsset(string name, List<Entry> candidates, string toolName,
+        string targetRid, IReadOnlyList<string> chain)
     {
-        var chain = RidFallbackChain();
         // rank: lower is better.  A RID-neutral lib asset (no runtimes/<rid>/lib segment) ranks after the whole
-        // chain; a RID asset outside the chain (incompatible with the host) is excluded.
+        // chain; a RID asset outside the chain (incompatible with the target) is excluded.
         int Rank(Entry e)
         {
             var rid = ExtractRid(e.Path);
             if (rid == null) return chain.Count;                       // RID-neutral `lib` asset
-            var idx = chain.FindIndex(r => string.Equals(r, rid, StringComparison.OrdinalIgnoreCase));
+            var idx = IndexOf(chain, rid);
             return idx < 0 ? int.MaxValue : idx;                       // incompatible RID -> excluded
         }
         var ranked = candidates
@@ -189,16 +208,22 @@ sealed class ManagedReferenceCatalog
             var chosen = ranked[0].entry;
             var rid = ExtractRid(chosen.Path);
             Console.Error.WriteLine(
-                $"{toolName}: '{name}' has {candidates.Count} RID builds; selected {(rid == null ? "RID-neutral lib" : "runtimes/" + rid + "/lib")} asset for host {RuntimeInformation.RuntimeIdentifier}");
+                $"{toolName}: '{name}' has {candidates.Count} RID builds; selected {(rid == null ? "RID-neutral lib" : "runtimes/" + rid + "/lib")} asset for target {targetRid}");
             return chosen;
         }
-        // No RID-compatible asset and no neutral lib.  This should not happen for a host-appropriate copy-local set
-        // (RAR only copies compatible RID assets), and a hand-written family chain does not model specialised RIDs
-        // (e.g. linux-musl-x64).  Fall back to the first candidate rather than hard-fail, and say so.
+        // No RID-compatible asset and no neutral lib.  This should not happen for a target-appropriate copy-local set
+        // (RAR only copies compatible RID assets).  Fall back to the first candidate rather than hard-fail, and say so.
         Console.Error.WriteLine(
-            $"{toolName}: WARNING '{name}' has no RID-compatible asset for host {RuntimeInformation.RuntimeIdentifier} " +
+            $"{toolName}: WARNING '{name}' has no RID-compatible asset for target {targetRid} " +
             $"(candidates: {string.Join(", ", candidates.Select(e => ExtractRid(e.Path) ?? "lib"))}); using {candidates[0].Path}");
         return candidates[0];
+    }
+
+    static int IndexOf(IReadOnlyList<string> chain, string rid)
+    {
+        for (var i = 0; i < chain.Count; i++)
+            if (string.Equals(chain[i], rid, StringComparison.OrdinalIgnoreCase)) return i;
+        return -1;
     }
 
     // The RID segment of a `.../runtimes/<rid>/lib/<tfm>/Foo.dll` copy-local path, or null for a RID-neutral
@@ -213,23 +238,102 @@ sealed class ManagedReferenceCatalog
         return null;
     }
 
-    // The host RID's ordered RID fallback chain (the transitive #import closure of the portable RID graph, most
-    // specific first).  The BCL exposes neither the chain nor a compatibility predicate, so reproduce the portable
-    // families directly: linux-<arch> > linux > unix-<arch> > unix > any > base (osx analogous; win/browser have no
-    // unix tier).  Specialised RIDs (linux-musl-*) fall back through their os tier only — good enough for managed
-    // RID assets, which authors key on os-level RIDs (win/unix/linux/osx).
-    static List<string> RidFallbackChain()
+    // The TARGET RID's ordered RID fallback chain (#51): the transitive #import closure of the .NET/NuGet portable
+    // RID graph, most specific first — the SAME data (`PortableRuntimeIdentifierGraph.json`) and BFS expansion that
+    // NuGet's RuntimeGraph.ExpandRuntime uses, so `runtimes/<rid>/lib` asset selection matches what the SDK's asset
+    // resolution would pick for that target. When the graph can't be found we fall back to a minimal built-in family
+    // chain (below) rather than hard-fail — enough for the os-level RIDs (win/unix/linux/osx) managed assets key on.
+    static IReadOnlyList<string> RidFallbackChain(string targetRid, string ridGraphPath)
     {
-        var host = RuntimeInformation.RuntimeIdentifier;              // e.g. "linux-x64"
-        var segs = host.Split('-');
+        var graph = LoadRidGraph(ridGraphPath ?? DiscoverRidGraphPath());
+        return graph != null ? ExpandRuntime(graph, targetRid) : BuiltinRidChain(targetRid);
+    }
+
+    // BFS expansion over the portable RID graph, mirroring NuGet's RuntimeGraph.ExpandRuntime: the RID itself first,
+    // then a breadth-first walk of its #import edges, de-duplicated — yielding the compatible RIDs in priority order.
+    static IReadOnlyList<string> ExpandRuntime(IReadOnlyDictionary<string, string[]> graph, string targetRid)
+    {
+        var chain = new List<string> { targetRid };
+        for (var i = 0; i < chain.Count; i++)
+            if (graph.TryGetValue(chain[i], out var imports))
+                foreach (var import in imports)
+                    if (IndexOf(chain, import) < 0) chain.Add(import);
+        return chain;
+    }
+
+    // Parse `PortableRuntimeIdentifierGraph.json` -> { rid : [imported rids] } (its `runtimes.<rid>.#import` array).
+    // Returns null on any absence/parse failure so the caller degrades to the built-in chain.
+    static IReadOnlyDictionary<string, string[]> LoadRidGraph(string path)
+    {
+        if (string.IsNullOrEmpty(path) || !File.Exists(path)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(path));
+            if (!doc.RootElement.TryGetProperty("runtimes", out var runtimes)) return null;
+            var map = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+            foreach (var rid in runtimes.EnumerateObject())
+            {
+                var imports = rid.Value.TryGetProperty("#import", out var imp) && imp.ValueKind == JsonValueKind.Array
+                    ? imp.EnumerateArray().Select(e => e.GetString()).Where(s => !string.IsNullOrEmpty(s)).ToArray()!
+                    : Array.Empty<string>();
+                map[rid.Name] = imports;
+            }
+            return map;
+        }
+        catch { return null; }
+    }
+
+    // Auto-discover the running SDK's portable RID graph when MSBuild did not pass $(RuntimeIdentifierGraphPath).
+    // The tools run under `dotnet`, so the SDK is on disk; probe DOTNET_ROOT, the host executable's dir, and the
+    // well-known install roots for `sdk/<version>/PortableRuntimeIdentifierGraph.json` (highest version wins). The
+    // graph sits one level under `sdk/`, so probe the immediate version dirs — no recursive SDK-tree walk.
+    static string DiscoverRidGraphPath()
+    {
+        var roots = new List<string>();
+        var dr = Environment.GetEnvironmentVariable("DOTNET_ROOT");
+        if (!string.IsNullOrEmpty(dr)) roots.Add(dr);
+        try
+        {
+            var host = Environment.ProcessPath;                        // the `dotnet` muxer, e.g. /usr/share/dotnet/dotnet
+            var dir = host != null ? Path.GetDirectoryName(host) : null;
+            if (!string.IsNullOrEmpty(dir)) roots.Add(dir);
+        }
+        catch { /* ProcessPath may throw on some hosts */ }
+        roots.Add("/usr/share/dotnet");
+        roots.Add("/usr/lib/dotnet");
+        foreach (var root in roots)
+        {
+            var sdk = Path.Combine(root, "sdk");
+            if (!Directory.Exists(sdk)) continue;
+            string best = null;
+            try
+            {
+                foreach (var versionDir in Directory.EnumerateDirectories(sdk))
+                {
+                    var f = Path.Combine(versionDir, "PortableRuntimeIdentifierGraph.json");
+                    if (File.Exists(f) && (best == null || string.CompareOrdinal(f, best) > 0)) best = f;   // path sort ~ version order
+                }
+            }
+            catch { /* unreadable sdk dir */ }
+            if (best != null) return best;
+        }
+        return null;
+    }
+
+    // Last-resort chain when no portable RID graph is available: the portable families reproduced directly —
+    // <rid> > qualifier-stripped > os-arch > os > unix[-arch] > any > base (osx/freebsd/illumos/solaris share the
+    // unix tier; win/browser do not). Enough for the os-level RIDs (win/unix/linux/osx) managed RID assets key on.
+    static IReadOnlyList<string> BuiltinRidChain(string targetRid)
+    {
+        var segs = targetRid.Split('-');
         var os = segs[0];
         var arch = segs.Length > 1 ? segs[^1] : null;
         var chain = new List<string>();
-        void Add(string r) { if (!chain.Any(x => string.Equals(x, r, StringComparison.OrdinalIgnoreCase))) chain.Add(r); }
-        Add(host);
+        void Add(string r) { if (IndexOf(chain, r) < 0) chain.Add(r); }
+        Add(targetRid);
         // A multi-part RID (e.g. linux-musl-x64) inherits both its qualifier-stripped (linux-musl) and its
         // os-arch (linux-x64) tiers before the bare os — so a package that ships only runtimes/linux-x64 still
-        // matches on a musl host, instead of falling through to keep-first (the PNSE lib placeholder).
+        // matches a musl target, instead of falling through to keep-first (the PNSE lib placeholder).
         if (segs.Length > 2)
         {
             Add(string.Join('-', segs[..^1]));
