@@ -570,30 +570,21 @@ il_check seqyieldall SeqYieldAll "$ROOT/cases/il-seqyieldall" "$(printf 'a,b,c')
 il_check for   ForT  "$ROOT/cases/il-for"     "$(printf 'sum 1..5 = 15\ncountdown 5 = 54321')"
 il_check exc   Exc   "$ROOT/cases/il-exc"     "$(printf 'safeDiv(10,2) = 5\nsafeDiv(1,0) = -1')"
 il_check ops   Ops   "$ROOT/cases/il-ops"     "$(printf '3\n2\n7\n3\n16\n15\n-1\n3\n5')"
-# charminus: Char arithmetic result typing — `Char.minus(Char): Int` (`'a'-'B'`=31, not the blank U+001F
-# glyph), while `Char.plus(Int)`/`Char.minus(Int): Char` ('a'+1='b'). kotc forces the operator's declared
-# Kotlin return type on the primitive `bin` (conv int / conv char).
-il_check charminus Cm "$ROOT/cases/il-charminus" "$(printf '31\n25\nb\nb')"
-# digittoint: Char.digitToIntOrNull()/digitToInt() value-type-nullable (Int?) return -> 7/10/null/7. The 'z' case
-# prints null via println(Any?), which the stdlib now renders as the string "null" (ConsoleClr println(Any?)).
-il_check digittoint Dti "$ROOT/cases/il-digittoint" "$(printf '7\n10\nnull\n7')"
+# The string/text family (String/Char ops, CharSequence, stringify, radix, number-parse, hashCode contract:
+# il-str, il-strops, il-blank, il-strnum, il-strhash, il-radix, il-charminus, il-digittoint, il-substr, il-subseq,
+# il-charseq/il-charseqs/il-charseqx/il-charseqbcl/il-charseqmore/il-charseqxfile/il-charseqlenref, il-colstr,
+# il-nestedstr, il-interpnull, il-ntostr, il-nulltostr) migrated to the NUnit battery tests/il/fixtures/StringsTests.kt
+# (+ StringsCrossFile.kt), gated by tests/run-nunit-il.sh. Per the cases-test-design audit #14 the old per-case dirs
+# + their il_check lines were deleted in that SAME change. (il-structfloateq/il-structfloateqnull matched the `str`
+# grep prefix but are float-equality cases — they stay below.)
 # printlnnull: println/print(null) render the string "null" (Kotlin semantics); non-null values print normally.
 il_check printlnnull PrintlnNull "$ROOT/cases/il-printlnnull" "$(printf 'null\nnull5x\nnull')"
 # The collections family (list/set/iteration/collection-op + Map-typed cases: il-coll*, il-map*, il-mut*, il-iter*,
 # il-hashset2, il-iscoll, il-listeq, il-listplus, il-eachcount, il-emptymap, il-groupby2, …) migrated to the NUnit
 # batteries tests/il/fixtures/CollectionsTests.kt (16) + MapsTests.kt (10), gated by tests/run-nunit-il.sh. Per the
 # cases-test-design audit #14 the old per-case dirs + their il_check lines were deleted in that SAME change.
-# colstr: a collection/Map operand prints Kotlin-style in EVERY stringify context — string template `"$m"`,
-# string `+` concat `"" + l`, and explicit `.toString()` — not just println(x). Same static-type routing to
-# clrCollToString/clrMapToString as the println path (bundle-6 FIX 1).
-il_check colstr Cstr "$ROOT/cases/il-colstr" "$(printf 'm={a=1, b=2}\nl=[1, 2, 3]\nx={a=1, b=2}\n[1, 2, 3]\n[1, 2, 3]\n{a=1, b=2}')"
-# interpnull: a NULL interpolated/concatenated operand renders "null", not an empty append (Kotlin/JVM parity) —
-# `"$x"`/`"" + x` route a nullable operand through the stdlib null-safe Any?.toString(); non-null + Map unchanged.
-il_check interpnull InterpNull "$ROOT/cases/il-interpnull" "$(printf '[null]\nn=null\nnull\ns=null end\na=5\nnn=7\nm={k=1}')"
 il_check math  MathT "$ROOT/cases/il-math"    "$(printf '9\n7\n3\n4')"
 il_check mathabs MathAbs "$ROOT/cases/il-mathabs" "$(printf -- '-2147483648\n-9223372036854775808\n5\n5\n0\n2147483647')"  # C9: kotlin.math.abs WRAPS at MIN_VALUE (unchecked neg), does NOT throw like System.Math.Abs
-il_check radix Radix "$ROOT/cases/il-radix" "$(printf -- '-ff\nff\n-80000000\nz\nff\n-ff\n1010')"  # C4: Int/Long.toString(radix) -> stdlib actual (sign + arbitrary base), NOT System.Convert.ToString (two's-complement / base-36 crash)
-il_check strhash StrHash "$ROOT/cases/il-strhash" "$(printf 'True\nTrue\nTrue\nTrue\nTrue\nTrue\n5\nTrue\n5\n-7\n2a')"  # #167/#168: String/Double/Float hashCode() bind CLR-native GetHashCode — asserts equals-consistency + hash-set membership (contract), NOT a pinned value; primitive Int toString/equals/hashCode stay correct
 il_check pairtostr PairToStr "$ROOT/cases/il-pairtostr" "$(printf '[1, 2, 3]\n[1, 2, 3]\n(1, 2)\n(1, 2, 3)\nRec(name=k, n=9)\nTrue')"  # C11 gate regression guard: collection/tuple/data-class toString + String.hashCode within-run consistency (#167)
 # pairnest: a nested collection/map INSIDE Pair/Triple.toString (C11) renders Kotlin-style — the tuple component's
 # erased generic static type used to reach the raw .NET `List`1[...]` ToString; now routed through the runtime
@@ -604,8 +595,6 @@ il_check pairnest PairNest "$ROOT/cases/il-pairnest" "$(printf '([1, 2], [3, 4])
 # face past the collapse). Pure runnable guard for that shape.
 il_check nullcollarg NullCollArg "$ROOT/cases/il-nullcollarg" "$(printf '{a=[1]}')"
 il_check extprop ExtProp "$ROOT/cases/il-extprop" "$(printf '2\n1\n1\n3\n-1\n1\n0')"  # C7 (+ #157 NON-coroutine guard): cross-module top-level extension-property getter -> callStatic get_<name>(receiver) (generic List.lastIndex carries type args); NOT a dropped-receiver field read. Resolves through the SAME general owner-null path as xmodtopval (prop:get -> get_<name> -> TryResolveTopLevelStatic recvKey branch) — a name-keyed re-special-case of that path would break these non-coroutine names
-il_check str   Str   "$ROOT/cases/il-str"     "$(printf 'HELLO\nhello\nhi\nello\nTrue\nTrue')"
-il_check strops StrOps "$ROOT/cases/il-strops" "$(printf 'hello\nhi\nhi\n  5\n005\n500\n>5  <\nheLLo\nbbbbbb\naXaX\nheLLo')"  # trim(vararg)/padStart/padEnd/replace -> pure-Kotlin stdlib bodies (no kotc STRING_OPS System.String lowering)
 il_check defargs DefArgs "$ROOT/cases/il-defargs" "$(printf 'x1-x2-x3\n1, 2, 3\n[1, 2, 3]\n1/2/~\nb=c\na\nnodelim\nFALLBACK\nP(x=1, y=20, z=3)\nP(x=10, y=2, z=30)\nHello, Kotlin!\nHello, Kotlin?')"  # C3: cross+same-module default args — omitted middle default must not shift a later provided arg's slot (joinToString transform / substringAfter `= this` / data-class copy(field=))
 il_check defargs2 DefArgs2 "$ROOT/cases/il-defargs2" "$(printf '55\n7\n12\n30\n134\n156\n159')"  # C3 residual: same-module default referencing ANOTHER value param (`b = a * 10`, `c = a + b`) — inlined with that param's filled arg substituted
 il_check negzero NegZero "$ROOT/cases/il-negzero" "$(printf 'False\n-1\n1\nTrue\nTrue\nFalse\n1\n0\nFalse\n-1\nTrue')"  # C14: boxed Double/Float total order (-0.0 < 0.0, NaN largest & NaN==NaN) via stdlib helpers; primitive ==/< stay IEEE
@@ -616,14 +605,11 @@ il_check indices Indices "$ROOT/cases/il-indices" "$(printf '012\n01234\n0123\ne
 # read stays on IReadOnlyCollection<T>, covariance-safe (same shape as the already-working List<T>.lastIndex).
 il_check indicesv IndicesV "$ROOT/cases/il-indicesv" "$(printf '012\n2\n1\n-1\ne\n3\n012\n3')"
 il_check coerce Coerce "$ROOT/cases/il-coerce" "$(printf '7\n5\n5\n2\n1\n5\n7')"       # coerceAtMost/AtLeast/In -> pure-Kotlin stdlib bodies (no kotc System.Math lowering)
-il_check blank Blank  "$ROOT/cases/il-blank"   "$(printf 'True\nTrue\nFalse\nTrue\nTrue')"  # isBlank/isNotBlank -> pure-Kotlin index-loop body (no kotc IsNullOrWhiteSpace lowering)
 il_check infloopret InfLoopRet "$ROOT/cases/il-infloopret" "$(printf '30\nok4')"  # #141: value-returning while(true){…return x} -> ilemit appends default(ret)+ret so the unreachable fall-through terminator is ilverify-clean (ReturnMissing gone)
 il_check genarrlam GenArrLam "$ROOT/cases/il-genarrlam" "$(printf '2\nnull\nnull\nnull\nnull\n3\nnull\nnull')"  # #142: `Array(size){ mk<T?>(null) }` in a generic class — nested constructed-generic `Ref<T?>` erased to `Ref<object>` CONSISTENTLY across method-sig/array-elem/newDelegate.funcType.ret; DelegateCtor gone. #4 (read side): reading the erased element back across the Box<Int>/Box<String> boundary (`b.a[0].v`/`b.elem(i).v`/retyped local/`val x: Int?=…`) re-derives `Ref<object>` from the erased decl (NullableTvErasureCallRealign) — was ilverify StackUnexpected `Ref`1<object>` vs `Ref`1<Nullable`1<int32>>`
 il_check nullgenlist NullGenList "$ROOT/cases/il-nullable-generic-list" "$(printf '2\na\na\nnull\n2\n7\n7\nnull\n1\n2')"  # GitHub #28: List<T?> uses the declaration's object-erased interface consistently at member reads (Count + get_Item + GetEnumerator), for reference and value instantiations.
 il_check toplateinit TopLateinit "$ROOT/cases/il-toplateinit" "$(printf 'caught: uninitialized\nhello\n5')"  # #104: top-level `lateinit var` (ref type) static field carries `"init": null` — must NOT hit the .cctor null-coercion store (crash); default-null + lateinitGet throw-before-init
 il_check samcmp SamCmp "$ROOT/cases/il-samcmp" "$(printf '1,1,2,3,4,5,6,9\n9,6,5,4,3,2,1,1')"  # explicit Comparator{} SAM conversion (plain fun interface; no kotc @ClrTypeAlias read)
-il_check strnum StrNum "$ROOT/cases/il-strnum" "$(printf '42\n-7\n100\nnfe\niae\n3.14\n2.5\ncomma\nnfd')"
-il_check ntostr NToStr "$ROOT/cases/il-ntostr" "$(printf '5\nnull\n7\n5\nnull')"   # value-type-nullable/value arg BOXED into a REFERENCED method's object param (EmitCallArgs pt==null path)
 il_check cp    Cp    "$ROOT/cases/il-cp"      "$(printf '50\n3.5\nTrue\nTrue\nX')"
 il_check ext   Ext   "$ROOT/cases/il-ext"     "$(printf '21\nHI')"
 il_check companionext CompanionExt "$ROOT/cases/il-companionext" "$(printf '5\n14\n21')"   # #177: an extension fun in a companion object lowers to a static method whose first param is the extension receiver — the call site must pass that receiver as the LEADING arg (was dropped -> arity miscompile)
@@ -708,16 +694,7 @@ il_check customexc CustomExc "$ROOT/cases/il-customexc" "$(printf 'error -5\ncod
 il_check comparator Comparator "$ROOT/cases/il-comparator" "$(printf -- '-3\n5\n0')"
 il_check use Use "$ROOT/cases/il-use" "$(printf 'close abcd\nn=4\nclose x\ncaught:boom')"
 il_check comparable Comparable "$ROOT/cases/il-comparable" "$(printf 'a<b\nc>b\na<=a\n-3\n1.2,1.5,2.0')"
-il_check charseq CS "$ROOT/cases/il-charseq" "$(printf '5\ne\n3\ne\n5')"
-il_check charseqx CSX "$ROOT/cases/il-charseqx" "$(printf 'False\nFalse')"
-il_check charseqs CSStr "$ROOT/cases/il-charseqs" "$(printf '5\ne\nllo\n5\n3\n3\nTrue\nTrue')"
-il_check charseqbcl CSBcl "$ROOT/cases/il-charseqbcl" "$(printf 'f:a\nf:b\nf:c\np:k1\np:k2\nm:1\nm:2\nu-v\nell\nk1+k2')"   # #148: computed/BCL-origin String receiver (property-read/app-fun-result/`!!`/StringBuilder.toString) into a stdlib CharSequence ext (split/replace/substring) — bir2cir must adapter-wrap it (else EntryPointNotFound on the body-less dotkt$CharSequence.subSequence; the #92 residual)
-il_check charseqxfile CSXFile "$ROOT/cases/il-charseqxfile" "$(printf 'L:a\nL:b\nL:c\nP:x\nP:y\nP:z')"   # #149-1: a CROSS-FILE String receiver (a user-class property `c.body` / a top-level fun `banner()` declared in a SIBLING .kt of the SAME assembly) into a stdlib CharSequence.split — bir2cir aggregates all files' declared types (StaticType.GlobalTypes) so the cross-file static type resolves and the receiver is adapter-wrapped (else EntryPointNotFound)
-il_check charseqmore CSMore "$ROOT/cases/il-charseqmore" "$(printf 'C:a\nC:b\nC:c\nE:nonempty\nB:p\nB:q')"   # #149-2/3/4: a String BRANCH of a polymorphic CharSequence if/else, a StringBuilder receiver (snapshot->adapter), and `x!!.isNullOrEmpty()` (nullable slot + `!!`) into a stdlib CharSequence ext — bir2cir wraps each (else EntryPointNotFound)
-il_check substr Substr "$ROOT/cases/il-substr" "$(printf 'ell\nworld\nhello\nworld')"
-il_check subseq SubSeq "$ROOT/cases/il-subseq" "$(printf 'ell\n1\nhel\nllo')"
 il_check seqfilter SeqFilter "$ROOT/cases/il-seqfilter" "$(printf '3,4,5,6\n20,40,60\n4\n3,4,5,6\n3')"
-il_check nulltostr NullToStr "$ROOT/cases/il-nulltostr" "$(printf 'null\nabc\nnull\nv=null')"
 il_check result Result "$ROOT/cases/il-result" "$(printf 'True\n10\n10\nTrue\nnull\n-99\nneg -1\nnull\nfb')"
 il_check genstatic GenStatic "$ROOT/cases/il-genstatic" "$(printf '42\nTrue\nTrue\nboom\nhi')"
 il_check bmore BMore "$ROOT/cases/il-bmore" "$(printf '5 items\nx = 42\n3.14\n00007\nff\n100%% ok: yes\n0:a,1:b,2:c\n0,20,60')"
@@ -730,9 +707,6 @@ il_check cwindowed CWindowed "$ROOT/cases/il-cwindowed" "$(printf '[ab, bc, cd]\
 # delegateNew target whose funcType keeps the synthetic <>dotkt_CharSequence, so its `it` param must stay synthetic
 # (not collapse to System.String) — the stdlib passes a real <>dotkt_CharSequence (subSequence's result) in. W4-B guard.
 il_check cwindowedv CWindowedV "$ROOT/cases/il-cwindowedv" "$(printf '[2, 2, 2]\n[a, b, c]\n[3, 3, 3]\n[ab, bc, cd]')"
-# nestedstr: nested collection/map stringification (final-review N7). A nested collection element used to render .NET's
-# raw `System.Collections.Generic.List`1[...]`; the stdlib `clrElemToString` now recurses via non-generic BCL facades.
-il_check nestedstr NestedStr "$ROOT/cases/il-nestedstr" "$(printf '{k=[1, 2]}\n[[1, 2]]\n[[1, 2], [3, 4]]\n{a={x=1}}\n[s, t]\n{k=5}')"
 il_check tryexpr TryExpr "$ROOT/cases/il-tryexpr" "$(printf '42\n-1\n5\n-7\n4')"
 il_check localclass LocalClass "$ROOT/cases/il-localclass" "$(printf '10\n42\n101\n3,4\nTrue\n60')"
 il_check writecapture AppKt "$ROOT/cases/il-writecapture/app.kt" "$(printf '3\n20')"   # #68: a local class / object expression that WRITES a captured outer `var` shares a heap ref-cell (computeRefCells promotes the mutated capture) — was a whole-compile abort for the write-through capture
@@ -1154,10 +1128,6 @@ il_check inlonlyintr AppKt "$ROOT/cases/il-inlonlyintr/app.kt" "$(printf 'Xbc\nT
 # branch — the only reachable instance is COROUTINE_SUSPENDED (klib-package-fragment-only shape, the stdlib's lone public plain
 # computed top-level val); the non-coroutine sibling of the SAME general path is il-extprop (extension-property getters, #157).
 il_check xmodtopval AppKt "$ROOT/cases/il-xmodtopval/app.kt" "$(printf 'True\nTrue')"
-# #57: a `length` property reference on a USER CharSequence implementer lifts faithfully (its accessor resolves on the
-# class's OWN emitted get_length slot) — DIRECT (A) and INHERITED-through-A (B), bound + unbound. The deferral keys on the
-# accessor's resolved declaring owner (getterFn.parent), replacing the override-chain walk that over-deferred direct + missed indirect.
-il_check charseqlenref AppKt "$ROOT/cases/il-charseqlenref/app.kt" "$(printf '5\n6\n5\n6\nlength')"
 
 # Reverse interop: a .NET (C#) host loads the IL-emitted Kotlin assembly and calls a Kotlin class + top-level
 # fun. Proves the IL output is a consumable .NET assembly. (Compile-time <Reference> needs per-type contract-

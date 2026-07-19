@@ -24,7 +24,7 @@ CACHE="$ROOT/build/test-package-cache"
 # --- expected discovered-test count per battery project (the single machine-readable manifest; each family
 #     migration bumps its project's number in the SAME change, so a dropped method is a red gate). ------------
 declare -A EXPECTED=(
-	["tests/il"]=49   # GenericsTests g1..g6 (6) + InlineTests 17 (il-inline*/il-xinline) + CollectionsTests 16 + MapsTests 10 (collections family)
+	["tests/il"]=71   # GenericsTests g1..g6 (6) + InlineTests 17 (il-inline*/il-xinline) + CollectionsTests 16 + MapsTests 10 + StringsTests 22 (string/text family)
 )
 
 # Read the packed SDK version from the single source of truth so a version bump needs no edit here.
