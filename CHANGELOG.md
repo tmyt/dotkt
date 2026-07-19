@@ -8,7 +8,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ### Fixed
 
 - **bir2cir/ilemit ([tmyt/dotkt#46], [tmyt/dotkt#121], area:bir2cir): property / field / event memberRef carry —
-  ilemit is now a pure LINKER for every CLR member axis (W1-S3, closes #46 + #121).** The remaining un-carried axes
+  ilemit is a pure linker for every clr* member-ACCESS axis: calls, ctors, properties, fields, events, dispatch
+  (W1-S3, closes #121). #46 stays OPEN for W1-S4 — two ilemit resolution sites remain (NOT in #121's enumerated
+  use-sites): the declaration-side override base-slot link (`Emitter.Assembly.cs`, still `GetMethod(name, ps)` + a
+  name-only fallback for every method override incl. ToString/Equals) and the `@Clr`/`@ClrIntrinsicAsDynamic`
+  `callInstance` resolution (`Emitter.Expressions.cs`).** The remaining un-carried axes
   followed the S2 plan: bir2cir (`ClrMemberResolution.PropFieldEvent.cs`, a partial of the S2 pass, running last)
   now resolves `clrPropGet`/`clrPropSet`, `clrEventAdd`/`clrEventRemove`, and an external `field`/`setFieldExpr`/
   `setField` against the ref.dll (MetadataLoadContext), stamping a `member` discriminator (`accessor`|`field`), the
