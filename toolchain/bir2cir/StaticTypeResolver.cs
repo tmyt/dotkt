@@ -296,8 +296,16 @@ static class StaticType
         if ((o["method"] as JsonValue)?.GetValue<string>() is not string method) return null;
         var sig = o["sig"] as JsonArray;
         var argCount = sig?.Count ?? (o["args"] as JsonArray)?.Count ?? 0;
-        var recvKey = sig != null && sig.Count > 0 && TypeJson.Read(sig[0]) is TypeNode.Fqn sf
-            ? ReferenceMetadataIndex.BareOwnerFqn(sf.Name) : null;
+        // Unwrap a nullable receiver (`IntArray?`): its top-level nullability is not part of the CLR static's identity,
+        // and RecvKeyOfFqn must see the bare array Fqn to yield "[]" (#153).
+        var sig0 = sig != null && sig.Count > 0 ? TypeJson.Read(sig[0]) : null;
+        if (sig0 is TypeNode.Nullable sn) sig0 = sn.Of;
+        var recvKey = sig0 is TypeNode.Fqn sf
+            ? ReferenceMetadataIndex.RecvKeyOfFqn(sf.Name)   // primitive-array Fqn -> "[]" (mirror the ref-side RecvKey; #153)
+            : null;
+        // The call's first-arg ParamKey — disambiguates a same-name/same-arity top-level overload set the coarse "[]"
+        // recvKey collapses (IntArray.toList's `List<Int>` vs the generic Array<T>.toList's `List<Tv>`; #153).
+        var firstParamKey = sig != null && sig.Count > 0 ? ReferenceMetadataIndex.ParamKey(sig[0]) : null;
         // An explicit owner (a member call `Box.get_items`): try the THIS-assembly emitted type first, then the ref.dll.
         if (TypeJson.Read(o["owner"] ?? o["ownerType"]) is TypeNode.Fqn of)
         {
@@ -307,7 +315,7 @@ static class StaticType
         // owner=null: a top-level fun — resolve via the THIS-assembly file class first (an app-own top-level fun the
         // ref.dll can't know), then the ref.dll file-class owner (a stdlib top-level fun).
         return o["owner"] is null
-            ? LocalMemberType(LocalFileClass, method, argCount) ?? TryGlobalTopLevel(method, argCount) ?? Refs?.TryTopLevelReturn(method, recvKey, argCount)
+            ? LocalMemberType(LocalFileClass, method, argCount) ?? TryGlobalTopLevel(method, argCount) ?? Refs?.TryTopLevelReturn(method, recvKey, argCount, firstParamKey)
             : null;
     }
 

@@ -54,7 +54,7 @@ sealed partial class ReferenceMetadataIndex
     readonly Dictionary<string, int[]> _topLevelIntrinsicByref = new(StringComparer.Ordinal); // top-level fun name -> byref param positions
     readonly Dictionary<string, string> _extMemberIntrinsics = new(StringComparer.Ordinal); // "name|recvKey|paramCount" -> bare member
     readonly Dictionary<string, (string Getter, string Conv)> _inlineBacking = new(StringComparer.Ordinal);
-    readonly Dictionary<string, List<(string Owner, string RecvKey)>> _topLevelStatics = new(StringComparer.Ordinal); // non-intrinsic top-level fun name -> [(file-class, recvKey)]
+    readonly Dictionary<string, List<(string Owner, string RecvKey, string ParamKey)>> _topLevelStatics = new(StringComparer.Ordinal); // non-intrinsic top-level fun name -> [(file-class, coarse recvKey, fine first-param ParamKey)]
     readonly Dictionary<string, string> _collectionFactories = new(StringComparer.Ordinal); // @ClrCollectionFactory fun name -> "list"/"set"/"map"
     readonly Dictionary<string, string> _arrayFactories = new(StringComparer.Ordinal);       // @ClrArrayFactory fun name -> "vararg"/"sized"
     readonly Dictionary<string, string> _arrayFactoryElemHints = new(StringComparer.Ordinal);// array factory name -> concrete elem FQN (empty-call fallback)
@@ -164,7 +164,7 @@ sealed partial class ReferenceMetadataIndex
             foreach (var kv in asm.DotKt.TopLevelStatics)
             {
                 if (!_topLevelStatics.TryGetValue(kv.Key, out var lst))
-                    _topLevelStatics[kv.Key] = lst = new List<(string, string)>();
+                    _topLevelStatics[kv.Key] = lst = new List<(string, string, string)>();
                 lst.AddRange(kv.Value);
             }
             foreach (var kv in asm.DotKt.KotlinDefaults)
@@ -338,6 +338,27 @@ sealed partial class ReferenceMetadataIndex
         if (br >= 0) t = t[..br];
         return StripGenericArity(t);
     }
+
+    // The top-level-extension receiver KEY of a call's first-sig-arg Fqn — the call-site mirror of the ref-side
+    // RecvKey(Type) (used to index/disambiguate TopLevelStatics by receiver type). A specialized primitive-array Fqn
+    // (`kotlin.IntArray`/`CharArray`/... + the unsigned specialized arrays) collapses to "[]" — the SAME canonicalization
+    // RecvKey(Type) applies to a real `int[]` (IsArray). kotc spells such a receiver as a bare `kotlin.IntArray` Fqn
+    // (BirTypeLowering decomposes it to a real array only later), so without this collapse a primitive-array receiver
+    // would key as "kotlin.IntArray" and never match the ref.dll's "[]" candidate — leaving `intArrayOf(..).toList()`
+    // owner-null AND its return type unresolved (#153). generic `Array<T>` already reaches "[]" (its sig is a TypeNode.Array).
+    // (ParamKey's `array:i32` is a DIFFERENT canonicalization for @ClrIntrinsic sig matching — not conflated here.)
+    public static string RecvKeyOfFqn(string fqnName) =>
+        BirTypeLowering.PrimArrayElem.ContainsKey(fqnName) ? "[]" : BareOwnerFqn(fqnName);
+
+    // Receiver-nullability normalization for a fine first-param key. A top-level extension's RECEIVER nullability is NOT
+    // part of the CLR static's identity, and the two key derivations disagree on it: the call side spells a nullable
+    // ARRAY/reference receiver as `nullable:array:byte` (from the birType `UByteArray?`), but the ref.dll reflection can
+    // never emit `nullable:` for a nullable reference-typed param (only Nullable<value> structs) -> the stored key is the
+    // bare `array:byte`. Strip a single leading `nullable:` on BOTH operands so a nullable-receiver `ubyteArrayOf(..)
+    // .contentToString()` still pins UArraysKt instead of falling to the buggy coarse "[]" first-match (#153). A
+    // value-type nullable receiver keys `nullable:i32` on BOTH sides, so stripping both stays a match.
+    static string NoRecvNull(string key) =>
+        key != null && key.StartsWith("nullable:", StringComparison.Ordinal) ? key["nullable:".Length..] : key;
 
     // Resolve a member-call/construction OWNER to its BCL type. True for a @ClrTypeAlias / class-@ClrIntrinsic owner
     // (or a foundational reference primitive). `kind` is the ref.dll type kind (class/struct/interface/enum).
@@ -711,11 +732,23 @@ sealed partial class ReferenceMetadataIndex
     // `callStatic owner=null` gets an explicit owner ilemit reflects against the referenced runtime stdlib. When the
     // name is defined in multiple file-classes (getOrElse in CollectionsKt/ArraysKt/MapsKt/...), the call's receiver
     // type (recvKey = its first sig param's bare owner) disambiguates. A single candidate needs no receiver match.
-    public bool TryResolveTopLevelStatic(string funName, string recvKey, out string owner)
+    public bool TryResolveTopLevelStatic(string funName, string recvKey, out string owner) =>
+        TryResolveTopLevelStatic(funName, recvKey, null, out owner);
+
+    public bool TryResolveTopLevelStatic(string funName, string recvKey, string firstParamKey, out string owner)
     {
         owner = null;
         if (!_topLevelStatics.TryGetValue(funName, out var cands) || cands.Count == 0) return false;
         if (cands.Count == 1) { owner = cands[0].Owner; return true; }
+        // When the coarse recvKey collapsed an ARRAY receiver to "[]" it is lossy — IntArray/CharArray/... AND the
+        // unsigned specialized arrays AND the generic Array<T> all share "[]", so the plain recvKey loop below would pin
+        // the FIRST array overload (the signed generic `toList<T>(T[])`) for EVERY array call, miscompiling an unsigned
+        // `ubyteArrayOf(..).toList()` onto _ArraysKt's uninstantiated generic. The fine first-param ParamKey pins the
+        // exact file-class+overload (UByteArray -> "array:byte" -> UArraysKt). Only "[]" is lossy; a normal owner recvKey
+        // is already exact, so gate on it to leave every non-array resolution byte-identical. (#153)
+        if (recvKey == "[]" && firstParamKey != null)
+            foreach (var c in cands)
+                if (NoRecvNull(c.ParamKey) == NoRecvNull(firstParamKey)) { owner = c.Owner; return true; }
         // The candidate RecvKey is the ref.dll's Kotlin receiver type (`kotlin.collections.List`); the call site's
         // recvKey may already be that type's @ClrTypeAlias CLR form (`System.Collections.Generic.IReadOnlyList`), when
         // kotc rendered the receiver local as its CLR alias (e.g. `val xs = listOf(...)` used only via an extension).
@@ -735,9 +768,20 @@ sealed partial class ReferenceMetadataIndex
     // The declared RETURN type of a bound member (owner.name, matched by arg count then by name), from the ref.dll —
     // used by StaticType (#59) to recover a call / field read whose BIR node carries NO `ret` (kotc emits `ret` only for
     // a GENERIC call). null when the owner/member is unknown or its return type was not structurable (a delegate/gp).
-    public TypeNode TryMemberReturn(string ownerFqn, string name, int argCount)
+    // `firstParamKey` (the call's first-arg ParamKey) disambiguates a same-name/same-arity overload set that a coarse
+    // name+count match would resolve to the WRONG sibling: the primitive-array `IntArray.toList` (first param `int[]` ->
+    // "array:i32", returning `List<Int>`) vs the generic `Array<out T>.toList` (first param `Array<T>` -> "array:gp",
+    // returning `List<Tv>`) — both in ArraysKt. Picking the generic sibling's `List<Tv>` leaves the element unbound and
+    // erases it to `object`, so `println(intArrayOf(1,2).toList())` wrapped in clrCollToString<object> then rejects the
+    // `IReadOnlyList<int32>` stack (#153). PREFER the first-param-key match; fall back to the coarse first-match when no
+    // key is supplied or none matches (monotone — only previously-arbitrary picks change).
+    public TypeNode TryMemberReturn(string ownerFqn, string name, int argCount, string firstParamKey = null)
     {
         if (ownerFqn == null || !_membersByOwner.TryGetValue(ownerFqn, out var list)) return null;
+        if (firstParamKey != null
+            && list.FirstOrDefault(b => b.Name == name && b.ParamCount == argCount && b.ReturnType != null
+                    && b.ParamTypes is { Length: > 0 } && NoRecvNull(ParamKey(b.ParamTypes[0])) == NoRecvNull(firstParamKey)) is { } keyed)
+            return keyed.ReturnType;
         return (list.FirstOrDefault(b => b.Name == name && b.ParamCount == argCount && b.ReturnType != null)
                 ?? list.FirstOrDefault(b => b.Name == name && b.ReturnType != null))?.ReturnType;
     }
@@ -750,8 +794,8 @@ sealed partial class ReferenceMetadataIndex
     // The declared RETURN type of a top-level fun (a `callStatic owner=null`), resolved via its file-class owner then the
     // member's return type. `recvKey` = the call's first sig-param bare owner (disambiguates overloads across file-classes);
     // `argCount` = the sig's total param count (receiver + args), matching the ref.dll static's ParamCount. null if unresolved.
-    public TypeNode TryTopLevelReturn(string funName, string recvKey, int argCount) =>
-        TryResolveTopLevelStatic(funName, recvKey, out var owner) ? TryMemberReturn(owner, funName, argCount) : null;
+    public TypeNode TryTopLevelReturn(string funName, string recvKey, int argCount, string firstParamKey = null) =>
+        TryResolveTopLevelStatic(funName, recvKey, firstParamKey, out var owner) ? TryMemberReturn(owner, funName, argCount, firstParamKey) : null;
 
     // A bare-@ClrIntrinsic extension fun resolved by name + the receiver-type key (the call's first-arg type) + the
     // FULL parameter count (receiver + args), so `set` on a MutableMap receiver -> set_Item (not StringBuilder's
@@ -1004,9 +1048,13 @@ sealed partial class ReferenceMetadataIndex
                         {
                             var ps = method.GetParameters();
                             var rk = ps.Length >= 1 ? RecvKey(ps[0].ParameterType) : "";
+                            // The FINE first-param key (ParamKey space): distinguishes the array overloads a coarse "[]"
+                            // recvKey collapses (IntArray->"array:i32", UByteArray->"array:byte", Array<T>->"array:gp") so
+                            // owner attribution pins the RIGHT file-class+overload (#153 unsigned-array miscompile).
+                            var pk = ps.Length >= 1 ? ParamKey(TypeName(ps[0].ParameterType)) : "";
                             if (!metadata.TopLevelStatics.TryGetValue(method.Name, out var lst))
-                                metadata.TopLevelStatics[method.Name] = lst = new List<(string, string)>();
-                            lst.Add((ownerFqn, rk));
+                                metadata.TopLevelStatics[method.Name] = lst = new List<(string, string, string)>();
+                            lst.Add((ownerFqn, rk, pk));
                         }
                         // Collection/array FACTORY markers on a [KotlinFileClass] static (listOf/setOf/mapOf/arrayOf/…):
                         // record name -> kind so MemberCallSubstitution re-emits the newList/newSet/newMap/newArray node
@@ -1402,7 +1450,7 @@ sealed class ReferenceDotKtMetadata
     // class it actually lives in (getOrElse -> kotlin.collections._CollectionsKt), disambiguated by the call's receiver
     // type when the name is defined across multiple file-classes (CollectionsKt vs ArraysKt vs MapsKt). NOT consulted in
     // a stdlib self-build (the fun is local there; owner=null + FindStatic finds the sibling).
-    public readonly Dictionary<string, List<(string Owner, string RecvKey)>> TopLevelStatics = new(StringComparer.Ordinal);
+    public readonly Dictionary<string, List<(string Owner, string RecvKey, string ParamKey)>> TopLevelStatics = new(StringComparer.Ordinal);
     // Collection/array FACTORY top-level funs, keyed by fun NAME -> the factory kind. A @kotlin.clr.ClrCollectionFactory
     // ("list"/"set"/"map") or @kotlin.clr.ClrArrayFactory ("vararg"/"sized") marker on a [KotlinFileClass] static.
     // MemberCallSubstitution reads these on a `callStatic owner=null` (listOf/setOf/mapOf/arrayOf/intArrayOf/arrayOfNulls
