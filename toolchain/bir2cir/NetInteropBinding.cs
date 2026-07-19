@@ -66,6 +66,13 @@ static class NetInteropBinding
         // binds the target by reflection). A Kotlin/local owner never resolves here -> the plain `newBoundDelegate` is
         // left for ilemit's own FindMethod-based handler. Byte-identical to kotc's former newBoundClrDelegate emit.
         if (k == "newBoundDelegate") { ReshapeBoundDelegate(node); return; }
+        // #178: the options-taking `kotlin.text.Regex` constructors. A plain `new` on a @ClrTypeAlias owner is bound to
+        // newClr by MemberCallSubstitution — but `Regex(String, RegexOption)` / `Regex(String, Set<RegexOption>)` map to
+        // the BCL `Regex(String, RegexOptions)`, and the DotKt enum / set neither RESOLVES to nor carries the numeric
+        // value of the `[Flags] System...RegexOptions` int param. Convert the option arg to the RegexOptions bitmask HERE
+        // (there is no pure-Kotlin ctor body to do it — the expect fixes options to the ctor). A no-op for every other
+        // `new`, which flows to MemberCallSubstitution.TransformNew unchanged.
+        if (k == "new") { ReshapeRegexCtorOptions(node); return; }
         if (k != "callStatic" && k != "callInstance") return;
         var ownerJson = node["ownerType"];
         // Peel Nullable/Oblivious/ByRef wrappers to reach the underlying .NET Fqn (a `List<Item>?` receiver's owner is
@@ -248,6 +255,20 @@ static class NetInteropBinding
             if (Take("suspendCall") is JsonNode scOp) node["suspendCall"] = scOp;
             return;
         }
+
+        // #179 — a Kotlin `operator fun compareTo` on a facadegen-injected DotKt owner that implements Comparable<Self>.
+        // The DotKt class's CLR slot is the PascalCase `System.IComparable<T>.CompareTo` (facadegen renamed the member +
+        // restored the `kotlin.Comparable<Self>` supertype), but kotc emits the plain Kotlin name `compareTo` (a member
+        // clrName is not a kotc channel), so a cross-module `c1 < c2` (the frontend resolves `<` to `compareTo`) would
+        // dangle on a non-existent lowercase slot. The INSTANCE-slot analog of the plus->op_Addition rule above: rebind
+        // `compareTo` -> `CompareTo` when the owner declares the `CompareTo` slot + a generic `IComparable` but NOT a
+        // verbatim lowercase `compareTo` (a standalone non-Comparable `operator fun compareTo` keeps its own slot), then
+        // fall through to the plain clrInstance path.
+        if (!isStatic && method == "compareTo"
+            && !DeclaresPublicMethodNamed(netType, "compareTo")
+            && DeclaresPublicMethodNamed(netType, "CompareTo")
+            && ImplementsGenericIComparable(netType))
+            method = "CompareTo";
 
         // PLAIN static/instance method (incl. indexer get_Item/set_Item, member-extension synthetic accessor).
         node["k"] = isStatic ? "clrStatic" : "clrInstance";
@@ -482,5 +503,141 @@ static class NetInteropBinding
         }
         return false;
     }
+
+    // True iff the .NET type implements the GENERIC `System.IComparable<T>` (its GetInterfaces set contains a
+    // `System.IComparable`1` instantiation) — the marker that a DotKt owner's PascalCase `CompareTo` slot IS the
+    // Comparable<Self> operator slot (#179), so a Kotlin `operator fun compareTo` call rebinds to it (rather than
+    // dangling on the lowercased Kotlin name). The non-generic `System.IComparable` alone does NOT qualify.
+    static bool ImplementsGenericIComparable(Type type)
+    {
+        try
+        {
+            return type.GetInterfaces().Any(i =>
+                (i.IsGenericType ? i.GetGenericTypeDefinition().FullName : i.FullName) == "System.IComparable`1");
+        }
+        catch { return false; }
+    }
+
+    // ---- #178 Regex(options) ctor-arg conversion -----------------------------------------------
+
+    const string RegexFqn = "kotlin.text.Regex";
+    const string RegexOptionFqn = "kotlin.text.RegexOption";
+    const string ClrRegexOptionsFqn = "kotlin.text.ClrRegexOptions";  // @ClrTypeAlias -> System...RegexOptions
+
+    // The RegexOption ordinal -> System.Text.RegularExpressions.RegexOptions [Flags] bit, the exact INVERSE of
+    // RegexClr.kt `nativeOptionsBits`. RegexOption's declaration order is IGNORE_CASE(0), MULTILINE(1), LITERAL(2),
+    // UNIX_LINES(3), COMMENTS(4), DOT_MATCHES_ALL(5), CANON_EQ(6); only the four with a direct .NET bit appear — the
+    // three .NET-unrepresentable options (LITERAL/UNIX_LINES/CANON_EQ) map to no bit (they encode to 0, the documented
+    // CLR symmetry with the decode side, which never round-trips them either).
+    static readonly (int Ordinal, int Bit)[] RegexOptionBits =
+    {
+        (0, 1),    // IGNORE_CASE      -> RegexOptions.IgnoreCase
+        (1, 2),    // MULTILINE        -> RegexOptions.Multiline
+        (5, 16),   // DOT_MATCHES_ALL  -> RegexOptions.Singleline
+        (4, 32),   // COMMENTS         -> RegexOptions.IgnorePatternWhitespace
+    };
+
+    static int _rxCounter;
+
+    // #178: `new kotlin.text.Regex(pattern, RegexOption)` / `new kotlin.text.Regex(pattern, Set<RegexOption>)` -> the
+    // options arg is SYNTHESIZED into the OR'd RegexOptions bitmask (an Int) and its declared arg type is retyped to
+    // `kotlin.text.ClrRegexOptions` (the @ClrTypeAlias twin of System...RegexOptions), so after BirTypeLowering the arg
+    // is a `System...RegexOptions` Int that ClrMemberResolution matches EXACTLY against the BCL `Regex(String,
+    // RegexOptions)` ctor. Runs before MemberCallSubstitution/BirTypeLowering (pure-Kotlin tokens) so the synthesized
+    // `contains`/enum nodes lower through the ordinary passes. A no-op for any non-Regex `new` or non-option ctor.
+    static void ReshapeRegexCtorOptions(JsonObject node)
+    {
+        if (TypeJson.Read(node["type"]) is not TypeNode.Fqn owner || owner.Name != RegexFqn) return;
+        if (node["argTypes"] is not JsonArray argTypes || argTypes.Count != 2) return;
+        if (node["args"] is not JsonArray args || args.Count != 2) return;
+        var optType = TypeJson.Read(argTypes[1]);
+        var single = optType is TypeNode.Fqn f1 && f1.Args == null && f1.Name == RegexOptionFqn;
+        var set = optType is TypeNode.Fqn fs && fs.Name == "kotlin.collections.Set"
+                  && fs.Args is { Length: 1 } sa && sa[0] is TypeNode.Fqn se && se.Name == RegexOptionFqn;
+        if (!single && !set) return;
+
+        var setType = argTypes[1];                 // the declared Set<RegexOption> type (needed before we retype it)
+        var optArg = args[1];
+        args.RemoveAt(1);                          // detach the option arg; the converted Int expr re-appends at index 1
+        args.Add(single ? SingleOptionBits(optArg) : SetOptionBits(optArg, setType));
+        argTypes[1] = TypeJson.Fqn(ClrRegexOptionsFqn);
+    }
+
+    // A single `RegexOption` value -> its RegexOptions bit: `d = ordinalOf(opt); d==0 ? 1 : d==1 ? 2 : d==5 ? 16 :
+    // d==4 ? 32 : 0`. The ordinal is bound to a temp (valueBlock) so a side-effecting option expression runs exactly
+    // once. `enumOrdinal` without a `type` lowers to Conv_I4 — RegexOption's underlying value == its ordinal (kotc emits
+    // contiguous 0..n), so the bare underlying int IS the ordinal.
+    static JsonNode SingleOptionBits(JsonNode optArg)
+    {
+        var name = "__rxopt$" + System.Threading.Interlocked.Increment(ref _rxCounter);
+        var decl = new JsonObject
+        {
+            ["k"] = "var", ["name"] = name, ["type"] = TypeJson.Fqn("kotlin.Int"),
+            ["init"] = new JsonObject { ["k"] = "enumOrdinal", ["e"] = optArg },
+        };
+        JsonNode chain = ConstInt(0);
+        for (int i = RegexOptionBits.Length - 1; i >= 0; i--)
+        {
+            var (ord, bit) = RegexOptionBits[i];
+            chain = new JsonObject
+            {
+                ["k"] = "cond", ["type"] = TypeJson.Fqn("kotlin.Int"),
+                ["cond"] = new JsonObject
+                {
+                    ["k"] = "binOp", ["op"] = "==",
+                    ["lhs"] = new JsonObject { ["k"] = "local", ["name"] = name }, ["rhs"] = ConstInt(ord),
+                },
+                ["then"] = ConstInt(bit), ["else"] = chain,
+            };
+        }
+        return new JsonObject { ["k"] = "valueBlock", ["stmts"] = new JsonArray { decl }, ["result"] = chain };
+    }
+
+    // A `Set<RegexOption>` -> the OR'd RegexOptions bitmask: `(IGNORE_CASE in s ? 1:0) | (MULTILINE in s ? 2:0) |
+    // (DOT_MATCHES_ALL in s ? 16:0) | (COMMENTS in s ? 32:0)`, with the set bound to a temp so it evaluates once. Each
+    // `X in s` is the plain Kotlin `Set.contains(RegexOption)` call (MemberCallSubstitution binds it off the ref.dll,
+    // exactly as a user `in`) with the option as a compile-time `enumValue` constant.
+    static JsonNode SetOptionBits(JsonNode setArg, JsonNode setType)
+    {
+        var name = "__rxopts$" + System.Threading.Interlocked.Increment(ref _rxCounter);
+        var decl = new JsonObject
+        {
+            ["k"] = "var", ["name"] = name, ["type"] = setType.DeepClone(), ["init"] = setArg,
+        };
+        JsonNode result = null;
+        foreach (var (ord, bit) in RegexOptionBits)
+        {
+            var test = new JsonObject
+            {
+                ["k"] = "cond", ["type"] = TypeJson.Fqn("kotlin.Int"),
+                ["cond"] = ContainsOption(name, ord, setType),
+                ["then"] = ConstInt(bit), ["else"] = ConstInt(0),
+            };
+            result = result == null
+                ? (JsonNode)test
+                : new JsonObject { ["k"] = "binOp", ["op"] = "|", ["lhs"] = result, ["rhs"] = test };
+        }
+        return new JsonObject { ["k"] = "valueBlock", ["stmts"] = new JsonArray { decl }, ["result"] = result };
+    }
+
+    // `RegexOption.<entry at ordinal> in s` = `s.contains(enumValue)` — the exact node kotc emits for a Set `in` check
+    // (virtual contains(T), the type-var sig, the Collection.contains override marker), so it binds identically.
+    static JsonObject ContainsOption(string setLocal, int ordinal, JsonNode setType) => new()
+    {
+        ["k"] = "callInstance",
+        ["ownerType"] = setType.DeepClone(),
+        ["virtual"] = true,
+        ["recv"] = new JsonObject { ["k"] = "local", ["name"] = setLocal },
+        ["method"] = "contains",
+        ["sig"] = new JsonArray { new JsonObject { ["t"] = "tv", ["scope"] = "type", ["i"] = 0 } },
+        ["ret"] = TypeJson.Fqn("kotlin.Boolean"),
+        ["args"] = new JsonArray { new JsonObject { ["k"] = "enumValue", ["type"] = TypeJson.Fqn(RegexOptionFqn), ["ordinal"] = ordinal } },
+        ["overrides"] = new JsonArray
+        {
+            new JsonObject { ["owner"] = TypeJson.Fqn("kotlin.collections.Collection"), ["member"] = "contains", ["kind"] = "method", ["arity"] = 1 },
+        },
+    };
+
+    static JsonObject ConstInt(int v) => new() { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Int"), ["value"] = v };
 }
 

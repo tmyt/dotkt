@@ -695,6 +695,11 @@ il_check regex Regex "$ROOT/cases/il-regex" "$(printf 'True\nFalse\na#b#c#\na_b_
 # — so a shorter alternation branch (`a` in `a|ab`) or a lazy quantifier still yields the full-input match; compiled
 # options (?i) and existing anchors coexist; capture-group numbers are preserved by the non-capturing wrapper group.
 il_check regexanchor RegexAnchor "$ROOT/cases/il-regexanchor" "$(printf 'ab\nTrue\na\naaa\nTrue\n12-34,12,34\nab\nTrue\nFalse\nnull')"
+# regexopts (#178): Regex(String, RegexOption) / Regex(String, Set<RegexOption>) ctors — bir2cir NetInteropBinding
+# converts the RegexOption / Set<RegexOption> arg to the BCL RegexOptions int bitmask (IGNORE_CASE->1 / MULTILINE->2 /
+# DOT_MATCHES_ALL->16 / COMMENTS->32) at the ctor call site (was InvalidProgram / ABI-mismatch: the DotKt enum/set does
+# not match nor carry the numeric value of the [Flags] System...RegexOptions int ctor param).
+il_check regexopts RegexOpts "$ROOT/cases/il-regexopts" "$(printf 'True\nTrue\nFalse\nTrue\nTrue\nFalse\nTrue\nFalse\nTrue\nTrue')"
 # linkedorder (#169): LinkedHashMap/LinkedHashSet (and mapOf/setOf) preserve insertion order across a MIDDLE removal —
 # LinkedHashMap is backed by the insertion-ordered System...OrderedDictionary; LinkedHashSet by a pure-Kotlin set over it.
 il_check linkedorder LinkedOrder "$ROOT/cases/il-linkedorder" "$(printf 'a,c,d,e\na=1,c=3,d=4,e=5\n1,3,4,5\nx,z,w,q\n4\nTrue\nFalse\none,two,three\np,d,b,a')"
