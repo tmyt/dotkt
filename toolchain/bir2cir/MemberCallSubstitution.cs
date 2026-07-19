@@ -530,30 +530,6 @@ static class MemberCallSubstitution
     {
         var ownerFqnNode = TypeJson.Read(node[instance ? "ownerType" : "owner"]) as TypeNode.Fqn;
         var ownerToken = ownerFqnNode?.Name;
-        // #80 (+residual) — the top-level val `COROUTINE_SUSPENDED` (kotlin.coroutines.intrinsics) read, canonicalized to
-        // its declaring IntrinsicsKt owner REGARDLESS of the owner kotc stamped. Two mis-owned shapes reach here, and BOTH
-        // are the SAME intrinsic val — bind them to `IntrinsicsKt.get_COROUTINE_SUSPENDED` (static + argless-guarded, so a
-        // user fn of the same name is not swallowed) BEFORE the owner-dependent branches below, so it resolves in EVERY
-        // reader whether kotc emitted it owner-null or already-owner'd:
-        //   • owner-NULL       — TryResolveTopLevelStatic (below) would mis-attribute it to the enclosing file class (it is
-        //                        a val, absent from the top-level-FUN index) → an unresolvable `<FileClass>.get_…`.
-        //   • already-OWNER'D  — the port's NON-suspend readers (`DispatchedCoroutine.getResult(): Any?`) emit the read
-        //                        with owner=<reader's own file class> (kotlinx.coroutines.Builders_commonKt) + a `prop:get`
-        //                        marker; that skips the owner-null block entirely, and the owner-ful non-CLR path only
-        //                        RENAMES the accessor (get_COROUTINE_SUSPENDED) → ilemit sees `<FileClass>.get_COROUTINE_
-        //                        SUSPENDED`, unresolvable (the #80 RESIDUAL). Non-suspend readers never reach
-        //                        SuspendColdLowering's SM-body Rewrite canonicalization, so this is their only rebind site.
-        // Match the RAW method (`COROUTINE_SUSPENDED` + a `prop:get` marker) OR a pre-baked `get_COROUTINE_SUSPENDED`;
-        // consume the `prop` marker (not BIR/CIR vocabulary) and force the canonical accessor slot.
-        if (!instance
-            && (node["method"] as JsonValue)?.GetValue<string>() is "COROUTINE_SUSPENDED" or "get_COROUTINE_SUSPENDED"
-            && (node["args"] is not JsonArray csArgs || csArgs.Count == 0))
-        {
-            node.Remove("prop");
-            node["owner"] = TypeJson.Fqn("kotlin.coroutines.intrinsics.IntrinsicsKt");
-            node["method"] = "get_COROUTINE_SUSPENDED";
-            return node;
-        }
         if (string.IsNullOrEmpty(ownerToken))
         {
             // Top-level fun call (`callStatic owner=null`) bound by @ClrIntrinsic. Two shapes (sourced from the ref.dll):
@@ -563,12 +539,16 @@ static class MemberCallSubstitution
             //                       sig type is the receiver type; the rest are the method args.
             var fn = (node["method"] as JsonValue)?.GetValue<string>();
             if (instance || string.IsNullOrEmpty(fn)) return null;
-            // #81: a top-level EXTENSION-property accessor (C7: `val List<T>.lastIndex`, `val Int.absoluteValue`)
-            // carries the bare property IDENTITY + a `"prop":"get"/"set"` marker instead of a baked `get_`/`set_`
-            // slot name (extending the #78 static-axis convention to the owner-null extension axis). There is no
-            // bare-name ext-property binding index, so reconstruct kotc's OWN `get_`/`set_<name>` accessor
-            // convention BEFORE every owner-null resolver below (`TryExtMemberIntrinsic` keyed `get_lastIndex|recv|
-            // count`, `TryResolveTopLevelStatic` keyed `get_lastIndex`) — byte-identical to the pre-#81 baked emission.
+            // #81/#157: an owner-null top-level PROPERTY accessor read carries the bare property IDENTITY + a
+            // `"prop":"get"/"set"` marker instead of a baked `get_`/`set_` slot name (the #78 static-axis convention
+            // extended to the owner-null axis). Two producers, ONE reconstruction: a top-level EXTENSION property
+            // (#81/C7: `val List<T>.lastIndex`, `val Int.absoluteValue` — resolves via the recvKey branch), and a
+            // plain (non-extension) cross-module top-level val deserialized from a metadata klib whose parent is a
+            // package fragment (#157: `COROUTINE_SUSPENDED` — resolves via the zero-arg single-candidate branch;
+            // this replaced a COROUTINE_SUSPENDED-specific owner-rebind band-aid, deleted as redundant). There is no
+            // bare-name binding index, so reconstruct kotc's OWN `get_`/`set_<name>` accessor convention BEFORE every
+            // owner-null resolver below (`TryExtMemberIntrinsic` keyed `get_lastIndex|recv|count`,
+            // `TryResolveTopLevelStatic` keyed `get_lastIndex`/`get_COROUTINE_SUSPENDED`) — byte-identical to the baked emission.
             if ((node["prop"] as JsonValue)?.GetValue<string>() is ("get" or "set") and var tlProp)
             {
                 node.Remove("prop");

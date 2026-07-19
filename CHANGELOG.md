@@ -7,6 +7,18 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir ([tmyt/dotkt#157], area:bir2cir): general cross-module top-level `val` accessor resolution; delete
+  the `COROUTINE_SUSPENDED` band-aid.** A cross-module top-level `val` read is kotc-emitted (post-#89) as
+  `callStatic owner:null … prop:get`; bir2cir already reconstructs the `get_<name>` accessor and resolves it via
+  `TryResolveTopLevelStatic` — and the ref-scan already indexes property accessors (`get_X`/`set_X` — file-class
+  statics with `intrinsic==null`, no `IsSpecialName` exclusion). The prior `COROUTINE_SUSPENDED`-specific
+  owner-rebind in `MemberCallSubstitution` was therefore redundant (post-#89 the "already-owner'd" shape it also
+  covered no longer occurs — both reads now arrive owner:null); removed it (no-band-aid rule), so every
+  cross-module top-level val resolves through the ONE general path. Byte-identical CIR before/after on
+  `il-suspendintrinsicowned`; the non-coroutine sibling of the same path is gated by `il-extprop` (extension-property
+  getters). NB the facadegen-consumed top-level val is a distinct owner-ful `staticField` shape (gated separately by
+  `roundtrip-toplevel-val`), and the owner:null path is klib-package-fragment-only. #157
+
 - **bir2cir/ilemit ([tmyt/dotkt#46], area:bir2cir): plain-call / ctor / dispatch memberRef carry — ilemit purified
   to a linker (W1-S2; the generic-call dual S1 was #44).** bir2cir now resolves `clrStatic`/`clrInstance`/`newClr`
   against the ref.dll (MetadataLoadContext), structurally matches the winning member, and carries its declared param
