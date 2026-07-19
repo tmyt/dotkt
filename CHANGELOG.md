@@ -178,6 +178,20 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `il-safecontresume` (async cross-thread `suspendCoroutine` resume).
 ### Changed
 
+- **gates/tests (area:gates): NUnit migration foundation + first family (generics battery) migrated off the
+  per-case bash gate.** Stood up the production in-process NUnit suite (`docs/design-nunit-test-harness.md`,
+  playbook `docs/nunit-migration-playbook.md`): `tests/il/DotKt.Tests.Il.ktproj` resolves the LOCALLY-BUILT
+  DotKt SDK from `build/nuget-feed` (`make pack`) via an active `tests/nuget.config` (isolated
+  `globalPackagesFolder`, package-source mapping `DotKt.*`→local feed) — so the suite tests the compiler in the
+  working tree, not a published nuget. `tests/run-nunit-il.sh` drives it and enforces a **discovered-count
+  guard** (asserts `dotnet test` discovered exactly the expected number of methods — a dropped/added method or a
+  0-test discovery failure reddens the gate) plus once-per-assembly ilverify. Migrated `cases/il-generic ..
+  il-generic6` (the G-1..G-6 progressive-milestone cases the cases-test-design audit condemns as 6 permanent
+  compiler processes) → one `GenericsTests` fixture, 6 `@TestAttribute` methods asserting the SAME values via
+  `assertEquals` (aliased from `ClassicAssert.Companion.AreEqual`); the 6 case dirs, their `verify-il.sh`
+  `il_check` lines, and their `verify-differential.sh` `PURE` entries were deleted in the SAME change (audit
+  必須是正条件 #14). `dotnet test` runs the battery in ~17 s clean / ~3.6 s warm against the local SDK.
+
 - **docs/process (area:semantics): the behavior-choice acceptance test is now stated as "consistent, documented,
   convincingly explainable"** (CLAUDE.md Design doctrine + `docs/dotkt-semantics.md` guiding principle): ① Kotlin
   contract by default, ② CLR-native where unspecified, ③ *interop-first deviation* may override even the KDoc letter
