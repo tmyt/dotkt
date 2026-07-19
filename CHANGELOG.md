@@ -5,6 +5,26 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Added
+
+- **CLR event model — a Kotlin class can now IMPLEMENT and RAISE a .NET interface event ([tmyt/dotkt#187],
+  [tmyt/dotkt#113], area:kotc, area:bir2cir, area:ilemit): first-class WPF/Avalonia/WinUI MVVM
+  (`INotifyPropertyChanged`) on Kotlin-on-CLR.** `class ViewModelBase : INotifyPropertyChanged { override val
+  PropertyChanged by clrEvent() }` now compiles to a loadable type: kotc synthesizes `add_/remove_/raise_<E>` accessors
+  + a backing delegate field; bir2cir (`ClrEventImplBinding`) resolves the concrete `EventHandlerType` delegate off the
+  ref.dll and lowers the accessor bodies; ilemit emits the C# field-like-event shape (a lock-free
+  `Delegate.Combine/Remove` + `Interlocked.CompareExchange<D>` CAS loop for add/remove, `field?.Invoke(args)` for raise)
+  + the `.event` metadata, and the synthesized accessors satisfy the interface `add_/remove_` slots. `kotlin.clr.ClrEvent<T>`
+  is now an **abstract covariant marker with a private ctor** (non-constructable, non-subclassable); the interface event
+  member is emitted OPEN, so a missing `by clrEvent()` on a direct interface implementer is a real compile diagnostic (a
+  kotc emission-time check — an abstract member is unsatisfiable when a .NET base explicitly implements the event with a
+  different-signature same-name public event, so it would wrongly break the `class MyApp : Avalonia.Application` ELIDE
+  case). **RAISE-from-outside** is a deliberate CLR-native deviation (interop-first): `vm.E.invoke(sender, args)`
+  is legal from any type via a public synthesized `raise_<E>` (`docs/dotkt-semantics.md` §8d). #113: all event emit routes
+  through guarded resolution — a missing/value-type/constructed-generic event owner gives a legible `ilemit:`/`bir2cir:`
+  breadcrumb instead of an opaque NRE. Design: `docs/design-clr-event-model.md`. (Class-delegation event forwarding #186
+  is deferred to 0.9.8.)
+
 ### Fixed
 
 - **stdlib/bir2cir ([tmyt/dotkt#56], area:bir2cir): high-arity (17–22) function-type declarations no longer

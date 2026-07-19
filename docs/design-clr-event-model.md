@@ -111,11 +111,40 @@ meaning; it is a compile-time lowering tag. Two consequences, both wanted:
    can accidentally materialize the fiction. Any node that still carries a live `ClrEvent<T>` value
    past bir2cir is a bug the type system now surfaces, instead of leaking `kotlin.clr.ClrEvent` to
    ilemit (the #186 failure signature `kotlin.clr.ClrEvent.plusAssign() not found`).
-2. **An interface event member becomes a member OBLIGATION.** The interface event is surfaced as an
-   **abstract** `ClrEvent<T>` member. A Kotlin class directly implementing that interface now inherits
-   an *unsatisfied abstract member* — the Kotlin frontend itself forces the author to write
-   `override val E by clrEvent()`, converting "kotc silently emits an invalid type" (#187) into a
-   normal, frontend-enforced override obligation with a real diagnostic when omitted.
+2. **A direct interface implementer must provide the event (#187 diagnostic).** A Kotlin class that
+   directly implements a .NET interface event without `override val E by clrEvent()` would emit an invalid
+   type (missing `add_/remove_` → `TypeLoadException`). This is caught with a real compile error.
+   **Correction to the original plan (implementation reality):** the interface event member is emitted
+   **OPEN** (overridable but NOT abstract), NOT abstract. An abstract member seemed to give a free frontend
+   obligation, but it **wrongly breaks the `class MyApp : Avalonia.Application` ELIDE case**: a .NET base
+   (`AvaloniaObject`) explicitly implements `INotifyPropertyChanged.PropertyChanged` (handler
+   `PropertyChangedEventHandler`) while ALSO exposing its **own** same-name public `PropertyChanged` event of a
+   **different** signature (`EventHandler<AvaloniaPropertyChangedEventArgs>`). facadegen can surface only ONE
+   `PropertyChanged` property (the public one, different handler), which therefore does **not** override the
+   abstract interface slot — so an abstract member is *unsatisfiable* and `MyApp` fails to compile ("not
+   abstract and does not implement abstract members"). **OPEN** lets `override val E by clrEvent()` typecheck
+   while imposing no obligation, so ELIDE compiles. The #187 obligation is enforced at **kotc emission time**
+   (`BirEmitter.checkUnimplementedClrEvents`), which distinguishes the cases by *provider*: a `ClrEvent<T>`
+   fake-override is unsatisfied (→ #187 error) only when provided by **neither** a base CLASS that declares it
+   (a Kotlin base that synthesized it — e.g. `PersonViewModel : ViewModelBase()`) **nor** an external .NET base
+   class (`MyApp : Avalonia.Application`). Never a false positive; the sole residual gap is a false-negative for
+   `class X : UnrelatedNetBase(), IEvented` (kotc-purity forbids reading .NET metadata to know which interface a
+   .NET base implements).
+3. **PRIVATE primary ctor — abstract for the obligation, but non-subclassable.** `ClrEvent<T>` is given a
+   `private` primary constructor. Abstractness was chosen ONLY for the member-obligation mechanism, which
+   never constructs or subclasses `ClrEvent<T>`; but `abstract` alone would let a user write
+   `class My<T> : ClrEvent<T>() { override … }` — an unintended side door that would force `ClrEvent<T>`
+   to materialize as a real emitted base type (violating §9's "ClrEvent<T> never reaches ilemit") and
+   ship a non-interop **fake event** (the CLR `.event` synthesis is keyed on `clrEvent()`, so a custom
+   subclass produces NO real CLR event). A private primary ctor keeps abstract-for-the-obligation fully
+   intact (nothing legitimately constructs it — the `MyApp : Avalonia.Application` fake-override and the
+   `clrEvent()` marker both never call it) while making `: ClrEvent<T>()` fail at the FRONTEND (a subclass
+   in another file cannot reach the private ctor).
+
+> FUTURE HOOK (out of scope for 0.9.7). The abstract shape is the natural hook for a future C#-style
+> custom-event-accessor feature — `override val E by someCustomEventImpl()` lowering author-supplied
+> add/remove bodies to real CLR accessors that still satisfy the interface slot — so the abstractness is
+> worth keeping rather than regretting. Noted only; NOT implemented here.
 
 **Per appearance:**
 
@@ -125,26 +154,31 @@ meaning; it is a compile-time lowering tag. Two consequences, both wanted:
   `operator fun invoke(vararg args): R` (raise), and abstract `operator fun getValue(r: Any?, p: KProperty<*>): ClrEvent<T>`
   (so `by clrEvent()` typechecks under the delegate convention — see §5). None have bodies; none
   are ever executed.
-- **The interface event member** (facadegen `Program.cs:755-763` → kotc
-  `ClrTypeInjection.generateProperties`, `ClrTypeInjection.kt:770-780`): emitted **ABSTRACT** on the
-  interface, reverting the current deliberate "emitted NON-abstract" choice at `ClrTypeInjection.kt:774`.
-  facadegen already surfaces the member (`EventObj`, N6); no facadegen shape change is needed beyond
-  keeping the interface event abstract — the abstractness is set at the kotc injection site. (facadegen
-  owns *whether* the type is `ClrEvent<T>`; kotc owns the *modality* of the injected member.)
-- **The fake-override elision** (kotc `BirEmitterDeclarations.isClrEventProperty`,
-  `BirEmitterDeclarations.kt:414`): stays for the **base-class-satisfies** case (`class MyApp :
-  Avalonia.Application` — the .NET base already implements the interface, fir2ir synthesizes a
-  *concrete* `ClrEvent<T>` fake-override that satisfies the abstract slot → elide, no synthesis). It
-  is **not** applied to a member the user explicitly implements with `by clrEvent()` (§5), nor to a
-  delegation forwarder (§4.4). See §5 for the discriminator.
+- **The interface event member** (facadegen `Program.cs` `EventObj`/N6 → kotc
+  `ClrTypeInjection.generateProperties`): emitted **OPEN** on the interface — overridable (so `override val E by
+  clrEvent()` typechecks) but non-abstract (no frontend obligation; see the correction in consequence #2 — an
+  abstract member breaks the ELIDE case of a .NET base that explicitly implements the event). A CLASS event
+  member stays final. facadegen owns *whether* the type is `ClrEvent<T>`; kotc owns the *modality*.
+- **The #187 obligation** (kotc `BirEmitterDeclarations.checkUnimplementedClrEvents`): a `ClrEvent<T>`
+  FAKE-OVERRIDE with no provider (neither a base CLASS that declares it, nor an external .NET base class) is a
+  compile error pointing at the missing `by clrEvent()`.
+- **The fake-override elision** (kotc `BirEmitterDeclarations.isClrEventProperty`): stays for the
+  **base-class-satisfies** case (`class MyApp : Avalonia.Application` — the .NET base implements the interface
+  at the CLR level; the inherited `ClrEvent<T>` fake-override is elided, no synthesis, and
+  `checkUnimplementedClrEvents` skips it because the class has an external .NET base). It is **not** applied to
+  a member the user explicitly implements with `by clrEvent()` (§5), nor to a delegation forwarder (§4.4, S4).
 
-> Why abstract is safe for `class MyApp : Avalonia.Application`. The worry behind the current
-> non-abstract choice was that an abstract interface event would impose an unsatisfiable obligation on
-> a subclass whose *base class* supplies the accessors. It does not: fir2ir produces a **concrete**
-> fake-override of the inherited `ClrEvent<T>` member (the base class's implementation), which
-> satisfies the abstract interface slot exactly as a normal inherited concrete member satisfies an
-> abstract one. Only a **direct** interface implementation with **no** intervening base-class
-> implementation leaves the slot abstract — precisely the case that must synthesize.
+> Why the interface event member is OPEN, not abstract (empirically verified). An abstract interface event
+> member was the original plan, assuming a .NET base that implements the interface would satisfy the slot. It
+> does NOT: `AvaloniaObject` explicitly implements `INotifyPropertyChanged.PropertyChanged`
+> (`PropertyChangedEventHandler`) **and** exposes its own same-name public `PropertyChanged`
+> (`EventHandler<AvaloniaPropertyChangedEventArgs>`) — facadegen surfaces only the latter (different handler),
+> which does not override the abstract interface slot, so `class MyApp : Avalonia.Application` fails to compile
+> ("not abstract and does not implement abstract members" — the `ktproj-avalonia` regression that proved this).
+> **OPEN** keeps `override val E by clrEvent()` typechecking (overridable) while imposing no obligation, so the
+> ELIDE case compiles; the #187 obligation is a kotc emission-time check keyed on the event *provider* (base
+> CLASS that declares it, or external .NET base). `ClrEvent<T>` the TYPE stays abstract + private-ctor
+> regardless (§3.1/§3.3).
 
 ---
 

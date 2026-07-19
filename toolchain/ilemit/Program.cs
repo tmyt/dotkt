@@ -182,6 +182,7 @@ sealed partial class Emitter
     // so EmitMethodBody/EmitCtorBody prescans the whole body. id -> IL Label. See docs/design-il-cfg.md.
     Dictionary<int, Label> _cfgLabels;
     Type _methodRetType = typeof(void);
+    TypeInfo _curTi;   // the TypeInfo whose method/ctor body is being emitted (for a synthesized-event accessor's backing field)
     // The generic context for emitting a type's members = the type's OWN params PLUS every enclosing (`nestedIn`) type's
     // params — a .NET nested type references its outer generic type's parameters by the outer's builder (a Kotlin `inner
     // class IteratorImpl` inside `AbstractList<E>` whose `next(): E` must resolve `gp:E` to AbstractList's `E`).

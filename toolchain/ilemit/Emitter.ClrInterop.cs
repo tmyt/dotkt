@@ -626,6 +626,64 @@ sealed partial class Emitter
         return (ctor, invoke);
     }
 
+    // §4.2/§4.3 (#187) — the body of a SYNTHESIZED field-like .NET event accessor. bir2cir (ClrEventImplBinding) resolved
+    // the concrete delegate `D` off the ref.dll and inserted the `<E>$delegate : D` backing field; ilemit emits pure CLR
+    // codegen from the `clrEventAccessorImpl{kind, name:<field>, delegateType:D}` directive — the C# field-like-event shape:
+    //   add/remove -> a lock-free CAS loop (Delegate.Combine/Remove + Interlocked.CompareExchange<D>);
+    //   raise      -> `field?.Invoke(args...)` (the null-conditional makes a zero-subscriber raise a safe no-op).
+    // The method's trailing `ret` is appended by EmitTrailingRet (all three are void). ilemit knows NO Kotlin here — the
+    // delegate + field are already resolved. (§9 — ClrEvent<T>/clrEvent() never reach this layer.)
+    void EmitClrEventAccessorImpl(JsonElement e)
+    {
+        var kind = e.GetProperty("kind").GetString();
+        var fieldName = e.GetProperty("name").GetString();
+        var d = MapType(e.GetProperty("delegateType"));
+        // S5 (#113): a missing backing field is a bir2cir/kotc synthesis defect — a legible breadcrumb, not an opaque miss.
+        if (_curTi == null || !_curTi.Fields.TryGetValue(fieldName, out var field))
+            throw new InvalidOperationException($"ilemit: clrEventAccessorImpl backing field '{fieldName}' is absent on '{_curTi?.TB?.Name}' (bir2cir ClrEventImplBinding must insert `<E>$delegate` — #187/#113)");
+        if (kind == "raise") { EmitClrEventRaise(field, d); return; }
+        EmitClrEventCas(field, d, add: kind == "add");
+    }
+
+    // The lock-free add/remove CAS loop over the backing delegate field (C#'s field-like-event accessor shape):
+    //   D cur = this.field; do { D cmp = cur; D upd = (D)Delegate.Combine/Remove(cmp, value);
+    //       cur = Interlocked.CompareExchange<D>(ref this.field, upd, cmp); } while (cur != cmp);
+    // arg0 = this, arg1 = the handler `value`. Reference comparison (bne.un), not delegate equality.
+    void EmitClrEventCas(FieldInfo field, Type d, bool add)
+    {
+        var combine = typeof(Delegate).GetMethod(add ? "Combine" : "Remove", new[] { typeof(Delegate), typeof(Delegate) });
+        var cmpx = typeof(System.Threading.Interlocked).GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .Single(m => m.Name == "CompareExchange" && m.IsGenericMethodDefinition && m.GetGenericArguments().Length == 1)
+            .MakeGenericMethod(d);
+        var cur = _il.DeclareLocal(d); var cmp = _il.DeclareLocal(d); var upd = _il.DeclareLocal(d);
+        var retry = _il.DefineLabel();
+        _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldfld, field); _il.Emit(OpCodes.Stloc, cur);
+        _il.MarkLabel(retry);
+        _il.Emit(OpCodes.Ldloc, cur); _il.Emit(OpCodes.Stloc, cmp);
+        _il.Emit(OpCodes.Ldloc, cmp); _il.Emit(OpCodes.Ldarg_1);
+        _il.Emit(OpCodes.Call, combine); _il.Emit(OpCodes.Castclass, d); _il.Emit(OpCodes.Stloc, upd);
+        _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldflda, field);
+        _il.Emit(OpCodes.Ldloc, upd); _il.Emit(OpCodes.Ldloc, cmp);
+        _il.Emit(OpCodes.Call, cmpx); _il.Emit(OpCodes.Stloc, cur);
+        _il.Emit(OpCodes.Ldloc, cur); _il.Emit(OpCodes.Ldloc, cmp); _il.Emit(OpCodes.Bne_Un, retry);
+    }
+
+    // `raise_<E>(args...)`: snapshot the backing field, and if non-null invoke it with the raise method's own params.
+    // arg0 = this; the raise params (== D.Invoke's params) start at arg1. The null check = C#'s field-like `field?.Invoke`.
+    void EmitClrEventRaise(FieldInfo field, Type d)
+    {
+        var invoke = d.GetMethod("Invoke");
+        var handler = _il.DeclareLocal(d);
+        var done = _il.DefineLabel();
+        _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldfld, field); _il.Emit(OpCodes.Stloc, handler);
+        _il.Emit(OpCodes.Ldloc, handler); _il.Emit(OpCodes.Brfalse, done);
+        _il.Emit(OpCodes.Ldloc, handler);
+        var n = invoke.GetParameters().Length;
+        for (int i = 0; i < n; i++) _il.Emit(OpCodes.Ldarg, checked((short)(i + 1)));
+        _il.Emit(OpCodes.Callvirt, invoke);
+        _il.MarkLabel(done);
+    }
+
     // Bind a lambda handler (newDelegate = non-capturing, newClosure = capturing) into a SPECIFIC delegate type.
     // Mirrors the newDelegate/newClosure cases but uses `want` (the event's delegate type) for the ctor.
     void EmitHandlerAsDelegate(JsonElement h, Type want)

@@ -581,6 +581,10 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	// from a named package — unlike a root-package symbol, which Kotlin cannot import into a named package.
 	private val stackBufferName = "stackBuffer"
 	private val stackBufferClassId = ClassId(clrPkg, Name.identifier("StackBuffer"))
+	// `clrEvent()`: the author-written marker `override val E by clrEvent()` that says "synthesize the field-like .NET
+	// event impl here" (§4.2/§5 of design-clr-event-model.md). A PURE kotc intrinsic — the returned `ClrEvent<T>` is
+	// never real; kotc recognizes the `by clrEvent()` delegate initializer and synthesizes add_/remove_/raise_.
+	private val clrEventName = "clrEvent"
 	// `Span<T>`: a `kotlin.clr` intrinsic that maps to the real `System.Span<T>` (birType -> clrg:System.Span)
 	// — the surfaced form of a .NET Span parameter and the result of `StackBuffer.asSpan()`.
 	private val spanClassId = ClassId(clrPkg, Name.identifier("Span"))
@@ -612,7 +616,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 
 	override fun getTopLevelCallableIds(): Set<CallableId> =
 		if (!clrActive) hashSetOf(CallableId(clrPkg, Name.identifier(byrefName)))
-		else hashSetOf(CallableId(clrPkg, Name.identifier(byrefName)), CallableId(clrPkg, Name.identifier(stackBufferName))) + topLevelByCallable.keys + topLevelPropByCallable.keys
+		else hashSetOf(CallableId(clrPkg, Name.identifier(byrefName)), CallableId(clrPkg, Name.identifier(stackBufferName)), CallableId(clrPkg, Name.identifier(clrEventName))) + topLevelByCallable.keys + topLevelPropByCallable.keys
 
 	override fun getTopLevelClassIds(): Set<ClassId> =
 		if (!clrActive) hashSetOf(clrRefClassId) else byClassId.keys + clrRefClassId + stackBufferClassId + spanClassId + clrEventClassId
@@ -621,7 +625,18 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		// The intrinsic `ClrRef<T>` carries getValue/setValue (so a ref return is `by`-delegatable). `ClrEvent<T>`
 		// (the .NET-event handle) carries plusAssign/minusAssign; both are generic single-param `kotlin.clr` fictions.
 		if (classId == clrRefClassId || classId == stackBufferClassId || classId == spanClassId || classId == clrEventClassId) return createTopLevelClass(classId, ClrGeneratedKey, ClassKind.CLASS) {
-			typeParameter(Name.identifier("T"), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey)
+			// `ClrEvent<T>` is an ABSTRACT MARKER (§3 of design-clr-event-model.md): it has no runtime instance and no
+			// runtime meaning (a .NET event is not a first-class value). Abstractness (a) makes `clrEvent()`/`ClrEvent()`
+			// unconstructable, and (b) turns an interface event member into a real frontend override obligation (#187).
+			// It ALSO carries a PRIVATE primary ctor (generateConstructors) so a user cannot `class My : ClrEvent<T>()` —
+			// abstract-for-the-obligation but non-subclassable, keeping `ClrEvent<T>` from ever materializing / shipping a
+			// non-interop fake event (§9). ClrRef/StackBuffer/Span stay concrete fictions (no obligation, freely used).
+			if (classId == clrEventClassId) modality = Modality.ABSTRACT
+			// `ClrEvent<out T>` is COVARIANT so `override val E by clrEvent()` typechecks: the marker `clrEvent()` returns
+			// `ClrEvent<Nothing>`, whose `getValue` yields `ClrEvent<Nothing>` — a subtype of the overridden `ClrEvent<Handler>`
+			// only under covariance (`Nothing <: Handler`). (The consume operators take `@UnsafeVariance T`; never called.)
+			val eventVariance = if (classId == clrEventClassId) org.jetbrains.kotlin.types.Variance.OUT_VARIANCE else org.jetbrains.kotlin.types.Variance.INVARIANT
+			typeParameter(Name.identifier("T"), eventVariance, false, ClrGeneratedKey)
 		}.symbol
 		val type = injectedType(classId) ?: return null
 		val kind = when { type.isAnnotation -> ClassKind.ANNOTATION_CLASS; type.isObject -> ClassKind.OBJECT; type.isInterface -> ClassKind.INTERFACE; else -> ClassKind.CLASS }
@@ -704,9 +719,12 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		// `StackBuffer<T>`: size (val), get/set (operators), asSpan (-> Span<T> = the real System.Span<T>).
 		if (classSymbol.classId == stackBufferClassId)
 			return hashSetOf(Name.identifier("size"), Name.identifier("get"), Name.identifier("set"), Name.identifier("asSpan"))
-		// `ClrEvent<T>`: the `+=`/`-=` subscription operators (member operators — see Codex-verified resolution).
+		// `ClrEvent<T>` (abstract marker): the `+=`/`-=` subscription operators (consume), `invoke` (raise), `getValue`
+		// (so `by clrEvent()` typechecks under the delegate convention) — all abstract, none ever executed. INIT signals a
+		// PRIVATE primary ctor (generateConstructors) so `ClrEvent<T>` is non-subclassable/non-constructable.
 		if (classSymbol.classId == clrEventClassId)
-			return hashSetOf(Name.identifier("plusAssign"), Name.identifier("minusAssign"))
+			return hashSetOf(Name.identifier("plusAssign"), Name.identifier("minusAssign"),
+				Name.identifier("invoke"), Name.identifier("getValue"), SpecialNames.INIT)
 		// A companion object: its callables are the owner class's static methods/props.
 		companionOwnerType(classSymbol.classId)?.let { ct ->
 			val n = HashSet<Name>()
@@ -770,13 +788,16 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		type.events.firstOrNull { it.name == callableId.callableName.asString() }?.let { ev ->
 			val handler = coneFunctionType(ev.handlerParams.map { coneOf(it.type, owner) }, coneOf(ev.handlerReturn, owner))
 			// A .NET event surfaces as a generated `ClrEvent<T>` handle property (never a real .NET property/field: the
-			// read emits a clrPropGet the ClrEventOperatorBinding consumes). Both class instance events and INTERFACE
-			// events (facadegen `event`) reach here, and it is emitted NON-abstract even on an interface: an abstract
-			// event member would impose an unsatisfiable member obligation on a Kotlin class subclassing a .NET class
-			// that implements the interface (`class MyApp : Avalonia.Application` — the ClrEvent<T> is a fiction, not a
-			// real overridable property). Non-abstract keeps `x.PropertyChanged += h` resolving on an interface-typed
-			// receiver while leaving no obligation; the inherited ClrEvent fake-override is elided by isClrEventProperty.
-			return listOf(createMemberProperty(owner, ClrGeneratedKey, callableId.callableName, clrEventOf(handler), true, false).symbol)
+			// read emits a clrEventGet the ClrEventOperatorBinding consumes). An INTERFACE event is OPEN (overridable but NOT
+			// abstract): `override val E by clrEvent()` (#187 IMPLEMENT) typechecks against it, yet it imposes NO frontend
+			// obligation — critical for the ELIDE case (`class MyApp : Avalonia.Application`), where a .NET base explicitly
+			// implements the interface event at the CLR level with a DIFFERENT-signature same-name public event, so an
+			// abstract slot could never be satisfied (name clash). The #187 missing-`by clrEvent()` obligation is instead a
+			// kotc EMISSION-time check (BirEmitter.checkUnimplementedClrEvents), which distinguishes the base-class-satisfied
+			// ELIDE case from a direct interface impl. A CLASS event member is non-abstract (final).
+			return listOf(createMemberProperty(owner, ClrGeneratedKey, callableId.callableName, clrEventOf(handler), true, false) {
+				if (type.isInterface) modality = Modality.OPEN
+			}.symbol)
 		}
 		val prop = type.properties.firstOrNull { it.name == callableId.callableName.asString() } ?: return emptyList()
 		// Property name == .NET name verbatim, so the backend emits `recv.<Name>` directly.
@@ -788,6 +809,11 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	}
 
 	override fun generateConstructors(context: MemberGenerationContext): List<FirConstructorSymbol> {
+		// `ClrEvent<T>` gets a PRIVATE primary ctor: abstract-for-the-obligation (§3) but non-subclassable — a user in
+		// another file cannot reach the private ctor, so `class My : ClrEvent<T>()` fails at the frontend, keeping
+		// `ClrEvent<T>` from ever materializing as a real emitted base (§9) or shipping a non-interop fake event.
+		if (context.owner.classId == clrEventClassId)
+			return listOf(createConstructor(context.owner, ClrGeneratedKey, isPrimary = true) { visibility = Visibilities.Private }.symbol)
 		val type = injectedType(context.owner.classId) ?: return emptyList()
 		if (type.isObject) return emptyList()
 		val ctors = type.ctors.ifEmpty { listOf(ClrCtor(emptyList())) }   // a class with no listed ctor still needs one
@@ -826,6 +852,17 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 						coneFunctionType(listOf(stackBufferOf(tps[0].symbol.constructType(emptyArray(), false))), tps[1].symbol.constructType(emptyArray(), false))
 					})
 				}
+				return listOf(fn.symbol)
+			}
+			// `fun <T> clrEvent(): ClrEvent<T>` — the author-written marker `override val E by clrEvent()` (§4.2/§5).
+			// A PURE kotc intrinsic: the returned `ClrEvent<T>` is never real (ClrEvent<T> is unconstructable). kotc
+			// RECOGNIZES the `by clrEvent()` delegate initializer and synthesizes the field-like event impl; the
+			// `clrEvent()` call itself is never lowered as a call.
+			if (callableId.callableName.asString() == clrEventName) {
+				// NON-generic `fun clrEvent(): ClrEvent<Nothing>` — the marker delegate. Non-generic so the `by clrEvent()`
+				// delegate position has no free type param to fail inference on; the property's own type drives `getValue<R>`.
+				val fn = createTopLevelFunction(ClrGeneratedKey, callableId,
+					{ _ -> clrEventOf(session.builtinTypes.nothingType.coneType) }) {}
 				return listOf(fn.symbol)
 			}
 			// DotKt round-trip: top-level functions restored from a [KotlinFile] facade. infix/operator are member-only,
@@ -893,14 +930,45 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			}
 			return listOf(fn.symbol)
 		}
-		// `ClrEvent<T>` subscription operators: `operator fun plusAssign(handler: T): Unit` / `minusAssign(handler: T)`.
-		// No body (never executed) — bir2cir's ClrEventOperatorBinding rewrites `w.Changed.plusAssign(h)` to the .NET
-		// add/remove accessor node (clrEventAdd/clrEventRemove) before emit. `operator` is REQUIRED for `+=`/`-=` to resolve.
+		// `ClrEvent<T>` (abstract marker) members — ALL abstract, NONE ever executed (a live ClrEvent<T> value never
+		// survives past bir2cir). `plusAssign`/`minusAssign` (consume) → bir2cir's ClrEventOperatorBinding rewrites
+		// `w.Changed.plusAssign(h)` to the add/remove accessor node; `invoke` (raise) → kotc lowers `handle.invoke(...)`
+		// to `clrEventRaise`; `getValue` exists ONLY so `override val E by clrEvent()` typechecks under the delegate
+		// convention (kotc recognizes the `clrEvent()` marker and synthesizes the impl — getValue is never called). `operator`
+		// is REQUIRED for `+=`/`-=`/`invoke()`/`by` to resolve.
 		if (owner.classId == clrEventClassId) {
 			val tOf = owner.typeParameterSymbols.first().constructType(emptyArray(), false)
-			val fn = createMemberFunction(owner, ClrGeneratedKey, callableId.callableName, session.builtinTypes.unitType.coneType) {
-				status { isOperator = true }
-				valueParameter(Name.identifier("handler"), tOf)
+			val anyN = session.builtinTypes.nullableAnyType.coneType
+			val fn = when (callableId.callableName.asString()) {
+				"plusAssign", "minusAssign" -> createMemberFunction(owner, ClrGeneratedKey, callableId.callableName, session.builtinTypes.unitType.coneType) {
+					modality = Modality.ABSTRACT; status { isOperator = true }
+					valueParameter(Name.identifier("handler"), tOf)
+				}
+				// `operator fun invoke(vararg args: Any?): Unit` — raise. `handle.invoke(sender, args)` / `handle(sender, args)`
+				// desugar to the same call; kotc lowers both to `clrEventRaise` (the result is discarded; a .NET event
+				// delegate is void-returning, so Unit is the honest return).
+				"invoke" -> {
+					// A vararg param's declared type is the ARRAY type (`Array<Any?>`), not the element type — fir2ir builds
+					// the vararg expression against it (an element-typed param crashes fir2ir's vararg lowering).
+					val arrAnyN = session.symbolProvider.getClassLikeSymbolByClassId(ClassId(FqName("kotlin"), Name.identifier("Array")))
+						?.constructType(arrayOf(anyN), false) ?: anyN
+					createMemberFunction(owner, ClrGeneratedKey, callableId.callableName, session.builtinTypes.unitType.coneType) {
+						modality = Modality.ABSTRACT; status { isOperator = true }
+						valueParameter(Name.identifier("args"), arrAnyN, isVararg = true)
+					}
+				}
+				// `operator fun getValue(thisRef: Any?, property: KProperty<*>): ClrEvent<T>` — the delegate-convention shape.
+				// Reading a delegated property yields getValue's return, so it must be `ClrEvent<T>` (not `Nothing`) or the
+				// raise `vm.E.invoke(...)` would resolve on the wrong type. With `clrEvent(): ClrEvent<Nothing>` the covariant
+				// `ClrEvent<Nothing>` satisfies the overridden `ClrEvent<Handler>`, and the read stays a `ClrEvent<…>`. Never called.
+				else -> {
+					val kProp = session.symbolProvider.getClassLikeSymbolByClassId(ClassId(FqName("kotlin.reflect"), Name.identifier("KProperty")))
+						?.constructType(arrayOf(org.jetbrains.kotlin.fir.types.ConeStarProjection), false) ?: anyN
+					createMemberFunction(owner, ClrGeneratedKey, callableId.callableName, clrEventOf(tOf)) {
+						modality = Modality.ABSTRACT; status { isOperator = true }
+						valueParameter(Name.identifier("thisRef"), anyN); valueParameter(Name.identifier("property"), kProp)
+					}
+				}
 			}
 			return listOf(fn.symbol)
 		}

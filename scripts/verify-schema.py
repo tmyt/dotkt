@@ -84,6 +84,7 @@ STR_OK = {
 CLR_OWNER_KINDS = {
     "clrStatic", "clrInstance", "clrDynInstance", "clrGenericStatic", "clrGenericInstance",
     "clrPropGet", "clrPropSet", "clrStaticField", "clrEventGet", "clrEventAdd", "clrEventRemove", "constrainedCall",
+    "clrEventRaise",   # §4.3: the raise handle read — its `type` is the receiver's owner FQN (BIR-only; bir2cir -> callInstance)
 }
 # Keys that legitimately hold an ARRAY containing bare strings: only the type-PARAMETER
 # name-declaration shorthand (typeParams may be ["T"] instead of [{name:"T"}]). A type-param
@@ -129,11 +130,20 @@ KINDS = {
     # event has no plain-Kotlin call form), consumed by bir2cir ClrEventOperatorBinding with the +=/-= into
     # clrEventAdd/Remove — never reaches ilemit/CIR. (byref/ClrRef are the other two CLR-only-vocab forms.)
     "clrEventGet",
+    # kotc-dialect CLR-only-vocab for the .NET-event IMPLEMENT/RAISE feature (§4.2/§4.3, #187). BIR-only (kotc -> bir2cir):
+    #   clrEventBacking  — a per-event `by clrEvent()` backing directive (in a type's `clrEvents` array; carries the handler
+    #                      Kotlin fn type). bir2cir ClrEventImplBinding -> a real `<E>$delegate` field + a `clrEventDecl`.
+    #   clrEventAccessor — the tagged body of a synthesized add_/remove_/raise_<E> accessor. bir2cir -> clrEventAccessorImpl.
+    #   clrEventRaise    — a Kotlin-declared event handle `.invoke(...)`. bir2cir -> a `callInstance raise_<E>`.
+    "clrEventBacking", "clrEventAccessor", "clrEventRaise",
     # --- CLR-lowered (bir2cir → CIR) ---
     "newClr", "clrInstance", "clrStatic", "clrGenericStatic", "clrGenericInstance",
     "clrDynInstance",   # W1-S2 (#46): a clrInstance on an interface owner with no static BCL slot — a DELIBERATE
                         # runtime-reflection dispatch node (replacing ilemit's former silent EmitDynamicCall downgrade)
     "clrPropGet", "clrPropSet", "clrStaticField", "clrEventAdd", "clrEventRemove",
+    # .NET-event IMPLEMENT (§4.2, #187): the bir2cir-lowered CIR forms of the synthesis — a resolved accessor body (CAS
+    # loop / raise, carrying the backing field + concrete delegate D) and a type-level `.event` metadata record.
+    "clrEventAccessorImpl", "clrEventDecl",
     # --- coroutine-lowered (bir2cir → CIR) ---
     "coReturn", "coSuspend", "coLabel", "coGoto", "coCondGoto", "coYield", "coYieldAll",
     "coTryBegin", "coCatchBegin", "coTryEnd",

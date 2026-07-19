@@ -277,6 +277,18 @@ sealed partial class Emitter
                         if (p.TryGetProperty("set", out var s) && s.ValueKind == JsonValueKind.String && ti.Methods.TryGetValue(s.GetString(), out var sm)) pb.SetSetMethod(sm);
                         StampMemberAttrs(pb.SetCustomAttribute, p);   // [KotlinSuspendFunctionType]/… (bir2cir-generated)
                     }
+                // Synthesized field-like .NET events (§4.2, #187): DefineEvent over the already-declared add_/remove_/raise_
+                // accessors, so a C#/reflection consumer sees a real `.event D E`. The accessors ALSO satisfy the interface
+                // add_/remove_ slots (wired by the referenced-interface binding pass below). bir2cir stamped `clrEventDecl`.
+                if (ti.Def.TryGetProperty("clrEvents", out var clrEvs) && clrEvs.ValueKind == JsonValueKind.Array)
+                    foreach (var ev in clrEvs.EnumerateArray())
+                    {
+                        var evName = ev.GetProperty("name").GetString();
+                        var eb = ti.TB.DefineEvent(evName, EventAttributes.None, MapType(ev.GetProperty("delegateType")));
+                        if (ti.Methods.TryGetValue("add_" + evName, out var am)) eb.SetAddOnMethod(am);
+                        if (ti.Methods.TryGetValue("remove_" + evName, out var rm)) eb.SetRemoveOnMethod(rm);
+                        if (ti.Methods.TryGetValue("raise_" + evName, out var rsm)) eb.SetRaiseMethod(rsm);
+                    }
                 EnsureCtorsDefined(ti);
             }
         }
@@ -763,6 +775,9 @@ sealed partial class Emitter
         else if (m.GetProperty("virtual").GetBoolean()) attrs |= MethodAttributes.Virtual | MethodAttributes.NewSlot;
         // An `abstract fun` (no body) -> a CLR abstract method: Virtual|Abstract, no IL body (subclasses override).
         if (m.TryGetProperty("abstract", out var amb) && amb.GetBoolean()) attrs |= MethodAttributes.Abstract | MethodAttributes.Virtual;
+        // A synthesized event accessor (add_/remove_/raise_<E>, §4.2) is `specialname` (the ECMA-335 event-accessor
+        // convention) so the emitted `.event` is a clean reflectable member. bir2cir stamps the flag on the rewritten accessor.
+        if (m.TryGetProperty("specialName", out var spn) && spn.GetBoolean()) attrs |= MethodAttributes.SpecialName;
 
         // NOTE: ilemit no longer rewrites a `suspend fun`'s signature to `Task<T>`. The cold-core coroutine lowering
         // (bir2cir, bundle-6) already arrives here as ordinary CIR: the public `Task<T>` bridge is its OWN method
