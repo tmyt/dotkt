@@ -579,27 +579,10 @@ il_check charminus Cm "$ROOT/cases/il-charminus" "$(printf '31\n25\nb\nb')"
 il_check digittoint Dti "$ROOT/cases/il-digittoint" "$(printf '7\n10\nnull\n7')"
 # printlnnull: println/print(null) render the string "null" (Kotlin semantics); non-null values print normally.
 il_check printlnnull PrintlnNull "$ROOT/cases/il-printlnnull" "$(printf 'null\nnull5x\nnull')"
-# maptostr: a Map operand of println prints Kotlin-style `{a=1, b=2}` (not the raw .NET Dictionary type
-# name) — kotc routes Map/MutableMap operands to clrMapToString at the static-type level, mirroring the
-# List path (clrCollToString).
-il_check maptostr Mts "$ROOT/cases/il-maptostr" "$(printf '{a=1, b=2}\n{x=9}\n[1, 2, 3]')"
-# mapmerge: MutableMap.merge (C2). The stdlib declares `merge` on the MutableMap builtin with a Kotlin function type
-# (frontend binds THIS over java.util.Map.merge's SAM overload -> no `Func<V,V,object>`->`Func<object,object,object>`
-# castclass), routed to ClrMapDefaults.clrMapMerge for BCL-aliased receivers (bir2cir Rule 5m).
-il_check mapmerge MapMerge "$ROOT/cases/il-mapmerge" "$(printf '15\n7\n15\n7\nnull\nFalse\nab\nz')"
-il_check mapof1 Mo1 "$ROOT/cases/il-mapof1" "$(printf '1
-1
-2
-1')"
-# mapvalues: groupBy().mapValues{} + a DIRECT size/containsKey on a value-type-mismatched groupBy result. size/containsKey
-# are UNBOUND on the Map interface — bir2cir Rule 5m routes them to the covariance-safe ClrMapDefaults.clrMapSize/
-# clrMapContainsKey (non-generic ICollection.Count/IDictionary.Contains), so mapValues' mapCapacity(size) and a direct
-# read no longer throw EntryPointNotFound; a normal map's size/containsKey stay correct (#29).
-il_check mapvalues MapValues "$ROOT/cases/il-mapvalues" "$(printf '{1=2, 0=2}\n2\nTrue\nFalse\n{1=9, 0=6}\n{a=2, b=1, c=1}\n3\nTrue\nFalse\n{a=10, b=20, c=30}\n2\nTrue')"
-# emptymap: emptyMap()/mapOf() read-only-empty behavior (POLISH family-6 coverage). Map @ClrTypeAlias-es to the
-# mutable IDictionary (no read-only split — binding decision), so emptyMap() stays IDictionary-compatible and
-# read-only-ness is frontend-enforced; locks that green (the IReadOnlyDictionary request is architecturally deferred).
-il_check emptymap EmptyMap "$ROOT/cases/il-emptymap" "$(printf '0\nTrue\nnull\nFalse\n0\n2\n1\nFalse\n0\nTrue')"
+# The collections family (list/set/iteration/collection-op + Map-typed cases: il-coll*, il-map*, il-mut*, il-iter*,
+# il-hashset2, il-iscoll, il-listeq, il-listplus, il-eachcount, il-emptymap, il-groupby2, …) migrated to the NUnit
+# batteries tests/il/fixtures/CollectionsTests.kt (16) + MapsTests.kt (10), gated by tests/run-nunit-il.sh. Per the
+# cases-test-design audit #14 the old per-case dirs + their il_check lines were deleted in that SAME change.
 # colstr: a collection/Map operand prints Kotlin-style in EVERY stringify context — string template `"$m"`,
 # string `+` concat `"" + l`, and explicit `.toString()` — not just println(x). Same static-type routing to
 # clrCollToString/clrMapToString as the println path (bundle-6 FIX 1).
@@ -616,11 +599,6 @@ il_check pairtostr PairToStr "$ROOT/cases/il-pairtostr" "$(printf '[1, 2, 3]\n[1
 # erased generic static type used to reach the raw .NET `List`1[...]` ToString; now routed through the runtime
 # collection-aware stdlib stringifier (clrRenderTupleElement -> clrElemToString), matching the top-level nestedstr path.
 il_check pairnest PairNest "$ROOT/cases/il-pairnest" "$(printf '([1, 2], [3, 4])\n([1], [2], [3])\n({1=2}, [3])\n(1, (2, 3))\n([[1]], 5)\n(1, 2)\n(null, a)')"
-# collrevview: #100 H1 (REVERSE variance-collapse seam). A readonly-faced collection value (`make(): List<Int>` ->
-# IReadOnlyList<int32>) flowing into a same-family collapsed MUTABLE type-arg slot (a Pair ctor / map-setter arg whose
-# V collapsed to IList<int32>). Fails ilverify (StackUnexpected found IReadOnlyList expected IList) WITHOUT ilemit's
-# reverse arm in IsCollectionViewSeam; the reconciling castclass is verifiable and succeeds at runtime.
-il_check collrevview CollRevView "$ROOT/cases/il-collrevview" "$(printf '([1, 2], 3)\n{k=[1, 2]}')"
 # nullcollarg: #100 H3 regression guard — a nullable-inner collection type-arg (`Map<String, List<Int>?>`) upcast from
 # a MutableMap must still collapse its V to IList and verify clean (the `?` must not smuggle an un-collapsed IReadOnly
 # face past the collapse). Pure runnable guard for that shape.
@@ -631,7 +609,6 @@ il_check strops StrOps "$ROOT/cases/il-strops" "$(printf 'hello\nhi\nhi\n  5\n00
 il_check defargs DefArgs "$ROOT/cases/il-defargs" "$(printf 'x1-x2-x3\n1, 2, 3\n[1, 2, 3]\n1/2/~\nb=c\na\nnodelim\nFALLBACK\nP(x=1, y=20, z=3)\nP(x=10, y=2, z=30)\nHello, Kotlin!\nHello, Kotlin?')"  # C3: cross+same-module default args — omitted middle default must not shift a later provided arg's slot (joinToString transform / substringAfter `= this` / data-class copy(field=))
 il_check defargs2 DefArgs2 "$ROOT/cases/il-defargs2" "$(printf '55\n7\n12\n30\n134\n156\n159')"  # C3 residual: same-module default referencing ANOTHER value param (`b = a * 10`, `c = a + b`) — inlined with that param's filled arg substituted
 il_check negzero NegZero "$ROOT/cases/il-negzero" "$(printf 'False\n-1\n1\nTrue\nTrue\nFalse\n1\n0\nFalse\n-1\nTrue')"  # C14: boxed Double/Float total order (-0.0 < 0.0, NaN largest & NaN==NaN) via stdlib helpers; primitive ==/< stay IEEE
-il_check listeq ListEq "$ROOT/cases/il-listeq" "$(printf 'True\nFalse\nTrue\nTrue\nTrue\nFalse\nFalse\nTrue\nFalse')"  # collection `==` is STRUCTURAL (List ordered / Set unordered / Map entrywise), routed to stdlib helpers not reference Object.Equals
 il_check indices Indices "$ROOT/cases/il-indices" "$(printf '012\n01234\n0123\nend')"  # for-in over a non-literal IntRange from `.indices` (Collection + CharSequence) counter-lowered off the iterator protocol
 # indicesv: a VALUE-element collection's .indices/.lastIndex (#30). `Collection<*>.indices` (star projection -> reified
 # IReadOnlyCollection<object>) threw EntryPointNotFound on a value-element list (ArrayList<int> implements
@@ -654,9 +631,6 @@ il_check arr   Arr   "$ROOT/cases/il-arr"     "$(printf '10\n30\n99\n3\n139\n139
 il_check lam   Lam   "$ROOT/cases/il-lambda"  "$(printf '42\n12')"
 il_check clo   Clo   "$ROOT/cases/il-closure" "$(printf '15\n105\n17')"
 il_check scope Sc    "$ROOT/cases/il-scope"   "$(printf '10\n6\n9\n10\n10\n7')"
-il_check coll  Coll  "$ROOT/cases/il-coll"    "$(printf '5\n5\n3\n2\n3\nTrue\nTrue\n3\n1\n4\nTrue\n5')"
-il_check coll2 Coll2 "$ROOT/cases/il-coll2"   "$(printf '10\n1-2-3-4\n1, 2, 3, 4\n100')"
-il_check coll3 Coll3 "$ROOT/cases/il-coll3"   "$(printf '60\n6')"
 il_check arraydeque AppKt "$ROOT/cases/il-arraydeque" "$(printf 'z\nb\nc\n1\nA')"   # concrete generic stdlib class ArrayDeque<E>:AbstractMutableList<E> as a field/owner forces ilemit to resolve kotlin.collections.ArrayDeque`1 from the rt dll — exercises the ICollection/IList void-drop methodimpl bridge (ilemit) + the BCL-only slot synthesis Contains/CopyTo/IsReadOnly/IndexOf (bir2cir)
 il_check copyintoverlap AppKt "$ROOT/cases/il-copyintoverlap/app.kt" "$(printf '1,1,2,3,4\n2,3,4,5,5\na,b,a,b,c\na,b,X,c,d')"   # #97: copyInto must be overlap-safe (System.Array.Copy = memmove); a forward element loop clobbers overlapping self-copies -> silently corrupts ArrayDeque.add(index,elem). Generic Array<T> path (the ArrayDeque victim); the 8 primitive copyInto actuals are fixed identically but not app-callable (pre-existing primitive-array-receiver resolution gap)
 il_check roundhalfup AppKt "$ROOT/cases/il-roundhalfup/app.kt" "$(printf '3\n-2\n1\n0\n4\n2\n3\n3\n-2\n3\n-2\n3\n2147483647\n-2147483648\nNaN-throws')"   # #103: roundToInt/roundToLong = round-half-UP toward +inf (floor(x+0.5)), NaN throws, out-of-range saturates — NOT banker's ToEven
@@ -681,10 +655,8 @@ il_check funref Funref "$ROOT/cases/il-funref" "$(printf '2,4,6\n1,4,9,16,25,36\
 # covers the Unit-returning forwarder (exprStmt body).
 il_check extfunref ExtFunref "$ROOT/cases/il-extfunref" "$(printf '  hi |world\n2,6,10\nKOTLIN!\nababab\n[a][b]')"
 il_check boundextref BoundExtRef "$ROOT/cases/il-boundextref" "$(printf 'hi!\nababab\nfirst!\n[x][x]\nTrue\nTrue')"   # #91: bound ext-fn ref `expr::extFn` -> capture-class lift (receiver captured eagerly; delegate over instance invoke). #106: bound CharSeq-ext ref (::isNotBlank/::isBlank) -> String field-read adapter-wrapped by StringCharSequenceBridge
-il_check mapdes MapDes "$ROOT/cases/il-mapdes" "$(printf '10\n60\n13\nx=1\ny=2\nz=3\ntotal=6')"
 # A6: rule-3 helper calls on CONCRETE generic alias receivers (HashMap/ArrayList/LinkedHashMap: class typeArgs +
 # instantiated sig) + Map/MutableMap getOrDefault (bare-V map-defaults helper: retType carry, was BadImageFormat).
-il_check mapgen MapGen "$ROOT/cases/il-mapgen" "$(printf '1\n1\n-1\n3\n9\n2\n7\nempty\n20\n50\n5\n6\n6')"
 il_check unsgn Unsigned "$ROOT/cases/il-unsigned" "$(printf '4000000100\n4000000000\n18000000000000000000\n60000\n250')"
 # ubytearr: UByteArray -> native System.Byte[] (#53). ubyteArrayOf/get/size as native array ops; toByteArray/toUByteArray
 # reinterpret between SByte[] (signed) and Byte[] (unsigned) — 250 unsigned reads as -6 signed and back.
@@ -732,7 +704,6 @@ il_check copydef CopyDef "$ROOT/cases/il-copydef" "$(printf '(1, 20)\n(5, 2)\n(1
 il_check equalscall EqualsCall "$ROOT/cases/il-equalscall" "$(printf 'False\nTrue\nTrue\nFalse\nTrue\nTrue\nFalse\nTrue\nTrue\nFalse\nTrue\nTrue')"   # §5a: explicit .equals() -> total-order (Double/Float) / structural (collections), plain object stays reference
 il_check enumbody EnumBody "$ROOT/cases/il-enumbody" "$(printf '+: 8\n-: 4\n*: 12\nPLUS\n9')"
 il_check bytearg ByteArg "$ROOT/cases/il-bytearg" "$(printf '5\n3\n7\n9\n4\n100\n-2')"
-il_check iterable Iterable "$ROOT/cases/il-iterable" "$(printf '321\n6\n6')"
 il_check customexc CustomExc "$ROOT/cases/il-customexc" "$(printf 'error -5\ncode=-5\ncaught:boom\n42')"
 il_check comparator Comparator "$ROOT/cases/il-comparator" "$(printf -- '-3\n5\n0')"
 il_check use Use "$ROOT/cases/il-use" "$(printf 'close abcd\nn=4\nclose x\ncaught:boom')"
@@ -759,8 +730,6 @@ il_check cwindowed CWindowed "$ROOT/cases/il-cwindowed" "$(printf '[ab, bc, cd]\
 # delegateNew target whose funcType keeps the synthetic <>dotkt_CharSequence, so its `it` param must stay synthetic
 # (not collapse to System.String) — the stdlib passes a real <>dotkt_CharSequence (subSequence's result) in. W4-B guard.
 il_check cwindowedv CWindowedV "$ROOT/cases/il-cwindowedv" "$(printf '[2, 2, 2]\n[a, b, c]\n[3, 3, 3]\n[ab, bc, cd]')"
-il_check eachcount EachCount "$ROOT/cases/il-eachcount" "$(printf '{a=2, b=1}\n{M=1, i=4, s=4, p=2}\n{1=2, 2=2, 0=2}')"
-il_check collmore CollMore "$ROOT/cases/il-collmore" "$(printf '20,40\n1,10,2,20,3,30,4,40,5,50\n1,2,3,4,5\n15\n14\n-1\n3\n3')"
 # nestedstr: nested collection/map stringification (final-review N7). A nested collection element used to render .NET's
 # raw `System.Collections.Generic.List`1[...]`; the stdlib `clrElemToString` now recurses via non-generic BCL facades.
 il_check nestedstr NestedStr "$ROOT/cases/il-nestedstr" "$(printf '{k=[1, 2]}\n[[1, 2]]\n[[1, 2], [3, 4]]\n{a={x=1}}\n[s, t]\n{k=5}')"
@@ -768,7 +737,6 @@ il_check tryexpr TryExpr "$ROOT/cases/il-tryexpr" "$(printf '42\n-1\n5\n-7\n4')"
 il_check localclass LocalClass "$ROOT/cases/il-localclass" "$(printf '10\n42\n101\n3,4\nTrue\n60')"
 il_check writecapture AppKt "$ROOT/cases/il-writecapture/app.kt" "$(printf '3\n20')"   # #68: a local class / object expression that WRITES a captured outer `var` shares a heap ref-cell (computeRefCells promotes the mutated capture) — was a whole-compile abort for the write-through capture
 il_check genlocalclass AppKt "$ROOT/cases/il-genlocalclass/app.kt" "$(printf '42\nhi\n1->2\na->b')"   # #69: a function-local class capturing an enclosing TYPE PARAMETER is lifted GENERICALLY (reified CLR generics); ownerSpec/birType name the constructed `L<T>` at the new site + denotable var slot + member access — was a whole-compile abort
-il_check collops2 CollOps2 "$ROOT/cases/il-collops2" "$(printf '2,4,6 | 1,3,5\n0:a 1:b 2:c \n1,2,3\n0,1,3,6,10\n100,101,103,106,110\n6,9,12\n3\n-99')"
 # A generic cold-sequence SM: `fun <T> wrap(x) = sequence { yield(x) }.toList()` over a VALUE element (Int) and a
 # reference element (String). Guards the `T?`-property `nextValue as T` double-unbox NRE (bir2cir erased-getter
 # call-site retype) that broke every value-typed cold sequence, and (via the same drive) the RingBuffer path.
@@ -834,7 +802,6 @@ il_check reqnn Rn    "$ROOT/cases/il-reqnn/app.kt" "$(printf 'h\n7')"
 il_check precond Pcd "$ROOT/cases/il-precond/app.kt" "$(printf '3\nreq\nchk\nerr:boom\ntodo')"   # #73 M6/M7: precondition/error family + top-level repeat{} inline loop (moved to bir2cir)
 il_check repeatnlr RptN "$ROOT/cases/il-repeatnlr/app.kt" "$(printf '3\n-1\n6\n6\n63\n9')"   # #75: NON-LOCAL return + return@repeat + nested repeat + scope-fn-in-repeat through repeat{} (kotc carries the un-closured lambda body; bir2cir InlineSplice splices it)
 il_check reif  Rf    "$ROOT/cases/il-reified/app.kt" "$(printf 'String\nInt32\nTrue\nFalse\nTrue\nyo\nno')"
-il_check iter  Iter  "$ROOT/cases/il-iter"    "$(printf 'x=10\nx=20\nx=30\nsum = 60\nn=3\nn=2\nn=1\nacc = 6')"
 il_check inner Inner "$ROOT/cases/il-inner"   "$(printf '110\n120\nT2\n5')"
 il_check lazy  Lazy  "$ROOT/cases/il-lazy"    "$(printf 'before\ncomputing...\nVALUE\nVALUE\n42\n42\nFalse\ncomputed\ncomputed\nTrue\n1\n42\n42\nsync\nsync\n1\npub\n1\nnone\n1\nFalse\nguarded\nTrue\n1')"
 il_check volatile Volatile "$ROOT/cases/il-volatile" "$(printf '0\n41\n42\nready\nTrue')"   # @kotlin.concurrent.Volatile -> a real CLR volatile field: modreq(IsVolatile) + `volatile.` prefix (the C# volatile shape) on value-type/ref-type instance fields + a top-level static field
@@ -848,7 +815,6 @@ il_check extpropref AppKt "$ROOT/cases/il-extpropref/app.kt" "$(printf 'mySimple
 il_check rwp   Rwp   "$ROOT/cases/il-rwp"     "$(printf 'set n = 5\nget n\n5')"
 il_check bymap Bm    "$ROOT/cases/il-bymap"   "$(printf 'Alice\n30')"
 il_check topdeleg AppKt "$ROOT/cases/il-topdeleg/app.kt" "$(printf '0\n42\ninit')"   # #70: a TOP-LEVEL delegated property with an arbitrary getValue/setValue provider routes through `x$delegate.getValue/setValue` (static delegate field, null thisRef) — was a whole-compile abort (only member/local delegated props were routed)
-il_check mapforin MapForin "$ROOT/cases/il-mapforin" "$(printf 'a=1\nb=2\nc=3\nd=4\n7\nc:3\nd:4')"
 il_check del2  D2    "$ROOT/cases/il-deleg2"  "$(printf '0 -> 1\n1 -> 2\n5\nhi')"
 # The G-1..G-6 generics battery (il-generic .. il-generic6) migrated to the NUnit suite:
 # tests/il/fixtures/GenericsTests.kt (gated by tests/run-nunit-il.sh). Per the cases-test-design audit #14,
@@ -1154,20 +1120,10 @@ il_check overload OV "$ROOT/cases/il-overload" "$(printf 'S:x\nF:y\nI:7\nbs:p\nb
 il_check mfclosure MfClosure "$ROOT/cases/il-mfclosure" "$(printf '10\n20')"
 il_check mflambda MFL "$ROOT/cases/il-mflambda" "$(printf 'A1\nA2\nB1')"
 il_check arrops Arro "$ROOT/cases/il-arrops" "$(printf '3\n6,8,10\n14\n2\n-1\n10\n30')"
-	il_check collrealkt CollRealKt "$ROOT/cases/il-collrealkt" "$(printf '10
-30
-500
-b,a,c
-two')"
-il_check mutcoll MutColl "$ROOT/cases/il-mutcoll" "$(printf '2,3,4\n2,4\n2\n0\n11,22,33')"
 # bundle-6 ④ stdlib-correctness routing (bir2cir)
 il_check cmpord   CmpOrd   "$ROOT/cases/il-cmpord"   "$(printf '31\n-31\n0\n-1\nFalse\n-7')"
-il_check mutset   MutSet   "$ROOT/cases/il-mutset"   "$(printf '20\n10,99,30\n10\n99,30')"
-il_check hashset2 HashSet2 "$ROOT/cases/il-hashset2" "$(printf '2\n2\n1\n1')"
-il_check iscoll   IsColl   "$ROOT/cases/il-iscoll"   "$(printf 'True\nTrue\nTrue\nTrue\nFalse\nFalse')"
 il_check starproj StarProj "$ROOT/cases/il-starproj" "$(printf '{1=2, 3=4}\n2\n[10, 20, 30]\n3\n20\n[10, 20, 30]\n[10, 20, 30]\n{1=2, 3=4}\nFalse\nFalse')"
 il_check excmap   ExcMap   "$ROOT/cases/il-excmap"   "$(printf 'caught-list\ncaught-arr\npst-ok\ncaught-super')"
-il_check mapfilter MapF "$ROOT/cases/il-mapfilter" "$(printf '10,20,30,40,50\n2,4\n4,5,6\n100,200,300\n2,4,6')"
 il_check nan Nan "$ROOT/cases/il-nan" "$(printf 'True\nTrue\nTrue\nFalse\nFalse')"
 il_check nestedtry NestedTry "$ROOT/cases/il-nestedtry" "$(printf 'inner fin\nouter fin\n1')"
 il_check trynullable TryNullable "$ROOT/cases/il-trynullable" "$(printf 'fin\n1')"
