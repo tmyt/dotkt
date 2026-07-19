@@ -691,6 +691,12 @@ sealed class Pipeline
             // its applied attr to the clr:-imported form so ilemit stamps it from the referenced stdlib rather than
             // skipping it. The stdlib self-build DEFINES the type locally, so it is left as the bare-FQN local stamp.
             if (_options.StdlibMode == BuildStdlibMode.App) KotlinDefaultAttrRef.Apply(lowered);
+            // W1-S2 (#46): RESOLVED-CLR-IR carry — resolve every clrStatic/clrInstance/newClr against the ref.dll MLC and
+            // stamp the winning member's DECLARED param signature as `memberSig` (+ `dispatch` on clrInstance), deleting the
+            // lossy `argTypes`. ilemit becomes a pure linker (exact structural match, hard-fail on 0/multi). Runs LAST — on
+            // the fully-lowered tree — so owner/argTypes speak the CLR vocabulary the MLC resolves; unconditional so
+            // RefBodySquash's `newClr NotImplementedException` is stamped too (its owner resolves off the BCL compile-refs).
+            ClrMemberResolution.Apply(lowered, refs, localBasicEnums);
             // A file whose ENTIRE content was @ClrTypeAlias types (e.g. Primitives.kt, Comparable.kt) is now empty after
             // AliasHelperHoist dropped them — emit no CIR file for it (an empty file-class would be a pointless empty
             // static type in the assembly). Skips only when types AND methods AND fields are all empty; never in ref.

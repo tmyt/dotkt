@@ -793,6 +793,10 @@ sealed partial class Emitter
             case "newClr": return EmitClrNew(e);
             case "clrStatic": return EmitClrCall(e, instance: false);
             case "clrInstance": return EmitClrCall(e, instance: true);
+            // W1-S2 (#46): a clrInstance whose interface owner has NO statically-matching BCL slot (the runtime value
+            // implements it under a different concrete type) is emitted by bir2cir as a DELIBERATE dynamic-dispatch node
+            // — replacing ilemit's former SILENT EmitClrCall->EmitDynamicCall downgrade, so the fallback is greppable.
+            case "clrDynInstance": return EmitDynamicCall(e);
             case "clrPropGet": return EmitClrPropGet(e);
             case "clrPropSet": return EmitClrPropSet(e);
             case "clrEventAdd": return EmitClrEvent(e, add: true);
