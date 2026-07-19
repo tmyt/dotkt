@@ -7,6 +7,24 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir/ilemit ([tmyt/dotkt#46], [tmyt/dotkt#183], area:bir2cir, area:ilemit): W1-S4 — declaration-side override
+  base-slot memberRef carry.** A method DECLARATION overriding a .NET base-CLASS virtual (a property accessor such as
+  `override val message` -> System.Exception.get_Message; the coroutine SM `create`/`invokeSuspend` overrides of
+  `BaseContinuationImpl`) carries `clrOverride` (the base owner FQN). bir2cir (`ClrMemberResolution.OverrideBase.cs`,
+  a partial of the S2 pass, running last on the fully-lowered tree) now resolves the EXACT base virtual off the ref.dll
+  (MetadataLoadContext) and stamps its DECLARED param signature as `clrOverrideSig` (positional-`tv` for a generic
+  base). ilemit's `LinkOverrideBase` (`Emitter.ClrInterop.cs`) links the UNIQUE base slot (0 = hard ABI error, >1 =
+  malformed) and `DefineMethodOverride`s it — deleting the former `baseT.GetMethod(name, ps) ?? baseT.GetMethod(name)`
+  NAME-ONLY first-pick fallback (`Emitter.Assembly.cs`). The match is STRUCTURAL identity (an override's params ARE the
+  base slot's), NOT call-side applicability — so `BaseContinuationImpl.create(Any,Cont)` and `create(Any[],Cont)` stay
+  distinguishable (a scalar arg no longer matches the array param via the object-downcast rule), with Kotlin `Any` ==
+  `System.Object` as the only leaf normalization. Gated by `il-overridemsg`/`il-supercall`/`il-superobj`/`il-supernet`
+  + every coroutine case (`il-corestrict`, `il-seqforin`, `il-inlsuspend*`, …). The `callInstance` `ResolveMethod` site
+  (#183 Site 2) stays a LINKER consuming kotc's FIR-resolved `sig` (the empirical arbitrary-overload first-pick and the
+  BCL-interface dynamic escape both fire 0× across the stdlib self-build + all app cases); its owners are either
+  local-emitted (MLC-unresolvable by definition — the S2 local-`new` SelectCtor residual parallel) or referenced
+  kotlin.* slots already structurally linked by the carried sig. #46 #183
+
 - **bir2cir/ilemit ([tmyt/dotkt#46], [tmyt/dotkt#121], area:bir2cir): property / field / event memberRef carry —
   ilemit is a pure linker for every clr* member-ACCESS axis: calls, ctors, properties, fields, events, dispatch
   (W1-S3, closes #121). #46 stays OPEN for W1-S4 — two ilemit resolution sites remain (NOT in #121's enumerated
