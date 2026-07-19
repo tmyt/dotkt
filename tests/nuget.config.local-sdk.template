@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- TEMPLATE (design D4 in docs/design-nunit-test-harness.md): make the NUnit test projects consume the
+     LOCALLY-BUILT DotKt SDK from `make pack` (build/nuget-feed) instead of a published nuget.
+
+     To activate: copy to `nuget.config` at the tests/ root (or repo root), point paths at the repo's
+     build/nuget-feed, set the test .ktproj/.csproj SDK to the locally-built version
+     (<Project Sdk="DotKt.Sdk/<local-version>">, or a central global.json msbuild-sdks entry), and let the gate
+     RECREATE the isolated globalPackagesFolder each run (NuGet prefers an existing exact-version package in a
+     persistent cache — never overwrite the same version there; recreate the cache or stamp a unique prerelease
+     version across all DotKt packages). This mirrors scripts/verify-packaged-sdk.sh. Use the NuGet SDK
+     resolver, NOT MSBuildSDKsPath (which bypasses the packaged resolution path we want to exercise). -->
+<configuration>
+  <config>
+    <!-- Recreated per gate; keeps the local SDK from colliding with a cached published version. -->
+    <add key="globalPackagesFolder" value="../build/test-package-cache" />
+  </config>
+  <packageSources>
+    <clear />
+    <add key="dotkt-local" value="../build/nuget-feed" />
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+  </packageSources>
+  <packageSourceMapping>
+    <packageSource key="dotkt-local">
+      <package pattern="DotKt.*" />
+    </packageSource>
+    <packageSource key="nuget.org">
+      <package pattern="*" />
+    </packageSource>
+  </packageSourceMapping>
+</configuration>
