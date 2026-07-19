@@ -576,7 +576,12 @@ il_check ops   Ops   "$ROOT/cases/il-ops"     "$(printf '3\n2\n7\n3\n16\n15\n-1\
 # il-nestedstr, il-interpnull, il-ntostr, il-nulltostr) migrated to the NUnit battery tests/il/fixtures/StringsTests.kt
 # (+ StringsCrossFile.kt), gated by tests/run-nunit-il.sh. Per the cases-test-design audit #14 the old per-case dirs
 # + their il_check lines were deleted in that SAME change. (il-structfloateq/il-structfloateqnull matched the `str`
-# grep prefix but are float-equality cases — they stay below.)
+# grep prefix but are float-equality cases — migrated to the float/IEEE battery tests/il/fixtures/FloatTests.kt.)
+# The float/IEEE family (Double/Float NaN + infinities, unordered `<=`/`>=` compares, -0.0/0.0 total-order,
+# structural + direct/nullable float equality, hypot/expm1/ln1p BCL primitives: il-nan, il-nancmp, il-negzero,
+# il-structfloateq, il-structfloateqnull, il-floateqnull, il-mathnumerics) migrated to the NUnit battery
+# tests/il/fixtures/FloatTests.kt (7), gated by tests/run-nunit-il.sh; the old per-case dirs + il_check lines were
+# deleted in that SAME change.
 # printlnnull: println/print(null) render the string "null" (Kotlin semantics); non-null values print normally.
 il_check printlnnull PrintlnNull "$ROOT/cases/il-printlnnull" "$(printf 'null\nnull5x\nnull')"
 # The collections family (list/set/iteration/collection-op + Map-typed cases: il-coll*, il-map*, il-mut*, il-iter*,
@@ -597,7 +602,6 @@ il_check nullcollarg NullCollArg "$ROOT/cases/il-nullcollarg" "$(printf '{a=[1]}
 il_check extprop ExtProp "$ROOT/cases/il-extprop" "$(printf '2\n1\n1\n3\n-1\n1\n0')"  # C7 (+ #157 NON-coroutine guard): cross-module top-level extension-property getter -> callStatic get_<name>(receiver) (generic List.lastIndex carries type args); NOT a dropped-receiver field read. Resolves through the SAME general owner-null path as xmodtopval (prop:get -> get_<name> -> TryResolveTopLevelStatic recvKey branch) — a name-keyed re-special-case of that path would break these non-coroutine names
 il_check defargs DefArgs "$ROOT/cases/il-defargs" "$(printf 'x1-x2-x3\n1, 2, 3\n[1, 2, 3]\n1/2/~\nb=c\na\nnodelim\nFALLBACK\nP(x=1, y=20, z=3)\nP(x=10, y=2, z=30)\nHello, Kotlin!\nHello, Kotlin?')"  # C3: cross+same-module default args — omitted middle default must not shift a later provided arg's slot (joinToString transform / substringAfter `= this` / data-class copy(field=))
 il_check defargs2 DefArgs2 "$ROOT/cases/il-defargs2" "$(printf '55\n7\n12\n30\n134\n156\n159')"  # C3 residual: same-module default referencing ANOTHER value param (`b = a * 10`, `c = a + b`) — inlined with that param's filled arg substituted
-il_check negzero NegZero "$ROOT/cases/il-negzero" "$(printf 'False\n-1\n1\nTrue\nTrue\nFalse\n1\n0\nFalse\n-1\nTrue')"  # C14: boxed Double/Float total order (-0.0 < 0.0, NaN largest & NaN==NaN) via stdlib helpers; primitive ==/< stay IEEE
 il_check indices Indices "$ROOT/cases/il-indices" "$(printf '012\n01234\n0123\nend')"  # for-in over a non-literal IntRange from `.indices` (Collection + CharSequence) counter-lowered off the iterator protocol
 # indicesv: a VALUE-element collection's .indices/.lastIndex (#30). `Collection<*>.indices` (star projection -> reified
 # IReadOnlyCollection<object>) threw EntryPointNotFound on a value-element list (ArrayList<int> implements
@@ -620,7 +624,6 @@ il_check scope Sc    "$ROOT/cases/il-scope"   "$(printf '10\n6\n9\n10\n10\n7')"
 il_check arraydeque AppKt "$ROOT/cases/il-arraydeque" "$(printf 'z\nb\nc\n1\nA')"   # concrete generic stdlib class ArrayDeque<E>:AbstractMutableList<E> as a field/owner forces ilemit to resolve kotlin.collections.ArrayDeque`1 from the rt dll — exercises the ICollection/IList void-drop methodimpl bridge (ilemit) + the BCL-only slot synthesis Contains/CopyTo/IsReadOnly/IndexOf (bir2cir)
 il_check copyintoverlap AppKt "$ROOT/cases/il-copyintoverlap/app.kt" "$(printf '1,1,2,3,4\n2,3,4,5,5\na,b,a,b,c\na,b,X,c,d')"   # #97: copyInto must be overlap-safe (System.Array.Copy = memmove); a forward element loop clobbers overlapping self-copies -> silently corrupts ArrayDeque.add(index,elem). Generic Array<T> path (the ArrayDeque victim); the 8 primitive copyInto actuals are fixed identically but not app-callable (pre-existing primitive-array-receiver resolution gap)
 il_check roundhalfup AppKt "$ROOT/cases/il-roundhalfup/app.kt" "$(printf '3\n-2\n1\n0\n4\n2\n3\n3\n-2\n3\n-2\n3\n2147483647\n-2147483648\nNaN-throws')"   # #103: roundToInt/roundToLong = round-half-UP toward +inf (floor(x+0.5)), NaN throws, out-of-range saturates — NOT banker's ToEven
-il_check mathnumerics AppKt "$ROOT/cases/il-mathnumerics/app.kt" "$(printf '5\nTrue\n0\nTrue\n0\nTrue\n5\nTrue')"   # #141: hypot/expm1/ln1p bind net10 System.Double/Single.Hypot/ExpM1/LogP1 (no sqrt-overflow, no exp-1/ln1p cancellation); Double 5.0 prints "5", Boolean prints "True" per CLR ToString
 il_check utf8throw AppKt "$ROOT/cases/il-utf8throw/app.kt" "$(printf 'True\ndecode-threw\nencode-threw\nhello')"   # #143: decodeToString/encodeToByteArray honor throwOnInvalidSequence=true -> CharacterCodingException via throwing UTF8Encoding(false,true)
 il_check caseinvariant AppKt "$ROOT/cases/il-caseinvariant/app.kt" "$(printf 'ß\nSTRAßE\nABC\nhello\nß\nTrue')"   # #144: String/Char uppercase()/lowercase() are CLR-native 1:1 ToUpperInvariant/ToLowerInvariant — DELIBERATELY no Unicode one-to-many expansion (ß stays ß, not SS)
 il_check fillrange AppKt "$ROOT/cases/il-fillrange/app.kt" "$(printf 'a,z,z,d,e\niae\nioobe\nioobe-neg\n4,4,4')"   # #145: array fill validates the range (IllegalArgumentException on fromIndex>toIndex, IndexOutOfBoundsException out-of-bounds); generic path (primitive actuals fixed identically but blocked by the primitive-array-receiver resolution gap)
@@ -1098,17 +1101,12 @@ il_check arrops Arro "$ROOT/cases/il-arrops" "$(printf '3\n6,8,10\n14\n2\n-1\n10
 il_check cmpord   CmpOrd   "$ROOT/cases/il-cmpord"   "$(printf '31\n-31\n0\n-1\nFalse\n-7')"
 il_check starproj StarProj "$ROOT/cases/il-starproj" "$(printf '{1=2, 3=4}\n2\n[10, 20, 30]\n3\n20\n[10, 20, 30]\n[10, 20, 30]\n{1=2, 3=4}\nFalse\nFalse')"
 il_check excmap   ExcMap   "$ROOT/cases/il-excmap"   "$(printf 'caught-list\ncaught-arr\npst-ok\ncaught-super')"
-il_check nan Nan "$ROOT/cases/il-nan" "$(printf 'True\nTrue\nTrue\nFalse\nFalse')"
 il_check nestedtry NestedTry "$ROOT/cases/il-nestedtry" "$(printf 'inner fin\nouter fin\n1')"
 il_check trynullable TryNullable "$ROOT/cases/il-trynullable" "$(printf 'fin\n1')"
 il_check tryexprop TryExprOp "$ROOT/cases/il-tryexprop" "$(printf 'n=5\n6\nbad=-1\n30')"
 il_check setlocalbox SetLocalBox "$ROOT/cases/il-setlocalbox" "$(printf '42\n7')"
-il_check nancmp NanCmp "$ROOT/cases/il-nancmp" "$(printf 'False\nFalse\nFalse\nFalse\nTrue\nTrue\nTrue\nFalse')"
 il_check bytewiden AppKt "$ROOT/cases/il-bytewiden/app.kt" "$(printf '200\n40000\n300\n80000\n200\n-128\n0\n0\n128\n44\n300\n4294967295\n18446744073709551615')"   # #93/#71: Byte/Short/UByte/UShort arith widens to Int/UInt & inc/dec/unaryMinus keep the declared return (bir2cir wraps the lowered op in a conv to dynRet); ilemit needs the unsigned Conv_U1/U2/U4/U8 arms — else the value truncates to the narrow left operand on box
 il_check unsignedshr AppKt "$ROOT/cases/il-unsignedshr/app.kt" "$(printf '2147483647\n9223372036854775807\n267386880\n1073741824\n2147483648\n-4')"   # #94: unsigned shr is LOGICAL (zero-filling) — bir2cir lowers a UInt/ULong `shr` to ">>>" (ilemit Shr_Un), not the sign-propagating ">>"; shl + signed shr are the non-regression checks
-il_check structfloateq AppKt "$ROOT/cases/il-structfloateq/app.kt" "$(printf 'False\nTrue\nTrue\nFalse\nTrue\nTrue\nFalse\nTrue\nFalse')"   # #95: STRUCTURAL Double/Float equality (data-class equals/hashCode) is total-order (NaN==NaN true, +0.0!=-0.0) via clrDoubleEquals/clrFloatEquals, NOT IEEE ceq; a DIRECT a==b stays IEEE (ieee754equals) — last two lines are the non-regression guard
-il_check structfloateqnull AppKt "$ROOT/cases/il-structfloateqnull/app.kt" "$(printf 'False\nTrue\nTrue\nTrue\nFalse\nFalse\nTrue\nTrue\nFalse')"   # #152: STRUCTURAL Double?/Float? equality (nullable data-class field) is total-order via null-safe bit-equality (nullableHasValue/nullableValue + clrDoubleEquals/clrFloatEquals), NOT boxed Double.Equals (IEEE: (-0.0).Equals(0.0)==true); null==null true, one null false, hashSet stays consistent
-il_check floateqnull AppKt "$ROOT/cases/il-floateqnull/app.kt" "$(printf 'True\nFalse\nTrue\nFalse\nFalse\nTrue\nFalse\nFalse\nTrue\nFalse\nTrue\nTrue\nTrue\n1\nTrue\nFalse\nTrue\nTrue\nFalse')"   # #180: DIRECT/mixed nullable Double?/Float? `==` (frontend routes to ieee754equals with raw Nullable<T> operands; incl. `(x as Double?)==y` via SURFACE nullness + `!=` + single-eval) is null-safe IEEE-shaped (operand-hoist + raw binOp== core), NOT raw ceq over Nullable<T> structs (unverifiable IL). -0.0==0.0 true, NaN==NaN false, null==null true, one-null false; DISTINCT from the STRUCTURAL total-order #152 path
 il_check whensubj WhenSubj "$ROOT/cases/il-whensubj" "$(printf 'b\n1\nz\n2\nseven')"
 il_check safecallnv SafeCallNv "$ROOT/cases/il-safecallnv" "$(printf '120\nnull\n3\nnull\n4')"
 il_check rangein RangeIn "$ROOT/cases/il-rangein" "$(printf 'True\n1\nFalse\n2\nTrue\nFalse\nFalse\nTrue\nTrue\n6\nTrue')"
