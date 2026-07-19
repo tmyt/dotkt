@@ -405,17 +405,8 @@ il_check usermember AppKt "$ROOT/cases/il-usermember/app.kt" "$(printf '33\nTrue
 il_check inheritedgenericinline AppKt "$ROOT/cases/il-inheritedgenericinline/app.kt" "$(printf '42\nabcd\n42')"   # #88: an inherited member `inline fun` whose OWNER class is GENERIC (`IntBox/StrBox : Container<E>`) spliced at a subclass call site — kotc's F2A carries the owner's type args via the corresponding-supertype instantiation `Container<Int>`/`Container<String>`, so the spliced payload's `tv{scope:type,0}` (E) concretizes instead of staying an OPEN generic (which typed the dispatch temp as the open type -> BadImageFormatException); the third line covers a TYPE-PARAMETER receiver whose bound `T : Container<Int>` fixes the owner arg
 il_check geninlinearg GenInlineArg "$ROOT/cases/il-geninlinearg/app.kt" "$(printf '[7]\n[x]\n1')"   # #122: inline collection-factory arg of a `new` in a generic fn — declared class-scope tv instantiated through the `new` binding (else Add(T[]) splat mismatch)
 il_check genextnew GenExtNew "$ROOT/cases/il-genextnew/app.kt" "$(printf '5\nhi\n42\nyo')"   # #123: `new Ext<T>(v)` (external generic over a FREE method type-var) is a TypeBuilderInstantiation — resolve its ctor on the open def + re-anchor via TypeBuilder.GetConstructor (else .GetConstructors() throws "does not support resolving members")
-il_check enum  Enum  "$ROOT/cases/il-enum"   "$(printf 'red\ngreen\nblue')"
-# enumintr (#77): a BASIC (non-rich) enum's top-level reified `enumValues<T>()`/`enumValueOf<T>()` intrinsics — index
-# + `.size` + a for-loop (the `forArray` elem-derivation gap StaticType.Surface's `enumValues` case fixes) + a
-# reified-generic-inline callee (`pick<T>`) instantiating the same intrinsic post-inline.
-il_check enumintr EnumIntr "$ROOT/cases/il-enumintr/app.kt" "$(printf 'GREEN\n3\n2\nRED\nGREEN\nBLUE\nBLUE')"
-# enumtostr (#90): a BASIC enum lowers to a CLR value-type `enum` that INHERITS ToString/Equals/GetHashCode from
-# System.Enum (declares none). Exercises the inherited-member family (explicit .toString(), println(Any?), string
-# concat, ==, equals, compareTo) — bir2cir EnumMemberBinding must rebind each to an `objMethod` (box + Object slot),
-# not a `callInstance E.ToString` (which dead-ends "method E.ToString not found" in ilemit). Two files (enum.kt decl +
-# app.kt use) so the gate also covers the MODULE-WIDE (cross-file) basic-enum collection.
-il_check enumtostr EnumToStr "$ROOT/cases/il-enumtostr" "$(printf 'A\nB\nC\nFalse\nTrue\n-2')"
+# enum family (il-enum/il-enumintr/il-enumtostr/il-enumbody/il-enumrich) migrated to the NUnit battery
+# tests/il/fixtures/EnumTests.kt (+ EnumCrossFile.kt for the #90 cross-file basic-enum decl).
 # netenumbound (#107): a facadegen-injected .NET enum (System.DayOfWeek) satisfies Kotlin's `T : Enum<T>` bound —
 # facadegen declares the self-referential `kotlin.Enum<Self>` supertype so a `<T : Enum<T>>` generic fn / the
 # reified `enumValues<TheNetEnum>()` / `enumValueOf<TheNetEnum>()` intrinsics resolve at the frontend; the backend
@@ -688,7 +679,6 @@ il_check langtail LangTail "$ROOT/cases/il-langtail" "$(printf '6\nhi\nint:42\ns
 il_check tailrec Tailrec "$ROOT/cases/il-tailrec" "$(printf '500000500000\n0\n2000000014\n1000000\n2000000')"   # §2b: deep `tailrec` TCO'd to a back-jump loop (self / when / extension-receiver / member); no CLR stack overflow
 il_check copydef CopyDef "$ROOT/cases/il-copydef" "$(printf '(1, 20)\n(5, 2)\n(1, 9, 3)\n(7, 2, 8)\nPoint(x=1, y=20, z=3)\nPoint(x=9, y=2, z=8)')"   # C3: data-class copy(field=x) with omitted fields — cross-module Pair/Triple reconstruct this.<field>
 il_check equalscall EqualsCall "$ROOT/cases/il-equalscall" "$(printf 'False\nTrue\nTrue\nFalse\nTrue\nTrue\nFalse\nTrue\nTrue\nFalse\nTrue\nTrue')"   # §5a: explicit .equals() -> total-order (Double/Float) / structural (collections), plain object stays reference
-il_check enumbody EnumBody "$ROOT/cases/il-enumbody" "$(printf '+: 8\n-: 4\n*: 12\nPLUS\n9')"
 il_check bytearg ByteArg "$ROOT/cases/il-bytearg" "$(printf '5\n3\n7\n9\n4\n100\n-2')"
 il_check customexc CustomExc "$ROOT/cases/il-customexc" "$(printf 'error -5\ncode=-5\ncaught:boom\n42')"
 il_check comparator Comparator "$ROOT/cases/il-comparator" "$(printf -- '-3\n5\n0')"
@@ -773,7 +763,6 @@ il_check nest  Nst   "$ROOT/cases/il-nested/app.kt" "$(printf 'outer:root\nnode(
 il_check scast Sc2   "$ROOT/cases/il-smartcast/app.kt" "$(printf 'int:42\nother\nyo\nnone')"
 il_check vis   VisT  "$ROOT/cases/il-vis/app.kt" "$(printf '98\nacct\n99')"
 il_check throwx Tx   "$ROOT/cases/il-throwexpr/app.kt" "$(printf 'pos\n42\n3')"
-il_check enumr Er    "$ROOT/cases/il-enumrich/app.kt" "$(printf '5\nTrue\nFalse\nJUPITER\n1\n9\nEARTH\nMARS\nJUPITER\nTrue\nFalse')"
 il_check precond Pcd "$ROOT/cases/il-precond/app.kt" "$(printf '3\nreq\nchk\nerr:boom\ntodo')"   # #73 M6/M7: precondition/error family + top-level repeat{} inline loop (moved to bir2cir)
 il_check repeatnlr RptN "$ROOT/cases/il-repeatnlr/app.kt" "$(printf '3\n-1\n6\n6\n63\n9')"   # #75: NON-LOCAL return + return@repeat + nested repeat + scope-fn-in-repeat through repeat{} (kotc carries the un-closured lambda body; bir2cir InlineSplice splices it)
 il_check reif  Rf    "$ROOT/cases/il-reified/app.kt" "$(printf 'String\nInt32\nTrue\nFalse\nTrue\nyo\nno')"
