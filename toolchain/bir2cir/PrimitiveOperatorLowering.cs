@@ -258,9 +258,25 @@ static class PrimitiveOperatorLowering
         if (m == "EQEQEQ" && args.Count == 2)
             return new JsonObject { ["k"] = "binOp", ["op"] = "==", ["lhs"] = args[0]?.DeepClone(), ["rhs"] = args[1]?.DeepClone() };
         // `ieee754equals`: the ordered IEEE-754 float/double comparison (`-0.0 == 0.0`, `NaN != NaN`) -> raw CIL
-        // `ceq` (`binOp ==`). Operands are already value-shaped by kotc; byte-identical to the former kotc lowering.
+        // `ceq` (`binOp ==`). For the NON-NULL direct `==` the operands are already value-shaped by kotc, so this stays
+        // byte-identical to the former kotc lowering. But the frontend ALSO routes a DIRECT/mixed NULLABLE float `==`
+        // (`Double? == Double?`, `Double == Double?`) here with RAW `Nullable<T>` operands — a raw `binOp ==` would then
+        // emit `ceq` over `Nullable<double>` structs = UNVERIFIABLE IL / InvalidProgram (#180). When at least one operand
+        // is value-nullable, shape a null-safe IEEE compare (the #152 operand-hoist skeleton, but the both-present core is
+        // a RAW `binOp ==` — direct-operator IEEE per #95: `-0.0 == 0.0` TRUE, `NaN == NaN` FALSE — NOT the total-order
+        // clr{Double,Float}Equals of the STRUCTURAL #152 path). null==null -> true, one null -> false.
         if (m == "ieee754equals" && args.Count == 2)
+        {
+            // Detect nullness off SURFACE (not Value): the frontend routes to `ieee754equals` by the STATIC type it
+            // saw, and an explicit `x as Double?` cast IS that surface nullable — `Value` peels the cast to the boxed
+            // `Any` underneath and would miss it, leaving the broken raw `ceq` over `Nullable<T>`. A smart-cast unwrap is
+            // a `nullableValue` node whose Surface is the non-null elem, so it still classifies non-null (raw path).
+            var lf = FloatOperand(StaticType.Surface(args[0], scope));
+            var rf = FloatOperand(StaticType.Surface(args[1], scope));
+            if (lf is { } lo && rf is { } ro && (lo.nullable || ro.nullable))
+                return NullableIeeeEquals(args[0], lo.nullable, args[1], ro.nullable, lo.nullable ? lo.elem : ro.elem);
             return new JsonObject { ["k"] = "binOp", ["op"] = "==", ["lhs"] = args[0]?.DeepClone(), ["rhs"] = args[1]?.DeepClone() };
+        }
         return null;
     }
 
@@ -291,7 +307,67 @@ static class PrimitiveOperatorLowering
         t is TypeNode.Nullable n && n.Of is TypeNode.Fqn { Args: null } f
             && (f.Name == "kotlin.Double" || f.Name == "kotlin.Float") ? f.Name : null;
 
-    // Distinct temp-name counter for the #152 hoisted operands (mirrors PreconditionLowering's `__rn$`).
+    // Classify an `ieee754equals` operand's SURFACE type as a Double/Float family with its nullness (#180). Returns null
+    // for a non-float surface type (unresolvable / not a Double/Float) — so the caller keeps the raw `binOp ==` (the
+    // byte-identical non-null direct path and the defensive unresolved fallback). A raw value-nullable `Double?`/`Float?`
+    // -> (nullable=true, elem); a non-null `Double`/`Float` -> (nullable=false, elem).
+    static (bool nullable, string elem)? FloatOperand(TypeNode t)
+    {
+        if (NullableFloatElem(t) is string ne) return (true, ne);
+        if (FaithfulHints.IsNonNullFqn(t, "kotlin.Double")) return (false, "kotlin.Double");
+        if (FaithfulHints.IsNonNullFqn(t, "kotlin.Float")) return (false, "kotlin.Float");
+        return null;
+    }
+
+    // Null-safe DIRECT/mixed IEEE `==` over `Double?`/`Float?` operands (#180). Same operand-hoist skeleton as the
+    // structural #152 path — each operand hoisted into a temp so a side-effecting operand is evaluated ONCE — but the
+    // both-present core is a RAW `binOp ==` (IEEE: `-0.0 == 0.0` TRUE, `NaN == NaN` FALSE, the direct-operator semantics
+    // #95 fixed for the non-null case), NOT the total-order clr{Double,Float}Equals. A NON-null operand is hoisted into a
+    // plain `T` temp (its `hasValue` is a const `true`, its value the bare local); a nullable operand into a `Nullable<T>`
+    // temp read via nullableHasValue/nullableValue. Result: null==null -> true, exactly one null -> false, both present ->
+    // IEEE `==` on the unwrapped values. Emitting `ceq` over `Nullable<T>` structs (the pre-#180 raw path) is unverifiable.
+    static JsonNode NullableIeeeEquals(JsonNode a, bool aNullable, JsonNode b, bool bNullable, string elemFqn)
+    {
+        var na = "__ne$" + Interlocked.Increment(ref _neCounter);
+        var nb = "__ne$" + Interlocked.Increment(ref _neCounter);
+        JsonObject Local(string name) => new() { ["k"] = "local", ["name"] = name };
+        JsonObject Bool(bool v) => new() { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Boolean"), ["value"] = v };
+        JsonNode VarType(bool nullable) => nullable
+            ? new JsonObject { ["t"] = "nullable", ["of"] = TypeJson.Fqn(elemFqn) }
+            : TypeJson.Fqn(elemFqn);
+        JsonObject Var(string name, JsonNode init, bool nullable) =>
+            new() { ["k"] = "var", ["name"] = name, ["type"] = VarType(nullable), ["init"] = init.DeepClone() };
+        JsonNode HasValue(string name, bool nullable) => nullable
+            ? new JsonObject { ["k"] = "nullableHasValue", ["elem"] = TypeJson.Fqn(elemFqn), ["e"] = Local(name) }
+            : Bool(true);
+        JsonNode Value(string name, bool nullable) => nullable
+            ? new JsonObject { ["k"] = "nullableValue", ["elem"] = TypeJson.Fqn(elemFqn), ["e"] = Local(name) }
+            : Local(name);
+        // both present -> RAW IEEE `binOp ==` on the unwrapped values; both null -> true.
+        var whenSameNullness = new JsonObject
+        {
+            ["k"] = "cond",
+            ["cond"] = HasValue(na, aNullable),
+            ["then"] = new JsonObject { ["k"] = "binOp", ["op"] = "==", ["lhs"] = Value(na, aNullable), ["rhs"] = Value(nb, bNullable) },
+            ["else"] = Bool(true),
+        };
+        // hasValue(a) == hasValue(b) ? (above) : false  — exactly one null is unequal.
+        var result = new JsonObject
+        {
+            ["k"] = "cond",
+            ["cond"] = new JsonObject { ["k"] = "binOp", ["op"] = "==", ["lhs"] = HasValue(na, aNullable), ["rhs"] = HasValue(nb, bNullable) },
+            ["then"] = whenSameNullness,
+            ["else"] = Bool(false),
+        };
+        return new JsonObject
+        {
+            ["k"] = "valueBlock",
+            ["stmts"] = new JsonArray { Var(na, a, aNullable), Var(nb, b, bNullable) },
+            ["result"] = result,
+        };
+    }
+
+    // Distinct temp-name counter for the #152/#180 hoisted operands (mirrors PreconditionLowering's `__rn$`).
     static int _neCounter;
 
     // Null-safe TOTAL-ORDER equality over two value-nullable `Double?`/`Float?` operands (#152). Hoists each raw
