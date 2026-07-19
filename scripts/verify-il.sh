@@ -578,7 +578,6 @@ il_check ops   Ops   "$ROOT/cases/il-ops"     "$(printf '3\n2\n7\n3\n16\n15\n-1\
 # + their il_check lines were deleted in that SAME change. (il-structfloateq/il-structfloateqnull matched the `str`
 # grep prefix but are float-equality cases — they stay below.)
 # printlnnull: println/print(null) render the string "null" (Kotlin semantics); non-null values print normally.
-il_check printlnnull PrintlnNull "$ROOT/cases/il-printlnnull" "$(printf 'null\nnull5x\nnull')"
 # The collections family (list/set/iteration/collection-op + Map-typed cases: il-coll*, il-map*, il-mut*, il-iter*,
 # il-hashset2, il-iscoll, il-listeq, il-listplus, il-eachcount, il-emptymap, il-groupby2, …) migrated to the NUnit
 # batteries tests/il/fixtures/CollectionsTests.kt (16) + MapsTests.kt (10), gated by tests/run-nunit-il.sh. Per the
@@ -593,7 +592,6 @@ il_check pairnest PairNest "$ROOT/cases/il-pairnest" "$(printf '([1, 2], [3, 4])
 # nullcollarg: #100 H3 regression guard — a nullable-inner collection type-arg (`Map<String, List<Int>?>`) upcast from
 # a MutableMap must still collapse its V to IList and verify clean (the `?` must not smuggle an un-collapsed IReadOnly
 # face past the collapse). Pure runnable guard for that shape.
-il_check nullcollarg NullCollArg "$ROOT/cases/il-nullcollarg" "$(printf '{a=[1]}')"
 il_check extprop ExtProp "$ROOT/cases/il-extprop" "$(printf '2\n1\n1\n3\n-1\n1\n0')"  # C7 (+ #157 NON-coroutine guard): cross-module top-level extension-property getter -> callStatic get_<name>(receiver) (generic List.lastIndex carries type args); NOT a dropped-receiver field read. Resolves through the SAME general owner-null path as xmodtopval (prop:get -> get_<name> -> TryResolveTopLevelStatic recvKey branch) — a name-keyed re-special-case of that path would break these non-coroutine names
 il_check defargs DefArgs "$ROOT/cases/il-defargs" "$(printf 'x1-x2-x3\n1, 2, 3\n[1, 2, 3]\n1/2/~\nb=c\na\nnodelim\nFALLBACK\nP(x=1, y=20, z=3)\nP(x=10, y=2, z=30)\nHello, Kotlin!\nHello, Kotlin?')"  # C3: cross+same-module default args — omitted middle default must not shift a later provided arg's slot (joinToString transform / substringAfter `= this` / data-class copy(field=))
 il_check defargs2 DefArgs2 "$ROOT/cases/il-defargs2" "$(printf '55\n7\n12\n30\n134\n156\n159')"  # C3 residual: same-module default referencing ANOTHER value param (`b = a * 10`, `c = a + b`) — inlined with that param's filled arg substituted
@@ -607,7 +605,6 @@ il_check indicesv IndicesV "$ROOT/cases/il-indicesv" "$(printf '012\n2\n1\n-1\ne
 il_check coerce Coerce "$ROOT/cases/il-coerce" "$(printf '7\n5\n5\n2\n1\n5\n7')"       # coerceAtMost/AtLeast/In -> pure-Kotlin stdlib bodies (no kotc System.Math lowering)
 il_check infloopret InfLoopRet "$ROOT/cases/il-infloopret" "$(printf '30\nok4')"  # #141: value-returning while(true){…return x} -> ilemit appends default(ret)+ret so the unreachable fall-through terminator is ilverify-clean (ReturnMissing gone)
 il_check genarrlam GenArrLam "$ROOT/cases/il-genarrlam" "$(printf '2\nnull\nnull\nnull\nnull\n3\nnull\nnull')"  # #142: `Array(size){ mk<T?>(null) }` in a generic class — nested constructed-generic `Ref<T?>` erased to `Ref<object>` CONSISTENTLY across method-sig/array-elem/newDelegate.funcType.ret; DelegateCtor gone. #4 (read side): reading the erased element back across the Box<Int>/Box<String> boundary (`b.a[0].v`/`b.elem(i).v`/retyped local/`val x: Int?=…`) re-derives `Ref<object>` from the erased decl (NullableTvErasureCallRealign) — was ilverify StackUnexpected `Ref`1<object>` vs `Ref`1<Nullable`1<int32>>`
-il_check nullgenlist NullGenList "$ROOT/cases/il-nullable-generic-list" "$(printf '2\na\na\nnull\n2\n7\n7\nnull\n1\n2')"  # GitHub #28: List<T?> uses the declaration's object-erased interface consistently at member reads (Count + get_Item + GetEnumerator), for reference and value instantiations.
 il_check toplateinit TopLateinit "$ROOT/cases/il-toplateinit" "$(printf 'caught: uninitialized\nhello\n5')"  # #104: top-level `lateinit var` (ref type) static field carries `"init": null` — must NOT hit the .cctor null-coercion store (crash); default-null + lateinitGet throw-before-init
 il_check samcmp SamCmp "$ROOT/cases/il-samcmp" "$(printf '1,1,2,3,4,5,6,9\n9,6,5,4,3,2,1,1')"  # explicit Comparator{} SAM conversion (plain fun interface; no kotc @ClrTypeAlias read)
 il_check cp    Cp    "$ROOT/cases/il-cp"      "$(printf '50\n3.5\nTrue\nTrue\nX')"
@@ -743,10 +740,12 @@ il_check volatileatomic AppKt "$ROOT/cases/il-volatileatomic" "$(printf '42\n900
 # (try/finally). A worker thread then acquires the same instance's monitor (loadAt); pre-fix the leaked lock made
 # worker.Join(2000) time out -> "DEADLOCK". Needs facadegen for System.Threading.Thread, so il_check_imports.
 il_check_imports atomicarraytry AppKt "$ROOT/cases/il-atomicarraytry" "$(printf 'True\n20\n100')"
-il_check null  Null  "$ROOT/cases/il-null"    "$(printf 'none\nHI\nfallback\nABC\n5')"
-il_check nullableprim NullablePrim "$ROOT/cases/il-nullableprim" "$(printf '7\n107\n8\n8\n14\ngt5\nbig\n7\n-1\n8\n-2\n101\n50\nlgt\n2.5\n2.75\ndlt')"
+# The nullable / null-safety battery (il-null, il-nullable-generic-list, il-nullableprim, il-nullbang,
+# il-nullcollarg, il-nullcs, il-printlnnull, il-reqnn, il-safecallnv, il-trynullable) migrated to the NUnit
+# battery tests/il/fixtures/NullableTests.kt (12 methods), gated by tests/run-nunit-il.sh. Per the
+# cases-test-design audit #14, the old per-case dirs + these il_check lines were deleted in that SAME change.
+# (il-nan/il-nancmp/il-negzero are NOT here — their subject is IEEE-float behavior, kept for a float battery.)
 il_check refcellnullable AppKt "$ROOT/cases/il-refcell-nullable/app.kt" "$(printf '5\n6\n105\n25\n2.5\nnull')"   # #36: a captured-and-mutated `var Int?`/`Long?`/`Double?` -> heap ref-cell whose `v` field is Nullable<T>; the INIT ctor arg (bare T -> Nullable<T>), the inline smart-cast READ (Nullable<T>.Value), and the WRITE must all agree — was `new Ref(bare int)` into a Nullable<int> ctor slot -> InvalidProgramException
-il_check nullbang NullBang "$ROOT/cases/il-nullbang" "$(printf '5\n6\n5\nnpe\n10\n3.75\n9\n6\n9\nnpe-u\n5\nnull\n6\n9\n5\nnull\n5\nhi\n2\nnpe-discard\nnpe-store')"   # #56/#115/#118/#126: `!!` (and unsigned SAFE_CALL/ELVIS/`as?`/if-else-null-join) on value-type (Int?/Long?/Double?/Byte?/UInt?/UByte?) routes the value-type nullable path (Nullable<T>) + throws NPE; reference (String?) `!!` throws NPE EAGERLY even when result is stored/discarded
 il_check tryval TryVal "$ROOT/cases/il-tryval" "$(printf '5\nnull\n7\n3.5\n1.5\nnull\n2.5\nnull\n11')"   # #127: `try{value}catch{null}` in VALUE position on a value-type result -> the shared temp is typed Nullable<T> (null branch = HasValue=false), mirror of ternary()'s value+null-branch join (incl. stdlib toFloatOrNull/toDoubleOrNull)
 il_check nncontract NnContract "$ROOT/cases/il-nncontract/app.kt" "$(printf '2\ntb\nnpe-param\nnpe-ctor\nnpe-member\nnpe-ret\nnpe-retexpr\nnpe-retm\nnpe-getter\nfin\nnpe-trret')"   # #6/#32: non-null CONTRACTS on the public surface — PARAMETER PRECONDITIONS (top-level fun / ctor / member fun) + RETURN POSTCONDITIONS (statement/expression-position top-level fun / member fun / getter / return-in-try: finally runs before the postcondition NPE propagates) throw NullPointerException fail-fast on a laundered null; a normal non-null call is unaffected
 il_check nullv MS1   "$ROOT/cases/m-s1/app.kt" "$(printf 'fallback\npresent\nforced\nlen null = -1\nlen hello = 5')"
@@ -772,7 +771,6 @@ il_check scast Sc2   "$ROOT/cases/il-smartcast/app.kt" "$(printf 'int:42\nother\
 il_check vis   VisT  "$ROOT/cases/il-vis/app.kt" "$(printf '98\nacct\n99')"
 il_check throwx Tx   "$ROOT/cases/il-throwexpr/app.kt" "$(printf 'pos\n42\n3')"
 il_check enumr Er    "$ROOT/cases/il-enumrich/app.kt" "$(printf '5\nTrue\nFalse\nJUPITER\n1\n9\nEARTH\nMARS\nJUPITER\nTrue\nFalse')"
-il_check reqnn Rn    "$ROOT/cases/il-reqnn/app.kt" "$(printf 'h\n7')"
 il_check precond Pcd "$ROOT/cases/il-precond/app.kt" "$(printf '3\nreq\nchk\nerr:boom\ntodo')"   # #73 M6/M7: precondition/error family + top-level repeat{} inline loop (moved to bir2cir)
 il_check repeatnlr RptN "$ROOT/cases/il-repeatnlr/app.kt" "$(printf '3\n-1\n6\n6\n63\n9')"   # #75: NON-LOCAL return + return@repeat + nested repeat + scope-fn-in-repeat through repeat{} (kotc carries the un-closured lambda body; bir2cir InlineSplice splices it)
 il_check reif  Rf    "$ROOT/cases/il-reified/app.kt" "$(printf 'String\nInt32\nTrue\nFalse\nTrue\nyo\nno')"
@@ -1100,7 +1098,6 @@ il_check starproj StarProj "$ROOT/cases/il-starproj" "$(printf '{1=2, 3=4}\n2\n[
 il_check excmap   ExcMap   "$ROOT/cases/il-excmap"   "$(printf 'caught-list\ncaught-arr\npst-ok\ncaught-super')"
 il_check nan Nan "$ROOT/cases/il-nan" "$(printf 'True\nTrue\nTrue\nFalse\nFalse')"
 il_check nestedtry NestedTry "$ROOT/cases/il-nestedtry" "$(printf 'inner fin\nouter fin\n1')"
-il_check trynullable TryNullable "$ROOT/cases/il-trynullable" "$(printf 'fin\n1')"
 il_check tryexprop TryExprOp "$ROOT/cases/il-tryexprop" "$(printf 'n=5\n6\nbad=-1\n30')"
 il_check setlocalbox SetLocalBox "$ROOT/cases/il-setlocalbox" "$(printf '42\n7')"
 il_check nancmp NanCmp "$ROOT/cases/il-nancmp" "$(printf 'False\nFalse\nFalse\nFalse\nTrue\nTrue\nTrue\nFalse')"
@@ -1110,13 +1107,11 @@ il_check structfloateq AppKt "$ROOT/cases/il-structfloateq/app.kt" "$(printf 'Fa
 il_check structfloateqnull AppKt "$ROOT/cases/il-structfloateqnull/app.kt" "$(printf 'False\nTrue\nTrue\nTrue\nFalse\nFalse\nTrue\nTrue\nFalse')"   # #152: STRUCTURAL Double?/Float? equality (nullable data-class field) is total-order via null-safe bit-equality (nullableHasValue/nullableValue + clrDoubleEquals/clrFloatEquals), NOT boxed Double.Equals (IEEE: (-0.0).Equals(0.0)==true); null==null true, one null false, hashSet stays consistent
 il_check floateqnull AppKt "$ROOT/cases/il-floateqnull/app.kt" "$(printf 'True\nFalse\nTrue\nFalse\nFalse\nTrue\nFalse\nFalse\nTrue\nFalse\nTrue\nTrue\nTrue\n1\nTrue\nFalse\nTrue\nTrue\nFalse')"   # #180: DIRECT/mixed nullable Double?/Float? `==` (frontend routes to ieee754equals with raw Nullable<T> operands; incl. `(x as Double?)==y` via SURFACE nullness + `!=` + single-eval) is null-safe IEEE-shaped (operand-hoist + raw binOp== core), NOT raw ceq over Nullable<T> structs (unverifiable IL). -0.0==0.0 true, NaN==NaN false, null==null true, one-null false; DISTINCT from the STRUCTURAL total-order #152 path
 il_check whensubj WhenSubj "$ROOT/cases/il-whensubj" "$(printf 'b\n1\nz\n2\nseven')"
-il_check safecallnv SafeCallNv "$ROOT/cases/il-safecallnv" "$(printf '120\nnull\n3\nnull\n4')"
 il_check rangein RangeIn "$ROOT/cases/il-rangein" "$(printf 'True\n1\nFalse\n2\nTrue\nFalse\nFalse\nTrue\nTrue\n6\nTrue')"
 il_check userrange UserRange "$ROOT/cases/il-userrange" "$(printf 'user contains\nTrue\nuser contains\nFalse')"   # #73 M2: `x in a..b` on a USER rangeTo/contains type dispatches the real contains(), not primitive comparisons
 il_check duration Duration "$ROOT/cases/il-duration" "$(printf -- '5s\n2s\n-1s\nTrue')"
 # #156: a genuinely-nullable String (String? = null) UNWRAPPED into a CharSequence?-receiver slot (isNullOrEmpty) — the
 # strict nullable-slot path now emits a runtime-conditional adapter wrap so String->dotkt$CharSequence is ilverify-clean.
-il_check nullcs NullCs "$ROOT/cases/il-nullcs" "$(printf 'Z:empty\nV:hi\nE:empty')"
 # #40 (guard): a CROSS-MODULE @InlineOnly + @ClrIntrinsic stdlib fn keeps its @ClrIntrinsic binding across the assembly
 # boundary — kotc carries the annotation as OPAQUE ref.dll metadata (attrsJson is unconditional, NOT dropped for
 # @InlineOnly) and bir2cir substitutes the plain call to the bound BCL member (`sb[0]='X'` -> set_Chars, Char.is* -> System.Char.Is*).
