@@ -413,6 +413,30 @@ internal fun BirEmitter.call(call: IrCall): String {
 		val recvJson = asClrEventReceiver { expr(recv) }
 		return """{"k":"callInstance","ownerType":${fqnJson("kotlin.clr.ClrEvent")},"virtual":false,"recv":$recvJson,"method":${str(callee.name.asString())},"args":[${expr(regularArgs(call).first())}]}"""
 	}
+	// RAISE: `handle.invoke(sender, args)` / `handle(sender, args)` (both desugar to `ClrEvent.invoke`). The event handle
+	// is a member read `vm.<E>` (a `ClrEvent<T>` property); raise is legal only for a KOTLIN-DECLARED event (one with a
+	// synthesized `raise_<E>`). kotc lowers this to a dedicated dialect node `clrEventRaise` carrying the RECEIVER's static
+	// type (the type that declares `raise_<E>`) + the event name + the invoke args — bir2cir's ClrEventImplBinding binds it
+	// to a `raise_<E>` call (and hard-errors a raise on a CONSUMED foreign event). The ClrEvent<T> value is consumed, never
+	// materialized — we emit the underlying receiver `vm`, not the handle read.
+	if (callee.name.asString() == "invoke"
+		&& (callee.parent as? IrClass)?.fqNameWhenAvailable?.asString() == "kotlin.clr.ClrEvent") {
+		val handle = dispatchReceiver(call)!!
+		val eventAccess = handle as? IrCall
+		val prop = eventAccess?.symbol?.owner?.correspondingPropertySymbol?.owner
+		val eventRecv = eventAccess?.dispatchReceiver
+		if (prop == null || eventRecv == null) {
+			hadError = true
+			messageCollector?.report(CompilerMessageSeverity.ERROR,
+				"a .NET event can be raised only through an instance event handle (`vm.<Event>.invoke(...)`)", locationOf(call))
+			return """{"k":"unsupportedExpr","of":"clr-event-raise-non-instance-handle"}"""
+		}
+		// invoke is `vararg args: Any?` — the individual sender/args arrive wrapped in a single IrVararg; unwrap them.
+		val rawArgs = regularArgs(call)
+		val argExprs = if (rawArgs.size == 1 && rawArgs[0] is IrVararg)
+			(rawArgs[0] as IrVararg).elements.filterIsInstance<IrExpression>() else rawArgs
+		return """{"k":"clrEventRaise","type":${birType(eventRecv.type).toJson()},"event":${str(prop.name.asString())},"recv":${expr(eventRecv)},"args":[${argExprs.joinToString(",") { expr(it) }}]}"""
+	}
 	// A `StackBuffer<T>` member access while its block is being spliced -> a stack op (ptr + index).
 	((dispatchReceiver(call) as? IrGetValue)?.symbol?.owner)?.let { stackBufSubst[it] }?.let { return emitStackBufferOp(call, callee, it) }
 	// A `<get-x>`/`<set-x>` call for a LOCAL delegated property -> access on the delegate local (thisRef=null,

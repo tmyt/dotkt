@@ -485,6 +485,13 @@ sealed class Pipeline
             // the clrPropGet receiver is consumed here, not emitted. Runs BEFORE MemberCallSubstitution so the operator
             // call — which has no ref.dll owner — is bound here. A no-op for the ref/rt stdlib self-build (no .NET events).
             hoisted = ClrEventOperatorBinding.Apply(hoisted);
+            // .NET EVENT IMPLEMENT/RAISE (§4.2/§4.3): a Kotlin class implementing/declaring a CLR event via `by clrEvent()`.
+            // kotc synthesized add_/remove_/raise_<E> + a `clrEvents` backing directive (pure-Kotlin identities); this pass —
+            // the ref.dll-reading layer — resolves the concrete delegate `D` (the interface event's EventHandlerType) and
+            // rewrites the accessor bodies to CIR `clrEventAccessorImpl` directives + inserts the `<E>$delegate : D` field +
+            // a type-level `clrEventDecl`. It also binds `clrEventRaise` to a `raise_<E>` call. App/rt only (no .NET events
+            // in the ref/rt stdlib self-build).
+            if (!_options.RefBuild) hoisted = ClrEventImplBinding.Apply(hoisted, refs);
             // KCLASS MEMBER BINDING: kotc emits `T::class.simpleName`/`.qualifiedName` as the PLAIN Kotlin property read
             // `callInstance(kotlin.reflect.KClass.get_simpleName/get_qualifiedName, recv = <a System.Type value>)` (the
             // `::class` receiver is already a System.Type token). A KClass is @ClrTypeAlias-ed onto System.Type, so this

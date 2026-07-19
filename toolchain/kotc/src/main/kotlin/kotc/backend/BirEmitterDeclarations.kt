@@ -21,6 +21,7 @@ import org.jetbrains.kotlin.ir.expressions.IrConst
 import org.jetbrains.kotlin.ir.expressions.IrConstructorCall
 import org.jetbrains.kotlin.ir.expressions.IrDelegatingConstructorCall
 import org.jetbrains.kotlin.ir.expressions.IrClassReference
+import org.jetbrains.kotlin.ir.expressions.IrCall
 import org.jetbrains.kotlin.ir.expressions.IrEnumConstructorCall
 import org.jetbrains.kotlin.ir.expressions.IrExpressionBody
 import org.jetbrains.kotlin.ir.declarations.IrEnumEntry
@@ -414,6 +415,94 @@ internal fun BirEmitter.volatileFieldFlag(p: IrProperty): String = if (isVolatil
 internal fun BirEmitter.isClrEventProperty(p: IrProperty): Boolean =
 	p.getter?.returnType?.classFqName?.asString() == "kotlin.clr.ClrEvent"
 
+/** The `clrEvent()` delegate-initializer call of a `by clrEvent()` property (§4.2/§5 of design-clr-event-model.md), or
+ *  null. A DELEGATED property whose delegate expression is a call to `kotlin.clr.clrEvent` — the marker "synthesize the
+ *  field-like .NET event impl here" (a backing delegate field + add_/remove_/raise_ accessors). Distinguished from the
+ *  ELIDE case (isClrEventProperty, a CONCRETE fake-override inherited from a .NET base) by BEING delegated with this
+ *  initializer: a fake-override is not delegated and has no clrEvent() initializer. */
+internal fun BirEmitter.clrEventDelegateCall(p: IrProperty): IrCall? {
+	if (!p.isDelegated) return null
+	val init = (p.backingField?.initializer as? IrExpressionBody)?.expression as? IrCall ?: return null
+	return if (init.symbol.owner.fqNameWhenAvailable?.asString() == "kotlin.clr.clrEvent") init else null
+}
+
+/** #187 missing-`by clrEvent()` diagnostic (kotc EMISSION time — the frontend can't enforce it via an abstract member:
+ *  a .NET base that explicitly implements an interface event with a different-signature same-name public event can never
+ *  satisfy an abstract slot, so an abstract interface event member would wrongly break `class MyApp : Avalonia.Application`).
+ *  A class DIRECTLY implementing a .NET interface event must write `override val E by clrEvent()` (a DECLARED delegated
+ *  property, not a fake-override) — otherwise it emits an invalid type (missing add_/remove_ -> TypeLoadException). Flag
+ *  the unsatisfied case: a `ClrEvent<T>` FAKE-OVERRIDE provided by NEITHER a base CLASS that declares it (a Kotlin base
+ *  that synthesized it, e.g. `PersonViewModel : ViewModelBase()`) NOR an external .NET base class (`MyApp :
+ *  Avalonia.Application` — the .NET base implements its interfaces at the CLR level). Never a false positive; the sole gap
+ *  is a false-NEGATIVE for `class X : UnrelatedNetBase(), IEvented` (kotc-purity forbids reading .NET metadata to know
+ *  which interface a .NET base implements). */
+internal fun BirEmitter.checkUnimplementedClrEvents(klass: IrClass) {
+	val hasNetBaseClass = klass.superTypes.any { st ->
+		(st.classifierOrNull?.owner as? IrClass)?.let { it.kind == ClassKind.CLASS && isExternalNetType(it) } == true
+	}
+	if (hasNetBaseClass) return
+	for (p in klass.declarations.filterIsInstance<IrProperty>()) {
+		if (!isClrEventProperty(p) || !p.isFakeOverride) continue
+		// Provided by a base CLASS that DECLARES it (a Kotlin base that synthesized the event) -> inherited, OK.
+		if ((p.getter?.resolveFakeOverride()?.parent as? IrClass)?.kind == ClassKind.CLASS) continue
+		hadError = true
+		messageCollector?.report(CompilerMessageSeverity.ERROR,
+			"class '${klass.name.asString()}' implements a .NET interface event '${p.name.asString()}' but does not provide it; " +
+				"declare `override val ${p.name.asString()} by clrEvent()` to synthesize the event (add/remove/raise accessors)",
+			locationOf(klass))
+	}
+}
+
+/** Synthesize the field-like .NET event impl for every `override val E by clrEvent()` (implement an interface slot) or
+ *  `val E: ClrEvent<D> by clrEvent()` (declare a NEW event) on [klass] (§4.2). Returns (clrEvents backing-directive JSONs,
+ *  synthesized add_/remove_/raise_ method JSONs). kotc emits PURE-KOTLIN identities only: the backing directive carries
+ *  the handler Kotlin FUNCTION type; the accessors carry tagged bodies (`clrEventAccessor`) + an `overrides` closure
+ *  naming the interface event slot by Kotlin identity (owner FQN + event name). bir2cir's ClrEventImplBinding resolves the
+ *  concrete delegate `D` + the interface accessor slots off the ref.dll and rewrites the tagged bodies. */
+internal fun BirEmitter.synthClrEvents(klass: IrClass): Pair<List<String>, List<String>> {
+	val backings = ArrayList<String>()
+	val methods = ArrayList<String>()
+	val unit = fqnJson("kotlin.Unit")
+	for (p in klass.declarations.filterIsInstance<IrProperty>()) {
+		clrEventDelegateCall(p) ?: continue
+		val name = p.name.asString()
+		// `var E by clrEvent()` is a hard error — an event is a read-only handle (subscribe/unsubscribe/raise, never reassign).
+		if (p.isVar) {
+			hadError = true
+			messageCollector?.report(CompilerMessageSeverity.ERROR,
+				"an event must be declared `val`, not `var` (`val $name by clrEvent()`) — an event handle is subscribed/raised, never reassigned",
+				locationOf(p))
+			continue
+		}
+		val handlerArg = (p.getter?.returnType as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection
+		if (handlerArg?.type == null) {
+			hadError = true
+			messageCollector?.report(CompilerMessageSeverity.ERROR,
+				"cannot infer the event handler type for `val $name by clrEvent()`; annotate it `ClrEvent<(…) -> Unit>`",
+				locationOf(p))
+			continue
+		}
+		val handlerJson = birType(handlerArg.type).toJson()
+		// The `overrides` closure: the interface event slot(s) this member implements, by Kotlin identity (owner FQN +
+		// event name). bir2cir derives the concrete add_/remove_ slot + delegate `D` off the ref.dll from it. Empty for a
+		// NEW event (no override), where bir2cir instead maps the handler function type to a delegate.
+		val overriddenOwners = p.overriddenSymbols.mapNotNull { (it.owner.parent as? IrClass)?.fqNameWhenAvailable?.asString() }
+		fun overridesFor(kind: String) = if (overriddenOwners.isEmpty()) "" else
+			""","overrides":[${overriddenOwners.joinToString(",") { o -> """{"owner":${fqnJson(o)},"member":${str(name)},"kind":${str(kind)},"arity":1}""" }}]"""
+		fun accessor(mname: String, virtual: Boolean, kind: String, ov: String) =
+			"""{"name":${str(mname)},"static":false,"override":false,"virtual":$virtual,"abstract":false,"objectOverride":false,"vis":"public","params":[{"name":"value","type":$handlerJson}],"ret":$unit,"body":[{"k":"clrEventAccessor","kind":${str(kind)},"event":${str(name)}}]$ov}"""
+		backings.add("""{"k":"clrEventBacking","name":${str(name)},"handlerType":$handlerJson}""")
+		// add_/remove_: public VIRTUAL NEWSLOT (implicitly implements the interface add_/remove_ slot; bir2cir also wires the
+		// explicit MethodImpl). bir2cir rewrites the `value` param type to the concrete delegate `D` + the body to the CAS loop.
+		methods.add(accessor("add_$name", virtual = true, kind = "add", ov = overridesFor("event-add")))
+		methods.add(accessor("remove_$name", virtual = true, kind = "remove", ov = overridesFor("event-remove")))
+		// raise_: public NON-virtual (not an interface member; the raise-from-outside deviation, §6). bir2cir sets its params
+		// to the delegate's Invoke params + the body to `field?.Invoke(args)`; the `value` placeholder param is overwritten.
+		methods.add(accessor("raise_$name", virtual = false, kind = "raise", ov = ""))
+	}
+	return backings to methods
+}
+
 /** STEP-1 (kotc->bir2cir clrName migration) — a PURE-KOTLIN override marker for an emitted member: the transitive
  *  closure of interface/base members it overrides, each as {owner FQN, Kotlin member name, kind, arity}. NO CLR
  *  knowledge (no @ClrIntrinsic read, no BCL name). bir2cir (Step 2) consumes this + the ref.dll @ClrIntrinsic to
@@ -622,7 +711,14 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 	// this (often abstract) parent's statics. Only a plain companion (no supertype) flattens here.
 	val companion = if (superTypedCompanion(klass) != null) null
 		else klass.declarations.filterIsInstance<IrClass>().firstOrNull { it.isCompanion }
+	// #187: a class DIRECTLY implementing a .NET interface event must `override val E by clrEvent()` (else invalid type).
+	checkUnimplementedClrEvents(klass)
+	// `override val E by clrEvent()` synthesis (§4.2): the field-like event impl (backing directive + add_/remove_/raise_).
+	val (clrEventBackings, clrEventMethods) = synthClrEvents(klass)
 	val instFields = klass.declarations.filterIsInstance<IrProperty>().mapNotNull { p ->
+		// A `by clrEvent()` property's `<E>$delegate` backing field (of the un-emittable `kotlin.clr.ClrEvent<T>` type) is
+		// REPLACED by the synthesized backing delegate field (bir2cir stamps `<E>$delegate : D`); never emit the fiction.
+		if (clrEventDelegateCall(p) != null) return@mapNotNull null
 		val bf = p.backingField ?: return@mapNotNull null
 		// Honor the property's visibility on its backing field (A-108): a `private`/`internal`/`protected`
 		// property gets a non-public field. (Kotlin's own access rules already keep same-class field reads valid.)
@@ -716,7 +812,7 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 		val setName = if (emitsSet(p)) str("set_" + p.name.asString()) else "null"
 		"""{"name":${str(p.name.asString())},"type":${birType(p.getter!!.returnType).toJson()},"get":${str(getName)},"set":$setName${overridesJson(p.getter!!)}}"""
 	}
-	val methods = (instMethods + statMethods + companionAccessors + userAccessors).joinToString(",")
+	val methods = (instMethods + statMethods + companionAccessors + userAccessors + clrEventMethods).joinToString(",")
 	// A .NET base class (`: System.Exception(...)`, incl. a generic `: Collection<Int>()`) -> a `clr:`/`clrg:`
 	// type spec (via birType) that ilemit resolves by reflection; a Kotlin-user base emits its bare FQN identity
 	// carrying its ACTUAL constructed type arguments.
@@ -780,7 +876,10 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 	// #68: a compiler-generated synthetic (a lifted anon-object / local class) carries `generated:true` — a STRUCTURAL
 	// fact (no `<>` CLR-unspeakability marker; that is ilemit's concern). ilemit reads it to stamp [CompilerGenerated].
 	val generatedFlag = if (generated) ""","generated":true""" else ""
-	val result = """{"name":${str(typeName(klass))},"kind":"class","abstract":$isAbstract,"vis":${str(vis)}$nestedIn$sealedFlag$tpJson$generatedFlag,"base":$baseJson,"interfaces":[$ifaces],"fields":[$fields],"ctors":[$ctors],"methods":[$methods],"properties":[$propsList],"attrs":[${attrsJson(klass.annotations)}]${posJson(klass)}}"""
+	// `clrEvents` (§4.2): per-event backing directives for the `by clrEvent()` synthesis — bir2cir's ClrEventImplBinding
+	// turns each into a real `<E>$delegate : D` field + a type-level `clrEventDecl` (the `.event` metadata record).
+	val clrEventsJson = if (clrEventBackings.isEmpty()) "" else ""","clrEvents":[${clrEventBackings.joinToString(",")}]"""
+	val result = """{"name":${str(typeName(klass))},"kind":"class","abstract":$isAbstract,"vis":${str(vis)}$nestedIn$sealedFlag$tpJson$generatedFlag,"base":$baseJson,"interfaces":[$ifaces],"fields":[$fields],"ctors":[$ctors],"methods":[$methods],"properties":[$propsList]$clrEventsJson,"attrs":[${attrsJson(klass.annotations)}]${posJson(klass)}}"""
 	// Restore the captured-param remap installed at the top.
 	savedCaptureSubst.forEach { (tp, prev) -> if (prev != null) typeArgSubst[tp] = prev else typeArgSubst.remove(tp) }
 	return result
@@ -811,7 +910,10 @@ internal fun BirEmitter.ctor(klass: IrClass, ctor: IrConstructor, captures: List
 			is IrDelegatingConstructorCall -> {}
 			is IrInstanceInitializerCall -> klass.declarations.forEach { d ->
 				when (d) {
-					is IrProperty -> d.backingField?.let { bf -> bf.initializer?.let {
+					// A `by clrEvent()` property has NO backing `<E>$delegate` field (synthClrEvents replaced it with the
+					// event's own `<E>$delegate : D` field, initialized to null); skip its ctor delegate-store, which would
+					// otherwise call the erased `clrEvent()` marker + store into the removed field.
+					is IrProperty -> if (clrEventDelegateCall(d) == null) d.backingField?.let { bf -> bf.initializer?.let {
 						// Use the backing-field name (a delegated property's field is `<name>$delegate`).
 						stmts.add("""{"k":"setField","ownerType":${fqnJson(typeName(klass))},"recv":{"k":"this"},"name":${str(bf.name.asString())},"value":${expr((it as IrExpressionBody).expression)}}""")
 					} }

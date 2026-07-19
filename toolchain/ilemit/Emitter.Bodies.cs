@@ -114,7 +114,7 @@ sealed partial class Emitter
         // #84 diagnostic breadcrumb — set BEFORE any read of `m`, so a malformed def (e.g. a missing `name`, the exact
         // bir2cir-bug class #84 targets) is attributed to THIS type, not the previously-emitted method. Refined to the
         // method name once resolved below.
-        _ctxType = ti.TB?.Name; _ctxMethod = "?"; _ctxNode = null; _ctxPos = PosOf(m);   // #112 P2: decl source pos
+        _ctxType = ti.TB?.Name; _ctxMethod = "?"; _ctxNode = null; _ctxPos = PosOf(m); _curTi = ti;   // #112 P2: decl source pos
         var mname = m.GetProperty("name").GetString();
         _ctxMethod = mname;
         // A DUPLICATE (name, params) def was define-phase-mangled to `name$dupN` (see DeclareMethod); body emission
