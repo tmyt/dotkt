@@ -44,7 +44,7 @@ declare -A RT_XFAIL=(
 	# and the CALL BINDING compareTo -> the DotKt owner's PascalCase `CompareTo` slot is bir2cir NetInteropBinding's job
 	# (the instance-slot analog of its `plus`->`op_Addition` rule) — blocked behind the #46 bir2cir restructure. Flips to
 	# FIXED when that rule lands; the meta section already asserts the facadegen half.
-	[roundtrip-comparable]="#179 residual: cross-module `class C : Comparable<C>` call binds the Kotlin name `compareTo` but the DotKt slot is `CompareTo`; the compareTo->CompareTo slot bind on the facadegen-injected owner is a bir2cir NetInteropBinding change (behind #46). facadegen symbol surface is done + guarded by roundtrip-comparable-meta"
+	[roundtrip-comparable]="#179 residual: cross-module 'class C : Comparable<C>' call binds the Kotlin name 'compareTo' but the DotKt slot is 'CompareTo'; the compareTo->CompareTo slot bind on the facadegen-injected owner is a bir2cir NetInteropBinding change (behind #46). facadegen symbol surface is done + guarded by roundtrip-comparable-meta"
 )
 
 # ---- section result collection (no section may abort the script) -----------------------------------
