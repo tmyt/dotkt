@@ -240,32 +240,6 @@ sealed partial class Emitter
             ? TypeBuilder.GetMethod(constructed, constructed.GetGenericTypeDefinition().GetMethod(name))
             : constructed.GetMethod(name);
 
-    // An interface member inherited through the interface chain (`IList<T>.Add` -> `ICollection<T>.Add`). Interface
-    // `GetMethods` excludes base-interface members, so search the open def's transitively-flattened base interfaces,
-    // substitute the open def's type parameters with `typeArgs` into each base reference — which covers BOTH a
-    // shared-arity chain (IList<T> : ICollection<T>) AND an ARITY-CHANGING constructed-arg chain
-    // (IDictionary<K,V> : ICollection<KeyValuePair<K,V>>, where Count/Clear live 2->1 down the chain) — and
-    // re-anchor the method onto the constructed base. Null if not found.
-    static MethodInfo ResolveInheritedIfaceMethod(Type open, Type[] typeArgs, string name, int argc, BindingFlags flags)
-    {
-        foreach (var bi in open.GetInterfaces())
-        {
-            if (!bi.IsGenericType)
-            {
-                var nm = bi.GetMethods(flags).FirstOrDefault(m => m.Name == name && m.GetParameters().Length == argc);
-                if (nm != null) return nm;
-                continue;
-            }
-            var biOpen = bi.GetGenericTypeDefinition();
-            var bom = biOpen.GetMethods(flags).FirstOrDefault(m => m.Name == name && m.GetParameters().Length == argc);
-            if (bom == null) continue;
-            var biCon = SubstituteIfaceArgs(bi, typeArgs);
-            return IsTbInstantiation(biCon) ? TypeBuilder.GetMethod(biCon, bom)
-                : biCon.GetMethods(flags).First(m => m.Name == name && m.GetParameters().Length == argc);
-        }
-        return null;
-    }
-
     // Substitute an open interface's own generic parameters (positionally = `typeArgs`) throughout a base-interface
     // reference as declared on that open def — including CONSTRUCTED args (`ICollection<KeyValuePair<K,V>>` with
     // K:=string,V:=int -> `ICollection<KeyValuePair<string,int>>`). Every generic parameter appearing in such a
@@ -1031,8 +1005,8 @@ sealed partial class Emitter
         // Inherited interface property (`ICollection<T>.Count` accessed on `IList<T>`, or the ARITY-CHANGING
         // `IReadOnlyCollection<KeyValuePair<K,V>>.Count` accessed on `IReadOnlyDictionary<K,V>`/`IDictionary<K,V>`):
         // interface GetProperty doesn't traverse base interfaces, so walk them, substitute the open def's type
-        // parameters into the (possibly constructed-arg) base reference, and re-anchor (mirrors
-        // ResolveInheritedIfaceMethod).
+        // parameters into the (possibly constructed-arg) base reference, and re-anchor (the accessor twin of the
+        // base-interface walk in FindMethod's FindInInterfaces).
         var typeArgs = type.GetGenericArguments();
         foreach (var bi in open.GetInterfaces())
         {
@@ -1117,6 +1091,10 @@ sealed partial class Emitter
     // `{t:tv,scope:type,i}` matches whatever those args substituted into the candidate's param at that position.
     bool GenericParamMatches(DotKt.Bir.TypeNode node, Type p, Type[] ownerArgs)
     {
+        // A function-type node ALWAYS matches structurally (even fully concrete): MapType(fn) builds ONE specific
+        // delegate (a BCL `Action<Panel>`), but the reflected param may be a per-assembly SYNTHETIC `KAction<Panel>` a
+        // DotKt library baked — GenericDelegateMatches accepts BOTH BCL Func/Action AND synthetic KFunc/KAction by shape.
+        if (node is DotKt.Bir.TypeNode.Fn fnNode) return GenericDelegateMatches(fnNode, p, ownerArgs);
         if (!ContainsTv(node))
         {
             try { return MapType(node) == p; } catch { return false; }
@@ -1168,11 +1146,12 @@ sealed partial class Emitter
     // (KFunc/KAction mirror Func/Action's generic-arg layout: params[..] + ret for Func-like, params[..] for Action-like).
     bool GenericDelegateMatches(DotKt.Bir.TypeNode.Fn fn, Type p, Type[] ownerArgs)
     {
-        if (!p.IsGenericType) return false;
-        var dn = p.GetGenericTypeDefinition().Name;
-        var ga = p.GetGenericArguments();
         var dp = fn.DelegateParams;
         bool isVoid = fn.Ret is DotKt.Bir.TypeNode.Fqn { Name: "void" or "System.Void", Args: null };
+        // The NON-generic `System.Action` (0-arg, void) — a `()->Unit` lambda param (`column(setup, content: ()->Unit)`).
+        if (!p.IsGenericType) return isVoid && dp.Length == 0 && p.Name == "Action" && p.Namespace == "System";
+        var dn = p.GetGenericTypeDefinition().Name;
+        var ga = p.GetGenericArguments();
         if (isVoid)
         {
             if (!(dn.StartsWith("Action`", StringComparison.Ordinal) || dn.StartsWith("KAction`", StringComparison.Ordinal))

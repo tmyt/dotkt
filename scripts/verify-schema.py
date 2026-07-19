@@ -33,6 +33,9 @@ STR_OK = {
     "op", "cmp",                                # binOp/unaryOp operator / structured-for comparison operator
     "value",                                    # const literal / attribute-arg scalar
     "vis", "variance", "kind",                  # visibility / variance / decl-kind enums
+    "dispatch",                                  # clrInstance dispatch enum ("call"/"callvirt"/"constrained") — a
+                                                # bir2cir DECISION (W1-S2 #46), NOT a type slot; ilemit emits the opcode
+                                                # verbatim (no re-derivation from reflected IsVirtual/IsFinal)
     "member", "method", "get", "set", "event",  # member/accessor/event NAME references (reflection/override — §2.2.1)
     "prop",                                     # callInstance/callStatic accessor KIND ("get"/"set"/"index-get"/"index-set")
                                                 # — a BIR-only frontend fact (A2 step 3/4); bir2cir consumes it into
@@ -76,7 +79,7 @@ STR_OK = {
 # (§2.2.1). Every OTHER kind's `type` is a value type and stays enforced. Their argTypes/ret/typeArgs remain
 # enforced value/type-arg slots.
 CLR_OWNER_KINDS = {
-    "clrStatic", "clrInstance", "clrGenericStatic", "clrGenericInstance",
+    "clrStatic", "clrInstance", "clrDynInstance", "clrGenericStatic", "clrGenericInstance",
     "clrPropGet", "clrPropSet", "clrStaticField", "clrEventGet", "clrEventAdd", "clrEventRemove", "constrainedCall",
 }
 # Keys that legitimately hold an ARRAY containing bare strings: only the type-PARAMETER
@@ -125,6 +128,8 @@ KINDS = {
     "clrEventGet",
     # --- CLR-lowered (bir2cir → CIR) ---
     "newClr", "clrInstance", "clrStatic", "clrGenericStatic", "clrGenericInstance",
+    "clrDynInstance",   # W1-S2 (#46): a clrInstance on an interface owner with no static BCL slot — a DELIBERATE
+                        # runtime-reflection dispatch node (replacing ilemit's former silent EmitDynamicCall downgrade)
     "clrPropGet", "clrPropSet", "clrStaticField", "clrEventAdd", "clrEventRemove",
     # --- coroutine-lowered (bir2cir → CIR) ---
     "coReturn", "coSuspend", "coLabel", "coGoto", "coCondGoto", "coYield", "coYieldAll",

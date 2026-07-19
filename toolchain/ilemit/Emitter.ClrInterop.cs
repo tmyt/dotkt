@@ -156,35 +156,17 @@ sealed partial class Emitter
     Type EmitClrNew(JsonElement e)
     {
         var type = ClrRef(e.GetProperty("type"));
-        var argTypes = e.GetProperty("argTypes").EnumerateArray().Select(a => { try { return ClrRef(a); } catch { return (Type)null; } }).ToArray();
         var args = e.GetProperty("args");
-        // `new List<R>()` where R is the enclosing generic FUNCTION's type parameter: List<R> is a
-        // TypeBuilderInstantiation whose .GetConstructor/.GetConstructors throw — resolve the ctor on the open generic
-        // definition (its params are non-generic for the cases we hit: no-arg, capacity), emit the args against those
-        // params, and re-anchor via TypeBuilder.GetConstructor. (Mirrors GenericMethod for member access.)
-        if (IsTbInstantiation(type))
+        // W1-S2 (#46) CONSUME-ONLY: bir2cir already RESOLVED the ctor overload against the ref.dll MLC and stamped the
+        // winning ctor's DECLARED param signature as `memberSig`; link the UNIQUE matching constructor (0 = hard ABI
+        // error, >1 = malformed) — no exact-then-assignability-then-arity cascade, no delegate-arity scoring.
+        var openCtor = LinkClrCtor(type, e, out var tb);
+        if (tb)
         {
-            var openDef = type.GetGenericTypeDefinition();
-            // GetConstructor(argTypes) throws ArgumentException when argTypes contains a TypeBuilder (a generic collection
-            // constructed with an EMITTED element type, e.g. `new HashSet<EmittedType>()`) -> null it and fall through to
-            // PickOpenCtor (the exact mirror of the EmitClrCall ArgumentException catch).
-            ConstructorInfo directCtor = null;
-            if (argTypes.All(t => t != null)) try { directCtor = openDef.GetConstructor(argTypes); } catch (ArgumentException) { }
-            var openCtor = directCtor
-                // ABI substitution (@Clr concrete collections, ArrayList->System.List): a Kotlin arg type doesn't EXACTLY
-                // match the BCL ctor param (Collection->IReadOnlyCollection vs the List(IEnumerable<T>) ctor). Fall back to
-                // arity + structural assignability (IReadOnlyCollection IS IEnumerable).
-                ?? PickOpenCtor(openDef, argTypes, args.GetArrayLength())
-                ?? throw new NotSupportedException($"no matching ctor on the open def of {type.FullName} with {args.GetArrayLength()} arg(s)");
-            // The openCtor's param types are the OPEN definition's own type-vars (`Func<T>` for `ThreadLocal<T>`'s
-            // valueFactory). Passing those raw to EmitArg leaves a delegate `want` mentioning an open param, so the
-            // lambda-arg rewrap (case 4) is SKIPPED and a Kotlin lambda self-builds as the internal `KFunc`1<Box>`
-            // instead of the target `System.Func`1<Box>` -> ilverify StackUnexpected. Substitute the constructed
-            // instantiation's concrete args (T -> Box) so `want` is the closed `Func<Box>` (a TypeBuilder CLASS arg,
-            // still rewrappable via TypeBuilder.GetX). Non-generic params (an `int` capacity) pass through unchanged;
-            // a still-open `classArgs` (a generic FUNCTION's `new ThreadLocal<R>(f)`) yields an open `want` that falls
-            // back to the prior skip-rewrap behavior. Trailing optional defaults are backfilled from the open params
-            // (parity with EmitArgs) — the substituted arity equals the arg arity for the ctors we bind here.
+            // A generic collection constructed with an EMITTED element type (`new HashSet<EmittedType>()`) is a
+            // TypeBuilderInstantiation whose members can't be reflected — the winner was matched on the OPEN def. Emit
+            // the args against the SUBSTITUTED param types (so a delegate/closure arg's rewrap target is the CLOSED
+            // param `Func<Box>`, not the open `Func<T>`), backfill trailing optional defaults, then re-anchor the ctor.
             var classArgs = type.GetGenericArguments();
             var openPs = openCtor.GetParameters();
             int ai = 0;
@@ -193,24 +175,117 @@ sealed partial class Emitter
             _il.Emit(OpCodes.Newobj, TypeBuilder.GetConstructor(type, openCtor));
             return type;
         }
-        // Exact match first; else an assignability pick (the @Clr concrete-collection ABI: a `Collection<T>` arg lowered
-        // to IReadOnlyCollection<T> matches List's `IEnumerable<T>` ctor, disambiguating it from the `int` capacity ctor
-        // — an exact GetConstructor misses because the param type differs); else arity-based selection (matters when a
-        // lambda arg's type was erased to `object` by the façade — the real delegate param is recovered here).
-        // GetConstructor throws ArgumentException when argTypes contains an EMITTED TypeBuilder ("Type must be a type
-        // provided by the runtime") — precise ctor argTypes can now resolve to emitted stdlib types; null it and let the
-        // assignability/arity fallbacks (which tolerate emitted types) resolve. Mirrors the Tb-instantiation catch above.
-        ConstructorInfo exact = null;
-        if (argTypes.All(t => t != null))
-            try { exact = type.GetConstructor(argTypes); }
-            catch (Exception ex) when (ex is ArgumentException || ex is NotSupportedException) { }
-        var ci = exact
-                 ?? PickCtorByAssignable(type, argTypes, args.GetArrayLength())
-                 ?? PickClrCtor(type, args);
-        if (ci == null) throw new NotSupportedException($"no matching constructor for {type.FullName} with {args.GetArrayLength()} arg(s)");
-        EmitArgs(args, ci.GetParameters());
-        _il.Emit(OpCodes.Newobj, ci);
+        EmitArgs(args, openCtor.GetParameters());
+        _il.Emit(OpCodes.Newobj, openCtor);
         return type;
+    }
+
+    // W1-S2 (#46) CONSUME-ONLY ctor linking. bir2cir stamped the resolved ctor's DECLARED param signature as `memberSig`
+    // (a class type-var as a positional `tv(type,i)`). Enumerate the type's ctors — on the OPEN def when the constructed
+    // type is a TypeBuilderInstantiation (`tb`, caller re-anchors) — and match each declared param STRUCTURALLY under
+    // positional-tv equality (GenericParamMatches, shared with the S1 generic matcher). Require EXACTLY ONE: 0 is a hard
+    // ABI-mismatch error, >1 a malformed-descriptor error, each printing the full descriptor.
+    ConstructorInfo LinkClrCtor(Type type, JsonElement e, out bool tb)
+    {
+        if (!e.TryGetProperty("memberSig", out var sigEl) || sigEl.ValueKind != JsonValueKind.Array)
+            throw new InvalidOperationException($"ilemit: newClr {type?.FullName} is missing its `memberSig` descriptor (bir2cir must carry the FIR-resolved ctor signature — W1-S2 #46)");
+        var declParams = sigEl.EnumerateArray().Select(DotKt.Bir.TypeNode.Read).ToArray();
+        tb = IsTbInstantiation(type);
+        var searchType = tb ? type.GetGenericTypeDefinition() : type;
+        // A CONSTRUCTED reflection owner substitutes its class type-vars on each ctor param (`IEnumerable<Int32>`) —
+        // resolve a `tv(type,i)` memberSig entry against those args; the OPEN-def / TbInstantiation path keeps `tv`
+        // positional (ownerArgs null). Mirrors ResolveGenericMethod's ownerArgs branch.
+        Type[] ownerArgs = tb ? null : (type.IsGenericType ? type.GetGenericArguments() : null);
+        var cands = searchType.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
+            .Where(c => c.GetParameters().Length == declParams.Length).ToList();
+        var hits = cands.Where(c => c.GetParameters()
+            .Select((p, i) => GenericParamMatches(declParams[i], p.ParameterType, ownerArgs)).All(x => x)).ToList();
+        var desc = $"{type?.FullName}::.ctor{sigEl}";
+        if (hits.Count == 1) return hits[0];
+        if (hits.Count == 0)
+            throw new InvalidOperationException($"ilemit: no constructor matches the resolved descriptor {desc} (ABI mismatch; {cands.Count} same-arity candidate(s): {string.Join("; ", cands.Select(c => c.ToString()))})");
+        throw new InvalidOperationException($"ilemit: resolved ctor descriptor {desc} is AMBIGUOUS — {hits.Count} constructors match (malformed memberSig): {string.Join("; ", hits.Select(c => c.ToString()))}");
+    }
+
+    // W1-S2 (#46) CONSUME-ONLY method linking. bir2cir stamped the resolved member's DECLARED param signature as
+    // `memberSig` (positional-tv for a generic owner/method). Enumerate the owner's name + static/instance + param-count
+    // candidates (incl. inherited class members via GetMethods, and base-interface members for an interface owner) — on
+    // the OPEN def when the owner is a TypeBuilderInstantiation (re-anchored via TypeBuilder.GetMethod) — and match each
+    // declared param STRUCTURALLY under positional-tv equality (GenericParamMatches). Require EXACTLY ONE hit: 0 is a
+    // hard ABI-mismatch error, >1 a malformed-descriptor error, each printing the full descriptor. No arity probe, no
+    // name+arity first-pick, no assignability scoring, no dynamic-dispatch/typeof(object) degradation.
+    MethodInfo LinkClrMethod(Type type, string name, JsonElement e, bool instance)
+    {
+        if (!e.TryGetProperty("memberSig", out var sigEl) || sigEl.ValueKind != JsonValueKind.Array)
+            throw new InvalidOperationException($"ilemit: clr{(instance ? "Instance" : "Static")} call to {type?.FullName}.{name} is missing its `memberSig` descriptor (bir2cir must carry the FIR-resolved parameter signature — W1-S2 #46)");
+        var declParams = sigEl.EnumerateArray().Select(DotKt.Bir.TypeNode.Read).ToArray();
+        var flags = BindingFlags.Public | (instance ? BindingFlags.Instance : BindingFlags.Static);
+        Type[] ownerArgs = type.IsGenericType ? type.GetGenericArguments() : null;
+        // A TypeBuilderInstantiation (constructed over an EMITTED arg — `IEnumerator<T>`, T a user class) can't reflect
+        // its members; resolve on the OPEN def and re-anchor the winner via TypeBuilder.GetMethod. Its type-args are
+        // erased for matching (ownerArgs null -> memberSig `tv` stays positional).
+        bool reanchor = IsTbInstantiation(type);
+        var searchType = reanchor ? type.GetGenericTypeDefinition() : type;
+        if (reanchor) ownerArgs = null;
+        // WITHOUT `typeArgs`, exclude generic-method DEFINITIONS so `Task.fromException` binds the non-generic
+        // `Task FromException(Exception)`, not `Task<T> FromException<T>`; WITH `typeArgs` keep BOTH — a generic Kotlin
+        // @ClrIntrinsic (`arrayCopy<T>`) can bind a NON-generic BCL method (`Array.Copy`), the structural match
+        // disambiguates (mirrors bir2cir ClrMemberResolution's candidate filter).
+        bool hasTypeArgs = e.TryGetProperty("typeArgs", out var taEl) && taEl.ValueKind == JsonValueKind.Array && taEl.GetArrayLength() > 0;
+        List<MethodInfo> Match(IEnumerable<MethodInfo> cs) => MostDerivedMethods(cs.Where(m => (hasTypeArgs || !m.IsGenericMethodDefinition)
+            && m.GetParameters().Select((p, i) => GenericParamMatches(declParams[i], p.ParameterType, ownerArgs)).All(x => x))
+            .GroupBy(m => (m.Module, m.MetadataToken)).Select(g => g.First()).ToList());   // dedupe + most-derived-declaring-type
+        MethodInfo[] Named(Type t) { try { return t.GetMethods(flags).Where(m => m.Name == name && m.GetParameters().Length == declParams.Length).ToArray(); } catch { return Array.Empty<MethodInfo>(); } }
+        var own = Named(searchType);
+        var hits = Match(own);
+        var desc = $"{type?.FullName}.{name}{sigEl}";
+        if (hits.Count == 1) return reanchor ? TypeBuilder.GetMethod(type, hits[0]) : hits[0];
+        // PREFER the owner's OWN members: a base-INTERFACE slot (`MoveNext` on the non-generic `IEnumerator`, inherited by
+        // `IEnumerator<T>`; interface GetMethods excludes base-interface members) is a FALLBACK consulted only when no own
+        // member matches — else `IEnumerable<T>.GetEnumerator()` is ambiguous with `IEnumerable.GetEnumerator()` (memberSig
+        // can't distinguish return-only slots). The base slot is DECLARED on that base interface and invoked DIRECTLY via
+        // the receiver's interface (no re-anchor onto `type`). Mirrors bir2cir ClrMemberResolution.Candidates + §12.8.10.2.
+        if (hits.Count == 0 && searchType.IsInterface)
+        {
+            var baseCands = SafeInterfaces(searchType).SelectMany(Named);
+            var baseHits = Match(baseCands);
+            if (baseHits.Count == 1) return baseHits[0];
+            if (baseHits.Count > 1)
+                throw new InvalidOperationException($"ilemit: resolved descriptor {desc} is AMBIGUOUS across base interfaces — {baseHits.Count} methods match (malformed memberSig): {string.Join("; ", baseHits.Select(m => m.ToString()))}");
+        }
+        if (hits.Count == 0)
+            throw new InvalidOperationException($"ilemit: no {(instance ? "instance" : "static")} .NET method matches the resolved descriptor {desc} (ABI mismatch; {own.Length} same-name/arity candidate(s): {string.Join("; ", own.Select(m => m.ToString()))})");
+        throw new InvalidOperationException($"ilemit: resolved descriptor {desc} is AMBIGUOUS — {hits.Count} methods match (malformed memberSig): {string.Join("; ", hits.Select(m => m.ToString()))}");
+    }
+
+    static Type[] SafeInterfaces(Type t) { try { return t.GetInterfaces(); } catch { return Array.Empty<Type>(); } }
+
+    // C#'s "most-derived declaring type wins" (§12.8.10.2): reflection's GetMethods surfaces base-CLASS members too, so
+    // `Task<T>.GetAwaiter()` (declared on Task`1) and the inherited `Task.GetAwaiter()` (declared on the base Task) both
+    // match memberSig []; discard a candidate whose declaring type is a STRICT base of another's. Mirrors bir2cir.
+    static List<MethodInfo> MostDerivedMethods(List<MethodInfo> hits)
+    {
+        if (hits.Count <= 1) return hits;
+        static Type Def(Type t) { try { return t.IsGenericType && !t.IsGenericTypeDefinition ? t.GetGenericTypeDefinition() : t; } catch { return t; } }
+        static bool StrictBase(Type b, Type d) { try { for (var t = d?.BaseType; t != null; t = t.BaseType) if (Def(t) == Def(b)) return true; } catch { } return false; }
+        // base INTERFACE shadowing too (`IEnumerable<T>.GetEnumerator()` beats `IEnumerable.GetEnumerator()`).
+        static bool IfaceOf(Type b, Type d) { if (b == null || d == null || !b.IsInterface) return false; try { return d.GetInterfaces().Any(i => Def(i) == Def(b)); } catch { return false; } }
+        return hits.Where(h => !hits.Any(o => !ReferenceEquals(o, h) && Def(h.DeclaringType) != Def(o.DeclaringType)
+            && (StrictBase(h.DeclaringType, o.DeclaringType) || IfaceOf(h.DeclaringType, o.DeclaringType)))).ToList();
+    }
+
+    // The bir2cir clrInstance `dispatch` decision (call | callvirt | constrained) -> the IL opcode. bir2cir computed it
+    // from the resolved MethodInfo IsVirtual/IsFinal + owner value-type-ness + the `super` base-slot flag (issue #14);
+    // ilemit no longer re-derives it. `constrained.` prefixes the callvirt with the receiver type (== the node `type`).
+    void EmitClrDispatch(MethodInfo mi, string dispatch, Type recvType)
+    {
+        switch (dispatch)
+        {
+            case "call": _il.Emit(OpCodes.Call, mi); break;
+            case "callvirt": _il.Emit(OpCodes.Callvirt, mi); break;
+            case "constrained": _il.Emit(OpCodes.Constrained, recvType); _il.Emit(OpCodes.Callvirt, mi); break;
+            default: throw new NotSupportedException($"ilemit: unknown clrInstance dispatch '{dispatch}' on {mi.DeclaringType}.{mi.Name} (bir2cir must emit call|callvirt|constrained — W1-S2 #46)");
+        }
     }
 
     // A `new` node's `argTypes` (kotc's resolved ctor param types, pure Kotlin FQNs) -> the EXACT ctor on an
@@ -225,28 +300,6 @@ sealed partial class Emitter
         try { argTypes = atEl.EnumerateArray().Select(a => ClrRef(a)).ToArray(); } catch { return null; }
         if (argTypes.Any(t => t == null)) return null;
         try { return type.GetConstructor(argTypes); } catch { return null; }
-    }
-
-    // When exact GetConstructor fails, pick the UNIQUE same-arity ctor on a (constructed/reflected) type whose params
-    // ACCEPT the KNOWN arg types by assignability — the @Clr collection ABI (a `Collection<T>` arg lowered to
-    // IReadOnlyCollection<T> is assignable to List's `IEnumerable<T>` ctor param, but NOT to its `int` capacity ctor).
-    // Null when arg types are unknown or the assignable match is not unique — the caller then falls back to arity scoring.
-    ConstructorInfo PickCtorByAssignable(Type type, Type[] argTypes, int n)
-    {
-        if (argTypes.Length != n || argTypes.Any(t => t == null)) return null;
-        ConstructorInfo hit = null;
-        try
-        {
-            foreach (var c in type.GetConstructors().Where(c => c.GetParameters().Length == n))
-            {
-                var ps = c.GetParameters();
-                if (!Enumerable.Range(0, n).All(i => ParamAccepts(ps[i].ParameterType, argTypes[i]))) continue;
-                if (hit != null) return null;   // ambiguous
-                hit = c;
-            }
-        }
-        catch (Exception ex) when (ex is NotSupportedException || ex is ArgumentException) { return null; }   // emitted/Tb types
-        return hit;
     }
 
     // Pick a ctor on an open generic def by arity + STRUCTURAL assignability (a Kotlin arg whose @Clr type derives from
@@ -280,175 +333,44 @@ sealed partial class Emitter
         return false;
     }
 
-    /** Pick a ctor by arity when exact type match fails; among equal-arity ctors prefer the one whose delegate-typed
-     *  params match the arity of the lambda (newDelegate/newClosure) args — disambiguates ThreadStart (`()->`) from
-     *  ParameterizedThreadStart (`(object)->`). */
-    ConstructorInfo PickClrCtor(Type type, JsonElement args)
-    {
-        int n = args.GetArrayLength();
-        var cands = type.GetConstructors().Where(c => c.GetParameters().Length == n).ToList();
-        if (cands.Count == 0) return n == 0 ? type.GetConstructor(Type.EmptyTypes) : null;
-        if (cands.Count == 1) return cands[0];
-        return cands.OrderByDescending(c =>
-        {
-            var ps = c.GetParameters(); int score = 0, i = 0;
-            foreach (var a in args.EnumerateArray())
-            {
-                var p = ps[i++].ParameterType;
-                if (a.TryGetProperty("k", out var k) && (k.GetString() == "newDelegate" || k.GetString() == "newClosure")
-                    && typeof(System.Delegate).IsAssignableFrom(p) && a.TryGetProperty("funcType", out var ft))
-                {
-                    var invoke = p.GetMethod("Invoke");
-                    if (invoke != null && invoke.GetParameters().Length == FuncArityOf(ft)) score += 2;
-                }
-            }
-            return score;
-        }).First();
-    }
-
-    // Delegate arity of a `funcType` slot — a structured `{t:"fn",params:[...]}` node (funcType is ALWAYS an `fn`
-    // node now, #37 #49; the `func:`/`sfunc:` string form is retired). Matches how FuncType builds the CLR delegate
-    // (from `fn.DelegateParams` — an extension receiver counts as the first arg), so the score compares against the
-    // same arity the emitted delegate's Invoke carries.
-    static int FuncArityOf(JsonElement ft) =>
-        ft.ValueKind == JsonValueKind.Object && DotKt.Bir.TypeNode.Read(ft) is DotKt.Bir.TypeNode.Fn fn ? fn.DelegateParams.Length
-        : 0;
-
-    // Does a candidate overload's parameter accept the resolved arg type? A null (un-resolvable) arg or an open generic
-    // param binds anything. `object` accepts every ref (and boxed value). Two reference types: accept only if PROVABLY
-    // assignable — an emitted TypeBuilder arg makes IsAssignableFrom throw OR return false; either way it is not provably
-    // assignable to a concrete BCL class (only to `object`), so we reject, steering a `dotkt$CharSequence` to
-    // `Append(object)` (ToStrings) rather than `Append(String)` (reinterprets the object -> corruption). A value-type is
-    // matched by identity (no implicit numeric widening in the fallback pick).
-    static bool ParamAcceptsArg(Type param, Type arg)
-    {
-        if (arg == null || param.IsGenericParameter || param.ContainsGenericParameters) return true;
-        if (param == typeof(object)) return true;
-        if (!param.IsValueType && !arg.IsValueType)
-        {
-            try { return param.IsAssignableFrom(arg); } catch { return false; }
-        }
-        return param == arg;
-    }
-
     Type EmitClrCall(JsonElement e, bool instance, bool deref = true)
     {
         // `ClrRef` (not `ResolveType`) so a method on a constructed generic .NET type (`Collection<int>`) resolves.
         var type = ClrRef(e.GetProperty("type"));
         var name = e.GetProperty("method").GetString();
-        // `argTypes` entries are structured TypeNodes (post type-flip) OR legacy strings — keep the JsonElements and
-        // resolve via ClrRef(JsonElement) (dispatches both). Reading them as `.GetString()` crashed on the structured
-        // form (InvalidOperationException: element is Object, not String).
-        var argSpecs = e.GetProperty("argTypes").EnumerateArray().ToList();
-        var flags = BindingFlags.Public | (instance ? BindingFlags.Instance : BindingFlags.Static);
-        MethodInfo mi = null;
-        // Exact overload resolution when every arg type resolves (ClrRef handles array:/clrg:/nullable:/func: too,
-        // so e.g. `array:object` -> object[] selects String.Format(string, params object[]) over (string, object)).
-        var resolved = argSpecs.Select(a => { try { return ClrRef(a); } catch { return (Type)null; } }).ToArray();
-        try
-        {
-            if (resolved.All(x => x != null))
-                try { mi = type.GetMethod(name, flags, null, resolved, null); }
-                // Overloads that collapse to the SAME CLR signature (e.g. IntArray.sum & Array<out Int>.sum -> sum(int[])
-                // under the primitive/boxed dual-representation) make GetMethod ambiguous -> pick the EXACT-param match
-                // (also prefers the concrete overload over a generic `T[]` one, which doesn't param-equal `int[]`).
-                catch (AmbiguousMatchException) {
-                    mi = type.GetMethods(flags).FirstOrDefault(m => m.Name == name
-                        && m.GetParameters().Select(p => p.ParameterType).SequenceEqual(resolved));
-                }
-                // A TypeBuilder in `resolved` (a generic collection of an emitted element type, e.g.
-                // ICollection<EmittedType>.Add(EmittedType)) makes GetMethod throw ArgumentException ("Type must be a
-                // type provided by the runtime"). Null it out so the name+arity fallback re-anchors on the constructed type.
-                catch (ArgumentException) { mi = null; }
-            // Fall back to name + arity — e.g. a generic-parameter arg type (`Add(T)` on `Collection<int>`) that
-            // doesn't name a plain .NET type; on the constructed type GetMethods returns the substituted overload.
-            // When SEVERAL overloads share the arity (StringBuilder.Append has ~19 one-arg overloads) an arbitrary
-            // FirstOrDefault can pick a param the arg is NOT assignable to — e.g. a non-String `dotkt$CharSequence`
-            // into `Append(String)` reinterprets the object as a string -> memory corruption. So, when the arg types
-            // resolved, keep only overloads whose every param ACCEPTS the resolved arg (is assignable-from it), then
-            // prefer the MOST-SPECIFIC (fewest `object` params): a real String still binds `Append(String)`, while a
-            // synthetic/emitted ref (a `dotkt$CharSequence` adapter) binds `Append(object)` which ToStrings it.
-            if (mi == null)
-            {
-                var cand = type.GetMethods(flags).Where(m => m.Name == name && m.GetParameters().Length == argSpecs.Count).ToList();
-                if (cand.Count > 1)
-                {
-                    var ok = cand.Where(m => m.GetParameters().Select(p => p.ParameterType).Zip(resolved, ParamAcceptsArg).All(b => b)).ToList();
-                    if (ok.Count > 0) cand = ok.OrderBy(m => m.GetParameters().Count(p => p.ParameterType == typeof(object))).ToList();
-                }
-                mi = cand.FirstOrDefault();
-            }
-        }
-        catch (NotSupportedException) { }
-        // A constructed generic type whose arg is an emitted generic parameter (TypeBuilderInstantiation) refuses
-        // reflection — re-anchor the open definition's method onto the constructed type via TypeBuilder.GetMethod.
-        if (mi == null && type.IsGenericType && !type.IsGenericTypeDefinition)
-        {
-            try {
-            var open = type.GetGenericTypeDefinition();
-            var typeArgs = type.GetGenericArguments();
-            var om = open.GetMethods(flags).FirstOrDefault(m => m.Name == name && m.GetParameters().Length == argSpecs.Count);
-            if (om != null) mi = TypeBuilder.GetMethod(type, om);
-            // An inherited INTERFACE member (`IList<T>.Add` lives on the base `ICollection<T>`): interface GetMethods
-            // doesn't include base-interface methods, so walk the (transitively-flattened) base interfaces, find the
-            // declaring one, construct it with this type's args (shared type parameters) and re-anchor. See item 3.
-            else mi = ResolveInheritedIfaceMethod(open, typeArgs, name, argSpecs.Count, flags);
-            }
-            catch (Exception ex) when (ex is NotSupportedException || ex is ArgumentException) { mi = null; }
-        }
-        // Last resort: a UNIQUELY-named method (covers e.g. a `params`/vararg method called with one array arg whose
-        // static argType — `object` — didn't match the `T[]` param, so neither exact nor arity resolution hit).
-        if (mi == null)
-        {
-            // A generic TypeBuilder instantiation throws on GetMethods — enumerate the open def + re-anchor via GetMethod.
-            // Every reflection step here can throw on a TypeBuilderInstantiation (GetMethods/GetGenericTypeDefinition ->
-            // NotSupportedException "Derived classes must provide an implementation"); any such failure must leave mi == null
-            // so we fall through to dynamic dispatch (below) rather than aborting the emit.
-            try {
-                MethodInfo[] all; bool reanchor = false;
-                try { all = type.GetMethods(flags); }
-                catch (NotSupportedException) { all = type.GetGenericTypeDefinition().GetMethods(flags); reanchor = true; }
-                var named = all.Where(m => m.Name == name).ToList();
-                if (named.Count == 1) mi = reanchor ? TypeBuilder.GetMethod(type, named[0]) : named[0];
-            }
-            catch (Exception ex) when (ex is NotSupportedException || ex is ArgumentException) { mi = null; }
-        }
-        // `Array<T>.Clone()` (@ClrIntrinsic("Clone")): a generic array receiver erases to `object`, whose Clone is protected, so
-        // resolution fails — but the runtime value is always a System.Array. Resolve Array.Clone and (below) cast the
-        // receiver to System.Array before the callvirt. Returns object; the stdlib `as Array<T>` re-types it.
-        bool arrayCloneFallback = false;
-        if (mi == null && name == "Clone" && argSpecs.Count == 0)
-        {
-            mi = typeof(System.Array).GetMethod("Clone", BindingFlags.Public | BindingFlags.Instance);
-            arrayCloneFallback = mi != null;
-        }
-        // An unbound Kotlin member that became a clrInstance because its receiver type is @Clr-substituted (e.g.
-        // MutableCollection.removeAll/addAll on ICollection -- no BCL equivalent by that name) -> dynamic dispatch.
-        // GATED to an INTERFACE owner (the clrInstance analog of the callInstance path's `OwnerHasClrInterface` gate):
-        // the runtime value implements that BCL interface under a different concrete type, so `recv.GetType().GetMethod`
-        // resolves the real slot. A NON-interface owner (a concrete BCL class) that missed static resolution is a
-        // bir2cir Rule-4 ROUTING MISS -- reflection would silently return null -> opaque runtime NRE -- so it must throw
-        // at EMIT instead of falling to dynamic dispatch. (bir2cir now refuses lowercase members on non-interface CLR
-        // owners upstream; this is the defense-in-depth twin of that compile-time refusal.)
-        if (mi == null && instance && type.IsInterface && e.TryGetProperty("recv", out _)) return EmitDynamicCall(e);
-        if (mi == null) throw new NotSupportedException($"clrInstance method not resolved: {type}.{name}/{argSpecs.Count} (no BCL match; dynamic-dispatch fallback is gated to interface owners -- a routing MISS on a concrete BCL owner)");
+        // W1-S2 (#46) CONSUME-ONLY: bir2cir already RESOLVED the overload against the ref.dll MLC and stamped the
+        // winning member's DECLARED param signature as `memberSig`; ilemit is a linker (exact structural match, hard
+        // fail on 0/multi) — no arity probe, no name+arity first-pick, no assignability scoring, no silent downgrade.
+        var mi = LinkClrMethod(type, name, e, instance);
         // A generic BCL method (`System.Array.Fill<T>(T[],T,int,int)`) resolved as its open DEFINITION must be
         // instantiated with the call's type args (threaded by bir2cir from the @ClrIntrinsic generic Kotlin callee),
         // or the emitted MethodSpec stays open -> "method/type not fully instantiated" at run. Non-generic targets
-        // (Array.Clone) leave IsGenericMethodDefinition false, so this is a no-op there.
+        // leave IsGenericMethodDefinition false, so this is a no-op there.
         if (mi.IsGenericMethodDefinition
             && e.TryGetProperty("typeArgs", out var clrTa) && clrTa.ValueKind == JsonValueKind.Array && clrTa.GetArrayLength() > 0)
             mi = mi.MakeGenericMethod(clrTa.EnumerateArray().Select(a => MapType(a)).ToArray());
-        // A value-type receiver's instance method needs a managed pointer (e.g. struct Vec2.Mag2()).
+        // A value-type receiver's instance method needs a managed pointer (e.g. struct Vec2.Mag2()); the `constrained.`
+        // dispatch (below) likewise needs the receiver ADDRESS. (A generic `Array<T>.clone()` is already retargeted by
+        // bir2cir to the `System.Array` owner, so its `T[]` receiver is statically assignable — no cast needed here.)
         if (instance)
         {
             if (type.IsValueType) EmitAddr(e.GetProperty("recv"));
-            else { EmitExpr(e.GetProperty("recv")); if (arrayCloneFallback && !typeof(System.Array).IsAssignableFrom(type)) _il.Emit(OpCodes.Castclass, typeof(System.Array)); }
+            else EmitExpr(e.GetProperty("recv"));
         }
         EmitArgs(e.GetProperty("args"), mi.GetParameters());
-        // A `super.M()` to a CLR-bound base (issue #14) rides in as `"super":true` — force a non-virtual `call` to the
-        // resolved base slot (else the callvirt re-dispatches to THIS class's override -> stack overflow).
-        EmitInstanceCall(mi, instance, type, superCall: e.TryGetProperty("super", out var supFlag) && supFlag.GetBoolean());
+        // Dispatch is a bir2cir DECISION carried on the node (call | callvirt | constrained) — computed from the
+        // resolved MethodInfo's IsVirtual/IsFinal + the owner value-type-ness + the `super` (issue #14 base-slot) flag.
+        // ilemit no longer derives it from reflected `mi.IsVirtual/IsFinal`. A static call is unconditionally `call`.
+        if (instance)
+        {
+            // `dispatch` is a REQUIRED bir2cir decision — a missing one is a producer defect, NOT a silent `callvirt`
+            // default (which on a value-type owner is unverifiable CallVirtOnValueType). Fail loud (consume-only doctrine).
+            if (!e.TryGetProperty("dispatch", out var dEl) || dEl.ValueKind != JsonValueKind.String)
+                throw new InvalidOperationException($"ilemit: clrInstance {type?.FullName}.{name} is missing its `dispatch` decision (bir2cir must carry call|callvirt|constrained — W1-S2 #46)");
+            EmitClrDispatch(mi, dEl.GetString(), type);
+        }
+        else
+            _il.Emit(OpCodes.Call, mi);
         // A `ref T`-returning method used as a value -> dereference the managed pointer (value copy). The live-ref
         // form (`byrefOf(m())`, behind `var x by byref(m())`) passes deref:false to keep the pointer.
         if (mi.ReturnType.IsByRef)

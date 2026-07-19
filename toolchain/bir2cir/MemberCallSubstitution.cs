@@ -621,9 +621,10 @@ static class MemberCallSubstitution
                         && refs.TryTopLevelIntrinsic(fn, out fq)))
                 && fq.LastIndexOf('.') is var dot && dot > 0)
                 return ClrCallNode(node, new TypeNode.Fqn(fq[..dot]), fq[(dot + 1)..], fq[(dot + 1)..], args0, instance: false, refs.TopLevelByrefPositions(fn));
-            // bare-intrinsic extension: resolve by name + the first-arg's receiver key + full param count (disambiguates
-            // `set`, and keeps `substring(String,Int)`@ClrIntrinsic from capturing the 3-arg `substring(String,Int,Int)`).
-            if (sigParts0.Count >= 1 && refs.TryExtMemberIntrinsic(fn, RecvKeyOf(sigParts0[0]), sigParts0.Count, out var extMember))
+            // bare-intrinsic extension: resolve by the call's FULL ParamKey signature (receiver-first) so it binds the
+            // EXACT @ClrIntrinsic overload — `substring(Int)` never captures the same-arity non-intrinsic `substring(IntRange)`
+            // (#46 same-name collapse: the IntRange overload has a Kotlin body and must fall through to the top-level path).
+            if (sigParts0.Count >= 1 && refs.TryExtMemberIntrinsic(fn, sigKey0, out var extMember))
                 return TopLevelExtensionInstance(node, refs, extMember, args0, sigParts0, ctx);
             // A NON-intrinsic referenced top-level stdlib fun (getOrElse/first/...): kotc emits owner=null (it cannot
             // know the file-class — that is CLR/ref knowledge). In an APP build, attribute it to the file-class the
@@ -1480,17 +1481,26 @@ static class MemberCallSubstitution
     }
 
     // True iff an argType slot (a legacy sig STRING or a structured Fqn) denotes kotc's synthetic monomorphic
-    // `dotkt$CharSequence` interface (tolerating a `nullable:`/`@` decoration). The `dotkt$StringCharSequence`
-    // adapter deliberately does NOT match — its token has no `dotkt$CharSequence` substring.
+    // `dotkt$CharSequence` interface (tolerating a `nullable`/`oblivious` decoration — a `CharSequence?`/`CharSequence!`
+    // param, e.g. `StringBuilder.append(CharSequence?, start, end)`, must ALSO snapshot to String at the BCL boundary,
+    // else the arg reaches a BCL call whose overloads are (Char[]|String|StringBuilder)-typed and none binds it). The
+    // `dotkt$StringCharSequence` adapter deliberately does NOT match — its token has no `dotkt$CharSequence` substring.
     static bool IsSyntheticCharSeqToken(JsonNode slot)
     {
         var name = slot switch
         {
             JsonValue v when v.TryGetValue<string>(out var s) => s,
-            _ => (TypeJson.Read(slot) as TypeNode.Fqn)?.Name,
+            _ => (UnwrapNullableOblivious(TypeJson.Read(slot)) as TypeNode.Fqn)?.Name,
         };
         return name != null && name.Contains("dotkt$CharSequence", StringComparison.Ordinal);
     }
+
+    static TypeNode UnwrapNullableOblivious(TypeNode t) => t switch
+    {
+        TypeNode.Nullable n => UnwrapNullableOblivious(n.Of),
+        TypeNode.Oblivious o => UnwrapNullableOblivious(o.Of),
+        _ => t,
+    };
 
     // Rule-3: route to `dotkt$ClrH_<owner>.<member>(recv?, args..)`. The receiver is threaded as the helper's
     // first argument (the hoisted static's `__self`); type args are carried through when present.

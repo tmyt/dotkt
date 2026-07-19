@@ -377,6 +377,27 @@ sealed partial class ReferenceMetadataIndex
         // its identity — never resolve it as an EXTERNAL .NET type off the refs, even when a referenced dll exports the
         // same FQN (the ProjectReference-source-glob layout). Source wins: leave the node routing to the emitted type.
         if (_localEmittedTypes.Contains(BareOwnerFqn(fqn))) return null;
+        return ProbeNetType(fqn, genericArity);
+    }
+
+    // W1-S2 (#46): resolve a STDLIB-owner clr* member's declaring type off the ref.dll — WITHOUT the `kotlin.*`/`kotlinx.*`
+    // skip that `ResolveNetType` applies (that skip keeps NetInteropBinding from reshaping a kotlin.* call; it does NOT
+    // apply to ClrMemberResolution, which runs AFTER all substitution and only needs to reflect a member's DECLARED sig).
+    // Used for a clr* node IteratorConsumerNormalization deliberately keeps on its `kotlin.collections.Iterator` owner for
+    // the rt-stdlib link. Still honors the local-emitted skip (a self-build's own kotlin.* type is authored, not reflected)
+    // + the dotkt-synthetic skip (dotkt$CharSequence has no ref.dll type). Null when the type is not in the ref universe.
+    public Type ResolveRefType(string fqn, int genericArity = 0)
+    {
+        if (string.IsNullOrEmpty(fqn)) return null;
+        if (fqn == "dotkt" || fqn.StartsWith("dotkt.", StringComparison.Ordinal) || fqn.StartsWith("dotkt$", StringComparison.Ordinal)) return null;
+        if (_localEmittedTypes.Contains(BareOwnerFqn(fqn))) return null;
+        return ProbeNetType(fqn, genericArity);
+    }
+
+    // The shared MLC probe (cache + candidate spellings + forwarder collapse) — the caller applies the owner-universe
+    // skip policy (ResolveNetType skips kotlin.*/dotkt/local; ResolveRefType skips only dotkt/local).
+    Type ProbeNetType(string fqn, int genericArity)
+    {
         if (_netTypeCache.TryGetValue(fqn, out var cached)) return cached;
         EnsureNetMlc();
         Type found = null;
@@ -738,8 +759,11 @@ sealed partial class ReferenceMetadataIndex
     // @ClrIntrinsic("Substring") must NOT capture the 3-param `substring(String,Int,Int)` real-body call (which would
     // wrongly emit Substring(start,end) with end read as a LENGTH). The paramCount disambiguates them; the real-bodied
     // overload misses here and falls through to its stdlib file-class attribution.
-    public bool TryExtMemberIntrinsic(string funName, string recvKey, int paramCount, out string member) =>
-        _extMemberIntrinsics.TryGetValue(funName + "|" + recvKey + "|" + paramCount, out member);
+    // EXACT-signature @ClrIntrinsic ext-member lookup: `sigKey` is the call's full ParamKey signature (receiver-first),
+    // so a same-name/same-arity NON-intrinsic overload (`substring(IntRange)` vs the bound `substring(Int)`) misses here
+    // and falls through to its real Kotlin body — never captured by a lossy name+count key (the #46 same-name collapse).
+    public bool TryExtMemberIntrinsic(string funName, string sigKey, out string member) =>
+        _extMemberIntrinsics.TryGetValue(funName + "|" + sigKey, out member);
 
     // An @JvmInline value class's backing-field getter call (`x.get_data()`): the inline UNBOX. Returns the CLR conv
     // token for the field's declared type so the call collapses to `conv(recv)` (the erased primitive IS the value).
@@ -968,7 +992,10 @@ sealed partial class ReferenceMetadataIndex
                                 if (byrefPositions.Length > 0) metadata.TopLevelIntrinsicByref.TryAdd(method.Name, byrefPositions);
                             }
                             else if (ps.Length >= 1)
-                                metadata.ExtMemberIntrinsics.TryAdd(method.Name + "|" + RecvKey(ps[0].ParameterType) + "|" + ps.Length, intrinsic);
+                                // Key by name|<full ParamKey signature> (receiver-first, mirroring TopLevelIntrinsicsBySig)
+                                // so a call resolves the EXACT overload — `substring(Int)`@ClrIntrinsic does NOT capture a
+                                // same-count non-intrinsic sibling `substring(IntRange)` (which then falls to its Kotlin body).
+                                metadata.ExtMemberIntrinsics.TryAdd(method.Name + "|" + SigKeyOf(ps), intrinsic);
                         }
                         // A NON-intrinsic top-level fun (a real Kotlin body in a file-class) -> index it by name so an APP
                         // build can attribute a referenced `callStatic owner=null` to this file-class (disambiguated by the
