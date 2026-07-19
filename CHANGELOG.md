@@ -18,6 +18,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   override-dispatch preserved (`MATCH 203 / DIFF 0`). Remaining for W1-S3 (so #46 stays open): properties / fields /
   events + the declaration side (`clrPropGet`/`clrPropSet` still route through `EmitInstanceCall`); the local-`new`
   `SelectCtor` + referenced `kotlin.*`-helper arity-probe axes are MLC-unresolvable and stay by design.
+- **bir2cir ([tmyt/dotkt#153], area:bir2cir): primitive-array-receiver top-level stdlib extensions resolve at app
+  level.** `intArrayOf(1,2).toList()` failed with ilemit `static method not found` — `RecvKeyOf` keyed the
+  primitive-array Fqn as `kotlin.IntArray` while the ref side collapses `int[]` to `[]`, so owner attribution missed.
+  A shared `RecvKeyOfFqn` now maps every specialized-array Fqn (signed + unsigned) to `[]`; because that key is lossy
+  (generic `Array<T>` + all primitives share it), a fine first-param `ParamKey` narrows the overload so generic
+  `Array<out T>.toList` no longer erases the element to `object` and `ubyteArrayOf(..).toList()` binds the
+  instantiated helper. Auto-recovers the app path for #97 (primitive `copyInto`) and #128 (`copyOf(newSize)`). Gate:
+  `il-intarraytolist`.
 - **packaging ([tmyt/dotkt#133], area:packaging): the MPP SDK (`DotKt.Sdk.Mpp`) builds out of the box — a new
   `dotkt-mpp` `dotnet new` template.** `Sdk="DotKt.Sdk.Mpp"` needs a `global.json` pinning both `DotKt.Sdk.Mpp`
   and the nested `DotKt.Sdk` (the NuGet resolver reads a nested SDK's version *only* from `global.json`), and
