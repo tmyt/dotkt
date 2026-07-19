@@ -559,7 +559,6 @@ il_check_imports colddimgen ColdDimGen "$ROOT/cases/il-colddimgen" "42"
 # three same-named `$dotkt_suspend` overloads + ilemit sig-driven external-generic resolution (both landed).
 il_check seqyieldall SeqYieldAll "$ROOT/cases/il-seqyieldall" "$(printf 'a,b,c')"
 il_check for   ForT  "$ROOT/cases/il-for"     "$(printf 'sum 1..5 = 15\ncountdown 5 = 54321')"
-il_check exc   Exc   "$ROOT/cases/il-exc"     "$(printf 'safeDiv(10,2) = 5\nsafeDiv(1,0) = -1')"
 il_check ops   Ops   "$ROOT/cases/il-ops"     "$(printf '3\n2\n7\n3\n16\n15\n-1\n3\n5')"
 # The string/text family (String/Char ops, CharSequence, stringify, radix, number-parse, hashCode contract:
 # il-str, il-strops, il-blank, il-strnum, il-strhash, il-radix, il-charminus, il-digittoint, il-substr, il-subseq,
@@ -680,12 +679,10 @@ il_check tailrec Tailrec "$ROOT/cases/il-tailrec" "$(printf '500000500000\n0\n20
 il_check copydef CopyDef "$ROOT/cases/il-copydef" "$(printf '(1, 20)\n(5, 2)\n(1, 9, 3)\n(7, 2, 8)\nPoint(x=1, y=20, z=3)\nPoint(x=9, y=2, z=8)')"   # C3: data-class copy(field=x) with omitted fields — cross-module Pair/Triple reconstruct this.<field>
 il_check equalscall EqualsCall "$ROOT/cases/il-equalscall" "$(printf 'False\nTrue\nTrue\nFalse\nTrue\nTrue\nFalse\nTrue\nTrue\nFalse\nTrue\nTrue')"   # §5a: explicit .equals() -> total-order (Double/Float) / structural (collections), plain object stays reference
 il_check bytearg ByteArg "$ROOT/cases/il-bytearg" "$(printf '5\n3\n7\n9\n4\n100\n-2')"
-il_check customexc CustomExc "$ROOT/cases/il-customexc" "$(printf 'error -5\ncode=-5\ncaught:boom\n42')"
 il_check comparator Comparator "$ROOT/cases/il-comparator" "$(printf -- '-3\n5\n0')"
 il_check use Use "$ROOT/cases/il-use" "$(printf 'close abcd\nn=4\nclose x\ncaught:boom')"
 il_check comparable Comparable "$ROOT/cases/il-comparable" "$(printf 'a<b\nc>b\na<=a\n-3\n1.2,1.5,2.0')"
 il_check seqfilter SeqFilter "$ROOT/cases/il-seqfilter" "$(printf '3,4,5,6\n20,40,60\n4\n3,4,5,6\n3')"
-il_check result Result "$ROOT/cases/il-result" "$(printf 'True\n10\n10\nTrue\nnull\n-99\nneg -1\nnull\nfb')"
 il_check genstatic GenStatic "$ROOT/cases/il-genstatic" "$(printf '42\nTrue\nTrue\nboom\nhi')"
 il_check bmore BMore "$ROOT/cases/il-bmore" "$(printf '5 items\nx = 42\n3.14\n00007\nff\n100%% ok: yes\n0:a,1:b,2:c\n0,20,60')"
 il_check chunk Chunk "$ROOT/cases/il-chunk" "$(printf '3,7,5\n3\n1-2-3 4-5\na,b,c\n3\n1,3,5\n9')"
@@ -697,7 +694,6 @@ il_check cwindowed CWindowed "$ROOT/cases/il-cwindowed" "$(printf '[ab, bc, cd]\
 # delegateNew target whose funcType keeps the synthetic <>dotkt_CharSequence, so its `it` param must stay synthetic
 # (not collapse to System.String) — the stdlib passes a real <>dotkt_CharSequence (subSequence's result) in. W4-B guard.
 il_check cwindowedv CWindowedV "$ROOT/cases/il-cwindowedv" "$(printf '[2, 2, 2]\n[a, b, c]\n[3, 3, 3]\n[ab, bc, cd]')"
-il_check tryexpr TryExpr "$ROOT/cases/il-tryexpr" "$(printf '42\n-1\n5\n-7\n4')"
 il_check localclass LocalClass "$ROOT/cases/il-localclass" "$(printf '10\n42\n101\n3,4\nTrue\n60')"
 il_check writecapture AppKt "$ROOT/cases/il-writecapture/app.kt" "$(printf '3\n20')"   # #68: a local class / object expression that WRITES a captured outer `var` shares a heap ref-cell (computeRefCells promotes the mutated capture) — was a whole-compile abort for the write-through capture
 il_check genlocalclass AppKt "$ROOT/cases/il-genlocalclass/app.kt" "$(printf '42\nhi\n1->2\na->b')"   # #69: a function-local class capturing an enclosing TYPE PARAMETER is lifted GENERICALLY (reified CLR generics); ownerSpec/birType name the constructed `L<T>` at the new site + denotable var slot + member access — was a whole-compile abort
@@ -762,7 +758,6 @@ il_check objgen OGen "$ROOT/cases/il-objgen/app.kt" "$(printf '42\nhi\n7\nok')"
 il_check nest  Nst   "$ROOT/cases/il-nested/app.kt" "$(printf 'outer:root\nnode(7)\n14\nleaf 3')"
 il_check scast Sc2   "$ROOT/cases/il-smartcast/app.kt" "$(printf 'int:42\nother\nyo\nnone')"
 il_check vis   VisT  "$ROOT/cases/il-vis/app.kt" "$(printf '98\nacct\n99')"
-il_check throwx Tx   "$ROOT/cases/il-throwexpr/app.kt" "$(printf 'pos\n42\n3')"
 il_check precond Pcd "$ROOT/cases/il-precond/app.kt" "$(printf '3\nreq\nchk\nerr:boom\ntodo')"   # #73 M6/M7: precondition/error family + top-level repeat{} inline loop (moved to bir2cir)
 il_check repeatnlr RptN "$ROOT/cases/il-repeatnlr/app.kt" "$(printf '3\n-1\n6\n6\n63\n9')"   # #75: NON-LOCAL return + return@repeat + nested repeat + scope-fn-in-repeat through repeat{} (kotc carries the un-closured lambda body; bir2cir InlineSplice splices it)
 il_check reif  Rf    "$ROOT/cases/il-reified/app.kt" "$(printf 'String\nInt32\nTrue\nFalse\nTrue\nyo\nno')"
@@ -1087,9 +1082,9 @@ il_check arrops Arro "$ROOT/cases/il-arrops" "$(printf '3\n6,8,10\n14\n2\n-1\n10
 # bundle-6 ④ stdlib-correctness routing (bir2cir)
 il_check cmpord   CmpOrd   "$ROOT/cases/il-cmpord"   "$(printf '31\n-31\n0\n-1\nFalse\n-7')"
 il_check starproj StarProj "$ROOT/cases/il-starproj" "$(printf '{1=2, 3=4}\n2\n[10, 20, 30]\n3\n20\n[10, 20, 30]\n[10, 20, 30]\n{1=2, 3=4}\nFalse\nFalse')"
-il_check excmap   ExcMap   "$ROOT/cases/il-excmap"   "$(printf 'caught-list\ncaught-arr\npst-ok\ncaught-super')"
-il_check nestedtry NestedTry "$ROOT/cases/il-nestedtry" "$(printf 'inner fin\nouter fin\n1')"
-il_check tryexprop TryExprOp "$ROOT/cases/il-tryexprop" "$(printf 'n=5\n6\nbad=-1\n30')"
+# exception / try-catch family (il-exc, il-customexc, il-excmap, il-nestedtry, il-result, il-throwexpr, il-tryexpr,
+# il-tryexprop) migrated to the NUnit battery tests/il/fixtures/ExceptionTests.kt (8 methods), gated by
+# tests/run-nunit-il.sh; the old per-case dirs + il_check lines were removed in the same change (audit #14).
 il_check setlocalbox SetLocalBox "$ROOT/cases/il-setlocalbox" "$(printf '42\n7')"
 il_check bytewiden AppKt "$ROOT/cases/il-bytewiden/app.kt" "$(printf '200\n40000\n300\n80000\n200\n-128\n0\n0\n128\n44\n300\n4294967295\n18446744073709551615')"   # #93/#71: Byte/Short/UByte/UShort arith widens to Int/UInt & inc/dec/unaryMinus keep the declared return (bir2cir wraps the lowered op in a conv to dynRet); ilemit needs the unsigned Conv_U1/U2/U4/U8 arms — else the value truncates to the narrow left operand on box
 il_check unsignedshr AppKt "$ROOT/cases/il-unsignedshr/app.kt" "$(printf '2147483647\n9223372036854775807\n267386880\n1073741824\n2147483648\n-4')"   # #94: unsigned shr is LOGICAL (zero-filling) — bir2cir lowers a UInt/ULong `shr` to ">>>" (ilemit Shr_Un), not the sign-propagating ">>"; shl + signed shr are the non-regression checks
