@@ -7,6 +7,19 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **ref-common ([tmyt/dotkt#51], area:packaging): reference-asset selection uses the TARGET RID, not the host RID,
+  and consults the real .NET/NuGet portable RID fallback graph instead of a hand-rolled family table.**
+  `ManagedReferenceCatalog.Create` gained `targetRid` / `ridGraphPath` parameters: `SelectRuntimeAsset` ranks
+  `runtimes/<rid>/lib` assets against the TARGET RID's fallback chain (the transitive `#import` closure of
+  `PortableRuntimeIdentifierGraph.json`, expanded breadth-first exactly like NuGet's `RuntimeGraph.ExpandRuntime`),
+  so cross-target compilation (e.g. Linux host → `win-x64`) now selects the correct RID-impl asset instead of the
+  host's — previously a Linux build targeting Windows picked the RID-neutral PlatformNotSupported placeholder and the
+  special-RID fallback was input-order dependent. The graph path is MSBuild's `$(RuntimeIdentifierGraphPath)` when
+  passed, else auto-discovered from the running SDK; `targetRid` defaults to the host RID when unset (correct for a
+  host-targeted or direct-script run), so existing host-target builds are unchanged. The hand-rolled family chain
+  survives only as a last resort when no portable graph is found. Wiring MSBuild's `$(RuntimeIdentifier)` /
+  `$(RuntimeIdentifierGraphPath)` through `ilemit --runtime-refs` into `Create` is a follow-up (ilemit + targets). #51
+
 - **bir2cir/ilemit ([tmyt/dotkt#46], [tmyt/dotkt#121], area:bir2cir): property / field / event memberRef carry —
   ilemit is a pure linker for every clr* member-ACCESS axis: calls, ctors, properties, fields, events, dispatch
   (W1-S3, closes #121). #46 stays OPEN for W1-S4 — two ilemit resolution sites remain (NOT in #121's enumerated
