@@ -7,6 +7,17 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir/ilemit ([tmyt/dotkt#46], area:bir2cir): plain-call / ctor / dispatch memberRef carry — ilemit purified
+  to a linker (W1-S2; the generic-call dual S1 was #44).** bir2cir now resolves `clrStatic`/`clrInstance`/`newClr`
+  against the ref.dll (MetadataLoadContext), structurally matches the winning member, and carries its declared param
+  signature as `memberSig` (+ `dispatch` for `clrInstance`); ilemit consumes it purely as a linker (structural match
+  to exactly one handle — 0 = hard ABI error, >1 = malformed, no first-pick). Deletes ilemit's
+  PickCtorByAssignable / PickClrCtor / ParamAcceptsArg / ResolveInheritedIfaceMethod / the EmitClrCall resolution
+  cascade / the implicit EmitDynamicCall downgrade / dispatch derivation (new pass `ClrMemberResolution.cs`); an
+  interface owner with no matching member becomes an explicit `clrDynInstance`, not a silent downgrade. #24
+  override-dispatch preserved (`MATCH 203 / DIFF 0`). Remaining for W1-S3 (so #46 stays open): properties / fields /
+  events + the declaration side (`clrPropGet`/`clrPropSet` still route through `EmitInstanceCall`); the local-`new`
+  `SelectCtor` + referenced `kotlin.*`-helper arity-probe axes are MLC-unresolvable and stay by design.
 - **packaging ([tmyt/dotkt#133], area:packaging): the MPP SDK (`DotKt.Sdk.Mpp`) builds out of the box — a new
   `dotkt-mpp` `dotnet new` template.** `Sdk="DotKt.Sdk.Mpp"` needs a `global.json` pinning both `DotKt.Sdk.Mpp`
   and the nested `DotKt.Sdk` (the NuGet resolver reads a nested SDK's version *only* from `global.json`), and
