@@ -115,6 +115,17 @@ need_dotnet_reference_sets
 RESULTS="$ROOT/build/verify-il"
 rm -rf "$RESULTS"; mkdir -p "$RESULTS"
 
+# Purge stale app-sample corpus dirs whose case no longer exists (migrated to NUnit / deleted). verify-il
+# rm+re-emits every LIVE case's build/{bir,cir}-<name> below, but NEVER touches a REMOVED case's dir, so a
+# ghost dir (pre-change BIR/CIR from an older toolchain) lingers and verify-schema.sh globs it -> a false-RED
+# "bare STRING at type slot" drift from output the CURRENT toolchain never produced. Zero-cost: any live dir
+# deleted here is re-emitted below; a genuinely-removed case's ghost is simply gone.
+for _d in "$ROOT"/build/bir-* "$ROOT"/build/cir-*; do
+	[ -d "$_d" ] || continue
+	_c="$(basename "$_d")"; _c="${_c#bir-}"; _c="${_c#cir-}"
+	[ -d "$ROOT/cases/il-$_c" ] || rm -rf "$_d"
+done
+
 # Run samples concurrently (each compile is an independent ~2s JVM startup). A job pool caps parallelism.
 JOBS="$(nproc 2>/dev/null || echo 4)"; (( JOBS > 2 )) && JOBS=$(( JOBS - 2 ))   # use the box (24c): leave 2 cores headroom. Was capped at 6 (stale — /tmp leak is fixed; MEMORY dev-box-resources-parallelize-aggressively)
 gate() { while (( $(jobs -rp | wc -l) >= JOBS )); do wait -n 2>/dev/null || true; done; }

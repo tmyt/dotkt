@@ -668,7 +668,7 @@ EOF
 CLR_TYPES_METADATA="" "$LAUNCHER" "$NV/lib" -no-stdlib -classpath "$CP" -d "$NV/libbir" >/dev/null 2>&1 || true
 emit_il "$NV/libil" NvLib "$NV/libbir"/*.bir.json
 dotnet "$RETARGET_DLL" "$NV/libil/NvLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" --meta "$NV/nv.meta" --compile-refs "$REFS$NV/libil/NvLib.dll" NBox LibKt >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" "$NV/nv.meta" --compile-refs "$REFS$NV/libil/NvLib.dll" NBox LibKt >/dev/null 2>&1 || true
 CLR_TYPES_METADATA="$NV/nv.meta" "$LAUNCHER" "$NV/app" -no-stdlib -classpath "$CP" -d "$NV/appbir" >/dev/null 2>&1 || true
 emit_il "$NV/appil" NvApp --ref "$NV/libil/NvLib.dll" "$NV/appbir"/*.bir.json
 cp "$NV/libil/NvLib.dll" "$NV/appil/" 2>/dev/null || true
