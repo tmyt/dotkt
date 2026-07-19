@@ -89,9 +89,22 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   fully-qualified `kotlin.Comparable<X>` (dropping the non-generic bridge) so the type is seen as `Comparable` and
   `sorted()`'s constraint holds, and (b) renames the DotKt `IComparable<X>`-self-slot `CompareTo` to the lowercase
   `compareTo` + forces the `operator` flag so the FRONTEND resolves `<`/`>`/`<=`/`>=`. A genuine .NET `IComparable`
-  keeps its verbatim PascalCase `CompareTo` (`il-icmparity`). Gate: `roundtrip-comparable-meta` (the facadegen surface,
-  green). The end-to-end run (`roundtrip-comparable`, RT_XFAIL) awaits the residual bir2cir `NetInteropBinding` slot
-  bind (`compareTo` → the DotKt owner's `CompareTo`), tracked behind the #46 restructure.
+  keeps its verbatim PascalCase `CompareTo` (`il-icmparity`). The residual bir2cir call-binding half — `NetInteropBinding`
+  rebinds the Kotlin `compareTo` call to the DotKt owner's PascalCase `CompareTo` slot when the owner implements generic
+  `IComparable<T>` — landed too, so the end-to-end `<`/`sorted()` run passes. Gates: `roundtrip-comparable-meta` (surface)
+  + `roundtrip-comparable` (end-to-end; its RT_XFAIL pruned). #179 fully closed.
+- **bir2cir ([tmyt/dotkt#178], area:bir2cir): `Regex(pattern, Set<RegexOption>)` / `Regex(pattern, RegexOption)` ctors
+  work.** The options-taking Regex constructors threw `InvalidProgramException` — the `Set<RegexOption>`/`RegexOption`
+  → `System...RegexOptions` ctor-arg conversion was unwired. `NetInteropBinding.Reshape` now synthesizes the
+  `RegexOptions` `[Flags]` bitmask (`IGNORE_CASE`→1, `MULTILINE`→2, `DOT_MATCHES_ALL`→16, `COMMENTS`→32; the three
+  no-.NET-bit options drop to 0) at the `newClr` site and retypes the arg so `ClrMemberResolution` binds the BCL
+  `Regex(String, RegexOptions)`. Gate: `il-regexopts`. Encode-side deviation recorded in `docs/dotkt-semantics.md` §5b-quater.
+- **bir2cir ([tmyt/dotkt#180], area:bir2cir): direct/mixed nullable `Double?`/`Float?` `==` is verifiable IL.** The
+  `ieee754equals` arm lowered a nullable-float `==` to a raw `Ceq` over `Nullable<T>` structs (unverifiable IL /
+  `InvalidProgram`, latent). It now emits null-safe shaping (`null==null`→true, one-null→false, both-present→IEEE `==`
+  on the values) — direct `==` stays IEEE per #95 (`-0.0 == 0.0` true, `NaN == NaN` false), distinct from #152's
+  structural bit-equality. Nullness is read from `StaticType.Surface` (so an explicit `x as Double?` is caught too).
+  Gate: `il-floateqnull`. Follow-up: #181 (safe-call `obj?.d == y` operand, same class).
 - **bir2cir ([tmyt/dotkt#152], area:bir2cir): nullable `Double?`/`Float?` structural equality uses total-order
   bit-equality, not boxed `Double.Equals`.** A data-class / structural `==` over a `Double?`/`Float?` field fell
   through to a boxed `System.Double.Equals` (IEEE: `-0.0 == 0.0` true), violating the total-order equals/hashCode

@@ -479,8 +479,12 @@ reduces to its `Int32` value) and decodes the four flags that have a Kotlin coun
 Kotlin `RegexOption`s have **no** `System...RegexOptions` bit and therefore never round-trip (deliberate CLR choice —
 they are unrepresentable in a compiled .NET `Regex`): `LITERAL` (.NET realizes literal matching via `Regex.Escape`, not
 an option), `UNIX_LINES` (no .NET line-terminator mode), and `CANON_EQ` (no .NET canonical-equivalence flag). A default
-`Regex` decodes to an empty set. (The inverse — the `Regex(pattern, options)` constructor's `Set<RegexOption>`→
-`RegexOptions` encode — is a separate bir2cir ctor-argument gap; when wired it must mirror this decode table.)
+`Regex` decodes to an empty set. The inverse — the `Regex(pattern, options)` constructor's `Set<RegexOption>` /
+`RegexOption` → `RegexOptions` encode — is wired in bir2cir `NetInteropBinding` (#178) and mirrors this table
+(`IGNORE_CASE`→1, `MULTILINE`→2, `DOT_MATCHES_ALL`→16, `COMMENTS`→32). Symmetrically, the three unrepresentable options
+**encode to no bit (dropped)**: e.g. `Regex("a.b", RegexOption.LITERAL)` compiles with `RegexOptions.None`, so `.`
+matches as a wildcard rather than a literal (a deliberate CLR choice, consistent with the decode table above — a
+program needing literal matching uses `Regex.escape`).
 
 ## 5b-ter. Case mapping is CLR one-to-one — `"ß".uppercase()` stays `"ß"` (interop-first deviation)
 
