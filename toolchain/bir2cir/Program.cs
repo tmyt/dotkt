@@ -521,9 +521,10 @@ sealed class Pipeline
             // (whose param stays the synthetic in the un-rebuilt stdlib) is still adapter-wrapped by the bridge — the
             // two compose. Skipped for the stdlib self-build (attributeTopLevelOwner) and for any assembly that
             // declares a user CharSequence implementer (hasUserCharSeqImpl) — those keep the synthetic verbatim.
+            CharSeqStringLowering.CharSeqRetLambdas charSeqRetLambdas = null;
             if (!_options.RefBuild && attributeTopLevelOwner && !hasUserCharSeqImpl)
-                substituted = CharSeqStringLowering.Apply(substituted, localTopLevelFns);
-            if (!_options.RefBuild) substituted = StringCharSequenceBridge.Apply(substituted, refs);
+                substituted = CharSeqStringLowering.Apply(substituted, localTopLevelFns, out charSeqRetLambdas);
+            if (!_options.RefBuild) substituted = StringCharSequenceBridge.Apply(substituted, refs, charSeqRetLambdas);
             // CATCH-CLAUSE WIDENING (bundle-6 ④): a Kotlin `catch (IndexOutOfBoundsException)` @ClrTypeAlias-es to a
             // SINGLE .NET type, but .NET index ops throw TWO distinct ones (List.get_Item -> ArgumentOutOfRangeException,
             // array -> IndexOutOfRangeException). Expand each such clause into two clauses covering BOTH so the Kotlin

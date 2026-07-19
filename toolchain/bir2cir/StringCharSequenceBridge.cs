@@ -73,6 +73,8 @@ static class StringCharSequenceBridge
     // The ref.dll index — consulted ONLY to read a spliced anonymous object's (`dotkt$obj*`) ctor param types, so a
     // static-String arg flowing into its `CharSequence` capture slot is adapter-wrapped (WrapNewCtorArgs). Null-safe.
     static ReferenceMetadataIndex _refs;
+    // #170 — lifted lambdas bound into a `dotkt$CharSequence`-returning delegate (from CharSeqStringLowering). Null-safe.
+    static CharSeqStringLowering.CharSeqRetLambdas _retLambdas;
 
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
 
@@ -104,10 +106,19 @@ static class StringCharSequenceBridge
         }
     }
 
-    public static JsonNode Apply(JsonNode root, ReferenceMetadataIndex refs = null)
+    public static JsonNode Apply(JsonNode root, ReferenceMetadataIndex refs = null,
+        CharSeqStringLowering.CharSeqRetLambdas retLambdas = null)
     {
         _refs = refs;
         _fired = false;
+        _retLambdas = retLambdas;
+        // #170 — a lifted lambda bound into a delegate whose declared RETURN is the synthetic `dotkt$CharSequence`
+        // (CharSeqStringLowering recorded these before it collapsed the CharSequence-return signal to `string`). Retype
+        // its lifted `ret` back to the synthetic BEFORE the walk, so `Env.WithDecl` sees `RetType = dotkt$CharSequence`
+        // and the existing WrapReturn adapter-wraps every String return — the lifted ldftn signature then matches the
+        // `KFunc<…,dotkt$CharSequence>` ilemit rewraps the literal into (else ilverify DelegateCtor). Point ① of the
+        // 3-point sync; point ② is WrapReturn during the walk; point ③ is the funcType sync in Transform.
+        if (retLambdas != null && root is JsonObject rootObj) RetypeLiftedRets(rootObj, retLambdas);
         // Seed the shared static-type resolver for THIS file so IsStaticString can recover a receiver's static type
         // uniformly (a property-getter call, an app top-level fun result, a `!!`/elvis valueBlock — none carry a `ret`).
         StaticType.Refs = refs;
@@ -177,6 +188,10 @@ static class StringCharSequenceBridge
             case "callStatic":
             case "callInstance":
                 WrapCallArgs(node, env);
+                return node;
+            case "newDelegate":
+            case "newClosure":
+                SyncDelegateFuncRet(node);
                 return node;
             case "new":
                 WrapNewCtorArgs(node, env);
@@ -316,6 +331,46 @@ static class StringCharSequenceBridge
         if (env.RetType is TypeNode rt && IsCharSeqT(rt) && node["value"] is JsonNode v
             && CoerceCharSeqArg(v, env, nonNullSlot: rt is TypeNode.Fqn) is JsonNode cv && !ReferenceEquals(cv, v))
             node["value"] = cv;
+    }
+
+    // #170 point ① — retype each recorded lifted lambda's declared `ret` from `System.String`/`kotlin.String` back to
+    // the synthetic `dotkt$CharSequence`, so the walk's WrapReturn adapter-wraps its String returns and the ldftn
+    // signature matches the CharSequence-returning delegate. A `newDelegate` target is a top-level lifted static in
+    // `methods`; a `newClosure` target is the `invoke` of the synthetic class in `types`. Only retype an actual String
+    // ret (idempotent for a `(…) -> CharSequence` lambda whose ret already survived as the synthetic).
+    static void RetypeLiftedRets(JsonObject root, CharSeqStringLowering.CharSeqRetLambdas rl)
+    {
+        if (root["methods"] is JsonArray methods)
+            foreach (var m in methods)
+                if (m is JsonObject mo && Str(mo["name"]) is string mn && rl.Statics.Contains(mn))
+                    RetypeRetToCharSeq(mo);
+        if (root["types"] is JsonArray types)
+            foreach (var t in types)
+                if (t is JsonObject to && Str(to["name"]) is string tn && rl.Closures.Contains(tn)
+                    && to["methods"] is JsonArray tms)
+                    foreach (var tm in tms)
+                        if (tm is JsonObject tmo && Str(tmo["name"]) == "invoke")
+                            RetypeRetToCharSeq(tmo);
+    }
+
+    static void RetypeRetToCharSeq(JsonObject decl)
+    {
+        if (TypeJson.Read(decl["ret"]) is TypeNode rt && IsStringTokT(rt))
+            decl["ret"] = new JsonObject { ["t"] = "fqn", ["name"] = CharSeq };
+    }
+
+    // #170 point ③ — sync a recorded delegate's `funcType` RETURN to the synthetic, so a self-build fallback
+    // (ilemit's `DelegateCtor(MapType(funcType))` path, taken when the callee slot is an open/TypeBuilder generic)
+    // constructs a `KFunc<…,dotkt$CharSequence>` consistent with the now-CharSequence-returning lifted body.
+    static void SyncDelegateFuncRet(JsonObject node)
+    {
+        if (_retLambdas == null) return;
+        var isTarget = Str(node["k"]) == "newDelegate"
+            ? Str(node["method"]) is string mn && _retLambdas.Statics.Contains(mn)
+            : TypeJson.Read(node["closureType"]) is TypeNode.Fqn { Name: { } ct } && _retLambdas.Closures.Contains(ct);
+        if (!isTarget || node["funcType"] is not JsonObject ft) return;
+        if (TypeJson.Read(ft["ret"]) is TypeNode rt && IsStringTokT(rt))
+            ft["ret"] = new JsonObject { ["t"] = "fqn", ["name"] = CharSeq };
     }
 
     // A structured Type is (nullable/array of) the CharSequence synthetic.

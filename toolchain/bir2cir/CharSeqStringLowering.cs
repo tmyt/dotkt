@@ -115,9 +115,19 @@ static class CharSeqStringLowering
     static HashSet<string> _delegateTargets = new(StringComparer.Ordinal);
 
     public static JsonNode Apply(JsonNode root, HashSet<string> localTopLevelFns)
+        => Apply(root, localTopLevelFns, out _);
+
+    public static JsonNode Apply(JsonNode root, HashSet<string> localTopLevelFns, out CharSeqRetLambdas retLambdas)
     {
         _localFns = localTopLevelFns ?? new HashSet<string>(StringComparer.Ordinal);
         _delegateTargets = CollectCharSeqDelegateTargets(root);
+        // Collect (on the PRE-collapse tree) the lifted lambdas bound into a delegate whose funcType RETURN is the
+        // synthetic `dotkt$CharSequence` — this pass is about to collapse that return signal to `string` (below), so
+        // the StringCharSequenceBridge (which runs next) would never see it. The bridge consumes this set to retype
+        // those lambdas' `ret` back to the synthetic and adapter-wrap their String returns, so the lifted ldftn
+        // signature matches the KFunc<…,dotkt$CharSequence> ilemit rewraps the literal into (#170). (A CharSequence
+        // PARAM target is a DIFFERENT case — that lambda stays verbatim via `_delegateTargets`; here it is the RETURN.)
+        retLambdas = CollectCharSeqRetDelegateTargets(root);
         return Walk(root, new Env());
     }
 
@@ -143,6 +153,51 @@ static class CharSeqStringLowering
         Scan(root);
         return set;
     }
+
+    // The lifted lambdas bound into a delegate whose funcType RETURN is `dotkt$CharSequence` (#170). A `newDelegate`
+    // names its lifted static by `method` (`__lambdaN`); a `newClosure` names its synthetic class by `closureType`
+    // (its lifted body is the class's `invoke`, since every closure's `method` is the constant "invoke"). The bridge
+    // resolves each accordingly.
+    public sealed record CharSeqRetLambdas(HashSet<string> Statics, HashSet<string> Closures);
+
+    // Collect (pre-collapse) the delegate targets whose funcType RETURN is the synthetic CharSequence. Only a BARE
+    // (non-nullable) CharSequence return qualifies — a nullable `(T) -> CharSequence?` delegate return is the separate
+    // nullable/NRT-erasure axis (delegnull), out of scope here.
+    static CharSeqRetLambdas CollectCharSeqRetDelegateTargets(JsonNode root)
+    {
+        var statics = new HashSet<string>(StringComparer.Ordinal);
+        var closures = new HashSet<string>(StringComparer.Ordinal);
+        void Scan(JsonNode n)
+        {
+            if (n is JsonObject o)
+            {
+                var k = Str(o["k"]);
+                if (k == "newDelegate" && FuncTypeHasCharSeqRet(o["funcType"]) && Str(o["method"]) is string mn)
+                    statics.Add(mn);
+                else if (k == "newClosure" && FuncTypeHasCharSeqRet(o["funcType"])
+                         && TypeJson.Read(o["closureType"]) is TypeNode.Fqn { Name: { } ct })
+                    closures.Add(ct);
+                foreach (var kv in o) if (kv.Value != null) Scan(kv.Value);
+            }
+            else if (n is JsonArray a) foreach (var it in a) if (it != null) Scan(it);
+        }
+        Scan(root);
+        return new CharSeqRetLambdas(statics, closures);
+    }
+
+    // A function type whose RETURN is a bare `dotkt$CharSequence`. Structured Fn (newDelegate) or the legacy
+    // `func:<ret>:<args>` string (newClosure) — the leading segment is the return.
+    static bool FuncTypeHasCharSeqRet(JsonNode ftNode)
+    {
+        if (TypeJson.Read(ftNode) is TypeNode.Fn fn) return fn.Ret is TypeNode.Fqn { Name: CharSeqSynthetic };
+        if (Str(ftNode) is not string ft || !ft.StartsWith("func:", StringComparison.Ordinal)) return false;
+        var rest = ft["func:".Length..];
+        var ci = TopLevelColon(rest);
+        var retSeg = ci < 0 ? rest : rest[..ci];
+        return retSeg == CharSeqSynthetic;
+    }
+
+    const string CharSeqSynthetic = "dotkt$CharSequence";
 
     // A function type any of whose PARAMS is CharSequence (the delegate-target exemption). funcType is a structured Fn
     // (newDelegate) or, on a newClosure, a legacy `func:<ret>:<args>` string.
