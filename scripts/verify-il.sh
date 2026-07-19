@@ -395,8 +395,11 @@ il_check superobj SuperObj "$ROOT/cases/il-superobj/app.kt" "$(printf 'N:7\nTrue
 il_check_imports supernet AppKt "$ROOT/cases/il-supernet" "$(printf 'True\nTrue')"   # #14 RESIDUAL R2: super.Next() to a facadegen-injected .NET base (System.Random) → NetInteropBinding propagates the `super` marker onto clrInstance; ilemit's EmitClrCall emits `call`, not the callvirt that re-dispatched → infinite recursion
 il_check xfaceimpl XFace "$ROOT/cases/il-xfaceimpl" "1"   # cross-file + namespaced interface impl/dispatch (FindMethod key regression)
 il_check ifacecompanion IfacecompanionKt "$ROOT/cases/il-ifacecompanion/app.kt" "$(printf '1\n2\n3\n4\n64\n2147483647')"   # #83: an interface's PLAIN companion flattens to the interface's statics (static fields run in its .cctor + static methods); kotc emitted `fields:[]` and ilemit skipped interface fields/.cctor -> `field SharingStarted.Eagerly not found`. Named-companion (Factory) const/val is the co-located non-regression.
-il_check genhof XHof "$ROOT/cases/il-genhof/app.kt" "$(printf '1\n2\n3')"   # generic fn: (T)->Unit over List<T> (TypeBuilderInstantiation.GetMethod regression)
-il_check genclosure GenClo "$ROOT/cases/il-genclosure/app.kt" "$(printf '1\nfn:2\n3\n4\nret:5\nlf:6')"   # closure in a generic fn capturing T-typed values (generic closure class regression)
+# lambda/closure/HOF/function-reference family (il-closure/il-lambda/il-genclosure/il-genhof/il-mfclosure/il-mflambda/
+# il-writecapture/il-funref/il-extfunref/il-threadlambda) migrated to the NUnit battery tests/il/fixtures/LambdaTests.kt
+# (10 methods; + LambdaTestsB.kt for the il-mfclosure/il-mflambda file-B halves), gated by tests/run-nunit-il.sh.
+# Per the cases-test-design audit #14 the old per-case dirs + il_check/il_check_imports lines were removed same-change.
+# (il-suspendcapture/il-suspendnestedcapture stay in the bash lane — suspend/coroutine, a deferred family.)
 il_check caprefinline AppKt "$ROOT/cases/il-capref-inline/app.kt" "$(printf '2\n4\n6\n99')"   # a coerced `::pushDouble` reference inside a buildList{} inline lambda -> an ADAPTER_FOR_CALLABLE_REFERENCE local fn whose bound receiver is an ExtensionReceiver param `receiver`; liftLocalFn must emit the receiver param, else the body's `receiver.pushDouble` dangles (the kotlinx flow `__local*_add: references undeclared local 'receiver'` blocker)
 il_check adapterref AppKt "$ROOT/cases/il-adapterref/app.kt" "$(printf 'sink 1\nsink 2\nsink 3\nbuilt 4\nbuilt 5')"   # #84 G: a coerced MEMBER reference (`s::add`/`::add`, Boolean-returning member adapted to (Int)->Unit) passed to an inline forEach — the ADAPTER_FOR_CALLABLE_REFERENCE must forward to the real member as callInstance (adapterRef replays the adapter body), not a top-level `callStatic owner:null` (`static method not found: add`, the consumeEach(collection::add) blocker)
 il_check geninherit AppKt "$ROOT/cases/il-geninherit/app.kt" "$(printf '42\nTrue\nTrue')"   # #84 I: a non-generic subclass calling a method INHERITED from a generic base (`IntHolder : Holder<Int>`) + a self-referentially-bounded generic (`Segment<S : Segment<S>>`) — the inherited method must anchor onto the CONSTRUCTED base (`Holder<Int>`/`Segment<Seg>`), not the open `Base`1::m` (\"not fully instantiated\", the ConcurrentLinkedListNode blocker)
@@ -605,8 +608,6 @@ il_check cp    Cp    "$ROOT/cases/il-cp"      "$(printf '50\n3.5\nTrue\nTrue\nX'
 il_check ext   Ext   "$ROOT/cases/il-ext"     "$(printf '21\nHI')"
 il_check companionext CompanionExt "$ROOT/cases/il-companionext" "$(printf '5\n14\n21')"   # #177: an extension fun in a companion object lowers to a static method whose first param is the extension receiver — the call site must pass that receiver as the LEADING arg (was dropped -> arity miscompile)
 il_check arr   Arr   "$ROOT/cases/il-arr"     "$(printf '10\n30\n99\n3\n139\n139')"
-il_check lam   Lam   "$ROOT/cases/il-lambda"  "$(printf '42\n12')"
-il_check clo   Clo   "$ROOT/cases/il-closure" "$(printf '15\n105\n17')"
 il_check scope Sc    "$ROOT/cases/il-scope"   "$(printf '10\n6\n9\n10\n10\n7')"
 il_check arraydeque AppKt "$ROOT/cases/il-arraydeque" "$(printf 'z\nb\nc\n1\nA')"   # concrete generic stdlib class ArrayDeque<E>:AbstractMutableList<E> as a field/owner forces ilemit to resolve kotlin.collections.ArrayDeque`1 from the rt dll — exercises the ICollection/IList void-drop methodimpl bridge (ilemit) + the BCL-only slot synthesis Contains/CopyTo/IsReadOnly/IndexOf (bir2cir)
 il_check copyintoverlap AppKt "$ROOT/cases/il-copyintoverlap/app.kt" "$(printf '1,1,2,3,4\n2,3,4,5,5\na,b,a,b,c\na,b,X,c,d')"   # #97: copyInto must be overlap-safe (System.Array.Copy = memmove); a forward element loop clobbers overlapping self-copies -> silently corrupts ArrayDeque.add(index,elem). Generic Array<T> path (the ArrayDeque victim); the 8 primitive copyInto actuals are fixed identically but not app-callable (pre-existing primitive-array-receiver resolution gap)
@@ -624,12 +625,10 @@ il_check arrslice Arrslice "$ROOT/cases/il-arrslice" "$(printf '[20, 30, 40]\n[1
 il_check intarraytolist Intarraytolist "$ROOT/cases/il-intarraytolist" "$(printf '[1, 2]\n[a, b]\n[1, 2, 3]\n[1.5, 2.5]\n[1, 2, 0, 0]\n[7, 8, 0]\n[1, 2]\n[3, 4]\n[9, 8]\n[5, 6]')"   # #153: primitive-array-receiver top-level stdlib extension (toList/copyOf/copyInto/contentToString) resolves to ArraysKt; fine first-param key disambiguates signed vs unsigned (UArraysKt) vs generic Array<T>, receiver-nullability-insensitive
 il_check arrplus Arrplus "$ROOT/cases/il-arrplus" "$(printf '[1, 2, 3, 4]\n[1, 2, 3, 5]\n6\n[1, 2, 3, 4]\n[1.5, 2.5, 3.5]\n[a, b, c]\n[a, b, c]\n[a, b, d]')"   # #120: Array<value-type>.plus/plusElement body-local var reified-array element kept !T (value + reference T)
 il_check copyofnull Copyofnull "$ROOT/cases/il-copyofnull" "$(printf '[1, 2, 3, null, null]\n[1, 2]\n[1, 2, 3]\n1\nnull\n6\n[1, 2, null]\n[2.5, 3.5, null]\n[a, b, null]\n[x, y, null]\n[7, null, null]')"   # #124: Array<value-type>.copyOf(newSize) builds Nullable<elem>[] by runtime reflection (grow null-tail/shrink/prefix read-back; value + reference + already-nullable T)
-il_check funref Funref "$ROOT/cases/il-funref" "$(printf '2,4,6\n1,4,9,16,25,36\nHi, Kotlin\n105\n107\ncalc100\n203\n42')"
 # G8 (#73 w9): UNBOUND extension-function callable references (`String::isNotBlank`, `String::repeatBy`) -> a lifted
 # static forwarder whose body is the faithful ext call; bir2cir binds/substitutes the inner call (isNotBlank = the
 # reverted Indent.kt case). Same-module (shout/doubleLen/repeatBy/logTo) + cross-module stdlib (isNotBlank); logTo
 # covers the Unit-returning forwarder (exprStmt body).
-il_check extfunref ExtFunref "$ROOT/cases/il-extfunref" "$(printf '  hi |world\n2,6,10\nKOTLIN!\nababab\n[a][b]')"
 il_check boundextref BoundExtRef "$ROOT/cases/il-boundextref" "$(printf 'hi!\nababab\nfirst!\n[x][x]\nTrue\nTrue')"   # #91: bound ext-fn ref `expr::extFn` -> capture-class lift (receiver captured eagerly; delegate over instance invoke). #106: bound CharSeq-ext ref (::isNotBlank/::isBlank) -> String field-read adapter-wrapped by StringCharSequenceBridge
 # A6: rule-3 helper calls on CONCRETE generic alias receivers (HashMap/ArrayList/LinkedHashMap: class typeArgs +
 # instantiated sig) + Map/MutableMap getOrDefault (bare-V map-defaults helper: retType carry, was BadImageFormat).
@@ -695,7 +694,6 @@ il_check cwindowed CWindowed "$ROOT/cases/il-cwindowed" "$(printf '[ab, bc, cd]\
 # (not collapse to System.String) — the stdlib passes a real <>dotkt_CharSequence (subSequence's result) in. W4-B guard.
 il_check cwindowedv CWindowedV "$ROOT/cases/il-cwindowedv" "$(printf '[2, 2, 2]\n[a, b, c]\n[3, 3, 3]\n[ab, bc, cd]')"
 il_check localclass LocalClass "$ROOT/cases/il-localclass" "$(printf '10\n42\n101\n3,4\nTrue\n60')"
-il_check writecapture AppKt "$ROOT/cases/il-writecapture/app.kt" "$(printf '3\n20')"   # #68: a local class / object expression that WRITES a captured outer `var` shares a heap ref-cell (computeRefCells promotes the mutated capture) — was a whole-compile abort for the write-through capture
 il_check genlocalclass AppKt "$ROOT/cases/il-genlocalclass/app.kt" "$(printf '42\nhi\n1->2\na->b')"   # #69: a function-local class capturing an enclosing TYPE PARAMETER is lifted GENERICALLY (reified CLR generics); ownerSpec/birType name the constructed `L<T>` at the new site + denotable var slot + member access — was a whole-compile abort
 # A generic cold-sequence SM: `fun <T> wrap(x) = sequence { yield(x) }.toList()` over a VALUE element (Int) and a
 # reference element (String). Guards the `T?`-property `nextValue as T` double-unbox NRE (bir2cir erased-getter
@@ -816,7 +814,6 @@ il_check_inject delegobj Dobj "$ROOT/cases/il-delegobj" "$(printf 'posted: 42\nb
 # (ThreadStart/ParameterizedThreadStart) + `Task.Run({...})` (Action/Func<T>) — resolves without ambiguity. facadegen
 # marks the Pareto-dominated sibling `lowPriority`; kotc stamps `@kotlin.internal.LowPriorityInOverloadResolution` so the
 # bare lambda binds the preferred (ThreadStart/Action) sibling. Import-scan path (BCL, no runtime.cs). FAIL before / PASS after.
-il_check_imports threadlambda AppKt "$ROOT/cases/il-threadlambda" "$(printf 'x\ny\ndone')"
 # delegnull (#150): a delegate type-arg's NRT byte survives into the Kotlin lambda param/return. The runtime.cs is
 # built with C# NRT ENABLED (il_check_inject_nrt), so `Func<string?>`/`Action<string?>` carry real [Nullable] bytes;
 # facadegen threads them into the fn node (contravariant sibling of #143). A lambda returning null into `Func<string?>`
@@ -1076,8 +1073,6 @@ il_check gfac TGfac "$ROOT/cases/il-gfac" "$(printf '42\nhi')"
 il_check xprop Xprop "$ROOT/cases/il-xprop" "7"
 il_check exprbody EB "$ROOT/cases/il-exprbody" "$(printf 'greet\nviaLambda\ncleanup\npos')"
 il_check overload OV "$ROOT/cases/il-overload" "$(printf 'S:x\nF:y\nI:7\nbs:p\nbf:q')"
-il_check mfclosure MfClosure "$ROOT/cases/il-mfclosure" "$(printf '10\n20')"
-il_check mflambda MFL "$ROOT/cases/il-mflambda" "$(printf 'A1\nA2\nB1')"
 il_check arrops Arro "$ROOT/cases/il-arrops" "$(printf '3\n6,8,10\n14\n2\n-1\n10\n30')"
 # bundle-6 ④ stdlib-correctness routing (bir2cir)
 il_check cmpord   CmpOrd   "$ROOT/cases/il-cmpord"   "$(printf '31\n-31\n0\n-1\nFalse\n-7')"
