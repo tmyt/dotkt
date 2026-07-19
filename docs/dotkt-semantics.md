@@ -894,12 +894,23 @@ c.CollectionChanged -= h                                     // unsubscribe (del
   (`TaskScheduler.UnobservedTaskException += h`); a static event on a `static class`/`object`
   (`System.Console.CancelKeyPress += h`) is a member of that object. Either binds to the event's **static** add/remove
   accessor (a plain `Call`). (facadegen originally emitted only *instance* events of *non-static classes*.)
-- **Interface events** (`INotifyPropertyChanged.PropertyChanged`) are **not yet surfaced.** Modelling them as a
-  `ClrEvent<T>` interface member is correct for an interface-typed receiver, but when a Kotlin class **subclasses** a
-  .NET class that implements such an interface (`class MyApp : Avalonia.Application`), fir2ir synthesizes a
-  fake-override getter returning the `ClrEvent<T>` compile-time fiction, which the emitter cannot declare. Surfacing
-  them awaits a downstream change that **elides a `ClrEvent`-typed fake-override member** (a .NET event is never a real
-  inherited property). Subscribe via the concrete class event in the meantime.
+- **Interface events** (`INotifyPropertyChanged.PropertyChanged`) surface as a `ClrEvent<T>` member and **consume**
+  the same way on an interface-typed receiver (`n.PropertyChanged += h`). When a Kotlin class **subclasses** a .NET
+  class that already implements the interface (`class MyApp : Avalonia.Application`), the inherited concrete
+  `ClrEvent<T>` fake-override satisfies the slot and is elided — nothing to declare.
+- **Implementing and raising a CLR event from Kotlin** (MVVM / `INotifyPropertyChanged`): a Kotlin class that directly
+  implements an event-bearing interface writes `override val E by clrEvent()` to synthesize the event (a backing
+  delegate field + real `add_E`/`remove_E`/`raise_E` accessors); a `ClrEvent<T>` handle exposes `invoke(sender, args)`
+  to **raise** it. **Deliberate CLR-native deviation (interop-first):** C# permits raising an event only from **within**
+  its declaring type, but the DotKt `ClrEvent<T>` handle exposes raise, so `vm.PropertyChanged.invoke(vm, args)` is
+  legal from **outside** the declaring type (it calls a public synthesized `raise_` accessor — the `.event`'s `.fire`).
+  This is exactly the raiser .NET libraries hand-roll as `protected virtual void OnPropertyChanged(...)`, promoted to a
+  first-class part of the event handle — it is what lets the idiomatic property-delegate MVVM pattern
+  (`ViewModelProperty.setValue` raising a base class's `PropertyChanged`) work. Consistent (a handle uniformly supports
+  `+=`/`-=`/`invoke`), documented (here + `docs/design-clr-event-model.md`), convincingly explainable — passes all
+  three conditions of the acceptance test. A **consumed** foreign .NET event has no synthesized `raise_`, so `invoke`
+  on it stays an error — you still cannot raise an event you did not declare. Full model:
+  [`docs/design-clr-event-model.md`](design-clr-event-model.md).
 
 ## 8e. A .NET delegate parameter surfaces as a Kotlin FUNCTION TYPE — even when its Invoke takes/returns `object`
 
