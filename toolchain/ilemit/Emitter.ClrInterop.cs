@@ -283,6 +283,54 @@ sealed partial class Emitter
             && (StrictBase(h.DeclaringType, o.DeclaringType) || IfaceOf(h.DeclaringType, o.DeclaringType)))).ToList();
     }
 
+    // W1-S4 (#46/#183) CONSUME-ONLY declaration-side override linking. A method overriding a .NET base-CLASS virtual
+    // (accessor) carries `clrOverride` (the base owner FQN) + `clrOverrideSig` (bir2cir's ref.dll-resolved base-virtual
+    // param signature, positional-tv for a generic base). This LINKS the exact base slot for DefineMethodOverride —
+    // enumerate the base type's name + instance + virtual + param-count candidates, match each param STRUCTURALLY under
+    // positional-tv equality (GenericParamMatches, ownerArgs null -> memberSig `tv` stays positional against the OPEN
+    // base def), require EXACTLY ONE (0 = hard ABI error, >1 = malformed). Replaces the former
+    // `baseT.GetMethod(name, ps) ?? baseT.GetMethod(name)` NAME-ONLY first-pick fallback. A generic base's winner is
+    // re-anchored onto the emitted type's CONSTRUCTED base instantiation (DefineMethodOverride must reference the slot
+    // on `Collection<Item>`, not the open def) — the corpus exercises only the non-generic accessor case.
+    MethodInfo LinkOverrideBase(Type baseT, string name, JsonElement m, Type derivedTb)
+    {
+        if (!m.TryGetProperty("clrOverrideSig", out var sigEl) || sigEl.ValueKind != JsonValueKind.Array)
+            throw new InvalidOperationException($"ilemit: override of {baseT?.FullName}.{name} is missing its `clrOverrideSig` descriptor (bir2cir must carry the resolved base-virtual signature — W1-S4 #46/#183)");
+        var declParams = sigEl.EnumerateArray().Select(DotKt.Bir.TypeNode.Read).ToArray();
+        var searchType = baseT.IsGenericType && !baseT.IsGenericTypeDefinition ? baseT.GetGenericTypeDefinition() : baseT;
+        var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+        MethodInfo[] named;
+        try { named = searchType.GetMethods(flags).Where(x => x.Name == name && x.IsVirtual && x.GetParameters().Length == declParams.Length).ToArray(); }
+        catch { named = Array.Empty<MethodInfo>(); }
+        var hits = MostDerivedMethods(named.Where(x => x.GetParameters()
+            .Select((p, i) => GenericParamMatches(declParams[i], p.ParameterType, null)).All(y => y))
+            .GroupBy(x => (x.Module, x.MetadataToken)).Select(g => g.First()).ToList());
+        var desc = $"{baseT?.FullName}.{name}{sigEl}";
+        if (hits.Count == 0)
+            throw new InvalidOperationException($"ilemit: no base virtual matches the override descriptor {desc} (ABI mismatch; {named.Length} same-name/arity virtual(s): {string.Join("; ", named.Select(x => x.ToString()))})");
+        if (hits.Count > 1)
+            throw new InvalidOperationException($"ilemit: override descriptor {desc} is AMBIGUOUS — {hits.Count} base virtuals match (malformed clrOverrideSig): {string.Join("; ", hits.Select(x => x.ToString()))}");
+        var win = hits[0];
+        // Non-generic declaring base (the accessor case): the reflected slot is a usable closed handle.
+        if (!(win.DeclaringType?.IsGenericType ?? false)) return win;
+        // Generic .NET base: DefineMethodOverride must reference the slot on the emitted type's CONSTRUCTED base
+        // instantiation (`Collection<Item>::InsertItem`). Walk the emitted type's base-CLASS chain for the instantiation
+        // whose generic def is the winner's declaring type; TypeBuilder.GetMethod re-anchors a TypeBuilderInstantiation
+        // base (emitted arg), else find the closed reflected slot by the shared def token.
+        for (var bt = derivedTb?.BaseType; bt != null; bt = bt.BaseType)
+            if (bt.IsGenericType && !bt.IsGenericTypeDefinition
+                && ReferenceEquals(bt.GetGenericTypeDefinition(), win.DeclaringType.GetGenericTypeDefinition()))
+            {
+                try { return TypeBuilder.GetMethod(bt, win); }
+                catch (ArgumentException)
+                {
+                    var closed = bt.GetMethods(flags).FirstOrDefault(x => x.Module == win.Module && x.MetadataToken == win.MetadataToken);
+                    return closed ?? win;
+                }
+            }
+        return win;
+    }
+
     // The bir2cir clrInstance `dispatch` decision (call | callvirt | constrained) -> the IL opcode. bir2cir computed it
     // from the resolved MethodInfo IsVirtual/IsFinal + owner value-type-ness + the `super` base-slot flag (issue #14);
     // ilemit no longer re-derives it. `constrained.` prefixes the callvirt with the receiver type (== the node `type`).

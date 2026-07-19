@@ -813,12 +813,12 @@ sealed partial class Emitter
         }
         if (clrOverride != null)
         {
-            // Link the override to the .NET base virtual (matched by name + parameter types) so virtual dispatch
-            // through the base type reaches it (`callvirt System.Exception::get_Message` -> our override).
+            // Link the override to the EXACT .NET base virtual so virtual dispatch through the base type reaches it
+            // (`callvirt System.Exception::get_Message` -> our override). bir2cir resolved the base slot off the ref.dll
+            // and carried its param signature as `clrOverrideSig` (#46/#183 W1-S4) — LinkOverrideBase links the unique
+            // slot (0 = hard ABI error), replacing the former name-only first-pick fallback.
             var baseT = ResolveType(clrOverride);
-            var baseM = baseT.GetMethod(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance, null, ps, null)
-                        ?? baseT.GetMethod(name);
-            if (baseM != null) ti.TB.DefineMethodOverride(mb, baseM);
+            ti.TB.DefineMethodOverride(mb, LinkOverrideBase(baseT, name, m, ti.TB));
         }
         // Kotlin's `@kotlin.internal.InlineOnly` says "this fn is meant to be inlined, not called as a method". The direct
         // CLR translation is a [MethodImpl(AggressiveInlining)] hint on the emitted method. kotc reads the annotation and
