@@ -39,12 +39,6 @@ declare -A RT_XFAIL=(
 	# CONCRETE cross-module value-type manifestation of #86 (invisible to every other gate, which drives only T=String);
 	# when #86/#147 land the param/field nullability, this section starts compiling+running (7/3/9/4/x) -> prune it.
 	[roundtrip-nullable-vt-generic]="#109/#86 (+#147/#127): cross-module nullable value-type generic T? in param/field position restores as bare non-null T -> consumer fails to compile (NBox<Int>(null): null cannot be a value of a non-null type 'Int'); the value-type axis of #86, exposed on purpose"
-	# #179 RESIDUAL (facadegen surface done + guarded green by roundtrip-comparable-meta): a re-consumed `class C :
-	# Comparable<C>` resolves `<`/sorted() in the frontend, but kotc emits the plain `callInstance geo.Ver.compareTo`
-	# and the CALL BINDING compareTo -> the DotKt owner's PascalCase `CompareTo` slot is bir2cir NetInteropBinding's job
-	# (the instance-slot analog of its `plus`->`op_Addition` rule) — blocked behind the #46 bir2cir restructure. Flips to
-	# FIXED when that rule lands; the meta section already asserts the facadegen half.
-	[roundtrip-comparable]="#179 residual: cross-module 'class C : Comparable<C>' call binds the Kotlin name 'compareTo' but the DotKt slot is 'CompareTo'; the compareTo->CompareTo slot bind on the facadegen-injected owner is a bir2cir NetInteropBinding change (behind #46). facadegen symbol surface is done + guarded by roundtrip-comparable-meta"
 )
 
 # ---- section result collection (no section may abort the script) -----------------------------------
@@ -1601,12 +1595,12 @@ check_output roundtrip-operator-flag "$opexpected" "$opactual" "operator compare
 # C's own operator), and (b) restores the `IComparable<X>` supertype as `kotlin.Comparable<X>` (dropping the non-generic
 # bridge) so `sorted()`'s `Comparable<C>` constraint is satisfied. That is the SYMBOL-SURFACE half (facadegen's); the
 # section is split accordingly:
-#   * roundtrip-comparable-meta  — the facadegen surface, asserted DIRECTLY on the generated metadata. GREEN today; a
-#                                  regression guard for the restore.
-#   * roundtrip-comparable       — the END-TO-END run. Still RT_XFAIL: kotc emits the plain `callInstance geo.Ver.compareTo`
-#                                  (member clrName is not a kotc channel), and the CALL BINDING compareTo->CompareTo on the
-#                                  facadegen-injected DotKt owner is bir2cir NetInteropBinding's job (the #179 residual,
-#                                  blocked behind the #46 bir2cir restructure). Flips to FIXED when that rule lands.
+#   * roundtrip-comparable-meta  — the facadegen surface, asserted DIRECTLY on the generated metadata. A regression
+#                                  guard for the restore.
+#   * roundtrip-comparable       — the END-TO-END run. kotc emits the plain `callInstance geo.Ver.compareTo` (a member
+#                                  clrName is not a kotc channel); bir2cir NetInteropBinding rebinds compareTo->CompareTo
+#                                  on the facadegen-injected DotKt owner (the instance-slot analog of its
+#                                  plus->op_Addition rule, gated on a generic-IComparable owner), so `<`/sorted() run.
 CM="$ROOT/build/roundtrip-comparable"; rm -rf "$CM"; mkdir -p "$CM/lib" "$CM/app" "$CM/libbir" "$CM/libil" "$CM/appbir" "$CM/appil"
 cat > "$CM/lib/lib.kt" <<'EOF'
 package geo
@@ -1652,10 +1646,10 @@ except Exception: print(0)
 PY
 )
 check_output roundtrip-comparable-meta "1" "$cm_meta" "facadegen surface: Ver gains operator compareTo (clrName CompareTo) + kotlin.Comparable<Ver> supertype, non-generic IComparable bridge dropped #179"
-# END-TO-END run (RT_XFAIL — bir2cir NetInteropBinding compareTo->CompareTo binding is the #179 residual, behind #46).
+# END-TO-END run: bir2cir NetInteropBinding rebinds the compareTo->CompareTo slot on the generic-IComparable DotKt owner (#179).
 cmexpected="$(printf 'True\nTrue\nTrue\nFalse\n1\n3')"
 run_app cmactual "$CM/appil/VerApp.dll"
-check_output roundtrip-comparable "$cmexpected" "$cmactual" "class C : Comparable<C> </>/<=/>=/sorted() resolve+run cross-module (needs bir2cir compareTo->CompareTo slot bind) #179"
+check_output roundtrip-comparable "$cmexpected" "$cmactual" "class C : Comparable<C> </>/<=/>=/sorted() resolve+run cross-module (bir2cir compareTo->CompareTo slot bind) #179"
 
 # ---- verdict --------------------------------------------------------------------------------------
 echo "------------------------------------"
