@@ -1,0 +1,11 @@
+<!-- Round-trip PRODUCER: a DotKt Kotlin LIBRARY compiled to a CLR dll carrying DotKt.Metadata attributes
+     ([KotlinFunction]/[KotlinFileClass]/...). It is consumed AS KOTLIN by ../consumer through a
+     <ProjectReference> — facadegen re-imports THIS dll's metadata (never its source). The producer lives in a
+     SIBLING directory of the consumer precisely so the consumer's `**/*.kt` glob cannot pull the source in:
+     the round-trip is real only if the consumer resolves the API via the built dll. -->
+<Project Sdk="DotKt.Sdk/0.9.6-rc7">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Library</OutputType>
+  </PropertyGroup>
+</Project>

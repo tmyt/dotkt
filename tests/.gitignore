@@ -1,0 +1,5 @@
+# Build outputs from `dotnet test` / `dotnet build` on the pilot projects.
+bin/
+obj/
+TestResults/
+build/test-package-cache/
