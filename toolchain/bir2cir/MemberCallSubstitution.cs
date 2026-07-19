@@ -634,7 +634,10 @@ static class MemberCallSubstitution
             if (_attributeTopLevelOwner && !_localTopLevelFns.Contains(fn))
             {
                 var recvKey = sigParts0.Count >= 1 ? RecvKeyOf(sigParts0[0]) : "";
-                if (refs.TryResolveTopLevelStatic(fn, recvKey, out var fileClassOwner))
+                // The FINE first-param key disambiguates the array overloads a coarse "[]" recvKey collapses (signed vs
+                // unsigned specialized arrays vs the generic Array<T>) so the owner pins the RIGHT file-class (#153).
+                var firstParamKey = sigParts0.Count >= 1 ? ReferenceMetadataIndex.ParamKey(sigParts0[0]) : null;
+                if (refs.TryResolveTopLevelStatic(fn, recvKey, firstParamKey, out var fileClassOwner))
                 {
                     node["owner"] = TypeJson.Fqn(fileClassOwner);   // owner is a birType-emitted (structured Fqn) slot
                     PromoteGenericShapeToSig(node);
@@ -1273,13 +1276,15 @@ static class MemberCallSubstitution
     };
 
     // The receiver-type key of a call's first-arg type (mirrors ReferenceMetadataIndex.RecvKey on the ref.dll side).
+    // A specialized primitive-array Fqn maps to "[]" via RecvKeyOfFqn (same collapse the ref-side applies to a real
+    // int[]) — see the helper for why generic `Array<T>` already reaches "[]" and the primitive variants need it (#153).
     static string RecvKeyOf(TypeNode sig0) => sig0 switch
     {
         TypeNode.Array => "[]",
         TypeNode.Tv => "gp",
         TypeNode.Nullable n => RecvKeyOf(n.Of),
         TypeNode.ByRef b => RecvKeyOf(b.Of),
-        TypeNode.Fqn f => ReferenceMetadataIndex.BareOwnerFqn(f.Name),
+        TypeNode.Fqn f => ReferenceMetadataIndex.RecvKeyOfFqn(f.Name),
         _ => "",
     };
 
