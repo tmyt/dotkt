@@ -514,10 +514,12 @@ internal fun BirEmitter.annotationDef(klass: IrClass): String {
 	return """{"name":${str(typeName(klass))},"kind":"class"${classModsJson(annotation = true)},"abstract":false,"vis":"public","base":null,"interfaces":[],"fields":[$fields],"ctors":[$ctor],"methods":[]}"""
 }
 
-/** The `attrs` JSON for a declaration: each annotation -> a .NET custom attribute application. A Kotlin-authored
- *  annotation is named by its plain Kotlin FQN (#46) — bir2cir derives its `: System.Attribute` base from the
- *  `"annotation":true` flag on the class def; an imported .NET attribute uses its real type via a `clr:` marker so
- *  ilemit binds the existing .NET constructor (#54).
+/** The `attrs` JSON for a declaration: each annotation -> a .NET custom attribute application. The `attr` type is a
+ *  structured `{t:fqn}` identity node (#48). A Kotlin-authored annotation is named by its plain Kotlin FQN (#46) —
+ *  bir2cir derives its `: System.Attribute` base from the `"annotation":true` flag on the class def. An imported .NET
+ *  attribute (a facadegen-injected annotation class) is named by its real .NET FQN and flagged `"attrClr":true` (a
+ *  frontend origin fact — kotc KNOWS the type was injected, via clrName); bir2cir consumes that flag into the
+ *  `attrExternal` bit so ilemit binds the existing .NET constructor (#54/#48). kotc emits no `clr:` marker.
  *
  *  kotc does NOT filter/select annotations: from kotc's view an annotation is just METADATA, so EVERY annotation is
  *  passed through to the BIR verbatim (incl. @ClrTypeAlias, @ClrIntrinsic, and every other `kotlin.*` annotation).
@@ -535,9 +537,9 @@ internal fun BirEmitter.attrsJson(anns: List<IrConstructorCall>): String {
 		val ac = ann.symbol.owner.parent as? IrClass ?: return@mapNotNull null
 		if (ac.kind != ClassKind.ANNOTATION_CLASS) return@mapNotNull null
 		val clr = clrName(ac)
-		val attrType = if (clr != null) "clr:$clr" else typeName(ac)
+		val attrClr = if (clr != null) ""","attrClr":true""" else ""
 		val args = regularArgs(ann)
-		"""{"attr":${str(attrType)},"argTypes":[${args.joinToString(",") { birType(it.type).toJson() }}],"args":[${args.joinToString(",") { expr(it) }}]}"""
+		"""{"attr":${fqnJson(clr ?: typeName(ac))}$attrClr,"argTypes":[${args.joinToString(",") { birType(it.type).toJson() }}],"args":[${args.joinToString(",") { expr(it) }}]}"""
 	}.joinToString(",")
 }
 
@@ -1119,7 +1121,7 @@ internal fun BirEmitter.paramsJsonList(params: List<org.jetbrains.kotlin.ir.decl
 			val srcAttrs = attrsJson(it.annotations)
 			val kotlinDefault = if (emitKotlinDefault) it.defaultValue?.expression?.let { def ->
 				val bir = defaultCarrierBir(def, ownerFn)   // BIR of the default (real IR — the callee's own build), CLOSED for cross-module splice
-				"""{"attr":"kotlin.clr.KotlinDefault","argTypes":[${fqnJson("kotlin.Int")},${fqnJson("kotlin.String")}],"args":[{"k":"const","type":${fqnJson("kotlin.Int")},"value":${regIdx + extOffset}},{"k":"const","type":${fqnJson("kotlin.String")},"value":${str(bir)}}]}"""
+				"""{"attr":${fqnJson("kotlin.clr.KotlinDefault")},"argTypes":[${fqnJson("kotlin.Int")},${fqnJson("kotlin.String")}],"args":[{"k":"const","type":${fqnJson("kotlin.Int")},"value":${regIdx + extOffset}},{"k":"const","type":${fqnJson("kotlin.String")},"value":${str(bir)}}]}"""
 			} else null
 			val allAttrs = listOfNotNull(srcAttrs.takeIf { s -> s.isNotEmpty() }, kotlinDefault).joinToString(",")
 			val pattrs = if (allAttrs.isNotEmpty()) ""","attrs":[$allAttrs]""" else ""

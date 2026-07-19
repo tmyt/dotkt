@@ -272,7 +272,7 @@ internal fun BirEmitter.emitOwnerfulInlineNode(call: IrCall): String {
 		else "null"
 	}
 	val retType = birType(callee.returnType).toJson()
-	return """{"k":"callInline","callee":${str(callee.fqNameWhenAvailable?.asString() ?: name)},"owner":${str(owner)},"pc":$pc,"ga":$ga,"typeArgs":[$typeArgs],"recvs":$recvs,"args":[$argsJson],"retType":$retType,"paramSig":[${paramSigOf(callee)}]}"""
+	return """{"k":"callInline","callee":${fqnJson(callee.fqNameWhenAvailable?.asString() ?: name)},"owner":${fqnJson(owner)},"pc":$pc,"ga":$ga,"typeArgs":[$typeArgs],"recvs":$recvs,"args":[$argsJson],"retType":$retType,"paramSig":[${paramSigOf(callee)}]}"""
 }
 
 /** Build the `recvs` object for an owner-ful inline `callInline` node: an extension receiver -> `recvs.extension`
@@ -401,7 +401,7 @@ internal fun BirEmitter.inlineSpliceCall(call: IrCall, fileClass: String): Strin
 	val retType = birType(callee.returnType).toJson()
 	val extRecvJson = extRecv?.let { expr(it) }
 	val recvs = if (extRecvJson != null) """{"extension":$extRecvJson}""" else "{}"
-	return """{"k":"callInline","callee":${str(callee.fqNameWhenAvailable?.asString() ?: name)},"owner":${str(fileClass)},"pc":$pc,"ga":$ga,"typeArgs":[$typeArgs],"recvs":$recvs,"args":[$argsJson],"retType":$retType,"paramSig":[${paramSigOf(callee)}]}"""
+	return """{"k":"callInline","callee":${fqnJson(callee.fqNameWhenAvailable?.asString() ?: name)},"owner":${fqnJson(fileClass)},"pc":$pc,"ga":$ga,"typeArgs":[$typeArgs],"recvs":$recvs,"args":[$argsJson],"retType":$retType,"paramSig":[${paramSigOf(callee)}]}"""
 }
 
 /** paramSig (#95 §4.2, overload disambiguator): one TYPE NODE per callee DECLARED parameter in the SAME order the
@@ -544,7 +544,7 @@ internal fun BirEmitter.inlineSpliceCallOwnerless(call: IrCall, extRecv: IrExpre
 	// The §4.2 overload disambiguator (see `paramSigOf`): one TYPE NODE per callee declared param (extension receiver as
 	// element 0), in the callee's OWN un-instantiated frame. bir2cir keys the ref.dll payload by owner(null)|name|pc|ga
 	// (a candidate list) and picks the candidate whose `params[i].type` DeepEquals this `paramSig[i]`.
-	return """{"k":"callInline","callee":${str(callee.fqNameWhenAvailable?.asString() ?: name)},"owner":null,"pc":$pc,"ga":$ga,"typeArgs":[$typeArgs],"recvs":$recvs,"args":[$argsJson],"retType":$retType,"paramSig":[${paramSigOf(callee)}]}"""
+	return """{"k":"callInline","callee":${fqnJson(callee.fqNameWhenAvailable?.asString() ?: name)},"owner":null,"pc":$pc,"ga":$ga,"typeArgs":[$typeArgs],"recvs":$recvs,"args":[$argsJson],"retType":$retType,"paramSig":[${paramSigOf(callee)}]}"""
 }
 
 /** True iff [body] contains an IrReturn TARGETING [target] anywhere other than as the body's LAST top-level
@@ -678,7 +678,7 @@ internal fun BirEmitter.emitStackBuffer(call: IrCall): String {
 	val ptrName = "__sbp$c"; val lenName = "__sbl$c"
 	val pre = arrayListOf(
 		"""{"k":"var","name":${str(lenName)},"type":${fqnJson("kotlin.Int")},"init":${expr(args[0])}}""",
-		"""{"k":"var","name":${str(ptrName)},"type":${fqnJson("stackptr")},"init":{"k":"stackAlloc","count":{"k":"local","name":${str(lenName)}},"elem":${str(elemT)}}}""")
+		"""{"k":"var","name":${str(ptrName)},"type":${fqnJson("dotkt\$stackptr")},"init":{"k":"stackAlloc","count":{"k":"local","name":${str(lenName)}},"elem":${str(elemT)}}}""")
 	stackBufSubst[bufParam] = BirEmitter.StackBufInfo(ptrName, lenName, elemT)
 	val result = spliceBody(bodyStatements(fn.body), fn.returnType.isUnit() || call.type.isUnit(), pre)
 	stackBufSubst.remove(bufParam)

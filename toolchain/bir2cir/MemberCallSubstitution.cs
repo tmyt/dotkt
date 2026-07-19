@@ -1388,13 +1388,10 @@ static class MemberCallSubstitution
         foreach (var i in byrefPositions)
         {
             if (i < 0 || i >= argTypes.Count) continue;
-            // A structured arg type -> ByRef(inner); a legacy sig-string token -> "byref:"+s. Idempotent either way.
-            if (TypeJson.Read(argTypes[i]) is TypeNode tn)
-            {
-                if (tn is not TypeNode.ByRef) argTypes[i] = TypeJson.Write(new TypeNode.ByRef(tn));
-            }
-            else if (argTypes[i] is JsonValue v && v.TryGetValue<string>(out var s) && !s.StartsWith("byref:", StringComparison.Ordinal))
-                argTypes[i] = "byref:" + s;
+            // A structured arg type -> ByRef(inner). Every argType is a `{t:…}` node (#48); the legacy `byref:`
+            // sig-string form is retired. Idempotent (an already-ByRef inner is left alone).
+            if (TypeJson.Read(argTypes[i]) is TypeNode tn && tn is not TypeNode.ByRef)
+                argTypes[i] = TypeJson.Write(new TypeNode.ByRef(tn));
         }
     }
 

@@ -203,10 +203,11 @@ sealed partial class Emitter
     // A type NAME slot that is NOT a structured node — a bare FQN / CLR-shorthand IDENTITY (an owner-FQN island, a
     // primitive shorthand). The legacy string-token GRAMMAR (`clr:`/`clrg:`/`array:`/`nullable:`/`func:`/`byref:`/`gp:`/`@`)
     // is retired (#48): every value type travels as a structured `{t:…}` node (MapType(TypeNode)); this string resolver
-    // handles ONLY the bare-identity slots. `stackptr` is the one pseudo-type kept.
+    // handles ONLY the bare-identity slots. `dotkt$stackptr` is the one synthetic pseudo-type kept — a canonical
+    // compiler-internal identity in the `dotkt$` synthetic namespace (#48), NOT a Kotlin/CLR type.
     Type MapType(string t)
     {
-        if (t == "stackptr") return typeof(byte).MakePointerType();   // a localloc'd stack buffer pointer (unverifiable)
+        if (t == "dotkt$stackptr") return typeof(byte).MakePointerType();   // a localloc'd stack buffer pointer (unverifiable)
         return t switch
         {
             "void" => typeof(void), "int" => typeof(int), "long" => typeof(long),

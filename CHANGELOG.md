@@ -24,6 +24,18 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   and bir2cir's `LowerTypeString` grammar-construction are deleted; bir2cir emits bare BCL FQNs. Gate: full
   `gate.sh --full` GREEN (il/schema/sanity/ktproj/roundtrip/differential-all-MATCH/widedelegates).
 
+- **kotc ([tmyt/dotkt#48], area:kotc: CLOSES #48 — the LAST string-token type grammar is deleted EVERYWHERE; kotc emits
+  structured `TypeNode` only.** Completes the kotc-owned residual the bir2cir/ilemit slice left open. (1) `callInline`'s
+  `owner`/`callee` are structured `{t:fqn}` identity nodes (owner may be JSON-null for the owner-less stdlib scope-fn
+  arm); bir2cir `InlineSplice` reads them via `TypeJson.OwnerName`. (2) An applied attribute's `attr` type is a
+  `{t:fqn}` node; kotc flags an imported .NET attribute with `"attrClr":true` (a frontend origin fact — no `clr:`
+  prefix), which bir2cir `AttrExternalNormalize` consumes into the `attrExternal` bool. (3) the `stackptr` pseudo-FQN
+  is renamed to the canonical synthetic identity `dotkt$stackptr`. `scripts/verify-schema.py` `STR_OK` drops
+  `owner`/`callee`/`attr` — every remaining entry is a genuine non-type string (member/accessor NAME islands, the
+  `ownerType` owner island, CFG/opaque payloads). Dead-data cleanup: `BirTypeLowering.LowerLeaf`'s `@`-decorated
+  dual-representation branch and `MemberCallSubstitution.WrapByref`'s `byref:` string form (both producer-dead). Gate:
+  full `gate.sh --full` GREEN; `verify-schema` 0 violations; differential MATCH unchanged.
+
 ### Fixed
 
 - **bir2cir/ilemit ([tmyt/dotkt#46], area:bir2cir, area:ilemit): CLOSED — ilemit re-resolves NOTHING on any clr*

@@ -185,7 +185,7 @@ Two entry points: `MapType(string)` (`Program.cs:3808`) — the primary resolver
 | prefix / form | line | resolves to |
 |---------------|------|-------------|
 | `byref:<T>` | 3810 | `MapType(T).MakeByRefType()` (`T&`) |
-| `stackptr` (literal) | 3811 | `byte*` |
+| `dotkt$stackptr` (literal) | 3811 | `byte*` |
 | `clr:<FQN>` | 3812 | `ResolveType(FQN)` — a referenced .NET type |
 | `array:<T>` | 3813 | `MapType(T).MakeArrayType()` |
 | `func:<ret>:<args>` | 3814 | `FuncType` → `System.Func<…>`/`Action<…>` (or synthetic delegate if arity > 16) |
@@ -280,10 +280,10 @@ Also emitted (not a `[Kotlin*]` attr but part of the model):
 ### 3a. Applied-annotation decoding (the `attr` sub-node, not a `k` node)
 
 `BuildCab` (`Emitter.Metadata.cs:86`) decodes an applied annotation from an `attrs` array element:
-reads `attr` (name), `args` (const nodes → `ConstArgValue`, :131), `argTypes` (for `clr:`-imported
-attrs, :95). `ConstArgValue` handles char-as-single-char-string coercion and numeric-type widening
-(`long`/`double`/`float`/`short`/`byte`/`char`). This is the generic path for `@KotlinDefault`,
-`@ClrRefArgument`, imported `clr:` .NET attributes (#54), etc.
+reads `attr` (a `{t:fqn}` node → `SlotName`, #48), `args` (const nodes → `ConstArgValue`, :131), `argTypes`
+(for `attrExternal`-flagged imported attrs, :95). `ConstArgValue` handles char-as-single-char-string coercion
+and numeric-type widening (`long`/`double`/`float`/`short`/`byte`/`char`). This is the generic path for
+`@KotlinDefault`, `@ClrRefArgument`, imported `attrExternal` .NET attributes (#54), etc.
 
 ### 3b. Relevance to the `(version, byte[])` carrier freeze (#37)
 

@@ -143,8 +143,11 @@ static class InlineSplice
 
     static void RewriteGeneric(JsonObject o, int depth)
     {
-        var owner = Str(o["owner"]);
-        var callee = Str(o["callee"]);
+        // owner/callee are structured `{t:fqn}` identity nodes (#48; owner may be JSON-null for the owner-less
+        // stdlib scope-fn arm) — read the bare FQN name off each. `callee` is the inline fn's Kotlin FQN identity
+        // (a dispatch key, never a value type); its simple name is the `owner|name|pc|ga` overload key.
+        var owner = TypeJson.OwnerName(o["owner"]);
+        var callee = TypeJson.OwnerName(o["callee"]);
         var name = callee != null && callee.Contains('.') ? callee[(callee.LastIndexOf('.') + 1)..] : callee;
         int pc = Int(o["pc"]);
         int ga = Int(o["ga"]);
@@ -481,7 +484,7 @@ static class InlineSplice
     {
         if (p["attrs"] is not JsonArray attrs) return null;
         foreach (var a in attrs)
-            if (a is JsonObject ao && Str(ao["attr"]) == "kotlin.clr.KotlinDefault"
+            if (a is JsonObject ao && TypeJson.OwnerName(ao["attr"]) == "kotlin.clr.KotlinDefault"
                 && ao["args"] is JsonArray args && args.Count >= 2
                 && args[1] is JsonObject bv && Str(bv["k"]) == "const"
                 && (bv["value"] as JsonValue)?.TryGetValue<string>(out var bir) == true)
@@ -675,8 +678,10 @@ static class InlineSplice
         var repl = new JsonObject
         {
             ["k"] = "callInline",
-            ["callee"] = name,
-            ["owner"] = ownerOut,
+            // owner/callee are structured `{t:fqn}` identity nodes (#48), matching kotc's callInline emit; owner is
+            // JSON-null for the owner-less kotlin.* scope-fn arm. RewriteGeneric reads both back via TypeJson.OwnerName.
+            ["callee"] = TypeJson.Fqn(name),
+            ["owner"] = ownerOut == null ? null : TypeJson.Fqn(ownerOut),
             ["pc"] = pc,
             ["ga"] = ga,
             ["paramSig"] = sig?.DeepClone() ?? new JsonArray(),
@@ -2658,7 +2663,7 @@ static class InlineSplice
         {
             if (Str(o["k"]) == "callInline")
                 throw new NotSupportedException(
-                    $"inline splice: a `callInline` (callee={Str(o["callee"])}) survived the pass un-spliced"
+                    $"inline splice: a `callInline` (callee={TypeJson.OwnerName(o["callee"])}) survived the pass un-spliced"
                     + (o.ContainsKey("pc") ? "" : " — it carries NO `pc`, so Rewrite silently skipped it")
                     + "; ilemit cannot emit a callInline. Fix the kotc emission or the splice gate.");
             foreach (var kv in o) if (kv.Value != null) AssertNoUnsplicedInline(kv.Value);
