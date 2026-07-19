@@ -82,14 +82,14 @@ sealed partial class Emitter
         t.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static);
 
     // Resolve a method for emit; out-param gives the substituted (concrete) return type for boxing decisions.
-    MethodInfo ResolveMethod(string spec, string name, out Type retType, string sig = null)
+    MethodInfo ResolveMethod(string spec, string name, out Type retType, DotKt.Bir.TypeNode[] sig = null)
         => ResolveMethod(ParseOwner(spec), name, out retType, sig);
 
     // Structured owner overload: a constructed-generic owner slot (`kotlin.Pair[int,int]`) arriving as a native
     // TypeNode.Fqn must keep its ARGS — `SlotName` collapses the Fqn to its open name, which would resolve the member
     // on the OPEN generic def (`kotlin.Pair`2::get_first`), an invalid cross-assembly memberref -> runtime
     // TypeLoadException. ParseOwnerSlot preserves the instantiation; this overload consumes the pre-parsed owner.
-    MethodInfo ResolveMethod((string open, Type constructed) owner, string name, out Type retType, string sig = null)
+    MethodInfo ResolveMethod((string open, Type constructed) owner, string name, out Type retType, DotKt.Bir.TypeNode[] sig = null)
     {
         var (open, constructed) = owner;
         // A REFERENCED generic owner constructed from PURE reflection types (NOT a TypeBuilder instantiation): resolve
@@ -98,11 +98,11 @@ sealed partial class Emitter
         // (TypeBuilder) arg stays on the TypeBuilder.GetMethod path below (reflection GetMethods throws on such a type).
         if (constructed != null && !_types.ContainsKey(open) && !IsTbInstantiation(constructed))
         {
-            var argc = sig == null ? -1 : (sig.Length == 0 ? 0 : SplitTopLevel(sig).Count);
+            var argc = sig?.Length ?? -1;
             // Prefer a SIG-DRIVEN pick: a referenced constructed-generic owner can carry same-name/same-arity overloads
             // that differ only in a PARAM's generic-type owner (SequenceScope<T>.yieldAll$dotkt_suspend over
             // Iterator<T> vs IEnumerable<T> vs Sequence<T>) — arity alone binds an arbitrary one -> BadImageFormat.
-            // FindReflectedMethodBySig maps the declared-callee `sig` tokens (structurally for open `gp:T` args) to
+            // FindReflectedMethodBySig matches the declared-callee `sig` nodes (structurally for open `Tv` args) to
             // disambiguate; fall back to the arity pick when no sig is carried (or it can't uniquely resolve).
             // A miss must be a LEGIBLE error (and lets callInstance's dynRet fallback catch it) — an unchecked
             // deref here was an opaque NRE.
@@ -445,47 +445,35 @@ sealed partial class Emitter
         return b < 0 ? n : n[..b];
     }
 
-    // name + parameter-type signature -> the overload key. `m` is a method DEF; the param types are STRUCTURED Type
-    // nodes rendered to the m3 legacy sig-token spelling (the ONE documented legacy-string exception) so a DEF-side key
-    // matches a CALL-side `sig` comma-string (kotc renders the call sig with the same legacyToken grammar; both are
-    // bir2cir-lowered to the same vocabulary, so `int` == `int` / `gp:T` == `gp:T`).
+    // name + parameter-type signature -> the overload key of the `MethodsBySig` dictionary. `m` is a method DEF; the
+    // param types are STRUCTURED Type nodes rendered to a CANONICAL overload-key encoding by SigCanon. Both sides of
+    // every lookup render through SigCanon (def key here; call key `SigKey(name, TypeNode[])` below), so the key is a
+    // pure internal hash string — NOT a wire type spelling (a Type never travels as this string; #48).
     static string SigKey(string name, JsonElement methodDef) =>
-        StripSigPrefixes(name + "(" + string.Join(",", methodDef.GetProperty("params").EnumerateArray().Select(p => SigTokenOf(p.GetProperty("type")))) + ")");
+        name + "(" + string.Join(",", methodDef.GetProperty("params").EnumerateArray().Select(p => SigCanon(DotKt.Bir.TypeNode.Read(p.GetProperty("type"))))) + ")";
 
-    static string SigKey(string name, string sig) => StripSigPrefixes(name + "(" + sig + ")");
+    static string SigKey(string name, DotKt.Bir.TypeNode[] sig) =>
+        name + "(" + string.Join(",", sig.Select(SigCanon)) + ")";
 
-    // The `clr:`/`clrg:` RESOLUTION-PREFIX vocabulary is a CALL-side spelling (bir2cir's legacy sig-token string) that
-    // the structured `SigTokenOf` (DEF side, post type-flip) no longer emits — a bare FQN Fqn node produces
-    // `System...IDictionary[gp:T,gp:T]`, not `clrg:System...IDictionary[...]`. That asymmetry made the exact SigKey
-    // lookup miss (e.g. `map += pair`'s `plusAssign` on `IDictionary<K,V>`), so FindStatic fell through to an arbitrary
-    // name-only overload (Atomics.plusAssign) -> type-mismatched IL -> InvalidProgramException. Strip the prefixes on
-    // BOTH sides so def-key and call-sig agree. (`clr:` is not a substring of `clrg:`, so replacement order is moot.)
-    static string StripSigPrefixes(string sig) => sig.Replace("clrg:", "").Replace("clr:", "");
-
-    // The m3 legacy sig-token spelling of a type SLOT (structured Type node -> token; a legacy string passes verbatim).
-    // Mirrors kotc.bir.TypeNode.legacyToken (a type var collapses to `gp:T`), so def-side and call-side sigs agree.
-    static string SigTokenOf(JsonElement e) =>
-        e.ValueKind == JsonValueKind.String ? e.GetString()
-        : e.ValueKind == JsonValueKind.Object ? SigTokenOf(DotKt.Bir.TypeNode.Read(e))
-        : "object";
-
-    // The call node's `sig` — a STRUCTURED TypeNode array (#37 m3b) — rendered to the canonical overload-key token
-    // string that the KEPT SigKey/SigTokenMatches machinery matches against a def's SigKey (both call- and def-side
-    // walk the same structured TypeNodes via SigTokenOf, so the keys agree). Null when the node carries no `sig`
-    // array; "" for an empty (nullary) sig (the existing sig.Length==0 -> argc 0 convention).
-    static string SigString(JsonElement e) =>
+    // The call node's `sig` — a STRUCTURED TypeNode array (#37 m3b) — read into TypeNode[] for the structural overload
+    // match (`Matches`) and the canonical `SigKey`. Null when the node carries no `sig` array; empty array for a nullary
+    // sig (`sig.Length == 0` -> argc 0 convention).
+    static DotKt.Bir.TypeNode[] SigNodes(JsonElement e) =>
         e.TryGetProperty("sig", out var s) && s.ValueKind == JsonValueKind.Array
-            ? string.Join(",", s.EnumerateArray().Select(SigTokenOf))
+            ? s.EnumerateArray().Select(DotKt.Bir.TypeNode.Read).ToArray()
             : null;
 
-    static string SigTokenOf(DotKt.Bir.TypeNode t) => t switch
+    // The CANONICAL overload-key encoding of a Type node (a type variable collapses to a single wildcard, so def-side
+    // and call-side keys agree wherever the shape matches). An internal dictionary-hash spelling — never parsed back and
+    // never on the wire; the structural `Matches` (not this string) does the actual type comparison against reflection.
+    static string SigCanon(DotKt.Bir.TypeNode t) => t switch
     {
-        DotKt.Bir.TypeNode.Fqn f => f.Args == null ? f.Name : f.Name + "[" + string.Join(",", f.Args.Select(SigTokenOf)) + "]",
+        DotKt.Bir.TypeNode.Fqn f => f.Args == null ? f.Name : f.Name + "[" + string.Join(",", f.Args.Select(SigCanon)) + "]",
         DotKt.Bir.TypeNode.Tv => "gp:T",
-        DotKt.Bir.TypeNode.Fn fn => (fn.Suspend ? "sfunc:" : "func:") + SigTokenOf(fn.Ret) + ":" + string.Join(",", fn.DelegateParams.Select(SigTokenOf)),
-        DotKt.Bir.TypeNode.Nullable n => "nullable:" + SigTokenOf(n.Of),
-        DotKt.Bir.TypeNode.Array a => "array:" + SigTokenOf(a.Elem),
-        DotKt.Bir.TypeNode.ByRef b => "byref:" + SigTokenOf(b.Of),
+        DotKt.Bir.TypeNode.Fn fn => (fn.Suspend ? "sfunc:" : "func:") + SigCanon(fn.Ret) + ":" + string.Join(",", fn.DelegateParams.Select(SigCanon)),
+        DotKt.Bir.TypeNode.Nullable n => "nullable:" + SigCanon(n.Of),
+        DotKt.Bir.TypeNode.Array a => "array:" + SigCanon(a.Elem),
+        DotKt.Bir.TypeNode.ByRef b => "byref:" + SigCanon(b.Of),
         _ => "object",
     };
 
@@ -520,45 +508,7 @@ sealed partial class Emitter
         return cand;
     }
 
-    // Canonicalize the generic-parameter NAMES in a sig by their order of first appearance (`gp:E,gp:E` -> `gp:#0,gp:#0`;
-    // `gp:K,gp:V` -> `gp:#0,gp:#1`). A method DEF names its OWN type parameter (`addAll<E>` -> `...[gp:E]`), but a CALL
-    // from inside another generic names the same slot by the CALLER's parameter (`plus<T>` calling addAll -> `...[gp:T]`),
-    // so the verbatim SigKey strings differ and MethodsBySig misses even though the overload is the intended one. The sig
-    // SHAPE (which slot uses which type param, in which order) is identical across def and call — only the names differ —
-    // so first-appearance ordinals make them agree, distinguishing `addAll(List,coll)` from `addAll(List,int,coll)`.
-    static string NormalizeGpNames(string sig)
-    {
-        var map = new Dictionary<string, int>(StringComparer.Ordinal);
-        return System.Text.RegularExpressions.Regex.Replace(sig, @"gp:([A-Za-z_][A-Za-z0-9_]*)", m =>
-        {
-            var nm = m.Groups[1].Value;
-            if (!map.TryGetValue(nm, out var idx)) { idx = map.Count; map[nm] = idx; }
-            return "gp:#" + idx;
-        });
-    }
-
-    // The exact SigKey missed (a generic method whose sig mentions a `gp:` — def-side name != call-side name). Match by
-    // the NAME-CANONICALIZED sig instead (first-appearance ordinals), returning the UNIQUE overload of `name` whose
-    // normalized def-sig equals the normalized call-sig. Null on no/ambiguous match (keeps the existing fallbacks). Only
-    // consulted after the exact lookup, so it never overrides a precise match — it recovers the cross-generic-rename case.
-    MethodBuilder FindByNormalizedSig(TypeInfo ti, string name, string sig)
-    {
-        if (sig == null || !sig.Contains("gp:", StringComparison.Ordinal)) return null;
-        var want = NormalizeGpNames(sig);
-        var prefix = name + "(";
-        MethodBuilder cand = null;
-        foreach (var kv in ti.MethodsBySig)
-        {
-            if (!kv.Key.StartsWith(prefix, StringComparison.Ordinal) || !kv.Key.EndsWith(")", StringComparison.Ordinal)) continue;
-            var defSig = kv.Key.Substring(prefix.Length, kv.Key.Length - prefix.Length - 1);
-            if (NormalizeGpNames(defSig) != want) continue;
-            if (cand != null && !ReferenceEquals(cand, kv.Value)) return null;   // ambiguous
-            cand = kv.Value;
-        }
-        return cand;
-    }
-
-    MethodInfo FindMethod(string typeName, string name, string sig = null)
+    MethodInfo FindMethod(string typeName, string name, DotKt.Bir.TypeNode[] sig = null)
     {
         typeName = NativeArrayOwner(typeName);
         var seenIfaces = new HashSet<string>();
@@ -572,7 +522,6 @@ sealed partial class Emitter
                 if (!_types.ContainsKey(open)) continue;   // referenced interfaces reflected at the FindMethod loop level
                 if (!seenIfaces.Add(open) || !_types.TryGetValue(open, out var iti)) continue;
                 if (sig != null && iti.MethodsBySig.TryGetValue(SigKey(name, sig), out var ms)) return ms;
-                if (sig != null && FindByNormalizedSig(iti, name, sig) is { } insm) return insm;
                 if (sig != null && UniqueGenericOverload(iti, name) is { } igm) return igm;
                 if (iti.Methods.TryGetValue(name, out var m)) return m;
                 var inherited = FindInInterfaces(iti);
@@ -609,7 +558,7 @@ sealed partial class Emitter
             // then picks arbitrarily (reflection order) -> the wrong body runs (a String passed where the CharSequence
             // interface is expected -> EntryPointNotFound). Resolve by the FULL `sig` first (the same signature-keyed
             // disambiguation the in-`_types` path does via MethodsBySig); fall back to the arity pick on any miss.
-            var extArgc = sig == null ? -1 : (sig.Length == 0 ? 0 : SplitTopLevel(sig).Count);
+            var extArgc = sig?.Length ?? -1;
             return FindReflectedMethodBySig(ext, name, sig) ?? FindReflectedMethod(ext, name, extArgc);
         }
         // Walk this type's own members, then its EMITTED base/interface chain. If the base is NOT emitted here (an
@@ -618,7 +567,6 @@ sealed partial class Emitter
         for (var ti = _types[typeName]; ti != null; ti = ti.BaseName != null && _types.ContainsKey(BareTypeKey(ti.BaseName)) ? _types[BareTypeKey(ti.BaseName)] : null)
         {
             if (sig != null && ti.MethodsBySig.TryGetValue(SigKey(name, sig), out var ms)) return ms;
-            if (sig != null && FindByNormalizedSig(ti, name, sig) is { } nsm) return nsm;
             if (sig != null && UniqueGenericOverload(ti, name) is { } gm) return gm;
             if (ti.Methods.TryGetValue(name, out var m)) return m;
             var im = FindInInterfaces(ti);
@@ -684,114 +632,119 @@ sealed partial class Emitter
         return null;
     }
 
-    // STRUCTURAL match for a sig token MapType could not resolve (an open generic-parameter token from the declared
-    // callee's sig, e.g. `gp:T` / `array:gp:T` / `clrg:Collection[gp:T]`, unbound at a cross-module call site):
-    // the token's SHAPE must agree with the candidate parameter's (generic param / array-of / constructed-generic).
-    // Concrete tokens never reach here (MapType resolves them), so this cannot loosen an exact-type comparison.
-    bool SigTokenMatchesOpen(string tok, Type p)
+    // STRUCTURAL match for a sig type node MapType could not resolve (an OPEN node carrying a type variable from the
+    // declared callee's sig, e.g. `Tv` / `array:Tv` / `Collection[Tv]`, unbound at a cross-module call site): the
+    // node's SHAPE must agree with the candidate parameter's (generic param / array-of / constructed-generic). Concrete
+    // nodes never reach here (Matches resolves them via MapType), so this cannot loosen an exact-type comparison.
+    bool MatchesOpen(DotKt.Bir.TypeNode t, Type p)
     {
-        if (tok.StartsWith("byref:", StringComparison.Ordinal))
-            return p.IsByRef && SigTokenMatches(tok.Substring(6), p.GetElementType());
-        if (tok.StartsWith("array:", StringComparison.Ordinal))
-            return p.IsArray && SigTokenMatches(tok.Substring(6), p.GetElementType());
-        if (tok.StartsWith("nullable:", StringComparison.Ordinal))
-            return SigTokenMatches(tok.Substring(9), p.IsGenericType && p.GetGenericTypeDefinition() == typeof(Nullable<>) ? p.GetGenericArguments()[0] : p);
-        if (tok.StartsWith("gp:", StringComparison.Ordinal)) return p.IsGenericParameter || _sigConstructedOwner;
-        // A constructed-generic owner token: either the legacy `clrg:Owner[args]` spelling OR — post #37 m3b type-path
-        // structuring, where the CALL-side sig is rendered from structured TypeNodes via SigTokenOf which drops the
-        // `clrg:` resolution prefix — a BARE `Owner[args]` (top-level `[`, no prefix-colon in the owner head; a `gp:`/
-        // `func:` argument's colon sits AFTER the bracket). Both route to the generic-owner-definition match.
+        switch (t)
         {
-            var genBr = tok.IndexOf('[');
-            var isClrg = tok.StartsWith("clrg:", StringComparison.Ordinal);
-            var firstColon = tok.IndexOf(':');
-            var isBareGeneric = !isClrg && genBr > 0 && tok.EndsWith("]", StringComparison.Ordinal)
-                && (firstColon < 0 || firstColon > genBr);
-            if (!isClrg && !isBareGeneric) goto notGeneric;
-            // Match on the generic-type-DEFINITION owner, not just "is a constructed generic": several same-arity
-            // overloads (SequenceScope.yieldAll over Iterator<T> / IEnumerable<T> / Sequence<T>) all satisfy
-            // IsGenericType, so the loose test binds an arbitrary one. The token's arg (`gp:T`) stays open, but its
-            // OWNER (`System.Collections.Generic.IEnumerable`) still distinguishes IEnumerable<T> from Iterator<T>.
-            if (!p.IsGenericType) return false;
-            var body = isClrg ? tok.Substring(5) : tok;
-            var br = body.IndexOf('[');
-            var openName = br < 0 ? body : body.Substring(0, br);
-            var argToks = br < 0 ? new List<string>() : SplitTopLevel(body.Substring(br + 1, body.Length - br - 2)).ToList();
-            var def = TryResolveType(openName + "`" + argToks.Count);
-            // Owner unresolvable (a Kotlin-only alias not in any referenced .NET assembly, e.g. `clrg:Collection[..]`
-            // as a bare name) -> keep the OLD loose shape match rather than falsely reject (strictly additive).
-            if (def == null) return true;
-            if (!ReferenceEquals(p.GetGenericTypeDefinition(), def)) return false;
-            // Recurse into the constructed generic's TYPE-ARGUMENTS. An open token arg (`gp:T`) must line up with a
-            // generic-parameter position, so `IEnumerable[gp:T]` selects the GENERIC overload `maxOrNull<T>(IEnumerable<T>)`
-            // and rejects the Double-specialized `maxOrNull(IEnumerable<Double>)` (whose arg is the concrete Double). A
-            // concrete sub-token likewise requires the candidate's actual type-argument to equal it (via SigTokenMatches).
-            var actualArgs = p.GetGenericArguments();
-            for (var i = 0; i < argToks.Count && i < actualArgs.Length; i++)
-                if (!SigTokenMatches(argToks[i], actualArgs[i])) return false;
-            return true;
-        }
-        notGeneric:
-        if (tok.StartsWith("func:", StringComparison.Ordinal))
-        {
-            // `func:<ret>:<arg1>,<arg2>,...` -> Func<arg1,...,argN,ret> (or Action<...> when ret==void). Match the
-            // return type AND each parameter type structurally so overloads that differ ONLY by the selector's return
-            // type stay distinguishable — e.g. `sumOf`'s Int/Long/Double/UInt/ULong family, where the loose "any Func"
-            // test used to collapse them all onto the first-reflected (Double) overload -> wrong body / 0 result.
-            if (!p.IsGenericType) return false;
-            var rest = tok.Substring(5);
-            var colon = FuncRetEnd(rest);
-            var retTok = rest.Substring(0, colon);
-            var argsPart = colon < rest.Length ? rest.Substring(colon + 1) : "";
-            var argToks = argsPart.Length == 0 ? new List<string>() : SplitTopLevel(argsPart).ToList();
-            var gargs = p.GetGenericArguments();
-            if (retTok == "void")
+            case DotKt.Bir.TypeNode.ByRef b:
+                return p.IsByRef && Matches(b.Of, p.GetElementType());
+            case DotKt.Bir.TypeNode.Array a:
+                return p.IsArray && Matches(a.Elem, p.GetElementType());
+            case DotKt.Bir.TypeNode.Nullable n:
+                return Matches(n.Of, p.IsGenericType && p.GetGenericTypeDefinition() == typeof(Nullable<>) ? p.GetGenericArguments()[0] : p);
+            case DotKt.Bir.TypeNode.Oblivious ob:
+                return Matches(ob.Of, p);   // a pure nullability annotation — the inner keeps this node's position
+            // A type variable: the candidate must be a generic-parameter slot (`gp:T`). When the owner is a CONSTRUCTED
+            // generic (SequenceScope<String>) the caller's own open param is bound by that same instantiation, so any
+            // concrete arg is accepted (_sigConstructedOwner) — see FindReflectedMethodBySig.
+            case DotKt.Bir.TypeNode.Tv:
+                return p.IsGenericParameter || _sigConstructedOwner;
+            // A constructed generic `Owner[args]` (structured Fqn with Args): match on the generic-type-DEFINITION owner,
+            // not just "is a constructed generic" — several same-arity overloads (SequenceScope.yieldAll over
+            // Iterator<T> / IEnumerable<T> / Sequence<T>) all satisfy IsGenericType, so the loose test binds an
+            // arbitrary one; the OWNER (`System.Collections.Generic.IEnumerable`) still distinguishes them.
+            case DotKt.Bir.TypeNode.Fqn { Args: { } fargs } f:
             {
-                if (gargs.Length != argToks.Count) return true;   // shape mismatch (Func vs Action) -> keep loose accept
-                for (var i = 0; i < argToks.Count; i++)
-                    if (!SigTokenMatches(argToks[i], gargs[i])) return false;
+                if (!p.IsGenericType) return false;
+                var def = TryResolveType(f.Name + "`" + fargs.Length);
+                // Owner unresolvable (a Kotlin-only alias not in any referenced .NET assembly) -> keep the loose shape
+                // match rather than falsely reject (strictly additive).
+                if (def == null) return true;
+                if (!ReferenceEquals(p.GetGenericTypeDefinition(), def)) return false;
+                // Recurse into the type-ARGUMENTS. An open arg (`Tv`) must line up with a generic-parameter position, so
+                // `IEnumerable[Tv]` selects `maxOrNull<T>(IEnumerable<T>)` over the Double-specialized sibling; a concrete
+                // sub-node requires the candidate's actual type-argument to equal it.
+                var actualArgs = p.GetGenericArguments();
+                for (var i = 0; i < fargs.Length && i < actualArgs.Length; i++)
+                    if (!Matches(fargs[i], actualArgs[i])) return false;
                 return true;
             }
-            if (gargs.Length != argToks.Count + 1) return true;   // shape mismatch -> keep loose accept
-            for (var i = 0; i < argToks.Count; i++)
-                if (!SigTokenMatches(argToks[i], gargs[i])) return false;
-            return SigTokenMatches(retTok, gargs[gargs.Length - 1]);
+            // A (non-suspend) function type -> Func<...>/Action<...>. Match the return type AND each parameter type
+            // structurally so overloads that differ ONLY by the selector's return type stay distinguishable — e.g.
+            // `sumOf`'s Int/Long/Double/UInt/ULong family. A suspend fn never exact-matches (it renders no delegate
+            // slot here) -> false, mirroring the pre-#48 `sfunc:` fall-through.
+            case DotKt.Bir.TypeNode.Fn { Suspend: false } fn:
+            {
+                if (!p.IsGenericType) return false;
+                var dparams = fn.DelegateParams;
+                var gargs = p.GetGenericArguments();
+                var retVoid = fn.Ret is DotKt.Bir.TypeNode.Fqn { Args: null, Name: "void" };
+                if (retVoid)
+                {
+                    if (gargs.Length != dparams.Length) return true;   // shape mismatch (Func vs Action) -> loose accept
+                    for (var i = 0; i < dparams.Length; i++)
+                        if (!Matches(dparams[i], gargs[i])) return false;
+                    return true;
+                }
+                if (gargs.Length != dparams.Length + 1) return true;   // shape mismatch -> loose accept
+                for (var i = 0; i < dparams.Length; i++)
+                    if (!Matches(dparams[i], gargs[i])) return false;
+                return Matches(fn.Ret, gargs[gargs.Length - 1]);
+            }
+            default:
+                return false;
         }
-        return false;
     }
 
-    // Combined sig-token match: a token MapType can fully resolve here (no unbound `gp:`) must EQUAL the candidate's
-    // type exactly; an unresolvable token falls to the structural open-token shape match. Used to recurse into a
-    // constructed-generic type-argument or a func's return/param slot, so a concrete inner token (a func's Int-vs-Double
-    // return, `IEnumerable[Double]` vs `[gp:T]`) is still discriminating instead of collapsing onto the loose shape.
-    bool SigTokenMatches(string tok, Type p)
+    // Combined structural match: a node with NO unbound type variable (and no suspend fn) that MapType can fully resolve
+    // must EQUAL the candidate's type exactly; anything open falls to the structural shape match. Used to recurse into a
+    // constructed-generic type-argument or a func's ret/param slot, so a concrete inner node (a func's Int-vs-Double
+    // return, `IEnumerable[Double]` vs `[Tv]`) stays discriminating instead of collapsing onto the loose shape.
+    bool Matches(DotKt.Bir.TypeNode t, Type p)
     {
-        // A token mentioning an unbound `gp:` is inherently OPEN — compare by SHAPE. (MapType would either throw or,
-        // for a bare `gp:T`, resolve it to a placeholder Type that never ReferenceEquals the candidate's actual generic
-        // parameter, wrongly rejecting the right overload -> arity fallback picks the wrong one. e.g. yieldAll's
-        // IEnumerable<T> overload lost to the first-reflected Iterator<T>.) Only a fully-concrete token uses MapType.
-        if (!tok.Contains("gp:", StringComparison.Ordinal))
+        // A node mentioning a type variable is inherently OPEN — compare by SHAPE (MapType would resolve a `Tv` to a
+        // placeholder that never ReferenceEquals the candidate's actual generic parameter, wrongly rejecting the right
+        // overload). A suspend fn likewise routes to the structural path (-> false). Only a fully-concrete node uses MapType.
+        if (!MentionsOpen(t))
         {
-            Type want; try { want = MapType(tok); } catch { want = null; }
+            Type want; try { want = MapType(t); } catch { want = null; }
             if (want != null) return want == p;
         }
-        return SigTokenMatchesOpen(tok, p);
+        return MatchesOpen(t, p);
     }
 
+    // True iff the node carries a type variable or a suspend function type anywhere — the "open, compare structurally"
+    // predicate (the structured successor of the old `tok.Contains("gp:")` test, plus the suspend-fn exclusion).
+    static bool MentionsOpen(DotKt.Bir.TypeNode t) => t switch
+    {
+        DotKt.Bir.TypeNode.Tv => true,
+        DotKt.Bir.TypeNode.Fn { Suspend: true } => true,
+        DotKt.Bir.TypeNode.Fn fn => MentionsOpen(fn.Ret) || fn.DelegateParams.Any(MentionsOpen),
+        DotKt.Bir.TypeNode.Fqn { Args: { } fa } => fa.Any(MentionsOpen),
+        DotKt.Bir.TypeNode.Nullable n => MentionsOpen(n.Of),
+        DotKt.Bir.TypeNode.Oblivious ob => MentionsOpen(ob.Of),
+        DotKt.Bir.TypeNode.Array a => MentionsOpen(a.Elem),
+        DotKt.Bir.TypeNode.ByRef b => MentionsOpen(b.Of),
+        _ => false,
+    };
+
     // Sig-aware overload pick on a REFERENCED file-class: several methods can share name+arity but differ in PARAM
-    // TYPES (a String-face vs a `dotkt$CharSequence`-face stdlib extension). Map each `sig` token to its Type and
-    // require an EXACT full match against a reflected overload's parameters; return the UNIQUE match, or null on a
-    // miss/ambiguity so the caller falls back to the arity pick (never a regression — this only ADDS disambiguation).
-    // A token that MapType can't resolve here (an unbound `gp:T`, a not-yet-emitted type) yields no match -> fall back.
-    MethodInfo FindReflectedMethodBySig(Type ext, string name, string sig)
+    // TYPES (a String-face vs a `dotkt$CharSequence`-face stdlib extension). Match each `sig` type node against a
+    // reflected overload's parameters; return the UNIQUE match, or null on a miss/ambiguity so the caller falls back to
+    // the arity pick (never a regression — this only ADDS disambiguation). An open node (a `Tv`, a not-yet-emitted type)
+    // matches structurally, so a genuine generic overload is still selected.
+    MethodInfo FindReflectedMethodBySig(Type ext, string name, DotKt.Bir.TypeNode[] sig)
     {
         if (sig == null) return null;
-        var toks = sig.Length == 0 ? new List<string>() : SplitTopLevel(sig).ToList();
         var bf = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance;
         // When `ext` is a CONSTRUCTED generic (SequenceScope<String>), its methods' params reflect the instantiation
-        // (IEnumerable<String>, not IEnumerable<T>) — so a `gp:T` token, which is the caller's OWN open param bound by
-        // that same instantiation, must match the concrete arg. When `ext` is OPEN/non-generic (the static _CollectionsKt),
-        // a `gp:T` token discriminates the method-generic overload (`maxOrNull<T>(IEnumerable<T>)`) from a concrete
+        // (IEnumerable<String>, not IEnumerable<T>) — so a `Tv`, which is the caller's OWN open param bound by that
+        // same instantiation, must match the concrete arg. When `ext` is OPEN/non-generic (the static _CollectionsKt),
+        // a `Tv` discriminates the method-generic overload (`maxOrNull<T>(IEnumerable<T>)`) from a concrete
         // sibling (`maxOrNull(IEnumerable<Double>)`), so it must require a genuine generic-parameter arg.
         _sigConstructedOwner = ext.IsConstructedGenericType;
         MethodInfo match = null;
@@ -799,18 +752,17 @@ sealed partial class Emitter
         {
             if (m.Name != name) continue;
             var ps = m.GetParameters();
-            if (ps.Length != toks.Count) continue;
+            if (ps.Length != sig.Length) continue;
             var ok = true;
             for (var i = 0; i < ps.Length; i++)
-                // SigTokenMatches is the combined matcher: a fully-CONCRETE token (no `gp:`) requires an EXACT type
-                // (so a String-face overload isn't confused with a CharSequence-face one), while ANY token mentioning
-                // `gp:` is compared STRUCTURALLY — even when it happens to resolve here. That last point is essential:
-                // a call from INSIDE a generic method (`fun <T> mx(c) = c.maxOrNull()`) carries `sig=IEnumerable[gp:T]`
-                // where `gp:T` resolves to the CALLER's own T builder; an exact compare against the callee's OWN `T`
-                // never matches, dropping to the arity fallback which arbitrarily picks a specialized sibling
-                // (`maxOrNull(IEnumerable<Double>)`). The structural path selects the generic `maxOrNull<T>(IEnumerable<T>)`
-                // in both the generic-caller and the non-generic-caller case. (Mirrors the in-`_types` MethodsBySig keys.)
-                if (!SigTokenMatches(toks[i], ps[i].ParameterType)) { ok = false; break; }
+                // Matches is the combined matcher: a fully-CONCRETE node requires an EXACT type (so a String-face
+                // overload isn't confused with a CharSequence-face one), while ANY node mentioning a type variable is
+                // compared STRUCTURALLY — even when it happens to resolve here. That last point is essential: a call
+                // from INSIDE a generic method (`fun <T> mx(c) = c.maxOrNull()`) carries `sig=IEnumerable[Tv]` where the
+                // Tv is the CALLER's own T; an exact compare against the callee's OWN `T` never matches, dropping to the
+                // arity fallback which arbitrarily picks a specialized sibling. The structural path selects the generic
+                // overload in both cases. (Mirrors the in-`_types` MethodsBySig keys.)
+                if (!Matches(sig[i], ps[i].ParameterType)) { ok = false; break; }
             if (!ok) continue;
             if (match != null)
             {
@@ -827,16 +779,11 @@ sealed partial class Emitter
         return match;
     }
 
-    MethodBuilder FindStatic(string name, string sig = null)
+    MethodBuilder FindStatic(string name, DotKt.Bir.TypeNode[] sig = null)
     {
         if (sig != null)
             foreach (var ti in _types.Values)
                 if (ti.IsFileClass && ti.MethodsBySig.TryGetValue(SigKey(name, sig), out var ms)) return ms;
-        // exact-sig miss on a generic method whose sig carries a `gp:` — the DEF names its own type param but the CALL
-        // names it by the caller's (a top-level static called from inside a generic): match by the name-canonicalized sig.
-        if (sig != null)
-            foreach (var ti in _types.Values)
-                if (ti.IsFileClass && FindByNormalizedSig(ti, name, sig) is { } nsm) return nsm;
         // exact-sig miss with a generic target -> the unique generic overload (its instantiated call sig won't match).
         if (sig != null)
             foreach (var ti in _types.Values)

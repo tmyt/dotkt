@@ -305,7 +305,7 @@ sealed partial class Emitter
                 while (ifWork.Count > 0)
                 {
                     var specFqn = ifWork.Dequeue();
-                    var spec = SigTokenOf(specFqn);          // the canonical key + a legacy-ish token for the string helpers below
+                    var spec = SigCanon(specFqn);            // the canonical overload/dedup key for this interface spec
                     var specName = specFqn.Name;
                     if (!ifSeen.Add(spec)) continue;
                     // The reverse GetEnumerator bridge fires below on a `clr:`/`clrg:` collection interface (the form
@@ -410,7 +410,7 @@ sealed partial class Emitter
                             // the sig-token spelling — matched against the class's own MethodsBySig (a nested value-class
                             // arg like Continuation.resumeWith(Result<T>) substitutes correctly, not just a bare gp).
                             var subSig = imName + "(" + string.Join(",", imDef.GetProperty("params").EnumerateArray()
-                                .Select(p => SigTokenOf(SubstTv(DotKt.Bir.TypeNode.Read(p.GetProperty("type")), specArgs)))) + ")";
+                                .Select(p => SigCanon(SubstTv(DotKt.Bir.TypeNode.Read(p.GetProperty("type")), specArgs)))) + ")";
                             // Only wire an EXACT signature match. A miss means the class doesn't override this exact
                             // overload (e.g. it lacks the JVM remove(K,V):Boolean default) -> SKIP rather than mis-wire a
                             // different overload; for a Kotlin interface the same-name+sig method resolves implicitly anyway.
@@ -742,7 +742,7 @@ sealed partial class Emitter
         isStatic = isStatic || m.GetProperty("static").GetBoolean();
         var objOverride = m.TryGetProperty("objectOverride", out var oo) && oo.GetBoolean();
         // Overriding a .NET base virtual (e.g. `override val Message`) reuses the base slot, like an object-method.
-        var clrOverride = m.TryGetProperty("clrOverride", out var co) ? co.GetString() : null;
+        var clrOverride = m.TryGetProperty("clrOverride", out var co) ? SlotName(co) : null;
         // An interface method with a DEFAULT body -> a CLR default interface method (Virtual|NewSlot, real IL body in
         // Pass 4); a bare slot (no body) stays Virtual|Abstract|NewSlot. (A Kotlin interface default impl, e.g.
         // CoroutineContext.plus, must carry its body so non-overriding implementers inherit it instead of failing load.)

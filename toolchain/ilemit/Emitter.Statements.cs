@@ -264,7 +264,7 @@ sealed partial class Emitter
                 // kotlin.ranges knowledge -- it resolves the accessors generically on whatever type the CIR layer names.
                 var rngT = EmitExpr(s.GetProperty("range"));
                 var rngLocal = _il.DeclareLocal(rngT); _il.Emit(OpCodes.Stloc, rngLocal);
-                var accessOwner = s.GetProperty("accessOwner").GetString();
+                var accessOwner = SlotName(s.GetProperty("accessOwner"));
                 if (!_types.TryGetValue(accessOwner, out var prog))
                     throw new NotSupportedException($"forRange: {accessOwner} not emitted in this assembly");
                 var i = _il.DeclareLocal(typeof(int)); _locals[s.GetProperty("var").GetString()] = i;

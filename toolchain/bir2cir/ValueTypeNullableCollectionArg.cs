@@ -73,7 +73,7 @@ static class ValueTypeNullableCollectionArg
         args[0] = new JsonObject
         {
             ["k"] = "clrGenericStatic",
-            ["type"] = "System.Linq.Enumerable",
+            ["type"] = TypeJson.Fqn("System.Linq.Enumerable"),
             ["method"] = "Cast",
             // typeArgs is a document type slot (ilemit MapType-resolves it) -> a structured `{t:fqn}` node. `memberSig`
             // (W1-S1 #46) is the FIR-resolved member descriptor: `Enumerable.Cast<TResult>(this IEnumerable source)`'s

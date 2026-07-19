@@ -47,10 +47,10 @@ sealed partial class Emitter
     {
         var attr = a.GetProperty("attr").GetString();
         var args = a.GetProperty("args").EnumerateArray().Select(ConstArgValue).ToArray();
-        if (attr.StartsWith("clr:"))
+        if (a.TryGetProperty("attrExternal", out var extF) && extF.GetBoolean())
         {
-            // An imported .NET attribute (#54): bind its real constructor (resolved by the declared arg types,
-            // falling back to arity) and apply it with the constant args.
+            // An EXTERNAL .NET attribute (#54/#48): its type lives in a referenced assembly, not this one — bind its
+            // real constructor (resolved by the declared arg types, falling back to arity) and apply it with the args.
             var at = ClrRef(attr);
             var argTypes = a.GetProperty("argTypes").EnumerateArray().Select(s => ClrRef(s)).ToArray();
             var nctor = at.GetConstructor(argTypes)
@@ -95,8 +95,8 @@ sealed partial class Emitter
     }
 
     // Stamp each CIR `attrs` entry of a field/property/return-parameter decl onto its builder — the SAME generic
-    // BuildCab path the type/method/param sites use. Skips an attr whose type is neither clr:-imported nor emitted in
-    // this assembly (BuildCab would KeyNotFound) — the CLR layer decides what is encodable. bir2cir (RoundtripMetadata)
+    // BuildCab path the type/method/param sites use. Skips an attr whose type is neither `attrExternal`-flagged nor
+    // emitted in this assembly (BuildCab would KeyNotFound) — the CLR layer decides what is encodable. bir2cir (RoundtripMetadata)
     // folds the round-trip metadata ([KotlinReadOnly]/[KotlinSuspendFunctionType]/[Nullable]/…) into these arrays;
     // ilemit only STAMPS. `set` is FieldBuilder/PropertyBuilder/ParameterBuilder.SetCustomAttribute.
     void StampMemberAttrs(Action<CustomAttributeBuilder> set, JsonElement decl)
@@ -105,7 +105,8 @@ sealed partial class Emitter
         foreach (var a in attrs.EnumerateArray())
         {
             var an = a.GetProperty("attr").GetString();
-            if (!an.StartsWith("clr:", StringComparison.Ordinal) && !_types.ContainsKey(an)) continue;
+            var anExternal = a.TryGetProperty("attrExternal", out var anExt) && anExt.GetBoolean();
+            if (!anExternal && !_types.ContainsKey(an)) continue;
             var cab = BuildCab(a); if (cab != null) set(cab);
         }
     }
@@ -182,14 +183,15 @@ sealed partial class Emitter
             // `vararg xs: T` -> [ParamArray] so the .NET signature is a params array (a C# OR Kotlin consumer can spread).
             if (vararg) pb.SetCustomAttribute(new CustomAttributeBuilder(typeof(ParamArrayAttribute).GetConstructor(Type.EmptyTypes), new object[0]));
             if (hasDefault) { try { pb.SetConstant(ConstArgValue(dflt)); } catch { } }
-            // Apply each param attribute whose type this assembly can encode (in-assembly emitted type or a clr:-imported
-            // one); an attr referencing a type not in `_types` is skipped (BuildCab would KeyNotFound) — the same "the CLR
-            // layer decides what is encodable" policy the method-level attr path uses.
+            // Apply each param attribute whose type this assembly can encode (an in-assembly emitted type, or an
+            // `attrExternal`-flagged referenced type); an attr referencing a type not in `_types` is skipped (BuildCab
+            // would KeyNotFound) — the same "the CLR layer decides what is encodable" policy the method-level path uses.
             if (hasAttrs)
                 foreach (var a in pattrs.EnumerateArray())
                 {
                     var an = a.GetProperty("attr").GetString();
-                    if (!an.StartsWith("clr:", StringComparison.Ordinal) && !_types.ContainsKey(an)) continue;
+                    var anExternal = a.TryGetProperty("attrExternal", out var anExt) && anExt.GetBoolean();
+                    if (!anExternal && !_types.ContainsKey(an)) continue;
                     var cab = BuildCab(a); if (cab != null) pb.SetCustomAttribute(cab);
                 }
             i++;

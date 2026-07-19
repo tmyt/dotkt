@@ -50,7 +50,7 @@ static partial class ClrMemberResolution
         // W1-S4 (#46/#183): a method DECLARATION overriding a .NET base-CLASS virtual (accessor) carries `clrOverride`
         // (the base owner FQN, from DeclarationRename) but no `k` — resolve its base virtual off the ref.dll and carry
         // `clrOverrideSig` so ilemit links the exact base slot (no name-only first-pick).
-        if (node["clrOverride"] is JsonValue) ResolveOverrideBase(node);
+        if (node["clrOverride"] != null) ResolveOverrideBase(node);
         switch ((node["k"] as JsonValue)?.GetValue<string>())
         {
             case "newClr": ResolveCtor(node); break;
