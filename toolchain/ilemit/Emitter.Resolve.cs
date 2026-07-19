@@ -173,31 +173,6 @@ sealed partial class Emitter
         return null;
     }
 
-    // A property read/write on an EXTERNAL type must go through the public accessor (`get_`/`set_<name>`), NOT the
-    // backing field: the CLR property model gives every Kotlin property a PRIVATE backing field, which is inaccessible
-    // cross-assembly (a direct Ldfld/Stfld -> FieldAccessException at runtime, e.g. `kotlin.Pair`.first/.second read
-    // via a destructuring `component1()`/`component2()` that kotc lowers to a field access). Returns the accessor
-    // anchored on the (possibly constructed-generic) owner, or null when the owner is emitted in THIS assembly (its
-    // backing field is directly accessible) or no such accessor exists (a public `@ClrField` -> keep the direct field).
-    MethodInfo ExternalPropAccessor(string spec, string accessor)
-        => ExternalPropAccessor(ParseOwner(spec), accessor);
-
-    // Structured owner overload (keeps the constructed-generic instantiation — see ResolveMethod's overload note).
-    MethodInfo ExternalPropAccessor((string open, Type constructed) owner, string accessor)
-    {
-        var (open, constructed) = owner;
-        if (_types.ContainsKey(open)) return null;
-        // Pure-reflection constructed generic: resolve directly on the instantiation (its accessor carries the
-        // SUBSTITUTED return/param types, so no TypeBuilder re-anchoring is needed) — mirrors ResolveMethod's branch.
-        if (constructed != null && !IsTbInstantiation(constructed))
-            return FindReflectedMethod(constructed, accessor);
-        var mb = FindMethod(open, accessor);
-        if (mb == null) return null;
-        if (constructed == null) return mb;
-        try { return TypeBuilder.GetMethod(constructed, mb); }
-        catch (ArgumentException) { return mb; }
-    }
-
     // True when `constructed` is a generic type instantiated with exactly its own open definition's type parameters
     // (in order) — i.e. `C<T0,T1,…>` referenced from within C, which is the same as the open type in emitted IL.
     static bool IsSelfInstantiation(Type constructed)
@@ -981,53 +956,6 @@ sealed partial class Emitter
         if (t == null) throw new NotSupportedException("cannot resolve .NET type " + name);
         _typeCache[name] = t;
         return t;
-    }
-
-    // A property getter/setter on a (possibly emitted-generic-instantiated) type. On a constructed generic type
-    // whose arg is an emitted generic parameter (TypeBuilderInstantiation), runtime reflection refuses
-    // GetProperty — re-anchor the open definition's accessor onto the constructed type via TypeBuilder.GetMethod.
-    static MethodInfo PropAccessor(Type type, string name, bool getter)
-    {
-        try { var pi = type.GetProperty(name); var m = getter ? pi?.GetGetMethod() : pi?.GetSetMethod(); if (m != null) return m; }
-        catch (NotSupportedException) { }
-        // A non-generic type with the property on a base class (e.g. an Element's inherited members) — walk up.
-        if (!type.IsGenericType)
-        {
-            for (var b = type.BaseType; b != null; b = b.BaseType)
-            {
-                var pi = b.GetProperty(name); var m = getter ? pi?.GetGetMethod() : pi?.GetSetMethod();
-                if (m != null) return m;
-            }
-        }
-        var open = type.IsGenericType ? type.GetGenericTypeDefinition() : type;
-        var openPi = open.GetProperty(name);
-        if (openPi != null) return TypeBuilder.GetMethod(type, getter ? openPi.GetGetMethod() : openPi.GetSetMethod());
-        // Inherited interface property (`ICollection<T>.Count` accessed on `IList<T>`, or the ARITY-CHANGING
-        // `IReadOnlyCollection<KeyValuePair<K,V>>.Count` accessed on `IReadOnlyDictionary<K,V>`/`IDictionary<K,V>`):
-        // interface GetProperty doesn't traverse base interfaces, so walk them, substitute the open def's type
-        // parameters into the (possibly constructed-arg) base reference, and re-anchor (the accessor twin of the
-        // base-interface walk in FindMethod's FindInInterfaces).
-        var typeArgs = type.GetGenericArguments();
-        foreach (var bi in open.GetInterfaces())
-        {
-            var biOpen = bi.IsGenericType ? bi.GetGenericTypeDefinition() : bi;
-            var bp = biOpen.GetProperty(name);
-            var acc = getter ? bp?.GetGetMethod() : bp?.GetSetMethod();
-            if (acc == null) continue;
-            if (!bi.IsGenericType) return acc;
-            var biCon = SubstituteIfaceArgs(bi, typeArgs);
-            return IsTbInstantiation(biCon) ? TypeBuilder.GetMethod(biCon, acc)
-                : (getter ? biCon.GetProperty(name).GetGetMethod() : biCon.GetProperty(name).GetSetMethod());
-        }
-        return null;
-    }
-
-    // List a .NET type's public property names (instance+static, incl. inherited) — for an actionable "no such
-    // property" diagnostic instead of a bare NullReferenceException.
-    static string PropList(Type t)
-    {
-        try { return string.Join(", ", t.GetProperties(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static).Select(p => p.Name).Distinct().OrderBy(s => s)); }
-        catch { return "?"; }
     }
 
     // W1-S1 (#46/#44) — CONSUME-ONLY generic-method linking. bir2cir holds the winning MethodInfo (ReferenceMetadataIndex

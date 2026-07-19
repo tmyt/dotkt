@@ -38,17 +38,20 @@ sealed partial class Emitter
             }
             case "setField":
             {
-                var fon = SlotName(s.GetProperty("ownerType"));
                 var fnm = s.GetProperty("name").GetString();
-                // An EXTERNAL type's property write goes through the public setter (its backing field is private
-                // cross-assembly -> Stfld would throw FieldAccessException). Falls back to the field when no setter.
-                if (ExternalPropAccessor(fon, "set_" + fnm) is { } setter)
+                // W1-S3 (#46 / #121) CONSUME-ONLY: an EXTERNAL owner's write goes through the public setter (its backing
+                // field is private cross-assembly) — bir2cir decided that KIND and stamped the accessor + memberSig +
+                // dispatch. Absent = a LOCAL owner or a public @ClrField -> the direct Stfld path below.
+                if (s.TryGetProperty("member", out var smk) && smk.ValueKind == JsonValueKind.String && smk.GetString() == "accessor")
                 {
-                    EmitExpr(s.GetProperty("recv"));
+                    var stype = ClrRef(s.GetProperty("ownerType"));
+                    var setter = LinkClrMethod(stype, s.GetProperty("accessor").GetString(), s, instance: true);
+                    if (stype.IsValueType) EmitAddr(s.GetProperty("recv")); else EmitExpr(s.GetProperty("recv"));
                     EmitStoreCoerced(s.GetProperty("value"), SetterValueType(setter));
-                    _il.Emit(OpCodes.Callvirt, setter);
+                    EmitClrDispatch(setter, RequireDispatch(s, stype, "setField"), stype);
                     break;
                 }
+                var fon = SlotName(s.GetProperty("ownerType"));
                 var sfld = ResolveField(fon, fnm, out var sft);
                 EmitExpr(s.GetProperty("recv"));
                 EmitStoreCoerced(s.GetProperty("value"), sft);

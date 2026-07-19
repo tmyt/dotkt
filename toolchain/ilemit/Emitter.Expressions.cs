@@ -89,17 +89,19 @@ sealed partial class Emitter
             }
             case "field":
             {
-                var fon = ParseOwnerSlot(e.GetProperty("ownerType"));
                 var fnm = e.GetProperty("name").GetString();
-                // (No Throwable.message/cause -> System.Exception.Message/InnerException correction here: bir2cir now
-                // substitutes those reads to clrPropGet off the @ClrProperty binding on kotlin.Throwable, so ilemit only
-                // ever sees a genuine field/getter node and trusts the CIR — no Kotlin BCL-member knowledge in ilemit.)
-                // An EXTERNAL type's property read must go through the public getter (its backing field is private
-                // cross-assembly -> Ldfld would throw FieldAccessException). Falls back to the field when no getter.
-                if (ExternalPropAccessor(fon, "get_" + fnm) is { } getter)
+                // W1-S3 (#46 / #121) CONSUME-ONLY: an EXTERNAL owner's backing field is PRIVATE cross-assembly, so the
+                // read goes through the public getter — bir2cir (ClrMemberResolution) decided that KIND and stamped
+                // `member:"accessor"` + the resolved accessor name + memberSig + dispatch. ilemit no longer reinterprets a
+                // `field` into a `get_` accessor (the ExternalPropAccessor probe is gone). Absent = a LOCAL owner (its
+                // backing field is directly accessible) or a genuine public @ClrField -> the direct Ldfld path below.
+                // (No Throwable.message/cause correction here either: bir2cir substitutes those to clrPropGet upstream.)
+                if (e.TryGetProperty("member", out var fmk) && fmk.ValueKind == JsonValueKind.String && fmk.GetString() == "accessor")
                 {
-                    EmitExpr(e.GetProperty("recv"));
-                    _il.Emit(OpCodes.Callvirt, getter);
+                    var ftype = ClrRef(e.GetProperty("ownerType"));
+                    var getter = LinkClrMethod(ftype, e.GetProperty("accessor").GetString(), e, instance: true);
+                    if (ftype.IsValueType) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv"));
+                    EmitClrDispatch(getter, RequireDispatch(e, ftype, "field"), ftype);
                     // Property-read twin of the CoerceReturn seam (`pair.first` vs the destructuring `component1()`),
                     // reconciling a collapsed-variance collection seam between the getter's REAL return type and bir2cir's
                     // declared `ret` view. FORWARD: the getter returns the mutable interface (IList<T>) while `ret` declares
@@ -109,6 +111,7 @@ sealed partial class Emitter
                     if (IsCollectionViewSeam(getter.ReturnType, prDeclared)) _il.Emit(OpCodes.Castclass, prDeclared);
                     return prDeclared;
                 }
+                var fon = ParseOwnerSlot(e.GetProperty("ownerType"));
                 EmitExpr(e.GetProperty("recv"));
                 var fb = ResolveField(fon, fnm, out var ft);
                 MaybeVolatile(fb);                       // `volatile.` prefix on a @Volatile field (pairs with modreq)
@@ -117,15 +120,17 @@ sealed partial class Emitter
             }
             case "setFieldExpr":
             {
-                var son = ParseOwnerSlot(e.GetProperty("ownerType"));
                 var snm = e.GetProperty("name").GetString();
-                if (ExternalPropAccessor(son, "set_" + snm) is { } setter)
+                if (e.TryGetProperty("member", out var smk) && smk.ValueKind == JsonValueKind.String && smk.GetString() == "accessor")
                 {
-                    EmitExpr(e.GetProperty("recv"));
+                    var stype = ClrRef(e.GetProperty("ownerType"));
+                    var setter = LinkClrMethod(stype, e.GetProperty("accessor").GetString(), e, instance: true);
+                    if (stype.IsValueType) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv"));
                     EmitStoreCoerced(e.GetProperty("value"), SetterValueType(setter));
-                    _il.Emit(OpCodes.Callvirt, setter);
+                    EmitClrDispatch(setter, RequireDispatch(e, stype, "setFieldExpr"), stype);
                     return typeof(void);
                 }
+                var son = ParseOwnerSlot(e.GetProperty("ownerType"));
                 var sfefld = ResolveField(son, snm, out var sfet);
                 EmitExpr(e.GetProperty("recv"));
                 EmitStoreCoerced(e.GetProperty("value"), sfet);

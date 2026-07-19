@@ -239,7 +239,16 @@ sealed partial class Emitter
         var own = Named(searchType);
         var hits = Match(own);
         var desc = $"{type?.FullName}.{name}{sigEl}";
-        if (hits.Count == 1) return reanchor ? TypeBuilder.GetMethod(type, hits[0]) : hits[0];
+        // A TypeBuilderInstantiation owner re-anchors the winner via TypeBuilder.GetMethod — but that REQUIRES the winner's
+        // declaring type to be the owner's open def. An INHERITED (base-class) member reflected off the open def declares on
+        // the base, so GetMethod throws ArgumentException; the reflected handle is already a usable closed token (mirrors the
+        // deleted ExternalPropAccessor's `catch (ArgumentException) { return mb; }`, which the S3 field/prop axes now share).
+        if (hits.Count == 1)
+        {
+            if (!reanchor) return hits[0];
+            try { return TypeBuilder.GetMethod(type, hits[0]); }
+            catch (ArgumentException) { return hits[0]; }
+        }
         // PREFER the owner's OWN members: a base-INTERFACE slot (`MoveNext` on the non-generic `IEnumerator`, inherited by
         // `IEnumerator<T>`; interface GetMethods excludes base-interface members) is a FALLBACK consulted only when no own
         // member matches — else `IEnumerable<T>.GetEnumerator()` is ambiguous with `IEnumerable.GetEnumerator()` (memberSig
@@ -458,116 +467,81 @@ sealed partial class Emitter
         try { return ResolveType(name); } catch (NotSupportedException) { return null; }
     }
 
+    // W1-S3 (#46 / #121) CONSUME-ONLY property GET. bir2cir (ClrMemberResolution) resolved the member against the ref.dll
+    // and stamped a `member` discriminator: "accessor" (a real .NET property OR a DotKt `get_X` method — carries the
+    // resolved accessor name + `memberSig` + `dispatch`) or "field" (a public/const field). ilemit no longer reclassifies
+    // property vs get_ method vs field, and no longer derives dispatch from the reflected accessor.
     Type EmitClrPropGet(JsonElement e)
     {
-        var typeName = SlotName(e.GetProperty("type"));
-        var propName = e.GetProperty("name").GetString();
         var type = ClrRef(e.GetProperty("type"));
         var isStatic = e.GetProperty("static").GetBoolean();
-        // `super.prop` to a CLR-bound base (issue #14) -> a non-virtual `call` to the base accessor slot (else callvirt re-dispatch).
-        var superCall = e.TryGetProperty("super", out var supG) && supG.GetBoolean();
-        var getter = PropAccessor(type, propName, getter: true);
-        if (getter == null)
+        if (ClrMemberKind(e) == "accessor")
         {
-            // Not a .NET property. A DotKt custom-accessor property is a plain `get_<name>` METHOD (no PropertyDef) ->
-            // call it. (A backing-field property is a public FIELD -> field access below.)
-            MethodInfo gm;
-            try
-            {
-                gm = type.GetMethod("get_" + propName, BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance, null, Type.EmptyTypes, null);
-            }
-            catch (NotSupportedException)
-            {
-                // A constructed generic over a TypeBuilder (TypeBuilderInstantiation) can't resolve members directly:
-                // resolve the getter on the open generic def, then re-anchor it to the constructed type via GetMethod.
-                gm = null;
-                if (type.IsConstructedGenericType)
-                {
-                    var openGm = type.GetGenericTypeDefinition().GetMethod("get_" + propName, BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance, null, Type.EmptyTypes, null);
-                    if (openGm != null) gm = TypeBuilder.GetMethod(type, openGm);
-                }
-            }
-            if (gm != null)
-            {
-                if (!isStatic && !gm.IsStatic) { if (type.IsValueType) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
-                EmitInstanceCall(gm, !isStatic && !gm.IsStatic, type, superCall);   // routes `constrained.` for a virtual value-type accessor (else CallVirtOnValueType)
-                return gm.ReturnType;
-            }
-            // A .NET FIELD surfaced as a Kotlin property (facadegen records static/const fields, public instance fields,
-            // and Kotlin backing-field properties). Emit a field access instead of a getter call.
-            FieldInfo fld;
-            try
-            {
-                fld = type.GetField(propName, BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance);
-            }
-            catch (NotSupportedException)
-            {
-                // Backing field of a constructed generic over a TypeBuilder: resolve on the open def + re-anchor.
-                fld = null;
-                if (type.IsConstructedGenericType)
-                {
-                    var openFld = type.GetGenericTypeDefinition().GetField(propName, BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance);
-                    if (openFld != null) fld = TypeBuilder.GetField(type, openFld);
-                }
-            }
-            if (fld == null)
-                throw new InvalidOperationException($"ilemit: no readable property OR field '{propName}' on .NET type '{type}' (spec '{typeName}'). Available properties: [{PropList(type)}]");
-            // A `const` (literal) field has no storage — `ldsfld` is invalid (and a memberref to it fails). Inline its
-            // value, exactly as C# does. Covers .NET consts surfaced by facadegen as `sprop` (e.g. WinRT constants).
-            if (fld.IsLiteral) return EmitLiteralValue(fld.GetRawConstantValue(), fld.FieldType);
-            if (!isStatic && !fld.IsStatic)
-            {
-                if (type.IsValueType) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv"));
-            }
-            _il.Emit(fld.IsStatic ? OpCodes.Ldsfld : OpCodes.Ldfld, fld);
-            return fld.FieldType;
+            var getter = LinkClrMethod(type, e.GetProperty("accessor").GetString(), e, instance: !isStatic);
+            if (!isStatic) { if (type.IsValueType) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
+            if (isStatic) _il.Emit(OpCodes.Call, getter);
+            else EmitClrDispatch(getter, RequireDispatch(e, type, "clrPropGet"), type);   // call | callvirt | constrained (bir2cir decision)
+            return getter.ReturnType;
         }
-        // A property getter on a VALUE type (e.g. KeyValuePair.Key/.Value) needs the receiver by managed pointer.
-        if (!isStatic)
-        {
-            if (type.IsValueType) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv"));
-        }
-        EmitInstanceCall(getter, !isStatic, type, superCall);   // routes `constrained.` for a virtual value-type accessor (else CallVirtOnValueType)
-        return getter.ReturnType;
+        // A .NET FIELD surfaced as a Kotlin property (bir2cir resolved member:"field"). A `const` (literal) field has no
+        // storage — inline its value (a mechanical raw-constant fetch, not a KIND decision), exactly as C# does.
+        var fld = ResolveClrPropField(type, e.GetProperty("name").GetString());
+        if (fld.IsLiteral) return EmitLiteralValue(fld.GetRawConstantValue(), fld.FieldType);
+        if (!isStatic && !fld.IsStatic) { if (type.IsValueType) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
+        _il.Emit(fld.IsStatic ? OpCodes.Ldsfld : OpCodes.Ldfld, fld);
+        return fld.FieldType;
     }
 
+    // W1-S3 (#46 / #121) CONSUME-ONLY property SET (twin of EmitClrPropGet).
     Type EmitClrPropSet(JsonElement e)
     {
-        var typeName = SlotName(e.GetProperty("type"));
-        var propName = e.GetProperty("name").GetString();
         var type = ClrRef(e.GetProperty("type"));
         var isStatic = e.GetProperty("static").GetBoolean();
-        // `super.prop = v` to a CLR-bound base (issue #14) -> a non-virtual `call` to the base setter slot.
-        var superCall = e.TryGetProperty("super", out var supS) && supS.GetBoolean();
-        var setter = PropAccessor(type, propName, getter: false);
-        if (setter == null)
+        if (ClrMemberKind(e) == "accessor")
         {
-            // A DotKt custom-accessor property's `set_<name>` METHOD (no PropertyDef) -> call it.
-            var sm = type.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance)
-                .FirstOrDefault(mm => mm.Name == "set_" + propName && mm.GetParameters().Length == 1);
-            if (sm != null)
-            {
-                // A value-type receiver's setter takes `this` by managed pointer -> load its ADDRESS so the mutation
-                // lands on the real struct (an addressable lvalue), not a spilled copy. Mirrors the getter path.
-                if (!isStatic && !sm.IsStatic) { if (type.IsValueType) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
-                EmitArgs2(new[] { e.GetProperty("value") }, sm.GetParameters());
-                EmitInstanceCall(sm, !isStatic && !sm.IsStatic, type, superCall);   // routes `constrained.` for a virtual value-type accessor (else CallVirtOnValueType)
-                return typeof(void);
-            }
-            // A writable .NET FIELD surfaced as a Kotlin (mutable) property -> field store.
-            var fld = type.GetField(propName, BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance)
-                ?? throw new InvalidOperationException($"ilemit: no writable property OR field '{propName}' on .NET type '{type}' (spec '{typeName}'). Available properties: [{PropList(type)}]");
-            // `stfld` on a value-type receiver needs the struct's ADDRESS (managed pointer), not a copy.
-            if (!isStatic && !fld.IsStatic) { if (type.IsValueType) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
-            EmitNullableCoerced(e.GetProperty("value"), fld.FieldType);
-            _il.Emit(fld.IsStatic ? OpCodes.Stsfld : OpCodes.Stfld, fld);
+            var setter = LinkClrMethod(type, e.GetProperty("accessor").GetString(), e, instance: !isStatic);
+            if (!isStatic) { if (type.IsValueType) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
+            EmitArgs2(new[] { e.GetProperty("value") }, setter.GetParameters());
+            if (isStatic) _il.Emit(OpCodes.Call, setter);
+            else EmitClrDispatch(setter, RequireDispatch(e, type, "clrPropSet"), type);
             return typeof(void);
         }
-        // A property setter on a VALUE type takes `this` by managed pointer -> load the receiver ADDRESS.
-        if (!isStatic) { if (type.IsValueType) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
-        EmitArgs2(new[] { e.GetProperty("value") }, setter.GetParameters());
-        EmitInstanceCall(setter, !isStatic, type, superCall);   // routes `constrained.` for a virtual value-type accessor (else CallVirtOnValueType)
+        // A writable .NET FIELD surfaced as a Kotlin (mutable) property -> field store.
+        var fld = ResolveClrPropField(type, e.GetProperty("name").GetString());
+        if (!isStatic && !fld.IsStatic) { if (type.IsValueType) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
+        EmitNullableCoerced(e.GetProperty("value"), fld.FieldType);
+        _il.Emit(fld.IsStatic ? OpCodes.Stsfld : OpCodes.Stfld, fld);
         return typeof(void);
+    }
+
+    // The bir2cir `member` discriminator ("accessor" | "field"), a REQUIRED W1-S3 decision. A missing one is a producer
+    // defect (ilemit must not re-derive the member kind), not a silent field fallback.
+    static string ClrMemberKind(JsonElement e)
+    {
+        if (e.TryGetProperty("member", out var m) && m.ValueKind == JsonValueKind.String) return m.GetString();
+        throw new InvalidOperationException($"ilemit: clr property/field node is missing its `member` discriminator (bir2cir ClrMemberResolution must carry accessor|field — W1-S3 #46/#121)");
+    }
+
+    static string RequireDispatch(JsonElement e, Type type, string what)
+    {
+        if (e.TryGetProperty("dispatch", out var d) && d.ValueKind == JsonValueKind.String) return d.GetString();
+        throw new InvalidOperationException($"ilemit: {what} on {type?.FullName} is missing its `dispatch` decision (bir2cir must carry call|callvirt|constrained — W1-S3 #46)");
+    }
+
+    // Resolve the FieldInfo for a `member:"field"` property node (bir2cir already decided the KIND is a field). GetField
+    // walks base classes; a constructed generic over a TypeBuilder re-anchors on the open def. NOT a KIND probe — the
+    // member is known to be a field, this only produces the handle.
+    FieldInfo ResolveClrPropField(Type type, string name)
+    {
+        const BindingFlags F = BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance;
+        try { var fld = type.GetField(name, F); if (fld != null) return fld; }
+        catch (NotSupportedException) { }
+        if (type.IsConstructedGenericType)
+        {
+            var openFld = type.GetGenericTypeDefinition().GetField(name, F);
+            if (openFld != null) return TypeBuilder.GetField(type, openFld);
+        }
+        throw new InvalidOperationException($"ilemit: field '{name}' resolved by bir2cir is absent on .NET type '{type}' (W1-S3 #46/#121)");
     }
 
     // `.NET event +=/-=` -> call the event's add/remove accessor with the handler bound as the event's OWN
@@ -575,16 +549,21 @@ sealed partial class Emitter
     // method's signature matches the delegate's Invoke (the FIR injector typed the handler from the event's
     // handler signature), so `ldftn`+`newobj <EventDelegate>(object, IntPtr)` is verifiable — exactly what
     // `button.Click += (s,e)=>{}` lowers to in C#.
+    // W1-S3 (#46 / #121 / #113) CONSUME-ONLY event add/remove. bir2cir (ClrMemberResolution) resolved the EventInfo off
+    // the ref.dll and stamped the add/remove accessor NAME + `memberSig` (the [handlerDelegate] param) + `dispatch`.
+    // ilemit LINKS the exact accessor (LinkClrMethod — hard-fails a missing/ambiguous slot, so the old unchecked
+    // `GetEvent(...).GetAddMethod()` NRE on a missing/value-type/constructed-generic event is gone) and consumes the
+    // carried dispatch. The handler delegate type flows from the resolved accessor's first param (== EventHandlerType).
     Type EmitClrEvent(JsonElement e, bool add)
     {
         var type = ClrRef(e.GetProperty("type"));
-        var ev = type.GetEvent(e.GetProperty("event").GetString());
-        var accessor = add ? ev.GetAddMethod() : ev.GetRemoveMethod();
-        var delType = accessor.GetParameters()[0].ParameterType;   // == ev.EventHandlerType
         bool isStatic = e.GetProperty("static").GetBoolean();
-        if (!isStatic) EmitExpr(e.GetProperty("recv"));
+        var accessor = LinkClrMethod(type, e.GetProperty("accessor").GetString(), e, instance: !isStatic);
+        var delType = accessor.GetParameters()[0].ParameterType;   // == the event's EventHandlerType
+        if (!isStatic) { if (type.IsValueType) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
         EmitHandlerAsDelegate(e.GetProperty("handler"), delType);
-        _il.Emit(isStatic ? OpCodes.Call : OpCodes.Callvirt, accessor);
+        if (isStatic) _il.Emit(OpCodes.Call, accessor);
+        else EmitClrDispatch(accessor, RequireDispatch(e, type, add ? "clrEventAdd" : "clrEventRemove"), type);
         return typeof(void);
     }
 

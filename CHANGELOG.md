@@ -7,6 +7,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir/ilemit ([tmyt/dotkt#46], [tmyt/dotkt#121], area:bir2cir): property / field / event memberRef carry —
+  ilemit is now a pure LINKER for every CLR member axis (W1-S3, closes #46 + #121).** The remaining un-carried axes
+  followed the S2 plan: bir2cir (`ClrMemberResolution.PropFieldEvent.cs`, a partial of the S2 pass, running last)
+  now resolves `clrPropGet`/`clrPropSet`, `clrEventAdd`/`clrEventRemove`, and an external `field`/`setFieldExpr`/
+  `setField` against the ref.dll (MetadataLoadContext), stamping a `member` discriminator (`accessor`|`field`), the
+  resolved accessor NAME, `memberSig`, and `dispatch`. ilemit consumes them via the shared `LinkClrMethod` +
+  `EmitClrDispatch` — no property-vs-`get_`-method-vs-field reclassify, no external-field→accessor reinterpret, no
+  unchecked `GetEvent` (a missing event is now a hard ABI error, hardening #113), and no `call`/`callvirt`/
+  `constrained` derivation from the reflected accessor. A generic base-interface accessor (`IReadOnlyCollection<T>.
+  get_Count` on `IReadOnlyList<T>`) retargets the owner to the constructed base interface (the resolved twin of the
+  deleted `PropAccessor`'s `SubstituteIfaceArgs` re-anchor). Deleted `PropAccessor`, `ExternalPropAccessor`,
+  `EmitInstanceCall`, `PropList` (the KIND-derivation / first-pick helpers). A LOCAL emitted owner (ref.dll returns
+  null) keeps its direct backing-field access. Gated by `il-extprop`/`il-vtprop`/`il-event`/`il-eventext`/
+  `il-ifaceevent` + `roundtrip-property-type`. #46 #121
+
 - **bir2cir ([tmyt/dotkt#157], area:bir2cir): general cross-module top-level `val` accessor resolution; delete
   the `COROUTINE_SUSPENDED` band-aid.** A cross-module top-level `val` read is kotc-emitted (post-#89) as
   `callStatic owner:null … prop:get`; bir2cir already reconstructs the `get_<name>` accessor and resolves it via
