@@ -602,6 +602,10 @@ sealed partial class Emitter
                 _il.Emit(OpCodes.Ldarg_0);
                 return;
             case "field":
+                // A `field` node bir2cir resolved to an external ACCESSOR (member:"accessor") is a getter CALL, not a
+                // direct backing-field lvalue — its address is the materialized rvalue (temp + Ldloca) below, NOT Ldflda on
+                // the private cross-assembly field. Only a genuine direct-field node takes the Ldflda fast path here.
+                if (e.TryGetProperty("member", out var fam) && fam.ValueKind == JsonValueKind.String && fam.GetString() == "accessor") break;
                 EmitExpr(e.GetProperty("recv"));
                 _il.Emit(OpCodes.Ldflda, ResolveField(ParseOwnerSlot(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out _));
                 return;
@@ -633,28 +637,6 @@ sealed partial class Emitter
         _il.Emit(OpCodes.Sizeof, elem);
         _il.Emit(OpCodes.Mul);
         _il.Emit(OpCodes.Add);
-    }
-
-    // Emit the actual call opcode for an instance/static .NET method whose receiver (if any) is already on the stack
-    // (by ADDRESS when `recvType` is a value type — see EmitAddr at the call sites). Chooses the verifiable opcode:
-    //   - static or non-virtual method                          -> `call`
-    //   - virtual method, REFERENCE receiver                     -> `callvirt`
-    //   - virtual FINAL method whose impl is on the value type   -> `call` (value types are sealed; e.g. the TaskAwaiter
-    //       struct's INotifyCompletion.OnCompleted, marked virtual-final in metadata — C# emits a direct `call` on the &)
-    //   - virtual NON-final method inherited by the value type   -> `constrained. <VT>; callvirt` (e.g. object.ToString
-    //       on a struct that doesn't override it — the prefix lets the JIT box/dispatch)
-    // A bare `callvirt` on a value-type receiver is CallVirtOnValueType (ilverify-rejected though JIT-tolerated).
-    //   - `superCall` (issue #14: a `super.M()` whose base is CLR-bound) forces a NON-virtual `call` on a REFERENCE
-    //       receiver — the callee already names the resolved base slot, so `callvirt` would re-dispatch by the
-    //       receiver's runtime type back to THIS class's override (infinite recursion). This is exactly C#'s `base.M()`.
-    void EmitInstanceCall(MethodInfo mi, bool instance, Type recvType, bool superCall = false)
-    {
-        if (!(instance && mi.IsVirtual)) { _il.Emit(OpCodes.Call, mi); return; }
-        if (superCall && !recvType.IsValueType) { _il.Emit(OpCodes.Call, mi); return; }   // base-slot dispatch (C# `base.M()`)
-        if (!recvType.IsValueType) { _il.Emit(OpCodes.Callvirt, mi); return; }
-        if (mi.IsFinal) { _il.Emit(OpCodes.Call, mi); return; }   // value type's own sealed impl -> direct call on the address
-        _il.Emit(OpCodes.Constrained, recvType);
-        _il.Emit(OpCodes.Callvirt, mi);
     }
 
     void EmitArgs(JsonElement args, ParameterInfo[] ps)

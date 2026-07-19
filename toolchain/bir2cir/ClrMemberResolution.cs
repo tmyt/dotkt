@@ -20,7 +20,7 @@ using DotKt.Bir;
 // So `List<E>` (generic stdlib) / `HashSet<EmittedType>` need NO MakeGenericType over an open/local type-arg; the
 // tv-vs-owner-instantiation bridge (the `ownerArgs` TypeNodes) resolves the concrete/open owner args positionally,
 // exactly as ilemit's GenericParamMatches `ownerArgs` branch does with reflected Types.
-static class ClrMemberResolution
+static partial class ClrMemberResolution
 {
     static ReferenceMetadataIndex _refs;
     static IReadOnlySet<string> _localEnums = new HashSet<string>();
@@ -52,6 +52,13 @@ static class ClrMemberResolution
             case "newClr": ResolveCtor(node); break;
             case "clrStatic": ResolveCall(node, instance: false); break;
             case "clrInstance": ResolveCall(node, instance: true); break;
+            case "clrPropGet": ResolveProp(node, write: false); break;
+            case "clrPropSet": ResolveProp(node, write: true); break;
+            case "clrEventAdd": ResolveEvent(node); break;
+            case "clrEventRemove": ResolveEvent(node); break;
+            case "field": ResolveFieldAccess(node, write: false); break;
+            case "setFieldExpr": ResolveFieldAccess(node, write: true); break;
+            case "setField": ResolveFieldAccess(node, write: true); break;
         }
     }
 
