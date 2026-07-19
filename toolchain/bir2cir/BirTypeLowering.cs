@@ -547,11 +547,11 @@ static class BirTypeLowering
         return LowerNode(val, refBuild, force);
     }
 
-    // Recurse the BIR type grammar, rewriting bare kotlin.* foundational tokens (numeric/bool/char + String/Any +
-    // the unsigned set) in the active map. Every other shape (gp:, clr:, clrg:[...], @Name[...], func:ret:args,
-    // array:/byref:/nullable: modifiers, the CLR shorthand, the position-dependent kotlin.Unit value, and user/
-    // stdlib FQNs like kotlin.collections.List) is structurally preserved; nested type arguments are recursed so a
-    // bare kotlin.* foundational token inside a generic lowers too.
+    // Lower a STILL-STRING type slot (a synthetic interface name like `dotkt$CharSequence`, a StringCharSequenceBridge
+    // adapter's `kotlin.String` slot): rewrite a bare @ClrTypeAlias kotlin.* type to its BARE BCL FQN (numeric/bool/char
+    // + String/Any + the unsigned set + non-generic BCL) and recurse nested `[...]` args. Output carries NO legacy
+    // string-token grammar (`clr:`/`clrg:`/`@`) — every type is a bare FQN / CLR shorthand ilemit resolves by name (#48);
+    // a user/stdlib FQN (kotlin.collections.List) and the position-dependent kotlin.Unit value pass through unchanged.
     public static string LowerTypeString(string raw, bool refBuild, bool force = false)
     {
         // Function types are structured `fn` nodes now (#37 #49): the `func:`/`sfunc:` STRING type token is retired,
@@ -568,9 +568,6 @@ static class BirTypeLowering
         foreach (var p in ModifierPrefixes)
             if (t.StartsWith(p, StringComparison.Ordinal))
                 return p + LowerTypeString(t[p.Length..], refBuild, force);
-
-        if (t.StartsWith("gp:", StringComparison.Ordinal)) return t;
-        if (t.StartsWith("clr:", StringComparison.Ordinal)) return t;
 
         var br = t.IndexOf('[');
         if (br >= 0 && t.EndsWith("]", StringComparison.Ordinal))
@@ -590,7 +587,7 @@ static class BirTypeLowering
             // class. So a `fun <T : Enum<T>> …` self-referential bound (`@kotlin.Enum[gp:T]`) must lower to `System.Enum`
             // (the CLR `where T : Enum` idiom) or a real enum type argument violates the constraint (VerificationException).
             // Drop the self-referential type arg — System.Enum is non-generic.
-            if (bareHead == "kotlin.Enum") return "clr:System.Enum";
+            if (bareHead == "kotlin.Enum") return "System.Enum";
             if (!head.StartsWith("clr", StringComparison.Ordinal) && AliasBcl(bareHead) is string genericBcl)
             {
                 // `Comparable<*>` / `Comparable<Any?>` (the star / Any-projected comparable — kotc token
@@ -601,9 +598,9 @@ static class BirTypeLowering
                 // (clrRawCompareTo's `as IComparable`); a reified `IComparable<object>` castclass fails on every primitive.
                 // A CONCRETE arg (`Comparable<C>` / `Comparable<gp:T>`) keeps the generic form (`sorted`'s element cast).
                 // The star/Any arg arrives as the shorthand "object" (a kotc-emitted CLR token) or, now that the
-                // primitive alias path lowers a bare kotlin.Any leaf, as "clr:System.Object" (#55) — accept both.
-                if (genericBcl == "System.IComparable" && (args == "object" || args == "clr:System.Object")) return "clr:System.IComparable";
-                return "clrg:" + genericBcl + "[" + args + "]";
+                // primitive alias path lowers a bare kotlin.Any leaf, as the bare "System.Object" (#55) — accept both.
+                if (genericBcl == "System.IComparable" && (args == "object" || args == "System.Object")) return "System.IComparable";
+                return genericBcl + "[" + args + "]";
             }
             return head + "[" + args + "]";
         }
@@ -613,11 +610,9 @@ static class BirTypeLowering
 
     static string LowerLeaf(string t, bool force)
     {
-        // @-decorated and clrg: references are emitted/CLR type references whose head is never a bare primitive
-        // (any bracket args were recursed above) — keep verbatim. A bare kotlin.* foundational leaf (numeric/bool/
-        // char + String/Any + the unsigned set) lowers via the active map; all other leaves (CLR shorthand, the
-        // position-dependent kotlin.Unit value, user/stdlib FQNs like kotlin.collections.List) pass through.
-        if (t.StartsWith("clrg:", StringComparison.Ordinal)) return t;
+        // A bare kotlin.* foundational leaf (numeric/bool/char + String/Any + the unsigned set) lowers to its BARE BCL
+        // FQN via the active map; all other leaves (CLR shorthand, the position-dependent kotlin.Unit value, user/stdlib
+        // FQNs like kotlin.collections.List) pass through. No legacy `clrg:` prefix is recognized/emitted (#48).
         // An `@`-decorated PRIMITIVE is the dual-representation type-arg form (Comparable<@kotlin.Int>) and MUST stay
         // verbatim — never lowered to the bare CLR primitive. A bare primitive lowers to its @ClrTypeAlias BCL form.
         var decorated = t.StartsWith("@", StringComparison.Ordinal);
@@ -628,9 +623,10 @@ static class BirTypeLowering
         // A decorated (dual-representation) primitive type-arg stays verbatim in the non-force path — @kotlin.Int keeps
         // its boxed form and is never lowered to the CLR value type.
         if (decorated) return t;
-        // A @ClrTypeAlias type used bare — a foundational primitive (kotlin.Int -> clr:System.Int32) OR a non-generic
-        // BCL (StringBuilder/Regex/Match/IComparable/TextWriter/...) -> clr:<bcl>, read from the ref.dll alias index.
-        if (AliasBcl(bare) is string bcl) return "clr:" + bcl;
+        // A @ClrTypeAlias type used bare — a foundational primitive (kotlin.Int -> System.Int32) OR a non-generic
+        // BCL (StringBuilder/Regex/Match/IComparable/TextWriter/...) -> the BARE <bcl> FQN (no legacy `clr:` prefix —
+        // ilemit derives resolution from the name; #48), read from the ref.dll alias index.
+        if (AliasBcl(bare) is string bcl) return bcl;
         return t;
     }
 

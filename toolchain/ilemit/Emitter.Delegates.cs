@@ -121,47 +121,17 @@ sealed partial class Emitter
             ? ft.GetGenericArguments()[r.GenericParameterPosition] : r;
     }
 
-    // The RETURN .NET type from a `func:<ret>:<args>` string — carried by the BIR, so we never reflect the
-    // ReturnType of a TypeBuilder-baked Invoke (which is unreliable on an un-baked generic instantiation).
-    // Structured funcType (a Fn node) or a legacy `func:` string -> the delegate's return type / mapped arg types.
+    // The delegate's RETURN / PARAMETER .NET types from a structured `funcType` (a Fn node) — carried by the BIR, so we
+    // never reflect the Invoke of a TypeBuilder-baked delegate (unreliable on an un-baked generic instantiation). The
+    // funcType slot is ALWAYS a structured Fn node (#37/#49; the legacy `func:` string form is retired — #48).
     Type FuncRetType(JsonElement e) =>
-        e.ValueKind == JsonValueKind.Object && DotKt.Bir.TypeNode.Read(e) is DotKt.Bir.TypeNode.Fn fn
-            ? MapType(fn.Ret) : FuncRetType(e.GetString());
+        DotKt.Bir.TypeNode.Read(e) is DotKt.Bir.TypeNode.Fn fn
+            ? MapType(fn.Ret) : throw new NotSupportedException("funcType is not a structured fn node");
 
     List<Type> FuncArgTypes(JsonElement e) =>
-        e.ValueKind == JsonValueKind.Object && DotKt.Bir.TypeNode.Read(e) is DotKt.Bir.TypeNode.Fn fn
+        DotKt.Bir.TypeNode.Read(e) is DotKt.Bir.TypeNode.Fn fn
             ? fn.DelegateParams.Select(MapType).ToList()
-            : FuncArgSpecs(e.GetString()).Select(MapType).ToList();
-
-    Type FuncRetType(string t)
-    {
-        var rest = t.Substring(5);
-        var ret = rest.Substring(0, FuncRetEnd(rest));
-        return ret == "void" ? typeof(void) : MapType(ret);
-    }
-
-    // The delegate's PARAMETER type specs from a `func:<ret>:<arg,arg,...>` funcType token (the `<ret>` may itself be a
-    // bracketed/prefixed type whose own ':' is not the separator — split at the first depth-0 ':' after the ret prefix).
-    // Empty for a nullary function type. Used to coerce delegateInvoke args to the Invoke param the JIT expects.
-    List<string> FuncArgSpecs(string t)
-    {
-        var rest = t.Substring(5);
-        var argsPart = rest.Substring(FuncRetEnd(rest) + 1);
-        return argsPart.Length == 0 ? new List<string>() : SplitTopLevel(argsPart).ToList();
-    }
-
-    // BIR `func:<ret>:<arg1>,<arg2>,...` -> a System.Func<...> (ret != void) or System.Action<...>.
-    Type FuncType(string t)
-    {
-        var rest = t.Substring(5);
-        // RET:ARGS — but RET may itself be a prefixed/bracketed type whose own ':' (clrg:Task[int]) must NOT be
-        // taken as the separator. Find the first ':' at bracket-depth 0 AFTER any leading type prefix.
-        var colon = FuncRetEnd(rest);
-        var ret = rest.Substring(0, colon);
-        var argsPart = rest.Substring(colon + 1);
-        var args = SplitTopLevel(argsPart).Select(MapType).ToArray();
-        return BuildFuncType(args, ret == "void" ? typeof(void) : MapType(ret));
-    }
+            : throw new NotSupportedException("funcType is not a structured fn node");
 
     Type SyntheticFuncType(Type[] args, Type ret) =>
         SyntheticDelegateType("KFunc", args.Append(ret).ToArray(), returnsValue: true).MakeGenericType(args.Append(ret).ToArray());
@@ -205,62 +175,6 @@ sealed partial class Emitter
         _syntheticDelegateCtors[tb] = ctor;
         _syntheticDelegateInvokes[tb] = invoke;
         return tb;
-    }
-
-    // Index of the ':' separating RET from ARGS in a `func:` BODY (the leading "func:" already stripped by the caller).
-    // When the RET is itself a NESTED func — `(Int)->(()->Int)` encodes as body `func:kotlin.Int::kotlin.Int` — the
-    // inner func's OWN ret/args colon sits at depth 0 and the old "skip one prefix, grab first ':'" split mis-parsed it
-    // (ret=`func:kotlin.Int`, args=`:kotlin.Int`, leaving `:kotlin.Int` unresolvable). Recursively skip the whole inner
-    // func in that case. Every OTHER ret shape (leaf / clrg:/array:/nullable: with its own bracket-protected or single
-    // leading colon) keeps the prior single-prefix scan — scoped narrowly so only the genuine nested-func-ret changes.
-    static int FuncRetEnd(string s)
-    {
-        if (s.StartsWith("func:", StringComparison.Ordinal) || s.StartsWith("sfunc:", StringComparison.Ordinal))
-            return SkipTypeToken(s, 0);
-        int start = 0;
-        foreach (var pre in new[] { "clrg:", "clr:", "array:", "nullable:", "gp:", "byref:" })
-            if (s.StartsWith(pre)) { start = pre.Length; break; }
-        int depth = 0;
-        for (int i = start; i < s.Length; i++)
-        {
-            if (s[i] == '[') depth++;
-            else if (s[i] == ']') depth--;
-            else if (s[i] == ':' && depth == 0) return i;
-        }
-        return s.Length;
-    }
-
-    // Advance past exactly ONE type token at `i`; return the index just after it (a top-level ':' / ',' / ']' / end).
-    // A `func:` token recurses through its ret + its comma-list args (args present iff the next char begins a type);
-    // a modifier prefix (array:/nullable:/byref:) recurses into its element; a clrg:/clr:/gp:/leaf token scans to the
-    // next top-level delimiter with [] nesting protecting inner ':'/','. Pure structural parse — no type resolution.
-    static int SkipTypeToken(string s, int i)
-    {
-        static bool At(string s, int i, string pre) => i + pre.Length <= s.Length && s.AsSpan(i, pre.Length).SequenceEqual(pre);
-        foreach (var pre in new[] { "array:", "nullable:", "byref:" })
-            if (At(s, i, pre)) return SkipTypeToken(s, i + pre.Length);
-        if (At(s, i, "func:"))
-        {
-            i = SkipTypeToken(s, i + 5);                                    // ret
-            if (i < s.Length && s[i] == ':') i++;                          // ret/args separator
-            if (i < s.Length && s[i] != ':' && s[i] != ',' && s[i] != ']') // non-empty args -> comma-list
-            {
-                i = SkipTypeToken(s, i);
-                while (i < s.Length && s[i] == ',') i = SkipTypeToken(s, i + 1);
-            }
-            return i;
-        }
-        foreach (var pre in new[] { "clrg:", "clr:", "gp:" })
-            if (At(s, i, pre)) { i += pre.Length; break; }
-        int depth = 0;
-        for (; i < s.Length; i++)
-        {
-            char c = s[i];
-            if (c == '[') depth++;
-            else if (c == ']') { if (depth == 0) break; depth--; }
-            else if (depth == 0 && (c == ':' || c == ',')) break;
-        }
-        return i;
     }
 
 }

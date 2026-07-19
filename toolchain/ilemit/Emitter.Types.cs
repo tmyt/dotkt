@@ -35,20 +35,15 @@ sealed partial class Emitter
     // so nested generics (List[ValueTuple[int,string]]) parse correctly.
     // Resolve a .NET type reference that may be a plain name (ResolveType), a generic `clrg:Open[args]`,
     // or a func/closed encoding (MapType). Used by newClr/clrPropGet so they accept generic types (System.Lazy<T>).
-    // A clr* owner/type slot: structured (bir2cir MemberCallSubstitution) walks TypeNode; a legacy string (kotc's own
-    // clrInstance interop `type`, a synthesized argType shorthand) keeps the string path.
+    // A clr* owner/type slot: a structured node (bir2cir MemberCallSubstitution) walks TypeNode; a bare-FQN owner-island
+    // IDENTITY string (an owner FQN, an `attrExternal` attribute type, a synthesized argType shorthand) resolves below.
     Type ClrRef(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object ? MapType(DotKt.Bir.TypeNode.Read(e)) : ClrRef(e.GetString());
 
+    // A bare type-IDENTITY string (no legacy grammar prefix — those are retired, #48): a CLR-shorthand primitive routes
+    // through MapType (which owns the shorthand switch — `argTypes` may synthesize e.g. "string" so the ctor-overload
+    // lookup binds StringBuilder(String) not StringBuilder(Int32)); every other bare FQN resolves by reflection.
     Type ClrRef(string s) =>
-        s.StartsWith("byref:") ? ClrRef(s.Substring(6)).MakeByRefType() :   // `out`/`ref` param type (T&)
-        s.StartsWith("clrg:") ? GenericType(s.Substring(5)) :
-        (s.StartsWith("func:") || s.StartsWith("clr:") || s.StartsWith("array:") || s.StartsWith("nullable:") || s.StartsWith("gp:") || s.StartsWith("@")) ? MapType(s) :
-        // A bare PRIMITIVE/string/void shorthand (int/long/bool/char/string/object/…) is CLR-resolution vocabulary that
-        // ResolveType (BCL reflection by FQN) cannot resolve — route it through MapType (which owns the shorthand switch).
-        // An `argTypes` entry can be such a shorthand: bir2cir's TransformNew synthesizes newClr.argTypes from an arg's BIR
-        // token and the type-lowering pass lowers e.g. `kotlin.String` -> "string"; without this the ctor-overload lookup
-        // nulls that entry and falls back to arity, mis-picking StringBuilder(Int32) for StringBuilder(String).
         PrimShorthand.Contains(s) ? MapType(s) :
         ResolveType(s);
 
@@ -195,37 +190,23 @@ sealed partial class Emitter
         return args.Length <= 16 && !synth ? ResolveType("System.Func`" + all.Length).MakeGenericType(all) : SyntheticFuncType(args, ret);
     }
 
+    // A generic type parameter resolved by NAME in context (method params shadow the enclosing type's). The structured
+    // TypeNode.Tv path uses positional `ResolveTv`; this name lookup serves the few places that hold only the CLR
+    // builder's generic-param NAME (a closure's own type args — ResolveClosure).
+    Type GenericParamByName(string gpName)
+    {
+        if (_curMethodParams != null && _curMethodParams.TryGetValue(gpName, out var mgp)) return mgp;
+        if (_curTypeParams != null && _curTypeParams.TryGetValue(gpName, out var tgp)) return tgp;
+        throw new NotSupportedException("unresolved generic type parameter " + gpName);
+    }
+
+    // A type NAME slot that is NOT a structured node — a bare FQN / CLR-shorthand IDENTITY (an owner-FQN island, a
+    // primitive shorthand). The legacy string-token GRAMMAR (`clr:`/`clrg:`/`array:`/`nullable:`/`func:`/`byref:`/`gp:`/`@`)
+    // is retired (#48): every value type travels as a structured `{t:…}` node (MapType(TypeNode)); this string resolver
+    // handles ONLY the bare-identity slots. `stackptr` is the one pseudo-type kept.
     Type MapType(string t)
     {
-        if (t != null && t.StartsWith("byref:")) return MapType(t.Substring(6)).MakeByRefType();   // a `ref T` local
         if (t == "stackptr") return typeof(byte).MakePointerType();   // a localloc'd stack buffer pointer (unverifiable)
-        if (t != null && t.StartsWith("clr:")) return ResolveType(t.Substring(4));
-        if (t != null && t.StartsWith("array:")) return MapType(t.Substring(6)).MakeArrayType();
-        if (t != null && t.StartsWith("func:")) return FuncType(t);
-        if (t != null && t.StartsWith("clrg:")) return GenericType(t.Substring(5));
-        if (t != null && t.StartsWith("nullable:")) return typeof(Nullable<>).MakeGenericType(MapType(t.Substring(9)));
-        // `gp:T` -> a generic type parameter, resolved in context (method params shadow the enclosing type's).
-        if (t != null && t.StartsWith("gp:"))
-        {
-            var gpName = t.Substring(3);
-            if (_curMethodParams != null && _curMethodParams.TryGetValue(gpName, out var mgp)) return mgp;
-            if (_curTypeParams != null && _curTypeParams.TryGetValue(gpName, out var tgp)) return tgp;
-            throw new NotSupportedException("unresolved generic type parameter " + gpName);
-        }
-        if (t != null && t.StartsWith("@"))
-        {
-            // `@Name` -> the user type; `@Name[arg,...]` -> that user generic type constructed (Box<int>). The `@` marker
-            // is kotc's "emitted-type" hint, but a PURE-Kotlin stdlib type with no @ClrTypeAlias (kotlin.Result,
-            // kotlin.text.MatchResult) is emitted in a REFERENCED assembly (DotKt.Stdlib.dll), not this one — so when it
-            // isn't in THIS assembly's `_types`, resolve it as a referenced .NET type (by FQN, arity-suffixed for a generic).
-            var spec = t.Substring(1);
-            var br = spec.IndexOf('[');
-            if (br < 0) return _types.TryGetValue(spec, out var ti0) ? ti0.AsType : ResolveType(spec);
-            var open = spec.Substring(0, br);
-            var args = SplitTopLevel(spec.Substring(br + 1, spec.Length - br - 2)).Select(MapArg).ToArray();
-            if (_types.TryGetValue(open, out var oti)) return oti.AsType.MakeGenericType(args);
-            return ResolveType(open + "`" + args.Length).MakeGenericType(args);
-        }
         return t switch
         {
             "void" => typeof(void), "int" => typeof(int), "long" => typeof(long),

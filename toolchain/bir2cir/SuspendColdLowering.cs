@@ -1776,7 +1776,7 @@ static partial class SuspendColdLowering
                 // this.__safe = newSafeContinuation((Continuation<Any?>) this)   — the SM is its own delegate.
                 outp.Add(SetField(safeField, new JsonObject
                 {
-                    ["k"] = "callStatic", ["owner"] = ThrowOnFailureOwner, ["method"] = "newSafeContinuation",
+                    ["k"] = "callStatic", ["owner"] = Tn(ThrowOnFailureOwner), ["method"] = "newSafeContinuation",
                     ["args"] = new JsonArray
                     {
                         new JsonObject { ["k"] = "cast", ["type"] = ContAny(), ["e"] = new JsonObject { ["k"] = "this" } },
@@ -1787,7 +1787,7 @@ static partial class SuspendColdLowering
                 foreach (var s in invBody) EmitStmt(SubstBlock(s, capMap, cParam, cBinding, closureType), outp);
                 tail = new JsonObject
                 {
-                    ["k"] = "callStatic", ["owner"] = ThrowOnFailureOwner, ["method"] = "safeGetOrThrow",
+                    ["k"] = "callStatic", ["owner"] = Tn(ThrowOnFailureOwner), ["method"] = "safeGetOrThrow",
                     ["args"] = new JsonArray { SmSelfField(safeField, ContAnyTn) }, ["ret"] = Tw(AnyTn),
                 };
             }
@@ -2435,7 +2435,7 @@ static partial class SuspendColdLowering
                 return new JsonObject
                 {
                     ["k"] = "callStatic",
-                    ["owner"] = StartSuspendOwner,
+                    ["owner"] = Tn(StartSuspendOwner),
                     ["method"] = "startSuspendUninterceptedOrReturnN",
                     ["typeArgs"] = new JsonArray { Tw(AnyTn) },        // T (result) — erased
                     // fn:Any, args:Array<Any?>, completion:Continuation<Any> — discriminates the N-arg overload.
@@ -2460,7 +2460,7 @@ static partial class SuspendColdLowering
             return new JsonObject
             {
                 ["k"] = "callStatic",
-                ["owner"] = StartSuspendOwner,
+                ["owner"] = Tn(StartSuspendOwner),
                 ["method"] = "startSuspendUninterceptedOrReturn",
                 ["typeArgs"] = typeArgs,
                 ["sig"] = sigArr,
@@ -2506,7 +2506,7 @@ static partial class SuspendColdLowering
                 ["body"] = invokeBody,
                 ["attrs"] = new JsonArray(),
             };
-            if (!_baseIsLocal) invoke["clrOverride"] = BaseContinuationImplFqn;
+            if (!_baseIsLocal) invoke["clrOverride"] = Tn(BaseContinuationImplFqn);
 
             var methods = new JsonArray { invoke };
             foreach (var rm in _awaitResumeMethods) methods.Add(rm);
@@ -2590,7 +2590,7 @@ static partial class SuspendColdLowering
                 ["body"] = invokeBody,
                 ["attrs"] = new JsonArray(),
             };
-            if (!_baseIsLocal) invoke["clrOverride"] = BaseContinuationImplFqn;
+            if (!_baseIsLocal) invoke["clrOverride"] = Tn(BaseContinuationImplFqn);
 
             var methods = new JsonArray { invoke };
             foreach (var cm in CreateMethods()) methods.Add(cm);
@@ -2759,7 +2759,7 @@ static partial class SuspendColdLowering
                 ["body"] = body,
                 ["attrs"] = new JsonArray(),
             };
-            if (!_baseIsLocal) m["clrOverride"] = BaseContinuationImplFqn;
+            if (!_baseIsLocal) m["clrOverride"] = Tn(BaseContinuationImplFqn);
             return m;
         }
 
@@ -3357,7 +3357,7 @@ static partial class SuspendColdLowering
         static JsonObject Suspended() => new()
         {
             ["k"] = "callStatic",
-            ["owner"] = IntrinsicsKtFqn,
+            ["owner"] = Tn(IntrinsicsKtFqn),
             ["method"] = "get_COROUTINE_SUSPENDED",
             ["args"] = new JsonArray(),
             ["ret"] = Tw(AnyTn),
@@ -3366,7 +3366,7 @@ static partial class SuspendColdLowering
         static JsonObject ThrowOnFailure() => new()
         {
             ["k"] = "callStatic",
-            ["owner"] = ThrowOnFailureOwner,
+            ["owner"] = Tn(ThrowOnFailureOwner),
             ["method"] = "throwOnFailure",
             ["args"] = new JsonArray { new JsonObject { ["k"] = "local", ["name"] = "result" } },
             ["ret"] = Tw(VoidTn),

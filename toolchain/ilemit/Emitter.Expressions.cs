@@ -27,7 +27,13 @@ sealed partial class Emitter
     {
         var (open, _) = ParseOwner(ownerType);
         if (!_types.TryGetValue(open, out var ti) || ti.Def.ValueKind != JsonValueKind.Object || !ti.Def.TryGetProperty("interfaces", out var ifs)) return false;
-        foreach (var i in ifs.EnumerateArray()) { var s = i.GetString(); if (s != null && (s.StartsWith("clr:") || s.StartsWith("clrg:"))) return true; }
+        // A CLR/BCL interface is a facadegen-injected .NET type: NOT emitted in THIS assembly AND not a Kotlin `kotlin.*`
+        // interface — the structured successor of the retired `clr:`/`clrg:` interface-token check (#48), kept narrow so
+        // a referenced *Kotlin* interface does not spuriously widen the dynamic-dispatch fallback.
+        foreach (var i in ifs.EnumerateArray())
+            if (DotKt.Bir.TypeNode.Read(i) is DotKt.Bir.TypeNode.Fqn f
+                && !_types.ContainsKey(BareTypeKey(f.Name))
+                && !f.Name.StartsWith("kotlin.", StringComparison.Ordinal)) return true;
         return false;
     }
 
@@ -216,7 +222,7 @@ sealed partial class Emitter
                 // sidestepping static resolution that cascades (a member on a BCL `clrg:` interface FindMethod skips).
                 if (e.TryGetProperty("dyn", out var dynF) && dynF.ValueKind == JsonValueKind.True)
                     return EmitDynamicCall(e);
-                var cisig = SigString(e);
+                var cisig = SigNodes(e);
                 MethodInfo m0 = null; Type rt = null;
                 // A @Clr-bound member whose STATIC resolution fails -- it lives on a BCL clrg: interface that FindMethod
                 // skips (e.g. AbstractMutableList.SubList calling get_Item on the IList slot) -- falls back to dynamic
@@ -290,7 +296,7 @@ sealed partial class Emitter
             case "callStatic":
             {
                 var name = e.GetProperty("method").GetString();
-                var csig = SigString(e);
+                var csig = SigNodes(e);
                 // owner present -> a static method on that named class (companion); else a file-class sibling.
                 // A static on a GENERIC emitted class (a generic class's companion fun) must be anchored onto a
                 // constructed owner — an open-typedef parent token is invalid IL at a foreign call site.

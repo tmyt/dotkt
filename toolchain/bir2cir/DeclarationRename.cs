@@ -81,7 +81,7 @@ static class DeclarationRename
                             // retired in #73 M4); this is the SOLE source of the clrOverride field, derived off the refs.
                             // The guard is defensive (no kotc producer remains to double-stamp).
                             if (!obj.ContainsKey("clrOverride") && ResolveNetClassOwner(ovs, refs) is string clrBase)
-                                obj["clrOverride"] = clrBase;
+                                obj["clrOverride"] = TypeJson.Fqn(clrBase);
                         }
                     }
                 }

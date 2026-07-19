@@ -5,6 +5,25 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Changed
+
+- **bir2cir/ilemit ([tmyt/dotkt#48], area:bir2cir, area:ilemit): the legacy string-token type grammar is DELETED —
+  structured `TypeNode` only, matching the frozen #37 schema; no dual-protocol.** The wire was already structured
+  (`docs/bir-cir.schema.json` `$defs/type`), but the CODE still PARSED/EMITTED the retired `clr:` / `clrg:Name[..]` /
+  `@Name` / primitive-shorthand / `func:`/`sfunc:` / `nullable:`/`array:`/`byref:`/`gp:` grammar. **S4 — owner islands →
+  `TypeNode`:** every bir2cir-side owner slot (`ownerType`/`accessOwner`/`clrOverride`/clr\* `type`, and
+  SuspendColdLowering's coroutine owners) is now a structured `{t:fqn}` node; the applied-attribute owner is a bare FQN
+  + an `attrExternal` bool (`AttrExternalNormalize` strips kotc's `clr:`-imported prefix), retiring ilemit's
+  `attr.StartsWith("clr:")` branches; `scripts/verify-schema.py` `STR_OK` shrinks (`ownerType`/`clrOverride`/
+  `accessOwner`/`recv0` dropped) so any regression reds the gate. **S5 — sig-token island → one structural comparator:**
+  ilemit's overload resolution no longer renders a `TypeNode` to a legacy token string and re-parses it — `SigTokenOf`/
+  `SigTokenMatches`/`SigTokenMatchesOpen`/`SkipTypeToken`/`FuncType(string)`/`FuncRetEnd`/`NormalizeGpNames`/
+  `FindByNormalizedSig`/`StripSigPrefixes` are replaced by a structural `Matches(TypeNode, System.Type)` and the `sig`
+  parameter threads as `TypeNode[]` (the `MethodsBySig` dictionary keeps a `SigCanon` hash key — an internal encoding,
+  never a wire spelling). ilemit's `MapType(string)`/`ClrRef(string)`/`NativeType(string)`/`ParseOwner` prefix parsers
+  and bir2cir's `LowerTypeString` grammar-construction are deleted; bir2cir emits bare BCL FQNs. Gate: full
+  `gate.sh --full` GREEN (il/schema/sanity/ktproj/roundtrip/differential-all-MATCH/widedelegates).
+
 ### Fixed
 
 - **bir2cir/ilemit ([tmyt/dotkt#46], area:bir2cir, area:ilemit): CLOSED — ilemit re-resolves NOTHING on any clr*

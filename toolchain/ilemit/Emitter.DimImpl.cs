@@ -47,7 +47,7 @@ sealed partial class Emitter
                 // The base method's params/ret with each Tv{type,i} re-anchored to `ti`'s args -> the overload key `ti`'s
                 // own DIM is registered under (a method-scope tv collapses to `gp:T` on both sides, so they agree).
                 var subSig = name + "(" + string.Join(",", bmDef.GetProperty("params").EnumerateArray()
-                    .Select(p => SigTokenOf(SubstTv(DotKt.Bir.TypeNode.Read(p.GetProperty("type")), specArgs)))) + ")";
+                    .Select(p => SigCanon(SubstTv(DotKt.Bir.TypeNode.Read(p.GetProperty("type")), specArgs)))) + ")";
                 if (!ti.MethodsBySig.TryGetValue(subSig, out var dim) || dim.Attributes.HasFlag(MethodAttributes.Abstract)) continue;
                 if (!seen.Add(dopen + "::" + subSig)) continue;   // diamond de-dup (per ECMA: no duplicate methodimpl rows)
                 var baseSlot = baseTi.MethodsBySig.TryGetValue(SigKey(name, bmDef), out var bs) ? bs

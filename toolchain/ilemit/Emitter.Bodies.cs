@@ -86,14 +86,14 @@ sealed partial class Emitter
         // `(Collection<E>)`, both 1-arg) — a plain count pick routes `new LinkedHashSet(coll)` to the `(Int)` ctor
         // (ilverify StackUnexpected [found IReadOnlyCollection][expected Int32] -> runtime InvalidProgram). Refine to an
         // EXACT param-signature match against the `new` node's declared `argTypes` (the resolved ctor's own param types,
-        // rendered with the same SigTokenOf grammar as the def side) when present; keep the first same-arity ctor as fallback.
+        // rendered with the same SigCanon encoding as the def side) when present; keep the first same-arity ctor as fallback.
         string[] want = null;
         if (newNode.ValueKind == JsonValueKind.Object
             && newNode.TryGetProperty("argTypes", out var at) && at.ValueKind == JsonValueKind.Array
             && at.GetArrayLength() == argCount)
             // A `new` node may carry PLACEHOLDER argTypes for untyped closure-capture args (`{}` — a state-machine
-            // `create`), which SigTokenOf/TypeNode.Read cannot read; abandon the signature match (arity fallback) then.
-            try { want = at.EnumerateArray().Select(SigTokenOf).ToArray(); } catch { want = null; }
+            // `create`), which TypeNode.Read cannot read; abandon the signature match (arity fallback) then.
+            try { want = at.EnumerateArray().Select(x => SigCanon(DotKt.Bir.TypeNode.Read(x))).ToArray(); } catch { want = null; }
         ConstructorBuilder firstArity = null;
         for (int i = 0; i < ti.Ctors.Count; i++)
         {
@@ -103,7 +103,7 @@ sealed partial class Emitter
             if (want == null) break;   // no sig info -> the first same-arity ctor (legacy behavior)
             int j = 0; bool exact = true;
             foreach (var p in ps.EnumerateArray())
-                if (SigTokenOf(p.GetProperty("type")) != want[j++]) { exact = false; break; }
+                if (SigCanon(DotKt.Bir.TypeNode.Read(p.GetProperty("type"))) != want[j++]) { exact = false; break; }
             if (exact) return ti.Ctors[i];
         }
         return firstArity ?? ti.Ctor;
@@ -408,9 +408,8 @@ sealed partial class Emitter
 
     (string open, Type constructed) ParseOwner(string spec)
     {
-        // A legacy clr:/clrg: marker (kotc's not-yet-retired exception map) — strip it so the bare FQN resolves.
-        if (spec.StartsWith("clr:", StringComparison.Ordinal)) spec = spec.Substring(4);
-        else if (spec.StartsWith("clrg:", StringComparison.Ordinal)) spec = spec.Substring(5);
+        // A bare owner-FQN IDENTITY (the legacy `clr:`/`clrg:` markers are retired — #48); a `[...]` suffix carries the
+        // referenced-generic instantiation.
         var br = spec.IndexOf('[');
         if (br < 0) return (spec, null);
         var open = spec.Substring(0, br);

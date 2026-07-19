@@ -469,39 +469,26 @@ sealed partial class Emitter
     }
 
     // A type slot for an IL-opcode context (newarr elem / conv / default): a structured node resolves via MapType, a
-    // legacy string token via the shorthand/prefix path below.
+    // bare type-IDENTITY string (a CLR-shorthand primitive, or a bare FQN) via the identity path below (the legacy
+    // grammar prefixes are retired, #48).
     Type NativeType(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object ? MapType(DotKt.Bir.TypeNode.Read(e)) : NativeType(e.GetString());
 
     Type NativeType(string spec)
     {
         if (spec == null) return typeof(object);
-        if (spec.StartsWith("clr:", StringComparison.Ordinal) ||
-            spec.StartsWith("clrg:", StringComparison.Ordinal) ||
-            spec.StartsWith("array:", StringComparison.Ordinal) ||
-            spec.StartsWith("func:", StringComparison.Ordinal) ||
-            spec.StartsWith("nullable:", StringComparison.Ordinal) ||
-            spec.StartsWith("byref:", StringComparison.Ordinal) ||
-            spec.StartsWith("gp:", StringComparison.Ordinal) ||
-            spec.StartsWith("@", StringComparison.Ordinal))
-            return MapType(spec);
         return spec switch
         {
             "void" or "int" or "long" or "double" or "float" or "bool" or "char" or "string" or
             "uint" or "ulong" or "byte" or "ushort" or "short" or "sbyte" or "object" => MapType(spec),
-            _ => ClrRef(ClrOwnerSpec(spec)),
+            _ => ClrRef(spec),
         };
     }
-
-    static string ClrOwnerSpec(string owner) =>
-        owner.StartsWith("clr:", StringComparison.Ordinal) || owner.StartsWith("clrg:", StringComparison.Ordinal)
-            ? owner
-            : "clr:" + owner;
 
     static string NativeOwnerSpec(JsonElement node, JsonElement member) =>
         node.TryGetProperty("ownerType", out var ownerType) && ownerType.ValueKind != JsonValueKind.Null
             ? SlotName(ownerType)
-            : ClrOwnerSpec(SlotName(member.GetProperty("owner")));
+            : SlotName(member.GetProperty("owner"));
 
     // ClrRef (generic-aware type resolution) that returns null instead of throwing.
     Type TryResolveClr(string spec) { try { return ClrRef(spec); } catch { return null; } }
@@ -619,7 +606,7 @@ sealed partial class Emitter
     // A capturing closure over an enclosing type param (`{ seed }` in `generateSequence<T>`) is a GENERIC class;
     // left as its open definition the `newobj Closure`1::.ctor(!0)` operand is OPEN -> a TypeLoadException at run.
     // Close it with the node's explicit `typeArgs`, else (C13a: kotc/bir2cir omitted them for the non-`this`-capturing
-    // form) with the enclosing params matched by NAME (the same resolution `MapType("gp:<name>")` uses). Shared by the
+    // form) with the enclosing params matched by NAME (GenericParamByName). Shared by the
     // main newClosure emit and the delegate-arg binding path so neither can diverge.
     (ConstructorInfo Ctor, MethodInfo Invoke) ResolveClosure(JsonElement e)
     {
@@ -630,7 +617,7 @@ sealed partial class Emitter
         if (e.TryGetProperty("typeArgs", out var taProp) && taProp.GetArrayLength() > 0)
             constructed = ct.TB.MakeGenericType(taProp.EnumerateArray().Select(a => MapType(a)).ToArray());
         else if (ct.TB.IsGenericTypeDefinition)
-            constructed = ct.TB.MakeGenericType(ct.TB.GetGenericArguments().Select(gp => MapType("gp:" + gp.Name)).ToArray());
+            constructed = ct.TB.MakeGenericType(ct.TB.GetGenericArguments().Select(gp => GenericParamByName(gp.Name)).ToArray());
         if (constructed != null)
         {
             ctor = TypeBuilder.GetConstructor(constructed, ct.Ctor);

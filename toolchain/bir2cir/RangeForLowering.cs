@@ -49,7 +49,7 @@ static class RangeForLowering
     static void StdlibForm(JsonObject o)
     {
         o.Remove("rangeType");
-        o["accessOwner"] = "kotlin.ranges.IntProgression";
+        o["accessOwner"] = TypeJson.Fqn("kotlin.ranges.IntProgression");
         o["firstM"] = "get_first";
         o["lastM"] = "get_last";
         o["stepM"] = "get_step";

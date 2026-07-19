@@ -26,7 +26,7 @@ static partial class ClrMemberResolution
 {
     static void ResolveOverrideBase(JsonObject node)
     {
-        var owner = (node["clrOverride"] as JsonValue)?.GetValue<string>();
+        var owner = TypeJson.OwnerName(node["clrOverride"]);
         var name = (node["name"] as JsonValue)?.GetValue<string>();
         if (owner == null || name == null || node["params"] is not JsonArray) return;
         var open = ResolveOwnerType(new TypeNode.Fqn(owner));
