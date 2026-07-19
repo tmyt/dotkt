@@ -626,7 +626,7 @@ il_check collrevview CollRevView "$ROOT/cases/il-collrevview" "$(printf '([1, 2]
 # a MutableMap must still collapse its V to IList and verify clean (the `?` must not smuggle an un-collapsed IReadOnly
 # face past the collapse). Pure runnable guard for that shape.
 il_check nullcollarg NullCollArg "$ROOT/cases/il-nullcollarg" "$(printf '{a=[1]}')"
-il_check extprop ExtProp "$ROOT/cases/il-extprop" "$(printf '2\n1\n1\n3\n-1\n1\n0')"  # C7: cross-module top-level extension-property getter -> callStatic get_<name>(receiver) (generic List.lastIndex carries type args); NOT a dropped-receiver field read
+il_check extprop ExtProp "$ROOT/cases/il-extprop" "$(printf '2\n1\n1\n3\n-1\n1\n0')"  # C7 (+ #157 NON-coroutine guard): cross-module top-level extension-property getter -> callStatic get_<name>(receiver) (generic List.lastIndex carries type args); NOT a dropped-receiver field read. Resolves through the SAME general owner-null path as xmodtopval (prop:get -> get_<name> -> TryResolveTopLevelStatic recvKey branch) — a name-keyed re-special-case of that path would break these non-coroutine names
 il_check str   Str   "$ROOT/cases/il-str"     "$(printf 'HELLO\nhello\nhi\nello\nTrue\nTrue')"
 il_check strops StrOps "$ROOT/cases/il-strops" "$(printf 'hello\nhi\nhi\n  5\n005\n500\n>5  <\nheLLo\nbbbbbb\naXaX\nheLLo')"  # trim(vararg)/padStart/padEnd/replace -> pure-Kotlin stdlib bodies (no kotc STRING_OPS System.String lowering)
 il_check defargs DefArgs "$ROOT/cases/il-defargs" "$(printf 'x1-x2-x3\n1, 2, 3\n[1, 2, 3]\n1/2/~\nb=c\na\nnodelim\nFALLBACK\nP(x=1, y=20, z=3)\nP(x=10, y=2, z=30)\nHello, Kotlin!\nHello, Kotlin?')"  # C3: cross+same-module default args — omitted middle default must not shift a later provided arg's slot (joinToString transform / substringAfter `= this` / data-class copy(field=))
@@ -1000,7 +1000,7 @@ il_check_imports cobuild Cob "$ROOT/cases/il-cobuild" "25"
 il_check_imports genasync GenAsync "$ROOT/cases/il-genasync" "7"  # genuine-async isolation: suspend fun with Task.Delay().await(), drained by blockOn
 il_check_imports suspendcatch SuspendCatch "$ROOT/cases/il-suspendcatch" "$(printf '10\n99\n103\n200\n300')"   # #78 Defect B: a suspend call INSIDE a catch handler (Select.kt:723 recoverAndThrow shape) — HoistSuspendingCatches lifts the handler out of the CLR catch clause so the SM can segment its suspension; the try body ALSO suspends (two-level dispatch) + multi-catch (both handlers suspend, per-clause capture)
 il_check_imports suspendintrinsic SuspendIntrinsic "$ROOT/cases/il-suspendintrinsic" "42"   # #80: a direct user read of the top-level val COROUTINE_SUSPENDED in a suspendCoroutineUninterceptedOrReturn block — canonicalized to the SM's Suspended() marker in Rewrite (mis-owned by MemberCallSubstitution to the file class otherwise)
-il_check suspendintrinsicowned AppKt "$ROOT/cases/il-suspendintrinsicowned/app.kt" "42"   # #80 RESIDUAL: an ALREADY-OWNER'd COROUTINE_SUSPENDED read — a NON-suspend member (getResult shape) reads the intrinsic val, so kotc stamps owner=<AppKt> + prop:get (not owner-null); MemberCallSubstitution now rebinds it to IntrinsicsKt.get_COROUTINE_SUSPENDED regardless of the stamped owner (the port hit this as Builders_commonKt.get_COROUTINE_SUSPENDED)
+il_check suspendintrinsicowned AppKt "$ROOT/cases/il-suspendintrinsicowned/app.kt" "42"   # #157 (was #80-residual): a NON-suspend member (getResult shape) reads the top-level val COROUTINE_SUSPENDED — post-#89 kotc emits owner:null + prop:get (like every cross-module top-level val), and bir2cir binds it through the GENERAL owner-null resolver (prop:get -> get_COROUTINE_SUSPENDED -> TryResolveTopLevelStatic single-candidate -> IntrinsicsKt), NOT a COROUTINE_SUSPENDED special-case (that band-aid was deleted as redundant)
 il_check_imports suspendloop SuspendLoop "$ROOT/cases/il-suspendloop" "$(printf '12\n18\n6')"   # #82: a structured collection loop (forArray + forEachInline) whose body spans a suspension — FlattenSuspendingLoops flattens it to CFG so the loop temps/element cross the resume as SM fields (else `load unknown var __inlsN$element`); + break/continue crossing the resume
 # inlsuspend: #75 S4a §8.7 arm (c) — a suspend call inside a NON-suspend-typed inline-arg lambda (repeat{tick()},
 # let{tick()}) splices into work()'s state machine (the delegate path would trap the await in a non-suspend closure).
@@ -1200,9 +1200,12 @@ il_check nullcs NullCs "$ROOT/cases/il-nullcs" "$(printf 'Z:empty\nV:hi\nE:empty
 # boundary — kotc carries the annotation as OPAQUE ref.dll metadata (attrsJson is unconditional, NOT dropped for
 # @InlineOnly) and bir2cir substitutes the plain call to the bound BCL member (`sb[0]='X'` -> set_Chars, Char.is* -> System.Char.Is*).
 il_check inlonlyintr AppKt "$ROOT/cases/il-inlonlyintr/app.kt" "$(printf 'Xbc\nTrue\nTrue\nTrue')"
-# #89: a CROSS-MODULE top-level `val` read (COROUTINE_SUSPENDED, a computed val deserialized from the metadata klib whose
+# #89/#157: a CROSS-MODULE top-level `val` read (COROUTINE_SUSPENDED, a computed val deserialized from the metadata klib whose
 # parent is a package fragment, not an IrFile) is attributed owner:null by kotc — NOT the READING file's class — so bir2cir
-# binds the true declaring IntrinsicsKt off the ref.dll instead of an unresolvable <ReaderFile>Kt.get_COROUTINE_SUSPENDED.
+# binds the true declaring IntrinsicsKt off the ref.dll via the GENERAL owner-null top-level resolver (prop:get -> get_<name> ->
+# TryResolveTopLevelStatic; the accessor is indexed in TopLevelStatics as a file-class static). This is the zero-arg (recvKey="")
+# branch — the only reachable instance is COROUTINE_SUSPENDED (klib-package-fragment-only shape, the stdlib's lone public plain
+# computed top-level val); the non-coroutine sibling of the SAME general path is il-extprop (extension-property getters, #157).
 il_check xmodtopval AppKt "$ROOT/cases/il-xmodtopval/app.kt" "$(printf 'True\nTrue')"
 # #57: a `length` property reference on a USER CharSequence implementer lifts faithfully (its accessor resolves on the
 # class's OWN emitted get_length slot) — DIRECT (A) and INHERITED-through-A (B), bound + unbound. The deferral keys on the

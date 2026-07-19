@@ -1044,6 +1044,10 @@ sealed partial class ReferenceMetadataIndex
                         // A NON-intrinsic top-level fun (a real Kotlin body in a file-class) -> index it by name so an APP
                         // build can attribute a referenced `callStatic owner=null` to this file-class (disambiguated by the
                         // first-param receiver type when overloaded across file-classes). The stdlib self-build never reads it.
+                        // #157: this DELIBERATELY has no IsSpecialName exclusion, so a top-level property ACCESSOR (`get_X`/
+                        // `set_X` — a file-class static with intrinsic==null) is indexed too. That is what lets a cross-module
+                        // top-level `val` read (kotc emits owner:null + prop:get -> reconstructed `get_X`) resolve GENERICALLY
+                        // through TryResolveTopLevelStatic (e.g. COROUTINE_SUSPENDED -> IntrinsicsKt), with no per-name special-case.
                         if (isFileClass && method.IsStatic && intrinsic == null)
                         {
                             var ps = method.GetParameters();
