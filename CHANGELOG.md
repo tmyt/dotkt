@@ -27,6 +27,15 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir ([tmyt/dotkt#138], area:bir2cir): `KClass.simpleName`/`qualifiedName` now report the KOTLIN name for a
+  statically-known `::class`, not the .NET reflection name.** `1::class.simpleName` was `"Int32"` and
+  `.qualifiedName` `"System.Int32"`; `"x"::class.qualifiedName` was `"System.String"` — the accessors were wired
+  straight through to `System.Type.Name`/`.FullName`. `KClassMemberBinding` runs before `BirTypeLowering`, where the
+  receiver's type slot is still a pure Kotlin FQN, so it now const-folds the accessor to the Kotlin name
+  (`qualifiedName` = the FQN, `simpleName` = its last `.`-segment) for both an unbound `Int::class`/`Foo::class`
+  (`classRef`) and a bound `1::class`/`"x"::class` on a known-final builtin (`getType` — a final type's runtime class
+  == its static type). Fixes the primitive tower + String; a genuinely-dynamic `x::class` on an open/interface static
+  type keeps the run-time read (a sequenced stdlib follow-up — see `docs/dotkt-semantics.md` §5g).
 - **kotc ([tmyt/dotkt#184], area:kotc): a .NET attribute with a `params` (varargs) constructor parameter can now be
   applied bare (zero args) from Kotlin.** The injected annotation class constructor was not marking `params array`
   parameters as vararg — `ClrTypeInjection.generateConstructors` iterated all params with a plain `valueParameter`
