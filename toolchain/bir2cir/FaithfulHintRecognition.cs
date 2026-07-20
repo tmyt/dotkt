@@ -164,8 +164,6 @@ static class FaithfulHintRecognition
 
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs = null, IReadOnlySet<string> localTopLevelFns = null)
     {
-        StaticType.Refs = refs;
-        StaticType.LocalTypes = StaticType.CollectTypes(root);
         _localTopLevelFns = localTopLevelFns ?? new HashSet<string>(StringComparer.Ordinal);
         Walk(root, BirScope.Empty);
     }

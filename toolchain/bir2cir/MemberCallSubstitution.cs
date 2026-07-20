@@ -1405,6 +1405,9 @@ static class MemberCallSubstitution
             ["recv"] = (extRecv ?? node["recv"])?.DeepClone(),
         };
         if (!write && RetToken(node) is JsonNode ret) pg["ret"] = ret;
+        // Carry the frontend static-type stamp (#122) so a LATE consumer (StringCharSequenceBridge) recovers the
+        // property's type even when it is non-generic (no `ret`) — e.g. a String-typed getter feeding a CharSequence slot.
+        if (!write && node["sty"] is JsonNode pgSty) pg["sty"] = pgSty.DeepClone();
         // WRITE value = the LAST arg (past a leading `__self` on the extension axis); args[0] on the instance/plain axis.
         if (write && args.Count >= 1) pg["value"] = (extRecv != null ? args[^1] : args[0]).DeepClone();
         // Carry the `super` (non-virtual) marker (issue #14) onto the substituted accessor so ilemit emits a
@@ -1455,6 +1458,9 @@ static class MemberCallSubstitution
             ["argTypes"] = argTypes,
         };
         if (ret != null) call["ret"] = ret;
+        // Carry the frontend static-type stamp (#122) so a LATE consumer recovers a non-generic (ret-less) call's
+        // return type — e.g. a String-returning BCL/app call feeding the CharSequence bridge.
+        if (node["sty"] is JsonNode callSty) call["sty"] = callSty.DeepClone();
         if (instance) call["recv"] = node["recv"]?.DeepClone();
         call["args"] = args.DeepClone();
         // Carry the `super` (non-virtual) marker (issue #14) onto the substituted clrInstance so ilemit emits a

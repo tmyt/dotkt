@@ -340,6 +340,9 @@ static class BirTypeLowering
                 // future bir2cir decl-rename pass can derive BCL slot names from the ref.dll @ClrIntrinsic. It is
                 // bir2cir-internal metadata — strip it here so it never reaches the CIR/ilemit (keeps emit byte-identical).
                 if (kv.Key == "overrides") continue;
+                // #122: the frontend static-type stamp `sty` is bir2cir-internal (consumed by StaticType up through the
+                // CharSequence bridge). Strip it here so it never reaches CIR/ilemit — a consumed hint, not a CIR slot.
+                if (kv.Key == "sty") continue;
                 if (kv.Value == null) { copy[kv.Key] = null; continue; }
                 if (kv.Key == "attrs")
                     copy[kv.Key] = LowerNode(kv.Value, refBuild, force: true);   // attribute application -> blob metadata

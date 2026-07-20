@@ -47,7 +47,6 @@ sealed partial class ReferenceMetadataIndex
     readonly HashSet<string> _helperTypes = new(StringComparer.Ordinal);             // emitted "dotkt$ClrH_*"
     readonly HashSet<string> _restrictsSuspension = new(StringComparer.Ordinal);     // @RestrictsSuspension owners
     readonly Dictionary<string, List<MemberBinding>> _membersByOwner = new(StringComparer.Ordinal);
-    readonly Dictionary<string, TypeNode> _staticFieldTypes = new(StringComparer.Ordinal); // "owner|field" -> declared type (#73-2b-A: cross-file array-const reads)
     readonly Dictionary<string, string> _topLevelIntrinsics = new(StringComparer.Ordinal); // top-level fun name -> FQ static
     readonly Dictionary<string, string> _topLevelIntrinsicsBySig = new(StringComparer.Ordinal); // "name|paramKeys" -> FQ static (overload-disambiguated)
     readonly HashSet<string> _ambiguousTopLevelIntrinsics = new(StringComparer.Ordinal); // names whose overloads bind to DIFFERENT statics (Math vs MathF)
@@ -154,7 +153,6 @@ sealed partial class ReferenceMetadataIndex
                     _membersByOwner[m.Owner] = list = new List<MemberBinding>();
                 list.Add(m);
             }
-            foreach (var kv in asm.DotKt.StaticFieldTypes) _staticFieldTypes.TryAdd(kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.TopLevelIntrinsics) _topLevelIntrinsics.TryAdd(kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.TopLevelIntrinsicsBySig) _topLevelIntrinsicsBySig.TryAdd(kv.Key, kv.Value);
             foreach (var n in asm.DotKt.AmbiguousTopLevelIntrinsics) _ambiguousTopLevelIntrinsics.Add(n);
@@ -790,11 +788,6 @@ sealed partial class ReferenceMetadataIndex
                 ?? list.FirstOrDefault(b => b.Name == name && b.ReturnType != null))?.ReturnType;
     }
 
-    // The declared type of a STATIC field on the ref.dll (a top-level `val` / companion constant, e.g. a cross-file
-    // `charArrayOf(…)` array constant). Used by StaticType (#73-2b-A) to derive an array-const read's element.
-    public TypeNode TryFieldType(string ownerFqn, string name) =>
-        ownerFqn != null && _staticFieldTypes.TryGetValue(ownerFqn + "|" + name, out var t) ? t : null;
-
     // The declared RETURN type of a top-level fun (a `callStatic owner=null`), resolved via its file-class owner then the
     // member's return type. `recvKey` = the call's first sig-param bare owner (disambiguates overloads across file-classes);
     // `argCount` = the sig's total param count (receiver + args), matching the ref.dll static's ParamCount. null if unresolved.
@@ -945,13 +938,6 @@ sealed partial class ReferenceMetadataIndex
                         if (backing != null && InlineFieldConv(backing.FieldType) is string conv)
                             metadata.InlineBacking[ownerFqn] = ("get_" + backing.Name, conv);
                     }
-
-                    // STATIC FIELD types (#73-2b-A): a top-level `val` / companion constant (e.g. a cross-file
-                    // `charArrayOf(…)` array constant) so StaticType can derive an `array-const[i]` read's element
-                    // when the field is defined in ANOTHER file (not in this file's LocalTypes).
-                    foreach (var fi in type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.DeclaredOnly))
-                        if (TypeNodeOf(fi.FieldType) is TypeNode ft)
-                            metadata.StaticFieldTypes.TryAdd(ownerFqn + "|" + fi.Name, ft);
 
                     foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly))
                     {
@@ -1436,7 +1422,6 @@ sealed class ReferenceDotKtMetadata
     public readonly List<MemberBinding> MemberBindings = new();                           // per-member @ClrIntrinsic + shape
     // [KotlinInline] raw-BIR payloads (#71/#75): "owner|name|pc|ga" -> the candidate decoded carrier JSONs (one per overload).
     public readonly Dictionary<string, List<string>> InlinePayloads = new(StringComparer.Ordinal);
-    public readonly Dictionary<string, TypeNode> StaticFieldTypes = new(StringComparer.Ordinal); // "owner|field" -> declared type
     // Top-level fun name -> its @ClrIntrinsic fully-qualified static target ("System.Diagnostics.Stopwatch.GetTimestamp").
     // A top-level fun is a static method of a [KotlinFileClass] type; its call site is `callStatic owner=null`.
     public readonly Dictionary<string, string> TopLevelIntrinsics = new(StringComparer.Ordinal);

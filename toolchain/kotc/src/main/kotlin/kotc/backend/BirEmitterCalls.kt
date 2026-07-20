@@ -141,7 +141,7 @@ internal fun BirEmitter.filledArgs(call: org.jetbrains.kotlin.ir.expressions.IrF
 							(dispatchReceiver(call) ?: extensionReceiver(call))?.let { r ->
 								// Owner via ownerSpec (the SAME token the plain `pair.first` property read uses — the referenced,
 								// instantiated `kotlin.Pair[Int,Int]`, no `@` this-assembly prefix, no open `gp:` param).
-								"""{"k":"field","ownerType":${ownerSpec(callee.parent as? IrClass, r.type).toJson()},"recv":${recvJson},"name":${str(p.name.asString())}}"""
+								"""{"sty":${birType(p.type).toJson()},"k":"field","ownerType":${ownerSpec(callee.parent as? IrClass, r.type).toJson()},"recv":${recvJson},"name":${str(p.name.asString())}}"""
 							}
 						// A @KotlinDefault-carrying callee (any non-constant default — joinToString's CharSequence separators,
 						// substringAfter's `= this`, `b = a * 10`) gets a POSITIONAL placeholder for EVERY omitted arg so a later
@@ -465,7 +465,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// `kotlin.Lazy<T>`), binding to the actual emitted stdlib getValue/setValue.
 		val (owner, ownerGeneric) = when {
 			delegateClass != null && !isExternalNetType(delegateClass) &&
-				delegateClass.fqNameWhenAvailable?.asString()?.startsWith("kotlin") != true -> str(typeName(delegateClass)) to false
+				delegateClass.fqNameWhenAvailable?.asString()?.startsWith("kotlin") != true -> fqnJson(typeName(delegateClass)) to false
 			dvFq == "kotlin.properties.ReadWriteProperty" || dvFq == "kotlin.properties.ReadOnlyProperty" -> {
 				val os = ownerSpec(delegateClass, dvar.type)
 				os.toJson() to ((os as? TypeNode.Fqn)?.args != null)
@@ -1012,11 +1012,11 @@ internal fun BirEmitter.call(call: IrCall): String {
 					val (customGet, customSet) = callableId?.let { kotc.frontend.clrInjectedTopLevelPropCustomAccessor(it) } ?: (false to false)
 					if (callee === p.setter) {
 						return if (customSet)
-							"""{"k":"callStatic","ownerType":${str(fileClass)},"method":${str(p.name.asString())},"prop":"set","argTypes":[${birType(regularArgs(call).first().type).toJson()}],"ret":${fqnJson("kotlin.Unit")},"args":[${expr(regularArgs(call).first())}]}"""
+							"""{"k":"callStatic","ownerType":${fqnJson(fileClass)},"method":${str(p.name.asString())},"prop":"set","argTypes":[${birType(regularArgs(call).first().type).toJson()}],"ret":${fqnJson("kotlin.Unit")},"args":[${expr(regularArgs(call).first())}]}"""
 						else """{"k":"staticFieldSet","ownerType":${fqnJson(fileClass)},"name":${str(p.name.asString())},"value":${expr(regularArgs(call).first())}}"""
 					}
 					return if (customGet)
-						"""{"k":"callStatic","ownerType":${str(fileClass)},"method":${str(p.name.asString())},"prop":"get","argTypes":[],"ret":${birType(callee.returnType).toJson()},"args":[]}"""
+						"""{"k":"callStatic","ownerType":${fqnJson(fileClass)},"method":${str(p.name.asString())},"prop":"get","argTypes":[],"ret":${birType(callee.returnType).toJson()},"args":[]}"""
 					else """{"k":"staticField","ownerType":${fqnJson(fileClass)},"name":${str(p.name.asString())}}"""
 				}
 				val recv = extensionReceiver(call)
@@ -1026,9 +1026,9 @@ internal fun BirEmitter.call(call: IrCall): String {
 				// `get_`/`set_` convention -> a clrStatic method call.
 				if (callee === p.setter) {
 					val args = listOfNotNull(recv) + regularArgs(call)
-					return """{"k":"callStatic","ownerType":${str(fileClass)},"method":${str(p.name.asString())},"prop":"set","argTypes":[${args.joinToString(",") { birType(it.type).toJson() }}],"ret":${fqnJson("kotlin.Unit")},"args":[${args.joinToString(",") { expr(it) }}]}"""
+					return """{"k":"callStatic","ownerType":${fqnJson(fileClass)},"method":${str(p.name.asString())},"prop":"set","argTypes":[${args.joinToString(",") { birType(it.type).toJson() }}],"ret":${fqnJson("kotlin.Unit")},"args":[${args.joinToString(",") { expr(it) }}]}"""
 				}
-				return """{"k":"callStatic","ownerType":${str(fileClass)},"method":${str(p.name.asString())},"prop":"get","argTypes":[${recv?.let { birType(it.type).toJson() } ?: ""}],"ret":${birType(callee.returnType).toJson()},"args":[${recv?.let { expr(it) } ?: ""}]}"""
+				return """{"k":"callStatic","ownerType":${fqnJson(fileClass)},"method":${str(p.name.asString())},"prop":"get","argTypes":[${recv?.let { birType(it.type).toJson() } ?: ""}],"ret":${birType(callee.returnType).toJson()},"args":[${recv?.let { expr(it) } ?: ""}]}"""
 			}
 		}
 
@@ -1061,7 +1061,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 					delegateClass.fqNameWhenAvailable?.asString()?.startsWith("kotlin") != true
 				val bfFq = bf?.type?.classFqName?.asString()
 				val (owner, ownerGeneric) = when {
-					isUserDelegate -> str(typeName(delegateClass!!)) to false
+					isUserDelegate -> fqnJson(typeName(delegateClass!!)) to false
 					bf != null && (bfFq == "kotlin.properties.ReadWriteProperty" || bfFq == "kotlin.properties.ReadOnlyProperty") -> {
 						val os = ownerSpec(bf.type.classifierOrNull?.owner as? IrClass, bf.type)
 						os.toJson() to ((os as? TypeNode.Fqn)?.args != null)
@@ -1209,7 +1209,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 			delegateClass.fqNameWhenAvailable?.asString()?.startsWith("kotlin") != true
 		val bfFq = bf?.type?.classFqName?.asString()
 		val (owner, ownerGeneric) = when {
-			isUserDelegate -> str(typeName(delegateClass!!)) to false
+			isUserDelegate -> fqnJson(typeName(delegateClass!!)) to false
 			bf != null && (bfFq == "kotlin.properties.ReadWriteProperty" || bfFq == "kotlin.properties.ReadOnlyProperty") -> {
 				val os = ownerSpec(bf.type.classifierOrNull?.owner as? IrClass, bf.type)
 				os.toJson() to ((os as? TypeNode.Fqn)?.args != null)
@@ -1538,7 +1538,7 @@ internal fun BirEmitter.plainInjectedTopLevelCall(call: IrCall, callee: IrSimple
 			val shapeTypes = shapeParams.joinToString(",") { birType(it.type).toJson() }
 			// A2 (#61): a PLAIN static call by identity carrying the generic facts (typeArgs + shapeTypes);
 			// bir2cir's NetInteropBinding resolves the file-class owner off the refs and shapes it to clrGenericStatic.
-			return """{"k":"callStatic","ownerType":${str(fileClass)},"method":${str(name)},"typeArgs":[$taJson],"shapeTypes":[$shapeTypes],"args":[${a.joinToString(",") { expr(it) }}]${suspendCallTag(callee)}}"""
+			return """{"k":"callStatic","ownerType":${fqnJson(fileClass)},"method":${str(name)},"typeArgs":[$taJson],"shapeTypes":[$shapeTypes],"args":[${a.joinToString(",") { expr(it) }}]${suspendCallTag(callee)}}"""
 		}
 	}
 	// A2 (#61): a PLAIN static call by identity to the referenced .NET file class; bir2cir's NetInteropBinding
@@ -1553,7 +1553,7 @@ internal fun BirEmitter.plainInjectedTopLevelCall(call: IrCall, callee: IrSimple
 	val argStrs = (listOfNotNull(extStr) + regArgs).joinToString(",")
 	val extParamType = callee.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }?.let { birType(it.type) }
 	val argTypeNodes = (listOfNotNull(extParamType) + regularParams(callee).map { birType(it.type) }.take(regArgs.size)).joinToString(",") { it.toJson() }
-	return """{"k":"callStatic","ownerType":${str(fileClass)},"method":${str(name)}${overloadSigField(callee)},"argTypes":[$argTypeNodes],"ret":${str(ret)},"args":[$argStrs]${suspendCallTag(callee)}}"""
+	return """{"k":"callStatic","ownerType":${fqnJson(fileClass)},"method":${str(name)}${overloadSigField(callee)},"argTypes":[$argTypeNodes],"ret":${str(ret)},"args":[$argStrs]${suspendCallTag(callee)}}"""
 }
 
 /**

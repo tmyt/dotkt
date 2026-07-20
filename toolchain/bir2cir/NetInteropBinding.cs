@@ -101,6 +101,10 @@ static class NetInteropBinding
         // dispatch like C#'s `base.M()`) instead of a `callvirt` that would re-dispatch to THIS class's override.
         var superNode = Take("super");
         void CarrySuper() { if (superNode != null) node["super"] = superNode; }
+        // Carry the frontend static-type stamp (#122) across the reshape (every key was detached above). Re-added once
+        // here — the branches only ADD keys, never re-clear — so a LATE consumer (StringCharSequenceBridge) recovers the
+        // reshaped node's Kotlin static type even when it is non-generic (no `ret`), e.g. a String-typed .NET property.
+        if (Take("sty") is JsonNode styCarry) node["sty"] = styCarry;
 
         // GENERIC .NET method: the presence of `typeArgs` (a frontend fact) is the signal. ilemit MakeGenericMethods it.
         // W1-S1 (#46/#44): carry the FIR-RESOLVED member reference into CIR as `memberSig` — the callee's DECLARED

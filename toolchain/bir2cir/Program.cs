@@ -229,13 +229,6 @@ sealed class Pipeline
         InlineBirStash.Reset();
         foreach (var b in birFiles) InlineBirStash.Stash(b.Root);
 
-        // CROSS-FILE STATIC-TYPE AGGREGATION (#149): seed StaticType's assembly-wide GlobalTypes / GlobalFileClasses
-        // from every input file's RAW root, so a receiver whose static type is declared in a SIBLING .kt (a cross-file
-        // user-class property `c.body`, a cross-file top-level fun result) resolves through the per-file LocalTypes
-        // MISS -> this global fallback. Consumed by the StringCharSequenceBridge (and every StaticType.Surface caller)
-        // to adapter-wrap a cross-file String receiver that would else reach the body-less `dotkt$CharSequence` slot.
-        StaticType.CollectGlobal(birFiles.Select(b => b.Root));
-
         // PHASE 1: per-file transforms up through the CharSequence bridge. Collect the staged roots so the
         // suspend cold lowering can run GLOBALLY (a same-assembly cross-file suspend call keeps `owner:null`,
         // so its cold-entry callee may live in another file — the suspend-member registry spans all files).
