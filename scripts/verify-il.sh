@@ -609,35 +609,24 @@ il_check pairnest PairNest "$ROOT/cases/il-pairnest" "$(printf '([1, 2], [3, 4])
 il_check extprop ExtProp "$ROOT/cases/il-extprop" "$(printf '2\n1\n1\n3\n-1\n1\n0')"  # C7 (+ #157 NON-coroutine guard): cross-module top-level extension-property getter -> callStatic get_<name>(receiver) (generic List.lastIndex carries type args); NOT a dropped-receiver field read. Resolves through the SAME general owner-null path as xmodtopval (prop:get -> get_<name> -> TryResolveTopLevelStatic recvKey branch) — a name-keyed re-special-case of that path would break these non-coroutine names
 il_check defargs DefArgs "$ROOT/cases/il-defargs" "$(printf 'x1-x2-x3\n1, 2, 3\n[1, 2, 3]\n1/2/~\nb=c\na\nnodelim\nFALLBACK\nP(x=1, y=20, z=3)\nP(x=10, y=2, z=30)\nHello, Kotlin!\nHello, Kotlin?')"  # C3: cross+same-module default args — omitted middle default must not shift a later provided arg's slot (joinToString transform / substringAfter `= this` / data-class copy(field=))
 il_check defargs2 DefArgs2 "$ROOT/cases/il-defargs2" "$(printf '55\n7\n12\n30\n134\n156\n159')"  # C3 residual: same-module default referencing ANOTHER value param (`b = a * 10`, `c = a + b`) — inlined with that param's filled arg substituted
-il_check indices Indices "$ROOT/cases/il-indices" "$(printf '012\n01234\n0123\nend')"  # for-in over a non-literal IntRange from `.indices` (Collection + CharSequence) counter-lowered off the iterator protocol
-# indicesv: a VALUE-element collection's .indices/.lastIndex (#30). `Collection<*>.indices` (star projection -> reified
-# IReadOnlyCollection<object>) threw EntryPointNotFound on a value-element list (ArrayList<int> implements
-# IReadOnlyCollection<int>, not <object> — no value-type covariance). Genericized to `Collection<T>.indices` so the size
-# read stays on IReadOnlyCollection<T>, covariance-safe (same shape as the already-working List<T>.lastIndex).
-il_check indicesv IndicesV "$ROOT/cases/il-indicesv" "$(printf '012\n2\n1\n-1\ne\n3\n012\n3')"
 il_check coerce Coerce "$ROOT/cases/il-coerce" "$(printf '7\n5\n5\n2\n1\n5\n7')"       # coerceAtMost/AtLeast/In -> pure-Kotlin stdlib bodies (no kotc System.Math lowering)
 il_check infloopret InfLoopRet "$ROOT/cases/il-infloopret" "$(printf '30\nok4')"  # #141: value-returning while(true){…return x} -> ilemit appends default(ret)+ret so the unreachable fall-through terminator is ilverify-clean (ReturnMissing gone)
-il_check genarrlam GenArrLam "$ROOT/cases/il-genarrlam" "$(printf '2\nnull\nnull\nnull\nnull\n3\nnull\nnull')"  # #142: `Array(size){ mk<T?>(null) }` in a generic class — nested constructed-generic `Ref<T?>` erased to `Ref<object>` CONSISTENTLY across method-sig/array-elem/newDelegate.funcType.ret; DelegateCtor gone. #4 (read side): reading the erased element back across the Box<Int>/Box<String> boundary (`b.a[0].v`/`b.elem(i).v`/retyped local/`val x: Int?=…`) re-derives `Ref<object>` from the erased decl (NullableTvErasureCallRealign) — was ilverify StackUnexpected `Ref`1<object>` vs `Ref`1<Nullable`1<int32>>`
 il_check toplateinit TopLateinit "$ROOT/cases/il-toplateinit" "$(printf 'caught: uninitialized\nhello\n5')"  # #104: top-level `lateinit var` (ref type) static field carries `"init": null` — must NOT hit the .cctor null-coercion store (crash); default-null + lateinitGet throw-before-init
 il_check samcmp SamCmp "$ROOT/cases/il-samcmp" "$(printf '1,1,2,3,4,5,6,9\n9,6,5,4,3,2,1,1')"  # explicit Comparator{} SAM conversion (plain fun interface; no kotc @ClrTypeAlias read)
 il_check cp    Cp    "$ROOT/cases/il-cp"      "$(printf '50\n3.5\nTrue\nTrue\nX')"
 il_check ext   Ext   "$ROOT/cases/il-ext"     "$(printf '21\nHI')"
-il_check arr   Arr   "$ROOT/cases/il-arr"     "$(printf '10\n30\n99\n3\n139\n139')"
+# Array family (arr/arrops/arrnull/arrslice/arrplus/intarraytolist/copyintoverlap/fillrange/indices/indicesv/ubytearr/
+# genarrlam) migrated to the NUnit in-process suite -> tests/il/fixtures/ArrayTests.kt (value asserts). il-copyofnull /
+# il-boxgen stay here (live XFAIL_ILVERIFY findings, not migratable into the ilverify-clean lane).
 il_check arraydeque AppKt "$ROOT/cases/il-arraydeque" "$(printf 'z\nb\nc\n1\nA')"   # concrete generic stdlib class ArrayDeque<E>:AbstractMutableList<E> as a field/owner forces ilemit to resolve kotlin.collections.ArrayDeque`1 from the rt dll — exercises the ICollection/IList void-drop methodimpl bridge (ilemit) + the BCL-only slot synthesis Contains/CopyTo/IsReadOnly/IndexOf (bir2cir)
-il_check copyintoverlap AppKt "$ROOT/cases/il-copyintoverlap/app.kt" "$(printf '1,1,2,3,4\n2,3,4,5,5\na,b,a,b,c\na,b,X,c,d')"   # #97: copyInto must be overlap-safe (System.Array.Copy = memmove); a forward element loop clobbers overlapping self-copies -> silently corrupts ArrayDeque.add(index,elem). Generic Array<T> path (the ArrayDeque victim); the 8 primitive copyInto actuals are fixed identically but not app-callable (pre-existing primitive-array-receiver resolution gap)
 il_check roundhalfup AppKt "$ROOT/cases/il-roundhalfup/app.kt" "$(printf '3\n-2\n1\n0\n4\n2\n3\n3\n-2\n3\n-2\n3\n2147483647\n-2147483648\nNaN-throws')"   # #103: roundToInt/roundToLong = round-half-UP toward +inf (floor(x+0.5)), NaN throws, out-of-range saturates — NOT banker's ToEven
 il_check utf8throw AppKt "$ROOT/cases/il-utf8throw/app.kt" "$(printf 'True\ndecode-threw\nencode-threw\nhello')"   # #143: decodeToString/encodeToByteArray honor throwOnInvalidSequence=true -> CharacterCodingException via throwing UTF8Encoding(false,true)
 il_check caseinvariant AppKt "$ROOT/cases/il-caseinvariant/app.kt" "$(printf 'ß\nSTRAßE\nABC\nhello\nß\nTrue')"   # #144: String/Char uppercase()/lowercase() are CLR-native 1:1 ToUpperInvariant/ToLowerInvariant — DELIBERATELY no Unicode one-to-many expansion (ß stays ß, not SS)
-il_check fillrange AppKt "$ROOT/cases/il-fillrange/app.kt" "$(printf 'a,z,z,d,e\niae\nioobe\nioobe-neg\n4,4,4')"   # #145: array fill validates the range (IllegalArgumentException on fromIndex>toIndex, IndexOutOfBoundsException out-of-bounds); generic path (primitive actuals fixed identically but blocked by the primitive-array-receiver resolution gap)
 il_check seq   Seq   "$ROOT/cases/il-seq"     "$(printf '6,12\n16\n3\n27\n10-20-30\n1,2,3\n4,5,6\n3')"
 il_check seqforin SeqForin "$ROOT/cases/il-seqforin" "$(printf 'a\nb')"
 il_check char  Char  "$ROOT/cases/il-char"    "$(printf 'True\nTrue\nTrue\nTrue\nA\nz\nTrue\nTrue\n97\nb')"
 il_check sort  Sort  "$ROOT/cases/il-sort"    "$(printf '9,6,5,4,3,2,1,1\na,dd,bbb,cccc\ncccc,bbb,dd,a')"
 il_check boxgen BoxgenKt "$ROOT/cases/il-boxgen" "$(printf '42\n1\n42\n42\n10\n-1\n[1, 2, 3]\n[3, 2, 1]\n[a, b, c]\n[1, null, 3]\n[5, null, null]\nSUMMER')"   # C2 boxed-primitive dual-representation: getOrPut/getOrElse/compareBy/Array<Int?>/T:Enum<T>
-il_check arrnull Arrnull "$ROOT/cases/il-arrnull" "$(printf '5\nnull\n3\n5\n7\nnull\n[5, null, null]\n100\nnull\nnull\n2.5\nx\nnull\nhi\nnull')"   # #113: arrayOfNulls<T>(n) allocates Nullable<T>[] (value-type nullability preserved) + copyOf() round-trip; general Int/Long/Double/Char/String
-il_check arrslice Arrslice "$ROOT/cases/il-arrslice" "$(printf '[20, 30, 40]\n[10, 20]\n[40, 50]\n3\n20\n90\n[1, 2]\n[2.5, 3.5]\n[b, c]\n[b, c]\n[a, b]\n[c, d]')"   # #117: Array<value-type>.slice/take/takeLast via runtime-type-preserving copyOfRange (value + reference T)
-il_check intarraytolist Intarraytolist "$ROOT/cases/il-intarraytolist" "$(printf '[1, 2]\n[a, b]\n[1, 2, 3]\n[1.5, 2.5]\n[1, 2, 0, 0]\n[7, 8, 0]\n[1, 2]\n[3, 4]\n[9, 8]\n[5, 6]')"   # #153: primitive-array-receiver top-level stdlib extension (toList/copyOf/copyInto/contentToString) resolves to ArraysKt; fine first-param key disambiguates signed vs unsigned (UArraysKt) vs generic Array<T>, receiver-nullability-insensitive
-il_check arrplus Arrplus "$ROOT/cases/il-arrplus" "$(printf '[1, 2, 3, 4]\n[1, 2, 3, 5]\n6\n[1, 2, 3, 4]\n[1.5, 2.5, 3.5]\n[a, b, c]\n[a, b, c]\n[a, b, d]')"   # #120: Array<value-type>.plus/plusElement body-local var reified-array element kept !T (value + reference T)
 il_check copyofnull Copyofnull "$ROOT/cases/il-copyofnull" "$(printf '[1, 2, 3, null, null]\n[1, 2]\n[1, 2, 3]\n1\nnull\n6\n[1, 2, null]\n[2.5, 3.5, null]\n[a, b, null]\n[x, y, null]\n[7, null, null]')"   # #124: Array<value-type>.copyOf(newSize) builds Nullable<elem>[] by runtime reflection (grow null-tail/shrink/prefix read-back; value + reference + already-nullable T)
 # G8 (#73 w9): UNBOUND extension-function callable references (`String::isNotBlank`, `String::repeatBy`) -> a lifted
 # static forwarder whose body is the faithful ext call; bir2cir binds/substitutes the inner call (isNotBlank = the
@@ -647,9 +636,6 @@ il_check boundextref BoundExtRef "$ROOT/cases/il-boundextref" "$(printf 'hi!\nab
 # A6: rule-3 helper calls on CONCRETE generic alias receivers (HashMap/ArrayList/LinkedHashMap: class typeArgs +
 # instantiated sig) + Map/MutableMap getOrDefault (bare-V map-defaults helper: retType carry, was BadImageFormat).
 il_check unsgn Unsigned "$ROOT/cases/il-unsigned" "$(printf '4000000100\n4000000000\n18000000000000000000\n60000\n250')"
-# ubytearr: UByteArray -> native System.Byte[] (#53). ubyteArrayOf/get/size as native array ops; toByteArray/toUByteArray
-# reinterpret between SByte[] (signed) and Byte[] (unsigned) — 250 unsigned reads as -6 signed and back.
-il_check ubytearr UByteArr "$ROOT/cases/il-ubytearr" "$(printf '3\n250\n-6\n250\n200')"
 il_check regex Regex "$ROOT/cases/il-regex" "$(printf 'True\nFalse\na#b#c#\na_b_c\nTrue\nFalse\n42\nnull')"
 # regexanchor (#162): matchEntire/matches do a TRUE anchored `\A(?:...)\z` match, not a leftmost search filtered by span
 # — so a shorter alternation branch (`a` in `a|ab`) or a lazy quantifier still yields the full-input match; compiled
@@ -1083,7 +1069,6 @@ il_check gfac TGfac "$ROOT/cases/il-gfac" "$(printf '42\nhi')"
 il_check xprop Xprop "$ROOT/cases/il-xprop" "7"
 il_check exprbody EB "$ROOT/cases/il-exprbody" "$(printf 'greet\nviaLambda\ncleanup\npos')"
 il_check overload OV "$ROOT/cases/il-overload" "$(printf 'S:x\nF:y\nI:7\nbs:p\nbf:q')"
-il_check arrops Arro "$ROOT/cases/il-arrops" "$(printf '3\n6,8,10\n14\n2\n-1\n10\n30')"
 # bundle-6 ④ stdlib-correctness routing (bir2cir)
 il_check cmpord   CmpOrd   "$ROOT/cases/il-cmpord"   "$(printf '31\n-31\n0\n-1\nFalse\n-7')"
 il_check starproj StarProj "$ROOT/cases/il-starproj" "$(printf '{1=2, 3=4}\n2\n[10, 20, 30]\n3\n20\n[10, 20, 30]\n[10, 20, 30]\n{1=2, 3=4}\nFalse\nFalse')"
