@@ -42,13 +42,15 @@ declare -A RT_XFAIL=(
 )
 
 # MIGRATED to the in-process ProjectReference round-trip lane (tests/roundtrip/consumer RoundtripTests, driven by
-# tests/run-nunit-il.sh) — these sections no longer run here (docs/design-nunit-test-harness.md §3, playbook §3):
-#   roundtrip-enum -> enumInheritedMembers          roundtrip-toplevel-val   -> topLevelValVar
-#   roundtrip-customprop -> customAccessorProperties roundtrip-defargs        -> defaultAndNamedArgs
-#   roundtrip-nrt -> triStateNullability             roundtrip-memext         -> memberExtensionFunctions
-#   roundtrip-operator-flag -> operatorAndInfixFromRealFlag  roundtrip-generic-operator -> genericOperatorGetSet
+# tests/run-nunit-il.sh) — these 7 sections no longer run here (docs/design-nunit-test-harness.md §3, playbook §3):
+#   roundtrip-enum -> enumInheritedMembers           roundtrip-defargs  -> defaultAndNamedArgs
+#   roundtrip-customprop -> customAccessorProperties roundtrip-nrt      -> triStateNullability
+#   roundtrip-memext -> memberExtensionFunctions     roundtrip-money/operator-flag -> operatorAndInfixFromRealFlag
+#   roundtrip-generic-operator -> genericOperatorGetSet
 # The remaining sections below stay in this shell lane pending later increments (suspend/coharness, negative
-# compile-fail, dual-emit-path/meta-inspection cases).
+# compile-fail, dual-emit-path/meta-inspection cases). roundtrip-toplevel-val STAYS here: a top-level PLAIN-field
+# (no custom accessor) file class is not surfaced by facadegen's --import-list path when reached only through
+# field imports, so it does not yet migrate to the ProjectReference consumer (a facadegen re-import gap).
 
 # ---- section result collection (no section may abort the script) -----------------------------------
 declare -a SUMMARY=() NEW_FAILS=()
@@ -1327,6 +1329,44 @@ check_output roundtrip-comparable-meta "1" "$cm_meta" "facadegen surface: Ver ga
 cmexpected="$(printf 'True\nTrue\nTrue\nFalse\n1\n3')"
 run_app cmactual "$CM/appil/VerApp.dll"
 check_output roundtrip-comparable "$cmexpected" "$cmactual" "class C : Comparable<C> </>/<=/>=/sorted() resolve+run cross-module (bir2cir compareTo->CompareTo slot bind) #179"
+
+# ----- TOP-LEVEL VAL/VAR round-trip (#34b): read a library's top-level property DIRECTLY, no fn workaround ----
+# A top-level `val greeting = "hi"` compiles (kotc) to a plain Public|Static FIELD on the file class (`tlval.LibKt`),
+# with NO get_/set_ accessor (only backing-field-LESS props — extension/computed — get accessors). facadegen now
+# surfaces each such field as a `tlprop <name> <type> <ro|rw>` meta token (Program.cs EmitKotlinFileClass), mirroring
+# the `tlfun`/`tlextprop` top-level path; the .NET file-class FQN rides the enclosing `file` line. This section proves
+# a consumer reads the library's top-level `val`/`var` DIRECTLY (`import tlval.greeting`), NOT via a function that
+# re-exposes the value (the H2 workaround the roundtrip-suspendfn-ret section had to use). Cases: a `val: String`, a
+# `var: Int` (read + write `+=`), and a `val` of a USER type (`Point`).
+SV="$ROOT/build/roundtrip-toplevel-val"; rm -rf "$SV"; mkdir -p "$SV/lib" "$SV/app" "$SV/libbir" "$SV/libil" "$SV/appbir" "$SV/appil"
+cat > "$SV/lib/lib.kt" <<'EOF'
+package tlval
+class Point(val x: Int, val y: Int) { override fun toString(): String = "($x, $y)" }
+val greeting: String = "hi"       // top-level val -> static field, read cross-module directly
+var counter: Int = 40             // top-level var -> read + write cross-module
+val origin: Point = Point(1, 2)   // top-level val of a USER type
+EOF
+cat > "$SV/app/app.kt" <<'EOF'
+import tlval.greeting
+import tlval.counter
+import tlval.origin
+fun main() {
+    println(greeting)   // hi
+    counter += 2
+    println(counter)    // 42
+    println(origin)     // (1, 2)
+}
+EOF
+CLR_TYPES_METADATA="" "$LAUNCHER" "$SV/lib" -no-stdlib -classpath "$CP" -d "$SV/libbir" >/dev/null 2>&1 || true
+emit_il "$SV/libil" TlvalLib "$SV/libbir"/*.bir.json
+dotnet "$RETARGET_DLL" "$SV/libil/TlvalLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" "$SV/k.meta" --compile-refs "$REFS$SV/libil/TlvalLib.dll" tlval.LibKt tlval.Point >/dev/null 2>&1 || true
+CLR_TYPES_METADATA="$SV/k.meta" "$LAUNCHER" "$SV/app" -no-stdlib -classpath "$CP" -d "$SV/appbir" >/dev/null 2>&1 || true
+emit_il "$SV/appil" TlvalApp --ref "$SV/libil/TlvalLib.dll" "$SV/appbir"/*.bir.json
+cp "$SV/libil/TlvalLib.dll" "$SV/appil/" 2>/dev/null || true
+svexpected="$(printf 'hi\n42\n(1, 2)')"
+run_app svactual "$SV/appil/TlvalApp.dll"
+check_output roundtrip-toplevel-val "$svexpected" "$svactual" "a top-level val/var round-trips: the consumer reads the library's top-level property DIRECTLY (no fn workaround) via the facadegen tlprop meta token"
 
 # ---- verdict --------------------------------------------------------------------------------------
 echo "------------------------------------"

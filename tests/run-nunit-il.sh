@@ -27,9 +27,9 @@ declare -A EXPECTED=(
 	["tests/il"]=157  # Generics 6 + Inline 17 + Collections 16 + Maps 10 + Strings 22 + Nullable 12 + Float 7 + Enum 5 + Exception 8 + Lambda 10 + ClrEvent 4 + LanguageCore 12 + Array 12 + GenericTypes 10 + Math 6
 	# ProjectReference round-trip consolidation lane (docs/design-nunit-test-harness.md §3; playbook §3): a producer
 	# DotKt LIBRARY (tests/roundtrip/producer) consumed via <ProjectReference> as its BUILT dll (facadegen re-import,
-	# NOT source) by this NUnit consumer. First batch = 8 migrated verify-roundtrip.sh sections (enum/toplevel-val/
-	# customprop/defargs/nrt/memext/operator-flag/generic-operator) -> 8 @TestAttribute methods.
-	["tests/roundtrip/consumer"]=8
+	# NOT source) by this NUnit consumer. First batch = 7 migrated verify-roundtrip.sh sections (enum/customprop/
+	# defargs/nrt/memext/operator-flag/generic-operator) -> 7 @TestAttribute methods.
+	["tests/roundtrip/consumer"]=7
 )
 
 # Extra DotKt-emitted assemblies (beyond the .ktproj-named one) to ALSO run ilverify over, per consumer project.

@@ -3,20 +3,18 @@
 // re-import round-trip. NONE of the producer's source is in this compilation — every `roundtrip.*` symbol
 // resolves from the built RoundtripProducer.dll (the DLL-not-source invariant, design §3).
 //
-// First migrated batch (8 verify-roundtrip.sh sections -> 8 @TestAttribute methods, golden values preserved
+// First migrated batch (7 verify-roundtrip.sh sections -> 7 @TestAttribute methods, golden values preserved
 // 1:1 as `// <expected>` trailing comments, per design D1 value asserts):
 //   enumInheritedMembers        <- roundtrip-enum            (#105)
-//   topLevelValVar              <- roundtrip-toplevel-val    (#34b)
 //   customAccessorProperties    <- roundtrip-customprop      (#103)
 //   defaultAndNamedArgs         <- roundtrip-defargs         (#134)
 //   triStateNullability         <- roundtrip-nrt             (#48)
 //   memberExtensionFunctions    <- roundtrip-memext
 //   operatorAndInfixFromRealFlag<- roundtrip-operator-flag   (#146)
 //   genericOperatorGetSet       <- roundtrip-generic-operator(#133)
+// (roundtrip-toplevel-val stays in the shell lane: a top-level PLAIN-field file class is not surfaced by
+//  facadegen's --import-list path when reached only through field imports — a facadegen re-import gap.)
 import roundtrip.palette.Color
-import roundtrip.tlval.greeting
-import roundtrip.tlval.counter
-import roundtrip.tlval.origin
 import roundtrip.cprop.topProp
 import roundtrip.cprop.topVar
 import roundtrip.cprop.topGetVar
@@ -45,15 +43,6 @@ class RoundtripTests {
         ClassicAssert.AreEqual("RED", Color.RED.toString())   // RED    inherited System.Enum.ToString on a value-type receiver
         ClassicAssert.IsFalse(Color.RED == Color.GREEN)       // False  structural inequality
         ClassicAssert.AreEqual(0, Color.RED.hashCode())       // 0      inherited System.Enum.GetHashCode (RED underlying int = 0)
-    }
-
-    // roundtrip-toplevel-val (#34b): the consumer reads a top-level val/var DIRECTLY (no fn workaround).
-    @TestAttribute
-    fun topLevelValVar() {
-        ClassicAssert.AreEqual("hi", greeting)                // hi
-        counter += 2
-        ClassicAssert.AreEqual(42, counter)                   // 42     top-level var read + write
-        ClassicAssert.AreEqual("(1, 2)", origin.toString())   // (1, 2) top-level val of a USER type
     }
 
     // roundtrip-customprop (#103): field-backed property with a CUSTOM accessor invokes the getter/setter
