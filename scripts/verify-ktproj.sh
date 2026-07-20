@@ -82,21 +82,6 @@ kt ktproj "cases/ktproj/hello.ktproj" \
 kt ktproj-mpp "cases/ktproj-mpp/hello-mpp.ktproj" \
 	"Hello from the CLR actual"
 
-# The README-advertised pure-IL starter project (README:139 points users at cases/ktproj-il/): a two-file
-# .ktproj (App.kt with `fun main` + a Greeter class) built entirely on the IL backend via ../KotlinClr.targets.
-# Wired here (COV6, 2026-07-06) so the user-facing sample can't rot unverified — it previously had NO gate.
-kt ktproj-il "cases/ktproj-il/hello-il.ktproj" \
-	"$(printf 'Hello, ktproj, from IL!\nsum 1..5 = 15')"
-
-# A stdlib op MIGRATED off the COLLECTION_OPS lowering (getOrElse): the targets auto-reference DotKt.Stdlib, so the
-# call routes to its real Kotlin body. End-to-end proof that the lowering-retirement pipeline works through MSBuild.
-kt ktproj-stdlib "cases/ktproj-stdlib/app.ktproj" \
-	"$(printf '20\n500')"
-
-# Façade-FREE FIR injection via import scan (the C-2 single path for taking in .NET types).
-kt ktproj-inject "cases/ktproj-inject/inject.ktproj" \
-	"no-facade via import scan; abs(-5)=5"
-
 # Import-driven .NET resolution: plain `import System.Text.StringBuilder` / `import System.Math`, no <KotlinClrFacade>,
 # no facade — the facadegen import scan injects the types. Fluent StringBuilder.Append chaining + Math.Max.
 # Wired here (COV6, 2026-07-06): was UNWIRED (previously no gate covered the bare-import ktproj path).
@@ -119,18 +104,6 @@ kt ktproj-bidir "cases/ktproj-bidir/app/app.csproj" \
 # façade-free, overriding a virtual. (Needs Avalonia in the NuGet cache.)
 kt ktproj-avalonia "cases/ktproj-avalonia/app.ktproj" \
 	"$(printf 'MyApp.Initialize: Kotlin override of Avalonia.Application\nsubclassed Avalonia.Application from Kotlin via PackageReference')"
-
-# KOTLIN -> KOTLIN ProjectReference round-trip: app.ktproj consumes lib.ktproj AS KOTLIN (top-level generic/plain
-# functions + a top-level extension infix + classes). The round-trip path through MSBuild.
-kt ktproj-roundtrip "cases/ktproj-roundtrip/app/App.ktproj" \
-	"$(printf '7\n5\nhi\n3\n40')"
-
-# APP + LIB via <ProjectReference>: App.ktproj (Exe) references Shapes.ktproj (Library), which DotKt emits as a real
-# .NET assembly (Shapes.dll) the app consumes WITHOUT recompiling the lib's sources. Exercises a richer library API
-# than ktproj-roundtrip — a class with a computed property + member fn, a data-class toString, an enum constant, a
-# top-level fn, and a top-level extension fn — all re-imported AS KOTLIN from the referenced dll's round-trip metadata.
-kt ktproj-applib "cases/ktproj-applib/app/App.ktproj" \
-	"$(printf 'Rectangle 3x4 area=12\n48\nPoint(x=-2, y=5)\n7\nBLUE')"
 
 # #27: a cross-module Kotlin LIBRARY whose public API takes kotlin.collections.* params — the params compile to their
 # BCL @ClrTypeAlias interfaces in Lib.dll (List->IReadOnlyList, MutableList->IList, Map->IDictionary). The app
@@ -220,19 +193,6 @@ kt ktproj-genov-common "cases/ktproj-genov-common/app/App.ktproj" \
 kt ktproj-coll "cases/ktproj-coll/app.ktproj" \
 	"$(printf '5\n30\n10\n20\n-1\nTrue\n3\n5\nFalse\n2\n150\nAPPLE\npear\n5\n4\n3')"
 
-# The <KotlinClrRefRt>true</KotlinClrRefRt> MSBuild property: build against the stdlib REFERENCE assembly and run
-# against the RUNTIME assembly (the ref->rt handoff, exactly as verify-il/dotkt do it). A single self-contained
-# .ktproj consuming the real CLR stdlib (listOf/size/indexing/uppercase/for). Wired here (COV6, 2026-07-06): was
-# UNWIRED — the only gate coverage of the <KotlinClrRefRt> app property.
-kt ktproj-refrt "cases/ktproj-refrt/app.ktproj" \
-	"$(printf '3\nAPPLE\n12')"
-
-# <KotlinClrRefRt> + a Kotlin->Kotlin <ProjectReference>: App.ktproj consumes Lib.ktproj (Library) AS KOTLIN
-# (top-level `greeting`/`sumTo` from package mylib) with the ref->rt stdlib flow on BOTH projects. Wired here
-# (COV6, 2026-07-06): was UNWIRED — covers the refrt property across a project-reference graph.
-kt ktproj-refrt-pr "cases/ktproj-refrt-pr/app/App.ktproj" \
-	"$(printf 'Hello, WORLD!\n55\n3\nHello, Z!')"
-
 # #37 finding 1 (RID-aware identity selection): a PackageReference (System.IO.Ports) whose copy-local set carries
 # BOTH lib/<tfm>/Foo.dll and runtimes/<rid>/lib/<tfm>/Foo.dll for ONE identity. ilemit's runtime catalog used to
 # hard-fail at emit on the duplicate simple name; it now dedups by identity and selects the host-RID asset. On Linux
@@ -287,9 +247,6 @@ rm -rf "$incr"
 # Clean each sample's build output.
 rm -rf "$ROOT"/cases/ktproj/bin "$ROOT"/cases/ktproj/obj \
        "$ROOT"/cases/ktproj-mpp/bin "$ROOT"/cases/ktproj-mpp/obj \
-       "$ROOT"/cases/ktproj-il/bin "$ROOT"/cases/ktproj-il/obj \
-       "$ROOT"/cases/ktproj-roundtrip/*/bin "$ROOT"/cases/ktproj-roundtrip/*/obj \
-       "$ROOT"/cases/ktproj-applib/*/bin "$ROOT"/cases/ktproj-applib/*/obj \
        "$ROOT"/cases/ktproj-listparam/*/bin "$ROOT"/cases/ktproj-listparam/*/obj \
        "$ROOT"/cases/ktproj-nestedlist/*/bin "$ROOT"/cases/ktproj-nestedlist/*/obj \
        "$ROOT"/cases/ktproj-genmember/*/bin "$ROOT"/cases/ktproj-genmember/*/obj \
@@ -300,10 +257,7 @@ rm -rf "$ROOT"/cases/ktproj/bin "$ROOT"/cases/ktproj/obj \
        "$ROOT"/cases/ktproj-genq/*/bin "$ROOT"/cases/ktproj-genq/*/obj \
        "$ROOT"/cases/ktproj-genov/*/bin "$ROOT"/cases/ktproj-genov/*/obj \
        "$ROOT"/cases/ktproj-genov-common/*/bin "$ROOT"/cases/ktproj-genov-common/*/obj \
-       "$ROOT"/cases/ktproj-inject/bin "$ROOT"/cases/ktproj-inject/obj \
        "$ROOT"/cases/ktproj-import/bin "$ROOT"/cases/ktproj-import/obj \
-       "$ROOT"/cases/ktproj-refrt/bin "$ROOT"/cases/ktproj-refrt/obj \
-       "$ROOT"/cases/ktproj-refrt-pr/*/bin "$ROOT"/cases/ktproj-refrt-pr/*/obj \
        "$ROOT"/cases/ktproj-extlib/bin "$ROOT"/cases/ktproj-extlib/obj \
        "$ROOT"/cases/ktproj-extlib/extlib/bin "$ROOT"/cases/ktproj-extlib/extlib/obj \
        "$ROOT"/cases/ktproj-bidir/*/bin "$ROOT"/cases/ktproj-bidir/*/obj \

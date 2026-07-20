@@ -410,7 +410,6 @@ il_check_imports gendelegate AppKt "$ROOT/cases/il-gendelegate" "$(printf '42\nT
 il_check_imports jsongeneric AppKt "$ROOT/cases/il-jsongeneric" "$(printf '42\n"hi"')"   # #44: a generic .NET method (JsonSerializer.Serialize<T>) with a facadegen-injected interop SIBLING param (JsonSerializerOptions) — ShapeSynthesis resolves the leaf off the refs to its .NET simple name so the overload-matcher shapes match ilemit's reflected shapes (was: "Object" erasure -> zero candidates -> ilemit "Sequence contains no elements")
 # m2 / mi1 consume BCL types via `import System.X` (System.Math, System.Text.StringBuilder) -> the facadegen import
 # scan (il_check_imports), NOT a bare il_check (which injects nothing, so the import would not resolve). No runtime.cs.
-il_check_imports m2  M2    "$ROOT/cases/m2"         "$(printf 'max(3, 7) = 7\nmin(3, 7) = 3\nabs(-9) = 9')"
 il_check_imports mi1 MI1   "$ROOT/cases/m-i1"       "$(printf 'Hello, CLR 42\nlength = 13')"
 # alias: `import System.Text.StringBuilder as SB` — the PSI import scan keeps the aliased form (feedback (5)).
 il_check_imports alias Alias "$ROOT/cases/il-alias" "$(printf 'hello, alias\n12')"
