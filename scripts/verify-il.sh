@@ -619,16 +619,10 @@ il_check boundextref BoundExtRef "$ROOT/cases/il-boundextref" "$(printf 'hi!\nab
 # A6: rule-3 helper calls on CONCRETE generic alias receivers (HashMap/ArrayList/LinkedHashMap: class typeArgs +
 # instantiated sig) + Map/MutableMap getOrDefault (bare-V map-defaults helper: retType carry, was BadImageFormat).
 il_check unsgn Unsigned "$ROOT/cases/il-unsigned" "$(printf '4000000100\n4000000000\n18000000000000000000\n60000\n250')"
-il_check regex Regex "$ROOT/cases/il-regex" "$(printf 'True\nFalse\na#b#c#\na_b_c\nTrue\nFalse\n42\nnull')"
-# regexanchor (#162): matchEntire/matches do a TRUE anchored `\A(?:...)\z` match, not a leftmost search filtered by span
-# — so a shorter alternation branch (`a` in `a|ab`) or a lazy quantifier still yields the full-input match; compiled
-# options (?i) and existing anchors coexist; capture-group numbers are preserved by the non-capturing wrapper group.
-il_check regexanchor RegexAnchor "$ROOT/cases/il-regexanchor" "$(printf 'ab\nTrue\na\naaa\nTrue\n12-34,12,34\nab\nTrue\nFalse\nnull')"
-# regexopts (#178): Regex(String, RegexOption) / Regex(String, Set<RegexOption>) ctors — bir2cir NetInteropBinding
-# converts the RegexOption / Set<RegexOption> arg to the BCL RegexOptions int bitmask (IGNORE_CASE->1 / MULTILINE->2 /
-# DOT_MATCHES_ALL->16 / COMMENTS->32) at the ctor call site (was InvalidProgram / ABI-mismatch: the DotKt enum/set does
-# not match nor carry the numeric value of the [Flags] System...RegexOptions int ctor param).
-il_check regexopts RegexOpts "$ROOT/cases/il-regexopts" "$(printf 'True\nTrue\nFalse\nTrue\nTrue\nFalse\nTrue\nFalse\nTrue\nTrue')"
+# regex family (il-regex/il-regexanchor/il-regexopts/il-regexreplace/il-regexgroups/il-regexseq/il-groupvalues)
+# migrated to the NUnit battery tests/il/fixtures/RegexTests.kt (7 methods), gated by tests/run-nunit-il.sh. Per the
+# cases-test-design audit #14 the old per-case dirs + il_check lines were removed same-change; their il-regex/
+# il-regexgroups/il-regexreplace/il-groupvalues PURE entries were removed from verify-differential.sh same-change.
 # linkedorder (#169): LinkedHashMap/LinkedHashSet (and mapOf/setOf) preserve insertion order across a MIDDLE removal —
 # LinkedHashMap is backed by the insertion-ordered System...OrderedDictionary; LinkedHashSet by a pure-Kotlin set over it.
 il_check linkedorder LinkedOrder "$ROOT/cases/il-linkedorder" "$(printf 'a,c,d,e\na=1,c=3,d=4,e=5\n1,3,4,5\nx,z,w,q\n4\nTrue\nFalse\none,two,three\np,d,b,a')"
@@ -636,22 +630,6 @@ il_check linkedorder LinkedOrder "$ROOT/cases/il-linkedorder" "$(printf 'a,c,d,e
 # (arity-only ctor pick routed `new LinkedHashSet(coll)` to the (Int) ctor; the self iterator()/ICollection Contains
 # slot referenced the open generic self). Locks the crash-free build AND insertion order across a MIDDLE removal + retainAll.
 il_check linkedset LinkedSet "$ROOT/cases/il-linkedset" "$(printf '3,1,2,4\n4\n3\na,b,c\nx,z,w,q\n4\nTrue\nFalse\n2,4,5\n10,30,40')"
-# regexreplace: Regex.replaceFirst / replace(String,String) marshaling (final-review N1). replaceFirst mis-bound the
-# 3-arg System...Regex.Replace(string,string,int) — returned the input unchanged + AccessViolationException on a
-# CharSequence-typed input; the fix materializes the CharSequence to a String at the call site. Also pins toString()
-# (the pattern-string method binding) AND `re.pattern` (final-review N2 — a rule-3 property accessor `get()=toString()`
-# that AliasHelperHoist now hoists into the ClrH helper; it was blanket-skipped as a get_ accessor -> ilemit crash).
-il_check regexreplace RegexReplace "$ROOT/cases/il-regexreplace" "$(printf 'bXnana\nbXnXnX\nbXnana\na#b34\na(\\d+)b\nc(\\w+)d')"
-# regexgroups: MatchResult.groups (ClrMatchGroupCollection) — by-index/by-name access, iteration, and `group in
-# match.groups` (POLISH family-6 coverage). il-regex never touches .groups; this pinned + fixed a TypeLoad on the
-# AbstractCollection base + a missing `contains` (ClrMatchGroupCollection now implements the collection directly).
-il_check regexgroups RegexGroups "$ROOT/cases/il-regexgroups" "$(printf '3\n12-34\n12\n34\n12-34,12,34,\nTrue\nFalse\nTrue\n2026')"
-# regexseq (#104): the Sequence-returning members findAll/splitToSequence + the options getter, which used to ship as
-# TODO() runtime stubs that threw NotImplementedError. findAll = generateSequence over find()/MatchResult.next()
-# (every non-overlapping match L-to-R, startIndex-honored); splitToSequence = split().asSequence(); options decodes the
-# compiled System...RegexOptions [Flags] bitmask (default Regex -> empty set, no longer throws).
-il_check regexseq RegexSeq "$ROOT/cases/il-regexseq" "$(printf '1,22,333\n0\n2,3\na|b|c\nTrue\na|b c d\nTrue')"
-il_check groupvalues GroupValues "$ROOT/cases/il-groupvalues" "$(printf 'abc,a,b,c\n12 34')"
 # gencolladd: non-inlined GENERIC collection building via `.map`/`.add`/`.size` — the stdlib `clrCollAdd<T>`
 # reads `c.size` (ICollection<!!T>.get_Count) on an OPEN method type-param. Locks the bymap/maxOrNull dispatch
 # family's collection analog (an open-generic ICollection member call must bind at runtime, no EntryPointNotFound).
