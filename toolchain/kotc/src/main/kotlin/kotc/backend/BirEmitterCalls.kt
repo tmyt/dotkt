@@ -1004,17 +1004,20 @@ internal fun BirEmitter.call(call: IrCall): String {
 				?.let { kotc.frontend.clrInjectedTopLevelPropFileClass(it) }?.let { fileClass ->
 				val isExt = p.getter?.parameters?.any { it.kind == IrParameterKind.ExtensionReceiver } == true
 				if (!isExt) {
-					// A2/#120: kotc no longer consults facadegen metadata (the retired `clrInjectedTopLevelPropCustom-
-					// Accessor` read) to pick the .NET member SHAPE — raw static field vs `get_`/`set_` accessor is a
-					// Kotlin<->CLR relation that belongs in bir2cir. kotc emits the PLAIN property access by identity +
-					// the accessor KIND marker (`prop:get`/`prop:set`, a frontend fact from correspondingPropertySymbol);
-					// bir2cir's NetInteropBinding resolves the file class off the refs and binds it UNIFORMLY —
-					// clrPropGet/clrPropSet serve a field (const-inlined ldsfld/stsfld), a default accessor, and a custom
-					// accessor alike (MemberIsPropertyOrField matches a field; a computed prop falls to the get_/set_
-					// convention). Byte-equivalent runtime effect to the old field-vs-accessor split, decision moved down.
-					if (callee === p.setter)
-						return """{"k":"callStatic","ownerType":${str(fileClass)},"method":${str(p.name.asString())},"prop":"set","argTypes":[${birType(regularArgs(call).first().type).toJson()}],"ret":${fqnJson("kotlin.Unit")},"args":[${expr(regularArgs(call).first())}]}"""
-					return """{"k":"callStatic","ownerType":${str(fileClass)},"method":${str(p.name.asString())},"prop":"get","argTypes":[],"ret":${birType(callee.returnType).toJson()},"args":[]}"""
+					// #103: a field-backed prop with a CUSTOM getter/setter must INVOKE the accessor (a static
+					// `get_/set_<name>` method on the file class, like the extension-property path below but without a
+					// receiver), NOT read/write the raw static field. bir2cir binds the `prop:get`/`prop:set` marker to
+					// the `get_`/`set_` method by convention. Read/write customness is independent (a `var` may pair a
+					// custom setter with a default getter, or vice versa); a default accessor stays a raw field access.
+					val (customGet, customSet) = callableId?.let { kotc.frontend.clrInjectedTopLevelPropCustomAccessor(it) } ?: (false to false)
+					if (callee === p.setter) {
+						return if (customSet)
+							"""{"k":"callStatic","ownerType":${str(fileClass)},"method":${str(p.name.asString())},"prop":"set","argTypes":[${birType(regularArgs(call).first().type).toJson()}],"ret":${fqnJson("kotlin.Unit")},"args":[${expr(regularArgs(call).first())}]}"""
+						else """{"k":"staticFieldSet","ownerType":${fqnJson(fileClass)},"name":${str(p.name.asString())},"value":${expr(regularArgs(call).first())}}"""
+					}
+					return if (customGet)
+						"""{"k":"callStatic","ownerType":${str(fileClass)},"method":${str(p.name.asString())},"prop":"get","argTypes":[],"ret":${birType(callee.returnType).toJson()},"args":[]}"""
+					else """{"k":"staticField","ownerType":${fqnJson(fileClass)},"name":${str(p.name.asString())}}"""
 				}
 				val recv = extensionReceiver(call)
 				// A2 (#61 / step 3): a top-level EXTENSION property accessor is a static `get_/set_<name>(__self)` METHOD
