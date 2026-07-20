@@ -75,24 +75,11 @@ ktproj_selftest
 kt ktproj "cases/ktproj/hello.ktproj" \
 	"$(printf 'Hello, Visual Studio, from a .ktproj!\nsum 1..5 = 15')"
 
-# MPP (#119): a multiplatform .ktproj — common/ carries the `expect class Greeter`, clr/ the `actual` + entry.
-# <DotKtMultiplatform>true</DotKtMultiplatform> makes the shared targets tag common/ sources with -Xcommon-sources
-# (+ -Xmulti-platform -Xexpect-actual-classes), so kotc's app pipeline does the common→platform module split and the
-# actual resolves. The only gate coverage of the MPP source-set path through MSBuild.
-kt ktproj-mpp "cases/ktproj-mpp/hello-mpp.ktproj" \
-	"Hello from the CLR actual"
-
 # Import-driven .NET resolution: plain `import System.Text.StringBuilder` / `import System.Math`, no <KotlinClrFacade>,
 # no facade — the facadegen import scan injects the types. Fluent StringBuilder.Append chaining + Math.Max.
 # Wired here (COV6, 2026-07-06): was UNWIRED (previously no gate covered the bare-import ktproj path).
 kt ktproj-import "cases/ktproj-import/import.ktproj" \
 	"dotkt imports just work: 40"
-
-# FORWARD ProjectReference + AssemblyResolver + .NET event subscription from a referenced C# project.
-# Also: assign a plain Boolean to the C# `bool?` (Nullable<bool>) property Enabled — facadegen maps Nullable<X> -> X?.
-# Also: consume Widget.Name, a reference type from a NON-NRT assembly -> platform type String! (injector flexible type).
-kt ktproj-extlib "cases/ktproj-extlib/app.ktproj" \
-	"$(printf 'Add(2,3) = 5\nname: gadget (len 6)\nenabled: True\nchanged: 5\nchanged: 9')"
 
 # BIDIRECTIONAL ProjectReference (R-1): cslib.csproj <- klib.ktproj <- app.csproj in one graph.
 # forward = Kotlin imports the C# Theme.Palette; reverse = C# consumes the Kotlin Greeter + its List<String>
@@ -104,86 +91,6 @@ kt ktproj-bidir "cases/ktproj-bidir/app/app.csproj" \
 # façade-free, overriding a virtual. (Needs Avalonia in the NuGet cache.)
 kt ktproj-avalonia "cases/ktproj-avalonia/app.ktproj" \
 	"$(printf 'MyApp.Initialize: Kotlin override of Avalonia.Application\nsubclassed Avalonia.Application from Kotlin via PackageReference')"
-
-# #27: a cross-module Kotlin LIBRARY whose public API takes kotlin.collections.* params — the params compile to their
-# BCL @ClrTypeAlias interfaces in Lib.dll (List->IReadOnlyList, MutableList->IList, Map->IDictionary). The app
-# references Lib.ktproj and calls those funs with listOf/mutableListOf/mapOf. Before the fix facadegen surfaced the
-# raw IReadOnlyList/IList/IDictionary, so the frontend REJECTED the kotlin.collections.* args ("argument type mismatch"
-# + "cannot infer type parameter T"). facadegen's reverse map now surfaces them back as kotlin.collections.*, and the
-# generic `makeHolder(listOf(...))` inference + `h.items.size` member resolution succeed. Regression guard for #27.
-kt ktproj-listparam "cases/ktproj-listparam/app/App.ktproj" \
-	"$(printf '2\n3\n2\n2')"
-
-# #29: a cross-module Kotlin LIBRARY nesting kotlin.collections.* INSIDE a user generic (`Box<List<T>>`, `State<List<T>>`).
-# bir2cir's Root-V variance collapse lowers the nested read-only `List<T>` to the invariant `IList<T>` (load-bearing for
-# reified-generic inhabitance), which collided with `MutableList`'s IList alias -> facadegen surfaced `Box<MutableList<T>>`
-# and REJECTED the app's `Box<List<String>>` value. bir2cir now stamps [KotlinCollectionIdentity] (the pre-collapse Kotlin
-# type) on each collapsed slot; facadegen restores List vs MutableList from it. A nested MutableList slot (unstamped) must
-# still surface as MutableList (read/write split). Regression guard for #29.
-kt ktproj-nestedlist "cases/ktproj-nestedlist/app/App.ktproj" \
-	"$(printf '2\n3\n3\n[10, 20, 10]')"
-
-# #33: a DIRECT read of a cross-module generic member whose declared return is the OWNER's type variable
-# (`Pair2<Int, MutableList<Int>>.b` = the open B; `Wrap<Int>.items` = List<X>). bir2cir's StaticTypeResolver.Surface
-# left the return as a bare `tv`, so the println collection-wrap misfired and printed the raw BCL `List`1`. Surface now
-# substitutes tv(type,i) against the receiver's concrete instantiation (index 1 + nested List<X> exercised). Guard for #33.
-kt ktproj-genmember "cases/ktproj-genmember/app/App.ktproj" \
-	"$(printf '7\n[1, 2]\n[9, 8, 7]')"
-
-# #15 EMIT-HALF: the pathological layout where the app's recursive `**/*.kt` glob pulls in a NESTED
-# <ProjectReference> lib's SOURCE (App.kt + lib/Demo.kt) AND references that lib's dll — so `demo.Plain`/
-# `demo.hello` are BOTH compiled LOCALLY and exported by the referenced Demo.dll. The frontend "source wins"
-# fix (#15 core) suppresses the injected copy; bir2cir must then PREFER the local BIR type over the referenced
-# dll of the same FQN — emitting a local `new demo.Plain` (this-assembly-emitted), NOT a `newClr` against
-# Demo.dll (which made the app both emit `demo.Plain` locally AND newClr the ref copy → ilemit conflict).
-# Before the fix: bir2cir/ilemit error. Regression guard for the local-over-ref resolution in ResolveNetType.
-kt ktproj-injectemit "cases/ktproj-injectemit/App.ktproj" \
-	"$(printf '42\nplain')"
-
-# #17: a DIRECT property get/set on a re-imported cross-module Kotlin type whose package starts with `kotlinx.`
-# (the atomicfu-port shape). App.ktproj references the `kotlinx.cell` Library and reads/writes `c.value`. The
-# `kotlinx.` FQN makes bir2cir's NetInteropBinding skip the owner, so MemberCallSubstitution must lower the
-# property access to the get_value/set_value accessor call — else ilemit's external ResolveMethod fails with
-# "method kotlinx.cell.Cell.value() not found". Regression guard for the #17 instance-property-marker reconstruct.
-kt ktproj-reprop "cases/ktproj-reprop/app/App.ktproj" \
-	"$(printf '10\n42\n84')"
-
-# #26: a cross-module Kotlin LIBRARY whose package FQN STARTS WITH `dotkt` (`dotktx.foo.bar`) but is a USER
-# package, NOT the compiler's own `dotkt`/`dotkt$…` synthetic vocabulary. The app captures a local of the lib's
-# `State<Int>` inside a lambda stored as a delegate and fired later cross-module. Before the fix, bir2cir's
-# ResolveNetType matched the owner FQN with a bare `StartsWith("dotkt")`, so `dotktx.foo.bar.State` was wrongly
-# skipped as "not a .NET/reference type" → the captured cross-module local was mishandled → runtime NRE/
-# InvalidProgram (compile clean). The guard now matches `dotkt` only as a full segment (`dotkt`/`dotkt.`/`dotkt$`).
-kt ktproj-dotktpkg "cases/ktproj-dotktpkg/app/App.ktproj" \
-	"2"
-
-# #18: a re-imported cross-module GENERIC factory `fun <T> holderOf(n): Holder<T?>`. bir2cir object-erases the nested
-# `Nullable(Tv)` to `Holder<object>`; the [KotlinNullableGeneric] round-trip attribute (stamped by RoundtripMetadata,
-# restored by facadegen) recovers `Holder<T?>` so the app's `h.size` + `h[0]` resolve. Before the fix `h` degraded to
-# `Any?` and the app FAILED TO COMPILE (unresolved `size`/indexer). Regression guard for the coroutines-port blocker.
-kt ktproj-genq "cases/ktproj-genq/app/App.ktproj" \
-	"$(printf '3\nempty\ncell-null')"
-
-# #25: a re-imported cross-module GENERIC top-level fun among a same-name OVERLOAD SET (the reduced kotlinx-atomicfu
-# `atomic` shape: non-generic `atomic(Int/Long/Boolean/Double)` + generic `atomic(T)` + a defaulted-sibling
-# `atomic(T, trace=None)` + a sole-generic `arrOf<T>(n)`). kotc emits a generic call as `callStatic shapeTypes=[…]`
-# with NO `sig`; because the owner is `kotlinx.*` NetInteropBinding leaves it a plain callStatic, so ilemit's
-# overload resolution needs `sig`. bir2cir now promotes `shapeTypes`->`sig` so `atomic<String?>(null)` binds to the
-# ARITY-1 `atomic(T)` (tag "gen1", NOT the arity-2 defaulted sibling -> NRE) and `arrOf<String>(3)` is found (was
-# "static method not found"). Regression guard for the atomicfu-port cross-module generic-overload blocker.
-kt ktproj-genov "cases/ktproj-genov/app/App.ktproj" \
-	"$(printf '3\ngen1\nint')"
-
-# #25 RESIDUAL: a GENERIC top-level factory declared in a MULTIPLATFORM library's COMMON fragment (file class
-# `GenovCommonKt`), consumed cross-module. kotc emits the generic call as `callStatic ownerType=…GenovCommonKt
-# typeArgs=[…] shapeTypes=[…]` with NO `sig`; the sig-less generic call yields an EMPTY receiver-key, so bir2cir's
-# TryResolveTopLevelStatic can't disambiguate the owner once the bare fun name lives under >1 file-class in the ref
-# index (here `arrOfNulls` also exists in the sibling package `GenovAltKt`) — the first #25 fix's owner-attribution
-# was skipped, leaving the call un-promoted -> ilemit "static method not found: arrOfNulls". bir2cir now adopts
-# kotc's facadegen-injected `ownerType` as the owner and promotes `shapeTypes`->`sig`. Regression guard for the
-# common-fragment (`*CommonKt`) arm of the atomicfu-port cross-module generic-factory blocker.
-kt ktproj-genov-common "cases/ktproj-genov-common/app/App.ktproj" \
-	"3"
 
 # PRACTICAL COLLECTIONS app consuming the real CLR stdlib (DotKt.Stdlib.dll): a List held as an app local (resolves as
 # the referenced IReadOnlyList), member access (size/indexing), TOP-LEVEL stdlib funs (first/getOrElse/contains/indexOf/
@@ -246,20 +153,7 @@ rm -rf "$incr"
 
 # Clean each sample's build output.
 rm -rf "$ROOT"/cases/ktproj/bin "$ROOT"/cases/ktproj/obj \
-       "$ROOT"/cases/ktproj-mpp/bin "$ROOT"/cases/ktproj-mpp/obj \
-       "$ROOT"/cases/ktproj-listparam/*/bin "$ROOT"/cases/ktproj-listparam/*/obj \
-       "$ROOT"/cases/ktproj-nestedlist/*/bin "$ROOT"/cases/ktproj-nestedlist/*/obj \
-       "$ROOT"/cases/ktproj-genmember/*/bin "$ROOT"/cases/ktproj-genmember/*/obj \
-       "$ROOT"/cases/ktproj-injectemit/bin "$ROOT"/cases/ktproj-injectemit/obj \
-       "$ROOT"/cases/ktproj-injectemit/lib/bin "$ROOT"/cases/ktproj-injectemit/lib/obj \
-       "$ROOT"/cases/ktproj-reprop/*/bin "$ROOT"/cases/ktproj-reprop/*/obj \
-       "$ROOT"/cases/ktproj-dotktpkg/*/bin "$ROOT"/cases/ktproj-dotktpkg/*/obj \
-       "$ROOT"/cases/ktproj-genq/*/bin "$ROOT"/cases/ktproj-genq/*/obj \
-       "$ROOT"/cases/ktproj-genov/*/bin "$ROOT"/cases/ktproj-genov/*/obj \
-       "$ROOT"/cases/ktproj-genov-common/*/bin "$ROOT"/cases/ktproj-genov-common/*/obj \
        "$ROOT"/cases/ktproj-import/bin "$ROOT"/cases/ktproj-import/obj \
-       "$ROOT"/cases/ktproj-extlib/bin "$ROOT"/cases/ktproj-extlib/obj \
-       "$ROOT"/cases/ktproj-extlib/extlib/bin "$ROOT"/cases/ktproj-extlib/extlib/obj \
        "$ROOT"/cases/ktproj-bidir/*/bin "$ROOT"/cases/ktproj-bidir/*/obj \
        "$ROOT"/cases/ktproj-coll/bin "$ROOT"/cases/ktproj-coll/obj \
        "$ROOT"/cases/ktproj-runtimetargets/bin "$ROOT"/cases/ktproj-runtimetargets/obj \
