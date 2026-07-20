@@ -50,23 +50,6 @@ sealed partial class Emitter
     static readonly HashSet<string> PrimShorthand = new(StringComparer.Ordinal)
     { "void", "object", "string", "int", "long", "short", "sbyte", "double", "float", "bool", "char", "uint", "ulong", "ushort", "byte" };
 
-    // The specialized primitive-array types are native CLR arrays whose members (get/set/size/iterator) live on a
-    // single emitted "array class" method-holder per element width — the stdlib emits kotlin.IntArray/ByteArray/… as
-    // real classes whose instances ARE the native `int[]`/`sbyte[]`/… (bir2cir's `.storage` reinterpret). The UNSIGNED
-    // specialized arrays (kotlin.UIntArray = `uint[]`, …) are the SAME native N-bit-integer arrays, so a member call on
-    // an unsigned-array owner resolves against the emitted SAME-WIDTH signed-array class — the identical native-array
-    // method-holder (8/16/32/64-bit widths line up: UByte=Byte/SByte, UShort=UInt16/Int16, UInt=UInt32/Int32,
-    // ULong=UInt64/Int64 per #53/#54). Pure CLR native-array owner resolution — no Kotlin semantics; it just names the
-    // width-matched method-holder for a native integer array that carries no class of its own (value-class-erased).
-    static readonly Dictionary<string, string> NativeArrayOwnerAlias = new(StringComparer.Ordinal)
-    {
-        ["kotlin.UByteArray"]  = "kotlin.ByteArray",  ["kotlin.UShortArray"] = "kotlin.ShortArray",
-        ["kotlin.UIntArray"]   = "kotlin.IntArray",   ["kotlin.ULongArray"]  = "kotlin.LongArray",
-    };
-
-    static string NativeArrayOwner(string typeName) =>
-        typeName != null && NativeArrayOwnerAlias.TryGetValue(typeName, out var s) ? s : typeName;
-
     // A generic TYPE ARGUMENT of `System.Void` is illegal in .NET; Kotlin `Unit`/`Nothing` map to `void` for a return
     // position but as a type arg (`Continuation<Unit>`, `Map<K, Unit>`, …) they must be a real type -> `object`.
     Type MapArg(string t) { var r = MapType(t); return r == typeof(void) ? typeof(object) : r; }

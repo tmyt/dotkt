@@ -510,7 +510,9 @@ sealed partial class Emitter
 
     MethodInfo FindMethod(string typeName, string name, DotKt.Bir.TypeNode[] sig = null)
     {
-        typeName = NativeArrayOwner(typeName);
+        // (#139 site-2) the unsigned->signed native-array owner alias is retired: bir2cir MemberCallSubstitution now
+        // rewrites an unsigned-array call `ownerType` to its signed-array FQN, so `typeName` is already the emitted
+        // method-holder — ilemit no longer re-resolves the Kotlin<->CLR array equivalence here.
         var seenIfaces = new HashSet<string>();
         MethodBuilder FindInInterfaces(TypeInfo ti)
         {
