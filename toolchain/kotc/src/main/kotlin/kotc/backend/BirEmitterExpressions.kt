@@ -75,7 +75,25 @@ import org.jetbrains.kotlin.cli.common.messages.CompilerMessageLocation
 import java.io.File
 
 // BIR expression rendering: an IrExpression -> a BIR JSON node (extension on BirEmitter).
-internal fun BirEmitter.expr(node: IrExpression): String = exprInner(node)
+//
+// #122: stamp the FRONTEND-RESOLVED static type `sty` (the instantiated `node.type`, incl. smart-cast refinement,
+// generic args and nullability) at this single chokepoint. bir2cir's StaticType CONSUMES it — reading an operand's
+// Kotlin static type off `sty` — instead of RE-deriving a callee's return type by re-doing overload resolution
+// against the ref.dll (the no-re-resolution-downstream invariant). Stamped ONLY on the value-node kinds StaticType
+// reads a return/static type from (`local`, `callStatic`, `callInstance`, `field`, `lateinitGet`, `staticField`);
+// the STRUCTURAL kinds (cast/const/new/conv/arrayGet/…) already carry their own type slot, so they need no stamp.
+// A pass-through arm (e.g. coercion-to-Unit returning its already-stamped argument) begins with `{"sty":` — not a
+// bare `{"k":<kind>` — so the prefix guard skips it and there is no double-stamp.
+internal fun BirEmitter.expr(node: IrExpression): String {
+	val s = exprInner(node)
+	return if (styNodePrefixes.any { s.startsWith(it) }) """{"sty":${birType(node.type).toJson()},${s.substring(1)}"""
+	else s
+}
+
+private val styNodePrefixes = listOf(
+	"""{"k":"local"""", """{"k":"callStatic"""", """{"k":"callInstance"""",
+	"""{"k":"field"""", """{"k":"lateinitGet"""", """{"k":"staticField"""",
+)
 
 internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 	is IrConst -> """{"k":"const","type":${birType(node.type).toJson()},"value":${constJson(node)}}"""

@@ -24,8 +24,6 @@ static class ArrayConstructionLowering
 {
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs = null)
     {
-        StaticType.Refs = refs;
-        StaticType.LocalTypes = StaticType.CollectTypes(root);
         switch (root)
         {
             case JsonObject o: WalkObject(o, BirScope.Empty); break;

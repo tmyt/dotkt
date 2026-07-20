@@ -69,14 +69,11 @@ STR_OK = {
                                                  # payload for [KotlinInline]/[KotlinSuspendFunctionType] and the nested
                                                  # NullableAttribute(byte[]) form; ilemit's ConstArgValue decodes it to a
                                                  # real byte[] fixed argument. An opaque payload, NOT a type slot.
-    # OWNER-FQN string island (§2.2.1 — a type IDENTITY used as a resolution key, NOT a document value-type slot).
-    # Only `ownerType` remains string here: every OTHER owner slot (`owner` — callStatic AND callInline.owner/callee,
-    # `clrOverride`, `accessOwner`, clr* `type`) is now a structured `{t:fqn}` node (#48). callInline.owner/callee were
-    # the last KOTC-emitted owner-FQN strings; they are structured nodes as of #48 (owner may be JSON-null for the
-    # owner-less stdlib scope-fn arm), consumed by bir2cir InlineSplice via TypeJson.OwnerName — never reaching CIR.
-    "ownerType",                                # callInstance/field/setField owner — kotc emits it as a bare-FQN string
-                                                # for class-delegation forwarders + interop-extension owners (a resolution
-                                                # identity, not a value type); the bir2cir/ilemit-side owners are nodes (#48)
+    # OWNER-FQN owner slots (§2.2.1 — a type IDENTITY used as a resolution key) are ALL structured `{t:fqn}` nodes now
+    # (#48 fully realized): `owner` (callStatic AND callInline.owner/callee), `ownerType`
+    # (callInstance/field/setField/staticField, incl. the top-level-file-class + interop-extension owners kotc formerly
+    # emitted as bare strings), `clrOverride`, `accessOwner`, clr* `type`. bir2cir reads them via TypeJson.Read/OwnerName
+    # and ilemit via SlotName/ParseOwnerSlot/ClrRef — both node-native. No owner-FQN string slot remains.
 }
 # On these CLR-lowered kinds the `type` field is the call's OWNER (not a value type) — the owner-FQN island
 # (§2.2.1). Every OTHER kind's `type` is a value type and stays enforced. Their argTypes/ret/typeArgs remain

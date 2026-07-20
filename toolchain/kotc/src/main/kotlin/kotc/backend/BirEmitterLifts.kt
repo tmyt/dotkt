@@ -470,9 +470,9 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			val extRecvParam = fn.parameters.first { it.kind == IrParameterKind.ExtensionReceiver }
 			val declShapeTypes = (listOf(extRecvParam) + regularParams(fn)).joinToString(",") { birType(it.type).toJson() }
 			if (hasRefTa)
-				"""{"k":"callStatic","ownerType":${str(injectedFileClass)},"method":${str(fn.name.asString())}$refTa,"shapeTypes":[$declShapeTypes],"args":[$callArgs]}"""
+				"""{"k":"callStatic","ownerType":${fqnJson(injectedFileClass)},"method":${str(fn.name.asString())}$refTa,"shapeTypes":[$declShapeTypes],"args":[$callArgs]}"""
 			else
-				"""{"k":"callStatic","ownerType":${str(injectedFileClass)},"method":${str(fn.name.asString())},"argTypes":[$declShapeTypes],"ret":${retT.toJson()},"args":[$callArgs]}"""
+				"""{"k":"callStatic","ownerType":${fqnJson(injectedFileClass)},"method":${str(fn.name.asString())},"argTypes":[$declShapeTypes],"ret":${retT.toJson()},"args":[$callArgs]}"""
 		} else {
 			"""{"k":"callStatic","owner":null,"method":${str(fn.name.asString())}${overloadSigField(fn)}$refTa${retHintStr(hasRefTa, retT)},"args":[$callArgs]}"""
 		}
@@ -535,7 +535,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			// A genuine `NetType::m` method reference -> a lifted static forwarding to the .NET instance method.
 			// (A kotlin.collections `Iterable::iterator` never reaches here: clrOwner is null for a jar-sourced stdlib
 			// collection interface, so the enumerator-bridge routing lives in bir2cir Rule 5, not this clrOwner!=null path.)
-			val callE = """{"k":"callInstance","ownerType":${str(clrOwner)},"method":${str(member)},"argTypes":[$argTypes],"ret":${birType(fn.returnType).toJson()},"recv":{"k":"local","name":"__self"},"args":[$argsJson]$anySlotTag}"""
+			val callE = """{"k":"callInstance","ownerType":${fqnJson(clrOwner)},"method":${str(member)},"argTypes":[$argTypes],"ret":${birType(fn.returnType).toJson()},"recv":{"k":"local","name":"__self"},"args":[$argsJson]$anySlotTag}"""
 			val body = if (retVoid) """{"k":"exprStmt","expr":$callE}""" else """{"k":"return","value":$callE}"""
 			val freeTps = freeTypeParams(listOf(fn.parameters[dispatchIdx].type) + regs.map { it.type } + listOf(fn.returnType))
 			val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
@@ -648,9 +648,9 @@ internal fun BirEmitter.boundExtFnRef(node: IrFunctionReference, fn: IrSimpleFun
 		val extRecvParam = fn.parameters.first { it.kind == IrParameterKind.ExtensionReceiver }
 		val declShapeTypes = (listOf(extRecvParam) + regularParams(fn)).joinToString(",") { birType(it.type).toJson() }
 		if (hasRefTa)
-			"""{"k":"callStatic","ownerType":${str(injectedFileClass)},"method":${str(fn.name.asString())}$refTa,"shapeTypes":[$declShapeTypes],"args":[$callArgs]}"""
+			"""{"k":"callStatic","ownerType":${fqnJson(injectedFileClass)},"method":${str(fn.name.asString())}$refTa,"shapeTypes":[$declShapeTypes],"args":[$callArgs]}"""
 		else
-			"""{"k":"callStatic","ownerType":${str(injectedFileClass)},"method":${str(fn.name.asString())},"argTypes":[$declShapeTypes],"ret":${retT.toJson()},"args":[$callArgs]}"""
+			"""{"k":"callStatic","ownerType":${fqnJson(injectedFileClass)},"method":${str(fn.name.asString())},"argTypes":[$declShapeTypes],"ret":${retT.toJson()},"args":[$callArgs]}"""
 	} else {
 		"""{"k":"callStatic","owner":null,"method":${str(fn.name.asString())}${overloadSigField(fn)}$refTa${retHintStr(hasRefTa, retT)},"args":[$callArgs]}"""
 	}
