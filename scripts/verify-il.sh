@@ -580,13 +580,10 @@ il_check genbaseext AppKt "$ROOT/cases/il-genbaseext/app.kt" "ok"
 
 # Reverse interop via an injected C# host: `il_check_inject` builds the sample's runtime.cs into a referenced .NET
 # assembly, scans the .kt imports through facadegen, and references it (the same façade-free `import Kfc.X` path the other
-# injected-runtime samples use). fieldvis: a .NET host reflects a DotKt-emitted property's CLR accessor visibility.
-il_check_inject fieldvis FieldVis "$ROOT/cases/il-fieldvis" "$(printf '150\nme\nPrivate\nPublic')" KfcFv
-il_check_inject delegatearg Dlg "$ROOT/cases/il-delegatearg" "$(printf '42\n20\n81')" KfcDel
-# delegobj (#1): override a BCL virtual whose delegate param has an `object`/Any? Invoke arg. facadegen surfaces the
-# delegate as a function type `(Any?) -> Unit` (not bare Any?), so the Kotlin override matches instead of
-# `error: 'Post' overrides nothing`.
-il_check_inject delegobj Dobj "$ROOT/cases/il-delegobj" "$(printf 'posted: 42\nbase-typed: 7')" KfcDelObj
+# injected-runtime samples use).
+# fieldvis/delegatearg/delegobj migrated to the C#-producer NUnit lane tests/interop/consumer
+# (InteropAInjectTests.kt: fieldvis; InteropADelegateTests.kt: delegatearg, delegobj) — the former runtime.cs became
+# the producer's per-namespace C# source (docs/nunit-migration-playbook.md §3).
 # threadlambda (#19): a BARE lambda `{ ... }` into a .NET member overloaded on delegate-typed params — `Thread({...})`
 # (ThreadStart/ParameterizedThreadStart) + `Task.Run({...})` (Action/Func<T>) — resolves without ambiguity. facadegen
 # marks the Pareto-dominated sibling `lowPriority`; kotc stamps `@kotlin.internal.LowPriorityInOverloadResolution` so the
@@ -597,39 +594,15 @@ il_check_inject delegobj Dobj "$ROOT/cases/il-delegobj" "$(printf 'posted: 42\nb
 # compiles only when the return surfaces as `String?` — the case would COMPILE-ERROR before the fix.
 il_check_inject_nrt delegnull DlgNull "$ROOT/cases/il-delegnull" "$(printf '<null>\nhello\nworld\n<n>\nx')" DlgNrtRt
 il_check_inject netenum NetEnum "$ROOT/cases/il-netenum" "$(printf '60\n6\nabbccc')" KfcNetEnum
-il_check_inject injbase InjBase "$ROOT/cases/il-injbase" "placed:0" KfcInjB
-il_check_inject injfqn InjFqn "$ROOT/cases/il-injfqn" "42" KfcInjF
-il_check_inject injstatic InjStatic "$ROOT/cases/il-injstatic" "$(printf 'p=42\n7\n99\n123\np=42\n7\n99\n123')" KfcStatic
+# injbase/injfqn migrated to the C#-producer NUnit lane tests/interop/consumer/InteropAInjectTests.kt; injstatic ->
+# InteropADelegateTests.kt.
 il_check_inject injuint InjUint "$ROOT/cases/il-injuint" "$(printf '65542\n42')" Boot
 # ubyteinj: .NET-interop STRICT byte mapping (#53) — facadegen maps System.Byte->UByte and byte[]->UByteArray, so a
 # .NET byte 200 reads as UByte 200 (not signed -56) and a byte[] surfaces as a native UByteArray (round-trip fidelity).
 il_check_inject ubyteinj UByteInj "$ROOT/cases/il-ubyteinj" "$(printf '200\n3\n250\n200\n253')" Bt
-# c1net consumes types from its OWN runtime.cs (Probe assembly) via `import Probe.X` -> il_check_inject (build the
-# runtime, scan the imports through facadegen, --ref it). The old no-import-scan @Clr-facade path is gone.
-il_check_inject c1net C1Net "$ROOT/cases/il-c1net" "$(printf '42\nhi\n10\n15\n105\n52\n21\n41\n117\n20\n5\nyo!')" Probe
-# csext (#137, Avalonia report B): C#-origin `[Extension]` static methods (`static int Twice(this W w)`) surface as
-# TOP-LEVEL Kotlin extension functions (`fun W.Twice(): Int`) so `w.Twice()` resolves via `import Interop.*` — the
-# Kotlin analog of C# `using Interop;`. Covers non-generic, extra-param, and GENERIC (`fun <T> Box<T>.Echo(): T`)
-# receivers. The whole Avalonia startup/render surface (UsePlatformDetect/StartWithClassicDesktopLifetime/…) is
-# namespace-imported extension methods, so this is the enabling seam. (The `import Owner.member` form is in il-c1net.)
-il_check_inject csext CsExt "$ROOT/cases/il-csext" "$(printf '42\n22\nhi')" CsExtRt
-# csextrecv (#144): TWO static classes in ONE namespace each declare a SAME-NAME, SAME-ARITY `[Extension]` method on a
-# DIFFERENT receiver type (`FooExt.Tag(this Foo)` + `BarExt.Tag(this Bar)`, the Avalonia parallel `*Extensions` shape).
-# facadegen injects both as `CallableId(Interop, Tag)`; the top-level file-class disambiguation must pick by the RESOLVED
-# callee's extension-RECEIVER type, not arity alone (which collides here) — else `bar.Tag()` silently binds to FooExt
-# (wrong static, wrong result). Guards `clrInjectedTopLevelFileClass` receiver-keying + `injectedExtReceiverFqn`.
-il_check_inject csextrecv CsExtRecv "$ROOT/cases/il-csextrecv" "$(printf '11\n120\n30\n15\n4\n1007')" CsExtRecvRt
-# genextval (#157): an inferred `val c = Interop.Cell(40)` over a facadegen-injected GENERIC `Cell<T>` whose ctor param
-# is an un-annotated type variable (`T v` -> meta `oblivious(Tv)`) must construct `Cell<int32>`, NOT `Cell<Nullable<int32>>`.
-# ClrTypeInjection resolves an oblivious TYPE-VARIABLE to a bare `T` (not a `ConeFlexibleType` that biases the value arg
-# nullable), so a NON-generic extension pinned to `Cell<int>` (`Peek(this Cell<int>)`) binds its `__self` receiver to the
-# SAME reified `Cell<int32>` instantiation and reads the stored 40 (-> 41), instead of garbage off a Nullable<int32> field.
-il_check_inject genextval GenExtVal "$ROOT/cases/il-genextval" "$(printf '40\n41')" GenExtValRt
-# N6: STATIC events subscribe via `+=`/`-=` — on a `static class`/`object` (an object member, the Console.CancelKeyPress
-# shape) and on a normal class (a companion property, the TaskScheduler.UnobservedTaskException shape). facadegen
-# surfaces both as `ClrEvent<T>` properties; bir2cir binds the operator to the event's STATIC add/remove accessor.
-# Regression guard: static events were absent (GetEvents was Public|Instance non-static only).
-il_check_inject eventext EventExt "$ROOT/cases/il-eventext" "$(printf 'ping: 3\nping: 7\nannounce: hi\nannounce: yo\nh: yo\nannounce: bye')" EvLib
+# c1net/csext/csextrecv/genextval/eventext migrated to the C#-producer NUnit lane tests/interop/consumer
+# (InteropAExtTests.kt: c1net, csext, csextrecv, genextval; InteropAEventTests.kt: eventext) — the former runtime.cs
+# became the producer's per-namespace C# source (docs/nunit-migration-playbook.md §3).
 # N5: same-name same-package top-level overloads restored from DIFFERENT .NET file facades (UtilsKt.foo() /
 # HelpersKt.foo(Int)) share CallableId(N5,"foo"); the A2 flat map collapsed to last-put-wins. The overload-aware key
 # routes each to its own file class by the resolved callee's arity. (A2 regression guard.)
@@ -641,7 +614,7 @@ il_check_inject vtprop VtProp "$ROOT/cases/il-vtprop" "$(printf '10\n20\n30')" P
 # I4 remnants battery: .NET enum (read/pass/==/when), generic delegates (Func<int,int> + custom Mapper<T>),
 # nullable value types (int?/double? both directions).
 il_check_inject netinterop NetInterop "$ROOT/cases/il-netinterop" "$(printf 'Green\n4\nTrue\nfresh\ncool\n15\n18\n42\n0\n7\n0\n1.5')" I4Probe
-il_check_inject firgap FirGap "$ROOT/cases/il-firgap" "$(printf '42\n60\n3\n20')" P
+# firgap migrated to the C#-producer NUnit lane tests/interop/consumer/InteropAInjectTests.kt.
 # CLR-interop C#-producer pilot batch (inherit/geninj/clriface/clrimpl/clrasm/genim) migrated to the
 # ProjectReference'd C#-producer NUnit lane tests/interop/{producer,consumer} (InteropTests.kt), gated by
 # tests/run-nunit-il.sh. Per the cases-test-design audit #14 the old per-case dirs + il_check_inject lines were
@@ -649,13 +622,9 @@ il_check_inject firgap FirGap "$ROOT/cases/il-firgap" "$(printf '42\n60\n3\n20')
 # (3)+(6): constructed-generic MEMBER types (IList<T>/IReadOnlyList<T>/Dictionary<K,V>/IEnumerable<T>) + the
 # transitive injection closure (Gadget/Sprocket are never imported — reached via member-signature hops).
 il_check_inject transinj TransInj "$ROOT/cases/il-transinj" "$(printf '1\nw1\n1\nw1\nw1!\n3\nw1\nw1.')" TxRt
-il_check_inject cbk Cbk "$ROOT/cases/il-cbk" "$(printf '=v42\nran')" PCbk
 # clriface/clrimpl migrated to the C#-producer NUnit lane tests/interop/consumer/InteropTests.kt (see breadcrumb above).
-# ifacechainvt (#129): a Kotlin class implements an injected .NET interface whose BASE-INTERFACE CHAIN carries a
-# value-type generic slot (`IMid<Int> : IBase<Int>`). #128's value-type-generic-interface slot bridge must hold across
-# the transitively-inherited base link — the inherited `Get(): Int` and the direct `Rank(Int): Int` both use bare
-# int32 slots (not Nullable<int>). Direct + upcast-to-IMid<Int> dispatch.
-il_check_inject ifacechainvt IfaceChainVt "$ROOT/cases/il-ifacechainvt" "$(printf '21\n10\n23')" ChainRt
+# cbk/ifacechainvt migrated to the C#-producer NUnit lane tests/interop/consumer (InteropADelegateTests.kt: cbk;
+# InteropAInjectTests.kt: ifacechainvt).
 # clrifaceimpl -> tests/il/fixtures/MigratedIntropCIfaceImplTests.kt (clrifaceimpl_referenceTypeIfaceImpl); clrifaceimplvt
 # (#128) -> same fixture (clrifaceimplvt_valueTypeIfaceSlotBridge — the value-type ValueTypeIfaceSlotBridge sibling), migrated.
 # ixname: a .NET type with a CUSTOM-NAMED indexer via [IndexerName("Cell")] — `g[i]`/`g[i]=v` must bind to
@@ -667,7 +636,7 @@ il_check_inject selfref SelfRef "$ROOT/cases/il-selfref" "4" PSelf
 # genim migrated to the C#-producer NUnit lane tests/interop/consumer/InteropTests.kt (see breadcrumb above).
 il_check_inject outref Outref "$ROOT/cases/il-outref" "$(printf 'ok=5\nfail\n2 1\n20\n20\n109\n5\n7 5')" OutR
 il_check_inject netattr NetAttr "$ROOT/cases/il-netattr" "$(printf 'widget#7\n42')" Lbl
-il_check_inject netattrvararg NetAttrVararg "$ROOT/cases/il-netattr-vararg" "$(printf 'widget#7\n42')" PVararg   # #184: params object[] ctor applied bare (zero args). rasm distinct from firgap's `P` (both namespace-P but different types) so the parallel build_runtime does not race on the shared build/rt-P dir (assembly NAME only; the `P` namespace its runtime.cs declares is unchanged, so `import P.TagAttribute` still resolves)
+il_check_inject netattrvararg NetAttrVararg "$ROOT/cases/il-netattr-vararg" "$(printf 'widget#7\n42')" PVararg   # #184: params object[] ctor applied bare (zero args). Distinct assembly NAME (PVararg) so a parallel build_runtime does not race on a shared build/rt-* dir; the `P` namespace its runtime.cs declares is unchanged, so `import P.TagAttribute` still resolves
 il_check_inject stackalloc Sa "$ROOT/cases/il-stackalloc" "$(printf '16\n30\n-1\n10\n21')" SpanRt
 # cobuild: the GENUINE .NET-async E2E — `Task.Delay(1).await()` truly suspends (imports System.*, so
 # il_check_IMPORTS runs facadegen for the await marker). bir2cir's P4 await lowering + the whole cold-core
