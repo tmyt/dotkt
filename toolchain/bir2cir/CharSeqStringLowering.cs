@@ -281,12 +281,30 @@ static class CharSeqStringLowering
         // the adapter-wrap. A raw `string` then reaches a `dotkt$CharSequence` slot -> ilverify StackUnexpected
         // (regexreplace's `val cs: CharSequence = "banana"; a.replaceFirst(cs, ...)`). Retype the read's stale `sty` to
         // String in lockstep with the decl — reproducing the pre-#122 resolution, which read a variable/field/
-        // staticField reference's static type off its (already-collapsed) declaration. Scoped to the DECLARATION-READ
-        // kinds: a call / subSequence RESULT that genuinely stays a `dotkt$CharSequence` adapter keeps its `sty`, so the
-        // bridge does not wrongly wrap an already-adapter value. (Delegate-target lambda subtrees never reach here —
-        // Walk clones them out before Transform — so their un-collapsed CharSequence reads are untouched.)
-        if (k is "local" or "field" or "lateinitGet" or "staticField" && IsCharSeqSlot(node["sty"]))
-            node["sty"] = LowerSlot(node["sty"]);
+        // staticField reference's static type off its (already-collapsed) declaration.
+        //   • field/lateinitGet/staticField: UNCONDITIONAL — no .NET field is typed `dotkt$CharSequence`, a same-module
+        //     class/file-class field DECL is collapsed by LowerDeclTypes, and object/enum staticField sty is the
+        //     owner FQN (never the synthetic), so a CharSeq sty here is always a collapsed-to-String declaration read.
+        //   • local: GATED on the lexical scope — collapse only when the var's (already-collapsed) decl type is String
+        //     (or the name is a bir2cir-synthesized temp absent from the scope). A bare `local` whose sty is a
+        //     SMART-CAST refinement over a NON-CharSequence decl (`val x: SomeIface; when (x) { is CharSequence -> … }`,
+        //     kotc emits a bare `{k:local}` typed by the refined `dotkt$CharSequence` — BirEmitterExpressions IrGetValue
+        //     narrowing) can hold a GENUINE `dotkt$StringCharSequence` adapter; its decl was never collapsed, so leaving
+        //     its sty intact keeps the bridge from wrongly adapter-wrapping a non-String value (Fable-flagged, gate-blind).
+        // A call / subSequence RESULT that genuinely stays a `dotkt$CharSequence` adapter is a callInstance/callStatic —
+        // NOT in this set — so it keeps its `sty`. (Delegate-target lambda subtrees never reach here — Walk clones them
+        // out before Transform — so their un-collapsed CharSequence reads are untouched.)
+        if (IsCharSeqSlot(node["sty"]))
+        {
+            var collapseSty = k switch
+            {
+                "field" or "lateinitGet" or "staticField" => true,
+                "local" => Str(node["name"]) is not string sn
+                           || !env.Vars.TryGetValue(sn, out var st) || IsStringTokT(st),
+                _ => false,
+            };
+            if (collapseSty) node["sty"] = LowerSlot(node["sty"]);
+        }
 
         // A member READ on a CharSequence value (kotc: callInstance whose ownerType is the synthetic). A stdlib
         // CharSequence-EXTENSION is a callStatic (receiver as arg[0]), never this shape, so this only ever hits the
