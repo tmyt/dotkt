@@ -168,6 +168,11 @@ static class FacadeGen
                 if ((t.Namespace ?? "") != ns || !HasKotlinFileClass(t)) continue;
                 // `import pkg.foo` matches a top-level function `foo` OR an extension property whose getter is `get_foo`.
                 if (t.GetMethods(BindingFlags.Public | BindingFlags.Static).Any(mm => mm.Name == fn || mm.Name == "get_" + fn)) return t;
+                // #195: a top-level `val`/`var` with NO custom accessor compiles to a plain public static FIELD `foo`
+                // (no get_foo/set_foo). Match the field too so `import pkg.foo` surfaces the file class from a plain
+                // field-backed top-level property, not only from an accessor method (EmitKotlinFileClass then emits the tlprop).
+                // Skip compiler-generated `<...>`/`$...` fields (a `$delegate`/backing field) — mirrors the emitter's filter.
+                if (t.GetFields(BindingFlags.Public | BindingFlags.Static).Any(f => f.Name == fn && f.Name.Length > 0 && f.Name[0] != '<' && f.Name[0] != '$')) return t;
             }
         }
         return null;
