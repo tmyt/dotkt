@@ -24,7 +24,7 @@ CACHE="$ROOT/build/test-package-cache"
 # --- expected discovered-test count per battery project (the single machine-readable manifest; each family
 #     migration bumps its project's number in the SAME change, so a dropped method is a red gate). ------------
 declare -A EXPECTED=(
-	["tests/il"]=240  # Generics 6 + Inline 19 + Collections 16 + Maps 10 + Strings 22 + Nullable 13 + Float 8 + Enum 5 + Exception 8 + Lambda 10 + ClrEvent 4 + LanguageCore 12 + Array 12 + GenericTypes 10 + Math 6 + Regex 7 + M3Inline 5 + M3Collections 2 + M3Language 7 + M3Delegates 5 + M1{Ctor 2 + Comparison 3 + Char 3 + Numeric 2 + Collections 4 + Delegation 3 + Decl 2 = 19} + M2{DefaultArgs 2 + Delegation 3 + Extension 3 + Generics 2 + Language 8 = 18} + M4Lang 16
+	["tests/il"]=262  # Generics 6 + Inline 19 + Collections 16 + Maps 10 + Strings 22 + Nullable 13 + Float 8 + Enum 5 + Exception 8 + Lambda 10 + ClrEvent 4 + LanguageCore 12 + Array 12 + GenericTypes 10 + Math 6 + Regex 7 + M3Inline 5 + M3Collections 2 + M3Language 7 + M3Delegates 5 + M1{Ctor 2 + Comparison 3 + Char 3 + Numeric 2 + Collections 4 + Delegation 3 + Decl 2 = 19} + M2{DefaultArgs 2 + Delegation 3 + Extension 3 + Generics 2 + Language 8 = 18} + M4Lang 16 + M5 22
 	# ProjectReference round-trip consolidation lane (docs/design-nunit-test-harness.md §3; playbook §3): a producer
 	# DotKt LIBRARY (tests/roundtrip/producer) consumed via <ProjectReference> as its BUILT dll (facadegen re-import,
 	# NOT source) by this NUnit consumer. Batch 1 = 7 sections (enum/customprop/defargs/nrt/memext/operator-flag/

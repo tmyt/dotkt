@@ -365,10 +365,8 @@ il_check m0    M0Kt  "$ROOT/cases/m0/M0.kt"  "$(printf 'sum = 5\nzero\nn=1\nn=2'
 il_check injectdedup App "$ROOT/cases/il-injectdedup" "$(printf '42\nplain')" "$ROOT/cases/il-injectdedup/demo.meta"
 il_check mc1   MC1   "$ROOT/cases/m-c1"      "$(printf 'c = (4, 6)\na.d2 = 25\nrect area=30')"
 il_check overridemsg AppKt "$ROOT/cases/il-overridemsg" "$(printf 'overridden\noverridden\noverridden')"   # #24: `override val message` on a @ClrTypeAlias base (kotlin.Exception->System.Exception) — DeclarationRename wires the get_message accessor to the @ClrProperty("Message") slot (rename + clrOverride) so DefineMethodOverride binds System.Exception.get_Message (else every read returns the base value)
-il_check supercall SuperCall "$ROOT/cases/il-supercall/app.kt" "$(printf 'derived+base\n21\nderived[base-tag]\nDerived<Base>\nABC\ndog>animal\nimpl+hi-default\nderived+base\n11')"   # #14: super.X() from an override is a non-virtual `call` to the resolved base slot (else callvirt re-dispatches → infinite recursion); covers method/prop/3-level chain/user-base toString/interface-DIM + a virtual-dispatch non-regression
 il_check superobj SuperObj "$ROOT/cases/il-superobj/app.kt" "$(printf 'N:7\nTrue\nTrue\nFalse')"   # #14 RESIDUAL R1: super.toString()/hashCode()/equals() to kotlin.Any → the System.Object slot NON-virtually (MemberCallSubstitution carries the `super` marker onto clrInstance; ilemit emits `call`, not the callvirt that re-dispatched → stack overflow)
 il_check_imports supernet AppKt "$ROOT/cases/il-supernet" "$(printf 'True\nTrue')"   # #14 RESIDUAL R2: super.Next() to a facadegen-injected .NET base (System.Random) → NetInteropBinding propagates the `super` marker onto clrInstance; ilemit's EmitClrCall emits `call`, not the callvirt that re-dispatched → infinite recursion
-il_check xfaceimpl XFace "$ROOT/cases/il-xfaceimpl" "1"   # cross-file + namespaced interface impl/dispatch (FindMethod key regression)
 # language-core family (il-object/il-objexpr/il-companionext/il-ifacecompanion/il-op/il-ops/il-usermember/il-userrange/
 # il-rangein/il-whensubj/il-smartcast/il-scope) migrated to the NUnit battery tests/il/fixtures/LanguageCoreTests.kt
 # (12 methods), gated by tests/run-nunit-il.sh. Per the cases-test-design audit #14 the old per-case dirs + il_check
@@ -571,20 +569,15 @@ il_check pairtostr PairToStr "$ROOT/cases/il-pairtostr" "$(printf '[1, 2, 3]\n[1
 # nullcollarg: #100 H3 regression guard — a nullable-inner collection type-arg (`Map<String, List<Int>?>`) upcast from
 # a MutableMap must still collapse its V to IList and verify clean (the `?` must not smuggle an un-collapsed IReadOnly
 # face past the collapse). Pure runnable guard for that shape.
-il_check toplateinit TopLateinit "$ROOT/cases/il-toplateinit" "$(printf 'caught: uninitialized\nhello\n5')"  # #104: top-level `lateinit var` (ref type) static field carries `"init": null` — must NOT hit the .cctor null-coercion store (crash); default-null + lateinitGet throw-before-init
 il_check samcmp SamCmp "$ROOT/cases/il-samcmp" "$(printf '1,1,2,3,4,5,6,9\n9,6,5,4,3,2,1,1')"  # explicit Comparator{} SAM conversion (plain fun interface; no kotc @ClrTypeAlias read)
 # Array family (arr/arrops/arrnull/arrslice/arrplus/intarraytolist/copyintoverlap/fillrange/indices/indicesv/ubytearr/
 # genarrlam) migrated to the NUnit in-process suite -> tests/il/fixtures/ArrayTests.kt (value asserts). il-copyofnull /
 # il-boxgen stay here (live XFAIL_ILVERIFY findings, not migratable into the ilverify-clean lane).
-il_check utf8throw AppKt "$ROOT/cases/il-utf8throw/app.kt" "$(printf 'True\ndecode-threw\nencode-threw\nhello')"   # #143: decodeToString/encodeToByteArray honor throwOnInvalidSequence=true -> CharacterCodingException via throwing UTF8Encoding(false,true)
-il_check seq   Seq   "$ROOT/cases/il-seq"     "$(printf '6,12\n16\n3\n27\n10-20-30\n1,2,3\n4,5,6\n3')"
 il_check seqforin SeqForin "$ROOT/cases/il-seqforin" "$(printf 'a\nb')"
-il_check sort  Sort  "$ROOT/cases/il-sort"    "$(printf '9,6,5,4,3,2,1,1\na,dd,bbb,cccc\ncccc,bbb,dd,a')"
 il_check boxgen BoxgenKt "$ROOT/cases/il-boxgen" "$(printf '42\n1\n42\n42\n10\n-1\n[1, 2, 3]\n[3, 2, 1]\n[a, b, c]\n[1, null, 3]\n[5, null, null]\nSUMMER')"   # C2 boxed-primitive dual-representation: getOrPut/getOrElse/compareBy/Array<Int?>/T:Enum<T>
 il_check copyofnull Copyofnull "$ROOT/cases/il-copyofnull" "$(printf '[1, 2, 3, null, null]\n[1, 2]\n[1, 2, 3]\n1\nnull\n6\n[1, 2, null]\n[2.5, 3.5, null]\n[a, b, null]\n[x, y, null]\n[7, null, null]')"   # #124: Array<value-type>.copyOf(newSize) builds Nullable<elem>[] by runtime reflection (grow null-tail/shrink/prefix read-back; value + reference + already-nullable T)
 # A6: rule-3 helper calls on CONCRETE generic alias receivers (HashMap/ArrayList/LinkedHashMap: class typeArgs +
 # instantiated sig) + Map/MutableMap getOrDefault (bare-V map-defaults helper: retType carry, was BadImageFormat).
-il_check unsgn Unsigned "$ROOT/cases/il-unsigned" "$(printf '4000000100\n4000000000\n18000000000000000000\n60000\n250')"
 # regex family (il-regex/il-regexanchor/il-regexopts/il-regexreplace/il-regexgroups/il-regexseq/il-groupvalues)
 # migrated to the NUnit battery tests/il/fixtures/RegexTests.kt (7 methods), gated by tests/run-nunit-il.sh. Per the
 # cases-test-design audit #14 the old per-case dirs + il_check lines were removed same-change; their il-regex/
@@ -597,9 +590,6 @@ il_check unsgn Unsigned "$ROOT/cases/il-unsigned" "$(printf '4000000100\n4000000
 # gencolladd: non-inlined GENERIC collection building via `.map`/`.add`/`.size` — the stdlib `clrCollAdd<T>`
 # reads `c.size` (ICollection<!!T>.get_Count) on an OPEN method type-param. Locks the bymap/maxOrNull dispatch
 # family's collection analog (an open-generic ICollection member call must bind at runtime, no EntryPointNotFound).
-il_check tailrec Tailrec "$ROOT/cases/il-tailrec" "$(printf '500000500000\n0\n2000000014\n1000000\n2000000')"   # §2b: deep `tailrec` TCO'd to a back-jump loop (self / when / extension-receiver / member); no CLR stack overflow
-il_check use Use "$ROOT/cases/il-use" "$(printf 'close abcd\nn=4\nclose x\ncaught:boom')"
-il_check seqfilter SeqFilter "$ROOT/cases/il-seqfilter" "$(printf '3,4,5,6\n20,40,60\n4\n3,4,5,6\n3')"
 # cwindowed: CharSequence.windowed exercises a `break` in EXPRESSION position (its `coercedEnd` init); kotc lowers
 # it to a valueBlock(goto/break + unreachable throw). eachcount: Grouping.eachCount reads a value-nullable smart-cast
 # (`Int?`) in arithmetic (`count + 1`) — the C1 value-slot-unwrap class, locked here as a regression guard.
@@ -615,12 +605,8 @@ il_check genseq GenSeq "$ROOT/cases/il-genseq" "$(printf '[5]\n[hi]')"
 # an OPEN operand (Closure`1::.ctor(!0)) -> TypeLoadException; and the iterator's delegateInvoke passed a boxed T? to
 # `Func<T,object>::Invoke(!0)` with no unbox -> InvalidProgramException at a VALUE element. Both fixed; value + ref drive.
 il_check genseq2 GenSeq2 "$ROOT/cases/il-genseq2" "$(printf '[1, 2, 4]\n[a, ab, abb]\n18')"
-il_check valcls ValCls "$ROOT/cases/il-valclass" "$(printf '1250\n12\n1250\nff\n1010\nff')"
 il_check_imports forin Forin "$ROOT/cases/il-forin" "$(printf '60\n10,20,30,\n3')"
-il_check triple Triple "$ROOT/cases/il-triple" "$(printf '1\ntwo\n3\n(1, two, 3)\n(1, two, 3)\n1|two|3\n1\ntwo\n3\n(1, TWO, 3)\nTrue\nFalse\n(3, two, 1)\n([1, 2], x, {k=9})')"   # COV4: Triple ctor/destructure/componentN/full-arg copy/toString (partial-copy-with-defaults omitted — cross-module default-arg bug)
-il_check typealias TypeAlias "$ROOT/cases/il-typealias" "$(printf 'a,b,c\n3\n12\n42\n9\n-1')"   # COV3: typealias over stdlib generic / function type / user class, used across a fn boundary
 il_check atomics Atomics "$ROOT/cases/il-atomics" "$(printf '11\n11\n16\nTrue\nFalse\n16\n16\n100\n55\n1001\n1001\n1000\n1000\n42')"   # COV2: kotlin.concurrent.atomics AtomicInt/AtomicLong exercising the @ClrRefArgument Interlocked byref binding
-il_check volatileatomic AppKt "$ROOT/cases/il-volatileatomic" "$(printf '42\n9000000000\nTrue\nb')"   # #130: scalar atomics load()/store() volatile round-trip (Volatile.Read/Write byref for int/long/bool; @Volatile field for AtomicReference)
 # #129: an AtomicIntArray element op whose bounds check THROWS mid-critical-section must still release the monitor
 # (try/finally). A worker thread then acquires the same instance's monitor (loadAt); pre-fix the leaked lock made
 # worker.Join(2000) time out -> "DEADLOCK". Needs facadegen for System.Threading.Thread, so il_check_imports.
@@ -630,7 +616,6 @@ il_check_imports atomicarraytry AppKt "$ROOT/cases/il-atomicarraytry" "$(printf 
 # battery tests/il/fixtures/NullableTests.kt (12 methods), gated by tests/run-nunit-il.sh. Per the
 # cases-test-design audit #14, the old per-case dirs + these il_check lines were deleted in that SAME change.
 # (il-nan/il-nancmp/il-negzero are NOT here — their subject is IEEE-float behavior, kept for a float battery.)
-il_check tryval TryVal "$ROOT/cases/il-tryval" "$(printf '5\nnull\n7\n3.5\n1.5\nnull\n2.5\nnull\n11')"   # #127: `try{value}catch{null}` in VALUE position on a value-type result -> the shared temp is typed Nullable<T> (null branch = HasValue=false), mirror of ternary()'s value+null-branch join (incl. stdlib toFloatOrNull/toDoubleOrNull)
 il_check nullv MS1   "$ROOT/cases/m-s1/app.kt" "$(printf 'fallback\npresent\nforced\nlen null = -1\nlen hello = 5')"
 il_check dataq Dq    "$ROOT/cases/m-s2/app.kt" "$(printf 'Point(x=3, y=4)\nPoint(x=7, y=9)\nx=3 y=4\na==b: True\na==c: False\nhash eq: True')"
 # The non-coroutine inline family (il-inline, il-inline2, il-xinline, il-inlinedefaultlambda, il-inlinememberdefault,
@@ -641,12 +626,9 @@ il_check dataq Dq    "$ROOT/cases/m-s2/app.kt" "$(printf 'Point(x=3, y=4)\nPoint
 # #75 S4a — escape-analysis narrowing samples. Cross-module stdlib inline ops (forEach/map/run) route through the
 # bir2cir InlineSplice engine ONLY when a lambda arg escapes (non-local return/break, or arm-c suspension); the
 # non-escaping majority takes the plain delegate call. See docs/design-inline-s4-narrowing-95.md §8.
-il_check vis   VisT  "$ROOT/cases/il-vis/app.kt" "$(printf '98\nacct\n99')"
-il_check volatile Volatile "$ROOT/cases/il-volatile" "$(printf '0\n41\n42\nready\nTrue')"   # @kotlin.concurrent.Volatile -> a real CLR volatile field: modreq(IsVolatile) + `volatile.` prefix (the C# volatile shape) on value-type/ref-type instance fields + a top-level static field
 il_check classdeleg AppKt "$ROOT/cases/il-classdeleg/app.kt" "$(printf 'p1\n1\np2\nc[p2]\n2\np40\n40\n3\nc')"   # #81: CLASS delegation `class Foo : Bar by baz` — the frontend's synthetic `$$delegate_0` IrField + its ctor initializer must be emitted (single/two/expr/generic delegates)
 # #70: a genuine `::x`/`obj::p`/`Type::p` callable reference -> a lifted class implementing the REAL stdlib
 # KProperty0/KMutableProperty0/KProperty1 (name/get/set/invoke), not the retired `dotkt$KProperty` synthetic.
-il_check topdeleg AppKt "$ROOT/cases/il-topdeleg/app.kt" "$(printf '0\n42\ninit')"   # #70: a TOP-LEVEL delegated property with an arbitrary getValue/setValue provider routes through `x$delegate.getValue/setValue` (static delegate field, null thisRef) — was a whole-compile abort (only member/local delegated props were routed)
 # The G-1..G-6 generics battery (il-generic .. il-generic6) migrated to the NUnit suite:
 # tests/il/fixtures/GenericsTests.kt (gated by tests/run-nunit-il.sh). Per the cases-test-design audit #14,
 # the old per-case dirs + these il_check lines were deleted in that SAME change.
@@ -938,14 +920,10 @@ il_check_imports inlsuspenddefault AppKt "$ROOT/cases/il-inlsuspenddefault" "$(p
 # (`acc += 10`) must KEEP working — kotc ref-cell-boxes the mutated capture, so the write reaches bir2cir as a ref-cell
 # field write (not a bare setLocal-to-capture), and MaterializeCarrier's new setLocal-to-capture refusal must NOT fire on it.
 il_check_imports inlmatsetcap AppKt "$ROOT/cases/il-inlmatsetcap" "10"
-il_check xprop Xprop "$ROOT/cases/il-xprop" "7"
 # bundle-6 ④ stdlib-correctness routing (bir2cir)
-il_check starproj StarProj "$ROOT/cases/il-starproj" "$(printf '{1=2, 3=4}\n2\n[10, 20, 30]\n3\n20\n[10, 20, 30]\n[10, 20, 30]\n{1=2, 3=4}\nFalse\nFalse')"
 # exception / try-catch family (il-exc, il-customexc, il-excmap, il-nestedtry, il-result, il-throwexpr, il-tryexpr,
 # il-tryexprop) migrated to the NUnit battery tests/il/fixtures/ExceptionTests.kt (8 methods), gated by
 # tests/run-nunit-il.sh; the old per-case dirs + il_check lines were removed in the same change (audit #14).
-il_check setlocalbox SetLocalBox "$ROOT/cases/il-setlocalbox" "$(printf '42\n7')"
-il_check unsignedshr AppKt "$ROOT/cases/il-unsignedshr/app.kt" "$(printf '2147483647\n9223372036854775807\n267386880\n1073741824\n2147483648\n-4')"   # #94: unsigned shr is LOGICAL (zero-filling) — bir2cir lowers a UInt/ULong `shr` to ">>>" (ilemit Shr_Un), not the sign-propagating ">>"; shl + signed shr are the non-regression checks
 # #156: a genuinely-nullable String (String? = null) UNWRAPPED into a CharSequence?-receiver slot (isNullOrEmpty) — the
 # strict nullable-slot path now emits a runtime-conditional adapter wrap so String->dotkt$CharSequence is ilverify-clean.
 # #40 (guard): a CROSS-MODULE @InlineOnly + @ClrIntrinsic stdlib fn keeps its @ClrIntrinsic binding across the assembly

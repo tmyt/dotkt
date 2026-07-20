@@ -68,18 +68,12 @@ declare -A XFAIL_DIFF=(
 # fixed strings in verify-il, so a Kotlin-INCORRECT mapping passed green forever. Promoting the JVM-runnable
 # subset here makes the JVM oracle (real kotlin/jvm) the ground truth — a regression now reddens the gate.
 PURE="m0 m-a1 m-a2 m-a3 m-a4 m-a5 m-a6 m-a7 m-a8 m-b1 m-b2 m-b3 m-b4 m-b5 m-b6 m-b7 m-b8 m-b9 m-b10 m-b11 m-b12 m-b13 m-s1 m-s2 m-s3 \
-il-seq il-sort \
-il-samcmp il-seqfilter il-setlocalbox il-unsigned il-use il-valclass il-vis il-volatile il-xfaceimpl il-xprop \
+il-samcmp \
 il-boxgen il-pairtostr \
 il-genmax il-genseq2 \
-il-triple il-typealias il-atomics il-tailrec"
-# COV2/COV3/COV4 (kcc review §2B, 2026-07-06): il-atomics (kotlin.concurrent.atomics — the @ClrRefArgument
-# Interlocked byref binding; API restricted to the released 2.2.0 surface so the JVM oracle resolves it),
-# il-typealias (typealias over stdlib generic / function type / user class across a fn boundary), il-triple
-# (Triple ctor/destructure/componentN/full-arg copy/toString). All three JVM-oracle-verified.
-# il-tailrec (2026-07-06, §2b CLOSED): deep `tailrec` is now TCO'd to a back-jump loop in kotc, so a
-# million-frame self/when/extension-receiver/member tailrec runs in constant stack and MATCHes the JVM
-# oracle (which also TCOs it) — promoted into PURE (was excluded as a documented deviation/crash).
+il-atomics"
+# COV2 (kcc review §2B, 2026-07-06): il-atomics (kotlin.concurrent.atomics — the @ClrRefArgument Interlocked
+# byref binding; API restricted to the released 2.2.0 surface so the JVM oracle resolves it), JVM-oracle-verified.
 # NOTE: this is the SINGLE effective PURE set. It was previously followed by three shadowing PURE=… reassignments
 # (a cross-task merge artifact from the C1/C2/C4/C5 review fixes) that dropped most of the list — il-nullableprim /
 # il-boxgen were silently un-tested. Consolidated into the union above (kcc review C3, 2026-07-06).
