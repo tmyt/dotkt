@@ -415,11 +415,13 @@ il_check xfaceimpl XFace "$ROOT/cases/il-xfaceimpl" "1"   # cross-file + namespa
 # (il-suspendcapture/il-suspendnestedcapture stay in the bash lane — suspend/coroutine, a deferred family.)
 il_check caprefinline AppKt "$ROOT/cases/il-capref-inline/app.kt" "$(printf '2\n4\n6\n99')"   # a coerced `::pushDouble` reference inside a buildList{} inline lambda -> an ADAPTER_FOR_CALLABLE_REFERENCE local fn whose bound receiver is an ExtensionReceiver param `receiver`; liftLocalFn must emit the receiver param, else the body's `receiver.pushDouble` dangles (the kotlinx flow `__local*_add: references undeclared local 'receiver'` blocker)
 il_check adapterref AppKt "$ROOT/cases/il-adapterref/app.kt" "$(printf 'sink 1\nsink 2\nsink 3\nbuilt 4\nbuilt 5')"   # #84 G: a coerced MEMBER reference (`s::add`/`::add`, Boolean-returning member adapted to (Int)->Unit) passed to an inline forEach — the ADAPTER_FOR_CALLABLE_REFERENCE must forward to the real member as callInstance (adapterRef replays the adapter body), not a top-level `callStatic owner:null` (`static method not found: add`, the consumeEach(collection::add) blocker)
-il_check geninherit AppKt "$ROOT/cases/il-geninherit/app.kt" "$(printf '42\nTrue\nTrue')"   # #84 I: a non-generic subclass calling a method INHERITED from a generic base (`IntHolder : Holder<Int>`) + a self-referentially-bounded generic (`Segment<S : Segment<S>>`) — the inherited method must anchor onto the CONSTRUCTED base (`Holder<Int>`/`Segment<Seg>`), not the open `Base`1::m` (\"not fully instantiated\", the ConcurrentLinkedListNode blocker)
-il_check genfield AppKt "$ROOT/cases/il-genfield/app.kt" "$(printf '41\n41\n42\n100\n101\n7\n8\nhi\nbye')"   # R4 #91: raw @ClrField access whose owner is a GENERIC type — the FIELD-side mirror of #84-I. A bare `C`1::f` token is \"not fully instantiated\" (ilemit `field must be declared on a generic type definition`; ilverify get_GenericParameters IndexOutOfRange). Anchors onto the CONSTRUCTED instantiation via TypeBuilder.GetField over all axes: self-inst own field (Cell), self-inst inherited generic-base field via `this` (Wrap, the JobSupport ResumeAwaitOnCompletion`1.invoke blocker), inherited-base field via a non-generic subclass (IntBox), and via a constructed generic subclass (Sub<String>). SUSPEND-FREE.
+# generic-types family (il-genbase/il-genctor/il-geninherit/il-genstatic/il-gencolladd/il-genlocalclass/il-genfield/
+# il-objgen/il-gfac/il-genextnew) migrated to the NUnit battery tests/il/fixtures/GenericTypesTests.kt (10 methods),
+# gated by tests/run-nunit-il.sh. Per the cases-test-design audit #14 the old per-case dirs + il_check lines were
+# removed same-change; their il-genbase/il-genctor/il-genstatic/il-gencolladd/il-gfac/il-objgen PURE entries were
+# removed from verify-differential.sh same-change.
 il_check inheritedgenericinline AppKt "$ROOT/cases/il-inheritedgenericinline/app.kt" "$(printf '42\nabcd\n42')"   # #88: an inherited member `inline fun` whose OWNER class is GENERIC (`IntBox/StrBox : Container<E>`) spliced at a subclass call site — kotc's F2A carries the owner's type args via the corresponding-supertype instantiation `Container<Int>`/`Container<String>`, so the spliced payload's `tv{scope:type,0}` (E) concretizes instead of staying an OPEN generic (which typed the dispatch temp as the open type -> BadImageFormatException); the third line covers a TYPE-PARAMETER receiver whose bound `T : Container<Int>` fixes the owner arg
 il_check geninlinearg GenInlineArg "$ROOT/cases/il-geninlinearg/app.kt" "$(printf '[7]\n[x]\n1')"   # #122: inline collection-factory arg of a `new` in a generic fn — declared class-scope tv instantiated through the `new` binding (else Add(T[]) splat mismatch)
-il_check genextnew GenExtNew "$ROOT/cases/il-genextnew/app.kt" "$(printf '5\nhi\n42\nyo')"   # #123: `new Ext<T>(v)` (external generic over a FREE method type-var) is a TypeBuilderInstantiation — resolve its ctor on the open def + re-anchor via TypeBuilder.GetConstructor (else .GetConstructors() throws "does not support resolving members")
 # enum family (il-enum/il-enumintr/il-enumtostr/il-enumbody/il-enumrich) migrated to the NUnit battery
 # tests/il/fixtures/EnumTests.kt (+ EnumCrossFile.kt for the #90 cross-file basic-enum decl).
 # netenumbound (#107): a facadegen-injected .NET enum (System.DayOfWeek) satisfies Kotlin's `T : Enum<T>` bound —
@@ -672,7 +674,6 @@ il_check groupvalues GroupValues "$ROOT/cases/il-groupvalues" "$(printf 'abc,a,b
 # gencolladd: non-inlined GENERIC collection building via `.map`/`.add`/`.size` — the stdlib `clrCollAdd<T>`
 # reads `c.size` (ICollection<!!T>.get_Count) on an OPEN method type-param. Locks the bymap/maxOrNull dispatch
 # family's collection analog (an open-generic ICollection member call must bind at runtime, no EntryPointNotFound).
-il_check gencolladd GenCollAdd "$ROOT/cases/il-gencolladd" "$(printf 'a,b,c\n3\n4\nv0,v1,v2\n3')"
 il_check langtail LangTail "$ROOT/cases/il-langtail" "$(printf '6\nhi\nint:42\nstr:3\nbig:5\nsmall\n700\n9')"
 il_check tailrec Tailrec "$ROOT/cases/il-tailrec" "$(printf '500000500000\n0\n2000000014\n1000000\n2000000')"   # §2b: deep `tailrec` TCO'd to a back-jump loop (self / when / extension-receiver / member); no CLR stack overflow
 il_check copydef CopyDef "$ROOT/cases/il-copydef" "$(printf '(1, 20)\n(5, 2)\n(1, 9, 3)\n(7, 2, 8)\nPoint(x=1, y=20, z=3)\nPoint(x=9, y=2, z=8)')"   # C3: data-class copy(field=x) with omitted fields — cross-module Pair/Triple reconstruct this.<field>
@@ -682,7 +683,6 @@ il_check comparator Comparator "$ROOT/cases/il-comparator" "$(printf -- '-3\n5\n
 il_check use Use "$ROOT/cases/il-use" "$(printf 'close abcd\nn=4\nclose x\ncaught:boom')"
 il_check comparable Comparable "$ROOT/cases/il-comparable" "$(printf 'a<b\nc>b\na<=a\n-3\n1.2,1.5,2.0')"
 il_check seqfilter SeqFilter "$ROOT/cases/il-seqfilter" "$(printf '3,4,5,6\n20,40,60\n4\n3,4,5,6\n3')"
-il_check genstatic GenStatic "$ROOT/cases/il-genstatic" "$(printf '42\nTrue\nTrue\nboom\nhi')"
 il_check bmore BMore "$ROOT/cases/il-bmore" "$(printf '5 items\nx = 42\n3.14\n00007\nff\n100%% ok: yes\n0:a,1:b,2:c\n0,20,60')"
 il_check chunk Chunk "$ROOT/cases/il-chunk" "$(printf '3,7,5\n3\n1-2-3 4-5\na,b,c\n3\n1,3,5\n9')"
 # cwindowed: CharSequence.windowed exercises a `break` in EXPRESSION position (its `coercedEnd` init); kotc lowers
@@ -694,7 +694,6 @@ il_check cwindowed CWindowed "$ROOT/cases/il-cwindowed" "$(printf '[ab, bc, cd]\
 # (not collapse to System.String) — the stdlib passes a real <>dotkt_CharSequence (subSequence's result) in. W4-B guard.
 il_check cwindowedv CWindowedV "$ROOT/cases/il-cwindowedv" "$(printf '[2, 2, 2]\n[a, b, c]\n[3, 3, 3]\n[ab, bc, cd]')"
 il_check localclass LocalClass "$ROOT/cases/il-localclass" "$(printf '10\n42\n101\n3,4\nTrue\n60')"
-il_check genlocalclass AppKt "$ROOT/cases/il-genlocalclass/app.kt" "$(printf '42\nhi\n1->2\na->b')"   # #69: a function-local class capturing an enclosing TYPE PARAMETER is lifted GENERICALLY (reified CLR generics); ownerSpec/birType name the constructed `L<T>` at the new site + denotable var slot + member access — was a whole-compile abort
 # A generic cold-sequence SM: `fun <T> wrap(x) = sequence { yield(x) }.toList()` over a VALUE element (Int) and a
 # reference element (String). Guards the `T?`-property `nextValue as T` double-unbox NRE (bir2cir erased-getter
 # call-site retype) that broke every value-typed cold sequence, and (via the same drive) the RingBuffer path.
@@ -750,7 +749,6 @@ il_check inlsiblingdelegate InlSiblingDelegate "$ROOT/cases/il-inlsiblingdelegat
 # non-escaping majority takes the plain delegate call. See docs/design-inline-s4-narrowing-95.md §8.
 il_check inlcompose    InlCompose    "$ROOT/cases/il-inlcompose/app.kt"        "$(printf '11\n99')"          # F3 (#62) transitive forwarding of an inline PARAM through a user top-level inline (outer(b)=inner(b)) + escaping non-local return
 il_check ctor  CtorT "$ROOT/cases/il-ctor/app.kt" "$(printf '12\n25\n5x5\nhi=7\nsolo=0')"
-il_check objgen OGen "$ROOT/cases/il-objgen/app.kt" "$(printf '42\nhi\n7\nok')"
 il_check nest  Nst   "$ROOT/cases/il-nested/app.kt" "$(printf 'outer:root\nnode(7)\n14\nleaf 3')"
 il_check vis   VisT  "$ROOT/cases/il-vis/app.kt" "$(printf '98\nacct\n99')"
 il_check precond Pcd "$ROOT/cases/il-precond/app.kt" "$(printf '3\nreq\nchk\nerr:boom\ntodo')"   # #73 M6/M7: precondition/error family + top-level repeat{} inline loop (moved to bir2cir)
@@ -776,11 +774,9 @@ il_check del2  D2    "$ROOT/cases/il-deleg2"  "$(printf '0 -> 1\n1 -> 2\n5\nhi')
 # Generic secondary-ctor delegation: `constructor(...) : this(...)` inside a generic class must anchor
 # the sibling ctor onto the self-instantiation `C<T>` (ilemit EmitCtorBody). Regression repro for the
 # RingBuffer<T> "not fully instantiated" crash behind listOf(...).windowed(3).
-il_check genctor GenCtor "$ROOT/cases/il-genctor" "$(printf '3,0\n5,0\n7')"
 # A generic class extending a generic base instantiated over its OWN type param (`class D<T> : Base<T>()`):
 # the base-ctor call AND inherited generic-base member access must anchor onto the CONSTRUCTED base `Base<!T>`,
 # not the open def `Base<>` (else "not fully instantiated" / InvalidProgram). This is the SequenceBuilderIterator shape.
-il_check genbase GenBaseKt "$ROOT/cases/il-genbase" "$(printf '42\n42\n42/42\nhi')"
 # genbaseext: a NON-GENERIC object over an EXTERNAL (stdlib) generic base with CONCRETE args
 # (`object : AbstractCoroutineContextKey<MyBase, MyDerived>` — the kotlinx.coroutines CoroutineDispatcher.Key
 # shape, the rc6 port blocker). kotc used to emit the base as an OPEN bare name, dropping the concrete args, so
@@ -1065,7 +1061,6 @@ il_check_imports inlsuspenddefault AppKt "$ROOT/cases/il-inlsuspenddefault" "$(p
 # field write (not a bare setLocal-to-capture), and MaterializeCarrier's new setLocal-to-capture refusal must NOT fire on it.
 il_check_imports inlmatsetcap AppKt "$ROOT/cases/il-inlmatsetcap" "10"
 il_check dsl Dsl "$ROOT/cases/il-dsl" "a[Pb]c"
-il_check gfac TGfac "$ROOT/cases/il-gfac" "$(printf '42\nhi')"
 il_check xprop Xprop "$ROOT/cases/il-xprop" "7"
 il_check exprbody EB "$ROOT/cases/il-exprbody" "$(printf 'greet\nviaLambda\ncleanup\npos')"
 il_check overload OV "$ROOT/cases/il-overload" "$(printf 'S:x\nF:y\nI:7\nbs:p\nbf:q')"
