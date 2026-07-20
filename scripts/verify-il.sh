@@ -403,7 +403,11 @@ il_check supercall SuperCall "$ROOT/cases/il-supercall/app.kt" "$(printf 'derive
 il_check superobj SuperObj "$ROOT/cases/il-superobj/app.kt" "$(printf 'N:7\nTrue\nTrue\nFalse')"   # #14 RESIDUAL R1: super.toString()/hashCode()/equals() to kotlin.Any → the System.Object slot NON-virtually (MemberCallSubstitution carries the `super` marker onto clrInstance; ilemit emits `call`, not the callvirt that re-dispatched → stack overflow)
 il_check_imports supernet AppKt "$ROOT/cases/il-supernet" "$(printf 'True\nTrue')"   # #14 RESIDUAL R2: super.Next() to a facadegen-injected .NET base (System.Random) → NetInteropBinding propagates the `super` marker onto clrInstance; ilemit's EmitClrCall emits `call`, not the callvirt that re-dispatched → infinite recursion
 il_check xfaceimpl XFace "$ROOT/cases/il-xfaceimpl" "1"   # cross-file + namespaced interface impl/dispatch (FindMethod key regression)
-il_check ifacecompanion IfacecompanionKt "$ROOT/cases/il-ifacecompanion/app.kt" "$(printf '1\n2\n3\n4\n64\n2147483647')"   # #83: an interface's PLAIN companion flattens to the interface's statics (static fields run in its .cctor + static methods); kotc emitted `fields:[]` and ilemit skipped interface fields/.cctor -> `field SharingStarted.Eagerly not found`. Named-companion (Factory) const/val is the co-located non-regression.
+# language-core family (il-object/il-objexpr/il-companionext/il-ifacecompanion/il-op/il-ops/il-usermember/il-userrange/
+# il-rangein/il-whensubj/il-smartcast/il-scope) migrated to the NUnit battery tests/il/fixtures/LanguageCoreTests.kt
+# (12 methods), gated by tests/run-nunit-il.sh. Per the cases-test-design audit #14 the old per-case dirs + il_check
+# lines were removed same-change; their il-object/il-objexpr/il-op/il-ops/il-rangein/il-scope/il-smartcast/il-userrange/
+# il-whensubj PURE entries were removed from verify-differential.sh same-change.
 # lambda/closure/HOF/function-reference family (il-closure/il-lambda/il-genclosure/il-genhof/il-mfclosure/il-mflambda/
 # il-writecapture/il-funref/il-extfunref/il-threadlambda) migrated to the NUnit battery tests/il/fixtures/LambdaTests.kt
 # (10 methods; + LambdaTestsB.kt for the il-mfclosure/il-mflambda file-B halves), gated by tests/run-nunit-il.sh.
@@ -413,7 +417,6 @@ il_check caprefinline AppKt "$ROOT/cases/il-capref-inline/app.kt" "$(printf '2\n
 il_check adapterref AppKt "$ROOT/cases/il-adapterref/app.kt" "$(printf 'sink 1\nsink 2\nsink 3\nbuilt 4\nbuilt 5')"   # #84 G: a coerced MEMBER reference (`s::add`/`::add`, Boolean-returning member adapted to (Int)->Unit) passed to an inline forEach — the ADAPTER_FOR_CALLABLE_REFERENCE must forward to the real member as callInstance (adapterRef replays the adapter body), not a top-level `callStatic owner:null` (`static method not found: add`, the consumeEach(collection::add) blocker)
 il_check geninherit AppKt "$ROOT/cases/il-geninherit/app.kt" "$(printf '42\nTrue\nTrue')"   # #84 I: a non-generic subclass calling a method INHERITED from a generic base (`IntHolder : Holder<Int>`) + a self-referentially-bounded generic (`Segment<S : Segment<S>>`) — the inherited method must anchor onto the CONSTRUCTED base (`Holder<Int>`/`Segment<Seg>`), not the open `Base`1::m` (\"not fully instantiated\", the ConcurrentLinkedListNode blocker)
 il_check genfield AppKt "$ROOT/cases/il-genfield/app.kt" "$(printf '41\n41\n42\n100\n101\n7\n8\nhi\nbye')"   # R4 #91: raw @ClrField access whose owner is a GENERIC type — the FIELD-side mirror of #84-I. A bare `C`1::f` token is \"not fully instantiated\" (ilemit `field must be declared on a generic type definition`; ilverify get_GenericParameters IndexOutOfRange). Anchors onto the CONSTRUCTED instantiation via TypeBuilder.GetField over all axes: self-inst own field (Cell), self-inst inherited generic-base field via `this` (Wrap, the JobSupport ResumeAwaitOnCompletion`1.invoke blocker), inherited-base field via a non-generic subclass (IntBox), and via a constructed generic subclass (Sub<String>). SUSPEND-FREE.
-il_check usermember AppKt "$ROOT/cases/il-usermember/app.kt" "$(printf '33\nTrue\nFalse\nTrue\n(1, 2)\n(1, 2)\nTrue\nFalse\nTrue\nTrue\nBase(9)\nTrue\nBase(9)\nWithName(hi)\nTrue\nTrue\nTrue\nTrue')"   # #96: explicit hashCode()/toString()/equals() (+ a bound method reference) on a user class/interface — a DECLARED override dispatches to the user member; a NON-overriding class/interface-receiver inherits the kotlin.Any slot by virtual dispatch (bir2cir AnySlotRebind -> objMethod; a method reference retargets its owner to kotlin.Any) instead of dead-ending at ilemit ("method <UserType>.GetHashCode not found"); a base-declared toString reached through a non-declaring subclass resolves to the base member
 il_check inheritedgenericinline AppKt "$ROOT/cases/il-inheritedgenericinline/app.kt" "$(printf '42\nabcd\n42')"   # #88: an inherited member `inline fun` whose OWNER class is GENERIC (`IntBox/StrBox : Container<E>`) spliced at a subclass call site — kotc's F2A carries the owner's type args via the corresponding-supertype instantiation `Container<Int>`/`Container<String>`, so the spliced payload's `tv{scope:type,0}` (E) concretizes instead of staying an OPEN generic (which typed the dispatch temp as the open type -> BadImageFormatException); the third line covers a TYPE-PARAMETER receiver whose bound `T : Container<Int>` fixes the owner arg
 il_check geninlinearg GenInlineArg "$ROOT/cases/il-geninlinearg/app.kt" "$(printf '[7]\n[x]\n1')"   # #122: inline collection-factory arg of a `new` in a generic fn — declared class-scope tv instantiated through the `new` binding (else Add(T[]) splat mismatch)
 il_check genextnew GenExtNew "$ROOT/cases/il-genextnew/app.kt" "$(printf '5\nhi\n42\nyo')"   # #123: `new Ext<T>(v)` (external generic over a FREE method type-var) is a TypeBuilderInstantiation — resolve its ctor on the open def + re-anchor via TypeBuilder.GetConstructor (else .GetConstructors() throws "does not support resolving members")
@@ -571,7 +574,6 @@ il_check_imports colddimgen ColdDimGen "$ROOT/cases/il-colddimgen" "42"
 # three same-named `$dotkt_suspend` overloads + ilemit sig-driven external-generic resolution (both landed).
 il_check seqyieldall SeqYieldAll "$ROOT/cases/il-seqyieldall" "$(printf 'a,b,c')"
 il_check for   ForT  "$ROOT/cases/il-for"     "$(printf 'sum 1..5 = 15\ncountdown 5 = 54321')"
-il_check ops   Ops   "$ROOT/cases/il-ops"     "$(printf '3\n2\n7\n3\n16\n15\n-1\n3\n5')"
 # The string/text family (String/Char ops, CharSequence, stringify, radix, number-parse, hashCode contract:
 # il-str, il-strops, il-blank, il-strnum, il-strhash, il-radix, il-charminus, il-digittoint, il-substr, il-subseq,
 # il-charseq/il-charseqs/il-charseqx/il-charseqbcl/il-charseqmore/il-charseqxfile/il-charseqlenref, il-colstr,
@@ -615,9 +617,7 @@ il_check toplateinit TopLateinit "$ROOT/cases/il-toplateinit" "$(printf 'caught:
 il_check samcmp SamCmp "$ROOT/cases/il-samcmp" "$(printf '1,1,2,3,4,5,6,9\n9,6,5,4,3,2,1,1')"  # explicit Comparator{} SAM conversion (plain fun interface; no kotc @ClrTypeAlias read)
 il_check cp    Cp    "$ROOT/cases/il-cp"      "$(printf '50\n3.5\nTrue\nTrue\nX')"
 il_check ext   Ext   "$ROOT/cases/il-ext"     "$(printf '21\nHI')"
-il_check companionext CompanionExt "$ROOT/cases/il-companionext" "$(printf '5\n14\n21')"   # #177: an extension fun in a companion object lowers to a static method whose first param is the extension receiver — the call site must pass that receiver as the LEADING arg (was dropped -> arity miscompile)
 il_check arr   Arr   "$ROOT/cases/il-arr"     "$(printf '10\n30\n99\n3\n139\n139')"
-il_check scope Sc    "$ROOT/cases/il-scope"   "$(printf '10\n6\n9\n10\n10\n7')"
 il_check arraydeque AppKt "$ROOT/cases/il-arraydeque" "$(printf 'z\nb\nc\n1\nA')"   # concrete generic stdlib class ArrayDeque<E>:AbstractMutableList<E> as a field/owner forces ilemit to resolve kotlin.collections.ArrayDeque`1 from the rt dll — exercises the ICollection/IList void-drop methodimpl bridge (ilemit) + the BCL-only slot synthesis Contains/CopyTo/IsReadOnly/IndexOf (bir2cir)
 il_check copyintoverlap AppKt "$ROOT/cases/il-copyintoverlap/app.kt" "$(printf '1,1,2,3,4\n2,3,4,5,5\na,b,a,b,c\na,b,X,c,d')"   # #97: copyInto must be overlap-safe (System.Array.Copy = memmove); a forward element loop clobbers overlapping self-copies -> silently corrupts ArrayDeque.add(index,elem). Generic Array<T> path (the ArrayDeque victim); the 8 primitive copyInto actuals are fixed identically but not app-callable (pre-existing primitive-array-receiver resolution gap)
 il_check roundhalfup AppKt "$ROOT/cases/il-roundhalfup/app.kt" "$(printf '3\n-2\n1\n0\n4\n2\n3\n3\n-2\n3\n-2\n3\n2147483647\n-2147483648\nNaN-throws')"   # #103: roundToInt/roundToLong = round-half-UP toward +inf (floor(x+0.5)), NaN throws, out-of-range saturates — NOT banker's ToEven
@@ -745,7 +745,6 @@ il_check refcellnullable AppKt "$ROOT/cases/il-refcell-nullable/app.kt" "$(print
 il_check tryval TryVal "$ROOT/cases/il-tryval" "$(printf '5\nnull\n7\n3.5\n1.5\nnull\n2.5\nnull\n11')"   # #127: `try{value}catch{null}` in VALUE position on a value-type result -> the shared temp is typed Nullable<T> (null branch = HasValue=false), mirror of ternary()'s value+null-branch join (incl. stdlib toFloatOrNull/toDoubleOrNull)
 il_check nncontract NnContract "$ROOT/cases/il-nncontract/app.kt" "$(printf '2\ntb\nnpe-param\nnpe-ctor\nnpe-member\nnpe-ret\nnpe-retexpr\nnpe-retm\nnpe-getter\nfin\nnpe-trret')"   # #6/#32: non-null CONTRACTS on the public surface — PARAMETER PRECONDITIONS (top-level fun / ctor / member fun) + RETURN POSTCONDITIONS (statement/expression-position top-level fun / member fun / getter / return-in-try: finally runs before the postcondition NPE propagates) throw NullPointerException fail-fast on a laundered null; a normal non-null call is unaffected
 il_check nullv MS1   "$ROOT/cases/m-s1/app.kt" "$(printf 'fallback\npresent\nforced\nlen null = -1\nlen hello = 5')"
-il_check op    OpT   "$ROOT/cases/il-op/app.kt" "$(printf '(4, 6)\n(2, 2)\n(6, 8)\n(-3, -4)\n3\n4\nTrue\nTrue\nFalse\nTrue\n7\n15')"
 il_check dataq Dq    "$ROOT/cases/m-s2/app.kt" "$(printf 'Point(x=3, y=4)\nPoint(x=7, y=9)\nx=3 y=4\na==b: True\na==c: False\nhash eq: True')"
 # The non-coroutine inline family (il-inline, il-inline2, il-xinline, il-inlinedefaultlambda, il-inlinememberdefault,
 # il-inline-klibmember-nlr, il-inlineinherit, il-inline-{nested-nlr,outerlabel,nlbreak,ownlabel,mutcapture,forward},
@@ -760,10 +759,8 @@ il_check inlsiblingdelegate InlSiblingDelegate "$ROOT/cases/il-inlsiblingdelegat
 # non-escaping majority takes the plain delegate call. See docs/design-inline-s4-narrowing-95.md §8.
 il_check inlcompose    InlCompose    "$ROOT/cases/il-inlcompose/app.kt"        "$(printf '11\n99')"          # F3 (#62) transitive forwarding of an inline PARAM through a user top-level inline (outer(b)=inner(b)) + escaping non-local return
 il_check ctor  CtorT "$ROOT/cases/il-ctor/app.kt" "$(printf '12\n25\n5x5\nhi=7\nsolo=0')"
-il_check objex Oe    "$ROOT/cases/il-objexpr/app.kt" "$(printf 'hello from anon\n105')"
 il_check objgen OGen "$ROOT/cases/il-objgen/app.kt" "$(printf '42\nhi\n7\nok')"
 il_check nest  Nst   "$ROOT/cases/il-nested/app.kt" "$(printf 'outer:root\nnode(7)\n14\nleaf 3')"
-il_check scast Sc2   "$ROOT/cases/il-smartcast/app.kt" "$(printf 'int:42\nother\nyo\nnone')"
 il_check vis   VisT  "$ROOT/cases/il-vis/app.kt" "$(printf '98\nacct\n99')"
 il_check precond Pcd "$ROOT/cases/il-precond/app.kt" "$(printf '3\nreq\nchk\nerr:boom\ntodo')"   # #73 M6/M7: precondition/error family + top-level repeat{} inline loop (moved to bir2cir)
 il_check repeatnlr RptN "$ROOT/cases/il-repeatnlr/app.kt" "$(printf '3\n-1\n6\n6\n63\n9')"   # #75: NON-LOCAL return + return@repeat + nested repeat + scope-fn-in-repeat through repeat{} (kotc carries the un-closured lambda body; bir2cir InlineSplice splices it)
@@ -1077,7 +1074,6 @@ il_check_imports inlsuspenddefault AppKt "$ROOT/cases/il-inlsuspenddefault" "$(p
 # field write (not a bare setLocal-to-capture), and MaterializeCarrier's new setLocal-to-capture refusal must NOT fire on it.
 il_check_imports inlmatsetcap AppKt "$ROOT/cases/il-inlmatsetcap" "10"
 il_check dsl Dsl "$ROOT/cases/il-dsl" "a[Pb]c"
-il_check object TObj "$ROOT/cases/il-object" "3"
 il_check gfac TGfac "$ROOT/cases/il-gfac" "$(printf '42\nhi')"
 il_check xprop Xprop "$ROOT/cases/il-xprop" "7"
 il_check exprbody EB "$ROOT/cases/il-exprbody" "$(printf 'greet\nviaLambda\ncleanup\npos')"
@@ -1092,9 +1088,6 @@ il_check starproj StarProj "$ROOT/cases/il-starproj" "$(printf '{1=2, 3=4}\n2\n[
 il_check setlocalbox SetLocalBox "$ROOT/cases/il-setlocalbox" "$(printf '42\n7')"
 il_check bytewiden AppKt "$ROOT/cases/il-bytewiden/app.kt" "$(printf '200\n40000\n300\n80000\n200\n-128\n0\n0\n128\n44\n300\n4294967295\n18446744073709551615')"   # #93/#71: Byte/Short/UByte/UShort arith widens to Int/UInt & inc/dec/unaryMinus keep the declared return (bir2cir wraps the lowered op in a conv to dynRet); ilemit needs the unsigned Conv_U1/U2/U4/U8 arms — else the value truncates to the narrow left operand on box
 il_check unsignedshr AppKt "$ROOT/cases/il-unsignedshr/app.kt" "$(printf '2147483647\n9223372036854775807\n267386880\n1073741824\n2147483648\n-4')"   # #94: unsigned shr is LOGICAL (zero-filling) — bir2cir lowers a UInt/ULong `shr` to ">>>" (ilemit Shr_Un), not the sign-propagating ">>"; shl + signed shr are the non-regression checks
-il_check whensubj WhenSubj "$ROOT/cases/il-whensubj" "$(printf 'b\n1\nz\n2\nseven')"
-il_check rangein RangeIn "$ROOT/cases/il-rangein" "$(printf 'True\n1\nFalse\n2\nTrue\nFalse\nFalse\nTrue\nTrue\n6\nTrue')"
-il_check userrange UserRange "$ROOT/cases/il-userrange" "$(printf 'user contains\nTrue\nuser contains\nFalse')"   # #73 M2: `x in a..b` on a USER rangeTo/contains type dispatches the real contains(), not primitive comparisons
 il_check duration Duration "$ROOT/cases/il-duration" "$(printf -- '5s\n2s\n-1s\nTrue')"
 # #156: a genuinely-nullable String (String? = null) UNWRAPPED into a CharSequence?-receiver slot (isNullOrEmpty) — the
 # strict nullable-slot path now emits a runtime-conditional adapter wrap so String->dotkt$CharSequence is ilverify-clean.
