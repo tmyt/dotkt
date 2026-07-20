@@ -1,17 +1,12 @@
-# kotlin/clr — Kotlin → .NET (CLR) compiler
+# DotKt — Kotlin → .NET (CLR) compiler
 
 A compiler that runs **Kotlin on .NET**. It reuses the official Kotlin frontend
 (`kotlin-compiler-embeddable` 2.4.0 — Configuration / FIR / Fir2Ir, so resolution and type
 checking are the real thing) and replaces only the backend, lowering **Kotlin IR → CIL** that
 runs on `dotnet`.
 
-Long-term goal: production grade. Mid-term goal: CLR windowing (drive Avalonia/WPF/WinUI from
-Kotlin via their real .NET types).
-
-> **Pure .NET binding — no framework of its own.** kotlin/clr ships the Kotlin standard library
-> compiled for the CLR (`DotKt.Stdlib`), but *no* UI toolkit or framework abstraction layer. You
-> reference real .NET assemblies and call their types directly from Kotlin. A Kotlin-idiomatic UI
-> DSL would be a separate downstream product.
+DotKt ships the Kotlin standard library compiled for the CLR (`DotKt.Stdlib`); you reference real
+.NET assemblies and call their types directly from Kotlin.
 
 ## New here? (user documentation)
 
@@ -126,7 +121,7 @@ Building the CLR stdlib (three artifacts — see `CLAUDE.md` for details):
 
 ### Build a project with MSBuild / `.ktproj`
 
-A Kotlin.NET project builds with plain `dotnet build` / `dotnet run` (and thus in Visual Studio):
+A DotKt project builds with plain `dotnet build` / `dotnet run` (and thus in Visual Studio):
 
 ```xml
 <Project Sdk="DotKt.Sdk/0.9.6-rc7">
