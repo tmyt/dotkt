@@ -1,10 +1,11 @@
-// Coroutine TEST HARNESS — NOT stdlib. `blockOn` (the runBlocking analog) was DROPPED from
-// kotlin.clr (docs/design-coroutine-cold-core-task-bridge.md §13): it is a kotlinx/Track-2 primitive,
-// re-implemented HERE in pure Kotlin over the PUBLIC stdlib primitives (startCoroutine/Continuation for
-// the cold-core drive) + System.Threading.Monitor (the cross-thread Wait/Pulse drain). ZERO compiler
-// special-casing — this harness IS a mini-Track-2, the living proof that runBlocking is ordinary library
-// code over the shared cold core. The coroutine samples import `dotkt.support.blockOn` from here instead
-// of a stdlib symbol.
+// Shared coroutine TEST HARNESS for the whole tests/coroutines assembly — NOT stdlib. `blockOn` (the
+// runBlocking analog) was DROPPED from kotlin.clr (docs/design-coroutine-cold-core-task-bridge.md §13): it is a
+// kotlinx/Track-2 primitive, re-implemented HERE in pure Kotlin over the PUBLIC stdlib primitives
+// (startCoroutine/Continuation for the cold-core drive) + System.Threading.Monitor (the cross-thread Wait/Pulse
+// drain). ZERO compiler special-casing — this harness IS a mini-Track-2, the living proof that runBlocking is
+// ordinary library code over the shared cold core. Every suspend-driving fixture in this assembly imports
+// `dotkt.support.blockOn` from here — this SINGLE copy replaces the per-case duplicated harness.kt files that
+// the migrated cases/il-* each carried (design-nunit-test-harness.md §4: "one shared harness/Coroutines.kt").
 @file:Suppress("UNCHECKED_CAST")
 
 package dotkt.support

@@ -13,6 +13,12 @@ Motivation: **`docs/reviews/2026-07-19-cases-test-design-audit.md`**.
 - `il/` — `DotKt.Tests.Il.ktproj`, the production IL-battery suite where migrated families land (one `.kt` per
   family under `il/fixtures/`). **First migrated family:** `il/fixtures/GenericsTests.kt` (6 `@TestAttribute`
   methods replacing `cases/il-generic .. il-generic6`).
+- `coroutines/` — `DotKt.Tests.Coroutines.ktproj`, the dedicated **suspend / coroutine** lane (subject-split:
+  basic · interop · coroutines · roundtrip). Cold-core state-machine cases land here; `coroutines/fixtures/Harness.kt`
+  is the SINGLE shared `dotkt.support.blockOn` drive imported by the suspend-driving fixtures (replacing the
+  per-case duplicated `harness.kt` copies). **Pilot batch:** `ColdCoreTests.kt` (suspendco, counit),
+  `SuspendValueTests.kt` (suspendvalue, suspendcapture), `TaskAwaitTests.kt` (genasync, taskawait, cofinally),
+  `SequenceTests.kt` (seqforin) — replacing 8 `cases/il-*` dirs.
 - `nuget.config` — **active**; routes every `DotKt.*` package for the test projects to the LOCALLY-BUILT SDK
   feed (`make pack` → `build/nuget-feed`) with an isolated `globalPackagesFolder`, so the suite tests the
   compiler in THIS working tree (design D4). Copied from `nuget.config.local-sdk.template`.

@@ -26,6 +26,10 @@ CACHE="$ROOT/build/test-package-cache"
 #     there is no hand-maintained discovered-count manifest (see TASK 2). --------------------------------------
 PROJECTS=(
 	"tests/il"
+	# Coroutine / suspend lane (docs/design-nunit-test-harness.md §4 "coroutine (+ the one shared harness)"): its
+	# OWN battery project (subject-split: basic · interop · coroutines · roundtrip) for the cold-core state-machine
+	# family. fixtures/Harness.kt provides the single shared dotkt.support.blockOn drive imported by the fixtures.
+	"tests/coroutines"
 	# ProjectReference round-trip consolidation lane (docs/design-nunit-test-harness.md §3; playbook §3): a producer
 	# DotKt LIBRARY (tests/roundtrip/producer) consumed via <ProjectReference> as its BUILT dll (facadegen re-import,
 	# NOT source) by this NUnit consumer. (nothing/generic-hof/receiver-lambda stay in the shell lane: they RUN

@@ -58,7 +58,7 @@ declare -A XFAIL_DIFF=(
 # JVM-RUNNABLE plain-Kotlin sample: no `import System.*` / `import kotlin.clr.*`, no injected C# runtime.cs
 # (il_check_inject), no coroutine/suspend/Task/sequence-builder cold-core, no other CLR-only construct.
 # EXCLUDED and WHY: il_check_imports/il_check_inject samples (interop, can't run on the JVM); the coroutine
-# cold-core family (il-cold*/il-co*/il-suspendco/il-seqforin/il-genseq/il-seqyieldall — CLR-specific SM
+# cold-core family (il-cold*/il-co*/il-genseq/il-seqyieldall + the migrated tests/coroutines lane — CLR-specific SM
 # lowering, and several have no `fun main` so the JVM oracle can't drive them); the .NET-base/metadata
 # il_check samples (il-event — inject System.* via facadegen meta). Also EXCLUDED as
 # CLR-SPECIFIC-BY-DESIGN (would DIFF for a documented reason, not a bug): String.format .NET composite
