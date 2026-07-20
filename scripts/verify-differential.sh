@@ -48,9 +48,8 @@ build_tool ilemit; build_tool bir2cir
 need_fe_klib; need_stdlib_ref; need_stdlib_rt; need_dotnet_reference_sets
 
 # The XFAIL baseline — MACHINE-READABLE (DIFFing sample -> reason), same mechanism as verify-il's
-# XFAIL_RUN. The coroutine names mirror verify-il's run-XFAILs. (The m-b6/m-b9/m-b10 entries from the
-# 2026-07-02 stdlib subtree bump cde8afd are FIXED — maxOrNull overload-select, sumOf func-return-type
-# overload disambiguation, and the groupBy/associate* Map dual-rep variance realignment — and pruned.)
+# XFAIL_RUN. Currently empty: the pure corpus that populated it (the m-b* stdlib family) has been migrated to the
+# NUnit il-battery and deleted, and every prior entry was already FIXED-and-pruned by the 2026-07-02 stdlib bump.
 declare -A XFAIL_DIFF=(
 )
 
@@ -67,7 +66,11 @@ declare -A XFAIL_DIFF=(
 # COV1 (2026-07-05 kcc review §2B): the ~120 pure il-* samples used to self-score against DotKt-captured
 # fixed strings in verify-il, so a Kotlin-INCORRECT mapping passed green forever. Promoting the JVM-runnable
 # subset here makes the JVM oracle (real kotlin/jvm) the ground truth — a regression now reddens the gate.
-PURE="m0 m-a1 m-a2 m-a3 m-a4 m-a5 m-a6 m-a7 m-a8 m-b1 m-b2 m-b3 m-b4 m-b5 m-b6 m-b7 m-b8 m-b9 m-b10 m-b11 m-b12 m-b13 m-s1 m-s2 m-s3 \
+# The m-a*/m-b*/m-s* pure corpus was migrated to the in-process NUnit il-battery (tests/il/fixtures/MigM*Tests.kt)
+# and DELETED same-change per the cases-test-design audit — every asserted value it uniquely proved is preserved 1:1
+# there. Dead/dup members (m-a7 local-fn -> il-nested/il-nestlam/il-localclass; m-s3 -> m-b1/m-b3/m-a2; m-c7 empty)
+# were dropped outright. m0 (M0.kt) is a SEPARATE differential sample, NOT part of the m-* corpus — it stays.
+PURE="m0 \
 il-samcmp \
 il-boxgen il-pairtostr \
 il-genmax il-genseq2"

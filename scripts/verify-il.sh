@@ -354,7 +354,8 @@ il_check m0    M0Kt  "$ROOT/cases/m0/M0.kt"  "$(printf 'sum = 5\nzero\nn=1\nn=2'
 # declaration wins (else `overload resolution ambiguity` + `conflicting overloads/declarations` — the #15
 # double). Uses the meta ALONE (no conflicting --ref), so the source type lowers/emits LOCALLY end-to-end.
 il_check injectdedup App "$ROOT/cases/il-injectdedup" "$(printf '42\nplain')" "$ROOT/cases/il-injectdedup/demo.meta"
-il_check mc1   MC1   "$ROOT/cases/m-c1"      "$(printf 'c = (4, 6)\na.d2 = 25\nrect area=30')"
+# m-c1 (cross-file open-class/override) migrated to the NUnit battery tests/il/fixtures/MigMCrossFileTests.kt
+# (crossFileClassesAndOverride; sibling decls in MigMCrossFile.kt) — the case dir + this il_check were removed same-change.
 # language-core family (il-object/il-objexpr/il-companionext/il-ifacecompanion/il-op/il-ops/il-usermember/il-userrange/
 # il-rangein/il-whensubj/il-smartcast/il-scope) migrated to the NUnit battery tests/il/fixtures/LanguageCoreTests.kt
 # (12 methods), gated by tests/run-nunit-il.sh. Per the cases-test-design audit #14 the old per-case dirs + il_check
@@ -375,9 +376,8 @@ il_check adapterref AppKt "$ROOT/cases/il-adapterref/app.kt" "$(printf 'sink 1\n
 # enum family (il-enum/il-enumintr/il-enumtostr/il-enumbody/il-enumrich) migrated to the NUnit battery
 # tests/il/fixtures/EnumTests.kt (+ EnumCrossFile.kt for the #90 cross-file basic-enum decl).
 # icmparity (#129) -> tests/il/fixtures/MigratedIntropCIfaceImplTests.kt (icmparity_arityClashInterfaceFamily), migrated.
-# m2 / mi1 consume BCL types via `import System.X` (System.Math, System.Text.StringBuilder) -> the facadegen import
-# scan (il_check_imports), NOT a bare il_check (which injects nothing, so the import would not resolve). No runtime.cs.
-il_check_imports mi1 MI1   "$ROOT/cases/m-i1"       "$(printf 'Hello, CLR 42\nlength = 13')"
+# m-i1 (System.Text.StringBuilder `import System.X` interop) migrated to the NUnit battery
+# tests/il/fixtures/MigMInteropTests.kt (stringBuilderInterop) — the case dir + this il_check_imports were removed same-change.
 # taskfam: a same-name .NET arity family — non-generic `Task` and `Task<TResult>` (Kotlin `Task1`) coexist in one
 # file; `generic:Task1[T]` cross-refs resolve to the arity-1 definition (docs/dotkt-semantics.md §8d).
 il_check_imports taskfam Tf "$ROOT/cases/il-taskfam" "$(printf 'plain=True\ngeneric=42')"
@@ -544,8 +544,10 @@ il_check genseq2 GenSeq2 "$ROOT/cases/il-genseq2" "$(printf '[1, 2, 4]\n[a, ab, 
 # battery tests/il/fixtures/NullableTests.kt (12 methods), gated by tests/run-nunit-il.sh. Per the
 # cases-test-design audit #14, the old per-case dirs + these il_check lines were deleted in that SAME change.
 # (il-nan/il-nancmp/il-negzero are NOT here — their subject is IEEE-float behavior, kept for a float battery.)
-il_check nullv MS1   "$ROOT/cases/m-s1/app.kt" "$(printf 'fallback\npresent\nforced\nlen null = -1\nlen hello = 5')"
-il_check dataq Dq    "$ROOT/cases/m-s2/app.kt" "$(printf 'Point(x=3, y=4)\nPoint(x=7, y=9)\nx=3 y=4\na==b: True\na==c: False\nhash eq: True')"
+# m-s1 (nullable ?:/!!/?.) and m-s2 (data-class toString/copy/componentN/==/hashCode) were DOUBLE-registered here
+# (il_check nullv/dataq) AND in verify-differential.sh PURE (m-s1/m-s2). Both are migrated to the NUnit battery
+# (tests/il/fixtures/MigMNullableTests.kt nullableOperators, MigMDataClassTests.kt dataClassMembers); the case dirs
+# and BOTH registrations (this il_check pair + the PURE entries) were removed in that SAME change.
 # The non-coroutine inline family (il-inline, il-inline2, il-xinline, il-inlinedefaultlambda, il-inlinememberdefault,
 # il-inline-klibmember-nlr, il-inlineinherit, il-inline-{nested-nlr,outerlabel,nlbreak,ownlabel,mutcapture,forward},
 # il-inlinereturn{expr,unit,local}, il-inlineretcoerce) migrated to the NUnit battery tests/il/fixtures/InlineTests.kt.
