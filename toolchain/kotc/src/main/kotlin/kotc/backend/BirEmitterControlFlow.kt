@@ -374,17 +374,25 @@ internal fun BirEmitter.blockExpr(block: IrBlock): String {
 		if (origin == "SAFE_CALL") nullableElem(block.type)?.let { elem ->
 			val (subjVar, subj) = bindOnce(tmp.initializer!!, tmp.type, "__nv")
 			val recvElem = nullableElem(tmp.type)
+			// #198: when the accessed member is ITSELF value-nullable (`b?.n` with `val n: Int?`), `b.n` already
+			// evaluates to a `Nullable<T>`, and `b?.n` flattens to that SAME `Nullable<T>` (elem equality is
+			// guaranteed - both this member type and block.type carry the same element). Wrapping it in
+			// `nullableWrap` would `newobj Nullable<T>(Nullable<T>)` (ilemit EmitNativeClrNullableWrap over an
+			// already-nullable value) -> InvalidProgram. Emit the member verbatim in the present arm instead.
+			val memberAlreadyNullable = nullableElem(whenExpr.branches.last().result.type) != null
+			fun present(member: String) =
+				if (memberAlreadyNullable) member else """{"k":"nullableWrap","elem":${str(elem)},"e":$member}"""
 			val core: String
 			if (recvElem != null) {
 				valSubst[key] = """{"k":"nullableValue","elem":${str(recvElem)},"e":$subj}"""
 				valSubstUnwrapped.add(key)   // receiver already reads .Value -> the value-nullable unwrap helpers must not re-wrap
 				val member = expr(whenExpr.branches.last().result)
-				core = """{"k":"cond","cond":{"k":"nullableHasValue","elem":${str(recvElem)},"e":$subj},"then":{"k":"nullableWrap","elem":${str(elem)},"e":$member},"else":{"k":"nullableNull","elem":${str(elem)}}}"""
+				core = """{"k":"cond","cond":{"k":"nullableHasValue","elem":${str(recvElem)},"e":$subj},"then":${present(member)},"else":{"k":"nullableNull","elem":${str(elem)}}}"""
 			} else {
 				valSubst[key] = subj
 				val nullCheck = expr(whenExpr.branches.first().condition)
 				val member = expr(whenExpr.branches.last().result)
-				core = """{"k":"cond","cond":$nullCheck,"then":{"k":"nullableNull","elem":${str(elem)}},"else":{"k":"nullableWrap","elem":${str(elem)},"e":$member}}"""
+				core = """{"k":"cond","cond":$nullCheck,"then":{"k":"nullableNull","elem":${str(elem)}},"else":${present(member)}}"""
 			}
 			restore()
 			return if (subjVar == null) core

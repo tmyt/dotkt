@@ -59,6 +59,15 @@ fun nvGn(): Char? { nvM++; return if (nvM < 0) 'x' else null }
 fun nvS(): String? { nvM++; return "hey" }
 fun nvSn(): String? { nvM++; return null }
 
+// ---- il-safecallnvnullable : #198 safe-call over a VALUE-NULLABLE member (`b?.n` where `n: Int?`). `b.n` is already
+// `Nullable<Int>`, so `b?.n` flattens to that same `Nullable<Int>` — kotc must NOT re-wrap it (a
+// `newobj Nullable<int>(Nullable<int>)` -> InvalidProgram). Non-float twin of FloatTests' FltSafeNND repro. ---------
+class NvIntBox(val n: Int?)
+// arm-1 twin: a VALUE-NULLABLE RECEIVER (`Int?`) whose member (an extension returning `Int?`) is ALSO value-nullable
+// -> `x?.nvHalfOrNull()` unwraps the receiver to `.Value` but the member result is already `Nullable<Int>` (must NOT
+// re-wrap). Covers the recvElem != null branch of the #198 fix.
+fun Int.nvHalfOrNull(): Int? = if (this % 2 == 0) this / 2 else null
+
 // ---- il-trynullable : a nullable Int? return through try/finally; finally still runs --------------------------
 val tryNullLog = mutableListOf<String>()
 fun tryNullF(): Int? {
@@ -232,6 +241,25 @@ class NullableTests {
         assertEquals(3, nvS()?.length)                   // 3       reference receiver, value-type result
         assertNull(nvSn()?.length)                        // null    null path
         assertEquals(4, nvM)                             // 4       every receiver ran exactly once
+    }
+
+    @TestAttribute
+    fun safecallnvnullable_valueNullableMember() {
+        // #198: `b?.n` over a value-nullable member (n: Int?) must not double-wrap the already-Nullable<Int> member.
+        val present: NvIntBox? = NvIntBox(3)
+        val innerNull: NvIntBox? = NvIntBox(null)
+        val nullRecv: NvIntBox? = null
+        assertEquals(3, present?.n)                       // 3       receiver present, member present
+        assertNull(innerNull?.n)                          // null    receiver present, member null
+        assertNull(nullRecv?.n)                           // null    receiver null -> flattened null
+        // arm-1: value-nullable RECEIVER (Int?) + value-nullable member (extension -> Int?); receiver unwraps to
+        // .Value, member stays Nullable<Int> (recvElem != null branch of the fix).
+        val even: Int? = 8
+        val odd: Int? = 5
+        val nullR: Int? = null
+        assertEquals(4, even?.nvHalfOrNull())             // 4       receiver present (even), member present
+        assertNull(odd?.nvHalfOrNull())                   // null    receiver present (odd), member null
+        assertNull(nullR?.nvHalfOrNull())                 // null    receiver null
     }
 
     @TestAttribute
