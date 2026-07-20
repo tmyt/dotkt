@@ -8,6 +8,8 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../ref-common/ManagedReferenceCatalog.cs" Link="ManagedReferenceCatalog.cs" />
+    <!-- Shared atomic (temp+rename) file writer so the repointed dll is never observed mid-write by a concurrent reader (#52). -->
+    <Compile Include="../ref-common/AtomicFile.cs" Link="AtomicFile.cs" />
     <!-- Cecil does the metadata rebuild on Write(); we only repoint TypeReference scopes. -->
     <PackageReference Include="Mono.Cecil" Version="0.11.5" />
     <!-- Reflect the reference pack without executing it (same as facadegen's forward path). -->

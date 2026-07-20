@@ -83,7 +83,7 @@ static class Retarget
         if (coreRefs.Count == 0)
         {
             if (verbose) Console.WriteLine("retarget: no System.Private.CoreLib ref — already clean, copying through.");
-            if (outPath != input) asm.Write(outPath); else asm.Write(input);
+            AtomicFile.Write(outPath, fs => asm.Write(fs));   // #52 — temp+rename so an in-place rewrite is never read torn
             return 0;
         }
 
@@ -136,7 +136,7 @@ static class Retarget
             if (!stillUsed) module.AssemblyReferences.Remove(core);
         }
 
-        asm.Write(outPath);
+        AtomicFile.Write(outPath, fs => asm.Write(fs));   // #52 — temp+rename so an in-place rewrite is never read torn
 
         if (verbose || missing > 0)
         {
@@ -159,7 +159,12 @@ static class Retarget
         foreach (var p in catalog.Paths)
         {
             Assembly a;
-            try { a = mlc.LoadFromAssemblyPath(p); } catch { continue; }
+            // The catalog already classified each path as a readable managed PE (#52); a load failure here means a
+            // transitive dependency the MLC resolver could not satisfy — surface it naming the file rather than
+            // silently dropping the assembly's types (which would send its TypeRefs to the System.Runtime fallback
+            // with no hint of the cause). Non-fatal: the contract map is best-effort over the assemblies that loaded.
+            try { a = mlc.LoadFromAssemblyPath(p); }
+            catch (Exception ex) { Console.Error.WriteLine($"retarget: warning: could not load reference into the metadata context: {p} — {ex.GetType().Name}: {ex.Message}"); continue; }
             var an = a.GetName();
             Type[] types;
             try { types = a.GetTypes(); }

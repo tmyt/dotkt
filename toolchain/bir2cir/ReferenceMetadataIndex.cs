@@ -466,9 +466,13 @@ sealed partial class ReferenceMetadataIndex
         {
             _netMlc = _compileRefs.CreateMetadataLoadContext();
             _netRefAsms = new List<Assembly>();
+            // The catalog already classified each entry as a readable managed PE (#52); a load failure here means a
+            // transitive dependency the MLC resolver could not satisfy — surface it naming the file instead of a
+            // silent skip. Non-fatal: NetInteropBinding probes the assemblies that DID load.
             foreach (var a in _compileRefs.Entries)
             {
-                try { _netRefAsms.Add(_netMlc.LoadFromAssemblyPath(a.Path)); } catch { }
+                try { _netRefAsms.Add(_netMlc.LoadFromAssemblyPath(a.Path)); }
+                catch (Exception ex) { Console.Error.WriteLine($"bir2cir: warning: could not load reference into the metadata context: {a.Path} — {ex.GetType().Name}: {ex.Message}"); }
             }
         }
         catch { _netMlc = null; }
