@@ -24,6 +24,20 @@ declare -A ILVERIFY_XFAIL=(
 	# BCL System.Action`3`/System.Func`4` — StackUnexpected at M2C::.ctor. Runtime-SAFE (both are MulticastDelegate with
 	# the identical Invoke signature; the value-assert RUN lane is green). Mirror of the verify-il.sh [del2] entry.
 	["M2C::.ctor()"]="#123 delegate-representation ABI: Delegates.observable/vetoable materializes a BCL System.Action/Func where the stdlib ctor bakes the Kotlin KAction/KFunc — runtime-safe (RUN green)"
+	# --- CorA coroutine batch (DotKt.Tests.Coroutines.dll) migrated from verify-il.sh (cases/il-coctxkey / il-cointercept /
+	#     il-awaitintercept / il-classdeleg). Each carries the SAME runtime-safe formal-only finding its verify-il.sh
+	#     XFAIL_ILVERIFY entry carried before migration; re-expressed for the battery types. All coroutines fixtures RUN green.
+	# #12 (formal-only, closed-#2 follow-up): a self-ref-bounded CoroutineContext.Key<E : Element> star-projected to Key<*> is
+	# realized as a Key<Self> companion where the invariant Key<Element> slot is formally expected (StackUnexpected). Runtime
+	# -safe (the reference is only stored/compared, never variance-cast). A bir2cir/representation follow-up, NOT ilemit codegen.
+	["CorACtxkElem::.ctor()"]="#12 (formal-only, closed-#2 follow-up): AbstractCoroutineContextElement subtype passes its Key<Self> companion where invariant Key<Element> is expected — runtime-safe (RUN green)"
+	["CorAIceptInterceptor::get_key()"]="#12 (formal-only, closed-#2 follow-up): ContinuationInterceptor impl get_key() returns Key<Self> where invariant Key<Element> is expected — runtime-safe (RUN green)"
+	["CorAAwiCountingInterceptor::get_key()"]="#12 (formal-only, closed-#2 follow-up): counting-interceptor get_key() returns Key<Self> where invariant Key<Element> is expected — runtime-safe, #7 await-resume precedence RUN green"
+	# #174: the generic class-delegation (#81) forwarder narrows the MutableList iterator()/listIterator() return to the
+	# read-only Iterator/ListIterator where the Mutable slot is formally expected. Runtime-safe (the backing MutableList
+	# returns a real Mutable iterator; RUN green). Keyed by the emitted type name (backtick-free — a raw generic-arity
+	# backtick in a bash double-quoted map key triggers command substitution) to cover all three narrowed forwarders.
+	["CorADelTracked"]="#174: class-delegation (#81) forwarder narrows MutableList iterator()/listIterator() return to the read-only Iterator/ListIterator where Mutable is expected — runtime-safe covariance-erasure (RUN green)"
 )
 
 ILV="$(find "$HOME/.dotnet" -name 'ILVerify.dll' 2>/dev/null | head -1)"
