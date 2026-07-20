@@ -61,7 +61,7 @@ declare -A XFAIL_DIFF=(
 # cold-core family (il-cold*/il-co*/il-suspendco/il-seqforin/il-genseq/il-seqyieldall — CLR-specific SM
 # lowering, and several have no `fun main` so the JVM oracle can't drive them); the .NET-base/metadata
 # il_check samples (il-event/il-netbase*/il-netgen* — inject System.* via facadegen meta). Also EXCLUDED as
-# CLR-SPECIFIC-BY-DESIGN (would DIFF for a documented reason, not a bug): il-bmore / il-fmt (String.format
+# CLR-SPECIFIC-BY-DESIGN (would DIFF for a documented reason, not a bug): il-bmore (String.format
 # uses .NET COMPOSITE format strings `{0:F2}`/`{0:D5}` — literal text on the JVM, not printf); il-reified
 # (prints `Int::class.simpleName` = the CLR name "Int32", whereas the JVM prints "Int").
 #
@@ -69,11 +69,11 @@ declare -A XFAIL_DIFF=(
 # fixed strings in verify-il, so a Kotlin-INCORRECT mapping passed green forever. Promoting the JVM-runnable
 # subset here makes the JVM oracle (real kotlin/jvm) the ground truth — a regression now reddens the gate.
 PURE="m0 m-a1 m-a2 m-a3 m-a4 m-a5 m-a6 m-a7 m-a8 m-b1 m-b2 m-b3 m-b4 m-b5 m-b6 m-b7 m-b8 m-b9 m-b10 m-b11 m-b12 m-b13 m-s1 m-s2 m-s3 \
-il-seq il-char il-sort il-getclass il-localdeleg il-langfeat il-ctorref il-localclass il-refcell il-annot il-props \
-il-bymap il-bytearg il-chunk il-cmpord il-comparable il-comparator il-cp il-ctor il-deleg il-deleg2 il-dsl il-duration il-exprbody il-ext il-for il-groupvalues il-iface il-inner il-langtail il-lazy il-loopjump il-nested il-overload il-overrideprop il-pair il-regex il-regexgroups il-regexreplace il-rwp il-samcmp il-seqfilter il-setlocalbox il-unsigned il-use il-valclass il-vis il-volatile il-xfaceimpl il-xprop \
-il-boxgen il-pairtostr il-extprop il-defargs il-defargs2 il-pairnest \
-il-genmax il-nestlam il-genseq2 il-cwindowed il-cwindowedv \
-il-triple il-typealias il-atomics il-tailrec il-copydef il-equalscall"
+il-seq il-char il-sort il-localdeleg il-langfeat il-ctorref il-localclass il-refcell il-annot il-props \
+il-bymap il-bytearg il-chunk il-cmpord il-comparable il-comparator il-cp il-ctor il-groupvalues il-iface il-inner il-langtail il-lazy il-loopjump il-nested il-overload il-overrideprop il-pair il-regex il-regexgroups il-regexreplace il-rwp il-samcmp il-seqfilter il-setlocalbox il-unsigned il-use il-valclass il-vis il-volatile il-xfaceimpl il-xprop \
+il-boxgen il-pairtostr il-pairnest \
+il-genmax il-nestlam il-genseq2 il-cwindowed \
+il-triple il-typealias il-atomics il-tailrec il-copydef"
 # COV2/COV3/COV4 (kcc review §2B, 2026-07-06): il-atomics (kotlin.concurrent.atomics — the @ClrRefArgument
 # Interlocked byref binding; API restricted to the released 2.2.0 surface so the JVM oracle resolves it),
 # il-typealias (typealias over stdlib generic / function type / user class across a fn boundary), il-triple
@@ -81,7 +81,7 @@ il-triple il-typealias il-atomics il-tailrec il-copydef il-equalscall"
 # il-tailrec (2026-07-06, §2b CLOSED): deep `tailrec` is now TCO'd to a back-jump loop in kotc, so a
 # million-frame self/when/extension-receiver/member tailrec runs in constant stack and MATCHes the JVM
 # oracle (which also TCOs it) — promoted into PURE (was excluded as a documented deviation/crash).
-# il-copydef (C3): data-class copy(field=x) partial fill; il-equalscall (§5a): explicit .equals() routing.
+# il-copydef (C3): data-class copy(field=x) partial fill.
 # NOTE: this is the SINGLE effective PURE set. It was previously followed by three shadowing PURE=… reassignments
 # (a cross-task merge artifact from the C1/C2/C4/C5 review fixes) that dropped most of the list — il-nullableprim /
 # il-boxgen were silently un-tested. Consolidated into the union above (kcc review C3, 2026-07-06).

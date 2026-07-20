@@ -18,6 +18,12 @@ declare -A ILVERIFY_XFAIL=(
 	# #170/#150: joinToString{} trailing-lambda synthetic delegate — ilverify rejects the delegate .ctor args;
 	# runtime-safe (the value-assert RUN lane is green). Same finding the verify-il.sh [defargs] entry carries.
 	["CollectionsDefaultArgsTests::joinToStringDefaults()"]="#170/#150 formal-only DelegateCtor on a joinToString{} synthetic delegate — runtime-safe (RUN green)"
+	# #123 (delegate-representation ABI follow-up; splice origin #60 W1, closed): the migrated il-deleg2 M2C's
+	# Delegates.observable/vetoable crossinline lambda escapes into a STDLIB-emitted object-literal ObservableProperty
+	# subclass whose ctor bakes the Kotlin KAction`3`/KFunc`4`; §4.4ii materializes the app-side onChange carrier as the
+	# BCL System.Action`3`/System.Func`4` — StackUnexpected at M2C::.ctor. Runtime-SAFE (both are MulticastDelegate with
+	# the identical Invoke signature; the value-assert RUN lane is green). Mirror of the verify-il.sh [del2] entry.
+	["M2C::.ctor()"]="#123 delegate-representation ABI: Delegates.observable/vetoable materializes a BCL System.Action/Func where the stdlib ctor bakes the Kotlin KAction/KFunc — runtime-safe (RUN green)"
 )
 
 ILV="$(find "$HOME/.dotnet" -name 'ILVerify.dll' 2>/dev/null | head -1)"
