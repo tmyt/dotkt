@@ -424,6 +424,11 @@ il_check genextnew GenExtNew "$ROOT/cases/il-genextnew/app.kt" "$(printf '5\nhi\
 # reified `enumValues<TheNetEnum>()` / `enumValueOf<TheNetEnum>()` intrinsics resolve at the frontend; the backend
 # routes `e.name` (kotlin.Enum member on a .NET-enum-bound type-param) + enumValues/enumValueOf to System.Enum.
 il_check_imports netenumbound NetEnumBound "$ROOT/cases/il-netenumbound" "$(printf 'Friday\n7\n1')"
+# vtboundref (#149): a bound callable-ref over a VALUE-TYPE (.NET struct) receiver — the delegate ctor's `object`
+# target + ldftn/ldvirtftn need an object reference, so ilemit boxes the struct receiver in newBoundClrDelegate.
+# Covers both the non-virtual (box + ldftn: TimeSpan::CompareTo) and virtual (box + dup + ldvirtftn: overridden
+# Object.ToString) target; unboxed it was StackUnexpected/mis-bound (unverifiable IL).
+il_check_imports vtboundref AppKt "$ROOT/cases/il-vtboundref" "$(printf -- '-1\n00:00:05')"
 # icmparity (#129): a Kotlin class implements a member of a same-name .NET arity FAMILY (System.IComparable +
 # System.IComparable`1). A Kotlin classifier cannot be arity-overloaded (K2 hard limit, dotkt-semantics §8d), so
 # facadegen names the GENERIC `IComparable1<T>` (non-generic keeps plain `IComparable`); implementing it uses the
