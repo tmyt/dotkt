@@ -11,6 +11,7 @@ open class Lib(val k: Int) {
     infix fun Box<Int>.glue(o: Box<Int>): Int = get() + o.get() + k // member extension infix
     operator fun Box<Int>.times(n: Int): Int = get() * n + k        // member extension operator
     inline fun <R> Box<Int>.mapped(f: (Int) -> R): R = f(get())     // member extension + inline + generic method + lambda
+    inline fun Box<Int>.boostedBy(f: (Int) -> Int): Int = f(get()) + k // #23 CROSS-MODULE dual-receiver: body reads BOTH the extension receiver (get) AND the dispatch `this@Lib.k`
     protected fun Box<Int>.sshh(): Int = get() * 100 + k           // protected member extension
     fun useProt(b: Box<Int>): Int = b.sshh()                       // protected used internally
 }

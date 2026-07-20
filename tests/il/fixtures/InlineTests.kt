@@ -201,6 +201,47 @@ fun elvisCoerce(q: Int?): Int = coerceRun { return@coerceRun (q ?: -1) }
 fun uintSc(u: UInt?): UInt = coerceRun { if (u != null) return@coerceRun u; 0u }
 fun <T : Any> pickCoerce(x: T?, d: T): T = coerceRun { if (x != null) return@coerceRun x; d }
 
+// ---- #23 : SAME-MODULE inline member-extension whose body reads BOTH receivers (dispatch + extension) ---------
+// `Int.scaledBy` is a member-extension of `Scaler` (dispatch = the Scaler instance, reads `factor`) on an `Int`
+// (extension = `this`, rides `__self`). The body reads the extension receiver (`this`) AND the enclosing dispatch
+// `this@Scaler.factor` (a `{k:this}` field read). Co-binding both receivers is #23; before the fix kotc failed loud
+// (bodyReferencesDispatch) so no valid callInline was emitted.
+class Scaler(val factor: Int) {
+    inline fun Int.scaledBy(op: (Int) -> Int): Int = op(this) * factor   // (op applied to the Int) * the Scaler's factor
+    fun run5(): Int = 5.scaledBy { it + 1 }                              // (5+1)*factor — same-module co-bind
+    fun runNeg(): Int = (-2).scaledBy { it - 1 }                        // (-2-1)*factor
+}
+// A GENERIC dispatch owner (exercises dispatchTypeArgs on the co-bound `this` temp): the body reads the extension
+// receiver (the Int) AND the dispatch's generic field `tag: T`.
+class Tagger23<T>(val tag: T) {
+    inline fun Int.tagged(op: (Int) -> String): String = op(this) + tag
+    fun make(): String = 7.tagged { "v$it-" }                           // "v7-" + tag
+}
+
+// ---- #126 : hygienic free-capture under nested crossinline + name shadowing --------------------------------
+// A caller-captured `x` colliding with an inner crossinline HOST carrier param `x`. The host carrier
+// `{ x -> act() + x }` escapes into `d` (materializes), so act()'s freed capture `x` (the caller's) must be
+// alpha-converted to a distinct field — NOT silently rebound to the host param `x`. Before the fix
+// PropagateSplicedCaptures skipped the collision and the caller's `x` bound to the host param (7) -> 14.
+inline fun hyg126MapDeferred(crossinline t: (Int) -> Int): Int {
+    val d = { t(7) }          // t escapes -> materializes; host carrier param `x` becomes an invoke param
+    return d()
+}
+inline fun hyg126Outer(crossinline act: () -> Int): Int = hyg126MapDeferred { x -> act() + x }
+fun hyg126Caller(): Int {
+    val x = 100
+    return hyg126Outer { x }  // act = { x } captures caller x=100  -> 100 + 7 = 107  (bug: 7 + 7 = 14)
+}
+// DEPTH-2 chained: a value-capture-bearing former host is itself spliced into a SECOND host — the caller's `x` must
+// ride the alpha-converted descriptor through both `x`-shadowing crossinline hosts to the caller frame.
+inline fun hyg126L1(crossinline g: (Int) -> Int): Int { val d = { g(5) }; return d() }  // materializes
+inline fun hyg126L2(crossinline f: (Int) -> Int): Int = hyg126L1 { x -> f(1) + x }      // host2 param x=5
+inline fun hyg126L3(crossinline act: () -> Int): Int = hyg126L2 { x -> act() + x }      // host1 param x=1
+fun hyg126CallerChained(): Int {
+    val x = 100
+    return hyg126L3 { x }     // act = { x } captures caller x=100  -> (100 + 1) + 5 = 106
+}
+
 class InlineTests {
     @TestAttribute
     fun inline_valueInline() {
@@ -360,5 +401,21 @@ class InlineTests {
         assertEquals(11u, uintSc(11u))       // 11
         assertEquals(0u, uintSc(null))       // 0
         assertEquals(4, pickCoerce(4, -1))   // 4
+    }
+
+    @TestAttribute
+    fun inlineMemberExtDualReceiver() {
+        // #23: an inline member-extension whose body reads BOTH the dispatch (enclosing-class) and the extension receiver.
+        assertEquals(18, Scaler(3).run5())      // (5+1)*3 = 18
+        assertEquals(-30, Scaler(10).runNeg())  // (-2-1)*10 = -30
+        assertEquals("v7-X", Tagger23("X").make())  // "v7-" + "X"  (generic dispatch owner)
+        assertEquals("v7-9", Tagger23(9).make())    // "v7-" + "9"  (Int tag boxed to String via +)
+    }
+
+    @TestAttribute
+    fun inlineHygienicFreeCapture() {
+        // #126: the caller's captured `x`=100 must NOT be shadowed by the inner crossinline host param `x`=7.
+        assertEquals(107, hyg126Caller())          // 100 + 7 = 107  (unhygienic rebind would give 14)
+        assertEquals(106, hyg126CallerChained())   // (100 + 1) + 5 = 106  (D2: value-capture rides through two hosts)
     }
 }

@@ -203,18 +203,30 @@ static class InlineSplice
         // value to that temp (BindOuterCapValues) instead of refusing.
         bool payloadExt = Str(payload["recv"]) == "extensionParam";
         bool payloadDispatch = Str(payload["recv"]) == "dispatch";
+        bool payloadStatic = Bool(payload["static"]);
         if (SuspendCaptureHazard(pBody, refuseOuter: !(payloadExt || payloadDispatch)) is string suspHazard)
         { FailLoud(o, owner, name, pc, ga, $"payload newSuspendLambda capture '{suspHazard}' cannot be splice-rewritten (captured enclosing receiver, or a name colliding with the SM's own scope) — #75 Batch B"); return; }
 
-        // #23 boundary (W1 silent->loud, #60): a cross-module member-EXTENSION payload classifies `recv==extensionParam`
-        // (InlineBirStash's single-valued `recv` — the extension `__self` SHADOWS dispatch), so §4.3's dispatch RewriteThis
-        // never runs and STEP 5 binds only the extension. A payload-frame `{k:this}` here is therefore a read of the
-        // DISPATCH (enclosing-class) receiver that would rebind to the CALLER's `this` at splice time = a SILENT miscompile.
-        // kotc now emits this dual-receiver shape unconditionally (BirEmitterCalls member gate) carrying `recvs.dispatch`;
-        // co-binding BOTH receivers is #23/W2. Until then FAIL LOUD (never silently rebind). The SOUND pure-extension idiom
-        // (body reads only the extension `this` = `__self`, never `{k:this}`) has no payload-frame `this` and splices on.
-        if (payloadExt && (o["recvs"] as JsonObject)?["dispatch"] != null && HasPayloadFrameThis(pBody))
-        { FailLoud(o, owner, name, pc, ga, "cross-module member-extension inline whose body reads the dispatch (enclosing-class) receiver — co-binding dispatch + extension receiver is not yet supported (#23); the pure-extension form splices"); return; }
+        // #23 (W2): a member-EXTENSION payload classifies `recv==extensionParam` (InlineBirStash's single-valued `recv` —
+        // the extension `__self` SHADOWS dispatch), so STEP 5 binds only the extension. A payload-frame `{k:this}` here is a
+        // read of the DISPATCH (enclosing-class) receiver. When the callee is a REAL-INSTANCE member (!static) and kotc
+        // carried `recvs.dispatch`, CO-BIND both: §4.3 (below) binds that `{k:this}` to `<prefix>this` alongside the
+        // extension `__self`. EXCLUDE a FLATTENED-companion / top-level (static) extension: its `recvs.dispatch` renders a
+        // dangling `Owner.INSTANCE` staticField, so a dispatch-reading body there stays a hard error (never silently
+        // rebind). The SOUND pure-extension idiom (body reads only `__self`, never `{k:this}`) has no payload-frame `this`.
+        // What counts as a DISPATCH read in an extension payload:
+        //  - a bare payload-frame `{k:this}` (HasPayloadFrameThis) is ALWAYS the dispatch receiver — the extension `this`
+        //    renders as `__self` (selfSubst), so a bare `{k:this}` can only be the enclosing-class receiver;
+        //  - a suspend-lambda `__outer` capture (HasPayloadOuterSuspendCapture) is the dispatch ONLY for a member-extension
+        //    (recvs.dispatch carried); for a TOP-LEVEL extension `__outer` IS the extension receiver, bound by 2B's
+        //    else-if(ext) — so it must NOT be read as a dispatch here (D1: else a top-level `flow { this@ext }` fails loud).
+        bool hasDispatchRecv = (o["recvs"] as JsonObject)?["dispatch"] != null;
+        bool payloadReadsDispatch = HasPayloadFrameThis(pBody) || (hasDispatchRecv && HasPayloadOuterSuspendCapture(pBody));
+        bool coBindDispatch = payloadExt && !payloadStatic && hasDispatchRecv && payloadReadsDispatch;
+        if (payloadExt && !coBindDispatch && payloadReadsDispatch)
+        { FailLoud(o, owner, name, pc, ga, payloadStatic
+              ? "a static (flattened-companion / top-level) extension inline whose body reads an enclosing `this` — recvs.dispatch would be a dangling `Owner.INSTANCE` token, cannot co-bind (#23)"
+              : "member-extension inline whose body reads the dispatch (enclosing-class) receiver but no recvs.dispatch was carried — cannot co-bind (#23)"); return; }
 
         var pRet = payload["ret"]?.DeepClone();
 
@@ -295,11 +307,12 @@ static class InlineSplice
         var boundArgs = new JsonArray();
         JsonNode defaultThisRecv = Str(payload["recv"]) == "dispatch" ? new JsonObject { ["k"] = "local", ["name"] = prefix + "this" } : null;
 
-        // §4.3 — DISPATCH RECEIVER (member inline fn): the payload's `this` refs are the callee's dispatch receiver, not
+        // §4.3 — DISPATCH RECEIVER: the payload's `this` refs are the callee's dispatch (enclosing-class) receiver, not
         // the CALLER's `this`. Bind kotc's carried `recvs.dispatch` to a fresh temp and rewrite the payload body's own
-        // `{k:this}` (not descending into nested closures/type-defs — their `this` is their own). Dormant until kotc wires
-        // the cross-module member-inline gate (S4b), but required-and-fail-loud when a `dispatch` payload does resolve.
-        if (Str(payload["recv"]) == "dispatch")
+        // `{k:this}` (not descending into nested closures/type-defs — their `this` is their own). Runs for a plain member
+        // inline (`recv==dispatch`) AND for a CO-BOUND real-instance member-extension (#23: `recv==extensionParam`,
+        // !static, body reads `{k:this}`) — in the latter STEP 5 additionally binds the extension `__self` below.
+        if (payloadDispatch || coBindDispatch)
         {
             if (recvs?["dispatch"] is not JsonNode disp)
             { FailLoud(o, owner, name, pc, ga, "dispatch (member) inline but no recvs.dispatch carried"); return; }
@@ -386,7 +399,9 @@ static class InlineSplice
         // fallback resolves to the CALLER's `this`/`__self` — the wrong receiver. Rebind each payload-frame `__outer`
         // construction value to the splice's bound receiver temp: extension -> `<prefix>__self` (STEP 5), dispatch ->
         // `<prefix>this` (§4.3). SuspendLambdaLowering consumes the `capValues` override verbatim.
-        if (payloadDispatch)
+        // A CO-BOUND member-extension's `__outer` is the enclosing CLASS instance (bound to `<prefix>this` by §4.3), not
+        // the extension `__self` — so the dispatch branch wins over the plain-extension one when both receivers are live.
+        if (payloadDispatch || coBindDispatch)
             { var ov = new JsonObject { ["k"] = "local", ["name"] = prefix + "this" }; BindOuterCapValues(pBody, ov); BindOuterCapValues(result, ov); }
         else if (ext)
             { var ov = new JsonObject { ["k"] = "local", ["name"] = prefix + "__self" }; BindOuterCapValues(pBody, ov); BindOuterCapValues(result, ov); }
@@ -655,19 +670,25 @@ static class InlineSplice
             payload = lp; ownerOut = null;
         }
         var recv = Str(payload["recv"]);
+        bool fwdStatic = Bool(payload["static"]);
 
-        // #23 guard: a member-EXTENSION callInstance carries BOTH a dispatch receiver (`o["recv"]`) and the extension
-        // receiver (`args[0]`), but the stash classifies its payload `recv=="extensionParam"` (extension SHADOWS dispatch,
-        // InlineBirStash.StashMethod) — so converting here would bind the extension and SILENTLY DROP the dispatch receiver
-        // (RewriteGeneric §4.3 binds a dispatch temp only for `recv=="dispatch"`). If the payload body reads that dispatch
-        // `this`, the drop is a silent miscompile. Leave it untouched (§4.4ii materializes a sound real delegate) — the
-        // consumer twin of kotc's producer `bodyReferencesDispatch` fail-loud, pending the #23 2-slot receiver model.
-        if (k == "callInstance" && recv == "extensionParam" && o["recv"] != null && HasNode(payload["body"], "this")) return;
+        // #23: a member-EXTENSION callInstance carries BOTH a dispatch receiver (`o["recv"]`) and the extension receiver
+        // (`args[0]`), but the stash classifies its payload `recv=="extensionParam"` (extension SHADOWS dispatch,
+        // InlineBirStash.StashMethod). For a REAL-INSTANCE member (!static) we CO-CARRY recvs.dispatch below, so
+        // RewriteGeneric §4.3 co-binds the payload `{k:this}` at STEP 8's fixpoint (nested forwarding keeps both receivers).
+        // A STATIC (flattened-companion) extension's dispatch is a dangling `Owner.INSTANCE`, so a dispatch-reading body
+        // there stays unspliceable -> leave the call untouched (§4.4ii materializes a sound real delegate).
+        if (k == "callInstance" && recv == "extensionParam" && o["recv"] != null && fwdStatic && HasNode(payload["body"], "this")) return;
 
         var recvs = new JsonObject();
         var callArgs = new JsonArray();
         int start = 0;
-        if (recv == "extensionParam") { recvs["extension"] = sargs[0]?.DeepClone(); start = 1; }
+        if (recv == "extensionParam")
+        {
+            recvs["extension"] = sargs[0]?.DeepClone(); start = 1;
+            // #23 co-bind: a REAL-INSTANCE member-extension's enclosing receiver rides `o["recv"]` alongside the extension.
+            if (!fwdStatic && o["recv"] is JsonNode edisp) recvs["dispatch"] = edisp.DeepClone();
+        }
         else if (recv == "dispatch" && o["recv"] is JsonNode disp) recvs["dispatch"] = disp.DeepClone();
         for (int i = start; i < sargs.Count; i++)
         {
@@ -716,8 +737,8 @@ static class InlineSplice
                 // E7: a captured carrier spliced INSIDE a host inlineLambda frees ITS OWN captures into the host frame —
                 // propagate them (verbatim descriptors) to the host's `captures` BEFORE the splice (lam's body is still
                 // intact here), or they dangle when the host is later materialized (§4.4ii / MaterializeSuspendCarrier).
-                if (hostCarrier != null) PropagateSplicedCaptures(lam, hostCarrier);
-                var repl = BuildLambdaSplice(lam, o["args"] as JsonArray ?? new JsonArray());
+                var hostRename = hostCarrier != null ? PropagateSplicedCaptures(lam, hostCarrier) : null;
+                var repl = BuildLambdaSplice(lam, o["args"] as JsonArray ?? new JsonArray(), hostRename, topLevelSplice: hostCarrier == null);
                 foreach (var key in new List<string>(((IDictionary<string, JsonNode>)o).Keys)) o.Remove(key);
                 foreach (var kv in repl) o[kv.Key] = kv.Value?.DeepClone();
             }
@@ -728,18 +749,29 @@ static class InlineSplice
         }
     }
 
-    // E7 — the splice counterpart of the E5 descriptor↔ref lockstep. STEP 6 REPLACES a `<lamParam>()` invoke with the
-    // carrier body wholesale, injecting the carrier's OWN captured refs (a genuine value capture like `klass` in
-    // `filter { klass.isInstance(it) }`) into the HOST inlineLambda frame with NO matching host descriptor — so once the
-    // host is lifted (a `newClosure` / suspend SM) they dangle (`references undeclared local`). Restore the invariant:
-    // copy each spliced-carrier capture descriptor VERBATIM (name+type, tvs in the shared flattened frame) onto the host
-    // `captures`, gated on the capture actually SURVIVING in the spliced body (a descriptor-only residue frees nothing —
-    // keeps green shapes byte-identical) and dedup'd against the host's existing captures. A name the host ALREADY binds
-    // (its own param/local) is SKIPPED: the freed ref resolves to that binding — the exact pre-E7 behavior. A type
-    // conflict against a same-named host capture is the one unrepresentable case -> fail loud (#95 doctrine).
-    static void PropagateSplicedCaptures(JsonObject lam, JsonObject host)
+    // E7 (+ #126 hygiene) — the splice counterpart of the E5 descriptor↔ref lockstep. STEP 6 REPLACES a `<lamParam>()`
+    // invoke with the carrier body wholesale, injecting the carrier's OWN captured refs (a genuine value capture like
+    // `klass` in `filter { klass.isInstance(it) }`) into the HOST inlineLambda frame with NO matching host descriptor — so
+    // once the host is lifted (a `newClosure` / suspend SM) they dangle (`references undeclared local`). Restore the
+    // invariant: copy each spliced-carrier capture descriptor onto the host `captures`, gated on the capture actually
+    // SURVIVING in the spliced body (a descriptor-only residue frees nothing — keeps green shapes byte-identical) and
+    // dedup'd against the host's existing captures. A type conflict against a same-named host capture is the one
+    // unrepresentable case -> fail loud (#95 doctrine).
+    //
+    // #126 HYGIENE: a carrier is a CALL-SITE-frame arg (from `o["args"]`); a host is a FRESHLY-CLONED payload literal — so
+    // a carrier capture `cn` can NEVER denote the host's OWN binding (disjoint lexical frames; Fable-ruled). When `cn`
+    // name-collides with a host param/local, LEAVING it (the old SKIP) silently rebinds the caller's captured value to the
+    // host binding — a miscompile in BOTH later dispositions (materialize: `HasStrayLocal` accepts the freed ref as the
+    // invoke param; splice: `BuildLambdaSplice`'s param-subst folds it into the host param temp). ALPHA-CONVERT instead:
+    // add a host descriptor `{name:fresh, type, value:{k:local,name:cn}}` — the field/body use `fresh`, the construction
+    // VALUE reads the original enclosing local, evaluated in the frame SURROUNDING the host (distinct from the host's
+    // invoke-frame binding) — and return `cn -> {local:fresh}` so BuildLambdaSplice renames the per-invocation spliced
+    // body. A WRITTEN colliding capture cannot be renamed soundly (the ref-cell box keys the enclosing-scope half by the
+    // var NAME) -> fail loud. Returns the per-site rename map (or null when no collision fired).
+    static Dictionary<string, JsonNode> PropagateSplicedCaptures(JsonObject lam, JsonObject host)
     {
-        if (lam["captures"] is not JsonArray lamCaps || lamCaps.Count == 0) return;
+        Dictionary<string, JsonNode> renameMap = null;
+        if (lam["captures"] is not JsonArray lamCaps || lamCaps.Count == 0) return renameMap;
         HashSet<string> hostScope = null;   // lazily built: host params + host-declared locals
         foreach (var c in lamCaps.OfType<JsonObject>())
         {
@@ -761,21 +793,40 @@ static class InlineSplice
             }
             if (!outer)
             {
-                // The host already BINDS this name (its own param or a declared local): the freed body ref resolves to
-                // that binding directly — the exact pre-E7 behavior (no propagation existed), which is correct when the
-                // carrier captured that same host variable (the common flattened-frame case: e.g. a stdlib `index`
-                // carried through a `forEachIndexed`-style host whose own loop var is `index`). SKIP — adding a
-                // descriptor would double-bind it. (A genuine same-name-DIFFERENT-var collision is a pre-existing
-                // hygiene concern, unchanged by E7 — the prefix pass disambiguates distinct splice-locals.)
                 if (hostScope == null) { hostScope = InlineLambdaParamNames(host); CollectDeclaredLocals(host["body"], hostScope); }
-                if (hostScope.Contains(cn)) continue;
+                if (hostScope.Contains(cn))
+                {
+                    // #126 collision — ALPHA-CONVERT (never SKIP: a call-site carrier's `cn` is a DIFFERENT variable than the
+                    // host's disjoint-frame binding).
+                    if (HasSetLocalIn(lam["body"], cn) || HasSetLocalIn(lam["result"], cn))
+                        throw new NotSupportedException(
+                            $"inline splice: a spliced carrier capture '{cn}' that is WRITTEN name-collides with a host binding — "
+                            + "alpha-converting a mutable capture is unsound (the ref-cell box keys the enclosing scope by name) (#126)");
+                    string fresh = "__inlhyg" + Interlocked.Increment(ref _counter) + "$" + cn;
+                    // Preserve the ORIGINAL construction source across repeated propagation (a former-alpha-converted `c`
+                    // already carries a `value`; ride it forward rather than re-aliasing to the intermediate fresh name).
+                    var srcVal = c["value"]?.DeepClone() ?? new JsonObject { ["k"] = "local", ["name"] = cn };
+                    if (hostCaps == null) { hostCaps = new JsonArray(); host["captures"] = hostCaps; }
+                    hostCaps.Add(new JsonObject { ["name"] = fresh, ["type"] = c["type"].DeepClone(), ["value"] = srcVal });
+                    (renameMap ??= new(StringComparer.Ordinal))[cn] = new JsonObject { ["k"] = "local", ["name"] = fresh };
+                    continue;
+                }
             }
             if (hostCaps == null) { hostCaps = new JsonArray(); host["captures"] = hostCaps; }
             hostCaps.Add((JsonObject)c.DeepClone());
         }
+        return renameMap;
     }
 
-    static JsonObject BuildLambdaSplice(JsonObject lam, JsonArray invokeArgs)
+    // `hostRename` (#126): cn -> {k:local,name:fresh} for each of THIS lam's captures the current-site PropagateSpliced
+    // Captures alpha-converted against the enclosing host — the per-invocation spliced body must adopt the fresh field name
+    // so the host materialization/splice binds it to the host's `{name:fresh,value:cn}` descriptor, not the caller value's
+    // colliding host binding. NULL when no collision fired at this site.
+    // `topLevelSplice` (#126): TRUE when there is NO enclosing host carrier (`hostCarrier == null`) — the spliced body flows
+    // straight into the caller frame, so a FORMER-HOST lam's own `{name:fresh,value}` capture descriptors have nowhere to
+    // propagate and must be INLINED to their construction source here (b). When there IS a host, PropagateSplicedCaptures
+    // instead rode those descriptors onto that host (which resolves them at ITS own disposition), so (b) must NOT double-run.
+    static JsonObject BuildLambdaSplice(JsonObject lam, JsonArray invokeArgs, Dictionary<string, JsonNode> hostRename = null, bool topLevelSplice = true)
     {
         int m = Interlocked.Increment(ref _counter);
         string prefix = "__inll" + m + "$";
@@ -815,8 +866,24 @@ static class InlineSplice
             });
             subst[pn] = new JsonObject { ["k"] = "local", ["name"] = temp };
         }
+        // (a) #126 alpha-rename: fold this-site's `cn -> {local:fresh}` into the param subst (keys DISJOINT — a capture free
+        // name is never a carrier param), so the spliced body's colliding free refs adopt the fresh host-field name.
+        if (hostRename != null) foreach (var kv in hostRename) subst[kv.Key] = kv.Value;
         RewriteLocalRefs(lamBody, subst);
         RewriteLocalRefs(lamResult, subst);
+        // (b) #126: a FORMER-HOST lam being spliced AT THE TOP LEVEL (no enclosing host) carries its own alpha-converted
+        // `{name:fresh,value}` capture descriptors — its body's `fresh` refs (from an earlier spliced-in carrier) resolve to
+        // the construction-source `value` VERBATIM (never param-subst'd: the host's params are renamed away, so a bare
+        // enclosing local in `value` is unshadowed here). When this lam splices INTO a host, PropagateSplicedCaptures already
+        // rode these descriptors onto that host (resolved at ITS disposition); on MATERIALIZE, the descriptor's ctor-arg
+        // (MaterializeCarrier / MaterializeSuspendCarrier) resolves them — so a value-capture is consumed by exactly one path.
+        if (topLevelSplice && lam["captures"] is JsonArray lamValCaps)
+        {
+            var valSubst = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
+            foreach (var c in lamValCaps.OfType<JsonObject>())
+                if (c["value"] is JsonNode vv && Str(c["name"]) is string fn) valSubst[fn] = vv;
+            if (valSubst.Count > 0) { RewriteLocalRefs(lamBody, valSubst); RewriteLocalRefs(lamResult, valSubst); }
+        }
 
         foreach (var st in lamBody) if (st != null) stmts.Add(st.DeepClone());
         // FLATTEN a `valueBlock` result into THIS splice's own stmts. When the carrier's lambda has a VALUE-POSITION
@@ -932,7 +999,10 @@ static class InlineSplice
                 fields.Add(new JsonObject { ["name"] = cn, ["type"] = ct.DeepClone() });
                 if (c["outer"] is JsonValue ov && ov.TryGetValue<bool>(out var ob) && ob)
                 { outerName = cn; captures.Add(new JsonObject { ["k"] = "this" }); }   // enclosing `this`
-                else { capNames.Add(cn); captures.Add(new JsonObject { ["k"] = "local", ["name"] = cn }); }
+                // #126: an ALPHA-CONVERTED free capture carries an explicit construction-source `value` node — the field/
+                // body use the fresh descriptor name `cn`, but the ctor-arg reads the ORIGINAL enclosing local (or other
+                // enclosing expr). Absent `value` (the common case) = the name-derived `{k:local,name:cn}`, byte-identical.
+                else { capNames.Add(cn); captures.Add(c["value"]?.DeepClone() ?? new JsonObject { ["k"] = "local", ["name"] = cn }); }
             }
         // A bare `{k:this}` (the enclosing receiver — a lambda has no `this` of its own) with NO `outer:true` capture listed
         // is an UNLISTED enclosing-`this` capture: fail loud (symmetric to the stray-local check; else the `{k:this}` would
@@ -1086,6 +1156,11 @@ static class InlineSplice
         // SuspendLambdaLowering keys on; a carrier `__outer` is SOUND at THIS materialization site — the carrier's
         // captured `this` IS the caller's receiver). A capture with no name/type kotc failed to list -> refuse.
         var captures = new JsonArray();
+        // #126: positional construction-value overrides (the schema's `newSuspendLambda.capValues` channel), aligned with
+        // `captures` — an ALPHA-CONVERTED capture's field/body use the fresh descriptor name while its construction value
+        // reads the ORIGINAL enclosing local. Non-`value` slots stay null (descriptor-name synthesis, byte-identical).
+        var suspendCapValues = new JsonArray();
+        bool anySuspendCapValue = false;
         var innerScope = new HashSet<string>(StringComparer.Ordinal);
         foreach (var p in lamParams.OfType<JsonObject>()) if (Str(p["name"]) is string pn) innerScope.Add(pn);
         CollectDeclaredLocals(invBody, innerScope);
@@ -1095,6 +1170,8 @@ static class InlineSplice
                 if (Str(c["name"]) is not string cn || c["type"] is not JsonNode ct) return MatNull("MSC:capture-no-name-type");
                 if (innerScope.Contains(cn)) return MatNull("MSC:innerscope-collide");   // FunGen name-conflation (a capture colliding with the SM's own scope)
                 captures.Add(new JsonObject { ["name"] = cn, ["type"] = ct.DeepClone() });
+                if (c["value"] is JsonNode cval) { suspendCapValues.Add(cval.DeepClone()); anySuspendCapValue = true; }
+                else suspendCapValues.Add(null);
             }
 
         // A suspend carrier that WRITES a captured enclosing var is a SILENT stale-value miscompile: SuspendColdLowering
@@ -1186,6 +1263,7 @@ static class InlineSplice
             ["funcType"] = ft.DeepClone(),
         };
         if (ctorTypeArgs.Count > 0) newSuspendLambda["typeArgs"] = ctorTypeArgs;
+        if (anySuspendCapValue) newSuspendLambda["capValues"] = suspendCapValues;   // #126 alpha-converted capture value channel
 
         var matTemp = "__inlmat" + n;
         stmts.Add(new JsonObject { ["k"] = "var", ["name"] = matTemp, ["type"] = ft.DeepClone(), ["init"] = newSuspendLambda });
@@ -1816,9 +1894,14 @@ static class InlineSplice
                 // read targets the PREFIXED local, not the hygiene-renamed-away one. Skip own params + `outer:true`.
                 if (o["captures"] is JsonArray ilCaps)
                     foreach (var c in ilCaps.OfType<JsonObject>())
+                    {
                         if (Str(c["name"]) is string cn && declared.Contains(cn) && !lamParams.Contains(cn)
                             && !(c["outer"] is JsonValue ov && ov.TryGetValue<bool>(out var ob) && ob))
                             c["name"] = prefix + cn;
+                        // #126: an ALPHA-CONVERTED capture's construction-source `value` is enclosing-frame vocab — prefix its
+                        // splice-declared locals in lockstep (the descriptor `name` is a fresh field name, never in `declared`).
+                        if (c["value"] is JsonNode cval) ApplyPrefix(cval, declared, prefix);
+                    }
                 var bodyDeclared = new HashSet<string>(declared, StringComparer.Ordinal);
                 bodyDeclared.ExceptWith(lamParams);
                 if (bodyDeclared.Count > 0)
@@ -1898,6 +1981,7 @@ static class InlineSplice
                 // enclosing `{k:this}`, not a name-keyed local — MaterializeCarrier emits `{k:this}` for it).
                 if (o["captures"] is JsonArray ilCaps)
                     foreach (var c in ilCaps.OfType<JsonObject>())
+                    {
                         if (Str(c["name"]) is string cn && !lamParams.Contains(cn)
                             && !(c["outer"] is JsonValue ov && ov.TryGetValue<bool>(out var ob) && ob)
                             && subst.TryGetValue(cn, out var cb))
@@ -1906,6 +1990,10 @@ static class InlineSplice
                             else throw new NotSupportedException(
                                 $"inline splice: a nested inlineLambda carrier captures '{cn}' but the splice binds it to a non-local expression — a carrier capture descriptor can only name a local/temp");
                         }
+                        // #126: an ALPHA-CONVERTED capture's construction-source `value` is enclosing-frame vocab — rewrite it
+                        // with the FULL subst in lockstep (the descriptor `name` is a fresh field name never in `subst`).
+                        if (c["value"] is JsonNode cval) RewriteLocalRefs(cval, subst);
+                    }
                 var bodySubst = lamParams.Count == 0 ? subst
                     : subst.Where(kv => !lamParams.Contains(kv.Key)).ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
                 if (o["body"] is JsonNode ib) RewriteLocalRefs(ib, bodySubst);
@@ -2699,6 +2787,28 @@ static class InlineSplice
         return false;
     }
 
+    // #23 (D1): a payload-frame `newSuspendLambda` that CAPTURED the enclosing receiver — its descriptor `{name:"__outer"}`.
+    // `HasPayloadFrameThis` skips a newSuspendLambda WHOLE (its `{k:this}` is the SM's own), so a member-extension whose ONLY
+    // dispatch use lives inside a suspend lambda (`class C { inline fun T.f(){ flow { …this@C… } } }`) is invisible to it —
+    // yet that `__outer` IS the DISPATCH receiver (for a member-extension the extension `this` rides `__self`, never
+    // `__outer`; selfSubst), so its splice MUST co-bind dispatch (2B then rebinds the `__outer` capValue to `<prefix>this`).
+    // Scanned alongside HasPayloadFrameThis in the coBindDispatch gate. Skips typeDef/synthClass (a nested local class's own
+    // `this`). Checks each NSL's own `captures` for `__outer`; nested NSLs recurse through the generic descent.
+    static bool HasPayloadOuterSuspendCapture(JsonNode node)
+    {
+        if (node is JsonObject o)
+        {
+            if (Str(o["k"]) == "typeDef") return false;
+            if (Str(o["k"]) == "newSuspendLambda" && o["captures"] is JsonArray caps
+                && caps.OfType<JsonObject>().Any(c => Str(c["name"]) == "__outer"
+                    || (c["outer"] is JsonValue ov && ov.TryGetValue<bool>(out var ob) && ob)))
+                return true;
+            foreach (var kv in o) if (kv.Key != "synthClass" && kv.Value != null && HasPayloadOuterSuspendCapture(kv.Value)) return true;
+        }
+        else if (node is JsonArray a) foreach (var c in a) if (c != null && HasPayloadOuterSuspendCapture(c)) return true;
+        return false;
+    }
+
     static bool HasNodeNonClosure(JsonNode node, string kind)
     {
         if (node is JsonObject o)
@@ -2829,4 +2939,5 @@ static class InlineSplice
 
     static string Str(JsonNode n) => (n as JsonValue)?.TryGetValue<string>(out var s) == true ? s : null;
     static int Int(JsonNode n) => (n as JsonValue)?.TryGetValue<int>(out var i) == true ? i : 0;
+    static bool Bool(JsonNode n) => (n as JsonValue)?.TryGetValue<bool>(out var b) == true && b;
 }
