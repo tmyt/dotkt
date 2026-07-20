@@ -61,17 +61,17 @@ declare -A XFAIL_DIFF=(
 # cold-core family (il-cold*/il-co*/il-suspendco/il-seqforin/il-genseq/il-seqyieldall — CLR-specific SM
 # lowering, and several have no `fun main` so the JVM oracle can't drive them); the .NET-base/metadata
 # il_check samples (il-event/il-netbase*/il-netgen* — inject System.* via facadegen meta). Also EXCLUDED as
-# CLR-SPECIFIC-BY-DESIGN (would DIFF for a documented reason, not a bug): il-reified
-# (prints `Int::class.simpleName` = the CLR name "Int32", whereas the JVM prints "Int").
+# CLR-SPECIFIC-BY-DESIGN (would DIFF for a documented reason, not a bug): String.format .NET composite
+# format strings (`{0:F2}`/`{0:D5}`, literal text on the JVM) or `Int::class.simpleName` (CLR "Int32" vs JVM "Int").
 #
 # COV1 (2026-07-05 kcc review §2B): the ~120 pure il-* samples used to self-score against DotKt-captured
 # fixed strings in verify-il, so a Kotlin-INCORRECT mapping passed green forever. Promoting the JVM-runnable
 # subset here makes the JVM oracle (real kotlin/jvm) the ground truth — a regression now reddens the gate.
 PURE="m0 m-a1 m-a2 m-a3 m-a4 m-a5 m-a6 m-a7 m-a8 m-b1 m-b2 m-b3 m-b4 m-b5 m-b6 m-b7 m-b8 m-b9 m-b10 m-b11 m-b12 m-b13 m-s1 m-s2 m-s3 \
-il-seq il-sort il-refcell il-props \
-il-nested il-overload il-overrideprop il-pair il-rwp il-samcmp il-seqfilter il-setlocalbox il-unsigned il-use il-valclass il-vis il-volatile il-xfaceimpl il-xprop \
-il-boxgen il-pairtostr il-pairnest \
-il-genmax il-nestlam il-genseq2 \
+il-seq il-sort \
+il-samcmp il-seqfilter il-setlocalbox il-unsigned il-use il-valclass il-vis il-volatile il-xfaceimpl il-xprop \
+il-boxgen il-pairtostr \
+il-genmax il-genseq2 \
 il-triple il-typealias il-atomics il-tailrec"
 # COV2/COV3/COV4 (kcc review §2B, 2026-07-06): il-atomics (kotlin.concurrent.atomics — the @ClrRefArgument
 # Interlocked byref binding; API restricted to the released 2.2.0 surface so the JVM oracle resolves it),
