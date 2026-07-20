@@ -41,6 +41,17 @@ declare -A RT_XFAIL=(
 	[roundtrip-nullable-vt-generic]="#109/#86 (+#147/#127): cross-module nullable value-type generic T? in param/field position restores as bare non-null T -> consumer fails to compile (NBox<Int>(null): null cannot be a value of a non-null type 'Int'); the value-type axis of #86, exposed on purpose"
 )
 
+# MIGRATED to the in-process ProjectReference round-trip lane (tests/roundtrip/consumer RoundtripTests, driven by
+# tests/run-nunit-il.sh) — these 7 sections no longer run here (docs/design-nunit-test-harness.md §3, playbook §3):
+#   roundtrip-enum -> enumInheritedMembers           roundtrip-defargs  -> defaultAndNamedArgs
+#   roundtrip-customprop -> customAccessorProperties roundtrip-nrt      -> triStateNullability
+#   roundtrip-memext -> memberExtensionFunctions     roundtrip-money/operator-flag -> operatorAndInfixFromRealFlag
+#   roundtrip-generic-operator -> genericOperatorGetSet
+# The remaining sections below stay in this shell lane pending later increments (suspend/coharness, negative
+# compile-fail, dual-emit-path/meta-inspection cases). roundtrip-toplevel-val STAYS here: a top-level PLAIN-field
+# (no custom accessor) file class is not surfaced by facadegen's --import-list path when reached only through
+# field imports, so it does not yet migrate to the ProjectReference consumer (a facadegen re-import gap).
+
 # ---- section result collection (no section may abort the script) -----------------------------------
 declare -a SUMMARY=() NEW_FAILS=()
 # section_result <name> <ok 0|1> <pass-descr> [fail-detail]
@@ -221,43 +232,6 @@ if CLR_TYPES_METADATA="$M/meta" "$LAUNCHER" "$M/rogue" -no-stdlib -classpath "$C
 mk_ok=0; if [[ "$mkactual" == "$mkexpected" && "$rogue_ok" == 0 ]]; then mk_ok=1; fi
 section_result roundtrip-markers "$mk_ok" "fun interface nature; sealed modality+exhaustive-when+cross-module enforcement; enum" \
 	"$(printf -- '--- expected ---\n%s\n--- actual ---\n%s\n--- rogue accepted (want reject): %s ---' "$mkexpected" "$mkactual" "$rogue_ok")"
-
-# ----- CROSS-ASSEMBLY BASIC-ENUM inherited System.Enum members (#105) -----
-# A BASIC (constants-only) `enum class` emits as a CLR value-type enum (deriving System.Enum) that declares no
-# ToString/GetHashCode/Equals of its own — it INHERITS them. #90 fixed the SAME-module case (bir2cir EnumMemberBinding
-# boxes the value-type receiver + callvirt the System.Object slot on a `callInstance` whose LOCAL owner is unresolvable
-# as a .NET type). The CROSS-ASSEMBLY case is closed EARLIER and by a DIFFERENT layer: kotc emits the inherited-member
-# call as a plain `callInstance owner=palette.Color` by FQN identity; bir2cir's NetInteropBinding resolves that owner off
-# the `--ref` DotKt assembly (A2/#61) and binds it to a `clrInstance`; ilemit's EmitClrCall/EmitInstanceCall then take
-# the value-type receiver BY ADDRESS and emit `constrained. <Color>; callvirt object::ToString` — valid, ilverify-clean.
-# So this section is a REGRESSION GUARD for that facadegen-injected-enum -> NetInteropBinding -> constrained-callvirt
-# path (it is not a fail-before/pass-after for any bir2cir enum-set change — the calls never reach EnumMemberBinding).
-# A `.toString()` (RED), an `==` (objEq -> False, CLR System.Boolean.ToString), and a `.hashCode()` (RED = ordinal 0 ->
-# System.Enum hashes the underlying int -> 0) exercise all three inherited slots.
-CE="$ROOT/build/roundtrip-enum"; rm -rf "$CE"; mkdir -p "$CE/lib" "$CE/app" "$CE/libbir" "$CE/libil" "$CE/appbir" "$CE/appil"
-cat > "$CE/lib/lib.kt" <<'EOF'
-package palette
-enum class Color { RED, GREEN }
-EOF
-cat > "$CE/app/app.kt" <<'EOF'
-import palette.Color
-fun main() {
-    println(Color.RED.toString())       // RED   inherited System.Enum.ToString on a value-type receiver
-    println(Color.RED == Color.GREEN)   // False structural equality (CLR System.Boolean.ToString, cf. roundtrip-defargs)
-    println(Color.RED.hashCode())       // 0     inherited System.Enum.GetHashCode (RED underlying int = 0)
-}
-EOF
-CLR_TYPES_METADATA="" "$LAUNCHER" "$CE/lib" -no-stdlib -classpath "$CP" -d "$CE/libbir" >/dev/null 2>&1 || true
-emit_il "$CE/libil" PaletteLib "$CE/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$CE/libil/PaletteLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-"$LAUNCHER" --scan-imports --output "$CE/imports.txt" "$CE/app"/*.kt >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" "$CE/meta" --compile-refs "$REFS$CE/libil/PaletteLib.dll" --import-list "$CE/imports.txt" >/dev/null 2>&1 || true
-CLR_TYPES_METADATA="$CE/meta" "$LAUNCHER" "$CE/app" -no-stdlib -classpath "$CP" -d "$CE/appbir" >/dev/null 2>&1 || true
-emit_il "$CE/appil" PaletteApp --ref "$CE/libil/PaletteLib.dll" "$CE/appbir"/*.bir.json
-cp "$CE/libil/PaletteLib.dll" "$CE/appil/" 2>/dev/null || true
-ceexpected="$(printf 'RED\nFalse\n0')"
-run_app ceactual "$CE/appil/PaletteApp.dll"
-check_output roundtrip-enum "$ceexpected" "$ceactual" "cross-assembly basic-enum inherited System.Enum members (toString/==/hashCode) #105"
 
 # ----- CONSUMED-TYPE members reference kotlin.* (BOTH stdlib twins on the ref-reader set) round-trip (#73) -----
 # A faithful minimal reduction of the atomicfu cross-module regression: a library declares four wrapper classes with
@@ -760,46 +734,6 @@ rlexpected="$(printf '4\n7\n105\n9\n8')"
 run_app rlactual "$RL/appil/UiApp.dll"
 check_output roundtrip-receiver-lambda "$rlexpected" "$rlactual" "receiver-lambda P.() -> Unit restored cross-module: param (top-level/member/multi) + top-level-val + member-property positions #145"
 
-# ----- MEMBER-declared extension functions: `class C { fun T.f() }` consumed via `with(c) { x.f() }` -----
-# Covers the cross-product: plain / infix / operator / inline+generic-method / protected, on a generic user receiver.
-# Restored via the `,ext` marker (the first param `__self` becomes the extension receiver); the consumer dispatches on
-# the enclosing instance with the extension receiver prepended. (Member extension PROPERTIES and SUSPEND member
-# extensions are covered by the next section.)
-ME="$ROOT/build/roundtrip-memext"; rm -rf "$ME"; mkdir -p "$ME/lib" "$ME/app" "$ME/libbir" "$ME/libil" "$ME/appbir" "$ME/appil"
-cat > "$ME/lib/lib.kt" <<'EOF'
-class Box<T>(val value: T) { fun get(): T = value }
-open class Lib(val k: Int) {
-    fun Box<Int>.boost(): Int = get() + k                          // member extension function
-    infix fun Box<Int>.glue(o: Box<Int>): Int = get() + o.get() + k // member extension infix
-    operator fun Box<Int>.times(n: Int): Int = get() * n + k        // member extension operator
-    inline fun <R> Box<Int>.mapped(f: (Int) -> R): R = f(get())     // member extension + inline + generic method + lambda
-    protected fun Box<Int>.sshh(): Int = get() * 100 + k           // protected member extension
-    fun useProt(b: Box<Int>): Int = b.sshh()                       // protected used internally
-}
-EOF
-cat > "$ME/app/app.kt" <<'EOF'
-fun main() {
-    val lib = Lib(10)
-    with(lib) {
-        println(Box(5).boost())            // 15
-        println(Box(2) glue Box(3))        // 15
-        println(Box(4) * 3)                // 22
-        println(Box(7).mapped { it + 1 })  // 8
-    }
-    println(lib.useProt(Box(1)))           // 110
-}
-EOF
-CLR_TYPES_METADATA="" "$LAUNCHER" "$ME/lib" -no-stdlib -classpath "$CP" -d "$ME/libbir" >/dev/null 2>&1 || true
-emit_il "$ME/libil" KLib "$ME/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$ME/libil/KLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" "$ME/k.meta" --compile-refs "$REFS$ME/libil/KLib.dll" Box Lib >/dev/null 2>&1 || true
-CLR_TYPES_METADATA="$ME/k.meta" "$LAUNCHER" "$ME/app" -no-stdlib -classpath "$CP" -d "$ME/appbir" >/dev/null 2>&1 || true
-emit_il "$ME/appil" KApp --ref "$ME/libil/KLib.dll" "$ME/appbir"/*.bir.json
-cp "$ME/libil/KLib.dll" "$ME/appil/" 2>/dev/null || true
-meexpected="$(printf '15\n15\n22\n8\n110')"
-run_app meactual "$ME/appil/KApp.dll"
-check_output roundtrip-memext "$meexpected" "$meactual" "member extension functions: plain/infix/operator/inline-generic/protected, consumed via with"
-
 # ----- MEMBER-declared extension PROPERTIES + SUSPEND member extensions -----
 # Member extension property (`class C { val T.p }`): restored via a `memextprop` meta line (a `get_p(__self)`/
 # `set_p(__self,v)` member method) as a member property with an extension receiver; read/write inside `with(c)` routes
@@ -851,51 +785,6 @@ cp "$MP/libil/KLib.dll" "$MP/appil/" 2>/dev/null || true
 mpexpected="$(printf 'lbl:17\n30\n15\n1002\n15\n210')"
 run_app mpactual "$MP/appil/KApp.dll"
 check_output roundtrip-memext2 "$mpexpected" "$mpactual" "member extension properties + suspend member extensions, public + protected"
-
-# ----- DEFAULT ARGUMENTS + NAMED ARGUMENTS: trailing/named-middle/reordered omission, on functions AND constructors -----
-# A restored default arg now carries a REAL constant value (`opt:Type=<const>` in the metadata -> a FirLiteralExpression
-# applied via replaceDefaultValue), so the consumer can omit it ANYWHERE: trailing, NAMED-MIDDLE (`box(1, c=9)` — skip a
-# middle default, provide a later one — which the old @JvmOverloads positional overloads could NOT express), or reordered
-# named. Constructors too (`Pt(y=4)`; ilemit now also emits ctor parameter NAMES). String defaults with spaces survive
-# (escaped in the token). (.NET BCL methods with an enum/struct default fall back to @JvmOverloads trailing overloads.)
-DA="$ROOT/build/roundtrip-defargs"; rm -rf "$DA"; mkdir -p "$DA/lib" "$DA/app" "$DA/libbir" "$DA/libil" "$DA/appbir" "$DA/appil"
-cat > "$DA/lib/lib.kt" <<'EOF'
-fun greet(name: String, greeting: String = "Hi", punct: String = "!"): String = "$greeting, $name$punct"
-fun box(a: Int, b: Int = 2, c: Int = 3): Int = a * 100 + b * 10 + c
-fun flags(on: Boolean = true, label: String = "x y"): String = "$on/$label"
-// non-Int kinds + a NULLABLE (`= null`) default, to lock every metaConstArg kind + the null-literal path
-fun kinds(tag: String, n: Long = 5L, r: Double = 1.5, ch: Char = 'z', note: String? = null): String =
-    "$tag/$n/$r/$ch/${note ?: "none"}"
-class Pt(val x: Int = 0, val y: Int = 0) { override fun toString(): String = "($x,$y)" }
-EOF
-cat > "$DA/app/app.kt" <<'EOF'
-fun main() {
-    println(greet("A"))                          // Hi, A!
-    println(greet("B", "Yo"))                     // Yo, B!   trailing omit
-    println(greet("C", punct = "?"))              // Hi, C?   NAMED MIDDLE omission
-    println(greet(greeting = "Hey", name = "E"))  // Hey, E!  reordered named
-    println(box(1))                               // 123
-    println(box(1, c = 9))                        // 129      NAMED MIDDLE omission
-    println(box(a = 5, c = 7))                    // 527      named middle omission
-    println(flags())                              // True/x y string default with a space
-    println(flags(label = "z"))                   // True/z   named middle omission
-    println(kinds("a"))                           // a/5/1.5/z/none      all defaults (Long/Double/Char/null)
-    println(kinds("b", ch = 'q'))                 // b/5/1.5/q/none      NAMED MIDDLE omit skipping Long+Double
-    println(kinds("c", note = "hi"))              // c/5/1.5/z/hi        NAMED-MIDDLE omit filling the null-default slot
-    println(Pt(y = 4))                            // (0,4)    ctor named middle omission
-    println(Pt(x = 7))                            // (7,0)    ctor named
-}
-EOF
-CLR_TYPES_METADATA="" "$LAUNCHER" "$DA/lib" -no-stdlib -classpath "$CP" -d "$DA/libbir" >/dev/null 2>&1 || true
-emit_il "$DA/libil" KLib "$DA/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$DA/libil/KLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" "$DA/k.meta" --compile-refs "$REFS$DA/libil/KLib.dll" Pt LibKt >/dev/null 2>&1 || true
-CLR_TYPES_METADATA="$DA/k.meta" "$LAUNCHER" "$DA/app" -no-stdlib -classpath "$CP" -d "$DA/appbir" >/dev/null 2>&1 || true
-emit_il "$DA/appil" KApp --ref "$DA/libil/KLib.dll" "$DA/appbir"/*.bir.json
-cp "$DA/libil/KLib.dll" "$DA/appil/" 2>/dev/null || true
-daexpected="$(printf 'Hi, A!\nYo, B!\nHi, C?\nHey, E!\n123\n129\n527\nTrue/x y\nTrue/z\na/5/1.5/z/none\nb/5/1.5/q/none\nc/5/1.5/z/hi\n(0,4)\n(7,0)')"
-run_app daactual "$DA/appil/KApp.dll"
-check_output roundtrip-defargs "$daexpected" "$daactual" "default args: trailing/named-middle/reordered omission, on functions + constructors"
 
 # ----- NON-CONST default args (#146): `= {}` / an expression default filled cross-module -----
 # #134 carried a CONSTANT default as a metadata value. #146 extends the SAME @KotlinDefault mechanism to a NON-CONST
@@ -1045,148 +934,6 @@ srexpected="$(printf '42\n30\n107')"
 run_app sractual "$SR/appil/Hof2App.dll"
 check_output roundtrip-suspendfn-ret "$srexpected" "$sractual" "a suspend (…) -> T VALUE round-trips in RETURN + PROPERTY + FIELD position: bir2cir lowers a value-position suspendLambdaNew to a SuspendLambda SM, the consumer drives it"
 
-# ----- TOP-LEVEL VAL/VAR round-trip (#34b): read a library's top-level property DIRECTLY, no fn workaround ----
-# A top-level `val greeting = "hi"` compiles (kotc) to a plain Public|Static FIELD on the file class (`tlval.LibKt`),
-# with NO get_/set_ accessor (only backing-field-LESS props — extension/computed — get accessors). facadegen now
-# surfaces each such field as a `tlprop <name> <type> <ro|rw>` meta token (Program.cs EmitKotlinFileClass), mirroring
-# the `tlfun`/`tlextprop` top-level path; the .NET file-class FQN rides the enclosing `file` line. This section proves
-# a consumer reads the library's top-level `val`/`var` DIRECTLY (`import tlval.greeting`), NOT via a function that
-# re-exposes the value (the H2 workaround the roundtrip-suspendfn-ret section had to use). Cases: a `val: String`, a
-# `var: Int` (read + write `+=`), and a `val` of a USER type (`Point`).
-SV="$ROOT/build/roundtrip-toplevel-val"; rm -rf "$SV"; mkdir -p "$SV/lib" "$SV/app" "$SV/libbir" "$SV/libil" "$SV/appbir" "$SV/appil"
-cat > "$SV/lib/lib.kt" <<'EOF'
-package tlval
-class Point(val x: Int, val y: Int) { override fun toString(): String = "($x, $y)" }
-val greeting: String = "hi"       // top-level val -> static field, read cross-module directly
-var counter: Int = 40             // top-level var -> read + write cross-module
-val origin: Point = Point(1, 2)   // top-level val of a USER type
-EOF
-cat > "$SV/app/app.kt" <<'EOF'
-import tlval.greeting
-import tlval.counter
-import tlval.origin
-fun main() {
-    println(greeting)   // hi
-    counter += 2
-    println(counter)    // 42
-    println(origin)     // (1, 2)
-}
-EOF
-CLR_TYPES_METADATA="" "$LAUNCHER" "$SV/lib" -no-stdlib -classpath "$CP" -d "$SV/libbir" >/dev/null 2>&1 || true
-emit_il "$SV/libil" TlvalLib "$SV/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$SV/libil/TlvalLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" "$SV/k.meta" --compile-refs "$REFS$SV/libil/TlvalLib.dll" tlval.LibKt tlval.Point >/dev/null 2>&1 || true
-CLR_TYPES_METADATA="$SV/k.meta" "$LAUNCHER" "$SV/app" -no-stdlib -classpath "$CP" -d "$SV/appbir" >/dev/null 2>&1 || true
-emit_il "$SV/appil" TlvalApp --ref "$SV/libil/TlvalLib.dll" "$SV/appbir"/*.bir.json
-cp "$SV/libil/TlvalLib.dll" "$SV/appil/" 2>/dev/null || true
-svexpected="$(printf 'hi\n42\n(1, 2)')"
-run_app svactual "$SV/appil/TlvalApp.dll"
-check_output roundtrip-toplevel-val "$svexpected" "$svactual" "a top-level val/var round-trips: the consumer reads the library's top-level property DIRECTLY (no fn workaround) via the facadegen tlprop meta token"
-
-# ----- CUSTOM-ACCESSOR field-backed property round-trip (#103) -------------------------------------------
-# A field-backed property with a CUSTOM accessor (`val x = 41; get() = field + 1`) compiles to a static/backing FIELD
-# PLUS a `get_/set_<name>` accessor method carrying the custom body. Read/written cross-module, the consumer must INVOKE
-# the accessor, NOT touch the raw field — else the custom getter/setter is silently BYPASSED (the #103 miscompile: a
-# top-level `val topProp get()=field+1` returned the raw 41 instead of 42). #89 fixed the SAME-MODULE shape; this is its
-# cross-module twin: facadegen marks the tlprop `customGet`/`customSet` (Program.cs EmitKotlinFileClass, skipping the
-# loose accessor fun), kotc restores it and routes the read/write through the accessor (BirEmitterCalls injected branch).
-# Covers TOP-LEVEL (the broken case) + companion + member field-backed props, and the independent get/set customness.
-CA="$ROOT/build/roundtrip-customprop"; rm -rf "$CA"; mkdir -p "$CA/lib" "$CA/app" "$CA/libbir" "$CA/libil" "$CA/appbir" "$CA/appil"
-cat > "$CA/lib/lib.kt" <<'EOF'
-package cprop
-val topProp: Int = 41
-    get() = field + 1               // custom getter -> 42, NOT the raw 41
-var topVar: Int = 0
-    set(value) { field = value + 5 } // custom setter: set(10) -> 15 (default getter reads the field)
-var topGetVar: Int = 100
-    get() = field - 1                // custom getter + DEFAULT setter: set(50) then read -> 49
-class Host {
-    val kProp: Int = 7
-        get() = field + 100          // member field-backed val, custom getter -> 107
-    var kVar: Int = 0
-        set(value) { field = value * 2 } // member var, custom setter: set(3) -> 6
-    companion object {
-        val cProp: Int = 10
-            get() = field * 2        // companion field-backed val, custom getter -> 20
-    }
-}
-EOF
-cat > "$CA/app/app.kt" <<'EOF'
-import cprop.topProp
-import cprop.topVar
-import cprop.topGetVar
-import cprop.Host
-fun main() {
-    println(topProp)          // 42 (custom getter, not raw 41)
-    val h = Host()
-    println(h.kProp)          // 107
-    println(Host.cProp)       // 20
-    topVar = 10
-    println(topVar)           // 15 (custom setter)
-    h.kVar = 3
-    println(h.kVar)           // 6 (custom setter)
-    topGetVar = 50
-    println(topGetVar)        // 49 (custom getter, default setter)
-}
-EOF
-CLR_TYPES_METADATA="" "$LAUNCHER" "$CA/lib" -no-stdlib -classpath "$CP" -d "$CA/libbir" >/dev/null 2>&1 || true
-emit_il "$CA/libil" CpropLib "$CA/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$CA/libil/CpropLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" "$CA/k.meta" --compile-refs "$REFS$CA/libil/CpropLib.dll" cprop.LibKt cprop.Host >/dev/null 2>&1 || true
-CLR_TYPES_METADATA="$CA/k.meta" "$LAUNCHER" "$CA/app" -no-stdlib -classpath "$CP" -d "$CA/appbir" >/dev/null 2>&1 || true
-emit_il "$CA/appil" CpropApp --ref "$CA/libil/CpropLib.dll" "$CA/appbir"/*.bir.json
-cp "$CA/libil/CpropLib.dll" "$CA/appil/" 2>/dev/null || true
-caexpected="$(printf '42\n107\n20\n15\n6\n49')"
-run_app caactual "$CA/appil/CpropApp.dll"
-check_output roundtrip-customprop "$caexpected" "$caactual" "field-backed property with a CUSTOM accessor, consumed cross-module, invokes the getter/setter (not the raw field) — #103; top-level + companion + member, independent get/set customness"
-
-# ----- TRI-STATE NULLABILITY (NRT) round-trip (#48): T / T? restored via the NullableAttribute byte + value Nullable<int> -----
-# #48 unified tri-state nullability (T / T? / T!) with proper NRT emission. The sharp proof that the NullableAttribute
-# byte round-trips faithfully is NOT runtime output (a reference `String?` is bare `String` at the CLR level — null
-# passes regardless of the byte), it is the CONSUMER's COMPILE-ABILITY: a mis-restored nullability makes the consumer
-# fail to compile, reddening the gate. This section exercises both CLR nullability MECHANISMS:
-#   - reference NRT byte:  non-null String (byte 1) and nullable String? (byte 2).
-#   - value structural:    Int? = System.Nullable<int> (NOT NRT — a distinct CLR shape that must also round-trip).
-# Sharp compile-dependencies (a wrong NRT byte -> the consumer will NOT compile -> `nrtactual` stays empty -> FAIL):
-#   * `retNonNull().length` with NO `?.` compiles ONLY if the return restored non-null (byte 1). A mis-restore to
-#     String? -> "only safe (?.) or non-null asserted (!!.) calls allowed on a nullable receiver" -> consumer fails.
-#   * `takeNullable(null)` compiles ONLY if the param restored nullable (byte 2). A mis-restore to non-null String ->
-#     "null can not be a value of a non-null type String" -> consumer fails. (THE sharp T? signal.)
-# The consumer also prints deterministic values (lengths / -1 for nulls) as a second signal: a value Int? mis-restored
-# to non-null would mis-drive at runtime. (T! / oblivious byte 0 is covered by the netbase/netgen/netinterop il-samples —
-# a .NET member with no NullableAttribute round-trips to ConeFlexibleType there; adding a System.* seed here would mix
-# facadegen's metadata and import-list paths, so per the task it is intentionally left to those sections.)
-NRT="$ROOT/build/roundtrip-nrt"; rm -rf "$NRT"; mkdir -p "$NRT/lib" "$NRT/app" "$NRT/libbir" "$NRT/libil" "$NRT/appbir" "$NRT/appil"
-cat > "$NRT/lib/lib.kt" <<'EOF'
-fun retNonNull(): String = "x"                                     // T  (non-null return, NullableAttribute byte 1)
-fun takeNonNull(s: String): Int = s.length                         // T  (non-null param)
-fun retNullable(flag: Boolean): String? = if (flag) "y" else null  // T? (nullable return, byte 2)
-fun takeNullable(s: String?): Int = s?.length ?: -1                // T? (nullable param — the sharp signal)
-fun retNullableInt(flag: Boolean): Int? = if (flag) 1 else null    // value T? = System.Nullable<int> (structural)
-EOF
-cat > "$NRT/app/app.kt" <<'EOF'
-fun main() {
-    println(retNonNull().length)             // 1   NO ?. — compiles only if the return restored non-null (byte 1)
-    println(takeNonNull("abcd"))             // 4   non-null param called with a non-null
-    println(retNullable(false)?.length ?: -1)// -1  nullable return, null branch
-    println(retNullable(true)?.length ?: -1) // 1   nullable return, value branch
-    println(takeNullable(null))              // -1  passing null compiles only if the param restored nullable (byte 2)
-    println(takeNullable("hello"))           // 5   nullable param with a non-null arg
-    println(retNullableInt(false) ?: -1)     // -1  value Nullable<int> — the null (HasValue=false) branch
-    println(retNullableInt(true) ?: -1)      // 1   value Nullable<int> — the value branch
-}
-EOF
-CLR_TYPES_METADATA="" "$LAUNCHER" "$NRT/lib" -no-stdlib -classpath "$CP" -d "$NRT/libbir" >/dev/null 2>&1 || true
-emit_il "$NRT/libil" NrtLib "$NRT/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$NRT/libil/NrtLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" "$NRT/k.meta" --compile-refs "$REFS$NRT/libil/NrtLib.dll" LibKt >/dev/null 2>&1 || true
-CLR_TYPES_METADATA="$NRT/k.meta" "$LAUNCHER" "$NRT/app" -no-stdlib -classpath "$CP" -d "$NRT/appbir" >/dev/null 2>&1 || true
-emit_il "$NRT/appil" NrtApp --ref "$NRT/libil/NrtLib.dll" "$NRT/appbir"/*.bir.json
-cp "$NRT/libil/NrtLib.dll" "$NRT/appil/" 2>/dev/null || true
-nrtexpected="$(printf '1\n4\n-1\n1\n-1\n5\n-1\n1')"
-run_app nrtactual "$NRT/appil/NrtApp.dll"
-check_output roundtrip-nrt "$nrtexpected" "$nrtactual" "tri-state NRT fidelity: non-null (byte 1) + nullable (byte 2) reference via consumer compile-dependency, + value Nullable<int> structural"
-
 # ---- UNSIGNED BYTE round-trip (#53): UByte / UByteArray fidelity through the DotKt emit -> facadegen consume cycle ----
 # A DotKt lib exposes UByte / UByteArray / a UByte-consuming fun. Emitted, the lib's CLR surface is System.Byte /
 # System.Byte[]. facadegen (STRICT #53) must surface them BACK as kotlin.UByte / kotlin.UByteArray (NOT the lossy signed
@@ -1220,11 +967,13 @@ ubexpected="$(printf '200\n3\n250\n200')"
 run_app ubactual "$UB/appil/UbApp.dll"
 check_output roundtrip-ubyte "$ubexpected" "$ubactual" "UByte/UByteArray strict-mapping fidelity: System.Byte->UByte + System.Byte[]->UByteArray via consumer compile-dependency + value 200"
 
-# ----- #133 GENERIC-FIDELITY regressions (atomicfu CLR port): three cases, all FIXED (now plain passing checks) --------
+# ----- #133 GENERIC-FIDELITY regressions (atomicfu CLR port): two cases, all FIXED (now plain passing checks) --------
 # The atomicfu port reported that a DotKt lib consumed AS KOTLIN lost fidelity for (1) a generic INLINE EXTENSION on a
-# generic receiver, (2) an OPERATOR on a generic type, (3) a Kotlin `Nothing` return. All three were FIXED by 299ba89
-# (#133) in their owning layers (kotc / bir2cir / bir2cir+kotc); the RT_XFAIL map is now empty, so these sections run
+# generic receiver and (3) a Kotlin `Nothing` return. Both were FIXED by 299ba89
+# (#133) in their owning layers (kotc / bir2cir+kotc); the RT_XFAIL map is now empty, so these sections run
 # through plain check_output and RED on any regression — kept as permanent round-trip regression guards.
+# (The third #133 case — an OPERATOR get/set on a generic type — now lives in the ProjectReference round-trip lane
+#  as tests/roundtrip/consumer RoundtripTests::genericOperatorGetSet.)
 
 # (1) GENERIC INLINE EXTENSION on a generic receiver — `c.update { it + 1 }` must infer T=Int from `c: Cell<Int>`. FIR
 # DOES infer it (facadegen's __self: Cell<T> meta is correct); kotc's facadegen inline-splice path refuses the lambda +
@@ -1250,36 +999,6 @@ emit_il "$GIE/appil" KApp --ref "$GIE/libil/KLib.dll" "$GIE/appbir"/*.bir.json
 cp "$GIE/libil/KLib.dll" "$GIE/appil/" 2>/dev/null || true
 run_app gieactual "$GIE/appil/KApp.dll"
 check_output roundtrip-generic-inline-ext "2" "$gieactual" "a generic inline extension on a generic receiver infers T from the receiver and splices cross-module"
-
-# (2) OPERATOR on a generic type — `r[1]` / `r2[0] = x` on `class Arr<T> { operator fun get/set }`. facadegen surfaces
-# the operator bit + clrName:get; bir2cir binds the facadegen-injected owner's operator to the BCL indexer accessor
-# get_Item/set_Item instead of the plain get/set method Kotlin emitted. Route: bir2cir NetInteropBinding.cs.
-GOP="$ROOT/build/roundtrip-generic-operator"; rm -rf "$GOP"; mkdir -p "$GOP/lib" "$GOP/app" "$GOP/libbir" "$GOP/libil" "$GOP/appbir" "$GOP/appil"
-cat > "$GOP/lib/lib.kt" <<'EOF'
-class Arr<T>(val a: Array<T>) {
-    operator fun get(i: Int): T = a[i]
-    operator fun set(i: Int, x: T) { a[i] = x }
-}
-EOF
-cat > "$GOP/app/app.kt" <<'EOF'
-fun main() {
-    val r = Arr(arrayOf("a", "b"))
-    println(r[1])          // b   generic operator get
-    val r2 = Arr(arrayOf(10, 20))
-    r2[0] = 99             // generic operator set
-    println(r2[0])         // 99
-}
-EOF
-CLR_TYPES_METADATA="" "$LAUNCHER" "$GOP/lib" -no-stdlib -classpath "$CP" -d "$GOP/libbir" >/dev/null 2>&1 || true
-emit_il "$GOP/libil" KLib "$GOP/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$GOP/libil/KLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" "$GOP/k.meta" --compile-refs "$REFS$GOP/libil/KLib.dll" Arr LibKt >/dev/null 2>&1 || true
-CLR_TYPES_METADATA="$GOP/k.meta" "$LAUNCHER" "$GOP/app" -no-stdlib -classpath "$CP" -d "$GOP/appbir" >/dev/null 2>&1 || true
-emit_il "$GOP/appil" KApp --ref "$GOP/libil/KLib.dll" "$GOP/appbir"/*.bir.json
-cp "$GOP/libil/KLib.dll" "$GOP/appil/" 2>/dev/null || true
-gopexpected="$(printf 'b\n99')"
-run_app gopactual "$GOP/appil/KApp.dll"
-check_output roundtrip-generic-operator "$gopexpected" "$gopactual" "a Kotlin operator get/set on a generic DotKt type resolves cross-module (plain get/set method, not the BCL get_Item indexer)"
 
 # (3) Kotlin `Nothing` return — `fun fail(): Nothing`. Sharp COMPILE-dependency: `val y: String = if (c) "ok" else
 # fail(...)` compiles to `String` ONLY if `fail` restored `Nothing` (else the if/else widens to Any? -> "expected String,
@@ -1546,46 +1265,6 @@ ic_ok=0; [[ "$icactual" == "$icexpected" && "$ic_statics" -ge 1 ]] && ic_ok=1
 section_result roundtrip-iface-companion "$ic_ok" "interface-companion statics (val+fun) surfaced by facadegen + injected as an interface companion, resolved cross-module #132" \
 	"$(printf -- 'statics_in_meta=%s\n--- expected ---\n%s\n--- actual ---\n%s' "$ic_statics" "$icexpected" "$icactual")"
 
-# ----- OPERATOR/INFIX restored from the REAL [KotlinFunction] flag (#146): compareTo carries operator, no name-hack -----
-# facadegen's KotlinFun USED to force `operator` onto ANY method literally named `compareTo` (masking a genuinely-missing
-# flag + mis-flagging a coincidental compareTo) and wrapped the whole attribute read in a BLANKET catch that silently
-# DEMOTED infix/operator/suspend on any materialization error. #146 removed the name-hack (the real isOperator flag kotc
-# stamps is authoritative) and narrowed the catch (per-attribute guard; a DotKt-assembly enumeration failure is now LOUD).
-# This section proves `operator fun compareTo` round-trips from the REAL flag: `<`/`>` on `Money` resolve to the restored
-# operator compareTo — if the read had regressed, the consumer would fail to compile ("operator modifier required").
-OP="$ROOT/build/roundtrip-operator-flag"; rm -rf "$OP"; mkdir -p "$OP/lib" "$OP/app" "$OP/libbir" "$OP/libil" "$OP/appbir" "$OP/appil"
-# A NON-Comparable class carrying an explicit `operator fun compareTo` (a standalone comparable-by-value type, NOT
-# `: Comparable<T>`): kotc keeps the LOWERCASE `compareTo` name and stamps the operator flag, so `<`/`>` resolve on the
-# re-imported facade purely from the [KotlinFunction] flag. (A `class C : Comparable<C>` is a DIFFERENT, pre-existing
-# round-trip gap — its compareTo lowers to the CLR `IComparable<T>.CompareTo` PascalCase slot, which the removed name-hack
-# never touched either; that gap is tracked separately, not by this #146 section.)
-cat > "$OP/lib/lib.kt" <<'EOF'
-package money
-class Money(val cents: Int) {
-    operator fun compareTo(o: Money): Int = cents - o.cents   // real `operator` flag (kotc isOperator), NOT the removed name-hack
-    infix fun combine(o: Money): Money = Money(cents + o.cents)
-}
-EOF
-cat > "$OP/app/app.kt" <<'EOF'
-import money.Money
-fun main() {
-    println(Money(5) < Money(9))                 // True   compareTo restored from the REAL [KotlinFunction] operator flag
-    println(Money(9) > Money(5))                 // True
-    println((Money(2) combine Money(3)).cents)   // 5      infix restored
-}
-EOF
-CLR_TYPES_METADATA="" "$LAUNCHER" "$OP/lib" -no-stdlib -classpath "$CP" -d "$OP/libbir" >/dev/null 2>&1 || true
-emit_il "$OP/libil" MoneyLib "$OP/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$OP/libil/MoneyLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-"$LAUNCHER" --scan-imports --output "$OP/imports.txt" "$OP/app"/*.kt >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" "$OP/meta" --compile-refs "$REFS$OP/libil/MoneyLib.dll" --import-list "$OP/imports.txt" >/dev/null 2>&1 || true
-CLR_TYPES_METADATA="$OP/meta" "$LAUNCHER" "$OP/app" -no-stdlib -classpath "$CP" -d "$OP/appbir" >/dev/null 2>&1 || true
-emit_il "$OP/appil" MoneyApp --ref "$OP/libil/MoneyLib.dll" "$OP/appbir"/*.bir.json
-cp "$OP/libil/MoneyLib.dll" "$OP/appil/" 2>/dev/null || true
-opexpected="$(printf 'True\nTrue\n5')"
-run_app opactual "$OP/appil/MoneyApp.dll"
-check_output roundtrip-operator-flag "$opexpected" "$opactual" "operator compareTo (via </>) + infix restored from the REAL [KotlinFunction] flag, name-hack removed #146"
-
 # ----- `class C : Comparable<C>` round-trip (#179): PascalCase IComparable<T>.CompareTo -> operator compareTo -----
 # A Kotlin `class C : Comparable<C>` lowers `compareTo` to the CLR `System.IComparable<C>.CompareTo` PascalCase slot
 # (bir2cir DeclarationRename) and its supertype to `System.IComparable<C>` (+ a non-generic bridge). Pre-fix facadegen
@@ -1650,6 +1329,44 @@ check_output roundtrip-comparable-meta "1" "$cm_meta" "facadegen surface: Ver ga
 cmexpected="$(printf 'True\nTrue\nTrue\nFalse\n1\n3')"
 run_app cmactual "$CM/appil/VerApp.dll"
 check_output roundtrip-comparable "$cmexpected" "$cmactual" "class C : Comparable<C> </>/<=/>=/sorted() resolve+run cross-module (bir2cir compareTo->CompareTo slot bind) #179"
+
+# ----- TOP-LEVEL VAL/VAR round-trip (#34b): read a library's top-level property DIRECTLY, no fn workaround ----
+# A top-level `val greeting = "hi"` compiles (kotc) to a plain Public|Static FIELD on the file class (`tlval.LibKt`),
+# with NO get_/set_ accessor (only backing-field-LESS props — extension/computed — get accessors). facadegen now
+# surfaces each such field as a `tlprop <name> <type> <ro|rw>` meta token (Program.cs EmitKotlinFileClass), mirroring
+# the `tlfun`/`tlextprop` top-level path; the .NET file-class FQN rides the enclosing `file` line. This section proves
+# a consumer reads the library's top-level `val`/`var` DIRECTLY (`import tlval.greeting`), NOT via a function that
+# re-exposes the value (the H2 workaround the roundtrip-suspendfn-ret section had to use). Cases: a `val: String`, a
+# `var: Int` (read + write `+=`), and a `val` of a USER type (`Point`).
+SV="$ROOT/build/roundtrip-toplevel-val"; rm -rf "$SV"; mkdir -p "$SV/lib" "$SV/app" "$SV/libbir" "$SV/libil" "$SV/appbir" "$SV/appil"
+cat > "$SV/lib/lib.kt" <<'EOF'
+package tlval
+class Point(val x: Int, val y: Int) { override fun toString(): String = "($x, $y)" }
+val greeting: String = "hi"       // top-level val -> static field, read cross-module directly
+var counter: Int = 40             // top-level var -> read + write cross-module
+val origin: Point = Point(1, 2)   // top-level val of a USER type
+EOF
+cat > "$SV/app/app.kt" <<'EOF'
+import tlval.greeting
+import tlval.counter
+import tlval.origin
+fun main() {
+    println(greeting)   // hi
+    counter += 2
+    println(counter)    // 42
+    println(origin)     // (1, 2)
+}
+EOF
+CLR_TYPES_METADATA="" "$LAUNCHER" "$SV/lib" -no-stdlib -classpath "$CP" -d "$SV/libbir" >/dev/null 2>&1 || true
+emit_il "$SV/libil" TlvalLib "$SV/libbir"/*.bir.json
+dotnet "$RETARGET_DLL" "$SV/libil/TlvalLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" "$SV/k.meta" --compile-refs "$REFS$SV/libil/TlvalLib.dll" tlval.LibKt tlval.Point >/dev/null 2>&1 || true
+CLR_TYPES_METADATA="$SV/k.meta" "$LAUNCHER" "$SV/app" -no-stdlib -classpath "$CP" -d "$SV/appbir" >/dev/null 2>&1 || true
+emit_il "$SV/appil" TlvalApp --ref "$SV/libil/TlvalLib.dll" "$SV/appbir"/*.bir.json
+cp "$SV/libil/TlvalLib.dll" "$SV/appil/" 2>/dev/null || true
+svexpected="$(printf 'hi\n42\n(1, 2)')"
+run_app svactual "$SV/appil/TlvalApp.dll"
+check_output roundtrip-toplevel-val "$svexpected" "$svactual" "a top-level val/var round-trips: the consumer reads the library's top-level property DIRECTLY (no fn workaround) via the facadegen tlprop meta token"
 
 # ---- verdict --------------------------------------------------------------------------------------
 echo "------------------------------------"
