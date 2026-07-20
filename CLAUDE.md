@@ -206,10 +206,20 @@ when you find residual code violating them, fixing it is in scope, not optional)
 > with the klib's (seen live: non-reified vs reified `arrayOf` → `overload resolution ambiguity`)
 > besides being slower than the prebuilt klib. The fix for any "stdlib symbol missing/ambiguous" is
 > **the klib** — never a facadegen scan of the stdlib or a `kotlin.*` guard inside facadegen
-> (symptom-patching; the root error is asking facadegen for stdlib symbols at all). NB the ban is on
-> the stdlib as a *generation source*: the stdlib dll may legitimately appear in facadegen's
-> `--compile-refs` *resolution universe* (as `dotkt.sh` does), and `--import-list` keeps generation
-> .NET-only.
+ (symptom-patching; the root error is asking facadegen for stdlib symbols at all).
+>
+> ### BINDING INVARIANT — facadegen NEVER receives the stdlib in `--compile-refs` (2026-07-21, user, emphatic/repeated)
+> **facadegen is the process that PROJECTS a FOREIGN CLR assembly into the Kotlin dialect** (so
+> `import System.X` / a C# `<ProjectReference>` works). The stdlib is NOT a foreign assembly to project:
+> `kotlin.*` **IS** the Kotlin dialect, supplied by the **KLIB**. So handing facadegen the stdlib is a
+> **category error** — you're asking the .NET→Kotlin projector to re-project the stdlib's own CLR form
+> (its `@ClrTypeAlias`'d BCL types), which **shadows the real BCL type with a degraded facade** (a
+> plain-C# `List<T>` loses its members/supertypes — `.Add`/`.Count`/Iterable/MutableList gone). So
+> facadegen's `--compile-refs` carries **ZERO stdlib — EVER**: neither the runtime `DotKt.Stdlib` nor
+> the reference `DotKt.Private.Stdlib` twin, at **every** call site (`dotkt.sh` — which was ALSO wrong —
+> `DotKt.Toolchain.targets`, the `verify-*.sh` `il_check_inject` helpers). facadegen resolves .NET types
+> via the **framework** references only; `--import-list` keeps generation .NET-only. (MEMORY
+> `facadegen-never-gets-stdlib-in-compile-refs`.)
 
 # The cardinal rule: do NOT special-case the compiler
 
