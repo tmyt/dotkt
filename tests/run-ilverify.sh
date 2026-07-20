@@ -38,6 +38,17 @@ declare -A ILVERIFY_XFAIL=(
 	# returns a real Mutable iterator; RUN green). Keyed by the emitted type name (backtick-free — a raw generic-arity
 	# backtick in a bash double-quoted map key triggers command substitution) to cover all three narrowed forwarders.
 	["CorADelTracked"]="#174: class-delegation (#81) forwarder narrows MutableList iterator()/listIterator() return to the read-only Iterator/ListIterator where Mutable is expected — runtime-safe covariance-erasure (RUN green)"
+	# #18 (migrated ktproj-genq): a re-imported generic factory `holderOf(): Vault<T?>` whose bir2cir
+	# NullableGenericReturnErasure object-erases the nested Nullable(Tv) to `Vault<object>`; the [KotlinNullableGeneric]
+	# round-trip restores `Vault<String?>` at the frontend, so the call's erased `Vault<object>` return meets the
+	# consumer's restored `Vault<string>` slot — StackUnexpected. Runtime-SAFE (object/string are reference-compatible;
+	# the erased Vault holds the string; the value-assert RUN lane is green). Same object-erasure formal-only family.
+	["KtprojTests::genq()"]="#18 nullable-generic object-erasure: holderOf's erased Vault<object> return vs the restored Vault<string> slot — runtime-safe (RUN green)"
+	# #29 (migrated ktproj-nestedlist): the Root-V variance collapse lowers a nested read-only `List<T>` to its
+	# INVARIANT CLR sibling `IList<T>`; at a use site the read-only `IReadOnlyCollection<T>` shape is expected, so the
+	# collapsed `IList<int32>` meets an `IReadOnlyCollection<int32>` slot — StackUnexpected. Runtime-SAFE (the concrete
+	# list implements both interfaces; the value-assert RUN lane is green). Same covariant-collection formal-only family.
+	["KtprojTests::nestedlist()"]="#29 Root-V collapse: nested List<T> lowered to invariant IList<int32> vs an expected IReadOnlyCollection<int32> — runtime-safe (RUN green)"
 )
 
 ILV="$(find "$HOME/.dotnet" -name 'ILVerify.dll' 2>/dev/null | head -1)"
