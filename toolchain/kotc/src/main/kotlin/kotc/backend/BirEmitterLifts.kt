@@ -522,6 +522,25 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 		val member = fn.name.asString()
 		val anySlotTag = if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""
 		val virtual = fn.modality == Modality.OPEN || fn.modality == Modality.ABSTRACT
+		// A reference to a STATIC .NET method (`Util::triple`, a .NET static class surfaced as an object): the bound
+		// receiver is an IrGetObjectValue — the SAME frontend fact the direct-call site reads as `isStatic`
+		// (`recv is IrGetObjectValue`), NOT CLR knowledge. Lift a static forwarder `__mref(args) = Owner.member(args)`
+		// (a callStatic, no `__self`) and make a plain newDelegate over it; bir2cir's NetInteropBinding reshapes the
+		// inner callStatic to clrStatic. A genuine bound INSTANCE ref (a real object receiver) keeps the
+		// newBoundDelegate below. Mirrors the unbound-instance forwarder just below, minus the receiver.
+		if (boundRecv is IrGetObjectValue) {
+			val lname = "__mref${lambdaCounter++}"
+			val psJson = regs.joinToString(",") { """{"name":${str(it.name.asString())},"type":${birType(it.type).toJson()}}""" }
+			val argsJson = regs.joinToString(",") { """{"k":"local","name":${str(it.name.asString())}}""" }
+			val retVoid = fn.returnType.isUnit()
+			val retT = birType(fn.returnType)
+			val callE = """{"k":"callStatic","ownerType":${str(clrOwner)},"method":${str(member)},"argTypes":[$argTypes],"ret":${birType(fn.returnType).toJson()},"args":[$argsJson]$anySlotTag}"""
+			val body = if (retVoid) """{"k":"exprStmt","expr":$callE}""" else """{"k":"return","value":$callE}"""
+			val freeTps = freeTypeParams(regs.map { it.type } + listOf(fn.returnType))
+			val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
+			liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${str(retT)},"body":[$body]}""")
+			return """{"k":"newDelegate","method":${str(lname)},"funcType":${TypeNode.Fn(false, retT, regs.map { birTypeDeleg(it.type) }).toJson()}$typeArgs}"""
+		}
 		if (boundRecv != null)
 			return """{"k":"newBoundDelegate","ownerType":${fqnJson(clrOwner)},"method":${str(member)},"argTypes":[$argTypes],"virtual":$virtual,"recv":${expr(boundRecv)},"funcType":${funcTypeOf(fn).toJson()}$anySlotTag}"""
 		if (dispatchIdx >= 0) {
