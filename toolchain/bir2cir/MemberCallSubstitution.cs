@@ -36,6 +36,39 @@ static class MemberCallSubstitution
         ["kotlin.UIntArray"] = "kotlin.Int", ["kotlin.ULongArray"] = "kotlin.Long",
     };
 
+    // #139 site-2: an unsigned specialized array is the SAME native N-bit-integer array as its same-width SIGNED
+    // counterpart (UByte=Byte, UShort=Short, UInt=Int, ULong=Long per #53/#54), so a member call on an unsigned-array
+    // owner resolves against the emitted signed-array class — the identical native-array method-holder. bir2cir OWNS
+    // this Kotlin<->CLR array identity, so it rewrites the call `ownerType` to the signed-array FQN here (the ownerType
+    // survives only in the rt self-build; consumer CIR is fully lowered). This RETIRES ilemit's NativeArrayOwner alias
+    // (Emitter.Types.cs / Resolve.cs FindMethod) — the layer-purity fix: ilemit re-resolved a Kotlin equivalence it
+    // should never have known. Sig/args are unchanged, so the resolved method is byte-identical to the former alias.
+    static readonly IReadOnlyDictionary<string, string> UnsignedArraySignedOwner = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["kotlin.UByteArray"] = "kotlin.ByteArray", ["kotlin.UShortArray"] = "kotlin.ShortArray",
+        ["kotlin.UIntArray"] = "kotlin.IntArray", ["kotlin.ULongArray"] = "kotlin.LongArray",
+    };
+
+    // Rewrite a member-resolving node's unsigned-array owner to the same-width signed-array FQN. A no-op for a node
+    // TransformCall already substituted (a clrInstance/clrStatic/clrPropGet BCL call has no unsigned owner) or whose
+    // owner is not an unsigned specialized array. Covers EVERY node kind that reaches ilemit's FindMethod — the exact
+    // set the retired NativeArrayOwner alias covered: a member call / property accessor (`callInstance`), a static call
+    // (`callStatic`, owner in `owner`), and a bound method reference (`newBoundDelegate`/`newBoundClrDelegate`).
+    static JsonNode RewriteUnsignedArrayOwner(JsonNode node)
+    {
+        if (node is not JsonObject o) return node;
+        string field = (o["k"] as JsonValue)?.GetValue<string>() switch
+        {
+            "callInstance" or "newBoundDelegate" or "newBoundClrDelegate" => "ownerType",
+            "callStatic" => "owner",
+            _ => null,
+        };
+        if (field != null && TypeJson.Read(o[field]) is TypeNode.Fqn owner
+            && UnsignedArraySignedOwner.TryGetValue(owner.Name, out var signed))
+            o[field] = TypeJson.Write(owner.Args != null ? new TypeNode.Fqn(signed, owner.Args) : new TypeNode.Fqn(signed));
+        return node;
+    }
+
     // A star-projection/erased type-arg token: `object`/`kotlin.Any`, possibly nullable/oblivious-wrapped (a star K/V
     // projects to `Any?`, i.e. `{t:nullable,of:kotlin.Any}` post-#48). Used by the Map<*,*> extension guard (#74a).
     static bool IsErasedAny(TypeNode t) => t switch
@@ -191,7 +224,7 @@ static class MemberCallSubstitution
 
     static JsonNode Transform(JsonObject node, ReferenceMetadataIndex refs, SubstCtx ctx)
     {
-        return (node["k"] as JsonValue)?.GetValue<string>() switch
+        var result = (node["k"] as JsonValue)?.GetValue<string>() switch
         {
             "new" => TransformNew(node, refs) ?? node,
             "callInstance" => TransformCall(node, refs, instance: true, ctx) ?? node,
@@ -200,6 +233,10 @@ static class MemberCallSubstitution
             "field" => TransformStorageField(node) ?? node,
             _ => node,
         };
+        // #139 site-2: after any substitution, rewrite a surviving unsigned-array member owner to its signed-array FQN
+        // (all four FindMethod-reaching node kinds; a no-op when the node was substituted to a BCL call or is not a
+        // member-resolving kind). ilemit's NativeArrayOwner alias is retired, so this is the sole owner-alias site.
+        return RewriteUnsignedArrayOwner(result);
     }
 
     // A companion INSTANCE load on a CLR-bound owner (`String.Companion` as a value — e.g. the receiver arg of a
