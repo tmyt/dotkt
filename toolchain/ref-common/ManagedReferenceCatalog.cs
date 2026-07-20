@@ -69,10 +69,12 @@ sealed class ManagedReferenceCatalog
     /// runtime stdlib).</para>
     /// <para><paramref name="targetRid"/> / <paramref name="ridGraphPath"/> (runtime set only, #51): the RID the app
     /// is being compiled FOR, and the .NET/NuGet portable RID fallback graph used to rank RID-impl assets. When
-    /// <paramref name="targetRid"/> is null the HOST RID is assumed — correct for a host-targeted or direct-script run,
-    /// but a cross-target build (Linux host → <c>win-x64</c>) MUST pass its <c>$(RuntimeIdentifier)</c> or asset
-    /// selection picks the host's asset (a RID-neutral PlatformNotSupported placeholder). <paramref name="ridGraphPath"/>
-    /// is MSBuild's <c>$(RuntimeIdentifierGraphPath)</c> (<c>PortableRuntimeIdentifierGraph.json</c>); when null it is
+    /// <paramref name="targetRid"/> is null OR EMPTY the HOST RID is assumed — correct for a host-targeted or
+    /// direct-script run, and for the framework-dependent MSBuild case where <c>$(RuntimeIdentifier)</c> is empty — but
+    /// a cross-target build (Linux host → <c>win-x64</c>) MUST pass its <c>$(RuntimeIdentifier)</c> or asset selection
+    /// picks the host's asset (a RID-neutral PlatformNotSupported placeholder). <paramref name="ridGraphPath"/> is
+    /// MSBuild's <c>$(RuntimeIdentifierGraphPath)</c> (the portable <c>PortableRuntimeIdentifierGraph.json</c> or, under
+    /// <c>UseRidGraph</c>, the full <c>RuntimeIdentifierGraph.json</c> — same schema); when null/empty it is
     /// auto-discovered from the running SDK, and if no graph is found a minimal built-in family chain is the last
     /// resort. The fallback chain is the graph's transitive <c>#import</c> closure (most specific first), NOT a
     /// hand-rolled family table.</para>
@@ -115,8 +117,12 @@ sealed class ManagedReferenceCatalog
 
         // The TARGET RID (#51): the RID being COMPILED FOR. Defaults to the HOST RID when the caller passed none (a
         // host-targeted or direct-script run). Its ordered fallback chain is computed LAZILY — only a runtime set that
-        // actually carries a RID-impl duplicate group reaches SelectRuntimeAsset.
-        var effectiveRid = targetRid ?? RuntimeInformation.RuntimeIdentifier;
+        // actually carries a RID-impl duplicate group reaches SelectRuntimeAsset. An EMPTY string counts as "none":
+        // MSBuild hands the tool `--target-rid $(RuntimeIdentifier)` and $(RuntimeIdentifier) is empty for a
+        // framework-dependent (no-RID) build, so an empty value degrades to the host RID rather than selecting on "".
+        var effectiveRid = string.IsNullOrWhiteSpace(targetRid)
+            ? RuntimeInformation.RuntimeIdentifier
+            : targetRid.Trim();
         var ridChain = new Lazy<IReadOnlyList<string>>(() => RidFallbackChain(effectiveRid, ridGraphPath));
 
         // Phase 2: resolve to at most one entry per simple name, preserving first-encounter order.
@@ -243,9 +249,14 @@ sealed class ManagedReferenceCatalog
     // NuGet's RuntimeGraph.ExpandRuntime uses, so `runtimes/<rid>/lib` asset selection matches what the SDK's asset
     // resolution would pick for that target. When the graph can't be found we fall back to a minimal built-in family
     // chain (below) rather than hard-fail — enough for the os-level RIDs (win/unix/linux/osx) managed assets key on.
+    // ridGraphPath is MSBuild's $(RuntimeIdentifierGraphPath); it may name EITHER the portable graph
+    // (PortableRuntimeIdentifierGraph.json, the .NET 8+ default) or the full RuntimeIdentifierGraph.json (UseRidGraph),
+    // which share the `{ runtimes: { <rid>: { #import: [...] } } }` schema LoadRidGraph parses — so both work. An empty
+    // path (MSBuild passed an unset property) falls through to auto-discovery, NOT to the built-in chain.
     static IReadOnlyList<string> RidFallbackChain(string targetRid, string ridGraphPath)
     {
-        var graph = LoadRidGraph(ridGraphPath ?? DiscoverRidGraphPath());
+        var path = string.IsNullOrWhiteSpace(ridGraphPath) ? DiscoverRidGraphPath() : ridGraphPath.Trim();
+        var graph = LoadRidGraph(path);
         return graph != null ? ExpandRuntime(graph, targetRid) : BuiltinRidChain(targetRid);
     }
 

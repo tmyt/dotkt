@@ -1,6 +1,6 @@
 // ilemit — emit a runnable .NET assembly directly as CIL from Backend IR (BIR) JSON. No C#, no csc.
 //
-//   ilemit <output-dir> <assemblyName> [--runtime-refs a.dll;b.dll;...] <file1.cir.json>...
+//   ilemit <output-dir> <assemblyName> [--runtime-refs a.dll;b.dll;...] [--target-rid <rid>] [--rid-graph-path <json>] <file1.cir.json>...
 //
 // All BIR files compile into ONE assembly (so multi-file Kotlin cross-references resolve).
 // D1.2 = M0 subset; D1.4 = user classes (fields, ctors, methods, inheritance, virtual/override).
@@ -16,7 +16,7 @@ static class IlEmit
 {
     static int Main(string[] args)
     {
-        if (args.Length < 3) { Console.Error.WriteLine("usage: ilemit <out-dir> <asmName> [--build-stdlib=metadata|runtime] [--runtime-refs <dll;dll;...>] <file.cir.json>..."); return 1; }
+        if (args.Length < 3) { Console.Error.WriteLine("usage: ilemit <out-dir> <asmName> [--build-stdlib=metadata|runtime] [--runtime-refs <dll;dll;...>] [--target-rid <rid>] [--rid-graph-path <json>] <file.cir.json>..."); return 1; }
         var outDir = args[0];
         var asmName = args[1];
         Directory.CreateDirectory(outDir);
@@ -28,10 +28,17 @@ static class IlEmit
         var bir = new List<string>();
         var runtimeRefs = new List<string>();
         var mode = Emitter.BuildStdlibMode.App;
+        // #51: the RID being COMPILED FOR (MSBuild's $(RuntimeIdentifier)) + the SDK's RID fallback graph
+        // ($(RuntimeIdentifierGraphPath)). Used ONLY to pick the right runtimes/<rid>/lib asset when the copy-local
+        // set carries multiple RID builds of one identity; empty/unset ⇒ the host RID (the direct/host-targeted case).
+        string targetRid = null;
+        string ridGraphPath = null;
         var rest = args.Skip(2).ToList();
         for (int i = 0; i < rest.Count; i++)
         {
             if (rest[i] == "--runtime-refs" && i + 1 < rest.Count) runtimeRefs.AddRange(ManagedReferenceCatalog.Split(rest[++i]));
+            else if (rest[i] == "--target-rid" && i + 1 < rest.Count) targetRid = rest[++i];
+            else if (rest[i] == "--rid-graph-path" && i + 1 < rest.Count) ridGraphPath = rest[++i];
             else if (rest[i] == "--ref") { Console.Error.WriteLine("ilemit: --ref was replaced by --runtime-refs"); return 1; }
             else if (rest[i] == "--build-stdlib=metadata") mode = Emitter.BuildStdlibMode.Metadata;
             else if (rest[i] == "--build-stdlib=runtime") mode = Emitter.BuildStdlibMode.Runtime;
@@ -43,7 +50,7 @@ static class IlEmit
         // full stack for debugging (rethrow), matching the existing crash-localizer flag (Emitter.Trace).
         try
         {
-            RuntimeReferences.Load(runtimeRefs);
+            RuntimeReferences.Load(runtimeRefs, targetRid, ridGraphPath);
             var files = bir.Select(LoadInputDocument).ToList();
             new Emitter(outDir, asmName, mode).EmitAssembly(MergeByFileClass(files));
             return 0;

@@ -18,13 +18,14 @@ Options:
   --run           build, then run it             (implies --exe)
   --ref <dll>     add a compile/emit reference   (repeatable; e.g. a NuGet/BCL dll or another DotKt assembly)
   --no-stdlib     do NOT reference DotKt.Stdlib
+  --target-rid <rid>  select copy-local RID assets for this TARGET runtime (default: host RID)
   --retarget      repoint BCL refs off System.Private.CoreLib (so a C# project can <Reference> the output)
   -h, --help      this help
 EOF
 }
 
 # --- args -------------------------------------------------------------------------------------------
-out_name=""; out_dir="$PWD/dotkt-out"; make_exe=0; do_run=0; use_stdlib=1; do_retarget=0
+out_name=""; out_dir="$PWD/dotkt-out"; make_exe=0; do_run=0; use_stdlib=1; do_retarget=0; target_rid=""
 declare -a srcs=() extra_refs=()
 while (( $# )); do
 	case "$1" in
@@ -34,6 +35,7 @@ while (( $# )); do
 		--run) do_run=1; make_exe=1; shift ;;
 		--ref) extra_refs+=("$2"); shift 2 ;;
 		--no-stdlib) use_stdlib=0; shift ;;
+		--target-rid) target_rid="$2"; shift 2 ;;
 		--retarget) do_retarget=1; shift ;;
 		-h|--help) usage; exit 0 ;;
 		-*) usage_error "unknown option '$1'" ;;
@@ -105,8 +107,10 @@ info "lowering BIR -> CIR" >&2
 dotnet "$BIR2CIR_DLL" "$cir" --compile-refs "$bir_compile_refs" "$bir"/*.bir.json >/dev/null
 
 # 4. ilemit: CIR -> CIL. Gets the RUNTIME stdlib (real Kotlin bodies); [Kotlin*] attrs synthesized per-assembly.
+#    --target-rid (#51): when cross-targeting, pick the target runtime's runtimes/<rid>/lib copy-local asset instead of
+#    the build host's; empty (the default) makes ilemit fall back to the host RID. The SDK RID graph is auto-discovered.
 info "emitting $out_name.dll" >&2
-dotnet "$ILEMIT_DLL" "$out_dir" "$out_name" --runtime-refs "$runtime_refs" "$cir"/*.cir.json
+dotnet "$ILEMIT_DLL" "$out_dir" "$out_name" --runtime-refs "$runtime_refs" --target-rid "$target_rid" "$cir"/*.cir.json
 
 # 5. optional retarget (for compile-time C# <Reference>).
 (( do_retarget )) && dotnet "$RETARGET_DLL" "$out_dir/$out_name.dll" --compile-refs "$retarget_compile_refs" >/dev/null

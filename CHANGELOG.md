@@ -27,6 +27,19 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **toolchain ([tmyt/dotkt#51], area:ilemit, area:packaging): reference-asset selection now keys off the
+  TARGET RID, not the build HOST RID — cross-target builds pick the right `runtimes/<rid>/lib` asset.** The core
+  slice made `ManagedReferenceCatalog` rank RID-impl assets against the target RID's portable-RID-graph `#import`
+  closure (NuGet `RuntimeGraph.ExpandRuntime`), but nothing passed the target RID *in*, so ilemit still selected on
+  the host RID. This completes the wiring: ilemit gained `--target-rid` / `--rid-graph-path`, `RuntimeReferences.Load`
+  forwards both to `ManagedReferenceCatalog.Create`, and the shipped MSBuild pipeline
+  (`DotKt.Toolchain.targets`, imported by both the packaged SDK and the in-repo `cases/KotlinClr.targets`) passes
+  `$(RuntimeIdentifier)` + `$(RuntimeIdentifierGraphPath)` on the ilemit `Exec`. ilemit is the sole consumer that
+  reaches RID-asset selection (bir2cir/facadegen/retarget read RAR's RID-neutral compile set — a repeated simple name
+  there still throws); an empty `$(RuntimeIdentifier)` (framework-dependent, no-RID build) degrades to the host RID.
+  `scripts/dotkt.sh` gained a matching `--target-rid` passthrough for direct cross-target dev runs. Verified: on a
+  linux-x64 host, `--target-rid win-x64` selects the `runtimes/win-x64/lib` asset (was the host linux-x64 asset).
+
 - **stdlib/bir2cir ([tmyt/dotkt#56], area:bir2cir): high-arity (17–22) function-type declarations no longer
   silently dropped during the stdlib build.** bir2cir's `HighArityFunctionFilter` dropped (with only a stderr
   warning) any stdlib declaration whose signature mentioned a function type with >16 params — a silent-drop

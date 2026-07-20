@@ -218,7 +218,13 @@
            DotKt.Runtime reference is needed (that pre-stdlib runtime DLL is retired). -->
     </ItemGroup>
     <Message Importance="high" Text="DotKt: emitting CIL from CIR -> $(TargetName)$(TargetExt)" />
-    <Exec Command="dotnet &quot;$(DotKtIlEmit)&quot; &quot;$(IntermediateOutputPath.TrimEnd('/').TrimEnd('\'))&quot; &quot;$(TargetName)&quot; --runtime-refs &quot;$(_DotKtRuntimeReferences)&quot; @(_DotKtCir->'&quot;%(FullPath)&quot;', ' ')" />
+    <!-- #51: pass the TARGET RID + the SDK's RID fallback graph so ilemit selects the runtimes/<rid>/lib asset the
+         TARGET runtime would load (not the build HOST's) when a copy-local package ships multiple RID builds. RAR
+         gives ilemit ALL RID assets of a RID-impl package; the tool must pick per the target RID. $(RuntimeIdentifier)
+         is empty for a framework-dependent (no-RID) build → ilemit defaults to the host RID (correct). Both properties
+         are set by Microsoft.NET.Sdk before this AfterTargets=CoreCompile target runs; $(RuntimeIdentifierGraphPath)
+         names the SDK's portable graph (or, under UseRidGraph, the full one — same schema). -->
+    <Exec Command="dotnet &quot;$(DotKtIlEmit)&quot; &quot;$(IntermediateOutputPath.TrimEnd('/').TrimEnd('\'))&quot; &quot;$(TargetName)&quot; --runtime-refs &quot;$(_DotKtRuntimeReferences)&quot; --target-rid &quot;$(RuntimeIdentifier)&quot; --rid-graph-path &quot;$(RuntimeIdentifierGraphPath)&quot; @(_DotKtCir->'&quot;%(FullPath)&quot;', ' ')" />
   </Target>
 
   <!-- REVERSE interop (R-1): repoint the emitted dll's BCL TypeRefs off the single System.Private.CoreLib onto the
