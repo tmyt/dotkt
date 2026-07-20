@@ -1,8 +1,7 @@
-// A genuine C#-origin reference assembly whose extension methods (`this`-parameter statics) carry
-// [System.Runtime.CompilerServices.Extension] — the shape facadegen must surface as Kotlin extension
-// functions so a Kotlin/clr app can call them façade-free (#137, Avalonia report B). The C# compiler
-// stamps [Extension] on both the method and the static class automatically for a `this`-parameter.
-namespace Interop
+// Producer source for the migrated il-csext case (#137, Avalonia report B). Genuine C#-origin `[Extension]` statics
+// that facadegen must surface as Kotlin extension functions so a Kotlin/clr app can call them façade-free via
+// `import Csext.*` (the `using Csext;` analog). Own namespace.
+namespace Csext
 {
     public class W
     {

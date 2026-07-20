@@ -1,4 +1,7 @@
-namespace Probe {
+// Producer source for the migrated il-c1net case (C-1 façade-free .NET consumption). Generic methods, params/vararg,
+// .NET default args, op_* operators, a struct value-type with instance methods, and C#-origin extension methods on a
+// primitive and a reference receiver. Own namespace so the many colliding simple names coexist in this producer.
+namespace C1Net {
     public struct Vec2 {
         public int X; public int Y;
         public Vec2(int x, int y) { X = x; Y = y; }

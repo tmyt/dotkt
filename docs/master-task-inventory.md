@@ -224,8 +224,8 @@ Sources: `ship-tasks.md #4`, `archive/future-work-interop.md #4`, `archive/dotkt
   routing), and `[ExtensionAttribute]` static methods as Kotlin extension functions (Int AND String receivers
   verified). `op_Equality`/`op_Inequality` are deliberately NOT mapped — Kotlin `==` routes to `Equals(Any?)`, the
   correct Kotlin semantics (a well-formed .NET type keeps op_Equality consistent with Equals); `op_Implicit`/
-  `op_Explicit` have no Kotlin analog and are skipped. Gate: `cases/il-c1net` (full battery: `+ - * / unary-` on a
-  C# struct + int/string extension methods).
+  `op_Explicit` have no Kotlin analog and are skipped. Gate: `tests/interop/consumer/InteropAExtTests.kt` (`c1net`;
+  full battery: `+ - * / unary-` on a C# struct + int/string extension methods).
 - ~~**dual-rep collision** (`import System.Text.StringBuilder` vs the stdlib alias)~~ — ✅ DECIDED+DONE (2026-07-02):
   the two are **two typed views of one CLR type** — they coexist, never unified; mixing identities is a clear
   frontend type error; an explicit cast (`as kotlin.text.StringBuilder`) is the escape hatch (same CLR type at
@@ -238,8 +238,8 @@ Sources: `ship-tasks.md #4`, `archive/future-work-interop.md #4`, `archive/dotkt
 - ~~**(4) delegate-type args collapse to `Any?`**~~ — ✅ DONE (re-verified 2026-07-02): `Map` emits a delegate as the
   bracketed function-type token `func:[ret,args…]` (from the delegate's `Invoke`), ClrTypeInjection restores a Kotlin
   function type, a lambda binds, and the backend builds the specific delegate from the call-site param. Covers BCL
-  `Func<int,int>`/`Action` AND custom GENERIC delegates (`delegate T Mapper<T>(T)`). Gates: `cases/il-delegatearg`,
-  `cases/il-netinterop`.
+  `Func<int,int>`/`Action` AND custom GENERIC delegates (`delegate T Mapper<T>(T)`). Gates:
+  `tests/interop/consumer/InteropADelegateTests.kt` (`delegatearg`), `cases/il-netinterop`.
 - ~~**(5) aliased import silently ignored** (`import … as X`)~~ — ✅ DONE (verified 2026-07-02): the PSI import scan
   (`ImportScan.kt`, `importedFqName`) keeps aliased imports (canonical FQN out; Kotlin's own import machinery binds
   the alias to the injected classifier); facadegen warns on a no-match import, and a nonexistent type errors at the

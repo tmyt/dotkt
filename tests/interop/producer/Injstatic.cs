@@ -1,4 +1,7 @@
-namespace Kfc {
+// Producer source for the migrated il-injstatic case. Public STATIC members of a normal injected class are surfaced on
+// a synthesized companion, reachable BOTH implicitly (`App.start`/`App.Count`) and explicitly (`App.Companion.start`).
+// Covers a static method w/ delegate arg, a static property, a static readonly FIELD (ldsfld), and a const. Own ns.
+namespace Injstatic {
     public delegate void InitCb(int p);
     public class App {                                  // a NORMAL class (has instance members) with STATIC members
         public int inst = 1;
