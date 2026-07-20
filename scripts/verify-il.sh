@@ -642,14 +642,15 @@ il_check_inject vtprop VtProp "$ROOT/cases/il-vtprop" "$(printf '10\n20\n30')" P
 # nullable value types (int?/double? both directions).
 il_check_inject netinterop NetInterop "$ROOT/cases/il-netinterop" "$(printf 'Green\n4\nTrue\nfresh\ncool\n15\n18\n42\n0\n7\n0\n1.5')" I4Probe
 il_check_inject firgap FirGap "$ROOT/cases/il-firgap" "$(printf '42\n60\n3\n20')" P
-il_check_inject inherit Inherit "$ROOT/cases/il-inherit" "$(printf 'run:derived\nshow:button\nbutton')" PInh
-il_check_inject geninj GenInj "$ROOT/cases/il-geninj" "$(printf '2\na')" PGI
+# CLR-interop C#-producer pilot batch (inherit/geninj/clriface/clrimpl/clrasm/genim) migrated to the
+# ProjectReference'd C#-producer NUnit lane tests/interop/{producer,consumer} (InteropTests.kt), gated by
+# tests/run-nunit-il.sh. Per the cases-test-design audit #14 the old per-case dirs + il_check_inject lines were
+# removed same-change; the former runtime.cs became the producer's per-namespace C# source (docs/nunit-migration-playbook.md §3).
 # (3)+(6): constructed-generic MEMBER types (IList<T>/IReadOnlyList<T>/Dictionary<K,V>/IEnumerable<T>) + the
 # transitive injection closure (Gadget/Sprocket are never imported — reached via member-signature hops).
 il_check_inject transinj TransInj "$ROOT/cases/il-transinj" "$(printf '1\nw1\n1\nw1\nw1!\n3\nw1\nw1.')" TxRt
 il_check_inject cbk Cbk "$ROOT/cases/il-cbk" "$(printf '=v42\nran')" PCbk
-il_check_inject clriface ClrIface "$ROOT/cases/il-clriface" "$(printf '2\na')" PIf
-il_check_inject clrimpl ClrImpl "$ROOT/cases/il-clrimpl" "$(printf 'draw:circle\ndraw:square\ncircle')" PImpl
+# clriface/clrimpl migrated to the C#-producer NUnit lane tests/interop/consumer/InteropTests.kt (see breadcrumb above).
 # ifacechainvt (#129): a Kotlin class implements an injected .NET interface whose BASE-INTERFACE CHAIN carries a
 # value-type generic slot (`IMid<Int> : IBase<Int>`). #128's value-type-generic-interface slot bridge must hold across
 # the transitively-inherited base link — the inherited `Get(): Int` and the direct `Rank(Int): Int` both use bare
@@ -661,9 +662,9 @@ il_check_inject ifacechainvt IfaceChainVt "$ROOT/cases/il-ifacechainvt" "$(print
 # get_Cell/set_Cell (read from the type's DefaultMemberAttribute by bir2cir.NetInteropBinding.DefaultIndexerAccessor),
 # not the hardcoded get_Item/set_Item. Regression guard for the custom-indexer-name binding path.
 il_check_inject ixname IxName "$ROOT/cases/il-ixname" "$(printf '10\n30\n99')" IxRt
-il_check_inject clrasm ClrAsm "$ROOT/cases/il-clrasm" "$(printf '2\n2\n2')" PAsm
+# clrasm migrated to the C#-producer NUnit lane tests/interop/consumer/InteropTests.kt (see breadcrumb above).
 il_check_inject selfref SelfRef "$ROOT/cases/il-selfref" "4" PSelf
-il_check_inject genim GenIM "$ROOT/cases/il-genim" "$(printf 'hello\nworld')" PGenIM
+# genim migrated to the C#-producer NUnit lane tests/interop/consumer/InteropTests.kt (see breadcrumb above).
 il_check_inject outref Outref "$ROOT/cases/il-outref" "$(printf 'ok=5\nfail\n2 1\n20\n20\n109\n5\n7 5')" OutR
 il_check_inject netattr NetAttr "$ROOT/cases/il-netattr" "$(printf 'widget#7\n42')" Lbl
 il_check_inject netattrvararg NetAttrVararg "$ROOT/cases/il-netattr-vararg" "$(printf 'widget#7\n42')" PVararg   # #184: params object[] ctor applied bare (zero args). rasm distinct from firgap's `P` (both namespace-P but different types) so the parallel build_runtime does not race on the shared build/rt-P dir (assembly NAME only; the `P` namespace its runtime.cs declares is unchanged, so `import P.TagAttribute` still resolves)

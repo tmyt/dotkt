@@ -1,0 +1,35 @@
+<!-- C#-producer roundtrip CONSUMER: a DotKt NUnit test project that <ProjectReference>s ../producer (a PLAIN C#
+     class library) and asserts each migrated CLR-interop `cases/il-*` case's golden values 1:1 as ClassicAssert
+     value asserts (design D1). The producer's public .NET types are consumed FAÇADE-FREE — the .kt say
+     `import ClrAsm.Bag`, facadegen re-imports the BUILT C# dll's metadata (NEVER its source; the producer is C#
+     and sits in a SIBLING dir, so this project's `**/*.kt` glob cannot capture it — the DLL-not-source invariant).
+
+     This is the C#-PRODUCER variant of the tests/roundtrip lane (whose producer is a DotKt .ktproj). The 35
+     runtime.cs-shipping cases in scripts/verify-il.sh are cross-module BY CONSTRUCTION — a separately-compiled C#
+     assembly the DotKt code references — so they need a real <ProjectReference>'d C# producer, which the single-
+     project in-process tests/il fixture cannot express (docs/nunit-migration-playbook.md §3). MSBuild's build graph
+     does the "build producer dll -> put it on the consumer's ReferencePath" step; `dotnet test` discovers the
+     @TestAttribute methods and runs them in-process.
+
+     Resolves the LOCALLY-BUILT SDK from build/nuget-feed via tests/nuget.config (design D4); version tracks
+     packaging/DotKt.Versions.props; the gate entry lives in tests/run-nunit-il.sh (PROJECTS + EXTRA_EMIT). -->
+<Project Sdk="DotKt.Sdk/0.9.6-rc7">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsTestProject>true</IsTestProject>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../producer/InteropProducer.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
+    <PackageReference Include="NUnit" Version="4.6.1" />
+    <PackageReference Include="NUnit3TestAdapter" Version="6.2.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+</Project>
