@@ -31,12 +31,21 @@ PROJECTS=(
 	# NOT source) by this NUnit consumer. (nothing/generic-hof/receiver-lambda stay in the shell lane: they RUN
 	# green but emit IL the ilverify phase rejects — see RoundtripTests.kt header.)
 	"tests/roundtrip/consumer"
+	# C#-PRODUCER round-trip lane (playbook §3, "injected-runtime interop"): the migrated CLR-interop `cases/il-*`
+	# that shipped a `runtime.cs` (a separately-compiled C# assembly the DotKt code references — cross-module BY
+	# CONSTRUCTION) become a PLAIN C# producer csproj (tests/interop/producer) <ProjectReference>'d by this NUnit
+	# consumer, which imports the built C# dll FAÇADE-FREE (`import <Ns>.<Type>`). Mechanically the MSBuild-graph
+	# equivalent of verify-il.sh's il_check_inject (build runtime.cs -> dll -> pass as compile+runtime ref).
+	"tests/interop/consumer"
 )
 
 # Extra DotKt-emitted assemblies (beyond the .ktproj-named one) to ALSO run ilverify over, per consumer project.
 # The round-trip consumer's <ProjectReference> copies the producer dll into its bin; verify BOTH (§5 order).
 declare -A EXTRA_EMIT=(
 	["tests/roundtrip/consumer"]="RoundtripProducer.dll"
+	# The C#-producer dll is csc-emitted (not ilemit), so it needs no DotKt ilverify of its own; ilverify over the
+	# CONSUMER assembly (the .ktproj-named dll) is what proves the emitted interop IL is clean. No EXTRA_EMIT entry
+	# for tests/interop/consumer — adding the plain C# producer would only formally re-verify a non-DotKt assembly.
 )
 
 # Read the packed SDK version from the single source of truth so a version bump needs no edit here.
