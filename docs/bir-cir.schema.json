@@ -196,6 +196,7 @@
         "vis":        { "$ref": "#/$defs/vis" },
         "static":     { "type": "boolean", "$comment": "a load-bearing CLR-shape flag, kept scalar (not a Kotlin source modifier)" },
         "virtual":    { "type": "boolean" },
+        "clrBridgeRole": { "enum": ["hasNext", "next", "iterator"], "$comment": "reverse-enumerator-bridge role marker bir2cir (IteratorBridgeMarking) stamps so ilemit drives its GetEnumerator adapter off a semantic marker, never the Kotlin FQN/member names — hasNext/next on kotlin.collections.Iterator's members, iterator on a class iterator(). A bir2cir->ilemit resolution HINT (ilemit reads it into TypeInfo.BridgeRoles), never emitted as .NET metadata." },
         "objectOverride": { "type": "boolean" },
         "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } },
         "params":     { "type": "array", "items": { "$ref": "#/$defs/param" } },

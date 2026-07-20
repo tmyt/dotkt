@@ -16,18 +16,22 @@ partial class Emitter
     TypeBuilder _enumAdapterTB;          // the open generic adapter `dotkt$EnumeratorOverKotlinIterator`1`
     ConstructorBuilder _enumAdapterCtor; // its ctor(Iterator<T>) on the open def
     const string EnumeratorAdapterName = "dotkt$EnumeratorOverKotlinIterator`1"; // referenced from the stdlib dll in app builds
+    // #139: the Kotlin iterator interface this assembly emits (set when a method carries the bir2cir `clrBridgeRole`
+    // "hasNext"/"next" marker). ilemit holds NO Kotlin FQN/member names — the reverse bridge keys off this marker. Null
+    // in an app build (the interface is referenced from the stdlib dll, not emitted here) -> the adapter is external.
+    TypeInfo _iterBridgeIface;
 
     // Emit the generic adapter type ONCE (after the Kotlin Iterator interface's methods are declared). No-op if the
-    // assembly has no kotlin.collections.Iterator (nothing to bridge). NOTE: the "kotlin.collections.Iterator" +
-    // "iterator"/"hasNext"/"next" names here (and at GenerateGetEnumeratorIfNeeded) are the LAST Kotlin-name
-    // hardcode left in ilemit — contained to this reverse bridge; the eventual ideal is to drive it off a
-    // semantic marker rather than the Kotlin FQN / member names.
+    // assembly emits no bridge-source Kotlin iterator interface (nothing to bridge — e.g. an app build, where it is a
+    // referenced type). The interface + its hasNext/next are found via the bir2cir `clrBridgeRole` markers (#139) — the
+    // Kotlin knowledge "kotlin.collections.Iterator.hasNext()/next() is the wrapped shape" lives in bir2cir, not here.
     void EmitEnumeratorAdapter()
     {
         if (_enumAdapterTB != null) return;
-        if (!_types.TryGetValue("kotlin.collections.Iterator", out var iterTi)) return;
-        if (!iterTi.Methods.TryGetValue("hasNext", out var openHasNext)) return;
-        if (!iterTi.Methods.TryGetValue("next", out var openNext)) return;
+        var iterTi = _iterBridgeIface;
+        if (iterTi == null) return;
+        if (!iterTi.BridgeRoles.TryGetValue("hasNext", out var openHasNext)) return;
+        if (!iterTi.BridgeRoles.TryGetValue("next", out var openNext)) return;
 
         var tb = _mod.DefineType("dotkt$EnumeratorOverKotlinIterator`1",
             TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit);
@@ -140,7 +144,8 @@ partial class Emitter
             if (externalAdapterOpen == null) return false;              // no Kotlin Iterator adapter available anywhere
         }
         if (!itype.IsGenericType || !EnumerableDerived.Contains(itype.GetGenericTypeDefinition())) return false;
-        if (!ti.Methods.TryGetValue("iterator", out var iterMethod)) return false;   // nothing to wrap
+        // The class's own `iterator()` (bir2cir `clrBridgeRole` marker, #139 — not the Kotlin member name).
+        if (!ti.BridgeRoles.TryGetValue("iterator", out var iterMethod)) return false;   // nothing to wrap
 
         var elemType = itype.GetGenericArguments()[0];
 

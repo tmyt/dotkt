@@ -654,6 +654,11 @@ sealed class Pipeline
             // hardcoded primitives) wherever it appears as a type token. The struct-ness oracle drives the reference
             // `{t:nullable}` strip (a value `T?` stays `Nullable<T>`; a reference `T?` -> bare + the NRT byte above).
             var lowered = BirTypeLowering.Lower(substituted, _options.RefBuild, refs.Aliases, isValueFqn);
+            // #139 — stamp the reverse-enumerator-bridge `clrBridgeRole` markers (kotlin.collections.Iterator's
+            // hasNext/next + every class `iterator()`) so ilemit drives its GetEnumerator adapter off a semantic marker,
+            // never the Kotlin FQN/member names. ALL builds; on the lowered tree (the Iterator FQN + type names survive
+            // lowering) so ref/rt/app mark the same nodes. Additive CIR hint — never a .NET attribute, emit is unchanged.
+            IteratorBridgeMarking.Apply(lowered);
             // `.size` (Count) on a STAR-PROJECTED / `Any`-erased collection receiver: StarProjectionLowering already
             // re-pointed the receiver `cast` at a non-generic BCL collection interface, but MemberCallSubstitution bound
             // Count to the GENERIC `IReadOnly*<object>.Count`, absent on a value-type-arg collection (`List<int>`)
