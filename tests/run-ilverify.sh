@@ -24,6 +24,12 @@ declare -A ILVERIFY_XFAIL=(
 	# BCL System.Action`3`/System.Func`4` — StackUnexpected at M2C::.ctor. Runtime-SAFE (both are MulticastDelegate with
 	# the identical Invoke signature; the value-assert RUN lane is green). Mirror of the verify-il.sh [del2] entry.
 	["M2C::.ctor()"]="#123 delegate-representation ABI: Delegates.observable/vetoable materializes a BCL System.Action/Func where the stdlib ctor bakes the Kotlin KAction/KFunc — runtime-safe (RUN green)"
+	# #12 (formal-only follow-up of closed #2): the migrated il-genbaseext (CorBSequenceTests) declares an external
+	# generic base (AbstractCoroutineContextKey) over a companion CoroutineContext.Key; its `get_key()` returns the
+	# Key<Self> companion where the invariant Key<Element> is formally expected (star-projection covariance the CLR
+	# has no equivalent for). Runtime-SAFE (the value-assert RUN lane is green). Mirror of the verify-il.sh
+	# [genbaseext] XFAIL_ILVERIFY entry, re-expressed for DotKt.Tests.Coroutines.dll.
+	["CorBGbeBase::get_key()"]="#12 formal-only covariance: external-generic-base get_key() returns Key<Self> companion where invariant Key<Element> is expected — runtime-safe (RUN green)"
 )
 
 ILV="$(find "$HOME/.dotnet" -name 'ILVerify.dll' 2>/dev/null | head -1)"
