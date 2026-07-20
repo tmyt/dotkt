@@ -843,6 +843,14 @@ sealed partial class Emitter
             mb = ti.TB.DefineMethod(name, attrs, MapType(m.GetProperty("ret")), ps);
         }
         ti.Methods[name] = mb; ti.MethodsBySig[SigKey(name, m)] = mb;
+        // #139: record the bir2cir reverse-enumerator-bridge role marker (never a Kotlin name). A "hasNext"/"next" role
+        // identifies THE Kotlin iterator interface the adapter wraps; an "iterator" role is the this.iterator() a
+        // synthesized GetEnumerator calls. Read by Emitter.ReverseBridge.cs; no effect on emitted metadata.
+        if (m.TryGetProperty("clrBridgeRole", out var brJson) && brJson.GetString() is { } bridgeRole)
+        {
+            ti.BridgeRoles[bridgeRole] = mb;
+            if (bridgeRole is "hasNext" or "next") _iterBridgeIface = ti;
+        }
         _mparams[mb] = ps;   // MethodBuilder.GetParameters() throws pre-bake; record param types for call-site boxing
         DefineParamNames(mb, m);
         if (objOverride)

@@ -40,6 +40,11 @@ STR_OK = {
     "accessor",                                  # W1-S3 (#46/#121): the ref.dll-resolved get_/set_/add_/remove_ accessor
                                                 # METHOD NAME ilemit links (clrPropGet/Set, clrEvent*, external field) — a
                                                 # bir2cir resolution decision, NOT a type slot (paired with `member`+`dispatch`)
+    "clrBridgeRole",                            # the reverse-enumerator-bridge role marker ("hasNext"/"next" on
+                                                # kotlin.collections.Iterator's members, "iterator" on a class iterator())
+                                                # bir2cir stamps so ilemit drives its GetEnumerator adapter off a semantic
+                                                # marker, never the Kotlin FQN/member names. A resolution HINT, NOT a type
+                                                # slot (never emitted as .NET metadata); ilemit reads it into TypeInfo.BridgeRoles
     "prop",                                     # callInstance/callStatic accessor KIND ("get"/"set"/"index-get"/"index-set")
                                                 # — a BIR-only frontend fact (A2 step 3/4); bir2cir consumes it into
                                                 # clrPropGet/clrPropSet (get/set) or the default-indexed-property accessor

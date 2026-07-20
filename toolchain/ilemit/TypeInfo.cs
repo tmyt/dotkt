@@ -21,6 +21,9 @@ sealed class TypeInfo
     // bodies/calls get misrouted. `MethodsBySig` keys by name + parameter-type signature so each overload is distinct
     // (e.g. `text(string)` vs `text(func:string:)`). Both body emission and call resolution prefer it.
     public readonly Dictionary<string, MethodBuilder> MethodsBySig = new();
+    // #139 reverse-enumerator-bridge markers: `clrBridgeRole` ("hasNext"/"next"/"iterator", bir2cir-stamped) -> the
+    // method builder, so the GetEnumerator adapter is driven off a semantic marker not the Kotlin FQN/member names.
+    public readonly Dictionary<string, MethodBuilder> BridgeRoles = new();
     public ConstructorBuilder Ctor;       // primary ctor (Ctors[0]) — convenience for the common single-ctor path
     public JsonElement CtorDef;
     public readonly List<ConstructorBuilder> Ctors = new();   // all ctors (primary + secondary)
