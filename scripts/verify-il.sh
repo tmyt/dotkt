@@ -377,7 +377,6 @@ il_check m0    M0Kt  "$ROOT/cases/m0/M0.kt"  "$(printf 'sum = 5\nzero\nn=1\nn=2'
 # double). Uses the meta ALONE (no conflicting --ref), so the source type lowers/emits LOCALLY end-to-end.
 il_check injectdedup App "$ROOT/cases/il-injectdedup" "$(printf '42\nplain')" "$ROOT/cases/il-injectdedup/demo.meta"
 il_check mc1   MC1   "$ROOT/cases/m-c1"      "$(printf 'c = (4, 6)\na.d2 = 25\nrect area=30')"
-il_check iface Iface "$ROOT/cases/il-iface"  "$(printf 'Hello\nKonnichiwa')"
 il_check overrideprop OverridePropKt "$ROOT/cases/il-overrideprop" "$(printf '21\n42\n7')"   # `override val` accessor fills the base CLASS abstract slot (not a fresh NewSlot) — else concrete subclass TypeLoad-fails
 il_check overridemsg AppKt "$ROOT/cases/il-overridemsg" "$(printf 'overridden\noverridden\noverridden')"   # #24: `override val message` on a @ClrTypeAlias base (kotlin.Exception->System.Exception) — DeclarationRename wires the get_message accessor to the @ClrProperty("Message") slot (rename + clrOverride) so DefineMethodOverride binds System.Exception.get_Message (else every read returns the base value)
 il_check supercall SuperCall "$ROOT/cases/il-supercall/app.kt" "$(printf 'derived+base\n21\nderived[base-tag]\nDerived<Base>\nABC\ndog>animal\nimpl+hi-default\nderived+base\n11')"   # #14: super.X() from an override is a non-virtual `call` to the resolved base slot (else callvirt re-dispatches → infinite recursion); covers method/prop/3-level chain/user-base toString/interface-DIM + a virtual-dispatch non-regression
@@ -402,7 +401,6 @@ il_check adapterref AppKt "$ROOT/cases/il-adapterref/app.kt" "$(printf 'sink 1\n
 # gated by tests/run-nunit-il.sh. Per the cases-test-design audit #14 the old per-case dirs + il_check lines were
 # removed same-change; their il-genbase/il-genctor/il-genstatic/il-gencolladd/il-gfac/il-objgen PURE entries were
 # removed from verify-differential.sh same-change.
-il_check inheritedgenericinline AppKt "$ROOT/cases/il-inheritedgenericinline/app.kt" "$(printf '42\nabcd\n42')"   # #88: an inherited member `inline fun` whose OWNER class is GENERIC (`IntBox/StrBox : Container<E>`) spliced at a subclass call site — kotc's F2A carries the owner's type args via the corresponding-supertype instantiation `Container<Int>`/`Container<String>`, so the spliced payload's `tv{scope:type,0}` (E) concretizes instead of staying an OPEN generic (which typed the dispatch temp as the open type -> BadImageFormatException); the third line covers a TYPE-PARAMETER receiver whose bound `T : Container<Int>` fixes the owner arg
 il_check geninlinearg GenInlineArg "$ROOT/cases/il-geninlinearg/app.kt" "$(printf '[7]\n[x]\n1')"   # #122: inline collection-factory arg of a `new` in a generic fn — declared class-scope tv instantiated through the `new` binding (else Add(T[]) splat mismatch)
 # enum family (il-enum/il-enumintr/il-enumtostr/il-enumbody/il-enumrich) migrated to the NUnit battery
 # tests/il/fixtures/EnumTests.kt (+ EnumCrossFile.kt for the #90 cross-file basic-enum decl).
@@ -594,7 +592,6 @@ il_check pairnest PairNest "$ROOT/cases/il-pairnest" "$(printf '([1, 2], [3, 4])
 il_check extprop ExtProp "$ROOT/cases/il-extprop" "$(printf '2\n1\n1\n3\n-1\n1\n0')"  # C7 (+ #157 NON-coroutine guard): cross-module top-level extension-property getter -> callStatic get_<name>(receiver) (generic List.lastIndex carries type args); NOT a dropped-receiver field read. Resolves through the SAME general owner-null path as xmodtopval (prop:get -> get_<name> -> TryResolveTopLevelStatic recvKey branch) — a name-keyed re-special-case of that path would break these non-coroutine names
 il_check defargs DefArgs "$ROOT/cases/il-defargs" "$(printf 'x1-x2-x3\n1, 2, 3\n[1, 2, 3]\n1/2/~\nb=c\na\nnodelim\nFALLBACK\nP(x=1, y=20, z=3)\nP(x=10, y=2, z=30)\nHello, Kotlin!\nHello, Kotlin?')"  # C3: cross+same-module default args — omitted middle default must not shift a later provided arg's slot (joinToString transform / substringAfter `= this` / data-class copy(field=))
 il_check defargs2 DefArgs2 "$ROOT/cases/il-defargs2" "$(printf '55\n7\n12\n30\n134\n156\n159')"  # C3 residual: same-module default referencing ANOTHER value param (`b = a * 10`, `c = a + b`) — inlined with that param's filled arg substituted
-il_check infloopret InfLoopRet "$ROOT/cases/il-infloopret" "$(printf '30\nok4')"  # #141: value-returning while(true){…return x} -> ilemit appends default(ret)+ret so the unreachable fall-through terminator is ilverify-clean (ReturnMissing gone)
 il_check toplateinit TopLateinit "$ROOT/cases/il-toplateinit" "$(printf 'caught: uninitialized\nhello\n5')"  # #104: top-level `lateinit var` (ref type) static field carries `"init": null` — must NOT hit the .cctor null-coercion store (crash); default-null + lateinitGet throw-before-init
 il_check samcmp SamCmp "$ROOT/cases/il-samcmp" "$(printf '1,1,2,3,4,5,6,9\n9,6,5,4,3,2,1,1')"  # explicit Comparator{} SAM conversion (plain fun interface; no kotc @ClrTypeAlias read)
 il_check cp    Cp    "$ROOT/cases/il-cp"      "$(printf '50\n3.5\nTrue\nTrue\nX')"
@@ -625,15 +622,12 @@ il_check unsgn Unsigned "$ROOT/cases/il-unsigned" "$(printf '4000000100\n4000000
 # il-regexgroups/il-regexreplace/il-groupvalues PURE entries were removed from verify-differential.sh same-change.
 # linkedorder (#169): LinkedHashMap/LinkedHashSet (and mapOf/setOf) preserve insertion order across a MIDDLE removal —
 # LinkedHashMap is backed by the insertion-ordered System...OrderedDictionary; LinkedHashSet by a pure-Kotlin set over it.
-il_check linkedorder LinkedOrder "$ROOT/cases/il-linkedorder" "$(printf 'a,c,d,e\na=1,c=3,d=4,e=5\n1,3,4,5\nx,z,w,q\n4\nTrue\nFalse\none,two,three\np,d,b,a')"
 # linkedset (#169 regression): setOf/distinct()/toMutableSet() build the CONCRETE LinkedHashSet — was InvalidProgram
 # (arity-only ctor pick routed `new LinkedHashSet(coll)` to the (Int) ctor; the self iterator()/ICollection Contains
 # slot referenced the open generic self). Locks the crash-free build AND insertion order across a MIDDLE removal + retainAll.
-il_check linkedset LinkedSet "$ROOT/cases/il-linkedset" "$(printf '3,1,2,4\n4\n3\na,b,c\nx,z,w,q\n4\nTrue\nFalse\n2,4,5\n10,30,40')"
 # gencolladd: non-inlined GENERIC collection building via `.map`/`.add`/`.size` — the stdlib `clrCollAdd<T>`
 # reads `c.size` (ICollection<!!T>.get_Count) on an OPEN method type-param. Locks the bymap/maxOrNull dispatch
 # family's collection analog (an open-generic ICollection member call must bind at runtime, no EntryPointNotFound).
-il_check langtail LangTail "$ROOT/cases/il-langtail" "$(printf '6\nhi\nint:42\nstr:3\nbig:5\nsmall\n700\n9')"
 il_check tailrec Tailrec "$ROOT/cases/il-tailrec" "$(printf '500000500000\n0\n2000000014\n1000000\n2000000')"   # §2b: deep `tailrec` TCO'd to a back-jump loop (self / when / extension-receiver / member); no CLR stack overflow
 il_check copydef CopyDef "$ROOT/cases/il-copydef" "$(printf '(1, 20)\n(5, 2)\n(1, 9, 3)\n(7, 2, 8)\nPoint(x=1, y=20, z=3)\nPoint(x=9, y=2, z=8)')"   # C3: data-class copy(field=x) with omitted fields — cross-module Pair/Triple reconstruct this.<field>
 il_check equalscall EqualsCall "$ROOT/cases/il-equalscall" "$(printf 'False\nTrue\nTrue\nFalse\nTrue\nTrue\nFalse\nTrue\nTrue\nFalse\nTrue\nTrue')"   # §5a: explicit .equals() -> total-order (Double/Float) / structural (collections), plain object stays reference
@@ -652,7 +646,6 @@ il_check cwindowed CWindowed "$ROOT/cases/il-cwindowed" "$(printf '[ab, bc, cd]\
 # delegateNew target whose funcType keeps the synthetic <>dotkt_CharSequence, so its `it` param must stay synthetic
 # (not collapse to System.String) — the stdlib passes a real <>dotkt_CharSequence (subSequence's result) in. W4-B guard.
 il_check cwindowedv CWindowedV "$ROOT/cases/il-cwindowedv" "$(printf '[2, 2, 2]\n[a, b, c]\n[3, 3, 3]\n[ab, bc, cd]')"
-il_check localclass LocalClass "$ROOT/cases/il-localclass" "$(printf '10\n42\n101\n3,4\nTrue\n60')"
 # A generic cold-sequence SM: `fun <T> wrap(x) = sequence { yield(x) }.toList()` over a VALUE element (Int) and a
 # reference element (String). Guards the `T?`-property `nextValue as T` double-unbox NRE (bir2cir erased-getter
 # call-site retype) that broke every value-typed cold sequence, and (via the same drive) the RingBuffer path.
@@ -669,13 +662,10 @@ il_check props Props "$ROOT/cases/il-props" "$(printf '20\n8\n16\nnot initialize
 # CALL get_<name>, not read the raw static field (which skipped the getter -> 41/7 instead of 42/107). The
 # symmetric `var` custom-setter write must CALL set_<name>, not store the raw field. Object property = control.
 il_check computedprop ComputedProp "$ROOT/cases/il-computedprop" "$(printf '42\n107\n20\n15\n6\n49')"
-il_check kstar KStar "$ROOT/cases/il-kstar/app.kt" "*"   # #82: KTypeProjection.STAR computed companion prop routes to get_STAR (not a spurious staticField STAR)
 il_check valcls ValCls "$ROOT/cases/il-valclass" "$(printf '1250\n12\n1250\nff\n1010\nff')"
 il_check ctorref CtorRef "$ROOT/cases/il-ctorref" "$(printf '(1,2)\n(3,4)\n(9,9)')"
 il_check getcls GetClass "$ROOT/cases/il-getclass" "$(printf 'String\nWidget\nWidget\nString')"
 il_check_imports forin Forin "$ROOT/cases/il-forin" "$(printf '60\n10,20,30,\n3')"
-il_check ldeleg LocalDeleg "$ROOT/cases/il-localdeleg" "$(printf '42\n42\nHI\nWORLD')"
-il_check langf LangFeat "$ROOT/cases/il-langfeat" "$(printf '7\n1024\n120\ntf\ncircle=12\nsq=25\n1a\n2b')"
 il_check pair  Pair  "$ROOT/cases/il-pair"    "$(printf '3\n4\nx\n10\n11')"
 il_check triple Triple "$ROOT/cases/il-triple" "$(printf '1\ntwo\n3\n(1, two, 3)\n(1, two, 3)\n1|two|3\n1\ntwo\n3\n(1, TWO, 3)\nTrue\nFalse\n(3, two, 1)\n([1, 2], x, {k=9})')"   # COV4: Triple ctor/destructure/componentN/full-arg copy/toString (partial-copy-with-defaults omitted — cross-module default-arg bug)
 il_check typealias TypeAlias "$ROOT/cases/il-typealias" "$(printf 'a,b,c\n3\n12\n42\n9\n-1')"   # COV3: typealias over stdlib generic / function type / user class, used across a fn boundary
@@ -700,29 +690,21 @@ il_check dataq Dq    "$ROOT/cases/m-s2/app.kt" "$(printf 'Point(x=3, y=4)\nPoint
 # il-inlinereturn{expr,unit,local}, il-inlineretcoerce) migrated to the NUnit battery tests/il/fixtures/InlineTests.kt.
 # The inline cases below remain because they need a distinct lane (member-extension / generic-owner / sibling-file
 # splice / transitive forwarding) or coroutine involvement (il-inline-suspend*, further down).
-il_check memberextinline MemberExtInline "$ROOT/cases/il-memberextinline/app.kt" "$(printf '3\n1\n2\n-1')"   # #20: inline MEMBER-extension (companion member + Long extension) called with a lambda via `state.withState{}`; dispatch(companion)-unused so the extension splices via __self; non-local return keeps it inline
-il_check inlnestparamshadow InlNestParamShadow "$ROOT/cases/il-inlnestparamshadow/app.kt" "1060"   # F2 (#61): a nested inlineLambda param `x` that SHADOWS the outer inline callee's value param `x` — RewriteLocalRefs must NOT rebind the inner param ref to outer's temp (silent miscompile; pre-fix -> 1050). The inlineLambda scope boundary in RewriteLocalRefs/ApplyPrefix/CollectDeclared
-il_check inlsiblingdelegate InlSiblingDelegate "$ROOT/cases/il-inlsiblingdelegate" "$(printf '107\n5')"   # F4 (#63): a §4.4ii materialized carrier whose body carries a `newDelegate` targeting a `__lambda` lifted into a SIBLING file's file class — `_appLocalMethods` must be MODULE-WIDE (else the sibling target is mis-judged non-app-local -> HasUnmaterializableNested fail-loud). Regression from 923a820
 # #75 S4a — escape-analysis narrowing samples. Cross-module stdlib inline ops (forEach/map/run) route through the
 # bir2cir InlineSplice engine ONLY when a lambda arg escapes (non-local return/break, or arm-c suspension); the
 # non-escaping majority takes the plain delegate call. See docs/design-inline-s4-narrowing-95.md §8.
-il_check inlcompose    InlCompose    "$ROOT/cases/il-inlcompose/app.kt"        "$(printf '11\n99')"          # F3 (#62) transitive forwarding of an inline PARAM through a user top-level inline (outer(b)=inner(b)) + escaping non-local return
 il_check ctor  CtorT "$ROOT/cases/il-ctor/app.kt" "$(printf '12\n25\n5x5\nhi=7\nsolo=0')"
 il_check nest  Nst   "$ROOT/cases/il-nested/app.kt" "$(printf 'outer:root\nnode(7)\n14\nleaf 3')"
 il_check vis   VisT  "$ROOT/cases/il-vis/app.kt" "$(printf '98\nacct\n99')"
 il_check precond Pcd "$ROOT/cases/il-precond/app.kt" "$(printf '3\nreq\nchk\nerr:boom\ntodo')"   # #73 M6/M7: precondition/error family + top-level repeat{} inline loop (moved to bir2cir)
 il_check repeatnlr RptN "$ROOT/cases/il-repeatnlr/app.kt" "$(printf '3\n-1\n6\n6\n63\n9')"   # #75: NON-LOCAL return + return@repeat + nested repeat + scope-fn-in-repeat through repeat{} (kotc carries the un-closured lambda body; bir2cir InlineSplice splices it)
 il_check reif  Rf    "$ROOT/cases/il-reified/app.kt" "$(printf 'String\nInt32\nTrue\nFalse\nTrue\nyo\nno')"
-il_check inner Inner "$ROOT/cases/il-inner"   "$(printf '110\n120\nT2\n5')"
-il_check lazy  Lazy  "$ROOT/cases/il-lazy"    "$(printf 'before\ncomputing...\nVALUE\nVALUE\n42\n42\nFalse\ncomputed\ncomputed\nTrue\n1\n42\n42\nsync\nsync\n1\npub\n1\nnone\n1\nFalse\nguarded\nTrue\n1')"
 il_check volatile Volatile "$ROOT/cases/il-volatile" "$(printf '0\n41\n42\nready\nTrue')"   # @kotlin.concurrent.Volatile -> a real CLR volatile field: modreq(IsVolatile) + `volatile.` prefix (the C# volatile shape) on value-type/ref-type instance fields + a top-level static field
 il_check deleg Deleg "$ROOT/cases/il-deleg"   "$(printf 'set count = 7\nget count\n7')"
 il_check classdeleg AppKt "$ROOT/cases/il-classdeleg/app.kt" "$(printf 'p1\n1\np2\nc[p2]\n2\np40\n40\n3\nc')"   # #81: CLASS delegation `class Foo : Bar by baz` — the frontend's synthetic `$$delegate_0` IrField + its ctor initializer must be emitted (single/two/expr/generic delegates)
 # #70: a genuine `::x`/`obj::p`/`Type::p` callable reference -> a lifted class implementing the REAL stdlib
 # KProperty0/KMutableProperty0/KProperty1 (name/get/set/invoke), not the retired `dotkt$KProperty` synthetic.
 il_check propref AppKt "$ROOT/cases/il-propref/app.kt" "$(printf 'x\n1\n99\n99\n7\n7\n99\ng\nt2\npay')"
-il_check lateinitref AppKt "$ROOT/cases/il-lateinitref/app.kt" "$(printf 'hello\nworld\nworld\nunbound\nname')"   # #66: a callable reference to a `lateinit var` property (bound `b::name` + unbound `Box::name`) lifts a KProperty over the backing FIELD (lateinitGet/setFieldExpr), not a get_/set_ accessor — was a whole-compile abort
-il_check lateinitrefpriv AppKt "$ROOT/cases/il-lateinitrefpriv/app.kt" "$(printf 'init\nchanged\nname')"   # #155: a PRIVATE `lateinit var` referenced via `this::name` lifts a KProperty that reads/writes the private backing field cross-class (lateinitGet/setFieldExpr) — bir2cir CrossClassPrivateWidening must widen those node kinds, else FieldAccessException at runtime
 il_check mrefpriv AppKt "$ROOT/cases/il-mrefpriv/app.kt" "$(printf 'secret')"   # #155 (audit extension): a bound ref to a PRIVATE method (`this::secret`) captured in a lifted closure emits newBoundDelegate{owner:Box,method:secret} (ldftn cross-class) — CrossClassPrivateWidening must widen newBoundDelegate too, else MethodAccessException at runtime
 il_check extpropref AppKt "$ROOT/cases/il-extpropref/app.kt" "$(printf 'mySimpleName:Foo\nmySimpleName=Foo\ntag=hi')"   # #21: bound (`this::extProp` -> KProperty0) + unbound (`String::extProp` -> KProperty1) + mutable-bound (`this::varExtProp` -> KMutableProperty0, set() path) reference to a top-level EXTENSION property; get/set invoke the static ext accessor with the captured/passed receiver (was "KProperty2 has no lowering")
 il_check rwp   Rwp   "$ROOT/cases/il-rwp"     "$(printf 'set n = 5\nget n\n5')"
@@ -753,7 +735,6 @@ il_check netbase2 Nb2 "$ROOT/cases/il-netbase2" "$(printf 'AppError #7\nAppError
 il_check netgen  Ng  "$ROOT/cases/il-netgen"  "$(printf '3\nTrue\n2')" "$COLLMETA"
 il_check netgen2 Ng2 "$ROOT/cases/il-netgen2" "$(printf '3\nTrue\n2')" "$COLLMETA"
 il_check event   Ev  "$ROOT/cases/il-event"   "$(printf 'changed\nchanged\n2\nchanged\nh fired\nchanged\n4')" "$OBSCOLLMETA"
-il_check loopjump LjT "$ROOT/cases/il-loopjump" "$(printf 'break at 3\nsumOdd=9\nouter break at 1,2')"
 il_check netgen3 Ng3 "$ROOT/cases/il-netgen3" "$(printf '4\n8\n8\nFalse\nTrue\n20\n99\n3')" "$GMMETA"
 
 # Reverse interop via an injected C# host: `il_check_inject` builds the sample's runtime.cs into a referenced .NET
