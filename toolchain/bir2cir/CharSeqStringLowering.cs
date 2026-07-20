@@ -330,8 +330,8 @@ static class CharSeqStringLowering
                 // keeping the frontend-static-type contract consistent with the CharSeq->String model. Gated on the
                 // env showing the var as a non-CharSeq (String) type, so a genuine dotkt$CharSequence local (only ever
                 // inside a delegate-target lambda, which Walk returns verbatim before Transform) is never touched.
-                if (IsCharSeqSlot(node["sty"]) && Str(node["name"]) is string ln
-                    && env.Vars.TryGetValue(ln, out var lt) && !IsCharSeqT(lt))
+                if (IsCharSeqSlot(node["sty"]) && Str(node["name"]) is string localName
+                    && env.Vars.TryGetValue(localName, out var localTy) && !IsCharSeqT(localTy))
                     node["sty"] = LowerSlot(node["sty"]);
                 return node;
             default:
