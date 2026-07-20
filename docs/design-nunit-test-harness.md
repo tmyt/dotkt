@@ -1,6 +1,7 @@
 # Design: NUnit in-process test harness — migrating off the per-case bash gate
 
-**Status:** design + working pilot (this doc's companion: `tests/nunit-pilot/`, `tests/nunit-roundtrip/`).
+**Status:** design realized in production as `tests/il/` — in-process `@TestAttribute` batteries (15 migrated
+families). The round-trip / ktproj `<ProjectReference>` lane is the pending consolidation.
 **Motivation:** `docs/reviews/2026-07-19-cases-test-design-audit.md` — the `cases/` gate grew to 384 `il-*`
 directories, each a separate `kotc → bir2cir → ilemit → dotnet-run → ilverify` **process**, driving the full
 gate to ~45 min. The audit's structural remedies (its items #6, #8, #12–16) and its dedup/battery remedies
@@ -129,7 +130,7 @@ never overwrite the same version in a persistent cache; recreate the isolated `g
 **Structure (two projects, producer built to a dll):**
 
 ```
-tests/nunit-roundtrip/
+tests/roundtrip/   (consolidation lane, to be built)
   producer/  RoundtripProducer.ktproj   (OutputType=Library) + Api/Money/Shapes/Async.kt
         ↓ <ProjectReference>  (consumed via the BUILT dll)
   consumer/  RoundtripConsumer.Tests.ktproj  (IsTestProject) + RoundtripTests.kt + harness/
@@ -190,16 +191,15 @@ Order: **build → ilverify (`--no-build`) → `dotnet test --no-build`**, with 
 
 ---
 
-## 6. Bugs surfaced by the pilot (value-assert batteries catch real defects)
+## 6. Bugs the value-assert batteries catch (real defects a stdout diff missed)
 
 1. **Grandchild override of an interface DEFAULT method is miscompiled.** `Shape { fun describe() = ... }`,
    `Rect : Shape` (does **not** override `describe`), `Square : Rect` (**overrides** `describe`) — calling
    `describe()` on a `Square` through a `Shape` reference dispatches to the **interface default**, not
-   `Square`'s override (got `"shape area=16"`, expected `"square area=16"`). **Boundary pinned in-process**
-   (`tests/nunit-pilot/fixtures/InterfaceDispatchTests.kt`): a **direct** child override of an interface default
-   works (`Circle : Shape` overriding `describe` → correct); only the **grandchild** override through a
-   non-overriding intermediate fails. This is a **general compiler bug** (reproduces in-process, not a re-import
-   gap) — the audit's 384-case corpus does not cover this exact shape. Should be filed as a GitHub issue.
+   `Square`'s override (got `"shape area=16"`, expected `"square area=16"`). **Boundary** (tracked as #185): a
+   **direct** child override of an interface default works (`Circle : Shape` overriding `describe` → correct);
+   only the **grandchild** override through a non-overriding intermediate fails. A **general compiler bug**,
+   not a re-import gap — the audit's 384-case corpus does not cover this exact shape.
 2. **`joinToString{}` synthetic-delegate `DelegateCtor` ilverify finding** — the known runtime-safe formal-only
    `#170/#150` (the `verify-il.sh` `[defargs]` XFAIL); reproduced here and baseline-listed in
    `tests/run-ilverify.sh`. Confirms the harness reproduces the existing formal-verification coverage.

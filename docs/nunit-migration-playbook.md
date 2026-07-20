@@ -113,9 +113,9 @@ Do ALL of this in **one commit** (audit #14). Work in an isolated worktree; neve
 
 ## 3. Special lanes (don't force these into the value-assert battery)
 
-- **Round-trip / cross-module** (`verify-roundtrip.sh`): a `<ProjectReference>` producer→consumer pair — see
-  `tests/nunit-roundtrip/` (the DLL-not-source invariant: producer is a sibling dir so the consumer glob can't
-  capture its `.kt`).
+- **Round-trip / cross-module** (`verify-roundtrip.sh`): a `<ProjectReference>` producer→consumer pair, to be
+  built as a gated lane during the roundtrip/ktproj consolidation (the DLL-not-source invariant: the producer
+  is a sibling dir so the consumer glob can't capture its `.kt`).
 - **Injected-runtime interop** (a case shipping `runtime.cs`): the C# helper becomes a `<ProjectReference>`'d
   csproj, mechanically identical to the roundtrip producer.
 - **Compile-fail / diagnostic-text** cases: stay in a small `kotc`-invoking shell lane (the code must NOT

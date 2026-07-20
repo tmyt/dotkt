@@ -4,9 +4,8 @@
      methods and runs them in-process/parallel. Each fixture is a migrated FAMILY (battery): many former
      stdout-diff cases -> @TestAttribute methods asserting the VALUE directly, compiled ONCE per assembly.
 
-     Unlike tests/nunit-pilot (which pins the PUBLISHED 0.9.6-rc7 to reproduce offline), this suite resolves
-     the LOCALLY-BUILT SDK from build/nuget-feed via tests/nuget.config (design D4) — so it tests the compiler
-     in THIS working tree. The pinned version tracks packaging/DotKt.Versions.props (DotKtVersionPrefix +
+     This suite resolves the LOCALLY-BUILT SDK from build/nuget-feed via tests/nuget.config (design D4) — so it
+     tests the compiler in THIS working tree. The pinned version tracks packaging/DotKt.Versions.props (DotKtVersionPrefix +
      -DotKtVersionSuffix); the gate driver tests/run-nunit-il.sh reads it from there and clears the isolated
      cache so a repacked same-version SDK always wins. -->
 <Project Sdk="DotKt.Sdk/0.9.6-rc7">

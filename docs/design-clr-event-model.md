@@ -363,8 +363,8 @@ Kotlin-declared events.)
 ## 7. Decision 5 — the canonical conformance case (NUnit)
 
 The user's `ViewModelBase`/`PersonViewModel` is the acceptance test, added as an NUnit fixture under
-the migration (`tests/nunit-pilot/fixtures/ClrEventTests.kt`, the `@TestAttribute` + `ClassicAssert`
-shape of `InterfaceDispatchTests.kt`). It exercises IMPLEMENT (`by clrEvent()`), the property-delegate
+the migration (`tests/il/fixtures/ClrEventTests.kt`, the `@TestAttribute` + `ClassicAssert`
+shape of the migrated `*Tests.kt` batteries). It exercises IMPLEMENT (`by clrEvent()`), the property-delegate
 RAISE-from-outside, and CONSUME via the `INotifyPropertyChanged` interface slot:
 
 ```kotlin
