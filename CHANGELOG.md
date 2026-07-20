@@ -63,6 +63,19 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- **bir2cir consumes the frontend-resolved operand static type instead of re-deriving it ([tmyt/dotkt#122],
+  [tmyt/dotkt#48], area:bir2cir, area:kotc): the no-re-resolution-downstream invariant, realized on the type-contract
+  surface.** kotc now stamps each value node's instantiated static type as a structured `sty` slot at its `expr()`
+  chokepoint; bir2cir's `StaticType` reads that stamp (carried onto the clr* nodes MemberCallSubstitution/NetInteropBinding
+  synthesize, stripped before CIR in BirTypeLowering) rather than re-doing overload return-type resolution against the
+  ref.dll. The ~27KB `StaticTypeResolver` re-inference — `ResolveCallReturn`/`ResolveFieldType`/`LocalMemberType`/
+  `TryGlobalTopLevel`/`SubstMemberTv` + the cross-file `GlobalTypes` aggregation + `ReferenceMetadataIndex.TryFieldType` —
+  is DELETED; the lexical `BirScope` (declared var/param types) stays for bir2cir-synthesized locals. Stdlib CIR is
+  byte-identical (only recognition moved). Also closes **#48 residual 1**: the last bare-string `ownerType` sites
+  (top-level file-class calls, `__mref` forwarders, class-delegation forwarders) now emit a structured `{t:"fqn"}` node,
+  so `ownerType` is removed from the `verify-schema` `STR_OK` allow-list. **#48 residual 2** (primitive-shorthand leaf
+  `int`/`void`/`object`) is confirmed a sanctioned below-kotc CLR-resolution vocabulary (ilemit normalizes toward it),
+  not a value-slot string — no change. #122 closes; #48 closes.
 - **bir2cir/ilemit ([tmyt/dotkt#48], area:bir2cir, area:ilemit): the legacy string-token type grammar is DELETED —
   structured `TypeNode` only, matching the frozen #37 schema; no dual-protocol.** The wire was already structured
   (`docs/bir-cir.schema.json` `$defs/type`), but the CODE still PARSED/EMITTED the retired `clr:` / `clrg:Name[..]` /

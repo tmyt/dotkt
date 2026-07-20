@@ -385,4 +385,18 @@ bare-FQN strings the wire format forbids):
 
 The OWNER-FQN and SIG-KEY string islands (§2.2.1) are deliberately OUT of scope — they are not document type slots
 (owner is its own slot kind; the sig-key is a transient reflection-comparison key), so `STR_OK` allow-lists the
-narrow owner/member-name keys and the validator never flags them.
+narrow owner/member-name keys and the validator never flags them. As of #48, `ownerType` is NO LONGER one of those
+keys: kotc emits EVERY owner slot (`owner`/`ownerType`) as a structured `{t:"fqn",…}` node (the last bare-string
+sites — top-level file-class calls, `__mref` interop forwarders, class-delegation forwarders — now use `fqnJson`),
+so `ownerType` is removed from `STR_OK` and the owner-FQN island survives ONLY as ilemit's private in-assembly
+`_types` string-keyed lookup, never on the wire.
+
+**`sty` — the frontend static-type stamp (#122, BIR-only transient).** kotc stamps the instantiated `node.type` as a
+structured `{t:…}` `sty` slot on every value node (`local`/`callStatic`/`callInstance`/`field`/`lateinitGet`/
+`staticField`) at its `expr()` chokepoint, so bir2cir's `StaticType` CONSUMES the frontend-resolved operand type
+instead of re-resolving a callee return against the ref.dll. bir2cir carries it across the passes that synthesize
+new nodes (MemberCallSubstitution / NetInteropBinding stamp `sty` onto the clr* nodes they build) and STRIPS it in
+`BirTypeLowering` before CIR — like `overrides`, it is bir2cir-internal metadata, never reaches CIR/ilemit. Its
+VALUE is a `{t:…}` node, so `verify-schema` validates it as a type node with no `STR_OK` entry. The
+primitive-shorthand LEAF vocabulary (`int`/`void`/`object`) inside a structured `fqn.name` stays a sanctioned
+below-kotc CLR-resolution form (ilemit normalizes toward it via `PrimShorthandName`), NOT a value-slot string.

@@ -962,17 +962,19 @@ static class InlineSplice
         if (boxedCaps.Count > 0)
         {
             var boxRefName = new Dictionary<string, string>(StringComparer.Ordinal);
+            var boxRefElem = new Dictionary<string, JsonNode>(StringComparer.Ordinal);   // #122: cap -> element type (for the `.v` read's `sty`)
             foreach (var f in fields.OfType<JsonObject>())
             {
                 if (Str(f["name"]) is not string fn || !boxedCaps.Contains(fn)) continue;
                 var elem = f["type"];   // the capture's plain type = the cell's element type
                 var refName = RefCellNameFor(elem);
                 boxRefName[fn] = refName;
+                if (elem != null) boxRefElem[fn] = elem.DeepClone();
                 f["type"] = TypeJson.Fqn(refName);            // the closure FIELD now holds the Ref cell
                 if (!_boxRequests.Any(r => r.varName == fn && r.refName == refName))
                     _boxRequests.Add((fn, refName, elem.DeepClone()));   // DISTINCT enclosing-scope box request (flushed at Apply)
             }
-            RewriteBoxedCaptureInCarrier(invBody, boxedCaps, boxRefName, cname);
+            RewriteBoxedCaptureInCarrier(invBody, boxedCaps, boxRefName, boxRefElem, cname);
         }
         // Any residual `{k:local}` that is neither an invoke param NOR one of the carrier's OWN declared locals is a capture
         // kotc did not list -> fail loud rather than leak an unbound local to ilemit.
@@ -2150,8 +2152,6 @@ static class InlineSplice
     // (kotlin.* FQNs), so `MapVarianceRealign.InvariantCollections` matches. Pairs with Piece 2 (stdlib Any-helpers).
     static void RetypeReceiverToConcrete(JsonNode root)
     {
-        StaticType.Refs = _refs;
-        StaticType.LocalTypes = StaticType.CollectTypes(root);
         void ProcessMethod(JsonObject method)
         {
             var scope = BirScope.Empty.Child();
@@ -2418,7 +2418,7 @@ static class InlineSplice
     // Carrier-side ref-cell rewrite: a boxed capture X read `{k:local,name:X}` -> `this.<X>.v` (the cell field's `.v`), and a
     // write `{k:setLocal,name:X,value:E}` -> `setField this.<X>.v = E`. `this.<X>` is the closure FIELD holding the cell
     // (typed as the Ref class). Replaces the node at its slot; does NOT descend into a nested `synthClass` (its X is its own).
-    static void RewriteBoxedCaptureInCarrier(JsonNode node, HashSet<string> boxed, Dictionary<string, string> refName, string cname)
+    static void RewriteBoxedCaptureInCarrier(JsonNode node, HashSet<string> boxed, Dictionary<string, string> refName, Dictionary<string, JsonNode> refElem, string cname)
     {
         JsonNode CapField(string x) => new JsonObject
         {
@@ -2427,12 +2427,15 @@ static class InlineSplice
             ["recv"] = new JsonObject { ["k"] = "this" },
             ["name"] = x,
         };
+        // #122: stamp the `.v` read with the boxed capture's element type (from `refElem`) so a downstream StaticType
+        // consumer (e.g. ArrayConstructionLowering off a boxed captured ARRAY) recovers it without a decl lookup.
         JsonNode ReadV(string x) => new JsonObject
         {
             ["k"] = "field",
             ["ownerType"] = TypeJson.Fqn(refName[x]),
             ["recv"] = CapField(x),
             ["name"] = "v",
+            ["sty"] = refElem != null && refElem.TryGetValue(x, out var el) ? el.DeepClone() : null,
         };
         bool IsBoxedRead(JsonNode v) => v is JsonObject lo && Str(lo["k"]) == "local" && Str(lo["name"]) is string ln && boxed.Contains(ln);
         // Wrap a `{k:setLocal name:X}` into `setField this.<X>.v = <value>`, rewriting the value's boxed reads too — INCLUDING
@@ -2441,7 +2444,7 @@ static class InlineSplice
         {
             RewriteBoxedWrite(wo, wn, refName, cname);
             if (IsBoxedRead(wo["value"])) wo["value"] = ReadV(Str(((JsonObject)wo["value"])["name"]));
-            else RewriteBoxedCaptureInCarrier(wo["value"], boxed, refName, cname);
+            else RewriteBoxedCaptureInCarrier(wo["value"], boxed, refName, refElem, cname);
         }
         if (node is JsonArray a)
         {
@@ -2449,7 +2452,7 @@ static class InlineSplice
             {
                 if (IsBoxedWrite(a[i], boxed, out var wn)) HandleWrite((JsonObject)a[i], wn);
                 else if (IsBoxedRead(a[i])) a[i] = ReadV(Str(((JsonObject)a[i])["name"]));
-                else if (a[i] != null) RewriteBoxedCaptureInCarrier(a[i], boxed, refName, cname);
+                else if (a[i] != null) RewriteBoxedCaptureInCarrier(a[i], boxed, refName, refElem, cname);
             }
             return;
         }
@@ -2460,7 +2463,7 @@ static class InlineSplice
             if (nested && key == "synthClass") continue;
             if (IsBoxedWrite(o[key], boxed, out var wn)) HandleWrite((JsonObject)o[key], wn);
             else if (IsBoxedRead(o[key])) o[key] = ReadV(Str(((JsonObject)o[key])["name"]));
-            else if (o[key] != null) RewriteBoxedCaptureInCarrier(o[key], boxed, refName, cname);
+            else if (o[key] != null) RewriteBoxedCaptureInCarrier(o[key], boxed, refName, refElem, cname);
         }
     }
 
@@ -2590,12 +2593,16 @@ static class InlineSplice
     // freshly-built `{k:local,name:X}` recv).
     static void BoxVarInBody(JsonNode node, string x, string refName, JsonNode elem)
     {
+        // #122: the ref-cell `.v` read's static type IS the boxed var's element type — stamp `sty` so a downstream
+        // StaticType consumer (e.g. ArrayConstructionLowering off a boxed captured ARRAY) recovers it without a decl
+        // lookup, matching kotc's own leaf stamp on an un-boxed local read.
         JsonNode ReadV() => new JsonObject
         {
             ["k"] = "field",
             ["ownerType"] = TypeJson.Fqn(refName),
             ["recv"] = new JsonObject { ["k"] = "local", ["name"] = x },
             ["name"] = "v",
+            ["sty"] = elem?.DeepClone(),
         };
         var refMap = new Dictionary<string, string>(StringComparer.Ordinal) { [x] = refName };
         bool IsRead(JsonNode v) => v is JsonObject lo && Str(lo["k"]) == "local" && Str(lo["name"]) == x;

@@ -125,6 +125,12 @@ static class ClosureSynthesis
             ["body"] = ctorBody,
         };
 
+        var invokeBody = (sc["body"] as JsonArray)?.DeepClone() ?? new JsonArray();
+        // #122: an INLINE-MATERIALIZED closure's body is bir2cir-synthesized (InlineSplice), so its capture-field reads
+        // never passed through kotc's expr() `sty` stamp. Stamp each `{k:field}` read of one of THIS closure's capture
+        // fields with that field's declared type, so a downstream StaticType consumer (e.g. ArrayConstructionLowering
+        // deriving `arrayGet.elem` off a captured array field) recovers the type WITHOUT re-resolving it from a decl.
+        StampCaptureFieldSty(invokeBody, fields);
         var invoke = new JsonObject
         {
             ["name"] = "invoke",
@@ -133,7 +139,7 @@ static class ClosureSynthesis
             ["virtual"] = false,
             ["params"] = (sc["params"] as JsonArray)?.DeepClone() ?? new JsonArray(),
             ["ret"] = sc["ret"]?.DeepClone(),
-            ["body"] = (sc["body"] as JsonArray)?.DeepClone() ?? new JsonArray(),
+            ["body"] = invokeBody,
         };
 
         var cls = new JsonObject
@@ -152,5 +158,34 @@ static class ClosureSynthesis
         cls["ctors"] = new JsonArray { ctor };
         cls["methods"] = new JsonArray { invoke };
         return cls;
+    }
+
+    // Walk a synthesized closure `invoke` body and stamp `sty` (the frontend static-type contract, #122) on every
+    // capture-field read `{k:field, recv:{k:this}, name:<f>}` whose `f` is one of the closure's capture fields, using
+    // that field's declared type. Idempotent (a read that already carries `sty` — a kotc-emitted closure body — is left
+    // untouched). No re-resolution: the type is read straight off the closure's own `fields` decl.
+    static void StampCaptureFieldSty(JsonNode body, JsonArray fields)
+    {
+        var fieldTypes = new Dictionary<string, JsonNode>(System.StringComparer.Ordinal);
+        foreach (var f in fields)
+            if (f is JsonObject fo && Str(fo["name"]) is string fn && fo["type"] is JsonNode ft)
+                fieldTypes[fn] = ft;
+        if (fieldTypes.Count == 0) return;
+        void Walk(JsonNode n)
+        {
+            if (n is JsonObject o)
+            {
+                if (Str(o["k"]) == "field" && o["sty"] == null
+                    && o["recv"] is JsonObject rc && Str(rc["k"]) == "this"
+                    && Str(o["name"]) is string nm && fieldTypes.TryGetValue(nm, out var t))
+                    o["sty"] = t.DeepClone();
+                // Do NOT descend into a NESTED closure's own invoke body (`synthClass`) — its `this` is a different
+                // closure, processed by its own BuildClosureClass. A nested closure's CAPTURE value exprs are evaluated
+                // in THIS scope and stay reachable (they are not under `synthClass`), so they still get stamped.
+                foreach (var kv in o) if (kv.Value != null && kv.Key != "synthClass") Walk(kv.Value);
+            }
+            else if (n is JsonArray a) foreach (var c in a) if (c != null) Walk(c);
+        }
+        Walk(body);
     }
 }

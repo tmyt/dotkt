@@ -29,8 +29,6 @@ static class ValueSlotNullableWrite
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs)
     {
         _refs = refs;
-        StaticType.Refs = refs;
-        StaticType.LocalTypes = StaticType.CollectTypes(root);
         switch (root)
         {
             case JsonObject o: WalkObject(o, BirScope.Empty); break;

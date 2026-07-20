@@ -121,8 +121,6 @@ static class StringCharSequenceBridge
         if (retLambdas != null && root is JsonObject rootObj) RetypeLiftedRets(rootObj, retLambdas);
         // Seed the shared static-type resolver for THIS file so IsStaticString can recover a receiver's static type
         // uniformly (a property-getter call, an app top-level fun result, a `!!`/elvis valueBlock — none carry a `ret`).
-        StaticType.Refs = refs;
-        StaticType.LocalTypes = StaticType.CollectTypes(root);
         var walked = Walk(root, new Env());
         // Emit the app-local adapter type into this file's `types` if a wrap fired here and no other file already got
         // it (one per assembly). ilemit resolves a wrap in a sibling file against it via the assembly-wide `_types`.
