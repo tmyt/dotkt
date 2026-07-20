@@ -275,17 +275,18 @@ static class CharSeqStringLowering
         var k = Str(node["k"]);
 
         // #122: `sty` is the frontend static-type stamp the following StringCharSequenceBridge CONSUMES (its `Surface`
-        // reads `sty` BEFORE the lexical scope). This pass collapses a CharSequence LOCAL/param DECLARATION to String,
-        // but a READ of that variable still carries the pre-collapse `dotkt$CharSequence` `sty` — so the bridge's
-        // sty-first Surface reports the stale CharSequence, judges the value "not a static String", and SKIPS the
-        // adapter-wrap. A raw `string` local then reaches a `dotkt$CharSequence` slot -> ilverify StackUnexpected
-        // (regexreplace's `val cs: CharSequence = "banana"; a.replaceFirst(cs, ...)`). Retype the read's `sty` to the
-        // variable's post-collapse lexical type (String), in lockstep with the decl — mirroring the pre-#122 scope-based
-        // resolution. Scoped to `local` reads: a call/subSequence result that genuinely stays a `dotkt$CharSequence`
-        // adapter keeps its `sty`, so the bridge does not wrongly wrap an already-adapter value.
-        if (k == "local" && Str(node["name"]) is string ln && IsCharSeqSlot(node["sty"])
-            && env.Vars.TryGetValue(ln, out var lt))
-            node["sty"] = TypeJson.Write(lt);
+        // reads `sty` BEFORE the lexical scope). This pass collapses a CharSequence local/param/field/top-level-val
+        // DECLARATION to String, but a READ of one still carries the pre-collapse `dotkt$CharSequence` `sty` — so the
+        // bridge's sty-first Surface reports the stale CharSequence, judges the value "not a static String", and SKIPS
+        // the adapter-wrap. A raw `string` then reaches a `dotkt$CharSequence` slot -> ilverify StackUnexpected
+        // (regexreplace's `val cs: CharSequence = "banana"; a.replaceFirst(cs, ...)`). Retype the read's stale `sty` to
+        // String in lockstep with the decl — reproducing the pre-#122 resolution, which read a variable/field/
+        // staticField reference's static type off its (already-collapsed) declaration. Scoped to the DECLARATION-READ
+        // kinds: a call / subSequence RESULT that genuinely stays a `dotkt$CharSequence` adapter keeps its `sty`, so the
+        // bridge does not wrongly wrap an already-adapter value. (Delegate-target lambda subtrees never reach here —
+        // Walk clones them out before Transform — so their un-collapsed CharSequence reads are untouched.)
+        if (k is "local" or "field" or "lateinitGet" or "staticField" && IsCharSeqSlot(node["sty"]))
+            node["sty"] = LowerSlot(node["sty"]);
 
         // A member READ on a CharSequence value (kotc: callInstance whose ownerType is the synthetic). A stdlib
         // CharSequence-EXTENSION is a callStatic (receiver as arg[0]), never this shape, so this only ever hits the
@@ -318,21 +319,6 @@ static class CharSeqStringLowering
             case "cast":
                 if (IsCharSeqSlot(node["type"]) && node["e"] is JsonNode ce)
                     return CoerceOrNull(ce, env) ?? ce.DeepClone();
-                return node;
-            case "local":
-                // #122 fix: this pass collapsed the read's VAR declaration `CharSequence -> String` (case "var" /
-                // Env.WithDecl / WalkArray), so the local now holds a real String. But kotc stamped a `sty`
-                // (SubstituteCharSeqIdentity already rewrote it `kotlin.CharSequence -> dotkt$CharSequence`) that the
-                // StringCharSequenceBridge CONSUMES via StaticType.Surface — and Surface reads `sty` BEFORE the scope,
-                // so a stale `dotkt$CharSequence` sty SHADOWS the retype and the bridge fails to adapter-wrap the String
-                // flowing into an un-rebuilt stdlib `dotkt$CharSequence` arg slot (ilverify StackUnexpected: a raw
-                // `string` reaches a `dotkt$CharSequence` param). Collapse the stale sty to match the var's real type,
-                // keeping the frontend-static-type contract consistent with the CharSeq->String model. Gated on the
-                // env showing the var as a non-CharSeq (String) type, so a genuine dotkt$CharSequence local (only ever
-                // inside a delegate-target lambda, which Walk returns verbatim before Transform) is never touched.
-                if (IsCharSeqSlot(node["sty"]) && Str(node["name"]) is string localName
-                    && env.Vars.TryGetValue(localName, out var localTy) && !IsCharSeqT(localTy))
-                    node["sty"] = LowerSlot(node["sty"]);
                 return node;
             default:
                 return node;
