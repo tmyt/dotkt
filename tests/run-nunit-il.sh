@@ -25,6 +25,17 @@ CACHE="$ROOT/build/test-package-cache"
 #     migration bumps its project's number in the SAME change, so a dropped method is a red gate). ------------
 declare -A EXPECTED=(
 	["tests/il"]=157  # Generics 6 + Inline 17 + Collections 16 + Maps 10 + Strings 22 + Nullable 12 + Float 7 + Enum 5 + Exception 8 + Lambda 10 + ClrEvent 4 + LanguageCore 12 + Array 12 + GenericTypes 10 + Math 6
+	# ProjectReference round-trip consolidation lane (docs/design-nunit-test-harness.md §3; playbook §3): a producer
+	# DotKt LIBRARY (tests/roundtrip/producer) consumed via <ProjectReference> as its BUILT dll (facadegen re-import,
+	# NOT source) by this NUnit consumer. First batch = 8 migrated verify-roundtrip.sh sections (enum/toplevel-val/
+	# customprop/defargs/nrt/memext/operator-flag/generic-operator) -> 8 @TestAttribute methods.
+	["tests/roundtrip/consumer"]=8
+)
+
+# Extra DotKt-emitted assemblies (beyond the .ktproj-named one) to ALSO run ilverify over, per consumer project.
+# The round-trip consumer's <ProjectReference> copies the producer dll into its bin; verify BOTH (§5 order).
+declare -A EXTRA_EMIT=(
+	["tests/roundtrip/consumer"]="RoundtripProducer.dll"
 )
 
 # Read the packed SDK version from the single source of truth so a version bump needs no edit here.
@@ -60,6 +71,11 @@ for proj in "${!EXPECTED[@]}"; do
 	asm="$(basename "$proj_file" .ktproj).dll"
 	emitted="$(find "$dir/bin" -name "$asm" 2>/dev/null | head -1)"
 	[[ -f "$emitted" ]] && EMITTED+=("$emitted")
+	# Also collect any declared EXTRA_EMIT assembly (e.g. a ProjectReference'd producer dll copied into bin).
+	if [[ -v EXTRA_EMIT[$proj] ]]; then
+		extra_emitted="$(find "$dir/bin" -name "${EXTRA_EMIT[$proj]}" 2>/dev/null | head -1)"
+		[[ -f "$extra_emitted" ]] && EMITTED+=("$extra_emitted")
+	fi
 
 	# Run the tests, capturing a TRX for the machine-readable discovered-count assertion.
 	trxdir="$dir/TestResults"; rm -rf "$trxdir"
