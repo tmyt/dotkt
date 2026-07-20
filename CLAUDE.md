@@ -208,17 +208,21 @@ when you find residual code violating them, fixing it is in scope, not optional)
 > **the klib** — never a facadegen scan of the stdlib or a `kotlin.*` guard inside facadegen
  (symptom-patching; the root error is asking facadegen for stdlib symbols at all).
 >
-> ### BINDING INVARIANT — facadegen NEVER receives the stdlib in `--compile-refs` (2026-07-21, user, emphatic/repeated)
+> ### BINDING INVARIANT — facadegen must never SURFACE the stdlib (resolver-scope OK, surface-set banned) (2026-07-21, user)
 > **facadegen is the process that PROJECTS a FOREIGN CLR assembly into the Kotlin dialect** (so
-> `import System.X` / a C# `<ProjectReference>` works). The stdlib is NOT a foreign assembly to project:
-> `kotlin.*` **IS** the Kotlin dialect, supplied by the **KLIB**. So handing facadegen the stdlib is a
-> **category error** — you're asking the .NET→Kotlin projector to re-project the stdlib's own CLR form
-> (its `@ClrTypeAlias`'d BCL types), which **shadows the real BCL type with a degraded facade** (a
-> plain-C# `List<T>` loses its members/supertypes — `.Add`/`.Count`/Iterable/MutableList gone). So
-> facadegen's `--compile-refs` carries **ZERO stdlib — EVER**: neither the runtime `DotKt.Stdlib` nor
-> the reference `DotKt.Private.Stdlib` twin, at **every** call site (`dotkt.sh` — which was ALSO wrong —
-> `DotKt.Toolchain.targets`, the `verify-*.sh` `il_check_inject` helpers). facadegen resolves .NET types
-> via the **framework** references only; `--import-list` keeps generation .NET-only. (MEMORY
+> `import System.X` / a C# `<ProjectReference>` works). `kotlin.*` **IS** the Kotlin dialect, supplied by
+> the **KLIB** — so facadegen must **never generate/surface a `kotlin.*` type from the stdlib**;
+> `--import-list` keeps generation .NET-only. But the stdlib legitimately (and for the DotKt-library
+> **roundtrip** lane, NECESSARILY) sits in facadegen's `--compile-refs` **resolver**: it is needed to
+> materialize a consumed DotKt lib's `[kotlin.clr.*]` round-trip attributes (`ManagedReferenceCatalog`
+> aliases the runtime twin to the reference twin for exactly this — `verify-roundtrip.sh` depends on it).
+> So the correct invariant is **resolver-scope OK, SURFACE-set banned** — enforced by separating the
+> loadable set from the surfaceable set (facadegen's `Resolve`/`TypesInNamespace`/`ResolveTopLevelFacade`/
+> `GetAwaiterExtIndex`/`HasArityClash` iterate the resolver universe indiscriminately; the fix routes the
+> *surfacing* sites through a stdlib-excluded index — the ~30-line "Option B" separation).
+> ⚠️ The earlier "handing facadegen the stdlib degrades a plain-C# `List<T>` facade" claim was a
+> **PHANTOM** — it does NOT reproduce (tests/interop is green 21/21); the reverse-`@ClrTypeAlias` restore
+> is gated on `IsDotKtEmittedAssembly`, which a plain-C# producer isn't. (MEMORY
 > `facadegen-never-gets-stdlib-in-compile-refs`.)
 
 # The cardinal rule: do NOT special-case the compiler
