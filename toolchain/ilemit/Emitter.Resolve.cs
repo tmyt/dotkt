@@ -511,8 +511,12 @@ sealed partial class Emitter
     MethodInfo FindMethod(string typeName, string name, DotKt.Bir.TypeNode[] sig = null)
     {
         // (#139 site-2) the unsigned->signed native-array owner alias is retired: bir2cir MemberCallSubstitution now
-        // rewrites an unsigned-array call `ownerType` to its signed-array FQN, so `typeName` is already the emitted
-        // method-holder — ilemit no longer re-resolves the Kotlin<->CLR array equivalence here.
+        // rewrites an unsigned-array owner (callInstance/callStatic/newBoundDelegate) to its signed-array FQN, so
+        // `typeName` is already the emitted method-holder — ilemit no longer re-resolves the Kotlin<->CLR array
+        // equivalence here. Belt-and-suspenders: if an unsigned owner still arrives, bir2cir missed a node kind — fail
+        // loud (a diagnosable producer bug) rather than resolve against the absent unsigned type and throw an opaque miss.
+        if (typeName is "kotlin.UByteArray" or "kotlin.UShortArray" or "kotlin.UIntArray" or "kotlin.ULongArray")
+            throw new NotSupportedException($"unsigned-array owner '{typeName}' reached ilemit FindMethod — bir2cir MemberCallSubstitution should have rewritten it to the signed-array FQN (#139 site-2)");
         var seenIfaces = new HashSet<string>();
         MethodBuilder FindInInterfaces(TypeInfo ti)
         {

@@ -363,7 +363,11 @@ sealed partial class Emitter
                         var itype = externalSynthIface ? ResolveType(specName) : MapType(specFqn);
                         // C3b reverse bridge: if this is a @Clr collection interface (IEnumerable<E>-derived) and the
                         // class has only a Kotlin iterator(), synthesize GetEnumerator (handles the two overloads itself).
-                        if (!viaBaseClass) GenerateGetEnumeratorIfNeeded(ti, itype);   // base class already emitted its adapter
+                        // Self-guards (idempotent + only when THIS class declares its own iterator()), so it is safe for a
+                        // viaBaseClass interface too: a grandchild that overrides iterator() over an abstract Iterable base
+                        // (whose abstract iterator produced no base GetEnumerator) still gets its adapter; a non-overriding
+                        // child no-ops and inherits the base's.
+                        GenerateGetEnumeratorIfNeeded(ti, itype);
                         var have = ti.Methods.Keys.ToHashSet();
                         // A SELF-REFERENTIAL constructed generic interface (e.g. `V : IComparable<V>`, V the emitted
                         // type) is a TypeBuilderInstantiation whose .GetMethods() throws. Enumerate the OPEN

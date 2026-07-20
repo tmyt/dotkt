@@ -49,16 +49,23 @@ static class MemberCallSubstitution
         ["kotlin.UIntArray"] = "kotlin.IntArray", ["kotlin.ULongArray"] = "kotlin.LongArray",
     };
 
-    // Rewrite a still-`callInstance` node's unsigned-array `ownerType` to the same-width signed-array FQN. A no-op for a
-    // node TransformCall already substituted (a clrInstance/clrPropGet BCL call has no unsigned `ownerType`) or whose
-    // owner is not an unsigned specialized array. Covers both the plain member call and the property-accessor form
-    // (`callInstance ... prop=get/set`), which are the same node kind.
+    // Rewrite a member-resolving node's unsigned-array owner to the same-width signed-array FQN. A no-op for a node
+    // TransformCall already substituted (a clrInstance/clrStatic/clrPropGet BCL call has no unsigned owner) or whose
+    // owner is not an unsigned specialized array. Covers EVERY node kind that reaches ilemit's FindMethod — the exact
+    // set the retired NativeArrayOwner alias covered: a member call / property accessor (`callInstance`), a static call
+    // (`callStatic`, owner in `owner`), and a bound method reference (`newBoundDelegate`/`newBoundClrDelegate`).
     static JsonNode RewriteUnsignedArrayOwner(JsonNode node)
     {
-        if (node is JsonObject o && (o["k"] as JsonValue)?.GetValue<string>() == "callInstance"
-            && TypeJson.Read(o["ownerType"]) is TypeNode.Fqn owner
+        if (node is not JsonObject o) return node;
+        string field = (o["k"] as JsonValue)?.GetValue<string>() switch
+        {
+            "callInstance" or "newBoundDelegate" or "newBoundClrDelegate" => "ownerType",
+            "callStatic" => "owner",
+            _ => null,
+        };
+        if (field != null && TypeJson.Read(o[field]) is TypeNode.Fqn owner
             && UnsignedArraySignedOwner.TryGetValue(owner.Name, out var signed))
-            o["ownerType"] = TypeJson.Write(owner.Args != null ? new TypeNode.Fqn(signed, owner.Args) : new TypeNode.Fqn(signed));
+            o[field] = TypeJson.Write(owner.Args != null ? new TypeNode.Fqn(signed, owner.Args) : new TypeNode.Fqn(signed));
         return node;
     }
 
@@ -217,15 +224,19 @@ static class MemberCallSubstitution
 
     static JsonNode Transform(JsonObject node, ReferenceMetadataIndex refs, SubstCtx ctx)
     {
-        return (node["k"] as JsonValue)?.GetValue<string>() switch
+        var result = (node["k"] as JsonValue)?.GetValue<string>() switch
         {
             "new" => TransformNew(node, refs) ?? node,
-            "callInstance" => RewriteUnsignedArrayOwner(TransformCall(node, refs, instance: true, ctx) ?? node),
+            "callInstance" => TransformCall(node, refs, instance: true, ctx) ?? node,
             "callStatic" => TransformCall(node, refs, instance: false, ctx) ?? node,
             "staticField" => TransformStaticField(node, refs) ?? node,
             "field" => TransformStorageField(node) ?? node,
             _ => node,
         };
+        // #139 site-2: after any substitution, rewrite a surviving unsigned-array member owner to its signed-array FQN
+        // (all four FindMethod-reaching node kinds; a no-op when the node was substituted to a BCL call or is not a
+        // member-resolving kind). ilemit's NativeArrayOwner alias is retired, so this is the sole owner-alias site.
+        return RewriteUnsignedArrayOwner(result);
     }
 
     // A companion INSTANCE load on a CLR-bound owner (`String.Companion` as a value — e.g. the receiver arg of a
