@@ -750,6 +750,7 @@ il_check extpropref AppKt "$ROOT/cases/il-extpropref/app.kt" "$(printf 'mySimple
 il_check rwp   Rwp   "$ROOT/cases/il-rwp"     "$(printf 'set n = 5\nget n\n5')"
 il_check bymap Bm    "$ROOT/cases/il-bymap"   "$(printf 'Alice\n30')"
 il_check topdeleg AppKt "$ROOT/cases/il-topdeleg/app.kt" "$(printf '0\n42\ninit')"   # #70: a TOP-LEVEL delegated property with an arbitrary getValue/setValue provider routes through `x$delegate.getValue/setValue` (static delegate field, null thisRef) — was a whole-compile abort (only member/local delegated props were routed)
+il_check gendp AppKt "$ROOT/cases/il-gendp/app.kt" "$(printf 'John\nJane\n30\n42\ntop\nchanged\n7\n99\nboxed\nrebox')"   # #191: a GENERIC user delegate `D<T>` backing a member/local/top-level/generic-enclosing-class delegated property — kotc names the owner BARE (`"D"`/`"Container"`), bir2cir GenericDelegateInstantiation stamps the constructed `D<String>`/`D<Int>`/`Container<String>` from the receiver's static type (was BadImageFormatException / ilverify found 'string' expected '!0')
 il_check del2  D2    "$ROOT/cases/il-deleg2"  "$(printf '0 -> 1\n1 -> 2\n5\nhi')"
 # The G-1..G-6 generics battery (il-generic .. il-generic6) migrated to the NUnit suite:
 # tests/il/fixtures/GenericsTests.kt (gated by tests/run-nunit-il.sh). Per the cases-test-design audit #14,

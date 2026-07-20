@@ -580,6 +580,16 @@ sealed class Pipeline
         if (!_options.RefBuild)
             GenericSelfInstantiation.ApplyAll(staged.Select(s => s.Root).ToList());
 
+        // PHASE 1.9 — GENERIC DELEGATE INSTANTIATION (#191): a `var x by D<T>(…)` delegated property whose user
+        // delegate is GENERIC gets its getValue/setValue dispatch emitted with the BARE delegate owner (`"D"`, no
+        // type args) while the `$delegate` field/local carries the constructed `D<String>` — the open owner
+        // mismatches the constructed receiver (BadImageFormatException / ilverify `found 'string' expected '!0'`).
+        // Recover the receiver's instantiation (StaticType.Surface) and stamp the constructed owner. The
+        // delegated-property analog of GenericSelfInstantiation; kotc names the type, bir2cir derives the CLR
+        // instantiation. BEFORE BirTypeLowering (so `D<kotlin.String>` lowers consistently with the receiver).
+        if (!_options.RefBuild)
+            GenericDelegateInstantiation.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
+
         // STAR-PROJECTION BOUND index (#2): the in-assembly generic type-param BOUNDS (`interface Key<E : Element>`
         // -> {Key: [Element]}), collected across ALL staged roots (a `Key<*>` use may live in a sibling file from Key's
         // declaration). Feeds StarProjectionBoundLowering so a `Key<object>` (kotc's star-projection erasure) is
