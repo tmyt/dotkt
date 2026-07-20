@@ -722,7 +722,12 @@ sealed partial class Emitter
                 // final method uses ldftn (the target stays on the stack as the delegate's first ctor arg).
                 var ft = MapType(e.GetProperty("funcType"));
                 var mb = FindMethod(SlotName(e.GetProperty("ownerType")), e.GetProperty("method").GetString());
-                EmitExpr(e.GetProperty("recv"));
+                var recvT = EmitExpr(e.GetProperty("recv"));
+                // A value-type (or `gp:T`) receiver must be BOXED before it can back the delegate: the delegate ctor's
+                // first arg is `object` and `ldvirtftn` dispatches on an object reference, but EmitExpr pushed the raw
+                // struct value. Box gives a valid object target; the CLR delegate machinery routes it through the value
+                // type's unboxing stub for a non-virtual `ldftn` target and virtual dispatch for `ldvirtftn`.
+                if (NeedsBoxToRef(recvT)) _il.Emit(OpCodes.Box, recvT);
                 if (IsVirtual(e)) { _il.Emit(OpCodes.Dup); _il.Emit(OpCodes.Ldvirtftn, mb); }
                 else _il.Emit(OpCodes.Ldftn, mb);
                 _il.Emit(OpCodes.Newobj, DelegateCtor(ft));
@@ -737,7 +742,10 @@ sealed partial class Emitter
                 // `clrType` is a STRUCTURED TypeNode post type-flip (was a bare string); ClrRef(JsonElement) dispatches both.
                 var type = ClrRef(e.GetProperty("clrType"));
                 var mi = LinkClrMethod(type, e.GetProperty("method").GetString(), e, instance: true);
-                EmitExpr(e.GetProperty("recv"));
+                var recvTc = EmitExpr(e.GetProperty("recv"));
+                // Same value-type-receiver rule as newBoundDelegate: a struct .NET receiver (e.g. `kvp::method`) must be
+                // boxed so the delegate ctor's `object` target and `ldvirtftn` see an object reference, not a raw struct.
+                if (NeedsBoxToRef(recvTc)) _il.Emit(OpCodes.Box, recvTc);
                 if (IsVirtual(e)) { _il.Emit(OpCodes.Dup); _il.Emit(OpCodes.Ldvirtftn, mi); }
                 else _il.Emit(OpCodes.Ldftn, mi);
                 _il.Emit(OpCodes.Newobj, DelegateCtor(ft));
