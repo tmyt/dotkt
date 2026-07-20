@@ -665,33 +665,46 @@ mangled `-impl` statics, no .NET `struct`. Structural equality survives; what is
 (identityless-ness is not enforced). The frontend still *requires* the `@JvmInline` annotation (a pinned-frontend
 checker); the attribute itself is not emitted. See §10.3 for the round-trip view.
 
-## 5g. `KClass.simpleName`/`qualifiedName` currently report CLR reflection names — a KNOWN GAP, not an accepted deviation (#138)
+## 5g. `KClass.simpleName`/`qualifiedName` report Kotlin names for the statically-known `::class` case (#138)
 
-`T::class` binds `kotlin.reflect.KClass` onto `System.Type` (intensionally faithful: `x::class`→`GetType()`,
-`Foo::class`→`typeof`). But the NAME accessors are wired straight through — bir2cir `KClassMemberBinding` rewrites
-`get_simpleName`→`System.Type.Name` and `get_qualifiedName`→`System.Type.FullName` with **no CLR→Kotlin name
-reversal**. So at present:
+`T::class` binds `kotlin.reflect.KClass` onto `System.Type` (intensionally faithful: `Foo::class`→`typeof` = an UNBOUND
+`classRef`; `x::class`→`GetType()` = a BOUND `getType`, reflecting the value's runtime class). **Kotlin contract
+(restored):** the NAME accessors report the Kotlin name — not the .NET reflection name — whenever the receiver's Kotlin
+type is **statically known**. bir2cir `KClassMemberBinding` runs BEFORE `BirTypeLowering`, so the receiver's type slot is
+still a pure Kotlin FQN token (`kotlin.Int`, `kotlin.String`, a user FQN); the pass **const-folds** the accessor straight
+off it — `qualifiedName` = the FQN verbatim, `simpleName` = its last `.`-segment. No CLR→Kotlin reverse table is needed:
+the Kotlin identity is still in hand. It folds two cases:
 
-- `1::class.simpleName` = `"Int32"` (Kotlin contract: `"Int"`); `1::class.qualifiedName` = `"System.Int32"`
-  (`"kotlin.Int"`); `"x"::class.qualifiedName` = `"System.String"`.
-- Generic types surface the **backtick-mangled** ABI encoding via `Type.Name` (e.g. `List` reads as `IList\`1`), and
-  `Type.FullName` is **null** for some types (open generic parameters) → `qualifiedName` is `null` where Kotlin's is
-  non-null.
+- **Unbound `classRef`** (`Int::class`, `Foo::class`, a generic `Box::class`, a reified `T::class` after inline-splice):
+  always foldable — the token IS the literal type. `Box::class.simpleName` = `"Box"` (class literals drop type args).
+- **Bound `getType`** on a **known-final builtin** — the primitive tower + `String` (`1::class`, `"x"::class`). A final
+  type has no subtypes, so the runtime class == the static type carried on the argument's `sty`/`type` slot; the fold is
+  sound (and gated to a side-effect-free `const`/`local` receiver so no evaluation is dropped). `1::class.simpleName` =
+  `"Int"`; `1::class.qualifiedName` = `"kotlin.Int"`; `"x"::class.qualifiedName` = `"kotlin.String"`.
 
-This does **not** pass the deviation discriminator, so it is recorded here as a **tracked bug (#138), not a by-design
-CLR-native deviation**. The primitive-tower naming (`Int32`/`System.Int32`) alone might be argued as an interop-first
-reflection choice — but the backtick-mangled (`IList\`1`) and `null` outputs are **genuinely broken by any naming
-convention** (not "consistent + convincingly explainable"), and `KClass.simpleName` carries the Kotlin KDoc contract
-("the name as declared in source code"), which the existing §5c-quater CLR→Kotlin reverse-map machinery can honor.
-Because the two cases share one mechanism, the honest verdict is **fix, not document-and-close**.
+The old **backtick-mangled** (`IList\`1`) and `null` outputs are gone for these statically-known cases: they arose only
+from reading `Type.Name`/`.FullName` at run time, which the const-fold no longer does.
 
-**Planned fix (bir2cir follow-up, sequenced after the #46 representation work — same "carry the resolved Kotlin
-identity" family):** in `KClassMemberBinding`, when the `::class` receiver's Kotlin type identity is statically known
-(`Foo::class`, `Int::class`, `List::class` via the carried `typeof` token), **const-fold** the accessor to the Kotlin
-name string (primitive tower + `kotlin.*` aliases via the reverse map; user DotKt types via their `[Kotlin*]`
-round-trip metadata) instead of a runtime `Type.Name`/`FullName` read. For the genuinely-dynamic `x::class.simpleName`
-case (receiver is a runtime `GetType()`), a small runtime CLR→Kotlin reverse-map helper resolves the name at run time.
-This is bir2cir (+ a runtime helper); it does **not** belong in kotc or ilemit.
+**Framing:** Kotlin-contract restoration — `KClass.simpleName`/`qualifiedName` carry the Kotlin KDoc contract ("the name
+as declared in source code"), so reporting the Kotlin name (not `Int32`/`System.Int32`) honors the contract by default.
+
+**Still dynamic (sequenced follow-up):** a BOUND `getType` still reads through `System.Type.Name`/`.FullName` — so can
+surface a .NET reflection name / backtick mangling / the CLR `+` nested separator — in these cases the const-fold does
+not reach:
+
+- static type is **open/an interface** (`x: Any`, a `List<Int>` value): the runtime class is a subtype, genuinely
+  dynamic.
+- a **generic** or **nested** final **user** class (`box::class` where `box: Box<Int>`, `inner::class` where
+  `inner: Outer.Inner`): reads back `Box\`1` / `Outer+Inner`. (A NON-generic TOP-LEVEL final user class IS already
+  correct via the run-time read — such a type is not CLR-renamed, so `Type.FullName`/`.Name` are its Kotlin
+  qualified/simple name. The UNBOUND `Box::class`/`Outer.Inner::class` is exact via the classRef fold regardless.)
+- the receiver is a **smart-cast wrapper** (`val a: Any = 1; if (a is Int) a::class`) or a bare **`this::class`** in a
+  non-inline member — kotc emits a `cast`/`nullableValue`/`this` node, not the `const`/`local` the fold gates on (a
+  `cast` node can also carry a throwing explicit `as`, so it is not safe to fold away).
+
+Closing these needs a small **runtime CLR→Kotlin reverse-map helper** (a stdlib runtime function `KClassMemberBinding`
+routes the dynamic `getType` to) — a cross-layer stdlib piece, not a bir2cir-only const-fold. It does **not** belong in
+kotc or ilemit.
 
 ## 6. Consuming a DotKt assembly AS KOTLIN — what rides metadata vs. needs an attribute
 

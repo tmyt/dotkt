@@ -489,11 +489,14 @@ sealed class Pipeline
             // in the ref/rt stdlib self-build).
             if (!_options.RefBuild) hoisted = ClrEventImplBinding.Apply(hoisted, refs);
             // KCLASS MEMBER BINDING: kotc emits `T::class.simpleName`/`.qualifiedName` as the PLAIN Kotlin property read
-            // `callInstance(kotlin.reflect.KClass.get_simpleName/get_qualifiedName, recv = <a System.Type value>)` (the
-            // `::class` receiver is already a System.Type token). A KClass is @ClrTypeAlias-ed onto System.Type, so this
-            // pass derives the CLR resolution — a `clrPropGet` of `System.Type.Name`/`.FullName`. The `System.Type` /
-            // BCL-member knowledge lives HERE (the Kotlin<->CLR layer), never in the kotc frontend (layer purity, mirrors
-            // the exception-map / annotation-base migrations). Non-ref only: the ref stdlib keeps KClass pure Kotlin.
+            // `callInstance(kotlin.reflect.KClass.get_simpleName/get_qualifiedName, recv = <a System.Type value>)`. This
+            // pass owns the Kotlin<->CLR NAME reversal (#138): where the receiver's Kotlin type is statically known — an
+            // UNBOUND `Int::class`/`Foo::class`, or a BOUND `1::class`/`"x"::class` on a known-final builtin — it CONST-
+            // FOLDS the accessor to the Kotlin name string ("Int"/"kotlin.Int") off the still-Kotlin FQN token (runs
+            // BEFORE BirTypeLowering), not the .NET reflection name. A genuinely-dynamic `x::class` (open/interface
+            // static type) keeps the faithful `System.Type.Name`/`.FullName` read (the CLR->Kotlin run-time helper is a
+            // sequenced stdlib follow-up, §5g). The System.Type/BCL knowledge lives HERE, never in the kotc frontend
+            // (layer purity, mirrors the exception-map / annotation-base migrations). Non-ref only: ref keeps KClass pure.
             if (!_options.RefBuild) hoisted = KClassMemberBinding.Apply(hoisted);
             var substituted = _options.RefBuild ? PropertyMarkerReconstruct.Apply(hoisted) : MemberCallSubstitution.Apply(hoisted, refs, localTopLevelFns, attributeTopLevelOwner);
             // Gap A — the for-loop iterator protocol over a referenced collection: re-point the desugared `<iterator>`
