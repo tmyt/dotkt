@@ -778,12 +778,24 @@ internal fun BirEmitter.call(call: IrCall): String {
 	if (inlineDecl.body == null && callNeedsSplice(call) && dispatchReceiver(call) != null)
 		return emitOwnerfulInlineNode(call)
 
-	// BCL interop: a call whose declaring class is a .NET type (`@Clr` or injected) resolves to a real .NET
-	// member. An INHERITED .NET member (e.g. `appError.Message`) is a fake-override whose `parent` is the
-	// Kotlin subclass, so resolve through the fake override to find the real .NET declaring type.
-	// clrName resolves the .NET TYPE name only: a `kotlin.*` stdlib owner resolves to null here, so its member call
-	// FALLS THROUGH to the plain Kotlin member-call path below (bir2cir substitutes it from the ref.dll). Only a
-	// genuine .NET interop owner (facadegen-injected, resolved off its IR ClassId) keeps a non-null clrType.
+	// NEUTRAL .NET-interop fact-carrier selector (A2/#61 — REALIZED; NOT a .NET call-SHAPE decision). This block
+	// decides NO CLR shape: it emits ONLY plain `callStatic`/`callInstance` nodes carrying frontend FACTS —
+	// static-ness (callStatic vs callInstance, from receiver presence), the accessor KIND (`prop:"get"/"set"`,
+	// from correspondingPropertySymbol), the indexed-access fact (`prop:"index-get"/"index-set"`), `typeArgs`+
+	// declared `shapeTypes`, `argTypes`/`ret`, and the constructed-owner IDENTITY (the `memberType` supertype
+	// walk). EVERY .NET shape — `clrStatic`/`clrInstance`/`clrPropGet`/`clrPropSet`/`clrGeneric*`, the indexer's
+	// `get_Item`/`[IndexerName]` accessor slot, `op_X` operators — is decided BELOW the kotc boundary by
+	// bir2cir's `NetInteropBinding`, which re-detects the .NET owner itself (ResolveNetType off the ref dlls),
+	// independent of this gate. What differs from the plain-Kotlin member paths below is only the fact-carrier
+	// DIALECT (`ownerType`+`argTypes`+`ret`+`prop` marker vs `owner`+`sig`+`retHint`) — the kotc↔bir2cir
+	// serialization contract that routes a node to `NetInteropBinding` (ownerType-keyed) vs `MemberCallSubstitution`
+	// (owner-keyed) — NOT a CLR decision. The `clrName` gate is a pure ORIGIN fact ("this owner is facadegen-
+	// injected", read off the IR ClassId — a frontend fact kotc is allowed to hold, like `isExternalNetType`), NOT
+	// an interpretation of `@Clr*` metadata or a BCL shape. The sole dialect EXCEPTION emitted here is `clrEventGet`
+	// (a .NET event has no plain-Kotlin call form — CLR-only vocab, by design). An INHERITED .NET member (e.g.
+	// `appError.Message`) is a fake-override whose `parent` is the Kotlin subclass, so resolve through the fake
+	// override to the real .NET declaring type. A `kotlin.*` stdlib owner resolves to null here and FALLS THROUGH to
+	// the plain Kotlin member-call path below (bir2cir substitutes it from the ref.dll).
 	val clrTypeName = declaringClass?.let { clrName(it) }
 		?: (callee.takeIf { it.isFakeOverride }?.resolveFakeOverride()?.parent as? IrClass)?.let { clrName(it) }
 		// A synthesized companion of an injected .NET type holds its STATIC members (`App.Start`) -> a static call

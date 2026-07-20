@@ -807,16 +807,25 @@ The synthetic-type *definitions* (closure / `dotkt$CharSequence` / KProperty / r
 the remaining kotc **structural** lowerings (closure / anon-object / SAM / ref-cell / KProperty + the
 `dotkt$CharSequence` synthetic) are genuine frontend facts and **STAY**.
 
-**Two residuals were tracked (neither gates 1.0); one remains:**
-- **A2 = task #61 — RESTORE the intended design (NOT "add purity").** kotc STILL special-cases facadegen-**injected**
-  .NET types: its backend reads `clrInjectedDotNetName`/`clrInjectedMemberName` and emits the CLR call SHAPE itself —
-  `clrStatic`/`clrInstance`/`clrPropGet`/`clrPropSet` (`BirEmitterTypes.kt`, the `clrInjectedDotNetName`/
-  `clrInjectedMemberName` reads — re-locate by name). Per the
-  confirmed architecture (CLAUDE.md "Who references the .NET Reference Assemblies"; MEMORY
-  `a2-restore-bir2cir-net-binding`), this is a **DEVIATION**, not purity-polish: kotc must be **.NET-AGNOSTIC** —
-  emit a plain `callStatic`/`callInstance` by the owner's FQN identity — and **bir2cir** resolves that FQN against the
-  loaded Reference Assemblies and binds the shape, exactly as #52 did for stdlib off the ref.dll. (The 2026-07-05
-  "interop-no-registry" work deleted the 4 lookup registries but did **not** move the shape decision — that is #61.)
+**Two residuals were tracked (neither gates 1.0); both are DONE:**
+- **A2 = task #61 — ✅ DONE (interop-no-registry keystone, 2026-07-05; re-verified #120, 2026-07-21).** kotc is
+  **.NET-AGNOSTIC** for facadegen-**injected** .NET types: it emits ONLY plain `callStatic`/`callInstance` by the
+  owner's FQN identity carrying frontend FACTS (static-ness, the `prop:"get"/"set"` accessor KIND, `prop:"index-*"`,
+  `typeArgs`+`shapeTypes`, `argTypes`/`ret`, the constructed-owner supertype identity) and decides **NO** CLR call
+  SHAPE — grep-verified to emit ZERO `clrStatic`/`clrInstance`/`clrPropGet`/`clrPropSet`/`clrGeneric*` nodes
+  (`clrInjectedMemberName` is deleted; `clrName`/`clrInjectedDotNetName` now yields only the injected type's FQN
+  IDENTITY, an origin fact off the IR ClassId — not a shape). **bir2cir**'s `NetInteropBinding` resolves the owner
+  FQN against the loaded Reference Assemblies (`ResolveNetType`, independent of any kotc flag) and binds EVERY shape:
+  `clrStatic`/`clrInstance`, `clrPropGet`/`clrPropSet` (converging the `prop` marker, a baked `get_X`, and a plain
+  `field` alike), `clrGeneric*`, the indexer accessor slot (DefaultMember/`[IndexerName]`), and `op_X` operators. The
+  `clrName`/`isExternalNetType` gate that survives in kotc is a pure ORIGIN fact selecting the neutral fact-carrier
+  DIALECT (`ownerType`+`argTypes`+`ret` vs the plain-Kotlin `owner`+`sig` dialect) — the kotc↔bir2cir serialization
+  contract that routes a node to `NetInteropBinding` (ownerType-keyed) vs `MemberCallSubstitution` (owner-keyed), NOT
+  a CLR decision. Kept-in-kotc by design: CLR-only vocab with no plain-Kotlin form — .NET events
+  (`clrEventGet`/`clrEventRaise`) and `byref`/`ClrRef<T>`. (#120 re-audited this: the earlier "the interop-no-registry
+  work deleted the 4 registries but did not move the shape decision" claim was **stale** — the shape decisions ARE in
+  bir2cir. Any future dialect-UNIFICATION — one neutral member form across .NET + stdlib + user owners — is a separate
+  multi-workstream program, NOT a byte-identical single change, and must be filed as such.)
 - **Naming purity** — ✅ **DONE (#68, 2026-07-08):** kotc authors `dotkt$…` names + a `generated:true` STRUCTURAL flag (ilemit stamps `[System.Runtime.CompilerServices.CompilerGenerated]` from it); the `<>dotkt_` CLR-marker convention is gone.
 
 ## 【7】 1.0 ship gate  *(non-code / production)*
