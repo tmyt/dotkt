@@ -97,7 +97,7 @@ Prereqs: the repo's Gradle auto-provisions a JDK; you need the **.NET SDK 10**.
 ```bash
 make help                          # all targets
 make all                           # toolchain + stdlib artifacts
-make dev SRC=cases/m0/M0.kt        # compile + run one file (wraps scripts/dotkt.sh --run)
+make dev SRC=path/to/Foo.kt        # compile + run one file (wraps scripts/dotkt.sh --run)
 make verify                        # the gates: verify-il + verify-ktproj
 make pack                          # NuGet packages into a local feed
 ```
@@ -134,7 +134,7 @@ A DotKt project builds with plain `dotnet build` / `dotnet run` (and thus in Vis
 
 Every `.kt` under the project is compiled; `import System.X` in source injects .NET types
 automatically (an explicit `<DotKtImport Include="..." />` item does the same from MSBuild).
-See `cases/ktproj-il/` and `docs/user/getting-started.md`.
+See `docs/user/getting-started.md`.
 
 ## Layout
 
