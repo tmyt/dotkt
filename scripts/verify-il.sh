@@ -380,11 +380,9 @@ il_check mc1   MC1   "$ROOT/cases/m-c1"      "$(printf 'c = (4, 6)\na.d2 = 25\nr
 il_check iface Iface "$ROOT/cases/il-iface"  "$(printf 'Hello\nKonnichiwa')"
 il_check overrideprop OverridePropKt "$ROOT/cases/il-overrideprop" "$(printf '21\n42\n7')"   # `override val` accessor fills the base CLASS abstract slot (not a fresh NewSlot) — else concrete subclass TypeLoad-fails
 il_check overridemsg AppKt "$ROOT/cases/il-overridemsg" "$(printf 'overridden\noverridden\noverridden')"   # #24: `override val message` on a @ClrTypeAlias base (kotlin.Exception->System.Exception) — DeclarationRename wires the get_message accessor to the @ClrProperty("Message") slot (rename + clrOverride) so DefineMethodOverride binds System.Exception.get_Message (else every read returns the base value)
-il_check supercall SuperCall "$ROOT/cases/il-supercall/app.kt" "$(printf 'derived+base\n21\nderived[base-tag]\nDerived<Base>\nABC\ndog>animal\nimpl+hi-default\nderived+base\n11')"   # #14: super.X() from an override is a non-virtual `call` to the resolved base slot (else callvirt re-dispatches → infinite recursion); covers method/prop/3-level chain/user-base toString/interface-DIM + a virtual-dispatch non-regression
 il_check dimgrandchild AppKt "$ROOT/cases/il-dimgrandchild/app.kt" "$(printf 'square area=16\nsquare area=9\nshape area=7\ncircle area=5\npentagon area=11\n15')"   # #185: an interface DIM overridden by a GRANDCHILD (intermediate class does NOT override) must dispatch to the override, not the DIM default — ilemit wires a per-type MethodImpl to the base-inherited interface slot (ECMA-335 II.12.2); last line = the GetEnumerator twin (grandchild iterator() over an abstract Iterable base)
 il_check superobj SuperObj "$ROOT/cases/il-superobj/app.kt" "$(printf 'N:7\nTrue\nTrue\nFalse')"   # #14 RESIDUAL R1: super.toString()/hashCode()/equals() to kotlin.Any → the System.Object slot NON-virtually (MemberCallSubstitution carries the `super` marker onto clrInstance; ilemit emits `call`, not the callvirt that re-dispatched → stack overflow)
 il_check_imports supernet AppKt "$ROOT/cases/il-supernet" "$(printf 'True\nTrue')"   # #14 RESIDUAL R2: super.Next() to a facadegen-injected .NET base (System.Random) → NetInteropBinding propagates the `super` marker onto clrInstance; ilemit's EmitClrCall emits `call`, not the callvirt that re-dispatched → infinite recursion
-il_check xfaceimpl XFace "$ROOT/cases/il-xfaceimpl" "1"   # cross-file + namespaced interface impl/dispatch (FindMethod key regression)
 # language-core family (il-object/il-objexpr/il-companionext/il-ifacecompanion/il-op/il-ops/il-usermember/il-userrange/
 # il-rangein/il-whensubj/il-smartcast/il-scope) migrated to the NUnit battery tests/il/fixtures/LanguageCoreTests.kt
 # (12 methods), gated by tests/run-nunit-il.sh. Per the cases-test-design audit #14 the old per-case dirs + il_check
@@ -595,7 +593,6 @@ il_check extprop ExtProp "$ROOT/cases/il-extprop" "$(printf '2\n1\n1\n3\n-1\n1\n
 il_check defargs DefArgs "$ROOT/cases/il-defargs" "$(printf 'x1-x2-x3\n1, 2, 3\n[1, 2, 3]\n1/2/~\nb=c\na\nnodelim\nFALLBACK\nP(x=1, y=20, z=3)\nP(x=10, y=2, z=30)\nHello, Kotlin!\nHello, Kotlin?')"  # C3: cross+same-module default args — omitted middle default must not shift a later provided arg's slot (joinToString transform / substringAfter `= this` / data-class copy(field=))
 il_check defargs2 DefArgs2 "$ROOT/cases/il-defargs2" "$(printf '55\n7\n12\n30\n134\n156\n159')"  # C3 residual: same-module default referencing ANOTHER value param (`b = a * 10`, `c = a + b`) — inlined with that param's filled arg substituted
 il_check infloopret InfLoopRet "$ROOT/cases/il-infloopret" "$(printf '30\nok4')"  # #141: value-returning while(true){…return x} -> ilemit appends default(ret)+ret so the unreachable fall-through terminator is ilverify-clean (ReturnMissing gone)
-il_check toplateinit TopLateinit "$ROOT/cases/il-toplateinit" "$(printf 'caught: uninitialized\nhello\n5')"  # #104: top-level `lateinit var` (ref type) static field carries `"init": null` — must NOT hit the .cctor null-coercion store (crash); default-null + lateinitGet throw-before-init
 il_check samcmp SamCmp "$ROOT/cases/il-samcmp" "$(printf '1,1,2,3,4,5,6,9\n9,6,5,4,3,2,1,1')"  # explicit Comparator{} SAM conversion (plain fun interface; no kotc @ClrTypeAlias read)
 il_check cp    Cp    "$ROOT/cases/il-cp"      "$(printf '50\n3.5\nTrue\nTrue\nX')"
 il_check ext   Ext   "$ROOT/cases/il-ext"     "$(printf '21\nHI')"
@@ -603,12 +600,9 @@ il_check ext   Ext   "$ROOT/cases/il-ext"     "$(printf '21\nHI')"
 # genarrlam) migrated to the NUnit in-process suite -> tests/il/fixtures/ArrayTests.kt (value asserts). il-copyofnull /
 # il-boxgen stay here (live XFAIL_ILVERIFY findings, not migratable into the ilverify-clean lane).
 il_check arraydeque AppKt "$ROOT/cases/il-arraydeque" "$(printf 'z\nb\nc\n1\nA')"   # concrete generic stdlib class ArrayDeque<E>:AbstractMutableList<E> as a field/owner forces ilemit to resolve kotlin.collections.ArrayDeque`1 from the rt dll — exercises the ICollection/IList void-drop methodimpl bridge (ilemit) + the BCL-only slot synthesis Contains/CopyTo/IsReadOnly/IndexOf (bir2cir)
-il_check utf8throw AppKt "$ROOT/cases/il-utf8throw/app.kt" "$(printf 'True\ndecode-threw\nencode-threw\nhello')"   # #143: decodeToString/encodeToByteArray honor throwOnInvalidSequence=true -> CharacterCodingException via throwing UTF8Encoding(false,true)
 il_check caseinvariant AppKt "$ROOT/cases/il-caseinvariant/app.kt" "$(printf 'ß\nSTRAßE\nABC\nhello\nß\nTrue')"   # #144: String/Char uppercase()/lowercase() are CLR-native 1:1 ToUpperInvariant/ToLowerInvariant — DELIBERATELY no Unicode one-to-many expansion (ß stays ß, not SS)
-il_check seq   Seq   "$ROOT/cases/il-seq"     "$(printf '6,12\n16\n3\n27\n10-20-30\n1,2,3\n4,5,6\n3')"
 il_check seqforin SeqForin "$ROOT/cases/il-seqforin" "$(printf 'a\nb')"
 il_check char  Char  "$ROOT/cases/il-char"    "$(printf 'True\nTrue\nTrue\nTrue\nA\nz\nTrue\nTrue\n97\nb')"
-il_check sort  Sort  "$ROOT/cases/il-sort"    "$(printf '9,6,5,4,3,2,1,1\na,dd,bbb,cccc\ncccc,bbb,dd,a')"
 il_check boxgen BoxgenKt "$ROOT/cases/il-boxgen" "$(printf '42\n1\n42\n42\n10\n-1\n[1, 2, 3]\n[3, 2, 1]\n[a, b, c]\n[1, null, 3]\n[5, null, null]\nSUMMER')"   # C2 boxed-primitive dual-representation: getOrPut/getOrElse/compareBy/Array<Int?>/T:Enum<T>
 il_check copyofnull Copyofnull "$ROOT/cases/il-copyofnull" "$(printf '[1, 2, 3, null, null]\n[1, 2]\n[1, 2, 3]\n1\nnull\n6\n[1, 2, null]\n[2.5, 3.5, null]\n[a, b, null]\n[x, y, null]\n[7, null, null]')"   # #124: Array<value-type>.copyOf(newSize) builds Nullable<elem>[] by runtime reflection (grow null-tail/shrink/prefix read-back; value + reference + already-nullable T)
 # G8 (#73 w9): UNBOUND extension-function callable references (`String::isNotBlank`, `String::repeatBy`) -> a lifted
@@ -618,7 +612,6 @@ il_check copyofnull Copyofnull "$ROOT/cases/il-copyofnull" "$(printf '[1, 2, 3, 
 il_check boundextref BoundExtRef "$ROOT/cases/il-boundextref" "$(printf 'hi!\nababab\nfirst!\n[x][x]\nTrue\nTrue')"   # #91: bound ext-fn ref `expr::extFn` -> capture-class lift (receiver captured eagerly; delegate over instance invoke). #106: bound CharSeq-ext ref (::isNotBlank/::isBlank) -> String field-read adapter-wrapped by StringCharSequenceBridge
 # A6: rule-3 helper calls on CONCRETE generic alias receivers (HashMap/ArrayList/LinkedHashMap: class typeArgs +
 # instantiated sig) + Map/MutableMap getOrDefault (bare-V map-defaults helper: retType carry, was BadImageFormat).
-il_check unsgn Unsigned "$ROOT/cases/il-unsigned" "$(printf '4000000100\n4000000000\n18000000000000000000\n60000\n250')"
 il_check regex Regex "$ROOT/cases/il-regex" "$(printf 'True\nFalse\na#b#c#\na_b_c\nTrue\nFalse\n42\nnull')"
 # regexanchor (#162): matchEntire/matches do a TRUE anchored `\A(?:...)\z` match, not a leftmost search filtered by span
 # — so a shorter alternation branch (`a` in `a|ab`) or a lazy quantifier still yields the full-input match; compiled
@@ -656,14 +649,11 @@ il_check groupvalues GroupValues "$ROOT/cases/il-groupvalues" "$(printf 'abc,a,b
 # reads `c.size` (ICollection<!!T>.get_Count) on an OPEN method type-param. Locks the bymap/maxOrNull dispatch
 # family's collection analog (an open-generic ICollection member call must bind at runtime, no EntryPointNotFound).
 il_check langtail LangTail "$ROOT/cases/il-langtail" "$(printf '6\nhi\nint:42\nstr:3\nbig:5\nsmall\n700\n9')"
-il_check tailrec Tailrec "$ROOT/cases/il-tailrec" "$(printf '500000500000\n0\n2000000014\n1000000\n2000000')"   # §2b: deep `tailrec` TCO'd to a back-jump loop (self / when / extension-receiver / member); no CLR stack overflow
 il_check copydef CopyDef "$ROOT/cases/il-copydef" "$(printf '(1, 20)\n(5, 2)\n(1, 9, 3)\n(7, 2, 8)\nPoint(x=1, y=20, z=3)\nPoint(x=9, y=2, z=8)')"   # C3: data-class copy(field=x) with omitted fields — cross-module Pair/Triple reconstruct this.<field>
 il_check equalscall EqualsCall "$ROOT/cases/il-equalscall" "$(printf 'False\nTrue\nTrue\nFalse\nTrue\nTrue\nFalse\nTrue\nTrue\nFalse\nTrue\nTrue')"   # §5a: explicit .equals() -> total-order (Double/Float) / structural (collections), plain object stays reference
 il_check bytearg ByteArg "$ROOT/cases/il-bytearg" "$(printf '5\n3\n7\n9\n4\n100\n-2')"
 il_check comparator Comparator "$ROOT/cases/il-comparator" "$(printf -- '-3\n5\n0')"
-il_check use Use "$ROOT/cases/il-use" "$(printf 'close abcd\nn=4\nclose x\ncaught:boom')"
 il_check comparable Comparable "$ROOT/cases/il-comparable" "$(printf 'a<b\nc>b\na<=a\n-3\n1.2,1.5,2.0')"
-il_check seqfilter SeqFilter "$ROOT/cases/il-seqfilter" "$(printf '3,4,5,6\n20,40,60\n4\n3,4,5,6\n3')"
 il_check bmore BMore "$ROOT/cases/il-bmore" "$(printf '5 items\nx = 42\n3.14\n00007\nff\n100%% ok: yes\n0:a,1:b,2:c\n0,20,60')"
 il_check chunk Chunk "$ROOT/cases/il-chunk" "$(printf '3,7,5\n3\n1-2-3 4-5\na,b,c\n3\n1,3,5\n9')"
 # cwindowed: CharSequence.windowed exercises a `break` in EXPRESSION position (its `coercedEnd` init); kotc lowers
@@ -692,17 +682,13 @@ il_check props Props "$ROOT/cases/il-props" "$(printf '20\n8\n16\nnot initialize
 # symmetric `var` custom-setter write must CALL set_<name>, not store the raw field. Object property = control.
 il_check computedprop ComputedProp "$ROOT/cases/il-computedprop" "$(printf '42\n107\n20\n15\n6\n49')"
 il_check kstar KStar "$ROOT/cases/il-kstar/app.kt" "*"   # #82: KTypeProjection.STAR computed companion prop routes to get_STAR (not a spurious staticField STAR)
-il_check valcls ValCls "$ROOT/cases/il-valclass" "$(printf '1250\n12\n1250\nff\n1010\nff')"
 il_check ctorref CtorRef "$ROOT/cases/il-ctorref" "$(printf '(1,2)\n(3,4)\n(9,9)')"
 il_check getcls GetClass "$ROOT/cases/il-getclass" "$(printf 'String\nWidget\nWidget\nString')"
 il_check_imports forin Forin "$ROOT/cases/il-forin" "$(printf '60\n10,20,30,\n3')"
 il_check ldeleg LocalDeleg "$ROOT/cases/il-localdeleg" "$(printf '42\n42\nHI\nWORLD')"
 il_check langf LangFeat "$ROOT/cases/il-langfeat" "$(printf '7\n1024\n120\ntf\ncircle=12\nsq=25\n1a\n2b')"
 il_check pair  Pair  "$ROOT/cases/il-pair"    "$(printf '3\n4\nx\n10\n11')"
-il_check triple Triple "$ROOT/cases/il-triple" "$(printf '1\ntwo\n3\n(1, two, 3)\n(1, two, 3)\n1|two|3\n1\ntwo\n3\n(1, TWO, 3)\nTrue\nFalse\n(3, two, 1)\n([1, 2], x, {k=9})')"   # COV4: Triple ctor/destructure/componentN/full-arg copy/toString (partial-copy-with-defaults omitted — cross-module default-arg bug)
-il_check typealias TypeAlias "$ROOT/cases/il-typealias" "$(printf 'a,b,c\n3\n12\n42\n9\n-1')"   # COV3: typealias over stdlib generic / function type / user class, used across a fn boundary
 il_check atomics Atomics "$ROOT/cases/il-atomics" "$(printf '11\n11\n16\nTrue\nFalse\n16\n16\n100\n55\n1001\n1001\n1000\n1000\n42')"   # COV2: kotlin.concurrent.atomics AtomicInt/AtomicLong exercising the @ClrRefArgument Interlocked byref binding
-il_check volatileatomic AppKt "$ROOT/cases/il-volatileatomic" "$(printf '42\n9000000000\nTrue\nb')"   # #130: scalar atomics load()/store() volatile round-trip (Volatile.Read/Write byref for int/long/bool; @Volatile field for AtomicReference)
 # #129: an AtomicIntArray element op whose bounds check THROWS mid-critical-section must still release the monitor
 # (try/finally). A worker thread then acquires the same instance's monitor (loadAt); pre-fix the leaked lock made
 # worker.Join(2000) time out -> "DEADLOCK". Needs facadegen for System.Threading.Thread, so il_check_imports.
@@ -713,7 +699,6 @@ il_check_imports atomicarraytry AppKt "$ROOT/cases/il-atomicarraytry" "$(printf 
 # cases-test-design audit #14, the old per-case dirs + these il_check lines were deleted in that SAME change.
 # (il-nan/il-nancmp/il-negzero are NOT here — their subject is IEEE-float behavior, kept for a float battery.)
 il_check refcellnullable AppKt "$ROOT/cases/il-refcell-nullable/app.kt" "$(printf '5\n6\n105\n25\n2.5\nnull')"   # #36: a captured-and-mutated `var Int?`/`Long?`/`Double?` -> heap ref-cell whose `v` field is Nullable<T>; the INIT ctor arg (bare T -> Nullable<T>), the inline smart-cast READ (Nullable<T>.Value), and the WRITE must all agree — was `new Ref(bare int)` into a Nullable<int> ctor slot -> InvalidProgramException
-il_check tryval TryVal "$ROOT/cases/il-tryval" "$(printf '5\nnull\n7\n3.5\n1.5\nnull\n2.5\nnull\n11')"   # #127: `try{value}catch{null}` in VALUE position on a value-type result -> the shared temp is typed Nullable<T> (null branch = HasValue=false), mirror of ternary()'s value+null-branch join (incl. stdlib toFloatOrNull/toDoubleOrNull)
 il_check nncontract NnContract "$ROOT/cases/il-nncontract/app.kt" "$(printf '2\ntb\nnpe-param\nnpe-ctor\nnpe-member\nnpe-ret\nnpe-retexpr\nnpe-retm\nnpe-getter\nfin\nnpe-trret')"   # #6/#32: non-null CONTRACTS on the public surface — PARAMETER PRECONDITIONS (top-level fun / ctor / member fun) + RETURN POSTCONDITIONS (statement/expression-position top-level fun / member fun / getter / return-in-try: finally runs before the postcondition NPE propagates) throw NullPointerException fail-fast on a laundered null; a normal non-null call is unaffected
 il_check nullv MS1   "$ROOT/cases/m-s1/app.kt" "$(printf 'fallback\npresent\nforced\nlen null = -1\nlen hello = 5')"
 il_check dataq Dq    "$ROOT/cases/m-s2/app.kt" "$(printf 'Point(x=3, y=4)\nPoint(x=7, y=9)\nx=3 y=4\na==b: True\na==c: False\nhash eq: True')"
@@ -731,13 +716,11 @@ il_check inlsiblingdelegate InlSiblingDelegate "$ROOT/cases/il-inlsiblingdelegat
 il_check inlcompose    InlCompose    "$ROOT/cases/il-inlcompose/app.kt"        "$(printf '11\n99')"          # F3 (#62) transitive forwarding of an inline PARAM through a user top-level inline (outer(b)=inner(b)) + escaping non-local return
 il_check ctor  CtorT "$ROOT/cases/il-ctor/app.kt" "$(printf '12\n25\n5x5\nhi=7\nsolo=0')"
 il_check nest  Nst   "$ROOT/cases/il-nested/app.kt" "$(printf 'outer:root\nnode(7)\n14\nleaf 3')"
-il_check vis   VisT  "$ROOT/cases/il-vis/app.kt" "$(printf '98\nacct\n99')"
 il_check precond Pcd "$ROOT/cases/il-precond/app.kt" "$(printf '3\nreq\nchk\nerr:boom\ntodo')"   # #73 M6/M7: precondition/error family + top-level repeat{} inline loop (moved to bir2cir)
 il_check repeatnlr RptN "$ROOT/cases/il-repeatnlr/app.kt" "$(printf '3\n-1\n6\n6\n63\n9')"   # #75: NON-LOCAL return + return@repeat + nested repeat + scope-fn-in-repeat through repeat{} (kotc carries the un-closured lambda body; bir2cir InlineSplice splices it)
 il_check reif  Rf    "$ROOT/cases/il-reified/app.kt" "$(printf 'String\nInt32\nTrue\nFalse\nTrue\nyo\nno')"
 il_check inner Inner "$ROOT/cases/il-inner"   "$(printf '110\n120\nT2\n5')"
 il_check lazy  Lazy  "$ROOT/cases/il-lazy"    "$(printf 'before\ncomputing...\nVALUE\nVALUE\n42\n42\nFalse\ncomputed\ncomputed\nTrue\n1\n42\n42\nsync\nsync\n1\npub\n1\nnone\n1\nFalse\nguarded\nTrue\n1')"
-il_check volatile Volatile "$ROOT/cases/il-volatile" "$(printf '0\n41\n42\nready\nTrue')"   # @kotlin.concurrent.Volatile -> a real CLR volatile field: modreq(IsVolatile) + `volatile.` prefix (the C# volatile shape) on value-type/ref-type instance fields + a top-level static field
 il_check deleg Deleg "$ROOT/cases/il-deleg"   "$(printf 'set count = 7\nget count\n7')"
 il_check classdeleg AppKt "$ROOT/cases/il-classdeleg/app.kt" "$(printf 'p1\n1\np2\nc[p2]\n2\np40\n40\n3\nc')"   # #81: CLASS delegation `class Foo : Bar by baz` — the frontend's synthetic `$$delegate_0` IrField + its ctor initializer must be emitted (single/two/expr/generic delegates)
 # #70: a genuine `::x`/`obj::p`/`Type::p` callable reference -> a lifted class implementing the REAL stdlib
@@ -749,7 +732,6 @@ il_check mrefpriv AppKt "$ROOT/cases/il-mrefpriv/app.kt" "$(printf 'secret')"   
 il_check extpropref AppKt "$ROOT/cases/il-extpropref/app.kt" "$(printf 'mySimpleName:Foo\nmySimpleName=Foo\ntag=hi')"   # #21: bound (`this::extProp` -> KProperty0) + unbound (`String::extProp` -> KProperty1) + mutable-bound (`this::varExtProp` -> KMutableProperty0, set() path) reference to a top-level EXTENSION property; get/set invoke the static ext accessor with the captured/passed receiver (was "KProperty2 has no lowering")
 il_check rwp   Rwp   "$ROOT/cases/il-rwp"     "$(printf 'set n = 5\nget n\n5')"
 il_check bymap Bm    "$ROOT/cases/il-bymap"   "$(printf 'Alice\n30')"
-il_check topdeleg AppKt "$ROOT/cases/il-topdeleg/app.kt" "$(printf '0\n42\ninit')"   # #70: a TOP-LEVEL delegated property with an arbitrary getValue/setValue provider routes through `x$delegate.getValue/setValue` (static delegate field, null thisRef) — was a whole-compile abort (only member/local delegated props were routed)
 il_check gendp AppKt "$ROOT/cases/il-gendp/app.kt" "$(printf 'John\nJane\n30\n42\ntop\nchanged\n7\n99\nboxed\nrebox')"   # #191: a GENERIC user delegate `D<T>` backing a member/local/top-level/generic-enclosing-class delegated property — kotc names the owner BARE (`"D"`/`"Container"`), bir2cir GenericDelegateInstantiation stamps the constructed `D<String>`/`D<Int>`/`Container<String>` from the receiver's static type (was BadImageFormatException / ilverify found 'string' expected '!0')
 il_check del2  D2    "$ROOT/cases/il-deleg2"  "$(printf '0 -> 1\n1 -> 2\n5\nhi')"
 # The G-1..G-6 generics battery (il-generic .. il-generic6) migrated to the NUnit suite:
@@ -1046,18 +1028,14 @@ il_check_imports inlsuspenddefault AppKt "$ROOT/cases/il-inlsuspenddefault" "$(p
 # field write (not a bare setLocal-to-capture), and MaterializeCarrier's new setLocal-to-capture refusal must NOT fire on it.
 il_check_imports inlmatsetcap AppKt "$ROOT/cases/il-inlmatsetcap" "10"
 il_check dsl Dsl "$ROOT/cases/il-dsl" "a[Pb]c"
-il_check xprop Xprop "$ROOT/cases/il-xprop" "7"
 il_check exprbody EB "$ROOT/cases/il-exprbody" "$(printf 'greet\nviaLambda\ncleanup\npos')"
 il_check overload OV "$ROOT/cases/il-overload" "$(printf 'S:x\nF:y\nI:7\nbs:p\nbf:q')"
 # bundle-6 ④ stdlib-correctness routing (bir2cir)
 il_check cmpord   CmpOrd   "$ROOT/cases/il-cmpord"   "$(printf '31\n-31\n0\n-1\nFalse\n-7')"
-il_check starproj StarProj "$ROOT/cases/il-starproj" "$(printf '{1=2, 3=4}\n2\n[10, 20, 30]\n3\n20\n[10, 20, 30]\n[10, 20, 30]\n{1=2, 3=4}\nFalse\nFalse')"
 # exception / try-catch family (il-exc, il-customexc, il-excmap, il-nestedtry, il-result, il-throwexpr, il-tryexpr,
 # il-tryexprop) migrated to the NUnit battery tests/il/fixtures/ExceptionTests.kt (8 methods), gated by
 # tests/run-nunit-il.sh; the old per-case dirs + il_check lines were removed in the same change (audit #14).
-il_check setlocalbox SetLocalBox "$ROOT/cases/il-setlocalbox" "$(printf '42\n7')"
 il_check bytewiden AppKt "$ROOT/cases/il-bytewiden/app.kt" "$(printf '200\n40000\n300\n80000\n200\n-128\n0\n0\n128\n44\n300\n4294967295\n18446744073709551615')"   # #93/#71: Byte/Short/UByte/UShort arith widens to Int/UInt & inc/dec/unaryMinus keep the declared return (bir2cir wraps the lowered op in a conv to dynRet); ilemit needs the unsigned Conv_U1/U2/U4/U8 arms — else the value truncates to the narrow left operand on box
-il_check unsignedshr AppKt "$ROOT/cases/il-unsignedshr/app.kt" "$(printf '2147483647\n9223372036854775807\n267386880\n1073741824\n2147483648\n-4')"   # #94: unsigned shr is LOGICAL (zero-filling) — bir2cir lowers a UInt/ULong `shr` to ">>>" (ilemit Shr_Un), not the sign-propagating ">>"; shl + signed shr are the non-regression checks
 il_check duration Duration "$ROOT/cases/il-duration" "$(printf -- '5s\n2s\n-1s\nTrue')"
 # #156: a genuinely-nullable String (String? = null) UNWRAPPED into a CharSequence?-receiver slot (isNullOrEmpty) — the
 # strict nullable-slot path now emits a runtime-conditional adapter wrap so String->dotkt$CharSequence is ilverify-clean.
