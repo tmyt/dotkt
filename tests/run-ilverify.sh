@@ -49,6 +49,12 @@ declare -A ILVERIFY_XFAIL=(
 	# collapsed `IList<int32>` meets an `IReadOnlyCollection<int32>` slot — StackUnexpected. Runtime-SAFE (the concrete
 	# list implements both interfaces; the value-assert RUN lane is green). Same covariant-collection formal-only family.
 	["KtprojTests::nestedlist()"]="#29 Root-V collapse: nested List<T> lowered to invariant IList<int32> vs an expected IReadOnlyCollection<int32> — runtime-safe (RUN green)"
+	# #12 (formal-only follow-up of closed #2): the migrated il-genbaseext (CorBSequenceTests) declares an external
+	# generic base (AbstractCoroutineContextKey) over a companion CoroutineContext.Key; its `get_key()` returns the
+	# Key<Self> companion where the invariant Key<Element> is formally expected (star-projection covariance the CLR
+	# has no equivalent for). Runtime-SAFE (the value-assert RUN lane is green). Mirror of the verify-il.sh
+	# [genbaseext] XFAIL_ILVERIFY entry, re-expressed for DotKt.Tests.Coroutines.dll.
+	["CorBGbeBase::get_key()"]="#12 formal-only covariance: external-generic-base get_key() returns Key<Self> companion where invariant Key<Element> is expected — runtime-safe (RUN green)"
 )
 
 ILV="$(find "$HOME/.dotnet" -name 'ILVerify.dll' 2>/dev/null | head -1)"

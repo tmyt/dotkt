@@ -43,12 +43,8 @@ declare -A XFAIL_ILVERIFY=(
 	# is a bir2cir/representation follow-up (emit the companion as `Key<Element>` or model the projection as covariant),
 	# NOT an ilemit codegen change. TRACKED as the OPEN issue #12 (repointed from the now-CLOSED root #2). Kept in ASMS
 	# (no silent gap); the run lane is the behavioral gate.
-	# (coctxkey / cointercept migrated -> tests/coroutines; their #12 ilverify finding is now baselined for
-	#  DotKt.Tests.Coroutines.dll in tests/run-ilverify.sh, same class as genbaseext below.)
-	[genbaseext]="GitHub #12 (formal-only, same class as coctxkey): the AbstractCoroutineContextKey external-generic-base RUN proves the base-arg fix; the ONLY ilverify finding is the incidental CoroutineContext.Key star-projection covariance (get_key Key<Self> <- invariant Key<Element>); runtime-safe, bir2cir representation follow-up"
-	# (awaitintercept #7 Part B / classdeleg #174 migrated -> tests/coroutines; their formal-only findings — the
-	#  interceptor get_key() Key<Self> and the class-delegation Mutable* iterator-narrowing — are now baselined for
-	#  DotKt.Tests.Coroutines.dll in tests/run-ilverify.sh.)
+	# coctxkey / cointercept / awaitintercept / classdeleg / genbaseext migrated -> tests/coroutines; their #12/#174
+	# formal-only ilverify findings are baselined for DotKt.Tests.Coroutines.dll in tests/run-ilverify.sh.
 	# ---- newly EXPOSED by the #99 run-derived-ASMS coverage work (these run-only samples had NO ilverify coverage
 	# before; each RUNS green — a runtime-safe formal-only finding attributed to a live tracking issue) ----
 	# copyofnull (#127/#86): the write/return axis of the nullable value-type OBJECT-erasure family. copyOf/arrayOfNulls
@@ -373,53 +369,20 @@ il_check injectdedup App "$ROOT/cases/il-injectdedup" "$(printf '42\nplain')" "$
 # icmparity (#129) -> tests/il/fixtures/MigratedIntropCIfaceImplTests.kt (icmparity_arityClashInterfaceFamily), migrated.
 # m-i1 (System.Text.StringBuilder `import System.X` interop) migrated to the NUnit battery
 # tests/il/fixtures/MigMInteropTests.kt (stringBuilderInterop) — the case dir + this il_check_imports were removed same-change.
-# taskfam: a same-name .NET arity family — non-generic `Task` and `Task<TResult>` (Kotlin `Task1`) coexist in one
-# file; `generic:Task1[T]` cross-refs resolve to the arity-1 definition (docs/dotkt-semantics.md §8d).
-il_check_imports taskfam Tf "$ROOT/cases/il-taskfam" "$(printf 'plain=True\ngeneric=42')"
+# taskfam (taskfam_sameNameArityFamily): migrated -> tests/coroutines/fixtures/CorBTaskAwaitTests.kt (same-name .NET
+# arity family — non-generic `Task` + `Task<TResult>`/`Task1` coexist, §8d); case dir + this line removed same-change.
 # taskawait (taskawait_syncFastPath): migrated -> tests/coroutines/fixtures/TaskAwaitTests.kt (SuspendColdLowering
 # P4 REVERSE bridge, Task.await() sync fast path); its cases/il-taskawait dir + this il_check line removed same-change.
-# valueawait (#10): `await` generalized to the .NET AWAITABLE PATTERN beyond Task — a NON-Task BCL awaitable
-# `ValueTask<Int>` (MEMBER GetAwaiter -> ValueTaskAwaiter<Int>, no .AsTask()). facadegen pattern-detects it and
-# injects `ValueTask1<T>.await()`; bir2cir's EmitAwaitPoint discovers the ValueTaskAwaiter shape from ref metadata
-# and emits the SAME dance as Task. SYNC FAST PATH (value-constructed ValueTask is already completed).
-il_check_imports valueawait ValueAwait "$ROOT/cases/il-valueawait" "42"
-# cfgawait / cfgawaitgen (#3): migrated -> tests/coroutines/fixtures/CorATaskAwaitTests.kt (`await(captureContext = false)`
-# opt-out — non-generic + generic ConfiguredTaskAwaitable awaiter, SYNC FAST PATH); dirs + these il_check lines removed same-change.
-# awaitintercept (#7 Part B): migrated -> tests/coroutines/fixtures/CorAContextKeyTests.kt (await-point resume PRECEDENCE:
-# interceptor > SyncContext > inline; ilverify #12 finding baselined in tests/run-ilverify.sh); dir + line removed same-change.
+# valueawait / cfgawait / cfgawaitgen / awaitintercept migrated -> tests/coroutines (CorA/CorB TaskAwait + ContextKey fixtures); dirs + il_check lines removed same-change.
 # extawait (#10): `await` via a GENERIC EXTENSION GetAwaiter — the WinRT IAsyncOperation<T> shape, proved without the
 # WinRT projection. `MyOp<T>` (runtime.cs) is awaitable ONLY through `static MyAwaiter<T> GetAwaiter<T>(this MyOp<T>)`.
 # facadegen finds the referenced [Extension] GetAwaiter and injects `MyOp<T>.await()`; bir2cir emits
 # `MyOpExtensions.GetAwaiter<Int>(op)` (clrGenericStatic, receiver-type-arg unified). Covers BOTH the sync fast path
 # (IsCompleted true) AND a genuine SUSPEND+resume (OnCompleted schedules the continuation on the threadpool).
 il_check_inject extawait ExtAwait "$ROOT/cases/il-extawait" "$(printf '8\n42')" KfcExtAwait
-# coldcf / coldgen / coforarray: migrated -> tests/coroutines/fixtures/CorAColdFlowTests.kt (P3 control flow across
-# suspension: if/when/while/for + try/catch + suspend extension fun; the generic SM spike; forArray-with-suspension); dirs + lines removed same-change.
-# coctxkey / cointercept (GitHub #12, formal-only follow-up of closed #2): migrated -> tests/coroutines/fixtures/CorAContextKeyTests.kt
-# (self-ref-bounded CoroutineContext.Key<E : Element> star projection; ilverify finding baselined in tests/run-ilverify.sh); dirs + lines removed same-change.
-# coldinst / coldvirt / coldsuper: migrated -> tests/coroutines/fixtures/CorAColdMemberTests.kt (P3 wave-2a INSTANCE
-# suspend members + member/cross-file calls; P5 A1b generic-class instance member; #78/#90 super/interface-inherited
-# member dispatch + mutual recursion); cases/il-coldinst + il-coldvirt + il-coldsuper dirs + these il_check lines removed same-change.
-# coroutinectx: bir2cir SuspendColdLowering #79 — the `suspend inline val coroutineContext` read (a stdlib
-# throw-only intrinsic getter) bound to `<current continuation>.get_context()`: the SM itself in an SM body, the
-# `completion` param in a no-SM body-direct cold entry, and the SM (not `$this`) in a suspending instance member.
-# Before the binding it reached ilemit as the bogus `<fileclass>.get_coroutineContext` (method-not-found). Runs ->
-# the three contexts' EmptyCoroutineContext toString + the appended ints.
-il_check coroutinectx CoroutineCtx "$ROOT/cases/il-coroutinectx" "$(printf 'EmptyCoroutineContext1\nEmptyCoroutineContext\nEmptyCoroutineContext2')"
-# coldabstract (coldAbstract_abstractClassSuspendVtable): migrated -> tests/coroutines/fixtures/CorAColdDispatchTests.kt
-# (BUG 3: abstract-class suspend member's full vtable — abstract cold entry + Task bridge, virtual dispatch); dir + line removed same-change.
-# ifacesuspend: bundle-6 ③ — the INTERFACE half of the abstract/interface suspend round-trip. kotc now tags an
-# interface `suspend fun` member with the neutral `"suspend":true`+`resultType` FACT (mirroring the abstract-CLASS
-# path), so bir2cir can synthesize the interface cold entry / Task<Int> bridge; Fetcher42 overrides both; `f.fetch()`
-# (f: Fetcher) dispatches virtually through the interface cold entry. Runs sync -> 42.
-il_check_imports ifacesuspend IfaceSuspend "$ROOT/cases/il-ifacesuspend" "42"
-# R1 (#90/#101/#100) — the "declaration is unconditional" cold-entry ABI: coldsubiface / coldbaseinherit /
-# coldstaticmember / colddimgen migrated -> tests/coroutines/fixtures/CorAColdDispatchTests.kt (interface member via
-# subtype receiver; base-declared member no override; companion/static M3 cold entry; defaulted generic-interface DIM);
-# cases/il-coldsubiface + il-coldbaseinherit + il-coldstaticmember + il-colddimgen dirs + these il_check lines removed same-change.
-# seqyieldall: yieldAll E2E over the cold core — bir2cir cold-call `sig` disambiguates SequenceScope.yieldAll's
-# three same-named `$dotkt_suspend` overloads + ilemit sig-driven external-generic resolution (both landed).
-il_check seqyieldall SeqYieldAll "$ROOT/cases/il-seqyieldall" "$(printf 'a,b,c')"
+# The cold-core family (coldcf/coldgen/coforarray/coctxkey/cointercept/coldinst/coldvirt/coldsuper/coroutinectx/
+# coldabstract/ifacesuspend/coldsubiface/coldbaseinherit/coldstaticmember/colddimgen/seqyieldall) migrated -> tests/coroutines
+# (CorA ColdFlow/ColdMember/ColdDispatch/ContextKey + CorB SuspendCore/SuspendValue/Sequence fixtures); dirs + il_check lines removed same-change.
 # The string/text family (String/Char ops, CharSequence, stringify, radix, number-parse, hashCode contract:
 # il-str, il-strops, il-blank, il-strnum, il-strhash, il-radix, il-charminus, il-digittoint, il-substr, il-subseq,
 # il-charseq/il-charseqs/il-charseqx/il-charseqbcl/il-charseqmore/il-charseqxfile/il-charseqlenref, il-colstr,
@@ -473,10 +436,8 @@ il_check copyofnull Copyofnull "$ROOT/cases/il-copyofnull" "$(printf '[1, 2, 3, 
 # cwindowedv: CharSequence.windowed with a VALUE-TYPE transform result (Int/Char). The transform lambda is a
 # delegateNew target whose funcType keeps the synthetic <>dotkt_CharSequence, so its `it` param must stay synthetic
 # (not collapse to System.String) — the stdlib passes a real <>dotkt_CharSequence (subSequence's result) in. W4-B guard.
-# A generic cold-sequence SM: `fun <T> wrap(x) = sequence { yield(x) }.toList()` over a VALUE element (Int) and a
-# reference element (String). Guards the `T?`-property `nextValue as T` double-unbox NRE (bir2cir erased-getter
-# call-site retype) that broke every value-typed cold sequence, and (via the same drive) the RingBuffer path.
-il_check genseq GenSeq "$ROOT/cases/il-genseq" "$(printf '[5]\n[hi]')"
+# genseq (genseq_genericColdSequence): migrated -> tests/coroutines/fixtures/CorBSequenceTests.kt (generic cold-sequence
+# SM `fun <T> wrap(x)=sequence{yield(x)}.toList()`; guards the T? nextValue double-unbox NRE); case dir + line removed same-change.
 # genseq2 (C13a): a generic capturing closure passed as a DELEGATE arg (generateSequence's `{ seed }` -> the
 # GeneratorSequence Function0 ctor param). ilemit's delegate-arg binding path emitted the generic closure newobj with
 # an OPEN operand (Closure`1::.ctor(!0)) -> TypeLoadException; and the iterator's delegateInvoke passed a boxed T? to
@@ -515,15 +476,10 @@ il_check genseq2 GenSeq2 "$ROOT/cases/il-genseq2" "$(printf '[1, 2, 4]\n[a, ab, 
 # A generic class extending a generic base instantiated over its OWN type param (`class D<T> : Base<T>()`):
 # the base-ctor call AND inherited generic-base member access must anchor onto the CONSTRUCTED base `Base<!T>`,
 # not the open def `Base<>` (else "not fully instantiated" / InvalidProgram). This is the SequenceBuilderIterator shape.
-# genbaseext: a NON-GENERIC object over an EXTERNAL (stdlib) generic base with CONCRETE args
-# (`object : AbstractCoroutineContextKey<MyBase, MyDerived>` — the kotlinx.coroutines CoroutineDispatcher.Key
-# shape, the rc6 port blocker). kotc used to emit the base as an OPEN bare name, dropping the concrete args, so
-# ilemit failed EMIT-time "cannot resolve .NET type kotlin.coroutines.AbstractCoroutineContextKey"; kotc now emits
-# the base's real args (`ownerSpec`) and ilemit ResolveType(`AbstractCoroutineContextKey`2`).MakeGenericType's it.
-# RUN-green proves emit resolved. Its ONLY ilverify finding is the INCIDENTAL CoroutineContext.Key star-projection
-# covariance (get_key returns Key<Self> where invariant Key<Element> is expected) — the SAME runtime-safe #12 class
-# as coctxkey/cointercept (unrelated to the base-arg fix), so it is XFAIL_ILVERIFY-listed.
-il_check genbaseext AppKt "$ROOT/cases/il-genbaseext/app.kt" "ok"
+# genbaseext (genbaseext_externalGenericBaseConcreteArgs): migrated -> tests/coroutines/fixtures/CorBSequenceTests.kt
+# (external generic base AbstractCoroutineContextKey<MyBase,MyDerived> concrete-arg EMIT via MakeGenericType). Its
+# incidental get_key Key<Self>/Key<Element> covariance (#12, formal-only) is now baselined in tests/run-ilverify.sh
+# (ILVERIFY_XFAIL "CorBGbeBase::get_key()"), not here; case dir + this line + the [genbaseext] XFAIL_ILVERIFY entry removed same-change.
 
 # Reverse interop via an injected C# host: `il_check_inject` builds the sample's runtime.cs into a referenced .NET
 # assembly, scans the .kt imports through facadegen, and references it (the same façade-free `import Kfc.X` path the other
@@ -589,24 +545,8 @@ il_check_inject stackalloc Sa "$ROOT/cases/il-stackalloc" "$(printf '16\n30\n-1\
 # Task.Delay().await() suspensions drained by blockOn); cases/il-cobuild dir + this il_check line removed same-change.
 # genasync (genasync_genuineAsyncTaskDelay): migrated -> tests/coroutines/fixtures/TaskAwaitTests.kt (genuine-async
 # isolation: suspend fun with Task.Delay().await(), drained by blockOn); cases/il-genasync + this line removed same-change.
-il_check_imports suspendcatch SuspendCatch "$ROOT/cases/il-suspendcatch" "$(printf '10\n99\n103\n200\n300')"   # #78 Defect B: a suspend call INSIDE a catch handler (Select.kt:723 recoverAndThrow shape) — HoistSuspendingCatches lifts the handler out of the CLR catch clause so the SM can segment its suspension; the try body ALSO suspends (two-level dispatch) + multi-catch (both handlers suspend, per-clause capture)
-il_check_imports suspendintrinsic SuspendIntrinsic "$ROOT/cases/il-suspendintrinsic" "42"   # #80: a direct user read of the top-level val COROUTINE_SUSPENDED in a suspendCoroutineUninterceptedOrReturn block — canonicalized to the SM's Suspended() marker in Rewrite (mis-owned by MemberCallSubstitution to the file class otherwise)
-il_check suspendintrinsicowned AppKt "$ROOT/cases/il-suspendintrinsicowned/app.kt" "42"   # #157 (was #80-residual): a NON-suspend member (getResult shape) reads the top-level val COROUTINE_SUSPENDED — post-#89 kotc emits owner:null + prop:get (like every cross-module top-level val), and bir2cir binds it through the GENERAL owner-null resolver (prop:get -> get_COROUTINE_SUSPENDED -> TryResolveTopLevelStatic single-candidate -> IntrinsicsKt), NOT a COROUTINE_SUSPENDED special-case (that band-aid was deleted as redundant)
-il_check_imports suspendloop SuspendLoop "$ROOT/cases/il-suspendloop" "$(printf '12\n18\n6')"   # #82: a structured collection loop (forArray + forEachInline) whose body spans a suspension — FlattenSuspendingLoops flattens it to CFG so the loop temps/element cross the resume as SM fields (else `load unknown var __inlsN$element`); + break/continue crossing the resume
-# inlsuspend: #75 S4a §8.7 arm (c) — a suspend call inside a NON-suspend-typed inline-arg lambda (repeat{tick()},
-# let{tick()}) splices into work()'s state machine (the delegate path would trap the await in a non-suspend closure).
-il_check_imports inlsuspend InlSuspend "$ROOT/cases/il-inline-suspend" "21"
-# suspendnestedcapture: #22 — a `suspend inline fun` with a `crossinline` block that NESTS a lambda capturing an
-# enclosing binding (the `suspendCancellableCoroutine { cont -> cont.invokeOnCancellation { … } }` shape). bir2cir's
-# §4.4ii MaterializeCarrier now allows a nested `newClosure`/`newSam` in the carrier (its captures — an invoke param
-# `cont` / a carrier capture `h` -> `this.field` — are rewritten by the descending sibling scans), instead of the old
-# blanket HasNestedClosure fail-loud that blocked the kotlinx.coroutines-core port. RESIDUAL (capFE/capMap/capFEI): the
-# `cont` capture reaching the block through an inner inline-EXTENSION iterator (`forEach`/`map`/`forEachIndexed`, receiver
-# `Array<T>`) — which splices to a `forArray` loop whose element binds in the node's `"var"` field — now counts that loop
-# binder as a declared local (CollectDeclaredLocals), so the element ref is no longer flagged an unlisted stray capture.
-il_check_imports suspendnestedcapture SuspendNestedCapture "$ROOT/cases/il-suspendnestedcapture" "$(printf '5\n42\nhi\n7\n7\n50\n100\n70\n80')"
-# comaindrain (coMainDrain_genuinelySuspendingMainBlocks): migrated -> tests/coroutines/fixtures/CorAColdMemberTests.kt
-# (BUG 4: a genuinely-suspending main awaiting Task.Delay, drained by blockOn); cases/il-comaindrain dir + line removed same-change.
+# suspendcatch / suspendintrinsic / suspendintrinsicowned / suspendloop / inline-suspend / suspendnestedcapture /
+# comaindrain migrated -> tests/coroutines (CorB SuspendCore/Intrinsic/InlineSuspend + CorA ColdMember fixtures); dirs + il_check lines removed same-change.
 # counit (counit_unitReturningSuspendTaskBridge): migrated -> tests/coroutines/fixtures/ColdCoreTests.kt (a PUBLIC
 # Unit-returning suspend fun -> a NON-generic public `Task` bridge, coroutine-abi.md §1); cases/il-counit + line removed same-change.
 # monitordrain -> tests/il/fixtures/MigratedIntropCThreadingTests.kt (monitordrain_waitPulseCrossThreadDrain): the
@@ -622,73 +562,30 @@ il_check_imports suspendnestedcapture SuspendNestedCapture "$ROOT/cases/il-suspe
 # (a hand-authored @RestrictsSuspension receiver driven by receiver-form startCoroutine); cases/il-corestrict dir + line removed same-change.
 # suspendco (suspendco_syncResume / suspendco_syncResumeWithException): migrated -> tests/coroutines/fixtures/ColdCoreTests.kt
 # (SuspendColdLowering F2 cross-module suspendCoroutine{} + F1 SafeContinuation UNDECIDED/RESUMED cache); cases/il-suspendco + line removed same-change.
-# #142: a suspendCoroutine whose SafeContinuation is resumed ASYNCHRONOUSLY from a worker thread — the
-# UNDECIDED->SUSPENDED (getOrThrow) and SUSPENDED->RESUMED (resumeWith) transitions genuinely race across threads,
-# which the fix's Interlocked.CompareExchange CAS over the @Volatile state field makes atomic. blockOn drives the
-# cold core; 42 is only observed if the cross-thread resume lands through the CAS. Uses the dotkt.support harness.
-il_check_imports safecontresume AppKt "$ROOT/cases/il-safecontresume" "42"
-# coinline (coInline_crossinlineOverUninterceptedIntrinsic): migrated -> tests/coroutines/fixtures/CorAColdFlowTests.kt
-# (#22 InlineSplice: suspend inline + crossinline invoked inside suspendCoroutineUninterceptedOrReturn); dir + line removed same-change.
-# coevalorder / cofieldorder / coarrayorder: migrated -> tests/coroutines/fixtures/CorAEvalOrderTests.kt (strict left-to-right
-# eval across a suspension — side-effect / raw @ClrField read / arrayGet spilled before the suspension); dirs + lines removed same-change.
-# lam1/lam2: bundle-6 P3 wave-2b — the suspend-LAMBDA payoff. kotc emits `suspendLambdaNew`, bir2cir builds
-# the SuspendLambda SM, and the dotkt.support blockOn harness drives it to completion on the cold core.
-# (il_check_IMPORTS: the co-compiled harness imports System.Threading.Monitor -> facadegen injects it.)
-il_check_imports lam1 Lam1Kt "$ROOT/cases/il-lam1" "42"
-il_check_imports lam2 Lam2Kt "$ROOT/cases/il-lam2" "15"
+# safecontresume / coinline / coevalorder / cofieldorder / coarrayorder / lam1 / lam2 migrated -> tests/coroutines
+# (CorA ColdFlow/EvalOrder + CorB SuspendCore/SuspendValue fixtures); dirs + il_check lines removed same-change.
 # suspendcapture (suspendcapture_enclosingInstanceCapture) + suspendvalue (suspendvalue_paramValueAndHigherOrder):
 # migrated -> tests/coroutines/fixtures/SuspendValueTests.kt (#34a enclosing-instance `__outer` capture; #36 GAP 1/2
 # suspend functional-value invoke via startSuspendUninterceptedOrReturn); both cases/il-* dirs + these lines removed same-change.
-il_check_imports suspendref AppKt "$ROOT/cases/il-suspendref" "$(printf '6\n40')"   # #67: a callable reference to a `suspend` function (top-level `::work` + bound member `d::apply`) lowered as a `newSuspendLambda` adapter (bir2cir builds the SuspendLambda SM); kotc emits only the suspend FACTS — was a whole-compile abort (KSuspendFunctionN type-token leak + no suspend-newDelegate lowering)
-# suspendval2: #38 — invoking a suspend functional VALUE of arity >= 2 (SuspendFunctionN, N>=2). The fixed
-# create()/create(value) slots cover 0/1; N>=2 boxes the args into Array<Any?> and drives the value through
-# `startSuspendUninterceptedOrReturnN` -> the SM's create(args, completion) override. Covers arity-2 param/local
-# values (run2/local2) + an arity-3 capturing lambda (run3).
-il_check_imports suspendval2 Sv2Kt "$ROOT/cases/il-suspendval2" "$(printf '42\n42\n42')"
-# BATCH B (#75) — the SUSPEND carrier-value contract for the inline splicer. inlsuspendcarrier: an inline fn with a
-# crossinline SUSPEND param builds a capturing suspend lambda (referencing the param + a value param) passed to a
-# NON-inline fn (blockOn) — retires the payload-newSuspendLambda fail-loud guard + exercises joint-hygiene descriptor
-# rewrite. inlsuspendobj: the FORMER SILENT-MISCOMPILE cell — a crossinline SUSPEND lambda captured by an `object :`
-# literal, materialized by MaterializeCarrier's suspend arm into a real newSuspendLambda VALUE (was a plain newClosure
-# delegate). inlsuspendlaunch: a coroutine-builder suspend lambda inside an inline-call lambda arg capturing that arg's
-# own local — retires the carrier-side descriptor guard. All drive the suspend body end-to-end (value MUST be correct).
-il_check_imports inlsuspendcarrier AppKt "$ROOT/cases/il-inlsuspendcarrier" "$(printf '42\n42\n7')"
-il_check_imports inlsuspendobj AppKt "$ROOT/cases/il-inlsuspendobj" "$(printf 'True\nFalse\nTrue')"
-il_check_imports inlsuspendlaunch AppKt "$ROOT/cases/il-inlsuspendlaunch" "$(printf '42\n10')"
-# BATCH B (#75, 2A/2B) — the GENERIC + RECEIVER + suspend-MEMBER inline-splice family (kotlinx `flow{}`, 51 sites) +
-# the `__outer` extension-receiver rebind (the 52nd). inlsuspendflow: a generic `inline fun <T>` with a crossinline
-# suspend RECEIVER lambda captured into an `object : Src<T>` whose carrier invokes the generic receiver's suspend
-# member `emit` — a MULTI-scope {(method,0),(type,0)} tv key set the old single-scope-prefix guard fail-loud'd on; 2A's
-# construction-typeArgs channel (mirroring the newClosure arm) instantiates `new SM<origTvs…>(…)`. Exercised top-level
-# + from a generic METHOD (method-scope free var) + a generic CLASS member (type-scope free var). inlsuspendouter: an
-# extension `inline fun T.op` whose payload newSuspendLambda captures `this@op` (__outer), rebound to the splice's
-# `__self` temp by 2B — incl. the DOMINANT placement (op spliced INSIDE a `suspend fun`, where GAP 2 must preserve the
-# 2B override, not clobber it). Both drive end-to-end via blockOn (value MUST be correct).
-il_check_imports inlsuspendflow AppKt "$ROOT/cases/il-inlsuspendflow" "$(printf '42\n42\n42')"
-# #75 Batch B — a §4.4ii-materialized SUSPEND carrier whose body NESTS a `newSuspendLambda` under a GAPPED / multi-scope
-# enclosing tv remap (the real unsafeFlow/combineTransform flow shape the prior 2A fix missed). The nested SM's own tv
-# frame is SHIELDED (like synthClass) from the outer carrier's CollectTvKeys/RenumberTvs; the shifting method-3 tv rides
-# inside a reference-typed suspend-`fn` capture (permitted by the narrowed guard). Drives end-to-end via blockOn.
-il_check_imports inlsuspendnest AppKt "$ROOT/cases/il-inlsuspendnest" "$(printf '42\n42')"
-il_check_imports inlsuspendouter AppKt "$ROOT/cases/il-inlsuspendouter" "$(printf '42\n7\n20')"
-# rc6 (#75 holistic) — the cold-SM NESTED-closure capture family (the kotlinx.coroutines flow port blocker). A mini cold
-# Flow reproducing the `unsafeFlow { collect { … transform(value) } }` / `filter { predicate(it) }` /
-# `filterDivisibleBy { box.accepts(it) }` shapes: a nested newSuspendLambda + suspend SAM capturing the inline-renamed
-# FlowCollector receiver ($this$unsafeFlow -> __recvN) AND a crossinline param / captured VALUE. Drives the whole unified
-# fix E1-E7 (body descriptor-name shadow + capValues one-value-channel, suspend-SAM mods.suspend, inlineLambda
-# capture-descriptor lockstep rename, §4.4iii dead-capture prune, spliced-carrier capture propagation) end-to-end via blockOn.
-il_check_imports flowtransform AppKt "$ROOT/cases/il-flowtransform" "$(printf '12\n210\n9')"
-# #43 — Batch A × Batch B integration seam. A crossinline SUSPEND carrier materialized §4.4ii (like inlsuspendcarrier)
-# whose body nests a MEMBER-inline call omitting a lambda default: the inner splice (walked first) fills it via the #34
-# member-inline default carriage, re-hoisting a `__dflt$lambda` app-local + minting a `newDelegate` INSIDE the carrier.
-# The suspend §4.4ii arm formerly refused ANY nested newDelegate (blanket) -> FailLoud; now it refuses only a newDelegate
-# that does NOT resolve app-locally, so the same-module re-hoisted delegate materializes. The suspendCancellableCoroutine*
-# family shape that gated the kotlinx.coroutines port. Values: c.pick(false,{5})=-1 & (true,{5})=5, addA sums.
-il_check_imports inlsuspenddefault AppKt "$ROOT/cases/il-inlsuspenddefault" "$(printf '19\n15\n-1')"
-# FIX 2 no-false-positive regression: a §4.4ii-materialized (non-suspend newClosure) carrier that MUTATES a captured var
-# (`acc += 10`) must KEEP working — kotc ref-cell-boxes the mutated capture, so the write reaches bir2cir as a ref-cell
-# field write (not a bare setLocal-to-capture), and MaterializeCarrier's new setLocal-to-capture refusal must NOT fire on it.
-il_check_imports inlmatsetcap AppKt "$ROOT/cases/il-inlmatsetcap" "10"
+# suspendref (suspendref_callableReferenceToSuspendFn): migrated -> tests/coroutines/fixtures/CorBSuspendValueTests.kt (#67: a callable reference to a suspend fn `::work`/`d::apply` lowered as a newSuspendLambda adapter); case dir + line removed same-change.
+# suspendval2 (suspendval2_storedSuspendValueArityN): migrated -> tests/coroutines/fixtures/CorBSuspendValueTests.kt
+# (#38: invoking a stored suspend functional VALUE of arity >= 2 via startSuspendUninterceptedOrReturnN -> create(args, completion)); case dir + line removed same-change.
+# inlsuspendcarrier (inlsuspendcarrier_escapingCapturingSuspendLambda) + inlsuspendlaunch (inlsuspendlaunch_suspendLambdaCapturingInlineArgLocal)
+# -> tests/coroutines/fixtures/CorBInlineSuspendTests.kt; inlsuspendobj (inlsuspendobj_crossinlineSuspendIntoObjectLiteral)
+# -> tests/coroutines/fixtures/CorBFlowTests.kt. BATCH B (#75): a crossinline SUSPEND carrier surviving in a non-invoke
+# position, materialized §4.4ii into a real newSuspendLambda VALUE (inlsuspendobj = the former silent-miscompile cell);
+# case dirs + these lines removed same-change.
+# inlsuspendflow (inlsuspendflow_genericReceiverSuspendMember) + inlsuspendnest (inlsuspendnest_nestedSuspendLambdaUnderTvRemap)
+# -> tests/coroutines/fixtures/CorBFlowTests.kt; inlsuspendouter (inlsuspendouter_outerReceiverRebindInPayloadSuspendLambda)
+# -> tests/coroutines/fixtures/CorBInlineSuspendTests.kt. BATCH B (#75, 2A/2B): the GENERIC + RECEIVER + suspend-MEMBER
+# inline-splice family (kotlinx `flow{}`) — multi-scope tv construction-typeArgs channel + nested-SM tv shield + the
+# `__outer` extension-receiver rebind; case dirs + these lines removed same-change.
+# flowtransform (flowtransform_nestedCrossinlineCaptureChain): migrated -> tests/coroutines/fixtures/CorBFlowTests.kt
+# (rc6 #75 holistic: the cold-SM nested-closure capture family — unsafeFlow/unsafeTransform/filter/map E1-E7, the kotlinx flow port blocker); case dir + line removed same-change.
+# inlsuspenddefault (inlsuspenddefault_nestedMemberInlineOmittedLambdaDefault): migrated -> tests/coroutines/fixtures/CorBInlineSuspendTests.kt
+# (#43 Batch A×B seam: a §4.4ii suspend carrier nesting a member-inline call that omits a lambda default -> a re-hoisted newDelegate inside the carrier); case dir + line removed same-change.
+# inlmatsetcap (inlmatsetcap_refCellWriteThroughMaterializedCarrier): migrated -> tests/coroutines/fixtures/CorBInlineSuspendTests.kt
+# (§4.4ii ref-cell write-through: a materialized non-suspend newClosure carrier mutating a captured var must keep working); case dir + line removed same-change.
 # bundle-6 ④ stdlib-correctness routing (bir2cir)
 # exception / try-catch family (il-exc, il-customexc, il-excmap, il-nestedtry, il-result, il-throwexpr, il-tryexpr,
 # il-tryexprop) migrated to the NUnit battery tests/il/fixtures/ExceptionTests.kt (8 methods), gated by
