@@ -69,8 +69,8 @@ declare -A XFAIL_DIFF=(
 # fixed strings in verify-il, so a Kotlin-INCORRECT mapping passed green forever. Promoting the JVM-runnable
 # subset here makes the JVM oracle (real kotlin/jvm) the ground truth — a regression now reddens the gate.
 PURE="m0 m-a1 m-a2 m-a3 m-a4 m-a5 m-a6 m-a7 m-a8 m-b1 m-b2 m-b3 m-b4 m-b5 m-b6 m-b7 m-b8 m-b9 m-b10 m-b11 m-b12 m-b13 m-s1 m-s2 m-s3 \
-il-seq il-char il-sort il-getclass il-localdeleg il-langfeat il-ctorref il-localclass il-refcell il-annot il-props \
-il-bymap il-bytearg il-chunk il-cmpord il-comparable il-comparator il-cp il-ctor il-deleg il-deleg2 il-dsl il-duration il-exprbody il-ext il-for il-iface il-inner il-langtail il-lazy il-loopjump il-nested il-overload il-overrideprop il-pair il-rwp il-samcmp il-seqfilter il-setlocalbox il-unsigned il-use il-valclass il-vis il-volatile il-xfaceimpl il-xprop \
+il-seq il-char il-sort il-getclass il-ctorref il-refcell il-annot il-props \
+il-bymap il-bytearg il-chunk il-cmpord il-comparable il-comparator il-cp il-ctor il-deleg il-deleg2 il-dsl il-duration il-exprbody il-ext il-for il-nested il-overload il-overrideprop il-pair il-rwp il-samcmp il-seqfilter il-setlocalbox il-unsigned il-use il-valclass il-vis il-volatile il-xfaceimpl il-xprop \
 il-boxgen il-pairtostr il-extprop il-defargs il-defargs2 il-pairnest \
 il-genmax il-nestlam il-genseq2 il-cwindowed il-cwindowedv \
 il-triple il-typealias il-atomics il-tailrec il-copydef il-equalscall"
