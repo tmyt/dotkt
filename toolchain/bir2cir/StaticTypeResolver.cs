@@ -95,6 +95,13 @@ static class StaticType
             case "const": return TypeJson.Read(o["type"]);
             case "conv": return TypeJson.Read(o["to"]);
             case "nullableValue": return TypeJson.Read(o["elem"]);
+            // A safe-call wrap (`a?.member` desugar, BirEmitterControlFlow): both arms produce `Nullable<elem>` — the
+            // `nullableWrap` present-value and the `nullableNull` absent-value. A BARE-LOCAL-receiver safe call returns
+            // the raw `cond` with NO `type` stamp (only the bindOnce path wraps it in a typed valueBlock), so its
+            // surface must be recovered from these arms — else a `b?.d == y` float `==` misses the value-nullable
+            // classification and keeps the raw `ceq` over `Nullable<T>` (unverifiable IL, #181).
+            case "nullableWrap" or "nullableNull":
+                return TypeJson.Read(o["elem"]) is TypeNode nwe ? new TypeNode.Nullable(nwe) : null;
             // A local read: the frontend stamp (accurate incl. smart-cast); else the declared type from the lexical
             // scope, for a bir2cir-SYNTHESIZED local (a spliced temp) that carries no stamp. NOTE the stamp SHADOWS a
             // later var-decl retype (InlineSplice.RetypeReceiverToConcrete / CharSeqStringLowering) — benign today

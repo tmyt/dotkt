@@ -24,7 +24,7 @@ CACHE="$ROOT/build/test-package-cache"
 # --- expected discovered-test count per battery project (the single machine-readable manifest; each family
 #     migration bumps its project's number in the SAME change, so a dropped method is a red gate). ------------
 declare -A EXPECTED=(
-	["tests/il"]=157  # Generics 6 + Inline 17 + Collections 16 + Maps 10 + Strings 22 + Nullable 12 + Float 7 + Enum 5 + Exception 8 + Lambda 10 + ClrEvent 4 + LanguageCore 12 + Array 12 + GenericTypes 10 + Math 6
+	["tests/il"]=158  # Generics 6 + Inline 17 + Collections 16 + Maps 10 + Strings 22 + Nullable 12 + Float 8 + Enum 5 + Exception 8 + Lambda 10 + ClrEvent 4 + LanguageCore 12 + Array 12 + GenericTypes 10 + Math 6
 	# ProjectReference round-trip consolidation lane (docs/design-nunit-test-harness.md §3; playbook §3): a producer
 	# DotKt LIBRARY (tests/roundtrip/producer) consumed via <ProjectReference> as its BUILT dll (facadegen re-import,
 	# NOT source) by this NUnit consumer. Batch 1 = 7 sections (enum/customprop/defargs/nrt/memext/operator-flag/
