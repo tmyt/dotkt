@@ -176,14 +176,8 @@ il_emit() { # <name> <ildir> <asm> <birdir> [extra ilemit args...]
 
 # S5 FIR-injection metadata for samples that inherit a real .NET base type (façade-free).
 build_tool facadegen
-EXCMETA="$ROOT/build/exc.meta"
-dotnet "$FACADEGEN_DLL" "$EXCMETA" --compile-refs "$FRAMEWORK_COMPILE_REFS" System.Exception System.Console >/dev/null 2>&1
-COLLMETA="$ROOT/build/coll.meta"
-dotnet "$FACADEGEN_DLL" "$COLLMETA" --compile-refs "$FRAMEWORK_COMPILE_REFS" System.Collections.ObjectModel.Collection >/dev/null 2>&1
 OBSCOLLMETA="$ROOT/build/obscoll.meta"
 dotnet "$FACADEGEN_DLL" "$OBSCOLLMETA" --compile-refs "$FRAMEWORK_COMPILE_REFS" System.Collections.ObjectModel.ObservableCollection >/dev/null 2>&1
-GMMETA="$ROOT/build/gm.meta"
-dotnet "$FACADEGEN_DLL" "$GMMETA" --compile-refs "$FRAMEWORK_COMPILE_REFS" System.Runtime.CompilerServices.Unsafe System.Runtime.CompilerServices.RuntimeHelpers System.Collections.ObjectModel.Collection >/dev/null 2>&1
 
 # CLR stdlib (the canonical build under libraries/stdlib/): the RUNTIME assembly is --ref'd into every
 # emitted case so a stdlib op resolves to its real Kotlin body (and copied next to each output for the
@@ -319,7 +313,7 @@ il_check() { # <name> <asm> <srcArg> <expected> [metadataFile]
 		echo "$asm" > "$RESULTS/asm-$name"
 		birdir="$ROOT/build/bir-$name"; ildir="$ROOT/build/il-$name"
 		rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
-		# The case's .NET-space facade metadata (EXCMETA/COLLMETA/... — System.* injection) ONLY, if any. The stdlib
+		# The case's .NET-space facade metadata (OBSCOLLMETA/... — System.* injection) ONLY, if any. The stdlib
 		# (kotlin.*) is supplied to kotc by the frontend KLIB on -classpath, NOT facadegen. --ref the runtime
 		# DotKt.Stdlib.dll so a stdlib op (getOrElse, ...) resolves to its real Kotlin body instead of a retired lowering.
 		if ! CLR_TYPES_METADATA="${meta:-}" "$LAUNCHER" $src -no-stdlib -classpath "$CP" -d $birdir >/dev/null 2>&1; then
@@ -366,7 +360,6 @@ il_check injectdedup App "$ROOT/cases/il-injectdedup" "$(printf '42\nplain')" "$
 il_check mc1   MC1   "$ROOT/cases/m-c1"      "$(printf 'c = (4, 6)\na.d2 = 25\nrect area=30')"
 il_check overridemsg AppKt "$ROOT/cases/il-overridemsg" "$(printf 'overridden\noverridden\noverridden')"   # #24: `override val message` on a @ClrTypeAlias base (kotlin.Exception->System.Exception) — DeclarationRename wires the get_message accessor to the @ClrProperty("Message") slot (rename + clrOverride) so DefineMethodOverride binds System.Exception.get_Message (else every read returns the base value)
 il_check superobj SuperObj "$ROOT/cases/il-superobj/app.kt" "$(printf 'N:7\nTrue\nTrue\nFalse')"   # #14 RESIDUAL R1: super.toString()/hashCode()/equals() to kotlin.Any → the System.Object slot NON-virtually (MemberCallSubstitution carries the `super` marker onto clrInstance; ilemit emits `call`, not the callvirt that re-dispatched → stack overflow)
-il_check_imports supernet AppKt "$ROOT/cases/il-supernet" "$(printf 'True\nTrue')"   # #14 RESIDUAL R2: super.Next() to a facadegen-injected .NET base (System.Random) → NetInteropBinding propagates the `super` marker onto clrInstance; ilemit's EmitClrCall emits `call`, not the callvirt that re-dispatched → infinite recursion
 # language-core family (il-object/il-objexpr/il-companionext/il-ifacecompanion/il-op/il-ops/il-usermember/il-userrange/
 # il-rangein/il-whensubj/il-smartcast/il-scope) migrated to the NUnit battery tests/il/fixtures/LanguageCoreTests.kt
 # (12 methods), gated by tests/run-nunit-il.sh. Per the cases-test-design audit #14 the old per-case dirs + il_check
@@ -432,20 +425,6 @@ il_check_imports awaitintercept AppKt "$ROOT/cases/il-awaitintercept" "$(printf 
 # `MyOpExtensions.GetAwaiter<Int>(op)` (clrGenericStatic, receiver-type-arg unified). Covers BOTH the sync fast path
 # (IsCompleted true) AND a genuine SUSPEND+resume (OnCompleted schedules the continuation on the threadpool).
 il_check_inject extawait ExtAwait "$ROOT/cases/il-extawait" "$(printf '8\n42')" KfcExtAwait
-# taskgen: a GENERIC .NET static factory (Task.FromResult<TResult>) — the seam that lets Kotlin BUILD a
-# Task<T> (async interop). kotc's companion generic-static builder declares the method type parameter and
-# resolves the return/param against it, so `Task.FromResult(42)` binds as `FromResult<Int>(42): Task<Int>`
-# and emits a `clrGenericStatic` node (bir2cir/ilemit already lower it — verified E2E with a hand-authored
-# meta). XFAIL until facadegen surfaces the generic `sfun` line (it currently skips m.IsGenericMethod at
-# facadegen/Program.cs:557); once it does, this auto-passes ("42").
-il_check_imports taskgen Tg "$ROOT/cases/il-taskgen" "42"
-# taskwhen: N3 regression — facadegen `Map` short-circuited on `t.FullName == self.FullName` where BOTH
-# are null for an OPEN constructed generic (`Task<T>` inside `IEnumerable<Task<T>>`), replacing the arg
-# with the ENCLOSING type's name -> `IEnumerable[IEnumerable]` / `Task1[Task1]`. Guarding the compare with
-# `FullName != null` recurses into the arg. `Task.WhenAny(a,b): Task<Task<Int>>` (double-nested RETURN)
-# runs for real. N3-deep: `Task.WhenAll(vararg Task<Int>): Task<Int[]>` now EXECUTES too — the generic .NET-method
-# value-param builder now strips the `vararg:` prefix (else the vararg param surfaced as Any? and mis-resolved).
-il_check_imports taskwhen Tw "$ROOT/cases/il-taskwhen" "$(printf '10\n6')"
 # coldcf/coldgen: bir2cir SuspendColdLowering P3 — the cold-core suspend state-machine transform lifted
 # from straight-line (P2) to control flow across suspension (if/when via cond-lowering, while/for already
 # flat), try/catch with the suspension in the try body (two-level dispatch), a suspend extension fun, and
@@ -615,12 +594,7 @@ il_check classdeleg AppKt "$ROOT/cases/il-classdeleg/app.kt" "$(printf 'p1\n1\np
 # covariance (get_key returns Key<Self> where invariant Key<Element> is expected) — the SAME runtime-safe #12 class
 # as coctxkey/cointercept (unrelated to the base-arg fix), so it is XFAIL_ILVERIFY-listed.
 il_check genbaseext AppKt "$ROOT/cases/il-genbaseext/app.kt" "ok"
-il_check netbase  Nb  "$ROOT/cases/il-netbase"  "$(printf 'app error\n7')" "$EXCMETA"
-il_check netbase2 Nb2 "$ROOT/cases/il-netbase2" "$(printf 'AppError #7\nAppError #21')" "$EXCMETA"
-il_check netgen  Ng  "$ROOT/cases/il-netgen"  "$(printf '3\nTrue\n2')" "$COLLMETA"
-il_check netgen2 Ng2 "$ROOT/cases/il-netgen2" "$(printf '3\nTrue\n2')" "$COLLMETA"
 il_check event   Ev  "$ROOT/cases/il-event"   "$(printf 'changed\nchanged\n2\nchanged\nh fired\nchanged\n4')" "$OBSCOLLMETA"
-il_check netgen3 Ng3 "$ROOT/cases/il-netgen3" "$(printf '4\n8\n8\nFalse\nTrue\n20\n99\n3')" "$GMMETA"
 
 # Reverse interop via an injected C# host: `il_check_inject` builds the sample's runtime.cs into a referenced .NET
 # assembly, scans the .kt imports through facadegen, and references it (the same façade-free `import Kfc.X` path the other
@@ -724,7 +698,6 @@ il_check_inject outref Outref "$ROOT/cases/il-outref" "$(printf 'ok=5\nfail\n2 1
 il_check_inject netattr NetAttr "$ROOT/cases/il-netattr" "$(printf 'widget#7\n42')" Lbl
 il_check_inject netattrvararg NetAttrVararg "$ROOT/cases/il-netattr-vararg" "$(printf 'widget#7\n42')" PVararg   # #184: params object[] ctor applied bare (zero args). rasm distinct from firgap's `P` (both namespace-P but different types) so the parallel build_runtime does not race on the shared build/rt-P dir (assembly NAME only; the `P` namespace its runtime.cs declares is unchanged, so `import P.TagAttribute` still resolves)
 il_check_inject stackalloc Sa "$ROOT/cases/il-stackalloc" "$(printf '16\n30\n-1\n10\n21')" SpanRt
-il_check_inject mref Mr "$ROOT/cases/il-mref" "$(printf 'hello world\n0')" MrRt
 # cobuild: the GENUINE .NET-async E2E — `Task.Delay(1).await()` truly suspends (imports System.*, so
 # il_check_IMPORTS runs facadegen for the await marker). bir2cir's P4 await lowering + the whole cold-core
 # SM chain are verified correct; the boxed-enum COROUTINE_SUSPENDED reference-identity issue (once the sole

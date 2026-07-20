@@ -60,7 +60,7 @@ declare -A XFAIL_DIFF=(
 # EXCLUDED and WHY: il_check_imports/il_check_inject samples (interop, can't run on the JVM); the coroutine
 # cold-core family (il-cold*/il-co*/il-suspendco/il-seqforin/il-genseq/il-seqyieldall — CLR-specific SM
 # lowering, and several have no `fun main` so the JVM oracle can't drive them); the .NET-base/metadata
-# il_check samples (il-event/il-netbase*/il-netgen* — inject System.* via facadegen meta). Also EXCLUDED as
+# il_check samples (il-event — inject System.* via facadegen meta). Also EXCLUDED as
 # CLR-SPECIFIC-BY-DESIGN (would DIFF for a documented reason, not a bug): String.format .NET composite
 # format strings (`{0:F2}`/`{0:D5}`, literal text on the JVM) or `Int::class.simpleName` (CLR "Int32" vs JVM "Int").
 #
