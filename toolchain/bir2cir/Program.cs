@@ -431,14 +431,17 @@ sealed class Pipeline
             // a corrected receiver. BEFORE BirTypeLowering.
             NullableTvErasureCallRealign.Apply(bir.Root, nullableTvDeclRets);
             // FUNC-SLOT nullable-return erasure (ALL builds — the transform-side twin of the pass above): a function
-            // TYPE with a nullable return (`(T) -> R?`) is kotc-tokenized `func:nullable:<ret>:<args>` (the open
-            // generic view `nullable:gp:R`; a value instantiation `nullable:int`). Its only CLR rep that agrees
-            // across open/value/reference instantiations is Func<…, object> (reference instantiations stay bare-typed
-            // and ride Func's `out TResult` covariance into the object slot). Rewrites every such token (param slots,
-            // sig strings, newDelegate/delegateInvoke funcTypes), erases the backing lambda methods' returns to
-            // object, and repairs the local dataflow (see the class). MUST consume every `nullable:`-marked func ret:
-            // ilemit's FuncRetEnd parses a single leading prefix and would misparse a stacked `nullable:gp:R`.
-            NullableFuncReturnErasure.Apply(bir.Root);
+            // TYPE whose RETURN is a nullable (`(T) -> R?`) over a VALUE (`R = Int`) or open-generic (`R = T`) inner
+            // has NO faithful null-carrying CLR delegate return other than `object` (a `Nullable<int>`/`Nullable<T>`
+            // can't ride `Func`'s `out TResult` covariance while keeping null), so it is erased to `Func<…, object>`.
+            // Rewrites every such funcType (param slots, newDelegate/delegateInvoke funcTypes), erases the backing
+            // lambda methods' returns to object, and repairs the local dataflow (see the class). A REFERENCE inner
+            // (`R = String` — `Func<string?>`, or a `Comparable<*>?` selector) is NOT erased: a reference already
+            // carries null, and erasing the lifted lambda's return to `object` would break the concrete-delegate ctor
+            // (`object` is not assignable-TO the `Func<string>` slot's `string` return → ilverify DelegateCtor, #189 —
+            // and the boxgen/sort `object`-where-`IComparable`-expected findings); ReferenceNullableStrip drops its
+            // nullable wrapper to the plain reference downstream. Gated by isValueFqn.
+            NullableFuncReturnErasure.Apply(bir.Root, isValueFqn);
             // VARIANCE -> INVARIANCE type-arg REALIGNMENT (il-bymap): kotc approximates a use-site `in`/`out` variance
             // projection to `kotlin.Any` (JVM-erased, harmless), so a call into an INVARIANT @ClrTypeAlias collection
             // generic (`getOrImplicitDefault<K,V>` on a `Map<String,V>` receiver) carries a `K = Any` typeArg while the

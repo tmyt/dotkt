@@ -6,8 +6,27 @@ using DotKt.Bir;
 
 static class NullableFuncReturnErasure
 {
-    public static void Apply(JsonNode root)
+    // A nullable func-RETURN is erased to `object` ONLY when a plain reference type cannot carry its null faithfully:
+    // a VALUE-type inner (`Int?` — `Nullable<int>` can't ride a delegate's `out TResult` covariance while keeping
+    // null) or an UNCONSTRAINED open generic (`T?` — `Nullable<T>` is inexpressible for an unconstrained T). A
+    // REFERENCE inner (`String?`, `List<T>?`) already carries null as a plain reference, so it stays the
+    // (nullable-stripped, by ReferenceNullableStrip) reference type — erasing it to `object` would make the lifted
+    // lambda return `object` where the concrete delegate slot (`Func<string>` from a .NET signature) demands a
+    // covariantly-assignable return, and `object -> string` is NOT assignable → ilverify DelegateCtor rejects the
+    // ctor (#189, the nullable/NRT-erasure delegate-return axis, distinct from #170's String->CharSequence). Codex-
+    // confirmed ECMA-335 rule: the ldftn target's return must be assignable-TO the delegate `Invoke` return.
+    static Func<string, bool> _isValue = _ => false;
+
+    static bool ShouldEraseNullableInner(TypeNode of) => of switch
     {
+        TypeNode.Tv => true,
+        TypeNode.Fqn { Args: null } f => _isValue(f.Name),
+        _ => false,
+    };
+
+    public static void Apply(JsonNode root, Func<string, bool> isValue)
+    {
+        _isValue = isValue ?? (_ => false);
         if (root is not JsonObject o) return;
         var erasedDelegateMethods = new HashSet<string>(StringComparer.Ordinal);
         var erasedClosureInvokes = new HashSet<string>(StringComparer.Ordinal);   // closure TYPE names
@@ -111,10 +130,13 @@ static class NullableFuncReturnErasure
     }
 
     static bool HasErasedRet(JsonObject node)
-        => TypeJson.Read(node["funcType"]) is TypeNode.Fn { Suspend: false, Ret: TypeNode.Nullable };
+        => TypeJson.Read(node["funcType"]) is TypeNode.Fn { Suspend: false, Ret: TypeNode.Nullable n }
+           && ShouldEraseNullableInner(n.Of);
 
-    // Type-slot sweep: a NON-suspend function type whose RETURN is a Nullable (`(…) -> R?`) has its return erased to
-    // `object` — the only CLR delegate return that carries a real null for a value-type R. Recurses nested funcs/args.
+    // Type-slot sweep: a NON-suspend function type whose RETURN is a Nullable (`(…) -> R?`) over a VALUE or open-generic
+    // inner (ShouldEraseNullableInner) has its return erased to `object` — the only CLR delegate return that carries a
+    // real null for a value-type/unconstrained R. A reference inner keeps its (later-stripped) reference type so the
+    // lifted lambda's return stays covariantly-assignable to the concrete delegate slot (#189). Recurses nested funcs/args.
     static void RewriteAllStrings(JsonNode node)
     {
         switch (node)
@@ -143,7 +165,8 @@ static class NullableFuncReturnErasure
     internal static TypeNode RewriteFnRet(TypeNode t) => t switch
     {
         TypeNode.Fn { Suspend: false } fn => new TypeNode.Fn(false,
-            fn.Ret is TypeNode.Nullable ? new TypeNode.Fqn("object") : RewriteFnRet(fn.Ret),
+            fn.Ret is TypeNode.Nullable rn && ShouldEraseNullableInner(rn.Of)
+                ? new TypeNode.Fqn("object") : RewriteFnRet(fn.Ret),
             fn.Params.Select(RewriteFnRet).ToArray(), fn.Recv == null ? null : RewriteFnRet(fn.Recv)),
         TypeNode.Fn fn => new TypeNode.Fn(true, fn.Ret, fn.Params.Select(RewriteFnRet).ToArray(),
             fn.Recv == null ? null : RewriteFnRet(fn.Recv)),
