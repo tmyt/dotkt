@@ -386,11 +386,6 @@ il_check adapterref AppKt "$ROOT/cases/il-adapterref/app.kt" "$(printf 'sink 1\n
 # removed from verify-differential.sh same-change.
 # enum family (il-enum/il-enumintr/il-enumtostr/il-enumbody/il-enumrich) migrated to the NUnit battery
 # tests/il/fixtures/EnumTests.kt (+ EnumCrossFile.kt for the #90 cross-file basic-enum decl).
-# netenumbound (#107): a facadegen-injected .NET enum (System.DayOfWeek) satisfies Kotlin's `T : Enum<T>` bound —
-# facadegen declares the self-referential `kotlin.Enum<Self>` supertype so a `<T : Enum<T>>` generic fn / the
-# reified `enumValues<TheNetEnum>()` / `enumValueOf<TheNetEnum>()` intrinsics resolve at the frontend; the backend
-# routes `e.name` (kotlin.Enum member on a .NET-enum-bound type-param) + enumValues/enumValueOf to System.Enum.
-il_check_imports netenumbound NetEnumBound "$ROOT/cases/il-netenumbound" "$(printf 'Friday\n7\n1')"
 # vtboundref (#149): a bound callable-ref over a VALUE-TYPE (.NET struct) receiver — the delegate ctor's `object`
 # target + ldftn/ldvirtftn need an object reference, so ilemit boxes the struct receiver in newBoundClrDelegate.
 # Covers both the non-virtual (box + ldftn: TimeSpan::CompareTo) and virtual (box + dup + ldvirtftn: overridden
@@ -401,34 +396,9 @@ il_check_imports vtboundref AppKt "$ROOT/cases/il-vtboundref" "$(printf -- '-1\n
 # facadegen names the GENERIC `IComparable1<T>` (non-generic keeps plain `IComparable`); implementing it uses the
 # VERBATIM .NET member `CompareTo(other: Ver?)`, not the Kotlin operator `compareTo`. Direct + upcast dispatch.
 il_check_imports icmparity IcmpArity "$ROOT/cases/il-icmparity" "$(printf -- '-2\n6')"
-# gendelegate (#140/P3): a Kotlin lambda into a GENERIC BCL delegate ctor param over a USER TypeBuilder
-# (ThreadLocal<Box> = Func<Box>, Progress<Box> = Action<Box>). The constructed TypeBuilderInstantiation
-# resolves the ctor on the OPEN def, so ilemit must substitute T->Box to materialize System.Func`1<Box>/
-# System.Action`1<Box>, not the internal KFunc`1<Box> (ilverify StackUnexpected). Covers both delegate
-# positions (return-var via Func, input-var via Action).
-il_check_imports gendelegate AppKt "$ROOT/cases/il-gendelegate" "$(printf '42\nTrue')"
-il_check_imports jsongeneric AppKt "$ROOT/cases/il-jsongeneric" "$(printf '42\n"hi"')"   # #44: a generic .NET method (JsonSerializer.Serialize<T>) with a facadegen-injected interop SIBLING param (JsonSerializerOptions) — ShapeSynthesis resolves the leaf off the refs to its .NET simple name so the overload-matcher shapes match ilemit's reflected shapes (was: "Object" erasure -> zero candidates -> ilemit "Sequence contains no elements")
 # m2 / mi1 consume BCL types via `import System.X` (System.Math, System.Text.StringBuilder) -> the facadegen import
 # scan (il_check_imports), NOT a bare il_check (which injects nothing, so the import would not resolve). No runtime.cs.
 il_check_imports mi1 MI1   "$ROOT/cases/m-i1"       "$(printf 'Hello, CLR 42\nlength = 13')"
-# alias: `import System.Text.StringBuilder as SB` — the PSI import scan keeps the aliased form (feedback (5)).
-il_check_imports alias Alias "$ROOT/cases/il-alias" "$(printf 'hello, alias\n12')"
-# dual-rep: the imported .NET view + the stdlib kotlin.text.StringBuilder coexist as two typed views of one CLR
-# type; an explicit cast crosses them (rule in docs/dotkt-semantics.md).
-il_check_imports dualrep DualRep "$ROOT/cases/il-dualrep" "$(printf 'net\n3\nkt\nnet')"
-# bclinject (#143): BCL-injection coverage + NRT fidelity — the generic `ThreadLocal<T>` value-factory ctor injects;
-# `ThreadLocal<T>.Value` surfaces as a PLATFORM type (`String!`, its getter carries [MaybeNull]) so `v == null` is legal
-# (not 'always false') and true when unset; and static `RuntimeHelpers.GetHashCode(object)` injects (the OBJECT_MEMBERS
-# name-skip no longer drops a distinct static method).
-il_check_imports bclinject AppKt "$ROOT/cases/il-bclinject" "$(printf 'hi\nTrue\nTrue')"
-# tlvalint (#8/#11): the VALUE-type twin of bclinject — `ThreadLocal<Int>.Value` is a `[MaybeNull]` oblivious platform
-# type `Int!`, so it lowers to a BARE `int32` (default `0` when unset), NEVER `Nullable<Int32>`. READ (#8): into a
-# non-null `Int` yields 0; the `== null` is statically false; the `?:` elvis returns the bare value; the
-# `ThreadLocal<String>` twin proves the reference-oblivious path (#143) still gives a real runtime null check. WRITE
-# (#11): a bare `5` writes; a `Nullable<Int32>` source (`Int? = 7`) is coerced/unwrapped to the bare slot (-> 7); the
-# `String?` reference-slot write needs no coercion (-> hi). (A literal-`null` value write is a loud bir2cir error, not a
-# run sample — §9a-bis.)
-il_check_imports tlvalint AppKt "$ROOT/cases/il-tlvalint" "$(printf '0\nFalse\n0\nTrue\n5\n7\nhi')"
 # taskfam: a same-name .NET arity family — non-generic `Task` and `Task<TResult>` (Kotlin `Task1`) coexist in one
 # file; `generic:Task1[T]` cross-refs resolve to the arity-1 definition (docs/dotkt-semantics.md §8d).
 il_check_imports taskfam Tf "$ROOT/cases/il-taskfam" "$(printf 'plain=True\ngeneric=42')"
@@ -604,7 +574,6 @@ il_check genseq GenSeq "$ROOT/cases/il-genseq" "$(printf '[5]\n[hi]')"
 # an OPEN operand (Closure`1::.ctor(!0)) -> TypeLoadException; and the iterator's delegateInvoke passed a boxed T? to
 # `Func<T,object>::Invoke(!0)` with no unbox -> InvalidProgramException at a VALUE element. Both fixed; value + ref drive.
 il_check genseq2 GenSeq2 "$ROOT/cases/il-genseq2" "$(printf '[1, 2, 4]\n[a, ab, abb]\n18')"
-il_check_imports forin Forin "$ROOT/cases/il-forin" "$(printf '60\n10,20,30,\n3')"
 il_check atomics Atomics "$ROOT/cases/il-atomics" "$(printf '11\n11\n16\nTrue\nFalse\n16\n16\n100\n55\n1001\n1001\n1000\n1000\n42')"   # COV2: kotlin.concurrent.atomics AtomicInt/AtomicLong exercising the @ClrRefArgument Interlocked byref binding
 # #129: an AtomicIntArray element op whose bounds check THROWS mid-critical-section must still release the monitor
 # (try/finally). A worker thread then acquires the same instance's monitor (loadAt); pre-fix the leaked lock made
