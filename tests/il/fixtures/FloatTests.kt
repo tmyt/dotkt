@@ -47,6 +47,12 @@ data class FltNullStructF(val x: Float?)
 var fltSideCalls = 0
 fun fltSideD(): Double? { fltSideCalls++; return 1.0 }
 
+// ---- #181 : a safe-call nullable-float operand (`c?.d == y`) — bare-local receiver, no valueBlock type stamp.
+// A nullable RECEIVER over a non-null Double/Float member: the safe-call result is `Double?`/`Float?`, so the operand
+// is value-nullable float and must route to the #180 null-safe IEEE path. ------------------------------------------
+class FltSafeD(val d: Double)
+class FltSafeF(val f: Float)
+
 class FloatTests {
     // il-nan: Double/Float NaN + infinities; any comparison with NaN is false.
     @TestAttribute
@@ -172,6 +178,40 @@ class FloatTests {
         assertTrue(nullF == nullF)       // True   (both null)
         assertTrue(1.0f == oneF)         // True   (mixed Float == Float?)
         assertFalse(nullF == 2.0f)       // False  (mixed, left null)
+    }
+
+    // #181: a safe-call nullable-float operand (`c?.d == y`) with a BARE-LOCAL nullable receiver — kotc emits the
+    // safe-call as a raw `cond` (nullableWrap/nullableNull arms) with NO valueBlock `type` stamp, so bir2cir's
+    // StaticType.Surface must recover the value-nullable `Double?`/`Float?` surface from those arms to route the
+    // ieee754equals to the #180 null-safe path (else a raw `ceq` over `Nullable<T>` — unverifiable IL). A null
+    // receiver makes `c?.d` null -> exactly-one-null -> FALSE; a present receiver compares by IEEE (NaN != NaN,
+    // -0.0 == 0.0).
+    @TestAttribute
+    fun safecall_nullableFloat() {
+        val someD: FltSafeD? = FltSafeD(1.0)
+        val zeroD: FltSafeD? = FltSafeD(-0.0)
+        val nanD: FltSafeD? = FltSafeD(Double.NaN)
+        val nullRecvD: FltSafeD? = null
+
+        assertTrue(someD?.d == 1.0)        // True   (present -> IEEE ==)
+        assertFalse(someD?.d == 2.0)       // False  (present, distinct)
+        assertTrue(zeroD?.d == 0.0)        // True   (IEEE: -0.0 == 0.0)
+        assertFalse(nanD?.d == Double.NaN) // False  (IEEE: NaN != NaN)
+        assertFalse(nullRecvD?.d == 1.0)   // False  (receiver null -> c?.d null -> one null)
+        // `!=` twin.
+        assertTrue(someD?.d != 2.0)        // True
+        assertTrue(nullRecvD?.d != 1.0)    // True   (null != 1.0)
+        // Concat over the same value-nullable safe-call surface: a null receiver renders "null" (the Surface change
+        // routes the bare-local safe-call part through the null-safe LibraryKt.toString, not a raw Nullable<T> part).
+        assertTrue("${nullRecvD?.d}" == "null")   // True
+
+        // Float? twin.
+        val someF: FltSafeF? = FltSafeF(1.0f)
+        val nanF: FltSafeF? = FltSafeF(Float.NaN)
+        val nullRecvF: FltSafeF? = null
+        assertTrue(someF?.f == 1.0f)       // True
+        assertFalse(nanF?.f == Float.NaN)  // False  (IEEE: NaN != NaN)
+        assertFalse(nullRecvF?.f == 1.0f)  // False  (receiver null)
     }
 
     // il-mathnumerics (#141): hypot/expm1/ln1p must bind the numerically-correct net10 BCL primitives

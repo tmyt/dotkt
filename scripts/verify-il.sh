@@ -573,7 +573,7 @@ il_check for   ForT  "$ROOT/cases/il-for"     "$(printf 'sum 1..5 = 15\ncountdow
 # The float/IEEE family (Double/Float NaN + infinities, unordered `<=`/`>=` compares, -0.0/0.0 total-order,
 # structural + direct/nullable float equality, hypot/expm1/ln1p BCL primitives: il-nan, il-nancmp, il-negzero,
 # il-structfloateq, il-structfloateqnull, il-floateqnull, il-mathnumerics) migrated to the NUnit battery
-# tests/il/fixtures/FloatTests.kt (7), gated by tests/run-nunit-il.sh; the old per-case dirs + il_check lines were
+# tests/il/fixtures/FloatTests.kt (8; +#181 safe-call nullable-float ==), gated by tests/run-nunit-il.sh; the old per-case dirs + il_check lines were
 # deleted in that SAME change.
 # printlnnull: println/print(null) render the string "null" (Kotlin semantics); non-null values print normally.
 # The collections family (list/set/iteration/collection-op + Map-typed cases: il-coll*, il-map*, il-mut*, il-iter*,
