@@ -310,13 +310,36 @@ sealed partial class Emitter
                 // covariant markNow over TimeSource.markNow must be bridged too, or the slot stays unimplemented).
                 // The interface entries are STRUCTURED Fqn nodes (birType-emitted). ilemit DERIVES the "referenced-vs-
                 // emitted" decision from the name (`_types` membership), not a clr:/clrg: marker.
-                var ifWork = new Queue<DotKt.Bir.TypeNode.Fqn>();
+                // (spec, viaBaseClass): a `viaBaseClass` interface is one this class implements ONLY through its emitted
+                // base-class chain (some intermediate base leaves an interface method as the default). We still wire THIS
+                // class's OWN override into that inherited interface slot (#185: a grandchild overriding an interface DIM
+                // that the intermediate class did not override — otherwise the grandchild's method is a fresh unlinked slot
+                // and virtual/interface dispatch falls through to the DIM default), but we must NOT emit the DIM forward-
+                // bridge / GetEnumerator adapter for it (the base class already did). A DIRECTLY-declared interface keeps
+                // full handling. ECMA-335 II.12.2: the most-derived per-type MethodImpl wins over the DIM fallback.
+                var ifWork = new Queue<(DotKt.Bir.TypeNode.Fqn spec, bool viaBaseClass)>();
                 var ifSeen = new HashSet<string>();
                 foreach (var i in ifs.EnumerateArray())
-                    if (ReadFqn(i) is DotKt.Bir.TypeNode.Fqn iff) ifWork.Enqueue(iff);
+                    if (ReadFqn(i) is DotKt.Bir.TypeNode.Fqn iff) ifWork.Enqueue((iff, false));
+                // Interfaces inherited through the EMITTED base-class chain, type args substituted into THIS class's frame
+                // (a generic base `Shape<T> : I<T>` under `Square : Shape<int>` yields `I<int>`). Enqueued AFTER the direct
+                // interfaces so a spec implemented BOTH ways is processed as direct (viaBaseClass=false, ifSeen dedup).
+                // `chainArgs` are the current base's actual type args expressed in THIS class's frame; each descent re-
+                // anchors the next base's args (stated in the current base's frame) back through `chainArgs`.
+                var chainName = ti.BaseName;
+                var chainArgs = ti.BaseFqn?.Args;
+                while (chainName != null && _types.TryGetValue(BareTypeKey(chainName), out var bti) && !bti.IsInterface)
+                {
+                    if (bti.Def.ValueKind == JsonValueKind.Object && bti.Def.TryGetProperty("interfaces", out var bifs))
+                        foreach (var bi in bifs.EnumerateArray())
+                            if (ReadFqn(bi) is DotKt.Bir.TypeNode.Fqn bbi && SubstTv(bbi, chainArgs) is DotKt.Bir.TypeNode.Fqn bbiF)
+                                ifWork.Enqueue((bbiF, true));
+                    chainArgs = bti.BaseFqn?.Args?.Select(a => SubstTv(a, chainArgs)).ToArray();
+                    chainName = bti.BaseName;
+                }
                 while (ifWork.Count > 0)
                 {
-                    var specFqn = ifWork.Dequeue();
+                    var (specFqn, viaBaseClass) = ifWork.Dequeue();
                     var spec = SigCanon(specFqn);            // the canonical overload/dedup key for this interface spec
                     var specName = specFqn.Name;
                     if (!ifSeen.Add(spec)) continue;
@@ -340,7 +363,7 @@ sealed partial class Emitter
                         var itype = externalSynthIface ? ResolveType(specName) : MapType(specFqn);
                         // C3b reverse bridge: if this is a @Clr collection interface (IEnumerable<E>-derived) and the
                         // class has only a Kotlin iterator(), synthesize GetEnumerator (handles the two overloads itself).
-                        GenerateGetEnumeratorIfNeeded(ti, itype);
+                        if (!viaBaseClass) GenerateGetEnumeratorIfNeeded(ti, itype);   // base class already emitted its adapter
                         var have = ti.Methods.Keys.ToHashSet();
                         // A SELF-REFERENTIAL constructed generic interface (e.g. `V : IComparable<V>`, V the emitted
                         // type) is a TypeBuilderInstantiation whose .GetMethods() throws. Enumerate the OPEN
@@ -405,7 +428,7 @@ sealed partial class Emitter
                     // chain (e.g. WithComparableMarks : TimeSource, or List<object> : Collection<object>).
                     if (iface.Def.ValueKind == JsonValueKind.Object && iface.Def.TryGetProperty("interfaces", out var baseIfs))
                         foreach (var bi in baseIfs.EnumerateArray())
-                            if (ReadFqn(bi) is DotKt.Bir.TypeNode.Fqn bi0 && SubstTv(bi0, specArgs) is DotKt.Bir.TypeNode.Fqn biF) ifWork.Enqueue(biF);
+                            if (ReadFqn(bi) is DotKt.Bir.TypeNode.Fqn bi0 && SubstTv(bi0, specArgs) is DotKt.Bir.TypeNode.Fqn biF) ifWork.Enqueue((biF, viaBaseClass));
                     // Iterate the interface's method DEFS (not the name-keyed iface.Methods) so OVERLOADED interface
                     // methods (e.g. MutableMap.remove(K):V vs the JVM remove(K,V):Boolean) each resolve to their own
                     // builder by signature, and to the matching body overload by TYPE-ARG-SUBSTITUTED signature. A miss
@@ -433,7 +456,9 @@ sealed partial class Emitter
                                 // treat an interface DIM as implicitly implementing the base interface method (Comparable.
                                 // compareTo), so the class slot stays unimplemented. Emit a class-level forwarding bridge
                                 // that calls the inherited DIM and put the MethodImpl on it.
-                                if (!ti.IsInterface) TryEmitDimForwardBridge(ti, imDef, specArgs, subSig, constructed, ifaceBuilder);
+                                // viaBaseClass: this class only inherits the interface through its base — the base already
+                                // emitted the DIM forward bridge for the not-overridden case; a second bridge here is wrong.
+                                if (!ti.IsInterface && !viaBaseClass) TryEmitDimForwardBridge(ti, imDef, specArgs, subSig, constructed, ifaceBuilder);
                                 continue;
                             }
                             var ifaceMethod = constructed != null ? TypeBuilder.GetMethod(constructed, ifaceBuilder) : (MethodInfo)ifaceBuilder;
