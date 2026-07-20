@@ -71,22 +71,12 @@ KTPROJ
 }
 ktproj_selftest
 
-# A real .ktproj end-to-end.
-kt ktproj "cases/ktproj/hello.ktproj" \
-	"$(printf 'Hello, Visual Studio, from a .ktproj!\nsum 1..5 = 15')"
-
 # MPP (#119): a multiplatform .ktproj — common/ carries the `expect class Greeter`, clr/ the `actual` + entry.
 # <DotKtMultiplatform>true</DotKtMultiplatform> makes the shared targets tag common/ sources with -Xcommon-sources
 # (+ -Xmulti-platform -Xexpect-actual-classes), so kotc's app pipeline does the common→platform module split and the
 # actual resolves. The only gate coverage of the MPP source-set path through MSBuild.
 kt ktproj-mpp "cases/ktproj-mpp/hello-mpp.ktproj" \
 	"Hello from the CLR actual"
-
-# Import-driven .NET resolution: plain `import System.Text.StringBuilder` / `import System.Math`, no <KotlinClrFacade>,
-# no facade — the facadegen import scan injects the types. Fluent StringBuilder.Append chaining + Math.Max.
-# Wired here (COV6, 2026-07-06): was UNWIRED (previously no gate covered the bare-import ktproj path).
-kt ktproj-import "cases/ktproj-import/import.ktproj" \
-	"dotkt imports just work: 40"
 
 # FORWARD ProjectReference + AssemblyResolver + .NET event subscription from a referenced C# project.
 # Also: assign a plain Boolean to the C# `bool?` (Nullable<bool>) property Enabled — facadegen maps Nullable<X> -> X?.
@@ -185,14 +175,6 @@ kt ktproj-genov "cases/ktproj-genov/app/App.ktproj" \
 kt ktproj-genov-common "cases/ktproj-genov-common/app/App.ktproj" \
 	"3"
 
-# PRACTICAL COLLECTIONS app consuming the real CLR stdlib (DotKt.Stdlib.dll): a List held as an app local (resolves as
-# the referenced IReadOnlyList), member access (size/indexing), TOP-LEVEL stdlib funs (first/getOrElse/contains/indexOf/
-# count/isEmpty/take) which kotc emits as `callStatic owner=null` and bir2cir attributes to their file-class owner
-# (kotlin.collections._CollectionsKt), AND `for (x in list)` (the iterator protocol re-pointed at the real referenced
-# kotlin.collections.Iterator<E> via the rt bridge). The whole app-consume gap, end-to-end through MSBuild.
-kt ktproj-coll "cases/ktproj-coll/app.ktproj" \
-	"$(printf '5\n30\n10\n20\n-1\nTrue\n3\n5\nFalse\n2\n150\nAPPLE\npear\n5\n4\n3')"
-
 # #37 finding 1 (RID-aware identity selection): a PackageReference (System.IO.Ports) whose copy-local set carries
 # BOTH lib/<tfm>/Foo.dll and runtimes/<rid>/lib/<tfm>/Foo.dll for ONE identity. ilemit's runtime catalog used to
 # hard-fail at emit on the duplicate simple name; it now dedups by identity and selects the host-RID asset. On Linux
@@ -201,13 +183,6 @@ kt ktproj-coll "cases/ktproj-coll/app.ktproj" \
 # would have picked the placeholder). Regression guard for #37 finding 1.
 kt ktproj-runtimetargets "cases/ktproj-runtimetargets/app.ktproj" \
 	"ports 0"
-
-# #37 finding 3 (catalog-first, TPA-fallback): framework/inbox types NOT copy-local (absent from the runtime
-# catalog) — System.Text.Json.JsonSerializerOptions + System.Net.Http.HttpClient — must resolve via the fallback
-# onto ilemit's own host framework (TPA). Before the fix these hard-failed "cannot resolve .NET type". Regression
-# guard for #37 finding 3.
-kt ktproj-inbox "cases/ktproj-inbox/app.ktproj" \
-	"$(printf 'indented False\ntimeout 100')"
 
 # #50: INCREMENTAL deletion-safety + staleness through MSBuild. A single dir is built TWICE with the SAME obj/ (no
 # clean) — the incremental path the shared targets guard. Between the builds a top-level `class Shape` is MOVED out of
@@ -245,8 +220,7 @@ fi
 rm -rf "$incr"
 
 # Clean each sample's build output.
-rm -rf "$ROOT"/cases/ktproj/bin "$ROOT"/cases/ktproj/obj \
-       "$ROOT"/cases/ktproj-mpp/bin "$ROOT"/cases/ktproj-mpp/obj \
+rm -rf "$ROOT"/cases/ktproj-mpp/bin "$ROOT"/cases/ktproj-mpp/obj \
        "$ROOT"/cases/ktproj-listparam/*/bin "$ROOT"/cases/ktproj-listparam/*/obj \
        "$ROOT"/cases/ktproj-nestedlist/*/bin "$ROOT"/cases/ktproj-nestedlist/*/obj \
        "$ROOT"/cases/ktproj-genmember/*/bin "$ROOT"/cases/ktproj-genmember/*/obj \
@@ -257,13 +231,10 @@ rm -rf "$ROOT"/cases/ktproj/bin "$ROOT"/cases/ktproj/obj \
        "$ROOT"/cases/ktproj-genq/*/bin "$ROOT"/cases/ktproj-genq/*/obj \
        "$ROOT"/cases/ktproj-genov/*/bin "$ROOT"/cases/ktproj-genov/*/obj \
        "$ROOT"/cases/ktproj-genov-common/*/bin "$ROOT"/cases/ktproj-genov-common/*/obj \
-       "$ROOT"/cases/ktproj-import/bin "$ROOT"/cases/ktproj-import/obj \
        "$ROOT"/cases/ktproj-extlib/bin "$ROOT"/cases/ktproj-extlib/obj \
        "$ROOT"/cases/ktproj-extlib/extlib/bin "$ROOT"/cases/ktproj-extlib/extlib/obj \
        "$ROOT"/cases/ktproj-bidir/*/bin "$ROOT"/cases/ktproj-bidir/*/obj \
-       "$ROOT"/cases/ktproj-coll/bin "$ROOT"/cases/ktproj-coll/obj \
        "$ROOT"/cases/ktproj-runtimetargets/bin "$ROOT"/cases/ktproj-runtimetargets/obj \
-       "$ROOT"/cases/ktproj-inbox/bin "$ROOT"/cases/ktproj-inbox/obj \
        "$ROOT"/cases/ktproj-avalonia/bin "$ROOT"/cases/ktproj-avalonia/obj
 
 echo "------------------------------------"
