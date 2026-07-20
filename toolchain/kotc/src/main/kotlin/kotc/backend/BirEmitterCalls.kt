@@ -1209,7 +1209,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 			delegateClass.fqNameWhenAvailable?.asString()?.startsWith("kotlin") != true
 		val bfFq = bf?.type?.classFqName?.asString()
 		val (owner, ownerGeneric) = when {
-			isUserDelegate -> str(typeName(delegateClass!!)) to false
+			isUserDelegate -> fqnJson(typeName(delegateClass!!)) to false
 			bf != null && (bfFq == "kotlin.properties.ReadWriteProperty" || bfFq == "kotlin.properties.ReadOnlyProperty") -> {
 				val os = ownerSpec(bf.type.classifierOrNull?.owner as? IrClass, bf.type)
 				os.toJson() to ((os as? TypeNode.Fqn)?.args != null)
