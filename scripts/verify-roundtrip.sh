@@ -42,15 +42,25 @@ declare -A RT_XFAIL=(
 )
 
 # MIGRATED to the in-process ProjectReference round-trip lane (tests/roundtrip/consumer RoundtripTests, driven by
-# tests/run-nunit-il.sh) — these 7 sections no longer run here (docs/design-nunit-test-harness.md §3, playbook §3):
-#   roundtrip-enum -> enumInheritedMembers           roundtrip-defargs  -> defaultAndNamedArgs
-#   roundtrip-customprop -> customAccessorProperties roundtrip-nrt      -> triStateNullability
-#   roundtrip-memext -> memberExtensionFunctions     roundtrip-money/operator-flag -> operatorAndInfixFromRealFlag
-#   roundtrip-generic-operator -> genericOperatorGetSet
+# tests/run-nunit-il.sh) — these sections no longer run here (docs/design-nunit-test-harness.md §3, playbook §3):
+#   BATCH 1 (7):
+#     roundtrip-enum -> enumInheritedMembers           roundtrip-defargs  -> defaultAndNamedArgs
+#     roundtrip-customprop -> customAccessorProperties roundtrip-nrt      -> triStateNullability
+#     roundtrip-memext -> memberExtensionFunctions     roundtrip-money/operator-flag -> operatorAndInfixFromRealFlag
+#     roundtrip-generic-operator -> genericOperatorGetSet
+#   BATCH 2 (8):
+#     roundtrip-nothing-return -> nothingReturnGeneric  roundtrip-pkg -> packagedNamespaces
+#     roundtrip-inline-member -> inlineMemberNonLocalReturn   roundtrip-generic-inline-ext -> genericInlineExtension
+#     roundtrip-dotfile -> dottedFileClass              roundtrip-nonconst-default -> nonConstDefaultArgs
+#     roundtrip-comparable -> comparableClass           roundtrip-ubyte -> ubyteFidelity
 # The remaining sections below stay in this shell lane pending later increments (suspend/coharness, negative
-# compile-fail, dual-emit-path/meta-inspection cases). roundtrip-toplevel-val STAYS here: a top-level PLAIN-field
-# (no custom accessor) file class is not surfaced by facadegen's --import-list path when reached only through
-# field imports, so it does not yet migrate to the ProjectReference consumer (a facadegen re-import gap).
+# compile-fail, dual-emit-path/meta-inspection cases). Three batch-2 CANDIDATES stayed here because they RUN green
+# but emit IL the in-process lane's ilverify phase rejects (formal-only, runtime-safe cross-module IL gaps; each
+# section below carries a STAYS-in-shell note): roundtrip-nothing (Nothing branch merges object/string),
+# roundtrip-generic-hof (KFunc vs System.Func delegate), roundtrip-receiver-lambda (KAction vs System.Action).
+# roundtrip-comparable-meta STAYS here: it asserts on the generated facadegen metadata JSON directly (no in-process
+# analog); only its END-TO-END twin migrated. roundtrip-toplevel-val STAYS here: a top-level PLAIN-field (no custom
+# accessor) file class is not surfaced by facadegen's --import-list path when reached only through field imports.
 
 # ---- section result collection (no section may abort the script) -----------------------------------
 declare -a SUMMARY=() NEW_FAILS=()
@@ -336,6 +346,10 @@ check_output roundtrip-atomic-twin "$atexpected" "$atactual" "consumed types who
 # type instead of widening to Any?. #133 wired the PLAIN method/getter path; #135 extends the READER to the
 # companion-static return (which the facadegen companion-static loop read via raw MapRetT -> Any?, now RetTypeSfxN).
 # LOAD-BEARING: if either Nothing widened to Any?, the `val r: String = if/else` would fail to compile -> section FAIL.
+# STAYS in this shell lane (not migrated to the in-process ProjectReference consumer): a cross-module re-imported
+# Nothing branch merges an `object`-returning call with a `string`, which the in-process lane's ilverify phase
+# rejects (StackUnexpected object/string) though it RUNS green (the else branch throws) — a formal-only cross-module
+# Nothing IL gap tracked as #197; the shell lane asserts only stdout so it keeps this RUN coverage.
 NO="$ROOT/build/roundtrip-nothing"; rm -rf "$NO"; mkdir -p "$NO/lib" "$NO/app" "$NO/libbir" "$NO/libil" "$NO/appbir" "$NO/appil"
 cat > "$NO/lib/lib.kt" <<'EOF'
 class Boom {
@@ -430,123 +444,6 @@ cp "$R/libil/KLib.dll" "$R/appil/" 2>/dev/null || true
 expected="$(printf '11\n(4, 6)\nHi, Vec\n42\n(3, 6)')"
 run_app actual "$R/appil/KApp.dll"
 check_output roundtrip "$expected" "$actual" "infix / operator / suspend / top-level restored from a DotKt assembly"
-
-# ----- PACKAGED round-trip: Kotlin packages project to .NET namespaces, consumed via package-qualified imports -----
-# Also guards the correctness bug where same-named classes in different packages collided at the root namespace.
-G="$ROOT/build/roundtrip-pkg"; rm -rf "$G"; mkdir -p "$G/lib" "$G/app" "$G/libbir" "$G/libil" "$G/appbir" "$G/appil"
-cat > "$G/lib/geom.kt" <<'EOF'
-package geom
-enum class Dir { NORTH, EAST }
-class Vec(var x: Int, var y: Int) {
-    infix fun dot(o: Vec): Int = x * o.x + y * o.y
-    val mag2: Int get() = x * x + y * y          // property with a custom getter
-}
-operator fun Vec.plus(o: Vec): Vec = Vec(x + o.x, y + o.y)   // top-level extension operator
-val Vec.manhattan: Int get() = x + y                          // extension property
-fun sumAll(vararg xs: Int): Int { var s = 0; for (v in xs) s += v; return s }   // vararg
-fun tagged(s: String = "def"): String = s                    // default argument
-fun orNone(s: String?): String = s ?: "none"                 // nullable parameter
-fun greet(name: String): String = "Hi, " + name
-inline fun <reified T> typeName(): String = T::class.simpleName ?: "?"   // reified inline -> generic method
-inline fun forEach3(a: Int, b: Int, c: Int, action: (Int) -> Unit) { action(a); action(b); action(c) }
-EOF
-# A class with the SAME simple name in a DIFFERENT package — must not collide (they used to, at the root namespace).
-cat > "$G/lib/other.kt" <<'EOF'
-package other
-class Vec(val tag: String)
-EOF
-cat > "$G/app/app.kt" <<'EOF'
-import geom.Vec
-import geom.Dir
-import geom.greet
-import geom.typeName
-import geom.forEach3
-import geom.plus
-import geom.manhattan
-import geom.sumAll
-import geom.tagged
-import geom.orNone
-fun firstEven(): Int {
-    forEach3(1, 3, 4) { if (it % 2 == 0) return it }   // NON-LOCAL return through a CROSS-MODULE inline lambda
-    return -1
-}
-fun main() {
-    println(Vec(1, 2) dot Vec(3, 4))   // geom.Vec, infix
-    println(greet("pkg"))              // top-level via `import geom.greet`
-    println(Dir.EAST)                  // enum in a package
-    println(typeName<String>())        // cross-module reified inline -> generic method call
-    println(firstEven())               // cross-module inline + lambda + non-local return -> spliced body
-    val v = Vec(3, 4); println(v.mag2) // property (custom getter)
-    v.x = 6; println(v.mag2)           // mutable property write
-    println((Vec(1, 2) + Vec(3, 4)).mag2)  // top-level extension operator + property
-    println(sumAll(1, 2, 3, 4))        // vararg
-    println(Vec(3, 4).manhattan)       // extension property
-    println(tagged())                  // default argument omitted
-    println(orNone(null))              // nullable param (null passable)
-}
-EOF
-CLR_TYPES_METADATA="" "$LAUNCHER" "$G/lib" -no-stdlib -classpath "$CP" -d "$G/libbir" >/dev/null 2>&1 || true
-emit_il "$G/libil" GeomLib "$G/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$G/libil/GeomLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-"$LAUNCHER" --scan-imports --output "$G/imports.txt" "$G/app"/*.kt >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" "$G/meta" --compile-refs "$REFS$G/libil/GeomLib.dll" --import-list "$G/imports.txt" >/dev/null 2>&1 || true
-CLR_TYPES_METADATA="$G/meta" "$LAUNCHER" "$G/app" -no-stdlib -classpath "$CP" -d "$G/appbir" >/dev/null 2>&1 || true
-emit_il "$G/appil" GeomApp --ref "$G/libil/GeomLib.dll" "$G/appbir"/*.bir.json
-cp "$G/libil/GeomLib.dll" "$G/appil/" 2>/dev/null || true
-pkgexpected="$(printf '11\nHi, pkg\nEAST\nString\n4\n25\n52\n52\n10\n7\ndef\nnone')"
-run_app pkgactual "$G/appil/GeomApp.dll"
-check_output roundtrip-pkg "$pkgexpected" "$pkgactual" "namespace; reified inline; non-local return; properties; ext operator/property; vararg; default arg; nullable"
-
-
-# ----- CROSS-MODULE inline MEMBER + non-local return (F1 / #60) -----
-# roundtrip-pkg (above) proved a cross-module inline TOP-LEVEL fn splices a non-local return. This proves the MEMBER
-# case: `class C { inline fun pick(block) }` restored from a DotKt assembly (isInline=true, body==null, a DISPATCH
-# receiver). Before F1 the member failed kotc's `dispatchReceiver(call) == null` cross-module gate and fell to the plain
-# `callInstance` path + a REAL delegate for the block, so a non-local `return` inside the block returned from the
-# DELEGATE, not the caller — a SILENT miscompile (`caller()` fell through to -1 instead of returning 99). kotc now emits
-# a member-aware `callInline` carrying `recvs.dispatch`; bir2cir's InlineSplice §4.3 binds it (the payload's `{k:this}`
-# member-field reads rebind to the caller-provided receiver) and routes the non-local return to the CALLER. NOT in
-# RT_XFAIL — it must pass. `matched()` also exercises the dispatch-receiver `this.c` field read in the spliced body.
-IM="$ROOT/build/roundtrip-inline-member"; rm -rf "$IM"; mkdir -p "$IM/lib" "$IM/app" "$IM/libbir" "$IM/libil" "$IM/appbir" "$IM/appil"
-cat > "$IM/lib/lib.kt" <<'EOF'
-package picker
-class C(val a: Int, val b: Int, val c: Int) {
-    inline fun pick(block: (Int) -> Boolean): Int {
-        if (block(a)) return a      // dispatch-receiver `this.a` read inside a spliced inline member body
-        if (block(b)) return b
-        if (block(c)) return c
-        return -1
-    }
-}
-EOF
-cat > "$IM/app/app.kt" <<'EOF'
-import picker.C
-fun caller(): Int {
-    val c = C(10, 20, 30)
-    c.pick { x -> if (x == 20) return 99; false }   // NON-LOCAL return from caller() through the CROSS-MODULE inline MEMBER
-    return -1                                        // must NOT be reached: pick sees 20 -> the block returns 99 from caller()
-}
-fun matched(): Int {
-    val c = C(10, 20, 30)
-    return c.pick { x -> x == 30 }                   // pick's own early `return c` (dispatch-receiver read) yields 30
-}
-fun main() {
-    println(caller())    // 99 — the non-local return escapes the CALLER, not the delegate
-    println(matched())   // 30 — inline-member body early-return + `this.c` field read
-}
-EOF
-CLR_TYPES_METADATA="" "$LAUNCHER" "$IM/lib" -no-stdlib -classpath "$CP" -d "$IM/libbir" >/dev/null 2>&1 || true
-emit_il "$IM/libil" PickLib "$IM/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$IM/libil/PickLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-"$LAUNCHER" --scan-imports --output "$IM/imports.txt" "$IM/app"/*.kt >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" "$IM/meta" --compile-refs "$REFS$IM/libil/PickLib.dll" --import-list "$IM/imports.txt" >/dev/null 2>&1 || true
-CLR_TYPES_METADATA="$IM/meta" "$LAUNCHER" "$IM/app" -no-stdlib -classpath "$CP" -d "$IM/appbir" >/dev/null 2>&1 || true
-emit_il "$IM/appil" PickApp --ref "$IM/libil/PickLib.dll" "$IM/appbir"/*.bir.json
-cp "$IM/libil/PickLib.dll" "$IM/appil/" 2>/dev/null || true
-imexpected="$(printf '99\n30')"
-run_app imactual "$IM/appil/PickApp.dll"
-check_output roundtrip-inline-member "$imexpected" "$imactual" "cross-module inline MEMBER + non-local return from the caller + dispatch-receiver field read in the spliced body (F1 #60)"
-
 
 # ----- GENERIC round-trip, COMBINED with every other round-tripping feature, consumed as Kotlin -----
 # Exercises user generics in every POSITION (class type param, member, return, parameter, two type params, generic
@@ -654,6 +551,10 @@ check_output roundtrip-nullable-vt-generic "$nvexpected" "$nvactual" "cross-modu
 # The metadata type grammar is a recursive structured type-node tree (an `fn` node's `ret`/`params` are themselves type
 # nodes), so a generic user type — an `fqn` node with `args` — nests inside a lambda parameter: top-level / member /
 # extension / infix / operator / inline all carry it.
+# STAYS in this shell lane (not migrated to the in-process ProjectReference consumer): the consumer materializes its
+# lambda as a CLR `System.Func`2` while the re-imported producer signature types the delegate param as DotKt's
+# `KFunc`2` — runtime-compatible (the RUN is green) but the in-process lane's ilverify phase rejects the delegate type
+# mismatch (StackUnexpected KFunc/System.Func). The cross-module delegate-representation ABI gap tracked as #123.
 HF="$ROOT/build/roundtrip-generic-hof"; rm -rf "$HF"; mkdir -p "$HF/lib" "$HF/app" "$HF/libbir" "$HF/libil" "$HF/appbir" "$HF/appil"
 cat > "$HF/lib/lib.kt" <<'EOF'
 class Box<T>(val value: T) { fun get(): T = value }
@@ -695,6 +596,9 @@ check_output roundtrip-generic-hof "$hfexpected" "$hfactual" "generic user types
 # fn receiver; ClrTypeInjection restores `Panel.() -> Unit` (an ExtensionFunctionType cone) so the consumer's lambda
 # gets `this: Panel`. Without the round-trip the injected param degrades to a receiver-less `(Panel)->Unit` and the
 # consumer fails with `unresolved reference 'margin'`. Also covers a member `Panel.() -> Unit` and multi-param mix.
+# STAYS in this shell lane (not migrated to the in-process ProjectReference consumer): same delegate-unification gap as
+# roundtrip-generic-hof but in the reverse direction (the consumer holds a DotKt `KAction`1` where the re-imported
+# signature expects `System.Action`1`) — runtime-compatible (RUN green) but the in-process ilverify phase rejects it (#123).
 RL="$ROOT/build/roundtrip-receiver-lambda"; rm -rf "$RL"; mkdir -p "$RL/lib" "$RL/app" "$RL/libbir" "$RL/libil" "$RL/appbir" "$RL/appil"
 cat > "$RL/lib/lib.kt" <<'EOF'
 package ui
@@ -785,46 +689,6 @@ cp "$MP/libil/KLib.dll" "$MP/appil/" 2>/dev/null || true
 mpexpected="$(printf 'lbl:17\n30\n15\n1002\n15\n210')"
 run_app mpactual "$MP/appil/KApp.dll"
 check_output roundtrip-memext2 "$mpexpected" "$mpactual" "member extension properties + suspend member extensions, public + protected"
-
-# ----- NON-CONST default args (#146): `= {}` / an expression default filled cross-module -----
-# #134 carried a CONSTANT default as a metadata value. #146 extends the SAME @KotlinDefault mechanism to a NON-CONST
-# default — an empty lambda `= {}` (THE Avalonia DSL idiom `configure: Panel.() -> Unit = {}`, composed with #145's
-# receiver lambda), a plain empty lambda, and a simple-expression default `= emptyList()`. kotc carries the default as a
-# CLOSED BIR sub-tree in `[kotlin.clr.KotlinDefault]` (a non-capturing lambda's lifted method rides a `defaultCarrier`
-# envelope); facadegen marks the injected param OPTIONAL (nonConst) so the consumer frontend accepts the omission; and
-# bir2cir's DefaultArgSplice (now PHASE 1) fills the omitted slot, re-hoisting a carried lambda app-local (fresh name) so
-# it re-lowers in THIS app's context. The empty-lambda default fills to `{}`. See docs/dotkt-semantics.md §10.
-NC="$ROOT/build/roundtrip-nonconst-default"; rm -rf "$NC"; mkdir -p "$NC/lib" "$NC/app" "$NC/libbir" "$NC/libil" "$NC/appbir" "$NC/appil"
-cat > "$NC/lib/lib.kt" <<'EOF'
-package ui
-class Panel { var margin: Int = 0; fun add(s: String): Int { margin += s.length; return margin } }
-fun column(configure: Panel.() -> Unit = {}, build: Panel.() -> Unit): Int { val p = Panel(); p.configure(); p.build(); return p.margin }
-fun run2(pre: () -> Unit = {}, body: () -> Unit): String { pre(); body(); return "ok" }
-fun tagged(name: String, items: List<String> = emptyList()): String = "$name=${items.size}"
-EOF
-cat > "$NC/app/app.kt" <<'EOF'
-import ui.Panel
-import ui.column
-import ui.run2
-import ui.tagged
-fun main() {
-    println(column(build = { add("hi") }))                          // 2   configure defaults to {} (empty receiver lambda)
-    println(column(configure = { add("ab") }, build = { add("c") })) // 3   both provided (no fill)
-    println(run2(body = { print("") }))                             // ok  pre defaults to {} (empty plain lambda)
-    println(tagged("z"))                                            // z=0 items defaults to emptyList() (simple-expr default)
-}
-EOF
-CLR_TYPES_METADATA="" "$LAUNCHER" "$NC/lib" -no-stdlib -classpath "$CP" -d "$NC/libbir" >/dev/null 2>&1 || true
-emit_il "$NC/libil" UiLib "$NC/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$NC/libil/UiLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-"$LAUNCHER" --scan-imports --output "$NC/imports.txt" "$NC/app"/*.kt >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" "$NC/meta" --compile-refs "$REFS$NC/libil/UiLib.dll" --import-list "$NC/imports.txt" >/dev/null 2>&1 || true
-CLR_TYPES_METADATA="$NC/meta" "$LAUNCHER" "$NC/app" -no-stdlib -classpath "$CP" -d "$NC/appbir" >/dev/null 2>&1 || true
-emit_il "$NC/appil" UiApp --ref "$NC/libil/UiLib.dll" "$NC/appbir"/*.bir.json
-cp "$NC/libil/UiLib.dll" "$NC/appil/" 2>/dev/null || true
-ncexpected="$(printf '2\n3\nok\nz=0')"
-run_app ncactual "$NC/appil/UiApp.dll"
-check_output roundtrip-nonconst-default "$ncexpected" "$ncactual" "non-const default args (#146): empty receiver/plain lambda = {} + simple-expr = emptyList() filled cross-module"
 
 # ----- SUSPEND FUNCTION-TYPE round-trip (H2): a `suspend (…) -> T` PARAMETER survives re-consumption -----
 # A library exports `fun runBlock(block: suspend () -> Int)` — bir2cir erases the CLR parameter SLOT to `object` (a
@@ -934,101 +798,6 @@ srexpected="$(printf '42\n30\n107')"
 run_app sractual "$SR/appil/Hof2App.dll"
 check_output roundtrip-suspendfn-ret "$srexpected" "$sractual" "a suspend (…) -> T VALUE round-trips in RETURN + PROPERTY + FIELD position: bir2cir lowers a value-position suspendLambdaNew to a SuspendLambda SM, the consumer drives it"
 
-# ---- UNSIGNED BYTE round-trip (#53): UByte / UByteArray fidelity through the DotKt emit -> facadegen consume cycle ----
-# A DotKt lib exposes UByte / UByteArray / a UByte-consuming fun. Emitted, the lib's CLR surface is System.Byte /
-# System.Byte[]. facadegen (STRICT #53) must surface them BACK as kotlin.UByte / kotlin.UByteArray (NOT the lossy signed
-# Byte/ByteArray) — proven by the consumer compiling AND reading value 200 as UByte 200 (a signed Byte would be -56).
-UB="$ROOT/build/roundtrip-ubyte"; rm -rf "$UB"; mkdir -p "$UB/lib" "$UB/app" "$UB/libbir" "$UB/libil" "$UB/appbir" "$UB/appil"
-cat > "$UB/lib/lib.kt" <<'EOF'
-@file:OptIn(kotlin.ExperimentalUnsignedTypes::class)
-fun ub(): UByte = 200u                                   // emits System.Byte 200 -> facadegen surfaces as UByte
-fun uba(): UByteArray = ubyteArrayOf(1u, 2u, 250u)       // emits System.Byte[] -> facadegen surfaces as UByteArray
-fun takeUb(x: UByte): Int = x.toInt()                    // System.Byte param -> facadegen surfaces as UByte
-EOF
-cat > "$UB/app/app.kt" <<'EOF'
-@file:OptIn(kotlin.ExperimentalUnsignedTypes::class)
-fun main() {
-    val u: UByte = ub()          // compiles ONLY if the return restored UByte (not Byte)
-    println(u.toInt())           // 200  unsigned fidelity (a mis-restored signed Byte would print -56)
-    val a: UByteArray = uba()    // compiles ONLY if byte[] restored to UByteArray (not ByteArray/Array<UByte>)
-    println(a.size)              // 3
-    println(a[2].toInt())        // 250
-    println(takeUb(200u))        // 200  pass a UByte to a UByte-restored param
-}
-EOF
-CLR_TYPES_METADATA="" "$LAUNCHER" "$UB/lib" -no-stdlib -classpath "$CP" -d "$UB/libbir" >/dev/null 2>&1 || true
-emit_il "$UB/libil" UbLib "$UB/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$UB/libil/UbLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" "$UB/k.meta" --compile-refs "$REFS$UB/libil/UbLib.dll" LibKt >/dev/null 2>&1 || true
-CLR_TYPES_METADATA="$UB/k.meta" "$LAUNCHER" "$UB/app" -no-stdlib -classpath "$CP" -d "$UB/appbir" >/dev/null 2>&1 || true
-emit_il "$UB/appil" UbApp --ref "$UB/libil/UbLib.dll" "$UB/appbir"/*.bir.json
-cp "$UB/libil/UbLib.dll" "$UB/appil/" 2>/dev/null || true
-ubexpected="$(printf '200\n3\n250\n200')"
-run_app ubactual "$UB/appil/UbApp.dll"
-check_output roundtrip-ubyte "$ubexpected" "$ubactual" "UByte/UByteArray strict-mapping fidelity: System.Byte->UByte + System.Byte[]->UByteArray via consumer compile-dependency + value 200"
-
-# ----- #133 GENERIC-FIDELITY regressions (atomicfu CLR port): two cases, all FIXED (now plain passing checks) --------
-# The atomicfu port reported that a DotKt lib consumed AS KOTLIN lost fidelity for (1) a generic INLINE EXTENSION on a
-# generic receiver and (3) a Kotlin `Nothing` return. Both were FIXED by 299ba89
-# (#133) in their owning layers (kotc / bir2cir+kotc); the RT_XFAIL map is now empty, so these sections run
-# through plain check_output and RED on any regression — kept as permanent round-trip regression guards.
-# (The third #133 case — an OPERATOR get/set on a generic type — now lives in the ProjectReference round-trip lane
-#  as tests/roundtrip/consumer RoundtripTests::genericOperatorGetSet.)
-
-# (1) GENERIC INLINE EXTENSION on a generic receiver — `c.update { it + 1 }` must infer T=Int from `c: Cell<Int>`. FIR
-# DOES infer it (facadegen's __self: Cell<T> meta is correct); kotc's facadegen inline-splice path refuses the lambda +
-# extension-receiver shape at BIR emit. Route: kotc BirEmitterCalls.kt.
-GIE="$ROOT/build/roundtrip-generic-inline-ext"; rm -rf "$GIE"; mkdir -p "$GIE/lib" "$GIE/app" "$GIE/libbir" "$GIE/libil" "$GIE/appbir" "$GIE/appil"
-cat > "$GIE/lib/lib.kt" <<'EOF'
-class Cell<T>(var v: T)
-inline fun <T> Cell<T>.update(fn: (T) -> T) { v = fn(v) }   // generic inline ext on a generic receiver
-EOF
-cat > "$GIE/app/app.kt" <<'EOF'
-fun main() {
-    val c = Cell(1)
-    c.update { it + 1 }   // infer T=Int from the receiver Cell<T>
-    println(c.v)          // 2
-}
-EOF
-CLR_TYPES_METADATA="" "$LAUNCHER" "$GIE/lib" -no-stdlib -classpath "$CP" -d "$GIE/libbir" >/dev/null 2>&1 || true
-emit_il "$GIE/libil" KLib "$GIE/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$GIE/libil/KLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" "$GIE/k.meta" --compile-refs "$REFS$GIE/libil/KLib.dll" Cell LibKt >/dev/null 2>&1 || true
-CLR_TYPES_METADATA="$GIE/k.meta" "$LAUNCHER" "$GIE/app" -no-stdlib -classpath "$CP" -d "$GIE/appbir" >/dev/null 2>&1 || true
-emit_il "$GIE/appil" KApp --ref "$GIE/libil/KLib.dll" "$GIE/appbir"/*.bir.json
-cp "$GIE/libil/KLib.dll" "$GIE/appil/" 2>/dev/null || true
-run_app gieactual "$GIE/appil/KApp.dll"
-check_output roundtrip-generic-inline-ext "2" "$gieactual" "a generic inline extension on a generic receiver infers T from the receiver and splices cross-module"
-
-# (3) Kotlin `Nothing` return — `fun fail(): Nothing`. Sharp COMPILE-dependency: `val y: String = if (c) "ok" else
-# fail(...)` compiles to `String` ONLY if `fail` restored `Nothing` (else the if/else widens to Any? -> "expected String,
-# actual Any?"). facadegen's reader is landed; needs bir2cir to stamp [KotlinNothing] + kotc coneOf to resolve it.
-NR="$ROOT/build/roundtrip-nothing-return"; rm -rf "$NR"; mkdir -p "$NR/lib" "$NR/app" "$NR/libbir" "$NR/libil" "$NR/appbir" "$NR/appil"
-cat > "$NR/lib/lib.kt" <<'EOF'
-package fx
-fun fail(msg: String): Nothing = throw RuntimeException(msg)
-fun <T> pick(cond: Boolean, x: T): T = if (cond) x else fail("no")
-EOF
-cat > "$NR/app/app.kt" <<'EOF'
-import fx.fail
-import fx.pick
-fun main() {
-    println(pick(true, 7))                        // 7
-    val y: String = if (true) "ok" else fail("x") // compiles as String only if fail(): Nothing round-tripped
-    println(y)                                    // ok
-}
-EOF
-CLR_TYPES_METADATA="" "$LAUNCHER" "$NR/lib" -no-stdlib -classpath "$CP" -d "$NR/libbir" >/dev/null 2>&1 || true
-emit_il "$NR/libil" NothLib "$NR/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$NR/libil/NothLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" "$NR/k.meta" --compile-refs "$REFS$NR/libil/NothLib.dll" fx.LibKt >/dev/null 2>&1 || true
-CLR_TYPES_METADATA="$NR/k.meta" "$LAUNCHER" "$NR/app" -no-stdlib -classpath "$CP" -d "$NR/appbir" >/dev/null 2>&1 || true
-emit_il "$NR/appil" NothApp --ref "$NR/libil/NothLib.dll" "$NR/appbir"/*.bir.json
-cp "$NR/libil/NothLib.dll" "$NR/appil/" 2>/dev/null || true
-nrexpected="$(printf '7\nok')"
-run_app nractual "$NR/appil/NothApp.dll"
-check_output roundtrip-nothing-return "$nrexpected" "$nractual" "a Kotlin Nothing return round-trips: the consumer's if/else with a Nothing branch keeps the non-Nothing type (no Any? widening)"
-
 # ----- VIRTUAL DISPATCH: an open/override instance method of a DotKt lib consumed AS KOTLIN dispatches virtually (#139) -----
 # kotc's .NET-interop callInstance path (a facadegen-reinjected owner) previously emitted NO `virtual` flag. bir2cir's
 # NetInteropBinding reshapes such a callInstance to a `clrInstance` (where virtual is moot) WHEN it resolves the owner
@@ -1102,39 +871,6 @@ vd_ok=0
 [[ "$vd_bir_ok" == 1 && "$vdactual1" == "$vdexpected" && "$vdactual2" == "$vdexpected" && "$vd_ilv_ok" == 1 ]] && vd_ok=1
 section_result roundtrip-virtual-dispatch "$vd_ok" "open/override instance method of a DotKt lib dispatches virtually as Kotlin; BIR carries virtual; reshaped + raw-callInstance paths; ilverify (#139)" \
 	"$(printf -- 'bir_ok=%s (has=%s missing=%s) ilv_ok=%s\n--- expected ---\n%s\n--- reshaped(clrInstance) ---\n%s\n--- raw callInstance->ilemit ---\n%s' "$vd_bir_ok" "$vd_has_virtual" "$vd_missing_virtual" "$vd_ilv_ok" "$vdexpected" "$vdactual1" "$vdactual2")"
-
-# ----- DOTTED FILENAME (#16): top-level funcs in a `*.common.kt` file class round-trip cross-module -----------
-# A source file whose stem contains a dot (`api.common.kt`, the standard MPP common-fragment convention) compiles to
-# a file-facade class. kotc must sanitize the stem's non-identifier chars to `_` (stock Kotlin: `Api_commonKt`)
-# BEFORE it derives the class name — else the raw `Api.commonKt` is read by ilemit's DefineType as
-# Namespace=demo.Api / Name=commonKt, so facadegen scanning package `demo` never surfaces its TOP-LEVEL functions
-# (top-level CLASSES round-trip fine either way — they carry their own type name) -> a cross-module `unresolved
-# reference` on `commonOnly`. After the fix the file class is `demo.Api_commonKt` and its top-level fun resolves.
-DF="$ROOT/build/roundtrip-dotfile"; rm -rf "$DF"; mkdir -p "$DF/lib" "$DF/app" "$DF/libbir" "$DF/libil" "$DF/appbir" "$DF/appil"
-cat > "$DF/lib/api.common.kt" <<'EOF'
-package demo
-fun commonOnly(x: Int): Int = x + 1     // top-level fun in a DOTTED-name file (the #16 regression surface)
-class Box(var v: Int)                    // top-level class in the same file (round-trips either way)
-EOF
-cat > "$DF/app/app.kt" <<'EOF'
-import demo.commonOnly
-import demo.Box
-fun main() {
-    println(commonOnly(1))   // 2   top-level fun from the dotted-name file class (was `unresolved reference`)
-    println(Box(2).v)        // 2   top-level class from the same file
-}
-EOF
-CLR_TYPES_METADATA="" "$LAUNCHER" "$DF/lib" -no-stdlib -classpath "$CP" -d "$DF/libbir" >/dev/null 2>&1 || true
-emit_il "$DF/libil" DemoLib "$DF/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$DF/libil/DemoLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-"$LAUNCHER" --scan-imports --output "$DF/imports.txt" "$DF/app"/*.kt >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" "$DF/meta" --compile-refs "$REFS$DF/libil/DemoLib.dll" --import-list "$DF/imports.txt" >/dev/null 2>&1 || true
-CLR_TYPES_METADATA="$DF/meta" "$LAUNCHER" "$DF/app" -no-stdlib -classpath "$CP" -d "$DF/appbir" >/dev/null 2>&1 || true
-emit_il "$DF/appil" DemoApp --ref "$DF/libil/DemoLib.dll" "$DF/appbir"/*.bir.json
-cp "$DF/libil/DemoLib.dll" "$DF/appil/" 2>/dev/null || true
-dfexpected="$(printf '2\n2')"
-run_app dfactual "$DF/appil/DemoApp.dll"
-check_output roundtrip-dotfile "$dfexpected" "$dfactual" "#16: top-level fun in a dotted-name file class (api.common.kt -> demo.Api_commonKt) resolves cross-module"
 
 # ----- PROPERTY-TYPE round-trip (#47): a property's nullability + suspend-fn-type restored on re-import -----
 # The OLD gate drove stored values through internal harness fns and NEVER re-imported the PROPERTY TYPE itself, so
@@ -1273,13 +1009,11 @@ section_result roundtrip-iface-companion "$ic_ok" "interface-companion statics (
 # DotKt IComparable<X> self slot `CompareTo` -> `compareTo` + forces the operator flag (so the FRONTEND resolves `<` to
 # C's own operator), and (b) restores the `IComparable<X>` supertype as `kotlin.Comparable<X>` (dropping the non-generic
 # bridge) so `sorted()`'s `Comparable<C>` constraint is satisfied. That is the SYMBOL-SURFACE half (facadegen's); the
-# section is split accordingly:
+# section keeps ONLY the facadegen-surface half here:
 #   * roundtrip-comparable-meta  — the facadegen surface, asserted DIRECTLY on the generated metadata. A regression
 #                                  guard for the restore.
-#   * roundtrip-comparable       — the END-TO-END run. kotc emits the plain `callInstance geo.Ver.compareTo` (a member
-#                                  clrName is not a kotc channel); bir2cir NetInteropBinding rebinds compareTo->CompareTo
-#                                  on the facadegen-injected DotKt owner (the instance-slot analog of its
-#                                  plus->op_Addition rule, gated on a generic-IComparable owner), so `<`/sorted() run.
+# The END-TO-END run (`<`/`>`/`<=`/`>=`/sorted() resolve+run cross-module, bir2cir compareTo->CompareTo slot bind)
+# MIGRATED to the in-process ProjectReference round-trip lane (tests/roundtrip/consumer RoundtripTests::comparableClass).
 CM="$ROOT/build/roundtrip-comparable"; rm -rf "$CM"; mkdir -p "$CM/lib" "$CM/app" "$CM/libbir" "$CM/libil" "$CM/appbir" "$CM/appil"
 cat > "$CM/lib/lib.kt" <<'EOF'
 package geo
@@ -1304,9 +1038,6 @@ emit_il "$CM/libil" VerLib "$CM/libbir"/*.bir.json
 dotnet "$RETARGET_DLL" "$CM/libil/VerLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
 "$LAUNCHER" --scan-imports --output "$CM/imports.txt" "$CM/app"/*.kt >/dev/null 2>&1 || true
 dotnet "$FACADEGEN_DLL" "$CM/meta" --compile-refs "$REFS$CM/libil/VerLib.dll" --import-list "$CM/imports.txt" >/dev/null 2>&1 || true
-CLR_TYPES_METADATA="$CM/meta" "$LAUNCHER" "$CM/app" -no-stdlib -classpath "$CP" -d "$CM/appbir" >/dev/null 2>&1 || true
-emit_il "$CM/appil" VerApp --ref "$CM/libil/VerLib.dll" "$CM/appbir"/*.bir.json
-cp "$CM/libil/VerLib.dll" "$CM/appil/" 2>/dev/null || true
 # facadegen SURFACE (must stay GREEN): the injected `Ver` carries an `operator compareTo` fun (clrName CompareTo) AND a
 # `kotlin.Comparable` supertype (the non-generic `System.IComparable` bridge dropped).
 cm_meta=$(python3 - "$CM/meta" <<'PY'
@@ -1325,10 +1056,6 @@ except Exception: print(0)
 PY
 )
 check_output roundtrip-comparable-meta "1" "$cm_meta" "facadegen surface: Ver gains operator compareTo (clrName CompareTo) + kotlin.Comparable<Ver> supertype, non-generic IComparable bridge dropped #179"
-# END-TO-END run: bir2cir NetInteropBinding rebinds the compareTo->CompareTo slot on the generic-IComparable DotKt owner (#179).
-cmexpected="$(printf 'True\nTrue\nTrue\nFalse\n1\n3')"
-run_app cmactual "$CM/appil/VerApp.dll"
-check_output roundtrip-comparable "$cmexpected" "$cmactual" "class C : Comparable<C> </>/<=/>=/sorted() resolve+run cross-module (bir2cir compareTo->CompareTo slot bind) #179"
 
 # ----- TOP-LEVEL VAL/VAR round-trip (#34b): read a library's top-level property DIRECTLY, no fn workaround ----
 # A top-level `val greeting = "hi"` compiles (kotc) to a plain Public|Static FIELD on the file class (`tlval.LibKt`),

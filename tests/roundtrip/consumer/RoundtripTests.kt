@@ -12,8 +12,27 @@
 //   memberExtensionFunctions    <- roundtrip-memext
 //   operatorAndInfixFromRealFlag<- roundtrip-operator-flag   (#146)
 //   genericOperatorGetSet       <- roundtrip-generic-operator(#133)
-// (roundtrip-toplevel-val stays in the shell lane: a top-level PLAIN-field file class is not surfaced by
-//  facadegen's --import-list path when reached only through field imports — a facadegen re-import gap.)
+//
+// Second migrated batch (8 more sections -> 8 @TestAttribute methods):
+//   nothingReturnGeneric        <- roundtrip-nothing-return  (#133)  Nothing in a generic top-level fn + if/else
+//   packagedNamespaces          <- roundtrip-pkg                    namespaces / reified inline / non-local return / ext op+prop / vararg / default / nullable
+//   inlineMemberNonLocalReturn  <- roundtrip-inline-member   (#60)   cross-module inline MEMBER + non-local return + dispatch-receiver field read
+//   genericInlineExtension      <- roundtrip-generic-inline-ext(#133) generic inline ext on a generic receiver infers T
+//   dottedFileClass             <- roundtrip-dotfile         (#16)   top-level fun in a dotted-name file class resolves
+//   nonConstDefaultArgs         <- roundtrip-nonconst-default(#146)  = {} / = emptyList() filled cross-module
+//   comparableClass             <- roundtrip-comparable      (#179)  class C : Comparable<C> </>/<=/>=/sorted()
+//   ubyteFidelity               <- roundtrip-ubyte                  UByte/UByteArray strict-mapping fidelity
+// STAYED in the shell lane (scripts/verify-roundtrip.sh) — they RUN green but emit IL the in-process lane's ilverify
+// phase rejects (formal-only, runtime-safe, tracked as separate cross-module IL gaps):
+//   roundtrip-nothing         — a cross-module Nothing branch merges an `object`-returning call with `string`
+//                               (StackUnexpected object/string; else-branch throws so RUN is green). Tracked as #197.
+//   roundtrip-generic-hof     — the consumer's lambda is a `System.Func` where the re-imported param is DotKt `KFunc`.
+//   roundtrip-receiver-lambda — the reverse: a DotKt `KAction` where the re-imported param is `System.Action`.
+//   (generic-hof + receiver-lambda are the delegate-representation ABI gap tracked as #123.)
+// (roundtrip-toplevel-val stays in shell: a top-level PLAIN-field file class is not surfaced by facadegen's
+//  --import-list path when reached only through field imports — a facadegen re-import gap. roundtrip-comparable-meta
+//  stays too: it asserts on the generated facadegen metadata JSON directly.)
+@file:OptIn(kotlin.ExperimentalUnsignedTypes::class)
 import roundtrip.palette.Color
 import roundtrip.cprop.topProp
 import roundtrip.cprop.topVar
@@ -33,6 +52,31 @@ import roundtrip.memext.Box
 import roundtrip.memext.Lib
 import roundtrip.money.Money
 import roundtrip.genop.Arr
+import roundtrip.nothingret.pick
+import roundtrip.nothingret.fail as nothingretFail
+import roundtrip.pkg.Vec
+import roundtrip.pkg.Dir
+import roundtrip.pkg.greet as pkgGreet
+import roundtrip.pkg.typeName
+import roundtrip.pkg.forEach3
+import roundtrip.pkg.plus
+import roundtrip.pkg.manhattan
+import roundtrip.pkg.sumAll
+import roundtrip.pkg.tagged as pkgTagged
+import roundtrip.pkg.orNone
+import roundtrip.picker.C
+import roundtrip.gie.Cell
+import roundtrip.gie.update
+import roundtrip.dotfile.commonOnly
+import roundtrip.dotfile.Box as DfBox
+import roundtrip.nc.Panel as NcPanel
+import roundtrip.nc.column as ncColumn
+import roundtrip.nc.run2
+import roundtrip.nc.tagged as ncTagged
+import roundtrip.cmp.Ver
+import roundtrip.ubyte.ub
+import roundtrip.ubyte.uba
+import roundtrip.ubyte.takeUb
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert
 
@@ -123,5 +167,106 @@ class RoundtripTests {
         val r2 = Arr(arrayOf(10, 20))
         r2[0] = 99                                               // generic operator set
         ClassicAssert.AreEqual(99, r2[0])                        // 99
+    }
+
+    // ---- second batch --------------------------------------------------------------------------------
+
+    // roundtrip-nothing-return (#133): a Nothing return round-trips through a generic fn + a bare if/else.
+    @TestAttribute
+    fun nothingReturnGeneric() {
+        ClassicAssert.AreEqual(7, pick(true, 7))                 // 7   generic pick, Nothing else-branch
+        val y: String = if (true) "ok" else nothingretFail("x")             // String only if fail(): Nothing round-tripped
+        ClassicAssert.AreEqual("ok", y)                          // ok
+    }
+
+    // roundtrip-pkg: namespaces; reified inline -> generic method; cross-module inline + non-local return;
+    // properties (custom getter + mutable write); top-level ext operator + ext property; vararg; default; nullable.
+    @TestAttribute
+    fun packagedNamespaces() {
+        ClassicAssert.AreEqual(11, Vec(1, 2) dot Vec(3, 4))      // 11   geom.Vec, infix
+        ClassicAssert.AreEqual("Hi, pkg", pkgGreet("pkg"))       // Hi, pkg   top-level via import
+        ClassicAssert.AreEqual("EAST", Dir.EAST.toString())      // EAST  enum in a package
+        ClassicAssert.AreEqual("String", typeName<String>())     // String  cross-module reified inline -> generic method call
+        ClassicAssert.AreEqual(4, firstEven())                   // 4     cross-module inline + lambda + non-local return
+        val v = Vec(3, 4)
+        ClassicAssert.AreEqual(25, v.mag2)                       // 25    property (custom getter)
+        v.x = 6
+        ClassicAssert.AreEqual(52, v.mag2)                       // 52    mutable property write
+        ClassicAssert.AreEqual(52, (Vec(1, 2) + Vec(3, 4)).mag2) // 52    top-level extension operator + property
+        ClassicAssert.AreEqual(10, sumAll(1, 2, 3, 4))           // 10    vararg
+        ClassicAssert.AreEqual(7, Vec(3, 4).manhattan)           // 7     extension property
+        ClassicAssert.AreEqual("def", pkgTagged())               // def   default argument omitted
+        ClassicAssert.AreEqual("none", orNone(null))             // none  nullable param (null passable)
+    }
+    private fun firstEven(): Int {
+        forEach3(1, 3, 4) { if (it % 2 == 0) return it }         // NON-LOCAL return through a CROSS-MODULE inline lambda
+        return -1
+    }
+
+    // roundtrip-inline-member (#60): cross-module inline MEMBER + non-local return from the CALLER + a
+    // dispatch-receiver field read in the spliced body.
+    @TestAttribute
+    fun inlineMemberNonLocalReturn() {
+        ClassicAssert.AreEqual(99, caller())     // 99   the non-local return escapes the CALLER, not the delegate
+        ClassicAssert.AreEqual(30, matched())    // 30   inline-member body early-return + `this.c` field read
+    }
+    private fun caller(): Int {
+        val c = C(10, 20, 30)
+        c.pick { x -> if (x == 20) return 99; false }   // NON-LOCAL return from caller() through the CROSS-MODULE inline MEMBER
+        return -1                                        // must NOT be reached
+    }
+    private fun matched(): Int {
+        val c = C(10, 20, 30)
+        return c.pick { x -> x == 30 }                   // pick's own early `return c` (dispatch-receiver read) yields 30
+    }
+
+    // roundtrip-generic-inline-ext (#133): a generic inline extension on a generic receiver infers T from the receiver.
+    @TestAttribute
+    fun genericInlineExtension() {
+        val c = Cell(1)
+        c.update { it + 1 }                              // infer T=Int from the receiver Cell<T>
+        ClassicAssert.AreEqual(2, c.v)                   // 2
+    }
+
+    // roundtrip-dotfile (#16): a top-level fun in a dotted-name file class (Dotfile.common.kt -> Dotfile_commonKt)
+    // resolves cross-module; the top-level class in the same file round-trips either way.
+    @TestAttribute
+    fun dottedFileClass() {
+        ClassicAssert.AreEqual(2, commonOnly(1))         // 2   top-level fun from the dotted-name file class
+        ClassicAssert.AreEqual(2, DfBox(2).v)            // 2   top-level class from the same file
+    }
+
+    // roundtrip-nonconst-default (#146): a NON-CONST default (`= {}` empty receiver/plain lambda, `= emptyList()`
+    // simple-expr) filled cross-module.
+    @TestAttribute
+    fun nonConstDefaultArgs() {
+        ClassicAssert.AreEqual(2, ncColumn(build = { add("hi") }))                     // 2   configure defaults to {} (empty receiver lambda)
+        ClassicAssert.AreEqual(3, ncColumn(configure = { add("ab") }, build = { add("c") })) // 3  both provided (no fill)
+        ClassicAssert.AreEqual("ok", run2(body = { }))                                 // ok  pre defaults to {} (empty plain lambda)
+        ClassicAssert.AreEqual("z=0", ncTagged("z"))                                   // z=0 items defaults to emptyList()
+    }
+
+    // roundtrip-comparable (#179): a `class C : Comparable<C>` — </>/<=/>= + sorted() resolve+run cross-module
+    // (facadegen restores operator compareTo + the kotlin.Comparable supertype; bir2cir binds compareTo->CompareTo).
+    @TestAttribute
+    fun comparableClass() {
+        ClassicAssert.IsTrue(Ver(3) < Ver(5))                   // True   `<`  -> restored operator compareTo
+        ClassicAssert.IsTrue(Ver(9) > Ver(2))                   // True   `>`
+        ClassicAssert.IsTrue(Ver(4) <= Ver(4))                  // True   `<=`
+        ClassicAssert.IsFalse(Ver(7) >= Ver(8))                 // False  `>=`
+        val xs = listOf(Ver(3), Ver(1), Ver(2)).sorted()        // sorted() needs Ver : Comparable<Ver> (supertype restored)
+        ClassicAssert.AreEqual(1, xs[0].n)                      // 1   smallest first
+        ClassicAssert.AreEqual(3, xs[2].n)                      // 3   largest last
+    }
+
+    // roundtrip-ubyte: UByte/UByteArray strict-mapping fidelity — a mis-restored signed Byte would print -56 for 200.
+    @TestAttribute
+    fun ubyteFidelity() {
+        val u: UByte = ub()                                     // compiles ONLY if the return restored UByte (not Byte)
+        ClassicAssert.AreEqual(200, u.toInt())                  // 200  unsigned fidelity
+        val a: UByteArray = uba()                               // compiles ONLY if byte[] restored to UByteArray
+        ClassicAssert.AreEqual(3, a.size)                       // 3
+        ClassicAssert.AreEqual(250, a[2].toInt())               // 250
+        ClassicAssert.AreEqual(200, takeUb(200u))               // 200  pass a UByte to a UByte-restored param
     }
 }
