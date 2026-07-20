@@ -75,7 +75,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   (top-level file-class calls, `__mref` forwarders, class-delegation forwarders) now emit a structured `{t:"fqn"}` node,
   so `ownerType` is removed from the `verify-schema` `STR_OK` allow-list. **#48 residual 2** (primitive-shorthand leaf
   `int`/`void`/`object`) is confirmed a sanctioned below-kotc CLR-resolution vocabulary (ilemit normalizes toward it),
-  not a value-slot string — no change. #122 closes; #48 closes.
+  not a value-slot string — no change. Two follow-on consistency fixes complete the change: (a) `CharSeqStringLowering`
+  now collapses a stale `dotkt$CharSequence` `sty` on a declaration-read (`local`/`field`/`lateinitGet`/`staticField`)
+  in lockstep with the decl it already retypes to `System.String`, so the sty-first `StaticType.Surface` no longer
+  shadows the CharSequence→String model and the `StringCharSequenceBridge` correctly adapter-wraps a String flowing into
+  an un-rebuilt stdlib `dotkt$CharSequence` arg slot (`il-regexreplace` ilverify StackUnexpected fixed — was a raw
+  `string` reaching a `dotkt$CharSequence` param); (b) the user-delegate `getValue`/`setValue` owner emit site (the
+  member-property `by` arm) was the last bare-string `ownerType` and now emits a `{t:"fqn"}` node like its two sibling
+  delegate sites, so `verify-schema` `STR_OK` genuinely holds zero `ownerType` (`il-deleg`/`il-rwp`). #122 closes; #48 closes.
 - **bir2cir/ilemit ([tmyt/dotkt#48], area:bir2cir, area:ilemit): the legacy string-token type grammar is DELETED —
   structured `TypeNode` only, matching the frozen #37 schema; no dual-protocol.** The wire was already structured
   (`docs/bir-cir.schema.json` `$defs/type`), but the CODE still PARSED/EMITTED the retired `clr:` / `clrg:Name[..]` /
