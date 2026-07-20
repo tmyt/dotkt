@@ -22,6 +22,7 @@
 //   nonConstDefaultArgs         <- roundtrip-nonconst-default(#146)  = {} / = emptyList() filled cross-module
 //   comparableClass             <- roundtrip-comparable      (#179)  class C : Comparable<C> </>/<=/>=/sorted()
 //   ubyteFidelity               <- roundtrip-ubyte                  UByte/UByteArray strict-mapping fidelity
+//   toplevelValVar              <- roundtrip-toplevel-val   (#195)  bare top-level val/var -> plain static FIELD (no accessor) resolved cross-module via facadegen --import-list
 // STAYED in the shell lane (scripts/verify-roundtrip.sh) — they RUN green but emit IL the in-process lane's ilverify
 // phase rejects (formal-only, runtime-safe, tracked as separate cross-module IL gaps):
 //   roundtrip-nothing         — a cross-module Nothing branch merges an `object`-returning call with `string`
@@ -29,9 +30,7 @@
 //   roundtrip-generic-hof     — the consumer's lambda is a `System.Func` where the re-imported param is DotKt `KFunc`.
 //   roundtrip-receiver-lambda — the reverse: a DotKt `KAction` where the re-imported param is `System.Action`.
 //   (generic-hof + receiver-lambda are the delegate-representation ABI gap tracked as #123.)
-// (roundtrip-toplevel-val stays in shell: a top-level PLAIN-field file class is not surfaced by facadegen's
-//  --import-list path when reached only through field imports — a facadegen re-import gap. roundtrip-comparable-meta
-//  stays too: it asserts on the generated facadegen metadata JSON directly.)
+// (roundtrip-comparable-meta stays in shell: it asserts on the generated facadegen metadata JSON directly.)
 @file:OptIn(kotlin.ExperimentalUnsignedTypes::class)
 import roundtrip.palette.Color
 import roundtrip.cprop.topProp
@@ -77,6 +76,9 @@ import roundtrip.cmp.Ver
 import roundtrip.ubyte.ub
 import roundtrip.ubyte.uba
 import roundtrip.ubyte.takeUb
+import roundtrip.tlval.greeting
+import roundtrip.tlval.counter
+import roundtrip.tlval.origin
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert
 
@@ -269,5 +271,18 @@ class RoundtripTests {
         ClassicAssert.AreEqual(3, a.size)                       // 3
         ClassicAssert.AreEqual(250, a[2].toInt())               // 250
         ClassicAssert.AreEqual(200, takeUb(200u))               // 200  pass a UByte to a UByte-restored param
+    }
+
+    // roundtrip-toplevel-val (#195): a bare top-level `val`/`var` with NO custom accessor compiles to a plain
+    // static FIELD (no get_/set_), reachable ONLY through the field. The consumer reads the library's top-level
+    // property DIRECTLY (`import roundtrip.tlval.greeting`), NOT via a re-exposing function — proving facadegen's
+    // --import-list now surfaces the field-backed val/var from the BUILT dll (the #195 facadegen gap). Covers a
+    // `val: String`, a `var: Int` (read + cross-module write `+=`), and a `val` of a USER type.
+    @TestAttribute
+    fun toplevelValVar() {
+        ClassicAssert.AreEqual("hi", greeting)                  // hi   top-level val -> plain static field, read directly
+        counter += 2                                            // cross-module write to a top-level var
+        ClassicAssert.AreEqual(42, counter)                     // 42   read back the written value (40 + 2)
+        ClassicAssert.AreEqual("(1, 2)", origin.toString())     // (1, 2)  top-level val of a USER type
     }
 }
