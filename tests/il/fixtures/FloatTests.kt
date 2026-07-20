@@ -53,6 +53,11 @@ fun fltSideD(): Double? { fltSideCalls++; return 1.0 }
 class FltSafeD(val d: Double)
 class FltSafeF(val f: Float)
 
+// #198: a safe-call over a VALUE-NULLABLE member (`b?.nd` where `nd: Double?`). `b.nd` is already `Nullable<Double>`,
+// so `b?.nd` flattens to that same `Nullable<Double>` — kotc must NOT re-wrap it (a `newobj Nullable<T>(Nullable<T>)`
+// -> InvalidProgram). This is the #181 literal repro (`class B(val d: Double?)`).
+class FltSafeNND(val nd: Double?)
+
 class FloatTests {
     // il-nan: Double/Float NaN + infinities; any comparison with NaN is false.
     @TestAttribute
@@ -212,6 +217,17 @@ class FloatTests {
         assertTrue(someF?.f == 1.0f)       // True
         assertFalse(nanF?.f == Float.NaN)  // False  (IEEE: NaN != NaN)
         assertFalse(nullRecvF?.f == 1.0f)  // False  (receiver null)
+
+        // #198: safe-call over a VALUE-NULLABLE member — `b?.nd` (nd: Double?) must NOT double-wrap the already-
+        // Nullable<Double> member (#181 literal repro). Three shapes: present receiver + present value, present
+        // receiver + null value, null receiver.
+        val presentD: FltSafeNND? = FltSafeNND(3.0)
+        val innerNullD: FltSafeNND? = FltSafeNND(null)
+        val nullRecvNND: FltSafeNND? = null
+        assertTrue(presentD?.nd == 3.0)    // True   (receiver present, member present)
+        assertFalse(presentD?.nd == 4.0)   // False  (present, distinct)
+        assertTrue(innerNullD?.nd == null) // True   (receiver present, member null)
+        assertTrue(nullRecvNND?.nd == null)// True   (receiver null -> flattened null)
     }
 
     // il-mathnumerics (#141): hypot/expm1/ln1p must bind the numerically-correct net10 BCL primitives
