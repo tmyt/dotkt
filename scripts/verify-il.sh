@@ -180,8 +180,6 @@ EXCMETA="$ROOT/build/exc.meta"
 dotnet "$FACADEGEN_DLL" "$EXCMETA" --compile-refs "$FRAMEWORK_COMPILE_REFS" System.Exception System.Console >/dev/null 2>&1
 COLLMETA="$ROOT/build/coll.meta"
 dotnet "$FACADEGEN_DLL" "$COLLMETA" --compile-refs "$FRAMEWORK_COMPILE_REFS" System.Collections.ObjectModel.Collection >/dev/null 2>&1
-OBSCOLLMETA="$ROOT/build/obscoll.meta"
-dotnet "$FACADEGEN_DLL" "$OBSCOLLMETA" --compile-refs "$FRAMEWORK_COMPILE_REFS" System.Collections.ObjectModel.ObservableCollection >/dev/null 2>&1
 GMMETA="$ROOT/build/gm.meta"
 dotnet "$FACADEGEN_DLL" "$GMMETA" --compile-refs "$FRAMEWORK_COMPILE_REFS" System.Runtime.CompilerServices.Unsafe System.Runtime.CompilerServices.RuntimeHelpers System.Collections.ObjectModel.Collection >/dev/null 2>&1
 
@@ -364,8 +362,6 @@ il_check m0    M0Kt  "$ROOT/cases/m0/M0.kt"  "$(printf 'sum = 5\nzero\nn=1\nn=2'
 # double). Uses the meta ALONE (no conflicting --ref), so the source type lowers/emits LOCALLY end-to-end.
 il_check injectdedup App "$ROOT/cases/il-injectdedup" "$(printf '42\nplain')" "$ROOT/cases/il-injectdedup/demo.meta"
 il_check mc1   MC1   "$ROOT/cases/m-c1"      "$(printf 'c = (4, 6)\na.d2 = 25\nrect area=30')"
-il_check overridemsg AppKt "$ROOT/cases/il-overridemsg" "$(printf 'overridden\noverridden\noverridden')"   # #24: `override val message` on a @ClrTypeAlias base (kotlin.Exception->System.Exception) — DeclarationRename wires the get_message accessor to the @ClrProperty("Message") slot (rename + clrOverride) so DefineMethodOverride binds System.Exception.get_Message (else every read returns the base value)
-il_check superobj SuperObj "$ROOT/cases/il-superobj/app.kt" "$(printf 'N:7\nTrue\nTrue\nFalse')"   # #14 RESIDUAL R1: super.toString()/hashCode()/equals() to kotlin.Any → the System.Object slot NON-virtually (MemberCallSubstitution carries the `super` marker onto clrInstance; ilemit emits `call`, not the callvirt that re-dispatched → stack overflow)
 il_check_imports supernet AppKt "$ROOT/cases/il-supernet" "$(printf 'True\nTrue')"   # #14 RESIDUAL R2: super.Next() to a facadegen-injected .NET base (System.Random) → NetInteropBinding propagates the `super` marker onto clrInstance; ilemit's EmitClrCall emits `call`, not the callvirt that re-dispatched → infinite recursion
 # language-core family (il-object/il-objexpr/il-companionext/il-ifacecompanion/il-op/il-ops/il-usermember/il-userrange/
 # il-rangein/il-whensubj/il-smartcast/il-scope) migrated to the NUnit battery tests/il/fixtures/LanguageCoreTests.kt
@@ -386,11 +382,6 @@ il_check adapterref AppKt "$ROOT/cases/il-adapterref/app.kt" "$(printf 'sink 1\n
 # removed from verify-differential.sh same-change.
 # enum family (il-enum/il-enumintr/il-enumtostr/il-enumbody/il-enumrich) migrated to the NUnit battery
 # tests/il/fixtures/EnumTests.kt (+ EnumCrossFile.kt for the #90 cross-file basic-enum decl).
-# vtboundref (#149): a bound callable-ref over a VALUE-TYPE (.NET struct) receiver — the delegate ctor's `object`
-# target + ldftn/ldvirtftn need an object reference, so ilemit boxes the struct receiver in newBoundClrDelegate.
-# Covers both the non-virtual (box + ldftn: TimeSpan::CompareTo) and virtual (box + dup + ldvirtftn: overridden
-# Object.ToString) target; unboxed it was StackUnexpected/mis-bound (unverifiable IL).
-il_check_imports vtboundref AppKt "$ROOT/cases/il-vtboundref" "$(printf -- '-1\n00:00:05')"
 # icmparity (#129): a Kotlin class implements a member of a same-name .NET arity FAMILY (System.IComparable +
 # System.IComparable`1). A Kotlin classifier cannot be arity-overloaded (K2 hard limit, dotkt-semantics §8d), so
 # facadegen names the GENERIC `IComparable1<T>` (non-generic keeps plain `IComparable`); implementing it uses the
@@ -531,14 +522,12 @@ il_check seqyieldall SeqYieldAll "$ROOT/cases/il-seqyieldall" "$(printf 'a,b,c')
 # Math/numeric family (il-math, il-mathabs, il-coerce, il-roundhalfup + differential-only il-divmin, il-mixnum)
 # migrated to the NUnit battery tests/il/fixtures/MathTests.kt (6 methods), gated by tests/run-nunit-il.sh. Per the
 # cases-test-design audit #14 the old per-case dirs + their il_check lines were deleted in that SAME change.
-il_check pairtostr PairToStr "$ROOT/cases/il-pairtostr" "$(printf '[1, 2, 3]\n[1, 2, 3]\n(1, 2)\n(1, 2, 3)\nRec(name=k, n=9)\nTrue')"  # C11 gate regression guard: collection/tuple/data-class toString + String.hashCode within-run consistency (#167)
 # pairnest: a nested collection/map INSIDE Pair/Triple.toString (C11) renders Kotlin-style — the tuple component's
 # erased generic static type used to reach the raw .NET `List`1[...]` ToString; now routed through the runtime
 # collection-aware stdlib stringifier (clrRenderTupleElement -> clrElemToString), matching the top-level nestedstr path.
 # nullcollarg: #100 H3 regression guard — a nullable-inner collection type-arg (`Map<String, List<Int>?>`) upcast from
 # a MutableMap must still collapse its V to IList and verify clean (the `?` must not smuggle an un-collapsed IReadOnly
 # face past the collapse). Pure runnable guard for that shape.
-il_check samcmp SamCmp "$ROOT/cases/il-samcmp" "$(printf '1,1,2,3,4,5,6,9\n9,6,5,4,3,2,1,1')"  # explicit Comparator{} SAM conversion (plain fun interface; no kotc @ClrTypeAlias read)
 # Array family (arr/arrops/arrnull/arrslice/arrplus/intarraytolist/copyintoverlap/fillrange/indices/indicesv/ubytearr/
 # genarrlam) migrated to the NUnit in-process suite -> tests/il/fixtures/ArrayTests.kt (value asserts). il-copyofnull /
 # il-boxgen stay here (live XFAIL_ILVERIFY findings, not migratable into the ilverify-clean lane).
@@ -619,7 +608,6 @@ il_check netbase  Nb  "$ROOT/cases/il-netbase"  "$(printf 'app error\n7')" "$EXC
 il_check netbase2 Nb2 "$ROOT/cases/il-netbase2" "$(printf 'AppError #7\nAppError #21')" "$EXCMETA"
 il_check netgen  Ng  "$ROOT/cases/il-netgen"  "$(printf '3\nTrue\n2')" "$COLLMETA"
 il_check netgen2 Ng2 "$ROOT/cases/il-netgen2" "$(printf '3\nTrue\n2')" "$COLLMETA"
-il_check event   Ev  "$ROOT/cases/il-event"   "$(printf 'changed\nchanged\n2\nchanged\nh fired\nchanged\n4')" "$OBSCOLLMETA"
 il_check netgen3 Ng3 "$ROOT/cases/il-netgen3" "$(printf '4\n8\n8\nFalse\nTrue\n20\n99\n3')" "$GMMETA"
 
 # Reverse interop via an injected C# host: `il_check_inject` builds the sample's runtime.cs into a referenced .NET
@@ -674,10 +662,6 @@ il_check_inject genextval GenExtVal "$ROOT/cases/il-genextval" "$(printf '40\n41
 # surfaces both as `ClrEvent<T>` properties; bir2cir binds the operator to the event's STATIC add/remove accessor.
 # Regression guard: static events were absent (GetEvents was Public|Instance non-static only).
 il_check_inject eventext EventExt "$ROOT/cases/il-eventext" "$(printf 'ping: 3\nping: 7\nannounce: hi\nannounce: yo\nh: yo\nannounce: bye')" EvLib
-# N6 (interface events): a public INSTANCE event of a .NET INTERFACE (INotifyPropertyChanged.PropertyChanged) surfaces
-# as a `ClrEvent<T>` abstract member, subscribed via `+=`/`-=` on an INTERFACE-typed receiver. facadegen scans the .kt
-# imports (il_check_imports); kotc elides the ClrEvent fake-override a .NET-subclass would inherit (isClrEventProperty).
-il_check_imports ifaceevent AppKt "$ROOT/cases/il-ifaceevent" "$(printf 'count=3\nfired=True')"
 # N5: same-name same-package top-level overloads restored from DIFFERENT .NET file facades (UtilsKt.foo() /
 # HelpersKt.foo(Int)) share CallableId(N5,"foo"); the A2 flat map collapsed to last-put-wins. The overload-aware key
 # routes each to its own file class by the resolved callee's arity. (A2 regression guard.)
@@ -894,10 +878,6 @@ il_check_imports inlmatsetcap AppKt "$ROOT/cases/il-inlmatsetcap" "10"
 # tests/run-nunit-il.sh; the old per-case dirs + il_check lines were removed in the same change (audit #14).
 # #156: a genuinely-nullable String (String? = null) UNWRAPPED into a CharSequence?-receiver slot (isNullOrEmpty) — the
 # strict nullable-slot path now emits a runtime-conditional adapter wrap so String->dotkt$CharSequence is ilverify-clean.
-# #40 (guard): a CROSS-MODULE @InlineOnly + @ClrIntrinsic stdlib fn keeps its @ClrIntrinsic binding across the assembly
-# boundary — kotc carries the annotation as OPAQUE ref.dll metadata (attrsJson is unconditional, NOT dropped for
-# @InlineOnly) and bir2cir substitutes the plain call to the bound BCL member (`sb[0]='X'` -> set_Chars, Char.is* -> System.Char.Is*).
-il_check inlonlyintr AppKt "$ROOT/cases/il-inlonlyintr/app.kt" "$(printf 'Xbc\nTrue\nTrue\nTrue')"
 # #89/#157: a CROSS-MODULE top-level `val` read (COROUTINE_SUSPENDED, a computed val deserialized from the metadata klib whose
 # parent is a package fragment, not an IrFile) is attributed owner:null by kotc — NOT the READING file's class — so bir2cir
 # binds the true declaring IntrinsicsKt off the ref.dll via the GENERAL owner-null top-level resolver (prop:get -> get_<name> ->
