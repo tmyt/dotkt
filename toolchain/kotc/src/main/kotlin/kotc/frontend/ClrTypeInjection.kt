@@ -110,9 +110,7 @@ internal val UNSIGNED_KOTLIN_TYPES = setOf(
 	"UByte", "UShort", "UInt", "ULong", "UByteArray", "UShortArray", "UIntArray", "ULongArray",
 )
 // A top-level property: `receiver` (a TypeNode) present => an EXTENSION property (`val T.p`); null => a plain top-level prop.
-// #103: `customGet`/`customSet` mark a field-backed prop whose read/write goes through a CUSTOM accessor (`get_`/`set_`
-// on the file class), not the raw static field — the backend must invoke the accessor cross-module (else it is bypassed).
-private class ClrTopLevelProp(val pkg: FqName, val fileClassDotNet: String, val name: String, val type: TypeNode, val mutable: Boolean, val receiver: TypeNode?, val customGet: Boolean = false, val customSet: Boolean = false)
+private class ClrTopLevelProp(val pkg: FqName, val fileClassDotNet: String, val name: String, val type: TypeNode, val mutable: Boolean, val receiver: TypeNode?)
 private class ClrProperty(val name: String, val type: TypeNode, val mutable: Boolean, val open: Boolean, val abstract: Boolean, val protected: Boolean)
 // A MEMBER extension property (`class C { val T.p }`): restored as a member property of C with an extension receiver.
 private class ClrMemberExtProp(val name: String, val type: TypeNode, val mutable: Boolean, val receiver: TypeNode, val protected: Boolean)
@@ -261,14 +259,6 @@ internal fun clrInjectedTopLevelParamDefaults(callableId: CallableId, paramCount
 internal fun clrInjectedTopLevelPropFileClass(callableId: CallableId): String? =
 	if (callableId in ClrMetadataHolder.sourceShadowedCallableIds) null else ClrMetadataHolder.fileClassByTopLevelPropCallableId[callableId]
 
-/**
- * #103: whether a restored DotKt top-level property has a CUSTOM getter/setter (`get_`/`set_<name>` on the file class)
- * rather than a plain static field. `(customGet, customSet)`; `(false, false)` for a plain field-backed prop or a
- * non-restored property. The backend must INVOKE the custom accessor cross-module, not read/write the raw static field.
- */
-internal fun clrInjectedTopLevelPropCustomAccessor(callableId: CallableId): Pair<Boolean, Boolean> =
-	if (callableId in ClrMetadataHolder.sourceShadowedCallableIds) (false to false)
-	else ClrMetadataHolder.customAccessorByTopLevelPropCallableId[callableId] ?: (false to false)
 
 /**
  * Loads the .NET type metadata to inject, once per process. The path comes from `CLR_TYPES_METADATA`
@@ -305,10 +295,8 @@ private object ClrMetadataHolder {
 				topLevel.add(ClrTopLevel(pkg, fileClass, readFun(fn as Map<String, Any?>)))
 			for (pp in (fo["props"] as? List<Any?>).orEmpty()) {
 				val p = pp as Map<String, Any?>
-				val mods = (p["mods"] as? Map<String, Any?>).orEmpty()
 				topLevelProps.add(ClrTopLevelProp(pkg, fileClass, p["name"] as String, typeOf(p["type"]),
-					p["rw"] == true, (p["recv"])?.let { typeOf(it) },
-					customGet = mods["customGet"] == true, customSet = mods["customSet"] == true))
+					p["rw"] == true, (p["recv"])?.let { typeOf(it) }))
 			}
 		}
 		return ClrModule(types, topLevel, topLevelProps)
@@ -441,14 +429,6 @@ private object ClrMetadataHolder {
 		buildMap {
 			for (tp in module?.topLevelProps.orEmpty())
 				put(CallableId(tp.pkg, Name.identifier(tp.name)), stripClrFileClass(tp.fileClassDotNet))
-		}
-	}
-	// #103: custom-accessor flags for a restored top-level property, keyed like fileClassByTopLevelPropCallableId.
-	val customAccessorByTopLevelPropCallableId: Map<CallableId, Pair<Boolean, Boolean>> by lazy {
-		buildMap {
-			for (tp in module?.topLevelProps.orEmpty())
-				if (tp.customGet || tp.customSet)
-					put(CallableId(tp.pkg, Name.identifier(tp.name)), tp.customGet to tp.customSet)
 		}
 	}
 	// Platform-actual files `<Common>Clr.kt` emit their actuals into the COMMON file class `<Common>Kt` -- ilemit/the rt
