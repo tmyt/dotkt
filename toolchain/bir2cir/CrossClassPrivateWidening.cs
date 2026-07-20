@@ -15,9 +15,10 @@ using System.Text.Json.Nodes;
 //
 // This generalizes SuspendColdLowering.WidenPrivatesAccessedBySm (which widens only what a synthesized SM
 // touches via its `$this` field) to ANY cross-class access: for every local type T, walk its bodies; for a
-// call (callInstance/callStatic) or a member field-access of the full node family
-// (field/setField/setFieldExpr/lateinitGet/staticField/staticFieldSet) whose owner (generics stripped) names a
-// DIFFERENT local type C, record (C, member); then relax any matching PRIVATE member (method, field, or accessor)
+// call (callInstance/callStatic), a bound method reference (newBoundDelegate, an `ldftn` over the member), or a
+// member field-access of the full node family (field/setField/setFieldExpr/lateinitGet/staticField/staticFieldSet)
+// whose owner (generics stripped) names a DIFFERENT local type C, record (C, member); then relax any matching
+// PRIVATE member (method, field, or property get_/set_ accessor)
 // on C to `internal` (assembly-visible). SOUNDNESS: valid Kotlin source can never have a top-level class
 // access another top-level class's private member, so ANY cross-class private access in emitted BIR came
 // from a lost nesting/lifting relationship — widening exactly those is minimal and correct (Codex-confirmed).
@@ -80,6 +81,16 @@ static class CrossClassPrivateWidening
                     case "callStatic":
                         if (BareOwner(TypeJson.OwnerName(o["owner"])) is string cs && cs != selfType)
                             Record(TypeJson.OwnerName(o["owner"]), Str(o["method"]));
+                        break;
+                    // A bound method reference `obj::method` — its delegate does an `ldftn` over (ownerType, method).
+                    // A `::privateMethod` captured inside a lifted lambda emits this over the enclosing class's private
+                    // method from the separate closure class -> MethodAccessException, the same fault class as the
+                    // field case. (The .NET-owner variant carries a System.* ownerType, filtered by the local-type
+                    // guard in Record; the unbound `Class::method` form lowers to a lifted __mref + callInstance,
+                    // already covered above.)
+                    case "newBoundDelegate":
+                        if (BareOwner(TypeJson.OwnerName(o["ownerType"])) is string bd && bd != selfType)
+                            Record(TypeJson.OwnerName(o["ownerType"]), Str(o["method"]));
                         break;
                     // The full member field-access node family — every kind that names a class member by
                     // (ownerType, name): instance read/write (`field`/`setField`/`setFieldExpr`), the null-checked
