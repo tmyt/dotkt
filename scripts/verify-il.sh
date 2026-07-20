@@ -121,8 +121,7 @@ mismatch() { # <expected> <actual> — fill reason/detail for an output comparis
 	detail="$(printf -- '--- expected ---\n%s\n--- actual ---\n%s' "$1" "$2")"
 }
 # Per-sample RUN timeout (#108): a coroutine resume/pulse-drop regression can DEADLOCK a blocking-drain
-# sample (il-monitordrain does Monitor.Wait until a cross-thread Pulse; il-comaindrain blocks a suspend
-# main until it drains). Without a hard bound ONE hung sample wedges the ENTIRE gate — CI then kills the
+# sample (il-comaindrain blocks a suspend main until it drains). Without a hard bound ONE hung sample wedges the ENTIRE gate — CI then kills the
 # whole job on its outer timeout with NO NEW-FAIL diff. timeout(1) SIGTERMs at the deadline (exit 124; if
 # still alive after -k, SIGKILL -> 137); either is classified as a distinct, loud "run timeout" FAIL so a
 # deadlock surfaces as a clean gate record instead of an indefinite hang. Override via DOTKT_RUN_TIMEOUT.
@@ -391,11 +390,7 @@ il_check adapterref AppKt "$ROOT/cases/il-adapterref/app.kt" "$(printf 'sink 1\n
 # Covers both the non-virtual (box + ldftn: TimeSpan::CompareTo) and virtual (box + dup + ldvirtftn: overridden
 # Object.ToString) target; unboxed it was StackUnexpected/mis-bound (unverifiable IL).
 il_check_imports vtboundref AppKt "$ROOT/cases/il-vtboundref" "$(printf -- '-1\n00:00:05')"
-# icmparity (#129): a Kotlin class implements a member of a same-name .NET arity FAMILY (System.IComparable +
-# System.IComparable`1). A Kotlin classifier cannot be arity-overloaded (K2 hard limit, dotkt-semantics §8d), so
-# facadegen names the GENERIC `IComparable1<T>` (non-generic keeps plain `IComparable`); implementing it uses the
-# VERBATIM .NET member `CompareTo(other: Ver?)`, not the Kotlin operator `compareTo`. Direct + upcast dispatch.
-il_check_imports icmparity IcmpArity "$ROOT/cases/il-icmparity" "$(printf -- '-2\n6')"
+# icmparity (#129) -> tests/il/fixtures/MigratedIntropCIfaceImplTests.kt (icmparity_arityClashInterfaceFamily), migrated.
 # m2 / mi1 consume BCL types via `import System.X` (System.Math, System.Text.StringBuilder) -> the facadegen import
 # scan (il_check_imports), NOT a bare il_check (which injects nothing, so the import would not resolve). No runtime.cs.
 il_check_imports mi1 MI1   "$ROOT/cases/m-i1"       "$(printf 'Hello, CLR 42\nlength = 13')"
@@ -574,11 +569,8 @@ il_check genseq GenSeq "$ROOT/cases/il-genseq" "$(printf '[5]\n[hi]')"
 # an OPEN operand (Closure`1::.ctor(!0)) -> TypeLoadException; and the iterator's delegateInvoke passed a boxed T? to
 # `Func<T,object>::Invoke(!0)` with no unbox -> InvalidProgramException at a VALUE element. Both fixed; value + ref drive.
 il_check genseq2 GenSeq2 "$ROOT/cases/il-genseq2" "$(printf '[1, 2, 4]\n[a, ab, abb]\n18')"
-il_check atomics Atomics "$ROOT/cases/il-atomics" "$(printf '11\n11\n16\nTrue\nFalse\n16\n16\n100\n55\n1001\n1001\n1000\n1000\n42')"   # COV2: kotlin.concurrent.atomics AtomicInt/AtomicLong exercising the @ClrRefArgument Interlocked byref binding
-# #129: an AtomicIntArray element op whose bounds check THROWS mid-critical-section must still release the monitor
-# (try/finally). A worker thread then acquires the same instance's monitor (loadAt); pre-fix the leaked lock made
-# worker.Join(2000) time out -> "DEADLOCK". Needs facadegen for System.Threading.Thread, so il_check_imports.
-il_check_imports atomicarraytry AppKt "$ROOT/cases/il-atomicarraytry" "$(printf 'True\n20\n100')"
+# atomics -> tests/il/fixtures/MigratedIntropCAtomicsTests.kt (atomics_interlockedByrefBinding); atomicarraytry ->
+# tests/il/fixtures/MigratedIntropCThreadingTests.kt (atomicarraytry_boundsThrowReleasesMonitorCrossThread), migrated.
 # The nullable / null-safety battery (il-null, il-nullable-generic-list, il-nullableprim, il-nullbang,
 # il-nullcollarg, il-nullcs, il-printlnnull, il-reqnn, il-safecallnv, il-trynullable) migrated to the NUnit
 # battery tests/il/fixtures/NullableTests.kt (12 methods), gated by tests/run-nunit-il.sh. Per the
@@ -703,16 +695,8 @@ il_check_inject clrimpl ClrImpl "$ROOT/cases/il-clrimpl" "$(printf 'draw:circle\
 # the transitively-inherited base link — the inherited `Get(): Int` and the direct `Rank(Int): Int` both use bare
 # int32 slots (not Nullable<int>). Direct + upcast-to-IMid<Int> dispatch.
 il_check_inject ifacechainvt IfaceChainVt "$ROOT/cases/il-ifacechainvt" "$(printf '21\n10\n23')" ChainRt
-# clrifaceimpl: a Kotlin class IMPLEMENTING a facadegen-injected .NET generic interface (IComparer<String>) — the other
-# interop-override samples only EXTEND a base class. bir2cir's DeclarationRename re-stamps the override:true/vis:public
-# off the injected interface member + fills its slot, so a direct call, an interface-typed upcast dispatch, AND a BCL
-# consumer (List<T>.Sort(IComparer<T>)) all dispatch into the override. (imports System.* -> il_check_imports/facadegen.)
-il_check_imports clrifaceimpl ClrIfaceImpl "$ROOT/cases/il-clrifaceimpl" "$(printf '1\n-3\nz,bb,abcd')"
-# clrifaceimplvt (#128): the VALUE-TYPE sibling — a class implementing a facadegen-injected .NET generic interface
-# instantiated with Int (IComparer<Int>/IEquatable<Int>). The injected `T?` override lowers to `Nullable<int32>` params
-# but the constructed slot wants BARE int32; bir2cir's ValueTypeIfaceSlotBridge synthesizes a bare-signature bridge
-# forwarding to the Nullable method, else TypeLoadException at type load. Direct + interface-upcast + BCL-Sort dispatch.
-il_check_imports clrifaceimplvt ClrIfaceImplVt "$ROOT/cases/il-clrifaceimplvt" "$(printf '2\n-2\nTrue\nFalse\n123')"
+# clrifaceimpl -> tests/il/fixtures/MigratedIntropCIfaceImplTests.kt (clrifaceimpl_referenceTypeIfaceImpl); clrifaceimplvt
+# (#128) -> same fixture (clrifaceimplvt_valueTypeIfaceSlotBridge — the value-type ValueTypeIfaceSlotBridge sibling), migrated.
 # ixname: a .NET type with a CUSTOM-NAMED indexer via [IndexerName("Cell")] — `g[i]`/`g[i]=v` must bind to
 # get_Cell/set_Cell (read from the type's DefaultMemberAttribute by bir2cir.NetInteropBinding.DefaultIndexerAccessor),
 # not the hardcoded get_Item/set_Item. Regression guard for the custom-indexer-name binding path.
@@ -757,12 +741,8 @@ il_check_imports comaindrain ComainDrain "$ROOT/cases/il-comaindrain" "$(printf 
 # TaskCompletionSource<Unit>.Task on return; `greet` suspends on step() (sync) so the SM + Unit bridge emit is
 # exercised and ilverify-checked. main drives greet via its cold entry.
 il_check counit CoUnit "$ROOT/cases/il-counit" "$(printf 'hello 42\ndone')"
-# monitordrain: locks the System.Threading.Monitor Wait/Pulse cross-thread DRAIN mechanism that
-# the harness blockOn's BlockOnSink is built on (waiter Enter/`while(!done) Wait`/Exit; completer
-# Enter/set/`done=true`/Pulse/Exit on the same monitor). `99` is only observable after a genuine
-# cross-thread hand-off, so it proves Wait blocks + Pulse wakes. (blockOn's own E2E true-suspension
-# waits on await's slow path; this isolates the primitives it depends on — verified drain-correct.)
-il_check_imports monitordrain MonitorDrainKt "$ROOT/cases/il-monitordrain" "99"
+# monitordrain -> tests/il/fixtures/MigratedIntropCThreadingTests.kt (monitordrain_waitPulseCrossThreadDrain): the
+# System.Threading.Monitor Wait/Pulse cross-thread DRAIN the harness blockOn's BlockOnSink is built on, migrated.
 # cofinally: bundle-6 ① BUG 1 — a genuine `Task.Delay(1).await()` suspension INSIDE a try/finally (the
 # use{}/withLock{} shape). bir2cir's EmitTry now gates the finally on the $suspending flag so `close()`
 # runs EXACTLY ONCE at the post-resume exit (before the fix it ran EARLY + TWICE). RUNS correct -> close,42

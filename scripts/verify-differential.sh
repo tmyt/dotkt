@@ -70,10 +70,9 @@ declare -A XFAIL_DIFF=(
 PURE="m0 m-a1 m-a2 m-a3 m-a4 m-a5 m-a6 m-a7 m-a8 m-b1 m-b2 m-b3 m-b4 m-b5 m-b6 m-b7 m-b8 m-b9 m-b10 m-b11 m-b12 m-b13 m-s1 m-s2 m-s3 \
 il-samcmp \
 il-boxgen il-pairtostr \
-il-genmax il-genseq2 \
-il-atomics"
-# COV2 (kcc review §2B, 2026-07-06): il-atomics (kotlin.concurrent.atomics — the @ClrRefArgument Interlocked
-# byref binding; API restricted to the released 2.2.0 surface so the JVM oracle resolves it), JVM-oracle-verified.
+il-genmax il-genseq2"
+# il-atomics (kotlin.concurrent.atomics CAS family) migrated to tests/il/fixtures/MigratedIntropCAtomicsTests.kt
+# (atomics_interlockedByrefBinding); its PURE JVM-oracle entry was removed in that same change.
 # NOTE: this is the SINGLE effective PURE set. It was previously followed by three shadowing PURE=… reassignments
 # (a cross-task merge artifact from the C1/C2/C4/C5 review fixes) that dropped most of the list — il-nullableprim /
 # il-boxgen were silently un-tested. Consolidated into the union above (kcc review C3, 2026-07-06).
