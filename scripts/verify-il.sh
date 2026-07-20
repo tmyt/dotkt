@@ -210,13 +210,13 @@ else
 fi
 
 # Build a sample's <srcDir>/runtime.cs into a referenced .NET assembly (name from <runtimeAsm>); echo its path.
-# The optional <nullableMode> (default `disable`) selects the C# NRT context: `enable` emits real [Nullable] byte
-# arrays so facadegen's NRT reader (e.g. #150 delegate-arg nullability) is exercised end-to-end.
-build_runtime() { # <srcDir> <runtimeAsm> [nullableMode]
-	local srcdir="$1" rasm="$2" nullable="${3:-disable}" rt="$ROOT/build/rt-$rasm"
+# NRT-oblivious (Nullable disable): the one sample that needed real [Nullable] bytes (#150 delegnull) is migrated
+# to the C#-producer NUnit lane (tests/interop/producer-nrt), so no verify-il sample builds runtime.cs with NRT on.
+build_runtime() { # <srcDir> <runtimeAsm>
+	local srcdir="$1" rasm="$2" rt="$ROOT/build/rt-$rasm"
 	rm -rf "$rt"; mkdir -p "$rt"
 	cp "$srcdir/runtime.cs" "$rt/runtime.cs"
-	printf '%s\n' "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><AssemblyName>$rasm</AssemblyName><Nullable>$nullable</Nullable></PropertyGroup></Project>" > "$rt/rt.csproj"
+	printf '%s\n' "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><AssemblyName>$rasm</AssemblyName><Nullable>disable</Nullable></PropertyGroup></Project>" > "$rt/rt.csproj"
 	dotnet build "$rt" -c Release -o "$rt/out" -v q --nologo >/dev/null 2>&1 || true
 	echo "$rt/out/$rasm.dll"
 }
@@ -264,31 +264,6 @@ il_check_inject() { # <name> <asm> <srcDir> <expected> <runtimeAsm>
 		echo "$asm" > "$RESULTS/asm-$name"
 		birdir="$ROOT/build/bir-$name"; ildir="$ROOT/build/il-$name"; meta="$ROOT/build/$name.meta"
 		refdll="$(build_runtime "$src" "$rasm")"; echo "$refdll" > "$RESULTS/refdll-$name"
-		implist="$ROOT/build/$name.imports"
-		"$LAUNCHER" --scan-imports --output "$implist" "$src"/*.kt >/dev/null 2>&1 || true
-		dotnet "$FACADEGEN_DLL" "$meta" --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$refdll")" --import-list "$implist" >/dev/null 2>&1 || true
-		rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
-		if ! CLR_TYPES_METADATA="$meta" "$LAUNCHER" $src -no-stdlib -classpath "$CP" -d $birdir >/dev/null 2>&1; then
-			reason="compile error"; exit 0; fi
-		if ! il_emit "$name" "$ildir" "$asm" "$birdir" --ref "$refdll" --ref "$STDLIB_RT_DLL"; then
-			reason="ilemit error"; exit 0; fi
-		cp "$refdll" "$ildir/"; cp "$STDLIB_RT_DLL" "$ildir/"
-		run_and_compare "$ildir/$asm.dll" "$expected"
-	) &
-}
-
-# Like il_check_inject but builds runtime.cs with C# NRT ENABLED (#150): the sample's own .NET assembly then carries
-# real [Nullable] byte arrays, so facadegen surfaces a delegate's nullable type-arg (`Action<string?>`/`Func<string?>`)
-# as a nullable Kotlin lambda param/return — a lambda body relying on that nullability (returning null into Func<string?>)
-# compiles only when the byte is honored. Everything else is identical to il_check_inject.
-il_check_inject_nrt() { # <name> <asm> <srcDir> <expected> <runtimeAsm>
-	gate
-	(
-		sample_guard "$1"
-		name="$1"; asm="$2"; src="$3"; expected="$4"; rasm="$5"
-		echo "$asm" > "$RESULTS/asm-$name"
-		birdir="$ROOT/build/bir-$name"; ildir="$ROOT/build/il-$name"; meta="$ROOT/build/$name.meta"
-		refdll="$(build_runtime "$src" "$rasm" enable)"; echo "$refdll" > "$RESULTS/refdll-$name"
 		implist="$ROOT/build/$name.imports"
 		"$LAUNCHER" --scan-imports --output "$implist" "$src"/*.kt >/dev/null 2>&1 || true
 		dotnet "$FACADEGEN_DLL" "$meta" --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$refdll")" --import-list "$implist" >/dev/null 2>&1 || true
@@ -591,19 +566,9 @@ il_check_inject delegobj Dobj "$ROOT/cases/il-delegobj" "$(printf 'posted: 42\nb
 # (ThreadStart/ParameterizedThreadStart) + `Task.Run({...})` (Action/Func<T>) — resolves without ambiguity. facadegen
 # marks the Pareto-dominated sibling `lowPriority`; kotc stamps `@kotlin.internal.LowPriorityInOverloadResolution` so the
 # bare lambda binds the preferred (ThreadStart/Action) sibling. Import-scan path (BCL, no runtime.cs). FAIL before / PASS after.
-# delegnull (#150): a delegate type-arg's NRT byte survives into the Kotlin lambda param/return. The runtime.cs is
-# built with C# NRT ENABLED (il_check_inject_nrt), so `Func<string?>`/`Action<string?>` carry real [Nullable] bytes;
-# facadegen threads them into the fn node (contravariant sibling of #143). A lambda returning null into `Func<string?>`
-# compiles only when the return surfaces as `String?` — the case would COMPILE-ERROR before the fix.
-il_check_inject_nrt delegnull DlgNull "$ROOT/cases/il-delegnull" "$(printf '<null>\nhello\nworld\n<n>\nx')" DlgNrtRt
-il_check_inject netenum NetEnum "$ROOT/cases/il-netenum" "$(printf '60\n6\nabbccc')" KfcNetEnum
 il_check_inject injbase InjBase "$ROOT/cases/il-injbase" "placed:0" KfcInjB
 il_check_inject injfqn InjFqn "$ROOT/cases/il-injfqn" "42" KfcInjF
 il_check_inject injstatic InjStatic "$ROOT/cases/il-injstatic" "$(printf 'p=42\n7\n99\n123\np=42\n7\n99\n123')" KfcStatic
-il_check_inject injuint InjUint "$ROOT/cases/il-injuint" "$(printf '65542\n42')" Boot
-# ubyteinj: .NET-interop STRICT byte mapping (#53) — facadegen maps System.Byte->UByte and byte[]->UByteArray, so a
-# .NET byte 200 reads as UByte 200 (not signed -56) and a byte[] surfaces as a native UByteArray (round-trip fidelity).
-il_check_inject ubyteinj UByteInj "$ROOT/cases/il-ubyteinj" "$(printf '200\n3\n250\n200\n253')" Bt
 # c1net consumes types from its OWN runtime.cs (Probe assembly) via `import Probe.X` -> il_check_inject (build the
 # runtime, scan the imports through facadegen, --ref it). The old no-import-scan @Clr-facade path is gone.
 il_check_inject c1net C1Net "$ROOT/cases/il-c1net" "$(printf '42\nhi\n10\n15\n105\n52\n21\n41\n117\n20\n5\nyo!')" Probe
@@ -630,25 +595,17 @@ il_check_inject genextval GenExtVal "$ROOT/cases/il-genextval" "$(printf '40\n41
 # surfaces both as `ClrEvent<T>` properties; bir2cir binds the operator to the event's STATIC add/remove accessor.
 # Regression guard: static events were absent (GetEvents was Public|Instance non-static only).
 il_check_inject eventext EventExt "$ROOT/cases/il-eventext" "$(printf 'ping: 3\nping: 7\nannounce: hi\nannounce: yo\nh: yo\nannounce: bye')" EvLib
-# N5: same-name same-package top-level overloads restored from DIFFERENT .NET file facades (UtilsKt.foo() /
-# HelpersKt.foo(Int)) share CallableId(N5,"foo"); the A2 flat map collapsed to last-put-wins. The overload-aware key
-# routes each to its own file class by the resolved callee's arity. (A2 regression guard.)
-il_check_inject tloverload TlOverload "$ROOT/cases/il-tloverload" "$(printf '100\n42')" N5Lib
-# vtprop: setting a MUTABLE property/field on a .NET value-type (struct) local via clrPropSet — the setter/stfld must
-# run on the struct's ADDRESS (ldloca), not a spilled copy, or the mutation is lost (pre-fix: `ldloc` + `call instance
-# set_V` on a value-type value = invalid IL -> segfault). Regression guard for the value-type-receiver property-set fix.
-il_check_inject vtprop VtProp "$ROOT/cases/il-vtprop" "$(printf '10\n20\n30')" ProbeVt
-# I4 remnants battery: .NET enum (read/pass/==/when), generic delegates (Func<int,int> + custom Mapper<T>),
-# nullable value types (int?/double? both directions).
-il_check_inject netinterop NetInterop "$ROOT/cases/il-netinterop" "$(printf 'Green\n4\nTrue\nfresh\ncool\n15\n18\n42\n0\n7\n0\n1.5')" I4Probe
 il_check_inject firgap FirGap "$ROOT/cases/il-firgap" "$(printf '42\n60\n3\n20')" P
 # CLR-interop C#-producer pilot batch (inherit/geninj/clriface/clrimpl/clrasm/genim) migrated to the
 # ProjectReference'd C#-producer NUnit lane tests/interop/{producer,consumer} (InteropTests.kt), gated by
 # tests/run-nunit-il.sh. Per the cases-test-design audit #14 the old per-case dirs + il_check_inject lines were
 # removed same-change; the former runtime.cs became the producer's per-namespace C# source (docs/nunit-migration-playbook.md §3).
-# (3)+(6): constructed-generic MEMBER types (IList<T>/IReadOnlyList<T>/Dictionary<K,V>/IEnumerable<T>) + the
-# transitive injection closure (Gadget/Sprocket are never imported — reached via member-signature hops).
-il_check_inject transinj TransInj "$ROOT/cases/il-transinj" "$(printf '1\nw1\n1\nw1\nw1!\n3\nw1\nw1.')" TxRt
+# CLR-interop C#-producer batch B (injuint/ixname/netattr/netattr-vararg/netenum/netinterop/outref/selfref/
+# tloverload/transinj/ubyteinj/vtprop/delegnull) migrated to the ProjectReference'd C#-producer NUnit lane
+# tests/interop/{producer,consumer} (InteropB*Tests.kt; delegnull's NRT producer is tests/interop/producer-nrt),
+# gated by tests/run-nunit-il.sh. Per the same-change rule the per-case dirs + il_check_inject lines were removed
+# here; each former runtime.cs became the producer's per-namespace C# source. (il-stackalloc stays below — its
+# emitted localloc is UNVERIFIABLE, so it cannot join the whole-assembly-ilverify'd NUnit consumer lane.)
 il_check_inject cbk Cbk "$ROOT/cases/il-cbk" "$(printf '=v42\nran')" PCbk
 # clriface/clrimpl migrated to the C#-producer NUnit lane tests/interop/consumer/InteropTests.kt (see breadcrumb above).
 # ifacechainvt (#129): a Kotlin class implements an injected .NET interface whose BASE-INTERFACE CHAIN carries a
@@ -658,16 +615,6 @@ il_check_inject cbk Cbk "$ROOT/cases/il-cbk" "$(printf '=v42\nran')" PCbk
 il_check_inject ifacechainvt IfaceChainVt "$ROOT/cases/il-ifacechainvt" "$(printf '21\n10\n23')" ChainRt
 # clrifaceimpl -> tests/il/fixtures/MigratedIntropCIfaceImplTests.kt (clrifaceimpl_referenceTypeIfaceImpl); clrifaceimplvt
 # (#128) -> same fixture (clrifaceimplvt_valueTypeIfaceSlotBridge — the value-type ValueTypeIfaceSlotBridge sibling), migrated.
-# ixname: a .NET type with a CUSTOM-NAMED indexer via [IndexerName("Cell")] — `g[i]`/`g[i]=v` must bind to
-# get_Cell/set_Cell (read from the type's DefaultMemberAttribute by bir2cir.NetInteropBinding.DefaultIndexerAccessor),
-# not the hardcoded get_Item/set_Item. Regression guard for the custom-indexer-name binding path.
-il_check_inject ixname IxName "$ROOT/cases/il-ixname" "$(printf '10\n30\n99')" IxRt
-# clrasm migrated to the C#-producer NUnit lane tests/interop/consumer/InteropTests.kt (see breadcrumb above).
-il_check_inject selfref SelfRef "$ROOT/cases/il-selfref" "4" PSelf
-# genim migrated to the C#-producer NUnit lane tests/interop/consumer/InteropTests.kt (see breadcrumb above).
-il_check_inject outref Outref "$ROOT/cases/il-outref" "$(printf 'ok=5\nfail\n2 1\n20\n20\n109\n5\n7 5')" OutR
-il_check_inject netattr NetAttr "$ROOT/cases/il-netattr" "$(printf 'widget#7\n42')" Lbl
-il_check_inject netattrvararg NetAttrVararg "$ROOT/cases/il-netattr-vararg" "$(printf 'widget#7\n42')" PVararg   # #184: params object[] ctor applied bare (zero args). rasm distinct from firgap's `P` (both namespace-P but different types) so the parallel build_runtime does not race on the shared build/rt-P dir (assembly NAME only; the `P` namespace its runtime.cs declares is unchanged, so `import P.TagAttribute` still resolves)
 il_check_inject stackalloc Sa "$ROOT/cases/il-stackalloc" "$(printf '16\n30\n-1\n10\n21')" SpanRt
 # cobuild: the GENUINE .NET-async E2E — `Task.Delay(1).await()` truly suspends (imports System.*, so
 # il_check_IMPORTS runs facadegen for the await marker). bir2cir's P4 await lowering + the whole cold-core

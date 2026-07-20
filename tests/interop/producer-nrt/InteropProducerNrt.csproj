@@ -1,0 +1,16 @@
+<!-- C#-producer roundtrip PRODUCER (NRT variant): identical to ../producer/InteropProducer.csproj EXCEPT it
+     compiles with C# Nullable Reference Types ENABLED (`<Nullable>enable</Nullable>`). Cases whose interop
+     surface DEPENDS on real [Nullable] metadata bytes (a delegate's nullable type-arg — `Func<string?>`,
+     `Action<string?>`) must live here: with NRT on, csc emits the [Nullable]/[NullableContext] attribute bytes
+     that facadegen reads to surface the delegate's nullable Kotlin param/return. The SIBLING oblivious producer
+     is deliberately NOT switched to NRT — flipping it would change every other case's reference-type nullability
+     (platform-type behavior), so the NRT-dependent case gets its OWN assembly instead. This is the MSBuild-graph
+     equivalent of scripts/verify-il.sh's il_check_inject_nrt (build runtime.cs with `enable` -> dll). Plain
+     csc-emitted (no DotKt.Metadata / no retarget); ../consumer <ProjectReference>s BOTH producers. -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+</Project>
