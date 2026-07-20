@@ -6,14 +6,15 @@
 // These are the cases whose real subject is Double/Float IEEE behavior — repeatedly EXCLUDED from the String and
 // numeric families because their subject is NaN/±0.0/unordered-compare/total-order/ULP, not text or coercion.
 //
-// EXCLUDED from this battery (matched the enumeration `ls cases/ | grep …` but the real subject is elsewhere —
-// kept in the bash lane):
-//   il-fmt      -> String.format composite-format binding — String-formatting family, not IEEE.
-//   il-math     -> kotlin.math.abs/max/min/sqrt -> System.Math.* binding parity (mostly Int) — math-binding, not IEEE.
-//   il-mathabs  -> kotlin.math.abs INTEGER wraparound at Int/Long.MIN_VALUE — integer-overflow semantics, not IEEE.
-//   il-mixnum   -> mixed-type numeric coercion to the wider type (Int/Long, Int/Double) — coercion family; also
-//                  differential-PURE-only (no il_check), so nothing to strengthen into an IL value assert here.
-//   il-duration -> kotlin.time.Duration value-class member operators + toString — value-class/time family, not IEEE.
+// EXCLUDED from this battery (matched the enumeration `ls cases/ | grep …` but the real subject is elsewhere):
+//   il-fmt      -> String.format composite-format binding — String-formatting family, not IEEE (bash lane).
+//   il-math     -> kotlin.math.abs/max/min/sqrt -> System.Math.* binding parity (mostly Int) — math-binding, not IEEE
+//                  (now migrated to the numeric/math battery MathTests.kt).
+//   il-mathabs  -> kotlin.math.abs INTEGER wraparound at Int/Long.MIN_VALUE — integer-overflow semantics, not IEEE
+//                  (now migrated to MathTests.kt).
+//   il-mixnum   -> mixed-type numeric coercion to the wider type (Int/Long, Int/Double) — coercion family, not IEEE
+//                  (now migrated to MathTests.kt).
+//   il-duration -> kotlin.time.Duration value-class member operators + toString — value-class/time family, not IEEE (bash lane).
 //
 // Coverage preserved (old case -> method):
 //   il-nan               -> nan_comparisons            Double/Float infinities + any-NaN-compare-is-false

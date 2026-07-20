@@ -598,8 +598,9 @@ il_check for   ForT  "$ROOT/cases/il-for"     "$(printf 'sum 1..5 = 15\ncountdow
 # il-hashset2, il-iscoll, il-listeq, il-listplus, il-eachcount, il-emptymap, il-groupby2, …) migrated to the NUnit
 # batteries tests/il/fixtures/CollectionsTests.kt (16) + MapsTests.kt (10), gated by tests/run-nunit-il.sh. Per the
 # cases-test-design audit #14 the old per-case dirs + their il_check lines were deleted in that SAME change.
-il_check math  MathT "$ROOT/cases/il-math"    "$(printf '9\n7\n3\n4')"
-il_check mathabs MathAbs "$ROOT/cases/il-mathabs" "$(printf -- '-2147483648\n-9223372036854775808\n5\n5\n0\n2147483647')"  # C9: kotlin.math.abs WRAPS at MIN_VALUE (unchecked neg), does NOT throw like System.Math.Abs
+# Math/numeric family (il-math, il-mathabs, il-coerce, il-roundhalfup + differential-only il-divmin, il-mixnum)
+# migrated to the NUnit battery tests/il/fixtures/MathTests.kt (6 methods), gated by tests/run-nunit-il.sh. Per the
+# cases-test-design audit #14 the old per-case dirs + their il_check lines were deleted in that SAME change.
 il_check pairtostr PairToStr "$ROOT/cases/il-pairtostr" "$(printf '[1, 2, 3]\n[1, 2, 3]\n(1, 2)\n(1, 2, 3)\nRec(name=k, n=9)\nTrue')"  # C11 gate regression guard: collection/tuple/data-class toString + String.hashCode within-run consistency (#167)
 # pairnest: a nested collection/map INSIDE Pair/Triple.toString (C11) renders Kotlin-style — the tuple component's
 # erased generic static type used to reach the raw .NET `List`1[...]` ToString; now routed through the runtime
@@ -611,7 +612,6 @@ il_check pairnest PairNest "$ROOT/cases/il-pairnest" "$(printf '([1, 2], [3, 4])
 il_check extprop ExtProp "$ROOT/cases/il-extprop" "$(printf '2\n1\n1\n3\n-1\n1\n0')"  # C7 (+ #157 NON-coroutine guard): cross-module top-level extension-property getter -> callStatic get_<name>(receiver) (generic List.lastIndex carries type args); NOT a dropped-receiver field read. Resolves through the SAME general owner-null path as xmodtopval (prop:get -> get_<name> -> TryResolveTopLevelStatic recvKey branch) — a name-keyed re-special-case of that path would break these non-coroutine names
 il_check defargs DefArgs "$ROOT/cases/il-defargs" "$(printf 'x1-x2-x3\n1, 2, 3\n[1, 2, 3]\n1/2/~\nb=c\na\nnodelim\nFALLBACK\nP(x=1, y=20, z=3)\nP(x=10, y=2, z=30)\nHello, Kotlin!\nHello, Kotlin?')"  # C3: cross+same-module default args — omitted middle default must not shift a later provided arg's slot (joinToString transform / substringAfter `= this` / data-class copy(field=))
 il_check defargs2 DefArgs2 "$ROOT/cases/il-defargs2" "$(printf '55\n7\n12\n30\n134\n156\n159')"  # C3 residual: same-module default referencing ANOTHER value param (`b = a * 10`, `c = a + b`) — inlined with that param's filled arg substituted
-il_check coerce Coerce "$ROOT/cases/il-coerce" "$(printf '7\n5\n5\n2\n1\n5\n7')"       # coerceAtMost/AtLeast/In -> pure-Kotlin stdlib bodies (no kotc System.Math lowering)
 il_check infloopret InfLoopRet "$ROOT/cases/il-infloopret" "$(printf '30\nok4')"  # #141: value-returning while(true){…return x} -> ilemit appends default(ret)+ret so the unreachable fall-through terminator is ilverify-clean (ReturnMissing gone)
 il_check toplateinit TopLateinit "$ROOT/cases/il-toplateinit" "$(printf 'caught: uninitialized\nhello\n5')"  # #104: top-level `lateinit var` (ref type) static field carries `"init": null` — must NOT hit the .cctor null-coercion store (crash); default-null + lateinitGet throw-before-init
 il_check samcmp SamCmp "$ROOT/cases/il-samcmp" "$(printf '1,1,2,3,4,5,6,9\n9,6,5,4,3,2,1,1')"  # explicit Comparator{} SAM conversion (plain fun interface; no kotc @ClrTypeAlias read)
@@ -621,7 +621,6 @@ il_check ext   Ext   "$ROOT/cases/il-ext"     "$(printf '21\nHI')"
 # genarrlam) migrated to the NUnit in-process suite -> tests/il/fixtures/ArrayTests.kt (value asserts). il-copyofnull /
 # il-boxgen stay here (live XFAIL_ILVERIFY findings, not migratable into the ilverify-clean lane).
 il_check arraydeque AppKt "$ROOT/cases/il-arraydeque" "$(printf 'z\nb\nc\n1\nA')"   # concrete generic stdlib class ArrayDeque<E>:AbstractMutableList<E> as a field/owner forces ilemit to resolve kotlin.collections.ArrayDeque`1 from the rt dll — exercises the ICollection/IList void-drop methodimpl bridge (ilemit) + the BCL-only slot synthesis Contains/CopyTo/IsReadOnly/IndexOf (bir2cir)
-il_check roundhalfup AppKt "$ROOT/cases/il-roundhalfup/app.kt" "$(printf '3\n-2\n1\n0\n4\n2\n3\n3\n-2\n3\n-2\n3\n2147483647\n-2147483648\nNaN-throws')"   # #103: roundToInt/roundToLong = round-half-UP toward +inf (floor(x+0.5)), NaN throws, out-of-range saturates — NOT banker's ToEven
 il_check utf8throw AppKt "$ROOT/cases/il-utf8throw/app.kt" "$(printf 'True\ndecode-threw\nencode-threw\nhello')"   # #143: decodeToString/encodeToByteArray honor throwOnInvalidSequence=true -> CharacterCodingException via throwing UTF8Encoding(false,true)
 il_check caseinvariant AppKt "$ROOT/cases/il-caseinvariant/app.kt" "$(printf 'ß\nSTRAßE\nABC\nhello\nß\nTrue')"   # #144: String/Char uppercase()/lowercase() are CLR-native 1:1 ToUpperInvariant/ToLowerInvariant — DELIBERATELY no Unicode one-to-many expansion (ß stays ß, not SS)
 il_check seq   Seq   "$ROOT/cases/il-seq"     "$(printf '6,12\n16\n3\n27\n10-20-30\n1,2,3\n4,5,6\n3')"
