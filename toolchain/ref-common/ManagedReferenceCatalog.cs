@@ -94,13 +94,43 @@ sealed class ManagedReferenceCatalog
             var full = Path.GetFullPath(raw.Trim());
             if (!seenPaths.Add(full)) continue;
             if (!File.Exists(full)) throw new ArgumentException($"{toolName}: reference not found: {full}");
-            if (!IsManagedAssembly(full))
+            // #52 — a load failure is CLASSIFIED, never swallowed as "native". A genuinely native PE (valid image, no
+            // CLI/COR directory) is always a legitimate silent skip. A broken/truncated PE or an I/O error is FATAL for
+            // the COMPILE set (facadegen/bir2cir/retarget consume `@(ReferencePath)` — pure managed reference assemblies,
+            // so a corrupt one is a real error that must name the file + stage instead of silently dropping a type). The
+            // RUNTIME copy-local set (ilemit, runtimeSelection) legitimately mixes managed + foreign-OS native assets
+            // named `*.dll`, so there a non-loadable image is a loud WARN + skip, not a hard fail.
+            switch (ClassifyReference(full, out var detail))
             {
-                Console.Error.WriteLine($"{toolName}: skipping non-managed reference {Path.GetFileName(full)}");
-                continue;
+                case RefLoadKind.Managed:
+                    break;
+                case RefLoadKind.Native:
+                    Console.Error.WriteLine($"{toolName}: skipping non-managed reference {Path.GetFileName(full)} ({detail})");
+                    continue;
+                case RefLoadKind.Broken when runtimeSelection:
+                    Console.Error.WriteLine($"{toolName}: skipping unreadable copy-local reference {Path.GetFileName(full)} ({detail})");
+                    continue;
+                case RefLoadKind.Broken:
+                    throw new ArgumentException(
+                        $"{toolName}: reference is not a readable managed assembly (corrupt/truncated PE): {full} — {detail}. " +
+                        "A supplied reference that fails to load is fatal; it is NOT silently reclassified as non-managed.");
+                case RefLoadKind.IoError when runtimeSelection:
+                    Console.Error.WriteLine($"{toolName}: skipping unreadable copy-local reference {Path.GetFileName(full)} (I/O error: {detail})");
+                    continue;
+                default: // RefLoadKind.IoError
+                    throw new ArgumentException(
+                        $"{toolName}: reference could not be read (I/O error): {full} — {detail}.");
             }
 
-            var identity = AssemblyName.GetAssemblyName(full);
+            AssemblyName identity;
+            try { identity = AssemblyName.GetAssemblyName(full); }
+            catch (Exception ex) when (ex is BadImageFormatException or IOException or FileLoadException)
+            {
+                // The PE opened + carried a COR header (else ClassifyReference would have diverted above), yet the
+                // CLI metadata / assembly-identity blob is unreadable — a distinct, still-fatal corruption class.
+                throw new ArgumentException(
+                    $"{toolName}: reference has unreadable CLI metadata / assembly identity: {full} — {ex.Message}.");
+            }
             if (string.IsNullOrEmpty(identity.Name))
                 throw new ArgumentException($"{toolName}: reference has no assembly name: {full}");
             // ReferenceCopyLocalPaths may contain satellite resource assemblies.  They are data for
@@ -388,15 +418,52 @@ sealed class ManagedReferenceCatalog
             ? Array.Empty<string>()
             : value.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-    static bool IsManagedAssembly(string path)
+    // #52 — how a reference file's open+parse turned out. Only `Native` (a fully-parsed PE that simply carries no
+    // CLI/COR data directory) is a legitimate silent skip; `Broken` (a PE-header parse FAILURE — corrupt/truncated
+    // image, e.g. a partial write) and `IoError` (open/read failure — sharing violation, unreadable) are FATAL and
+    // must name the offending file + the consumer stage rather than being bucketed as "non-managed".
+    enum RefLoadKind { Managed, Native, Broken, IoError }
+
+    // Classify a reference file structurally (the Codex-confirmed native-vs-corrupt discriminator): fully parse the
+    // PE headers, then decide on the RAW CLR data-directory entry — NOT on `CorHeader == null` alone, which conflates
+    // a genuinely native image with one whose CLR directory is advertised but unresolvable (a nonzero-but-invalid RVA
+    // leaves CorHeader null WITHOUT throwing). Only a PE whose CorHeaderTableDirectory is truly empty (RVA==0 && Size==0)
+    // is native (a legitimate silent skip). A PE-header parse failure (BadImageFormatException — a truncated/corrupt
+    // image, e.g. a partial concurrent write) is Broken; an open/read failure (sharing violation / EndOfStream) is IoError.
+    static RefLoadKind ClassifyReference(string path, out string detail)
     {
-        try
+        detail = null;
+        FileStream stream;
+        try { stream = File.OpenRead(path); }
+        catch (IOException ex) { detail = ex.Message; return RefLoadKind.IoError; }
+        catch (UnauthorizedAccessException ex) { detail = ex.Message; return RefLoadKind.IoError; }
+        using (stream)
         {
-            using var stream = File.OpenRead(path);
-            using var pe = new PEReader(stream);
-            return pe.HasMetadata && pe.PEHeaders.CorHeader != null;
+            try
+            {
+                using var pe = new PEReader(stream);
+                var headers = pe.PEHeaders;               // lazily parses the PE headers; throws BadImageFormatException on a corrupt/truncated image
+                if (headers.IsCoffOnly || headers.PEHeader == null)
+                {
+                    detail = "not a PE image (COFF-only / no optional header)";
+                    return RefLoadKind.Broken;
+                }
+                var clr = headers.PEHeader.CorHeaderTableDirectory;
+                if (clr.RelativeVirtualAddress == 0 && clr.Size == 0)
+                {
+                    detail = "valid PE, no CLI/COR directory (native image)";
+                    return RefLoadKind.Native;
+                }
+                if (headers.CorHeader == null)
+                {
+                    detail = "CLI/COR directory advertised but unresolvable";
+                    return RefLoadKind.Broken;
+                }
+                return RefLoadKind.Managed;
+            }
+            catch (BadImageFormatException ex) { detail = ex.Message; return RefLoadKind.Broken; }
+            catch (IOException ex) { detail = ex.Message; return RefLoadKind.IoError; }
         }
-        catch { return false; }
     }
 
     static StringComparer PathComparer => OperatingSystem.IsWindows()

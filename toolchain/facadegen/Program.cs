@@ -67,8 +67,13 @@ static class FacadeGen
         // twin DotKt.Private.Stdlib (same type shapes) so reading the lib's attrs doesn't FileNotFoundException.
         var catalog = ManagedReferenceCatalog.Create(paths, "facadegen", refStdlibAliasesRuntime: true);
         Mlc = catalog.CreateMetadataLoadContext();
+        // The catalog already classified each path as a readable managed PE (#52), so a load failure HERE is a
+        // genuine surprise (a missing transitive dependency the MLC resolver could not satisfy) — surface it naming
+        // the file rather than swallowing it silently. Non-fatal: Resolve iterates GetAssemblies resiliently, so a
+        // partial set still lets the requested types resolve if they live in the assemblies that DID load.
         foreach (var p in catalog.Paths)
-            try { Mlc.LoadFromAssemblyPath(p); } catch { /* skip unloadable */ }
+            try { Mlc.LoadFromAssemblyPath(p); }
+            catch (Exception ex) { Console.Error.WriteLine($"facadegen: warning: could not load reference into the metadata context: {p} — {ex.GetType().Name}: {ex.Message}"); }
     }
 
     static Type Resolve(string name)

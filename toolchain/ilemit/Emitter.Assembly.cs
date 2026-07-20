@@ -5,6 +5,7 @@ using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
 using System.Text.Json;
+using DotKt.Toolchain;
 
 // EmitAssembly passes 1-6 (DefineType/bases/signatures/bodies/.cctor/entry/bake), bridges, and Save.
 sealed partial class Emitter
@@ -1088,10 +1089,14 @@ sealed partial class Emitter
             entryPoint: entry != null ? MetadataTokens.MethodDefinitionHandle(entry.MetadataToken) : default);
         var blob = new BlobBuilder();
         peBuilder.Serialize(blob);
-        using (var fs = new FileStream(Path.Combine(_outDir, _asmName + ".dll"), FileMode.Create, FileAccess.Write))
-            blob.WriteContentTo(fs);
+        // #52 — write ATOMICALLY (temp + rename): FileMode.Create truncates-then-writes in place, so a concurrent
+        // reader (retarget/facadegen/bir2cir loading this same dll) can observe a partial image and fail with a
+        // spurious "Format of the executable is invalid" / BadImageFormatException. A same-directory rename is atomic,
+        // so a reader always sees either the whole old file or the whole new one — never a torn write.
+        var dllPath = Path.Combine(_outDir, _asmName + ".dll");
+        AtomicFile.Write(dllPath, fs => blob.WriteContentTo(fs));
         var v = Environment.Version;
-        File.WriteAllText(Path.Combine(_outDir, _asmName + ".runtimeconfig.json"),
+        AtomicFile.WriteAllText(Path.Combine(_outDir, _asmName + ".runtimeconfig.json"),
             "{\n  \"runtimeOptions\": {\n    \"tfm\": \"net10.0\",\n" +
             "    \"framework\": { \"name\": \"Microsoft.NETCore.App\", \"version\": \"" + v.Major + "." + v.Minor + ".0\" }\n  }\n}\n");
         Console.WriteLine($"emitted {_asmName}.dll");
