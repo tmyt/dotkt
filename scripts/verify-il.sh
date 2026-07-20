@@ -51,15 +51,6 @@ declare -A XFAIL_ILVERIFY=(
 	# Runtime-SAFE — the RUN lane PASSES (interceptor precedence at the await resume verified: A:resumes=1). The #7
 	# behavior does NOT depend on the #2 fix; only this formal ilverify finding does (same bir2cir/representation follow-up).
 	[awaitintercept]="GitHub #12 (formal-only follow-up of closed #2): interceptor get_key() Key<Self> <- invariant Key<Element>; runtime-safe, RUN green, #7 precedence verified"
-	# sort (F3 #62): the transitive-forward widening moved compareBy/sortedBy/sortedByDescending onto the splice engine,
-	# so the compareValuesBy selector is now INLINED into the synthesized comparator SAM (ComparisonsKt$Sam102/Sam104
-	# ::compare). The selector returns Int (boxed to `object`) and flows to the compareValues helper whose param is
-	# Comparable (mapped to System.IComparable) — StackUnexpected `found object expected IComparable`. Runtime-SAFE: the
-	# boxed Int32 DOES implement IComparable, so CLR interface dispatch executes correctly (RUN green: sorted output
-	# correct); ILVerify only rejects the ERASED static stack type. Same covariance-erasure class as the #12 entries
-	# above — a bir2cir representation follow-up (carry the selector's concrete Comparable type / provenance), TRACKED as
-	# the Set B representation work #46.
-	[sort]="F3 #62 / #46 (Set B representation): compareValuesBy selector inlined into the comparator SAM boxes Int to object where IComparable is expected — runtime-safe covariance-erasure (RUN green), same class as #12"
 	# del2 (#60 W1): the splice-all widening (kotc now emits a callInline for EVERY cross-module inline member with a
 	# lambda) moved `Delegates.observable`/`vetoable` — klib-stdlib inline MEMBERS whose CROSSINLINE lambda escapes into
 	# an object-literal ObservableProperty subclass — onto the splice engine. That subclass is a STDLIB-emitted named
@@ -75,10 +66,6 @@ declare -A XFAIL_ILVERIFY=(
 	[del2]="#123 (OPEN delegate-representation ABI follow-up; splice origin #60 W1, closed): splice-all widening routed Delegates.observable/vetoable (crossinline lambda -> stdlib-emitted object-literal) onto the splice engine; §4.4ii materializes a BCL System.Action/Func where the stdlib ctor bakes the Kotlin KAction/KFunc — runtime-safe cross-module delegate-representation ABI mismatch (RUN green)"
 	# ---- newly EXPOSED by the #99 run-derived-ASMS coverage work (these run-only samples had NO ilverify coverage
 	# before; each RUNS green — a runtime-safe formal-only finding attributed to a live tracking issue) ----
-	# boxgen: SAME class as sort above (#62/#46). compareBy/sortedBy/sortedByDescending selectors are inlined into the
-	# ComparisonsKt$Sam102/$Sam104 comparator, boxing the Int/Pair selector result to object where IComparable is
-	# formally expected. Runtime-safe (the boxed value implements IComparable; RUN green — sorted output correct).
-	[boxgen]="#62/#46 (same covariance-erasure class as sort): compareBy/sortedBy selector inlined into the comparator SAM boxes Int/Pair to object where IComparable is expected — runtime-safe (RUN green)"
 	# classdeleg (#174): a class-delegation (#81) forwarder `Tracked<T> : MutableList<T> by backing` narrows the
 	# iterator()/listIterator() return to the READ-ONLY Iterator/ListIterator where the Mutable* slot is formally
 	# expected. Runtime-safe (the backing MutableList returns a real Mutable* iterator; RUN green), same erased-static
@@ -88,12 +75,6 @@ declare -A XFAIL_ILVERIFY=(
 	# honestly yields Array<T?> (#124); for a value elem the array is materialized as object[] where Nullable<int32>[]
 	# is formally expected at the callsite. Runtime-safe (RUN green — null tail + prefix read back correctly).
 	[copyofnull]="#127/#86: nullable value-type array (copyOf -> Array<T?>, #124) materialized as object[] where Nullable<T>[] is formally expected — the object-erasure write/return axis, runtime-safe (RUN green)"
-	# delegnull: a formal-only DelegateCtor 'Unrecognized arguments for delegate .ctor'. A Func<string?>/Action<string?>
-	# lambda-to-delegate construction — a nullable/NRT-erasure axis (a lifted lambda returns `object` where the delegate
-	# Invoke expects a `string?`), DISTINCT from the #170 String->CharSequence delegate-return fix (which retyped the
-	# lifted lambda's ret + adapter-wrapped its returns to match the KFunc<…,dotkt$CharSequence> ilemit rewraps into —
-	# that closed defargs + linkedorder). RUN green — a separate bir2cir invocation-adapter follow-up.
-	[delegnull]="#150: formal-only DelegateCtor 'Unrecognized arguments for delegate .ctor' on a Func<string?>/Action<string?> lambda-to-delegate construction (nullable/NRT axis, distinct from #170) — runtime-safe (RUN green)"
 )
 
 # The CLR stdlib (kotlin.*) is supplied to kotc via the FRONTEND KLIB (scripts/build-stdlib-klib.sh) on

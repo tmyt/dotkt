@@ -27,6 +27,16 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir ([tmyt/dotkt#189], area:bir2cir): a nullable-REFERENCE-returning lambda bound into a delegate
+  (`Api.RunNullable(Func<string?>) { null }`) is now ilverify-clean.** `NullableFuncReturnErasure` erased EVERY
+  nullable func-return `(…) -> R?` to `object`, so the lifted lambda's ret became `object` while the concrete delegate
+  slot's `Invoke` returns `string` — `object` is not assignable-to `string`, so `newobj Func<string>::.ctor(ldftn object …)`
+  failed ilverify `DelegateCtor` (runtime-safe; the ctor is not JIT-verified). The erasure to `object` is only needed
+  when a plain reference cannot carry the null — a VALUE-type inner (`Int?`) or an unconstrained open generic (`T?`);
+  a REFERENCE inner (`String?`) already carries null and now stays the (nullable-stripped) reference type, keeping the
+  lifted return covariantly-assignable to the delegate slot (ECMA-335: the ldftn target's return must be
+  assignable-TO the delegate `Invoke` return). Gated by `isValueFqn`; distinct axis from #170's String->CharSequence
+  delegate-return bridge. Prunes the `il-delegnull` `XFAIL_ILVERIFY` entry.
 - **toolchain ([tmyt/dotkt#51], area:ilemit, area:packaging): reference-asset selection now keys off the
   TARGET RID, not the build HOST RID — cross-target builds pick the right `runtimes/<rid>/lib` asset.** The core
   slice made `ManagedReferenceCatalog` rank RID-impl assets against the target RID's portable-RID-graph `#import`
