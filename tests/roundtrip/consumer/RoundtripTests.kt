@@ -103,6 +103,7 @@ class RoundtripTests {
             ClassicAssert.AreEqual(15, Box(2) glue Box(3))       // 15
             ClassicAssert.AreEqual(22, Box(4) * 3)               // 22
             ClassicAssert.AreEqual(8, Box(7).mapped { it + 1 })  // 8
+            ClassicAssert.AreEqual(18, Box(7).boostedBy { it + 1 })  // (7+1)+10 = 18  #23 dual-receiver inline member-extension (reads extension get() AND dispatch k)
         }
         ClassicAssert.AreEqual(110, lib.useProt(Box(1)))         // 110
     }

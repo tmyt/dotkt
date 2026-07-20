@@ -76,15 +76,22 @@ static class InlineBirStash
         // recv classification (drives the splicer's guard): a leading `__self` param = extension receiver; a non-static
         // instance member = a `{k:this}` dispatch receiver; else none.
         string firstParam = prms != null && prms.Count > 0 ? Str((prms[0] as JsonObject)?["name"]) : null;
+        bool isStatic = Bool(mo["static"]) == true;
         string recv = firstParam == "__self" ? "extensionParam"
-                    : (Bool(mo["static"]) == false ? "dispatch" : "none");
+                    : (!isStatic ? "dispatch" : "none");
 
+        // #23: carry the emitted `static` flag. For a member-EXTENSION (recv==extensionParam) the single-valued `recv`
+        // cannot express the enclosing dispatch receiver, so InlineSplice reads THIS flag to decide whether a body-read
+        // dispatch `{k:this}` can be CO-BOUND: a REAL-INSTANCE member (!static) binds recvs.dispatch alongside `__self`;
+        // a FLATTENED-companion / top-level (static) extension's recvs.dispatch would be a dangling `Owner.INSTANCE`, so
+        // a dispatch-reading body there stays a hard error. Rides the [KotlinInline] carrier to the cross-module reader.
         var payload = new JsonObject
         {
             ["v"] = 1,
             ["fqn"] = owner + "." + name,
             ["owner"] = owner,
             ["recv"] = recv,
+            ["static"] = isStatic,
             ["typeParams"] = typeParams?.DeepClone() ?? new JsonArray(),
             ["params"] = prms?.DeepClone() ?? new JsonArray(),
             ["ret"] = mo["ret"]?.DeepClone(),
