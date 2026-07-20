@@ -1,0 +1,33 @@
+<!-- Coroutine / suspend NUnit battery suite — the dedicated lane for the suspend/coroutine family of the
+     cases/il-* -> NUnit migration (docs/design-nunit-test-harness.md §4: "coroutine (+ the one shared harness)"
+     battery; playbook docs/nunit-migration-playbook.md). Given its OWN project (per the tests/basic ·
+     tests/interop · tests/coroutines · tests/roundtrip subject-split) rather than folded into tests/il, because
+     the cold-core state-machine lowering + the shared blockOn drive harness are a distinct subject.
+
+     Every .kt under this project is Kotlin, compiled to CLR IL by the DotKt MSBuild SDK; `dotnet test` discovers
+     the @TestAttribute methods and runs them in-process. Each fixture migrates a set of former stdout-diff
+     coroutine cases -> @TestAttribute methods asserting the VALUE directly, compiled ONCE per assembly.
+     `fixtures/Harness.kt` is the SINGLE shared `dotkt.support.blockOn` cold-core drive (the runBlocking analog,
+     pure Kotlin over the public stdlib primitives) that all suspend-driving fixtures import — it replaces the
+     per-case duplicated harness.kt copies (design §4 "one shared harness/Coroutines.kt").
+
+     Resolves the LOCALLY-BUILT SDK from build/nuget-feed via tests/nuget.config (design D4) — so it tests the
+     compiler in THIS working tree. The pinned version tracks packaging/DotKt.Versions.props; the gate driver
+     tests/run-nunit-il.sh reads it from there and clears the isolated cache so a repacked same-version SDK
+     always wins. -->
+<Project Sdk="DotKt.Sdk/0.9.6-rc7">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsTestProject>true</IsTestProject>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
+    <PackageReference Include="NUnit" Version="4.6.1" />
+    <PackageReference Include="NUnit3TestAdapter" Version="6.2.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+</Project>

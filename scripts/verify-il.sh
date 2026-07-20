@@ -364,7 +364,8 @@ il_check mc1   MC1   "$ROOT/cases/m-c1"      "$(printf 'c = (4, 6)\na.d2 = 25\nr
 # il-writecapture/il-funref/il-extfunref/il-threadlambda) migrated to the NUnit battery tests/il/fixtures/LambdaTests.kt
 # (10 methods; + LambdaTestsB.kt for the il-mfclosure/il-mflambda file-B halves), gated by tests/run-nunit-il.sh.
 # Per the cases-test-design audit #14 the old per-case dirs + il_check/il_check_imports lines were removed same-change.
-# (il-suspendcapture/il-suspendnestedcapture stay in the bash lane — suspend/coroutine, a deferred family.)
+# (The suspend/coroutine family has its OWN NUnit lane now — tests/coroutines; the pilot batch migrated there
+# same-change. il-suspendnestedcapture + the rest of the family stay in this bash lane pending later batches.)
 il_check caprefinline AppKt "$ROOT/cases/il-capref-inline/app.kt" "$(printf '2\n4\n6\n99')"   # a coerced `::pushDouble` reference inside a buildList{} inline lambda -> an ADAPTER_FOR_CALLABLE_REFERENCE local fn whose bound receiver is an ExtensionReceiver param `receiver`; liftLocalFn must emit the receiver param, else the body's `receiver.pushDouble` dangles (the kotlinx flow `__local*_add: references undeclared local 'receiver'` blocker)
 il_check adapterref AppKt "$ROOT/cases/il-adapterref/app.kt" "$(printf 'sink 1\nsink 2\nsink 3\nbuilt 4\nbuilt 5')"   # #84 G: a coerced MEMBER reference (`s::add`/`::add`, Boolean-returning member adapted to (Int)->Unit) passed to an inline forEach — the ADAPTER_FOR_CALLABLE_REFERENCE must forward to the real member as callInstance (adapterRef replays the adapter body), not a top-level `callStatic owner:null` (`static method not found: add`, the consumeEach(collection::add) blocker)
 # generic-types family (il-genbase/il-genctor/il-geninherit/il-genstatic/il-gencolladd/il-genlocalclass/il-genfield/
@@ -381,10 +382,8 @@ il_check_imports mi1 MI1   "$ROOT/cases/m-i1"       "$(printf 'Hello, CLR 42\nle
 # taskfam: a same-name .NET arity family — non-generic `Task` and `Task<TResult>` (Kotlin `Task1`) coexist in one
 # file; `generic:Task1[T]` cross-refs resolve to the arity-1 definition (docs/dotkt-semantics.md §8d).
 il_check_imports taskfam Tf "$ROOT/cases/il-taskfam" "$(printf 'plain=True\ngeneric=42')"
-# taskawait: bir2cir SuspendColdLowering P4 REVERSE bridge — the facadegen-injected `Task.await()` marker
-# lowered to the cold-core awaiter dance (GetAwaiter/IsCompleted/OnCompleted/GetResult TaskAwaiter STRUCT
-# calls). SYNC FAST PATH (already-completed tasks): generic Task<Int>.await() + non-generic Task.await():Unit.
-il_check_imports taskawait TaskAwait "$ROOT/cases/il-taskawait" "$(printf '43\n7')"
+# taskawait (taskawait_syncFastPath): migrated -> tests/coroutines/fixtures/TaskAwaitTests.kt (SuspendColdLowering
+# P4 REVERSE bridge, Task.await() sync fast path); its cases/il-taskawait dir + this il_check line removed same-change.
 # valueawait (#10): `await` generalized to the .NET AWAITABLE PATTERN beyond Task — a NON-Task BCL awaitable
 # `ValueTask<Int>` (MEMBER GetAwaiter -> ValueTaskAwaiter<Int>, no .AsTask()). facadegen pattern-detects it and
 # injects `ValueTask1<T>.await()`; bir2cir's EmitAwaitPoint discovers the ValueTaskAwaiter shape from ref metadata
@@ -505,7 +504,8 @@ il_check seqyieldall SeqYieldAll "$ROOT/cases/il-seqyieldall" "$(printf 'a,b,c')
 # Array family (arr/arrops/arrnull/arrslice/arrplus/intarraytolist/copyintoverlap/fillrange/indices/indicesv/ubytearr/
 # genarrlam) migrated to the NUnit in-process suite -> tests/il/fixtures/ArrayTests.kt (value asserts). il-copyofnull /
 # il-boxgen stay here (live XFAIL_ILVERIFY findings, not migratable into the ilverify-clean lane).
-il_check seqforin SeqForin "$ROOT/cases/il-seqforin" "$(printf 'a\nb')"
+# seqforin (seqforin_forInOverSequence): migrated -> tests/coroutines/fixtures/SequenceTests.kt (`for (x in seq)`
+# over a Kotlin Sequence lowers through the same GetEnumerator/forEachInline path as Iterable); cases/il-seqforin + line removed same-change.
 il_check boxgen BoxgenKt "$ROOT/cases/il-boxgen" "$(printf '42\n1\n42\n42\n10\n-1\n[1, 2, 3]\n[3, 2, 1]\n[a, b, c]\n[1, null, 3]\n[5, null, null]\nSUMMER')"   # C2 boxed-primitive dual-representation: getOrPut/getOrElse/compareBy/Array<Int?>/T:Enum<T>
 il_check copyofnull Copyofnull "$ROOT/cases/il-copyofnull" "$(printf '[1, 2, 3, null, null]\n[1, 2]\n[1, 2, 3]\n1\nnull\n6\n[1, 2, null]\n[2.5, 3.5, null]\n[a, b, null]\n[x, y, null]\n[7, null, null]')"   # #124: Array<value-type>.copyOf(newSize) builds Nullable<elem>[] by runtime reflection (grow null-tail/shrink/prefix read-back; value + reference + already-nullable T)
 # A6: rule-3 helper calls on CONCRETE generic alias receivers (HashMap/ArrayList/LinkedHashMap: class typeArgs +
@@ -671,7 +671,8 @@ il_check_inject stackalloc Sa "$ROOT/cases/il-stackalloc" "$(printf '16\n30\n-1\
 # SM chain are verified correct; the boxed-enum COROUTINE_SUSPENDED reference-identity issue (once the sole
 # remaining fail) is fixed by caching the box (Intrinsics.kt), so this now runs green -> 25 (no XFAIL).
 il_check_imports cobuild Cob "$ROOT/cases/il-cobuild" "25"
-il_check_imports genasync GenAsync "$ROOT/cases/il-genasync" "7"  # genuine-async isolation: suspend fun with Task.Delay().await(), drained by blockOn
+# genasync (genasync_genuineAsyncTaskDelay): migrated -> tests/coroutines/fixtures/TaskAwaitTests.kt (genuine-async
+# isolation: suspend fun with Task.Delay().await(), drained by blockOn); cases/il-genasync + this line removed same-change.
 il_check_imports suspendcatch SuspendCatch "$ROOT/cases/il-suspendcatch" "$(printf '10\n99\n103\n200\n300')"   # #78 Defect B: a suspend call INSIDE a catch handler (Select.kt:723 recoverAndThrow shape) — HoistSuspendingCatches lifts the handler out of the CLR catch clause so the SM can segment its suspension; the try body ALSO suspends (two-level dispatch) + multi-catch (both handlers suspend, per-clause capture)
 il_check_imports suspendintrinsic SuspendIntrinsic "$ROOT/cases/il-suspendintrinsic" "42"   # #80: a direct user read of the top-level val COROUTINE_SUSPENDED in a suspendCoroutineUninterceptedOrReturn block — canonicalized to the SM's Suspended() marker in Rewrite (mis-owned by MemberCallSubstitution to the file class otherwise)
 il_check suspendintrinsicowned AppKt "$ROOT/cases/il-suspendintrinsicowned/app.kt" "42"   # #157 (was #80-residual): a NON-suspend member (getResult shape) reads the top-level val COROUTINE_SUSPENDED — post-#89 kotc emits owner:null + prop:get (like every cross-module top-level val), and bir2cir binds it through the GENERAL owner-null resolver (prop:get -> get_COROUTINE_SUSPENDED -> TryResolveTopLevelStatic single-candidate -> IntrinsicsKt), NOT a COROUTINE_SUSPENDED special-case (that band-aid was deleted as redundant)
@@ -693,18 +694,12 @@ il_check_imports suspendnestedcapture SuspendNestedCapture "$ROOT/cases/il-suspe
 # BLOCKS on tcs.Task until the threadpool resume completes (the old null completion NRE'd on resume). RUNS
 # correct -> start,42; carries the same TaskAwaiter CallVirtOnValueType ilverify formal-only finding as genasync.
 il_check_imports comaindrain ComainDrain "$ROOT/cases/il-comaindrain" "$(printf 'start\n42')"
-# counit: a PUBLIC Unit-returning suspend fun -> a NON-generic public `Task` bridge (coroutine-abi.md §1:
-# T=Unit -> Task, not Task<Unit>). bir2cir's BuildBridge emits `Task greet()` and upcasts the
-# TaskCompletionSource<Unit>.Task on return; `greet` suspends on step() (sync) so the SM + Unit bridge emit is
-# exercised and ilverify-checked. main drives greet via its cold entry.
-il_check counit CoUnit "$ROOT/cases/il-counit" "$(printf 'hello 42\ndone')"
+# counit (counit_unitReturningSuspendTaskBridge): migrated -> tests/coroutines/fixtures/ColdCoreTests.kt (a PUBLIC
+# Unit-returning suspend fun -> a NON-generic public `Task` bridge, coroutine-abi.md §1); cases/il-counit + line removed same-change.
 # monitordrain -> tests/il/fixtures/MigratedIntropCThreadingTests.kt (monitordrain_waitPulseCrossThreadDrain): the
 # System.Threading.Monitor Wait/Pulse cross-thread DRAIN the harness blockOn's BlockOnSink is built on, migrated.
-# cofinally: bundle-6 ① BUG 1 — a genuine `Task.Delay(1).await()` suspension INSIDE a try/finally (the
-# use{}/withLock{} shape). bir2cir's EmitTry now gates the finally on the $suspending flag so `close()`
-# runs EXACTLY ONCE at the post-resume exit (before the fix it ran EARLY + TWICE). RUNS correct -> close,42
-# and passes ilverify (the gated finally shape emits no TaskAwaiter CallVirtOnValueType finding).
-il_check_imports cofinally CoFinally "$ROOT/cases/il-cofinally" "$(printf 'close\n42')"
+# cofinally (cofinally_finallyRunsExactlyOnce): migrated -> tests/coroutines/fixtures/TaskAwaitTests.kt (bundle-6
+# BUG 1: EmitTry gates the finally on $suspending so close() runs EXACTLY ONCE post-resume); cases/il-cofinally + line removed same-change.
 # coexc: exception propagation ACROSS a suspended Task boundary (POLISH family-6 coverage). (a) a throw AFTER a
 # genuine Task.Delay().await() crosses the resume boundary -> blockOn rethrows into the caller's try/catch;
 # (b) a throw across a NESTED suspend frame propagates up the resumeWithException chain; (c) awaiting a FAULTED
@@ -726,13 +721,8 @@ il_check cocancelkt CoCancelKt "$ROOT/cases/il-cocancelkt" "$(printf 'True\nFals
 # bir2cir bug: a synchronous Unit-returning scope member's DIRECT cold entry fell off with no return value
 # (ColdEntryDirect now appends the trailing `return Unit`, mirroring the SM branch). Runs -> 1,2,3,4,5 / 5 / a-b.
 il_check corestrict CoRestrict "$ROOT/cases/il-corestrict" "$(printf '1,2,3,4,5\n5\na-b')"
-# suspendco: bir2cir SuspendColdLowering F2 — a CROSS-MODULE `suspendCoroutine { it.resume(v) }`. Our compiler
-# does NOT inline @InlineOnly cross-module, so kotc emits a plain un-inlined `suspendCoroutine(<closure>)` call;
-# bir2cir reconstructs the wrapper's SafeContinuation body inside the caller SM (via the public clr-internal
-# bridges newSafeContinuation/safeGetOrThrow). F1 — SafeContinuation caches the UNDECIDED/RESUMED boxed enums so a
-# SYNC resume's `cur === UNDECIDED` identity check holds (else it wrongly throws "Already resumed"). resume(42)
-# -> 42; resumeWithException -> getOrThrow rethrows at the sync point, caught. Sync-completion drain via `main`.
-il_check suspendco SuspendCo "$ROOT/cases/il-suspendco" "$(printf '42\ncaught:boom')"
+# suspendco (suspendco_syncResume / suspendco_syncResumeWithException): migrated -> tests/coroutines/fixtures/ColdCoreTests.kt
+# (SuspendColdLowering F2 cross-module suspendCoroutine{} + F1 SafeContinuation UNDECIDED/RESUMED cache); cases/il-suspendco + line removed same-change.
 # #142: a suspendCoroutine whose SafeContinuation is resumed ASYNCHRONOUSLY from a worker thread — the
 # UNDECIDED->SUSPENDED (getOrThrow) and SUSPENDED->RESUMED (resumeWith) transitions genuinely race across threads,
 # which the fix's Interlocked.CompareExchange CAS over the @Volatile state field makes atomic. blockOn drives the
@@ -765,16 +755,9 @@ il_check coarrayorder CoArrayOrder "$ROOT/cases/il-coarrayorder" "15"
 # (il_check_IMPORTS: the co-compiled harness imports System.Threading.Monitor -> facadegen injects it.)
 il_check_imports lam1 Lam1Kt "$ROOT/cases/il-lam1" "42"
 il_check_imports lam2 Lam2Kt "$ROOT/cases/il-lam2" "15"
-# suspendcapture: #34a — a suspend lambda closing over its ENCLOSING instance. bir2cir's SuspendLambda SM
-# captures the instance as `__outer` and (the fix) redirects a lambda-body `this` to that field, so `this.n`
-# resolves through the capture instead of leaking the SM. Covers value / call-arg / member-method / object /
-# nested capture positions, with a local-capture lambda (mk) as the non-regression control.
-il_check_imports suspendcapture SuspendCapture "$ROOT/cases/il-suspendcapture" "$(printf '42\n42\n41\n40\n105\n42')"
-# suspendvalue: GAP 1/2 (#36) — invoking a suspend functional VALUE `b()` (SuspendFunctionN). No named cold
-# entry: the value is a SuspendLambda SM, driven through the stdlib `startSuspendUninterceptedOrReturn` helper.
-# Covers a suspend param value (run1), the higher-order times/repeat idiom, a suspend value in a local (local1),
-# and a suspend MEMBER building a this-capturing lambda + driving it via a suspend-value call (Box.go).
-il_check_imports suspendvalue AppKt "$ROOT/cases/il-suspendvalue" "$(printf '42\n42\n42\n42')"
+# suspendcapture (suspendcapture_enclosingInstanceCapture) + suspendvalue (suspendvalue_paramValueAndHigherOrder):
+# migrated -> tests/coroutines/fixtures/SuspendValueTests.kt (#34a enclosing-instance `__outer` capture; #36 GAP 1/2
+# suspend functional-value invoke via startSuspendUninterceptedOrReturn); both cases/il-* dirs + these lines removed same-change.
 il_check_imports suspendref AppKt "$ROOT/cases/il-suspendref" "$(printf '6\n40')"   # #67: a callable reference to a `suspend` function (top-level `::work` + bound member `d::apply`) lowered as a `newSuspendLambda` adapter (bir2cir builds the SuspendLambda SM); kotc emits only the suspend FACTS — was a whole-compile abort (KSuspendFunctionN type-token leak + no suspend-newDelegate lowering)
 # suspendval2: #38 — invoking a suspend functional VALUE of arity >= 2 (SuspendFunctionN, N>=2). The fixed
 # create()/create(value) slots cover 0/1; N>=2 boxes the args into Array<Any?> and drives the value through
