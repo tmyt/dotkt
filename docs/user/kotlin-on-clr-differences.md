@@ -83,11 +83,6 @@ A primitive/String/null constant default is native .NET metadata — **C# caller
 free**. Non-constant defaults (and String defaults on interface-typed params) are carried as
 Kotlin metadata: Kotlin callers can omit the argument; C# callers must pass it explicitly.
 
-## Statics of imported .NET classes need `.Companion`
-
-`App.Companion.start(...)`, not `App.start(...)` — see
-[Using .NET from Kotlin §2](using-dotnet-from-kotlin.md#2-static-members--go-through-companion).
-
 ## Not supported (current, honest list)
 
 - **kotlinx libraries** (kotlinx-coroutines, kotlinx-serialization, …) — DotKt binds the
