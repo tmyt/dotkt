@@ -824,7 +824,9 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			// lowered (construction is native newClr) so the missing delegation is harmless.
 			val real = realDefaults(params)   // all-buildable ctor defaults -> real defaults (`Pt(y = 4)` omits x); else required
 			createConstructor(context.owner, ClrGeneratedKey, i == 0, type.baseNoArgCtor) {
-				for (p in params) valueParameter(Name.identifier(p.name), coneOf(p.type, context.owner, paramPos = true), hasDefaultValue = real && p.default != null)
+				for (p in params)
+					if (p.vararg) valueParameter(Name.identifier(p.name), coneOf(TypeNode.Array(p.type), context.owner, paramPos = true), isVararg = true)
+					else valueParameter(Name.identifier(p.name), coneOf(p.type, context.owner, paramPos = true), hasDefaultValue = real && p.default != null)
 			}.also { if (real) applyDefaults(it, params); if (ctor.lowPriority) applyLowPriority(it) }.symbol
 		}
 	}

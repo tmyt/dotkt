@@ -27,6 +27,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **kotc ([tmyt/dotkt#184], area:kotc): a .NET attribute with a `params` (varargs) constructor parameter can now be
+  applied bare (zero args) from Kotlin.** The injected annotation class constructor was not marking `params array`
+  parameters as vararg — `ClrTypeInjection.generateConstructors` iterated all params with a plain `valueParameter`
+  call that ignored `p.vararg`, so a `params object[]` ctor parameter surfaced as REQUIRED rather than omittable.
+  The same `if (p.vararg) … isVararg = true` branch already used for injected method parameters is now applied to
+  constructor parameters too. `@TestFixtureAttribute` (and any attribute whose sole ctor is `params T[]`) can now
+  be applied bare (`@TestFixtureAttribute` with no args → empty array) or with arguments, matching C#/CLR semantics.
+  Gated by `il-netattr-vararg`.
 - **bir2cir ([tmyt/dotkt#189], area:bir2cir): a nullable-REFERENCE-returning lambda bound into a delegate
   (`Api.RunNullable(Func<string?>) { null }`) is now ilverify-clean.** `NullableFuncReturnErasure` erased EVERY
   nullable func-return `(…) -> R?` to `object`, so the lifted lambda's ret became `object` while the concrete delegate
