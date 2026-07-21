@@ -49,7 +49,10 @@
 //
 // The whole analysis is GLOBAL across the compilation's files (ApplyAll): a same-assembly cross-file suspend
 // call keeps `owner:null` (kotc emits it identically to a same-file call) and the cold entry it names may
-// live in another file.
+// live in another file. #199 Design B: kotc's `calleeOwner` file-class DISPATCH hint rides through the cold
+// rewrite (DeepClone), and synthesized owner-null cold-entry calls (the `main` kickoff, the Task bridge) stamp
+// `calleeOwner = Tn(FileClass)` so ilemit dispatches `<name>$dotkt_suspend` in the correct same-simple-name
+// package's file class. It is advisory: owner stays null, so the owner-null recognition machinery is untouched.
 //
 // Runs AFTER MemberCallSubstitution and BEFORE BirTypeLowering. Active in app AND rt-stdlib builds; SKIPPED
 // only in the REF build (RefBuild — ref suspend fns stay metadata-only, the ref.dll carries the Suspend flag
@@ -204,7 +207,15 @@ static partial class SuspendColdLowering
     // is the joined param-type list — it discriminates OVERLOADS that share (Owner, Name) (e.g. SequenceScope
     // has three `yieldAll` overloads differing only by param type: Iterator/Iterable/Sequence). Without it the
     // registry would collapse the overloads to one, dropping the others (see SigOf).
-    readonly record struct FunKey(string Owner, string Name, string Sig);
+    //
+    // #199 — FileClass is part of the identity so two TOP-LEVEL suspend funs with the SAME simple name in
+    // DIFFERENT packages (Owner=null for both — kotc emits top-level method names as bare simple names) do NOT
+    // collide. Without it `a.foo` and `b.foo` share FunKey(null,"foo",sig): the loser is dropped from `entries`
+    // and left un-lowered -> ilemit "reached codegen un-lowered" / runtime EntryPointNotFound. A MEMBER's Owner is
+    // already the class FQN (`a.Box` vs `b.Box`) so it needs no FileClass to disambiguate, but including it is
+    // harmless (a class lives in exactly one file). The Container (`Owner ?? FileClass`) is the FQN identity used
+    // to key the return-type maps below.
+    readonly record struct FunKey(string Owner, string FileClass, string Name, string Sig);
 
     // The param-type signature discriminating overloaded suspend members (see FunKey.Sig).
     // Overload-key signature: the CANONICAL JSON of each param's structured TypeNode. Post-#37-flip `p["type"]` is a
@@ -254,30 +265,34 @@ static partial class SuspendColdLowering
             if (file["methods"] is JsonArray methods && !isInteropBridge)
                 foreach (var m in methods)
                     if (m is JsonObject mo && Str(mo["name"]) is string name && IsColdCandidate(mo))
-                        entries[new FunKey(null, name, SigOf(mo))] = new Entry(mo, file, null, null, fileClass);
+                        entries[new FunKey(null, fileClass, name, SigOf(mo))] = new Entry(mo, file, null, null, fileClass);
             if (file["types"] is JsonArray types)
                 foreach (var t in types)
                     if (t is JsonObject to && Str(to["name"]) is string owner && to["methods"] is JsonArray tms)
                         foreach (var m in tms)
                             if (m is JsonObject mo && Str(mo["name"]) is string name && IsMemberColdCandidate(mo))
-                                entries[new FunKey(owner, name, SigOf(mo))] = new Entry(mo, file, to, owner, fileClass);
+                                entries[new FunKey(owner, fileClass, name, SigOf(mo))] = new Entry(mo, file, to, owner, fileClass);
         }
-        // callee-return-type fallback for await-temp field typing when a call node carries no instantiated
-        // ret (a bare `one()` has `sig:""`): the callee's declared resultType, keyed by cold-entry name.
-        // Built here (before the early returns) so it is ALWAYS returned for the lambda phase's use.
+        // callee-return-type fallback for await-temp field typing when a call node carries neither an instantiated
+        // `ret`/`dynRet` NOR a static-type `sty` (see EmitSuspensionPoint — `sty`, the frontend-resolved static
+        // type kotc stamps on every call node, is the PRIMARY source and needs no owner disambiguation): the
+        // callee's declared resultType, keyed by cold-entry name. Built here (before the early returns) so it is
+        // ALWAYS returned for the lambda phase's use. #199 note: this is a bare-name key, so it cannot distinguish
+        // two same-simple-name suspend funs across packages — but `sty` (read first) already types every
+        // kotc-origin suspension point precisely per call, so this fallback only serves rare synthesized nodes.
         var calleeRet = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
         foreach (var (k, e) in entries)
             calleeRet[k.Name] = TypeJson.Read(e.Method["suspendRet"]) ?? AnyTn;
 
         // A global (owner#name -> resultType) index of EVERY method (not just suspend). The eval-order spill
         // (BUG 2 fix, Rewrite/RewriteEvalOrder) uses it to type a temp SM field holding a left-of-suspension
-        // operand whose own node carries no return type (a same-assembly `callStatic side()` has no `ret`).
-        // Top-level -> "#name"; member -> "owner#name".
+        // operand whose own node carries no return type. It is a SECONDARY fallback: TypeOfExpr reads the node's
+        // `sty` (the frontend static type kotc stamps on every call/field node) FIRST, so this index is consulted
+        // only for the rare node without one. Top-level -> "#name"; member -> "owner#name".
         var methodRets = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
-        // A global (owner#name -> declared type) index of EVERY member/static FIELD. The eval-order spill (BUG 2 fix,
-        // N4) needs it to type the temp SM field that holds a raw `field`/`staticField`/`lateinitGet` read spilled to
-        // the LEFT of a suspension — a raw field read node carries no `retType` (kotc emits only ownerType+name), so
-        // without this the temp would fall back to kotlin.Any and box a value-type field, breaking the enclosing bin.
+        // A global (owner#name -> declared type) index of EVERY member/static FIELD, a SECONDARY fallback to `sty`
+        // (as methodRets). The eval-order spill (BUG 2 fix, N4) uses it to type the temp SM field holding a raw
+        // `field`/`staticField`/`lateinitGet` read spilled to the LEFT of a suspension.
         var fieldTypes = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
         foreach (var r in roots)
         {
@@ -339,7 +354,7 @@ static partial class SuspendColdLowering
         // output unchanged); a group of >1 appends a suffix from the param types' simple names
         // (`_Iterator`/`_Iterable`/`_Sequence`), falling back to a positional index on a residual collision.
         var smSuffix = new Dictionary<FunKey, string>();
-        foreach (var g in entries.Keys.GroupBy(k => (k.Owner, k.Name)))
+        foreach (var g in entries.Keys.GroupBy(k => (k.Owner, k.FileClass, k.Name)))
         {
             var members = g.ToList();
             if (members.Count == 1) { smSuffix[members[0]] = ""; continue; }
@@ -1630,14 +1645,17 @@ static partial class SuspendColdLowering
         }
 
         // The static type token of an expression, for typing an eval-order spill field. Reads an explicit type key
-        // when present; else resolves a same-assembly call's declared return type from the global method index; a
+        // when present; #199 — else the node's `sty` (the frontend-resolved instantiated static type kotc stamps on
+        // every call/field/read node, BirEmitterExpressions.kt) — a PRECISE, per-node type that needs no owner
+        // disambiguation and so is immune to the same-simple-name-across-packages collision that a name-keyed lookup
+        // has; else the same-assembly method/field index (a name-keyed fallback for a rare node without `sty`); a
         // `bin`'s result is its left-operand type (comparisons -> Boolean). Falls back to kotlin.Any.
         TypeNode TypeOfExpr(JsonNode n)
         {
             if (n is not JsonObject o) return AnyTn;
             if (TypeJson.Read(o["ret"]) is TypeNode t0) return t0;
-            if (TypeJson.Read(o["ret"]) is TypeNode t1) return t1;
             if (TypeJson.Read(o["dynRet"]) is TypeNode t2) return t2;
+            if (TypeJson.Read(o["sty"]) is TypeNode ts) return ts;
             var k = Str(o["k"]);
             switch (k)
             {
@@ -1705,10 +1723,15 @@ static partial class SuspendColdLowering
         {
             var retTok = TypeJson.Read(callNode["ret"])
                 ?? TypeJson.Read(callNode["dynRet"])
+                // #199 — `sty`, the frontend-resolved instantiated static type kotc stamps on every call node
+                // (BirEmitterExpressions.kt), is the callee's return type PER CALL. It is precise and needs no owner
+                // disambiguation, so it types the awaited value correctly even for two same-simple-name suspend funs
+                // in different packages (a bare same-file `one()` carries no `ret`/`dynRet`, only `sty`). This
+                // supersedes the name-keyed `_calleeRet` fallback below, which cannot distinguish such a pair.
+                ?? TypeJson.Read(callNode["sty"])
                 // A CROSS-ASSEMBLY suspend call arrives in the `clr*` vocabulary, whose declared return type rides `ret`
-                // (not `retType`/`sig`) and is absent from _calleeRet (a same-assembly-only map). Read it so the awaited
-                // value gets its real type (+ unbox/castclass) instead of falling to kotlin.Any.
-                ?? TypeJson.Read(callNode["ret"])
+                // (handled first above). The name-keyed same-assembly fallback remains for a rare synthesized node
+                // that carries none of ret/dynRet/sty; `sty` above makes it unreachable for kotc-origin nodes.
                 ?? (_calleeRet.TryGetValue(Str(callNode["method"]) ?? "", out var d) ? d : null)
                 ?? AnyTn;
             if (IsUnitTn(retTok)) retTok = AnyTn;
@@ -2375,6 +2398,9 @@ static partial class SuspendColdLowering
                 {
                     ["k"] = "callStatic",
                     ["owner"] = callNode["owner"]?.DeepClone(),
+                    // #199 Design B: carry the callee-file-class DISPATCH hint on the rewritten owner-null cold call, so
+                    // ilemit dispatches `<method>$dotkt_suspend` to the correct same-simple-name package's file class.
+                    ["calleeOwner"] = callNode["calleeOwner"]?.DeepClone(),
                     ["method"] = method,
                     ["args"] = args,
                     ["ret"] = Tw(AnyTn),
@@ -2951,7 +2977,9 @@ static partial class SuspendColdLowering
                     ["k"] = "var", ["name"] = "__r", ["type"] = Tw(AnyTn),
                     ["init"] = new JsonObject
                     {
-                        ["k"] = "callStatic", ["owner"] = null, ["method"] = _coldName,
+                        // #199 Design B: the cold entry is a top-level static in THIS file class (owner:null); stamp the
+                        // file-class dispatch hint so ilemit resolves `main$dotkt_suspend` in the right same-name package.
+                        ["k"] = "callStatic", ["owner"] = null, ["calleeOwner"] = Tn(_fileClass), ["method"] = _coldName,
                         ["args"] = coldArgs, ["ret"] = Tw(AnyTn),
                     },
                 },
@@ -3229,6 +3257,9 @@ static partial class SuspendColdLowering
                 {
                     ["k"] = "callStatic",
                     ["owner"] = _staticMember && _ownerClass != null ? Tn(_ownerClass) : null,
+                    // #199 Design B: a top-level cold entry keeps owner:null and carries the file-class dispatch hint (a
+                    // static member already names its owner and needs none).
+                    ["calleeOwner"] = _staticMember && _ownerClass != null ? null : Tn(_fileClass),
                     ["method"] = _coldName,
                     ["args"] = args,
                     ["ret"] = Tw(AnyTn),

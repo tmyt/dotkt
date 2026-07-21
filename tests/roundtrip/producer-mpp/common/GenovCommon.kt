@@ -12,9 +12,10 @@
 // facadegen-injected `ownerType` as the owner and promotes even when the ref index can't attribute it.
 package kotlinx.genovc
 
-// `GenovcArr` (not `Arr`): the single-platform producer's kotlinx.genov also has an `Arr`, and a cross-dll
-// same-simple-name collision made ilverify confuse the two `Arr` types. Unique names keep the two producer
-// assemblies' types distinct. The case tests the common-fragment generic-factory promotion (#25 residual).
-class GenovcArr<T>(val size: Int)
+// `Arr<T>` DELIBERATELY shares its simple name with `kotlinx.genov.Arr<T>` in the single-platform producer's OTHER dll
+// — the #199-③ regression: facadegen must emit `arrOfNulls`'s return as the NAMESPACE-QUALIFIED `kotlinx.genovc.Arr`,
+// so the injector binds `arrOfNulls<String>(3)` to THIS dll's `Arr`, not the twin (a bare name last-wins, producing a
+// cross-assembly type mismatch ilverify flags as StackUnexpected). Also tests the common-fragment promotion (#25 residual).
+class Arr<T>(val size: Int)
 
-fun <T> arrOfNulls(n: Int): GenovcArr<T> = GenovcArr(n)
+fun <T> arrOfNulls(n: Int): Arr<T> = Arr(n)
