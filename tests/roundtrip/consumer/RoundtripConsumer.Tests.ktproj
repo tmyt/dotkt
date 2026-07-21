@@ -19,6 +19,11 @@
 
   <ItemGroup>
     <ProjectReference Include="../producer/RoundtripProducer.ktproj" />
+    <!-- The MULTIPLATFORM producer (Sdk="DotKt.Sdk.Mpp"): the migrated ktproj-mpp + ktproj-genov-common cases need
+         the common/(expect) vs clr/(actual) source-set split, a project-level flag the single-platform
+         RoundtripProducer cannot carry — so they live in a SECOND producer, consumed cross-module here alongside
+         the first. Its dll is also ilverified via tests/run-nunit-il.sh EXTRA_EMIT. -->
+    <ProjectReference Include="../producer-mpp/RoundtripProducerMpp.ktproj" />
   </ItemGroup>
 
   <ItemGroup>

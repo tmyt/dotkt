@@ -1,5 +1,12 @@
 # Master task inventory — the de-duplicated "what's left" ledger
 
+> ## ⚠️ DEPRECATED (2026-07-21, user-directed) — the GitHub issue tracker is the SOLE source of truth
+> Remaining work — **bugs AND tasks** — now lives ONLY in the GitHub issue tracker. Do **NOT** add new
+> items here, and do **NOT** treat the items below as authoritative or current. This file is retained for
+> **historical/archival** context only (the 6-wave migration plan, the 【1】–【8】 bundle history). When you
+> need to know what's left, query the issues — never this file. (`docs/ship-tasks.md` §0 remains the binding
+> architecture reference; only the *remaining-work ledger* role moved to issues.)
+
 > **RECONCILE 2026-07-05:** all gates are XFAIL-ZERO (verify-il 209/0, differential ALL MATCH, ktproj 9/9); coroutine bundle-6, the A2 interop-no-registry keystone (4 registries deleted), the Polish layer-purity, and the 2026-07-05 final-review findings (N1-N8, F1/F2) are all DONE. Any item below marked open/TODO that concerns those is STALE. Genuine residuals: roundtrip-memext2 (with{}-scope suspend), interface events, and the LOW hardening items in the session task list.
 
 > **RECONCILE 2026-07-08 (#52 kotc-purity):** the stdlib-recognition axis of bundle 8 (【6b】) is DONE — kotc
@@ -224,8 +231,8 @@ Sources: `ship-tasks.md #4`, `archive/future-work-interop.md #4`, `archive/dotkt
   routing), and `[ExtensionAttribute]` static methods as Kotlin extension functions (Int AND String receivers
   verified). `op_Equality`/`op_Inequality` are deliberately NOT mapped — Kotlin `==` routes to `Equals(Any?)`, the
   correct Kotlin semantics (a well-formed .NET type keeps op_Equality consistent with Equals); `op_Implicit`/
-  `op_Explicit` have no Kotlin analog and are skipped. Gate: `cases/il-c1net` (full battery: `+ - * / unary-` on a
-  C# struct + int/string extension methods).
+  `op_Explicit` have no Kotlin analog and are skipped. Gate: `tests/interop/consumer/InteropAExtTests.kt` (`c1net`;
+  full battery: `+ - * / unary-` on a C# struct + int/string extension methods).
 - ~~**dual-rep collision** (`import System.Text.StringBuilder` vs the stdlib alias)~~ — ✅ DECIDED+DONE (2026-07-02):
   the two are **two typed views of one CLR type** — they coexist, never unified; mixing identities is a clear
   frontend type error; an explicit cast (`as kotlin.text.StringBuilder`) is the escape hatch (same CLR type at
@@ -238,8 +245,8 @@ Sources: `ship-tasks.md #4`, `archive/future-work-interop.md #4`, `archive/dotkt
 - ~~**(4) delegate-type args collapse to `Any?`**~~ — ✅ DONE (re-verified 2026-07-02): `Map` emits a delegate as the
   bracketed function-type token `func:[ret,args…]` (from the delegate's `Invoke`), ClrTypeInjection restores a Kotlin
   function type, a lambda binds, and the backend builds the specific delegate from the call-site param. Covers BCL
-  `Func<int,int>`/`Action` AND custom GENERIC delegates (`delegate T Mapper<T>(T)`). Gates: `cases/il-delegatearg`,
-  `cases/il-netinterop`.
+  `Func<int,int>`/`Action` AND custom GENERIC delegates (`delegate T Mapper<T>(T)`). Gates:
+  `tests/interop/consumer/InteropADelegateTests.kt` (`delegatearg`), `cases/il-netinterop`.
 - ~~**(5) aliased import silently ignored** (`import … as X`)~~ — ✅ DONE (verified 2026-07-02): the PSI import scan
   (`ImportScan.kt`, `importedFqName`) keeps aliased imports (canonical FQN out; Kotlin's own import machinery binds
   the alias to the injected classifier); facadegen warns on a no-match import, and a nonexistent type errors at the

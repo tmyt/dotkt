@@ -1,0 +1,19 @@
+<!-- MULTIPLATFORM round-trip PRODUCER: a DotKt Kotlin LIBRARY built with the MPP source-set split
+     (<DotKtMultiplatform> via Sdk="DotKt.Sdk.Mpp") — common/ carries the platform-agnostic fragment
+     (`expect class Greeter` + generic factories), clr/ the CLR `actual` + collision sibling. The shared targets
+     tag common/ sources with -Xcommon-sources (+ -Xmulti-platform -Xexpect-actual-classes), so kotc's app pipeline
+     does the common->platform module split and the `actual` resolves — the only ProjectReference-lane coverage of
+     the MPP source-set path through MSBuild (migrated from cases/ktproj-mpp + cases/ktproj-genov-common).
+
+     It is consumed AS KOTLIN by ../consumer through a SECOND <ProjectReference> (alongside ../producer): facadegen
+     re-imports THIS dll's metadata (NEVER its source; the producer lives in a SIBLING dir so the consumer's
+     `**/*.kt` glob cannot pull it in — the DLL-not-source invariant). The Mpp SDK's nested base-SDK version is
+     pinned in the sibling global.json (the only place the NuGet nested-SDK resolver reads it). Resolves the
+     LOCALLY-BUILT SDK from build/nuget-feed via tests/nuget.config (design D4). -->
+<Project Sdk="DotKt.Sdk.Mpp">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Library</OutputType>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+</Project>

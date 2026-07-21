@@ -7,8 +7,9 @@
 >
 > Authority order: (1) the user's request → (2) this file's rules → (3) the actual code + canonical
 > scripts for current behavior → (4) **`docs/ship-tasks.md` §0** for architecture (**its invariants
-> are binding: an implementation that violates them is a bug**) → (5) **`docs/master-task-inventory.md`**
-> for what remains to do → (6) other docs for rationale (they may lag the code — verify, and flag
+> are binding: an implementation that violates them is a bug**) → (5) the **GitHub issue tracker**
+> (the SOLE source of truth for what remains to do — bugs AND tasks; `docs/master-task-inventory.md` is
+> DEPRECATED/archival) → (6) other docs for rationale (they may lag the code — verify, and flag
 > stale docs rather than following them).
 
 # Ground Rules
@@ -206,10 +207,24 @@ when you find residual code violating them, fixing it is in scope, not optional)
 > with the klib's (seen live: non-reified vs reified `arrayOf` → `overload resolution ambiguity`)
 > besides being slower than the prebuilt klib. The fix for any "stdlib symbol missing/ambiguous" is
 > **the klib** — never a facadegen scan of the stdlib or a `kotlin.*` guard inside facadegen
-> (symptom-patching; the root error is asking facadegen for stdlib symbols at all). NB the ban is on
-> the stdlib as a *generation source*: the stdlib dll may legitimately appear in facadegen's
-> `--compile-refs` *resolution universe* (as `dotkt.sh` does), and `--import-list` keeps generation
-> .NET-only.
+ (symptom-patching; the root error is asking facadegen for stdlib symbols at all).
+>
+> ### BINDING INVARIANT — facadegen must never SURFACE the stdlib (resolver-scope OK, surface-set banned) (2026-07-21, user)
+> **facadegen is the process that PROJECTS a FOREIGN CLR assembly into the Kotlin dialect** (so
+> `import System.X` / a C# `<ProjectReference>` works). `kotlin.*` **IS** the Kotlin dialect, supplied by
+> the **KLIB** — so facadegen must **never generate/surface a `kotlin.*` type from the stdlib**;
+> `--import-list` keeps generation .NET-only. But the stdlib legitimately (and for the DotKt-library
+> **roundtrip** lane, NECESSARILY) sits in facadegen's `--compile-refs` **resolver**: it is needed to
+> materialize a consumed DotKt lib's `[kotlin.clr.*]` round-trip attributes (`ManagedReferenceCatalog`
+> aliases the runtime twin to the reference twin for exactly this — `verify-roundtrip.sh` depends on it).
+> So the correct invariant is **resolver-scope OK, SURFACE-set banned** — enforced by separating the
+> loadable set from the surfaceable set (facadegen's `Resolve`/`TypesInNamespace`/`ResolveTopLevelFacade`/
+> `GetAwaiterExtIndex`/`HasArityClash` iterate the resolver universe indiscriminately; the fix routes the
+> *surfacing* sites through a stdlib-excluded index — the ~30-line "Option B" separation).
+> ⚠️ The earlier "handing facadegen the stdlib degrades a plain-C# `List<T>` facade" claim was a
+> **PHANTOM** — it does NOT reproduce (tests/interop is green 21/21); the reverse-`@ClrTypeAlias` restore
+> is gated on `IsDotKtEmittedAssembly`, which a plain-C# producer isn't. (MEMORY
+> `facadegen-never-gets-stdlib-in-compile-refs`.)
 
 # The cardinal rule: do NOT special-case the compiler
 
@@ -232,7 +247,7 @@ not the compiler.
 
 | If you are about to… | Read first |
 |----------------------|-----------|
-| **pick up work / know what's left** | **`docs/master-task-inventory.md`** (THE remaining-work ledger); `docs/ship-tasks.md` §0 stays the binding architecture reference |
+| **pick up work / know what's left** | the **GitHub issue tracker** (the SOLE source of truth — bugs AND tasks; `docs/master-task-inventory.md` is DEPRECATED/archival); `docs/ship-tasks.md` §0 stays the binding architecture reference |
 | change the backend pipeline (BIR/CIR/IL, layer boundaries) | `docs/design-fir-bir-cir-il.md` + MEMORY `compiler-layer-responsibilities` |
 | touch stdlib bindings / `@Clr*` / lowerings | `docs/clr-stdlib-intrinsic-audit.md`, `docs/design-clr-stdlib-ref-runtime-split.md` |
 | retire / migrate an intrinsic | `docs/master-task-inventory.md` 【1】 (archived 6-wave plan: `docs/archive/bir2cir-migration-inventory.md`) |

@@ -24,6 +24,37 @@ declare -A ILVERIFY_XFAIL=(
 	# BCL System.Action`3`/System.Func`4` — StackUnexpected at M2C::.ctor. Runtime-SAFE (both are MulticastDelegate with
 	# the identical Invoke signature; the value-assert RUN lane is green). Mirror of the verify-il.sh [del2] entry.
 	["M2C::.ctor()"]="#123 delegate-representation ABI: Delegates.observable/vetoable materializes a BCL System.Action/Func where the stdlib ctor bakes the Kotlin KAction/KFunc — runtime-safe (RUN green)"
+	# --- CorA coroutine batch (DotKt.Tests.Coroutines.dll) migrated from verify-il.sh (cases/il-coctxkey / il-cointercept /
+	#     il-awaitintercept / il-classdeleg). Each carries the SAME runtime-safe formal-only finding its verify-il.sh
+	#     XFAIL_ILVERIFY entry carried before migration; re-expressed for the battery types. All coroutines fixtures RUN green.
+	# #12 (formal-only, closed-#2 follow-up): a self-ref-bounded CoroutineContext.Key<E : Element> star-projected to Key<*> is
+	# realized as a Key<Self> companion where the invariant Key<Element> slot is formally expected (StackUnexpected). Runtime
+	# -safe (the reference is only stored/compared, never variance-cast). A bir2cir/representation follow-up, NOT ilemit codegen.
+	["CorACtxkElem::.ctor()"]="#12 (formal-only, closed-#2 follow-up): AbstractCoroutineContextElement subtype passes its Key<Self> companion where invariant Key<Element> is expected — runtime-safe (RUN green)"
+	["CorAIceptInterceptor::get_key()"]="#12 (formal-only, closed-#2 follow-up): ContinuationInterceptor impl get_key() returns Key<Self> where invariant Key<Element> is expected — runtime-safe (RUN green)"
+	["CorAAwiCountingInterceptor::get_key()"]="#12 (formal-only, closed-#2 follow-up): counting-interceptor get_key() returns Key<Self> where invariant Key<Element> is expected — runtime-safe, #7 await-resume precedence RUN green"
+	# #174: the generic class-delegation (#81) forwarder narrows the MutableList iterator()/listIterator() return to the
+	# read-only Iterator/ListIterator where the Mutable slot is formally expected. Runtime-safe (the backing MutableList
+	# returns a real Mutable iterator; RUN green). Keyed by the emitted type name (backtick-free — a raw generic-arity
+	# backtick in a bash double-quoted map key triggers command substitution) to cover all three narrowed forwarders.
+	["CorADelTracked"]="#174: class-delegation (#81) forwarder narrows MutableList iterator()/listIterator() return to the read-only Iterator/ListIterator where Mutable is expected — runtime-safe covariance-erasure (RUN green)"
+	# #18 (migrated ktproj-genq): a re-imported generic factory `holderOf(): Vault<T?>` whose bir2cir
+	# NullableGenericReturnErasure object-erases the nested Nullable(Tv) to `Vault<object>`; the [KotlinNullableGeneric]
+	# round-trip restores `Vault<String?>` at the frontend, so the call's erased `Vault<object>` return meets the
+	# consumer's restored `Vault<string>` slot — StackUnexpected. Runtime-SAFE (object/string are reference-compatible;
+	# the erased Vault holds the string; the value-assert RUN lane is green). Same object-erasure formal-only family.
+	["KtprojTests::genq()"]="#18 nullable-generic object-erasure: holderOf's erased Vault<object> return vs the restored Vault<string> slot — runtime-safe (RUN green)"
+	# #29 (migrated ktproj-nestedlist): the Root-V variance collapse lowers a nested read-only `List<T>` to its
+	# INVARIANT CLR sibling `IList<T>`; at a use site the read-only `IReadOnlyCollection<T>` shape is expected, so the
+	# collapsed `IList<int32>` meets an `IReadOnlyCollection<int32>` slot — StackUnexpected. Runtime-SAFE (the concrete
+	# list implements both interfaces; the value-assert RUN lane is green). Same covariant-collection formal-only family.
+	["KtprojTests::nestedlist()"]="#29 Root-V collapse: nested List<T> lowered to invariant IList<int32> vs an expected IReadOnlyCollection<int32> — runtime-safe (RUN green)"
+	# #12 (formal-only follow-up of closed #2): the migrated il-genbaseext (CorBSequenceTests) declares an external
+	# generic base (AbstractCoroutineContextKey) over a companion CoroutineContext.Key; its `get_key()` returns the
+	# Key<Self> companion where the invariant Key<Element> is formally expected (star-projection covariance the CLR
+	# has no equivalent for). Runtime-SAFE (the value-assert RUN lane is green). Mirror of the verify-il.sh
+	# [genbaseext] XFAIL_ILVERIFY entry, re-expressed for DotKt.Tests.Coroutines.dll.
+	["CorBGbeBase::get_key()"]="#12 formal-only covariance: external-generic-base get_key() returns Key<Self> companion where invariant Key<Element> is expected — runtime-safe (RUN green)"
 )
 
 ILV="$(find "$HOME/.dotnet" -name 'ILVerify.dll' 2>/dev/null | head -1)"

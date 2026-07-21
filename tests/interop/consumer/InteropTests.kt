@@ -38,6 +38,11 @@ import Inherit.Base
 import Inherit.Widget
 import Inherit.Button
 import Inherit.Host
+// ktproj-extlib (forward C#-library interop): Ext.Widget from an oblivious C# assembly. Its simple name DELIBERATELY
+// collides with Inherit.Widget (same producer, different namespace) — the #199-② regression. Aliased here because
+// Inherit.Widget is also used unqualified below; facadegen's namespace-qualified references keep the two distinct so
+// a subclass of Inherit.Widget no longer binds to Ext.Widget (whose missing no-arg ctor crashed the ctor injector).
+import Ext.Widget as ExtWidget
 
 // il-inherit top-level helper: subclass an injected .NET class and override its PROTECTED VIRTUAL (the WinUI
 // App.OnLaunched pattern). Unique name so it can't collide with another battery's top-level decl.
@@ -99,5 +104,28 @@ class InteropTests {
         assertEquals("show:button", host.Show(Button()))   // show:button — Button assignable to the Widget param
         val w: Widget = Button()                           // upcast holds at the type level
         assertEquals("button", w.Name())                   // button — virtual dispatch through the injected hierarchy
+    }
+
+    // ktproj-extlib: forward interop with a plain C# type from an oblivious (NON-NRT) referenced assembly, consumed
+    // façade-free — a .NET method, a reference-type property surfaced as the PLATFORM type String! (usable without
+    // null ceremony), a nullable VALUE-type property (bool? == Nullable<bool>, facadegen maps Nullable<X> -> X?), and
+    // a real .NET `event` subscribed with a Kotlin lambda via the ClrEvent<T> `+=` operator. Golden (was printed
+    // stdout: "Add(2,3) = 5 / name: gadget (len 6) / enabled: True / changed: 5 / changed: 9").
+    @TestAttribute
+    fun extlib() {
+        val w = ExtWidget("gadget")
+        assertEquals(5, w.Add(2, 3))                       // 5   a plain .NET instance method
+        val name: String = w.Name                          // reference type from an oblivious assembly -> String!
+        assertEquals("gadget", name)                       // gadget
+        assertEquals(6, name.length)                       // 6
+        w.Enabled = true                                   // assign a plain Boolean to a .NET `bool?` (Nullable<bool>)
+        assertEquals(true, w.Enabled)                      // True
+        val received = mutableListOf<Int>()
+        w.Changed += { n -> received.add(n) }              // .NET event `+=` a Kotlin handler (ClrEvent<T> operator)
+        w.Fire(5)
+        w.Fire(9)
+        assertEquals(2, received.size)                     // both handler invocations fired
+        assertEquals(5, received[0])                       // changed: 5
+        assertEquals(9, received[1])                       // changed: 9
     }
 }

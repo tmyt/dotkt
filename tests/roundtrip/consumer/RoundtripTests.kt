@@ -79,6 +79,11 @@ import roundtrip.ubyte.takeUb
 import roundtrip.tlval.greeting
 import roundtrip.tlval.counter
 import roundtrip.tlval.origin
+// #199-①: two same-simple-name GENERIC types (`Cell<T>`) in different producer packages, aliased here.
+import roundtrip.genclash.a.Cell as CellA
+import roundtrip.genclash.b.Cell as CellB
+import roundtrip.genclash.a.cellA
+import roundtrip.genclash.b.cellB
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert
 
@@ -284,5 +289,22 @@ class RoundtripTests {
         counter += 2                                            // cross-module write to a top-level var
         ClassicAssert.AreEqual(42, counter)                     // 42   read back the written value (40 + 2)
         ClassicAssert.AreEqual("(1, 2)", origin.toString())     // (1, 2)  top-level val of a USER type
+    }
+
+    // #199-①: two GENERIC types sharing the simple name `Cell` in DIFFERENT producer packages must stay DISTINCT on
+    // re-import. Each factory's declared return type is annotated with the package-qualified `Cell` alias, so if
+    // facadegen dropped the namespace (bare `Cell`, last-wins) the return would resolve to the WRONG package's type
+    // and this assignment would not compile. The `var value` proves mutability survived; `.boxed()`/`.value` prove
+    // members resolve on the correctly-qualified type.
+    @TestAttribute
+    fun genericSameSimpleNameAcrossPackages() {
+        val a: CellA<Int> = cellA(5)                 // return type is roundtrip.genclash.a.Cell, not b.Cell
+        a.value = 6                                  // `var` survived the round-trip (would fail if degraded to val)
+        ClassicAssert.AreEqual(6, a.value)           // 6
+        ClassicAssert.AreEqual(6, a.boxed())         // 6   member resolves on a.Cell
+        val b: CellB<String> = cellB("x")            // return type is roundtrip.genclash.b.Cell, not a.Cell
+        b.value = "y"                                // b.Cell's `var` survived independently
+        ClassicAssert.AreEqual("y", b.value)         // y
+        ClassicAssert.AreEqual("y", b.boxed())       // y   member resolves on b.Cell
     }
 }

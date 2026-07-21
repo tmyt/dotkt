@@ -44,9 +44,10 @@ PROJECTS=(
 )
 
 # Extra DotKt-emitted assemblies (beyond the .ktproj-named one) to ALSO run ilverify over, per consumer project.
-# The round-trip consumer's <ProjectReference> copies the producer dll into its bin; verify BOTH (§5 order).
+# Space-separated list per project. The round-trip consumer's two <ProjectReference>s copy BOTH producer dlls into
+# its bin (the single-platform RoundtripProducer + the MPP RoundtripProducerMpp); verify all (§5 order).
 declare -A EXTRA_EMIT=(
-	["tests/roundtrip/consumer"]="RoundtripProducer.dll"
+	["tests/roundtrip/consumer"]="RoundtripProducer.dll RoundtripProducerMpp.dll"
 	# The C#-producer dll is csc-emitted (not ilemit), so it needs no DotKt ilverify of its own; ilverify over the
 	# CONSUMER assembly (the .ktproj-named dll) is what proves the emitted interop IL is clean. No EXTRA_EMIT entry
 	# for tests/interop/consumer — adding the plain C# producer would only formally re-verify a non-DotKt assembly.
@@ -86,8 +87,10 @@ for proj in "${PROJECTS[@]}"; do
 	[[ -f "$emitted" ]] && EMITTED+=("$emitted")
 	# Also collect any declared EXTRA_EMIT assembly (e.g. a ProjectReference'd producer dll copied into bin).
 	if [[ -v EXTRA_EMIT[$proj] ]]; then
-		extra_emitted="$(find "$dir/bin" -name "${EXTRA_EMIT[$proj]}" 2>/dev/null | head -1)"
-		[[ -f "$extra_emitted" ]] && EMITTED+=("$extra_emitted")
+		for extra_name in ${EXTRA_EMIT[$proj]}; do
+			extra_emitted="$(find "$dir/bin" -name "$extra_name" 2>/dev/null | head -1)"
+			[[ -f "$extra_emitted" ]] && EMITTED+=("$extra_emitted")
+		done
 	fi
 
 	# Run the tests. HONOR dotnet test's EXIT STATUS as the verdict: it returns non-zero on ANY test failure,
