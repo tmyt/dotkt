@@ -38,9 +38,11 @@ import Inherit.Base
 import Inherit.Widget
 import Inherit.Button
 import Inherit.Host
-// ktproj-extlib (forward C#-library interop): Ext.Gadget from an oblivious C# assembly (unique name — Widget is
-// taken by the Inherit case; a same-simple-name collision crashes kotc's ctor injector for a paramless-ctor-less type)
-import Ext.Gadget
+// ktproj-extlib (forward C#-library interop): Ext.Widget from an oblivious C# assembly. Its simple name DELIBERATELY
+// collides with Inherit.Widget (same producer, different namespace) — the #199-② regression. Aliased here because
+// Inherit.Widget is also used unqualified below; facadegen's namespace-qualified references keep the two distinct so
+// a subclass of Inherit.Widget no longer binds to Ext.Widget (whose missing no-arg ctor crashed the ctor injector).
+import Ext.Widget as ExtWidget
 
 // il-inherit top-level helper: subclass an injected .NET class and override its PROTECTED VIRTUAL (the WinUI
 // App.OnLaunched pattern). Unique name so it can't collide with another battery's top-level decl.
@@ -111,7 +113,7 @@ class InteropTests {
     // stdout: "Add(2,3) = 5 / name: gadget (len 6) / enabled: True / changed: 5 / changed: 9").
     @TestAttribute
     fun extlib() {
-        val w = Gadget("gadget")
+        val w = ExtWidget("gadget")
         assertEquals(5, w.Add(2, 3))                       // 5   a plain .NET instance method
         val name: String = w.Name                          // reference type from an oblivious assembly -> String!
         assertEquals("gadget", name)                       // gadget

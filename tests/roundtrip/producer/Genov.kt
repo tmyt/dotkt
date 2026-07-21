@@ -7,11 +7,13 @@
 // tag (no T-typed field) so the case isolates the overload-binding fault, not generic-value boxing.
 package kotlinx.genov
 
-// `GenovRef`/`GenovArr` (not `Ref`/`Arr`): `Arr` also exists in the MPP producer's kotlinx.genovc, and a
-// cross-dll same-simple-name collision made ilverify confuse the two `Arr` types on `arrOf`'s return. Unique
-// names keep the two producer assemblies' types distinct. The case tests the generic-overload binding (#25).
+// `Arr<T>` DELIBERATELY shares its simple name with `kotlinx.genovc.Arr<T>` in the MPP producer's OTHER dll — the
+// #199-③ regression: facadegen must emit `arrOf`'s return as the NAMESPACE-QUALIFIED `kotlinx.genov.Arr`, not the bare
+// `Arr`. A bare name made the injector bind `arrOf<String>(3)` to the WRONG dll's `Arr` (by-simple-name last-wins), so
+// ilemit faithfully emitted a cross-assembly type mismatch that ilverify flagged as StackUnexpected (RUN passed only
+// because the two layouts coincide). `GenovRef` keeps a unique name (it has no cross-dll twin). Also tests #25.
 class GenovRef<T>(val tag: String)
-class GenovArr<T>(val size: Int)
+class Arr<T>(val size: Int)
 
 sealed class TraceBase
 object None : TraceBase()
@@ -24,4 +26,4 @@ fun atomic(x: Double): GenovRef<Double> = GenovRef("double")
 fun <T> atomic(x: T): GenovRef<T> = GenovRef("gen1")
 fun <T> atomic(x: T, trace: TraceBase = None): GenovRef<T> = GenovRef("gen2:" + (trace === None))
 
-fun <T> arrOf(n: Int): GenovArr<T> = GenovArr(n)
+fun <T> arrOf(n: Int): Arr<T> = Arr(n)
