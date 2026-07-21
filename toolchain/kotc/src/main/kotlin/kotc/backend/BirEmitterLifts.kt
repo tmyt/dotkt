@@ -247,7 +247,7 @@ internal fun BirEmitter.lambda(node: IrFunctionExpression): String {
 			liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false$typeParams,"params":[${lambdaParamsJson(fn.parameters)}],"ret":${str(ret)},"body":[$body]}""")
 		}
 		val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
-		return """{"k":"newDelegate","method":${str(lname)},"funcType":${str(ftype)}$typeArgs}"""
+		return """{"k":"newDelegate","method":${str(lname)},"funcType":${str(ftype)}$typeArgs${localCalleeOwnerTag()}}"""
 	}
 	// Capturing: build a closure class. Captures rewrite to `this.<field>` (by symbol identity, so the
 	// enclosing `this` — captured when the lambda reads a member — maps to a `__outer` field, not the
@@ -362,7 +362,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			val freeTps = freeTypeParams(ps.map { it.type } + listOf(ctor.returnType))
 			val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
 			liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${str(retT)},"body":[{"k":"return","value":$newE}]}""")
-			return """{"k":"newDelegate","method":${str(lname)},"funcType":${TypeNode.Fn(false, retT, ps.map { birTypeDeleg(it.type) }).toJson()}$typeArgs}"""
+			return """{"k":"newDelegate","method":${str(lname)},"funcType":${TypeNode.Fn(false, retT, ps.map { birTypeDeleg(it.type) }).toJson()}$typeArgs${localCalleeOwnerTag()}}"""
 		}
 		// `::NetType` — a lifted factory `__ctorref(args) = new NetType(args)`, bound as a delegate. kotc emits a
 		// plain `new` carrying the .NET-FQN identity; bir2cir TransformNew reshapes it to `newClr` off the refs.
@@ -376,7 +376,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			val freeTps = freeTypeParams(ps.map { it.type } + listOf(ctor.returnType))
 			val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
 			liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${str(retT)},"body":[{"k":"return","value":$newE}]}""")
-			return """{"k":"newDelegate","method":${str(lname)},"funcType":${TypeNode.Fn(false, retT, ps.map { birTypeDeleg(it.type) }).toJson()}$typeArgs}"""
+			return """{"k":"newDelegate","method":${str(lname)},"funcType":${TypeNode.Fn(false, retT, ps.map { birTypeDeleg(it.type) }).toJson()}$typeArgs${localCalleeOwnerTag()}}"""
 		}
 		return unsupported(node, "this constructor reference", "the constructor's class could not be resolved")
 	}
@@ -402,11 +402,11 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 	if (fn.isSuspend && !hasExt) return suspendFunctionRef(node, fn, dispatchIdx)
 	// `::topLevelFun` — no receiver: a delegate over the static file-class method. Carries `calleeOwner` (#199 Design
 	// B, the SAME two-axis contract as a top-level FUNCTION call in BirEmitterCalls): `method` + the resolved parameter
-	// `sig` select the overload, while the FIR-resolved callee file-class is an advisory DISPATCH hint. Two
+	// `sig` select the overload, while the FIR-resolved callee file-class is the mandatory DISPATCH identity. Two
 	// same-simple-name top-level funcs in DIFFERENT
-	// packages (a.foo/b.foo) both emit `method:foo`, and ilemit's global FindStatic would bind BOTH `::foo` delegates
-	// to whichever file class the enumeration hits first — calleeOwner disambiguates to THIS package's foo. A
-	// CROSS-MODULE callee (parent = package fragment, not IrFile) omits it (`calleeOwnerTag` self-gates on IrFile).
+	// packages (a.foo/b.foo) both emit `method:foo`; calleeOwner disambiguates to THIS package's foo. A facadegen-
+	// injected cross-module callee carries its injected file class too; any unresolved external shape fails at the
+	// CIR invariant rather than falling back to a global first match.
 	// The substitution axis is unchanged: a delegate over a top-level fun stays owner-less (no `owner` field here).
 	if (dispatchIdx < 0 && !hasExt)
 		return """{"k":"newDelegate","method":${str(fn.name.asString())}${overloadSigField(fn)},"funcType":${funcTypeOf(fn).toJson()}${calleeOwnerTag(fn)}}"""
@@ -481,7 +481,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			else
 				"""{"k":"callStatic","ownerType":${fqnJson(injectedFileClass)},"method":${str(fn.name.asString())},"argTypes":[$declShapeTypes],"ret":${retT.toJson()},"args":[$callArgs]}"""
 		} else {
-			"""{"k":"callStatic","owner":null,"method":${str(fn.name.asString())}${overloadSigField(fn)}$refTa${retHintStr(hasRefTa, retT)},"args":[$callArgs]}"""
+			"""{"k":"callStatic","owner":null,"method":${str(fn.name.asString())}${overloadSigField(fn)}$refTa${retHintStr(hasRefTa, retT)},"args":[$callArgs]${calleeOwnerTag(fn)}}"""
 		}
 		val body = if (retVoid) """{"k":"exprStmt","expr":$callE}""" else """{"k":"return","value":$callE}"""
 		// freeTypeParams over node.type's SUBSTITUTED args (not the declared fn params — same call-site-type trap):
@@ -491,7 +491,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 		val freeTps = freeTypeParams(nodeTypeArgs)
 		val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
 		liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${retT.toJson()},"body":[$body]}""")
-		return """{"k":"newDelegate","method":${str(lname)},"funcType":${fnType.toJson()}$typeArgs}"""
+		return """{"k":"newDelegate","method":${str(lname)},"funcType":${fnType.toJson()}$typeArgs${localCalleeOwnerTag()}}"""
 	}
 	// `obj::method` — a bound instance reference: a delegate whose target is the bound receiver. Only USER
 	// classes (the method resolves via FindMethod); .NET-method / extension / unbound refs are deferred. `ownerType` is
@@ -501,7 +501,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 	val ownerClass = fn.parent as? IrClass
 	if (boundRecv != null && ownerClass != null && !isExternalNetType(ownerClass)) {
 		val virtual = fn.modality != Modality.FINAL || fn.overriddenSymbols.isNotEmpty()
-		return """{"k":"newBoundDelegate","ownerType":${fqnJson(typeName(ownerClass))},"method":${str(fn.name.asString())}${overloadSigField(fn)},"virtual":$virtual,"recv":${expr(boundRecv)},"funcType":${funcTypeOf(fn).toJson()}${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""}}"""
+		return """{"k":"newBoundDelegate","ownerType":${fqnJson(typeName(ownerClass))},"method":${str(fn.name.asString())}${overloadSigField(fn)},"virtual":$virtual,"recv":${expr(boundRecv)},"funcType":${funcTypeOf(fn).toJson()}${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""},"calleeOwner":${fqnJson(typeName(ownerClass))}}"""
 	}
 	// `Class::method` (UNbound) -> a lifted static `__mref(self, args) = self.method(args)`; the receiver
 	// becomes the delegate's first parameter. User classes only (`Func<UserType,…>` resolves via DelegateCtor).
@@ -520,7 +520,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 		val freeTps = freeTypeParams(listOf(fn.parameters[dispatchIdx].type) + ps.map { it.type } + listOf(fn.returnType))
 		val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
 		liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${str(retT)},"body":[$body]}""")
-		return """{"k":"newDelegate","method":${str(lname)},"funcType":${TypeNode.Fn(false, retT, listOf(selfT) + ps.map { birTypeDeleg(it.type) }).toJson()}$typeArgs}"""
+		return """{"k":"newDelegate","method":${str(lname)},"funcType":${TypeNode.Fn(false, retT, listOf(selfT) + ps.map { birTypeDeleg(it.type) }).toJson()}$typeArgs${localCalleeOwnerTag()}}"""
 	}
 	// A .NET method reference. Bound `obj::m` -> a NEUTRAL `newBoundDelegate` carrying the owner identity; bir2cir
 	// shapes it to the CLR bound delegate. Unbound `NetType::m` -> a lifted static `__mref(self, args) = self.m(args)`.
@@ -548,10 +548,10 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			val freeTps = freeTypeParams(regs.map { it.type } + listOf(fn.returnType))
 			val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
 			liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${str(retT)},"body":[$body]}""")
-			return """{"k":"newDelegate","method":${str(lname)},"funcType":${TypeNode.Fn(false, retT, regs.map { birTypeDeleg(it.type) }).toJson()}$typeArgs}"""
+			return """{"k":"newDelegate","method":${str(lname)},"funcType":${TypeNode.Fn(false, retT, regs.map { birTypeDeleg(it.type) }).toJson()}$typeArgs${localCalleeOwnerTag()}}"""
 		}
 		if (boundRecv != null)
-			return """{"k":"newBoundDelegate","ownerType":${fqnJson(clrOwner)},"method":${str(member)},"argTypes":[$argTypes],"virtual":$virtual,"recv":${expr(boundRecv)},"funcType":${funcTypeOf(fn).toJson()}$anySlotTag}"""
+			return """{"k":"newBoundDelegate","ownerType":${fqnJson(clrOwner)},"method":${str(member)},"argTypes":[$argTypes],"virtual":$virtual,"recv":${expr(boundRecv)},"funcType":${funcTypeOf(fn).toJson()}$anySlotTag,"calleeOwner":${fqnJson(clrOwner)}}"""
 		if (dispatchIdx >= 0) {
 			val selfT = birType(fn.parameters[dispatchIdx].type)
 			val lname = "__mref${lambdaCounter++}"
@@ -568,7 +568,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			val freeTps = freeTypeParams(listOf(fn.parameters[dispatchIdx].type) + regs.map { it.type } + listOf(fn.returnType))
 			val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
 			liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${str(retT)},"body":[$body]}""")
-			return """{"k":"newDelegate","method":${str(lname)},"funcType":${TypeNode.Fn(false, retT, listOf(selfT) + regs.map { birTypeDeleg(it.type) }).toJson()}$typeArgs}"""
+			return """{"k":"newDelegate","method":${str(lname)},"funcType":${TypeNode.Fn(false, retT, listOf(selfT) + regs.map { birTypeDeleg(it.type) }).toJson()}$typeArgs${localCalleeOwnerTag()}}"""
 		}
 	}
 	return unsupported(node, "a method reference to a .NET method (`::${fn.name}`)",
@@ -621,7 +621,7 @@ internal fun BirEmitter.suspendFunctionRef(node: IrFunctionReference, fn: IrSimp
 			// Top-level `::fn` — all lambda params are the target's regular args; an owner:null static call.
 			val args = paramNames.joinToString(",") { localArg(it) }
 			captures = ""; capValues = null
-			bodyCall = """{"k":"callStatic","owner":null,"method":${str(member)}${overloadSigField(fn)},"args":[$args],"suspendCall":true}"""
+			bodyCall = """{"k":"callStatic","owner":null,"method":${str(member)}${overloadSigField(fn)},"args":[$args],"suspendCall":true${calleeOwnerTag(fn)}}"""
 		}
 		else -> return unsupported(node, "a suspend function reference",
 			"its receiver could not be resolved to a supported (top-level or user-member) suspend target")
@@ -680,7 +680,7 @@ internal fun BirEmitter.boundExtFnRef(node: IrFunctionReference, fn: IrSimpleFun
 		else
 			"""{"k":"callStatic","ownerType":${fqnJson(injectedFileClass)},"method":${str(fn.name.asString())},"argTypes":[$declShapeTypes],"ret":${retT.toJson()},"args":[$callArgs]}"""
 	} else {
-		"""{"k":"callStatic","owner":null,"method":${str(fn.name.asString())}${overloadSigField(fn)}$refTa${retHintStr(hasRefTa, retT)},"args":[$callArgs]}"""
+		"""{"k":"callStatic","owner":null,"method":${str(fn.name.asString())}${overloadSigField(fn)}$refTa${retHintStr(hasRefTa, retT)},"args":[$callArgs]${calleeOwnerTag(fn)}}"""
 	}
 	val forwardBody = if (retVoid) """{"k":"exprStmt","expr":$callE}""" else """{"k":"return","value":$callE}"""
 	// The closure must be GENERIC over any enclosing type params referenced by the captured receiver or the invoke
@@ -739,7 +739,7 @@ internal fun BirEmitter.adapterRef(node: IrFunctionReference, fn: IrSimpleFuncti
 		val lname = "__mref${lambdaCounter++}"
 		val body = withLambdaParamShadow(fn) { (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
 		liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$invokeParamsJson],"ret":${str(ret)},"body":[$body]}""")
-		return """{"k":"newDelegate","method":${str(lname)},"funcType":${str(fnType)}$typeArgs}"""
+		return """{"k":"newDelegate","method":${str(lname)},"funcType":${str(fnType)}$typeArgs${localCalleeOwnerTag()}}"""
 	}
 	// Bound receiver(s) -> a capture-class closure (mirrors `lambda()`'s capturing branch); the bound value(s) are the
 	// capture exprs, and the adapter body's receiver-param reads rewrite to the capture fields via `captureSubst`.
@@ -892,7 +892,7 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 		// getter's is [recv]. Using the getter's sig for `prop:set` would key a same-name `var`-ext-property overload
 		// to the wrong slot.
 		val sigFn = if (isSetter) setterFn!! else getterFn
-		return """{"k":"callStatic","owner":null,"method":${str(name)},"prop":${str(kind)}${overloadSigField(sigFn)},"args":[$args]}"""
+		return """{"k":"callStatic","owner":null,"method":${str(name)},"prop":${str(kind)}${overloadSigField(sigFn)},"args":[$args]${calleeOwnerTag(sigFn)}}"""
 	}
 	fun accessorCall(isSetter: Boolean, extraArg: String?): String {
 		val fn = if (isSetter) setterFn!! else getterFn

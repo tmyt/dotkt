@@ -24,8 +24,8 @@ using DotKt.Bir;
 // `configure: Panel.() -> Unit = {}` idiom) whose `newDelegate` points at a library-local `__lambdaN` — is carried as a
 // `{"k":"defaultCarrier","expr":<newDelegate>,"lifted":[<method decls>]}` envelope (kotc BirEmitterDeclarations
 // .defaultCarrierBir). At the splice we RE-HOIST each carried method into THIS file's file-class methods under a fresh
-// per-splice name and rewrite the `newDelegate.method` reference, so ilemit's assembly-local `FindStatic` resolves it —
-// no cross-assembly `ldftn` and no ilemit change. A constant / simple-call default (`= emptyList()`) carries its BIR
+// per-splice name and rewrite both `newDelegate.method` and its mandatory `calleeOwner` to this consuming file class —
+// no cross-assembly `ldftn`. A constant / simple-call default (`= emptyList()`) carries its BIR
 // verbatim (no envelope). A `{"k":"defaultUnsupported"}` poison carrier (a capturing/SAM/suspend lambda default kotc
 // could not close) is refused loudly here.
 //
@@ -40,7 +40,8 @@ static class DefaultArgSplice
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs)
     {
         var hoist = new JsonArray();
-        Walk(root, refs, hoist);
+        var localOwner = root is JsonObject ro && Str(ro["fileClass"]) is string fc ? TypeJson.Fqn(fc) : null;
+        Walk(root, refs, hoist, localOwner);
         if (hoist.Count > 0)
         {
             // A carrier re-hoisted a lifted default lambda but this file has no file-class `methods` array to place it in
@@ -54,17 +55,17 @@ static class DefaultArgSplice
         AssertNoPlaceholder(root);
     }
 
-    static void Walk(JsonNode node, ReferenceMetadataIndex refs, JsonArray hoist)
+    static void Walk(JsonNode node, ReferenceMetadataIndex refs, JsonArray hoist, JsonNode localOwner)
     {
         if (node is JsonObject obj)
         {
-            foreach (var kv in obj.ToList()) if (kv.Value != null) Walk(kv.Value, refs, hoist);
-            TrySplice(obj, refs, hoist);
+            foreach (var kv in obj.ToList()) if (kv.Value != null) Walk(kv.Value, refs, hoist, localOwner);
+            TrySplice(obj, refs, hoist, localOwner);
         }
-        else if (node is JsonArray arr) foreach (var it in arr.ToList()) if (it != null) Walk(it, refs, hoist);
+        else if (node is JsonArray arr) foreach (var it in arr.ToList()) if (it != null) Walk(it, refs, hoist, localOwner);
     }
 
-    static void TrySplice(JsonObject node, ReferenceMetadataIndex refs, JsonArray hoist)
+    static void TrySplice(JsonObject node, ReferenceMetadataIndex refs, JsonArray hoist, JsonNode localOwner)
     {
         var k = Str(node["k"]);
         if (k != "callStatic" && k != "callInstance") return;
@@ -97,13 +98,13 @@ static class DefaultArgSplice
         {
             if (!IsPlaceholder(args[j])) continue;
             if (!defaults.TryGetValue(j, out var bir)) continue;         // no @KotlinDefault at this slot -> caught by the chokepoint
-            if (SpliceOne(bir, receiver, args, hoist, refs, method, j) is JsonNode fill) { args[j] = fill; Walk(fill, refs, hoist); }
+            if (SpliceOne(bir, receiver, args, hoist, refs, method, j, localOwner) is JsonNode fill) { args[j] = fill; Walk(fill, refs, hoist, localOwner); }
         }
         // 2) Append any purely-TRAILING omitted args (callee carries @KotlinDefault but kotc dropped the tail).
         for (var pos = args.Count; pos < sigCount; pos++)
         {
             if (!defaults.TryGetValue(pos, out var bir)) return;         // gap -> bail (leave the call unchanged)
-            if (SpliceOne(bir, receiver, args, hoist, refs, method, pos) is JsonNode fill) { args.Add(fill); Walk(fill, refs, hoist); } else return;
+            if (SpliceOne(bir, receiver, args, hoist, refs, method, pos, localOwner) is JsonNode fill) { args.Add(fill); Walk(fill, refs, hoist, localOwner); } else return;
         }
     }
 
@@ -112,9 +113,9 @@ static class DefaultArgSplice
     // Parse a @KotlinDefault BIR-json string, unwrap a `defaultCarrier` (re-hoisting its lifted methods app-local), and
     // bind the callee's default-expression tokens (`{this}` / `{defaultArgParam idx}`) to THIS call's args. A deep-fresh
     // subtree per occurrence.
-    static JsonNode SpliceOne(string bir, JsonNode receiver, JsonArray args, JsonArray hoist, ReferenceMetadataIndex refs, string method, int slot)
+    static JsonNode SpliceOne(string bir, JsonNode receiver, JsonArray args, JsonArray hoist, ReferenceMetadataIndex refs, string method, int slot, JsonNode localOwner)
     {
-        var parsed = MaterializeDefault(bir, hoist, refs, method, slot);
+        var parsed = MaterializeDefault(bir, hoist, refs, method, slot, localOwner);
         return parsed == null ? null : SubstituteTokens(parsed, receiver, args);
     }
 
@@ -122,7 +123,7 @@ static class DefaultArgSplice
     // refuse a `defaultUnsupported` poison loudly, unwrap a `defaultCarrier` (re-hoisting its lifted methods into `hoist`),
     // and return the raw default EXPR (still carrying `{this}` / `{defaultArgParam idx}` tokens — the caller binds them to
     // its own arg/param frame via SubstituteTokens). Returns null on an unparseable string.
-    internal static JsonNode MaterializeDefault(string bir, JsonArray hoist, ReferenceMetadataIndex refs, string method, int slot)
+    internal static JsonNode MaterializeDefault(string bir, JsonArray hoist, ReferenceMetadataIndex refs, string method, int slot, JsonNode localOwner)
     {
         JsonNode parsed; try { parsed = JsonNode.Parse(bir, documentOptions: BirJson.DocOptions); } catch { return null; }
         if (parsed is JsonObject env)
@@ -133,14 +134,14 @@ static class DefaultArgSplice
                     $"bir2cir: cannot fill the omitted default argument at slot {slot} of '{method}': " +
                     (Str(env["reason"]) ?? "the default is not representable at a cross-module call site"));
             if (envK == "defaultCarrier")
-                parsed = UnwrapCarrier(env, hoist, refs);
+                parsed = UnwrapCarrier(env, hoist, refs, localOwner);
         }
         return parsed;
     }
 
     // A `defaultCarrier` envelope: RE-HOIST each carried lifted method into this file (fresh per-splice name), rewrite the
     // `newDelegate.method` references (in the expr AND across the lifted bodies) to the fresh names, and return the expr.
-    static JsonNode UnwrapCarrier(JsonObject env, JsonArray hoist, ReferenceMetadataIndex refs)
+    static JsonNode UnwrapCarrier(JsonObject env, JsonArray hoist, ReferenceMetadataIndex refs, JsonNode localOwner)
     {
         var expr = env["expr"];
         var lifted = env["lifted"] as JsonArray;
@@ -157,27 +158,32 @@ static class DefaultArgSplice
         foreach (var c in clones)
         {
             if (Str(c["name"]) is string on && rename.TryGetValue(on, out var nn)) c["name"] = nn;
-            RewriteDelegateNames(c, rename);
+            RewriteDelegateNames(c, rename, localOwner);
             // The carried lifted body may ITSELF contain a `defaultArg` placeholder (a default `= { crossModuleFn() }`
             // whose call omits a non-const default) — fill it before the method is hoisted (the clone is unparented here).
-            Walk(c, refs, hoist);
+            Walk(c, refs, hoist, localOwner);
             hoist.Add(c);
         }
         var exprClone = expr.DeepClone();
-        RewriteDelegateNames(exprClone, rename);
+        RewriteDelegateNames(exprClone, rename, localOwner);
         return exprClone;
     }
 
     // Rewrite every `{"k":"newDelegate","method":<old>}` whose method is in `map` to the renamed method.
-    static void RewriteDelegateNames(JsonNode node, Dictionary<string, string> map)
+    static void RewriteDelegateNames(JsonNode node, Dictionary<string, string> map, JsonNode localOwner)
     {
         if (node is JsonObject obj)
         {
             if (Str(obj["k"]) == "newDelegate" && Str(obj["method"]) is string m && map.TryGetValue(m, out var nn))
+            {
                 obj["method"] = nn;
-            foreach (var kv in obj.ToList()) if (kv.Value != null) RewriteDelegateNames(kv.Value, map);
+                // The target method was moved out of the referenced carrier into THIS consuming file class.
+                // Retarget #204's mandatory dispatch identity together with the fresh method name.
+                obj["calleeOwner"] = localOwner?.DeepClone();
+            }
+            foreach (var kv in obj.ToList()) if (kv.Value != null) RewriteDelegateNames(kv.Value, map, localOwner);
         }
-        else if (node is JsonArray arr) foreach (var it in arr.ToList()) if (it != null) RewriteDelegateNames(it, map);
+        else if (node is JsonArray arr) foreach (var it in arr.ToList()) if (it != null) RewriteDelegateNames(it, map, localOwner);
     }
 
     // Rebuild `node`, replacing every `{"k":"this"}` with a deep clone of `receiver` and every

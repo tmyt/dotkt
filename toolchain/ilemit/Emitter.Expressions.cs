@@ -300,18 +300,14 @@ sealed partial class Emitter
                 // owner present -> a static method on that named class (companion); else a file-class sibling.
                 // A static on a GENERIC emitted class (a generic class's companion fun) must be anchored onto a
                 // constructed owner — an open-typedef parent token is invalid IL at a foreign call site.
-                // #199 Design B — DISPATCH axis. `owner:null` means "top-level call" (the substitution/recognition axis,
-                // set by bir2cir). When owner is null, the frontend-resolved `calleeOwner` file-class hint (mirrors
-                // `sty`) scopes the lookup to the RIGHT file class FIRST, so two same-simple-name top-level funcs in
-                // different packages (a.foo/b.foo) dispatch correctly instead of by global first-match. Falls back to
-                // the global FindStatic if the hint misses (defensive for a bir2cir-synthesized/renamed target).
+                // #199/#204 — `owner:null` remains the substitution/recognition axis, while mandatory `calleeOwner`
+                // is the exact dispatch axis. Never global-search by method name: a missing/scoped miss is malformed
+                // CIR and must fail loud instead of silently binding another file class's same-simple-name function.
                 MethodInfo resolved;
                 if (e.TryGetProperty("owner", out var ow) && ow.ValueKind != JsonValueKind.Null && SlotName(ow) is string ownm)
                     resolved = FindMethod(ownm, name, csig);
-                else if (e.TryGetProperty("calleeOwner", out var co) && co.ValueKind != JsonValueKind.Null && SlotName(co) is string coName)
-                    resolved = FindMethod(coName, name, csig) ?? FindStatic(name, csig);
                 else
-                    resolved = FindStatic(name, csig);
+                    resolved = FindCalleeOwnedStatic(e, "callStatic", name, csig);
                 var mb = ApplyTypeArgs(AnchorOpenGenericOwnerStatic(resolved), e, out var srt, out var sps);
                 if (e.TryGetProperty("typeArgs", out _)) EmitArgsTyped(e.GetProperty("args"), sps, mb);
                 else EmitCallArgs(e.GetProperty("args"), mb);
@@ -714,19 +710,11 @@ sealed partial class Emitter
             {
                 // Non-capturing lambda: bind the lifted static method into a Func/Action delegate.
                 var ft = MapType(e.GetProperty("funcType"));
-                // #199 Design B — DISPATCH axis for a `::topLevelFun` reference (bare `method` name). When the node
-                // carries `calleeOwner` (the FIR-resolved callee file-class hint), scope the lookup to THAT file class
-                // FIRST so two same-simple-name top-level funcs in different packages (a.foo/b.foo) bind their OWN body
-                // instead of the global first-match. `sig` selects the overload within that file class (#203). Falls
-                // back to global FindStatic on a hint miss (defensive for a bir2cir-synthesized/renamed target). The
-                // lifted `__lambdaN`/`__ctorref`/`__mref`/adapter forwarders
-                // use UNIQUE names in the current file class and carry NO calleeOwner -> the plain FindStatic path,
-                // unchanged.
+                // #199/#203/#204: calleeOwner selects the exact file class and sig selects its overload. Locally
+                // lifted __lambda/__ctorref/__mref targets carry their synthesizing file class too; no global fallback.
                 var dname = e.GetProperty("method").GetString();
                 var dsig = SigNodes(e);
-                MethodInfo mb = (e.TryGetProperty("calleeOwner", out var dco) && dco.ValueKind != JsonValueKind.Null && SlotName(dco) is string dcoName)
-                    ? (FindMethod(dcoName, dname, dsig) ?? FindStatic(dname, dsig))
-                    : FindStatic(dname, dsig);
+                MethodInfo mb = FindCalleeOwnedStatic(e, "newDelegate", dname, dsig);
                 // A GENERIC lifted lambda (e.g. the comparator inside a generic `sort<T>`) MUST be instantiated with its
                 // typeArgs before Ldftn -- loading the open generic-method-DEFINITION's ftn throws "the method itself or
                 // the containing type is not fully instantiated" at runtime.
@@ -744,7 +732,13 @@ sealed partial class Emitter
                 // overload within ownerType (#203). ldvirtftn needs the object twice (dup); a
                 // final method uses ldftn (the target stays on the stack as the delegate's first ctor arg).
                 var ft = MapType(e.GetProperty("funcType"));
-                var mb = FindMethod(SlotName(e.GetProperty("ownerType")), e.GetProperty("method").GetString(), SigNodes(e));
+                var boundName = e.GetProperty("method").GetString();
+                var boundOwner = SlotName(e.GetProperty("ownerType"));
+                if (!e.TryGetProperty("calleeOwner", out var bco) || bco.ValueKind == JsonValueKind.Null
+                    || SlotName(bco) is not string bcoName || bcoName != boundOwner)
+                    throw new NotSupportedException($"newBoundDelegate target '{boundOwner}.{boundName}' is missing or mismatches required calleeOwner");
+                var mb = FindMethod(boundOwner, boundName, SigNodes(e))
+                    ?? throw new NotSupportedException($"newBoundDelegate target '{boundOwner}.{boundName}' was not found");
                 var recvT = EmitExpr(e.GetProperty("recv"));
                 // A value-type (or `gp:T`) receiver must be BOXED before it can back the delegate: the delegate ctor's
                 // first arg is `object` and `ldvirtftn` dispatches on an object reference, but EmitExpr pushed the raw
