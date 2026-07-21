@@ -90,17 +90,22 @@ fail() { # <name> <reason> [detail]
 	{ echo "FAIL  pkgsdk:$1 ($2)"; [[ -n "$detail" ]] && printf '%s\n' "$detail"; } > "$RESULTS/$1.tmp"; mv -f "$RESULTS/$1.tmp" "$RESULTS/$1"
 	FAILS+=("$1")
 }
-# Strip the compiler's own stderr chatter from a run's stdout so the assert compares only program output.
+# Strip the compiler's own chatter from a run's stdout so the assert compares only program output.
 run_out() { grep -vE 'kotlin/clr:|duplicate source root' || true; }
 
-# run_project <dir> <stderr-logfile> [extra `dotnet run` args...]  — build+run a packaged project in <dir>; echo
-# its noise-filtered stdout; RETURN the run's exit status (0 iff build AND execution succeeded). Status and stdout
-# are captured INDEPENDENTLY (issue #163): the process status is no longer lost to the `2>/dev/null | run_out ||
-# true` pipe that used to accept a project which printed the expected text and THEN threw / returned non-zero.
-run_project() { # <dir> <stderr-logfile> [extra args...]
-	local dir="$1" log="$2"; shift 2
+# run_project <dir> <stderr-logfile> — build+run a packaged project in <dir>; echo its noise-filtered program
+# stdout; RETURN the run's exit status (0 iff build AND execution succeeded). Build/restore output is kept out of
+# the captured program stdout: on a clean GitHub runner NuGet can print certificate and package-install messages
+# to stdout even at quiet verbosity. Status and stdout are captured independently (issue #163), so a project
+# which prints the expected text and THEN throws / returns non-zero remains rejected.
+run_project() { # <dir> <stderr-logfile>
+	local dir="$1" log="$2" build_log="${2%.err}.build.log"
+	if ! (cd "$dir" && dotnet build -v q --nologo >"$build_log" 2>&1); then
+		cp "$build_log" "$log"
+		return 1
+	fi
 	local rc=0 raw
-	raw="$(cd "$dir" && dotnet run -v q "$@" 2>"$log")" || rc=$?
+	raw="$(cd "$dir" && dotnet run --no-build --no-restore -v q 2>"$log")" || rc=$?
 	printf '%s' "$raw" | run_out
 	return $rc
 }
@@ -170,7 +175,7 @@ EOF
 fun main() { println("packaged exe ok: " + (2 + 3)) }
 EOF
 	local expected="packaged exe ok: 5" actual rc=0
-	actual="$(run_project "$d" "$d/run.err" --nologo)" || rc=$?
+	actual="$(run_project "$d" "$d/run.err")" || rc=$?
 	if (( rc != 0 )); then fail exe "run exit $rc" "$(printf -- '--- expected ---\n%s\n--- stdout ---\n%s\n--- stderr ---\n%s' "$expected" "$actual" "$(tail -30 "$d/run.err" 2>/dev/null)")"
 	elif [[ "$actual" == "$expected" ]]; then pass exe
 	else fail exe "output mismatch" "$(printf -- '--- expected ---\n%s\n--- actual ---\n%s' "$expected" "$actual")"; fi
@@ -294,7 +299,7 @@ package mpp.greeter
 fun main() { println(Greeter().say()) }
 EOF
 	local expected="Hello from the CLR actual (packaged MPP SDK)" actual rc=0
-	actual="$(run_project "$d" "$d/run.err" --nologo)" || rc=$?
+	actual="$(run_project "$d" "$d/run.err")" || rc=$?
 	if (( rc != 0 )); then fail mpp "run exit $rc" "$(printf -- '--- expected ---\n%s\n--- stdout ---\n%s\n--- stderr ---\n%s' "$expected" "$actual" "$(tail -30 "$d/run.err" 2>/dev/null)")"
 	elif [[ "$actual" == "$expected" ]]; then pass mpp
 	else fail mpp "output mismatch" "$(printf -- '--- expected ---\n%s\n--- actual ---\n%s' "$expected" "$actual")"; fi
@@ -326,8 +331,6 @@ case_template() {
 	if ! grep -q "Sdk=\"DotKt.Sdk/$VER\"" "$proj"/*.csproj 2>/dev/null; then
 		fail template "generated project does not pin DotKt.Sdk/$VER" "$(cat "$proj"/*.csproj 2>/dev/null)"; return
 	fi
-	# NB no `--nologo` here: this template's main echoes args.firstOrNull(), and `dotnet run` forwards any
-	# trailing token to the app — so `--nologo` would leak in as the greeted name. (DOTNET_NOLOGO=1 is exported.)
 	local expected="Hello, World, from DotKt — Kotlin on .NET!" actual rc=0
 	actual="$(run_project "$proj" "$proj/run.err")" || rc=$?
 	if (( rc != 0 )); then fail template "run exit $rc" "$(printf -- '--- expected ---\n%s\n--- stdout ---\n%s\n--- stderr ---\n%s' "$expected" "$actual" "$(tail -30 "$proj/run.err" 2>/dev/null)")"
@@ -360,7 +363,6 @@ case_mpp_template() {
 	if ! grep -q "\"DotKt.Sdk.Mpp\": \"$VER\"" "$proj/global.json" 2>/dev/null || ! grep -q "\"DotKt.Sdk\": \"$VER\"" "$proj/global.json" 2>/dev/null; then
 		fail mpp-template "scaffolded global.json does not pin both SDKs to $VER" "$(cat "$proj/global.json" 2>/dev/null)"; return
 	fi
-	# NB no `--nologo`: main echoes args.firstOrNull(), and `dotnet run` forwards trailing tokens to the app.
 	local expected="Hello, World, from a DotKt multiplatform app on .NET!" actual rc=0
 	actual="$(run_project "$proj" "$proj/run.err")" || rc=$?
 	if (( rc != 0 )); then fail mpp-template "run exit $rc" "$(printf -- '--- expected ---\n%s\n--- stdout ---\n%s\n--- stderr ---\n%s' "$expected" "$actual" "$(tail -30 "$proj/run.err" 2>/dev/null)")"
@@ -379,7 +381,7 @@ selftest() {
 EOF
 	printf 'fun main() { println("SELFTEST-EXPECTED"); throw RuntimeException("boom after print") }\n' > "$d/app.kt"
 	local rc=0
-	run_project "$d" "$d/run.err" --nologo >/dev/null || rc=$?
+	run_project "$d" "$d/run.err" >/dev/null || rc=$?
 	if (( rc == 0 )); then
 		echo "PACKAGED-SDK GATE RED — #163 self-test FAILED: a print-then-crash packaged exe was accepted (exit-code hole open)"; exit 1
 	fi
