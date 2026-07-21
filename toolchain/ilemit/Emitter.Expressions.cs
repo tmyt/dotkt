@@ -717,14 +717,16 @@ sealed partial class Emitter
                 // #199 Design B — DISPATCH axis for a `::topLevelFun` reference (bare `method` name). When the node
                 // carries `calleeOwner` (the FIR-resolved callee file-class hint), scope the lookup to THAT file class
                 // FIRST so two same-simple-name top-level funcs in different packages (a.foo/b.foo) bind their OWN body
-                // instead of the global first-match. Falls back to global FindStatic on a hint miss (defensive for a
-                // bir2cir-synthesized/renamed target). The lifted `__lambdaN`/`__ctorref`/`__mref`/adapter forwarders
+                // instead of the global first-match. `sig` selects the overload within that file class (#203). Falls
+                // back to global FindStatic on a hint miss (defensive for a bir2cir-synthesized/renamed target). The
+                // lifted `__lambdaN`/`__ctorref`/`__mref`/adapter forwarders
                 // use UNIQUE names in the current file class and carry NO calleeOwner -> the plain FindStatic path,
                 // unchanged.
                 var dname = e.GetProperty("method").GetString();
+                var dsig = SigNodes(e);
                 MethodInfo mb = (e.TryGetProperty("calleeOwner", out var dco) && dco.ValueKind != JsonValueKind.Null && SlotName(dco) is string dcoName)
-                    ? (FindMethod(dcoName, dname) ?? FindStatic(dname))
-                    : FindStatic(dname);
+                    ? (FindMethod(dcoName, dname, dsig) ?? FindStatic(dname, dsig))
+                    : FindStatic(dname, dsig);
                 // A GENERIC lifted lambda (e.g. the comparator inside a generic `sort<T>`) MUST be instantiated with its
                 // typeArgs before Ldftn -- loading the open generic-method-DEFINITION's ftn throws "the method itself or
                 // the containing type is not fully instantiated" at runtime.
@@ -738,10 +740,11 @@ sealed partial class Emitter
             }
             case "newBoundDelegate":
             {
-                // `obj::method` -> a delegate bound to the receiver. ldvirtftn needs the object twice (dup); a
+                // `obj::method` -> a delegate bound to the receiver. The carried declaration `sig` selects the exact
+                // overload within ownerType (#203). ldvirtftn needs the object twice (dup); a
                 // final method uses ldftn (the target stays on the stack as the delegate's first ctor arg).
                 var ft = MapType(e.GetProperty("funcType"));
-                var mb = FindMethod(SlotName(e.GetProperty("ownerType")), e.GetProperty("method").GetString());
+                var mb = FindMethod(SlotName(e.GetProperty("ownerType")), e.GetProperty("method").GetString(), SigNodes(e));
                 var recvT = EmitExpr(e.GetProperty("recv"));
                 // A value-type (or `gp:T`) receiver must be BOXED before it can back the delegate: the delegate ctor's
                 // first arg is `object` and `ldvirtftn` dispatches on an object reference, but EmitExpr pushed the raw
