@@ -27,6 +27,32 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **compiler ([tmyt/dotkt#199], area:kotc/bir2cir/ilemit): two same-simple-name top-level functions in DIFFERENT
+  packages (`a.foo`/`b.foo`) now dispatch to their OWN package's body instead of a global first-match. Root: the
+  `callStatic.owner` slot overloads two concepts — `owner:null` is the load-bearing "top-level call" axis that ~12
+  bir2cir recognizers key on (`@ClrIntrinsic`/collection/array-factory substitution, Precondition/Repeat/Enum/ForIn/
+  CharSeq lowerings), so the earlier fix of stamping the file-class on `owner` silently disabled substitution and
+  broke `make stdlib` (`clrTimestamp` et al. reached ilemit unresolved). Fix (Design B): split the axes — `owner`
+  keeps its meaning (`null` = top-level, UNTOUCHED) and a NEW advisory `calleeOwner` carries the FIR-resolved callee
+  file-class DISPATCH hint (mirrors `sty`); the bir2cir owner-null machinery ignores it, only ilemit's `callStatic`
+  dispatch consults it (falling back to the global `FindStatic` on a hint miss). Covers the non-suspend path, the
+  suspend cold-lowering (the hint rides the rewrite + synthesized cold-entry/Task-bridge calls stamp it), and the
+  top-level extension-property accessor. Regression fixtures: tests/il `XPkgSameNameFunTests`, tests/coroutines
+  `SameNameAcrossPackagesTests`.**
+- **facadegen ([tmyt/dotkt#199], area:facadegen): a re-imported/injected type REFERENCE to another type that shares
+  its simple name with a type in a DIFFERENT namespace now carries the NAMESPACE-QUALIFIED name, so the injector
+  resolves the EXACT type instead of the by-simple-name last-wins collision.** Two symptom families are fixed: ① a
+  GENERIC reference (a factory RETURN `a.State<T>`, a `var` PROPERTY type, a generic supertype) was emitted as the bare
+  `State` — collapsing `a.State<T>` and `b.State<T>` to one, so a factory's return / a var's type resolved to the WRONG
+  package's type (var mutability + members degraded); the generic-reference paths (`CrossTypeT`/`CrossTypeTN`), the
+  self-reference short-circuits, and the enum self-type now qualify with the namespace. ② a NON-generic base class and
+  interface supertype was emitted as the bare simple name, so a subclass of `Inherit.Widget` could bind to a
+  same-named `Ext.Widget` whose missing no-arg ctor CRASHED kotc's `generateConstructors`
+  (`No arguments constructor for class Ext/Widget not found`); `SuperTypes`/`ClassInterfaceSuperTypes` now emit the
+  qualified name. Nested base types key on `namespace + simpleName` (matching the injector's `+`-stripped ClassId), so
+  the nested edge resolves too. Regression fixtures: `tests/roundtrip/producer/Genclash{A,B}.kt` (two same-simple-name
+  generic `Cell<T>` across packages) and `tests/interop/producer/Extlib.cs` (`Ext.Widget` restored to collide with
+  `Inherit.Widget`).
 - **bir2cir ([tmyt/dotkt#138], area:bir2cir): `KClass.simpleName`/`qualifiedName` now report the KOTLIN name for a
   statically-known `::class`, not the .NET reflection name.** `1::class.simpleName` was `"Int32"` and
   `.qualifiedName` `"System.Int32"`; `"x"::class.qualifiedName` was `"System.String"` — the accessors were wired

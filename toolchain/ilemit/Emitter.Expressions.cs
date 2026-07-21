@@ -300,9 +300,19 @@ sealed partial class Emitter
                 // owner present -> a static method on that named class (companion); else a file-class sibling.
                 // A static on a GENERIC emitted class (a generic class's companion fun) must be anchored onto a
                 // constructed owner — an open-typedef parent token is invalid IL at a foreign call site.
-                var mb = ApplyTypeArgs(AnchorOpenGenericOwnerStatic(
-                    (e.TryGetProperty("owner", out var ow) && ow.ValueKind != JsonValueKind.Null && SlotName(ow) is string ownm)
-                        ? FindMethod(ownm, name, csig) : FindStatic(name, csig)), e, out var srt, out var sps);
+                // #199 Design B — DISPATCH axis. `owner:null` means "top-level call" (the substitution/recognition axis,
+                // set by bir2cir). When owner is null, the frontend-resolved `calleeOwner` file-class hint (mirrors
+                // `sty`) scopes the lookup to the RIGHT file class FIRST, so two same-simple-name top-level funcs in
+                // different packages (a.foo/b.foo) dispatch correctly instead of by global first-match. Falls back to
+                // the global FindStatic if the hint misses (defensive for a bir2cir-synthesized/renamed target).
+                MethodInfo resolved;
+                if (e.TryGetProperty("owner", out var ow) && ow.ValueKind != JsonValueKind.Null && SlotName(ow) is string ownm)
+                    resolved = FindMethod(ownm, name, csig);
+                else if (e.TryGetProperty("calleeOwner", out var co) && co.ValueKind != JsonValueKind.Null && SlotName(co) is string coName)
+                    resolved = FindMethod(coName, name, csig) ?? FindStatic(name, csig);
+                else
+                    resolved = FindStatic(name, csig);
+                var mb = ApplyTypeArgs(AnchorOpenGenericOwnerStatic(resolved), e, out var srt, out var sps);
                 if (e.TryGetProperty("typeArgs", out _)) EmitArgsTyped(e.GetProperty("args"), sps, mb);
                 else EmitCallArgs(e.GetProperty("args"), mb);
                 _il.Emit(OpCodes.Call, mb);
