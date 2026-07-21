@@ -33,23 +33,6 @@ ktproj_run() { # <project> <stderr-logfile>
 	return $rc
 }
 
-# <name> <project> <expected>  — build+run a project on the IL backend and diff stdout. A non-zero run status is a
-# FAIL (recording stderr + the failing stage) BEFORE any output compare — never masked, so one broken sample is
-# reported as its own FAIL line and the gate still runs every remaining sample and summarizes at the end.
-kt() {
-	local name="$1" proj="$2" expected="$3"
-	local actual rc=0 log="$ROOT/build/ktproj-run-$name.err"
-	mkdir -p "$ROOT/build"
-	actual="$(ktproj_run "$proj" "$log")" || rc=$?
-	if (( rc != 0 )); then
-		echo "FAIL  $name (run exit $rc)"
-		printf -- '--- expected ---\n%s\n--- actual (stdout before failure) ---\n%s\n--- stderr ---\n%s\n' "$expected" "$actual" "$(tail -30 "$log" 2>/dev/null)"; fail=1; return
-	fi
-	if [[ "$actual" == "$expected" ]]; then echo "PASS  $name"; else
-		echo "FAIL  $name"; printf -- '--- expected ---\n%s\n--- actual ---\n%s\n' "$expected" "$actual"; fail=1
-	fi
-}
-
 # ---- issue #163 self-test: a .ktproj whose main prints the EXPECTED text then throws MUST be REJECTED. Drives the
 # real ktproj_run capture path and asserts a non-zero status is observed; a green (exit 0) means the hole is open. ----
 ktproj_selftest() {
@@ -72,26 +55,8 @@ KTPROJ
 ktproj_selftest
 
 
-# BIDIRECTIONAL ProjectReference (R-1): cslib.csproj <- klib.ktproj <- app.csproj in one graph.
-# forward = Kotlin imports the C# Theme.Palette; reverse = C# consumes the Kotlin Greeter + its List<String>
-# at compile time (needs the emitted dll reference-clean via the retarget tool). Running the C# host drives all.
-kt ktproj-bidir "cases/ktproj-bidir/app/app.csproj" \
-	"$(printf 'Hi, Visual Studio (accent=cyan)\nVisual Studio A, Visual Studio B, Visual Studio C')"
-
-# Framework-direct base class: a Kotlin class inherits Avalonia.Application from a <PackageReference>,
-# façade-free, overriding a virtual. (Needs Avalonia in the NuGet cache.)
-kt ktproj-avalonia "cases/ktproj-avalonia/app.ktproj" \
-	"$(printf 'MyApp.Initialize: Kotlin override of Avalonia.Application\nsubclassed Avalonia.Application from Kotlin via PackageReference')"
-
-
-# #37 finding 1 (RID-aware identity selection): a PackageReference (System.IO.Ports) whose copy-local set carries
-# BOTH lib/<tfm>/Foo.dll and runtimes/<rid>/lib/<tfm>/Foo.dll for ONE identity. ilemit's runtime catalog used to
-# hard-fail at emit on the duplicate simple name; it now dedups by identity and selects the host-RID asset. On Linux
-# the runtimes/unix/lib build is the REAL impl (the plain lib asset is a PlatformNotSupported placeholder), so
-# GetPortNames() returning a count (0 here) — not throwing — proves the RID-correct asset was selected (keep-first
-# would have picked the placeholder). Regression guard for #37 finding 1.
-kt ktproj-runtimetargets "cases/ktproj-runtimetargets/app.ktproj" \
-	"ports 0"
+# Static PackageReference and bidirectional ProjectReference samples now run as NUnit tests under tests/interop and
+# tests/roundtrip. This shell gate remains only for stateful MSBuild behavior that cannot be expressed in-process.
 
 # #50: INCREMENTAL deletion-safety + staleness through MSBuild. A single dir is built TWICE with the SAME obj/ (no
 # clean) — the incremental path the shared targets guard. Between the builds a top-level `class Shape` is MOVED out of
@@ -129,10 +94,5 @@ fi
 rm -rf "$incr"
 
 # Clean each sample's build output.
-rm -rf \
-       "$ROOT"/cases/ktproj-bidir/*/bin "$ROOT"/cases/ktproj-bidir/*/obj \
-       "$ROOT"/cases/ktproj-runtimetargets/bin "$ROOT"/cases/ktproj-runtimetargets/obj \
-       "$ROOT"/cases/ktproj-avalonia/bin "$ROOT"/cases/ktproj-avalonia/obj
-
 echo "------------------------------------"
 [[ $fail -eq 0 ]] && echo "ALL PASS" || { echo "SOME FAILED"; exit 1; }

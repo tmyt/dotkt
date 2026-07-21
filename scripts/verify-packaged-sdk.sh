@@ -51,7 +51,7 @@ FEED="$ROOT/build/nuget-feed"
 
 # 1. Pack the 5 nupkgs FRESH from the current sources (rebuilds the tools + re-copies the shipped targets into
 #    DotKt.Toolchain). Uses the cached stdlib dlls when present — correct for an MSBuild/targets-only change;
-#    a stdlib/kotc/bir2cir source change is gated by verify-il, not here.
+#    a stdlib/kotc/bir2cir source change is gated by verify-tests, not here.
 info "packing 5 nupkgs (version $VER) -> $FEED"
 bash "$ROOT/scripts/pack-nuget.sh" >/dev/null || die "pack-nuget.sh failed"
 

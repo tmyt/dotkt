@@ -47,5 +47,5 @@ Status legend: ✅ works today (exercised by the test gates) · 🚧 in progress
 | Consume the output from C# (`ProjectReference`, NRT, `Task<T>`) | ✅ |
 | Re-consume a DotKt dll **as Kotlin** (`infix`/`operator`/`suspend`/`inline`/`sealed`/bounds restored) | ✅ (with documented losses: enum-class-ness, `object` sugar, SAM-lambda — [details](../dotkt-semantics.md)) |
 
-Gates backing this table: `scripts/verify-il.sh` (compile → run → assert → `ilverify`),
+Gates backing this table: `scripts/verify-compiler-tests.sh` (compile → run → assert → `ilverify`),
 `scripts/verify-ktproj.sh` (MSBuild end-to-end), `scripts/verify-roundtrip.sh` (consume-as-Kotlin).

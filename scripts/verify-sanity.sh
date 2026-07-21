@@ -7,11 +7,12 @@
 # goto/brIf, missing field owners, malformed binOp/cond, bad for-cmp) and reddens on any violation.
 #
 # COVERAGE = CIR ONLY (unlike verify-schema, which validates BIR + CIR shape): the CLR stdlib
-# build/clr-stdlib/cir + every app sample build/cir-*/*.cir.json. The sanity invariants (local resolution,
+# build/clr-stdlib/cir + every categorized test project tests/**/obj/dotkt-cir/*.cir.json, plus any legacy
+# one-shot developer outputs build/cir-*/*.cir.json. The sanity invariants (local resolution,
 # CFG targets) hold for POST-LOWERING CIR — the exact tree the in-process gate checks (bir2cir on its CIR
 # output; ilemit at EmitAssembly). BIR is PRE-lowering: an inline-lambda body still references `it` and loop
 # vars that bir2cir materializes as `var` statements during splice, so the local-resolution check
-# legitimately (falsely) trips on BIR. FRESHNESS: run AFTER a fresh emit (verify-il re-emits app CIR;
+# legitimately (falsely) trips on BIR. FRESHNESS: run AFTER a fresh emit (verify-tests re-emits test CIR;
 # `make stdlib` refreshes the stdlib CIR).
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -20,10 +21,13 @@ PY="${PYTHON:-python3}"
 
 globs=()
 [ -d build/clr-stdlib/cir ] && globs+=("build/clr-stdlib/cir/*.cir.json")
+while IFS= read -r -d '' file; do globs+=("$file"); done < <(
+  find tests -type f -path '*/obj/dotkt-cir/*.cir.json' -print0
+)
 for d in build/cir-*; do [ -d "$d" ] && globs+=("$d/*.cir.json"); done
 
 if [ ${#globs[@]} -eq 0 ]; then
-  echo "SANITY GATE: no emitted BIR/CIR found — run 'make stdlib' and/or ./scripts/verify-il.sh first" >&2
+  echo "SANITY GATE: no emitted BIR/CIR found — run 'make stdlib' and/or ./scripts/verify-compiler-tests.sh first" >&2
   exit 2
 fi
 

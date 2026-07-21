@@ -2,7 +2,7 @@
 # Regression gate for function types wider than System.Func/Action supports: System.Func tops out at 16
 # value parameters plus TResult (Func`17); Kotlin function values can be wider, so ilemit synthesizes
 # module-local delegate types DotKt.Runtime.CompilerServices.KFunc`N / KAction`N when needed. Drives
-# cases/il-widedeleg/wide.kt (17-arg function values) through the REAL pipeline — kotc -> bir2cir ->
+# tests/special/wide-delegates/wide.kt (17-arg function values) through the REAL pipeline — kotc -> bir2cir ->
 # ilemit, the same single path every other gate uses. Runs the app, checks the synthesized delegate types
 # exist in the dll, and that
 # facadegen restores the wide type as a Kotlin function type. Exits nonzero on any failure.
@@ -23,7 +23,7 @@ done
 OUT="$ROOT/build/wide-delegates"
 rm -rf "$OUT"; mkdir -p "$OUT/bir" "$OUT/cir" "$OUT/il"
 
-# Unconditional tool builds: the gate tests the CURRENT sources. Stdlib artifact roles mirror verify-il:
+# Unconditional tool builds: the gate tests the CURRENT sources. Stdlib artifact roles mirror verify-tests:
 # the frontend KLIB is kotc's -classpath (kotlin.* comes from the klib, never facadegen), the REFERENCE
 # dll feeds bir2cir's @Clr labels, the RUNTIME dll backs println at run time.
 "$ROOT/gradlew" -q :kotc:installDist >/dev/null 2>&1
@@ -31,8 +31,8 @@ build_tool ilemit; build_tool bir2cir; build_tool facadegen; build_tool retarget
 need_fe_klib; need_stdlib_ref; need_stdlib_rt
 need_dotnet_reference_sets
 
-"$KOTC" "$ROOT/cases/il-widedeleg" -no-stdlib -classpath "$FE_KLIB" -d "$OUT/bir" >/dev/null 2>&1 \
-	|| die "kotc failed on cases/il-widedeleg"
+"$KOTC" "$ROOT/tests/special/wide-delegates" -no-stdlib -classpath "$FE_KLIB" -d "$OUT/bir" >/dev/null 2>&1 \
+	|| die "kotc failed on tests/special/wide-delegates"
 dotnet "$BIR2CIR_DLL" "$OUT/cir" --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL")" "$OUT/bir"/*.bir.json >/dev/null 2>&1 \
 	|| die "bir2cir failed"
 dotnet "$ILEMIT_DLL" "$OUT/il" Wide --runtime-refs "$STDLIB_RT_DLL" "$OUT/cir"/*.cir.json >/dev/null 2>&1 \

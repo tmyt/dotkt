@@ -49,7 +49,7 @@ bir2cir at app-emit — the compiler itself stays generic.
 
 ## What works today
 
-The gates: `scripts/verify-il.sh` (compile → IL → run → assert → `ilverify` over the full
+The gates: `scripts/verify-compiler-tests.sh` (compile → IL → run → assert → `ilverify` over the full
 `cases/il-*` corpus; **0 run-failures** outside the documented XFAIL baseline — a small tail of
 ilverify-strictness findings and coroutine-deferred samples) and `scripts/verify-ktproj.sh`
 (MSBuild end-to-end over the `cases/ktproj*` projects). Run the gates for the authoritative pass
@@ -98,14 +98,14 @@ Prereqs: the repo's Gradle auto-provisions a JDK; you need the **.NET SDK 10**.
 make help                          # all targets
 make all                           # toolchain + stdlib artifacts
 make dev SRC=path/to/Foo.kt        # compile + run one file (wraps scripts/dotkt.sh --run)
-make verify                        # the gates: verify-il + verify-ktproj
+make verify                        # all compiler, IR, MSBuild, roundtrip, and package gates
 make pack                          # NuGet packages into a local feed
 ```
 
 Or the scripts directly:
 
 ```bash
-./scripts/verify-il.sh                 # the canonical gate (run-correct + ilverify-clean)
+./scripts/verify-compiler-tests.sh                 # the canonical gate (run-correct + ilverify-clean)
 ./scripts/verify-ktproj.sh             # MSBuild/.ktproj end-to-end
 ./scripts/verify-roundtrip.sh          # consume a DotKt dll as Kotlin
 ./scripts/dotkt.sh --run path/Foo.kt   # one-shot compile + run (-h for options)
@@ -148,7 +148,7 @@ See `docs/user/getting-started.md`.
 | `libraries/stdlib/` | the **CLR Kotlin stdlib** sources (common Kotlin + `clr/` actuals + `@Clr*` bindings) |
 | `packaging/` | NuGet packages: `DotKt.Sdk`, `DotKt.Toolchain`, `DotKt.Stdlib`, `DotKt.Templates` |
 | `cases/` | `il-*` (IL-backend samples = the gate corpus), `m-*` (language/interop), `ktproj-*` (MSBuild) |
-| `scripts/` | the gates (`verify-il.sh`, `verify-ktproj.sh`, `verify-roundtrip.sh`), `dotkt.sh`, the three `build-stdlib-*.sh` |
+| `scripts/` | the gates (`verify-compiler-tests.sh`, `verify-ktproj.sh`, `verify-roundtrip.sh`), `dotkt.sh`, the three `build-stdlib-*.sh` |
 | `docs/user/` | **user-facing docs** (getting started / .NET interop / CLR differences) |
 | `docs/dotkt-semantics.md` | **canonical**: how Kotlin maps to the CLR + deliberate deviations from Kotlin/JVM |
 | `docs/design-fir-bir-cir-il.md` | backend layer contract (kotc / bir2cir / ilemit responsibilities) |

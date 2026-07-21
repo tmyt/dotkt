@@ -27,7 +27,7 @@ done
 # The XFAIL baseline — MACHINE-READABLE (name -> reason). The three suspend-consuming sections drive the
 # library's suspend funs via the test-harness `dotkt.support.blockOn` (write_coharness; blockOn was dropped
 # from the stdlib per design §13 and re-homed to the harness over public primitives). The suspend machinery now emits
-# (P2/P3/P4 done: in-module async runs — cf. verify-il genasync/cobuild), so these no longer abort on a
+# (P2/P3/P4 done: in-module async runs — now covered by the coroutine suite), so these no longer abort on a
 # bare `kotlin.coroutines.Continuation` at emit; they surface the REMAINING *cross-module* coroutine gaps
 # (below). This gate is the coroutine bundle's cross-module E2E check: when these flip to FIXED, prune them.
 declare -A RT_XFAIL=(
@@ -42,7 +42,7 @@ declare -A RT_XFAIL=(
 )
 
 # MIGRATED to the in-process ProjectReference round-trip lane (tests/roundtrip/consumer RoundtripTests, driven by
-# tests/run-nunit-il.sh) — these sections no longer run here (docs/design-nunit-test-harness.md §3, playbook §3):
+# tests/run-nunit-tests.sh) — these sections no longer run here (docs/design-nunit-test-harness.md §3, playbook §3):
 #   BATCH 1 (7):
 #     roundtrip-enum -> enumInheritedMembers           roundtrip-defargs  -> defaultAndNamedArgs
 #     roundtrip-customprop -> customAccessorProperties roundtrip-nrt      -> triStateNullability
@@ -119,7 +119,7 @@ need_dotnet_reference_sets
 REFS="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_RT_DLL");"
 
 # kotc emits bare kotlin.* type tokens (the frontend klib resolves the stdlib to our real kotlin.* declarations); bir2cir
-# lowers them to the CLR-codegen vocabulary ilemit consumes. So route every emit through bir2cir (mirrors verify-il) —
+# lowers them to the CLR-codegen vocabulary ilemit consumes. So route every emit through bir2cir (mirrors verify-tests) —
 # feeding BIR straight to ilemit would leave kotlin.* tokens un-lowered ("cannot resolve .NET type kotlin.String"). The
 # REFERENCE stdlib supplies bir2cir's @ClrTypeAlias labels (built once if missing; the roundtrip types are pure-Kotlin).
 build_tool bir2cir
@@ -128,14 +128,14 @@ need_stdlib_ref; need_stdlib_rt
 # Both stages tolerate failure (|| true): a broken emit surfaces as its SECTION's FAIL, not a script abort.
 # ilemit references the RUNTIME stdlib (--ref) so REAL emitted kotlin.* types resolve — notably the coroutine
 # runtime (`kotlin.coroutines.Continuation`, injected into a suspend fun's CPS signature by bir2cir's suspend
-# lowering); and the rt dll is dropped beside the emitted assembly so the run resolves it (mirrors verify-il).
+# lowering); and the rt dll is dropped beside the emitted assembly so the run resolves it (mirrors verify-tests).
 emit_il() {
 	local out="$1" asm="$2"; shift 2
 	local refs=() birs=() usrrefs=()
 	while (( $# )); do
 		# A user `--ref X` (a retargeted DotKt library) goes to ilemit AND — A2 (#61) — to bir2cir, which RESOLVES
 		# the facadegen-injected owner FQN against it to bind the .NET call SHAPE (clrStatic/clrInstance/…). Mirrors
-		# verify-il's il_emit: the RUNTIME stdlib (added below) is ilemit-only (bir2cir reads the REFERENCE stdlib).
+		# The compiler-test emit path uses the RUNTIME stdlib only for ilemit (bir2cir reads the REFERENCE stdlib).
 		if [[ "$1" == --ref ]]; then refs+=("$2"); usrrefs+=("$2"); shift 2; else birs+=("$1"); shift; fi
 	done
 	[[ -f "$STDLIB_RT_DLL" ]] && refs+=("$STDLIB_RT_DLL")

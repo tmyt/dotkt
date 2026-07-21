@@ -44,12 +44,12 @@ build_tool ilemit; build_tool bir2cir
 # (the JVM oracle above keeps the separate JVM kotlin-stdlib.jar — it IS the oracle, a different thing).
 # bir2cir then reads the REFERENCE assembly for the @Clr labels, and ilemit references the RUNTIME
 # assembly so a stdlib op resolves to its real Kotlin body — exactly the canonical ref/rt stdlib that
-# dotkt.sh / verify-il use. kotlin.* comes from the klib, never a facadegen reconstruction.
+# dotkt.sh / verify-tests use. kotlin.* comes from the klib, never a facadegen reconstruction.
 need_fe_klib; need_stdlib_ref; need_stdlib_rt; need_dotnet_reference_sets
 
-# The XFAIL baseline — MACHINE-READABLE (DIFFing sample -> reason), same mechanism as verify-il's
+# The XFAIL baseline — MACHINE-READABLE (DIFFing sample -> reason), same mechanism as the compiler test gate's
 # XFAIL_RUN. Currently empty: the pure corpus that populated it (the m-b* stdlib family) has been migrated to the
-# NUnit il-battery and deleted, and every prior entry was already FIXED-and-pruned by the 2026-07-02 stdlib bump.
+# categorized NUnit suites and deleted, and every prior entry was already FIXED-and-pruned by the 2026-07-02 stdlib bump.
 declare -A XFAIL_DIFF=(
 )
 
@@ -64,18 +64,15 @@ declare -A XFAIL_DIFF=(
 # format strings (`{0:F2}`/`{0:D5}`, literal text on the JVM) or `Int::class.simpleName` (CLR "Int32" vs JVM "Int").
 #
 # COV1 (2026-07-05 kcc review §2B): the ~120 pure il-* samples used to self-score against DotKt-captured
-# fixed strings in verify-il, so a Kotlin-INCORRECT mapping passed green forever. Promoting the JVM-runnable
+# fixed strings in the former shell gate, so a Kotlin-INCORRECT mapping passed green forever. Promoting the JVM-runnable
 # subset here makes the JVM oracle (real kotlin/jvm) the ground truth — a regression now reddens the gate.
-# The m-a*/m-b*/m-s* pure corpus was migrated to the in-process NUnit il-battery (tests/il/fixtures/MigM*Tests.kt)
+# The former pure corpus was migrated to the categorized NUnit suites under tests/basic.
 # and DELETED same-change per the cases-test-design audit — every asserted value it uniquely proved is preserved 1:1
 # there. Dead/dup members (m-a7 local-fn -> il-nested/il-nestlam/il-localclass; m-s3 -> m-b1/m-b3/m-a2; m-c7 empty)
 # were dropped outright. m0 (M0.kt) is a SEPARATE differential sample, NOT part of the m-* corpus — it stays.
-PURE="m0 \
-il-samcmp \
-il-boxgen il-pairtostr \
-il-genmax il-genseq2"
-# il-atomics (kotlin.concurrent.atomics CAS family) migrated to tests/il/fixtures/MigratedIntropCAtomicsTests.kt
-# (atomics_interlockedByrefBinding); its PURE JVM-oracle entry was removed in that same change.
+PURE=""
+# There are currently no standalone JVM-differential samples. The generic max known-failure repro lives under
+# tests/known-fail and is intentionally not a green gate input.
 # NOTE: this is the SINGLE effective PURE set. It was previously followed by three shadowing PURE=… reassignments
 # (a cross-task merge artifact from the C1/C2/C4/C5 review fixes) that dropped most of the list — il-nullableprim /
 # il-boxgen were silently un-tested. Consolidated into the union above (kcc review C3, 2026-07-06).
@@ -159,7 +156,7 @@ diff_selftest
 # place. The old design echoed MATCH/DIFF straight from the parallel `{ } &` subshells to the shared, redirected
 # stdout; those children INHERIT ONE file offset, so when the tool cache is warm and samples finish in tight
 # bursts their writes seek to the same offset and CLOBBER each other — most MATCH lines silently vanished (the
-# same stdout race verify-il already retired). The verdict is still driven off these records, never off stdout.
+# same stdout race the compiler test gate already retired). The verdict is still driven off these records, never off stdout.
 RESULTS="$ROOT/build/verify-differential"; rm -rf "$RESULTS"; mkdir -p "$RESULTS"
 for s in $PURE; do
 	gate

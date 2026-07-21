@@ -23,14 +23,14 @@
 #   scripts/{lib,build-stdlib*,dotkt,  -> FULL   (shared build machinery — affects every stage)
 #     gen-*,pack-nuget}.sh
 #   toolchain/facadegen/**             -> facadegen is rebuilt by the suites; run verify-roundtrip +
-#                                          verify-ktproj + verify-il (facadegen metadata feeds all three)
-#   toolchain/bir2cir/** | ilemit/**   -> stdlib EMIT (clean) + verify-il + verify-differential +
+#                                          verify-ktproj + compiler tests (facadegen metadata feeds all three)
+#   toolchain/bir2cir/** | ilemit/**   -> stdlib EMIT (clean) + compiler tests +
 #                                          verify-schema + verify-sanity   (kotc unchanged: no installDist cost)
 #   toolchain/bir-common/**            -> FULL   (TypeNode/IrSanity are <Compile Link/>-shared into every tool)
 #   toolchain/retarget/**              -> FULL   (a stdlib-bake input + BCL-repoint used by roundtrip/ktproj)
 #   toolchain/kotc/** | libraries/stdlib/**  -> FULL + clean stdlib rebuild
 #   cases/ktproj*/**                   -> verify-ktproj
-#   cases/**                           -> verify-il + verify-differential
+#   tests/{basic,interop,coroutines,roundtrip}/** -> compiler tests
 #   anything else                      -> FULL
 #
 # CLEAN STDLIB REBUILD (rm -rf build/clr-stdlib*) happens iff a stdlib-BAKING axis changed
@@ -82,7 +82,7 @@ collect_changes() {
 }
 
 # ---- selection state ------------------------------------------------------------------------------
-declare -A WANT=()          # suite -> 1 (il schema sanity ktproj roundtrip differential widedelegates packagedsdk)
+declare -A WANT=()          # suite -> 1 (compiler_tests schema sanity ktproj roundtrip differential widedelegates packagedsdk)
 declare -a REASONS=()       # human-readable "path -> decision" lines
 CLEAN=0                     # force a clean stdlib rebuild
 NEED_FULL=0                 # an unmatched/broad path forces the complete set
@@ -100,7 +100,7 @@ classify() { # <path>
 		# ---- scripts ----------------------------------------------------------------------------
 		scripts/gate.sh)
 			reason "$p -> (no gate: the wrapper itself, no pipeline effect)" ;;
-		scripts/verify-il.sh)          want il;            reason "$p -> verify-il" ;;
+		scripts/verify-compiler-tests.sh) want compiler_tests; reason "$p -> compiler tests" ;;
 		scripts/verify-schema.sh|scripts/verify-schema.py)    want schema;   reason "$p -> verify-schema" ;;
 		scripts/verify-sanity.sh|scripts/verify-sanity.py)    want sanity;   reason "$p -> verify-sanity" ;;
 		scripts/verify-ktproj.sh)      want ktproj;        reason "$p -> verify-ktproj" ;;
@@ -112,11 +112,11 @@ classify() { # <path>
 			NEED_FULL=1; reason "$p -> FULL (shared build machinery)" ;;
 		# ---- toolchain --------------------------------------------------------------------------
 		toolchain/facadegen/*)
-			want roundtrip; want ktproj; want il
-			reason "$p -> facadegen: verify-roundtrip + verify-ktproj + verify-il (metadata feeds all three)" ;;
+			want roundtrip; want ktproj; want compiler_tests
+			reason "$p -> facadegen: verify-roundtrip + verify-ktproj + compiler tests (metadata feeds all three)" ;;
 		toolchain/bir2cir/*|toolchain/ilemit/*)
-			want il; want differential; want schema; want sanity; CLEAN=1
-			reason "$p -> bir2cir/ilemit: clean stdlib emit + verify-il + verify-differential + verify-schema + verify-sanity" ;;
+			want compiler_tests; want schema; want sanity; CLEAN=1
+			reason "$p -> bir2cir/ilemit: clean stdlib emit + compiler tests + verify-schema + verify-sanity" ;;
 		toolchain/bir-common/*)
 			NEED_FULL=1; CLEAN=1; reason "$p -> FULL (bir-common is <Compile Link/>-shared into every tool)" ;;
 		toolchain/retarget/*)
@@ -125,11 +125,18 @@ classify() { # <path>
 			NEED_FULL=1; CLEAN=1; reason "$p -> FULL + clean stdlib (kotc frontend changed)" ;;
 		libraries/stdlib/*)
 			NEED_FULL=1; CLEAN=1; reason "$p -> FULL + clean stdlib (stdlib source changed)" ;;
-		# ---- cases ------------------------------------------------------------------------------
+		# ---- tests ------------------------------------------------------------------------------
+		tests/basic/*|tests/coroutines/*|tests/interop/*|tests/roundtrip/*|tests/support/*|tests/run-nunit-tests.sh|tests/run-ilverify.sh)
+			want compiler_tests; reason "$p -> categorized compiler tests" ;;
+		tests/special/wide-delegates/*)
+			want widedelegates; reason "$p -> wide-delegate structural test" ;;
+		tests/known-fail/*)
+			reason "$p -> documented known-failure repro (not a green gate)" ;;
+		# ---- development MSBuild cases ----------------------------------------------------------
 		cases/ktproj*/*|cases/ktproj*)
 			want ktproj; reason "$p -> verify-ktproj (ktproj case)" ;;
 		cases/*)
-			want il; want differential; reason "$p -> verify-il + verify-differential (sample case)" ;;
+			want ktproj; reason "$p -> development MSBuild target/case" ;;
 		# ---- anything else ----------------------------------------------------------------------
 		*)
 			NEED_FULL=1; reason "$p -> FULL (unrecognized path: conservative fallback)" ;;
@@ -137,14 +144,14 @@ classify() { # <path>
 }
 
 # ---- suite runners (invoke the REAL scripts verbatim) ---------------------------------------------
-declare -a RUN_ORDER=(il schema sanity ktproj roundtrip differential widedelegates packagedsdk)
+declare -a RUN_ORDER=(compiler_tests schema sanity ktproj roundtrip differential widedelegates packagedsdk)
 declare -A SUITE_SCRIPT=(
-	[il]=verify-il.sh [schema]=verify-schema.sh [sanity]=verify-sanity.sh
+	[compiler_tests]=verify-compiler-tests.sh [schema]=verify-schema.sh [sanity]=verify-sanity.sh
 	[ktproj]=verify-ktproj.sh [roundtrip]=verify-roundtrip.sh [differential]=verify-differential.sh
 	[widedelegates]=verify-wide-delegates.sh [packagedsdk]=verify-packaged-sdk.sh
 )
 
-FULL_SUITES=(il schema sanity ktproj roundtrip differential widedelegates)
+FULL_SUITES=(compiler_tests schema sanity ktproj roundtrip widedelegates)
 
 # ---- compute the plan -----------------------------------------------------------------------------
 mapfile -t CHANGES < <(collect_changes)

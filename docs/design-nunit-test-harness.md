@@ -1,6 +1,7 @@
 # Design: NUnit in-process test harness — migrating off the per-case bash gate
 
-**Status:** design realized in production as `tests/il/` — in-process `@TestAttribute` batteries (15 migrated
+**Status:** design realized in production as subject-oriented `tests/basic`, `tests/interop`, `tests/coroutines`,
+and `tests/roundtrip` in-process `@TestAttribute` batteries (15 migrated
 families). The round-trip / ktproj `<ProjectReference>` lane is the pending consolidation.
 **Motivation:** `docs/reviews/2026-07-19-cases-test-design-audit.md` — the `cases/` gate grew to 384 `il-*`
 directories, each a separate `kotc → bir2cir → ilemit → dotnet-run → ilverify` **process**, driving the full
@@ -8,7 +9,7 @@ gate to ~45 min. The audit's structural remedies (its items #6, #8, #12–16) an
 (#1–5, #11) are realized by moving to an **in-process NUnit suite**: Kotlin `@TestAttribute` methods,
 batch-compiled by the DotKt MSBuild SDK, discovered and run in-process/parallel by `dotnet test`.
 
-This is not "improve the bash scripts". It **replaces** `verify-il.sh`, `verify-roundtrip.sh` (1000+ lines) and
+This is not "improve the bash scripts". It **replaces** `verify-compiler-tests.sh`, `verify-roundtrip.sh` (1000+ lines) and
 `verify-ktproj.sh` with one model, leaving only a short, irreducible shell lane (see §7).
 
 ---
@@ -19,7 +20,7 @@ Every current gate flavor collapses into **one** artifact type: an NUnit test pr
 
 | Current gate | Current unit | Becomes |
 |---|---|---|
-| `verify-il.sh` (381 samples) | one `cases/il-*/app.kt` → own dll, stdout-diff, per-dll ilverify | a `@TestAttribute fun` asserting the **value**; related cases grouped into one fixture **battery** = one assembly |
+| `verify-compiler-tests.sh` (381 samples) | one `cases/il-*/app.kt` → own dll, stdout-diff, per-dll ilverify | a `@TestAttribute fun` asserting the **value**; related cases grouped into one fixture **battery** = one assembly |
 | `verify-roundtrip.sh` | heredoc lib compiled, consumed as Kotlin, stdout-diff | an NUnit project that **`<ProjectReference>`s** a DotKt library project and asserts the consumed API |
 | `verify-ktproj.sh` | MSBuild `.ktproj` end-to-end | the same: reference the sample project, assert — the SDK build graph *is* the orchestration |
 
@@ -64,7 +65,7 @@ lane (§7). These are rare; the pilot found none in its slice.
 Keep formal verification, but run it **once over the built test assembly**, not per case. ilverify only reports
 on the target assembly's own methods; the `-r` sets are resolution scopes (shared framework + the assembly's
 output dir, which already holds NUnit/stdlib/producer dlls). `tests/run-ilverify.sh` implements this with an
-`ILVERIFY_XFAIL` map (substring → tracking issue), mirroring `verify-il.sh`'s `XFAIL_ILVERIFY` discipline:
+`ILVERIFY_XFAIL` map (substring → tracking issue), mirroring `verify-compiler-tests.sh`'s `XFAIL_ILVERIFY` discipline:
 **green iff every finding is baseline-listed; any finding outside it is a NEW-FAIL.** 382 per-dll ilverify runs
 → one per battery assembly (~16).
 
@@ -201,7 +202,7 @@ Order: **build → ilverify (`--no-build`) → `dotnet test --no-build`**, with 
    only the **grandchild** override through a non-overriding intermediate fails. A **general compiler bug**,
    not a re-import gap — the audit's 384-case corpus does not cover this exact shape.
 2. **`joinToString{}` synthetic-delegate `DelegateCtor` ilverify finding** — the known runtime-safe formal-only
-   `#170/#150` (the `verify-il.sh` `[defargs]` XFAIL); reproduced here and baseline-listed in
+   `#170/#150` (the `verify-compiler-tests.sh` `[defargs]` XFAIL); reproduced here and baseline-listed in
    `tests/run-ilverify.sh`. Confirms the harness reproduces the existing formal-verification coverage.
 
 ---
@@ -216,7 +217,7 @@ Order: **build → ilverify (`--no-build`) → `dotnet test --no-build`**, with 
 - **Mutually-incompatible build modes** (MPP, special MSBuild props) needing separate project configs.
 - **NuGet package restore itself** (the packaged-SDK release gate, `verify-packaged-sdk.sh`).
 
-Everything else in `verify-il.sh` / `verify-roundtrip.sh` / `verify-ktproj.sh` is replaced.
+Everything else in `verify-compiler-tests.sh` / `verify-roundtrip.sh` / `verify-ktproj.sh` is replaced.
 
 ---
 
@@ -258,7 +259,7 @@ assemblies × ~20–30 s build, MSBuild-parallel across projects on the 24-core 
 
 **GO on full migration.** Evidence:
 
-- **Model proven end-to-end green.** IL battery (27 tests) and a real producer→consumer round-trip (10 tests)
+- **Model proven end-to-end green.** Categorized NUnit suites and real producer→consumer round-trips
   both pass `dotnet test`; ilverify runs once per assembly and is green against a machine-readable XFAIL
   baseline; the DLL-not-source invariant is verified.
 - **Every audit remedy has a concrete mechanism** (§1–§7): dedup→batteries, one shared harness, single

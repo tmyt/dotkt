@@ -1,0 +1,9 @@
+<Project Sdk="DotKt.Sdk/0.9.6-rc7">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Library</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../csharp-producer/BidirectionalProducer.csproj" />
+  </ItemGroup>
+</Project>

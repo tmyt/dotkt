@@ -11,7 +11,7 @@
 #
 # Keep IN SYNC with toolchain/bir-common/IrSanity.cs (the C# is normative; this is the corpus net).
 # DELIBERATELY CONSERVATIVE: every check is calibrated to NEVER false-positive on a valid input (the
-# verify-il corpus + the 250-file stdlib rt build). Two invariants are intentionally NOT checked
+# categorized compiler-test corpus + the 250-file stdlib rt build). Two invariants are intentionally NOT checked
 # (callStatic owner-presence; call/new args-vs-argTypes arity) — both legitimately vary in valid CIR.
 #
 # The check set (per method / ctor / static-field-initializer scope):

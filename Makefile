@@ -39,7 +39,7 @@ tool_src    = $(shell find toolchain/$(1) toolchain/bir-common -name '*.cs' -o -
 # Aggregate targets
 # ==================================================================================================
 .PHONY: all toolchain kotc $(TOOLS) stdlib stdlib-klib stdlib-ref stdlib-rt pack \
-        verify verify-core verify-il verify-schema verify-sanity verify-ktproj verify-packaged-sdk \
+        verify verify-core verify-tests verify-schema verify-sanity verify-ktproj verify-packaged-sdk \
         verify-roundtrip verify-differential verify-widedelegates \
         dev facades clean clean-tools clean-stdlib clean-pack help
 
@@ -101,15 +101,17 @@ verify: verify-core verify-packaged-sdk ## run ALL gates (the canonical set + th
 # The canonical gate set EXCEPT the packaged-SDK gate. CI runs verify-core in the main job and
 # verify-packaged-sdk as a DISTINCT release-blocking job (GitHub #160), so the split lives here — not
 # copied into the workflow YAML. `make verify` still runs the complete set (verify-core + packaged-sdk).
-verify-core: verify-il verify-schema verify-sanity verify-ktproj verify-roundtrip verify-differential verify-widedelegates ## every gate except the packaged-SDK release gate
+# verify-differential remains available as a focused harness check, but its former case corpus is now represented by
+# value assertions in tests/basic; with no standalone PURE samples it is not part of the canonical aggregate.
+verify-core: verify-tests verify-schema verify-sanity verify-ktproj verify-roundtrip verify-widedelegates ## every gate except the packaged-SDK release gate
 
-verify-il: ## the canonical IL gate (compile -> IL -> run -> assert -> ilverify)
-	bash scripts/verify-il.sh
+verify-tests: ## canonical compiler behavior gate (categorized NUnit suites + ILVerify)
+	bash scripts/verify-compiler-tests.sh
 
-verify-schema: ## the #37 BIR/CIR freeze enforcer (types-are-nodes + canonical k over fresh BIR/CIR); run AFTER verify-il
+verify-schema: ## the #37 BIR/CIR freeze enforcer (types-are-nodes + canonical k over fresh BIR/CIR); run AFTER verify-tests
 	bash scripts/verify-schema.sh
 
-verify-sanity: ## the offline IR-sanity gate (#112 P4 — semantic invariants over fresh BIR/CIR); run AFTER verify-il
+verify-sanity: ## the offline IR-sanity gate (#112 P4 — semantic invariants over fresh BIR/CIR); run AFTER verify-tests
 	bash scripts/verify-sanity.sh
 
 verify-ktproj: ## MSBuild / .ktproj end-to-end
@@ -163,5 +165,5 @@ help: ## this help
 		awk -F':.*## ' '{ printf "  \033[1m%-22s\033[0m %s\n", $$1, $$2 }'
 	@printf "  \033[1m%-22s\033[0m %s\n" "ilemit|bir2cir|facadegen|retarget" "build one .NET tool -> build/<tool>-bin"
 	@echo
-	@echo "Common flows:  make all   ·   make -j toolchain   ·   make stdlib   ·   make verify-il"
-	@echo "               make dev SRC=cases/il/M0.kt RUN=1"
+	@echo "Common flows:  make all   ·   make -j toolchain   ·   make stdlib   ·   make verify-tests"
+	@echo "               make dev SRC=path/to/Foo.kt RUN=1"

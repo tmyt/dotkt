@@ -120,12 +120,12 @@ The build is a multi-stage native pipeline, not a single `gradle build`:
 
 | Goal | Command |
 |------|---------|
-| **Run the IL test gate** (compile → IL → run → assert → `ilverify`) | `./scripts/verify-il.sh` |
+| **Run the IL test gate** (compile → IL → run → assert → `ilverify`) | `./scripts/verify-compiler-tests.sh` |
 | MSBuild / `.ktproj` end-to-end | `./scripts/verify-ktproj.sh` |
 | Kotlin↔CLR round-trip (consume a DotKt dll as Kotlin) | `./scripts/verify-roundtrip.sh` |
 | **One-shot: compile + run a single `.kt`** | `./scripts/dotkt.sh --run path/to/Foo.kt` |
 
-`verify-il.sh` is the **canonical gate** — a behavior-affecting change (compiler, stdlib, scripts,
+`verify-compiler-tests.sh` is the **canonical gate** — a behavior-affecting change (compiler, stdlib, scripts,
 packaging) is not "done" without a run. The truthful fail-set baseline is **machine-readable, not
 prose**: the `XFAIL_RUN` / `XFAIL_ILVERIFY` maps at the top of the script (one reason per name). The
 gate **exits 0 iff every actual fail is XFAIL-listed** and prints a `NEW-FAIL` / `FIXED` diff either
