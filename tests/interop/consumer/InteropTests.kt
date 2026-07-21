@@ -33,6 +33,9 @@ import GenInj.Item as GenInjItem
 // il-genim
 import GenIm.Conv
 import GenIm.IConv
+// #205: generic interface deriving a member-bearing non-generic base interface
+import IfaceBaseGen.Source as IfaceBaseSource
+import IfaceBaseGen.IPingable as IfaceBasePingable
 // il-inherit
 import Inherit.Base
 import Inherit.Widget
@@ -53,6 +56,9 @@ class InheritMyApp : Base() {
 
 // il-genim top-level helper: call the generic interface method through the IConv interface TYPE.
 fun genimViaIface(c: IConv): String = c.Convert<String>("hello")
+
+// #205 helper: reach the inherited non-generic-base member through the base interface TYPE.
+fun ifaceBaseViaBase(p: IfaceBasePingable): String = p.Ping()
 
 class InteropTests {
     @TestAttribute
@@ -102,6 +108,18 @@ class InteropTests {
         val c = Conv()
         assertEquals("hello", genimViaIface(c))         // hello — through interface type
         assertEquals("world", c.Convert<String>("world")) // world — Conv assignable to IConv usage
+    }
+
+    // #205: a generic interface (IReader<Doc>) deriving a member-bearing non-generic base interface (IPingable).
+    // Ping is inherited from the NON-generic base; IReader<Doc> is assignable to IPingable — both require facadegen
+    // to emit the non-generic super edge on the injected generic interface (InterfaceSuperTypes).
+    @TestAttribute
+    fun ifacebasegen() {
+        val r = IfaceBaseSource().Reader
+        assertEquals("hi", r.Read().Text)             // hi   — own generic member IReader<Doc>.Read
+        assertEquals("pong", r.Ping())                // pong — inherited from the non-generic base IPingable
+        val p: IfaceBasePingable = r                  // IReader<Doc> assignable to the non-generic base interface
+        assertEquals("pong", ifaceBaseViaBase(p))     // pong — through the base interface type
     }
 
     @TestAttribute

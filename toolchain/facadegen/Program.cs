@@ -1420,26 +1420,46 @@ static class FacadeGen
         return set;
     }
 
-    // Interface->interface supertypes for an injected interface: its DIRECT, GENERIC interfaces, encoded as
-    // `generic:Open:args` (via Map). Non-generic interfaces are skipped — they'd reintroduce the non-generic
-    // GetEnumerator/etc. alongside the generic one (an overload clash). Interface inheritance imposes no member-
-    // satisfaction obligation, so (unlike class-implements-interface) this is safe.
+    // Interface->interface supertypes for an injected interface: its DIRECT interfaces (transitively-implied ones
+    // arrive via another direct super, so they're deduped out). Interface inheritance imposes no member-satisfaction
+    // obligation, so (unlike class-implements-interface) linking every direct super is safe. Both generic and
+    // non-generic supers are emitted so an injected interface carries its INHERITED members + assignability:
+    //   - a GENERIC super (`IList<T> : ICollection<T>`) is encoded as `Fqn(Open, args)` via MapT;
+    //   - a NON-generic super (`IDerived<T> : IBase`, #205) is encoded as a namespace-qualified `Fqn` so IBase's
+    //     members (`Ping`) resolve on an `IDerived<X>`-typed receiver and `IDerived<X>` is assignable to `IBase`.
+    // The LEGACY non-generic shadow of a same-simple-name generic sibling (`IEnumerable` beside `IEnumerable<T>`) is
+    // dropped — it would reintroduce the object-typed `GetEnumerator` overload alongside the generic one (mirrors the
+    // class path's genericNames guard in SatisfiableInterfaces).
     static List<TN> InterfaceSuperTypes(Type t)
     {
         Type[] all; try { all = t.GetInterfaces(); } catch { return new List<TN>(); }
         var implied = new HashSet<Type>();
         foreach (var i in all) { try { foreach (var sub in i.GetInterfaces()) implied.Add(sub); } catch { } }
+        var genericNames = new HashSet<string>(all.Where(x => x.IsGenericType).Select(x => SimpleName(x.GetGenericTypeDefinition())));
         var supers = new List<TN>(); var seen = new HashSet<string>();
         bool dotkt = IsDotKtEmittedAssembly(t.Assembly);
         foreach (var i in all)
         {
-            if (implied.Contains(i) || !i.IsGenericType) continue;   // direct + generic only
-            // #179: a DotKt `interface I : Comparable<X>` restores its `IComparable<X>` face as `kotlin.Comparable<X>`
-            // (fully-qualified for the injector's supertype resolver), mirroring the class path in ClassInterfaceSuperTypes.
-            var node = dotkt && i.GetGenericTypeDefinition().FullName == "System.IComparable`1"
-                ? new TN.Fqn("kotlin.Comparable", new[] { MapT(i.GetGenericArguments()[0], t) })
-                : MapT(i, t);                                         // a constructed generic -> Fqn with args
-            if (IsGenericFqn(node) && seen.Add(TN.ToJson(node))) supers.Add(node);
+            if (implied.Contains(i)) continue;   // arrives via another direct super
+            TN node;
+            if (i.IsGenericType)
+            {
+                // #179: a DotKt `interface I : Comparable<X>` restores its `IComparable<X>` face as `kotlin.Comparable<X>`
+                // (fully-qualified for the injector's supertype resolver), mirroring the class path in ClassInterfaceSuperTypes.
+                node = dotkt && i.GetGenericTypeDefinition().FullName == "System.IComparable`1"
+                    ? new TN.Fqn("kotlin.Comparable", new[] { MapT(i.GetGenericArguments()[0], t) })
+                    : MapT(i, t);                                     // a constructed generic -> Fqn with args
+                if (!IsGenericFqn(node)) continue;                    // a degraded/unresolvable generic super -> skip
+            }
+            else
+            {
+                // #205: a member-bearing NON-generic base interface. Skip the legacy same-name-generic shadow and any
+                // non-injectable super (empty namespace / NO_INJECT / Object / non-identifier simple name).
+                if (genericNames.Contains(SimpleName(i)) || !IsInjectableSupertype(i)
+                    || !SimpleName(i).All(ch => char.IsLetterOrDigit(ch) || ch == '_')) continue;
+                node = new TN.Fqn(QualifiedKotlinName(i));           // namespace-qualified (#199 reference-token rule)
+            }
+            if (seen.Add(TN.ToJson(node))) supers.Add(node);
         }
         return supers;
     }
