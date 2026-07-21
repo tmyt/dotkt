@@ -698,10 +698,10 @@ static class FacadeGen
                 // `<T : Enum<T>>` fn). DOTTED name so ClrTypeInjection.superClassId resolves it directly to kotlin.Enum
                 // (it does not consult builtinBoundOpen); the self arg is a lazy lookup-tag cone, same shape as
                 // `Money : IComparable<Money>`. No member synthesis needed — name/ordinal/compareTo inherit from kotlin.Enum.
-                supers.Add(Ty(new TN.Fqn("kotlin.Enum", new TN[] { new TN.Fqn(t.Name) })));
+                supers.Add(Ty(new TN.Fqn("kotlin.Enum", new TN[] { new TN.Fqn(QualifiedKotlinName(t)) })));   // #199: qualify the enum self-arg
                 typeObj["supers"] = supers;
                 foreach (var nm in Enum.GetNames(t))
-                    props.Add(PropObj(nm, new TN.Fqn(t.Name), false, new JsonObject(), "public", null, null));
+                    props.Add(PropObj(nm, new TN.Fqn(QualifiedKotlinName(t)), false, new JsonObject(), "public", null, null));   // #199: qualify the entry type
                 typeObj["props"] = props;
                 types.Add(typeObj);
                 Console.WriteLine($"meta: {t.FullName} (enum)");
@@ -1356,6 +1356,20 @@ static class FacadeGen
         return named;
     }
 
+    // #199: the FQN-QUALIFIED Kotlin name for a `TN.Fqn` REFERENCE token (`a.State` / `System.Threading.Tasks.Task1`),
+    // so the injector resolves the EXACT type and never a same-simple-name type from another namespace (its by-simple-
+    // name lookup keeps only the LAST same-(name,arity) type). Root-namespace types stay bare. The DECLARATION's own
+    // `name`/`dotNet` fields keep the simple Kotlin name + the true CLR identity — only reference tokens are qualified.
+    static string QualifiedKotlinName(Type t)
+    {
+        var simple = KotlinName(t);
+        return string.IsNullOrEmpty(t.Namespace) ? simple : t.Namespace + "." + simple;
+    }
+
+    // A dotted qualified identifier: every '.'-separated segment is a valid Kotlin identifier (rejects `.State`,
+    // `a..State`, `a.1State` while keeping the per-segment letters/digits/underscore rule).
+    static bool IsQualifiedIdent(string name) => name.Split('.').All(IsIdent);
+
     // The contiguous run of base classes from t.BaseType upward whose supertype edge IS emitted — members declared
     // there reach `t` through the injected supertype chain, so `t` must NOT re-declare them (fake-override clash).
     // The chain stops at the first ancestor we don't link (Object, a generic base, or a base with no no-arg ctor);
@@ -1461,7 +1475,11 @@ static class FacadeGen
             if (dotkt && i.IsGenericType && i.GetGenericTypeDefinition().FullName == "System.IComparable`1")
                 node = new TN.Fqn("kotlin.Comparable", new[] { MapT(i.GetGenericArguments()[0], c) });
             else
-                node = i.IsGenericType ? MapT(i, c) : new TN.Fqn(SimpleName(i));
+                // #199-②: a NON-generic interface supertype must carry its NAMESPACE-qualified name (like the generic
+                // MapT path and the dotted `kotlin.Comparable` case above) — a bare simple name makes superClassId fall
+                // back to a by-simple-name map that keeps only the LAST same-name type, so `Inherit.Widget` vs `Ext.Widget`
+                // collide and a subclass's base resolves to the WRONG one. (Nested types key on namespace+simple too.)
+                node = i.IsGenericType ? MapT(i, c) : new TN.Fqn(QualifiedKotlinName(i));
             if (IsAnyQ(node) || (i.IsGenericType && !IsGenericFqn(node))) continue;
             if (seen.Add(TN.ToJson(node))) supers.Add(node);
         }
@@ -1489,7 +1507,10 @@ static class FacadeGen
     static List<TN> SuperTypes(Type t)
     {
         var supers = new List<TN>();
-        if (t.BaseType != null && EmittableBase(t.BaseType)) supers.Add(new TN.Fqn(SimpleName(t.BaseType)));
+        // #199-②: the base CLASS carries its NAMESPACE-qualified name so superClassId resolves the EXACT base, not a
+        // same-simple-name class from another namespace (a bare name last-wins in the by-simple-name map -> a subclass
+        // of `Inherit.Widget` could bind to `Ext.Widget`, whose missing no-arg ctor crashes generateConstructors).
+        if (t.BaseType != null && EmittableBase(t.BaseType)) supers.Add(new TN.Fqn(QualifiedKotlinName(t.BaseType)));
         return supers;
     }
 
@@ -2213,7 +2234,7 @@ static class FacadeGen
         }
         // Only short-circuit to the enclosing type's name when the FullName MATCH is real (an OPEN constructed generic
         // referencing a type param has a NULL FullName -> must recurse into the arg, not return the enclosing type).
-        if (t.FullName != null && t.FullName == self.FullName) return new TN.Fqn(KotlinName(self));
+        if (t.FullName != null && t.FullName == self.FullName) return new TN.Fqn(QualifiedKotlinName(self));   // #199: qualify the self-ref
         return t.FullName switch
         {
             "System.Int32" => new TN.Fqn("Int"),
@@ -2266,19 +2287,24 @@ static class FacadeGen
             var open = t.GetGenericTypeDefinition();
             // A NESTED generic definition (`List`1+Enumerator`) is NOT injected (no CLR-addressable open name); degrade.
             if (open.IsNested) return DegradeToAny(t, "nested generic definition — no CLR-addressable open name");
-            var openName = KotlinName(open);   // arity-suffixed iff the name family clashes (Task`1 -> Task1)
-            if (NO_INJECT.Contains(open.FullName ?? "") || !openName.All(c => char.IsLetterOrDigit(c) || c == '_'))
-                return DegradeToAny(t, "generic open def not injectable / not a simple identifier");
+            // #199: QUALIFY the generic reference with its namespace (like the non-generic branch below), so the injector
+            // resolves the EXACT type, not a same-simple-name generic from ANOTHER namespace (`a.State<T>` vs `b.State<T>`
+            // otherwise both collapse to the bare `State`, of which the injector keeps only the LAST). Root-namespace bare.
+            var openName = QualifiedKotlinName(open);   // arity-suffixed iff the name family clashes (Task`1 -> Task1)
+            if (NO_INJECT.Contains(open.FullName ?? "") || !IsQualifiedIdent(openName))
+                return DegradeToAny(t, "generic open def not injectable / not a resolvable qualified identifier");
             var args = t.GetGenericArguments().Select(a => MapT(a, t)).ToArray();
             if (args.Any(IsAnyQ)) return DegradeToAny(t, "a generic type argument was unresolvable");
             return new TN.Fqn(openName, args);
         }
         // The FULLY-QUALIFIED name (so the injector resolves the EXACT type, not a same-simple-name type from another
-        // namespace); fall back to the simple name for nested types (FullName has '+').
+        // namespace). A NESTED type's FullName has a '+' (`NS.Outer+Nested`) that fails the dotted-ident check, so #199:
+        // fall back to `namespace + simpleName` (QualifiedKotlinName) — the injector keys a nested type on that same
+        // '+'-stripped ClassId, so `NS.Nested` resolves — NEVER a bare simple name a cross-namespace twin would shadow.
         var fqn = t.FullName;
-        if (fqn != null && fqn.All(c => char.IsLetterOrDigit(c) || c == '_' || c == '.')) return new TN.Fqn(fqn);
-        var n = t.Name;
-        return n.All(c => char.IsLetterOrDigit(c) || c == '_') ? new TN.Fqn(n) : DegradeToAny(t, "name is not a resolvable identifier");
+        if (fqn != null && IsQualifiedIdent(fqn)) return new TN.Fqn(fqn);
+        var q = QualifiedKotlinName(t);
+        return IsQualifiedIdent(q) ? new TN.Fqn(q) : DegradeToAny(t, "name is not a resolvable identifier");
     }
 
     // ====================================================================================================
@@ -2342,7 +2368,7 @@ static class FacadeGen
         if (MetaMode && IsDelegate(t))
             return MapDelegateN(t, self, attrs, ctx, my, ref pos, wrap);
         if (t.FullName != null && t.FullName == self.FullName)
-            return WrapNrt(new TN.Fqn(KotlinName(self)), t, attrs, ctx, my, wrap);
+            return WrapNrt(new TN.Fqn(QualifiedKotlinName(self)), t, attrs, ctx, my, wrap);   // #199: qualify the self-ref
         switch (t.FullName)
         {
             case "System.Int32": return new TN.Fqn("Int");
@@ -2412,20 +2438,28 @@ static class FacadeGen
             // produced it; a genuine C# `IList<T>` keeps its BCL surface. This is the PRIMARY param/return/property path
             // (MapTFn->MapTN->here), so it — not the MapT copy — surfaces `fun f(xs: List<String>)`'s param. The cursor
             // still advances over every arg slot below. `ctx.DeclaringType` is the signature's declaring (DotKt) type.
+            // #199: a same-simple-name generic in ANOTHER namespace (`a.State<T>` vs `b.State<T>`) must NOT collapse to the
+            // bare `State` (of which the injector keeps only the LAST); QUALIFY the KotlinName with its namespace (root-
+            // namespace generics stay bare). The BCL_COLLECTION_REVERSE branch is ALREADY a dotted kotlin.collections.* FQN,
+            // so it is left as-is; only the KotlinName fallback is qualified.
             var openName = IsDotKtEmittedAssembly(ctx?.DeclaringType?.Assembly)
-                && BCL_COLLECTION_REVERSE.TryGetValue(open.FullName ?? "", out var kcoll) ? kcoll : KotlinName(open);
-            if (NO_INJECT.Contains(open.FullName ?? "") || !openName.All(c => char.IsLetterOrDigit(c) || c == '_' || c == '.'))
-                return DegradeToAny(t, "generic open def not injectable / not a simple identifier");
+                && BCL_COLLECTION_REVERSE.TryGetValue(open.FullName ?? "", out var kcoll)
+                ? kcoll
+                : QualifiedKotlinName(open);
+            if (NO_INJECT.Contains(open.FullName ?? "") || !IsQualifiedIdent(openName))
+                return DegradeToAny(t, "generic open def not injectable / not a resolvable qualified identifier");
             var ga = t.GetGenericArguments();
             var args = new TN[ga.Length];
             for (int i = 0; i < ga.Length; i++) args[i] = MapTN(ga[i], t, attrs, ctx, ref pos, wrap);
             if (args.Any(IsAnyQ)) return DegradeToAny(t, "a generic type argument was unresolvable");
             return WrapNrt(new TN.Fqn(openName, args), t, attrs, ctx, my, wrap);
         }
+        // #199: a NESTED type's FullName has a '+' that fails the dotted-ident check; fall back to `namespace + simpleName`
+        // (QualifiedKotlinName), which matches the injector's '+'-stripped ClassId — NEVER a bare simple name.
         var fqn = t.FullName;
-        if (fqn != null && fqn.All(c => char.IsLetterOrDigit(c) || c == '_' || c == '.')) return WrapNrt(new TN.Fqn(fqn), t, attrs, ctx, my, wrap);
-        var n = t.Name;
-        return n.All(c => char.IsLetterOrDigit(c) || c == '_') ? WrapNrt(new TN.Fqn(n), t, attrs, ctx, my, wrap) : DegradeToAny(t, "name is not a resolvable identifier");
+        if (fqn != null && IsQualifiedIdent(fqn)) return WrapNrt(new TN.Fqn(fqn), t, attrs, ctx, my, wrap);
+        var q = QualifiedKotlinName(t);
+        return IsQualifiedIdent(q) ? WrapNrt(new TN.Fqn(q), t, attrs, ctx, my, wrap) : DegradeToAny(t, "name is not a resolvable identifier");
     }
 
     // Map a CLR generic-parameter CONSTRAINT type to a Kotlin bound TypeNode. ilemit lowers a Kotlin `Comparable<T>`
