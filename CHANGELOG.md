@@ -38,6 +38,27 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   New regression: `tests/interop` `ifacebasegen`. This is the narrow genuine follow-up found during #205; the issue's
   broader provenance false-positive was fixed separately by PR #201.
 
+- **compiler ([tmyt/dotkt#203], area:kotc/ilemit): callable references now bind same-owner overloads by resolved
+  parameter signature.** `calleeOwner` fixed package selection for `::foo`, but `newDelegate` and
+  `newBoundDelegate` still performed a name-only `ldftn` lookup inside the selected file class / declaring class, so
+  `(Int) -> String` and `(String) -> String` references could bind the same overload. kotc now carries the same
+  structured `sig` used by ordinary calls on top-level and bound references (and on the inner call of an unbound member
+  forwarder); ilemit consumes it in both normal and event-handler delegate construction. The signature contains type
+  facts only, so bir2cir's declaration/slot name rewrites cannot stale it. Regression coverage exercises top-level,
+  bound-member, and unbound-member overload pairs.
+- **facadegen ([tmyt/dotkt#202], area:facadegen): generic method overrides no longer make
+  `MetadataLoadContext.GetMethods` skip otherwise valid types and awaitable candidates.** The runtime's inherited-member
+  suppression can call `GetGenericTypeDefinition()` on a generic parameter and throw for a non-generic derived type,
+  producing 90 duplicate `skipped type` / `skipped awaitable` warnings in the NUnit-backed interop build. facadegen now
+  falls back to derived-first, declared-only hierarchy enumeration for that reflection failure. A C# generic-override
+  producer and Kotlin consumer call cover both metadata injection and dispatch; the same clean build now emits zero
+  warnings.
+- **bir2cir ([tmyt/dotkt#200], area:bir2cir): nested suspend lambdas inside a materialized inline carrier now retain
+  their transitive captures.** A deep inline `Flow.transform`/`filter` chain could leave the nested lambda's
+  `predicate` capture off the enclosing suspend state machine; synthesized-name ordering then decided whether ilemit
+  saw a valid SM field or an unspilled local. InlineSplice now promotes current-frame nested-SM capture dependencies
+  into the outer carrier, making spill ownership independent of declaration names. The coroutine flow-transform
+  fixture uses the formerly failing prefixed declaration shape as the regression guard.
 - **facadegen / roundtrip ([tmyt/dotkt#205], area:bir2cir/ilemit/facadegen): DotKt assembly provenance is now
   explicit instead of inferred from a namespace name.** DotKt output carries assembly-level
   `[AssemblyMetadata("DotKt.Compiler", "metadata-v1")]`, and every embedded

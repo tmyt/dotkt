@@ -401,14 +401,15 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 	// references; an ext-receiver suspend ref (rarer) falls through to the clean deferral below.
 	if (fn.isSuspend && !hasExt) return suspendFunctionRef(node, fn, dispatchIdx)
 	// `::topLevelFun` — no receiver: a delegate over the static file-class method. Carries `calleeOwner` (#199 Design
-	// B, the SAME two-axis contract as a top-level FUNCTION call in BirEmitterCalls): the bare `method` name plus the
-	// FIR-resolved callee file-class as an advisory DISPATCH hint. Two same-simple-name top-level funcs in DIFFERENT
+	// B, the SAME two-axis contract as a top-level FUNCTION call in BirEmitterCalls): `method` + the resolved parameter
+	// `sig` select the overload, while the FIR-resolved callee file-class is an advisory DISPATCH hint. Two
+	// same-simple-name top-level funcs in DIFFERENT
 	// packages (a.foo/b.foo) both emit `method:foo`, and ilemit's global FindStatic would bind BOTH `::foo` delegates
 	// to whichever file class the enumeration hits first — calleeOwner disambiguates to THIS package's foo. A
 	// CROSS-MODULE callee (parent = package fragment, not IrFile) omits it (`calleeOwnerTag` self-gates on IrFile).
 	// The substitution axis is unchanged: a delegate over a top-level fun stays owner-less (no `owner` field here).
 	if (dispatchIdx < 0 && !hasExt)
-		return """{"k":"newDelegate","method":${str(fn.name.asString())},"funcType":${funcTypeOf(fn).toJson()}${calleeOwnerTag(fn)}}"""
+		return """{"k":"newDelegate","method":${str(fn.name.asString())}${overloadSigField(fn)},"funcType":${funcTypeOf(fn).toJson()}${calleeOwnerTag(fn)}}"""
 	// `Type::extFn` — an EXTENSION-function reference (G8). The delegate's target is a lifted static forwarder whose
 	// BODY is the faithful extension CALL — the SAME shape a DIRECT call to this callee would emit (`owner:null` for a
 	// stdlib/this-module ext, `ownerType:fileClass` for a referenced-assembly facade ext), NOT a bare `ldftn` of the
@@ -493,12 +494,14 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 		return """{"k":"newDelegate","method":${str(lname)},"funcType":${fnType.toJson()}$typeArgs}"""
 	}
 	// `obj::method` — a bound instance reference: a delegate whose target is the bound receiver. Only USER
-	// classes (the method resolves via FindMethod); .NET-method / extension / unbound refs are deferred.
+	// classes (the method resolves via FindMethod); .NET-method / extension / unbound refs are deferred. `ownerType` is
+	// already the exact declaring-class identity (the member analogue of calleeOwner); `sig` disambiguates overloads
+	// within it and survives bir2cir's name-only declaration/slot rewrites unchanged.
 	val boundRecv = if (dispatchIdx >= 0 && !hasExt) node.arguments.getOrNull(dispatchIdx) else null
 	val ownerClass = fn.parent as? IrClass
 	if (boundRecv != null && ownerClass != null && !isExternalNetType(ownerClass)) {
 		val virtual = fn.modality != Modality.FINAL || fn.overriddenSymbols.isNotEmpty()
-		return """{"k":"newBoundDelegate","ownerType":${fqnJson(typeName(ownerClass))},"method":${str(fn.name.asString())},"virtual":$virtual,"recv":${expr(boundRecv)},"funcType":${funcTypeOf(fn).toJson()}${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""}}"""
+		return """{"k":"newBoundDelegate","ownerType":${fqnJson(typeName(ownerClass))},"method":${str(fn.name.asString())}${overloadSigField(fn)},"virtual":$virtual,"recv":${expr(boundRecv)},"funcType":${funcTypeOf(fn).toJson()}${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""}}"""
 	}
 	// `Class::method` (UNbound) -> a lifted static `__mref(self, args) = self.method(args)`; the receiver
 	// becomes the delegate's first parameter. User classes only (`Func<UserType,…>` resolves via DelegateCtor).
@@ -510,7 +513,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			ps.map { """{"name":${str(it.name.asString())},"type":${birType(it.type).toJson()}}""" }).joinToString(",")
 		val argsJson = ps.joinToString(",") { """{"k":"local","name":${str(it.name.asString())}}""" }
 		val virtual = fn.modality != Modality.FINAL || fn.overriddenSymbols.isNotEmpty()
-		val callE = """{"k":"callInstance","ownerType":${fqnJson(typeName(ownerClass))},"virtual":$virtual,"recv":{"k":"local","name":"__self"},"method":${str(fn.name.asString())},"args":[$argsJson]${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""}}"""
+		val callE = """{"k":"callInstance","ownerType":${fqnJson(typeName(ownerClass))},"virtual":$virtual,"recv":{"k":"local","name":"__self"},"method":${str(fn.name.asString())}${overloadSigField(fn)},"args":[$argsJson]${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""}}"""
 		val retVoid = fn.returnType.isUnit()
 		val retT = birType(fn.returnType)
 		val body = if (retVoid) """{"k":"exprStmt","expr":$callE}""" else """{"k":"return","value":$callE}"""
