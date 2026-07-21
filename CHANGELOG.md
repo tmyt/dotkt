@@ -27,6 +27,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **compiler ([tmyt/dotkt#203], area:kotc/ilemit): callable references now bind same-owner overloads by resolved
+  parameter signature.** `calleeOwner` fixed package selection for `::foo`, but `newDelegate` and
+  `newBoundDelegate` still performed a name-only `ldftn` lookup inside the selected file class / declaring class, so
+  `(Int) -> String` and `(String) -> String` references could bind the same overload. kotc now carries the same
+  structured `sig` used by ordinary calls on top-level and bound references (and on the inner call of an unbound member
+  forwarder); ilemit consumes it in both normal and event-handler delegate construction. The signature contains type
+  facts only, so bir2cir's declaration/slot name rewrites cannot stale it. Regression coverage exercises top-level,
+  bound-member, and unbound-member overload pairs.
 - **facadegen ([tmyt/dotkt#202], area:facadegen): generic method overrides no longer make
   `MetadataLoadContext.GetMethods` skip otherwise valid types and awaitable candidates.** The runtime's inherited-member
   suppression can call `GetGenericTypeDefinition()` on a generic parameter and throw for a non-generic derived type,
