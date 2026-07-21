@@ -1174,6 +1174,35 @@ static class InlineSplice
                 else suspendCapValues.Add(null);
             }
 
+        // A first-level nested SM's default capture values are reads in THIS carrier frame. kotc may list that
+        // dependency only on the nested `newSuspendLambda` (rather than redundantly on every enclosing inline carrier),
+        // so promote any such free descriptor into the materialized outer SM. Otherwise RewriteSuspendLambdaNew sees
+        // neither a current-frame local nor an outer-SM field and emits a dangling `{k:local}` at the segment boundary
+        // (#200's name/order-sensitive `predicate` failure). An explicit capValue is already the construction
+        // expression and must not be replaced by descriptor-name synthesis here.
+        foreach (var nested in CurrentFrameNestedSuspendLambdas(invBody))
+        {
+            if (nested["captures"] is not JsonArray nestedCaps) continue;
+            var nestedValues = nested["capValues"] as JsonArray;
+            for (int i = 0; i < nestedCaps.Count; i++)
+            {
+                if (nestedValues != null && i < nestedValues.Count && nestedValues[i] != null) continue;
+                if (nestedCaps[i] is not JsonObject nc
+                    || Str(nc["name"]) is not string nn || nc["type"] is not JsonNode nt)
+                    return MatNull("MSC:nested-capture-no-name-type");
+                if (innerScope.Contains(nn)) continue;
+
+                var existing = captures.OfType<JsonObject>().FirstOrDefault(c => Str(c["name"]) == nn);
+                if (existing != null)
+                {
+                    if (!JsonNode.DeepEquals(existing["type"], nt)) return MatNull("MSC:nested-capture-type-conflict");
+                    continue;
+                }
+                captures.Add(new JsonObject { ["name"] = nn, ["type"] = nt.DeepClone() });
+                suspendCapValues.Add(null);
+            }
+        }
+
         // A suspend carrier that WRITES a captured enclosing var is a SILENT stale-value miscompile: SuspendColdLowering
         // rewrites a `setLocal`-to-capture into a `setField` on the SM's OWN copy field, so the enclosing local never sees
         // the write. Ref-cell write-through for the suspend arm is a follow-up (the SM would have to capture the cell, not a
@@ -1556,6 +1585,25 @@ static class InlineSplice
         }
         else if (node is JsonArray a)
             foreach (var c in a) if (c != null) foreach (var n in FirstLevelNestedSuspendLambdas(c)) yield return n;
+    }
+
+    // `newSuspendLambda` constructions evaluated in the current carrier frame. Do not inspect another closure's body:
+    // its capture dependencies belong to that closure's frame, not to this materialized SM.
+    static IEnumerable<JsonObject> CurrentFrameNestedSuspendLambdas(JsonNode node)
+    {
+        if (node is JsonObject o)
+        {
+            var k = Str(o["k"]);
+            if (k == "newSuspendLambda") { yield return o; yield break; }
+            if (k is "inlineLambda" or "lambda" or "newClosure" or "newSam" or "synthClass") yield break;
+            foreach (var kv in o)
+                if (kv.Value != null)
+                    foreach (var n in CurrentFrameNestedSuspendLambdas(kv.Value)) yield return n;
+        }
+        else if (node is JsonArray a)
+            foreach (var c in a)
+                if (c != null)
+                    foreach (var n in CurrentFrameNestedSuspendLambdas(c)) yield return n;
     }
 
     // Collect the distinct `{t:tv}` (scope, index) KEYS in the subtree. kotc numbers method type-params independently of
