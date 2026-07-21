@@ -27,6 +27,18 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **compiler ([tmyt/dotkt#199], area:kotc/bir2cir/ilemit): two same-simple-name top-level functions in DIFFERENT
+  packages (`a.foo`/`b.foo`) now dispatch to their OWN package's body instead of a global first-match. Root: the
+  `callStatic.owner` slot overloads two concepts — `owner:null` is the load-bearing "top-level call" axis that ~12
+  bir2cir recognizers key on (`@ClrIntrinsic`/collection/array-factory substitution, Precondition/Repeat/Enum/ForIn/
+  CharSeq lowerings), so the earlier fix of stamping the file-class on `owner` silently disabled substitution and
+  broke `make stdlib` (`clrTimestamp` et al. reached ilemit unresolved). Fix (Design B): split the axes — `owner`
+  keeps its meaning (`null` = top-level, UNTOUCHED) and a NEW advisory `calleeOwner` carries the FIR-resolved callee
+  file-class DISPATCH hint (mirrors `sty`); the bir2cir owner-null machinery ignores it, only ilemit's `callStatic`
+  dispatch consults it (falling back to the global `FindStatic` on a hint miss). Covers the non-suspend path, the
+  suspend cold-lowering (the hint rides the rewrite + synthesized cold-entry/Task-bridge calls stamp it), and the
+  top-level extension-property accessor. Regression fixtures: tests/il `XPkgSameNameFunTests`, tests/coroutines
+  `SameNameAcrossPackagesTests`.**
 - **facadegen ([tmyt/dotkt#199], area:facadegen): a re-imported/injected type REFERENCE to another type that shares
   its simple name with a type in a DIFFERENT namespace now carries the NAMESPACE-QUALIFIED name, so the injector
   resolves the EXACT type instead of the by-simple-name last-wins collision.** Two symptom families are fixed: ① a

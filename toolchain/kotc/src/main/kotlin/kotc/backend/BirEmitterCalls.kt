@@ -1109,10 +1109,10 @@ internal fun BirEmitter.call(call: IrCall): String {
 			// CharSequence.indices`) has NO real static field — its value is an accessor emitted by the property's
 			// OWN bare Kotlin identity + a `"prop":"get"/"set"` marker (#78/#81) whose leading arg is the extension
 			// receiver. Emit it `owner=null`, so bir2cir attributes it to the ref.dll file class in a cross-module app
-			// build (a same-module extension-property accessor then relies on ilemit's global FindStatic — unlike a
-			// same-module top-level FUNCTION call, which since #199 stamps its own file-class owner; a same-simple-name
-			// same-receiver extension PROPERTY across two packages is the residual accessor-side analogue of that bug,
-			// not yet closed here). bir2cir shapes the .NET accessor from the stdlib binding metadata, falling back to
+			// build (the owner-null top-level substitution axis — UNTOUCHED). It ALSO carries `calleeOwner` (#199 Design
+			// B, same two-axis contract as a top-level FUNCTION call): a same-module same-simple-name extension property
+			// across two packages disambiguates by the FIR-resolved file-class DISPATCH hint at ilemit, without shadowing
+			// substitution. bir2cir shapes the .NET accessor from the stdlib binding metadata, falling back to
 			// kotc's get_/set_<name> declaration convention when none exists. `sig` disambiguates a same-name overload
 			// by receiver type. A cross-module DESERIALIZED stub can spuriously report a backing field, so an
 			// extension property must NEVER fall to the static-field read below — that dropped the receiver and looked
@@ -1125,9 +1125,9 @@ internal fun BirEmitter.call(call: IrCall): String {
 				val ta = typeArgsJson(call)
 				return if (callee === p.setter) {
 					val args = listOf(ext) + regularArgs(call)
-					"""{"k":"callStatic","owner":null,"method":${str(p.name.asString())},"prop":"set"${overloadSigField(callee)}$ta,"args":[${args.joinToString(",") { expr(it) }}]}"""
+					"""{"k":"callStatic","owner":null,"method":${str(p.name.asString())},"prop":"set"${overloadSigField(callee)}$ta,"args":[${args.joinToString(",") { expr(it) }}]${calleeOwnerTag(p)}}"""
 				} else
-					"""{"k":"callStatic","owner":null,"method":${str(p.name.asString())},"prop":"get"${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), birType(call.type))},"args":[${expr(ext)}]}"""
+					"""{"k":"callStatic","owner":null,"method":${str(p.name.asString())},"prop":"get"${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), birType(call.type))},"args":[${expr(ext)}]${calleeOwnerTag(p)}}"""
 			}
 			// A plain top-level property (parent is the file/package, not a class) -> a static field of ITS DEFINING
 			// file's class. Use the property's own file, NOT the file currently being emitted — else a cross-file
@@ -1495,15 +1495,13 @@ internal fun BirEmitter.call(call: IrCall): String {
 	// (the kickoff/Task/await lowering is a deferred downstream layer). kotc bakes no coroutine ABI here.
 	val effRet = birType(call.type)
 	val recv = dispatchReceiver(call)
-	// #199: a SAME-MODULE top-level function call stamps its DEFINING file-class as the callStatic owner (mirrors the
-	// top-level PROPERTY-accessor precedent above, `accessorOwner`), so ilemit's owner-ful FindMethod dispatches to
-	// THIS package's `foo` rather than the global first-match FindStatic — two same-simple-name top-level funcs in
-	// DIFFERENT packages both emit `owner:null method:foo` otherwise, and FindStatic picks whichever file class the
-	// enumeration hits first (a.foo() ran b.foo()'s body). A CROSS-MODULE callee (its parent is a package fragment,
-	// not an IrFile) stays `owner:null` — bir2cir binds its true file class off the ref.dll (its owner-null top-level
-	// resolver). Applies to suspend and non-suspend calls, and to a same-module top-level EXTENSION fn (whose file
-	// class holds the static `f(__self, …)`). `sig` still rides for overload disambiguation within that file class.
-	val topLevelOwner = if (callee.parent is IrFile) fqnJson(fileClassOf(callee)) else "null"
+	// #199 DESIGN B — TWO-AXIS top-level call encoding. `owner:null` is LOAD-BEARING BIR vocabulary meaning "this is
+	// a top-level call": ~12 bir2cir recognizers key on it (@ClrIntrinsic/@ClrCollectionFactory/@ClrArrayFactory
+	// substitution, Precondition/Repeat/Enum/ForIn/CharSeq lowerings, …). So a same-module top-level call KEEPS
+	// `owner:null` (the substitution/recognition axis — UNTOUCHED) and instead carries `calleeOwner`, the
+	// FIR-resolved callee file-class (the DISPATCH axis; advisory — the whole owner-null machinery IGNORES it, only
+	// ilemit's dispatch consults it, mirroring `sty`). That disambiguates two same-simple-name top-level funcs in
+	// DIFFERENT packages (a.foo/b.foo both emit `method:foo`) without shadowing substitution. See `calleeOwnerTag`.
 	// An extension function: the receiver is the `__self` first arg. TOP-LEVEL `fun T.f()` -> static `f(self,args)`.
 	// MEMBER `class C { fun T.f() }` has BOTH receivers -> instance method on the enclosing C (dispatch receiver),
 	// with the extension receiver as the first arg (mirrors the JVM `C.f(T $receiver)` shape).
@@ -1515,7 +1513,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 			val virtual = isVirtualInstanceCall(call, callee)
 			return """{"k":"callInstance","ownerType":${ownerStr.toJson()},"virtual":$virtual,"recv":${expr(recv)},"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty() || (ownerStr as? TypeNode.Fqn)?.args != null, effRet)},"args":[$all]${suspendCallTag(callee)}${superTag(call)}}"""
 		}
-		return """{"k":"callStatic","owner":$topLevelOwner,"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$all]${suspendCallTag(callee)}}"""
+		return """{"k":"callStatic","owner":null,"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$all]${suspendCallTag(callee)}${calleeOwnerTag(callee)}}"""
 	}
 	// Instance method on a user class, or a sibling top-level call.
 	return if (recv != null) {
@@ -1535,7 +1533,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// still throw. See ilemit EmitDynamicCall.
 		val dynRet = ""","dynRet":${birType(call.type).toJson()}"""
 		"""{"k":"callInstance","ownerType":${ownerStr.toJson()},"virtual":$virtual,"recv":${recvExpr(recv, ownerStr, declaringClass?.defaultType)},"method":${str(mname)}${overloadSigField(callee)}$ta$dynRet${retHintStr(ta.isNotEmpty() || (ownerStr as? TypeNode.Fqn)?.args != null, effRet)},"args":[$args]${suspendCallTag(callee)}${overridesJson(callee)}$anySlotTag${superTag(call)}}"""
-	} else """{"k":"callStatic","owner":$topLevelOwner,"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$args]${suspendCallTag(callee)}}"""
+	} else """{"k":"callStatic","owner":null,"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$args]${suspendCallTag(callee)}${calleeOwnerTag(callee)}}"""
 }
 
 /**
@@ -1596,6 +1594,19 @@ internal fun BirEmitter.retHintStr(generic: Boolean, ret: TypeNode): String =
  *  is a DEFERRED downstream layer that consumes this tag. kotc does NO coroutine lowering. */
 internal fun BirEmitter.suspendCallTag(callee: org.jetbrains.kotlin.ir.declarations.IrFunction): String =
 	if ((callee as? IrSimpleFunction)?.isSuspend == true) ""","suspendCall":true""" else ""
+
+/** #199 DESIGN B: the `,"calleeOwner":<fileClassFqn>` DISPATCH hint on a top-level `callStatic` whose `owner` stays
+ *  `null`. `owner:null` is the load-bearing "top-level call" axis ~12 bir2cir owner-null recognizers key on
+ *  (@ClrIntrinsic/@ClrCollectionFactory/@ClrArrayFactory substitution, Precondition/Repeat/Enum/ForIn/CharSeq
+ *  lowerings, …); calleeOwner is a SEPARATE advisory axis those passes IGNORE (they carry it through DeepClone or
+ *  legitimately drop it when replacing a recognized call). ONLY ilemit's callStatic dispatch consults it — mirroring
+ *  `sty`, a frontend-resolved per-node fact consumed downstream without re-resolution. Stamped when `decl` is
+ *  SAME-MODULE (parent is a real IrFile) so two same-simple-name top-level funcs in DIFFERENT packages (a.foo/b.foo)
+ *  dispatch correctly; a CROSS-MODULE `decl` (parent = package fragment) omits it — bir2cir binds the true file class
+ *  off the ref.dll via its owner-null top-level resolver. `decl` is the callee function (or, for a top-level
+ *  extension property accessor, the property itself — its file class holds the static accessor). */
+internal fun BirEmitter.calleeOwnerTag(decl: org.jetbrains.kotlin.ir.declarations.IrDeclaration): String =
+	if (decl.parent is IrFile) ""","calleeOwner":${fqnJson(fileClassOf(decl))}""" else ""
 
 /** `,"super":true` on a `super.X()` callInstance (issue #14). kotc already forces `virtual:false` here
  *  (isVirtualInstanceCall), but that non-virtual intent is LOST when a CLR-binding pass in bir2cir reshapes the

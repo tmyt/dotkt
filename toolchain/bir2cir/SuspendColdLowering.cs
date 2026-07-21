@@ -49,7 +49,10 @@
 //
 // The whole analysis is GLOBAL across the compilation's files (ApplyAll): a same-assembly cross-file suspend
 // call keeps `owner:null` (kotc emits it identically to a same-file call) and the cold entry it names may
-// live in another file.
+// live in another file. #199 Design B: kotc's `calleeOwner` file-class DISPATCH hint rides through the cold
+// rewrite (DeepClone), and synthesized owner-null cold-entry calls (the `main` kickoff, the Task bridge) stamp
+// `calleeOwner = Tn(FileClass)` so ilemit dispatches `<name>$dotkt_suspend` in the correct same-simple-name
+// package's file class. It is advisory: owner stays null, so the owner-null recognition machinery is untouched.
 //
 // Runs AFTER MemberCallSubstitution and BEFORE BirTypeLowering. Active in app AND rt-stdlib builds; SKIPPED
 // only in the REF build (RefBuild — ref suspend fns stay metadata-only, the ref.dll carries the Suspend flag
@@ -2395,6 +2398,9 @@ static partial class SuspendColdLowering
                 {
                     ["k"] = "callStatic",
                     ["owner"] = callNode["owner"]?.DeepClone(),
+                    // #199 Design B: carry the callee-file-class DISPATCH hint on the rewritten owner-null cold call, so
+                    // ilemit dispatches `<method>$dotkt_suspend` to the correct same-simple-name package's file class.
+                    ["calleeOwner"] = callNode["calleeOwner"]?.DeepClone(),
                     ["method"] = method,
                     ["args"] = args,
                     ["ret"] = Tw(AnyTn),
@@ -2971,7 +2977,9 @@ static partial class SuspendColdLowering
                     ["k"] = "var", ["name"] = "__r", ["type"] = Tw(AnyTn),
                     ["init"] = new JsonObject
                     {
-                        ["k"] = "callStatic", ["owner"] = null, ["method"] = _coldName,
+                        // #199 Design B: the cold entry is a top-level static in THIS file class (owner:null); stamp the
+                        // file-class dispatch hint so ilemit resolves `main$dotkt_suspend` in the right same-name package.
+                        ["k"] = "callStatic", ["owner"] = null, ["calleeOwner"] = Tn(_fileClass), ["method"] = _coldName,
                         ["args"] = coldArgs, ["ret"] = Tw(AnyTn),
                     },
                 },
@@ -3249,6 +3257,9 @@ static partial class SuspendColdLowering
                 {
                     ["k"] = "callStatic",
                     ["owner"] = _staticMember && _ownerClass != null ? Tn(_ownerClass) : null,
+                    // #199 Design B: a top-level cold entry keeps owner:null and carries the file-class dispatch hint (a
+                    // static member already names its owner and needs none).
+                    ["calleeOwner"] = _staticMember && _ownerClass != null ? null : Tn(_fileClass),
                     ["method"] = _coldName,
                     ["args"] = args,
                     ["ret"] = Tw(AnyTn),
