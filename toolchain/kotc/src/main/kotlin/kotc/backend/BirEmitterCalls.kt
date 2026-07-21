@@ -1108,9 +1108,11 @@ internal fun BirEmitter.call(call: IrCall): String {
 			// C7: a TOP-LEVEL EXTENSION property (`val List<T>.lastIndex`, `val Int.absoluteValue`, `val
 			// CharSequence.indices`) has NO real static field — its value is an accessor emitted by the property's
 			// OWN bare Kotlin identity + a `"prop":"get"/"set"` marker (#78/#81) whose leading arg is the extension
-			// receiver. Route it EXACTLY like a top-level extension FUNCTION: owner=null, so bir2cir attributes it to
-			// the ref.dll file class in a cross-module app build (and a same-module sibling stays owner-less for
-			// ilemit's FindStatic). bir2cir shapes the .NET accessor from the stdlib binding metadata, falling back to
+			// receiver. Emit it `owner=null`, so bir2cir attributes it to the ref.dll file class in a cross-module app
+			// build (a same-module extension-property accessor then relies on ilemit's global FindStatic — unlike a
+			// same-module top-level FUNCTION call, which since #199 stamps its own file-class owner; a same-simple-name
+			// same-receiver extension PROPERTY across two packages is the residual accessor-side analogue of that bug,
+			// not yet closed here). bir2cir shapes the .NET accessor from the stdlib binding metadata, falling back to
 			// kotc's get_/set_<name> declaration convention when none exists. `sig` disambiguates a same-name overload
 			// by receiver type. A cross-module DESERIALIZED stub can spuriously report a backing field, so an
 			// extension property must NEVER fall to the static-field read below — that dropped the receiver and looked
@@ -1493,6 +1495,15 @@ internal fun BirEmitter.call(call: IrCall): String {
 	// (the kickoff/Task/await lowering is a deferred downstream layer). kotc bakes no coroutine ABI here.
 	val effRet = birType(call.type)
 	val recv = dispatchReceiver(call)
+	// #199: a SAME-MODULE top-level function call stamps its DEFINING file-class as the callStatic owner (mirrors the
+	// top-level PROPERTY-accessor precedent above, `accessorOwner`), so ilemit's owner-ful FindMethod dispatches to
+	// THIS package's `foo` rather than the global first-match FindStatic — two same-simple-name top-level funcs in
+	// DIFFERENT packages both emit `owner:null method:foo` otherwise, and FindStatic picks whichever file class the
+	// enumeration hits first (a.foo() ran b.foo()'s body). A CROSS-MODULE callee (its parent is a package fragment,
+	// not an IrFile) stays `owner:null` — bir2cir binds its true file class off the ref.dll (its owner-null top-level
+	// resolver). Applies to suspend and non-suspend calls, and to a same-module top-level EXTENSION fn (whose file
+	// class holds the static `f(__self, …)`). `sig` still rides for overload disambiguation within that file class.
+	val topLevelOwner = if (callee.parent is IrFile) fqnJson(fileClassOf(callee)) else "null"
 	// An extension function: the receiver is the `__self` first arg. TOP-LEVEL `fun T.f()` -> static `f(self,args)`.
 	// MEMBER `class C { fun T.f() }` has BOTH receivers -> instance method on the enclosing C (dispatch receiver),
 	// with the extension receiver as the first arg (mirrors the JVM `C.f(T $receiver)` shape).
@@ -1504,7 +1515,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 			val virtual = isVirtualInstanceCall(call, callee)
 			return """{"k":"callInstance","ownerType":${ownerStr.toJson()},"virtual":$virtual,"recv":${expr(recv)},"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty() || (ownerStr as? TypeNode.Fqn)?.args != null, effRet)},"args":[$all]${suspendCallTag(callee)}${superTag(call)}}"""
 		}
-		return """{"k":"callStatic","owner":null,"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$all]${suspendCallTag(callee)}}"""
+		return """{"k":"callStatic","owner":$topLevelOwner,"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$all]${suspendCallTag(callee)}}"""
 	}
 	// Instance method on a user class, or a sibling top-level call.
 	return if (recv != null) {
@@ -1524,7 +1535,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// still throw. See ilemit EmitDynamicCall.
 		val dynRet = ""","dynRet":${birType(call.type).toJson()}"""
 		"""{"k":"callInstance","ownerType":${ownerStr.toJson()},"virtual":$virtual,"recv":${recvExpr(recv, ownerStr, declaringClass?.defaultType)},"method":${str(mname)}${overloadSigField(callee)}$ta$dynRet${retHintStr(ta.isNotEmpty() || (ownerStr as? TypeNode.Fqn)?.args != null, effRet)},"args":[$args]${suspendCallTag(callee)}${overridesJson(callee)}$anySlotTag${superTag(call)}}"""
-	} else """{"k":"callStatic","owner":null,"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$args]${suspendCallTag(callee)}}"""
+	} else """{"k":"callStatic","owner":$topLevelOwner,"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$args]${suspendCallTag(callee)}}"""
 }
 
 /**
