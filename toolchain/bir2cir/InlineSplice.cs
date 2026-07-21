@@ -35,6 +35,7 @@ static class InlineSplice
     static int _nextLabelId;                    // per-file fresh cfg label id (set at Apply entry)
     static ReferenceMetadataIndex _refs;
     static JsonArray _hoist;                    // #34: lifted default-lambda methods re-hoisted from a `defaultCarrier`
+    static JsonNode _fileClassOwner;            // #204: owner of any default-carrier delegate re-hoisted into this file
     static HashSet<string> _appLocalMethods;   // #43/#63: file-class method names a `newDelegate` can `ldftn` — MODULE-WIDE (every input file's file-class methods, seeded from Program.cs) + every drained re-hoist (a PENDING re-hoist is checked live via `_hoist`). Provenance oracle for the §4.4ii materialization-side newDelegate guard, the materialization-side counterpart of the §4.6 `!sameModule` payload-side guard in RewriteGeneric.
     // §4.4ii ref-cell write-through: a MATERIALIZED carrier that WRITES a captured enclosing `var` (a bare `setLocal` to a
     // capture kotc did NOT ref-cell-box — a cross-module inline body's callee-local, etc.) must promote that var to a shared
@@ -47,10 +48,11 @@ static class InlineSplice
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs, IReadOnlyCollection<string> moduleWideAppLocalMethods)
     {
         _refs = refs;
+        _fileClassOwner = root is JsonObject ro && Str(ro["fileClass"]) is string fc ? TypeJson.Fqn(fc) : null;
         _nextLabelId = MaxLabelId(root) + 1;
         _hoist = new JsonArray();
-        // #63 (F4): SEED module-wide (every input file's file-class methods), NOT just this file's — ilemit FindStatic
-        // resolves a `newDelegate` target by bare name against ALL IsFileClass types module-wide, and the inline stash
+        // #63 (F4): SEED module-wide (every input file's file-class methods), NOT just this file's — delegate targets
+        // can live in any module file class, and the inline stash
         // spans all files, so a carrier materializing a SIBLING file's lifted `__lambdaN` IS app-local. Copy into a fresh
         // per-file set so drained #34 re-hoists (added below) never leak across files.
         _appLocalMethods = new HashSet<string>(moduleWideAppLocalMethods, StringComparer.Ordinal);
@@ -98,7 +100,7 @@ static class InlineSplice
     }
 
     // #43/#63: the FILE-CLASS method names a `newDelegate` target `ldftn`-resolves against — collected MODULE-WIDE across
-    // EVERY input file (ilemit's FindStatic binds a delegate method by bare name against ALL `IsFileClass` types in the
+    // EVERY input file (delegate targets may belong to any `IsFileClass` type in the
     // module, and the inline stash spans all files, so a materialized carrier splicing a SIBLING file's lifted `__lambdaN`
     // is app-local too — #63/F4). Nested-TYPE member methods are deliberately excluded — a bare-name match there would
     // ACCEPT here then fail loud in ilemit's ldftn, so keeping the set exactly ilemit's file-class universe fails such a
@@ -374,7 +376,7 @@ static class InlineSplice
                     // a `defaultCarrier`, re-hoisting its lifted `__lambdaN` into this file via `_hoist`), then bind its
                     // `{defaultArgParam idx}` / `{this}` tokens to the ALREADY-bound earlier-param temps (Kotlin defaults
                     // reference only earlier params) — the shared DefaultArgSplice machinery.
-                    var raw = DefaultArgSplice.MaterializeDefault(carrierBir, _hoist, _refs, name, i);
+                    var raw = DefaultArgSplice.MaterializeDefault(carrierBir, _hoist, _refs, name, i, _fileClassOwner);
                     if (raw == null) { FailLoud(o, owner, name, pc, ga, $"param '{pn}' default carrier BIR is unparseable"); return; }
                     var recvForTokens = defaultThisRecv ?? (ext ? boundArgs.ElementAtOrDefault(0) : null);
                     argNode = DefaultArgSplice.SubstituteTokens(raw, recvForTokens, boundArgs);
@@ -2496,9 +2498,8 @@ static class InlineSplice
     // target name is a declared file-class method ANYWHERE in the module (`_appLocalMethods` is seeded module-wide, #63/F4)
     // OR a PENDING #34 re-hoist still in `_hoist` (a nested member-inline default fill mints it during the SAME pass,
     // BEFORE the outer §4.4ii materialization sees it — the #43 seam). The materialization-side counterpart of the §4.6
-    // `!sameModule` payload-side guard; this now matches ilemit FindStatic's module-wide file-class ldftn universe exactly
-    // (a cross-module dangling token still fails loud). NOTE: a bare-name cross-file collision inherits ilemit's pre-existing
-    // sig-less first-file-class-match ambiguity — durable fix is provenance-by-signature (Set B, #46).
+    // `!sameModule` payload-side guard. A cross-module dangling token still fails loud; the surviving node carries its
+    // exact calleeOwner, so ilemit never needs a module-wide name match (#204).
     static bool IsAppLocalDelegate(JsonObject nd)
     {
         if (Str(nd["method"]) is not string m) return false;

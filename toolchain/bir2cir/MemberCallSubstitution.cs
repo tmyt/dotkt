@@ -65,7 +65,13 @@ static class MemberCallSubstitution
         };
         if (field != null && TypeJson.Read(o[field]) is TypeNode.Fqn owner
             && UnsignedArraySignedOwner.TryGetValue(owner.Name, out var signed))
-            o[field] = TypeJson.Write(owner.Args != null ? new TypeNode.Fqn(signed, owner.Args) : new TypeNode.Fqn(signed));
+        {
+            var rewritten = TypeJson.Write(owner.Args != null ? new TypeNode.Fqn(signed, owner.Args) : new TypeNode.Fqn(signed));
+            o[field] = rewritten;
+            // Keep #204's bound-delegate dispatch identity in lockstep with the exact member owner.
+            if ((o["k"] as JsonValue)?.GetValue<string>() == "newBoundDelegate")
+                o["calleeOwner"] = rewritten.DeepClone();
+        }
         return node;
     }
 
@@ -1639,4 +1645,3 @@ static class MemberCallSubstitution
         return result;
     }
 }
-

@@ -785,18 +785,17 @@ sealed partial class Emitter
         return match;
     }
 
-    MethodBuilder FindStatic(string name, DotKt.Bir.TypeNode[] sig = null)
+    // Resolve an owner-less static call/delegate target ONLY through its producer-carried file-class identity.
+    // A missing/misspelled hint is a malformed CIR contract: never fall back to a module-wide first name match,
+    // which can silently bind a same-simple-name top-level function from another file/package (#204).
+    MethodInfo FindCalleeOwnedStatic(JsonElement node, string kind, string name, DotKt.Bir.TypeNode[] sig = null)
     {
-        if (sig != null)
-            foreach (var ti in _types.Values)
-                if (ti.IsFileClass && ti.MethodsBySig.TryGetValue(SigKey(name, sig), out var ms)) return ms;
-        // exact-sig miss with a generic target -> the unique generic overload (its instantiated call sig won't match).
-        if (sig != null)
-            foreach (var ti in _types.Values)
-                if (ti.IsFileClass && UniqueGenericOverload(ti, name) is { } gm) return gm;
-        foreach (var ti in _types.Values)
-            if (ti.IsFileClass && ti.Methods.TryGetValue(name, out var mb)) return mb;
-        throw new NotSupportedException("static method not found: " + name);
+        if (!node.TryGetProperty("calleeOwner", out var ownerNode)
+            || ownerNode.ValueKind == JsonValueKind.Null
+            || SlotName(ownerNode) is not string owner || owner.Length == 0)
+            throw new NotSupportedException($"{kind} target '{name}' is missing required calleeOwner");
+        return FindMethod(owner, name, sig)
+            ?? throw new NotSupportedException($"{kind} target '{owner}.{name}' was not found through calleeOwner");
     }
 
     // The `(object, IntPtr)` delegate constructor. For a delegate type instantiated with a user TypeBuilder

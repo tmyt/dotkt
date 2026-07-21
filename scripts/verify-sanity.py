@@ -11,14 +11,14 @@
 #
 # Keep IN SYNC with toolchain/bir-common/IrSanity.cs (the C# is normative; this is the corpus net).
 # DELIBERATELY CONSERVATIVE: every check is calibrated to NEVER false-positive on a valid input (the
-# verify-il corpus + the 250-file stdlib rt build). Two invariants are intentionally NOT checked
-# (callStatic owner-presence; call/new args-vs-argTypes arity) — both legitimately vary in valid CIR.
+# verify-il corpus + the 250-file stdlib rt build). Call/new args-vs-argTypes arity is intentionally NOT checked:
+# callers may legitimately omit trailing default args.
 #
 # The check set (per method / ctor / static-field-initializer scope):
 #   1. LOCAL RESOLUTION  — local/setLocal/byref{Load,Store} name a var/param declared in scope.
 #   2. CFG TARGETS       — goto/brIf id has a matching `label`; no `label` id declared twice in one body.
 #   3. STRUCTURAL        — binOp has lhs+rhs; cond has cond+then+else.
-#   4. OWNER PRESENCE    — field/staticField/setField/setFieldExpr/lateinitGet carry non-null ownerType.
+#   4. OWNER PRESENCE    — fields carry ownerType; owner:null callStatic/newDelegate/newBoundDelegate carry calleeOwner.
 #   5. `for` cmp in {<=, <, >=}.
 import json, sys, glob, os
 
@@ -111,6 +111,12 @@ class Sanity:
             elif k in ("field", "staticField", "setField", "setFieldExpr", "lateinitGet"):
                 if o.get("ownerType") is None:
                     self.err(_f, _dl, f"'{k}' is missing a non-null 'ownerType'")
+            elif k == "callStatic":
+                if "owner" in o and o.get("owner") is None and o.get("calleeOwner") is None:
+                    self.err(_f, _dl, "'callStatic' with owner:null is missing required 'calleeOwner'")
+            elif k in ("newDelegate", "newBoundDelegate"):
+                if o.get("calleeOwner") is None:
+                    self.err(_f, _dl, f"'{k}' is missing required 'calleeOwner'")
             elif k == "for":
                 cmp = o.get("cmp")
                 if isinstance(cmp, str) and cmp not in ("<=", "<", ">="):

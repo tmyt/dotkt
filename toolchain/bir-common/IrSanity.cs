@@ -11,8 +11,6 @@
 // DELIBERATELY CONSERVATIVE: every check is calibrated to NEVER false-positive on a valid input — the verify-il gate
 // + the stdlib rt build (250+ files) are the calibration corpus. An ambiguous shape is left UNCHECKED rather than
 // risk a false reject. Two invariants were DROPPED for exactly that reason:
-//   - callStatic owner-presence: callStatic's owner is OPTIONAL (absent = a file-class sibling call), so requiring
-//     it would false-reject every top-level-function call. (field/staticField/setField owners ARE mandatory.)
 //   - call/`new` args-vs-argTypes arity: a caller may legitimately omit trailing DEFAULT args (args < argTypes),
 //     and EmitNewArgs already tolerates the mismatch, so an equality check would false-reject valid CIR.
 //
@@ -21,7 +19,7 @@
 //   2. CFG TARGETS — every `goto`/`brIf` id has a matching `label` node in the body, and no `label` id is declared
 //      twice in one body.
 //   3. STRUCTURAL — `binOp` has both `lhs`+`rhs`; `cond` has `cond`+`then`+`else`.
-//   4. OWNER PRESENCE — field/staticField/setField/setFieldExpr/lateinitGet carry a non-null `ownerType`.
+//   4. OWNER PRESENCE — fields carry ownerType; owner:null callStatic/newDelegate/newBoundDelegate carry calleeOwner.
 //   5. `for` `cmp` ∈ {<=, <, >=} — an unknown cmp silently miscompiles to an infinite loop.
 //
 // SCOPE units mirror ilemit's `_locals`/`_cfgLabels` lifetimes exactly: a method = params ∪ body; a ctor ALSO folds
@@ -221,6 +219,16 @@ public static class IrSanity
                     case "lateinitGet":
                         if (!HasNonNull(node, "ownerType"))
                             throw new IrSanityException(decl, $"'{kEl.GetString()}' is missing a non-null 'ownerType'");
+                        break;
+                    case "callStatic":
+                        if (node.TryGetProperty("owner", out var callOwner) && callOwner.ValueKind == JsonValueKind.Null
+                            && !HasNonNull(node, "calleeOwner"))
+                            throw new IrSanityException(decl, "'callStatic' with owner:null is missing required 'calleeOwner'");
+                        break;
+                    case "newDelegate":
+                    case "newBoundDelegate":
+                        if (!HasNonNull(node, "calleeOwner"))
+                            throw new IrSanityException(decl, $"'{kEl.GetString()}' is missing required 'calleeOwner'");
                         break;
                     case "for":
                         if (node.TryGetProperty("cmp", out var cmpEl) && cmpEl.ValueKind == JsonValueKind.String)

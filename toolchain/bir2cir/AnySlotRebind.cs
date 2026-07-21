@@ -122,6 +122,9 @@ static class AnySlotRebind
             // token the frontend emits for `(p as Any)::hashCode` (verified to compile), so the standard substitution
             // binds System.Object::GetHashCode and ilemit `ldvirtftn`s the runtime slot with the unchanged `virtual`.
             obj["ownerType"] = TypeJson.Fqn("kotlin.Any");
+            // #204: newBoundDelegate's mandatory dispatch identity must track every owner retarget. Leaving the
+            // frontend class here while ownerType moves to Any/System.Object makes the two axes disagree at ilemit.
+            if (k == "newBoundDelegate") obj["calleeOwner"] = TypeJson.Fqn("kotlin.Any");
             return;
         }
 
