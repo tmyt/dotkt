@@ -6,7 +6,9 @@
 # ilemit, the same single path every other gate uses. Runs the app, checks the synthesized delegate types
 # exist in the dll, and that
 # facadegen restores the wide type as a Kotlin function type. Exits nonzero on any failure.
-source "$(dirname "$0")/lib.sh"
+ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+SCRIPT_NAME=wide-delegate-tests
+source "$ROOT/scripts/lib.sh"
 
 usage() { cat <<EOF
 usage: $SCRIPT_NAME

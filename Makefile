@@ -1,14 +1,14 @@
 # kotlin/clr — unified build interface.
 #
-# A THIN ORCHESTRATOR over the canonical scripts (scripts/*.sh stay the single source of truth for
-# each stage's env gates / flags; this file only sequences them and adds incremental file targets).
+# A THIN ORCHESTRATOR over build helpers in scripts/ and test suites in tests/. This file only sequences
+# them and adds incremental file targets.
 # The artifact DAG:
 #
 #   kotc ──┬────────────────────────────────► stdlib-klib (frontend KLIB, kotc -classpath)
 #          ├─ ilemit/bir2cir/facadegen/retarget
 #          └────────────► stdlib-ref ──► stdlib-rt ──► pack (5 NuGet packages -> build/nuget-feed)
 #
-# Output paths are LOAD-BEARING (dotkt.sh, verify-*.sh, cases/KotlinClr.targets hard-reference
+# Output paths are LOAD-BEARING (dotkt.sh, test runners, and eng/KotlinClr.targets hard-reference
 # build/<tool>-bin, build/clr-stdlib*/dll, build/clr-stdlib-frontend-klib) — do not rename them here.
 #
 #   make help          # this listing (the default goal)
@@ -39,8 +39,8 @@ tool_src    = $(shell find toolchain/$(1) toolchain/bir-common -name '*.cs' -o -
 # Aggregate targets
 # ==================================================================================================
 .PHONY: all toolchain kotc $(TOOLS) stdlib stdlib-klib stdlib-ref stdlib-rt pack \
-        verify verify-core verify-tests verify-schema verify-sanity verify-ktproj verify-packaged-sdk \
-        verify-roundtrip verify-differential verify-widedelegates \
+        verify verify-core verify-tests verify-schema verify-sanity verify-msbuild verify-packaged-sdk \
+        verify-roundtrip verify-wide-delegates \
         dev facades clean clean-tools clean-stdlib clean-pack help
 
 all: pack ## one-shot: toolchain -> stdlib -> the 5 NuGet packages in build/nuget-feed
@@ -94,40 +94,35 @@ pack: toolchain stdlib ## the 5 NuGet packages (Sdk/Sdk.Mpp/Toolchain/Stdlib/Tem
 	bash scripts/pack-nuget.sh
 
 # ==================================================================================================
-# Verification gates (the scripts are called VERBATIM; behavior is identical to invoking them)
+# Verification gates (test suite entry points live beside their tests under tests/)
 # ==================================================================================================
 verify: verify-core verify-packaged-sdk ## run ALL gates (the canonical set + the packaged-SDK release gate)
 
 # The canonical gate set EXCEPT the packaged-SDK gate. CI runs verify-core in the main job and
 # verify-packaged-sdk as a DISTINCT release-blocking job (GitHub #160), so the split lives here — not
 # copied into the workflow YAML. `make verify` still runs the complete set (verify-core + packaged-sdk).
-# verify-differential remains available as a focused harness check, but its former case corpus is now represented by
-# value assertions in tests/basic; with no standalone PURE samples it is not part of the canonical aggregate.
-verify-core: verify-tests verify-schema verify-sanity verify-ktproj verify-roundtrip verify-widedelegates ## every gate except the packaged-SDK release gate
+verify-core: verify-tests verify-schema verify-sanity verify-msbuild verify-roundtrip verify-wide-delegates ## every gate except the packaged-SDK release gate
 
-verify-tests: ## canonical compiler behavior gate (categorized NUnit suites + ILVerify)
-	bash scripts/verify-compiler-tests.sh
+verify-tests: pack ## canonical compiler behavior gate (categorized NUnit suites + ILVerify)
+	bash tests/run-nunit-tests.sh
 
 verify-schema: ## the #37 BIR/CIR freeze enforcer (types-are-nodes + canonical k over fresh BIR/CIR); run AFTER verify-tests
-	bash scripts/verify-schema.sh
+	bash tests/ir/run-schema.sh
 
 verify-sanity: ## the offline IR-sanity gate (#112 P4 — semantic invariants over fresh BIR/CIR); run AFTER verify-tests
-	bash scripts/verify-sanity.sh
+	bash tests/ir/run-sanity.sh
 
-verify-ktproj: ## MSBuild / .ktproj end-to-end
-	bash scripts/verify-ktproj.sh
+verify-msbuild: ## stateful MSBuild integration (same obj/ across source mutation)
+	bash tests/msbuild/run.sh
 
 verify-packaged-sdk: ## packaged nupkg-resolution gate (DotKt.Sdk/.Mpp + implicit Toolchain/Stdlib from a feed)
-	bash scripts/verify-packaged-sdk.sh
+	bash tests/packaged-sdk/run.sh
 
 verify-roundtrip: ## Kotlin<->CLR round-trip (consume a DotKt dll as Kotlin)
-	bash scripts/verify-roundtrip.sh
+	bash tests/roundtrip/scenarios/run.sh
 
-verify-differential: ## direct-IL differential vs the kotlin/jvm oracle
-	bash scripts/verify-differential.sh
-
-verify-widedelegates: ## >16-arg function types (KFunc/KAction synthesis)
-	bash scripts/verify-wide-delegates.sh
+verify-wide-delegates: ## >16-arg function types (KFunc/KAction synthesis)
+	bash tests/special/wide-delegates/run.sh
 
 # ==================================================================================================
 # Dev conveniences

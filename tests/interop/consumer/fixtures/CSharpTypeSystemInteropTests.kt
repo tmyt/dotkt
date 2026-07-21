@@ -5,7 +5,7 @@
 // capture it). Each C# runtime.cs was given its OWN namespace so the colliding simple names (Item/Bag) coexist.
 //
 // First migrated batch (6 `cases/il-*` runtime.cs-inject cases -> 6 @TestAttribute methods; golden values from
-// scripts/verify-compiler-tests.sh preserved 1:1 as `// <expected>` trailing comments, per design D1 value asserts):
+// the former per-case compiler runner preserved 1:1 as `// <expected>` trailing comments, per design D1 value asserts):
 //   clrasm   <- il-clrasm    List<Item> assignable to every generic interface (IEnumerable/ICollection/IList)
 //   clriface <- il-clriface  a property typed as a generic INTERFACE (IList<Item>); .Add via inherited ICollection<T>
 //   clrimpl  <- il-clrimpl   a C# class implementing a C# interface is assignable to the interface-typed param

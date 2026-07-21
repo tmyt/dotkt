@@ -18,6 +18,6 @@
 
   <!-- Build with the IN-REPO toolchain (not a published DotKt.Sdk package): the stdlib is a first-party repo
        component, and using the published SDK would be circular + fight the NuGet same-version cache. -->
-  <Import Project="../../cases/KotlinClr.targets" />
+  <Import Project="../../eng/KotlinClr.targets" />
 
 </Project>

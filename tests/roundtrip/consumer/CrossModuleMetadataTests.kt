@@ -1,4 +1,4 @@
-// Migrated ktproj-* MSBuild-E2E battery (was scripts/verify-ktproj.sh `kt <name> …` blocks): each cross-module
+// Migrated ktproj-* MSBuild-E2E battery (was the former MSBuild runner `kt <name> …` blocks): each cross-module
 // .ktproj graph became a producer (package-separated in ../producer, or ../producer-mpp for the MPP cases) consumed
 // here via <ProjectReference> as its BUILT dll (facadegen re-import, NOT source — the DLL-not-source invariant,
 // design §3), asserting the same golden 1:1 as ClassicAssert value asserts (`// <expected>` trailing comments).

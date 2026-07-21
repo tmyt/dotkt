@@ -1,7 +1,7 @@
 <!-- In-repo DEV entry for the kt -> BIR -> CIL build. The shipping SDK and this file share ONE pipeline,
      packaging/DotKt.Toolchain/build/DotKt.Toolchain.targets; this file just (1) points the $(DotKt*) tool vars at the in-repo
      source builds, (2) bootstraps those tools the first time (the shipping SDK gets them from NuGet instead), and
-     (3) sets the project hygiene the SDK's Sdk.props sets. Sample .ktproj import this via <Import .../KotlinClr.targets>. -->
+     (3) sets the project hygiene the SDK's Sdk.props sets. In-repo .ktproj files import this explicitly. -->
 <Project>
 
   <PropertyGroup>
@@ -15,7 +15,7 @@
     <DotKtBir2Cir Condition="'$(DotKtBir2Cir)' == ''">$(KotlinClrRoot)/build/bir2cir-bin/bir2cir.dll</DotKtBir2Cir>
     <DotKtIlEmit Condition="'$(DotKtIlEmit)' == ''">$(KotlinClrRoot)/build/ilemit-bin/ilemit.dll</DotKtIlEmit>
     <DotKtRetargetTool Condition="'$(DotKtRetargetTool)' == ''">$(KotlinClrRoot)/build/retarget-bin/retarget.dll</DotKtRetargetTool>
-    <!-- The CLR stdlib (canonical build under runtime/stdlib/, mirrors scripts/verify-il.sh + dotkt.sh): the RUNTIME
+    <!-- The CLR stdlib (canonical build, mirrors the NUnit runner + dotkt.sh): the RUNTIME
          assembly (real Kotlin bodies) is copy-local and ilemit's runtime ref; the @Clr-metadata REFERENCE assembly
          feeds bir2cir's @ClrTypeAlias/@ClrIntrinsic substitution (added as a non-copy Reference below, handed to
          bir2cir by the shared DotKtBir2Cir target). The OLD build/dotkt-stdlib (build-dotkt-stdlib.sh) is retired. -->

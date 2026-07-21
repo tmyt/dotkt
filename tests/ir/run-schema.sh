@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# verify-schema.sh — the #37 BIR/CIR freeze ENFORCER gate.
+# run-schema.sh — the #37 BIR/CIR freeze ENFORCER test corpus.
 #
 # Runs the structural validator (scripts/verify-schema.py, normative schema docs/bir-cir.schema.json,
 # spec docs/bir-cir-spec.md §5/§7) over the FRESHLY-emitted BIR + CIR and reddens on any drift:
@@ -17,7 +17,7 @@
 # AFTER verify-tests (which re-emits the test BIR/CIR); `make stdlib` refreshes the stdlib corpus. A stale tree
 # with a retired spelling will (correctly) red — that IS drift.
 set -u
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1
 PY="${PYTHON:-python3}"
 
@@ -31,7 +31,7 @@ for d in build/bir-*; do [ -d "$d" ] && globs+=("$d/*.bir.json"); done
 for d in build/cir-*; do [ -d "$d" ] && globs+=("$d/*.cir.json"); done
 
 if [ ${#globs[@]} -eq 0 ]; then
-  echo "SCHEMA GATE: no emitted BIR/CIR found — run 'make stdlib' and/or ./scripts/verify-compiler-tests.sh first" >&2
+  echo "SCHEMA GATE: no emitted BIR/CIR found — run 'make stdlib' and/or 'make verify-tests' first" >&2
   exit 2
 fi
 

@@ -4,7 +4,7 @@
      this project's `**/*.kt` glob cannot capture it (the DLL-not-source invariant, design §3).
 
      This single NUnit project replaces the hand-rolled compile-then-consume orchestration of
-     scripts/verify-roundtrip.sh: the MSBuild build graph already does the "build producer dll -> put it on the
+     tests/roundtrip/scenarios/run.sh: the MSBuild build graph already does the "build producer dll -> put it on the
      consumer's ReferencePath" step, and `dotnet test` discovers the @TestAttribute methods and runs them
      in-process. Each method migrates ONE verify-roundtrip.sh section, preserving its golden values 1:1 as
      ClassicAssert value asserts (design D1). Resolves the LOCALLY-BUILT SDK from build/nuget-feed via

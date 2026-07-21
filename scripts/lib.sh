@@ -1,6 +1,6 @@
-# scripts/lib.sh — shared conventions for every script in scripts/. Source it, never execute it:
+# scripts/lib.sh — shared conventions for build helpers and shell-based test suites. Source it, never execute it:
 #
-#   source "$(dirname "$0")/lib.sh"
+#   source "$ROOT/scripts/lib.sh"
 #
 # Provides, in order: strict mode (set -euo pipefail — a script that must tolerate a failing
 # command, e.g. kotc exiting nonzero while the script reports error counts, adds an explicit

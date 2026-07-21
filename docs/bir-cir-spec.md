@@ -333,7 +333,7 @@ not a valid `Type` node, or an unknown `version` reddens a gate. Round-trip: dec
 inline body, assert it re-encodes identically.
 
 ## 7. The validator — LANDED (#37 m6, the freeze ENFORCER)
-`scripts/verify-schema.py` (gate wrapper `scripts/verify-schema.sh`, Makefile target `verify-schema`) is the
+`scripts/verify-schema.py` (corpus runner `tests/ir/run-schema.sh`, Makefile target `verify-schema`) is the
 structural enforcer for this contract. Because `Type` is drift-proof by construction but node FIELD names are
 NOT (§2.5 — there is no single shared node model), the validator is node-format's ONLY safety net: it walks the
 freshly-emitted BIR + CIR and reddens the gate on any drift.

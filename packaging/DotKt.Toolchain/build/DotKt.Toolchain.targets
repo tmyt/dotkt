@@ -1,7 +1,7 @@
 <!-- DotKt build pipeline (kt -> BIR -> CIL) — the SINGLE source of truth, shipped WITH the toolchain that it
      drives. NuGet auto-imports this (build/<PackageId>.targets) for any project referencing DotKt.Toolchain,
      so the DotKt.Sdk just references the toolchain and the pipeline comes along. The in-repo dev entry
-     (cases/KotlinClr.targets) imports it explicitly. Tool paths come from DotKt.Toolchain.props ($(DotKt*)). -->
+     (eng/KotlinClr.targets) imports it explicitly. Tool paths come from DotKt.Toolchain.props ($(DotKt*)). -->
 <Project>
   <PropertyGroup>
     <DotKtOut>$(BaseIntermediateOutputPath)dotkt-bir</DotKtOut>
@@ -119,7 +119,7 @@
   <Target Name="DotKtComputeCompileOptions" Condition="'@(KotlinCompile)' != ''">
     <!-- MPP (#119): when common sources are present, mark them with -Xcommon-sources and enable the common→platform
          module split (-Xmulti-platform) + cross-module expect/actual (-Xexpect-actual-classes) — the exact
-         invocation the cases/ktproj-mpp gate (verify-ktproj) exercises. All sources still pass POSITIONALLY (in @(KotlinCompile));
+         invocation the MPP NUnit producer exercises. All sources still pass POSITIONALLY (in @(KotlinCompile));
          -Xcommon-sources only tags which of them are common. Empty DotKtCommon => empty flags => unchanged compile. -->
     <PropertyGroup Condition="'@(DotKtCommon)' != ''">
       <DotKtMppFlags>-Xmulti-platform -Xexpect-actual-classes -Xcommon-sources=&quot;@(DotKtCommon->'%(FullPath)', ',')&quot;</DotKtMppFlags>

@@ -5,7 +5,7 @@
 // restores the supertype as `kotlin.Comparable<C>` (so `sorted()`'s constraint is satisfied); bir2cir
 // NetInteropBinding rebinds compareTo->CompareTo on the facadegen-injected owner so the calls run cross-module.
 // (The facadegen-SURFACE assertion `roundtrip-comparable-meta` inspects the generated metadata JSON directly and
-//  stays in scripts/verify-roundtrip.sh — it has no in-process analog.)
+//  stays in tests/roundtrip/scenarios/run.sh — it has no in-process analog.)
 package roundtrip.cmp
 
 class Ver(val n: Int) : Comparable<Ver> {

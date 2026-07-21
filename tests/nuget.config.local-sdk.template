@@ -7,7 +7,7 @@
      (<Project Sdk="DotKt.Sdk/<local-version>">, or a central global.json msbuild-sdks entry), and let the gate
      RECREATE the isolated globalPackagesFolder each run (NuGet prefers an existing exact-version package in a
      persistent cache — never overwrite the same version there; recreate the cache or stamp a unique prerelease
-     version across all DotKt packages). This mirrors scripts/verify-packaged-sdk.sh. Use the NuGet SDK
+     version across all DotKt packages). This mirrors tests/packaged-sdk/run.sh. Use the NuGet SDK
      resolver, NOT MSBuildSDKsPath (which bypasses the packaged resolution path we want to exercise). -->
 <configuration>
   <config>

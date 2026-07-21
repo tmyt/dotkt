@@ -3,10 +3,10 @@
 # Gate wiring lives in the Makefile, NOT here — this workflow invokes the aggregate targets so the
 # canonical gate LIST is single-sourced (adding a gate to `make verify-core` / `make verify` reaches CI
 # with no YAML edit). The targets:
-#   make verify-core       : the canonical set — verify-il (+ilverify), verify-schema, verify-sanity,
-#                            verify-ktproj, verify-roundtrip, verify-differential, verify-widedelegates.
+#   make verify-core       : NUnit (+ ILVerify), emitted-IR validation, stateful MSBuild, irreducible
+#                            round-trip scenarios, and wide-delegate synthesis.
 #   make verify-packaged-sdk : the ONLY gate that restores + consumes the 5 real .nupkgs from a feed
-#                            (exe / library / mpp packaged projects). Two prior releases shipped broken
+#                            (exe / library / mpp / CLI-template / MPP-template scenarios). Two releases shipped broken
 #                            on packaging-only defects this gate catches — so it is a DISTINCT,
 #                            release-blocking job here, not folded into the big job (GitHub #160).
 #
@@ -18,8 +18,8 @@
 #                             restore, a packaged .ktproj build/run, reverse C# interop, `dotnet new`
 #                             template creation. WPF/WinUI windowing samples (Windows-only) belong here.
 #
-# Green semantics: verify-il / verify-roundtrip / verify-packaged-sdk carry explicit XFAIL baselines
-# (XFAIL_RUN / XFAIL_ILVERIFY / RT_XFAIL / XFAIL_PKG in the scripts) — they exit 0 iff every fail is a
+# Green semantics: ILVerify / round-trip / packaged-SDK carry explicit XFAIL baselines
+# (ILVERIFY_XFAIL / RT_XFAIL / XFAIL_PKG in their test runners) — they exit 0 iff every fail is a
 # listed, reasoned expected-fail and exit 1 on any NEW fail name. A red run is a real regression.
 name: verify
 
@@ -33,6 +33,7 @@ jobs:
   # ---- the canonical functional gate set (Linux) --------------------------------------------------
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -71,6 +72,7 @@ jobs:
   # ---- the packaged-nupkg release gate (Linux), distinct + release-blocking (GitHub #160) ---------
   packaged-sdk:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -93,15 +95,16 @@ jobs:
             ~/.gradle/wrapper
           key: gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
 
-      # Packs the 5 nupkgs fresh from source and drives exe / library / mpp projects that resolve them
+      # Packs the 5 nupkgs fresh from source and drives exe / library / mpp / template scenarios that resolve them
       # from a local feed only (isolated globalPackagesFolder — no cache masking). Exit 0 iff no fail
-      # name is outside the XFAIL_PKG baseline in scripts/verify-packaged-sdk.sh.
+      # name is outside the XFAIL_PKG baseline in tests/packaged-sdk/run.sh.
       - name: make verify-packaged-sdk (packaged nupkg resolution)
         run: make verify-packaged-sdk
 
   # ---- the Windows story the Linux jobs cannot cover (GitHub #160) --------------------------------
   windows:
     runs-on: windows-latest
+    timeout-minutes: 45
     defaults:
       run:
         shell: bash
@@ -143,8 +146,8 @@ jobs:
         run: make verify-packaged-sdk
 
       # MSBuild / .ktproj end-to-end incl. bidirectional C# <ProjectReference> (reverse interop).
-      - name: make verify-ktproj (Windows MSBuild integration)
-        run: make verify-ktproj
+      - name: make verify-msbuild (Windows stateful MSBuild integration)
+        run: make verify-msbuild
 
       # `dotnet new` template creation from the freshly-packed feed: install, scaffold, build, run.
       - name: dotnet new template creation

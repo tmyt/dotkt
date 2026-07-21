@@ -3,7 +3,7 @@
      consumed AS A FAÇADE-FREE .NET LIBRARY by ../consumer through a <ProjectReference>: MSBuild builds this csproj
      first, its implementation dll lands on the consumer's @(ReferencePath)+@(ReferenceCopyLocalPaths), and the
      DotKt pipeline's facadegen (`import <Ns>.<Type>` scan) / bir2cir / ilemit all resolve against it — mechanically
-     identical to scripts/verify-compiler-tests.sh's il_check_inject building runtime.cs to a dll and passing it as both a
+     identical to the former per-case compiler runner's il_check_inject building runtime.cs to a dll and passing it as both a
      compile-ref and a runtime reference (docs/nunit-migration-playbook.md §3).
 
      Each .cs here is one migrated case's runtime, given its OWN namespace so the many colliding simple names

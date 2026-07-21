@@ -23,7 +23,7 @@
 //   comparableClass             <- roundtrip-comparable      (#179)  class C : Comparable<C> </>/<=/>=/sorted()
 //   ubyteFidelity               <- roundtrip-ubyte                  UByte/UByteArray strict-mapping fidelity
 //   toplevelValVar              <- roundtrip-toplevel-val   (#195)  bare top-level val/var -> plain static FIELD (no accessor) resolved cross-module via facadegen --import-list
-// STAYED in the shell lane (scripts/verify-roundtrip.sh) — they RUN green but emit IL the in-process lane's ilverify
+// STAYED in the shell lane (tests/roundtrip/scenarios/run.sh) — they RUN green but emit IL the in-process lane's ilverify
 // phase rejects (formal-only, runtime-safe, tracked as separate cross-module IL gaps):
 //   roundtrip-nothing         — a cross-module Nothing branch merges an `object`-returning call with `string`
 //                               (StackUnexpected object/string; else-branch throws so RUN is green). Tracked as #197.

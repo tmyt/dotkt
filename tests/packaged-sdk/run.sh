@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # The PACKAGED-SDK gate: the ONLY gate that exercises the shipping nupkg-resolution path — a project that
 # resolves `DotKt.Sdk` / `DotKt.Sdk.Mpp` + the implicit `DotKt.Toolchain` / `DotKt.Stdlib` PackageReferences
-# from real .nupkgs in a NuGet feed. `verify-ktproj.sh` uses the IN-REPO dev entry (cases/KotlinClr.targets,
+# from real .nupkgs in a NuGet feed. `tests/msbuild/run.sh` uses the IN-REPO dev entry (eng/KotlinClr.targets,
 # hard-coded tool paths) and never restores a nupkg, so packaging-only bugs slip past it — 0.9.5 shipped
 # broken twice for exactly this reason (#131 stale SDK version, #132 a Library's non-copy-local reference
-# never reaching bir2cir/ilemit). This gate packs the 5 nupkgs to a local feed and drives THREE throwaway
-# projects through `dotnet build`/`dotnet run` from that feed only:
+# never reaching bir2cir/ilemit). This suite packs the 5 nupkgs to a local feed and drives FIVE isolated
+# scenarios through `dotnet build`/`dotnet run` from that feed only:
 #   exe      — a plain `Sdk="DotKt.Sdk"` Exe: build + RUN, assert stdout.
 #   library  — a `Library` that PackageReferences a SECOND DotKt library (packed as its own nupkg) and calls
 #              into it. A package runtime dll is NOT copy-local for OutputType=Library, so under the old
@@ -13,16 +13,20 @@
 #              This is the case the gate exists to hold: build succeeds + the emitted dll carries the call.
 #   mpp      — a `Sdk="DotKt.Sdk.Mpp"` multiplatform Exe (common `expect` + clr `actual`): the MPP SDK path
 #              end-to-end through nupkg resolution. build + RUN, assert stdout.
+#   template — install DotKt.Templates, scaffold the CLI template, then build + RUN it.
+#   mpp-template — scaffold the MPP template and verify both SDK pins before build + RUN.
 #
 # Isolation (defeats the cache-masking landmine): a per-run nuget.config with <clear/> + the local feed ONLY,
 # and an isolated <globalPackagesFolder> under the scratch dir — a stale published 0.9.5 in the user's
 # ~/.nuget cache can never mask the freshly-packed one, and the user's global cache is never touched. Green =
 # every fail name is in the XFAIL_PKG baseline below (exit 0); any name outside it prints NEW-FAIL, exit 1.
-source "$(dirname "$0")/lib.sh"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+SCRIPT_NAME=packaged-sdk-tests
+source "$ROOT/scripts/lib.sh"
 
 usage() { cat <<EOF
 usage: $SCRIPT_NAME
-Packs the 5 nupkgs to build/nuget-feed and drives 3 packaged projects (exe/library/mpp) from that feed only.
+Packs the 5 nupkgs to build/nuget-feed and drives 5 packaged SDK/template scenarios from that feed only.
 Green (exit 0) = no fail name outside the XFAIL_PKG baseline declared in this script.
 EOF
 }
@@ -33,7 +37,7 @@ while (( $# )); do
 	esac
 done
 
-# The authoritative XFAIL baseline (fail name -> reason). Empty: all three packaged cases must pass. A listed
+# The authoritative XFAIL baseline (fail name -> reason). Empty: all five packaged cases must pass. A listed
 # name that starts passing prints "FIXED — remove it" WITHOUT reddening the gate; any name NOT listed that
 # fails prints NEW-FAIL and reddens. Computed by lib.sh xfail_diff at the bottom.
 declare -A XFAIL_PKG=(

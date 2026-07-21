@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# verify-sanity.sh — the OFFLINE IR-SANITY gate (#112 Phase 4).
+# run-sanity.sh — the OFFLINE IR-SANITY test corpus (#112 Phase 4).
 #
 # Runs scripts/verify-sanity.py — the build-free mirror of the in-process bir-common IrSanity gate
 # (toolchain/bir-common/IrSanity.cs, run by BOTH bir2cir and ilemit) — over the FRESHLY-emitted BIR + CIR
@@ -15,7 +15,7 @@
 # legitimately (falsely) trips on BIR. FRESHNESS: run AFTER a fresh emit (verify-tests re-emits test CIR;
 # `make stdlib` refreshes the stdlib CIR).
 set -u
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1
 PY="${PYTHON:-python3}"
 
@@ -27,7 +27,7 @@ while IFS= read -r -d '' file; do globs+=("$file"); done < <(
 for d in build/cir-*; do [ -d "$d" ] && globs+=("$d/*.cir.json"); done
 
 if [ ${#globs[@]} -eq 0 ]; then
-  echo "SANITY GATE: no emitted BIR/CIR found — run 'make stdlib' and/or ./scripts/verify-compiler-tests.sh first" >&2
+  echo "SANITY GATE: no emitted BIR/CIR found — run 'make stdlib' and/or 'make verify-tests' first" >&2
   exit 2
 fi
 

@@ -9,7 +9,9 @@
 # allowed to take the gate down mid-script. Verdict: exit 0 iff every failing section is RT_XFAIL-listed;
 # an XFAIL section that starts passing prints "FIXED — remove it from the xfail list" and stays green.
 # See docs/design-kotlin-metadata-attributes.md.
-source "$(dirname "$0")/lib.sh"
+ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+SCRIPT_NAME=roundtrip-scenarios
+source "$ROOT/scripts/lib.sh"
 
 usage() { cat <<EOF
 usage: $SCRIPT_NAME

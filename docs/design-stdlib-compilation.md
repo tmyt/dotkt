@@ -108,7 +108,7 @@ The residual ~280 (with the jar) / ~1283 (standalone) break down as:
   (`packaging/DotKt.Toolchain/build/DotKt.Toolchain.targets`, appended to the compile command). `stdlib.ktproj` uses it
   for the bootstrap flags above. Verified: it collapses the config-noise band to zero.
 - **`libraries/stdlib/stdlib.ktproj`** builds with the **in-repo toolchain** (`Sdk="Microsoft.NET.Sdk"` +
-  `<Import ../../cases/KotlinClr.targets>`), not a published `DotKt.Sdk` package — the stdlib is a first-party repo
+  `<Import ../../eng/KotlinClr.targets>`), not a published `DotKt.Sdk` package — the stdlib is a first-party repo
   component; using the published SDK would be circular and fight the NuGet same-version cache. It sets
   `<KotlinClrRuntimeRef>false</KotlinClrRuntimeRef>` (the stdlib is more fundamental than DotKt.Runtime).
 

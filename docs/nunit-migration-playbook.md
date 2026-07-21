@@ -1,7 +1,9 @@
 # NUnit migration playbook — retiring the per-case bash gate, one family at a time
 
-**Status:** active. This is the step-by-step procedure every `cases/il-*` family follows to move onto the
-in-process NUnit suite. It operationalizes `docs/design-nunit-test-harness.md` (the design) under the authority
+**Status:** historical-complete. This records the step-by-step procedure used to move every `cases/il-*`
+family onto the in-process NUnit suite. New tests should be added directly to the subject-oriented fixtures
+under `tests/`; the old paths below are retained only as migration history. It operationalized
+`docs/design-nunit-test-harness.md` (the design) under the authority
 of `docs/reviews/2026-07-19-cases-test-design-audit.md` (esp. 必須是正条件 **#14**: a later case that subsumes
 an earlier one DELETES the old in the SAME change).
 
@@ -137,7 +139,8 @@ its own `tests/<battery>/…` project. One project = one assembly = one namespac
 
 ---
 
-## 5. Do NOT delete the bash gate wholesale up front
+## 5. Retirement condition (completed)
 
-Keep `cases/` and `scripts/verify-*.sh` running until each family is proven migrated; each migration removes only
-its own family (design §9). The bash gate reaches retirement when the last family has moved, not before.
+The old `cases/` and per-case shell gate remained until every family was proven migrated. That retirement
+condition is now satisfied. New compiler behavior tests belong in a subject-oriented NUnit fixture; only tests
+that inherently require external build/process state belong in the classified shell suites under `tests/`.
