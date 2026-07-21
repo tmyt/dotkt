@@ -25,11 +25,12 @@
 // factory return vs the restored Vault<string> slot; nestedlist: the Root-V-collapsed IList<int32> vs an expected
 // IReadOnlyCollection<int32>). verify-ktproj never ran ilverify, so these gaps surface for the first time here.
 //
-// The producer types carry case-unique simple names (Signal/Vault/Slot/Crate/Store, GenovRef/GenovArr/GenovcArr,
-// Ext.Gadget) — NOT the case's original State/Holder/Ref/Box/Widget/Arr: in this ONE shared producer assembly (two
-// dlls: RoundtripProducer + RoundtripProducerMpp) a same-simple-name type in another package breaks facadegen's
-// re-import of a generic member (or crashes kotc's ctor injector for a paramless-ctor-less C# type). The cases test
-// the #-numbered semantics, not the type names.
+// Most producer types carry case-unique simple names (Signal/Vault/Slot/Crate/Store, GenovRef) so an unrelated case's
+// semantics aren't perturbed by a name clash. But the #199 same-simple-name collision is now FIXED (facadegen emits
+// namespace-qualified reference tokens), so three collisions are DELIBERATELY RESTORED as its regression guards: the
+// two `Arr<T>` (kotlinx.genov.Arr in RoundtripProducer + kotlinx.genovc.Arr in RoundtripProducerMpp — #199-③, a
+// generic factory RETURN across dlls) and `Ext.Widget` vs `Inherit.Widget` (#199-② in tests/interop). Each binds to
+// the correct type only because facadegen no longer drops the namespace. The cases test the #-numbered semantics.
 import dotktx.foo.bar.state
 import dotktx.foo.bar.register
 import dotktx.foo.bar.fire

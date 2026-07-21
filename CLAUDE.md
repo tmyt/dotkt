@@ -7,8 +7,9 @@
 >
 > Authority order: (1) the user's request → (2) this file's rules → (3) the actual code + canonical
 > scripts for current behavior → (4) **`docs/ship-tasks.md` §0** for architecture (**its invariants
-> are binding: an implementation that violates them is a bug**) → (5) **`docs/master-task-inventory.md`**
-> for what remains to do → (6) other docs for rationale (they may lag the code — verify, and flag
+> are binding: an implementation that violates them is a bug**) → (5) the **GitHub issue tracker**
+> (the SOLE source of truth for what remains to do — bugs AND tasks; `docs/master-task-inventory.md` is
+> DEPRECATED/archival) → (6) other docs for rationale (they may lag the code — verify, and flag
 > stale docs rather than following them).
 
 # Ground Rules
@@ -246,7 +247,7 @@ not the compiler.
 
 | If you are about to… | Read first |
 |----------------------|-----------|
-| **pick up work / know what's left** | **`docs/master-task-inventory.md`** (THE remaining-work ledger); `docs/ship-tasks.md` §0 stays the binding architecture reference |
+| **pick up work / know what's left** | the **GitHub issue tracker** (the SOLE source of truth — bugs AND tasks; `docs/master-task-inventory.md` is DEPRECATED/archival); `docs/ship-tasks.md` §0 stays the binding architecture reference |
 | change the backend pipeline (BIR/CIR/IL, layer boundaries) | `docs/design-fir-bir-cir-il.md` + MEMORY `compiler-layer-responsibilities` |
 | touch stdlib bindings / `@Clr*` / lowerings | `docs/clr-stdlib-intrinsic-audit.md`, `docs/design-clr-stdlib-ref-runtime-split.md` |
 | retire / migrate an intrinsic | `docs/master-task-inventory.md` 【1】 (archived 6-wave plan: `docs/archive/bir2cir-migration-inventory.md`) |

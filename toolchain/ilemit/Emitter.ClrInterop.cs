@@ -707,8 +707,16 @@ sealed partial class Emitter
         switch (k)
         {
             case "newDelegate":
+                // #199 Design B — DISPATCH axis: a `::topLevelFun` reference carrying `calleeOwner` binds to THAT
+                // file class first (two same-simple-name top-level funcs across packages), falling back to global
+                // FindStatic on a hint miss. A lifted `__lambdaN`/`__ctorref`/`__mref` forwarder has no calleeOwner
+                // and stays on the plain FindStatic path. Mirrors the newDelegate case in Emitter.Expressions.
+                var dname = h.GetProperty("method").GetString();
+                var dtarget = (h.TryGetProperty("calleeOwner", out var dco) && dco.ValueKind != JsonValueKind.Null && SlotName(dco) is string dcoName)
+                    ? (FindMethod(dcoName, dname) ?? (MethodInfo)FindStatic(dname))
+                    : FindStatic(dname);
                 _il.Emit(OpCodes.Ldnull);
-                _il.Emit(OpCodes.Ldftn, FindStatic(h.GetProperty("method").GetString()));
+                _il.Emit(OpCodes.Ldftn, dtarget);
                 _il.Emit(OpCodes.Newobj, ctor);
                 break;
             case "newClosure":

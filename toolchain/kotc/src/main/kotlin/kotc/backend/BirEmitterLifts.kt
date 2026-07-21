@@ -400,9 +400,15 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 	// `suspendCall:true` on the inner call); bir2cir owns the SM transform. Covers top-level, bound and unbound MEMBER
 	// references; an ext-receiver suspend ref (rarer) falls through to the clean deferral below.
 	if (fn.isSuspend && !hasExt) return suspendFunctionRef(node, fn, dispatchIdx)
-	// `::topLevelFun` — no receiver: a delegate over the static file-class method (FindStatic resolves it).
+	// `::topLevelFun` — no receiver: a delegate over the static file-class method. Carries `calleeOwner` (#199 Design
+	// B, the SAME two-axis contract as a top-level FUNCTION call in BirEmitterCalls): the bare `method` name plus the
+	// FIR-resolved callee file-class as an advisory DISPATCH hint. Two same-simple-name top-level funcs in DIFFERENT
+	// packages (a.foo/b.foo) both emit `method:foo`, and ilemit's global FindStatic would bind BOTH `::foo` delegates
+	// to whichever file class the enumeration hits first — calleeOwner disambiguates to THIS package's foo. A
+	// CROSS-MODULE callee (parent = package fragment, not IrFile) omits it (`calleeOwnerTag` self-gates on IrFile).
+	// The substitution axis is unchanged: a delegate over a top-level fun stays owner-less (no `owner` field here).
 	if (dispatchIdx < 0 && !hasExt)
-		return """{"k":"newDelegate","method":${str(fn.name.asString())},"funcType":${funcTypeOf(fn).toJson()}}"""
+		return """{"k":"newDelegate","method":${str(fn.name.asString())},"funcType":${funcTypeOf(fn).toJson()}${calleeOwnerTag(fn)}}"""
 	// `Type::extFn` — an EXTENSION-function reference (G8). The delegate's target is a lifted static forwarder whose
 	// BODY is the faithful extension CALL — the SAME shape a DIRECT call to this callee would emit (`owner:null` for a
 	// stdlib/this-module ext, `ownerType:fileClass` for a referenced-assembly facade ext), NOT a bare `ldftn` of the
