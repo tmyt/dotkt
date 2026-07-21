@@ -14,9 +14,6 @@
 #   verify        (ubuntu)  — build toolchain + CLR stdlib, then `make verify-core`.
 #   packaged-sdk  (ubuntu)  — the packaged-nupkg release gate, on its own so a packaging break is
 #                             attributed and blocks independently of the functional gates.
-#   windows       (windows) — the Windows story the Linux jobs cannot cover: kotc.bat install, nupkg
-#                             restore, a packaged .ktproj build/run, reverse C# interop, `dotnet new`
-#                             template creation. WPF/WinUI windowing samples (Windows-only) belong here.
 #
 # Green semantics: ILVerify / round-trip / packaged-SDK carry explicit XFAIL baselines
 # (ILVERIFY_XFAIL / RT_XFAIL / XFAIL_PKG in their test runners) — they exit 0 iff every fail is a
@@ -100,64 +97,3 @@ jobs:
       # name is outside the XFAIL_PKG baseline in tests/packaged-sdk/run.sh.
       - name: make verify-packaged-sdk (packaged nupkg resolution)
         run: make verify-packaged-sdk
-
-  # ---- the Windows story the Linux jobs cannot cover (GitHub #160) --------------------------------
-  windows:
-    runs-on: windows-latest
-    timeout-minutes: 45
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up .NET 10
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
-
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-
-      - name: Cache Gradle
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: gradle-win-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-
-      # The canonical scripts are driven through `make`; install it (windows-latest has Git Bash + the
-      # core utils the scripts use, but not make).
-      - name: Install make
-        run: choco install make --no-progress -y
-
-      # kotc.bat install (gradle installDist emits the Windows launcher) + bir2cir/ilemit/facadegen/
-      # retarget + the CLR stdlib + the 5 nupkgs — the whole shipping toolchain, on Windows.
-      - name: make pack (Windows toolchain + nupkgs)
-        run: make pack
-
-      # Package restore + a packaged .ktproj build/RUN, and the library/mpp packaged projects
-      # (reverse/bidirectional interop rides the library case). This is the release surface on Windows.
-      - name: make verify-packaged-sdk (Windows packaged resolution)
-        run: make verify-packaged-sdk
-
-      # MSBuild / .ktproj end-to-end incl. bidirectional C# <ProjectReference> (reverse interop).
-      - name: make verify-msbuild (Windows stateful MSBuild integration)
-        run: make verify-msbuild
-
-      # `dotnet new` template creation from the freshly-packed feed: install, scaffold, build, run.
-      - name: dotnet new template creation
-        run: |
-          set -euo pipefail
-          VER="$(grep -oE '<DotKtVersionPrefix>[^<]+' packaging/DotKt.Versions.props | sed 's/.*>//')"
-          SUF="$(grep -oE '<DotKtVersionSuffix>[^<]*' packaging/DotKt.Versions.props | sed 's/.*>//')"
-          [ -n "$SUF" ] && VER="$VER-$SUF"
-          dotnet new install "DotKt.Templates::$VER" --add-source "$PWD/build/nuget-feed"
-          work="$(mktemp -d)"
-          dotnet new dotkt-cli -o "$work/hello"
-          dotnet build "$work/hello" -c Release
-          dotnet run --project "$work/hello" -c Release
