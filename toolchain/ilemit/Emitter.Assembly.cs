@@ -26,6 +26,14 @@ sealed partial class Emitter
         // through a MetadataLoadContext over the REFERENCE assemblies and pass that core to PersistedAssemblyBuilder,
         // so refs become System.Runtime — a large, contained refactor (every typeof(Bcl) -> mlc lookup). Tracked #50.
         var ab = new PersistedAssemblyBuilder(new AssemblyName(_asmName), typeof(object).Assembly);
+        // Assembly provenance: the emitter owns the final assembly in BOTH SDK and direct-CLI flows, so it stamps an
+        // explicit, versioned DotKt protocol marker here (not in MSBuild-only SDK plumbing). facadegen requires this
+        // signal together with compiler-generated embedded metadata carriers before applying Kotlin-only reverse maps.
+        const string dotKtMarkerKey = "DotKt.Compiler";
+        const string dotKtMarkerValue = "metadata-v1";
+        var assemblyMetadataCtor = typeof(AssemblyMetadataAttribute).GetConstructor(new[] { typeof(string), typeof(string) });
+        ab.SetCustomAttribute(new CustomAttributeBuilder(
+            assemblyMetadataCtor, new object[] { dotKtMarkerKey, dotKtMarkerValue }));
         _mod = ab.DefineDynamicModule(_asmName);
         // #71 S2: the DotKt.Runtime.CompilerServices.* + System.Runtime.CompilerServices.Nullable{,Context} attribute
         // CLASSES are now ordinary CIR type decls (bir2cir's synthetic `000-dotkt-roundtrip-attrs` file); pass 1 below

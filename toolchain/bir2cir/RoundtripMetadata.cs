@@ -329,8 +329,11 @@ static class RoundtripMetadata
     // ---------------------------------------------------------------------------------------------------------------
     // The embedded attribute-class defs, emitted ONCE as a dedicated synthetic CIR file. Each is `internal sealed :
     // System.Attribute` with the same ctor overloads ilemit's DefineEmbeddedAttr{,N} used to synthesize. `final:true`
-    // -> TypeAttributes.Sealed (matching the old NotPublic|Sealed|Class). Ctor params carry NO name (a named ctor param
-    // would mint Param rows the embedded attrs never had); the empty body chains to Attribute()'s protected ctor.
+    // -> TypeAttributes.Sealed (matching the old NotPublic|Sealed|Class); `generated:true` makes ilemit stamp the
+    // STANDARD [CompilerGenerated] trust marker. facadegen accepts DotKt metadata only from carrier definitions bearing
+    // that marker in an explicitly marked DotKt assembly, so a C# lookalike with the same full name is inert. Ctor params carry
+    // NO name (a named ctor param would mint Param rows the embedded attrs never had); the empty body chains to
+    // Attribute()'s protected ctor.
     // ---------------------------------------------------------------------------------------------------------------
     public static JsonObject SynthDefsFile()
     {
@@ -373,6 +376,7 @@ static class RoundtripMetadata
             ["kind"] = "class",
             ["vis"] = "internal",
             ["final"] = true,                                // -> TypeAttributes.Sealed
+            ["generated"] = true,                            // -> [CompilerGenerated] provenance marker
             ["base"] = Fqn("System.Attribute"),
             ["interfaces"] = new JsonArray(),
             ["fields"] = new JsonArray(),

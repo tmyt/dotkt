@@ -32,15 +32,27 @@ The attributes are **compiler-EMBEDDED per-assembly** as internal `DotKt.Runtime
 own `NullableAttribute`/`IsReadOnlyAttribute`) — there is **no referenced `DotKt.Runtime` DLL** (that runtime is
 ELIMINATED; the real CLR stdlib superseded it). They are metadata-only, never executed ([[dotkt-naming-and-runtime-split]]).
 
+### Provenance
+
+Full-name equality is not enough to identify these internal carriers: an ordinary C# assembly can declare a
+lookalike. DotKt therefore stamps `[assembly: AssemblyMetadata("DotKt.Compiler", "metadata-v1")]` and stamps each
+embedded carrier definition with `[CompilerGenerated]`. `facadegen` accepts Kotlin metadata only when both signals are
+present. An unmarked `DotKt.Runtime.CompilerServices.Kotlin*Attribute` is treated as an ordinary third-party attribute
+and cannot enable Kotlin-only reverse mappings. Outputs from compilers predating this provenance contract must be
+rebuilt; there is deliberately no namespace-only compatibility fallback because it recreates the false-positive
+classification.
+
 ## Pipeline (mirror of the forward `--refs` injection)
 
 ```
   emit:   BirEmitter records infix/operator/suspend, inline bodies, read-only fields, file classes,
           and reference nullability
-            -> ilemit stamps [KotlinFunction(flags)] / [KotlinFileClass] / [KotlinInline(body)] /
-               [KotlinReadOnly] / .NET NRT [Nullable*]
+            -> ilemit stamps [assembly: AssemblyMetadata("DotKt.Compiler", "metadata-v1")],
+               compiler-generated embedded carrier definitions,
+               [KotlinFunction(flags)] / [KotlinFileClass] / [KotlinInline(body)] / [KotlinReadOnly] /
+               .NET NRT [Nullable*]
   retarget: dotkt-retarget repoints BCL refs (also needed so facadegen can MLC-load the dll)
-  read:   facadegen reads the attributes -> meta tokens
+  read:   facadegen verifies assembly + carrier provenance, then reads the attributes -> meta tokens
             `fun <name> <ret> final,infix|operator|suspend ...`   (suspend: Task<T> unwrapped to T)
             CLR `op_*` methods map back to Kotlin operator names through the standard operator table
             CLR events restore as CLREvent<T> endpoints from EventInfo + delegate Invoke

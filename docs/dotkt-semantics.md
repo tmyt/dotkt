@@ -612,8 +612,10 @@ narrow, and closing either would add per-call reconciliation for an idiom that i
 When a Kotlin program consumes a **referenced assembly** as Kotlin (a `<ProjectReference>` / `<Reference>` to a
 DotKt library, or a façade-free `import` of a .NET type), facadegen reads each member signature's .NET types and
 maps them to Kotlin tokens. The BCL collection interfaces the forward `@ClrTypeAlias` table emits are **reverse-mapped
-back** to `kotlin.collections.*` — but **only for a DotKt-emitted library**, detected by the embedded
-`DotKt.Runtime.CompilerServices` attribute set (`IsDotKtEmittedAssembly`). Consequences:
+back** to `kotlin.collections.*` — but **only for a DotKt-emitted library**, detected by the conjunction of the
+assembly-level `[AssemblyMetadata("DotKt.Compiler", "metadata-v1")]` marker and a compiler-generated embedded
+`DotKt.Runtime.CompilerServices.KotlinFileClassAttribute` carrier (`IsDotKtEmittedAssembly`). A matching namespace or
+attribute full name without those provenance markers is ignored. Consequences:
 
 - **A DotKt library's `fun f(xs: List<String>)`** compiled its param to `IReadOnlyList<String>`; a consumer's
   `listOf(...)` (a `kotlin.collections.List`) now **unifies** with it, and generic inference / element-member

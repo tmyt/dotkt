@@ -467,9 +467,9 @@ il_check genseq2 GenSeq2 "$ROOT/cases/il-genseq2" "$(printf '[1, 2, 4]\n[a, ab, 
 # marks the Pareto-dominated sibling `lowPriority`; kotc stamps `@kotlin.internal.LowPriorityInOverloadResolution` so the
 # bare lambda binds the preferred (ThreadStart/Action) sibling. Import-scan path (BCL, no runtime.cs). FAIL before / PASS after.
 # CLR-interop C#-producer batch B (delegnull/injuint/ixname/netattr/netattr-vararg/netenum/netinterop/
-# outref/selfref/tloverload/transinj/ubyteinj/vtprop) migrated to the ProjectReference'd C#-producer
-# NUnit lane tests/interop/{producer,consumer} (InteropB*Tests.kt; delegnull's NRT producer is
-# tests/interop/producer-nrt), gated by tests/run-nunit-il.sh. Per the same-change rule the per-case
+# outref/selfref/transinj/ubyteinj/vtprop) migrated to the ProjectReference'd C#-producer NUnit lane
+# tests/interop/{producer,consumer} (InteropB*Tests.kt; delegnull's NRT producer is tests/interop/producer-nrt),
+# gated by tests/run-nunit-il.sh. Per the same-change rule the per-case
 # dirs + il_check_inject lines were removed here; each former runtime.cs became the producer's
 # per-namespace C# source. (il-stackalloc stays below — its emitted localloc is UNVERIFIABLE, so it
 # cannot join the whole-assembly-ilverify'd NUnit consumer lane.)
@@ -478,6 +478,8 @@ il_check genseq2 GenSeq2 "$ROOT/cases/il-genseq2" "$(printf '[1, 2, 4]\n[a, ab, 
 # c1net/csext/csextrecv/genextval/eventext migrated to the C#-producer NUnit lane tests/interop/consumer
 # (InteropAExtTests.kt: c1net, csext, csextrecv, genextval; InteropAEventTests.kt: eventext) — the former runtime.cs
 # became the producer's per-namespace C# source (docs/nunit-migration-playbook.md §3).
+# tloverload migrated to the REAL Kotlin-producer roundtrip lane tests/roundtrip/{producer,consumer}; its two source
+# files compile to genuine DotKt file facades instead of a C# stand-in for internal metadata.
 # firgap migrated to the C#-producer NUnit lane tests/interop/consumer/InteropAInjectTests.kt.
 # CLR-interop C#-producer pilot batch (inherit/geninj/clriface/clrimpl/clrasm/genim) migrated to the
 # ProjectReference'd C#-producer NUnit lane tests/interop/{producer,consumer} (InteropTests.kt), gated by
