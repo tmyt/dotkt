@@ -48,6 +48,19 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   newDelegate binding sites resolve `FindMethod(calleeOwner, name) ?? FindStatic(name)` (global fallback on a hint
   miss). Lifted `__lambdaN`/`__ctorref`/`__mref`/adapter forwarders (unique names, no `calleeOwner`) keep the plain
   `FindStatic` path, unchanged. Regression fixture: tests/il `XPkgSameNameDelegTests`.**
+- **compiler ([tmyt/dotkt#199], area:kotc): the Design-B `calleeOwner` dispatch hint is now also stamped on a LIFTED
+  LOCAL function call — completing the rule that EVERY `owner:null` `callStatic` carries its FIR-resolved dispatch
+  owner.** A local `fun` is lifted to a static `__local<n>_<fn>` in the current file's file class; its call site emitted
+  `owner:null` with no dispatch hint, leaving ilemit to resolve via global first-match `FindStatic`. It now carries
+  `calleeOwner = <current file class>` (used directly, since a local fn's parent is the enclosing function, not an
+  `IrFile`, so the `calleeOwnerTag` gate excludes it). This is a **defensive** hardening, not a reproducible-bug fix:
+  `__local<n>`'s `<n>` is `scopeCounter`, which is monotonic across all files in one kotc invocation, and every
+  canonical build is one invocation per assembly — so two `__local<n>` with the same `<n>` never coexist in an assembly
+  and the global `FindStatic` resolves correctly today. A mis-dispatch is reachable only by linking BIR from two
+  SEPARATE kotc invocations into one assembly (no canonical path does this). It is the method-dispatch analog of the
+  `synthScope` per-file prefix already applied to synthetic closure TYPE names. No fixture is added — a single-`.ktproj`
+  fixture compiles in one invocation, gets unique `__local<n>` names, and would pass with AND without the fix (a fake
+  guard).**
 - **facadegen ([tmyt/dotkt#199], area:facadegen): a re-imported/injected type REFERENCE to another type that shares
   its simple name with a type in a DIFFERENT namespace now carries the NAMESPACE-QUALIFIED name, so the injector
   resolves the EXACT type instead of the by-simple-name last-wins collision.** Two symptom families are fixed: ① a

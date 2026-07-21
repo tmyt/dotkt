@@ -514,7 +514,22 @@ internal fun BirEmitter.call(call: IrCall): String {
 		}
 		// If the lifted method is generic (captured enclosing type params), pass them as type arguments.
 		val typeArgs = if (tps.isEmpty()) "" else ""","typeArgs":[${tps.joinToString(",") { tvOf(it).toJson() }}]"""
-		return """{"k":"callStatic","owner":null,"method":${str(lname)},"args":[${(capArgs + recvArgs + filledArgs(call)).joinToString(",")}]$typeArgs}"""
+		// #199 DESIGN B — same two-axis contract as a top-level function call, completing it for the LAST `owner:null`
+		// callStatic shape. The lifted static `__local<n>_<fn>` lives in the CURRENT file's file class (liftLocalFn ->
+		// liftedMethods). `owner:null` stays (the load-bearing substitution/recognition axis — a lifted-local call is
+		// never intrinsic-substituted, but the invariant that owner:null ⇔ "not owned by a named class" holds), and the
+		// DISPATCH hint `calleeOwner = <this file class>` scopes ilemit's lookup to the RIGHT file class FIRST (mirrors
+		// `sty`; the owner-null substitution machinery IGNORES it). Uses `fileClass` directly, not `calleeOwnerTag`,
+		// whose IrFile-parent gate excludes a local fn (its parent is the enclosing function).
+		//   The name `__local<n>` embeds `scopeCounter`, which is MONOTONIC across all files in one kotc invocation (one
+		// BirEmitter reused per file; emitFile resets liftedMethods but NOT scopeCounter). Every canonical build is one
+		// invocation per assembly, so two `__local<n>` with the same `<n>` never coexist in an assembly and ilemit's
+		// global FindStatic happens to resolve correctly today — this hint is thus DEFENSIVE (no reproducible mis-dispatch
+		// in a single-invocation build; only two SEPARATE kotc invocations linked into one assembly collide on `__local0`).
+		// It is the method-dispatch analog of `synthScope` (which already per-file-prefixes synthetic closure TYPE names
+		// against the same cross-file link collision) and closes the Design-B rule that every owner:null callStatic
+		// carries its FIR-resolved dispatch owner.
+		return """{"k":"callStatic","owner":null,"method":${str(lname)},"args":[${(capArgs + recvArgs + filledArgs(call)).joinToString(",")}]$typeArgs,"calleeOwner":${fqnJson(fileClass)}}"""
 	}
 
 	// Inlining (lambda-param inline funs only; lambda-less inline = JIT's job — see [[clr-not-jvm-discard-jvmisms]]).
