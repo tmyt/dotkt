@@ -1,5 +1,12 @@
 # Master task inventory — the de-duplicated "what's left" ledger
 
+> ## ⚠️ DEPRECATED (2026-07-21, user-directed) — the GitHub issue tracker is the SOLE source of truth
+> Remaining work — **bugs AND tasks** — now lives ONLY in the GitHub issue tracker. Do **NOT** add new
+> items here, and do **NOT** treat the items below as authoritative or current. This file is retained for
+> **historical/archival** context only (the 6-wave migration plan, the 【1】–【8】 bundle history). When you
+> need to know what's left, query the issues — never this file. (`docs/ship-tasks.md` §0 remains the binding
+> architecture reference; only the *remaining-work ledger* role moved to issues.)
+
 > **RECONCILE 2026-07-05:** all gates are XFAIL-ZERO (verify-il 209/0, differential ALL MATCH, ktproj 9/9); coroutine bundle-6, the A2 interop-no-registry keystone (4 registries deleted), the Polish layer-purity, and the 2026-07-05 final-review findings (N1-N8, F1/F2) are all DONE. Any item below marked open/TODO that concerns those is STALE. Genuine residuals: roundtrip-memext2 (with{}-scope suspend), interface events, and the LOW hardening items in the session task list.
 
 > **RECONCILE 2026-07-08 (#52 kotc-purity):** the stdlib-recognition axis of bundle 8 (【6b】) is DONE — kotc
