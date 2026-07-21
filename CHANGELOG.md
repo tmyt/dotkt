@@ -27,6 +27,17 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **facadegen ([tmyt/dotkt#205], area:facadegen): a generic .NET interface that derives a member-bearing
+  NON-generic base interface now surfaces the base as a supertype, so its INHERITED members resolve and the
+  generic interface stays assignable to the base.** `interface IReader<T> : IPingable` used to surface `IReader`1`
+  with NO super edge (`InterfaceSuperTypes` emitted only GENERIC direct supers), dropping `IPingable.Ping` — a
+  consumer's `reader.Ping()` gave `unresolved reference 'Ping'` and `IReader<Doc>` was not assignable to
+  `IPingable`. Fix: `InterfaceSuperTypes` now also emits the namespace-qualified (#199 reference-token rule)
+  non-generic direct super edge, dropping only the legacy same-simple-name generic shadow (`IEnumerable` beside
+  `IEnumerable<T>`), mirroring the class path's `genericNames` guard. General to any generic BCL/user interface.
+  New regression: `tests/interop` `ifacebasegen`. This is the narrow genuine follow-up found during #205; the issue's
+  broader provenance false-positive was fixed separately by PR #201.
+
 - **facadegen / roundtrip ([tmyt/dotkt#205], area:bir2cir/ilemit/facadegen): DotKt assembly provenance is now
   explicit instead of inferred from a namespace name.** DotKt output carries assembly-level
   `[AssemblyMetadata("DotKt.Compiler", "metadata-v1")]`, and every embedded
