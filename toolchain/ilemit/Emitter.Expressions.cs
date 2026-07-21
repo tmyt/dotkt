@@ -714,7 +714,17 @@ sealed partial class Emitter
             {
                 // Non-capturing lambda: bind the lifted static method into a Func/Action delegate.
                 var ft = MapType(e.GetProperty("funcType"));
-                var mb = FindStatic(e.GetProperty("method").GetString());
+                // #199 Design B — DISPATCH axis for a `::topLevelFun` reference (bare `method` name). When the node
+                // carries `calleeOwner` (the FIR-resolved callee file-class hint), scope the lookup to THAT file class
+                // FIRST so two same-simple-name top-level funcs in different packages (a.foo/b.foo) bind their OWN body
+                // instead of the global first-match. Falls back to global FindStatic on a hint miss (defensive for a
+                // bir2cir-synthesized/renamed target). The lifted `__lambdaN`/`__ctorref`/`__mref`/adapter forwarders
+                // use UNIQUE names in the current file class and carry NO calleeOwner -> the plain FindStatic path,
+                // unchanged.
+                var dname = e.GetProperty("method").GetString();
+                MethodInfo mb = (e.TryGetProperty("calleeOwner", out var dco) && dco.ValueKind != JsonValueKind.Null && SlotName(dco) is string dcoName)
+                    ? (FindMethod(dcoName, dname) ?? FindStatic(dname))
+                    : FindStatic(dname);
                 // A GENERIC lifted lambda (e.g. the comparator inside a generic `sort<T>`) MUST be instantiated with its
                 // typeArgs before Ldftn -- loading the open generic-method-DEFINITION's ftn throws "the method itself or
                 // the containing type is not fully instantiated" at runtime.

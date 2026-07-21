@@ -39,6 +39,15 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   suspend cold-lowering (the hint rides the rewrite + synthesized cold-entry/Task-bridge calls stamp it), and the
   top-level extension-property accessor. Regression fixtures: tests/il `XPkgSameNameFunTests`, tests/coroutines
   `SameNameAcrossPackagesTests`.**
+- **compiler ([tmyt/dotkt#199], area:kotc/ilemit): a `::foo` function-REFERENCE delegate over a top-level fun now
+  dispatches to its OWN package's body — the delegate analogue of the same-simple-name call bug above. kotc emitted
+  the bare-name `newDelegate method:foo` (dropping the FIR-resolved callee file-class) and ilemit bound it by global
+  first-match `FindStatic`, so two same-simple-name top-level funcs across packages (`a.foo`/`b.foo`) both bound to
+  the first. Fix: extend Design B's `calleeOwner` DISPATCH hint to `newDelegate` — kotc stamps the callee file-class
+  when the target is a top-level fun (`owner` stays absent, the substitution axis unchanged), and both ilemit
+  newDelegate binding sites resolve `FindMethod(calleeOwner, name) ?? FindStatic(name)` (global fallback on a hint
+  miss). Lifted `__lambdaN`/`__ctorref`/`__mref`/adapter forwarders (unique names, no `calleeOwner`) keep the plain
+  `FindStatic` path, unchanged. Regression fixture: tests/il `XPkgSameNameDelegTests`.**
 - **facadegen ([tmyt/dotkt#199], area:facadegen): a re-imported/injected type REFERENCE to another type that shares
   its simple name with a type in a DIFFERENT namespace now carries the NAMESPACE-QUALIFIED name, so the injector
   resolves the EXACT type instead of the by-simple-name last-wins collision.** Two symptom families are fixed: ① a
