@@ -707,16 +707,11 @@ sealed partial class Emitter
         switch (k)
         {
             case "newDelegate":
-                // #199 Design B — DISPATCH axis: a `::topLevelFun` reference carrying `calleeOwner` binds to THAT
-                // file class first (two same-simple-name top-level funcs across packages), with `sig` selecting the
-                // same-owner overload (#203), then falling back to global FindStatic on a hint miss. A lifted
-                // `__lambdaN`/`__ctorref`/`__mref` forwarder has no calleeOwner
-                // and stays on the plain FindStatic path. Mirrors the newDelegate case in Emitter.Expressions.
+                // Mirrors Emitter.Expressions: mandatory calleeOwner selects the one file class and sig selects the
+                // overload. Missing/misspelled ownership is malformed CIR, never a global name lookup (#204).
                 var dname = h.GetProperty("method").GetString();
                 var dsig = SigNodes(h);
-                var dtarget = (h.TryGetProperty("calleeOwner", out var dco) && dco.ValueKind != JsonValueKind.Null && SlotName(dco) is string dcoName)
-                    ? (FindMethod(dcoName, dname, dsig) ?? (MethodInfo)FindStatic(dname, dsig))
-                    : FindStatic(dname, dsig);
+                var dtarget = FindCalleeOwnedStatic(h, "event newDelegate", dname, dsig);
                 _il.Emit(OpCodes.Ldnull);
                 _il.Emit(OpCodes.Ldftn, dtarget);
                 _il.Emit(OpCodes.Newobj, ctor);

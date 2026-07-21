@@ -2049,7 +2049,8 @@ static partial class SuspendColdLowering
                         new JsonObject
                         {
                             ["k"] = "newBoundDelegate", ["funcType"] = Tw(new TypeNode.Fn(false, VoidTn, System.Array.Empty<TypeNode>())),
-                            ["ownerType"] = Tw(_smTypeInst), ["method"] = cbName, ["virtual"] = false,
+                            ["ownerType"] = Tw(_smTypeInst), ["calleeOwner"] = Tw(_smTypeInst),
+                            ["method"] = cbName, ["virtual"] = false,
                             ["recv"] = new JsonObject { ["k"] = "this" },
                         },
                     },
