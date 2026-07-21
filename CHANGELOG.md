@@ -27,6 +27,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **facadegen ([tmyt/dotkt#202], area:facadegen): generic method overrides no longer make
+  `MetadataLoadContext.GetMethods` skip otherwise valid types and awaitable candidates.** The runtime's inherited-member
+  suppression can call `GetGenericTypeDefinition()` on a generic parameter and throw for a non-generic derived type,
+  producing 90 duplicate `skipped type` / `skipped awaitable` warnings in the NUnit-backed interop build. facadegen now
+  falls back to derived-first, declared-only hierarchy enumeration for that reflection failure. A C# generic-override
+  producer and Kotlin consumer call cover both metadata injection and dispatch; the same clean build now emits zero
+  warnings.
 - **facadegen / roundtrip ([tmyt/dotkt#205], area:bir2cir/ilemit/facadegen): DotKt assembly provenance is now
   explicit instead of inferred from a namespace name.** DotKt output carries assembly-level
   `[AssemblyMetadata("DotKt.Compiler", "metadata-v1")]`, and every embedded

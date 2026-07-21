@@ -36,6 +36,7 @@ import GenIm.IConv
 // il-inherit
 import Inherit.Base
 import Inherit.Widget
+import Mlcmethod.Derived
 import Inherit.Button
 import Inherit.Host
 // ktproj-extlib (forward C#-library interop): Ext.Widget from an oblivious C# assembly. Its simple name DELIBERATELY
@@ -54,6 +55,12 @@ class InheritMyApp : Base() {
 fun genimViaIface(c: IConv): String = c.Convert<String>("hello")
 
 class InteropTests {
+    @TestAttribute
+    fun metadataLoadContextGenericOverrideFallback() {
+        assertEquals(42, Derived().Ping())
+        assertEquals("7", Derived().Describe(7))
+    }
+
     @TestAttribute
     fun clrasm() {
         val b = ClrAsmBag(); b.Items.Add(ClrAsmItem("a")); b.Items.Add(ClrAsmItem("b"))
