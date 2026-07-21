@@ -84,8 +84,10 @@ pass() { # <name>
 	echo "PASS  pkgsdk:$1"; echo "PASS  pkgsdk:$1" > "$RESULTS/$1.tmp"; mv -f "$RESULTS/$1.tmp" "$RESULTS/$1"
 }
 fail() { # <name> <reason> [detail]
+	local detail="${3:-}"
 	echo "FAIL  pkgsdk:$1 ($2)"
-	{ echo "FAIL  pkgsdk:$1 ($2)"; [[ -n "${3:-}" ]] && printf '%s\n' "$3"; } > "$RESULTS/$1.tmp"; mv -f "$RESULTS/$1.tmp" "$RESULTS/$1"
+	[[ -n "$detail" ]] && printf '%s\n' "$detail"
+	{ echo "FAIL  pkgsdk:$1 ($2)"; [[ -n "$detail" ]] && printf '%s\n' "$detail"; } > "$RESULTS/$1.tmp"; mv -f "$RESULTS/$1.tmp" "$RESULTS/$1"
 	FAILS+=("$1")
 }
 # Strip the compiler's own stderr chatter from a run's stdout so the assert compares only program output.
