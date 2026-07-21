@@ -167,7 +167,7 @@ static class FacadeGen
             {
                 if ((t.Namespace ?? "") != ns || !HasKotlinFileClass(t)) continue;
                 // `import pkg.foo` matches a top-level function `foo` OR an extension property whose getter is `get_foo`.
-                if (t.GetMethods(BindingFlags.Public | BindingFlags.Static).Any(mm => mm.Name == fn || mm.Name == "get_" + fn)) return t;
+                if (Methods(t, BindingFlags.Public | BindingFlags.Static).Any(mm => mm.Name == fn || mm.Name == "get_" + fn)) return t;
                 // #195: a top-level `val`/`var` with NO custom accessor compiles to a plain public static FIELD `foo`
                 // (no get_foo/set_foo). Match the field too so `import pkg.foo` surfaces the file class from a plain
                 // field-backed top-level property, not only from an accessor method (EmitKotlinFileClass then emits the tlprop).
@@ -346,7 +346,7 @@ static class FacadeGen
     // then a referenced `[Extension] GetAwaiter(this X)` (WinRT/custom). Null when the type is not awaitable.
     static Type AwaitableAwaiterReturn(Type t)
     {
-        var m = t.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+        var m = Methods(t, BindingFlags.Public | BindingFlags.Instance)
             .FirstOrDefault(x => x.Name == "GetAwaiter" && !x.IsGenericMethodDefinition && x.GetParameters().Length == 0);
         if (m != null) return m.ReturnType;
         var def = t.IsGenericType && !t.IsGenericTypeDefinition ? t.GetGenericTypeDefinition() : t;
@@ -369,7 +369,7 @@ static class FacadeGen
                     // otherwise abort the whole scan (this index is built on the first non-awaitable type) — skip it.
                     try
                     {
-                        foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Static))
+                        foreach (var m in Methods(t, BindingFlags.Public | BindingFlags.Static))
                         {
                             if (m.Name != "GetAwaiter" || !IsExtensionMethod(m)) continue;
                             var ps = m.GetParameters();
@@ -391,6 +391,45 @@ static class FacadeGen
         catch { return Array.Empty<Type>(); }
     }
 
+    // MetadataLoadContext's inherited-member suppression can throw while comparing a generic override from a base
+    // class with a non-generic derived type (RoGenericParameterType.GetGenericTypeDefinition, #202). Prefer the normal
+    // reflection result; on that MLC failure, enumerate declared methods one level at a time so no generic-only API is
+    // applied by the runtime's override comparer. Derived methods stay first, matching Type.GetMethods well enough for
+    // the callers' signature de-duplication and first-match awaiter lookup; private base methods remain non-inherited.
+    static MethodInfo[] Methods(Type t, BindingFlags flags)
+    {
+        try { return t.GetMethods(flags); }
+        catch (InvalidOperationException) { }
+
+        var found = new List<MethodInfo>();
+        var declared = flags | BindingFlags.DeclaredOnly;
+        if ((flags & BindingFlags.Instance) != 0)
+        {
+            if (t.IsInterface)
+            {
+                var levels = new List<Type> { t };
+                try { levels.AddRange(t.GetInterfaces()); } catch { }
+                foreach (var level in levels)
+                    try { found.AddRange(level.GetMethods(declared)); } catch { }
+            }
+            else
+            {
+                for (var level = t; level != null; level = level.BaseType)
+                    try
+                    {
+                        var ms = level.GetMethods(declared);
+                        found.AddRange(level == t ? ms : ms.Where(m => !m.IsPrivate));
+                    }
+                    catch { }
+            }
+        }
+        else
+        {
+            try { found.AddRange(t.GetMethods(declared)); } catch { }
+        }
+        return found.ToArray();
+    }
+
     // A conforming awaiter: PUBLIC `bool IsCompleted { get; }`, a public parameterless `GetResult()`, and a PUBLIC
     // `OnCompleted(Action)` — the members the bir2cir lowering binds by direct instance call (so this MUST agree with
     // ReferenceMetadataIndex.AwaiterConforms). We require the public OnCompleted method, NOT merely an INotifyCompletion
@@ -403,7 +442,7 @@ static class FacadeGen
         var hasIsCompleted = def.GetProperties(BindingFlags.Public | BindingFlags.Instance)
             .Any(p => p.Name == "IsCompleted" && p.PropertyType.FullName == "System.Boolean" && p.CanRead);
         var hasGetResult = GetResultReturnType(def) != null;
-        var hasOnCompleted = def.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+        var hasOnCompleted = Methods(def, BindingFlags.Public | BindingFlags.Instance)
             .Any(m => m.Name == "OnCompleted" && m.GetParameters().Length == 1);
         return hasIsCompleted && hasGetResult && hasOnCompleted;
     }
@@ -411,12 +450,12 @@ static class FacadeGen
     static Type GetResultReturnType(Type awaiter)
     {
         var def = awaiter.IsGenericType && !awaiter.IsGenericTypeDefinition ? awaiter.GetGenericTypeDefinition() : awaiter;
-        return def.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+        return Methods(def, BindingFlags.Public | BindingFlags.Instance)
             .FirstOrDefault(m => m.Name == "GetResult" && m.GetParameters().Length == 0)?.ReturnType;
     }
 
     static bool HasConfigureAwaitBool(Type t) =>
-        t.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+        Methods(t, BindingFlags.Public | BindingFlags.Instance)
             .Any(m => m.Name == "ConfigureAwait" && m.GetParameters() is { Length: 1 } ps
                 && ps[0].ParameterType.FullName == "System.Boolean");
 
@@ -735,7 +774,7 @@ static class FacadeGen
                     typeObj["iteratorElem"] = Ty(new TN.Tv("type", 0));
                 var iseen = new HashSet<string>();
                 var iprops = t.GetProperties(BindingFlags.Public | BindingFlags.Instance);
-                foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Instance))
+                foreach (var m in Methods(t, BindingFlags.Public | BindingFlags.Instance))
                 {
                     if (m.IsSpecialName) continue;
                     // A property accessor (get_size/set_size) not flagged SpecialName -> skip; the `prop` below covers it.
@@ -800,7 +839,7 @@ static class FacadeGen
                     if (!iseen.Add("sprop:" + sp.Name)) continue;
                     staticProps.Add(PropObj(sp.Name, PropTypeN(sp, t), sp.CanWrite, new JsonObject(), "public", null, null));
                 }
-                foreach (var sm in t.GetMethods(BindingFlags.Public | BindingFlags.Static))
+                foreach (var sm in Methods(t, BindingFlags.Public | BindingFlags.Static))
                 {
                     if (sm.IsSpecialName || sm.IsAbstract || sm.IsVirtual || sm.DeclaringType?.FullName == "System.Object" || (sm.IsGenericMethod && !sm.IsGenericMethodDefinition)) continue;
                     var smgp = sm.IsGenericMethodDefinition ? sm.GetGenericArguments().Select(g => g.Name).ToList() : new List<string>();
@@ -913,19 +952,19 @@ static class FacadeGen
                     var rw = !(f.IsInitOnly || IsKotlinReadOnly(f));
                     props.Add(PropObj(f.Name, FieldTypeN(f, t), rw, new JsonObject(), "public", null, null));
                 }
-                foreach (var g in t.GetMethods(IM))
+                foreach (var g in Methods(t, IM))
                 {
                     if (g.IsSpecialName || !g.Name.StartsWith("get_") || g.GetParameters().Length != 0) continue;
                     if (Covered(g) || Vis(g) == null || !Supported(g.ReturnType)) continue;
                     var pn = g.Name.Substring(4);
                     if (!seen.Add("prop:" + pn)) continue;
-                    var setter = t.GetMethods(IM).FirstOrDefault(m => !m.IsSpecialName && m.Name == "set_" + pn && m.GetParameters().Length == 1 && Vis(m) != null);
+                    var setter = Methods(t, IM).FirstOrDefault(m => !m.IsSpecialName && m.Name == "set_" + pn && m.GetParameters().Length == 1 && Vis(m) != null);
                     accessorMembers.Add(g.Name); if (setter != null) accessorMembers.Add(setter.Name);
                     var (pm, pv) = ModVis(Vis(g).Value, g.IsAbstract, g.IsVirtual && !g.IsFinal);
                     props.Add(PropObj(pn, RetTypeSfxN(g, t), setter != null, pm, pv, null, null));
                 }
                 // MEMBER extension properties (`class C { val T.p get() }`): accessors get_X(__self)/set_X(__self, v).
-                foreach (var g in t.GetMethods(IM))
+                foreach (var g in Methods(t, IM))
                 {
                     if (g.IsSpecialName || !g.Name.StartsWith("get_")) continue;
                     var gps = g.GetParameters();
@@ -933,7 +972,7 @@ static class FacadeGen
                     var prot = Vis(g); if (prot == null) continue;
                     var pn = g.Name.Substring(4);
                     if (!seen.Add("prop:" + pn)) continue;
-                    var setter = t.GetMethods(IM).FirstOrDefault(m => !m.IsSpecialName && m.Name == "set_" + pn
+                    var setter = Methods(t, IM).FirstOrDefault(m => !m.IsSpecialName && m.Name == "set_" + pn
                         && m.GetParameters().Length == 2 && m.GetParameters()[0].Name == "__self" && Vis(m) != null);
                     accessorMembers.Add(g.Name); if (setter != null) accessorMembers.Add(setter.Name);
                     memberExtProps.Add(PropObj(pn, RetTypeSfxN(g, t), setter != null, new JsonObject(),
@@ -973,7 +1012,7 @@ static class FacadeGen
                     if (p.GetIndexParameters().Length == 0 && Supported(p.PropertyType) && p.CanRead && seen.Add("sprop:" + p.Name))
                         staticProps.Add(PropObj(p.Name, PropTypeN(p, t),
                             p.CanWrite, new JsonObject(), "public", null, null));
-                foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Static))
+                foreach (var m in Methods(t, BindingFlags.Public | BindingFlags.Static))
                 {
                     // A generic METHOD DEFINITION (`Task.FromResult<T>`/`Task.Run<T>`) is surfaced so Kotlin can BUILD a
                     // `Task<T>` (async interop §②); a CONSTRUCTED generic static is skipped.
@@ -1026,7 +1065,7 @@ static class FacadeGen
                 }
             }
             var flags = BindingFlags.Public | BindingFlags.NonPublic | (isStatic ? BindingFlags.Static : BindingFlags.Instance);
-            foreach (var m in t.GetMethods(flags))
+            foreach (var m in Methods(t, flags))
             {
                 if (m.IsSpecialName) continue;
                 if (accessorMembers.Contains(m.Name)) continue;   // already surfaced as a `prop`
@@ -1092,7 +1131,7 @@ static class FacadeGen
             // LEFT operand is the receiver, so a binary op drops param[0] and a unary op has no value params. `clrName =
             // op_*` re-prepends the receiver + emits the static call. Only when param[0] IS the declaring type.
             if (!isStatic && GenuineNet(t))
-                foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Static))
+                foreach (var m in Methods(t, BindingFlags.Public | BindingFlags.Static))
                 {
                     if (!m.IsSpecialName || !OPERATOR_NAMES.TryGetValue(m.Name, out var kop)) continue;
                     var unary = UNARY_OPERATORS.Contains(kop);
@@ -1153,7 +1192,7 @@ static class FacadeGen
                     props.Add(PropObj(p.Name, PropTypeN(p, t),
                         p.CanWrite, new JsonObject(), "public", null, null));
                 }
-                foreach (var m in i.GetMethods())
+                foreach (var m in Methods(i, BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static))
                 {
                     if (m.IsSpecialName || m.IsStatic || m.IsGenericMethod) continue;
                     var ps = m.GetParameters();
@@ -1198,7 +1237,7 @@ static class FacadeGen
         foreach (var p in props) { yield return p.PropertyType; foreach (var ip in p.GetIndexParameters()) yield return ip.ParameterType; }
         EventInfo[] evs; try { evs = t.GetEvents(PUB); } catch { evs = Array.Empty<EventInfo>(); }
         foreach (var e in evs) { var inv = e.EventHandlerType?.GetMethod("Invoke"); if (inv != null) { yield return inv.ReturnType; foreach (var p in inv.GetParameters()) yield return p.ParameterType; } }
-        MethodInfo[] ms; try { ms = t.GetMethods(PUB); } catch { ms = Array.Empty<MethodInfo>(); }
+        MethodInfo[] ms; try { ms = Methods(t, PUB); } catch { ms = Array.Empty<MethodInfo>(); }
         foreach (var m in ms)
         {
             // #143: mirror the emission narrowing (line 786) — a STATIC member (e.g. RuntimeHelpers.GetHashCode) now
