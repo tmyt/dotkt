@@ -1515,6 +1515,9 @@ static class FacadeGen
     }
 
     // ----- DotKt metadata: restore Kotlin modifiers a DotKt-compiled assembly stamped (no .NET analog) -----
+    const string DotKtAssemblyMarkerAttr = "System.Reflection.AssemblyMetadataAttribute";
+    const string DotKtAssemblyMarkerKey = "DotKt.Compiler";
+    const string DotKtAssemblyMarkerValue = "metadata-v1";
     const string KFuncAttr = "DotKt.Runtime.CompilerServices.KotlinFunctionAttribute";
     const string KFileAttr = "DotKt.Runtime.CompilerServices.KotlinFileClassAttribute";
 
@@ -1534,7 +1537,7 @@ static class FacadeGen
             {
                 try
                 {
-                    if (cad.AttributeType.FullName == KFuncAttr && cad.ConstructorArguments.Count == 1)
+                    if (IsDotKtMetadata(cad, KFuncAttr) && cad.ConstructorArguments.Count == 1)
                     {
                         var f = Convert.ToInt32(cad.ConstructorArguments[0].Value);
                         infix = (f & 1) != 0; op = (f & 2) != 0; suspend = (f & 4) != 0;
@@ -1557,14 +1560,14 @@ static class FacadeGen
 
     static bool HasKotlinFileClass(Type t)
     {
-        try { return t.GetCustomAttributesData().Any(c => c.AttributeType.FullName == KFileAttr); }
+        try { return t.GetCustomAttributesData().Any(c => IsDotKtMetadata(c, KFileAttr)); }
         catch { return false; }
     }
 
     // #27: was this referenced assembly EMITTED BY kotc (a DotKt library), or is it a genuine 3rd-party/BCL assembly?
-    // Discriminator: a kotc-emitted assembly EMBEDS its round-trip attribute set in `DotKt.Runtime.CompilerServices`
-    // (KotlinFunctionAttribute/KotlinFileClassAttribute/…; metadata-attrs-embedded-nrt-nullability), so it DEFINES at
-    // least one type in that namespace; a C#/BCL assembly does not. This gates the collection reverse map: only a
+    // Discriminator: ilemit stamps [assembly: AssemblyMetadata("DotKt.Compiler", "metadata-v1")], while bir2cir's
+    // embedded KotlinFileClassAttribute definition is itself [CompilerGenerated]. BOTH are required: namespace/full-name
+    // lookalikes authored in ordinary C# are not provenance. This gates the collection reverse map: only a
     // DotKt lib's `IReadOnlyList<T>` WAS a `kotlin.collections.List<T>` (the forward @ClrTypeAlias produced it), so only
     // its signatures are restored. A genuine C# `IList<T>`/`IEnumerable<T>` was NEVER a Kotlin collection and stays a
     // BCL interface, so façade-free interop keeps direct BCL member access (`.Add`/`.Count`/`.IndexOf` — il-clriface/
@@ -1575,10 +1578,26 @@ static class FacadeGen
         if (a == null) return false;
         if (s_dotktAsm.TryGetValue(a, out var v)) return v;
         bool dotkt;
-        try { dotkt = a.GetTypes().Any(t => t.Namespace == "DotKt.Runtime.CompilerServices"); }
+        try
+        {
+            bool dotktMarker = a.GetCustomAttributesData().Any(c =>
+                c.AttributeType.FullName == DotKtAssemblyMarkerAttr
+                && c.ConstructorArguments.Count == 2
+                && c.ConstructorArguments[0].Value as string == DotKtAssemblyMarkerKey
+                && c.ConstructorArguments[1].Value as string == DotKtAssemblyMarkerValue);
+            var fileClassCarrier = a.GetType(KFileAttr, throwOnError: false, ignoreCase: false);
+            dotkt = dotktMarker && fileClassCarrier != null && IsCompilerGenerated(fileClassCarrier);
+        }
         catch (Exception e) { dotkt = false; Console.Error.WriteLine($"note: could not classify assembly provenance ({a.GetName().Name}: {e.GetType().Name}); treating as non-DotKt (collection reverse map off)"); }
         return s_dotktAsm[a] = dotkt;
     }
+
+    // Full-name equality alone is not provenance: ordinary C# can declare the same name. Accept an internal carrier
+    // only when both its defining assembly and the carrier type bear compiler provenance.
+    static bool IsDotKtMetadata(CustomAttributeData cad, string fullName) =>
+        cad.AttributeType.FullName == fullName
+        && IsCompilerGenerated(cad.AttributeType)
+        && IsDotKtEmittedAssembly(cad.AttributeType.Assembly);
 
     // Class-nature round-trip markers: [KotlinFunInterface] on a `fun interface` (SAM), [KotlinSealed] on a `sealed`
     // class/interface. Read back so the injector restores the Kotlin nature the CLR shape (plain interface / abstract
@@ -1587,19 +1606,19 @@ static class FacadeGen
     const string KSealedAttr   = "DotKt.Runtime.CompilerServices.KotlinSealedAttribute";
     static bool HasKotlinFunInterface(Type t)
     {
-        try { return t.GetCustomAttributesData().Any(c => c.AttributeType.FullName == KFunIfaceAttr); }
+        try { return t.GetCustomAttributesData().Any(c => IsDotKtMetadata(c, KFunIfaceAttr)); }
         catch { return false; }
     }
     static bool HasKotlinSealed(Type t)
     {
-        try { return t.GetCustomAttributesData().Any(c => c.AttributeType.FullName == KSealedAttr); }
+        try { return t.GetCustomAttributesData().Any(c => IsDotKtMetadata(c, KSealedAttr)); }
         catch { return false; }
     }
 
     const string KReadOnlyAttr = "DotKt.Runtime.CompilerServices.KotlinReadOnlyAttribute";
     static bool IsKotlinReadOnly(FieldInfo f)
     {
-        try { return f.GetCustomAttributesData().Any(c => c.AttributeType.FullName == KReadOnlyAttr); }
+        try { return f.GetCustomAttributesData().Any(c => IsDotKtMetadata(c, KReadOnlyAttr)); }
         catch { return false; }
     }
 
@@ -1676,7 +1695,7 @@ static class FacadeGen
     static string KotlinInlineBody(MethodInfo m)
     {
         foreach (var cad in m.GetCustomAttributesData())
-            if (cad.AttributeType.FullName == KInlineAttr && cad.ConstructorArguments.Count == 2)
+            if (IsDotKtMetadata(cad, KInlineAttr) && cad.ConstructorArguments.Count == 2)
                 return DecodeCarrier(cad);
         return null;
     }
@@ -1716,7 +1735,7 @@ static class FacadeGen
     {
         string shape = null;
         foreach (var cad in attrs)
-            if (cad.AttributeType.FullName == KSuspendFnAttr && cad.ConstructorArguments.Count == 2)
+            if (IsDotKtMetadata(cad, KSuspendFnAttr) && cad.ConstructorArguments.Count == 2)
             { shape = DecodeCarrier(cad); break; }
         if (string.IsNullOrEmpty(shape)) return null;
         try { var node = TN.Parse(shape); return node is TN.Fn { Suspend: true } ? node : null; }
@@ -1787,7 +1806,7 @@ static class FacadeGen
     static bool HasExtFnMarker(IList<CustomAttributeData> attrs)
     {
         foreach (var cad in attrs)
-            if (cad.AttributeType.FullName == KExtFnAttr) return true;
+            if (IsDotKtMetadata(cad, KExtFnAttr)) return true;
         return false;
     }
     // Move a mapped delegate's FIRST arg into the fn receiver (through a nullable/oblivious wrapper). A non-delegate or
@@ -1830,7 +1849,7 @@ static class FacadeGen
     static bool HasNothingMarker(IList<CustomAttributeData> attrs)
     {
         foreach (var cad in attrs)
-            if (cad.AttributeType.FullName == KNothingAttr) return true;
+            if (IsDotKtMetadata(cad, KNothingAttr)) return true;
         return false;
     }
 
@@ -1842,7 +1861,7 @@ static class FacadeGen
     {
         string shape = null;
         foreach (var cad in attrs)
-            if (cad.AttributeType.FullName == KNullableGenAttr && cad.ConstructorArguments.Count == 2)
+            if (IsDotKtMetadata(cad, KNullableGenAttr) && cad.ConstructorArguments.Count == 2)
             { shape = DecodeCarrier(cad); break; }
         if (string.IsNullOrEmpty(shape)) return null;
         try { return TN.Parse(shape); } catch { return null; }
@@ -1917,7 +1936,7 @@ static class FacadeGen
     {
         string shape = null;
         foreach (var cad in attrs)
-            if (cad.AttributeType.FullName == KCollIdentityAttr && cad.ConstructorArguments.Count == 2)
+            if (IsDotKtMetadata(cad, KCollIdentityAttr) && cad.ConstructorArguments.Count == 2)
             { shape = DecodeCarrier(cad); break; }
         if (string.IsNullOrEmpty(shape)) return null;
         try { return TN.Parse(shape); } catch { return null; }

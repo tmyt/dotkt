@@ -1,7 +1,9 @@
+// Producer source for the migrated il-netenum case. A .NET type that is IEnumerable<T> (like a BCL collection /
+// LINQ result) but NOT a Kotlin collection: `for (x in it)` must enumerate via GetEnumerator/MoveNext/Current.
+// Own namespace (Kfc).
 using System.Collections;
 using System.Collections.Generic;
 namespace Kfc {
-    // A .NET type that is IEnumerable<int> (like a BCL collection / LINQ result) but NOT a Kotlin collection.
     public class Nums : IEnumerable<int> {
         private readonly int[] _xs = new[] { 10, 20, 30 };
         public IEnumerator<int> GetEnumerator() => ((IEnumerable<int>)_xs).GetEnumerator();

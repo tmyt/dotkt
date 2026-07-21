@@ -1,7 +1,7 @@
+// Producer source for the migrated il-netinterop case. I4 remnants battery: .NET enum, generic delegates (BCL Func
+// + a custom generic delegate), and nullable value types (int?/double?) in signatures. Own namespace (I4).
 using System;
 namespace I4 {
-    // I4 remnants battery: .NET enum, generic delegates (BCL Func + a custom generic delegate), and
-    // nullable value types (int?/double?) in signatures.
     public enum Color { Red = 1, Green = 2, Blue = 4 }
     public class Probe {
         // enum in signatures

@@ -27,6 +27,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **facadegen / roundtrip ([tmyt/dotkt#205], area:bir2cir/ilemit/facadegen): DotKt assembly provenance is now
+  explicit instead of inferred from a namespace name.** DotKt output carries assembly-level
+  `[AssemblyMetadata("DotKt.Compiler", "metadata-v1")]`, and every embedded
+  `DotKt.Runtime.CompilerServices.*Attribute` definition is also `[CompilerGenerated]`; facadegen requires both before
+  reading Kotlin metadata or applying collection reverse maps.
+  An ordinary C# assembly containing a same-full-name lookalike therefore stays ordinary C#. The `il-tloverload`
+  regression now uses two real Kotlin producer files and round-trips their genuine file facades, replacing the C#
+  stand-in attribute that caused PR #201's shared producer DLL to be misclassified.
 - **compiler ([tmyt/dotkt#199], area:kotc/bir2cir/ilemit): two same-simple-name top-level functions in DIFFERENT
   packages (`a.foo`/`b.foo`) now dispatch to their OWN package's body instead of a global first-match. Root: the
   `callStatic.owner` slot overloads two concepts — `owner:null` is the load-bearing "top-level call" axis that ~12

@@ -1,6 +1,9 @@
+// Producer source for the migrated il-transinj case. 2-hop transitive injection: Panel/Widget are imported;
+// Gadget (hop 1) and Sprocket (hop 2) are NOT — the facadegen reachable-closure injects them because they appear
+// in Widget.Make() / Gadget.Core() signatures. Generic-typed members resolve as real constructed generics. Own
+// namespace (TX).
 using System.Collections.Generic;
 namespace TX {
-    // 2-hop transitive: Panel/Widget are imported; Gadget (hop 1) and Sprocket (hop 2) are NOT.
     public class Sprocket { public Sprocket(int n) { Size = n; } public int Size { get; } }
     public class Gadget {
         public Gadget(string n) { Tag = n; }

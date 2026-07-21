@@ -22,6 +22,11 @@
 
   <ItemGroup>
     <ProjectReference Include="../producer/InteropProducer.csproj" />
+    <!-- The NRT-enabled producer (../producer-nrt): its DlgNrt.Api carries real [Nullable] delegate-type-arg
+         bytes (Func<string?>/Action<string?>) that the oblivious producer cannot express — the migrated
+         il-delegnull case (#150) consumes it façade-free. Kept a SEPARATE assembly so enabling NRT does not
+         change the other cases' reference-type nullability (platform-type behavior). -->
+    <ProjectReference Include="../producer-nrt/InteropProducerNrt.csproj" />
   </ItemGroup>
 
   <ItemGroup>
