@@ -23,6 +23,11 @@ import System.Collections.ObjectModel.ObservableCollection
 import System.ComponentModel.INotifyPropertyChanged
 
 class ObservableCollectionEventTests {
+    private fun <T> subscribeGeneric(
+        collection: ObservableCollection<T>,
+        handler: (Any?, Any?) -> Unit,
+    ): AutoCloseable = collection.CollectionChanged.subscribe(handler)
+
     // il-event: a direct lambda literal (`button.Click += { }`) AND a stored handler reference (needed for `-=`
     // delegate equality) subscribe/unsubscribe on a .NET INSTANCE event; Add() raises CollectionChanged synchronously.
     @TestAttribute
@@ -66,5 +71,43 @@ class ObservableCollectionEventTests {
         c.Add(30)                                     // handler no longer fires
         assertEquals(3, c.Count)                      // count=3
         assertTrue(fired > 0)                         // fired=true (raised while subscribed)
+    }
+
+    @TestAttribute
+    fun subscriptionCloseRemovesTheExactLambdaOnce() {
+        val c = ObservableCollection<Int>()
+        var fired = 0
+        val subscription = c.CollectionChanged.subscribe { _, _ -> fired++ }
+
+        c.Add(10)
+        assertEquals(1, fired)
+        subscription.close()
+        subscription.close()                         // idempotent
+        c.Add(20)
+        assertEquals(1, fired)
+    }
+
+    @TestAttribute
+    fun subscriptionParticipatesInUse() {
+        val c = ObservableCollection<Int>()
+        var fired = 0
+
+        c.CollectionChanged.subscribe { _, _ -> fired++ }.use {
+            c.Add(10)
+        }
+        c.Add(20)
+        assertEquals(1, fired)
+    }
+
+    @TestAttribute
+    fun subscriptionClosesInGenericContext() {
+        val c = ObservableCollection<String>()
+        var fired = 0
+        val subscription = subscribeGeneric(c) { _, _ -> fired++ }
+
+        c.Add("before")
+        subscription.close()
+        c.Add("after")
+        assertEquals(1, fired)
     }
 }

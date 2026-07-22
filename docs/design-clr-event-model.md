@@ -93,7 +93,7 @@ A .NET event is not a first-class value; it exposes only add / remove / raise. D
 
 | Op | Kotlin surface | Realized as |
 |----|----------------|-------------|
-| **CONSUME** | `x.E += h` / `x.E -= h` | the event's `add_E`/`remove_E` accessor (works today) |
+| **CONSUME** | `x.E += h` / `x.E -= h` / `x.E.subscribe(h)` | the event's `add_E`/`remove_E` accessor; `subscribe` returns an `EventSubscription<T>` that removes the exact added handler on `close()` |
 | **IMPLEMENT** | `override val E by clrEvent()` (implement an interface slot) **or** `val E: ClrEvent<D> by clrEvent()` (declare a NEW event) | a synthesized backing delegate field + real `add_E`/`remove_E`/`raise_E` on the emitted type |
 | **RAISE** | `vm.E.invoke(sender, args)` **or** `vm.E(sender, args)` (same `operator fun invoke`) | invoke the backing delegate via the `raise_E` accessor |
 
@@ -150,7 +150,7 @@ meaning; it is a compile-time lowering tag. Two consequences, both wanted:
 
 - **The `kotlin.clr.ClrEvent` type** (kotc `ClrTypeInjection.generateTopLevelClassLikeDeclaration`,
   `ClrTypeInjection.kt:620-624`): created with `ClassKind.CLASS` + `Modality.ABSTRACT`. It carries
-  abstract `operator fun plusAssign(h: T)` / `minusAssign(h: T)` (consume), abstract
+  abstract `operator fun plusAssign(h: T)` / `minusAssign(h: T)` and `fun subscribe(h: T): EventSubscription<T>` (consume), abstract
   `operator fun invoke(vararg args): R` (raise), and abstract `operator fun getValue(r: Any?, p: KProperty<*>): ClrEvent<T>`
   (so `by clrEvent()` typechecks under the delegate convention — see §5). None have bodies; none
   are ever executed.
@@ -188,12 +188,14 @@ meaning; it is a compile-time lowering tag. Two consequences, both wanted:
 (unchanged): `clrEventGet{type,name,static,recv}` (kotc-dialect handle read),
 `clrEventAdd`/`clrEventRemove{type,event,static,recv,handler}` (bir2cir-produced accessor call).
 
-### 4.1 CONSUME — `x.E += h` (unchanged)
+### 4.1 CONSUME — `x.E += h`, `x.E -= h`, or `x.E.subscribe(h)`
 
 Already implemented and covered by `tests/interop/consumer/fixtures/ObservableCollectionEventTests.kt`.
 kotc emits `clrEventGet` for the handle read
-and a plain `ClrEvent.plusAssign/minusAssign` call; bir2cir's `ClrEventOperatorBinding` rewrites the
-pair to `clrEventAdd`/`clrEventRemove`; ilemit's `EmitClrEvent` links the ref.dll accessor and emits
+and a plain `ClrEvent.plusAssign/minusAssign/subscribe` call; bir2cir's `ClrEventOperatorBinding` rewrites the
+pair to `clrEventAdd`/`clrEventRemove`. For `subscribe`, it evaluates the receiver and handler once, emits the add,
+then constructs the stdlib `EventSubscription<T>` with a synthesized remove callback that captures the receiver.
+ilemit's `EmitClrEvent` links the ref.dll accessor and emits
 the delegate-wrap + `callvirt add_E`. **One kotc widening** (for #186 use-site): produce `clrEventGet`
 whenever the accessed member is a `ClrEvent<T>` property, **regardless of whether the receiver is a
 .NET type or a Kotlin type that implements a .NET-event interface** (`BirEmitterCalls.kt:870`). Today
@@ -236,7 +238,7 @@ relation; ilemit emits pure CLR codegen):
 - **kotc**: `invoke` resolved on `kotlin.clr.ClrEvent<T>` (the abstract `operator fun invoke`) whose
   receiver is a `clrEventGet` → a dedicated dialect node `clrEventRaise{type,event,static,recv,args}`
   (parallel to `clrEventGet`; emitted in `BirEmitterCalls.kt` alongside the existing
-  `plusAssign/minusAssign` handling at `:409-414`). The `ClrEvent<T>` value is consumed, never
+  `plusAssign/minusAssign/subscribe` handling). The `ClrEvent<T>` value is consumed, never
   materialized. Because raise is `operator fun invoke`, **`vm.E.invoke(s, a)` and `vm.E(s, a)` desugar
   to the identical call** (Kotlin's invoke convention) → both produce `clrEventRaise`; the author
   writes whichever form (`.invoke` = explicit/C#-`Invoke`-parallel, `E(…)` = idiomatic sugar),

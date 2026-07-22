@@ -26,4 +26,14 @@ class StaticEventTests {
         Station.Announce("bye")   // announce: bye
         assertEquals("ping: 3\nping: 7\nannounce: hi\nannounce: yo\nh: yo\nannounce: bye\n", log)
     }
+
+    @TestAttribute
+    fun staticEventSubscriptionCloses() {
+        var log = ""
+        val subscription = Station.Announced.subscribe { s -> log += "$s\n" }
+        Station.Announce("before")
+        subscription.close()
+        Station.Announce("after")
+        assertEquals("before\n", log)
+    }
 }
