@@ -948,7 +948,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 						?.constructType(arrayOf(tOf), false) ?: anyN
 					createMemberFunction(owner, ClrGeneratedKey, callableId.callableName, subscriptionType) {
 						modality = Modality.ABSTRACT
-						valueParameter(Name.identifier("block"), tOf)
+						valueParameter(Name.identifier("handler"), tOf)
 					}
 				}
 				// `operator fun invoke(vararg args: Any?): Unit` — raise. `handle.invoke(sender, args)` / `handle(sender, args)`
