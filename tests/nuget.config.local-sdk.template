@@ -3,8 +3,8 @@
      LOCALLY-BUILT DotKt SDK from `make pack` (build/nuget-feed) instead of a published nuget.
 
      To activate: copy to `nuget.config` at the tests/ root (or repo root), point paths at the repo's
-     build/nuget-feed, set the test .ktproj/.csproj SDK to the locally-built version
-     (<Project Sdk="DotKt.Sdk/<local-version>">, or a central global.json msbuild-sdks entry), and let the gate
+     build/nuget-feed, pin the locally-built SDK once in the repository-root global.json `msbuild-sdks` map, use
+     versionless <Project Sdk="DotKt.Sdk"> references in test projects, and let the gate
      RECREATE the isolated globalPackagesFolder each run (NuGet prefers an existing exact-version package in a
      persistent cache — never overwrite the same version there; recreate the cache or stamp a unique prerelease
      version across all DotKt packages). This mirrors tests/packaged-sdk/run.sh. Use the NuGet SDK
