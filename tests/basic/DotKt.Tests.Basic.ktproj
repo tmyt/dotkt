@@ -1,5 +1,5 @@
 <!-- Basic Kotlin language and standard-library NUnit suite.
-     (docs/design-nunit-test-harness.md; playbook docs/nunit-migration-playbook.md). Every .kt under this
+     (docs/design-nunit-test-harness.md). Every .kt under this
      project is Kotlin, compiled to CLR IL by the DotKt MSBuild SDK; `dotnet test` discovers the @TestAttribute
      methods and runs them in-process/parallel. Each fixture is a coherent feature family: many former
      stdout-diff cases -> @TestAttribute methods asserting the VALUE directly, compiled ONCE per assembly.

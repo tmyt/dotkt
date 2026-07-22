@@ -1,8 +1,7 @@
 # Coroutine cold core + CLR Task bridge design note
 
-Status: design note (2026-07-03). This refines the coroutine direction in
-[coroutine-abi.md](coroutine-abi.md), [design-coroutines-clr.md](design-coroutines-clr.md), and
-[coroutine-stdlib-port-plan.md](coroutine-stdlib-port-plan.md).
+Status: implemented design record (2026-07-03). This supplies the internal implementation behind
+the public [coroutine ABI](coroutine-abi.md).
 
 The short version:
 
@@ -380,8 +379,8 @@ ilemit:
 
 ## 11. Implementation contract (P0 lock, 2026-07-03 — the approved bundle-6 plan)
 
-Locked decisions the implementation phases (P1-P6) build against. The full phased plan lives in the
-approved plan file; `docs/master-task-inventory.md 【6】` mirrors it.
+Locked decisions the implementation phases (P1-P6) built against. Remaining defects are tracked in
+GitHub Issues.
 
 ### Naming + shapes
 
@@ -444,16 +443,15 @@ public suspend fun delay(ms: Long)             // Task.Delay(ms).await()
   (which keep the internal type inside the stdlib). `SafeContinuation` caches its `UNDECIDED`/`RESUMED`
   boxed enums (F1) so a sync resume's `cur === UNDECIDED` identity check holds on the CLR (a boxed value
   type has unstable `===` identity otherwise). Same-module `suspendCoroutine*` still lowers via the
-  inlined `valueBlock` intrinsic (`EmitIntrinsicSuspension`). Case: `cases/il-suspendco`.
+  inlined `valueBlock` intrinsic (`EmitIntrinsicSuspension`). Coverage:
+  `tests/coroutines/fixtures/ContinuationBridgeTests.kt`.
 - No CancellationToken/Job/interceptor dispatch (later layers); `intercepted()` = identity v1.
 
 ### Supersession notes
 
-- `coroutine-il.md`'s strategy-B (`IAsyncStateMachine`/`AsyncTaskMethodBuilder`) SM framing is
-  SUPERSEDED: the SM is `ContinuationImpl`-based plain CIR; the ATMB machinery is deleted with
-  `Emitter.Coroutines.cs` in P6. The hot-Task PUBLIC ABI (`coroutine-abi.md` §1) is unchanged.
-- `coroutine-stdlib-port-plan.md`'s TypedCont/Builders port is DEAD (the class-form bridge types are
-  never ported; the TCS RootContinuation replaces them).
+- Earlier `IAsyncStateMachine`/`AsyncTaskMethodBuilder` and TypedCont/Builders designs are superseded.
+  They remain available in Git history. The implemented state machine is `ContinuationImpl`-based
+  plain CIR, while the hot-Task public ABI remains unchanged.
 
 ## 12. Status + refinements (P0-P2 landed, 2026-07-03)
 
@@ -523,8 +521,8 @@ test harness that implements the kotlinx primitives `blockOn`/`delay` in pure Ko
 primitives, with ZERO compiler special-casing, is a LIVING PROOF of exactly that claim. If the harness can't
 express them, that surfaces a real primitive gap — the best possible test. The harness IS a mini-Track-2.
 
-Harness location: a shared `cases/support/`-style Kotlin file compiled with the coroutine samples (+ the
-roundtrip heredocs get their own inline copy). `cobuild`/roundtrip/the LAM rungs import it. Sequencing:
+Harness location: shared Kotlin support under `tests/support/`, compiled with the coroutine tests; roundtrip
+scenarios keep their own inline copy. Sequencing:
 harness `blockOn` needs only `startCoroutine` (available after wave-2b lambda SMs); harness `delay` needs
 `await` (P4) — so `delay`-using tests wait on P4, `blockOn`-using tests land right after wave-2b.
 

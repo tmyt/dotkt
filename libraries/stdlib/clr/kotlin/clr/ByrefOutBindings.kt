@@ -6,7 +6,7 @@
 // Demonstrations of the implicit-byref binding for BCL `out` parameters (the `ref` form is exercised by the atomics'
 // Interlocked in builtins/Atomics.kt). Kotlin has no `out`/`ref` syntax: a helper marks its byref parameter with
 // @ClrRefArgument on a PLAIN type (no `ClrRef<T>`, so the stdlib ABI stays identical to the standard Kotlin stdlib and
-// no compiler-injected intrinsic leaks into the frontend jar). bir2cir reads @ClrIntrinsic + @ClrRefArgument from the
+// no compiler-injected intrinsic leaks into the frontend KLIB). bir2cir reads @ClrIntrinsic + @ClrRefArgument from the
 // ref.dll and substitutes the call to the BCL static, passing that argument by reference (ldloca/ldflda).
 
 package kotlin.clr

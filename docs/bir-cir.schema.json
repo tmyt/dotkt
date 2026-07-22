@@ -255,7 +255,7 @@
       "$comment": "Representative kotc-emit set. The AUTHORITATIVE frozen kind set (the union of every kind the toolchain emits across a full fresh build, incl. the CLR-lowered `clr*`, coroutine-lowered `co*`, structured `for`, and the not-yet-merged `setFieldExpr`/`staticFieldSet` field-write variants) lives in the m6 validator's KINDS (scripts/verify-schema.py; regenerate with --dump-kinds). The validator rejects any k outside it. (cond = ternary expression; if = statement.)"
     },
     "nodeByKind": {
-      "$comment": "Representative canonical shapes (the m6 validator pins the full per-kind field set, generated from docs/bir-audit/kotc-emit.md §1). Canonical field vocabulary below.",
+      "$comment": "Representative canonical shapes; the validator pins the full per-kind field set. Canonical field vocabulary below.",
       "oneOf": [
         { "properties": { "k": { "const": "local" }, "name": { "type": "string" } }, "required": ["name"] },
         { "properties": { "k": { "const": "const" }, "type": { "$ref": "#/$defs/type" }, "value": {} }, "required": ["type"] },

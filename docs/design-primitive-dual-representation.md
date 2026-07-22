@@ -1,7 +1,7 @@
 # Primitive dual-representation — how kotlin.Int/Short/… emit on the CLR
 
 Status: **decided (Model-B pragmatic)** (2026-06-28); **the general rule is IMPLEMENTED** (bir2cir type lowering;
-nullable-generic `T?` return erasure to `object` landed 2026-07-02 — `master-task-inventory.md` RC2). This is the hardest type-representation problem in the stdlib; the
+nullable-generic `T?` return erasure to `object` landed 2026-07-02). This is the hardest type-representation problem in the stdlib; the
 trigger is dotPeek showing the garbage `public class kotlin.Short : Number, Comparable<short>` (an empty shell) and the
 primitive `toDouble` no-impl load errors.
 

@@ -5,7 +5,7 @@
 // But it only has a Kotlin `iterator(): Iterator<T>` (hasNext/next), NOT a BCL IEnumerator<T> (MoveNext/Current). We
 // generate, IN IL (Codex-reviewed decision A2 — Kotlin can't express the two distinct `Current` slots), a single generic
 // adapter `dotkt$EnumeratorOverKotlinIterator<T>` that wraps the Kotlin iterator, plus a `GetEnumerator()` on each
-// qualifying class. docs/design-clr-stdlib-ref-runtime-split.md "Reverse GetEnumerator bridge".
+// qualifying class. See docs/design-clr-collection-binding.md.
 using System;
 using System.Collections.Generic;
 using System.Reflection;

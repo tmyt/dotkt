@@ -301,7 +301,7 @@ sealed partial class Emitter
                 break;
             case "break": { var (_, brk) = TargetLoop(s); _il.Emit(OpCodes.Br, brk); break; }
             case "continue": { var (cont, _) = TargetLoop(s); _il.Emit(OpCodes.Br, cont); break; }
-            // CFG block-IR (E-0.5): a basic-block boundary and (un)conditional branches. See docs/design-il-cfg.md.
+            // CFG block-IR (E-0.5): a basic-block boundary and (un)conditional branches. See docs/bir-cir-spec.md.
             case "label": _il.MarkLabel(_cfgLabels[s.GetProperty("id").GetInt32()]); break;
             case "goto":
             {

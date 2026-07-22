@@ -40,7 +40,7 @@ public const val WRITE: Int = 2
 // `fun setX(v)` (e.g. StringBuilder.length + setLength()), each accessor carries @ClrProperty with the SAME `name`.
 // Distinct from @ClrIntrinsic (which binds to a like-named .NET METHOD). Indexers (get_Item(i)/set_Item(i,v) — they take
 // an index arg) are genuine methods and STAY @ClrIntrinsic. No default arg on `access` (cross-module default-arg values
-// are dropped by the frontend jar); always pass both `access` and `name`.
+// are dropped by the frontend KLIB); always pass both `access` and `name`.
 @Target(AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY)
 public annotation class ClrProperty(val access: Int, val name: String)
 
@@ -65,7 +65,7 @@ public annotation class ClrRefArgument
 public annotation class ClrIntrinsicAsDynamic(val name: String)
 
 // Carries a parameter's DEFAULT-VALUE expression as embedded BIR so a CROSS-MODULE caller that OMITS the argument can
-// have it filled. The frontend jar drops a callee's default VALUES (hands them back as IrErrorExpression), and .NET
+// have it filled. The frontend KLIB drops a callee's default VALUES (hands them back as IrErrorExpression), and .NET
 // `[DefaultParameterValue]` metadata can only carry a CONSTANT of the parameter's own type — it cannot represent a
 // non-null object/`CharSequence` default (e.g. `joinToString`'s `prefix: CharSequence = ""`, which is 4-A-coerced to
 // `new <>dotkt_StringCharSequence("")`, a non-constant). So kotc STAMPS this on the defaulted parameter when compiling

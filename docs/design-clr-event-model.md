@@ -31,7 +31,7 @@ class PersonViewModel : ViewModelBase() { val name by viewModelProperty("John Do
 ```
 
 Related reading: `docs/dotkt-semantics.md` §8d (the consume side + the raise deviation this note
-adds), the layer table in `docs/ship-tasks.md` §0, and the existing consume pass
+adds), the layer table in `docs/architecture.md` §0, and the existing consume pass
 `toolchain/bir2cir/ClrEventOperatorBinding.cs`.
 
 ---
@@ -190,7 +190,8 @@ meaning; it is a compile-time lowering tag. Two consequences, both wanted:
 
 ### 4.1 CONSUME — `x.E += h` (unchanged)
 
-Already implemented and green (`cases/il-ifaceevent`). kotc emits `clrEventGet` for the handle read
+Already implemented and covered by `tests/interop/consumer/fixtures/ObservableCollectionEventTests.kt`.
+kotc emits `clrEventGet` for the handle read
 and a plain `ClrEvent.plusAssign/minusAssign` call; bir2cir's `ClrEventOperatorBinding` rewrites the
 pair to `clrEventAdd`/`clrEventRemove`; ilemit's `EmitClrEvent` links the ref.dll accessor and emits
 the delegate-wrap + `callvirt add_E`. **One kotc widening** (for #186 use-site): produce `clrEventGet`
@@ -363,7 +364,7 @@ Kotlin-declared events.)
 ## 7. Decision 5 — the canonical conformance case (NUnit)
 
 The user's `ViewModelBase`/`PersonViewModel` is the acceptance test, added as an NUnit fixture under
-the migration (`tests/il/fixtures/ClrEventTests.kt`, the `@TestAttribute` + `ClassicAssert`
+the migration (`tests/interop/consumer/fixtures/ClrEventTests.kt`, the `@TestAttribute` + `ClassicAssert`
 shape of the migrated `*Tests.kt` batteries). It exercises IMPLEMENT (`by clrEvent()`), the property-delegate
 RAISE-from-outside, and CONSUME via the `INotifyPropertyChanged` interface slot:
 
@@ -417,7 +418,7 @@ already passes via the consume path and stays a control.
 
 ## 8. Decision 6 — sequenced implementation plan (0.9.7)
 
-Each step is independently gate-runnable (`./scripts/verify-il.sh`; the NUnit fixture via the pilot).
+Each step is independently gate-runnable through the focused NUnit fixture and `make verify`.
 Order minimizes cross-layer churn: land the type-level marker + node vocabulary first, then the two
 synthesis flavors, then hardening.
 
@@ -429,7 +430,7 @@ synthesis flavors, then hardening.
 | **S3** | ilemit | `EmitClrEventAccessorImpl` (CAS loop §1 for add/remove, `field?.Invoke` for raise) + `MethodImpl` wiring to the interface slots + `.event` metadata from `clrEventDecl`. | #187 |
 | **S4** *(deferred → 0.9.8)* | kotc + bir2cir | Class-delegation forwarder: synthesize forwarding `add_/remove_` for a delegated CLR interface event (§4.4); use-site `a.E += h` via widened `clrEventGet`. Carry the overridden slot's `Mutable*` return type in the forwarder (fold #174). **Not in the initial 0.9.7 implementation** (user-directed 2026-07-20) — a follow-on reusing S1/S2's synthesis machinery. | #186, #174 (0.9.8) |
 | **S5** | ilemit | Route **all** event emit (consume, implement, raise, `.event`) through the guarded `LinkClrMethod`/`RequireDispatch`/null-checked `GetEvent` family; legible `ilemit:` breadcrumb on a missing/value-type/constructed-generic event owner instead of an opaque NRE. | #113 |
-| **S6** | tests + docs | Add `ClrEventTests.kt` (§7); record the raise deviation in `docs/dotkt-semantics.md` §8d; correct the stale "interface events not yet surfaced" note (§8d:897-902). Run `verify-il.sh` + the NUnit pilot; prune any FIXED XFAIL. | — |
+| **S6** | tests + docs | Add `ClrEventTests.kt` (§7); record the raise deviation in `docs/dotkt-semantics.md` §8d; run the focused NUnit fixture and full gate. | — |
 
 Sequencing notes: **S0–S3 are the #187 spine** and must land together (a half-landed abstract marker
 without synthesis would red the gate on every existing interface-event consumer). **The initial 0.9.7

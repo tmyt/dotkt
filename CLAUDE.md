@@ -6,10 +6,10 @@
 > Full overview, layout table, and design notes: **`README.md`**.
 >
 > Authority order: (1) the user's request → (2) this file's rules → (3) the actual code + canonical
-> scripts for current behavior → (4) **`docs/ship-tasks.md` §0** for architecture (**its invariants
+> scripts for current behavior → (4) **`docs/architecture.md`** for architecture (**its invariants
 > are binding: an implementation that violates them is a bug**) → (5) the **GitHub issue tracker**
-> (the SOLE source of truth for what remains to do — bugs AND tasks; `docs/master-task-inventory.md` is
-> DEPRECATED/archival) → (6) other docs for rationale (they may lag the code — verify, and flag
+> (the SOLE source of truth for what remains to do — bugs AND tasks) → (6) other docs for rationale
+> (they may lag the code — verify, and flag
 > stale docs rather than following them).
 
 # Ground Rules
@@ -139,12 +139,12 @@ in order; other stdlib scripts are stale or experimental:
 - `./scripts/build-stdlib-klib.sh` — the **frontend KLIB** (`kotlin-stdlib-clr-frontend.klib`),
   kotc's `-classpath` input. Built by kotc's own `DOTKT_BUILD_KLIB=1` metadata pipeline over the
   actualized stdlib sources, so it carries real `@ClrTypeAlias`/`@ClrIntrinsic` metadata and
-  compiled const values. (Superseded the retired JVM frontend jar — #67/#80.)
+  compiled const values. (Superseded the retired JVM frontend JAR — #67/#80.)
 - `./scripts/build-stdlib-ref.sh --emit` — the **reference** assembly (`DotKt.Private.Stdlib.dll`;
   compile-time only, carries `@Clr*` metadata, substituted away at app-emit).
 - `./scripts/build-stdlib-rt.sh --emit` — the shipping **runtime** assembly (`DotKt.Stdlib.dll`).
 - `--emit` makes ref/rt actually run `ilemit` (without it: frontend + BIR only, for fast triage).
-  Why the ref/runtime split: `docs/design-clr-stdlib-ref-runtime-split.md`.
+  Why the ref/runtime split: `docs/architecture.md`.
 - ⚠️ `scripts/build-stdlib.sh` (a #66 shared-BIR experiment) exists but is NOT canonical and is not
   in the Makefile; consolidating onto it is an open follow-up.
 
@@ -155,7 +155,7 @@ Toolchain: JDK auto-provisioned by Gradle; **.NET SDK 10 required**. Kotlin/IR A
 
 The authoritative layer table — including the reference artifact each stage reads (facadegen ← CLR
 dll, kotc ← stdlib.klib, bir2cir ← stdlib.ref.dll, ilemit ← stdlib.rt.dll) — is
-**`docs/ship-tasks.md` §0**. This summary must not drift from it.
+**`docs/architecture.md`**. This summary must not drift from it.
 
 | Module | Owns | Must NOT contain |
 |--------|------|------------------|
@@ -196,7 +196,7 @@ when you find residual code violating them, fixing it is in scope, not optional)
   lowers `kotlin.Int` → the CLR primitive. Single unflagged path (the compat dual-track is removed).
 - **ilemit knows no Kotlin** and ideally does not read the Reference Assemblies — residual .NET
   resolution above bir2cir is historical debt: when you touch it, move it toward the boundary, don't
-  entrench it. (Status ledger: `docs/master-task-inventory.md` 【1】.)
+  entrench it. Track concrete residuals in GitHub Issues.
 
 > ### BINDING INVARIANT — `kotlin.*` comes from the KLIB, never from facadegen
 > kotc resolves the **entire stdlib (`kotlin.*`)** from the frontend **KLIB** (`-classpath`), which
@@ -246,12 +246,12 @@ not the compiler.
 
 | If you are about to… | Read first |
 |----------------------|-----------|
-| **pick up work / know what's left** | the **GitHub issue tracker** (the SOLE source of truth — bugs AND tasks; `docs/master-task-inventory.md` is DEPRECATED/archival); `docs/ship-tasks.md` §0 stays the binding architecture reference |
-| change the backend pipeline (BIR/CIR/IL, layer boundaries) | `docs/design-fir-bir-cir-il.md` + MEMORY `compiler-layer-responsibilities` |
-| touch stdlib bindings / `@Clr*` / lowerings | `docs/clr-stdlib-intrinsic-audit.md`, `docs/design-clr-stdlib-ref-runtime-split.md` |
-| retire / migrate an intrinsic | `docs/master-task-inventory.md` 【1】 (archived 6-wave plan: `docs/archive/bir2cir-migration-inventory.md`) |
+| **pick up work / know what's left** | the **GitHub issue tracker** (the sole source of truth for bugs and tasks); `docs/architecture.md` is the binding architecture reference |
+| change the backend pipeline (BIR/CIR/IL, layer boundaries) | `docs/architecture.md` + MEMORY `compiler-layer-responsibilities` |
+| touch stdlib bindings / `@Clr*` / lowerings | `docs/architecture.md`, then the relevant implementation and tests |
+| retire / migrate an intrinsic | `docs/architecture.md` plus the tracking GitHub issue |
 | ask "how does Kotlin map to the CLR, or why does it differ?" | `docs/dotkt-semantics.md` (canonical) |
-| check what is left for 1.0 | `docs/remaining-tasks.md` |
+| check what is left for 1.0 | the GitHub issue tracker |
 | **record a new behavioral difference** from Kotlin/JVM | write it **into** `docs/dotkt-semantics.md` (not a code comment) |
 | log a fix | add it under `## Unreleased` in `CHANGELOG.md` |
 

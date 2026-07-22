@@ -1,6 +1,6 @@
 <!-- Coroutine / suspend NUnit suite — the dedicated lane for the suspend/coroutine family of the
      cases/il-* -> NUnit migration (docs/design-nunit-test-harness.md §4: "coroutine (+ the one shared harness)"
-     battery; playbook docs/nunit-migration-playbook.md). Given its OWN project (per the tests/basic ·
+     battery; docs/design-nunit-test-harness.md). Given its OWN project (per the tests/basic ·
      tests/interop · tests/coroutines · tests/roundtrip subject-split) rather than folded into tests/basic, because
      the cold-core state-machine lowering + the shared blockOn drive harness are a distinct subject.
 

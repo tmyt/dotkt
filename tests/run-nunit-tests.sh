@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # NUnit gate driver for the Basic, Interop, Coroutines, and Roundtrip suites.
-# (docs/design-nunit-test-harness.md; playbook docs/nunit-migration-playbook.md).
+# See docs/design-nunit-test-harness.md.
 #
 # It drives the test projects against the LOCALLY-BUILT DotKt SDK (build/nuget-feed via tests/nuget.config,
 # design D4) and enforces the audit's machine-readable governance:

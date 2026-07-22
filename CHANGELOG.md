@@ -430,8 +430,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ### Changed
 
 - **gates/tests (area:gates): NUnit migration foundation + first family (generics battery) migrated off the
-  per-case bash gate.** Stood up the production in-process NUnit suite (`docs/design-nunit-test-harness.md`,
-  playbook `docs/nunit-migration-playbook.md`): `tests/il/DotKt.Tests.Il.ktproj` resolves the LOCALLY-BUILT
+  per-case bash gate.** Stood up the production in-process NUnit suite (`docs/design-nunit-test-harness.md`):
+  `tests/il/DotKt.Tests.Il.ktproj` resolves the LOCALLY-BUILT
   DotKt SDK from `build/nuget-feed` (`make pack`) via an active `tests/nuget.config` (isolated
   `globalPackagesFolder`, package-source mapping `DotKt.*`→local feed) — so the suite tests the compiler in the
   working tree, not a published nuget. `tests/run-nunit-il.sh` drives it and enforces a **discovered-count

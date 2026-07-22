@@ -200,7 +200,7 @@ sealed partial class Emitter
 
     // Define an IL Label for every CFG `label` node anywhere in the body (forward refs from goto/brIf), so the
     // single emit pass can branch to not-yet-emitted blocks. Recursive: labels can sit inside nested structured
-    // bodies (a CFG-lowered `while` spliced into a still-structured `if`). See docs/design-il-cfg.md.
+    // bodies (a CFG-lowered `while` spliced into a still-structured `if`). See docs/bir-cir-spec.md.
     void PrescanCfgLabels(JsonElement node)
     {
         _cfgLabels = new Dictionary<int, Label>();
@@ -482,7 +482,7 @@ sealed partial class Emitter
     // Emit call args, boxing each value arg passed to a reference/object param (param types known explicitly).
     // When `mb` is a REFERENCED (reflectable) method, backfill omitted trailing [Optional]/[DefaultParameterValue]
     // args exactly like EmitCallArgs — a GENERIC (typeArgs) cross-module call may omit defaulted trailing params
-    // (the frontend jar strips default VALUES; kotc emits fewer args than the full sig, e.g. `windowed(3)` vs the
+    // (the frontend KLIB strips default VALUES; kotc emits fewer args than the full sig, e.g. `windowed(3)` vs the
     // 4-param `windowed(list, size, step=1, partialWindows=false)`), and the CLR caller must supply them or the
     // stack is short -> InvalidProgram. In-assembly emitted methods (MethodBuilder / MethodBuilderInstantiation)
     // can't be reflected pre-bake and carry no default metadata, so GetParameters() there is skipped (try/catch).

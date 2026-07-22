@@ -394,7 +394,7 @@ private object ClrMetadataHolder {
 	// backtick stripped (`System.Threading.Tasks.Task\`1` -> `Task`), matching the backend contract (BirEmitter emits the
 	// arity-LESS open name in `clrg:<open>[args]`; ilemit re-appends `\`N` from the constructed arg count). This is a pure
 	// projection of `byClassId`, which already excludes @Clr-bound stdlib types (clrBinding != null) and `kotlin.*` — a
-	// facadegen-injected stdlib type never happens (kotlin.* comes from the JAR). NOTE: the .NET name of an arity-QUALIFIED Kotlin name
+	// facadegen-injected stdlib type never happens (kotlin.* comes from the KLIB). NOTE: the .NET name of an arity-QUALIFIED Kotlin name
 	// (`Task\`1` -> Kotlin `Task1`) genuinely diverges from the ClassId simple name, so it must be carried (facadegen's
 	// fact), not re-derived from the ClassId string — hence this metadata read rather than `classId.asString()` alone.
 	val dotNetNameByClassId: Map<ClassId, String> by lazy { byClassId.mapValues { it.value.dotNetName.substringBefore('`') } }
@@ -452,7 +452,7 @@ private object ClrMetadataHolder {
 		}
 	}
 	// Platform-actual files `<Common>Clr.kt` emit their actuals into the COMMON file class `<Common>Kt` -- ilemit/the rt
-	// strip the `Clr` suffix (BirEmitter.fileClassName). The metadata's fileClass comes from the K2 frontend jar, which
+	// strip the `Clr` suffix (BirEmitter.fileClassName). The metadata's fileClass comes from the frontend KLIB, which
 	// does NOT strip, so a non-inline top-level call would reference `<Common>ClrKt` -- never emitted by the rt, giving
 	// `cannot resolve .NET type ...ClrKt`. Strip here to match the rt. Mirrors fileClassName's `stem.endsWith("Clr")`.
 	private fun stripClrFileClass(fc: String): String {
@@ -506,9 +506,8 @@ private object ClrMetadataHolder {
  * assemblies, feeding the compiler in-memory.
  *
  * Synthesized FIR carries no annotations; the backend recovers each type's .NET name from its IR
- * `ClassId` (via [clrInjectedDotNetName]). Supported now: `object` (static) + `class` (constructors + instance
- * methods); members with primitive/String/Unit/self/other-injected-type signatures. Properties and
- * generics are the next slice (see docs/research-roadmap.md §S5).
+ * `ClassId` (via [clrInjectedDotNetName]). It supports static and instance members, constructors,
+ * properties, generics, and signatures that reference other injected CLR types.
  */
 class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(session) {
 	private val module = ClrMetadataHolder.module

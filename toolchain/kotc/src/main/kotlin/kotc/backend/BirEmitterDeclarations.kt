@@ -1127,7 +1127,7 @@ internal fun BirEmitter.isMetadataRepresentableDefault(p: org.jetbrains.kotlin.i
  *  bir2cir uses to fill an omitted arg POSITIONALLY (Tier-1 and Tier-2 alike). Two consumers read the carrier:
  *  DefaultArgSplice at a cross-module callStatic/callInstance, and InlineSplice STEP 5 at a callInline body splice.
  *  This MUST cover Tier-1 too: at a CROSS-MODULE call kotc sees the callee's default as an IrErrorExpression (the
- *  frontend jar drops the VALUE) and so cannot tell Tier-1 from Tier-2 — it emits a `defaultArg` placeholder for EVERY
+ *  frontend KLIB drops the VALUE) and so cannot tell Tier-1 from Tier-2 — it emits a `defaultArg` placeholder for EVERY
  *  omitted default, which bir2cir can only fill if a `@KotlinDefault` exists for that slot. (Tier-1 params ALSO keep the
  *  native `[Optional]` + `[DefaultParameterValue]` metadata for a C#/VB/F# consumer — unchanged; `@KotlinDefault` is the
  *  kcc-consumer splice source, ref.dll-only, stripped from the runtime build.)

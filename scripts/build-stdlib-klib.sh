@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the CLR frontend stdlib KLIB used by kotc's common/metadata frontend.
-# This replaces the old JVM frontend jar path: kotc now resolves kotlin.* from
+# This replaces the old JVM frontend JAR path: kotc now resolves kotlin.* from
 # a metadata KLIB and runs FIR2IR explicitly on the common side.
 source "$(dirname "$0")/lib.sh"
 

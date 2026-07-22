@@ -27,8 +27,7 @@ class ClrBackendArtifact(
  * JVM pipeline, so by the time we get here [input] already holds fully-resolved Kotlin IR.
  *
  * It dumps the resolved IR (a debugging foothold) and walks each file to emit BIR — the portable backend IR
- * that `tools/ilemit` turns into CIL. (The retired C#-text backend was removed; BIR -> ilemit is the sole
- * shipping path. See docs/csharp-retirement-design.md.)
+ * consumed by bir2cir before ilemit emits CIL. See docs/architecture.md.
  */
 object ClrBackendPhase : PipelinePhase<kotc.pipeline.ClrFir2IrPipelineArtifact, ClrBackendArtifact>(
 	name = "ClrBackendPhase",

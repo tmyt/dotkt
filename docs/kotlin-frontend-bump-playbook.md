@@ -1,9 +1,8 @@
 # Kotlin frontend bump playbook (version-independent)
 
 > How to bump the pinned Kotlin frontend (kotc reuses the stock Kotlin Configuration→FIR→Fir2Ir; the backend is
-> ours). **The 2.4.0 bump was this playbook's TestFlight** — the first real exercise that validated these steps.
-> Its concrete, verified artifacts are the worked example: `docs/design-kotlin-2.4.0-bump.md` (compiler delta) +
-> `docs/design-stdlib-2.4.0-refresh.md` (stdlib-source refresh). For the next bump (e.g. 2.5.0), re-run the 7 steps
+> ours). **The 2.4.0 bump was this playbook's TestFlight** — the first real exercise that validated these steps;
+> its detailed execution record remains in Git history. For the next bump (e.g. 2.5.0), re-run the 7 steps
 > below — the steps are version-independent; only the delta is version-specific.
 
 ## The 7 steps
@@ -22,8 +21,7 @@ verified delta beats speculation — 2.4.0 had ~9 certain breaks in ~5 pipeline 
 
 ### 2. Bump the dependencies (minutes)
 - `toolchain/kotc/build.gradle.kts` (kotlin plugin + `kotlin-compiler-embeddable`).
-- **`scripts/verify-differential.sh` oracle jars** (stdlib/compiler-embeddable/script-runtime) — EASY TO MISS; if not
-  bumped, the JVM-oracle speaks the old version while kotc speaks the new one.
+- Any test fixture or packaged metadata that embeds the Kotlin compiler version.
 - `upstream/` checkout at the tag; the doc/pin references (step 7).
 
 ### 3. Compile-fix inside-out (the bulk — mechanical Opus grind, ~1-2 days)
@@ -56,10 +54,10 @@ kotc pokes several **internal/unstable FIR surfaces**; a bump can silently break
   other `expect`/`OptionalExpectation` annotations kotc relied on — re-check what the IR still carries.
 
 ### 6. Gate to the PRE-BUMP baseline = behavior-preserving
-The bump is done (compiler half) when `verify-il` returns to the exact pre-bump baseline (2.4.0: 265/239) with
-`verify-ktproj` ALL PASS and `verify-differential` matching. A **new** run/verify regression is a real 2.4-frontend
-behavioral change — root-cause it with Fable + a **BIR-corpus diff** (compile `cases/` with the old kotc side-by-side;
-BIR is deterministic JSON). Every regression that "symptom-moves" is escalation-rule territory. 2.4.0 hit exactly 3
+The compiler half is done when `make verify` returns to the pre-bump result with no lost or disabled tests.
+A new compile, runtime, schema, or ILVerify regression is a real frontend behavioral change — root-cause it with
+a focused source reproducer and, when useful, a side-by-side deterministic BIR diff. Every regression that
+"symptom-moves" is escalation-rule territory. The 2.4.0 bump hit exactly 3
 distinct root causes behind the ~22 reds (an identity-cast `unbox.any`, a double-`nullableValue`, the language `is`
 tightening) — bisect, don't lump.
 

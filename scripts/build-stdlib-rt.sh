@@ -6,7 +6,7 @@
 # bir2cir reads the REFERENCE assembly (build-stdlib-ref.sh — must exist first) for the @ClrTypeAlias/
 # @ClrIntrinsic call-substitution labels. Inputs: libraries/stdlib sources + kotc + bir2cir/ilemit dlls +
 # the ref dll. Outputs: build/clr-stdlib-rt/{bir,cir,dll} + *.err logs.
-# See docs/design-clr-stdlib-ref-runtime-split.md "Runtime-build architecture".
+# See docs/architecture.md.
 source "$(dirname "$0")/lib.sh"
 
 usage() {
