@@ -382,7 +382,7 @@ sealed partial class ReferenceMetadataIndex
         // CLR-only-vocabulary SYNTHETICS facadegen injects purely to make the frontend typecheck — `kotlin.clr.ClrEvent`,
         // `kotlin.clr.ClrRef`, the `kotlin.clr.byref` marker — which have NO definition in any reference assembly and are
         // fully lowered by kotc itself (kotc's own dialect extension). They must never be resolved here (they don't
-        // exist); their pre-lowered nodes (an event `clrPropGet`, a ref-passing form) flow through this pass opaquely.
+        // exist); their pre-lowered nodes (an event `clrEventGet`, a ref-passing form) flow through this pass opaquely.
         // #26: match `dotkt` ONLY as a complete leading segment/marker — `dotkt` itself, a `dotkt.`-namespaced
         // internal, or a `dotkt$…` mangled synthetic (dotkt$obj*/dotkt$ClrH_*/dotkt$CharSequence/…). NEVER as a bare
         // prefix of a longer identifier: a user library package like `dotktx.ui.avalonia` STARTS WITH "dotkt" but is a

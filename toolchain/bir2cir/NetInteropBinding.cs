@@ -21,10 +21,10 @@ using DotKt.Bir;
 // stdlib is bound by MemberCallSubstitution off the ref.dll; a local type is emitted here). CLR-ONLY vocabulary that
 // has no plain-Kotlin form — `.NET events` (ClrEvent<T>), `byref`/`ClrRef<T>` — is NOT emitted as a plain call by
 // kotc (kotc lowers it directly, as facadegen-injected CLR vocab), so it never reaches this pass. Runs BEFORE
-// ClrEventOperatorBinding/KClassMemberBinding/MemberCallSubstitution and before BirTypeLowering, so the shaped `clr*`
+// ClrEventSubscriptionBinding/KClassMemberBinding/MemberCallSubstitution and before BirTypeLowering, so the shaped `clr*`
 // nodes still carry pure-Kotlin type tokens that the subsequent lowering turns into the CLR forms — the CIR is
 // byte-identical to what kotc used to emit directly (the shape decision merely moved down a layer). Bottom-up walk,
-// mirroring ClrEventOperatorBinding/KClassMemberBinding.
+// mirroring ClrEventSubscriptionBinding/KClassMemberBinding.
 static class NetInteropBinding
 {
     static ReferenceMetadataIndex _refs;
@@ -644,4 +644,3 @@ static class NetInteropBinding
 
     static JsonObject ConstInt(int v) => new() { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Int"), ["value"] = v };
 }
-

@@ -8,7 +8,7 @@ forwarding) + the folded #174 (delegation-forwarder return covariance) — §4.4
 reuses the S1/S2 synthesis machinery once the spine lands.
 
 This note completes the `.NET event` story. Today DotKt can **consume** a CLR event
-(`c.CollectionChanged += h`) but cannot **provide** one from Kotlin: a Kotlin class that names a
+(`c.CollectionChanged.subscribe(h)`) but cannot **provide** one from Kotlin: a Kotlin class that names a
 CLR interface carrying an event (`class KC : IB`, `class ViewModelBase : INotifyPropertyChanged`)
 compiles with no diagnostic and emits an invalid type (missing `add_E`/`remove_E` → `TypeLoadException`
 / ilverify `InterfaceMethodNotImplemented`). That gap is the last thing between Kotlin-on-CLR and
@@ -32,7 +32,7 @@ class PersonViewModel : ViewModelBase() { val name by viewModelProperty("John Do
 
 Related reading: `docs/dotkt-semantics.md` §8d (the consume side + the raise deviation this note
 adds), the layer table in `docs/architecture.md` §0, and the existing consume pass
-`toolchain/bir2cir/ClrEventOperatorBinding.cs`.
+`toolchain/bir2cir/ClrEventSubscriptionBinding.cs`.
 
 ---
 
@@ -93,7 +93,7 @@ A .NET event is not a first-class value; it exposes only add / remove / raise. D
 
 | Op | Kotlin surface | Realized as |
 |----|----------------|-------------|
-| **CONSUME** | `x.E += h` / `x.E -= h` | the event's `add_E`/`remove_E` accessor (works today) |
+| **CONSUME** | `x.E.subscribe(h)` | call `add_E`, then return an `EventSubscription<T>` that calls `remove_E` with the exact added handler on `close()` |
 | **IMPLEMENT** | `override val E by clrEvent()` (implement an interface slot) **or** `val E: ClrEvent<D> by clrEvent()` (declare a NEW event) | a synthesized backing delegate field + real `add_E`/`remove_E`/`raise_E` on the emitted type |
 | **RAISE** | `vm.E.invoke(sender, args)` **or** `vm.E(sender, args)` (same `operator fun invoke`) | invoke the backing delegate via the `raise_E` accessor |
 
@@ -110,7 +110,7 @@ meaning; it is a compile-time lowering tag. Two consequences, both wanted:
 1. **`ClrEvent()` is unconstructable.** An abstract type forbids `new ClrEvent()`, so no code path
    can accidentally materialize the fiction. Any node that still carries a live `ClrEvent<T>` value
    past bir2cir is a bug the type system now surfaces, instead of leaking `kotlin.clr.ClrEvent` to
-   ilemit (the #186 failure signature `kotlin.clr.ClrEvent.plusAssign() not found`).
+   ilemit (the #186 failure signature: an unresolved `kotlin.clr.ClrEvent` member call).
 2. **A direct interface implementer must provide the event (#187 diagnostic).** A Kotlin class that
    directly implements a .NET interface event without `override val E by clrEvent()` would emit an invalid
    type (missing `add_/remove_` → `TypeLoadException`). This is caught with a real compile error.
@@ -141,16 +141,16 @@ meaning; it is a compile-time lowering tag. Two consequences, both wanted:
    `clrEvent()` marker both never call it) while making `: ClrEvent<T>()` fail at the FRONTEND (a subclass
    in another file cannot reach the private ctor).
 
-> FUTURE HOOK (out of scope for 0.9.7). The abstract shape is the natural hook for a future C#-style
-> custom-event-accessor feature — `override val E by someCustomEventImpl()` lowering author-supplied
-> add/remove bodies to real CLR accessors that still satisfy the interface slot — so the abstractness is
-> worth keeping rather than regretting. Noted only; NOT implemented here.
+> FUTURE HOOK (out of scope for 0.9.7): [#188](https://github.com/tmyt/dotkt/issues/188) will turn this
+> marker into a sanctioned runtime contract for `override val E by someCustomEventImpl()`. Custom implementations
+> supply protected add/remove policy hooks and raise behavior; consumers still see only `subscribe`, never public
+> `+=` / `-=`. The compiler maps those policy bodies to real CLR accessors and `.event` metadata.
 
 **Per appearance:**
 
 - **The `kotlin.clr.ClrEvent` type** (kotc `ClrTypeInjection.generateTopLevelClassLikeDeclaration`,
   `ClrTypeInjection.kt:620-624`): created with `ClassKind.CLASS` + `Modality.ABSTRACT`. It carries
-  abstract `operator fun plusAssign(h: T)` / `minusAssign(h: T)` (consume), abstract
+  abstract `fun subscribe(h: T): EventSubscription<T>` (consume), abstract
   `operator fun invoke(vararg args): R` (raise), and abstract `operator fun getValue(r: Any?, p: KProperty<*>): ClrEvent<T>`
   (so `by clrEvent()` typechecks under the delegate convention — see §5). None have bodies; none
   are ever executed.
@@ -188,12 +188,14 @@ meaning; it is a compile-time lowering tag. Two consequences, both wanted:
 (unchanged): `clrEventGet{type,name,static,recv}` (kotc-dialect handle read),
 `clrEventAdd`/`clrEventRemove{type,event,static,recv,handler}` (bir2cir-produced accessor call).
 
-### 4.1 CONSUME — `x.E += h` (unchanged)
+### 4.1 CONSUME — `x.E.subscribe(h)`
 
 Already implemented and covered by `tests/interop/consumer/fixtures/ObservableCollectionEventTests.kt`.
 kotc emits `clrEventGet` for the handle read
-and a plain `ClrEvent.plusAssign/minusAssign` call; bir2cir's `ClrEventOperatorBinding` rewrites the
-pair to `clrEventAdd`/`clrEventRemove`; ilemit's `EmitClrEvent` links the ref.dll accessor and emits
+and a plain `ClrEvent.subscribe` call; bir2cir's `ClrEventSubscriptionBinding` evaluates the receiver and handler
+once, emits `clrEventAdd`,
+then constructs the stdlib `EventSubscription<T>` with a synthesized remove callback that captures the receiver.
+ilemit's `EmitClrEvent` links the ref.dll accessor and emits
 the delegate-wrap + `callvirt add_E`. **One kotc widening** (for #186 use-site): produce `clrEventGet`
 whenever the accessed member is a `ClrEvent<T>` property, **regardless of whether the receiver is a
 .NET type or a Kotlin type that implements a .NET-event interface** (`BirEmitterCalls.kt:870`). Today
@@ -218,7 +220,7 @@ relation; ilemit emits pure CLR codegen):
      Override wiring is frontend-resolved (per the no-re-resolution invariant); bir2cir derives the
      concrete `add_E`/`remove_E` slot names off ref.dll from these refs, exactly as it does for
      property accessors.
-- **bir2cir** (new pass `ClrEventImplBinding.cs`, sibling of `ClrEventOperatorBinding.cs`): this is
+- **bir2cir** (new pass `ClrEventImplBinding.cs`, sibling of `ClrEventSubscriptionBinding.cs`): this is
   the Kotlin↔CLR relation. Resolve the interface event off ref.dll → its concrete `EventHandlerType`
   (the delegate `D`) and the interface accessor slot names. Rewrite the backing field to `<E>$delegate : D`,
   and rewrite each accessor's tagged body into a CIR directive `clrEventAccessorImpl{kind, field:"<E>$delegate",
@@ -236,12 +238,12 @@ relation; ilemit emits pure CLR codegen):
 - **kotc**: `invoke` resolved on `kotlin.clr.ClrEvent<T>` (the abstract `operator fun invoke`) whose
   receiver is a `clrEventGet` → a dedicated dialect node `clrEventRaise{type,event,static,recv,args}`
   (parallel to `clrEventGet`; emitted in `BirEmitterCalls.kt` alongside the existing
-  `plusAssign/minusAssign` handling at `:409-414`). The `ClrEvent<T>` value is consumed, never
+  `subscribe` handling). The `ClrEvent<T>` value is consumed, never
   materialized. Because raise is `operator fun invoke`, **`vm.E.invoke(s, a)` and `vm.E(s, a)` desugar
   to the identical call** (Kotlin's invoke convention) → both produce `clrEventRaise`; the author
   writes whichever form (`.invoke` = explicit/C#-`Invoke`-parallel, `E(…)` = idiomatic sugar),
   ABI-identical.
-- **bir2cir** (`ClrEventOperatorBinding` extended, or `ClrEventImplBinding`): bind `clrEventRaise` to
+- **bir2cir** (`ClrEventImplBinding`): bind `clrEventRaise` to
   a call of the declaring type's `raise_<E>` accessor: `clrRaiseCall{recv, accessor:"raise_<E>", args}`.
   **Guard:** raise is legal only for a **Kotlin-implemented** event (one that has a synthesized
   `raise_<E>`); `clrEventRaise` against a *consumed* foreign .NET event (no `raise_`) is a bir2cir
@@ -249,7 +251,7 @@ relation; ilemit emits pure CLR codegen):
   declaring instance).
 - **ilemit**: emit the call to `raise_<E>` (§4.2 emitted its body as `field?.Invoke(args)` — the
   null-conditional makes **raise with zero subscribers a safe no-op**, matching a C# field-like event;
-  the backing delegate is null until the first `+=`, so `vm.E(s, a)` on an unsubscribed event does
+  the backing delegate is null until the first subscription, so `vm.E(s, a)` on an unsubscribed event does
   nothing rather than NPE-ing).
 
 ### 4.4 DELEGATION — `class A : B by c` (#186)
@@ -258,9 +260,9 @@ A third IMPLEMENT flavor: forwarding, not field-like. kotc's class-delegation fo
 **skips** the `ClrEvent<T>` member (`A.methods=["Ping"]`, no `add_E1`). Fix: for a delegated CLR
 interface event, synthesize `add_<E>`/`remove_<E>` **forwarder** accessors whose bodies are
 `clrEventAdd`/`clrEventRemove` on the delegate field `$$delegate_0` (`c`) — reusing the **consume**
-lowering (§4.1). No backing field, no `raise_` (you raise on `c`). At the use site, `a.E += h` on the
-Kotlin delegating class goes through the widened `clrEventGet` (§4.1) → `add_<E>` on `A` → forwards to
-`c.E += h`. This is the same synthesis machinery as §4.2 with a forwarding body instead of a CAS body.
+lowering (§4.1). No backing field, no `raise_` (you raise on `c`). At the use site, `a.E.subscribe(h)` on the
+Kotlin delegating class goes through the widened `clrEventGet` (§4.1) → `add_<E>` on `A`; closing its token calls
+`remove_<E>` on `A`. Both forward to `c`. This is the same synthesis machinery as §4.2 with forwarding bodies.
 
 > #174 (delegation forwarder narrows `MutableList.iterator()` return to the read-only `Iterator`) is
 > the same forwarder-synthesis site. Fold its fix in here: the delegation forwarder must carry the
@@ -343,7 +345,7 @@ is choosing an accessibility C# declines to expose. The user's MVVM pattern rais
 from any type is legal and simply calls `vm.raise_PropertyChanged(...)`.
 
 This passes all three conditions of the acceptance test (`docs/dotkt-semantics.md`): **consistent** (a
-`ClrEvent<T>` handle uniformly supports `+=`/`-=`/`invoke`), **documented** (§8d + this note), and
+`ClrEvent<T>` handle uniformly supports `subscribe`/`invoke`), **documented** (§8d + this note), and
 **convincingly explainable** (it is exactly the general-purpose event pattern .NET libraries hand-roll
 with a `protected virtual void OnPropertyChanged(...)` raiser — DotKt makes the raiser a first-class
 part of the event handle rather than boilerplate the author must write, which is what enables the
@@ -395,14 +397,15 @@ class ClrEventTests {
         val vm = PersonViewModel()
         var fired = 0
         var lastName: String? = null
-        val h: (Any?, PropertyChangedEventArgs) -> Unit = { _, e -> fired++; lastName = e.PropertyName }
-        (vm as INotifyPropertyChanged).PropertyChanged += h          // CONSUME through the interface slot
+        val subscription = (vm as INotifyPropertyChanged).PropertyChanged.subscribe { _, e ->
+            fired++; lastName = e.PropertyName
+        }                                                            // CONSUME through the interface slot
         vm.name = "Jane Doe"
         ClassicAssert.AreEqual(1, fired)                             // raised exactly once
         ClassicAssert.AreEqual("name", lastName)                     // args carry the KProperty name
         vm.name = "Jane Doe"                                         // unchanged value -> no raise
         ClassicAssert.AreEqual(1, fired)
-        (vm as INotifyPropertyChanged).PropertyChanged -= h
+        subscription.close()
         vm.name = "Bob"
         ClassicAssert.AreEqual(1, fired)                             // unsubscribed -> no raise
     }
@@ -410,7 +413,7 @@ class ClrEventTests {
 ```
 
 Pass criteria: the type **loads** (no `TypeLoadException`), **ilverify-clean** (`add_/remove_` satisfy
-the `INotifyPropertyChanged` slots), subscribe/unsubscribe by delegate equality works, and the raise
+the `INotifyPropertyChanged` slots), closing the subscription removes the exact handler, and the raise
 carries `"name"`. A pure-CLR control (a C# `INotifyPropertyChanged` implementer subscribed from Kotlin)
 already passes via the consume path and stays a control.
 
@@ -428,7 +431,7 @@ synthesis flavors, then hardening.
 | **S1** | kotc | Recognize `by clrEvent()`; synthesize the backing field + `add_/remove_/raise_` decls with tagged bodies + `overrides` closure (§4.2). Widen `clrEventGet` to any `ClrEvent<T>` member read (§4.1). Emit `clrEventRaise` for `handle.invoke(...)` (§4.3). | #187 |
 | **S2** | bir2cir | New `ClrEventImplBinding.cs`: resolve interface event → `EventHandlerType` + slot names off ref.dll; expand tagged accessor bodies → `clrEventAccessorImpl` CIR (CAS for field-like, forward for delegation); emit type-level `clrEventDecl`; bind `clrEventRaise` → `raise_<E>` call with the "no raise on consumed event" guard (§4.2/§4.3/§6). | #187 |
 | **S3** | ilemit | `EmitClrEventAccessorImpl` (CAS loop §1 for add/remove, `field?.Invoke` for raise) + `MethodImpl` wiring to the interface slots + `.event` metadata from `clrEventDecl`. | #187 |
-| **S4** *(deferred → 0.9.8)* | kotc + bir2cir | Class-delegation forwarder: synthesize forwarding `add_/remove_` for a delegated CLR interface event (§4.4); use-site `a.E += h` via widened `clrEventGet`. Carry the overridden slot's `Mutable*` return type in the forwarder (fold #174). **Not in the initial 0.9.7 implementation** (user-directed 2026-07-20) — a follow-on reusing S1/S2's synthesis machinery. | #186, #174 (0.9.8) |
+| **S4** *(deferred → 0.9.8)* | kotc + bir2cir | Class-delegation forwarder: synthesize forwarding `add_/remove_` for a delegated CLR interface event (§4.4); use-site `a.E.subscribe(h)` via widened `clrEventGet`. Carry the overridden slot's `Mutable*` return type in the forwarder (fold #174). **Not in the initial 0.9.7 implementation** (user-directed 2026-07-20) — a follow-on reusing S1/S2's synthesis machinery. | #186, #174 (0.9.8) |
 | **S5** | ilemit | Route **all** event emit (consume, implement, raise, `.event`) through the guarded `LinkClrMethod`/`RequireDispatch`/null-checked `GetEvent` family; legible `ilemit:` breadcrumb on a missing/value-type/constructed-generic event owner instead of an opaque NRE. | #113 |
 | **S6** | tests + docs | Add `ClrEventTests.kt` (§7); record the raise deviation in `docs/dotkt-semantics.md` §8d; run the focused NUnit fixture and full gate. | — |
 

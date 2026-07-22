@@ -473,14 +473,19 @@ sealed class Pipeline
             // capacity-hint default is preserved and map/filter do not regress. Runs before MemberCallSubstitution so it
             // sees the raw `callInstance` on the kotlin.collections.* alias.
             if (attributeTopLevelOwner) StarProjectionLowering.Apply(hoisted);
-            // .NET EVENT `+=`/`-=` BINDING: kotc surfaces a .NET event as a `kotlin.clr.ClrEvent<T>` property and emits
-            // the idiomatic `w.Changed += h` as the PLAIN operator call `callInstance(kotlin.clr.ClrEvent.plusAssign,
-            // recv = <clrPropGet w Changed>, [h])`. This pass BINDS that to the .NET add/remove accessor — the existing
+            // .NET EVENT `subscribe` BINDING: kotc surfaces a .NET event as a `kotlin.clr.ClrEvent<T>` property and emits
+            // `w.Changed.subscribe(h)` as the PLAIN call `callInstance(kotlin.clr.ClrEvent.subscribe,
+            // recv = <clrEventGet w Changed>, [h])`. This pass BINDS that to the .NET add/remove accessor — the existing
             // clrEventAdd/clrEventRemove node (ilemit unchanged), reading owner .NET type + event name straight off the
-            // clrPropGet member-access. The ClrEvent<T> value is never materialized (a .NET event isn't first-class);
-            // the clrPropGet receiver is consumed here, not emitted. Runs BEFORE MemberCallSubstitution so the operator
-            // call — which has no ref.dll owner — is bound here. A no-op for the ref/rt stdlib self-build (no .NET events).
-            hoisted = ClrEventOperatorBinding.Apply(hoisted);
+            // clrEventGet member-access. The ClrEvent<T> value is never materialized (a .NET event isn't first-class);
+            // the clrEventGet receiver is consumed here, not emitted. Runs BEFORE MemberCallSubstitution so the synthetic
+            // call — which has no ref.dll owner — is bound here. `subscribe` also constructs the stdlib close token with
+            // a synthesized remove callback. A no-op for the ref/rt stdlib self-build (no .NET events).
+            hoisted = ClrEventSubscriptionBinding.Apply(hoisted);
+            // `ClrEvent.subscribe` synthesizes the remove callback as a normal `newClosure` ingredient bag. The main
+            // ClosureSynthesis pass ran earlier, before event binding; run the idempotent collector once more so only
+            // these newly-created callback classes are assembled before the remaining whole-tree passes.
+            ClosureSynthesis.Apply(hoisted);
             // .NET EVENT IMPLEMENT/RAISE (§4.2/§4.3): a Kotlin class implementing/declaring a CLR event via `by clrEvent()`.
             // kotc synthesized add_/remove_/raise_<E> + a `clrEvents` backing directive (pure-Kotlin identities); this pass —
             // the ref.dll-reading layer — resolves the concrete delegate `D` (the interface event's EventHandlerType) and
