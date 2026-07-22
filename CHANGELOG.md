@@ -27,6 +27,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir (area:bir2cir): `dotkt` and `dotkt.*` are ordinary user namespaces again.** Reference resolution still
+  skipped the namespace once used by the retired pre-stdlib compiler-intrinsics runtime, even though only the
+  unspeakable `dotkt$...` generated-type prefix remains compiler-owned. A cross-module Kotlin library under
+  `dotkt.foo.bar` could therefore compile cleanly but be mis-bound at runtime. `ResolveNetType`/`ResolveRefType` now
+  reserve only `dotkt$...`; the round-trip regression captures and mutates a referenced generic value from the exact
+  `dotkt.*` namespace through a stored delegate.
+
 - **bir2cir ([tmyt/dotkt#140], area:bir2cir): an asynchronously faulted or canceled `suspend fun main` now surfaces
   the raw await exception instead of `AggregateException`.** The synthesized blocking entry point drains its root
   `Task<Unit>` with `GetAwaiter().GetResult()` rather than `Task.Wait()`, matching the coroutine bridge design and
