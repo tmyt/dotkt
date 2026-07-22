@@ -603,13 +603,20 @@ static partial class SuspendColdLowering
                 // suspension). A genuine SUSPEND lambda is `newSuspendLambda` (above); a `newClosure` that DOES wrap a
                 // suspension stays refused (SuspendLambdaLowering territory).
                 if ((k == "newClosure" || k == "newDelegate") && !HasSuspension(o)) return null;
-                // #82 — a `forEachInline` (GetEnumerator collection loop) whose BODY spans a suspension is FLATTENED to
-                // flat CFG by FlattenSuspendingLoops (like the always-admitted `forArray`), so ONLY that shape is exempted
+                // App-build ranges have already become counted `for` and are flattened below. A stdlib self-build
+                // retains `forRange`; reject its suspending body explicitly instead of letting Rewrite hoist the
+                // suspension outside the structured loop.
+                if (k == "forRange" && o["body"] is JsonNode frBody && HasOwnSuspension(frBody))
+                    return "suspension buried in an unsupported 'forRange' loop position";
+                // #82/#98 — a `forEachInline` (GetEnumerator collection loop) or counted `for` whose BODY spans a
+                // suspension is FLATTENED to flat CFG by FlattenSuspendingLoops (like the always-admitted `forArray`).
+                // Only forEachInline needs an exemption
                 // from the LambdaKinds refusal below (falling through to the generic child recursion, which validates its
                 // body). A SUSPENSION-FREE forEachInline stays REFUSED: it would reach Build as a structured loop whose
                 // LambdaKinds subtree CollectVarFields/DisambiguateShadowedVars SKIP but Rewrite DESCENDS — a loop-interior
                 // name colliding with a spilled outer var would silently miscompile, so it stays on the un-lowered path.
-                // `repeatInline`/`for`/`forRange` with a body suspension stay refused too (not flattened).
+                // `repeatInline`/`forRange` with a body suspension stay refused (not flattened); app-build ranges have
+                // already become counted `for` nodes and are handled here.
                 // ANY OTHER lambda/closure/sequence node -> unsupported (genuine suspend lambdas, which emit a
                 // `newClosure` and are NOT flagged `suspendCall`, are handled separately by SuspendLambdaLowering).
                 if (k != null && LambdaKinds.Contains(k)
@@ -972,8 +979,8 @@ static partial class SuspendColdLowering
 
             var body = _isLambda ? _lambdaBody : ((_m["body"] as JsonArray) ?? new JsonArray());
             var hasSuspension = HasSuspension(body);
-            // #78/#82 — normalize a suspending body BEFORE segmentation so a suspension in a POSITION the straight-line
-            // SM cannot segment is lifted into one it can: a structured collection loop whose body spans a suspension is
+            // #78/#82/#98 — normalize a suspending body BEFORE segmentation so a suspension in a POSITION the straight-line
+            // SM cannot segment is lifted into one it can: a structured loop whose body spans a suspension is
             // flattened to label/brIf/goto CFG (FlattenSuspendingLoops — its implicit loop vars become real `{k:var}` so
             // CollectVarFields spills them), and a suspending catch handler is hoisted OUT of the CLR catch clause (a
             // `leave`-in / resume-into a catch is illegal IL) into gated straight-line code (HoistSuspendingCatches).

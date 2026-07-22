@@ -27,6 +27,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir ([tmyt/dotkt#98], area:bir2cir): a counted range loop now resumes inside every iteration instead of
+  hoisting its suspension before the loop.** SuspendColdLowering flattens app-build `for (i in a..b)` and
+  `for (i in a downTo b)` nodes into state-machine CFG before segmentation, spilling the counter as an SM field and
+  preserving `break`/`continue` targets. This fixes both the silent “suspend once, execute the body N times” result
+  and the unresolved loop variable failure when the resumed expression reads `i`. Coroutine regressions cover
+  suspension count, ascending ranges, descending ranges, runtime results, and ILVerify.
+
 - **facadegen ([tmyt/dotkt#205], area:facadegen): a generic .NET interface that derives a member-bearing
   NON-generic base interface now surfaces the base as a supertype, so its INHERITED members resolve and the
   generic interface stays assignable to the base.** `interface IReader<T> : IPingable` used to surface `IReader`1`

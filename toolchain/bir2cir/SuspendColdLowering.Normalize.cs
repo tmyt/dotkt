@@ -4,12 +4,13 @@
 // entry point for. Two such positions occur in the kotlinx.coroutines port; each is normalized into an
 // equivalent position the SM CAN segment, BEFORE CollectVarFields / EmitStmt run:
 //
-//   #82 FlattenSuspendingLoops — a STRUCTURED collection loop (`forArray` / `forEachInline`) whose body spans
+//   #82/#98 FlattenSuspendingLoops — a STRUCTURED loop (`forArray` / `forEachInline` / counted `for`) whose body spans
 //        a suspension is desugared to flat `label`/`brIf`/`goto` CFG with its implicit loop machinery made
-//        EXPLICIT `{k:var}` (array + index; or a non-generic IEnumerator), so CollectVarFields spills those
-//        temps into SM fields (the `load unknown var __inlsN$element` root) and the resume can re-enter the
-//        loop across the back-edge. `for`/`forRange`/`repeatInline` are NOT flattened (a body suspension in
-//        those is refused by the gate for named funs / caught by AssertLocalsResolved otherwise).
+//        EXPLICIT `{k:var}` (array + index; a non-generic IEnumerator; or the counted-loop variable), so
+//        CollectVarFields spills those temps into SM fields (the `load unknown var __inlsN$element` root) and the
+//        resume can re-enter the loop across the back-edge. `forRange`/`repeatInline` are NOT flattened (an app-build
+//        range is already realized as counted `for`; the remaining stdlib-only `forRange` and repeat shapes stay
+//        unsupported).
 //
 //   #78 HoistSuspendingCatches — a suspension inside a CATCH handler is impossible to resume into (branching
 //        into a CLR catch clause is illegal IL). The handler is HOISTED out of the clause: the real catch only
@@ -75,7 +76,8 @@ static partial class SuspendColdLowering
                 case JsonObject o:
                     var k = Str(o["k"]);
                     if (k != null && NestedScopeKinds.Contains(k)) return false;
-                    if ((k == "forArray" || k == "forEachInline") && o["body"] is JsonNode lb && HasOwnSuspension(lb))
+                    if ((k == "forArray" || k == "forEachInline" || k == "for")
+                        && o["body"] is JsonNode lb && HasOwnSuspension(lb))
                         return true;
                     foreach (var kv in o) if (kv.Value != null && HasFlattenableLoop(kv.Value)) return true;
                     return false;
@@ -95,7 +97,7 @@ static partial class SuspendColdLowering
             {
                 var fs = FlattenNode(s);                         // post-order: nested loops in this stmt already flat
                 if (fs is JsonObject o && Str(o["k"]) is string k
-                    && (k == "forArray" || k == "forEachInline")
+                    && (k == "forArray" || k == "forEachInline" || k == "for")
                     && o["body"] is JsonArray lb && HasOwnSuspension(lb))
                     EmitFlatLoop(o, result);
                 else
@@ -132,7 +134,8 @@ static partial class SuspendColdLowering
             return n?.DeepClone();
         }
 
-        // Append the flat CFG for a suspending forArray / forEachInline. `o.body` is already flattened (post-order).
+        // Append the flat CFG for a suspending forArray / forEachInline / counted for. `o.body` is already flattened
+        // (post-order).
         void EmitFlatLoop(JsonObject o, JsonArray result)
         {
             var k = Str(o["k"]);
@@ -144,6 +147,33 @@ static partial class SuspendColdLowering
             var startId = NextLabel();
             RewriteBreakContinue(bodyArr, loopLabel, contId, endId, insideNestedLoop: false);
             var kc = ++_loopCounter;
+
+            if (k == "for")
+            {
+                var cmp = Str(o["cmp"]);
+                if (cmp is not ("<=" or "<" or ">="))
+                    throw new System.NotSupportedException(
+                        $"suspend-lowering (#98): counted for in '{(_ownerClass ?? _fileClass)}.{_name}' carries unsupported cmp '{cmp}'.");
+                if (o["step"] is not JsonValue stepValue || !stepValue.TryGetValue<int>(out var step))
+                    throw new System.NotSupportedException(
+                        $"suspend-lowering (#98): counted for in '{(_ownerClass ?? _fileClass)}.{_name}' carries no integer step.");
+
+                // Match ilemit's structured counted-loop semantics exactly: evaluate `from` once, evaluate `to` at
+                // each header visit, execute the body while cmp(i,to), and route continue through the increment.
+                result.Add(Var(loopVar, Tw(IntTn), o["from"]?.DeepClone()));
+                result.Add(Label(startId));
+                result.Add(BrIf(Bin(cmp, LocalOf(loopVar), o["to"]?.DeepClone()), false, endId));
+                foreach (var st in bodyArr) result.Add(st?.DeepClone());
+                result.Add(Label(contId));
+                result.Add(new JsonObject
+                {
+                    ["k"] = "setLocal", ["name"] = loopVar,
+                    ["value"] = Bin("+", LocalOf(loopVar), IntConst(step)),
+                });
+                result.Add(Goto(startId));
+                result.Add(Label(endId));
+                return;
+            }
 
             if (k == "forArray")
             {
