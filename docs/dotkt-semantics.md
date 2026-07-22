@@ -97,7 +97,7 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   unchecked cast still renders as `""` in string concatenation (`String.Concat` treats a null
   reference as empty), whereas a genuinely-nullable `String?` holding `null` renders `"null"` — same
   value, different textual result, depending on how the null got there.
-- Deep dive: §3 (inline), `docs/design-il-generics.md`, memory `function-inlining-spike`.
+- Deep dive: §3 (inline).
 
 ## 2b. `tailrec` IS tail-call optimized — deep tail recursion runs in constant stack (matches Kotlin/JVM)
 
@@ -112,7 +112,7 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   recursion that used to overflow the CLR stack now runs in constant stack: `sumTo(1_000_000, 0)` returns
   `500000500000`. Covered for the self / multi-branch-`when` / extension-receiver (`__self` reassigned) / member
   (dispatch `this` unchanged) forms.
-- Gate: `cases/il-tailrec` (verify-il + JVM-oracle PURE). (The `tailrec` **modifier** itself is still compile-time
+- Coverage: `tests/basic/fixtures/NumericAndTupleTests.kt`. (The `tailrec` **modifier** itself is still compile-time
   only and does not round-trip as a declaration fact — §566 — but the behavior now matches.)
 
 ## 2c. `super.X()` from an override is a NON-virtual `call` to the base slot (matches Kotlin/JVM, #14)
@@ -127,13 +127,8 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   the receiver's runtime type back to the override → **infinite recursion / stack overflow**. A normal virtual call
   through a base-typed variable (`(b: Base).greet()`) is unchanged — still `callvirt` to the override. Covers
   `super.<prop>`, N-level `super` chains, `super` to a user base's `toString()`, and `super<IFace>.foo()` to a Kotlin
-  interface default (DIM). Gate: `cases/il-supercall`.
-- **Residual (XFAIL, `cases/il-superobj`):** `super.toString()`/`super.hashCode()`/`super.equals()` whose *immediate*
-  super is `kotlin.Any` (or a super call to any facadegen-injected .NET base / `@ClrTypeAlias`-bound stdlib base) still
-  re-dispatches. kotc's BIR is faithful (`callInstance kotlin.Any virtual:false anySlot:true`), but bir2cir rewrites the
-  `@ClrTypeAlias(System.Object)` owner to a `clrInstance System.Object::ToString` and drops the non-virtual intent, and
-  ilemit's `EmitInstanceCall` emits an unconditional `callvirt` for a reference owner. Fixing it is a bir2cir (carry the
-  non-virtual/super fact onto the reshaped `clrInstance`/`clrPropGet`) + ilemit (honor it — emit `call`) follow-up.
+  interface default (DIM). Coverage: `tests/basic/fixtures/RuntimeTypesVisibilityAndCrossFileTests.kt` and
+  `tests/interop/consumer/fixtures/ClrObjectModelTests.kt`.
 
 ## 3. `inline` happens at EMIT time, and is decoration unless a lambda literal is passed
 
@@ -207,8 +202,8 @@ This is a user-stated foundational deviation, not an implementation detail.
   slot (there an arity-2+ suspend lambda is driven through the generated `FunctionN.invoke(a,b,…,completion)`
   bridge, which DotKt does not synthesize); the array-create is the CLR cold-core generalization. Purely an
   internal ABI difference — the language semantics of `f(a,b,…)` are unchanged.
-- Deep dives: `docs/coroutine-abi.md` (the ABI contract), `docs/design-coroutines-clr.md` (design + Track-2 plan),
-  `docs/coroutine-stdlib-port-plan.md` (the live implementation plan), memory `coroutine-abi-decision`.
+- Deep dives: `docs/coroutine-abi.md` (the ABI contract) and
+  `docs/design-coroutine-cold-core-task-bridge.md` (the internal implementation).
 
 ## 4a. `Task.await()` resume precedence — interceptor > captured SynchronizationContext > inline (#3/#7)
 
@@ -256,8 +251,7 @@ on the CLR — `CancellationExceptionClr.kt`), while .NET signals it with `Syste
   recognize it as cancellation. `.await()` deliberately does NOT auto-insert an inbound OCE→CE mapping (matching the
   #86 "nothing auto-inserted" principle); the planned fix is an OPT-IN interop adapter `Task.awaitCancellable()`
   (OCE→CancellationException) shipped with the structured-concurrency track (it is meaningless without `Job`/
-  `CoroutineScope`). See `docs/design-kotlinx-coroutines-port.md` §4 (the P7 adapter) and §7 (the CE↔OCE both-directions
-  boundary).
+  `CoroutineScope`). A future opt-in adapter can bridge this boundary; remaining work is tracked in GitHub Issues.
 
 ## 4c. `.await()` binds to the .NET AWAITABLE PATTERN (GetAwaiter), not to Task (#10)
 
@@ -285,8 +279,7 @@ embed no dialect.
 - **`ConfigureAwait`/`captureContext` stays Task-like:** the `await(captureContext = false)` opt-out (§4a) is offered ONLY
   for an awaitable that exposes a `ConfigureAwait(bool)` member (Task, ValueTask). A generic awaitable without it uses
   GetAwaiter directly; requesting `captureContext = false` on such a type is a compile-time error.
-- Gate: `cases/il-valueawait` (ValueTask<T>, member GetAwaiter — non-Task BCL) and `cases/il-extawait` (a generic-extension
-  custom awaitable mirroring the WinRT shape, both the sync fast path and a genuine suspend+resume).
+- Coverage: `tests/coroutines/fixtures/TaskAndValueTaskAwaitTests.kt`; custom-awaitable gaps are tracked in GitHub Issues.
 
 ## 4b. The default `lazy { }` is thread-safe (a Monitor lock, matching Kotlin/JVM and `System.Lazy`)
 
@@ -343,7 +336,7 @@ encoding, which the JIT honors and which a single-threaded run cannot itself obs
   **.NET-native** rendering: `println(true)` → `True` (not the JVM's `true`), `println(4.0)` → `4` (not `4.0`). This
   is a *choice within unspecified behavior*, not a deviation from the Kotlin language — the JVM's `true`/`4.0` are
   themselves just `java.lang.Boolean`/`Double.toString` implementation details, not language essence.
-- The JVM differential harness (`verify-differential.sh`) normalizes these cosmetic differences and checks the logic.
+- NUnit tests assert the chosen CLR-native forms directly.
 - Memory `clr-native-primitive-formatting`.
 - **`String.format` exists on DotKt as platform API (like the JVM has its own; Native/JS have none), but uses the
   .NET composite format (`"{0} items"`, `"{0:D5}"`, `"{0,-4}"`), not Java printf (`"%d"`)** — the same
@@ -384,7 +377,8 @@ largest value with `NaN == NaN` structurally and `NaN.compareTo(NaN) == 0`. On t
 
 The **primitive** operators stay IEEE (matching Kotlin, and `il-nancmp`-green): `-0.0 == 0.0` → `true`,
 `Double.NaN == Double.NaN` → `false`, and direct `<`/`>`/`<=`/`>=` (which desugar to the IEEE compare intrinsics, not
-`.compareTo`) are unaffected. Gates: `cases/il-negzero`, `cases/il-listeq`, `cases/il-equalscall` (JVM-oracle PURE).
+`.compareTo`) are unaffected. Coverage: `tests/basic/fixtures/FloatTests.kt`,
+`tests/basic/fixtures/CollectionsTests.kt`, and `tests/basic/fixtures/InterfaceDslAndRuntimeTests.kt`.
 
 ## 5a-bis. Referential identity `===` on primitive/boxed/enum values deviates from Kotlin/JVM
 
@@ -427,8 +421,8 @@ sub-ulp cases that a `floor(x + 0.5)` formulation hits — the only inputs where
 - **odd integral doubles in `[2^52 + 1, 2^53)`** (in `Int`/`Long` range, so not clamped) → CLR is off by one for
   `roundToLong` (`x + 0.5` rounds to `x + 1` under ties-to-even).
 
-Both are pathological (no realistic numeric code rounds these) and are precedented on non-JVM Kotlin backends. Gate:
-`cases/il-roundhalfup`.
+Both are pathological (no realistic numeric code rounds these) and are precedented on non-JVM Kotlin backends.
+Coverage: `tests/basic/fixtures/MathTests.kt`.
 
 ## 5b. `CharSequence` is `string` on the CLR — an immutable snapshot, not a live view
 
@@ -720,7 +714,7 @@ runtime.
 |---|---|
 | `infix` / `operator` | `[KotlinFunction(Infix\|Operator)]` |
 | `suspend` (a `suspend fun`) | `[KotlinFunction(Suspend)]` (+ `Task<T>`→`T` unwrap) |
-| a `suspend (…) -> T` **function TYPE** (param / return / property / field position) | `[KotlinSuspendFunctionType("sfunc:<ret>:<args>")]` — carries the pre-erasure SHAPE, because the type slot itself erases to `object` (a suspend-lambda value is a `Continuation`-based state-machine object, not a `Func`). bir2cir records the fact, ilemit stamps it, facadegen reads it back as an `sfunc:[ret,args]` injection-meta token, and kotc's `ClrTypeInjection` restores it to `kotlin.coroutines.SuspendFunctionN` — so a re-consumed `fun runBlock(block: suspend () -> Int)` sees `block` as a **suspend** function type again and a passed lambda re-binds as a suspend lambda (`verify-roundtrip.sh` `roundtrip-suspendfn`). All FOUR positions are now end-to-end: bir2cir's `SuspendLambdaLowering` lowers a `newSuspendLambda` node to a `new <SuspendLambda SM>` value in ANY position — not just a call argument, but also a `return`, a top-level/object property, and a static field initializer (it walks `fields[].init` in addition to method/ctor/accessor bodies). Return + property + field are proven cross-module by `verify-roundtrip.sh` `roundtrip-suspendfn-ret`. (H2 closed.) **Enclosing-instance capture is now correct too (#34a):** a suspend lambda that closes over its enclosing instance (`class Box(val n:Int){ fun make(): suspend ()->Int = { f(n) } }`) captures that instance as the SM's `__outer` field, and a lambda-body `this` (kotc emits member reads as a bare `this.member`) is redirected to read `this.__outer` inside `invokeSuspend` — previously a body `this` leaked the SM instance itself, so `this.n` read garbage. Correct now in every construction position (value / call-argument / via a member method / object receiver / nested lambda); a local-capture lambda stays correct as before. Covered by `verify-il.sh` `il-suspendcapture`. |
+| a `suspend (…) -> T` **function TYPE** (parameter / return / property / field) | `[KotlinSuspendFunctionType("sfunc:<ret>:<args>")]` preserves the pre-erasure shape because the CLR slot itself erases to `object`. bir2cir records it, ilemit stamps it, facadegen reads it, and kotc restores `kotlin.coroutines.SuspendFunctionN`. All four positions are covered by the roundtrip NUnit suite. |
 | top-level functions | `[KotlinFileClass]` on the `<File>Kt` facade → restored as package-level functions. Same-name overloads that live in **different** source files of the same package (`foo()` in `UtilsKt`, `foo(Int)` in `HelpersKt`) each route back to their **own** file-facade class — resolved by the call's arity, so no cross-file mis-routing. |
 | `inline` (with a lambda) | `[KotlinInline(birJson)]` (only for cross-module non-local return; see §3) |
 | **reference-type nullability** (`String?`) | **.NET's own NRT** `[Nullable]`/`[NullableContext]` (§9) — readable by C# too |
@@ -946,7 +940,8 @@ resolves. (Previously such a delegate collapsed to a bare `Any?`, and the overri
   ambiguity**, while an explicit `Thread({ x -> … })` (or a method reference) still reaches the wider
   `ParameterizedThreadStart` — it is then the sole applicable candidate. Preference order (lower = preferred): fewer
   function params first (arity 0 before 1), then a Unit-returning delegate before a value-returning one; two
-  equally-preferred delegates tie and neither is deprioritized. Gate: `cases/il-threadlambda`, `cases/il-monitordrain`.
+  equally-preferred delegates tie and neither is deprioritized. Coverage:
+  `tests/interop/consumer/fixtures/ThreadingInteropTests.kt` and `DelegateOverloadTests.kt`.
 
 ## 8f. A SOURCE declaration wins over a facadegen-injected copy of the same identity (#15)
 

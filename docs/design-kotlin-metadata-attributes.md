@@ -1,6 +1,6 @@
 # Consuming a DotKt assembly AS KOTLIN — metadata attributes
 
-**Status: v1 implemented & verified (2026-06-24).** `scripts/verify-roundtrip.sh`.
+**Status: v1 implemented & verified (2026-06-24).** `tests/roundtrip/scenarios/run.sh`.
 
 ## Goal
 
@@ -124,7 +124,7 @@ a non-local return (the Unit-lambda forEach shape is covered — the common non-
   throws). Fixed by the `GenM` helper (re-anchor the open method via `TypeBuilder.GetMethod`) across the coroutine
   state machine, **and** by the `EmitClrCall` return-type substitution: `TypeBuilder.GetMethod` leaves the method's
   return type open (`TaskAwaiter`1<!0>`), so the runBlocking/await path mis-typed its temp — now it trusts the BIR
-  `ret` hint. Works through both a `suspend fun` and a `runBlocking { … }` lambda. (`scripts/verify-roundtrip.sh`.)
+  `ret` hint. Works through both a `suspend fun` and a `runBlocking { … }` lambda.
 - **Parameter names** — ilemit defined methods by type only (never `DefineParameter`), so names were lost and
   facadegen fell back to `arg0`/`arg1`, blocking named-argument calls across a boundary. Now emitted; `f(b = 2, a = 1)`
   round-trips. (The names were always in the BIR — it was purely an emit omission, not a FIR limitation.)
@@ -139,5 +139,4 @@ a non-local return (the Unit-lambda forEach shape is covered — the common non-
 ## Known gaps / follow-ups
 
 - Extension functions (`fun T.f()`) restore as plain statics, not Kotlin extensions, yet (a future flag/marker).
-- An MSBuild `.ktproj → .ktproj` consume-as-Kotlin sample isn't wired into `verify-ktproj.sh` yet (the round-trip is
-  covered by the shell harness `verify-roundtrip.sh`, which drives the same import-scan → facadegen → inject flow).
+- Remaining roundtrip limitations are tracked in GitHub Issues and covered where possible by `tests/roundtrip/`.

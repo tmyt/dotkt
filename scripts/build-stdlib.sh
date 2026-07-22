@@ -6,7 +6,7 @@
 # bir2cir's + ilemit's — so the frontend runs exactly once and its BIR is cacheable/shared. This supersedes the
 # separate build-stdlib-ref.sh + build-stdlib-rt.sh (each of which ran its own kotc); those remain until the gate
 # confirms this unified path. Outputs to the CANONICAL locations (STDLIB_REF_DLL / STDLIB_RT_DLL) so all downstream
-# consumers (dotkt.sh, verify-*.sh) find them unchanged. See docs/design-clr-stdlib-ref-runtime-split.md.
+# consumers (dotkt.sh, verify-*.sh) find them unchanged. See docs/architecture.md.
 source "$(dirname "$0")/lib.sh"
 
 usage() {

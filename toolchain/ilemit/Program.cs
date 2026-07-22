@@ -186,7 +186,7 @@ sealed partial class Emitter
     // active loops: break/continue target the innermost (or the one matching the Kotlin label).
     readonly List<(string label, Label cont, Label brk)> _loops = new();
     // CFG block-IR labels: `label`/`goto`/`brIf` (E-0.5). Forward references need every label defined up-front,
-    // so EmitMethodBody/EmitCtorBody prescans the whole body. id -> IL Label. See docs/design-il-cfg.md.
+    // so EmitMethodBody/EmitCtorBody prescans the whole body. id -> IL Label. See docs/bir-cir-spec.md.
     Dictionary<int, Label> _cfgLabels;
     Type _methodRetType = typeof(void);
     TypeInfo _curTi;   // the TypeInfo whose method/ctor body is being emitted (for a synthesized-event accessor's backing field)

@@ -3,7 +3,7 @@
  * BCL types (IReadOnlyCollection<T> / IReadOnlyList<T> only expose Count / this[i] / GetEnumerator). The backend routes a
  * member call `recv.isEmpty()` / `recv.contains(e)` / ... to these statics (mirrors the iterator() bridge). The bodies use
  * ONLY BCL-bound members (size->Count, get->get_Item, iterator->GetEnumerator) so they never recurse into a routed member.
- * See docs/design-clr-stdlib-ref-runtime-split.md "non-BCL members".
+ * See docs/design-clr-collection-binding.md.
  */
 @file:Suppress("NOTHING_TO_INLINE")
 

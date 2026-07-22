@@ -1,12 +1,12 @@
 # Compiler Modes — 各ステージの動作モード・属性出力・Lowering
 
-> **状態 (2026-06-30 確定 / ユーザ確定スペック)**: コンパイラ各ステージの「モード」と、出力成果物ごとの属性付与・Lowering 規則の**正本**。[[artifact-emission-policy]] の 4-artifact マトリクスを精緻化し、一部を訂正する（§6）。層責務は [[compiler-layer-responsibilities]] / [design-fir-bir-cir-il.md](design-fir-bir-cir-il.md)、三参照モデルは [ship-tasks.md](ship-tasks.md) §0。
+> **状態 (2026-06-30 確定 / ユーザ確定スペック)**: コンパイラ各ステージの「モード」と、出力成果物ごとの属性付与・Lowering 規則の**正本**。[[artifact-emission-policy]] の 4-artifact マトリクスを精緻化し、一部を訂正する（§6）。層責務と三参照モデルは [architecture.md](architecture.md)。
 
 ## 0. 原則
 
 - toolchain = **facadegen / kotc / bir2cir / ilemit**。
 - **出力モードを持つのは bir2cir のみ**（`ref.dll` / `rt.dll` / `app` の 3 モード）。他 3 ステージはモード不変。
-- frontend klib（`kotlin-stdlib-clr-frontend.klib`）は kotc の metadata pipeline（`build-stdlib-klib.sh`）で別途生成する成果物（[[artifact-emission-policy]] の artifact A）であり、bir2cir のモードではない（§2）。旧 JVM frontend jar は #67 で退役。
+- frontend klib（`kotlin-stdlib-clr-frontend.klib`）は kotc の metadata pipeline（`build-stdlib-klib.sh`）で別途生成する成果物（[[artifact-emission-policy]] の artifact A）であり、bir2cir のモードではない（§2）。旧 JVM frontend JAR は #67 で退役。
 
 ---
 
@@ -62,7 +62,7 @@
 | `@ClrTypeAlias`（型の読み替え）で差し替えられるクラス | 出力する（subst 無し） | **出力から Omit**。結果的に **Kotlin Primitive の Boxed 型** も、正しく TypeAlias されていれば Omit される | **Omit**（rt.dll に合わせる。app に `@ClrTypeAlias` は通常存在しないため実質 moot） |
 
 > モードの直感:
-> - **ref.dll** = 「純 `kotlin.*` の参照面。全 attribute を持つが body は空（throw スタブ）、primitive は boxed のまま」。`@ClrIntrinsic` の**出所**（[ship-tasks.md](ship-tasks.md) §0 の不変条件）。
+> - **ref.dll** = 「純 `kotlin.*` の参照面。全 attribute を持つが body は空（throw スタブ）、primitive は boxed のまま」。`@ClrIntrinsic` の**出所**（[architecture.md](architecture.md) の不変条件）。
 > - **rt.dll** = 「実行時実装。body あり、primitive は CLR 化、BCL に TypeAlias されるクラスは Omit」。
 > - **app** = 「利用者コード。subst 済みかつ、下流の facadegen が Kotlin として再消費できるよう read-back/Roundtrip 属性と inline BIR を持つ」。
 

@@ -17,7 +17,7 @@ sealed class ManagedReferenceCatalog
 {
     readonly Dictionary<string, Entry> _bySimpleName = new(StringComparer.OrdinalIgnoreCase);
 
-    // The ref/runtime stdlib split (docs/design-clr-stdlib-ref-runtime-split.md): the REFERENCE stdlib
+    // The ref/runtime stdlib split (docs/architecture.md): the REFERENCE stdlib
     // (metadata twin, kept by ref-READERS bir2cir+facadegen) and the RUNTIME stdlib (shipped, loaded by
     // ilemit) define the SAME `kotlin.clr.*` type shapes; only the assembly name differs.
     const string RefStdlibName = "DotKt.Private.Stdlib";
@@ -191,7 +191,7 @@ sealed class ManagedReferenceCatalog
         // RUNTIME stdlib, so a copy-local build puts BOTH stdlib twins on a ref-reader's compile set — the REFERENCE
         // twin `DotKt.Private.Stdlib` (which bir2cir/facadegen are meant to read) AND the RUNTIME twin `DotKt.Stdlib`.
         // The runtime twin is the SUBSTITUTE build (its @Clr-bound types are dropped/BCL-substituted and its
-        // `[Kotlin*]`/`[Clr]` metadata stripped — docs/design-clr-stdlib-ref-runtime-split.md), so for a ref-reader it
+        // `[Kotlin*]`/`[Clr]` metadata stripped — docs/architecture.md), so for a ref-reader it
         // is not just redundant but an actively WRONG metadata source. Worse, loading BOTH into one MetadataLoadContext
         // makes every `kotlin.*` type (e.g. `kotlin.reflect.KProperty`, `kotlin.concurrent.atomics.AtomicReference`)
         // resolve to TWO defining assemblies, so a ref-reader's use-site duplicate-definition check throws and a

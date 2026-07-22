@@ -85,9 +85,8 @@ round-trip, wide-delegate, and packaged-SDK scenarios. Test entry points live be
   inline/nullability/sealed/bounds via `[Kotlin*]` attributes (see
   `docs/dotkt-semantics.md` §6/§10)
 
-Still in progress: coroutines/`Sequence` builders (the `suspend`⇔`Task<T>` ABI is settled;
-`docs/coroutine-stdlib-port-plan.md` is the live plan) — see `docs/master-task-inventory.md`
-(the canonical task ledger) and `docs/remaining-tasks.md` (the 1.0 ship checklist).
+The `suspend`⇔`Task<T>` ABI is settled. Remaining bugs and planned work, including coroutine
+limitations, are tracked exclusively in [GitHub Issues](https://github.com/tmyt/dotkt/issues).
 
 ## Quick start (repo)
 
@@ -151,10 +150,8 @@ See `docs/user/getting-started.md`.
 | `scripts/` | reusable build/validation tools, `dotkt.sh`, and the three `build-stdlib-*.sh` helpers |
 | `docs/user/` | **user-facing docs** (getting started / .NET interop / CLR differences) |
 | `docs/dotkt-semantics.md` | **canonical**: how Kotlin maps to the CLR + deliberate deviations from Kotlin/JVM |
-| `docs/design-fir-bir-cir-il.md` | backend layer contract (kotc / bir2cir / ilemit responsibilities) |
-| `docs/master-task-inventory.md` | the canonical "what's left" task ledger |
-| `docs/remaining-tasks.md` | the 1.0 ship checklist |
-| `docs/archive/` | historical design/plan docs (superseded; kept for rationale) |
+| `docs/architecture.md` | backend layer contract (kotc / bir2cir / ilemit responsibilities) |
+| [GitHub Issues](https://github.com/tmyt/dotkt/issues) | the only bug and task backlog |
 
 ## How it works (design)
 

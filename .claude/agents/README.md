@@ -1,7 +1,7 @@
 # kotlin/clr specialist agents
 
 Five specialist subagents, one per pipeline stage, so a large change can be split along the **layer
-boundaries** the architecture already defines (`docs/ship-tasks.md` §0). Each agent's system prompt
+boundaries** the architecture already defines (`docs/architecture.md`). Each agent's system prompt
 encodes *its layer's contract and the boundary it must not cross* — so boundary violations (CLR
 knowledge leaking into kotc, Kotlin knowledge into ilemit) are prevented by construction, not by
 hope.
@@ -27,7 +27,7 @@ hope.
 
 `@ClrIntrinsic` is **sourced from ref.dll** (stdlib agent writes it; facadegen does NOT bind it),
 **consumed by bir2cir** (substituted to a plain BCL call), and **never passed to ilemit**. A fix that
-violates this is a bug — see `docs/ship-tasks.md` §0.
+violates this is a bug — see `docs/architecture.md`.
 
 ## How to orchestrate (main agent / you)
 

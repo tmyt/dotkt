@@ -42,7 +42,7 @@
 
 ## Interaction with existing work
 
-- **Default arguments (RC1, `docs/master-task-inventory.md` §4-C):** under this model a `CharSequence` param with a
+- **Default arguments:** under this model a `CharSequence` param with a
   string default becomes a **`string`** param with a string default → it moves from Tier 2 (`[KotlinDefault]` +
   required) to **Tier 1** (`[Optional][DefaultParameterValue("")]`, native for both C# and kcc). `joinToString`'s
   `separator`/`prefix`/`postfix`/`truncated` all become clean native-optional `string` params. RC1's `[KotlinDefault]`
@@ -92,7 +92,7 @@ stays the synthetic `<>dotkt_CharSequence`. ilemit emits per the resolved tokens
 It runs BEFORE `StringCharSequenceBridge`, so a now-`string` value flowing into a *stdlib* CharSequence-extension (whose
 param is still the synthetic in the un-rebuilt stdlib) is still adapter-wrapped by the bridge — **the two compose**
 (verified: a pure-app `fun has(cs: CharSequence) = cs.contains(sub)` works for both a `String` and a `StringBuilder`).
-Sample: `cases/il-charseqs`. Existing `il-charseq` / `il-charseqx` (user `class S : CharSequence`) stay on the
+Coverage: `tests/basic/fixtures/StringsTests.kt`. User `class S : CharSequence` cases stay on the
 synthetic path unchanged (the per-assembly guard disables the pass) — both still green.
 
 **RETAINED (technical necessity):** the synthetic `<>dotkt_CharSequence` + `<>dotkt_StringCharSequence` adapter +
@@ -102,11 +102,6 @@ polymorphic reads (`show(cs: CharSequence) = cs.length` with `show(S("hello"))` 
 genuinely require the synthetic — collapsing them to `string` + `.toString()` would snapshot `S` via its (default,
 type-name) `toString` and lose the length. Hence: an assembly that declares a user implementer keeps `CharSequence`
 polymorphic **assembly-wide** (the pass is skipped there).
-
-> *Currency note (2026-07-03):* bundle 4-B has since retired the CLEAN String ops (`contains`/`indexOf`/`startsWith`/
-> `endsWith`/`split`/`substring(2-arg)`/`isEmpty`, the `s[i]` indexer, Regex) via the adapter-bridge path — see
-> `master-task-inventory.md` §4-A ⑧. The remaining lowered set (`trim*`/`reversed`/`padStart`/`padEnd`/
-> `replace(S,S)`/`isBlank`) is blocked by distinct stdlib-BODY bugs, and the full signature-lowering below is still open.
 
 **DEFERRED (follow-up — NOT done, needs a stdlib rebuild):** lowering the **stdlib's own** CharSequence-extension
 signatures (`StringsKt.contains`/`trim`/… params) from the synthetic to `string`. That is the change that would let the

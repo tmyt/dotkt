@@ -88,7 +88,7 @@ import org.jetbrains.kotlin.cli.common.messages.CompilerMessageLocation
 import java.io.File
 
 /** The BIR placeholder for an OMITTED default argument this build cannot inline (a cross-module default whose VALUE
- *  the frontend jar dropped → IrErrorExpression). Emitted POSITIONALLY so a later provided arg keeps its slot;
+ *  the frontend KLIB dropped → IrErrorExpression). Emitted POSITIONALLY so a later provided arg keeps its slot;
  *  bir2cir's DefaultArgSplice replaces it (by array index) from the callee's ref.dll @KotlinDefault / [DefaultParameterValue]. */
 private val defaultArgPlaceholder = """{"k":"defaultArg"}"""
 
@@ -225,7 +225,7 @@ internal fun BirEmitter.filledArgExprs(call: org.jetbrains.kotlin.ir.expressions
 			// data class `copy`'s `x = this.x`) must be evaluated in the callee's scope (cf. Kotlin/JVM's `$default`),
 			// which the .NET backend doesn't yet do. Reject only HERE — at the omitting call — not at the declaration:
 			// a data class whose `copy` is never arg-omitted must still compile. Otherwise a dangling `local a`/`this`
-			// reaches ilemit as invalid IL. See docs/future-work-interop.md (non-constant default arguments).
+			// reaches ilemit as invalid IL. See docs/dotkt-semantics.md (non-constant default arguments).
 			if (refsAny(def, calleeLocals)) unsupported(call, "omitting a non-constant default argument",
 				"the default value of parameter '${p.name.asString()}' references other parameters or the receiver, " +
 				"which the .NET backend cannot evaluate at the call site; pass the argument explicitly")
@@ -1399,7 +1399,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// @ClrIntrinsic (runtime/stdlib/clr/kotlin/io/ConsoleClr.kt) and wraps a collection/Map arg in
 		// clrCollToString/clrMapToString (Kotlin-style `[a, b]`) — recovering the operand static types via StaticType.
 		// `readLine()` is NOT lowered: the CLR stdlib exposes readln()/readlnOrNull() (readlnOrNull is @ClrIntrinsic-bound
-		// to System.Console.ReadLine in ConsoleClr.kt). There is no `kotlin.io.readLine` symbol in the frontend jar.
+		// to System.Console.ReadLine in ConsoleClr.kt). There is no `kotlin.io.readLine` symbol in the frontend KLIB.
 		// Regex is NOT lowered here: `kotlin.text.Regex` is
 		// @ClrTypeAlias("System.Text.RegularExpressions.Regex") with `containsMatchIn`@ClrIntrinsic("IsMatch") /
 		// `replace`@ClrIntrinsic("Replace") + real Kotlin bodies for `matches`/`find`/`split`/`.value`
@@ -1408,7 +1408,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// calls on kotlin.text.Regex; bir2cir substitutes the @ClrTypeAlias ctor + @ClrIntrinsic members off the
 		// ref.dll and runs the real bodies. The Kotlin<->CLR relation lives in bir2cir, not kotc.
 		// `String.format` is NOT lowered here. System.String.Format would be CLR knowledge in kotc, and it is
-		// dead against the CLR frontend jar anyway — that jar has no `kotlin.text.String.Companion.format`, so the
+		// dead against the frontend KLIB anyway — that jar has no `kotlin.text.String.Companion.format`, so the
 		// symbol is unresolved before the backend ever runs. Making `String.format` work is a stdlib concern (bind a
 		// `String.Companion.format(String, vararg Any?)` @ClrIntrinsic("System.String.Format")), NOT a kotc lowering.
 		// `noWhenBranchMatchedException` / `throwUninitializedPropertyAccessException` are COMPILER INTRINSICS (the

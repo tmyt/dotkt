@@ -189,7 +189,7 @@ static class FacadeGen
         // surface references (base class chain, implemented interfaces, member return/param/element/generic-arg
         // types) and inject the whole reachable closure. This is what makes chained access (`panel.Children.Add`)
         // and cross-type assignability work without the user importing every intermediate type — see
-        // docs/dotkt-interop-feedback.md (6). Bounded by resolvability + a hard cap (runaway backstop).
+        // docs/dotkt-semantics.md (6). Bounded by resolvability + a hard cap (runaway backstop).
         const int CAP = 5000;
         var queue = new Queue<Type>();
         var enqueued = new HashSet<string>();   // by FullName — guards the queue
@@ -232,7 +232,7 @@ static class FacadeGen
             }
             if (fam.Count == 0) { Console.Error.WriteLine($"warning: .NET import resolved to no type (injected nothing): {typeName}"); continue; }
             // BINDING INVARIANT: a resolved seed that lands in `kotlin.*` is dropped — the stdlib comes from the
-            // frontend JAR, never facadegen (see IsKotlinStdlibSymbol). The `kotlin.clr.await` bridge is exempt: it
+            // frontend KLIB, never facadegen (see IsKotlinStdlibSymbol). The `kotlin.clr.await` bridge is exempt: it
             // resolves to no type here and is surfaced textually by EmitAwaitables. Defense-in-depth / output-neutral.
             fam.RemoveAll(s => IsKotlinStdlibSymbol(s));
             if (fam.Count == 0) { Console.Error.WriteLine($"warning: .NET import is a kotlin.* stdlib symbol (owned by the JAR, not facadegen; injected nothing): {typeName}"); continue; }
@@ -462,7 +462,7 @@ static class FacadeGen
     // Emit one type's FIR-injection metadata (enum/interface/annotation/object/class + members).
     // A `[ClrIntrinsic]`/`[ClrTypeAlias]` binding on a ref-assembly type/member (when facadegen reflects a DotKt
     // library) registers the Kotlin type's dotNet name AS THE BCL TARGET, so the app binds it
-    // (kotlin.collections.List -> System.Collections.Generic.IReadOnlyList). docs/design-clr-stdlib-ref-runtime-split.md.
+    // (kotlin.collections.List -> System.Collections.Generic.IReadOnlyList). docs/architecture.md.
     // NOTE (M3): in the PRODUCTION import-scan path (`--import-list`, no DotKt ref.dll scanned) this always
     // returns null — no injected .NET type carries these stdlib-binding attributes. It is kept because the ref/runtime-
     // split round-trip design (reflecting a DotKt library's ref.dll) depends on it and its removal is bir2cir-owner
@@ -1274,8 +1274,8 @@ static class FacadeGen
       "System.Nullable`1",
       "System.Delegate", "System.MulticastDelegate", "System.ValueType", "System.Enum", "System.Array" };
 
-    // BINDING INVARIANT (CLAUDE.md §"kotlin.* comes from the JAR, never from facadegen"; docs/ship-tasks.md §0):
-    // kotc resolves the ENTIRE Kotlin stdlib (`kotlin.*`) from the frontend JAR on -classpath, which preserves full
+    // BINDING INVARIANT (CLAUDE.md §"kotlin.* comes from the KLIB, never from facadegen"; docs/architecture.md):
+    // kotc resolves the ENTIRE Kotlin stdlib (`kotlin.*`) from the frontend KLIB on -classpath, which preserves full
     // Kotlin semantics (the Companion-object call sites the stdlib is premised on). facadegen owns the .NET space ONLY
     // and must NEVER inject a `kotlin.*` symbol — a facadegen-reconstructed `kotlin.*` DUPLICATES the jar's, which then
     // conflict (overload-resolution ambiguity), and re-scanning the whole stdlib is slower than the prebuilt jar.
@@ -1310,7 +1310,7 @@ static class FacadeGen
         if (t == null || t.IsGenericParameter || t.IsPointer || t.IsByRef) return false;
         if (IsCompilerGenerated(t)) return false;
         if (string.IsNullOrEmpty(t.Namespace) || t.FullName == null) return false;
-        // BINDING INVARIANT: never inject a `kotlin.*` stdlib symbol — it comes from the frontend JAR (see
+        // BINDING INVARIANT: never inject a `kotlin.*` stdlib symbol — it comes from the frontend KLIB (see
         // IsKotlinStdlibSymbol). Defense-in-depth: the closure never reaches one (facadegen resolves only .NET-space
         // names), so this is output-neutral; it just moves the guarantee into the owning layer.
         if (IsKotlinStdlibSymbol(t)) return false;
@@ -2144,7 +2144,7 @@ static class FacadeGen
             // makeList(): List<Int>` has no jar counterpart). EXTENSION funs are KEPT (receiver-based, no ambiguity).
             if (!isExt && (t.Namespace ?? "").StartsWith("kotlin") && IsStdlibCollectionFqn(ret))
             {
-                Console.Error.WriteLine($"note: dropped stdlib collection factory tlfun {(string.IsNullOrEmpty(t.Namespace) ? "" : t.Namespace + ".")}{m.Name} (its {(ret as TN.Fqn)?.Name} return is ambiguous with the kotlin-stdlib.jar's same-signature factory)");
+                Console.Error.WriteLine($"note: dropped stdlib collection factory tlfun {(string.IsNullOrEmpty(t.Namespace) ? "" : t.Namespace + ".")}{m.Name} (its {(ret as TN.Fqn)?.Name} return is ambiguous with the frontend KLIB.s same-signature factory)");
                 continue;
             }
             // An EXTENSION whose RECEIVER maps to Any? is a CATCH-ALL that mis-wins overload resolution; skip it.

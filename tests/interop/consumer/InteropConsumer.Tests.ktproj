@@ -7,7 +7,7 @@
      This is the C#-PRODUCER variant of the tests/roundtrip lane (whose producer is a DotKt .ktproj). The 35
      runtime.cs-shipping cases in the former per-case compiler runner are cross-module BY CONSTRUCTION — a separately-compiled C#
      assembly the DotKt code references — so they need a real <ProjectReference>'d C# producer, which the single-
-     project in-process tests/basic fixture cannot express (docs/nunit-migration-playbook.md §3). MSBuild's build graph
+     project in-process tests/basic fixture cannot express (docs/design-nunit-test-harness.md). MSBuild's build graph
      does the "build producer dll -> put it on the consumer's ReferencePath" step; `dotnet test` discovers the
      @TestAttribute methods and runs them in-process.
 

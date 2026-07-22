@@ -140,7 +140,7 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	// kotc emits ONE BIR independent of the ref/rt split. The ref/rt divergence (BCL substitution, the
 	// kotlin.Comparable-bound + `in`-variance drops, the metadata strip) is entirely bir2cir's + ilemit's, keyed off the
 	// `--build-stdlib=metadata|runtime` flag downstream. The stdlib REFERENCE build and the RUNTIME build produce
-	// BIT-IDENTICAL BIR from a single kotc frontend run. docs/design-clr-stdlib-ref-runtime-split.md.
+	// BIT-IDENTICAL BIR from a single kotc frontend run. docs/architecture.md.
 
 	internal fun unsupported(node: IrElement?, what: String, detail: String): String {
 		hadError = true

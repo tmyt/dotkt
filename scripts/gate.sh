@@ -92,7 +92,7 @@ classify() { # <path>
 	local p="$1"
 	case "$p" in
 		# ---- docs / changelog -------------------------------------------------------------------
-		docs/bir-cir-spec.md|docs/bir-cir.schema.json|docs/design-fir-bir-cir-il.md)
+		docs/bir-cir-spec.md|docs/bir-cir.schema.json|docs/architecture.md)
 			want schema; reason "$p -> verify-schema (BIR/CIR schema doc)" ;;
 		*.md|docs/*|CHANGELOG*)
 			reason "$p -> (no gate: docs)" ;;

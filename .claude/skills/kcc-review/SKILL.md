@@ -1,6 +1,6 @@
 ---
 name: kcc-review
-description: Run a review of the KCC (Kotlin CLR Compiler) toolchain + stdlib as review-team leader. Fixed phase order (baseline → prior-finding re-verification → static layer-purity → empirical behavioral → coverage audit → IL quality → synthesis), per-layer specialist subagents + Codex, repo-specific invariants and false-positive traps, fixed Japanese report under docs/reviews/. Use when asked to review the toolchain, audit layer purity, hunt miscompiles, or certify that the gates are genuinely green.
+description: Run a review of the KCC (Kotlin CLR Compiler) toolchain + stdlib as review-team leader. Fixed phase order (baseline → issue re-verification → static layer-purity → empirical behavioral → coverage audit → IL quality → synthesis), per-layer specialist subagents + Codex, repo-specific invariants and false-positive traps. Use when asked to review the toolchain, audit layer purity, hunt miscompiles, or certify that the gates are genuinely green.
 argument-hint: "[scope: full | static | behavioral | <layer> | <topic>]"
 ---
 
@@ -14,12 +14,6 @@ repro). Subagent and Codex output are *inputs*, never conclusions.
 A review is an **assessment deliverable**: report findings, do not fix them (unless the user
 explicitly asked for fixes in the same request). The report is written in **Japanese**; everything
 else — your reasoning, subagent prompts, repro code — stays in English (CLAUDE.md ground rule).
-
-This procedure is calibrated by three prior reviews that worked:
-`docs/polish-review-layer-purity.md` (2026-07-04, static purity),
-`docs/review-kcc-toolchain-2026-07-05.md` (2-part: static + empirical — the reference format),
-`docs/reviews/2026-07-05-final-review.md` (claim-verification review). Read at least the most
-recent one before starting; mirror their structure.
 
 ## Scope calibration
 
@@ -35,7 +29,7 @@ Never skip Phase 0 or Phase 6. Never report a behavioral claim without Phase-3 e
 
 ## The mental model (what "correct" means here)
 
-The authoritative layer table and invariants are `docs/ship-tasks.md` §0 and
+The authoritative layer table and invariants are `docs/architecture.md` and
 `.claude/agents/README.md`. The review-relevant core:
 
 | Layer | Reads | Owns | Must NOT contain |
@@ -62,20 +56,15 @@ Binding invariants every finding is judged against:
 1. Record HEAD commit + date. **All file:line citations in the report are pinned to this commit.**
 2. `git status` — note dirty build artifacts (`dotkt-out/` churn is known noise, not a finding
    unless the tracking itself is in scope).
-3. **Clean-rebuild the stdlib before trusting any gate**: `rm -rf build/clr-stdlib*`, then
-   `./scripts/build-stdlib-ref.sh --emit`, `./scripts/build-stdlib-rt.sh --emit`,
-   `./scripts/build-stdlib-klib.sh`. A cached dll masks bir2cir/kotc regressions
-   (MEMORY `build-cache-masks-stdlib-regressions`).
-4. **Run the gates solo and quiescent.** Concurrent builds churn the shared `build/` tree and
-   produce false-RED `FileLoadError` on interop samples (2026-07-05 incident). If a gate reddens,
-   re-run it alone before believing it. Capture FULL output (tail hides the runtime-FAIL section).
-5. Read the **machine-readable baselines**, never prose counts: `XFAIL_RUN`/`XFAIL_ILVERIFY` maps
-   in `scripts/verify-il.sh`, `XFAIL_DIFF` + the `PURE` list in `scripts/verify-differential.sh`,
-   `RT_XFAIL` in `scripts/verify-roundtrip.sh`.
-6. Load prior state: the newest report in `docs/reviews/` (and `docs/review-*.md`,
-   `docs/polish-review-layer-purity.md`), plus `docs/master-task-inventory.md`. An item already
-   tracked as open in the inventory is reported as **"known-open (tracked)"**, never as a new
-   finding — this is what keeps finding counts stable across sessions.
+3. Build the stdlib through its canonical scripts before trusting cached artifacts:
+   `./scripts/build-stdlib-klib.sh`, `./scripts/build-stdlib-ref.sh --emit`, and
+   `./scripts/build-stdlib-rt.sh --emit`.
+4. **Run gates solo and quiescent.** Use `make verify` for the full gate and the focused runners
+   under `tests/` when narrowing a failure. Capture complete output.
+5. Read test configuration and expected-failure data from the current test projects and runners;
+   do not rely on prose counts from old reviews.
+6. Load prior state from open GitHub Issues. An already-tracked item is reported as
+   **"known-open (tracked)"**, never as a new finding.
 
 ### Phase 1 — Re-verify prior findings
 
@@ -196,9 +185,12 @@ must include:
 - **A green gate is weak evidence of correctness** (self-scored fixed strings — see Phase 4); a
   red gate under concurrent builds is weak evidence of breakage (see Phase 0.4).
 - **Documented deviations** in `docs/dotkt-semantics.md` are design, not bugs.
-- **An open item in `docs/master-task-inventory.md`** is known-open, not a new finding.
+- **An open GitHub issue** is known-open, not a new finding.
 
-## Report format (fixed — write in Japanese, save to `docs/reviews/YYYY-MM-DD-<scope>.md`)
+## Report format (fixed — write in Japanese)
+
+Return the report to the user. Persist it under `build/reports/` only when a file deliverable is
+useful; do not add point-in-time review reports to `docs/`.
 
 ```markdown
 # KCC レビュー報告（YYYY-MM-DD, <scope>）
@@ -220,6 +212,5 @@ must include:
 ## Swept-and-CORRECT                   ← 正しさを確認済みの表面（安心材料・次回の重複防止）
 ```
 
-Full-review precedent for tone and depth: `docs/review-kcc-toolchain-2026-07-05.md`. After saving
-the report, deliver the Japanese summary (総評 + severity table + recommended order) directly to
-the user; do not fix anything unless asked.
+Deliver the Japanese summary (総評 + severity table + recommended order) directly to the user; do
+not fix anything unless asked.

@@ -2,8 +2,8 @@
 
 > NORMATIVE. This is the single source of truth for the BIR/CIR serialization format. Every layer
 > (kotc emit / bir2cir consume+produce / ilemit consume / facadegen meta / [KotlinInline] splice)
-> implements to THIS. Design rationale: `docs/design-bir-cir-freeze.md`. Exhaustive prior-state audit:
-> `docs/bir-audit/*.md`. Durable-ABI principles: uniformity, self-describing, additive-extensible,
+> implements to THIS. Earlier freeze proposals and producer/consumer audits are preserved in Git history.
+> Durable-ABI principles: uniformity, self-describing, additive-extensible,
 > codec-agnostic, single-source. **BIR contains NO stringly-typed compound tokens — types are nodes.**
 
 ## 0. Envelope & versioning
@@ -113,7 +113,7 @@ Node kinds stay `{"k":…}`-tagged objects (already structured). The freeze CLEA
 change). Canonical set = the live kinds from the audit, MINUS the dead/merged below. Every `type`/`ret`/
 `elem`-valued field inside a node now holds a **`Type` node** (§1), never a string.
 
-DELETED (dead / producer-zero — `docs/bir-audit/ilemit-consume.md`):
+Deleted producer-zero vocabulary:
 - The entire `clr.*` twin family: `clr.const`, `clr.bin`, `clr.un`, `clr.conv`, `clr.obj.eq`, `clr.newarr`,
   `clr.ldelem`, `clr.stelem`, `clr.ldlen`, `clr.str.concat`, `clr.obj.method`, `clr.default`,
   `clr.array.spread`, `clr.stackalloc`, `clr.stack.*`, `clr.constrained.compareTo`, `clr.nullable.*`,
@@ -154,7 +154,7 @@ additive (a new modifier = a new key). No comma strings, no `Contains`/`StartsWi
   already gates cold-lowering) — `mods.suspend` is the single source; a redundant top-level `suspend` field is removed.
 The meta side (facadegen tlfun/tlextprop/tlprop) emits the SAME `mods` object, not the `final,inline,ext` comma string.
 
-(The full per-kind field table is generated from `docs/bir-audit/kotc-emit.md` §1 during impl; this section
+(The full per-kind field table is enforced by the schema and validators; this section
 lists only the freeze DECISIONS. The validator (§4) enforces the canonical set.)
 
 ### 2.5 Node-kind FORMAT stabilization — canonical field names + per-kind schema + validator
@@ -353,15 +353,13 @@ freshly-emitted BIR + CIR and reddens the gate on any drift.
   mixed object (roles are disjoint) reds.
 - **`mods` keys ⊆ the frozen set, `vis` ∈ the enum (§2.1).**
 
-**Coverage** = `build/clr-stdlib/{bir,cir}` (the 250-file bulk corpus, fresh after `make stdlib`) + every app
-sample `build/{bir,cir}-*` (fresh after `verify-il` — exercises the CLR-lowered `clr*`, coroutine-lowered `co*`,
-and StringCharSequence-adapter kinds the stdlib build alone does not). Wired into the gate aggregate AFTER
-`verify-il` (which re-emits every app BIR/CIR), and into `m1verify`.
+**Coverage** = freshly emitted stdlib and application BIR/CIR. `tests/ir/run-schema.sh` drives the structural
+validator, and `make verify` includes the schema and sanity gates.
 
 **Carrier (§0) scope.** The `[KotlinInline]`/`[KotlinSuspendFunctionType]` carriers ride as CLR attributes on the
 emitted assembly, not as document nodes, so they are out of the document walk. Their version is guarded LOUDLY at
 decode time by `bir-common` `BirCarrier.DecodeBody` (an unknown version throws `NotSupportedException` — never a
-silent mis-decode) and is exercised end-to-end by `verify-roundtrip` (facadegen decodes every stdlib ref.dll
+silent mis-decode) and is exercised end-to-end by the roundtrip tests (facadegen decodes every stdlib ref.dll
 inline body through the one codec). The decoded carrier BODY is itself a node/type that ALSO appears inline as the
 emitting method's body in the BIR/CIR — validated there by the document walk.
 
