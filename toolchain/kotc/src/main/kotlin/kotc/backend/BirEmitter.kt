@@ -150,7 +150,7 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	}
 
 	// A `kotlin.clr.ClrEvent<T>` value is a compile-time-only fiction (the surfaced form of a .NET event); it may
-	// appear ONLY as the receiver of a `+=`/`-=` subscription or `subscribe(handler)`, never be materialized as a real
+	// appear ONLY as the receiver of `subscribe(handler)`, never be materialized as a real
 	// value. This flag is set true ONLY while emitting the event member-access that is the receiver of one of those
 	// ClrEvent operations;
 	// a ClrEvent-typed property read seen with it FALSE is a misuse (`val e = w.Changed`) and is a compile error.

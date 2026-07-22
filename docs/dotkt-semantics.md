@@ -42,7 +42,7 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
 | [8](#8-reverse--cross-assembly-interop) | Reverse / cross-assembly interop |
 | [8b](#8b-dual-representation-import-systemtextstringbuilder-vs-kotlintextstringbuilder--two-typed-views-of-one-clr-type) | Dual view: imported .NET type vs. its stdlib alias |
 | [8c](#8c-injected-net-static-members-implicit-typemember-works-companion-optional) | Injected .NET statics: implicit `Type.member` works |
-| [8d](#8d-net-event-subscriptions-and-closeable-tokens) | .NET events subscribe with `+=` or a closeable token |
+| [8d](#8d-net-event-subscriptions-and-closeable-tokens) | .NET events use closeable subscriptions |
 | [9](#9-reference-type-nullability--net-nrt-un-annotated-net-types-are-platform-types) | Nullability ⇔ .NET NRT; platform types `T!` |
 | [10](#10-round-trip-fidelity-audit--what-re-consuming-a-dotkt-assembly-as-kotlin-loses) | Round-trip fidelity audit (incl. pinned-2.4.0 limitations) |
 
@@ -880,15 +880,10 @@ injected `IEnumerable<T>` iterator marker, and the backend enumerates via `GetEn
 ## 8d. .NET event subscriptions and closeable tokens
 
 A .NET **event** (`ObservableCollection.CollectionChanged`, a WinForms/WPF `Button.Click`, a custom library
-`Widget.Changed`) supports both the idiomatic Kotlin operators and a scoped subscription token:
+`Widget.Changed`) is consumed through a closeable subscription token:
 
 ```kotlin
 val c = ObservableCollection<Int>()
-c.CollectionChanged += { sender, e -> println("changed") }   // subscribe (the event's add accessor)
-val h: (Any?, Any?) -> Unit = { s, e -> println("h fired") }
-c.CollectionChanged += h                                     // subscribe a stored handler
-c.CollectionChanged -= h                                     // unsubscribe (delegate equality — removes exactly h)
-
 c.CollectionChanged.subscribe { sender, e -> println("scoped") }.use {
     c.Add(1)                                                  // automatically unsubscribed at the end of use
 }
@@ -898,20 +893,19 @@ c.CollectionChanged.subscribe { sender, e -> println("scoped") }.use {
   the handler's **Kotlin function type** (`(Any?, Any?) -> Unit`) — so a lambda `{ s, e -> … }` binds directly.
   `ClrEvent<T>` (`kotlin.clr.ClrEvent`) is a **compile-time-only handle**: a .NET event is not a first-class value
   (you can only add/remove/raise it), so `c.CollectionChanged` never materializes an object — it exists only to make
-  `+=`/`-=`/`subscribe` resolve. The compiler binds those operations to the event's underlying **add/remove
-  accessor**; the handler lambda is wrapped as the event's own delegate type (not `Action`/`Func`).
+  `subscribe` resolve. The compiler binds it to the event's underlying **add/remove accessors**; the handler lambda
+  is wrapped as the event's own delegate type (not `Action`/`Func`).
 - `subscribe(handler)` adds the handler and returns `kotlin.clr.EventSubscription<HandlerFn>`, an
   `AutoCloseable`. `close()` is idempotent and removes the **same handler instance** that was added, so a direct
   lambda can be safely scoped with `use` without separately retaining it.
-- `-=` removes by **delegate equality**, so removal works only with a **stored** handler reference (as in the JVM
-  idiom for listeners) — a fresh lambda literal at the `-=` site is a different delegate and removes nothing.
-- This replaces the earlier `add_<Event>` / `remove_<Event>` accessor-method spelling, which no longer exists.
+- Public `+=` / `-=` are intentionally not exposed: they split handler identity and subscription lifetime across
+  caller-managed values. This also replaces the earlier `add_<Event>` / `remove_<Event>` accessor-method spelling.
 - **Static events** subscribe the same way. A **static** event on a normal class is reached through the companion
-  (`TaskScheduler.UnobservedTaskException += h`); a static event on a `static class`/`object`
-  (`System.Console.CancelKeyPress += h`) is a member of that object. Either binds to the event's **static** add/remove
+  (`TaskScheduler.UnobservedTaskException.subscribe(h)`); a static event on a `static class`/`object`
+  (`System.Console.CancelKeyPress.subscribe(h)`) is a member of that object. Either binds to the event's **static** add/remove
   accessor (a plain `Call`). (facadegen originally emitted only *instance* events of *non-static classes*.)
 - **Interface events** (`INotifyPropertyChanged.PropertyChanged`) surface as a `ClrEvent<T>` member and **consume**
-  the same way on an interface-typed receiver (`n.PropertyChanged += h`). When a Kotlin class **subclasses** a .NET
+  the same way on an interface-typed receiver (`n.PropertyChanged.subscribe(h)`). When a Kotlin class **subclasses** a .NET
   class that already implements the interface (`class MyApp : Avalonia.Application`), the inherited concrete
   `ClrEvent<T>` fake-override satisfies the slot and is elided — nothing to declare.
 - **Implementing and raising a CLR event from Kotlin** (MVVM / `INotifyPropertyChanged`): a Kotlin class that directly
@@ -923,7 +917,7 @@ c.CollectionChanged.subscribe { sender, e -> println("scoped") }.use {
   This is exactly the raiser .NET libraries hand-roll as `protected virtual void OnPropertyChanged(...)`, promoted to a
   first-class part of the event handle — it is what lets the idiomatic property-delegate MVVM pattern
   (`ViewModelProperty.setValue` raising a base class's `PropertyChanged`) work. Consistent (a handle uniformly supports
-  `+=`/`-=`/`invoke`), documented (here + `docs/design-clr-event-model.md`), convincingly explainable — passes all
+  `subscribe`/`invoke`), documented (here + `docs/design-clr-event-model.md`), convincingly explainable — passes all
   three conditions of the acceptance test. A **consumed** foreign .NET event has no synthesized `raise_`, so `invoke`
   on it stays an error — you still cannot raise an event you did not declare. Full model:
   [`docs/design-clr-event-model.md`](design-clr-event-model.md).

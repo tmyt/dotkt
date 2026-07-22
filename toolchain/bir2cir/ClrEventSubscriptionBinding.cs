@@ -4,20 +4,19 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// .NET EVENT `+=`/`-=`/`subscribe` binding. A .NET event is surfaced by facadegen/kotc as a
+// .NET EVENT `subscribe` binding. A .NET event is surfaced by facadegen/kotc as a
 // read-only `kotlin.clr.ClrEvent<T>` property (a compile-time fiction — a .NET event is NOT a first-class value), and
-// `w.Changed += handler` resolves through NORMAL Kotlin operator resolution to `w.Changed.plusAssign(handler)`. kotc
-// emits that as a PLAIN call `callInstance(ownerType = kotlin.clr.ClrEvent, method = plusAssign/minusAssign/subscribe,
+// `w.Changed.subscribe(handler)` resolves through NORMAL Kotlin resolution. kotc emits it as a PLAIN call
+// `callInstance(ownerType = kotlin.clr.ClrEvent, method = subscribe,
 // recv = <clrEventGet w Changed>, args = [handler])` — no `add_`/`remove_` naming, no CLR binding. The event READ
 // `w.Changed` is a DEDICATED kotc-dialect node `clrEventGet` (the ClrEvent<T> handle — a CLR-only-vocab synthetic
 // kotc lowers itself; NOT `clrPropGet`, which after A2/#61 is exclusively a real bir2cir-produced .NET property).
 // This pass BINDS the pair: it reads the owner .NET type + event name straight off the clrEventGet member-access node
 // and emits the EXISTING clrEventAdd/clrEventRemove nodes (ilemit's EmitClrEvent, unchanged). `subscribe` additionally
 // creates the real stdlib EventSubscription<T> with a synthesized remove callback, after spilling receiver + handler
-// once. Thus the emitted
-// add/remove accessor IL is identical to the old `add_<E>`/`remove_<E>` model. The ClrEvent<T> value + the clrEventGet
+// once. The emitted add/remove accessor IL is identical to the old direct-accessor model. The ClrEvent<T> value + clrEventGet
 // are consumed here, never emitted (a .NET event isn't materializable). This is the Kotlin<->CLR event relation, bir2cir's to own.
-static class ClrEventOperatorBinding
+static class ClrEventSubscriptionBinding
 {
     sealed class Binder
     {
@@ -53,27 +52,12 @@ static class ClrEventOperatorBinding
         {
             if (Str(node["k"]) != "callInstance") return null;
             if (TypeJson.OwnerName(node["ownerType"]) != "kotlin.clr.ClrEvent") return null;
-            var method = Str(node["method"]);
-            if (method != "plusAssign" && method != "minusAssign" && method != "subscribe") return null;
+            if (Str(node["method"]) != "subscribe") return null;
             // The receiver is the event member-access `w.Changed`, emitted by kotc as a `clrEventGet` carrying the .NET
             // owner type (`type`), the event name (`name`), and the actual owner value (`recv`). Anything else is not an event op.
             if (node["recv"] is not JsonObject eventGet || Str(eventGet["k"]) != "clrEventGet") return null;
             if (node["args"] is not JsonArray args || args.Count != 1) return null;
-            return method == "subscribe" ? Subscribe(node, eventGet, args[0]) : Accessor(method, eventGet, args[0]);
-        }
-
-        static JsonObject Accessor(string method, JsonObject eventGet, JsonNode handler)
-        {
-            var isStatic = (eventGet["static"] as JsonValue)?.GetValue<bool>() ?? false;
-            return new JsonObject
-            {
-                ["k"] = method == "plusAssign" ? "clrEventAdd" : "clrEventRemove",
-                ["type"] = eventGet["type"]?.DeepClone(),
-                ["event"] = eventGet["name"]?.DeepClone(),
-                ["static"] = isStatic,
-                ["recv"] = isStatic ? null : eventGet["recv"]?.DeepClone(),
-                ["handler"] = handler?.DeepClone(),
-            };
+            return Subscribe(node, eventGet, args[0]);
         }
 
         JsonNode Subscribe(JsonObject call, JsonObject eventGet, JsonNode handler)

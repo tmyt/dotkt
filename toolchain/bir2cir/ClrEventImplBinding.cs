@@ -8,7 +8,7 @@ using DotKt.Bir;
 // .NET EVENT IMPLEMENT/RAISE binding (§4.2/§4.3 of design-clr-event-model.md) — the Kotlin↔CLR relation for a Kotlin
 // class that IMPLEMENTS a CLR interface event (`class ViewModelBase : INotifyPropertyChanged { override val
 // PropertyChanged by clrEvent() }`) or DECLARES a new one (`val clicked: ClrEvent<D> by clrEvent()`). Sibling of the
-// CONSUME pass ClrEventOperatorBinding.
+// CONSUME pass ClrEventSubscriptionBinding.
 //
 // kotc emitted PURE-KOTLIN identities: a per-event `clrEventBacking{name, handlerType}` directive (the handler as a
 // Kotlin FUNCTION type) in the type's `clrEvents` array, plus three synthesized accessor methods add_/remove_/raise_<E>

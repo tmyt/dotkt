@@ -276,8 +276,8 @@ internal fun clrInjectedTopLevelPropCustomAccessor(callableId: CallableId): Pair
  * that don't opt in are completely unaffected. The backend reads each injected type's .NET name off its
  * IR `ClassId` via [clrInjectedDotNetName]. A member's .NET slot name is NOT resolved here — bir2cir's DeclarationRename
  * reflects it off the refs (A2 step 5). A .NET EVENT no longer needs any
- * side-channel at all: it is surfaced as a `ClrEvent<T>` property and subscribed via `+=`/`-=`, which bir2cir binds
- * to the add/remove accessor. All interop facts are keyed off the resolved IR identity — no name-keyed side-channel.
+ * side-channel at all: it is surfaced as a `ClrEvent<T>` property and consumed via `subscribe`, which bir2cir binds
+ * to add plus a close-token for remove. All interop facts are keyed off the resolved IR identity.
  */
 private object ClrMetadataHolder {
 	val module: ClrModule? by lazy { System.getenv("CLR_TYPES_METADATA")?.let { load(File(it)) } }
@@ -587,12 +587,12 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	// `Span<T>`: a `kotlin.clr` intrinsic that maps to the real `System.Span<T>` (birType -> clrg:System.Span)
 	// — the surfaced form of a .NET Span parameter and the result of `StackBuffer.asSpan()`.
 	private val spanClassId = ClassId(clrPkg, Name.identifier("Span"))
-	// `ClrEvent<T>`: a compile-time-only fiction for `.NET event` subscription (`+=`/`-=`/`subscribe`).
+	// `ClrEvent<T>`: a compile-time-only fiction for `.NET event` subscription (`subscribe`).
 	// A .NET event is NOT a first-class value (you can only add/remove/raise it), so `w.Changed` NEVER materializes a
-	// ClrEvent<T> at runtime -- it is a handle whose only purpose is to make those Kotlin operations resolve. The
+	// ClrEvent<T> at runtime -- it is a handle whose only purpose is to make the Kotlin operation resolve. The
 	// event member is surfaced as a read-only property `Changed: ClrEvent<HandlerFn>` (T = the handler's Kotlin function
-	// type); ClrEvent<T> carries `plusAssign(handler)`, `minusAssign(handler)`, and `subscribe(handler)` (no body -- never
-	// executed). bir2cir's ClrEventOperatorBinding rewrites `w.Changed.plusAssign(h)` -> the .NET add-accessor node
+	// type); ClrEvent<T> carries `subscribe(handler)` (no body -- never executed). bir2cir's
+	// ClrEventSubscriptionBinding rewrites it to add + a close token
 	// (clrEventAdd) before emit, so this type is a pure frontend-resolution fiction -- NOT a shipped stdlib type. Lives
 	// in `kotlin.clr` (the CLR-intrinsic home, alongside `ClrRef`/`Span`), and never reaches ilemit.
 	private val clrEventClassId = ClassId(clrPkg, Name.identifier("ClrEvent"))
@@ -625,7 +625,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 
 	override fun generateTopLevelClassLikeDeclaration(classId: ClassId): FirClassLikeSymbol<*>? {
 		// The intrinsic `ClrRef<T>` carries getValue/setValue (so a ref return is `by`-delegatable). `ClrEvent<T>`
-		// (the .NET-event handle) carries plusAssign/minusAssign/subscribe; both types are generic `kotlin.clr` fictions.
+		// (the .NET-event handle) carries subscribe; both types are generic `kotlin.clr` fictions.
 		if (classId == clrRefClassId || classId == stackBufferClassId || classId == spanClassId || classId == clrEventClassId) return createTopLevelClass(classId, ClrGeneratedKey, ClassKind.CLASS) {
 			// `ClrEvent<T>` is an ABSTRACT MARKER (§3 of design-clr-event-model.md): it has no runtime instance and no
 			// runtime meaning (a .NET event is not a first-class value). Abstractness (a) makes `clrEvent()`/`ClrEvent()`
@@ -721,12 +721,12 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		// `StackBuffer<T>`: size (val), get/set (operators), asSpan (-> Span<T> = the real System.Span<T>).
 		if (classSymbol.classId == stackBufferClassId)
 			return hashSetOf(Name.identifier("size"), Name.identifier("get"), Name.identifier("set"), Name.identifier("asSpan"))
-		// `ClrEvent<T>` (abstract marker): the `+=`/`-=` subscription operators (consume), `invoke` (raise), `getValue`
+		// `ClrEvent<T>` (abstract marker): `subscribe` (consume), `invoke` (raise), `getValue`
 		// (so `by clrEvent()` typechecks under the delegate convention) — all abstract, none ever executed. INIT signals a
 		// PRIVATE primary ctor (generateConstructors) so `ClrEvent<T>` is non-subclassable/non-constructable.
 		if (classSymbol.classId == clrEventClassId)
-			return hashSetOf(Name.identifier("plusAssign"), Name.identifier("minusAssign"),
-				Name.identifier("subscribe"), Name.identifier("invoke"), Name.identifier("getValue"), SpecialNames.INIT)
+			return hashSetOf(Name.identifier("subscribe"), Name.identifier("invoke"),
+				Name.identifier("getValue"), SpecialNames.INIT)
 		// A companion object: its callables are the owner class's static methods/props.
 		companionOwnerType(classSymbol.classId)?.let { ct ->
 			val n = HashSet<Name>()
@@ -739,8 +739,8 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		val names = type.methods.mapTo(HashSet()) { Name.identifier(it.name) }
 		type.properties.forEach { names.add(Name.identifier(it.name)) }
 		type.memberExtProps.forEach { names.add(Name.identifier(it.name)) }
-		// A .NET event is surfaced as a read-only member PROPERTY `Changed: ClrEvent<HandlerFn>` (the idiomatic
-		// `w.Changed += handler` subscription); the old `add_<E>`/`remove_<E>` accessor-method synthesis is retired.
+		// A .NET event is surfaced as a read-only member PROPERTY `Changed: ClrEvent<HandlerFn>`; consumers call
+		// `w.Changed.subscribe(handler)`. The old direct accessor-method surface is retired.
 		type.events.forEach { names.add(Name.identifier(it.name)) }
 		type.indexer?.let { names.add(Name.identifier("get")); if (it.mutable) names.add(Name.identifier("set")) }
 		if (type.iteratorElem != null) names.add(Name.identifier("iterator"))
@@ -765,8 +765,8 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			return listOf(createMemberProperty(owner, ClrGeneratedKey, callableId.callableName, session.builtinTypes.intType.coneType, true, false).symbol)
 		// A companion object holds the owner class's STATIC props/fields (App.Current). Backend emits .NET static get.
 		companionOwnerType(owner.classId)?.let { ct ->
-			// (N6) A STATIC .NET event surfaced as a companion read-only `ClrEvent<HandlerFn>` property: `Type.Event += h`
-			// reads it (recv = the companion -> clrPropGet static=true), which bir2cir binds to the STATIC add/remove accessor.
+			// (N6) A STATIC .NET event surfaced as a companion read-only `ClrEvent<HandlerFn>` property. Calling subscribe
+			// reads it with static=true, which bir2cir binds to the STATIC add/remove accessors.
 			ct.staticEvents.firstOrNull { it.name == callableId.callableName.asString() }?.let { ev ->
 				val handler = coneFunctionType(ev.handlerParams.map { coneOf(it.type, owner) }, coneOf(ev.handlerReturn, owner))
 				return listOf(createMemberProperty(owner, ClrGeneratedKey, callableId.callableName, clrEventOf(handler), true, false).symbol)
@@ -785,12 +785,12 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		}
 		// A .NET event -> a read-only member property `Changed: ClrEvent<HandlerFn>` (the subscription handle).
 		// No .NET property/field backs it: `w.Changed` is a compile-time handle whose read the backend emits as a plain
-		// clrPropGet(owner .NET type, event name) — consumed by bir2cir's ClrEventOperatorBinding, never materialized. The
-		// ClrEvent type arg is the handler's Kotlin FUNCTION type, so a lambda binds straight to plusAssign/subscribe(T).
+		// clrEventGet(owner .NET type, event name) — consumed by bir2cir's ClrEventSubscriptionBinding, never materialized.
+		// The ClrEvent type arg is the handler's Kotlin FUNCTION type, so a lambda binds straight to subscribe(T).
 		type.events.firstOrNull { it.name == callableId.callableName.asString() }?.let { ev ->
 			val handler = coneFunctionType(ev.handlerParams.map { coneOf(it.type, owner) }, coneOf(ev.handlerReturn, owner))
 			// A .NET event surfaces as a generated `ClrEvent<T>` handle property (never a real .NET property/field: the
-			// read emits a clrEventGet the ClrEventOperatorBinding consumes). An INTERFACE event is OPEN (overridable but NOT
+			// read emits a clrEventGet the ClrEventSubscriptionBinding consumes). An INTERFACE event is OPEN (overridable but NOT
 			// abstract): `override val E by clrEvent()` (#187 IMPLEMENT) typechecks against it, yet it imposes NO frontend
 			// obligation — critical for the ELIDE case (`class MyApp : Avalonia.Application`), where a .NET base explicitly
 			// implements the interface event at the CLR level with a DIFFERENT-signature same-name public event, so an
@@ -935,19 +935,14 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			return listOf(fn.symbol)
 		}
 		// `ClrEvent<T>` (abstract marker) members — ALL abstract, NONE ever executed (a live ClrEvent<T> value never
-		// survives past bir2cir). `plusAssign`/`minusAssign` (consume) → bir2cir's ClrEventOperatorBinding rewrites
-		// `w.Changed.plusAssign(h)` to the add/remove accessor node; `invoke` (raise) → kotc lowers `handle.invoke(...)`
+		// survives past bir2cir). `subscribe` (consume) → bir2cir's ClrEventSubscriptionBinding emits add + close-token;
+		// `invoke` (raise) → kotc lowers `handle.invoke(...)`
 		// to `clrEventRaise`; `getValue` exists ONLY so `override val E by clrEvent()` typechecks under the delegate
-		// convention (kotc recognizes the `clrEvent()` marker and synthesizes the impl — getValue is never called). `operator`
-		// is REQUIRED for `+=`/`-=`/`invoke()`/`by` to resolve.
+		// convention (kotc recognizes the `clrEvent()` marker and synthesizes the impl — getValue is never called).
 		if (owner.classId == clrEventClassId) {
 			val tOf = owner.typeParameterSymbols.first().constructType(emptyArray(), false)
 			val anyN = session.builtinTypes.nullableAnyType.coneType
 			val fn = when (callableId.callableName.asString()) {
-				"plusAssign", "minusAssign" -> createMemberFunction(owner, ClrGeneratedKey, callableId.callableName, session.builtinTypes.unitType.coneType) {
-					modality = Modality.ABSTRACT; status { isOperator = true }
-					valueParameter(Name.identifier("handler"), tOf)
-				}
 				"subscribe" -> {
 					val subscriptionType = session.symbolProvider.getClassLikeSymbolByClassId(eventSubscriptionClassId)
 						?.constructType(arrayOf(tOf), false) ?: anyN
@@ -1253,7 +1248,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			?: session.builtinTypes.nullableAnyType.coneType
 
 	/** The intrinsic `ClrEvent<handler>` cone type (the surfaced form of a .NET event; `handler` = the handler's
-	 *  Kotlin function type, so a lambda binds to `plusAssign(handler: T)`). Never materialized — a compile-time handle. */
+	 *  Kotlin function type, so a lambda binds to `subscribe(handler: T)`). Never materialized — a compile-time handle. */
 	private fun clrEventOf(handler: ConeKotlinType): ConeKotlinType =
 		session.symbolProvider.getClassLikeSymbolByClassId(clrEventClassId)?.constructType(arrayOf(handler), false)
 			?: session.builtinTypes.nullableAnyType.coneType

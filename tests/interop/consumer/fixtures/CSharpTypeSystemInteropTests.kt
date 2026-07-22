@@ -140,7 +140,7 @@ class CSharpInheritanceTests {
     // ktproj-extlib: forward interop with a plain C# type from an oblivious (NON-NRT) referenced assembly, consumed
     // façade-free — a .NET method, a reference-type property surfaced as the PLATFORM type String! (usable without
     // null ceremony), a nullable VALUE-type property (bool? == Nullable<bool>, facadegen maps Nullable<X> -> X?), and
-    // a real .NET `event` subscribed with a Kotlin lambda via the ClrEvent<T> `+=` operator. Golden (was printed
+    // a real .NET `event` subscribed with a Kotlin lambda via a closeable ClrEvent<T> subscription. Golden (was printed
     // stdout: "Add(2,3) = 5 / name: gadget (len 6) / enabled: True / changed: 5 / changed: 9").
 }
 
@@ -155,11 +155,12 @@ class CSharpLibrarySurfaceTests {
         w.Enabled = true                                   // assign a plain Boolean to a .NET `bool?` (Nullable<bool>)
         assertEquals(true, w.Enabled)                      // True
         val received = mutableListOf<Int>()
-        w.Changed += { n -> received.add(n) }              // .NET event `+=` a Kotlin handler (ClrEvent<T> operator)
+        val subscription = w.Changed.subscribe { n -> received.add(n) }
         w.Fire(5)
         w.Fire(9)
         assertEquals(2, received.size)                     // both handler invocations fired
         assertEquals(5, received[0])                       // changed: 5
         assertEquals(9, received[1])                       // changed: 9
+        subscription.close()
     }
 }

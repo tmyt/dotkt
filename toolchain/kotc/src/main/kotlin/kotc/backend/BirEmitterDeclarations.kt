@@ -407,7 +407,7 @@ internal fun BirEmitter.isVolatile(p: IrProperty): Boolean {
 internal fun BirEmitter.volatileFieldFlag(p: IrProperty): String = if (isVolatile(p)) ""","volatile":true""" else ""
 
 /** A property whose type is `kotlin.clr.ClrEvent<T>` — the compile-time-only fiction surfacing a .NET event.
- *  A .NET event is subscribed via `+=`/`-=` and is NEVER a first-class value or a real inherited property, so
+ *  A .NET event is consumed via `subscribe` and is NEVER a first-class value or a real inherited property, so
  *  such a property must never be emitted as a member. This matters for a FAKE-OVERRIDE: when a Kotlin class
  *  subclasses a .NET type whose interface carries an event (`class MyApp : Avalonia.Application`, whose bases
  *  implement an event-bearing interface), fir2ir synthesizes a fake-override getter returning `ClrEvent<T>`;

@@ -2,10 +2,10 @@
 // IMPLEMENTS a .NET interface event (`class ViewModelBase : INotifyPropertyChanged { override val PropertyChanged by
 // clrEvent() }`), RAISES it from OUTSIDE (a property-delegate `setValue` on a DIFFERENT type calling
 // `vm.PropertyChanged.invoke(...)`, the deliberate CLR-native deviation §6), and CONSUMES it through the
-// `INotifyPropertyChanged` interface slot (`+=`/`-=`).
+// `INotifyPropertyChanged` interface slot (`subscribe`/`close`).
 //
 // Pass criteria (all asserted below): the type LOADS (no TypeLoadException — the synthesized add_/remove_ satisfy the
-// interface slots), subscribe/unsubscribe by delegate equality works, the raise carries the KProperty name, an
+// interface slots), subscribe/close removes the exact handler, the raise carries the KProperty name, an
 // unchanged-value assignment does NOT raise, and a raise with zero subscribers is a safe no-op (the `field?.Invoke`
 // null-conditional). This is the first-class WPF/Avalonia MVVM spine on Kotlin-on-CLR.
 //
@@ -54,14 +54,15 @@ class ClrEventTests {
         val vm = PersonViewModel()
         var fired = 0
         var lastName: String? = null
-        val h: (Any?, PropertyChangedEventArgs) -> Unit = { _, e -> fired++; lastName = e.PropertyName }
-        (vm as INotifyPropertyChanged).PropertyChanged += h          // CONSUME through the interface slot
+        val subscription = (vm as INotifyPropertyChanged).PropertyChanged.subscribe { _, e ->
+            fired++; lastName = e.PropertyName
+        }
         vm.name = "Jane Doe"
         assertEquals(1, fired)                                       // raised exactly once
         assertEquals("name", lastName)                              // args carry the KProperty name
         vm.name = "Jane Doe"                                        // unchanged value -> no raise
         assertEquals(1, fired)
-        (vm as INotifyPropertyChanged).PropertyChanged -= h
+        subscription.close()
         vm.name = "Bob"
         assertEquals(1, fired)                                       // unsubscribed -> no raise
     }
@@ -71,13 +72,15 @@ class ClrEventTests {
     fun eachPropertyRaisesItsOwnName() {
         val vm = PersonViewModel()
         val names = ArrayList<String>()
-        val h: (Any?, PropertyChangedEventArgs) -> Unit = { _, e -> e.PropertyName?.let { names.add(it) } }
-        (vm as INotifyPropertyChanged).PropertyChanged += h
+        val subscription = (vm as INotifyPropertyChanged).PropertyChanged.subscribe { _, e ->
+            e.PropertyName?.let { names.add(it) }
+        }
         vm.name = "Ann"
         vm.title = "Dr"
         assertEquals(2, names.size)
         assertEquals("name", names[0])
         assertEquals("title", names[1])
+        subscription.close()
     }
 
     // Multiple subscribers all fire (the CAS Delegate.Combine multicast), and removing one leaves the other.
@@ -86,18 +89,17 @@ class ClrEventTests {
         val vm = PersonViewModel()
         var a = 0
         var b = 0
-        val ha: (Any?, PropertyChangedEventArgs) -> Unit = { _, _ -> a++ }
-        val hb: (Any?, PropertyChangedEventArgs) -> Unit = { _, _ -> b++ }
         val np = vm as INotifyPropertyChanged
-        np.PropertyChanged += ha
-        np.PropertyChanged += hb
+        val sa = np.PropertyChanged.subscribe { _, _ -> a++ }
+        val sb = np.PropertyChanged.subscribe { _, _ -> b++ }
         vm.name = "X"
         assertEquals(1, a)
         assertEquals(1, b)
-        np.PropertyChanged -= ha
+        sa.close()
         vm.name = "Y"
-        assertEquals(1, a)                                          // ha removed
-        assertEquals(2, b)                                          // hb still subscribed
+        assertEquals(1, a)                                          // first subscription removed
+        assertEquals(2, b)                                          // second still subscribed
+        sb.close()
     }
 
     // A raise with ZERO subscribers is a safe no-op (the `field?.Invoke` null-conditional), never an NRE.

@@ -60,12 +60,12 @@ classification.
             field mutability, inline body availability, and NRT nullability
   inject: ClrTypeInjection parses them and restores the Kotlin modifier on the synthesized FIR:
             members -> status { isInfix/isOperator/isSuspend }
-            events -> CLREvent<T> endpoint with plusAssign/minusAssign compiler-intrinsic operations
+            events -> ClrEvent<T> endpoint with a subscribe compiler-intrinsic operation
             top-level -> getTopLevelCallableIds + generateFunctions(owner==null)
   backend (consumer): a call to a restored top-level fun -> ClrTopLevelRegistry -> a static call on the file class;
             a restored suspend call's .NET return is Task<T> (coTaskType), awaited by the coroutine machinery;
-            a restored event subscription lowers to the event add/remove accessor with the handler bound to the
-            event's exact CLR delegate type.
+            a restored event subscription lowers to add + an EventSubscription close-token whose callback invokes
+            remove with the exact same handler bound to the event's exact CLR delegate type.
 ```
 
 ## `inline` / `reified` — deliberately NOT round-tripped (design conclusion)

@@ -398,14 +398,14 @@ internal fun BirEmitter.call(call: IrCall): String {
 	// named `stackBuffer` is not mistaken for the intrinsic.
 	if (callee.fqNameWhenAvailable?.asString() == "kotlin.clr.stackBuffer")
 		return emitStackBuffer(call)
-	// A .NET event subscription `w.Changed += h` / `-= h` / `.subscribe(h)` resolves (normal Kotlin resolution) to
-	// a member of the injected `kotlin.clr.ClrEvent<T>` fiction (the surfaced
-	// form of a .NET event member — see ClrTypeInjection). kotc emits the PLAIN Kotlin operator-call identity: a
-	// `callInstance` on `kotlin.clr.ClrEvent` whose receiver is the event member-access `w.Changed` (a clrPropGet
+	// A .NET event subscription `w.Changed.subscribe(h)` resolves (normal Kotlin resolution) to a member of the
+	// injected `kotlin.clr.ClrEvent<T>` fiction (the surfaced form of a .NET event member — see ClrTypeInjection).
+	// kotc emits the PLAIN Kotlin call identity: a
+	// `callInstance` on `kotlin.clr.ClrEvent` whose receiver is the event member-access `w.Changed` (a clrEventGet
 	// carrying the .NET owner type + event name). NO `add_`/`remove_` naming, NO clrEventAdd here — bir2cir's
-	// ClrEventOperatorBinding recognizes this node and binds it to the .NET add/remove accessor (the Kotlin<->CLR
+	// ClrEventSubscriptionBinding recognizes this node and binds it to the .NET add/remove accessors (the Kotlin<->CLR
 	// event relation lives in bir2cir, not kotc). The ClrEvent<T> value is never materialized.
-	if ((callee.name.asString() == "plusAssign" || callee.name.asString() == "minusAssign" || callee.name.asString() == "subscribe")
+	if (callee.name.asString() == "subscribe"
 		&& (callee.parent as? IrClass)?.fqNameWhenAvailable?.asString() == "kotlin.clr.ClrEvent") {
 		val recv = dispatchReceiver(call)!!
 		// The receiver here is the ONLY legitimate ClrEvent-value position (the event member-access `w.Changed`);
@@ -843,10 +843,10 @@ internal fun BirEmitter.call(call: IrCall): String {
 			else -> (recvClass?.superTypes ?: (recv?.type?.classifierOrNull?.owner as? org.jetbrains.kotlin.ir.declarations.IrTypeParameter)?.superTypes)
 				?.firstOrNull { it.classifierOrNull?.owner == declClass }?.let { birType(it) } ?: clrType
 		}
-		// A .NET event is NOT rewritten to an `add_<E>`/`remove_<E>` call (clrEventAdd) here. It is
-		// surfaced as a `kotlin.clr.ClrEvent<T>` property and subscribed via `w.<E> += handler` / `-= handler`; kotc
-		// emits the plain `plusAssign`/`minusAssign` operator call (handled at the top of this function), and bir2cir's
-		// ClrEventOperatorBinding binds it to the .NET add/remove accessor. No `add_`/`remove_` naming, no clrEventAdd
+		// A .NET event is NOT rewritten to an `add_<E>`/`remove_<E>` call here. It is surfaced as a
+		// `kotlin.clr.ClrEvent<T>` property and consumed via `subscribe`; kotc emits the plain subscribe call (handled
+		// at the top of this function), and bir2cir's ClrEventSubscriptionBinding binds it to add + close-token remove.
+		// No `add_`/`remove_` naming, no clrEventAdd
 		// in kotc — the Kotlin<->CLR event relation is bir2cir's (layer purity).
 		// A generic .NET method (`Unsafe.SizeOf<T>()`, `Activator.CreateInstance<T>()`) -> resolve the open
 		// generic-method definition by name + type-arity + parameter shapes, then MakeGenericMethod with the
@@ -881,8 +881,8 @@ internal fun BirEmitter.call(call: IrCall): String {
 		}
 		val prop = callee.correspondingPropertySymbol?.owner
 		if (prop != null) {
-			// A `kotlin.clr.ClrEvent<T>` property read is legal ONLY as the receiver of a `+=`/`-=` subscription or
-			// `.subscribe(h)`, where clrEventReceiverOk is set. A bare read (`val e = w.Changed`) would emit a
+			// A `kotlin.clr.ClrEvent<T>` property read is legal ONLY as the receiver of `.subscribe(h)`, where
+			// clrEventReceiverOk is set. A bare read (`val e = w.Changed`) would emit a
 			// `clrPropGet get_<Event>` that no bir2cir rule strips -> a distant, diagnostic-free downstream failure.
 			// A .NET event is not a first-class value, so reject it here at the source with a kotc compile error.
 			if (!clrEventReceiverOk && callee === prop.getter
@@ -890,7 +890,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 				hadError = true
 				messageCollector?.report(CompilerMessageSeverity.ERROR,
 					"a .NET event ('${prop.name.asString()}') is not a first-class value: it may only be used with " +
-						"'+=', '-=', or '.subscribe(handler)', not be read/assigned",
+						"'.subscribe(handler)', not be read/assigned",
 					locationOf(call))
 				return """{"k":"unsupportedExpr","of":"clr-event-read-outside-subscription: ${prop.name.asString()}"}"""
 			}
@@ -914,7 +914,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 			// call form (it exposes add_/remove_, not a get_); facadegen injects it purely to typecheck, so kotc
 			// LOWERS it directly to a DEDICATED dialect node `clrEventGet` (the ClrEvent<T> handle) — NOT the
 			// bir2cir-produced `clrPropGet` (which after A2 means a real .NET property). It exists ONLY to feed a
-			// `+=`/`-=`/`subscribe`: bir2cir's ClrEventOperatorBinding consumes the `clrEventGet + operation` pair
+			// `subscribe`: bir2cir's ClrEventSubscriptionBinding consumes the `clrEventGet + call` pair
 			// into an add_/remove_ accessor, so it never reaches ilemit (a bare event read is rejected above). Every
 			// OTHER property is a plain Kotlin-shaped access -> emit the get_/set_ accessor CALL by identity;
 			// NetInteropBinding shapes it to clrPropGet/clrPropSet (a .NET property OR field) off the refs.

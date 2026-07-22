@@ -31,7 +31,7 @@ using DotKt.Bir;
 //     the §5g dynamic follow-up (an UNBOUND `Box::class`/`Outer.Inner::class` is already exact via the classRef fold).
 //   • a BOUND `getType` whose receiver is a SMART-CAST wrapper (`cast`/`nullableValue`) or a bare `this` — not folded
 //     (a `cast` node also carries a throwing explicit `as`, so it is not safe to drop); §5g dynamic follow-up.
-// Non-ref only (the ref stdlib keeps KClass pure Kotlin). Bottom-up rewrite, mirroring ClrEventOperatorBinding.
+// Non-ref only (the ref stdlib keeps KClass pure Kotlin). Bottom-up rewrite, mirroring ClrEventSubscriptionBinding.
 static class KClassMemberBinding
 {
     // Kotlin builtin types that are FINAL (no subtypes), so a bound `value::class` on one is statically resolvable
