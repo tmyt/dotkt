@@ -565,6 +565,9 @@ intrinsics (`suspendCoroutine*`, un-lowered in stdlib builds for the ilemit `_st
   catches it and faults the Task (`RootContinuation.resumeWith` → `TrySetException`, NSE is not OCE so
   faulted, not canceled). A C# caller that drops the returned faulted Task never observes the NSE — the
   standard .NET async contract, accepted as Kotlin-faithful.
+- **Suspend lambdas use the same classifier (#125).** A non-segmentable `newSuspendLambda` still becomes a valid
+  `SuspendLambda` state machine with the normal capture/create protocol, but its `invokeSuspend` body throws the same
+  explanatory `NotSupportedException` at invocation. It never embeds an unsegmented `suspendCall` in emitted IL.
 - **M3 (static/companion members) enter the classifier.** kotc promotes a `companion object` suspend fun to a
   `static` method on the outer class; its cold entry/bridge stay static (no `$this`), the SM is top-level-shaped,
   and the bridge's cold call targets the enclosing class owner (not `owner:null` = the file class).

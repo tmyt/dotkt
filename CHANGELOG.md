@@ -27,6 +27,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir ([tmyt/dotkt#125], area:bir2cir): non-segmentable suspend lambdas now fail loud at invocation instead of
+  emitting invalid IL.** `newSuspendLambda` uses the same structural classifier as named suspend functions; a
+  suspension in `finally`, a suspending `catch` paired with `finally`, or a nested suspending `try` produces a valid
+  `SuspendLambda` state machine whose `invokeSuspend` throws an explanatory `NotSupportedException`. The normal
+  capture and `create()` protocol remains intact. Coroutine regressions drive all three shapes and require the
+  call-time diagnostic rather than `InvalidProgramException`.
+
 - **bir2cir ([tmyt/dotkt#98], area:bir2cir): a counted range loop now resumes inside every iteration instead of
   hoisting its suspension before the loop.** SuspendColdLowering flattens app-build `for (i in a..b)` and
   `for (i in a downTo b)` nodes into state-machine CFG before segmentation, spilling the counter as an SM field and

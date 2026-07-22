@@ -930,6 +930,10 @@ static partial class SuspendColdLowering
             _typeParams = typeParams ?? new List<string>();
             _smAllTps = _typeParams;   // a lambda SM has no enclosing-class type params
             _smTypeInst = _typeParams.Count == 0 ? new TypeNode.Fqn(_smType) : new TypeNode.Fqn(_smType, TypeTvs(_typeParams.Count));
+            // #125 — lambda SMs share the named-fun segmentability classifier. A refused lambda still gets a valid
+            // SuspendLambda type, but invokeSuspend becomes a call-time NotSupportedException stub (Build), never a
+            // body containing an unsegmented suspendCall / invalid IL.
+            _stubReason = SuspensionRefusalReason(body, inHandler: false, tryDepth: 0);
         }
 
         static List<string> ReadTypeParamNames(JsonNode tps)
@@ -965,8 +969,23 @@ static partial class SuspendColdLowering
             // paths observe the throw: a Kotlin->Kotlin cold call propagates it synchronously; the public Task
             // bridge catches it (its try/catch) and faults the Task. Warn once here, naming the fun + the root
             // refusal (this REPLACES the deleted fixpoint's L3 drop warning).
-            if (!_isLambda && _stubReason is string reason)
+            if (_stubReason is string reason)
             {
+                if (_isLambda)
+                {
+                    Console.Error.WriteLine(
+                        $"bir2cir: WARNING suspend-lowering: suspend lambda '{_smType}' is not segmentable "
+                        + $"({reason}) — emitting a call-time-throw SuspendLambda state machine (v1 limitation). "
+                        + "The lambda COMPILES; invoking it throws NotSupportedException.");
+                    // SmTypeLambda's ctor/create protocol still needs capture + lambda-param fields even though the
+                    // stub invokeSuspend never reads them.
+                    foreach (var (n, t) in _captures) AddField(n, t);
+                    foreach (var p in _params) AddField(Str(p["name"]), TypeJson.Read(p["type"]));
+                    var msg = $"{_smType}: {reason} — this suspend lambda is not supported by bir2cir's v1 "
+                        + "cold-lowering (docs/design-coroutine-cold-core-task-bridge.md §11/§14).";
+                    newTypes.Add(SmTypeLambda(UnsupportedThrowBody(msg)));
+                    return;
+                }
                 Console.Error.WriteLine(
                     $"bir2cir: WARNING suspend-lowering: '{(_ownerClass ?? _fileClass)}.{_name}' is not segmentable "
                     + $"({reason}) — emitting a call-time-throw cold entry (v1 limitation). The suspend fun COMPILES; "
@@ -2891,22 +2910,23 @@ static partial class SuspendColdLowering
         {
             var msg = $"{(_ownerClass ?? _fileClass)}.{_name}: {reason} — this suspend fun is not supported by "
                 + "bir2cir's v1 cold-lowering (docs/design-coroutine-cold-core-task-bridge.md §11/§14).";
-            var body = new JsonArray
-            {
-                new JsonObject
-                {
-                    ["k"] = "throw",
-                    ["value"] = new JsonObject
-                    {
-                        ["k"] = "newClr",
-                        ["type"] = TypeJson.Fqn("System.NotSupportedException"),
-                        ["argTypes"] = new JsonArray { Tw(new TypeNode.Fqn("kotlin.String")) },
-                        ["args"] = new JsonArray { new JsonObject { ["k"] = "const", ["type"] = Tw(new TypeNode.Fqn("kotlin.String")), ["value"] = msg } },
-                    },
-                },
-            };
-            return ColdMethod(body);
+            return ColdMethod(UnsupportedThrowBody(msg));
         }
+
+        JsonArray UnsupportedThrowBody(string msg) => new()
+        {
+            new JsonObject
+            {
+                ["k"] = "throw",
+                ["value"] = new JsonObject
+                {
+                    ["k"] = "newClr",
+                    ["type"] = TypeJson.Fqn("System.NotSupportedException"),
+                    ["argTypes"] = new JsonArray { Tw(new TypeNode.Fqn("kotlin.String")) },
+                    ["args"] = new JsonArray { new JsonObject { ["k"] = "const", ["type"] = Tw(new TypeNode.Fqn("kotlin.String")), ["value"] = msg } },
+                },
+            },
+        };
 
         // An abstract member's cold entry: `<name>$dotkt_suspend(params..., completion): Any?`, Virtual|Abstract,
         // no body/SM. Concrete overrides emit an `override:true` ColdMethod filling this slot. On a generic class
