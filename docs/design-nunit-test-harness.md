@@ -1,14 +1,16 @@
 # Design: NUnit in-process test harness — migrating off the per-case bash gate
 
-**Status:** design realized in production as `tests/il/` — in-process `@TestAttribute` batteries (15 migrated
-families). The round-trip / ktproj `<ProjectReference>` lane is the pending consolidation.
+**Status:** realized. Subject-oriented `tests/basic`, `tests/interop`, `tests/coroutines`, and
+`tests/roundtrip` projects contain the in-process `@TestAttribute` batteries. The old `cases/` corpus and
+per-case compiler runner are gone; the irreducible external-process scenarios are classified under
+`tests/ir`, `tests/msbuild`, `tests/packaged-sdk`, `tests/roundtrip/scenarios`, and `tests/special`.
 **Motivation:** `docs/reviews/2026-07-19-cases-test-design-audit.md` — the `cases/` gate grew to 384 `il-*`
 directories, each a separate `kotc → bir2cir → ilemit → dotnet-run → ilverify` **process**, driving the full
 gate to ~45 min. The audit's structural remedies (its items #6, #8, #12–16) and its dedup/battery remedies
 (#1–5, #11) are realized by moving to an **in-process NUnit suite**: Kotlin `@TestAttribute` methods,
 batch-compiled by the DotKt MSBuild SDK, discovered and run in-process/parallel by `dotnet test`.
 
-This is not "improve the bash scripts". It **replaces** `verify-il.sh`, `verify-roundtrip.sh` (1000+ lines) and
+This is not "improve the bash scripts". It **replaces** `verify-compiler-tests.sh`, `verify-roundtrip.sh` (1000+ lines) and
 `verify-ktproj.sh` with one model, leaving only a short, irreducible shell lane (see §7).
 
 ---
@@ -19,7 +21,7 @@ Every current gate flavor collapses into **one** artifact type: an NUnit test pr
 
 | Current gate | Current unit | Becomes |
 |---|---|---|
-| `verify-il.sh` (381 samples) | one `cases/il-*/app.kt` → own dll, stdout-diff, per-dll ilverify | a `@TestAttribute fun` asserting the **value**; related cases grouped into one fixture **battery** = one assembly |
+| `verify-compiler-tests.sh` (381 samples) | one `cases/il-*/app.kt` → own dll, stdout-diff, per-dll ilverify | a `@TestAttribute fun` asserting the **value**; related cases grouped into one fixture **battery** = one assembly |
 | `verify-roundtrip.sh` | heredoc lib compiled, consumed as Kotlin, stdout-diff | an NUnit project that **`<ProjectReference>`s** a DotKt library project and asserts the consumed API |
 | `verify-ktproj.sh` | MSBuild `.ktproj` end-to-end | the same: reference the sample project, assert — the SDK build graph *is* the orchestration |
 
@@ -64,7 +66,7 @@ lane (§7). These are rare; the pilot found none in its slice.
 Keep formal verification, but run it **once over the built test assembly**, not per case. ilverify only reports
 on the target assembly's own methods; the `-r` sets are resolution scopes (shared framework + the assembly's
 output dir, which already holds NUnit/stdlib/producer dlls). `tests/run-ilverify.sh` implements this with an
-`ILVERIFY_XFAIL` map (substring → tracking issue), mirroring `verify-il.sh`'s `XFAIL_ILVERIFY` discipline:
+`ILVERIFY_XFAIL` map (substring → tracking issue), mirroring `verify-compiler-tests.sh`'s `XFAIL_ILVERIFY` discipline:
 **green iff every finding is baseline-listed; any finding outside it is a NEW-FAIL.** 382 per-dll ilverify runs
 → one per battery assembly (~16).
 
@@ -89,7 +91,7 @@ The pilot pins the **published** `DotKt.Sdk/0.9.6-rc7` (present in the local nug
 offline. The repo gate must instead consume the **locally-built** SDK from `make pack` → `build/nuget-feed`.
 Mechanism (Codex-validated; **NuGet SDK resolver**, *not* `MSBuildSDKsPath` — the latter bypasses the packaged
 resolution path we want to test): a repo/test-level `nuget.config` with a local feed + package-source mapping,
-restoring through an **isolated `globalPackagesFolder`** — exactly the model `scripts/verify-packaged-sdk.sh`
+restoring through an **isolated `globalPackagesFolder`** — exactly the model `tests/packaged-sdk/run.sh`
 already uses. Template:
 
 ```xml
@@ -201,7 +203,7 @@ Order: **build → ilverify (`--no-build`) → `dotnet test --no-build`**, with 
    only the **grandchild** override through a non-overriding intermediate fails. A **general compiler bug**,
    not a re-import gap — the audit's 384-case corpus does not cover this exact shape.
 2. **`joinToString{}` synthetic-delegate `DelegateCtor` ilverify finding** — the known runtime-safe formal-only
-   `#170/#150` (the `verify-il.sh` `[defargs]` XFAIL); reproduced here and baseline-listed in
+   `#170/#150` (the `verify-compiler-tests.sh` `[defargs]` XFAIL); reproduced here and baseline-listed in
    `tests/run-ilverify.sh`. Confirms the harness reproduces the existing formal-verification coverage.
 
 ---
@@ -214,9 +216,9 @@ Order: **build → ilverify (`--no-build`) → `dotnet test --no-build`**, with 
   reflection from *inside* an NUnit test**, so it need not be shell.
 - **C#→Kotlin / Kotlin→C# cross-language ABI** checks.
 - **Mutually-incompatible build modes** (MPP, special MSBuild props) needing separate project configs.
-- **NuGet package restore itself** (the packaged-SDK release gate, `verify-packaged-sdk.sh`).
+- **NuGet package restore itself** (`tests/packaged-sdk/run.sh`).
 
-Everything else in `verify-il.sh` / `verify-roundtrip.sh` / `verify-ktproj.sh` is replaced.
+Everything else from the former per-case runners is now represented by NUnit fixtures.
 
 ---
 
@@ -258,7 +260,7 @@ assemblies × ~20–30 s build, MSBuild-parallel across projects on the 24-core 
 
 **GO on full migration.** Evidence:
 
-- **Model proven end-to-end green.** IL battery (27 tests) and a real producer→consumer round-trip (10 tests)
+- **Model proven end-to-end green.** Categorized NUnit suites and real producer→consumer round-trips
   both pass `dotnet test`; ilverify runs once per assembly and is green against a machine-readable XFAIL
   baseline; the DLL-not-source invariant is verified.
 - **Every audit remedy has a concrete mechanism** (§1–§7): dedup→batteries, one shared harness, single
@@ -275,11 +277,9 @@ assemblies × ~20–30 s build, MSBuild-parallel across projects on the 24-core 
   need the C# helper as a `<ProjectReference>`'d csproj — mechanically identical to the roundtrip producer, one
   extra project per interop battery. (b) **compile-fail/diagnostic** cases stay in a small `kotc`-invoking
   shell lane (§5/§7). (c) **JVM oracle** needs the dual-backend alias + a `kotlinc`+JUnit project (§D3), scoped
-  to the few genuine JVM-equivalence claims. (d) **local-SDK feed** wiring (§D4) is designed and matches
-  `verify-packaged-sdk.sh`; the pilot used published rc7 to stay offline-reproducible.
+  to the few genuine JVM-equivalence claims. (d) **local-SDK feed** wiring (§D4) is implemented by
+  `tests/packaged-sdk/run.sh`; the pilot used published rc7 to stay offline-reproducible.
 
-**Recommended sequencing:** stand up the battery skeleton + the local-SDK `nuget.config` + the discovered-count
-guard; migrate batteries family-by-family (each migration deletes the superseded `cases/il-*` dirs and their
-`il_check`/`PURE` lines in the **same** change, per the audit's #14); convert roundtrip/ktproj; add the JVM
-oracle alias last. Keep the bash gate running until each family is proven migrated (do not delete `cases/` or
-`scripts/verify-*.sh` wholesale up front).
+**Completed sequencing:** the battery skeleton, local-SDK `nuget.config`, discovered-count guard, family
+migrations, and roundtrip/MSBuild project-reference conversions were landed incrementally. The old corpus was
+removed only after its last unique assertion moved.

@@ -56,7 +56,7 @@ done
 need_kotc; need_tool ilemit; need_tool bir2cir; need_tool facadegen
 # kotc -classpath: the CLR FRONTEND klib built FROM our CLR stdlib sources (scripts/build-stdlib-klib.sh).
 # kotlin.* resolves from THIS klib (full Kotlin semantics), never from facadegen — the
-# binding verify-il invariant.
+# binding used by the compiler test gate.
 need_fe_klib
 # The CLR stdlib ref/rt assemblies are the canonical CACHED builds (scripts/build-stdlib-{ref,rt}.sh
 # --emit). Do NOT auto-rebuild them here: the runtime emit is the slow, blocker-prone path; a cached
@@ -71,7 +71,7 @@ work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 bir="$work/bir"; cir="$work/cir"; mkdir -p "$bir" "$cir" "$out_dir"
 cp="$FE_KLIB"
 
-# Reference assemblies. Mirroring verify-il, the two backend stages take DIFFERENT stdlib refs: bir2cir
+# Reference assemblies. Mirroring verify-tests, the two backend stages take DIFFERENT stdlib refs: bir2cir
 # reads the @Clr-metadata REFERENCE stdlib (for @ClrTypeAlias/@ClrIntrinsic substitution), ilemit gets
 # the RUNTIME stdlib (the real Kotlin bodies). The [Kotlin*] round-trip attributes are SYNTHESIZED
 # per-assembly by ilemit (no DotKt.Runtime). The targeting pack is the compile universe for facadegen,

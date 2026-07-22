@@ -1,8 +1,0 @@
-{
-  "types": [
-    {"name":"Plain","dotNet":"demo.Plain","kind":"class","ctors":[{"params":[]}]}
-  ],
-  "files": [
-    {"pkg":"demo","fileClass":"demo.DemoKt","funs":[{"name":"hello","ret":{"t":"fqn","name":"Int"},"params":[]}]}
-  ]
-}

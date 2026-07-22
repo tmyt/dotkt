@@ -1,31 +1,26 @@
 #!/usr/bin/env bash
-# Formal IL verification (ilverify) for the NUnit test-harness pilot — run ONCE over each DotKt-EMITTED test
+# Formal IL verification for the categorized NUnit suites — run ONCE over each DotKt-emitted test
 # assembly (not per-case). ilverify checks only the target assembly's own methods; the -r sets are resolution
 # scopes only (the shared framework + the assembly's own output dir, which already holds NUnit/stdlib/producer).
-# This is the whole-assembly equivalent of verify-il.sh's per-dll ilverify phase: 1 invocation instead of N.
+# Whole-assembly verification replaces the former per-case, per-dll shell invocations.
 #
 # Green (exit 0) iff every ilverify finding matches an ILVERIFY_XFAIL substring below — the same
-# machine-readable "one reason per known finding" discipline as verify-il.sh's XFAIL_ILVERIFY map. Any finding
+# machine-readable "one reason per known finding" discipline. Any finding
 # outside the baseline is a NEW-FAIL and reddens the gate.
 #
 # Usage: tests/run-ilverify.sh <emitted-test-assembly.dll> [<more.dll> ...]
 set -euo pipefail
 
 # Known runtime-safe, formal-only findings (substring -> tracking issue + reason). A finding line must contain
-# one of these substrings to be tolerated. Keyed narrowly (fixture::method + finding kind) so it can only mask
-# the exact known shape. Mirror of verify-il.sh XFAIL_ILVERIFY entries, re-expressed for the battery methods.
+# one of these substrings to be tolerated. Keys are narrow fixture/method or emitted-type identifiers so they only mask
+# the documented shape.
 declare -A ILVERIFY_XFAIL=(
-	# #170/#150: joinToString{} trailing-lambda synthetic delegate — ilverify rejects the delegate .ctor args;
-	# runtime-safe (the value-assert RUN lane is green). Same finding the verify-il.sh [defargs] entry carries.
-	["CollectionsDefaultArgsTests::joinToStringDefaults()"]="#170/#150 formal-only DelegateCtor on a joinToString{} synthetic delegate — runtime-safe (RUN green)"
-	# #123 (delegate-representation ABI follow-up; splice origin #60 W1, closed): the migrated il-deleg2 M2C's
-	# Delegates.observable/vetoable crossinline lambda escapes into a STDLIB-emitted object-literal ObservableProperty
-	# subclass whose ctor bakes the Kotlin KAction`3`/KFunc`4`; §4.4ii materializes the app-side onChange carrier as the
-	# BCL System.Action`3`/System.Func`4` — StackUnexpected at M2C::.ctor. Runtime-SAFE (both are MulticastDelegate with
-	# the identical Invoke signature; the value-assert RUN lane is green). Mirror of the verify-il.sh [del2] entry.
-	["M2C::.ctor()"]="#123 delegate-representation ABI: Delegates.observable/vetoable materializes a BCL System.Action/Func where the stdlib ctor bakes the Kotlin KAction/KFunc — runtime-safe (RUN green)"
-	# --- CorA coroutine batch (DotKt.Tests.Coroutines.dll) migrated from verify-il.sh (cases/il-coctxkey / il-cointercept /
-	#     il-awaitintercept / il-classdeleg). Each carries the SAME runtime-safe formal-only finding its verify-il.sh
+	# #123: Delegates.observable/vetoable accepts Kotlin KAction/KFunc carriers in the stdlib constructor, while
+	# the application-side escaping lambdas materialize as signature-compatible System.Action/Func delegates.
+	# The CLR runtime accepts the MulticastDelegate instances and all observable/vetoable assertions run green.
+	["M2C::.ctor()"]="#123 delegate-representation ABI: observable/vetoable materializes System.Action/Func where the stdlib constructor declares KAction/KFunc — runtime-safe (RUN green)"
+	# --- CorA coroutine batch (DotKt.Tests.Coroutines.dll) migrated from verify-compiler-tests.sh (cases/il-coctxkey / il-cointercept /
+	#     il-awaitintercept / il-classdeleg). Each carries the SAME runtime-safe formal-only finding its verify-compiler-tests.sh
 	#     XFAIL_ILVERIFY entry carried before migration; re-expressed for the battery types. All coroutines fixtures RUN green.
 	# #12 (formal-only, closed-#2 follow-up): a self-ref-bounded CoroutineContext.Key<E : Element> star-projected to Key<*> is
 	# realized as a Key<Self> companion where the invariant Key<Element> slot is formally expected (StackUnexpected). Runtime
@@ -43,18 +38,23 @@ declare -A ILVERIFY_XFAIL=(
 	# round-trip restores `Vault<String?>` at the frontend, so the call's erased `Vault<object>` return meets the
 	# consumer's restored `Vault<string>` slot — StackUnexpected. Runtime-SAFE (object/string are reference-compatible;
 	# the erased Vault holds the string; the value-assert RUN lane is green). Same object-erasure formal-only family.
-	["KtprojTests::genq()"]="#18 nullable-generic object-erasure: holderOf's erased Vault<object> return vs the restored Vault<string> slot — runtime-safe (RUN green)"
+	["GenericMetadataRoundtripTests::nullableGenericMembersRoundTrip()"]="#18 nullable-generic object-erasure: holderOf's erased Vault<object> return vs the restored Vault<string> slot — runtime-safe (RUN green)"
 	# #29 (migrated ktproj-nestedlist): the Root-V variance collapse lowers a nested read-only `List<T>` to its
 	# INVARIANT CLR sibling `IList<T>`; at a use site the read-only `IReadOnlyCollection<T>` shape is expected, so the
 	# collapsed `IList<int32>` meets an `IReadOnlyCollection<int32>` slot — StackUnexpected. Runtime-SAFE (the concrete
 	# list implements both interfaces; the value-assert RUN lane is green). Same covariant-collection formal-only family.
-	["KtprojTests::nestedlist()"]="#29 Root-V collapse: nested List<T> lowered to invariant IList<int32> vs an expected IReadOnlyCollection<int32> — runtime-safe (RUN green)"
+	["GenericMetadataRoundtripTests::nestedGenericCollectionsRoundTrip()"]="#29 Root-V collapse: nested List<T> lowered to invariant IList<int32> vs an expected IReadOnlyCollection<int32> — runtime-safe (RUN green)"
+	# #127/#86: copyOf on a value-element array returns Array<T?>, represented as object[] while the formal callsite
+	# expects Nullable<Int>[]; all prefix/tail value assertions run green.
+	["ArrayTests::copyOfGrowsWithNullTail()"]="#127/#86 nullable value-array object erasure: copyOf returns object[] where Nullable<Int>[] is formally expected — runtime-safe (RUN green)"
 	# #12 (formal-only follow-up of closed #2): the migrated il-genbaseext (CorBSequenceTests) declares an external
 	# generic base (AbstractCoroutineContextKey) over a companion CoroutineContext.Key; its `get_key()` returns the
 	# Key<Self> companion where the invariant Key<Element> is formally expected (star-projection covariance the CLR
-	# has no equivalent for). Runtime-SAFE (the value-assert RUN lane is green). Mirror of the verify-il.sh
+	# has no equivalent for). Runtime-SAFE (the value-assert RUN lane is green). Mirror of the verify-compiler-tests.sh
 	# [genbaseext] XFAIL_ILVERIFY entry, re-expressed for DotKt.Tests.Coroutines.dll.
 	["CorBGbeBase::get_key()"]="#12 formal-only covariance: external-generic-base get_key() returns Key<Self> companion where invariant Key<Element> is expected — runtime-safe (RUN green)"
+	# localloc is intentionally unverifiable ECMA-335 IL. The runtime test validates the resulting Span writes/reads.
+	["StackBufferTests::stackAllocationAndSpanInterop()"]="by design: stackalloc emits localloc, which ILVerify must report as unverifiable; runtime assertions are green"
 )
 
 ILV="$(find "$HOME/.dotnet" -name 'ILVerify.dll' 2>/dev/null | head -1)"

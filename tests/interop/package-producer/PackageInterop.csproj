@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <PackageId>DotKt.Tests.VirtualPackage</PackageId>
+    <Version>1.0.0</Version>
+    <Description>Local test package for DotKt PackageReference interop.</Description>
+    <NoWarn>NU5128</NoWarn>
+  </PropertyGroup>
+</Project>

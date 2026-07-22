@@ -1,41 +1,33 @@
-# NUnit test harness — pilot + production migration
+# Categorized NUnit compiler tests
 
-Migrating the per-case bash gate (`cases/il-*` + `scripts/verify-il.sh` / `verify-roundtrip.sh` /
-`verify-ktproj.sh`) to an **in-process NUnit suite**: Kotlin `@TestAttribute` methods, batch-compiled by the
-DotKt MSBuild SDK, discovered and run in-process by `dotnet test`.
+The compiler behavior tests are grouped by the contract they exercise, rather than by the old shell-case or
+backend batch that happened to create them:
 
-Design + decisions + measured numbers + go/no-go: **`docs/design-nunit-test-harness.md`**.
-Per-family migration steps: **`docs/nunit-migration-playbook.md`**.
-Motivation: **`docs/reviews/2026-07-19-cases-test-design-audit.md`**.
+- `basic/` — Kotlin language and standard-library behavior with no CLR-specific dependency.
+- `interop/` — BCL, C# producer, PackageReference, delegate, event, by-ref, and other CLR interop behavior.
+- `coroutines/` — suspend lowering, continuations, coroutine context, sequences, and Task/ValueTask bridges.
+- `roundtrip/` — emitted Kotlin metadata consumed by another Kotlin or C# project through a real project reference.
+- `support/` — shared test-only projects, currently the coroutine driver used by coroutine and interop fixtures.
+- `special/` — valid compiler tests whose required build shape does not fit an NUnit method (for example a
+  greater-than-16-parameter delegate assembly-shape check).
+- `known-fail/` — documented reproducers that intentionally stay outside the green gate.
 
-## Production suite (local-SDK) — the real migration target
+Fixture files and classes use feature names. Historical migration batches such as `MigratedM2`, `CorA`, and the
+old undifferentiated `il` suite are not categories.
 
-- `il/` — `DotKt.Tests.Il.ktproj`, the production IL-battery suite where migrated families land (one `.kt` per
-  family under `il/fixtures/`). **First migrated family:** `il/fixtures/GenericsTests.kt` (6 `@TestAttribute`
-  methods replacing `cases/il-generic .. il-generic6`).
-- `coroutines/` — `DotKt.Tests.Coroutines.ktproj`, the dedicated **suspend / coroutine** lane (subject-split:
-  basic · interop · coroutines · roundtrip). Cold-core state-machine cases land here; `coroutines/fixtures/Harness.kt`
-  is the SINGLE shared `dotkt.support.blockOn` drive imported by the suspend-driving fixtures (replacing the
-  per-case duplicated `harness.kt` copies). **Pilot batch:** `ColdCoreTests.kt` (suspendco, counit),
-  `SuspendValueTests.kt` (suspendvalue, suspendcapture), `TaskAwaitTests.kt` (genasync, taskawait, cofinally),
-  `SequenceTests.kt` (seqforin) — replacing 8 `cases/il-*` dirs.
-- `nuget.config` — **active**; routes every `DotKt.*` package for the test projects to the LOCALLY-BUILT SDK
-  feed (`make pack` → `build/nuget-feed`) with an isolated `globalPackagesFolder`, so the suite tests the
-  compiler in THIS working tree (design D4). Copied from `nuget.config.local-sdk.template`.
-- `run-nunit-il.sh` — the gate driver: builds each battery against the local feed, runs `dotnet test` with a
-  TRX logger, asserts the **discovered test count** equals its `EXPECTED` manifest (a dropped/added method or a
-  0-test discovery failure reddens the gate), then runs `run-ilverify.sh` once per emitted assembly.
-
-Run it (needs `make pack` first to populate `build/nuget-feed`):
+`run-nunit-tests.sh` builds all categorized projects against the locally packed SDK, runs `dotnet test`, and then
+runs `run-ilverify.sh` once for every DotKt-emitted assembly. A project build failure, test failure, discovery
+failure (including a zero-test TRX), or ILVerify finding outside the narrow baseline fails the gate. Builds are
+non-incremental because the gate deliberately repacks and reuses the same local SDK version.
 
 ```bash
-make pack                 # build+pack the local DotKt SDK -> build/nuget-feed
-bash tests/run-nunit-il.sh   # local-SDK build + dotnet test + discovered-count guard + ilverify
+make pack
+bash tests/run-nunit-tests.sh
 ```
 
-## Supporting files
+The canonical repository entry point is `make verify-tests`, which packs the current SDK before invoking the
+runner. `nuget.config` uses an isolated cache and the local `build/nuget-feed`, so a same-version repack cannot be
+masked by a previously extracted SDK package.
 
-- `run-ilverify.sh` — runs ilverify **once** over each emitted test assembly, with a machine-readable
-  `ILVERIFY_XFAIL` baseline (mirrors `verify-il.sh`'s `XFAIL_ILVERIFY`); driven by `run-nunit-il.sh`.
-- `nuget.config.local-sdk.template` — how the gate consumes the **locally-built** SDK
-  (`make pack` → `build/nuget-feed`) instead of a published version (design D4).
+`run-ilverify.sh` contains the machine-readable `ILVERIFY_XFAIL` baseline. Baselines are keyed to the narrowest
+emitted type or fixture method possible and require a tracking reason; a newly clean result must be pruned.

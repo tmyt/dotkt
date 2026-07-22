@@ -70,6 +70,10 @@ STR_OK = {
                                                  # canonical-JSON string by bir2cir NullableGenericReturnErasure (before the
                                                  # nested `Nullable(Tv)` is object-erased); RoundtripMetadata carrier-encodes
                                                  # it into [KotlinNullableGeneric] for facadegen. A payload, NOT a type slot.
+    "collIdentity", "collIdentityRet",           # #29: PRE-collapse Kotlin collection TypeNodes stashed as canonical-JSON
+                                                 # strings by CollectionIdentityRecord. RoundtripMetadata immediately turns
+                                                 # them into [KotlinCollectionIdentity] carrier bytes for facadegen; these
+                                                 # are opaque metadata payloads, not the CIR parameter/return type slots.
     "bytes",                                     # #71 S2: a base64 attribute-arg VALUE (RoundtripMetadata) — the carrier
                                                  # payload for [KotlinInline]/[KotlinSuspendFunctionType] and the nested
                                                  # NullableAttribute(byte[]) form; ilemit's ConstArgValue decodes it to a

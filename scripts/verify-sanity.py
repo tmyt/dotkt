@@ -7,11 +7,11 @@
 # SCOPE = POST-LOWERING CIR (the exact tree the in-process gate checks: bir2cir on its CIR output; ilemit
 # at EmitAssembly). Do NOT feed it PRE-lowering BIR: a BIR inline-lambda body still references `it` / loop
 # vars that bir2cir materializes as `var` statements during splice, so the local-resolution check would
-# legitimately (falsely) trip. verify-sanity.sh globs CIR only for this reason.
+# legitimately (falsely) trip. tests/ir/run-sanity.sh globs CIR only for this reason.
 #
 # Keep IN SYNC with toolchain/bir-common/IrSanity.cs (the C# is normative; this is the corpus net).
 # DELIBERATELY CONSERVATIVE: every check is calibrated to NEVER false-positive on a valid input (the
-# verify-il corpus + the 250-file stdlib rt build). Call/new args-vs-argTypes arity is intentionally NOT checked:
+# categorized compiler-test corpus + the 250-file stdlib rt build). Call/new args-vs-argTypes arity is intentionally NOT checked:
 # callers may legitimately omit trailing default args.
 #
 # The check set (per method / ctor / static-field-initializer scope):

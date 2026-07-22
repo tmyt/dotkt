@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # gate.sh — the CHANGE-AWARE gate wrapper.
 #
-# The canonical suites (scripts/verify-*.sh) each rebuild + gate a WHOLE stage from scratch; running the
-# complete set (make verify-core) is ~45 min and rebuilds the stdlib every time regardless of what
-# changed. This wrapper reads the set of CHANGED paths and runs the MINIMAL CORRECT rebuild + suite
+# The canonical suites under tests/ each rebuild + gate a WHOLE stage from scratch; running the
+# complete set still rebuilds the stdlib and the irreducible cross-module scenarios. This wrapper reads
+# the set of CHANGED paths and runs the MINIMAL CORRECT rebuild + suite
 # subset for exactly those changes. It does NOT reimplement any suite — it selects which of the existing
-# scripts/verify-*.sh to invoke (verbatim) and whether to force a clean stdlib rebuild first.
+# Make suite targets to invoke and whether to force a clean stdlib rebuild first.
 #
 # It is a SELECTOR, not a new gate: `gate.sh --full` runs the complete verify-core set with a clean
 # stdlib rebuild and is the AUTHORITATIVE pre-merge / release gate the coordinator uses for integration.
@@ -18,19 +18,18 @@
 #
 # SELECTION RULES (each changed path contributes; the union is run; any UNMATCHED path forces --full):
 #   *.md / docs/** / CHANGELOG*        -> nothing  (schema doc -> verify-schema only)
-#   scripts/verify-<x>.sh (+ .py)      -> just that suite
+#   tests/<suite>/**                   -> that suite
 #   scripts/gate.sh                    -> nothing (this wrapper itself, no pipeline effect)
 #   scripts/{lib,build-stdlib*,dotkt,  -> FULL   (shared build machinery — affects every stage)
 #     gen-*,pack-nuget}.sh
 #   toolchain/facadegen/**             -> facadegen is rebuilt by the suites; run verify-roundtrip +
-#                                          verify-ktproj + verify-il (facadegen metadata feeds all three)
-#   toolchain/bir2cir/** | ilemit/**   -> stdlib EMIT (clean) + verify-il + verify-differential +
+#                                          verify-msbuild + compiler tests (facadegen metadata feeds all three)
+#   toolchain/bir2cir/** | ilemit/**   -> stdlib EMIT (clean) + compiler tests +
 #                                          verify-schema + verify-sanity   (kotc unchanged: no installDist cost)
 #   toolchain/bir-common/**            -> FULL   (TypeNode/IrSanity are <Compile Link/>-shared into every tool)
 #   toolchain/retarget/**              -> FULL   (a stdlib-bake input + BCL-repoint used by roundtrip/ktproj)
 #   toolchain/kotc/** | libraries/stdlib/**  -> FULL + clean stdlib rebuild
-#   cases/ktproj*/**                   -> verify-ktproj
-#   cases/**                           -> verify-il + verify-differential
+#   tests/{basic,interop,coroutines,roundtrip}/** -> compiler tests
 #   anything else                      -> FULL
 #
 # CLEAN STDLIB REBUILD (rm -rf build/clr-stdlib*) happens iff a stdlib-BAKING axis changed
@@ -41,7 +40,7 @@ source "$(dirname "$0")/lib.sh"
 
 usage() { cat <<EOF
 usage: $SCRIPT_NAME [--full] [--release] [--dry-run] [PATH...]
-Change-aware wrapper over the scripts/verify-*.sh suites: runs the minimal correct rebuild + suite
+Change-aware wrapper over the tests/ suites: runs the minimal correct rebuild + suite
 subset for the changed paths (default: git-detected). Prints exactly what it chose and WHY.
 
   --full        run the complete verify-core set with a clean stdlib rebuild (authoritative pre-merge)
@@ -82,7 +81,7 @@ collect_changes() {
 }
 
 # ---- selection state ------------------------------------------------------------------------------
-declare -A WANT=()          # suite -> 1 (il schema sanity ktproj roundtrip differential widedelegates packagedsdk)
+declare -A WANT=()          # suite -> 1 (compiler_tests schema sanity msbuild roundtrip widedelegates packagedsdk)
 declare -a REASONS=()       # human-readable "path -> decision" lines
 CLEAN=0                     # force a clean stdlib rebuild
 NEED_FULL=0                 # an unmatched/broad path forces the complete set
@@ -97,26 +96,20 @@ classify() { # <path>
 			want schema; reason "$p -> verify-schema (BIR/CIR schema doc)" ;;
 		*.md|docs/*|CHANGELOG*)
 			reason "$p -> (no gate: docs)" ;;
-		# ---- scripts ----------------------------------------------------------------------------
+		# ---- shared build/validation scripts ------------------------------------------------------
 		scripts/gate.sh)
 			reason "$p -> (no gate: the wrapper itself, no pipeline effect)" ;;
-		scripts/verify-il.sh)          want il;            reason "$p -> verify-il" ;;
-		scripts/verify-schema.sh|scripts/verify-schema.py)    want schema;   reason "$p -> verify-schema" ;;
-		scripts/verify-sanity.sh|scripts/verify-sanity.py)    want sanity;   reason "$p -> verify-sanity" ;;
-		scripts/verify-ktproj.sh)      want ktproj;        reason "$p -> verify-ktproj" ;;
-		scripts/verify-roundtrip.sh)   want roundtrip;     reason "$p -> verify-roundtrip" ;;
-		scripts/verify-differential.sh) want differential; reason "$p -> verify-differential" ;;
-		scripts/verify-wide-delegates.sh) want widedelegates; reason "$p -> verify-wide-delegates" ;;
-		scripts/verify-packaged-sdk.sh) want packagedsdk;  reason "$p -> verify-packaged-sdk" ;;
+		scripts/verify-schema.py) want schema; reason "$p -> verify-schema" ;;
+		scripts/verify-sanity.py) want sanity; reason "$p -> verify-sanity" ;;
 		scripts/lib.sh|scripts/build-stdlib*.sh|scripts/dotkt.sh|scripts/gen-*|scripts/pack-nuget.sh|scripts/hooks/*)
 			NEED_FULL=1; reason "$p -> FULL (shared build machinery)" ;;
 		# ---- toolchain --------------------------------------------------------------------------
 		toolchain/facadegen/*)
-			want roundtrip; want ktproj; want il
-			reason "$p -> facadegen: verify-roundtrip + verify-ktproj + verify-il (metadata feeds all three)" ;;
+			want roundtrip; want msbuild; want compiler_tests
+			reason "$p -> facadegen: verify-roundtrip + verify-msbuild + compiler tests (metadata feeds all three)" ;;
 		toolchain/bir2cir/*|toolchain/ilemit/*)
-			want il; want differential; want schema; want sanity; CLEAN=1
-			reason "$p -> bir2cir/ilemit: clean stdlib emit + verify-il + verify-differential + verify-schema + verify-sanity" ;;
+			want compiler_tests; want schema; want sanity; CLEAN=1
+			reason "$p -> bir2cir/ilemit: clean stdlib emit + compiler tests + verify-schema + verify-sanity" ;;
 		toolchain/bir-common/*)
 			NEED_FULL=1; CLEAN=1; reason "$p -> FULL (bir-common is <Compile Link/>-shared into every tool)" ;;
 		toolchain/retarget/*)
@@ -125,26 +118,35 @@ classify() { # <path>
 			NEED_FULL=1; CLEAN=1; reason "$p -> FULL + clean stdlib (kotc frontend changed)" ;;
 		libraries/stdlib/*)
 			NEED_FULL=1; CLEAN=1; reason "$p -> FULL + clean stdlib (stdlib source changed)" ;;
-		# ---- cases ------------------------------------------------------------------------------
-		cases/ktproj*/*|cases/ktproj*)
-			want ktproj; reason "$p -> verify-ktproj (ktproj case)" ;;
-		cases/*)
-			want il; want differential; reason "$p -> verify-il + verify-differential (sample case)" ;;
+		# ---- tests ------------------------------------------------------------------------------
+		tests/ir/run-schema.sh) want schema; reason "$p -> verify-schema" ;;
+		tests/ir/run-sanity.sh) want sanity; reason "$p -> verify-sanity" ;;
+		tests/msbuild/*) want msbuild; reason "$p -> stateful MSBuild tests" ;;
+		tests/packaged-sdk/*) want packagedsdk; reason "$p -> packaged SDK tests" ;;
+		tests/roundtrip/scenarios/*) want roundtrip; reason "$p -> shell round-trip scenarios" ;;
+		tests/basic/*|tests/coroutines/*|tests/interop/*|tests/roundtrip/*|tests/support/*|tests/run-nunit-tests.sh|tests/run-ilverify.sh)
+			want compiler_tests; reason "$p -> categorized compiler tests" ;;
+		tests/special/wide-delegates/*)
+			want widedelegates; reason "$p -> wide-delegate structural test" ;;
+		tests/known-fail/*)
+			reason "$p -> documented known-failure repro (not a green gate)" ;;
+		eng/KotlinClr.targets)
+			want msbuild; reason "$p -> in-repo MSBuild integration" ;;
 		# ---- anything else ----------------------------------------------------------------------
 		*)
 			NEED_FULL=1; reason "$p -> FULL (unrecognized path: conservative fallback)" ;;
 	esac
 }
 
-# ---- suite runners (invoke the REAL scripts verbatim) ---------------------------------------------
-declare -a RUN_ORDER=(il schema sanity ktproj roundtrip differential widedelegates packagedsdk)
-declare -A SUITE_SCRIPT=(
-	[il]=verify-il.sh [schema]=verify-schema.sh [sanity]=verify-sanity.sh
-	[ktproj]=verify-ktproj.sh [roundtrip]=verify-roundtrip.sh [differential]=verify-differential.sh
-	[widedelegates]=verify-wide-delegates.sh [packagedsdk]=verify-packaged-sdk.sh
+# ---- suite targets --------------------------------------------------------------------------------
+declare -a RUN_ORDER=(compiler_tests schema sanity msbuild roundtrip widedelegates packagedsdk)
+declare -A SUITE_TARGET=(
+	[compiler_tests]=verify-tests [schema]=verify-schema [sanity]=verify-sanity
+	[msbuild]=verify-msbuild [roundtrip]=verify-roundtrip
+	[widedelegates]=verify-wide-delegates [packagedsdk]=verify-packaged-sdk
 )
 
-FULL_SUITES=(il schema sanity ktproj roundtrip differential widedelegates)
+FULL_SUITES=(compiler_tests schema sanity msbuild roundtrip widedelegates)
 
 # ---- compute the plan -----------------------------------------------------------------------------
 mapfile -t CHANGES < <(collect_changes)
@@ -205,10 +207,9 @@ fi
 
 rc=0; FAILED=(); PASSED=()
 for s in "${selected[@]}"; do
-	script="$ROOT/scripts/${SUITE_SCRIPT[$s]}"
 	echo
-	echo "########## gate.sh: running ${SUITE_SCRIPT[$s]} ##########"
-	if bash "$script"; then
+	echo "########## gate.sh: running make ${SUITE_TARGET[$s]} ##########"
+	if make -C "$ROOT" "${SUITE_TARGET[$s]}"; then
 		PASSED+=("$s")
 	else
 		FAILED+=("$s"); rc=1

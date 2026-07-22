@@ -120,18 +120,17 @@ The build is a multi-stage native pipeline, not a single `gradle build`:
 
 | Goal | Command |
 |------|---------|
-| **Run the IL test gate** (compile → IL → run → assert → `ilverify`) | `./scripts/verify-il.sh` |
-| MSBuild / `.ktproj` end-to-end | `./scripts/verify-ktproj.sh` |
-| Kotlin↔CLR round-trip (consume a DotKt dll as Kotlin) | `./scripts/verify-roundtrip.sh` |
+| **Run the compiler test gate** (categorized NUnit + `ilverify`) | `make verify-tests` |
+| Stateful MSBuild integration | `make verify-msbuild` |
+| Kotlin↔CLR round-trip scenarios (consume a DotKt dll as Kotlin) | `make verify-roundtrip` |
 | **One-shot: compile + run a single `.kt`** | `./scripts/dotkt.sh --run path/to/Foo.kt` |
 
-`verify-il.sh` is the **canonical gate** — a behavior-affecting change (compiler, stdlib, scripts,
-packaging) is not "done" without a run. The truthful fail-set baseline is **machine-readable, not
-prose**: the `XFAIL_RUN` / `XFAIL_ILVERIFY` maps at the top of the script (one reason per name). The
-gate **exits 0 iff every actual fail is XFAIL-listed** and prints a `NEW-FAIL` / `FIXED` diff either
-way; an XFAIL entry that starts passing prints "FIXED — remove it" (prune it in the same change).
-Never copy fail counts/names into docs — run the gate and read its diff. Same discipline: `RT_XFAIL`
-in `verify-roundtrip.sh`, `XFAIL_DIFF` in `verify-differential.sh`. `dotkt.sh` is the fast dev
+`make verify` is the **canonical gate** — a behavior-affecting change (compiler, stdlib, build helpers,
+packaging) is not "done" without a run. The truthful fail-set baselines are **machine-readable, not
+prose**: `ILVERIFY_XFAIL` in `tests/run-ilverify.sh`, `RT_XFAIL` in
+`tests/roundtrip/scenarios/run.sh`, and `XFAIL_PKG` in `tests/packaged-sdk/run.sh`. Each gate exits 0 iff
+every actual fail is listed and reports new/fixed findings. Never copy fail counts/names into docs; run
+the gate and read its diff. `dotkt.sh` is the fast dev
 wrapper over the same pipeline (`-h` for `--exe`, `--no-stdlib`, `--retarget`, `--ref <dll>`).
 
 **Building the CLR stdlib** (`libraries/stdlib/`) — `make stdlib` runs the THREE canonical scripts

@@ -49,11 +49,10 @@ bir2cir at app-emit — the compiler itself stays generic.
 
 ## What works today
 
-The gates: `scripts/verify-il.sh` (compile → IL → run → assert → `ilverify` over the full
-`cases/il-*` corpus; **0 run-failures** outside the documented XFAIL baseline — a small tail of
-ilverify-strictness findings and coroutine-deferred samples) and `scripts/verify-ktproj.sh`
-(MSBuild end-to-end over the `cases/ktproj*` projects). Run the gates for the authoritative pass
-set — the truth lives in the scripts' XFAIL maps, not in a number copied here.
+The canonical gate is `make verify`: categorized NUnit suites compile related tests into shared
+assemblies, execute them in-process, apply the ILVerify baseline, then run emitted-IR, stateful MSBuild,
+round-trip, wide-delegate, and packaged-SDK scenarios. Test entry points live beside their fixtures under
+`tests/`; reusable build and validation tools live under `scripts/`.
 
 **Language**
 - Top-level functions; primitives; arithmetic, comparison, bitwise; control flow (`if`/`when`
@@ -98,16 +97,16 @@ Prereqs: the repo's Gradle auto-provisions a JDK; you need the **.NET SDK 10**.
 make help                          # all targets
 make all                           # toolchain + stdlib artifacts
 make dev SRC=path/to/Foo.kt        # compile + run one file (wraps scripts/dotkt.sh --run)
-make verify                        # the gates: verify-il + verify-ktproj
+make verify                        # all compiler, IR, MSBuild, roundtrip, and package gates
 make pack                          # NuGet packages into a local feed
 ```
 
-Or the scripts directly:
+Or focused suites directly:
 
 ```bash
-./scripts/verify-il.sh                 # the canonical gate (run-correct + ilverify-clean)
-./scripts/verify-ktproj.sh             # MSBuild/.ktproj end-to-end
-./scripts/verify-roundtrip.sh          # consume a DotKt dll as Kotlin
+./tests/run-nunit-tests.sh                         # categorized NUnit suites + ILVerify
+./tests/msbuild/run.sh                             # stateful MSBuild behavior
+./tests/roundtrip/scenarios/run.sh                 # irreducible consume-as-Kotlin scenarios
 ./scripts/dotkt.sh --run path/Foo.kt   # one-shot compile + run (-h for options)
 ```
 
@@ -147,8 +146,9 @@ See `docs/user/getting-started.md`.
 | `toolchain/retarget/` | repoint emitted BCL refs so a C# project can `<Reference>` the dll at compile time |
 | `libraries/stdlib/` | the **CLR Kotlin stdlib** sources (common Kotlin + `clr/` actuals + `@Clr*` bindings) |
 | `packaging/` | NuGet packages: `DotKt.Sdk`, `DotKt.Toolchain`, `DotKt.Stdlib`, `DotKt.Templates` |
-| `cases/` | `il-*` (IL-backend samples = the gate corpus), `m-*` (language/interop), `ktproj-*` (MSBuild) |
-| `scripts/` | the gates (`verify-il.sh`, `verify-ktproj.sh`, `verify-roundtrip.sh`), `dotkt.sh`, the three `build-stdlib-*.sh` |
+| `tests/` | categorized NUnit projects plus the few shell scenarios that require external process/build state |
+| `eng/` | in-repo development build integration (`KotlinClr.targets`) |
+| `scripts/` | reusable build/validation tools, `dotkt.sh`, and the three `build-stdlib-*.sh` helpers |
 | `docs/user/` | **user-facing docs** (getting started / .NET interop / CLR differences) |
 | `docs/dotkt-semantics.md` | **canonical**: how Kotlin maps to the CLR + deliberate deviations from Kotlin/JVM |
 | `docs/design-fir-bir-cir-il.md` | backend layer contract (kotc / bir2cir / ilemit responsibilities) |
