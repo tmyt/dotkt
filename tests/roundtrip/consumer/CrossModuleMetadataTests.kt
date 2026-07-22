@@ -61,7 +61,7 @@ class CrossModuleCaptureTests {
     // ktproj-dotktpkg (#26 follow-up): a `dotkt.foo.bar` cross-module local captured in a lambda,
     // stored as a delegate, fired later — the captured `Signal<Int>` must survive (not read back NULL/NRE).
     @TestAttribute
-    fun capturedStateInDotktPackage() {
+    fun capturedSignalInDotktPackage() {
         val c = state(0)                          // cross-module Signal<Int>
         register { c.value = c.value + 1 }        // capture c in a lambda stored as a delegate
         fire()
