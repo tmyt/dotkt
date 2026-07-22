@@ -1,15 +1,14 @@
-// ktproj-dotktpkg (#26): a cross-module Kotlin LIBRARY whose package FQN STARTS WITH `dotkt` (`dotktx.foo.bar`)
-// but is a USER package, NOT the compiler's own `dotkt`/`dotkt$...` synthetic vocabulary — the exact shape of the
-// reporter's `dotktx.ui.avalonia` windowing lib. The consumer captures a local of this lib's `State<Int>` inside a
-// lambda stored as a delegate and fired later cross-module. Before the #26 fix bir2cir's ResolveNetType matched the
-// owner FQN with a bare `StartsWith("dotkt")`, so `dotktx.foo.bar.State` was wrongly classified as "not a .NET/
-// reference type" — the captured cross-module local read back NULL (NRE) even though compile stayed clean. The guard
-// now matches `dotkt` only as a complete leading segment (`dotkt`/`dotkt.`/`dotkt$`), never a prefix of `dotktx`.
-package dotktx.foo.bar
+// ktproj-dotktpkg (#26 follow-up): a cross-module Kotlin LIBRARY in the ordinary user package `dotkt.foo.bar`.
+// The pre-stdlib compiler-intrinsics runtime once used the `dotkt.*` space, but that runtime is retired; only the
+// unspeakable `dotkt$...` generated-type prefix remains compiler-owned. ResolveNetType/ResolveRefType nevertheless
+// skipped the complete `dotkt` namespace, so a referenced type here was never reflected. The consumer captures a
+// local of this library's `Signal<Int>` inside a stored delegate — the same compile-clean NRE/InvalidProgram shape
+// that #26 exposed for the formerly over-broad `StartsWith("dotkt")` treatment of `dotktx.*` user packages.
+package dotkt.foo.bar
 
 // `Signal` (not `State`) so the simple name is UNIQUE across this shared producer assembly — a same-simple-name
 // collision with another package's generic type breaks facadegen's re-import of the generic member (the `var value`
-// mutability / generic factory return degrade). The case tests the dotkt-PREFIX package guard (#26), not the name.
+// mutability / generic factory return degrade). The case tests that `dotkt.*` is an ordinary package, not the name.
 class Signal<T>(var value: T)
 
 fun <T> state(x: T): Signal<T> = Signal(x)

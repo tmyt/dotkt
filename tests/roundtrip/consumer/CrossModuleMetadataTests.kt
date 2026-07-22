@@ -4,7 +4,7 @@
 // design §3), asserting the same golden 1:1 as ClassicAssert value asserts (`// <expected>` trailing comments).
 //
 // Migrated cases (9 -> 9 @TestAttribute methods; the golden was the .ktproj's printed stdout):
-//   dotktpkg     <- ktproj-dotktpkg     (#26)  dotkt-prefix package false-positive + cross-module captured local
+//   dotktpkg     <- ktproj-dotktpkg     (#26)  retired dotkt.* reservation + cross-module captured local
 //   genmember    <- ktproj-genmember    (#33)  cross-module generic member whose return is an OPEN owner tv
 //   genov        <- ktproj-genov        (#25)  cross-module generic top-level fn in a same-name overload set
 //   genq         <- ktproj-genq         (#18)  generic Holder<T?> nested-nullable-generic round-trip
@@ -31,9 +31,9 @@
 // two `Arr<T>` (kotlinx.genov.Arr in RoundtripProducer + kotlinx.genovc.Arr in RoundtripProducerMpp — #199-③, a
 // generic factory RETURN across dlls) and `Ext.Widget` vs `Inherit.Widget` (#199-② in tests/interop). Each binds to
 // the correct type only because facadegen no longer drops the namespace. The cases test the #-numbered semantics.
-import dotktx.foo.bar.state
-import dotktx.foo.bar.register
-import dotktx.foo.bar.fire
+import dotkt.foo.bar.state
+import dotkt.foo.bar.register
+import dotkt.foo.bar.fire
 import p2.pair2
 import p2.wrap
 import kotlinx.genov.atomic
@@ -58,11 +58,11 @@ import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert
 
 class CrossModuleCaptureTests {
-    // ktproj-dotktpkg (#26): a `dotktx.foo.bar` (dotkt-PREFIX but user) cross-module local captured in a lambda,
-    // stored as a delegate, fired later — the captured `State<Int>` must survive (not read back NULL/NRE).
+    // ktproj-dotktpkg (#26 follow-up): a `dotkt.foo.bar` cross-module local captured in a lambda,
+    // stored as a delegate, fired later — the captured `Signal<Int>` must survive (not read back NULL/NRE).
     @TestAttribute
-    fun capturedStateInDotktPrefixedPackage() {
-        val c = state(0)                          // cross-module State<Int>
+    fun capturedSignalInDotktPackage() {
+        val c = state(0)                          // cross-module Signal<Int>
         register { c.value = c.value + 1 }        // capture c in a lambda stored as a delegate
         fire()
         fire()
