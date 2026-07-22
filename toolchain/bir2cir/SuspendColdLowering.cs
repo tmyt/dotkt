@@ -603,13 +603,20 @@ static partial class SuspendColdLowering
                 // suspension). A genuine SUSPEND lambda is `newSuspendLambda` (above); a `newClosure` that DOES wrap a
                 // suspension stays refused (SuspendLambdaLowering territory).
                 if ((k == "newClosure" || k == "newDelegate") && !HasSuspension(o)) return null;
-                // #82 — a `forEachInline` (GetEnumerator collection loop) whose BODY spans a suspension is FLATTENED to
-                // flat CFG by FlattenSuspendingLoops (like the always-admitted `forArray`), so ONLY that shape is exempted
+                // App-build ranges have already become counted `for` and are flattened below. A stdlib self-build
+                // retains `forRange`; reject its suspending body explicitly instead of letting Rewrite hoist the
+                // suspension outside the structured loop.
+                if (k == "forRange" && o["body"] is JsonNode frBody && HasOwnSuspension(frBody))
+                    return "suspension buried in an unsupported 'forRange' loop position";
+                // #82/#98 — a `forEachInline` (GetEnumerator collection loop) or counted `for` whose BODY spans a
+                // suspension is FLATTENED to flat CFG by FlattenSuspendingLoops (like the always-admitted `forArray`).
+                // Only forEachInline needs an exemption
                 // from the LambdaKinds refusal below (falling through to the generic child recursion, which validates its
                 // body). A SUSPENSION-FREE forEachInline stays REFUSED: it would reach Build as a structured loop whose
                 // LambdaKinds subtree CollectVarFields/DisambiguateShadowedVars SKIP but Rewrite DESCENDS — a loop-interior
                 // name colliding with a spilled outer var would silently miscompile, so it stays on the un-lowered path.
-                // `repeatInline`/`for`/`forRange` with a body suspension stay refused too (not flattened).
+                // `repeatInline`/`forRange` with a body suspension stay refused (not flattened); app-build ranges have
+                // already become counted `for` nodes and are handled here.
                 // ANY OTHER lambda/closure/sequence node -> unsupported (genuine suspend lambdas, which emit a
                 // `newClosure` and are NOT flagged `suspendCall`, are handled separately by SuspendLambdaLowering).
                 if (k != null && LambdaKinds.Contains(k)
@@ -923,6 +930,10 @@ static partial class SuspendColdLowering
             _typeParams = typeParams ?? new List<string>();
             _smAllTps = _typeParams;   // a lambda SM has no enclosing-class type params
             _smTypeInst = _typeParams.Count == 0 ? new TypeNode.Fqn(_smType) : new TypeNode.Fqn(_smType, TypeTvs(_typeParams.Count));
+            // #125 — lambda SMs share the named-fun segmentability classifier. A refused lambda still gets a valid
+            // SuspendLambda type, but invokeSuspend becomes a call-time NotSupportedException stub (Build), never a
+            // body containing an unsegmented suspendCall / invalid IL.
+            _stubReason = SuspensionRefusalReason(body, inHandler: false, tryDepth: 0);
         }
 
         static List<string> ReadTypeParamNames(JsonNode tps)
@@ -958,8 +969,23 @@ static partial class SuspendColdLowering
             // paths observe the throw: a Kotlin->Kotlin cold call propagates it synchronously; the public Task
             // bridge catches it (its try/catch) and faults the Task. Warn once here, naming the fun + the root
             // refusal (this REPLACES the deleted fixpoint's L3 drop warning).
-            if (!_isLambda && _stubReason is string reason)
+            if (_stubReason is string reason)
             {
+                if (_isLambda)
+                {
+                    Console.Error.WriteLine(
+                        $"bir2cir: WARNING suspend-lowering: suspend lambda '{_smType}' is not segmentable "
+                        + $"({reason}) — emitting a call-time-throw SuspendLambda state machine (v1 limitation). "
+                        + "The lambda COMPILES; invoking it throws NotSupportedException.");
+                    // SmTypeLambda's ctor/create protocol still needs capture + lambda-param fields even though the
+                    // stub invokeSuspend never reads them.
+                    foreach (var (n, t) in _captures) AddField(n, t);
+                    foreach (var p in _params) AddField(Str(p["name"]), TypeJson.Read(p["type"]));
+                    var msg = $"{_smType}: {reason} — this suspend lambda is not supported by bir2cir's v1 "
+                        + "cold-lowering (docs/design-coroutine-cold-core-task-bridge.md §11/§14).";
+                    newTypes.Add(SmTypeLambda(UnsupportedThrowBody(msg)));
+                    return;
+                }
                 Console.Error.WriteLine(
                     $"bir2cir: WARNING suspend-lowering: '{(_ownerClass ?? _fileClass)}.{_name}' is not segmentable "
                     + $"({reason}) — emitting a call-time-throw cold entry (v1 limitation). The suspend fun COMPILES; "
@@ -972,8 +998,8 @@ static partial class SuspendColdLowering
 
             var body = _isLambda ? _lambdaBody : ((_m["body"] as JsonArray) ?? new JsonArray());
             var hasSuspension = HasSuspension(body);
-            // #78/#82 — normalize a suspending body BEFORE segmentation so a suspension in a POSITION the straight-line
-            // SM cannot segment is lifted into one it can: a structured collection loop whose body spans a suspension is
+            // #78/#82/#98 — normalize a suspending body BEFORE segmentation so a suspension in a POSITION the straight-line
+            // SM cannot segment is lifted into one it can: a structured loop whose body spans a suspension is
             // flattened to label/brIf/goto CFG (FlattenSuspendingLoops — its implicit loop vars become real `{k:var}` so
             // CollectVarFields spills them), and a suspending catch handler is hoisted OUT of the CLR catch clause (a
             // `leave`-in / resume-into a catch is illegal IL) into gated straight-line code (HoistSuspendingCatches).
@@ -2884,22 +2910,23 @@ static partial class SuspendColdLowering
         {
             var msg = $"{(_ownerClass ?? _fileClass)}.{_name}: {reason} — this suspend fun is not supported by "
                 + "bir2cir's v1 cold-lowering (docs/design-coroutine-cold-core-task-bridge.md §11/§14).";
-            var body = new JsonArray
-            {
-                new JsonObject
-                {
-                    ["k"] = "throw",
-                    ["value"] = new JsonObject
-                    {
-                        ["k"] = "newClr",
-                        ["type"] = TypeJson.Fqn("System.NotSupportedException"),
-                        ["argTypes"] = new JsonArray { Tw(new TypeNode.Fqn("kotlin.String")) },
-                        ["args"] = new JsonArray { new JsonObject { ["k"] = "const", ["type"] = Tw(new TypeNode.Fqn("kotlin.String")), ["value"] = msg } },
-                    },
-                },
-            };
-            return ColdMethod(body);
+            return ColdMethod(UnsupportedThrowBody(msg));
         }
+
+        JsonArray UnsupportedThrowBody(string msg) => new()
+        {
+            new JsonObject
+            {
+                ["k"] = "throw",
+                ["value"] = new JsonObject
+                {
+                    ["k"] = "newClr",
+                    ["type"] = TypeJson.Fqn("System.NotSupportedException"),
+                    ["argTypes"] = new JsonArray { Tw(new TypeNode.Fqn("kotlin.String")) },
+                    ["args"] = new JsonArray { new JsonObject { ["k"] = "const", ["type"] = Tw(new TypeNode.Fqn("kotlin.String")), ["value"] = msg } },
+                },
+            },
+        };
 
         // An abstract member's cold entry: `<name>$dotkt_suspend(params..., completion): Any?`, Virtual|Abstract,
         // no body/SM. Concrete overrides emit an `override:true` ColdMethod filling this slot. On a generic class
@@ -2939,7 +2966,9 @@ static partial class SuspendColdLowering
         // value and needs no wait (the root is unused, byte-for-byte the old behaviour, and a raw synchronous throw
         // still propagates because there is no try/catch on the sync path). A GENUINELY-suspending main (e.g. it awaits
         // an incomplete Task) returns COROUTINE_SUSPENDED; the eventual resume lands in RootContinuation.resumeWith on a
-        // threadpool thread and completes the TCS, so main must BLOCK on `tcs.Task` until then (`Task.Wait()`) — with a
+        // threadpool thread and completes the TCS, so main must BLOCK on `tcs.Task` until then. Drain it through
+        // `GetAwaiter().GetResult()` (not `Task.Wait()`) so an asynchronous fault/cancellation is rethrown with normal
+        // .NET await semantics instead of being wrapped in AggregateException (#140). With a
         // null completion the resume dereferenced null (NRE / lost result). #55: the Task aliases are GUARANTEED present
         // in an app build (ApplyAll hard-errors otherwise), so the old null-completion fallback is DELETED (no dual-track).
         JsonObject DrainMain()
@@ -2951,6 +2980,11 @@ static partial class SuspendColdLowering
             var tcsType = new TypeNode.Fqn(_tcsBcl, new[] { UnitTn });
             var taskType = new TypeNode.Fqn(_taskBcl, new[] { UnitTn });
             var rootType = new TypeNode.Fqn(RootContinuationFqn, new[] { UnitTn });
+            var taskPlan = _refs?.ResolveAwaitable(_taskBcl, 1)
+                ?? throw new InvalidOperationException(
+                    $"suspend main drain: '{_taskBcl}<Unit>' has no conforming GetAwaiter in referenced metadata");
+            var awaiterType = new TypeNode.Fqn(taskPlan.AwaiterDefName,
+                taskPlan.AwaiterGeneric ? new[] { UnitTn } : null);
 
             var coldArgs = new JsonArray();
             foreach (var p in _params) coldArgs.Add(new JsonObject { ["k"] = "local", ["name"] = Str(p["name"]) });
@@ -2985,21 +3019,25 @@ static partial class SuspendColdLowering
                     },
                 },
             };
-            // if (r !== COROUTINE_SUSPENDED) return;   else  tcs.Task.Wait();   (block for the async resume)
+            // if (r !== COROUTINE_SUSPENDED) return;
+            // else tcs.Task.GetAwaiter().GetResult();   (block, preserving raw await exception semantics)
             var skipL = NextLabel();
             body.Add(BrIf(new JsonObject { ["k"] = "objEq", ["lhs"] = Local("__r"), ["rhs"] = Suspended() }, false, skipL));
+            var task = new JsonObject
+            {
+                ["k"] = "clrPropGet", ["type"] = Tw(tcsType), ["name"] = "Task", ["static"] = false,
+                ["recv"] = Local("__tcs"), ["ret"] = Tw(taskType),
+            };
+            var getAwaiter = BuildGetAwaiter(taskPlan, taskType, awaiterType, task,
+                noCapture: false, resultTok: UnitTn, generic: true);
             body.Add(new JsonObject
             {
                 ["k"] = "exprStmt",
                 ["expr"] = new JsonObject
                 {
-                    ["k"] = "clrInstance", ["type"] = Tw(taskType), ["method"] = "Wait",
-                    ["recv"] = new JsonObject
-                    {
-                        ["k"] = "clrPropGet", ["type"] = Tw(tcsType), ["name"] = "Task", ["static"] = false,
-                        ["recv"] = Local("__tcs"), ["ret"] = Tw(taskType),
-                    },
-                    ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(), ["ret"] = Tw(VoidTn),
+                    ["k"] = "clrInstance", ["type"] = Tw(awaiterType), ["method"] = "GetResult",
+                    ["recv"] = getAwaiter,
+                    ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(), ["ret"] = Tw(UnitTn),
                 },
             });
             body.Add(Label(skipL));

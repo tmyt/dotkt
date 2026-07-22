@@ -57,7 +57,41 @@ ktproj_selftest
 
 
 # Static PackageReference and bidirectional ProjectReference samples now run as NUnit tests under tests/interop and
-# tests/roundtrip. This shell gate remains only for stateful MSBuild behavior that cannot be expressed in-process.
+# tests/roundtrip. This shell gate otherwise remains for stateful MSBuild behavior, plus process-boundary assertions
+# (such as the synthesized suspend-main entry point) that cannot be expressed by an in-process NUnit fixture.
+
+# #140: a genuinely-suspending main whose resumed body faults must surface the RAW exception. Task.Wait() wrapped it
+# in AggregateException; GetAwaiter().GetResult() follows normal .NET await semantics. This must be a separate process:
+# invoking the original suspend declaration via blockOn would bypass the compiler-synthesized plain main drain.
+main_fault="$WORK/suspend-main-fault"
+rm -rf "$main_fault"; mkdir -p "$main_fault"
+cat > "$main_fault/app.ktproj" <<KTPROJ
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><Nullable>disable</Nullable></PropertyGroup>
+  <Import Project="$ROOT/eng/KotlinClr.targets" />
+</Project>
+KTPROJ
+cat > "$main_fault/App.kt" <<'KOTLIN'
+import System.Threading.Tasks.Task
+import kotlin.clr.await
+
+suspend fun main() {
+    Task.Delay(1).await()
+    throw IllegalStateException("async-main-boom")
+}
+KOTLIN
+main_fault_rc=0
+ktproj_run "$main_fault/app.ktproj" "$main_fault/run.err" >/dev/null || main_fault_rc=$?
+if (( main_fault_rc != 0 )) \
+    && grep -q 'System.InvalidOperationException: async-main-boom' "$main_fault/run.err" \
+    && ! grep -q 'AggregateException' "$main_fault/run.err"; then
+	echo "PASS  ktproj-suspend-main-raw-fault"
+else
+	echo "FAIL  ktproj-suspend-main-raw-fault (run exit $main_fault_rc; want raw InvalidOperationException, no AggregateException)"
+	tail -20 "$main_fault/run.err" 2>/dev/null
+	fail=1
+fi
+rm -rf "$main_fault"
 
 # #50: INCREMENTAL deletion-safety + staleness through MSBuild. A single dir is built TWICE with the SAME obj/ (no
 # clean) — the incremental path the shared targets guard. Between the builds a top-level `class Shape` is MOVED out of
