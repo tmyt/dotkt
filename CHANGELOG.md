@@ -27,6 +27,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir ([tmyt/dotkt#140], area:bir2cir): an asynchronously faulted or canceled `suspend fun main` now surfaces
+  the raw await exception instead of `AggregateException`.** The synthesized blocking entry point drains its root
+  `Task<Unit>` with `GetAwaiter().GetResult()` rather than `Task.Wait()`, matching the coroutine bridge design and
+  normal .NET await semantics. A process-level regression verifies the asynchronous fault path.
+
 - **bir2cir ([tmyt/dotkt#125], area:bir2cir): non-segmentable suspend lambdas now fail loud at invocation instead of
   emitting invalid IL.** `newSuspendLambda` uses the same structural classifier as named suspend functions; a
   suspension in `finally`, a suspending `catch` paired with `finally`, or a nested suspending `try` produces a valid

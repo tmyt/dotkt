@@ -2966,7 +2966,9 @@ static partial class SuspendColdLowering
         // value and needs no wait (the root is unused, byte-for-byte the old behaviour, and a raw synchronous throw
         // still propagates because there is no try/catch on the sync path). A GENUINELY-suspending main (e.g. it awaits
         // an incomplete Task) returns COROUTINE_SUSPENDED; the eventual resume lands in RootContinuation.resumeWith on a
-        // threadpool thread and completes the TCS, so main must BLOCK on `tcs.Task` until then (`Task.Wait()`) — with a
+        // threadpool thread and completes the TCS, so main must BLOCK on `tcs.Task` until then. Drain it through
+        // `GetAwaiter().GetResult()` (not `Task.Wait()`) so an asynchronous fault/cancellation is rethrown with normal
+        // .NET await semantics instead of being wrapped in AggregateException (#140). With a
         // null completion the resume dereferenced null (NRE / lost result). #55: the Task aliases are GUARANTEED present
         // in an app build (ApplyAll hard-errors otherwise), so the old null-completion fallback is DELETED (no dual-track).
         JsonObject DrainMain()
@@ -2978,6 +2980,11 @@ static partial class SuspendColdLowering
             var tcsType = new TypeNode.Fqn(_tcsBcl, new[] { UnitTn });
             var taskType = new TypeNode.Fqn(_taskBcl, new[] { UnitTn });
             var rootType = new TypeNode.Fqn(RootContinuationFqn, new[] { UnitTn });
+            var taskPlan = _refs?.ResolveAwaitable(_taskBcl, 1)
+                ?? throw new InvalidOperationException(
+                    $"suspend main drain: '{_taskBcl}<Unit>' has no conforming GetAwaiter in referenced metadata");
+            var awaiterType = new TypeNode.Fqn(taskPlan.AwaiterDefName,
+                taskPlan.AwaiterGeneric ? new[] { UnitTn } : null);
 
             var coldArgs = new JsonArray();
             foreach (var p in _params) coldArgs.Add(new JsonObject { ["k"] = "local", ["name"] = Str(p["name"]) });
@@ -3012,21 +3019,25 @@ static partial class SuspendColdLowering
                     },
                 },
             };
-            // if (r !== COROUTINE_SUSPENDED) return;   else  tcs.Task.Wait();   (block for the async resume)
+            // if (r !== COROUTINE_SUSPENDED) return;
+            // else tcs.Task.GetAwaiter().GetResult();   (block, preserving raw await exception semantics)
             var skipL = NextLabel();
             body.Add(BrIf(new JsonObject { ["k"] = "objEq", ["lhs"] = Local("__r"), ["rhs"] = Suspended() }, false, skipL));
+            var task = new JsonObject
+            {
+                ["k"] = "clrPropGet", ["type"] = Tw(tcsType), ["name"] = "Task", ["static"] = false,
+                ["recv"] = Local("__tcs"), ["ret"] = Tw(taskType),
+            };
+            var getAwaiter = BuildGetAwaiter(taskPlan, taskType, awaiterType, task,
+                noCapture: false, resultTok: UnitTn, generic: true);
             body.Add(new JsonObject
             {
                 ["k"] = "exprStmt",
                 ["expr"] = new JsonObject
                 {
-                    ["k"] = "clrInstance", ["type"] = Tw(taskType), ["method"] = "Wait",
-                    ["recv"] = new JsonObject
-                    {
-                        ["k"] = "clrPropGet", ["type"] = Tw(tcsType), ["name"] = "Task", ["static"] = false,
-                        ["recv"] = Local("__tcs"), ["ret"] = Tw(taskType),
-                    },
-                    ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(), ["ret"] = Tw(VoidTn),
+                    ["k"] = "clrInstance", ["type"] = Tw(awaiterType), ["method"] = "GetResult",
+                    ["recv"] = getAwaiter,
+                    ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(), ["ret"] = Tw(UnitTn),
                 },
             });
             body.Add(Label(skipL));
