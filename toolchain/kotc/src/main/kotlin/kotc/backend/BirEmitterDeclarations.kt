@@ -789,12 +789,15 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 	// `clrOverride` field from that marker (kotc emits no clrOverride — A2 / #73 M4.3).
 	fun ovIface(a: IrSimpleFunction) = a.overriddenSymbols.any { (it.owner.parent as? IrClass)?.kind == ClassKind.INTERFACE }
 	// A FAKE-OVERRIDE property whose implementation is INHERITED FROM A BASE CLASS (`name` in `Sq : Shape("sq")`)
-	// has accessors with NO body — emitting them produced an empty-bodied get_name (ilverify ReturnMissing,
-	// il-langf); CLR class inheritance provides the slot. An ABSTRACT fake-override resolved only to an INTERFACE
-	// member (AbstractMutableList.size over MutableList.size) is KEPT: the CLR requires the (abstract) class to
-	// re-declare the unimplemented interface slot.
-	fun classInherited(a: IrSimpleFunction?) = (a?.resolveFakeOverride()?.parent as? IrClass)?.kind == ClassKind.CLASS
-	fun dropFake(p: IrProperty) = p.isFakeOverride && classInherited(p.getter)
+	// or from a CLR default interface property has accessors with NO body. Emitting such an accessor creates a new,
+	// empty override (returning the CLR default value) and shadows the inherited implementation. An ABSTRACT
+	// fake-override resolved only to an INTERFACE member (AbstractMutableList.size over MutableList.size) is KEPT:
+	// the CLR requires the (abstract) class to re-declare the unimplemented interface slot.
+	fun implementationInherited(a: IrSimpleFunction?): Boolean {
+		val resolved = a?.resolveFakeOverride() ?: return false
+		return (resolved.parent as? IrClass)?.kind == ClassKind.CLASS || resolved.modality != Modality.ABSTRACT
+	}
+	fun dropFake(p: IrProperty) = p.isFakeOverride && implementationInherited(p.getter)
 	// `!isClrEventProperty`: a `kotlin.clr.ClrEvent<T>` fake-override (a .NET event inherited through a base's
 	// interface) is not a real property and must not surface an accessor/property member.
 	fun emitsGet(p: IrProperty) = p.getter != null && !p.isConst && !p.isLateinit && !p.isDelegated && !isClrField(p) && !dropFake(p) && !isClrEventProperty(p)

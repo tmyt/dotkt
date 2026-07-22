@@ -33,6 +33,8 @@ import GenInj.Item as GenInjItem
 // il-genim
 import GenIm.Conv
 import GenIm.IConv
+// CLR default interface implementations: only the genuinely abstract member is an implementation obligation.
+import DefaultIface.IDefaultArithmetic
 // #205: generic interface deriving a member-bearing non-generic base interface
 import IfaceBaseGen.Source as IfaceBaseSource
 import IfaceBaseGen.IPingable as IfaceBasePingable
@@ -56,6 +58,10 @@ class InheritMyApp : Base() {
 
 // il-genim top-level helper: call the generic interface method through the IConv interface TYPE.
 fun genimViaIface(c: IConv): String = c.Convert<String>("hello")
+
+class DefaultArithmetic : IDefaultArithmetic {
+    override fun Required(value: Int): Int = value * 2
+}
 
 // #205 helper: reach the inherited non-generic-base member through the base interface TYPE.
 fun ifaceBaseViaBase(p: IfaceBasePingable): String = p.Ping()
@@ -111,6 +117,15 @@ class CSharpInterfaceAndGenericTests {
         val c = Conv()
         assertEquals("hello", genimViaIface(c))         // hello — through interface type
         assertEquals("world", c.Convert<String>("world")) // world — Conv assignable to IConv usage
+    }
+
+    @TestAttribute
+    fun defaultInterfaceImplementations() {
+        val x: IDefaultArithmetic = DefaultArithmetic()
+        assertEquals(10, x.Offset)                       // default interface property getter
+        assertEquals(15, x.Add(5))                       // default interface method calling that getter
+        assertEquals("echo", x.Echo<String>("echo"))     // generic default interface method
+        assertEquals(14, x.Required(7))                  // genuinely abstract slot implemented by Kotlin
     }
 
     // #205: a generic interface (IReader<Doc>) deriving a member-bearing non-generic base interface (IPingable).
