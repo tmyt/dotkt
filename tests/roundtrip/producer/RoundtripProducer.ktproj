@@ -8,7 +8,7 @@
      Each *.kt here is one migrated verify-roundtrip.sh section's library, given its OWN package so the many
      colliding simple names (Box/Money/...) coexist in this single producer assembly. Resolves the LOCALLY-BUILT
      SDK from build/nuget-feed via tests/nuget.config (design D4). -->
-<Project Sdk="DotKt.Sdk/0.9.6-rc7">
+<Project Sdk="DotKt.Sdk/0.9.7">
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <OutputType>Library</OutputType>

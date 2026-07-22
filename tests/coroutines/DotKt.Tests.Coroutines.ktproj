@@ -15,7 +15,7 @@
      compiler in THIS working tree. The pinned version tracks packaging/DotKt.Versions.props; the gate driver
      tests/run-nunit-tests.sh reads it from there and clears the isolated cache so a repacked same-version SDK
      always wins. -->
-<Project Sdk="DotKt.Sdk/0.9.6-rc7">
+<Project Sdk="DotKt.Sdk/0.9.7">
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <IsTestProject>true</IsTestProject>

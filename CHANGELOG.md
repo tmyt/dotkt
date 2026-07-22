@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.7 (2026-07-22)
+
 ### Added
 
 - **CLR event model — a Kotlin class can now IMPLEMENT and RAISE a .NET interface event ([tmyt/dotkt#187],

@@ -28,13 +28,11 @@ DotKt ships as four NuGet packages:
 | `DotKt.Stdlib` | the Kotlin standard library compiled for the CLR |
 | `DotKt.Templates` | `dotnet new` project templates |
 
-Install the templates once. **Pin the version** — `dotnet new install` resolves the latest *stable*
-package by default, but DotKt is pre-1.0 and only publishes **pre-release** versions (e.g.
-`0.9.6-rc7`); an unversioned install cannot resolve against a feed that carries no stable release
-and fails with "package not found":
+Install the templates once. **Pin the version** for reproducible builds — DotKt is pre-1.0; the feed's
+current release is `0.9.7`, and pinning keeps a project on a known toolchain across feed updates:
 
 ```bash
-dotnet new install DotKt.Templates::0.9.6-rc7
+dotnet new install DotKt.Templates::0.9.7
 ```
 
 (Check `packaging/DotKt.Versions.props` in the repo for the current shipping version if this page
@@ -52,7 +50,7 @@ dotnet run
 That template is just two files. The project file:
 
 ```xml
-<Project Sdk="DotKt.Sdk/0.9.6-rc7">
+<Project Sdk="DotKt.Sdk/0.9.7">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>

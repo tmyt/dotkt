@@ -11,7 +11,7 @@
          GUARD (#131 durable): scripts/pack-nuget.sh dies if this default != the release version CORE
          (DotKtVersionPrefix, plus -DotKtVersionSuffix when pre-release — e.g. 0.9.6-rc7; both in
          packaging/DotKt.Versions.props), so a stale value can never silently ship — bump both together. -->
-    <DotKtVersion Condition="'$(DotKtVersion)' == ''">0.9.6-rc7</DotKtVersion>
+    <DotKtVersion Condition="'$(DotKtVersion)' == ''">0.9.7</DotKtVersion>
     <!-- We generate the assembly ourselves (kt -> BIR -> CIL); don't let the .NET SDK glob .cs and don't infer
          a language from the project file. -->
     <EnableDefaultCompileItems Condition="'$(EnableDefaultCompileItems)' == ''">false</EnableDefaultCompileItems>
