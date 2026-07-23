@@ -23,7 +23,7 @@ static class RefBodySquash
     public static void Squash(JsonNode root)
     {
         if (root is not JsonObject file) return;
-        SquashMethods(file["methods"] as JsonArray);
+        SquashMethods(file["methods"] as JsonArray, interfaceMembers: false);
         SquashTypes(file["types"] as JsonArray);
     }
 
@@ -33,13 +33,13 @@ static class RefBodySquash
         foreach (var t in types)
         {
             if (t is not JsonObject type) continue;
-            SquashMethods(type["methods"] as JsonArray);
+            SquashMethods(type["methods"] as JsonArray, Str(type["kind"]) == "interface");
             SquashCtors(type["ctors"] as JsonArray);
             SquashTypes(type["types"] as JsonArray);   // nested types (local/object/companion)
         }
     }
 
-    static void SquashMethods(JsonArray methods)
+    static void SquashMethods(JsonArray methods, bool interfaceMembers)
     {
         if (methods == null) return;
         foreach (var m in methods)
@@ -50,7 +50,15 @@ static class RefBodySquash
             // and NO `body` (ilemit emits its own throwing stub under stdlib-compile); leave it untouched. We only
             // squash a member that actually carries a `body` statement array.
             if (IsAbstract(method)) continue;
-            if (method["body"] is JsonArray) method["body"] = ThrowStubBody();
+            if (method["body"] is JsonArray body)
+            {
+                // Kotlin interface declarations encode an abstract slot as an empty body array and a DIM as a
+                // non-empty one.  Preserve that distinction in the reference assembly: body stripping must never
+                // turn an abstract slot into a concrete throw-stub DIM, because downstream hierarchy lowering reads
+                // MethodInfo.IsAbstract as ABI metadata.
+                if (interfaceMembers && body.Count == 0) continue;
+                method["body"] = ThrowStubBody();
+            }
         }
     }
 
@@ -70,6 +78,9 @@ static class RefBodySquash
     static bool IsAbstract(JsonObject method) =>
         method["abstract"] is JsonValue v && v.TryGetValue<bool>(out var b) && b;
 
+    static string Str(JsonNode node) =>
+        node is JsonValue value && value.TryGetValue<string>(out var result) ? result : null;
+
     // A one-statement body: `throw new System.NotImplementedException()`. Mirrors the existing throw-statement
     // shape ilemit already consumes (see the stdlib's NotSupportedException intrinsic stubs); the same shape kotc
     // emits for `kotlin.TODO()`, only as a statement rather than an expression.
@@ -88,4 +99,3 @@ static class RefBodySquash
         },
     };
 }
-

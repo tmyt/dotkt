@@ -34,6 +34,11 @@ class IntropDMyEx : Exception("boom") {
     override val message: String get() = "overridden"
 }
 
+// Exception.InnerException is non-virtual: this remains a Kotlin virtual newslot and must not receive a CLR .override.
+class IntropDCauseEx(private val ownCause: Throwable) : Exception("outer", IllegalStateException("base")) {
+    override val cause: Throwable get() = ownCause
+}
+
 // il-pairtostr: a same-module user data class — its auto-toString embeds the (prefixed) class name and named fields.
 data class IntropDRec(val name: String, val n: Int)
 
@@ -71,6 +76,12 @@ class ClrObjectModelTests {
             ex.message
         }
         assertEquals("overridden", caught)           // overridden
+    }
+
+    @TestAttribute
+    fun overrideNonVirtualExceptionCause() {
+        val e = IntropDCauseEx(IllegalArgumentException("own"))
+        assertEquals("own", e.cause!!.message)
     }
 
     // il-pairtostr: set/Triple/data-class toString routing (only the assertions NOT already covered elsewhere).

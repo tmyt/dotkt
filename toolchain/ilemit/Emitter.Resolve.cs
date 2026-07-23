@@ -131,14 +131,11 @@ sealed partial class Emitter
         }
         // The owner constructed with its OWN class type parameters (`RingBuffer<T>` referenced from inside
         // RingBuffer<T>) is the self instantiation. A call must reference the method on that self-instantiation
-        // (`C<!0>::m`), NOT the open type def (`C`1::m`) — the open form is "not fully instantiated" at runtime (any
-        // self method-call `this.b()` inside a generic class). EXCEPTION: a generic-METHOD self-call must keep the open
-        // MethodBuilder, because TypeBuilder.GetMethod yields a MethodBuilderInstantiation that can't be
-        // MakeGenericMethod'd (`this.toArray<object>()`); ApplyTypeArgs instantiates the open mb instead.
+        // (`C<!0>::m`), NOT the open type def (`C`1::m`) — including a GENERIC method. ApplyTypeArgs now applies the
+        // method MethodSpec to this anchored handle, preserving both instantiations exactly as CIR specifies.
         if (IsSelfInstantiation(constructed))
         {
             retType = mb.ReturnType;
-            if (mb.IsGenericMethodDefinition) return mb;
             // TypeBuilder.GetMethod requires `mb` declared on `constructed`'s OWN generic def. An INHERITED self-call
             // (mb on a generic base, `class D<T> : Base<T>` — `this.show()`) throws; anchor it onto the CONSTRUCTED
             // base instantiation (`Base<!T>`), not the open def (`Base``1::m` is "not fully instantiated").
@@ -250,6 +247,26 @@ sealed partial class Emitter
         return subd.SequenceEqual(ga) ? t : t.GetGenericTypeDefinition().MakeGenericType(subd);
     }
 
+    // Structural substitution for the combined owner-type + method-type parameter map used while materializing a
+    // MethodSpec from an already-bound CIR owner. This is bookkeeping for argument/return emission only; member and
+    // overload selection have already been completed by bir2cir.
+    static Type SubstituteTypeMap(Type t, IReadOnlyDictionary<Type, Type> map)
+    {
+        if (t == null) return null;
+        if (map.TryGetValue(t, out var direct)) return direct;
+        if (t.HasElementType)
+        {
+            var elem = SubstituteTypeMap(t.GetElementType(), map);
+            if (ReferenceEquals(elem, t.GetElementType())) return t;
+            return t.IsArray ? (t.GetArrayRank() == 1 ? elem.MakeArrayType() : elem.MakeArrayType(t.GetArrayRank()))
+                : t.IsByRef ? elem.MakeByRefType() : t.IsPointer ? elem.MakePointerType() : t;
+        }
+        var args = t.GetGenericArguments();
+        if (args.Length == 0) return t;
+        var subst = args.Select(a => SubstituteTypeMap(a, map)).ToArray();
+        return subst.SequenceEqual(args) ? t : t.GetGenericTypeDefinition().MakeGenericType(subst);
+    }
+
     // Overload disambiguation for interface-slot wiring: does a body method's declared param type satisfy the
     // interface method's (substituted) param type? Reference/Type equality first; builders vs runtime
     // instantiations of the same shape compare by name (TypeBuilderInstantiation instances are not reference-equal
@@ -319,13 +336,11 @@ sealed partial class Emitter
                 int k = 0;
                 foreach (var gp in gps.Values) { if (k < targs.Length) sub[gp] = targs[k]; k++; }
             }
-            // A generic method on a CONSTRUCTED-generic TypeBuilder owner (non-self, e.g. `ringBuffer<E>.toArray<T>()`)
-            // is a MethodBuilderInstantiation whose MakeGenericMethod is unsupported. Instantiate the OPEN method's
-            // generic params. Reflection.Emit has NO API for a generic method on a constructed-generic TypeBuilder
-            // owner (TypeBuilder.GetMethod wants a generic-method-DEFINITION; MethodBuilderInstantiation can't
-            // MakeGenericMethod). The owner here is constructed with enclosing type params (e.g. ringBuffer<E>.toArray
-            // <T>() from inside another generic), which erases to the open owner in IL, so use the OPEN method's
-            // instantiation directly — the same shape the self-instantiation path emits.
+            // A generic method on a CONSTRUCTED-generic TypeBuilder owner must keep BOTH instantiations from CIR:
+            // owner `Base<X>` and method `<Y>`. TypeBuilder.GetMethod has already anchored `m` to that owner; applying
+            // the method args to the anchored method is the mechanical MethodSpec construction. Falling back to the
+            // OPEN MethodBuilder loses `Base<X>` and creates an invalid MemberRef whenever X is an enclosing method/type
+            // parameter ("containing type is not fully instantiated").
             if (m is not MethodBuilder && m.DeclaringType is { IsGenericType: true } dt && !dt.IsGenericTypeDefinition
                 && dt.GetGenericTypeDefinition() is TypeBuilder openTb)
             {
@@ -339,30 +354,13 @@ sealed partial class Emitter
                 {
                     int k = 0;
                     foreach (var gp in ogps.Values) { if (k < targs.Length) sub[gp] = targs[k]; k++; }
-                    // A CONCRETE owner instantiation (`Holder<int>.pairWith<string>` — a call site OUTSIDE any generic
-                    // context, e.g. main): the open-method form below loses the container's `<int>` and throws "not
-                    // fully instantiated" at runtime. Here the anchored MethodOnTypeBuilderInstantiation (m, produced
-                    // by ResolveMethod's TypeBuilder.GetMethod) DOES support MakeGenericMethod (the documented
-                    // TypeBuilder.GetMethod-then-MakeGenericMethod order; verified on .NET 10 persisted emit), carrying
-                    // BOTH instantiations. Gated STRICTLY to owners with no generic-parameter args so the erased-context
-                    // path below (the rt-stdlib self/enclosing-generic case) is untouched. KNOWN EDGE (Codex review,
-                    // no failing sample): a MIXED owner (`Holder<int, U>` — concrete + enclosing-generic args) still
-                    // takes the open path and would lose the concrete arg; if such CIR ever appears, route it here too.
-                    if (!dt.GetGenericArguments().Any(ContainsGenericParam))
-                    {
-                        var cpars = openTb.GetGenericArguments();
-                        var cargs = dt.GetGenericArguments();
-                        for (int i = 0; i < cpars.Length && i < cargs.Length; i++) sub[cpars[i]] = cargs[i];
-                        retType = sub.TryGetValue(openMb.ReturnType, out var cr) ? cr : m.ReturnType;
-                        paramTypes = _mparams.TryGetValue(openMb, out var ops)
-                            ? ops.Select(x => sub.TryGetValue(x, out var s) ? s : x).ToArray() : ps;
-                        return m.MakeGenericMethod(targs);
-                    }
-                    // Owner constructed with enclosing GENERIC PARAMS (`ringBuffer<E>.toArray<T>()` from inside another
-                    // generic) — erases to the open owner in IL, so the OPEN method's instantiation is the right shape.
-                    retType = sub.TryGetValue(openMb.ReturnType, out var or) ? or : m.ReturnType;
-                    paramTypes = ps;
-                    return openMb.MakeGenericMethod(targs);
+                    var cpars = openTb.GetGenericArguments();
+                    var cargs = dt.GetGenericArguments();
+                    for (int i = 0; i < cpars.Length && i < cargs.Length; i++) sub[cpars[i]] = cargs[i];
+                    retType = SubstituteTypeMap(openMb.ReturnType, sub);
+                    paramTypes = _mparams.TryGetValue(openMb, out var ops)
+                        ? ops.Select(x => SubstituteTypeMap(x, sub)).ToArray() : ps;
+                    return m.MakeGenericMethod(targs);
                 }
             }
             retType = sub.TryGetValue(m.ReturnType, out var r) ? r : m.ReturnType;

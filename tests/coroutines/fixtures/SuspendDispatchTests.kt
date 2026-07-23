@@ -46,6 +46,18 @@ class CorADimIntSource(val v: Int) : CorADimSource<Int> {
 }
 suspend fun corADimDrive(s: CorADimSource<Int>): Int = s.fetchOrDefault(0)
 
+// A constructed generic receiver's suspend result must be substituted before the caller SM copies it into an
+// await field. Keeping the callee-relative `type TV0` until after SM synthesis makes this field `object`, followed by
+// invalid `object + int` IL in the resumed branch.
+interface CorAConstructedSource<E> { suspend fun read(): E }
+class CorAConstructedIntSource(private val value: Int) : CorAConstructedSource<Int> {
+    override suspend fun read(): Int = value
+}
+suspend fun corAConstructedUse(source: CorAConstructedSource<Int>): Int {
+    val value = source.read()
+    return value + 2
+}
+
 // ---- il-coldstaticmember: a static/companion suspend member's cold-entry declaration (M3) --------------------
 suspend fun corAStatBump(x: Int): Int = x + 1
 class CorAStatCalc {
@@ -79,6 +91,11 @@ class SuspendDispatchTests {
     @TestAttribute
     fun genericInterfaceDefaultMethod() {
         assertEquals(42, blockOn { corADimDrive(CorADimIntSource(42)) })   // 42
+    }
+
+    @TestAttribute
+    fun constructedGenericSuspendResult() {
+        assertEquals(42, blockOn { corAConstructedUse(CorAConstructedIntSource(40)) })
     }
 
     @TestAttribute

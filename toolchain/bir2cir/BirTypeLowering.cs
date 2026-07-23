@@ -155,6 +155,21 @@ static class BirTypeLowering
         ["kotlin.collections.Set"] = "System.Collections.Generic.ICollection",
     };
 
+    // A synthesized result slot sometimes has to be named before this lowering pass runs (the suspend
+    // TaskCompletionSource<R>/RootContinuation<R> drive is the canonical case). Its public Task<R> must retain the
+    // same readonly head type a Kotlin call observes; spelling that BCL head explicitly also exempts this one coherent
+    // producer/consumer slot from Root-V's generic-argument collapse. Nested collection arguments still lower normally.
+    internal static TypeNode AsReadonlyResultSlot(TypeNode t) => t switch
+    {
+        TypeNode.Fqn { Name: "kotlin.collections.List", Args: not null } f
+            => new TypeNode.Fqn("System.Collections.Generic.IReadOnlyList", f.Args),
+        TypeNode.Fqn { Name: "kotlin.collections.Collection" or "kotlin.collections.Set", Args: not null } f
+            => new TypeNode.Fqn("System.Collections.Generic.IReadOnlyCollection", f.Args),
+        TypeNode.Nullable n => new TypeNode.Nullable(AsReadonlyResultSlot(n.Of)),
+        TypeNode.Oblivious o => new TypeNode.Oblivious(AsReadonlyResultSlot(o.Of)),
+        _ => t,
+    };
+
     // Whether the INNER of a `{t:nullable}` node is a value type — evaluated on the SEMANTIC (pre-lowering) inner so a
     // struct/enum/primitive FQN is recognized before it is rewritten to a CLR shorthand / BCL name. A generic
     // application, function type, array, byRef, or type variable is treated as a reference (stripped). A value FQN
@@ -339,7 +354,7 @@ static class BirTypeLowering
                 // STEP-1 clrName migration: kotc emits a pure-Kotlin `overrides` marker (the override closure) so a
                 // future bir2cir decl-rename pass can derive BCL slot names from the ref.dll @ClrIntrinsic. It is
                 // bir2cir-internal metadata — strip it here so it never reaches the CIR/ilemit (keeps emit byte-identical).
-                if (kv.Key == "overrides") continue;
+                if (kv.Key is "overrides" or "fakeOverride") continue;
                 // #122: the frontend static-type stamp `sty` is bir2cir-internal (consumed by StaticType up through the
                 // CharSequence bridge). Strip it here so it never reaches CIR/ilemit — a consumed hint, not a CIR slot.
                 if (kv.Key == "sty") continue;

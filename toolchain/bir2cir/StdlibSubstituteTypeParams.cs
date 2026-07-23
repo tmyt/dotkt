@@ -10,7 +10,12 @@ using System.Text.Json.Nodes;
 //       kotlin.Comparable, so `ClosedRange<Int>` would violate the constraint at CLR type-load; the body's compareTo
 //       already dispatches through `constrained. System.IComparable<T>::CompareTo` (which primitives satisfy), and
 //       runtime constraints are not enforced anyway (the app type-checked against the ref).
-//   (2) DROP `in` (contravariant) declaration-site variance. The CLR's variance-validity check is stricter than
+//   (2) DROP every interface type-param constraint in the executable runtime CIR. Kotlin/frontend constraints remain
+//       complete in the metadata/reference CIR, but reifying the same bound on a CLR interface type param is unsafe for
+//       generic DIM forwarding: CoreCLR validates a nested `Key<!!E>` using its shared `object` canon before substituting
+//       the forwarding method's `E : Element`, and rejects the valid MethodSpec as `Key<object>`. Method constraints are
+//       untouched; only the runtime interface TYPE declaration drops the duplicate CLR constraint.
+//   (3) DROP `in` (contravariant) declaration-site variance. The CLR's variance-validity check is stricter than
 //       Kotlin's (e.g. `Continuation<in T>.resumeWith(Result<out T>)` — T in an input position — is rejected). Runtime
 //       types don't need declaration-site variance (a compile-time concern; the ref.dll keeps it).
 //
@@ -23,28 +28,31 @@ static class StdlibSubstituteTypeParams
     {
         if (node is JsonObject o)
         {
-            if (o["typeParams"] is JsonArray tps) Rewrite(tps);
+            if (o["typeParams"] is JsonArray tps) Rewrite(tps, Str(o["kind"]) == "interface");
             foreach (var kv in o) if (kv.Value != null) Apply(kv.Value);
         }
         else if (node is JsonArray a)
             foreach (var it in a) if (it != null) Apply(it);
     }
 
-    static void Rewrite(JsonArray tps)
+    static void Rewrite(JsonArray tps, bool runtimeInterface)
     {
         for (int i = 0; i < tps.Count; i++)
         {
             if (tps[i] is not JsonObject tp) continue;   // already a bare-string param — nothing to drop
 
-            // (1) drop the kotlin.Comparable upper bound (keep every other bound).
+            // (1)/(2): an interface runtime declaration drops all constraints; other declarations drop only the
+            // substitution-incompatible kotlin.Comparable bound.
             if (tp["constraints"] is JsonArray cs)
             {
-                for (int j = cs.Count - 1; j >= 0; j--)
-                    if (IsComparableFqn(cs[j])) cs.RemoveAt(j);
+                if (runtimeInterface) cs.Clear();
+                else
+                    for (int j = cs.Count - 1; j >= 0; j--)
+                        if (IsComparableFqn(cs[j])) cs.RemoveAt(j);
                 if (cs.Count == 0) tp.Remove("constraints");
             }
 
-            // (2) drop `in` declaration-site variance (keep `out`).
+            // (3) drop `in` declaration-site variance (keep `out`).
             if (Str(tp["variance"]) == "in") tp.Remove("variance");
 
             // Collapse a now name-only param back to the bare-string form kotc's rt build emitted.

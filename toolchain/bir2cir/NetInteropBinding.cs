@@ -81,11 +81,33 @@ static class NetInteropBinding
         var ownerFqnNode = ownerJson == null ? null : UnwrapFqn(ownerJson);
         if (ownerFqnNode == null) return;
         var bare = ReferenceMetadataIndex.BareOwnerFqn(ownerFqnNode.Name);
+        var method = Str(node["method"]);
         var netType = _refs.ResolveNetType(bare, ownerFqnNode.Args?.Length ?? 0);
+        Type dotKtEmittedType = null;
+        if (netType == null && _refs.HasDotKtOwner(bare))
+            dotKtEmittedType = _refs.ResolveRefType(bare, ownerFqnNode.Args?.Length ?? 0);
+        // A basic Kotlin enum is emitted as a real CLR value-type enum. Its constants, inherited System.Enum/Object
+        // members, value receiver address-taking, and constrained dispatch are therefore ordinary CLR ABI facts even
+        // though the declaration came from Kotlin. Route that entire owner shape through this binder; rich Kotlin enums
+        // remain class-like DotKt owners and stay on the Kotlin ABI path.
+        if (netType == null && dotKtEmittedType?.IsEnum == true)
+            netType = dotKtEmittedType;
+        // A referenced DotKt owner normally stays on the Kotlin ABI path: reflecting every Kotlin member as raw CLR
+        // would erase property/operator conventions that MemberCallSubstitution owns. One language ABI seam genuinely
+        // needs the emitted metadata, though: `Comparable<T>.compareTo` implements CLR IComparable<T>.CompareTo and the
+        // exported slot is therefore PascalCase. Admit ONLY that structurally-proven seam to the existing binder. A
+        // standalone Kotlin `operator fun compareTo` still declares lowercase `compareTo` and does not match, while an
+        // arbitrary package/type name is irrelevant. This keeps the decision in bir2cir and leaves ilemit an exact CIR
+        // method name, without reclassifying the rest of a referenced Kotlin library as C#.
+        if (netType == null && k == "callInstance" && method == "compareTo"
+            && dotKtEmittedType is Type dotKtComparable
+            && !DeclaresPublicMethodNamed(dotKtComparable, "compareTo")
+            && DeclaresPublicMethodNamed(dotKtComparable, "CompareTo")
+            && ImplementsGenericIComparable(dotKtComparable))
+            netType = dotKtComparable;
         if (netType == null) return;   // not a reachable .NET-interop owner -> leave for the other binders
 
         var isStatic = k == "callStatic";
-        var method = Str(node["method"]);
         var hasTypeArgs = node["typeArgs"] is JsonArray ta && ta.Count > 0;
 
         // Detach every current field (removing a key from a JsonObject detaches its value) so it can be re-added in the

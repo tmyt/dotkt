@@ -36,6 +36,23 @@ class CorAIceptInterceptor : ContinuationInterceptor {
     override fun <T> interceptContinuation(continuation: Continuation<T>): Continuation<T> = continuation
 }
 
+// A plain intermediate interface reproduces kotlinx.coroutines' `Job : CoroutineContext.Element` shape. The frontend
+// materializes Element's inherited members on CorATransitiveElement as abstract slots; the class-side CLR MethodImpls
+// therefore have to forward those distinct slots to Element's referenced stdlib DIMs.
+interface CorATransitiveElement : CoroutineContext.Element
+
+class CorATransitiveElementImpl : CorATransitiveElement {
+    companion object Key : CoroutineContext.Key<CorATransitiveElementImpl>
+    override val key: CoroutineContext.Key<*> get() = Key
+}
+
+// BIR intentionally keeps the LOCAL intermediate receiver owner; bir2cir must bind this generic
+// call to the nearest referenced declaration (Element, not the transitive CoroutineContext slot).
+fun <E : CoroutineContext.Element> corATransitiveGet(
+    delegate: CorATransitiveElement,
+    key: CoroutineContext.Key<E>,
+): E? = delegate[key]
+
 // ---- il-awaitintercept: an interceptor that COUNTS resumes routed through it (#7 Part B, harness inlined) -----
 class CorAAwiCountingInterceptor : ContinuationInterceptor {
     var resumes: Int = 0
@@ -92,6 +109,17 @@ class CoroutineContextInterceptionTests {
     fun interceptorKeyProjection() {
         val i = CorAIceptInterceptor()
         assertEquals(true, i.key === ContinuationInterceptor)   // True
+        assertEquals(true, (i as CoroutineContext)[ContinuationInterceptor] === i)
+    }
+
+    @TestAttribute
+    fun transitiveReferencedElementDefaults() {
+        val e: CorATransitiveElement = CorATransitiveElementImpl()
+        assertEquals(true, e[CorATransitiveElementImpl.Key] === e)
+        assertEquals(e, e.fold<Any?>(null) { _, element -> element })
+        assertEquals(EmptyCoroutineContext, e.minusKey(CorATransitiveElementImpl.Key))
+
+        assertEquals(true, corATransitiveGet(e, CorATransitiveElementImpl.Key) === e)
     }
 
     @TestAttribute

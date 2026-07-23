@@ -95,12 +95,21 @@ internal fun BirEmitter.interfaceDef(iface: IrClass): String {
 		// emits a CLR default interface method; an implementer that doesn't override it then INHERITS the default
 		// instead of failing to load ("does not have an implementation", e.g. CoroutineContext.plus, ClosedRange.contains).
 		val hasDefault = fn.body != null && fn.modality != Modality.ABSTRACT
+		// A MEMBER-extension receiver is part of the Kotlin function signature. The class-method path already carries it
+		// as the leading `__self` parameter; the interface-only path must be identical. Dropping it here made the abstract
+		// slot `f(value)` while every implementation correctly emitted `f(__self,value)`, so otherwise-valid implementers
+		// failed CLR type loading. This is still pure Kotlin vocabulary/fact preservation: no CLR owner/name is inferred.
+		val extRecv = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
+		if (extRecv != null) selfSubst[extRecv] = """{"k":"local","name":"__self"}"""
 		// #6 non-null parameter PRECONDITIONS + return POSTCONDITION for a default interface method body (an abstract slot
 		// has no body to guard).
 		val body = if (hasDefault) {
 			val stmts = withReturnPostcondition(fn) { (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
 			(preconditionChecks(fn) + listOfNotNull(stmts.takeIf { it.isNotEmpty() })).joinToString(",")
 		} else ""
+		if (extRecv != null) selfSubst.remove(extRecv)
+		val selfParam = extRecv?.let { """{"name":"__self","type":${birType(it.type).toJson()}}""" }
+		val params = (listOfNotNull(selfParam) + paramsJsonList(fn.parameters, ownerFn = fn)).joinToString(",")
 		// A generic interface method (`fun <E> get(...)`, `<R> fold(...)`) must carry its own type params, else
 		// `gp:E`/`gp:R` in its signature is unresolvable at emit (CoroutineContext / ContinuationInterceptor / …).
 		// `attrs`: ride the @Clr/[Kotlin*] metadata so the ref assembly carries the BCL binding hint (for app-emit
@@ -110,7 +119,17 @@ internal fun BirEmitter.interfaceDef(iface: IrClass): String {
 		// `method()` path emits (BirEmitter.kt:1413). Without it bir2cir has nothing to key off for an INTERFACE
 		// suspend member — it can't synthesize the Task-bridge signature / cold-entry — so a cross-assembly
 		// `interface Fetcher { suspend fun fetch(): Int }` round-trip breaks (the abstract-CLASS path already tags it).
-		return """{"name":${str(name)},"static":false,"override":false,"virtual":true${typeParamsJson(fn.typeParameters)},"params":[${paramsJson(fn.parameters)}],"ret":${str(ret)}${funModsJson(fn)}${resultTypeJson(fn)},"body":[$body],"attrs":[$memberAttrs]${overridesJson(fn)}}"""
+		// Preserve whether this declaration is a Kotlin IR fake override.  It is a Kotlin-side fact, not a CLR
+		// decision: bir2cir uses it to distinguish a genuinely declared abstract override from an inherited member
+		// that FIR/IR materialized on the derived interface.  Previously both shapes became identical empty methods,
+		// forcing ilemit to rediscover the hierarchy and synthesize DIM forwarders.
+		// Kotlin 2.4 does not consistently expose inherited declarations through the isFakeOverride convenience flag
+		// after FIR2IR (notably for an interface inheriting a declaration injected from a klib).  The IR shape is still
+		// unambiguous: an inherited synthetic has an override closure, no body, and no source offset/origin.
+		val inheritedSynthetic = fn.isFakeOverride || fn.origin.toString().contains("FAKE_OVERRIDE") ||
+			(fn.body == null && fn.overriddenSymbols.isNotEmpty() && fn.startOffset < 0)
+		val fakeOverride = if (inheritedSynthetic) ",\"fakeOverride\":true" else ""
+		return """{"name":${str(name)},"static":false,"override":false,"virtual":true$fakeOverride${typeParamsJson(fn.typeParameters)},"params":[$params],"ret":${str(ret)}${funModsJson(fn)}${resultTypeJson(fn)},"body":[$body],"attrs":[$memberAttrs]${overridesJson(fn)}}"""
 	}
 	val funMethods = iface.declarations.filterIsInstance<IrSimpleFunction>()
 		// equals/hashCode/toString are inherited from Any into every Kotlin interface (fake overrides). On the CLR

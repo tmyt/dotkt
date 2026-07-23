@@ -316,13 +316,13 @@ sealed partial class Emitter
             }
             case "staticField":
             {
-                // A miss on an EXTERNAL owner returns null from FindField — surface it as a legible error
-                // (an unchecked Ldsfld(null) was an opaque ArgumentNullException deep in ILGenerator).
-                var f = FindField(SlotName(e.GetProperty("ownerType")), e.GetProperty("name").GetString())
-                    ?? throw new NotSupportedException($"static field {SlotName(e.GetProperty("ownerType"))}.{e.GetProperty("name").GetString()} not found");
+                // ownerType is already the final CIR TypeSpec (including the canonical instantiation for a static on a
+                // generic owner). Preserve it exactly; collapsing through SlotName/FindField would silently replace
+                // `G<object>` with the open `G<!0>` and manufacture invalid IL in a non-generic caller.
+                var f = ResolveField(ParseOwnerSlot(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out var ft);
                 MaybeVolatile(f);
                 _il.Emit(OpCodes.Ldsfld, f);
-                return f.FieldType;
+                return ft;
             }
             case "clrStaticField":   // a static field on a .NET (reflected) type, e.g. EmptyCoroutineContext.Instance
             {

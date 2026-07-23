@@ -108,8 +108,15 @@ static class StarProjectionBoundLowering
             {
                 var newArgs = args.Select(a => Subst(a, localBounds, refs)).ToArray();
                 for (var i = 0; i < newArgs.Length; i++)
-                    if (IsObjectish(newArgs[i]) && BoundFor(f.Name, i, localBounds, refs) is TypeNode bound && !ContainsTypeVar(bound))
-                        newArgs[i] = bound;
+                    if (IsObjectish(newArgs[i]) && BoundFor(f.Name, i, localBounds, refs) is TypeNode bound)
+                    {
+                        // A dependent bound may refer to an EARLIER owner parameter (`<B : Element, E : B>`).
+                        // By this point that earlier star has already been closed to its own bound, so substitute it
+                        // into the dependent bound: `<Any,Any>` -> `<Element,Element>`. Self/forward references remain
+                        // type variables and are rejected by ContainsTypeVar, preserving F-bound termination.
+                        var closedBound = CloseEarlierOwnerTypeVars(bound, newArgs, i);
+                        if (!ContainsTypeVar(closedBound)) newArgs[i] = closedBound;
+                    }
                 return new TypeNode.Fqn(f.Name, newArgs);
             }
             case TypeNode.Nullable n: return new TypeNode.Nullable(Subst(n.Of, localBounds, refs));
@@ -146,6 +153,24 @@ static class StarProjectionBoundLowering
         TypeNode.ByRef b => ContainsTypeVar(b.Of),
         TypeNode.Fn fn => ContainsTypeVar(fn.Ret) || fn.Params.Any(ContainsTypeVar) || (fn.Recv != null && ContainsTypeVar(fn.Recv)),
         _ => false,
+    };
+
+    // Substitute only owner type vars whose index is earlier than the parameter currently being closed. Those args
+    // have already passed through this left-to-right loop and are constraint-compatible. A self-reference (`i`) or
+    // forward reference (`> i`) intentionally survives, so ContainsTypeVar rejects the uncloseable bound.
+    static TypeNode CloseEarlierOwnerTypeVars(TypeNode t, TypeNode[] args, int current) => t switch
+    {
+        TypeNode.Tv { Scope: "type", I: var i } when i >= 0 && i < current && i < args.Length => args[i],
+        TypeNode.Fqn { Args: { } nested } f => new TypeNode.Fqn(f.Name,
+            nested.Select(a => CloseEarlierOwnerTypeVars(a, args, current)).ToArray()),
+        TypeNode.Nullable n => new TypeNode.Nullable(CloseEarlierOwnerTypeVars(n.Of, args, current)),
+        TypeNode.Oblivious o => new TypeNode.Oblivious(CloseEarlierOwnerTypeVars(o.Of, args, current)),
+        TypeNode.Array a => new TypeNode.Array(CloseEarlierOwnerTypeVars(a.Elem, args, current)),
+        TypeNode.ByRef b => new TypeNode.ByRef(CloseEarlierOwnerTypeVars(b.Of, args, current)),
+        TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, CloseEarlierOwnerTypeVars(fn.Ret, args, current),
+            fn.Params.Select(p => CloseEarlierOwnerTypeVars(p, args, current)).ToArray(),
+            fn.Recv == null ? null : CloseEarlierOwnerTypeVars(fn.Recv, args, current)),
+        _ => t,
     };
 
     // A star-projection / erased arg: `kotlin.Any`/`object`/`System.Object`, possibly nullable/oblivious-wrapped (a

@@ -18,7 +18,7 @@ using System.Text.Json.Nodes;
 // call (callInstance/callStatic), a bound method reference (newBoundDelegate, an `ldftn` over the member), or a
 // member field-access of the full node family (field/setField/setFieldExpr/lateinitGet/staticField/staticFieldSet)
 // whose owner (generics stripped) names a DIFFERENT local type C, record (C, member); then relax any matching
-// PRIVATE member (method, field, or property get_/set_ accessor)
+// PRIVATE member (constructor, method, field, or property get_/set_ accessor)
 // on C to `internal` (assembly-visible). SOUNDNESS: valid Kotlin source can never have a top-level class
 // access another top-level class's private member, so ANY cross-class private access in emitted BIR came
 // from a lost nesting/lifting relationship — widening exactly those is minimal and correct (Codex-confirmed).
@@ -72,6 +72,13 @@ static class CrossClassPrivateWidening
             {
                 switch (Str(o["k"]))
                 {
+                    // A synthesized/lifted state machine or closure can construct a Kotlin-private nested/local class.
+                    // Once both are separate CLR types that constructor is a cross-class access just like a private
+                    // method call; record a synthetic member key and widen only the reached constructors.
+                    case "new":
+                        if (BareOwner(TypeJson.OwnerName(o["type"])) is string cn && cn != selfType)
+                            Record(TypeJson.OwnerName(o["type"]), ".ctor");
+                        break;
                     // Owner slots are structured Type nodes now — read the Fqn identity directly (BareOwner is then a
                     // no-op on the already-bare name, kept only as a defensive strip for a legacy string owner).
                     case "callInstance":
@@ -127,6 +134,12 @@ static class CrossClassPrivateWidening
         foreach (var (owner, members) in accessed)
         {
             var t = types[owner];
+            // Accessing a public/internal member is still illegal when its nested declaring TYPE is private. A lifted
+            // sibling (state machine/closure) has lost Kotlin's lexical nesting privilege, so widen the reached private
+            // type itself alongside the exact members. `internal` maps to NestedAssembly for a nested CLR type.
+            Relax(t);
+            if (members.Contains(".ctor") && t["ctors"] is JsonArray ctors)
+                foreach (var ctor in ctors.OfType<JsonObject>()) Relax(ctor);
             if (t["methods"] is JsonArray ms)
                 foreach (var m in ms)
                     if (m is JsonObject mo && Str(mo["name"]) is string mn && members.Contains(mn)) Relax(mo);
