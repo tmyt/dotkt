@@ -236,9 +236,10 @@ internal fun BirEmitter.birType(t: IrType): TypeNode {
 	}
 	// Enums -> the real .NET enum type reference (package-qualified, like other user types).
 	if (klass != null && klass.kind == ClassKind.ENUM_CLASS) return TypeNode.Fqn(typeName(klass))
-	// A user-declared class/interface becomes a reference to that BIR type; a constructed user generic carries
-	// concrete args. Anon objects resolve through `typeName`.
-	if (klass != null && (klass.kind == ClassKind.CLASS || klass.kind == ClassKind.INTERFACE)) {
+	// A user-declared class/interface/object becomes a reference to that BIR type; a constructed user generic carries
+	// concrete args. Object singleton types remain distinct classifiers at use sites (`value is Active` must not
+	// collapse to `value is Any`), while anonymous objects resolve through `typeName`.
+	if (klass != null && (klass.kind == ClassKind.CLASS || klass.kind == ClassKind.INTERFACE || klass.kind == ClassKind.OBJECT)) {
 		// An `inner class` re-declares its enclosing class(es)' type params; reference it WITH those (as `tv`).
 		val enclArgs = innerEnclosingTypeParams(klass).map { tvOf(it) }
 		// A LIFTED local class made generic over enclosing type params (liftLocalClass) is DENOTABLE — a `val l: L`

@@ -28,6 +28,10 @@ import NUnit.Framework.Legacy.ClassicAssert.Companion.IsFalse as assertFalse
 
 // ---- il-object : `object` singleton as shared mutable state; member access routes as instance access -------------
 object ObjCounter { var n = 0; fun inc() { n = n + 1 } }
+interface ObjState
+object ObjActive : ObjState
+object ObjInactive : ObjState
+fun objIsActive(value: Any?): Boolean = value is ObjActive
 
 // ---- il-objexpr : anonymous `object : Iface` implementing interface members -------------------------------------
 interface ObjGreeter { fun greet(): String }
@@ -135,6 +139,9 @@ class LanguageCoreTests {
         ObjCounter.n = 0
         ObjCounter.inc(); ObjCounter.inc(); ObjCounter.inc()
         assertEquals(3, ObjCounter.n)  // 3
+        assertTrue(objIsActive(ObjActive))
+        assertFalse(objIsActive(ObjInactive))
+        assertFalse(objIsActive("not an object singleton"))
     }
 
     @TestAttribute
