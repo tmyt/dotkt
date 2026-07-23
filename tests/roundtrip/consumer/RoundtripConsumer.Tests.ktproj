@@ -8,9 +8,9 @@
      consumer's ReferencePath" step, and `dotnet test` discovers the @TestAttribute methods and runs them
      in-process. Each method migrates ONE verify-roundtrip.sh section, preserving its golden values 1:1 as
      ClassicAssert value asserts (design D1). Resolves the LOCALLY-BUILT SDK from build/nuget-feed via
-     tests/nuget.config (design D4); version tracks packaging/DotKt.Versions.props; the gate entry lives in
-     tests/run-nunit-tests.sh. -->
-<Project Sdk="DotKt.Sdk/0.9.7">
+     tests/nuget.config (design D4); its version is pinned in the repository-root global.json; the gate entry lives
+     in tests/run-nunit-tests.sh. -->
+<Project Sdk="DotKt.Sdk">
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <IsTestProject>true</IsTestProject>

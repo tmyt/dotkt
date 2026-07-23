@@ -746,7 +746,9 @@ static class FacadeGen
                 Console.WriteLine($"meta: {t.FullName} (enum)");
                 return;
             }
-            // A .NET interface -> Kotlin can IMPLEMENT it (methods become abstract members). Generic interfaces
+            // A .NET interface -> Kotlin can IMPLEMENT it. Abstract CLR members remain implementation obligations;
+            // default interface implementations surface as concrete/open members so Kotlin implementors inherit them.
+            // Generic interfaces
             // (`IList`1`) -> simple name + OPEN .NET name + type-parameter tokens, mirroring the class path, so
             // `generic:IList:Foo` resolves to a real `interface IList<T>` (P1-2). `interface <Name> <DotNet> [<TP>...]`.
             if (t.IsInterface)
@@ -788,18 +790,25 @@ static class FacadeGen
                     if (!ps.All(p => Supported(p.ParameterType)) || !retOk) continue;
                     if (!iseen.Add(m.Name + "<" + string.Join(",", gp) + ">(" + Sig(ps, t) + ")")) continue;
                     var iret = k.suspend ? SuspendRetNode(m, t) : RetTypeSfxN(m, t);
-                    var (mmods, mvis) = ModVis(false, isAbstract: true, isOpen: false, infix: k.infix, op: k.op, suspend: k.suspend);
+                    // CLR default interface methods have IsAbstract=false and carry a real body. Preserve that
+                    // distinction: marking every interface member abstract makes Kotlin classes reimplement DIMs.
+                    var (mmods, mvis) = ModVis(false, m.IsAbstract, m.IsVirtual && !m.IsFinal,
+                        infix: k.infix, op: k.op, suspend: k.suspend);
                     funs.Add(FunObj(m.Name, iret, mmods, mvis, ClrAttrName(m),
                         m.IsGenericMethodDefinition ? TypeParamsArr(m.GetGenericArguments(), t, false, false) : null,
                         ParamsArr(ps, t)));
                 }
-                // Interface properties (Count, IsReadOnly, ...) -> abstract members.
+                // Interface properties: a property is an obligation when any exposed accessor is abstract. When all
+                // accessors have CLR bodies, surface a default/open property instead (C# DIM property getter/setter).
                 foreach (var p in t.GetProperties(BindingFlags.Public | BindingFlags.Instance))
                 {
                     if (p.GetIndexParameters().Length > 0 || !Supported(p.PropertyType) || !p.CanRead || !iseen.Add("prop:" + p.Name)) continue;
                     var pclr = p.GetMethod != null ? ClrAttrName(p.GetMethod) : null;   // member substitution: size -> Count
+                    var accessors = new[] { p.GetMethod, p.SetMethod }.Where(a => a != null).ToArray();
+                    var pAbstract = accessors.Any(a => a.IsAbstract);
+                    var pOpen = !pAbstract && accessors.Any(a => a.IsVirtual && !a.IsFinal);
                     props.Add(PropObj(p.Name, PropTypeN(p, t),
-                        p.CanWrite, Mods(("abstract", true)), "public", pclr, null));
+                        p.CanWrite, ModVis(false, pAbstract, pOpen).mods, "public", pclr, null));
                 }
                 // (N6) INTERFACE instance events -> a `ClrEvent<T>` member.
                 foreach (var ev in t.GetEvents(BindingFlags.Public | BindingFlags.Instance))

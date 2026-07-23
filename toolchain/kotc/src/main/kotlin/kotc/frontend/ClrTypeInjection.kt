@@ -805,7 +805,9 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		val prop = type.properties.firstOrNull { it.name == callableId.callableName.asString() } ?: return emptyList()
 		// Property name == .NET name verbatim, so the backend emits `recv.<Name>` directly.
 		return listOf(createMemberProperty(owner, ClrGeneratedKey, callableId.callableName, coneOf(prop.type, owner), !prop.mutable, false) {
-			if (type.isInterface || prop.abstract) modality = Modality.ABSTRACT
+			// An interface member is not inherently abstract: CLR default interface properties carry accessor bodies.
+			// facadegen reflects the accessor modality into prop.abstract/open; preserve it here so DIMs are inherited.
+			if (prop.abstract) modality = Modality.ABSTRACT
 			else if (prop.open && !type.isObject) modality = Modality.OPEN
 			if (prop.protected) visibility = Visibilities.Protected
 		}.symbol)
@@ -1068,8 +1070,8 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 				val trailingOpt = if (real) 0 else vps.reversed().takeWhile { it.default != null }.count()
 				((vps.size - trailingOpt)..vps.size).map { arity ->
 				createMemberFunction(owner, ClrGeneratedKey, callableId.callableName, coneOf(m.returnType, owner)) {
-					// interface members + .NET abstract => ABSTRACT (must implement); .NET virtual => OPEN (overridable).
-					if (type.isInterface || m.abstract) modality = Modality.ABSTRACT
+					// CLR abstract => ABSTRACT (must implement); virtual/default-interface => OPEN (inherited/overridable).
+					if (m.abstract) modality = Modality.ABSTRACT
 					else if (m.open && !type.isObject) modality = Modality.OPEN
 					if (m.protected) visibility = Visibilities.Protected   // overridable protected lifecycle methods (item 2)
 					// DotKt round-trip: Kotlin modifiers with no .NET analog, restored from the `mods` object.

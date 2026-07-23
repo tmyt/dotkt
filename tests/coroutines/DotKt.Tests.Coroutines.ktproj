@@ -12,10 +12,9 @@
      per-case duplicated harness.kt copies (design §4 "one shared harness/Coroutines.kt").
 
      Resolves the LOCALLY-BUILT SDK from build/nuget-feed via tests/nuget.config (design D4) — so it tests the
-     compiler in THIS working tree. The pinned version tracks packaging/DotKt.Versions.props; the gate driver
-     tests/run-nunit-tests.sh reads it from there and clears the isolated cache so a repacked same-version SDK
-     always wins. -->
-<Project Sdk="DotKt.Sdk/0.9.7">
+     compiler in THIS working tree. The SDK version is pinned once in the repository-root global.json; the gate
+     driver tests/run-nunit-tests.sh clears the isolated cache so a repacked same-version SDK always wins. -->
+<Project Sdk="DotKt.Sdk">
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <IsTestProject>true</IsTestProject>

@@ -28,8 +28,9 @@ done
 FEED="$ROOT/build/nuget-feed"; rm -rf "$FEED"; mkdir -p "$FEED"
 
 # GUARD (#131): the SDK Sdk.props hardcode a DotKtVersion default (copied verbatim into the package; nuspec
-# $version$ does NOT reach it) that pins the implicit Toolchain/Stdlib PackageReferences. A stale value silently
-# pulls an OLD toolchain (0.9.5 shipped pulling 0.9.3). Refuse to pack a mismatch — bump Sdk.props with the release.
+# $version$ does NOT reach it) that pins the implicit Toolchain/Stdlib PackageReferences. The repository-root
+# global.json also pins the custom SDK versions for every static test project. A stale value silently pulls an OLD
+# package set (0.9.5 shipped pulling 0.9.3). Refuse to pack a mismatch — bump both surfaces with the release.
 VERPREFIX="$(grep -oE '<DotKtVersionPrefix>[^<]+' "$ROOT/packaging/DotKt.Versions.props" | sed 's/.*>//')"
 VERSUFFIX="$(grep -oE '<DotKtVersionSuffix>[^<]*' "$ROOT/packaging/DotKt.Versions.props" | sed 's/.*>//')"
 VERCORE="$VERPREFIX"; [[ -n "$VERSUFFIX" ]] && VERCORE="$VERPREFIX-$VERSUFFIX"
@@ -42,6 +43,10 @@ COMMIT="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
 for sp in packaging/DotKt.Sdk/Sdk/Sdk.props packaging/DotKt.Sdk.Mpp/Sdk/Sdk.props; do
 	sv="$(grep -oE "<DotKtVersion Condition[^>]*>[^<]+" "$ROOT/$sp" | sed 's/.*>//')"
 	[[ "$sv" == "$VERCORE" ]] || die "$sp DotKtVersion default ($sv) != release version core ($VERCORE) — bump it (else the SDK ships pulling a stale toolchain, GitHub #131)"
+done
+for sdk in DotKt.Sdk DotKt.Sdk.Mpp; do
+	gv="$(sed -n "s/^[[:space:]]*\"$sdk\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$ROOT/global.json")"
+	[[ "$gv" == "$VERCORE" ]] || die "global.json $sdk version ($gv) != release version core ($VERCORE) — bump it (else tests resolve a stale SDK)"
 done
 
 # GUARD (#53): the version/Kotlin-version strings scattered across templates, docs, and nuspec tags drift after a
