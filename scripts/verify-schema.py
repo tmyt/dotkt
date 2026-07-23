@@ -33,6 +33,8 @@ STR_OK = {
     "op", "cmp",                                # binOp/unaryOp operator / structured-for comparison operator
     "value",                                    # const literal / attribute-arg scalar
     "vis", "variance", "kind",                  # visibility / variance / decl-kind enums
+    "clr",                                      # fn.clr: CIR-only physical delegate-family decision authored by
+                                                # bir2cir; validated structurally + by BIR/CIR phase in type_node
     "dispatch",                                  # clrInstance dispatch enum ("call"/"callvirt"/"constrained") — a
                                                 # bir2cir DECISION (W1-S2 #46), NOT a type slot; ilemit emits the opcode
                                                 # verbatim (no re-derivation from reflected IsVirtual/IsFinal)
@@ -182,8 +184,22 @@ class V:
                 self.err(f, path, f"tv.scope={o.get('scope')!r} not in ['type','method']")
             if not isinstance(o.get("i"), int):
                 self.err(f, path, f"tv.i must be int, got {o.get('i')!r}")
-        if t == "fn" and not isinstance(o.get("suspend"), bool):
-            self.err(f, path, f"fn.suspend must be bool, got {o.get('suspend')!r}")
+        if t == "fn":
+            if not isinstance(o.get("suspend"), bool):
+                self.err(f, path, f"fn.suspend must be bool, got {o.get('suspend')!r}")
+            clr = o.get("clr")
+            delegate_families = {
+                "System.Func", "System.Action",
+                "DotKt.Runtime.CompilerServices.KFunc", "DotKt.Runtime.CompilerServices.KAction",
+            }
+            if clr is not None and clr not in delegate_families:
+                self.err(f, path, f"fn.clr={clr!r} is not a supported CIR delegate family")
+            if f.endswith(".bir.json") and clr is not None:
+                self.err(f, path, "fn.clr is CIR-only and must not appear in kotc BIR")
+            # suspendFnType is pre-erasure Kotlin metadata carried for [KotlinSuspendFunctionType];
+            # it is not a CLR value/delegate slot and intentionally keeps the pure Kotlin fn shape.
+            if f.endswith(".cir.json") and clr is None and "SuspendFnType" not in path and "suspendFnType" not in path:
+                self.err(f, path, "ilemit-facing CIR fn is missing required fn.clr delegate family")
 
     def walk(self, f, o, path):
         if isinstance(o, dict):

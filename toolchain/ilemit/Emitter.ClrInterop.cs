@@ -688,7 +688,6 @@ sealed partial class Emitter
     // Mirrors the newDelegate/newClosure cases but uses `want` (the event's delegate type) for the ctor.
     void EmitHandlerAsDelegate(JsonElement h, Type want)
     {
-        var ctor = DelegateCtor(want);
         // The delegate's Invoke return type: when it is a real (non-void) type while the lambda's NATURAL delegate is
         // void-returning (a Unit body maps to void), binding the void method-pointer into the ctor is not verifiable
         // -> self-build the natural void delegate and wrap it in a Unit-return adapter. InvokeRetOf (not want.GetMethod/
@@ -701,7 +700,7 @@ sealed partial class Emitter
         {
             var ft = EmitExpr(h);                             // the lambda's natural void delegate, on the stack
             _il.Emit(OpCodes.Ldftn, UnitWrapAdapter(ft, invokeRet, FuncArgTypes(h.GetProperty("funcType")).ToArray()));
-            _il.Emit(OpCodes.Newobj, ctor);
+            EmitDelegateCtor(_il, want);
             return;
         }
         switch (k)
@@ -714,14 +713,14 @@ sealed partial class Emitter
                 var dtarget = FindCalleeOwnedStatic(h, "event newDelegate", dname, dsig);
                 _il.Emit(OpCodes.Ldnull);
                 _il.Emit(OpCodes.Ldftn, dtarget);
-                _il.Emit(OpCodes.Newobj, ctor);
+                EmitDelegateCtor(_il, want);
                 break;
             case "newClosure":
                 var (cctor, cinvoke) = ResolveClosure(h);
                 foreach (var c in h.GetProperty("captures").EnumerateArray()) EmitExpr(c);
                 _il.Emit(OpCodes.Newobj, cctor);
                 _il.Emit(OpCodes.Ldftn, cinvoke);
-                _il.Emit(OpCodes.Newobj, ctor);
+                EmitDelegateCtor(_il, want);
                 break;
             default:
                 // A stored handler value (a Func/Action local/field). Re-wrap it into the event's delegate
@@ -730,7 +729,7 @@ sealed partial class Emitter
                 var src = EmitExpr(h);                       // stack: the stored delegate value
                 _il.Emit(OpCodes.Dup);
                 _il.Emit(OpCodes.Ldvirtftn, src.GetMethod("Invoke"));
-                _il.Emit(OpCodes.Newobj, ctor);
+                EmitDelegateCtor(_il, want);
                 break;
         }
     }

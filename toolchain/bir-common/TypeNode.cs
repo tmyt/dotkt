@@ -5,8 +5,8 @@
 // A Type is ALWAYS a JSON object with a `t` discriminator — there is NO bare-string type. Readers
 // dispatch(t); they NEVER split/scan a string. This file is the ONE place a Type is parsed/built.
 //
-// This file is ADDITIVE (phase 1b): it defines the frozen contract in code. It is not yet wired to
-// the emit/consume paths (phases 2-5). It must byte-for-byte agree with kotc.bir.TypeNode (Kotlin).
+// It agrees with kotc.bir.TypeNode for BIR. The one phase extension is Fn.Clr: kotc omits it,
+// bir2cir authors it in CIR, and ilemit requires it.
 
 #nullable enable
 using System.Text;
@@ -41,12 +41,17 @@ public abstract record TypeNode
     /// </summary>
     public sealed record Tv(string Scope, int I) : TypeNode;
 
-    /// <summary>`fn`: a function type; <c>Suspend</c> is a flag, <c>Recv</c> is the extension receiver (subsumes func:/sfunc:).</summary>
-    public sealed record Fn(bool Suspend, TypeNode Ret, TypeNode[] Params, TypeNode? Recv = null) : TypeNode
+    /// <summary>
+    /// `fn`: a function type; <c>Suspend</c> is a flag, <c>Recv</c> is the extension receiver
+    /// (subsumes func:/sfunc:). <c>Clr</c> is a CIR-only physical delegate-family decision authored by bir2cir;
+    /// kotc's BIR projection always omits it.
+    /// </summary>
+    public sealed record Fn(bool Suspend, TypeNode Ret, TypeNode[] Params, TypeNode? Recv = null, string? Clr = null) : TypeNode
     {
         public bool Equals(Fn? o) =>
-            o is not null && Suspend == o.Suspend && Ret == o.Ret && SeqEq(Params, o.Params) && Recv == o.Recv;
-        public override int GetHashCode() => System.HashCode.Combine(Suspend, Ret, Params.Length, Recv);
+            o is not null && Suspend == o.Suspend && Ret == o.Ret && SeqEq(Params, o.Params)
+            && Recv == o.Recv && Clr == o.Clr;
+        public override int GetHashCode() => System.HashCode.Combine(Suspend, Ret, Params.Length, Recv, Clr);
 
         /// <summary>
         /// The delegate ARG list: an extension receiver (`P.() -> R`) is the delegate's FIRST argument on the CLR
@@ -117,7 +122,8 @@ public abstract record TypeNode
                     e.GetProperty("suspend").GetBoolean(),
                     Read(e.GetProperty("ret")),
                     ReadArray(e.GetProperty("params")),
-                    e.TryGetProperty("recv", out var recv) ? Read(recv) : null);
+                    e.TryGetProperty("recv", out var recv) ? Read(recv) : null,
+                    e.TryGetProperty("clr", out var clr) ? clr.GetString() : null);
             case "nullable":
                 return new Nullable(Read(e.GetProperty("of")));
             case "oblivious":
@@ -163,6 +169,7 @@ public abstract record TypeNode
                     ["params"] = WriteArray(fn.Params),
                 };
                 if (fn.Recv is not null) o["recv"] = Write(fn.Recv);
+                if (fn.Clr is not null) o["clr"] = fn.Clr;
                 return o;
             }
             case Nullable n:
@@ -185,7 +192,7 @@ public abstract record TypeNode
         return arr;
     }
 
-    /// <summary>Compact canonical JSON string of a type — must match kotc's TypeNode.toJson byte-for-byte.</summary>
+    /// <summary>Compact canonical JSON string of a type. A BIR node (Fn.Clr absent) matches kotc byte-for-byte.</summary>
     public static string ToJson(TypeNode t) =>
         Write(t).ToJsonString(new JsonSerializerOptions { WriteIndented = false });
 

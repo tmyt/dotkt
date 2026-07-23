@@ -508,6 +508,8 @@ static partial class ClrMemberResolution
     {
         if (IsObjectMlc(p)) return MatchKind.Assignable;
         if (!IsDelegateType(p)) return MatchKind.No;
+        var targetFamily = DelegateFamily(p);
+        if (targetFamily != null && fn.Clr != targetFamily) return MatchKind.No;
         MethodInfo invoke; try { invoke = p.GetMethod("Invoke"); } catch { return MatchKind.No; }
         if (invoke == null) return MatchKind.No;
         var ips = invoke.GetParameters();
@@ -567,10 +569,8 @@ static partial class ClrMemberResolution
         if (t.IsArray) return new TypeNode.Array(MemberSigOf(t.GetElementType()));
         if (t.IsGenericParameter)
             return new TypeNode.Tv(t.DeclaringMethod != null ? "method" : "type", t.GenericParameterPosition);
-        // A Func/Action delegate param — OR a per-assembly SYNTHETIC KFunc/KAction (a DotKt library bakes its OWN copy of
-        // each) — is emitted as a function-type `fn` node, NOT a name-based Fqn: a name Fqn would bind the WRONG assembly's
-        // KAction at the consume site (each DotKt dll has a distinct `DotKt.Runtime.CompilerServices.KAction`1`). ilemit's
-        // GenericDelegateMatches then matches it by SHAPE against the reflected delegate (BCL Func/Action or synthetic K*).
+        // Kotlin function delegate families stay `fn`, carrying their exact nominal family. Unknown/custom CLR delegates
+        // remain FQNs below.
         if (IsShapeDelegate(t)) return DelegateFn(t);
         if (t.IsGenericType && !t.IsGenericTypeDefinition)
         {
@@ -582,15 +582,24 @@ static partial class ClrMemberResolution
         return new TypeNode.Fqn(StripArity(Dotted(t.FullName ?? t.Name)));
     }
 
-    // A shape-matched delegate family (BCL Func/Action + the DotKt synthetic KFunc/KAction) — memberSig carries these as
-    // `fn` nodes so ilemit links them structurally, not by a per-assembly name (see MemberSigOf). Other delegates
-    // (ThreadStart, EventHandler, …) keep their concrete Fqn identity.
-    static bool IsShapeDelegate(Type t)
+    static bool IsShapeDelegate(Type t) => IsDelegateType(t) && DelegateFamily(t) != null;
+
+    static string DelegateFamily(Type t)
     {
-        if (!IsDelegateType(t)) return false;   // a user class merely NAMED `Action`/`KFunc` is not a delegate
-        var n = t.Name;
-        return n == "Action" || n.StartsWith("Func`", StringComparison.Ordinal) || n.StartsWith("Action`", StringComparison.Ordinal)
-            || n.StartsWith("KFunc`", StringComparison.Ordinal) || n.StartsWith("KAction`", StringComparison.Ordinal);
+        Type def;
+        try { def = t.IsGenericType && !t.IsGenericTypeDefinition ? t.GetGenericTypeDefinition() : t; }
+        catch { return null; }
+        if (def.Namespace == "System")
+        {
+            if (def.Name == "Action" || def.Name.StartsWith("Action`", StringComparison.Ordinal)) return "System.Action";
+            if (def.Name.StartsWith("Func`", StringComparison.Ordinal)) return "System.Func";
+        }
+        if (def.Namespace == "DotKt.Runtime.CompilerServices")
+        {
+            if (def.Name.StartsWith("KAction`", StringComparison.Ordinal)) return "DotKt.Runtime.CompilerServices.KAction";
+            if (def.Name.StartsWith("KFunc`", StringComparison.Ordinal)) return "DotKt.Runtime.CompilerServices.KFunc";
+        }
+        return null;
     }
 
     static TypeNode DelegateFn(Type t)
@@ -599,7 +608,7 @@ static partial class ClrMemberResolution
         if (invoke == null) return new TypeNode.Fqn(StripArity(Dotted(t.FullName ?? t.Name)));   // defensive: not a real delegate
         var ps = invoke.GetParameters().Select(p => MemberSigOf(p.ParameterType)).ToArray();
         var ret = invoke.ReturnType.FullName is "System.Void" or "kotlin.Unit" ? new TypeNode.Fqn("void") : MemberSigOf(invoke.ReturnType);
-        return new TypeNode.Fn(false, ret, ps);
+        return new TypeNode.Fn(false, ret, ps, null, DelegateFamily(t));
     }
 
     static string Dotted(string s) => s.Replace('+', '.');

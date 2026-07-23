@@ -1406,16 +1406,16 @@ sealed partial class ReferenceMetadataIndex
         if (type.IsArray) return DeclarationTypeNode(type.GetElementType()!) is TypeNode e1 ? new TypeNode.Array(e1) : null;
         if (type.IsGenericParameter)
             return new TypeNode.Tv(type.DeclaringMethod != null ? "method" : "type", type.GenericParameterPosition);
-        // Kotlin function types are emitted as KFunc/KAction delegates but remain `{t:fn}` in
-        // BIR/CIR.  Project the reflected declaration back to that structural Kotlin vocabulary so
-        // inherited-owner overload matching compares like with like (e.g. CoroutineContext.fold).
-        if (IsDelegate(type))
+        // Kotlin function types remain `{t:fn}` in CIR, with the exact physical delegate family retained.
+        // Unknown/custom CLR delegates stay nominal FQNs below; shape-projecting them would lose their identity.
+        var delegateFamily = DelegateFamily(type);
+        if (delegateFamily != null)
         {
             var invoke = type.GetMethod("Invoke");
             if (invoke == null) return null;
             var ret = DeclarationTypeNode(invoke.ReturnType);
             var ps = invoke.GetParameters().Select(p => DeclarationTypeNode(p.ParameterType)).ToArray();
-            return ret != null && ps.All(p => p != null) ? new TypeNode.Fn(false, ret, ps) : null;
+            return ret != null && ps.All(p => p != null) ? new TypeNode.Fn(false, ret, ps, null, delegateFamily) : null;
         }
         if (type.IsConstructedGenericType)
         {
@@ -1433,6 +1433,24 @@ sealed partial class ReferenceMetadataIndex
 
     static bool IsAction(Type type) =>
         type.Namespace == "System" && type.Name.StartsWith("Action`", StringComparison.Ordinal);
+
+    static string DelegateFamily(Type type)
+    {
+        Type def;
+        try { def = type.IsGenericType && !type.IsGenericTypeDefinition ? type.GetGenericTypeDefinition() : type; }
+        catch { return null; }
+        if (def.Namespace == "System")
+        {
+            if (def.Name == "Action" || def.Name.StartsWith("Action`", StringComparison.Ordinal)) return "System.Action";
+            if (def.Name.StartsWith("Func`", StringComparison.Ordinal)) return "System.Func";
+        }
+        if (def.Namespace == "DotKt.Runtime.CompilerServices")
+        {
+            if (def.Name.StartsWith("KAction`", StringComparison.Ordinal)) return "DotKt.Runtime.CompilerServices.KAction";
+            if (def.Name.StartsWith("KFunc`", StringComparison.Ordinal)) return "DotKt.Runtime.CompilerServices.KFunc";
+        }
+        return null;
+    }
 
     static bool IsDelegate(Type type)
     {

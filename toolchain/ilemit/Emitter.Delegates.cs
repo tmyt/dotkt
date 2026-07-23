@@ -38,8 +38,11 @@ sealed partial class Emitter
     // absorbs that genericity, so the adapter names only the (concrete/BCL) delegate type. Fires ONLY on the
     // void-lifted-vs-non-void-delegate mismatch; a genuine `Action` (void Invoke) / matching-return `Func` binds directly.
     TypeBuilder _unitAdapterTB;
+    TypeBuilder _delegateInvokeAdapterTB;
 
     int _unitAdapterCounter;
+    readonly Dictionary<string, MethodBuilder> _delegateInvokeAdapters = new();
+    readonly Dictionary<string, MethodBuilder> _delegateCtorAdapters = new();
 
     TypeBuilder UnitAdapterHolder()
     {
@@ -50,6 +53,108 @@ sealed partial class Emitter
         _unitAdapterTB.SetCustomAttribute(new CustomAttributeBuilder(
             typeof(System.Runtime.CompilerServices.CompilerGeneratedAttribute).GetConstructor(Type.EmptyTypes), new object[0]));
         return _unitAdapterTB;
+    }
+
+    TypeBuilder DelegateInvokeAdapterHolder()
+    {
+        if (_delegateInvokeAdapterTB != null) return _delegateInvokeAdapterTB;
+        _delegateInvokeAdapterTB = _mod.DefineType(CompilerServicesNs + "DelegateInvokeAdapters",
+            TypeAttributes.NotPublic | TypeAttributes.Sealed | TypeAttributes.Abstract | TypeAttributes.Class,
+            typeof(object));
+        _delegateInvokeAdapterTB.SetCustomAttribute(new CustomAttributeBuilder(
+            typeof(System.Runtime.CompilerServices.CompilerGeneratedAttribute).GetConstructor(Type.EmptyTypes), new object[0]));
+        return _delegateInvokeAdapterTB;
+    }
+
+    // PersistedAssemblyBuilder cannot encode a MemberRef for a BCL delegate instantiated with a COMPOSITE open
+    // type (`Func<E[]>`, `Func<List<E>,R>`): TypeBuilder.GetMethod fails to map Invoke onto that TypeSpec. Keep the
+    // public ABI as System.Func/Action and move the composite type into a MethodSpec instead:
+    //
+    //   static TResult InvokeFunc<T1,...,TResult>(Func<T1,...,TResult> d, T1 p1, ...) => d(p1, ...);
+    //
+    // The helper body names only direct generic parameters, which Reflection.Emit encodes reliably; the call site
+    // instantiates those parameters with E[]/List<E>/etc. This is an emit mechanism, never a delegate-family choice.
+    bool NeedsDelegateInvokeAdapter(Type ft)
+    {
+        if (!IsGenericInst(ft) || ft.GetGenericTypeDefinition() is TypeBuilder) return false;
+        var n = ft.GetGenericTypeDefinition().FullName;
+        if (n == null || !(n.StartsWith("System.Func`", StringComparison.Ordinal)
+                           || n.StartsWith("System.Action`", StringComparison.Ordinal))) return false;
+        return ft.GetGenericArguments().Any(a => !a.IsGenericParameter && ContainsTypeBuilder(a));
+    }
+
+    MethodInfo DelegateInvokeAdapter(Type ft)
+    {
+        var def = ft.GetGenericTypeDefinition();
+        var actual = ft.GetGenericArguments();
+        bool returnsValue = def.FullName.StartsWith("System.Func`", StringComparison.Ordinal);
+        string key = (returnsValue ? "F" : "A") + actual.Length;
+        if (!_delegateInvokeAdapters.TryGetValue(key, out var mb))
+        {
+            mb = DelegateInvokeAdapterHolder().DefineMethod(
+                (returnsValue ? "InvokeFunc" : "InvokeAction") + actual.Length,
+                MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.HideBySig);
+            var gps = mb.DefineGenericParameters(Enumerable.Range(1, actual.Length)
+                .Select(i => returnsValue && i == actual.Length ? "TResult" : "T" + i).ToArray());
+            var delegateType = def.MakeGenericType(gps);
+            var invokeParams = returnsValue ? gps.Take(gps.Length - 1).Cast<Type>().ToArray() : gps.Cast<Type>().ToArray();
+            mb.SetReturnType(returnsValue ? gps[^1] : typeof(void));
+            mb.SetParameters(new[] { delegateType }.Concat(invokeParams).ToArray());
+            var il = mb.GetILGenerator();
+            for (int i = 0; i <= invokeParams.Length; i++) il.Emit(OpCodes.Ldarg, i);
+            il.Emit(OpCodes.Callvirt, TypeBuilder.GetMethod(delegateType, def.GetMethod("Invoke")));
+            il.Emit(OpCodes.Ret);
+            _delegateInvokeAdapters[key] = mb;
+        }
+        return mb.MakeGenericMethod(actual);
+    }
+
+    void EmitDelegateInvoke(ILGenerator il, Type ft)
+    {
+        if (NeedsDelegateInvokeAdapter(ft)) il.Emit(OpCodes.Call, DelegateInvokeAdapter(ft));
+        else il.Emit(OpCodes.Callvirt, InvokeOf(ft));
+    }
+
+    // The same PersistedAssemblyBuilder limitation applies to the delegate `.ctor`: it cannot map
+    // `Func<E[]>::.ctor` when E is an enclosing TypeBuilder parameter. As with Invoke, keep the CIR-selected
+    // System.Func/Action identity and move the composite instantiation into a MethodSpec:
+    //
+    //   static Func<TResult> NewFunc<TResult>(object target, IntPtr method) =>
+    //       new Func<TResult>(target, method);
+    //
+    // The helper definition mentions only its own direct generic parameters, which Reflection.Emit can encode;
+    // the call site supplies E[]/List<E>/etc. This is strictly an encoding adapter, not delegate selection.
+    MethodInfo DelegateCtorAdapter(Type ft)
+    {
+        var def = ft.GetGenericTypeDefinition();
+        var actual = ft.GetGenericArguments();
+        bool returnsValue = def.FullName.StartsWith("System.Func`", StringComparison.Ordinal);
+        string key = (returnsValue ? "F" : "A") + actual.Length;
+        if (!_delegateCtorAdapters.TryGetValue(key, out var mb))
+        {
+            mb = DelegateInvokeAdapterHolder().DefineMethod(
+                (returnsValue ? "NewFunc" : "NewAction") + actual.Length,
+                MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.HideBySig);
+            var gps = mb.DefineGenericParameters(Enumerable.Range(1, actual.Length)
+                .Select(i => returnsValue && i == actual.Length ? "TResult" : "T" + i).ToArray());
+            var delegateType = def.MakeGenericType(gps);
+            mb.SetReturnType(delegateType);
+            mb.SetParameters(typeof(object), typeof(IntPtr));
+            var il = mb.GetILGenerator();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Newobj, TypeBuilder.GetConstructor(delegateType,
+                def.GetConstructor(new[] { typeof(object), typeof(IntPtr) })));
+            il.Emit(OpCodes.Ret);
+            _delegateCtorAdapters[key] = mb;
+        }
+        return mb.MakeGenericMethod(actual);
+    }
+
+    void EmitDelegateCtor(ILGenerator il, Type ft)
+    {
+        if (NeedsDelegateInvokeAdapter(ft)) il.Emit(OpCodes.Call, DelegateCtorAdapter(ft));
+        else il.Emit(OpCodes.Newobj, DelegateCtor(ft));
     }
 
     // `static Unit A(<voidDelegate> d, <params>) { d.Invoke(<params>); return Unit.INSTANCE; }` — the void delegate `ft`
@@ -70,7 +175,7 @@ sealed partial class Emitter
             invokeRet, pTypes);
         var il = mb.GetILGenerator();
         for (int i = 0; i < pTypes.Length; i++) il.Emit(OpCodes.Ldarg, i);
-        il.Emit(OpCodes.Callvirt, InvokeOf(ft));
+        EmitDelegateInvoke(il, ft);
         il.Emit(OpCodes.Ldsfld, instF);
         il.Emit(OpCodes.Ret);
         return mb;

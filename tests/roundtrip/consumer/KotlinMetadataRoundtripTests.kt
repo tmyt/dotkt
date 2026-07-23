@@ -23,13 +23,11 @@
 //   comparableClass             <- roundtrip-comparable      (#179)  class C : Comparable<C> </>/<=/>=/sorted()
 //   ubyteFidelity               <- roundtrip-ubyte                  UByte/UByteArray strict-mapping fidelity
 //   toplevelValVar              <- roundtrip-toplevel-val   (#195)  bare top-level val/var -> plain static FIELD (no accessor) resolved cross-module via facadegen --import-list
-// STAYED in the shell lane (tests/roundtrip/scenarios/run.sh) — they RUN green but emit IL the in-process lane's ilverify
-// phase rejects (formal-only, runtime-safe, tracked as separate cross-module IL gaps):
+// STAYED in the shell lane (tests/roundtrip/scenarios/run.sh):
 //   roundtrip-nothing         — a cross-module Nothing branch merges an `object`-returning call with `string`
 //                               (StackUnexpected object/string; else-branch throws so RUN is green). Tracked as #197.
-//   roundtrip-generic-hof     — the consumer's lambda is a `System.Func` where the re-imported param is DotKt `KFunc`.
-//   roundtrip-receiver-lambda — the reverse: a DotKt `KAction` where the re-imported param is `System.Action`.
-//   (generic-hof + receiver-lambda are the delegate-representation ABI gap tracked as #123.)
+//   roundtrip-generic-hof / roundtrip-receiver-lambda — now formally clean after low-arity delegate ABI unification;
+//                               pending only mechanical migration to this in-process lane.
 // (roundtrip-comparable-meta stays in shell: it asserts on the generated facadegen metadata JSON directly.)
 @file:OptIn(kotlin.ExperimentalUnsignedTypes::class)
 import roundtrip.palette.Color

@@ -485,7 +485,12 @@ sealed partial class Emitter
         DotKt.Bir.TypeNode.Nullable n => new DotKt.Bir.TypeNode.Nullable(SubstTv(n.Of, args)),
         DotKt.Bir.TypeNode.Array a => new DotKt.Bir.TypeNode.Array(SubstTv(a.Elem, args)),
         DotKt.Bir.TypeNode.ByRef b => new DotKt.Bir.TypeNode.ByRef(SubstTv(b.Of, args)),
-        DotKt.Bir.TypeNode.Fn fn => new DotKt.Bir.TypeNode.Fn(fn.Suspend, SubstTv(fn.Ret, args), fn.Params.Select(p => SubstTv(p, args)).ToArray(), fn.Recv == null ? null : SubstTv(fn.Recv, args)),
+        DotKt.Bir.TypeNode.Fn fn => new DotKt.Bir.TypeNode.Fn(
+            fn.Suspend,
+            SubstTv(fn.Ret, args),
+            fn.Params.Select(p => SubstTv(p, args)).ToArray(),
+            fn.Recv == null ? null : SubstTv(fn.Recv, args),
+            fn.Clr),
         _ => t,
     };
 
@@ -516,15 +521,30 @@ sealed partial class Emitter
         if (typeName is "kotlin.UByteArray" or "kotlin.UShortArray" or "kotlin.UIntArray" or "kotlin.ULongArray")
             throw new NotSupportedException($"unsigned-array owner '{typeName}' reached ilemit FindMethod — bir2cir MemberCallSubstitution should have rewritten it to the signed-array FQN (#139 site-2)");
         var seenIfaces = new HashSet<string>();
-        MethodBuilder FindInInterfaces(TypeInfo ti)
+        MethodInfo FindInInterfaces(TypeInfo ti)
         {
             if (ti == null || !ti.Def.TryGetProperty("interfaces", out var ifs)) return null;
             foreach (var i in ifs.EnumerateArray())
             {
                 if (ReadFqn(i) is not DotKt.Bir.TypeNode.Fqn iF) continue;
                 var open = iF.Name;   // only the OPEN name matters here (avoid mapping a `[gp:T]` inner-generic arg)
-                if (!_types.ContainsKey(open)) continue;   // referenced interfaces reflected at the FindMethod loop level
-                if (!seenIfaces.Add(open) || !_types.TryGetValue(open, out var iti)) continue;
+                if (!seenIfaces.Add(open)) continue;
+                if (!_types.TryGetValue(open, out var iti))
+                {
+                    // The emitted-interface chain can terminate at a REFERENCED interface
+                    // (`CompletableDeferred -> Deferred -> Job -> CoroutineContext.Element`). Link the exact
+                    // CIR-carried signature on that external interface instead of abandoning the traversal at the
+                    // assembly boundary. This is member linking only: the Kotlin overload was already selected by
+                    // kotc and is represented by `sig`; no delegate-family or overload policy is inferred here.
+                    Type refIf = null;
+                    try { refIf = MapType(iF); } catch { }
+                    if (refIf == null) continue;
+                    var reflected = sig != null
+                        ? FindReflectedMethodBySig(refIf, name, sig)
+                        : FindReflectedMethod(refIf, name);
+                    if (reflected != null) return reflected;
+                    continue;
+                }
                 if (sig != null && iti.MethodsBySig.TryGetValue(SigKey(name, sig), out var ms)) return ms;
                 if (sig != null && UniqueGenericOverload(iti, name) is { } igm) return igm;
                 if (iti.Methods.TryGetValue(name, out var m)) return m;
@@ -683,18 +703,42 @@ sealed partial class Emitter
             // slot here) -> false, mirroring the pre-#48 `sfunc:` fall-through.
             case DotKt.Bir.TypeNode.Fn { Suspend: false } fn:
             {
-                if (!p.IsGenericType) return false;
                 var dparams = fn.DelegateParams;
+                var retVoid = fn.Ret is DotKt.Bir.TypeNode.Fqn { Args: null, Name: "void" or "System.Void" };
+                var expectedNs = fn.Clr switch
+                {
+                    "System.Action" or "System.Func" => "System",
+                    "DotKt.Runtime.CompilerServices.KAction" or "DotKt.Runtime.CompilerServices.KFunc"
+                        => "DotKt.Runtime.CompilerServices",
+                    _ => null,
+                };
+                var expectedName = fn.Clr switch
+                {
+                    "System.Action" => "Action",
+                    "System.Func" => "Func",
+                    "DotKt.Runtime.CompilerServices.KAction" => "KAction",
+                    "DotKt.Runtime.CompilerServices.KFunc" => "KFunc",
+                    _ => null,
+                };
+                if (expectedName == null) return false;
+                if (!p.IsGenericType)
+                    return retVoid && dparams.Length == 0
+                        && expectedNs == "System" && expectedName == "Action"
+                        && p.Namespace == "System" && p.Name == "Action";
+                Type delegateDef;
+                try { delegateDef = p.GetGenericTypeDefinition(); } catch { return false; }
+                if (delegateDef.Namespace != expectedNs
+                    || !delegateDef.Name.StartsWith(expectedName + "`", StringComparison.Ordinal))
+                    return false;
                 var gargs = p.GetGenericArguments();
-                var retVoid = fn.Ret is DotKt.Bir.TypeNode.Fqn { Args: null, Name: "void" };
                 if (retVoid)
                 {
-                    if (gargs.Length != dparams.Length) return true;   // shape mismatch (Func vs Action) -> loose accept
+                    if (expectedName is not ("Action" or "KAction") || gargs.Length != dparams.Length) return false;
                     for (var i = 0; i < dparams.Length; i++)
                         if (!Matches(dparams[i], gargs[i])) return false;
                     return true;
                 }
-                if (gargs.Length != dparams.Length + 1) return true;   // shape mismatch -> loose accept
+                if (expectedName is not ("Func" or "KFunc") || gargs.Length != dparams.Length + 1) return false;
                 for (var i = 0; i < dparams.Length; i++)
                     if (!Matches(dparams[i], gargs[i])) return false;
                 return Matches(fn.Ret, gargs[gargs.Length - 1]);
@@ -970,9 +1014,7 @@ sealed partial class Emitter
     // `{t:tv,scope:type,i}` matches whatever those args substituted into the candidate's param at that position.
     bool GenericParamMatches(DotKt.Bir.TypeNode node, Type p, Type[] ownerArgs)
     {
-        // A function-type node ALWAYS matches structurally (even fully concrete): MapType(fn) builds ONE specific
-        // delegate (a BCL `Action<Panel>`), but the reflected param may be a per-assembly SYNTHETIC `KAction<Panel>` a
-        // DotKt library baked — GenericDelegateMatches accepts BOTH BCL Func/Action AND synthetic KFunc/KAction by shape.
+        // A function-type node matches structurally within the exact CIR-selected nominal delegate family.
         if (node is DotKt.Bir.TypeNode.Fn fnNode) return GenericDelegateMatches(fnNode, p, ownerArgs);
         if (!ContainsTv(node))
         {
@@ -1019,26 +1061,42 @@ sealed partial class Emitter
         try { return ResolveType(name.Contains('`') ? name : name + "`" + arity); } catch { return null; }
     }
 
-    // A var-bearing function-type declared param (`Func<T,R>` / `Action<T>`) against the candidate's delegate param.
-    // The candidate may be a BCL `System.Func`/`Action` OR the synthetic `KFunc`/`KAction` a DotKt library bakes when
-    // the function type is over generic user types (unencodable as a BCL delegate) — both shape-match identically
-    // (KFunc/KAction mirror Func/Action's generic-arg layout: params[..] + ret for Func-like, params[..] for Action-like).
+    // A function-type declared param against the candidate's delegate param. CIR carries the exact nominal family;
+    // matching a same-shaped KFunc against System.Func would reintroduce the cross-assembly ABI ambiguity that bir2cir
+    // is responsible for eliminating.
     bool GenericDelegateMatches(DotKt.Bir.TypeNode.Fn fn, Type p, Type[] ownerArgs)
     {
         var dp = fn.DelegateParams;
         bool isVoid = fn.Ret is DotKt.Bir.TypeNode.Fqn { Name: "void" or "System.Void", Args: null };
+        string expectedNs;
+        string expectedName;
+        switch (fn.Clr)
+        {
+            case "System.Action": expectedNs = "System"; expectedName = "Action"; break;
+            case "System.Func": expectedNs = "System"; expectedName = "Func"; break;
+            case "DotKt.Runtime.CompilerServices.KAction":
+                expectedNs = "DotKt.Runtime.CompilerServices"; expectedName = "KAction"; break;
+            case "DotKt.Runtime.CompilerServices.KFunc":
+                expectedNs = "DotKt.Runtime.CompilerServices"; expectedName = "KFunc"; break;
+            default: return false;
+        }
         // The NON-generic `System.Action` (0-arg, void) — a `()->Unit` lambda param (`column(setup, content: ()->Unit)`).
-        if (!p.IsGenericType) return isVoid && dp.Length == 0 && p.Name == "Action" && p.Namespace == "System";
+        if (!p.IsGenericType)
+            return isVoid && dp.Length == 0 && expectedNs == "System" && expectedName == "Action"
+                   && p.Name == "Action" && p.Namespace == "System";
         var dn = p.GetGenericTypeDefinition().Name;
+        var dns = p.GetGenericTypeDefinition().Namespace;
         var ga = p.GetGenericArguments();
         if (isVoid)
         {
-            if (!(dn.StartsWith("Action`", StringComparison.Ordinal) || dn.StartsWith("KAction`", StringComparison.Ordinal))
+            if (expectedName is not ("Action" or "KAction") || dns != expectedNs
+                || !dn.StartsWith(expectedName + "`", StringComparison.Ordinal)
                 || ga.Length != dp.Length) return false;
             for (int i = 0; i < dp.Length; i++) if (!GenericParamMatches(dp[i], ga[i], ownerArgs)) return false;
             return true;
         }
-        if (!(dn.StartsWith("Func`", StringComparison.Ordinal) || dn.StartsWith("KFunc`", StringComparison.Ordinal))
+        if (expectedName is not ("Func" or "KFunc") || dns != expectedNs
+            || !dn.StartsWith(expectedName + "`", StringComparison.Ordinal)
             || ga.Length != dp.Length + 1) return false;
         for (int i = 0; i < dp.Length; i++) if (!GenericParamMatches(dp[i], ga[i], ownerArgs)) return false;
         return GenericParamMatches(fn.Ret, ga[^1], ownerArgs);

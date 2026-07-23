@@ -47,12 +47,18 @@ Notes:
   map `scope`+`i` straight to `!i` / `!!i`.
 - `fn` subsumes both plain and suspend function types; the H2 position metadata is just an `fn` with
   `suspend:true` in a param/return/field slot — no separate `sfunc:` token, no `BirTokenToMeta`.
+  kotc BIR contains only that Kotlin function shape and MUST omit `clr`. During type lowering bir2cir
+  adds the CIR-only `clr` delegate-family field: `System.Action` for a void return and arity 0–16,
+  `System.Func` for a value return and arity 0–16, otherwise
+  `DotKt.Runtime.CompilerServices.KAction`/`KFunc`. Arity includes an extension receiver.
+  Every `fn` reaching ilemit MUST carry this field; ilemit realizes that exact nominal delegate type
+  and never chooses a family from TypeBuilder state or assembly names.
   **STATUS (#49): the `funcType` slot is FOLDED.** The delegate-view function type on
   `newClosure`/`newDelegate`/`newSam`/`newSuspendLambda`/`newBoundDelegate`/`delegateInvoke` was the LAST
   string-typed type slot (`func:<ret>:<args>` / `sfunc:<ret>:<args>`); kotc now emits it as the structured
   `fn` node (0 `func:`/`sfunc:` strings in the emitted BIR), bir2cir's `LowerFuncTypeValued` lowers the `fn`
   node via `LowerFnDelegate` (suspend→delegate shape kept for the sequence/iterator closure path; a suspend
-  `fn` in a plain type slot still erases to `object`), and ilemit derives the CLR delegate from the `fn` node
+  `fn` in a plain type slot still erases to `object`), and ilemit realizes the CIR-selected delegate from the `fn` node
   (`MapType(Fn)`→`FuncType(Fn)`, `FuncArityOf`/`FuncRetType`/`FuncArgTypes` read the node). The dead
   `func:`/`sfunc:` STRING-parsing scanners (kotc `synthLambda`; bir2cir `LowerFuncString`/`FuncRetEnd`/
   `SkipTypeToken`/`PrefixLength`/`FoldSFuncToFunc` + the `func:`/`sfunc:` branches of `LowerTypeString`;
@@ -297,8 +303,9 @@ ONE type read/write per language, used by EVERY site. No other code parses/build
 
 **C# (bir2cir / ilemit / facadegen)** — a shared `DotKt.Bir.TypeNode` record hierarchy (Fqn/Tv/Fn/Nullable/
 Array/Byref) + `TypeNode Read(JsonElement)` / `JsonNode Write(TypeNode)`, in ONE shared file referenced by
-all three C# tools. Every `MapType`/`SplitTopLevel`/`FuncRetEnd`/`SkipTypeToken`/`BirTokenToMeta`/`BareOwner`/
-`CanonSig` is DELETED and replaced by walking `TypeNode`.
+all three C# tools. Its `Fn.Clr` member is the sole phase extension: absent in kotc BIR, required in
+ilemit-facing CIR (§1). Every `MapType`/`SplitTopLevel`/`FuncRetEnd`/`SkipTypeToken`/`BirTokenToMeta`/
+`BareOwner`/`CanonSig` is DELETED and replaced by walking `TypeNode`.
 
 ## 5b. Injection metadata (facadegen → kotc) — structured, SAME vocabulary as BIR (retire the line grammar)
 Today facadegen emits injection metadata as **space-separated, positional TEXT LINES** — `file <pkg>

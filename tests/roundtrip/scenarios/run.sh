@@ -58,10 +58,9 @@ declare -A RT_XFAIL=(
 #   BATCH 3 (1):
 #     roundtrip-toplevel-val -> toplevelValVar  (#195: facadegen --import-list now surfaces a field-backed top-level val/var)
 # The remaining sections below stay in this shell lane pending later increments (suspend/coharness, negative
-# compile-fail, dual-emit-path/meta-inspection cases). Three batch-2 CANDIDATES stayed here because they RUN green
-# but emit IL the in-process lane's ilverify phase rejects (formal-only, runtime-safe cross-module IL gaps; each
-# section below carries a STAYS-in-shell note): roundtrip-nothing (Nothing branch merges object/string),
-# roundtrip-generic-hof (KFunc vs System.Func delegate), roundtrip-receiver-lambda (KAction vs System.Action).
+# compile-fail, dual-emit-path/meta-inspection cases). roundtrip-nothing still has a formal object/string IL gap.
+# generic-hof and receiver-lambda are now formally clean after low-arity delegate ABI unification; they remain here
+# only because their migration to the in-process ProjectReference lane has not been done yet.
 # roundtrip-comparable-meta STAYS here: it asserts on the generated facadegen metadata JSON directly (no in-process
 # analog); only its END-TO-END twin migrated.
 
@@ -554,10 +553,8 @@ check_output roundtrip-nullable-vt-generic "$nvexpected" "$nvactual" "cross-modu
 # The metadata type grammar is a recursive structured type-node tree (an `fn` node's `ret`/`params` are themselves type
 # nodes), so a generic user type — an `fqn` node with `args` — nests inside a lambda parameter: top-level / member /
 # extension / infix / operator / inline all carry it.
-# STAYS in this shell lane (not migrated to the in-process ProjectReference consumer): the consumer materializes its
-# lambda as a CLR `System.Func`2` while the re-imported producer signature types the delegate param as DotKt's
-# `KFunc`2` — runtime-compatible (the RUN is green) but the in-process lane's ilverify phase rejects the delegate type
-# mismatch (StackUnexpected KFunc/System.Func). The cross-module delegate-representation ABI gap tracked as #123.
+# Still in this shell lane pending mechanical migration to the in-process ProjectReference consumer. Both producer
+# and consumer now use the canonical low-arity `System.Func`2` ABI; this scenario guards that cross-module identity.
 HF="$ROOT/build/roundtrip-generic-hof"; rm -rf "$HF"; mkdir -p "$HF/lib" "$HF/app" "$HF/libbir" "$HF/libil" "$HF/appbir" "$HF/appil"
 cat > "$HF/lib/lib.kt" <<'EOF'
 class Box<T>(val value: T) { fun get(): T = value }
@@ -599,9 +596,8 @@ check_output roundtrip-generic-hof "$hfexpected" "$hfactual" "generic user types
 # fn receiver; ClrTypeInjection restores `Panel.() -> Unit` (an ExtensionFunctionType cone) so the consumer's lambda
 # gets `this: Panel`. Without the round-trip the injected param degrades to a receiver-less `(Panel)->Unit` and the
 # consumer fails with `unresolved reference 'margin'`. Also covers a member `Panel.() -> Unit` and multi-param mix.
-# STAYS in this shell lane (not migrated to the in-process ProjectReference consumer): same delegate-unification gap as
-# roundtrip-generic-hof but in the reverse direction (the consumer holds a DotKt `KAction`1` where the re-imported
-# signature expects `System.Action`1`) — runtime-compatible (RUN green) but the in-process ilverify phase rejects it (#123).
+# Still in this shell lane pending mechanical migration to the in-process ProjectReference consumer. The receiver
+# marker remains Kotlin metadata while the physical low-arity delegate is `System.Action`1` on both sides.
 RL="$ROOT/build/roundtrip-receiver-lambda"; rm -rf "$RL"; mkdir -p "$RL/lib" "$RL/app" "$RL/libbir" "$RL/libil" "$RL/appbir" "$RL/appil"
 cat > "$RL/lib/lib.kt" <<'EOF'
 package ui

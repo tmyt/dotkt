@@ -15,10 +15,6 @@ set -euo pipefail
 # one of these substrings to be tolerated. Keys are narrow fixture/method or emitted-type identifiers so they only mask
 # the documented shape.
 declare -A ILVERIFY_XFAIL=(
-	# #123: Delegates.observable/vetoable accepts Kotlin KAction/KFunc carriers in the stdlib constructor, while
-	# the application-side escaping lambdas materialize as signature-compatible System.Action/Func delegates.
-	# The CLR runtime accepts the MulticastDelegate instances and all observable/vetoable assertions run green.
-	["M2C::.ctor()"]="#123 delegate-representation ABI: observable/vetoable materializes System.Action/Func where the stdlib constructor declares KAction/KFunc — runtime-safe (RUN green)"
 	# --- CorA coroutine batch (DotKt.Tests.Coroutines.dll) migrated from verify-compiler-tests.sh (cases/il-coctxkey / il-cointercept /
 	#     il-awaitintercept / il-classdeleg). Each carries the SAME runtime-safe formal-only finding its verify-compiler-tests.sh
 	#     XFAIL_ILVERIFY entry carried before migration; re-expressed for the battery types. All coroutines fixtures RUN green.

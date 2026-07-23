@@ -418,8 +418,8 @@ sealed partial class Emitter
                 // instantiation whose .GetMethod / .GetParameters / .ReturnType all throw -- resolve Invoke via
                 // InvokeOf, and read the param/return shapes off the delegate's type ARGS (GetGenericArguments is
                 // safe on an instantiation; reflecting the Invoke signature is not).
-                var invoke = InvokeOf(fnType);
                 var ga = fnType.IsGenericType ? fnType.GetGenericArguments() : null;
+                var invoke = ga == null ? InvokeOf(fnType) : null;
                 var pType = ga != null ? ga[0] : invoke.GetParameters()[0].ParameterType;
                 var rType = ga != null ? ga[^1] : invoke.ReturnType;
                 _il.Emit(OpCodes.Ldloc, size); _il.Emit(OpCodes.Newarr, elem);
@@ -431,7 +431,7 @@ sealed partial class Emitter
                 _il.Emit(OpCodes.Ldloc, arr); _il.Emit(OpCodes.Ldloc, i);                       // arr, i (for stelem)
                 _il.Emit(OpCodes.Ldloc, fn); _il.Emit(OpCodes.Ldloc, i);                         // fn, i
                 if (!pType.IsValueType) _il.Emit(OpCodes.Box, typeof(int));
-                _il.Emit(OpCodes.Callvirt, invoke);                                              // init(i)
+                EmitDelegateInvoke(_il, fnType);                                                 // init(i)
                 if (rType != elem) { if (elem.IsValueType || elem.IsGenericParameter) _il.Emit(OpCodes.Unbox_Any, elem); else _il.Emit(OpCodes.Castclass, elem); }
                 EmitStelem(elem);                                                                // arr[i] = init(i)
                 _il.Emit(OpCodes.Ldloc, i); _il.Emit(OpCodes.Ldc_I4_1); _il.Emit(OpCodes.Add); _il.Emit(OpCodes.Stloc, i);
@@ -723,7 +723,7 @@ sealed partial class Emitter
                     : mb;
                 _il.Emit(OpCodes.Ldnull);
                 _il.Emit(OpCodes.Ldftn, target);
-                _il.Emit(OpCodes.Newobj, DelegateCtor(ft));
+                EmitDelegateCtor(_il, ft);
                 return ft;
             }
             case "newBoundDelegate":
@@ -747,7 +747,7 @@ sealed partial class Emitter
                 if (NeedsBoxToRef(recvT)) _il.Emit(OpCodes.Box, recvT);
                 if (IsVirtual(e)) { _il.Emit(OpCodes.Dup); _il.Emit(OpCodes.Ldvirtftn, mb); }
                 else _il.Emit(OpCodes.Ldftn, mb);
-                _il.Emit(OpCodes.Newobj, DelegateCtor(ft));
+                EmitDelegateCtor(_il, ft);
                 return ft;
             }
             case "newBoundClrDelegate":
@@ -765,7 +765,7 @@ sealed partial class Emitter
                 if (NeedsBoxToRef(recvTc)) _il.Emit(OpCodes.Box, recvTc);
                 if (IsVirtual(e)) { _il.Emit(OpCodes.Dup); _il.Emit(OpCodes.Ldvirtftn, mi); }
                 else _il.Emit(OpCodes.Ldftn, mi);
-                _il.Emit(OpCodes.Newobj, DelegateCtor(ft));
+                EmitDelegateCtor(_il, ft);
                 return ft;
             }
             case "delegateInvoke":
@@ -790,7 +790,7 @@ sealed partial class Emitter
                         && !got.IsValueType && !got.IsGenericParameter && got != want)
                         _il.Emit(OpCodes.Unbox_Any, want);
                 }
-                _il.Emit(OpCodes.Callvirt, InvokeOf(ft));
+                EmitDelegateInvoke(_il, ft);
                 return FuncRetType(ftNode);
             }
             case "newClosure":
@@ -803,7 +803,7 @@ sealed partial class Emitter
                 _il.Emit(OpCodes.Newobj, ctor);              // closure instance is the delegate target
                 _il.Emit(OpCodes.Ldftn, invoke);
                 var ft = MapType(e.GetProperty("funcType"));
-                _il.Emit(OpCodes.Newobj, DelegateCtor(ft));
+                EmitDelegateCtor(_il, ft);
                 return ft;
             }
             case "newSam":

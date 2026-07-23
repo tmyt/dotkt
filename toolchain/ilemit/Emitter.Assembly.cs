@@ -678,6 +678,8 @@ sealed partial class Emitter
         // The Unit-return delegate adapters forward to a void delegate type `ft` (a BCL Action or a synthetic
         // KAction), so bake them AFTER the synthetic delegates whose signatures they may reference.
         if (_unitAdapterTB != null && !_unitAdapterTB.IsCreated()) _unitAdapterTB.CreateType();
+        // BCL Func/Action Invoke trampolines used when a TypeSpec contains a composite open type (Func<E[]>).
+        if (_delegateInvokeAdapterTB != null && !_delegateInvokeAdapterTB.IsCreated()) _delegateInvokeAdapterTB.CreateType();
         // Safety net: any user type Ordered() somehow missed (so Save won't throw "not supported before the type is
         // created"). Repeat until stable, since creating one may be a prerequisite for another.
         for (bool again = true; again;)
@@ -1231,7 +1233,12 @@ sealed partial class Emitter
                     ifaceRet = imDef.TryGetProperty("ret", out var rt) ? MapType(SubstTv(DotKt.Bir.TypeNode.Read(rt), specArgs)) : typeof(void);
                     paramTypes = imDef.GetProperty("params").EnumerateArray().Select(p => MapType(SubstTv(DotKt.Bir.TypeNode.Read(p.GetProperty("type")), specArgs))).ToArray();
                 }
-                catch { _curMethodParams = savedMp; bridge.GetILGenerator().ThrowException(typeof(NotSupportedException)); return; }
+                catch (Exception ex)
+                {
+                    _curMethodParams = savedMp;
+                    throw new InvalidOperationException(
+                        $"cannot materialize DIM forwarder {ti.TB.FullName}.{imDef.GetProperty("name").GetString()}: {ex.Message}", ex);
+                }
                 bridge.SetReturnType(ifaceRet);
                 bridge.SetParameters(paramTypes);
                 _curMethodParams = savedMp;

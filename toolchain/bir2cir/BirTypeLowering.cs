@@ -302,13 +302,20 @@ static class BirTypeLowering
     // A function type kept as a DELEGATE (a `funcType` slot, or a plain fn in a type slot): lower ret (a Unit
     // ret -> void, Action vs Func) + params + receiver; the suspend flag is folded to false (the delegate shape
     // is preserved — the sequence/iterator closure path needs a real Func/Action, not an object-erased SM value).
+    // The physical CLR delegate family is decided HERE and carried explicitly in CIR. ilemit must not change the
+    // nominal ABI based on whether one of the resolved types happens to still be a TypeBuilder.
     static TypeNode LowerFnDelegate(TypeNode.Fn fn, bool refBuild, bool force)
     {
         var ret = (fn.Ret is TypeNode.Fqn rf && rf.Args == null && rf.Name == "kotlin.Unit")
             ? VoidType : LowerType(fn.Ret, refBuild, force, typeArg: false);
         var ps = fn.Params.Select(p => LowerType(p, refBuild, force, typeArg: false)).ToArray();
         var recv = fn.Recv == null ? null : LowerType(fn.Recv, refBuild, force, typeArg: false);
-        return new TypeNode.Fn(false, ret, ps, recv);
+        int arity = ps.Length + (recv == null ? 0 : 1);
+        bool returnsVoid = ret is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" };
+        string clr = returnsVoid
+            ? arity <= 16 ? "System.Action" : "DotKt.Runtime.CompilerServices.KAction"
+            : arity <= 16 ? "System.Func" : "DotKt.Runtime.CompilerServices.KFunc";
+        return new TypeNode.Fn(false, ret, ps, recv, clr);
     }
 
     // Read a structured Type node out of the BIR JSON, lower it, and write it back.
