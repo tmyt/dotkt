@@ -67,14 +67,14 @@ $(foreach t,$(TOOLS),$(eval $(call TOOL_RULE,$(t))))
 stdlib: stdlib-klib stdlib-ref stdlib-rt ## the CLR stdlib: frontend KLIB + reference dll + runtime dll
 
 stdlib-klib: $(FE_KLIB) ## kotlin-stdlib-clr-frontend.klib (kotc -classpath input)
-$(FE_KLIB): $(KOTC) $(STDLIB_SRC) scripts/build-stdlib-klib.sh
+$(FE_KLIB): $(KOTC) $(STDLIB_SRC) scripts/build-stdlib-klib.sh scripts/lib.sh
 	bash scripts/build-stdlib-klib.sh
 
 # The stdlib dlls depend on the emitter tools via their SOURCES (real change signal) plus ORDER-ONLY
 # deps on the dlls (existence). Depending on the dll mtimes directly would spuriously retrigger these
 # slow builds: the verify scripts' internal `dotnet build` refreshes the dlls even when nothing changed.
 stdlib-ref: $(STDLIB_REF) ## DotKt.Private.Stdlib.dll (compile-time @Clr metadata; bir2cir's --ref)
-$(STDLIB_REF): $(KOTC) $(STDLIB_SRC) scripts/build-stdlib-ref.sh \
+$(STDLIB_REF): $(KOTC) $(STDLIB_SRC) scripts/build-stdlib-ref.sh scripts/lib.sh \
                $(call tool_src,bir2cir) $(call tool_src,ilemit) $(call tool_src,retarget) \
                | build/bir2cir-bin/bir2cir.dll build/ilemit-bin/ilemit.dll build/retarget-bin/retarget.dll
 	bash scripts/build-stdlib-ref.sh --emit
@@ -83,7 +83,7 @@ $(STDLIB_REF): $(KOTC) $(STDLIB_SRC) scripts/build-stdlib-ref.sh \
 stdlib-rt: $(STDLIB_RT) ## DotKt.Stdlib.dll (the shipping runtime assembly)
 # The script exits 0 on success / nonzero on real failure (the old final-error-grep footgun — exit 1
 # exactly when the build was CLEAN — is fixed, so no compensating `|| true` here any more).
-$(STDLIB_RT): $(STDLIB_REF) $(STDLIB_SRC) scripts/build-stdlib-rt.sh \
+$(STDLIB_RT): $(STDLIB_REF) $(STDLIB_SRC) scripts/build-stdlib-rt.sh scripts/lib.sh \
               $(call tool_src,bir2cir) $(call tool_src,ilemit) \
               | build/bir2cir-bin/bir2cir.dll build/ilemit-bin/ilemit.dll
 	bash scripts/build-stdlib-rt.sh --emit

@@ -58,6 +58,10 @@ FEED="$ROOT/build/nuget-feed"
 #    a stdlib/kotc/bir2cir source change is gated by verify-tests, not here.
 info "packing 5 nupkgs (version $VER) -> $FEED"
 bash "$ROOT/scripts/pack-nuget.sh" >/dev/null || die "pack-nuget.sh failed"
+# #223: immediately repeat the standalone pack. Tool builds may refresh output mtimes, but a content-stable
+# toolchain must reuse the just-baked frontend KLIB and stdlib pair. The helper also proves that a real same-size
+# content change invalidates the new fingerprint, so idempotency does not weaken stale-artifact protection.
+bash "$ROOT/tests/packaged-sdk/verify-pack-idempotency.sh"
 
 # 2. Scratch workspace: an isolated globalPackagesFolder + a local-only feed, so restore can ONLY see the
 #    freshly-packed nupkgs (no cache masking, no touching the user's ~/.nuget).

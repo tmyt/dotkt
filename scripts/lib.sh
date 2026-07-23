@@ -114,21 +114,31 @@ build_tool() { # <name> — UNCONDITIONAL build (the verify gates use this: they
 # false-RED, and — worse — a silent stale-GREEN (a case passing against a stale bake, breaking on the next
 # fresh one). Each of the three artifacts is a deterministic function of its INPUTS (the installed kotc, the
 # relevant native tool dlls, and the stdlib source tree); we hash those inputs into a sidecar
-# '<artifact>.toolstamp' and rebuild on MISMATCH, not just absence. The hash is mtime+size+path (cheap; the
-# build tools are incremental, so an unchanged toolchain leaves every input untouched -> stamp matches -> no
-# spurious rebuild, preserving the build-only-if-needed fast path).
+# '<artifact>.toolstamp' and rebuild on MISMATCH, not just absence. The hash covers CONTENT+PATH, never mtime:
+# installDist/dotnet build may replace an unchanged output and refresh its mtime on every pack invocation.
+# An mtime stamp therefore invalidates itself after pack rebuilds the tools (#223), while a content stamp keeps
+# unchanged packs idempotent and still rejects every actual tool/source/reference-pack content change.
 KOTC_INSTALL_DIR="$ROOT/toolchain/kotc/build/install/kotc"
 STDLIB_SRC_DIR="$ROOT/libraries/stdlib"
+STDLIB_BUILD_LIB="$ROOT/scripts/lib.sh"
 
 # _toolstamp <path>... — fingerprint the given input files/dirs. Missing paths contribute nothing (a build
-# that truly lacks an input fails loudly on its own); deterministic (sort before hashing).
-_toolstamp() { find "$@" -type f -printf '%T@ %s %p\n' 2>/dev/null | LC_ALL=C sort | sha256sum | awk '{print $1}'; }
+# that truly lacks an input fails loudly on its own). Sort the NUL-delimited absolute paths, hash each file,
+# then hash that ordered manifest. `sha256sum` records both content digest and path, so additions/removals and
+# path changes invalidate the stamp without treating a metadata-only touch as a compiler change.
+_toolstamp() {
+	find "$@" -type f -print0 2>/dev/null \
+		| LC_ALL=C sort -z \
+		| xargs -0 -r sha256sum \
+		| sha256sum \
+		| awk '{print $1}'
+}
 # Per-artifact input sets. klib: kotc + stdlib sources (a klib has no IL -> ilemit/bir2cir are irrelevant to
 # its bytes). ref: kotc + bir2cir + ilemit + retarget + targeting pack + sources. rt: the same plus the REF dll it
 # consumes through bir2cir's compile-reference set.
-_toolstamp_klib() { _toolstamp "$KOTC_INSTALL_DIR" "$STDLIB_SRC_DIR"; }
-_toolstamp_ref()  { need_dotnet_reference_sets; _toolstamp "$KOTC_INSTALL_DIR" "$BIR2CIR_DLL" "$ILEMIT_DLL" "$RETARGET_DLL" "$DOTNET_REFPACK_DIR" "$STDLIB_SRC_DIR"; }
-_toolstamp_rt()   { need_dotnet_reference_sets; _toolstamp "$KOTC_INSTALL_DIR" "$BIR2CIR_DLL" "$ILEMIT_DLL" "$RETARGET_DLL" "$STDLIB_REF_DLL" "$DOTNET_REFPACK_DIR" "$STDLIB_SRC_DIR"; }
+_toolstamp_klib() { _toolstamp "$KOTC_INSTALL_DIR" "$STDLIB_SRC_DIR" "$STDLIB_BUILD_LIB" "$ROOT/scripts/build-stdlib-klib.sh"; }
+_toolstamp_ref()  { need_dotnet_reference_sets; _toolstamp "$KOTC_INSTALL_DIR" "$BIR2CIR_DLL" "$ILEMIT_DLL" "$RETARGET_DLL" "$DOTNET_REFPACK_DIR" "$STDLIB_SRC_DIR" "$STDLIB_BUILD_LIB" "$ROOT/scripts/build-stdlib-ref.sh"; }
+_toolstamp_rt()   { need_dotnet_reference_sets; _toolstamp "$KOTC_INSTALL_DIR" "$BIR2CIR_DLL" "$ILEMIT_DLL" "$RETARGET_DLL" "$STDLIB_REF_DLL" "$DOTNET_REFPACK_DIR" "$STDLIB_SRC_DIR" "$STDLIB_BUILD_LIB" "$ROOT/scripts/build-stdlib-rt.sh"; }
 # _stamp_fresh <artifact> <fingerprint>: true iff the artifact exists AND its sidecar records this fingerprint.
 _stamp_fresh() { [[ -e "$1" && -f "$1.toolstamp" && "$(cat "$1.toolstamp" 2>/dev/null)" == "$2" ]]; }
 
