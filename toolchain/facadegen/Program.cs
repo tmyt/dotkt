@@ -1776,6 +1776,23 @@ static class FacadeGen
         return DotKt.Bir.BirCarrier.DecodeBody(version, content).ToJsonString();
     }
 
+    // A compiler-synthesized CLR type may have a different Kotlin surface type. The F-bound star-projection lowering,
+    // for example, represents G<*> with a non-generic existential interface so every closed G<X> can implement it.
+    // [KotlinType] carries the exact pre-lowering TypeNode; accepting it requires the same assembly + carrier provenance
+    // as every other DotKt round-trip marker, so a same-named attribute in an ordinary CLR assembly is inert.
+    const string KTypeAttr = "DotKt.Runtime.CompilerServices.KotlinTypeAttribute";
+    static TN KotlinTypeNode(Type t)
+    {
+        try
+        {
+            foreach (var cad in t.GetCustomAttributesData())
+                if (IsDotKtMetadata(cad, KTypeAttr) && cad.ConstructorArguments.Count == 2)
+                    return TN.Parse(DecodeCarrier(cad));
+        }
+        catch { /* malformed/unresolvable carrier: retain the ordinary CLR mapping and its diagnostic */ }
+        return null;
+    }
+
     // H2: the [KotlinSuspendFunctionType(shape)] attribute stamped by bir2cir's RoundtripMetadata on a `suspend (…) -> T`
     // function-type POSITION (param / return / field / property). bir2cir erases the CLR signature slot to `object` (a
     // suspend-lambda VALUE is a Continuation state-machine object, not a Func), so the suspend ORIGIN + arg/return SHAPE
@@ -2355,6 +2372,7 @@ static class FacadeGen
     // A reference to another .NET type -> a Fqn (simple name / dotted FQN) the injector resolves IF injected, else Any?.
     static TN CrossTypeT(Type t)
     {
+        if (KotlinTypeNode(t) is TN kotlinType) return kotlinType;
         if (t.IsArray) { var e = MapT(t.GetElementType(), t); return IsAnyQ(e) ? AnyQ() : new TN.Array(e); }
         // A root-namespace GENERIC user type (`Box<T>`) is handled by the generic branch; only reject an empty namespace
         // for NON-generic types (a global/compiler type with no useful injectable identity).
@@ -2505,6 +2523,7 @@ static class FacadeGen
     // as CrossTypeT does (a dotted Fqn), never MapTN's simple-name self-match branch.
     static TN CrossTypeTN(Type t, IList<CustomAttributeData> attrs, MemberInfo ctx, int my, ref int pos, bool wrap)
     {
+        if (KotlinTypeNode(t) is TN kotlinType) return WrapNrt(kotlinType, t, attrs, ctx, my, wrap);
         if (t.IsArray) { var e = MapTN(t.GetElementType(), t, attrs, ctx, ref pos, wrap); return IsAnyQ(e) ? AnyQ() : WrapNrt(new TN.Array(e), t, attrs, ctx, my, wrap); }
         if (t.IsByRef || t.IsPointer || t.IsGenericParameter || (string.IsNullOrEmpty(t.Namespace) && !t.IsGenericType)) return AnyQ();
         if (t.IsGenericType)

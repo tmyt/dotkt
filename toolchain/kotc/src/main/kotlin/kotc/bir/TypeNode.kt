@@ -24,6 +24,9 @@ sealed class TypeNode {
      */
     data class Tv(val scope: String, val i: Int) : TypeNode()
 
+    /** `star`: a Kotlin `*` projection. Metadata/frontend-only; backend BIR keeps its existing `kotlin.Any` erasure. */
+    data object Star : TypeNode()
+
     /** `fn`: a function type; [suspend] is a flag, [recv] is the extension receiver (subsumes func:/sfunc:). */
     data class Fn(
         val suspend: Boolean,
@@ -66,6 +69,7 @@ sealed class TypeNode {
                 sb.append('}')
             }
             is Tv -> sb.append("{\"t\":\"tv\",\"scope\":").append(esc(scope)).append(",\"i\":").append(i).append('}')
+            Star -> sb.append("{\"t\":\"star\"}")
             is Fn -> {
                 sb.append("{\"t\":\"fn\",\"suspend\":").append(if (suspend) "true" else "false")
                 sb.append(",\"ret\":"); ret.write(sb)
@@ -134,6 +138,7 @@ sealed class TypeNode {
                     o["scope"] as? String ?: throw IllegalArgumentException("tv missing scope"),
                     (o["i"] as Number).toInt(),
                 )
+                "star" -> Star
                 "fn" -> Fn(
                     o["suspend"] as Boolean,
                     fromValue(o["ret"]),

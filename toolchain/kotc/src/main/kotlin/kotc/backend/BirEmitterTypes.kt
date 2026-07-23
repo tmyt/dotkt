@@ -290,6 +290,7 @@ internal fun BirEmitter.tvOf(param: IrTypeParameter): TypeNode.Tv {
  *  A non-generic synthetic (`dotkt_KProperty`) can't bake a `tv`, so this gates the fall-through. */
 internal fun BirEmitter.hasTv(t: TypeNode): Boolean = when (t) {
 	is TypeNode.Tv -> true
+	TypeNode.Star -> false   // metadata/frontend-only; a defensive value cannot contain a type variable
 	is TypeNode.Fqn -> t.args?.any { hasTv(it) } == true
 	is TypeNode.Fn -> hasTv(t.ret) || t.params.any { hasTv(it) } || (t.recv?.let { hasTv(it) } == true)
 	is TypeNode.Nullable -> hasTv(t.of)
@@ -303,6 +304,7 @@ internal fun BirEmitter.hasTv(t: TypeNode): Boolean = when (t) {
  *  concrete type (resolves fine). */
 internal fun BirEmitter.containsTv(t: TypeNode): Boolean = when (t) {
 	is TypeNode.Tv -> true
+	TypeNode.Star -> false   // metadata/frontend-only; a defensive value cannot contain a type variable
 	is TypeNode.Fqn -> t.args?.any { containsTv(it) } == true
 	is TypeNode.Fn -> containsTv(t.ret) || t.params.any { containsTv(it) } || (t.recv?.let { containsTv(it) } == true)
 	is TypeNode.Nullable -> containsTv(t.of)

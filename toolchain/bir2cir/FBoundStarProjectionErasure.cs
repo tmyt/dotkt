@@ -92,6 +92,13 @@ static class FBoundStarProjectionErasure
         {
             ["name"] = owner.ErasedName,
             ["kind"] = "interface",
+            ["generated"] = true,
+            // The CLR existential view is an implementation detail, not the Kotlin source type. Preserve the exact
+            // pre-lowering Kotlin projection as an opaque fact; RoundtripMetadata turns it into [KotlinType], and a
+            // downstream facadegen restores G<*> for the frontend instead of exposing this synthetic interface or
+            // degrading the whole signature to Any?. The ordinary FIR -> IR path erases the captured star before BIR.
+            ["kotlinType"] = TypeJson.Write(new TypeNode.Fqn(owner.Name,
+                new TypeNode[] { new TypeNode.Star() })).ToJsonString(),
             ["base"] = null,
             ["interfaces"] = inherited,
             ["fields"] = new JsonArray(),

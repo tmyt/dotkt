@@ -16,8 +16,9 @@ using System.Text.Json.Nodes;
 namespace DotKt.Bir;
 
 /// <summary>
-/// The universal type representation (spec §1). A sealed hierarchy of six variants — every Kotlin/CLR
-/// type identity is exactly one of these. `T` in the spec denotes a nested <see cref="TypeNode"/>.
+/// The structured type representation shared by the compiler tools. The <see cref="Star"/> variant is a
+/// metadata/frontend-only carrier; all other variants form the emitted BIR/CIR type vocabulary.
+/// `T` in the spec denotes a nested <see cref="TypeNode"/>.
 /// </summary>
 public abstract record TypeNode
 {
@@ -40,6 +41,12 @@ public abstract record TypeNode
     /// index over the enclosing-type nesting chain. The scope disambiguates the two distinct spaces.
     /// </summary>
     public sealed record Tv(string Scope, int I) : TypeNode;
+
+    /// <summary>
+    /// `star`: a Kotlin <c>*</c> type projection. Metadata/frontend-only: kotc resolves it to a captured IR type and
+    /// emits the existing objectish BIR erasure, so this node never reaches CIR emission.
+    /// </summary>
+    public sealed record Star : TypeNode;
 
     /// <summary>
     /// `fn`: a function type; <c>Suspend</c> is a flag, <c>Recv</c> is the extension receiver
@@ -117,6 +124,8 @@ public abstract record TypeNode
                 return new Tv(
                     e.GetProperty("scope").GetString() ?? throw new FormatException("tv missing scope"),
                     e.GetProperty("i").GetInt32());
+            case "star":
+                return new Star();
             case "fn":
                 return new Fn(
                     e.GetProperty("suspend").GetBoolean(),
@@ -159,6 +168,8 @@ public abstract record TypeNode
             }
             case Tv v:
                 return new JsonObject { ["t"] = "tv", ["scope"] = v.Scope, ["i"] = v.I };
+            case Star:
+                return new JsonObject { ["t"] = "star" };
             case Fn fn:
             {
                 var o = new JsonObject
@@ -257,6 +268,8 @@ public static class TypeNodeSelfTest
                 "{\"t\":\"fqn\",\"name\":\"kotlin.Int\"}"),
             (new TypeNode.Fqn("kotlin.collections.List", new TypeNode[] { new TypeNode.Fqn("kotlin.Int") }),
                 "{\"t\":\"fqn\",\"name\":\"kotlin.collections.List\",\"args\":[{\"t\":\"fqn\",\"name\":\"kotlin.Int\"}]}"),
+            (new TypeNode.Fqn("Bounded", new TypeNode[] { new TypeNode.Star() }),
+                "{\"t\":\"fqn\",\"name\":\"Bounded\",\"args\":[{\"t\":\"star\"}]}"),
             (new TypeNode.Fn(false, new TypeNode.Fqn("kotlin.String"), new TypeNode[] { new TypeNode.Fqn("kotlin.Int") }),
                 "{\"t\":\"fn\",\"suspend\":false,\"ret\":{\"t\":\"fqn\",\"name\":\"kotlin.String\"},\"params\":[{\"t\":\"fqn\",\"name\":\"kotlin.Int\"}]}"),
             // suspend Foo<T>.()->T?

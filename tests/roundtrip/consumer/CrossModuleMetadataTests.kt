@@ -54,6 +54,9 @@ import demo.hello
 import demo.Plain
 import mpp.app.Greeter
 import kotlinx.genovc.arrOfNulls
+import starprojection.StarKey
+import starprojection.starOwner
+import starprojection.isConcreteStarKey
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert
 
@@ -129,6 +132,14 @@ class GenericMetadataRoundtripTests {
         // (the direct `mb.v` generic-member read — the #33 shape — is covered by genmember's p.b/w.items; omitting
         //  it here keeps this method's emitted IL ilverify-clean, since the read-only vs invariant collection
         //  interface of the Root-V collapse would surface a formal-only IList/IReadOnlyCollection variance finding.)
+    }
+
+    // A bounded generic G<*> is represented in CLR by a compiler-generated existential interface. The referenced
+    // property's and function parameter's Kotlin signatures must be restored from metadata, never weakened to Any?.
+    @TestAttribute
+    fun boundedStarProjectionRoundTrips() {
+        val key: StarKey<*> = starOwner().key
+        ClassicAssert.IsTrue(isConcreteStarKey(key))
     }
 
     // ktproj-reprop (#17): a direct property get/set on a `kotlinx.`-packaged re-imported type lowers to the
