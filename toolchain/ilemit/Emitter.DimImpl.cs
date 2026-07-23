@@ -83,7 +83,12 @@ sealed partial class Emitter
                         ifaceRet = bmDef.TryGetProperty("ret", out var rt) ? MapType(SubstTv(DotKt.Bir.TypeNode.Read(rt), specArgs)) : typeof(void);
                         paramTypes = bmDef.GetProperty("params").EnumerateArray().Select(p => MapType(SubstTv(DotKt.Bir.TypeNode.Read(p.GetProperty("type")), specArgs))).ToArray();
                     }
-                    catch { _curMethodParams = savedMp; bridge.GetILGenerator().ThrowException(typeof(NotSupportedException)); continue; }
+                    catch (Exception ex)
+                    {
+                        _curMethodParams = savedMp;
+                        throw new InvalidOperationException(
+                            $"cannot materialize emitted-base DIM bridge {ti.TB.FullName}.{name}: {ex.Message}", ex);
+                    }
                     bridge.SetReturnType(ifaceRet);
                     bridge.SetParameters(paramTypes);
                     _curMethodParams = savedMp;

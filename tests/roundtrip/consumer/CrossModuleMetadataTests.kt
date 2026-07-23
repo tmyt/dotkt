@@ -54,8 +54,34 @@ import demo.hello
 import demo.Plain
 import mpp.app.Greeter
 import kotlinx.genovc.arrOfNulls
+import starprojection.StarKey
+import starprojection.starOwner
+import starprojection.isConcreteStarKey
+import suspendcompanion.CompanionSuspendApi
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.coroutines.startCoroutine
+
+class CrossModuleSuspendSink : Continuation<Int> {
+    override val context: CoroutineContext get() = EmptyCoroutineContext
+    var completed: Boolean = false
+    var value: Int = 0
+
+    override fun resumeWith(result: Result<Int>) {
+        value = result.getOrThrow()
+        completed = true
+    }
+}
+
+fun runCrossModuleSuspend(block: suspend () -> Int): Int {
+    val sink = CrossModuleSuspendSink()
+    block.startCoroutine(sink)
+    ClassicAssert.IsTrue(sink.completed)
+    return sink.value
+}
 
 class CrossModuleCaptureTests {
     // ktproj-dotktpkg (#26 follow-up): a `dotkt.foo.bar` cross-module local captured in a lambda,
@@ -131,6 +157,14 @@ class GenericMetadataRoundtripTests {
         //  interface of the Root-V collapse would surface a formal-only IList/IReadOnlyCollection variance finding.)
     }
 
+    // A bounded generic G<*> is represented in CLR by a compiler-generated existential interface. The referenced
+    // property's and function parameter's Kotlin signatures must be restored from metadata, never weakened to Any?.
+    @TestAttribute
+    fun boundedStarProjectionRoundTrips() {
+        val key: StarKey<*> = starOwner().key
+        ClassicAssert.IsTrue(isConcreteStarKey(key))
+    }
+
     // ktproj-reprop (#17): a direct property get/set on a `kotlinx.`-packaged re-imported type lowers to the
     // get_value/set_value accessor call (the kotlinx. prefix makes NetInteropBinding skip the owner).
 }
@@ -171,5 +205,14 @@ class MultiplatformMetadataTests {
     @TestAttribute
     fun commonFragmentGenericFactoryRoundTrip() {
         ClassicAssert.AreEqual(3, arrOfNulls<String>(3).size)  // 3  common-fragment generic factory
+    }
+}
+
+class SuspendMetadataRoundtripTests {
+    // #148: a suspend member on a companion crosses the DLL boundary through facadegen metadata, is invoked from a
+    // consumer-side suspend lambda, and completes through the Kotlin Continuation ABI (not merely declaration emit).
+    @TestAttribute
+    fun companionSuspendFunctionRoundTripsAndRuns() {
+        ClassicAssert.AreEqual(42, runCrossModuleSuspend { CompanionSuspendApi.compute(41) })
     }
 }

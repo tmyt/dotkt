@@ -12,6 +12,9 @@
 //                   a PUBLIC Unit-returning suspend fun -> a NON-generic public `Task` bridge (coroutine-abi.md
 //                   §1: `suspend fun f(): Unit` maps to `Task`, not `Task<Unit>`). greet stays Unit-returning
 //                   (the bridge point); its former println side effect is captured into `cuLog` and asserted.
+//   regression   -> cuList
+//                   compiling a generic List<T>-returning public suspend declaration synthesizes one coherent
+//                   readonly CLR result slot across Task<T>, TCS<T>, RootContinuation<T>, and TrySetResult(T).
 //
 // Top-level names are family-prefixed (`sco`/`cu`) so they can't clash with sibling coroutine fixtures or the
 // stdlib within this single assembly.
@@ -37,6 +40,8 @@ suspend fun cuGreet(): Unit {
     val x = cuStep()
     cuLog = "hello " + (x * 2)
 }
+
+suspend fun <T> cuList(value: T): List<T> = listOf(value)
 
 class ContinuationBridgeTests {
     @TestAttribute

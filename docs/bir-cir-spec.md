@@ -28,6 +28,7 @@ A `Type` is ALWAYS a JSON object with a `t` discriminator. **There is no bare-st
 |-----|--------|----------------|-----------------------------|
 | `fqn` | `name:string`, `args?:[T…]` | a named type `kotlin.collections.List<…>` — a PURE Kotlin/CLR FQN identity, generic args optional | plain FQN, `clr:`, `clrg:Name[..]`, `@Name`/`@Name[..]`, primitive shorthand (`int`/`string`/`void`/`object`/…) |
 | `tv` | `scope:"type"\|"method"`, `i:int` | a type variable — `scope` is the CLR generic-param SPACE, `i` the owner-local positional index | `gp:X` (name-keyed, space-blind) |
+| `star` | — | a Kotlin `*` projection; metadata/frontend-only and erased by kotc before BIR emission | no CIR form |
 | `fn` | `suspend:bool`, `ret:T`, `params:[T…]`, `recv?:T` | a function type; `suspend` is a flag, `recv` = extension receiver | `func:ret:args`, `sfunc:ret:args` |
 | `nullable` | `of:T` | `T?` (NRT-annotated nullable, `NullableAttribute`=2) | `nullable:X` |
 | `oblivious` | `of:T` | `T!` — an NRT-*oblivious* flexible type `(T..T?)` (`NullableAttribute`=0); the CLR term, not the Kotlin-consumer "platform" name | the META `!` platform suffix |
@@ -47,12 +48,18 @@ Notes:
   map `scope`+`i` straight to `!i` / `!!i`.
 - `fn` subsumes both plain and suspend function types; the H2 position metadata is just an `fn` with
   `suspend:true` in a param/return/field slot — no separate `sfunc:` token, no `BirTokenToMeta`.
+  kotc BIR contains only that Kotlin function shape and MUST omit `clr`. During type lowering bir2cir
+  adds the CIR-only `clr` delegate-family field: `System.Action` for a void return and arity 0–16,
+  `System.Func` for a value return and arity 0–16, otherwise
+  `DotKt.Runtime.CompilerServices.KAction`/`KFunc`. Arity includes an extension receiver.
+  Every `fn` reaching ilemit MUST carry this field; ilemit realizes that exact nominal delegate type
+  and never chooses a family from TypeBuilder state or assembly names.
   **STATUS (#49): the `funcType` slot is FOLDED.** The delegate-view function type on
   `newClosure`/`newDelegate`/`newSam`/`newSuspendLambda`/`newBoundDelegate`/`delegateInvoke` was the LAST
   string-typed type slot (`func:<ret>:<args>` / `sfunc:<ret>:<args>`); kotc now emits it as the structured
   `fn` node (0 `func:`/`sfunc:` strings in the emitted BIR), bir2cir's `LowerFuncTypeValued` lowers the `fn`
   node via `LowerFnDelegate` (suspend→delegate shape kept for the sequence/iterator closure path; a suspend
-  `fn` in a plain type slot still erases to `object`), and ilemit derives the CLR delegate from the `fn` node
+  `fn` in a plain type slot still erases to `object`), and ilemit realizes the CIR-selected delegate from the `fn` node
   (`MapType(Fn)`→`FuncType(Fn)`, `FuncArityOf`/`FuncRetType`/`FuncArgTypes` read the node). The dead
   `func:`/`sfunc:` STRING-parsing scanners (kotc `synthLambda`; bir2cir `LowerFuncString`/`FuncRetEnd`/
   `SkipTypeToken`/`PrefixLength`/`FoldSFuncToFunc` + the `func:`/`sfunc:` branches of `LowerTypeString`;
@@ -297,8 +304,9 @@ ONE type read/write per language, used by EVERY site. No other code parses/build
 
 **C# (bir2cir / ilemit / facadegen)** — a shared `DotKt.Bir.TypeNode` record hierarchy (Fqn/Tv/Fn/Nullable/
 Array/Byref) + `TypeNode Read(JsonElement)` / `JsonNode Write(TypeNode)`, in ONE shared file referenced by
-all three C# tools. Every `MapType`/`SplitTopLevel`/`FuncRetEnd`/`SkipTypeToken`/`BirTokenToMeta`/`BareOwner`/
-`CanonSig` is DELETED and replaced by walking `TypeNode`.
+all three C# tools. Its `Fn.Clr` member is the sole phase extension: absent in kotc BIR, required in
+ilemit-facing CIR (§1). Every `MapType`/`SplitTopLevel`/`FuncRetEnd`/`SkipTypeToken`/`BirTokenToMeta`/
+`BareOwner`/`CanonSig` is DELETED and replaced by walking `TypeNode`.
 
 ## 5b. Injection metadata (facadegen → kotc) — structured, SAME vocabulary as BIR (retire the line grammar)
 Today facadegen emits injection metadata as **space-separated, positional TEXT LINES** — `file <pkg>
@@ -346,8 +354,10 @@ freshly-emitted BIR + CIR and reddens the gate on any drift.
   `typeParams` name-declaration shorthand (`STRARR_OK`). This fails closed across the whole tree — a future
   string type token anywhere reddens without the validator having to enumerate every type slot.
 - **Canonical node kinds + type tags (§2.5/§2.6).** Every `{k}` must be in the frozen `KINDS` set (the union of
-  every kind the current toolchain emits across a full fresh build — regenerate with `--dump-kinds`); every `{t}`
-  in `{fqn,tv,fn,nullable,oblivious,array,byRef}`. A typo, a retired spelling (`bin`/`un`/`isinst`/`isinstRef`/
+  every kind the current toolchain emits across a full fresh build — regenerate with `--dump-kinds`); every emitted
+  BIR/CIR `{t}` is in `{fqn,tv,fn,nullable,oblivious,array,byRef}`. The metadata/frontend-only `star` carrier never
+  enters an emitted BIR/CIR document and is therefore outside this validator. A typo, a retired spelling (`bin`/`un`/
+  `isinst`/`isinstRef`/
   `setFieldExpr`/`staticFieldSet`), or an ad-hoc new kind reds. Casing is enforced by set membership.
 - **Well-formed types (§1):** each `{t}` carries its required fields with the right value shapes; a `{k}`+`{t}`
   mixed object (roles are disjoint) reds.

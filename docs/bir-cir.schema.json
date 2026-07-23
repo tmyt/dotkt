@@ -58,7 +58,11 @@
         "suspend": { "type": "boolean" },
         "ret":     { "$ref": "#/$defs/type" },
         "params":  { "type": "array", "items": { "$ref": "#/$defs/type" } },
-        "recv":    { "$ref": "#/$defs/type", "description": "extension receiver; absent = none" }
+        "recv":    { "$ref": "#/$defs/type", "description": "extension receiver; absent = none" },
+        "clr":     {
+          "enum": ["System.Func", "System.Action", "DotKt.Runtime.CompilerServices.KFunc", "DotKt.Runtime.CompilerServices.KAction"],
+          "description": "CIR-only physical delegate family, authored by bir2cir after Kotlin-to-CLR lowering. kotc BIR MUST omit it; every fn that reaches ilemit MUST carry it."
+        }
       },
       "required": ["t", "suspend", "ret", "params"],
       "additionalProperties": false

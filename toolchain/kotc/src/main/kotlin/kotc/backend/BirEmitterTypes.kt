@@ -236,9 +236,10 @@ internal fun BirEmitter.birType(t: IrType): TypeNode {
 	}
 	// Enums -> the real .NET enum type reference (package-qualified, like other user types).
 	if (klass != null && klass.kind == ClassKind.ENUM_CLASS) return TypeNode.Fqn(typeName(klass))
-	// A user-declared class/interface becomes a reference to that BIR type; a constructed user generic carries
-	// concrete args. Anon objects resolve through `typeName`.
-	if (klass != null && (klass.kind == ClassKind.CLASS || klass.kind == ClassKind.INTERFACE)) {
+	// A user-declared class/interface/object becomes a reference to that BIR type; a constructed user generic carries
+	// concrete args. Object singleton types remain distinct classifiers at use sites (`value is Active` must not
+	// collapse to `value is Any`), while anonymous objects resolve through `typeName`.
+	if (klass != null && (klass.kind == ClassKind.CLASS || klass.kind == ClassKind.INTERFACE || klass.kind == ClassKind.OBJECT)) {
 		// An `inner class` re-declares its enclosing class(es)' type params; reference it WITH those (as `tv`).
 		val enclArgs = innerEnclosingTypeParams(klass).map { tvOf(it) }
 		// A LIFTED local class made generic over enclosing type params (liftLocalClass) is DENOTABLE — a `val l: L`
@@ -289,6 +290,7 @@ internal fun BirEmitter.tvOf(param: IrTypeParameter): TypeNode.Tv {
  *  A non-generic synthetic (`dotkt_KProperty`) can't bake a `tv`, so this gates the fall-through. */
 internal fun BirEmitter.hasTv(t: TypeNode): Boolean = when (t) {
 	is TypeNode.Tv -> true
+	TypeNode.Star -> false   // metadata/frontend-only; a defensive value cannot contain a type variable
 	is TypeNode.Fqn -> t.args?.any { hasTv(it) } == true
 	is TypeNode.Fn -> hasTv(t.ret) || t.params.any { hasTv(it) } || (t.recv?.let { hasTv(it) } == true)
 	is TypeNode.Nullable -> hasTv(t.of)
@@ -302,6 +304,7 @@ internal fun BirEmitter.hasTv(t: TypeNode): Boolean = when (t) {
  *  concrete type (resolves fine). */
 internal fun BirEmitter.containsTv(t: TypeNode): Boolean = when (t) {
 	is TypeNode.Tv -> true
+	TypeNode.Star -> false   // metadata/frontend-only; a defensive value cannot contain a type variable
 	is TypeNode.Fqn -> t.args?.any { containsTv(it) } == true
 	is TypeNode.Fn -> containsTv(t.ret) || t.params.any { containsTv(it) } || (t.recv?.let { containsTv(it) } == true)
 	is TypeNode.Nullable -> containsTv(t.of)

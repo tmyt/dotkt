@@ -215,7 +215,7 @@ static partial class SuspendColdLowering
     // already the class FQN (`a.Box` vs `b.Box`) so it needs no FileClass to disambiguate, but including it is
     // harmless (a class lives in exactly one file). The Container (`Owner ?? FileClass`) is the FQN identity used
     // to key the return-type maps below.
-    readonly record struct FunKey(string Owner, string FileClass, string Name, string Sig);
+    readonly record struct FunKey(string Owner, string FileClass, string Name, string Sig, string TypeParamSig);
 
     // The param-type signature discriminating overloaded suspend members (see FunKey.Sig).
     // Overload-key signature: the CANONICAL JSON of each param's structured TypeNode. Post-#37-flip `p["type"]` is a
@@ -230,6 +230,13 @@ static partial class SuspendColdLowering
             ? string.Join(",", ps.OfType<JsonObject>().Select(p =>
                 TypeJson.Read(p["type"]) is TypeNode t ? TypeNode.ToJson(t) : (Str(p["type"]) ?? "")))
             : "";
+
+    // Kotlin may distinguish overloads solely by generic bounds. Those bounds are absent from the CLR method
+    // signature, but they remain part of the Kotlin declaration identity and therefore must keep the declarations
+    // distinct through suspend lowering. ilemit's general duplicate-signature handling owns the eventual physical
+    // CLR-name mangling; this registry must not discard either declaration before that layer sees it.
+    static string TypeParamSigOf(JsonObject m) =>
+        m["typeParams"] is JsonArray tps ? tps.ToJsonString() : "";
 
     // A declared suspend fun + where it lives (for cold-entry/SM splicing).
     sealed record Entry(JsonObject Method, JsonObject Root, JsonObject TypeNode, string Owner, string FileClass);
@@ -265,13 +272,13 @@ static partial class SuspendColdLowering
             if (file["methods"] is JsonArray methods && !isInteropBridge)
                 foreach (var m in methods)
                     if (m is JsonObject mo && Str(mo["name"]) is string name && IsColdCandidate(mo))
-                        entries[new FunKey(null, fileClass, name, SigOf(mo))] = new Entry(mo, file, null, null, fileClass);
+                        entries[new FunKey(null, fileClass, name, SigOf(mo), TypeParamSigOf(mo))] = new Entry(mo, file, null, null, fileClass);
             if (file["types"] is JsonArray types)
                 foreach (var t in types)
                     if (t is JsonObject to && Str(to["name"]) is string owner && to["methods"] is JsonArray tms)
                         foreach (var m in tms)
                             if (m is JsonObject mo && Str(mo["name"]) is string name && IsMemberColdCandidate(mo))
-                                entries[new FunKey(owner, fileClass, name, SigOf(mo))] = new Entry(mo, file, to, owner, fileClass);
+                                entries[new FunKey(owner, fileClass, name, SigOf(mo), TypeParamSigOf(mo))] = new Entry(mo, file, to, owner, fileClass);
         }
         // callee-return-type fallback for await-temp field typing when a call node carries neither an instantiated
         // `ret`/`dynRet` NOR a static-type `sty` (see EmitSuspensionPoint — `sty`, the frontend-resolved static
@@ -364,6 +371,18 @@ static partial class SuspendColdLowering
                 smSuffix[members[i]] = "_" + (unique ? cands[i] : "ov" + i);
         }
 
+        // A stricter collision remains when Kotlin overloads have identical value-parameter TypeNodes and differ
+        // only in generic bounds. Their public bridges are physically renamed by ilemit's general `$dupN` policy.
+        // Give the corresponding cold entries the same ordinal here so each bridge drives its own constrained
+        // implementation instead of resolving the first same-signature cold entry.
+        var coldSuffix = new Dictionary<FunKey, string>();
+        foreach (var g in entries.Keys.GroupBy(k => (k.Owner, k.FileClass, k.Name, k.Sig)))
+        {
+            var members = g.ToList();
+            for (var i = 0; i < members.Count; i++)
+                coldSuffix[members[i]] = i == 0 ? "" : "$dup" + (i + 1);
+        }
+
         // 2. Transform each declared suspend fun, splicing the cold entry (into its declaring container) and the
         //    SM type (into its file's top-level types).
         foreach (var key in entries.Keys)
@@ -397,7 +416,7 @@ static partial class SuspendColdLowering
             // `call` to the (interface-abstract) cold entry is unverifiable (ilverify CallAbstract). Concrete
             // implementations in classes fill both slots — ilemit's interface-impl pass binds them by name/sig.
             var ownerIsInterface = e.TypeNode != null && Str(e.TypeNode["kind"]) == "interface";
-            var gen = new FunGen(e.Method, key.Name, e.FileClass, e.Owner, calleeRet, baseIsLocal, tcsBcl, taskBcl, ownerTps, closures, smSuffix[key], methodRets, fieldTypes, fileLambdas, ownerIsInterface, staticMember);
+            var gen = new FunGen(e.Method, key.Name, e.FileClass, e.Owner, calleeRet, baseIsLocal, tcsBcl, taskBcl, ownerTps, closures, smSuffix[key], coldSuffix[key], methodRets, fieldTypes, fileLambdas, ownerIsInterface, staticMember);
             var newMethods = new List<JsonNode>();
             var newTypes = new List<JsonNode>();
             gen.Build(newMethods, newTypes);
@@ -817,6 +836,7 @@ static partial class SuspendColdLowering
         readonly bool _resultNullable;           // the suspend fn's result had an outer `?` (#37/#48: read off the type node)
         readonly List<JsonObject> _params;       // original params (extension: leading __self)
         readonly List<string> _typeParams;       // generic type-param names ([] when non-generic)
+        readonly JsonArray _methodTypeParamDecls; // original names + constraints for emitted bridge/cold signatures
         readonly HashSet<string> _fields = new(StringComparer.Ordinal);
         readonly List<(string name, TypeNode type)> _fieldDecls = new();
         // Synthesized SM methods for each `task.await()` suspension point (the OnCompleted Action callback
@@ -840,7 +860,7 @@ static partial class SuspendColdLowering
         public FunGen(JsonObject m, string name, string fileClass, string ownerClass,
             Dictionary<string, TypeNode> calleeRet, bool baseIsLocal, string tcsBcl = null, string taskBcl = null,
             List<string> ownerTypeParams = null, IReadOnlyDictionary<string, JsonObject> closures = null,
-            string smNameSuffix = "", Dictionary<string, TypeNode> methodRets = null,
+            string smNameSuffix = "", string coldNameSuffix = "", Dictionary<string, TypeNode> methodRets = null,
             Dictionary<string, TypeNode> fieldTypes = null,
             IReadOnlyDictionary<string, JsonObject> lambdaMethods = null,
             bool ownerIsInterface = false, bool staticMember = false)
@@ -866,7 +886,7 @@ static partial class SuspendColdLowering
             _memberOverride = _isMember && Bool(m["override"]);
             _memberVirtual = _isMember && Bool(m["virtual"]);
             _smType = (ownerClass ?? fileClass) + "_" + name + smNameSuffix + "$sm";
-            _coldName = name + "$dotkt_suspend";
+            _coldName = name + "$dotkt_suspend" + coldNameSuffix;
             // #37/#48: the result nullability now rides the `suspendRet` TYPE NODE (`{t:nullable,of:R}`), not a retired
             // scalar `retNullable` flag. Strip the outer `?` so `_resultType` is the bare R (as it always was for the
             // reference case) and record it in `_resultNullable` for the Task-bridge NRT walk.
@@ -875,6 +895,7 @@ static partial class SuspendColdLowering
             _resultType = (suspendRetRaw is TypeNode.Nullable srn ? srn.Of : suspendRetRaw) ?? VoidTn;
             _params = (m["params"] as JsonArray)?.OfType<JsonObject>().ToList() ?? new List<JsonObject>();
             _typeParams = ReadTypeParamNames(m["typeParams"]);
+            _methodTypeParamDecls = (m["typeParams"] as JsonArray)?.DeepClone() as JsonArray ?? new JsonArray();
             // The SM is generic over the ENCLOSING class's type params (an instance member on a generic class) PLUS
             // the member's own — its fields / `$this` / label reference them (type-scope tv by flattened position).
             _smAllTps = new List<string>(_ownerTypeParams);
@@ -928,6 +949,7 @@ static partial class SuspendColdLowering
             _resultType = (resultType is TypeNode.Nullable lrn ? lrn.Of : resultType) ?? VoidTn;
             _params = lambdaParams ?? new List<JsonObject>();
             _typeParams = typeParams ?? new List<string>();
+            _methodTypeParamDecls = new JsonArray(_typeParams.Select(n => (JsonNode)JsonValue.Create(n)).ToArray());
             _smAllTps = _typeParams;   // a lambda SM has no enclosing-class type params
             _smTypeInst = _typeParams.Count == 0 ? new TypeNode.Fqn(_smType) : new TypeNode.Fqn(_smType, TypeTvs(_typeParams.Count));
             // #125 — lambda SMs share the named-fun segmentability classifier. A refused lambda still gets a valid
@@ -2893,11 +2915,7 @@ static partial class SuspendColdLowering
                 ["attrs"] = new JsonArray(),
             };
             if (_typeParams.Count > 0)
-            {
-                var tp = new JsonArray();
-                foreach (var n in _typeParams) tp.Add(n);
-                method["typeParams"] = tp;
-            }
+                method["typeParams"] = _methodTypeParamDecls.DeepClone();
             return method;
         }
 
@@ -2951,11 +2969,7 @@ static partial class SuspendColdLowering
                 ["attrs"] = new JsonArray(),
             };
             if (_typeParams.Count > 0)
-            {
-                var tp = new JsonArray();
-                foreach (var n in _typeParams) tp.Add(n);
-                method["typeParams"] = tp;
-            }
+                method["typeParams"] = _methodTypeParamDecls.DeepClone();
             return method;
         }
 
@@ -3081,11 +3095,15 @@ static partial class SuspendColdLowering
         {
             var isUnit = IsUnitTn(_resultType);
             var rKotlin = isUnit ? UnitTn : _resultType;
+            // Name the readonly public result representation now and use it for every producer/consumer of the slot.
+            // Otherwise Root-V independently makes the nested TCS/Task owner invariant while the head-position
+            // TrySetResult value and Kotlin call sites remain readonly, producing either a resolver or IL mismatch.
+            var rTaskSlot = BirTypeLowering.AsReadonlyResultSlot(rKotlin);
             // coroutine-abi.md §1: `suspend fun f(): Unit` -> a NON-generic public `Task` (the C#-idiomatic
             // async-void-returning-Task shape); `suspend fun f(): R` -> `Task<R>`. The internal drive stays generic
             // over Unit (TaskCompletionSource<Unit> / RootContinuation<Unit>); the returned `__tcs.Task` (a Task<Unit>)
             // upcasts to the non-generic Task on return (Task<T> : Task). So ONLY the PUBLIC return type differs for Unit.
-            var taskType = new TypeNode.Fqn(_taskBcl, new[] { rKotlin });    // TaskCompletionSource<R>.Task runtime type
+            var taskType = new TypeNode.Fqn(_taskBcl, new[] { rTaskSlot }); // TaskCompletionSource<R>.Task runtime type
             var taskRetType = isUnit ? new TypeNode.Fqn(_taskBcl) : taskType;   // the public bridge return type
 
             // BUG 3: an ABSTRACT interface/member suspend fun -> an abstract Task<T> bridge SIGNATURE (no body, no
@@ -3111,11 +3129,7 @@ static partial class SuspendColdLowering
                     ["attrs"] = new JsonArray(),
                 };
                 if (_typeParams.Count > 0)
-                {
-                    var tp = new JsonArray();
-                    foreach (var n in _typeParams) tp.Add(n);
-                    am["typeParams"] = tp;
-                }
+                    am["typeParams"] = _methodTypeParamDecls.DeepClone();
                 if (TaskReturnNullableFlags() is JsonArray arnf) am["retNullableFlags"] = arnf;
                 // #151 — a `suspend fun f(): Nothing` bridge (Task<Nothing>): carry the pre-erasure Nothing fact so
                 // RoundtripMetadata stamps [KotlinNothing] on the return (BirTypeLowering erases the inner Nothing to
@@ -3124,8 +3138,8 @@ static partial class SuspendColdLowering
                 return am;
             }
 
-            var tcsType = new TypeNode.Fqn(_tcsBcl, new[] { rKotlin });
-            var rootType = new TypeNode.Fqn(RootContinuationFqn, new[] { rKotlin });
+            var tcsType = new TypeNode.Fqn(_tcsBcl, new[] { rTaskSlot });
+            var rootType = new TypeNode.Fqn(RootContinuationFqn, new[] { rTaskSlot });
 
             var body = new JsonArray
             {
@@ -3174,10 +3188,10 @@ static partial class SuspendColdLowering
 
             var skipL = NextLabel();
             body.Add(BrIf(new JsonObject { ["k"] = "objEq", ["lhs"] = Local("__r"), ["rhs"] = Suspended() }, true, skipL));
-            JsonNode resultVal = IsAnyTn(rKotlin)
+            JsonNode resultVal = IsAnyTn(rTaskSlot)
                 ? Local("__r")
-                : new JsonObject { ["k"] = "cast", ["type"] = Tw(rKotlin), ["e"] = Local("__r") };
-            body.Add(new JsonObject { ["k"] = "exprStmt", ["expr"] = TcsCall(tcsType, "TrySetResult", rKotlin, resultVal) });
+                : new JsonObject { ["k"] = "cast", ["type"] = Tw(rTaskSlot), ["e"] = Local("__r") };
+            body.Add(new JsonObject { ["k"] = "exprStmt", ["expr"] = TcsCall(tcsType, "TrySetResult", rTaskSlot, resultVal) });
             body.Add(Label(skipL));
             JsonNode tcsTask = new JsonObject
             {
@@ -3209,11 +3223,7 @@ static partial class SuspendColdLowering
                 ["attrs"] = new JsonArray(),
             };
             if (_typeParams.Count > 0)
-            {
-                var tp = new JsonArray();
-                foreach (var n in _typeParams) tp.Add(n);
-                method["typeParams"] = tp;
-            }
+                method["typeParams"] = _methodTypeParamDecls.DeepClone();
             // BUG 2 (nested return nullability): a `suspend fun f(): String?`'s bridge return `Task<string?>` needs the
             // inner `?` — the scalar retNullable can't express a nullability that rides an INNER type arg. Emit the
             // flattened NullableAttribute byte walk (ilemit stamps it verbatim on the return; facadegen reads it back).

@@ -678,6 +678,8 @@ sealed partial class Emitter
         // The Unit-return delegate adapters forward to a void delegate type `ft` (a BCL Action or a synthetic
         // KAction), so bake them AFTER the synthetic delegates whose signatures they may reference.
         if (_unitAdapterTB != null && !_unitAdapterTB.IsCreated()) _unitAdapterTB.CreateType();
+        // BCL Func/Action Invoke trampolines used when a TypeSpec contains a composite open type (Func<E[]>).
+        if (_delegateInvokeAdapterTB != null && !_delegateInvokeAdapterTB.IsCreated()) _delegateInvokeAdapterTB.CreateType();
         // Safety net: any user type Ordered() somehow missed (so Save won't throw "not supported before the type is
         // created"). Repeat until stable, since creating one may be a prerequisite for another.
         for (bool again = true; again;)
@@ -942,6 +944,75 @@ sealed partial class Emitter
         _ => false,
     };
 
+    // Whether an occurrence of an interface type parameter is illegal for its declared CLR variance. Kotlin permits
+    // `out T` in a suspend return, but the CLR bridge is `Task<T>` and Task is invariant: the nested occurrence is
+    // therefore both input and output from the CLR verifier's perspective. Walk the actual generic variance of each
+    // containing type instead of treating every method return as automatically covariant.
+    bool VarianceConflict(DotKt.Bir.TypeNode t, int pos, int context, int declared)
+    {
+        switch (t)
+        {
+            case DotKt.Bir.TypeNode.Tv tv:
+                return tv.Scope == "type" && tv.I == pos && (context == 0 || context != declared);
+            case DotKt.Bir.TypeNode.Fqn { Args: { } args } f:
+                for (var i = 0; i < args.Length; i++)
+                {
+                    var variance = GenericArgVariance(f.Name, args.Length, i);
+                    var nested = context == 0 || variance == 0 ? 0 : context * variance;
+                    if (VarianceConflict(args[i], pos, nested, declared)) return true;
+                }
+                return false;
+            case DotKt.Bir.TypeNode.Nullable n:
+                return VarianceConflict(n.Of, pos, context, declared);
+            case DotKt.Bir.TypeNode.Oblivious o:
+                return VarianceConflict(o.Of, pos, context, declared);
+            case DotKt.Bir.TypeNode.Array a:
+                return VarianceConflict(a.Elem, pos, 0, declared); // writable CLR arrays are invariant for safety
+            case DotKt.Bir.TypeNode.ByRef b:
+                return VarianceConflict(b.Of, pos, 0, declared);
+            case DotKt.Bir.TypeNode.Fn fn:
+                if (VarianceConflict(fn.Ret, pos, context, declared)) return true;
+                foreach (var p in fn.DelegateParams)
+                    if (VarianceConflict(p, pos, -context, declared)) return true;
+                return false;
+            default:
+                return false;
+        }
+    }
+
+    // +1 covariant, -1 contravariant, 0 invariant/unknown. Local definitions are read from their Kotlin-neutral CIR
+    // declaration; referenced CLR definitions are read from reflection. Unknown must be invariant — optimistic
+    // variance here creates unloadable metadata, while invariant metadata is always sound.
+    int GenericArgVariance(string name, int arity, int index)
+    {
+        if (_types.TryGetValue(BareTypeKey(name), out var ti)
+            && ti.Def.TryGetProperty("typeParams", out var localTps)
+            && index < localTps.GetArrayLength())
+        {
+            var tp = localTps[index];
+            if (tp.ValueKind == JsonValueKind.Object && tp.TryGetProperty("variance", out var v))
+                return v.GetString() switch { "out" => 1, "in" => -1, _ => 0 };
+            return 0;
+        }
+
+        Type open = null;
+        try
+        {
+            open = RuntimeReferences.ResolveType(name + "`" + arity)
+                ?? RuntimeReferences.ResolveFromHostFramework(name + "`" + arity);
+        }
+        catch { }
+        if (open == null || !open.IsGenericTypeDefinition) return 0;
+        var gps = open.GetGenericArguments();
+        if (index >= gps.Length) return 0;
+        return (gps[index].GenericParameterAttributes & GenericParameterAttributes.VarianceMask) switch
+        {
+            GenericParameterAttributes.Covariant => 1,
+            GenericParameterAttributes.Contravariant => -1,
+            _ => 0,
+        };
+    }
+
     void ApplyConstraints(JsonElement tps, Dictionary<string, GenericTypeParameterBuilder> map, bool isInterface, JsonElement? typeDef = null)
     {
         foreach (var x in tps.EnumerateArray())
@@ -961,10 +1032,15 @@ sealed partial class Emitter
                 if ((vs == "out" || vs == "in") && typeDef is { } td && td.TryGetProperty("methods", out var ms))
                     foreach (var m in ms.EnumerateArray())
                     {
-                        if (vs == "out" && m.TryGetProperty("params", out var ps))
+                        var declared = vs == "out" ? 1 : -1;
+                        if (m.TryGetProperty("params", out var ps))
                             foreach (var p in ps.EnumerateArray())
-                                if (p.TryGetProperty("type", out var pt) && MentionsTv(pt, gp.GenericParameterPosition)) { conflict = true; break; }
-                        if (vs == "in" && m.TryGetProperty("ret", out var rt) && MentionsTv(rt, gp.GenericParameterPosition)) conflict = true;
+                                if (p.TryGetProperty("type", out var pt)
+                                    && VarianceConflict(DotKt.Bir.TypeNode.Read(pt), gp.GenericParameterPosition, -1, declared))
+                                { conflict = true; break; }
+                        if (!conflict && m.TryGetProperty("ret", out var rt)
+                            && VarianceConflict(DotKt.Bir.TypeNode.Read(rt), gp.GenericParameterPosition, 1, declared))
+                            conflict = true;
                         if (conflict) break;
                     }
                 var attr = conflict ? GenericParameterAttributes.None
@@ -1033,10 +1109,12 @@ sealed partial class Emitter
         ti.TB.DefineMethodOverride(bridge, ifaceMethod);
     }
 
-    // A class implements an interface method (Comparable.compareTo) for which it has no own body, but a DIRECT base
-    // interface provides it as a DEFAULT method (ComparableTimeMark.compareTo DIM). The CLR doesn't treat the DIM as
-    // implicitly implementing the base interface method, so emit a class-level forwarding bridge that calls the inherited
-    // DIM (callvirt the base-interface method on `this`) and put the MethodImpl for the interface method on the bridge.
+    // A class implements an interface method (Comparable.compareTo) for which it has no own body, but one of its
+    // interfaces provides it as a DEFAULT method (ComparableTimeMark.compareTo DIM). The provider may be TRANSITIVE and
+    // may live in a referenced assembly: `JobSupport : Job`, for example, must use stdlib's
+    // `CoroutineContext.Element.get` to fill Job's compiler-materialized abstract `get` slot. The CLR doesn't treat that
+    // inherited DIM as implementing the distinct redeclared slot, so emit a class-level forwarding bridge that calls the
+    // inherited DIM and put the MethodImpl for the interface method on the bridge.
     void TryEmitDimForwardBridge(TypeInfo ti, JsonElement imDef, DotKt.Bir.TypeNode[] specArgs, string subSig, Type constructed, MethodBuilder ifaceBuilder)
     {
         if (ti.Def.ValueKind != JsonValueKind.Object || !ti.Def.TryGetProperty("interfaces", out var dirIfs)) return;
@@ -1045,18 +1123,93 @@ sealed partial class Emitter
         // both fails the CLR's methodimpl signature match (a generic-arity mismatch, TypeLoadException) AND collapses
         // `Key<E>` to `Key<object>`. The DIM's method type params come straight off the interface method DEF.
         var genTps = imDef.TryGetProperty("typeParams", out var mtp) && mtp.GetArrayLength() > 0 ? (JsonElement?)mtp : null;
+        // Search most-specific interfaces first, then their bases. Looking only at `dirIfs` loses a DIM as soon as an
+        // intermediate Kotlin interface carries a fake/abstract override of the inherited member. Keep every hop as a
+        // structured spec so owner type arguments are substituted into the implementing class's frame.
+        var work = new Queue<DotKt.Bir.TypeNode.Fqn>();
+        var seen = new HashSet<string>();
         foreach (var di in dirIfs.EnumerateArray())
+            if (ReadFqn(di) is DotKt.Bir.TypeNode.Fqn diF) work.Enqueue(diF);
+
+        MethodInfo dimTarget = null;
+        MethodBuilder dimBuilder = null;
+        while (work.Count > 0 && dimTarget == null)
         {
-            if (ReadFqn(di) is not DotKt.Bir.TypeNode.Fqn diF) continue;
-            var (dopen, _) = ParseOwnerT(diF);
-            if (!_types.TryGetValue(dopen, out var diTi) || !diTi.MethodsBySig.TryGetValue(subSig, out var dim)) continue;
-            if (dim.Attributes.HasFlag(MethodAttributes.Abstract)) continue;   // need an actual DEFAULT (bodied) method
+            var diF = work.Dequeue();
+            if (!seen.Add(SigCanon(diF))) continue;
+            var (dopen, dconstructed) = ParseOwnerT(diF);
+            if (_types.TryGetValue(dopen, out var diTi))
+            {
+                var diArgs = diF.Args;
+                if (diTi.Def.ValueKind == JsonValueKind.Object && diTi.Def.TryGetProperty("interfaces", out var bases))
+                    foreach (var bi in bases.EnumerateArray())
+                        if (ReadFqn(bi) is DotKt.Bir.TypeNode.Fqn bi0
+                            && SubstTv(bi0, diArgs) is DotKt.Bir.TypeNode.Fqn biF)
+                            work.Enqueue(biF);
+
+                if (!diTi.Def.TryGetProperty("methods", out var methods)) continue;
+                foreach (var candDef in methods.EnumerateArray())
+                {
+                    if (!candDef.TryGetProperty("name", out var cn) || cn.GetString() != imDef.GetProperty("name").GetString()
+                        || !candDef.TryGetProperty("params", out var cps)) continue;
+                    var candSig = cn.GetString() + "(" + string.Join(",", cps.EnumerateArray()
+                        .Select(p => SigCanon(SubstTv(DotKt.Bir.TypeNode.Read(p.GetProperty("type")), diArgs)))) + ")";
+                    if (candSig != subSig) continue;
+                    var raw = diTi.MethodsBySig.TryGetValue(SigKey(cn.GetString(), candDef), out var bySig) ? bySig
+                            : (diTi.Methods.TryGetValue(cn.GetString(), out var byName) ? byName : null);
+                    if (raw == null || raw.Attributes.HasFlag(MethodAttributes.Abstract)) continue;
+                    dimBuilder = raw;
+                    dimTarget = dconstructed != null ? TypeBuilder.GetMethod(dconstructed, raw) : raw;
+                    break;
+                }
+            }
+            else
+            {
+                // Referenced Kotlin interfaces are ordinary CLR interfaces here. Resolve the overload structurally from
+                // the SLOT signature (including generic method shape), and accept only a genuinely bodied DIM.
+                Type ext = null;
+                try { ext = MapType(diF); } catch { }
+                if (ext == null) continue;
+                var slotSig = imDef.GetProperty("params").EnumerateArray()
+                    .Select(p => SubstTv(DotKt.Bir.TypeNode.Read(p.GetProperty("type")), specArgs)).ToArray();
+                MethodInfo reflected = null;
+                try { reflected = FindReflectedMethodBySig(ext, imDef.GetProperty("name").GetString(), slotSig); }
+                catch (NotSupportedException)
+                {
+                    // A referenced generic interface instantiated with an emitted TypeBuilder argument cannot reflect
+                    // members directly. Resolve on its OPEN definition and re-anchor the handle, exactly as the main
+                    // interface-binding pass does.
+                    try
+                    {
+                        var openExt = ext.GetGenericTypeDefinition();
+                        var openMethod = FindReflectedMethodBySig(openExt, imDef.GetProperty("name").GetString(), slotSig);
+                        if (openMethod != null) reflected = TypeBuilder.GetMethod(ext, openMethod);
+                    }
+                    catch (NotSupportedException) { }
+                }
+                if (reflected != null && !reflected.IsAbstract) dimTarget = reflected;
+                // GetInterfaces is flattened, which is fine for this fallback: breadth ordering among referenced bases
+                // is immaterial once an intermediate declaration is abstract, and the first bodied exact slot wins.
+                if (dimTarget == null)
+                    try
+                    {
+                        foreach (var rb in ext.GetInterfaces())
+                        {
+                            var rm = FindReflectedMethodBySig(rb, imDef.GetProperty("name").GetString(), slotSig);
+                            if (rm != null && !rm.IsAbstract) { dimTarget = rm; break; }
+                        }
+                    }
+                    catch (NotSupportedException) { } // constructed TypeBuilder bases are already represented in CIR
+            }
+        }
+        if (dimTarget == null) return;
+
             // If the found DEFAULT is the very slot we are trying to fill (a direct interface that both DECLARES and
             // DEFAULTS this method — e.g. `Element` for its own `get`), the DIM already implements its own slot: a
             // self-forwarding override would only re-dispatch through `this` straight back into the bridge (infinite
             // recursion). The base-interface slot that genuinely needs filling (`CoroutineContext.get`) is a DIFFERENT
             // `ifaceBuilder`, so its bridge (which callvirts THIS `dim`) resolves to the inherited DIM, not to itself.
-            if (ReferenceEquals(dim, ifaceBuilder)) return;
+            if (ReferenceEquals(dimBuilder, ifaceBuilder)) return;
             MethodBuilder bridge; MethodInfo dimCall;
             Type ifaceRet; Type[] paramTypes;
             if (genTps != null)
@@ -1080,11 +1233,16 @@ sealed partial class Emitter
                     ifaceRet = imDef.TryGetProperty("ret", out var rt) ? MapType(SubstTv(DotKt.Bir.TypeNode.Read(rt), specArgs)) : typeof(void);
                     paramTypes = imDef.GetProperty("params").EnumerateArray().Select(p => MapType(SubstTv(DotKt.Bir.TypeNode.Read(p.GetProperty("type")), specArgs))).ToArray();
                 }
-                catch { _curMethodParams = savedMp; bridge.GetILGenerator().ThrowException(typeof(NotSupportedException)); return; }
+                catch (Exception ex)
+                {
+                    _curMethodParams = savedMp;
+                    throw new InvalidOperationException(
+                        $"cannot materialize DIM forwarder {ti.TB.FullName}.{imDef.GetProperty("name").GetString()}: {ex.Message}", ex);
+                }
                 bridge.SetReturnType(ifaceRet);
                 bridge.SetParameters(paramTypes);
                 _curMethodParams = savedMp;
-                dimCall = dim.MakeGenericMethod(gps.Cast<Type>().ToArray());
+                dimCall = dimTarget.MakeGenericMethod(gps.Cast<Type>().ToArray());
             }
             else
             {
@@ -1099,7 +1257,7 @@ sealed partial class Emitter
                 bridge = ti.TB.DefineMethod("dotkt$dimfwd$" + (_covarBridge++),
                     MethodAttributes.Private | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.NewSlot | MethodAttributes.HideBySig,
                     ifaceRet, paramTypes);
-                dimCall = dim;
+                dimCall = dimTarget;
             }
             StampCompilerGenerated(bridge);   // #68: ilemit-authored generated member
             var il = bridge.GetILGenerator();
@@ -1109,8 +1267,6 @@ sealed partial class Emitter
             il.Emit(OpCodes.Ret);
             var ifaceMethod = constructed != null ? TypeBuilder.GetMethod(constructed, ifaceBuilder) : (MethodInfo)ifaceBuilder;
             ti.TB.DefineMethodOverride(bridge, ifaceMethod);
-            return;
-        }
     }
 
 

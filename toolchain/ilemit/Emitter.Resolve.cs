@@ -131,14 +131,11 @@ sealed partial class Emitter
         }
         // The owner constructed with its OWN class type parameters (`RingBuffer<T>` referenced from inside
         // RingBuffer<T>) is the self instantiation. A call must reference the method on that self-instantiation
-        // (`C<!0>::m`), NOT the open type def (`C`1::m`) — the open form is "not fully instantiated" at runtime (any
-        // self method-call `this.b()` inside a generic class). EXCEPTION: a generic-METHOD self-call must keep the open
-        // MethodBuilder, because TypeBuilder.GetMethod yields a MethodBuilderInstantiation that can't be
-        // MakeGenericMethod'd (`this.toArray<object>()`); ApplyTypeArgs instantiates the open mb instead.
+        // (`C<!0>::m`), NOT the open type def (`C`1::m`) — including a GENERIC method. ApplyTypeArgs now applies the
+        // method MethodSpec to this anchored handle, preserving both instantiations exactly as CIR specifies.
         if (IsSelfInstantiation(constructed))
         {
             retType = mb.ReturnType;
-            if (mb.IsGenericMethodDefinition) return mb;
             // TypeBuilder.GetMethod requires `mb` declared on `constructed`'s OWN generic def. An INHERITED self-call
             // (mb on a generic base, `class D<T> : Base<T>` — `this.show()`) throws; anchor it onto the CONSTRUCTED
             // base instantiation (`Base<!T>`), not the open def (`Base``1::m` is "not fully instantiated").
@@ -250,6 +247,26 @@ sealed partial class Emitter
         return subd.SequenceEqual(ga) ? t : t.GetGenericTypeDefinition().MakeGenericType(subd);
     }
 
+    // Structural substitution for the combined owner-type + method-type parameter map used while materializing a
+    // MethodSpec from an already-bound CIR owner. This is bookkeeping for argument/return emission only; member and
+    // overload selection have already been completed by bir2cir.
+    static Type SubstituteTypeMap(Type t, IReadOnlyDictionary<Type, Type> map)
+    {
+        if (t == null) return null;
+        if (map.TryGetValue(t, out var direct)) return direct;
+        if (t.HasElementType)
+        {
+            var elem = SubstituteTypeMap(t.GetElementType(), map);
+            if (ReferenceEquals(elem, t.GetElementType())) return t;
+            return t.IsArray ? (t.GetArrayRank() == 1 ? elem.MakeArrayType() : elem.MakeArrayType(t.GetArrayRank()))
+                : t.IsByRef ? elem.MakeByRefType() : t.IsPointer ? elem.MakePointerType() : t;
+        }
+        var args = t.GetGenericArguments();
+        if (args.Length == 0) return t;
+        var subst = args.Select(a => SubstituteTypeMap(a, map)).ToArray();
+        return subst.SequenceEqual(args) ? t : t.GetGenericTypeDefinition().MakeGenericType(subst);
+    }
+
     // Overload disambiguation for interface-slot wiring: does a body method's declared param type satisfy the
     // interface method's (substituted) param type? Reference/Type equality first; builders vs runtime
     // instantiations of the same shape compare by name (TypeBuilderInstantiation instances are not reference-equal
@@ -319,13 +336,11 @@ sealed partial class Emitter
                 int k = 0;
                 foreach (var gp in gps.Values) { if (k < targs.Length) sub[gp] = targs[k]; k++; }
             }
-            // A generic method on a CONSTRUCTED-generic TypeBuilder owner (non-self, e.g. `ringBuffer<E>.toArray<T>()`)
-            // is a MethodBuilderInstantiation whose MakeGenericMethod is unsupported. Instantiate the OPEN method's
-            // generic params. Reflection.Emit has NO API for a generic method on a constructed-generic TypeBuilder
-            // owner (TypeBuilder.GetMethod wants a generic-method-DEFINITION; MethodBuilderInstantiation can't
-            // MakeGenericMethod). The owner here is constructed with enclosing type params (e.g. ringBuffer<E>.toArray
-            // <T>() from inside another generic), which erases to the open owner in IL, so use the OPEN method's
-            // instantiation directly — the same shape the self-instantiation path emits.
+            // A generic method on a CONSTRUCTED-generic TypeBuilder owner must keep BOTH instantiations from CIR:
+            // owner `Base<X>` and method `<Y>`. TypeBuilder.GetMethod has already anchored `m` to that owner; applying
+            // the method args to the anchored method is the mechanical MethodSpec construction. Falling back to the
+            // OPEN MethodBuilder loses `Base<X>` and creates an invalid MemberRef whenever X is an enclosing method/type
+            // parameter ("containing type is not fully instantiated").
             if (m is not MethodBuilder && m.DeclaringType is { IsGenericType: true } dt && !dt.IsGenericTypeDefinition
                 && dt.GetGenericTypeDefinition() is TypeBuilder openTb)
             {
@@ -339,30 +354,13 @@ sealed partial class Emitter
                 {
                     int k = 0;
                     foreach (var gp in ogps.Values) { if (k < targs.Length) sub[gp] = targs[k]; k++; }
-                    // A CONCRETE owner instantiation (`Holder<int>.pairWith<string>` — a call site OUTSIDE any generic
-                    // context, e.g. main): the open-method form below loses the container's `<int>` and throws "not
-                    // fully instantiated" at runtime. Here the anchored MethodOnTypeBuilderInstantiation (m, produced
-                    // by ResolveMethod's TypeBuilder.GetMethod) DOES support MakeGenericMethod (the documented
-                    // TypeBuilder.GetMethod-then-MakeGenericMethod order; verified on .NET 10 persisted emit), carrying
-                    // BOTH instantiations. Gated STRICTLY to owners with no generic-parameter args so the erased-context
-                    // path below (the rt-stdlib self/enclosing-generic case) is untouched. KNOWN EDGE (Codex review,
-                    // no failing sample): a MIXED owner (`Holder<int, U>` — concrete + enclosing-generic args) still
-                    // takes the open path and would lose the concrete arg; if such CIR ever appears, route it here too.
-                    if (!dt.GetGenericArguments().Any(ContainsGenericParam))
-                    {
-                        var cpars = openTb.GetGenericArguments();
-                        var cargs = dt.GetGenericArguments();
-                        for (int i = 0; i < cpars.Length && i < cargs.Length; i++) sub[cpars[i]] = cargs[i];
-                        retType = sub.TryGetValue(openMb.ReturnType, out var cr) ? cr : m.ReturnType;
-                        paramTypes = _mparams.TryGetValue(openMb, out var ops)
-                            ? ops.Select(x => sub.TryGetValue(x, out var s) ? s : x).ToArray() : ps;
-                        return m.MakeGenericMethod(targs);
-                    }
-                    // Owner constructed with enclosing GENERIC PARAMS (`ringBuffer<E>.toArray<T>()` from inside another
-                    // generic) — erases to the open owner in IL, so the OPEN method's instantiation is the right shape.
-                    retType = sub.TryGetValue(openMb.ReturnType, out var or) ? or : m.ReturnType;
-                    paramTypes = ps;
-                    return openMb.MakeGenericMethod(targs);
+                    var cpars = openTb.GetGenericArguments();
+                    var cargs = dt.GetGenericArguments();
+                    for (int i = 0; i < cpars.Length && i < cargs.Length; i++) sub[cpars[i]] = cargs[i];
+                    retType = SubstituteTypeMap(openMb.ReturnType, sub);
+                    paramTypes = _mparams.TryGetValue(openMb, out var ops)
+                        ? ops.Select(x => SubstituteTypeMap(x, sub)).ToArray() : ps;
+                    return m.MakeGenericMethod(targs);
                 }
             }
             retType = sub.TryGetValue(m.ReturnType, out var r) ? r : m.ReturnType;
@@ -487,7 +485,12 @@ sealed partial class Emitter
         DotKt.Bir.TypeNode.Nullable n => new DotKt.Bir.TypeNode.Nullable(SubstTv(n.Of, args)),
         DotKt.Bir.TypeNode.Array a => new DotKt.Bir.TypeNode.Array(SubstTv(a.Elem, args)),
         DotKt.Bir.TypeNode.ByRef b => new DotKt.Bir.TypeNode.ByRef(SubstTv(b.Of, args)),
-        DotKt.Bir.TypeNode.Fn fn => new DotKt.Bir.TypeNode.Fn(fn.Suspend, SubstTv(fn.Ret, args), fn.Params.Select(p => SubstTv(p, args)).ToArray(), fn.Recv == null ? null : SubstTv(fn.Recv, args)),
+        DotKt.Bir.TypeNode.Fn fn => new DotKt.Bir.TypeNode.Fn(
+            fn.Suspend,
+            SubstTv(fn.Ret, args),
+            fn.Params.Select(p => SubstTv(p, args)).ToArray(),
+            fn.Recv == null ? null : SubstTv(fn.Recv, args),
+            fn.Clr),
         _ => t,
     };
 
@@ -518,15 +521,30 @@ sealed partial class Emitter
         if (typeName is "kotlin.UByteArray" or "kotlin.UShortArray" or "kotlin.UIntArray" or "kotlin.ULongArray")
             throw new NotSupportedException($"unsigned-array owner '{typeName}' reached ilemit FindMethod — bir2cir MemberCallSubstitution should have rewritten it to the signed-array FQN (#139 site-2)");
         var seenIfaces = new HashSet<string>();
-        MethodBuilder FindInInterfaces(TypeInfo ti)
+        MethodInfo FindInInterfaces(TypeInfo ti)
         {
             if (ti == null || !ti.Def.TryGetProperty("interfaces", out var ifs)) return null;
             foreach (var i in ifs.EnumerateArray())
             {
                 if (ReadFqn(i) is not DotKt.Bir.TypeNode.Fqn iF) continue;
                 var open = iF.Name;   // only the OPEN name matters here (avoid mapping a `[gp:T]` inner-generic arg)
-                if (!_types.ContainsKey(open)) continue;   // referenced interfaces reflected at the FindMethod loop level
-                if (!seenIfaces.Add(open) || !_types.TryGetValue(open, out var iti)) continue;
+                if (!seenIfaces.Add(open)) continue;
+                if (!_types.TryGetValue(open, out var iti))
+                {
+                    // The emitted-interface chain can terminate at a REFERENCED interface
+                    // (`CompletableDeferred -> Deferred -> Job -> CoroutineContext.Element`). Link the exact
+                    // CIR-carried signature on that external interface instead of abandoning the traversal at the
+                    // assembly boundary. This is member linking only: the Kotlin overload was already selected by
+                    // kotc and is represented by `sig`; no delegate-family or overload policy is inferred here.
+                    Type refIf = null;
+                    try { refIf = MapType(iF); } catch { }
+                    if (refIf == null) continue;
+                    var reflected = sig != null
+                        ? FindReflectedMethodBySig(refIf, name, sig)
+                        : FindReflectedMethod(refIf, name);
+                    if (reflected != null) return reflected;
+                    continue;
+                }
                 if (sig != null && iti.MethodsBySig.TryGetValue(SigKey(name, sig), out var ms)) return ms;
                 if (sig != null && UniqueGenericOverload(iti, name) is { } igm) return igm;
                 if (iti.Methods.TryGetValue(name, out var m)) return m;
@@ -685,18 +703,42 @@ sealed partial class Emitter
             // slot here) -> false, mirroring the pre-#48 `sfunc:` fall-through.
             case DotKt.Bir.TypeNode.Fn { Suspend: false } fn:
             {
-                if (!p.IsGenericType) return false;
                 var dparams = fn.DelegateParams;
+                var retVoid = fn.Ret is DotKt.Bir.TypeNode.Fqn { Args: null, Name: "void" or "System.Void" };
+                var expectedNs = fn.Clr switch
+                {
+                    "System.Action" or "System.Func" => "System",
+                    "DotKt.Runtime.CompilerServices.KAction" or "DotKt.Runtime.CompilerServices.KFunc"
+                        => "DotKt.Runtime.CompilerServices",
+                    _ => null,
+                };
+                var expectedName = fn.Clr switch
+                {
+                    "System.Action" => "Action",
+                    "System.Func" => "Func",
+                    "DotKt.Runtime.CompilerServices.KAction" => "KAction",
+                    "DotKt.Runtime.CompilerServices.KFunc" => "KFunc",
+                    _ => null,
+                };
+                if (expectedName == null) return false;
+                if (!p.IsGenericType)
+                    return retVoid && dparams.Length == 0
+                        && expectedNs == "System" && expectedName == "Action"
+                        && p.Namespace == "System" && p.Name == "Action";
+                Type delegateDef;
+                try { delegateDef = p.GetGenericTypeDefinition(); } catch { return false; }
+                if (delegateDef.Namespace != expectedNs
+                    || !delegateDef.Name.StartsWith(expectedName + "`", StringComparison.Ordinal))
+                    return false;
                 var gargs = p.GetGenericArguments();
-                var retVoid = fn.Ret is DotKt.Bir.TypeNode.Fqn { Args: null, Name: "void" };
                 if (retVoid)
                 {
-                    if (gargs.Length != dparams.Length) return true;   // shape mismatch (Func vs Action) -> loose accept
+                    if (expectedName is not ("Action" or "KAction") || gargs.Length != dparams.Length) return false;
                     for (var i = 0; i < dparams.Length; i++)
                         if (!Matches(dparams[i], gargs[i])) return false;
                     return true;
                 }
-                if (gargs.Length != dparams.Length + 1) return true;   // shape mismatch -> loose accept
+                if (expectedName is not ("Func" or "KFunc") || gargs.Length != dparams.Length + 1) return false;
                 for (var i = 0; i < dparams.Length; i++)
                     if (!Matches(dparams[i], gargs[i])) return false;
                 return Matches(fn.Ret, gargs[gargs.Length - 1]);
@@ -972,9 +1014,7 @@ sealed partial class Emitter
     // `{t:tv,scope:type,i}` matches whatever those args substituted into the candidate's param at that position.
     bool GenericParamMatches(DotKt.Bir.TypeNode node, Type p, Type[] ownerArgs)
     {
-        // A function-type node ALWAYS matches structurally (even fully concrete): MapType(fn) builds ONE specific
-        // delegate (a BCL `Action<Panel>`), but the reflected param may be a per-assembly SYNTHETIC `KAction<Panel>` a
-        // DotKt library baked — GenericDelegateMatches accepts BOTH BCL Func/Action AND synthetic KFunc/KAction by shape.
+        // A function-type node matches structurally within the exact CIR-selected nominal delegate family.
         if (node is DotKt.Bir.TypeNode.Fn fnNode) return GenericDelegateMatches(fnNode, p, ownerArgs);
         if (!ContainsTv(node))
         {
@@ -1021,26 +1061,42 @@ sealed partial class Emitter
         try { return ResolveType(name.Contains('`') ? name : name + "`" + arity); } catch { return null; }
     }
 
-    // A var-bearing function-type declared param (`Func<T,R>` / `Action<T>`) against the candidate's delegate param.
-    // The candidate may be a BCL `System.Func`/`Action` OR the synthetic `KFunc`/`KAction` a DotKt library bakes when
-    // the function type is over generic user types (unencodable as a BCL delegate) — both shape-match identically
-    // (KFunc/KAction mirror Func/Action's generic-arg layout: params[..] + ret for Func-like, params[..] for Action-like).
+    // A function-type declared param against the candidate's delegate param. CIR carries the exact nominal family;
+    // matching a same-shaped KFunc against System.Func would reintroduce the cross-assembly ABI ambiguity that bir2cir
+    // is responsible for eliminating.
     bool GenericDelegateMatches(DotKt.Bir.TypeNode.Fn fn, Type p, Type[] ownerArgs)
     {
         var dp = fn.DelegateParams;
         bool isVoid = fn.Ret is DotKt.Bir.TypeNode.Fqn { Name: "void" or "System.Void", Args: null };
+        string expectedNs;
+        string expectedName;
+        switch (fn.Clr)
+        {
+            case "System.Action": expectedNs = "System"; expectedName = "Action"; break;
+            case "System.Func": expectedNs = "System"; expectedName = "Func"; break;
+            case "DotKt.Runtime.CompilerServices.KAction":
+                expectedNs = "DotKt.Runtime.CompilerServices"; expectedName = "KAction"; break;
+            case "DotKt.Runtime.CompilerServices.KFunc":
+                expectedNs = "DotKt.Runtime.CompilerServices"; expectedName = "KFunc"; break;
+            default: return false;
+        }
         // The NON-generic `System.Action` (0-arg, void) — a `()->Unit` lambda param (`column(setup, content: ()->Unit)`).
-        if (!p.IsGenericType) return isVoid && dp.Length == 0 && p.Name == "Action" && p.Namespace == "System";
+        if (!p.IsGenericType)
+            return isVoid && dp.Length == 0 && expectedNs == "System" && expectedName == "Action"
+                   && p.Name == "Action" && p.Namespace == "System";
         var dn = p.GetGenericTypeDefinition().Name;
+        var dns = p.GetGenericTypeDefinition().Namespace;
         var ga = p.GetGenericArguments();
         if (isVoid)
         {
-            if (!(dn.StartsWith("Action`", StringComparison.Ordinal) || dn.StartsWith("KAction`", StringComparison.Ordinal))
+            if (expectedName is not ("Action" or "KAction") || dns != expectedNs
+                || !dn.StartsWith(expectedName + "`", StringComparison.Ordinal)
                 || ga.Length != dp.Length) return false;
             for (int i = 0; i < dp.Length; i++) if (!GenericParamMatches(dp[i], ga[i], ownerArgs)) return false;
             return true;
         }
-        if (!(dn.StartsWith("Func`", StringComparison.Ordinal) || dn.StartsWith("KFunc`", StringComparison.Ordinal))
+        if (expectedName is not ("Func" or "KFunc") || dns != expectedNs
+            || !dn.StartsWith(expectedName + "`", StringComparison.Ordinal)
             || ga.Length != dp.Length + 1) return false;
         for (int i = 0; i < dp.Length; i++) if (!GenericParamMatches(dp[i], ga[i], ownerArgs)) return false;
         return GenericParamMatches(fn.Ret, ga[^1], ownerArgs);

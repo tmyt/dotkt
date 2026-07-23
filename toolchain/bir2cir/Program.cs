@@ -220,6 +220,8 @@ sealed class Pipeline
         // cross-file materialization is not mis-judged non-app-local and refused loud. Nested-TYPE member methods stay
         // excluded (ilemit's file-class-only ldftn universe) — only the FILE scope was wrong (regression from 923a820).
         var appLocalFileClassMethods = InlineSplice.CollectAppLocalMethodNames(birFiles.Select(f => f.Root));
+        var inlineDispatchHierarchy = InlineSplice.CollectDispatchHierarchy(birFiles.Select(f => f.Root));
+        var genericDowncastHierarchy = GenericDowncastRealignment.Collect(birFiles.Select(f => f.Root));
 
         // INLINE-BIR STASH (#71/#75 S1): BEFORE any lowering pass runs, capture every `mods.inline` method's RAW
         // pre-lowering body into an OPAQUE `inlineBir` base64 string (ilemit stamps it verbatim as the raw-BIR
@@ -270,7 +272,7 @@ sealed class Pipeline
             // same-module index) and SPLICES it (positional tv-subst, temp-bound params, lambda-invoke splicing, routed
             // returns, hygiene) into a value-producing valueBlock — which then re-lowers IN THIS app's context. Runs here
             // (before ClosureSynthesis, like RepeatInlineLowering) so nested closures in the spliced body synthesize once.
-            InlineSplice.Apply(bir.Root, refs, appLocalFileClassMethods);
+            InlineSplice.Apply(bir.Root, refs, appLocalFileClassMethods, inlineDispatchHierarchy);
             // CROSS-MODULE DEFAULT-ARG SPLICE (#146): fill a call's OMITTED defaulted args (kotc's `defaultArg`
             // placeholders) from the callee's `[kotlin.clr.KotlinDefault]` BIR on the referenced .dll. Runs HERE — phase 1,
             // right after InlineSplice, before ObjectSlotRename/ClosureSynthesis/MemberCallSubstitution/BirTypeLowering —
@@ -456,6 +458,10 @@ sealed class Pipeline
             // (once it stops reading @ClrIntrinsic). BEFORE the hoist so an alias class's bound stubs / @ClrIntrinsic
             // overrides don't over-hoist into the rule-3 helper.
             if (!_options.RefBuild) MemberStrip.Apply(bir.Root, refs);
+            // Kotlin IR fake overrides are BIR facts, not CLR declarations.  When an interface fake override is backed
+            // by an inherited DIM, consume it here instead of emitting a distinct abstract slot and asking ilemit to
+            // infer a class-level forwarding bridge.  Abstract ancestors remain explicit.
+            if (!_options.RefBuild) InheritedDefaultFakeOverrideElision.Apply(bir.Root, refs);
             var hoisted = _options.RefBuild ? bir.Root : AliasHelperHoist.Apply(bir.Root, refs);
             // DECLARATION + CALL-NAME rename (clrName migration): a member declaration that overrides a CLR-bound
             // interface member carrying @ClrIntrinsic gets the BCL slot name (a `size` getter override -> get_Count,
@@ -545,6 +551,24 @@ sealed class Pipeline
             staged.Add((substituted, outputName));
         }
 
+        // F-BOUND STAR PROJECTION: CLR has no legal/reified `Node<*>` TypeSpec for `Node<N : Node<N>>`.
+        // Materialize a deterministic non-generic existential view in bir2cir and make every closed Node<N> implement
+        // it. Runs before interface-slot normalization and suspend lowering, in ref and runtime builds alike.
+        FBoundStarProjectionErasure.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
+
+        // KOTLIN FAKE-OVERRIDE -> CLR INTERFACE SLOT: if a concrete class implements an interface using a public
+        // NON-VIRTUAL method inherited from its base class, Kotlin considers the member implemented but CLR implicit
+        // interface binding does not. Materialize the exact forwarding member in CIR/BIR-space before suspend lowering
+        // (so a synthesized suspend member is transformed normally). Exact signature/return only; ambiguity is skipped.
+        InheritedClassInterfaceBridge.ApplyAll(staged.Select(s => s.Root).ToList());
+
+        // CONSTRUCTED MEMBER RESULT SUBSTITUTION (early): suspend lowering copies a call's result type into
+        // state-machine fields/locals. Close every already-constructed receiver-relative return BEFORE that copy
+        // happens (`Deferred<Int>.await(): type-TV0` -> `Int`), otherwise a non-generic SM permanently captures an
+        // out-of-scope TV and ilemit can only realize it as object. The late pass below remains necessary after exact
+        // inherited declaring-owner binding; both passes are structural and idempotent.
+        ConstructedMemberReturnSubstitution.ApplyAll(staged.Select(s => s.Root).ToList());
+
         // PHASE 1.5 — SUSPEND COLD LOWERING (R1 classifier): rewrite EVERY declared `suspend fun` (top-level statics,
         // extensions, instance members, static/companion members, abstract/interface members) into the cold
         // Continuation shape (SM class + `f$dotkt_suspend` cold entry + Task bridge + suspend-main drain), and rewrite
@@ -598,6 +622,25 @@ sealed class Pipeline
         if (!_options.RefBuild)
             GenericDelegateInstantiation.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
 
+        // GENERIC STATIC OWNER BINDING: a companion/static member on generic `G<T>` has a faithful bare Kotlin owner in
+        // BIR, but CLR MemberRefs require a constructed parent. Canonicalize to `G<Any>` here (the member cannot depend
+        // on T), so ilemit never guesses an instantiation. No source/library names are involved.
+        if (!_options.RefBuild)
+            GenericStaticOwnerBinding.ApplyAll(staged.Select(s => s.Root).ToList());
+
+        // INHERITED GENERIC MEMBER OWNER BINDING: BIR keeps the Kotlin receiver owner (`Derived<T>.m`), while a CLR
+        // MemberRef must name the exact CONSTRUCTED declaring owner (`Base<T>.m`). Resolve that hierarchy substitution
+        // here, from local declarations + kotc's override facts, before type lowering. This removes a semantic inference
+        // from ilemit and prevents open-generic member operands ("containing type is not fully instantiated"). Exact
+        // signature/arity matches only; ambiguous overloads are never guessed. No library/member names are special.
+        if (!_options.RefBuild)
+            InheritedMemberOwnerBinding.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
+
+        // CONSTRUCTED MEMBER RESULT SUBSTITUTION (late): inherited owner binding above can introduce the exact
+        // constructed declaring owner only after suspend synthesis. Close those remaining callee-relative result TVs;
+        // ilemit receives a closed CIR return type and performs no inference.
+        ConstructedMemberReturnSubstitution.ApplyAll(staged.Select(s => s.Root).ToList());
+
         // STAR-PROJECTION BOUND index (#2): the in-assembly generic type-param BOUNDS (`interface Key<E : Element>`
         // -> {Key: [Element]}), collected across ALL staged roots (a `Key<*>` use may live in a sibling file from Key's
         // declaration). Feeds StarProjectionBoundLowering so a `Key<object>` (kotc's star-projection erasure) is
@@ -615,6 +658,7 @@ sealed class Pipeline
             // (kotlin.Any then lowers to object in rt/app, verbatim in ref). Un-blocks BlockOnSink/startCoroutine/
             // resumeWith dispatch (CLR interface variance does not lift value types; uniform erasure is the fix).
             ContinuationErasure.Apply(substituted);
+            GenericDowncastRealignment.Apply(substituted, genericDowncastHierarchy);
             // SEQUENCE for-in dispatch (#37 m1 wave-2, cases/il-seqforin): a `for (x in seq)` over a Kotlin Sequence
             // lowers to `forEachInline` with a typed `IEnumerable<elem>::GetEnumerator` dispatch, but the anon Sequence
             // `sequence { .. }` returns is erased to `IEnumerable<object>` at runtime (its lifted class carries no type
@@ -839,8 +883,8 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> CompileReferenc
     // The RUNTIME stdlib build (`--build-stdlib=runtime` -> DotKt.Stdlib.dll) — NOT an app build. Since #66 kotc emits
     // one substitute-independent BIR, the rt-only type-param drops (kotlin.Comparable bound / `in` variance) that kotc
     // used to do live here (StdlibSubstituteTypeParams). App builds keep those, substituting the Comparable bound to
-    // System.IComparable — so this is the stdlib-runtime build ONLY. (The @Clr*/NRT/[Kotlin*] metadata strip stays in
-    // ilemit, gated on the SAME `--build-stdlib=runtime` flag passed to ilemit — see ilemit's _stripMetadata.)
+    // System.IComparable — so this is the stdlib-runtime build ONLY. Runtime attribute stripping and every other
+    // Kotlin-to-CLR representation decision are likewise completed in bir2cir before ilemit sees the CIR.
     public bool SubstituteStdlibBuild => StdlibMode == BuildStdlibMode.Runtime;
 
     public static DriverOptions Parse(string[] args)

@@ -155,6 +155,21 @@ static class BirTypeLowering
         ["kotlin.collections.Set"] = "System.Collections.Generic.ICollection",
     };
 
+    // A synthesized result slot sometimes has to be named before this lowering pass runs (the suspend
+    // TaskCompletionSource<R>/RootContinuation<R> drive is the canonical case). Its public Task<R> must retain the
+    // same readonly head type a Kotlin call observes; spelling that BCL head explicitly also exempts this one coherent
+    // producer/consumer slot from Root-V's generic-argument collapse. Nested collection arguments still lower normally.
+    internal static TypeNode AsReadonlyResultSlot(TypeNode t) => t switch
+    {
+        TypeNode.Fqn { Name: "kotlin.collections.List", Args: not null } f
+            => new TypeNode.Fqn("System.Collections.Generic.IReadOnlyList", f.Args),
+        TypeNode.Fqn { Name: "kotlin.collections.Collection" or "kotlin.collections.Set", Args: not null } f
+            => new TypeNode.Fqn("System.Collections.Generic.IReadOnlyCollection", f.Args),
+        TypeNode.Nullable n => new TypeNode.Nullable(AsReadonlyResultSlot(n.Of)),
+        TypeNode.Oblivious o => new TypeNode.Oblivious(AsReadonlyResultSlot(o.Of)),
+        _ => t,
+    };
+
     // Whether the INNER of a `{t:nullable}` node is a value type — evaluated on the SEMANTIC (pre-lowering) inner so a
     // struct/enum/primitive FQN is recognized before it is rewritten to a CLR shorthand / BCL name. A generic
     // application, function type, array, byRef, or type variable is treated as a reference (stripped). A value FQN
@@ -287,13 +302,20 @@ static class BirTypeLowering
     // A function type kept as a DELEGATE (a `funcType` slot, or a plain fn in a type slot): lower ret (a Unit
     // ret -> void, Action vs Func) + params + receiver; the suspend flag is folded to false (the delegate shape
     // is preserved — the sequence/iterator closure path needs a real Func/Action, not an object-erased SM value).
+    // The physical CLR delegate family is decided HERE and carried explicitly in CIR. ilemit must not change the
+    // nominal ABI based on whether one of the resolved types happens to still be a TypeBuilder.
     static TypeNode LowerFnDelegate(TypeNode.Fn fn, bool refBuild, bool force)
     {
         var ret = (fn.Ret is TypeNode.Fqn rf && rf.Args == null && rf.Name == "kotlin.Unit")
             ? VoidType : LowerType(fn.Ret, refBuild, force, typeArg: false);
         var ps = fn.Params.Select(p => LowerType(p, refBuild, force, typeArg: false)).ToArray();
         var recv = fn.Recv == null ? null : LowerType(fn.Recv, refBuild, force, typeArg: false);
-        return new TypeNode.Fn(false, ret, ps, recv);
+        int arity = ps.Length + (recv == null ? 0 : 1);
+        bool returnsVoid = ret is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" };
+        string clr = returnsVoid
+            ? arity <= 16 ? "System.Action" : "DotKt.Runtime.CompilerServices.KAction"
+            : arity <= 16 ? "System.Func" : "DotKt.Runtime.CompilerServices.KFunc";
+        return new TypeNode.Fn(false, ret, ps, recv, clr);
     }
 
     // Read a structured Type node out of the BIR JSON, lower it, and write it back.
@@ -339,7 +361,7 @@ static class BirTypeLowering
                 // STEP-1 clrName migration: kotc emits a pure-Kotlin `overrides` marker (the override closure) so a
                 // future bir2cir decl-rename pass can derive BCL slot names from the ref.dll @ClrIntrinsic. It is
                 // bir2cir-internal metadata — strip it here so it never reaches the CIR/ilemit (keeps emit byte-identical).
-                if (kv.Key == "overrides") continue;
+                if (kv.Key is "overrides" or "fakeOverride") continue;
                 // #122: the frontend static-type stamp `sty` is bir2cir-internal (consumed by StaticType up through the
                 // CharSequence bridge). Strip it here so it never reaches CIR/ilemit — a consumed hint, not a CIR slot.
                 if (kv.Key == "sty") continue;

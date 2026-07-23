@@ -853,9 +853,17 @@ static class FacadeGen
                     if (sm.IsSpecialName || sm.IsAbstract || sm.IsVirtual || sm.DeclaringType?.FullName == "System.Object" || (sm.IsGenericMethod && !sm.IsGenericMethodDefinition)) continue;
                     var smgp = sm.IsGenericMethodDefinition ? sm.GetGenericArguments().Select(g => g.Name).ToList() : new List<string>();
                     var smps = sm.GetParameters();
-                    if (!smps.All(p => Supported(p.ParameterType)) || !Supported(sm.ReturnType)) continue;
+                    // A flattened companion suspend member is a static Task/Task<T> bridge carrying
+                    // [KotlinFunction(Suspend)]. Restore it exactly as the instance-member and file-facade paths do;
+                    // treating every static as plain .NET would leak Task<T> into the Kotlin surface.
+                    var sk = KotlinFun(sm);
+                    var smRetOk = sk.suspend ? SuspendRetSupported(sm.ReturnType) : Supported(sm.ReturnType);
+                    if (!smps.All(p => Supported(p.ParameterType)) || !smRetOk) continue;
                     if (!iseen.Add("sm:" + sm.Name + "<" + string.Join(",", smgp) + ">(" + Sig(smps, t) + ")")) continue;
-                    staticFuns.Add(FunObj(sm.Name, RetTypeSfxN(sm, t), new JsonObject(), "public", null,
+                    var smRet = sk.suspend ? SuspendRetNode(sm, t) : RetTypeSfxN(sm, t);
+                    var (smMods, smVis) = ModVis(false, isAbstract: false, isOpen: false,
+                        infix: sk.infix, op: sk.op, suspend: sk.suspend, inline: KotlinInlineBody(sm) != null);
+                    staticFuns.Add(FunObj(sm.Name, smRet, smMods, smVis, null,
                         sm.IsGenericMethodDefinition ? TypeParamsArr(sm.GetGenericArguments(), t, false, false) : null,
                         ParamsArr(smps, t)));
                 }
@@ -1030,12 +1038,20 @@ static class FacadeGen
                     if (m.IsSpecialName || m.DeclaringType?.FullName == "System.Object" || (m.IsGenericMethod && !m.IsGenericMethodDefinition)) continue;
                     var sgp = m.IsGenericMethodDefinition ? m.GetGenericArguments().Select(g => g.Name).ToList() : new List<string>();
                     var sps = m.GetParameters();
-                    if (!sps.All(p => Supported(p.ParameterType)) || !Supported(m.ReturnType)) continue;
+                    // Kotlin companion members flatten onto the containing CLR type. Preserve the same round-trip
+                    // modifier/result contract as ordinary members: in particular, a suspend bridge's Task<T>
+                    // is an ABI detail and the injected companion must expose `suspend fun ...: T`.
+                    var sk = KotlinFun(m);
+                    var smRetOk = sk.suspend ? SuspendRetSupported(m.ReturnType) : Supported(m.ReturnType);
+                    if (!sps.All(p => Supported(p.ParameterType)) || !smRetOk) continue;
                     if (!seen.Add("sm:" + m.Name + "<" + string.Join(",", sgp) + ">(" + Sig(sps, t) + ")")) continue;
                     // #135: route the return through RetTypeSfxN (Nothing marker + NRT + ext-recv restore) — the same
                     // reader the instance/interface/top-level loops use — instead of raw MapRetT, so a companion-static
                     // `fun g(): Nothing` round-trips and NRT folds on companion statics.
-                    staticFuns.Add(FunObj(m.Name, RetTypeSfxN(m, t), new JsonObject(), "public", null,
+                    var smRet = sk.suspend ? SuspendRetNode(m, t) : RetTypeSfxN(m, t);
+                    var (smMods, smVis) = ModVis(false, isAbstract: false, isOpen: false,
+                        infix: sk.infix, op: sk.op, suspend: sk.suspend, inline: KotlinInlineBody(m) != null);
+                    staticFuns.Add(FunObj(m.Name, smRet, smMods, smVis, null,
                         m.IsGenericMethodDefinition ? TypeParamsArr(m.GetGenericArguments(), t, false, false) : null,
                         ParamsArr(sps, t)));
                 }
@@ -1785,6 +1801,23 @@ static class FacadeGen
         return DotKt.Bir.BirCarrier.DecodeBody(version, content).ToJsonString();
     }
 
+    // A compiler-synthesized CLR type may have a different Kotlin surface type. The F-bound star-projection lowering,
+    // for example, represents G<*> with a non-generic existential interface so every closed G<X> can implement it.
+    // [KotlinType] carries the exact pre-lowering TypeNode; accepting it requires the same assembly + carrier provenance
+    // as every other DotKt round-trip marker, so a same-named attribute in an ordinary CLR assembly is inert.
+    const string KTypeAttr = "DotKt.Runtime.CompilerServices.KotlinTypeAttribute";
+    static TN KotlinTypeNode(Type t)
+    {
+        try
+        {
+            foreach (var cad in t.GetCustomAttributesData())
+                if (IsDotKtMetadata(cad, KTypeAttr) && cad.ConstructorArguments.Count == 2)
+                    return TN.Parse(DecodeCarrier(cad));
+        }
+        catch { /* malformed/unresolvable carrier: retain the ordinary CLR mapping and its diagnostic */ }
+        return null;
+    }
+
     // H2: the [KotlinSuspendFunctionType(shape)] attribute stamped by bir2cir's RoundtripMetadata on a `suspend (…) -> T`
     // function-type POSITION (param / return / field / property). bir2cir erases the CLR signature slot to `object` (a
     // suspend-lambda VALUE is a Continuation state-machine object, not a Func), so the suspend ORIGIN + arg/return SHAPE
@@ -2364,6 +2397,7 @@ static class FacadeGen
     // A reference to another .NET type -> a Fqn (simple name / dotted FQN) the injector resolves IF injected, else Any?.
     static TN CrossTypeT(Type t)
     {
+        if (KotlinTypeNode(t) is TN kotlinType) return kotlinType;
         if (t.IsArray) { var e = MapT(t.GetElementType(), t); return IsAnyQ(e) ? AnyQ() : new TN.Array(e); }
         // A root-namespace GENERIC user type (`Box<T>`) is handled by the generic branch; only reject an empty namespace
         // for NON-generic types (a global/compiler type with no useful injectable identity).
@@ -2514,6 +2548,7 @@ static class FacadeGen
     // as CrossTypeT does (a dotted Fqn), never MapTN's simple-name self-match branch.
     static TN CrossTypeTN(Type t, IList<CustomAttributeData> attrs, MemberInfo ctx, int my, ref int pos, bool wrap)
     {
+        if (KotlinTypeNode(t) is TN kotlinType) return WrapNrt(kotlinType, t, attrs, ctx, my, wrap);
         if (t.IsArray) { var e = MapTN(t.GetElementType(), t, attrs, ctx, ref pos, wrap); return IsAnyQ(e) ? AnyQ() : WrapNrt(new TN.Array(e), t, attrs, ctx, my, wrap); }
         if (t.IsByRef || t.IsPointer || t.IsGenericParameter || (string.IsNullOrEmpty(t.Namespace) && !t.IsGenericType)) return AnyQ();
         if (t.IsGenericType)

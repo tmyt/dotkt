@@ -41,7 +41,7 @@ dotnet "$ILEMIT_DLL" "$OUT/il" Wide --runtime-refs "$STDLIB_RT_DLL" "$OUT/cir"/*
 	|| die "ilemit failed"
 cp "$STDLIB_RT_DLL" "$OUT/il/"
 
-expected="$(printf '17\n17\n17')"
+expected="$(printf '17\n17\n17\n23\n29\n31')"
 if ! actual="$(dotnet "$OUT/il/Wide.dll" 2>/dev/null)"; then actual+="${actual:+$'\n'}(app crashed: exit $?)"; fi
 if [[ "$actual" != "$expected" ]]; then
 	echo "FAIL  wide delegate invocation" >&2
@@ -58,6 +58,20 @@ if ! strings "$OUT/il/Wide.dll" | grep -q 'KAction`17'; then
 	echo "FAIL  emitted assembly is missing KAction\`17" >&2
 	exit 1
 fi
+# A TypeBuilder/composite-open generic in a low-arity signature must not silently change the ABI to a
+# module-local KFunc/KAction. Only the genuinely wide families above may be synthesized.
+for arity in $(seq 1 17); do
+	if strings "$OUT/il/Wide.dll" | grep -qx "KFunc\`$arity"; then
+		echo "FAIL  low-arity KFunc\`$arity was synthesized" >&2
+		exit 1
+	fi
+done
+for arity in $(seq 1 16); do
+	if strings "$OUT/il/Wide.dll" | grep -qx "KAction\`$arity"; then
+		echo "FAIL  low-arity KAction\`$arity was synthesized" >&2
+		exit 1
+	fi
+done
 
 # Round-trip surface: facadegen must restore the KFunc`18-typed parameter as a Kotlin function type.
 # facadegen reads the delegate's Invoke signature (17 params + Int return) directly, regardless of arity

@@ -9,10 +9,9 @@
 //   il-seqyieldall -> seqyieldall_yieldAllOverloadPick    (BUG Y: yieldAll cold-entry `sig` overload disambiguation)
 //   il-genbaseext  -> genbaseext_externalGenericBaseConcreteArgs (concrete base-arg EMIT via MakeGenericType)
 //
-// ILVERIFY: genbaseext's declared `get_key()` carries the incidental CoroutineContext.Key star-projection
-// covariance finding (GitHub #12, formal-only, runtime-safe). In the per-case bash gate it was a verify-compiler-tests.sh
-// XFAIL_ILVERIFY [genbaseext] entry; migrated it becomes a finding against DotKt.Tests.Coroutines.dll, baseline-
-// listed in tests/run-ilverify.sh (ILVERIFY_XFAIL "CorBGbeBase::get_key()").
+// The former per-case gate baselined a formal-only #12 finding for genbaseext's `get_key()`. Existential
+// star-projection metadata and bir2cir lowering now preserve this shape without a finding; the whole-assembly
+// ILVerify gate therefore carries no exception for it.
 //
 // Top-level names carry a per-case token (`gs`/`gbe`) under the shared `corB`/`CorB` prefix so they can't clash
 // with sibling coroutine fixtures or the stdlib within this single assembly.
@@ -57,8 +56,8 @@ class CoroutineSequenceBuilderTests {
     fun externalGenericBaseConcreteArgs() {
         // The DECLARATION of CorBGbeDerivedKey (external generic base SetParent-resolved via MakeGenericType) is the
         // coverage — the former main only printed "ok". Do NOT reference CorBGbeDerivedKey (forcing its .cctor hits a
-        // SEPARATE #12 covariance-erasure). Reading get_key on the derived instance resolves through the external
-        // generic base to the companion Key (formal-only covariance finding, baseline-listed; runtime-safe).
+        // SEPARATE static-initialization path). Reading get_key on the derived instance resolves through the external
+        // generic base to the companion Key and is required to remain ILVerify-clean.
         val key = CorBGbeDerived().key
         assertEquals(CorBGbeBase.Key, key)   // former golden: "ok"
     }

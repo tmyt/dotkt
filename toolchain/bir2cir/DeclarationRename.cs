@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
@@ -94,8 +95,9 @@ static class DeclarationRename
 
     // #73 M4-c — the .NET base CLASS owner FQN in an accessor's override closure (a virtual property whose declaring
     // .NET type is a real CLASS, not an interface/struct), else null. Used to stamp `clrOverride` so ilemit's
-    // DefineMethodOverride binds the base virtual slot. Resolves off the refs (ResolveNetType skips kotlin.*/local
-    // owners) and confirms the .NET type declares the property, mirroring ResolveSlot's facadegen fallback.
+    // DefineMethodOverride binds the base virtual slot. A property mapping alone is NOT sufficient: Kotlin's open
+    // Throwable.cause maps to the NON-virtual Exception.InnerException getter, so a subclass `override val cause`
+    // must remain a Kotlin virtual newslot rather than attempt an impossible CLR .override.
     static string ResolveNetClassOwner(JsonArray ovs, ReferenceMetadataIndex refs)
     {
         foreach (var o in ovs)
@@ -103,9 +105,10 @@ static class DeclarationRename
             if (o is not JsonObject oo) continue;
             if (TypeJson.OwnerName(oo["owner"]) is not string owner) continue;
             if ((oo["member"] as JsonValue)?.GetValue<string>() is not string member) continue;
+            var overrideKind = (oo["kind"] as JsonValue)?.GetValue<string>();
             var bare = ReferenceMetadataIndex.BareOwnerFqn(owner);
             if (refs.ResolveNetType(bare) is not Type nt || !nt.IsClass) continue;   // IsClass excludes interface + struct
-            if (!NetInteropBinding.MemberIsPropertyOrField(nt, member)) continue;
+            if (!HasOverridableAccessor(nt, member, overrideKind)) continue;
             return bare;
         }
         // @ClrProperty on a @ClrTypeAlias base (issue #24): the override's ancestor is a kotlin.* alias (kotlin.Throwable)
@@ -118,11 +121,25 @@ static class DeclarationRename
             if (o is not JsonObject oo) continue;
             if (TypeJson.OwnerName(oo["owner"]) is not string owner) continue;
             if ((oo["member"] as JsonValue)?.GetValue<string>() is not string member) continue;
-            if (refs.TryResolveClrOwner(owner, out var bcl, out var kind) && kind == "class"
-                && refs.TryMemberProperty(ReferenceMetadataIndex.BareOwnerFqn(owner), "get_" + member, 0, out _, out _))
+            var overrideKind = (oo["kind"] as JsonValue)?.GetValue<string>();
+            if (refs.TryResolveClrOwner(owner, out var bcl, out var ownerKind) && ownerKind == "class"
+                && refs.TryMemberProperty(ReferenceMetadataIndex.BareOwnerFqn(owner), "get_" + member, 0, out _, out var bclProperty)
+                && refs.ResolveNetType(bcl) is Type nt && HasOverridableAccessor(nt, bclProperty, overrideKind))
                 return bcl;
         }
         return null;
+    }
+
+    static bool HasOverridableAccessor(Type owner, string propertyName, string overrideKind)
+    {
+        try
+        {
+            var p = owner.GetProperty(propertyName,
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static);
+            var accessor = overrideKind == "setter" ? p?.GetSetMethod(true) : p?.GetGetMethod(true);
+            return accessor?.IsVirtual == true && !accessor.IsFinal;
+        }
+        catch { return false; }
     }
 
     // The BARE property intrinsic ("Count") for a property record's override closure: the @ClrIntrinsic is on the
@@ -210,7 +227,7 @@ static class DeclarationRename
                 return (kind == "getter" ? "get_" : "set_") + bclPropName;
         }
         // FACADEGEN-INJECTED .NET interface/base (A2 step 5): the override owner resolves to a REAL .NET Type off the
-        // refs (NOT a stdlib ref.dll alias — ResolveNetType skips kotlin.*/kotlinx.*/dotkt$ synthetics and every local
+        // refs (NOT a stdlib ref.dll alias — ResolveNetType excludes kotlin.*/dotkt$ synthetics and locals
         // type).
         // A Kotlin class implementing/overriding such a member binds the .NET slot HERE (kotc no longer bakes it). Because
         // facadegen injects the Kotlin member identity EQUAL to the .NET name, the slot is the identity: a method ->
@@ -236,4 +253,3 @@ static class DeclarationRename
         return null;
     }
 }
-

@@ -2,9 +2,9 @@
 // `CoroutineContext.Key<E : Element>` self-ref-bounded key surface (bir2cir StarProjectionBoundLowering repoints the
 // `Key<*>` projection to `Key<Element>`) and the #7 await-point resume precedence (interceptor > SyncContext > inline).
 //
-// ILVERIFY NOTE: these three carry the SAME runtime-safe formal-only finding as the old verify-compiler-tests.sh XFAIL_ILVERIFY
-// entries — the invariant `Key<Element>` slot filled by a `Key<Self>` companion (GitHub #12, formal-only follow-up of
-// the closed #2). The RUN lane is green; the finding is baselined for DotKt.Tests.Coroutines.dll in tests/run-ilverify.sh.
+// The old per-case battery baselined formal-only #12 findings for these self-ref-bounded Key shapes. Existential
+// star-projection metadata and bir2cir lowering now preserve the signatures without producing those findings, so
+// both the runtime assertions and whole-assembly ILVerify gate are expected to remain green.
 //
 // Coverage preserved (old case -> method):
 //   il-coctxkey       -> coCtxKey_abstractElementCompanionKey     (#12: AbstractCoroutineContextElement subtype)
@@ -35,6 +35,23 @@ class CorAIceptInterceptor : ContinuationInterceptor {
     override val key: CoroutineContext.Key<*> get() = ContinuationInterceptor
     override fun <T> interceptContinuation(continuation: Continuation<T>): Continuation<T> = continuation
 }
+
+// A plain intermediate interface reproduces kotlinx.coroutines' `Job : CoroutineContext.Element` shape. The frontend
+// materializes Element's inherited members on CorATransitiveElement as abstract slots; the class-side CLR MethodImpls
+// therefore have to forward those distinct slots to Element's referenced stdlib DIMs.
+interface CorATransitiveElement : CoroutineContext.Element
+
+class CorATransitiveElementImpl : CorATransitiveElement {
+    companion object Key : CoroutineContext.Key<CorATransitiveElementImpl>
+    override val key: CoroutineContext.Key<*> get() = Key
+}
+
+// BIR intentionally keeps the LOCAL intermediate receiver owner; bir2cir must bind this generic
+// call to the nearest referenced declaration (Element, not the transitive CoroutineContext slot).
+fun <E : CoroutineContext.Element> corATransitiveGet(
+    delegate: CorATransitiveElement,
+    key: CoroutineContext.Key<E>,
+): E? = delegate[key]
 
 // ---- il-awaitintercept: an interceptor that COUNTS resumes routed through it (#7 Part B, harness inlined) -----
 class CorAAwiCountingInterceptor : ContinuationInterceptor {
@@ -92,6 +109,17 @@ class CoroutineContextInterceptionTests {
     fun interceptorKeyProjection() {
         val i = CorAIceptInterceptor()
         assertEquals(true, i.key === ContinuationInterceptor)   // True
+        assertEquals(true, (i as CoroutineContext)[ContinuationInterceptor] === i)
+    }
+
+    @TestAttribute
+    fun transitiveReferencedElementDefaults() {
+        val e: CorATransitiveElement = CorATransitiveElementImpl()
+        assertEquals(true, e[CorATransitiveElementImpl.Key] === e)
+        assertEquals(e, e.fold<Any?>(null) { _, element -> element })
+        assertEquals(EmptyCoroutineContext, e.minusKey(CorATransitiveElementImpl.Key))
+
+        assertEquals(true, corATransitiveGet(e, CorATransitiveElementImpl.Key) === e)
     }
 
     @TestAttribute

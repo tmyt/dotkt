@@ -483,6 +483,7 @@ private object ClrMetadataHolder {
 		is TypeNode.Nullable -> receiverClassifierClassId(t.of)
 		is TypeNode.Oblivious -> receiverClassifierClassId(t.of)
 		is TypeNode.ByRef -> null   // a `ClrRef<T>` byref receiver is not an overload-collision axis
+		TypeNode.Star -> null
 		is TypeNode.Array -> {
 			val prim = (t.elem as? TypeNode.Fqn)?.takeIf { it.args == null }?.name?.let { PRIM_ARRAY_ELEM[it] }
 			ClassId(FqName("kotlin"), Name.identifier(prim ?: "Array"))
@@ -987,7 +988,16 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			return ct.staticMethods.filter { it.name == cn }.map { m ->
 				if (m.typeParams.isEmpty())
 					createMemberFunction(owner, ClrGeneratedKey, callableId.callableName, coneOf(m.returnType, owner)) {
-						for (p in m.params) valueParameter(Name.identifier(p.name), coneOf(p.type, owner, paramPos = true))
+						// Static CLR members live on the synthesized companion in the Kotlin surface. They still carry
+						// the full Kotlin declaration vocabulary restored by facadegen; dropping `suspend` here makes
+						// fir2ir type-check the result as T while kotc emits a plain Task<T> call. Preserve the same
+						// modifier facts as the ordinary injected-member path so bir2cir sees `suspendCall:true`.
+						if (m.infix || m.operator || m.suspend)
+							status { isInfix = m.infix; isOperator = m.operator; isSuspend = m.suspend }
+						if (m.inline) status { isInline = true }
+						for (p in m.params)
+							if (p.vararg) valueParameter(Name.identifier(p.name), coneOf(TypeNode.Array(p.type), owner, paramPos = true), isVararg = true)
+							else valueParameter(Name.identifier(p.name), coneOf(p.type, owner, paramPos = true))
 					}.also { if (m.lowPriority) applyLowPriority(it) }.symbol
 				else
 					// A GENERIC static (`Task.FromResult<TResult>(TResult): Task<TResult>`, `Task.Run<TResult>`): declare the
@@ -996,7 +1006,13 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 					// This is the seam that lets Kotlin BUILD a Task<T> from a .NET generic factory (async interop).
 					createMemberFunction(owner, ClrGeneratedKey, callableId.callableName,
 						{ tps -> coneOf(m.returnType, owner, tps) }) {
-						for (tp in m.typeParams) typeParameter(Name.identifier(tp.name), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey)
+						if (m.infix || m.operator || m.suspend)
+							status { isInfix = m.infix; isOperator = m.operator; isSuspend = m.suspend }
+						if (m.inline) status { isInline = true }
+						for (tp in m.typeParams) typeParameter(Name.identifier(tp.name), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey) {
+							for (b in tp.bounds)
+								bound { tps -> boundConeOf(b, tps) ?: session.builtinTypes.nullableAnyType.coneType }
+						}
 						// N3-deep: a GENERIC static's `vararg` param (`Task.WhenAll<T>(params Task<T>[])`) rebuilds as an
 						// `Array<elem>` vararg so it resolves to the real `params Task<T>[]` overload (not `Any?`).
 						for (p in m.params)
@@ -1117,6 +1133,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		val bt = session.builtinTypes
 		return when (node) {
 			is TypeNode.Tv -> (if (node.scope == "type") tps.getOrNull(node.i)?.symbol?.constructType(emptyArray(), false) else null) ?: bt.nullableAnyType.coneType
+			TypeNode.Star -> bt.nullableAnyType.coneType
 			is TypeNode.Nullable -> superArgCone(node.of, tps).withNullability(true, session.typeContext)
 			is TypeNode.Oblivious -> superArgCone(node.of, tps)
 			is TypeNode.Fqn -> when (node.name) {
@@ -1165,6 +1182,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		try {
 			return when (node) {
 				is TypeNode.Tv -> tps.getOrNull(node.i)?.symbol?.constructType(emptyArray(), false)
+				TypeNode.Star -> session.builtinTypes.nullableAnyType.coneType
 				is TypeNode.Nullable -> boundConeOf(node.of, tps)?.withNullability(true, session.typeContext)
 				is TypeNode.Oblivious -> boundConeOf(node.of, tps)
 				is TypeNode.Fqn -> {
@@ -1372,6 +1390,8 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 					else owner?.typeParameterSymbols?.getOrNull(node.i)
 				sym?.constructType(emptyArray(), false) ?: bt.nullableAnyType.coneType
 			}
+			// A bare star is only meaningful as a generic argument and is handled by coneProjectionOf below.
+			TypeNode.Star -> bt.nullableAnyType.coneType
 			// A named type: a primitive/builtin, else an injected type by (simpleName, arity) or a dotted `pkg.Name`.
 			is TypeNode.Fqn -> {
 				if (node.args == null) when (node.name) {
@@ -1395,12 +1415,23 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 				if (sym == null) bt.nullableAnyType.coneType
 				else {
 					@Suppress("UNCHECKED_CAST")
-					val args = (node.args?.map { coneOf(it, owner, methodTps, paramPos) } ?: emptyList()).toTypedArray() as Array<org.jetbrains.kotlin.fir.types.ConeTypeProjection>
+					val args = (node.args?.map { coneProjectionOf(it, owner, methodTps, paramPos) } ?: emptyList()).toTypedArray()
 					sym.constructType(args, false)
 				}
 			}
 		}
 	}
+
+	/** Preserve a genuine Kotlin `*` from round-trip metadata as a FIR projection. Non-star arguments remain ordinary
+	 *  ConeKotlinTypes, which are also ConeTypeProjections. fir2ir/backend then applies the normal capture/erasure. */
+	private fun coneProjectionOf(
+		node: TypeNode,
+		owner: FirClassSymbol<*>?,
+		methodTps: List<org.jetbrains.kotlin.fir.declarations.FirTypeParameterRef>?,
+		paramPos: Boolean,
+	): org.jetbrains.kotlin.fir.types.ConeTypeProjection =
+		if (node === TypeNode.Star) org.jetbrains.kotlin.fir.types.ConeStarProjection
+		else coneOf(node, owner, methodTps, paramPos)
 }
 
 /** Registers [ClrTypeInjector] as a FIR class-generation extension (supertypes are declared in its class builder). */

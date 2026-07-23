@@ -37,6 +37,14 @@ static class InlineSplice
     static JsonArray _hoist;                    // #34: lifted default-lambda methods re-hoisted from a `defaultCarrier`
     static JsonNode _fileClassOwner;            // #204: owner of any default-carrier delegate re-hoisted into this file
     static HashSet<string> _appLocalMethods;   // #43/#63: file-class method names a `newDelegate` can `ldftn` — MODULE-WIDE (every input file's file-class methods, seeded from Program.cs) + every drained re-hoist (a PENDING re-hoist is checked live via `_hoist`). Provenance oracle for the §4.4ii materialization-side newDelegate guard, the materialization-side counterpart of the §4.6 `!sameModule` payload-side guard in RewriteGeneric.
+    static IReadOnlyDictionary<string, DispatchDef> _dispatchDefs;
+
+    public sealed class DispatchDef
+    {
+        public int Arity;
+        public TypeNode.Fqn Base;
+        public TypeNode.Fqn[] Interfaces = Array.Empty<TypeNode.Fqn>();
+    }
     // §4.4ii ref-cell write-through: a MATERIALIZED carrier that WRITES a captured enclosing `var` (a bare `setLocal` to a
     // capture kotc did NOT ref-cell-box — a cross-module inline body's callee-local, etc.) must promote that var to a shared
     // heap cell so the closure's write is visible in the enclosing scope. `_refCellNames` dedups one `dotkt$…$Ref$…` class
@@ -45,9 +53,11 @@ static class InlineSplice
     static Dictionary<string, string> _refCellNames;          // elem-type JSON -> ref-cell class name (per file)
     static List<(string varName, string refName, JsonNode elem)> _boxRequests;   // DISTINCT (enclosing var, ref class, elem) box requests — keyed by cell, NOT bare name, so two same-named-but-different-typed captures both survive (BoxMaterializedCaptures scopes each by its own cell)
 
-    public static void Apply(JsonNode root, ReferenceMetadataIndex refs, IReadOnlyCollection<string> moduleWideAppLocalMethods)
+    public static void Apply(JsonNode root, ReferenceMetadataIndex refs, IReadOnlyCollection<string> moduleWideAppLocalMethods,
+        IReadOnlyDictionary<string, DispatchDef> dispatchDefs)
     {
         _refs = refs;
+        _dispatchDefs = dispatchDefs;
         _fileClassOwner = root is JsonObject ro && Str(ro["fileClass"]) is string fc ? TypeJson.Fqn(fc) : null;
         _nextLabelId = MaxLabelId(root) + 1;
         _hoist = new JsonArray();
@@ -113,6 +123,33 @@ static class InlineSplice
             if (root is JsonObject ro && ro["methods"] is JsonArray a)
                 foreach (var m in a) if (m is JsonObject mo && Str(mo["name"]) is string mn) set.Add(mn);
         return set;
+    }
+
+    // Exact local generic hierarchy retained for inherited member-inline dispatch. A derived receiver may be
+    // non-generic while its declaring inline owner is constructed (`DelayedQueue : Heap<DelayedTask>`); the payload's
+    // `scope:type` vars must be substituted from that constructed ancestor, not dropped to object.
+    public static Dictionary<string, DispatchDef> CollectDispatchHierarchy(IEnumerable<JsonNode> roots)
+    {
+        var result = new Dictionary<string, DispatchDef>(StringComparer.Ordinal);
+        foreach (var root in roots) CollectDispatchTypes(root, result);
+        return result;
+    }
+
+    static void CollectDispatchTypes(JsonNode node, Dictionary<string, DispatchDef> result)
+    {
+        if (node is not JsonObject obj || obj["types"] is not JsonArray types) return;
+        foreach (var type in types.OfType<JsonObject>())
+        {
+            if (Str(type["name"]) is string name)
+                result[name] = new DispatchDef
+                {
+                    Arity = (type["typeParams"] as JsonArray)?.Count ?? 0,
+                    Base = TypeJson.Read(type["base"]) as TypeNode.Fqn,
+                    Interfaces = (type["interfaces"] as JsonArray)?.Select(TypeJson.Read).OfType<TypeNode.Fqn>().ToArray()
+                        ?? Array.Empty<TypeNode.Fqn>(),
+                };
+            CollectDispatchTypes(type, result);
+        }
     }
 
     static void Walk(JsonNode node, int depth)
@@ -654,7 +691,8 @@ static class InlineSplice
             var ownerName = TypeJson.OwnerName(o["ownerType"]);
             if (ownerName == null) return;
             if (ResolveInlinePayload(ownerName, name, pc, ga, sig).payload is not JsonObject mp) return;
-            payload = mp; ownerOut = ownerName;
+            payload = mp;
+            ownerOut = Str(payload["owner"]) ?? ownerName;
         }
         // An owner-FUL callStatic carries its owner as a STRUCTURED Fqn (companion/object/enum member flattened to a
         // static; `TypeJson.OwnerName` reads both an Fqn object AND a legacy string, and yields null for the genuinely
@@ -691,7 +729,14 @@ static class InlineSplice
             // #23 co-bind: a REAL-INSTANCE member-extension's enclosing receiver rides `o["recv"]` alongside the extension.
             if (!fwdStatic && o["recv"] is JsonNode edisp) recvs["dispatch"] = edisp.DeepClone();
         }
-        else if (recv == "dispatch" && o["recv"] is JsonNode disp) recvs["dispatch"] = disp.DeepClone();
+        else if (recv == "dispatch" && o["recv"] is JsonNode disp)
+        {
+            recvs["dispatch"] = disp.DeepClone();
+            if ((StaticReceiverType(o["recv"]) ?? TypeJson.Read(o["ownerType"]) as TypeNode.Fqn) is TypeNode.Fqn receiverSpec
+                && ResolveConstructedSuper(receiverSpec, ownerOut) is TypeNode.Fqn ownerSpec
+                && ownerSpec.Args is { Length: > 0 })
+                recvs["dispatchTypeArgs"] = new JsonArray(ownerSpec.Args.Select(TypeJson.Write).ToArray());
+        }
         for (int i = start; i < sargs.Count; i++)
         {
             if (sargs[i] is JsonObject ao && Str(ao["k"]) == "local" && Str(ao["name"]) is string ln && lambdaMap.TryGetValue(ln, out var lam))
@@ -716,6 +761,49 @@ static class InlineSplice
         foreach (var key in new List<string>(((IDictionary<string, JsonNode>)o).Keys)) o.Remove(key);
         foreach (var kv in repl) o[kv.Key] = kv.Value?.DeepClone();
     }
+
+    static TypeNode.Fqn StaticReceiverType(JsonNode recv)
+    {
+        if (recv is not JsonObject o) return null;
+        if (TypeJson.Read(o["stype"]) is TypeNode.Fqn st) return st;
+        if (Str(o["k"]) == "cast" && TypeJson.Read(o["type"]) is TypeNode.Fqn cast) return cast;
+        return null;
+    }
+
+    static TypeNode.Fqn ResolveConstructedSuper(TypeNode.Fqn start, string target)
+    {
+        var queue = new Queue<TypeNode.Fqn>();
+        queue.Enqueue(start);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        while (queue.Count > 0)
+        {
+            var current = queue.Dequeue();
+            var key = current.ToString();
+            if (!seen.Add(key)) continue;
+            if (current.Name == target) return current;
+            if (_dispatchDefs == null || !_dispatchDefs.TryGetValue(current.Name, out var def)) continue;
+            var args = def.Arity == 0 ? Array.Empty<TypeNode>() : current.Args;
+            if (args == null || args.Length != def.Arity) continue;
+            if (def.Base != null) queue.Enqueue((TypeNode.Fqn)SubstDispatchTvs(def.Base, args));
+            foreach (var iface in def.Interfaces) queue.Enqueue((TypeNode.Fqn)SubstDispatchTvs(iface, args));
+        }
+        return null;
+    }
+
+    static TypeNode SubstDispatchTvs(TypeNode type, TypeNode[] args) => type switch
+    {
+        TypeNode.Tv { Scope: "type" } tv when tv.I >= 0 && tv.I < args.Length => args[tv.I],
+        TypeNode.Fqn { Args: { } nested } f => new TypeNode.Fqn(f.Name,
+            nested.Select(a => SubstDispatchTvs(a, args)).ToArray()),
+        TypeNode.Nullable n => new TypeNode.Nullable(SubstDispatchTvs(n.Of, args)),
+        TypeNode.Oblivious o => new TypeNode.Oblivious(SubstDispatchTvs(o.Of, args)),
+        TypeNode.Array a => new TypeNode.Array(SubstDispatchTvs(a.Elem, args)),
+        TypeNode.ByRef b => new TypeNode.ByRef(SubstDispatchTvs(b.Of, args)),
+        TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, SubstDispatchTvs(fn.Ret, args),
+            fn.Params.Select(p => SubstDispatchTvs(p, args)).ToArray(),
+            fn.Recv == null ? null : SubstDispatchTvs(fn.Recv, args)),
+        _ => type,
+    };
 
     // Splice invocations of a lambda param: `{k:callInstance, method:invoke, recv:{k:local,name:<lamParam>}}` where
     // <lamParam> is a registered lambda -> the carried lambda body, freshened+prefixed PER INVOCATION, with the lambda's

@@ -12,6 +12,10 @@ sealed partial class ReferenceMetadataIndex
     const string KotlinFileClassAttr = "DotKt.Runtime.CompilerServices.KotlinFileClassAttribute";
     const string KotlinFunctionAttr = "DotKt.Runtime.CompilerServices.KotlinFunctionAttribute";
     const string KotlinInlineAttr = "DotKt.Runtime.CompilerServices.KotlinInlineAttribute";
+    const string DotKtAssemblyMarkerAttr = "System.Reflection.AssemblyMetadataAttribute";
+    const string DotKtAssemblyMarkerKey = "DotKt.Compiler";
+    const string DotKtAssemblyMarkerValue = "metadata-v1";
+    const string CompilerGeneratedAttr = "System.Runtime.CompilerServices.CompilerGeneratedAttribute";
     // The round-trip marker RoundtripMetadata stamps on every `value`/inline class. It REPLACES the old
     // `kotlin.jvm.JvmInline` key: the 2.4.0 frontend no longer materializes @JvmInline into the IR (OptionalExpectation
     // `expect` with no non-JVM actual), so value-ness now rides `mods.value` -> this synthetic attribute on the ref/rt DLL.
@@ -26,6 +30,7 @@ sealed partial class ReferenceMetadataIndex
     // Aggregate CALL-SUBSTITUTION index across all reference assemblies.
     readonly Dictionary<string, string> _ownerAlias = new(StringComparer.Ordinal);   // Kotlin FQN -> BCL alias
     readonly Dictionary<string, string> _ownerKind = new(StringComparer.Ordinal);    // Kotlin FQN -> class/struct/...
+    readonly HashSet<string> _dotKtOwners = new(StringComparer.Ordinal);              // types authored by a DotKt-emitted assembly
     readonly Dictionary<string, int> _ownerArity = new(StringComparer.Ordinal);      // Kotlin FQN -> generic arity
     readonly Dictionary<string, string[]> _ownerTypeParams = new(StringComparer.Ordinal); // Kotlin FQN -> generic param names
     // Per owner-FQN, the declared param type names of its (first/sole) constructor — used to adapt a static-String arg
@@ -47,6 +52,12 @@ sealed partial class ReferenceMetadataIndex
     readonly HashSet<string> _helperTypes = new(StringComparer.Ordinal);             // emitted "dotkt$ClrH_*"
     readonly HashSet<string> _restrictsSuspension = new(StringComparer.Ordinal);     // @RestrictsSuspension owners
     readonly Dictionary<string, List<MemberBinding>> _membersByOwner = new(StringComparer.Ordinal);
+    // Reference-owner hierarchy in BIR's dotted Kotlin vocabulary.  Calls retain their Kotlin
+    // receiver owner in BIR; inherited CLR MemberRefs are selected later by bir2cir, so that pass
+    // needs the same constructed base/interface graph for referenced types as it has for local CIR
+    // declarations.  Keep the graph as structured TypeNodes -- never reconstruct generic owners in
+    // ilemit from reflection strings.
+    readonly Dictionary<string, ReferenceTypeShape> _referenceTypeShapes = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _topLevelIntrinsics = new(StringComparer.Ordinal); // top-level fun name -> FQ static
     readonly Dictionary<string, string> _topLevelIntrinsicsBySig = new(StringComparer.Ordinal); // "name|paramKeys" -> FQ static (overload-disambiguated)
     readonly HashSet<string> _ambiguousTopLevelIntrinsics = new(StringComparer.Ordinal); // names whose overloads bind to DIFFERENT statics (Math vs MathF)
@@ -140,6 +151,7 @@ sealed partial class ReferenceMetadataIndex
         {
             foreach (var kv in asm.DotKt.Aliases) _ownerAlias[kv.Key] = kv.Value;
             foreach (var kv in asm.DotKt.TypeKinds) _ownerKind[kv.Key] = kv.Value;
+            foreach (var owner in asm.DotKt.DotKtOwners) _dotKtOwners.Add(owner);
             foreach (var kv in asm.DotKt.TypeArity) _ownerArity[kv.Key] = kv.Value;
             foreach (var kv in asm.DotKt.TypeParamNames) _ownerTypeParams[kv.Key] = kv.Value;
             foreach (var kv in asm.DotKt.CtorParamTypes) _ownerCtorParams[kv.Key] = kv.Value;
@@ -153,6 +165,7 @@ sealed partial class ReferenceMetadataIndex
                     _membersByOwner[m.Owner] = list = new List<MemberBinding>();
                 list.Add(m);
             }
+            foreach (var kv in asm.DotKt.TypeShapes) _referenceTypeShapes.TryAdd(kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.TopLevelIntrinsics) _topLevelIntrinsics.TryAdd(kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.TopLevelIntrinsicsBySig) _topLevelIntrinsicsBySig.TryAdd(kv.Key, kv.Value);
             foreach (var n in asm.DotKt.AmbiguousTopLevelIntrinsics) _ambiguousTopLevelIntrinsics.Add(n);
@@ -369,27 +382,28 @@ sealed partial class ReferenceMetadataIndex
     }
 
     // Resolve a facadegen-injected .NET owner FQN to its metadata-only reflection Type (A2 / #61), or null when the
-    // owner is NOT a reachable .NET type — i.e. a `kotlin.*`/`kotlinx.*` stdlib owner (bound by MemberCallSubstitution
-    // off the ref.dll, NOT here) or the compiler's own `dotkt$…` synthetic vocabulary, a local
-    // app-emitted type, or anything the compile-reference set does not contain. `genericArity` lets a constructed
+    // owner is `kotlin.*` stdlib vocabulary (bound by MemberCallSubstitution off the ref.dll, NOT here), compiler-owned
+    // `dotkt$…` synthetic vocabulary, a local app-emitted type, or absent from the compile-reference set.
+    // `genericArity` lets a constructed
     // generic owner ("System.Collections.Generic.List"
     // + args) resolve its open definition (`List`1`). Consumed by NetInteropBinding to shape the call. Cached.
     public Type ResolveNetType(string fqn, int genericArity = 0)
     {
         if (string.IsNullOrEmpty(fqn)) return null;
-        // The stdlib's own vocabulary is bound off the ref.dll (@ClrTypeAlias/@ClrIntrinsic) by MemberCallSubstitution,
-        // never reflected as a raw .NET type here — skip it so the two binders never collide. This ALSO skips the three
-        // CLR-only-vocabulary SYNTHETICS facadegen injects purely to make the frontend typecheck — `kotlin.clr.ClrEvent`,
-        // `kotlin.clr.ClrRef`, the `kotlin.clr.byref` marker — which have NO definition in any reference assembly and are
-        // fully lowered by kotc itself (kotc's own dialect extension). They must never be resolved here (they don't
-        // exist); their pre-lowered nodes (an event `clrEventGet`, a ref-passing form) flow through this pass opaquely.
         // #26 follow-up: only `dotkt$…` is compiler-owned synthetic vocabulary
         // (dotkt$obj*/dotkt$ClrH_*/dotkt$CharSequence/…). `dotkt` and `dotkt.*` were used by the retired pre-stdlib
         // runtime, but are ordinary user FQNs now; skipping them breaks a referenced Kotlin library in that namespace
         // exactly like the former over-broad StartsWith("dotkt") broke `dotktx.*` packages.
+        // `kotlinx.*` is intentionally NOT special: it is the ordinary namespace used by separately-built libraries
+        // such as atomicfu and coroutines. Treating that prefix as stdlib vocabulary prevents their facadegen-injected
+        // members from reaching the normal reflection-backed external-assembly binding.
         if (fqn == "kotlin" || fqn.StartsWith("kotlin.", StringComparison.Ordinal)
-            || fqn.StartsWith("kotlinx.", StringComparison.Ordinal)
             || fqn.StartsWith("dotkt$", StringComparison.Ordinal)) return null;
+        // A type carrying DotKt declaration metadata is a Kotlin library surface even when its namespace is ordinary
+        // (`kotlinx.*`, `roundtrip.*`, ...). Its calls must retain Kotlin ABI handling in MemberCallSubstitution rather
+        // than being reclassified as raw C# members by NetInteropBinding. This replaces namespace-prefix ownership
+        // guesses for external DotKt libraries while leaving genuine .NET types on the reflection path.
+        if (_dotKtOwners.Contains(BareOwnerFqn(fqn))) return null;
         // LOCAL-OVER-REF (#15): a type DECLARED in this compilation is this-assembly-emitted and is the authority for
         // its identity — never resolve it as an EXTERNAL .NET type off the refs, even when a referenced dll exports the
         // same FQN (the ProjectReference-source-glob layout). Source wins: leave the node routing to the emitted type.
@@ -397,9 +411,9 @@ sealed partial class ReferenceMetadataIndex
         return ProbeNetType(fqn, genericArity);
     }
 
-    // W1-S2 (#46): resolve a STDLIB-owner clr* member's declaring type off the ref.dll — WITHOUT the `kotlin.*`/`kotlinx.*`
-    // skip that `ResolveNetType` applies (that skip keeps NetInteropBinding from reshaping a kotlin.* call; it does NOT
-    // apply to ClrMemberResolution, which runs AFTER all substitution and only needs to reflect a member's DECLARED sig).
+    // W1-S2 (#46): resolve a STDLIB-owner clr* member's declaring type off the ref.dll — WITHOUT the `kotlin.*`
+    // exclusion that `ResolveNetType` applies (that exclusion keeps NetInteropBinding from reshaping a stdlib call; it
+    // does NOT apply to ClrMemberResolution, which runs AFTER substitution and only reflects a member's DECLARED sig).
     // Used for a clr* node IteratorConsumerNormalization deliberately keeps on its `kotlin.collections.Iterator` owner for
     // the rt-stdlib link. Still honors the local-emitted skip (a self-build's own kotlin.* type is authored, not reflected)
     // + the dotkt-synthetic skip (dotkt$CharSequence has no ref.dll type). Null when the type is not in the ref universe.
@@ -412,7 +426,7 @@ sealed partial class ReferenceMetadataIndex
     }
 
     // The shared MLC probe (cache + candidate spellings + forwarder collapse) — the caller applies the owner-universe
-    // skip policy (ResolveNetType skips kotlin.*/dotkt$ synthetics/local; ResolveRefType skips only dotkt$ synthetics/local).
+    // policy (ResolveNetType excludes kotlin.*/dotkt$ synthetics/local; ResolveRefType excludes only the latter two).
     Type ProbeNetType(string fqn, int genericArity)
     {
         if (_netTypeCache.TryGetValue(fqn, out var cached)) return cached;
@@ -516,6 +530,11 @@ sealed partial class ReferenceMetadataIndex
         var arr = _ownerTypeParamBounds.GetValueOrDefault(StripGenericArity(ownerFqn));
         return arr != null && i >= 0 && i < arr.Length ? arr[i] : null;
     }
+
+    // Deterministic synthetic owners (for example an F-bound star-view interface) are part of a DotKt reference's
+    // ordinary type surface.  bir2cir may target one only when it is actually present; this avoids assuming that an
+    // arbitrary CLR library opted into a compiler-private ABI convention merely because its generic shape looks alike.
+    public bool HasDotKtOwner(string ownerFqn) => _dotKtOwners.Contains(ownerFqn);
 
     // The @ClrProperty accessor binding for owner.member: its READ/WRITE access flags + the .NET property name. Routes the
     // call EXPLICITLY to clrPropGet/clrPropSet (no get_/set_ string-prefix sniff). Overload-disambiguated by arg count.
@@ -832,6 +851,76 @@ sealed partial class ReferenceMetadataIndex
         ownerToken != null && _membersByOwner.TryGetValue(BareOwnerFqn(ownerToken), out var list)
         && list.Any(m => m.Name == "iterator" && m.ParamCount == 0 && !m.IsAbstract && !m.IsStatic);
 
+    // Does this exact referenced owner declare a concrete instance member of the given Kotlin/CLR name and arity?
+    // Used to consume an explicit BIR fakeOverride fact when its inherited declaration is a DIM.  Exact owner and
+    // arity keep overloads separate; hierarchy traversal belongs to the override closure already carried by BIR.
+    public bool DeclaresConcreteMember(string ownerToken, string memberName, int paramCount) =>
+        ownerToken != null && memberName != null
+        && TryMembersByBirOwner(BareOwnerFqn(ownerToken), out var list)
+        && list.Any(m => m.Name == memberName && m.ParamCount == paramCount && !m.IsAbstract && !m.IsStatic);
+
+    // Exact referenced declaration lookup for inherited-member owner binding.  The signature is
+    // structural (including type-vs-method Tv scope/index), not a name/arity guess, so overloads
+    // remain distinct.  Multiple identical candidates are treated as ambiguous and refused.
+    public bool DeclaresExactInstanceMember(string ownerToken, string memberName, int methodArity,
+        IReadOnlyList<TypeNode> signature)
+    {
+        if (ownerToken == null || memberName == null || IsAliasedOwner(ownerToken)
+            || !TryMembersByBirOwner(BareOwnerFqn(ownerToken), out var list)) return false;
+        return list.Count(m => !m.IsStatic && m.Name == memberName && m.MethodArity == methodArity
+            && m.ParamTypeNodes is { } ps && ps.Length == signature.Count
+            && ps.Select((p, i) => p == signature[i]).All(x => x)) == 1;
+    }
+
+    // Return the declaration-shape of a referenced owner, normalized to BIR's dotted nested-type
+    // spelling.  The returned base/interfaces may contain type-scoped Tvs and are substituted by
+    // InheritedMemberOwnerBinding exactly like locally declared supertypes.
+    public bool TryReferenceTypeShape(string ownerToken, out int typeParamCount, out string kind,
+        out TypeNode.Fqn baseType, out TypeNode.Fqn[] interfaces)
+    {
+        if (ownerToken != null && !IsAliasedOwner(ownerToken)
+            && _referenceTypeShapes.TryGetValue(DottedFqn(BareOwnerFqn(ownerToken)), out var shape))
+        {
+            typeParamCount = shape.TypeParamCount;
+            kind = shape.Kind;
+            baseType = shape.Base;
+            interfaces = shape.Interfaces;
+            return true;
+        }
+        typeParamCount = 0;
+        kind = null;
+        baseType = null;
+        interfaces = Array.Empty<TypeNode.Fqn>();
+        return false;
+    }
+
+    // @ClrTypeAlias owners are not CLR declaration owners: their calls must go through
+    // MemberCallSubstitution (which also selects/renames the target member).  Late inherited
+    // binding across this boundary would leave a Kotlin name on a BCL owner.
+    bool IsAliasedOwner(string ownerToken)
+    {
+        var bare = BareOwnerFqn(ownerToken);
+        if (_ownerAlias.ContainsKey(bare) || FoundationalRefAliases.ContainsKey(bare)) return true;
+        var matches = _ownerAlias.Keys.Where(k => DottedFqn(k) == DottedFqn(bare)).Take(2).ToList();
+        return matches.Count == 1;
+    }
+
+    // Reflection spells a nested owner with '+' while BIR deliberately remains in Kotlin's dotted vocabulary.
+    // Resolve that representation seam here, in the reference index.  Refuse a theoretically ambiguous collision
+    // (`A.B+C` and `A.B.C` both exist) instead of guessing which CLR owner the Kotlin token meant.
+    bool TryMembersByBirOwner(string ownerFqn, out List<MemberBinding> members)
+    {
+        if (_membersByOwner.TryGetValue(ownerFqn, out members)) return true;
+        var matches = _membersByOwner.Where(kv => DottedFqn(kv.Key) == ownerFqn).Take(2).ToList();
+        if (matches.Count == 1)
+        {
+            members = matches[0].Value;
+            return true;
+        }
+        members = null;
+        return false;
+    }
+
     public static string HelperTypeName(string ownerFqn) =>
         "dotkt$ClrH_" + System.Text.RegularExpressions.Regex.Replace(ownerFqn, "[^A-Za-z0-9]", "_");
 
@@ -885,6 +974,15 @@ sealed partial class ReferenceMetadataIndex
             try { types = asm.GetTypes(); }
             catch (ReflectionTypeLoadException ex) { types = ex.Types.Where(t => t != null).Cast<Type>().ToArray(); }
 
+            // DotKt ownership is provenance, not a namespace/type-name guess. ilemit stamps the versioned assembly
+            // marker and bir2cir emits a [CompilerGenerated] metadata carrier; require BOTH, matching facadegen's
+            // classifier. A third-party C# assembly may legally define a full-name lookalike and must remain on the
+            // ordinary CLR metadata path (including custom awaitables and BCL collection signatures).
+            var dotKtAuthored = IsDotKtEmittedAssembly(asm);
+            if (dotKtAuthored)
+                foreach (var authoredType in types)
+                    metadata.DotKtOwners.Add(StripGenericArity(authoredType.FullName ?? authoredType.Name));
+
             foreach (var type in types)
             {
                 try
@@ -894,6 +992,11 @@ sealed partial class ReferenceMetadataIndex
                     // binding) or, for any not-yet-renamed bound class, a class-level @ClrIntrinsic.
                     var ownerFqn = StripGenericArity(type.FullName ?? type.Name);
                     metadata.TypeKinds[ownerFqn] = TypeKind(type);
+                    metadata.TypeShapes[DottedFqn(ownerFqn)] = new ReferenceTypeShape(
+                        type.IsGenericType ? type.GetGenericArguments().Length : 0,
+                        TypeKind(type),
+                        DeclarationTypeNode(type.BaseType) as TypeNode.Fqn,
+                        type.GetInterfaces().Select(DeclarationTypeNode).OfType<TypeNode.Fqn>().ToArray());
                     if (type.IsGenericType)
                     {
                         var gargs = type.GetGenericArguments();
@@ -973,7 +1076,9 @@ sealed partial class ReferenceMetadataIndex
                             suspend,
                             isConv,
                             convTo,
-                            TypeNodeOf(method.ReturnType)));
+                            TypeNodeOf(method.ReturnType),
+                            method.GetGenericArguments().Length,
+                            method.GetParameters().Select(p => DeclarationTypeNode(p.ParameterType)).ToArray()));
                         // [KotlinInline] raw-BIR carrier (#71/#75 S1): decode the versioned carrier now (the codec is
                         // BirCarrier, shared) and key it owner|name|pc|ga so InlineSplice can splice this injected inline
                         // fn's body at a cross-module call site. A malformed / pre-S1-shaped payload is swallowed (no
@@ -1079,6 +1184,27 @@ sealed partial class ReferenceMetadataIndex
         catch (Exception ex)
         {
             metadata.Diagnostics.Add($"{Path.GetFileName(reference)}: subst scan failed: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    static bool IsDotKtEmittedAssembly(Assembly asm)
+    {
+        try
+        {
+            var marked = asm.GetCustomAttributesData().Any(c =>
+                c.AttributeType.FullName == DotKtAssemblyMarkerAttr
+                && c.ConstructorArguments.Count == 2
+                && c.ConstructorArguments[0].Value as string == DotKtAssemblyMarkerKey
+                && c.ConstructorArguments[1].Value as string == DotKtAssemblyMarkerValue);
+            var carrier = asm.GetType(KotlinFileClassAttr, throwOnError: false, ignoreCase: false);
+            return marked && carrier != null && carrier.GetCustomAttributesData()
+                .Any(c => c.AttributeType.FullName == CompilerGeneratedAttr);
+        }
+        catch
+        {
+            // Classification is an ownership routing hint. An unreadable marker is not authority to reinterpret a
+            // foreign assembly as Kotlin; the normal CLR path will surface any actually required metadata failure.
+            return false;
         }
     }
 
@@ -1270,11 +1396,61 @@ sealed partial class ReferenceMetadataIndex
         return new TypeNode.Fqn(prim ?? StripGenericArity(type.FullName ?? type.Name));
     }
 
+    // Declaration-signature projection used only by bir2cir's reference hierarchy/member index.
+    // Unlike TypeNodeOf (a best-effort static-result helper), generic parameters are meaningful
+    // here and must retain their CLR owner space and position.
+    static TypeNode DeclarationTypeNode(Type type)
+    {
+        if (type == null) return null;
+        if (type.IsByRef) return DeclarationTypeNode(type.GetElementType()!) is TypeNode e0 ? new TypeNode.ByRef(e0) : null;
+        if (type.IsArray) return DeclarationTypeNode(type.GetElementType()!) is TypeNode e1 ? new TypeNode.Array(e1) : null;
+        if (type.IsGenericParameter)
+            return new TypeNode.Tv(type.DeclaringMethod != null ? "method" : "type", type.GenericParameterPosition);
+        // Kotlin function types remain `{t:fn}` in CIR, with the exact physical delegate family retained.
+        // Unknown/custom CLR delegates stay nominal FQNs below; shape-projecting them would lose their identity.
+        var delegateFamily = DelegateFamily(type);
+        if (delegateFamily != null)
+        {
+            var invoke = type.GetMethod("Invoke");
+            if (invoke == null) return null;
+            var ret = DeclarationTypeNode(invoke.ReturnType);
+            var ps = invoke.GetParameters().Select(p => DeclarationTypeNode(p.ParameterType)).ToArray();
+            return ret != null && ps.All(p => p != null) ? new TypeNode.Fn(false, ret, ps, null, delegateFamily) : null;
+        }
+        if (type.IsConstructedGenericType)
+        {
+            var def = type.GetGenericTypeDefinition();
+            var args = type.GetGenericArguments().Select(DeclarationTypeNode).ToArray();
+            if (def == typeof(Nullable<>)) return new TypeNode.Nullable(args[0]);
+            return new TypeNode.Fqn(DottedFqn(StripGenericArity(def.FullName ?? def.Name)), args);
+        }
+        var prim = PrimitiveBirName(type);
+        return new TypeNode.Fqn(prim ?? DottedFqn(StripGenericArity(type.FullName ?? type.Name)));
+    }
+
     static bool IsFunc(Type type) =>
         type.Namespace == "System" && type.Name.StartsWith("Func`", StringComparison.Ordinal);
 
     static bool IsAction(Type type) =>
         type.Namespace == "System" && type.Name.StartsWith("Action`", StringComparison.Ordinal);
+
+    static string DelegateFamily(Type type)
+    {
+        Type def;
+        try { def = type.IsGenericType && !type.IsGenericTypeDefinition ? type.GetGenericTypeDefinition() : type; }
+        catch { return null; }
+        if (def.Namespace == "System")
+        {
+            if (def.Name == "Action" || def.Name.StartsWith("Action`", StringComparison.Ordinal)) return "System.Action";
+            if (def.Name.StartsWith("Func`", StringComparison.Ordinal)) return "System.Func";
+        }
+        if (def.Namespace == "DotKt.Runtime.CompilerServices")
+        {
+            if (def.Name.StartsWith("KAction`", StringComparison.Ordinal)) return "DotKt.Runtime.CompilerServices.KAction";
+            if (def.Name.StartsWith("KFunc`", StringComparison.Ordinal)) return "DotKt.Runtime.CompilerServices.KFunc";
+        }
+        return null;
+    }
 
     static bool IsDelegate(Type type)
     {
@@ -1408,6 +1584,7 @@ sealed class ReferenceDotKtMetadata
     // class-level @ClrTypeAlias (the type-identity binding) or, for a not-yet-renamed bound class, a class-level @ClrIntrinsic.
     public readonly Dictionary<string, string> Aliases = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> TypeKinds = new(StringComparer.Ordinal);   // ownerFqn -> class/struct/interface/enum
+    public readonly HashSet<string> DotKtOwners = new(StringComparer.Ordinal);             // producer-marked DotKt assembly types
     public readonly Dictionary<string, int> TypeArity = new(StringComparer.Ordinal);       // ownerFqn -> generic arity
     public readonly Dictionary<string, string[]> TypeParamNames = new(StringComparer.Ordinal); // ownerFqn -> generic param names
     public readonly Dictionary<string, string[]> CtorParamTypes = new(StringComparer.Ordinal); // ownerFqn -> (first) ctor param type names
@@ -1418,6 +1595,7 @@ sealed class ReferenceDotKtMetadata
     // lambda whose RECEIVER is such a scope (e.g. SequenceScope) gets the RestrictedSuspendLambda SM base (bundle-6 P5).
     public readonly HashSet<string> RestrictsSuspensionTypes = new(StringComparer.Ordinal);
     public readonly List<MemberBinding> MemberBindings = new();                           // per-member @ClrIntrinsic + shape
+    public readonly Dictionary<string, ReferenceTypeShape> TypeShapes = new(StringComparer.Ordinal);
     // [KotlinInline] raw-BIR payloads (#71/#75): "owner|name|pc|ga" -> the candidate decoded carrier JSONs (one per overload).
     public readonly Dictionary<string, List<string>> InlinePayloads = new(StringComparer.Ordinal);
     // Top-level fun name -> its @ClrIntrinsic fully-qualified static target ("System.Diagnostics.Stopwatch.GetTimestamp").
@@ -1464,4 +1642,6 @@ sealed class ReferenceDotKtMetadata
 // (Suspend bit = 4) in the LIVE MetadataLoadContext scan. Populated for the Task-based coroutine bundle (bundle 6):
 // a cross-module call site must know "is this referenced callee suspend?" (its CLR shape is the Task<T> kickoff).
 // NO consumer reads it yet — bundle 6 wires it.
-sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, string[] ParamTypes = null, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, string ConvTo = null, TypeNode ReturnType = null);
+sealed record ReferenceTypeShape(int TypeParamCount, string Kind, TypeNode.Fqn Base, TypeNode.Fqn[] Interfaces);
+
+sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, string[] ParamTypes = null, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, string ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null);

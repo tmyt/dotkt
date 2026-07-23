@@ -582,6 +582,29 @@ static class MemberCallSubstitution
             //                       sig type is the receiver type; the rest are the method args.
             var fn = (node["method"] as JsonValue)?.GetValue<string>();
             if (instance || string.IsNullOrEmpty(fn)) return null;
+            // A facadegen-injected STATIC property on a referenced DotKt type carries its declaring type in
+            // `ownerType`, while callStatic's `owner` remains null. Bind a real CLR property/public field immediately,
+            // before the owner-null top-level-property convention below rewrites its bare name to `get_`/`set_`.
+            // The declaring type is resolved from the reference metadata universe, so this is independent of package
+            // names and covers class-like enum entries as well as ordinary companion/static properties.
+            if ((node["prop"] as JsonValue)?.GetValue<string>() is ("get" or "set") and var injectedPropKind
+                && TypeJson.Read(node["ownerType"]) is TypeNode.Fqn injectedPropOwner
+                && refs.ResolveRefType(injectedPropOwner.Name, injectedPropOwner.Args?.Length ?? 0) is Type injectedType
+                && NetInteropBinding.MemberIsPropertyOrField(injectedType, fn))
+            {
+                var injectedPropArgs = node["args"] as JsonArray ?? new JsonArray();
+                var shaped = new JsonObject
+                {
+                    ["k"] = injectedPropKind == "get" ? "clrPropGet" : "clrPropSet",
+                    ["type"] = node["ownerType"]?.DeepClone(),
+                    ["name"] = fn,
+                    ["static"] = true,
+                    ["recv"] = null,
+                };
+                if (injectedPropKind == "get") shaped["ret"] = node["ret"]?.DeepClone();
+                else shaped["value"] = injectedPropArgs.Count > 0 ? injectedPropArgs[0]?.DeepClone() : null;
+                return shaped;
+            }
             // #81/#157: an owner-null top-level PROPERTY accessor read carries the bare property IDENTITY + a
             // `"prop":"get"/"set"` marker instead of a baked `get_`/`set_` slot name (the #78 static-axis convention
             // extended to the owner-null axis). Two producers, ONE reconstruction: a top-level EXTENSION property
@@ -653,8 +676,12 @@ static class MemberCallSubstitution
             // know the file-class — that is CLR/ref knowledge). In an APP build, attribute it to the file-class the
             // ref.dll says it lives in, so ilemit's owner-present FindMethod reflects it against the runtime stdlib —
             // exactly how the iterator bridge `callStatic kotlin.collections.ClrIteratorBridgeKt.*` already resolves.
-            // Skipped when the fun is locally defined (the sibling wins) or in the stdlib self-build (flag off).
-            if (_attributeTopLevelOwner && !_localTopLevelFns.Contains(fn))
+            // A same-module call already carries its exact `calleeOwner`; that dispatch fact — not a compilation-wide
+            // name set — is the local-sibling authority. The old `_localTopLevelFns.Contains(fn)` guard collapsed
+            // packages and hid `kotlin.coroutines.resume` merely because kotlinx.coroutines also declares an unrelated
+            // top-level `resume`, leaving the stdlib call ownerless at the CIR boundary.
+            // In a stdlib self-build attribution remains disabled by `_attributeTopLevelOwner`.
+            if (_attributeTopLevelOwner && TypeJson.OwnerName(node["calleeOwner"]) == null)
             {
                 var recvKey = sigParts0.Count >= 1 ? RecvKeyOf(sigParts0[0]) : "";
                 // The FINE first-param key disambiguates the array overloads a coarse "[]" recvKey collapses (signed vs
@@ -682,6 +709,21 @@ static class MemberCallSubstitution
                 {
                     node["owner"] = TypeJson.Fqn(injectedOwner);
                     PromoteGenericShapeToSig(node);
+                    return node;
+                }
+
+                // The non-generic counterpart of the residual path above. facadegen-injected static callables carry
+                // their declaring type in `ownerType` and their exact parameter list in `argTypes`; kotc preserves
+                // both but emits the neutral callStatic owner slot as null. Once the top-level indexes have had first
+                // refusal, that injected declaring type is authoritative: move it onto callStatic's CLR owner axis.
+                // Some frontend paths already materialize `sig` while others leave only `argTypes`; both represent the
+                // same resolved declaration and must converge to the same CIR. The rule is structural and applies to
+                // every referenced non-generic static callable, without knowing a library, type, or member name.
+                if (node["argTypes"] is JsonArray injectedArgTypes
+                    && TypeJson.Read(node["ownerType"]) is TypeNode.Fqn injectedStaticOwner)
+                {
+                    node["owner"] = TypeJson.Write(injectedStaticOwner);
+                    node["sig"] ??= injectedArgTypes.DeepClone();
                     return node;
                 }
             }
@@ -753,8 +795,8 @@ static class MemberCallSubstitution
             // that way regardless of CLR-boundness) so the call resolves to the REAL emitted accessor:
             //   • SAME-module owner -> ilemit's `_types` FindMethod finds the emitted `get_<p>`/`set_<p>`.
             //   • RE-IMPORTED cross-module Kotlin owner (#17: a `--ref` Kotlin assembly whose type is skipped by
-            //     NetInteropBinding's ResolveNetType because its FQN starts with `kotlin.`/`kotlinx.`/`dotkt$`, e.g. a
-            //     `kotlinx.atomicfu.AtomicInt` port) -> ilemit's EXTERNAL-owner ResolveMethod reflects the public
+            //     NetInteropBinding's ResolveNetType because it is stdlib/compiler-synthetic vocabulary) -> ilemit's
+            //     EXTERNAL-owner ResolveMethod reflects the public
             //     `get_<p>`/`set_<p>` accessor off the referenced dll. Without this the bare `method:"<p>",prop:"get"`
             //     reaches ilemit and its ResolveMethod looks for a literal method `<p>` -> "method …value() not found".
             // A normally-packaged cross-module Kotlin owner (`shapes.Rectangle.area`) never reaches here — NetInterop-

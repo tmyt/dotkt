@@ -42,6 +42,7 @@ static class RoundtripMetadata
     const string AKNothing      = Ns + "KotlinNothingAttribute";
     const string AKNullableGen  = Ns + "KotlinNullableGenericAttribute";
     const string AKCollIdentity = Ns + "KotlinCollectionIdentityAttribute";
+    const string AKType         = Ns + "KotlinTypeAttribute";
     const string ANullable      = ClrNs + "NullableAttribute";
     const string ANullableCtx   = ClrNs + "NullableContextAttribute";
 
@@ -75,6 +76,16 @@ static class RoundtripMetadata
         // into the IR, so this [KotlinValue] marker is the ROUND-TRIP carrier of value-ness that ReferenceMetadataIndex
         // reads back off the ref/rt DLL to drive the single-field erase-to-underlying lowering.
         if (ModFlag(to, "value")) Append(to, Marker(AKValue));       // `value` class (@JvmInline)
+        // [KotlinType(version, bytes)] — a compiler-synthesized CLR type whose Kotlin surface is a different TypeNode.
+        // FBoundStarProjectionErasure uses this on its non-generic existential interface so a downstream reader restores
+        // the original G<*> projection rather than exposing the CLR implementation type or degrading it to Any?.
+        if ((to["kotlinType"] as JsonValue)?.GetValue<string>() is string kt)
+        {
+            Append(to, KotlinTypeAttr(kt));
+            // This is a bir2cir-only hand-off between lowering passes. Final CIR contains only the fully-authored
+            // attribute that ilemit emits 1:1; it must not retain an extra inference/input fact.
+            to.Remove("kotlinType");
+        }
         StampMethods(to["methods"]);
         StampFields(to["fields"]);
         StampProps(to["properties"]);
@@ -204,6 +215,9 @@ static class RoundtripMetadata
     public static void StripRuntimeAttrs(JsonNode root)
     {
         if (root is not JsonObject o) return;
+        // FBoundStarProjectionErasure's pass-local hand-off is consumed only by Stamp in metadata-bearing builds.
+        // The runtime build deliberately emits no round-trip attribute, but must still discard the temporary fact.
+        o.Remove("kotlinType");
         StripAttrs(o, "attrs");
         StripDecls(o["methods"], hasParams: true);
         StripDecls(o["fields"]);
@@ -290,6 +304,14 @@ static class RoundtripMetadata
         return Marker(AKCollIdentity, StringArg(BirCarrier.JsonV1), BytesArg(Convert.ToBase64String(content)));
     }
 
+    // [KotlinType(version, bytes)] — the complete Kotlin surface TypeNode corresponding to a compiler-synthesized CLR
+    // type. The fact is kept opaque through CLR lowering and decoded only by facadegen.
+    static JsonObject KotlinTypeAttr(string typeJson)
+    {
+        byte[] content = BirCarrier.EncodeBody(BirCarrier.JsonV1, JsonNode.Parse(typeJson));
+        return Marker(AKType, StringArg(BirCarrier.JsonV1), BytesArg(Convert.ToBase64String(content)));
+    }
+
     static JsonObject Marker(string attr, params JsonObject[] args)
     {
         var arr = new JsonArray();
@@ -351,6 +373,7 @@ static class RoundtripMetadata
             AttrClass(AKNothing, Ctor()),   // #133 case3 — bare marker on a Kotlin `Nothing` return
             AttrClass(AKNullableGen, Ctor(Param("System.String"), Param(ByteArrayType()))),  // #18 — carrier of a pre-erasure `Holder<T?>` return
             AttrClass(AKCollIdentity, Ctor(Param("System.String"), Param(ByteArrayType()))), // #29 — carrier of a pre-collapse `Box<List<T>>` collection identity
+            AttrClass(AKType, Ctor(Param("System.String"), Param(ByteArrayType()))),         // compiler-synthesized CLR type -> original Kotlin TypeNode
             // NullableAttribute — csc's DUAL ctor: (byte) FIRST, (byte[]) SECOND (declaration order preserved so the
             // MethodDef rows and BuildCab's arity fallback stay deterministic).
             AttrClass(ANullable, Ctor(Param("System.Byte")), Ctor(Param(ByteArrayType()))),

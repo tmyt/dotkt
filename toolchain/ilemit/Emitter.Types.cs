@@ -148,29 +148,36 @@ sealed partial class Emitter
         return typeof(object);
     }
 
-    // Structured function type -> the CLR delegate (Action/Func or a synthetic for arity > 16).
+    // Structured CIR function type -> the exact CLR delegate family selected by bir2cir.
     Type FuncType(DotKt.Bir.TypeNode.Fn fn)
     {
         // DelegateParams prepends an extension receiver (`P.() -> R` = `Func<P,R>`/`KAction`1[P]`) so a restored
         // receiver-lambda param type builds the SAME CLR delegate as the flat lambda-value closure bound to it.
         var args = fn.DelegateParams.Select(MapType).ToArray();
         var ret = MapType(fn.Ret);
-        return BuildFuncType(args, ret);
+        return BuildFuncType(args, ret, fn.Clr
+            ?? throw new NotSupportedException("CIR function type is missing bir2cir-resolved `clr` delegate family"));
     }
 
-    // A runtime System.Func/Action cannot encode a generic arg that is a CONSTRUCTED type over a generic param
-    // (`Func<E[]>` / `Func<List<E>,R>`) — ModuleBuilderImpl's member-ref encoding throws "Invoke could not be found"
-    // (a BARE `Func<T>`, or fully-concrete args, are fine). Route such delegates through a synthetic (TypeBuilder-
-    // backed) delegate, which encodes reliably via TypeBuilder.GetMethod. Also used for arity > 16.
-    Type BuildFuncType(Type[] args, Type ret)
+    // Realize bir2cir's nominal ABI decision 1:1. TypeBuilder-involving System.Func/Action instantiations stay BCL
+    // delegates; their Reflection.Emit member references are handled by DelegateCtor/InvokeOf and must never alter
+    // the signature identity.
+    Type BuildFuncType(Type[] args, Type ret, string clr)
     {
-        bool synth = args.Append(ret).Any(a => !a.IsGenericParameter && ContainsTypeBuilder(a));
-        if (ret == typeof(void))
-            return args.Length == 0 ? typeof(Action)
-                : args.Length <= 16 && !synth ? ResolveType("System.Action`" + args.Length).MakeGenericType(args)
-                : SyntheticActionType(args);
-        var all = args.Append(ret).ToArray();
-        return args.Length <= 16 && !synth ? ResolveType("System.Func`" + all.Length).MakeGenericType(all) : SyntheticFuncType(args, ret);
+        return clr switch
+        {
+            "System.Action" when ret == typeof(void) && args.Length == 0 => typeof(Action),
+            "System.Action" when ret == typeof(void) && args.Length <= 16 =>
+                ResolveType("System.Action`" + args.Length).MakeGenericType(args),
+            "System.Func" when ret != typeof(void) && args.Length <= 16 =>
+                ResolveType("System.Func`" + (args.Length + 1)).MakeGenericType(args.Append(ret).ToArray()),
+            "DotKt.Runtime.CompilerServices.KAction" when ret == typeof(void) && args.Length > 16 =>
+                SyntheticActionType(args),
+            "DotKt.Runtime.CompilerServices.KFunc" when ret != typeof(void) && args.Length > 16 =>
+                SyntheticFuncType(args, ret),
+            _ => throw new NotSupportedException(
+                $"invalid CIR delegate family `{clr}` for arity {args.Length}, return {ret}")
+        };
     }
 
     // A generic type parameter resolved by NAME in context (method params shadow the enclosing type's). The structured
