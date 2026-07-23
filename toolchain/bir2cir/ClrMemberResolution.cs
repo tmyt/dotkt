@@ -29,7 +29,9 @@ static partial class ClrMemberResolution
     // stdlib enum like RegexOption is in the ref.dll and resolves concretely, never via the enum-reinterpret fallback).
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs, IReadOnlySet<string> localEnums)
     {
-        _refs = refs; _localEnums = localEnums ?? new HashSet<string>(); Walk(root);
+        _refs = refs; _localEnums = localEnums ?? new HashSet<string>();
+        ResolveExternalClassOverrides(root);
+        Walk(root);
     }
 
     static void Walk(JsonNode node)
