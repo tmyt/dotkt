@@ -5,6 +5,7 @@ import org.jetbrains.kotlin.backend.common.collectTailRecursionCalls
 import org.jetbrains.kotlin.descriptors.ClassKind
 import org.jetbrains.kotlin.descriptors.Modality
 import org.jetbrains.kotlin.descriptors.Visibilities
+import org.jetbrains.kotlin.ir.declarations.IrDeclarationOrigin
 import org.jetbrains.kotlin.ir.declarations.IrDeclarationWithVisibility
 import org.jetbrains.kotlin.ir.declarations.IrAnonymousInitializer
 import org.jetbrains.kotlin.ir.declarations.IrClass
@@ -124,9 +125,9 @@ internal fun BirEmitter.interfaceDef(iface: IrClass): String {
 		// that FIR/IR materialized on the derived interface.  Previously both shapes became identical empty methods,
 		// forcing ilemit to rediscover the hierarchy and synthesize DIM forwarders.
 		// Kotlin 2.4 does not consistently expose inherited declarations through the isFakeOverride convenience flag
-		// after FIR2IR (notably for an interface inheriting a declaration injected from a klib).  The IR shape is still
-		// unambiguous: an inherited synthetic has an override closure, no body, and no source offset/origin.
-		val inheritedSynthetic = fn.isFakeOverride || fn.origin.toString().contains("FAKE_OVERRIDE") ||
+		// after FIR2IR (notably for an interface inheriting a declaration injected from a klib).  Prefer its typed IR
+		// origin when present; otherwise the shape is still unambiguous: an override closure, no body, and no source offset.
+		val inheritedSynthetic = fn.isFakeOverride || fn.origin == IrDeclarationOrigin.FAKE_OVERRIDE ||
 			(fn.body == null && fn.overriddenSymbols.isNotEmpty() && fn.startOffset < 0)
 		val fakeOverride = if (inheritedSynthetic) ",\"fakeOverride\":true" else ""
 		return """{"name":${str(name)},"static":false,"override":false,"virtual":true$fakeOverride${typeParamsJson(fn.typeParameters)},"params":[$params],"ret":${str(ret)}${funModsJson(fn)}${resultTypeJson(fn)},"body":[$body],"attrs":[$memberAttrs]${overridesJson(fn)}}"""
