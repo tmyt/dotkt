@@ -2,9 +2,9 @@
 // `CoroutineContext.Key<E : Element>` self-ref-bounded key surface (bir2cir StarProjectionBoundLowering repoints the
 // `Key<*>` projection to `Key<Element>`) and the #7 await-point resume precedence (interceptor > SyncContext > inline).
 //
-// ILVERIFY NOTE: these three carry the SAME runtime-safe formal-only finding as the old verify-compiler-tests.sh XFAIL_ILVERIFY
-// entries — the invariant `Key<Element>` slot filled by a `Key<Self>` companion (GitHub #12, formal-only follow-up of
-// the closed #2). The RUN lane is green; the finding is baselined for DotKt.Tests.Coroutines.dll in tests/run-ilverify.sh.
+// The old per-case battery baselined formal-only #12 findings for these self-ref-bounded Key shapes. Existential
+// star-projection metadata and bir2cir lowering now preserve the signatures without producing those findings, so
+// both the runtime assertions and whole-assembly ILVerify gate are expected to remain green.
 //
 // Coverage preserved (old case -> method):
 //   il-coctxkey       -> coCtxKey_abstractElementCompanionKey     (#12: AbstractCoroutineContextElement subtype)

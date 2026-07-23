@@ -15,15 +15,6 @@ set -euo pipefail
 # one of these substrings to be tolerated. Keys are narrow fixture/method or emitted-type identifiers so they only mask
 # the documented shape.
 declare -A ILVERIFY_XFAIL=(
-	# --- CorA coroutine batch (DotKt.Tests.Coroutines.dll) migrated from verify-compiler-tests.sh (cases/il-coctxkey / il-cointercept /
-	#     il-awaitintercept / il-classdeleg). Each carries the SAME runtime-safe formal-only finding its verify-compiler-tests.sh
-	#     XFAIL_ILVERIFY entry carried before migration; re-expressed for the battery types. All coroutines fixtures RUN green.
-	# #12 (formal-only, closed-#2 follow-up): a self-ref-bounded CoroutineContext.Key<E : Element> star-projected to Key<*> is
-	# realized as a Key<Self> companion where the invariant Key<Element> slot is formally expected (StackUnexpected). Runtime
-	# -safe (the reference is only stored/compared, never variance-cast). A bir2cir/representation follow-up, NOT ilemit codegen.
-	["CorACtxkElem::.ctor()"]="#12 (formal-only, closed-#2 follow-up): AbstractCoroutineContextElement subtype passes its Key<Self> companion where invariant Key<Element> is expected — runtime-safe (RUN green)"
-	["CorAIceptInterceptor::get_key()"]="#12 (formal-only, closed-#2 follow-up): ContinuationInterceptor impl get_key() returns Key<Self> where invariant Key<Element> is expected — runtime-safe (RUN green)"
-	["CorAAwiCountingInterceptor::get_key()"]="#12 (formal-only, closed-#2 follow-up): counting-interceptor get_key() returns Key<Self> where invariant Key<Element> is expected — runtime-safe, #7 await-resume precedence RUN green"
 	# #174: the generic class-delegation (#81) forwarder narrows the MutableList iterator()/listIterator() return to the
 	# read-only Iterator/ListIterator where the Mutable slot is formally expected. Runtime-safe (the backing MutableList
 	# returns a real Mutable iterator; RUN green). Keyed by the emitted type name (backtick-free — a raw generic-arity
@@ -43,12 +34,6 @@ declare -A ILVERIFY_XFAIL=(
 	# #127/#86: copyOf on a value-element array returns Array<T?>, represented as object[] while the formal callsite
 	# expects Nullable<Int>[]; all prefix/tail value assertions run green.
 	["ArrayTests::copyOfGrowsWithNullTail()"]="#127/#86 nullable value-array object erasure: copyOf returns object[] where Nullable<Int>[] is formally expected — runtime-safe (RUN green)"
-	# #12 (formal-only follow-up of closed #2): the migrated il-genbaseext (CorBSequenceTests) declares an external
-	# generic base (AbstractCoroutineContextKey) over a companion CoroutineContext.Key; its `get_key()` returns the
-	# Key<Self> companion where the invariant Key<Element> is formally expected (star-projection covariance the CLR
-	# has no equivalent for). Runtime-SAFE (the value-assert RUN lane is green). Mirror of the verify-compiler-tests.sh
-	# [genbaseext] XFAIL_ILVERIFY entry, re-expressed for DotKt.Tests.Coroutines.dll.
-	["CorBGbeBase::get_key()"]="#12 formal-only covariance: external-generic-base get_key() returns Key<Self> companion where invariant Key<Element> is expected — runtime-safe (RUN green)"
 	# localloc is intentionally unverifiable ECMA-335 IL. The runtime test validates the resulting Span writes/reads.
 	["StackBufferTests::stackAllocationAndSpanInterop()"]="by design: stackalloc emits localloc, which ILVerify must report as unverifiable; runtime assertions are green"
 )

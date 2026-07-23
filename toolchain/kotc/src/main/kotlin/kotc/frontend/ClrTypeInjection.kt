@@ -986,7 +986,16 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			return ct.staticMethods.filter { it.name == cn }.map { m ->
 				if (m.typeParams.isEmpty())
 					createMemberFunction(owner, ClrGeneratedKey, callableId.callableName, coneOf(m.returnType, owner)) {
-						for (p in m.params) valueParameter(Name.identifier(p.name), coneOf(p.type, owner, paramPos = true))
+						// Static CLR members live on the synthesized companion in the Kotlin surface. They still carry
+						// the full Kotlin declaration vocabulary restored by facadegen; dropping `suspend` here makes
+						// fir2ir type-check the result as T while kotc emits a plain Task<T> call. Preserve the same
+						// modifier facts as the ordinary injected-member path so bir2cir sees `suspendCall:true`.
+						if (m.infix || m.operator || m.suspend)
+							status { isInfix = m.infix; isOperator = m.operator; isSuspend = m.suspend }
+						if (m.inline) status { isInline = true }
+						for (p in m.params)
+							if (p.vararg) valueParameter(Name.identifier(p.name), coneOf(TypeNode.Array(p.type), owner, paramPos = true), isVararg = true)
+							else valueParameter(Name.identifier(p.name), coneOf(p.type, owner, paramPos = true))
 					}.also { if (m.lowPriority) applyLowPriority(it) }.symbol
 				else
 					// A GENERIC static (`Task.FromResult<TResult>(TResult): Task<TResult>`, `Task.Run<TResult>`): declare the
@@ -995,7 +1004,13 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 					// This is the seam that lets Kotlin BUILD a Task<T> from a .NET generic factory (async interop).
 					createMemberFunction(owner, ClrGeneratedKey, callableId.callableName,
 						{ tps -> coneOf(m.returnType, owner, tps) }) {
-						for (tp in m.typeParams) typeParameter(Name.identifier(tp.name), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey)
+						if (m.infix || m.operator || m.suspend)
+							status { isInfix = m.infix; isOperator = m.operator; isSuspend = m.suspend }
+						if (m.inline) status { isInline = true }
+						for (tp in m.typeParams) typeParameter(Name.identifier(tp.name), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey) {
+							for (b in tp.bounds)
+								bound { tps -> boundConeOf(b, tps) ?: session.builtinTypes.nullableAnyType.coneType }
+						}
 						// N3-deep: a GENERIC static's `vararg` param (`Task.WhenAll<T>(params Task<T>[])`) rebuilds as an
 						// `Array<elem>` vararg so it resolves to the real `params Task<T>[]` overload (not `Any?`).
 						for (p in m.params)
