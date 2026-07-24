@@ -101,7 +101,13 @@ static class UncheckedGenericCastReturnErasure
                     && TypeJson.Read(value["type"]) is TypeNode.Tv cast && cast == ret
                     && value["e"] is JsonObject source && IsNullableOrObjectSource(source))
                     return true;
-                return obj.Any(kv => kv.Value != null && HasReturnedUncheckedCast(kv.Value, ret));
+                // `synthClass` is a nested declaration, not an expression evaluated in this method's return scope.
+                // ClosureSynthesis later publishes its invoke/SAM methods as independent declarations.  Looking
+                // through this transient payload here lets a return in that other method change the enclosing
+                // method's physical CLR ABI.
+                return obj.Any(kv => kv.Key != "synthClass"
+                                     && kv.Value != null
+                                     && HasReturnedUncheckedCast(kv.Value, ret));
             case JsonArray arr:
                 return arr.Any(value => value != null && HasReturnedUncheckedCast(value, ret));
             default:
