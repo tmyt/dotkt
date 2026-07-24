@@ -118,7 +118,7 @@ verify-sanity: ## the offline IR-sanity gate (#112 P4 — semantic invariants ov
 verify-msbuild: ## stateful MSBuild integration (same obj/ across source mutation)
 	bash tests/msbuild/run.sh
 
-verify-packaged-sdk: ## packaged nupkg-resolution gate (DotKt.Sdk/.Mpp + implicit Toolchain/Stdlib from a feed)
+verify-packaged-sdk: ## packaged nupkg-resolution + cross-module async coroutine gate
 	bash tests/packaged-sdk/run.sh
 
 verify-roundtrip: ## Kotlin<->CLR round-trip (consume a DotKt dll as Kotlin)
