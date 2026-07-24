@@ -146,8 +146,8 @@ static class BirTypeLowering
     // invariant value — `IList<T>` does NOT inherit `IReadOnlyList<T>`, so `Dictionary<K,IList<V>>` inhabits no
     // `IDictionary<K,IReadOnlyList<V>>` (invariant). The concrete BCL type inhabits these exactly: List<T>/HashSet<T>
     // implement IList<T>/ICollection<T>. (Iterable->IEnumerable is covariant, no collapse; Map/MutableMap already
-    // collapse to IDictionary at head.) HEAD-position seams (a head IList<T> value into a readonly IReadOnlyList<T> slot)
-    // are closed by ilemit's EmitArg ref->ref castclass companion — this is a coordinator-orchestrated cross-layer change.
+    // collapse to IDictionary at head.) HEAD-position seams (a head IList<T> value into a readonly IReadOnlyList<T>
+    // slot) are materialized as explicit CIR casts by CollectionViewCallCoercion after this transform.
     static readonly IReadOnlyDictionary<string, string> InvariantSibling = new Dictionary<string, string>(StringComparer.Ordinal)
     {
         ["kotlin.collections.List"] = "System.Collections.Generic.IList",
@@ -250,8 +250,8 @@ static class BirTypeLowering
                         return new TypeNode.Fqn("System.IComparable");
                     // ARG-POSITION VARIANCE COLLAPSE (Root V): at generic-arg depth >= 1 (typeArg), a covariant readonly
                     // collection interface -> its INVARIANT sibling, so a concrete invariant value inhabits the nested
-                    // slot EXACTLY. The HEAD (depth-0) keeps the covariant alias; the head-position seam it leaves is
-                    // closed by ilemit's EmitArg ref->ref castclass. RefBuild is `kotlin.*` verbatim (line 191); `!refBuild`
+                    // slot EXACTLY. The HEAD (depth-0) keeps the covariant alias; CollectionViewCallCoercion materializes
+                    // any resulting call-site seam as an explicit CIR cast. RefBuild is `kotlin.*` verbatim (line 191); `!refBuild`
                     // also spares a `force` attribute-blob.
                     if (typeArg && !refBuild && InvariantSibling.TryGetValue(f.Name, out var inv))
                         return new TypeNode.Fqn(inv, loweredArgs);

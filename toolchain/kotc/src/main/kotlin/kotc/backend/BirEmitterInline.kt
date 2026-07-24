@@ -628,7 +628,7 @@ internal fun BirEmitter.spliceBodyWithReturns(target: IrSimpleFunction, unit: Bo
 				return """{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}"""
 			}
 		}
-		return spliceBody(stmts, unit, pre)
+		return spliceBody(stmts, unit, pre, target.symbol)
 	}
 	val res = if (unit) null else "__inlRet${inlCounter++}"
 	val end = cfgFresh()
@@ -644,7 +644,7 @@ internal fun BirEmitter.spliceBodyWithReturns(target: IrSimpleFunction, unit: Bo
 	val tail = if (!unit && last is IrExpression && last !is IrReturn && last.type.classFqName?.asString() == "kotlin.Nothing") {
 		stmts.forEach { pre.add(stmt(it)) }
 		null
-	} else spliceBody(stmts, unit, pre)
+	} else spliceBody(stmts, unit, pre, target.symbol)
 	if (saved != null) inlineReturnSubst[target.symbol] = saved else inlineReturnSubst.remove(target.symbol)
 	return if (res != null) {
 		tail?.let { pre.add("""{"k":"setLocal","name":${str(res)},"value":$it}""") }
@@ -656,12 +656,22 @@ internal fun BirEmitter.spliceBodyWithReturns(target: IrSimpleFunction, unit: Bo
 	}
 }
 
-/** Emit body statements into `pre`, returning the value expression (Unit -> void const; else the last expr). */
-internal fun BirEmitter.spliceBody(stmts: List<org.jetbrains.kotlin.ir.IrStatement>, unit: Boolean, pre: MutableList<String>): String {
+/** Emit body statements into `pre`, returning the value expression (Unit -> void const; else the last expr).
+ *
+ * A tail [IrReturn] is only the body's value when it targets the function whose body is being spliced. A return
+ * targeting an enclosing function is a genuine non-local return and must remain a `returnExpr`; folding it to
+ * `last.value` silently discards the control transfer (`value?.let { return it }` then falls through).
+ */
+internal fun BirEmitter.spliceBody(
+	stmts: List<org.jetbrains.kotlin.ir.IrStatement>,
+	unit: Boolean,
+	pre: MutableList<String>,
+	ownReturnTarget: IrReturnTargetSymbol? = null,
+): String {
 	if (unit) { stmts.forEach { pre.add(stmt(it)) }; return """{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}""" }
 	stmts.dropLast(1).forEach { pre.add(stmt(it)) }
 	return when (val last = stmts.lastOrNull()) {
-		is IrReturn -> expr(last.value)
+		is IrReturn -> if (last.returnTargetSymbol == ownReturnTarget) expr(last.value) else expr(last)
 		is IrExpression -> expr(last)
 		else -> { last?.let { pre.add(stmt(it)) }; """{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}""" }
 	}
@@ -682,7 +692,7 @@ internal fun BirEmitter.emitStackBuffer(call: IrCall): String {
 		"""{"k":"var","name":${str(lenName)},"type":${fqnJson("kotlin.Int")},"init":${expr(args[0])}}""",
 		"""{"k":"var","name":${str(ptrName)},"type":${fqnJson("dotkt\$stackptr")},"init":{"k":"stackAlloc","count":{"k":"local","name":${str(lenName)}},"elem":${str(elemT)}}}""")
 	stackBufSubst[bufParam] = BirEmitter.StackBufInfo(ptrName, lenName, elemT)
-	val result = spliceBody(bodyStatements(fn.body), fn.returnType.isUnit() || call.type.isUnit(), pre)
+	val result = spliceBody(bodyStatements(fn.body), fn.returnType.isUnit() || call.type.isUnit(), pre, fn.symbol)
 	stackBufSubst.remove(bufParam)
 	return """{"k":"valueBlock","stmts":[${pre.joinToString(",")}],"result":$result}"""
 }

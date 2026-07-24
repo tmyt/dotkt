@@ -941,11 +941,23 @@ static class InlineSplice
 
         var stmts = new JsonArray();
         var subst = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
+        var boundParamTemps = new HashSet<string>(StringComparer.Ordinal);
         for (int j = 0; j < lamParams.Count; j++)
         {
             if (lamParams[j] is not JsonObject lp) continue;
             string pn = Str(lp["name"]);
             string temp = prefix + pn;
+            // Kotlin IR gives every ignored lambda parameter the same synthetic name
+            // `<unused var>`.  They are distinct bindings nevertheless.  Keeping the
+            // spelling verbatim makes suspend cold lowering collapse their differently
+            // typed locals into one state-machine field (for example `(Segment, Int)`
+            // becomes one `Segment` field and produces an invalid stfld for the Int).
+            // Preserve the familiar first name, but make every later binding unique.
+            if (!boundParamTemps.Add(temp))
+            {
+                temp += "$" + (j + 1);
+                while (!boundParamTemps.Add(temp)) temp += "$";
+            }
             stmts.Add(new JsonObject
             {
                 ["k"] = "var",

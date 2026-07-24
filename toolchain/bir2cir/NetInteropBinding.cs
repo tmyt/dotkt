@@ -107,7 +107,15 @@ static class NetInteropBinding
             netType = dotKtComparable;
         if (netType == null) return;   // not a reachable .NET-interop owner -> leave for the other binders
 
-        var isStatic = k == "callStatic";
+        // kotc preserves Kotlin object/companion semantics in BIR: a surfaced static member can be a callInstance whose
+        // receiver is the synthetic `Owner.INSTANCE`. Resolve the actual property/field declaration's static bit here
+        // (notably a referenced Kotlin enum constant is a CLR static field). Static classes remain the member-method
+        // counterpart. A DotKt-emitted Kotlin object does not enter this .NET binder, so its INSTANCE receiver remains.
+        var propertyKind = Str(node["prop"]);
+        var isStatic = k == "callStatic"
+            || (k == "callInstance" && netType.IsAbstract && netType.IsSealed)
+            || (k == "callInstance" && propertyKind is "get" or "set"
+                && MemberIsStaticPropertyOrField(netType, method));
         var hasTypeArgs = node["typeArgs"] is JsonArray ta && ta.Count > 0;
 
         // Detach every current field (removing a key from a JsonObject detaches its value) so it can be re-added in the
@@ -504,6 +512,39 @@ static class NetInteropBinding
             try { foreach (var i in cur.GetInterfaces()) stack.Push(i); } catch { }
         }
         return false;
+    }
+
+    // The static/instance declaration bit for a property/field surfaced through Kotlin companion syntax. Refuse
+    // ambiguous hierarchy collisions instead of choosing a first reflection result.
+    static bool MemberIsStaticPropertyOrField(Type type, string name)
+    {
+        const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance
+            | BindingFlags.Static | BindingFlags.DeclaredOnly;
+        var matches = new List<bool>();
+        var seen = new HashSet<Type>();
+        var stack = new Stack<Type>();
+        stack.Push(type);
+        while (stack.Count > 0)
+        {
+            var cur = stack.Pop();
+            if (cur == null || !seen.Add(cur)) continue;
+            try
+            {
+                foreach (var p in cur.GetProperties(Flags))
+                {
+                    if (p.Name != name || p.GetIndexParameters().Length != 0) continue;
+                    var accessor = p.GetMethod ?? p.SetMethod;
+                    if (accessor != null) matches.Add(accessor.IsStatic);
+                }
+                foreach (var field in cur.GetFields(Flags))
+                    if (field.Name == name) matches.Add(field.IsStatic);
+            }
+            catch { /* metadata-load edge — ambiguity/failure remains false */ }
+            Type baseType = null; try { baseType = cur.BaseType; } catch { }
+            if (baseType != null) stack.Push(baseType);
+            try { foreach (var i in cur.GetInterfaces()) stack.Push(i); } catch { }
+        }
+        return matches.Count == 1 && matches[0];
     }
 
     // True iff the .NET type (or a base/interface) declares a method of this name (any arity), public OR protected —

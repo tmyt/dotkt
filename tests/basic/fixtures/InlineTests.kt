@@ -201,6 +201,14 @@ fun elvisCoerce(q: Int?): Int = coerceRun { return@coerceRun (q ?: -1) }
 fun uintSc(u: UInt?): UInt = coerceRun { if (u != null) return@coerceRun u; 0u }
 fun <T : Any> pickCoerce(x: T?, d: T): T = coerceRun { if (x != null) return@coerceRun x; d }
 
+// A tail return in an inline carrier is not necessarily the carrier's own return. With `?.let`, Kotlin lowers
+// `return it` as the lambda's tail IrReturn targeting the enclosing function. The emitter must preserve that
+// non-local control transfer instead of treating `it` as the carrier result and then falling through.
+fun safeCallTailNlr(value: Int?): Int {
+    value?.let { return it }
+    return -1
+}
+
 // ---- #23 : SAME-MODULE inline member-extension whose body reads BOTH receivers (dispatch + extension) ---------
 // `Int.scaledBy` is a member-extension of `Scaler` (dispatch = the Scaler instance, reads `factor`) on an `Int`
 // (extension = `this`, rides `__self`). The body reads the extension receiver (`this`) AND the enclosing dispatch
@@ -240,6 +248,23 @@ inline fun hyg126L3(crossinline act: () -> Int): Int = hyg126L2 { x -> act() + x
 fun hyg126CallerChained(): Int {
     val x = 100
     return hyg126L3 { x }     // act = { x } captures caller x=100  -> (100 + 1) + 5 = 106
+}
+
+// A cross-module inline/F-bound lowering can leave `next === null` over a generic-parameter local. CLR `ceq`
+// cannot compare an unboxed generic slot with null; bir2cir must author the boxed object comparison in CIR.
+interface GenericNullNode<N : GenericNullNode<N>> {
+    val next: N?
+}
+
+class GenericNullLink(override val next: GenericNullLink?) : GenericNullNode<GenericNullLink>
+
+fun <N : GenericNullNode<N>> genericNullTail(start: N): N {
+    var current = start
+    while (true) {
+        val next = current.next
+        if (next === null) return current
+        current = next
+    }
 }
 
 class InlineTests {
@@ -404,6 +429,12 @@ class InlineTests {
     }
 
     @TestAttribute
+    fun inlineSafeCallTailNlr() {
+        assertEquals(7, safeCallTailNlr(7))
+        assertEquals(-1, safeCallTailNlr(null))
+    }
+
+    @TestAttribute
     fun inlineMemberExtDualReceiver() {
         // #23: an inline member-extension whose body reads BOTH the dispatch (enclosing-class) and the extension receiver.
         assertEquals(18, Scaler(3).run5())      // (5+1)*3 = 18
@@ -417,5 +448,12 @@ class InlineTests {
         // #126: the caller's captured `x`=100 must NOT be shadowed by the inner crossinline host param `x`=7.
         assertEquals(107, hyg126Caller())          // 100 + 7 = 107  (unhygienic rebind would give 14)
         assertEquals(106, hyg126CallerChained())   // (100 + 1) + 5 = 106  (D2: value-capture rides through two hosts)
+    }
+
+    @TestAttribute
+    fun genericParameterNullIdentity() {
+        val tail = GenericNullLink(null)
+        val head = GenericNullLink(tail)
+        assertEquals(tail, genericNullTail(head))
     }
 }

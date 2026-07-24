@@ -21,10 +21,12 @@ static class ClrEventSubscriptionBinding
     sealed class Binder
     {
         readonly string _scope;
+        readonly ReferenceMetadataIndex _refs;
         int _next;
 
-        public Binder(JsonNode root)
+        public Binder(JsonNode root, ReferenceMetadataIndex refs)
         {
+            _refs = refs;
             var fileClass = root is JsonObject f ? Str(f["fileClass"]) : null;
             _scope = string.Concat((fileClass ?? "File").Select(c => char.IsLetterOrDigit(c) ? c : '_'));
         }
@@ -67,6 +69,14 @@ static class ClrEventSubscriptionBinding
             var ownerType = eventGet["type"]?.DeepClone()
                 ?? throw new InvalidOperationException("bir2cir: ClrEvent.subscribe is missing its event owner type");
             var isStatic = (eventGet["static"] as JsonValue)?.GetValue<bool>() ?? false;
+            // A CLR static class is surfaced as a Kotlin object, so kotc's neutral Kotlin projection carries an
+            // INSTANCE-looking receiver. Bind the actual CLR event declaration here; this is the lowering layer that
+            // owns the ABI decision. If metadata cannot establish one unique declaration, preserve the projected bit
+            // and let ClrMemberResolution emit its existing precise missing/ambiguous-member diagnostic.
+            var ownerName = TypeJson.OwnerName(ownerType);
+            var eventName = Str(eventGet["name"]);
+            if (_refs.TryClrEventIsStatic(ownerName, eventName, out var declaredStatic))
+                isStatic = declaredStatic;
             var id = _next++;
             var handlerLocal = $"__clrEventSubscriptionHandler{id}";
             var receiverLocal = $"__clrEventSubscriptionReceiver{id}";
@@ -180,7 +190,7 @@ static class ClrEventSubscriptionBinding
         }
     }
 
-    public static JsonNode Apply(JsonNode root) => new Binder(root).Apply(root);
+    public static JsonNode Apply(JsonNode root, ReferenceMetadataIndex refs) => new Binder(root, refs).Apply(root);
 
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
 

@@ -96,7 +96,14 @@ sealed partial class Emitter
                     // keeps CLR access to the enclosing type's private members; otherwise a top-level Public/NotPublic.
                     var nested = t.TryGetProperty("nestedIn", out var niEl) && _types.TryGetValue(niEl.GetString(), out var parentTi);
                     var typeAccess = nested
-                        ? visStr switch { "internal" => TypeAttributes.NestedAssembly, "protected" => TypeAttributes.NestedFamily, "private" => TypeAttributes.NestedPrivate, _ => TypeAttributes.NestedPublic }
+                        ? visStr switch
+                        {
+                            "internal" => TypeAttributes.NestedAssembly,
+                            "protected" => TypeAttributes.NestedFamily,
+                            "protectedInternal" => TypeAttributes.NestedFamORAssem,
+                            "private" => TypeAttributes.NestedPrivate,
+                            _ => TypeAttributes.NestedPublic,
+                        }
                         : (visStr == "public" ? TypeAttributes.Public : TypeAttributes.NotPublic);
                     var attrs = isIface
                         ? typeAccess | TypeAttributes.Interface | TypeAttributes.Abstract
@@ -256,13 +263,14 @@ sealed partial class Emitter
                         if (ti.IsInterface && !(f.TryGetProperty("static", out var ifst) && ifst.GetBoolean())) continue;
                         // A property's visibility maps to the field's CLR access. True CLR-private is now correct
                         // because `inner`/`nested` classes are emitted as real nested types, which retain access to the
-                        // enclosing type's privates. (internal -> Assembly, protected -> FamORAssem so same-assembly
-                        // nested/local types and subclasses both reach it.)
+                        // enclosing type's privates. Any lifted cross-class protected access has already been made
+                        // explicit by bir2cir as protectedInternal; this layer maps the CIR visibility 1:1.
                         var fattrs = (f.TryGetProperty("vis", out var fv) ? fv.GetString() : "public") switch
                         {
                             "private" => FieldAttributes.Private,
                             "internal" => FieldAttributes.Assembly,
-                            "protected" => FieldAttributes.FamORAssem,
+                            "protected" => FieldAttributes.Family,
+                            "protectedInternal" => FieldAttributes.FamORAssem,
                             _ => FieldAttributes.Public,
                         };
                         if (f.TryGetProperty("static", out var st) && st.GetBoolean()) fattrs |= FieldAttributes.Static;
@@ -459,6 +467,16 @@ sealed partial class Emitter
                             // arg like Continuation.resumeWith(Result<T>) substitutes correctly, not just a bare gp).
                             var subSig = imName + "(" + string.Join(",", imDef.GetProperty("params").EnumerateArray()
                                 .Select(p => SigCanon(SubstTv(DotKt.Bir.TypeNode.Read(p.GetProperty("type")), specArgs)))) + ")";
+                            var ifaceMethod = constructed != null ? TypeBuilder.GetMethod(constructed, ifaceBuilder) : (MethodInfo)ifaceBuilder;
+                            // A bir2cir-resolved exact MethodImpl bridge. The decision and exact slot signature are
+                            // already CIR facts; this is mechanical consumption only. In particular, do not also wire
+                            // the narrow Kotlin declaration, whose covariant return is not a byte-exact CLR MethodImpl.
+                            var explicitBridge = FindExplicitInterfaceBridge(ti, specFqn, imName, subSig);
+                            if (explicitBridge != null)
+                            {
+                                ti.TB.DefineMethodOverride(explicitBridge, ifaceMethod);
+                                continue;
+                            }
                             // Only wire an EXACT signature match. A miss means the class doesn't override this exact
                             // overload (e.g. it lacks the JVM remove(K,V):Boolean default) -> SKIP rather than mis-wire a
                             // different overload; for a Kotlin interface the same-name+sig method resolves implicitly anyway.
@@ -474,7 +492,6 @@ sealed partial class Emitter
                                 if (!ti.IsInterface && !viaBaseClass) TryEmitDimForwardBridge(ti, imDef, specArgs, subSig, constructed, ifaceBuilder);
                                 continue;
                             }
-                            var ifaceMethod = constructed != null ? TypeBuilder.GetMethod(constructed, ifaceBuilder) : (MethodInfo)ifaceBuilder;
                             // Covariant return: a NARROWED override return type (markNow():ValueTimeMark over the iface's
                             // :ComparableTimeMark) makes a direct MethodImpl fail the CLR's exact-return rule. Emit a bridge
                             // with the iface's (base) return type that calls the narrow body method and upcasts; put the
@@ -763,6 +780,7 @@ sealed partial class Emitter
             "private" => MethodAttributes.Private,
             "internal" => MethodAttributes.Assembly,
             "protected" => MethodAttributes.Family,
+            "protectedInternal" => MethodAttributes.FamORAssem,
             _ => MethodAttributes.Public,
         };
 

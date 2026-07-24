@@ -33,7 +33,15 @@ static class InheritedClassInterfaceBridge
     {
         var rootList = roots.ToList();
         var defs = Collect(rootList);
-        foreach (var def in defs.Values.Where(d => d.Kind == "class").ToList())
+        var classes = defs.Values.Where(d => d.Kind == "class").ToList();
+
+        // Normalize every declaration-owned interface implementation before inspecting inherited members. Doing both
+        // operations in one traversal makes the result depend on dictionary/type order: a derived class may observe a
+        // still-non-virtual base method and synthesize a forwarding slot which later recursively dispatches to itself
+        // after the base declaration is normalized.
+        foreach (var def in classes)
+            NormalizeOwnedSlots(def, defs);
+        foreach (var def in classes)
             AddBridges(def, defs);
     }
 
@@ -94,20 +102,46 @@ static class InheritedClassInterfaceBridge
                     .Where(m => !Bool(m["static"]) && (Str(m["vis"]) is null or "public"))
                     .ToList();
                 if (own.Count > 1) continue; // overload ambiguity: never guess which declaration owns the slot
-                if (own.Count == 1)
-                {
-                    // Kotlin does not require `open` when a declaration merely satisfies an interface. CLR interface
-                    // MethodImpl targets, however, must be virtual. This is ABI normalization, not Kotlin openness:
-                    // calls may still be devirtualized/finalized later, but the metadata slot must exist.
-                    own[0]["virtual"] = true;
-                    continue;
-                }
+                if (own.Count == 1) continue;
 
                 if (Bool(cls.Node["abstract"])) continue;
 
                 var inherited = FindNonVirtualBaseMethod(cls, defs, name, methodArity, slotParams, slotRet);
                 if (inherited == null) continue;
                 classMethods.Add(BuildBridge(iface, ifaceSpec, im, slotParams, slotRet, inherited.Value));
+            }
+        }
+    }
+
+    static void NormalizeOwnedSlots(Def cls, Dictionary<string, Def> defs)
+    {
+        if (cls.Node["methods"] is not JsonArray classMethods) return;
+
+        foreach (var ifaceSpec in ReachableInterfaces(cls, defs))
+        {
+            if (!defs.TryGetValue(ifaceSpec.Name, out var iface) || iface.Kind != "interface") continue;
+            var ifaceArgs = EffectiveArgs(ifaceSpec, iface.Arity);
+            if (ifaceArgs == null) continue;
+
+            foreach (var im in iface.Methods.OfType<JsonObject>())
+            {
+                if (Bool(im["static"]) || HasConcreteBody(im)) continue;
+                if (Str(im["name"]) is not string name || im["params"] is not JsonArray ips) continue;
+                var methodArity = (im["typeParams"] as JsonArray)?.Count ?? 0;
+                var slotParams = ips.OfType<JsonObject>().Select(p => TypeJson.Read(p["type"]))
+                    .Select(t => t == null ? null : SubstOwnerTvs(t, ifaceArgs)).ToArray();
+                var slotRet0 = TypeJson.Read(im["ret"]);
+                var slotRet = slotRet0 == null ? null : SubstOwnerTvs(slotRet0, ifaceArgs);
+                if (slotParams.Any(p => p == null) || slotRet == null) continue;
+
+                var own = ExactMethods(classMethods, name, methodArity, slotParams, slotRet, ClassOwnArgs(cls))
+                    .Where(m => !Bool(m["static"]) && (Str(m["vis"]) is null or "public"))
+                    .ToList();
+                if (own.Count != 1) continue;
+
+                // Kotlin does not require `open` when a declaration merely satisfies an interface. CLR interface
+                // MethodImpl targets, however, must be virtual. This is ABI normalization, not Kotlin openness.
+                own[0]["virtual"] = true;
             }
         }
     }

@@ -76,6 +76,24 @@ static class EnumMemberBinding
             ToObjMethod(obj, recv, "ToString", arg: null);
             return;
         }
+        // `T : Enum<T>`.ordinal has no System.Enum property slot. Preserve Kotlin's declaration-index semantics
+        // explicitly: enumOrdinal over the receiver's lexical T asks ilemit only to emit the CIR-authored generic
+        // enum reflection sequence. This must happen before generic constrained-member binding; otherwise the bare
+        // Kotlin owner is mistaken for a real `System.Enum.get_ordinal` MemberRef.
+        if (owner == "kotlin.Enum" && method is "get_ordinal" or "ordinal")
+        {
+            var ordinal = new JsonObject
+            {
+                ["k"] = "enumOrdinal",
+                ["e"] = recv.DeepClone(),
+            };
+            if (recv is JsonObject receiver
+                && (receiver["sty"]?.DeepClone() ?? receiver["ret"]?.DeepClone()) is JsonNode receiverType)
+                ordinal["type"] = receiverType;
+            obj.Clear();
+            foreach (var kv in ordinal) obj[kv.Key] = kv.Value?.DeepClone();
+            return;
+        }
 
         // (1) CONCRETE receiver: a `System.Enum`-inherited Object slot on a local value-type enum owner that declares
         // none of them. Box + `System.Object` virtual slot; System.Enum's override supplies name/equality/hash.

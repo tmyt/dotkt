@@ -86,6 +86,7 @@ static class StarProjectionLowering
     // each arg to `Any?`, i.e. `{t:nullable,of:kotlin.Any}` post-#48). Unwrap the wrappers before the bare-name check.
     static bool IsObjectArg(TypeNode a) => a switch
     {
+        TypeNode.Star => true,
         TypeNode.Nullable n => IsObjectArg(n.Of),
         TypeNode.Oblivious o => IsObjectArg(o.Of),
         TypeNode.Fqn { Args: null, Name: "object" or "kotlin.Any" } => true,
@@ -184,4 +185,3 @@ static class StarProjectionLowering
         }
     }
 }
-

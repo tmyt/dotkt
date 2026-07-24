@@ -17,7 +17,7 @@ namespace DotKt.Bir;
 
 /// <summary>
 /// The structured type representation shared by the compiler tools. The <see cref="Star"/> variant is a
-/// metadata/frontend-only carrier; all other variants form the emitted BIR/CIR type vocabulary.
+/// Kotlin projection carrier in BIR/metadata; bir2cir must lower it before CIR emission.
 /// `T` in the spec denotes a nested <see cref="TypeNode"/>.
 /// </summary>
 public abstract record TypeNode
@@ -43,8 +43,8 @@ public abstract record TypeNode
     public sealed record Tv(string Scope, int I) : TypeNode;
 
     /// <summary>
-    /// `star`: a Kotlin <c>*</c> type projection. Metadata/frontend-only: kotc resolves it to a captured IR type and
-    /// emits the existing objectish BIR erasure, so this node never reaches CIR emission.
+    /// `star`: a Kotlin <c>*</c> type projection. kotc preserves it in BIR; bir2cir lowers it to an existential
+    /// non-generic view (or an explicit object fallback when no local/reference view exists).
     /// </summary>
     public sealed record Star : TypeNode;
 

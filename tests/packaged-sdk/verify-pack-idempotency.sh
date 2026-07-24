@@ -2,7 +2,8 @@
 # Regression gate for #223. The caller has just completed one successful pack, so every baked artifact and
 # sidecar must be current. Prove both halves of the contract:
 #   1. the content fingerprint ignores metadata-only touches but changes for real content/path changes;
-#   2. a second unchanged standalone pack does not rebuild the frontend KLIB or either stdlib DLL.
+#   2. a second unchanged standalone pack does not rebuild the frontend KLIB or either stdlib DLL;
+#   3. Make's prerequisite path and standalone pack share the same stamp-aware builders.
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SCRIPT_NAME=pack-idempotency
 source "$ROOT/scripts/lib.sh"
@@ -78,4 +79,30 @@ for i in "${!artifacts[@]}"; do
 		die "second unchanged pack rewrote $a.toolstamp"
 done
 
-info "PASS: content changes invalidate stamps; metadata-only changes and a second unchanged pack do not"
+# Exercise Make's stale-target recipes without changing any content. Before #223's fresh-Make follow-up those
+# recipes invoked build-stdlib-*.sh directly (which deleted/no longer wrote the sidecars), then pack-nuget rebuilt
+# the same three artifacts again. The unified recipes call need_* instead: the metadata-only touch is accepted by
+# the content stamp, Make touches each target current, and the nested standalone pack also reuses it.
+touch "$ROOT/scripts/lib.sh"
+for i in "${!artifacts[@]}"; do
+	stamp_times[$i]="$(stat -c '%y' "${artifacts[$i]}.toolstamp")"
+done
+
+make_log="$work/make-pack.log"
+if ! make -C "$ROOT" pack >"$make_log" 2>&1; then
+	tail -80 "$make_log" >&2
+	die "Make pack path failed after metadata-only dependency touch"
+fi
+
+if grep -E 'building CLR frontend stdlib klib|building stdlib (REFERENCE|RUNTIME) dll|^bash scripts/build-stdlib-(klib|ref|rt)\.sh' "$make_log" >&2; then
+	die "Make pack path rebuilt a content-stable stdlib artifact"
+fi
+
+for i in "${!artifacts[@]}"; do
+	a="${artifacts[$i]}"
+	after="$(stat -c '%y' "$a.toolstamp")"
+	[[ "$after" == "${stamp_times[$i]}" ]] ||
+		die "Make pack path rewrote $a.toolstamp after a metadata-only dependency touch"
+done
+
+info "PASS: content changes invalidate stamps; standalone and Make pack paths reuse content-stable artifacts"

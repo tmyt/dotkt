@@ -1119,11 +1119,23 @@ static class MemberCallSubstitution
     // null when the shape carries no recoverable static type.
     static TypeNode RecvStaticType(JsonObject recv, SubstCtx ctx, bool allowExprShapes)
     {
+        // kotc stamps the Kotlin static type on expression nodes. In particular, a synthesized SAM body reads a
+        // captured constrained receiver through `{k:field,sty:C}` rather than a local; that declaration fact is the
+        // only sound route back to `C : MutableCollection<T>` / `M : MutableMap<K,V>`.
+        if (TypeJson.Read(recv["sty"]) is TypeNode stamped)
+            return stamped switch
+            {
+                TypeNode.Nullable n => n.Of,
+                TypeNode.Oblivious o => o.Of,
+                _ => stamped,
+            };
         var rk = (recv["k"] as JsonValue)?.GetValue<string>();
         if (rk == "local")
             return (recv["name"] as JsonValue)?.GetValue<string>() is string vn
                 && ctx.VarTypes.TryGetValue(vn, out var vt) ? vt : null;
         if (!allowExprShapes) return null;
+        if (rk == "field")
+            return TypeJson.Read(recv["ret"]);
         if (rk == "callInstance")
             return TypeJson.Read(recv["ret"]);
         if (rk == "arrayGet")
@@ -1169,9 +1181,8 @@ static class MemberCallSubstitution
         if (!IsObjType(own) || ownerFqn.Args != null) return own;
         // The owner is BARE (`kotlin.collections.MutableCollection`, no type args): the frontend dropped the element
         // when inlining `mapTo`/`filterTo`'s `destination.add(...)`. Recover it from the RECEIVER's declared type.
-        if (ctx != null && node["recv"] is JsonObject recv && (recv["k"] as JsonValue)?.GetValue<string>() == "local"
-            && (recv["name"] as JsonValue)?.GetValue<string>() is string vn
-            && ctx.VarTypes.TryGetValue(vn, out var vt))
+        if (ctx != null && node["recv"] is JsonObject recv
+            && RecvStaticType(recv, ctx, allowExprShapes: true) is TypeNode vt)
         {
             // (a) The receiver is a type-PARAMETER (`destination: C where C : MutableCollection<R>`): its element comes
             // from the collection-interface constraint's arg (the same recovery Constrainify performs).
@@ -1204,8 +1215,8 @@ static class MemberCallSubstitution
     {
         var (k, v) = OwnerKvArgs(ownerFqn);
         if (!IsObjType(k) && !IsObjType(v)) return (k, v);
-        if (ctx != null && refs != null && node["recv"] is JsonObject recv && (recv["k"] as JsonValue)?.GetValue<string>() == "local"
-            && (recv["name"] as JsonValue)?.GetValue<string>() is string vn && ctx.VarTypes.TryGetValue(vn, out var vt) && vt is TypeNode.Tv tvR
+        if (ctx != null && refs != null && node["recv"] is JsonObject recv
+            && RecvStaticType(recv, ctx, allowExprShapes: true) is TypeNode.Tv tvR
             && ctx.TpConstraints.TryGetValue(tvR.Scope + ":" + tvR.I, out var cons))
         {
             foreach (var c in cons)

@@ -192,6 +192,11 @@ sealed class Pipeline
         // NullableTvErasureCallRealign so a `Box<Int>.get_a()` call across the generic boundary re-derives its
         // return from the (erased) declaration instead of kotc's over-substituted `Ref<Nullable<Int>>` (#4).
         var nullableTvDeclRets = NullableTvErasureCallRealign.CollectDeclaredMemberRets(birFiles.Select(f => f.Root));
+        // Snapshot every method whose source-level `T` return is produced by an unchecked cast from a nullable/object
+        // carrier.  Its physical CLR ABI must return object so narrowing can be delayed until the value is consumed;
+        // the exact Kotlin `T` return is retained through [KotlinType].  Collected module-wide so cross-file local calls
+        // are matched by owner + substituted signature, never by a library/name heuristic.
+        var uncheckedGenericCastRets = UncheckedGenericCastReturnErasure.Collect(birFiles.Select(f => f.Root));
 
         // The local RICH-enum type names (a `kind:"class"` decl carrying the faithful `enumRich:true` marker), across
         // ALL input files: EnumIntrinsicLowering lowers `enumValues<RichEnum>()` to the synthesized static values()
@@ -425,6 +430,12 @@ sealed class Pipeline
             // the exact object-erasure boundary (IsObjectErasureOf); local generic declarations plus member flow from
             // a corrected receiver. BEFORE BirTypeLowering.
             NullableTvErasureCallRealign.Apply(bir.Root, nullableTvDeclRets);
+            // UNCHECKED OBJECT->Tv RETURN ERASURE: the non-null-T sibling of nullable-generic return erasure.  A JVM
+            // `Any? as T` physically returns Object; spelling the CLR return as reified T would insert `unbox.any T`
+            // inside the callee and throw even when a null result is stored but never consumed.  Emit object physically,
+            // preserve T in round-trip metadata, and keep a directly initialized Tv local object-typed until its actual
+            // typed use.  All matching is structural and this pass fully states the CIR types ilemit emits 1:1.
+            UncheckedGenericCastReturnErasure.Apply(bir.Root, uncheckedGenericCastRets);
             // FUNC-SLOT nullable-return erasure (ALL builds — the transform-side twin of the pass above): a function
             // TYPE whose RETURN is a nullable (`(T) -> R?`) over a VALUE (`R = Int`) or open-generic (`R = T`) inner
             // has NO faithful null-carrying CLR delegate return other than `object` (a `Nullable<int>`/`Nullable<T>`
@@ -487,7 +498,7 @@ sealed class Pipeline
             // the clrEventGet receiver is consumed here, not emitted. Runs BEFORE MemberCallSubstitution so the synthetic
             // call — which has no ref.dll owner — is bound here. `subscribe` also constructs the stdlib close token with
             // a synthesized remove callback. A no-op for the ref/rt stdlib self-build (no .NET events).
-            hoisted = ClrEventSubscriptionBinding.Apply(hoisted);
+            hoisted = ClrEventSubscriptionBinding.Apply(hoisted, refs);
             // `ClrEvent.subscribe` synthesizes the remove callback as a normal `newClosure` ingredient bag. The main
             // ClosureSynthesis pass ran earlier, before event binding; run the idempotent collector once more so only
             // these newly-created callback classes are assembled before the remaining whole-tree passes.
@@ -510,6 +521,10 @@ sealed class Pipeline
             // (layer purity, mirrors the exception-map / annotation-base migrations). Non-ref only: ref keeps KClass pure.
             if (!_options.RefBuild) hoisted = KClassMemberBinding.Apply(hoisted);
             var substituted = _options.RefBuild ? PropertyMarkerReconstruct.Apply(hoisted) : MemberCallSubstitution.Apply(hoisted, refs, localTopLevelFns, attributeTopLevelOwner);
+            // Cross-module half of UncheckedGenericCastReturnErasure.  MemberCallSubstitution has now attributed a
+            // referenced top-level call to its real file-class owner; bind the trusted physical-Object/logical-T
+            // metadata boundary to an explicit CIR return conversion before `sty` is consumed by type lowering.
+            if (!_options.RefBuild) UncheckedGenericCastReturnErasure.ApplyReferenced(substituted, refs);
             // Gap A — the for-loop iterator protocol over a referenced collection: re-point the desugared `<iterator>`
             // var + its synthetic hasNext/next owner at the REAL referenced kotlin.collections.Iterator<E> (app build
             // only; the stdlib self-build emits Iterator itself, so it is left synthetic there).
@@ -555,12 +570,19 @@ sealed class Pipeline
         // Materialize a deterministic non-generic existential view in bir2cir and make every closed Node<N> implement
         // it. Runs before interface-slot normalization and suspend lowering, in ref and runtime builds alike.
         FBoundStarProjectionErasure.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
+        var existentialReceiverMembers =
+            ExistentialReceiverBinding.Collect(staged.Select(s => s.Root));
 
         // KOTLIN FAKE-OVERRIDE -> CLR INTERFACE SLOT: if a concrete class implements an interface using a public
         // NON-VIRTUAL method inherited from its base class, Kotlin considers the member implemented but CLR implicit
         // interface binding does not. Materialize the exact forwarding member in CIR/BIR-space before suspend lowering
         // (so a synthesized suspend member is transformed normally). Exact signature/return only; ambiguity is skipped.
         InheritedClassInterfaceBridge.ApplyAll(staged.Select(s => s.Root).ToList());
+
+        // KOTLIN COVARIANT OVERRIDE -> EXACT CLR METHODIMPL: preserve the Kotlin declaration's narrow return and add a
+        // private forwarding bridge with the interface slot's exact return. The bridge carries a resolved
+        // `clrInterfaceImpls` instruction; ilemit only consumes that instruction and does not infer covariance.
+        CovariantInterfaceReturnBridge.ApplyAll(staged.Select(s => s.Root).ToList());
 
         // CONSTRUCTED MEMBER RESULT SUBSTITUTION (early): suspend lowering copies a call's result type into
         // state-machine fields/locals. Close every already-constructed receiver-relative return BEFORE that copy
@@ -636,6 +658,18 @@ sealed class Pipeline
         if (!_options.RefBuild)
             InheritedMemberOwnerBinding.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
 
+        // facadegen restores G<*> for Kotlin source analysis while the referenced DLL physically exposes
+        // G$dotkt_star. Re-apply that exact referenced ABI to call signatures and directly initialized locals before
+        // CLR type lowering; ilemit must never infer the hidden physical signature.
+        if (!_options.RefBuild)
+            foreach (var stagedFile in staged)
+                ReferenceExistentialAbiBinding.Apply(stagedFile.Root, refs);
+
+        // A spliced inline payload may retain raw identity `T === null` over a generic local. ECMA ceq cannot consume
+        // a generic-parameter stack value and null directly; author the boxed object-null comparison in CIR.
+        if (!_options.RefBuild)
+            foreach (var stagedFile in staged) GenericParameterNullComparison.Apply(stagedFile.Root);
+
         // CONSTRUCTED MEMBER RESULT SUBSTITUTION (late): inherited owner binding above can introduce the exact
         // constructed declaring owner only after suspend synthesis. Close those remaining callee-relative result TVs;
         // ilemit receives a closed CIR return type and performs no inference.
@@ -659,6 +693,10 @@ sealed class Pipeline
             // resumeWith dispatch (CLR interface variance does not lift value types; uniform erasure is the fix).
             ContinuationErasure.Apply(substituted);
             GenericDowncastRealignment.Apply(substituted, genericDowncastHierarchy);
+            // GenericDowncastRealignment aligns a local's declared type with an erased
+            // G$dotkt_star cast. Bind calls through that local to the exact synthesized
+            // existential slot before CLR type lowering.
+            ExistentialReceiverBinding.Apply(substituted, existentialReceiverMembers, refs);
             // SEQUENCE for-in dispatch (#37 m1 wave-2, cases/il-seqforin): a `for (x in seq)` over a Kotlin Sequence
             // lowers to `forEachInline` with a typed `IEnumerable<elem>::GetEnumerator` dispatch, but the anon Sequence
             // `sequence { .. }` returns is erased to `IEnumerable<object>` at runtime (its lifted class carries no type
@@ -703,6 +741,10 @@ sealed class Pipeline
             // hardcoded primitives) wherever it appears as a type token. The struct-ness oracle drives the reference
             // `{t:nullable}` strip (a value `T?` stays `Nullable<T>`; a reference `T?` -> bare + the NRT byte above).
             var lowered = BirTypeLowering.Lower(substituted, _options.RefBuild, refs.Aliases, isValueFqn);
+            // A mutable/spilled collection value can lower to IList<T> while a Kotlin read-only call slot lowers to
+            // IReadOnlyList<T>. These are sibling CLR interfaces, so make the conversion an explicit CIR cast after
+            // substituting method type args. ilemit then emits the stated cast instead of inferring a stack seam.
+            if (!_options.RefBuild) CollectionViewCallCoercion.Apply(lowered);
             // #139 — stamp the reverse-enumerator-bridge `clrBridgeRole` markers (kotlin.collections.Iterator's
             // hasNext/next + every class `iterator()`) so ilemit drives its GetEnumerator adapter off a semantic marker,
             // never the Kotlin FQN/member names. ALL builds; on the lowered tree (the Iterator FQN + type names survive

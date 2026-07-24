@@ -28,7 +28,7 @@ A `Type` is ALWAYS a JSON object with a `t` discriminator. **There is no bare-st
 |-----|--------|----------------|-----------------------------|
 | `fqn` | `name:string`, `args?:[T…]` | a named type `kotlin.collections.List<…>` — a PURE Kotlin/CLR FQN identity, generic args optional | plain FQN, `clr:`, `clrg:Name[..]`, `@Name`/`@Name[..]`, primitive shorthand (`int`/`string`/`void`/`object`/…) |
 | `tv` | `scope:"type"\|"method"`, `i:int` | a type variable — `scope` is the CLR generic-param SPACE, `i` the owner-local positional index | `gp:X` (name-keyed, space-blind) |
-| `star` | — | a Kotlin `*` projection; metadata/frontend-only and erased by kotc before BIR emission | no CIR form |
+| `star` | — | a Kotlin `*` projection; preserved in BIR so bir2cir can choose a provenance-backed CLR existential representation | no CIR form |
 | `fn` | `suspend:bool`, `ret:T`, `params:[T…]`, `recv?:T` | a function type; `suspend` is a flag, `recv` = extension receiver | `func:ret:args`, `sfunc:ret:args` |
 | `nullable` | `of:T` | `T?` (NRT-annotated nullable, `NullableAttribute`=2) | `nullable:X` |
 | `oblivious` | `of:T` | `T!` — an NRT-*oblivious* flexible type `(T..T?)` (`NullableAttribute`=0); the CLR term, not the Kotlin-consumer "platform" name | the META `!` platform suffix |
@@ -153,10 +153,13 @@ additive (a new modifier = a new key). No comma strings, no `Contains`/`StartsWi
 ```
 - Method/fun flags: `inline`, `infix`, `operator`, `tailrec`, `external`, `ext` (extension), `override`,
   `abstract`, `open`, `suspend` (also drives the `fn`-type `suspend` flag §1 — keep consistent), `data`-generated.
-- Class flags: `data`, `sealed`, `inner`, `abstract`, `open`, `enum`, `fun` (fun-interface), `annotation`, `value`.
+- Class flags: `data`, `sealed`, `inner`, `abstract`, `open`, `enum`, `fun` (fun-interface), `annotation`, `value`,
+  `object` (singleton identity retained across a referenced DLL boundary).
 - Property flags: `const`, `lateinit`, `override`, `open`, `ext`.
 - Param flags: `noinline`, `crossinline`, `vararg`.
-- **Visibility is NOT a mod** (it is an enum, not a boolean): a separate `"vis": "public"|"private"|"protected"|"internal"`.
+- **Visibility is NOT a mod** (it is an enum, not a boolean): a separate
+  `"vis": "public"|"private"|"protected"|"internal"|"protectedInternal"`. `protectedInternal` is CIR-only:
+  bir2cir authors it when lifted code needs the CLR `FamORAssem` accessibility; kotc never emits it.
 - **Modifier semantics that drive lowering stay first-class** where a consumer keys on them (e.g. `suspend`
   already gates cold-lowering) — `mods.suspend` is the single source; a redundant top-level `suspend` field is removed.
 The meta side (facadegen tlfun/tlextprop/tlprop) emits the SAME `mods` object, not the `final,inline,ext` comma string.
@@ -355,8 +358,8 @@ freshly-emitted BIR + CIR and reddens the gate on any drift.
   string type token anywhere reddens without the validator having to enumerate every type slot.
 - **Canonical node kinds + type tags (§2.5/§2.6).** Every `{k}` must be in the frozen `KINDS` set (the union of
   every kind the current toolchain emits across a full fresh build — regenerate with `--dump-kinds`); every emitted
-  BIR/CIR `{t}` is in `{fqn,tv,fn,nullable,oblivious,array,byRef}`. The metadata/frontend-only `star` carrier never
-  enters an emitted BIR/CIR document and is therefore outside this validator. A typo, a retired spelling (`bin`/`un`/
+  BIR/CIR `{t}` is in `{fqn,tv,star,fn,nullable,oblivious,array,byRef}`. `star` is valid only in BIR and must be
+  eliminated by bir2cir before CIR. A typo, a retired spelling (`bin`/`un`/
   `isinst`/`isinstRef`/
   `setFieldExpr`/`staticFieldSet`), or an ad-hoc new kind reds. Casing is enforced by set membership.
 - **Well-formed types (§1):** each `{t}` carries its required fields with the right value shapes; a `{k}`+`{t}`

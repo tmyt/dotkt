@@ -15,10 +15,9 @@ using DotKt.Bir;
 //
 // PHASE 1 (#146): runs immediately AFTER InlineSplice — BEFORE ObjectSlotRename/ClosureSynthesis/MemberCallSubstitution/
 // BirTypeLowering — so the spliced RAW payload re-lowers IN THIS app's context (owner attribution for a payload's own
-// `callStatic owner:null`, @ClrIntrinsic binding, generic resolution), exactly like InlineSplice's body splice. Because
-// the owner is NOT yet attributed here, the callee is resolved OWNERLESS by `method name | emitted-arity`
-// (ReferenceMetadataIndex.KotlinDefaultsFor) — a name+arity carried by several owners with conflicting defaults is
-// AMBIGUOUS and refused loudly rather than guessed.
+// `callStatic owner:null`, @ClrIntrinsic binding, generic resolution), exactly like InlineSplice's body splice.
+// facadegen-injected cross-module calls already carry the callee's exact file-facade `ownerType`; use it. Only a truly
+// ownerless Kotlin call falls back to `method name | emitted-arity`, where conflicting owners are refused loudly.
 //
 // CLOSED CARRIER (#146): a NON-CONSTANT default that lifts a helper — a non-capturing lambda `= {}` (the Avalonia
 // `configure: Panel.() -> Unit = {}` idiom) whose `newDelegate` points at a library-local `__lambdaN` — is carried as a
@@ -69,7 +68,12 @@ static class DefaultArgSplice
     {
         var k = Str(node["k"]);
         if (k != "callStatic" && k != "callInstance") return;
-        if (node["args"] is not JsonArray args || node["sig"] is not JsonArray sig) return;
+        if (node["args"] is not JsonArray args) return;
+        // A non-generic call carries `sig`; a generic facade call carries the same declared parameter vector as
+        // `shapeTypes` so later CLR binding can close the method. Both are structural callee signatures and therefore
+        // equally authoritative for the KotlinDefault owner+name+arity lookup.
+        var sig = node["sig"] as JsonArray ?? node["shapeTypes"] as JsonArray;
+        if (sig == null) return;
         var sigCount = sig.Count;
         var hasPlaceholder = false;
         for (var j = 0; j < args.Count; j++) if (IsPlaceholder(args[j])) { hasPlaceholder = true; break; }
@@ -81,10 +85,11 @@ static class DefaultArgSplice
         if (!hasPlaceholder) return;
         var method = Str(node["method"]);
         if (method == null) return;
-        var defaults = refs.KotlinDefaultsFor(method, sigCount);
+        var owner = TypeJson.OwnerName(node["ownerType"] ?? node["calleeOwner"] ?? node["owner"]);
+        var defaults = refs.KotlinDefaultsFor(owner, method, sigCount);
         if (defaults == null)
         {
-            if (hasPlaceholder && refs.KotlinDefaultsAmbiguous(method, sigCount))
+            if (hasPlaceholder && refs.KotlinDefaultsAmbiguous(owner, method, sigCount))
                 throw new InvalidOperationException(
                     $"bir2cir: cannot fill an omitted default argument of '{method}' (arity {sigCount}) — the name+arity is " +
                     "carried by several referenced functions whose defaults disagree; pass the argument explicitly");

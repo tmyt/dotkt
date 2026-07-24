@@ -4,7 +4,7 @@
 # structurally enforces the frozen contract so any future drift reddens the gate:
 #
 #   1. TYPES ARE NODES (§1): every document type slot is a structured {t:...} node
-#      (fqn/tv/fn/nullable/oblivious/array/byRef), NEVER a bare string. This is enforced
+#      (fqn/tv/star/fn/nullable/oblivious/array/byRef), NEVER a bare string. This is enforced
 #      by an INVERSE allow-list — the finite set of keys that MAY carry a bare string is
 #      fixed (STR_OK / STRARR_OK); a bare string at ANY other key is a type-token leak.
 #   2. CANONICAL NODE KINDS (§2.5/§2.6): every {k:...} is in the frozen KINDS set and every
@@ -20,7 +20,7 @@
 # method's body (validated here). See spec §7.
 import json, sys, glob, os
 
-TYPE_TAGS = {"fqn", "tv", "fn", "nullable", "oblivious", "array", "byRef"}
+TYPE_TAGS = {"fqn", "tv", "star", "fn", "nullable", "oblivious", "array", "byRef"}
 
 # Keys that legitimately hold a bare STRING scalar: format vocabulary (k/t tags, enums),
 # object-language NAME payloads, and the documented owner/member/attribute reference
@@ -104,10 +104,10 @@ STRARR_OK = {"typeParams"}
 MOD_KEYS = {
     "inline", "infix", "operator", "tailrec", "external", "ext", "override", "abstract",
     "open", "suspend", "data", "sealed", "inner", "enum", "fun", "annotation", "value",
-    "const", "lateinit", "vararg", "noinline", "crossinline",
+    "object", "const", "lateinit", "vararg", "noinline", "crossinline",
     "inlineOnly",                                # #98: @InlineOnly → [MethodImpl(AggressiveInlining)] (ilemit reads mods.inlineOnly)
 }
-VIS = {"public", "private", "protected", "internal"}
+VIS = {"public", "private", "protected", "internal", "protectedInternal"}
 CARRIER_VERSIONS = {"bir-json/1"}
 
 # The frozen node-kind set (§2.5) — the union of every kind the current toolchain emits across
@@ -174,6 +174,7 @@ class V:
             return
         req = {
             "fqn": ["name"], "tv": ["scope", "i"], "fn": ["suspend", "ret", "params"],
+            "star": [],
             "nullable": ["of"], "oblivious": ["of"], "array": ["elem"], "byRef": ["of"],
         }[t]
         for r in req:
@@ -200,6 +201,8 @@ class V:
             # it is not a CLR value/delegate slot and intentionally keeps the pure Kotlin fn shape.
             if f.endswith(".cir.json") and clr is None and "SuspendFnType" not in path and "suspendFnType" not in path:
                 self.err(f, path, "ilemit-facing CIR fn is missing required fn.clr delegate family")
+        if t == "star" and f.endswith(".cir.json"):
+            self.err(f, path, "Kotlin star projection must be lowered by bir2cir before CIR")
 
     def walk(self, f, o, path):
         if isinstance(o, dict):
@@ -220,6 +223,8 @@ class V:
                         self.err(f, path + "/mods", f"unknown mod key {mk!r}")
             if isinstance(o.get("vis"), str) and o["vis"] not in VIS:
                 self.err(f, path, f"unknown vis {o['vis']!r}")
+            if o.get("vis") == "protectedInternal" and f.endswith(".bir.json"):
+                self.err(f, path, "protectedInternal is a bir2cir-authored CIR visibility and must not appear in BIR")
             clr_owner = o.get("k") in CLR_OWNER_KINDS
             for key, val in o.items():
                 p = path + "/" + key
