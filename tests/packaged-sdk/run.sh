@@ -4,13 +4,16 @@
 # from real .nupkgs in a NuGet feed. `tests/msbuild/run.sh` uses the IN-REPO dev entry (eng/KotlinClr.targets,
 # hard-coded tool paths) and never restores a nupkg, so packaging-only bugs slip past it — 0.9.5 shipped
 # broken twice for exactly this reason (#131 stale SDK version, #132 a Library's non-copy-local reference
-# never reaching bir2cir/ilemit). This suite packs the 5 nupkgs to a local feed and drives FIVE isolated
+# never reaching bir2cir/ilemit). This suite packs the 5 nupkgs to a local feed and drives SIX isolated
 # scenarios through `dotnet build`/`dotnet run` from that feed only:
 #   exe      — a plain `Sdk="DotKt.Sdk"` Exe: build + RUN, assert stdout.
 #   library  — a `Library` that PackageReferences a SECOND DotKt library (packed as its own nupkg) and calls
 #              into it. A package runtime dll is NOT copy-local for OutputType=Library, so under the old
 #              copy-local-glob targets that reference never reached ilemit -> the emit FAILED (#132-general).
 #              This is the case the gate exists to hold: build succeeds + the emitted dll carries the call.
+#   coroutine-cross-module — a packaged Kotlin library exports a suspend function that genuinely suspends on
+#              Task.Delay; a separately compiled packaged-SDK Kotlin Exe restores and drives that function across
+#              the assembly boundary, observes return-before-resume, and both emitted assemblies pass ILVerify (#137).
 #   mpp      — a `Sdk="DotKt.Sdk.Mpp"` multiplatform Exe (common `expect` + clr `actual`): the MPP SDK path
 #              end-to-end through nupkg resolution. build + RUN, assert stdout.
 #   template — install DotKt.Templates, scaffold the CLI template, then build + RUN it.
@@ -26,7 +29,7 @@ source "$ROOT/scripts/lib.sh"
 
 usage() { cat <<EOF
 usage: $SCRIPT_NAME
-Packs the 5 nupkgs to build/nuget-feed and drives 5 packaged SDK/template scenarios from that feed only.
+Packs the 5 nupkgs to build/nuget-feed and drives 6 packaged SDK/template scenarios from that feed only.
 Green (exit 0) = no fail name outside the XFAIL_PKG baseline declared in this script.
 EOF
 }
@@ -37,7 +40,7 @@ while (( $# )); do
 	esac
 done
 
-# The authoritative XFAIL baseline (fail name -> reason). Empty: all five packaged cases must pass. A listed
+# The authoritative XFAIL baseline (fail name -> reason). Empty: all six packaged cases must pass. A listed
 # name that starts passing prints "FIXED — remove it" WITHOUT reddening the gate; any name NOT listed that
 # fails prints NEW-FAIL and reddens. Computed by lib.sh xfail_diff at the bottom.
 declare -A XFAIL_PKG=(
@@ -97,19 +100,23 @@ fail() { # <name> <reason> [detail]
 # Strip the compiler's own chatter from a run's stdout so the assert compares only program output.
 run_out() { grep -vE 'kotlin/clr:|duplicate source root' || true; }
 
-# run_project <dir> <stderr-logfile> — build+run a packaged project in <dir>; echo its noise-filtered program
+# run_project <dir> <stderr-logfile> [timeout] — build+run a packaged project in <dir>; echo its noise-filtered program
 # stdout; RETURN the run's exit status (0 iff build AND execution succeeded). Build/restore output is kept out of
 # the captured program stdout: on a clean GitHub runner NuGet can print certificate and package-install messages
 # to stdout even at quiet verbosity. Status and stdout are captured independently (issue #163), so a project
 # which prints the expected text and THEN throws / returns non-zero remains rejected.
-run_project() { # <dir> <stderr-logfile>
-	local dir="$1" log="$2" build_log="${2%.err}.build.log"
+run_project() { # <dir> <stderr-logfile> [timeout]
+	local dir="$1" log="$2" run_timeout="${3:-}" build_log="${2%.err}.build.log"
 	if ! (cd "$dir" && dotnet build -v q --nologo >"$build_log" 2>&1); then
 		cp "$build_log" "$log"
 		return 1
 	fi
 	local rc=0 raw
-	raw="$(cd "$dir" && dotnet run --no-build --no-restore -v q 2>"$log")" || rc=$?
+	if [[ -n "$run_timeout" ]]; then
+		raw="$(cd "$dir" && timeout "$run_timeout" dotnet run --no-build --no-restore -v q 2>"$log")" || rc=$?
+	else
+		raw="$(cd "$dir" && dotnet run --no-build --no-restore -v q 2>"$log")" || rc=$?
+	fi
 	printf '%s' "$raw" | run_out
 	return $rc
 }
@@ -272,6 +279,155 @@ EOF
 }
 
 # ---------------------------------------------------------------------------------------------------------
+# Case: coroutine-cross-module — #137's end-user path. The producer and consumer are separate Kotlin
+# compilations, both resolved through the freshly packed SDK. The producer's Task.Delay is incomplete when
+# startCoroutine returns to the consumer, so this covers a real cross-assembly suspend/resume rather than the
+# synchronous fast path. The producer is packed as an ordinary NuGet dependency to exercise the same facadegen
+# re-import and reference-asset path an end user hits. Both DotKt-emitted assemblies must also be ILVerify-clean.
+# ---------------------------------------------------------------------------------------------------------
+case_coroutine_cross_module() {
+	# (a) Build the packaged-SDK Kotlin producer.
+	local lib="$WS/async-lib"; mkdir -p "$lib"; cp "$NUGET_CONFIG" "$lib/nuget.config"
+	cat > "$lib/DotKt.AsyncGate.ktproj" <<EOF
+<Project Sdk="DotKt.Sdk/$VER">
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+</Project>
+EOF
+	cat > "$lib/AsyncGate.kt" <<'EOF'
+package asyncgate
+
+import System.Threading.Tasks.Task
+import kotlin.clr.await
+
+suspend fun delayedValue(): Int {
+    Task.Delay(500).await()
+    return 42
+}
+EOF
+	if ! (cd "$lib" && dotnet build -v q --nologo >"$lib/build.log" 2>&1); then
+		fail coroutine-cross-module "producer build failed" "$(tail -30 "$lib/build.log")"; return
+	fi
+	local libdll; libdll="$(find "$lib/bin" -name 'DotKt.AsyncGate.dll' | head -1)"
+	[[ -f "$libdll" ]] || { fail coroutine-cross-module "producer dll not emitted"; return; }
+
+	# (b) Put the emitted producer in the same isolated feed as a normal runtime package.
+	local pw="$WS/async-packwrap"; mkdir -p "$pw"
+	cat > "$pw/PackWrap.csproj" <<EOF
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <PackageId>DotKt.AsyncGate</PackageId>
+    <Version>$VER</Version>
+    <NoWarn>NU5128;NU5127</NoWarn>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="$libdll" Pack="true" PackagePath="lib/net10.0/" />
+  </ItemGroup>
+</Project>
+EOF
+	if ! (cd "$pw" && dotnet pack -o "$FEED" -v q --nologo >"$pw/pack.log" 2>&1); then
+		fail coroutine-cross-module "packing producer failed" "$(tail -30 "$pw/pack.log")"; return
+	fi
+	rm -rf "$WS/pkgs/dotkt.asyncgate"
+
+	# (c) Compile a separate Kotlin consumer from the packaged SDK and packaged producer.
+	local con="$WS/async-consumer"; mkdir -p "$con"; cp "$NUGET_CONFIG" "$con/nuget.config"
+	cat > "$con/AsyncConsumer.ktproj" <<EOF
+<Project Sdk="DotKt.Sdk/$VER">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="DotKt.AsyncGate" Version="$VER" />
+  </ItemGroup>
+</Project>
+EOF
+	cat > "$con/Main.kt" <<'EOF'
+@file:Suppress("UNCHECKED_CAST")
+
+package asyncconsumer
+
+import System.Threading.Monitor
+import asyncgate.delayedValue
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.coroutines.startCoroutine
+
+private var observedSuspension = false
+
+private class GateSink : Continuation<Any?> {
+    var done = false
+    var value: Any? = null
+    var exception: Throwable? = null
+
+    override val context: CoroutineContext
+        get() = EmptyCoroutineContext
+
+    override fun resumeWith(result: Result<Any?>) {
+        Monitor.Enter(this)
+        try {
+            value = result.getOrNull()
+            exception = result.exceptionOrNull()
+            done = true
+            Monitor.Pulse(this)
+        } finally {
+            Monitor.Exit(this)
+        }
+    }
+}
+
+private fun <T> blockOnObserved(block: suspend () -> T): T {
+    val sink = GateSink()
+    block.startCoroutine(sink)
+    // Task.Delay(500) is still incomplete here. sink.done must be false (and observedSuspension true) before
+    // the producer resumes from another assembly; a synchronous-only cross-module bridge cannot satisfy the gate.
+    observedSuspension = !sink.done
+    Monitor.Enter(sink)
+    try {
+        while (!sink.done) Monitor.Wait(sink)
+    } finally {
+        Monitor.Exit(sink)
+    }
+    sink.exception?.let { throw it }
+    return sink.value as T
+}
+
+fun main() {
+    val value = blockOnObserved { delayedValue() }
+    println("packaged coroutine ok: $value suspended=$observedSuspension")
+}
+EOF
+	local expected="packaged coroutine ok: 42 suspended=True" actual rc=0
+	actual="$(run_project "$con" "$con/run.err" 20s)" || rc=$?
+	if (( rc != 0 )); then
+		fail coroutine-cross-module "consumer run exit $rc" \
+			"$(printf -- '--- expected ---\n%s\n--- stdout ---\n%s\n--- stderr ---\n%s' "$expected" "$actual" "$(tail -30 "$con/run.err" 2>/dev/null)")"
+		return
+	fi
+	if [[ "$actual" != "$expected" ]]; then
+		fail coroutine-cross-module "output mismatch" \
+			"$(printf -- '--- expected ---\n%s\n--- actual ---\n%s' "$expected" "$actual")"
+		return
+	fi
+
+	local condll; condll="$(find "$con/bin" -name 'AsyncConsumer.dll' | head -1)"
+	[[ -f "$condll" ]] || { fail coroutine-cross-module "consumer dll not emitted"; return; }
+	if ! bash "$ROOT/tests/run-ilverify.sh" "$libdll" "$condll" >"$con/ilverify.log" 2>&1; then
+		fail coroutine-cross-module "ILVerify failed" "$(tail -40 "$con/ilverify.log")"; return
+	fi
+	pass coroutine-cross-module
+}
+
+# ---------------------------------------------------------------------------------------------------------
 # Case: mpp — a packaged MULTIPLATFORM Exe via Sdk="DotKt.Sdk.Mpp" (common `expect` + clr `actual`). The Mpp
 # SDK nests a version-LESS import of the base DotKt.Sdk, whose version the NuGet SDK resolver reads ONLY from
 # global.json's msbuild-sdks — so a global.json pinning both is REQUIRED (and part of what this covers).
@@ -395,6 +551,7 @@ selftest
 
 case_exe
 case_library
+case_coroutine_cross_module
 case_mpp
 case_template
 case_mpp_template

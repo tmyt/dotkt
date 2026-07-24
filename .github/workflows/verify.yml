@@ -6,8 +6,8 @@
 #   make verify-core       : NUnit (+ ILVerify), emitted-IR validation, stateful MSBuild, irreducible
 #                            round-trip scenarios, and wide-delegate synthesis.
 #   make verify-packaged-sdk : the ONLY gate that restores + consumes the 5 real .nupkgs from a feed
-#                            (exe / library / mpp / CLI-template / MPP-template scenarios). Two releases shipped broken
-#                            on packaging-only defects this gate catches — so it is a DISTINCT,
+#                            (exe / library / cross-module async coroutine / mpp / template scenarios). Two releases
+#                            shipped broken on packaging-only defects this gate catches — so it is a DISTINCT,
 #                            release-blocking job here, not folded into the big job (GitHub #160).
 #
 # Jobs:
@@ -92,8 +92,11 @@ jobs:
             ~/.gradle/wrapper
           key: gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
 
-      # Packs the 5 nupkgs fresh from source and drives exe / library / mpp / template scenarios that resolve them
-      # from a local feed only (isolated globalPackagesFolder — no cache masking). Exit 0 iff no fail
-      # name is outside the XFAIL_PKG baseline in tests/packaged-sdk/run.sh.
+      - name: Install ilverify
+        run: dotnet tool install -g dotnet-ilverify
+
+      # Packs the 5 nupkgs fresh from source and drives exe / library / cross-module async coroutine / mpp /
+      # template scenarios that resolve them from a local feed only (isolated globalPackagesFolder — no cache
+      # masking). Exit 0 iff no fail name is outside the XFAIL_PKG baseline in tests/packaged-sdk/run.sh.
       - name: make verify-packaged-sdk (packaged nupkg resolution)
         run: make verify-packaged-sdk
