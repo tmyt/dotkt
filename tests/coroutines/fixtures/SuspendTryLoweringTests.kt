@@ -82,10 +82,14 @@ suspend fun corBUnsNestedTryNamed(failInner: Boolean) {
         } catch (e: IllegalStateException) {
             corBUnsTrace += "inner-catch;"
             throw e
+        } finally {
+            corBUnsTrace += "inner-finally;"
         }
         corBUnsTrace += "outer-after;"
     } catch (e: IllegalStateException) {
         corBUnsTrace += "outer-catch;"
+    } finally {
+        corBUnsTrace += "outer-finally;"
     }
 }
 
@@ -100,10 +104,14 @@ fun corBUnsNestedTryLambda(failInner: Boolean): suspend () -> Unit = {
         } catch (e: IllegalStateException) {
             corBUnsTrace += "inner-catch;"
             throw e
+        } finally {
+            corBUnsTrace += "inner-finally;"
         }
         corBUnsTrace += "outer-after;"
     } catch (e: IllegalStateException) {
         corBUnsTrace += "outer-catch;"
+    } finally {
+        corBUnsTrace += "outer-finally;"
     }
 }
 
@@ -127,7 +135,7 @@ class SuspendTryLoweringTests {
         corBUnsTrace = ""
         assertEquals("ok", corBUnsOutcome { corBUnsNestedTryNamed(false) })
         assertEquals(
-            "outer-before;inner-before;inner-after;outer-after;",
+            "outer-before;inner-before;inner-after;inner-finally;outer-after;outer-finally;",
             corBUnsTrace,
         )
     }
@@ -151,7 +159,7 @@ class SuspendTryLoweringTests {
         corBUnsTrace = ""
         assertEquals("ok", corBUnsOutcome(corBUnsNestedTryLambda(false)))
         assertEquals(
-            "outer-before;inner-before;inner-after;outer-after;",
+            "outer-before;inner-before;inner-after;inner-finally;outer-after;outer-finally;",
             corBUnsTrace,
         )
     }
@@ -179,7 +187,7 @@ class SuspendTryLoweringTests {
         corBUnsTrace = ""
         assertEquals("ok", corBUnsOutcome { corBUnsNestedTryNamed(true) })
         assertEquals(
-            "outer-before;inner-before;inner-catch;outer-catch;",
+            "outer-before;inner-before;inner-catch;inner-finally;outer-catch;outer-finally;",
             corBUnsTrace,
         )
     }
@@ -207,7 +215,7 @@ class SuspendTryLoweringTests {
         corBUnsTrace = ""
         assertEquals("ok", corBUnsOutcome(corBUnsNestedTryLambda(true)))
         assertEquals(
-            "outer-before;inner-before;inner-catch;outer-catch;",
+            "outer-before;inner-before;inner-catch;inner-finally;outer-catch;outer-finally;",
             corBUnsTrace,
         )
     }

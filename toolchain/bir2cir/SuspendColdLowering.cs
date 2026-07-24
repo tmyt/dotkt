@@ -1391,6 +1391,16 @@ static partial class SuspendColdLowering
             }
             var tryEntry = NextLabel();
             outp.Add(Label(tryEntry));
+            // A label does not occupy an IL offset. If the next CIR statement is the try itself, Reflection.Emit
+            // gives the label and the protected region the same offset; a resume dispatch from outside then becomes
+            // an illegal branch INTO the try (the CLR JIT can crash before producing InvalidProgramException).
+            // Materialize a semantically inert instruction at the bir2cir-authored boundary so every dispatch lands
+            // outside the EH region and falls through normally. ilemit still emits the CIR one-to-one.
+            outp.Add(new JsonObject
+            {
+                ["k"] = "exprStmt",
+                ["expr"] = NullConst(AnyTn),
+            });
 
             var inner = new List<(int state, int label)>();
             _tryStack.Push((inner, tryEntry));
