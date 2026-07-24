@@ -252,8 +252,9 @@ internal fun BirEmitter.birType(t: IrType): TypeNode {
 				val ownArgs = sargs.map { a ->
 					val at = (a as? IrTypeProjection)?.type
 					when {
-						// A STAR projection (`Comparable<*>`) -> Any (dropping it leaves a raw generic — malformed).
-						at == null -> OBJ
+						// A STAR projection is Kotlin vocabulary. Preserve it in BIR; bir2cir authors the CLR
+						// existential representation (a reified `G<Any>` is not equivalent on the CLR).
+						at == null -> TypeNode.Star
 						// A `Unit` TYPE-ARG stays the real Unit identity (a generic arg of System.Void is invalid).
 						at.isUnit() -> TypeNode.Fqn("kotlin.Unit")
 						// A NULLABLE type-parameter arg keeps its `nullable(tv)` marker (bir2cir erases it).
@@ -450,11 +451,11 @@ internal fun BirEmitter.ownerSpec(klass: IrClass?, recvType: IrType?): TypeNode 
 		return if (head.isNotEmpty()) TypeNode.Fqn(name, head) else TypeNode.Fqn(name)
 	}
 	// A type-parameter argument keeps its `tv` form (resolvable in the enclosing generic context), NOT the open type.
-	// A `Unit` TYPE-ARG stays the real Unit identity; a STAR projection -> Any (mirroring birType).
+	// A `Unit` TYPE-ARG stays the real Unit identity; a STAR projection stays `star` for bir2cir.
 	val args = (recvType as? IrSimpleType)?.arguments?.map { a ->
 		val at = (a as? IrTypeProjection)?.type
 		when {
-			at == null -> OBJ
+			at == null -> TypeNode.Star
 			at.isUnit() -> TypeNode.Fqn("kotlin.Unit")
 			else -> birType(at)
 		}

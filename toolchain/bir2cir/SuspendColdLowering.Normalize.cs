@@ -12,11 +12,13 @@
 //        range is already realized as counted `for`; the remaining stdlib-only `forRange` and repeat shapes stay
 //        unsupported).
 //
-//   #78 HoistSuspendingCatches — a suspension inside a CATCH handler is impossible to resume into (branching
+//   #78 HoistSuspendingCatches — a suspension inside a CATCH/FINALLY handler is impossible to resume into (branching
 //        into a CLR catch clause is illegal IL). The handler is HOISTED out of the clause: the real catch only
 //        records the exception into an SM-field-backed `__exc$N`, and the handler body runs as gated
 //        straight-line code (`if (__exc$N != null) { … }`) AFTER the try — where the SM segments it normally.
-//        Only a FINALLY-FREE try is hoistable (hoisting past a finally would flip Kotlin's run-after ordering).
+//        A finally is kept around the hoisted catch tail when it is synchronous. A suspending finally is moved
+//        after a catch-all exception capture; pending returns are routed through it, and a pending exception is
+//        rethrown only after the finally completes. Thus Kotlin's body -> catch -> finally ordering is retained.
 //
 // Both are clone-on-change (return the input array untouched when nothing applies, else a private DeepClone —
 // never mutating the shared/retained rt-stdlib original), skip nested lambda scopes, and run post-order
@@ -46,16 +48,15 @@ static partial class SuspendColdLowering
     static readonly HashSet<string> StmtListKeys = new(System.StringComparer.Ordinal)
         { "body", "stmts", "finally" };
 
-    // A try is HOISTABLE iff it has no (non-empty) finally AND at least one catch handler spans a suspension.
+    // A try needs handler hoisting iff at least one catch or its finally spans a suspension.
     // Shared by SuspensionRefusalReason (the gate admits the shape) and HoistSuspendingCatches (it performs the hoist).
     static bool IsHoistableTry(JsonObject o)
     {
         if (Str(o["k"]) != "try") return false;
-        if (o["finally"] is not JsonArray fa || fa.Count == 0) { /* finally absent or empty -> ok */ }
-        else return false;                                      // a non-empty finally -> not hoistable
-        if (o["catches"] is not JsonArray cs) return false;
-        foreach (var c in cs)
-            if (c is JsonObject co && co["body"] is JsonNode cb && HasOwnSuspension(cb)) return true;
+        if (o["catches"] is JsonArray cs)
+            foreach (var c in cs)
+                if (c is JsonObject co && co["body"] is JsonNode cb && HasOwnSuspension(cb)) return true;
+        if (o["finally"] is JsonArray fa && HasOwnSuspension(fa)) return true;
         return false;
     }
 
@@ -333,7 +334,8 @@ static partial class SuspendColdLowering
             return n?.DeepClone();
         }
 
-        // Emit: [ var __exc$K = null (per suspending clause) ]  try{ BODY }catch(recording | real){…}  [ if(__exc$K!=null){ HANDLER } per clause ].
+        // Emit: [ var __exc$K = null (per suspending clause) ]  try{ BODY }catch(recording | real){…}
+        //       [ if(__exc$K!=null){ HANDLER } per clause ], retaining/hoisting FINALLY as described below.
         // The try body is verbatim (its own suspensions ride EmitTry's two-level dispatch). A suspending catch becomes a
         // recording clause (`__exc$K = e`) whose SM-field-backed capture keeps the exception across the hoisted handler's
         // suspension; a non-suspending catch stays a real CLR catch. The handler's catch-var refs rebind to `__exc$K`.
@@ -381,14 +383,209 @@ static partial class SuspendColdLowering
                     tail.Add(Label(skipL));
                 }
 
-            result.Add(new JsonObject
+            var innerTry = new JsonObject
             {
                 ["k"] = "try",
                 ["type"] = o["type"]?.DeepClone(),
                 ["body"] = (o["body"] as JsonArray)?.DeepClone() ?? new JsonArray(),
                 ["catches"] = newCatches,
+            };
+
+            if (o["finally"] is not JsonArray fin || fin.Count == 0)
+            {
+                result.Add(innerTry);
+                foreach (var t in tail) result.Add(t);
+                return;
+            }
+
+            // The catch tail must complete before finally. For a synchronous finally, wrapping the inner try and
+            // hoisted tail in an outer CLR try/finally preserves precisely that order (and also runs finally when a
+            // hoisted handler throws). Nested resume dispatch is supported by RegisterResume.
+            // A finally-only source try has no catches to retain after the finally is hoisted. Do not leave a
+            // handler-less `try` in CIR: it has no CLR representation (BeginExceptionBlock/EndExceptionBlock without
+            // a catch/finally is rejected by Reflection.Emit), and ilemit must not infer that it should be unwrapped.
+            var protectedBody = new JsonArray();
+            if (newCatches.Count > 0)
+                protectedBody.Add(innerTry);
+            else if (o["body"] is JsonArray plainBody)
+                foreach (var st in plainBody) protectedBody.Add(st?.DeepClone());
+            foreach (var t in tail) protectedBody.Add(t);
+            if (!HasOwnSuspension(fin))
+            {
+                result.Add(new JsonObject
+                {
+                    ["k"] = "try",
+                    ["type"] = o["type"]?.DeepClone(),
+                    ["body"] = protectedBody,
+                    ["catches"] = new JsonArray(),
+                    ["finally"] = fin.DeepClone(),
+                });
+                return;
+            }
+
+            EmitSuspendingFinally(protectedBody, fin, o["type"], result);
+        }
+
+        // A CLR finally cannot suspend. Turn
+        //
+        //   try { PROTECTED } finally { FIN }
+        //
+        // into an exception/return route:
+        //
+        //   var pending: Throwable? = null
+        //   try { PROTECTED' } catch (t: Throwable) { pending = t }
+        // route:
+        //   FIN
+        //   if (pending != null) throw pending
+        //   if (returning) return returnValue
+        //
+        // PROTECTED' rewrites function returns to save their value and leave to `route`; ilemit emits that goto as
+        // `leave` because the target label is outside the protected region. FIN's own return/throw is deliberately
+        // untouched and therefore overrides the pending outcome, exactly as Kotlin finally does. All route state is
+        // declared as ordinary BIR vars and is consequently spilled to SM fields by CollectVarFields.
+        void EmitSuspendingFinally(JsonArray protectedBody, JsonArray fin, JsonNode tryType, JsonArray result)
+        {
+            var kc = ++_excCounter;
+            var pendingName = "__pendingExc$" + kc;
+            var caughtName = "__pendingCaught$" + kc;
+            var routeLabel = NextLabel();
+            var throwable = new TypeNode.Fqn("kotlin.Throwable");
+            result.Add(Var(pendingName, Tw(new TypeNode.Nullable(throwable)), NullConst(new TypeNode.Nullable(throwable))));
+
+            var hasReturn = HasFunctionReturn(protectedBody);
+            string returningName = null;
+            string returnValueName = null;
+            TypeNode returnValueType = null;
+            if (hasReturn)
+            {
+                returningName = "__returning$" + kc;
+                returnValueName = "__returnValue$" + kc;
+                returnValueType = IsUnitTn(_resultType) ? AnyTn : _resultType;
+                result.Add(Var(returningName, Tw(BoolTn), BoolConst(false)));
+                result.Add(Var(returnValueName, Tw(returnValueType), DefaultOf(returnValueType)));
+                protectedBody = RouteFunctionReturns(
+                    protectedBody, returningName, returnValueName, returnValueType, routeLabel);
+            }
+
+            result.Add(new JsonObject
+            {
+                ["k"] = "try",
+                ["type"] = tryType?.DeepClone(),
+                ["body"] = protectedBody,
+                ["catches"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["excType"] = Tw(throwable),
+                        ["var"] = caughtName,
+                        ["body"] = new JsonArray
+                        {
+                            new JsonObject
+                            {
+                                ["k"] = "setLocal", ["name"] = pendingName,
+                                ["value"] = LocalOf(caughtName),
+                            },
+                        },
+                    },
+                },
             });
-            foreach (var t in tail) result.Add(t);
+            result.Add(Label(routeLabel));
+            foreach (var st in fin) result.Add(st?.DeepClone());
+
+            var noPending = NextLabel();
+            result.Add(BrIf(new JsonObject
+            {
+                ["k"] = "objEq", ["lhs"] = LocalOf(pendingName), ["rhs"] = NullConst(AnyTn),
+            }, true, noPending));
+            result.Add(new JsonObject { ["k"] = "throw", ["value"] = LocalOf(pendingName) });
+            result.Add(Label(noPending));
+
+            if (hasReturn)
+            {
+                var noReturn = NextLabel();
+                result.Add(BrIf(LocalOf(returningName), false, noReturn));
+                result.Add(new JsonObject { ["k"] = "return", ["value"] = LocalOf(returnValueName) });
+                result.Add(Label(noReturn));
+            }
+        }
+
+        static bool HasFunctionReturn(JsonNode n)
+        {
+            switch (n)
+            {
+                case JsonObject o:
+                    var k = Str(o["k"]);
+                    if (k != null && NestedScopeKinds.Contains(k)) return false;
+                    if (k == "return") return true;
+                    foreach (var kv in o) if (kv.Value != null && HasFunctionReturn(kv.Value)) return true;
+                    return false;
+                case JsonArray a:
+                    foreach (var it in a) if (it != null && HasFunctionReturn(it)) return true;
+                    return false;
+                default:
+                    return false;
+            }
+        }
+
+        JsonArray RouteFunctionReturns(
+            JsonArray stmts, string returningName, string returnValueName, TypeNode returnValueType, int routeLabel)
+        {
+            var result = new JsonArray();
+            foreach (var st in stmts)
+            {
+                if (st is JsonObject o && Str(o["k"]) == "return")
+                {
+                    result.Add(new JsonObject
+                    {
+                        ["k"] = "setLocal", ["name"] = returnValueName,
+                        ["value"] = o["value"]?.DeepClone() ?? DefaultOf(returnValueType),
+                    });
+                    result.Add(new JsonObject
+                    {
+                        ["k"] = "setLocal", ["name"] = returningName, ["value"] = BoolConst(true),
+                    });
+                    result.Add(Goto(routeLabel));
+                }
+                else
+                    result.Add(RouteReturnsNode(st, returningName, returnValueName, returnValueType, routeLabel));
+            }
+            return result;
+        }
+
+        JsonNode RouteReturnsNode(
+            JsonNode n, string returningName, string returnValueName, TypeNode returnValueType, int routeLabel)
+        {
+            if (n is JsonObject o)
+            {
+                var k = Str(o["k"]);
+                if (k != null && NestedScopeKinds.Contains(k)) return o.DeepClone();
+                var copy = new JsonObject();
+                foreach (var kv in o)
+                {
+                    if (kv.Value is JsonArray arr && StmtListKeys.Contains(kv.Key))
+                        copy[kv.Key] = RouteFunctionReturns(
+                            arr, returningName, returnValueName, returnValueType, routeLabel);
+                    else if (kv.Key == "catches" && kv.Value is JsonArray cs)
+                        copy[kv.Key] = RebuildCatches(
+                            cs, a => RouteFunctionReturns(
+                                a, returningName, returnValueName, returnValueType, routeLabel));
+                    else
+                        copy[kv.Key] = kv.Value == null ? null
+                            : RouteReturnsNode(
+                                kv.Value, returningName, returnValueName, returnValueType, routeLabel);
+                }
+                return copy;
+            }
+            if (n is JsonArray a)
+            {
+                var copy = new JsonArray();
+                foreach (var it in a)
+                    copy.Add(it == null ? null
+                        : RouteReturnsNode(
+                            it, returningName, returnValueName, returnValueType, routeLabel));
+                return copy;
+            }
+            return n?.DeepClone();
         }
 
         // Rebind every `{k:local}`/`{k:setLocal}` naming `oldName` to `newName` (the hoisted catch var -> its SM-field

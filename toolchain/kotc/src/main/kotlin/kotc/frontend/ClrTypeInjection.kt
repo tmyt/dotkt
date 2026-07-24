@@ -235,6 +235,20 @@ private fun List<List<ClrParam>>.defaultsForArity(paramCount: Int): List<ClrCons
 }
 
 /**
+ * #146: whether each parameter's restored default is backed by the library's non-constant
+ * `[kotlin.clr.KotlinDefault]` carrier. Keep this distinct from [defaultsForArity]: `null` there means both
+ * "not defaulted" and "defaulted, but not a CLR constant", while the backend must emit a positional `defaultArg` for
+ * the latter. As with constant defaults, same-arity overloads that disagree are ambiguous and therefore return null.
+ */
+private fun List<List<ClrParam>>.kotlinDefaultSlotsForArity(paramCount: Int): List<Boolean>? {
+	val candidates = filter { it.size == paramCount }.map { ps -> ps.map { it.default?.nonConst == true } }
+	if (candidates.isEmpty()) return null
+	val first = candidates[0]
+	if (candidates.any { it != first }) return null
+	return first
+}
+
+/**
  * #134: the per-regular-parameter constant defaults of a facadegen-injected CONSTRUCTOR (its owner resolved by IR
  * `ClassId`, the overload matched by regular-param count), or null if the owner isn't injected / has no such ctor (or
  * same-arity ctors disagree on defaults — see [defaultsForArity]). Each element is that parameter's default (null when
@@ -244,6 +258,10 @@ internal fun clrInjectedCtorParamDefaults(classId: ClassId, paramCount: Int): Li
 	if (classId in ClrMetadataHolder.sourceShadowedClassIds) null   // #15: source ctor wins — its defaults come from source
 	else ClrMetadataHolder.byClassId[classId]?.ctors?.map { it.params }?.defaultsForArity(paramCount)
 
+internal fun clrInjectedCtorKotlinDefaultSlots(classId: ClassId, paramCount: Int): List<Boolean>? =
+	if (classId in ClrMetadataHolder.sourceShadowedClassIds) null
+	else ClrMetadataHolder.byClassId[classId]?.ctors?.map { it.params }?.kotlinDefaultSlotsForArity(paramCount)
+
 /**
  * #134: the per-value-parameter constant defaults of a facadegen-injected TOP-LEVEL function (keyed by resolved IR
  * `CallableId`, the overload matched by value-param count), or null if not injected / no such overload (or ambiguous).
@@ -251,6 +269,10 @@ internal fun clrInjectedCtorParamDefaults(classId: ClassId, paramCount: Int): Li
 internal fun clrInjectedTopLevelParamDefaults(callableId: CallableId, paramCount: Int): List<ClrConstDefault?>? =
 	if (callableId in ClrMetadataHolder.sourceShadowedCallableIds) null   // #15: source fun wins
 	else ClrMetadataHolder.topLevelParamsByCallableId[callableId]?.defaultsForArity(paramCount)
+
+internal fun clrInjectedTopLevelKotlinDefaultSlots(callableId: CallableId, paramCount: Int): List<Boolean>? =
+	if (callableId in ClrMetadataHolder.sourceShadowedCallableIds) null
+	else ClrMetadataHolder.topLevelParamsByCallableId[callableId]?.kotlinDefaultSlotsForArity(paramCount)
 
 /**
  * A2 keystone (interop-no-registry, stage 3): the backend reads a restored DotKt TOP-LEVEL EXTENSION PROPERTY's .NET

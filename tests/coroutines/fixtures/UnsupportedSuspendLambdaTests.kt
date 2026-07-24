@@ -1,58 +1,66 @@
-// #125 — a suspend lambda must pass through the same segmentability classifier as a named suspend function.
-// These three v1-unsupported try shapes must produce a valid SuspendLambda SM whose invokeSuspend fails loud with
-// NotSupportedException, never an SM containing an unsegmented suspendCall / invalid IL.
+// A suspend lambda must pass through the same try/catch/finally normalization as a named suspend function.
+// These shapes used to be v1 refusals. Keep them as execution regressions now that handlers and nested protected
+// regions are hoisted into resumable straight-line routes.
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
 import System.Threading.Tasks.Task
 import kotlin.clr.await
 import dotkt.support.blockOn
 
-fun corBUnsTouch() {}
+var corBUnsTrace = ""
 
 fun corBUnsFinallyLambda(): suspend () -> Unit = {
     try {
-        corBUnsTouch()
+        corBUnsTrace += "body;"
     } finally {
+        corBUnsTrace += "finally-before;"
         Task.Delay(1).await()
+        corBUnsTrace += "finally-after;"
     }
 }
 
 fun corBUnsCatchWithFinallyLambda(): suspend () -> Unit = {
     try {
+        corBUnsTrace += "try;"
         throw IllegalStateException("boom")
     } catch (e: IllegalStateException) {
+        corBUnsTrace += "catch-before;"
         Task.Delay(1).await()
+        corBUnsTrace += "catch-after;"
     } finally {
-        corBUnsTouch()
+        corBUnsTrace += "finally;"
     }
 }
 
 fun corBUnsNestedTryLambda(): suspend () -> Unit = {
     try {
+        corBUnsTrace += "outer-before;"
         try {
+            corBUnsTrace += "inner-before;"
             Task.Delay(1).await()
+            corBUnsTrace += "inner-after;"
         } catch (e: IllegalStateException) {
-            corBUnsTouch()
+            corBUnsTrace += "inner-catch;"
         }
+        corBUnsTrace += "outer-after;"
     } catch (e: Throwable) {
-        corBUnsTouch()
+        corBUnsTrace += "outer-catch;"
     }
 }
 
-fun corBUnsFailure(block: suspend () -> Unit): String {
-    try {
-        blockOn(block)
-    } catch (e: UnsupportedOperationException) {
-        return e.message ?: ""
-    }
-    return ""
-}
-
-class UnsupportedSuspendLambdaTests {
+class SuspendTryLambdaTests {
     @TestAttribute
-    fun unsupportedTryShapesFailLoudAtInvocation() {
-        assertTrue(corBUnsFailure(corBUnsFinallyLambda()).contains("catch/finally handler"))
-        assertTrue(corBUnsFailure(corBUnsCatchWithFinallyLambda()).contains("catch/finally handler"))
-        assertTrue(corBUnsFailure(corBUnsNestedTryLambda()).contains("nested inside another suspending try"))
+    fun tryShapesResumeInKotlinOrder() {
+        corBUnsTrace = ""
+        blockOn(corBUnsFinallyLambda())
+        assertTrue(corBUnsTrace == "body;finally-before;finally-after;")
+
+        corBUnsTrace = ""
+        blockOn(corBUnsCatchWithFinallyLambda())
+        assertTrue(corBUnsTrace == "try;catch-before;catch-after;finally;")
+
+        corBUnsTrace = ""
+        blockOn(corBUnsNestedTryLambda())
+        assertTrue(corBUnsTrace == "outer-before;inner-before;inner-after;outer-after;")
     }
 }

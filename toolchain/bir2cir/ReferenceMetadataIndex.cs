@@ -12,6 +12,7 @@ sealed partial class ReferenceMetadataIndex
     const string KotlinFileClassAttr = "DotKt.Runtime.CompilerServices.KotlinFileClassAttribute";
     const string KotlinFunctionAttr = "DotKt.Runtime.CompilerServices.KotlinFunctionAttribute";
     const string KotlinInlineAttr = "DotKt.Runtime.CompilerServices.KotlinInlineAttribute";
+    const string KotlinTypeAttr = "DotKt.Runtime.CompilerServices.KotlinTypeAttribute";
     const string DotKtAssemblyMarkerAttr = "System.Reflection.AssemblyMetadataAttribute";
     const string DotKtAssemblyMarkerKey = "DotKt.Compiler";
     const string DotKtAssemblyMarkerValue = "metadata-v1";
@@ -250,14 +251,19 @@ sealed partial class ReferenceMetadataIndex
     public string ArrayFactoryElemHint(string funName) => _arrayFactoryElemHints.GetValueOrDefault(funName);
 
     // The @KotlinDefault BIR splice map for a call's callee — (argPosition -> default-expression BIR-json). #146:
-    // OWNERLESS (method name + total emitted-call arity, extension receiver included) because DefaultArgSplice runs at
-    // PHASE 1, before the owner is attributed. Null when no callee carries @KotlinDefault at this name|arity, OR when
-    // several owners at that key DISAGREE on defaults (ambiguous — the splice loud-refuses, see [KotlinDefaultsAmbiguous]).
-    public Dictionary<int, string> KotlinDefaultsFor(string method, int paramCount) =>
-        method != null && _kotlinDefaultsOwnerless.TryGetValue(method + "|" + paramCount, out var m) ? m : null;
-    // True when name|arity is carried by >1 owner with CONFLICTING defaults (the splice must refuse, not guess).
-    public bool KotlinDefaultsAmbiguous(string method, int paramCount) =>
-        method != null && _kotlinDefaultsAmbiguous.Contains(method + "|" + paramCount);
+    // facadegen-injected calls already carry their exact file-facade `ownerType` in BIR, so use that structural identity
+    // first. Truly ownerless Kotlin calls retain the conservative name+arity index; conflicting owners remain ambiguous
+    // and are refused. Running this at phase 1 does not imply throwing away an owner kotc has already projected.
+    public Dictionary<int, string> KotlinDefaultsFor(string owner, string method, int paramCount)
+    {
+        if (method == null) return null;
+        if (owner != null)
+            return _kotlinDefaults.TryGetValue(owner + "|" + method + "|" + paramCount, out var exact) ? exact : null;
+        return _kotlinDefaultsOwnerless.TryGetValue(method + "|" + paramCount, out var ownerless) ? ownerless : null;
+    }
+    // True only for a genuinely ownerless name+arity carried by >1 owner with CONFLICTING defaults.
+    public bool KotlinDefaultsAmbiguous(string owner, string method, int paramCount) =>
+        owner == null && method != null && _kotlinDefaultsAmbiguous.Contains(method + "|" + paramCount);
 
     static bool SameDefaults(Dictionary<int, string> a, Dictionary<int, string> b)
     {
@@ -536,6 +542,116 @@ sealed partial class ReferenceMetadataIndex
     // arbitrary CLR library opted into a compiler-private ABI convention merely because its generic shape looks alike.
     public bool HasDotKtOwner(string ownerFqn) => _dotKtOwners.Contains(ownerFqn);
 
+    // The frontend deliberately preserves the Kotlin surface of a CLR static class as an `object`: an event read on
+    // that object therefore reaches BIR with an INSTANCE-looking receiver. Static/instance is nevertheless a CLR ABI
+    // fact. Resolve it from the referenced declaration here so ClrEventSubscriptionBinding can produce final CIR
+    // without asking ilemit to reinterpret the member. Refuse hierarchy collisions instead of selecting the first
+    // reflection result.
+    public bool TryClrEventIsStatic(string ownerFqn, string eventName, out bool isStatic)
+    {
+        isStatic = false;
+        if (ownerFqn == null || eventName == null) return false;
+        var type = ResolveNetType(BareOwnerFqn(ownerFqn), 0);
+        if (type == null) return false;
+
+        const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance
+            | BindingFlags.Static | BindingFlags.DeclaredOnly;
+        var matches = new List<bool>();
+        var seen = new HashSet<Type>();
+        var stack = new Stack<Type>();
+        stack.Push(type);
+        while (stack.Count > 0)
+        {
+            var cur = stack.Pop();
+            if (cur == null || !seen.Add(cur)) continue;
+            try
+            {
+                foreach (var ev in cur.GetEvents(Flags))
+                {
+                    if (ev.Name != eventName) continue;
+                    var accessor = ev.GetAddMethod(nonPublic: true) ?? ev.GetRemoveMethod(nonPublic: true);
+                    if (accessor != null) matches.Add(accessor.IsStatic);
+                }
+            }
+            catch { /* an incomplete metadata dependency cannot establish a unique declaration */ }
+            Type baseType = null;
+            try { baseType = cur.BaseType; } catch { }
+            if (baseType != null) stack.Push(baseType);
+            try { foreach (var i in cur.GetInterfaces()) stack.Push(i); } catch { }
+        }
+
+        if (matches.Count != 1) return false;
+        isStatic = matches[0];
+        return true;
+    }
+
+    // Resolve the physical member exposed by a referenced one-parameter generic's compiler-generated
+    // existential (`G$dotkt_star`).  A member whose signature mentions the owner's T cannot reuse the
+    // Kotlin name: on G<object> the erased bridge would collide with the real closed-generic slot, so
+    // FBoundStarProjectionErasure gives it a deterministic `$dotkt_star$<name>$<ordinal>` name.
+    //
+    // This is reference metadata, not a spelling guess about arbitrary assemblies: require the emitted
+    // existential owner to carry DotKt provenance, then select a unique name+arity slot from its actual
+    // member table.  The caller retains the Kotlin vocabulary until bir2cir asks this index for the
+    // concrete CIR owner/member pair.
+    public bool TryStarProjectionMember(string ownerFqn, string memberName, int paramCount,
+        out string erasedOwner, out string erasedMember)
+    {
+        erasedOwner = erasedMember = null;
+        if (ownerFqn == null || memberName == null) return false;
+        var candidateOwner = BareOwnerFqn(ownerFqn) + "$dotkt_star";
+        if (!HasDotKtOwner(candidateOwner)
+            || !TryMembersByBirOwner(candidateOwner, out var members)) return false;
+
+        var prefix = "$dotkt_star$" + memberName + "$";
+        var candidates = members
+            .Where(m => !m.IsStatic && m.ParamCount == paramCount
+                && (m.Name == memberName || m.Name.StartsWith(prefix, StringComparison.Ordinal)))
+            .Select(m => m.Name)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (candidates.Count != 1) return false;
+        erasedOwner = candidateOwner;
+        erasedMember = candidates[0];
+        return true;
+    }
+
+    // Recover the physical CLR signature hidden behind a KotlinType-restored existential surface. facadegen correctly
+    // presents `G<*>` to the frontend, but calls in CIR must use the referenced DLL's actual `G$dotkt_star` slots.
+    // Require a unique declaration by staticness/name/generic-arity/parameter-count and require that at least one
+    // signature position names a provenance-verified existential owner.
+    public bool TryExistentialAbiMember(string ownerToken, string memberName, bool isStatic, int methodArity,
+        int paramCount, out TypeNode[] parameters, out TypeNode result)
+    {
+        parameters = null;
+        result = null;
+        if (ownerToken == null || memberName == null
+            || !TryMembersByBirOwner(BareOwnerFqn(ownerToken), out var members)) return false;
+        var candidates = members.Where(m => m.IsStatic == isStatic && m.Name == memberName
+            && m.MethodArity == methodArity && m.ParamCount == paramCount
+            && m.ParamTypeNodes != null && m.ReturnType != null).ToList();
+        if (candidates.Count != 1) return false;
+        var match = candidates[0];
+        if (!ContainsExistential(match.ReturnType)
+            && !match.ParamTypeNodes.Any(ContainsExistential)) return false;
+        parameters = match.ParamTypeNodes;
+        result = match.ReturnType;
+        return true;
+    }
+
+    bool ContainsExistential(TypeNode type) => type switch
+    {
+        TypeNode.Fqn f => (f.Name.EndsWith("$dotkt_star", StringComparison.Ordinal) && HasDotKtOwner(f.Name))
+            || (f.Args?.Any(ContainsExistential) ?? false),
+        TypeNode.Nullable n => ContainsExistential(n.Of),
+        TypeNode.Oblivious o => ContainsExistential(o.Of),
+        TypeNode.Array a => ContainsExistential(a.Elem),
+        TypeNode.ByRef b => ContainsExistential(b.Of),
+        TypeNode.Fn fn => ContainsExistential(fn.Ret) || fn.Params.Any(ContainsExistential)
+            || (fn.Recv != null && ContainsExistential(fn.Recv)),
+        _ => false,
+    };
+
     // The @ClrProperty accessor binding for owner.member: its READ/WRITE access flags + the .NET property name. Routes the
     // call EXPLICITLY to clrPropGet/clrPropSet (no get_/set_ string-prefix sniff). Overload-disambiguated by arg count.
     public bool TryMemberProperty(string ownerFqn, string memberName, int argCount, out int access, out string name)
@@ -805,6 +921,39 @@ sealed partial class ReferenceMetadataIndex
                 ?? list.FirstOrDefault(b => b.Name == name && b.ReturnType != null))?.ReturnType;
     }
 
+    // Resolve the exact cross-module ABI boundary produced by
+    // UncheckedGenericCastReturnErasure: the referenced CLR method physically returns Object while its trusted
+    // [KotlinType] return carrier records the source-level generic type variable.  The caller supplies the already
+    // attributed file-class/member owner plus method shape; an ambiguous overload is deliberately not guessed.
+    // The returned node is the DECLARATION type (normally a method/type Tv), which the call-side pass substitutes with
+    // the call's owner/type arguments before accepting the frontend's `sty` as the CIR result conversion.
+    public bool TryUncheckedGenericCastReturn(string ownerFqn, string name, bool isStatic, int argCount,
+        int methodArity, out TypeNode kotlinReturn)
+    {
+        kotlinReturn = null;
+        if (ownerFqn == null || name == null
+            || !_membersByOwner.TryGetValue(BareOwnerFqn(ownerFqn), out var list))
+            return false;
+        var shapeMatches = list.Where(m =>
+                m.Name == name
+                && m.IsStatic == isStatic
+                && m.ParamCount == argCount
+                && m.MethodArity == methodArity)
+            .ToArray();
+        // The BIR signature is the Kotlin surface and can intentionally differ from the physical one (a suspend
+        // function parameter is Object in CLR), so do not fake an equality comparison between vocabularies.  Refuse
+        // every same-name/same-shape overload set instead; a unique declaration is the only authoritative binding.
+        if (shapeMatches.Length != 1
+            || !IsObjectType(shapeMatches[0].ReturnType)
+            || shapeMatches[0].KotlinReturnType is not TypeNode.Tv)
+            return false;
+        kotlinReturn = shapeMatches[0].KotlinReturnType;
+        return true;
+    }
+
+    static bool IsObjectType(TypeNode type) =>
+        type is TypeNode.Fqn f && f.Name is "System.Object" or "object" or "kotlin.Any";
+
     // The declared RETURN type of a top-level fun (a `callStatic owner=null`), resolved via its file-class owner then the
     // member's return type. `recvKey` = the call's first sig-param bare owner (disambiguates overloads across file-classes);
     // `argCount` = the sig's total param count (receiver + args), matching the ref.dll static's ParamCount. null if unresolved.
@@ -870,6 +1019,23 @@ sealed partial class ReferenceMetadataIndex
         return list.Count(m => !m.IsStatic && m.Name == memberName && m.MethodArity == methodArity
             && m.ParamTypeNodes is { } ps && ps.Length == signature.Count
             && ps.Select((p, i) => p == signature[i]).All(x => x)) == 1;
+    }
+
+    // Whether the exact referenced declaration is virtual. When BIR omitted a declaration signature (common for
+    // nullary property accessors), accept only a unique name/method-arity/parameter-count match. This is a CLR
+    // dispatch fact consumed by bir2cir; ilemit must not rediscover it from reflection while emitting.
+    public bool DeclaresVirtualInstanceMember(string ownerToken, string memberName, int methodArity,
+        IReadOnlyList<TypeNode> signature, int paramCount)
+    {
+        if (ownerToken == null || memberName == null || IsAliasedOwner(ownerToken)
+            || !TryMembersByBirOwner(BareOwnerFqn(ownerToken), out var list)) return false;
+        var candidates = list.Where(m => !m.IsStatic && m.Name == memberName
+            && m.MethodArity == methodArity && m.ParamCount == paramCount);
+        if (signature != null)
+            candidates = candidates.Where(m => m.ParamTypeNodes is { } ps && ps.Length == signature.Count
+                && ps.Select((p, i) => p == signature[i]).All(x => x));
+        var matches = candidates.ToList();
+        return matches.Count == 1 && matches[0].IsVirtual;
     }
 
     // Return the declaration-shape of a referenced owner, normalized to BIR's dotted nested-type
@@ -1078,7 +1244,9 @@ sealed partial class ReferenceMetadataIndex
                             convTo,
                             TypeNodeOf(method.ReturnType),
                             method.GetGenericArguments().Length,
-                            method.GetParameters().Select(p => DeclarationTypeNode(p.ParameterType)).ToArray()));
+                            method.GetParameters().Select(p => DeclarationTypeNode(p.ParameterType)).ToArray(),
+                            method.IsVirtual,
+                            dotKtAuthored ? KotlinTypeOf(method.ReturnParameter.GetCustomAttributesData(), method.DeclaringType?.Assembly) : null));
                         // [KotlinInline] raw-BIR carrier (#71/#75 S1): decode the versioned carrier now (the codec is
                         // BirCarrier, shared) and key it owner|name|pc|ga so InlineSplice can splice this injected inline
                         // fn's body at a cross-module call site. A malformed / pre-S1-shaped payload is swallowed (no
@@ -1224,6 +1392,35 @@ sealed partial class ReferenceMetadataIndex
 
     static bool HasAttribute(IList<CustomAttributeData> attrs, string fullName) =>
         attrs.Any(a => a.AttributeType.FullName == fullName);
+
+    // Decode a compiler-owned round-trip [KotlinType] carrier.  Full-name equality is insufficient: a foreign
+    // assembly may define a lookalike.  The containing assembly has already passed the DotKt marker + generated
+    // carrier test; additionally require this embedded attribute type to come from that assembly and itself carry
+    // [CompilerGenerated], matching facadegen's provenance rule.
+    static TypeNode KotlinTypeOf(IList<CustomAttributeData> attrs, Assembly declaringAssembly)
+    {
+        if (declaringAssembly == null) return null;
+        foreach (var cad in attrs)
+        {
+            try
+            {
+                if (cad.AttributeType.FullName != KotlinTypeAttr
+                    || cad.AttributeType.Assembly != declaringAssembly
+                    || !HasAttribute(cad.AttributeType.GetCustomAttributesData(), CompilerGeneratedAttr)
+                    || cad.ConstructorArguments.Count != 2
+                    || cad.ConstructorArguments[0].Value is not string version)
+                    continue;
+                var content = ReadByteArrayArg(cad.ConstructorArguments[1]);
+                return TypeNode.Parse(BirCarrier.DecodeBody(version, content).ToJsonString());
+            }
+            catch
+            {
+                // A malformed carrier is not authority to alter the CLR call shape.  Ignore it and retain the ordinary
+                // reflected Object return; the downstream verifier will surface any actually required conversion.
+            }
+        }
+        return null;
+    }
 
     // The first constructor string argument of the attribute `fullName` (e.g. @ClrCollectionFactory("list") -> "list"),
     // or null when the attribute is absent / carries no string arg. Used for the factory-kind markers.
@@ -1644,4 +1841,4 @@ sealed class ReferenceDotKtMetadata
 // NO consumer reads it yet — bundle 6 wires it.
 sealed record ReferenceTypeShape(int TypeParamCount, string Kind, TypeNode.Fqn Base, TypeNode.Fqn[] Interfaces);
 
-sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, string[] ParamTypes = null, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, string ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null);
+sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, string[] ParamTypes = null, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, string ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null);

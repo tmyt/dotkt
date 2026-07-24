@@ -276,6 +276,33 @@ sealed partial class Emitter
         ReferenceEquals(body, iface) || body == iface
         || (body.Name == iface.Name && (body.Namespace ?? "") == (iface.Namespace ?? ""));
 
+    // Consume bir2cir's resolved `clrInterfaceImpls` directive. Matching is structural against the already-substituted
+    // interface spec and parameter signature; no assignability, hierarchy, or covariance decision occurs here.
+    MethodBuilder FindExplicitInterfaceBridge(TypeInfo ti, DotKt.Bir.TypeNode.Fqn ifaceSpec, string member, string slotSig)
+    {
+        if (ti.Def.ValueKind != JsonValueKind.Object || !ti.Def.TryGetProperty("methods", out var methods)) return null;
+        var ifaceKey = SigCanon(ifaceSpec);
+        foreach (var method in methods.EnumerateArray())
+        {
+            if (!method.TryGetProperty("clrInterfaceImpls", out var impls)
+                || !method.TryGetProperty("name", out var bridgeNameNode)) continue;
+            foreach (var impl in impls.EnumerateArray())
+            {
+                if (!impl.TryGetProperty("owner", out var ownerNode)
+                    || ReadFqn(ownerNode) is not DotKt.Bir.TypeNode.Fqn owner
+                    || SigCanon(owner) != ifaceKey
+                    || !impl.TryGetProperty("member", out var memberNode)
+                    || memberNode.GetString() != member
+                    || !impl.TryGetProperty("params", out var ps)) continue;
+                var describedSig = member + "(" + string.Join(",", ps.EnumerateArray()
+                    .Select(p => SigCanon(DotKt.Bir.TypeNode.Read(p)))) + ")";
+                if (describedSig != slotSig) continue;
+                return ti.Methods.TryGetValue(bridgeNameNode.GetString(), out var bridge) ? bridge : null;
+            }
+        }
+        return null;
+    }
+
     // A STATIC method declared on a GENERIC emitted class (a Kotlin companion fun of a generic class —
     // `Result<T>`'s `fun <T> success(value: T)` emitted as a static generic method on `Result`1`) resolved via a
     // bare owner spec is an open MethodBuilder. Emitting a call with that open-typedef parent from ANOTHER class

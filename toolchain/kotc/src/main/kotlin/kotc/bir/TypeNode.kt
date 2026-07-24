@@ -24,7 +24,7 @@ sealed class TypeNode {
      */
     data class Tv(val scope: String, val i: Int) : TypeNode()
 
-    /** `star`: a Kotlin `*` projection. Metadata/frontend-only; backend BIR keeps its existing `kotlin.Any` erasure. */
+    /** `star`: a Kotlin `*` projection. BIR preserves it; bir2cir chooses an existential CLR representation. */
     data object Star : TypeNode()
 
     /** `fn`: a function type; [suspend] is a flag, [recv] is the extension receiver (subsumes func:/sfunc:). */

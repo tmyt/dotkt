@@ -248,6 +248,19 @@ internal fun BirEmitter.injectedMetaDefaults(callee: org.jetbrains.kotlin.ir.dec
 		else -> null
 	}
 
+/** The non-constant Kotlin-default carrier slots restored by facadegen for an injected constructor/top-level function.
+ * Unlike [carriesKotlinDefault], this survives the bodies-skipped dependency IR, where declaration-origin/default-body
+ * details are intentionally incomplete. */
+internal fun injectedKotlinDefaultSlots(callee: org.jetbrains.kotlin.ir.declarations.IrFunction, regCount: Int): List<Boolean>? =
+	when (callee) {
+		is org.jetbrains.kotlin.ir.declarations.IrConstructor ->
+			(callee.parent as? IrClass)?.classId?.let { kotc.frontend.clrInjectedCtorKotlinDefaultSlots(it, regCount) }
+		is org.jetbrains.kotlin.ir.declarations.IrSimpleFunction ->
+			(callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)
+				?.let { kotc.frontend.clrInjectedTopLevelKotlinDefaultSlots(org.jetbrains.kotlin.name.CallableId(it.packageFqName, callee.name), regCount) }
+		else -> null
+	}
+
 /** #146: the regular-arg BIR STRINGS for a call to a facadegen-injected TOP-LEVEL function, filling an OMITTED default:
  *  a metadata-representable CONSTANT is synthesized inline (#134, [metaConstArg]); a NON-CONSTANT default (`= {}`, a
  *  call, any expr the metadata can't carry) becomes a POSITIONAL `defaultArg` placeholder — bir2cir's DefaultArgSplice
@@ -260,6 +273,7 @@ internal fun BirEmitter.filledInjectedArgs(call: org.jetbrains.kotlin.ir.express
 	val callee = (call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction) ?: return emptyList()
 	val regCount = callee.parameters.count { it.kind == IrParameterKind.Regular }
 	val metaDefaults = injectedMetaDefaults(callee, regCount)
+	val kotlinDefaultSlots = injectedKotlinDefaultSlots(callee, regCount)
 	val carries = (callee as? org.jetbrains.kotlin.ir.declarations.IrSimpleFunction)?.let { carriesKotlinDefault(it) } ?: false
 	val out = ArrayList<String>()
 	var regIdx = -1
@@ -271,7 +285,10 @@ internal fun BirEmitter.filledInjectedArgs(call: org.jetbrains.kotlin.ir.express
 		val def = p.defaultValue?.expression ?: return@forEachIndexed
 		if (def is org.jetbrains.kotlin.ir.expressions.IrErrorExpression) {
 			metaDefaults?.getOrNull(regIdx)?.let { metaConstArg(it, p.type) }?.let { out.add(expr(it)); return@forEachIndexed }
-			if (carries) { out.add(defaultArgPlaceholder); return@forEachIndexed }
+			if (kotlinDefaultSlots?.getOrNull(regIdx) == true || carries) {
+				out.add(defaultArgPlaceholder)
+				return@forEachIndexed
+			}
 			val laterArgProvided = (i + 1 until call.arguments.size).any { j ->
 				call.arguments[j] != null && callee.parameters[j].kind == IrParameterKind.Regular
 			}
@@ -819,7 +836,13 @@ internal fun BirEmitter.call(call: IrCall): String {
 	val clrType = clrTypeName?.let { TypeNode.Fqn(it) }
 	if (clrType != null) {
 		val recv = dispatchReceiver(call)
-		val isStatic = recv == null || recv is IrGetObjectValue
+		// A synthesized companion of a normal injected .NET class represents that class's CLR statics. A genuine Kotlin
+		// `object`, however, is an instance singleton: keep its IrGetObjectValue receiver in BIR (`Owner.INSTANCE`) and
+		// let bir2cir decide whether the referenced owner is actually a CLR static class or an emitted Kotlin object.
+		// Treating every object receiver as CLR static here erased the receiver of cross-module `Dispatchers.Default`.
+		val injectedStaticCompanion = declaringClass?.isCompanion == true &&
+			(declaringClass.parent as? IrClass)?.let { clrName(it) } != null
+		val isStatic = recv == null || injectedStaticCompanion
 		// A NON-static callInstance emitted here is normally reshaped to a `clrInstance` by bir2cir's
 		// NetInteropBinding (which resolves the owner off the .NET refs) — where `virtual` is irrelevant. But a
 		// DotKt library consumed AS KOTLIN whose owner bir2cir cannot resolve (netType == null -> left un-reshaped)
@@ -835,12 +858,12 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// The REAL .NET declaring type (resolve the fake override; `declaringClass` would be the subclass).
 		val declClass = (callee.takeIf { it.isFakeOverride }?.resolveFakeOverride()?.parent as? IrClass) ?: declaringClass
 		val memberType = when {
-			isStatic || recv == null -> clrType
+			isStatic -> clrType
 			recvClass != null && isExternalNetType(recvClass) -> birType(recv.type)
 			// A type-PARAM receiver (`destination: C` where `C : MutableCollection<T>`, e.g. filterTo's body) has no
 			// recvClass -> use the type param's @Clr-bound BOUND with its args (clrg:ICollection[T]), not the raw
 			// clrName (System.Collections.Generic.ICollection without `1 -> ResolveType fails).
-			else -> (recvClass?.superTypes ?: (recv?.type?.classifierOrNull?.owner as? org.jetbrains.kotlin.ir.declarations.IrTypeParameter)?.superTypes)
+			else -> (recvClass?.superTypes ?: (recv.type.classifierOrNull?.owner as? org.jetbrains.kotlin.ir.declarations.IrTypeParameter)?.superTypes)
 				?.firstOrNull { it.classifierOrNull?.owner == declClass }?.let { birType(it) } ?: clrType
 		}
 		// A .NET event is NOT rewritten to an `add_<E>`/`remove_<E>` call here. It is surfaced as a
@@ -1565,7 +1588,9 @@ internal fun BirEmitter.plainInjectedTopLevelCall(call: IrCall, callee: IrSimple
 		val targs = callee.typeParameters.indices.map { call.typeArguments.getOrNull(it) }
 		if (targs.all { it != null }) {
 			// An extension fun: its receiver is the .NET method's first param (`__self`), so prepend it to the args.
-			val a = listOfNotNull(extRecv) + filledArgExprs(call)   // fill omitted default args (trailing/named-middle/reordered)
+			// Keep injected args as BIR strings: a non-constant cross-module default has no honest IrExpression and is
+			// represented by a positional `defaultArg` for bir2cir to splice from `[KotlinDefault]`.
+			val a = listOfNotNull(extRecv?.let { expr(it) }) + filledInjectedArgs(call)
 			val taJson = targs.joinToString(",") { birType(it!!).toJson() }
 			// `shapeTypes` must line up with `a` (= extension receiver, then regular args), so a GENERIC extension
 			// fun's `__self` receiver type is included — else bir2cir's by-shape overload pick finds 0 params.
@@ -1574,7 +1599,7 @@ internal fun BirEmitter.plainInjectedTopLevelCall(call: IrCall, callee: IrSimple
 			val shapeTypes = shapeParams.joinToString(",") { birType(it.type).toJson() }
 			// A2 (#61): a PLAIN static call by identity carrying the generic facts (typeArgs + shapeTypes);
 			// bir2cir's NetInteropBinding resolves the file-class owner off the refs and shapes it to clrGenericStatic.
-			return """{"k":"callStatic","ownerType":${fqnJson(fileClass)},"method":${str(name)},"typeArgs":[$taJson],"shapeTypes":[$shapeTypes],"args":[${a.joinToString(",") { expr(it) }}]${suspendCallTag(callee)}}"""
+			return """{"k":"callStatic","ownerType":${fqnJson(fileClass)},"method":${str(name)},"typeArgs":[$taJson],"shapeTypes":[$shapeTypes],"args":[${a.joinToString(",")}]${suspendCallTag(callee)}}"""
 		}
 	}
 	// A2 (#61): a PLAIN static call by identity to the referenced .NET file class; bir2cir's NetInteropBinding

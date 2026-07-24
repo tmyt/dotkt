@@ -43,7 +43,131 @@ static class InheritedMemberOwnerBinding
     {
         var rootList = roots.ToList();
         var types = CollectTypes(rootList);
+        foreach (var root in rootList) BindConstrainedReceivers(root, types);
         foreach (var root in rootList) Walk(root, types, refs);
+    }
+
+    // `fun <N : Node<N>> N.close() = markAsClosed()` has receiver static type !!N, while faithful BIR names the
+    // declaration classifier as bare `Node` (no CLR construction decision in kotc). A MemberRef on open `Node<>`
+    // is invalid. Close it from N's lexical bound here, before the ordinary inherited-owner walk.
+    static void BindConstrainedReceivers(JsonNode root, Dictionary<string, TypeDef> types)
+    {
+        if (root is not JsonObject file) return;
+        var noTypeParams = new JsonArray();
+        if (file["methods"] is JsonArray methods)
+            foreach (var method in methods.OfType<JsonObject>())
+                BindConstrainedMethod(method, noTypeParams, types);
+        if (file["types"] is JsonArray declared)
+            foreach (var type in declared.OfType<JsonObject>())
+                BindConstrainedType(type, types);
+    }
+
+    static void BindConstrainedType(JsonObject type, Dictionary<string, TypeDef> types)
+    {
+        var typeParams = type["typeParams"] as JsonArray ?? new JsonArray();
+        if (type["ctors"] is JsonArray ctors)
+            foreach (var ctor in ctors.OfType<JsonObject>())
+                BindConstrainedMethod(ctor, typeParams, types);
+        if (type["methods"] is JsonArray methods)
+            foreach (var method in methods.OfType<JsonObject>())
+                BindConstrainedMethod(method, typeParams, types);
+        if (type["types"] is JsonArray nested)
+            foreach (var child in nested.OfType<JsonObject>())
+                BindConstrainedType(child, types);
+    }
+
+    static void BindConstrainedMethod(
+        JsonObject method,
+        JsonArray typeParams,
+        Dictionary<string, TypeDef> types)
+    {
+        var methodParams = method["typeParams"] as JsonArray ?? new JsonArray();
+        var locals = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
+        var ambiguous = new HashSet<string>(StringComparer.Ordinal);
+
+        void Record(JsonObject declaration)
+        {
+            if (Str(declaration["name"]) is not string name || TypeJson.Read(declaration["type"]) is not TypeNode type)
+                return;
+            if (locals.TryGetValue(name, out var prior) && prior != type)
+            {
+                ambiguous.Add(name);
+                locals.Remove(name);
+            }
+            else if (!ambiguous.Contains(name))
+                locals[name] = type;
+        }
+
+        if (method["params"] is JsonArray parameters)
+            foreach (var p in parameters.OfType<JsonObject>()) Record(p);
+        void Collect(JsonNode node)
+        {
+            switch (node)
+            {
+                case JsonObject o:
+                    if (Str(o["k"]) == "var") Record(o);
+                    foreach (var kv in o)
+                        if (kv.Value != null) Collect(kv.Value);
+                    break;
+                case JsonArray a:
+                    foreach (var item in a)
+                        if (item != null) Collect(item);
+                    break;
+            }
+        }
+        if (method["body"] is JsonNode body) Collect(body);
+
+        void Bind(JsonNode node)
+        {
+            switch (node)
+            {
+                case JsonObject call:
+                    if (Str(call["k"]) == "callInstance"
+                        && TypeJson.Read(call["ownerType"]) is TypeNode.Fqn { Args: null } openOwner
+                        && types.TryGetValue(openOwner.Name, out var ownerDef)
+                        && ownerDef.TypeParamCount > 0
+                        && call["recv"] is JsonObject recv
+                        && Str(recv["k"]) == "local"
+                        && Str(recv["name"]) is string localName
+                        && locals.TryGetValue(localName, out var localType)
+                        && localType is TypeNode.Tv tv
+                        && ConstraintAt(tv, openOwner.Name, typeParams, methodParams) is TypeNode.Fqn bound
+                        && bound.Args?.Length == ownerDef.TypeParamCount)
+                    {
+                        // A !!T receiver is not a Node<T> reference on the evaluation stack. Even with the exact
+                        // constructed MemberRef, ECMA-335 requires an address plus `constrained. !!T; callvirt`.
+                        // Author that dispatch explicitly in CIR; ilemit emits this node one-to-one.
+                        call["k"] = "constrainedCall";
+                        call["recvType"] = TypeJson.Write(tv);
+                        call["iface"] = TypeJson.Write(bound);
+                        if (call["ret"] == null && call["dynRet"] is JsonNode dynRet)
+                            call["ret"] = dynRet.DeepClone();
+                        call.Remove("ownerType");
+                        call.Remove("virtual");
+                        call.Remove("sig");
+                        call.Remove("dynRet");
+                    }
+                    foreach (var kv in call)
+                        if (kv.Value != null) Bind(kv.Value);
+                    break;
+                case JsonArray a:
+                    foreach (var item in a)
+                        if (item != null) Bind(item);
+                    break;
+            }
+        }
+        if (method["body"] is JsonNode methodBody) Bind(methodBody);
+    }
+
+    static TypeNode ConstraintAt(TypeNode.Tv tv, string ownerName, JsonArray typeParams, JsonArray methodParams)
+    {
+        var source = tv.Scope == "type" ? typeParams : tv.Scope == "method" ? methodParams : null;
+        if (source == null || tv.I < 0 || tv.I >= source.Count || source[tv.I] is not JsonObject descriptor
+            || descriptor["constraints"] is not JsonArray constraints)
+            return null;
+        var fqns = constraints.Select(TypeJson.Read).OfType<TypeNode.Fqn>()
+            .Where(f => f.Name == ownerName).ToList();
+        return fqns.Count == 1 ? fqns[0] : null;
     }
 
     static Dictionary<string, TypeDef> CollectTypes(IEnumerable<JsonNode> roots)
@@ -92,6 +216,10 @@ static class InheritedMemberOwnerBinding
     {
         var kind = Str(call["k"]);
         if (kind is not ("callInstance" or "newBoundDelegate" or "newBoundClrDelegate")) return;
+        // Some earlier bir2cir passes synthesize a call whose CLR declaration owner and dispatch have already been
+        // selected. Rebinding such a call from its receiver hierarchy would undo that decision (in particular, an
+        // exact covariant-interface bridge would call its own interface slot and recurse).
+        if (Bool(call["clrOwnerResolved"])) return;
         // An explicit Kotlin `super` call already names the exact non-virtual declaration owner selected by the
         // frontend.  Walking farther up the hierarchy is not inherited-member binding: it changes
         // `C.super<B>.m()` into `A.m()` when both B and A declare the same slot, skipping B's implementation.
@@ -102,9 +230,31 @@ static class InheritedMemberOwnerBinding
             || (!types.ContainsKey(owner.Name) && !refs.TryReferenceTypeShape(owner.Name, out _, out _, out _, out _))) return;
         if (Str(call["method"]) is not string method) return;
 
-        var sig = ReadTypes(call["sig"] as JsonArray);
-        if (sig == null) return; // exact overload binding requires the declaration signature
         var methodArity = (call["typeArgs"] as JsonArray)?.Count ?? 0;
+        var sig = ReadTypes(call["sig"] as JsonArray);
+        var paramCount = (call["args"] as JsonArray)?.Count ?? -1;
+
+        // A call can already name its exact declaration owner yet still lack the CLR dispatch bit. This is especially
+        // visible cross-module when a Kotlin-final accessor implements an existential interface slot and is therefore
+        // virtual in metadata. Consume that declaration fact here. With no BIR signature, require a unique
+        // name/method-arity/parameter-count declaration; never guess among overloads.
+        if (paramCount >= 0
+            && (DeclaresVirtual(types.GetValueOrDefault(owner.Name), method, methodArity, sig, paramCount)
+                || refs.DeclaresVirtualInstanceMember(owner.Name, method, methodArity, sig, paramCount)))
+            call["virtual"] = true;
+
+        if (sig == null) return; // inherited owner binding requires the declaration signature
+
+        // The static receiver owner can itself declare the exact slot while also carrying the Kotlin override closure.
+        // That closure records semantic ancestry; it does not ask CIR to call the base/interface declaration. Retargeting
+        // a covariant concrete method (`Derived.m(): Derived`) to its interface slot (`Base.m(): Base`) changes the
+        // physical return type and makes an immediately-narrow consumer unverifiable. Prefer the real declaration on
+        // the current owner. A local fake override is not emitted as a slot, so it deliberately falls through to the
+        // hierarchy search.
+        if (DeclaresExact(types.GetValueOrDefault(owner.Name), method, methodArity, sig, owner.Args)
+            || refs.DeclaresExactInstanceMember(owner.Name, method, methodArity, sig))
+            return;
+
         var hierarchy = ReachableTypes(owner, types, refs).ToList();
 
         // Prefer the frontend's semantic override/declaration fact, but still verify that
@@ -202,6 +352,7 @@ static class InheritedMemberOwnerBinding
         foreach (var method in def.Methods.OfType<JsonObject>())
         {
             if (Str(method["name"]) != name) continue;
+            if (Bool(method["fakeOverride"])) continue;
             if (((method["typeParams"] as JsonArray)?.Count ?? 0) != methodArity) continue;
             if (method["params"] is not JsonArray ps || ps.Count != callSig.Length) continue;
             var exact = true;
@@ -221,6 +372,21 @@ static class InheritedMemberOwnerBinding
             if (exact) matches++;
         }
         return matches == 1;
+    }
+
+    static bool DeclaresVirtual(TypeDef def, string name, int methodArity, TypeNode[] callSig, int paramCount)
+    {
+        if (def?.Methods == null) return false;
+        var matches = def.Methods.OfType<JsonObject>()
+            .Where(method => Str(method["name"]) == name
+                && ((method["typeParams"] as JsonArray)?.Count ?? 0) == methodArity
+                && method["params"] is JsonArray ps && ps.Count == paramCount)
+            .Where(method => callSig == null || callSig.Length == paramCount
+                && method["params"] is JsonArray ps
+                && ps.Select((p, i) => p is JsonObject parameter
+                    && TypeJson.Read(parameter["type"]) == callSig[i]).All(x => x))
+            .ToList();
+        return matches.Count == 1 && Bool(matches[0]["virtual"]);
     }
 
     static TypeNode[] ReadTypes(JsonArray array)

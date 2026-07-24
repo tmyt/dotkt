@@ -46,7 +46,49 @@ static class ContinuationErasure
     const string Cont = "kotlin.coroutines.Continuation";
     const string ResultFqn = "kotlin.Result";
 
-    public static void Apply(JsonNode root) => Walk(root, inResumeWith: false);
+    public static void Apply(JsonNode root)
+    {
+        RecordDeclarationSurfaces(root);
+        Walk(root, inResumeWith: false);
+    }
+
+    // The CLR coroutine ABI is deliberately monomorphic, but a referenced DLL must still re-expose the source-level
+    // Kotlin signature. Preserve every declaration position changed by this pass as a pure TypeNode fact. Later,
+    // RoundtripMetadata turns the fact into [KotlinType]; facadegen restores it before FIR sees the declaration.
+    static void RecordDeclarationSurfaces(JsonNode node)
+    {
+        switch (node)
+        {
+            case JsonObject obj:
+            {
+                // Method declaration (call/expression nodes carry `k`).
+                if (obj["k"] == null && obj["name"] is JsonValue && obj["params"] is JsonArray ps)
+                {
+                    foreach (var p in ps.OfType<JsonObject>())
+                        RecordSlot(p, "type", "kotlinType");
+                    RecordSlot(obj, "ret", "retKotlinType");
+                }
+                // Fields and properties use the same `type` slot. Recording an unchanged slot is avoided by RecordSlot.
+                if (obj["k"] == null && obj["type"] != null)
+                    RecordSlot(obj, "type", "kotlinType");
+                foreach (var child in obj.Select(kv => kv.Value).Where(v => v != null).ToList())
+                    RecordDeclarationSurfaces(child);
+                break;
+            }
+            case JsonArray arr:
+                foreach (var child in arr.Where(v => v != null).ToList())
+                    RecordDeclarationSurfaces(child);
+                break;
+        }
+    }
+
+    static void RecordSlot(JsonObject owner, string slot, string fact)
+    {
+        if (TypeJson.Read(owner[slot]) is not TypeNode original) return;
+        var erased = EraseType(original);
+        if (TypeNode.ToJson(original) != TypeNode.ToJson(erased))
+            owner[fact] = TypeNode.ToJson(original);
+    }
 
     static void Walk(JsonNode node, bool inResumeWith)
     {

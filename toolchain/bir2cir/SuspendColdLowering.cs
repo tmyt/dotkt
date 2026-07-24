@@ -98,10 +98,14 @@ static partial class SuspendColdLowering
     static readonly TypeNode UnitTn = new TypeNode.Fqn("kotlin.Unit");
     static readonly TypeNode ContAnyTn = new TypeNode.Fqn("kotlin.coroutines.Continuation", new TypeNode[] { new TypeNode.Fqn("kotlin.Any") });
     static readonly TypeNode ContUnitTn = new TypeNode.Fqn("kotlin.coroutines.Continuation", new TypeNode[] { new TypeNode.Fqn("kotlin.Unit") });
+    // Physical existential view synthesized by FBoundStarProjectionErasure for Continuation<*>. BaseContinuationImpl's
+    // create overloads use this CLR slot; their Kotlin surface remains Continuation<*> via [KotlinType].
+    static readonly TypeNode ContStarTn = new TypeNode.Fqn("kotlin.coroutines.Continuation$dotkt_star");
     static JsonNode Tn(string fqn) => TypeJson.Fqn(fqn);
     static JsonNode Tw(TypeNode t) => TypeJson.Write(t);
     static JsonNode ContAny() => TypeJson.Write(ContAnyTn);
     static JsonNode ContUnit() => TypeJson.Write(ContUnitTn);
+    static JsonNode ContStar() => TypeJson.Write(ContStarTn);
     static bool IsUnitTn(TypeNode t) => t is TypeNode.Fqn { Args: null, Name: "void" or "kotlin.Unit" };
     static bool IsAnyTn(TypeNode t) => t is TypeNode.Fqn { Args: null, Name: "kotlin.Any" };
     // #151 — the suspend RESULT type is `kotlin.Nothing` (`suspend fun f(): Nothing`, incl. `Nothing?` — the outer `?`
@@ -592,9 +596,9 @@ static partial class SuspendColdLowering
     // --- segmentability ------------------------------------------------------------------------------
     // Is every suspension point in a position the straight-line SM can lower? Returns null when YES (segmentable),
     // else a short human-readable REFUSAL REASON naming the first unsupported shape (the classifier stubs the fun
-    // with a call-time throw carrying this reason + warns). Refuses: suspension in a catch/finally handler, a
-    // suspending try nested inside another suspending try (the two-level dispatch is single-level v1), and a
-    // suspension buried in a disallowed lambda/closure position. Member/cross-assembly suspend CALLS are always
+    // with a call-time throw carrying this reason + warns). Refuses a suspension buried in a disallowed
+    // lambda/closure position. Catch/finally handlers and nested protected regions are normalized into resumable
+    // flat routes before segmentation. Member/cross-assembly suspend CALLS are always
     // allowed — their cold-shape resolvability holds by construction (R1), not by a check here.
     static string SuspensionRefusalReason(JsonNode node, bool inHandler, int tryDepth)
     {
@@ -641,10 +645,6 @@ static partial class SuspendColdLowering
                 if (k != null && LambdaKinds.Contains(k)
                     && !(k == "forEachInline" && o["body"] is JsonNode feBody && HasOwnSuspension(feBody)))
                     return $"suspension buried in an unsupported '{k}' lambda/closure position";
-                if (o.ContainsKey("suspendCall") && Bool(o["suspendCall"]))
-                {
-                    if (inHandler) return "suspension inside a catch/finally handler (v1)";
-                }
                 if (k == "try")
                 {
                     // Loop-aware: HasOwnSuspension is forEachInline-BLIND (LambdaKinds), so a try whose body's only
@@ -652,20 +652,15 @@ static partial class SuspendColdLowering
                     // nested-suspending-try refusal would then be bypassed and Build would emit a branch INTO the outer
                     // protected region (InvalidProgramException). HasLoopBorneSuspension sees through forEachInline.
                     var bodyHasSusp = o["body"] != null && HasLoopBorneSuspension(o["body"]);
-                    if (bodyHasSusp && tryDepth > 0) return "a suspending try nested inside another suspending try (v1)";
                     if (SuspensionRefusalReason(o["body"] ?? JsonValue.Create(0), inHandler, bodyHasSusp ? tryDepth + 1 : tryDepth) is string tbr)
                         return tbr;
-                    // #78 — a suspension inside a CATCH handler is supported when the try is HOISTABLE (finally-free):
-                    // HoistSuspendingCatches lifts the handler OUT of the CLR catch clause into gated straight-line code
-                    // the SM can segment. Recurse the catch body with the try's OWN `inHandler` (the handler runs OUTSIDE
-                    // this try once hoisted), not the hardcoded `true`. A try WITH a finally is NOT hoistable (finally
-                    // ordering would flip) — its catch stays `inHandler:true` (suspension refused).
-                    var catchInHandler = IsHoistableTry(o) ? inHandler : true;
+                    // #78 — HoistSuspendingCatches moves suspending catch/finally handlers out of CLR handler
+                    // clauses before segmentation. Recurse here only to retain the other structural refusals.
                     if (o["catches"] is JsonArray cs)
                         foreach (var c in cs)
-                            if (c is JsonObject co && SuspensionRefusalReason(co["body"] ?? JsonValue.Create(0), catchInHandler, tryDepth) is string cbr)
+                            if (c is JsonObject co && SuspensionRefusalReason(co["body"] ?? JsonValue.Create(0), inHandler, tryDepth) is string cbr)
                                 return cbr;
-                    if (o["finally"] != null && SuspensionRefusalReason(o["finally"], inHandler: true, tryDepth) is string fbr)
+                    if (o["finally"] != null && SuspensionRefusalReason(o["finally"], inHandler, tryDepth) is string fbr)
                         return fbr;
                     return null;
                 }
@@ -919,6 +914,39 @@ static partial class SuspendColdLowering
 
         // The first `n` type-scope generic params by flattened index (Tv{type,0..n-1}).
         static TypeNode[] TypeTvs(int n) => Enumerable.Range(0, n).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray();
+
+        // A named suspend method's executable body moves from a generic METHOD into a synthesized generic TYPE.
+        // Every lexical `!!i` in that moved declaration (including nested newSam/newClosure type arguments) must
+        // therefore become the SM's `!ownerArity+i`. The same move applies to the method type-parameter constraints:
+        // without carrying `C : MutableCollection<T>` onto the SM, constructing a nested `Sam<T,C>` is rejected by
+        // the CLR even when the eventual closed C satisfies the Kotlin constraint.
+        static void RebindMethodTypeVariablesToSm(JsonNode node, int ownerArity)
+        {
+            switch (node)
+            {
+                case JsonObject o:
+                    if (Str(o["t"]) == "tv" && Str(o["scope"]) == "method"
+                        && o["i"] is JsonValue iv && iv.TryGetValue<int>(out var index))
+                    {
+                        o["scope"] = "type";
+                        o["i"] = ownerArity + index;
+                        return;
+                    }
+                    foreach (var kv in o)
+                    {
+                        // These arrays describe the CALLEE's generic signature (`!!i` belongs to the called method),
+                        // not a lexical type used by the moved caller body. Re-scoping them would make overload tokens
+                        // refer to an unrelated SM type parameter and also defeat later type-argument substitution.
+                        if (kv.Key is "sig" or "argTypes" or "memberSig" or "clrOverrideSig") continue;
+                        if (kv.Value != null) RebindMethodTypeVariablesToSm(kv.Value, ownerArity);
+                    }
+                    break;
+                case JsonArray a:
+                    foreach (var item in a)
+                        if (item != null) RebindMethodTypeVariablesToSm(item, ownerArity);
+                    break;
+            }
+        }
 
         // Lambda-mode ctor (Part B). Builds a `<smName> : SuspendLambda` SM from a newSuspendLambda node's
         // parts. Captures become ctor params + fields; the lambda's own params become fields set by create().
@@ -1532,7 +1560,7 @@ static partial class SuspendColdLowering
                 // rewrite the result expression — a suspend call in the result becomes a normal suspension point
                 // owned by this pass. A suspension-FREE valueBlock (e.g. an `index++` post-increment) is left
                 // intact (the default copy below) for ilemit's inline emission — output stays byte-identical.
-                if (k == "valueBlock" && HasOwnSuspension(o))
+                if (k == "valueBlock" && (HasOwnSuspension(o) || EscapesExpression(o)))
                 {
                     if (o["stmts"] is JsonArray vbStmts) foreach (var s in vbStmts) EmitStmt(s, outp);
                     if (o["body"] is JsonArray vbBody) foreach (var s in vbBody) EmitStmt(s, outp);
@@ -1561,7 +1589,7 @@ static partial class SuspendColdLowering
                 if ((k == "clrStatic" || k == "clrInstance" || k == "clrGenericStatic" || k == "clrGenericInstance")
                     && Bool(o["suspendCall"]))
                     return EmitSuspensionPoint(o, outp);
-                if (k == "cond" && HasOwnSuspension(o))
+                if (k == "cond" && (HasOwnSuspension(o) || EscapesExpression(o)))
                     return EmitCondValue(o, outp);
                 // BUG 2 (left-to-right evaluation order across a suspension): when an ordered-eval node contains a
                 // suspension in a LATER operand, any impure earlier operand must be evaluated + SPILLED into a temp
@@ -1756,12 +1784,83 @@ static partial class SuspendColdLowering
 
             var condExpr = Rewrite(c["cond"], outp);
             outp.Add(BrIf(condExpr, false, elseL));
-            outp.Add(SetField(resultField, Rewrite(c["then"], outp)));
+            EmitCondBranch(c["then"], outp, resultField, ty);
             outp.Add(Goto(endL));
             outp.Add(Label(elseL));
-            outp.Add(SetField(resultField, Rewrite(c["else"], outp)));
+            EmitCondBranch(c["else"], outp, resultField, ty);
             outp.Add(Label(endL));
             return FieldOf(resultField, ty);
+        }
+
+        // A condition branch can be a suspension-free valueBlock whose statements perform a non-local control transfer
+        // (`goto` back to an enclosing inline loop) and whose formal result is an unreachable throw expression. Leaving
+        // that valueBlock as a setField RHS makes ilemit push the field receiver before entering the block; the goto then
+        // reaches its target with that receiver still on the CLR stack. Flatten the block while bir2cir still owns the
+        // control-flow decision, then assign only its fallthrough result. Suspension-bearing valueBlocks are already
+        // flattened by Rewrite itself.
+        void EmitCondBranch(JsonNode branch, List<JsonNode> outp, string resultField, TypeNode resultType)
+        {
+            JsonNode value;
+            if (branch is JsonObject b && Str(b["k"]) == "valueBlock")
+            {
+                if (b["stmts"] is JsonArray stmts)
+                    foreach (var stmt in stmts) EmitStmt(stmt, outp);
+                if (b["body"] is JsonArray body)
+                    foreach (var stmt in body) EmitStmt(stmt, outp);
+                value = b["result"] != null
+                    ? Rewrite(b["result"], outp)
+                    : NullConst(resultType);
+            }
+            else
+            {
+                value = Rewrite(branch, outp);
+            }
+            // A terminal expression has no fallthrough value to assign. Emitting it as a
+            // standalone CIR statement also guarantees that no setField receiver has been
+            // pushed before `throw`/`return`/`goto`.
+            if (value is JsonObject terminal
+                && Str(terminal["k"]) is "throwExpr" or "returnExpr" or "throw" or "return" or "goto")
+            {
+                var terminalKind = Str(terminal["k"]);
+                outp.Add(terminalKind is "throwExpr" or "returnExpr"
+                    ? new JsonObject
+                    {
+                        ["k"] = terminalKind == "throwExpr" ? "throw" : "return",
+                        ["value"] = terminalKind == "returnExpr" && terminal["value"] == null
+                            ? NullConst(AnyTn)
+                            : terminal["value"]?.DeepClone(),
+                    }
+                    : value);
+                return;
+            }
+            outp.Add(SetField(resultField, value));
+        }
+
+        // A value expression containing a control transfer cannot remain nested under a CLR
+        // operand (setField receiver, call receiver/argument, binary lhs, ...). ilemit emits
+        // CIR mechanically and would necessarily push the parent operand before entering the
+        // nested block; a jump/return/throw then escapes with that pending value on the stack.
+        // Flatten such expressions while bir2cir still owns CFG construction.
+        static bool EscapesExpression(JsonNode node)
+        {
+            bool Walk(JsonNode n)
+            {
+                if (n is JsonObject o)
+                {
+                    var k = Str(o["k"]);
+                    if (k != null && LambdaKinds.Contains(k)) return false;
+                    if (k is "goto" or "brIf" or "return" or "returnExpr" or "throw" or "throwExpr") return true;
+                    foreach (var kv in o)
+                        if (kv.Value != null && Walk(kv.Value)) return true;
+                }
+                else if (n is JsonArray a)
+                {
+                    foreach (var item in a)
+                        if (item != null && Walk(item)) return true;
+                }
+                return false;
+            }
+            return Walk(node);
         }
 
         // A suspension point (mirrors kotc emitSuspend): set label, start the cold call passing `this` (the SM,
@@ -1983,9 +2082,16 @@ static partial class SuspendColdLowering
                 _dispatch.Add((state, resumeLabel));
             else
             {
-                var top = _tryStack.Peek();
-                top.inner.Add((state, resumeLabel));
-                _dispatch.Add((state, top.tryEntry));
+                // A resume nested N protected regions must re-enter the OUTERMOST try first, then each nested
+                // try's local state dispatch, before reaching the actual resume label. Branching directly to the
+                // innermost try entry bypasses its enclosing protected region and produces invalid IL.
+                var target = resumeLabel;
+                foreach (var frame in _tryStack) // Stack enumerates innermost -> outermost.
+                {
+                    frame.inner.Add((state, target));
+                    target = frame.tryEntry;
+                }
+                _dispatch.Add((state, target));
             }
         }
 
@@ -2624,9 +2730,12 @@ static partial class SuspendColdLowering
             if (_smAllTps.Count > 0)
             {
                 var tp = new JsonArray();
-                foreach (var n in _smAllTps) tp.Add(n);
+                foreach (var n in _ownerTypeParams) tp.Add(n);
+                foreach (var declaration in _methodTypeParamDecls)
+                    tp.Add(declaration?.DeepClone());
                 type["typeParams"] = tp;
             }
+            RebindMethodTypeVariablesToSm(type, _ownerTypeParams.Count);
             return type;
         }
 
@@ -2703,9 +2812,11 @@ static partial class SuspendColdLowering
             if (_typeParams.Count > 0)
             {
                 var tp = new JsonArray();
-                foreach (var n in _typeParams) tp.Add(n);
+                foreach (var declaration in _methodTypeParamDecls)
+                    tp.Add(declaration?.DeepClone());
                 type["typeParams"] = tp;
             }
+            RebindMethodTypeVariablesToSm(type, ownerArity: 0);
             return type;
         }
 
@@ -2715,16 +2826,15 @@ static partial class SuspendColdLowering
         //                                                             sm.<param> = value; return sm
         //   arity-N:  create(args: Array<Any?>, completion): Continuation
         //                 -> sm = new SM(captures..., completion); sm.<p0> = args[0]; …; sm.<pN-1> = args[N-1]; return sm
-        // Matches BaseContinuationImpl.create's erased CLR ABI: params (Continuation<object>) / (object,
-        // Continuation<object>) / (object[], Continuation<object>), return Continuation<object> (Unit-as-typearg
-        // erases to object). ilemit binds the base slot by name + param types (clrOverride), so the param types MUST
-        // match exactly.
+        // Matches BaseContinuationImpl.create's CLR ABI: params (Continuation<*> existential) / (object,
+        // Continuation<*> existential) / (object[], Continuation<*> existential), return Continuation<Unit>.
+        // ilemit binds the base slot by the bir2cir-authored clrOverrideSig, so these physical params must match.
         IEnumerable<JsonObject> CreateMethods()
         {
             if (_arity == 0)
             {
                 yield return CreateMethod(
-                    new JsonArray { new JsonObject { ["name"] = "completion", ["type"] = ContAny() } },
+                    new JsonArray { new JsonObject { ["name"] = "completion", ["type"] = ContStar() } },
                     new JsonArray { Ret(NewSm()) });
             }
             else if (_arity >= 2)
@@ -2763,7 +2873,7 @@ static partial class SuspendColdLowering
                     new JsonArray
                     {
                         new JsonObject { ["name"] = "args", ["type"] = Tw(new TypeNode.Array(new TypeNode.Nullable(AnyTn))) },
-                        new JsonObject { ["name"] = "completion", ["type"] = ContAny() },
+                        new JsonObject { ["name"] = "completion", ["type"] = ContStar() },
                     },
                     body);
             }
@@ -2782,7 +2892,7 @@ static partial class SuspendColdLowering
                     new JsonArray
                     {
                         new JsonObject { ["name"] = "value", ["type"] = Tw(AnyTn) },
-                        new JsonObject { ["name"] = "completion", ["type"] = ContAny() },
+                        new JsonObject { ["name"] = "completion", ["type"] = ContStar() },
                     },
                     new JsonArray
                     {
@@ -2813,7 +2923,14 @@ static partial class SuspendColdLowering
             var args = new JsonArray();
             var argTypes = new JsonArray();
             foreach (var (n, t) in _captures) { args.Add(FieldOf(n, t)); argTypes.Add(t); }
-            args.Add(new JsonObject { ["k"] = "local", ["name"] = "completion" });
+            // The create ABI accepts the existential Continuation<*> view, while every generated SM/base ctor stores
+            // the uniform erased Continuation<Any>. Compiled coroutine completions are BaseContinuationImpl/root
+            // continuations and implement that physical slot; make the representation narrowing explicit in CIR.
+            args.Add(new JsonObject
+            {
+                ["k"] = "cast", ["type"] = ContAny(),
+                ["e"] = new JsonObject { ["k"] = "local", ["name"] = "completion" },
+            });
             argTypes.Add(ContAny());
             return new JsonObject { ["k"] = "new", ["type"] = Tw(_smTypeInst), ["argTypes"] = argTypes, ["args"] = args };
         }

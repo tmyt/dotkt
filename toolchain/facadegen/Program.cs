@@ -154,9 +154,10 @@ static class FacadeGen
 
     // A top-level function import (`import geom.greet`) -> the [KotlinFileClass] facade class in that package that holds a
     // matching static method, so the FIR injector restores `greet` as a top-level function. Null if none.
-    static Type ResolveTopLevelFacade(string fqn)
+    static List<Type> ResolveTopLevelFacades(string fqn)
     {
-        if (Mlc == null) return null;
+        var result = new List<Type>();
+        if (Mlc == null) return result;
         int dot = fqn.LastIndexOf('.');
         var ns = dot < 0 ? "" : fqn.Substring(0, dot);
         var fn = dot < 0 ? fqn : fqn.Substring(dot + 1);
@@ -167,15 +168,20 @@ static class FacadeGen
             {
                 if ((t.Namespace ?? "") != ns || !HasKotlinFileClass(t)) continue;
                 // `import pkg.foo` matches a top-level function `foo` OR an extension property whose getter is `get_foo`.
-                if (Methods(t, BindingFlags.Public | BindingFlags.Static).Any(mm => mm.Name == fn || mm.Name == "get_" + fn)) return t;
+                if (Methods(t, BindingFlags.Public | BindingFlags.Static).Any(mm => mm.Name == fn || mm.Name == "get_" + fn))
+                {
+                    result.Add(t);
+                    continue;
+                }
                 // #195: a top-level `val`/`var` with NO custom accessor compiles to a plain public static FIELD `foo`
                 // (no get_foo/set_foo). Match the field too so `import pkg.foo` surfaces the file class from a plain
                 // field-backed top-level property, not only from an accessor method (EmitKotlinFileClass then emits the tlprop).
                 // Skip compiler-generated `<...>`/`$...` fields (a `$delegate`/backing field) — mirrors the emitter's filter.
-                if (t.GetFields(BindingFlags.Public | BindingFlags.Static).Any(f => f.Name == fn && f.Name.Length > 0 && f.Name[0] != '<' && f.Name[0] != '$')) return t;
+                if (t.GetFields(BindingFlags.Public | BindingFlags.Static).Any(f => f.Name == fn && f.Name.Length > 0 && f.Name[0] != '<' && f.Name[0] != '$'))
+                    result.Add(t);
             }
         }
-        return null;
+        return result;
     }
 
     static int EmitMeta(string outFile, IEnumerable<string> typeNames)
@@ -221,7 +227,10 @@ static class FacadeGen
             // A top-level function import (`import geom.greet`) isn't a type — resolve it to the [KotlinFileClass] facade
             // class that holds it (EmitOneType then emits `file`/`tlfun`). `import geom.*` already yields the facade
             // type directly via TypesInNamespace, so this only covers the single-function form.
-            if (fam.Count == 0 && ResolveTopLevelFacade(dn) is { } facade) fam.Add(facade);
+            // A Kotlin package may legally contain a classifier and a top-level callable with the same name
+            // (`Channel<E>` plus `fun Channel(...)`). Importing that name must seed both declarations.
+            foreach (var facade in ResolveTopLevelFacades(dn))
+                if (!fam.Any(t => t.FullName == facade.FullName)) fam.Add(facade);
             // A MEMBER import (`import Probe.Ext.tripled` — a member of an object/static class, e.g. a C#-origin
             // extension fun) doesn't resolve to a type; inject its CONTAINING type (the prefix) so the member comes into
             // scope. Walk successive prefixes (handles a member of a nested type) and stop at the first that resolves.
@@ -569,6 +578,8 @@ static class FacadeGen
     {
         var o = new JsonObject { ["name"] = MetaParamName(p, i) };
         var attrs = CustomAttributeData.GetCustomAttributes(p);
+        var exact = KotlinTypeNode(attrs);
+        if (exact != null) { o["type"] = Ty(exact); return o; }
         var sfn = SuspendFnNode(attrs);   // H2: a `suspend (…) -> T` parameter
         if (sfn != null) { o["type"] = Ty(sfn); return o; }
         if (p.ParameterType.IsArray && IsParamArray(p))
@@ -903,13 +914,14 @@ static class FacadeGen
                 return;
             }
             var isStatic = t.IsAbstract && t.IsSealed;
+            var isKotlinObject = HasKotlinObject(t);
             // A generic type definition -> Kotlin simple name (arity-suffixed iff its name family clashes) + the TRUE
             // CLR name (backtick arity) in `dotNet`; the type params carry variance/bounds via `typeParams`. `open` =
             // inheritability (a non-sealed CLR class).
-            typeObj["kind"] = isStatic ? "object" : "class";
+            typeObj["kind"] = isStatic || isKotlinObject ? "object" : "class";
             typeObj["name"] = KotlinName(t);
             typeObj["dotNet"] = t.IsGenericTypeDefinition ? ClrOpenName(t) : t.FullName;
-            if (!isStatic) typeObj["open"] = !t.IsSealed;
+            if (!isStatic && !isKotlinObject) typeObj["open"] = !t.IsSealed;
             // Round-trip: a Kotlin `sealed` class lowered to a CLR abstract (non-sealed) class.
             if (!isStatic && HasKotlinSealed(t)) typeObj["sealed"] = true;
             // Round-trip gap ①: upper bounds of the class's type params (a CLR class type param has no variance form).
@@ -1023,8 +1035,11 @@ static class FacadeGen
                     typeObj["iteratorElem"] = Ty(MapT(ienum.GetGenericArguments()[0], t));
                 // Public STATIC members of a NORMAL class -> companion-object members (App.Start / App.Current).
                 foreach (var f in t.GetFields(BindingFlags.Public | BindingFlags.Static))
+                {
+                    if (isKotlinObject && f.Name == "INSTANCE" && f.FieldType.FullName == t.FullName) continue;
                     if (Supported(f.FieldType) && seen.Add("sfield:" + f.Name))
                         staticProps.Add(PropObj(f.Name, FieldTypeN(f, t), false, new JsonObject(), "public", null, null));
+                }
                 foreach (var p in t.GetProperties(BindingFlags.Public | BindingFlags.Static))
                     if (p.GetIndexParameters().Length == 0 && Supported(p.PropertyType) && p.CanRead && seen.Add("sprop:" + p.Name))
                         staticProps.Add(PropObj(p.Name, PropTypeN(p, t),
@@ -1197,7 +1212,7 @@ static class FacadeGen
                     ["fileClass"] = t.FullName,
                     ["funs"] = csExtFuns
                 });
-            Console.WriteLine($"meta: {t.FullName} ({(isStatic ? "object" : "class")})");
+            Console.WriteLine($"meta: {t.FullName} ({(isStatic || isKotlinObject ? "object" : "class")})");
     }
 
     static void EmitExplicitInterfaceStubs(Type t, JsonArray props, JsonArray funs, HashSet<string> seen)
@@ -1688,6 +1703,7 @@ static class FacadeGen
     // class) dropped. Absent (a genuine .NET type, or an un-stamped assembly) -> the plain shape, as before.
     const string KFunIfaceAttr = "DotKt.Runtime.CompilerServices.KotlinFunInterfaceAttribute";
     const string KSealedAttr   = "DotKt.Runtime.CompilerServices.KotlinSealedAttribute";
+    const string KObjectAttr   = "DotKt.Runtime.CompilerServices.KotlinObjectAttribute";
     static bool HasKotlinFunInterface(Type t)
     {
         try { return t.GetCustomAttributesData().Any(c => IsDotKtMetadata(c, KFunIfaceAttr)); }
@@ -1696,6 +1712,11 @@ static class FacadeGen
     static bool HasKotlinSealed(Type t)
     {
         try { return t.GetCustomAttributesData().Any(c => IsDotKtMetadata(c, KSealedAttr)); }
+        catch { return false; }
+    }
+    static bool HasKotlinObject(Type t)
+    {
+        try { return t.GetCustomAttributesData().Any(c => IsDotKtMetadata(c, KObjectAttr)); }
         catch { return false; }
     }
 
@@ -1806,16 +1827,22 @@ static class FacadeGen
     // [KotlinType] carries the exact pre-lowering TypeNode; accepting it requires the same assembly + carrier provenance
     // as every other DotKt round-trip marker, so a same-named attribute in an ordinary CLR assembly is inert.
     const string KTypeAttr = "DotKt.Runtime.CompilerServices.KotlinTypeAttribute";
-    static TN KotlinTypeNode(Type t)
+    static TN KotlinTypeNode(IList<CustomAttributeData> attrs)
     {
         try
         {
-            foreach (var cad in t.GetCustomAttributesData())
+            foreach (var cad in attrs)
                 if (IsDotKtMetadata(cad, KTypeAttr) && cad.ConstructorArguments.Count == 2)
                     return TN.Parse(DecodeCarrier(cad));
         }
         catch { /* malformed/unresolvable carrier: retain the ordinary CLR mapping and its diagnostic */ }
         return null;
+    }
+
+    static TN KotlinTypeNode(Type t)
+    {
+        try { return KotlinTypeNode(t.GetCustomAttributesData()); }
+        catch { return null; }
     }
 
     // H2: the [KotlinSuspendFunctionType(shape)] attribute stamped by bir2cir's RoundtripMetadata on a `suspend (…) -> T`
@@ -1848,6 +1875,8 @@ static class FacadeGen
     static TN FieldTypeN(FieldInfo f, Type self)
     {
         var attrs = f.GetCustomAttributesData();
+        var exact = KotlinTypeNode(attrs);
+        if (exact != null) return exact;
         var sfn = SuspendFnNode(attrs);
         if (sfn != null) return sfn;
         // #29: a field nesting a collapsed read-only collection carries the pre-collapse Kotlin type.
@@ -1866,6 +1895,8 @@ static class FacadeGen
     static TN RetTypeSfxN(MethodInfo m, Type self)
     {
         var attrs = CustomAttributeData.GetCustomAttributes(m.ReturnParameter);
+        var exact = KotlinTypeNode(attrs);
+        if (exact != null) return exact;
         var sfn = SuspendFnNode(attrs);
         if (sfn != null) return sfn;
         // #133: a Kotlin `Nothing` return has no CLR analog — bir2cir erases it to `object` (BirTypeLowering
@@ -1926,6 +1957,8 @@ static class FacadeGen
     static TN PropTypeN(PropertyInfo p, Type self)
     {
         var attrs = CustomAttributeData.GetCustomAttributes(p);
+        var exact = KotlinTypeNode(attrs);
+        if (exact != null) return exact;
         // #47: a `val/var p: suspend (…) -> T` (or `suspend R.() -> T`) property carries the pre-erasure `fn` shape in
         // [KotlinSuspendFunctionType] (bir2cir erased the CLR slot to `object`). Restore the fn node directly (it carries
         // its arg/return shape + extension receiver) — else the property degrades to a plain erased `Any?`. NB: an OUTER

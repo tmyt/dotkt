@@ -18,11 +18,10 @@ using System.Text.Json.Nodes;
 // call (callInstance/callStatic), a bound method reference (newBoundDelegate, an `ldftn` over the member), or a
 // member field-access of the full node family (field/setField/setFieldExpr/lateinitGet/staticField/staticFieldSet)
 // whose owner (generics stripped) names a DIFFERENT local type C, record (C, member); then relax any matching
-// PRIVATE member (constructor, method, field, or property get_/set_ accessor)
-// on C to `internal` (assembly-visible). SOUNDNESS: valid Kotlin source can never have a top-level class
-// access another top-level class's private member, so ANY cross-class private access in emitted BIR came
-// from a lost nesting/lifting relationship — widening exactly those is minimal and correct (Codex-confirmed).
-// `internal` keeps the member off the public surface (the enclosing types here are internal stdlib machinery).
+// PRIVATE member to `internal`, or PROTECTED member to `protectedInternal`. The latter preserves access for
+// external subclasses while granting the lifted sibling/state-machine its lost lexical access. SOUNDNESS:
+// valid Kotlin source can never have an unrelated top-level class access another class's private/protected
+// member, so every such access in emitted BIR came from lifting a lexically privileged declaration.
 //
 // Runs GLOBALLY across all files, in NON-ref builds (rt + app), AFTER SuspendColdLowering/SuspendLambdaLowering
 // (so synthesized SM types are present and covered too) and BEFORE BirTypeLowering (owner tokens are still the
@@ -124,12 +123,32 @@ static class CrossClassPrivateWidening
 
         foreach (var (name, node) in types)
             Walk(node, name);
+        // An inline member body can be spliced into a TOP-LEVEL function (file class), where it still legally reaches
+        // the declaring class's private implementation detail in Kotlin. The file-class methods are not entries in
+        // `types`, so scan them explicitly with their own owner identity; otherwise that private accessor remains
+        // inaccessible after the inline body crosses the CLR type boundary.
+        foreach (var root in roots.OfType<JsonObject>())
+        {
+            var fileClass = Str(root["fileClass"]);
+            if (root["methods"] is JsonNode methods) Walk(methods, fileClass);
+            if (root["fields"] is JsonNode fields) Walk(fields, fileClass);
+        }
         if (accessed.Count == 0) return;
 
-        // 3. Relax each accessed PRIVATE member (method / field / property accessor) to internal.
+        // 3. Relax each accessed lexically-visible member (method / field / property accessor) just enough
+        // for its lifted CLR sibling. Keep protected reachability for external subclasses.
         static void Relax(JsonObject member)
         {
-            if (member != null && Str(member["vis"]) == "private") member["vis"] = "internal";
+            if (member == null) return;
+            switch (Str(member["vis"]))
+            {
+                case "private":
+                    member["vis"] = "internal";
+                    break;
+                case "protected":
+                    member["vis"] = "protectedInternal";
+                    break;
+            }
         }
         foreach (var (owner, members) in accessed)
         {
@@ -155,6 +174,43 @@ static class CrossClassPrivateWidening
                         if (members.Contains("get_" + pn)) Relax(po["getter"] as JsonObject);
                         if (members.Contains("set_" + pn)) Relax(po["setter"] as JsonObject);
                     }
+        }
+
+        // CLR forbids an override from reducing accessibility. If a lifted sibling forced a protected virtual
+        // base member to protectedInternal, carry that already-resolved CLR visibility through every local override
+        // in the hierarchy. This is a bir2cir hierarchy decision; ilemit must not rediscover it while defining slots.
+        static int Arity(JsonObject method, string key) =>
+            method[key] is JsonArray items ? items.Count : 0;
+        static bool IsOverride(JsonObject method) =>
+            method["override"] is JsonValue value && value.TryGetValue<bool>(out var result) && result;
+        static bool SameSlotShape(JsonObject candidate, JsonObject derived) =>
+            Str(candidate["name"]) == Str(derived["name"])
+            && Arity(candidate, "params") == Arity(derived, "params")
+            && Arity(candidate, "typeParams") == Arity(derived, "typeParams");
+
+        bool HasWidenedBaseSlot(JsonObject type, JsonObject method)
+        {
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var baseName = BareOwner(TypeJson.OwnerName(type["base"]));
+            while (baseName != null && seen.Add(baseName) && types.TryGetValue(baseName, out var baseType))
+            {
+                if (baseType["methods"] is JsonArray baseMethods
+                    && baseMethods.OfType<JsonObject>().Any(candidate =>
+                        Str(candidate["vis"]) == "protectedInternal" && SameSlotShape(candidate, method)))
+                    return true;
+                baseName = BareOwner(TypeJson.OwnerName(baseType["base"]));
+            }
+            return false;
+        }
+
+        foreach (var type in types.Values)
+        {
+            if (type["methods"] is not JsonArray methods) continue;
+            foreach (var method in methods.OfType<JsonObject>())
+            {
+                if (Str(method["vis"]) == "protected" && IsOverride(method) && HasWidenedBaseSlot(type, method))
+                    method["vis"] = "protectedInternal";
+            }
         }
     }
 }

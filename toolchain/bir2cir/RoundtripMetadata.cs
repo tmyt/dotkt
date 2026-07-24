@@ -37,6 +37,7 @@ static class RoundtripMetadata
     const string AKFunInterface = Ns + "KotlinFunInterfaceAttribute";
     const string AKSealed       = Ns + "KotlinSealedAttribute";
     const string AKValue        = Ns + "KotlinValueAttribute";
+    const string AKObject       = Ns + "KotlinObjectAttribute";
     const string AKSuspendFn    = Ns + "KotlinSuspendFunctionTypeAttribute";
     const string AKExtFn        = Ns + "KotlinExtensionFunctionTypeAttribute";
     const string AKNothing      = Ns + "KotlinNothingAttribute";
@@ -76,6 +77,7 @@ static class RoundtripMetadata
         // into the IR, so this [KotlinValue] marker is the ROUND-TRIP carrier of value-ness that ReferenceMetadataIndex
         // reads back off the ref/rt DLL to drive the single-field erase-to-underlying lowering.
         if (ModFlag(to, "value")) Append(to, Marker(AKValue));       // `value` class (@JvmInline)
+        if (ModFlag(to, "object")) Append(to, Marker(AKObject));     // `object` singleton
         // [KotlinType(version, bytes)] — a compiler-synthesized CLR type whose Kotlin surface is a different TypeNode.
         // FBoundStarProjectionErasure uses this on its non-generic existential interface so a downstream reader restores
         // the original G<*> projection rather than exposing the CLR implementation type or degrading it to Any?.
@@ -121,6 +123,11 @@ static class RoundtripMetadata
         // return's NRT byte (computed from the pre-erasure type via retNullableFlags, unperturbed here) composes on top —
         // facadegen reads the marker by presence (HasNothingMarker), order-independent, and the Nullable byte separately.
         var ret = new JsonArray();
+        if ((mo["retKotlinType"] as JsonValue)?.GetValue<string>() is string rkt)
+        {
+            ret.Add(KotlinTypeAttr(rkt));
+            mo.Remove("retKotlinType");
+        }
         if (mo["retNullableFlags"] is JsonArray rnf && NullableAttr(rnf) is JsonObject rna) ret.Add(rna);
         if (mo["retSuspendFnType"] is JsonNode rsf) ret.Add(SuspendFnAttr(rsf));
         // [KotlinExtensionFunctionType] (#145) — a bare marker: a method returning `P.() -> R`. Unlike suspend, the
@@ -150,6 +157,11 @@ static class RoundtripMetadata
         {
             // Prepend [Nullable, KotlinSuspendFunctionType] BEFORE any user param attr (ilemit's old order).
             if (po["suspendFnType"] is JsonNode sf) Prepend(po, SuspendFnAttr(sf));
+            if ((po["kotlinType"] as JsonValue)?.GetValue<string>() is string kt)
+            {
+                Prepend(po, KotlinTypeAttr(kt));
+                po.Remove("kotlinType");
+            }
             if (po["nullableFlags"] is JsonArray nf && NullableAttr(nf) is JsonObject na) Prepend(po, na);
             // [KotlinExtensionFunctionType] (#145) — a `block: P.() -> R` param; the bare marker rides after any user
             // attr (order-independent — facadegen reads it by presence). The delegate keeps `P` as its first arg.
@@ -169,6 +181,11 @@ static class RoundtripMetadata
             // file-class field path). #47: the `nullableFlags` NRT byte (DeclNullableFlags) rides here regardless of
             // topLevel, so a nullable field surfaces as `T?` on re-import (facadegen's FieldTypeN reads it via ApplyNrt).
             if (fo["suspendFnType"] is JsonNode sf) Prepend(fo, SuspendFnAttr(sf));
+            if ((fo["kotlinType"] as JsonValue)?.GetValue<string>() is string kt)
+            {
+                Prepend(fo, KotlinTypeAttr(kt));
+                fo.Remove("kotlinType");
+            }
             if (!topLevel && (fo["readOnly"] as JsonValue)?.GetValue<bool>() == true) Prepend(fo, Marker(AKReadOnly));
             if (fo["nullableFlags"] is JsonArray nf && NullableAttr(nf) is JsonObject na) Prepend(fo, na);
             if (HasRecvFn(fo["type"])) Append(fo, Marker(AKExtFn));   // a `val handler: P.() -> R` field (#145)
@@ -181,6 +198,11 @@ static class RoundtripMetadata
         if (props is not JsonArray a) return;
         foreach (var p in a) if (p is JsonObject po)
         {
+            if ((po["kotlinType"] as JsonValue)?.GetValue<string>() is string kt)
+            {
+                Prepend(po, KotlinTypeAttr(kt));
+                po.Remove("kotlinType");
+            }
             // Prepend [Nullable, KotlinSuspendFunctionType] (Nullable outermost — same order as params). #47: a
             // `val/var x: T?` property carries its NRT byte here (from DeclNullableFlags' nullableFlags); facadegen's
             // PropTypeN reads it via ApplyNrt, so `val text: String?` re-imports nullable instead of degrading to
@@ -218,6 +240,7 @@ static class RoundtripMetadata
         // FBoundStarProjectionErasure's pass-local hand-off is consumed only by Stamp in metadata-bearing builds.
         // The runtime build deliberately emits no round-trip attribute, but must still discard the temporary fact.
         o.Remove("kotlinType");
+        o.Remove("retKotlinType");
         StripAttrs(o, "attrs");
         StripDecls(o["methods"], hasParams: true);
         StripDecls(o["fields"]);
@@ -232,6 +255,8 @@ static class RoundtripMetadata
         if (arr is not JsonArray a) return;
         foreach (var d in a) if (d is JsonObject po)
         {
+            po.Remove("kotlinType");
+            po.Remove("retKotlinType");
             StripAttrs(po, "attrs");
             StripAttrs(po, "retAttrs");
             if (hasParams) StripDecls(po["params"]);
@@ -368,6 +393,7 @@ static class RoundtripMetadata
             AttrClass(AKFunInterface, Ctor()),
             AttrClass(AKSealed, Ctor()),
             AttrClass(AKValue, Ctor()),
+            AttrClass(AKObject, Ctor()),
             AttrClass(AKSuspendFn, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKExtFn, Ctor()),     // #145 — bare marker: a `P.() -> R` receiver function-type position
             AttrClass(AKNothing, Ctor()),   // #133 case3 — bare marker on a Kotlin `Nothing` return

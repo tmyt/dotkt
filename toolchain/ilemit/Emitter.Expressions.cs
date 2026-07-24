@@ -260,7 +260,15 @@ sealed partial class Emitter
                 {
                     var rt2 = MapType(e.GetProperty("recvType"));
                     var if2 = MapType(e.GetProperty("iface"));
-                    var mi2 = InterfaceMethodOn(if2, e.GetProperty("method").GetString());
+                    // CIR already carries the exact constructed constraint owner. The only distinction here is token
+                    // mechanics: a type emitted in this module must be linked through its TypeBuilder registry, while
+                    // a referenced interface uses its reflected constructed MethodInfo. This does not re-select an
+                    // owner or overload; bir2cir has already made both decisions.
+                    var ifaceNode = e.GetProperty("iface");
+                    var ifaceSpec = ReadFqn(ifaceNode);
+                    var mi2 = ifaceSpec != null && _types.ContainsKey(ifaceSpec.Name)
+                        ? ResolveMethod(ParseOwnerSlot(ifaceNode), e.GetProperty("method").GetString(), out _, SigNodes(e))
+                        : InterfaceMethodOn(if2, e.GetProperty("method").GetString());
                     EmitAddr(e.GetProperty("recv"));            // &C  (a managed pointer, required by `constrained.`)
                     EmitArgs(ccArgs, mi2.GetParameters());
                     _il.Emit(OpCodes.Constrained, rt2);

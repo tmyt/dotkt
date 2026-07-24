@@ -890,7 +890,11 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 	// so a re-consuming Kotlin module restores `sealed` (ilemit stamps [KotlinSealed]). `value` (inline class) is
 	// likewise carried as a mod — the 2.4.0 frontend no longer surfaces its `@JvmInline` annotation, so this modifier
 	// is bir2cir's sole value-class signal for the erase-to-underlying lowering (see classModsJson).
-	val sealedFlag = classModsJson(sealed = klass.modality == Modality.SEALED, value = klass.isValue)
+	val sealedFlag = classModsJson(
+		sealed = klass.modality == Modality.SEALED,
+		value = klass.isValue,
+		objectSingleton = isObject
+	)
 	// typeParams = the anon/class's own params PLUS the captured enclosing params (scanned + installed at the top).
 	val ownTpsJson = typeParamsJson(ownTps).removePrefix(""","typeParams":[""").removeSuffix("]")
 	val extraJson = capturedTpParams.joinToString(",") { str(it.name.asString()) }
@@ -1061,12 +1065,19 @@ internal fun BirEmitter.resultTypeJson(fn: IrSimpleFunction): String =
  *  (OptionalExpectation `expect` annotation with no non-JVM actual) on kotc's metadata/native sessions —
  *  so the value-class fact must be carried as this pure-Kotlin modifier instead. bir2cir keys single-field
  *  value-class erasure off it (it owns the single-vs-multi-field lowering decision). */
-internal fun BirEmitter.classModsJson(fnIface: Boolean = false, sealed: Boolean = false, annotation: Boolean = false, value: Boolean = false): String {
+internal fun BirEmitter.classModsJson(
+	fnIface: Boolean = false,
+	sealed: Boolean = false,
+	annotation: Boolean = false,
+	value: Boolean = false,
+	objectSingleton: Boolean = false
+): String {
 	val flags = buildList {
 		if (annotation) add(""""annotation":true""")
 		if (fnIface) add(""""fun":true""")
 		if (sealed) add(""""sealed":true""")
 		if (value) add(""""value":true""")
+		if (objectSingleton) add(""""object":true""")
 	}
 	return if (flags.isEmpty()) "" else ""","mods":{${flags.joinToString(",")}}"""
 }
