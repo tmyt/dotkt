@@ -389,7 +389,11 @@ bare-FQN strings the wire format forbids):
   `smName<tv{type,0..N-1}>` fallback. Absent on kotc's own source-lambda emission (which keeps the positional
   fallback, byte-identical). The optional `capValues` (per-capture construction-value overrides, positional with
   `captures`) carries an SM-vocabulary spill (`SuspendColdLowering` GAP 2) or an `__outer` rebound to the splice's
-  receiver temp (InlineSplice 2B).
+  receiver temp (InlineSplice 2B). `funcType` is the canonical Kotlin function type: an extension receiver appears
+  only in `funcType.recv`, while `funcType.params` contains regular parameters. The node's physical `params` remains
+  receiver-first because those descriptors supply the state-machine field names and `create` arguments. Receiver
+  reads in `body` name that leading parameter explicitly; a bare `this` is therefore reserved for a captured enclosing
+  dispatch receiver and bir2cir never guesses which meaning was intended.
 - The `StringCharSequenceBridge` adapter (bir2cir `AdapterTypeJson` literal + `WrapAdapter`) — every `type`/`ret`/
   `elem`/`argTypes`/`interfaces`/`ownerType` slot rewritten to `{t:"fqn",…}`; the retired `@<name>` this-assembly
   marker dropped (bir2cir/ilemit derive local-vs-referenced from the FQN via `_types`).

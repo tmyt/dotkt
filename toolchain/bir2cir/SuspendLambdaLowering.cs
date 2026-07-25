@@ -16,7 +16,7 @@
 //     "suspendRet":"kotlin.X",                   // the lambda's result type ("void"/"kotlin.Unit" -> Unit)
 //     "typeParams":[<tp-name>,...],              // enclosing generic type-param NAME decls (open SM instantiation)
 //     "body":[ ...structured, suspendCall-tagged... ],
-//     "funcType":"sfunc:<ret>:<args>" }          // informational (the delegate view; not consumed here)
+//     "funcType":{t:"fn",suspend:true,recv?:T,...} } // canonical Kotlin function type; recv is not in params
 //
 // Node -> value: the suspend-lambda VALUE is the cold, unstarted SM instance
 //   new <mangled>_lambdaN$sm(<captureVals>..., /*completion*/ null)
@@ -46,7 +46,6 @@ static class SuspendLambdaLowering
     static IReadOnlyDictionary<string, TypeNode> _calleeRet;
 
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
-
     public static void ApplyAll(IReadOnlyList<JsonNode> roots, IReadOnlySet<string> localTypeFqns,
         IReadOnlyDictionary<string, TypeNode> calleeRet = null, ReferenceMetadataIndex refs = null)
     {
@@ -182,18 +181,20 @@ static class SuspendLambdaLowering
         var captures = ReadNameTypes(node["captures"]);
         var lambdaParams = (node["params"] as JsonArray)?.OfType<JsonObject>().ToList() ?? new List<JsonObject>();
         var resultType = TypeJson.Read(node["suspendRet"]);
+        var funcType = TypeJson.Read(node["funcType"]) as TypeNode.Fn;
         var typeArgs = ReadStrings(node["typeParams"]);
         var smName = ctx + "_lambda" + (++counter[0]) + "$sm";
 
-        // A suspend lambda whose RECEIVER (its create()-bound param) is a @RestrictsSuspension scope (SequenceScope)
-        // gets the RestrictedSuspendLambda SM base. kotc conveys the receiver as a lambda param, so any param whose
-        // type is a @RestrictsSuspension owner (per the ref.dll) triggers it. A safe discriminator: only genuinely
-        // restricted scopes carry the annotation, so a plain value param never matches.
-        var restricted = _refs != null && lambdaParams.Any(p => _refs.HasRestrictsSuspension(TypeJson.OwnerName(p["type"])));
+        // Restricted suspension is a property of the Kotlin EXTENSION RECEIVER, not of an arbitrary parameter.
+        // `funcType.recv` is the canonical semantic channel; the physical leading entry in node.params only supplies
+        // the state-machine field name/create argument.
+        var restricted = _refs != null && funcType?.Recv != null
+            && _refs.HasRestrictsSuspension(TypeJson.OwnerName(TypeNode.Write(funcType.Recv)));
         var effBaseIsLocal = restricted ? _restrictedBaseIsLocal : baseIsLocal;
 
         var sm = SuspendColdLowering.BuildLambdaSm(
-            smName, arity, captures, lambdaParams, body, resultType, typeArgs, effBaseIsLocal, _calleeRet, restricted, _refs);
+            smName, arity, captures, lambdaParams, body, resultType, typeArgs, effBaseIsLocal,
+            _calleeRet, restricted, _refs);
         if (sm == null) return node;   // arity < 0 (never) -> keep the node; arbitrary N is now expressible
 
         newTypes.Add(sm);

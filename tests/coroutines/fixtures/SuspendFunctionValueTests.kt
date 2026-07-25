@@ -16,7 +16,9 @@
 // top-level decls.)
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import System.Threading.Tasks.Task
 import dotkt.support.blockOn
+import kotlin.clr.await
 
 // ---- il-suspendval2 ------------------------------------------------------------------------------------------
 suspend fun corBSv2AddA(a: Int, b: Int): Int = a + b
@@ -42,6 +44,13 @@ fun corBSrefRunRef(f: suspend (Int) -> Int, arg: Int): Int = blockOn { f(arg) }
 // ---- il-lam2 -------------------------------------------------------------------------------------------------
 suspend fun corBLam2H(): Int = 5
 
+class CorBSvReceiverFactory(private val delta: Int) {
+    fun make(): suspend Int.() -> Int = {
+        Task.Delay(10).await()
+        this + delta
+    }
+}
+
 // ---- il-ifacesuspend -----------------------------------------------------------------------------------------
 interface CorBIfcFetcher { suspend fun fetch(): Int }
 class CorBIfcFetcher42(val n: Int) : CorBIfcFetcher { override suspend fun fetch(): Int = n + 1 }
@@ -66,6 +75,18 @@ class SuspendFunctionValueTests {
     fun capturingSuspendLambda() {
         val n = 10
         assertEquals(15, blockOn { corBLam2H() + n })   // 15
+    }
+
+    @TestAttribute
+    fun receiverSuspendValueResumesAsynchronously() {
+        val f: suspend Int.() -> Int = {
+            Task.Delay(10).await()
+            this + 1
+        }
+        assertEquals(42, blockOn(41, f))
+        // The lambda has both an extension receiver (`this`) and a captured dispatch receiver (`delta`).
+        // They must remain distinct after the lambda becomes a state machine.
+        assertEquals(42, blockOn(40, CorBSvReceiverFactory(2).make()))
     }
 
     @TestAttribute

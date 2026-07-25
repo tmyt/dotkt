@@ -25,14 +25,28 @@ import kotlin.coroutines.startCoroutine
 public fun <T> blockOn(block: suspend () -> T): T {
     val sink = BlockOnSink()
     block.startCoroutine(sink) // Continuation<Any?> is a Continuation<T> by contravariance
-    Monitor.Enter(sink)
+    return sink.awaitResult()
+}
+
+/**
+ * Receiver-form counterpart of [blockOn]. Keeping this in the shared harness exercises the public
+ * `suspend R.() -> T` start protocol directly instead of wrapping the value in a receiver-less lambda.
+ */
+public fun <R, T> blockOn(receiver: R, block: suspend R.() -> T): T {
+    val sink = BlockOnSink()
+    block.startCoroutine(receiver, sink)
+    return sink.awaitResult()
+}
+
+private fun <T> BlockOnSink.awaitResult(): T {
+    Monitor.Enter(this)
     try {
-        while (!sink.done) Monitor.Wait(sink)
+        while (!done) Monitor.Wait(this)
     } finally {
-        Monitor.Exit(sink)
+        Monitor.Exit(this)
     }
-    sink.exception?.let { throw it }
-    return sink.value as T
+    exception?.let { throw it }
+    return value as T
 }
 
 /** The blocking root sink: stores the outcome and pulses the [blockOn] waiter (all under this monitor). */
