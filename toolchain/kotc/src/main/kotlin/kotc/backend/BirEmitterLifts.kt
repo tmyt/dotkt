@@ -1147,7 +1147,9 @@ internal fun BirEmitter.liftLocalFn(fn: IrSimpleFunction) {
 	val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
 	capPairs.forEach { (decl, _) -> captureSubst.remove(decl) }
 	val ret = birType(fn.returnType)
-	liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[${(capParams + ownParams).joinToString(",")}],"ret":${str(ret)},"body":[$body]}""")
+	// Lifting is a Kotlin-to-Kotlin structural projection. Preserve declaration facts exactly as for an ordinary
+	// function; bir2cir remains solely responsible for lowering a suspend declaration to the CLR continuation ABI.
+	liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)}${funModsJson(fn)}${resultTypeJson(fn)},"params":[${(capParams + ownParams).joinToString(",")}],"ret":${str(ret)},"body":[$body]}""")
 }
 
 /**

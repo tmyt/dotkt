@@ -44,6 +44,14 @@ fun corBSrefRunRef(f: suspend (Int) -> Int, arg: Int): Int = blockOn { f(arg) }
 // ---- il-lam2 -------------------------------------------------------------------------------------------------
 suspend fun corBLam2H(): Int = 5
 
+suspend fun corBLocalSuspendHost(base: Int): Int {
+    suspend fun addAfterResume(delta: Int): Int {
+        Task.Delay(10).await()
+        return base + delta
+    }
+    return addAfterResume(2)
+}
+
 class CorBSvReceiverFactory(private val delta: Int) {
     fun make(): suspend Int.() -> Int = {
         Task.Delay(10).await()
@@ -75,6 +83,11 @@ class SuspendFunctionValueTests {
     fun capturingSuspendLambda() {
         val n = 10
         assertEquals(15, blockOn { corBLam2H() + n })   // 15
+    }
+
+    @TestAttribute
+    fun liftedLocalSuspendFunction() {
+        assertEquals(42, blockOn { corBLocalSuspendHost(40) })
     }
 
     @TestAttribute
