@@ -58,6 +58,11 @@ import starprojection.StarKey
 import starprojection.starOwner
 import starprojection.isConcreteStarKey
 import suspendcompanion.CompanionSuspendApi
+import suspendnullable.NullableSuspendHolder
+import suspendnullable.invokeNullableSuspend
+import suspendnullable.makeNullableSuspend
+import suspendnullable.nullableTopLevelBlock
+import suspendnullable.nullableSuspendStep
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert
 import kotlin.coroutines.Continuation
@@ -214,5 +219,23 @@ class SuspendMetadataRoundtripTests {
     @TestAttribute
     fun companionSuspendFunctionRoundTripsAndRuns() {
         ClassicAssert.AreEqual(42, runCrossModuleSuspend { CompanionSuspendApi.compute(41) })
+    }
+
+    // #172: facadegen must compose the slot's CLR NRT nullable marker over its carried suspend-function shape. Each
+    // assignment/call below is a compile-time dependency on restoring `(suspend () -> Int)?` from the producer DLL.
+    @TestAttribute
+    fun nullableSuspendFunctionTypesRoundTripAndRun() {
+        ClassicAssert.AreEqual(42, invokeNullableSuspend { nullableSuspendStep(41) }) // parameter
+        ClassicAssert.AreEqual(-1, invokeNullableSuspend(null))
+
+        val returned: (suspend () -> Int)? = makeNullableSuspend(40)                  // return
+        ClassicAssert.AreEqual(41, runCrossModuleSuspend(returned!!))
+        ClassicAssert.IsNull(makeNullableSuspend(-1))
+
+        val holder = NullableSuspendHolder(39)
+        val property: (suspend () -> Int)? = holder.block                            // property
+        val field: (suspend () -> Int)? = nullableTopLevelBlock                       // file-class field
+        ClassicAssert.AreEqual(40, runCrossModuleSuspend(property!!))
+        ClassicAssert.AreEqual(41, runCrossModuleSuspend(field!!))
     }
 }
