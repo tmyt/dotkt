@@ -80,6 +80,12 @@ class SuspendFunctionValueTests {
     }
 
     @TestAttribute
+    fun storedSuspendReferenceInvokesDirectly() {
+        val r = ::corBSrefWork
+        assertEquals(42, blockOn { r(41) })
+    }
+
+    @TestAttribute
     fun capturingSuspendLambda() {
         val n = 10
         assertEquals(15, blockOn { corBLam2H() + n })   // 15

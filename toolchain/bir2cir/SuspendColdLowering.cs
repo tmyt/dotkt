@@ -179,18 +179,26 @@ static partial class SuspendColdLowering
     }
 
     // GAP 1 (P3 wave-2b) — a call to a suspend functional VALUE: `b()` where `b: suspend (...) -> T` is a
-    // param/local/field. kotc emits it as `recv.invoke()` (suspendCall:true) whose receiver TYPE is a
-    // `kotlin.coroutines.SuspendFunctionN[...]` (SuspendFunction0[R], SuspendFunction1[P,R], ...). Unlike a
-    // NAMED suspend call it has no `<name>$dotkt_suspend` cold entry — the value at runtime IS a SuspendLambda
-    // state machine (a BaseContinuationImpl), so the suspension is driven through the stdlib cold-invoke helper
+    // param/local/field. kotc emits it as `recv.invoke()` (suspendCall:true) and stamps the receiver's resolved
+    // Kotlin static type as a structured suspend `fn`. That fact covers both a declared `suspend (...) -> T` value
+    // (`kotlin.coroutines.SuspendFunctionN`) and an inferred callable-reference value (`kotlin.reflect.KSuspendFunctionN`)
+    // without teaching this lowering about either frontend implementation class name. Unlike a NAMED suspend call it
+    // has no `<name>$dotkt_suspend` cold entry — the value at runtime IS a SuspendLambda state machine (a
+    // BaseContinuationImpl), so the suspension is driven through the stdlib cold-invoke helper
     // `startSuspendUninterceptedOrReturn(fn, [receiver,] completion)` (= `create(completion).invokeSuspend(Unit)`),
     // NOT a virtual invoke (the SM implements no SuspendFunctionN interface / carries no `invoke` bridge).
-    const string SuspendFunctionPrefix = "kotlin.coroutines.SuspendFunction";
     const string StartSuspendOwner = "kotlin.coroutines.clr.internal.ContinuationImplKt";
-    static bool IsSuspendValueCall(JsonObject o) =>
-        Str(o["k"]) == "callInstance" && Bool(o["suspendCall"]) && Str(o["method"]) == "invoke"
-        && (BareOwner(TypeJson.OwnerName(o["ownerType"]))?.StartsWith(SuspendFunctionPrefix, StringComparison.Ordinal) ?? false);
-
+    static bool IsSuspendFunctionValue(JsonNode n)
+    {
+        if (n is not JsonObject o) return false;
+        // `sty` is kotc's canonical resolved-type fact. Inline materialization can replace a local receiver with a
+        // typed field/call expression, whose equivalent fact lives in its ordinary result/type slot instead.
+        var type = TypeJson.Read(o["sty"])
+            ?? TypeJson.Read(o["ret"])
+            ?? TypeJson.Read(o["dynRet"])
+            ?? TypeJson.Read(o["type"]);
+        return type is TypeNode.Fn { Suspend: true };
+    }
     // #79 — the top-level `suspend inline val coroutineContext` read (Continuation.kt:157). Its getter is
     // intentionally `throw NotImplementedError("Implemented as intrinsic")`, so RESOLUTION can never make it work — a
     // real binding is required, and it lives HERE (the only layer that knows the current-continuation identity). kotc
@@ -2463,7 +2471,7 @@ static partial class SuspendColdLowering
         {
             // GAP 1: a call to a suspend functional VALUE has no named cold entry — drive it through the stdlib
             // cold-invoke helper `startSuspendUninterceptedOrReturn(fn, [receiver,] completion)`.
-            if (IsSuspendValueCall(callNode)) return SuspendValueColdCall(callNode, outp);
+            if (IsSuspendValueCallInScope(callNode)) return SuspendValueColdCall(callNode, outp);
 
             var k = Str(callNode["k"]);
             var method = Str(callNode["method"]) + "$dotkt_suspend";
@@ -2586,6 +2594,21 @@ static partial class SuspendColdLowering
             sigArr.Add(ContAny());
             call["sig"] = sigArr;
             return call;
+        }
+
+        bool IsSuspendValueCallInScope(JsonObject call)
+        {
+            if (Str(call["k"]) != "callInstance" || !Bool(call["suspendCall"]) || Str(call["method"]) != "invoke")
+                return false;
+            if (IsSuspendFunctionValue(call["recv"])) return true;
+
+            // InlineSplice may replace a typed lambda parameter with a fresh bare local (`__inlmatN`). The local's
+            // structured `fn` type lives on its `var` declaration and has already been collected into this SM's field
+            // table; resolve it lexically instead of falling back to the call owner's implementation-class name.
+            return call["recv"] is JsonObject recv
+                && Str(recv["k"]) == "local"
+                && Str(recv["name"]) is string local
+                && FieldType(local) is TypeNode.Fn { Suspend: true };
         }
 
         // GAP 1 — the cold-invoke of a suspend functional VALUE. The value `fn` (`b()`'s receiver) is a cold,
