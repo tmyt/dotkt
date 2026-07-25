@@ -29,6 +29,7 @@ fun makeNullableSuspend(value: Int): (suspend () -> Int)? =
     if (value < 0) null else suspendBlock(value)
 
 val nullableTopLevelBlock: (suspend () -> Int)? = suspendBlock(40)
+val nullTopLevelBlock: (suspend () -> Int)? = null
 
 class NullableSuspendHolder(value: Int?) {
     val block: (suspend () -> Int)? =
