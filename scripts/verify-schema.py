@@ -217,6 +217,33 @@ class V:
                 self.kinds_seen.add(k)
                 if k not in KINDS:
                     self.err(f, path, f"unknown node kind k={k!r}")
+                if k == "newSuspendLambda":
+                    # The physical SM parameter descriptors and the semantic Kotlin function type deliberately use
+                    # different shapes: node.params is receiver-first (create arguments/field names), while
+                    # funcType.recv owns the extension receiver and funcType.params contains regular params only.
+                    # Enforce their one-to-one projection so nobody can reintroduce the former flattened/side-band
+                    # receiver encoding without reddening the wire-contract gate.
+                    ft = o.get("funcType")
+                    ps = o.get("params")
+                    arity = o.get("arity")
+                    if not isinstance(ft, dict) or ft.get("t") != "fn" or ft.get("suspend") is not True:
+                        self.err(f, path, "newSuspendLambda.funcType must be a suspend fn type")
+                    elif isinstance(ps, list):
+                        semantic = ([] if ft.get("recv") is None else [ft["recv"]]) + (
+                            ft.get("params") if isinstance(ft.get("params"), list) else []
+                        )
+                        physical = [p.get("type") if isinstance(p, dict) else None for p in ps]
+                        if physical != semantic:
+                            self.err(
+                                f, path,
+                                "newSuspendLambda params must equal [funcType.recv?] + funcType.params"
+                            )
+                        if ft.get("ret") != o.get("suspendRet"):
+                            self.err(f, path, "newSuspendLambda.suspendRet must equal funcType.ret")
+                    else:
+                        self.err(f, path, "newSuspendLambda.params must be an array")
+                    if not isinstance(arity, int) or not isinstance(ps, list) or arity != len(ps):
+                        self.err(f, path, "newSuspendLambda.arity must equal the physical params length")
             if isinstance(o.get("mods"), dict):
                 for mk in o["mods"]:
                     if mk not in MOD_KEYS:

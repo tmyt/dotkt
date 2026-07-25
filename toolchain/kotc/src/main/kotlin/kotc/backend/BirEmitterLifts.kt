@@ -185,6 +185,7 @@ private fun BirEmitter.suspendLambda(node: IrFunctionExpression): String? {
 	// generic over) — a type-param DECLARATION list (bir2cir names the SM's params + instantiates `!i`), NOT a
 	// type-USAGE slot, so it rides as the `typeParams` name shorthand (§2.5), consistent with the other lambda paths.
 	val typeParamsBare = freeTps.joinToString(",") { str(it.name.asString()) }
+	val extensionReceiver = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
 	// (B) body shadow: emit the SM body with each captured decl bound to its DESCRIPTOR name `{k:local,name:D}` in
 	// whichever subst map is active (captureSubst/selfSubst/valSubst — the SAME lookup order exprInner's IrGetValue
 	// uses), so the body names the capture EXACTLY as the descriptor declares it (the name bir2cir's spill rewrite
@@ -201,7 +202,19 @@ private fun BirEmitter.suspendLambda(node: IrFunctionExpression): String? {
 		val nm = d.name.asString()
 		if (valSubst.containsKey(nm) && !shadowVal.containsKey(nm)) { shadowVal[nm] = valSubst[nm]; valSubst[nm] = local }
 	}
+	// A suspend extension lambda has two distinct `this` candidates: its own extension receiver and a captured
+	// enclosing dispatch receiver. Preserve that distinction in BIR instead of asking bir2cir to infer it from a bare
+	// `this`: the extension receiver is the leading physical lambda param, so bind its IrGetValue to that param by
+	// identity while emitting the body. A remaining bare `this` can then only denote the captured enclosing instance.
+	val hadExtensionReceiver = extensionReceiver != null && selfSubst.containsKey(extensionReceiver)
+	val savedExtensionReceiver = extensionReceiver?.let { selfSubst[it] }
+	if (extensionReceiver != null)
+		selfSubst[extensionReceiver] = """{"k":"local","name":${str(extensionReceiver.name.asString())}}"""
 	val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
+	if (extensionReceiver != null) {
+		if (hadExtensionReceiver) selfSubst[extensionReceiver] = savedExtensionReceiver!!
+		else selfSubst.remove(extensionReceiver)
+	}
 	shadowCap.forEach { (d, prev) -> if (prev != null) captureSubst[d] = prev else captureSubst.remove(d) }
 	shadowSelf.forEach { (d, prev) -> if (prev != null) selfSubst[d] = prev else selfSubst.remove(d) }
 	shadowVal.forEach { (nm, prev) -> if (prev != null) valSubst[nm] = prev else valSubst.remove(nm) }
@@ -1055,13 +1068,15 @@ internal fun BirEmitter.orderedLambdaParams(fn: IrSimpleFunction): List<IrValueP
 	fn.parameters.filter { it.kind == IrParameterKind.ExtensionReceiver } +
 		fn.parameters.filter { it.kind == IrParameterKind.Regular }
 
-/** The function type `fn` for a lambda's signature (extension receiver first). A `suspend` lambda sets
- *  `fn.suspend=true` — same delegate shape carrying the suspend FACT for the newSuspendLambda SM builder.
+/** The function type `fn` for a lambda's Kotlin signature. The extension receiver stays in `fn.recv`; regular
+ *  parameters stay in `fn.params`. Consumers needing the physical delegate argument list prepend `recv` through
+ *  `DelegateParams`. A `suspend` lambda sets `fn.suspend=true`, carrying the suspend FACT for the SM builder.
  *  bir2cir ERASES a suspend `fn` to `object` wherever it appears in a TYPE slot; only the `funcType` node
- *  key itself keeps it. So this stays behavior-preserving. */
+ *  key itself keeps it. */
 internal fun BirEmitter.funcTypeOf(fn: IrSimpleFunction): TypeNode.Fn {
-	val ps = orderedLambdaParams(fn).map { birTypeDeleg(it.type) }
-	return TypeNode.Fn(fn.isSuspend, funcRetTypeOf(fn.returnType), ps)
+	val recv = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }?.let { birTypeDeleg(it.type) }
+	val ps = fn.parameters.filter { it.kind == IrParameterKind.Regular }.map { birTypeDeleg(it.type) }
+	return TypeNode.Fn(fn.isSuspend, funcRetTypeOf(fn.returnType), ps, recv)
 }
 
 /**

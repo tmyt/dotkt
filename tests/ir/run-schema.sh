@@ -6,6 +6,7 @@
 #   - a document type slot that is a bare string instead of a {t:...} node (types-are-nodes, §1);
 #   - an unknown/typo'd/retired node kind {k} or type tag {t} (§2.5/§2.6);
 #   - a malformed Type node, or an unknown mods key / vis value.
+#   - a newSuspendLambda whose physical receiver-first params diverge from canonical funcType.recv + funcType.params.
 #
 # COVERAGE = the whole pipeline surface:
 #   - the CLR stdlib  build/clr-stdlib/{bir,cir}   (fresh after `make stdlib`) — 250 files, the bulk corpus;
