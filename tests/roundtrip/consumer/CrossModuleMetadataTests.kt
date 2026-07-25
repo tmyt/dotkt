@@ -58,6 +58,12 @@ import starprojection.StarKey
 import starprojection.starOwner
 import starprojection.isConcreteStarKey
 import suspendcompanion.CompanionSuspendApi
+import suspendnullable.NullableSuspendHolder
+import suspendnullable.invokeNullableSuspend
+import suspendnullable.makeNullableSuspend
+import suspendnullable.nullTopLevelBlock
+import suspendnullable.nullableTopLevelBlock
+import suspendnullable.nullableSuspendStep
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert
 import kotlin.coroutines.Continuation
@@ -82,6 +88,12 @@ fun runCrossModuleSuspend(block: suspend () -> Int): Int {
     ClassicAssert.IsTrue(sink.completed)
     return sink.value
 }
+
+private class InvariantTypeProbe<T>(val value: T)
+
+private fun requireNullableSuspendType(
+    probe: InvariantTypeProbe<(suspend () -> Int)?>
+): (suspend () -> Int)? = probe.value
 
 class CrossModuleCaptureTests {
     // ktproj-dotktpkg (#26 follow-up): a `dotkt.foo.bar` cross-module local captured in a lambda,
@@ -214,5 +226,34 @@ class SuspendMetadataRoundtripTests {
     @TestAttribute
     fun companionSuspendFunctionRoundTripsAndRuns() {
         ClassicAssert.AreEqual(42, runCrossModuleSuspend { CompanionSuspendApi.compute(41) })
+    }
+
+    // #172: facadegen must compose the slot's CLR NRT nullable marker over its carried suspend-function shape. Wrapping
+    // each imported expression in an invariant probe first captures its independently inferred type: passing that probe
+    // to requireNullableSuspendType then compiles only when the DLL slot restored exactly `(suspend () -> Int)?`.
+    @TestAttribute
+    fun nullableSuspendFunctionTypesRoundTripAndRun() {
+        ClassicAssert.AreEqual(42, invokeNullableSuspend { nullableSuspendStep(41) }) // parameter
+        ClassicAssert.AreEqual(-1, invokeNullableSuspend(null))
+
+        val returnedProbe = InvariantTypeProbe(makeNullableSuspend(40))               // return
+        val returned = requireNullableSuspendType(returnedProbe)
+        ClassicAssert.AreEqual(41, runCrossModuleSuspend(returned!!))
+        val nullReturnedProbe = InvariantTypeProbe(makeNullableSuspend(-1))
+        ClassicAssert.IsNull(requireNullableSuspendType(nullReturnedProbe))
+
+        val holder = NullableSuspendHolder(39)
+        val propertyProbe = InvariantTypeProbe(holder.block)                          // property
+        val property = requireNullableSuspendType(propertyProbe)
+        ClassicAssert.AreEqual(40, runCrossModuleSuspend(property!!))
+
+        val nullPropertyProbe = InvariantTypeProbe(NullableSuspendHolder(null).block)
+        ClassicAssert.IsNull(requireNullableSuspendType(nullPropertyProbe))
+
+        val fieldProbe = InvariantTypeProbe(nullableTopLevelBlock)                     // file-class field
+        val field = requireNullableSuspendType(fieldProbe)
+        ClassicAssert.AreEqual(41, runCrossModuleSuspend(field!!))
+        val nullFieldProbe = InvariantTypeProbe(nullTopLevelBlock)
+        ClassicAssert.IsNull(requireNullableSuspendType(nullFieldProbe))
     }
 }

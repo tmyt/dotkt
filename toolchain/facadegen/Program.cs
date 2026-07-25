@@ -581,7 +581,11 @@ static class FacadeGen
         var exact = KotlinTypeNode(attrs);
         if (exact != null) { o["type"] = Ty(exact); return o; }
         var sfn = SuspendFnNode(attrs);   // H2: a `suspend (…) -> T` parameter
-        if (sfn != null) { o["type"] = Ty(sfn); return o; }
+        if (sfn != null)
+        {
+            o["type"] = Ty(ApplyNrt(sfn, p.ParameterType, attrs, p.Member as MemberInfo));
+            return o;
+        }
         if (p.ParameterType.IsArray && IsParamArray(p))
         {
             // vararg: the ELEMENT type rides `type` (the consumer arrays it, picking IntArray/etc. for a primitive
@@ -1852,6 +1856,8 @@ static class FacadeGen
     // node with `suspend:true` (the #37 type-flip: every emitted type token is now a `{t:…}` object, NOT the old
     // `sfunc:<ret>:…` BIR string). SuspendFnNode reads it via the shared TypeNode contract and returns the `fn` node
     // DIRECTLY (no META-string re-serialization); ClrTypeInjection.coneOf restores `kotlin.coroutines.SuspendFunctionN`.
+    // The carrier records the suspend-function SHAPE only. Reference nullability remains ordinary CLR NRT metadata and
+    // is composed over this node by each declaration-slot reader through ApplyNrt.
     const string KSuspendFnAttr = "DotKt.Runtime.CompilerServices.KotlinSuspendFunctionTypeAttribute";
     // The pre-erasure `suspend (…) -> T` type carried in [KotlinSuspendFunctionType] as a STRUCTURED TypeNode JSON —
     // an `fn` node with `suspend:true` (bir2cir erased the CLR slot to `object`). Embedded DIRECTLY as the shared
@@ -1878,7 +1884,7 @@ static class FacadeGen
         var exact = KotlinTypeNode(attrs);
         if (exact != null) return exact;
         var sfn = SuspendFnNode(attrs);
-        if (sfn != null) return sfn;
+        if (sfn != null) return ApplyNrt(sfn, f.FieldType, attrs, f);
         // #29: a field nesting a collapsed read-only collection carries the pre-collapse Kotlin type.
         var ci = CollectionIdentityNode(attrs);
         var plain = MapT(f.FieldType, self);
@@ -1891,14 +1897,15 @@ static class FacadeGen
     // parameter's [KotlinSuspendFunctionType], else the plain mapped return type. (A `suspend fun` itself returns
     // Task/Task<T> and is restored via SuspendRetToken — a different path, untouched.)
     // A method/getter RETURN type as a TypeNode, folding the tri-state NRT nullability. A restored suspend function
-    // type carries its own shape and takes no NRT wrapper (the erased `object` slot's NRT is meaningless for it).
+    // type carries its own shape; the erased `object` slot's NRT metadata composes the outer nullable wrapper over it.
     static TN RetTypeSfxN(MethodInfo m, Type self)
     {
         var attrs = CustomAttributeData.GetCustomAttributes(m.ReturnParameter);
         var exact = KotlinTypeNode(attrs);
         if (exact != null) return exact;
         var sfn = SuspendFnNode(attrs);
-        if (sfn != null) return sfn;
+        if (sfn != null)
+            return ApplyFlowContract(ApplyNrt(sfn, m.ReturnType, attrs, m), m.ReturnType, attrs);
         // #133: a Kotlin `Nothing` return has no CLR analog — bir2cir erases it to `object` (BirTypeLowering
         // kotlin.Nothing->object). The [KotlinNothing] return-parameter marker (stamped by bir2cir's RoundtripMetadata,
         // riding the same retAttrs channel as [Nullable]/[KotlinSuspendFunctionType]) restores it, so the consumer's FIR
@@ -1959,13 +1966,18 @@ static class FacadeGen
         var attrs = CustomAttributeData.GetCustomAttributes(p);
         var exact = KotlinTypeNode(attrs);
         if (exact != null) return exact;
-        // #47: a `val/var p: suspend (…) -> T` (or `suspend R.() -> T`) property carries the pre-erasure `fn` shape in
-        // [KotlinSuspendFunctionType] (bir2cir erased the CLR slot to `object`). Restore the fn node directly (it carries
-        // its arg/return shape + extension receiver) — else the property degrades to a plain erased `Any?`. NB: an OUTER
-        // nullable wrapper on the position (`(suspend …)?` = `{t:nullable,of:fn}`) is not carried (SuspendFnSlot matches
-        // only a bare `fn` slot) — a pre-existing carrier limitation, tracked separately, not folded here.
+        // #47/#172: a `val/var p: suspend (…) -> T` (or `suspend R.() -> T`) property carries the pre-erasure `fn`
+        // shape in [KotlinSuspendFunctionType] (bir2cir erased the CLR slot to `object`). Restore the fn node (including
+        // its extension receiver), then compose the property's ordinary CLR NRT metadata over it; else the property
+        // degrades to a plain erased `Any?`.
         var sfn = SuspendFnNode(attrs);
-        if (sfn != null) return sfn;
+        if (sfn != null)
+        {
+            var restored = ApplyFlowContract(ApplyNrt(sfn, p.PropertyType, attrs, p), p.PropertyType, attrs);
+            if (p.GetMethod != null)
+                restored = ApplyFlowContract(restored, p.PropertyType, CustomAttributeData.GetCustomAttributes(p.GetMethod.ReturnParameter));
+            return restored;
+        }
         // #29: a property nesting a collapsed read-only collection carries the pre-collapse Kotlin type.
         var ci = CollectionIdentityNode(attrs);
         var plainT = MapTFn(p.PropertyType, self, attrs, p);
