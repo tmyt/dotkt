@@ -546,7 +546,10 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// It is the method-dispatch analog of `synthScope` (which already per-file-prefixes synthetic closure TYPE names
 		// against the same cross-file link collision) and closes the Design-B rule that every owner:null callStatic
 		// carries its FIR-resolved dispatch owner.
-		return """{"k":"callStatic","owner":null,"method":${str(lname)},"args":[${(capArgs + recvArgs + filledArgs(call)).joinToString(",")}]$typeArgs,"calleeOwner":${fqnJson(fileClass)}}"""
+		// A lift changes only the declaration's location/parameter list; it does not stop being a Kotlin suspend
+		// call. Preserve the same call-site fact as every other suspend call so bir2cir can route it to the lowered
+		// continuation entry. kotc deliberately does not name that CLR entry here.
+		return """{"k":"callStatic","owner":null,"method":${str(lname)},"args":[${(capArgs + recvArgs + filledArgs(call)).joinToString(",")}]$typeArgs${suspendCallTag(callee)},"calleeOwner":${fqnJson(fileClass)}}"""
 	}
 
 	// Inlining (lambda-param inline funs only; lambda-less inline = JIT's job — see [[clr-not-jvm-discard-jvmisms]]).
