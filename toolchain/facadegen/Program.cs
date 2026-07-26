@@ -586,20 +586,31 @@ static class FacadeGen
             o["type"] = Ty(ApplyNrt(sfn, p.ParameterType, attrs, p.Member as MemberInfo));
             return o;
         }
+        var ng = NullableGenericNode(attrs);
         if (p.ParameterType.IsArray && IsParamArray(p))
         {
             // vararg: the ELEMENT type rides `type` (the consumer arrays it, picking IntArray/etc. for a primitive
             // element). A vararg is non-null by nature, so the element carries NO NRT wrapper — an `oblivious`/`nullable`
             // wrapper here would defeat the consumer's primitive-array detection (`Array<Int!>` instead of `IntArray`).
-            o["type"] = Ty(MapT(p.ParameterType.GetElementType(), self));
+            var elem = p.ParameterType.GetElementType();
+            var restored = ng is TN.Array a
+                ? RestoreNullableGeneric(elem, self, a.Elem, outer: false)
+                : MapT(elem, self);
+            o["type"] = Ty(restored);
             o["mods"] = Mods(("vararg", true));
             return o;
         }
+        // #147: a parameter nesting `Nullable(Tv)` carries its pre-erasure Kotlin TypeNode. Restore it before folding
+        // the declaration slot's ordinary NRT byte; otherwise `Slot<T?>` reads back from IL as `Slot<object>` and
+        // facadegen degrades the whole constructed type to `Any?`, preventing type inference at the consumer.
         // #29: a param nesting a collapsed read-only collection carries the pre-collapse Kotlin type; restore `List` vs
         // `MutableList` from it. Absent -> the plain MapTFn (BCL reverse-map) keeps a genuine `MutableList` as MutableList.
         var ci = CollectionIdentityNode(attrs);
-        var plainP = MapTFn(p.ParameterType, self, attrs, p.Member as MemberInfo);  // #150: NRT-threaded (delegate args)
-        var pt = ApplyNrt(ci != null ? FoldCollectionIdentity(plainP, ci) : plainP, p.ParameterType, attrs, p.Member as MemberInfo);
+        var plainP = ng != null
+            ? RestoreNullableGeneric(p.ParameterType, self, ng)
+            : MapTFn(p.ParameterType, self, attrs, p.Member as MemberInfo);  // #150: NRT-threaded (delegate args)
+        var pt = ApplyNrt(ng == null && ci != null ? FoldCollectionIdentity(plainP, ci) : plainP,
+            p.ParameterType, attrs, p.Member as MemberInfo);
         o["type"] = Ty(HasExtFnMarker(attrs) ? WithExtRecv(pt) : pt);   // #145: `block: P.() -> R` -> restore the receiver
         // #146: a NON-CONST default (`= {}` / a call / any non-metadata-representable expr) carries no CLR
         // [Optional]+[DefaultParameterValue] — it rides `[kotlin.clr.KotlinDefault]` (the BIR sub-tree bir2cir splices
@@ -1885,12 +1896,15 @@ static class FacadeGen
         if (exact != null) return exact;
         var sfn = SuspendFnNode(attrs);
         if (sfn != null) return ApplyNrt(sfn, f.FieldType, attrs, f);
+        // #147: restore the pre-erasure `Slot<T?>` shape carried on the FieldDef before ordinary NRT composition.
+        var ng = NullableGenericNode(attrs);
         // #29: a field nesting a collapsed read-only collection carries the pre-collapse Kotlin type.
         var ci = CollectionIdentityNode(attrs);
-        var plain = MapT(f.FieldType, self);
+        var plain = ng != null ? RestoreNullableGeneric(f.FieldType, self, ng) : MapT(f.FieldType, self);
         // #47: fold the field's NRT byte ([Nullable] from bir2cir's nullableFlags) so a `val text: String?` surfaced
         // AS a property from a CLR field re-imports nullable instead of degrading to non-null.
-        var t = ApplyNrt(ci != null ? FoldCollectionIdentity(plain, ci) : plain, f.FieldType, attrs, f);
+        var t = ApplyNrt(ng == null && ci != null ? FoldCollectionIdentity(plain, ci) : plain,
+            f.FieldType, attrs, f);
         return HasExtFnMarker(attrs) ? WithExtRecv(t) : t;   // #145: a `val handler: P.() -> R` field
     }
     // H2: a non-suspend method / property getter that RETURNS a `suspend (…) -> T` value -> restore it from the return
@@ -1978,10 +1992,15 @@ static class FacadeGen
                 restored = ApplyFlowContract(restored, p.PropertyType, CustomAttributeData.GetCustomAttributes(p.GetMethod.ReturnParameter));
             return restored;
         }
+        // #147: restore the pre-erasure `Slot<T?>` shape carried on the PropertyDef before ordinary NRT/flow metadata.
+        var ng = NullableGenericNode(attrs);
         // #29: a property nesting a collapsed read-only collection carries the pre-collapse Kotlin type.
         var ci = CollectionIdentityNode(attrs);
-        var plainT = MapTFn(p.PropertyType, self, attrs, p);
-        var t = ApplyNrt(ci != null ? FoldCollectionIdentity(plainT, ci) : plainT, p.PropertyType, attrs, p);  // #150: NRT-threaded (delegate-typed property)
+        var plainT = ng != null
+            ? RestoreNullableGeneric(p.PropertyType, self, ng)
+            : MapTFn(p.PropertyType, self, attrs, p);
+        var t = ApplyNrt(ng == null && ci != null ? FoldCollectionIdentity(plainT, ci) : plainT,
+            p.PropertyType, attrs, p);  // #150: NRT-threaded (delegate-typed property)
         // #143: a property's `[MaybeNull]`/`[NotNull]` flow contract may ride the PropertyDef OR its GETTER's return
         // parameter (`[return: MaybeNull] get`) — the BCL uses both placements (e.g. `ThreadLocal<T>.Value` on the getter
         // return). Fold from both attribute sets. Demotes `ThreadLocal<T>.Value` to a platform `T!`.
@@ -1999,9 +2018,9 @@ static class FacadeGen
         return false;
     }
 
-    // #18: the pre-erasure return TypeNode carried in [KotlinNullableGeneric] (a `Holder<T?>` whose `Nullable(Tv)` arg
-    // bir2cir object-erased). Decoded via the shared carrier + TypeNode.Parse (same envelope as [KotlinSuspendFunctionType]).
-    // Null when absent/malformed -> the caller keeps the plain (degraded) mapping.
+    // #18/#147: the pre-erasure declaration-slot TypeNode carried in [KotlinNullableGeneric] (a `Holder<T?>` whose
+    // `Nullable(Tv)` arg bir2cir object-erased). Decoded via the shared carrier + TypeNode.Parse (same envelope as
+    // [KotlinSuspendFunctionType]). Null when absent/malformed -> the caller keeps the plain (degraded) mapping.
     const string KNullableGenAttr = "DotKt.Runtime.CompilerServices.KotlinNullableGenericAttribute";
     static TN NullableGenericNode(IList<CustomAttributeData> attrs)
     {
@@ -2013,7 +2032,7 @@ static class FacadeGen
         try { return TN.Parse(shape); } catch { return null; }
     }
 
-    // #18: rebuild the pre-erasure return type by walking the emitted IL type `t` in parallel with the recorded
+    // #18/#147: rebuild the pre-erasure declaration-slot type by walking the emitted IL type `t` in parallel with the recorded
     // pre-erasure node `pre`. Where `pre` marks a position as `Nullable(Tv)` (the arg bir2cir object-erased), trust the
     // recorded node — its tv scope/index already match facadegen's positional convention (a method type-param is
     // `tv(method,i)`, a type param is `tv(type,i)`). Everywhere else, reuse facadegen's OWN mapping (KotlinName + the
@@ -2043,24 +2062,55 @@ static class FacadeGen
         }
         if (t.IsByRef && pre is TN.ByRef pb)
             return new TN.ByRef(RestoreNullableGeneric(t.GetElementType(), self, pb.Of, outer: false));
+        if (pre is TN.Fn { Suspend: false } pfn && IsDelegate(t))
+        {
+            // A plain Kotlin function type is a real CLR delegate. Rebuild its Kotlin params/receiver/return by walking
+            // Invoke in parallel with the PRE-erasure fn node. This is deliberately carrier-driven rather than NRT-driven:
+            // the carrier retains all sibling nullability as well as the `Nullable(Tv)` leaf that became object.
+            var invoke = t.GetMethod("Invoke");
+            var invokeParams = invoke?.GetParameters();
+            var preParams = pfn.DelegateParams;
+            if (invoke == null || invokeParams == null || invokeParams.Length != preParams.Length)
+                return DegradeToAny(t, "nullable-generic function carrier does not match delegate Invoke arity");
+            bool preUnit = pfn.Ret is TN.Fqn { Args: null, Name: "kotlin.Unit" or "Unit" };
+            bool clrVoid = invoke.ReturnType.FullName == "System.Void";
+            if (preUnit != clrVoid)
+                return DegradeToAny(t, "nullable-generic function carrier does not match delegate return kind");
+
+            var restoredParams = new TN[preParams.Length];
+            for (int i = 0; i < preParams.Length; i++)
+                restoredParams[i] = RestoreNullableGeneric(invokeParams[i].ParameterType, t, preParams[i], outer: false);
+            if (restoredParams.Any(IsAnyQ))
+                return DegradeToAny(t, "a nullable-generic function parameter was unresolvable");
+
+            var restoredRet = clrVoid
+                ? new TN.Fqn("Unit")
+                : RestoreNullableGeneric(invoke.ReturnType, t, pfn.Ret, outer: false);
+            if (IsAnyQ(restoredRet))
+                return DegradeToAny(t, "the nullable-generic function return was unresolvable");
+
+            TN recv = pfn.Recv == null ? null : restoredParams[0];
+            var ps = pfn.Recv == null ? restoredParams : restoredParams[1..];
+            return new TN.Fn(false, restoredRet, ps, recv);
+        }
         if (t.IsGenericType && pre is TN.Fqn { Args: { } pargs } && t.GetGenericArguments().Length == pargs.Length)
         {
             var open = t.GetGenericTypeDefinition();
             if (open.IsNested) return DegradeToAny(t, "nested generic definition — no CLR-addressable open name");
-            // #27: this [KotlinNullableGeneric] restore path (a DotKt member's pre-erasure return, e.g. `List<T?>` whose
+            // #27: this [KotlinNullableGeneric] restore path (a DotKt declaration slot, e.g. `List<T?>` whose
             // IL is `IReadOnlyList<object>`) is a THIRD generic mapper alongside MapT/CrossTypeTN — it needs the same
             // BCL-collection reverse (gated; the attribute is a DotKt round-trip stamp so `self` is always a DotKt type)
             // or the restored `List<T?>` would surface as the raw `IReadOnlyList<T?>` and reintroduce #27 on this shape.
             // #29 (compose): when `pre` here names a `kotlin.collections.*` identity it is AUTHORITATIVE — a `Box<List<T?>>`
-            // return carries BOTH [KotlinNullableGeneric] (which wins, to restore the erased `T?`) and the collapsed IL
+            // slot carries BOTH [KotlinNullableGeneric] (which wins, to restore the erased `T?`) and the collapsed IL
             // `IList` at this nested slot; trust pre's read-only-vs-mutable name so the compose doesn't reverse-map the
             // collapsed `IList` back to `MutableList` and resurrect #29 on the nullable-generic shape.
             var preFqn = pre as TN.Fqn;
             var openName = preFqn != null && IsKotlinCollectionName(preFqn.Name) ? preFqn.Name
                 : IsDotKtEmittedAssembly(self.Assembly)
-                    && BCL_COLLECTION_REVERSE.TryGetValue(open.FullName ?? "", out var kcoll) ? kcoll : KotlinName(open);
-            if (NO_INJECT.Contains(open.FullName ?? "") || !openName.All(c => char.IsLetterOrDigit(c) || c == '_' || c == '.'))
-                return DegradeToAny(t, "generic open def not injectable / not a simple identifier");
+                    && BCL_COLLECTION_REVERSE.TryGetValue(open.FullName ?? "", out var kcoll) ? kcoll : QualifiedKotlinName(open);
+            if (NO_INJECT.Contains(open.FullName ?? "") || !IsQualifiedIdent(openName))
+                return DegradeToAny(t, "generic open def not injectable / not a resolvable qualified identifier");
             var gargs = t.GetGenericArguments();
             var args = new TN[gargs.Length];
             for (int i = 0; i < gargs.Length; i++) args[i] = RestoreNullableGeneric(gargs[i], t, pargs[i], outer: false);

@@ -5,6 +5,16 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Fixed
+
+- **bir2cir/facadegen ([tmyt/dotkt#147], area:bir2cir): nested nullable-generic shapes now round-trip through every
+  declaration slot.** `[KotlinNullableGeneric]` records the pre-erasure Kotlin `Holder<T?>` shape on method and
+  constructor parameters, fields, and properties as well as returns; facadegen restores that shape before NRT
+  composition, including ordinary function-type trees and public interface bridges synthesized after erasure. Restored
+  user types keep their namespace-qualified identity. A separately compiled Kotlin consumer now retains generic
+  inference and member types instead of seeing `Any?`, while metadata regressions cover raw fields and same-simple-name
+  types directly. Bare top-level `T?` remains the distinct dual-representation work tracked by #86.
+
 ## 0.9.7 (2026-07-22)
 
 ### Added
