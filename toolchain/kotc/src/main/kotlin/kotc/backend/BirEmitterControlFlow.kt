@@ -326,11 +326,12 @@ internal fun BirEmitter.blockExpr(block: IrBlock): String {
 			val captured = capturedVarsForObject(anon)
 			// Writing an outer local through the object goes through its heap ref-cell: the module-wide scan
 			// (BirEmitter.initRefCells) already promoted every captured-and-mutated `var`, so `isRefCell(it)` holds
-			// here. The guard only fires on a mutated capture that is not a `var` local (unreachable for valid IR:
-			// a Kotlin parameter cannot be assigned) — an invariant-assert, not a limitation.
+			// here — the shape is SUPPORTED. Reaching the branch below means the scan and this predicate disagree
+			// (they read the same two helpers over the same node), i.e. a mutated capture that is not a `var` local,
+			// which valid frontend IR cannot produce: a Kotlin parameter cannot be assigned.
 			if (captured.any { it in mutatedIn(anon) && !isRefCell(it) })
-				return unsupported(block, "an object expression that writes to a captured outer variable",
-					"read-only capture works; to mutate shared state, use a small class with a field instead")
+				return invariantBroken(block, "an object expression writes a captured outer variable that was not " +
+					"promoted to a heap ref-cell")
 			// Capturing an ENCLOSING TYPE PARAMETER (`fun <T> mk(v:T) = object : Box<T> { ... }`, or an inlined object
 			// whose supertype/captures resolve to the enclosing `T`): typeDef makes the synthesized class GENERIC over
 			// the params its members reference (reified CLR generics), recording them in `liftedTypeArgNames`. The `new`

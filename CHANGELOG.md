@@ -18,22 +18,29 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   the host RID and requires that replay to fail, so the assertion cannot pass vacuously. Previously the RID flow
   was only exercised at the host RID and cross-target selection had been confirmed by hand.
 ### Fixed
-- **kotc ([tmyt/dotkt#68], area:kotc): a captured `var` written from a local class, an object expression or a lambda is
-  now heap ref-celled on EVERY emission root, not just inside a function body.** The promotion of a
-  captured-and-mutated local to a shared `dotkt$Ref<T>` was decided per emission root, and only two roots decided it —
-  `method()` and `topLevelAccessorMethod()`. Everywhere else the emitter ran with an empty set, so a constructor body,
-  an `init` block, a property or field initializer, a member/companion accessor, a default interface method, a
-  static-field initializer, a rich-enum entry argument and a `@KotlinDefault` default-value expression each aborted the
-  compile ("does not support an object expression / a local class that writes to a captured outer variable") — while
-  the same shape written with a LAMBDA hit no guard at all and emitted a `setLocal` against a local that does not exist
-  in the lifted closure, which bir2cir then rejected as an undeclared local. Needing a cell is a property of the
-  VARIABLE, not of the frame emitting it, so the set is now computed ONCE per module
+- **kotc ([tmyt/dotkt#68], area:kotc): a captured `var` written across a capture boundary is now heap ref-celled under
+  every emission root and for every boundary kind — previously only inside a function body, and never for a local
+  `fun`.** The promotion of a captured-and-mutated local to a shared `dotkt$Ref<T>` was decided per emission root, and
+  only two roots decided it — `method()` and `topLevelAccessorMethod()`. Everywhere else the emitter ran with an empty
+  set, so a constructor body, an `init` block, a property or field initializer, a member accessor, a default interface
+  method, a static-field initializer, a rich-enum entry argument and a `@KotlinDefault` default-value expression each
+  aborted the compile ("does not support an object expression / a local class that writes to a captured outer
+  variable") — while the same shape written with a LAMBDA hit no guard at all and emitted a `setLocal` against a local
+  that does not exist in the lifted closure, which bir2cir then rejected as an undeclared local. Needing a cell is a
+  property of the VARIABLE, not of the frame emitting it, so the set is now computed ONCE per module
   (`BirEmitter.initRefCells`, driven by `ClrBackendPhase`) and is identity-keyed; the per-root save/restore is gone
-  with it, and the two `unsupported(...)` guards are now true invariant-asserts. This also makes the two frames that
-  emit ONE default-argument expression — the callee's `@KotlinDefault` carrier and the omitting call site — agree.
-  Regressions: `tests/basic/fixtures/CapturedVarRefCellTests.kt` (all of the above roots, plus one `var` written by a
-  lambda, an object expression and a local class at once); the function-body root stays pinned by
-  `LambdaTests.kt`'s `localClassObject`.
+  with it. This also makes the two frames that emit ONE default-argument expression — the callee's `@KotlinDefault`
+  carrier and the omitting call site — agree. The two guards that used to reject the shape now report a broken emitter
+  invariant instead of an unsupported language construct (they can only fire on a mutated capture that is not a `var`
+  local, which valid frontend IR cannot produce).
+  In the same pass, a LOCAL `fun` became a capture boundary for this analysis. It lifts to a static method whose
+  captures are by-value parameters, so `fun f(): Int { var n = 0; fun bump() { n++ }; bump(); bump(); return n }`
+  compiled clean and silently returned 0 instead of 2 — a wrong answer with no diagnostic, at every root including a
+  plain function body.
+  Regressions: `tests/basic/fixtures/CapturedVarRefCellTests.kt` (every root above; one `var` written by a lambda, a
+  local `fun`, an object expression and a local class at once; and the enclosing frame's own write observed through the
+  shared cell); the object/local-class boundaries in a function body stay pinned by `LambdaTests.kt`'s
+  `localClassObject`.
 
 - **bir2cir ([tmyt/dotkt#228], area:bir2cir): an auto-property no longer emits a same-named field, so
   reflection-driven .NET libraries (JSON.NET) can serialize a Kotlin type again.** An accessor-routed property

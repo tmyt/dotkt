@@ -42,7 +42,6 @@ import org.jetbrains.kotlin.ir.expressions.IrComposite
 import org.jetbrains.kotlin.ir.expressions.IrDoWhileLoop
 import org.jetbrains.kotlin.ir.expressions.IrVararg
 import org.jetbrains.kotlin.ir.expressions.IrSpreadElement
-import org.jetbrains.kotlin.ir.expressions.IrFunctionExpression
 import org.jetbrains.kotlin.ir.expressions.IrPropertyReference
 import org.jetbrains.kotlin.ir.expressions.IrFunctionReference
 import org.jetbrains.kotlin.ir.expressions.IrGetClass
@@ -147,6 +146,19 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		messageCollector?.report(CompilerMessageSeverity.ERROR,
 			"the .NET backend does not support $what yet: $detail", locationOf(node))
 		return """{"k":"unsupportedExpr","of":${str("$what — $detail")}}"""
+	}
+
+	/**
+	 * Report a BROKEN EMITTER INVARIANT as a source-located compile error and return a placeholder BIR node. Unlike
+	 * [unsupported] this is never a statement about the language: the construct IS supported, and reaching here means
+	 * the emitter's own bookkeeping is inconsistent, so the message must name the invariant rather than tell the user
+	 * to rewrite working code. The build fails (hadError), so the placeholder never reaches ilemit.
+	 */
+	internal fun invariantBroken(node: IrElement?, invariant: String): String {
+		hadError = true
+		messageCollector?.report(CompilerMessageSeverity.ERROR,
+			"kotc internal error: broken emitter invariant — $invariant", locationOf(node))
+		return """{"k":"unsupportedExpr","of":${str("broken emitter invariant — $invariant")}}"""
 	}
 
 	// A `kotlin.clr.ClrEvent<T>` value is a compile-time-only fiction (the surfaced form of a .NET event); it may
@@ -367,10 +379,11 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	// generic stdlib interface identity (like `by lazy`'s `kotlin.Lazy<T>`), so delegate field/local types,
 	// the `Delegates.observable(…)` value, and the getValue/setValue dispatch owner share one type (ilverify-clean).
 
-	// heap ref-cell: local `var`s captured-and-mutated by a (non-inline) closure / object / local class are promoted
-	// to a shared `dotkt$Ref<T>{ var v }` so the mutation is visible across the capture boundary; all reads/writes of
-	// such a var go through `.v`.
-	// Needing a cell is a property of the VARIABLE — "some closure/object/local class in its scope WRITES it" — not of
+	// heap ref-cell: local `var`s captured-and-mutated by a lambda / local function / object expression / local class
+	// are promoted to a shared `dotkt$Ref<T>{ var v }` so the mutation is visible across the capture boundary; all
+	// reads/writes of such a var go through `.v`. No inline test: an inline-argument lambda is celled like any other,
+	// so the decision does not depend on which call the lambda is passed to.
+	// Needing a cell is a property of the VARIABLE — "something in its scope captures and WRITES it" — not of
 	// the frame that happens to be emitting it. So the set is computed ONCE for the whole module ([initRefCells],
 	// before any file is emitted) and is IDENTITY-keyed, which makes an entry for a declaration the tree at hand never
 	// mentions inert. Every emission root therefore sees the same decision for the same variable — a method body, a
@@ -403,14 +416,18 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	/** A captured value's type as held in the closure: the Ref cell for a ref-cell var, else its plain type. */
 	internal fun captureFieldType(d: IrValueDeclaration): TypeNode = if (isRefCell(d)) TypeNode.Fqn(refTypeName(d)) else birType(d.type)
 
-	/** Local `var`s captured AND mutated by a closure/object/local class within [node] (-> need a heap ref-cell). */
+	/** Local `var`s captured AND mutated across a capture boundary within [node] (-> need a heap ref-cell). The
+	 *  boundaries are every class (an object expression or a local class) and every function (a lambda — whose
+	 *  `IrSimpleFunction` is visited as the `IrFunctionExpression`'s child — or a LOCAL `fun`, which lifts to a static
+	 *  method taking its captures as by-value params and would otherwise write its own parameter and lose the update).
+	 *  A non-local function references no enclosing local, so its capture set is empty and the arm is inert for it. */
 	private fun computeRefCells(node: IrElement): Set<IrValueDeclaration> {
 		val out = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<IrValueDeclaration, Boolean>())
 		node.acceptChildrenVoid(object : IrVisitorVoid() {
 			override fun visitElement(element: IrElement) {
 				val caps: List<IrValueDeclaration>? = when (element) {
 					is IrClass -> capturedVarsForObject(element)
-					is IrFunctionExpression -> capturedVars(element.function)
+					is IrSimpleFunction -> capturedVars(element)
 					else -> null
 				}
 				if (caps != null) {

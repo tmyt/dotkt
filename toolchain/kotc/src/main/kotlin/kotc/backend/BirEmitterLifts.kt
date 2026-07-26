@@ -1166,11 +1166,12 @@ internal fun BirEmitter.liftLocalClass(klass: IrClass): String {
 	// module-wide ref-cell scan (BirEmitter.initRefCells, run before ANY file is emitted) promoted every
 	// captured-and-mutated `var` to a shared `dotkt$Ref<T>`, so `isRefCell(it)` is true here whatever root we are
 	// under — a method, a constructor/init block, an initializer expression — and the class reads/writes the shared
-	// cell. The guard below only fires on a mutated capture that is not a `var` local (unreachable for valid IR: a
-	// Kotlin parameter cannot be assigned) — an invariant-assert, not a limitation.
+	// cell. The shape is SUPPORTED; reaching the branch below means the scan and this predicate disagree (they read
+	// the same two helpers over the same node), i.e. a mutated capture that is not a `var` local, which valid
+	// frontend IR cannot produce: a Kotlin parameter cannot be assigned.
 	if (captured.any { it in mutatedIn(klass) && !isRefCell(it) })
-		return unsupported(klass, "a local class that writes to a captured outer variable",
-			"read-only capture works; pass the value in by constructor, or use a class field")
+		return invariantBroken(klass, "a local class writes a captured outer variable that was not promoted to a " +
+			"heap ref-cell")
 	val capPairs = captured.map { it to captureFieldName(it) }
 	capPairs.forEach { (decl, fname) ->
 		captureSubst[decl] = """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":${str(fname)}}"""
