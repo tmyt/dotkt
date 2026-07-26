@@ -257,7 +257,7 @@ internal fun BirEmitter.lambda(node: IrFunctionExpression): String {
 		val typeParams = typeParamsJson(freeTps)
 		run {
 			val body = withLambdaParamShadow(fn) { (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
-			liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false$typeParams,"params":[${lambdaParamsJson(fn.parameters)}],"ret":${str(ret)},"body":[$body]}""")
+			liftedMethods.add("""{"name":${str(lname)},"generated":true,"static":true,"override":false,"virtual":false$typeParams,"params":[${lambdaParamsJson(fn.parameters)}],"ret":${str(ret)},"body":[$body]}""")
 		}
 		val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
 		return """{"k":"newDelegate","method":${str(lname)},"funcType":${str(ftype)}$typeArgs${localCalleeOwnerTag()}}"""
@@ -374,7 +374,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			val newE = """{"k":"new","type":${ownerSpec(klass, ctor.returnType).toJson()},"args":[$argsJson]}"""
 			val freeTps = freeTypeParams(ps.map { it.type } + listOf(ctor.returnType))
 			val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
-			liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${str(retT)},"body":[{"k":"return","value":$newE}]}""")
+			liftedMethods.add("""{"name":${str(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${str(retT)},"body":[{"k":"return","value":$newE}]}""")
 			return """{"k":"newDelegate","method":${str(lname)},"funcType":${TypeNode.Fn(false, retT, ps.map { birTypeDeleg(it.type) }).toJson()}$typeArgs${localCalleeOwnerTag()}}"""
 		}
 		// `::NetType` — a lifted factory `__ctorref(args) = new NetType(args)`, bound as a delegate. kotc emits a
@@ -388,7 +388,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			val newE = """{"k":"new","type":${fqnJson(clrName(klass)!!)},"argTypes":[${ps.joinToString(",") { birType(it.type).toJson() }}],"args":[$argsJson]}"""
 			val freeTps = freeTypeParams(ps.map { it.type } + listOf(ctor.returnType))
 			val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
-			liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${str(retT)},"body":[{"k":"return","value":$newE}]}""")
+			liftedMethods.add("""{"name":${str(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${str(retT)},"body":[{"k":"return","value":$newE}]}""")
 			return """{"k":"newDelegate","method":${str(lname)},"funcType":${TypeNode.Fn(false, retT, ps.map { birTypeDeleg(it.type) }).toJson()}$typeArgs${localCalleeOwnerTag()}}"""
 		}
 		return unsupported(node, "this constructor reference", "the constructor's class could not be resolved")
@@ -503,7 +503,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 		val nodeTypeArgs = (node.type as? IrSimpleType)?.arguments?.mapNotNull { (it as? IrTypeProjection)?.type }.orEmpty()
 		val freeTps = freeTypeParams(nodeTypeArgs)
 		val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
-		liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${retT.toJson()},"body":[$body]}""")
+		liftedMethods.add("""{"name":${str(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${retT.toJson()},"body":[$body]}""")
 		return """{"k":"newDelegate","method":${str(lname)},"funcType":${fnType.toJson()}$typeArgs${localCalleeOwnerTag()}}"""
 	}
 	// `obj::method` — a bound instance reference: a delegate whose target is the bound receiver. Only USER
@@ -532,7 +532,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 		val body = if (retVoid) """{"k":"exprStmt","expr":$callE}""" else """{"k":"return","value":$callE}"""
 		val freeTps = freeTypeParams(listOf(fn.parameters[dispatchIdx].type) + ps.map { it.type } + listOf(fn.returnType))
 		val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
-		liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${str(retT)},"body":[$body]}""")
+		liftedMethods.add("""{"name":${str(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${str(retT)},"body":[$body]}""")
 		return """{"k":"newDelegate","method":${str(lname)},"funcType":${TypeNode.Fn(false, retT, listOf(selfT) + ps.map { birTypeDeleg(it.type) }).toJson()}$typeArgs${localCalleeOwnerTag()}}"""
 	}
 	// A .NET method reference. Bound `obj::m` -> a NEUTRAL `newBoundDelegate` carrying the owner identity; bir2cir
@@ -560,7 +560,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			val body = if (retVoid) """{"k":"exprStmt","expr":$callE}""" else """{"k":"return","value":$callE}"""
 			val freeTps = freeTypeParams(regs.map { it.type } + listOf(fn.returnType))
 			val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
-			liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${str(retT)},"body":[$body]}""")
+			liftedMethods.add("""{"name":${str(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${str(retT)},"body":[$body]}""")
 			return """{"k":"newDelegate","method":${str(lname)},"funcType":${TypeNode.Fn(false, retT, regs.map { birTypeDeleg(it.type) }).toJson()}$typeArgs${localCalleeOwnerTag()}}"""
 		}
 		if (boundRecv != null)
@@ -580,7 +580,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			val body = if (retVoid) """{"k":"exprStmt","expr":$callE}""" else """{"k":"return","value":$callE}"""
 			val freeTps = freeTypeParams(listOf(fn.parameters[dispatchIdx].type) + regs.map { it.type } + listOf(fn.returnType))
 			val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
-			liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${str(retT)},"body":[$body]}""")
+			liftedMethods.add("""{"name":${str(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${str(retT)},"body":[$body]}""")
 			return """{"k":"newDelegate","method":${str(lname)},"funcType":${TypeNode.Fn(false, retT, listOf(selfT) + regs.map { birTypeDeleg(it.type) }).toJson()}$typeArgs${localCalleeOwnerTag()}}"""
 		}
 	}
@@ -751,7 +751,7 @@ internal fun BirEmitter.adapterRef(node: IrFunctionReference, fn: IrSimpleFuncti
 	if (boundCaps.isEmpty()) {
 		val lname = "__mref${lambdaCounter++}"
 		val body = withLambdaParamShadow(fn) { (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
-		liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$invokeParamsJson],"ret":${str(ret)},"body":[$body]}""")
+		liftedMethods.add("""{"name":${str(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$invokeParamsJson],"ret":${str(ret)},"body":[$body]}""")
 		return """{"k":"newDelegate","method":${str(lname)},"funcType":${str(fnType)}$typeArgs${localCalleeOwnerTag()}}"""
 	}
 	// Bound receiver(s) -> a capture-class closure (mirrors `lambda()`'s capturing branch); the bound value(s) are the
@@ -1149,7 +1149,7 @@ internal fun BirEmitter.liftLocalFn(fn: IrSimpleFunction) {
 	val ret = birType(fn.returnType)
 	// Lifting is a Kotlin-to-Kotlin structural projection. Preserve declaration facts exactly as for an ordinary
 	// function; bir2cir remains solely responsible for lowering a suspend declaration to the CLR continuation ABI.
-	liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)}${funModsJson(fn)}${resultTypeJson(fn)},"params":[${(capParams + ownParams).joinToString(",")}],"ret":${str(ret)},"body":[$body]}""")
+	liftedMethods.add("""{"name":${str(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)}${funModsJson(fn)}${resultTypeJson(fn)},"params":[${(capParams + ownParams).joinToString(",")}],"ret":${str(ret)},"body":[$body]}""")
 }
 
 /**

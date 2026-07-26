@@ -139,9 +139,9 @@ This is the single most surprising deviation, so it gets the most detail.
 - **DotKt pipeline (four layers: `facadegen` / `kotc` / `bir2cir` / `ilemit`).** The
   frontend is `…Fir2Ir then ClrBackendPhase` — **there is NO JVM `FunctionInlining` lowering.** The IR that reaches the
   backend still has un-inlined `inline` calls. **Inlining (and the `[KotlinInline]` splice) is a `bir2cir` (BIR→CIR)
-  responsibility — currently still partly in `BirEmitter`, being migrated** (`ilemit` is meant to be Kotlin-free):
+  responsibility.** kotc projects the call and caller-lambda body without introducing CLR vocabulary:
   ```
-  call() → if (callee.isInline && callee.body != null && hasLambdaArg(call)) inlineCall(call)  // splices the IR body
+  Kotlin IR call → kotc callInline BIR → bir2cir raw-BIR splice → CIR → ilemit
   ```
 - Consequences:
   - **`inline` and `reified` are pure decoration UNLESS the call passes a lambda LITERAL.** A lambda-less `inline fun`
@@ -153,10 +153,10 @@ This is the single most surprising deviation, so it gets the most detail.
     return inline degrades to a plain (or generic) call — correct. The ONE case that can't degrade is a **non-local
     `return` through a lambda** (it must return from the *caller's* frame, which only inlining achieves).
 - Cross-module non-local-return IS supported (2026-06-24), and — because inlining is over (near-)BIR — it's
-  **much lighter than JVM's `@Metadata`** (no IR deserializer): `[KotlinInline(birJson)]` carries the function's own
-  BIR body, the consumer's `bir2cir` reads it from the `--ref`'d assembly and splices it before codegen (a `return`
-  in the spliced lambda body becomes the caller's `ret`; the splice still runs partly in `BirEmitter` today, being
-  migrated into `bir2cir`, since `ilemit` is meant to be Kotlin-free). Full mechanism + scope in
+  **much lighter than JVM's `@Metadata`** (no IR deserializer): `[KotlinInline]` carries the function's closed raw-BIR
+  payload, the consumer's `bir2cir` reads it from the `--ref`'d assembly, re-hoists any carried generated delegate
+  targets, and splices it before codegen (a `return` in the spliced lambda body becomes the caller's `ret`). Full
+  mechanism + scope in
   `docs/design-kotlin-metadata-attributes.md`.
 - Pitfall (verified, do NOT do this): marking an injected body-less function `inline` *without* carrying the body lets
   the frontend accept a non-local return but leaves nothing to splice → `InvalidProgramException` at runtime (worse

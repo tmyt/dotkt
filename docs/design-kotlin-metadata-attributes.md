@@ -88,34 +88,34 @@ cross-assembly inline matrix is:
 | same-module inline (incl. non-local return, crossinline) | ✅ existing (`il-inline`/`il-inline2`/`il-xinline`) |
 | cross-module **non-reified** inline | ✅ emitted as a normal method; consumed as a regular (non-inlined) call |
 | cross-module **reified** inline | ✅ emitted as a real generic method; consumed as `f<Int>()` (CLR generics are reified, so the `T::class`/`is T` body works) — required restoring generic TYPE PARAMS on the top-level injector + a `clrGenericStatic` call |
-| cross-module inline + lambda with **non-local return** | ❌ the one case that can't degrade |
-
-**The last row is now IMPLEMENTED** (2026-06-24) — cross-module inline with a lambda + non-local `return` works.
+| cross-module inline + lambda with **non-local return** | ✅ carried as raw BIR and spliced by bir2cir |
 
 **Where inlining happens.** DotKt does NOT run the standard JVM IR `FunctionInlining` lowering — its pipeline is the
 four layers `facadegen` / `kotc` / `bir2cir` / `ilemit` (`native-cir` is the target; the frontend is
 `…Fir2Ir then ClrBackendPhase`, no JVM lowerings). **Inlining (the `[KotlinInline]` splice) is a `bir2cir` (BIR→CIR)
-responsibility — currently still partly in `BirEmitter`, being migrated**
-(`call()` → `if (callee.isInline && callee.body != null && hasLambdaArg(call)) inlineCall(call)`, which `spliceBody`s
-the callee's IR body at the call site; lambda-less inline funs are left as ordinary calls for the JIT, and `inline`/
-`reified` are pure decoration unless a lambda LITERAL is passed). Because inlining is over (near-)BIR, the
+responsibility.** kotc projects the call and caller-lambda body to a `callInline` BIR node; bir2cir resolves either
+the same-module raw stash or the referenced `[KotlinInline]` payload and performs the splice. Lambda-less inline funs
+are left as ordinary calls for the JIT, and `inline`/`reified` are pure decoration unless a lambda literal is passed.
+Because inlining is over raw BIR, the
 cross-module fix is **lighter than JVM's `@Metadata`** (no frontend IR deserializer):
 
-1. **emit** — `ilemit` stamps an inline+lambda fn with `[KotlinInline(birJson)]` carrying its own `{params, body}` BIR.
+1. **emit** — `bir2cir` freezes the raw inline payload
+   `{v:1,fqn,owner,fileClass,recv,static,typeParams,params,ret,body,lifted}` before lowering; `ilemit` stamps those
+   bytes verbatim as `[KotlinInline("bir-json/1", content)]`. `lifted` closes the body transitively over every
+   `generated:true` file-class method reached by a `newDelegate`.
 2. **read** — `facadegen` flags the restored fn `,inline` in the meta; the body STAYS in the assembly (read at splice time).
 3. **inject** — `ClrTypeInjection` marks the fn `status { isInline = true }`, so the consumer's frontend ACCEPTS a
    non-local `return` through the lambda (a body-less stub here, so BirEmitter's `callee.body == null`).
 4. **splice** — the consumer's `bir2cir` emits an `inlineSplice` node (the call's value/lambda bindings), reads
-   `[KotlinInline].Body` from the `--ref`'d library, parses it, and splices the callee body HERE with substitution: a
+   `[KotlinInline].Body` from the `--ref`'d library, parses it, re-hoists carried generated methods into the
+   consumer file class under fresh names, and splices the callee body HERE with substitution: a
    callee param `local` → its bound value; a `delegateInvoke` of a lambda param → the caller's lambda body (binding its
    param). A `return` in that spliced lambda body emits a `ret` from the caller → non-local return works. CFG labels are
-   re-`DefineLabel`d per splice (the BIR ids are baked, so re-emitting a body would otherwise redefine a Label). (This
-   splice currently still runs across `BirEmitter`/`ilemit` and is being migrated into `bir2cir`; `ilemit` is meant to
-   be Kotlin-free.)
+   freshened per splice. ilemit only realizes the resulting CIR.
 
-Scope: lambda-taking inline funcs only (the only ones whose body must travel; lambda-less degrade to plain/generic
-methods). Not yet handled: a callee body with its OWN locals (name scoping), and value-returning lambda params with
-a non-local return (the Unit-lambda forEach shape is covered — the common non-local-return case).
+Scope: lambda-taking inline funcs only (the only ones whose body must travel; lambda-less calls degrade to
+plain/generic methods). Splice hygiene covers callee locals, labels, generic lifted methods, transitively nested
+non-capturing lambdas, member inline functions, and non-local returns.
 
 ## Fixed along the way (2026-06-24)
 

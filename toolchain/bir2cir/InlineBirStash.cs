@@ -1,10 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 // INLINE-BIR STASH (#71/#75 S1). Runs FIRST — before EVERY lowering pass — over every input file. For each `mods.inline`
-// method it deep-clones the RAW pre-lowering facts {v,fqn,owner,recv,typeParams,params,ret,body} and stores them as ONE
+// method it deep-clones the RAW pre-lowering facts {v,fqn,owner,recv,typeParams,params,ret,body,lifted} and stores them as ONE
 // OPAQUE STRING field `"inlineBir"` = base64(BirCarrier.EncodeBody(JsonV1, payload)). Encoding AT STASH TIME is load-
 // bearing: every downstream walker (BirTypeLowering, RefBodySquash, …) then sees an inert JsonValue string and cannot
 // descend into / rewrite the captured body. ilemit later stamps that string VERBATIM as the [KotlinInline] carrier
@@ -49,21 +50,28 @@ static class InlineBirStash
     {
         if (root is not JsonObject o) return;
         var fileClass = Str(o["fileClass"]);
-        if (fileClass != null && o["methods"] is JsonArray topMethods)
-            foreach (var m in topMethods) if (m is JsonObject mo) StashMethod(fileClass, mo);
+        var topMethods = o["methods"] as JsonArray;
+        var generatedMethods = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+        if (topMethods != null)
+            foreach (var m in topMethods.OfType<JsonObject>())
+                if (Bool(m["generated"]) == true && Str(m["name"]) is string name)
+                    generatedMethods.TryAdd(name, m);
+        if (fileClass != null && topMethods != null)
+            foreach (var m in topMethods) if (m is JsonObject mo) StashMethod(fileClass, mo, fileClass, generatedMethods);
         if (o["types"] is JsonArray types)
-            foreach (var t in types) if (t is JsonObject to) StashType(to);
+            foreach (var t in types) if (t is JsonObject to) StashType(to, fileClass, generatedMethods);
     }
 
-    static void StashType(JsonObject type)
+    static void StashType(JsonObject type, string fileClass, IReadOnlyDictionary<string, JsonObject> generatedMethods)
     {
         if (Str(type["name"]) is string owner && type["methods"] is JsonArray methods)
-            foreach (var m in methods) if (m is JsonObject mo) StashMethod(owner, mo);
+            foreach (var m in methods) if (m is JsonObject mo) StashMethod(owner, mo, fileClass, generatedMethods);
         if (type["types"] is JsonArray nested)
-            foreach (var t in nested) if (t is JsonObject to) StashType(to);
+            foreach (var t in nested) if (t is JsonObject to) StashType(to, fileClass, generatedMethods);
     }
 
-    static void StashMethod(string owner, JsonObject mo)
+    static void StashMethod(string owner, JsonObject mo, string fileClass,
+        IReadOnlyDictionary<string, JsonObject> generatedMethods)
     {
         if (mo["mods"] is not JsonObject mods || Bool(mods["inline"]) != true) return;
         if (Str(mo["name"]) is not string name || mo["body"] is not JsonArray) return;
@@ -90,6 +98,7 @@ static class InlineBirStash
             ["v"] = 1,
             ["fqn"] = owner + "." + name,
             ["owner"] = owner,
+            ["fileClass"] = fileClass,
             ["recv"] = recv,
             ["static"] = isStatic,
             ["typeParams"] = typeParams?.DeepClone() ?? new JsonArray(),
@@ -97,6 +106,16 @@ static class InlineBirStash
             ["ret"] = mo["ret"]?.DeepClone(),
             ["body"] = mo["body"].DeepClone(),
         };
+        // #43: close the raw inline term over compiler-generated file-class methods. A non-capturing lambda /
+        // callable-reference adapter is represented by `newDelegate(method, calleeOwner)` plus a generated top-level
+        // method holding its body. The executable producer needs that method too, so do not detach it; embed a raw clone
+        // in the carrier. Follow generated newDelegate targets transitively so a lifted body may itself create another
+        // delegate. User-authored function references are deliberately NOT copied: their calleeOwner continues to name
+        // the referenced assembly method. The structural `generated` fact comes from kotc; no `__lambda` name sniffing.
+        var lifted = new JsonArray();
+        var seenLifted = new HashSet<string>(StringComparer.Ordinal);
+        CollectLifted(payload["body"], fileClass, generatedMethods, seenLifted, lifted);
+        payload["lifted"] = lifted;
 
         // §4.2 (#75 S4b): the overload key is `owner|name|pc|ga` -> a LIST of candidates (same-name inline OVERLOADS share
         // it). The call site picks the UNIQUE candidate whose declared `params[i].type` structurally equals the call's
@@ -117,6 +136,30 @@ static class InlineBirStash
 
         byte[] enc = BirCarrier.EncodeBody(BirCarrier.JsonV1, payload);
         mo["inlineBir"] = Convert.ToBase64String(enc);
+    }
+
+    static void CollectLifted(JsonNode node, string fileClass,
+        IReadOnlyDictionary<string, JsonObject> generatedMethods, HashSet<string> seen, JsonArray into)
+    {
+        if (node is JsonObject obj)
+        {
+            if (Str(obj["k"]) == "newDelegate"
+                && TypeJson.OwnerName(obj["calleeOwner"]) == fileClass
+                && Str(obj["method"]) is string method
+                && generatedMethods.TryGetValue(method, out var decl)
+                && seen.Add(method))
+            {
+                var clone = decl.DeepClone();
+                into.Add(clone);
+                // Reachability is transitive: the lifted implementation may create another generated delegate.
+                CollectLifted(clone, fileClass, generatedMethods, seen, into);
+            }
+            foreach (var kv in obj)
+                if (kv.Value != null) CollectLifted(kv.Value, fileClass, generatedMethods, seen, into);
+        }
+        else if (node is JsonArray arr)
+            foreach (var child in arr)
+                if (child != null) CollectLifted(child, fileClass, generatedMethods, seen, into);
     }
 
     // §4.2 (#75 S4b) — STRUCTURAL overload selection. From candidate decl-fact payloads sharing `owner|name|pc|ga`, return

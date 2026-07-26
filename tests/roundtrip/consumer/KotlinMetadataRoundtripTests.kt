@@ -80,6 +80,10 @@ import roundtrip.ubyte.takeUb
 import roundtrip.tlval.greeting
 import roundtrip.tlval.counter
 import roundtrip.tlval.origin
+import roundtrip.inldelegate.applyViaNestedDelegate
+import roundtrip.inldelegate.applyViaGenericNestedDelegate
+import roundtrip.inldelegate.applyViaTransitivelyNestedDelegate
+import roundtrip.inldelegate.NestedDelegateHost
 // #199-①: two same-simple-name GENERIC types (`Cell<T>`) in different producer packages, aliased here.
 import roundtrip.genclash.a.Cell as CellA
 import roundtrip.genclash.b.Cell as CellB
@@ -89,6 +93,22 @@ import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert
 
 class KotlinApiShapeRoundtripTests {
+    // #43: the producer inline payload contains a newDelegate whose lifted method belongs
+    // to the producer file. Cross-module splicing must carry and re-home that implementation.
+    @TestAttribute
+    fun crossModuleInlineNestedDelegate() {
+        ClassicAssert.AreEqual(7, applyViaNestedDelegate(3) { it + 1 })
+        ClassicAssert.AreEqual("ok!", applyViaGenericNestedDelegate("ok") { it + "!" })
+        ClassicAssert.AreEqual(10, applyViaTransitivelyNestedDelegate(3) { it + 1 })
+        ClassicAssert.AreEqual(5, NestedDelegateHost().apply(3) { it + 1 })
+        ClassicAssert.AreEqual(42, nestedDelegateNonLocalReturn())
+    }
+
+    private fun nestedDelegateNonLocalReturn(): Int {
+        applyViaNestedDelegate(3) { if (it == 6) return 42 else it }
+        return -1
+    }
+
     // roundtrip-enum (#105): a basic enum's INHERITED System.Enum members (toString/==/hashCode) round-trip.
     @TestAttribute
     fun enumInheritedMembers() {
