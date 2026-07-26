@@ -5,11 +5,17 @@ using DotKt.Bir;
 // DECL-position NRT-byte collection (#37/#48 nullability fold). Runs on the SEMANTIC BIR (kotlin.* type tokens, the
 // `{t:nullable}` reference wrappers still present) — AFTER the object-erasure passes but BEFORE BirTypeLowering strips
 // the reference `?` wrappers to bare types. For every declaration slot whose Type node carries a nullable REFERENCE
-// position, it emits the flattened `NullableAttribute` byte array that ilemit stamps in place of the retired scalar
-// `"nullable"` / `"retNullable"` decl flags:
-//   * a method  -> `retNullableFlags` (its `ret` node)         [ilemit: Program.cs return-param path]
-//   * a param   -> `nullableFlags`    (its `type` node)        [ilemit: DefineParamNames]
-//   * a field / property -> `nullableFlags` (its `type` node)  [forward-compat; harmless if unconsumed]
+// position, it emits the flattened `NullableAttribute` byte array in place of the retired scalar `"nullable"` /
+// `"retNullable"` decl flags:
+//   * a method            -> `retNullableFlags` (its `ret` node)
+//   * a method param      -> `nullableFlags`    (its `type` node)
+//   * a CONSTRUCTOR param -> `nullableFlags`    (its `type` node)
+//   * a field / property  -> `nullableFlags`    (its `type` node)
+//
+// The CONSUMER is RoundtripMetadata (Stamp), which turns each flags key into a real `[Nullable]` entry in the decl's
+// `attrs`/`retAttrs` array; ilemit then stamps those entries through its generic BuildCab path and never reads the
+// flags keys itself. Producer and consumer traversals must therefore agree: RoundtripMetadata.StampType walks
+// methods / fields / properties / ctors / nested types, so ApplyRec walks exactly the same set.
 //
 // A VALUE `T?` (`Nullable<Int>`) contributes NO byte (it is the structural Nullable<T>, kept by BirTypeLowering); a
 // non-null reference emits nothing (the type's [NullableContext(1)] default covers it) — only a nullable reference
@@ -27,6 +33,11 @@ static class DeclNullableFlags
         if (o["methods"] is JsonArray methods)
             foreach (var m in methods)
                 if (m is JsonObject mo) ApplyToMethod(mo, isValue);
+        // A ctor decl has params but no `ret` (BirEmitterDeclarations.ctor), so its params are stamped directly
+        // rather than through ApplyToMethod.
+        if (o["ctors"] is JsonArray ctors)
+            foreach (var c in ctors)
+                if (c is JsonObject co) ApplyToDecls(co["params"], isValue);
         ApplyToDecls(o["fields"], isValue);
         ApplyToDecls(o["properties"], isValue);
         if (o["types"] is JsonArray types)

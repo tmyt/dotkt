@@ -33,15 +33,17 @@ done
 # bare `kotlin.coroutines.Continuation` at emit; they surface the REMAINING *cross-module* coroutine gaps
 # (below). This gate is the coroutine bundle's cross-module E2E check: when these flip to FIXED, prune them.
 declare -A RT_XFAIL=(
-	# #109/#86: the cross-module nullable VALUE-TYPE generic gap this section was ADDED to expose. The lib's `T?` in
-	# PARAM position (firstOr<T>(x: T?, …)) and FIELD position (NBox<T>(val value: T?)) is kept as bare non-null `T`
-	# for the round-trip (#86). #147's [KotlinNullableGeneric] carrier covers `Holder<T?>`-style NESTED positions, not
-	# this bare top-level `T?` dual representation — so on re-import the ctor/param restores as `Int`, not `Int?`.
-	# The consumer then FAILS TO COMPILE:
-	# `NBox<Int>(null)` / `firstOr<Int>(null, …)` -> "null cannot be a value of a non-null type 'Int'". This is the
-	# CONCRETE cross-module value-type manifestation of #86 (invisible to every other gate, which drives only T=String);
-	# when #86 lands the bare param/field representation, this section starts compiling+running (7/3/9/4/x) -> prune it.
-	[roundtrip-nullable-vt-generic]="#109/#86/#127: cross-module nullable value-type generic bare T? in param/field position restores as non-null T -> consumer fails to compile (NBox<Int>(null): null cannot be a value of a non-null type 'Int'); distinct from #147's nested constructed-type carrier"
+	# #109/#86: the cross-module nullable VALUE-TYPE generic gap this section was ADDED to expose. A top-level `T?`
+	# in METHOD-PARAM position (firstOr<T>(x: T?, …)) and CTOR-PARAM position (NBox<T>(val value: T?)) keeps the
+	# type-param IDENTITY in the emitted signature: the CLR slot is the bare non-null `T` plus a NullableAttribute(2)
+	# byte (#86; #147's [KotlinNullableGeneric] carrier covers `Holder<T?>`-style NESTED positions, not this bare
+	# top-level dual representation). The consumer therefore COMPILES — the byte restores both slots as `T?` — but the
+	# bare `T` slot is a struct at T=Int, so a null cannot cross it: `firstOr<Int>(null, 7)` and `NBox<Int>(null)`
+	# emit `ldnull` into an int32 slot (ilverify: StackUnexpected, found Nullobjref, expected Int32) and the app dies
+	# with System.InvalidProgramException at AppKt::main. The T=String and non-null lines (3/4/x) run correctly, so
+	# this is the value-type axis of #86 alone (invisible to every other gate, which drives only T=String); when #86
+	# lands a null-capable representation for a bare `T?` slot the section runs 7/3/9/4/x -> prune it.
+	[roundtrip-nullable-vt-generic]="#109/#86/#127: cross-module nullable value-type generic — a top-level T? method/ctor param is emitted as the bare struct-incapable T slot, so the consumer compiles (NullableAttribute(2) restores T?) but firstOr<Int>(null,7)/NBox<Int>(null) push null into an int32 slot -> System.InvalidProgramException at runtime; distinct from #147's nested constructed-type carrier"
 )
 
 # MIGRATED to the in-process ProjectReference round-trip lane (tests/roundtrip/consumer RoundtripTests, driven by
@@ -513,20 +515,22 @@ run_app gactual "$GG/appil/KApp.dll"
 check_output roundtrip-generic "$gexpected" "$gactual" "user generics in every position × operator/infix/extension/suspend/nullable/default/vararg"
 
 # ----- NULLABLE VALUE-TYPE generic, CROSS-MODULE (#109) -----------------------------------------------
-# #86 is a CROSS-MODULE representation defect: a `T?` param/field kept as bare `T` so it can survive the facadegen
+# #86 is a CROSS-MODULE representation defect: a top-level `T?` PARAMETER kept as bare `T` so it can survive the facadegen
 # round-trip is unsound at VALUE-TYPE instantiations (a bare struct T cannot hold null). But every existing cross-module
 # gate exercises this family only at T=String — roundtrip-generic drives `orDefault<String>` (a reference type, where
 # bare-T is trivially sound), the MSBuild nullable-generic sample consumes `holderOf<String>`, and the same-compilation
 # IL lane (il-nullable-generic-list / il-genarrlam) never crosses the module boundary where #86 lives. So a regression in
 # cross-module bare-T handling at a value type would be INVISIBLE to every gate. This section closes that axis: a lib
-# declares a nullable-value-type generic PARAM (`firstOr<T>(x: T?, d: T)`) and FIELD (`NBox<T>(value: T?)`), compiled
-# SEPARATELY, then consumed by an app that instantiates BOTH at T=Int (a value type) with a null argument crossing the
-# boundary — plus a T=String non-regression. If #86's bare-T representation is unsound at T=Int this section FAILs
-# (documented in RT_XFAIL against #86); today it is driven live so a fix flips it to FIXED.
+# declares a nullable-value-type generic METHOD param (`firstOr<T>(x: T?, d: T)`) and CTOR param (`NBox<T>(value: T?)`),
+# compiled SEPARATELY, then consumed by an app that instantiates BOTH at T=Int (a value type) with a null argument
+# crossing the boundary — plus a T=String non-regression. (The `val value: T?` BACKING FIELD is not the subject: a bare
+# `T?` field is object-erased by NullableGenericErasure and holds a genuine null; only the ctor's `T?` PARAM reaches the
+# consumer as a bare `T` slot.) If #86's bare-T representation is unsound at T=Int this section FAILs (documented in
+# RT_XFAIL against #86); today it is driven live so a fix flips it to FIXED.
 NV="$ROOT/build/roundtrip-nullable-vt-generic"; rm -rf "$NV"; mkdir -p "$NV/lib" "$NV/app" "$NV/libbir" "$NV/libil" "$NV/appbir" "$NV/appil"
 cat > "$NV/lib/lib.kt" <<'EOF'
-class NBox<T>(val value: T?) {          // nullable value-type generic FIELD (the bare-T-for-T? representation, #86)
-    fun orElse(d: T): T = value ?: d    // reads the nullable generic field across the module boundary
+class NBox<T>(val value: T?) {          // nullable value-type generic CTOR PARAM (the bare-T-for-T? representation, #86)
+    fun orElse(d: T): T = value ?: d    // reads the (object-erased) nullable generic field across the module boundary
 }
 fun <T> firstOr(x: T?, d: T): T = x ?: d   // top-level nullable value-type generic PARAM, consumed cross-module
 EOF
