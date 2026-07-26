@@ -611,9 +611,18 @@ sealed partial class Emitter
             // free legacy calls may use the name/arity lookup.
             var extArgc = sig?.Length ?? -1;
             if (sig != null)
-                return FindReflectedMethodBySig(ext, name, sig)
-                    ?? throw new NotSupportedException(
-                        $"method {typeName}.{SigKey(name, sig)} was not found through its carried signature");
+            {
+                if (FindReflectedMethodBySig(ext, name, sig) is { } linked)
+                    return linked;
+                var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance;
+                var candidates = ext.GetMethods(flags)
+                    .Where(m => m.Name == name && m.GetParameters().Length == sig.Length)
+                    .ToArray();
+                throw new InvalidOperationException(
+                    $"ilemit: no referenced method matches the resolved descriptor {typeName}.{SigKey(name, sig)} " +
+                    $"(ABI mismatch; {candidates.Length} same-name/parameter-count candidate(s): " +
+                    $"{string.Join("; ", candidates.Select(m => m.ToString()))})");
+            }
             return FindReflectedMethod(ext, name, extArgc);
         }
         // Walk this type's own members, then its EMITTED base/interface chain. If the base is NOT emitted here (an
