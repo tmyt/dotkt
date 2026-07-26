@@ -135,6 +135,22 @@ class M2EvalOnce {
     fun encl(): M2Encl { calls++; return M2Encl(9) }
 }
 
+// #235: EVALUATION ORDER around a value bound for single evaluation. Binding one value moves its evaluation ahead of
+// the call, so every side-effecting value to its LEFT must move with it — Kotlin evaluates the receiver, then each
+// argument, left to right.
+fun m2Order(p: Int, q: Int, r: Int = q * 10): Int = p * 10000 + q * 100 + r
+class M2Log {
+    var s = ""
+    fun a(): Int { s += "a"; return 1 }
+    fun b(): Int { s += "b"; return 2 }
+    fun self(): M2Log { s += "m"; return this }
+    fun m(p: Int, q: Int = p * 10): Int = p * 100 + q
+}
+class M2Cell {
+    var x = 0
+    fun bump(): Int { x = 5; return 1 }
+}
+
 class DefaultArgumentTests {
     @TestAttribute
     fun defargs() {
@@ -249,5 +265,20 @@ class DefaultArgumentTests {
         val f = M2EvalOnce()
         assertEquals(5, m2SideF(f.next(), 1))                           // no default filled -> no temp, still once
         assertEquals(1, f.calls)
+    }
+
+    // #235: binding a value for single evaluation must not REORDER the call's other values.
+    @TestAttribute
+    fun defargsEvalOrder() {
+        val l = M2Log()
+        assertEquals(10220, m2Order(l.a(), l.b()))                      // p=1, q=2, r=q*10=20
+        assertEquals("ab", l.s)                                         // q is bound; p must still run FIRST
+
+        val l2 = M2Log()
+        assertEquals(110, l2.self().m(l2.a()))                          // p=1, q=p*10=10
+        assertEquals("ma", l2.s)                                        // receiver before argument
+
+        val c = M2Cell()
+        assertEquals(10550, m2Order(c.bump(), c.x))                     // p=1, then q reads x=5, r=50
     }
 }

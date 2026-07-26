@@ -923,8 +923,12 @@ internal fun BirEmitter.ctor(klass: IrClass, ctor: IrConstructor, captures: List
 		"""{"k":"setField","ownerType":${fqnJson(typeName(klass))},"recv":{"k":"this"},"name":${str(fname)},"value":{"k":"local","name":${str(fname)}}}"""
 	}
 	// `ctor` as the owner so its defaulted params carry `@KotlinDefault` (the cross-module splice source), exactly as a
-	// carrying function's do — a re-consumed constructor's non-constant default has no other carrier.
-	val params = (capParams + paramsJsonList(ctor.parameters, ctor)).joinToString(",")
+	// carrying function's do — a re-consumed constructor's non-constant default has no other carrier. NOT for a lifted
+	// LOCAL/anonymous class: its `capParams` are extra leading args the stamped index does not count (only an inner
+	// class's single `__outer` lines up, via `extOffset`), and its default expression reads those captures as
+	// `this.<field>` — an unbindable carrier. A local class has no cross-module call site to carry anything for.
+	val carrierOwner = ctor.takeIf { captures.isEmpty() || klass.isInner }
+	val params = (capParams + paramsJsonList(ctor.parameters, carrierOwner)).joinToString(",")
 	val body = ctor.body as? IrBlockBody
 	val delegating = body?.statements?.filterIsInstance<IrDelegatingConstructorCall>()?.firstOrNull()
 	val delegateClass = delegating?.symbol?.owner?.parent as? IrClass
@@ -1181,6 +1185,10 @@ internal fun BirEmitter.isMetadataRepresentableDefault(p: org.jetbrains.kotlin.i
 /** True if `fn` carries `@KotlinDefault` on ALL its defaulted params — the UNIFORM per-parameter splice source
  *  bir2cir uses to fill an omitted arg POSITIONALLY (Tier-1 and Tier-2 alike). Two consumers read the carrier:
  *  DefaultArgSplice at a cross-module callStatic/callInstance, and InlineSplice STEP 5 at a callInline body splice.
+ *  A CONSTRUCTOR's carrier has NO consumer yet: DefaultArgSplice recognizes only callStatic/callInstance and
+ *  ReferenceMetadataIndex harvests @KotlinDefault only from GetMethods, so a `new`'s placeholder currently stops at that
+ *  pass's chokepoint. Stamping it is still the prerequisite — without the attribute facadegen surfaces the param
+ *  REQUIRED and the omission does not even resolve at the consumer's frontend (#235).
  *  This MUST cover Tier-1 too: at a CROSS-MODULE call kotc sees the callee's default as an IrErrorExpression (the
  *  frontend KLIB drops the VALUE) and so cannot tell Tier-1 from Tier-2 — it emits a `defaultArg` placeholder for EVERY
  *  omitted default, which bir2cir can only fill if a `@KotlinDefault` exists for that slot. (Tier-1 params ALSO keep the

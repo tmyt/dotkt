@@ -94,13 +94,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   and restores the substitutions it installs, so a closure that captured the callee's own parameter keeps its binding
   across a recursive omitting call; a delegation's args read the leading capture PARAMS, which (unlike the capture
   fields) are already live before the constructor body.
-  **A value a filled default splices is now evaluated exactly ONCE**: the receiver (or enclosing instance) a `= this` /
-  `= outerProp` default reads, and the earlier argument a `= a * 10` default reads, are bound to a call-site temporary
-  in a wrapping `valueBlock`, so `mkOuter().In()` runs `mkOuter()` once — the constructor and its default now see the
-  SAME instance — and `f(next())` calls `next()` once however many defaults read it. A stable value (a literal or an
-  immutable local/parameter read) still splices directly, so an ordinary call emits no temporary. A constructor
-  delegation and an enum entry are not emitted in an expression position, so they have nowhere to declare a temporary
-  and still splice by expression (`docs/dotkt-semantics.md` §7).
+  **A value a same-module filled default splices is now evaluated exactly ONCE**: the receiver (or enclosing instance) a
+  `= this` / `= outerProp` default reads, and the earlier argument a `= a * 10` default reads, are bound to a call-site
+  temporary in a wrapping `valueBlock`, so `mkOuter().In()` runs `mkOuter()` once — the constructor and its default now
+  see the SAME instance — and `f(next())` calls `next()` once however many defaults read it. A stable value (a literal
+  or an immutable local/parameter read) still splices directly, so an ordinary call emits no temporary, and every
+  non-stable value to the left of a bound one is bound with it so the evaluation order stays Kotlin's. A cross-module
+  omission (filled by `bir2cir.DefaultArgSplice`, which clones the argument), a constructor delegation and an enum entry
+  still splice by expression (`docs/dotkt-semantics.md` §7).
   **Cross-module**: a CONSTRUCTOR now carries the same `@kotlin.clr.KotlinDefault` stamp a function does, so facadegen
   surfaces its non-constant defaulted parameter OPTIONAL and a consumer's `P(3)` RESOLVES where it previously failed the
   frontend with *no value passed for parameter 'b'*; the stamped index counts an inner class's enclosing instance first

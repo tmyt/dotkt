@@ -123,9 +123,9 @@ internal fun BirEmitter.filledArgs(
 	val metaDefaults: List<kotc.frontend.ClrConstDefault?>? by lazy {
 		injectedMetaDefaults(callee, callee.parameters.count { it.kind == IrParameterKind.Regular })
 	}
-	// The non-constant @KotlinDefault carrier SLOTS facadegen restored for this callee. Unlike `carries` (an IR-shape
-	// test, so IrSimpleFunction-only) this is CONSTRUCTOR-aware, which is what lets a re-consumed ctor's non-constant
-	// default splice from the ref.dll like a function's.
+	// The non-constant @KotlinDefault carrier SLOTS facadegen restored for this callee. This is the AUTHORITATIVE signal
+	// for a cross-module omission (it reflects what the referenced assembly actually carries), where `carries` is only an
+	// IR-shape test over a bodies-skipped declaration — hence the sole signal for a CONSTRUCTOR below.
 	val kotlinDefaultSlots: List<Boolean>? by lazy {
 		injectedKotlinDefaultSlots(callee, callee.parameters.count { it.kind == IrParameterKind.Regular })
 	}
@@ -142,8 +142,8 @@ internal fun BirEmitter.filledArgs(
 	val enclosingSyms = enclosingThis.map { it.first.symbol }.toHashSet()
 	// The call's receiver expression (for `this`-referencing same-module defaults): the extension receiver if any, else
 	// the dispatch receiver (a data-class `copy` is a member, so its `this.y` default resolves to the dispatch receiver).
-	// Emitted lazily and reused per omitted default — single-eval is best-effort (a trivial local/this receiver is safe
-	// to duplicate; a side-effecting receiver read by several omitted defaults is a documented edge).
+	// Emitted lazily and reused by every omitted default. A non-stable receiver is a temp LOCAL read by then — `expr`
+	// hoisted it for exactly-once evaluation before this call was emitted — so reusing the string duplicates nothing.
 	val recvJson: String? by lazy { emittedRecv?.value ?: (extensionReceiver(call) ?: dispatchReceiver(call))?.let { expr(it) } }
 	val regs = callee.parameters.mapIndexedNotNull { i, p -> if (p.kind == IrParameterKind.Regular) i to p else null }
 	val provided = regs.map { (i, _) -> if (i < call.arguments.size) call.arguments[i] else null }
@@ -182,7 +182,11 @@ internal fun BirEmitter.filledArgs(
 						// substringAfter's `= this`, `b = a * 10`) gets a POSITIONAL placeholder for EVERY omitted arg so a later
 						// provided arg (the trailing transform lambda) keeps its slot; bir2cir fills each from the ref.dll
 						// @KotlinDefault (its `{param n}` tokens → this call's args).
-						?: if (kotlinDefaultSlots?.getOrNull(idx) == true || carries) defaultArgPlaceholder else {
+						// For a CONSTRUCTOR the decision rests on the facadegen slot ALONE. `carries` is an IR-shape test, and a
+						// bodies-skipped dependency ctor satisfies it for every optional param — including a Tier-1 constant whose
+						// metadata lookup came back inconclusive (two same-arity ctors disagreeing), which must keep DROPPING to
+						// ilemit's [DefaultParameterValue] backfill rather than become a placeholder nothing can fill.
+						?: if (kotlinDefaultSlots?.getOrNull(idx) == true || (carries && callee !is IrConstructor)) defaultArgPlaceholder else {
 							// Neither a metadata constant NOR a @KotlinDefault carrier. A purely TRAILING omit is safe (ilemit's
 							// [DefaultParameterValue] backfill fills it). But if any LATER slot still EMITS — an explicitly
 							// provided arg, or one this pass fills from the metadata — silently omitting THIS slot would slide
@@ -207,8 +211,9 @@ internal fun BirEmitter.filledArgs(
 						// string rewrite of the emitted `{"k":"this"}` token) is what keeps a substituted expression that itself
 						// contains `this` — a `c.m(this.k)` argument, or the receiver expression bound for an enclosing
 						// instance — from being rewritten a second time into a wrong-receiver call.
-						// Best-effort single-eval: a side-effecting earlier arg / receiver read by this default is duplicated
-						// (documented edge, docs/dotkt-semantics.md §7).
+						// Each bound value is evaluated exactly once: `expr` hoisted any non-stable receiver/argument this default
+						// reads into a call-site temp before the call was emitted, so what gets spliced here is a local read
+						// (docs/dotkt-semantics.md §7).
 						val subst = ArrayList<Pair<IrValueDeclaration, String>>()
 						filledByParam.forEach { (vp, js) -> subst.add(vp to js) }
 						val needsRecv = refsAny(def, receiverSyms) || refsAny(def, enclosingSyms)
@@ -243,6 +248,16 @@ internal fun BirEmitter.filledArgs(
 		if (emitted != null) { out.add(emitted); filledByParam[p] = emitted }
 	}
 	return out
+}
+
+/** True if this call is SOURCE-SPLICED as an inline body (the same test [call] routes on): a same-module `inline` fn
+ *  whose body is present, taking a lambda. Its args and omitted defaults are emitted by the splice, not by
+ *  [filledArgs] — so nothing of the call site is spliced into a default expression here. */
+internal fun BirEmitter.isInlineSplicedCall(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): Boolean {
+	if (call !is IrCall) return false
+	val callee = call.symbol.owner
+	val decl = if (callee.isFakeOverride) callee.resolveFakeOverride() ?: callee else callee
+	return decl.body != null && callNeedsSplice(call)
 }
 
 /** The args of a constructor DELEGATION (`: this(…)` / `: super(…)`) or an enum-entry constructor call, POSITIONALLY

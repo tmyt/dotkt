@@ -102,44 +102,57 @@ private fun BirEmitter.styStamped(node: IrExpression, s: String): String =
  *  to a temp local, so it is evaluated EXACTLY ONCE however many times it is spliced. Kotlin evaluates a receiver and
  *  each argument once; splicing the rendered expression per reader would not.
  *
- *  Returns (IR node, `var` statement) in evaluation order — receiver first, then arguments left to right, matching
- *  Kotlin — for the caller to wrap in a `valueBlock` and to un-register after this node is emitted. Every reader (the
- *  call's own receiver/argument slot, an inner-class `new`'s enclosing-instance argument, the spliced default) reaches
- *  the value through `expr()` on the SAME IR node, so [BirEmitter.evalOnceSubst] hands them all the one temp.
- *  Empty when there is nothing to bind: not a call, no omitted default, no default that reads a call value, or a STABLE
- *  value (a literal / immutable local or parameter read — free to re-read, exactly [bindOnce]'s test). */
+ *  Hoisting REORDERS: a temp's initializer runs before the call node, so every non-stable value to the LEFT of the last
+ *  hoisted one is bound too, even when no default reads it — otherwise it would slide after a value Kotlin evaluates
+ *  later (`g(a(), b())` with `r = q * 10` must still run `a()` first). Returns (IR node, `var` statement) in evaluation
+ *  order = parameter order (receivers, then arguments left to right), which IS Kotlin's order, for the caller to wrap in
+ *  a `valueBlock` and to un-register after this node is emitted. Every reader (the call's own receiver/argument slot, an
+ *  inner-class `new`'s enclosing-instance argument, the spliced default) reaches the value through `expr()` on the SAME
+ *  IR node, so [BirEmitter.evalOnceSubst] hands them all the one temp.
+ *  Empty when there is nothing to bind: not a call, no omitted default this call FILLS, no default that reads a call
+ *  value, or only STABLE values (a literal / immutable local or parameter read — free to re-read and impossible to
+ *  observe out of order, exactly [bindOnce]'s test). */
 private fun BirEmitter.hoistCallValuesReadByDefaults(node: IrExpression): List<Pair<IrExpression, String>> {
 	val call = node as? org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression ?: return emptyList()
 	val callee = call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction ?: return emptyList()
 	if (callee.parameters.none { it.kind == IrParameterKind.Regular && it.defaultValue != null }) return emptyList()
-	// The defaults this call actually fills (a cross-module IrErrorExpression carries no readable expression).
+	// A SOURCE-SPLICED inline call fills nothing here (its omitted default rides the inline carrier and its lambda args
+	// are spliced, not emitted as values), so a temp would be dead — and emitting a lambda into one lifts it twice.
+	if (isInlineSplicedCall(call)) return emptyList()
+	// The defaults this call actually fills (a cross-module IrErrorExpression carries no readable expression: that
+	// omission becomes a positional placeholder bir2cir fills, and nothing of this call is spliced into it here).
 	val omitted = callee.parameters.withIndex().mapNotNull { (i, p) ->
 		if (p.kind != IrParameterKind.Regular || (i < call.arguments.size && call.arguments[i] != null)) null
 		else p.defaultValue?.expression?.takeIf { it !is org.jetbrains.kotlin.ir.expressions.IrErrorExpression }
 	}
 	if (omitted.isEmpty()) return emptyList()
+	// The receiver `filledArgs` splices is whichever of the two this call has: the extension receiver if any, else the
+	// dispatch receiver. Reads of ANY enclosing `this` render as that same expression (an inner-class ctor / member).
+	val recvIdx = callee.parameters.indexOfFirst { it.kind == IrParameterKind.ExtensionReceiver }
+		.takeIf { it >= 0 } ?: callee.parameters.indexOfFirst { it.kind == IrParameterKind.DispatchReceiver }
+	val enclosingSyms = enclosingThisChain(callee).map { it.first.symbol }
+	// Does a filled default read the value passed at parameter position `i`?
+	fun readsAt(i: Int): Boolean {
+		val syms = HashSet<org.jetbrains.kotlin.ir.symbols.IrValueSymbol>()
+		callee.parameters.getOrNull(i)?.let { syms.add(it.symbol) }
+		if (i == recvIdx) syms.addAll(enclosingSyms)
+		return syms.isNotEmpty() && omitted.any { refsAny(it, syms) }
+	}
+	val values = callee.parameters.indices.mapNotNull { i ->
+		(if (i < call.arguments.size) call.arguments[i] else null)?.let { i to it }
+	}
+	val last = values.lastOrNull { (i, _) -> readsAt(i) }?.first ?: return emptyList()
 	val out = ArrayList<Pair<IrExpression, String>>()
-	fun bind(value: IrExpression, prefix: String, syms: Set<org.jetbrains.kotlin.ir.symbols.IrValueSymbol>) {
-		if (syms.isEmpty() || evalOnceSubst.containsKey(value) || isStableValue(value)) return
-		if (omitted.none { refsAny(it, syms) }) return
-		val tv = "$prefix${scopeCounter++}"
+	for ((i, value) in values) {
+		if (i > last) break
+		val p = callee.parameters[i]
+		// A byref / @ClrRefArgument arg is emitted as an ADDRESSABLE lvalue, never through `expr()` on this node, so a
+		// temp would be dead. An lvalue read is side-effect-free anyway, so leaving it in place reorders nothing.
+		if (birType(p.type) is TypeNode.ByRef || isClrRefArgument(p)) continue
+		if (evalOnceSubst.containsKey(value) || isStableValue(value)) continue
+		val tv = if (i == recvIdx) "__recv${scopeCounter++}" else "__arg${scopeCounter++}"
 		out.add(value to """{"k":"var","name":${str(tv)},"type":${birType(value.type).toJson()},"init":${expr(value)}}""")
 		evalOnceSubst[value] = """{"k":"local","name":${str(tv)}}"""
-	}
-	// The RECEIVER: read by a default through the callee's own receiver params, or through an enclosing instance
-	// (an inner-class ctor / a member of an inner class).
-	(extensionReceiver(call) ?: dispatchReceiver(call))?.let { recv ->
-		val syms = HashSet<org.jetbrains.kotlin.ir.symbols.IrValueSymbol>()
-		callee.parameters.filter { it.kind == IrParameterKind.DispatchReceiver || it.kind == IrParameterKind.ExtensionReceiver }
-			.forEach { syms.add(it.symbol) }
-		enclosingThisChain(callee).forEach { syms.add(it.first.symbol) }
-		bind(recv, "__recv", syms)
-	}
-	// Each PROVIDED argument an omitted default reads — the filled arg's JSON is what gets spliced for that param.
-	callee.parameters.forEachIndexed { i, p ->
-		if (p.kind != IrParameterKind.Regular) return@forEachIndexed
-		val arg = if (i < call.arguments.size) call.arguments[i] else null
-		if (arg != null) bind(arg, "__arg", setOf(p.symbol))
 	}
 	return out
 }
