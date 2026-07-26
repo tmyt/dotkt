@@ -39,9 +39,9 @@ Status: **design locked** (design owner, 2026-06-28). **Phases 1–5 implemented
 ## Target shape
 
 For `class C { val p: T ; var q: U }` (no `@ClrField`):
-- internal backing fields `<p>k__BackingField : T`, `<q>k__BackingField : U` (renamed so they don't collide with the
+- internal backing fields `<p>k__BackingField` : T, `<q>k__BackingField` : U (renamed so they don't collide with the
   property name — the C# auto-property convention; bir2cir `BackingFieldRename`, #228).
-- `public T get_p()` { ldarg.0; ldfld <p>k__BackingField; ret } ; `public U get_q()` ; `public void set_q(U)`.
+- `public T get_p()` { ldarg.0; ldfld `<p>k__BackingField`; ret } ; `public U get_q()` ; `public void set_q(U)`.
 - CLR properties `p` (get only) and `q` (get+set) via `PropertyBuilder`.
 - accessors are `virtual final` when the property implements an interface/override (binds the slot — see the
   `overridesIface` method/accessor fix already landed for the method side), else non-virtual.
