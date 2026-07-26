@@ -254,6 +254,16 @@ internal fun BirEmitter.filledArgs(
 	return out
 }
 
+/** #235: place a call's single-evaluation temps where the call site has no wrapping expression to hold them — a
+ *  constructor DELEGATION's `thisArgs`/`baseArgs` and an enum entry's base call, both plain JSON arg ARRAYS on a
+ *  declaration. The `var` statements ride a `valueBlock` around the FIRST argument, which is evaluated before every
+ *  later one, and a `var` declares an ordinary method-body local — so a later argument's read of a temp is both in
+ *  scope and correctly ordered. No temps ⇒ the arg list is returned untouched. */
+internal fun declaringFirstArg(temps: List<String>, args: List<String>): List<String> {
+	if (temps.isEmpty() || args.isEmpty()) return args
+	return listOf("""{"k":"valueBlock","stmts":[${temps.joinToString(",")}],"result":${args[0]}}""") + args.drop(1)
+}
+
 /** True if this call is SOURCE-SPLICED as an inline body (the same test [call] routes on): a same-module `inline` fn
  *  whose body is present, taking a lambda. Its args and omitted defaults are emitted by the splice, not by
  *  [filledArgs] — so nothing of the call site is spliced into a default expression here. */

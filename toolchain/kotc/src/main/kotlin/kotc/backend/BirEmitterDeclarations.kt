@@ -289,10 +289,14 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 		} else {
 			val ecc = (ent.initializerExpression as? IrExpressionBody)?.expression as? IrEnumConstructorCall
 			// An entry's `NAME(args)` is an omitting call site too (`R(1)` on `enum class Col(val rgb: Int, val
-			// label: String = "c")`), so it fills omitted defaults like every other call shape.
-			val entryArgs = ecc?.let { filledArgs(it) }.orEmpty()
+			// label: String = "c")`), so it fills omitted defaults like every other call shape — and binds a value a
+			// filled default splices to a temp (#235), declared by a `valueBlock` around this initializer.
+			val (entryTemps, entryArgs) = ecc?.let { c -> withCallValuesBoundOnce(c) { filledArgs(c) } } ?: (emptyList<String>() to emptyList())
 			val newArgs = (nameOrd(i, ent) + entryArgs).joinToString(",")
-			fields.add("""{"name":${str(ent.name.asString())},"type":${fqnJson(name)},"static":true,"init":{"k":"new","type":${fqnJson(name)},"args":[$newArgs]}}""")
+			val newEntry = """{"k":"new","type":${fqnJson(name)},"args":[$newArgs]}"""
+			val init = if (entryTemps.isEmpty()) newEntry
+				else """{"k":"valueBlock","type":${fqnJson(name)},"stmts":[${entryTemps.joinToString(",")}],"result":$newEntry}"""
+			fields.add("""{"name":${str(ent.name.asString())},"type":${fqnJson(name)},"static":true,"init":$init}""")
 		}
 	}
 	// methods: concrete user methods + abstract member decls + toString + values() + valueOf().
@@ -326,7 +330,10 @@ internal fun BirEmitter.enumSuperArgs(cc: IrClass): List<String> {
 	val ctor = cc.declarations.filterIsInstance<IrConstructor>().firstOrNull() ?: return emptyList()
 	val call = (ctor.body as? IrBlockBody)?.statements?.firstNotNullOfOrNull { it as? IrEnumConstructorCall }
 		?: return emptyList()
-	return filledArgs(call)
+	// These args ride the subclass ctor's `baseArgs`, so a single-evaluation temp is declared by the FIRST of them
+	// (the same placement a constructor delegation uses — see [declaringFirstArg]).
+	val (temps, args) = withCallValuesBoundOnce(call) { filledArgs(call) }
+	return declaringFirstArg(temps, args)
 }
 
 /** A per-entry enum body `NAME(args) { override fun … }` -> a subclass `<>Enum_NAME : Enum` whose ctor takes only
@@ -949,10 +956,19 @@ internal fun BirEmitter.ctor(klass: IrClass, ctor: IrConstructor, captures: List
 		captureSubst[d] = """{"k":"local","name":${str(fname)}}"""
 	}
 	val capForwardArgs = if (klass.isInner) emptyList() else captures.map { (_, f) -> """{"k":"local","name":${str(f)}}""" }
-	val thisArgs = if (isThisDelegate) (capForwardArgs + delegatedCtorArgs(delegating!!)).joinToString(",") else null
+	// A value a filled default SPLICES is bound to a temp so it is evaluated once (#235), like at every other call site.
+	// A delegation is not an expression — it rides the ctor declaration, ahead of the body — so there is no wrapping
+	// `valueBlock` to declare the temps in. They go in the FIRST argument instead: `var` statements in a `valueBlock`
+	// declare method-body locals, and the first argument is evaluated before every later one, so each later argument's
+	// read of a temp is in scope and in order.
+	val thisArgs = if (isThisDelegate) withCallValuesBoundOnce(delegating!!) {
+		capForwardArgs + delegatedCtorArgs(delegating)
+	}.let { (temps, a) -> declaringFirstArg(temps, a).joinToString(",") } else null
 	val baseArgs = if (!isThisDelegate) delegating?.let { d ->
 		val targetFq = delegateClass?.fqNameWhenAvailable?.asString()
-		if (targetFq != "kotlin.Any") delegatedCtorArgs(d).joinToString(",") else null
+		if (targetFq != "kotlin.Any") withCallValuesBoundOnce(d) { delegatedCtorArgs(d) }
+			.let { (temps, a) -> declaringFirstArg(temps, a).joinToString(",") }
+		else null
 	} else null
 	savedCapSubst.forEach { (d, prev) -> if (prev != null) captureSubst[d] = prev else captureSubst.remove(d) }
 	val stmts = ArrayList<String>()

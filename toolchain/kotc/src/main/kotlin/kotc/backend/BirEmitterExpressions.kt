@@ -87,10 +87,20 @@ import java.io.File
 internal fun BirEmitter.expr(node: IrExpression): String {
 	// A value the ENCLOSING call bound to a temp for single evaluation: every reader renders as that temp's read.
 	evalOnceSubst[node]?.let { return styStamped(node, it) }
-	val hoists = hoistCallValuesReadByDefaults(node)
-	val s = styStamped(node, try { exprInner(node) } finally { hoists.forEach { evalOnceSubst.remove(it.first) } })
-	if (hoists.isEmpty()) return s
-	return """{"k":"valueBlock","type":${birType(node.type).toJson()},"stmts":[${hoists.joinToString(",") { it.second }}],"result":$s}"""
+	val (temps, s) = withCallValuesBoundOnce(node) { styStamped(node, exprInner(node)) }
+	if (temps.isEmpty()) return s
+	return """{"k":"valueBlock","type":${birType(node.type).toJson()},"stmts":[${temps.joinToString(",")}],"result":$s}"""
+}
+
+/** #235: run `emit` with every value of `call` that a filled default SPLICES bound to a temp local, and hand back the
+ *  `var` statements that declare them (in evaluation order) for the caller to place. THE call sites that are not an
+ *  expression — a constructor DELEGATION and an ENUM ENTRY — place them differently from [expr]'s `valueBlock`, but the
+ *  binding itself is identical, so it lives here once. Empty list ⇒ nothing needed binding and `emit`'s output stands
+ *  alone. */
+internal fun <T> BirEmitter.withCallValuesBoundOnce(call: IrExpression, emit: () -> T): Pair<List<String>, T> {
+	val hoists = hoistCallValuesReadByDefaults(call)
+	val out = try { emit() } finally { hoists.forEach { evalOnceSubst.remove(it.first) } }
+	return hoists.map { it.second } to out
 }
 
 /** #122's `sty` stamp on the value-node kinds bir2cir's StaticType reads a type from (see the note above). */

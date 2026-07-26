@@ -115,6 +115,10 @@ static class DefaultArgSplice
             var sig = node["sig"] as JsonArray ?? node["shapeTypes"] as JsonArray;
             if (sig == null) return;
             sigCount = sig.Count;
+            // `sig`/`shapeTypes` IS the callee's declared parameter vector, so it identifies the exact OVERLOAD — two
+            // same-arity declarations of one name (an extension `String.tagged(t = this)` beside a
+            // `tagged(name, items = emptyList())`) carry different defaults and must not be told apart by arity alone.
+            sigKey = string.Join(",", sig.Select(t => ReferenceMetadataIndex.ParamKey(t)));
             method = Str(node["method"]);
             if (method == null) return;
             owner = TypeJson.OwnerName(node["ownerType"] ?? node["calleeOwner"] ?? node["owner"]);
@@ -130,22 +134,26 @@ static class DefaultArgSplice
                     "carried by several referenced declarations whose defaults disagree; pass the argument explicitly");
             return;
         }
-        // The declared parameter vector, for typing a hoisted temp (below) — the same vector the arity key came from.
+        // The declared parameter vector — a FALLBACK for typing a hoisted temp; the value's own static type wins (below).
         var declared = isNew ? node["argTypes"] as JsonArray : (node["sig"] as JsonArray ?? node["shapeTypes"] as JsonArray);
         // SINGLE EVALUATION (#235). A fill SPLICES this call's receiver / argument into the default expression, while the
         // call keeps using it too — so a non-trivial value would run twice, where Kotlin evaluates a receiver and each
         // argument exactly once. Bind every such value to a temp first: the call slot AND the fill then read the local.
-        // The positions a fill will read come from the carriers themselves, so collect them before filling anything.
+        // The positions a fill will read come from the carriers themselves, so collect them before filling anything —
+        // from the TRAILING carriers too (they bind the same tokens against the same args array).
         var read = new HashSet<int>();
-        for (var j = 0; j < args.Count; j++)
-            if (IsPlaceholder(args[j]) && defaults.TryGetValue(j, out var peek)) CollectReadPositions(peek, read);
+        for (var pos = 0; pos < sigCount; pos++)
+            if ((pos >= args.Count || IsPlaceholder(args[pos])) && defaults.TryGetValue(pos, out var peek))
+                CollectReadPositions(peek, read);
         var lastRead = read.Count == 0 ? -1 : read.Max();
+        // Binding a value moves its evaluation ahead of the call, so EVERY non-stable value up to `lastRead` must bind with
+        // it or it would slide after the temps. If even one of them cannot be typed, bind NOTHING: a partial hoist would
+        // reorder the call, which is worse than the double evaluation it would have removed.
+        var bindable = lastRead >= 0;
+        for (var j = 0; j <= lastRead && bindable; j++)
+            if (j < args.Count && !IsPlaceholder(args[j]) && args[j] is JsonNode v && !IsStableValue(v) && TempType(declared, j, v) == null)
+                bindable = false;
         var temps = new JsonArray();
-        // The RECEIVER is evaluated before any argument, so it moves with them (hoisting an argument alone would slide it
-        // after the temp). Its declared type is the member's owner.
-        if (lastRead >= 0 && node["recv"] is JsonNode recvNode && !IsStableValue(recvNode)
-            && TempType(node["ownerType"], recvNode) is JsonNode recvType)
-            node["recv"] = Hoist(temps, recvNode, recvType);
         // 1) Replace POSITIONAL placeholders in place (a later provided arg keeps its slot). Fill by array index = the
         //    @KotlinDefault index (extension receiver counted first, matching kotc's stamp). ASCENDING, so a lower slot a
         //    later default reads is already filled — and already hoisted, so reading it again costs nothing.
@@ -163,18 +171,24 @@ static class DefaultArgSplice
             // Hoist every non-stable value up to the last one a fill reads — including the fill just spliced in (a later
             // default may read THIS slot, and a filled default must not be evaluated twice either), and including values
             // no fill reads, whose evaluation would otherwise slide after the temps.
-            if (j <= lastRead && !IsPlaceholder(args[j]) && args[j] is JsonNode value && !IsStableValue(value)
-                && TempType(declared?.Count > j ? declared[j] : null, value) is JsonNode argType)
+            if (bindable && j <= lastRead && !IsPlaceholder(args[j]) && args[j] is JsonNode value && !IsStableValue(value)
+                && TempType(declared, j, value) is JsonNode argType)
                 args[j] = Hoist(temps, value, argType);
         }
         // 2) Append any purely-TRAILING omitted args (callee carries @KotlinDefault but kotc dropped the tail). Unreachable
-        //    for a `new`: its `args.Count == sigCount` is asserted above.
+        //    for a `new`: its `args.Count == sigCount` is asserted above. A gap leaves the call PARTIALLY filled — the
+        //    chokepoint then reports the unfilled placeholder, and the temps below still declare what the fills reference.
         for (var pos = args.Count; pos < sigCount; pos++)
         {
-            if (!defaults.TryGetValue(pos, out var bir)) break;          // gap -> bail (leave the call unchanged)
+            if (!defaults.TryGetValue(pos, out var bir)) break;
             var receiver = args.Count > 0 ? args[0] : null;
             if (SpliceOne(bir, receiver, args, hoist, refs, label, pos, localOwner) is JsonNode fill) { args.Add(fill); Walk(fill, refs, hoist, localOwner); } else break;
         }
+        // The RECEIVER is evaluated before any argument, so it binds only when an argument did — and then FIRST, ahead of
+        // them. Left alone otherwise: for a value-type receiver a temp is a copy, not the address the call would take.
+        if (temps.Count > 0 && node["recv"] is JsonNode recvNode && !IsStableValue(recvNode)
+            && TempType(null, 0, recvNode) is JsonNode recvType)
+            node["recv"] = HoistFirst(temps, recvNode, recvType);
         // The temps are declared by a `valueBlock` wrapping this very call. Rewritten IN PLACE (the node is parented, and
         // its parent slot is what must now hold the block): the original content becomes the block's `result`.
         if (temps.Count > 0)
@@ -193,6 +207,9 @@ static class DefaultArgSplice
     static void CollectReadPositions(string bir, HashSet<int> into)
     {
         JsonNode parsed; try { parsed = JsonNode.Parse(bir, documentOptions: BirJson.DocOptions); } catch { return; }
+        // Only the carrier's EXPRESSION is token-substituted; a `defaultCarrier`'s `lifted` method bodies are re-hoisted
+        // verbatim, so a token inside one binds nothing and must not force a hoist.
+        if (parsed is JsonObject env && Str(env["k"]) == "defaultCarrier") parsed = env["expr"];
         void Scan(JsonNode n)
         {
             if (n is JsonObject o)
@@ -214,21 +231,44 @@ static class DefaultArgSplice
     static bool IsStableValue(JsonNode n) =>
         n is not JsonObject o || Str(o["k"]) is "const" or "this";
 
-    // The type slot for a hoisted temp: the callee's DECLARED type for that position (what both the call slot and the
-    // carrier's parameter read expect), else the value's own static type. Null -> the value is left in place (a byref
-    // slot is an addressable lvalue, not a value a temp can hold).
-    static JsonNode TempType(JsonNode declared, JsonNode value)
+    // The type slot for a hoisted temp: the VALUE's own static type, which is concrete at this call site. The callee's
+    // declared type is only a fallback, and only when it is closed — `sig`/`shapeTypes`/`argTypes` render a generic
+    // callee's parameter as the CALLEE's positional type variable, which would resolve in the CALLER's frame (to the
+    // wrong parameter, or to `object`). Null -> not bindable: a byref slot is an addressable lvalue rather than a value a
+    // temp can hold, and a synthesized operand may carry no type at all.
+    static JsonNode TempType(JsonArray declared, int position, JsonNode value)
     {
-        if (declared != null && TypeJson.Read(declared) is TypeNode d)
-            return d is TypeNode.ByRef ? null : declared.DeepClone();
-        return (value as JsonObject)?["sty"]?.DeepClone() ?? (value as JsonObject)?["type"]?.DeepClone();
+        var own = (value as JsonObject)?["sty"] ?? (value as JsonObject)?["type"];
+        if (own != null && TypeJson.Read(own) is TypeNode o && !IsOpen(o)) return own.DeepClone();
+        var slot = declared != null && declared.Count > position ? declared[position] : null;
+        if (slot != null && TypeJson.Read(slot) is TypeNode d && d is not TypeNode.ByRef && !IsOpen(d)) return slot.DeepClone();
+        return null;
     }
 
+    // A type mentioning a positional type VARIABLE: it names a slot in the declaring generic's frame, so it cannot be
+    // written into a local of THIS body without re-resolving it there.
+    static bool IsOpen(TypeNode t) => t switch
+    {
+        TypeNode.Tv => true,
+        TypeNode.ByRef b => IsOpen(b.Of),
+        TypeNode.Array a => IsOpen(a.Elem),
+        TypeNode.Nullable n => IsOpen(n.Of),
+        TypeNode.Oblivious ob => IsOpen(ob.Of),
+        TypeNode.Fqn f => f.Args != null && f.Args.Any(IsOpen),
+        TypeNode.Fn fn => fn.Params.Any(IsOpen) || IsOpen(fn.Ret),
+        _ => false,
+    };
+
     // Move `value` into a fresh `var` on `temps` and return the local read that replaces it.
-    static JsonNode Hoist(JsonArray temps, JsonNode value, JsonNode type)
+    static JsonNode Hoist(JsonArray temps, JsonNode value, JsonNode type) => HoistAt(temps, temps.Count, value, type);
+
+    // The RECEIVER binds ahead of the arguments already bound (Kotlin evaluates it first).
+    static JsonNode HoistFirst(JsonArray temps, JsonNode value, JsonNode type) => HoistAt(temps, 0, value, type);
+
+    static JsonNode HoistAt(JsonArray temps, int at, JsonNode value, JsonNode type)
     {
         var name = "__dflt$tmp$" + Interlocked.Increment(ref _counter);
-        temps.Add(new JsonObject { ["k"] = "var", ["name"] = name, ["type"] = type, ["init"] = value.DeepClone() });
+        temps.Insert(at, new JsonObject { ["k"] = "var", ["name"] = name, ["type"] = type, ["init"] = value.DeepClone() });
         return new JsonObject { ["k"] = "local", ["name"] = name, ["sty"] = type.DeepClone() };
     }
 
