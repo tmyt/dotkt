@@ -22,8 +22,9 @@ using DotKt.Bir;
 // exactly as ilemit's GenericParamMatches `ownerArgs` branch does with reflected Types.
 static partial class ClrMemberResolution
 {
-    static readonly Dictionary<JsonObject, JsonArray> KotlinSigSnapshots =
-        new(ReferenceEqualityComparer.Instance);
+    const string KotlinSigSnapshotId = "dotktKotlinSigId";
+    static readonly Dictionary<int, JsonArray> KotlinSigSnapshots = new();
+    static int _nextKotlinSigSnapshotId;
     static ReferenceMetadataIndex _refs;
     static IReadOnlySet<string> _localEnums = new HashSet<string>();
 
@@ -85,14 +86,19 @@ static partial class ClrMemberResolution
     }
 
     // Nullable-generic/function erasure runs before top-level owner attribution. Preserve the frontend-resolved
-    // descriptor out-of-band across those transforms; no temporary compiler field enters BIR or CIR.
+    // descriptor out-of-band across those transforms. A scalar identity token rides the call while transforms clone
+    // it; the token is removed after resolution and never enters CIR.
     public static void CaptureReferencedStaticCallSignatures(JsonNode node)
     {
         if (node is JsonObject obj)
         {
             if ((obj["k"] as JsonValue)?.GetValue<string>() == "callStatic"
-                && obj["sig"] is JsonArray sig && !KotlinSigSnapshots.ContainsKey(obj))
-                KotlinSigSnapshots.Add(obj, (JsonArray)sig.DeepClone());
+                && obj["sig"] is JsonArray sig && obj[KotlinSigSnapshotId] == null)
+            {
+                var id = ++_nextKotlinSigSnapshotId;
+                KotlinSigSnapshots.Add(id, (JsonArray)sig.DeepClone());
+                obj[KotlinSigSnapshotId] = id;
+            }
             foreach (var kv in obj.ToList())
                 if (kv.Value != null) CaptureReferencedStaticCallSignatures(kv.Value);
         }
@@ -129,7 +135,8 @@ static partial class ClrMemberResolution
             || node["sig"] is not JsonArray sig)
             return;
         var selectionSig = sig;
-        if (KotlinSigSnapshots.TryGetValue(node, out var snapshot))
+        if ((node[KotlinSigSnapshotId] as JsonValue)?.TryGetValue<int>(out var snapshotId) == true
+            && KotlinSigSnapshots.TryGetValue(snapshotId, out var snapshot))
             selectionSig = snapshot;
         var callSig = selectionSig.Select(TypeJson.Read).Where(t => t != null).ToArray();
         if (callSig.Length != selectionSig.Count) return;
@@ -144,7 +151,9 @@ static partial class ClrMemberResolution
     {
         if (node is JsonObject obj)
         {
-            KotlinSigSnapshots.Remove(obj);
+            if ((obj[KotlinSigSnapshotId] as JsonValue)?.TryGetValue<int>(out var snapshotId) == true)
+                KotlinSigSnapshots.Remove(snapshotId);
+            obj.Remove(KotlinSigSnapshotId);
             foreach (var kv in obj.ToList())
                 if (kv.Value != null) DropKotlinSigSnapshots(kv.Value);
         }
