@@ -403,6 +403,16 @@ fun cvrcLocalClassThisDelegate(): Int {
     return n
 }
 
+// A capture colliding with a BODY LOCAL of the lifted local fun. The lift's captures become parameters, and a
+// `{k:local}` read resolves against body locals before parameters in one flat map, so a like-named local declared
+// anywhere inside would shadow the capture from that point on — a wrong value, not a diagnostic.
+fun cvrcLocalFunBodyLocalShadow(): Int {
+    val k = 1
+    fun get(): Int = k
+    fun outer(): Int { val k = 100; return get() + k }
+    return outer()
+}
+
 // A capture colliding with a CONSTRUCTOR PARAMETER of the lifted class — a parameter with no backing field, so the
 // collision is invisible if only the class's own fields are consulted.
 fun cvrcLocalClassCtorParamCollision(): Int {
@@ -506,6 +516,7 @@ class CapturedVarRefCellTests {
         assertEquals(4, CvrcRefCapturesThis().run())             // 1 + 3, the enclosing instance captured
         assertEquals(2, cvrcLocalClassThisDelegate())            // 2 — `this(1)` forwarded the capture
         assertEquals(2, cvrcLocalClassCtorParamCollision())      // 2, not the ctor parameter's `n`
+        assertEquals(101, cvrcLocalFunBodyLocalShadow())         // 1 + 100, not the body local read twice
         assertEquals(2, CvrcCellA(1, 2).pick())                  // distinct cells despite identical printed elements
         assertEquals(4, CvrcCellB(3, 4).pick())
         assertEquals("y", cvrcLocalFunBoundedTv<CvrcStrBox, String>(CvrcStrBox("x"), CvrcStrBox("y")).get())

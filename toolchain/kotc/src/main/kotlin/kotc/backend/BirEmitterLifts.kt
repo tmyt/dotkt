@@ -1139,28 +1139,24 @@ internal fun BirEmitter.captureFieldName(d: IrValueDeclaration): String =
 	if (d.name.asString() == "<this>") "__outer" else d.name.asString()
 
 /**
- * Capture (decl, field-name) pairs for a lifted CLASS, with each name made unique against the class's OWN fields.
+ * Capture (decl, name) pairs, each name unique against [taken] and against the pairs already produced.
  *
- * A lifted class holds its captures as extra instance fields beside the fields it declares itself, in one namespace,
- * and a capture no longer has to be textually mentioned inside the class to be one — reaching a capturing local `fun`
- * or local class is enough. So `class L { val n = 1; fun go() { bump() } }` can be handed a capture named `n` that
- * collides with its own `n`: two same-named fields, and every read binds to whichever one wins, losing the capture
- * silently. Prefix a colliding capture into a namespace Kotlin source cannot spell. `__outer` is left alone — the
- * suspend lowerings key their enclosing-instance handling on that exact name.
- */
-/**
- * Capture (decl, name) pairs with each name made unique against [taken] and against the pairs already produced.
+ * A capture normally keeps its own Kotlin name — that is what every lift has always emitted, and what a reader
+ * expects to see — unless something else already owns that name in the same namespace, in which case it moves into a
+ * `cap$` prefix Kotlin source cannot spell. Set [alwaysPrefix] where the namespace cannot be enumerated up front:
+ * a lifted local fun's captures become PARAMETERS, and ilemit resolves a `{k:local}` read against body locals before
+ * parameters in one flat map (Emitter.Expressions/Bodies), so a body local declared anywhere inside the lift would
+ * shadow a like-named capture parameter from that point on. A lifted CLASS has no such problem: its captures are
+ * FIELDS, read through `this`, and the names they must avoid are exactly its own fields and constructor parameters.
  *
- * A capture keeps its own Kotlin name — that is what every existing lift emits, and what a reader expects to see —
- * unless something else already owns that name in the same namespace, in which case it moves into a `cap$` prefix
- * Kotlin source cannot spell. Two things make a collision reachable: the lift puts the captures beside declarations
- * the lifted entity already has (a class's own fields and constructor parameters; a lifted local fun's own value
- * parameters), and a capture list can now hold two DIFFERENT outer declarations of the SAME name, because reaching a
- * local `fun` or local class captures transitively through it. `__outer` is never renamed: the suspend lowerings key
- * their enclosing-instance handling on that exact name, and it cannot collide with a capture.
+ * The enclosing `this` keeps `__outer`, which the suspend lowerings key on by spelling. A second `<this>` capture
+ * (a lift inside an `inner class` member touching both instances) is left to the duplicate check below rather than
+ * silently taking a second `__outer`.
  */
 internal fun BirEmitter.uniqueCaptureNames(
-	captured: List<IrValueDeclaration>, taken: MutableSet<String> = HashSet(),
+	captured: List<IrValueDeclaration>,
+	taken: MutableSet<String> = HashSet(),
+	alwaysPrefix: Boolean = false,
 ): List<Pair<IrValueDeclaration, String>> {
 	// Uniquing the names INSIDE the lift is not enough when two captures are two DIFFERENT declarations that share a
 	// Kotlin name: the capture VALUES are read in the enclosing frame, where kotc addresses a local by that name
@@ -1168,14 +1164,21 @@ internal fun BirEmitter.uniqueCaptureNames(
 	// is a wrong answer with no diagnostic, so refuse instead. Fixing it means giving the emitter a per-frame local
 	// uniquer — every `var` emission and every by-name read — which is a wider change than the capture path.
 	captured.groupBy { it.name.asString() }.values.firstOrNull { it.size > 1 }?.let { clash ->
-		unsupported(clash.first(), "capturing two different declarations both named `${clash.first().name.asString()}`",
-			"kotc addresses a captured local by its Kotlin name, so the two are indistinguishable at the capture site; " +
-				"rename one of them")
+		val shared = clash.first().name.asString()
+		if (shared == "<this>")
+			unsupported(clash.first(), "capturing TWO enclosing instances in one lifted declaration",
+				"a local fun/class inside an `inner class` member that touches both the inner and the outer instance " +
+					"needs two enclosing-instance captures, and only one of them can take the `__outer` slot the " +
+					"downstream lowerings key on; pass the value you need in as a parameter instead")
+		else
+			unsupported(clash.first(), "capturing two different declarations both named `$shared`",
+				"kotc addresses a captured local by its Kotlin name, so the two are indistinguishable at the " +
+					"capture site; rename one of them")
 	}
 	return captured.map { decl ->
 		val name = captureFieldName(decl)
 		val unique = if (name == "__outer") name
-			else generateSequence(0) { it + 1 }
+			else generateSequence(if (alwaysPrefix) 1 else 0) { it + 1 }
 				.map { if (it == 0) name else if (it == 1) "cap\$$name" else "cap\$$name\$${it - 1}" }
 				.first { it !in taken }
 		taken.add(unique)
@@ -1298,7 +1301,8 @@ internal fun BirEmitter.liftLocalFn(fn: IrSimpleFunction) {
 	// This lift puts the captures in the method's PARAMETER namespace, beside the fn's own value params — and a
 	// transitive capture arrives from ANOTHER body, where its name may resolve to a different declaration than it does
 	// here (`fun bump() { n++ }` called by `fun addTwice(n: Int)`). Uniquing keeps the wrong binding from happening.
-	val capPairs = uniqueCaptureNames(captures, ownValueParams.mapTo(HashSet()) { it.name.asString() })
+	val capPairs = uniqueCaptureNames(
+		captures, ownValueParams.mapTo(HashSet()) { it.name.asString() }, alwaysPrefix = true)
 	// Captures arrive as leading params; rewrite body refs to those params. This must cover not only `<this>` but
 	// also receiver-like captured params such as `$this$buildString`, otherwise an active inline substitution can
 	// leak a caller-local (`__lam<N>`) into the lifted method body.
