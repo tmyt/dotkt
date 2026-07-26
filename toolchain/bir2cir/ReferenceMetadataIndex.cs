@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
@@ -1832,7 +1833,18 @@ sealed partial class ReferenceMetadataIndex
         // A nested generic reflection name has one arity suffix per generic segment
         // (`Map`2+Map$Entry`2`). Truncating at the first backtick collapses the nested declaration to its outer owner
         // and can then apply the outer owner's @ClrTypeAlias to a member signature. Remove only each `N suffix.
-        return System.Text.RegularExpressions.Regex.Replace(value, @"`\d+", "");
+        var result = new StringBuilder(value.Length);
+        for (var i = 0; i < value.Length;)
+        {
+            if (value[i] == '`' && i + 1 < value.Length && char.IsAsciiDigit(value[i + 1]))
+            {
+                i += 2;
+                while (i < value.Length && char.IsAsciiDigit(value[i])) i++;
+                continue;
+            }
+            result.Append(value[i++]);
+        }
+        return result.ToString();
     }
 
     // The nested-type separator normalizer: a reflected FullName uses `+` between an enclosing type and its nested type

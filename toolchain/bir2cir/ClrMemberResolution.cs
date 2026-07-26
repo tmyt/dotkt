@@ -109,6 +109,16 @@ static partial class ClrMemberResolution
         }
     }
 
+    // Some structural lowerings replace a callStatic with a newly-built callStatic instead of cloning the node.
+    // Carry only the scalar lookup token; the Kotlin descriptor stays in this pass's side table and is still removed
+    // before CIR emission.
+    public static void CarryReferencedStaticCallSignatureSnapshot(JsonObject source, JsonObject target)
+    {
+        if ((source[KotlinSigSnapshotId] as JsonValue)?.TryGetValue<int>(out var snapshotId) == true
+            && KotlinSigSnapshots.ContainsKey(snapshotId))
+            target[KotlinSigSnapshotId] = snapshotId;
+    }
+
     static void WalkReferencedStaticCalls(JsonNode node)
     {
         if (node is JsonObject obj)
