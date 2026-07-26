@@ -20,9 +20,11 @@
 #   mpp-template — scaffold the MPP template and verify both SDK pins before build + RUN.
 #
 # Isolation (defeats the cache-masking landmine): a per-run nuget.config with <clear/> + the local feed ONLY,
-# and an isolated <globalPackagesFolder> under the scratch dir — a stale published 0.9.5 in the user's
-# ~/.nuget cache can never mask the freshly-packed one, and the user's global cache is never touched. Green =
-# every fail name is in the XFAIL_PKG baseline below (exit 0); any name outside it prints NEW-FAIL, exit 1.
+# an isolated <globalPackagesFolder>, and an isolated `dotnet new` template hive — all under the scratch dir.
+# A stale published 0.9.5 in the user's ~/.nuget cache can never mask the freshly-packed one, and neither the
+# user's global package cache nor the machine-global template store is touched, so several worktrees can run
+# this gate concurrently. Green = every fail name is in the XFAIL_PKG baseline below (exit 0); any name
+# outside it prints NEW-FAIL, exit 1.
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SCRIPT_NAME=packaged-sdk-tests
 source "$ROOT/scripts/lib.sh"
@@ -66,8 +68,9 @@ bash "$ROOT/scripts/pack-nuget.sh" >/dev/null || die "pack-nuget.sh failed"
 # content change invalidates the new fingerprint, so idempotency does not weaken stale-artifact protection.
 bash "$ROOT/tests/packaged-sdk/verify-pack-idempotency.sh"
 
-# 2. Scratch workspace: an isolated globalPackagesFolder + a local-only feed, so restore can ONLY see the
-#    freshly-packed nupkgs (no cache masking, no touching the user's ~/.nuget).
+# 2. Scratch workspace: an isolated globalPackagesFolder + a local-only feed + an isolated template hive, so
+#    restore can ONLY see the freshly-packed nupkgs (no cache masking, no touching the user's ~/.nuget) and
+#    `dotnet new` can ONLY see the freshly-packed templates.
 WS="$ROOT/build/verify-packaged-sdk"
 rm -rf "$WS"; mkdir -p "$WS/pkgs"
 RESULTS="$WS/results"; mkdir -p "$RESULTS"
@@ -84,6 +87,15 @@ cat > "$NUGET_CONFIG" <<EOF
   </packageSources>
 </configuration>
 EOF
+
+# Every `dotnet new` invocation runs against a per-run template hive inside the scratch workspace. The hive is
+# the template engine's whole state (installed packages + their expanded templates), so the gate neither reads
+# nor writes the machine-global store under $HOME: the packed DotKt.Templates is the only thing it can resolve,
+# and two worktrees running this gate at once cannot race on one shared hive (issue #250 — the collision showed
+# up as ThrowMoreThanOneMatchException / "Could not find the template package containing template ..."). $WS is
+# wiped at the top of every run, so the hive is disposable and nothing needs uninstalling afterwards.
+TEMPLATE_HIVE="$WS/template-hive"
+dotnet_new() { dotnet new "$@" --debug:custom-hive "$TEMPLATE_HIVE"; }
 
 # One atomic result record per case + a fail-name list for the verdict.
 declare -a FAILS=()
@@ -470,20 +482,17 @@ EOF
 # project with `dotnet new dotkt-cli`, and build+run it from the isolated feed. A stale template Sdk pin (the
 # 0.9.5-while-release-is-0.9.6 drift) makes restore pull a version the feed does not carry -> this fails. The
 # generated project file must pin the RELEASE version (proves the pack-time Sdk-version substitution worked).
-# NB `dotnet new install/uninstall` touches the machine-global template store (unavoidable for `dotnet new`);
-# installed from the exact packed nupkg with --force and uninstalled in a trap so a failure still cleans up.
+# Installed from the exact packed nupkg with --force, into the per-run template hive.
 # ---------------------------------------------------------------------------------------------------------
 case_template() {
 	local d="$WS/template"; mkdir -p "$d"
 	local nupkg; nupkg="$(find "$FEED" -maxdepth 1 -name "DotKt.Templates.$VER.nupkg" | head -1)"
 	[[ -f "$nupkg" ]] || { fail template "DotKt.Templates.$VER.nupkg not packed"; return; }
-	# Uninstall on any exit from this case so the global template store is never left dirty.
-	trap 'dotnet new uninstall DotKt.Templates >/dev/null 2>&1 || true' RETURN
-	if ! dotnet new install "$nupkg" --force >"$d/install.log" 2>&1; then
+	if ! dotnet_new install "$nupkg" --force >"$d/install.log" 2>&1; then
 		fail template "dotnet new install failed" "$(tail -20 "$d/install.log")"; return
 	fi
 	local proj="$d/hello"; rm -rf "$proj"
-	if ! dotnet new dotkt-cli -o "$proj" >"$d/new.log" 2>&1; then
+	if ! dotnet_new dotkt-cli -o "$proj" >"$d/new.log" 2>&1; then
 		fail template "dotnet new dotkt-cli failed" "$(tail -20 "$d/new.log")"; return
 	fi
 	cp "$NUGET_CONFIG" "$proj/nuget.config"
@@ -510,12 +519,11 @@ case_mpp_template() {
 	local d="$WS/mpp-template"; mkdir -p "$d"
 	local nupkg; nupkg="$(find "$FEED" -maxdepth 1 -name "DotKt.Templates.$VER.nupkg" | head -1)"
 	[[ -f "$nupkg" ]] || { fail mpp-template "DotKt.Templates.$VER.nupkg not packed"; return; }
-	trap 'dotnet new uninstall DotKt.Templates >/dev/null 2>&1 || true' RETURN
-	if ! dotnet new install "$nupkg" --force >"$d/install.log" 2>&1; then
+	if ! dotnet_new install "$nupkg" --force >"$d/install.log" 2>&1; then
 		fail mpp-template "dotnet new install failed" "$(tail -20 "$d/install.log")"; return
 	fi
 	local proj="$d/hello-mpp"; rm -rf "$proj"
-	if ! dotnet new dotkt-mpp -o "$proj" >"$d/new.log" 2>&1; then
+	if ! dotnet_new dotkt-mpp -o "$proj" >"$d/new.log" 2>&1; then
 		fail mpp-template "dotnet new dotkt-mpp failed" "$(tail -20 "$d/new.log")"; return
 	fi
 	cp "$NUGET_CONFIG" "$proj/nuget.config"
