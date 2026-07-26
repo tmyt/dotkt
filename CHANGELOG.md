@@ -7,18 +7,19 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
-- **packaged-SDK gate ([tmyt/dotkt#250], area:packaging): `dotnet new` now runs against a per-run template hive, so
-  concurrent worktree gates no longer false-RED each other.** `tests/packaged-sdk/run.sh` isolated NuGet state but
-  installed/uninstalled `DotKt.Templates` in the machine-global template store under `$HOME`. Two `make verify` runs
-  in different worktrees carry the same package id at the same version, so one run's `--force` reinstall or its
-  cleanup uninstall landed between the other's install and its scaffold — reported as
+- **packaged-SDK gate ([tmyt/dotkt#250], area:packaging): each `dotnet new` template case now gets its own scratch
+  hive, so concurrent worktree gates no longer false-RED each other.** `tests/packaged-sdk/run.sh` isolated NuGet
+  state but installed/uninstalled `DotKt.Templates` in the machine-global template store under `$HOME`. Two
+  `make verify` runs in different worktrees carry the same package id at the same version, so one run's `--force`
+  reinstall or its cleanup uninstall landed between the other's install and its scaffold — reported as
   `ThrowMoreThanOneMatchException` / "Could not find the template package containing template 'DotKt.Templates.Cli'"
   on a gate that had nothing wrong with it. Every `dotnet new` invocation now goes through a `dotnet_new` helper that
-  passes `--debug:custom-hive`, and each template case gets its own hive inside the run's scratch workspace, which is
-  wiped at the start of each run: the machine-global store is neither read nor written, and the uninstall trap that
-  existed only to keep it clean is gone with it. One hive per case, not per run — `dotnet new install --force` of a
-  package a hive already carries appends a second registration for the same id and makes the next scaffold ambiguous
-  with the very same error, which the old cross-case uninstall had been hiding.
+  passes `--debug:custom-hive` pointing at the case's own hive inside the run's scratch workspace, which is wiped at
+  the start of each run: the machine-global store is neither read nor written, and the uninstall trap that existed
+  only to keep it clean is gone with it. The hive is per case rather than per run because installing a package a hive
+  already carries is either a hard error or, with `--force`, a second registration for the same id that makes every
+  later scaffold ambiguous with the very same error — which the old cross-case uninstall had been hiding. `--force`
+  is dropped with it, so a double install would now fail loudly instead of corrupting the hive.
 
 ## 0.9.7 (2026-07-22)
 

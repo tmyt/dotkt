@@ -19,14 +19,15 @@
 #   template — install DotKt.Templates, scaffold the CLI template, then build + RUN it.
 #   mpp-template — scaffold the MPP template and verify both SDK pins before build + RUN.
 #
-# Isolation (defeats the cache-masking landmine): the SDK-resolution path restores through a per-run
-# nuget.config with <clear/> + the local feed ONLY and an isolated <globalPackagesFolder> under the scratch
-# dir, so a stale published 0.9.5 in the user's ~/.nuget cache can never mask the freshly-packed one and the
-# packages the scenarios resolve never land in the user's cache. `dotnet new` runs against a scratch template
-# hive, never the machine-global store. (Two build-time exceptions, deliberate and NOT under test: the
-# refcheck tool below and the tool/stdlib builds in pack-nuget.sh restore from nuget.org with the default
-# config.) Green = every fail name is in the XFAIL_PKG baseline below (exit 0); any name outside it prints
-# NEW-FAIL, exit 1.
+# Isolation (defeats the cache-masking landmine): everything the SIX scenarios resolve restores through a
+# per-run nuget.config with <clear/> + the local feed ONLY and an isolated <globalPackagesFolder> under the
+# scratch dir, so a stale published 0.9.5 in the user's ~/.nuget cache can never mask the freshly-packed one
+# and the scenarios' packages never land in that cache; `dotnet new` runs against a scratch template hive,
+# never the machine-global store. What the run needs in order to GET to the scenarios is deliberately outside
+# that boundary and is not under test: the refcheck tool below restores from the user's configured NuGet
+# sources into ~/.nuget, and pack-nuget.sh drives Gradle (~/.gradle, Maven Central) plus the toolchain's own
+# NuGet restore. Green = every fail name is in the XFAIL_PKG baseline below (exit 0); any name outside it
+# prints NEW-FAIL, exit 1.
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SCRIPT_NAME=packaged-sdk-tests
 source "$ROOT/scripts/lib.sh"
@@ -90,25 +91,28 @@ cat > "$NUGET_CONFIG" <<EOF
 </configuration>
 EOF
 
-# A hive is the template engine's whole state: the installed packages and their expanded templates. Every
-# `dotnet new` here names its own hive inside the scratch workspace instead of the machine-global store under
-# $HOME, which the gate therefore never reads or writes. Two consequences the cases depend on:
+# A hive is the template engine's whole state: the installed packages and their expanded templates. Each
+# template case below owns one, inside the scratch workspace, and never the machine-global store under $HOME —
+# which this gate therefore neither reads nor writes. Two reasons the hive is per CASE and not per run:
 #   * two worktrees running this gate at once cannot collide (issue #250 — the collision surfaced as
 #     ThrowMoreThanOneMatchException / "Could not find the template package containing template ...");
-#   * a hive holds exactly one install of DotKt.Templates. `dotnet new install --force` of a package a hive
-#     ALREADY carries appends a SECOND registration for the same id and makes every later scaffold ambiguous
-#     — the same error above — so each template case installs into a hive of its own.
+#   * installing DotKt.Templates into a hive that already carries it must not happen. Without --force it is a
+#     hard error; WITH --force the engine appends a SECOND registration for the same id and every later
+#     scaffold in that hive hits the same ambiguity error. A fresh hive per case needs neither.
 # $WS is wiped at the top of every run, so the hives are disposable and nothing needs uninstalling afterwards.
+# The switch goes AHEAD of the caller's arguments: on the scaffold form a trailing option would be offered to
+# the template's own parameter parser, so an SDK that stopped recognizing it could absorb it instead of failing.
 dotnet_new() { # <hive> <dotnet-new-args>...
 	local hive="$1"; shift
 	dotnet new --debug:custom-hive "$hive" "$@"
 }
 # An SDK that no longer knows the switch exits non-zero on the unrecognized option, so the case fails loudly.
-# This tripwire covers the other direction — an SDK that ACCEPTS it and installs to $HOME anyway would leave the
-# scratch hive empty and otherwise pass, quietly restoring the cross-worktree race.
-hive_isolated() { # <case-name> <hive> — true iff the install materialized the scratch hive
-	[[ -f "$2/packages.json" ]] && return 0
-	fail "$1" "dotnet new did not use the scratch template hive" "expected $2/packages.json"
+# This tripwire covers the other direction — an SDK that ACCEPTS it and installs under $HOME anyway would leave
+# the package out of the scratch hive and otherwise pass, quietly restoring the cross-worktree race.
+hive_isolated() { # <case-name> <hive> — true iff the install landed the package IN this case's hive
+	local name="$1" hive="$2"
+	if find "$hive" -name "DotKt.Templates.$VER.nupkg" -print -quit 2>/dev/null | grep -q .; then return 0; fi
+	fail "$name" "dotnet new installed outside the scratch template hive" "no DotKt.Templates.$VER.nupkg under ${hive#"$ROOT/"}"
 	return 1
 }
 
@@ -248,7 +252,8 @@ EOF
 	local libdll; libdll="$(find "$lib/bin" -name 'MyDotKtLib.dll' | head -1)"
 	[[ -f "$libdll" ]] || { fail library "second-library dll not emitted"; return; }
 
-	# (b) pack the emitted dll as a NuGet package into the feed (build-time only, default config is fine).
+	# (b) pack the emitted dll as a NuGet package into the feed. Build-time only; it lives under $WS, so NuGet's
+	#     upward config walk picks up the isolated nuget.config just like the scenarios do.
 	local pw="$WS/packwrap"; mkdir -p "$pw"
 	cat > "$pw/PackWrap.csproj" <<EOF
 <Project Sdk="Microsoft.NET.Sdk">
@@ -497,17 +502,17 @@ EOF
 # project with `dotnet new dotkt-cli`, and build+run it from the isolated feed. A stale template Sdk pin (the
 # 0.9.5-while-release-is-0.9.6 drift) makes restore pull a version the feed does not carry -> this fails. The
 # generated project file must pin the RELEASE version (proves the pack-time Sdk-version substitution worked).
-# Installed from the exact packed nupkg with --force, into this case's own template hive.
+# Installed from the exact packed nupkg into this case's own template hive.
 # ---------------------------------------------------------------------------------------------------------
 case_template() {
 	local d="$WS/template"; mkdir -p "$d"
 	local hive="$d/hive"
 	local nupkg; nupkg="$(find "$FEED" -maxdepth 1 -name "DotKt.Templates.$VER.nupkg" | head -1)"
 	[[ -f "$nupkg" ]] || { fail template "DotKt.Templates.$VER.nupkg not packed"; return; }
-	if ! dotnet_new "$hive" install "$nupkg" --force >"$d/install.log" 2>&1; then
+	if ! dotnet_new "$hive" install "$nupkg" >"$d/install.log" 2>&1; then
 		fail template "dotnet new install failed" "$(tail -20 "$d/install.log")"; return
 	fi
-	hive_isolated template "$hive" || return
+	if ! hive_isolated template "$hive"; then return 0; fi
 	local proj="$d/hello"; rm -rf "$proj"
 	if ! dotnet_new "$hive" dotkt-cli -o "$proj" >"$d/new.log" 2>&1; then
 		fail template "dotnet new dotkt-cli failed" "$(tail -20 "$d/new.log")"; return
@@ -537,10 +542,10 @@ case_mpp_template() {
 	local hive="$d/hive"
 	local nupkg; nupkg="$(find "$FEED" -maxdepth 1 -name "DotKt.Templates.$VER.nupkg" | head -1)"
 	[[ -f "$nupkg" ]] || { fail mpp-template "DotKt.Templates.$VER.nupkg not packed"; return; }
-	if ! dotnet_new "$hive" install "$nupkg" --force >"$d/install.log" 2>&1; then
+	if ! dotnet_new "$hive" install "$nupkg" >"$d/install.log" 2>&1; then
 		fail mpp-template "dotnet new install failed" "$(tail -20 "$d/install.log")"; return
 	fi
-	hive_isolated mpp-template "$hive" || return
+	if ! hive_isolated mpp-template "$hive"; then return 0; fi
 	local proj="$d/hello-mpp"; rm -rf "$proj"
 	if ! dotnet_new "$hive" dotkt-mpp -o "$proj" >"$d/new.log" 2>&1; then
 		fail mpp-template "dotnet new dotkt-mpp failed" "$(tail -20 "$d/new.log")"; return
