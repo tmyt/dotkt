@@ -18,9 +18,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   the host RID and requires that replay to fail, so the assertion cannot pass vacuously. Previously the RID flow
   was only exercised at the host RID and cross-target selection had been confirmed by hand.
 ### Fixed
-- **kotc/bir2cir/ilemit ([tmyt/dotkt#68], area:kotc, area:bir2cir, area:ilemit): a captured `var` written from a local class, an object
-  expression, a lambda or a local `fun` is now heap ref-celled under EVERY emission root and for every one of those
-  boundaries — previously only a function body, and never a local `fun`.** The promotion of a
+- **kotc/bir2cir/ilemit ([tmyt/dotkt#68], area:kotc, area:bir2cir, area:ilemit): a captured `var` written from a
+  local class, an object expression, a lambda or a local `fun` is now heap ref-celled under EVERY emission root and
+  for every one of those boundaries — previously only a function body, and never a local `fun`.** The promotion of a
   captured-and-mutated local to a shared `dotkt$Ref<T>` was decided per emission root, and
   only two roots decided it — `method()` and `topLevelAccessorMethod()`. Everywhere else the emitter ran with an empty
   set, so a constructor body, an `init` block, a property or field initializer, a member accessor, a default interface
@@ -45,7 +45,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   has the enclosing CLASS as its IR parent and is distinguished from a member only by being absent from that class's
   declarations; the lift's capture parameters moved into a `cap$` namespace Kotlin source cannot spell, since a
   transitive capture can arrive under a name the receiving frame already uses for something else; the lift is now also
-  generic over the type operands in its BODY, like the lambda lift; kotc records on the lifted method which enclosing
+  generic over the type operands in its BODY, like the lambda lift, and over the BOUNDS of the type parameters it
+  re-declares; both lifts now RESTORE the enclosing frame's capture binding instead of dropping it, so a local fun or
+  local class declared inside a closure/object/local-class member no longer leaves that frame reading a bare local it
+  does not have (in an `inner class` member, dropping it silently redirected every later member's enclosing-instance
+  read to the inner instance); CONSTRUCTING a local class propagates captures like calling a local fun, so the scan
+  follows `IrConstructorCall` too; a local declaration is recognized by the frontend's own `LOCAL` visibility rather
+  than by probing its IR parent, which is exact for classes as well and needs no `init { }` special case; kotc records
+  on the lifted method which enclosing
   type variable each of its own type params re-declares (`_syntheticTypeArgs`, the same key and meaning
   ClosureSynthesis already derives for a lifted closure CLASS) and bir2cir's `SharedSyntheticSynthesis` applies its
   synthetic-frame remap to METHODS as well — so a generic cell used inside the lift is constructed in the method's own
@@ -58,8 +65,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   Regressions: `tests/basic/fixtures/CapturedVarRefCellTests.kt` (every root above; one `var` written by a lambda, an
   object expression, a local class and a local fun at once; the enclosing frame's own write observed through the shared
   cell; the local-fun boundary plain, in an `init` block, generic, recursive, and with the cell declared inside the
-  lift; and that boundary reached through a lambda, an object expression and a local class, including under a name the
-  receiving frame already uses); the function-body root stays pinned by `LambdaTests.kt`'s `localClassObject`. The two `tests/known-fail/localfun-capture-write*` reproductions
+  lift; that boundary reached through a lambda, an object expression and a local class, including under a name the
+  receiving frame already uses; and a local fun / local class reached from INSIDE another lift, an `inner class`
+  member's outer-`this` surviving one, and a bound that names a second type parameter); the function-body root stays
+  pinned by `LambdaTests.kt`'s `localClassObject`. The two `tests/known-fail/localfun-capture-write*` reproductions
   this replaced are deleted.
 
 - **bir2cir ([tmyt/dotkt#251], area:bir2cir): constructor parameters now carry their `[Nullable]` annotation, so a
