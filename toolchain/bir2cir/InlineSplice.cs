@@ -34,8 +34,8 @@ static class InlineSplice
     static int _counter;                       // global unique splice-instance id (local-prefix minting)
     static int _nextLabelId;                    // per-file fresh cfg label id (set at Apply entry)
     static ReferenceMetadataIndex _refs;
-    static JsonArray _hoist;                    // #34: lifted default-lambda methods re-hoisted from a `defaultCarrier`
-    static JsonNode _fileClassOwner;            // #204: owner of any default-carrier delegate re-hoisted into this file
+    static JsonArray _hoist;                    // generated delegate targets re-hoisted from closed default/inline carriers
+    static JsonNode _fileClassOwner;            // owner of any carried delegate target re-hoisted into this file
     static HashSet<string> _appLocalMethods;   // #43/#63: file-class method names a `newDelegate` can `ldftn` — MODULE-WIDE (every input file's file-class methods, seeded from Program.cs) + every drained re-hoist (a PENDING re-hoist is checked live via `_hoist`). Provenance oracle for the §4.4ii materialization-side newDelegate guard, the materialization-side counterpart of the §4.6 `!sameModule` payload-side guard in RewriteGeneric.
     static IReadOnlyDictionary<string, DispatchDef> _dispatchDefs;
 
@@ -69,13 +69,13 @@ static class InlineSplice
         _refCellNames = new Dictionary<string, string>(StringComparer.Ordinal);
         _boxRequests = new List<(string, string, JsonNode)>();
         Walk(root, 0);
-        // #34: a `defaultCarrier` default (a non-capturing lambda default `= { error(...) }`) re-hoists its lifted
-        // `__lambdaN` helper into THIS file's file-class methods (fresh name), exactly like DefaultArgSplice's cross-module
-        // path — do it BEFORE the post-passes so they normalize the hoisted bodies too.
+        // A closed carrier (`defaultCarrier`, or a cross-module [KotlinInline] payload) re-hoists its generated
+        // delegate target into THIS file's file-class methods under a fresh name. Do it BEFORE the post-passes so they
+        // normalize the hoisted bodies too.
         if (_hoist.Count > 0)
         {
             if (root is not JsonObject fo || fo["methods"] is not JsonArray methods)
-                throw new InvalidOperationException("bir2cir: InlineSplice re-hoisted a carried default lambda but the file root has no `methods` array");
+                throw new InvalidOperationException("bir2cir: InlineSplice re-hoisted a carried delegate target but the file root has no `methods` array");
             // DRAIN: a re-hoisted default-lambda body may ITSELF contain a `callInline` (a nested inline call in the
             // default, e.g. `= { listOf(1,2).count { it > 0 } }`) — splice it through InlineSplice BEFORE the method lands
             // (an un-spliced callInline reaching ilemit is a hard break), and that splice may enqueue further carriers.
@@ -228,10 +228,12 @@ static class InlineSplice
         if (pBody == null) { FailLoud(o, owner, name, pc, ga, "payload has no body"); return; }
         var typeArgs = o["typeArgs"] as JsonArray ?? new JsonArray();
         if (typeArgs.Count < ga) { FailLoud(o, owner, name, pc, ga, "fewer typeArgs than generic arity"); return; }
-        // §4.6: a payload `newDelegate` is a capture-less nested lambda lifted to the ORIGIN file's __lambdaN class; that
-        // type token dangles when spliced into another file. Legal same-module (the class is in this file); across a
-        // ref.dll edge it is a hard error (engine-side zero-capture synthesis is a future follow-up, never a kotc hack).
-        if (!sameModule && HasNode(pBody, "newDelegate")) { FailLoud(o, owner, name, pc, ga, "cross-module payload carries a newDelegate (origin-file __lambdaN) — dangles when spliced (§4.6)"); return; }
+        // §4.6 / #43: the payload is CLOSED over every compiler-generated file-class method its newDelegates reach.
+        // Re-hoist those raw BIR declarations into the consumer and retarget each delegate before any materialization
+        // guard runs. `lifted`/`fileClass` are required parts of the current v1 schema; old payloads are intentionally
+        // not supported and fail loud with a rebuild diagnostic rather than adding a second compatibility path.
+        if (!sameModule && RehoistPayloadDelegates(payload, pBody) is string rehoistError)
+        { FailLoud(o, owner, name, pc, ga, rehoistError); return; }
         // BATCH B (#75): a capturing `newSuspendLambda` in the payload is now a first-class HYGIENE citizen — its
         // `captures[].name` descriptors are renamed JOINTLY with the frame by ApplyPrefix/RewriteLocalRefs (skipping the
         // SM's own inner scope), and a captured lambda-param is materialized into a real suspend SM value (§4.4ii suspend
@@ -2598,6 +2600,69 @@ static class InlineSplice
         }
         else if (node is JsonArray a) foreach (var c in a) if (c != null && HasNode(c, kinds)) return true;
         return false;
+    }
+
+    // #43: close a [KotlinInline] payload by moving each carried generated method into this consumer file. The
+    // carrier records RAW BIR declarations, so their bodies go through this app's normal lowering pipeline after drain.
+    // Rename the complete set first, then rewrite delegate edges in both the payload body and carried declarations;
+    // this handles transitively nested non-capturing lambdas without relying on any generated-name convention.
+    static string RehoistPayloadDelegates(JsonObject payload, JsonArray body)
+    {
+        if (payload["lifted"] is not JsonArray lifted)
+            return "[KotlinInline] payload has no closed lifted-method set; rebuild the referenced library with the current SDK";
+        if (lifted.Count == 0) return null;
+        if (Str(payload["fileClass"]) is not string originFileClass)
+            return "[KotlinInline] payload carries lifted methods but has no origin file-class identity";
+        if (_fileClassOwner == null)
+            return "cannot re-hoist a closed [KotlinInline] delegate target because the consuming BIR file has no fileClass";
+
+        var rename = new Dictionary<string, string>(StringComparer.Ordinal);
+        var clones = new List<JsonObject>();
+        foreach (var item in lifted)
+        {
+            if (item is not JsonObject method
+                || Str(method["name"]) is not string oldName
+                || Bool(method["generated"]) != true
+                || Bool(method["static"]) != true
+                || method["params"] is not JsonArray
+                || method["ret"] == null
+                || method["body"] is not JsonArray)
+                return "[KotlinInline] payload contains a malformed or non-generated lifted method";
+            if (!rename.TryAdd(oldName, "__inl$lift$" + Interlocked.Increment(ref _counter)))
+                return $"[KotlinInline] payload carries duplicate lifted method '{oldName}'";
+            clones.Add((JsonObject)method.DeepClone());
+        }
+
+        RewriteCarriedDelegateEdges(body, originFileClass, rename);
+        foreach (var clone in clones)
+        {
+            var oldName = Str(clone["name"]);
+            clone["name"] = rename[oldName];
+            RewriteCarriedDelegateEdges(clone, originFileClass, rename);
+            _hoist.Add(clone);
+        }
+        return null;
+    }
+
+    static void RewriteCarriedDelegateEdges(JsonNode node, string originFileClass,
+        IReadOnlyDictionary<string, string> rename)
+    {
+        if (node is JsonObject obj)
+        {
+            if (Str(obj["k"]) == "newDelegate"
+                && TypeJson.OwnerName(obj["calleeOwner"]) == originFileClass
+                && Str(obj["method"]) is string oldName
+                && rename.TryGetValue(oldName, out var newName))
+            {
+                obj["method"] = newName;
+                obj["calleeOwner"] = _fileClassOwner.DeepClone();
+            }
+            foreach (var kv in obj.ToList())
+                if (kv.Value != null) RewriteCarriedDelegateEdges(kv.Value, originFileClass, rename);
+        }
+        else if (node is JsonArray arr)
+            foreach (var child in arr.ToList())
+                if (child != null) RewriteCarriedDelegateEdges(child, originFileClass, rename);
     }
 
     // #43/#63: is a `{k:newDelegate, method:<name>}` target resolvable app-locally (its static `__lambdaN`/`__dflt$lambda$N`

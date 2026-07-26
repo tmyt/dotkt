@@ -1354,9 +1354,9 @@ static class FacadeGen
     // type) is skipped by its STANDARD [CompilerGenerated] attribute — never by `dotkt$` name-sniffing. Every such type
     // now carries the attribute (kotc/bir2cir flag `generated:true` -> ilemit stamps it; ilemit stamps its own synthetics
     // too), so this is the primary skip; the empty-namespace guard below is belt-and-suspenders. MetadataLoadContext-safe.
-    static bool IsCompilerGenerated(Type t)
+    static bool IsCompilerGenerated(MemberInfo member)
     {
-        try { return t.GetCustomAttributesData().Any(c => c.AttributeType.FullName == "System.Runtime.CompilerServices.CompilerGeneratedAttribute"); }
+        try { return member.GetCustomAttributesData().Any(c => c.AttributeType.FullName == "System.Runtime.CompilerServices.CompilerGeneratedAttribute"); }
         catch { return false; }
     }
 
@@ -2234,7 +2234,7 @@ static class FacadeGen
         var extPropMembers = new HashSet<string>();
         foreach (var g in t.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly))
         {
-            if (g.IsSpecialName || !g.Name.StartsWith("get_")) continue;
+            if (g.IsSpecialName || IsCompilerGenerated(g) || !g.Name.StartsWith("get_")) continue;
             var gps = g.GetParameters();
             if (gps.Length != 1 || gps[0].Name != "__self" || !Supported(g.ReturnType) || !Supported(gps[0].ParameterType)) continue;
             var pn = g.Name.Substring(4);
@@ -2255,7 +2255,7 @@ static class FacadeGen
         var fieldAccessorMembers = new HashSet<string>();
         foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly))
         {
-            if (m.IsSpecialName) continue;
+            if (m.IsSpecialName || IsCompilerGenerated(m)) continue;
             var mps = m.GetParameters();
             if (m.Name.StartsWith("get_") && mps.Length == 0 && staticFieldNames.Contains(m.Name.Substring(4)))
                 fieldAccessorMembers.Add(m.Name);
@@ -2264,7 +2264,7 @@ static class FacadeGen
         }
         foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly))
         {
-            if (m.IsSpecialName || m.Name == "Main" || OBJECT_MEMBERS.Contains(m.Name) || extPropMembers.Contains(m.Name) || fieldAccessorMembers.Contains(m.Name)) continue;
+            if (m.IsSpecialName || IsCompilerGenerated(m) || m.Name == "Main" || OBJECT_MEMBERS.Contains(m.Name) || extPropMembers.Contains(m.Name) || fieldAccessorMembers.Contains(m.Name)) continue;
             if (m.IsGenericMethod && !m.IsGenericMethodDefinition) continue;
             var ps = m.GetParameters();
             var k = KotlinFun(m);

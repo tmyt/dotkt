@@ -16,8 +16,20 @@
 - Carriers: `KotlinInlineAttribute(string version, byte[] content)` (inline-fn body) and
   `KotlinSuspendFunctionTypeAttribute(string version, byte[] content)` (a `suspend (…) -> T` position's
   pre-erasure `fn` `Type` shape). The old bare `(string)` ctors are DELETED (no dual-track). Producers
-  (`ilemit` `ApplyKotlinInline` / `ApplySuspendFnType`) and consumers (`ilemit` cross-module splice,
+  (`ilemit` `ApplyKotlinInline` / `ApplySuspendFnType`) and consumers (`bir2cir` cross-module splice,
   `facadegen` `KotlinInlineBody` / `SuspendFnNode`) all route through the one codec.
+- A decoded `[KotlinInline]` content is the current payload object
+  `{v:1,fqn,owner,fileClass,recv,static,typeParams,params,ret,body,lifted}`. The numeric `v` identifies the
+  payload shape and is independent of the carrier codec string (`bir-json/1`). `body` is the raw BIR body.
+  `lifted` is the transitive closure of raw, compiler-generated file-class method declarations reached by
+  `newDelegate` edges from `body`; every entry MUST carry `generated:true`, `static:true`, `params`, `ret`,
+  and `body`. `fileClass` is the declaration identity those carried delegate edges originally target.
+  At a cross-module splice, bir2cir re-hoists the complete `lifted` set into the consuming file class under
+  fresh names and rewrites the delegate edges before normal lowering. Same-module splices use the original
+  declarations. The payload is closed structurally from `generated:true`; generated-name spelling is not an
+  ownership signal. Payload v1 is a pre-1.0 compiler contract: the current shape replaces older v1 shapes;
+  readers reject incomplete payloads and require the referenced library to be rebuilt. There is no legacy-v1
+  compatibility path.
 
 ## 1. Type — the universal type representation (FULL structured, no exceptions)
 
