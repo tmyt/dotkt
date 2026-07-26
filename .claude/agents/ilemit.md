@@ -25,7 +25,7 @@ If fixing something requires knowing what a Kotlin construct *means*, stop — t
 - `dotnet build toolchain/ilemit -c Release -o build/ilemit-bin`
 - `./tests/run-nunit-tests.sh` — compiler and ILVerify tests
 - `./tests/special/wide-delegates/run.sh`, then `make verify`
-- To debug a JIT failure, disassemble with `ilspycmd … -il`. Always run the dll as `dotnet <dll>` — the apphost has a runtime-version mismatch.
+- To debug a JIT failure, disassemble with `ilspycmd <assembly> -il`. Always run the dll as `dotnet <dll>` — the apphost has a runtime-version mismatch.
 
 ## Gotchas
 
