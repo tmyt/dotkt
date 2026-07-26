@@ -88,14 +88,21 @@
   brief, verbatim intent: *"You run in your OWN isolated git worktree on your OWN branch. NEVER
   touch/edit/build/gate the main working tree; NEVER `git checkout/switch main`; NEVER `cd` out of
   your worktree. Do ALL work (edits, installDist, dotnet build, gates, commits) INSIDE your worktree
-  ONLY. Commit to YOUR branch; the COORDINATOR integrates into main — you MUST NOT. If any step seems
-  to require touching main, STOP and report."* **Only the coordinator integrates**: merge branches
-  into main ONE at a time, resolve conflicts with `Edit` (never whole-file checkout), then run ONE
-  integrated gate. Cut worktree branches from a HEAD that already contains any in-flight main-direct
-  work. Serialize (one mutating agent owns main+gate) only when truly unsplittable; **default =
+  ONLY. Commit to YOUR branch; the USER integrates — you MUST NOT. If any step seems to require
+  touching main, STOP and report."* Cut worktree branches from `origin/main`; **default =
   worktree-isolated parallelism.** (MEMORY `parallel-agents-isolate-or-serialize`.)
+- **CLAUDE NEVER INTEGRATES — the USER merges. Suspended until the user says otherwise (2026-07-26,
+  user-directed, emphatic).** No `git merge` into `main`, no `gh pr merge`, and no "merge the
+  branches, then run ONE integrated gate" — **that pattern is RETIRED**. It advanced `main` by six
+  commits underneath a Codex worktree based on it, which is precisely the harm. **The coordinator
+  does not own `main` and does not touch its working tree either** — not for integration, not for
+  gates, not for ad-hoc `dotkt.sh` verification probes. Gate on your branch or in a worktree.
+  **The deliverable is a PR and the turn ENDS there:** implement in a worktree → gate green → cold
+  review → `gh pr create` → STOP and report. **ONE PR PER SCOPE** — never combine unrelated issues in
+  one integration PR, even when they were gated together. Merge order and timing are the user's
+  alone. (MEMORY `never-work-in-main-working-tree`.)
 - **Prefer dedicated subagents for tasks, and actively use Codex (user-directed).** The coordinator
-  orchestrates and integrates; substantive work goes to specialist subagents. Use Codex for design
+  orchestrates and reports; substantive work goes to specialist subagents. Use Codex for design
   and investigation, and **instruct every subagent to USE it** (not merely note it's available).
   **Fable is OPTIONAL, never a mandatory pairing (2026-07-26, user-directed — Opus 5 release).**
   Opus 5 carries the design/root-cause quality bar on its own, so no rule here requires a Fable
