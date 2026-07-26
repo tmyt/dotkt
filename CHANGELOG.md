@@ -29,6 +29,19 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   error; the former standalone known-failure is an in-process NUnit regression covering concrete, value-generic,
   and reference-generic calls.
 
+- **bir2cir ([tmyt/dotkt#251], area:bir2cir): constructor parameters now carry their `[Nullable]` annotation, so a
+  nullable ctor parameter stays nullable across a module boundary.** The declaration-position NRT walk
+  (`toolchain/bir2cir/DeclNullableFlags.cs`) visited methods, fields, properties and nested types but never `ctors`,
+  while the stamp that turns those bytes into `[Nullable]` already walked constructor parameters — so every
+  constructor parameter was emitted unannotated. A Kotlin consumer of a DotKt library therefore saw `C(val s:
+  String?)` as taking a non-null `String` and `C(null)` failed to compile with "null cannot be a value of a non-null
+  type"; a C# consumer lost the annotation outright. The walk now covers constructor parameters, matching the
+  declaration kinds the stamp traverses. Regressions:
+  `tests/roundtrip/producer/Nrt.kt` + `tests/roundtrip/consumer/KotlinMetadataRoundtripTests.kt`
+  (`nullableConstructorParams`, cross-module Kotlin) and
+  `tests/roundtrip/bidirectional/consumer/BidirectionalTests.cs`
+  (`KotlinNullableConstructorParameterCarriesNullableAttribute`, the C# metadata assert).
+
 - **bir2cir ([tmyt/dotkt#228], area:bir2cir): an auto-property no longer emits a same-named field, so
   reflection-driven .NET libraries (JSON.NET) can serialize a Kotlin type again.** An accessor-routed property
   emitted its backing field under the property's own name, so the CLR type carried `Value` as BOTH a property and a

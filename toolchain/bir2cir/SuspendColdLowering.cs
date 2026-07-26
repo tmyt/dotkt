@@ -3387,7 +3387,8 @@ static partial class SuspendColdLowering
                 method["typeParams"] = _methodTypeParamDecls.DeepClone();
             // BUG 2 (nested return nullability): a `suspend fun f(): String?`'s bridge return `Task<string?>` needs the
             // inner `?` — the scalar retNullable can't express a nullability that rides an INNER type arg. Emit the
-            // flattened NullableAttribute byte walk (ilemit stamps it verbatim on the return; facadegen reads it back).
+            // flattened NullableAttribute byte walk (RoundtripMetadata folds it into the return's `retAttrs` for ilemit
+            // to stamp; facadegen reads it back).
             if (TaskReturnNullableFlags() is JsonArray rnf) method["retNullableFlags"] = rnf;
             // #151 — a `suspend fun f(): Nothing` bridge (Task<Nothing>): carry the pre-erasure Nothing fact so
             // RoundtripMetadata stamps [KotlinNothing] on the return (BirTypeLowering erases the inner Nothing to
