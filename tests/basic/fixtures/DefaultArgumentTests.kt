@@ -200,7 +200,7 @@ class DefaultArgumentTests {
         assertEquals(0, m2Rec(0))                                       // b = a * 2 = 0
         assertEquals(1, m2Rec(1))
         assertEquals(5050, M2SelfHolder().call())                       // a = this.k = 5, b = 50 (NOT c.k = 7)
-        assertEquals(9, M2EnclHolder(M2Encl(9)).x())                    // enclosing instance through `o`, not `this`
+        assertEquals(36, M2EnclHolder(M2Encl(9)).x())                   // k * 4 = 36, enclosing instance through `o`, not `this`
         assertEquals(7, M2EnclDel(7).In().b)                            // inner secondary ctor delegating
         assertEquals(2, M2EnclDel(7).In(1, 2).b)                        // provided
         assertEquals(20, M2EnclMember(5).Q().f())                       // MEMBER of an inner class: k * 4
