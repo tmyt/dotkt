@@ -790,13 +790,13 @@ internal fun BirEmitter.kPropertyStub(name: String): String =
  * get/set param types, so a captured enclosing generic (`Box<T>::value`) resolves through the SAME `birType`/
  * `typeArgSubst` machinery any other reference does (no separate remap here).
  *
- * v1 scope: a TOP-LEVEL property (`::x`), or a MEMBER property either BOUND (`obj::p`, receiver captured in a
- * field) or UNBOUND (`Type::p`, receiver becomes the `get`/`set`'s own leading param) — mirrors `functionRef`'s
- * ctor-ref/bound/unbound split. An EXTENSION-receiver property reference (`KProperty2`), a `lateinit var`, a
- * `@ClrField` property, and a `length` reference RESOLVED on a .NET-mapped CharSequence owner (String/StringBuilder/
- * the polymorphic kotlin.CharSequence — bir2cir renames its slot; a USER CharSequence implementer is faithful) are
- * clean deferrals (their access shape differs from the plain get_/set_ accessor convention used below). The
- * compiler-synthesized KProperty argument of a delegate's
+ * Supported scope: a TOP-LEVEL property (`::x`), a MEMBER property either BOUND (`obj::p`, receiver captured in a
+ * field) or UNBOUND (`Type::p`, receiver becomes the `get`/`set`'s own leading param), and a TOP-LEVEL extension
+ * property in its bound/unbound forms — including generic and referenced-assembly accessors. A MEMBER extension
+ * property with both dispatch and extension receivers (`KProperty2`) and a `length` reference RESOLVED on a
+ * .NET-mapped CharSequence owner (String/StringBuilder/the polymorphic kotlin.CharSequence — bir2cir renames its
+ * slot; a USER CharSequence implementer is faithful) are clean deferrals. `lateinit var` and `@ClrField` member
+ * references use the backing-field path below. The compiler-synthesized KProperty argument of a delegate's
  * getValue/setValue/provideDelegate is NOT this path — those call sites materialize `kPropertyStub` directly
  * without going through `expr()`/this dispatch; the origin check below is a defensive fallback only.
  */
@@ -838,17 +838,6 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 		&& declOwnerFq in setOf("kotlin.CharSequence", "kotlin.String", "kotlin.text.StringBuilder"))
 		return unsupported(node, "this property reference",
 			"a length reference addressed at a .NET-mapped CharSequence owner has no supported lowering yet")
-	// A top-level extension-property reference is lowered below ONLY for a SAME-MODULE, NON-GENERIC accessor:
-	//  - an INJECTED (referenced-assembly) ext accessor — `getterFn.body == null`, the codebase's cross-module/
-	//    deserialized-stub signal (mirrors the function-ref injected gate in `call()`) — needs the argTypes/ret
-	//    .NET-interop call shape the value-read path emits so bir2cir's NetInteropBinding can attribute it; a plain
-	//    `prop:get` owner:null call would not resolve cross-module. And
-	//  - a GENERIC ext accessor (`val <T> List<T>.lastIndex`) needs its resolved typeArgs threaded onto the accessor
-	//    call, else the call hits the uninstantiated generic method ("type is not fully instantiated").
-	// Neither is wired here yet, so defer cleanly — a diagnostic beats a mis-shaped emit (#21).
-	if (hasExtRecv && (getterFn.body == null || getterFn.typeParameters.isNotEmpty()))
-		return unsupported(node, "this property reference",
-			"a cross-module or generic extension-property reference has no supported lowering yet")
 	val setterFn = if (prop.isVar) (node.setter?.owner ?: prop.setter) else null
 	val declClass = getterFn.parent as? IrClass
 	val name = prop.name.asString()
@@ -861,6 +850,14 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 		val idx = params?.indexOfFirst { it.kind == IrParameterKind.ExtensionReceiver } ?: -1
 		if (idx in 0 until node.arguments.size) node.arguments[idx] else null
 	} else null
+	// A referenced DotKt top-level property is physically emitted on its source file's facade class. The frontend
+	// restores that structural owner from [KotlinTopLevelProperty] metadata; carry it into BIR just as direct
+	// extension-property calls and extension-function references do. A local/stdlib property has no injected record
+	// and stays owner-less for bir2cir's ordinary Kotlin-member substitution.
+	val injectedExtPropFileClass = if (hasExtRecv)
+		(prop.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)?.let {
+			kotc.frontend.clrInjectedTopLevelPropFileClass(CallableId(it.packageFqName, prop.name))
+		} else null
 	// The receiver captured into the lift's `__recv` field for a BOUND reference: the dispatch receiver (a member
 	// property) or the extension receiver (a top-level ext property). Only one is ever present.
 	val capturedRecv = boundRecv ?: extBoundRecv
@@ -891,10 +888,9 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 		else -> OBJ
 	}
 	// A top-level EXTENSION property: its getter/setter is a static `<name>` accessor (a `prop:get`/`prop:set` marker
-	// carrying the ext receiver as its leading arg), NOT an instance `get_/set_` slot — the SAME `owner:null` shape the
-	// same-module ext-property value-read path in `call()` emits. kotc stays .NET-agnostic (no injected file class is
-	// baked here — a cross-module/injected ext-property reference is deferred above); bir2cir binds the accessor off the
-	// stdlib/facade metadata (or the get_/set_<name> convention).
+	// carrying the ext receiver as its leading arg), NOT an instance `get_/set_` slot. Mirror the direct value-read
+	// path: local/stdlib accessors use `owner:null`; a restored DotKt accessor carries its metadata-derived file class.
+	// In both cases kotc projects the resolved Kotlin accessor identity and bir2cir chooses the CLR accessor shape.
 	fun extAccessorCall(isSetter: Boolean, valueArg: String?): String {
 		val kind = if (isSetter) "set" else "get"
 		val recvArg = if (bound)
@@ -905,7 +901,25 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 		// getter's is [recv]. Using the getter's sig for `prop:set` would key a same-name `var`-ext-property overload
 		// to the wrong slot.
 		val sigFn = if (isSetter) setterFn!! else getterFn
-		return """{"k":"callStatic","owner":null,"method":${str(name)},"prop":${str(kind)}${overloadSigField(sigFn)},"args":[$args]${calleeOwnerTag(sigFn)}}"""
+		// A generic extension property reference carries the property accessor's OWN resolved type arguments on the
+		// reference node (`List<Int>::lastIndex` -> T=Int). Thread them onto the forwarded accessor call exactly as the
+		// direct value-read path does, so bir2cir/ilemit close the generic method rather than seeing an open `!!T`.
+		val refTps = sigFn.typeParameters
+		val refTaArgs = refTps.indices.map { node.typeArguments.getOrNull(it) }
+		val hasRefTa = refTps.isNotEmpty() && refTaArgs.all { it != null }
+		val refTa = if (!hasRefTa) "" else
+			""","typeArgs":[${refTaArgs.joinToString(",") { birType(it!!).toJson() }}]"""
+		val retT = if (isSetter) TypeNode.Fqn("kotlin.Unit") else vType
+		if (injectedExtPropFileClass != null) {
+			val extRecvParam = sigFn.parameters.first { it.kind == IrParameterKind.ExtensionReceiver }
+			val declShapeTypes = (listOf(extRecvParam) + regularParams(sigFn))
+				.joinToString(",") { birType(it.type).toJson() }
+			return if (hasRefTa)
+				"""{"k":"callStatic","ownerType":${fqnJson(injectedExtPropFileClass)},"method":${str(name)},"prop":${str(kind)}$refTa,"shapeTypes":[$declShapeTypes],"args":[$args]}"""
+			else
+				"""{"k":"callStatic","ownerType":${fqnJson(injectedExtPropFileClass)},"method":${str(name)},"prop":${str(kind)},"argTypes":[$declShapeTypes],"ret":${retT.toJson()},"args":[$args]}"""
+		}
+		return """{"k":"callStatic","owner":null,"method":${str(name)},"prop":${str(kind)}${overloadSigField(sigFn)}$refTa${retHintStr(hasRefTa, retT)},"args":[$args]${calleeOwnerTag(sigFn)}}"""
 	}
 	fun accessorCall(isSetter: Boolean, extraArg: String?): String {
 		val fn = if (isSetter) setterFn!! else getterFn

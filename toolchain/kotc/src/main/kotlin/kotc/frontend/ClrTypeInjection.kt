@@ -112,7 +112,17 @@ internal val UNSIGNED_KOTLIN_TYPES = setOf(
 // A top-level property: `receiver` (a TypeNode) present => an EXTENSION property (`val T.p`); null => a plain top-level prop.
 // #103: `customGet`/`customSet` mark a field-backed prop whose read/write goes through a CUSTOM accessor (`get_`/`set_`
 // on the file class), not the raw static field — the backend must invoke the accessor cross-module (else it is bypassed).
-private class ClrTopLevelProp(val pkg: FqName, val fileClassDotNet: String, val name: String, val type: TypeNode, val mutable: Boolean, val receiver: TypeNode?, val customGet: Boolean = false, val customSet: Boolean = false)
+private class ClrTopLevelProp(
+	val pkg: FqName,
+	val fileClassDotNet: String,
+	val name: String,
+	val type: TypeNode,
+	val mutable: Boolean,
+	val receiver: TypeNode?,
+	val typeParams: List<ClrTypeParam> = emptyList(),
+	val customGet: Boolean = false,
+	val customSet: Boolean = false,
+)
 private class ClrProperty(val name: String, val type: TypeNode, val mutable: Boolean, val open: Boolean, val abstract: Boolean, val protected: Boolean)
 // A MEMBER extension property (`class C { val T.p }`): restored as a member property of C with an extension receiver.
 private class ClrMemberExtProp(val name: String, val type: TypeNode, val mutable: Boolean, val receiver: TypeNode, val protected: Boolean)
@@ -330,6 +340,7 @@ private object ClrMetadataHolder {
 				val mods = (p["mods"] as? Map<String, Any?>).orEmpty()
 				topLevelProps.add(ClrTopLevelProp(pkg, fileClass, p["name"] as String, typeOf(p["type"]),
 					p["rw"] == true, (p["recv"])?.let { typeOf(it) },
+					typeParams = readTypeParams(p["typeParams"]),
 					customGet = mods["customGet"] == true, customSet = mods["customSet"] == true))
 			}
 		}
@@ -778,8 +789,13 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		// STATIC FIELD of the referenced .NET file class (#34b). `isVar = tp.mutable` (rw -> var, ro -> val).
 		// #15: a source-declared top-level property of the same identity wins — do not inject a colliding copy.
 		if (context?.owner == null && !sourceDeclaresTopLevelProperty(callableId)) topLevelPropByCallable[callableId]?.let { tp ->
-			return listOf(createTopLevelProperty(ClrGeneratedKey, callableId, coneOf(tp.type, null), !tp.mutable, false) {
-				tp.receiver?.let { extensionReceiverType(coneOf(it, null)) }
+			return listOf(createTopLevelProperty(ClrGeneratedKey, callableId, { tps -> coneOf(tp.type, null, tps) }, !tp.mutable, false) {
+				for (typeParam in tp.typeParams)
+					typeParameter(Name.identifier(typeParam.name), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey) {
+						for (b in typeParam.bounds)
+							bound { tps -> boundConeOf(b, tps) ?: session.builtinTypes.nullableAnyType.coneType }
+					}
+				tp.receiver?.let { recv -> extensionReceiverType { tps -> coneOf(recv, null, tps) } }
 			}.symbol)
 		}
 		val owner = context?.owner ?: return emptyList()
