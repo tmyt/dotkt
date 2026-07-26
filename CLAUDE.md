@@ -1,288 +1,180 @@
 # CLAUDE.md
 
-> kotlin/clr — a compiler that runs **Kotlin on .NET (CLR)**. Reuses the stock Kotlin 2.4.0
-> frontend (Configuration → FIR → Fir2Ir) and replaces only the backend:
-> **Kotlin IR → BirEmitter → BIR(json) → bir2cir → CIR(json) → ilemit → CIL**.
-> Full overview, layout table, and design notes: **`README.md`**.
->
-> Authority order: (1) the user's request → (2) this file's rules → (3) the actual code + canonical
-> scripts for current behavior → (4) **`docs/architecture.md`** for architecture (**its invariants
-> are binding: an implementation that violates them is a bug**) → (5) the **GitHub issue tracker**
-> (the SOLE source of truth for what remains to do — bugs AND tasks) → (6) other docs for rationale
-> (they may lag the code — verify, and flag
-> stale docs rather than following them).
+kotlin/clr — a compiler that runs **Kotlin on .NET (CLR)**. It reuses the stock Kotlin 2.4.0 frontend
+(Configuration → FIR → Fir2Ir) and replaces only the backend:
 
-# Ground Rules
+    Kotlin IR → BirEmitter → BIR(json) → bir2cir → CIR(json) → ilemit → CIL
 
-## Language & turn discipline
-- **Think in English; write the user-facing report in Japanese.** Reasoning, code, comments,
-  identifiers, commit messages, and subagent (Agent tool) prompts stay English — they are
-  instructions to agents; only the final report to the user is Japanese.
-- **Tool turns: work FIRST, report LAST — never announce-then-stop (2026-07-17, supersedes the
-  2026-07-14 HARD no-prose rule).** A prose-only message ENDS the turn, so a message that says
-  "I will now do X" and stops means X never happens. Run the tool calls first; the user-facing
-  report (Japanese) is the FINAL, tool-free message of the turn — never a preamble, never a
-  promise of pending work.
-  - **On Opus 4.8 only, keep tool-bearing turns 100% prose-free:** on that model, prose sharing
-    a turn with a tool call intermittently CORRUPTS the call (stray tokens, dropped `antml:`
-    prefix → malformed, wasted turns). Incident record: MEMORY
-    `respond-in-english-when-tool-calling`.
-  - **On Opus 5 (current default) and other models:** the corruption has not been reproduced;
-    a one-line pre-tool status note is allowed when it helps. If call corruption is EVER observed
-    on a model, treat that model as Opus-4.8-class: go fully prose-free there and record the
-    model name here.
+`README.md` has the layout table and quick start. `docs/architecture.md` is the binding architecture
+reference — its invariants are not advisory; an implementation that violates one is a bug. The GitHub issue
+tracker is the only record of what remains to do. Other docs explain rationale and may lag the code; when one
+names a file, flag or number, check it still exists and flag the drift rather than following it.
 
-## Use what's already written
-- **The answer is usually already written down — this repo over-documents.** Before any non-trivial
-  change, use the **Task → doc map** at the bottom and read the matching doc. Do not re-derive what
-  a design doc already settled.
-- **Durable rules live in THIS file, not auto-memory.** CLAUDE.md loads in full every session and is
-  authoritative; memory is a recall-gated side-store that may not surface. When the user says
-  "remember this, it's important" about a rule, add it HERE, not just to memory.
-- **Decide and implement — do NOT bounce A/B questions back.** Once the goal is clear, pick the
-  option the project's rules + docs already imply and carry it to completion. Asking is for
-  genuinely-open design forks only — never for questions a rule here or in MEMORY already answers.
-  - **Layer placement is a lookup, never a question:** a fix that reads .NET/CLR metadata (a ref
-    dll, `@Clr*` labels, BCL shapes) belongs in **bir2cir**, never in kotc/`BirEmitter`; Kotlin
-    semantics never go in ilemit. "Which layer?" is not a real fork — see **Layer boundaries** below.
+When these disagree, the order is: what you asked for, then this file, then the code and canonical scripts
+for what actually happens today, then `docs/architecture.md`, then the tracker, then everything else.
 
-## Design doctrine
-- **The acceptance test for behavior choices is "consistent, documented, convincingly explainable" — JVM is a reader reference, not a compat target (2026-07-18/19, user-directed).**
-  Resolution order: ① where the Kotlin spec/KDoc contract fixes behavior, honor it by default (frame it
-  "Kotlin contract"); ② where Kotlin leaves it unspecified, take the CLR-native form (frame it
-  "deliberate CLR choice (reason)"); ③ where CLR/interop consistency convincingly outweighs the KDoc
-  letter, deviate even from the contract (frame it "interop-first deviation" — exemplar:
-  `"ß".uppercase()` stays `"ß"`, not the KDoc/Unicode `"SS"`, because one-to-one case mapping is the
-  general mscorlib behavior). Every deviation must pass all three test conditions and be recorded in
-  `docs/dotkt-semantics.md`. NEVER hand-force a JVM value/behavior and NEVER cite "matches JVM" as a
-  correctness claim — "the JVM does it" passes none of the three conditions.
-- **Unpublished project: cleanest design over backward compatibility. Break freely.**
-- **NO compat shims. NO dual-track. Delete the legacy path in the SAME change (2026-06-30, binding, user-directed).**
-  Keeping an old path alive behind a `compat`/legacy flag is the proven root cause of blurred layer
-  boundaries (the removed `--compat-bir`/`--native-cir` lesson). When moving logic to the 4-layer
-  architecture, delete the legacy code in that same change; always choose a clean rebuild over an
-  incremental shim, even when the rebuild is larger.
-- **Clean as you go — the same-change rule covers COMMENTS and DOCS too (2026-07-08, user-directed).**
-  Relocating/deleting logic deletes its comments, dead helpers, and stale doc lines in the SAME
-  change. A stale FALSE claim is DELETED or replaced with the current truth — NEVER annotated
-  ("this used to be true but…"); state what the code does NOW.
-- **Author for AGENT cognition — one pass/concern per file, each small enough to read WHOLE (2026-07-11, user-directed).**
-  This codebase is ~100% agent-implemented; an agent editing a monolith works with partial vision
-  (grep + a read window) and misses cross-cutting invariants — the trap that regrew
-  bir2cir/Program.cs 5740→7007 lines (unwound in #41). When a pass or family grows, give it its OWN
-  file in the SAME change, following the established per-file patterns (bir2cir per-pass `*.cs`,
-  ilemit `Emitter.*.cs` partial-class parts, kotc `BirEmitter*.kt` extension files);
-  verify-by-refactor (output byte-identical). A driver/entry file stays; an outgrown concern does not.
+## Principles
 
-## Working the repo (git, agents, gates)
-- **NEVER run a destructive git op on a file carrying uncommitted work you did not verify is disposable (2026-07-11, user-directed, after a real loss).**
-  `git checkout/restore <file>`, `git stash`, `git reset --hard` silently destroy working-tree
-  changes — and this tree usually holds several agents' uncommitted edits at once. To undo ONE hunk,
-  use `Edit` to write just that hunk back — never a whole-file checkout. If you truly must
-  checkout/restore: first capture the complete state you are about to touch (staged + unstaged +
-  untracked; e.g. `git diff` AND `git status --porcelain` for the untracked list), and re-check
-  `git status` before and after.
-- **Sub-agents MUST NEVER touch the `main` working tree — parallel work goes in an ISOLATED WORKTREE, no exceptions (2026-07-13, user-directed after repeated data-loss).**
-  Any parallel file-mutating agent (or any concurrent agent that COMPILES — builds contend on the
-  tree's shared `build/`) gets `isolation: "worktree"` and this non-negotiable block prepended to its
-  brief, verbatim intent: *"You run in your OWN isolated git worktree on your OWN branch. NEVER
-  touch/edit/build/gate the main working tree; NEVER `git checkout/switch main`; NEVER `cd` out of
-  your worktree. Do ALL work (edits, installDist, dotnet build, gates, commits) INSIDE your worktree
-  ONLY. Commit to YOUR branch; the USER integrates — you MUST NOT. If any step seems to require
-  touching main, STOP and report."* Cut worktree branches from `origin/main`; **default =
-  worktree-isolated parallelism.** (MEMORY `parallel-agents-isolate-or-serialize`.)
-- **CLAUDE NEVER INTEGRATES — the USER merges. Suspended until the user says otherwise (2026-07-26,
-  user-directed, emphatic).** No `git merge` into `main`, no `gh pr merge`, and no "merge the
-  branches, then run ONE integrated gate" — **that pattern is RETIRED**. It advanced `main` by six
-  commits underneath a Codex worktree based on it, which is precisely the harm. **The coordinator
-  does not own `main` and does not touch its working tree either** — not for integration, not for
-  gates, not for ad-hoc `dotkt.sh` verification probes. Gate on your branch or in a worktree.
-  **The deliverable is a PR and the turn ENDS there:** implement in a worktree → gate green → cold
-  review → `gh pr create` → STOP and report. **ONE PR PER SCOPE** — never combine unrelated issues in
-  one integration PR, even when they were gated together. Merge order and timing are the user's
-  alone. (MEMORY `never-work-in-main-working-tree`.)
-- **Prefer dedicated subagents for tasks, and actively use Codex (user-directed).** The coordinator
-  orchestrates and reports; substantive work goes to specialist subagents. Use Codex for design
-  and investigation, and **instruct every subagent to USE it** (not merely note it's available).
-  **Fable is OPTIONAL, never a mandatory pairing (2026-07-26, user-directed — Opus 5 release).**
-  Opus 5 carries the design/root-cause quality bar on its own, so no rule here requires a Fable
-  consult and no subagent brief may mandate one. Reach for `model: "fable"` only when a genuinely
-  open cross-layer design fork would gain from a second independent read — never as ritual, never
-  as a second review of a diff already reviewed.
-  Canonical Codex invocation:
-  `codex exec -s read-only --skip-git-repo-check "<question in English>" </dev/null`
-  — the **`</dev/null` is MANDATORY**: the harness keeps stdin open and codex reads it to EOF, so an
-  un-redirected call hangs forever. If Codex goes silent across agents it may be blocked on an
-  interactive self-update prompt on the user's terminal — ask the user to check, and fall back to
-  empirical verification meanwhile.
-- **Quality review is done by a COLD agent, NEVER by the author (2026-07-26, user-directed).**
-  Self-review by the agent that wrote the change is worth little — it re-reads its own intent, not
-  the code. Before any change is reported done, it is reviewed by a **fresh agent carrying ZERO of
-  the implementation context**: spawn it with the Agent tool (`subagent_type: "Plan"` — read-only)
-  and give it ONLY (a) the task/issue statement, (b) *where* to read the diff (`git diff` in that
-  tree/worktree, or the branch), (c) which invariants apply (this file's layer table,
-  `docs/architecture.md`, the layer contract). **NEVER paste your rationale, your "why I chose X",
-  or your own summary of the change** — that is precisely the context that must not leak; it turns
-  an independent read into a confirmation pass. Fix what the review confirms; where you disagree,
-  say so explicitly in your report instead of silently dropping the finding. This binds **specialist
-  subagents** (cold review before reporting back) **and the coordinator** (cold review before
-  integrating into main). One review per distinct diff — never re-review the same diff twice.
-- **When ≥3 specialist round-trips fail to resolve ONE problem, escalate to a holistic cross-layer root-cause pass (2026-07-12, user-directed; model-neutral since 2026-07-26).**
-  The tell is whack-a-mole: the same fault class keeps moving (a new IL offset, a new pass/store
-  site) instead of closing — the failure mode of per-layer one-symptom-at-a-time fixing. STOP
-  dispatching per-layer specialists and mount a **read-only cross-layer design pass** — the
-  coordinator itself, or a `Plan`/`Explore` agent — that (a) enumerates the COMPLETE manifestation
-  set, (b) rules root-vs-band-aid, (c) weighs a design-level fix that dissolves the whole family,
-  (d) specs ONE unified fix; then implement (coordinator + specialists) and gate it once. Run that
-  pass in parallel with any in-flight specialist attempt (read-only → no build collision).
-  **3 is a ceiling, not a quota** — escalate the moment the pattern is clear. This is a STRUCTURAL
-  escalation (holistic vs per-layer), **not a model switch**: Opus 5 does the holistic pass itself,
-  so do not reach for another model to satisfy this rule. (Origin: the #75 covariance-erasure
-  ilverify loop.)
+The layers exist so that no layer has to guess. These are contracts, not preferences — a change that
+breaks one is wrong even when the tests pass, and "it works" is not a defence.
 
-# Build & test (do NOT guess commands)
+They still sit below your instructions. If you tell me to break one for a specific change — most often the
+source-compatibility principle, when a dotkt-side source break is worth it — that is the decision, and I do
+it without relitigating; I will say what it breaks, not argue the principle back at you. What is out of
+bounds is *me* deciding a principle doesn't apply this time.
 
-The build is a multi-stage native pipeline, not a single `gradle build`:
+- **kotc projects Kotlin IR into BIR in Kotlin vocabulary.** It carries Kotlin identities and frontend facts
+  across. It decides no CLR member, owner, or call shape.
+- **bir2cir fixes the physical CLR representation of Kotlin meaning.** Every "what does this Kotlin thing
+  become on the CLR" decision is made here, and only here.
+- **ilemit emits CIR one-to-one as CIL and re-infers nothing** — not an overload, not a stdlib ABI, not a
+  member kind. If ilemit cannot resolve something, an earlier layer dropped it: fix the drop rather than
+  adding a resolver. ilemit is a projection, not a second compiler.
+- **A reference assembly may lose bodies, never declarations.** Signatures, generic constraints and Kotlin
+  metadata all survive body-stripping. A ref dll missing one of those is broken, not merely reduced.
+- **The common layer of stdlib, coroutines and atomicfu tracks upstream.** Adapt the CLR platform actuals,
+  not the shared sources — divergence there is debt that compounds at every upstream bump.
+- **Kotlin source compatibility is what we owe; internal compatibility is not.** As long as Kotlin source
+  keeps compiling and meaning the same thing, any internal shape — ABI, metadata, BIR/CIR vocabulary, pass
+  structure — is fair to break outright.
+- **Solve for arbitrary Kotlin source, not for the library in front of you.** A fix keyed to a particular
+  library, type or function name is a symptom patch; the rule has to hold for source nobody has written yet.
+
+## Where the project is
+
+Getting the compiler from nothing to mostly-working is done. This is the last stretch — closing the gap
+between "mostly works" and "shippable" — and it changes what good work looks like here.
+
+Earlier the bottleneck was coverage, so the right instinct was to move fast, decide alone, and start the
+next thing. It isn't any more. The bar for a change is now "would I ship this", not "does it move forward":
+depth over breadth, one thing finished properly over three started, and a green gate is the floor for a
+change rather than the finish line. Where speed and rigor pull against each other, rigor wins.
+
+This is about how carefully work is verified, not about becoming conservative with the design. Breaking an
+internal shape for a cleaner one is still the right instinct — that is the source-compatibility principle
+above, and it does not soften here. What must not happen is a regression: something that works today quietly
+stopping.
+
+## Working agreement
+
+These are about who does what, not about how to write code.
+
+- Reports to me are in Japanese. Everything else — code, comments, identifiers, commit messages, subagent
+  prompts — is English.
+- Do the work, then report. A message that only says what you are about to do ends the turn without doing it.
+- **The main working tree is mine.** Don't edit, build, gate or run probes there. Work in a worktree cut from
+  `origin/main`, and give every file-mutating or compiling subagent its own.
+- **I do the merging.** Not `git merge` into main, not `gh pr merge`. Your deliverable is an opened PR, one
+  per scope, and the turn ends there.
+- **The issue tracker is mine.** Don't create, close or re-milestone issues unless I ask.
+- Before a destructive git operation, capture the full state (`git diff` and `git status --porcelain`) and
+  confirm what you are about to lose. To undo one hunk, edit it back.
+
+## Scope
+
+An issue names a user-visible behavior; that behavior is the scope, not the file the bug happens to live in
+or the example in the issue body. If another path breaks the same behavior, it belongs in the same fix — a
+tracker with one issue per code site is useless. Conversely, don't widen into a different subject.
+
+"It was already broken", "that's a different layer", "that needs another mechanism" are not reasons to defer.
+If something genuinely blocks you, stop and name the blocker rather than shipping around it.
+
+When the frontend has resolved a program, a valid CIL lowering exists. A backend abort on accepted IR is a
+bug; the only legitimate throw is an assert that cannot fire on valid IR.
+
+## Design stance
+
+- The bar for a behavior choice is that it is consistent, documented, and convincingly explainable. The
+  JVM is a reader reference, not a compat target — "matches JVM" is not an argument. Honor the Kotlin
+  spec/KDoc contract; where Kotlin leaves something unspecified, take the CLR-native form; deviate from the
+  contract only where interop consistency clearly outweighs it. Record deviations in
+  `docs/dotkt-semantics.md`.
+- Break internal shapes freely, per the source-compatibility principle above: a redesign that costs more now
+  beats a shape you would regret, and nothing has shipped as 1.0.0 to hold you back. No compat shims and no
+  dual-track paths — when you replace something, delete what it replaced in the same change rather than
+  keeping it behind a flag. Dual-track is what blurred the layer boundaries before.
+- Relocating or deleting logic takes its comments and doc lines with it. State what the code does now; don't
+  annotate a stale claim as formerly-true.
+- This codebase is written almost entirely by agents working through grep and a read window, so a file that
+  can't be read whole tends to lose its invariants. When a concern outgrows its file, split it out in the
+  same change and verify the output is byte-identical.
+
+## How I like work done
+
+- Check the premise before acting on it, and prefer a question to a wrong autonomous change. Open the file
+  before citing a doc; read a closed issue's body before filing something related; re-read your own rewrite
+  before building on it. Asking used to be the expensive option here; it isn't now.
+- Finish one thing before starting the next. A few concurrent streams that each get verified beat many that
+  each get a glance — and gates that run at the same time can produce false failures, so a result you did
+  not watch is not a result.
+- Specialist subagents do the substantive work; use Codex for design and investigation, and tell subagents to
+  use it too: `codex exec -s read-only --skip-git-repo-check "<question>" </dev/null`. The `</dev/null` is
+  required or it hangs. If it goes silent it may be stuck on an interactive update prompt — ask me.
+- Review before reporting done, by a fresh agent that has none of the implementation context: give it the
+  task, where to read the diff, and the applicable invariants — not your reasoning, which turns an
+  independent read into a confirmation pass.
+- If the same fault keeps reappearing somewhere new instead of closing, stop fixing symptoms per layer and do
+  one read-only pass that enumerates every manifestation and specs a single fix.
+
+## Build and test
+
+Not a single `gradle build` — a multi-stage native pipeline. Don't guess these.
 
 | Goal | Command |
 |------|---------|
-| **Run the compiler test gate** (categorized NUnit + `ilverify`) | `make verify-tests` |
-| Stateful MSBuild integration | `make verify-msbuild` |
-| Kotlin↔CLR round-trip scenarios (consume a DotKt dll as Kotlin) | `make verify-roundtrip` |
-| **One-shot: compile + run a single `.kt`** | `./scripts/dotkt.sh --run path/to/Foo.kt` |
+| Canonical gate (a behavior-affecting change isn't done without it) | `make verify` |
+| Compiler behavior only (NUnit + `ilverify`) | `make verify-tests` |
+| Compile and run one file | `./scripts/dotkt.sh --run path/to/Foo.kt` |
+| The CLR stdlib: frontend KLIB, then reference dll, then runtime dll | `make stdlib` |
 
-`make verify` is the **canonical gate** — a behavior-affecting change (compiler, stdlib, build helpers,
-packaging) is not "done" without a run. The truthful fail-set baselines are **machine-readable, not
-prose**: `ILVERIFY_XFAIL` in `tests/run-ilverify.sh`, `RT_XFAIL` in
-`tests/roundtrip/scenarios/run.sh`, and `XFAIL_PKG` in `tests/packaged-sdk/run.sh`. Each gate exits 0 iff
-every actual fail is listed and reports new/fixed findings. Never copy fail counts/names into docs; run
-the gate and read its diff. `dotkt.sh` is the fast dev
-wrapper over the same pipeline (`-h` for `--exe`, `--no-stdlib`, `--retarget`, `--ref <dll>`).
+The truthful fail-sets are machine-readable, never prose: `ILVERIFY_XFAIL` in `tests/run-ilverify.sh`,
+`RT_XFAIL` in `tests/roundtrip/scenarios/run.sh`, `XFAIL_PKG` in `tests/packaged-sdk/run.sh`. A gate exits 0
+iff every actual failure is listed, and reports what is new or newly fixed. Read that diff; don't copy counts
+into docs.
 
-**Building the CLR stdlib** (`libraries/stdlib/`) — `make stdlib` runs the THREE canonical scripts
-in order; other stdlib scripts are stale or experimental:
+Two traps worth knowing: the toolchain binaries are only checked for existence, so after changing
+bir2cir/ilemit/facadegen you need `rm -rf build/*-bin` (plus `build/clr-stdlib*` for stdlib-affecting work)
+before a gate result means anything; and after any kotc change, `./gradlew :kotc:installDist`, or a stale
+launcher fails the gate for the wrong reason.
 
-- `./scripts/build-stdlib-klib.sh` — the **frontend KLIB** (`kotlin-stdlib-clr-frontend.klib`),
-  kotc's `-classpath` input. Built by kotc's own `DOTKT_BUILD_KLIB=1` metadata pipeline over the
-  actualized stdlib sources, so it carries real `@ClrTypeAlias`/`@ClrIntrinsic` metadata and
-  compiled const values. (Superseded the retired JVM frontend JAR — #67/#80.)
-- `./scripts/build-stdlib-ref.sh --emit` — the **reference** assembly (`DotKt.Private.Stdlib.dll`;
-  compile-time only, carries `@Clr*` metadata, substituted away at app-emit).
-- `./scripts/build-stdlib-rt.sh --emit` — the shipping **runtime** assembly (`DotKt.Stdlib.dll`).
-- `--emit` makes ref/rt actually run `ilemit` (without it: frontend + BIR only, for fast triage).
-  Why the ref/runtime split: `docs/architecture.md`.
-- ⚠️ `scripts/build-stdlib.sh` (a #66 shared-BIR experiment) exists but is NOT canonical and is not
-  in the Makefile; consolidating onto it is an open follow-up.
+Toolchain: JDK auto-provisioned by Gradle, .NET SDK 10 required, Kotlin/IR APIs pinned to 2.4.0 (bump
+procedure in `docs/kotlin-frontend-bump-playbook.md`).
 
-Toolchain: JDK auto-provisioned by Gradle; **.NET SDK 10 required**. Kotlin/IR APIs **pinned to
-2.4.0** (internal/unstable; bump procedure: `docs/kotlin-frontend-bump-playbook.md`).
+## Layers
 
-# Layer boundaries (put logic in the layer that owns it)
+The three principles above fix kotc, bir2cir and ilemit. The remaining two: facadegen projects .NET metadata
+into Kotlin-visible metadata, and retarget repoints emitted BCL references so a C# project can reference the
+dll. `docs/architecture.md` owns the full table, including which reference artifact each stage reads.
 
-The authoritative layer table — including the reference artifact each stage reads (facadegen ← CLR
-dll, kotc ← stdlib.klib, bir2cir ← stdlib.ref.dll, ilemit ← stdlib.rt.dll) — is
-**`docs/architecture.md`**. This summary must not drift from it.
+So "which layer?" is a lookup, not a design question — a fix that consults a ref dll, `@Clr*` labels or BCL
+shapes goes in bir2cir. Residual .NET resolution still living in ilemit is a principle violation carrying
+interest: move it toward the boundary when you touch it, never entrench it.
 
-| Module | Owns | Must NOT contain |
-|--------|------|------------------|
-| `toolchain/kotc/` | the **Kotlin frontend** (PSI/FIR/IR → BIR) | CLR/BCL knowledge |
-| `toolchain/bir2cir/` | the **Kotlin ↔ CLR relation** (lowering BIR → CIR) | — |
-| `toolchain/ilemit/` | **CLR codegen** (CIR-json → CIL via Reflection.Emit) | Kotlin-language knowledge |
-| `toolchain/facadegen/` | .NET metadata → FIR-injection metadata (façade-free `import System.X`) | |
-| `toolchain/retarget/` | repoint emitted BCL refs so C# can `<Reference>` the dll | |
+Two invariants that are easy to violate by accident:
 
-**The binding layer is bir2cir.** The invariants (2026-06-30, user, foundational — all realized;
-when you find residual code violating them, fixing it is in scope, not optional):
+- `kotlin.*` comes from the frontend KLIB on kotc's `-classpath`, never from facadegen. facadegen cannot
+  restore Kotlin semantics (inline, reified, operator), and a facadegen copy of the stdlib collides with the
+  klib's. Any "stdlib symbol missing or ambiguous" is a klib problem.
+- facadegen may keep the stdlib in its `--compile-refs` resolver — the DotKt-library round-trip lane needs it
+  to materialize `[kotlin.clr.*]` attributes — but must never surface a `kotlin.*` type into the generated
+  surface. Resolver scope yes, surface set no.
 
-- **kotc INTERPRETS no CLR metadata.** It reads neither `@ClrIntrinsic` nor `@ClrTypeAlias`
-  (realized by #52 kotc-purity: kotc recognizes zero operators and reads no `@Clr*`; it only carries
-  annotations as opaque metadata when serializing the klib). kotc emits pure Kotlin — a plain
-  `callStatic`/`callInstance` by FQN identity, the bare `kotlin.String` owner — and does NOT decide
-  the .NET call shape. To kotc, a facadegen-injected library is just "a weird Kotlin library with
-  PascalCase packages". (Realized for .NET interop by bir2cir `NetInteropBinding` — A2/#61: kotc
-  emits the plain call, bir2cir reflects the owner against the reference assemblies and binds
-  `clrStatic`/`clrInstance`/`clrPropGet`/…. Exception by design: CLR-only vocabulary with no
-  plain-Kotlin form — `.NET events`, `byref`/`ClrRef<T>` — is lowered directly by kotc as
-  facadegen-injected CLR vocab.)
-- **BIR type tokens are pure Kotlin FQN identities.** The `@Name` / `clr:Name` / `clrg:Name[args]` /
-  primitive-shorthand vocabulary encodes CLR-resolution decisions (local vs referenced, primitive vs
-  generic) and lives **below** the kotc boundary: kotc emits only `kotlin.Int`,
-  `kotlin.collections.List`, `System.Exception`; bir2cir/ilemit derive the resolution from the FQN.
-- **bir2cir reads the ref.dll** and treats a `@ClrTypeAlias` class as a CLR-bound owner and its
-  `@ClrIntrinsic` members (and rule-3 bodies) as substitution targets — rewriting
-  `kotlin.String.length` → `System.String.get_Length`, etc. (`MemberCallSubstitution`). This
-  reference-metadata substitution is the CORE of the 4-layer design; it is what makes the ref.dll a
-  pure **annotation surface**. `@ClrIntrinsic` is consumed HERE as a "what to substitute" label and
-  emitted as a plain BCL call — **ilemit never interprets it as binding semantics** (in the
-  ref-stdlib build the label rides through as an ordinary CIR attribute, nothing more).
-- **Primitive substitution is mode-gated, owned by bir2cir:** the **ref** build
-  (`--build-stdlib=metadata`) keeps `kotlin.Int` un-lowered — its bodies are squashed to
-  `throw NotImplementedException()` (`RefBodySquash`), so a bare `kotlin.Int` never reaches
-  arithmetic IL and a ref method leaking into runtime fails loud. **Every other build** (rt, app)
-  lowers `kotlin.Int` → the CLR primitive. Single unflagged path (the compat dual-track is removed).
-- **ilemit knows no Kotlin** and ideally does not read the Reference Assemblies — residual .NET
-  resolution above bir2cir is historical debt: when you touch it, move it toward the boundary, don't
-  entrench it. Track concrete residuals in GitHub Issues.
+## The cardinal rule
 
-> ### BINDING INVARIANT — `kotlin.*` comes from the KLIB, never from facadegen
-> kotc resolves the **entire stdlib (`kotlin.*`)** from the frontend **KLIB** (`-classpath`), which
-> preserves full Kotlin semantics. facadegen **generates the .NET space ONLY** (`System.*` and any
-> referenced .NET assembly) and must **NEVER generate/inject `kotlin.*` facades** — it cannot
-> restore Kotlin semantics (inline/reified/operator…), and a facadegen copy of `kotlin.*` conflicts
-> with the klib's (seen live: non-reified vs reified `arrayOf` → `overload resolution ambiguity`)
-> besides being slower than the prebuilt klib. The fix for any "stdlib symbol missing/ambiguous" is
-> **the klib** — never a facadegen scan of the stdlib or a `kotlin.*` guard inside facadegen
- (symptom-patching; the root error is asking facadegen for stdlib symbols at all).
->
-> ### BINDING INVARIANT — facadegen must never SURFACE the stdlib (resolver-scope OK, surface-set banned) (2026-07-21, user)
-> **facadegen is the process that PROJECTS a FOREIGN CLR assembly into the Kotlin dialect** (so
-> `import System.X` / a C# `<ProjectReference>` works). `kotlin.*` **IS** the Kotlin dialect, supplied by
-> the **KLIB** — so facadegen must **never generate/surface a `kotlin.*` type from the stdlib**;
-> `--import-list` keeps generation .NET-only. But the stdlib legitimately (and for the DotKt-library
-> **roundtrip** lane, NECESSARILY) sits in facadegen's `--compile-refs` **resolver**: it is needed to
-> materialize a consumed DotKt lib's `[kotlin.clr.*]` round-trip attributes (`ManagedReferenceCatalog`
-> aliases the runtime twin to the reference twin for exactly this — `verify-roundtrip.sh` depends on it).
-> So the correct invariant is **resolver-scope OK, SURFACE-set banned** — enforced by separating the
-> loadable set from the surfaceable set (facadegen's `Resolve`/`TypesInNamespace`/`ResolveTopLevelFacade`/
-> `GetAwaiterExtIndex`/`HasArityClash` iterate the resolver universe indiscriminately; the fix routes the
-> *surfacing* sites through a stdlib-excluded index — the ~30-line "Option B" separation).
-> ⚠️ The earlier "handing facadegen the stdlib degrades a plain-C# `List<T>` facade" claim was a
-> **PHANTOM** — it does NOT reproduce (tests/interop is green 21/21); the reverse-`@ClrTypeAlias` restore
-> is gated on `IsDotKtEmittedAssembly`, which a plain-C# producer isn't. (MEMORY
-> `facadegen-never-gets-stdlib-in-compile-refs`.)
+There is a real CLR stdlib in `libraries/stdlib/`, and the point of compiling it is to retire the compiler's
+hand-written lowerings. So a stdlib function that doesn't work is fixed stdlib-side — emit the real type, or
+add an `actual` in `libraries/stdlib/clr/` — never with a denylist, type-map or ilemit stub. Prefer binding a
+named BCL method as `@ClrIntrinsic` metadata over a compiler lowering; only genuine primitive IL ops stay
+lowered. If a stdlib function seems to need a compiler hack, the binding is wrong.
 
-# The cardinal rule: do NOT special-case the compiler
+Source analysis uses the Kotlin PSI, not regex.
 
-There is a real CLR stdlib (`libraries/stdlib/`). The point of compiling it is to **retire** the
-compiler's hand-written stdlib lowerings — so:
+## Where to read first
 
-- **NEVER** add compiler special-casing (denylist / type-map / `ilemit` stub) to force a stdlib
-  function to work. The fix is **always stdlib-side**: emit the real type, or add an `actual`/stub
-  in `libraries/stdlib/clr/`. (MEMORY `stdlib-compile-retires-lowerings-never-adds`.)
-- **Prefer `@ClrIntrinsic` bindings over compiler lowerings.** Bind named BCL methods
-  (`String.format` → `System.String.Format`) as stdlib metadata; only genuine primitive IL ops stay
-  compiler-lowered. (MEMORY `intrinsic-over-compiler-lowering`.)
-- **Source analysis uses a real parser/lexer (Kotlin PSI), never regex/heuristics.** (MEMORY
-  `prefer-parser-over-regex`.)
-
-If a stdlib function "needs" a compiler hack to work, the stdlib binding is wrong — fix the binding,
-not the compiler.
-
-# Task → doc map (read BEFORE you act, not after)
-
-| If you are about to… | Read first |
-|----------------------|-----------|
-| **pick up work / know what's left** | the **GitHub issue tracker** (the sole source of truth for bugs and tasks); `docs/architecture.md` is the binding architecture reference |
-| change the backend pipeline (BIR/CIR/IL, layer boundaries) | `docs/architecture.md` + MEMORY `compiler-layer-responsibilities` |
-| touch stdlib bindings / `@Clr*` / lowerings | `docs/architecture.md`, then the relevant implementation and tests |
-| retire / migrate an intrinsic | `docs/architecture.md` plus the tracking GitHub issue |
-| ask "how does Kotlin map to the CLR, or why does it differ?" | `docs/dotkt-semantics.md` (canonical) |
-| check what is left for 1.0 | the GitHub issue tracker |
-| **record a new behavioral difference** from Kotlin/JVM | write it **into** `docs/dotkt-semantics.md` (not a code comment) |
-| log a fix | add it under `## Unreleased` in `CHANGELOG.md` |
-
-For everything else, **`README.md`** has the layout table, quick-start, and "what works today".
-**MEMORY** holds dated decisions and process gotchas — its index auto-loads, but treat entries as
-background that may be stale: if one names a file/flag/number, verify it still exists before relying
-on it. Do not copy volatile completion status into this file — verify names, flags, and task status
-against the current tree.
+| Before you… | Read |
+|---|---|
+| pick up work | the GitHub issue tracker |
+| change the backend pipeline or a layer boundary | `docs/architecture.md` |
+| ask how Kotlin maps to the CLR, or why it differs | `docs/dotkt-semantics.md` |
+| record a new behavioral difference | write it into `docs/dotkt-semantics.md` |
+| log a fix | `CHANGELOG.md`, under `## Unreleased` |
