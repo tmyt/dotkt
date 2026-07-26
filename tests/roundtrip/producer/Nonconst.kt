@@ -25,7 +25,13 @@ class Pair2(val n: Int, val label: String = n.toString() + "!") {
 // #235 SINGLE EVALUATION: each of these has a carrier that reads a value of the CALL — the extension receiver, an
 // argument, an argument read by TWO defaults, an argument no default reads (order), and a side-effecting DEFAULT that a
 // later default reads. The consumer counts how many times its own side-effecting expression runs.
-fun String.tagged(t: String = this): String = this + "/" + t
+// `suffixed` deliberately shares neither name nor arity with `tagged` above; the same-arity OVERLOAD pair that exercises
+// the signature-keyed carrier lookup is `ov` below.
+fun String.suffixed(t: String = this): String = this + "/" + t
+// #235: two SAME-ARITY overloads of one name carrying DIFFERENT defaults. The carrier is keyed by the declared parameter
+// vector, so each call site resolves its own default instead of whichever declaration the metadata scan reached last.
+fun ov(a: Int, b: Int = a * 2): String = "$a/$b"
+fun ov(a: String, b: String = a + "!"): String = "$a/$b"
 fun scaled(a: Int, b: Int = a * 10): Int = a + b
 fun tri3(a: Int, b: Int = a + 1, c: Int = a * 100 + b): Int = c
 fun order3(p: Int, q: Int, r: Int = q * 10): String = "$p/$q/$r"

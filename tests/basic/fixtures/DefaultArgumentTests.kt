@@ -135,6 +135,34 @@ class M2EvalOnce {
     fun encl(): M2Encl { calls++; return M2Encl(9) }
 }
 
+// #235: the two call sites that are not expressions — a constructor DELEGATION and an ENUM ENTRY. Their arguments ride a
+// declaration rather than an expression, so their single-evaluation temps are declared by the first argument; a value a
+// filled default reads must still run exactly once. The counter is a per-test instance except for the enum, whose entries
+// are initialized ONCE per process by the static initializer — so those two read a companion counter.
+class M2DelOnce(val p: Int, val q: Int = p * 10) {
+    constructor(unused: String) : this(M2DelCounter.next())
+}
+open class M2DelBaseOnce(val p: Int, val q: Int = p * 10)
+class M2DelSubOnce : M2DelBaseOnce(M2DelCounter.next())
+object M2DelCounter {
+    var calls = 0
+    fun next(): Int { calls++; return 4 }
+}
+// No entry bodies (the entry-field path) and ALL entry bodies (the per-entry subclass's base call) are separate enums:
+// an enum MIXING the two is unloadable for reasons unrelated to default arguments (it reproduces with none).
+enum class M2EnumOnce(val n: Int, val m: Int = n * 10) {
+    R(M2EnumCounter.next()),
+    G(M2EnumCounter.next())
+}
+enum class M2EnumBodyOnce(val n: Int, val m: Int = n * 10) {
+    X(M2EnumBodyCounter.next()) { override fun tag(): String = "x" },
+    Y(M2EnumBodyCounter.next()) { override fun tag(): String = "y" };
+
+    abstract fun tag(): String
+}
+object M2EnumCounter { var calls = 0; fun next(): Int { calls++; return 4 } }
+object M2EnumBodyCounter { var calls = 0; fun next(): Int { calls++; return 4 } }
+
 // #235: EVALUATION ORDER around a value bound for single evaluation. Binding one value moves its evaluation ahead of
 // the call, so every side-effecting value to its LEFT must move with it — Kotlin evaluates the receiver, then each
 // argument, left to right.
@@ -280,5 +308,34 @@ class DefaultArgumentTests {
 
         val c = M2Cell()
         assertEquals(10550, m2Order(c.bump(), c.x))                     // p=1, then q reads x=5, r=50
+    }
+
+    // #235: single evaluation at the two call sites that ride a DECLARATION rather than an expression.
+    @TestAttribute
+    fun defargsSingleEvalDelegationAndEnum() {
+        M2DelCounter.calls = 0
+        val d = M2DelOnce("")
+        assertEquals(4, d.p)                                            // `: this(next())`
+        assertEquals(40, d.q)                                           // p * 10, filled at the delegation
+        assertEquals(1, M2DelCounter.calls)                             // next() ran ONCE, not once per splice
+
+        M2DelCounter.calls = 0
+        val s = M2DelSubOnce()
+        assertEquals(4, s.p)                                            // `: super(next())`
+        assertEquals(40, s.q)
+        assertEquals(1, M2DelCounter.calls)
+
+        // The entries are constructed by the enum's static initializer, so each counter reflects that ONE construction:
+        // two entries, one `next()` each.
+        assertEquals(4, M2EnumOnce.R.n)
+        assertEquals(40, M2EnumOnce.R.m)                                // n * 10, filled at the entry
+        assertEquals(40, M2EnumOnce.G.m)
+        assertEquals(2, M2EnumCounter.calls)                            // 2 entries x once (was 2 x twice)
+
+        assertEquals(4, M2EnumBodyOnce.X.n)
+        assertEquals(40, M2EnumBodyOnce.X.m)                            // filled at the per-entry body's base call
+        assertEquals("x", M2EnumBodyOnce.X.tag())
+        assertEquals(40, M2EnumBodyOnce.Y.m)
+        assertEquals(2, M2EnumBodyCounter.calls)                        // 2 entries x once
     }
 }

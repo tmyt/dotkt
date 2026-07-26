@@ -812,21 +812,22 @@ call's own receiver and argument slots, an inner-class `new`'s enclosing-instanc
 reads that local. So `mkOuter().In()` runs `mkOuter()` once (the constructor and its default see the SAME instance),
 `f(next())` with `b: Int = a * 10` calls `next()` once however many defaults read `a`, and `sideEffect().substringAfter(".")`
 — whose `missingDelimiterValue: String = this` rides a cross-module carrier — evaluates `sideEffect()` once. A STABLE
-value (a literal, or `this`) is spliced directly, so an ordinary call emits no temporary at all. Binding one value moves
+value is spliced directly, so an ordinary call emits no temporary at all (what counts as stable differs slightly by path
+— see below). Binding one value moves
 its evaluation ahead of the call, so every non-stable value to its LEFT is bound with it: the order stays Kotlin's
 (receiver, then arguments left to right), including when an argument reads a variable a preceding argument writes.
 
-The two paths bind at different points, because the two know different things. SAME-MODULE, kotc has the default's IR
-and hoists before emitting (`evalOnceSubst`, keyed by IR-node identity, so it can leave an immutable local read spliced
-in place). CROSS-MODULE, only the `@KotlinDefault` carrier says which values a default reads, so `DefaultArgSplice`
-hoists as it fills — including a filled default a LATER default reads, which must not be evaluated per reader either
-(`chain(a, b = bump(), c = b * 10)` calls `bump()` once). Working on emitted JSON it cannot tell a `val` from a `var`, so
-it binds every local read too.
+This holds at every call site that fills a default, including the two that ride a DECLARATION rather than an expression —
+a constructor **DELEGATION** (`: this(…)` / `: super(…)`) and an **ENUM ENTRY**'s `NAME(args)`, whose temporaries are
+declared by the first argument (a `var` declares an ordinary method-body local, and the first argument is evaluated
+before every later one, so a later read is in scope and in order).
 
-One pair of call sites still splices by expression: a constructor **DELEGATION** (`: this(…)` / `: super(…)`) and an
-**ENUM ENTRY**'s `NAME(args)`. Both call the filling pass directly rather than through the expression emitter that
-introduces the temporary, so nothing is bound there regardless of stability. Reaching the double evaluation takes a
-side-effecting argument in one of those two positions (`constructor() : this(next())` with a default reading it).
+The paths bind at different points, because they know different things. SAME-MODULE, kotc has the default's IR and hoists
+before emitting (`evalOnceSubst`, keyed by IR-node identity, so it can leave an immutable local or parameter read spliced
+in place). CROSS-MODULE, only the `@KotlinDefault` carrier says which values a default reads, so `DefaultArgSplice` hoists
+as it fills — including a filled default a LATER default reads, which must not be evaluated per reader either
+(`chain(a, b = bump(), c = b * 10)` calls `bump()` once). Working on emitted JSON it cannot tell a `val` from a `var`, so
+there only a literal or `this` stays spliced in place and every local read is bound.
 
 **#146 known gap (named, not silent):** a non-const default that references a PRIVATE/internal library symbol
 (`= privateHelper()`) is NOT poison-detected at stamp time — it is carried, then fails LOUDLY (imprecise) at the

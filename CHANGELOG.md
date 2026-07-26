@@ -98,20 +98,25 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `= this` / `= outerProp` default reads, and the earlier argument a `= a * 10` default reads, are bound to a call-site
   temporary in a wrapping `valueBlock`, so `mkOuter().In()` runs `mkOuter()` once — the constructor and its default now
   see the SAME instance — and `f(next())` calls `next()` once however many defaults read it. A stable value (a literal
-  or `this`) still splices directly, so an ordinary call emits no temporary, and every non-stable value to the left of a
-  bound one is bound with it so the evaluation order stays Kotlin's. **Cross-module omissions bind too**
+  or an immutable local/parameter read) still splices directly, so an ordinary call emits no temporary, and every
+  non-stable value to the left of a bound one is bound with it so the evaluation order stays Kotlin's. This holds at
+  EVERY site that fills a default: a constructor delegation and an enum entry ride a declaration rather than an
+  expression, so their temporaries are declared by the first argument. **Cross-module omissions bind too**
   (area:bir2cir): `DefaultArgSplice` used to deep-clone the call's receiver/argument into the default it filled, so
   `sideEffect().substringAfter(".")` ran `sideEffect()` twice and a value two defaults read ran four times — it now
   hoists as it fills, including a filled default a later default reads (`chain(a, b = bump(), c = b * 10)` calls
-  `bump()` once). A constructor delegation and an enum entry still splice by expression
-  (`docs/dotkt-semantics.md` §7).
+  `bump()` once). Working on emitted JSON it cannot tell a `val` from a `var`, so there only a literal or `this` stays
+  spliced in place (`docs/dotkt-semantics.md` §7).
   **Cross-module too** (area:bir2cir with it): a CONSTRUCTOR now carries the same `@kotlin.clr.KotlinDefault` stamp a
   function does, facadegen surfaces its non-constant defaulted parameter OPTIONAL, and `bir2cir.DefaultArgSplice` fills
   the `{"k":"new"}` placeholder from the reference dll — so a consumer of a DotKt library can write `Rect(3)` against
   `class Rect(val w: Int, val h: Int = w * 2)` and get `h == 6`, where it previously failed the frontend with *no value
   passed for parameter 'h'*. The splice keys a constructor as `<type>|.ctor|<declared parameter count>`
   (`ReferenceMetadataIndex` now scans `GetConstructors` alongside `GetMethods`), and the stamped index is the parameter's
-  position in the emitted constructor's own parameter list. Lower slots fill first, so a chain fills too
+  position in the emitted constructor's own parameter list. Both constructors and methods are additionally keyed by the
+  declared parameter VECTOR, so two same-arity overloads carrying different defaults resolve their own instead of the
+  arity key serving whichever declaration the metadata scan reached last; a pair the key cannot separate is refused.
+  Lower slots fill first, so a chain fills too
   (`class Tri(a, b = a + 1, c = a * 100 + b)` consumed as `Tri(2)` gives `c == 203`). A metadata-representable (Tier-1)
   constant still fills from the facadegen metadata and never becomes a placeholder; a ctor default reading an enclosing
   instance is still refused at stamp time. Covered by `tests/basic/fixtures/DefaultArgumentTests.kt` (`defargsCtor`,

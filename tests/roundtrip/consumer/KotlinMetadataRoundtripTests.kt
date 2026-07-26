@@ -79,7 +79,8 @@ import roundtrip.nc.Rect as NcRect
 import roundtrip.nc.Tri as NcTri
 import roundtrip.nc.Bag as NcBag
 import roundtrip.nc.Pair2 as NcPair2
-import roundtrip.nc.tagged as ncTaggedExt
+import roundtrip.nc.suffixed as ncSuffixed
+import roundtrip.nc.ov as ncOv
 import roundtrip.nc.scaled as ncScaled
 import roundtrip.nc.tri3 as ncTri3
 import roundtrip.nc.order3 as ncOrder3
@@ -300,6 +301,11 @@ class PackageAndInlineRoundtripTests {
         // Same-arity ctor OVERLOADS: the splice key carries the declared parameter vector, so each resolves its own.
         ClassicAssert.AreEqual("2!", NcPair2("hi").label)                               // 2!  the (String,String) ctor fills upper, delegates this(2)
         ClassicAssert.AreEqual("7!", NcPair2(7).label)                                  // 7!  the (Int,String) ctor fills label
+        // Same-arity FUNCTION overloads carrying different defaults: keyed by the declared parameter vector, so each
+        // call site gets ITS own default instead of whichever declaration the metadata scan reached last.
+        ClassicAssert.AreEqual("3/6", ncOv(3))                                          // 3/6  the Int overload: b = a * 2
+        ClassicAssert.AreEqual("x/x!", ncOv("x"))                                       // x/x! the String overload: b = a + "!"
+        ClassicAssert.AreEqual("z=0", ncTagged("z"))                                    // z=0  the List-typed sibling still resolves its own
     }
 
     // #235: a value the CROSS-MODULE carrier splices is evaluated exactly ONCE, and binding it does not reorder the
@@ -307,7 +313,7 @@ class PackageAndInlineRoundtripTests {
     @TestAttribute
     fun nonConstDefaultArgsEvaluateOnce() {
         val a = NcEvalCounter()
-        ClassicAssert.AreEqual("h/h", a.s().ncTaggedExt())                              // h/h  the EXTENSION RECEIVER a `= this` default reads
+        ClassicAssert.AreEqual("h/h", a.s().ncSuffixed())                               // h/h  the EXTENSION RECEIVER a `= this` default reads
         ClassicAssert.AreEqual(1, a.calls)                                              // 1    once, not once per splice
 
         val b = NcEvalCounter()
