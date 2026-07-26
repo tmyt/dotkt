@@ -988,71 +988,82 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 
 /** Free value references in a lambda / local-fun body (referenced but not declared inside) = its captured vars. */
 internal fun BirEmitter.capturedVars(fn: IrSimpleFunction, includeThis: Boolean = false): List<IrValueDeclaration> =
-	capturedVarsTransitive(fn, includeThis,
-		java.util.Collections.newSetFromMap(java.util.IdentityHashMap<IrSimpleFunction, Boolean>()))
+	captureScan(fn.body, fn.parameters, includeThis, newCycleGuard())
 
-/** A function declared in STATEMENT position (a local `fun`) rather than as a member or a package-level function.
- *  Its parent is the enclosing function/initializer, never an `IrClass` or an `IrPackageFragment` (which covers both
- *  the current `IrFile` and an external module's fragment). This is the same structural fact `stmt` uses to decide to
- *  lift it (BirEmitterStatements: an `IrSimpleFunction` in statement position -> `liftLocalFn`). */
-private fun isLocalFunction(fn: IrSimpleFunction): Boolean =
-	fn.parent !is IrClass && fn.parent !is org.jetbrains.kotlin.ir.declarations.IrPackageFragment
+/**
+ * A LOCAL `fun` — one kotc lifts to a file-class static whose captures become leading by-value parameters supplied
+ * at each CALL SITE ([liftLocalFn]). Calling one is therefore a capture in its own right, which is why the scans
+ * below must recognize it exactly.
+ *
+ * Structural test, because the scans run before (and independently of) any lift: a local fun is the only
+ * `IrSimpleFunction` that is neither a package-level function (parent = an `IrPackageFragment`, covering this
+ * `IrFile` and an external module's fragment) nor a member of the class that DECLARES it. The second half cannot be
+ * simplified to "parent is not an `IrClass`": `IrAnonymousInitializer` is not an `IrDeclarationParent`, so a `fun`
+ * declared inside `init { }` has the enclosing CLASS as its parent and is distinguished from a real member only by
+ * being absent from that class's `declarations`. A property accessor is excluded outright — it is a member reached
+ * through its property, never a call whose captures ride the call site.
+ */
+private fun isLocalFunction(fn: IrSimpleFunction): Boolean {
+	if (fn.correspondingPropertySymbol != null) return false
+	val parent = fn.parent
+	if (parent is org.jetbrains.kotlin.ir.declarations.IrPackageFragment) return false
+	return parent !is IrClass || fn !in parent.declarations
+}
 
-private fun BirEmitter.capturedVarsTransitive(
-	fn: IrSimpleFunction,
+private fun newCycleGuard(): MutableSet<IrSimpleFunction> =
+	java.util.Collections.newSetFromMap(java.util.IdentityHashMap<IrSimpleFunction, Boolean>())
+
+/**
+ * The free value references under [body] — referenced anywhere inside, declared outside — given the declarations
+ * [ownParams] that the scanned entity itself introduces. Shared by the lambda/local-fun scan ([capturedVars]) and the
+ * object-literal / local-class scan ([capturedVarsForObject]) so both see the same capture set: they lift the same
+ * kinds of body and must agree, or one of them emits a reference to a value its frame never received.
+ *
+ * A CALL to a local `fun` contributes that fun's own captures (recursively): the lift passes them as leading
+ * arguments at the call site, so a body that merely calls `bump()` — never mentioning `bump`'s `n` — must still have
+ * `n` in scope. [guard] stops a recursive local fun; a cycle's captures are collected by the frame that entered it.
+ */
+private fun BirEmitter.captureScan(
+	body: IrElement?,
+	ownParams: List<IrValueDeclaration>,
 	includeThis: Boolean,
-	inProgress: MutableSet<IrSimpleFunction>,
+	guard: MutableSet<IrSimpleFunction>,
 ): List<IrValueDeclaration> {
-	// Self / mutual recursion between local funs: the cycle's captures are already being collected by the outer frame.
-	if (!inProgress.add(fn)) return emptyList()
-	val declared = HashSet<IrValueDeclaration>()
-	fn.parameters.forEach { declared.add(it) }
+	val declared = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<IrValueDeclaration, Boolean>())
+	ownParams.forEach { declared.add(it) }
 	val referenced = LinkedHashSet<IrValueDeclaration>()
-	fn.body?.acceptVoid(object : IrVisitorVoid() {
+	body?.acceptVoid(object : IrVisitorVoid() {
 		override fun visitElement(element: IrElement) {
 			when (element) {
 				is IrVariable -> declared.add(element)
-				// A nested lambda/local-fun's own parameters are declared there, not captured by `fn`.
+				// A nested lambda/local-fun's own parameters are declared there, not captured by this body.
 				is IrValueParameter -> declared.add(element)
 				is IrGetValue -> referenced.add(element.symbol.owner)
 				is IrSetValue -> referenced.add(element.symbol.owner)
-				// CALLING a local fun captures TRANSITIVELY: `liftLocalFn` turns its captures into leading by-value
-				// params supplied AT THE CALL SITE, so every value it captures must also be in scope in THIS body —
-				// otherwise the emitted `callStatic` passes a local that does not exist here (a lambda that merely
-				// calls `bump()` never mentions `bump`'s `n`). Ask for `<this>` too: an enclosing-instance capture must
-				// propagate the same way; this frame's own `includeThis` decides whether it survives the filter below.
+				// Ask a called local fun for `<this>` too: an enclosing-instance capture propagates the same way, and
+				// this frame's own `includeThis` decides whether it survives the filter below.
 				is IrCall -> (element.symbol.owner as? IrSimpleFunction)?.takeIf { isLocalFunction(it) }
-					?.let { referenced.addAll(capturedVarsTransitive(it, true, inProgress)) }
+					?.let { callee ->
+						if (guard.add(callee)) {
+							referenced.addAll(captureScan(callee.body, callee.parameters, true, guard))
+							guard.remove(callee)
+						}
+					}
 			}
 			element.acceptChildrenVoid(this)
 		}
 	})
-	inProgress.remove(fn)
 	return referenced.filter { it !in declared && (includeThis || it.name.asString() != "<this>") }
 }
 
 /**
- * Free outer values captured by an object literal: any value referenced anywhere in the anon class
- * (method bodies + property initializers) but declared OUTSIDE it. The anon's own receivers/params/locals
- * are excluded by identity — crucially this keeps the captured enclosing `this` (same name "<this>" as
- * the anon's own receiver, distinguished only by symbol identity).
+ * Free outer values captured by an object literal or a local class: any value referenced anywhere in it
+ * (method bodies + property initializers, and the captures of any local `fun` those call) but declared OUTSIDE it.
+ * The anon's own receivers/params/locals are excluded by identity — crucially this keeps the captured enclosing
+ * `this` (same name "<this>" as the anon's own receiver, distinguished only by symbol identity).
  */
-internal fun BirEmitter.capturedVarsForObject(anon: IrClass): List<IrValueDeclaration> {
-	val own = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<IrValueDeclaration, Boolean>())
-	val referenced = LinkedHashSet<IrValueDeclaration>()
-	anon.acceptChildrenVoid(object : IrVisitorVoid() {
-		override fun visitElement(element: IrElement) {
-			when (element) {
-				is IrValueParameter -> own.add(element)
-				is IrVariable -> own.add(element)
-				is IrGetValue -> referenced.add(element.symbol.owner)
-				is IrSetValue -> referenced.add(element.symbol.owner)
-			}
-			element.acceptChildrenVoid(this)
-		}
-	})
-	return referenced.filter { it !in own }
-}
+internal fun BirEmitter.capturedVarsForObject(anon: IrClass): List<IrValueDeclaration> =
+	captureScan(anon, emptyList(), includeThis = true, guard = newCycleGuard())
 
 /** Value declarations assigned (IrSetValue) anywhere inside an object literal (for mutable-capture detection). */
 internal fun BirEmitter.mutatedIn(node: IrElement): Set<IrValueDeclaration> {
@@ -1156,13 +1167,24 @@ internal fun BirEmitter.liftLocalFn(fn: IrSimpleFunction) {
 	val ownValueParams = fn.parameters.filter {
 		it.kind == IrParameterKind.Regular || it.kind == IrParameterKind.DispatchReceiver || it.kind == IrParameterKind.ExtensionReceiver
 	}
-	// A local fn referencing an enclosing type parameter (in a capture, its own params/receivers, or its return) becomes
-	// a GENERIC static method — reified CLR generics, same as a capturing closure class. The call site (callStatic)
-	// passes the enclosing type params as type arguments.
-	val freeTps = freeTypeParams(captures.map { it.type } + ownValueParams.map { it.type } + listOf(fn.returnType))
+	// A local fn referencing an enclosing type parameter (in a capture, its own params/receivers, its return, or a TYPE
+	// OPERAND in its body such as `x is R` / `R::class`) becomes a GENERIC static method — reified CLR generics, same as
+	// a capturing closure class, which scans `bodyTypeOperands` for exactly the same reason. The call site (callStatic)
+	// passes the enclosing type params as type arguments. Missing a body-only operand here would also leave a `tv` this
+	// lift cannot name in its own frame (see `_syntheticTypeArgs` below).
+	val freeTps = freeTypeParams(
+		captures.map { it.type } + ownValueParams.map { it.type } + listOf(fn.returnType) + bodyTypeOperands(fn))
 	localFns[fn] = Triple(lname, captures, freeTps)
 	fun pj(name: String, t: IrType) = """{"name":${str(name)},"type":${birType(t).toJson()}}"""
-	val capPairs = captures.map { it to captureFieldName(it) }
+	// Unlike a closure class, whose captures become FIELDS, this lift puts them in the method's PARAMETER namespace
+	// beside the fn's own params and body locals. A transitive capture arrives from ANOTHER body, where its name may
+	// resolve to a different declaration than it does here (`fun bump() { n++ }` called by `fun addTwice(n: Int)`), so
+	// the raw Kotlin name would emit two params called `n` and bind the wrong one. Prefix them into a namespace Kotlin
+	// source cannot spell. The enclosing `this` keeps `__outer`: the suspend lowerings key their enclosing-instance
+	// handling on that exact descriptor name, and no capture can collide with it.
+	fun capParamName(d: IrValueDeclaration) =
+		if (d.name.asString() == "<this>") "__outer" else "cap\$${d.name.asString()}"
+	val capPairs = captures.map { it to capParamName(it) }
 	// Captures arrive as leading params; rewrite body refs to those params. This must cover not only `<this>` but
 	// also receiver-like captured params such as `$this$buildString`, otherwise an active inline substitution can
 	// leak a caller-local (`__lam<N>`) into the lifted method body.

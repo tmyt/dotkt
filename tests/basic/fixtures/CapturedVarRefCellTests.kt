@@ -17,12 +17,13 @@
 // CvrcInitMixed asserts that composition, and CvrcInitShared asserts the ENCLOSING frame's own write is visible
 // through the cell too.
 //
-// The local-`fun` boundary is the one that fails SILENTLY without a cell rather than aborting: the lift turns its
-// captures into BY-VALUE parameters of a static method, so the write lands on that parameter and the caller keeps the
-// stale value. Its three shapes are pinned by CvrcLocalFun*: the plain one, the one whose captured var is typed by an
-// enclosing TYPE PARAMETER (the cell is generic, and the lifted static re-declares the enclosing type params as its
-// own, so the cell must be constructed in the METHOD frame), and the one where a lambda only CALLS the local fun (the
-// capture has to propagate transitively, since the lift passes it at the call site).
+// The local-`fun` boundary differs from the other three: the lift turns its captures into BY-VALUE parameters of a
+// static method, so a missing cell makes the write land on that parameter and the caller keep the stale value — no
+// diagnostic at all, where the object/local-class boundaries abort. Reaching it from ANOTHER boundary failed loud
+// instead, because the lift supplies those captures at the call site. `cvrcLocalFun*`/`CvrcLocalFun*` pin both halves:
+// the write itself (plain, in an `init` block, recursive, and typed by an enclosing TYPE PARAMETER so the cell is
+// generic and must be constructed in the lifted method's own frame), and reaching the local fun through a lambda, an
+// object expression or a local class, including when the receiving frame already has a value of that name.
 //
 // Top-level names are family-prefixed (`cvrc`/`Cvrc`) — one project is one namespace, shared with the sibling batteries.
 import NUnit.Framework.TestAttribute
@@ -205,8 +206,8 @@ enum class CvrcEnum(val v: Int) {
 }
 
 // ---- the local-`fun` boundary --------------------------------------------------------------------------------------
-// A local fun lifts to a static method whose captures are BY-VALUE parameters, so without a cell each write below
-// lands on the lifted method's own parameter and is silently lost (2 -> 0, 6 -> 0, `other` -> `t`, 2 -> 0).
+// A local fun lifts to a static method whose captures are BY-VALUE parameters, so without a cell a write through it
+// lands on the lifted method's own parameter and the caller keeps the stale value.
 fun cvrcLocalFunInFunction(): Int {
     var n = 0
     fun bump() { n++ }
@@ -255,6 +256,62 @@ fun cvrcLocalFunRecursive(): Int {
     return n
 }
 
+// The local fun is declared in an `init` block, and only a LAMBDA calls it. A `fun` in `init { }` has the enclosing
+// CLASS as its IR parent (an anonymous initializer cannot be a declaration parent), so recognizing it as local cannot
+// be a test on the parent kind alone — it is absent from that class's declarations, unlike a real member.
+class CvrcLocalFunInitViaClosure {
+    val total: Int
+    init {
+        var n = 0
+        fun bump() { n++ }
+        val g = { bump() }
+        g(); g()
+        total = n
+    }
+}
+
+// An OBJECT EXPRESSION and a LOCAL CLASS whose member only calls the local fun: the same transitive capture, through
+// the other two boundary kinds.
+fun cvrcLocalFunViaObject(): Int {
+    var n = 0
+    fun bump() { n++ }
+    val o = object { fun go() { bump() } }
+    o.go(); o.go()
+    return n
+}
+
+fun cvrcLocalFunViaLocalClass(): Int {
+    var n = 0
+    fun bump() { n++ }
+    class L { fun go() { bump() } }
+    L().go(); L().go()
+    return n
+}
+
+// A transitive capture whose name is ALREADY TAKEN in the frame that receives it: `addTwice`'s own parameter is also
+// called `n`, so the lifted static must not put two `n` parameters side by side and bind the wrong one.
+fun cvrcLocalFunShadowedCapture(): Int {
+    var n = 0
+    fun bump() { n++ }
+    fun addTwice(n: Int) { if (n > 0) { bump(); bump() } }
+    addTwice(1)
+    return n
+}
+
+// The celled `var` is declared INSIDE the local fun and captured by a lambda there, so its generic cell has no use
+// left in the frame that declares the type parameter — the lift itself has to supply the parameter's constraints.
+class CvrcLocalFunInnerCell<T>(val a: T, val b: T) {
+    fun pick(): T {
+        fun inner(): T {
+            var cur = a
+            val g = { cur = b }
+            g()
+            return cur
+        }
+        return inner()
+    }
+}
+
 // ---- default-argument value root (the `@KotlinDefault` carrier + the omitting call site) -------------------------
 fun cvrcDefaultArg(x: Int = run {
     var n = 0
@@ -283,6 +340,18 @@ class CapturedVarRefCellTests {
         assertEquals("b", CvrcLocalFunGeneric("a", "b").pick())
         assertEquals(2, cvrcLocalFunViaClosure())              // 2
         assertEquals(6, cvrcLocalFunRecursive())               // 3 + 2 + 1
+    }
+
+    @TestAttribute
+    fun localFunReachedThroughAnotherBoundary() {
+        // The lift supplies a local fun's captures at the CALL SITE, so whichever boundary contains that call has to
+        // capture them too — a lambda, an object expression or a local class alike, under any emission root.
+        assertEquals(2, CvrcLocalFunInitViaClosure().total)     // 2
+        assertEquals(2, cvrcLocalFunViaObject())                // 2
+        assertEquals(2, cvrcLocalFunViaLocalClass())            // 2
+        assertEquals(2, cvrcLocalFunShadowedCapture())          // 2, not the shadowing parameter's 0
+        assertEquals(2, CvrcLocalFunInnerCell(1, 2).pick())     // `b`
+        assertEquals("b", CvrcLocalFunInnerCell("a", "b").pick())
     }
 
     @TestAttribute

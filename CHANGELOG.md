@@ -18,7 +18,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   the host RID and requires that replay to fail, so the assertion cannot pass vacuously. Previously the RID flow
   was only exercised at the host RID and cross-target selection had been confirmed by hand.
 ### Fixed
-- **kotc/bir2cir/ilemit ([tmyt/dotkt#68], area:kotc): a captured `var` written from a local class, an object
+- **kotc/bir2cir/ilemit ([tmyt/dotkt#68], area:kotc, area:bir2cir, area:ilemit): a captured `var` written from a local class, an object
   expression, a lambda or a local `fun` is now heap ref-celled under EVERY emission root and for every one of those
   boundaries — previously only a function body, and never a local `fun`.** The promotion of a
   captured-and-mutated local to a shared `dotkt$Ref<T>` was decided per emission root, and
@@ -36,20 +36,30 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   local, which valid frontend IR cannot produce).
   A local `fun` is now a capture boundary too. It lifts to a static method whose captures are BY-VALUE parameters, so
   `fun f(): Int { var n = 0; fun bump() { n++ }; bump(); bump(); return n }` compiled clean and returned 0 instead of
-  2 — the one boundary that lost the write SILENTLY rather than aborting. Closing it took three pieces:
-  `capturedVars` now follows a call INTO a local fun (cycle-guarded), because the lift supplies that fun's captures at
-  the call site, so a lambda that merely calls `bump()` must capture `bump`'s `n` as well; kotc records on the lifted
-  method which enclosing type variable each of its own type params re-declares (`_syntheticTypeArgs`, the same key and
-  meaning ClosureSynthesis already derives for a lifted closure CLASS), and bir2cir's `SharedSyntheticSynthesis`
-  applies its existing synthetic-frame remap to METHODS as well, so a generic cell used inside the lift is constructed
-  in the method's own parameter space instead of being looked up in a frame that does not declare it; and ilemit's
-  `setField` now takes its owner through `ParseOwnerSlot` like the field READ path beside it, instead of collapsing a
-  constructed-generic owner to its open name — writing a `Cell<T>` field from a generic static method emitted
-  `Cell<!0>::v` where the frame has only `!!0`, which the runtime rejected as a bad image.
+  2 — the only boundary whose missing cell lost the write with no diagnostic, where the object-expression and
+  local-class boundaries aborted. Reaching a capturing local fun from another boundary failed loud rather than
+  silently, since the lift supplies its captures at the CALL SITE. Closing both halves took:
+  the capture scan is now shared by the lambda/local-fun and object/local-class walks and follows a call INTO a local
+  fun (cycle-guarded), so a lambda, object expression or local class that merely calls `bump()` captures `bump`'s `n`
+  as well; a local fun is recognized structurally rather than by its parent kind, because one declared in `init { }`
+  has the enclosing CLASS as its IR parent and is distinguished from a member only by being absent from that class's
+  declarations; the lift's capture parameters moved into a `cap$` namespace Kotlin source cannot spell, since a
+  transitive capture can arrive under a name the receiving frame already uses for something else; the lift is now also
+  generic over the type operands in its BODY, like the lambda lift; kotc records on the lifted method which enclosing
+  type variable each of its own type params re-declares (`_syntheticTypeArgs`, the same key and meaning
+  ClosureSynthesis already derives for a lifted closure CLASS) and bir2cir's `SharedSyntheticSynthesis` applies its
+  synthetic-frame remap to METHODS as well — so a generic cell used inside the lift is constructed in the method's own
+  parameter space rather than looked up in a frame that does not declare it, and a lifted synthetic can supply the
+  parameter constraints when the celled `var` is declared inside it and no use survives in the declaring frame; that
+  binder now runs collect/bind/construct in separate passes, so its result no longer depends on declaration order; and
+  ilemit's `setField`/`staticFieldSet` take their owner through `ParseOwnerSlot` like the field READ paths beside them
+  instead of collapsing a constructed-generic owner to its open name — writing a `Cell<T>` field from a generic static
+  method emitted `Cell<!0>::v` where the frame has only `!!0`, which the runtime rejected as a bad image.
   Regressions: `tests/basic/fixtures/CapturedVarRefCellTests.kt` (every root above; one `var` written by a lambda, an
   object expression, a local class and a local fun at once; the enclosing frame's own write observed through the shared
-  cell; and the local-fun boundary plain, generic, called-from-a-lambda and recursive); the function-body root stays
-  pinned by `LambdaTests.kt`'s `localClassObject`. The two `tests/known-fail/localfun-capture-write*` reproductions
+  cell; the local-fun boundary plain, in an `init` block, generic, recursive, and with the cell declared inside the
+  lift; and that boundary reached through a lambda, an object expression and a local class, including under a name the
+  receiving frame already uses); the function-body root stays pinned by `LambdaTests.kt`'s `localClassObject`. The two `tests/known-fail/localfun-capture-write*` reproductions
   this replaced are deleted.
 
 - **bir2cir ([tmyt/dotkt#251], area:bir2cir): constructor parameters now carry their `[Nullable]` annotation, so a

@@ -503,6 +503,10 @@ sealed class Pipeline
             // ClosureSynthesis pass ran earlier, before event binding; run the idempotent collector once more so only
             // these newly-created callback classes are assembled before the remaining whole-tree passes.
             ClosureSynthesis.Apply(hoisted);
+            // ClosureSynthesis stamps the transient lifted-frame correspondence on a GENERIC closure class, and the pass
+            // that consumes it (SharedSyntheticSynthesis) already ran. Drop it here so the invariant "it never reaches
+            // CIR" holds for a class assembled by this late pass too, rather than only for the main one.
+            SharedSyntheticSynthesis.DropSyntheticTypeArgs(hoisted);
             // .NET EVENT IMPLEMENT/RAISE (§4.2/§4.3): a Kotlin class implementing/declaring a CLR event via `by clrEvent()`.
             // kotc synthesized add_/remove_/raise_<E> + a `clrEvents` backing directive (pure-Kotlin identities); this pass —
             // the ref.dll-reading layer — resolves the concrete delegate `D` (the interface event's EventHandlerType) and
