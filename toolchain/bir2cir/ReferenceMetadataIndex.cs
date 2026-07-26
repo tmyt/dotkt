@@ -1989,7 +1989,7 @@ sealed class ReferenceDotKtMetadata
     public readonly Dictionary<string, Dictionary<int, string>> KotlinDefaults = new(StringComparer.Ordinal);
     // Keys of [KotlinDefaults] that TWO declarations of the same owner+name+arity carry with DIFFERENT defaults — the key
     // cannot tell them apart, so the splice must refuse instead of filling whichever was enumerated last. Populated for
-    // CONSTRUCTORS (same-arity ctor overloads are common; #235); the method key has the same shape and would deserve it too.
+    // both METHODS and CONSTRUCTORS (same-arity overloads are common; #235).
     public readonly HashSet<string> KotlinDefaultsConflicted = new(StringComparer.Ordinal);
     // The declared parameter types behind a [KotlinDefaults] arity key, for a call site that carries no signature vector
     // of its own (a constructor DELEGATION's `baseArgs`). First writer wins, exactly like the arity key it mirrors.
