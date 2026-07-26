@@ -115,7 +115,7 @@ internal fun BirEmitter.filledArgs(
 	emittedRecv: Lazy<String?>? = null,
 ): List<String> {
 	val callee = (call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction) ?: return emptyList()
-	val carries = (callee as? org.jetbrains.kotlin.ir.declarations.IrSimpleFunction)?.let { carriesKotlinDefault(it) } ?: false
+	val carries = carriesKotlinDefault(callee)
 	// #134: the facadegen metadata's constant defaults for this callee's regular params, keyed by resolved IR identity —
 	// a CROSS-MODULE facadegen constructor/top-level function's injected default deserializes as an IrErrorExpression
 	// (fir2ir drops the VALUE for a bodies-skipped dependency declaration), so the real value is read from here. Lazy:
@@ -326,7 +326,7 @@ internal fun BirEmitter.filledInjectedArgs(call: org.jetbrains.kotlin.ir.express
 	val regCount = callee.parameters.count { it.kind == IrParameterKind.Regular }
 	val metaDefaults = injectedMetaDefaults(callee, regCount)
 	val kotlinDefaultSlots = injectedKotlinDefaultSlots(callee, regCount)
-	val carries = (callee as? org.jetbrains.kotlin.ir.declarations.IrSimpleFunction)?.let { carriesKotlinDefault(it) } ?: false
+	val carries = carriesKotlinDefault(callee)
 	val out = ArrayList<String>()
 	var regIdx = -1
 	callee.parameters.forEachIndexed { i, p ->

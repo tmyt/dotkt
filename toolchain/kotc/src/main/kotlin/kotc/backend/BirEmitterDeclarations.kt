@@ -922,7 +922,9 @@ internal fun BirEmitter.ctor(klass: IrClass, ctor: IrConstructor, captures: List
 	val capAssigns = captures.map { (_, fname) ->
 		"""{"k":"setField","ownerType":${fqnJson(typeName(klass))},"recv":{"k":"this"},"name":${str(fname)},"value":{"k":"local","name":${str(fname)}}}"""
 	}
-	val params = (capParams + paramsJsonList(ctor.parameters)).joinToString(",")
+	// `ctor` as the owner so its defaulted params carry `@KotlinDefault` (the cross-module splice source), exactly as a
+	// carrying function's do — a re-consumed constructor's non-constant default has no other carrier.
+	val params = (capParams + paramsJsonList(ctor.parameters, ctor)).joinToString(",")
 	val body = ctor.body as? IrBlockBody
 	val delegating = body?.statements?.filterIsInstance<IrDelegatingConstructorCall>()?.firstOrNull()
 	val delegateClass = delegating?.symbol?.owner?.parent as? IrClass
@@ -1199,9 +1201,16 @@ internal fun BirEmitter.isMetadataRepresentableDefault(p: org.jetbrains.kotlin.i
  *  receiver — is poisoned per-expression in [defaultCarrierBir] (a `{k:this}` dispatch read binds correctly ONLY in
  *  InlineSplice's `recv==dispatch` path, not for a member-EXTENSION splice nor DefaultArgSplice — since the SAME carrier
  *  feeds all consumers, it is refused rather than risk a miscompile). */
-internal fun BirEmitter.carriesKotlinDefault(fn: org.jetbrains.kotlin.ir.declarations.IrSimpleFunction): Boolean =
-	fn.parameters.any { it.kind == IrParameterKind.Regular && it.defaultValue != null } &&
-		(fn.isInline || (!fn.isSuspend && fn.parameters.none { it.kind == IrParameterKind.DispatchReceiver }))
+internal fun BirEmitter.carriesKotlinDefault(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): Boolean =
+	fn.parameters.any { it.kind == IrParameterKind.Regular && it.defaultValue != null } && when (fn) {
+		// A CONSTRUCTOR always carries: it is never `suspend`, it is statically resolved, and its enclosing-instance
+		// read (an inner class) is poisoned per-expression by [defaultCarrierBir] exactly as a member fn's is. Without
+		// the carrier a re-consumed ctor's non-constant default has nowhere to come from, so facadegen surfaces the
+		// param REQUIRED and `P(3)` does not even resolve at the consumer's frontend.
+		is IrConstructor -> true
+		is IrSimpleFunction -> fn.isInline || (!fn.isSuspend && fn.parameters.none { it.kind == IrParameterKind.DispatchReceiver })
+		else -> false
+	}
 
 /** A data-class `copy` synthetic — `copy` cannot be user-declared on a data class, so name + `isData` parent is exact. */
 internal fun BirEmitter.isDataClassCopy(fn: org.jetbrains.kotlin.ir.declarations.IrSimpleFunction): Boolean =
@@ -1225,7 +1234,7 @@ internal fun BirEmitter.isDataClassCopy(fn: org.jetbrains.kotlin.ir.declarations
  *  substring — a nested object/lambda `this` is a different receiver, and a pure-extension `this` is the extension
  *  receiver, which binds correctly to args[0]). */
 internal fun BirEmitter.defaultCarrierBir(def: org.jetbrains.kotlin.ir.expressions.IrExpression,
-		ownerFn: org.jetbrains.kotlin.ir.declarations.IrSimpleFunction? = null): String {
+		ownerFn: org.jetbrains.kotlin.ir.declarations.IrFunction? = null): String {
 	if (ownerFn != null && defaultReadsDispatch(ownerFn, def))
 		return """{"k":"defaultUnsupported","reason":${str("a default that reads an enclosing-instance (dispatch or outer-class) receiver cannot be filled at an omitting call site — pass the argument explicitly")}}"""
 	val before = liftedMethods.size
@@ -1242,14 +1251,21 @@ internal fun BirEmitter.defaultCarrierBir(def: org.jetbrains.kotlin.ir.expressio
 }
 
 internal fun BirEmitter.paramsJsonList(params: List<org.jetbrains.kotlin.ir.declarations.IrValueParameter>,
-		ownerFn: org.jetbrains.kotlin.ir.declarations.IrSimpleFunction? = null): List<String> {
+		ownerFn: org.jetbrains.kotlin.ir.declarations.IrFunction? = null): List<String> {
 	// A `@KotlinDefault(index, bir)` on each defaulted param of a qualifying function: `index` = the param's position
 	// in the emitted call (extension receiver first, if any), `bir` = the default expression as a BIR-json STRING (so
 	// bir2cir splices it PRE-lowering; it is opaque to this build's type lowering). Stamped on ALL defaulted params of
 	// a Tier-2-carrying function (uniform splice source). kotc emits ONE BIR for every build: the attr rides every
 	// build; the rt build strips it downstream (ilemit param-attr strip under `--build-stdlib=runtime`).
 	val emitKotlinDefault = ownerFn != null && carriesKotlinDefault(ownerFn)
-	val extOffset = if (ownerFn?.parameters?.any { it.kind == IrParameterKind.ExtensionReceiver } == true) 1 else 0
+	// The stamped `index` is the param's position in the EMITTED call's arg array, so whatever rides ahead of the
+	// regular args counts first: an extension receiver (`__self`), or — for an INNER-class ctor — the enclosing
+	// instance the `new` passes as its leading arg.
+	val extOffset = when {
+		ownerFn?.parameters?.any { it.kind == IrParameterKind.ExtensionReceiver } == true -> 1
+		ownerFn is IrConstructor && (ownerFn.parent as? IrClass)?.isInner == true -> 1
+		else -> 0
+	}
 	val valueParams = params.filter { isValueParameter(it) }
 	// A @KotlinDefault BIR whose default expression reads ANOTHER value parameter (`b: Int = a * 10`) must encode that
 	// read as a call-index token, NOT a bare `local a` (which would resolve to a non-existent local in the CALLER after

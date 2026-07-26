@@ -261,6 +261,12 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	// name-keyed map can't tell them apart (it would capture C's `this` too). The dispatch `<this>` then falls
 	// through to `{"k":"this"}` and the extension receiver resolves here.
 	internal val selfSubst = java.util.IdentityHashMap<IrValueDeclaration, String>()
+	// #235: a call value (its RECEIVER, or a provided ARGUMENT) bound to a temp local for exactly-once evaluation,
+	// because a filled default of that call splices the value into its default expression. Keyed by the value
+	// EXPRESSION's identity, so every reader of that one IR node — the call's own receiver/argument slot, an
+	// inner-class `new`'s enclosing-instance arg, the spliced default — renders the same temp read. Installed and
+	// removed around the owning call's emission (`expr`), which wraps the call in the `valueBlock` declaring the temps.
+	internal val evalOnceSubst = java.util.IdentityHashMap<org.jetbrains.kotlin.ir.expressions.IrExpression, String>()
 	// Function-local classes lifted to top-level synthetic types: the outer locals they capture (prepended to the
 	// ctor at construction sites). Keyed by the IrClass.
 	internal val localClassCaptures = java.util.IdentityHashMap<IrClass, List<IrValueDeclaration>>()

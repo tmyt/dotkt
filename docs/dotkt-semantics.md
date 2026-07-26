@@ -803,12 +803,15 @@ entry**'s `NAME(args)` (including a per-entry body's base call) — so a class, 
 delegation or enum entry omits such a default exactly as a function does. (A .NET-interop call shape fills nothing
 here: `[DefaultParameterValue]` is native metadata and ilemit's call path backfills it.)
 
-**Known edge (single-eval):** the bound expression is SPLICED into the default, so a side-effecting receiver or
-argument read by a `= this` / `= a * 10` / `= outerProp` default is evaluated once per reading default in addition to
-its own use (a data-class `copy`, `substringAfter`, a plain variable/literal argument or enclosing instance — the
-common case — is unaffected). For an inner-class `new` that means the enclosing instance expression runs twice, so a
-side-effecting one can hand the constructor and the default two DIFFERENT instances. Single-eval would need a
-call-site temporary; the splice is deliberately expression-only.
+**The spliced receiver is evaluated exactly once.** A receiver (or enclosing instance) that a filled default reads is
+bound to a call-site temporary — the call is wrapped in a `valueBlock` whose `var __recvN` holds it, and the call's own
+receiver slot, an inner-class `new`'s enclosing-instance argument and the spliced default all read that local. So
+`mkOuter().In()` runs `mkOuter()` once and the constructor and its default see the SAME instance, as Kotlin specifies.
+A STABLE receiver (a literal, or an immutable local/parameter read) is spliced directly — re-reading it is free and
+side-effect-free — so the common call emits no temporary. Hoisting the receiver first also matches Kotlin's evaluation
+order (receiver before arguments). An earlier ARGUMENT that a later default reads is still spliced by expression, so
+`f(sideEffect())` with `b: Int = a * 10` evaluates `sideEffect()` once per reading default (the same temporary would
+close it; arguments are not hoisted today).
 
 **#146 known gap (named, not silent):** a non-const default that references a PRIVATE/internal library symbol
 (`= privateHelper()`) is NOT poison-detected at stamp time — it is carried, then fails LOUDLY (imprecise) at the
@@ -1263,9 +1266,16 @@ that has lost the distinction.
    placeholder for a @KotlinDefault-carrying cross-module callee, spliced by `bir2cir.DefaultArgSplice`; a same-module
    default inlined directly). A RECEIVER-referencing default (`missingDelimiterValue = this`, a `copy`'s `y = this.y`)
    round-trips via the `this`→call-receiver rewrite, and a default reading an earlier VALUE parameter (`b = a * 10`) via
-   the carrier's `{"k":"defaultArgParam","idx":N}`. **Residual:** the `@KotlinDefault` carrier is stamped on FUNCTION
-   parameters only, so a re-consumed **constructor**'s non-constant default has no cross-module carrier (same-module it
-   fills normally, #235); and both rewrites are single-eval only for a trivial receiver/argument (§7).
+   the carrier's `{"k":"defaultArgParam","idx":N}`. A **CONSTRUCTOR** now carries the same `@KotlinDefault` stamp as a
+   function (#235), so facadegen surfaces its non-constant defaulted param OPTIONAL (`nonConst`) and a consumer's
+   `P(3)` RESOLVES where it used to fail the frontend with *no value passed for parameter 'b'*; kotc emits the
+   positional `{"k":"defaultArg"}` for the omitted slot, with the stamped index counting an inner class's enclosing
+   instance first (it rides `args[0]`, like an extension receiver's `__self`). **Residual:** `bir2cir.DefaultArgSplice`
+   recognizes only `callStatic`/`callInstance`, and `ReferenceMetadataIndex` harvests `@KotlinDefault` only from
+   `GetMethods`, so a `{"k":"new"}` placeholder is not filled — the omission stops at that pass's chokepoint with
+   *"an omitted cross-module default argument was not filled"* (an authoring-time refusal, never a miscompile). A
+   metadata-representable (Tier-1) constant is unaffected: it fills from the facadegen metadata (#134) and never becomes
+   a placeholder.
 
 7. **Generic-fidelity gaps surfaced by the atomicfu CLR port (#133)** — **ALL THREE FIXED.** Three
    DOWNSTREAM-of-facadegen gaps (the facadegen symbol surface was verified correct in each; the

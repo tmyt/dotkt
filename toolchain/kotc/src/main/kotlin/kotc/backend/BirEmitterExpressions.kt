@@ -85,10 +85,71 @@ import java.io.File
 // A pass-through arm (e.g. coercion-to-Unit returning its already-stamped argument) begins with `{"sty":` — not a
 // bare `{"k":<kind>` — so the prefix guard skips it and there is no double-stamp.
 internal fun BirEmitter.expr(node: IrExpression): String {
-	val s = exprInner(node)
-	return if (styNodePrefixes.any { s.startsWith(it) }) """{"sty":${birType(node.type).toJson()},${s.substring(1)}"""
-	else s
+	// A value the ENCLOSING call bound to a temp for single evaluation: every reader renders as that temp's read.
+	evalOnceSubst[node]?.let { return styStamped(node, it) }
+	val hoists = hoistCallValuesReadByDefaults(node)
+	val s = styStamped(node, try { exprInner(node) } finally { hoists.forEach { evalOnceSubst.remove(it.first) } })
+	if (hoists.isEmpty()) return s
+	return """{"k":"valueBlock","type":${birType(node.type).toJson()},"stmts":[${hoists.joinToString(",") { it.second }}],"result":$s}"""
 }
+
+/** #122's `sty` stamp on the value-node kinds bir2cir's StaticType reads a type from (see the note above). */
+private fun BirEmitter.styStamped(node: IrExpression, s: String): String =
+	if (styNodePrefixes.any { s.startsWith(it) }) """{"sty":${birType(node.type).toJson()},${s.substring(1)}""" else s
+
+/** #235: bind each value of THIS call that a filled default SPLICES — the receiver (or enclosing instance) a
+ *  `= this` / `= outerProp` default reads, and each provided ARGUMENT an omitted default reads (`b: Int = a * 10`) —
+ *  to a temp local, so it is evaluated EXACTLY ONCE however many times it is spliced. Kotlin evaluates a receiver and
+ *  each argument once; splicing the rendered expression per reader would not.
+ *
+ *  Returns (IR node, `var` statement) in evaluation order — receiver first, then arguments left to right, matching
+ *  Kotlin — for the caller to wrap in a `valueBlock` and to un-register after this node is emitted. Every reader (the
+ *  call's own receiver/argument slot, an inner-class `new`'s enclosing-instance argument, the spliced default) reaches
+ *  the value through `expr()` on the SAME IR node, so [BirEmitter.evalOnceSubst] hands them all the one temp.
+ *  Empty when there is nothing to bind: not a call, no omitted default, no default that reads a call value, or a STABLE
+ *  value (a literal / immutable local or parameter read — free to re-read, exactly [bindOnce]'s test). */
+private fun BirEmitter.hoistCallValuesReadByDefaults(node: IrExpression): List<Pair<IrExpression, String>> {
+	val call = node as? org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression ?: return emptyList()
+	val callee = call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction ?: return emptyList()
+	if (callee.parameters.none { it.kind == IrParameterKind.Regular && it.defaultValue != null }) return emptyList()
+	// The defaults this call actually fills (a cross-module IrErrorExpression carries no readable expression).
+	val omitted = callee.parameters.withIndex().mapNotNull { (i, p) ->
+		if (p.kind != IrParameterKind.Regular || (i < call.arguments.size && call.arguments[i] != null)) null
+		else p.defaultValue?.expression?.takeIf { it !is org.jetbrains.kotlin.ir.expressions.IrErrorExpression }
+	}
+	if (omitted.isEmpty()) return emptyList()
+	val out = ArrayList<Pair<IrExpression, String>>()
+	fun bind(value: IrExpression, prefix: String, syms: Set<org.jetbrains.kotlin.ir.symbols.IrValueSymbol>) {
+		if (syms.isEmpty() || evalOnceSubst.containsKey(value) || isStableValue(value)) return
+		if (omitted.none { refsAny(it, syms) }) return
+		val tv = "$prefix${scopeCounter++}"
+		out.add(value to """{"k":"var","name":${str(tv)},"type":${birType(value.type).toJson()},"init":${expr(value)}}""")
+		evalOnceSubst[value] = """{"k":"local","name":${str(tv)}}"""
+	}
+	// The RECEIVER: read by a default through the callee's own receiver params, or through an enclosing instance
+	// (an inner-class ctor / a member of an inner class).
+	(extensionReceiver(call) ?: dispatchReceiver(call))?.let { recv ->
+		val syms = HashSet<org.jetbrains.kotlin.ir.symbols.IrValueSymbol>()
+		callee.parameters.filter { it.kind == IrParameterKind.DispatchReceiver || it.kind == IrParameterKind.ExtensionReceiver }
+			.forEach { syms.add(it.symbol) }
+		enclosingThisChain(callee).forEach { syms.add(it.first.symbol) }
+		bind(recv, "__recv", syms)
+	}
+	// Each PROVIDED argument an omitted default reads — the filled arg's JSON is what gets spliced for that param.
+	callee.parameters.forEachIndexed { i, p ->
+		if (p.kind != IrParameterKind.Regular) return@forEachIndexed
+		val arg = if (i < call.arguments.size) call.arguments[i] else null
+		if (arg != null) bind(arg, "__arg", setOf(p.symbol))
+	}
+	return out
+}
+
+/** [bindOnce]'s stability test: a const or a read of an immutable non-ref-cell local/parameter re-reads for free and
+ *  without side effects, so splicing it twice is safe and it needs no temp. */
+private fun BirEmitter.isStableValue(e: IrExpression): Boolean =
+	e is IrConst || (e as? IrGetValue)?.symbol?.owner?.let { o ->
+		!isRefCell(o) && (o is IrValueParameter || (o as? IrVariable)?.isVar == false)
+	} == true
 
 private val styNodePrefixes = listOf(
 	"""{"k":"local"""", """{"k":"callStatic"""", """{"k":"callInstance"""",
