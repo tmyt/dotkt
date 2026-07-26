@@ -1198,18 +1198,22 @@ sealed partial class ReferenceMetadataIndex
                     // token so a `get_<prop>()` call collapses to `conv(<recv>)`. NARROWED to EXACTLY ONE instance field
                     // — a value class has precisely one property/backing field, so requiring a single field picks the
                     // correct underlying type (and refuses to erase off an arbitrary FirstOrDefault if the shape is
-                    // unexpected). The GETTER comes from the PROPERTY that owns the field, never from the field's
-                    // metadata name: an auto-property's storage is emitted with the unspeakable `<data>k__BackingField`
-                    // name (BackingFieldRename), so a `"get_" + field.Name` derivation would key an unreachable slot.
+                    // unexpected). The GETTER is the accessor of the PROPERTY that OWNS that field: an accessor-routed
+                    // property's storage carries the compiler-generated `<data>k__BackingField` name
+                    // (BackingFieldRename), which no `"get_" + field.Name` spelling can reach. A field that is NOT an
+                    // auto-property's storage (a plain-field/`@ClrField` shape, or a pre-rename assembly) IS the member
+                    // itself, so its own name stays the accessor stem — the entry is never dropped, in any shape.
                     if (HasAttribute(type.GetCustomAttributesData(), KotlinValueAttr))
                     {
                         var instanceFields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly);
                         var backing = instanceFields.Length == 1 ? instanceFields[0] : null;
-                        var getter = backing == null ? null
-                            : type.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly)
-                                  .FirstOrDefault(p => BackingFieldRename.Mangle(p.Name) == backing.Name)?.GetMethod?.Name;
-                        if (getter != null && InlineFieldConv(backing.FieldType) is string conv)
-                            metadata.InlineBacking[ownerFqn] = (getter, conv);
+                        if (backing != null && InlineFieldConv(backing.FieldType) is string conv)
+                        {
+                            var owningProp = type
+                                .GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+                                .FirstOrDefault(p => BackingFieldRename.Mangle(p.Name) == backing.Name);
+                            metadata.InlineBacking[ownerFqn] = (owningProp?.GetMethod?.Name ?? "get_" + backing.Name, conv);
+                        }
                     }
 
                     foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly))

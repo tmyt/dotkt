@@ -2,25 +2,34 @@ using System;
 using System.Collections.Generic;
 using System.Text.Json.Nodes;
 
-// AUTO-PROPERTY BACKING-FIELD RENAME (#228). A Kotlin property with a default accessor becomes a REAL CLR property
-// (get_/set_ + a `properties` record) plus the storage that backs it. kotc names that storage with the KOTLIN identity
-// — the property's own name — because kotc emits Kotlin facts and decides no CLR member name. The resulting CLR type
+// AUTO-PROPERTY BACKING-FIELD RENAME (#228). An ACCESSOR-ROUTED Kotlin property becomes a REAL CLR property (get_/set_
+// + a `properties` record) plus the storage that backs it. kotc names that storage with the KOTLIN identity — the
+// property's own name — because kotc emits Kotlin facts and decides no CLR member name. The resulting CLR type
 // therefore carried a property `Value` AND a field `Value`: two same-named members, which reflection-driven libraries
 // cannot resolve (Newtonsoft's member grouping keys on the name and drops the pair, so `SerializeObject` silently
 // yields `{}`).
 //
 // bir2cir owns the Kotlin->CLR representation, so the CLR metadata name is minted HERE: `<Name>k__BackingField`, the
-// C# auto-property convention. It is UNSPEAKABLE in Kotlin — even a backtick-quoted identifier cannot contain `<`/`>`
-// — so it can never collide with a user declaration nor be referenced from source; and it is per-property unique
-// within its owner, so two properties never share one. The field is additionally stamped
-// [System.Runtime.CompilerServices.CompilerGenerated], the standard CLR "this member is not user-authored" signal that
-// debuggers, analyzers and serializers key on (C# stamps the same attribute on the same field).
+// C# auto-property convention. It cannot be written in Kotlin — a backtick-quoted `` `<Value>k__BackingField` `` is
+// rejected by the frontend ("name contains illegal characters: <>") — so it can never collide with a user declaration
+// nor be referenced from source; and it is per-property unique within its owner, so two properties never share one.
+// The field is additionally stamped [System.Runtime.CompilerServices.CompilerGenerated], the standard CLR "this member
+// is not user-authored" signal that debuggers, analyzers and serializers key on (C# stamps the same attribute on the
+// same field).
 //
-// IN SCOPE: exactly the INSTANCE fields whose owner also declares a `properties` record of the same name — i.e. the
-// synthesized storage of an accessor-routed property. A `@ClrField` property (the opt-out that deliberately emits a
-// user-visible plain field), a `const`, a `lateinit var`, a delegated property's `<p>$delegate`, a companion/top-level
-// static field and every capture/synthetic field emit NO property record, so none of them is touched and every
-// user-visible field keeps its name.
+// DISCRIMINATOR: an INSTANCE field whose owner also declares a `properties` record of the same name. That pairing is a
+// CLR-representation fact read off the CIR type declaration — the property record and the field list are exactly the
+// inputs to "how is this property's storage named on the CLR", which is this layer's decision; it is deliberately NOT
+// a Kotlin-frontend flag. It covers bir2cir's OWN synthesized adapters too (StringCharSequenceBridge's
+// `dotkt$StringCharSequence` declares both a `value` field and a `value` property, and had the same clash).
+// (DeclarationRename, which runs earlier, rewrites a property record's `get`/`set` but never its `name`, so the
+// pairing key is stable.)
+//
+// OUT OF SCOPE — every property whose storage IS the user-visible member emits NO property record, so none of them is
+// touched and every user-visible field keeps its name: a `@ClrField` property (the opt-out that deliberately emits a
+// plain field), a `const`, a `lateinit var`, a delegated property's `<p>$delegate`, a companion/top-level static field
+// and every capture/synthetic field. A property with a CUSTOM accessor that still has a backing field
+// (`val x = 7; get() = field + 1`) IS accessor-routed and IS renamed.
 //
 // Runs GLOBALLY over all staged roots (a `byref(obj.prop)` addresses a sibling file's backing field directly) and in
 // EVERY build — ref, runtime and app agree on the emitted shape. Placed at the end of the global structural phase:
@@ -86,8 +95,9 @@ static class BackingFieldRename
             if ((fo["static"] as JsonValue)?.GetValue<bool>() == true) continue;
             if (Str(fo["name"]) is not string fieldName || !propNames.Contains(fieldName)) continue;
             var mangled = Mangle(fieldName);
-            // Unspeakable in Kotlin, so this can only fire if a bir2cir producer minted the same name — an invariant
-            // breach, never a valid-input condition.
+            // Belt-and-braces. The frontend already rejects the spelling outright — a backtick-quoted
+            // `` `<Value>k__BackingField` `` fails kotc with "name contains illegal characters: <>" — so no user
+            // declaration can reach here; this catches a bir2cir producer minting the same name.
             if (declared.Contains(mangled))
                 throw new InvalidOperationException(
                     $"bir2cir: '{owner}' already declares a field named '{mangled}'; cannot rename the backing field of property '{fieldName}'");
@@ -95,7 +105,12 @@ static class BackingFieldRename
             StampCompilerGenerated(fo);
             (map ??= new Dictionary<string, string>(StringComparer.Ordinal))[fieldName] = mangled;
         }
-        if (map != null) renames[owner] = map;
+        if (map == null) return;
+        // MERGE, never replace: `owner` is the arity-stripped FQN, so two decls could in principle share the key —
+        // dropping the earlier map would silently leave its use sites pointing at the old name.
+        if (renames.TryGetValue(owner, out var existing))
+            foreach (var kv in map) existing[kv.Key] = kv.Value;
+        else renames[owner] = map;
     }
 
     // Append the standard [CompilerGenerated] to the field's applied-attribute array. `attrExternal` is required: the

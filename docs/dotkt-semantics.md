@@ -656,7 +656,7 @@ DotKt aliases `Appendable` to `System.Text.StringBuilder` (`@ClrTypeAlias` + `@C
 ## 5f. `value class` is a real wrapper class — never erased
 
 The OPPOSITE of Kotlin/JVM: a `@JvmInline value class Money(val amount: Int)` is emitted as an **ordinary reference
-class** (private backing field + property + synthesized `equals`/`hashCode`/`toString`) — no inline-class erasure, no
+class** (an ordinary accessor-routed property — §5h — plus synthesized `equals`/`hashCode`/`toString`) — no inline-class erasure, no
 mangled `-impl` statics, no .NET `struct`. Structural equality survives; what is lost is the value-ness itself
 (identityless-ness is not enforced). The frontend still *requires* the `@JvmInline` annotation (a pinned-frontend
 checker); the attribute itself is not emitted. See §10.3 for the round-trip view.
@@ -704,21 +704,24 @@ kotc or ilemit.
 
 ## 5h. An auto-property's backing field is a compiler-generated `<Name>k__BackingField` (#228)
 
-Every Kotlin property with **default accessors** becomes a real CLR property (`Name` + `get_Name`/`set_Name`); its
-storage is emitted as an assembly-visible field named **`<Name>k__BackingField`**, stamped
+An **accessor-routed** Kotlin property becomes a real CLR property (`Name` + `get_Name`/`set_Name`); its storage is
+emitted as an assembly-visible (`internal`) field named **`<Name>k__BackingField`**, stamped
 `[System.Runtime.CompilerServices.CompilerGenerated]` — the same convention and attribute `csc` uses for a C#
 auto-property. Kotlin/JVM instead names the field after the property, which on the CLR would put a property and a field
 of the SAME name on one type: reflection-driven .NET libraries group candidate members by name and cannot resolve that
 pair (Newtonsoft's `SerializeObject` silently returned `{}`, and the round-trip back threw).
 
-**Framing:** interop-first, CLR-native. The name is un-writable in Kotlin — a backtick-quoted identifier still cannot
-contain `<`/`>` — so it can never collide with, or be referenced by, a user declaration; and it is derived from the
-property name, so two properties never share one. The rename lives in `bir2cir` (the layer that owns the Kotlin↔CLR
-representation); kotc keeps emitting the pure Kotlin identity.
+**Framing:** interop-first, CLR-native. The name is un-writable in Kotlin: even backtick-quoted, the frontend rejects
+``var `<Value>k__BackingField` = 0`` with *"name contains illegal characters: <>"* — so it can never collide with, or be
+referenced by, a user declaration; and it is derived from the property name, so two properties never share one. The
+rename lives in `bir2cir` (the layer that owns the Kotlin↔CLR representation); kotc keeps emitting the pure Kotlin
+identity.
 
-A property whose storage **is** the user-visible member emits no CLR property and therefore keeps its plain name:
-`lateinit var`, `const`, a delegated property's `<p>$delegate`, a companion/top-level `val`/`var` (a static field), and
-the `@ClrField` opt-out (§5f-adjacent: `@ClrField` deliberately emits a plain public field instead of a property).
+"Accessor-routed" is the exact scope, and it is **wider than "default accessors"**: a property that has a backing field
+*and* a custom accessor (`val p = 7; get() = field + 1`) still emits a CLR property, so its storage is renamed too.
+Only a property whose storage **is** the user-visible member emits no CLR property and therefore keeps its plain field
+name: `lateinit var`, `const`, a delegated property's `p$delegate`, a companion/top-level `val`/`var` (a static field),
+and the `@ClrField` opt-out (§5f-adjacent: `@ClrField` deliberately emits a plain public field instead of a property).
 
 ## 6. Consuming a DotKt assembly AS KOTLIN — what rides metadata vs. needs an attribute
 

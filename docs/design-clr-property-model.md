@@ -39,8 +39,9 @@ Status: **design locked** (design owner, 2026-06-28). **Phases 1–5 implemented
 ## Target shape
 
 For `class C { val p: T ; var q: U }` (no `@ClrField`):
-- internal backing fields `<p>__bf : T`, `<q>__bf : U` (renamed so they don't collide with the property name).
-- `public T get_p()` { ldarg.0; ldfld <p>__bf; ret } ; `public U get_q()` ; `public void set_q(U)`.
+- internal backing fields `<p>k__BackingField : T`, `<q>k__BackingField : U` (renamed so they don't collide with the
+  property name — the C# auto-property convention; bir2cir `BackingFieldRename`, #228).
+- `public T get_p()` { ldarg.0; ldfld <p>k__BackingField; ret } ; `public U get_q()` ; `public void set_q(U)`.
 - CLR properties `p` (get only) and `q` (get+set) via `PropertyBuilder`.
 - accessors are `virtual final` when the property implements an interface/override (binds the slot — see the
   `overridesIface` method/accessor fix already landed for the method side), else non-virtual.
@@ -51,8 +52,9 @@ For `class C { val p: T ; var q: U }` (no `@ClrField`):
 
 1. **ilemit `PropertyBuilder`.** Add a `properties` list to the type metadata (name, type, getMethod, setMethod?). In
    the method-baking pass, after methods exist, `tb.DefineProperty(name, PropertyAttributes.None, type, null)` +
-   `SetGetMethod`/`SetSetMethod`. Make the backing field private + renamed. (Additive — no access-site change yet.)
-2. **kotc emit accessors + property metadata for ALL properties** (not a public field), backing field private/renamed,
+   `SetGetMethod`/`SetSetMethod`. Demote + rename the backing field. (Additive — no access-site change yet.) As built
+   it landed as `internal`, not private — an in-module `byref(obj.p)` must still be able to `ldflda` it (phase 5).
+2. **kotc emit accessors + property metadata for ALL properties** (not a public field), backing field internal/renamed,
    UNLESS `@ClrField`. Reuses `accessorMethod` (already emits `return field` / virtual-on-override). Emit the
    `properties` list.
 3. **Access-site routing (the broad, risky step).** A property read/write -> accessor call (`clrPropGet`/`clrPropSet`)
@@ -80,8 +82,10 @@ For `class C { val p: T ; var q: U }` (no `@ClrField`):
 
 - **Phase 3 is the regression surface** — every property access changes. Do it under the full verify suite; expect to
   fix differential/round-trip fallout (e.g. a consumer reading `obj.p` must now call `get_p`).
-- **Backing-field naming**: a CLR field and property *can* share a name across metadata tables, but rename the backing
-  field (`<p>__bf` / the C# `<p>k__BackingField` convention) to avoid consumer confusion and any emit-time clash.
+- **Backing-field naming**: ✅ DONE (#228) — a CLR field and property *can* share a name across metadata tables, but a
+  reflection consumer that groups candidate members by name cannot resolve the pair (Newtonsoft's `SerializeObject`
+  returned `{}`). bir2cir's `BackingFieldRename` emits the storage as `<p>k__BackingField` + `[CompilerGenerated]`,
+  the C# auto-property convention.
 - **Perf**: trivial accessors are JIT-inlined, so the field->accessor change is effectively free at runtime.
 - **`data class` / `equals`/`hashCode`/`copy`**: these read properties; once routed through accessors they still work,
   but verify the generated members.
