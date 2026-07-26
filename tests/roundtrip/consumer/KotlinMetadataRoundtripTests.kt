@@ -19,7 +19,9 @@
 //   inlineMemberNonLocalReturn  <- roundtrip-inline-member   (#60)   cross-module inline MEMBER + non-local return + dispatch-receiver field read
 //   genericInlineExtension      <- roundtrip-generic-inline-ext(#133) generic inline ext on a generic receiver infers T
 //   dottedFileClass             <- roundtrip-dotfile         (#16)   top-level fun in a dotted-name file class resolves
-//   nonConstDefaultArgs         <- roundtrip-nonconst-default(#146)  = {} / = emptyList() filled cross-module
+//   nonConstDefaultArgs         <- roundtrip-nonconst-default(#146)  = {} / = emptyList() filled cross-module,
+//                                                             plus (#235) a CONSTRUCTOR's non-const default
+//   nonConstDefaultArgsEvaluateOnce                           (#235) a spliced receiver/argument runs exactly once
 //   comparableClass             <- roundtrip-comparable      (#179)  class C : Comparable<C> </>/<=/>=/sorted()
 //   ubyteFidelity               <- roundtrip-ubyte                  UByte/UByteArray strict-mapping fidelity
 //   toplevelValVar              <- roundtrip-toplevel-val   (#195)  bare top-level val/var -> plain static FIELD (no accessor) resolved cross-module via facadegen --import-list
@@ -73,6 +75,23 @@ import roundtrip.nc.Panel as NcPanel
 import roundtrip.nc.column as ncColumn
 import roundtrip.nc.run2
 import roundtrip.nc.tagged as ncTagged
+import roundtrip.nc.Rect as NcRect
+import roundtrip.nc.Tri as NcTri
+import roundtrip.nc.Bag as NcBag
+import roundtrip.nc.Pair2 as NcPair2
+import roundtrip.nc.suffixed as ncSuffixed
+import roundtrip.nc.ov as ncOv
+import roundtrip.nc.Panel2 as NcPanel2
+import roundtrip.nc.note as ncNote
+import roundtrip.nc.Seeded as NcSeeded
+import roundtrip.nc.seeds as ncSeeds
+import roundtrip.nc.uf as ncUf
+import roundtrip.nc.Marker as NcMarker
+import roundtrip.nc.scaled as ncScaled
+import roundtrip.nc.tri3 as ncTri3
+import roundtrip.nc.order3 as ncOrder3
+import roundtrip.nc.chain as ncChain
+import roundtrip.nc.bumps as ncBumps
 import roundtrip.cmp.Ver
 import roundtrip.ubyte.ub
 import roundtrip.ubyte.uba
@@ -323,10 +342,104 @@ class PackageAndInlineRoundtripTests {
         ClassicAssert.AreEqual(3, ncColumn(configure = { add("ab") }, build = { add("c") })) // 3  both provided (no fill)
         ClassicAssert.AreEqual("ok", run2(body = { }))                                 // ok  pre defaults to {} (empty plain lambda)
         ClassicAssert.AreEqual("z=0", ncTagged("z"))                                   // z=0 items defaults to emptyList()
+        // #235: the CONSTRUCTOR half — a ctor's non-constant default is carried and filled at the omitting `new`.
+        ClassicAssert.AreEqual(18, NcRect(3).area)                                      // 18  h defaults to w * 2 = 6
+        ClassicAssert.AreEqual("r", NcRect(3).tag)                                      // r   a later Tier-1 const still fills
+        ClassicAssert.AreEqual(12, NcRect(3, 4).area)                                   // 12  h provided, no fill
+        ClassicAssert.AreEqual("z", NcRect(3, tag = "z").tag)                           // z   omit the MIDDLE default, name a later arg
+        ClassicAssert.AreEqual(6, NcRect(3, tag = "z").h)                               // 6   the omitted middle still filled from w
+        ClassicAssert.AreEqual(203, NcTri(2).c)                                         // 203 chain: b = a + 1 = 3, c = a * 100 + b
+        ClassicAssert.AreEqual(210, NcTri(2, 10).c)                                     // 210 b provided, c still filled
+        ClassicAssert.AreEqual(7, NcTri(2, 10, 7).c)                                    // 7   nothing omitted
+        ClassicAssert.AreEqual(1, NcBag().size)                                         // 1   items = emptyList(), n = 1
+        ClassicAssert.AreEqual(5, NcBag(n = 5).size)                                    // 5   omit a leading non-const default
+        // The argument the default reads is the CONSUMER's own instance read, so the spliced default contains a `this`
+        // that belongs to the CALLER. Only a `this` in the CARRIER means "the callee read its receiver".
+        ClassicAssert.AreEqual(32, NcCtorDefaultHost(4).rectArea())                     // 32  w = 4, h = w * 2 = 8
+        ClassicAssert.AreEqual(405, NcCtorDefaultHost(4).triC())                        // 405 b = a + 1 = 5, c = a * 100 + b
+        // Same-arity ctor OVERLOADS: the splice key carries the declared parameter vector, so each resolves its own.
+        ClassicAssert.AreEqual("2!", NcPair2("hi").label)                               // 2!  the (String,String) ctor fills upper, delegates this(2)
+        ClassicAssert.AreEqual("7!", NcPair2(7).label)                                  // 7!  the (Int,String) ctor fills label
+        // Same-arity FUNCTION overloads carrying different defaults: keyed by the declared parameter vector, so each
+        // call site gets ITS own default instead of whichever declaration the metadata scan reached first.
+        ClassicAssert.AreEqual("3/6", ncOv(3))                                          // 3/6  the Int overload: b = a * 2
+        ClassicAssert.AreEqual("x/x!", ncOv("x"))                                       // x/x! the String overload: b = a + "!"
+        // Same NAME and same emitted ARITY (an extension's receiver rides as a leading `__self` parameter), differing in
+        // a CLASS position — the pair that broke this lane under a name+arity-only carrier key. Its non-extension half
+        // is `ncTagged("z")` in the block above.
+        ClassicAssert.AreEqual("q/q", "q".ncTagged())                                   // q/q  t = this
+        // Same arity again, differing in a NULLABLE REFERENCE position (`String?` lowers to a plain `System.String`).
+        ClassicAssert.AreEqual("m/-", ncNote("m"))                                      // m/-  tag defaults to null
+        ClassicAssert.AreEqual("5/7", ncNote(5))                                        // 5/7  the Int overload's own default
+        // An UNSIGNED parameter beside a class-typed sibling: two spellings of one type must fold to one key.
+        ClassicAssert.AreEqual("u7/1", ncUf(7u))                                        // u7/1 the UInt overload's own default
+        ClassicAssert.AreEqual("mx/2", ncUf(NcMarker("x")))                             // mx/2 the class overload's own default
+        // A `: super(…)` omitting a cross-module base's non-constant default: a delegation is a call site too.
+        ClassicAssert.AreEqual(18, NcSuperSub(3).area)                                  // 18   h = w * 2 = 6
+    }
+
+    // #235: a value the CROSS-MODULE carrier splices is evaluated exactly ONCE, and binding it does not reorder the
+    // call's other values. Each `calls`/`log` assertion is the load-bearing one — the values pass either way.
+    @TestAttribute
+    fun nonConstDefaultArgsEvaluateOnce() {
+        val a = NcEvalCounter()
+        ClassicAssert.AreEqual("h/h", a.s().ncSuffixed())                               // h/h  the EXTENSION RECEIVER a `= this` default reads
+        ClassicAssert.AreEqual(1, a.calls)                                              // 1    once, not once per splice
+
+        val b = NcEvalCounter()
+        ClassicAssert.AreEqual(44, ncScaled(b.n()))                                     // 44   a = 4, b = a * 10
+        ClassicAssert.AreEqual(1, b.calls)
+
+        val c = NcEvalCounter()
+        ClassicAssert.AreEqual(405, ncTri3(c.n()))                                      // 405  a read by BOTH b's and c's defaults
+        ClassicAssert.AreEqual(1, c.calls)                                              // 1    (was 4 — once per spliced read)
+
+        val d = NcEvalCounter()
+        ClassicAssert.AreEqual("1/2/20", ncOrder3(d.a(), d.b()))                        // r = q * 10
+        ClassicAssert.AreEqual("ab", d.log)                                             // ab   p before q, and q ONCE (was "abb")
+
+        val e = NcEvalCounter()
+        ClassicAssert.AreEqual(32, NcRect(e.n()).area)                                  // 32   a ctor argument the default reads
+        ClassicAssert.AreEqual(1, e.calls)
+
+        // A side-effecting DEFAULT that a later default reads: filled once, then read from the temp.
+        val before = ncBumps
+        ClassicAssert.AreEqual(3030, ncChain(1))                                        // b = bump() = 3, c = b * 10 = 30
+        ClassicAssert.AreEqual(1, ncBumps - before)                                     // 1    bump() ran once (was 2)
+        // The same shape at a `: super(…)`, where the args ride the constructor DECLARATION.
+        val seedsBefore = ncSeeds
+        val sub = NcSeededSub()
+        ClassicAssert.AreEqual(3, sub.a)                                                // 3    a = seed()
+        ClassicAssert.AreEqual(30, sub.b)                                               // 30   b = a * 10, reading the temp
+        ClassicAssert.AreEqual(1, ncSeeds - seedsBefore)                                // 1    seed() ran once
     }
 
     // roundtrip-comparable (#179): a `class C : Comparable<C>` — </>/<=/>= + sorted() resolve+run cross-module
     // (facadegen restores operator compareTo + the kotlin.Comparable supertype; bir2cir binds compareTo->CompareTo).
+}
+
+// #235: omits a cross-module ctor's non-constant default while passing an argument that reads THIS instance — the
+// filled default therefore embeds the consumer's own `this`, which must not be mistaken for the callee reading a receiver.
+class NcCtorDefaultHost(val n: Int) {
+    fun rectArea(): Int = NcRect(n).area
+    fun triC(): Int = NcTri(this.n).c
+}
+
+// #235: counts how often a side-effecting value the cross-module carrier SPLICES actually runs. Kotlin evaluates a
+// receiver and each argument once; before the splice bound them to a temp, each spliced read re-ran the expression
+// (a value read by two defaults ran four times, and `order3(a(), b())` logged "abb").
+// #235: omits the cross-module base's non-constant default at its `: super(…)`, and (NcSeededSub) omits BOTH of a
+// base's defaults where the first is side-effecting and the second reads it.
+class NcSuperSub(w: Int) : NcPanel2(w)
+class NcSeededSub : NcSeeded()
+
+class NcEvalCounter {
+    var calls = 0
+    fun s(): String { calls++; return "h" }
+    fun n(): Int { calls++; return 4 }
+    var log = ""
+    fun a(): Int { log += "a"; return 1 }
+    fun b(): Int { log += "b"; return 2 }
 }
 
 class ComparableUnsignedAndPropertyRoundtripTests {

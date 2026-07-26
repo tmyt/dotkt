@@ -148,7 +148,7 @@ internal fun BirEmitter.bodyReferencesDispatch(callee: IrSimpleFunction): Boolea
  *  extension fn has no dispatch receiver, so its `this` (the extension receiver, which DOES bind to args[0]) is never
  *  matched here — extension `= this` defaults keep carrying. Symbol-aware, NOT a JSON substring: a nested object/lambda
  *  `this` is a different receiver and is correctly ignored. */
-internal fun BirEmitter.defaultReadsDispatch(fn: IrSimpleFunction, def: IrExpression): Boolean {
+internal fun BirEmitter.defaultReadsDispatch(fn: org.jetbrains.kotlin.ir.declarations.IrFunction, def: IrExpression): Boolean {
 	val receiverSyms = HashSet<org.jetbrains.kotlin.ir.symbols.IrValueSymbol>()
 	fn.parameters.firstOrNull { it.kind == IrParameterKind.DispatchReceiver }?.let { receiverSyms += it.symbol }
 	// Every enclosing class's `thisReceiver`: an inner-class member reads its outer instance as `this@Outer`, which

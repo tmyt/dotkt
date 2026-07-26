@@ -772,13 +772,15 @@ default-omission works **everywhere** — trailing, named-middle, reordered, and
   **enclosing-instance receiver** — a member fn's own dispatch `this@Owner` or an inner-class member's outer
   `this@Outer` (detected by an IR-symbol scan of the dispatch-receiver param + every enclosing class `thisReceiver`) —
   cannot be reconstructed positionally cross-module → a `{"k":"defaultUnsupported"}` poison carrier the consumer's
-  splice refuses on (a precise diagnostic, never a miscompile: the one uniform carrier binds `{"k":"this"}` to args[0],
+  splice refuses on (a precise diagnostic, never a miscompile: the one uniform carrier binds `{"k":"this"}` to args[0] —
+  and at a `new`, which has no receiver, to nothing, so a ctor carrier holding the token is refused outright —
   never to an enclosing instance). An EXTENSION-receiver `= this` is NOT this case — the extension receiver DOES bind to
   args[0], so it round-trips (below). For a CROSS-MODULE call kotc emits a POSITIONAL `{"k":"defaultArg"}` placeholder for each omitted
   arg of such a callee (so a later provided arg keeps its slot), and `bir2cir.DefaultArgSplice` — run at **PHASE 1**
   (right after `InlineSplice`, before owner attribution / the CharSequence bridge / type-lowering, so the spliced RAW
-  expression re-lowers in THIS app's context) — resolves the callee OWNERLESSLY (by method name + emitted arity, the
-  owner not yet attributed) and replaces each placeholder in place by array index (matching the `@KotlinDefault` stamp
+  expression re-lowers in THIS app's context) — resolves the callee by the owner kotc already projected (a facadegen call
+  carries its file-facade `ownerType`; a `new` carries its `type`), falling back to method name + emitted arity only for a
+  truly ownerless call, and replaces each placeholder in place by array index (matching the `@KotlinDefault` stamp
   index), RE-HOISTING a `defaultCarrier`'s lifted method into the consumer's file class under a fresh per-splice name.
   An EXTENSION-receiver `= this` default carries `{"k":"this"}` → the call's receiver (args[0]); a default reading an earlier value param carries
   `{"k":"defaultArgParam","idx":N}` → the call's arg N. For a SAME-MODULE call kotc has the real default IR and inlines
@@ -789,18 +791,53 @@ default-omission works **everywhere** — trailing, named-middle, reordered, and
   `list.joinToString("-") { … }` fills the omitted CharSequence defaults by positional splice (kcc) — keeping the
   trailing `transform` lambda in its own slot — or requires them (C#).
 
-**Known edge (single-eval):** the call-site receiver-rewrite duplicates the receiver EXPRESSION into the spliced default,
-so a receiver with side effects that is read by a `= this` default is evaluated more than once (a data-class `copy` or
-`substringAfter` on a plain variable/literal — the common case — is unaffected). The remaining unhandled case is a
-SAME-MODULE default that references another VALUE parameter (`b: Int = a * 10`): it still needs the callee's own scope and
-is rejected at the omitting call (a real `$default` synthetic would lift it — a documented follow-up).
+A SAME-MODULE default that references the callee's own scope — an earlier VALUE parameter (`b: Int = a * 10`, a
+constructor's `h: Int = w * 2`), the RECEIVER (`= this`), or an ENCLOSING INSTANCE
+(`inner class In(val x: Int = outerProp)`, also from a member of an inner class) — is inlined at the omitting call
+with each such read **bound by symbol** to THIS call's expression for that value: the filled argument for a parameter,
+the call's receiver for the receiver, and for an enclosing instance the constructor call's dispatch receiver (a member
+call, and each further level, through the `__outer` capture field). That is the `$default` scope, applied at the
+emitted-JSON level. Binding by SYMBOL (rather than rewriting the emitted `this` token) is what keeps a substituted
+expression that itself contains `this` — `c.m(this.k)`, or the receiver bound for an enclosing instance — from being
+re-pointed at the call's receiver. The **same** filling pass serves every Kotlin call site — a function call, a `new`,
+an array ctor, a lifted local/class `new`, a `: this(…)` / `: super(…)` **constructor delegation**, and an **enum
+entry**'s `NAME(args)` (including a per-entry body's base call) — so a class, data class, secondary constructor,
+delegation or enum entry omits such a default exactly as a function does. (A .NET-interop call shape fills nothing
+here: `[DefaultParameterValue]` is native metadata and ilemit's call path backfills it.)
 
-**#146 known gaps (named, not silent):** a non-const default that references a PRIVATE/internal library symbol
+**A value a filled default splices is evaluated exactly once — same-module and cross-module alike.** Both the RECEIVER
+(or enclosing instance) a `= this` / `= outerProp` default reads and the earlier ARGUMENT a `= a * 10` default reads are
+bound to a call-site temporary: the call is wrapped in a `valueBlock` whose `var` holds the value, and every reader — the
+call's own receiver and argument slots, an inner-class `new`'s enclosing-instance argument, and each spliced default —
+reads that local. So `mkOuter().In()` runs `mkOuter()` once (the constructor and its default see the SAME instance),
+`f(next())` with `b: Int = a * 10` calls `next()` once however many defaults read `a`, and `sideEffect().substringAfter(".")`
+— whose `missingDelimiterValue: String = this` rides a cross-module carrier — evaluates `sideEffect()` once. A STABLE
+value is spliced directly, so an ordinary call emits no temporary at all (what counts as stable differs slightly by path
+— see below). Binding one value moves
+its evaluation ahead of the call, so every non-stable value to its LEFT is bound with it: the order stays Kotlin's
+(receiver, then arguments left to right), including when an argument reads a variable a preceding argument writes.
+
+This holds at every call site that fills a default, including the two that ride a DECLARATION rather than an expression —
+a constructor **DELEGATION** (`: this(…)` / `: super(…)`) and an **ENUM ENTRY**'s `NAME(args)`, whose temporaries are
+declared by the first argument (a `var` declares an ordinary method-body local, and the first argument is evaluated
+before every later one, so a later read is in scope and in order). Cross-module a DELEGATION is filled by a separate walk
+over the constructor declarations, since its arguments are not a call node; an enum entry is always same-module (its own
+constructor is being compiled). The one escape is deliberate: when some value in the bound range carries no usable type —
+a `byref` slot, an open generic slot, a synthesized operand with no type at all — NOTHING is bound, because a partial
+hoist would reorder the call, which is worse than the double evaluation it removes.
+
+The paths bind at different points, because they know different things. SAME-MODULE, kotc has the default's IR and hoists
+before emitting (`evalOnceSubst`, keyed by IR-node identity, so it can leave an immutable local or parameter read spliced
+in place). CROSS-MODULE, only the `@KotlinDefault` carrier says which values a default reads, so `DefaultArgSplice` hoists
+as it fills — including a filled default a LATER default reads, which must not be evaluated per reader either
+(`chain(a, b = bump(), c = b * 10)` calls `bump()` once). Working on emitted JSON it cannot tell a `val` from a `var`, so
+there only a literal or `this` stays spliced in place and every local read is bound.
+
+**#146 known gap (named, not silent):** a non-const default that references a PRIVATE/internal library symbol
 (`= privateHelper()`) is NOT poison-detected at stamp time — it is carried, then fails LOUDLY (imprecise) at the
 consumer's re-lower (the private symbol is absent from the public ref surface → an unresolved `callStatic`/`FindStatic`),
-not with a precise stamp-time diagnostic; a stamp-time IR-walk detection is a cheap later add. And a GENERIC injected
-top-level function's non-const default still loud-refuses (the generic call path keeps `filledArgExprs`, which has no
-`defaultArg` placeholder). Both are authoring-time refusals, never a miscompile.
+not with a precise stamp-time diagnostic; a stamp-time IR-walk detection is a cheap later add. An authoring-time
+refusal, never a miscompile.
 
 ## 8. Reverse / cross-assembly interop
 
@@ -1194,7 +1231,7 @@ that has lost the distinction.
 | **`enum class`** | entry values | A *basic* enum → a real CLR `enum` → `facadegen` restores it as an **`object` of `val`s** (value access like `Color.GREEN` works); a *rich* enum (ctor args / methods / per-entry bodies, `isRichEnum`) → a singleton-field **class** → restored as a plain **`class`**. Either way it is **not** a Kotlin `enum class`: exhaustive `when`, `.entries`/`values()`/`valueOf`, `.ordinal`/`.name` identity degrade. **Not fixable via the injection path (gap ④):** a `FirDeclarationGenerationExtension` (2.4.0) cannot synthesize real `FirEnumEntry` declarations — the exhaustiveness checker (`FirWhenExhaustivenessTransformer`) enumerates `enumClass.declarations.filterIsInstance<FirEnumEntry>()`, and the plugin API exposes no `createEnumEntry`/entry hook (only `createTopLevelClass`/`createMemberProperty`/…). Generating `ClassKind.ENUM_CLASS` with enum-shaped `val`s would mislead FIR without giving exhaustiveness, so no `[KotlinEnum]` carrier is emitted. |
 | **`data class`** | generated members (10.1) | The **`data` modifier itself** is not carried (consumer sees an ordinary class). A `copy(field = x)` with the generated **self-referential defaults** (`y = this.y`) **now works** — same-module and cross-module — via the positional receiver-rewrite fill (§7). |
 | **Annotations** | RUNTIME/BINARY-retained with CLR-legal args; `KClass`→`System.Type` | `ilemit` **skips** annotations whose ctor-arg shape the CLR encoder rejects (`BuildCab`/`TryCab` → diagnostic, e.g. a generic-instantiation parameter). **SOURCE**-retention annotations are gone. **Use-site targets** (`@get:`/`@field:`/`@param:`) are only as faithful as which CLR target they landed on — the Kotlin intent is ambiguous. Repeatable-annotation semantics differ. |
-| **Default arguments** | constants + receiver-referencing non-constant defaults (§7) | A non-constant default that references the RECEIVER (`= this`) round-trips (positional splice / receiver-rewrite). Only a default that reads another VALUE parameter (`b = a * 10`) is still rejected at the omitting call (needs a `$default` synthetic). |
+| **Default arguments** | constants + non-constant defaults reading the receiver or an earlier value parameter (§7) | A non-constant default that references the RECEIVER (`= this`) or an earlier VALUE parameter (`b = a * 10`) round-trips (positional splice; the carrier's `{"k":"this"}` / `{"k":"defaultArgParam","idx":N}` bind to the call's receiver / arg N). Non-stable receiver/argument values spliced into a default are hoisted into temporaries so they evaluate exactly once (stable literals and `this` may remain inlined). |
 | **`internal` visibility** | hidden cross-assembly (correct for module≈assembly) | `kotc` lowers `internal`→ CLR `assembly`; `facadegen.Vis` skips assembly-visible members, so they don't inject — aligned with Kotlin's module boundary, but the **`internal` modifier is not itself restorable**, there is **no friend-module / `InternalsVisibleTo`** wiring, and no JVM-style name mangling. |
 
 ### 10.3 Lost (no carrier — not reconstructable from the current metadata)
@@ -1244,13 +1281,22 @@ that has lost the distinction.
 5. **`sealed` hierarchies** — **FIXED (gap ⑤, 2026-07-02).** `[KotlinSealed]` → `sealed` meta → `Modality.SEALED`
    restores the modality, cross-module inheritance enforcement, AND exhaustive `when` (the injected subtypes supply the
    closed inheritor set). See §10.1.
-6. **Non-constant default args / `data class copy` self-defaults** — **MOSTLY FIXED (kcc review C3, 2026-07-06).** The
-   omitted middle default no longer shifts a later provided arg's slot: kotc fills positionally (a `{"k":"defaultArg"}`
-   placeholder for a @KotlinDefault-carrying cross-module callee, spliced by `bir2cir.DefaultArgSplice`; a same-module
-   default inlined directly). A RECEIVER-referencing default (`missingDelimiterValue = this`, a `copy`'s `y = this.y`)
-   round-trips via the `this`→call-receiver rewrite. **Residual:** a default that reads another VALUE parameter
-   (`b = a * 10`) still needs the callee scope and is rejected at the omitting call (a real `$default` synthetic would
-   lift it); and the receiver-rewrite is single-eval only for a trivial receiver (§7).
+6. **Non-constant default args / `data class copy` self-defaults** — **FIXED (kcc review C3, 2026-07-06; constructors
+   #235).** The omitted middle default no longer shifts a later provided arg's slot: kotc fills positionally (a
+   `{"k":"defaultArg"}` placeholder for a @KotlinDefault-carrying cross-module callee, spliced by
+   `bir2cir.DefaultArgSplice`; a same-module default inlined directly). A RECEIVER-referencing default
+   (`missingDelimiterValue = this`, a `copy`'s `y = this.y`) round-trips via the `this`→call-receiver rewrite, and a
+   default reading an earlier VALUE parameter (`b = a * 10`) via the carrier's `{"k":"defaultArgParam","idx":N}`.
+   A **CONSTRUCTOR** round-trips the same way: kotc stamps `@KotlinDefault` on its defaulted params, facadegen surfaces
+   them OPTIONAL (`nonConst`), and `DefaultArgSplice` fills a `{"k":"new"}`'s placeholder from the reference dll, keyed
+   `<type>|.ctor|<declared parameter count>` — the stamped index is the parameter's position in the emitted constructor's
+   own parameter list, so a consumer's argument array lines up with it one-for-one. Lower slots fill first, so a CHAIN
+   works: `class Tri(a, b = a + 1, c = a * 100 + b)` consumed as `Tri(2)` yields `c == 203`. Same-arity constructor
+   OVERLOADS resolve by signature — the key also carries the declared parameter vector, which the `new`'s `argTypes`
+   reproduces exactly. Refused rather than guessed: a default that reads an ENCLOSING instance (`defaultUnsupported` at
+   stamp time, §7 / #34 — a `new` has no receiver to bind it to).
+   A lifted LOCAL class's constructor is not stamped when it captures anything: its captures ride as leading parameters
+   the index does not count, and it has no cross-module call site to carry them for.
 
 7. **Generic-fidelity gaps surfaced by the atomicfu CLR port (#133)** — **ALL THREE FIXED.** Three
    DOWNSTREAM-of-facadegen gaps (the facadegen symbol surface was verified correct in each; the

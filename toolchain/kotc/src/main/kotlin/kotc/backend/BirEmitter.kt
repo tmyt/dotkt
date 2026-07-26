@@ -283,6 +283,18 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	internal fun localSlotName(d: IrValueDeclaration): String =
 		if (d is IrVariable) localSlotNames.getOrPut(d) { "dotkt\$local${localSlotCounter++}" }
 		else d.name.asString()
+	// #235: a call value (its RECEIVER, or a provided ARGUMENT) bound to a temp local for exactly-once evaluation,
+	// because a filled default of that call splices the value into its default expression. Keyed by the value
+	// EXPRESSION's identity, so every reader of that one IR node — the call's own receiver/argument slot, an
+	// inner-class `new`'s enclosing-instance arg, the spliced default — renders the same temp read. Installed and
+	// removed around the owning call's emission (`expr`), which wraps the call in the `valueBlock` declaring the temps.
+	internal val evalOnceSubst = java.util.IdentityHashMap<org.jetbrains.kotlin.ir.expressions.IrExpression, String>()
+	// The ordered temp declarations of the call currently being emitted. The pre-pass registers provided
+	// receiver/argument values here; `filledArgs` adds an OMITTED default after it has rendered that default in the
+	// callee's substituted scope. Keeping both in one parameter-indexed list preserves evaluation order while allowing a
+	// later default to read the first default's one local (`a = bump(), b = a * 10`).
+	internal val callEvalOnceTemps =
+		java.util.IdentityHashMap<org.jetbrains.kotlin.ir.expressions.IrExpression, MutableList<Pair<Int, String>>>()
 	// Function-local classes lifted to top-level synthetic types: the outer locals they capture (prepended to the
 	// ctor at construction sites). Keyed by the IrClass.
 	internal val localClassCaptures = java.util.IdentityHashMap<IrClass, List<IrValueDeclaration>>()

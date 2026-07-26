@@ -29,8 +29,7 @@ Never skip Phase 0 or Phase 6. Never report a behavioral claim without Phase-3 e
 
 ## The mental model (what "correct" means here)
 
-The authoritative layer table and invariants are `docs/architecture.md` and
-`.claude/agents/README.md`. The review-relevant core:
+The authoritative layer table and invariants are `docs/architecture.md`. The review-relevant core:
 
 | Layer | Reads | Owns | Must NOT contain |
 |---|---|---|---|

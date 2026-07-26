@@ -76,7 +76,7 @@ static class CrossClassPrivateWidening
                     // method call; record a synthetic member key and widen only the reached constructors.
                     case "new":
                         if (BareOwner(TypeJson.OwnerName(o["type"])) is string cn && cn != selfType)
-                            Record(TypeJson.OwnerName(o["type"]), ".ctor");
+                            Record(TypeJson.OwnerName(o["type"]), ReferenceMetadataIndex.CtorKeyName);
                         break;
                     // Owner slots are structured Type nodes now — read the Fqn identity directly (BareOwner is then a
                     // no-op on the already-bare name, kept only as a defensive strip for a legacy string owner).

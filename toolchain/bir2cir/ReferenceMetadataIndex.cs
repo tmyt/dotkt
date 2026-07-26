@@ -78,6 +78,10 @@ sealed partial class ReferenceMetadataIndex
     // ClrTypeInjection.defaultsForArity.
     readonly Dictionary<string, Dictionary<int, string>> _kotlinDefaultsOwnerless = new(StringComparer.Ordinal);
     readonly HashSet<string> _kotlinDefaultsAmbiguous = new(StringComparer.Ordinal);
+    // OWNERFUL keys two same-arity declarations carry with different defaults (see ReferenceAssemblyMetadata).
+    readonly HashSet<string> _kotlinDefaultsConflicted = new(StringComparer.Ordinal);
+    // The declared parameter types behind an arity key (see KotlinDefaultParamTypesFor).
+    readonly Dictionary<string, TypeNode[]> _kotlinDefaultParamTypes = new(StringComparer.Ordinal);
     // [KotlinInline] raw-BIR payloads (#71/#75): "owner|name|pc|ga" -> the CANDIDATE decoded carrier JSONs (one per overload
     // sharing that key; the raw pre-lowering decl facts InlineBirStash stashed). Read cross-module by InlineSplice, which
     // picks the UNIQUE candidate matching the call's `paramSig` (§4.2), then splices its body at the call site (so it
@@ -180,14 +184,27 @@ sealed partial class ReferenceMetadataIndex
                     _topLevelStatics[kv.Key] = lst = new List<(string, string, string)>();
                 lst.AddRange(kv.Value);
             }
+            foreach (var key in asm.DotKt.KotlinDefaultsConflicted) _kotlinDefaultsConflicted.Add(key);
+            foreach (var kv in asm.DotKt.KotlinDefaultParamTypes) _kotlinDefaultParamTypes.TryAdd(kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.KotlinDefaults)
             {
                 _kotlinDefaults.TryAdd(kv.Key, kv.Value);
                 // OWNERLESS fold "owner|name|pc" -> "name|pc" (#146). Method/owner names carry no '|', so the split is exact.
                 var parts = kv.Key.Split('|');
-                if (parts.Length != 3) continue;
+                // Only the 3-part ARITY key folds: a signature-keyed entry is 4 parts, and a CONSTRUCTOR is never called
+                // ownerlessly (a `new` always names its type), so folding `.ctor|pc` would only make every type of the
+                // same ctor arity collide with every other.
+                if (parts.Length != 3 || parts[1] == CtorKeyName) continue;
                 var np = parts[1] + "|" + parts[2];
                 if (_kotlinDefaultsAmbiguous.Contains(np)) continue;
+                // The OWNERFUL key is already known to be carried by two declarations that disagree, so the ownerless
+                // fold of it cannot identify one either — mark it rather than folding the first-seen declaration in.
+                if (asm.DotKt.KotlinDefaultsConflicted.Contains(kv.Key))
+                {
+                    _kotlinDefaultsOwnerless.Remove(np);
+                    _kotlinDefaultsAmbiguous.Add(np);
+                    continue;
+                }
                 if (_kotlinDefaultsOwnerless.TryGetValue(np, out var have))
                 {
                     if (!SameDefaults(have, kv.Value)) { _kotlinDefaultsOwnerless.Remove(np); _kotlinDefaultsAmbiguous.Add(np); }
@@ -251,20 +268,54 @@ sealed partial class ReferenceMetadataIndex
     // The concrete element FQN for an array factory (empty-call fallback for `intArrayOf()`), or null.
     public string ArrayFactoryElemHint(string funName) => _arrayFactoryElemHints.GetValueOrDefault(funName);
 
+    /// The `method` component of a CONSTRUCTOR's @KotlinDefault key (#235). `.ctor` is the CLR's own constructor name and
+    /// is unspeakable in Kotlin, so it can never collide with a real method a `new`'s owner declares.
+    internal const string CtorKeyName = ".ctor";
+
     // The @KotlinDefault BIR splice map for a call's callee — (argPosition -> default-expression BIR-json). #146:
     // facadegen-injected calls already carry their exact file-facade `ownerType` in BIR, so use that structural identity
     // first. Truly ownerless Kotlin calls retain the conservative name+arity index; conflicting owners remain ambiguous
     // and are refused. Running this at phase 1 does not imply throwing away an owner kotc has already projected.
-    public Dictionary<int, string> KotlinDefaultsFor(string owner, string method, int paramCount)
+    public Dictionary<int, string> KotlinDefaultsFor(string owner, string method, int paramCount, string sigKey = null)
     {
         if (method == null) return null;
         if (owner != null)
-            return _kotlinDefaults.TryGetValue(owner + "|" + method + "|" + paramCount, out var exact) ? exact : null;
+        {
+            var key = owner + "|" + method + "|" + paramCount;
+            // A call carries its callee's declared parameter vector (`sig`/`shapeTypes`, or a `new`'s `argTypes`), so try
+            // the SIGNATURE key first — that is what tells same-arity overloads apart. Exact first, then with class
+            // positions collapsed (the call's Kotlin spelling and the reference's CLR spelling only compare there), then
+            // the arity key, which refuses when two declarations carry it with different defaults.
+            if (sigKey != null)
+            {
+                if (_kotlinDefaults.TryGetValue(key + "|" + sigKey, out var bySig)
+                    && !_kotlinDefaultsConflicted.Contains(key + "|" + sigKey)) return bySig;
+                var relaxed = key + "|~" + RelaxedSigKey(sigKey);
+                if (_kotlinDefaults.TryGetValue(relaxed, out var byRelaxed) && !_kotlinDefaultsConflicted.Contains(relaxed))
+                    return byRelaxed;
+            }
+            if (_kotlinDefaultsConflicted.Contains(key)) return null;
+            return _kotlinDefaults.TryGetValue(key, out var exact) ? exact : null;
+        }
         return _kotlinDefaultsOwnerless.TryGetValue(method + "|" + paramCount, out var ownerless) ? ownerless : null;
     }
-    // True only for a genuinely ownerless name+arity carried by >1 owner with CONFLICTING defaults.
+    /// The declared parameter types behind a @KotlinDefault arity key, as a JSON type vector — for a call site with no
+    /// signature of its own (a constructor DELEGATION). Null when the callee carries no defaults.
+    public JsonArray KotlinDefaultParamTypesFor(string owner, string method, int paramCount)
+    {
+        if (owner == null || method == null) return null;
+        if (!_kotlinDefaultParamTypes.TryGetValue(owner + "|" + method + "|" + paramCount, out var types)) return null;
+        var arr = new JsonArray();
+        foreach (var t in types) arr.Add(t == null ? null : TypeJson.Write(t));
+        return arr;
+    }
+
+    // True when the name+arity cannot identify ONE set of defaults: a genuinely ownerless name carried by >1 owner that
+    // disagree, or an OWNERFUL key two same-arity declarations (ctor overloads) carry with different defaults.
     public bool KotlinDefaultsAmbiguous(string owner, string method, int paramCount) =>
-        owner == null && method != null && _kotlinDefaultsAmbiguous.Contains(method + "|" + paramCount);
+        method != null && (owner == null
+            ? _kotlinDefaultsAmbiguous.Contains(method + "|" + paramCount)
+            : _kotlinDefaultsConflicted.Contains(owner + "|" + method + "|" + paramCount));
 
     static bool SameDefaults(Dictionary<int, string> a, Dictionary<int, string> b)
     {
@@ -768,6 +819,13 @@ sealed partial class ReferenceMetadataIndex
             "kotlin.String" or "System.String" or "string" => "str",
             "kotlin.Unit" or "System.Void" or "void" => "void",
             "kotlin.Any" or "System.Object" or "object" => "obj",
+            // Unsigned scalars, folded like every other primitive: the specialized ARRAYS were already folded below, but
+            // the element types were not, so a `UInt` parameter keyed as `kotlin.UInt` from a pre-lowering call site and
+            // as `uint` from a reference assembly — two spellings of one type that no signature compare could match.
+            "kotlin.UByte" or "System.Byte" or "byte" => "byte",
+            "kotlin.UShort" or "System.UInt16" or "ushort" => "ushort",
+            "kotlin.UInt" or "System.UInt32" or "uint" => "uint",
+            "kotlin.ULong" or "System.UInt64" or "ulong" => "ulong",
             // Primitive-array class spellings (kotc lowers to `array:int`, but the ref.dll may reflect the kotlin.IntArray
             // class) -> the same array key so a top-level `sort(IntArray)`@ClrIntrinsic matches by signature.
             "kotlin.IntArray" => "array:i32",
@@ -1317,9 +1375,13 @@ sealed partial class ReferenceMetadataIndex
                         var isConv = HasAttribute(method.GetCustomAttributesData(), "kotlin.clr.ClrConv");
                         var convTo = isConv ? TypeName(method.ReturnType) : null;
                         // @KotlinDefault(index, bir) on the method's params -> the cross-module default-arg splice source.
-                        var kdefaults = KotlinDefaultsOf(method);
-                        if (kdefaults != null)
-                            metadata.KotlinDefaults[ownerFqn + "|" + method.Name + "|" + method.GetParameters().Length] = kdefaults;
+                        // Keyed BY SIGNATURE as well as by arity, exactly like the constructor scan below: two same-arity
+                        // overloads of one name (an extension `fun String.tagged(t: String = this)` beside a
+                        // `fun tagged(name: String, items: List<String> = emptyList())`) carry DIFFERENT defaults, and an
+                        // arity-only key would hand one's default to the other's call site. The arity key stays for the
+                        // single-declaration case and records a CONFLICT so that fallback refuses instead of guessing.
+                        if (KotlinDefaultsOf(method) is Dictionary<int, string> kdefaults)
+                            AddKotlinDefaults(metadata, ownerFqn, method.Name, method.GetParameters(), kdefaults);
                         // The `suspend` bit from the DotKt round-trip [KotlinFunction(flags)] attribute (Suspend = 4,
                         // the flag word ilemit stamps; the dead Assembly.LoadFrom scan read it, this live scan didn't).
                         // Channelled into MemberBinding.Suspend for the coroutine bundle (bundle 6) — no consumer yet.
@@ -1439,6 +1501,20 @@ sealed partial class ReferenceMetadataIndex
                                     metadata.ArrayFactoryElemHints[method.Name] = ah;
                             }
                         }
+                    }
+                    // @KotlinDefault(index, bir) on a CONSTRUCTOR's params -> the splice source for a `new` that omits a
+                    // non-constant default (#235). A ctor has no name of its own, so the key is `<owner>|.ctor|<declared
+                    // param count>`: the args array a `new` carries is POSITIONALLY complete (kotc emits a placeholder for
+                    // every omitted slot), so its length is that same declared count and each stamped index indexes it.
+                    // NonPublic included for the same reason the method scan includes it — an `internal` ctor is still a
+                    // legitimate splice target inside its own module's ref dll.
+                    // A CONSTRUCTOR has no name of its own, so it is keyed by the `.ctor` pseudo-name (#235). Same scheme as
+                    // the method scan above: the `new` carries its resolved ctor's declared parameter types in `argTypes`,
+                    // the same ParamKey space, so same-arity ctor overloads resolve rather than collide.
+                    foreach (var ctor in type.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+                    {
+                        if (KotlinDefaultsOf(ctor) is Dictionary<int, string> cdefaults)
+                            AddKotlinDefaults(metadata, ownerFqn, CtorKeyName, ctor.GetParameters(), cdefaults);
                     }
                 }
                 catch (Exception ex)
@@ -1621,6 +1697,77 @@ sealed partial class ReferenceMetadataIndex
     // top-level @ClrIntrinsic (sqrt(Double) vs sqrt(Float); pow(Double,Double) intrinsic vs pow(Double,Int) real-body).
     // Runs each param's TypeName through ParamKey so the ref.dll declaration and the call's kotc `sig` agree.
     static string SigKeyOf(ParameterInfo[] ps) => string.Join(",", ps.Select(p => ParamKey(TypeName(p.ParameterType))));
+
+    /// A signature key with every position [ParamKey] could not FOLD collapsed to `ref`. The two sides of a
+    /// @KotlinDefault lookup describe the same parameter in DIFFERENT spaces — a call site carries kotc's pre-lowering
+    /// Kotlin type (`kotlin.collections.List`), a reference assembly its lowered CLR form
+    /// (`System.Collections.Generic.IReadOnlyList`) — so only a token from [ParamKey]'s fold table is comparable, and
+    /// anything else has to collapse. That still separates an overload differing in a folded position
+    /// (`f(String, String)` from `f(String, List&lt;String&gt;)`), which is what the exact key cannot do here. Two
+    /// overloads differing only between two DIFFERENT class types collapse together, are recorded as a conflict, and are
+    /// refused rather than guessed.
+    public static string RelaxedSigKey(string sigKey) =>
+        string.Join(",", sigKey.Split(',').Select(RelaxToken));
+
+    static string RelaxToken(string token)
+    {
+        foreach (var w in new[] { "byref:", "array:" })
+            if (token.StartsWith(w, StringComparison.Ordinal)) return w + RelaxToken(token[w.Length..]);
+        // NULLABILITY is asymmetric across the two spaces for a REFERENCE type: Kotlin's `String?` is a call-side
+        // `nullable:str` but lowers to a plain `System.String` (its nullability rides [Nullable]), so the reference side
+        // reads `str`. A nullable VALUE type is `System.Nullable<T>` on both sides and keeps the wrapper.
+        if (token.StartsWith("nullable:", StringComparison.Ordinal))
+        {
+            var inner = RelaxToken(token["nullable:".Length..]);
+            return ValueTokens.Contains(inner) ? "nullable:" + inner : inner;
+        }
+        // An ALLOW-LIST, not "is it dotted": a namespace-less emitted type (`dotkt$CharSequence`) is dotless yet still a
+        // class, and its call-side spelling (`kotlin.CharSequence`) differs — collapsing both is what keeps them equal.
+        return FoldedTokens.Contains(token) ? token : "ref";
+    }
+
+    // Every token [ParamKey] can produce for a type it FOLDED — i.e. one whose two spellings it made equal. A token
+    // outside this set is a class identity that only one of the two spaces spells that way.
+    static readonly HashSet<string> ValueTokens = new(StringComparer.Ordinal)
+        { "i8", "i16", "i32", "i64", "f32", "f64", "bool", "char", "void", "byte", "ushort", "uint", "ulong" };
+    static readonly HashSet<string> FoldedTokens = new(ValueTokens, StringComparer.Ordinal) { "str", "obj", "func", "gp" };
+
+    /// Record one declaration's @KotlinDefault carriers under BOTH keys the splice can look up: `owner|name|arity|sigKey`
+    /// (the exact overload — a call site reproduces that signature from its own declared parameter vector) and
+    /// `owner|name|arity` (the fallback when no signature is available). The arity key is written once; a SECOND
+    /// declaration of the same name+arity whose defaults differ marks it CONFLICTED, so the fallback refuses instead of
+    /// serving whichever declaration the metadata scan happened to reach last.
+    static void AddKotlinDefaults(ReferenceDotKtMetadata metadata, string ownerFqn, string name, ParameterInfo[] ps,
+        Dictionary<int, string> defaults)
+    {
+        var arityKey = ownerFqn + "|" + name + "|" + ps.Length;
+        var sig = SigKeyOf(ps);
+        // The callee's DECLARED parameter types, for a call site that carries none of its own — a constructor
+        // DELEGATION rides the ctor declaration, so `baseArgs` is a bare array with no signature vector. The splice
+        // needs them to type the temp it binds each spliced value to.
+        if (!metadata.KotlinDefaultParamTypes.ContainsKey(arityKey))
+            metadata.KotlinDefaultParamTypes[arityKey] = ps.Select(p => DeclarationTypeNode(p.ParameterType)).ToArray();
+        Put(arityKey + "|" + sig, defaults);                        // the exact signature
+        Put(arityKey + "|~" + RelaxedSigKey(sig), defaults);        // class positions collapsed, for cross-space compare
+        if (metadata.KotlinDefaults.TryGetValue(arityKey, out var prior))
+        {
+            if (!SameDefaults(prior, defaults)) metadata.KotlinDefaultsConflicted.Add(arityKey);
+            return;
+        }
+        metadata.KotlinDefaults[arityKey] = defaults;
+
+        void Put(string key, Dictionary<int, string> d)
+        {
+            // Two declarations landing on the SAME signature key can only be told apart by a finer key, so this one
+            // refuses too rather than serving the last writer.
+            if (metadata.KotlinDefaults.TryGetValue(key, out var had))
+            {
+                if (!SameDefaults(had, d)) metadata.KotlinDefaultsConflicted.Add(key);
+                return;
+            }
+            metadata.KotlinDefaults[key] = d;
+        }
+    }
 
     // An @JvmInline backing-field's CLR `conv` target — the ilemit conv opcode token for the field's primitive type
     // (kotlin.Int -> "int", kotlin.Byte -> "sbyte", ...). Null if the field is not a primitive ilemit conv'able.
@@ -1942,6 +2089,13 @@ sealed class ReferenceDotKtMetadata
     // pass reads this to fill trailing omitted args BEFORE the CharSequence bridge + type lowering (so a String default
     // is coerced exactly like an explicit arg). Rides the ref.dll only (param attrs stripped in the rt build).
     public readonly Dictionary<string, Dictionary<int, string>> KotlinDefaults = new(StringComparer.Ordinal);
+    // Keys of [KotlinDefaults] that TWO declarations of the same owner+name+arity carry with DIFFERENT defaults — the key
+    // cannot tell them apart, so the splice must refuse instead of filling whichever was enumerated last. Populated for
+    // both METHODS and CONSTRUCTORS (same-arity overloads are common; #235).
+    public readonly HashSet<string> KotlinDefaultsConflicted = new(StringComparer.Ordinal);
+    // The declared parameter types behind a [KotlinDefaults] arity key, for a call site that carries no signature vector
+    // of its own (a constructor DELEGATION's `baseArgs`). First writer wins, exactly like the arity key it mirrors.
+    public readonly Dictionary<string, TypeNode[]> KotlinDefaultParamTypes = new(StringComparer.Ordinal);
 }
 
 // A single ref.dll member's call-substitution shape. Owner is the Kotlin FQN ("kotlin.String"); Intrinsic is the
