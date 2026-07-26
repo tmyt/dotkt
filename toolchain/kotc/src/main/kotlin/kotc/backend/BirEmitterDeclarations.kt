@@ -931,11 +931,24 @@ internal fun BirEmitter.ctor(klass: IrClass, ctor: IrConstructor, captures: List
 	// A delegation is an ordinary omitting call site (`: this(3)` on `class D(val a: Int, val b: Int = a * 2)`), so its
 	// args run through the SAME default-filling pass every other call shape uses — dropping the omitted slot instead
 	// would slide every later arg into the wrong parameter.
-	val thisArgs = if (isThisDelegate) delegatedCtorArgs(delegating!!).joinToString(",") else null
+	//   The delegation is emitted BEFORE the ctor body, where the capture FIELDS are not yet stored (capAssigns above
+	// run as the body's first statements): while emitting its args, every captured value must read the leading capture
+	// PARAM instead of `this.<field>` — the enclosing instance of an inner class included, whose class-body binding is
+	// the `__outer` FIELD. A lifted local class's captures are also leading params of the TARGET sibling ctor, so a
+	// `: this(...)` passes them along (an inner class's enclosing instance is the delegation's dispatch-receiver arg
+	// instead, prepended by `delegatedCtorArgs`).
+	val savedCapSubst = java.util.IdentityHashMap<IrValueDeclaration, String?>()
+	captures.forEach { (d, fname) ->
+		savedCapSubst[d] = captureSubst[d]
+		captureSubst[d] = """{"k":"local","name":${str(fname)}}"""
+	}
+	val capForwardArgs = if (klass.isInner) emptyList() else captures.map { (_, f) -> """{"k":"local","name":${str(f)}}""" }
+	val thisArgs = if (isThisDelegate) (capForwardArgs + delegatedCtorArgs(delegating!!)).joinToString(",") else null
 	val baseArgs = if (!isThisDelegate) delegating?.let { d ->
 		val targetFq = delegateClass?.fqNameWhenAvailable?.asString()
 		if (targetFq != "kotlin.Any") delegatedCtorArgs(d).joinToString(",") else null
 	} else null
+	savedCapSubst.forEach { (d, prev) -> if (prev != null) captureSubst[d] = prev else captureSubst.remove(d) }
 	val stmts = ArrayList<String>()
 	stmts.addAll(capAssigns)   // store captures before instance initializers, which may read them
 	body?.statements?.forEach { s ->

@@ -72,10 +72,15 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   **delegation** and an **enum entry**'s `NAME(args)` (including a per-entry body's base call) dropped an omitted
   default's slot outright, sliding every later argument one place down — `class D(val a: Int, val b: Int = a * 2) {
   constructor() : this(3) }` produced an unloadable `D..ctor()`. A constructor default that reads an **enclosing
-  instance** (`inner class In(val x: Int = outerProp)`) now lowers too: the enclosing `this` binds to the call's
-  dispatch receiver, a further level through that level's `__outer` field (it previously emitted the *caller's* `this`
-  and threw `InvalidProgramException`). Filling also saves and restores the substitutions it installs, so a closure
-  that captured the callee's own parameter keeps its binding across a recursive omitting call. Covered by
+  instance** (`inner class In(val x: Int = outerProp)`, and the same default on a member of an inner class) now lowers
+  too: the enclosing `this` binds to the call's dispatch receiver, a member call and each further level through the
+  `__outer` capture field (it previously emitted the *caller's* `this` and threw `InvalidProgramException`). Every
+  binding is now made BY SYMBOL rather than by rewriting the emitted `this` token, which also fixes an argument that
+  reads `this` being re-pointed at the call's receiver — `class D { val k = 5; val c = C(7); fun f() = c.m(k) }`, with
+  `C.m(a: Int, b: Int = a * 10)`, filled `b` from `c.k` by emitting `D::get_k` against a `C` receiver. Filling saves
+  and restores the substitutions it installs, so a closure that captured the callee's own parameter keeps its binding
+  across a recursive omitting call; a delegation's args read the leading capture PARAMS, which (unlike the capture
+  fields) are already live before the constructor body. Covered by
   `tests/basic/fixtures/DefaultArgumentTests.kt` (`defargsCtor`, `defargsCtorDelegation`,
   `defargsCtorEnclosingInstance`).
 

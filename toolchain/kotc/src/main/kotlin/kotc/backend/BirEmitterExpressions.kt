@@ -191,10 +191,16 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 				// `Func<int,T>` a TypeBuilderInstantiation (ilemit GetMethod("Invoke") fails) -> leave it to the fall-through.
 				if (elemType != null && elemType.classifierOrNull !is org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol) birType(elemType) else null
 			} else null
+		// An inner-class ctor takes the enclosing instance (its dispatch receiver) as a leading arg. Emitted ONCE, and
+		// handed to `filledArgs` as well, so a default that reads the enclosing instance splices the SAME string rather
+		// than a second emission of the expression (which would append a second copy of any lifted lambda in it).
+		val outerArgLazy = lazy {
+			if ((node.symbol.owner.parent as? IrClass)?.isInner == true) dispatchReceiver(node)?.let { expr(it) } else null
+		}
 		// The ctor's regular args, omitted defaults filled — the SAME single pass every call shape uses. Emitted once
 		// (`by lazy`, at the first branch that needs it): re-running it would duplicate any lift/lambda emission side
 		// effect, and hoisting it above `outerArg`/`capArgs` would reorder the emitted synthetic names.
-		val ctorArgs: List<String> by lazy { filledArgs(node) }
+		val ctorArgs: List<String> by lazy { filledArgs(node, outerArgLazy) }
 		val arrArgs = if (arrElem != null) ctorArgs else emptyList()
 		if (arrElem != null && arrArgs.size == 2)
 			"""{"k":"newArrayInit","elem":${arrElem.toJson()},"size":${arrArgs[0]},"init":${arrArgs[1]}}"""
@@ -214,8 +220,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		if (clr != null)
 			"""{"k":"new","type":${clr.toJson()},"argTypes":[${node.symbol.owner.parameters.filter { it.kind == IrParameterKind.Regular }.joinToString(",") { birType(it.type).toJson() }}],"args":[${ctorArgs.joinToString(",")}]}"""
 		else {
-			// An inner-class ctor takes the enclosing instance (its dispatch receiver) as a leading arg.
-			val outerArg = if (klass?.isInner == true) dispatchReceiver(node)?.let { expr(it) } else null
+			val outerArg = outerArgLazy.value
 			// A lifted local class prepends its captured outer locals (evaluated here, in the outer context).
 			val capArgs = klass?.let { localClassCaptures[it] }?.map { capValueExpr(it) } ?: emptyList()
 			val args = (listOfNotNull(outerArg) + capArgs + ctorArgs).joinToString(",")

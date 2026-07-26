@@ -82,6 +82,45 @@ fun m2Rec(a: Int, b: Int = a * 2): Int {
     return f()
 }
 
+// #235: the filled expression is bound BY SYMBOL, so an argument that itself reads `this` (`c.m(k)` passes `this.k`)
+// keeps its own receiver instead of being re-pointed at the call's receiver. M2SelfArg.k and M2SelfHolder.k differ so
+// a wrong receiver is a wrong VALUE, not just a wrong type.
+class M2SelfArg(val k: Int) {
+    fun m(a: Int, b: Int = a * 10): Int = a * 1000 + b
+}
+class M2SelfHolder {
+    val k = 5
+    val c = M2SelfArg(7)
+    fun call(): Int = c.m(k)
+}
+
+// #235: the enclosing instance reached through a NON-`this` receiver (`o.M2EIn()` inside another class), and an inner
+// class's own secondary constructor delegating with the target's default reading the enclosing instance.
+class M2EnclHolder(val o: M2Encl) {
+    fun x(): Int = o.M2EIn().x
+}
+class M2EnclDel(val k: Int) {
+    inner class In(val a: Int, val b: Int = k) {
+        constructor() : this(1)
+    }
+}
+
+// #235: a MEMBER function (not a constructor) of an inner class, whose default reads the enclosing instance.
+class M2EnclMember(val k: Int) {
+    inner class Q {
+        fun f(x: Int = k * 4): Int = x
+    }
+}
+
+// #235: a lifted LOCAL class whose secondary constructor delegates — the capture params are leading args of the
+// TARGET constructor too, and the delegation's own omitted default reads the capture.
+fun m2LocalDelegate(seed: Int): Int {
+    class L(val p: Int, val q: Int = seed) {
+        constructor() : this(1)
+    }
+    return L().q
+}
+
 class DefaultArgumentTests {
     @TestAttribute
     fun defargs() {
@@ -160,5 +199,12 @@ class DefaultArgumentTests {
         assertEquals(6, m2Rec(3))                                       // 3 + (2 + (1 + 0))
         assertEquals(0, m2Rec(0))                                       // b = a * 2 = 0
         assertEquals(1, m2Rec(1))
+        assertEquals(5050, M2SelfHolder().call())                       // a = this.k = 5, b = 50 (NOT c.k = 7)
+        assertEquals(9, M2EnclHolder(M2Encl(9)).x())                    // enclosing instance through `o`, not `this`
+        assertEquals(7, M2EnclDel(7).In().b)                            // inner secondary ctor delegating
+        assertEquals(2, M2EnclDel(7).In(1, 2).b)                        // provided
+        assertEquals(20, M2EnclMember(5).Q().f())                       // MEMBER of an inner class: k * 4
+        assertEquals(1, M2EnclMember(5).Q().f(1))                       // provided
+        assertEquals(11, m2LocalDelegate(11))                           // local class, secondary ctor delegating
     }
 }

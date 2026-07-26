@@ -790,19 +790,25 @@ default-omission works **everywhere** — trailing, named-middle, reordered, and
   trailing `transform` lambda in its own slot — or requires them (C#).
 
 A SAME-MODULE default that references the callee's own scope — an earlier VALUE parameter (`b: Int = a * 10`, a
-constructor's `h: Int = w * 2`), or, for an inner-class constructor, an ENCLOSING INSTANCE
-(`inner class In(val x: Int = outerProp)`) — is inlined at the omitting call with each such read rewritten to THIS
-call's expression for that value: the filled argument for a parameter, the call's dispatch receiver for the
-immediately enclosing instance (a further level through that level's `__outer` capture field). That is the `$default`
-scope, applied at the emitted-JSON level. The **same** filling pass serves every call site — a function call, a `new`,
+constructor's `h: Int = w * 2`), the RECEIVER (`= this`), or an ENCLOSING INSTANCE
+(`inner class In(val x: Int = outerProp)`, also from a member of an inner class) — is inlined at the omitting call
+with each such read **bound by symbol** to THIS call's expression for that value: the filled argument for a parameter,
+the call's receiver for the receiver, and for an enclosing instance the constructor call's dispatch receiver (a member
+call, and each further level, through the `__outer` capture field). That is the `$default` scope, applied at the
+emitted-JSON level. Binding by SYMBOL (rather than rewriting the emitted `this` token) is what keeps a substituted
+expression that itself contains `this` — `c.m(this.k)`, or the receiver bound for an enclosing instance — from being
+re-pointed at the call's receiver. The **same** filling pass serves every Kotlin call site — a function call, a `new`,
 an array ctor, a lifted local/class `new`, a `: this(…)` / `: super(…)` **constructor delegation**, and an **enum
 entry**'s `NAME(args)` (including a per-entry body's base call) — so a class, data class, secondary constructor,
-delegation or enum entry omits such a default exactly as a function does.
+delegation or enum entry omits such a default exactly as a function does. (A .NET-interop call shape fills nothing
+here: `[DefaultParameterValue]` is native metadata and ilemit's call path backfills it.)
 
-**Known edge (single-eval):** the call-site rewrite duplicates the receiver / earlier-argument EXPRESSION into the
-spliced default, so a side-effecting receiver or argument read by a `= this` / `= a * 10` default is evaluated more
-than once (a data-class `copy`, `substringAfter`, or a plain variable/literal argument — the common case — is
-unaffected).
+**Known edge (single-eval):** the bound expression is SPLICED into the default, so a side-effecting receiver or
+argument read by a `= this` / `= a * 10` / `= outerProp` default is evaluated once per reading default in addition to
+its own use (a data-class `copy`, `substringAfter`, a plain variable/literal argument or enclosing instance — the
+common case — is unaffected). For an inner-class `new` that means the enclosing instance expression runs twice, so a
+side-effecting one can hand the constructor and the default two DIFFERENT instances. Single-eval would need a
+call-site temporary; the splice is deliberately expression-only.
 
 **#146 known gap (named, not silent):** a non-const default that references a PRIVATE/internal library symbol
 (`= privateHelper()`) is NOT poison-detected at stamp time — it is carried, then fails LOUDLY (imprecise) at the

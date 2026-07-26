@@ -92,24 +92,28 @@ import java.io.File
  *  bir2cir's DefaultArgSplice replaces it (by array index) from the callee's ref.dll @KotlinDefault / [DefaultParameterValue]. */
 private val defaultArgPlaceholder = """{"k":"defaultArg"}"""
 
-private val defaultArgThisToken = """{"k":"this"}"""
-
 /** Regular args, POSITIONALLY complete, filling omitted default arguments (IL has no default-parameter mechanism).
- *  ONE pass for every resolved-callee call shape — a function call, a `new`, an array ctor, a lifted local/class call.
- *  (A call to a facadegen-injected TOP-LEVEL function is filled by [filledInjectedArgs], which additionally reads the
- *  injected @KotlinDefault SLOTS the bodies-skipped dependency IR cannot carry.)
+ *  ONE pass for every KOTLIN call shape whose callee IR carries its defaults — a function call, a `new`, an array ctor,
+ *  a lifted local/class `new`, a constructor delegation, an enum entry. (Two neighbours do NOT come through here: a
+ *  call to a facadegen-injected TOP-LEVEL function is filled by [filledInjectedArgs], and a .NET-interop call shape
+ *  fills nothing at all — ilemit's `[DefaultParameterValue]` backfill serves it.)
  *  Fill source by default KIND: a same-module CONSTANT/global default is inlined verbatim; a same-module default that
- *  reads an earlier VALUE PARAMETER (`b: Int = a * 10`, a ctor's `h: Int = w * 2`) is inlined with each referenced
- *  param rewritten to THIS call's filled arg for it; a same-module default that reads the callee's RECEIVER
- *  (`missingDelimiterValue = this`, a data-class `copy`'s `y = this.y`) is inlined with `this` rewritten to THIS call's
- *  receiver (both are the JVM `$default` scope, done at the JSON level);
+ *  reads the callee's OWN SCOPE — an earlier VALUE PARAMETER (`b: Int = a * 10`, a ctor's `h: Int = w * 2`), the
+ *  RECEIVER (`missingDelimiterValue = this`, a data-class `copy`'s `y = this.y`), or an ENCLOSING instance
+ *  (`inner class In(val x: Int = outerProp)`) — is inlined with each such read bound BY SYMBOL to THIS call's
+ *  expression for it (the JVM `$default` scope, done at the JSON level);
  *  a CROSS-MODULE default (IrErrorExpression — the frontend artifact preserves no default VALUE) is filled from the
  *  facadegen metadata's constant (#134) if it has one, else becomes a `defaultArg` placeholder that bir2cir fills from
- *  the ref.dll @KotlinDefault (a FUNCTION's — `carriesKotlinDefault`, like the stamp side, describes an IrSimpleFunction,
- *  so a cross-module CONSTRUCTOR has no such carrier). A slot with neither is dropped when purely TRAILING (ilemit's
- *  [DefaultParameterValue] backfill fills it), and refused loudly when a LATER arg is provided (a "gap" — silently
- *  omitting it would shift the later arg into the wrong parameter slot: the joinToString/substringAfter miscompile). */
-internal fun BirEmitter.filledArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): List<String> {
+ *  the ref.dll @KotlinDefault. A slot with neither is dropped when purely TRAILING (ilemit's [DefaultParameterValue]
+ *  backfill fills it), and refused loudly when a LATER slot still emits (a "gap" — silently omitting it would shift
+ *  that value into the wrong parameter slot: the joinToString/substringAfter miscompile). */
+internal fun BirEmitter.filledArgs(
+	call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression,
+	/** The call's receiver JSON as the CALLER emits it for its own use (an inner-class `new` passes the enclosing
+	 *  instance as the leading arg). Shared so the expression is emitted ONCE — a second `expr()` of the same IR would
+	 *  append a second copy of any lifted lambda it contains. Lazy: neither side forces an emission it does not use. */
+	emittedRecv: Lazy<String?>? = null,
+): List<String> {
 	val callee = (call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction) ?: return emptyList()
 	val carries = (callee as? org.jetbrains.kotlin.ir.declarations.IrSimpleFunction)?.let { carriesKotlinDefault(it) } ?: false
 	// #134: the facadegen metadata's constant defaults for this callee's regular params, keyed by resolved IR identity —
@@ -119,21 +123,28 @@ internal fun BirEmitter.filledArgs(call: org.jetbrains.kotlin.ir.expressions.IrF
 	val metaDefaults: List<kotc.frontend.ClrConstDefault?>? by lazy {
 		injectedMetaDefaults(callee, callee.parameters.count { it.kind == IrParameterKind.Regular })
 	}
-	val receiverSyms = callee.parameters.filter {
+	// The non-constant @KotlinDefault carrier SLOTS facadegen restored for this callee. Unlike `carries` (an IR-shape
+	// test, so IrSimpleFunction-only) this is CONSTRUCTOR-aware, which is what lets a re-consumed ctor's non-constant
+	// default splice from the ref.dll like a function's.
+	val kotlinDefaultSlots: List<Boolean>? by lazy {
+		injectedKotlinDefaultSlots(callee, callee.parameters.count { it.kind == IrParameterKind.Regular })
+	}
+	val receiverParams = callee.parameters.filter {
 		it.kind == IrParameterKind.DispatchReceiver || it.kind == IrParameterKind.ExtensionReceiver
-	}.map { it.symbol }.toHashSet()
+	}
+	val receiverSyms = receiverParams.map { it.symbol }.toHashSet()
 	val valueSyms = callee.parameters.filter { it.kind == IrParameterKind.Regular }.map { it.symbol }.toHashSet()
 	val contextSyms = callee.parameters.filter { it.kind == IrParameterKind.Context }.map { it.symbol }.toHashSet()
-	// An INNER-class constructor's default may read an ENCLOSING instance (`inner class In(val x: Int = outerProp)`).
-	// That read is the enclosing class's own `thisReceiver` — NOT one of the ctor's parameters — so it is bound
-	// separately, by symbol, to the call's dispatch receiver (see [enclosingThisSubst]).
+	// A default may also read an ENCLOSING instance (`inner class In(val x: Int = outerProp)`, or a member of an inner
+	// class). That read is the enclosing class's own `thisReceiver` — NOT one of the callee's parameters — so it is
+	// bound separately (see [enclosingThisChain] / [enclosingThisSubst]).
 	val enclosingThis = enclosingThisChain(callee)
-	val enclosingSyms = enclosingThis.map { it.symbol }.toHashSet()
+	val enclosingSyms = enclosingThis.map { it.first.symbol }.toHashSet()
 	// The call's receiver expression (for `this`-referencing same-module defaults): the extension receiver if any, else
 	// the dispatch receiver (a data-class `copy` is a member, so its `this.y` default resolves to the dispatch receiver).
 	// Emitted lazily and reused per omitted default — single-eval is best-effort (a trivial local/this receiver is safe
 	// to duplicate; a side-effecting receiver read by several omitted defaults is a documented edge).
-	val recvJson: String? by lazy { (extensionReceiver(call) ?: dispatchReceiver(call))?.let { expr(it) } }
+	val recvJson: String? by lazy { emittedRecv?.value ?: (extensionReceiver(call) ?: dispatchReceiver(call))?.let { expr(it) } }
 	val regs = callee.parameters.mapIndexedNotNull { i, p -> if (p.kind == IrParameterKind.Regular) i to p else null }
 	val provided = regs.map { (i, _) -> if (i < call.arguments.size) call.arguments[i] else null }
 	val out = ArrayList<String>()
@@ -171,12 +182,15 @@ internal fun BirEmitter.filledArgs(call: org.jetbrains.kotlin.ir.expressions.IrF
 						// substringAfter's `= this`, `b = a * 10`) gets a POSITIONAL placeholder for EVERY omitted arg so a later
 						// provided arg (the trailing transform lambda) keeps its slot; bir2cir fills each from the ref.dll
 						// @KotlinDefault (its `{param n}` tokens → this call's args).
-						?: if (carries) defaultArgPlaceholder else {
+						?: if (kotlinDefaultSlots?.getOrNull(idx) == true || carries) defaultArgPlaceholder else {
 							// Neither a metadata constant NOR a @KotlinDefault carrier. A purely TRAILING omit is safe (ilemit's
-							// [DefaultParameterValue] backfill fills it). But if a LATER arg is provided, silently omitting THIS
-							// slot would slide that arg into the wrong parameter — refuse loudly instead of miscompiling.
-							val laterArgProvided = (pair.first + 1 until call.arguments.size).any { j ->
-								call.arguments[j] != null && callee.parameters[j].kind == IrParameterKind.Regular
+							// [DefaultParameterValue] backfill fills it). But if any LATER slot still EMITS — an explicitly
+							// provided arg, or one this pass fills from the metadata — silently omitting THIS slot would slide
+							// that value into the wrong parameter, so refuse loudly instead of miscompiling.
+							val laterArgProvided = regs.drop(idx + 1).withIndex().any { (k, later) ->
+								val j = later.first
+								(j < call.arguments.size && call.arguments[j] != null) ||
+									metaDefaults?.getOrNull(idx + 1 + k) != null
 							}
 							if (laterArgProvided) unsupported(call, "omitting a cross-module default argument the metadata does not carry",
 								"the default value of parameter '${p.name.asString()}' is not available as a constant in the referenced " +
@@ -184,37 +198,36 @@ internal fun BirEmitter.filledArgs(call: org.jetbrains.kotlin.ir.expressions.IrF
 							null
 						}
 					}
-					refsAny(def, valueSyms) || refsAny(def, enclosingSyms) -> {
-						// SAME-MODULE default reading the CALLEE'S OWN SCOPE — another VALUE parameter (`b: Int = a * 10`), or,
-						// for an inner-class ctor, an ENCLOSING instance (`inner class In(val x: Int = outerProp)`). Both are
-						// bound BY SYMBOL through captureSubst, so each read renders as THIS call's expression for that value:
-						// the $default-scope evaluation at the emitted-JSON level (the twin of the `= this` receiver case below).
-						// Best-effort single-eval: a side-effecting earlier arg / enclosing receiver read by this default is
-						// duplicated (documented edge, same as the receiver case).
+					refsAny(def, valueSyms) || refsAny(def, receiverSyms) || refsAny(def, enclosingSyms) -> {
+						// SAME-MODULE default reading the CALLEE'S OWN SCOPE — an earlier VALUE parameter (`b: Int = a * 10`,
+						// a ctor's `h: Int = w * 2`), the callee's RECEIVER (`missingDelimiterValue = this`, a data-class
+						// `copy`'s `y = this.y`), or an ENCLOSING instance (`inner class In(val x: Int = outerProp)`). Every one
+						// of them is bound BY SYMBOL through captureSubst, so each read renders as THIS call's expression for
+						// that exact value — the `$default` scope, at the emitted-JSON level. Binding by symbol (never a
+						// string rewrite of the emitted `{"k":"this"}` token) is what keeps a substituted expression that itself
+						// contains `this` — a `c.m(this.k)` argument, or the receiver expression bound for an enclosing
+						// instance — from being rewritten a second time into a wrong-receiver call.
+						// Best-effort single-eval: a side-effecting earlier arg / receiver read by this default is duplicated
+						// (documented edge, docs/dotkt-semantics.md §7).
 						val subst = ArrayList<Pair<IrValueDeclaration, String>>()
 						filledByParam.forEach { (vp, js) -> subst.add(vp to js) }
-						if (refsAny(def, enclosingSyms)) subst.addAll(enclosingThisSubst(enclosingThis, recvJson))
+						val needsRecv = refsAny(def, receiverSyms) || refsAny(def, enclosingSyms)
+						// The receiver is emitted ONLY for a default that actually reads it (or an enclosing instance): forcing
+						// it otherwise emits the receiver expression a second time — an inner-class `new` already emitted it as
+						// the enclosing-instance arg — leaking its lifted lambdas into the file class.
+						val r = if (needsRecv) recvJson else null
+						if (refsAny(def, receiverSyms)) receiverParams.forEach { rp -> r?.let { subst.add(rp to it) } }
+						subst.addAll(enclosingThisSubst(enclosingThis, r, callee is IrConstructor))
 						// Save and RESTORE — a callee parameter can already be a captureSubst key (a closure that captured it,
 						// re-entered through a recursive call in its own body); dropping that binding would emit a bare local
 						// the closure has no slot for.
 						val saved = java.util.IdentityHashMap<IrValueDeclaration, String?>()
-						subst.forEach { (d, js) -> if (!saved.containsKey(d)) saved[d] = captureSubst[d]; captureSubst[d] = js }
-						val raw = expr(def)
-						saved.forEach { (d, prev) -> if (prev != null) captureSubst[d] = prev else captureSubst.remove(d) }
-						// Such a default may ALSO read the callee's own RECEIVER (`b: Int = a + this.k`); rewrite that too. Only
-						// emit the receiver when the default actually carries the token: emitting it for a receiver-free default
-						// would duplicate the receiver EXPRESSION (an inner-class `new` already emitted it as the enclosing-
-						// instance arg) and leak its lifted lambdas into the file class for a string that is then discarded.
-						if (raw.contains(defaultArgThisToken)) recvJson?.let { raw.replace(defaultArgThisToken, it) } ?: raw
-						else raw
-					}
-					refsAny(def, receiverSyms) -> {
-						// SAME-MODULE default reading the RECEIVER (`= this` / `this.field`). Inline with `this` rewritten to
-						// THIS call's receiver — the $default-scope evaluation, at the emitted-JSON level. Every `this` in the
-						// callee's default denotes the callee's receiver, so replacing them ALL with this call's receiver is
-						// correct (an inserted `{"k":"this"}` from a `this.foo` receiver then denotes the CALLER's this).
-						val r = recvJson
-						if (r != null) expr(def).replace(defaultArgThisToken, r) else argExpr(def, p)
+						subst.forEach { (d, js) ->
+							if (!saved.containsKey(d)) saved[d] = captureSubst[d]
+							captureSubst[d] = js
+						}
+						try { expr(def) }
+						finally { saved.forEach { (d, prev) -> if (prev != null) captureSubst[d] = prev else captureSubst.remove(d) } }
 					}
 					// A default reading a callee parameter that is NEITHER a fillable value param NOR a rewritable receiver —
 					// a CONTEXT parameter, the only remaining IrParameterKind — has no call-site form: inlining it verbatim
@@ -240,33 +253,36 @@ internal fun BirEmitter.filledArgs(call: org.jetbrains.kotlin.ir.expressions.IrF
 internal fun BirEmitter.delegatedCtorArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): List<String> =
 	listOfNotNull(dispatchReceiver(call)?.let { expr(it) }) + filledArgs(call)
 
-/** The `this` of each class ENCLOSING an inner-class constructor's own class, innermost FIRST — the values an
- *  inner-class ctor default can read (`inner class In(val x: Int = outerProp)`). Empty for any other callee: only a
- *  constructor of an `inner` class carries an enclosing instance at its call site. */
-internal fun enclosingThisChain(callee: org.jetbrains.kotlin.ir.declarations.IrFunction): List<IrValueParameter> {
-	if (callee !is IrConstructor) return emptyList()
-	var cls = (callee.parent as? IrClass)?.takeIf { it.isInner } ?: return emptyList()
-	val out = ArrayList<IrValueParameter>()
-	while (true) {
+/** The `this` of each class ENCLOSING the callee's own class, innermost FIRST — the enclosing instances a default can
+ *  read (`inner class In(val x: Int = outerProp)`, or a member of an inner class). Each is paired with the INNER class
+ *  whose `__outer` capture field reaches it. Empty unless the callee's class is `inner`: without an enclosing instance
+ *  there is nothing to read. */
+internal fun enclosingThisChain(callee: org.jetbrains.kotlin.ir.declarations.IrFunction): List<Pair<IrValueParameter, IrClass>> {
+	var cls = callee.parent as? IrClass ?: return emptyList()
+	val out = ArrayList<Pair<IrValueParameter, IrClass>>()
+	while (cls.isInner) {
 		val outer = cls.parent as? IrClass ?: break
-		outer.thisReceiver?.let { out.add(it) }
-		if (!outer.isInner) break
+		outer.thisReceiver?.let { out.add(it to cls) }
 		cls = outer
 	}
 	return out
 }
 
-/** Each enclosing `this` of [chain] bound to the call-site expression that yields it: the IMMEDIATELY enclosing
- *  instance IS the ctor call's dispatch receiver, and each further level is reached through that level's `__outer`
- *  capture field — the same chain `innerClassDef` installs while emitting the class body. Empty when the call has no
- *  receiver expression to start the chain from. */
-internal fun BirEmitter.enclosingThisSubst(chain: List<IrValueParameter>, recv: String?): List<Pair<IrValueDeclaration, String>> {
+/** Each enclosing `this` of [chain] bound to the call-site expression that yields it. A CONSTRUCTOR's dispatch
+ *  receiver IS the enclosing instance (the `new`'s leading arg), so its first level needs no hop; a MEMBER's receiver
+ *  is an instance of the callee's own class, so every level is reached through that class's `__outer` capture field —
+ *  the same chain `innerClassDef` installs while emitting the class body. Empty when the call has no receiver
+ *  expression to start from. */
+internal fun BirEmitter.enclosingThisSubst(
+	chain: List<Pair<IrValueParameter, IrClass>>, recv: String?, calleeIsCtor: Boolean,
+): List<Pair<IrValueDeclaration, String>> {
 	var value = recv ?: return emptyList()
+	var hop = !calleeIsCtor
 	val out = ArrayList<Pair<IrValueDeclaration, String>>()
-	for (t in chain) {
+	for ((t, inner) in chain) {
+		if (hop) value = """{"k":"field","ownerType":${fqnJson(typeName(inner))},"recv":$value,"name":"__outer"}"""
+		hop = true
 		out.add(t to value)
-		val owner = t.parent as? IrClass ?: break
-		value = """{"k":"field","ownerType":${fqnJson(typeName(owner))},"recv":$value,"name":"__outer"}"""
 	}
 	return out
 }
