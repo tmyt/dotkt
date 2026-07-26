@@ -59,6 +59,16 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   that the packed nupkg really landed in its own hive, so an SDK that silently stopped honouring the switch cannot
   restore the race behind a green gate.
 
+- **kotc ([tmyt/dotkt#235], area:kotc): a constructor call may omit a default argument whose value reads an earlier
+  constructor parameter — `class Rect(val w: Int, val h: Int = w * 2)` + `Rect(3)` compiles and yields `h == 6`.**
+  kotc carried two default-argument filling passes: the one behind ordinary calls already inlined such a default with
+  each referenced parameter rewritten to that call's filled argument, while the one behind `new` / array constructors /
+  a lifted local class's `new` refused the identical shape. The constructor path is folded onto the single pass, so one
+  implementation now serves every call shape (and constructors additionally gain the arg-slot coercions and the
+  facadegen constant-default fill the call path already had). Covered by `tests/basic/fixtures/DefaultArgumentTests.kt`
+  (`defargsCtor`: plain class, data class, a default reading TWO earlier parameters, a later argument passed by name,
+  and a secondary constructor).
+
 ## 0.9.7 (2026-07-22)
 
 ### Added

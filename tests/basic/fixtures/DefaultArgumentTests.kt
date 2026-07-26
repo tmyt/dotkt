@@ -21,6 +21,15 @@ fun m2F(a: Int, b: Int = a * 10): Int = a + b
 fun m2G(x: Int, y: Int = x + 1): Int = x * y
 fun m2H(a: Int, b: Int = 3, c: Int = a + b): Int = a * 100 + b * 10 + c
 
+// #235: the CONSTRUCTOR shapes of the same defaults — a default that reads an EARLIER constructor parameter, in a
+// plain class, a data class, reading TWO earlier params, with a later arg passed by name, and on a secondary ctor.
+class M2Rect(val w: Int, val h: Int = w * 2)
+data class M2DRect(val w: Int, val h: Int = w * 3, val tag: String = "d")
+class M2Tri(val a: Int, val b: Int = a + 1, val c: Int = a * 10 + b)
+class M2Sec(val v: Int) {
+    constructor(a: Int, b: Int, c: Int = a * 5) : this(a + b + c)
+}
+
 class DefaultArgumentTests {
     @TestAttribute
     fun defargs() {
@@ -49,5 +58,23 @@ class DefaultArgumentTests {
         assertEquals(134, m2H(1))       // 134
         assertEquals(156, m2H(1, 5))    // 156
         assertEquals(159, m2H(1, 5, 9)) // 159
+    }
+
+    // #235: a constructor default that reads an earlier constructor parameter is filled at the omitting `new`,
+    // exactly as the function-path defaults above are — one default-filling pass serves both.
+    @TestAttribute
+    fun defargsCtor() {
+        assertEquals(6, M2Rect(3).h)                                    // w * 2
+        assertEquals(5, M2Rect(3, 5).h)                                 // provided, not defaulted
+        assertEquals("M2DRect(w=2, h=6, tag=d)", M2DRect(2).toString())
+        assertEquals("M2DRect(w=2, h=6, tag=z)", M2DRect(2, tag = "z").toString())   // later arg by NAME keeps its slot
+        assertEquals("M2DRect(w=4, h=6, tag=d)", M2DRect(2).copy(w = 4).toString())  // copy's own self-defaults still fill
+        val t = M2Tri(2)
+        assertEquals(3, t.b)                                            // a + 1
+        assertEquals(23, t.c)                                           // a * 10 + b, reading TWO earlier params
+        val t2 = M2Tri(2, 10)
+        assertEquals(30, t2.c)                                          // a * 10 + b, b provided
+        assertEquals(8, M2Sec(1, 2).v)                                  // secondary ctor: c = a * 5 -> 1 + 2 + 5
+        assertEquals(6, M2Sec(1, 2, 3).v)                               // secondary ctor, c provided
     }
 }
