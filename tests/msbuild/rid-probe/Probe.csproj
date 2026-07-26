@@ -1,0 +1,21 @@
+<!-- Builds ONE variant of the RID probe assemblies consumed by the cross-target scenario in
+     tests/msbuild/run.sh.  The gate invokes it four times with $(ProbeAssemblyName) / $(ProbeFamily) /
+     $(ProbeFull) and a per-variant $(BaseIntermediateOutputPath), because two variants deliberately share an
+     assembly IDENTITY and only differ by a preprocessor symbol — a shared obj/ would hand the second build
+     the first build's up-to-date output. -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>$(ProbeAssemblyName)</AssemblyName>
+    <RootNamespace>DotKt.Tests.Rid</RootNamespace>
+    <Version>1.0.0</Version>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <IsPackable>false</IsPackable>
+    <DefineConstants Condition="'$(ProbeFamily)' == 'true'">$(DefineConstants);FAMILY</DefineConstants>
+    <DefineConstants Condition="'$(ProbeFull)' == 'true'">$(DefineConstants);FULL</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Probe.cs" />
+  </ItemGroup>
+</Project>
