@@ -42,6 +42,22 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   user types keep their namespace-qualified identity. A separately compiled Kotlin consumer now retains generic
   inference and member types instead of seeing `Any?`, while metadata regressions cover raw fields and same-simple-name
   types directly. Bare top-level `T?` remains the distinct dual-representation work tracked by #86.
+  
+ - **packaged-SDK gate ([tmyt/dotkt#250], area:packaging): each `dotnet new` template case now gets its own scratch
+  hive, so concurrent worktree gates no longer false-RED each other.** `tests/packaged-sdk/run.sh` isolated NuGet
+  state but installed/uninstalled `DotKt.Templates` in the machine-global template store under `$HOME`. Two
+  `make verify` runs in different worktrees carry the same package id at the same version, so one run's `--force`
+  reinstall or its cleanup uninstall landed between the other's install and its scaffold — reported as
+  `ThrowMoreThanOneMatchException` / "Could not find the template package containing template 'DotKt.Templates.Cli'"
+  on a gate that had nothing wrong with it. Every `dotnet new` invocation now goes through a `dotnet_new` helper that
+  passes `--debug:custom-hive` pointing at the case's own hive inside the run's scratch workspace, which is wiped at
+  the start of each run: nothing is installed into or uninstalled from the machine-global store any more, and the
+  uninstall trap that existed only to keep it clean is gone with it. The hive is per case rather than per run because
+  installing a package a hive already carries is either a hard error or, with `--force`, a second registration for the
+  same id that makes every later scaffold ambiguous with the very same error — which the old cross-case uninstall had
+  been hiding. `--force` goes with it, since a fresh hive never has anything to force over. Each case also asserts
+  that the packed nupkg really landed in its own hive, so an SDK that silently stopped honouring the switch cannot
+  restore the race behind a green gate.
 
 ## 0.9.7 (2026-07-22)
 
