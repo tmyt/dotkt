@@ -29,7 +29,7 @@ You do not produce CIL (ilemit) and you do not parse Kotlin source (kotc). You o
 ## Gotchas
 
 - Prefer an `@ClrIntrinsic` substitution to a compiler lowering; only genuine primitive IL ops stay lowered.
-- `@ClrIntrinsic` naming: a property takes the bare name ("Length"); an indexer or method takes the accessor name.
+- `@ClrIntrinsic` naming: a property takes the bare name ("Length"); an indexer takes the accessor name ("get_Item"/"set_Item"); a method takes the method name.
 
 ## Reporting back
 
