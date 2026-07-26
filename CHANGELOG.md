@@ -18,6 +18,17 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   the host RID and requires that replay to fail, so the assertion cannot pass vacuously. Previously the RID flow
   was only exercised at the host RID and cross-target selection had been confirmed by hand.
 ### Fixed
+- **bir2cir/ilemit ([tmyt/dotkt#46], area:bir2cir, area:ilemit): calls into referenced Kotlin helpers
+  now carry and link the physical declaration signature instead of falling back to a same-name/same-arity method.**
+  bir2cir preserves the frontend Kotlin descriptor before nullable-generic erasure, resolves the referenced
+  declaration after owner attribution, then carries that declaration through actual/type-alias lowering; synthesized
+  alias helpers likewise carry their flattened method type-variable scope. ilemit consumes that physical signature
+  exactly. In particular,
+  `Collection<T>.maxOrNull()` from inside a generic function keeps its `IEnumerable<T>` descriptor and cannot
+  silently bind the neighboring `IEnumerable<Double>` overload. A missing descriptor match is now a link-time ABI
+  error; the former standalone known-failure is an in-process NUnit regression covering concrete, value-generic,
+  and reference-generic calls.
+
 - **bir2cir ([tmyt/dotkt#228], area:bir2cir): an auto-property no longer emits a same-named field, so
   reflection-driven .NET libraries (JSON.NET) can serialize a Kotlin type again.** An accessor-routed property
   emitted its backing field under the property's own name, so the CLR type carried `Value` as BOTH a property and a

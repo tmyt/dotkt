@@ -22,6 +22,8 @@ using DotKt.Bir;
 // exactly as ilemit's GenericParamMatches `ownerArgs` branch does with reflected Types.
 static partial class ClrMemberResolution
 {
+    static readonly Dictionary<JsonObject, JsonArray> KotlinSigSnapshots =
+        new(ReferenceEqualityComparer.Instance);
     static ReferenceMetadataIndex _refs;
     static IReadOnlySet<string> _localEnums = new HashSet<string>();
 
@@ -29,7 +31,8 @@ static partial class ClrMemberResolution
     // stdlib enum like RegexOption is in the ref.dll and resolves concretely, never via the enum-reinterpret fallback).
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs, IReadOnlySet<string> localEnums)
     {
-        _refs = refs; _localEnums = localEnums ?? new HashSet<string>();
+        _refs = refs;
+        _localEnums = localEnums ?? new HashSet<string>();
         ResolveExternalClassOverrides(root);
         Walk(root);
     }
@@ -66,6 +69,89 @@ static partial class ClrMemberResolution
             case "field": ResolveFieldAccess(node, write: false); break;
             case "setFieldExpr": ResolveFieldAccess(node, write: true); break;
             case "setField": ResolveFieldAccess(node, write: true); break;
+        }
+    }
+
+    // A plain top-level/static Kotlin call into a referenced assembly is already attributed to its file class by
+    // MemberCallSubstitution (`owner`) or the frontend provenance carry (`calleeOwner`). Replace the frontend call-site
+    // `sig` with the referenced declaration's physical signature so ilemit links that exact slot. This is the plain-
+    // call counterpart of `memberSig` on clr* nodes: no CLR policy is inferred by ilemit, and no arity fallback is
+    // needed. Local same-assembly calls are absent from the reference index and remain unchanged.
+    public static void ResolveReferencedStaticCalls(JsonNode root, ReferenceMetadataIndex refs)
+    {
+        _refs = refs;
+        WalkReferencedStaticCalls(root);
+        DropKotlinSigSnapshots(root);
+    }
+
+    // Nullable-generic/function erasure runs before top-level owner attribution. Preserve the frontend-resolved
+    // descriptor out-of-band across those transforms; no temporary compiler field enters BIR or CIR.
+    public static void CaptureReferencedStaticCallSignatures(JsonNode node)
+    {
+        if (node is JsonObject obj)
+        {
+            if ((obj["k"] as JsonValue)?.GetValue<string>() == "callStatic"
+                && obj["sig"] is JsonArray sig && !KotlinSigSnapshots.ContainsKey(obj))
+                KotlinSigSnapshots.Add(obj, (JsonArray)sig.DeepClone());
+            foreach (var kv in obj.ToList())
+                if (kv.Value != null) CaptureReferencedStaticCallSignatures(kv.Value);
+        }
+        else if (node is JsonArray arr)
+        {
+            foreach (var item in arr.ToList())
+                if (item != null) CaptureReferencedStaticCallSignatures(item);
+        }
+    }
+
+    static void WalkReferencedStaticCalls(JsonNode node)
+    {
+        if (node is JsonObject obj)
+        {
+            foreach (var kv in obj.ToList())
+                if (kv.Value != null) WalkReferencedStaticCalls(kv.Value);
+            if ((obj["k"] as JsonValue)?.GetValue<string>() == "callStatic")
+                ResolveReferencedStaticCall(obj);
+        }
+        else if (node is JsonArray arr)
+        {
+            foreach (var item in arr.ToList())
+                if (item != null) WalkReferencedStaticCalls(item);
+        }
+    }
+
+    static void ResolveReferencedStaticCall(JsonObject node)
+    {
+        var ownerNode = node["owner"] is JsonNode owner && owner.GetValueKind() != System.Text.Json.JsonValueKind.Null
+            ? owner
+            : node["calleeOwner"];
+        if (ReadOwnerNode(ownerNode) is not TypeNode.Fqn ownerFqn
+            || (node["method"] as JsonValue)?.TryGetValue<string>(out var name) != true
+            || node["sig"] is not JsonArray sig)
+            return;
+        var selectionSig = sig;
+        if (KotlinSigSnapshots.TryGetValue(node, out var snapshot))
+            selectionSig = snapshot;
+        var callSig = selectionSig.Select(TypeJson.Read).Where(t => t != null).ToArray();
+        if (callSig.Length != selectionSig.Count) return;
+        var methodArity = (node["typeArgs"] as JsonArray)?.Count ?? 0;
+        if (!_refs.TryResolveStaticMemberSignature(
+                ownerFqn.Name, name, methodArity, callSig, out var declarationSig))
+            return;
+        node["sig"] = new JsonArray(declarationSig.Select(TypeJson.Write).ToArray());
+    }
+
+    static void DropKotlinSigSnapshots(JsonNode node)
+    {
+        if (node is JsonObject obj)
+        {
+            KotlinSigSnapshots.Remove(obj);
+            foreach (var kv in obj.ToList())
+                if (kv.Value != null) DropKotlinSigSnapshots(kv.Value);
+        }
+        else if (node is JsonArray arr)
+        {
+            foreach (var item in arr.ToList())
+                if (item != null) DropKotlinSigSnapshots(item);
         }
     }
 

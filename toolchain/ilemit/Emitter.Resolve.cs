@@ -605,12 +605,16 @@ sealed partial class Emitter
             if (ext == null) return null;
             // A referenced file-class can carry several overloads that share name AND arity but differ in PARAM TYPES —
             // e.g. the stdlib's String-face `StringsKt.substring(String,int,int)` vs its CharSequence-face
-            // `substring(dotkt$CharSequence,int,int)`, or `trim(String)` vs `trim(dotkt$CharSequence)`. Arity alone
-            // then picks arbitrarily (reflection order) -> the wrong body runs (a String passed where the CharSequence
-            // interface is expected -> EntryPointNotFound). Resolve by the FULL `sig` first (the same signature-keyed
-            // disambiguation the in-`_types` path does via MethodsBySig); fall back to the arity pick on any miss.
+            // `substring(dotkt$CharSequence,int,int)`, or the generic
+            // `maxOrNull<T>(IEnumerable<T>)` beside `maxOrNull(IEnumerable<Double>)`. A carried `sig` is the resolved
+            // descriptor: consume it exactly and fail loud on a miss instead of re-resolving by arity. Only descriptor-
+            // free legacy calls may use the name/arity lookup.
             var extArgc = sig?.Length ?? -1;
-            return FindReflectedMethodBySig(ext, name, sig) ?? FindReflectedMethod(ext, name, extArgc);
+            if (sig != null)
+                return FindReflectedMethodBySig(ext, name, sig)
+                    ?? throw new NotSupportedException(
+                        $"method {typeName}.{SigKey(name, sig)} was not found through its carried signature");
+            return FindReflectedMethod(ext, name, extArgc);
         }
         // Walk this type's own members, then its EMITTED base/interface chain. If the base is NOT emitted here (an
         // external .NET base, e.g. an emitted class extending a BCL type), fall through to a reflected lookup on the
@@ -809,9 +813,9 @@ sealed partial class Emitter
 
     // Sig-aware overload pick on a REFERENCED file-class: several methods can share name+arity but differ in PARAM
     // TYPES (a String-face vs a `dotkt$CharSequence`-face stdlib extension). Match each `sig` type node against a
-    // reflected overload's parameters; return the UNIQUE match, or null on a miss/ambiguity so the caller falls back to
-    // the arity pick (never a regression — this only ADDS disambiguation). An open node (a `Tv`, a not-yet-emitted type)
-    // matches structurally, so a genuine generic overload is still selected.
+    // reflected overload's parameters; return the unique structural link or null on a miss. Callers with a carried
+    // signature treat null as an ABI mismatch and must not fall back to a name/arity pick. An open node (a `Tv`, a
+    // not-yet-emitted type) matches structurally, so a genuine generic overload is still selected.
     MethodInfo FindReflectedMethodBySig(Type ext, string name, DotKt.Bir.TypeNode[] sig)
     {
         if (sig == null) return null;

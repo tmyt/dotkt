@@ -870,6 +870,93 @@ sealed partial class ReferenceMetadataIndex
     public bool TryResolveTopLevelStatic(string funName, string recvKey, out string owner) =>
         TryResolveTopLevelStatic(funName, recvKey, null, out owner);
 
+    // Resolve the declaration signature of an already-attributed referenced static call while its frontend Kotlin
+    // descriptor is still available. That descriptor can differ from the metadata declaration at an intentional
+    // erasure seam (`generateSequence(seed: T?, next: (T)->T?)` reflects as `T, Func<T,object>`). Method generic arity
+    // + parameter count normally identify one overload; when several remain, accept an exact/ABI-equivalent semantic
+    // shape only. Identical duplicate declarations collapse to one structural shape. No first-pick is performed.
+    public bool TryResolveStaticMemberSignature(string ownerFqn, string name, int methodArity,
+        IReadOnlyList<TypeNode> callSignature, out TypeNode[] declarationSignature)
+    {
+        declarationSignature = null;
+        if (ownerFqn == null || name == null || callSignature == null)
+            return false;
+        var bareOwner = BareOwnerFqn(ownerFqn);
+        var ownerArity = _ownerArity.TryGetValue(bareOwner, out var oa) ? oa : 0;
+        var owner = ResolveRefType(bareOwner, ownerArity);
+        if (owner == null)
+            return false;
+        var candidates = owner.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
+            .Where(m => m.Name == name && m.GetGenericArguments().Length == methodArity
+                && m.GetParameters().Length == callSignature.Count)
+            .Select(m => m.GetParameters().Select(p => DeclarationTypeNode(p.ParameterType)).ToArray())
+            .Where(ps => ps.All(p => p != null))
+            .ToList();
+        if (candidates.Count == 0)
+            return false;
+
+        var exact = candidates.Where(ps => ps.SequenceEqual(callSignature)).ToList();
+        var compatible = exact.Count > 0
+            ? exact
+            : candidates.Where(ps => ps.Select((p, i) => DeclarationDescribesCall(p, callSignature[i])).All(x => x))
+                .ToList();
+        var source = compatible.Count > 0 ? compatible : candidates;
+        var shapes = source
+            .GroupBy(ps => string.Join(",", ps.Select(TypeNode.ToJson)), StringComparer.Ordinal)
+            .Select(g => g.First())
+            .ToList();
+        if (shapes.Count != 1)
+            return false;
+        declarationSignature = shapes[0];
+        return true;
+    }
+
+    // BIR's resolved Kotlin descriptor can retain semantic nullability that the metadata-only ref declaration has
+    // already erased (`T?` parameter -> !!T, function return T? -> object). Compare only those ABI-equivalent seams;
+    // nominal/function shape and Tv scope/index remain exact so sibling overloads cannot collapse.
+    static bool DeclarationDescribesCall(TypeNode declaration, TypeNode call)
+    {
+        if (declaration == call) return true;
+        if (declaration is TypeNode.Oblivious dOb)
+            return DeclarationDescribesCall(dOb.Of, call);
+        if (call is TypeNode.Oblivious cOb)
+            return DeclarationDescribesCall(declaration, cOb.Of);
+        if (call is TypeNode.Nullable cNull)
+        {
+            if (declaration is TypeNode.Tv dt && cNull.Of == dt) return true;
+            if (declaration is TypeNode.Fqn df && cNull.Of is TypeNode.Fqn cf)
+                return DeclarationDescribesCall(df, cf);
+        }
+        if (declaration is TypeNode.Fqn { Args: null } erased
+            && ParamKey(erased) == "obj"
+            && call is TypeNode.Nullable { Of: TypeNode.Tv })
+            return true;
+        if (declaration is TypeNode.Fqn dfqn && call is TypeNode.Fqn cfqn)
+        {
+            if (ParamKey(dfqn) != ParamKey(cfqn)) return false;
+            if (dfqn.Args == null || cfqn.Args == null) return dfqn.Args == null && cfqn.Args == null;
+            return dfqn.Args.Length == cfqn.Args.Length
+                && dfqn.Args.Select((p, i) => DeclarationDescribesCall(p, cfqn.Args[i])).All(x => x);
+        }
+        if (declaration is TypeNode.Nullable dn && call is TypeNode.Nullable cn)
+            return DeclarationDescribesCall(dn.Of, cn.Of);
+        if (declaration is TypeNode.Array da && call is TypeNode.Array ca)
+            return DeclarationDescribesCall(da.Elem, ca.Elem);
+        if (declaration is TypeNode.ByRef db && call is TypeNode.ByRef cb)
+            return DeclarationDescribesCall(db.Of, cb.Of);
+        if (declaration is TypeNode.Fn dfn && call is TypeNode.Fn cfn)
+        {
+            if (dfn.Suspend != cfn.Suspend || dfn.Params.Length != cfn.Params.Length) return false;
+            if (dfn.Clr != null && cfn.Clr != null && dfn.Clr != cfn.Clr) return false;
+            return DeclarationDescribesCall(dfn.Ret, cfn.Ret)
+                && dfn.Params.Select((p, i) => DeclarationDescribesCall(p, cfn.Params[i])).All(x => x)
+                && (dfn.Recv == null
+                    ? cfn.Recv == null
+                    : cfn.Recv != null && DeclarationDescribesCall(dfn.Recv, cfn.Recv));
+        }
+        return false;
+    }
+
     public bool TryResolveTopLevelStatic(string funName, string recvKey, string firstParamKey, out string owner)
     {
         owner = null;
@@ -1741,8 +1828,11 @@ sealed partial class ReferenceMetadataIndex
 
     static string StripGenericArity(string value)
     {
-        var idx = value.IndexOf('`');
-        return idx >= 0 ? value[..idx] : value;
+        if (value == null || value.IndexOf('`') < 0) return value;
+        // A nested generic reflection name has one arity suffix per generic segment
+        // (`Map`2+Map$Entry`2`). Truncating at the first backtick collapses the nested declaration to its outer owner
+        // and can then apply the outer owner's @ClrTypeAlias to a member signature. Remove only each `N suffix.
+        return System.Text.RegularExpressions.Regex.Replace(value, @"`\d+", "");
     }
 
     // The nested-type separator normalizer: a reflected FullName uses `+` between an enclosing type and its nested type
