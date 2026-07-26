@@ -115,7 +115,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   (`ReferenceMetadataIndex` now scans `GetConstructors` alongside `GetMethods`), and the stamped index is the parameter's
   position in the emitted constructor's own parameter list. Both constructors and methods are additionally keyed by the
   declared parameter VECTOR, so two same-arity overloads carrying different defaults resolve their own instead of the
-  arity key serving whichever declaration the metadata scan reached last; a pair the key cannot separate is refused.
+  arity key serving whichever declaration the metadata scan reached first; a pair the key cannot separate is refused.
   Lower slots fill first, so a chain fills too
   (`class Tri(a, b = a + 1, c = a * 100 + b)` consumed as `Tri(2)` gives `c == 203`). A metadata-representable (Tier-1)
   constant still fills from the facadegen metadata and never becomes a placeholder; a ctor default reading an enclosing

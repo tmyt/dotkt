@@ -820,7 +820,10 @@ its evaluation ahead of the call, so every non-stable value to its LEFT is bound
 This holds at every call site that fills a default, including the two that ride a DECLARATION rather than an expression —
 a constructor **DELEGATION** (`: this(…)` / `: super(…)`) and an **ENUM ENTRY**'s `NAME(args)`, whose temporaries are
 declared by the first argument (a `var` declares an ordinary method-body local, and the first argument is evaluated
-before every later one, so a later read is in scope and in order).
+before every later one, so a later read is in scope and in order). Cross-module those two are filled by a separate walk
+over the constructor declarations, since neither is a call node. The one escape is deliberate: when some value in the
+bound range carries no usable type — a `byref` slot, an open generic slot, a synthesized operand with no type at all —
+NOTHING is bound, because a partial hoist would reorder the call, which is worse than the double evaluation it removes.
 
 The paths bind at different points, because they know different things. SAME-MODULE, kotc has the default's IR and hoists
 before emitting (`evalOnceSubst`, keyed by IR-node identity, so it can leave an immutable local or parameter read spliced

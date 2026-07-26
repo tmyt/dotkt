@@ -193,6 +193,14 @@ sealed partial class ReferenceMetadataIndex
                 if (parts.Length != 3 || parts[1] == CtorKeyName) continue;
                 var np = parts[1] + "|" + parts[2];
                 if (_kotlinDefaultsAmbiguous.Contains(np)) continue;
+                // The OWNERFUL key is already known to be carried by two declarations that disagree, so the ownerless
+                // fold of it cannot identify one either — mark it rather than folding the first-seen declaration in.
+                if (asm.DotKt.KotlinDefaultsConflicted.Contains(kv.Key))
+                {
+                    _kotlinDefaultsOwnerless.Remove(np);
+                    _kotlinDefaultsAmbiguous.Add(np);
+                    continue;
+                }
                 if (_kotlinDefaultsOwnerless.TryGetValue(np, out var have))
                 {
                     if (!SameDefaults(have, kv.Value)) { _kotlinDefaultsOwnerless.Remove(np); _kotlinDefaultsAmbiguous.Add(np); }
@@ -1594,10 +1602,23 @@ sealed partial class ReferenceMetadataIndex
 
     static string RelaxToken(string token)
     {
-        foreach (var w in new[] { "byref:", "array:", "nullable:" })
+        foreach (var w in new[] { "byref:", "array:" })
             if (token.StartsWith(w, StringComparison.Ordinal)) return w + RelaxToken(token[w.Length..]);
+        // NULLABILITY is asymmetric across the two spaces for a REFERENCE type: Kotlin's `String?` is a call-side
+        // `nullable:str` but lowers to a plain `System.String` (its nullability rides [Nullable]), so the reference side
+        // reads `str`. A nullable VALUE type is `System.Nullable<T>` on both sides and keeps the wrapper.
+        if (token.StartsWith("nullable:", StringComparison.Ordinal))
+        {
+            var inner = RelaxToken(token["nullable:".Length..]);
+            return ValueTokens.Contains(inner) ? "nullable:" + inner : inner;
+        }
         return token.Contains('.') ? "ref" : token;
     }
+
+    // The [ParamKey] tokens for CLR value types — everything else is a reference (`str`, `obj`, `func`, `gp`, `ref`, a
+    // dotless class name), for which a `nullable:` wrapper does not survive lowering.
+    static readonly HashSet<string> ValueTokens = new(StringComparer.Ordinal)
+        { "i8", "i16", "i32", "i64", "f32", "f64", "bool", "char", "void", "byte", "ushort", "uint", "ulong" };
 
     /// Record one declaration's @KotlinDefault carriers under BOTH keys the splice can look up: `owner|name|arity|sigKey`
     /// (the exact overload — a call site reproduces that signature from its own declared parameter vector) and
