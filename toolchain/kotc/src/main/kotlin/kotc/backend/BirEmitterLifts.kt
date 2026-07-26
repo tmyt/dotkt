@@ -280,7 +280,7 @@ internal fun BirEmitter.lambda(node: IrFunctionExpression): String {
 	// closure's own `this`). For a CPS suspend lambda the closure `invoke` is an INSTANCE coroutine; ilemit
 	// captures the closure `this` into the state machine so resume can still read the captured-var fields.
 	val cname = "dotkt\$${synthScope}\$Closure${closureCounter++}"
-	val capPairs = captures.map { it to captureFieldName(it) }
+	val capPairs = uniqueCaptureNames(captures)
 	// Save any prior substitution for each captured decl so the OUTER binding (e.g. an intrinsic block's `c`
 	// bound to the coroutine's own continuation) is restored after the body — not blown away — so the capture
 	// VALUE (capValueExpr below) is still evaluated correctly in the enclosing context.
@@ -435,10 +435,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 	// CIR invariant rather than falling back to a global first match.
 	// The substitution axis is unchanged: a delegate over a top-level fun stays owner-less (no `owner` field here).
 	// `::localFun` — a reference to a LOCAL fun, which is not a file-class member under its own name: it was lifted to
-	// a static `__localN_<name>` whose captures are leading params. With no captures the delegate targets that lifted
-	// method directly (the same shape the lifted-lambda path emits). WITH captures the delegate's arity cannot match —
-	// the target needs the captured values bound, which is a closure, not a static method reference — so refuse rather
-	// than emit a call the arity of which is wrong.
+	// a static `__localN_<name>` whose captures are leading params.
 	localFns[fn]?.let { (lname, caps, tps) ->
 		val typeArgs = if (tps.isEmpty()) "" else ""","typeArgs":[${tps.joinToString(",") { tvOf(it).toJson() }}]"""
 		// No captures: the delegate targets the lifted static directly.
@@ -446,14 +443,14 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			return """{"k":"newDelegate","method":${str(lname)},"funcType":${funcTypeOf(fn).toJson()}$typeArgs${localCalleeOwnerTag()}}"""
 		// WITH captures the delegate's arity cannot match the lifted static's (captures ride ahead of the declared
 		// params), so the reference is a CLOSURE over those values whose `invoke` forwards to the lift — the same
-		// `{ args -> bump(args) }` the user could write by hand, and the same `synthClass` ingredients the lambda path
-		// emits. A GENERIC lift is excluded for now: the closure class would have to re-declare the lift's own type
-		// params and the two frames must agree, which is the open frame problem recorded at `bodyTypeOperands`.
+		// `{ args -> bump(args) }` the user could write by hand, built from the same `synthClass` ingredients as the
+		// lambda path minus its generic half: a GENERIC lift is excluded here, because the closure class would also
+		// have to re-declare the lift's own type params and pass them at the inner call.
 		if (tps.isNotEmpty())
 			return unsupported(node, "a reference to a generic local function that captures values",
 				"call it directly, or wrap it in a lambda (`{ … -> ${fn.name.asString()}(…) }`)")
 		val cname = "dotkt\$${synthScope}\$Closure${closureCounter++}"
-		val capPairs = caps.map { it to captureFieldName(it) }
+		val capPairs = uniqueCaptureNames(caps)
 		val fields = capPairs.joinToString(",") { (decl, fname) ->
 			"""{"name":${str(fname)},"type":${str(captureFieldType(decl))}}"""
 		}
@@ -1151,12 +1148,46 @@ internal fun BirEmitter.captureFieldName(d: IrValueDeclaration): String =
  * silently. Prefix a colliding capture into a namespace Kotlin source cannot spell. `__outer` is left alone — the
  * suspend lowerings key their enclosing-instance handling on that exact name.
  */
+/**
+ * Capture (decl, name) pairs with each name made unique against [taken] and against the pairs already produced.
+ *
+ * A capture keeps its own Kotlin name — that is what every existing lift emits, and what a reader expects to see —
+ * unless something else already owns that name in the same namespace, in which case it moves into a `cap$` prefix
+ * Kotlin source cannot spell. Two things make a collision reachable: the lift puts the captures beside declarations
+ * the lifted entity already has (a class's own fields and constructor parameters; a lifted local fun's own value
+ * parameters), and a capture list can now hold two DIFFERENT outer declarations of the SAME name, because reaching a
+ * local `fun` or local class captures transitively through it. `__outer` is never renamed: the suspend lowerings key
+ * their enclosing-instance handling on that exact name, and it cannot collide with a capture.
+ */
+internal fun BirEmitter.uniqueCaptureNames(
+	captured: List<IrValueDeclaration>, taken: MutableSet<String> = HashSet(),
+): List<Pair<IrValueDeclaration, String>> {
+	// Uniquing the names INSIDE the lift is not enough when two captures are two DIFFERENT declarations that share a
+	// Kotlin name: the capture VALUES are read in the enclosing frame, where kotc addresses a local by that name
+	// (`capValueExpr`'s fallback), so both read whichever one is in scope there and the other's writes are lost. That
+	// is a wrong answer with no diagnostic, so refuse instead. Fixing it means giving the emitter a per-frame local
+	// uniquer — every `var` emission and every by-name read — which is a wider change than the capture path.
+	captured.groupBy { it.name.asString() }.values.firstOrNull { it.size > 1 }?.let { clash ->
+		unsupported(clash.first(), "capturing two different declarations both named `${clash.first().name.asString()}`",
+			"kotc addresses a captured local by its Kotlin name, so the two are indistinguishable at the capture site; " +
+				"rename one of them")
+	}
+	return captured.map { decl ->
+		val name = captureFieldName(decl)
+		val unique = if (name == "__outer") name
+			else generateSequence(0) { it + 1 }
+				.map { if (it == 0) name else if (it == 1) "cap\$$name" else "cap\$$name\$${it - 1}" }
+				.first { it !in taken }
+		taken.add(unique)
+		decl to unique
+	}
+}
+
+/** [uniqueCaptureNames] for a lifted CLASS: its captures become fields beside the class's own fields, and leading
+ *  parameters of every constructor beside that constructor's own parameters. */
 internal fun BirEmitter.captureFieldPairs(
 	klass: IrClass, captured: List<IrValueDeclaration>,
 ): List<Pair<IrValueDeclaration, String>> {
-	// Everything the capture names share a namespace with: the class's own fields, the constructor parameters they are
-	// prepended to (a ctor param need not have a backing field), and each other — two DIFFERENT outer declarations can
-	// both be called `n` and both be captured, now that reaching a local `fun` or local class captures transitively.
 	val taken = HashSet<String>()
 	klass.declarations.forEach { d ->
 		when (d) {
@@ -1166,15 +1197,7 @@ internal fun BirEmitter.captureFieldPairs(
 			else -> {}
 		}
 	}
-	return captured.map { decl ->
-		val name = captureFieldName(decl)
-		// `__outer` is left alone: the suspend lowerings key their enclosing-instance handling on that exact name.
-		val unique = if (name == "__outer") name else generateSequence(0) { it + 1 }
-			.map { if (it == 0) "cap\$$name" else "cap\$$name\$$it" }
-			.first { it !in taken }
-		taken.add(unique)
-		decl to unique
-	}
+	return uniqueCaptureNames(captured, taken)
 }
 
 /** A capture's value at the `new` site (in the enclosing context): the outer `this`, or an outer local. */
@@ -1272,15 +1295,10 @@ internal fun BirEmitter.liftLocalFn(fn: IrSimpleFunction) {
 		captures.map { it.type } + ownValueParams.map { it.type } + listOf(fn.returnType) + bodyTypeOperands(fn))
 	localFns[fn] = Triple(lname, captures, freeTps)
 	fun pj(name: String, t: IrType) = """{"name":${str(name)},"type":${birType(t).toJson()}}"""
-	// Unlike a closure class, whose captures become FIELDS, this lift puts them in the method's PARAMETER namespace
-	// beside the fn's own params and body locals. A transitive capture arrives from ANOTHER body, where its name may
-	// resolve to a different declaration than it does here (`fun bump() { n++ }` called by `fun addTwice(n: Int)`), so
-	// the raw Kotlin name would emit two params called `n` and bind the wrong one. Prefix them into a namespace Kotlin
-	// source cannot spell. The enclosing `this` keeps `__outer`: the suspend lowerings key their enclosing-instance
-	// handling on that exact descriptor name, and no capture can collide with it.
-	fun capParamName(d: IrValueDeclaration) =
-		if (d.name.asString() == "<this>") "__outer" else "cap\$${d.name.asString()}"
-	val capPairs = captures.map { it to capParamName(it) }
+	// This lift puts the captures in the method's PARAMETER namespace, beside the fn's own value params — and a
+	// transitive capture arrives from ANOTHER body, where its name may resolve to a different declaration than it does
+	// here (`fun bump() { n++ }` called by `fun addTwice(n: Int)`). Uniquing keeps the wrong binding from happening.
+	val capPairs = uniqueCaptureNames(captures, ownValueParams.mapTo(HashSet()) { it.name.asString() })
 	// Captures arrive as leading params; rewrite body refs to those params. This must cover not only `<this>` but
 	// also receiver-like captured params such as `$this$buildString`, otherwise an active inline substitution can
 	// leak a caller-local (`__lam<N>`) into the lifted method body.

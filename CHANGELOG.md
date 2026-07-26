@@ -21,64 +21,58 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - **kotc/bir2cir/ilemit ([tmyt/dotkt#68], area:kotc, area:bir2cir, area:ilemit): a captured `var` written from a
   local class, an object expression, a lambda or a local `fun` is now heap ref-celled under EVERY emission root and
   for every one of those boundaries — previously only a function body, and never a local `fun`.** The promotion of a
-  captured-and-mutated local to a shared `dotkt$Ref<T>` was decided per emission root, and
-  only two roots decided it — `method()` and `topLevelAccessorMethod()`. Everywhere else the emitter ran with an empty
-  set, so a constructor body, an `init` block, a property or field initializer, a member accessor, a default interface
-  method, a static-field initializer, a rich-enum entry argument and a `@KotlinDefault` default-value expression each
-  aborted the compile ("does not support an object expression / a local class that writes to a captured outer
-  variable") — while the same shape written with a LAMBDA hit no guard at all and emitted a `setLocal` against a local
-  that does not exist in the lifted closure, which bir2cir then rejected as an undeclared local. Needing a cell is a
-  property of the VARIABLE, not of the frame emitting it, so the set is now computed ONCE per module
-  (`BirEmitter.initRefCells`, driven by `ClrBackendPhase`) and is identity-keyed; the per-root save/restore is gone
-  with it. This also makes the two frames that emit ONE default-argument expression — the callee's `@KotlinDefault`
-  carrier and the omitting call site — agree. The two guards that used to reject the shape now report a broken emitter
-  invariant instead of an unsupported language construct (they can only fire on a mutated capture that is not a `var`
-  local, which valid frontend IR cannot produce).
+  captured-and-mutated local to a shared `dotkt$Ref<T>` was decided per emission root, and only two roots decided it —
+  `method()` and `topLevelAccessorMethod()`. Everywhere else the emitter ran with an empty set, so a constructor body,
+  an `init` block, a property or field initializer, a member accessor, a default interface method, a static-field
+  initializer, a rich-enum entry argument and a `@KotlinDefault` default-value expression each aborted the compile
+  ("does not support an object expression / a local class that writes to a captured outer variable") — while the same
+  shape written with a LAMBDA hit no guard at all and emitted a `setLocal` against a local that does not exist in the
+  lifted closure, which bir2cir then rejected as an undeclared local. Needing a cell is a property of the VARIABLE,
+  not of the frame emitting it, so the set is now computed ONCE per module (`BirEmitter.initRefCells`, driven by
+  `ClrBackendPhase`) and is identity-keyed; the per-root save/restore is gone with it. This also makes the two frames
+  that emit ONE default-argument expression — the callee's `@KotlinDefault` carrier and the omitting call site —
+  agree. The two guards that used to reject the shape now report a broken emitter invariant instead of an unsupported
+  language construct (they can only fire on a mutated capture that is not a `var` local, which valid frontend IR
+  cannot produce).
+
   A local `fun` is now a capture boundary too. It lifts to a static method whose captures are BY-VALUE parameters, so
   `fun f(): Int { var n = 0; fun bump() { n++ }; bump(); bump(); return n }` compiled clean and returned 0 instead of
-  2 — the only boundary whose missing cell lost the write with no diagnostic, where the object-expression and
-  local-class boundaries aborted. Reaching a capturing local fun from another boundary failed loud rather than
-  silently, since the lift supplies its captures at the CALL SITE. Closing both halves took:
-  the capture scan is now shared by the lambda/local-fun and object/local-class walks and follows a call INTO a local
-  fun (cycle-guarded), so a lambda, object expression or local class that merely calls `bump()` captures `bump`'s `n`
-  as well; the lift's capture parameters moved into a `cap$` namespace Kotlin source cannot spell, since a
-  transitive capture can arrive under a name the receiving frame already uses for something else; the lift is now also
-  generic over the type operands in its BODY, like the lambda lift, and over the BOUNDS of the type parameters it
-  re-declares; both lifts now RESTORE the enclosing frame's capture binding instead of dropping it, so a local fun or
-  local class declared inside a closure/object/local-class member no longer leaves that frame reading a bare local it
-  does not have (in an `inner class` member, dropping it left every LATER member reading the enclosing instance off the
-  inner one — an owner/receiver mismatch the runtime rejects); a lifted class's capture fields are renamed away from a
-  collision with the class's OWN fields, which a transitive capture can now produce and which would otherwise send the
-  write to the wrong field silently; CONSTRUCTING a local class propagates captures like calling a local fun, so the
-  scan
-  follows `IrConstructorCall` too; a local declaration is recognized by the frontend's own `Local` visibility rather
-  than by probing its IR parent, which is exact for a class as well and needs no `init { }` special case; kotc records
-  on the lifted method which enclosing
-  type variable each of its own type params re-declares (`_syntheticTypeArgs`, the same key and meaning
-  ClosureSynthesis already derives for a lifted closure CLASS) and bir2cir's `SharedSyntheticSynthesis` applies its
-  synthetic-frame remap to METHODS as well — so a generic cell used inside the lift is constructed in the method's own
-  parameter space rather than looked up in a frame that does not declare it, and a lifted synthetic can supply the
-  parameter constraints when the celled `var` is declared inside it and no use survives in the declaring frame; that
-  binder now runs collect/bind/construct in separate passes, so its result no longer depends on declaration order; and
-  ilemit's `setField`/`staticFieldSet` take their owner through `ParseOwnerSlot` like the field READ paths beside them
-  instead of collapsing a constructed-generic owner to its open name — writing a `Cell<T>` field from a generic static
-  method emitted `Cell<!0>::v` where the frame has only `!!0`, which the runtime rejected as a bad image.
-  A lifted class keeps the BOUNDS of the enclosing type parameters it re-declares (they were emitted as bare names, so
-  a member needing one had no constraint to dispatch through — wrong metadata, no diagnostic), and the captured set
-  closes over those bounds. A local class INHERITING from a capturing local class, and a `this(...)` delegation between
-  two constructors of one, both forward the captures ahead of the source-level arguments. Ref-cell identity keys on the
-  bounds of the variables its element mentions, not the printed element alone, so two same-file generic classes no
-  longer share one cell and one of them its constraint. `::localFun` lowers through the lifted static — as a plain
-  delegate with no captures, and as a closure over the captured values when there are some (including the enclosing
-  instance); only a GENERIC capturing local fun is still refused, and loudly.
-  Regressions: `tests/basic/fixtures/CapturedVarRefCellTests.kt` (every root above; one `var` written by a lambda, an
-  object expression, a local class and a local fun at once; the enclosing frame's own write observed through the shared
-  cell; the local-fun boundary plain, in an `init` block, generic, recursive, and with the cell declared inside the
-  lift; that boundary reached through a lambda, an object expression and a local class, including under a name the
-  receiving frame already uses; and a local fun / local class reached from INSIDE another lift, an `inner class`
-  member's outer-`this` surviving one, and a bound that names a second type parameter); the function-body root stays
-  pinned by `LambdaTests.kt`'s `localClassObject`. The two `tests/known-fail/localfun-capture-write*` reproductions
-  this replaced are deleted.
+  2 — the only boundary whose missing cell lost the write with no diagnostic. Reaching a capturing local fun from
+  another boundary failed loud, since the lift supplies its captures at the CALL SITE. Closing both halves took: one
+  capture scan shared by the lambda/local-fun and object/local-class walks, which follows a call INTO a local fun and
+  a CONSTRUCTION of a local class (cycle-guarded), so a lambda, object expression or local class that merely calls
+  `bump()` captures `bump`'s `n` too; a local declaration recognized by the frontend's own `Local` visibility rather
+  than by probing its IR parent, which is exact for a class as well and needs no `init { }` special case; both lifts
+  RESTORING the enclosing frame's capture binding instead of dropping it, so a local fun or local class declared
+  inside a closure/object/local-class member no longer leaves that frame reading a bare local it does not have (in an
+  `inner class` member, dropping it left every LATER member reading the enclosing instance off the inner one); a
+  capture keeping its own name unless something else already owns it in the same namespace — the lifted class's own
+  fields and constructor parameters, the lifted local fun's own value parameters, or an earlier capture — in which
+  case it moves into a `cap$` prefix; the lift also generic over the type operands in its BODY, like the lambda lift,
+  and over the BOUNDS of the type parameters it re-declares; kotc recording on the lifted method which enclosing type
+  variable each of its own type params re-declares (`_syntheticTypeArgs`, the same key and meaning ClosureSynthesis
+  already derives for a lifted closure CLASS) and bir2cir's `SharedSyntheticSynthesis` applying its synthetic-frame
+  remap to METHODS as well, so a generic cell used inside the lift is constructed in the method's own parameter space
+  and a lifted synthetic can supply the parameter constraints when the celled `var` is declared inside it; that binder
+  running collect/bind/construct in separate passes, so its result no longer depends on declaration order; and
+  ilemit's `setField`/`staticFieldSet` taking their owner through `ParseOwnerSlot` like the field READ paths beside
+  them instead of collapsing a constructed-generic owner to its open name — writing a `Cell<T>` field from a generic
+  static method emitted `Cell<!0>::v` where the frame has only `!!0`, which the runtime rejected as a bad image.
+
+  A lifted class also keeps the BOUNDS of the enclosing type parameters it re-declares (they were emitted as bare
+  names, so a member needing one had no constraint to dispatch through — wrong metadata, no diagnostic). A local class
+  INHERITING from a capturing local class, and a `this(...)` delegation between two constructors of one, both forward
+  the captures ahead of the source-level arguments. Ref-cell identity keys on the bounds of the variables its element
+  mentions, not the printed element alone, so two same-file generic classes no longer share one cell and one of them
+  its constraint. `::localFun` lowers through the lifted static — a plain delegate with no captures, and a closure
+  over the captured values when there are some, including the enclosing instance. Two shapes are refused rather than
+  miscompiled: a GENERIC capturing local fun reference, and capturing two DIFFERENT declarations that share a Kotlin
+  name (kotc addresses a captured local by its name at the capture site, so the two are indistinguishable there and
+  one's writes would be lost — reachable only now that reaching a local declaration captures transitively).
+
+  Regressions: `tests/basic/fixtures/CapturedVarRefCellTests.kt`; the function-body root stays pinned by
+  `LambdaTests.kt`'s `localClassObject`. The two `tests/known-fail/localfun-capture-write*` reproductions this
+  replaced are deleted.
 
 - **bir2cir ([tmyt/dotkt#251], area:bir2cir): constructor parameters now carry their `[Nullable]` annotation, so a
   nullable ctor parameter stays nullable across a module boundary.** The declaration-position NRT walk
