@@ -12,11 +12,11 @@
 //                                     enclosing class/interface statics), CvrcEnum (rich-enum entry argument)
 //   default-value expression       -> cvrcDefaultArg (the `@KotlinDefault` carrier + the omitting call site)
 //
-// BOUNDARY KIND (what captures the `var`): a lambda, a local `fun` (lifted to a static method whose captures are
-// by-value params — without the cell it writes its own parameter and the update is lost), an object expression, and a
-// local class. The cell is keyed by the VARIABLE, not by the boundary, so all four writing the SAME `var` must land in
-// the SAME cell — CvrcInitMixed asserts that composition, and CvrcInitShared asserts the ENCLOSING frame's own write
-// is visible through the cell too.
+// BOUNDARY KIND (what captures the `var`): a lambda, an object expression, and a local class. The cell is keyed by the
+// VARIABLE, not by the boundary, so every boundary writing the SAME `var` lands in the SAME cell — CvrcInitMixed
+// asserts that composition (a local `fun` rides the cell the others created, even though a local fun is not itself a
+// boundary that creates one — tests/known-fail/localfun-capture-write/), and CvrcInitShared asserts the ENCLOSING
+// frame's own write is visible through the cell too.
 //
 // Top-level names are family-prefixed (`cvrc`/`Cvrc`) — one project is one namespace, shared with the sibling batteries.
 import NUnit.Framework.TestAttribute
@@ -60,19 +60,8 @@ class CvrcInitLambda {
     }
 }
 
-// A LOCAL FUN writing an init-block `var`. It lifts to a static method that takes its captures as by-value
-// parameters, so without the cell the increment lands on the lifted method's own parameter and is lost.
-class CvrcInitLocalFun {
-    val total: Int
-    init {
-        var n = 0
-        fun bump() { n += 2 }
-        bump(); bump()
-        total = n
-    }
-}
-
-// One `var`, all four writers -> ONE shared cell.
+// One `var`, every writer -> ONE shared cell. The local `fun` is included deliberately: it does not create a cell,
+// but once a boundary has, its by-value capture parameter carries that cell and its write is visible like the rest.
 class CvrcInitMixed {
     val total: Int
     init {
@@ -172,7 +161,11 @@ val cvrcTopLevel: Int = run {
 }
 
 // ---- static-field initializer roots (a companion's fields flatten onto the enclosing class/interface statics) -----
-// The initializer is an immediately-invoked lambda, so the captured `var` lives in the STATIC initializer itself.
+// The initializer is an immediately-invoked lambda, so the captured `var` lives in the STATIC initializer itself. It is
+// deliberately not `run { … }`: in a COMPANION initializer that resolves to the extension `T.run` and the companion's
+// implicit receiver is emitted into the static initializer, which fails independently of anything ref-cell related
+// (a plain `val total: Int = run { var n = 0; n++; n }` companion property fails the same way). `cvrcTopLevel` above
+// can use `run` because a top-level initializer has no implicit receiver to bind.
 class CvrcCompanion {
     companion object {
         val total: Int = {
@@ -206,14 +199,6 @@ enum class CvrcEnum(val v: Int) {
     fun show(): Int = v
 }
 
-// ---- the local-`fun` boundary in a plain function body -----------------------------------------------------------
-fun cvrcLocalFunInFunction(): Int {
-    var n = 0
-    fun bump() { n++ }
-    bump(); bump()
-    return n
-}
-
 // ---- default-argument value root (the `@KotlinDefault` carrier + the omitting call site) -------------------------
 fun cvrcDefaultArg(x: Int = run {
     var n = 0
@@ -228,18 +213,10 @@ class CapturedVarRefCellTests {
         assertEquals(2, CvrcInitObject().total)      // 2
         assertEquals(6, CvrcInitLocalClass().total)  // 6
         assertEquals(2, CvrcInitLambda().total)      // 2
-        assertEquals(4, CvrcInitLocalFun().total)    // 2 + 2
         assertEquals(1111, CvrcInitMixed().total)    // 1 + 1000 + 10 + 100
         assertEquals(30, CvrcInitShared().total)     // read() == 15 (the enclosing write is visible) + n == 15
         assertEquals(10, CvrcInitNested().total)     // 5 + 5
         assertEquals(14, CvrcSecondary().total)      // 7 + 7
-    }
-
-    @TestAttribute
-    fun functionBodyLocalFun() {
-        // The local-`fun` boundary in the function-body root — the sibling of LambdaTests.localClassObject, which
-        // covers the object-expression and local-class boundaries there.
-        assertEquals(2, cvrcLocalFunInFunction())    // 2
     }
 
     @TestAttribute

@@ -18,9 +18,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   the host RID and requires that replay to fail, so the assertion cannot pass vacuously. Previously the RID flow
   was only exercised at the host RID and cross-target selection had been confirmed by hand.
 ### Fixed
-- **kotc ([tmyt/dotkt#68], area:kotc): a captured `var` written across a capture boundary is now heap ref-celled under
-  every emission root and for every boundary kind — previously only inside a function body, and never for a local
-  `fun`.** The promotion of a captured-and-mutated local to a shared `dotkt$Ref<T>` was decided per emission root, and
+- **kotc ([tmyt/dotkt#68], area:kotc): a captured `var` written from a local class, an object expression or a lambda is
+  now heap ref-celled under EVERY emission root, not only inside a function body.** The promotion of a
+  captured-and-mutated local to a shared `dotkt$Ref<T>` was decided per emission root, and
   only two roots decided it — `method()` and `topLevelAccessorMethod()`. Everywhere else the emitter ran with an empty
   set, so a constructor body, an `init` block, a property or field initializer, a member accessor, a default interface
   method, a static-field initializer, a rich-enum entry argument and a `@KotlinDefault` default-value expression each
@@ -33,14 +33,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   carrier and the omitting call site — agree. The two guards that used to reject the shape now report a broken emitter
   invariant instead of an unsupported language construct (they can only fire on a mutated capture that is not a `var`
   local, which valid frontend IR cannot produce).
-  In the same pass, a LOCAL `fun` became a capture boundary for this analysis. It lifts to a static method whose
-  captures are by-value parameters, so `fun f(): Int { var n = 0; fun bump() { n++ }; bump(); bump(); return n }`
-  compiled clean and silently returned 0 instead of 2 — a wrong answer with no diagnostic, at every root including a
-  plain function body.
-  Regressions: `tests/basic/fixtures/CapturedVarRefCellTests.kt` (every root above; one `var` written by a lambda, a
-  local `fun`, an object expression and a local class at once; and the enclosing frame's own write observed through the
-  shared cell); the object/local-class boundaries in a function body stay pinned by `LambdaTests.kt`'s
-  `localClassObject`.
+  A local `fun` is still not a capture boundary for this analysis, so a `var` written ONLY by a local fun still loses
+  the write silently — newly documented, with its two blockers, in
+  `tests/known-fail/localfun-capture-write/app.kt`. (A local fun does ride a cell one of the three boundaries above
+  created for the same `var`.)
+  Regressions: `tests/basic/fixtures/CapturedVarRefCellTests.kt` (every root above; one `var` written by a lambda, an
+  object expression, a local class and a local fun at once; and the enclosing frame's own write observed through the
+  shared cell); the function-body root stays pinned by `LambdaTests.kt`'s `localClassObject`.
 
 - **bir2cir ([tmyt/dotkt#228], area:bir2cir): an auto-property no longer emits a same-named field, so
   reflection-driven .NET libraries (JSON.NET) can serialize a Kotlin type again.** An accessor-routed property

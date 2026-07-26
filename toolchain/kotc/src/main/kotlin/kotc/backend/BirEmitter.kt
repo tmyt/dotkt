@@ -43,6 +43,7 @@ import org.jetbrains.kotlin.ir.expressions.IrDoWhileLoop
 import org.jetbrains.kotlin.ir.expressions.IrVararg
 import org.jetbrains.kotlin.ir.expressions.IrSpreadElement
 import org.jetbrains.kotlin.ir.expressions.IrPropertyReference
+import org.jetbrains.kotlin.ir.expressions.IrFunctionExpression
 import org.jetbrains.kotlin.ir.expressions.IrFunctionReference
 import org.jetbrains.kotlin.ir.expressions.IrGetClass
 import org.jetbrains.kotlin.ir.declarations.IrLocalDelegatedProperty
@@ -417,17 +418,21 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	internal fun captureFieldType(d: IrValueDeclaration): TypeNode = if (isRefCell(d)) TypeNode.Fqn(refTypeName(d)) else birType(d.type)
 
 	/** Local `var`s captured AND mutated across a capture boundary within [node] (-> need a heap ref-cell). The
-	 *  boundaries are every class (an object expression or a local class) and every function (a lambda — whose
-	 *  `IrSimpleFunction` is visited as the `IrFunctionExpression`'s child — or a LOCAL `fun`, which lifts to a static
-	 *  method taking its captures as by-value params and would otherwise write its own parameter and lose the update).
-	 *  A non-local function references no enclosing local, so its capture set is empty and the arm is inert for it. */
+	 *  boundaries are a lambda and a class (an object expression or a local class); a top-level/member class enters the
+	 *  class arm too but captures nothing, so it contributes nothing.
+	 *  A LOCAL `fun` is NOT a boundary here, though it lifts to a static method taking its captures as BY-VALUE params
+	 *  and so loses a write to a var no other boundary cells: see tests/known-fail/localfun-capture-write/. Celling it
+	 *  needs two fixes this analysis alone cannot supply — bir2cir must resolve a cell whose element is an enclosing
+	 *  TYPE VARIABLE inside a file-class static method, and the lift must propagate captures transitively through a
+	 *  call to the local fun. A local fun DOES ride a cell another boundary created (captureFieldType keys on the
+	 *  variable, not on the boundary kind). */
 	private fun computeRefCells(node: IrElement): Set<IrValueDeclaration> {
 		val out = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<IrValueDeclaration, Boolean>())
 		node.acceptChildrenVoid(object : IrVisitorVoid() {
 			override fun visitElement(element: IrElement) {
 				val caps: List<IrValueDeclaration>? = when (element) {
 					is IrClass -> capturedVarsForObject(element)
-					is IrSimpleFunction -> capturedVars(element)
+					is IrFunctionExpression -> capturedVars(element.function)
 					else -> null
 				}
 				if (caps != null) {
