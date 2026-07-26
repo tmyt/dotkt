@@ -207,14 +207,16 @@ node-format stability is achieved DECLARATIVELY, in three parts:
    node model, the validator is node-format's ONLY structural safety net (contrast `Type`, which is drift-proof
    by construction). Therefore the validator is NOT deferred to last; it lands early enough to guard the flip.
 
-### 2.2 `sig` — call-site overload signature is a `Type[]` (retire the comma-joined string)
-A call node carries `sig` so a consumer resolves the right OVERLOAD by name+signature. Today it is a
-**comma-joined string of param type tokens** (`BirEmitter.kt:1705`, `(ext + regs).joinToString(",")`),
-hand-parsed in ≥5 places (bir2cir `EnumMemberBinding`/`MapVarianceRealign`/`ValueTypeNullableCollectionArg`,
-ilemit `Emitter.Expressions.cs:166/227`, `CanonSig`, `FindReflectedMethodBySig`). FREEZE: `sig` is a
-**JSON array of `Type` nodes** (§1) — `"sig":[T, T, …]` (extension receiver first, then value params). No
-comma-join, no `CanonSig`/`FindReflectedMethodBySig` string parse; overload match walks the `Type[]`.
-Generic params in a `sig` use positional `tv` (§1), which kills the def-vs-call name-remap dance.
+### 2.2 `sig` — resolved declaration signature is a `Type[]`
+A call node carries `sig` so its consumer links the already-resolved overload by name and declaration signature.
+It is a **JSON array of `Type` nodes** (§1) — `"sig":[T, T, …]` (extension receiver first, then value params).
+Generic params use positional `tv` (§1), including their distinct type/method scopes.
+
+In BIR this descriptor remains in Kotlin vocabulary. For a call into a referenced assembly, bir2cir reads the
+referenced declaration, applies the selected runtime actual/type-alias representation, and writes its physical
+declaration shape to CIR. Compiler-generated alias helpers also remap the aliased class and member type variables
+onto the helper method's flattened generic-parameter space. ilemit consumes a present CIR `sig` exactly: zero or
+multiple structural matches are ABI errors, never a request to retry by name and arity.
 
 ### 2.2.1 The TWO intentional string islands (documented KEEP — not producer-zero)
 The BIR/CIR **wire format** carries no stringly-typed compound type token (§1): every `type`/`ret`/`elem`/

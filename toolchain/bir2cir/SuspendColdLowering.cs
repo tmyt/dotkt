@@ -2580,6 +2580,8 @@ static partial class SuspendColdLowering
                 };
             }
             if (callNode["typeArgs"] is JsonArray ta) call["typeArgs"] = ta.DeepClone();
+            if (!isInstance)
+                ClrMemberResolution.CarryReferencedStaticCallSignatureSnapshot(callNode, call);
             // BUG Y — overload disambiguation. `<method>$dotkt_suspend` may be one of several same-named IL
             // overloads (SequenceScope.yieldAll has 3: Iterator/Iterable/Sequence), which ilemit resolves via
             // MethodsBySig on the param-type signature. Synthesize the call `sig` = the ORIGINAL call's param
@@ -2590,7 +2592,16 @@ static partial class SuspendColdLowering
             // -> arg/param mismatch -> BadImageFormatException. (yield works today only because it has ONE overload.)
             // Structured sig (#37 m3b): the ORIGINAL call's param TypeNodes + the appended `completion` slot
             // (Continuation<Any>). ilemit resolves the `<method>$dotkt_suspend` overload by this structured signature.
-            var sigArr = callNode["sig"] is JsonArray os ? (JsonArray)os.DeepClone() : new JsonArray();
+            // BIR spells the resolved descriptor of an instance call as `argTypes`; `sig` is the corresponding
+            // spelling used by static calls.  Preserve whichever descriptor the frontend supplied before appending
+            // the cold ABI's completion slot.  Falling back to an empty signature here used to be masked by ilemit's
+            // name/arity lookup and made every referenced non-zero-argument suspend member ambiguous or unlinkable
+            // once CIR signature consumption became exact.
+            var sigArr = callNode["sig"] is JsonArray os
+                ? (JsonArray)os.DeepClone()
+                : callNode["argTypes"] is JsonArray oat
+                    ? (JsonArray)oat.DeepClone()
+                    : new JsonArray();
             sigArr.Add(ContAny());
             call["sig"] = sigArr;
             return call;

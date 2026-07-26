@@ -21,6 +21,9 @@
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
+
+fun <T : Comparable<T>> collectionGenericMax(values: Collection<T>): T? = values.maxOrNull()
+
 class CollectionAggregateTests {
 
     // ---- m-b6 : distinct / sorted / reduce / maxOrNull / setOf / joinToString ----
@@ -30,6 +33,16 @@ class CollectionAggregateTests {
         assertEquals("1-2-2-3-4", xs.sorted().joinToString("-"))  // 1-2-2-3-4
         assertEquals(12, xs.reduce { a, b -> a + b })       // 12
         assertEquals(4, xs.maxOrNull())                     // 4
+    }
+
+    // #46: the carried open signature IEnumerable<T> must link maxOrNull<T>, never the same-arity
+    // IEnumerable<Double> sibling. Cover both the concrete call site and a call whose type argument is the
+    // enclosing method's own generic parameter.
+    @TestAttribute
+    fun genericMaxLinksCarriedSignature() {
+        assertEquals(3, listOf(3, 1, 2).maxOrNull())
+        assertEquals(3, collectionGenericMax(listOf(3, 1, 2)))
+        assertEquals("z", collectionGenericMax(listOf("a", "z", "m")))
     }
 
     // ---- m-b9 : firstOrNull / lastOrNull / none / sumOf / maxByOrNull ----
