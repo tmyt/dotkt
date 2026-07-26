@@ -379,6 +379,59 @@ fun cvrcLocalFunReferenceCapturing(): Int {
     return f()
 }
 
+// A callable reference is a declaration-reachability edge just like a direct call. Here that edge is itself nested
+// in another capture boundary, so the outer lambda must transitively carry `bump`'s cell.
+fun cvrcLocalFunReferenceInsideClosure(): Int {
+    var n = 0
+    fun bump() { n++ }
+    val run = { val f: () -> Unit = ::bump; f() }
+    run(); run()
+    return n
+}
+
+// A local CLASS constructor reference has the source constructor's arity, while the lifted ctor also takes hidden
+// captures. The callable-reference adapter binds those captures without exposing them in `(Int) -> Bump`.
+fun cvrcLocalClassConstructorReference(): Int {
+    var n = 0
+    class Bump(val step: Int) { init { n += step } }
+    val make: (Int) -> Bump = ::Bump
+    make(2); make(3)
+    return n
+}
+
+// A generic enclosing type parameter is re-declared by both the lifted local fun and its callable-reference closure.
+fun <T> cvrcGenericLocalFunReference(first: T, second: T): T {
+    var current = first
+    fun pick(): T { current = second; return current }
+    val f: () -> T = ::pick
+    return f()
+}
+
+// Distinct declarations with the same Kotlin spelling can be captured transitively by one lift. Frame slots and
+// capture fields are allocated from declaration identity, so neither value aliases the other.
+fun cvrcDuplicateCaptureNames(): Int {
+    var n = 0
+    fun bumpOuter() { n++ }
+    return run {
+        var n = 10
+        fun bumpBoth() { bumpOuter(); n++ }
+        bumpBoth()
+        n
+    } + n
+}
+
+// A local variable shadowing a captured ref-cell must not replace that cell in ilemit's flat local table.
+fun cvrcShadowedFrameSlot(): Int {
+    var n = 0
+    fun bump() { n++ }
+    if (n == 0) {
+        val n = 100
+        bump()
+        if (n != 100) return -1
+    }
+    return n
+}
+
 // …including a capture of the enclosing INSTANCE, which is a capture like any other.
 class CvrcRefCapturesThis {
     val k = 3
@@ -386,6 +439,15 @@ class CvrcRefCapturesThis {
         fun add(x: Int) = x + k
         val f: (Int) -> Int = ::add
         return f(1)
+    }
+}
+
+// `__outer` is a legal Kotlin parameter name, not a reserved capture slot. The captured enclosing instance is
+// uniqued in the lifted method's parameter namespace and every use follows the emitted binding by identity.
+class CvrcOuterNameCollision(val base: Int) {
+    fun run(): Int {
+        fun add(__outer: Int): Int = base + __outer
+        return add(2)
     }
 }
 
@@ -513,6 +575,13 @@ class CapturedVarRefCellTests {
         assertEquals(2, cvrcLocalClassInheritance())             // 2 — the base's captures reach it through `B : A()`
         assertEquals(42, cvrcLocalFunReference())                // 42 — `::twice` targets the lifted static
         assertEquals(2, cvrcLocalFunReferenceCapturing())        // 2 — the reference carries the captured cell
+        assertEquals(2, cvrcLocalFunReferenceInsideClosure())    // reference reachability propagates through lambda
+        assertEquals(5, cvrcLocalClassConstructorReference())    // hidden ctor captures stay bound in the closure
+        assertEquals(2, cvrcGenericLocalFunReference(1, 2))      // generic capturing local-fun reference
+        assertEquals("b", cvrcGenericLocalFunReference("a", "b"))
+        assertEquals(12, cvrcDuplicateCaptureNames())            // inner 11 + outer 1
+        assertEquals(1, cvrcShadowedFrameSlot())                 // shadow did not replace the outer ref-cell
+        assertEquals(9, CvrcOuterNameCollision(7).run())         // user `__outer` and captured this stay distinct
         assertEquals(4, CvrcRefCapturesThis().run())             // 1 + 3, the enclosing instance captured
         assertEquals(2, cvrcLocalClassThisDelegate())            // 2 — `this(1)` forwarded the capture
         assertEquals(2, cvrcLocalClassCtorParamCollision())      // 2, not the ctor parameter's `n`

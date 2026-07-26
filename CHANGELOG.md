@@ -65,14 +65,31 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   the captures ahead of the source-level arguments. Ref-cell identity keys on the bounds of the variables its element
   mentions, not the printed element alone, so two same-file generic classes no longer share one cell and one of them
   its constraint. `::localFun` lowers through the lifted static — a plain delegate with no captures, and a closure
-  over the captured values when there are some, including the enclosing instance. Two shapes are refused rather than
-  miscompiled: a GENERIC capturing local fun reference, and capturing two DIFFERENT declarations that share a Kotlin
-  name (kotc addresses a captured local by its name at the capture site, so the two are indistinguishable there and
-  one's writes would be lost — reachable only now that reaching a local declaration captures transitively).
+  over the captured values when there are some, including the enclosing instance and enclosing generic parameters.
+  Callable references participate in the same transitive declaration-reachability scan as calls and constructions;
+  a capturing local-class constructor reference binds the hidden lifted-ctor arguments in a closure while preserving
+  its Kotlin-visible arity. Finally, every function-local variable is assigned a BIR frame slot by IR declaration
+  identity rather than source spelling, so shadowed locals and two distinct captures with the same name cannot alias
+  in ilemit's flat local table; capture names (including the preferred `__outer`) are collision-free bindings rather
+  than downstream semantic markers. Suspend-lambda captures likewise use compiler-only descriptor bindings and carry
+  their enclosing-frame value explicitly, so the body and construction site never depend on sharing a source name.
+  With declaration identity preserved in BIR, bir2cir's former `DisambiguateShadowedVars` JSON scope reconstruction
+  has been deleted; coroutine lowering now only spills the slots the frontend actually declared.
 
-  Regressions: `tests/basic/fixtures/CapturedVarRefCellTests.kt`; the function-body root stays pinned by
-  `LambdaTests.kt`'s `localClassObject`. The two `tests/known-fail/localfun-capture-write*` reproductions this
-  replaced are deleted.
+  Regressions: `tests/basic/fixtures/CapturedVarRefCellTests.kt` and the asynchronous shadowed-slot case in
+  `tests/coroutines/fixtures/SuspendCaptureTests.kt`; the function-body root stays pinned by `LambdaTests.kt`'s
+  `localClassObject`. The two `tests/known-fail/localfun-capture-write*` reproductions this replaced are deleted.
+
+- **bir2cir/ilemit ([tmyt/dotkt#46], area:bir2cir, area:ilemit): calls into referenced Kotlin helpers
+  now carry and link the physical declaration signature instead of falling back to a same-name/same-arity method.**
+  bir2cir preserves the frontend Kotlin descriptor before nullable-generic erasure, resolves the referenced
+  declaration after owner attribution, then carries that declaration through actual/type-alias lowering; synthesized
+  alias helpers likewise carry their flattened method type-variable scope. ilemit consumes that physical signature
+  exactly. In particular,
+  `Collection<T>.maxOrNull()` from inside a generic function keeps its `IEnumerable<T>` descriptor and cannot
+  silently bind the neighboring `IEnumerable<Double>` overload. A missing descriptor match is now a link-time ABI
+  error; the former standalone known-failure is an in-process NUnit regression covering concrete, value-generic,
+  and reference-generic calls.
 
 - **bir2cir ([tmyt/dotkt#251], area:bir2cir): constructor parameters now carry their `[Nullable]` annotation, so a
   nullable ctor parameter stays nullable across a module boundary.** The declaration-position NRT walk

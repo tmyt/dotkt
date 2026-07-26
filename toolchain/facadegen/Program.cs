@@ -553,13 +553,17 @@ static class FacadeGen
         return o;
     }
 
-    // A `prop` decl `{name, type, rw, mods, vis?, clrName?, recv?}` (spec §5b). `recv` (a top-level/member
-    // extension property) is the discriminator vs a plain property.
-    static JsonObject PropObj(string name, TN type, bool rw, JsonObject mods, string vis, string clrName, TN recv)
+    // A `prop` decl `{name, type, rw, mods, vis?, clrName?, typeParams?, recv?}` (spec §5b). `recv` (a
+    // top-level/member extension property) is the discriminator vs a plain property. Generic extension properties
+    // own method-scoped type parameters just like their emitted get_/set_ methods; preserving that declaration is
+    // what keeps `val <T> List<T>.p: T` from degrading to `List<Any?>.p: Any?` on re-import.
+    static JsonObject PropObj(string name, TN type, bool rw, JsonObject mods, string vis, string clrName, TN recv,
+        JsonArray typeParams = null)
     {
         var o = new JsonObject { ["name"] = name, ["type"] = Ty(type), ["rw"] = rw, ["mods"] = mods };
         if (vis != "public") o["vis"] = vis;
         if (clrName != null) o["clrName"] = clrName;
+        if (typeParams != null && typeParams.Count > 0) o["typeParams"] = typeParams;
         if (recv != null) o["recv"] = Ty(recv);
         return o;
     }
@@ -1354,9 +1358,9 @@ static class FacadeGen
     // type) is skipped by its STANDARD [CompilerGenerated] attribute — never by `dotkt$` name-sniffing. Every such type
     // now carries the attribute (kotc/bir2cir flag `generated:true` -> ilemit stamps it; ilemit stamps its own synthetics
     // too), so this is the primary skip; the empty-namespace guard below is belt-and-suspenders. MetadataLoadContext-safe.
-    static bool IsCompilerGenerated(Type t)
+    static bool IsCompilerGenerated(MemberInfo member)
     {
-        try { return t.GetCustomAttributesData().Any(c => c.AttributeType.FullName == "System.Runtime.CompilerServices.CompilerGeneratedAttribute"); }
+        try { return member.GetCustomAttributesData().Any(c => c.AttributeType.FullName == "System.Runtime.CompilerServices.CompilerGeneratedAttribute"); }
         catch { return false; }
     }
 
@@ -2234,7 +2238,7 @@ static class FacadeGen
         var extPropMembers = new HashSet<string>();
         foreach (var g in t.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly))
         {
-            if (g.IsSpecialName || !g.Name.StartsWith("get_")) continue;
+            if (g.IsSpecialName || IsCompilerGenerated(g) || !g.Name.StartsWith("get_")) continue;
             var gps = g.GetParameters();
             if (gps.Length != 1 || gps[0].Name != "__self" || !Supported(g.ReturnType) || !Supported(gps[0].ParameterType)) continue;
             var pn = g.Name.Substring(4);
@@ -2242,7 +2246,9 @@ static class FacadeGen
             var setter = t.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly)
                 .FirstOrDefault(s => !s.IsSpecialName && s.Name == "set_" + pn && s.GetParameters().Length == 2 && s.GetParameters()[0].Name == "__self");
             extPropMembers.Add(g.Name); if (setter != null) extPropMembers.Add(setter.Name);
-            tlProps.Add(PropObj(pn, RetTypeSfxN(g, t), setter != null, Mods(("ext", true)), "public", null, MapT(gps[0].ParameterType, t)));
+            tlProps.Add(PropObj(pn, RetTypeSfxN(g, t), setter != null, Mods(("ext", true)), "public", null,
+                MapT(gps[0].ParameterType, t),
+                g.IsGenericMethodDefinition ? TypeParamsArr(g.GetGenericArguments(), t, false, false) : null));
         }
         // #103: a top-level field-backed property with a CUSTOM accessor compiles to a public static FIELD `<name>`
         // PLUS a separate non-special-name `get_<name>`/`set_<name>` method (the custom accessor body). Detect the
@@ -2255,7 +2261,7 @@ static class FacadeGen
         var fieldAccessorMembers = new HashSet<string>();
         foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly))
         {
-            if (m.IsSpecialName) continue;
+            if (m.IsSpecialName || IsCompilerGenerated(m)) continue;
             var mps = m.GetParameters();
             if (m.Name.StartsWith("get_") && mps.Length == 0 && staticFieldNames.Contains(m.Name.Substring(4)))
                 fieldAccessorMembers.Add(m.Name);
@@ -2264,7 +2270,7 @@ static class FacadeGen
         }
         foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly))
         {
-            if (m.IsSpecialName || m.Name == "Main" || OBJECT_MEMBERS.Contains(m.Name) || extPropMembers.Contains(m.Name) || fieldAccessorMembers.Contains(m.Name)) continue;
+            if (m.IsSpecialName || IsCompilerGenerated(m) || m.Name == "Main" || OBJECT_MEMBERS.Contains(m.Name) || extPropMembers.Contains(m.Name) || fieldAccessorMembers.Contains(m.Name)) continue;
             if (m.IsGenericMethod && !m.IsGenericMethodDefinition) continue;
             var ps = m.GetParameters();
             var k = KotlinFun(m);

@@ -141,7 +141,7 @@ static class MemberCallSubstitution
         // local kept the PARAM's (possibly `gp:`) type — mis-routing Constrainify to a constrained dispatch on a
         // concrete-typed local. Recorded AFTER params so the local shadows; scoped to this decl's own body (the walk
         // stops at a nested param-bearing decl, so an inner lambda's locals don't leak up). Mirrors the SM's
-        // DisambiguateShadowedVars intent (a same-name local of a different type is a distinct binding).
+        // kotc now gives every IrVariable an identity-derived name, so a shadowing local is already a distinct binding.
         public SubstCtx Extend(JsonObject decl)
         {
             var ps = decl["params"] as JsonArray;
@@ -1621,14 +1621,22 @@ static class MemberCallSubstitution
         foreach (var ca in classArgs) typeArgs.Add(TypeJson.Write(ca));
         if (node["typeArgs"] is JsonArray ta) foreach (var t in ta) typeArgs.Add(t?.DeepClone());
         if (typeArgs.Count > 0) call["typeArgs"] = typeArgs;
-        // Carry the callee's param-type list (receiver-first, mirroring the hoisted helper's __self) so the
-        // String->CharSequence bridge sees the synthetic-CharSequence slots (il-regex). `sig` is a STRUCTURED
-        // TypeNode array (#37 m3b): the receiver type prepends the original sig's structured elements verbatim.
+        // Carry the HOISTED DECLARATION signature, not a constructed call-site projection. AliasHelperHoist moves the
+        // alias class's type params ahead of the member's own params onto one static helper method, so class-scoped !i
+        // becomes method-scoped !!i and the member's existing !!i is offset by the class arity. The receiver slot is
+        // likewise the open helper declaration (`OrderedDictionary<!!0,!!1>`), independent of this call's concrete
+        // typeArgs. This keeps CIR as the exact physical descriptor ilemit links.
         var sigParts = new JsonArray();
         if (instance && node["recv"] != null)
-            sigParts.Add(TypeJson.Write(classArgs.Count > 0 ? new TypeNode.Fqn(ownerName, classArgs.ToArray()) : ownerFqn));
+            sigParts.Add(TypeJson.Write(arity > 0
+                ? new TypeNode.Fqn(ownerName, Enumerable.Range(0, arity)
+                    .Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray())
+                : new TypeNode.Fqn(ownerName)));
         if (node["sig"] is JsonArray origSig)
-            foreach (var p in origSig) sigParts.Add(p?.DeepClone());
+            foreach (var p in origSig)
+                sigParts.Add(TypeJson.Read(p) is TypeNode pt
+                    ? TypeJson.Write(RemapHoistedTypeVars(pt, arity))
+                    : p?.DeepClone());
         // `sig` may be LONGER than args (omitted defaulted params, filled downstream) — the bridge matches
         // positionally from the left; only a SHORTER sig would misalign.
         if (sigParts.Count >= hargs.Count) call["sig"] = sigParts;
@@ -1643,8 +1651,26 @@ static class MemberCallSubstitution
         return call;
     }
 
-    // The call's parameter types, used as the clr* argTypes overload key. Prefer kotc's `sig` (a comma-joined
-    // param-type list); else infer each arg's own type token; else empty. Left in the kotlin.* vocabulary —
+    static TypeNode RemapHoistedTypeVars(TypeNode type, int classArity) => type switch
+    {
+        TypeNode.Tv { Scope: "type" } tv => new TypeNode.Tv("method", tv.I),
+        TypeNode.Tv { Scope: "method" } tv => new TypeNode.Tv("method", classArity + tv.I),
+        TypeNode.Fqn f => new TypeNode.Fqn(f.Name, f.Args?.Select(a => RemapHoistedTypeVars(a, classArity)).ToArray()),
+        TypeNode.Nullable n => new TypeNode.Nullable(RemapHoistedTypeVars(n.Of, classArity)),
+        TypeNode.Oblivious o => new TypeNode.Oblivious(RemapHoistedTypeVars(o.Of, classArity)),
+        TypeNode.Array a => new TypeNode.Array(RemapHoistedTypeVars(a.Elem, classArity)),
+        TypeNode.ByRef b => new TypeNode.ByRef(RemapHoistedTypeVars(b.Of, classArity)),
+        TypeNode.Fn fn => new TypeNode.Fn(
+            fn.Suspend,
+            RemapHoistedTypeVars(fn.Ret, classArity),
+            fn.Params.Select(p => RemapHoistedTypeVars(p, classArity)).ToArray(),
+            fn.Recv == null ? null : RemapHoistedTypeVars(fn.Recv, classArity),
+            fn.Clr),
+        _ => type,
+    };
+
+    // The call's parameter types, used as the clr* argTypes overload key. Prefer kotc's structured `sig`;
+    // else infer each arg's own type token; else empty. Left in the kotlin.* vocabulary —
     // BirTypeLowering lowers `argTypes` afterwards.
     static JsonArray InferArgTypes(JsonObject node, JsonArray args)
     {

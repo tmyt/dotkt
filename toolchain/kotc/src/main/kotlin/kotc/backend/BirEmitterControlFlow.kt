@@ -170,7 +170,7 @@ internal fun BirEmitter.birForLoop(block: IrBlock): String? {
 	// `for (x in array)` -> an indexed loop (avoids the kotlin iterator types). No `elem`: bir2cir derives the
 	// loop-variable element type off the array operand's (now faithful) type.
 	if (source != null && isArrayType(source.type))
-		return """{"k":"forArray","label":$lbl,"var":${str(loopVar.name.asString())},"array":${expr(source)},"body":[$body]}"""
+		return """{"k":"forArray","label":$lbl,"var":${str(localSlotName(loopVar))},"array":${expr(source)},"body":[$body]}"""
 	// NON-array for-loops: kotc no longer classifies the source at all — whether it is a counted RANGE, an
 	// `a downTo b` counter, a stdlib collection, a `kotlin.sequences.Sequence`, or a facadegen-injected .NET
 	// enumerable are each a `kotlin.ranges.*`/`kotlin.collections.*` FQN, a `downTo` operator identity, or a
@@ -188,7 +188,7 @@ internal fun BirEmitter.birForLoop(block: IrBlock): String? {
 	val elem = (source?.type as? IrSimpleType)?.arguments?.firstOrNull()
 		?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: birType(loopVar.type)
 	if (source != null)
-		return """{"k":"forIn","label":$lbl,"elem":${str(elem)},"src":${expr(source)},"srcType":${birType(source.type).toJson()},"var":${str(loopVar.name.asString())},"body":[$body],"fallback":{"k":"block","body":[${block.statements.joinToString(",") { stmt(it) }}]}}"""
+		return """{"k":"forIn","label":$lbl,"elem":${str(elem)},"src":${expr(source)},"srcType":${birType(source.type).toJson()},"var":${str(localSlotName(loopVar))},"body":[$body],"fallback":{"k":"block","body":[${block.statements.joinToString(",") { stmt(it) }}]}}"""
 	return null
 }
 
@@ -197,7 +197,7 @@ internal fun BirEmitter.tryStmt(node: IrTry): String {
 		val p = c.catchParameter
 		// Use birType so a USER exception class catches as its own type (`@AppErr`), not `object`
 		// (which degrades to System.Object — an unverifiable catch).
-		"""{"excType":${birType(p.type).toJson()},"var":${str(p.name.asString())},"body":[${bodyStmts(c.result)}]}"""
+		"""{"excType":${birType(p.type).toJson()},"var":${str(localSlotName(p))},"body":[${bodyStmts(c.result)}]}"""
 	}
 	val finally = node.finallyExpression?.let { ""","finally":[${bodyStmts(it)}]""" } ?: ""
 	return """{"k":"try","type":${birType(node.type).toJson()},"body":[${bodyStmts(node.tryResult)}],"catches":[$catches]$finally}"""
@@ -214,7 +214,7 @@ internal fun BirEmitter.tryExpr(node: IrTry): String {
 		val p = c.catchParameter
 		// birType (matching tryStmt) so the catch type stays the Kotlin FQN that bir2cir lowers via @ClrTypeAlias —
 		// a USER exception class catches as its own `@AppErr`, a stdlib one as its BCL alias.
-		"""{"excType":${birType(p.type).toJson()},"var":${str(p.name.asString())},"body":[${bodyStmtsAssign(c.result, tv)}]}"""
+		"""{"excType":${birType(p.type).toJson()},"var":${str(localSlotName(p))},"body":[${bodyStmtsAssign(c.result, tv)}]}"""
 	}
 	val finally = node.finallyExpression?.let { ""","finally":[${bodyStmts(it)}]""" } ?: ""
 	val tryS = """{"k":"try","type":${fqnJson("kotlin.Unit")},"body":[$tryBody],"catches":[$catches]$finally}"""

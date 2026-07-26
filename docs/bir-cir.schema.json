@@ -5,7 +5,7 @@
   "description": "The durable ABI for kotlin/clr's backend interchange. BIR (kotc→bir2cir) and CIR (bir2cir→ilemit) share ONE schema; they differ only by lowering stage, not shape. Names shown are the post-m5 canonical form (the m6 validator enforces this document). Version tag: bir-json/1.",
 
   "type": "object",
-  "$comment": "A BIR/CIR file is a compilation unit. Injection metadata (facadegen→kotc, §5b) reuses $defs.type/$defs.decl but has its own root ($defs.injectionDoc). CARRIER (§0) is OUT OF SCOPE for this document schema: inline-fn bodies and suspend fn-types are not document nodes — they ride as CLR attributes on the EMITTED assembly ([KotlinInline(string version, byte[] content)] / [KotlinSuspendFunctionType(...)], version 'bir-json/1', reader DecodeInlineBody(version, byte[])). What this schema DOES govern is the attribute's DECODED content: [KotlinInline]'s byte[] decodes to a node body (a $defs/node or array thereof); [KotlinSuspendFunctionType]'s to a $defs/type (an fn with suspend:true). The attribute ctor shape itself lives in spec §0, not here.",
+  "$comment": "A BIR/CIR file is a compilation unit. Injection metadata (facadegen→kotc, §5b) reuses $defs.type/$defs.decl but has its own root ($defs.injectionDoc). CARRIER (§0) is OUT OF SCOPE for this document schema: inline payloads and suspend fn-types are not document roots — they ride as CLR attributes on the EMITTED assembly ([KotlinInline(string version, byte[] content)] / [KotlinSuspendFunctionType(...)], codec version 'bir-json/1'). A decoded [KotlinInline] content is the §0 payload object {v,fqn,owner,fileClass,recv,static,typeParams,params,ret,body,lifted}; its body nodes, types, and lifted method declarations use this schema's vocabulary. [KotlinSuspendFunctionType] decodes to a $defs/type (an fn with suspend:true). The attribute ctor and inline-payload envelope live in spec §0, not here.",
   "properties": {
     "types":    { "type": "array", "items": { "$ref": "#/$defs/typeDecl" } },
     "topLevel": { "type": "array", "items": { "$ref": "#/$defs/decl" }, "description": "top-level funs/props (the file-class members)" },
@@ -207,6 +207,7 @@
       "type": "object",
       "properties": {
         "name":       { "type": "string" },
+        "generated":  { "type": "boolean", "description": "Compiler-generated method declaration (lifted lambda/local-function/callable-reference target or a lowerer synthetic). ilemit maps this CIR fact 1:1 to [CompilerGenerated]; facadegen excludes the method from the restored Kotlin API." },
         "ret":        { "$ref": "#/$defs/type" },
         "retNullableFlags": { "type": "array", "items": { "type": "integer", "enum": [0, 1, 2] }, "$comment": "#48: bir2cir-derived flattened NullableAttribute bytes for the RETURN's reference-nullable positions (the retired scalar `retNullable` flag's replacement); RoundtripMetadata folds it into the method's `retAttrs` as a NullableAttribute entry, which ilemit stamps on the return parameter. Absent when the return carries no nullable-reference position." },
         "mods":       { "$ref": "#/$defs/mods" },

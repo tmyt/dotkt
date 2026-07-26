@@ -274,6 +274,15 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	// name-keyed map can't tell them apart (it would capture C's `this` too). The dispatch `<this>` then falls
 	// through to `{"k":"this"}` and the extension receiver resolves here.
 	internal val selfSubst = java.util.IdentityHashMap<IrValueDeclaration, String>()
+	// A function frame is keyed by DECLARATION IDENTITY in Kotlin IR, not by the source spelling of a local. Give
+	// every IrVariable an unspellable, module-unique BIR slot name so no later phase has to reconstruct lexical
+	// binding from JSON scopes. Value parameters retain their observable metadata/ABI names. Inline-lambda capture
+	// descriptors use this same allocator, so payload materialization and ordinary bodies share one vocabulary.
+	private val localSlotNames = java.util.IdentityHashMap<IrVariable, String>()
+	private var localSlotCounter = 0
+	internal fun localSlotName(d: IrValueDeclaration): String =
+		if (d is IrVariable) localSlotNames.getOrPut(d) { "dotkt\$local${localSlotCounter++}" }
+		else d.name.asString()
 	// Function-local classes lifted to top-level synthetic types: the outer locals they capture (prepended to the
 	// ctor at construction sites). Keyed by the IrClass.
 	internal val localClassCaptures = java.util.IdentityHashMap<IrClass, List<IrValueDeclaration>>()
@@ -452,7 +461,7 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	}
 	internal fun isRefCell(d: IrValueDeclaration) = d in refCellVars
 	/** The Ref-typed base expression for a ref-cell var: its capture field inside a closure, else the local. */
-	internal fun refBase(d: IrValueDeclaration) = captureSubst[d] ?: """{"k":"local","name":${str(d.name.asString())}}"""
+	internal fun refBase(d: IrValueDeclaration) = captureSubst[d] ?: """{"k":"local","name":${str(localSlotName(d))}}"""
 	/** A captured value's type as held in the closure: the Ref cell for a ref-cell var, else its plain type. */
 	internal fun captureFieldType(d: IrValueDeclaration): TypeNode = if (isRefCell(d)) TypeNode.Fqn(refTypeName(d)) else birType(d.type)
 

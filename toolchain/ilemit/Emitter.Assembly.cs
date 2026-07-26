@@ -870,6 +870,11 @@ sealed partial class Emitter
             ps = m.GetProperty("params").EnumerateArray().Select(p => MapType(p.GetProperty("type"))).ToArray();
             mb = ti.TB.DefineMethod(name, attrs, MapType(m.GetProperty("ret")), ps);
         }
+        // A kotc-authored lifted method (`newDelegate` target) carries the same structural generated fact as
+        // synthesized types. Stamp the standard marker here; facadegen uses it to keep implementation-only helpers
+        // out of the re-imported Kotlin surface. This is a direct CIR flag -> metadata mapping, not name inference.
+        if (m.TryGetProperty("generated", out var generated) && generated.GetBoolean())
+            StampCompilerGenerated(mb);
         ti.Methods[name] = mb; ti.MethodsBySig[SigKey(name, m)] = mb;
         // #139: record the bir2cir reverse-enumerator-bridge role marker (never a Kotlin name). A "hasNext"/"next" role
         // identifies THE Kotlin iterator interface the adapter wraps; an "iterator" role is the this.iterator() a

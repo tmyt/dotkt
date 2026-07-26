@@ -139,7 +139,7 @@ static partial class SuspendColdLowering
     {
         "newClosure", "newDelegate", "lambda", "forEachInline", "repeatInline",
         // A suspend-lambda VALUE built inside a suspend fun. Kept here so the SUBTREE-SKIPPING analyses
-        // (CollectVarFields / DisambiguateShadowedVars) do not descend into the lambda's own body (its vars are
+        // (CollectVarFields) do not descend into the lambda's own body (its vars are
         // the lambda SM's, not the enclosing SM's). SuspensionRefusalReason and Rewrite SPECIAL-CASE it (GAP 2): the
         // enclosing fun IS cold-transformed, the lambda copied opaquely with SM-vocabulary `capValues`.
         "newSuspendLambda",
@@ -644,7 +644,7 @@ static partial class SuspendColdLowering
                 // Only forEachInline needs an exemption
                 // from the LambdaKinds refusal below (falling through to the generic child recursion, which validates its
                 // body). A SUSPENSION-FREE forEachInline stays REFUSED: it would reach Build as a structured loop whose
-                // LambdaKinds subtree CollectVarFields/DisambiguateShadowedVars SKIP but Rewrite DESCENDS — a loop-interior
+                // LambdaKinds subtree CollectVarFields SKIPS but Rewrite DESCENDS — a loop-interior
                 // name colliding with a spilled outer var would silently miscompile, so it stays on the un-lowered path.
                 // `repeatInline`/`forRange` with a body suspension stay refused (not flattened); app-build ranges have
                 // already become counted `for` nodes and are handled here.
@@ -1062,18 +1062,13 @@ static partial class SuspendColdLowering
             // CollectVarFields spills them), and a suspending catch handler is hoisted OUT of the CLR catch clause (a
             // `leave`-in / resume-into a catch is illegal IL) into gated straight-line code (HoistSuspendingCatches).
             // Both clone-on-change (never mutate the shared/retained rt-stdlib original) and skip nested lambda scopes.
-            // They allocate fresh label ids via NextLabel(), so seed the allocator first. Runs BEFORE DisambiguateShadowedVars
-            // (a flattened loop's `{k:var}` loop temp / a hoisted handler's moved locals must be seen by the shadow-rename).
+            // They allocate fresh label ids via NextLabel(), so seed the allocator first.
             if (hasSuspension)
             {
                 _label = MaxLabelId(body) + 1000;
                 body = FlattenSuspendingLoops(body);
                 body = HoistSuspendingCatches(body);
             }
-            // Pre-pass: alpha-rename shadowed same-name locals of DIFFERENT types (see DisambiguateShadowedVars)
-            // so each distinct declaration gets its OWN correctly-typed SM field. Returns the input unchanged
-            // when there is no type clash; a renamed CLONE otherwise (never mutates the shared/retained body).
-            body = DisambiguateShadowedVars(body);
             // BUG 1: does the body contain a try whose finally spans a suspension? If so, the finally must be
             // gated (see SuspendingField) so it does not run on the suspend-return unwind and re-run at exit.
             // Computed POST-flatten so a suspension that was inside a (now-flattened) loop is visible here.
@@ -1179,125 +1174,6 @@ static partial class SuspendColdLowering
         void AddFieldTyped(string name, TypeNode type)
         {
             if (_fields.Add(name)) _fieldDecls.Add((name, type ?? AnyTn));
-        }
-
-        // Make SM-field allocation SCOPE-AWARE for shadowed same-name locals of DIFFERENT types. A coroutine
-        // body may declare the same `var` name in DISJOINT scopes with DIFFERENT types (e.g.
-        // SlidingWindow.windowedIterator's `var buffer = ArrayList<T>()` in one if-branch vs
-        // `var buffer = RingBuffer<T>(...)` in the other). CollectVarFields keys SM fields by NAME, so it would
-        // collapse the two to a single field of ONE type -> the other branch's `buffer.expanded()/isFull()` then
-        // can't resolve on the wrong-typed field (ilverify StackUnexpected / runtime "Iterator has failed").
-        //
-        // We alpha-rename the shadowing declarations (`buffer` / `buffer$2`) so each distinct-typed declaration
-        // gets its OWN correctly-typed SM field, binding every `local`/`setLocal` reference to the declaration
-        // lexically IN SCOPE (a scope-frame stack, resolved innermost-first, one frame per block/valueBlock/try
-        // body/catch/finally). This is the general "shadowed same-name locals of different types" fix, common in
-        // generated/inlined stdlib code. Only names whose declarations DISAGREE on type are renamed (the common
-        // case — including same-type disjoint reuse that harmlessly shares one field — is left byte-identical),
-        // and we return the INPUT array untouched when there is no clash. On a clash we operate on a DeepClone,
-        // so the shared/retained original body node (kept in the rt-stdlib build) is never mutated.
-        static JsonArray DisambiguateShadowedVars(JsonArray body)
-        {
-            // 1. Which `var` names are declared with more than one distinct type? (Skip nested lambda/closure and
-            //    the suspendCoroutine intrinsic subtrees — they own their own scope, handled separately.)
-            var declTypes = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
-            void Scan(JsonNode n)
-            {
-                if (n is JsonObject o)
-                {
-                    var k = Str(o["k"]);
-                    // Skip nested lambda/closure subtrees (incl. the F2 suspendCoroutine call's newClosure/newDelegate
-                    // block arg) — they own their own scope, handled separately.
-                    if (k != null && LambdaKinds.Contains(k)) return;
-                    if (k == "var" && Str(o["name"]) is string vn)
-                    {
-                        if (!declTypes.TryGetValue(vn, out var set))
-                            declTypes[vn] = set = new HashSet<string>(StringComparer.Ordinal);
-                        set.Add(Str(o["type"]) ?? "kotlin.Any");
-                    }
-                    foreach (var kv in o) if (kv.Value != null) Scan(kv.Value);
-                }
-                else if (n is JsonArray a) foreach (var it in a) if (it != null) Scan(it);
-            }
-            Scan(body);
-            var conflicts = new HashSet<string>(
-                declTypes.Where(kv => kv.Value.Count > 1).Select(kv => kv.Key), StringComparer.Ordinal);
-            if (conflicts.Count == 0) return body;
-
-            // 2. Rename the conflicting declarations + their in-scope references on a private clone.
-            var clone = (JsonArray)body.DeepClone();
-            // Per conflicting name: type -> assigned emitted name. First type keeps the bare name; each further
-            // type gets a `$N` suffix. A same (name,type) reused across disjoint scopes maps to the SAME field.
-            var assigned = new Dictionary<string, Dictionary<TypeNode, string>>(StringComparer.Ordinal);
-            string Assign(string name, TypeNode type)
-            {
-                if (!assigned.TryGetValue(name, out var byType))
-                    assigned[name] = byType = new Dictionary<TypeNode, string>();
-                if (byType.TryGetValue(type, out var nn)) return nn;
-                var newName = byType.Count == 0 ? name : name + "$" + (byType.Count + 1);
-                byType[type] = newName;
-                return newName;
-            }
-
-            var scopes = new List<Dictionary<string, string>>();
-            string Resolve(string name)
-            {
-                for (var i = scopes.Count - 1; i >= 0; i--)
-                    if (scopes[i].TryGetValue(name, out var r)) return r;
-                return null;
-            }
-            void PushList(JsonArray stmts)
-            {
-                scopes.Add(new Dictionary<string, string>(StringComparer.Ordinal));
-                foreach (var s in stmts) if (s != null) Visit(s);
-                scopes.RemoveAt(scopes.Count - 1);
-            }
-            void Visit(JsonNode n)
-            {
-                if (n is JsonArray a) { foreach (var it in a) if (it != null) Visit(it); return; }
-                if (n is not JsonObject o) return;
-                var k = Str(o["k"]);
-                if (k != null && LambdaKinds.Contains(k)) return;   // nested lambda/closure (incl. F2 block arg) -> separate SM
-                switch (k)
-                {
-                    case "var":
-                        if (o["init"] != null) Visit(o["init"]);    // init binds in the OUTER scope (before decl)
-                        if (Str(o["name"]) is string vn && conflicts.Contains(vn))
-                        {
-                            var nn = Assign(vn, TypeJson.Read(o["type"]) ?? AnyTn);
-                            o["name"] = nn;
-                            scopes[^1][vn] = nn;
-                        }
-                        return;
-                    case "local":
-                        if (Str(o["name"]) is string ln && Resolve(ln) is string lr) o["name"] = lr;
-                        return;
-                    case "setLocal":
-                        if (o["value"] != null) Visit(o["value"]);
-                        if (Str(o["name"]) is string sn && Resolve(sn) is string sr) o["name"] = sr;
-                        return;
-                    case "block":
-                    case "valueBlock":
-                        scopes.Add(new Dictionary<string, string>(StringComparer.Ordinal));
-                        if (o["body"] is JsonArray bb) foreach (var s in bb) if (s != null) Visit(s);
-                        if (o["stmts"] is JsonArray ss) foreach (var s in ss) if (s != null) Visit(s);
-                        if (o["result"] != null) Visit(o["result"]);   // evaluated in the block's scope
-                        scopes.RemoveAt(scopes.Count - 1);
-                        return;
-                    case "try":
-                        if (o["body"] is JsonArray tb) PushList(tb);
-                        if (o["catches"] is JsonArray cs)
-                            foreach (var c in cs)
-                                if (c is JsonObject co && co["body"] is JsonArray cb) PushList(cb);
-                        if (o["finally"] is JsonArray fb) PushList(fb);
-                        return;
-                    default:
-                        foreach (var kv in o) if (kv.Value != null) Visit(kv.Value);
-                        return;
-                }
-            }
-            PushList(clone);
-            return clone;
         }
 
         void CollectVarFields(JsonNode node, bool inHandler)
@@ -2580,6 +2456,8 @@ static partial class SuspendColdLowering
                 };
             }
             if (callNode["typeArgs"] is JsonArray ta) call["typeArgs"] = ta.DeepClone();
+            if (!isInstance)
+                ClrMemberResolution.CarryReferencedStaticCallSignatureSnapshot(callNode, call);
             // BUG Y — overload disambiguation. `<method>$dotkt_suspend` may be one of several same-named IL
             // overloads (SequenceScope.yieldAll has 3: Iterator/Iterable/Sequence), which ilemit resolves via
             // MethodsBySig on the param-type signature. Synthesize the call `sig` = the ORIGINAL call's param
@@ -2590,7 +2468,16 @@ static partial class SuspendColdLowering
             // -> arg/param mismatch -> BadImageFormatException. (yield works today only because it has ONE overload.)
             // Structured sig (#37 m3b): the ORIGINAL call's param TypeNodes + the appended `completion` slot
             // (Continuation<Any>). ilemit resolves the `<method>$dotkt_suspend` overload by this structured signature.
-            var sigArr = callNode["sig"] is JsonArray os ? (JsonArray)os.DeepClone() : new JsonArray();
+            // BIR spells the resolved descriptor of an instance call as `argTypes`; `sig` is the corresponding
+            // spelling used by static calls.  Preserve whichever descriptor the frontend supplied before appending
+            // the cold ABI's completion slot.  Falling back to an empty signature here used to be masked by ilemit's
+            // name/arity lookup and made every referenced non-zero-argument suspend member ambiguous or unlinkable
+            // once CIR signature consumption became exact.
+            var sigArr = callNode["sig"] is JsonArray os
+                ? (JsonArray)os.DeepClone()
+                : callNode["argTypes"] is JsonArray oat
+                    ? (JsonArray)oat.DeepClone()
+                    : new JsonArray();
             sigArr.Add(ContAny());
             call["sig"] = sigArr;
             return call;

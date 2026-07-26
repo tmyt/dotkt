@@ -419,6 +419,7 @@ sealed class Pipeline
             // The CLR-faithful representation of a generic `T?` is `System.Object` (the boxed/erased nullable form).
             // Rewrite the return to `object`; ilemit boxes value returns and the CALL boundary converts object ->
             // the caller's Nullable<V> / reference type. Runs BEFORE the rest so type-lowering/substitution see it.
+            if (attributeTopLevelOwner) ClrMemberResolution.CaptureReferencedStaticCallSignatures(bir.Root);
             NullableGenericErasure.Apply(bir.Root);
             // GENERIC-BOUNDARY nullable-Tv READ realignment (#4; #113/#117/#120/#142 read side). The DEF-side erasure
             // above turns a member's `…Ref<T?>…` into `…Ref<object>…`, but a CALL site kotc emitted with T already
@@ -717,6 +718,11 @@ sealed class Pipeline
             // `System.Collections.IEnumerable`/`IEnumerator` + an element cast. Non-ref; before type lowering (the src's
             // `kotlin.sequences.Sequence` FQN is still in the source vocabulary).
             if (!_options.RefBuild) SequenceForEachLowering.Apply(substituted);
+            // Resolve an attributed callStatic to the referenced declaration while its Kotlin descriptor still
+            // distinguishes shapes that share one CLR erasure (`T?` vs object, function-return `T?` vs object).
+            // The selected declaration then follows the ordinary nullable/alias/type transform into physical CIR.
+            // App-only: stdlib metadata/runtime builds own their kotlin.* facades in this assembly.
+            if (attributeTopLevelOwner) ClrMemberResolution.ResolveReferencedStaticCalls(substituted, refs);
             // DECL-position NRT byte collection (#37/#48): stamp `nullableFlags`/`retNullableFlags` from the SEMANTIC
             // `{t:nullable}` reference wrappers BEFORE BirTypeLowering strips them to bare types. Runs in ALL builds so
             // the ref.dll + rt.dll + app views of a signature's nullability agree (the scalar decl flags are retired).

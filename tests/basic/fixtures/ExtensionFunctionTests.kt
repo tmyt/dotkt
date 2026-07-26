@@ -6,8 +6,8 @@
 //   il-ext        -> m2_ext         user-defined extension functions (receiver -> __self first param)
 //   il-extprop    -> m2_extprop     C7 top-level extension-property getters route to get_<name>(receiver): a GENERIC
 //                                    getter (List<T>.lastIndex) + non-generic (CharSequence.lastIndex, Int.absoluteValue/.sign)
-//   il-extpropref -> m2_extpropref  #21 bound (`this::extProp`->KProperty0) + unbound (`String::extProp`->KProperty1)
-//                                    + mutable-bound (`this::varExtProp`->KMutableProperty0 set() path) ext-property refs
+//   il-extpropref -> m2_extpropref  #21 bound/unbound + mutable extension-property references, including generic
+//                                    receiver/value slots (`List<T>`, `List<T>` return, `M2RefBox<T>` get/set)
 //
 // The ext properties were `mySimpleName`/`tag`; renamed `m2MySimpleName`/`m2Tag` for collision-freedom, so a
 // reference's `.name` now reads the new name — the property name is incidental to the subject (that the bound/unbound
@@ -27,6 +27,12 @@ private var m2Store = "init"
 var Any.m2Tag: String
     get() = m2Store
     set(value) { m2Store = value }
+class M2RefBox<T>(var value: T)
+val <T> List<T>.m2AuditLast: T get() = this[lastIndex]
+val <T> T.m2AuditSingleton: List<T> get() = listOf(this)
+var <T> M2RefBox<T>.m2AuditValue: T
+    get() = value
+    set(newValue) { value = newValue }
 class M2Foo {
     override fun toString(): String {
         val p = this::m2MySimpleName
@@ -60,5 +66,20 @@ class ExtensionFunctionTests {
         val m = M2Foo()::m2Tag                                      // BOUND mutable ext-property ref -> KMutableProperty0
         m.set("hi")                                                 // set() invokes the static set_ accessor w/ captured receiver
         assertEquals("m2Tag=hi", "${m.name}=${m.get()}")
+
+        val genericUnbound = List<String>::m2AuditLast
+        assertEquals("b", genericUnbound.get(listOf("a", "b")))
+        val genericBound = listOf(10, 20)::m2AuditLast
+        assertEquals(20, genericBound.get())
+        val genericCollectionValue = String::m2AuditSingleton
+        assertEquals("[one]", genericCollectionValue.get("one").toString())
+
+        val genericBox = M2RefBox("before")
+        val genericMutableUnbound = M2RefBox<String>::m2AuditValue
+        genericMutableUnbound.set(genericBox, "unbound")
+        assertEquals("unbound", genericMutableUnbound.get(genericBox))
+        val genericMutableBound = genericBox::m2AuditValue
+        genericMutableBound.set("bound")
+        assertEquals("bound", genericMutableBound.get())
     }
 }
