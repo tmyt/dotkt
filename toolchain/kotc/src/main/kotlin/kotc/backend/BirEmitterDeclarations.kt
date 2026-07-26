@@ -288,9 +288,15 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 			fields.add("""{"name":${str(ent.name.asString())},"type":${fqnJson(name)},"static":true,"init":{"k":"new","type":${fqnJson(sub)},"args":[${nameOrd(i, ent).joinToString(",")}]}}""")
 		} else {
 			val ecc = (ent.initializerExpression as? IrExpressionBody)?.expression as? IrEnumConstructorCall
-			val entryArgs = ecc?.let { regularArgs(it).map { a -> expr(a) } }.orEmpty()
+			// An entry's `NAME(args)` is an omitting call site too (`R(1)` on `enum class Col(val rgb: Int, val
+			// label: String = "c")`), so it fills omitted defaults like every other call shape — and binds a value a
+			// filled default splices to a temp (#235), declared by a `valueBlock` around this initializer.
+			val (entryTemps, entryArgs) = ecc?.let { c -> withCallValuesBoundOnce(c) { filledArgs(c) } } ?: (emptyList<String>() to emptyList())
 			val newArgs = (nameOrd(i, ent) + entryArgs).joinToString(",")
-			fields.add("""{"name":${str(ent.name.asString())},"type":${fqnJson(name)},"static":true,"init":{"k":"new","type":${fqnJson(name)},"args":[$newArgs]}}""")
+			val newEntry = """{"k":"new","type":${fqnJson(name)},"args":[$newArgs]}"""
+			val init = if (entryTemps.isEmpty()) newEntry
+				else """{"k":"valueBlock","type":${fqnJson(name)},"stmts":[${entryTemps.joinToString(",")}],"result":$newEntry}"""
+			fields.add("""{"name":${str(ent.name.asString())},"type":${fqnJson(name)},"static":true,"init":$init}""")
 		}
 	}
 	// methods: concrete user methods + abstract member decls + toString + values() + valueOf().
@@ -318,12 +324,16 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 	return (listOf(baseDef) + subDefs).joinToString(",")
 }
 
-/** The enum-super args a per-entry body's anonymous subclass passes (the `NAME(args)` args), as expr JSON. */
+/** The enum-super args a per-entry body's anonymous subclass passes (the `NAME(args)` args), as expr JSON —
+ *  omitted defaults filled, like every other constructor call site. */
 internal fun BirEmitter.enumSuperArgs(cc: IrClass): List<String> {
 	val ctor = cc.declarations.filterIsInstance<IrConstructor>().firstOrNull() ?: return emptyList()
 	val call = (ctor.body as? IrBlockBody)?.statements?.firstNotNullOfOrNull { it as? IrEnumConstructorCall }
 		?: return emptyList()
-	return regularArgs(call).map { expr(it) }
+	// These args ride the subclass ctor's `baseArgs`, so a single-evaluation temp is declared by the FIRST of them
+	// (the same placement a constructor delegation uses — see [declaringFirstArg]).
+	val (temps, args) = withCallValuesBoundOnce(call) { filledArgs(call) }
+	return declaringFirstArg(temps, args)
 }
 
 /** A per-entry enum body `NAME(args) { override fun … }` -> a subclass `<>Enum_NAME : Enum` whose ctor takes only
@@ -919,17 +929,48 @@ internal fun BirEmitter.ctor(klass: IrClass, ctor: IrConstructor, captures: List
 	val capAssigns = captures.map { (_, fname) ->
 		"""{"k":"setField","ownerType":${fqnJson(typeName(klass))},"recv":{"k":"this"},"name":${str(fname)},"value":{"k":"local","name":${str(fname)}}}"""
 	}
-	val params = (capParams + paramsJsonList(ctor.parameters)).joinToString(",")
+	// `ctor` as the owner so its defaulted params carry `@KotlinDefault` (the cross-module splice source), exactly as a
+	// carrying function's do — a re-consumed constructor's non-constant default has no other carrier. NOT for a lifted
+	// LOCAL/anonymous class: its `capParams` are extra leading args the stamped index does not count (only an inner
+	// class's single `__outer` lines up, via `extOffset`), and its default expression reads those captures as
+	// `this.<field>` — an unbindable carrier. A local class has no cross-module call site to carry anything for.
+	val carrierOwner = ctor.takeIf { captures.isEmpty() || klass.isInner }
+	val params = (capParams + paramsJsonList(ctor.parameters, carrierOwner)).joinToString(",")
 	val body = ctor.body as? IrBlockBody
 	val delegating = body?.statements?.filterIsInstance<IrDelegatingConstructorCall>()?.firstOrNull()
 	val delegateClass = delegating?.symbol?.owner?.parent as? IrClass
 	// `constructor(...) : this(...)` delegates to a sibling ctor; `: super(...)` / implicit -> base.
 	val isThisDelegate = delegating != null && delegateClass == klass
-	val thisArgs = if (isThisDelegate) delegating!!.arguments.filterNotNull().joinToString(",") { expr(it) } else null
+	// A delegation is an ordinary omitting call site (`: this(3)` on `class D(val a: Int, val b: Int = a * 2)`), so its
+	// args run through the SAME default-filling pass every other call shape uses — dropping the omitted slot instead
+	// would slide every later arg into the wrong parameter.
+	//   The delegation is emitted BEFORE the ctor body, where the capture FIELDS are not yet stored (capAssigns above
+	// run as the body's first statements): while emitting its args, every captured value must read the leading capture
+	// PARAM instead of `this.<field>` — the enclosing instance of an inner class included, whose class-body binding is
+	// the `__outer` FIELD. A lifted local class's captures are also leading params of the TARGET sibling ctor, so a
+	// `: this(...)` passes them along (an inner class's enclosing instance is the delegation's dispatch-receiver arg
+	// instead, prepended by `delegatedCtorArgs`).
+	val savedCapSubst = java.util.IdentityHashMap<IrValueDeclaration, String?>()
+	captures.forEach { (d, fname) ->
+		savedCapSubst[d] = captureSubst[d]
+		captureSubst[d] = """{"k":"local","name":${str(fname)}}"""
+	}
+	val capForwardArgs = if (klass.isInner) emptyList() else captures.map { (_, f) -> """{"k":"local","name":${str(f)}}""" }
+	// A value a filled default SPLICES is bound to a temp so it is evaluated once (#235), like at every other call site.
+	// A delegation is not an expression — it rides the ctor declaration, ahead of the body — so there is no wrapping
+	// `valueBlock` to declare the temps in. They go in the FIRST argument instead: `var` statements in a `valueBlock`
+	// declare method-body locals, and the first argument is evaluated before every later one, so each later argument's
+	// read of a temp is in scope and in order.
+	val thisArgs = if (isThisDelegate) withCallValuesBoundOnce(delegating!!) {
+		capForwardArgs + delegatedCtorArgs(delegating)
+	}.let { (temps, a) -> declaringFirstArg(temps, a).joinToString(",") } else null
 	val baseArgs = if (!isThisDelegate) delegating?.let { d ->
 		val targetFq = delegateClass?.fqNameWhenAvailable?.asString()
-		if (targetFq != "kotlin.Any") d.arguments.filterNotNull().joinToString(",") { expr(it) } else null
+		if (targetFq != "kotlin.Any") withCallValuesBoundOnce(d) { delegatedCtorArgs(d) }
+			.let { (temps, a) -> declaringFirstArg(temps, a).joinToString(",") }
+		else null
 	} else null
+	savedCapSubst.forEach { (d, prev) -> if (prev != null) captureSubst[d] = prev else captureSubst.remove(d) }
 	val stmts = ArrayList<String>()
 	stmts.addAll(capAssigns)   // store captures before instance initializers, which may read them
 	body?.statements?.forEach { s ->
@@ -1160,6 +1201,9 @@ internal fun BirEmitter.isMetadataRepresentableDefault(p: org.jetbrains.kotlin.i
 /** True if `fn` carries `@KotlinDefault` on ALL its defaulted params — the UNIFORM per-parameter splice source
  *  bir2cir uses to fill an omitted arg POSITIONALLY (Tier-1 and Tier-2 alike). Two consumers read the carrier:
  *  DefaultArgSplice at a cross-module callStatic/callInstance, and InlineSplice STEP 5 at a callInline body splice.
+ *  A CONSTRUCTOR carries it too (#235), consumed by DefaultArgSplice at a cross-module `new` (keyed
+ *  `<type>|.ctor|<emitted arg count>`). Without the attribute facadegen would surface the param REQUIRED and the
+ *  omission would not even resolve at the consumer's frontend.
  *  This MUST cover Tier-1 too: at a CROSS-MODULE call kotc sees the callee's default as an IrErrorExpression (the
  *  frontend KLIB drops the VALUE) and so cannot tell Tier-1 from Tier-2 — it emits a `defaultArg` placeholder for EVERY
  *  omitted default, which bir2cir can only fill if a `@KotlinDefault` exists for that slot. (Tier-1 params ALSO keep the
@@ -1180,9 +1224,16 @@ internal fun BirEmitter.isMetadataRepresentableDefault(p: org.jetbrains.kotlin.i
  *  receiver — is poisoned per-expression in [defaultCarrierBir] (a `{k:this}` dispatch read binds correctly ONLY in
  *  InlineSplice's `recv==dispatch` path, not for a member-EXTENSION splice nor DefaultArgSplice — since the SAME carrier
  *  feeds all consumers, it is refused rather than risk a miscompile). */
-internal fun BirEmitter.carriesKotlinDefault(fn: org.jetbrains.kotlin.ir.declarations.IrSimpleFunction): Boolean =
-	fn.parameters.any { it.kind == IrParameterKind.Regular && it.defaultValue != null } &&
-		(fn.isInline || (!fn.isSuspend && fn.parameters.none { it.kind == IrParameterKind.DispatchReceiver }))
+internal fun BirEmitter.carriesKotlinDefault(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): Boolean =
+	fn.parameters.any { it.kind == IrParameterKind.Regular && it.defaultValue != null } && when (fn) {
+		// A CONSTRUCTOR always carries: it is never `suspend`, it is statically resolved, and its enclosing-instance
+		// read (an inner class) is poisoned per-expression by [defaultCarrierBir] exactly as a member fn's is. Without
+		// the carrier a re-consumed ctor's non-constant default has nowhere to come from, so facadegen surfaces the
+		// param REQUIRED and `P(3)` does not even resolve at the consumer's frontend.
+		is IrConstructor -> true
+		is IrSimpleFunction -> fn.isInline || (!fn.isSuspend && fn.parameters.none { it.kind == IrParameterKind.DispatchReceiver })
+		else -> false
+	}
 
 /** A data-class `copy` synthetic — `copy` cannot be user-declared on a data class, so name + `isData` parent is exact. */
 internal fun BirEmitter.isDataClassCopy(fn: org.jetbrains.kotlin.ir.declarations.IrSimpleFunction): Boolean =
@@ -1206,7 +1257,7 @@ internal fun BirEmitter.isDataClassCopy(fn: org.jetbrains.kotlin.ir.declarations
  *  substring — a nested object/lambda `this` is a different receiver, and a pure-extension `this` is the extension
  *  receiver, which binds correctly to args[0]). */
 internal fun BirEmitter.defaultCarrierBir(def: org.jetbrains.kotlin.ir.expressions.IrExpression,
-		ownerFn: org.jetbrains.kotlin.ir.declarations.IrSimpleFunction? = null): String {
+		ownerFn: org.jetbrains.kotlin.ir.declarations.IrFunction? = null): String {
 	if (ownerFn != null && defaultReadsDispatch(ownerFn, def))
 		return """{"k":"defaultUnsupported","reason":${str("a default that reads an enclosing-instance (dispatch or outer-class) receiver cannot be filled at an omitting call site — pass the argument explicitly")}}"""
 	val before = liftedMethods.size
@@ -1223,14 +1274,21 @@ internal fun BirEmitter.defaultCarrierBir(def: org.jetbrains.kotlin.ir.expressio
 }
 
 internal fun BirEmitter.paramsJsonList(params: List<org.jetbrains.kotlin.ir.declarations.IrValueParameter>,
-		ownerFn: org.jetbrains.kotlin.ir.declarations.IrSimpleFunction? = null): List<String> {
+		ownerFn: org.jetbrains.kotlin.ir.declarations.IrFunction? = null): List<String> {
 	// A `@KotlinDefault(index, bir)` on each defaulted param of a qualifying function: `index` = the param's position
 	// in the emitted call (extension receiver first, if any), `bir` = the default expression as a BIR-json STRING (so
 	// bir2cir splices it PRE-lowering; it is opaque to this build's type lowering). Stamped on ALL defaulted params of
 	// a Tier-2-carrying function (uniform splice source). kotc emits ONE BIR for every build: the attr rides every
 	// build; the rt build strips it downstream (ilemit param-attr strip under `--build-stdlib=runtime`).
 	val emitKotlinDefault = ownerFn != null && carriesKotlinDefault(ownerFn)
-	val extOffset = if (ownerFn?.parameters?.any { it.kind == IrParameterKind.ExtensionReceiver } == true) 1 else 0
+	// The stamped `index` is the param's position in the EMITTED call's arg array, so whatever rides ahead of the
+	// regular args counts first: an extension receiver (`__self`), or — for an INNER-class ctor — the enclosing
+	// instance the `new` passes as its leading arg.
+	val extOffset = when {
+		ownerFn?.parameters?.any { it.kind == IrParameterKind.ExtensionReceiver } == true -> 1
+		ownerFn is IrConstructor && (ownerFn.parent as? IrClass)?.isInner == true -> 1
+		else -> 0
+	}
 	val valueParams = params.filter { isValueParameter(it) }
 	// A @KotlinDefault BIR whose default expression reads ANOTHER value parameter (`b: Int = a * 10`) must encode that
 	// read as a call-index token, NOT a bare `local a` (which would resolve to a non-existent local in the CALLER after

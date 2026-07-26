@@ -85,10 +85,120 @@ import java.io.File
 // A pass-through arm (e.g. coercion-to-Unit returning its already-stamped argument) begins with `{"sty":` — not a
 // bare `{"k":<kind>` — so the prefix guard skips it and there is no double-stamp.
 internal fun BirEmitter.expr(node: IrExpression): String {
-	val s = exprInner(node)
-	return if (styNodePrefixes.any { s.startsWith(it) }) """{"sty":${birType(node.type).toJson()},${s.substring(1)}"""
-	else s
+	// A value the ENCLOSING call bound to a temp for single evaluation: every reader renders as that temp's read.
+	evalOnceSubst[node]?.let { return styStamped(node, it) }
+	val (temps, s) = withCallValuesBoundOnce(node) { styStamped(node, exprInner(node)) }
+	if (temps.isEmpty()) return s
+	return """{"k":"valueBlock","type":${birType(node.type).toJson()},"stmts":[${temps.joinToString(",")}],"result":$s}"""
 }
+
+/** #235: run `emit` with every value of `call` that a filled default SPLICES bound to a temp local, and hand back the
+ *  `var` statements that declare them (in evaluation order) for the caller to place. THE call sites that are not an
+ *  expression — a constructor DELEGATION and an ENUM ENTRY — place them differently from [expr]'s `valueBlock`, but the
+ *  binding itself is identical, so it lives here once. Empty list ⇒ nothing needed binding and `emit`'s output stands
+ *  alone. */
+internal fun <T> BirEmitter.withCallValuesBoundOnce(call: IrExpression, emit: () -> T): Pair<List<String>, T> {
+	val hoists = hoistCallValuesReadByDefaults(call)
+	val temps = hoists.mapTo(ArrayList()) { (order, _, stmt) -> order to stmt }
+	val previous = callEvalOnceTemps.put(call, temps)
+	val out = try { emit() } finally {
+		hoists.forEach { (_, value, _) -> evalOnceSubst.remove(value) }
+		if (previous != null) callEvalOnceTemps[call] = previous else callEvalOnceTemps.remove(call)
+	}
+	return temps.sortedBy { it.first }.map { it.second } to out
+}
+
+/** #122's `sty` stamp on the value-node kinds bir2cir's StaticType reads a type from (see the note above). */
+private fun BirEmitter.styStamped(node: IrExpression, s: String): String =
+	if (styNodePrefixes.any { s.startsWith(it) }) """{"sty":${birType(node.type).toJson()},${s.substring(1)}""" else s
+
+/** #235: bind each value of THIS call that a filled default SPLICES — the receiver (or enclosing instance) a
+ *  `= this` / `= outerProp` default reads, and each provided ARGUMENT an omitted default reads (`b: Int = a * 10`) —
+ *  to a temp local, so it is evaluated EXACTLY ONCE however many times it is spliced. Kotlin evaluates a receiver and
+ *  each argument once; splicing the rendered expression per reader would not.
+ *
+ *  Hoisting REORDERS: a temp's initializer runs before the call node, so every non-stable value to the LEFT of the last
+ *  hoisted one is bound too, even when no default reads it — otherwise it would slide after a value Kotlin evaluates
+ *  later (`g(a(), b())` with `r = q * 10` must still run `a()` first). Returns (parameter order, IR node, `var`
+ *  statement), where parameter order = receivers then arguments left to right, for the caller to merge with temps that
+ *  [filledArgs] adds after rendering an omitted default. Every reader (the call's own receiver/argument slot, an
+ *  inner-class `new`'s enclosing-instance argument, the spliced default) reaches the value through `expr()` on the SAME
+ *  IR node, so [BirEmitter.evalOnceSubst] hands them all the one temp.
+ *  Empty when there is nothing to bind: not a call, no omitted default this call FILLS, no default that reads a call
+ *  value, or only STABLE values (a literal / immutable local or parameter read — free to re-read and impossible to
+ *  observe out of order, exactly [bindOnce]'s test). */
+private fun BirEmitter.hoistCallValuesReadByDefaults(node: IrExpression): List<Triple<Int, IrExpression, String>> {
+	val call = node as? org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression ?: return emptyList()
+	val callee = call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction ?: return emptyList()
+	if (callee.parameters.none { it.kind == IrParameterKind.Regular && it.defaultValue != null }) return emptyList()
+	// A SOURCE-SPLICED inline call fills nothing here (its omitted default rides the inline carrier and its lambda args
+	// are spliced, not emitted as values), so a temp would be dead — and emitting a lambda into one lifts it twice.
+	if (isInlineSplicedCall(call)) return emptyList()
+	// The defaults this call actually fills (a cross-module IrErrorExpression carries no readable expression: that
+	// omission becomes a positional placeholder bir2cir fills, and nothing of this call is spliced into it here).
+	val omitted = callee.parameters.withIndex().mapNotNull { (i, p) ->
+		if (p.kind != IrParameterKind.Regular || (i < call.arguments.size && call.arguments[i] != null)) null
+		else p.defaultValue?.expression?.takeIf { it !is org.jetbrains.kotlin.ir.expressions.IrErrorExpression }
+	}
+	if (omitted.isEmpty()) return emptyList()
+	// The receiver `filledArgs` splices is whichever of the two this call has: the extension receiver if any, else the
+	// dispatch receiver. Reads of ANY enclosing `this` render as that same expression (an inner-class ctor / member).
+	val recvIdx = callee.parameters.indexOfFirst { it.kind == IrParameterKind.ExtensionReceiver }
+		.takeIf { it >= 0 } ?: callee.parameters.indexOfFirst { it.kind == IrParameterKind.DispatchReceiver }
+	val enclosingSyms = enclosingThisChain(callee).map { it.first.symbol }
+	// Does a filled default read the value passed at parameter position `i`?
+	fun readsAt(i: Int): Boolean {
+		val syms = HashSet<org.jetbrains.kotlin.ir.symbols.IrValueSymbol>()
+		callee.parameters.getOrNull(i)?.let { syms.add(it.symbol) }
+		if (i == recvIdx) syms.addAll(enclosingSyms)
+		return syms.isNotEmpty() && omitted.any { refsAny(it, syms) }
+	}
+	val values = callee.parameters.indices.mapNotNull { i ->
+		(if (i < call.arguments.size) call.arguments[i] else null)?.let { i to it }
+	}
+	val last = values.lastOrNull { (i, _) -> readsAt(i) }?.first ?: return emptyList()
+	val out = ArrayList<Triple<Int, IrExpression, String>>()
+	for ((i, value) in values) {
+		if (i > last) break
+		val p = callee.parameters[i]
+		// A byref / @ClrRefArgument arg is emitted as an ADDRESSABLE lvalue, never through `expr()` on this node, so a
+		// temp would be dead. An lvalue read is side-effect-free anyway, so leaving it in place reorders nothing.
+		if (birType(p.type) is TypeNode.ByRef || isClrRefArgument(p)) continue
+		if (evalOnceSubst.containsKey(value) || isStableValue(value)) continue
+		val tv = if (i == recvIdx) "__recv${scopeCounter++}" else "__arg${scopeCounter++}"
+		out.add(Triple(i, value, """{"k":"var","name":${str(tv)},"type":${birType(value.type).toJson()},"init":${expr(value)}}"""))
+		evalOnceSubst[value] = """{"k":"local","name":${str(tv)}}"""
+	}
+	return out
+}
+
+/** Bind an OMITTED default after [filledArgs] has rendered it in the callee's substituted scope. The ordinary pre-pass
+ *  can bind only expressions present in `call.arguments`; a default absent from that array must join the same ordered
+ *  temp list here when a later filled default reads its parameter. Returning the local makes both the call's own slot and
+ *  every later symbolic substitution read the one value. */
+internal fun BirEmitter.bindFilledDefaultOnce(
+	call: IrExpression,
+	paramIndex: Int,
+	param: IrValueParameter,
+	defaultExpr: IrExpression,
+	emitted: String,
+): String {
+	val temps = callEvalOnceTemps[call] ?: return emitted
+	if (isStableValue(defaultExpr)) return emitted
+	if (birType(param.type) is TypeNode.ByRef)
+		return unsupported(call, "omitting a by-reference default argument that another default reads",
+			"the default value of parameter '${param.name.asString()}' cannot be copied into a temporary; pass it explicitly")
+	val tv = "__arg${scopeCounter++}"
+	temps.add(paramIndex to """{"k":"var","name":${str(tv)},"type":${birType(param.type).toJson()},"init":$emitted}""")
+	return """{"k":"local","name":${str(tv)}}"""
+}
+
+/** [bindOnce]'s stability test: a const or a read of an immutable non-ref-cell local/parameter re-reads for free and
+ *  without side effects, so splicing it twice is safe and it needs no temp. */
+private fun BirEmitter.isStableValue(e: IrExpression): Boolean =
+	e is IrConst || (e as? IrGetValue)?.symbol?.owner?.let { o ->
+		!isRefCell(o) && (o is IrValueParameter || (o as? IrVariable)?.isVar == false)
+	} == true
 
 private val styNodePrefixes = listOf(
 	"""{"k":"local"""", """{"k":"callStatic"""", """{"k":"callInstance"""",
@@ -191,11 +301,21 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 				// `Func<int,T>` a TypeBuilderInstantiation (ilemit GetMethod("Invoke") fails) -> leave it to the fall-through.
 				if (elemType != null && elemType.classifierOrNull !is org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol) birType(elemType) else null
 			} else null
-		val arrArgs = if (arrElem != null) filledArgExprs(node) else emptyList()
+		// An inner-class ctor takes the enclosing instance (its dispatch receiver) as a leading arg. Emitted ONCE, and
+		// handed to `filledArgs` as well, so a default that reads the enclosing instance splices the SAME string rather
+		// than a second emission of the expression (which would append a second copy of any lifted lambda in it).
+		val outerArgLazy = lazy {
+			if ((node.symbol.owner.parent as? IrClass)?.isInner == true) dispatchReceiver(node)?.let { expr(it) } else null
+		}
+		// The ctor's regular args, omitted defaults filled — the SAME single pass every call shape uses. Emitted once
+		// (`by lazy`, at the first branch that needs it): re-running it would duplicate any lift/lambda emission side
+		// effect, and hoisting it above `outerArg`/`capArgs` would reorder the emitted synthetic names.
+		val ctorArgs: List<String> by lazy { filledArgs(node, outerArgLazy) }
+		val arrArgs = if (arrElem != null) ctorArgs else emptyList()
 		if (arrElem != null && arrArgs.size == 2)
-			"""{"k":"newArrayInit","elem":${arrElem.toJson()},"size":${expr(arrArgs[0])},"init":${expr(arrArgs[1])}}"""
+			"""{"k":"newArrayInit","elem":${arrElem.toJson()},"size":${arrArgs[0]},"init":${arrArgs[1]}}"""
 		else if (arrElem != null && arrArgs.size == 1)
-			"""{"k":"newArraySized","elem":${arrElem.toJson()},"size":${expr(arrArgs[0])}}"""
+			"""{"k":"newArraySized","elem":${arrElem.toJson()},"size":${arrArgs[0]}}"""
 		else {
 		// A generic .NET type (`Collection<Int>()`) -> a constructed `clrg:` spec; non-generic stays plain.
 		val clr: TypeNode? = klass?.let { clrName(it) }?.let { net ->
@@ -208,13 +328,12 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		// A builtin-exception ctor (`throw IllegalStateException(msg)`) is NOT mapped here: it emits a plain `new
 		// @kotlin.IllegalStateException` and bir2cir rewrites it to `newClr System.X` off the stdlib's @ClrTypeAlias.
 		if (clr != null)
-			"""{"k":"new","type":${clr.toJson()},"argTypes":[${node.symbol.owner.parameters.filter { it.kind == IrParameterKind.Regular }.joinToString(",") { birType(it.type).toJson() }}],"args":[${filledArgExprs(node).joinToString(",") { expr(it) }}]}"""
+			"""{"k":"new","type":${clr.toJson()},"argTypes":[${node.symbol.owner.parameters.filter { it.kind == IrParameterKind.Regular }.joinToString(",") { birType(it.type).toJson() }}],"args":[${ctorArgs.joinToString(",")}]}"""
 		else {
-			// An inner-class ctor takes the enclosing instance (its dispatch receiver) as a leading arg.
-			val outerArg = if (klass?.isInner == true) dispatchReceiver(node)?.let { expr(it) } else null
+			val outerArg = outerArgLazy.value
 			// A lifted local class prepends its captured outer locals (evaluated here, in the outer context).
 			val capArgs = klass?.let { localClassCaptures[it] }?.map { capValueExpr(it) } ?: emptyList()
-			val args = (listOfNotNull(outerArg) + capArgs + filledArgExprs(node).map { expr(it) }).joinToString(",")
+			val args = (listOfNotNull(outerArg) + capArgs + ctorArgs).joinToString(",")
 			// The resolved ctor's regular-parameter STATIC TYPES, as pure Kotlin FQNs (bir2cir/ilemit derive the CLR
 			// forms — kotc emits identity, not resolution). This lets a `new` of a type with overloaded constructors
 			// resolve by SIGNATURE, not by arg count alone (mirrors the .NET-owner `new` branch above, which carries `argTypes`). Only the ctor's

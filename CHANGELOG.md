@@ -83,6 +83,60 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   that the packed nupkg really landed in its own hive, so an SDK that silently stopped honouring the switch cannot
   restore the race behind a green gate.
 
+- **kotc ([tmyt/dotkt#235], area:kotc): a constructor call may omit a default argument whose value reads an earlier
+  constructor parameter — `class Rect(val w: Int, val h: Int = w * 2)` + `Rect(3)` compiles and yields `h == 6`.**
+  kotc carried two default-argument filling passes: the one behind ordinary calls already inlined such a default with
+  each referenced parameter rewritten to that call's filled argument, while the one behind `new` / array constructors /
+  a lifted local class's `new` refused the identical shape. The constructor path is folded onto that pass, so one
+  implementation now serves both. Folding takes the UNION of the two passes' behaviors: constructor arguments gain the
+  call path's arg-slot coercions (byref shaping, `Nullable<T>` unwrap, boxed-`Any` narrowing), calls gain the
+  constructor path's facadegen constant-default fill (#134) and its loud refusal when an unfillable cross-module
+  default is omitted with a LATER argument provided (that slot-shift was previously a silent miscompile on the call
+  path). The remaining constructor call sites are routed through the same pass with it: a `: this(…)` / `: super(…)`
+  **delegation** and an **enum entry**'s `NAME(args)` (including a per-entry body's base call) dropped an omitted
+  default's slot outright, sliding every later argument one place down — `class D(val a: Int, val b: Int = a * 2) {
+  constructor() : this(3) }` produced an unloadable `D..ctor()`. A constructor default that reads an **enclosing
+  instance** (`inner class In(val x: Int = outerProp)`, and the same default on a member of an inner class) now lowers
+  too: the enclosing `this` binds to the call's dispatch receiver, a member call and each further level through the
+  `__outer` capture field (it previously emitted the *caller's* `this` and threw `InvalidProgramException`). Every
+  binding is now made BY SYMBOL rather than by rewriting the emitted `this` token, which also fixes an argument that
+  reads `this` being re-pointed at the call's receiver — `class D { val k = 5; val c = C(7); fun f() = c.m(k) }`, with
+  `C.m(a: Int, b: Int = a * 10)`, filled `b` from `c.k` by emitting `D::get_k` against a `C` receiver. Filling saves
+  and restores the substitutions it installs, so a closure that captured the callee's own parameter keeps its binding
+  across a recursive omitting call; a delegation's args read the leading capture PARAMS, which (unlike the capture
+  fields) are already live before the constructor body.
+  **A value a same-module filled default splices is now evaluated exactly ONCE**: the receiver (or enclosing instance) a
+  `= this` / `= outerProp` default reads, and the earlier argument a `= a * 10` default reads, are bound to a call-site
+  temporary in a wrapping `valueBlock`, so `mkOuter().In()` runs `mkOuter()` once — the constructor and its default now
+  see the SAME instance — and `f(next())` calls `next()` once however many defaults read it. A stable value (a literal
+  or an immutable local/parameter read) still splices directly, so an ordinary call emits no temporary, and every
+  non-stable value to the left of a bound one is bound with it so the evaluation order stays Kotlin's. This holds at
+  EVERY site that fills a default: a constructor delegation and an enum entry ride a declaration rather than an
+  expression, so their temporaries are declared by the first argument. **Cross-module omissions bind too**
+  (area:bir2cir): `DefaultArgSplice` used to deep-clone the call's receiver/argument into the default it filled, so
+  `sideEffect().substringAfter(".")` ran `sideEffect()` twice and a value two defaults read ran four times — it now
+  hoists as it fills, including a filled default a later default reads (`chain(a, b = bump(), c = b * 10)` calls
+  `bump()` once). Working on emitted JSON it cannot tell a `val` from a `var`, so there only a literal or `this` stays
+  spliced in place (`docs/dotkt-semantics.md` §7).
+  **Cross-module too** (area:bir2cir with it): a CONSTRUCTOR now carries the same `@kotlin.clr.KotlinDefault` stamp a
+  function does, facadegen surfaces its non-constant defaulted parameter OPTIONAL, and `bir2cir.DefaultArgSplice` fills
+  the `{"k":"new"}` placeholder from the reference dll — so a consumer of a DotKt library can write `Rect(3)` against
+  `class Rect(val w: Int, val h: Int = w * 2)` and get `h == 6`, where it previously failed the frontend with *no value
+  passed for parameter 'h'*. The splice keys a constructor as `<type>|.ctor|<declared parameter count>`
+  (`ReferenceMetadataIndex` now scans `GetConstructors` alongside `GetMethods`), and the stamped index is the parameter's
+  position in the emitted constructor's own parameter list. Both constructors and methods are additionally keyed by the
+  declared parameter VECTOR, so two same-arity overloads carrying different defaults resolve their own instead of the
+  arity key serving whichever declaration the metadata scan reached first; a pair the key cannot separate is refused. A
+  cross-module `: super(…)` is filled too — its arguments ride the constructor declaration rather than a call node, so
+  they were previously left unfilled and aborted the build; lacking a signature vector there, the target constructor is
+  identified by arity alone (a base with same-arity constructor overloads whose defaults disagree is refused).
+  Lower slots fill first, so a chain fills too
+  (`class Tri(a, b = a + 1, c = a * 100 + b)` consumed as `Tri(2)` gives `c == 203`). A metadata-representable (Tier-1)
+  constant still fills from the facadegen metadata and never becomes a placeholder; a ctor default reading an enclosing
+  instance is still refused at stamp time. Covered by `tests/basic/fixtures/DefaultArgumentTests.kt` (`defargsCtor`,
+  `defargsCtorDelegation`, `defargsCtorEnclosingInstance`, `defargsSingleEval`, `defargsEvalOrder`) and by the round-trip
+  lane's `nonConstDefaultArgs` (`tests/roundtrip/producer/Nonconst.kt` + `tests/roundtrip/consumer/`).
+
 ## 0.9.7 (2026-07-22)
 
 ### Added
