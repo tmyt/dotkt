@@ -553,13 +553,17 @@ static class FacadeGen
         return o;
     }
 
-    // A `prop` decl `{name, type, rw, mods, vis?, clrName?, recv?}` (spec §5b). `recv` (a top-level/member
-    // extension property) is the discriminator vs a plain property.
-    static JsonObject PropObj(string name, TN type, bool rw, JsonObject mods, string vis, string clrName, TN recv)
+    // A `prop` decl `{name, type, rw, mods, vis?, clrName?, typeParams?, recv?}` (spec §5b). `recv` (a
+    // top-level/member extension property) is the discriminator vs a plain property. Generic extension properties
+    // own method-scoped type parameters just like their emitted get_/set_ methods; preserving that declaration is
+    // what keeps `val <T> List<T>.p: T` from degrading to `List<Any?>.p: Any?` on re-import.
+    static JsonObject PropObj(string name, TN type, bool rw, JsonObject mods, string vis, string clrName, TN recv,
+        JsonArray typeParams = null)
     {
         var o = new JsonObject { ["name"] = name, ["type"] = Ty(type), ["rw"] = rw, ["mods"] = mods };
         if (vis != "public") o["vis"] = vis;
         if (clrName != null) o["clrName"] = clrName;
+        if (typeParams != null && typeParams.Count > 0) o["typeParams"] = typeParams;
         if (recv != null) o["recv"] = Ty(recv);
         return o;
     }
@@ -2242,7 +2246,9 @@ static class FacadeGen
             var setter = t.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly)
                 .FirstOrDefault(s => !s.IsSpecialName && s.Name == "set_" + pn && s.GetParameters().Length == 2 && s.GetParameters()[0].Name == "__self");
             extPropMembers.Add(g.Name); if (setter != null) extPropMembers.Add(setter.Name);
-            tlProps.Add(PropObj(pn, RetTypeSfxN(g, t), setter != null, Mods(("ext", true)), "public", null, MapT(gps[0].ParameterType, t)));
+            tlProps.Add(PropObj(pn, RetTypeSfxN(g, t), setter != null, Mods(("ext", true)), "public", null,
+                MapT(gps[0].ParameterType, t),
+                g.IsGenericMethodDefinition ? TypeParamsArr(g.GetGenericArguments(), t, false, false) : null));
         }
         // #103: a top-level field-backed property with a CUSTOM accessor compiles to a public static FIELD `<name>`
         // PLUS a separate non-special-name `get_<name>`/`set_<name>` method (the custom accessor body). Detect the

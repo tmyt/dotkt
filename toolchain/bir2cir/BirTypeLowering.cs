@@ -155,6 +155,26 @@ static class BirTypeLowering
         ["kotlin.collections.Set"] = "System.Collections.Generic.ICollection",
     };
 
+    // KProperty's generic parameters are not collection-storage slots: each one is substituted directly into a CLR
+    // interface method parameter/return (`KProperty1<T,V>.get(T):V`, `KMutableProperty1.set(T,V)`, etc.). Lowering a
+    // concrete `List<X>` argument through Root-V here would produce `KProperty1<IList<X>,V>` while the implementing
+    // method's head-position parameter lowers to `IReadOnlyList<X>`, making the generated reference type unloadable.
+    // Treat these carrier arguments as method-slot heads (typeArg:false); recursion inside the argument still applies
+    // Root-V normally, so `KProperty0<List<List<X>>>.get()` and its return stay byte-identical at every depth.
+    // ClrPropertyStub<V> must use the same rule because it supplies the generated reference's KProperty<V> base face.
+    static readonly HashSet<string> InterfaceMethodSlotCarriers = new(StringComparer.Ordinal)
+    {
+        "kotlin.reflect.KProperty",
+        "kotlin.reflect.KMutableProperty",
+        "kotlin.reflect.KProperty0",
+        "kotlin.reflect.KMutableProperty0",
+        "kotlin.reflect.KProperty1",
+        "kotlin.reflect.KMutableProperty1",
+        "kotlin.reflect.KProperty2",
+        "kotlin.reflect.KMutableProperty2",
+        "kotlin.reflect.ClrPropertyStub",
+    };
+
     // A synthesized result slot sometimes has to be named before this lowering pass runs (the suspend
     // TaskCompletionSource<R>/RootContinuation<R> drive is the canonical case). Its public Task<R> must retain the
     // same readonly head type a Kotlin call observes; spelling that BCL head explicitly also exempts this one coherent
@@ -224,7 +244,9 @@ static class BirTypeLowering
                 // `kotlin.Enum<E>` -> the NON-generic `System.Enum` (a Kotlin enum is a real CLR System.Enum, not
                 // the generic stdlib class); drop the self-referential arg (`where T : Enum`).
                 if (f.Name == "kotlin.Enum" && f.Args != null) return new TypeNode.Fqn("System.Enum");
-                var loweredArgs = f.Args?.Select(a => LowerType(a, refBuild, force, typeArg: true)).ToArray();
+                var methodSlotCarrier = f.Args != null && InterfaceMethodSlotCarriers.Contains(f.Name);
+                var loweredArgs = f.Args?.Select(a => LowerType(a, refBuild, force,
+                    typeArg: methodSlotCarrier ? false : true)).ToArray();
                 if (loweredArgs == null)
                 {
                     // A leaf: a foundational primitive (numeric/bool/char + String/Any/Nothing + the unsigned set)

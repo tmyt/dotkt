@@ -84,6 +84,11 @@ import roundtrip.inldelegate.applyViaNestedDelegate
 import roundtrip.inldelegate.applyViaGenericNestedDelegate
 import roundtrip.inldelegate.applyViaTransitivelyNestedDelegate
 import roundtrip.inldelegate.NestedDelegateHost
+import roundtrip.extpropref.RefBox
+import roundtrip.extpropref.auditLength
+import roundtrip.extpropref.auditLast
+import roundtrip.extpropref.auditSingleton
+import roundtrip.extpropref.auditValue
 // #199-①: two same-simple-name GENERIC types (`Cell<T>`) in different producer packages, aliased here.
 import roundtrip.genclash.a.Cell as CellA
 import roundtrip.genclash.b.Cell as CellB
@@ -93,6 +98,34 @@ import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert
 
 class KotlinApiShapeRoundtripTests {
+    // #21: top-level generic extension-property accessors are restored from the producer DLL and remain callable
+    // through both bound and unbound read/write property references.
+    @TestAttribute
+    fun crossModuleGenericExtensionPropertyReferences() {
+        val unboundPlain = String::auditLength
+        ClassicAssert.AreEqual(3, unboundPlain.get("abc"))
+        val boundPlain = "hello"::auditLength
+        ClassicAssert.AreEqual(5, boundPlain.get())
+
+        val unboundRead = List<String>::auditLast
+        ClassicAssert.AreEqual("b", unboundRead.get(listOf("a", "b")))
+
+        val boundRead = listOf(10, 20)::auditLast
+        ClassicAssert.AreEqual(20, boundRead.get())
+
+        val collectionValue = String::auditSingleton
+        ClassicAssert.AreEqual("[one]", collectionValue.get("one").toString())
+
+        val box = RefBox("before")
+        val unboundMutable = RefBox<String>::auditValue
+        unboundMutable.set(box, "unbound")
+        ClassicAssert.AreEqual("unbound", unboundMutable.get(box))
+
+        val boundMutable = box::auditValue
+        boundMutable.set("bound")
+        ClassicAssert.AreEqual("bound", boundMutable.get())
+    }
+
     // #43: the producer inline payload contains a newDelegate whose lifted method belongs
     // to the producer file. Cross-module splicing must carry and re-home that implementation.
     @TestAttribute
