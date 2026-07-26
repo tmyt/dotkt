@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using NUnit.Framework;
 
 public class BidirectionalTests
@@ -16,5 +17,33 @@ public class BidirectionalTests
     public void CSharpCallsKotlinTopLevelFunctionAtCompileTime()
     {
         Assert.That(LibraryKt.bidirectionalAdd(2, 3), Is.EqualTo(5));
+    }
+
+    // #251 — the emitted CONSTRUCTOR parameter must carry NullableAttribute(2), the same NRT annotation a C#
+    // consumer reads off a nullable METHOD parameter. This project does not enable NRT, so a `new … (null)` call
+    // compiles either way: the metadata assert is the proof, the behavioral line only guards the runtime.
+    [Test]
+    public void KotlinNullableConstructorParameterCarriesNullableAttribute()
+    {
+        static byte? NullableByte(System.Reflection.ParameterInfo p) =>
+            p.GetCustomAttributesData()
+                .Where(a => a.AttributeType.FullName == "System.Runtime.CompilerServices.NullableAttribute")
+                .Select(a => (byte?)a.ConstructorArguments[0].Value)
+                .SingleOrDefault();
+
+        var ctorParam = typeof(BidirectionalNullableCtor).GetConstructors().Single().GetParameters().Single();
+        var methodParam = typeof(BidirectionalNullableCtor)
+            .GetMethod(nameof(BidirectionalNullableCtor.takeNullable))!.GetParameters().Single();
+        // A nested Kotlin class becomes a real CLR nested type (kotc flattens it into the file's type list with a
+        // `nestedIn` marker); its ctor param must be annotated like any other.
+        var nestedCtorParam = typeof(BidirectionalNullableCtor.Nested)
+            .GetConstructors().Single().GetParameters().Single();
+        Assert.That(NullableByte(ctorParam), Is.EqualTo((byte)2), "ctor param lost its NullableAttribute");
+        Assert.That(NullableByte(methodParam), Is.EqualTo((byte)2), "method param lost its NullableAttribute");
+        Assert.That(NullableByte(nestedCtorParam), Is.EqualTo((byte)2), "nested-type ctor param lost its NullableAttribute");
+
+        Assert.That(new BidirectionalNullableCtor(null).labelLength(), Is.EqualTo(-1));
+        Assert.That(new BidirectionalNullableCtor("abcd").labelLength(), Is.EqualTo(4));
+        Assert.That(new BidirectionalNullableCtor.Nested(null).tagLength(), Is.EqualTo(-1));
     }
 }
