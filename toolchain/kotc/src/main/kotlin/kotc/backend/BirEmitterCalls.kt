@@ -95,17 +95,28 @@ private val defaultArgPlaceholder = """{"k":"defaultArg"}"""
 private val defaultArgThisToken = """{"k":"this"}"""
 
 /** Regular args, POSITIONALLY complete, filling omitted default arguments (IL has no default-parameter mechanism).
+ *  THE single default-filling pass — it serves every call shape: a function call, a `new`, an array ctor, a lifted
+ *  local/class call.
  *  Fill source by default KIND: a same-module CONSTANT/global default is inlined verbatim; a same-module default that
- *  reads the callee's RECEIVER (`missingDelimiterValue = this`, a data-class `copy`'s `y = this.y`) is inlined with
- *  `this` rewritten to THIS call's receiver (the JVM `$default` scope, done at the JSON level); a CROSS-MODULE default
- *  (IrErrorExpression — the jar preserves no default VALUE) becomes a `defaultArg` placeholder that bir2cir fills from
- *  the ref.dll. The placeholder is emitted whenever the callee carries @KotlinDefault OR a LATER arg is provided (a
- *  "gap" — silently omitting it would shift the later arg into the wrong parameter slot: the joinToString/substringAfter
- *  miscompile); a purely TRAILING cross-module omit on a metadata-representable callee is still dropped so ilemit's
- *  [DefaultParameterValue] backfill fills it (unchanged). */
+ *  reads an earlier VALUE PARAMETER (`b: Int = a * 10`, a ctor's `h: Int = w * 2`) is inlined with each referenced
+ *  param rewritten to THIS call's filled arg for it; a same-module default that reads the callee's RECEIVER
+ *  (`missingDelimiterValue = this`, a data-class `copy`'s `y = this.y`, an inner-class ctor's `= outerProp`) is
+ *  inlined with `this` rewritten to THIS call's receiver (both are the JVM `$default` scope, done at the JSON level);
+ *  a CROSS-MODULE default (IrErrorExpression — the frontend artifact preserves no default VALUE) is filled from the
+ *  facadegen metadata's constant (#134) if it has one, else becomes a `defaultArg` placeholder that bir2cir fills from
+ *  the ref.dll @KotlinDefault. A slot with neither is dropped when purely TRAILING (ilemit's [DefaultParameterValue]
+ *  backfill fills it), and refused loudly when a LATER arg is provided (a "gap" — silently omitting it would shift the
+ *  later arg into the wrong parameter slot: the joinToString/substringAfter miscompile). */
 internal fun BirEmitter.filledArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): List<String> {
 	val callee = (call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction) ?: return emptyList()
 	val carries = (callee as? org.jetbrains.kotlin.ir.declarations.IrSimpleFunction)?.let { carriesKotlinDefault(it) } ?: false
+	// #134: the facadegen metadata's constant defaults for this callee's regular params, keyed by resolved IR identity —
+	// a CROSS-MODULE facadegen constructor/top-level function's injected default deserializes as an IrErrorExpression
+	// (fir2ir drops the VALUE for a bodies-skipped dependency declaration), so the real value is read from here. Lazy:
+	// only an actually-omitted cross-module default needs the lookup. Null for a same-module callee (its default is real IR).
+	val metaDefaults: List<kotc.frontend.ClrConstDefault?>? by lazy {
+		injectedMetaDefaults(callee, callee.parameters.count { it.kind == IrParameterKind.Regular })
+	}
 	val receiverSyms = callee.parameters.filter {
 		it.kind == IrParameterKind.DispatchReceiver || it.kind == IrParameterKind.ExtensionReceiver
 	}.map { it.symbol }.toHashSet()
@@ -131,24 +142,40 @@ internal fun BirEmitter.filledArgs(call: org.jetbrains.kotlin.ir.expressions.IrF
 				val def = p.defaultValue?.expression
 				when {
 					def == null -> null
-					def is org.jetbrains.kotlin.ir.expressions.IrErrorExpression ->
-						// CROSS-MODULE: the jar dropped the default VALUE. A data-class `copy` (Pair/Triple, or any referenced
-						// data class) is a SPECIAL case: its omitted-field default is ALWAYS `this.<field>` by construction, so
-						// reconstruct it as a receiver FIELD read at the INSTANTIATED call site — the exact BIR kotc emits for a
-						// plain `pair.first` (owner = the actual `kotlin.Pair[Int,Int]`, so no generic `gp:` token leaks; the
-						// @KotlinDefault splice can't carry that instantiation). This is the Pair/Triple partial-`copy` fix (C3).
-						if ((callee as? org.jetbrains.kotlin.ir.declarations.IrSimpleFunction)?.let { isDataClassCopy(it) } == true && recvJson != null)
-							(dispatchReceiver(call) ?: extensionReceiver(call))?.let { r ->
-								// Owner via ownerSpec (the SAME token the plain `pair.first` property read uses — the referenced,
-								// instantiated `kotlin.Pair[Int,Int]`, no `@` this-assembly prefix, no open `gp:` param).
-								"""{"sty":${birType(p.type).toJson()},"k":"field","ownerType":${ownerSpec(callee.parent as? IrClass, r.type).toJson()},"recv":${recvJson},"name":${str(p.name.asString())}}"""
-							}
+					def is org.jetbrains.kotlin.ir.expressions.IrErrorExpression -> {
+						// CROSS-MODULE: the frontend artifact dropped the default VALUE. A data-class `copy` (Pair/Triple, or any
+						// referenced data class) is a SPECIAL case: its omitted-field default is ALWAYS `this.<field>` by
+						// construction, so reconstruct it as a receiver FIELD read at the INSTANTIATED call site — the exact BIR
+						// kotc emits for a plain `pair.first` (owner = the actual `kotlin.Pair[Int,Int]`, so no generic `gp:` token
+						// leaks; the @KotlinDefault splice can't carry that instantiation). The Pair/Triple partial-`copy` fix (C3).
+						val copyField =
+							if ((callee as? org.jetbrains.kotlin.ir.declarations.IrSimpleFunction)?.let { isDataClassCopy(it) } == true && recvJson != null)
+								(dispatchReceiver(call) ?: extensionReceiver(call))?.let { r ->
+									// Owner via ownerSpec (the SAME token the plain `pair.first` property read uses — the referenced,
+									// instantiated `kotlin.Pair[Int,Int]`, no `@` this-assembly prefix, no open `gp:` param).
+									"""{"sty":${birType(p.type).toJson()},"k":"field","ownerType":${ownerSpec(callee.parent as? IrClass, r.type).toJson()},"recv":${recvJson},"name":${str(p.name.asString())}}"""
+								}
+							else null
+						// #134: the facadegen metadata's REAL constant default, synthesized as an IrConst, so a named-middle /
+						// reordered omission of an injected .NET ctor's or top-level function's constant default is correct.
+						copyField ?: metaDefaults?.getOrNull(idx)?.let { metaConstArg(it, p.type) }?.let { expr(it) }
 						// A @KotlinDefault-carrying callee (any non-constant default — joinToString's CharSequence separators,
 						// substringAfter's `= this`, `b = a * 10`) gets a POSITIONAL placeholder for EVERY omitted arg so a later
 						// provided arg (the trailing transform lambda) keeps its slot; bir2cir fills each from the ref.dll
-						// @KotlinDefault (its `{param n}` tokens → this call's args). A callee with only metadata-representable
-						// defaults carries none → drop the (trailing) omit for ilemit's [DefaultParameterValue] backfill.
-						else if (carries) defaultArgPlaceholder else null
+						// @KotlinDefault (its `{param n}` tokens → this call's args).
+						?: if (carries) defaultArgPlaceholder else {
+							// Neither a metadata constant NOR a @KotlinDefault carrier. A purely TRAILING omit is safe (ilemit's
+							// [DefaultParameterValue] backfill fills it). But if a LATER arg is provided, silently omitting THIS
+							// slot would slide that arg into the wrong parameter — refuse loudly instead of miscompiling.
+							val laterArgProvided = (pair.first + 1 until call.arguments.size).any { j ->
+								call.arguments[j] != null && callee.parameters[j].kind == IrParameterKind.Regular
+							}
+							if (laterArgProvided) unsupported(call, "omitting a cross-module default argument the metadata does not carry",
+								"the default value of parameter '${p.name.asString()}' is not available as a constant in the referenced " +
+								"assembly's metadata; pass the argument explicitly")
+							null
+						}
+					}
 					refsAny(def, valueSyms) -> {
 						// SAME-MODULE default reading another VALUE parameter (`b: Int = a * 10`). Inline with each referenced
 						// value param rewritten to THIS call's filled arg for that param — the $default-scope evaluation at the
@@ -178,66 +205,9 @@ internal fun BirEmitter.filledArgs(call: org.jetbrains.kotlin.ir.expressions.IrF
 	return out
 }
 
-/** The call's regular args IN ORDER, filling an omitted default-arg param with its callee's default-value
- *  expression. A restored function/ctor carries a real constant default (applyDefaults), so the consumer can omit a
- *  default arg ANYWHERE — trailing, named-middle (`f(c=9)`), or reordered — and the value is filled here. */
-internal fun BirEmitter.filledArgExprs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): List<IrExpression> {
-	val callee = (call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction) ?: return emptyList()
-	val calleeLocals = callee.parameters.map { it.symbol }.toHashSet()
-	// #134: the facadegen metadata's constant defaults for this callee's regular params, keyed by resolved IR identity —
-	// a CROSS-MODULE facadegen constructor/top-level function's injected default deserializes as an IrErrorExpression
-	// (fir2ir drops the VALUE for a bodies-skipped dependency declaration), so the real value is read from here to fill an
-	// omitted default arg ANYWHERE (named-middle `f(c=9)` / reordered — a trailing omit falls back to ilemit's
-	// [DefaultParameterValue] backfill either way). Null for a same-module callee (its default is a real IrConst in IR).
-	val regCount = callee.parameters.count { it.kind == IrParameterKind.Regular }
-	val metaDefaults = injectedMetaDefaults(callee, regCount)
-	val out = ArrayList<IrExpression>()
-	var regIdx = -1
-	callee.parameters.forEachIndexed { i, p ->
-		if (p.kind != IrParameterKind.Regular) return@forEachIndexed
-		regIdx++
-		val arg = if (i < call.arguments.size) call.arguments[i] else null
-		if (arg != null) out.add(arg)
-		else (p.defaultValue?.expression)?.let { def ->
-			// A CROSS-MODULE callee's default value does NOT deserialize from the jar/metadata as a real IR expression:
-			// the frontend hands back an IrErrorExpression placeholder. #134: fill it from the facadegen metadata's REAL
-			// constant default (synthesized as an IrConst) so a named-middle / reordered omission is correct. If the
-			// metadata has no value for this slot, OMIT the (trailing) arg — ilemit's call path then fills it from the
-			// callee's .NET [DefaultParameterValue] metadata (EmitCallArgs), the intended "constant default -> metadata
-			// -> ilemit fill" path (e.g. Regex.find's startIndex=0).
-			if (def is org.jetbrains.kotlin.ir.expressions.IrErrorExpression) {
-				val filled = metaDefaults?.getOrNull(regIdx)?.let { metaConstArg(it, p.type) }
-				if (filled != null) { out.add(filled); return@let }
-				// The metadata carries no constant for this omitted slot. A purely TRAILING omit is safe (ilemit's
-				// [DefaultParameterValue] backfill fills it). But if a LATER arg is provided, silently omitting THIS slot
-				// would slide that arg into the wrong parameter (the joinToString/substringAfter miscompile class) — refuse
-				// loudly instead of miscompiling.
-				val laterArgProvided = (i + 1 until call.arguments.size).any { j ->
-					call.arguments[j] != null && callee.parameters[j].kind == IrParameterKind.Regular
-				}
-				if (laterArgProvided) unsupported(call, "omitting a cross-module default argument the metadata does not carry",
-					"the default value of parameter '${p.name.asString()}' is not available as a constant in the referenced " +
-					"assembly's metadata; pass the argument explicitly")
-				return@let
-			}
-			// Filling an OMITTED default inlines the callee's default expression at THIS call site — fine for a
-			// constant/global, but a default that reads the callee's OWN parameters/receiver (`b: Int = a * 10`, or a
-			// data class `copy`'s `x = this.x`) must be evaluated in the callee's scope (cf. Kotlin/JVM's `$default`),
-			// which the .NET backend doesn't yet do. Reject only HERE — at the omitting call — not at the declaration:
-			// a data class whose `copy` is never arg-omitted must still compile. Otherwise a dangling `local a`/`this`
-			// reaches ilemit as invalid IL. See docs/dotkt-semantics.md (non-constant default arguments).
-			if (refsAny(def, calleeLocals)) unsupported(call, "omitting a non-constant default argument",
-				"the default value of parameter '${p.name.asString()}' references other parameters or the receiver, " +
-				"which the .NET backend cannot evaluate at the call site; pass the argument explicitly")
-			out.add(def)
-		}
-	}
-	return out
-}
-
 /** The facadegen metadata's per-regular-parameter constant defaults for `callee` (ctor by IR ClassId, or top-level
  *  function by resolved CallableId), matched by regular-param count. Null for a same-module callee or one with no such
- *  overload / ambiguous defaults. Shared by [filledArgExprs] (#134 const inline) and [filledInjectedArgs] (#146). */
+ *  overload / ambiguous defaults. Shared by [filledArgs] (#134 const inline) and [filledInjectedArgs] (#146). */
 internal fun BirEmitter.injectedMetaDefaults(callee: org.jetbrains.kotlin.ir.declarations.IrFunction, regCount: Int): List<kotc.frontend.ClrConstDefault?>? =
 	when (callee) {
 		is org.jetbrains.kotlin.ir.declarations.IrConstructor ->
@@ -330,7 +300,8 @@ private fun metaConstArg(d: kotc.frontend.ClrConstDefault, type: IrType): IrExpr
 }
 
 /** True if `expr` reads any of `locals` — detects a default-arg expression that references the callee's own
- *  parameters/receiver (e.g. `b = a * 10`, or a data class `copy`'s `this.x`), which can't be inlined at a call site. */
+ *  parameters/receiver (e.g. `b = a * 10`, or a data class `copy`'s `this.x`), which [filledArgs] inlines with those
+ *  reads rewritten to THIS call's args/receiver instead of verbatim. */
 internal fun BirEmitter.refsAny(expr: IrExpression, locals: Set<org.jetbrains.kotlin.ir.symbols.IrValueSymbol>): Boolean {
 	var found = false
 	expr.acceptVoid(object : IrVisitorVoid() {

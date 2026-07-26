@@ -191,11 +191,15 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 				// `Func<int,T>` a TypeBuilderInstantiation (ilemit GetMethod("Invoke") fails) -> leave it to the fall-through.
 				if (elemType != null && elemType.classifierOrNull !is org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol) birType(elemType) else null
 			} else null
-		val arrArgs = if (arrElem != null) filledArgExprs(node) else emptyList()
+		// The ctor's regular args, omitted defaults filled — the SAME single pass every call shape uses. Emitted once
+		// (`by lazy`, at the first branch that needs it): re-running it would duplicate any lift/lambda emission side
+		// effect, and hoisting it above `outerArg`/`capArgs` would reorder the emitted synthetic names.
+		val ctorArgs: List<String> by lazy { filledArgs(node) }
+		val arrArgs = if (arrElem != null) ctorArgs else emptyList()
 		if (arrElem != null && arrArgs.size == 2)
-			"""{"k":"newArrayInit","elem":${arrElem.toJson()},"size":${expr(arrArgs[0])},"init":${expr(arrArgs[1])}}"""
+			"""{"k":"newArrayInit","elem":${arrElem.toJson()},"size":${arrArgs[0]},"init":${arrArgs[1]}}"""
 		else if (arrElem != null && arrArgs.size == 1)
-			"""{"k":"newArraySized","elem":${arrElem.toJson()},"size":${expr(arrArgs[0])}}"""
+			"""{"k":"newArraySized","elem":${arrElem.toJson()},"size":${arrArgs[0]}}"""
 		else {
 		// A generic .NET type (`Collection<Int>()`) -> a constructed `clrg:` spec; non-generic stays plain.
 		val clr: TypeNode? = klass?.let { clrName(it) }?.let { net ->
@@ -208,13 +212,13 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		// A builtin-exception ctor (`throw IllegalStateException(msg)`) is NOT mapped here: it emits a plain `new
 		// @kotlin.IllegalStateException` and bir2cir rewrites it to `newClr System.X` off the stdlib's @ClrTypeAlias.
 		if (clr != null)
-			"""{"k":"new","type":${clr.toJson()},"argTypes":[${node.symbol.owner.parameters.filter { it.kind == IrParameterKind.Regular }.joinToString(",") { birType(it.type).toJson() }}],"args":[${filledArgExprs(node).joinToString(",") { expr(it) }}]}"""
+			"""{"k":"new","type":${clr.toJson()},"argTypes":[${node.symbol.owner.parameters.filter { it.kind == IrParameterKind.Regular }.joinToString(",") { birType(it.type).toJson() }}],"args":[${ctorArgs.joinToString(",")}]}"""
 		else {
 			// An inner-class ctor takes the enclosing instance (its dispatch receiver) as a leading arg.
 			val outerArg = if (klass?.isInner == true) dispatchReceiver(node)?.let { expr(it) } else null
 			// A lifted local class prepends its captured outer locals (evaluated here, in the outer context).
 			val capArgs = klass?.let { localClassCaptures[it] }?.map { capValueExpr(it) } ?: emptyList()
-			val args = (listOfNotNull(outerArg) + capArgs + filledArgExprs(node).map { expr(it) }).joinToString(",")
+			val args = (listOfNotNull(outerArg) + capArgs + ctorArgs).joinToString(",")
 			// The resolved ctor's regular-parameter STATIC TYPES, as pure Kotlin FQNs (bir2cir/ilemit derive the CLR
 			// forms — kotc emits identity, not resolution). This lets a `new` of a type with overloaded constructors
 			// resolve by SIGNATURE, not by arg count alone (mirrors the .NET-owner `new` branch above, which carries `argTypes`). Only the ctor's
