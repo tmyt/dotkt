@@ -17,6 +17,8 @@
 //   il-mfclosure    -> mfclosure_multiFile           two files each emit a capturing closure + ref cell (no synthetic collision)
 //   il-mflambda     -> mflambda_multiFile            two files each lift their own lambdas (per-file lifted state resets)
 //   il-writecapture -> writecapture_localClassObject #68 local class / object expr WRITES a captured outer `var` (shared ref cell)
+//                      — the FUNCTION-BODY root; the constructor/initializer/accessor/static-initializer roots of the
+//                        same #68 subject live in CapturedVarRefCellTests.kt
 //   il-funref       -> funref_callableReferences     `::foo` / `obj::m` / `Class::m` callable refs -> delegate
 //   il-extfunref    -> extfunref_extensionReferences unbound `Type::extFn` refs (stdlib + same-module) -> static forwarder
 //

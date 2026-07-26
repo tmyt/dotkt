@@ -324,7 +324,10 @@ internal fun BirEmitter.blockExpr(block: IrBlock): String {
 			val cname = "dotkt\$obj${scopeCounter++}"
 			anonNames[anon] = cname
 			val captured = capturedVarsForObject(anon)
-			// Mutable capture (writing an outer local through the object) would need heap ref-cells.
+			// Writing an outer local through the object goes through its heap ref-cell: the module-wide scan
+			// (BirEmitter.initRefCells) already promoted every captured-and-mutated `var`, so `isRefCell(it)` holds
+			// here. The guard only fires on a mutated capture that is not a `var` local (unreachable for valid IR:
+			// a Kotlin parameter cannot be assigned) — an invariant-assert, not a limitation.
 			if (captured.any { it in mutatedIn(anon) && !isRefCell(it) })
 				return unsupported(block, "an object expression that writes to a captured outer variable",
 					"read-only capture works; to mutate shared state, use a small class with a field instead")

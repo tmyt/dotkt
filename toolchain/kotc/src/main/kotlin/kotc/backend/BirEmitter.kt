@@ -368,9 +368,22 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	// the `Delegates.observable(…)` value, and the getValue/setValue dispatch owner share one type (ilverify-clean).
 
 	// heap ref-cell: local `var`s captured-and-mutated by a (non-inline) closure / object / local class are promoted
-	// to a shared `dotkt$Ref<T>{ var v }` so the mutation is visible across the capture boundary. Per top-level
-	// function (set in `method`/`ctor`); all reads/writes of such a var go through `.v`.
+	// to a shared `dotkt$Ref<T>{ var v }` so the mutation is visible across the capture boundary; all reads/writes of
+	// such a var go through `.v`.
+	// Needing a cell is a property of the VARIABLE — "some closure/object/local class in its scope WRITES it" — not of
+	// the frame that happens to be emitting it. So the set is computed ONCE for the whole module ([initRefCells],
+	// before any file is emitted) and is IDENTITY-keyed, which makes an entry for a declaration the tree at hand never
+	// mentions inert. Every emission root therefore sees the same decision for the same variable — a method body, a
+	// constructor / init block, a property or static-field initializer, a member or interface accessor, a default
+	// interface method, an enum-entry argument, a `@KotlinDefault` carrier — including the paths that emit ONE
+	// expression in TWO frames (a same-module omitted default is emitted both as the callee's carrier and inline at
+	// the caller), where a per-frame set would disagree with itself.
 	internal var refCellVars: Set<IrValueDeclaration> = emptySet()
+		private set
+
+	/** Compute the module-wide heap ref-cell set (see [refCellVars]). Called ONCE, before any file is emitted. */
+	internal fun initRefCells(module: IrElement) { refCellVars = computeRefCells(module) }
+
 	internal val refTypes = LinkedHashMap<String, String>()   // element type JSON -> monomorphized Ref class name
 	internal fun refTypeName(d: IrValueDeclaration): String {
 		val elem = birType(d.type)
@@ -391,7 +404,7 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	internal fun captureFieldType(d: IrValueDeclaration): TypeNode = if (isRefCell(d)) TypeNode.Fqn(refTypeName(d)) else birType(d.type)
 
 	/** Local `var`s captured AND mutated by a closure/object/local class within [node] (-> need a heap ref-cell). */
-	internal fun computeRefCells(node: IrElement): Set<IrValueDeclaration> {
+	private fun computeRefCells(node: IrElement): Set<IrValueDeclaration> {
 		val out = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<IrValueDeclaration, Boolean>())
 		node.acceptChildrenVoid(object : IrVisitorVoid() {
 			override fun visitElement(element: IrElement) {

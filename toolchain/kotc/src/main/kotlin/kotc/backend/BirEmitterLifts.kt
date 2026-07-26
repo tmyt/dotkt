@@ -1162,11 +1162,12 @@ internal fun BirEmitter.liftLocalClass(klass: IrClass): String {
 	val cname = "dotkt\$${klass.name.asString()}\$${scopeCounter++}"
 	anonNames[klass] = cname
 	val captured = capturedVarsForObject(klass)
-	// Writing a captured outer local from the class is heap ref-celled the SAME way the lambda/object path is:
-	// `computeRefCells` (run over the enclosing fn in `method`) promotes a mutated captured `var` to a shared
-	// `dotkt$Ref<T>` BEFORE we get here, so `isRefCell(it)` is true and the class reads/writes the shared cell. The
-	// guard below only fires on a mutated capture that is NOT a value declaration (unreachable for valid IR — only a
-	// `var` local is both captured and mutable) — kept as a defensive invariant-assert, not a real limitation.
+	// Writing a captured outer local from the class is heap ref-celled the SAME way the lambda/object path is: the
+	// module-wide ref-cell scan (BirEmitter.initRefCells, run before ANY file is emitted) promoted every
+	// captured-and-mutated `var` to a shared `dotkt$Ref<T>`, so `isRefCell(it)` is true here whatever root we are
+	// under — a method, a constructor/init block, an initializer expression — and the class reads/writes the shared
+	// cell. The guard below only fires on a mutated capture that is not a `var` local (unreachable for valid IR: a
+	// Kotlin parameter cannot be assigned) — an invariant-assert, not a limitation.
 	if (captured.any { it in mutatedIn(klass) && !isRefCell(it) })
 		return unsupported(klass, "a local class that writes to a captured outer variable",
 			"read-only capture works; pass the value in by constructor, or use a class field")
