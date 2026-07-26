@@ -789,11 +789,15 @@ default-omission works **everywhere** — trailing, named-middle, reordered, and
   `list.joinToString("-") { … }` fills the omitted CharSequence defaults by positional splice (kcc) — keeping the
   trailing `transform` lambda in its own slot — or requires them (C#).
 
-A SAME-MODULE default that references an earlier VALUE parameter (`b: Int = a * 10`, a constructor's
-`h: Int = w * 2`) is inlined at the omitting call with each referenced parameter rewritten to THIS call's filled
-argument for it — the `$default` scope, applied at the emitted-JSON level. The **same** filling pass serves a function
-call, a `new`, an array ctor and a lifted local/class call, so a class, data class, or secondary constructor omits such
-a default exactly as a function does.
+A SAME-MODULE default that references the callee's own scope — an earlier VALUE parameter (`b: Int = a * 10`, a
+constructor's `h: Int = w * 2`), or, for an inner-class constructor, an ENCLOSING INSTANCE
+(`inner class In(val x: Int = outerProp)`) — is inlined at the omitting call with each such read rewritten to THIS
+call's expression for that value: the filled argument for a parameter, the call's dispatch receiver for the
+immediately enclosing instance (a further level through that level's `__outer` capture field). That is the `$default`
+scope, applied at the emitted-JSON level. The **same** filling pass serves every call site — a function call, a `new`,
+an array ctor, a lifted local/class `new`, a `: this(…)` / `: super(…)` **constructor delegation**, and an **enum
+entry**'s `NAME(args)` (including a per-entry body's base call) — so a class, data class, secondary constructor,
+delegation or enum entry omits such a default exactly as a function does.
 
 **Known edge (single-eval):** the call-site rewrite duplicates the receiver / earlier-argument EXPRESSION into the
 spliced default, so a side-effecting receiver or argument read by a `= this` / `= a * 10` default is evaluated more

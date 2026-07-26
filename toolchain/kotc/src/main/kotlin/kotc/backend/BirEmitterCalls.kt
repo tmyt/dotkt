@@ -124,6 +124,11 @@ internal fun BirEmitter.filledArgs(call: org.jetbrains.kotlin.ir.expressions.IrF
 	}.map { it.symbol }.toHashSet()
 	val valueSyms = callee.parameters.filter { it.kind == IrParameterKind.Regular }.map { it.symbol }.toHashSet()
 	val contextSyms = callee.parameters.filter { it.kind == IrParameterKind.Context }.map { it.symbol }.toHashSet()
+	// An INNER-class constructor's default may read an ENCLOSING instance (`inner class In(val x: Int = outerProp)`).
+	// That read is the enclosing class's own `thisReceiver` — NOT one of the ctor's parameters — so it is bound
+	// separately, by symbol, to the call's dispatch receiver (see [enclosingThisSubst]).
+	val enclosingThis = enclosingThisChain(callee)
+	val enclosingSyms = enclosingThis.map { it.symbol }.toHashSet()
 	// The call's receiver expression (for `this`-referencing same-module defaults): the extension receiver if any, else
 	// the dispatch receiver (a data-class `copy` is a member, so its `this.y` default resolves to the dispatch receiver).
 	// Emitted lazily and reused per omitted default — single-eval is best-effort (a trivial local/this receiver is safe
@@ -179,20 +184,27 @@ internal fun BirEmitter.filledArgs(call: org.jetbrains.kotlin.ir.expressions.IrF
 							null
 						}
 					}
-					refsAny(def, valueSyms) -> {
-						// SAME-MODULE default reading another VALUE parameter (`b: Int = a * 10`). Inline with each referenced
-						// value param rewritten to THIS call's filled arg for that param — the $default-scope evaluation at the
-						// emitted-JSON level (the twin of the `= this` receiver case below, via captureSubst instead of a
-						// token replace). Best-effort single-eval: a side-effecting earlier arg read by this default is
+					refsAny(def, valueSyms) || refsAny(def, enclosingSyms) -> {
+						// SAME-MODULE default reading the CALLEE'S OWN SCOPE — another VALUE parameter (`b: Int = a * 10`), or,
+						// for an inner-class ctor, an ENCLOSING instance (`inner class In(val x: Int = outerProp)`). Both are
+						// bound BY SYMBOL through captureSubst, so each read renders as THIS call's expression for that value:
+						// the $default-scope evaluation at the emitted-JSON level (the twin of the `= this` receiver case below).
+						// Best-effort single-eval: a side-effecting earlier arg / enclosing receiver read by this default is
 						// duplicated (documented edge, same as the receiver case).
-						val installed = ArrayList<org.jetbrains.kotlin.ir.declarations.IrValueParameter>()
-						for ((vp, js) in filledByParam) { captureSubst[vp] = js; installed.add(vp) }
+						val subst = ArrayList<Pair<IrValueDeclaration, String>>()
+						filledByParam.forEach { (vp, js) -> subst.add(vp to js) }
+						if (refsAny(def, enclosingSyms)) subst.addAll(enclosingThisSubst(enclosingThis, recvJson))
+						// Save and RESTORE — a callee parameter can already be a captureSubst key (a closure that captured it,
+						// re-entered through a recursive call in its own body); dropping that binding would emit a bare local
+						// the closure has no slot for.
+						val saved = java.util.IdentityHashMap<IrValueDeclaration, String?>()
+						subst.forEach { (d, js) -> if (!saved.containsKey(d)) saved[d] = captureSubst[d]; captureSubst[d] = js }
 						val raw = expr(def)
-						installed.forEach { captureSubst.remove(it) }
-						// Such a default may ALSO read the receiver (`b: Int = a + this.k`); rewrite that too. Only emit the
-						// receiver when the default actually carries the token: emitting it for a receiver-free default would
-						// duplicate the receiver EXPRESSION (an inner-class `new` already emitted it as the enclosing-instance
-						// arg) and leak its lifted lambdas into the file class for a string that is then discarded.
+						saved.forEach { (d, prev) -> if (prev != null) captureSubst[d] = prev else captureSubst.remove(d) }
+						// Such a default may ALSO read the callee's own RECEIVER (`b: Int = a + this.k`); rewrite that too. Only
+						// emit the receiver when the default actually carries the token: emitting it for a receiver-free default
+						// would duplicate the receiver EXPRESSION (an inner-class `new` already emitted it as the enclosing-
+						// instance arg) and leak its lifted lambdas into the file class for a string that is then discarded.
 						if (raw.contains(defaultArgThisToken)) recvJson?.let { raw.replace(defaultArgThisToken, it) } ?: raw
 						else raw
 					}
@@ -216,6 +228,45 @@ internal fun BirEmitter.filledArgs(call: org.jetbrains.kotlin.ir.expressions.IrF
 			}
 		}
 		if (emitted != null) { out.add(emitted); filledByParam[p] = emitted }
+	}
+	return out
+}
+
+/** The args of a constructor DELEGATION (`: this(…)` / `: super(…)`) or an enum-entry constructor call, POSITIONALLY
+ *  complete: the enclosing instance an INNER-class target takes as its dispatch receiver (the leading arg, mirroring
+ *  the `new` path), then the regular args with omitted defaults filled by [filledArgs]. A delegation is an ordinary
+ *  omitting call site — `class D(val a: Int, val b: Int = a * 2) { constructor() : this(3) }` omits `b` exactly as
+ *  `D(3)` does — so it must not simply drop the missing argument (that shifts every later arg's slot). */
+internal fun BirEmitter.delegatedCtorArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): List<String> =
+	listOfNotNull(dispatchReceiver(call)?.let { expr(it) }) + filledArgs(call)
+
+/** The `this` of each class ENCLOSING an inner-class constructor's own class, innermost FIRST — the values an
+ *  inner-class ctor default can read (`inner class In(val x: Int = outerProp)`). Empty for any other callee: only a
+ *  constructor of an `inner` class carries an enclosing instance at its call site. */
+internal fun enclosingThisChain(callee: org.jetbrains.kotlin.ir.declarations.IrFunction): List<IrValueParameter> {
+	if (callee !is IrConstructor) return emptyList()
+	var cls = (callee.parent as? IrClass)?.takeIf { it.isInner } ?: return emptyList()
+	val out = ArrayList<IrValueParameter>()
+	while (true) {
+		val outer = cls.parent as? IrClass ?: break
+		outer.thisReceiver?.let { out.add(it) }
+		if (!outer.isInner) break
+		cls = outer
+	}
+	return out
+}
+
+/** Each enclosing `this` of [chain] bound to the call-site expression that yields it: the IMMEDIATELY enclosing
+ *  instance IS the ctor call's dispatch receiver, and each further level is reached through that level's `__outer`
+ *  capture field — the same chain `innerClassDef` installs while emitting the class body. Empty when the call has no
+ *  receiver expression to start the chain from. */
+internal fun BirEmitter.enclosingThisSubst(chain: List<IrValueParameter>, recv: String?): List<Pair<IrValueDeclaration, String>> {
+	var value = recv ?: return emptyList()
+	val out = ArrayList<Pair<IrValueDeclaration, String>>()
+	for (t in chain) {
+		out.add(t to value)
+		val owner = t.parent as? IrClass ?: break
+		value = """{"k":"field","ownerType":${fqnJson(typeName(owner))},"recv":$value,"name":"__outer"}"""
 	}
 	return out
 }

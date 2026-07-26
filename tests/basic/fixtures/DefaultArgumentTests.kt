@@ -42,6 +42,46 @@ fun m2LocalDefault(seed: Int): Int {
     return L(2).q
 }
 
+// #235: the constructor call sites that are NOT a `new` — a `: this(…)` / `: super(…)` delegation and an enum
+// entry's `NAME(args)` (both the plain-entry form and a per-entry BODY's base call). Each is an omitting call site,
+// so an omitted default must be filled there too, not dropped (dropping it slides every later arg one slot down).
+class M2Del(val a: Int, val b: Int = a * 2) {
+    constructor() : this(3)
+}
+open class M2DelBase(val a: Int, val b: Int = a + 1)
+class M2DelSub : M2DelBase(2)
+
+enum class M2Hue(val rgb: Int, val label: String = "c") {
+    R(1),
+    G(2, "g")
+}
+
+enum class M2Op(val arity: Int, val label: String = "op") {
+    ADD(2) { override fun apply(a: Int, b: Int): Int = a + b },
+    NEG(1, "neg") { override fun apply(a: Int, b: Int): Int = -a };
+
+    abstract fun apply(a: Int, b: Int): Int
+}
+
+// #235: a constructor default that reads the ENCLOSING instance — one level up (the call's own dispatch receiver)
+// and two (through that level's `__outer`).
+class M2Encl(val k: Int) {
+    inner class M2EIn(val x: Int = k * 4)
+}
+class M2Deep(val q: Int) {
+    inner class M2DMid {
+        inner class M2DIn(val x: Int = q + 1)
+    }
+}
+
+// #235: a closure captures the callee's OWN parameter and a recursive call inside it omits a default that reads
+// that same parameter — filling must not clobber the closure's capture binding for it.
+fun m2Rec(a: Int, b: Int = a * 2): Int {
+    if (a <= 0) return b
+    val f = { a + m2Rec(a - 1) }
+    return f()
+}
+
 class DefaultArgumentTests {
     @TestAttribute
     fun defargs() {
@@ -91,5 +131,34 @@ class DefaultArgumentTests {
         assertEquals(136, M2Own(1).M2In(3).all)                         // inner: enclosing instance prepended, b = a * 2
         assertEquals(134, M2Own(1).M2In(3, 4).all)                      // inner, b provided
         assertEquals(12, m2LocalDefault(10))                            // local class: captures prepended, q = p + seed
+    }
+
+    // #235: the constructor call sites that used to bypass default filling entirely — a delegation and an enum entry.
+    @TestAttribute
+    fun defargsCtorDelegation() {
+        assertEquals(3, M2Del().a)                                      // `: this(3)`
+        assertEquals(6, M2Del().b)                                      // omitted there: a * 2
+        assertEquals(12, M2Del(4, 12).b)                                // the primary ctor still takes both
+        assertEquals(2, M2DelSub().a)                                   // `: super(2)`
+        assertEquals(3, M2DelSub().b)                                   // omitted there: a + 1
+        assertEquals("c", M2Hue.R.label)                                // enum entry `R(1)` omits label
+        assertEquals(1, M2Hue.R.rgb)
+        assertEquals("g", M2Hue.G.label)                                // provided
+        assertEquals("op", M2Op.ADD.label)                              // entry BODY: the subclass's base() call omits it
+        assertEquals(5, M2Op.ADD.apply(2, 3))
+        assertEquals("neg", M2Op.NEG.label)                             // entry BODY, provided
+        assertEquals(-2, M2Op.NEG.apply(2, 3))
+    }
+
+    // #235: a constructor default reading the enclosing instance, and one reading a parameter a closure captured.
+    @TestAttribute
+    fun defargsCtorEnclosingInstance() {
+        assertEquals(20, M2Encl(5).M2EIn().x)                           // k * 4, k from the enclosing instance
+        assertEquals(1, M2Encl(5).M2EIn(1).x)                           // provided
+        assertEquals(2, M2Deep(1).M2DMid().M2DIn().x)                   // q + 1, two levels up (via `__outer`)
+        assertEquals(9, M2Deep(1).M2DMid().M2DIn(9).x)                  // provided
+        assertEquals(6, m2Rec(3))                                       // 3 + (2 + (1 + 0))
+        assertEquals(0, m2Rec(0))                                       // b = a * 2 = 0
+        assertEquals(1, m2Rec(1))
     }
 }

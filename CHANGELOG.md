@@ -68,8 +68,16 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   call path's arg-slot coercions (byref shaping, `Nullable<T>` unwrap, boxed-`Any` narrowing), calls gain the
   constructor path's facadegen constant-default fill (#134) and its loud refusal when an unfillable cross-module
   default is omitted with a LATER argument provided (that slot-shift was previously a silent miscompile on the call
-  path). Covered by `tests/basic/fixtures/DefaultArgumentTests.kt` (`defargsCtor`: plain class, data class, a default
-  reading TWO earlier parameters, a later argument passed by name, an inner class, and a secondary constructor).
+  path). The remaining constructor call sites are routed through the same pass with it: a `: this(…)` / `: super(…)`
+  **delegation** and an **enum entry**'s `NAME(args)` (including a per-entry body's base call) dropped an omitted
+  default's slot outright, sliding every later argument one place down — `class D(val a: Int, val b: Int = a * 2) {
+  constructor() : this(3) }` produced an unloadable `D..ctor()`. A constructor default that reads an **enclosing
+  instance** (`inner class In(val x: Int = outerProp)`) now lowers too: the enclosing `this` binds to the call's
+  dispatch receiver, a further level through that level's `__outer` field (it previously emitted the *caller's* `this`
+  and threw `InvalidProgramException`). Filling also saves and restores the substitutions it installs, so a closure
+  that captured the callee's own parameter keeps its binding across a recursive omitting call. Covered by
+  `tests/basic/fixtures/DefaultArgumentTests.kt` (`defargsCtor`, `defargsCtorDelegation`,
+  `defargsCtorEnclosingInstance`).
 
 ## 0.9.7 (2026-07-22)
 

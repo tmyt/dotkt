@@ -288,7 +288,9 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 			fields.add("""{"name":${str(ent.name.asString())},"type":${fqnJson(name)},"static":true,"init":{"k":"new","type":${fqnJson(sub)},"args":[${nameOrd(i, ent).joinToString(",")}]}}""")
 		} else {
 			val ecc = (ent.initializerExpression as? IrExpressionBody)?.expression as? IrEnumConstructorCall
-			val entryArgs = ecc?.let { regularArgs(it).map { a -> expr(a) } }.orEmpty()
+			// An entry's `NAME(args)` is an omitting call site too (`R(1)` on `enum class Col(val rgb: Int, val
+			// label: String = "c")`), so it fills omitted defaults like every other call shape.
+			val entryArgs = ecc?.let { filledArgs(it) }.orEmpty()
 			val newArgs = (nameOrd(i, ent) + entryArgs).joinToString(",")
 			fields.add("""{"name":${str(ent.name.asString())},"type":${fqnJson(name)},"static":true,"init":{"k":"new","type":${fqnJson(name)},"args":[$newArgs]}}""")
 		}
@@ -318,12 +320,13 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 	return (listOf(baseDef) + subDefs).joinToString(",")
 }
 
-/** The enum-super args a per-entry body's anonymous subclass passes (the `NAME(args)` args), as expr JSON. */
+/** The enum-super args a per-entry body's anonymous subclass passes (the `NAME(args)` args), as expr JSON —
+ *  omitted defaults filled, like every other constructor call site. */
 internal fun BirEmitter.enumSuperArgs(cc: IrClass): List<String> {
 	val ctor = cc.declarations.filterIsInstance<IrConstructor>().firstOrNull() ?: return emptyList()
 	val call = (ctor.body as? IrBlockBody)?.statements?.firstNotNullOfOrNull { it as? IrEnumConstructorCall }
 		?: return emptyList()
-	return regularArgs(call).map { expr(it) }
+	return filledArgs(call)
 }
 
 /** A per-entry enum body `NAME(args) { override fun … }` -> a subclass `<>Enum_NAME : Enum` whose ctor takes only
@@ -925,10 +928,13 @@ internal fun BirEmitter.ctor(klass: IrClass, ctor: IrConstructor, captures: List
 	val delegateClass = delegating?.symbol?.owner?.parent as? IrClass
 	// `constructor(...) : this(...)` delegates to a sibling ctor; `: super(...)` / implicit -> base.
 	val isThisDelegate = delegating != null && delegateClass == klass
-	val thisArgs = if (isThisDelegate) delegating!!.arguments.filterNotNull().joinToString(",") { expr(it) } else null
+	// A delegation is an ordinary omitting call site (`: this(3)` on `class D(val a: Int, val b: Int = a * 2)`), so its
+	// args run through the SAME default-filling pass every other call shape uses — dropping the omitted slot instead
+	// would slide every later arg into the wrong parameter.
+	val thisArgs = if (isThisDelegate) delegatedCtorArgs(delegating!!).joinToString(",") else null
 	val baseArgs = if (!isThisDelegate) delegating?.let { d ->
 		val targetFq = delegateClass?.fqNameWhenAvailable?.asString()
-		if (targetFq != "kotlin.Any") d.arguments.filterNotNull().joinToString(",") { expr(it) } else null
+		if (targetFq != "kotlin.Any") delegatedCtorArgs(d).joinToString(",") else null
 	} else null
 	val stmts = ArrayList<String>()
 	stmts.addAll(capAssigns)   // store captures before instance initializers, which may read them
