@@ -41,9 +41,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   silently, since the lift supplies its captures at the CALL SITE. Closing both halves took:
   the capture scan is now shared by the lambda/local-fun and object/local-class walks and follows a call INTO a local
   fun (cycle-guarded), so a lambda, object expression or local class that merely calls `bump()` captures `bump`'s `n`
-  as well; a local fun is recognized structurally rather than by its parent kind, because one declared in `init { }`
-  has the enclosing CLASS as its IR parent and is distinguished from a member only by being absent from that class's
-  declarations; the lift's capture parameters moved into a `cap$` namespace Kotlin source cannot spell, since a
+  as well; the lift's capture parameters moved into a `cap$` namespace Kotlin source cannot spell, since a
   transitive capture can arrive under a name the receiving frame already uses for something else; the lift is now also
   generic over the type operands in its BODY, like the lambda lift, and over the BOUNDS of the type parameters it
   re-declares; both lifts now RESTORE the enclosing frame's capture binding instead of dropping it, so a local fun or
@@ -51,9 +49,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   does not have (in an `inner class` member, dropping it left every LATER member reading the enclosing instance off the
   inner one — an owner/receiver mismatch the runtime rejects); a lifted class's capture fields are renamed away from a
   collision with the class's OWN fields, which a transitive capture can now produce and which would otherwise send the
-  write to the wrong field silently; CONSTRUCTING a local class propagates captures like calling a local fun, so the scan
-  follows `IrConstructorCall` too; a local declaration is recognized by the frontend's own `LOCAL` visibility rather
-  than by probing its IR parent, which is exact for classes as well and needs no `init { }` special case; kotc records
+  write to the wrong field silently; CONSTRUCTING a local class propagates captures like calling a local fun, so the
+  scan
+  follows `IrConstructorCall` too; a local declaration is recognized by the frontend's own `Local` visibility rather
+  than by probing its IR parent, which is exact for a class as well and needs no `init { }` special case; kotc records
   on the lifted method which enclosing
   type variable each of its own type params re-declares (`_syntheticTypeArgs`, the same key and meaning
   ClosureSynthesis already derives for a lifted closure CLASS) and bir2cir's `SharedSyntheticSynthesis` applies its
@@ -64,6 +63,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   ilemit's `setField`/`staticFieldSet` take their owner through `ParseOwnerSlot` like the field READ paths beside them
   instead of collapsing a constructed-generic owner to its open name — writing a `Cell<T>` field from a generic static
   method emitted `Cell<!0>::v` where the frame has only `!!0`, which the runtime rejected as a bad image.
+  A lifted class keeps the BOUNDS of the enclosing type parameters it re-declares (they were emitted as bare names, so
+  a member needing one had no constraint to dispatch through — wrong metadata, no diagnostic), and the captured set
+  closes over those bounds. A local class INHERITING from a capturing local class, and a `this(...)` delegation between
+  two constructors of one, both forward the captures ahead of the source-level arguments. Ref-cell identity keys on the
+  bounds of the variables its element mentions, not the printed element alone, so two same-file generic classes no
+  longer share one cell and one of them its constraint. `::localFun` lowers through the lifted static — as a plain
+  delegate with no captures, and as a closure over the captured values when there are some (including the enclosing
+  instance); only a GENERIC capturing local fun is still refused, and loudly.
   Regressions: `tests/basic/fixtures/CapturedVarRefCellTests.kt` (every root above; one `var` written by a lambda, an
   object expression, a local class and a local fun at once; the enclosing frame's own write observed through the shared
   cell; the local-fun boundary plain, in an `init` block, generic, recursive, and with the cell declared inside the

@@ -369,6 +369,59 @@ fun cvrcLocalFunReference(): Int {
     return f(21)
 }
 
+// A reference to a CAPTURING local fun. The lift's captures ride ahead of the declared params, so the reference cannot
+// be a plain delegate over the static — it is a closure holding the captured values whose `invoke` forwards to it.
+fun cvrcLocalFunReferenceCapturing(): Int {
+    var n = 0
+    fun bump(): Int { n++; return n }
+    val f: () -> Int = ::bump
+    f()
+    return f()
+}
+
+// …including a capture of the enclosing INSTANCE, which is a capture like any other.
+class CvrcRefCapturesThis {
+    val k = 3
+    fun run(): Int {
+        fun add(x: Int) = x + k
+        val f: (Int) -> Int = ::add
+        return f(1)
+    }
+}
+
+// A lifted class's SECONDARY constructor delegating with `this(...)`: every ctor of the class takes the same leading
+// capture params, so the delegation forwards them ahead of the source-level arguments.
+fun cvrcLocalClassThisDelegate(): Int {
+    var n = 0
+    fun bump() { n++ }
+    class L {
+        val q: Int
+        constructor() : this(1)
+        constructor(v: Int) { q = v; bump() }
+    }
+    L(); L()
+    return n
+}
+
+// A capture colliding with a CONSTRUCTOR PARAMETER of the lifted class — a parameter with no backing field, so the
+// collision is invisible if only the class's own fields are consulted.
+fun cvrcLocalClassCtorParamCollision(): Int {
+    var n = 0
+    fun bump() { n++ }
+    class L(n: Int) { val m = n * 2; fun go(): Int { bump(); return m } }
+    L(3).go(); L(3).go()
+    return n
+}
+
+// Two generic classes in ONE file whose cell element types PRINT identically (both `T` at position 0) but whose bounds
+// differ: they must not share a cell, or one gets the other's constraint.
+class CvrcCellA<T : Comparable<T>>(val a: T, val b: T) {
+    fun pick(): T { var cur = a; val g = { cur = b }; g(); return cur }
+}
+class CvrcCellB<T>(val a: T, val b: T) {
+    fun pick(): T { var cur = a; val g = { cur = b }; g(); return cur }
+}
+
 // A local class that both DECLARES a field `n` and receives a capture named `n` (transitively, by calling `bump`).
 // The two share one namespace in the lifted class, so the capture is renamed rather than shadowed — otherwise the
 // write goes to the class's own field and the caller's `n` never moves.
@@ -449,6 +502,12 @@ class CapturedVarRefCellTests {
         assertEquals(2, cvrcLocalClassFieldCollision())          // 2, not the class's own `n`
         assertEquals(2, cvrcLocalClassInheritance())             // 2 — the base's captures reach it through `B : A()`
         assertEquals(42, cvrcLocalFunReference())                // 42 — `::twice` targets the lifted static
+        assertEquals(2, cvrcLocalFunReferenceCapturing())        // 2 — the reference carries the captured cell
+        assertEquals(4, CvrcRefCapturesThis().run())             // 1 + 3, the enclosing instance captured
+        assertEquals(2, cvrcLocalClassThisDelegate())            // 2 — `this(1)` forwarded the capture
+        assertEquals(2, cvrcLocalClassCtorParamCollision())      // 2, not the ctor parameter's `n`
+        assertEquals(2, CvrcCellA(1, 2).pick())                  // distinct cells despite identical printed elements
+        assertEquals(4, CvrcCellB(3, 4).pick())
         assertEquals("y", cvrcLocalFunBoundedTv<CvrcStrBox, String>(CvrcStrBox("x"), CvrcStrBox("y")).get())
     }
 

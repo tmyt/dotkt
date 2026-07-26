@@ -937,7 +937,13 @@ internal fun BirEmitter.ctor(klass: IrClass, ctor: IrConstructor, captures: List
 	val delegateClass = delegating?.symbol?.owner?.parent as? IrClass
 	// `constructor(...) : this(...)` delegates to a sibling ctor; `: super(...)` / implicit -> base.
 	val isThisDelegate = delegating != null && delegateClass == klass
-	val thisArgs = if (isThisDelegate) delegating!!.arguments.filterNotNull().joinToString(",") { expr(it) } else null
+	// A sibling ctor of a lifted class takes the SAME leading capture params (they are prepended to every ctor of the
+	// class), so a `this(...)` delegation must forward them ahead of the source-level arguments — the twin of the base
+	// delegation below. Pass this ctor's own capture params: the capture fields are not assigned until after it.
+	val thisArgs = if (isThisDelegate)
+		(captures.map { (_, fname) -> """{"k":"local","name":${str(fname)}}""" } +
+			delegating!!.arguments.filterNotNull().map { expr(it) }).joinToString(",")
+	else null
 	val baseArgs = if (!isThisDelegate) delegating?.let { d ->
 		val targetFq = delegateClass?.fqNameWhenAvailable?.asString()
 		if (targetFq == "kotlin.Any") null else {
@@ -946,9 +952,9 @@ internal fun BirEmitter.ctor(klass: IrClass, ctor: IrConstructor, captures: List
 			// arguments — the construction-site rule, one level up the hierarchy. THIS class captures them too (the
 			// capture scan follows the delegation), so each is already a leading param of the ctor we are emitting;
 			// pass that param, not `capValueExpr`, because the capture FIELDS are only assigned after the base call.
-			val baseCaps = delegateClass?.let { localClassCaptures[it] }.orEmpty().map { decl ->
-				val here = captures.firstOrNull { (d, _) -> d === decl }?.second
-					?: return@let invariantBroken(d,
+			val baseCaps = delegateClass?.let { localClassCaptures[it] }.orEmpty().map { baseCapture ->
+				val here = captures.firstOrNull { (own, _) -> own === baseCapture }?.second
+					?: return@let invariantBroken(delegating,
 						"a local base class's capture is not a capture of the derived local class")
 				"""{"k":"local","name":${str(here)}}"""
 			}

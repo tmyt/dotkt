@@ -440,12 +440,34 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 	// the target needs the captured values bound, which is a closure, not a static method reference — so refuse rather
 	// than emit a call the arity of which is wrong.
 	localFns[fn]?.let { (lname, caps, tps) ->
-		if (caps.isNotEmpty())
-			return unsupported(node, "a reference to a local function that captures values",
-				"the reference would need to carry ${caps.size} captured value(s); call it directly, " +
-					"or wrap it in a lambda (`{ … -> ${fn.name.asString()}(…) }`)")
 		val typeArgs = if (tps.isEmpty()) "" else ""","typeArgs":[${tps.joinToString(",") { tvOf(it).toJson() }}]"""
-		return """{"k":"newDelegate","method":${str(lname)},"funcType":${funcTypeOf(fn).toJson()}$typeArgs${localCalleeOwnerTag()}}"""
+		// No captures: the delegate targets the lifted static directly.
+		if (caps.isEmpty())
+			return """{"k":"newDelegate","method":${str(lname)},"funcType":${funcTypeOf(fn).toJson()}$typeArgs${localCalleeOwnerTag()}}"""
+		// WITH captures the delegate's arity cannot match the lifted static's (captures ride ahead of the declared
+		// params), so the reference is a CLOSURE over those values whose `invoke` forwards to the lift — the same
+		// `{ args -> bump(args) }` the user could write by hand, and the same `synthClass` ingredients the lambda path
+		// emits. A GENERIC lift is excluded for now: the closure class would have to re-declare the lift's own type
+		// params and the two frames must agree, which is the open frame problem recorded at `bodyTypeOperands`.
+		if (tps.isNotEmpty())
+			return unsupported(node, "a reference to a generic local function that captures values",
+				"call it directly, or wrap it in a lambda (`{ … -> ${fn.name.asString()}(…) }`)")
+		val cname = "dotkt\$${synthScope}\$Closure${closureCounter++}"
+		val capPairs = caps.map { it to captureFieldName(it) }
+		val fields = capPairs.joinToString(",") { (decl, fname) ->
+			"""{"name":${str(fname)},"type":${str(captureFieldType(decl))}}"""
+		}
+		val ownVps = fn.parameters.filter { it.kind == IrParameterKind.Regular }
+		val callArgs = (capPairs.map { (_, fname) ->
+			"""{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":${str(fname)}}"""
+		} + ownVps.map { """{"k":"local","name":${str(it.name.asString())}}""" }).joinToString(",")
+		val callE = """{"k":"callStatic","owner":null,"method":${str(lname)},"args":[$callArgs]${localCalleeOwnerTag()}}"""
+		val retT = birType(fn.returnType)
+		val invokeBody = if (fn.returnType.isUnit()) """{"k":"exprStmt","expr":$callE}"""
+			else """{"k":"return","value":$callE}"""
+		val synthClass = """{"name":${str(cname)},"fields":[$fields],"params":[${lambdaParamsJson(ownVps)}],"ret":${str(retT)},"body":[$invokeBody]}"""
+		val capExprs = caps.joinToString(",") { capValueExpr(it) }
+		return """{"k":"newClosure","closureType":${fqnJson(cname)},"captures":[$capExprs],"method":"invoke","funcType":${funcTypeOf(fn).toJson()},"synthClass":$synthClass}"""
 	}
 	if (dispatchIdx < 0 && !hasExt)
 		return """{"k":"newDelegate","method":${str(fn.name.asString())}${overloadSigField(fn)},"funcType":${funcTypeOf(fn).toJson()}${calleeOwnerTag(fn)}}"""
@@ -1132,17 +1154,26 @@ internal fun BirEmitter.captureFieldName(d: IrValueDeclaration): String =
 internal fun BirEmitter.captureFieldPairs(
 	klass: IrClass, captured: List<IrValueDeclaration>,
 ): List<Pair<IrValueDeclaration, String>> {
-	val own = HashSet<String>()
+	// Everything the capture names share a namespace with: the class's own fields, the constructor parameters they are
+	// prepended to (a ctor param need not have a backing field), and each other — two DIFFERENT outer declarations can
+	// both be called `n` and both be captured, now that reaching a local `fun` or local class captures transitively.
+	val taken = HashSet<String>()
 	klass.declarations.forEach { d ->
 		when (d) {
-			is IrProperty -> d.backingField?.let { own.add(it.name.asString()) }
-			is IrField -> own.add(d.name.asString())
+			is IrProperty -> d.backingField?.let { taken.add(it.name.asString()) }
+			is IrField -> taken.add(d.name.asString())
+			is IrConstructor -> d.parameters.forEach { taken.add(it.name.asString()) }
 			else -> {}
 		}
 	}
 	return captured.map { decl ->
 		val name = captureFieldName(decl)
-		decl to (if (name != "__outer" && name in own) "cap\$$name" else name)
+		// `__outer` is left alone: the suspend lowerings key their enclosing-instance handling on that exact name.
+		val unique = if (name == "__outer") name else generateSequence(0) { it + 1 }
+			.map { if (it == 0) "cap\$$name" else "cap\$$name\$$it" }
+			.first { it !in taken }
+		taken.add(unique)
+		decl to unique
 	}
 }
 
@@ -1316,8 +1347,10 @@ internal fun BirEmitter.liftLocalClass(klass: IrClass): String {
 	// object-literal path (blockExpr) does. `captureEnclosingGenerics` runs typeDef's structural scan, which records
 	// `liftedTypeArgParams[klass]`; each `new L()` site (IrConstructorCall) instantiates the flattened class with the
 	// enclosing args from that record. A non-generic local class captures nothing and lifts unchanged.
+	// Register BEFORE emitting the class: a member of this class may CONSTRUCT it (or a subclass may delegate to its
+	// ctor) while `typeDef` is running, and that construction site reads this record to prepend the capture arguments.
+	localClassCaptures[klass] = captured
 	liftedTypes.add(typeDef(klass, capPairs, captureEnclosingGenerics = true, generated = true))
 	capPairs.forEach { (decl, _) -> val prev = savedSubst[decl]; if (prev != null) captureSubst[decl] = prev else captureSubst.remove(decl) }
-	localClassCaptures[klass] = captured
 	return """{"k":"block","body":[]}"""
 }
