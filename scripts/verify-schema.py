@@ -68,10 +68,11 @@ STR_OK = {
                                                  # (base64(BirCarrier.EncodeBody(raw decl))) bir2cir InlineBirStash stamps on
                                                  # an inline method decl; ilemit emits it verbatim as the carrier bytes. A
                                                  # metadata payload, NOT a type slot (§3 opaque, like smName/closureName).
-    "nullableGenericRet",                        # #18: the PRE-erasure `Holder<T?>` return TypeNode, stashed as an OPAQUE
-                                                 # canonical-JSON string by bir2cir NullableGenericReturnErasure (before the
-                                                 # nested `Nullable(Tv)` is object-erased); RoundtripMetadata carrier-encodes
-                                                 # it into [KotlinNullableGeneric] for facadegen. A payload, NOT a type slot.
+    "nullableGeneric", "nullableGenericRet",     # #18/#147: PRE-erasure `Holder<T?>` declaration-slot TypeNodes, stashed
+                                                 # as OPAQUE canonical-JSON strings by bir2cir NullableGenericErasure
+                                                 # before nested `Nullable(Tv)` is object-erased. RoundtripMetadata
+                                                 # carrier-encodes them into [KotlinNullableGeneric] for facadegen.
+                                                 # Payloads, NOT type slots.
     "collIdentity", "collIdentityRet",           # #29: PRE-collapse Kotlin collection TypeNodes stashed as canonical-JSON
                                                  # strings by CollectionIdentityRecord. RoundtripMetadata immediately turns
                                                  # them into [KotlinCollectionIdentity] carrier bytes for facadegen; these

@@ -1194,16 +1194,26 @@ sealed partial class ReferenceMetadataIndex
                     var isFileClass = HasAttribute(type.GetCustomAttributesData(), KotlinFileClassAttr);
 
                     // `value`/inline class (marked with [KotlinValue], the 2.4.0 carrier of `mods.value`): its single
-                    // instance backing field IS the erased value. Record the field getter + the field's CLR conv token so a
-                    // `get_<field>()` call collapses to `conv(<recv>)`. NARROWED to EXACTLY ONE instance field — a value
-                    // class has precisely one property/backing field, so requiring a single field picks the correct
-                    // underlying type (and refuses to erase off an arbitrary FirstOrDefault if the shape is unexpected).
+                    // instance backing field IS the erased value. Record that property's GETTER + the field's CLR conv
+                    // token so a `get_<prop>()` call collapses to `conv(<recv>)`. NARROWED to EXACTLY ONE instance field
+                    // — a value class has precisely one property/backing field, so requiring a single field picks the
+                    // correct underlying type (and refuses to erase off an arbitrary FirstOrDefault if the shape is
+                    // unexpected). The GETTER is the accessor of the PROPERTY that OWNS that field: an accessor-routed
+                    // property's storage carries the compiler-generated `<data>k__BackingField` name
+                    // (BackingFieldRename), which no `"get_" + field.Name` spelling can reach. A field that is NOT an
+                    // auto-property's storage (a plain-field/`@ClrField` shape, or a pre-rename assembly) IS the member
+                    // itself, so its own name stays the accessor stem — the entry is never dropped, in any shape.
                     if (HasAttribute(type.GetCustomAttributesData(), KotlinValueAttr))
                     {
                         var instanceFields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly);
                         var backing = instanceFields.Length == 1 ? instanceFields[0] : null;
                         if (backing != null && InlineFieldConv(backing.FieldType) is string conv)
-                            metadata.InlineBacking[ownerFqn] = ("get_" + backing.Name, conv);
+                        {
+                            var owningProp = type
+                                .GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+                                .FirstOrDefault(p => BackingFieldRename.Mangle(p.Name) == backing.Name);
+                            metadata.InlineBacking[ownerFqn] = (owningProp?.GetMethod?.Name ?? "get_" + backing.Name, conv);
+                        }
                     }
 
                     foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly))

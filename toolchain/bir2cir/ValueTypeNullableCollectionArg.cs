@@ -9,7 +9,7 @@ using DotKt.Bir;
 //
 // kotc erases the extension receiver `Iterable<T?>` to the token `@kotlin.collections.Iterable[nullable:gp:T]`, which
 // type-lowering turns into the CLR param `IEnumerable<object>` (the boxed/erased nullable rep — see
-// NullableGenericReturnErasure). For a REFERENCE element (`List<String?>`) the arg `IReadOnlyList<String>` IS
+// NullableGenericErasure). For a REFERENCE element (`List<String?>`) the arg `IReadOnlyList<String>` IS
 // covariantly `IEnumerable<object>`, so the plain arg flows fine. For a VALUE element (`List<Int?>` =
 // `IReadOnlyList<Nullable<Int32>>`) .NET reified generics give NO value-type covariance — the collection does NOT
 // implement `IEnumerable<object>`, so the call passes a value the callee can't `GetEnumerator` (NRE / ilverify

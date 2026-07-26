@@ -21,7 +21,7 @@ declare -A ILVERIFY_XFAIL=(
 	# backtick in a bash double-quoted map key triggers command substitution) to cover all three narrowed forwarders.
 	["CorADelTracked"]="#174: class-delegation (#81) forwarder narrows MutableList iterator()/listIterator() return to the read-only Iterator/ListIterator where Mutable is expected — runtime-safe covariance-erasure (RUN green)"
 	# #18 (migrated ktproj-genq): a re-imported generic factory `holderOf(): Vault<T?>` whose bir2cir
-	# NullableGenericReturnErasure object-erases the nested Nullable(Tv) to `Vault<object>`; the [KotlinNullableGeneric]
+	# NullableGenericErasure object-erases the nested Nullable(Tv) to `Vault<object>`; the [KotlinNullableGeneric]
 	# round-trip restores `Vault<String?>` at the frontend, so the call's erased `Vault<object>` return meets the
 	# consumer's restored `Vault<string>` slot — StackUnexpected. Runtime-SAFE (object/string are reference-compatible;
 	# the erased Vault holds the string; the value-assert RUN lane is green). Same object-erasure formal-only family.

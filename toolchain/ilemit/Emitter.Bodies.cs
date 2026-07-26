@@ -543,7 +543,7 @@ sealed partial class Emitter
     }
 
     // Boundary conversion after a call whose ACTUAL return is `System.Object` — the erased representation of a
-    // generic `T?` (NullableGenericReturnErasure in bir2cir). The caller's statically-known type (`retType`) says
+    // generic `T?` (NullableGenericErasure in bir2cir). The caller's statically-known type (`retType`) says
     // what to recover: a value-type nullable `Nullable<V>` via `unbox.any` (a null ref -> HasValue=false; a boxed V
     // -> HasValue=true), a reference type via `castclass` (null stays null). When the caller ALSO wants `object`
     // (an internal nullable->nullable hand-off) there is nothing to do. A non-object actual return is untouched.
@@ -760,7 +760,7 @@ sealed partial class Emitter
     //  - `T` returned where the declared type is `T?` -> wrap in Nullable<T> (e.g. a `sortedBy` selector typed
     //    `(T)->R?` whose body yields a non-null R). Mirrors EmitArg's coercion.
     //  - a value-type / generic-param value returned where the method returns `object` (an erased generic `T?` —
-    //    NullableGenericReturnErasure) must be boxed so `ldnull`/boxed-value share the object return. A null-const
+    //    NullableGenericErasure) must be boxed so `ldnull`/boxed-value share the object return. A null-const
     //    return already left a real null (no box). Mirrors the var-store box.
     void EmitReturnCoerced(Type got)
     {
