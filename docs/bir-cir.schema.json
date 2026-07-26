@@ -158,7 +158,7 @@
       "properties": {
         "name":     { "type": "string" },
         "type":     { "$ref": "#/$defs/type" },
-        "nullableFlags": { "type": "array", "items": { "type": "integer", "enum": [0, 1, 2] }, "$comment": "bir2cir-derived flattened NullableAttribute bytes (0=oblivious,1=not-null,2=nullable) for this param's reference-nullable positions; stamped by ilemit. Absent when the type carries no nullable-reference position." },
+        "nullableFlags": { "type": "array", "items": { "type": "integer", "enum": [0, 1, 2] }, "$comment": "bir2cir-derived flattened NullableAttribute bytes (0=oblivious,1=not-null,2=nullable) for this param's reference-nullable positions; RoundtripMetadata folds it into the param's `attrs` as a NullableAttribute entry, which ilemit stamps. Absent when the type carries no nullable-reference position." },
         "mods":     { "$ref": "#/$defs/mods", "$comment": "only vararg/noinline/crossinline apply to a param" },
         "default":  { "$ref": "#/$defs/node", "description": "a KotlinDefault expression; absent = required" }
       },
@@ -207,7 +207,7 @@
       "properties": {
         "name":       { "type": "string" },
         "ret":        { "$ref": "#/$defs/type" },
-        "retNullableFlags": { "type": "array", "items": { "type": "integer", "enum": [0, 1, 2] }, "$comment": "#48: bir2cir-derived flattened NullableAttribute bytes for the RETURN's reference-nullable positions (the retired scalar `retNullable` flag's replacement); stamped by ilemit on the return parameter. Absent when the return carries no nullable-reference position." },
+        "retNullableFlags": { "type": "array", "items": { "type": "integer", "enum": [0, 1, 2] }, "$comment": "#48: bir2cir-derived flattened NullableAttribute bytes for the RETURN's reference-nullable positions (the retired scalar `retNullable` flag's replacement); RoundtripMetadata folds it into the method's `retAttrs` as a NullableAttribute entry, which ilemit stamps on the return parameter. Absent when the return carries no nullable-reference position." },
         "mods":       { "$ref": "#/$defs/mods" },
         "vis":        { "$ref": "#/$defs/vis" },
         "static":     { "type": "boolean", "$comment": "a load-bearing CLR-shape flag, kept scalar (not a Kotlin source modifier)" },

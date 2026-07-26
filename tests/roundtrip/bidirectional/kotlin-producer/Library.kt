@@ -14,7 +14,8 @@ class BidirectionalNullableCtor(val label: String?) {
     fun labelLength(): Int = label?.length ?: -1
     fun takeNullable(other: String?): Int = other?.length ?: -1
 
-    // The NESTED-type axis of the same walk: a nested class's ctor param must be annotated too.
+    // A CLR nested type's ctor param must be annotated too (a Kotlin consumer cannot name a nested DotKt class —
+    // facadegen does not surface one — so this axis is only assertable from C#).
     class Nested(val tag: String?) {
         fun tagLength(): Int = tag?.length ?: -1
     }

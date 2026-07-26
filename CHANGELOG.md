@@ -24,8 +24,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   while the stamp that turns those bytes into `[Nullable]` already walked constructor parameters — so every
   constructor parameter was emitted unannotated. A Kotlin consumer of a DotKt library therefore saw `C(val s:
   String?)` as taking a non-null `String` and `C(null)` failed to compile with "null cannot be a value of a non-null
-  type"; a C# consumer lost the annotation outright. The walk now covers constructor parameters (primary, secondary
-  and nested-type), matching the stamp's traversal exactly. Regressions:
+  type"; a C# consumer lost the annotation outright. The walk now covers constructor parameters, matching the
+  declaration kinds the stamp traverses. Regressions:
   `tests/roundtrip/producer/Nrt.kt` + `tests/roundtrip/consumer/KotlinMetadataRoundtripTests.kt`
   (`nullableConstructorParams`, cross-module Kotlin) and
   `tests/roundtrip/bidirectional/consumer/BidirectionalTests.cs`

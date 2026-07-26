@@ -39,11 +39,13 @@ declare -A RT_XFAIL=(
 	# byte (#86; #147's [KotlinNullableGeneric] carrier covers `Holder<T?>`-style NESTED positions, not this bare
 	# top-level dual representation). The consumer therefore COMPILES — the byte restores both slots as `T?` — but the
 	# bare `T` slot is a struct at T=Int, so a null cannot cross it: `firstOr<Int>(null, 7)` and `NBox<Int>(null)`
-	# emit `ldnull` into an int32 slot (ilverify: StackUnexpected, found Nullobjref, expected Int32) and the app dies
-	# with System.InvalidProgramException at AppKt::main. The T=String and non-null lines (3/4/x) run correctly, so
-	# this is the value-type axis of #86 alone (invisible to every other gate, which drives only T=String); when #86
-	# lands a null-capable representation for a bare `T?` slot the section runs 7/3/9/4/x -> prune it.
-	[roundtrip-nullable-vt-generic]="#109/#86/#127: cross-module nullable value-type generic — a top-level T? method/ctor param is emitted as the bare struct-incapable T slot, so the consumer compiles (NullableAttribute(2) restores T?) but firstOr<Int>(null,7)/NBox<Int>(null) push null into an int32 slot -> System.InvalidProgramException at runtime; distinct from #147's nested constructed-type carrier"
+	# emit `ldnull` into an int32 slot (ilverify: StackUnexpected, found Nullobjref, expected Int32). Both live in
+	# `main`, so the WHOLE method fails JIT verification: the app prints NOTHING and dies with
+	# System.InvalidProgramException at AppKt::main — the observed output is empty, not a partial 7/3/9/4/x. Compiling
+	# the same lib against an app WITHOUT the two T=Int null crossings runs 3/4/x, so the fault is confined to the
+	# value-type axis of #86 (invisible to every other gate, which drives only T=String); when #86 lands a null-capable
+	# representation for a bare `T?` slot the section runs 7/3/9/4/x -> prune it.
+	[roundtrip-nullable-vt-generic]="#109/#86/#127: cross-module nullable value-type generic — a top-level T? method/ctor param is emitted as the bare struct-incapable T slot, so the consumer COMPILES (NullableAttribute(2) restores T?) but firstOr<Int>(null,7)/NBox<Int>(null) push null into an int32 slot, so main fails JIT verification and the app produces NO output (System.InvalidProgramException); distinct from #147's nested constructed-type carrier"
 )
 
 # MIGRATED to the in-process ProjectReference round-trip lane (tests/roundtrip/consumer RoundtripTests, driven by
@@ -538,8 +540,8 @@ cat > "$NV/app/app.kt" <<'EOF'
 fun main() {
     println(firstOr<Int>(null, 7))       // 7   value-type T=Int, null crosses the module boundary
     println(firstOr(3, 7))               // 3   value-type T=Int, present
-    println(NBox<Int>(null).orElse(9))   // 9   nullable value-type generic FIELD, null, read cross-module
-    println(NBox(4).orElse(9))           // 4   nullable value-type generic FIELD, present
+    println(NBox<Int>(null).orElse(9))   // 9   null through the nullable value-type generic CTOR PARAM
+    println(NBox(4).orElse(9))           // 4   same ctor param, present
     println(firstOr<String>(null, "x"))  // x   reference-type non-regression
 }
 EOF
@@ -552,7 +554,7 @@ emit_il "$NV/appil" NvApp --ref "$NV/libil/NvLib.dll" "$NV/appbir"/*.bir.json
 cp "$NV/libil/NvLib.dll" "$NV/appil/" 2>/dev/null || true
 nvexpected="$(printf '7\n3\n9\n4\nx')"
 run_app nvactual "$NV/appil/NvApp.dll"
-check_output roundtrip-nullable-vt-generic "$nvexpected" "$nvactual" "cross-module nullable VALUE-TYPE generic (T? param + field) instantiated at T=Int (#109/#86)"
+check_output roundtrip-nullable-vt-generic "$nvexpected" "$nvactual" "cross-module nullable VALUE-TYPE generic (T? method param + ctor param) instantiated at T=Int (#109/#86)"
 
 # ----- HIGHER-ORDER generics: a function-type parameter whose ARG/RETURN is a generic user type (`(Box<U>)->Box<V>`) -----
 # The metadata type grammar is a recursive structured type-node tree (an `fn` node's `ret`/`params` are themselves type

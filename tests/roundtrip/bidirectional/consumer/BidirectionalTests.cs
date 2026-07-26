@@ -34,7 +34,8 @@ public class BidirectionalTests
         var ctorParam = typeof(BidirectionalNullableCtor).GetConstructors().Single().GetParameters().Single();
         var methodParam = typeof(BidirectionalNullableCtor)
             .GetMethod(nameof(BidirectionalNullableCtor.takeNullable))!.GetParameters().Single();
-        // A NESTED type's ctor param goes through the same walk's type recursion.
+        // A nested Kotlin class becomes a real CLR nested type (kotc flattens it into the file's type list with a
+        // `nestedIn` marker); its ctor param must be annotated like any other.
         var nestedCtorParam = typeof(BidirectionalNullableCtor.Nested)
             .GetConstructors().Single().GetParameters().Single();
         Assert.That(NullableByte(ctorParam), Is.EqualTo((byte)2), "ctor param lost its NullableAttribute");

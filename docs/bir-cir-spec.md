@@ -94,7 +94,8 @@ Notes:
   - **bir2cir** (`DeclNullableFlags` → `ReferenceNullableStrip` → `BirTypeLowering`, in that order, all on the
     semantic tree): `DeclNullableFlags` walks each decl slot's Type node and emits the flattened `NullableAttribute`
     byte array (`nullableFlags` on a method/constructor param, field or property; `retNullableFlags` on a method
-    return) — the NRT byte-walk now derives from the **type node**, not a flag. `ReferenceNullableStrip` then removes EVERY reference
+    return) — the NRT byte-walk now derives from the **type node**, not a flag. `ReferenceNullableStrip` then removes
+    EVERY reference
     `{t:"nullable","of":<reference>}` in ANY position (decl slots, owner generic type-args, `argTypes`/`typeArgs`,
     expression `cast`/`type`), leaving a bare ref type (ilemit's `MapType` asserts a VALUE inner, so no reference
     `Nullable<>` may reach it); a VALUE `{t:"nullable","of":<value/struct/enum>}` is KEPT as the structural
@@ -108,8 +109,7 @@ Notes:
     `retNullable` reads are retired. ilemit does NOT read `nullableFlags`/`retNullableFlags`: bir2cir's
     `RoundtripMetadata` folds them into the decl's `attrs`/`retAttrs` as a plain `NullableAttribute` entry, which
     ilemit stamps through its generic attribute path (facadegen reads it back off the dll). The value-vs-reference
-    decision is `IsValueType` + generic-constraint driven, per
-    the tri-state model — never a hardcoded FQN set.
+    decision is `IsValueType` + generic-constraint driven, per the tri-state model — never a hardcoded FQN set.
 - Examples:
   - `kotlin.Int` → `{"t":"fqn","name":"kotlin.Int"}`
   - `List<Int>` → `{"t":"fqn","name":"kotlin.collections.List","args":[{"t":"fqn","name":"kotlin.Int"}]}`

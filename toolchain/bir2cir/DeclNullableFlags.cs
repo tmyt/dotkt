@@ -14,8 +14,10 @@ using DotKt.Bir;
 //
 // The CONSUMER is RoundtripMetadata (Stamp), which turns each flags key into a real `[Nullable]` entry in the decl's
 // `attrs`/`retAttrs` array; ilemit then stamps those entries through its generic BuildCab path and never reads the
-// flags keys itself. Producer and consumer traversals must therefore agree: RoundtripMetadata.StampType walks
-// methods / fields / properties / ctors / nested types, so ApplyRec walks exactly the same set.
+// flags keys itself. Producer and consumer traversals must therefore agree on the decl kinds they visit — a slot this
+// pass skips silently loses its `[Nullable]` at stamp time (the #251 ctor bug). RoundtripMetadata.StampType visits
+// methods / fields / properties / ctors, so ApplyRec visits the same four; StampType additionally skips a
+// `kind:"enum"` type outright (a real CLR enum has no ctors and no nullable slot, so nothing is stamped there).
 //
 // A VALUE `T?` (`Nullable<Int>`) contributes NO byte (it is the structural Nullable<T>, kept by BirTypeLowering); a
 // non-null reference emits nothing (the type's [NullableContext(1)] default covers it) — only a nullable reference
