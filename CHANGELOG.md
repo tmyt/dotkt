@@ -14,9 +14,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   cleanup uninstall landed between the other's install and its scaffold — reported as
   `ThrowMoreThanOneMatchException` / "Could not find the template package containing template 'DotKt.Templates.Cli'"
   on a gate that had nothing wrong with it. Every `dotnet new` invocation now goes through a `dotnet_new` helper that
-  passes `--debug:custom-hive` pointing into the run's own scratch workspace, which is wiped at the start of each run:
-  the machine-global store is neither read nor written, and the uninstall trap that existed only to keep it clean is
-  gone with it.
+  passes `--debug:custom-hive`, and each template case gets its own hive inside the run's scratch workspace, which is
+  wiped at the start of each run: the machine-global store is neither read nor written, and the uninstall trap that
+  existed only to keep it clean is gone with it. One hive per case, not per run — `dotnet new install --force` of a
+  package a hive already carries appends a second registration for the same id and makes the next scaffold ambiguous
+  with the very same error, which the old cross-case uninstall had been hiding.
 
 ## 0.9.7 (2026-07-22)
 
