@@ -63,11 +63,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   constructor parameter — `class Rect(val w: Int, val h: Int = w * 2)` + `Rect(3)` compiles and yields `h == 6`.**
   kotc carried two default-argument filling passes: the one behind ordinary calls already inlined such a default with
   each referenced parameter rewritten to that call's filled argument, while the one behind `new` / array constructors /
-  a lifted local class's `new` refused the identical shape. The constructor path is folded onto the single pass, so one
-  implementation now serves every call shape (and constructors additionally gain the arg-slot coercions and the
-  facadegen constant-default fill the call path already had). Covered by `tests/basic/fixtures/DefaultArgumentTests.kt`
-  (`defargsCtor`: plain class, data class, a default reading TWO earlier parameters, a later argument passed by name,
-  and a secondary constructor).
+  a lifted local class's `new` refused the identical shape. The constructor path is folded onto that pass, so one
+  implementation now serves both. Folding takes the UNION of the two passes' behaviors: constructor arguments gain the
+  call path's arg-slot coercions (byref shaping, `Nullable<T>` unwrap, boxed-`Any` narrowing), calls gain the
+  constructor path's facadegen constant-default fill (#134) and its loud refusal when an unfillable cross-module
+  default is omitted with a LATER argument provided (that slot-shift was previously a silent miscompile on the call
+  path). Covered by `tests/basic/fixtures/DefaultArgumentTests.kt` (`defargsCtor`: plain class, data class, a default
+  reading TWO earlier parameters, a later argument passed by name, an inner class, and a secondary constructor).
 
 ## 0.9.7 (2026-07-22)
 

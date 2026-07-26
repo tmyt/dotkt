@@ -23,11 +23,23 @@ fun m2H(a: Int, b: Int = 3, c: Int = a + b): Int = a * 100 + b * 10 + c
 
 // #235: the CONSTRUCTOR shapes of the same defaults — a default that reads an EARLIER constructor parameter, in a
 // plain class, a data class, reading TWO earlier params, with a later arg passed by name, and on a secondary ctor.
+// The INNER class and the LOCAL class (m2LocalDefault) additionally cover the arg positions a `new` PREPENDS in front
+// of the filled args — the enclosing instance and the lifted captures — which must not shift the filled slots.
 class M2Rect(val w: Int, val h: Int = w * 2)
 data class M2DRect(val w: Int, val h: Int = w * 3, val tag: String = "d")
 class M2Tri(val a: Int, val b: Int = a + 1, val c: Int = a * 10 + b)
 class M2Sec(val v: Int) {
     constructor(a: Int, b: Int, c: Int = a * 5) : this(a + b + c)
+}
+class M2Own(val n: Int) {
+    inner class M2In(val a: Int, val b: Int = a * 2) {
+        val all: Int get() = n * 100 + a * 10 + b
+    }
+}
+
+fun m2LocalDefault(seed: Int): Int {
+    class L(val p: Int, val q: Int = p + seed)
+    return L(2).q
 }
 
 class DefaultArgumentTests {
@@ -76,5 +88,8 @@ class DefaultArgumentTests {
         assertEquals(30, t2.c)                                          // a * 10 + b, b provided
         assertEquals(8, M2Sec(1, 2).v)                                  // secondary ctor: c = a * 5 -> 1 + 2 + 5
         assertEquals(6, M2Sec(1, 2, 3).v)                               // secondary ctor, c provided
+        assertEquals(136, M2Own(1).M2In(3).all)                         // inner: enclosing instance prepended, b = a * 2
+        assertEquals(134, M2Own(1).M2In(3, 4).all)                      // inner, b provided
+        assertEquals(12, m2LocalDefault(10))                            // local class: captures prepended, q = p + seed
     }
 }

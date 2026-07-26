@@ -95,18 +95,20 @@ private val defaultArgPlaceholder = """{"k":"defaultArg"}"""
 private val defaultArgThisToken = """{"k":"this"}"""
 
 /** Regular args, POSITIONALLY complete, filling omitted default arguments (IL has no default-parameter mechanism).
- *  THE single default-filling pass — it serves every call shape: a function call, a `new`, an array ctor, a lifted
- *  local/class call.
+ *  ONE pass for every resolved-callee call shape — a function call, a `new`, an array ctor, a lifted local/class call.
+ *  (A call to a facadegen-injected TOP-LEVEL function is filled by [filledInjectedArgs], which additionally reads the
+ *  injected @KotlinDefault SLOTS the bodies-skipped dependency IR cannot carry.)
  *  Fill source by default KIND: a same-module CONSTANT/global default is inlined verbatim; a same-module default that
  *  reads an earlier VALUE PARAMETER (`b: Int = a * 10`, a ctor's `h: Int = w * 2`) is inlined with each referenced
  *  param rewritten to THIS call's filled arg for it; a same-module default that reads the callee's RECEIVER
- *  (`missingDelimiterValue = this`, a data-class `copy`'s `y = this.y`, an inner-class ctor's `= outerProp`) is
- *  inlined with `this` rewritten to THIS call's receiver (both are the JVM `$default` scope, done at the JSON level);
+ *  (`missingDelimiterValue = this`, a data-class `copy`'s `y = this.y`) is inlined with `this` rewritten to THIS call's
+ *  receiver (both are the JVM `$default` scope, done at the JSON level);
  *  a CROSS-MODULE default (IrErrorExpression — the frontend artifact preserves no default VALUE) is filled from the
  *  facadegen metadata's constant (#134) if it has one, else becomes a `defaultArg` placeholder that bir2cir fills from
- *  the ref.dll @KotlinDefault. A slot with neither is dropped when purely TRAILING (ilemit's [DefaultParameterValue]
- *  backfill fills it), and refused loudly when a LATER arg is provided (a "gap" — silently omitting it would shift the
- *  later arg into the wrong parameter slot: the joinToString/substringAfter miscompile). */
+ *  the ref.dll @KotlinDefault (a FUNCTION's — `carriesKotlinDefault`, like the stamp side, describes an IrSimpleFunction,
+ *  so a cross-module CONSTRUCTOR has no such carrier). A slot with neither is dropped when purely TRAILING (ilemit's
+ *  [DefaultParameterValue] backfill fills it), and refused loudly when a LATER arg is provided (a "gap" — silently
+ *  omitting it would shift the later arg into the wrong parameter slot: the joinToString/substringAfter miscompile). */
 internal fun BirEmitter.filledArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): List<String> {
 	val callee = (call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction) ?: return emptyList()
 	val carries = (callee as? org.jetbrains.kotlin.ir.declarations.IrSimpleFunction)?.let { carriesKotlinDefault(it) } ?: false
@@ -121,6 +123,7 @@ internal fun BirEmitter.filledArgs(call: org.jetbrains.kotlin.ir.expressions.IrF
 		it.kind == IrParameterKind.DispatchReceiver || it.kind == IrParameterKind.ExtensionReceiver
 	}.map { it.symbol }.toHashSet()
 	val valueSyms = callee.parameters.filter { it.kind == IrParameterKind.Regular }.map { it.symbol }.toHashSet()
+	val contextSyms = callee.parameters.filter { it.kind == IrParameterKind.Context }.map { it.symbol }.toHashSet()
 	// The call's receiver expression (for `this`-referencing same-module defaults): the extension receiver if any, else
 	// the dispatch receiver (a data-class `copy` is a member, so its `this.y` default resolves to the dispatch receiver).
 	// Emitted lazily and reused per omitted default — single-eval is best-effort (a trivial local/this receiver is safe
@@ -184,9 +187,14 @@ internal fun BirEmitter.filledArgs(call: org.jetbrains.kotlin.ir.expressions.IrF
 						// duplicated (documented edge, same as the receiver case).
 						val installed = ArrayList<org.jetbrains.kotlin.ir.declarations.IrValueParameter>()
 						for ((vp, js) in filledByParam) { captureSubst[vp] = js; installed.add(vp) }
-						val js = recvJson?.let { expr(def).replace(defaultArgThisToken, it) } ?: expr(def)
+						val raw = expr(def)
 						installed.forEach { captureSubst.remove(it) }
-						js
+						// Such a default may ALSO read the receiver (`b: Int = a + this.k`); rewrite that too. Only emit the
+						// receiver when the default actually carries the token: emitting it for a receiver-free default would
+						// duplicate the receiver EXPRESSION (an inner-class `new` already emitted it as the enclosing-instance
+						// arg) and leak its lifted lambdas into the file class for a string that is then discarded.
+						if (raw.contains(defaultArgThisToken)) recvJson?.let { raw.replace(defaultArgThisToken, it) } ?: raw
+						else raw
 					}
 					refsAny(def, receiverSyms) -> {
 						// SAME-MODULE default reading the RECEIVER (`= this` / `this.field`). Inline with `this` rewritten to
@@ -196,6 +204,13 @@ internal fun BirEmitter.filledArgs(call: org.jetbrains.kotlin.ir.expressions.IrF
 						val r = recvJson
 						if (r != null) expr(def).replace(defaultArgThisToken, r) else argExpr(def, p)
 					}
+					// A default reading a callee parameter that is NEITHER a fillable value param NOR a rewritable receiver —
+					// a CONTEXT parameter, the only remaining IrParameterKind — has no call-site form: inlining it verbatim
+					// would leave a dangling local read for ilemit. Refuse at the omitting call, not at the declaration (a
+					// callee whose default is never omitted must still compile).
+					refsAny(def, contextSyms) -> unsupported(call, "omitting a default argument that reads a context parameter",
+						"the default value of parameter '${p.name.asString()}' references the callee's context parameter, " +
+						"which has no call-site form; pass the argument explicitly")
 					else -> argExpr(def, p)   // constant / global — inline verbatim (unchanged)
 				}
 			}

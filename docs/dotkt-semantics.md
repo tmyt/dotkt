@@ -791,9 +791,9 @@ default-omission works **everywhere** — trailing, named-middle, reordered, and
 
 A SAME-MODULE default that references an earlier VALUE parameter (`b: Int = a * 10`, a constructor's
 `h: Int = w * 2`) is inlined at the omitting call with each referenced parameter rewritten to THIS call's filled
-argument for it — the `$default` scope, applied at the emitted-JSON level. **One** filling pass does this for every
-call shape (a function call, a `new`, an array ctor, a lifted local/class call), so a class, data class, or secondary
-constructor omits such a default exactly as a function does.
+argument for it — the `$default` scope, applied at the emitted-JSON level. The **same** filling pass serves a function
+call, a `new`, an array ctor and a lifted local/class call, so a class, data class, or secondary constructor omits such
+a default exactly as a function does.
 
 **Known edge (single-eval):** the call-site rewrite duplicates the receiver / earlier-argument EXPRESSION into the
 spliced default, so a side-effecting receiver or argument read by a `= this` / `= a * 10` default is evaluated more
@@ -1248,13 +1248,14 @@ that has lost the distinction.
 5. **`sealed` hierarchies** — **FIXED (gap ⑤, 2026-07-02).** `[KotlinSealed]` → `sealed` meta → `Modality.SEALED`
    restores the modality, cross-module inheritance enforcement, AND exhaustive `when` (the injected subtypes supply the
    closed inheritor set). See §10.1.
-6. **Non-constant default args / `data class copy` self-defaults** — **FIXED (kcc review C3, 2026-07-06; the
-   constructor path folded onto the same pass, #235).** The omitted middle default no longer shifts a later provided
-   arg's slot: kotc fills positionally (a `{"k":"defaultArg"}` placeholder for a @KotlinDefault-carrying cross-module
-   callee, spliced by `bir2cir.DefaultArgSplice`; a same-module default inlined directly). A RECEIVER-referencing
-   default (`missingDelimiterValue = this`, a `copy`'s `y = this.y`) round-trips via the `this`→call-receiver rewrite,
-   and a default that reads an earlier VALUE parameter (`b = a * 10`, a constructor's `h = w * 2`) via the
-   argument rewrite. **Residual:** both rewrites are single-eval only for a trivial receiver/argument (§7).
+6. **Non-constant default args / `data class copy` self-defaults** — **MOSTLY FIXED (kcc review C3, 2026-07-06).** The
+   omitted middle default no longer shifts a later provided arg's slot: kotc fills positionally (a `{"k":"defaultArg"}`
+   placeholder for a @KotlinDefault-carrying cross-module callee, spliced by `bir2cir.DefaultArgSplice`; a same-module
+   default inlined directly). A RECEIVER-referencing default (`missingDelimiterValue = this`, a `copy`'s `y = this.y`)
+   round-trips via the `this`→call-receiver rewrite, and a default reading an earlier VALUE parameter (`b = a * 10`) via
+   the carrier's `{"k":"defaultArgParam","idx":N}`. **Residual:** the `@KotlinDefault` carrier is stamped on FUNCTION
+   parameters only, so a re-consumed **constructor**'s non-constant default has no cross-module carrier (same-module it
+   fills normally, #235); and both rewrites are single-eval only for a trivial receiver/argument (§7).
 
 7. **Generic-fidelity gaps surfaced by the atomicfu CLR port (#133)** — **ALL THREE FIXED.** Three
    DOWNSTREAM-of-facadegen gaps (the facadegen symbol surface was verified correct in each; the
