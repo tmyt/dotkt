@@ -18,6 +18,25 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   the host RID and requires that replay to fail, so the assertion cannot pass vacuously. Previously the RID flow
   was only exercised at the host RID and cross-target selection had been confirmed by hand.
 
+### Fixed
+
+- **bir2cir ([tmyt/dotkt#228], area:bir2cir): an auto-property no longer emits a same-named field, so
+  reflection-driven .NET libraries (JSON.NET) can serialize a Kotlin type again.** An accessor-routed property
+  emitted its backing field under the property's own name, so the CLR type carried `Value` as BOTH a property and a
+  field; Newtonsoft groups candidate members by name and could not resolve the pair — `JsonConvert.SerializeObject`
+  silently produced `{}` and deserializing back threw on the null constructor argument. The backing field is now
+  emitted as `<Value>k__BackingField` (the C# auto-property convention) with
+  `[System.Runtime.CompilerServices.CompilerGenerated]`. The name is unwritable in Kotlin — even backtick-quoted, the
+  frontend rejects it with "name contains illegal characters: <>" — so it can never collide with a user declaration.
+  The rename lives in bir2cir (`toolchain/bir2cir/BackingFieldRename.cs`), which owns the Kotlin↔CLR representation;
+  kotc keeps emitting the pure Kotlin identity. Only accessor-routed properties are affected (including one with a
+  custom accessor over a backing field) — `lateinit var`, `const`, a delegated `p$delegate`, companion/top-level
+  statics and the `@ClrField` opt-out emit no CLR property and keep their plain field name. An `@JvmInline value
+  class`'s erased-value getter is now read off the property that owns the single instance field instead of being
+  spelled from that field's name. Documented in `docs/dotkt-semantics.md` §5h and
+  `docs/design-clr-property-model.md`; regression in
+  `tests/interop/consumer/fixtures/AutoPropertyBackingFieldTests.kt`.
+
 ## 0.9.7 (2026-07-22)
 
 ### Added
