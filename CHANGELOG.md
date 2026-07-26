@@ -48,8 +48,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   generic over the type operands in its BODY, like the lambda lift, and over the BOUNDS of the type parameters it
   re-declares; both lifts now RESTORE the enclosing frame's capture binding instead of dropping it, so a local fun or
   local class declared inside a closure/object/local-class member no longer leaves that frame reading a bare local it
-  does not have (in an `inner class` member, dropping it silently redirected every later member's enclosing-instance
-  read to the inner instance); CONSTRUCTING a local class propagates captures like calling a local fun, so the scan
+  does not have (in an `inner class` member, dropping it left every LATER member reading the enclosing instance off the
+  inner one — an owner/receiver mismatch the runtime rejects); a lifted class's capture fields are renamed away from a
+  collision with the class's OWN fields, which a transitive capture can now produce and which would otherwise send the
+  write to the wrong field silently; CONSTRUCTING a local class propagates captures like calling a local fun, so the scan
   follows `IrConstructorCall` too; a local declaration is recognized by the frontend's own `LOCAL` visibility rather
   than by probing its IR parent, which is exact for classes as well and needs no `init { }` special case; kotc records
   on the lifted method which enclosing

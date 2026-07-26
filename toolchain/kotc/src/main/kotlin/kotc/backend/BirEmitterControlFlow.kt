@@ -337,7 +337,7 @@ internal fun BirEmitter.blockExpr(block: IrBlock): String {
 			// the params its members reference (reified CLR generics), recording them in `liftedTypeArgNames`. The `new`
 			// site must then INSTANTIATE it with the enclosing args — bracket those `gp:` tokens onto the constructed type
 			// (they resolve at THIS site, i.e. the enclosing method/type scope). Mirrors newClosure/newSam's `typeArgs`.
-			val capPairs = captured.map { it to captureFieldName(it) }
+			val capPairs = captureFieldPairs(anon, captured)
 			// Save any PRIOR binding for each captured decl: when this object literal is nested inside a capturing
 			// closure/object that captures the SAME outer var (`element`), the enclosing frame already bound it to
 			// its OWN field. Blindly `remove`ing after typeDef would clobber that, so the capture VALUE below would

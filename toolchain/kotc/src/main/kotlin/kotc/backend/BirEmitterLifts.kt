@@ -11,6 +11,7 @@ import org.jetbrains.kotlin.ir.declarations.IrClass
 import org.jetbrains.kotlin.ir.declarations.IrConstructor
 import org.jetbrains.kotlin.ir.declarations.IrFile
 import org.jetbrains.kotlin.ir.declarations.IrParameterKind
+import org.jetbrains.kotlin.ir.declarations.IrField
 import org.jetbrains.kotlin.ir.declarations.IrProperty
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
 import org.jetbrains.kotlin.ir.declarations.IrVariable
@@ -1007,13 +1008,15 @@ internal fun BirEmitter.capturedVars(fn: IrSimpleFunction, includeThis: Boolean 
  * ([liftLocalFn], [liftLocalClass]), so reaching one is itself a capture of everything it captures, which is why the
  * scans below must recognize it exactly.
  *
- * The frontend states the fact directly: a declaration inside a function body carries `LOCAL` visibility. Testing it
- * is O(1) and touches no lazily-materialized member list — and unlike a test on the IR `parent`, it does not have to
- * special-case `init { }`, where the enclosing CLASS is the parent because `IrAnonymousInitializer` cannot be a
- * declaration parent.
+ * The frontend states the fact directly: a `fun`/class declared in statement position carries `Local` visibility (a
+ * MEMBER of a local class does not — it keeps its declared visibility). Testing it is O(1) and touches no lazily
+ * materialized member list — and unlike a test on the IR `parent`, it does not have to special-case `init { }`, where
+ * the enclosing CLASS is the parent because `IrAnonymousInitializer` cannot be a declaration parent. It also matches a
+ * class nested inside a local class, which is harmless here: such a class is only reachable through its local
+ * enclosing one, whose captures the scan already collects.
  */
 private fun isLocalDeclaration(d: IrDeclarationWithVisibility): Boolean =
-	d.visibility == org.jetbrains.kotlin.descriptors.DescriptorVisibilities.LOCAL
+	d.visibility.delegate == org.jetbrains.kotlin.descriptors.Visibilities.Local
 
 private fun newCycleGuard(): MutableSet<IrElement> =
 	java.util.Collections.newSetFromMap(java.util.IdentityHashMap<IrElement, Boolean>())
@@ -1097,6 +1100,33 @@ internal fun BirEmitter.mutatedIn(node: IrElement): Set<IrValueDeclaration> {
 /** A capture's field name: the enclosing `this` -> `__outer`, an outer local/param -> its own name. */
 internal fun BirEmitter.captureFieldName(d: IrValueDeclaration): String =
 	if (d.name.asString() == "<this>") "__outer" else d.name.asString()
+
+/**
+ * Capture (decl, field-name) pairs for a lifted CLASS, with each name made unique against the class's OWN fields.
+ *
+ * A lifted class holds its captures as extra instance fields beside the fields it declares itself, in one namespace,
+ * and a capture no longer has to be textually mentioned inside the class to be one — reaching a capturing local `fun`
+ * or local class is enough. So `class L { val n = 1; fun go() { bump() } }` can be handed a capture named `n` that
+ * collides with its own `n`: two same-named fields, and every read binds to whichever one wins, losing the capture
+ * silently. Prefix a colliding capture into a namespace Kotlin source cannot spell. `__outer` is left alone — the
+ * suspend lowerings key their enclosing-instance handling on that exact name.
+ */
+internal fun BirEmitter.captureFieldPairs(
+	klass: IrClass, captured: List<IrValueDeclaration>,
+): List<Pair<IrValueDeclaration, String>> {
+	val own = HashSet<String>()
+	klass.declarations.forEach { d ->
+		when (d) {
+			is IrProperty -> d.backingField?.let { own.add(it.name.asString()) }
+			is IrField -> own.add(d.name.asString())
+			else -> {}
+		}
+	}
+	return captured.map { decl ->
+		val name = captureFieldName(decl)
+		decl to (if (name != "__outer" && name in own) "cap\$$name" else name)
+	}
+}
 
 /** A capture's value at the `new` site (in the enclosing context): the outer `this`, or an outer local. */
 internal fun BirEmitter.capValueExpr(d: IrValueDeclaration): String =
@@ -1249,7 +1279,7 @@ internal fun BirEmitter.liftLocalClass(klass: IrClass): String {
 	if (captured.any { it in mutatedIn(klass) && !isRefCell(it) })
 		return invariantBroken(klass, "a local class writes a captured outer variable that was not promoted to a " +
 			"heap ref-cell")
-	val capPairs = captured.map { it to captureFieldName(it) }
+	val capPairs = captureFieldPairs(klass, captured)
 	// Save any prior binding and RESTORE it below rather than dropping it — this local class may be declared inside a
 	// closure/object/local fun that already bound the same outer decl to its own capture field (mirrors the closure
 	// path); dropping it leaves the enclosing frame reading a bare local it no longer has.

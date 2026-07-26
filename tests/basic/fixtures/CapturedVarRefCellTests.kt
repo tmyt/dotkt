@@ -23,7 +23,8 @@
 // instead, because the lift supplies those captures at the call site. `cvrcLocalFun*`/`CvrcLocalFun*` pin both halves:
 // the write itself (plain, in an `init` block, recursive, and typed by an enclosing TYPE PARAMETER so the cell is
 // generic and must be constructed in the lifted method's own frame), and reaching the local fun through a lambda, an
-// object expression or a local class, including when the receiving frame already has a value of that name.
+// object expression or a local class, including when the receiving frame already has a value of that name — for a
+// lifted CLASS that means one of its own fields, which is why a colliding capture field is renamed.
 //
 // Top-level names are family-prefixed (`cvrc`/`Cvrc`) — one project is one namespace, shared with the sibling batteries.
 import NUnit.Framework.TestAttribute
@@ -330,12 +331,36 @@ class CvrcOuter(val v: Int) {
 }
 
 // A captured `var` whose type parameter's BOUND names a SECOND parameter: the lift re-declares the bound with the
-// parameter, so it has to be generic over both or the re-declared constraint is unbound.
-fun <T, U> cvrcLocalFunBoundedTv(a: T, b: T): T where T : Comparable<U> {
+// parameter, so it has to be generic over both or the re-declared constraint is unbound. The bound is deliberately one
+// the two variables cannot satisfy interchangeably (`CvrcStrBox : CvrcBox<String>` is not a `CvrcBox<CvrcStrBox>`), so
+// the assertion pins WHICH variable the lift's re-declared constraint resolves to, not merely that it resolves.
+interface CvrcBox<X> { fun get(): X }
+class CvrcStrBox(val s: String) : CvrcBox<String> { override fun get(): String = s }
+
+fun <T, U> cvrcLocalFunBoundedTv(a: T, b: T): T where T : CvrcBox<U> {
     var cur = a
     fun set() { cur = b }
     set()
     return cur
+}
+
+// A local class declared INSIDE a lambda: the lift must restore the lambda's own capture binding for `n`.
+fun cvrcLocalClassInsideClosure(): Int {
+    var n = 0
+    val g = { class L { fun go() { n++ } }; L().go() }
+    g(); g()
+    return n
+}
+
+// A local class that both DECLARES a field `n` and receives a capture named `n` (transitively, by calling `bump`).
+// The two share one namespace in the lifted class, so the capture is renamed rather than shadowed — otherwise the
+// write goes to the class's own field and the caller's `n` never moves.
+fun cvrcLocalClassFieldCollision(): Int {
+    var n = 0
+    fun bump() { n++ }
+    class L { val n = 1; fun go() { bump() } }
+    L().go(); L().go()
+    return n
 }
 
 // The celled `var` is declared INSIDE the local fun and captured by a lambda there, so its generic cell has no use
@@ -403,7 +428,9 @@ class CapturedVarRefCellTests {
         val outer = CvrcOuter(7)
         assertEquals(7, outer.Inner().viaLocalFun())             // 7
         assertEquals(7, outer.Inner().direct())                  // 7 — the outer-`this` binding survived
-        assertEquals(2, cvrcLocalFunBoundedTv<Int, Int>(1, 2))   // `b`
+        assertEquals(2, cvrcLocalClassInsideClosure())           // 2
+        assertEquals(2, cvrcLocalClassFieldCollision())          // 2, not the class's own `n`
+        assertEquals("y", cvrcLocalFunBoundedTv<CvrcStrBox, String>(CvrcStrBox("x"), CvrcStrBox("y")).get())
     }
 
     @TestAttribute
