@@ -9,7 +9,7 @@ using DotKt.Bir;
 //
 // A generic class `Box<T>` with a member typed `…Ref<T?>…` (a constructed generic whose arg is the
 // nullable type-VARIABLE `T?`) has that `Nullable(Tv)` erased to `object` on the DECLARATION side by
-// NullableGenericReturnErasure.EraseNullableTv — `object` is the only uniform CLR storage that carries a
+// NullableGenericErasure.EraseNullableTv — `object` is the only uniform CLR storage that carries a
 // real null for BOTH a reference and a value instantiation of the unconstrained T. So Box's emitted
 // field/getter/`elem` all return `Ref<object>` (…[]). That erasure is correct (#142) and mandatory.
 //
@@ -266,7 +266,7 @@ static class NullableTvErasureCallRealign
         if (declRet == null) return stampedRet;
 
         var methodArgs = (obj["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray();
-        var derived = Subst(NullableGenericReturnErasure.EraseNullableTv(declRet), owner.Args, methodArgs);
+        var derived = Subst(NullableGenericErasure.EraseNullableTv(declRet), owner.Args, methodArgs);
         if (derived == null) return stampedRet;
 
         // Rewrite the return ONLY when `derived` is the object-erasure of the stamped return — the exact erasure
@@ -290,7 +290,7 @@ static class NullableTvErasureCallRealign
         var key = method + "|" + ((obj["args"] as JsonArray)?.Count ?? 0);
         if (!idx.TopLevel.TryGetValue(key, out var declRet) || declRet == null) return stampedRet;
         var methodArgs = (obj["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray();
-        var derived = Subst(NullableGenericReturnErasure.EraseNullableTv(declRet), null, methodArgs);
+        var derived = Subst(NullableGenericErasure.EraseNullableTv(declRet), null, methodArgs);
         if (stampedRet != null && derived != null && !derived.Equals(stampedRet) && IsObjectErasureOf(derived, stampedRet))
         {
             if (obj["ret"] != null) obj["ret"] = TypeJson.Write(derived);

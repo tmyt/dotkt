@@ -20,12 +20,13 @@ using DotKt.Bir;
 // with base-chaining ctors — so ilemit defines them like any type (no EnsureKotlinAttrs). NullableAttribute carries the
 // csc DUAL ctor: (byte) scalar + (byte[]) nested; the two overloads are disambiguated by BuildCab's runtime-type match.
 //
-// ATTR ORDER (per emitted member) reproduces ilemit's old stamp order verbatim, so a metadata dump stays equivalent:
+// ATTR ORDER (per emitted member) keeps the established order and inserts each newer carrier beside its slot peers:
 //   type:   [NullableContext, …user, KotlinFileClass?/KotlinFunInterface?, KotlinSealed?, KotlinValue?]
 //   method: [ …user, KotlinFunction?, KotlinInline? ]      ret: [ Nullable?, KotlinSuspendFunctionType?, KotlinExtensionFunctionType?, KotlinNothing? ]
-//   param:  [ Nullable?, KotlinSuspendFunctionType?, …user, KotlinExtensionFunctionType? ]
-//   field:  [ Nullable?, KotlinReadOnly?, KotlinSuspendFunctionType?, …user, KotlinExtensionFunctionType? ]   (#47 Nullable)
-//   prop:   [ Nullable?, KotlinSuspendFunctionType?, …user, KotlinExtensionFunctionType? ]                    (#47 Nullable)
+//   param:  [ Nullable?, KotlinSuspendFunctionType?, KotlinNullableGeneric?, …user, KotlinExtensionFunctionType? ]
+//   field:  [ Nullable?, KotlinReadOnly?, KotlinSuspendFunctionType?, KotlinNullableGeneric?, …user,
+//             KotlinExtensionFunctionType? ]
+//   prop:   [ Nullable?, KotlinSuspendFunctionType?, KotlinNullableGeneric?, …user, KotlinExtensionFunctionType? ]
 static class RoundtripMetadata
 {
     const string Ns = "DotKt.Runtime.CompilerServices.";
@@ -135,11 +136,15 @@ static class RoundtripMetadata
         // facadegen reads the marker and moves the delegate's first arg back into the fn's receiver.
         if (HasRecvFn(mo["ret"])) ret.Add(Marker(AKExtFn));
         if ((mo["retNothing"] as JsonValue)?.GetValue<bool>() == true) ret.Add(Marker(AKNothing));
-        // [KotlinNullableGeneric(version, bytes)] (#18) — a `fun <T> …(): Holder<T?>` whose nested `Nullable(Tv)` arg
-        // NullableGenericReturnErasure object-erased to `Holder<object>`. The carrier holds the PRE-erasure return
+        // [KotlinNullableGeneric(version, bytes)] (#18/#147) — a `fun <T> …(): Holder<T?>` whose nested `Nullable(Tv)`
+        // arg NullableGenericErasure object-erased to `Holder<object>`. The carrier holds the PRE-erasure return
         // TypeNode (recorded as the opaque `nullableGenericRet` string) so facadegen restores `Holder<T?>` instead of
         // degrading the re-imported factory/member return to `Any?`. Rides the SAME retAttrs channel as [Nullable]/[Nothing].
-        if ((mo["nullableGenericRet"] as JsonValue)?.GetValue<string>() is string ngr) ret.Add(NullableGenAttr(ngr));
+        if ((mo["nullableGenericRet"] as JsonValue)?.GetValue<string>() is string ngr)
+        {
+            ret.Add(NullableGenAttr(ngr));
+            mo.Remove("nullableGenericRet");
+        }
         // [KotlinCollectionIdentity(version, bytes)] (#29) — a return that nests a read-only `List/Set/Collection`
         // whose Root-V collapse to `IList`/`ICollection` erased the read-only-vs-mutable identity. Carries the
         // PRE-collapse Kotlin TypeNode (recorded as the opaque `collIdentityRet` string) so facadegen restores
@@ -155,7 +160,13 @@ static class RoundtripMetadata
         if (ps is not JsonArray a) return;
         foreach (var p in a) if (p is JsonObject po)
         {
-            // Prepend [Nullable, KotlinSuspendFunctionType] BEFORE any user param attr (ilemit's old order).
+            // Prepend declaration-slot carriers before user attrs. Reverse prepend order yields
+            // [Nullable, KotlinType?, KotlinSuspendFunctionType?, KotlinNullableGeneric?, ...user].
+            if ((po["nullableGeneric"] as JsonValue)?.GetValue<string>() is string ng)
+            {
+                Prepend(po, NullableGenAttr(ng));
+                po.Remove("nullableGeneric");
+            }
             if (po["suspendFnType"] is JsonNode sf) Prepend(po, SuspendFnAttr(sf));
             if ((po["kotlinType"] as JsonValue)?.GetValue<string>() is string kt)
             {
@@ -176,10 +187,13 @@ static class RoundtripMetadata
         if (fs is not JsonArray a) return;
         foreach (var f in a) if (f is JsonObject fo)
         {
-            // Prepend [Nullable, KotlinReadOnly, KotlinSuspendFunctionType] (Nullable outermost). [KotlinReadOnly] is
-            // INSTANCE-field only — a top-level file-class static field never carried it (byte-equivalence with the old
-            // file-class field path). #47: the `nullableFlags` NRT byte (DeclNullableFlags) rides here regardless of
-            // topLevel, so a nullable field surfaces as `T?` on re-import (facadegen's FieldTypeN reads it via ApplyNrt).
+            // Prepend [Nullable, KotlinReadOnly, KotlinType?, KotlinSuspendFunctionType?, KotlinNullableGeneric?].
+            // [KotlinReadOnly] is INSTANCE-field only — a top-level file-class static field never carries it.
+            if ((fo["nullableGeneric"] as JsonValue)?.GetValue<string>() is string ng)
+            {
+                Prepend(fo, NullableGenAttr(ng));
+                fo.Remove("nullableGeneric");
+            }
             if (fo["suspendFnType"] is JsonNode sf) Prepend(fo, SuspendFnAttr(sf));
             if ((fo["kotlinType"] as JsonValue)?.GetValue<string>() is string kt)
             {
@@ -198,6 +212,11 @@ static class RoundtripMetadata
         if (props is not JsonArray a) return;
         foreach (var p in a) if (p is JsonObject po)
         {
+            if ((po["nullableGeneric"] as JsonValue)?.GetValue<string>() is string ng)
+            {
+                Prepend(po, NullableGenAttr(ng));
+                po.Remove("nullableGeneric");
+            }
             if ((po["kotlinType"] as JsonValue)?.GetValue<string>() is string kt)
             {
                 Prepend(po, KotlinTypeAttr(kt));
@@ -257,6 +276,8 @@ static class RoundtripMetadata
         {
             po.Remove("kotlinType");
             po.Remove("retKotlinType");
+            po.Remove("nullableGeneric");
+            po.Remove("nullableGenericRet");
             StripAttrs(po, "attrs");
             StripAttrs(po, "retAttrs");
             if (hasParams) StripDecls(po["params"]);
@@ -309,10 +330,9 @@ static class RoundtripMetadata
         return Marker(AKSuspendFn, StringArg(BirCarrier.JsonV1), BytesArg(Convert.ToBase64String(content)));
     }
 
-    // [KotlinNullableGeneric(version, bytes)] (#18) — the pre-erasure return TypeNode, carrier-encoded (same envelope as
-    // KotlinSuspendFunctionType). `nullableGenericRet` was stashed as a canonical TypeNode JSON STRING (opaque to the
-    // intervening type-rewriting passes); parse it back to a JsonNode so the carrier payload is the structured node
-    // facadegen's TypeNode.Parse reads.
+    // [KotlinNullableGeneric(version, bytes)] (#18/#147) — a pre-erasure declaration-slot TypeNode, carrier-encoded
+    // with the same envelope as KotlinSuspendFunctionType. The slot hand-off was stashed as canonical TypeNode JSON;
+    // parse it back so the carrier payload is the structured node facadegen reads.
     static JsonObject NullableGenAttr(string typeJson)
     {
         byte[] content = BirCarrier.EncodeBody(BirCarrier.JsonV1, JsonNode.Parse(typeJson));
@@ -397,7 +417,7 @@ static class RoundtripMetadata
             AttrClass(AKSuspendFn, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKExtFn, Ctor()),     // #145 — bare marker: a `P.() -> R` receiver function-type position
             AttrClass(AKNothing, Ctor()),   // #133 case3 — bare marker on a Kotlin `Nothing` return
-            AttrClass(AKNullableGen, Ctor(Param("System.String"), Param(ByteArrayType()))),  // #18 — carrier of a pre-erasure `Holder<T?>` return
+            AttrClass(AKNullableGen, Ctor(Param("System.String"), Param(ByteArrayType()))),  // #18/#147 — pre-erasure `Holder<T?>` declaration slot
             AttrClass(AKCollIdentity, Ctor(Param("System.String"), Param(ByteArrayType()))), // #29 — carrier of a pre-collapse `Box<List<T>>` collection identity
             AttrClass(AKType, Ctor(Param("System.String"), Param(ByteArrayType()))),         // compiler-synthesized CLR type -> original Kotlin TypeNode
             // NullableAttribute — csc's DUAL ctor: (byte) FIRST, (byte[]) SECOND (declaration order preserved so the

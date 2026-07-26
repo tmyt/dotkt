@@ -108,7 +108,7 @@ static class InheritedClassInterfaceBridge
 
                 var inherited = FindNonVirtualBaseMethod(cls, defs, name, methodArity, slotParams, slotRet);
                 if (inherited == null) continue;
-                classMethods.Add(BuildBridge(iface, ifaceSpec, im, slotParams, slotRet, inherited.Value));
+                classMethods.Add(BuildBridge(iface, ifaceSpec, ifaceArgs, im, slotParams, slotRet, inherited.Value));
             }
         }
     }
@@ -192,8 +192,8 @@ static class InheritedClassInterfaceBridge
         return null;
     }
 
-    static JsonObject BuildBridge(Def iface, TypeNode.Fqn ifaceSpec, JsonObject im, TypeNode[] slotParams,
-        TypeNode slotRet, MethodMatch target)
+    static JsonObject BuildBridge(Def iface, TypeNode.Fqn ifaceSpec, TypeNode[] ifaceArgs, JsonObject im,
+        TypeNode[] slotParams, TypeNode slotRet, MethodMatch target)
     {
         var name = Str(im["name"]);
         var ps = im["params"] as JsonArray;
@@ -202,7 +202,12 @@ static class InheritedClassInterfaceBridge
         for (var i = 0; i < slotParams.Length; i++)
         {
             var pn = ps[i] is JsonObject po && Str(po["name"]) is string n ? n : "p" + i;
-            bridgeParams.Add(new JsonObject { ["name"] = pn, ["type"] = TypeJson.Write(slotParams[i]) });
+            var bridgeParam = new JsonObject { ["name"] = pn, ["type"] = TypeJson.Write(slotParams[i]) };
+            // NullableGenericErasure recorded the interface's pre-erasure `Slot<T?>` before this late bridge existed.
+            // Carry that semantic slot onto the synthesized public bridge, substituting the interface owner's type args
+            // into the derived class's scope. RoundtripMetadata can then stamp the ordinary parameter attribute later.
+            CopyNullableGenericFact(ps[i] as JsonObject, bridgeParam, "nullableGeneric", ifaceArgs);
+            bridgeParams.Add(bridgeParam);
             args.Add(new JsonObject { ["k"] = "local", ["name"] = pn });
         }
 
@@ -254,8 +259,23 @@ static class InheritedClassInterfaceBridge
                 }
             },
         };
+        CopyNullableGenericFact(im, bridge, "nullableGenericRet", ifaceArgs);
         if (im["typeParams"] is JsonArray tps) bridge["typeParams"] = tps.DeepClone();
         return bridge;
+    }
+
+    static void CopyNullableGenericFact(JsonObject source, JsonObject target, string key, TypeNode[] ownerArgs)
+    {
+        if (Str(source?[key]) is not string encoded) return;
+        try
+        {
+            target[key] = TypeNode.ToJson(SubstOwnerTvs(TypeNode.Parse(encoded), ownerArgs));
+        }
+        catch
+        {
+            // A malformed transient fact is not an excuse to corrupt or suppress the otherwise-valid CLR bridge.
+            // RoundtripMetadata follows the same fail-soft contract for absent carrier facts.
+        }
     }
 
     static bool DeclaresExact(JsonArray methods, string name, int arity, TypeNode[] ps, TypeNode ret, TypeNode[] ownerArgs) =>

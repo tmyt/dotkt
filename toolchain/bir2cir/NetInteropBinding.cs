@@ -372,7 +372,7 @@ static class NetInteropBinding
     // W1-S1 (#46): the clrGeneric* `memberSig` = the callee's declared param types, matched STRUCTURALLY by ilemit
     // against the reflected .NET method DEFINITION. Normalize each entry to how reflection presents the OPEN param:
     // a nullability ANNOTATION over a type-var (`T?`, `T!`) reflects as the bare open param `T` (there is no `T?` Type),
-    // so unwrap `nullable`/`oblivious` around a `tv` at any depth. Without this the later NullableGenericReturnErasure
+    // so unwrap `nullable`/`oblivious` around a `tv` at any depth. Without this the later NullableGenericErasure
     // pass object-erases a `nullable(tv)` entry (the boxed value rep) to `object`, which then fails to match the open
     // `T` param. A `nullable(value)` (`Int?` = `Nullable<Int32>`) is a real reflected type and is KEPT.
     static JsonNode NormalizeMemberSig(JsonArray shapeTypes)

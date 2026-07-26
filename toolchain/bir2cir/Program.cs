@@ -188,7 +188,7 @@ sealed class Pipeline
         var calleeTypeParams = MapVarianceRealign.CollectCalleeTypeParams(birFiles.Select(f => f.Root));
 
         // Snapshot every LOCAL generic type's declared member returns BEFORE the per-file DEF-side EraseNullableTv
-        // (NullableGenericReturnErasure runs inside the transform loop, mutating declarations in place). Feeds
+        // (NullableGenericErasure runs inside the transform loop, mutating declarations in place). Feeds
         // NullableTvErasureCallRealign so a `Box<Int>.get_a()` call across the generic boundary re-derives its
         // return from the (erased) declaration instead of kotc's over-substituted `Ref<Nullable<Int>>` (#4).
         var nullableTvDeclRets = NullableTvErasureCallRealign.CollectDeclaredMemberRets(birFiles.Select(f => f.Root));
@@ -391,7 +391,7 @@ sealed class Pipeline
             // VALUE-TYPE NULLABLE-COLLECTION receiver boxing (bundle-6 BUG-1 Part A): a value-type-element collection
             // (`List<Int?>`) passed to a nullable-generic collection extension (`Iterable<T?>.filterNotNull()`) is NOT
             // covariantly `IEnumerable<object>` on the CLR — wrap the receiver in `Enumerable.Cast<object>` so it boxes
-            // into a real object-enumerable. Runs FIRST, before NullableGenericReturnErasure sweeps the `nullable:gp:`
+            // into a real object-enumerable. Runs FIRST, before NullableGenericErasure sweeps the `nullable:gp:`
             // receiver token to `object` (this pass keys on that token). Self-gates to concrete value instantiations
             // (an open `gp:T` arg is not a value type) so it is a no-op in the rt-stdlib self-build.
             if (!_options.RefBuild) ValueTypeNullableCollectionArg.Apply(bir.Root);
@@ -411,7 +411,7 @@ sealed class Pipeline
             // rebind to an `objMethod` (virtual dispatch to the runtime slot). Fires ONLY where FindMethod would throw, so
             // a type declaring its own override is untouched. Runs AFTER ObjectSlotRename (call `method` is BCL here).
             if (!_options.RefBuild) AnySlotRebind.Apply(bir.Root, localRefTypes);
-            // NULLABLE-GENERIC-RETURN erasure (ALL builds, so ref.dll + rt.dll signatures agree): a Kotlin method
+            // NULLABLE-GENERIC erasure (ALL builds, so ref.dll + rt.dll signatures agree): a Kotlin declaration
             // declaring a nullable generic-parameter return (`fun <T> …(): T?`) has its nullability erased by kotc to
             // a bare `gp:T` return (Nullable<T> is inexpressible for an unconstrained T). That is CORRECT for a
             // reference T (`ldnull` is a real null) but for a VALUE T `ldnull; ret !!T` collapses to default(T)=0 —
@@ -419,7 +419,7 @@ sealed class Pipeline
             // The CLR-faithful representation of a generic `T?` is `System.Object` (the boxed/erased nullable form).
             // Rewrite the return to `object`; ilemit boxes value returns and the CALL boundary converts object ->
             // the caller's Nullable<V> / reference type. Runs BEFORE the rest so type-lowering/substitution see it.
-            NullableGenericReturnErasure.Apply(bir.Root);
+            NullableGenericErasure.Apply(bir.Root);
             // GENERIC-BOUNDARY nullable-Tv READ realignment (#4; #113/#117/#120/#142 read side). The DEF-side erasure
             // above turns a member's `…Ref<T?>…` into `…Ref<object>…`, but a CALL site kotc emitted with T already
             // substituted carries the concrete `…Ref<Nullable(kotlin.Int)>…` (no bare `Tv` for the sweep to catch),
