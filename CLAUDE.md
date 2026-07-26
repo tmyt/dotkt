@@ -107,12 +107,17 @@ bug; the only legitimate throw is an assert that cannot fire on valid IR.
 - Finish one thing before starting the next. A few concurrent streams that each get verified beat many that
   each get a glance — and gates that run at the same time can produce false failures, so a result you did
   not watch is not a result.
-- Specialist subagents do the substantive work; use Codex for design and investigation, and tell subagents to
-  use it too: `codex exec -s read-only --skip-git-repo-check "<question>" </dev/null`. The `</dev/null` is
-  required or it hangs. If it goes silent it may be stuck on an interactive update prompt — ask me.
+- Substantive work goes to a subagent in its own worktree. Brief it with the issue, the worktree and the
+  acceptance test — a plain restatement of the issue's symptom has to become true — and say nothing about
+  which files it may touch. The layer table tells you where code *belongs*; it is not a permission boundary,
+  and a root cause does not pick its layer to suit whoever is fixing it.
+- Use Codex for design and investigation, and tell subagents to use it too:
+  `codex exec -s read-only --skip-git-repo-check "<question>" </dev/null`. The `</dev/null` is required or it
+  hangs. If it goes silent it may be stuck on an interactive update prompt — ask me.
 - Review before reporting done, by a fresh agent that has none of the implementation context: give it the
   task, where to read the diff, and the applicable invariants — not your reasoning, which turns an
-  independent read into a confirmation pass.
+  independent read into a confirmation pass. Then have Codex review the diff before the PR goes up, and hand
+  it the honest remainder rather than only the summary.
 - If the same fault keeps reappearing somewhere new instead of closing, stop fixing symptoms per layer and do
   one read-only pass that enumerates every manifestation and specs a single fix.
 
