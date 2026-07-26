@@ -15,11 +15,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `ThrowMoreThanOneMatchException` / "Could not find the template package containing template 'DotKt.Templates.Cli'"
   on a gate that had nothing wrong with it. Every `dotnet new` invocation now goes through a `dotnet_new` helper that
   passes `--debug:custom-hive` pointing at the case's own hive inside the run's scratch workspace, which is wiped at
-  the start of each run: the machine-global store is neither read nor written, and the uninstall trap that existed
-  only to keep it clean is gone with it. The hive is per case rather than per run because installing a package a hive
-  already carries is either a hard error or, with `--force`, a second registration for the same id that makes every
-  later scaffold ambiguous with the very same error — which the old cross-case uninstall had been hiding. `--force`
-  is dropped with it, so a double install would now fail loudly instead of corrupting the hive.
+  the start of each run: nothing is installed into or uninstalled from the machine-global store any more, and the
+  uninstall trap that existed only to keep it clean is gone with it. The hive is per case rather than per run because
+  installing a package a hive already carries is either a hard error or, with `--force`, a second registration for the
+  same id that makes every later scaffold ambiguous with the very same error — which the old cross-case uninstall had
+  been hiding. `--force` goes with it, since a fresh hive never has anything to force over. Each case also asserts
+  that the packed nupkg really landed in its own hive, so an SDK that silently stopped honouring the switch cannot
+  restore the race behind a green gate.
 
 ## 0.9.7 (2026-07-22)
 

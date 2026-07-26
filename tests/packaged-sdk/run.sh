@@ -19,15 +19,14 @@
 #   template — install DotKt.Templates, scaffold the CLI template, then build + RUN it.
 #   mpp-template — scaffold the MPP template and verify both SDK pins before build + RUN.
 #
-# Isolation (defeats the cache-masking landmine): everything the SIX scenarios resolve restores through a
-# per-run nuget.config with <clear/> + the local feed ONLY and an isolated <globalPackagesFolder> under the
-# scratch dir, so a stale published 0.9.5 in the user's ~/.nuget cache can never mask the freshly-packed one
-# and the scenarios' packages never land in that cache; `dotnet new` runs against a scratch template hive,
-# never the machine-global store. What the run needs in order to GET to the scenarios is deliberately outside
-# that boundary and is not under test: the refcheck tool below restores from the user's configured NuGet
-# sources into ~/.nuget, and pack-nuget.sh drives Gradle (~/.gradle, Maven Central) plus the toolchain's own
-# NuGet restore. Green = every fail name is in the XFAIL_PKG baseline below (exit 0); any name outside it
-# prints NEW-FAIL, exit 1.
+# Isolation (defeats the cache-masking landmine): every project the cases drive restores through a per-run
+# nuget.config with <clear/> + the local feed ONLY and an isolated <globalPackagesFolder> under the scratch
+# dir, so a stale published 0.9.5 in the user's ~/.nuget cache can never mask the freshly-packed one and the
+# packages the cases resolve never land in that cache; `dotnet new` installs into a scratch template hive
+# instead of the machine-global store. Getting the toolchain BUILT is deliberately outside that boundary:
+# the refcheck tool below restores from the user's configured NuGet sources into ~/.nuget, and pack-nuget.sh
+# drives Gradle (~/.gradle, Maven Central) plus the toolchain's own NuGet restore. Green = every fail name is
+# in the XFAIL_PKG baseline below (exit 0); any name outside it prints NEW-FAIL, exit 1.
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SCRIPT_NAME=packaged-sdk-tests
 source "$ROOT/scripts/lib.sh"
@@ -91,23 +90,23 @@ cat > "$NUGET_CONFIG" <<EOF
 </configuration>
 EOF
 
-# A hive is the template engine's whole state: the installed packages and their expanded templates. Each
-# template case below owns one, inside the scratch workspace, and never the machine-global store under $HOME —
-# which this gate therefore neither reads nor writes. Two reasons the hive is per CASE and not per run:
-#   * two worktrees running this gate at once cannot collide (issue #250 — the collision surfaced as
-#     ThrowMoreThanOneMatchException / "Could not find the template package containing template ...");
-#   * installing DotKt.Templates into a hive that already carries it must not happen. Without --force it is a
-#     hard error; WITH --force the engine appends a SECOND registration for the same id and every later
-#     scaffold in that hive hits the same ambiguity error. A fresh hive per case needs neither.
-# $WS is wiped at the top of every run, so the hives are disposable and nothing needs uninstalling afterwards.
-# The switch goes AHEAD of the caller's arguments: on the scaffold form a trailing option would be offered to
-# the template's own parameter parser, so an SDK that stopped recognizing it could absorb it instead of failing.
+# A hive is the template engine's whole state: the installed packages and their expanded templates. Naming one
+# inside the scratch workspace keeps the gate out of the machine-global store under $HOME, so two worktrees
+# running this gate at once cannot collide over one shared hive — issue #250, which surfaced as
+# ThrowMoreThanOneMatchException / "Could not find the template package containing template ...".
+# The hive is per CASE rather than per run because installing DotKt.Templates into a hive that already carries
+# it must not happen: without --force it is a hard error, and WITH --force the engine appends a SECOND
+# registration for the same id so every later scaffold in that hive hits the same ambiguity error. A fresh hive
+# per case needs neither. $WS is wiped at the top of every run, so the hives are disposable and nothing needs
+# uninstalling afterwards. The switch goes AHEAD of the caller's arguments: on the scaffold form a trailing
+# option would be offered to the template's own parameter parser, so an SDK that stopped recognizing it could
+# absorb it instead of failing.
 dotnet_new() { # <hive> <dotnet-new-args>...
 	local hive="$1"; shift
 	dotnet new --debug:custom-hive "$hive" "$@"
 }
 # An SDK that no longer knows the switch exits non-zero on the unrecognized option, so the case fails loudly.
-# This tripwire covers the other direction — an SDK that ACCEPTS it and installs under $HOME anyway would leave
+# This tripwire covers the other direction — an SDK that ACCEPTS it and installs under $HOME instead would leave
 # the package out of the scratch hive and otherwise pass, quietly restoring the cross-worktree race.
 hive_isolated() { # <case-name> <hive> — true iff the install landed the package IN this case's hive
 	local name="$1" hive="$2"
