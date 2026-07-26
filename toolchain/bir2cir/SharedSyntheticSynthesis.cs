@@ -67,6 +67,12 @@ static class SharedSyntheticSynthesis
             file.Remove("refTypes");
         }
 
+        // `_syntheticTypeArgs` is a TRANSIENT lifted-frame correspondence, consumed above and never part of CIR. The
+        // consumer above only runs for a file that HAS a ref-cell registry, so drop any remaining one here: both
+        // producers (kotc's lifted local `fun`, ClosureSynthesis's lifted closure class) emit it whenever the lifted
+        // synthetic is generic, ref cells or not.
+        DropSyntheticTypeArgs(file);
+
         // 2) Reference-triggered fixed-shape synthetics. Scan the file (methods + fields + types, including the closure
         // classes ClosureSynthesis just added) for each identity, then inject the matching def once.
         var referenced = new HashSet<string>();
@@ -76,6 +82,20 @@ static class SharedSyntheticSynthesis
 
         if (referenced.Contains(CharSeq) && present.Add(CharSeq))
             types.Add(JsonNode.Parse(CharSeqDef));
+    }
+
+    static void DropSyntheticTypeArgs(JsonNode node)
+    {
+        switch (node)
+        {
+            case JsonObject o:
+                o.Remove("_syntheticTypeArgs");
+                foreach (var kv in o) if (kv.Value != null) DropSyntheticTypeArgs(kv.Value);
+                break;
+            case JsonArray a:
+                foreach (var item in a) if (item != null) DropSyntheticTypeArgs(item);
+                break;
+        }
     }
 
     // Recursively record any string value equal to one of the tracked synthetic names (a type node's `name`, an
@@ -196,17 +216,28 @@ static class SharedSyntheticSynthesis
         if (file["fields"] is JsonNode fields) BindRefsIn(fields, specs, noParams, noParams);
         if (file["methods"] is JsonArray methods)
             foreach (var method in methods.OfType<JsonObject>())
-                BindRefsIn(method, specs, noParams, ParamsOf(method));
+                BindMethod(method, specs, noParams);
 
         if (file["types"] is JsonArray types)
             foreach (var type in types.OfType<JsonObject>())
                 BindType(type, specs);
     }
 
+    static void BindMethod(JsonObject method, IReadOnlyDictionary<string, RefCellSpec> specs, JsonArray typeParams)
+    {
+        // A lifted local `fun` is a static method that re-declares its enclosing declaration's free type params as its
+        // OWN METHOD params (kotc carries the correspondence in `_syntheticTypeArgs`), so a bare cell identity used
+        // here must construct in the METHOD parameter space — the exact twin of a lifted closure CLASS constructing in
+        // its type parameter space. Without this the cell's enclosing-frame `tv` would be looked up in a frame that
+        // does not declare it (a file-class method has no enclosing type params at all).
+        PrepareSyntheticRefUses(method, specs, "method");
+        BindRefsIn(method, specs, typeParams, ParamsOf(method));
+    }
+
     static void BindType(JsonObject type, IReadOnlyDictionary<string, RefCellSpec> specs)
     {
         var typeParams = ParamsOf(type);
-        PrepareSyntheticRefUses(type, specs);
+        PrepareSyntheticRefUses(type, specs, "type");
 
         // Scan the type header/fields without descending through member declarations under the wrong method context.
         foreach (var kv in type)
@@ -220,7 +251,7 @@ static class SharedSyntheticSynthesis
                 BindRefsIn(ctor, specs, typeParams, ParamsOf(ctor));
         if (type["methods"] is JsonArray methods)
             foreach (var method in methods.OfType<JsonObject>())
-                BindRefsIn(method, specs, typeParams, ParamsOf(method));
+                BindMethod(method, specs, typeParams);
         if (type["types"] is JsonArray nested)
             foreach (var child in nested.OfType<JsonObject>())
                 BindType(child, specs);
@@ -251,7 +282,12 @@ static class SharedSyntheticSynthesis
         }
     }
 
-    static void PrepareSyntheticRefUses(JsonObject type, IReadOnlyDictionary<string, RefCellSpec> specs)
+    // `_syntheticTypeArgs` records, positionally, which ORIGINAL enclosing type variable each of a lifted synthetic's
+    // own type params re-declares. Two producers, one meaning: kotc emits it on a lifted local `fun` (whose new frame
+    // is its METHOD params), bir2cir's ClosureSynthesis derives it for a lifted closure CLASS from
+    // `newClosure.typeArgs` (whose new frame is the class's TYPE params). [newScope] is that new frame's scope.
+    static void PrepareSyntheticRefUses(
+        JsonObject type, IReadOnlyDictionary<string, RefCellSpec> specs, string newScope)
     {
         if (type["_syntheticTypeArgs"] is not JsonArray origins) return;
         var positions = new Dictionary<TvKey, int>();
@@ -273,9 +309,9 @@ static class SharedSyntheticSynthesis
                         {
                             if (!positions.TryGetValue(key, out var position))
                                 throw new InvalidOperationException(
-                                    $"generic ref-cell `{name}` in synthetic class `{Str(type["name"])}` "
+                                    $"generic ref-cell `{name}` in lifted synthetic `{Str(type["name"])}` "
                                     + $"cannot map captured {key.Scope} type variable #{key.Index}");
-                            args.Add(new JsonObject { ["t"] = "tv", ["scope"] = "type", ["i"] = position });
+                            args.Add(new JsonObject { ["t"] = "tv", ["scope"] = newScope, ["i"] = position });
                         }
                         o["args"] = args;
                     }

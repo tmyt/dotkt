@@ -380,7 +380,7 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	// generic stdlib interface identity (like `by lazy`'s `kotlin.Lazy<T>`), so delegate field/local types,
 	// the `Delegates.observable(…)` value, and the getValue/setValue dispatch owner share one type (ilverify-clean).
 
-	// heap ref-cell: local `var`s captured-and-mutated by a lambda / local function / object expression / local class
+	// heap ref-cell: local `var`s captured-and-mutated by a lambda / local `fun` / object expression / local class
 	// are promoted to a shared `dotkt$Ref<T>{ var v }` so the mutation is visible across the capture boundary; all
 	// reads/writes of such a var go through `.v`. No inline test: an inline-argument lambda is celled like any other,
 	// so the decision does not depend on which call the lambda is passed to.
@@ -418,21 +418,19 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	internal fun captureFieldType(d: IrValueDeclaration): TypeNode = if (isRefCell(d)) TypeNode.Fqn(refTypeName(d)) else birType(d.type)
 
 	/** Local `var`s captured AND mutated across a capture boundary within [node] (-> need a heap ref-cell). The
-	 *  boundaries are a lambda and a class (an object expression or a local class); a top-level/member class enters the
-	 *  class arm too but captures nothing, so it contributes nothing.
-	 *  A LOCAL `fun` is NOT a boundary here, though it lifts to a static method taking its captures as BY-VALUE params
-	 *  and so loses a write to a var no other boundary cells: see tests/known-fail/localfun-capture-write/. Celling it
-	 *  needs two fixes this analysis alone cannot supply — bir2cir must resolve a cell whose element is an enclosing
-	 *  TYPE VARIABLE inside a file-class static method, and the lift must propagate captures transitively through a
-	 *  call to the local fun. A local fun DOES ride a cell another boundary created (captureFieldType keys on the
-	 *  variable, not on the boundary kind). */
+	 *  boundaries are every class (an object expression or a local class) and every function — a lambda, whose
+	 *  `IrSimpleFunction` is visited as the `IrFunctionExpression`'s child, or a LOCAL `fun`, which lifts to a static
+	 *  method taking its captures as BY-VALUE params and would otherwise write its own parameter and lose the update.
+	 *  A class or function that captures nothing (every top-level/member one) contributes nothing, so those arms are
+	 *  inert for it — but note a local class's MEMBER is a function whose capture set is non-empty; it is redundant
+	 *  rather than inert, being a subset of what the enclosing class arm already contributes. */
 	private fun computeRefCells(node: IrElement): Set<IrValueDeclaration> {
 		val out = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<IrValueDeclaration, Boolean>())
 		node.acceptChildrenVoid(object : IrVisitorVoid() {
 			override fun visitElement(element: IrElement) {
 				val caps: List<IrValueDeclaration>? = when (element) {
 					is IrClass -> capturedVarsForObject(element)
-					is IrFunctionExpression -> capturedVars(element.function)
+					is IrSimpleFunction -> capturedVars(element)
 					else -> null
 				}
 				if (caps != null) {

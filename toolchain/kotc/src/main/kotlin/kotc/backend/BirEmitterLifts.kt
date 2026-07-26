@@ -986,8 +986,25 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 	return """{"k":"new","type":${classType.toJson()},"args":[$ctorArgs]}"""
 }
 
-/** Free value references in a lambda body (referenced but not declared inside) = its captured vars. */
-internal fun BirEmitter.capturedVars(fn: IrSimpleFunction, includeThis: Boolean = false): List<IrValueDeclaration> {
+/** Free value references in a lambda / local-fun body (referenced but not declared inside) = its captured vars. */
+internal fun BirEmitter.capturedVars(fn: IrSimpleFunction, includeThis: Boolean = false): List<IrValueDeclaration> =
+	capturedVarsTransitive(fn, includeThis,
+		java.util.Collections.newSetFromMap(java.util.IdentityHashMap<IrSimpleFunction, Boolean>()))
+
+/** A function declared in STATEMENT position (a local `fun`) rather than as a member or a package-level function.
+ *  Its parent is the enclosing function/initializer, never an `IrClass` or an `IrPackageFragment` (which covers both
+ *  the current `IrFile` and an external module's fragment). This is the same structural fact `stmt` uses to decide to
+ *  lift it (BirEmitterStatements: an `IrSimpleFunction` in statement position -> `liftLocalFn`). */
+private fun isLocalFunction(fn: IrSimpleFunction): Boolean =
+	fn.parent !is IrClass && fn.parent !is org.jetbrains.kotlin.ir.declarations.IrPackageFragment
+
+private fun BirEmitter.capturedVarsTransitive(
+	fn: IrSimpleFunction,
+	includeThis: Boolean,
+	inProgress: MutableSet<IrSimpleFunction>,
+): List<IrValueDeclaration> {
+	// Self / mutual recursion between local funs: the cycle's captures are already being collected by the outer frame.
+	if (!inProgress.add(fn)) return emptyList()
 	val declared = HashSet<IrValueDeclaration>()
 	fn.parameters.forEach { declared.add(it) }
 	val referenced = LinkedHashSet<IrValueDeclaration>()
@@ -999,10 +1016,18 @@ internal fun BirEmitter.capturedVars(fn: IrSimpleFunction, includeThis: Boolean 
 				is IrValueParameter -> declared.add(element)
 				is IrGetValue -> referenced.add(element.symbol.owner)
 				is IrSetValue -> referenced.add(element.symbol.owner)
+				// CALLING a local fun captures TRANSITIVELY: `liftLocalFn` turns its captures into leading by-value
+				// params supplied AT THE CALL SITE, so every value it captures must also be in scope in THIS body —
+				// otherwise the emitted `callStatic` passes a local that does not exist here (a lambda that merely
+				// calls `bump()` never mentions `bump`'s `n`). Ask for `<this>` too: an enclosing-instance capture must
+				// propagate the same way; this frame's own `includeThis` decides whether it survives the filter below.
+				is IrCall -> (element.symbol.owner as? IrSimpleFunction)?.takeIf { isLocalFunction(it) }
+					?.let { referenced.addAll(capturedVarsTransitive(it, true, inProgress)) }
 			}
 			element.acceptChildrenVoid(this)
 		}
 	})
+	inProgress.remove(fn)
 	return referenced.filter { it !in declared && (includeThis || it.name.asString() != "<this>") }
 }
 
@@ -1147,9 +1172,17 @@ internal fun BirEmitter.liftLocalFn(fn: IrSimpleFunction) {
 	val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
 	capPairs.forEach { (decl, _) -> captureSubst.remove(decl) }
 	val ret = birType(fn.returnType)
+	// This lifted static RE-DECLARES the enclosing declaration's free type params as its OWN (`freeTps` ->
+	// `typeParams`), but every `tv` token inside it still names them in their ORIGINAL frame (the enclosing class's
+	// `tv{type,i}` / method's `tv{method,i}`) — the frame is part of a token's identity (#74). Carry the positional
+	// correspondence so a consumer that must re-express one of those tokens in THIS method's frame can: bir2cir's
+	// SharedSyntheticSynthesis needs it to construct a bare heap-ref-cell identity used here, whose element type is
+	// registered in the enclosing frame. Same key, same meaning as the one ClosureSynthesis derives for a lifted
+	// closure CLASS from `newClosure.typeArgs`; consumed and dropped there, never reaching CIR.
+	val synthTvs = if (freeTps.isEmpty()) "" else ""","_syntheticTypeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
 	// Lifting is a Kotlin-to-Kotlin structural projection. Preserve declaration facts exactly as for an ordinary
 	// function; bir2cir remains solely responsible for lowering a suspend declaration to the CLR continuation ABI.
-	liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)}${funModsJson(fn)}${resultTypeJson(fn)},"params":[${(capParams + ownParams).joinToString(",")}],"ret":${str(ret)},"body":[$body]}""")
+	liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)}$synthTvs${funModsJson(fn)}${resultTypeJson(fn)},"params":[${(capParams + ownParams).joinToString(",")}],"ret":${str(ret)},"body":[$body]}""")
 }
 
 /**
