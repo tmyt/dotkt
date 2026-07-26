@@ -130,25 +130,106 @@ static class DefaultArgSplice
                     "carried by several referenced declarations whose defaults disagree; pass the argument explicitly");
             return;
         }
-        // An extension receiver rides args[0] (the emitted extension fun's `__self`). A `= this` default binds to it.
-        // A `new` has NO receiver: args[0] is the ctor's first ARGUMENT, so a `{k:this}` in a ctor carrier binds to
-        // nothing (kotc refuses to carry one — `defaultReadsDispatch` poisons it — and `SpliceOne` asserts it here).
-        var receiver = isNew ? null : (args.Count > 0 ? args[0] : null);
+        // The declared parameter vector, for typing a hoisted temp (below) — the same vector the arity key came from.
+        var declared = isNew ? node["argTypes"] as JsonArray : (node["sig"] as JsonArray ?? node["shapeTypes"] as JsonArray);
+        // SINGLE EVALUATION (#235). A fill SPLICES this call's receiver / argument into the default expression, while the
+        // call keeps using it too — so a non-trivial value would run twice, where Kotlin evaluates a receiver and each
+        // argument exactly once. Bind every such value to a temp first: the call slot AND the fill then read the local.
+        // The positions a fill will read come from the carriers themselves, so collect them before filling anything.
+        var read = new HashSet<int>();
+        for (var j = 0; j < args.Count; j++)
+            if (IsPlaceholder(args[j]) && defaults.TryGetValue(j, out var peek)) CollectReadPositions(peek, read);
+        var lastRead = read.Count == 0 ? -1 : read.Max();
+        var temps = new JsonArray();
+        // The RECEIVER is evaluated before any argument, so it moves with them (hoisting an argument alone would slide it
+        // after the temp). Its declared type is the member's owner.
+        if (lastRead >= 0 && node["recv"] is JsonNode recvNode && !IsStableValue(recvNode)
+            && TempType(node["ownerType"], recvNode) is JsonNode recvType)
+            node["recv"] = Hoist(temps, recvNode, recvType);
         // 1) Replace POSITIONAL placeholders in place (a later provided arg keeps its slot). Fill by array index = the
-        //    @KotlinDefault index (extension receiver counted first, matching kotc's stamp).
+        //    @KotlinDefault index (extension receiver counted first, matching kotc's stamp). ASCENDING, so a lower slot a
+        //    later default reads is already filled — and already hoisted, so reading it again costs nothing.
         for (var j = 0; j < args.Count; j++)
         {
-            if (!IsPlaceholder(args[j])) continue;
-            if (!defaults.TryGetValue(j, out var bir)) continue;         // no @KotlinDefault at this slot -> caught by the chokepoint
-            if (SpliceOne(bir, receiver, args, hoist, refs, label, j, localOwner, ctorNoReceiver: isNew) is JsonNode fill) { args[j] = fill; Walk(fill, refs, hoist, localOwner); }
+            if (IsPlaceholder(args[j]) && defaults.TryGetValue(j, out var bir))
+            {
+                // An extension receiver rides args[0] (the emitted extension fun's `__self`). A `= this` default binds to
+                // it — re-read per fill because a hoist may have replaced it with the temp. A `new` has NO receiver:
+                // args[0] is the ctor's first ARGUMENT, so a `{k:this}` in a ctor carrier binds to nothing (kotc refuses
+                // to carry one — `defaultReadsDispatch` poisons it — and `SpliceOne` asserts it here).
+                var receiver = isNew ? null : (args.Count > 0 ? args[0] : null);
+                if (SpliceOne(bir, receiver, args, hoist, refs, label, j, localOwner, ctorNoReceiver: isNew) is JsonNode fill) { args[j] = fill; Walk(fill, refs, hoist, localOwner); }
+            }
+            // Hoist every non-stable value up to the last one a fill reads — including the fill just spliced in (a later
+            // default may read THIS slot, and a filled default must not be evaluated twice either), and including values
+            // no fill reads, whose evaluation would otherwise slide after the temps.
+            if (j <= lastRead && !IsPlaceholder(args[j]) && args[j] is JsonNode value && !IsStableValue(value)
+                && TempType(declared?.Count > j ? declared[j] : null, value) is JsonNode argType)
+                args[j] = Hoist(temps, value, argType);
         }
         // 2) Append any purely-TRAILING omitted args (callee carries @KotlinDefault but kotc dropped the tail). Unreachable
         //    for a `new`: its `args.Count == sigCount` is asserted above.
         for (var pos = args.Count; pos < sigCount; pos++)
         {
-            if (!defaults.TryGetValue(pos, out var bir)) return;         // gap -> bail (leave the call unchanged)
-            if (SpliceOne(bir, receiver, args, hoist, refs, label, pos, localOwner) is JsonNode fill) { args.Add(fill); Walk(fill, refs, hoist, localOwner); } else return;
+            if (!defaults.TryGetValue(pos, out var bir)) break;          // gap -> bail (leave the call unchanged)
+            var receiver = args.Count > 0 ? args[0] : null;
+            if (SpliceOne(bir, receiver, args, hoist, refs, label, pos, localOwner) is JsonNode fill) { args.Add(fill); Walk(fill, refs, hoist, localOwner); } else break;
         }
+        // The temps are declared by a `valueBlock` wrapping this very call. Rewritten IN PLACE (the node is parented, and
+        // its parent slot is what must now hold the block): the original content becomes the block's `result`.
+        if (temps.Count > 0)
+        {
+            var inner = node.DeepClone();
+            node.Clear();
+            node["k"] = "valueBlock";
+            node["stmts"] = temps;
+            node["result"] = inner;
+        }
+    }
+
+    // The positions of THIS call's values that a carrier reads: `{k:this}` -> args[0] (an extension receiver), and
+    // `{k:defaultArgParam,idx}` -> args[idx]. Parsed WITHOUT materializing (no lifted-method hoisting): this only needs
+    // the token positions, and MaterializeDefault runs later for the real fill.
+    static void CollectReadPositions(string bir, HashSet<int> into)
+    {
+        JsonNode parsed; try { parsed = JsonNode.Parse(bir, documentOptions: BirJson.DocOptions); } catch { return; }
+        void Scan(JsonNode n)
+        {
+            if (n is JsonObject o)
+            {
+                switch (Str(o["k"]))
+                {
+                    case "this": into.Add(0); break;
+                    case "defaultArgParam" when (o["idx"] as JsonValue)?.GetValue<int>() is int i && i >= 0: into.Add(i); break;
+                }
+                foreach (var kv in o) if (kv.Value != null) Scan(kv.Value);
+            }
+            else if (n is JsonArray a) foreach (var it in a) if (it != null) Scan(it);
+        }
+        if (parsed != null) Scan(parsed);
+    }
+
+    // A value that is free to RE-READ: a literal or `this` (immutable, no side effect). Everything else — including a
+    // plain local read, which another argument's evaluation could write between the two reads — is bound to a temp.
+    static bool IsStableValue(JsonNode n) =>
+        n is not JsonObject o || Str(o["k"]) is "const" or "this";
+
+    // The type slot for a hoisted temp: the callee's DECLARED type for that position (what both the call slot and the
+    // carrier's parameter read expect), else the value's own static type. Null -> the value is left in place (a byref
+    // slot is an addressable lvalue, not a value a temp can hold).
+    static JsonNode TempType(JsonNode declared, JsonNode value)
+    {
+        if (declared != null && TypeJson.Read(declared) is TypeNode d)
+            return d is TypeNode.ByRef ? null : declared.DeepClone();
+        return (value as JsonObject)?["sty"]?.DeepClone() ?? (value as JsonObject)?["type"]?.DeepClone();
+    }
+
+    // Move `value` into a fresh `var` on `temps` and return the local read that replaces it.
+    static JsonNode Hoist(JsonArray temps, JsonNode value, JsonNode type)
+    {
+        var name = "__dflt$tmp$" + Interlocked.Increment(ref _counter);
+        temps.Add(new JsonObject { ["k"] = "var", ["name"] = name, ["type"] = type, ["init"] = value.DeepClone() });
+        return new JsonObject { ["k"] = "local", ["name"] = name, ["sty"] = type.DeepClone() };
     }
 
     // A `{"k":"this"}` in the CARRIER — the callee's own default expression, before this call's args are substituted in.
