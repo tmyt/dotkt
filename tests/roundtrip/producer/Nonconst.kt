@@ -19,6 +19,17 @@ class Bag(val items: List<String> = emptyList(), val n: Int = 1) { val size: Int
 // #235: a base whose constructor default a SUBCLASS omits at its `: super(…)` — a delegation is a call site too, and
 // cross-module its args ride the subclass's constructor declaration rather than a call node.
 open class Panel2(val w: Int, val h: Int = w * 2) { val area: Int get() = w * h }
+// Both defaults omitted there, the FIRST side-effecting and the SECOND reading it: the filled `a` must be evaluated
+// once and read from a temp by `b`, which needs the target ctor's declared parameter types (a delegation carries none).
+var seeds: Int = 0
+fun seed(): Int { seeds++; return 3 }
+open class Seeded(val a: Int = seed(), val b: Int = a * 10)
+// #235: an UNSIGNED parameter beside a class-typed sibling of the same arity. `UInt` is `kotlin.UInt` at a call site and
+// `System.UInt32` in a reference assembly; unless the signature key folds the two spellings, one overload's key collapses
+// onto the other's and the wrong default is spliced.
+class Marker(val s: String)
+fun uf(a: UInt, b: Int = 1): String = "u$a/$b"
+fun uf(a: Marker, b: Int = 2): String = "m${a.s}/$b"
 // Two SAME-ARITY ctors both carrying a non-constant default: the splice key carries the declared parameter vector, so
 // the omitting consumer resolves the right overload instead of whichever the metadata scan enumerated last.
 class Pair2(val n: Int, val label: String = n.toString() + "!") {
@@ -31,9 +42,9 @@ class Pair2(val n: Int, val label: String = n.toString() + "!") {
 fun String.suffixed(t: String = this): String = this + "/" + t
 // #235: SAME-ARITY overloads of one name carrying DIFFERENT defaults. The carrier is keyed by the declared parameter
 // vector, so each call site resolves its own default instead of the arity key serving whichever declaration the metadata
-// scan reached first. Two pairs, because the two keys differ: `ov`'s parameters fold to the same token on both sides
-// (`i32`/`str`), while `tagged`'s sibling below differs in a CLASS position (`List<String>` against `String`) that the
-// call's Kotlin spelling and the reference's CLR spelling can only be compared through the relaxed key.
+// scan reached first. Several pairs, because they key differently: `ov`'s parameters fold to the same token on both
+// sides (`i32`/`str`); `tagged`'s sibling differs in a CLASS position (`List<String>` against `String`), comparable only
+// through the relaxed key; `note`'s differs in a NULLABLE REFERENCE position; and `uf`'s in an UNSIGNED one.
 fun ov(a: Int, b: Int = a * 2): String = "$a/$b"
 fun ov(a: String, b: String = a + "!"): String = "$a/$b"
 // arity 2 as well, because an extension's receiver rides as a leading `__self` parameter — the exact collision that

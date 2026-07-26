@@ -83,6 +83,10 @@ import roundtrip.nc.suffixed as ncSuffixed
 import roundtrip.nc.ov as ncOv
 import roundtrip.nc.Panel2 as NcPanel2
 import roundtrip.nc.note as ncNote
+import roundtrip.nc.Seeded as NcSeeded
+import roundtrip.nc.seeds as ncSeeds
+import roundtrip.nc.uf as ncUf
+import roundtrip.nc.Marker as NcMarker
 import roundtrip.nc.scaled as ncScaled
 import roundtrip.nc.tri3 as ncTri3
 import roundtrip.nc.order3 as ncOrder3
@@ -308,14 +312,17 @@ class PackageAndInlineRoundtripTests {
         ClassicAssert.AreEqual("3/6", ncOv(3))                                          // 3/6  the Int overload: b = a * 2
         ClassicAssert.AreEqual("x/x!", ncOv("x"))                                       // x/x! the String overload: b = a + "!"
         // Same NAME and same emitted ARITY (an extension's receiver rides as a leading `__self` parameter), differing in
-        // a CLASS position — the pair that broke this lane under a name+arity-only carrier key.
-        ClassicAssert.AreEqual("z=0", ncTagged("z"))                                    // z=0  items = emptyList()
-        ClassicAssert.AreEqual("q/q", "q".ncTagged())                                // q/q  t = this
+        // a CLASS position — the pair that broke this lane under a name+arity-only carrier key. Its non-extension half
+        // is `ncTagged("z")` in the block above.
+        ClassicAssert.AreEqual("q/q", "q".ncTagged())                                   // q/q  t = this
         // Same arity again, differing in a NULLABLE REFERENCE position (`String?` lowers to a plain `System.String`).
         ClassicAssert.AreEqual("m/-", ncNote("m"))                                      // m/-  tag defaults to null
         ClassicAssert.AreEqual("5/7", ncNote(5))                                        // 5/7  the Int overload's own default
+        // An UNSIGNED parameter beside a class-typed sibling: two spellings of one type must fold to one key.
+        ClassicAssert.AreEqual("u7/1", ncUf(7u))                                        // u7/1 the UInt overload's own default
+        ClassicAssert.AreEqual("mx/2", ncUf(NcMarker("x")))                             // mx/2 the class overload's own default
         // A `: super(…)` omitting a cross-module base's non-constant default: a delegation is a call site too.
-        ClassicAssert.AreEqual(18, NcSuperSub(3).area)                                   // 18  h = w * 2 = 6
+        ClassicAssert.AreEqual(18, NcSuperSub(3).area)                                  // 18   h = w * 2 = 6
     }
 
     // #235: a value the CROSS-MODULE carrier splices is evaluated exactly ONCE, and binding it does not reorder the
@@ -346,6 +353,12 @@ class PackageAndInlineRoundtripTests {
         val before = ncBumps
         ClassicAssert.AreEqual(3030, ncChain(1))                                        // b = bump() = 3, c = b * 10 = 30
         ClassicAssert.AreEqual(1, ncBumps - before)                                     // 1    bump() ran once (was 2)
+        // The same shape at a `: super(…)`, where the args ride the constructor DECLARATION.
+        val seedsBefore = ncSeeds
+        val sub = NcSeededSub()
+        ClassicAssert.AreEqual(3, sub.a)                                                // 3    a = seed()
+        ClassicAssert.AreEqual(30, sub.b)                                               // 30   b = a * 10, reading the temp
+        ClassicAssert.AreEqual(1, ncSeeds - seedsBefore)                                // 1    seed() ran once
     }
 
     // roundtrip-comparable (#179): a `class C : Comparable<C>` — </>/<=/>= + sorted() resolve+run cross-module
@@ -362,8 +375,10 @@ class NcCtorDefaultHost(val n: Int) {
 // #235: counts how often a side-effecting value the cross-module carrier SPLICES actually runs. Kotlin evaluates a
 // receiver and each argument once; before the splice bound them to a temp, each spliced read re-ran the expression
 // (a value read by two defaults ran four times, and `order3(a(), b())` logged "abb").
-// #235: omits the cross-module base's non-constant default at its `: super(…)`.
+// #235: omits the cross-module base's non-constant default at its `: super(…)`, and (NcSeededSub) omits BOTH of a
+// base's defaults where the first is side-effecting and the second reads it.
 class NcSuperSub(w: Int) : NcPanel2(w)
+class NcSeededSub : NcSeeded()
 
 class NcEvalCounter {
     var calls = 0

@@ -182,7 +182,7 @@ static class DefaultArgSplice
             else if (args[j] is JsonNode v && !IsStableValue(v) && TempType(declared, j, v) == null) bindable = false;
         }
         if (bindable && recvHost?["recv"] is JsonNode recvCheck && !IsStableValue(recvCheck)
-            && TempType(null, 0, recvCheck) == null && TempType(AsVector(recvHost["ownerType"]), 0, recvCheck) == null)
+            && TempType(AsVector(recvHost["ownerType"]), 0, recvCheck) == null)
             bindable = false;
         var temps = new JsonArray();
         // 1) Replace POSITIONAL placeholders in place (a later provided arg keeps its slot). Fill by array index = the
@@ -216,14 +216,17 @@ static class DefaultArgSplice
             if (SpliceOne(bir, receiver, args, hoist, refs, label, pos, localOwner, ctorNoReceiver) is JsonNode fill) { args.Add(fill); Walk(fill, refs, hoist, localOwner); } else break;
         }
         // The RECEIVER is evaluated before any argument, so it binds only when an argument did — and then FIRST, ahead of
-        // them. (`bindable` above already refused the whole call if it could not be typed.)
+        // them. (`bindable` above already refused the whole call if it could not be typed.) Its declared type is the
+        // member's OWNER: a temp of the owner type is what the call slot expects, and a `byref` owner is refused by
+        // [TempType] rather than copied, since for an addressable receiver a temp is a copy and not the address the call
+        // would take.
         if (temps.Count > 0 && recvHost?["recv"] is JsonNode recvNode && !IsStableValue(recvNode)
-            && (TempType(null, 0, recvNode) ?? TempType(AsVector(recvHost["ownerType"]), 0, recvNode)) is JsonNode recvType)
+            && TempType(AsVector(recvHost["ownerType"]), 0, recvNode) is JsonNode recvType)
             recvHost["recv"] = HoistFirst(temps, recvNode, recvType);
         return temps;
     }
 
-    // The owner type as a one-element "declared vector", so a receiver can reuse [TempType]'s rules.
+    // The owner type as a one-element "declared vector", so a receiver goes through [TempType]'s rules unchanged.
     static JsonArray AsVector(JsonNode type) => type == null ? null : new JsonArray(type.DeepClone());
 
     /// A constructor DELEGATION (`: super(…)` / `: this(…)`) is an omitting call site like any other, but its arguments
@@ -265,7 +268,11 @@ static class DefaultArgSplice
                         "that arity is carried by several constructors whose defaults disagree; pass the argument explicitly");
                 return;
             }
-            var temps = FillAndBind(args, args.Count, defaults, declared: null, ctorNoReceiver: true,
+            // The target ctor's DECLARED parameter types: a delegation carries no signature vector of its own, and
+            // without them a placeholder slot inside the bound range would be untypable and the whole call would decline
+            // to bind — silently reverting to per-reader evaluation.
+            var declared = refs.KotlinDefaultParamTypesFor(owner, ReferenceMetadataIndex.CtorKeyName, args.Count);
+            var temps = FillAndBind(args, args.Count, defaults, declared, ctorNoReceiver: true,
                 recvHost: null, owner + " constructor", refs, hoist, localOwner);
             if (temps.Count == 0) return;
             if (args.Count == 0)
