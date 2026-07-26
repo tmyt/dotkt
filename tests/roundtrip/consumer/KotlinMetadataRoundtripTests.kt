@@ -77,6 +77,7 @@ import roundtrip.nc.tagged as ncTagged
 import roundtrip.nc.Rect as NcRect
 import roundtrip.nc.Tri as NcTri
 import roundtrip.nc.Bag as NcBag
+import roundtrip.nc.Pair2 as NcPair2
 import roundtrip.cmp.Ver
 import roundtrip.ubyte.ub
 import roundtrip.ubyte.uba
@@ -285,10 +286,24 @@ class PackageAndInlineRoundtripTests {
         ClassicAssert.AreEqual(7, NcTri(2, 10, 7).c)                                    // 7   nothing omitted
         ClassicAssert.AreEqual(1, NcBag().size)                                         // 1   items = emptyList(), n = 1
         ClassicAssert.AreEqual(5, NcBag(n = 5).size)                                    // 5   omit a leading non-const default
+        // The argument the default reads is the CONSUMER's own instance read, so the spliced default contains a `this`
+        // that belongs to the CALLER. Only a `this` in the CARRIER means "the callee read its receiver".
+        ClassicAssert.AreEqual(24, NcCtorDefaultHost(4).rectArea())                     // 4 * (4 * 2)
+        ClassicAssert.AreEqual(403, NcCtorDefaultHost(4).triC())                        // b = 5, c = 4 * 100 + 5
+        // Same-arity ctor OVERLOADS: the splice key carries the declared parameter vector, so each resolves its own.
+        ClassicAssert.AreEqual("2!", NcPair2("hi").label)                               // 2!  the (String,String) ctor fills upper, delegates this(2)
+        ClassicAssert.AreEqual("7!", NcPair2(7).label)                                  // 7!  the (Int,String) ctor fills label
     }
 
     // roundtrip-comparable (#179): a `class C : Comparable<C>` — </>/<=/>= + sorted() resolve+run cross-module
     // (facadegen restores operator compareTo + the kotlin.Comparable supertype; bir2cir binds compareTo->CompareTo).
+}
+
+// #235: omits a cross-module ctor's non-constant default while passing an argument that reads THIS instance — the
+// filled default therefore embeds the consumer's own `this`, which must not be mistaken for the callee reading a receiver.
+class NcCtorDefaultHost(val n: Int) {
+    fun rectArea(): Int = NcRect(n).area
+    fun triC(): Int = NcTri(this.n).c
 }
 
 class ComparableUnsignedAndPropertyRoundtripTests {

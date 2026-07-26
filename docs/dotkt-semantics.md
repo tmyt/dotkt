@@ -772,13 +772,15 @@ default-omission works **everywhere** — trailing, named-middle, reordered, and
   **enclosing-instance receiver** — a member fn's own dispatch `this@Owner` or an inner-class member's outer
   `this@Outer` (detected by an IR-symbol scan of the dispatch-receiver param + every enclosing class `thisReceiver`) —
   cannot be reconstructed positionally cross-module → a `{"k":"defaultUnsupported"}` poison carrier the consumer's
-  splice refuses on (a precise diagnostic, never a miscompile: the one uniform carrier binds `{"k":"this"}` to args[0],
+  splice refuses on (a precise diagnostic, never a miscompile: the one uniform carrier binds `{"k":"this"}` to args[0] —
+  and at a `new`, which has no receiver, to nothing, so a ctor carrier holding the token is refused outright —
   never to an enclosing instance). An EXTENSION-receiver `= this` is NOT this case — the extension receiver DOES bind to
   args[0], so it round-trips (below). For a CROSS-MODULE call kotc emits a POSITIONAL `{"k":"defaultArg"}` placeholder for each omitted
   arg of such a callee (so a later provided arg keeps its slot), and `bir2cir.DefaultArgSplice` — run at **PHASE 1**
   (right after `InlineSplice`, before owner attribution / the CharSequence bridge / type-lowering, so the spliced RAW
-  expression re-lowers in THIS app's context) — resolves the callee OWNERLESSLY (by method name + emitted arity, the
-  owner not yet attributed) and replaces each placeholder in place by array index (matching the `@KotlinDefault` stamp
+  expression re-lowers in THIS app's context) — resolves the callee by the owner kotc already projected (a facadegen call
+  carries its file-facade `ownerType`; a `new` carries its `type`), falling back to method name + emitted arity only for a
+  truly ownerless call, and replaces each placeholder in place by array index (matching the `@KotlinDefault` stamp
   index), RE-HOISTING a `defaultCarrier`'s lifted method into the consumer's file class under a fresh per-splice name.
   An EXTENSION-receiver `= this` default carries `{"k":"this"}` → the call's receiver (args[0]); a default reading an earlier value param carries
   `{"k":"defaultArgParam","idx":N}` → the call's arg N. For a SAME-MODULE call kotc has the real default IR and inlines
@@ -1282,11 +1284,14 @@ that has lost the distinction.
    default reading an earlier VALUE parameter (`b = a * 10`) via the carrier's `{"k":"defaultArgParam","idx":N}`.
    A **CONSTRUCTOR** round-trips the same way: kotc stamps `@KotlinDefault` on its defaulted params, facadegen surfaces
    them OPTIONAL (`nonConst`), and `DefaultArgSplice` fills a `{"k":"new"}`'s placeholder from the reference dll, keyed
-   `<type>|.ctor|<emitted arg count>` (an inner class's enclosing instance counts first, riding `args[0]` like an
-   extension receiver's `__self`). Lower slots fill first, so a CHAIN works — `class Tri(a, b = a + 1, c = a * 100 + b)`
-   consumed as `Tri(2)` yields `c == 203`. A constructor default that reads an ENCLOSING instance is still refused at
-   stamp time (`defaultUnsupported`, §7 / #34), and a lifted LOCAL class carries nothing (it has no cross-module call
-   site).
+   `<type>|.ctor|<declared parameter count>` — the stamped index is the parameter's position in the emitted constructor's
+   own parameter list, so a consumer's argument array lines up with it one-for-one. Lower slots fill first, so a CHAIN
+   works: `class Tri(a, b = a + 1, c = a * 100 + b)` consumed as `Tri(2)` yields `c == 203`. Same-arity constructor
+   OVERLOADS resolve by signature — the key also carries the declared parameter vector, which the `new`'s `argTypes`
+   reproduces exactly. Refused rather than guessed: a default that reads an ENCLOSING instance (`defaultUnsupported` at
+   stamp time, §7 / #34 — a `new` has no receiver to bind it to).
+   A lifted LOCAL class's constructor is not stamped when it captures anything: its captures ride as leading parameters
+   the index does not count, and it has no cross-module call site to carry them for.
 
 7. **Generic-fidelity gaps surfaced by the atomicfu CLR port (#133)** — **ALL THREE FIXED.** Three
    DOWNSTREAM-of-facadegen gaps (the facadegen symbol surface was verified correct in each; the

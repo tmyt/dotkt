@@ -31,6 +31,12 @@ using DotKt.Bir;
 // A `= this` (an extension receiver) default rides a `{k:this}` token -> the call's arg[0]; a default reading an EARLIER
 // param rides `{k:defaultArgParam, idx}` -> the call's arg[idx] (Kotlin defaults reference only earlier params; lower
 // indices fill first). Unconditional across builds (a ref/rt stdlib self-build simply carries no cross-module omission).
+//
+// CONSTRUCTORS (#235) come through the same machinery with two differences: a `{"k":"new"}` names its callee by TYPE, so
+// it is always OWNERFUL (`<type>|.ctor|<declared param count>`, the count read off `argTypes`) and never falls back to the
+// name+arity index; and it has no receiver, so a carrier that reads one is refused rather than bound to `args[0]` (which
+// is a plain constructor argument). Two same-arity ctor overloads carrying DIFFERENT defaults make the key ambiguous and
+// are refused (ReferenceMetadataIndex.KotlinDefaultsConflicted).
 static class DefaultArgSplice
 {
     static int _counter;   // global unique id for fresh re-hoisted lifted-method names (per splice instance)
@@ -78,18 +84,28 @@ static class DefaultArgSplice
         // carrying `sig`) must NOT be touched: appending a default off an ownerless name match would corrupt it. This is
         // essential now the splice runs at phase 1 on EVERY build (a stdlib self-build call short of `sig` is not an omission).
         if (!hasPlaceholder) return;
-        string method, owner;
+        string method, owner, sigKey = null;
         int sigCount;
         if (isNew)
         {
             // A `new` names its callee by TYPE — there is no `method`/`sig` to read. The ctor's splice identity is
-            // `<type>|.ctor|<emitted arg count>` (#235): the args array is positionally complete, so its length IS the
-            // ctor's declared parameter count (an inner class's enclosing instance included, as its leading param) and
-            // each stamped @KotlinDefault index indexes that same array.
+            // `<type>|.ctor|<declared parameter count>` (#235), and `argTypes` IS that declared vector (kotc emits the
+            // resolved ctor's own parameter types). The args array must line up with it one-for-one: kotc fills every
+            // omitted slot with a placeholder, so each stamped @KotlinDefault index indexes that same array. A mismatch
+            // means an arg was dropped rather than placeheld — refuse instead of filling the wrong slot.
             owner = TypeJson.OwnerName(node["type"]);
             if (owner == null) return;
             method = ReferenceMetadataIndex.CtorKeyName;
-            sigCount = args.Count;
+            if (node["argTypes"] is not JsonArray ctorParamTypes) return;
+            sigCount = ctorParamTypes.Count;
+            // `argTypes` IS the resolved ctor's declared parameter vector, in the same ParamKey space the reference scan
+            // keys by — so same-arity ctor overloads resolve to the RIGHT one instead of being refused as ambiguous.
+            sigKey = string.Join(",", ctorParamTypes.Select(t => ReferenceMetadataIndex.ParamKey(t)));
+            if (args.Count != sigCount)
+                throw new InvalidOperationException(
+                    $"bir2cir: cannot fill an omitted default argument of '{owner}''s constructor — the call emits " +
+                    $"{args.Count} argument(s) for {sigCount} parameter(s), so the omitted slot is not identifiable; " +
+                    "pass the argument explicitly");
         }
         else
         {
@@ -103,20 +119,20 @@ static class DefaultArgSplice
             if (method == null) return;
             owner = TypeJson.OwnerName(node["ownerType"] ?? node["calleeOwner"] ?? node["owner"]);
         }
-        var defaults = refs.KotlinDefaultsFor(owner, method, sigCount);
+        // The callee as a DIAGNOSTIC names itself: `.ctor` is a key component, not something to show a reader.
+        var label = isNew ? owner + " constructor" : method;
+        var defaults = refs.KotlinDefaultsFor(owner, method, sigCount, sigKey);
         if (defaults == null)
         {
             if (hasPlaceholder && refs.KotlinDefaultsAmbiguous(owner, method, sigCount))
                 throw new InvalidOperationException(
-                    $"bir2cir: cannot fill an omitted default argument of '{method}' (arity {sigCount}) — the name+arity is " +
-                    "carried by several referenced functions whose defaults disagree; pass the argument explicitly");
+                    $"bir2cir: cannot fill an omitted default argument of '{label}' (arity {sigCount}) — that name+arity is " +
+                    "carried by several referenced declarations whose defaults disagree; pass the argument explicitly");
             return;
         }
         // An extension receiver rides args[0] (the emitted extension fun's `__self`). A `= this` default binds to it.
-        // A `new` has NO receiver: args[0] is the ctor's first argument, so binding a `{k:this}` to it would silently
-        // read the wrong object. kotc poisons a ctor default that reads an enclosing instance (`defaultReadsDispatch` ->
-        // `defaultUnsupported`), so no ctor carrier can legitimately hold that token — passing null keeps a stray one
-        // unbound, and the assert below refuses it rather than emitting a wrong `this`.
+        // A `new` has NO receiver: args[0] is the ctor's first ARGUMENT, so a `{k:this}` in a ctor carrier binds to
+        // nothing (kotc refuses to carry one — `defaultReadsDispatch` poisons it — and `SpliceOne` asserts it here).
         var receiver = isNew ? null : (args.Count > 0 ? args[0] : null);
         // 1) Replace POSITIONAL placeholders in place (a later provided arg keeps its slot). Fill by array index = the
         //    @KotlinDefault index (extension receiver counted first, matching kotc's stamp).
@@ -124,30 +140,23 @@ static class DefaultArgSplice
         {
             if (!IsPlaceholder(args[j])) continue;
             if (!defaults.TryGetValue(j, out var bir)) continue;         // no @KotlinDefault at this slot -> caught by the chokepoint
-            if (SpliceOne(bir, receiver, args, hoist, refs, method, j, localOwner) is JsonNode fill)
-            {
-                if (isNew && ContainsThisToken(fill))
-                    throw new InvalidOperationException(
-                        $"bir2cir: the omitted default argument at slot {j} of '{owner}''s constructor reads an enclosing " +
-                        "instance, which a constructor call site cannot bind; pass the argument explicitly");
-                args[j] = fill; Walk(fill, refs, hoist, localOwner);
-            }
+            if (SpliceOne(bir, receiver, args, hoist, refs, label, j, localOwner, ctorNoReceiver: isNew) is JsonNode fill) { args[j] = fill; Walk(fill, refs, hoist, localOwner); }
         }
-        // 2) Append any purely-TRAILING omitted args (callee carries @KotlinDefault but kotc dropped the tail). A `new`
-        //    derives `sigCount` FROM `args`, so this loop is empty for it by construction.
+        // 2) Append any purely-TRAILING omitted args (callee carries @KotlinDefault but kotc dropped the tail). Unreachable
+        //    for a `new`: its `args.Count == sigCount` is asserted above.
         for (var pos = args.Count; pos < sigCount; pos++)
         {
             if (!defaults.TryGetValue(pos, out var bir)) return;         // gap -> bail (leave the call unchanged)
-            if (SpliceOne(bir, receiver, args, hoist, refs, method, pos, localOwner) is JsonNode fill) { args.Add(fill); Walk(fill, refs, hoist, localOwner); } else return;
+            if (SpliceOne(bir, receiver, args, hoist, refs, label, pos, localOwner) is JsonNode fill) { args.Add(fill); Walk(fill, refs, hoist, localOwner); } else return;
         }
     }
 
-    // A `{"k":"this"}` anywhere in a spliced ctor default — an invariant assert (kotc refuses to carry such a default),
-    // never a diagnostic a valid reference assembly can trigger.
-    static bool ContainsThisToken(JsonNode node) => node switch
+    // A `{"k":"this"}` in the CARRIER — the callee's own default expression, before this call's args are substituted in.
+    // (The substituted result may legitimately contain `this`: an argument the CONSUMER wrote reading its own instance.)
+    static bool CarrierReadsReceiver(JsonNode node) => node switch
     {
-        JsonObject obj => Str(obj["k"]) == "this" || obj.Any(kv => kv.Value != null && ContainsThisToken(kv.Value)),
-        JsonArray arr => arr.Any(it => it != null && ContainsThisToken(it)),
+        JsonObject obj => Str(obj["k"]) == "this" || obj.Any(kv => kv.Value != null && CarrierReadsReceiver(kv.Value)),
+        JsonArray arr => arr.Any(it => it != null && CarrierReadsReceiver(it)),
         _ => false,
     };
 
@@ -156,10 +165,18 @@ static class DefaultArgSplice
     // Parse a @KotlinDefault BIR-json string, unwrap a `defaultCarrier` (re-hoisting its lifted methods app-local), and
     // bind the callee's default-expression tokens (`{this}` / `{defaultArgParam idx}`) to THIS call's args. A deep-fresh
     // subtree per occurrence.
-    static JsonNode SpliceOne(string bir, JsonNode receiver, JsonArray args, JsonArray hoist, ReferenceMetadataIndex refs, string method, int slot, JsonNode localOwner)
+    static JsonNode SpliceOne(string bir, JsonNode receiver, JsonArray args, JsonArray hoist, ReferenceMetadataIndex refs, string method, int slot, JsonNode localOwner, bool ctorNoReceiver = false)
     {
         var parsed = MaterializeDefault(bir, hoist, refs, method, slot, localOwner);
-        return parsed == null ? null : SubstituteTokens(parsed, receiver, args);
+        if (parsed == null) return null;
+        // A ctor call site has no receiver to bind a `{k:this}` to. Checked on the CARRIER, never on the substituted
+        // result — that legitimately carries `this` whenever the CONSUMER passed an argument reading its own instance
+        // (`Rect(this.w)`), which is the shape the same-module path already binds by symbol rather than by token.
+        if (ctorNoReceiver && CarrierReadsReceiver(parsed))
+            throw new InvalidOperationException(
+                $"bir2cir: cannot fill the omitted default argument at slot {slot} of {method}: its default reads an " +
+                "enclosing instance, which a constructor call site cannot bind; pass the argument explicitly");
+        return SubstituteTokens(parsed, receiver, args);
     }
 
     // SHARED with InlineSplice (#34 — omitted defaulted param of an inline callee): parse a @KotlinDefault BIR string,

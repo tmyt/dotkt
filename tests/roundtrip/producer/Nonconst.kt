@@ -16,3 +16,8 @@ fun tagged(name: String, items: List<String> = emptyList()): String = "$name=${i
 class Rect(val w: Int, val h: Int = w * 2, val tag: String = "r") { val area: Int get() = w * h }
 class Tri(val a: Int, val b: Int = a + 1, val c: Int = a * 100 + b)
 class Bag(val items: List<String> = emptyList(), val n: Int = 1) { val size: Int get() = items.size * 10 + n }
+// Two SAME-ARITY ctors both carrying a non-constant default: the splice key carries the declared parameter vector, so
+// the omitting consumer resolves the right overload instead of whichever the metadata scan enumerated last.
+class Pair2(val n: Int, val label: String = n.toString() + "!") {
+    constructor(s: String, upper: String = s.uppercase()) : this(upper.length)
+}

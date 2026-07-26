@@ -77,6 +77,8 @@ sealed partial class ReferenceMetadataIndex
     // ClrTypeInjection.defaultsForArity.
     readonly Dictionary<string, Dictionary<int, string>> _kotlinDefaultsOwnerless = new(StringComparer.Ordinal);
     readonly HashSet<string> _kotlinDefaultsAmbiguous = new(StringComparer.Ordinal);
+    // OWNERFUL keys two same-arity declarations carry with different defaults (see ReferenceAssemblyMetadata).
+    readonly HashSet<string> _kotlinDefaultsConflicted = new(StringComparer.Ordinal);
     // [KotlinInline] raw-BIR payloads (#71/#75): "owner|name|pc|ga" -> the CANDIDATE decoded carrier JSONs (one per overload
     // sharing that key; the raw pre-lowering decl facts InlineBirStash stashed). Read cross-module by InlineSplice, which
     // picks the UNIQUE candidate matching the call's `paramSig` (§4.2), then splices its body at the call site (so it
@@ -179,15 +181,16 @@ sealed partial class ReferenceMetadataIndex
                     _topLevelStatics[kv.Key] = lst = new List<(string, string, string)>();
                 lst.AddRange(kv.Value);
             }
+            foreach (var key in asm.DotKt.KotlinDefaultsConflicted) _kotlinDefaultsConflicted.Add(key);
             foreach (var kv in asm.DotKt.KotlinDefaults)
             {
                 _kotlinDefaults.TryAdd(kv.Key, kv.Value);
                 // OWNERLESS fold "owner|name|pc" -> "name|pc" (#146). Method/owner names carry no '|', so the split is exact.
                 var parts = kv.Key.Split('|');
-                if (parts.Length != 3) continue;
                 // A CONSTRUCTOR is never called ownerlessly (a `new` always names its type), so folding `.ctor|pc` would
-                // only make every type of the same ctor arity collide with every other.
-                if (parts[1] == CtorKeyName) continue;
+                // only make every type of the same ctor arity collide with every other. (Its 4-part signature-keyed twin
+                // is excluded by the length check anyway.)
+                if (parts.Length != 3 || parts[1] == CtorKeyName) continue;
                 var np = parts[1] + "|" + parts[2];
                 if (_kotlinDefaultsAmbiguous.Contains(np)) continue;
                 if (_kotlinDefaultsOwnerless.TryGetValue(np, out var have))
@@ -261,16 +264,27 @@ sealed partial class ReferenceMetadataIndex
     // facadegen-injected calls already carry their exact file-facade `ownerType` in BIR, so use that structural identity
     // first. Truly ownerless Kotlin calls retain the conservative name+arity index; conflicting owners remain ambiguous
     // and are refused. Running this at phase 1 does not imply throwing away an owner kotc has already projected.
-    public Dictionary<int, string> KotlinDefaultsFor(string owner, string method, int paramCount)
+    public Dictionary<int, string> KotlinDefaultsFor(string owner, string method, int paramCount, string sigKey = null)
     {
         if (method == null) return null;
         if (owner != null)
-            return _kotlinDefaults.TryGetValue(owner + "|" + method + "|" + paramCount, out var exact) ? exact : null;
+        {
+            var key = owner + "|" + method + "|" + paramCount;
+            // A CONSTRUCTOR call carries its resolved ctor's declared parameter types, so try the SIGNATURE key first —
+            // that is what tells same-arity overloads apart. The arity key is the fallback (and refuses when it is
+            // carried by two declarations whose defaults disagree).
+            if (sigKey != null && _kotlinDefaults.TryGetValue(key + "|" + sigKey, out var bySig)) return bySig;
+            if (_kotlinDefaultsConflicted.Contains(key)) return null;
+            return _kotlinDefaults.TryGetValue(key, out var exact) ? exact : null;
+        }
         return _kotlinDefaultsOwnerless.TryGetValue(method + "|" + paramCount, out var ownerless) ? ownerless : null;
     }
-    // True only for a genuinely ownerless name+arity carried by >1 owner with CONFLICTING defaults.
+    // True when the name+arity cannot identify ONE set of defaults: a genuinely ownerless name carried by >1 owner that
+    // disagree, or an OWNERFUL key two same-arity declarations (ctor overloads) carry with different defaults.
     public bool KotlinDefaultsAmbiguous(string owner, string method, int paramCount) =>
-        owner == null && method != null && _kotlinDefaultsAmbiguous.Contains(method + "|" + paramCount);
+        method != null && (owner == null
+            ? _kotlinDefaultsAmbiguous.Contains(method + "|" + paramCount)
+            : _kotlinDefaultsConflicted.Contains(owner + "|" + method + "|" + paramCount));
 
     static bool SameDefaults(Dictionary<int, string> a, Dictionary<int, string> b)
     {
@@ -1367,8 +1381,21 @@ sealed partial class ReferenceMetadataIndex
                     // legitimate splice target inside its own module's ref dll.
                     foreach (var ctor in type.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly))
                     {
-                        if (KotlinDefaultsOf(ctor) is Dictionary<int, string> cdefaults)
-                            metadata.KotlinDefaults[ownerFqn + "|" + CtorKeyName + "|" + ctor.GetParameters().Length] = cdefaults;
+                        if (KotlinDefaultsOf(ctor) is not Dictionary<int, string> cdefaults) continue;
+                        var cps = ctor.GetParameters();
+                        // Keyed BY SIGNATURE as well as by arity: same-arity ctor overloads are ordinary Kotlin, and a
+                        // `new` carries its resolved ctor's declared parameter types in `argTypes` — the same ParamKey
+                        // space — so the splice can pick the RIGHT overload. The arity key stays for the single-ctor case
+                        // (and as the fallback when a signature does not match), and records a CONFLICT when two
+                        // same-arity ctors disagree, so that fallback refuses rather than filling whichever came last.
+                        metadata.KotlinDefaults[ownerFqn + "|" + CtorKeyName + "|" + cps.Length + "|" + SigKeyOf(cps)] = cdefaults;
+                        var ckey = ownerFqn + "|" + CtorKeyName + "|" + cps.Length;
+                        if (metadata.KotlinDefaults.TryGetValue(ckey, out var prior))
+                        {
+                            if (!SameDefaults(prior, cdefaults)) metadata.KotlinDefaultsConflicted.Add(ckey);
+                            continue;
+                        }
+                        metadata.KotlinDefaults[ckey] = cdefaults;
                     }
                 }
                 catch (Exception ex)
@@ -1858,6 +1885,10 @@ sealed class ReferenceDotKtMetadata
     // pass reads this to fill trailing omitted args BEFORE the CharSequence bridge + type lowering (so a String default
     // is coerced exactly like an explicit arg). Rides the ref.dll only (param attrs stripped in the rt build).
     public readonly Dictionary<string, Dictionary<int, string>> KotlinDefaults = new(StringComparer.Ordinal);
+    // Keys of [KotlinDefaults] that TWO declarations of the same owner+name+arity carry with DIFFERENT defaults — the key
+    // cannot tell them apart, so the splice must refuse instead of filling whichever was enumerated last. Populated for
+    // CONSTRUCTORS (same-arity ctor overloads are common; #235); the method key has the same shape and would deserve it too.
+    public readonly HashSet<string> KotlinDefaultsConflicted = new(StringComparer.Ordinal);
 }
 
 // A single ref.dll member's call-substitution shape. Owner is the Kotlin FQN ("kotlin.String"); Intrinsic is the

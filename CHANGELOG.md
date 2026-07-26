@@ -106,9 +106,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   function does, facadegen surfaces its non-constant defaulted parameter OPTIONAL, and `bir2cir.DefaultArgSplice` fills
   the `{"k":"new"}` placeholder from the reference dll — so a consumer of a DotKt library can write `Rect(3)` against
   `class Rect(val w: Int, val h: Int = w * 2)` and get `h == 6`, where it previously failed the frontend with *no value
-  passed for parameter 'h'*. The splice keys a constructor as `<type>|.ctor|<emitted arg count>` (`ReferenceMetadataIndex`
-  now scans `GetConstructors` alongside `GetMethods`), with an inner class's enclosing instance counting first — it rides
-  `args[0]`, like an extension receiver's `__self`. Lower slots fill first, so a chain fills too
+  passed for parameter 'h'*. The splice keys a constructor as `<type>|.ctor|<declared parameter count>`
+  (`ReferenceMetadataIndex` now scans `GetConstructors` alongside `GetMethods`), and the stamped index is the parameter's
+  position in the emitted constructor's own parameter list. Lower slots fill first, so a chain fills too
   (`class Tri(a, b = a + 1, c = a * 100 + b)` consumed as `Tri(2)` gives `c == 203`). A metadata-representable (Tier-1)
   constant still fills from the facadegen metadata and never becomes a placeholder; a ctor default reading an enclosing
   instance is still refused at stamp time. Covered by `tests/basic/fixtures/DefaultArgumentTests.kt` (`defargsCtor`,

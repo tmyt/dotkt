@@ -189,12 +189,16 @@ internal fun BirEmitter.filledArgs(
 						?: if (kotlinDefaultSlots?.getOrNull(idx) == true || (carries && callee !is IrConstructor)) defaultArgPlaceholder else {
 							// Neither a metadata constant NOR a @KotlinDefault carrier. A purely TRAILING omit is safe (ilemit's
 							// [DefaultParameterValue] backfill fills it). But if any LATER slot still EMITS — an explicitly
-							// provided arg, or one this pass fills from the metadata — silently omitting THIS slot would slide
-							// that value into the wrong parameter, so refuse loudly instead of miscompiling.
+							// provided arg, one this pass fills from the metadata, or one that becomes a positional
+							// placeholder — silently omitting THIS slot would slide that value into the wrong parameter (and
+							// leave the emitted args short of the callee's arity), so refuse loudly instead of miscompiling.
 							val laterArgProvided = regs.drop(idx + 1).withIndex().any { (k, later) ->
 								val j = later.first
+								val laterIdx = idx + 1 + k
 								(j < call.arguments.size && call.arguments[j] != null) ||
-									metaDefaults?.getOrNull(idx + 1 + k) != null
+									metaDefaults?.getOrNull(laterIdx) != null ||
+									kotlinDefaultSlots?.getOrNull(laterIdx) == true ||
+									(carries && callee !is IrConstructor && later.second.defaultValue != null)
 							}
 							if (laterArgProvided) unsupported(call, "omitting a cross-module default argument the metadata does not carry",
 								"the default value of parameter '${p.name.asString()}' is not available as a constant in the referenced " +
