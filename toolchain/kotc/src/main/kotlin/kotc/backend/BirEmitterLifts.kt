@@ -20,6 +20,7 @@ import org.jetbrains.kotlin.ir.expressions.IrBlockBody
 import org.jetbrains.kotlin.ir.expressions.IrCall
 import org.jetbrains.kotlin.ir.expressions.IrConst
 import org.jetbrains.kotlin.ir.expressions.IrConstructorCall
+import org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression
 import org.jetbrains.kotlin.ir.expressions.IrDelegatingConstructorCall
 import org.jetbrains.kotlin.ir.expressions.IrClassReference
 import org.jetbrains.kotlin.ir.expressions.IrEnumConstructorCall
@@ -433,6 +434,19 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 	// injected cross-module callee carries its injected file class too; any unresolved external shape fails at the
 	// CIR invariant rather than falling back to a global first match.
 	// The substitution axis is unchanged: a delegate over a top-level fun stays owner-less (no `owner` field here).
+	// `::localFun` — a reference to a LOCAL fun, which is not a file-class member under its own name: it was lifted to
+	// a static `__localN_<name>` whose captures are leading params. With no captures the delegate targets that lifted
+	// method directly (the same shape the lifted-lambda path emits). WITH captures the delegate's arity cannot match —
+	// the target needs the captured values bound, which is a closure, not a static method reference — so refuse rather
+	// than emit a call the arity of which is wrong.
+	localFns[fn]?.let { (lname, caps, tps) ->
+		if (caps.isNotEmpty())
+			return unsupported(node, "a reference to a local function that captures values",
+				"the reference would need to carry ${caps.size} captured value(s); call it directly, " +
+					"or wrap it in a lambda (`{ … -> ${fn.name.asString()}(…) }`)")
+		val typeArgs = if (tps.isEmpty()) "" else ""","typeArgs":[${tps.joinToString(",") { tvOf(it).toJson() }}]"""
+		return """{"k":"newDelegate","method":${str(lname)},"funcType":${funcTypeOf(fn).toJson()}$typeArgs${localCalleeOwnerTag()}}"""
+	}
 	if (dispatchIdx < 0 && !hasExt)
 		return """{"k":"newDelegate","method":${str(fn.name.asString())}${overloadSigField(fn)},"funcType":${funcTypeOf(fn).toJson()}${calleeOwnerTag(fn)}}"""
 	// `Type::extFn` — an EXTENSION-function reference (G8). The delegate's target is a lifted static forwarder whose
@@ -1061,14 +1075,18 @@ private fun BirEmitter.captureScan(
 					}
 				// CONSTRUCTING a local class / object expression is the same transitive capture one boundary over:
 				// `liftLocalClass`/`blockExpr` prepend its captures as ctor arguments AT THIS SITE, so a body that only
-				// does `L().go()` must hold whatever `L` captures.
-				is IrConstructorCall -> (element.symbol.owner.parent as? IrClass)?.takeIf { isLocalDeclaration(it) }
-					?.let { cls ->
-						if (guard.add(cls)) {
-							referenced.addAll(captureScan(cls, emptyList(), true, guard))
-							guard.remove(cls)
+				// does `L().go()` must hold whatever `L` captures. A DELEGATING construction (`class B : A()`, and an
+				// object literal's `super()`) reaches a capturing base the same way — its captures are prepended to the
+				// base call — so a derived local class must capture whatever its local base does.
+				is IrConstructorCall, is IrDelegatingConstructorCall ->
+					((element as IrFunctionAccessExpression).symbol.owner.parent as? IrClass)
+						?.takeIf { isLocalDeclaration(it) }
+						?.let { cls ->
+							if (guard.add(cls)) {
+								referenced.addAll(captureScan(cls, emptyList(), true, guard))
+								guard.remove(cls)
+							}
 						}
-					}
 			}
 			element.acceptChildrenVoid(this)
 		}
@@ -1253,6 +1271,12 @@ internal fun BirEmitter.liftLocalFn(fn: IrSimpleFunction) {
 	// SharedSyntheticSynthesis needs it to construct a bare heap-ref-cell identity used here, whose element type is
 	// registered in the enclosing frame. Same key, same meaning as the one ClosureSynthesis derives for a lifted
 	// closure CLASS from `newClosure.typeArgs`; consumed and dropped there, never reaching CIR.
+	//
+	// The body is NOT re-expressed in this lift's frame. Doing that (a typeArgSubst over `freeTps`, the treatment
+	// typeDef gives a lifted class) is the real fix for a body-local whose type is an enclosing variable, but it also
+	// re-frames the `newClosure.typeArgs` of any closure nested in this body, from which ClosureSynthesis derives that
+	// closure class's own correspondence — and the two derivations then disagree about which frame a cell inside the
+	// closure belongs to. Attempted and reverted; the residual is bir2cir's loud refusal, recorded at bodyTypeOperands.
 	val synthTvs = if (freeTps.isEmpty()) "" else ""","_syntheticTypeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
 	// Lifting is a Kotlin-to-Kotlin structural projection. Preserve declaration facts exactly as for an ordinary
 	// function; bir2cir remains solely responsible for lowering a suspend declaration to the CLR continuation ABI.

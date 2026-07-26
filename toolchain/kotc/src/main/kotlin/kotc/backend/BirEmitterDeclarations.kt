@@ -715,6 +715,16 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 				else -> {}
 			}
 		}
+		// A captured param's own BOUND can name a FURTHER enclosing param (`<T, U> where T : Box<U>`): this class
+		// re-declares the bound along with the param, so it must re-declare that one too or the constraint references a
+		// variable the flattened class does not have. Close the set (worklist — a bound can pull in a param whose own
+		// bound pulls in another; `capturedTpParams` is a set, so a cyclic bound terminates).
+		val pending = ArrayDeque(capturedTpParams)
+		while (pending.isNotEmpty()) {
+			val before = capturedTpParams.size
+			pending.removeFirst().superTypes.forEach { scan(it, ownNames) }
+			if (capturedTpParams.size != before) pending.addAll(capturedTpParams.drop(before))
+		}
 	}
 	// Install the enclosing→own-generic-space remap for the captured params BEFORE any member is rendered.
 	val savedCaptureSubst = HashMap<org.jetbrains.kotlin.ir.declarations.IrTypeParameter, TypeNode?>()
@@ -893,8 +903,13 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 		objectSingleton = isObject
 	)
 	// typeParams = the anon/class's own params PLUS the captured enclosing params (scanned + installed at the top).
+	// The captured ones go through the SAME renderer as the class's own, so they keep their BOUNDS: emitting them as
+	// bare names dropped every constraint, and a member that needs one (`v.get()` on a `T : Box<U>` capture) then has no
+	// constraint to dispatch through — a silently wrong signature, not a diagnostic. Their bounds render through the
+	// typeArgSubst installed above, so a bound naming another captured param resolves in THIS class's space.
 	val ownTpsJson = typeParamsJson(ownTps).removePrefix(""","typeParams":[""").removeSuffix("]")
-	val extraJson = capturedTpParams.joinToString(",") { str(it.name.asString()) }
+	val extraJson = typeParamsJson(capturedTpParams.toList())
+		.removePrefix(""","typeParams":[""").removeSuffix("]")
 	val tpEntries = listOf(ownTpsJson, extraJson).filter { it.isNotEmpty() }.joinToString(",")
 	val tpJson = if (tpEntries.isEmpty()) "" else ""","typeParams":[$tpEntries]"""
 	// #68: a compiler-generated synthetic (a lifted anon-object / local class) carries `generated:true` — a STRUCTURAL
@@ -925,7 +940,20 @@ internal fun BirEmitter.ctor(klass: IrClass, ctor: IrConstructor, captures: List
 	val thisArgs = if (isThisDelegate) delegating!!.arguments.filterNotNull().joinToString(",") { expr(it) } else null
 	val baseArgs = if (!isThisDelegate) delegating?.let { d ->
 		val targetFq = delegateClass?.fqNameWhenAvailable?.asString()
-		if (targetFq != "kotlin.Any") d.arguments.filterNotNull().joinToString(",") { expr(it) } else null
+		if (targetFq == "kotlin.Any") null else {
+			// A CAPTURING local base (`open class A { fun go() { n++ } }` + `class B : A()`) took its captures as
+			// leading ctor params when it was lifted, so this delegation must supply them ahead of the source-level
+			// arguments — the construction-site rule, one level up the hierarchy. THIS class captures them too (the
+			// capture scan follows the delegation), so each is already a leading param of the ctor we are emitting;
+			// pass that param, not `capValueExpr`, because the capture FIELDS are only assigned after the base call.
+			val baseCaps = delegateClass?.let { localClassCaptures[it] }.orEmpty().map { decl ->
+				val here = captures.firstOrNull { (d, _) -> d === decl }?.second
+					?: return@let invariantBroken(d,
+						"a local base class's capture is not a capture of the derived local class")
+				"""{"k":"local","name":${str(here)}}"""
+			}
+			(baseCaps + d.arguments.filterNotNull().map { expr(it) }).joinToString(",")
+		}
 	} else null
 	val stmts = ArrayList<String>()
 	stmts.addAll(capAssigns)   // store captures before instance initializers, which may read them

@@ -352,6 +352,23 @@ fun cvrcLocalClassInsideClosure(): Int {
     return n
 }
 
+// A local class INHERITING from a capturing local class. The base took its captures as leading ctor params when it was
+// lifted, so the derived class must capture them too and forward them ahead of the source-level base arguments.
+fun cvrcLocalClassInheritance(): Int {
+    var n = 0
+    open class A { fun go() { n++ } }
+    class B : A()
+    B().go(); B().go()
+    return n
+}
+
+// A reference to a non-capturing local fun: it targets the LIFTED static, not a file-class member under its own name.
+fun cvrcLocalFunReference(): Int {
+    fun twice(k: Int): Int = k * 2
+    val f: (Int) -> Int = ::twice
+    return f(21)
+}
+
 // A local class that both DECLARES a field `n` and receives a capture named `n` (transitively, by calling `bump`).
 // The two share one namespace in the lifted class, so the capture is renamed rather than shadowed — otherwise the
 // write goes to the class's own field and the caller's `n` never moves.
@@ -430,6 +447,8 @@ class CapturedVarRefCellTests {
         assertEquals(7, outer.Inner().direct())                  // 7 — the outer-`this` binding survived
         assertEquals(2, cvrcLocalClassInsideClosure())           // 2
         assertEquals(2, cvrcLocalClassFieldCollision())          // 2, not the class's own `n`
+        assertEquals(2, cvrcLocalClassInheritance())             // 2 — the base's captures reach it through `B : A()`
+        assertEquals(42, cvrcLocalFunReference())                // 42 — `::twice` targets the lifted static
         assertEquals("y", cvrcLocalFunBoundedTv<CvrcStrBox, String>(CvrcStrBox("x"), CvrcStrBox("y")).get())
     }
 

@@ -398,17 +398,56 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	/** Compute the module-wide heap ref-cell set (see [refCellVars]). Called ONCE, before any file is emitted. */
 	internal fun initRefCells(module: IrElement) { refCellVars = computeRefCells(module) }
 
-	internal val refTypes = LinkedHashMap<String, String>()   // element type JSON -> monomorphized Ref class name
+	/** identity key -> (monomorphized Ref class name, element type JSON). One entry per DISTINCT cell in the file. */
+	internal val refTypes = LinkedHashMap<String, Pair<String, String>>()
+
+	/**
+	 * The cell class for a var, registered once per file.
+	 *
+	 * The element type ALONE does not identify a cell: a type variable prints as its positional `tv`, so `T` of one
+	 * class and `T` of another in the same file print identically while carrying DIFFERENT bounds. Sharing one cell
+	 * between them gives it one class's bounds and instantiates it with the other's argument — rejected downstream if
+	 * the bounds conflict, and a bound the argument does not satisfy if they merely differ. So the key closes over the
+	 * bounds of every variable the element mentions, and a second distinct cell for the same printed element gets a
+	 * suffixed name.
+	 */
 	internal fun refTypeName(d: IrValueDeclaration): String {
 		val elem = birType(d.type)
-		return refTypes.getOrPut(elem.toJson()) { "dotkt\$${synthScope}\$Ref\$" + mangle(elem) }
+		val elemJson = elem.toJson()
+		val key = elemJson + "|" + typeVarBoundsKey(d.type)
+		refTypes[key]?.let { return it.first }
+		val base = "dotkt\$${synthScope}\$Ref\$" + mangle(elem)
+		val taken = refTypes.values.count { (name, _) -> name == base || name.startsWith("$base\$") }
+		val name = if (taken == 0) base else "$base\$$taken"
+		refTypes[key] = name to elemJson
+		return name
+	}
+
+	/** A stable key for the BOUNDS of every type variable [t] mentions (see [refTypeName]); empty for a closed type. */
+	private fun typeVarBoundsKey(t: IrType): String {
+		val seen = java.util.Collections.newSetFromMap(
+			java.util.IdentityHashMap<org.jetbrains.kotlin.ir.declarations.IrTypeParameter, Boolean>())
+		val parts = ArrayList<String>()
+		fun walk(ty: IrType) {
+			(ty.classifierOrNull as? org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol)?.let { sym ->
+				if (!seen.add(sym.owner)) return
+				parts.add(tvOf(sym.owner).toJson() + ":" + sym.owner.superTypes.joinToString(",") { birType(it).toJson() })
+				sym.owner.superTypes.forEach(::walk)
+				return
+			}
+			(ty as? org.jetbrains.kotlin.ir.types.IrSimpleType)?.arguments?.forEach {
+				(it as? org.jetbrains.kotlin.ir.types.IrTypeProjection)?.type?.let(::walk)
+			}
+		}
+		walk(t)
+		return parts.sorted().joinToString(";")
 	}
 	// #52 (kotc-purity): the monomorphized heap cell `dotkt$Ref_<elem>{ var v }` is a CLR-representation synthetic.
 	// kotc emits ONLY the FACT — a file-level `refTypes` registry (each cell's name + element TYPE identity) plus the
 	// use-site `new`/`field`/`setField` on the cell. bir2cir's RefCellSynthesis assembles the actual trivial class
 	// (single `v` field + its init ctor) into the file `types` from this registry. The element type is unrecoverable
 	// from the use-site nodes alone (a bare `field .v` read carries no type), so the registry is the required fact.
-	internal fun refTypesJson(): String = refTypes.entries.joinToString(",") { (elemJson, name) ->
+	internal fun refTypesJson(): String = refTypes.values.joinToString(",") { (name, elemJson) ->
 		"""{"name":${str(name)},"elem":$elemJson}"""
 	}
 	internal fun isRefCell(d: IrValueDeclaration) = d in refCellVars
