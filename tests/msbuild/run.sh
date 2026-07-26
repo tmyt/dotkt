@@ -281,7 +281,15 @@ if [[ -z "$rid_msg" ]]; then
 	[[ -n "$rid_cmd" ]] || rid_msg="could not recover the ilemit command line from the build log"
 fi
 rid_replay() { # <log-name> <literal argument to replace (non-empty)> <replacement>; echoes the exit status
-	local cmd="${rid_cmd//"$2"/$3}" rc=0
+	local from="$2" to="$3" pat cmd rc=0
+	# Bash replacement patterns are globs: escape metacharacters so Windows paths (with backslashes) match literally.
+	pat="$from"
+	pat="${pat//\\/\\\\}"
+	pat="${pat//\*/\\*}"
+	pat="${pat//\?/\\?}"
+	pat="${pat//\[/\\[}"
+	pat="${pat//\]/\\]}"
+	cmd="${rid_cmd//$pat/$to}"
 	[[ "$cmd" != "$rid_cmd" ]] || { echo "substitution-failed"; return; }
 	( cd "$rid/app" && eval "$cmd" ) >"$rid/$1.log" 2>&1 || rc=$?
 	echo "$rc"
