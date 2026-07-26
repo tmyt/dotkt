@@ -27,7 +27,7 @@
     a turn with a tool call intermittently CORRUPTS the call (stray tokens, dropped `antml:`
     prefix → malformed, wasted turns). Incident record: MEMORY
     `respond-in-english-when-tool-calling`.
-  - **On Fable 5 (current default) and other models:** the corruption has not been reproduced;
+  - **On Opus 5 (current default) and other models:** the corruption has not been reproduced;
     a one-line pre-tool status note is allowed when it helps. If call corruption is EVER observed
     on a model, treat that model as Opus-4.8-class: go fully prose-free there and record the
     model name here.
@@ -97,22 +97,41 @@
 - **Prefer dedicated subagents for tasks, and actively use Codex (user-directed).** The coordinator
   orchestrates and integrates; substantive work goes to specialist subagents. Use Codex for design
   and investigation, and **instruct every subagent to USE it** (not merely note it's available).
-  Canonical invocation:
+  **Fable is OPTIONAL, never a mandatory pairing (2026-07-26, user-directed — Opus 5 release).**
+  Opus 5 carries the design/root-cause quality bar on its own, so no rule here requires a Fable
+  consult and no subagent brief may mandate one. Reach for `model: "fable"` only when a genuinely
+  open cross-layer design fork would gain from a second independent read — never as ritual, never
+  as a second review of a diff already reviewed.
+  Canonical Codex invocation:
   `codex exec -s read-only --skip-git-repo-check "<question in English>" </dev/null`
   — the **`</dev/null` is MANDATORY**: the harness keeps stdin open and codex reads it to EOF, so an
   un-redirected call hangs forever. If Codex goes silent across agents it may be blocked on an
   interactive self-update prompt on the user's terminal — ask the user to check, and fall back to
   empirical verification meanwhile.
-- **When ≥3 specialist round-trips fail to resolve ONE problem, escalate to a holistic Fable+Opus root-cause pass (2026-07-12, user-directed).**
+- **Quality review is done by a COLD agent, NEVER by the author (2026-07-26, user-directed).**
+  Self-review by the agent that wrote the change is worth little — it re-reads its own intent, not
+  the code. Before any change is reported done, it is reviewed by a **fresh agent carrying ZERO of
+  the implementation context**: spawn it with the Agent tool (`subagent_type: "Plan"` — read-only)
+  and give it ONLY (a) the task/issue statement, (b) *where* to read the diff (`git diff` in that
+  tree/worktree, or the branch), (c) which invariants apply (this file's layer table,
+  `docs/architecture.md`, the layer contract). **NEVER paste your rationale, your "why I chose X",
+  or your own summary of the change** — that is precisely the context that must not leak; it turns
+  an independent read into a confirmation pass. Fix what the review confirms; where you disagree,
+  say so explicitly in your report instead of silently dropping the finding. This binds **specialist
+  subagents** (cold review before reporting back) **and the coordinator** (cold review before
+  integrating into main). One review per distinct diff — never re-review the same diff twice.
+- **When ≥3 specialist round-trips fail to resolve ONE problem, escalate to a holistic cross-layer root-cause pass (2026-07-12, user-directed; model-neutral since 2026-07-26).**
   The tell is whack-a-mole: the same fault class keeps moving (a new IL offset, a new pass/store
   site) instead of closing — the failure mode of per-layer one-symptom-at-a-time fixing. STOP
-  dispatching per-layer specialists and mount a **Fable** read-only cross-layer design pass that
-  (a) enumerates the COMPLETE manifestation set, (b) rules root-vs-band-aid, (c) weighs a
-  design-level fix that dissolves the whole family, (d) specs ONE unified fix — then **Opus**
-  (coordinator + specialists) implements and gates it once. Run the Fable pass in parallel with any
-  in-flight specialist attempt (read-only → no build collision). **3 is a ceiling, not a quota** —
-  escalate the moment the pattern is clear. This is a STRUCTURAL escalation (holistic vs per-layer),
-  not a model upgrade. (Origin: the #75 covariance-erasure ilverify loop.)
+  dispatching per-layer specialists and mount a **read-only cross-layer design pass** — the
+  coordinator itself, or a `Plan`/`Explore` agent — that (a) enumerates the COMPLETE manifestation
+  set, (b) rules root-vs-band-aid, (c) weighs a design-level fix that dissolves the whole family,
+  (d) specs ONE unified fix; then implement (coordinator + specialists) and gate it once. Run that
+  pass in parallel with any in-flight specialist attempt (read-only → no build collision).
+  **3 is a ceiling, not a quota** — escalate the moment the pattern is clear. This is a STRUCTURAL
+  escalation (holistic vs per-layer), **not a model switch**: Opus 5 does the holistic pass itself,
+  so do not reach for another model to satisfy this rule. (Origin: the #75 covariance-erasure
+  ilverify loop.)
 
 # Build & test (do NOT guess commands)
 

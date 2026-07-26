@@ -12,31 +12,32 @@ Confirm the target `kotlin-compiler-embeddable-<X>.jar` exists on Maven Central 
 module** (`unzip -l | grep 'org/jetbrains/kotlin/cli/metadata'`). If it doesn't bundle it, the metadata-klib pipeline
 needs an extra artifact / vendoring — the plan changes. (2.4.0: bundled, 38 classes — preflight passed.)
 
-### 1. Scope with Fable against the upstream tag — NOT from memory (the highest-leverage step)
+### 1. Scope against the upstream tag — NOT from memory (the highest-leverage step)
 Point `upstream/` at the target release tag (`git --git-dir=upstream/.git`; note `vX` and `build-X-*` can co-locate on
-one commit). Have **Fable read the real vX source** and produce: (a) the **CERTAIN-BREAKS** list — every internal/
-unstable API kotc uses that renamed/reshaped, with file:line; (b) the **behavioral watch-list** — changes that
-*compile* but could silently miscompile. This front-loads the reasoning; the rest is mostly mechanical. Fable's
-verified delta beats speculation — 2.4.0 had ~9 certain breaks in ~5 pipeline files, all found this way.
+one commit). **Read the real vX source** (a read-only `Plan`/`Explore` fan-out is the cheap way) and produce: (a) the
+**CERTAIN-BREAKS** list — every internal/unstable API kotc uses that renamed/reshaped, with file:line; (b) the
+**behavioral watch-list** — changes that *compile* but could silently miscompile. This front-loads the reasoning; the
+rest is mostly mechanical. A source-verified delta beats speculation — 2.4.0 had ~9 certain breaks in ~5 pipeline
+files, all found this way.
 
 ### 2. Bump the dependencies (minutes)
 - `toolchain/kotc/build.gradle.kts` (kotlin plugin + `kotlin-compiler-embeddable`).
 - Any test fixture or packaged metadata that embeds the Kotlin compiler version.
 - `upstream/` checkout at the tag; the doc/pin references (step 7).
 
-### 3. Compile-fix inside-out (the bulk — mechanical Opus grind, ~1-2 days)
+### 3. Compile-fix inside-out (the bulk — mechanical grind, ~1-2 days)
 Fix the CERTAIN-BREAKS in dependency order: `Main.kt` (removed args) → `ClrCliPipeline.kt` (pipeline artifacts/phases)
 → frontend phases (artifact ctors, `getCompilerExtensions`, klib loading) → `ClrDefaultImports.kt` (renames) →
 `ClrMetadataKlibPipeline.kt` (**stop here — step 4 first**) → `ClrTypeInjection.kt` (plugin/registrar DSL) →
 `BirEmitter*` residue (expected small — it sits on the stable IR tree). Each break is a compiler error pointing at it.
 
-### 4. The metadata-klib serializer — the ONE recurring gating risk (Fable)
+### 4. The metadata-klib serializer — the ONE recurring gating risk
 The const-value serializer is where a bump gets *stuck*, not just delayed. Kotlin keeps evolving how const values bake
 into the metadata klib (2.4.0 deleted `constValueProvider`/the IR fallback). **Prefer adopting upstream's own
 serializer** (2.4.0: `fir/pipeline/Fir2KlibMetadataSerializer.kt` — the HMPP/actualization-aware one kotc hand-rolled)
 over hand-patching. Then **EMPIRICALLY verify const baking**: rebuild the klib, compile an app using `Int.MIN_VALUE`,
-`Double.POSITIVE_INFINITY` (the historical failures), run it. If they vanish → a real design problem (Fable). Do NOT
-trust the gate to find this indirectly — check the klib directly.
+`Double.POSITIVE_INFINITY` (the historical failures), run it. If they vanish → a real design problem: root-cause it
+holistically, do not patch the symptom. Do NOT trust the gate to find this indirectly — check the klib directly.
 
 ### 5. Fragile watch-points — verify empirically, never assume "unchanged"
 kotc pokes several **internal/unstable FIR surfaces**; a bump can silently break any of them:
@@ -69,11 +70,12 @@ their `// NOTE (CLR)` / `// #76` markers) + the `clr/` actuals; write CLR actual
 Then the P6 sweep: `CLAUDE.md` / `README.md` / the docs' "pinned to X" lines. Do the doc sweep only AFTER green (writing
 "2.X" while the gate is red is premature).
 
-## Fable-vs-Opus split (plan the budget this way)
-- **Fable (front-load; high-leverage):** step 1 (the verified delta + watch-list), step 4 (the const-serializer choice
-  + coverage), step 5/6 (behavioral-regression root-cause), step 7 (the 3-way classification + new-actual enumeration).
-- **Opus (mechanical grind):** step 3 (the rename/reshape fix loop), step 7's merge + actuals, the gate-and-fix cycles,
-  the doc sweep. These need no Fable and can run after Fable is unavailable.
+## Reasoning-vs-grind split (plan the budget this way)
+- **Reasoning-heavy (front-load; high-leverage):** step 1 (the verified delta + watch-list), step 4 (the
+  const-serializer choice + coverage), step 5/6 (behavioral-regression root-cause), step 7 (the 3-way classification +
+  new-actual enumeration). Do these FIRST and carefully; they decide how mechanical the rest is.
+- **Mechanical grind (parallelizable across worktree-isolated specialists):** step 3 (the rename/reshape fix loop),
+  step 7's merge + actuals, the gate-and-fix cycles, the doc sweep.
 
 ## Effort
 2.4.0 (the TestFlight): compiler half ~3-5 days (mostly grind + the one const-serializer decision); stdlib refresh ~1
