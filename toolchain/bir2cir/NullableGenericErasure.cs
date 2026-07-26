@@ -4,24 +4,21 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// Erase a nullable generic-parameter return (`fun <T> …(): T?`, kotc-lowered to `ret=gp:X` + `retNullable=true`)
-// to a `System.Object` return — the only CLR representation of a generic `T?` that can carry a real null for a
-// VALUE-type instantiation. The method body's `ldnull` (null case) then stays a genuine null; value returns are
-// boxed by ilemit's return/cond emitters; and the CALL boundary (ilemit) converts the object back to the caller's
-// statically-known Nullable<V> (unbox.any) or reference type (castclass). Runs in EVERY build so the ref.dll and
-// rt.dll signatures — and the app's view of them — agree. A no-op for a method that is not a nullable-generic return.
-static class NullableGenericReturnErasure
+// Erase nullable generic-parameter positions into their CLR-safe representation and preserve their Kotlin surface.
+// A bare generic `T?` return and every nested `Nullable(Tv)` position use `System.Object` where a uniform CLR slot must
+// carry either a real null or a boxed value-type instance. Call/read boundaries re-narrow to the statically known type.
+// Runs in every build so ref.dll, rt.dll, and the app's view of their signatures agree.
+static class NullableGenericErasure
 {
     public static void Apply(JsonNode root)
     {
         if (root is not JsonObject o) return;
-        // #18 ROUND-TRIP RECORD (runs BEFORE the erasure below): capture the PRE-erasure return type of every method
-        // whose return is a CONSTRUCTED generic / array / byref carrying a NESTED `Nullable(Tv)` (`fun <T> …(): Holder<T?>`
-        // — the atomicArrayOfNulls shape). The erasure turns that arg into `object` (`Holder<object>`), which facadegen
-        // then CANNOT read back — it degrades the whole re-imported factory/member return to `Any?`, hiding every member
-        // of the generic result. Stash the pre-erasure node so RoundtripMetadata stamps it as [KotlinNullableGeneric] and
-        // facadegen restores `Holder<T?>`. See RecordNullableGenericRets.
-        RecordNullableGenericRets(o);
+        // #18/#147 ROUND-TRIP RECORD (runs BEFORE the erasure below): capture each declaration slot whose constructed
+        // generic / array / byref / function type carries a NESTED `Nullable(Tv)` (`Holder<T?>` / `(T?)->R`, including
+        // method and constructor params, returns, fields, and properties). The erasure turns that slot into `object`, which
+        // facadegen cannot infer back. Keep the pre-erasure TypeNode opaque until RoundtripMetadata stamps
+        // [KotlinNullableGeneric] on that exact CLR declaration slot.
+        RecordNullableGenericSlots(o);
         ApplyRec(o);
         // NESTED / STANDALONE nullable-generic TYPE-ARG erasure (FIX 1 part-2). A `T?` that kotc left as the
         // inline token `nullable:gp:T` — nested in a `clrg:Owner[...]` arg list (e.g.
@@ -34,30 +31,60 @@ static class NullableGenericReturnErasure
         EraseNullableGpAllStrings(o);
     }
 
-    // #18: for every method whose return type carries a NESTED `Nullable(Tv)` (a `Holder<T?>` / `Array<T?>` / `Ref<T?>` —
-    // NOT a bare top-level `T?`, which is a different object-erasure axis), record the PRE-erasure return TypeNode on the
-    // method as the OPAQUE JSON STRING `nullableGenericRet`. Stored as a STRING (not a `{t:…}` type node) so the later
-    // ReferenceNullableStrip / BirTypeLowering passes — which walk and rewrite structured type slots — leave it untouched;
-    // RoundtripMetadata reads it back at stamp time and carrier-encodes it into [KotlinNullableGeneric]. Recurses into
-    // nested types so a member of a generic class (`AtomicArray<T>.get(): AtomicRef<T?>`) is covered as well.
-    static void RecordNullableGenericRets(JsonObject o)
+    // Record the PRE-erasure TypeNode on every declaration slot carrying a nested `Nullable(Tv)`. Return slots use the
+    // existing `nullableGenericRet` hand-off; params/fields/properties use `nullableGeneric` on the slot itself. These
+    // are opaque JSON STRINGS (not structured type slots), so ReferenceNullableStrip / BirTypeLowering leave them
+    // untouched until RoundtripMetadata carrier-encodes them. A bare top-level `T?` is deliberately excluded: it is the
+    // distinct dual-representation problem tracked by #86, not the nested constructed-type carrier handled here.
+    static void RecordNullableGenericSlots(JsonObject o)
     {
         if (o["methods"] is JsonArray methods)
             foreach (var m in methods)
-                if (m is JsonObject mo
-                    && TypeJson.Read(mo["ret"]) is TypeNode ret
-                    && ret is not TypeNode.Nullable { Of: TypeNode.Tv }   // exclude the bare top-level `T?` return
-                    && HasRestorableNullableTv(ret))                      // a nested `Nullable(Tv)` facadegen can walk back
-                    mo["nullableGenericRet"] = TypeNode.ToJson(ret);
+                if (m is JsonObject mo)
+                {
+                    RecordNullableGenericSlot(mo, "ret", "nullableGenericRet");
+                    RecordNullableGenericParams(mo["params"]);
+                }
+        RecordNullableGenericCtorParams(o["ctors"]);
+        RecordNullableGenericDecls(o["fields"]);
+        RecordNullableGenericDecls(o["properties"]);
         if (o["types"] is JsonArray types)
-            foreach (var t in types) if (t is JsonObject to) RecordNullableGenericRets(to);
+            foreach (var t in types) if (t is JsonObject to) RecordNullableGenericSlots(to);
     }
 
-    // True iff `t` carries a `Nullable(Tv)` reachable purely through Fqn-args / Array / ByRef / Nullable — i.e. a shape
-    // facadegen's RestoreNullableGeneric can walk in parallel with the emitted IL type. A `Nullable(Tv)` nested INSIDE an
-    // `Fn` (a `(T?) -> R` delegate return arg) is DELIBERATELY excluded: facadegen restores delegate internals via its
-    // own NRT-threaded MapTFn path (and NullableFuncReturnErasure owns the func-return erasure), so recording it would
-    // strand the fn-shaped return on a non-NRT fallback. Records exactly the constructed-generic / array / byref returns.
+    static void RecordNullableGenericCtorParams(JsonNode node)
+    {
+        if (node is not JsonArray a) return;
+        foreach (var item in a)
+            if (item is JsonObject ctor) RecordNullableGenericParams(ctor["params"]);
+    }
+
+    static void RecordNullableGenericParams(JsonNode node)
+    {
+        if (node is not JsonArray a) return;
+        foreach (var item in a)
+            if (item is JsonObject p) RecordNullableGenericSlot(p, "type", "nullableGeneric");
+    }
+
+    static void RecordNullableGenericDecls(JsonNode node)
+    {
+        if (node is not JsonArray a) return;
+        foreach (var item in a)
+            if (item is JsonObject d) RecordNullableGenericSlot(d, "type", "nullableGeneric");
+    }
+
+    static void RecordNullableGenericSlot(JsonObject decl, string typeKey, string factKey)
+    {
+        if (TypeJson.Read(decl[typeKey]) is TypeNode t
+            && t is not TypeNode.Nullable { Of: TypeNode.Tv }
+            && HasRestorableNullableTv(t))
+            decl[factKey] = TypeNode.ToJson(t);
+    }
+
+    // True iff `t` carries a `Nullable(Tv)` reachable through a CLR-representable declaration shape. A non-suspend `Fn`
+    // is a real delegate in CIR, so facadegen can walk its Invoke signature in parallel with the recorded Kotlin fn node.
+    // A suspend fn is excluded: BirTypeLowering erases the whole value to object and its distinct suspend-fn carrier owns
+    // restoration, so there is no physical delegate shape for this carrier to align with.
     static bool HasRestorableNullableTv(TypeNode t) => t switch
     {
         TypeNode.Nullable { Of: TypeNode.Tv } => true,
@@ -65,7 +92,11 @@ static class NullableGenericReturnErasure
         TypeNode.Fqn { Args: { } args } => args.Any(HasRestorableNullableTv),
         TypeNode.Array a => HasRestorableNullableTv(a.Elem),
         TypeNode.ByRef b => HasRestorableNullableTv(b.Of),
-        _ => false,   // Fn / bare Fqn / Tv / Oblivious: no restorable nested Nullable(Tv)
+        TypeNode.Fn { Suspend: false } fn =>
+            HasRestorableNullableTv(fn.Ret)
+            || fn.Params.Any(HasRestorableNullableTv)
+            || (fn.Recv != null && HasRestorableNullableTv(fn.Recv)),
+        _ => false,   // suspend Fn / bare Fqn / Tv / Oblivious: no restorable nested Nullable(Tv)
     };
 
     static void ApplyRec(JsonObject o)
@@ -653,4 +684,3 @@ static class NullableGenericReturnErasure
         }
     }
 }
-

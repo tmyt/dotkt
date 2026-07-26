@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// The TRANSFORM-SIDE twin of NullableGenericReturnErasure: erase a nullable FUNCTION-TYPE return
+// The TRANSFORM-SIDE twin of NullableGenericErasure: erase a nullable FUNCTION-TYPE return
 // (`(T) -> R?`, kotc-tokenized `func:nullable:<ret>:<args>`) to a `Func<…, object>` slot. Rationale: the open
 // stdlib view (`nullable:gp:R`) and a caller's value instantiation (`nullable:int`) must lower to the SAME
 // delegate type or the passed delegate is reinterpreted through a foreign Invoke signature (Func<int,int> read
@@ -15,7 +15,7 @@ using DotKt.Bir;
 //   1. every `func:` TOKEN whose return segment is `nullable:`-marked (param slots, call sig strings,
 //      newDelegate/newClosure/delegateInvoke funcTypes, nested occurrences) — ret segment -> `object`;
 //   2. the backing lambda method of an erased newDelegate/newClosure — its `ret` -> `object` (+ the return-value
-//      expression types, mirroring NullableGenericReturnErasure.RetypeReturns);
+//      expression types, mirroring NullableGenericErasure.RetypeReturns);
 //   3. local dataflow repair where an erased delegateInvoke result lands in a typed var: a `gp:X` var is retyped
 //      to `object` (it must still hold the null); a `nullable:V`/reference var keeps its type and the init is
 //      wrapped in a `cast` (ilemit's universal unbox.any/castclass); a later var re-narrowing an object-retyped
