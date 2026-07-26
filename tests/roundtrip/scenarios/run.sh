@@ -35,12 +35,13 @@ done
 declare -A RT_XFAIL=(
 	# #109/#86: the cross-module nullable VALUE-TYPE generic gap this section was ADDED to expose. The lib's `T?` in
 	# PARAM position (firstOr<T>(x: T?, …)) and FIELD position (NBox<T>(val value: T?)) is kept as bare non-null `T`
-	# for the round-trip (#86) and the nullable-generic re-import carrier [KotlinNullableGeneric] is method-RETURN-only
-	# (#147/#127) — so on re-import the ctor/param restores as `Int`, not `Int?`. The consumer then FAILS TO COMPILE:
+	# for the round-trip (#86). #147's [KotlinNullableGeneric] carrier covers `Holder<T?>`-style NESTED positions, not
+	# this bare top-level `T?` dual representation — so on re-import the ctor/param restores as `Int`, not `Int?`.
+	# The consumer then FAILS TO COMPILE:
 	# `NBox<Int>(null)` / `firstOr<Int>(null, …)` -> "null cannot be a value of a non-null type 'Int'". This is the
 	# CONCRETE cross-module value-type manifestation of #86 (invisible to every other gate, which drives only T=String);
-	# when #86/#147 land the param/field nullability, this section starts compiling+running (7/3/9/4/x) -> prune it.
-	[roundtrip-nullable-vt-generic]="#109/#86 (+#147/#127): cross-module nullable value-type generic T? in param/field position restores as bare non-null T -> consumer fails to compile (NBox<Int>(null): null cannot be a value of a non-null type 'Int'); the value-type axis of #86, exposed on purpose"
+	# when #86 lands the bare param/field representation, this section starts compiling+running (7/3/9/4/x) -> prune it.
+	[roundtrip-nullable-vt-generic]="#109/#86/#127: cross-module nullable value-type generic bare T? in param/field position restores as non-null T -> consumer fails to compile (NBox<Int>(null): null cannot be a value of a non-null type 'Int'); distinct from #147's nested constructed-type carrier"
 )
 
 # MIGRATED to the in-process ProjectReference round-trip lane (tests/roundtrip/consumer RoundtripTests, driven by
@@ -901,6 +902,29 @@ class Holder {
     val block: suspend () -> Int = { 7 }            // suspend function-type property (#47)
     val ext: suspend Int.() -> Int = { this + 1 }   // suspend EXTENSION function-type property (#47 combined cone)
 }
+
+// #147: every declaration slot nesting Nullable(Tv) must carry its pre-erasure shape, not only method returns.
+annotation class ClrField
+class Slot<T>(val value: T)
+fun <T> acceptsNullable(slot: Slot<T?>): Int = if (slot.value == null) 0 else 1
+class GenericSlots<T>(initial: Slot<T?>) {
+    @ClrField val fieldSlot: Slot<T?> = initial
+    val propertySlot: Slot<T?> get() = fieldSlot
+    fun accept(slot: Slot<T?>): Int = if (slot.value == null) 0 else 1
+    fun acceptMany(vararg slots: Slot<T?>): Int = slots.size
+}
+class FunctionSlots<T>(initial: (T?) -> String) {
+    @ClrField val functionField: (T?) -> String = initial
+    val functionProperty: (T?) -> String get() = functionField
+}
+interface SlotConsumer<T> { fun bridgeAccept(slot: Slot<T?>): String }
+open class SlotBase<T> { fun bridgeAccept(slot: Slot<T?>): String = slot.value?.toString() ?: "null" }
+class SlotDerived<T> : SlotBase<T>(), SlotConsumer<T>
+EOF
+cat > "$PR/lib/twin.kt" <<'EOF'
+package rtprops2
+class Slot<T>(val value: T)
+fun <T> acceptsNullable(slot: Slot<T?>): Int = if (slot.value == null) 0 else 1
 EOF
 cat > "$PR/app/app.kt" <<'EOF'
 import dotkt.support.blockOn
@@ -917,7 +941,7 @@ EOF
 CLR_TYPES_METADATA="" "$LAUNCHER" "$PR/lib" -no-stdlib -classpath "$CP" -d "$PR/libbir" >/dev/null 2>&1 || true
 emit_il "$PR/libil" PropLib "$PR/libbir"/*.bir.json
 dotnet "$RETARGET_DLL" "$PR/libil/PropLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" "$PR/meta" --compile-refs "$REFS$PR/libil/PropLib.dll" rtprops.Holder System.Threading.Monitor >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" "$PR/meta" --compile-refs "$REFS$PR/libil/PropLib.dll" rtprops.Holder rtprops.GenericSlots rtprops.FunctionSlots rtprops.SlotDerived rtprops.LibKt rtprops2.TwinKt System.Threading.Monitor >/dev/null 2>&1 || true
 write_coharness "$PR/app"
 CLR_TYPES_METADATA="$PR/meta" "$LAUNCHER" "$PR/app" -no-stdlib -classpath "$CP" -d "$PR/appbir" >/dev/null 2>&1 || true
 emit_il "$PR/appil" PropApp --ref "$PR/libil/PropLib.dll" "$PR/appbir"/*.bir.json
@@ -938,9 +962,59 @@ try:
 except Exception: print(0)
 PY
 )
+# #147 carrier surface: the constructor parameter, method parameter, CLR property, and raw FieldDef all restore
+# `Slot<T?>`. This direct metadata assertion deliberately isolates the raw-field TYPE from the separate external
+# raw-field access path; the ProjectReference consumer exercises constructor/method/property inference and runtime.
+pr_nullable_generic_slots=$(python3 - "$PR/meta" <<'PY'
+import json,sys
+try:
+    d=json.load(open(sys.argv[1]))
+    t=next(x for x in d.get("types",[]) if x.get("dotNet","").startswith("rtprops.GenericSlots`"))
+    def slot_tv(n):
+        name=n.get("name","") if isinstance(n,dict) else ""
+        a=n.get("args") if isinstance(n,dict) and n.get("t")=="fqn" and (name=="Slot" or name.endswith(".Slot")) else None
+        q=a[0] if isinstance(a,list) and len(a)==1 else {}
+        v=q.get("of",{}) if q.get("t")=="nullable" else {}
+        return v.get("t")=="tv" and v.get("scope")=="type" and v.get("i")==0
+    def fn_tv(n):
+        ps=n.get("params") if isinstance(n,dict) and n.get("t")=="fn" else None
+        q=ps[0] if isinstance(ps,list) and len(ps)==1 else {}
+        v=q.get("of",{}) if q.get("t")=="nullable" else {}
+        return v.get("t")=="tv" and v.get("scope")=="type" and v.get("i")==0
+    ctor=slot_tv(t.get("ctors",[{}])[0].get("params",[{}])[0].get("type",{}))
+    method=next((slot_tv(f.get("params",[{}])[0].get("type",{}))
+                 for f in t.get("funs",[]) if f.get("name")=="accept"),False)
+    vararg=next((slot_tv(f.get("params",[{}])[0].get("type",{}))
+                 and f.get("params",[{}])[0].get("mods",{}).get("vararg") is True
+                 for f in t.get("funs",[]) if f.get("name")=="acceptMany"),False)
+    props={p.get("name"):slot_tv(p.get("type",{})) for p in t.get("props",[])}
+    ft=next(x for x in d.get("types",[]) if x.get("dotNet","").startswith("rtprops.FunctionSlots`"))
+    fctor=fn_tv(ft.get("ctors",[{}])[0].get("params",[{}])[0].get("type",{}))
+    fprops={p.get("name"):fn_tv(p.get("type",{})) for p in ft.get("props",[])}
+    dt=next(x for x in d.get("types",[]) if x.get("dotNet","").startswith("rtprops.SlotDerived`"))
+    bridge=next((slot_tv(f.get("params",[{}])[0].get("type",{}))
+                 for f in dt.get("funs",[]) if f.get("name")=="bridgeAccept"),False)
+    def nullable_fun_slot(pkg, expected):
+        file=next(x for x in d.get("files",[]) if x.get("pkg")==pkg)
+        fun=next(x for x in file.get("funs",[]) if x.get("name")=="acceptsNullable")
+        n=fun.get("params",[{}])[0].get("type",{})
+        args=n.get("args") if n.get("t")=="fqn" and n.get("name")==expected else None
+        q=args[0] if isinstance(args,list) and len(args)==1 else {}
+        v=q.get("of",{}) if q.get("t")=="nullable" else {}
+        return v.get("t")=="tv" and v.get("scope")=="method" and v.get("i")==0
+    clash_a=nullable_fun_slot("rtprops", "rtprops.Slot")
+    clash_b=nullable_fun_slot("rtprops2", "rtprops2.Slot")
+    print(1 if ctor and method and vararg and props.get("propertySlot") and props.get("fieldSlot")
+          and fctor and fprops.get("functionProperty") and fprops.get("functionField") and bridge
+          and clash_a and clash_b else 0)
+except Exception: print(0)
+PY
+)
 pr_ok=0; [[ "$practual" == "$prexpected" && "$pr_ext_recv" -ge 1 ]] && pr_ok=1
 section_result roundtrip-property-type "$pr_ok" "a property's nullability (String?) + suspend-fn-type (suspend ()->T, suspend R.()->T incl. restored receiver) re-import directly as the property type #47" \
 	"$(printf -- 'ext_recv_in_meta=%s\n--- expected ---\n%s\n--- actual ---\n%s' "$pr_ext_recv" "$prexpected" "$practual")"
+check_output roundtrip-nullable-generic-slots "1" "$pr_nullable_generic_slots" \
+	"the [KotlinNullableGeneric] pre-erasure shape restores on params/properties/raw fields, function types, and late synthesized bridges #147"
 
 # ----- INTERFACE-COMPANION statics round-trip (#132): `interface I { companion object { val X; fun f() } }` -----
 # kotc FLATTENS an interface's plain companion object to the interface's OWN static fields/methods (BirEmitterDeclarations

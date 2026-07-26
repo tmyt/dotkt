@@ -16,7 +16,7 @@ using DotKt.Bir;
 // facadegen's BCL reverse-map cannot tell a collapsed read-only `List<T>` from a genuine `MutableList<T>`, so it
 // surfaces `Box<MutableList<T>>` cross-module and REJECTS a `Box<List<String>>` value.
 //
-// So — mirroring the #18 [KotlinNullableGeneric] precedent (NullableGenericReturnErasure.RecordNullableGenericRets)
+// So — mirroring the #18/#147 [KotlinNullableGeneric] precedent (NullableGenericErasure's positional records)
 // and the positional-fact model (suspendFnType, retNothing, nullableGenericRet) — record the PRE-collapse Kotlin
 // type of every decl-surface slot (method return/param, ctor param, property, field) that nests a collapsing
 // read-only collection, as the OPAQUE canonical TypeNode JSON STRING. Stored as a string (not a `{t:…}` node) so the

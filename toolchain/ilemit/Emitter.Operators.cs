@@ -284,7 +284,7 @@ sealed partial class Emitter
             return want;
         }
         // A value-type / generic-param branch flowing into an `object` want (an erased generic `T?` return whose
-        // branch type-tag was retyped to object by bir2cir's NullableGenericReturnErasure) must box; a `null` branch
+        // branch type-tag was retyped to object by bir2cir's NullableGenericErasure) must box; a `null` branch
         // already left a real null ref (EmitExpr(null-const) is a reference), so it is unaffected.
         if (want == typeof(object) && got != null && NeedsBoxToRef(got)) { _il.Emit(OpCodes.Box, got); return want; }
         return got;

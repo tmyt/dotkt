@@ -39,7 +39,12 @@ import p2.wrap
 import kotlinx.genov.atomic
 import kotlinx.genov.arrOf
 import genq.Slot
+import genq.GenericSlots
+import genq.FunctionSlots
+import genq.SlotDerived
 import genq.holderOf
+import genq.invokeNullable
+import genq.unwrapSlot
 import listparam.takesList
 import listparam.takesMutable
 import listparam.takesMap
@@ -141,6 +146,30 @@ class GenericMetadataRoundtripTests {
         ClassicAssert.AreEqual("empty", e ?: "empty")   // empty
         val c: Slot<String?> = h.cell()           // Slot<String?>  (member tv(type,0) restored)
         ClassicAssert.AreEqual("cell-null", c.value ?: "cell-null")  // cell-null
+
+        // #147: unlike the return carrier above, parameter / constructor / property declaration slots also need the
+        // pre-erasure Slot<T?> shape. `unwrapSlot` must infer T from its parameter without an expected return type.
+        // The raw-field slot is asserted directly on facadegen's structured metadata in verify-roundtrip: a separately
+        // tracked raw-field access path currently routes an injected member through a nonexistent getter.
+        val inferred = unwrapSlot(Slot<String?>("param"))
+        ClassicAssert.AreEqual("param", inferred)
+
+        val slots = GenericSlots(Slot<String?>("field"))
+        val property: Slot<String?> = slots.propertySlot
+        ClassicAssert.AreEqual("field", property.value)
+
+        // A plain function type is a CLR delegate, so its own parameter/return tree must be restored from the same
+        // carrier. The explicitly nullable lambda parameter makes T infer as String rather than degrading to Any?.
+        val invoked = invokeNullable { value: String? -> value ?: "fn-null" }
+        ClassicAssert.AreEqual("fn-null", invoked)
+        val functionSlots = FunctionSlots<String> { value -> value ?: "property-null" }
+        val functionProperty: (String?) -> String = functionSlots.functionProperty
+        ClassicAssert.AreEqual("property-null", functionProperty(null))
+
+        // The public CLR forwarding slot is synthesized after the initial erasure pass. Its parameter carrier must be
+        // propagated from SlotConsumer<T> and remain callable through the concrete derived type after re-import.
+        val derived = SlotDerived<String>()
+        ClassicAssert.AreEqual("bridge", derived.accept(Slot<String?>("bridge")))
     }
 
     // ktproj-listparam (#27): kotlin.collections.* params surface as BCL ifaces in the dll; facadegen reverse-maps

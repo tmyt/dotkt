@@ -5,8 +5,19 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
-### Fixed
+### Added
 
+- **Cross-target (target RID != host RID) reference-asset selection is now covered by the gate
+  ([tmyt/dotkt#192], area:ilemit, area:packaging).** `tests/msbuild/run.sh` gained
+  `ktproj-crosstarget-rid-assets`: it builds a throwaway RID-implementation package from
+  `tests/msbuild/rid-probe/` and runs a real `dotnet build -r <rid>` for a RID derived to differ from the host,
+  asserting that ilemit loads the `runtimes/<rid>/lib` asset of the TARGET RID — on an exact-RID hit and through
+  the RID fallback chain (`win-x64` to `win`, `linux-x64` to `unix`), under both the portable RID graph and the
+  built-in chain. The package's RID-neutral placeholder omits a member its compile surface declares, so a wrong
+  selection is a red build rather than a subtly different program; the scenario additionally replays the emit at
+  the host RID and requires that replay to fail, so the assertion cannot pass vacuously. Previously the RID flow
+  was only exercised at the host RID and cross-target selection had been confirmed by hand.
+### Fixed
 - **bir2cir ([tmyt/dotkt#228], area:bir2cir): an auto-property no longer emits a same-named field, so
   reflection-driven .NET libraries (JSON.NET) can serialize a Kotlin type again.** An accessor-routed property
   emitted its backing field under the property's own name, so the CLR type carried `Value` as BOTH a property and a
@@ -23,6 +34,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   spelled from that field's name. Documented in `docs/dotkt-semantics.md` §5h and
   `docs/design-clr-property-model.md`; regression in
   `tests/interop/consumer/fixtures/AutoPropertyBackingFieldTests.kt`.
+
+- **bir2cir/facadegen ([tmyt/dotkt#147], area:bir2cir): nested nullable-generic shapes now round-trip through every
+  declaration slot.** `[KotlinNullableGeneric]` records the pre-erasure Kotlin `Holder<T?>` shape on method and
+  constructor parameters, fields, and properties as well as returns; facadegen restores that shape before NRT
+  composition, including ordinary function-type trees and public interface bridges synthesized after erasure. Restored
+  user types keep their namespace-qualified identity. A separately compiled Kotlin consumer now retains generic
+  inference and member types instead of seeing `Any?`, while metadata regressions cover raw fields and same-simple-name
+  types directly. Bare top-level `T?` remains the distinct dual-representation work tracked by #86.
 
 ## 0.9.7 (2026-07-22)
 
