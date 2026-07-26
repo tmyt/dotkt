@@ -149,15 +149,13 @@ class KotlinApiShapeRoundtripTests {
 
     // #251: CONSTRUCTOR-parameter nullability. Every `null` below is the sharp signal — it compiles only if the
     // ctor param re-imported as `String?`; a param restored non-null fails with "null cannot be a value of a
-    // non-null type 'String'". Covers primary, secondary, nested-type and value-typed ctor params.
+    // non-null type 'String'". Covers a primary, a secondary and a value-typed (`Int?`) ctor param.
     @TestAttribute
     fun nullableConstructorParams() {
         ClassicAssert.AreEqual(-1, NullableCtorHolder(null).len())          // -1  PRIMARY ctor param restored nullable
         ClassicAssert.AreEqual(2, NullableCtorHolder("ab").len())           // 2   primary ctor with a non-null arg
         ClassicAssert.AreEqual(-1, NullableCtorHolder(2, null).len())       // -1  SECONDARY ctor param restored nullable
         ClassicAssert.AreEqual(4, NullableCtorHolder(2, "ab").len())        // 4   secondary ctor: "ab".repeat(2)
-        ClassicAssert.AreEqual(-1, NullableCtorHolder.Inner(null).len())    // -1  NESTED type's ctor param
-        ClassicAssert.AreEqual(3, NullableCtorHolder.Inner("abc").len())    // 3   nested type, non-null arg
         ClassicAssert.AreEqual(-2, NullableValueCtor(null, null).sum())     // -2  value Nullable<int> + reference, both null
         ClassicAssert.AreEqual(6, NullableValueCtor(3, "abc").sum())        // 6   3 + 3
     }

@@ -13,4 +13,9 @@ fun bidirectionalAdd(a: Int, b: Int): Int = a + b
 class BidirectionalNullableCtor(val label: String?) {
     fun labelLength(): Int = label?.length ?: -1
     fun takeNullable(other: String?): Int = other?.length ?: -1
+
+    // The NESTED-type axis of the same walk: a nested class's ctor param must be annotated too.
+    class Nested(val tag: String?) {
+        fun tagLength(): Int = tag?.length ?: -1
+    }
 }
