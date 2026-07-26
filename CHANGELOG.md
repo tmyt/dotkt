@@ -7,7 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Added
 
-- **Gate: cross-target (target RID != host RID) reference-asset selection is now verified automatically
+- **Cross-target (target RID != host RID) reference-asset selection is now covered by the gate
   ([tmyt/dotkt#192], area:ilemit, area:packaging).** `tests/msbuild/run.sh` gained
   `ktproj-crosstarget-rid-assets`: it builds a throwaway RID-implementation package from
   `tests/msbuild/rid-probe/` and runs a real `dotnet build -r <rid>` for a RID derived to differ from the host,

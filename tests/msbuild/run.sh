@@ -151,7 +151,9 @@ rm -rf "$rid"
 mkdir -p "$rid/feed" "$rid/asm" "$rid/app"
 
 # Derive the HOST RID and pick a target RID that genuinely differs, so the scenario is meaningful on any dev box.
-rid_host="$(dotnet --info 2>/dev/null | sed -n 's/^[[:space:]]*RID:[[:space:]]*//p' | head -1)"
+# Every extraction below ends in `|| true`: under this script's `set -euo pipefail` a non-matching grep/sed pipeline
+# would otherwise kill the whole gate mid-scenario instead of reaching the explicit diagnosis that follows it.
+rid_host="$(dotnet --info 2>/dev/null | sed -n 's/^[[:space:]]*RID:[[:space:]]*//p' | head -1)" || true
 if [[ -z "$rid_host" ]]; then
 	case "$(uname -s)" in
 		MINGW*|MSYS*|CYGWIN*|Windows_NT) rid_host=win-x64 ;;
@@ -265,7 +267,9 @@ elif ! grep -qF "ilemit: 'DotKt.Tests.Rid.Family' has 2 RID builds; selected run
 elif [[ ! -f "$rid_asm" ]]; then
 	rid_msg="no emitted assembly at ${rid_asm#$ROOT/}"
 elif ! LC_ALL=C grep -qa 'TargetOnlyMarker' "$rid_asm" || ! LC_ALL=C grep -qa 'FamilyOnlyMarker' "$rid_asm"; then
-	# The emitted metadata itself must name both RID-asset-only members.
+	# Confirm in the OUTPUT, not just in the build's exit status, that the emit linked both RID-asset-only members.
+	# A wrong selection already fails the build above, so this cannot be the first assertion to notice a regression;
+	# it exists so the gate names the artifact-level fact instead of trusting the exit status alone.
 	rid_msg="the emitted assembly does not reference the RID-asset-only marker members"
 fi
 
@@ -273,7 +277,7 @@ fi
 # the CIR and the resolved reference set stay exactly what MSBuild produced, so neither needs a second build.
 rid_cmd=""
 if [[ -z "$rid_msg" ]]; then
-	rid_cmd="$(grep -oE 'dotnet "[^"]*ilemit\.dll".*' "$rid/build.log" | head -1)"
+	rid_cmd="$(grep -oE 'dotnet "[^"]*ilemit\.dll".*' "$rid/build.log" | head -1)" || true
 	[[ -n "$rid_cmd" ]] || rid_msg="could not recover the ilemit command line from the build log"
 fi
 rid_replay() { # <log-name> <literal argument to replace (non-empty)> <replacement>; echoes the exit status
@@ -287,7 +291,7 @@ rid_replay() { # <log-name> <literal argument to replace (non-empty)> <replaceme
 # hard-coded family chain instead of the portable graph's #import closure; that last-resort path must still reach the
 # family asset, so the same two selections (and a successful emit) must come out.
 if [[ -z "$rid_msg" ]]; then
-	rid_graph_arg="$(grep -oE -- '--rid-graph-path "[^"]*"' <<<"$rid_cmd" | head -1)"
+	rid_graph_arg="$(grep -oE -- '--rid-graph-path "[^"]*"' <<<"$rid_cmd" | head -1)" || true
 	rid_bi_rc=substitution-failed
 	[[ -z "$rid_graph_arg" ]] \
 		|| rid_bi_rc="$(rid_replay builtin-chain "$rid_graph_arg" "--rid-graph-path \"$rid/absent-rid-graph.json\"")"
