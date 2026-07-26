@@ -267,6 +267,12 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	// inner-class `new`'s enclosing-instance arg, the spliced default — renders the same temp read. Installed and
 	// removed around the owning call's emission (`expr`), which wraps the call in the `valueBlock` declaring the temps.
 	internal val evalOnceSubst = java.util.IdentityHashMap<org.jetbrains.kotlin.ir.expressions.IrExpression, String>()
+	// The ordered temp declarations of the call currently being emitted. The pre-pass registers provided
+	// receiver/argument values here; `filledArgs` adds an OMITTED default after it has rendered that default in the
+	// callee's substituted scope. Keeping both in one parameter-indexed list preserves evaluation order while allowing a
+	// later default to read the first default's one local (`a = bump(), b = a * 10`).
+	internal val callEvalOnceTemps =
+		java.util.IdentityHashMap<org.jetbrains.kotlin.ir.expressions.IrExpression, MutableList<Pair<Int, String>>>()
 	// Function-local classes lifted to top-level synthetic types: the outer locals they capture (prepended to the
 	// ctor at construction sites). Keyed by the IrClass.
 	internal val localClassCaptures = java.util.IdentityHashMap<IrClass, List<IrValueDeclaration>>()

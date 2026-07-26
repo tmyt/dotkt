@@ -99,8 +99,13 @@ internal fun BirEmitter.expr(node: IrExpression): String {
  *  alone. */
 internal fun <T> BirEmitter.withCallValuesBoundOnce(call: IrExpression, emit: () -> T): Pair<List<String>, T> {
 	val hoists = hoistCallValuesReadByDefaults(call)
-	val out = try { emit() } finally { hoists.forEach { evalOnceSubst.remove(it.first) } }
-	return hoists.map { it.second } to out
+	val temps = hoists.mapTo(ArrayList()) { (order, _, stmt) -> order to stmt }
+	val previous = callEvalOnceTemps.put(call, temps)
+	val out = try { emit() } finally {
+		hoists.forEach { (_, value, _) -> evalOnceSubst.remove(value) }
+		if (previous != null) callEvalOnceTemps[call] = previous else callEvalOnceTemps.remove(call)
+	}
+	return temps.sortedBy { it.first }.map { it.second } to out
 }
 
 /** #122's `sty` stamp on the value-node kinds bir2cir's StaticType reads a type from (see the note above). */
@@ -114,15 +119,15 @@ private fun BirEmitter.styStamped(node: IrExpression, s: String): String =
  *
  *  Hoisting REORDERS: a temp's initializer runs before the call node, so every non-stable value to the LEFT of the last
  *  hoisted one is bound too, even when no default reads it — otherwise it would slide after a value Kotlin evaluates
- *  later (`g(a(), b())` with `r = q * 10` must still run `a()` first). Returns (IR node, `var` statement) in evaluation
- *  order = parameter order (receivers, then arguments left to right), which IS Kotlin's order, for the caller to wrap in
- *  a `valueBlock` and to un-register after this node is emitted. Every reader (the call's own receiver/argument slot, an
+ *  later (`g(a(), b())` with `r = q * 10` must still run `a()` first). Returns (parameter order, IR node, `var`
+ *  statement), where parameter order = receivers then arguments left to right, for the caller to merge with temps that
+ *  [filledArgs] adds after rendering an omitted default. Every reader (the call's own receiver/argument slot, an
  *  inner-class `new`'s enclosing-instance argument, the spliced default) reaches the value through `expr()` on the SAME
  *  IR node, so [BirEmitter.evalOnceSubst] hands them all the one temp.
  *  Empty when there is nothing to bind: not a call, no omitted default this call FILLS, no default that reads a call
  *  value, or only STABLE values (a literal / immutable local or parameter read — free to re-read and impossible to
  *  observe out of order, exactly [bindOnce]'s test). */
-private fun BirEmitter.hoistCallValuesReadByDefaults(node: IrExpression): List<Pair<IrExpression, String>> {
+private fun BirEmitter.hoistCallValuesReadByDefaults(node: IrExpression): List<Triple<Int, IrExpression, String>> {
 	val call = node as? org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression ?: return emptyList()
 	val callee = call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction ?: return emptyList()
 	if (callee.parameters.none { it.kind == IrParameterKind.Regular && it.defaultValue != null }) return emptyList()
@@ -152,7 +157,7 @@ private fun BirEmitter.hoistCallValuesReadByDefaults(node: IrExpression): List<P
 		(if (i < call.arguments.size) call.arguments[i] else null)?.let { i to it }
 	}
 	val last = values.lastOrNull { (i, _) -> readsAt(i) }?.first ?: return emptyList()
-	val out = ArrayList<Pair<IrExpression, String>>()
+	val out = ArrayList<Triple<Int, IrExpression, String>>()
 	for ((i, value) in values) {
 		if (i > last) break
 		val p = callee.parameters[i]
@@ -161,10 +166,31 @@ private fun BirEmitter.hoistCallValuesReadByDefaults(node: IrExpression): List<P
 		if (birType(p.type) is TypeNode.ByRef || isClrRefArgument(p)) continue
 		if (evalOnceSubst.containsKey(value) || isStableValue(value)) continue
 		val tv = if (i == recvIdx) "__recv${scopeCounter++}" else "__arg${scopeCounter++}"
-		out.add(value to """{"k":"var","name":${str(tv)},"type":${birType(value.type).toJson()},"init":${expr(value)}}""")
+		out.add(Triple(i, value, """{"k":"var","name":${str(tv)},"type":${birType(value.type).toJson()},"init":${expr(value)}}"""))
 		evalOnceSubst[value] = """{"k":"local","name":${str(tv)}}"""
 	}
 	return out
+}
+
+/** Bind an OMITTED default after [filledArgs] has rendered it in the callee's substituted scope. The ordinary pre-pass
+ *  can bind only expressions present in `call.arguments`; a default absent from that array must join the same ordered
+ *  temp list here when a later filled default reads its parameter. Returning the local makes both the call's own slot and
+ *  every later symbolic substitution read the one value. */
+internal fun BirEmitter.bindFilledDefaultOnce(
+	call: IrExpression,
+	paramIndex: Int,
+	param: IrValueParameter,
+	defaultExpr: IrExpression,
+	emitted: String,
+): String {
+	val temps = callEvalOnceTemps[call] ?: return emitted
+	if (isStableValue(defaultExpr)) return emitted
+	if (birType(param.type) is TypeNode.ByRef)
+		return unsupported(call, "omitting a by-reference default argument that another default reads",
+			"the default value of parameter '${param.name.asString()}' cannot be copied into a temporary; pass it explicitly")
+	val tv = "__arg${scopeCounter++}"
+	temps.add(paramIndex to """{"k":"var","name":${str(tv)},"type":${birType(param.type).toJson()},"init":$emitted}""")
+	return """{"k":"local","name":${str(tv)}}"""
 }
 
 /** [bindOnce]'s stability test: a const or a read of an immutable non-ref-cell local/parameter re-reads for free and

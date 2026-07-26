@@ -147,6 +147,19 @@ internal fun BirEmitter.filledArgs(
 	val recvJson: String? by lazy { emittedRecv?.value ?: (extensionReceiver(call) ?: dispatchReceiver(call))?.let { expr(it) } }
 	val regs = callee.parameters.mapIndexedNotNull { i, p -> if (p.kind == IrParameterKind.Regular) i to p else null }
 	val provided = regs.map { (i, _) -> if (i < call.arguments.size) call.arguments[i] else null }
+	// A default value is itself a call-site value. If a LATER omitted default reads this parameter, a non-stable default
+	// must be bound after substitution just like a provided argument is bound by the expression pre-pass; otherwise
+	// `a = bump(), b = a * 10` renders two copies of `bump()`. Only defaults this call actually fills participate.
+	val realFilledDefaults = regs.mapIndexed { idx, (_, p) ->
+		if (provided[idx] != null) null
+		else p.defaultValue?.expression?.takeIf { it !is org.jetbrains.kotlin.ir.expressions.IrErrorExpression }
+	}
+	val readByLaterFilledDefault = BooleanArray(regs.size) { idx ->
+		val sym = regs[idx].second.symbol
+		(idx + 1 until regs.size).any { later ->
+			realFilledDefaults[later]?.let { refsAny(it, setOf(sym)) } == true
+		}
+	}
 	val out = ArrayList<String>()
 	// The filled JSON for each already-processed value parameter — the substitution source for a same-module default
 	// that reads ANOTHER value parameter (`b: Int = a * 10`). A Kotlin default may reference only EARLIER params, so
@@ -249,7 +262,14 @@ internal fun BirEmitter.filledArgs(
 				}
 			}
 		}
-		if (emitted != null) { out.add(emitted); filledByParam[p] = emitted }
+		if (emitted != null) {
+			val finalEmitted =
+				if (arg == null && readByLaterFilledDefault[idx] && realFilledDefaults[idx] != null)
+					bindFilledDefaultOnce(call, pair.first, p, realFilledDefaults[idx]!!, emitted)
+				else emitted
+			out.add(finalEmitted)
+			filledByParam[p] = finalEmitted
+		}
 	}
 	return out
 }

@@ -135,6 +135,25 @@ class M2EvalOnce {
     fun encl(): M2Encl { calls++; return M2Encl(9) }
 }
 
+// #235: an OMITTED default is a value too. If a later omitted default reads it, the first default must be evaluated
+// once and shared, just like an explicitly provided side-effecting argument.
+class M2DefaultSource {
+    var calls = 0
+    fun bump(): Int { calls++; return 3 }
+}
+fun m2DefaultChainF(source: M2DefaultSource, a: Int = source.bump(), b: Int = a * 10): Int = a * 1000 + b
+class M2DefaultChainC(val source: M2DefaultSource, val a: Int = source.bump(), val b: Int = a * 10)
+class M2DefaultChainDel(val source: M2DefaultSource, val a: Int = source.bump(), val b: Int = a * 10) {
+    constructor(source: M2DefaultSource, unused: String) : this(source)
+}
+object M2DefaultEnumSource {
+    var calls = 0
+    fun bump(): Int { calls++; return 3 }
+}
+enum class M2DefaultChainE(val a: Int = M2DefaultEnumSource.bump(), val b: Int = a * 10) {
+    ONLY
+}
+
 // #235: the two call sites that are not expressions — a constructor DELEGATION and an ENUM ENTRY. Their arguments ride a
 // declaration rather than an expression, so their single-evaluation temps are declared by the first argument; a value a
 // filled default reads must still run exactly once. The counter is a per-test instance except for the enum, whose entries
@@ -293,6 +312,26 @@ class DefaultArgumentTests {
         val f = M2EvalOnce()
         assertEquals(5, m2SideF(f.next(), 1))                           // no default filled -> no temp, still once
         assertEquals(1, f.calls)
+
+        val g = M2DefaultSource()
+        assertEquals(3030, m2DefaultChainF(g))                           // a = bump(), b = a * 10
+        assertEquals(1, g.calls)                                        // the FILLED default itself ran once
+
+        val h = M2DefaultSource()
+        val hc = M2DefaultChainC(h)
+        assertEquals(3, hc.a)
+        assertEquals(30, hc.b)
+        assertEquals(1, h.calls)                                        // the same rule through a constructor `new`
+
+        val i = M2DefaultSource()
+        val ic = M2DefaultChainDel(i, "")
+        assertEquals(3, ic.a)
+        assertEquals(30, ic.b)
+        assertEquals(1, i.calls)                                        // and through a constructor delegation
+
+        assertEquals(3, M2DefaultChainE.ONLY.a)
+        assertEquals(30, M2DefaultChainE.ONLY.b)
+        assertEquals(1, M2DefaultEnumSource.calls)                       // and through an enum-entry initializer
     }
 
     // #235: binding a value for single evaluation must not REORDER the call's other values.
