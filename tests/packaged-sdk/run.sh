@@ -96,6 +96,14 @@ EOF
 # wiped at the top of every run, so the hive is disposable and nothing needs uninstalling afterwards.
 TEMPLATE_HIVE="$WS/template-hive"
 dotnet_new() { dotnet new "$@" --debug:custom-hive "$TEMPLATE_HIVE"; }
+# An SDK that no longer knows the switch exits non-zero on the unrecognized option, so the case fails loudly.
+# This tripwire covers the other direction — an SDK that ACCEPTS it and installs to $HOME anyway would leave the
+# scratch hive empty and otherwise pass, quietly restoring the cross-worktree race.
+hive_isolated() { # <case-name> — true iff the install materialized the scratch hive
+	[[ -f "$TEMPLATE_HIVE/packages.json" ]] && return 0
+	fail "$1" "dotnet new did not use the scratch template hive" "expected $TEMPLATE_HIVE/packages.json"
+	return 1
+}
 
 # One atomic result record per case + a fail-name list for the verdict.
 declare -a FAILS=()
@@ -491,6 +499,7 @@ case_template() {
 	if ! dotnet_new install "$nupkg" --force >"$d/install.log" 2>&1; then
 		fail template "dotnet new install failed" "$(tail -20 "$d/install.log")"; return
 	fi
+	hive_isolated template || return
 	local proj="$d/hello"; rm -rf "$proj"
 	if ! dotnet_new dotkt-cli -o "$proj" >"$d/new.log" 2>&1; then
 		fail template "dotnet new dotkt-cli failed" "$(tail -20 "$d/new.log")"; return
@@ -522,6 +531,7 @@ case_mpp_template() {
 	if ! dotnet_new install "$nupkg" --force >"$d/install.log" 2>&1; then
 		fail mpp-template "dotnet new install failed" "$(tail -20 "$d/install.log")"; return
 	fi
+	hive_isolated mpp-template || return
 	local proj="$d/hello-mpp"; rm -rf "$proj"
 	if ! dotnet_new dotkt-mpp -o "$proj" >"$d/new.log" 2>&1; then
 		fail mpp-template "dotnet new dotkt-mpp failed" "$(tail -20 "$d/new.log")"; return
