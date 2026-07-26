@@ -18,8 +18,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   the host RID and requires that replay to fail, so the assertion cannot pass vacuously. Previously the RID flow
   was only exercised at the host RID and cross-target selection had been confirmed by hand.
 ### Fixed
-- **kotc ([tmyt/dotkt#68], area:kotc): a captured `var` written from a local class, an object expression or a lambda is
-  now heap ref-celled under EVERY emission root, not only inside a function body.** The promotion of a
+- **kotc/bir2cir/ilemit ([tmyt/dotkt#68], area:kotc): a captured `var` written from a local class, an object
+  expression, a lambda or a local `fun` is now heap ref-celled under EVERY emission root and for every one of those
+  boundaries — previously only a function body, and never a local `fun`.** The promotion of a
   captured-and-mutated local to a shared `dotkt$Ref<T>` was decided per emission root, and
   only two roots decided it — `method()` and `topLevelAccessorMethod()`. Everywhere else the emitter ran with an empty
   set, so a constructor body, an `init` block, a property or field initializer, a member accessor, a default interface
@@ -33,13 +34,23 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   carrier and the omitting call site — agree. The two guards that used to reject the shape now report a broken emitter
   invariant instead of an unsupported language construct (they can only fire on a mutated capture that is not a `var`
   local, which valid frontend IR cannot produce).
-  A local `fun` is still not a capture boundary for this analysis, so a `var` written ONLY by a local fun still loses
-  the write silently — newly documented, with its two blockers, in
-  `tests/known-fail/localfun-capture-write/app.kt`. (A local fun does ride a cell one of the three boundaries above
-  created for the same `var`.)
+  A local `fun` is now a capture boundary too. It lifts to a static method whose captures are BY-VALUE parameters, so
+  `fun f(): Int { var n = 0; fun bump() { n++ }; bump(); bump(); return n }` compiled clean and returned 0 instead of
+  2 — the one boundary that lost the write SILENTLY rather than aborting. Closing it took three pieces:
+  `capturedVars` now follows a call INTO a local fun (cycle-guarded), because the lift supplies that fun's captures at
+  the call site, so a lambda that merely calls `bump()` must capture `bump`'s `n` as well; kotc records on the lifted
+  method which enclosing type variable each of its own type params re-declares (`_syntheticTypeArgs`, the same key and
+  meaning ClosureSynthesis already derives for a lifted closure CLASS), and bir2cir's `SharedSyntheticSynthesis`
+  applies its existing synthetic-frame remap to METHODS as well, so a generic cell used inside the lift is constructed
+  in the method's own parameter space instead of being looked up in a frame that does not declare it; and ilemit's
+  `setField` now takes its owner through `ParseOwnerSlot` like the field READ path beside it, instead of collapsing a
+  constructed-generic owner to its open name — writing a `Cell<T>` field from a generic static method emitted
+  `Cell<!0>::v` where the frame has only `!!0`, which the runtime rejected as a bad image.
   Regressions: `tests/basic/fixtures/CapturedVarRefCellTests.kt` (every root above; one `var` written by a lambda, an
-  object expression, a local class and a local fun at once; and the enclosing frame's own write observed through the
-  shared cell); the function-body root stays pinned by `LambdaTests.kt`'s `localClassObject`.
+  object expression, a local class and a local fun at once; the enclosing frame's own write observed through the shared
+  cell; and the local-fun boundary plain, generic, called-from-a-lambda and recursive); the function-body root stays
+  pinned by `LambdaTests.kt`'s `localClassObject`. The two `tests/known-fail/localfun-capture-write*` reproductions
+  this replaced are deleted.
 
 - **bir2cir ([tmyt/dotkt#251], area:bir2cir): constructor parameters now carry their `[Nullable]` annotation, so a
   nullable ctor parameter stays nullable across a module boundary.** The declaration-position NRT walk

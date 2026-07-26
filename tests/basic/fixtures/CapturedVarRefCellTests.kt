@@ -12,11 +12,17 @@
 //                                     enclosing class/interface statics), CvrcEnum (rich-enum entry argument)
 //   default-value expression       -> cvrcDefaultArg (the `@KotlinDefault` carrier + the omitting call site)
 //
-// BOUNDARY KIND (what captures the `var`): a lambda, an object expression, and a local class. The cell is keyed by the
-// VARIABLE, not by the boundary, so every boundary writing the SAME `var` lands in the SAME cell — CvrcInitMixed
-// asserts that composition (a local `fun` rides the cell the others created, even though a local fun is not itself a
-// boundary that creates one — tests/known-fail/localfun-capture-write/), and CvrcInitShared asserts the ENCLOSING
-// frame's own write is visible through the cell too.
+// BOUNDARY KIND (what captures the `var`): a lambda, a local `fun`, an object expression, and a local class. The cell
+// is keyed by the VARIABLE, not by the boundary, so every boundary writing the SAME `var` lands in the SAME cell —
+// CvrcInitMixed asserts that composition, and CvrcInitShared asserts the ENCLOSING frame's own write is visible
+// through the cell too.
+//
+// The local-`fun` boundary is the one that fails SILENTLY without a cell rather than aborting: the lift turns its
+// captures into BY-VALUE parameters of a static method, so the write lands on that parameter and the caller keeps the
+// stale value. Its three shapes are pinned by CvrcLocalFun*: the plain one, the one whose captured var is typed by an
+// enclosing TYPE PARAMETER (the cell is generic, and the lifted static re-declares the enclosing type params as its
+// own, so the cell must be constructed in the METHOD frame), and the one where a lambda only CALLS the local fun (the
+// capture has to propagate transitively, since the lift passes it at the call site).
 //
 // Top-level names are family-prefixed (`cvrc`/`Cvrc`) — one project is one namespace, shared with the sibling batteries.
 import NUnit.Framework.TestAttribute
@@ -60,8 +66,7 @@ class CvrcInitLambda {
     }
 }
 
-// One `var`, every writer -> ONE shared cell. The local `fun` is included deliberately: it does not create a cell,
-// but once a boundary has, its by-value capture parameter carries that cell and its write is visible like the rest.
+// One `var`, every writer -> ONE shared cell.
 class CvrcInitMixed {
     val total: Int
     init {
@@ -199,6 +204,57 @@ enum class CvrcEnum(val v: Int) {
     fun show(): Int = v
 }
 
+// ---- the local-`fun` boundary --------------------------------------------------------------------------------------
+// A local fun lifts to a static method whose captures are BY-VALUE parameters, so without a cell each write below
+// lands on the lifted method's own parameter and is silently lost (2 -> 0, 6 -> 0, `other` -> `t`, 2 -> 0).
+fun cvrcLocalFunInFunction(): Int {
+    var n = 0
+    fun bump() { n++ }
+    bump(); bump()
+    return n
+}
+
+class CvrcLocalFunInit {
+    val total: Int
+    init {
+        var n = 0
+        fun bump() { n += 3 }
+        bump(); bump()
+        total = n
+    }
+}
+
+// The captured `var` is typed by an enclosing TYPE PARAMETER, so its cell is generic. The lifted static re-declares
+// the enclosing type params as its OWN method params while the cell's element type is registered in the enclosing
+// frame, so the cell use inside the lift has to be constructed in the method's parameter space.
+class CvrcLocalFunGeneric<T>(val t: T, val other: T) {
+    fun pick(): T {
+        var cur = t
+        fun set() { cur = other }
+        set()
+        return cur
+    }
+}
+
+// A lambda that only CALLS the local fun must capture what the local fun captures — the lift passes those values as
+// leading arguments AT THE CALL SITE, which here sits inside the lambda's own frame.
+fun cvrcLocalFunViaClosure(): Int {
+    var n = 0
+    fun bump() { n++ }
+    val g = { bump() }
+    g(); g()
+    return n
+}
+
+// A RECURSIVE local fun writing the captured `var`: the transitive-capture walk follows a call into a local fun, so
+// it has to stop at the cycle instead of recursing forever.
+fun cvrcLocalFunRecursive(): Int {
+    var n = 0
+    fun down(k: Int) { if (k > 0) { n += k; down(k - 1) } }
+    down(3)
+    return n
+}
+
 // ---- default-argument value root (the `@KotlinDefault` carrier + the omitting call site) -------------------------
 fun cvrcDefaultArg(x: Int = run {
     var n = 0
@@ -217,6 +273,16 @@ class CapturedVarRefCellTests {
         assertEquals(30, CvrcInitShared().total)     // read() == 15 (the enclosing write is visible) + n == 15
         assertEquals(10, CvrcInitNested().total)     // 5 + 5
         assertEquals(14, CvrcSecondary().total)      // 7 + 7
+    }
+
+    @TestAttribute
+    fun localFunBoundary() {
+        assertEquals(2, cvrcLocalFunInFunction())              // 2
+        assertEquals(6, CvrcLocalFunInit().total)              // 3 + 3
+        assertEquals(2, CvrcLocalFunGeneric(1, 2).pick())      // `other`, not `t`
+        assertEquals("b", CvrcLocalFunGeneric("a", "b").pick())
+        assertEquals(2, cvrcLocalFunViaClosure())              // 2
+        assertEquals(6, cvrcLocalFunRecursive())               // 3 + 2 + 1
     }
 
     @TestAttribute
