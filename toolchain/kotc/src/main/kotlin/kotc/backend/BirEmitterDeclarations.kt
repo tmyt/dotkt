@@ -1185,10 +1185,9 @@ internal fun BirEmitter.isMetadataRepresentableDefault(p: org.jetbrains.kotlin.i
 /** True if `fn` carries `@KotlinDefault` on ALL its defaulted params — the UNIFORM per-parameter splice source
  *  bir2cir uses to fill an omitted arg POSITIONALLY (Tier-1 and Tier-2 alike). Two consumers read the carrier:
  *  DefaultArgSplice at a cross-module callStatic/callInstance, and InlineSplice STEP 5 at a callInline body splice.
- *  A CONSTRUCTOR's carrier has NO consumer yet: DefaultArgSplice recognizes only callStatic/callInstance and
- *  ReferenceMetadataIndex harvests @KotlinDefault only from GetMethods, so a `new`'s placeholder currently stops at that
- *  pass's chokepoint. Stamping it is still the prerequisite — without the attribute facadegen surfaces the param
- *  REQUIRED and the omission does not even resolve at the consumer's frontend (#235).
+ *  A CONSTRUCTOR carries it too (#235), consumed by DefaultArgSplice at a cross-module `new` (keyed
+ *  `<type>|.ctor|<emitted arg count>`). Without the attribute facadegen would surface the param REQUIRED and the
+ *  omission would not even resolve at the consumer's frontend.
  *  This MUST cover Tier-1 too: at a CROSS-MODULE call kotc sees the callee's default as an IrErrorExpression (the
  *  frontend KLIB drops the VALUE) and so cannot tell Tier-1 from Tier-2 — it emits a `defaultArg` placeholder for EVERY
  *  omitted default, which bir2cir can only fill if a `@KotlinDefault` exists for that slot. (Tier-1 params ALSO keep the

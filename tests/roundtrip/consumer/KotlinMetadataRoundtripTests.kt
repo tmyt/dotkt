@@ -19,7 +19,8 @@
 //   inlineMemberNonLocalReturn  <- roundtrip-inline-member   (#60)   cross-module inline MEMBER + non-local return + dispatch-receiver field read
 //   genericInlineExtension      <- roundtrip-generic-inline-ext(#133) generic inline ext on a generic receiver infers T
 //   dottedFileClass             <- roundtrip-dotfile         (#16)   top-level fun in a dotted-name file class resolves
-//   nonConstDefaultArgs         <- roundtrip-nonconst-default(#146)  = {} / = emptyList() filled cross-module
+//   nonConstDefaultArgs         <- roundtrip-nonconst-default(#146)  = {} / = emptyList() filled cross-module,
+//                                                             plus (#235) a CONSTRUCTOR's non-const default
 //   comparableClass             <- roundtrip-comparable      (#179)  class C : Comparable<C> </>/<=/>=/sorted()
 //   ubyteFidelity               <- roundtrip-ubyte                  UByte/UByteArray strict-mapping fidelity
 //   toplevelValVar              <- roundtrip-toplevel-val   (#195)  bare top-level val/var -> plain static FIELD (no accessor) resolved cross-module via facadegen --import-list
@@ -73,6 +74,9 @@ import roundtrip.nc.Panel as NcPanel
 import roundtrip.nc.column as ncColumn
 import roundtrip.nc.run2
 import roundtrip.nc.tagged as ncTagged
+import roundtrip.nc.Rect as NcRect
+import roundtrip.nc.Tri as NcTri
+import roundtrip.nc.Bag as NcBag
 import roundtrip.cmp.Ver
 import roundtrip.ubyte.ub
 import roundtrip.ubyte.uba
@@ -270,6 +274,17 @@ class PackageAndInlineRoundtripTests {
         ClassicAssert.AreEqual(3, ncColumn(configure = { add("ab") }, build = { add("c") })) // 3  both provided (no fill)
         ClassicAssert.AreEqual("ok", run2(body = { }))                                 // ok  pre defaults to {} (empty plain lambda)
         ClassicAssert.AreEqual("z=0", ncTagged("z"))                                   // z=0 items defaults to emptyList()
+        // #235: the CONSTRUCTOR half — a ctor's non-constant default is carried and filled at the omitting `new`.
+        ClassicAssert.AreEqual(18, NcRect(3).area)                                      // 18  h defaults to w * 2 = 6
+        ClassicAssert.AreEqual("r", NcRect(3).tag)                                      // r   a later Tier-1 const still fills
+        ClassicAssert.AreEqual(12, NcRect(3, 4).area)                                   // 12  h provided, no fill
+        ClassicAssert.AreEqual("z", NcRect(3, tag = "z").tag)                           // z   omit the MIDDLE default, name a later arg
+        ClassicAssert.AreEqual(6, NcRect(3, tag = "z").h)                               // 6   the omitted middle still filled from w
+        ClassicAssert.AreEqual(203, NcTri(2).c)                                         // 203 chain: b = a + 1 = 3, c = a * 100 + b
+        ClassicAssert.AreEqual(210, NcTri(2, 10).c)                                     // 210 b provided, c still filled
+        ClassicAssert.AreEqual(7, NcTri(2, 10, 7).c)                                    // 7   nothing omitted
+        ClassicAssert.AreEqual(1, NcBag().size)                                         // 1   items = emptyList(), n = 1
+        ClassicAssert.AreEqual(5, NcBag(n = 5).size)                                    // 5   omit a leading non-const default
     }
 
     // roundtrip-comparable (#179): a `class C : Comparable<C>` — </>/<=/>= + sorted() resolve+run cross-module

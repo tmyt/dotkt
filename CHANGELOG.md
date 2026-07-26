@@ -102,15 +102,18 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   non-stable value to the left of a bound one is bound with it so the evaluation order stays Kotlin's. A cross-module
   omission (filled by `bir2cir.DefaultArgSplice`, which clones the argument), a constructor delegation and an enum entry
   still splice by expression (`docs/dotkt-semantics.md` §7).
-  **Cross-module**: a CONSTRUCTOR now carries the same `@kotlin.clr.KotlinDefault` stamp a function does, so facadegen
-  surfaces its non-constant defaulted parameter OPTIONAL and a consumer's `P(3)` RESOLVES where it previously failed the
-  frontend with *no value passed for parameter 'b'*; the stamped index counts an inner class's enclosing instance first
-  (it rides `args[0]`, like an extension receiver's `__self`). Filling that placeholder is `bir2cir.DefaultArgSplice`'s
-  half and is not done yet — it recognizes only `callStatic`/`callInstance`, and `ReferenceMetadataIndex` harvests
-  `@KotlinDefault` only from `GetMethods` — so the omission stops at that pass's chokepoint with a precise diagnostic
-  instead of a miscompile. A metadata-representable (Tier-1) constant default is unaffected: it fills from the facadegen
-  metadata and never becomes a placeholder. Covered by `tests/basic/fixtures/DefaultArgumentTests.kt` (`defargsCtor`,
-  `defargsCtorDelegation`, `defargsCtorEnclosingInstance`, `defargsSingleEval`).
+  **Cross-module too** (area:bir2cir with it): a CONSTRUCTOR now carries the same `@kotlin.clr.KotlinDefault` stamp a
+  function does, facadegen surfaces its non-constant defaulted parameter OPTIONAL, and `bir2cir.DefaultArgSplice` fills
+  the `{"k":"new"}` placeholder from the reference dll — so a consumer of a DotKt library can write `Rect(3)` against
+  `class Rect(val w: Int, val h: Int = w * 2)` and get `h == 6`, where it previously failed the frontend with *no value
+  passed for parameter 'h'*. The splice keys a constructor as `<type>|.ctor|<emitted arg count>` (`ReferenceMetadataIndex`
+  now scans `GetConstructors` alongside `GetMethods`), with an inner class's enclosing instance counting first — it rides
+  `args[0]`, like an extension receiver's `__self`. Lower slots fill first, so a chain fills too
+  (`class Tri(a, b = a + 1, c = a * 100 + b)` consumed as `Tri(2)` gives `c == 203`). A metadata-representable (Tier-1)
+  constant still fills from the facadegen metadata and never becomes a placeholder; a ctor default reading an enclosing
+  instance is still refused at stamp time. Covered by `tests/basic/fixtures/DefaultArgumentTests.kt` (`defargsCtor`,
+  `defargsCtorDelegation`, `defargsCtorEnclosingInstance`, `defargsSingleEval`, `defargsEvalOrder`) and by the round-trip
+  lane's `nonConstDefaultArgs` (`tests/roundtrip/producer/Nonconst.kt` + `tests/roundtrip/consumer/`).
 
 ## 0.9.7 (2026-07-22)
 

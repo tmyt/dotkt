@@ -185,6 +185,9 @@ sealed partial class ReferenceMetadataIndex
                 // OWNERLESS fold "owner|name|pc" -> "name|pc" (#146). Method/owner names carry no '|', so the split is exact.
                 var parts = kv.Key.Split('|');
                 if (parts.Length != 3) continue;
+                // A CONSTRUCTOR is never called ownerlessly (a `new` always names its type), so folding `.ctor|pc` would
+                // only make every type of the same ctor arity collide with every other.
+                if (parts[1] == CtorKeyName) continue;
                 var np = parts[1] + "|" + parts[2];
                 if (_kotlinDefaultsAmbiguous.Contains(np)) continue;
                 if (_kotlinDefaultsOwnerless.TryGetValue(np, out var have))
@@ -249,6 +252,10 @@ sealed partial class ReferenceMetadataIndex
     public string ArrayFactoryKind(string funName) => _arrayFactories.GetValueOrDefault(funName);
     // The concrete element FQN for an array factory (empty-call fallback for `intArrayOf()`), or null.
     public string ArrayFactoryElemHint(string funName) => _arrayFactoryElemHints.GetValueOrDefault(funName);
+
+    /// The `method` component of a CONSTRUCTOR's @KotlinDefault key (#235). `.ctor` is the CLR's own constructor name and
+    /// is unspeakable in Kotlin, so it can never collide with a real method a `new`'s owner declares.
+    internal const string CtorKeyName = ".ctor";
 
     // The @KotlinDefault BIR splice map for a call's callee — (argPosition -> default-expression BIR-json). #146:
     // facadegen-injected calls already carry their exact file-facade `ownerType` in BIR, so use that structural identity
@@ -1351,6 +1358,17 @@ sealed partial class ReferenceMetadataIndex
                                     metadata.ArrayFactoryElemHints[method.Name] = ah;
                             }
                         }
+                    }
+                    // @KotlinDefault(index, bir) on a CONSTRUCTOR's params -> the splice source for a `new` that omits a
+                    // non-constant default (#235). A ctor has no name of its own, so the key is `<owner>|.ctor|<declared
+                    // param count>`: the args array a `new` carries is POSITIONALLY complete (kotc emits a placeholder for
+                    // every omitted slot), so its length is that same declared count and each stamped index indexes it.
+                    // NonPublic included for the same reason the method scan includes it — an `internal` ctor is still a
+                    // legitimate splice target inside its own module's ref dll.
+                    foreach (var ctor in type.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+                    {
+                        if (KotlinDefaultsOf(ctor) is Dictionary<int, string> cdefaults)
+                            metadata.KotlinDefaults[ownerFqn + "|" + CtorKeyName + "|" + ctor.GetParameters().Length] = cdefaults;
                     }
                 }
                 catch (Exception ex)

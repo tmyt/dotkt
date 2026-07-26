@@ -1274,21 +1274,19 @@ that has lost the distinction.
 5. **`sealed` hierarchies** — **FIXED (gap ⑤, 2026-07-02).** `[KotlinSealed]` → `sealed` meta → `Modality.SEALED`
    restores the modality, cross-module inheritance enforcement, AND exhaustive `when` (the injected subtypes supply the
    closed inheritor set). See §10.1.
-6. **Non-constant default args / `data class copy` self-defaults** — **MOSTLY FIXED (kcc review C3, 2026-07-06).** The
-   omitted middle default no longer shifts a later provided arg's slot: kotc fills positionally (a `{"k":"defaultArg"}`
-   placeholder for a @KotlinDefault-carrying cross-module callee, spliced by `bir2cir.DefaultArgSplice`; a same-module
-   default inlined directly). A RECEIVER-referencing default (`missingDelimiterValue = this`, a `copy`'s `y = this.y`)
-   round-trips via the `this`→call-receiver rewrite, and a default reading an earlier VALUE parameter (`b = a * 10`) via
-   the carrier's `{"k":"defaultArgParam","idx":N}`. A **CONSTRUCTOR** now carries the same `@KotlinDefault` stamp as a
-   function (#235), so facadegen surfaces its non-constant defaulted param OPTIONAL (`nonConst`) and a consumer's
-   `P(3)` RESOLVES where it used to fail the frontend with *no value passed for parameter 'b'*; kotc emits the
-   positional `{"k":"defaultArg"}` for the omitted slot, with the stamped index counting an inner class's enclosing
-   instance first (it rides `args[0]`, like an extension receiver's `__self`). **Residual:** `bir2cir.DefaultArgSplice`
-   recognizes only `callStatic`/`callInstance`, and `ReferenceMetadataIndex` harvests `@KotlinDefault` only from
-   `GetMethods`, so a `{"k":"new"}` placeholder is not filled — the omission stops at that pass's chokepoint with
-   *"an omitted cross-module default argument was not filled"* (an authoring-time refusal, never a miscompile). A
-   metadata-representable (Tier-1) constant is unaffected: it fills from the facadegen metadata (#134) and never becomes
-   a placeholder.
+6. **Non-constant default args / `data class copy` self-defaults** — **FIXED (kcc review C3, 2026-07-06; constructors
+   #235).** The omitted middle default no longer shifts a later provided arg's slot: kotc fills positionally (a
+   `{"k":"defaultArg"}` placeholder for a @KotlinDefault-carrying cross-module callee, spliced by
+   `bir2cir.DefaultArgSplice`; a same-module default inlined directly). A RECEIVER-referencing default
+   (`missingDelimiterValue = this`, a `copy`'s `y = this.y`) round-trips via the `this`→call-receiver rewrite, and a
+   default reading an earlier VALUE parameter (`b = a * 10`) via the carrier's `{"k":"defaultArgParam","idx":N}`.
+   A **CONSTRUCTOR** round-trips the same way: kotc stamps `@KotlinDefault` on its defaulted params, facadegen surfaces
+   them OPTIONAL (`nonConst`), and `DefaultArgSplice` fills a `{"k":"new"}`'s placeholder from the reference dll, keyed
+   `<type>|.ctor|<emitted arg count>` (an inner class's enclosing instance counts first, riding `args[0]` like an
+   extension receiver's `__self`). Lower slots fill first, so a CHAIN works — `class Tri(a, b = a + 1, c = a * 100 + b)`
+   consumed as `Tri(2)` yields `c == 203`. A constructor default that reads an ENCLOSING instance is still refused at
+   stamp time (`defaultUnsupported`, §7 / #34), and a lifted LOCAL class carries nothing (it has no cross-module call
+   site).
 
 7. **Generic-fidelity gaps surfaced by the atomicfu CLR port (#133)** — **ALL THREE FIXED.** Three
    DOWNSTREAM-of-facadegen gaps (the facadegen symbol surface was verified correct in each; the

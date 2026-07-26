@@ -67,14 +67,9 @@ static class DefaultArgSplice
     static void TrySplice(JsonObject node, ReferenceMetadataIndex refs, JsonArray hoist, JsonNode localOwner)
     {
         var k = Str(node["k"]);
-        if (k != "callStatic" && k != "callInstance") return;
+        var isNew = k == "new";
+        if (!isNew && k != "callStatic" && k != "callInstance") return;
         if (node["args"] is not JsonArray args) return;
-        // A non-generic call carries `sig`; a generic facade call carries the same declared parameter vector as
-        // `shapeTypes` so later CLR binding can close the method. Both are structural callee signatures and therefore
-        // equally authoritative for the KotlinDefault owner+name+arity lookup.
-        var sig = node["sig"] as JsonArray ?? node["shapeTypes"] as JsonArray;
-        if (sig == null) return;
-        var sigCount = sig.Count;
         var hasPlaceholder = false;
         for (var j = 0; j < args.Count; j++) if (IsPlaceholder(args[j])) { hasPlaceholder = true; break; }
         // ONLY a POSITIONAL `defaultArg` placeholder marks a cross-module omission to fill. kotc emits a placeholder for
@@ -83,9 +78,31 @@ static class DefaultArgSplice
         // carrying `sig`) must NOT be touched: appending a default off an ownerless name match would corrupt it. This is
         // essential now the splice runs at phase 1 on EVERY build (a stdlib self-build call short of `sig` is not an omission).
         if (!hasPlaceholder) return;
-        var method = Str(node["method"]);
-        if (method == null) return;
-        var owner = TypeJson.OwnerName(node["ownerType"] ?? node["calleeOwner"] ?? node["owner"]);
+        string method, owner;
+        int sigCount;
+        if (isNew)
+        {
+            // A `new` names its callee by TYPE — there is no `method`/`sig` to read. The ctor's splice identity is
+            // `<type>|.ctor|<emitted arg count>` (#235): the args array is positionally complete, so its length IS the
+            // ctor's declared parameter count (an inner class's enclosing instance included, as its leading param) and
+            // each stamped @KotlinDefault index indexes that same array.
+            owner = TypeJson.OwnerName(node["type"]);
+            if (owner == null) return;
+            method = ReferenceMetadataIndex.CtorKeyName;
+            sigCount = args.Count;
+        }
+        else
+        {
+            // A non-generic call carries `sig`; a generic facade call carries the same declared parameter vector as
+            // `shapeTypes` so later CLR binding can close the method. Both are structural callee signatures and therefore
+            // equally authoritative for the KotlinDefault owner+name+arity lookup.
+            var sig = node["sig"] as JsonArray ?? node["shapeTypes"] as JsonArray;
+            if (sig == null) return;
+            sigCount = sig.Count;
+            method = Str(node["method"]);
+            if (method == null) return;
+            owner = TypeJson.OwnerName(node["ownerType"] ?? node["calleeOwner"] ?? node["owner"]);
+        }
         var defaults = refs.KotlinDefaultsFor(owner, method, sigCount);
         if (defaults == null)
         {
@@ -96,22 +113,43 @@ static class DefaultArgSplice
             return;
         }
         // An extension receiver rides args[0] (the emitted extension fun's `__self`). A `= this` default binds to it.
-        var receiver = args.Count > 0 ? args[0] : null;
+        // A `new` has NO receiver: args[0] is the ctor's first argument, so binding a `{k:this}` to it would silently
+        // read the wrong object. kotc poisons a ctor default that reads an enclosing instance (`defaultReadsDispatch` ->
+        // `defaultUnsupported`), so no ctor carrier can legitimately hold that token — passing null keeps a stray one
+        // unbound, and the assert below refuses it rather than emitting a wrong `this`.
+        var receiver = isNew ? null : (args.Count > 0 ? args[0] : null);
         // 1) Replace POSITIONAL placeholders in place (a later provided arg keeps its slot). Fill by array index = the
         //    @KotlinDefault index (extension receiver counted first, matching kotc's stamp).
         for (var j = 0; j < args.Count; j++)
         {
             if (!IsPlaceholder(args[j])) continue;
             if (!defaults.TryGetValue(j, out var bir)) continue;         // no @KotlinDefault at this slot -> caught by the chokepoint
-            if (SpliceOne(bir, receiver, args, hoist, refs, method, j, localOwner) is JsonNode fill) { args[j] = fill; Walk(fill, refs, hoist, localOwner); }
+            if (SpliceOne(bir, receiver, args, hoist, refs, method, j, localOwner) is JsonNode fill)
+            {
+                if (isNew && ContainsThisToken(fill))
+                    throw new InvalidOperationException(
+                        $"bir2cir: the omitted default argument at slot {j} of '{owner}''s constructor reads an enclosing " +
+                        "instance, which a constructor call site cannot bind; pass the argument explicitly");
+                args[j] = fill; Walk(fill, refs, hoist, localOwner);
+            }
         }
-        // 2) Append any purely-TRAILING omitted args (callee carries @KotlinDefault but kotc dropped the tail).
+        // 2) Append any purely-TRAILING omitted args (callee carries @KotlinDefault but kotc dropped the tail). A `new`
+        //    derives `sigCount` FROM `args`, so this loop is empty for it by construction.
         for (var pos = args.Count; pos < sigCount; pos++)
         {
             if (!defaults.TryGetValue(pos, out var bir)) return;         // gap -> bail (leave the call unchanged)
             if (SpliceOne(bir, receiver, args, hoist, refs, method, pos, localOwner) is JsonNode fill) { args.Add(fill); Walk(fill, refs, hoist, localOwner); } else return;
         }
     }
+
+    // A `{"k":"this"}` anywhere in a spliced ctor default — an invariant assert (kotc refuses to carry such a default),
+    // never a diagnostic a valid reference assembly can trigger.
+    static bool ContainsThisToken(JsonNode node) => node switch
+    {
+        JsonObject obj => Str(obj["k"]) == "this" || obj.Any(kv => kv.Value != null && ContainsThisToken(kv.Value)),
+        JsonArray arr => arr.Any(it => it != null && ContainsThisToken(it)),
+        _ => false,
+    };
 
     static bool IsPlaceholder(JsonNode n) => n is JsonObject o && Str(o["k"]) == "defaultArg";
 
