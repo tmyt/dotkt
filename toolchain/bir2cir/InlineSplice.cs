@@ -1154,12 +1154,14 @@ static class InlineSplice
         CollectDeclaredLocals(invBody, allowed);
         if (HasStrayLocal(invBody, allowed)) return MatNull("MC:stray-local");
 
-        // Generic-ness: the closure must be generic over every tv its funcType/params/ret/body/FIELDS reference (reified CLR
-        // generics — an unresolved tv is a BadImageFormat). Key tvs by (SCOPE, index): kotc numbers method type-params
-        // independently of type (class) type-params, so `tv{method,0}` and `tv{type,0}` are DISTINCT enclosing params and
-        // must map to DISTINCT closure params. Renumber the closure-frame refs to a 0-based space, declare that many
-        // typeParams, and pass the ORIGINAL enclosing tvs (scope+index) as `typeArgs`. The `newClosure.funcType` stays the
-        // CALLER-frame `ft` (un-renumbered) — ilemit resolves it in the caller, `typeArgs` bind the closure params to it.
+        // Generic-ness: the closure must be generic over every CALLER-FRAME tv its funcType/params/ret/body/FIELDS reference
+        // (reified CLR generics — an unresolved tv is a BadImageFormat). A nested call's `sig`/`paramSig`, however, is the
+        // callee DECLARATION'S foreign frame and is neither collected nor renumbered (#74). Key caller-frame tvs by
+        // (SCOPE, index): kotc numbers method type-params independently of type (class) type-params, so
+        // `tv{method,0}` and `tv{type,0}` are DISTINCT enclosing params and must map to DISTINCT closure params. Renumber
+        // the closure-frame refs to a 0-based space, declare that many typeParams, and pass the ORIGINAL enclosing tvs
+        // (scope+index) as `typeArgs`. The `newClosure.funcType` stays the CALLER-frame `ft` (un-renumbered) — ilemit
+        // resolves it in the caller, `typeArgs` bind the closure params to it.
         var invParams = (JsonArray)lamParams.DeepClone();
         var invRet = ft["ret"]?.DeepClone() ?? TypeJson.Fqn("kotlin.Unit");
         var keys = new SortedSet<(string scope, int i)>();
@@ -1316,15 +1318,15 @@ static class InlineSplice
             if (written.Count > 0) return MatNull("MSC:written-capture");
         }
 
-        // TV FRAME (#75 Batch B, 2A): renumber every enclosing tv the SM references to a DENSE 0-based space, declare
+        // TV FRAME (#75 Batch B, 2A): renumber every CALLER-FRAME tv the SM references to a DENSE 0-based space, declare
         // that many placeholder typeParams, and pass the ORIGINAL enclosing tvs (ANY scope/index) as construction
-        // `typeArgs` — the SAME mechanism the non-suspend newClosure arm (MaterializeCarrier :885-922) already uses.
+        // `typeArgs` — the SAME mechanism the non-suspend newClosure arm already uses. A nested call's declaration-relative
+        // `sig`/`paramSig` is a foreign frame and must remain byte-for-byte unchanged (#74).
         // This DISSOLVES the former single-scope-0..N-1-prefix limitation: SuspendLambdaLowering consumes `typeArgs`
         // to instantiate `new smName<origTvs…>(…)` instead of the positional `smName<tv{type,0..N-1}>` fallback. A
-        // member-sig tv (e.g. `FlowCollector<T>`'s `tv{type,0}` on an `emit` call) is renumbered + carried as a
-        // construction typeArg that resolves to `object` at the (non-generic) construction site but is NEVER consulted
-        // — ilemit re-resolves the receiver call against the field's static type. IDENTICAL soundness to newClosure.
-        // Names are cosmetic — ilemit/SuspendLambdaLowering resolve tvs POSITIONALLY (ResolveTv is by index).
+        // member-sig tv (e.g. `FlowCollector<T>`'s `tv{type,0}` on an `emit` call) is NOT an SM dependency; the call's
+        // constructed `ownerType`/argument/return types carry the caller-frame types ilemit needs. Names are cosmetic —
+        // ilemit/SuspendLambdaLowering resolve the SM's own tvs POSITIONALLY (ResolveTv is by index).
         var invParams = (JsonArray)lamParams.DeepClone();
         var invSuspendRet = ft["ret"]?.DeepClone() ?? TypeJson.Fqn("kotlin.Unit");
         var keys = new SortedSet<(string scope, int i)>();
@@ -1708,8 +1710,10 @@ static class InlineSplice
                     foreach (var n in CurrentFrameNestedSuspendLambdas(c)) yield return n;
     }
 
-    // Collect the distinct `{t:tv}` (scope, index) KEYS in the subtree. kotc numbers method type-params independently of
-    // type (class) type-params, so scope is part of a tv's identity.
+    // Collect the distinct CALLER-FRAME `{t:tv}` (scope, index) KEYS in the subtree. kotc numbers method type-params
+    // independently of type (class) type-params, so scope is part of a tv's identity. A call's `sig`/`paramSig` is a
+    // declaration-signature descriptor in the nested CALLEE'S frame, not a value/type in this caller's frame; it can
+    // never legitimately contribute a free tv to this synthesized closure (#74, same boundary as SubstTvIn).
     static void CollectTvKeys(JsonNode node, SortedSet<(string scope, int i)> keys)
     {
         if (node is JsonObject o)
@@ -1721,14 +1725,16 @@ static class InlineSplice
             // `newSuspendLambda` is the SAME kind of tv scope boundary — shield its own frame, descend its outer refs.
             bool nestedSm = Str(o["k"]) == "newSuspendLambda";
             foreach (var kv in o)
-                if (kv.Value != null && kv.Key != "synthClass" && !(nestedSm && SuspendLambdaOwnFrame.Contains(kv.Key)))
+                if (kv.Value != null && kv.Key is not ("sig" or "paramSig") && kv.Key != "synthClass"
+                    && !(nestedSm && SuspendLambdaOwnFrame.Contains(kv.Key)))
                     CollectTvKeys(kv.Value, keys);
         }
         else if (node is JsonArray a) foreach (var c in a) if (c != null) CollectTvKeys(c, keys);
     }
 
-    // Renumber every `{t:tv}` index in place via `remap` keyed by (scope, index). Scope is PRESERVED on the ref (ilemit's
-    // cross-pool positional ResolveTv resolves it against the closure class's type params by the renumbered index).
+    // Renumber every CALLER-FRAME `{t:tv}` index in place via `remap` keyed by (scope, index). Scope is PRESERVED on the
+    // ref (ilemit's cross-pool positional ResolveTv resolves it against the closure class's type params by the renumbered
+    // index). Declaration-relative `sig`/`paramSig` entries stay in their callee's frame and are never rewritten (#74).
     static void RenumberTvs(JsonNode node, Dictionary<(string, int), int> remap)
     {
         if (node is JsonObject o)
@@ -1740,7 +1746,8 @@ static class InlineSplice
             // A nested `newSuspendLambda`'s own frame is shielded identically — only its outer-frame refs are renumbered.
             bool nestedSm = Str(o["k"]) == "newSuspendLambda";
             foreach (var kv in o)
-                if (kv.Value != null && kv.Key != "synthClass" && !(nestedSm && SuspendLambdaOwnFrame.Contains(kv.Key)))
+                if (kv.Value != null && kv.Key is not ("sig" or "paramSig") && kv.Key != "synthClass"
+                    && !(nestedSm && SuspendLambdaOwnFrame.Contains(kv.Key)))
                     RenumberTvs(kv.Value, remap);
         }
         else if (node is JsonArray a) foreach (var c in a) if (c != null) RenumberTvs(c, remap);
