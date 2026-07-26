@@ -298,6 +298,46 @@ fun cvrcLocalFunShadowedCapture(): Int {
     return n
 }
 
+// The local fun is declared INSIDE a lambda. The lift must RESTORE the enclosing binding for `n` rather than drop it,
+// or the `bump()` call that follows evaluates `n` as a bare local the closure's frame does not have.
+fun cvrcLocalFunInsideClosure(): Int {
+    var n = 0
+    val g = { fun bump() { n++ }; bump() }
+    g(); g()
+    return n
+}
+
+// A LOCAL CLASS constructed from inside a lambda: its captures ride the CONSTRUCTION site, so the lambda must capture
+// them even though nothing in it mentions `n`.
+fun cvrcLocalClassCtorViaClosure(): Int {
+    var n = 0
+    class L { fun go() { n++ } }
+    val g = { L().go() }
+    g(); g()
+    return n
+}
+
+// A local fun inside an `inner class` member reads the enclosing instance. Restoring (not dropping) the outer-`this`
+// binding is what keeps a LATER member of the same class reading the enclosing instance instead of its own.
+class CvrcOuter(val v: Int) {
+    inner class Inner {
+        fun viaLocalFun(): Int {
+            fun g(): Int = v
+            return g()
+        }
+        fun direct(): Int = v
+    }
+}
+
+// A captured `var` whose type parameter's BOUND names a SECOND parameter: the lift re-declares the bound with the
+// parameter, so it has to be generic over both or the re-declared constraint is unbound.
+fun <T, U> cvrcLocalFunBoundedTv(a: T, b: T): T where T : Comparable<U> {
+    var cur = a
+    fun set() { cur = b }
+    set()
+    return cur
+}
+
 // The celled `var` is declared INSIDE the local fun and captured by a lambda there, so its generic cell has no use
 // left in the frame that declares the type parameter — the lift itself has to supply the parameter's constraints.
 class CvrcLocalFunInnerCell<T>(val a: T, val b: T) {
@@ -349,9 +389,21 @@ class CapturedVarRefCellTests {
         assertEquals(2, CvrcLocalFunInitViaClosure().total)     // 2
         assertEquals(2, cvrcLocalFunViaObject())                // 2
         assertEquals(2, cvrcLocalFunViaLocalClass())            // 2
-        assertEquals(2, cvrcLocalFunShadowedCapture())          // 2, not the shadowing parameter's 0
+        assertEquals(2, cvrcLocalFunShadowedCapture())          // 2; a lost write would give 0
         assertEquals(2, CvrcLocalFunInnerCell(1, 2).pick())     // `b`
         assertEquals("b", CvrcLocalFunInnerCell("a", "b").pick())
+    }
+
+    @TestAttribute
+    fun localDeclarationReachedFromAnotherLift() {
+        // Reaching a local fun / local class from INSIDE another lift: the enclosing frame's capture binding has to
+        // survive the inner lift, and a construction site propagates captures just like a call site.
+        assertEquals(2, cvrcLocalFunInsideClosure())             // 2
+        assertEquals(2, cvrcLocalClassCtorViaClosure())          // 2
+        val outer = CvrcOuter(7)
+        assertEquals(7, outer.Inner().viaLocalFun())             // 7
+        assertEquals(7, outer.Inner().direct())                  // 7 — the outer-`this` binding survived
+        assertEquals(2, cvrcLocalFunBoundedTv<Int, Int>(1, 2))   // `b`
     }
 
     @TestAttribute

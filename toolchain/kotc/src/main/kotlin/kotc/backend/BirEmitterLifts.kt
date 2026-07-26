@@ -96,7 +96,11 @@ import java.io.File
 private fun BirEmitter.freeTypeParams(types: List<IrType>): List<org.jetbrains.kotlin.ir.declarations.IrTypeParameter> {
 	val acc = LinkedHashSet<org.jetbrains.kotlin.ir.declarations.IrTypeParameter>()
 	fun walk(t: IrType) {
-		(t.classifierOrNull as? IrTypeParameterSymbol)?.let { acc.add(it.owner) }
+		(t.classifierOrNull as? IrTypeParameterSymbol)?.let {
+			// A param's own BOUND may name a FURTHER param (`<T, U> where T : Comparable<U>`). The lift re-declares the
+			// bound with the param, so it has to be generic over `U` as well or the re-declared constraint is unbound.
+			if (acc.add(it.owner)) it.owner.superTypes.forEach(::walk)
+		}
 		if (t is IrSimpleType) t.arguments.forEach { (it as? IrTypeProjection)?.type?.let(::walk) }
 	}
 	types.forEach(::walk)
@@ -104,8 +108,15 @@ private fun BirEmitter.freeTypeParams(types: List<IrType>): List<org.jetbrains.k
 }
 
 /** Type operands USED in a function body (e.g. `x is R` / `x as R` / `R::class`). A lifted closure must be generic
- *  over these too: on the CLR generics are reified, so `is R` works once the lifted method carries `R` — unlike the
- *  JVM, which needs `reified`+inlining. freeTypeParams over (params+return+captures) alone misses a body-only `R`. */
+ *  over these too: on the CLR generics are reified, so `is R` works once the lifted method carries `R` — that is the
+ *  deliberate CLR form, where the JVM would need `reified`+inlining. freeTypeParams over (params+return+captures)
+ *  alone misses a body-only `R`.
+ *
+ *  NOT included: the declared type of a body-LOCAL. Making the lift generic over it is not enough on its own — the
+ *  lift's body still names every `tv` in the ENCLOSING frame and leans on ilemit's positional cross-scope fallback,
+ *  so a local whose type is an enclosing variable needs the whole body re-expressed in the lift's own frame (the
+ *  treatment bir2cir's ClosureSynthesis.RebindSyntheticTypeVariables gives a lifted closure class). Adding the type
+ *  here alone converts bir2cir's loud refusal into invalid IL, so the refusal stands until that lands. */
 internal fun BirEmitter.bodyTypeOperands(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): List<IrType> {
 	val out = ArrayList<IrType>()
 	fn.body?.acceptVoid(object : IrVisitorVoid() {
@@ -991,27 +1002,21 @@ internal fun BirEmitter.capturedVars(fn: IrSimpleFunction, includeThis: Boolean 
 	captureScan(fn.body, fn.parameters, includeThis, newCycleGuard())
 
 /**
- * A LOCAL `fun` — one kotc lifts to a file-class static whose captures become leading by-value parameters supplied
- * at each CALL SITE ([liftLocalFn]). Calling one is therefore a capture in its own right, which is why the scans
- * below must recognize it exactly.
+ * A LOCAL declaration — a `fun` kotc lifts to a file-class static, or a class/object it lifts to a top-level
+ * synthetic type. Both take their captures as leading by-value parameters supplied by the CALL / CONSTRUCTION site
+ * ([liftLocalFn], [liftLocalClass]), so reaching one is itself a capture of everything it captures, which is why the
+ * scans below must recognize it exactly.
  *
- * Structural test, because the scans run before (and independently of) any lift: a local fun is the only
- * `IrSimpleFunction` that is neither a package-level function (parent = an `IrPackageFragment`, covering this
- * `IrFile` and an external module's fragment) nor a member of the class that DECLARES it. The second half cannot be
- * simplified to "parent is not an `IrClass`": `IrAnonymousInitializer` is not an `IrDeclarationParent`, so a `fun`
- * declared inside `init { }` has the enclosing CLASS as its parent and is distinguished from a real member only by
- * being absent from that class's `declarations`. A property accessor is excluded outright — it is a member reached
- * through its property, never a call whose captures ride the call site.
+ * The frontend states the fact directly: a declaration inside a function body carries `LOCAL` visibility. Testing it
+ * is O(1) and touches no lazily-materialized member list — and unlike a test on the IR `parent`, it does not have to
+ * special-case `init { }`, where the enclosing CLASS is the parent because `IrAnonymousInitializer` cannot be a
+ * declaration parent.
  */
-private fun isLocalFunction(fn: IrSimpleFunction): Boolean {
-	if (fn.correspondingPropertySymbol != null) return false
-	val parent = fn.parent
-	if (parent is org.jetbrains.kotlin.ir.declarations.IrPackageFragment) return false
-	return parent !is IrClass || fn !in parent.declarations
-}
+private fun isLocalDeclaration(d: IrDeclarationWithVisibility): Boolean =
+	d.visibility == org.jetbrains.kotlin.descriptors.DescriptorVisibilities.LOCAL
 
-private fun newCycleGuard(): MutableSet<IrSimpleFunction> =
-	java.util.Collections.newSetFromMap(java.util.IdentityHashMap<IrSimpleFunction, Boolean>())
+private fun newCycleGuard(): MutableSet<IrElement> =
+	java.util.Collections.newSetFromMap(java.util.IdentityHashMap<IrElement, Boolean>())
 
 /**
  * The free value references under [body] — referenced anywhere inside, declared outside — given the declarations
@@ -1019,15 +1024,17 @@ private fun newCycleGuard(): MutableSet<IrSimpleFunction> =
  * object-literal / local-class scan ([capturedVarsForObject]) so both see the same capture set: they lift the same
  * kinds of body and must agree, or one of them emits a reference to a value its frame never received.
  *
- * A CALL to a local `fun` contributes that fun's own captures (recursively): the lift passes them as leading
- * arguments at the call site, so a body that merely calls `bump()` — never mentioning `bump`'s `n` — must still have
- * `n` in scope. [guard] stops a recursive local fun; a cycle's captures are collected by the frame that entered it.
+ * Reaching a LOCAL declaration contributes its own captures (recursively): the lift passes them as leading arguments
+ * at the reaching site, so a body that merely calls `bump()` — never mentioning `bump`'s `n` — must still have `n` in
+ * scope, and likewise a body that only constructs a local class whose member writes `n`. [guard] holds the
+ * declarations currently being scanned, so a cycle stops instead of recursing forever; the captures of a declaration
+ * already on that stack are collected by the frame that entered it.
  */
 private fun BirEmitter.captureScan(
 	body: IrElement?,
 	ownParams: List<IrValueDeclaration>,
 	includeThis: Boolean,
-	guard: MutableSet<IrSimpleFunction>,
+	guard: MutableSet<IrElement>,
 ): List<IrValueDeclaration> {
 	val declared = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<IrValueDeclaration, Boolean>())
 	ownParams.forEach { declared.add(it) }
@@ -1040,13 +1047,23 @@ private fun BirEmitter.captureScan(
 				is IrValueParameter -> declared.add(element)
 				is IrGetValue -> referenced.add(element.symbol.owner)
 				is IrSetValue -> referenced.add(element.symbol.owner)
-				// Ask a called local fun for `<this>` too: an enclosing-instance capture propagates the same way, and
-				// this frame's own `includeThis` decides whether it survives the filter below.
-				is IrCall -> (element.symbol.owner as? IrSimpleFunction)?.takeIf { isLocalFunction(it) }
+				// Ask a reached local declaration for `<this>` too: an enclosing-instance capture propagates the same
+				// way, and this frame's own `includeThis` decides whether it survives the filter below.
+				is IrCall -> (element.symbol.owner as? IrSimpleFunction)?.takeIf { isLocalDeclaration(it) }
 					?.let { callee ->
 						if (guard.add(callee)) {
 							referenced.addAll(captureScan(callee.body, callee.parameters, true, guard))
 							guard.remove(callee)
+						}
+					}
+				// CONSTRUCTING a local class / object expression is the same transitive capture one boundary over:
+				// `liftLocalClass`/`blockExpr` prepend its captures as ctor arguments AT THIS SITE, so a body that only
+				// does `L().go()` must hold whatever `L` captures.
+				is IrConstructorCall -> (element.symbol.owner.parent as? IrClass)?.takeIf { isLocalDeclaration(it) }
+					?.let { cls ->
+						if (guard.add(cls)) {
+							referenced.addAll(captureScan(cls, emptyList(), true, guard))
+							guard.remove(cls)
 						}
 					}
 			}
@@ -1063,7 +1080,7 @@ private fun BirEmitter.captureScan(
  * `this` (same name "<this>" as the anon's own receiver, distinguished only by symbol identity).
  */
 internal fun BirEmitter.capturedVarsForObject(anon: IrClass): List<IrValueDeclaration> =
-	captureScan(anon, emptyList(), includeThis = true, guard = newCycleGuard())
+	captureScan(anon, emptyList(), includeThis = true, guard = newCycleGuard().also { it.add(anon) })
 
 /** Value declarations assigned (IrSetValue) anywhere inside an object literal (for mutable-capture detection). */
 internal fun BirEmitter.mutatedIn(node: IrElement): Set<IrValueDeclaration> {
@@ -1188,11 +1205,16 @@ internal fun BirEmitter.liftLocalFn(fn: IrSimpleFunction) {
 	// Captures arrive as leading params; rewrite body refs to those params. This must cover not only `<this>` but
 	// also receiver-like captured params such as `$this$buildString`, otherwise an active inline substitution can
 	// leak a caller-local (`__lam<N>`) into the lifted method body.
+	// Save any prior substitution and RESTORE it after the body, exactly as the closure path does: this local fun may
+	// be declared INSIDE a closure/object/local class that already bound the same outer decl to its own capture field.
+	// Removing the binding instead would leave the enclosing frame reading the bare local again, so the `bump()` call
+	// site after it (capValueExpr) emits a local that does not exist in that frame.
+	val savedSubst = capPairs.associate { (decl, _) -> decl to captureSubst[decl] }
 	capPairs.forEach { (decl, fname) -> captureSubst[decl] = """{"k":"local","name":${str(fname)}}""" }
 	val capParams = capPairs.map { (decl, fname) -> """{"name":${str(fname)},"type":${str(captureFieldType(decl))}}""" }
 	val ownParams = ownValueParams.map { pj(it.name.asString(), it.type) }
 	val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
-	capPairs.forEach { (decl, _) -> captureSubst.remove(decl) }
+	capPairs.forEach { (decl, _) -> val prev = savedSubst[decl]; if (prev != null) captureSubst[decl] = prev else captureSubst.remove(decl) }
 	val ret = birType(fn.returnType)
 	// This lifted static RE-DECLARES the enclosing declaration's free type params as its OWN (`freeTps` ->
 	// `typeParams`), but every `tv` token inside it still names them in their ORIGINAL frame (the enclosing class's
@@ -1228,6 +1250,10 @@ internal fun BirEmitter.liftLocalClass(klass: IrClass): String {
 		return invariantBroken(klass, "a local class writes a captured outer variable that was not promoted to a " +
 			"heap ref-cell")
 	val capPairs = captured.map { it to captureFieldName(it) }
+	// Save any prior binding and RESTORE it below rather than dropping it — this local class may be declared inside a
+	// closure/object/local fun that already bound the same outer decl to its own capture field (mirrors the closure
+	// path); dropping it leaves the enclosing frame reading a bare local it no longer has.
+	val savedSubst = capPairs.associate { (decl, _) -> decl to captureSubst[decl] }
 	capPairs.forEach { (decl, fname) ->
 		captureSubst[decl] = """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":${str(fname)}}"""
 	}
@@ -1237,7 +1263,7 @@ internal fun BirEmitter.liftLocalClass(klass: IrClass): String {
 	// `liftedTypeArgParams[klass]`; each `new L()` site (IrConstructorCall) instantiates the flattened class with the
 	// enclosing args from that record. A non-generic local class captures nothing and lifts unchanged.
 	liftedTypes.add(typeDef(klass, capPairs, captureEnclosingGenerics = true, generated = true))
-	capPairs.forEach { (decl, _) -> captureSubst.remove(decl) }
+	capPairs.forEach { (decl, _) -> val prev = savedSubst[decl]; if (prev != null) captureSubst[decl] = prev else captureSubst.remove(decl) }
 	localClassCaptures[klass] = captured
 	return """{"k":"block","body":[]}"""
 }
