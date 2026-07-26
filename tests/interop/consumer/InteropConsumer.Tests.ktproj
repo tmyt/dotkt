@@ -32,6 +32,9 @@
 
   <ItemGroup>
     <PackageReference Include="DotKt.Tests.VirtualPackage" Version="1.0.0" />
+    <!-- #228: the reflection-driven serializer the auto-property backing-field shape must satisfy
+         (AutoPropertyBackingFieldTests). -->
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
     <PackageReference Include="NUnit" Version="4.6.1" />
     <PackageReference Include="NUnit3TestAdapter" Version="6.2.0">

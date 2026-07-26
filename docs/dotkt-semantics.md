@@ -702,6 +702,24 @@ Closing these needs a small **runtime CLR→Kotlin reverse-map helper** (a stdli
 routes the dynamic `getType` to) — a cross-layer stdlib piece, not a bir2cir-only const-fold. It does **not** belong in
 kotc or ilemit.
 
+## 5h. An auto-property's backing field is a compiler-generated `<Name>k__BackingField` (#228)
+
+Every Kotlin property with **default accessors** becomes a real CLR property (`Name` + `get_Name`/`set_Name`); its
+storage is emitted as an assembly-visible field named **`<Name>k__BackingField`**, stamped
+`[System.Runtime.CompilerServices.CompilerGenerated]` — the same convention and attribute `csc` uses for a C#
+auto-property. Kotlin/JVM instead names the field after the property, which on the CLR would put a property and a field
+of the SAME name on one type: reflection-driven .NET libraries group candidate members by name and cannot resolve that
+pair (Newtonsoft's `SerializeObject` silently returned `{}`, and the round-trip back threw).
+
+**Framing:** interop-first, CLR-native. The name is un-writable in Kotlin — a backtick-quoted identifier still cannot
+contain `<`/`>` — so it can never collide with, or be referenced by, a user declaration; and it is derived from the
+property name, so two properties never share one. The rename lives in `bir2cir` (the layer that owns the Kotlin↔CLR
+representation); kotc keeps emitting the pure Kotlin identity.
+
+A property whose storage **is** the user-visible member emits no CLR property and therefore keeps its plain name:
+`lateinit var`, `const`, a delegated property's `<p>$delegate`, a companion/top-level `val`/`var` (a static field), and
+the `@ClrField` opt-out (§5f-adjacent: `@ClrField` deliberately emits a plain public field instead of a property).
+
 ## 6. Consuming a DotKt assembly AS KOTLIN — what rides metadata vs. needs an attribute
 
 When another `.ktproj` consumes a DotKt assembly, the Kotlin facts with **no native .NET representation** are carried
@@ -1270,6 +1288,7 @@ residual is the **`object` singleton `.INSTANCE`** round-trip (#2), not implicit
 - A `CharSequence` parameter surfaces to C# as `string`; a `StringBuilder` passed as `CharSequence` is **snapshotted** by an implicit `.toString()` — no live view. §5b.
 - A Kotlin `Map` surfaces to C# as a *mutable* `IDictionary<K,V>`; `keys`/`values`/`entries` are snapshots. §5c.
 - A `value class` is a real (reference) class on the CLR — never erased, never a struct. §5f.
+- An auto-property's backing field is named `<Name>k__BackingField` (C# convention, `[CompilerGenerated]`), not `Name` — so reflection never sees a property and a field under one name. §5h.
 - `System.Byte` is UNSIGNED → maps to `UByte` (and `byte[]` → `UByteArray`, a native `System.Byte[]`); `kotlin.Byte` is signed = `System.SByte`. `UByteArray.toByteArray()` is a reinterpret VIEW, not a copy. §9b.
 - `import System.Text.StringBuilder` and `kotlin.text.StringBuilder` are two distinct typed views of one CLR type; mixing them is a type error (cast to cross). §8b.
 - An injected .NET class's statics resolve implicitly (`Application.Start(...)`); `.Companion` is optional. §8c.
