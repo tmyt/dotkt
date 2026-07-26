@@ -121,6 +121,20 @@ fun m2LocalDelegate(seed: Int): Int {
     return L().q
 }
 
+// #235: SINGLE EVALUATION of a value a filled default splices. Every counter lives on a per-test instance (no shared
+// top-level state) so the suite can run these in parallel.
+fun m2SideF(a: Int, b: Int = a * 10): Int = a + b
+class M2SideC(val a: Int, val b: Int = a * 10) { val sum: Int get() = a + b }
+class M2SideHolder(val s: String) {
+    fun tag(t: String = s): String = s + "/" + t
+}
+class M2EvalOnce {
+    var calls = 0
+    fun next(): Int { calls++; return 4 }
+    fun holder(): M2SideHolder { calls++; return M2SideHolder("h") }
+    fun encl(): M2Encl { calls++; return M2Encl(9) }
+}
+
 class DefaultArgumentTests {
     @TestAttribute
     fun defargs() {
@@ -206,5 +220,34 @@ class DefaultArgumentTests {
         assertEquals(20, M2EnclMember(5).Q().f())                       // MEMBER of an inner class: k * 4
         assertEquals(1, M2EnclMember(5).Q().f(1))                       // provided
         assertEquals(11, m2LocalDelegate(11))                           // local class, secondary ctor delegating
+    }
+
+    // #235: a value a filled default SPLICES is evaluated exactly once — Kotlin evaluates a receiver and each
+    // argument once, and the splice must not re-run it per reading default.
+    @TestAttribute
+    fun defargsSingleEval() {
+        val a = M2EvalOnce()
+        assertEquals(44, m2SideF(a.next()))                             // 4 + 40
+        assertEquals(1, a.calls)                                        // the argument ran ONCE, not once per splice
+
+        val b = M2EvalOnce()
+        assertEquals(44, M2SideC(b.next()).sum)                         // the same through a `new`
+        assertEquals(1, b.calls)
+
+        val c = M2EvalOnce()
+        assertEquals(23, M2Tri(c.next() - 2).c)                         // a = 2, read by BOTH b and c defaults
+        assertEquals(1, c.calls)
+
+        val d = M2EvalOnce()
+        assertEquals("h/h", d.holder().tag())                           // the RECEIVER a `= s` default reads
+        assertEquals(1, d.calls)
+
+        val e = M2EvalOnce()
+        assertEquals(36, e.encl().M2EIn().x)                            // the ENCLOSING INSTANCE a `= k * 4` default reads
+        assertEquals(1, e.calls)                                        // ctor and default see the SAME instance
+
+        val f = M2EvalOnce()
+        assertEquals(5, m2SideF(f.next(), 1))                           // no default filled -> no temp, still once
+        assertEquals(1, f.calls)
     }
 }

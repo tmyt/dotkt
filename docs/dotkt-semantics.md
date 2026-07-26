@@ -803,15 +803,21 @@ entry**'s `NAME(args)` (including a per-entry body's base call) — so a class, 
 delegation or enum entry omits such a default exactly as a function does. (A .NET-interop call shape fills nothing
 here: `[DefaultParameterValue]` is native metadata and ilemit's call path backfills it.)
 
-**The spliced receiver is evaluated exactly once.** A receiver (or enclosing instance) that a filled default reads is
-bound to a call-site temporary — the call is wrapped in a `valueBlock` whose `var __recvN` holds it, and the call's own
-receiver slot, an inner-class `new`'s enclosing-instance argument and the spliced default all read that local. So
-`mkOuter().In()` runs `mkOuter()` once and the constructor and its default see the SAME instance, as Kotlin specifies.
-A STABLE receiver (a literal, or an immutable local/parameter read) is spliced directly — re-reading it is free and
-side-effect-free — so the common call emits no temporary. Hoisting the receiver first also matches Kotlin's evaluation
-order (receiver before arguments). An earlier ARGUMENT that a later default reads is still spliced by expression, so
-`f(sideEffect())` with `b: Int = a * 10` evaluates `sideEffect()` once per reading default (the same temporary would
-close it; arguments are not hoisted today).
+**A value a filled default splices is evaluated exactly once.** Both the RECEIVER (or enclosing instance) a
+`= this` / `= outerProp` default reads and the earlier ARGUMENT a `= a * 10` default reads are bound to a call-site
+temporary: the call is wrapped in a `valueBlock` whose `var __recvN` / `var __argN` holds the value, and every reader —
+the call's own receiver and argument slots, an inner-class `new`'s enclosing-instance argument, and each spliced
+default — reads that local. So `mkOuter().In()` runs `mkOuter()` once (the constructor and its default see the SAME
+instance) and `f(next())` with `b: Int = a * 10` calls `next()` once however many defaults read `a`, exactly as Kotlin
+specifies. A STABLE value (a literal, or an immutable local/parameter read) is spliced directly — re-reading it is free
+and side-effect-free — so an ordinary call emits no temporary at all. The temporaries are evaluated in Kotlin's own
+order, receiver before arguments.
+
+Two call sites still splice by expression, because they are not emitted in an expression position and so have nowhere
+to put a temporary's `var`: a constructor DELEGATION (`: this(…)` / `: super(…)`, whose args ride the constructor
+declaration ahead of its body) and an ENUM ENTRY's `NAME(args)` (a static field initializer). Their arguments are
+literals or local reads in ordinary code — stable, hence spliced directly either way — so the double evaluation is only
+reachable by passing a side-effecting expression there (`constructor() : this(next())` with a default reading it).
 
 **#146 known gap (named, not silent):** a non-const default that references a PRIVATE/internal library symbol
 (`= privateHelper()`) is NOT poison-detected at stamp time — it is carried, then fails LOUDLY (imprecise) at the

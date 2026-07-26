@@ -93,9 +93,23 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `C.m(a: Int, b: Int = a * 10)`, filled `b` from `c.k` by emitting `D::get_k` against a `C` receiver. Filling saves
   and restores the substitutions it installs, so a closure that captured the callee's own parameter keeps its binding
   across a recursive omitting call; a delegation's args read the leading capture PARAMS, which (unlike the capture
-  fields) are already live before the constructor body. Covered by
-  `tests/basic/fixtures/DefaultArgumentTests.kt` (`defargsCtor`, `defargsCtorDelegation`,
-  `defargsCtorEnclosingInstance`).
+  fields) are already live before the constructor body.
+  **A value a filled default splices is now evaluated exactly ONCE**: the receiver (or enclosing instance) a `= this` /
+  `= outerProp` default reads, and the earlier argument a `= a * 10` default reads, are bound to a call-site temporary
+  in a wrapping `valueBlock`, so `mkOuter().In()` runs `mkOuter()` once — the constructor and its default now see the
+  SAME instance — and `f(next())` calls `next()` once however many defaults read it. A stable value (a literal or an
+  immutable local/parameter read) still splices directly, so an ordinary call emits no temporary. A constructor
+  delegation and an enum entry are not emitted in an expression position, so they have nowhere to declare a temporary
+  and still splice by expression (`docs/dotkt-semantics.md` §7).
+  **Cross-module**: a CONSTRUCTOR now carries the same `@kotlin.clr.KotlinDefault` stamp a function does, so facadegen
+  surfaces its non-constant defaulted parameter OPTIONAL and a consumer's `P(3)` RESOLVES where it previously failed the
+  frontend with *no value passed for parameter 'b'*; the stamped index counts an inner class's enclosing instance first
+  (it rides `args[0]`, like an extension receiver's `__self`). Filling that placeholder is `bir2cir.DefaultArgSplice`'s
+  half and is not done yet — it recognizes only `callStatic`/`callInstance`, and `ReferenceMetadataIndex` harvests
+  `@KotlinDefault` only from `GetMethods` — so the omission stops at that pass's chokepoint with a precise diagnostic
+  instead of a miscompile. A metadata-representable (Tier-1) constant default is unaffected: it fills from the facadegen
+  metadata and never becomes a placeholder. Covered by `tests/basic/fixtures/DefaultArgumentTests.kt` (`defargsCtor`,
+  `defargsCtorDelegation`, `defargsCtorEnclosingInstance`, `defargsSingleEval`).
 
 ## 0.9.7 (2026-07-22)
 
