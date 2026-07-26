@@ -98,10 +98,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `= this` / `= outerProp` default reads, and the earlier argument a `= a * 10` default reads, are bound to a call-site
   temporary in a wrapping `valueBlock`, so `mkOuter().In()` runs `mkOuter()` once — the constructor and its default now
   see the SAME instance — and `f(next())` calls `next()` once however many defaults read it. A stable value (a literal
-  or an immutable local/parameter read) still splices directly, so an ordinary call emits no temporary, and every
-  non-stable value to the left of a bound one is bound with it so the evaluation order stays Kotlin's. A cross-module
-  omission (filled by `bir2cir.DefaultArgSplice`, which clones the argument), a constructor delegation and an enum entry
-  still splice by expression (`docs/dotkt-semantics.md` §7).
+  or `this`) still splices directly, so an ordinary call emits no temporary, and every non-stable value to the left of a
+  bound one is bound with it so the evaluation order stays Kotlin's. **Cross-module omissions bind too**
+  (area:bir2cir): `DefaultArgSplice` used to deep-clone the call's receiver/argument into the default it filled, so
+  `sideEffect().substringAfter(".")` ran `sideEffect()` twice and a value two defaults read ran four times — it now
+  hoists as it fills, including a filled default a later default reads (`chain(a, b = bump(), c = b * 10)` calls
+  `bump()` once). A constructor delegation and an enum entry still splice by expression
+  (`docs/dotkt-semantics.md` §7).
   **Cross-module too** (area:bir2cir with it): a CONSTRUCTOR now carries the same `@kotlin.clr.KotlinDefault` stamp a
   function does, facadegen surfaces its non-constant defaulted parameter OPTIONAL, and `bir2cir.DefaultArgSplice` fills
   the `{"k":"new"}` placeholder from the reference dll — so a consumer of a DotKt library can write `Rect(3)` against

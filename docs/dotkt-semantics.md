@@ -805,28 +805,28 @@ entry**'s `NAME(args)` (including a per-entry body's base call) — so a class, 
 delegation or enum entry omits such a default exactly as a function does. (A .NET-interop call shape fills nothing
 here: `[DefaultParameterValue]` is native metadata and ilemit's call path backfills it.)
 
-**A value a SAME-MODULE filled default splices is evaluated exactly once.** Both the RECEIVER (or enclosing instance) a
-`= this` / `= outerProp` default reads and the earlier ARGUMENT a `= a * 10` default reads are bound to a call-site
-temporary: the call is wrapped in a `valueBlock` whose `var __recvN` / `var __argN` holds the value, and every reader —
-the call's own receiver and argument slots, an inner-class `new`'s enclosing-instance argument, and each spliced
-default — reads that local. So `mkOuter().In()` runs `mkOuter()` once (the constructor and its default see the SAME
-instance) and `f(next())` with `b: Int = a * 10` calls `next()` once however many defaults read `a`, exactly as Kotlin
-specifies. A STABLE value (a literal, or an immutable local/parameter read) is spliced directly — re-reading it is free
-and side-effect-free — so an ordinary call emits no temporary at all. Binding one value moves its evaluation ahead of
-the call, so every non-stable value to its LEFT is bound with it: the order stays Kotlin's (receiver, then arguments
-left to right), including when an argument reads a variable a preceding argument writes.
+**A value a filled default splices is evaluated exactly once — same-module and cross-module alike.** Both the RECEIVER
+(or enclosing instance) a `= this` / `= outerProp` default reads and the earlier ARGUMENT a `= a * 10` default reads are
+bound to a call-site temporary: the call is wrapped in a `valueBlock` whose `var` holds the value, and every reader — the
+call's own receiver and argument slots, an inner-class `new`'s enclosing-instance argument, and each spliced default —
+reads that local. So `mkOuter().In()` runs `mkOuter()` once (the constructor and its default see the SAME instance),
+`f(next())` with `b: Int = a * 10` calls `next()` once however many defaults read `a`, and `sideEffect().substringAfter(".")`
+— whose `missingDelimiterValue: String = this` rides a cross-module carrier — evaluates `sideEffect()` once. A STABLE
+value (a literal, or `this`) is spliced directly, so an ordinary call emits no temporary at all. Binding one value moves
+its evaluation ahead of the call, so every non-stable value to its LEFT is bound with it: the order stays Kotlin's
+(receiver, then arguments left to right), including when an argument reads a variable a preceding argument writes.
 
-Three call sites still splice by expression:
+The two paths bind at different points, because the two know different things. SAME-MODULE, kotc has the default's IR
+and hoists before emitting (`evalOnceSubst`, keyed by IR-node identity, so it can leave an immutable local read spliced
+in place). CROSS-MODULE, only the `@KotlinDefault` carrier says which values a default reads, so `DefaultArgSplice`
+hoists as it fills — including a filled default a LATER default reads, which must not be evaluated per reader either
+(`chain(a, b = bump(), c = b * 10)` calls `bump()` once). Working on emitted JSON it cannot tell a `val` from a `var`, so
+it binds every local read too.
 
-- A **CROSS-MODULE** omission does not go through the inline path at all — kotc emits a positional
-  `{"k":"defaultArg"}` and `bir2cir.DefaultArgSplice` fills it by deep-cloning the call's `args[0]` (for the carrier's
-  `{"k":"this"}`) or `args[N]` (for `{"k":"defaultArgParam"}`), so `sideEffect().substringAfter(".")` — whose
-  `missingDelimiterValue: String = this` rides a carrier — still evaluates `sideEffect()` twice. Closing it is the same
-  temporary, applied in that pass.
-- A constructor **DELEGATION** (`: this(…)` / `: super(…)`) and an **ENUM ENTRY**'s `NAME(args)`: both call the filling
-  pass directly rather than through the expression emitter that introduces the temporary, so nothing is bound there
-  regardless of stability. Reaching the double evaluation takes a side-effecting argument in one of those two
-  positions (`constructor() : this(next())` with a default reading it).
+One pair of call sites still splices by expression: a constructor **DELEGATION** (`: this(…)` / `: super(…)`) and an
+**ENUM ENTRY**'s `NAME(args)`. Both call the filling pass directly rather than through the expression emitter that
+introduces the temporary, so nothing is bound there regardless of stability. Reaching the double evaluation takes a
+side-effecting argument in one of those two positions (`constructor() : this(next())` with a default reading it).
 
 **#146 known gap (named, not silent):** a non-const default that references a PRIVATE/internal library symbol
 (`= privateHelper()`) is NOT poison-detected at stamp time — it is carried, then fails LOUDLY (imprecise) at the

@@ -21,6 +21,7 @@
 //   dottedFileClass             <- roundtrip-dotfile         (#16)   top-level fun in a dotted-name file class resolves
 //   nonConstDefaultArgs         <- roundtrip-nonconst-default(#146)  = {} / = emptyList() filled cross-module,
 //                                                             plus (#235) a CONSTRUCTOR's non-const default
+//   nonConstDefaultArgsEvaluateOnce                           (#235) a spliced receiver/argument runs exactly once
 //   comparableClass             <- roundtrip-comparable      (#179)  class C : Comparable<C> </>/<=/>=/sorted()
 //   ubyteFidelity               <- roundtrip-ubyte                  UByte/UByteArray strict-mapping fidelity
 //   toplevelValVar              <- roundtrip-toplevel-val   (#195)  bare top-level val/var -> plain static FIELD (no accessor) resolved cross-module via facadegen --import-list
@@ -78,6 +79,12 @@ import roundtrip.nc.Rect as NcRect
 import roundtrip.nc.Tri as NcTri
 import roundtrip.nc.Bag as NcBag
 import roundtrip.nc.Pair2 as NcPair2
+import roundtrip.nc.tagged as ncTaggedExt
+import roundtrip.nc.scaled as ncScaled
+import roundtrip.nc.tri3 as ncTri3
+import roundtrip.nc.order3 as ncOrder3
+import roundtrip.nc.chain as ncChain
+import roundtrip.nc.bumps as ncBumps
 import roundtrip.cmp.Ver
 import roundtrip.ubyte.ub
 import roundtrip.ubyte.uba
@@ -295,6 +302,36 @@ class PackageAndInlineRoundtripTests {
         ClassicAssert.AreEqual("7!", NcPair2(7).label)                                  // 7!  the (Int,String) ctor fills label
     }
 
+    // #235: a value the CROSS-MODULE carrier splices is evaluated exactly ONCE, and binding it does not reorder the
+    // call's other values. Each `calls`/`log` assertion is the load-bearing one — the values pass either way.
+    @TestAttribute
+    fun nonConstDefaultArgsEvaluateOnce() {
+        val a = NcEvalCounter()
+        ClassicAssert.AreEqual("h/h", a.s().ncTaggedExt())                              // h/h  the EXTENSION RECEIVER a `= this` default reads
+        ClassicAssert.AreEqual(1, a.calls)                                              // 1    once, not once per splice
+
+        val b = NcEvalCounter()
+        ClassicAssert.AreEqual(44, ncScaled(b.n()))                                     // 44   a = 4, b = a * 10
+        ClassicAssert.AreEqual(1, b.calls)
+
+        val c = NcEvalCounter()
+        ClassicAssert.AreEqual(405, ncTri3(c.n()))                                      // 405  a read by BOTH b's and c's defaults
+        ClassicAssert.AreEqual(1, c.calls)                                              // 1    (was 4 — once per spliced read)
+
+        val d = NcEvalCounter()
+        ClassicAssert.AreEqual("1/2/20", ncOrder3(d.a(), d.b()))                        // r = q * 10
+        ClassicAssert.AreEqual("ab", d.log)                                             // ab   p before q, and q ONCE (was "abb")
+
+        val e = NcEvalCounter()
+        ClassicAssert.AreEqual(32, NcRect(e.n()).area)                                  // 32   a ctor argument the default reads
+        ClassicAssert.AreEqual(1, e.calls)
+
+        // A side-effecting DEFAULT that a later default reads: filled once, then read from the temp.
+        val before = ncBumps
+        ClassicAssert.AreEqual(3030, ncChain(1))                                        // b = bump() = 3, c = b * 10 = 30
+        ClassicAssert.AreEqual(1, ncBumps - before)                                     // 1    bump() ran once (was 2)
+    }
+
     // roundtrip-comparable (#179): a `class C : Comparable<C>` — </>/<=/>= + sorted() resolve+run cross-module
     // (facadegen restores operator compareTo + the kotlin.Comparable supertype; bir2cir binds compareTo->CompareTo).
 }
@@ -304,6 +341,18 @@ class PackageAndInlineRoundtripTests {
 class NcCtorDefaultHost(val n: Int) {
     fun rectArea(): Int = NcRect(n).area
     fun triC(): Int = NcTri(this.n).c
+}
+
+// #235: counts how often a side-effecting value the cross-module carrier SPLICES actually runs. Kotlin evaluates a
+// receiver and each argument once; before the splice bound them to a temp, each spliced read re-ran the expression
+// (a value read by two defaults ran four times, and `order3(a(), b())` logged "abb").
+class NcEvalCounter {
+    var calls = 0
+    fun s(): String { calls++; return "h" }
+    fun n(): Int { calls++; return 4 }
+    var log = ""
+    fun a(): Int { log += "a"; return 1 }
+    fun b(): Int { log += "b"; return 2 }
 }
 
 class ComparableUnsignedAndPropertyRoundtripTests {

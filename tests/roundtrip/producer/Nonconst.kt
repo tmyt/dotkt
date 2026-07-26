@@ -21,3 +21,14 @@ class Bag(val items: List<String> = emptyList(), val n: Int = 1) { val size: Int
 class Pair2(val n: Int, val label: String = n.toString() + "!") {
     constructor(s: String, upper: String = s.uppercase()) : this(upper.length)
 }
+
+// #235 SINGLE EVALUATION: each of these has a carrier that reads a value of the CALL — the extension receiver, an
+// argument, an argument read by TWO defaults, an argument no default reads (order), and a side-effecting DEFAULT that a
+// later default reads. The consumer counts how many times its own side-effecting expression runs.
+fun String.tagged(t: String = this): String = this + "/" + t
+fun scaled(a: Int, b: Int = a * 10): Int = a + b
+fun tri3(a: Int, b: Int = a + 1, c: Int = a * 100 + b): Int = c
+fun order3(p: Int, q: Int, r: Int = q * 10): String = "$p/$q/$r"
+var bumps: Int = 0
+fun bump(): Int { bumps++; return 3 }
+fun chain(a: Int, b: Int = bump(), c: Int = b * 10): Int = b * 1000 + c
