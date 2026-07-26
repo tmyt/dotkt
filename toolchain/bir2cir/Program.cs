@@ -675,6 +675,14 @@ sealed class Pipeline
         // ilemit receives a closed CIR return type and performs no inference.
         ConstructedMemberReturnSubstitution.ApplyAll(staged.Select(s => s.Root).ToList());
 
+        // AUTO-PROPERTY BACKING-FIELD RENAME (#228): kotc names an accessor-routed property's storage with the KOTLIN
+        // identity, so the emitted type carried a property AND a field of the same name (reflection consumers cannot
+        // resolve the pair). Mint the CLR metadata name `<Name>k__BackingField` here — the layer that owns the
+        // Kotlin-to-CLR representation — and rewrite every field read/write that addresses it. GLOBAL (a
+        // `byref(obj.prop)` addresses a sibling file's backing field) and unconditional (ref/rt/app emit one shape);
+        // last in the structural phase, so every synthesized body exists and owner tokens are still Kotlin FQNs.
+        BackingFieldRename.ApplyAll(staged.Select(s => s.Root).ToList());
+
         // STAR-PROJECTION BOUND index (#2): the in-assembly generic type-param BOUNDS (`interface Key<E : Element>`
         // -> {Key: [Element]}), collected across ALL staged roots (a `Key<*>` use may live in a sibling file from Key's
         // declaration). Feeds StarProjectionBoundLowering so a `Key<object>` (kotc's star-projection erasure) is

@@ -188,7 +188,25 @@ static partial class ClrMemberResolution
         var name = (node["name"] as JsonValue)?.GetValue<string>();
         if (name == null) return;
         var acc = FindAccessorMethod(open, (write ? "set_" : "get_") + name, write ? 1 : 0, BindingFlags.Public | BindingFlags.Instance);
-        if (acc == null) return;    // no accessor -> a genuine public @ClrField -> direct ldfld/stfld in ilemit
+        if (acc == null)
+        {
+            // No accessor. A genuine public @ClrField (the field really is declared there) -> direct ldfld/stfld in
+            // ilemit, unchanged. But if the owner declares NEITHER an accessor NOR a field of that name, the node names
+            // storage that does not exist in the referenced assembly — an accessor-routed property's storage is emitted
+            // under its compiler-generated name (BackingFieldRename), reachable only through get_/set_. Reaching here
+            // means a carrier (a cross-module [KotlinInline] payload) named the Kotlin identity for storage that is not
+            // cross-assembly-addressable. Fail with a breadcrumb rather than let ilemit's ResolveField return null and
+            // NRE at Emit(Ldfld, null).
+            // Deliberately the WIDEST probe (any visibility, flattened, field OR accessor): the throw must fire only
+            // when the member is absent outright, never merely because the narrow public probe above missed it.
+            const BindingFlags Any = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance
+                                     | BindingFlags.Static | BindingFlags.FlattenHierarchy;
+            if (FindFieldMember(open, name, Any) == null && FindAccessorMethod(open, (write ? "set_" : "get_") + name, write ? 1 : 0, Any) == null)
+                throw new InvalidOperationException(
+                    $"bir2cir: '{ownerFqn.Name}.{name}' is neither a field nor a get_/set_ accessor on the referenced owner — "
+                    + "a cross-assembly property's storage is reachable only through its accessors");
+            return;
+        }
         RetargetToBaseInterface(node, "ownerType", open, acc, ownerFqn);
         node["member"] = "accessor";
         node["accessor"] = acc.Name;
