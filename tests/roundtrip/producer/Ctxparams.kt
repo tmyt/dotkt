@@ -51,6 +51,9 @@ class GenHolder {
 }
 
 class Boxy(val v: Int)
+// The RETURN position of a receiver-carrying context function type, which restores through the method's `retAttrs`
+// channel and whose value is a lifted lambda — the shape that returned the CONTEXT's field instead of the receiver's.
+fun makeCtxFn(): context(Scale) Boxy.() -> Int = { this.v * 10 + contextOf<Scale>().factor }
 fun evaluatePlain(f: context(Boxy) (Int) -> Int): Int = with(Boxy(10)) { f(5) }
 fun evaluateRecv(f: context(Boxy) Boxy.() -> Int): Int = with(Boxy(10)) { Boxy(3).f() }
 

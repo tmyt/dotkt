@@ -51,9 +51,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   instead of the receiver's and returned the wrong number with no diagnostic. kotc now captures the arity from FIR
   before it is dropped (`kotc.frontend.ClrContextFnTypes`) and carries it as the slot fact `ctxFnType`/`retCtxFnType`
   -> `[KotlinContextFunctionType(N)]` -> facadegen's context split -> the injector's `ContextFunctionTypeParams` cone
-  attribute. Residual: a lambda LITERAL of a RECEIVER-carrying context function type is lifted with its body's `this`
-  still reading physical slot 0 (the context) rather than the receiver, which ILVerify reports directly and which also
-  makes such a type wrong in RETURN position; the receiver-less form and the parameter position are covered.
+  attribute. A lambda LITERAL of such a type needed one more fix: the lift had no binding for the lambda's own
+  receiver, so the body's `this` fell through to `{k:this}` — the enclosing instance, or nothing in a static lift. It
+  now mints a name for the receiver parameter and binds `this` to it, as the inline splice carrier already did. That
+  ALSO closes the context-free sibling, where the same gap made `val f: Int.(Int) -> Int = { d -> this + d }` throw a
+  NullReferenceException; both lift shapes (non-capturing static and capturing closure) are covered.
   Also fixed in the same family: a cross-module MEMBER (and member-extension) call never emitted a positional
   `defaultArg` placeholder for an omitted default — it built `args`/`argTypes` from the expressions that happened to
   be present, so the omitted slot was DELETED and a later provided argument slid into it (`h.pick(b = 3)` bound `3`

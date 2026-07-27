@@ -132,6 +132,7 @@ import roundtrip.ctxparams.bumped
 import roundtrip.ctxparams.Boxy
 import roundtrip.ctxparams.evaluatePlain
 import roundtrip.ctxparams.evaluateRecv
+import roundtrip.ctxparams.makeCtxFn
 import roundtrip.ctxparams.GenHolder
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert
@@ -190,9 +191,10 @@ class KotlinApiShapeRoundtripTests {
         // context AS the receiver compiled fine (the ordinary parameter became the unused implicit `it`) and returned
         // 10 — a silently wrong value with no diagnostic anywhere.
         ClassicAssert.AreEqual(3, evaluateRecv { this.v })           // 3
-        // NOT covered here: a receiver-carrying context function type in RETURN position, or as a lambda LITERAL
-        // that gets lifted to a delegate. Both still bind `this` to physical slot 0 (the context) instead of the
-        // receiver — see the residual in docs/dotkt-semantics.md. The PARAMETER position above is the fixed one.
+        // The RETURN position of the same type: the restored value takes a receiver AND a context, and `this` must
+        // be the receiver. This returned 77 (the context's field, twice) before the lambda lift bound the receiver.
+        val produced = makeCtxFn()
+        with(Scale(7)) { ClassicAssert.AreEqual(37, Boxy(3).produced()) }  // 37  this.v*10 + context.factor
     }
 
     // #21: top-level generic extension-property accessors are restored from the producer DLL and remain callable

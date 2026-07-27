@@ -155,6 +155,19 @@ fun ctxApplyFnType(f: context(CtxScale) (Int) -> Int): Int = with(CtxScale(10)) 
 // it must carry the lambda's OWN context parameter too.
 inline fun ctxApplyFnTypeInline(f: context(CtxScale) (Int) -> Int): Int = with(CtxScale(10)) { f(5) }
 
+// The RECEIVER-CARRYING form, in both positions. Kotlin orders a function type's physical arguments contexts-FIRST,
+// then the receiver: `context(A) B.(D) -> E` is `@ExtensionFunctionType Function4<A, B, D, E>`. So a lambda's `this`
+// is physical argument 1, and binding it to argument 0 hands the lambda the CONTEXT as its receiver.
+fun ctxApplyRecvFnType(f: context(CtxScale) Int.() -> Int): Int = with(CtxScale(10)) { 3.f() }
+fun ctxMakeFnType(): context(CtxScale) Int.() -> Int = { this + contextOf<CtxScale>().factor }
+
+// The CONTEXT-FREE sibling of the same lift. A lambda's receiver parameter is the anonymous `<this>`, and its body's
+// `this` had nothing to bind to in the lifted static / closure `invoke` — this threw a NullReferenceException before
+// the receiver was bound to a named leading parameter. Both lift shapes: non-capturing and capturing.
+class CtxRecvHolder(val k: Int) {
+    val f: Int.(Int) -> Int = { d -> this + d + k }
+}
+
 
 class ContextParameterTests {
     @TestAttribute
@@ -236,5 +249,15 @@ class ContextParameterTests {
         // The same lambda through an INLINE callee, where the body is spliced from a carrier rather than invoked
         // through a delegate — a second parameter list that has to count the context slot.
         assertEquals(6, ctxApplyFnTypeInline { a -> a + 1 })     // 6
+        // Receiver-carrying, PARAMETER position: `this` is the RECEIVER (3), not the context.
+        assertEquals(13, ctxApplyRecvFnType { this + contextOf<CtxScale>().factor })   // 13
+        // ...and RETURN position, where the lambda is produced as a value and invoked later.
+        val made = ctxMakeFnType()
+        with(CtxScale(10)) { assertEquals(13, 3.made()) }        // 13
+        // The context-free sibling of the same lift, both shapes.
+        val plain: Int.(Int) -> Int = { d -> this + d }
+        assertEquals(12, 7.plain(5))                             // 12  non-capturing static lift
+        val capturing = CtxRecvHolder(100).f
+        assertEquals(112, 7.capturing(5))                        // 112 capturing closure lift
     }
 }

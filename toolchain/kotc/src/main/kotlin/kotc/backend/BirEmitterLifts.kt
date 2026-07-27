@@ -267,8 +267,11 @@ internal fun BirEmitter.lambda(node: IrFunctionExpression): String {
 		val freeTps = freeTypeParams(fn.parameters.map { it.type } + listOf(fn.returnType) + bodyTypeOperands(fn))
 		val typeParams = typeParamsJson(freeTps)
 		run {
-			val body = withLambdaParamShadow(fn) { (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
-			liftedMethods.add("""{"name":${str(lname)},"generated":true,"static":true,"override":false,"virtual":false$typeParams,"params":[${lambdaParamsJson(fn.parameters)}],"ret":${str(ret)},"body":[$body]}""")
+			val recvName = lambdaRecvName(fn)
+			val body = withLambdaSelf(fn, recvName) {
+				withLambdaParamShadow(fn) { (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
+			}
+			liftedMethods.add("""{"name":${str(lname)},"generated":true,"static":true,"override":false,"virtual":false$typeParams,"params":[${lambdaParamsJson(fn.parameters, recvName)}],"ret":${str(ret)},"body":[$body]}""")
 		}
 		val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
 		return """{"k":"newDelegate","method":${str(lname)},"funcType":${str(ftype)}$typeArgs${localCalleeOwnerTag()}}"""
@@ -286,7 +289,10 @@ internal fun BirEmitter.lambda(node: IrFunctionExpression): String {
 	capPairs.forEach { (decl, fname) ->
 		captureSubst[decl] = """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":${str(fname)}}"""
 	}
-	val body = withLambdaParamShadow(fn) { (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
+	val recvName = lambdaRecvName(fn)
+	val body = withLambdaSelf(fn, recvName) {
+		withLambdaParamShadow(fn) { (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
+	}
 	capPairs.forEach { (decl, _) -> val prev = savedSubst[decl]; if (prev != null) captureSubst[decl] = prev else captureSubst.remove(decl) }
 	val fields = capPairs.joinToString(",") { (decl, fname) -> """{"name":${str(fname)},"type":${str(captureFieldType(decl))}}""" }
 	// The closure must be GENERIC over any enclosing type parameters it captures (reified CLR generics — a `gp:T`
@@ -297,7 +303,7 @@ internal fun BirEmitter.lambda(node: IrFunctionExpression): String {
 	// type-param decls); bir2cir's ClosureSynthesis assembles the actual closure class (kind/base/interfaces wrapper +
 	// the ctor field-init body) into the file `types`, then STRIPS `synthClass`, leaving the lean `newClosure`
 	// (closureType + capture VALUE exprs + funcType + typeArgs) that ilemit consumes for the `new` — byte-identical.
-	val synthClass = """{"name":${str(cname)},"fields":[$fields],"params":[${lambdaParamsJson(fn.parameters)}],"ret":${str(ret)},"body":[$body]${typeParamsJson(freeTps)}}"""
+	val synthClass = """{"name":${str(cname)},"fields":[$fields],"params":[${lambdaParamsJson(fn.parameters, recvName)}],"ret":${str(ret)},"body":[$body]${typeParamsJson(freeTps)}}"""
 	// Capture values are evaluated in the enclosing context (the outer `this`, or an outer local).
 	val capExprs = captures.joinToString(",") { capValueExpr(it) }
 	val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
@@ -1291,14 +1297,39 @@ internal fun BirEmitter.birTypeDeleg(t: IrType): TypeNode {
 
 /** Lambda/closure method params with KProperty erased to Any (must agree with funcTypeOf for delegates), in the
  *  physical delegate order [orderedLambdaParams] defines: contexts, then the extension receiver (so a receiver
- *  lambda's `$this$build` is bound), then the regular params — i.e. IR order minus the dispatch receiver. */
-internal fun BirEmitter.lambdaParamsJson(params: List<IrValueParameter>): String =
+ *  lambda's `$this$build` is bound), then the regular params — i.e. IR order minus the dispatch receiver.
+ *
+ *  `recvName` renames the EXTENSION RECEIVER slot. A lambda's receiver parameter is the anonymous `<this>`, which is
+ *  not an emittable identifier and which the body reads as `{k:this}` — meaningless in the STATIC lift / wrong in a
+ *  closure `invoke`. Passing a minted name here and binding [BirEmitter.selfSubst] to it around the body emission is
+ *  what makes the receiver reachable, exactly as `emitInlineLambdaCarrier` already does for a splice carrier. */
+internal fun BirEmitter.lambdaParamsJson(params: List<IrValueParameter>, recvName: String? = null): String =
 	params.filter { it.kind != IrParameterKind.DispatchReceiver }
 		// A `Unit`-typed PARAMETER must be the real Unit VALUE identity, not `void` (invalid metadata).
 		.joinToString(",") { p ->
 			val ty = if (p.type.isUnit()) TypeNode.Fqn("kotlin.Unit") else birTypeDeleg(p.type)
-			"""{"name":${str(p.name.asString())},"type":${ty.toJson()}}"""
+			val nm = if (recvName != null && p.kind == IrParameterKind.ExtensionReceiver) recvName else p.name.asString()
+			"""{"name":${str(nm)},"type":${ty.toJson()}}"""
 		}
+
+/** Emit `block` with a lifted lambda's OWN extension receiver bound to `recvName`, so the body's `this` reads render
+ *  as that parameter instead of `{k:this}`. `{k:this}` is the ENCLOSING instance (or nothing at all in a static
+ *  lift), so without this the receiver was never reachable: `val f: Int.(Int) -> Int = { d -> this + d }` threw a
+ *  NullReferenceException, and once context parameters joined the physical sequence `this` began reading the CONTEXT
+ *  — physical slot 0 — and silently returned the wrong value. Saved and RESTORED: the same parameter may already be
+ *  bound by an enclosing carrier. */
+internal inline fun <T> BirEmitter.withLambdaSelf(fn: IrSimpleFunction, recvName: String?, block: () -> T): T {
+	val ext = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
+	if (ext == null || recvName == null) return block()
+	val had = selfSubst.containsKey(ext)
+	val saved = selfSubst[ext]
+	selfSubst[ext] = """{"k":"local","name":${str(recvName)}}"""
+	try { return block() } finally { if (had) selfSubst[ext] = saved!! else selfSubst.remove(ext) }
+}
+
+/** A fresh name for a lifted lambda's extension-receiver parameter, or null when it has none. */
+internal fun BirEmitter.lambdaRecvName(fn: IrSimpleFunction): String? =
+	if (fn.parameters.any { it.kind == IrParameterKind.ExtensionReceiver }) "__recv${inlCounter++}" else null
 
 /** Lift a local function to a file-class static method; captured vars become leading params (by their own names). */
 internal fun BirEmitter.liftLocalFn(fn: IrSimpleFunction) {

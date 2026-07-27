@@ -788,14 +788,14 @@ off as contexts, and the FIR injector rebuilds the type with the `ContextFunctio
 SLOT fact rather than a field of the type node because a type node is rebuilt by a dozen lowering passes, any of which
 would drop it — the same reason `suspendFnType` is one.
 
-**Residual — a lambda LITERAL of a receiver-carrying context function type.** The PARAMETER position round-trips end
-to end (a consumer's `evaluate { this.n }` now reads the receiver). What is still wrong is the LIFT of such a lambda
-to a delegate: its physical parameters are `(context…, receiver, …)`, but the body's `this` still reads physical slot
-0 — the context — instead of the receiver. ILVerify names it directly
-(`__lambda0(Scale, Boxy) … found ref Scale, expected ref Boxy`). It is the same slot-0-is-the-receiver assumption the
-round-trip carrier fixed on the metadata side, still present in the lambda-lift's `this` binding, and it also makes a
-context function type in RETURN position (whose value is such a lambda) produce a wrong number cross-module. The
-receiver-LESS form (`context(A) (B) -> C`) is unaffected and is covered in both suites.
+A lambda LITERAL of such a type needed one more thing: its receiver had to become reachable. A lambda's receiver
+parameter is the anonymous `<this>`, and the lifted static / closure `invoke` had nothing to bind the body's `this`
+to — so it fell through to `{k:this}`, which is the ENCLOSING instance or nothing at all. That was already broken for
+the context-FREE form (`val f: Int.(Int) -> Int = { d -> this + d }` threw a NullReferenceException), and once
+contexts joined the physical sequence the same `this` began reading physical slot 0 — the CONTEXT — and returned a
+wrong number instead. The lift now mints a name for the receiver parameter and binds `this` to it for the body
+emission, exactly as the inline splice carrier already did; both shapes (non-capturing static lift and capturing
+closure) are covered, with and without contexts.
 
 Two further limits of the carrier, both by construction: it holds ONE arity per declaration slot, so a context
 function type NESTED inside another type (`fun use(xs: List<context(Ctx) () -> Unit>)`) is not carried; and the fact
