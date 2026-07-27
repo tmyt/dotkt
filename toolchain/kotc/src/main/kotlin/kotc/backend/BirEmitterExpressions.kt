@@ -96,16 +96,20 @@ internal fun BirEmitter.expr(node: IrExpression): String {
  *  `var` statements that declare them (in evaluation order) for the caller to place. THE call sites that are not an
  *  expression — a constructor DELEGATION and an ENUM ENTRY — place them differently from [expr]'s `valueBlock`, but the
  *  binding itself is identical, so it lives here once. Empty list ⇒ nothing needed binding and `emit`'s output stands
- *  alone. */
+ *  alone.
+ *
+ *  A null from the pre-pass is the REFUSAL — this call cannot bind its supplied values, so it must not bind a filled
+ *  default either (that temp would move the default ahead of them). `callEvalOnceTemps` is then left uninstalled, which
+ *  is what [bindFilledDefaultOnce] tests. */
 internal fun <T> BirEmitter.withCallValuesBoundOnce(call: IrExpression, emit: () -> T): Pair<List<String>, T> {
 	val hoists = hoistCallValuesReadByDefaults(call)
-	val temps = hoists.mapTo(ArrayList()) { (order, _, stmt) -> order to stmt }
-	val previous = callEvalOnceTemps.put(call, temps)
+	val temps = hoists?.mapTo(ArrayList()) { (order, _, stmt) -> order to stmt }
+	val previous = if (temps != null) callEvalOnceTemps.put(call, temps) else callEvalOnceTemps.remove(call)
 	val out = try { emit() } finally {
-		hoists.forEach { (_, value, _) -> evalOnceSubst.remove(value) }
+		hoists?.forEach { (_, value, _) -> evalOnceSubst.remove(value) }
 		if (previous != null) callEvalOnceTemps[call] = previous else callEvalOnceTemps.remove(call)
 	}
-	return temps.sortedBy { it.first }.map { it.second } to out
+	return (temps?.sortedBy { it.first }?.map { it.second } ?: emptyList()) to out
 }
 
 /** #122's `sty` stamp on the value-node kinds bir2cir's StaticType reads a type from (see the note above). */
@@ -120,15 +124,18 @@ private fun BirEmitter.styStamped(node: IrExpression, s: String): String =
  *
  *  Hoisting REORDERS: a temp's initializer runs before the call node, so every non-stable value to the LEFT of the last
  *  hoisted one is bound too, even when no default reads it — otherwise it would slide after a value Kotlin evaluates
- *  later (`g(a(), b())` with `r = q * 10` must still run `a()` first). Returns (parameter order, IR node, `var`
- *  statement), where parameter order = receivers then arguments left to right, for the caller to merge with temps that
- *  [filledArgs] adds after rendering an omitted default. Every reader (the call's own receiver/argument slot, an
- *  inner-class `new`'s enclosing-instance argument, the spliced default) reaches the value through `expr()` on the SAME
- *  IR node, so [BirEmitter.evalOnceSubst] hands them all the one temp.
+ *  later (`g(a(), b())` with `r = q * 10` must still run `a()` first). Returns (order key, IR node, `var` statement) —
+ *  the order key of a SUPPLIED value is its parameter index (receivers, then arguments left to right), for the caller
+ *  to merge with the temps [filledArgs] adds after rendering an omitted default, which key ABOVE every supplied one
+ *  (see [BirEmitter.callEvalOnceTemps]). Every reader (the call's own receiver/argument slot, an inner-class `new`'s
+ *  enclosing-instance argument, the spliced default) reaches the value through `expr()` on the SAME IR node, so
+ *  [BirEmitter.evalOnceSubst] hands them all the one temp.
  *  Empty when there is nothing to bind: not a call, no omitted default this call FILLS, no default that reads a call
  *  value, or only STABLE values (a literal / immutable local or parameter read — free to re-read and impossible to
- *  observe out of order, exactly [bindOnce]'s test). */
-private fun BirEmitter.hoistCallValuesReadByDefaults(node: IrExpression): List<Triple<Int, IrExpression, String>> {
+ *  observe out of order, exactly [bindOnce]'s test).
+ *  NULL is the REFUSAL: a value in the bound range cannot be held by a temp at all, so this call binds nothing —
+ *  neither its supplied values nor a filled default. */
+private fun BirEmitter.hoistCallValuesReadByDefaults(node: IrExpression): List<Triple<Int, IrExpression, String>>? {
 	val call = node as? org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression ?: return emptyList()
 	val callee = call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction ?: return emptyList()
 	if (callee.parameters.none { it.kind == IrParameterKind.Regular && it.defaultValue != null }) return emptyList()
@@ -175,22 +182,23 @@ private fun BirEmitter.hoistCallValuesReadByDefaults(node: IrExpression): List<T
 	}
 	// A fill that a LATER fill reads is bound to a temp AFTER rendering ([bindFilledDefaultOnce]), and that temp is
 	// declared ahead of the call node. Kotlin evaluates the receiver, then each argument, and only then the callee's
-	// defaults — so when such a fill will be bound, EVERY supplied value binds with it (they sort ahead of it by
-	// parameter index). Without this the fill's initializer ran first: `host().f()` with `a = bump(), b = a * 10` ran
-	// `bump()` before `host()`, and `host().g(arg())` before both.
+	// defaults — so when such a fill will be bound, EVERY supplied value binds with it, and the fill's temp keys above
+	// them all. Without this the fill's initializer ran first: `host().f()` with `a = bump(), b = a * 10` ran `bump()`
+	// before `host()`, and `host().g(arg())` before both.
 	val boundFill = filledDefaultsReadByLater(call, callee).any { it }
 	val last = (if (boundFill) values.lastOrNull()?.first else null)
 		?: values.lastOrNull { (i, _) -> readsAt(i) }?.first ?: return emptyList()
 	// A byref / @ClrRefArgument argument is an ADDRESSABLE lvalue, never emitted through `expr()` on this node, so no
 	// temp can hold it — while the expression that PRODUCES the address can still have side effects
 	// (`byref(mk().field)`). Binding the values around it would move them across it, so an unbindable position in the
-	// bound range means NOTHING is bound: a partial hoist reorders the call, which is worse than the double evaluation
-	// it would have removed (the same trade bir2cir's DefaultArgSplice makes). A STABLE one reorders nothing and is
-	// simply skipped below.
+	// bound range REFUSES the whole call: nothing is bound, not even a filled default (whose temp would then be the one
+	// thing moved ahead of the call). A partial hoist reorders the call, which is worse than the double evaluation it
+	// would have removed — the same trade bir2cir's DefaultArgSplice makes. A STABLE one reorders nothing and is simply
+	// skipped below.
 	if (values.any { (i, v) ->
 			i <= last && !isStableValue(v) &&
 				(birType(callee.parameters[i].type) is TypeNode.ByRef || isClrRefArgument(callee.parameters[i]))
-		}) return emptyList()
+		}) return null
 	val out = ArrayList<Triple<Int, IrExpression, String>>()
 	for ((i, value) in values) {
 		if (i > last) break
@@ -207,9 +215,16 @@ private fun BirEmitter.hoistCallValuesReadByDefaults(node: IrExpression): List<T
 /** Bind an OMITTED default after [filledArgs] has rendered it in the callee's substituted scope. The ordinary pre-pass
  *  can bind only expressions present in `call.arguments`; a default absent from that array must join the same ordered
  *  temp list here when a later filled default reads its parameter. Returning the local makes both the call's own slot and
- *  every later symbolic substitution read the one value. Called exactly for the positions
- *  [filledDefaultsReadByLater] reports, which the pre-pass has already answered for by binding every SUPPLIED value —
- *  so this temp lands after the receiver's and each argument's in the parameter-ordered list. */
+ *  every later symbolic substitution read the one value.
+ *
+ *  Called exactly for the positions [filledDefaultsReadByLater] reports, which the pre-pass has already answered for by
+ *  binding every SUPPLIED value. Kotlin evaluates all of those before ANY default, so this temp keys ABOVE all of them
+ *  — the callee's parameter COUNT plus the default's own index, which orders the defaults among themselves too. Keying
+ *  on the bare parameter index put a default ahead of an argument supplied at a HIGHER index
+ *  (`h(a = mk(), b = a * 10, c: Int)` called as `h(c = arg())` ran `mk()` first).
+ *
+ *  Returns `emitted` untouched when the pre-pass REFUSED to bind this call (no `callEvalOnceTemps` entry): the fill's
+ *  temp would then be the one value moved ahead of the call. */
 internal fun BirEmitter.bindFilledDefaultOnce(
 	call: IrExpression,
 	paramIndex: Int,
@@ -220,8 +235,9 @@ internal fun BirEmitter.bindFilledDefaultOnce(
 	if (birType(param.type) is TypeNode.ByRef)
 		return unsupported(call, "omitting a by-reference default argument that another default reads",
 			"the default value of parameter '${param.name.asString()}' cannot be copied into a temporary; pass it explicitly")
+	val suppliedKeys = (param.parent as? org.jetbrains.kotlin.ir.declarations.IrFunction)?.parameters?.size ?: 0
 	val tv = "__arg${scopeCounter++}"
-	temps.add(paramIndex to """{"k":"var","name":${str(tv)},"type":${birType(param.type).toJson()},"init":$emitted}""")
+	temps.add((suppliedKeys + paramIndex) to """{"k":"var","name":${str(tv)},"type":${birType(param.type).toJson()},"init":$emitted}""")
 	return """{"k":"local","name":${str(tv)}}"""
 }
 

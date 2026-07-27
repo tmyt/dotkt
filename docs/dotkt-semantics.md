@@ -823,15 +823,18 @@ declared by the first argument (a `var` declares an ordinary method-body local, 
 before every later one, so a later read is in scope and in order). Cross-module a DELEGATION is filled by a separate walk
 over the constructor declarations, since its arguments are not a call node; an enum entry is always same-module (its own
 constructor is being compiled). The one escape is deliberate, and BOTH paths take it: when some value in the bound range
-cannot be held by a temporary — a `byref` / `@ClrRefArgument` slot (an addressable lvalue, whose address-producing
-expression can itself have side effects), an open generic slot, a synthesized operand with no type at all — NOTHING is
-bound, because a partial hoist would reorder the call, which is worse than the double evaluation it removes.
+cannot be held by a temporary, NOTHING is bound at that call — not its supplied values and not a filled default —
+because a partial hoist would reorder the call, which is worse than the double evaluation it removes. What counts as
+unholdable differs by what each path can see: same-module it is a `byref` / `@ClrRefArgument` slot (an addressable
+lvalue, and the expression that PRODUCES the address can itself have side effects); cross-module, working on emitted
+JSON, it is additionally an open generic slot or an operand carrying no type at all.
 
 An omitted default is evaluated AFTER everything the call supplies (Kotlin: the receiver, then each argument, then the
 callee's defaults). A filled default that a later default reads is itself bound to a temporary, and that temporary is
-declared ahead of the call node — so binding one forces every supplied value to be bound with it. The temporaries are
-emitted in parameter order, and a receiver's parameter index precedes every regular parameter's, so the result is
-exactly Kotlin's order.
+declared ahead of the call node — so binding one forces every supplied value to be bound with it. The temporaries carry
+a two-tier order key, all the supplied values (in parameter order, receivers first) ahead of all the filled defaults (in
+parameter order), which is exactly Kotlin's order. One tier alone would not be: a default declared before a later
+parameter would otherwise sort ahead of the argument supplied for it.
 
 The paths bind at different points, because they know different things. SAME-MODULE, kotc has the default's IR and hoists
 before emitting (`evalOnceSubst`, keyed by IR-node identity, so it can leave an immutable local or parameter read spliced

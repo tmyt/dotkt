@@ -40,11 +40,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   non-extension `plain()` called it once. It now runs once and every branch shares that one list. Three more defects in
   the same rule went with it: (a) that bound fill's temp is declared ahead of the call node, so it ran BEFORE the
   receiver and before every provided argument — `host().f()` ran `bump()` before `host()` and `host().g(arg())` before
-  both, where Kotlin evaluates the receiver, then each argument, and only then the callee's defaults; the pre-pass now
-  binds every supplied value whenever a fill will be bound, and the parameter-ordered temp list puts them back in
-  Kotlin's order. (b) A byref / `@ClrRefArgument` argument in the bound range was skipped while later values were still
+  both, where Kotlin evaluates the receiver, then each argument, and only then the callee's defaults. The pre-pass now
+  binds every supplied value whenever a fill will be bound, and the temps carry a TWO-TIER order key — all supplied
+  values ahead of all filled defaults — because keying both tiers on the bare parameter index still put a default ahead
+  of an argument supplied at a higher index (`h(a = mk(), b = a * 10, c: Int)` called as `h(c = arg())` ran `mk()`
+  first). (b) A byref / `@ClrRefArgument` argument in the bound range was skipped while later values were still
   hoisted, which moved them ahead of its (possibly side-effecting) address computation; an unbindable position now
-  binds NOTHING, matching what the code claimed and what bir2cir's splice already does. (c) The synthetic-`copy` test
+  refuses the whole call — no supplied value and no filled default is bound — the same trade bir2cir's splice makes.
+  (c) The synthetic-`copy` test
   was name + `isData`, but a data class may also declare a differently-signed `copy` OVERLOAD whose defaults are
   ordinary expressions — it is now matched by the generated signature (parameters mirroring the primary constructor),
   so an overload cannot be reconstructed as `this.<field>`.

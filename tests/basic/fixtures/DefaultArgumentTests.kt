@@ -248,27 +248,33 @@ fun m2CopyVia(f: () -> Int): Pair<Int, Int> { M2CopyLambdaCounter.calls++; retur
 
 // A data class may ALSO declare a differently-signed `copy` OVERLOAD of its own — only the generated signature is
 // reserved. Its defaults are ordinary expressions, not `this.<field>` reads, so the synthetic-copy test must not claim
-// it (`copy` + `isData` alone did).
+// it (`copy` + `isData` alone did). A CONTROL, not a regression test: this class is same-module, so its defaults are
+// real IR and never reach the reconstruction. Reaching the mis-selection needs a data class with a `copy` overload in a
+// REFERENCED module, and the only cross-module source that preserves the `data` nature is the frontend KLIB, which we
+// do not author.
 data class M2CopyOver(val x: Int, val y: Int) {
     fun copy(tag: String, z: Int = x * 2): String = "$tag/$z/$y"
 }
 
 // A FILLED default that a later default reads is bound to a temp declared AHEAD of the call node. Kotlin evaluates the
 // receiver, then each argument, and only then the callee's defaults — so binding it must not move it in front of them.
-class M2FillOrder {
-    var s = ""
-    fun mk(): Int { s += "d"; return 3 }
-    fun arg(): Int { s += "p"; return 7 }
-    fun self(): M2FillOrder { s += "H"; return this }
-    fun f(a: Int = mk(), b: Int = a * 10): Int = a * 1000 + b
-    fun g(p: Int, a: Int = mk(), b: Int = a * 10): Int = p + a * 1000 + b
-}
+// The side-effecting default is a TOP-LEVEL call on purpose: a default calling a MEMBER of the callee's own class reads
+// the dispatch receiver, which the pre-pass already bound for that reason, and would not exercise the ordering rule.
 object M2FillLog {
     var s = ""
     fun mk(): Int { s += "d"; return 3 }
     fun arg(): Int { s += "p"; return 7 }
 }
-class M2FillCtorHost(val p: Int, val a: Int = M2FillLog.mk(), val b: Int = a * 10)
+fun m2FillMk(): Int = M2FillLog.mk()
+class M2FillOrder {
+    fun f(a: Int = m2FillMk(), b: Int = a * 10): Int = a * 1000 + b
+    fun g(p: Int, a: Int = m2FillMk(), b: Int = a * 10): Int = p + a * 1000 + b
+    // A supplied argument whose parameter index is HIGHER than the bound fill's: the fill's temp must still sort after
+    // it, which a bare parameter-index key does not express.
+    fun h(a: Int = m2FillMk(), b: Int = a * 10, c: Int): Int = c + a * 1000 + b
+}
+fun m2FillHost(): M2FillOrder { M2FillLog.s += "H"; return M2FillOrder() }
+class M2FillCtorHost(val p: Int, val a: Int = m2FillMk(), val b: Int = a * 10)
 
 // An EXTENSION call site fills its omitted defaults through the same pass as every other call, and must run that pass
 // ONCE. Filling is not a pure rendering — it binds a filled default that a LATER default reads to a temp — so a second
@@ -470,13 +476,18 @@ class DefaultArgumentTests {
     // evaluates the receiver, then each argument, and only then the callee's defaults.
     @TestAttribute
     fun defargsFilledDefaultOrder() {
-        val h = M2FillOrder()
-        assertEquals(3030, h.self().f())                                // a = mk() = 3, b = a * 10 = 30
-        assertEquals("Hd", h.s)                                         // Hd   receiver first (was "dH")
+        M2FillLog.s = ""
+        assertEquals(3030, m2FillHost().f())                            // a = mk() = 3, b = a * 10 = 30
+        assertEquals("Hd", M2FillLog.s)                                 // Hd   receiver first (was "dH")
 
-        val h2 = M2FillOrder()
-        assertEquals(3037, h2.self().g(h2.arg()))                       // p = 7 + 3000 + 30
-        assertEquals("Hpd", h2.s)                                       // Hpd  receiver, argument, then the default (was "dHp")
+        M2FillLog.s = ""
+        assertEquals(3037, m2FillHost().g(M2FillLog.arg()))             // 7 + 3000 + 30
+        assertEquals("Hpd", M2FillLog.s)                                // Hpd  receiver, argument, then the default (was "dHp")
+
+        // The supplied argument sits at a HIGHER parameter index than the bound fill.
+        M2FillLog.s = ""
+        assertEquals(3037, m2FillHost().h(c = M2FillLog.arg()))
+        assertEquals("Hpd", M2FillLog.s)                                // Hpd  (was "Hdp" — the fill ran before the argument)
 
         M2FillLog.s = ""
         val c = M2FillCtorHost(M2FillLog.arg())

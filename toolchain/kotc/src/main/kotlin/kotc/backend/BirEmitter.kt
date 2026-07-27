@@ -291,8 +291,13 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	internal val evalOnceSubst = java.util.IdentityHashMap<org.jetbrains.kotlin.ir.expressions.IrExpression, String>()
 	// The ordered temp declarations of the call currently being emitted. The pre-pass registers provided
 	// receiver/argument values here; `filledArgs` adds an OMITTED default after it has rendered that default in the
-	// callee's substituted scope. Keeping both in one parameter-indexed list preserves evaluation order while allowing a
-	// later default to read the first default's one local (`a = bump(), b = a * 10`).
+	// callee's substituted scope. Keeping both in one list preserves evaluation order while allowing a later default to
+	// read the first default's one local (`a = bump(), b = a * 10`).
+	// The `Int` is an ORDER KEY, not a parameter index: Kotlin evaluates every value the call SUPPLIES (the receivers,
+	// then the arguments) before ANY of the callee's defaults, so a supplied value keys on its parameter index while a
+	// filled default keys on the callee's parameter COUNT plus its own index. Keying both on the bare parameter index
+	// put a default ahead of a supplied argument declared after it (`h(a = mk(), b = a * 10, c: Int)` called
+	// `h(c = arg())` ran `mk()` before `arg()`).
 	internal val callEvalOnceTemps =
 		java.util.IdentityHashMap<org.jetbrains.kotlin.ir.expressions.IrExpression, MutableList<Pair<Int, String>>>()
 	// Function-local classes lifted to top-level synthetic types: the outer locals they capture (prepended to the
