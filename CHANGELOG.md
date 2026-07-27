@@ -44,11 +44,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   keeps writing `with(scale) { scaled(5) }`; without the marker the same physical method surfaced as a plain
   leading value parameter, a Kotlin SOURCE break at the module boundary. `docs/user/kotlin-on-clr-differences.md`
   and `docs/user/supported-features.md` claimed context parameters were rejected outright; both are corrected.
-  Known residual, recorded in `docs/dotkt-semantics.md` §5i: a context FUNCTION TYPE does not round-trip its
-  context arity across a module boundary (the marker rides a parameter; a context function type is a property of the
-  TYPE, the peer of `[KotlinExtensionFunctionType]`), so a consumer sees `(A, B) -> C` for a producer's
-  `context(A) (B) -> C` and must spell the context as a lambda parameter. Same-module it works fully. The failure
-  mode is a consumer-side arity compile error, never a miscompile.
+  A context FUNCTION TYPE (`context(A) B.(D) -> E`) round-trips too, which needed its own carrier: fir2ir ERASES
+  which of a function type's leading arguments were contexts (at IR level `context(A) B.(D) -> E` is *identical* to
+  `B.(A, D) -> E`), so bir2cir stamped `[KotlinExtensionFunctionType]` and facadegen promoted the delegate's first
+  argument — the CONTEXT — to the restored receiver. A consumer's `evaluate { this.n }` then read the context's field
+  instead of the receiver's and returned the wrong number with no diagnostic. kotc now captures the arity from FIR
+  before it is dropped (`kotc.frontend.ClrContextFnTypes`) and carries it as the slot fact `ctxFnType`/`retCtxFnType`
+  -> `[KotlinContextFunctionType(N)]` -> facadegen's context split -> the injector's `ContextFunctionTypeParams` cone
+  attribute. Residual: a lambda LITERAL of a RECEIVER-carrying context function type is lifted with its body's `this`
+  still reading physical slot 0 (the context) rather than the receiver, which ILVerify reports directly and which also
+  makes such a type wrong in RETURN position; the receiver-less form and the parameter position are covered.
+  Also fixed in the same family: a cross-module MEMBER (and member-extension) call never emitted a positional
+  `defaultArg` placeholder for an omitted default — it built `args`/`argTypes` from the expressions that happened to
+  be present, so the omitted slot was DELETED and a later provided argument slid into it (`h.pick(b = 3)` bound `3`
+  to `a` and zero-filled `b`). Those paths now use the same positional filler and carry `sig`, and the
+  `@KotlinDefault` metadata lookup — previously constructors and top-level functions only — covers members.
   Regression coverage: `tests/basic/fixtures/ContextParameterTests.kt`,
   `tests/coroutines/fixtures/SuspendContextParameterTests.kt`, and `crossModuleContextParameters` in
   `tests/roundtrip/consumer/KotlinMetadataRoundtripTests.kt` over `tests/roundtrip/producer/Ctxparams.kt`.

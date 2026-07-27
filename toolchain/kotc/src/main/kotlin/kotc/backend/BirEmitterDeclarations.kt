@@ -130,7 +130,7 @@ internal fun BirEmitter.interfaceDef(iface: IrClass): String {
 		val inheritedSynthetic = fn.isFakeOverride || fn.origin == IrDeclarationOrigin.FAKE_OVERRIDE ||
 			(fn.body == null && fn.overriddenSymbols.isNotEmpty() && fn.startOffset < 0)
 		val fakeOverride = if (inheritedSynthetic) ",\"fakeOverride\":true" else ""
-		return """{"name":${str(name)},"static":false,"override":false,"virtual":true$fakeOverride${typeParamsJson(fn.typeParameters)},"params":[$params],"ret":${str(ret)}${funModsJson(fn)}${resultTypeJson(fn)},"body":[$body],"attrs":[$memberAttrs]${overridesJson(fn)}}"""
+		return """{"name":${str(name)},"static":false,"override":false,"virtual":true$fakeOverride${typeParamsJson(fn.typeParameters)},"params":[$params],"ret":${str(ret)}${retCtxFnTypeField(fn)}${funModsJson(fn)}${resultTypeJson(fn)},"body":[$body],"attrs":[$memberAttrs]${overridesJson(fn)}}"""
 	}
 	val funMethods = iface.declarations.filterIsInstance<IrSimpleFunction>()
 		// equals/hashCode/toString are inherited from Any into every Kotlin interface (fake overrides). On the CLR
@@ -581,7 +581,7 @@ internal fun BirEmitter.topLevelAccessorMethod(acc: IrSimpleFunction, propName: 
 	val ps = (listOfNotNull(selfParam) + paramsJsonList(acc.parameters)).joinToString(",")
 	val name = (if (isGetter) "get_" else "set_") + propName
 	val ret = if (isGetter) birType(acc.returnType) else TypeNode.Fqn("kotlin.Unit")
-	return """{"name":${str(name)},"static":true,"override":false,"virtual":false,"abstract":false,"objectOverride":false,"vis":"public"${typeParamsJson(acc.typeParameters)},"params":[$ps],"ret":${str(ret)}${funModsJson(acc)},"body":[$body]}"""
+	return """{"name":${str(name)},"static":true,"override":false,"virtual":false,"abstract":false,"objectOverride":false,"vis":"public"${typeParamsJson(acc.typeParameters)},"params":[$ps],"ret":${str(ret)}${retCtxFnTypeField(acc)}${funModsJson(acc)},"body":[$body]}"""
 }
 
 internal fun BirEmitter.accessorMethod(acc: IrSimpleFunction, propName: String, isGetter: Boolean): String {
@@ -628,7 +628,7 @@ internal fun BirEmitter.accessorMethod(acc: IrSimpleFunction, propName: String, 
 	// never carries it. In an app build these attrs simply ride the accessor as ordinary metadata.
 	val propAnns = (acc.correspondingPropertySymbol?.owner ?: acc).annotations
 	val accAttrs = ""","attrs":[${attrsJson(propAnns)}]"""
-	return """{"name":${str(mname)},"static":false,"override":$isOverrideClass,"virtual":$virtual,"abstract":$isAbstract,"objectOverride":false,"vis":${str(vis)},"params":[$ps],"ret":${str(ret)}${funModsJson(acc)},"body":[$body]$accAttrs${overridesJson(acc)}}"""
+	return """{"name":${str(mname)},"static":false,"override":$isOverrideClass,"virtual":$virtual,"abstract":$isAbstract,"objectOverride":false,"vis":${str(vis)},"params":[$ps],"ret":${str(ret)}${retCtxFnTypeField(acc)}${funModsJson(acc)},"body":[$body]$accAttrs${overridesJson(acc)}}"""
 }
 
 /** A user `annotation class Ann(val v: Int, …)` -> a plain BIR class carrying the pure-Kotlin `"annotation":true`
@@ -1109,7 +1109,7 @@ internal fun BirEmitter.method(fn: IrSimpleFunction, static: Boolean): String {
 	val mods = funModsJson(fn, isInlineWithLambda(fn))
 	// Return nullability (`fun f(): String?`) rides the `ret` type node (`{t:nullable,of:...}` from the uniform
 	// birType) — the decl-level `retNullable` flag is RETIRED. bir2cir/ilemit derive .NET NRT from the type node.
-	return """{"name":${str(emitName)},"static":$static,"override":$isOvr,"virtual":$isVirtual,"abstract":$isAbstract,"objectOverride":${isAnySlot},"vis":${str(vis)}${typeParamsJson(fn.typeParameters)}$mods${resultTypeJson(fn)},"params":[$ps],"ret":${birType(fn.returnType).toJson()},"body":[$body],"attrs":[${attrsJson(fn.annotations)}]${overridesJson(fn)}${posJson(fn)}}"""
+	return """{"name":${str(emitName)},"static":$static,"override":$isOvr,"virtual":$isVirtual,"abstract":$isAbstract,"objectOverride":${isAnySlot},"vis":${str(vis)}${typeParamsJson(fn.typeParameters)}$mods${resultTypeJson(fn)},"params":[$ps],"ret":${birType(fn.returnType).toJson()}${retCtxFnTypeField(fn)},"body":[$body],"attrs":[${attrsJson(fn.annotations)}]${overridesJson(fn)}${posJson(fn)}}"""
 }
 
 /** Structured declaration-modifier object (spec §2.1): a single `"mods":{name:true,…}` carrying ONLY the set flags
@@ -1227,6 +1227,40 @@ internal fun BirEmitter.paramsJson(params: List<org.jetbrains.kotlin.ir.declarat
  *  vector, where dropping a context parameter on one side and not the other is what makes a call miscompile. */
 internal fun BirEmitter.isValueParameter(p: IrValueParameter): Boolean =
 	p.kind == IrParameterKind.Regular || p.kind == IrParameterKind.Context
+
+/** `,"ctxFnType":N` for a declaration slot whose Kotlin TYPE is a CONTEXT function type — N = how many of that
+ *  function type's LEADING physical arguments are contexts (`context(A) B.(D) -> E` is
+ *  `@ExtensionFunctionType Function3<A,B,D,E>`, so N=1: contexts first, then the receiver, then the value params).
+ *
+ *  It is a SLOT fact rather than a field of the type node because a type node is rebuilt by a dozen bir2cir passes
+ *  (ReferenceNullableStrip, NullableGenericErasure, …), any of which would silently drop it — the same reason
+ *  `suspendFnType`/`retNullableFlags` are slot facts. bir2cir turns it into `[KotlinContextFunctionType(N)]`.
+ *
+ *  fir2ir ERASES the arity: `context(A) B.(D) -> E` and `B.(A, D) -> E` are the SAME IrType, so the number cannot be
+ *  read off `IrType` at all. It comes from the FIR capture ([kotc.frontend.ClrContextFnTypes]), keyed by this slot's
+ *  source offset (fir2ir copies the same PSI offsets onto the IR declaration). Empty for every ordinary slot. */
+internal fun ctxFnTypeField(ctxCount: Int): String =
+	if (ctxCount > 0) ""","ctxFnType":$ctxCount""" else ""
+
+/** The RETURN-position twin of [ctxFnTypeField]: `,"retCtxFnType":N` for a declaration whose RETURN type is a
+ *  context function type (`fun make(): context(A) B.() -> C`, and a property accessor's restored type). A property
+ *  accessor is keyed by its OWN source offset when it has one and by the property's otherwise — a default accessor
+ *  is synthesized and carries the property's. */
+internal fun BirEmitter.retCtxFnTypeField(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String {
+	val own = kotc.frontend.ClrContextFnTypes.returnContextCountAt(sourcePathOf(fn), fn.startOffset, fn.endOffset)
+	// A property's own range answers for its GETTER, whose Kotlin return type IS the property's. A SETTER returns
+	// Unit, so it must never inherit that fact — the fallback is gated on the accessor actually being the getter.
+	val prop = (fn as? IrSimpleFunction)?.correspondingPropertySymbol?.owner
+	val n = if (own > 0) own
+		else if (prop != null && prop.getter === fn)
+			kotc.frontend.ClrContextFnTypes.returnContextCountAt(sourcePathOf(prop), prop.startOffset, prop.endOffset)
+		else 0
+	return if (n > 0) ""","retCtxFnType":$n""" else ""
+}
+
+/** The source file an IR declaration came from, as the FIR capture recorded it — the file half of the
+ *  [kotc.frontend.ClrContextFnTypes] key. Null for a synthetic declaration with no source (which has no fact). */
+internal fun BirEmitter.sourcePathOf(node: org.jetbrains.kotlin.ir.IrElement): String? = locationOf(node)?.path
 
 /** How many parameters `fn` EMITS: the [isValueParameter] physical sequence with the extension receiver's leading
  *  `__self` counted first. The one number to hand any consumer that compares against a .NET parameter count. */
@@ -1379,7 +1413,8 @@ internal fun BirEmitter.paramsJsonList(params: List<org.jetbrains.kotlin.ir.decl
 			} else null
 			val allAttrs = listOfNotNull(srcAttrs.takeIf { s -> s.isNotEmpty() }, kotlinDefault).joinToString(",")
 			val pattrs = if (allAttrs.isNotEmpty()) ""","attrs":[$allAttrs]""" else ""
-			"""{"name":${str(it.name.asString())},"type":${birType(it.type).toJson()}$vararg$default$pattrs}"""
+			val ctxFn = ctxFnTypeField(kotc.frontend.ClrContextFnTypes.contextCountAt(sourcePathOf(it), it.startOffset, it.endOffset))
+			"""{"name":${str(it.name.asString())},"type":${birType(it.type).toJson()}$vararg$default$ctxFn$pattrs}"""
 		}
 	if (emitKotlinDefault) valueParams.forEach { captureSubst.remove(it) }
 	return result

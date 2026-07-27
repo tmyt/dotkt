@@ -197,7 +197,12 @@ object ClrAppFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtifact
 		val outputs = sessionsWithSources.map { (session, files) ->
 			installKotlinJvmDefaultImport(session)
 			val firFiles = session.buildFirFromKtFiles(files)
-			resolveAndCheckFir(session, firFiles, diagnosticsReporter)
+			resolveAndCheckFir(session, firFiles, diagnosticsReporter).also {
+				// Capture the CONTEXT-FUNCTION-TYPE arities while FIR still has them — fir2ir erases the
+				// `ContextFunctionTypeParams` cone attribute, and `context(A) B.(D) -> E` becomes indistinguishable
+				// from `B.(A, D) -> E` at IR level. See [kotc.frontend.ClrContextFnTypes].
+				kotc.frontend.ClrContextFnTypes.capture(it.fir)
+			}
 		}
 
 		outputs.runPlatformCheckers(diagnosticsReporter)

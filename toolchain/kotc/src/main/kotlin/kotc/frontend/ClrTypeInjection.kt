@@ -297,6 +297,29 @@ internal fun clrInjectedTopLevelKotlinDefaultSlots(callableId: CallableId, param
 	else ClrMetadataHolder.topLevelParamsByCallableId[callableId]?.kotlinDefaultSlotsForArity(paramCount)
 
 /**
+ * The same two lookups for a facadegen-injected MEMBER function, keyed by its owner `ClassId` + name and matched by
+ * emitted-parameter count. Without them the backend had no authoritative answer for a member and fell back to
+ * `carriesKotlinDefault`, an IR-SHAPE test that is false for every member (it requires `isInline`, which facadegen
+ * does not surface on a member) — so an omitted cross-module member default was neither placeheld nor refused: its
+ * slot was silently DELETED and a later provided argument slid into it. The metadata is the authority here exactly as
+ * it already is for a constructor and a top-level function; `params` is the PHYSICAL list (a `__self` extension
+ * receiver and every restored `context(...)` slot included), so `paramCount` is the emitted parameter count.
+ */
+private fun ClrMethod.valueParams(): List<ClrParam> =
+	if (ext && params.isNotEmpty()) params.drop(1) else params   // an `ext` fun's leading `__self` is a receiver, not a value param
+
+private fun memberValueParams(classId: ClassId, name: Name): List<List<ClrParam>>? =
+	if (classId in ClrMetadataHolder.sourceShadowedClassIds) null
+	else ClrMetadataHolder.byClassId[classId]?.methods?.filter { it.name == name.asString() }
+		?.map { it.valueParams() }?.takeIf { it.isNotEmpty() }
+
+internal fun clrInjectedMemberParamDefaults(classId: ClassId, name: Name, paramCount: Int): List<ClrConstDefault?>? =
+	memberValueParams(classId, name)?.defaultsForArity(paramCount)
+
+internal fun clrInjectedMemberKotlinDefaultSlots(classId: ClassId, name: Name, paramCount: Int): List<Boolean>? =
+	memberValueParams(classId, name)?.kotlinDefaultSlotsForArity(paramCount)
+
+/**
  * A2 keystone (interop-no-registry, stage 3): the backend reads a restored DotKt TOP-LEVEL EXTENSION PROPERTY's .NET
  * file-facade class (its `get_`/`set_<name>` statics live there) off its resolved IR `CallableId` (`package` + name) —
  * facadegen's metadata keyed structurally.
@@ -1295,6 +1318,26 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	 *  [KotlinExtensionFunctionType] marker (bir2cir did NOT erase the delegate — the receiver rode as its first CLR
 	 *  type arg). The receiver heads the type args, mirroring the frontend's own representation. Falls back to a plain
 	 *  function type if the synthetic FunctionN symbol can't be resolved (never a crash). */
+	/** A Kotlin CONTEXT function type `context(A…) [R.](P…) -> T`. Physically it is the plain
+	 *  `Function{ctx+recv+params}<A…, R?, P…, T>` — contexts FIRST, then the receiver, then the value params — and the
+	 *  context-ness is the `ContextFunctionTypeParams(n)` cone attribute (composed with `ExtensionFunctionType` when
+	 *  the source also wrote a receiver). Without the attribute the restored type is an ordinary extension function
+	 *  type whose receiver is the first CONTEXT, so a consumer's lambda binds `this` to the context — the silent
+	 *  cross-module miscompile the `[KotlinContextFunctionType]` round-trip exists to prevent. */
+	private fun coneContextFunctionType(contexts: List<ConeKotlinType>, recv: ConeKotlinType?, params: List<ConeKotlinType>,
+			ret: ConeKotlinType, suspend: Boolean): ConeKotlinType {
+		val physical = contexts + listOfNotNull(recv) + params
+		val cid = if (suspend) ClassId(FqName("kotlin.coroutines"), Name.identifier("SuspendFunction${physical.size}"))
+			else ClassId(FqName("kotlin"), Name.identifier("Function${physical.size}"))
+		val sym = session.symbolProvider.getClassLikeSymbolByClassId(cid) ?: return coneFunctionType(physical, ret)
+		@Suppress("UNCHECKED_CAST")
+		val args = (physical + ret).toTypedArray() as Array<org.jetbrains.kotlin.fir.types.ConeTypeProjection>
+		val attrs = ConeAttributes.create(
+			listOfNotNull(CompilerConeAttributes.ContextFunctionTypeParams(contexts.size),
+				CompilerConeAttributes.ExtensionFunctionType.takeIf { recv != null }))
+		return sym.constructType(args, false, attrs)
+	}
+
 	private fun coneExtensionFunctionType(recv: ConeKotlinType, params: List<ConeKotlinType>, ret: ConeKotlinType): ConeKotlinType {
 		val cid = ClassId(FqName("kotlin"), Name.identifier("Function${params.size + 1}"))
 		val sym = session.symbolProvider.getClassLikeSymbolByClassId(cid) ?: return coneFunctionType(listOf(recv) + params, ret)
@@ -1445,7 +1488,13 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			// A .NET delegate / a `suspend (…) -> T` position -> a Kotlin (suspend) function type, so a lambda binds and
 			// overloads disambiguate. A suspend fn makes a passed lambda a SUSPEND lambda (the H2 round-trip).
 			is TypeNode.Fn ->
-				if (node.recv != null && node.suspend)   // #47: `suspend R.() -> T` — compose suspend kind + ext receiver
+				// A CONTEXT function type (`ctx` non-empty — facadegen restored it from [KotlinContextFunctionType]).
+				if (node.ctx.isNotEmpty())
+					coneContextFunctionType(node.ctx.map { coneOf(it, owner, methodTps, paramPos) },
+						node.recv?.let { coneOf(it, owner, methodTps, paramPos) },
+						node.params.map { coneOf(it, owner, methodTps, paramPos) },
+						coneOf(node.ret, owner, methodTps, paramPos), node.suspend)
+				else if (node.recv != null && node.suspend)   // #47: `suspend R.() -> T` — compose suspend kind + ext receiver
 					coneSuspendExtensionFunctionType(coneOf(node.recv, owner, methodTps, paramPos), node.params.map { coneOf(it, owner, methodTps, paramPos) }, coneOf(node.ret, owner, methodTps, paramPos))
 				else if (node.recv != null)
 					coneExtensionFunctionType(coneOf(node.recv, owner, methodTps, paramPos), node.params.map { coneOf(it, owner, methodTps, paramPos) }, coneOf(node.ret, owner, methodTps, paramPos))

@@ -368,6 +368,9 @@ internal fun BirEmitter.injectedMetaDefaults(callee: org.jetbrains.kotlin.ir.dec
 		is org.jetbrains.kotlin.ir.declarations.IrSimpleFunction ->
 			(callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)
 				?.let { kotc.frontend.clrInjectedTopLevelParamDefaults(org.jetbrains.kotlin.name.CallableId(it.packageFqName, callee.name), valCount) }
+			// A MEMBER of a facadegen-injected type: the metadata is the authority here too (see the member accessors'
+			// KDoc). Without it a member's omitted default had no carrier signal at all.
+				?: (callee.parent as? IrClass)?.classId?.let { kotc.frontend.clrInjectedMemberParamDefaults(it, callee.name, valCount) }
 		else -> null
 	}
 
@@ -381,6 +384,7 @@ internal fun injectedKotlinDefaultSlots(callee: org.jetbrains.kotlin.ir.declarat
 		is org.jetbrains.kotlin.ir.declarations.IrSimpleFunction ->
 			(callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)
 				?.let { kotc.frontend.clrInjectedTopLevelKotlinDefaultSlots(org.jetbrains.kotlin.name.CallableId(it.packageFqName, callee.name), valCount) }
+				?: (callee.parent as? IrClass)?.classId?.let { kotc.frontend.clrInjectedMemberKotlinDefaultSlots(it, callee.name, valCount) }
 		else -> null
 	}
 
@@ -404,7 +408,10 @@ internal fun BirEmitter.filledInjectedArgs(call: org.jetbrains.kotlin.ir.express
 		if (!isValueParameter(p)) return@forEachIndexed
 		valIdx++
 		val arg = if (i < call.arguments.size) call.arguments[i] else null
-		if (arg != null) { out.add(expr(arg)); return@forEachIndexed }
+		// A `byref(x)` / @ClrRefArgument arg is emitted as its ADDRESSABLE lvalue (ilemit's EmitArg passes it by
+		// address). `byrefMarker` is null for every ordinary argument, so this is a no-op everywhere else — it lets
+		// the .NET-interop member paths share this filler instead of keeping a second, non-filling renderer.
+		if (arg != null) { out.add(byrefMarker(arg)?.let { inner -> byrefBackingField(inner) ?: expr(inner) } ?: expr(arg)); return@forEachIndexed }
 		val def = p.defaultValue?.expression ?: return@forEachIndexed
 		if (def is org.jetbrains.kotlin.ir.expressions.IrErrorExpression) {
 			metaDefaults?.getOrNull(valIdx)?.let { metaConstArg(it, p.type) }?.let { out.add(expr(it)); return@forEachIndexed }
@@ -1017,7 +1024,12 @@ internal fun BirEmitter.call(call: IrCall): String {
 				// DERIVES the ilemit `shapes` overload-matcher tokens (the .NET simple names Int64/SByte/… + gp/
 				// generic/ienum/func:N) off the @ClrTypeAlias index and drops `shapeTypes`. No CLR-shape knowledge here.
 				val shapeTypes = shapeParams.joinToString(",") { birType(it).toJson() }
-				val argsJson = (listOfNotNull(gExt) + regularArgs(call)).joinToString(",") { expr(it) }
+				// Positional filling, like every other .NET/restored-member call path: building `args` from the
+				// expressions that happen to be present DELETES an omitted default's slot, so a later provided
+				// argument slides into it (`g.pick(b = 3)` bound `3` to `a` and left the required `b` zero-filled)
+				// while `shapeTypes` above still describes the full parameter vector. `filledInjectedArgs` emits a
+				// metadata constant, a `defaultArg` placeholder for bir2cir's DefaultArgSplice, or a loud refusal.
+				val argsJson = (listOfNotNull(gExt?.let { expr(it) }) + filledInjectedArgs(call)).joinToString(",")
 				// A `suspend` generic .NET-member callee carries the `"suspendCall":true` FACT for bir2cir's deferred
 				// Task/await lowering, exactly like the non-generic call paths (suspendCallTag) — otherwise a generic
 				// .NET-member suspend call would silently drop out of the suspension lowering. (latent ⑤.)
@@ -1104,24 +1116,22 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// object: it's a STATIC call whose first argument is the extension receiver.
 		val extRecv = extensionReceiver(call)
 		if (isStatic && extRecv != null) {
-			val allArgs = (listOf(expr(extRecv)) + regularArgs(call).map { expr(it) }).joinToString(",")
-			val allArgTypes = (listOf(birType(extRecv.type).toJson()) + regularArgs(call).map { birType(it.type).toJson() }).joinToString(",")
-			return """{"k":"callStatic","ownerType":${clrType!!.toJson()},"method":${str(member)},"argTypes":[$allArgTypes],"ret":$ret,"args":[$allArgs]$suspendTag$anySlotTag}"""
+			val (allArgs, allArgTypes) = clrCallArgsWithRecv(call, callee, extRecv)
+			return """{"k":"callStatic","ownerType":${clrType!!.toJson()},"method":${str(member)}${overloadSigField(callee)},"argTypes":[$allArgTypes],"ret":$ret,"args":[$allArgs]$suspendTag$anySlotTag}"""
 		}
 		// A restored MEMBER extension function (`class C { fun T.f() }`): an INSTANCE method on the dispatch receiver
 		// (C) whose first .NET param `__self` is the extension receiver -> dispatch on `recv`, prepend the receiver.
 		if (!isStatic && extRecv != null && recv != null) {
-			val allArgs = (listOf(expr(extRecv)) + regularArgs(call).map { expr(it) }).joinToString(",")
-			val allArgTypes = (listOf(birType(extRecv.type).toJson()) + regularArgs(call).map { birType(it.type).toJson() }).joinToString(",")
-			return """{"k":"callInstance","virtual":$clrCallVirtual,"ownerType":${memberType!!.toJson()},"method":${str(member)},"argTypes":[$allArgTypes],"ret":$ret,"recv":${expr(recv)},"args":[$allArgs]$suspendTag$anySlotTag${superTag(call)}}"""
+			val (allArgs, allArgTypes) = clrCallArgsWithRecv(call, callee, extRecv)
+			return """{"k":"callInstance","virtual":$clrCallVirtual,"ownerType":${memberType!!.toJson()},"method":${str(member)}${overloadSigField(callee)},"argTypes":[$allArgTypes],"ret":$ret,"recv":${expr(recv)},"args":[$allArgs]$suspendTag$anySlotTag${superTag(call)}}"""
 		}
 		// A2 (#61): a PLAIN static/instance call by the .NET owner's FQN identity; bir2cir's NetInteropBinding
 		// resolves the owner off the .NET refs and shapes it (clrStatic/clrInstance). No .NET-shape decision here.
 		val (cArgs, cArgTypes) = clrCallArgs(call, callee)
 		return if (isStatic)
-			"""{"k":"callStatic","ownerType":${clrType!!.toJson()},"method":${str(member)},"argTypes":[$cArgTypes],"ret":$ret,"args":[$cArgs]$suspendTag$anySlotTag}"""
+			"""{"k":"callStatic","ownerType":${clrType!!.toJson()},"method":${str(member)}${overloadSigField(callee)},"argTypes":[$cArgTypes],"ret":$ret,"args":[$cArgs]$suspendTag$anySlotTag}"""
 		else
-			"""{"k":"callInstance","virtual":$clrCallVirtual,"ownerType":${memberType!!.toJson()},"method":${str(member)},"argTypes":[$cArgTypes],"ret":$ret,"recv":${expr(recv!!)},"args":[$cArgs]$suspendTag$anySlotTag${superTag(call)}}"""
+			"""{"k":"callInstance","virtual":$clrCallVirtual,"ownerType":${memberType!!.toJson()},"method":${str(member)}${overloadSigField(callee)},"argTypes":[$cArgTypes],"ret":$ret,"recv":${expr(recv!!)},"args":[$cArgs]$suspendTag$anySlotTag${superTag(call)}}"""
 	}
 
 	// Companion-object member -> a static member of the enclosing class (precedes user-property field access).
@@ -1894,17 +1904,36 @@ internal fun BirEmitter.byrefBackingField(inner: IrExpression): String? {
 	return """{"k":"field","ownerType":$owner,"recv":$recv,"name":${str(prop.name.asString())}}"""
 }
 
-/** (argsJson, argTypesJson) for an injected .NET call. A `ClrRef<T>` param already maps to `byref:T` via birType
- *  (so the out/ref overload resolves + optional params still default-fill); a `byref(x)` arg unwraps to its lvalue
- *  `x`, which ilemit passes by address (EmitArg routes an IsByRef param through EmitAddr). */
+/** (argsJson, argTypesJson) for an injected .NET / restored-DotKt call — the ONE builder every such call site uses,
+ *  so the two vectors are always the SAME physical sequence: `[__self?] + contexts + regulars`, positions filled by
+ *  [filledInjectedArgs].
+ *
+ *  Both halves derive from the callee's PARAMETERS, never from "the expressions that happen to be present". Building
+ *  them from provided expressions (the previous shape here and at the three sibling member paths) silently DELETED an
+ *  omitted default's slot: no `defaultArg` placeholder was emitted, so bir2cir's DefaultArgSplice never consulted the
+ *  callee's `@KotlinDefault` carrier, and a later provided argument slid into the omitted parameter's position — a
+ *  cross-module `h.pick(b = 3)` bound `3` to `a` and zero-filled `b`. `sig` (emitted by the callers via
+ *  [overloadSigField]) is what lets DefaultArgSplice key the carrier; `argTypes` stays aligned with the args actually
+ *  emitted, since a purely-trailing uncarried slot is still dropped for ilemit's [DefaultParameterValue] backfill.
+ *
+ *  A `ClrRef<T>` param already maps to `byref:T` via birType (so the out/ref overload resolves + optional params still
+ *  default-fill); a `byref(x)` arg unwraps to its lvalue `x`, which ilemit passes by address. */
 internal fun BirEmitter.clrCallArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression, callee: org.jetbrains.kotlin.ir.declarations.IrFunction): Pair<String, String> {
-	// [isValueParameter], matching `regularArgs` below — a restored `context(...)` parameter is an ordinary
-	// positional slot, so counting it on one side of this pair and not the other would emit `argTypes` shorter
-	// than `args` and leave bir2cir's overload resolution one type short of the arg vector.
-	val params = regularParams(callee)
-	val tj = params.map { birType(it.type).toJson() }
-	val aj = regularArgs(call).map { val inner = byrefMarker(it); if (inner != null) (byrefBackingField(inner) ?: expr(inner)) else expr(it) }
+	val aj = filledInjectedArgs(call)
+	val tj = regularParams(callee).map { birType(it.type).toJson() }.take(aj.size)
 	return aj.joinToString(",") to tj.joinToString(",")
+}
+
+/** [clrCallArgs] with the callee's EXTENSION receiver prepended to both vectors — a .NET `static M(this T self, …)`
+ *  surfaced as a Kotlin extension, or a restored DotKt member extension whose leading `__self` is that receiver. */
+internal fun BirEmitter.clrCallArgsWithRecv(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression,
+		callee: org.jetbrains.kotlin.ir.declarations.IrFunction, extRecv: IrExpression): Pair<String, String> {
+	val (aj, tj) = clrCallArgs(call, callee)
+	val extParamType = callee.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
+		?.let { birType(it.type) } ?: birType(extRecv.type)
+	val args = listOf(expr(extRecv)) + listOfNotNull(aj.takeIf { it.isNotEmpty() })
+	val types = listOf(extParamType.toJson()) + listOfNotNull(tj.takeIf { it.isNotEmpty() })
+	return args.joinToString(",") to types.joinToString(",")
 }
 
 // #82: whether an IrProperty is backed by a REAL static field vs a COMPUTED property whose cross-module

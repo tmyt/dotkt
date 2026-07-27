@@ -52,13 +52,18 @@ public abstract record TypeNode
     /// `fn`: a function type; <c>Suspend</c> is a flag, <c>Recv</c> is the extension receiver
     /// (subsumes func:/sfunc:). <c>Clr</c> is a CIR-only physical delegate-family decision authored by bir2cir;
     /// kotc's BIR projection always omits it.
+    /// <c>Ctx</c> is META-ONLY (facadegen writes it, the FIR injector reads it), exactly like <c>Oblivious</c>:
+    /// how many of the function type's LEADING arguments are Kotlin CONTEXT parameters. `context(A) B.(D) -&gt; E`
+    /// restores as <c>Ctx=[A]</c>, <c>Recv=B</c>, <c>Params=[D]</c>. kotc's BIR carries the same fact as the
+    /// declaration-slot key `ctxFnType` instead, because a type node is rebuilt by many lowering passes.
     /// </summary>
-    public sealed record Fn(bool Suspend, TypeNode Ret, TypeNode[] Params, TypeNode? Recv = null, string? Clr = null) : TypeNode
+    public sealed record Fn(bool Suspend, TypeNode Ret, TypeNode[] Params, TypeNode? Recv = null, string? Clr = null,
+        TypeNode[]? Ctx = null) : TypeNode
     {
         public bool Equals(Fn? o) =>
             o is not null && Suspend == o.Suspend && Ret == o.Ret && SeqEq(Params, o.Params)
-            && Recv == o.Recv && Clr == o.Clr;
-        public override int GetHashCode() => System.HashCode.Combine(Suspend, Ret, Params.Length, Recv, Clr);
+            && Recv == o.Recv && Clr == o.Clr && SeqEq(Ctx ?? System.Array.Empty<TypeNode>(), o.Ctx ?? System.Array.Empty<TypeNode>());
+        public override int GetHashCode() => System.HashCode.Combine(Suspend, Ret, Params.Length, Recv, Clr, Ctx?.Length ?? 0);
 
         /// <summary>
         /// The delegate ARG list: an extension receiver (`P.() -> R`) is the delegate's FIRST argument on the CLR
@@ -132,7 +137,8 @@ public abstract record TypeNode
                     Read(e.GetProperty("ret")),
                     ReadArray(e.GetProperty("params")),
                     e.TryGetProperty("recv", out var recv) ? Read(recv) : null,
-                    e.TryGetProperty("clr", out var clr) ? clr.GetString() : null);
+                    e.TryGetProperty("clr", out var clr) ? clr.GetString() : null,
+                    e.TryGetProperty("ctx", out var ctxA) ? ReadArray(ctxA) : null);
             case "nullable":
                 return new Nullable(Read(e.GetProperty("of")));
             case "oblivious":
@@ -181,6 +187,7 @@ public abstract record TypeNode
                 };
                 if (fn.Recv is not null) o["recv"] = Write(fn.Recv);
                 if (fn.Clr is not null) o["clr"] = fn.Clr;
+                if (fn.Ctx is { Length: > 0 }) o["ctx"] = WriteArray(fn.Ctx);
                 return o;
             }
             case Nullable n:

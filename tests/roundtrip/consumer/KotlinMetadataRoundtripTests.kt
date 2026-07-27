@@ -129,6 +129,10 @@ import roundtrip.ctxparams.labeled
 import roundtrip.ctxparams.deco
 import roundtrip.ctxparams.gauge
 import roundtrip.ctxparams.bumped
+import roundtrip.ctxparams.Boxy
+import roundtrip.ctxparams.evaluatePlain
+import roundtrip.ctxparams.evaluateRecv
+import roundtrip.ctxparams.GenHolder
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert
 
@@ -152,7 +156,43 @@ class KotlinApiShapeRoundtripTests {
             ClassicAssert.AreEqual(30, gauge)                        // 30    top-level context property
             ClassicAssert.AreEqual(12, 2.bumped)                     // 12    extension receiver + context
             ClassicAssert.AreEqual(200, CtxHolder(20).reading)       // 200   member context property
+            // A cross-module MEMBER whose omitted default reads the context parameter, with a LATER required arg.
+            // The omitted slot must become a positional placeholder bir2cir fills from the callee's @KotlinDefault —
+            // dropping it slid `3` into `a` and zero-filled `b`.
+            ClassicAssert.AreEqual(1003, CtxHolder(1).pick(b = 3))    // 1003  a defaults to s.factor = 10
+            ClassicAssert.AreEqual(203, CtxHolder(1).pick(2, 3))      // 203   nothing omitted
+            // The member-EXTENSION form of the same shape (`__self` + context + omitted default + later required arg).
+            with(CtxHolder(1)) {
+                ClassicAssert.AreEqual(1203, "ab".pickExt(b = 3))     // 1203  a = s.factor + length = 12
+                ClassicAssert.AreEqual(203, "ab".pickExt(2, 3))       // 203   nothing omitted
+            }
         }
+    }
+
+    // A cross-module GENERIC member with an omitted default and a later required argument — the generic call path
+    // builds its own argument vector and used to drop the omitted slot, sliding `3` into `a`.
+    @TestAttribute
+    fun crossModuleGenericMemberDefaultArgs() {
+        ClassicAssert.AreEqual("7/3", GenHolder().pick(b = 3))            // 7/3   a defaults to 7
+        ClassicAssert.AreEqual("2/3", GenHolder().pick(2, 3))             // 2/3   nothing omitted
+        with(GenHolder()) {
+            ClassicAssert.AreEqual("x:7/3", "x".pickExt(b = 3))           // x:7/3 __self + omitted default + later arg
+            ClassicAssert.AreEqual("x:2/3", "x".pickExt(2, 3))            // x:2/3 nothing omitted
+        }
+    }
+
+    // A cross-module context FUNCTION TYPE, both forms. The receiver-carrying form is the one that used to bind the
+    // CONTEXT argument to the restored extension receiver and silently return the wrong value.
+    @TestAttribute
+    fun crossModuleContextFunctionTypes() {
+        ClassicAssert.AreEqual(6, evaluatePlain { a -> a + 1 })      // 6   context(Boxy) (Int) -> Int, f(5)
+        // The RECEIVER-carrying form: `this` must be the RECEIVER Boxy(3), never the context Boxy(10). Restoring the
+        // context AS the receiver compiled fine (the ordinary parameter became the unused implicit `it`) and returned
+        // 10 — a silently wrong value with no diagnostic anywhere.
+        ClassicAssert.AreEqual(3, evaluateRecv { this.v })           // 3
+        // NOT covered here: a receiver-carrying context function type in RETURN position, or as a lambda LITERAL
+        // that gets lifted to a delegate. Both still bind `this` to physical slot 0 (the context) instead of the
+        // receiver — see the residual in docs/dotkt-semantics.md. The PARAMETER position above is the fixed one.
     }
 
     // #21: top-level generic extension-property accessors are restored from the producer DLL and remain callable

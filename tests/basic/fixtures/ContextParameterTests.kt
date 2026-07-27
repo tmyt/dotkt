@@ -155,6 +155,7 @@ fun ctxApplyFnType(f: context(CtxScale) (Int) -> Int): Int = with(CtxScale(10)) 
 // it must carry the lambda's OWN context parameter too.
 inline fun ctxApplyFnTypeInline(f: context(CtxScale) (Int) -> Int): Int = with(CtxScale(10)) { f(5) }
 
+
 class ContextParameterTests {
     @TestAttribute
     fun contextFunctions() {

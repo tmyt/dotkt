@@ -768,16 +768,39 @@ it AS a context parameter. Without that marker the same physical method would su
 parameter and `with(scale) { scaled(5) }` would have to become `scaled(scale, 5)` — a Kotlin **source** break at
 the module boundary, which is the one thing the round-trip metadata exists to prevent.
 
-**Known residual — a context FUNCTION TYPE does not round-trip its context arity.** `context(A) (B) -> C` is
-physically `Function2<A, B, C>` and works fully within a module (declaration, lambda, delegate, inline carrier).
-Across a module boundary, though, the marker above rides a *parameter*, and a context function TYPE is a property of
-the type in a parameter's slot — the peer of `[KotlinExtensionFunctionType]`, which the type layer does carry. So a
-consumer sees `fun h(f: (A, B) -> C)` where the producer wrote `fun h(f: context(A) (B) -> C)`, and must spell the
-context as a lambda parameter (`h { a, b -> … }`) — a consumer-side arity compile error until they do. The
-RECEIVER-carrying form degrades more quietly: `funcTypeOf` puts the leading context in `recv`, so the slot is stamped
-`[KotlinExtensionFunctionType]` and the consumer restores `context(A) B.(D) -> E` as `A.(B, D) -> E` — physically the
-same delegate with the receiver relabelled, and no diagnostic. Neither form miscompiles; both change the source shape
-a consumer must write.
+### A context FUNCTION TYPE carries its arity as a separate fact
+
+`context(A) B.(D) -> E` is physically `@ExtensionFunctionType Function4<A, B, D, E>` — **contexts first, then the
+receiver, then the value params** — and fir2ir ERASES which leading arguments were contexts: at IR level it is
+*identical* to `B.(A, D) -> E`. Kotlin treats them as the same type; on the JVM only `@kotlin.Metadata` tells them
+apart, and DotKt emits no `@Metadata`.
+
+That erasure was a silent miscompile across a module boundary. bir2cir stamped `[KotlinExtensionFunctionType]` from
+the presence of a receiver and facadegen promoted the delegate's FIRST argument to the restored receiver — but that
+argument is the CONTEXT. A consumer of `fun evaluate(f: context(Box) Box.() -> Int)` saw `Box.(Box) -> Int`; a bare
+lambda still compiled (its one ordinary parameter became the unused implicit `it`), and at run `this` bound to the
+context. `evaluate { this.n }` returned the context's field instead of the receiver's, with no diagnostic anywhere.
+
+So kotc CAPTURES the arity from FIR before fir2ir drops it (`kotc.frontend.ClrContextFnTypes`, keyed by the
+declaration slot's source range) and carries it as the slot fact `ctxFnType` / `retCtxFnType`. bir2cir turns that into
+`[KotlinContextFunctionType(N)]` beside the receiver marker, facadegen splits the leading N delegate arguments back
+off as contexts, and the FIR injector rebuilds the type with the `ContextFunctionTypeParams` cone attribute. It is a
+SLOT fact rather than a field of the type node because a type node is rebuilt by a dozen lowering passes, any of which
+would drop it — the same reason `suspendFnType` is one.
+
+**Residual — a lambda LITERAL of a receiver-carrying context function type.** The PARAMETER position round-trips end
+to end (a consumer's `evaluate { this.n }` now reads the receiver). What is still wrong is the LIFT of such a lambda
+to a delegate: its physical parameters are `(context…, receiver, …)`, but the body's `this` still reads physical slot
+0 — the context — instead of the receiver. ILVerify names it directly
+(`__lambda0(Scale, Boxy) … found ref Scale, expected ref Boxy`). It is the same slot-0-is-the-receiver assumption the
+round-trip carrier fixed on the metadata side, still present in the lambda-lift's `this` binding, and it also makes a
+context function type in RETURN position (whose value is such a lambda) produce a wrong number cross-module. The
+receiver-LESS form (`context(A) (B) -> C`) is unaffected and is covered in both suites.
+
+Two further limits of the carrier, both by construction: it holds ONE arity per declaration slot, so a context
+function type NESTED inside another type (`fun use(xs: List<context(Ctx) () -> Unit>)`) is not carried; and the fact
+is keyed by the slot's file path plus source range, so a declaration with no source (a synthesized one) carries
+nothing — neither shape has a context function type to lose in practice, but neither is carried if it does.
 
 Kotlin itself rules out the shapes this projection could not express: a callable reference to a context function, a
 context parameter on a constructor, a *delegated* context property, and a *field-backed* context property are all

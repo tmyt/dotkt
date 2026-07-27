@@ -621,7 +621,7 @@ static class FacadeGen
             : MapTFn(p.ParameterType, self, attrs, p.Member as MemberInfo);  // #150: NRT-threaded (delegate args)
         var pt = ApplyNrt(ng == null && ci != null ? FoldCollectionIdentity(plainP, ci) : plainP,
             p.ParameterType, attrs, p.Member as MemberInfo);
-        o["type"] = Ty(HasExtFnMarker(attrs) ? WithExtRecv(pt) : pt);   // #145: `block: P.() -> R` -> restore the receiver
+        o["type"] = Ty(RestoreFnShape(pt, attrs));   // #145 `block: P.() -> R` + the `context(A…)` split
         // #146: a NON-CONST default (`= {}` / a call / any non-metadata-representable expr) carries no CLR
         // [Optional]+[DefaultParameterValue] — it rides `[kotlin.clr.KotlinDefault]` (the BIR sub-tree bir2cir splices
         // at the omitted call site). Surface it as a `{"nonConst":true}` default so the consumer marks the param
@@ -1935,7 +1935,7 @@ static class FacadeGen
         // AS a property from a CLR field re-imports nullable instead of degrading to non-null.
         var t = ApplyNrt(ng == null && ci != null ? FoldCollectionIdentity(plain, ci) : plain,
             f.FieldType, attrs, f);
-        return HasExtFnMarker(attrs) ? WithExtRecv(t) : t;   // #145: a `val handler: P.() -> R` field
+        return RestoreFnShape(t, attrs);   // #145 a `val handler: P.() -> R` field + the `context(A…)` split
     }
     // H2: a non-suspend method / property getter that RETURNS a `suspend (…) -> T` value -> restore it from the return
     // parameter's [KotlinSuspendFunctionType], else the plain mapped return type. (A `suspend fun` itself returns
@@ -1978,7 +1978,7 @@ static class FacadeGen
                 ? FoldCollectionIdentity(MapTFn(retT, self, attrs, m), ci)
                 : MapTFn(retT, self, attrs, m);
         var rt = ApplyFlowContract(ApplyNrt(mapped, m.ReturnType, attrs, m), m.ReturnType, attrs);
-        return HasExtFnMarker(attrs) ? WithExtRecv(rt) : rt;   // #145: a method returning `P.() -> R`
+        return RestoreFnShape(rt, attrs);   // #145 a method returning `P.() -> R` + the `context(A…)` split
     }
 
     // #145: the bare marker `[KotlinExtensionFunctionType]` -> the delegate at this position was a Kotlin RECEIVER
@@ -1992,6 +1992,44 @@ static class FacadeGen
             if (IsDotKtMetadata(cad, KExtFnAttr)) return true;
         return false;
     }
+    // `[KotlinContextFunctionType(N)]` -> the function type at this slot was `context(A…) …`, and N of the mapped
+    // delegate's LEADING arguments are those contexts. It rides BESIDE [KotlinExtensionFunctionType] for the
+    // receiver-carrying form: `context(A) B.(D) -> E` is `@ExtensionFunctionType Function3<A,B,D,E>`, so contexts come
+    // FIRST and the receiver is argument N. Applying WithExtRecv without splitting them off promoted argument 0 — the
+    // CONTEXT — to the restored receiver, and the consumer's lambda bound `this` to the wrong value at run.
+    const string KCtxFnTypeAttr = "DotKt.Runtime.CompilerServices.KotlinContextFunctionTypeAttribute";
+    static int CtxFnArity(IList<CustomAttributeData> attrs)
+    {
+        foreach (var cad in attrs)
+            if (IsDotKtMetadata(cad, KCtxFnTypeAttr) && cad.ConstructorArguments.Count == 1)
+                try { return Convert.ToInt32(cad.ConstructorArguments[0].Value); } catch { return 0; }
+        return 0;
+    }
+
+    /// Restore a slot's Kotlin function type from the mapped delegate: split the leading <paramref name="ctx"/>
+    /// arguments off as CONTEXTS, then (when the source wrote a receiver form) make the next one the receiver. `ctx`
+    /// is 0 for every ordinary slot, in which case this is exactly the previous `HasExtFnMarker ? WithExtRecv : id`.
+    static TN RestoreFnShape(TN t, IList<CustomAttributeData> attrs)
+    {
+        bool ext = HasExtFnMarker(attrs);
+        int ctx = CtxFnArity(attrs);
+        if (ctx <= 0) return ext ? WithExtRecv(t) : t;
+        return WithContexts(t, ctx, ext);
+    }
+
+    // Peel `ctx` leading delegate arguments into `Ctx`, then optionally the next one into the receiver.
+    static TN WithContexts(TN t, int ctx, bool ext) => t switch
+    {
+        TN.Fn f when f.Params.Length >= ctx + (ext ? 1 : 0) =>
+            new TN.Fn(f.Suspend, f.Ret,
+                f.Params.Skip(ctx + (ext ? 1 : 0)).ToArray(),
+                ext ? f.Params[ctx] : null,
+                Ctx: f.Params.Take(ctx).ToArray()),
+        TN.Nullable n => new TN.Nullable(WithContexts(n.Of, ctx, ext)),
+        TN.Oblivious o => new TN.Oblivious(WithContexts(o.Of, ctx, ext)),
+        _ => ext ? WithExtRecv(t) : t,   // defensive: an unexpected shape degrades to the previous behaviour
+    };
+
     // The bare marker `[KotlinContextParameter]` -> this positional parameter WAS a Kotlin `context(...)` parameter.
     const string KCtxParamAttr = "DotKt.Runtime.CompilerServices.KotlinContextParameterAttribute";
     static bool HasCtxParamMarker(IList<CustomAttributeData> attrs)
@@ -2050,7 +2088,7 @@ static class FacadeGen
         // return). Fold from both attribute sets. Demotes `ThreadLocal<T>.Value` to a platform `T!`.
         t = ApplyFlowContract(t, p.PropertyType, attrs);
         if (p.GetMethod != null) t = ApplyFlowContract(t, p.PropertyType, CustomAttributeData.GetCustomAttributes(p.GetMethod.ReturnParameter));
-        return HasExtFnMarker(attrs) ? WithExtRecv(t) : t;
+        return RestoreFnShape(t, attrs);
     }
 
     // #133: the bare marker `[KotlinNothing]` on a return parameter -> the erased `object` return was a Kotlin `Nothing`.

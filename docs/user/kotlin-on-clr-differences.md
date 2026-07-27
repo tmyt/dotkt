@@ -97,10 +97,6 @@ current language version 2.4.` Functions, properties, members, extensions,
 `suspend`, `inline`, defaults that read a context parameter, and context function types
 (`context(A) (B) -> C`) all work.
 
-One gap: a context **function type** in a *public API you consume from another module* loses its
-context-ness — the consumer sees `(A, B) -> C` and passes the context as a lambda parameter. Context
-parameters on the declaration itself round-trip fully.
-
 ## Not supported (current, honest list)
 
 - **kotlinx libraries** (kotlinx-coroutines, kotlinx-serialization, …) — DotKt binds the
