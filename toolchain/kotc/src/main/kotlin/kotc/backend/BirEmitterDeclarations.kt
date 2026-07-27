@@ -586,8 +586,11 @@ internal fun BirEmitter.accessorMethod(acc: IrSimpleFunction, propName: String, 
 	val extRecv = acc.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
 	if (extRecv != null) selfSubst[extRecv] = """{"k":"local","name":"__self"}"""
 	val selfParam = extRecv?.let { """{"name":"__self","type":${birType(it.type).toJson()}}""" }
-	val ps = (listOfNotNull(selfParam) + acc.parameters.filter { it.kind == IrParameterKind.Regular }
-		.map { """{"name":${str(it.name.asString())},"type":${birType(it.type).toJson()}}""" }).joinToString(",")
+	// [paramsJsonList], the ONE physical projection — not a `Regular`-only re-derivation: `context(c: Ctx) val C.p`
+	// carries its context parameter as an ordinary slot here exactly as the top-level accessor path does (so the
+	// accessor's arity matches its call sites'), and the `mods.context` marker rides with it for the cross-module
+	// restore. `ownerFn` is deliberately absent: an accessor parameter never carries a Kotlin default.
+	val ps = (listOfNotNull(selfParam) + paramsJsonList(acc.parameters)).joinToString(",")
 	// #6 non-null parameter PRECONDITIONS (a setter's `value` param) at entry + a getter's non-null return POSTCONDITION
 	// (a setter returns Unit -> naturally out of scope).
 	val bodyStmts = withReturnPostcondition(acc) { (acc.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
@@ -1199,6 +1202,17 @@ internal fun BirEmitter.typeParamsJson(tps: List<org.jetbrains.kotlin.ir.declara
 internal fun BirEmitter.paramsJson(params: List<org.jetbrains.kotlin.ir.declarations.IrValueParameter>): String =
 	paramsJsonList(params).joinToString(",")
 
+/** THE single projection predicate: a parameter that occupies a POSITIONAL slot in the emitted method. Kotlin has four
+ *  `IrParameterKind`s and DotKt gives each exactly one physical form:
+ *    - `DispatchReceiver` -> the CLR call receiver (`{k:this}` in the body), never a parameter slot;
+ *    - `ExtensionReceiver` -> the LEADING `__self` parameter, prepended by each declaration site;
+ *    - `Context` and `Regular` -> ordinary positional value parameters, in `IrFunction.parameters` order (so every
+ *      context parameter precedes every regular one, matching fir2ir's ordering).
+ *  So the emitted physical sequence of ANY function is `[__self?] + contexts + regulars`, and the declaration's `params`,
+ *  the call's `args`, the `sig`/`paramSig` overload key and the `@KotlinDefault` index all count that ONE sequence. A
+ *  `Regular`-only filter is correct ONLY for a fact that is genuinely about regular parameters (can carry a default,
+ *  `vararg`, `noinline`, the `main` entry-point shape) — never for building a parameter, argument, signature or index
+ *  vector, where dropping a context parameter on one side and not the other is what makes a call miscompile. */
 internal fun BirEmitter.isValueParameter(p: IrValueParameter): Boolean =
 	p.kind == IrParameterKind.Regular || p.kind == IrParameterKind.Context
 
@@ -1302,8 +1316,9 @@ internal fun BirEmitter.paramsJsonList(params: List<org.jetbrains.kotlin.ir.decl
 	// build; the rt build strips it downstream (ilemit param-attr strip under `--build-stdlib=runtime`).
 	val emitKotlinDefault = ownerFn != null && carriesKotlinDefault(ownerFn)
 	// The stamped `index` is the param's position in the EMITTED call's arg array, so whatever rides ahead of the
-	// regular args counts first: an extension receiver (`__self`), or — for an INNER-class ctor — the enclosing
-	// instance the `new` passes as its leading arg.
+	// value args counts first: an extension receiver (`__self`), or — for an INNER-class ctor — the enclosing
+	// instance the `new` passes as its leading arg. (Context parameters need no offset: they ARE value params here,
+	// numbered in place ahead of the regulars, and [filledArgs] emits them in the same positions.)
 	val extOffset = when {
 		ownerFn?.parameters?.any { it.kind == IrParameterKind.ExtensionReceiver } == true -> 1
 		ownerFn is IrConstructor && (ownerFn.parent as? IrClass)?.isInner == true -> 1
@@ -1315,15 +1330,22 @@ internal fun BirEmitter.paramsJsonList(params: List<org.jetbrains.kotlin.ir.decl
 	// bir2cir's cross-module splice). Install a `{"k":"defaultArgParam","idx":N}` captureSubst for every value param
 	// (N = its emitted call index, extension receiver counted first) around the bir emission; bir2cir's DefaultArgSplice
 	// substitutes each token with this call's arg at that index (the peer of its `{this}` → receiver substitution).
-	if (emitKotlinDefault) valueParams.forEachIndexed { regIdx, vp ->
-		captureSubst[vp] = """{"k":"defaultArgParam","idx":${regIdx + extOffset}}"""
+	if (emitKotlinDefault) valueParams.forEachIndexed { valueIdx, vp ->
+		captureSubst[vp] = """{"k":"defaultArgParam","idx":${valueIdx + extOffset}}"""
 	}
 	val result = valueParams
-		.mapIndexed { regIdx, it ->
+		.mapIndexed { valueIdx, it ->
 			// `vararg xs: T` -> mark the param so ilemit stamps [ParamArray] (native .NET varargs; a cross-module
-			// consumer can then call `f(1, 2, 3)`). Param nullability now rides the `type` node itself
-			// (`{t:nullable,of:...}` from the uniform birType) — the decl-level `nullable` flag is RETIRED.
-			val vararg = if (it.varargElementType != null) ""","mods":{"vararg":true}""" else ""
+			// consumer can then call `f(1, 2, 3)`). `context` marks a Kotlin CONTEXT parameter: physically an ordinary
+			// positional parameter, but a consuming Kotlin module must restore it AS a context parameter, else the callee's
+			// SOURCE shape changes at the module boundary (`with(s) { f(1) }` would have to become `f(s, 1)`). bir2cir turns
+			// the flag into the `[KotlinContextParameter]` marker facadegen reads back. Param nullability rides the `type`
+			// node itself (`{t:nullable,of:...}` from the uniform birType) — the decl-level `nullable` flag is RETIRED.
+			val modFlags = listOfNotNull(
+				"\"vararg\":true".takeIf { _ -> it.varargElementType != null },
+				"\"context\":true".takeIf { _ -> it.kind == IrParameterKind.Context },
+			)
+			val vararg = if (modFlags.isEmpty()) "" else ""","mods":{${modFlags.joinToString(",")}}"""
 			// TIER 1 — a metadata-representable default -> carry it so ilemit stamps [Optional]+[DefaultParameterValue]
 			// (a C# OR kcc caller can omit the arg; ilemit's EmitDefaultArg fills it from the .NET metadata). A TIER-2
 			// default carries NO `default` field, so the param is emitted REQUIRED (no [Optional]) — a C# caller must
@@ -1335,7 +1357,7 @@ internal fun BirEmitter.paramsJsonList(params: List<org.jetbrains.kotlin.ir.decl
 			val srcAttrs = attrsJson(it.annotations)
 			val kotlinDefault = if (emitKotlinDefault) it.defaultValue?.expression?.let { def ->
 				val bir = defaultCarrierBir(def, ownerFn)   // BIR of the default (real IR — the callee's own build), CLOSED for cross-module splice
-				"""{"attr":${fqnJson("kotlin.clr.KotlinDefault")},"argTypes":[${fqnJson("kotlin.Int")},${fqnJson("kotlin.String")}],"args":[{"k":"const","type":${fqnJson("kotlin.Int")},"value":${regIdx + extOffset}},{"k":"const","type":${fqnJson("kotlin.String")},"value":${str(bir)}}]}"""
+				"""{"attr":${fqnJson("kotlin.clr.KotlinDefault")},"argTypes":[${fqnJson("kotlin.Int")},${fqnJson("kotlin.String")}],"args":[{"k":"const","type":${fqnJson("kotlin.Int")},"value":${valueIdx + extOffset}},{"k":"const","type":${fqnJson("kotlin.String")},"value":${str(bir)}}]}"""
 			} else null
 			val allAttrs = listOfNotNull(srcAttrs.takeIf { s -> s.isNotEmpty() }, kotlinDefault).joinToString(",")
 			val pattrs = if (allAttrs.isNotEmpty()) ""","attrs":[$allAttrs]""" else ""
@@ -1348,13 +1370,15 @@ internal fun BirEmitter.paramsJsonList(params: List<org.jetbrains.kotlin.ir.decl
 /** A `,"sig":[<TypeNode>,...]` field carried on a call so ilemit resolves the right OVERLOAD by name+signature.
  *  Emit it ALWAYS: for a non-overloaded callee it's harmless (ilemit's `MethodsBySig` lookup hits the sole method,
  *  or falls back to the name), and emitting unconditionally avoids any overload-detection edge case. The signature
- *  MATCHES how `method()` lays out the def's `params` ([ext receiver?] + regular params, each `birType`) — the
- *  #37 m3b type-path structuring: sig is a STRUCTURED TypeNode array (the same `birType(...).toJson()` path every
- *  other type slot uses), NOT a legacy comma-string; bir2cir/ilemit derive the overload key from the TypeNodes. */
+ *  MATCHES how `method()` lays out the def's `params` — the [isValueParameter] physical sequence `[ext receiver?] +
+ *  contexts + regulars`, each `birType` — the #37 m3b type-path structuring: sig is a STRUCTURED TypeNode array (the same
+ *  `birType(...).toJson()` path every other type slot uses), NOT a legacy comma-string; bir2cir/ilemit derive the overload
+ *  key from the TypeNodes. Omitting the context parameters here made the key one arity short of the declaration it was
+ *  meant to select, so ilemit fell back to name-only resolution and emitted a short arg list (invalid IL). */
 internal fun BirEmitter.overloadSigField(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String {
 	val ext = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }?.let { birType(it.type) }
-	val regs = fn.parameters.filter { it.kind == IrParameterKind.Regular }.map { birType(it.type) }
-	return ""","sig":[${(listOfNotNull(ext) + regs).joinToString(",") { it.toJson() }}]"""
+	val vals = fn.parameters.filter { isValueParameter(it) }.map { birType(it.type) }
+	return ""","sig":[${(listOfNotNull(ext) + vals).joinToString(",") { it.toJson() }}]"""
 }
 
 /** True iff `fn` is an override of one of kotlin.Any's three universal methods (the CLR System.Object slots) —

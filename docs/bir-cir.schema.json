@@ -135,7 +135,8 @@
         "const":      { "const": true },
         "lateinit":   { "const": true }, "vararg":    { "const": true },
         "noinline":   { "const": true }, "crossinline":{ "const": true },
-        "inlineOnly": { "const": true }
+        "inlineOnly": { "const": true },
+        "context":    { "const": true }
       },
       "additionalProperties": false
     },
@@ -159,7 +160,7 @@
         "name":     { "type": "string" },
         "type":     { "$ref": "#/$defs/type" },
         "nullableFlags": { "type": "array", "items": { "type": "integer", "enum": [0, 1, 2] }, "$comment": "bir2cir-derived flattened NullableAttribute bytes (0=oblivious,1=not-null,2=nullable) for this param's reference-nullable positions; RoundtripMetadata folds it into the param's `attrs` as a NullableAttribute entry, which ilemit stamps. Absent when the type carries no nullable-reference position." },
-        "mods":     { "$ref": "#/$defs/mods", "$comment": "only vararg/noinline/crossinline apply to a param" },
+        "mods":     { "$ref": "#/$defs/mods", "$comment": "only vararg/noinline/crossinline/context apply to a param; `context` marks a Kotlin context parameter (physically an ordinary positional slot, restored AS a context parameter by a consuming Kotlin module)" },
         "default":  { "$ref": "#/$defs/node", "description": "a KotlinDefault expression; absent = required" }
       },
       "required": ["name", "type"],

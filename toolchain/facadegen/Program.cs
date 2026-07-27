@@ -582,6 +582,12 @@ static class FacadeGen
     {
         var o = new JsonObject { ["name"] = MetaParamName(p, i) };
         var attrs = CustomAttributeData.GetCustomAttributes(p);
+        // A Kotlin CONTEXT parameter: physically an ordinary positional parameter (that is how kotc projects one), so
+        // without this flag the consumer would restore `context(s: Scale) fun f(a: Int)` as `fun f(s: Scale, a: Int)`
+        // and `with(scale) { f(1) }` would stop resolving across the module boundary. The param STAYS in this physical
+        // array (every arity/index space downstream counts emitted CLR parameters); the consumer moves the flagged ones
+        // into the declaration's context-parameter list. Stamped before every type-shape branch below returns early.
+        if (HasCtxParamMarker(attrs)) o["mods"] = Mods(("context", true));
         var exact = KotlinTypeNode(attrs);
         if (exact != null) { o["type"] = Ty(exact); return o; }
         var sfn = SuspendFnNode(attrs);   // H2: a `suspend (…) -> T` parameter
@@ -1011,20 +1017,33 @@ static class FacadeGen
                     var (pm, pv) = ModVis(Vis(g).Value, g.IsAbstract, g.IsVirtual && !g.IsFinal);
                     props.Add(PropObj(pn, RetTypeSfxN(g, t), setter != null, pm, pv, null, null));
                 }
-                // MEMBER extension properties (`class C { val T.p get() }`): accessors get_X(__self)/set_X(__self, v).
+                // MEMBER extension / CONTEXT properties (`class C { val T.p get() }`, `class C { context(s: S) val p }`):
+                // accessors get_X([__self,] ctx...) / set_X([__self,] ctx..., v). The physical parameter run is the same
+                // `[__self?] + contexts` shape the top-level accessor path reads, each context slot carrying
+                // [KotlinContextParameter]; without the split a context property would surface as an extension property
+                // on the CONTEXT type — a different declaration that `with(scale) { h.reading }` cannot resolve.
                 foreach (var g in Methods(t, IM))
                 {
                     if (g.IsSpecialName || !g.Name.StartsWith("get_")) continue;
                     var gps = g.GetParameters();
-                    if (gps.Length != 1 || gps[0].Name != "__self" || !Supported(g.ReturnType) || !Supported(gps[0].ParameterType)) continue;
+                    bool hasSelf = gps.Length > 0 && gps[0].Name == "__self";
+                    var ctxPs = gps.Skip(hasSelf ? 1 : 0).ToArray();
+                    if (!hasSelf && ctxPs.Length == 0) continue;
+                    if (ctxPs.Length > 0 && !ctxPs.All(cp => HasCtxParamMarker(CustomAttributeData.GetCustomAttributes(cp)))) continue;
+                    if (!Supported(g.ReturnType) || !gps.All(gp => Supported(gp.ParameterType))) continue;
                     var prot = Vis(g); if (prot == null) continue;
                     var pn = g.Name.Substring(4);
                     if (!seen.Add("prop:" + pn)) continue;
                     var setter = Methods(t, IM).FirstOrDefault(m => !m.IsSpecialName && m.Name == "set_" + pn
-                        && m.GetParameters().Length == 2 && m.GetParameters()[0].Name == "__self" && Vis(m) != null);
+                        && m.GetParameters().Length == gps.Length + 1
+                        && (!hasSelf || m.GetParameters()[0].Name == "__self") && Vis(m) != null);
                     accessorMembers.Add(g.Name); if (setter != null) accessorMembers.Add(setter.Name);
-                    memberExtProps.Add(PropObj(pn, RetTypeSfxN(g, t), setter != null, new JsonObject(),
-                        prot.Value ? "protected" : "public", null, MapT(gps[0].ParameterType, t)));
+                    var mctx = new JsonArray();
+                    foreach (var cp in ctxPs) mctx.Add(Ty(MapT(cp.ParameterType, t)));
+                    var mprop = PropObj(pn, RetTypeSfxN(g, t), setter != null, new JsonObject(),
+                        prot.Value ? "protected" : "public", null, hasSelf ? MapT(gps[0].ParameterType, t) : null);
+                    if (mctx.Count > 0) mprop["ctx"] = mctx;
+                    memberExtProps.Add(mprop);
                 }
                 // Events (I4).
                 foreach (var ev in t.GetEvents(BindingFlags.Public | BindingFlags.Instance))
@@ -1966,6 +1985,14 @@ static class FacadeGen
             if (IsDotKtMetadata(cad, KExtFnAttr)) return true;
         return false;
     }
+    // The bare marker `[KotlinContextParameter]` -> this positional parameter WAS a Kotlin `context(...)` parameter.
+    const string KCtxParamAttr = "DotKt.Runtime.CompilerServices.KotlinContextParameterAttribute";
+    static bool HasCtxParamMarker(IList<CustomAttributeData> attrs)
+    {
+        foreach (var cad in attrs)
+            if (IsDotKtMetadata(cad, KCtxParamAttr)) return true;
+        return false;
+    }
     // Move a mapped delegate's FIRST arg into the fn receiver (through a nullable/oblivious wrapper). A non-delegate or
     // an argless delegate is returned unchanged (defensive — the marker only rides genuine `P.() -> R` positions).
     static TN WithExtRecv(TN t) => t switch
@@ -2240,15 +2267,28 @@ static class FacadeGen
         {
             if (g.IsSpecialName || IsCompilerGenerated(g) || !g.Name.StartsWith("get_")) continue;
             var gps = g.GetParameters();
-            if (gps.Length != 1 || gps[0].Name != "__self" || !Supported(g.ReturnType) || !Supported(gps[0].ParameterType)) continue;
+            // The getter's physical parameters are `[__self?] + contexts` — an extension receiver (named `__self`) and/or
+            // a Kotlin `context(...)` parameter run, each context slot carrying [KotlinContextParameter]. A getter with
+            // any OTHER parameter is not a property accessor at all (it stays a loose top-level `fun`). Without the
+            // context split a `context(s: Scale) val gauge` would look like `val Scale.gauge` — a DIFFERENT declaration.
+            bool hasSelf = gps.Length > 0 && gps[0].Name == "__self";
+            var ctxPs = gps.Skip(hasSelf ? 1 : 0).ToArray();
+            if (ctxPs.Length > 0 && !ctxPs.All(cp => HasCtxParamMarker(CustomAttributeData.GetCustomAttributes(cp)))) continue;
+            if (!hasSelf && ctxPs.Length == 0) continue;   // a 0-arg get_<n> is the #103 custom accessor of a field-backed prop
+            if (!Supported(g.ReturnType) || !gps.All(gp => Supported(gp.ParameterType))) continue;
             var pn = g.Name.Substring(4);
             if (!seen.Add("tlextprop:" + pn)) continue;
             var setter = t.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly)
-                .FirstOrDefault(s => !s.IsSpecialName && s.Name == "set_" + pn && s.GetParameters().Length == 2 && s.GetParameters()[0].Name == "__self");
+                .FirstOrDefault(s => !s.IsSpecialName && s.Name == "set_" + pn && s.GetParameters().Length == gps.Length + 1
+                    && (!hasSelf || s.GetParameters()[0].Name == "__self"));
             extPropMembers.Add(g.Name); if (setter != null) extPropMembers.Add(setter.Name);
-            tlProps.Add(PropObj(pn, RetTypeSfxN(g, t), setter != null, Mods(("ext", true)), "public", null,
-                MapT(gps[0].ParameterType, t),
-                g.IsGenericMethodDefinition ? TypeParamsArr(g.GetGenericArguments(), t, false, false) : null));
+            var ctxArr = new JsonArray();
+            foreach (var cp in ctxPs) ctxArr.Add(Ty(MapT(cp.ParameterType, t)));
+            var prop = PropObj(pn, RetTypeSfxN(g, t), setter != null, Mods(("ext", hasSelf)), "public", null,
+                hasSelf ? MapT(gps[0].ParameterType, t) : null,
+                g.IsGenericMethodDefinition ? TypeParamsArr(g.GetGenericArguments(), t, false, false) : null);
+            if (ctxArr.Count > 0) prop["ctx"] = ctxArr;
+            tlProps.Add(prop);
         }
         // #103: a top-level field-backed property with a CUSTOM accessor compiles to a public static FIELD `<name>`
         // PLUS a separate non-special-name `get_<name>`/`set_<name>` method (the custom accessor body). Detect the

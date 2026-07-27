@@ -107,6 +107,8 @@ MOD_KEYS = {
     "open", "suspend", "data", "sealed", "inner", "enum", "fun", "annotation", "value",
     "object", "const", "lateinit", "vararg", "noinline", "crossinline",
     "inlineOnly",                                # #98: @InlineOnly → [MethodImpl(AggressiveInlining)] (ilemit reads mods.inlineOnly)
+    "context",                                   # a Kotlin CONTEXT parameter (a param-only mod; bir2cir turns it into
+                                                 # the [KotlinContextParameter] marker facadegen restores from)
 }
 VIS = {"public", "private", "protected", "internal", "protectedInternal"}
 CARRIER_VERSIONS = {"bir-json/1"}

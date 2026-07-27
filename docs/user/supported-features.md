@@ -19,7 +19,7 @@ Status legend: ✅ works today (exercised by the test gates) · 🚧 in progress
 | Operator overloading, `infix`, destructuring | ✅ |
 | `suspend` functions (`Task<T>` ABI) / `Sequence` builders / `yield` | 🚧 (ABI settled; runtime port in progress) |
 | Structured concurrency (`Job`, `CoroutineScope`, `launch`) | ❌ (later track) |
-| Context parameters/receivers | ❌ |
+| Context parameters (`context(s: S) fun f()`), incl. cross-module | ✅ (a leading CLR parameter; see the differences doc) |
 
 ## Standard library
 

@@ -25,6 +25,8 @@
 //   comparableClass             <- roundtrip-comparable      (#179)  class C : Comparable<C> </>/<=/>=/sorted()
 //   ubyteFidelity               <- roundtrip-ubyte                  UByte/UByteArray strict-mapping fidelity
 //   toplevelValVar              <- roundtrip-toplevel-val   (#195)  bare top-level val/var -> plain static FIELD (no accessor) resolved cross-module via facadegen --import-list
+//   crossModuleContextParameters                             context parameters restored AS context parameters from
+//                                                             [KotlinContextParameter] (functions, defaults, properties)
 // STAYED in the shell lane (tests/roundtrip/scenarios/run.sh):
 //   roundtrip-nothing         — a cross-module Nothing branch merges an `object`-returning call with `string`
 //                               (StackUnexpected object/string; else-branch throws so RUN is green). Tracked as #197.
@@ -113,10 +115,46 @@ import roundtrip.genclash.a.Cell as CellA
 import roundtrip.genclash.b.Cell as CellB
 import roundtrip.genclash.a.cellA
 import roundtrip.genclash.b.cellB
+// Context parameters (kotlin 2.4 needs no opt-in for them): the producer's `roundtrip.ctxparams` declarations are
+// consumed here THROUGH THE DLL, so this is the metadata half of the rule — kotc marks each context slot in the
+// emitted parameter list, bir2cir turns the mark into a `[KotlinContextParameter]` marker, and facadegen restores
+// the parameter AS a context parameter. Without the round-trip the same physical method surfaces as a plain leading
+// value parameter, and `with(Scale(10)) { scaled(5) }` stops resolving at the module boundary (`scaled(scale, 5)`
+// would be required) — a Kotlin SOURCE break, which is exactly what the round-trip metadata exists to prevent.
+import roundtrip.ctxparams.Scale
+import roundtrip.ctxparams.Holder as CtxHolder
+import roundtrip.ctxparams.scaled
+import roundtrip.ctxparams.tagged
+import roundtrip.ctxparams.labeled
+import roundtrip.ctxparams.deco
+import roundtrip.ctxparams.gauge
+import roundtrip.ctxparams.bumped
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert
 
 class KotlinApiShapeRoundtripTests {
+    @TestAttribute
+    fun crossModuleContextParameters() {
+        with(Scale(10)) {
+            ClassicAssert.AreEqual(50, scaled(5))                    // 50    top-level context fun
+            ClassicAssert.AreEqual("q:50", "q".deco(5))              // q:50  extension receiver + context
+            ClassicAssert.AreEqual(70, CtxHolder(20).combine(5))     // 70    member context fun
+            // An omitted NON-CONSTANT default that READS the context parameter: the @KotlinDefault carrier's index
+            // counts the context slot, so the splice fills the right position.
+            ClassicAssert.AreEqual("5/f10", tagged(5))               // 5/f10 label defaults to "f" + s.factor
+            ClassicAssert.AreEqual("5/x", tagged(5, "x"))            // 5/x   nothing omitted
+            // A TIER-1 CONSTANT default behind the context slot: filled from the facadegen metadata, whose
+            // per-parameter list is physical — so the context slot shifts `k`'s ordinal.
+            ClassicAssert.AreEqual(18, labeled(1))                   // 18    k defaults to 7
+            ClassicAssert.AreEqual(13, labeled(1, 2))                // 13    nothing omitted
+            // Context PROPERTIES: the accessor is a `get_<name>([__self,] ctx...)` method, restored as a context
+            // property rather than an extension property on the CONTEXT type (a different declaration).
+            ClassicAssert.AreEqual(30, gauge)                        // 30    top-level context property
+            ClassicAssert.AreEqual(12, 2.bumped)                     // 12    extension receiver + context
+            ClassicAssert.AreEqual(200, CtxHolder(20).reading)       // 200   member context property
+        }
+    }
+
     // #21: top-level generic extension-property accessors are restored from the producer DLL and remain callable
     // through both bound and unbound read/write property references.
     @TestAttribute

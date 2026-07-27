@@ -23,7 +23,8 @@ using DotKt.Bir;
 // ATTR ORDER (per emitted member) keeps the established order and inserts each newer carrier beside its slot peers:
 //   type:   [NullableContext, …user, KotlinFileClass?/KotlinFunInterface?, KotlinSealed?, KotlinValue?]
 //   method: [ …user, KotlinFunction?, KotlinInline? ]      ret: [ Nullable?, KotlinSuspendFunctionType?, KotlinExtensionFunctionType?, KotlinNothing? ]
-//   param:  [ Nullable?, KotlinSuspendFunctionType?, KotlinNullableGeneric?, …user, KotlinExtensionFunctionType? ]
+//   param:  [ Nullable?, KotlinSuspendFunctionType?, KotlinNullableGeneric?, …user, KotlinExtensionFunctionType?,
+//             KotlinContextParameter? ]
 //   field:  [ Nullable?, KotlinReadOnly?, KotlinSuspendFunctionType?, KotlinNullableGeneric?, …user,
 //             KotlinExtensionFunctionType? ]
 //   prop:   [ Nullable?, KotlinSuspendFunctionType?, KotlinNullableGeneric?, …user, KotlinExtensionFunctionType? ]
@@ -41,6 +42,7 @@ static class RoundtripMetadata
     const string AKObject       = Ns + "KotlinObjectAttribute";
     const string AKSuspendFn    = Ns + "KotlinSuspendFunctionTypeAttribute";
     const string AKExtFn        = Ns + "KotlinExtensionFunctionTypeAttribute";
+    const string AKCtxParam     = Ns + "KotlinContextParameterAttribute";
     const string AKNothing      = Ns + "KotlinNothingAttribute";
     const string AKNullableGen  = Ns + "KotlinNullableGenericAttribute";
     const string AKCollIdentity = Ns + "KotlinCollectionIdentityAttribute";
@@ -177,6 +179,19 @@ static class RoundtripMetadata
             // [KotlinExtensionFunctionType] (#145) — a `block: P.() -> R` param; the bare marker rides after any user
             // attr (order-independent — facadegen reads it by presence). The delegate keeps `P` as its first arg.
             if (HasRecvFn(po["type"])) Append(po, Marker(AKExtFn));
+            // [KotlinContextParameter] — a bare marker on a Kotlin CONTEXT parameter. It is physically an ordinary
+            // positional parameter (kotc projects it as one), so without the marker a consuming Kotlin module would
+            // restore it as a plain leading value parameter and the callee's SOURCE shape would change at the module
+            // boundary. The `mods.context` flag is CONSUMED here (removed) — its whole purpose is this attribute.
+            if (ModFlag(po, "context"))
+            {
+                Append(po, Marker(AKCtxParam));
+                if (po["mods"] is JsonObject pmods)
+                {
+                    pmods.Remove("context");
+                    if (pmods.Count == 0) po.Remove("mods");
+                }
+            }
             // [KotlinCollectionIdentity] (#29) — a param nesting a collapsed read-only collection.
             if ((po["collIdentity"] as JsonValue)?.GetValue<string>() is string ci) Append(po, CollIdentityAttr(ci));
         }
@@ -416,6 +431,7 @@ static class RoundtripMetadata
             AttrClass(AKObject, Ctor()),
             AttrClass(AKSuspendFn, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKExtFn, Ctor()),     // #145 — bare marker: a `P.() -> R` receiver function-type position
+            AttrClass(AKCtxParam, Ctor()),  // bare marker: a Kotlin `context(...)` parameter (physically positional)
             AttrClass(AKNothing, Ctor()),   // #133 case3 — bare marker on a Kotlin `Nothing` return
             AttrClass(AKNullableGen, Ctor(Param("System.String"), Param(ByteArrayType()))),  // #18/#147 — pre-erasure `Holder<T?>` declaration slot
             AttrClass(AKCollIdentity, Ctor(Param("System.String"), Param(ByteArrayType()))), // #29 — carrier of a pre-collapse `Box<List<T>>` collection identity

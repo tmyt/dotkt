@@ -723,6 +723,52 @@ Only a property whose storage **is** the user-visible member emits no CLR proper
 name: `lateinit var`, `const`, a delegated property's `p$delegate`, a companion/top-level `val`/`var` (a static field),
 and the `@ClrField` opt-out (§5f-adjacent: `@ClrField` deliberately emits a plain public field instead of a property).
 
+## 5i. A context parameter is an ordinary POSITIONAL parameter (`[__self?] + contexts + regulars`)
+
+Kotlin has four `IrParameterKind`s; DotKt gives each exactly one physical form:
+
+| kind | physical form |
+|---|---|
+| `DispatchReceiver` | the CLR call receiver (`this` in the body) — never a parameter slot |
+| `ExtensionReceiver` | the leading `__self` parameter |
+| `Context` | an ordinary positional parameter |
+| `Regular` | an ordinary positional parameter |
+
+So the emitted parameter sequence of ANY declaration is **`[__self?] + contexts + regulars`**, in
+`IrFunction.parameters` order (fir2ir already orders contexts before the extension receiver; DotKt keeps `__self`
+first so the receiver stays where every other extension puts it). `context(s: Scale) fun String.deco(a: Int)` emits
+`deco(string __self, Scale s, int a)`.
+
+That ONE sequence is what the declaration's parameter list, the call's argument list, the `sig`/`paramSig` overload
+key, the inline payload's `pc`, and the `@KotlinDefault` / `defaultArgParam` index space all count. A layer that
+counted only the regular parameters on one side of a call produced a short argument list against a longer method —
+`InvalidProgramException` at run, or (for a generic context type) a silent `null` argument.
+
+A **property** with context parameters is the same rule applied to its accessors: `context(s: Scale) val gauge`
+emits `get_gauge(Scale)`, and `context(s: Scale) val Int.bumped` emits `get_bumped(int __self, Scale)`. Since a
+property whose accessor takes arguments is not a CLR property, these are plain `get_`/`set_` methods, exactly as a
+member extension property already was.
+
+**Deviations, both deliberate:**
+
+- **No non-null precondition is emitted for a context parameter** (§6's `#6` precondition family). A context
+  argument is resolved by the frontend from a value already in scope, so a Kotlin caller cannot pass null; this
+  matches the existing treatment of receivers, which are also unchecked.
+- **`__self` precedes the contexts**, where Kotlin's own function-type layout puts contexts first
+  (`context(A) B.(D) -> E` is `Function4<A, B, D, E>`). The two orders coexist without ambiguity because they are
+  different surfaces: a *declaration* is `[__self] + contexts + regulars`, a *function type / lambda* keeps
+  Kotlin's `contexts + receiver + params` (it must — that layout IS the `FunctionN` type argument order, and the
+  delegate has to match it).
+
+Cross-module, each context slot carries `[KotlinContextParameter]` (see §6) so a consuming Kotlin module restores
+it AS a context parameter. Without that marker the same physical method would surface as a plain leading value
+parameter and `with(scale) { scaled(5) }` would have to become `scaled(scale, 5)` — a Kotlin **source** break at
+the module boundary, which is the one thing the round-trip metadata exists to prevent.
+
+Kotlin itself rules out the shapes this projection could not express: a callable reference to a context function, a
+context parameter on a constructor, a *delegated* context property, and a *field-backed* context property are all
+frontend errors, so no emitted form has to exist for them.
+
 ## 6. Consuming a DotKt assembly AS KOTLIN — what rides metadata vs. needs an attribute
 
 When another `.ktproj` consumes a DotKt assembly, the Kotlin facts with **no native .NET representation** are carried
@@ -738,6 +784,7 @@ runtime.
 | a `suspend (…) -> T` **function TYPE** (parameter / return / property / field) | `[KotlinSuspendFunctionType("sfunc:<ret>:<args>")]` preserves the pre-erasure shape because the CLR slot itself erases to `object`. bir2cir records it, ilemit stamps it, facadegen reads it, and kotc restores `kotlin.coroutines.SuspendFunctionN`. All four positions are covered by the roundtrip NUnit suite. |
 | top-level functions | `[KotlinFileClass]` on the `<File>Kt` facade → restored as package-level functions. Same-name overloads that live in **different** source files of the same package (`foo()` in `UtilsKt`, `foo(Int)` in `HelpersKt`) each route back to their **own** file-facade class — resolved by the call's arity, so no cross-file mis-routing. |
 | `inline` (with a lambda) | `[KotlinInline(birJson)]` (only for cross-module non-local return; see §3) |
+| a **context parameter** (`context(s: S) fun f()`) | `[KotlinContextParameter]` on the emitted positional parameter — a bare marker. The parameter is physically ordinary (§5i), so without it the consumer would restore a plain leading value parameter and `with(s) { f() }` would stop resolving. Covers functions and property accessors, top-level and member. |
 | **reference-type nullability** (`String?`) | **.NET's own NRT** `[Nullable]`/`[NullableContext]` (§9) — readable by C# too |
 | `final`/`open`/`abstract`, visibility | **none** — ride .NET virtual-ness / accessibility |
 | generics, `reified` | **none** — CLR generics are reified (§2) |
