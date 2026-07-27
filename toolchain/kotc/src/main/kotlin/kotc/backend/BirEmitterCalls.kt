@@ -562,13 +562,14 @@ internal fun BirEmitter.call(call: IrCall): String {
 	// no enclosing instance). `by lazy`: the local's `.Value`; custom delegate: getValue/setValue(null, KProperty).
 	localDelegates[callee]?.let { ldp ->
 		val dvar = ldp.delegate!!
-		val dlocal = """{"k":"local","name":${str(dvar.name.asString())}}"""
+		val dname = localSlotName(dvar)
+		val dlocal = """{"k":"local","name":${str(dname)}}"""
 		val elem = birType(ldp.getter.returnType)
 		// A `ClrRef<T>` delegate (byref local): getValue/setValue inline to ldobj/stobj through the managed pointer.
 		if (birType(dvar.type) is TypeNode.ByRef)
 			return if (callee === ldp.setter)
-				"""{"k":"byrefStore","local":${str(dvar.name.asString())},"elem":${str(elem)},"value":${expr(regularArgs(call).first())}}"""
-			else """{"k":"byrefLoad","local":${str(dvar.name.asString())},"elem":${str(elem)}}"""
+				"""{"k":"byrefStore","local":${str(dname)},"elem":${str(elem)},"value":${expr(regularArgs(call).first())}}"""
+			else """{"k":"byrefLoad","local":${str(dname)},"elem":${str(elem)}}"""
 		// `by lazy` (local): the delegate is a real `kotlin.Lazy<T>` (the stdlib `UnsafeLazyImpl`). Its accessor is
 		// the InlineOnly `Lazy<T>.getValue(…) = value` operator, whose stdlib inline body is absent from our IR;
 		// inline it (a pure Kotlin-frontend fact) to a plain read of the Lazy interface's `value` getter. bir2cir/

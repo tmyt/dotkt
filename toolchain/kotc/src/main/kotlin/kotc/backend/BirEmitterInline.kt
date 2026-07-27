@@ -493,7 +493,8 @@ internal fun BirEmitter.emitInlineLambdaCarrier(lambda: IrFunctionExpression): S
 			d.name.asString() == "<this>" ->
 				"""{"name":"__outer","type":${captureFieldType(d).toJson()},"outer":true}"""
 			else ->
-				"""{"name":${str(captureFieldName(d))},"type":${captureFieldType(d).toJson()}}"""
+				// Match the identity-allocated enclosing-frame slot used by the carrier body.
+				"""{"name":${str(localSlotName(d))},"type":${captureFieldType(d).toJson()}}"""
 		}
 	}
 	return """{"k":"inlineLambda","params":[$paramsJson],"captures":[$capturesJson],"body":[${body.joinToString(",")}],"result":$result}"""

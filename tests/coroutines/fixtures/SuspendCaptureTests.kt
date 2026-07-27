@@ -58,6 +58,19 @@ object ScapHolder {
 
 fun scapMk(k: Int): suspend () -> Int = { scapAddA(k, 5) }                     // LOCAL capture (non-regression control)
 
+// BIR local slots are declaration identities, not Kotlin source spellings. This deliberately keeps two `value`
+// declarations of different types alive around a genuinely asynchronous resume; bir2cir must spill the slots already
+// named by kotc, without reconstructing lexical shadowing from nested JSON.
+suspend fun scapShadowedFrameSlots(): String {
+    val value = 1
+    val resumed = corBScrAsyncResume()
+    val rendered = run {
+        val value = "inner"
+        value
+    }
+    return value.toString() + ":" + resumed.toString() + ":" + rendered
+}
+
 class SuspendCaptureTests {
     @TestAttribute
     fun paramValueAndHigherOrder() {
@@ -77,5 +90,6 @@ class SuspendCaptureTests {
         assertEquals(40, blockOn(ScapBox(20).outer()))     // 40
         assertEquals(105, ScapHolder.runObj())             // 105
         assertEquals(42, blockOn(scapMk(37)))              // 42
+        assertEquals("1:42:inner", blockOn { scapShadowedFrameSlots() })
     }
 }

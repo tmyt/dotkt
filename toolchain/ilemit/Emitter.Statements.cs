@@ -52,8 +52,13 @@ sealed partial class Emitter
                     EmitClrDispatch(setter, RequireDispatch(s, stype, "setField"), stype);
                     break;
                 }
-                var fon = SlotName(s.GetProperty("ownerType"));
-                var sfld = ResolveField(fon, fnm, out var sft);
+                // Consume the owner AS RESOLVED: `SlotName` collapses a constructed-generic owner to its open name,
+                // dropping the instantiation bir2cir already fixed, so the write bound the field on the type's own
+                // implied self-instantiation. Writing a `Cell<T>` field from a generic STATIC method then emitted
+                // `Cell<!0>::v` — a TYPE generic parameter, in a method whose frame has only `!!0` — which the JIT
+                // rejects as a bad image. `ParseOwnerSlot` preserves the instantiation, exactly as the field READ and
+                // `Ldflda` paths already do (Emitter.Expressions/Bodies).
+                var sfld = ResolveField(ParseOwnerSlot(s.GetProperty("ownerType")), fnm, out var sft);
                 EmitExpr(s.GetProperty("recv"));
                 EmitStoreCoerced(s.GetProperty("value"), sft);
                 MaybeVolatile(sfld);

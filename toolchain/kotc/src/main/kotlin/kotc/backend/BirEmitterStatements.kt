@@ -81,7 +81,7 @@ internal fun BirEmitter.stmt(node: org.jetbrains.kotlin.ir.IrElement): String = 
 	is IrVariable -> if (birType(node.type) is TypeNode.ByRef) {
 		val inner = node.initializer?.let { byrefMarker(it) ?: it }
 		val init = inner?.let { """{"k":"byrefOf","inner":${expr(it)}}""" } ?: "null"
-		"""{"k":"var","name":${str(node.name.asString())},"type":${birType(node.type).toJson()},"init":$init}"""
+		"""{"k":"var","name":${str(localSlotName(node))},"type":${birType(node.type).toJson()},"init":$init}"""
 	}
 	// A ref-cell var: `var x = init` -> `val x = new dotkt$Ref_<elem>(init)` (the heap cell). The cell's `v` field —
 	// and thus the synthesized ctor param — is the FULL element type `birType(node.type)`; when that is a value-type
@@ -93,7 +93,7 @@ internal fun BirEmitter.stmt(node: org.jetbrains.kotlin.ir.IrElement): String = 
 		val rt = refTypeName(node)
 		val elem = birType(node.type)
 		val init = node.initializer?.let { expr(it) } ?: """{"k":"default","type":${elem.toJson()}}"""
-		"""{"k":"var","name":${str(node.name.asString())},"type":${fqnJson(rt)},"init":{"k":"new","type":${fqnJson(rt)},"args":[$init],"argTypes":[${elem.toJson()}]}}"""
+		"""{"k":"var","name":${str(localSlotName(node))},"type":${fqnJson(rt)},"init":{"k":"new","type":${fqnJson(rt)},"args":[$init],"argTypes":[${elem.toJson()}]}}"""
 	} else {
 		// Evaluate the initializer FIRST so an object-expr init registers its synthetic name before the var's
 		// type is read (`val x = object {}` whose type IS that anonymous class). A value-type-nullable initializer
@@ -103,7 +103,7 @@ internal fun BirEmitter.stmt(node: org.jetbrains.kotlin.ir.IrElement): String = 
 		// A `T?` (nullable type-parameter) LOCAL now carries its nullability on the `type` node itself
 		// (`{t:nullable,of:tv}` from the uniform birType) — the decl-level `nullable` flag is RETIRED. bir2cir derives
 		// the nullable-generic-local erasure (`type` -> object) from the type node.
-		"""{"k":"var","name":${str(node.name.asString())},"type":${birType(node.type).toJson()},"init":$init}"""
+		"""{"k":"var","name":${str(localSlotName(node))},"type":${birType(node.type).toJson()},"init":$init}"""
 	}
 	// `val x by <delegate>` declared INSIDE a function (IrLocalDelegatedProperty): emit the delegate as a
 	// local var; its getter/setter calls (`<get-x>`) are rewritten to delegate access in call() (localDelegates).
@@ -115,7 +115,7 @@ internal fun BirEmitter.stmt(node: org.jetbrains.kotlin.ir.IrElement): String = 
 	// A ref-cell var write `x = e` -> `x.v = e` (through the shared heap cell, via the capture field inside a closure).
 	is IrSetValue -> if (isRefCell(node.symbol.owner))
 		"""{"k":"setField","ownerType":${fqnJson(refTypeName(node.symbol.owner))},"recv":${refBase(node.symbol.owner)},"name":"v","value":${expr(node.value)}}"""
-	else """{"k":"setLocal","name":${str(node.symbol.owner.name.asString())},"value":${expr(node.value)}}"""
+	else """{"k":"setLocal","name":${str(localSlotName(node.symbol.owner))},"value":${expr(node.value)}}"""
 	is IrSetField -> {
 		val ownerClass = node.symbol.owner.parent as? IrClass
 		val clr = ownerClass?.let { clrName(it) }
