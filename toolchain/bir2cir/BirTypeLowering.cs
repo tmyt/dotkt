@@ -21,6 +21,12 @@ using DotKt.Bir;
 // resolve ("cannot resolve .NET type kotlin.Byte").
 static class BirTypeLowering
 {
+    // The `kotlin.clr.Span<T>` intrinsic and the BCL type it IS. ONE declaration of that identity: [LowerType] rewrites
+    // the token with it, and [ReferenceMetadataIndex.IsByRefLikeFqn] canonicalizes through it so a pass that runs
+    // BEFORE this lowering (the cross-module default-arg splice) asks the reference metadata about the same type.
+    public const string SpanIntrinsicFqn = "kotlin.clr.Span";
+    public const string SpanClrFqn = "System.Span";
+
     // The bare kotlin.* tokens and their CLR-codegen lowering. Consulted only in the non-reference
     // (substitute/app) build; the reference build keeps every kotlin.* token verbatim.
     //
@@ -236,8 +242,8 @@ static class BirTypeLowering
                 // and bir2cir OWNS the BCL substitution (M11 — the last naked `System.*` name left in kotc). Placed
                 // before the refBuild passthrough so the ref build substitutes it too, matching the former kotc birType
                 // (which emitted `System.Span` unconditionally); the element lowers like any generic type-arg.
-                if (f.Name == "kotlin.clr.Span" && f.Args != null)
-                    return new TypeNode.Fqn("System.Span", f.Args.Select(a => LowerType(a, refBuild, force, typeArg: true)).ToArray());
+                if (f.Name == SpanIntrinsicFqn && f.Args != null)
+                    return new TypeNode.Fqn(SpanClrFqn, f.Args.Select(a => LowerType(a, refBuild, force, typeArg: true)).ToArray());
                 // The reference build keeps the pure-Kotlin surface verbatim (no recursion) unless an attribute
                 // blob forces a concrete System.* type.
                 if (!force && refBuild) return f;

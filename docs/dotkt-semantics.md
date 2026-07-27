@@ -823,11 +823,30 @@ declared by the first argument (a `var` declares an ordinary method-body local, 
 before every later one, so a later read is in scope and in order). Cross-module a DELEGATION is filled by a separate walk
 over the constructor declarations, since its arguments are not a call node; an enum entry is always same-module (its own
 constructor is being compiled). The one escape is deliberate, and BOTH paths take it: when some value in the bound range
-cannot be held by a temporary, NOTHING is bound at that call — not its supplied values and not a filled default —
-because a partial hoist would reorder the call, which is worse than the double evaluation it removes. What counts as
-unholdable differs by what each path can see: same-module it is a `byref` / `@ClrRefArgument` slot (an addressable
-lvalue, and the expression that PRODUCES the address can itself have side effects); cross-module, working on emitted
-JSON, it is additionally an open generic slot or an operand carrying no type at all.
+cannot be held by a temporary, no SUPPLIED value is bound at that call, because a partial hoist would move the others
+across it, which is worse than the double evaluation it removes. A filled default that a later default reads still
+binds — that temporary is what makes the two readers see ONE value, and dropping it does not merely re-run the default,
+it gives the readers DIFFERENT values (`f(t, a = next(), b = a)` must return `11`, not `12`). Its temporary is declared
+ahead of the call, so in that one shape the default runs before the values the call supplies: wrong order, which is the
+lesser of the two and is what this compiler already did.
+
+**What a temporary can hold** is one question with one answer, asked of the VALUE and of the slot separately:
+
+- the SLOT takes an address rather than a value — a `byref` (`ClrRef<T>`) or `@ClrRefArgument` parameter. The lvalue is
+  never emitted through the value path, and the expression that PRODUCES the address can itself have side effects.
+- the VALUE cannot occupy the storage the temporary will become. A temporary is emitted as a `var`, and a `var` in a
+  coroutine body is promoted to an INSTANCE FIELD of the state machine — so the admissible types are the ones the CLR
+  allows in an instance field, which excludes every **byref-like** (`ref struct`) type: `System.Span<T>`,
+  `System.ReadOnlySpan<T>`, and any `ref struct` a referenced assembly declares. Binding one emitted a state machine
+  that failed at LOAD with *"A ByRef or ByRef-like type cannot be used as the type for an instance field in a
+  non-ByRef-like type"*. The exclusion is UNCONDITIONAL, not "only in a `suspend` function": an `inline` callee's body
+  is spliced into the caller's frame, so a temporary emitted while rendering a non-suspend lambda can still land in a
+  suspend function's state machine — measured, not assumed. Byref-like-ness is read from metadata (facadegen carries
+  `IsByRefLike` for kotc; bir2cir reads it off the references directly), never from a type name.
+- cross-module only, working on emitted JSON: an open generic slot, or an operand carrying no type at all.
+
+A filled default whose own parameter type is unholdable is the only place a binding is dropped outright; there the two
+readers of that default do see two evaluations, because no temporary can exist to hold the one.
 
 An omitted default is evaluated AFTER everything the call supplies (Kotlin: the receiver, then each argument, then the
 callee's defaults). A filled default that a later default reads is itself bound to a temporary, and that temporary is

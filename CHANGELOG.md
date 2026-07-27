@@ -50,7 +50,28 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   (c) The synthetic-`copy` test
   was name + `isData`, but a data class may also declare a differently-signed `copy` OVERLOAD whose defaults are
   ordinary expressions — it is now matched by the generated signature (parameters mirroring the primary constructor),
-  so an overload cannot be reconstructed as `this.<field>`.
+  so an overload cannot be reconstructed as `this.<field>`. (That last one is UNMEASURED: reaching the mis-selection
+  needs a data class with a `copy` overload in a referenced module, and the only cross-module source that preserves
+  the `data` nature is the frontend KLIB — the stdlib, which declares no such class.)
+- **kotc/bir2cir/facadegen (area:kotc, area:bir2cir, area:facadegen): a BYREF-LIKE (`ref struct`) value at a call that
+  fills a default argument no longer emits a state machine that fails to load.** A single-evaluation temporary is
+  emitted as a `var`, and bir2cir promotes every `var` of a coroutine body to an INSTANCE FIELD of the state machine —
+  which the CLR refuses for a byref-like type ("A ByRef or ByRef-like type cannot be used as the type for an instance
+  field in a non-ByRef-like type", thrown at type LOAD). The admissibility guard tested the callee PARAMETER for
+  `byref`/`@ClrRefArgument`, which a `Span<T>` / `ReadOnlySpan<T>` / user `ref struct` parameter is not, so such a value
+  was bound and the emitted state machine could not be loaded: `f(RefApi.MakeTally(4))` against
+  `fun f(t: Tally, a: Int = bump(), b: Int = a * 10)` inside a `suspend` body threw `TypeLoadException`, as did the same
+  value as an extension RECEIVER, and as did a call sitting in a non-suspend `inline` lambda spliced into a suspend
+  frame. kotc now asks ONE question — can a temporary hold this value (`canHoldInTemp`) — of the value's own type as
+  well as of the slot, and binds no SUPPLIED value of that call when it cannot, exactly as it already did for a `byref`
+  slot. A filled default that a later default reads still binds there: dropping that temporary does not merely re-run
+  the default, it makes its two readers see DIFFERENT values (`f(t, a = next(), b = a)` returned `12` for Kotlin's
+  `11`), so the residual is the pre-existing one — that default runs before the argument, which is what this compiler
+  already did. bir2cir's cross-module splice had the same hole in its own `TempType` and takes the same refusal. Byref-like-ness is
+  a DECLARATION fact read from metadata — facadegen carries `IsByRefLike` into the injection metadata for kotc, and
+  bir2cir reads it off the references — so a `ref struct` nobody has written yet answers the same way and no layer
+  matches a type NAME. `bindFilledDefaultOnce`'s hard `unsupported(...)` abort on a `byref` default became the same
+  decline-to-bind, since a backend abort on frontend-accepted IR is a bug.
   Cross-module `copy`-field omission reaches only a data class resolved through the frontend KLIB
   (`kotlin.Pair`/`kotlin.Triple`); a data class RE-CONSUMED from a DotKt library dll still cannot omit a `copy` field
   at all (the `data` nature is not carried, so every `copy` parameter surfaces REQUIRED). That gap is now written down

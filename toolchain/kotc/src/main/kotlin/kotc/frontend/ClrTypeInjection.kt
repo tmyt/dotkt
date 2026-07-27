@@ -109,6 +109,11 @@ internal val PRIMITIVE_RECEIVER_NAMES = setOf(
 internal val UNSIGNED_KOTLIN_TYPES = setOf(
 	"UByte", "UShort", "UInt", "ULong", "UByteArray", "UShortArray", "UIntArray", "ULongArray",
 )
+// The `kotlin.clr.Span<T>` intrinsic's ClassId, at file level because two owners need the SAME identity: the injector
+// that synthesizes the type, and [ClrMetadataHolder.byRefLikeClassIds] — the intrinsic surfaces a .NET type that is
+// BYREF-LIKE, which is a fact about what this fiction IS, so it is declared here beside it rather than re-derived from
+// a name downstream. facadegen never emits a record for it (it is NO_INJECT there), so it cannot arrive as metadata.
+internal val CLR_SPAN_CLASS_ID = ClassId(FqName("kotlin.clr"), Name.identifier("Span"))
 // A top-level property: `receiver` (a TypeNode) present => an EXTENSION property (`val T.p`); null => a plain top-level prop.
 // #103: `customGet`/`customSet` mark a field-backed prop whose read/write goes through a CUSTOM accessor (`get_`/`set_`
 // on the file class), not the raw static field — the backend must invoke the accessor cross-module (else it is bypassed).
@@ -154,6 +159,7 @@ private class ClrType(
 	val clrBinding: String? = null,    // ref/runtime split: the BCL type this Kotlin type binds to (`List` -> IReadOnlyList)
 	val isFunInterface: Boolean = false,   // round-trip: was a Kotlin `fun interface` (SAM) — restore `status.isFun`
 	val isSealed: Boolean = false,         // round-trip: was a Kotlin `sealed` class/interface — restore Modality.SEALED
+	val byRefLike: Boolean = false,        // a .NET `ref struct` — a VALUE of it cannot live in an instance field (see [clrByRefLikeType])
 	val iteratorElem: TypeNode? = null,    // IEnumerable<T> element -> a frontend-only `operator fun iterator(): Iterator<T>`
 )
 private class ClrModule(val types: List<ClrType>, val topLevel: List<ClrTopLevel> = emptyList(), val topLevelProps: List<ClrTopLevelProp> = emptyList())
@@ -172,6 +178,20 @@ private val ClrType.hasStatics: Boolean get() = staticMethods.isNotEmpty() || st
  */
 internal fun clrInjectedDotNetName(classId: ClassId): String? =
 	if (classId in ClrMetadataHolder.sourceShadowedClassIds) null else ClrMetadataHolder.dotNetNameByClassId[classId]
+
+/**
+ * Is a value of this type BYREF-LIKE — a .NET `ref struct`? The CLR forbids such a value as the type of an instance
+ * field of a non-byref-like type, so a value of it cannot be spilled into a coroutine state machine's field; the
+ * backend consults this before putting one in a synthesized temporary (see `canHoldInTemp`).
+ *
+ * A DECLARATION fact of the referenced type, discovered by facadegen (`IsByRefLike`) and carried in its metadata, plus
+ * the one `kotlin.clr` intrinsic that surfaces such a type ([CLR_SPAN_CLASS_ID]) — so no caller recognizes a byref-like
+ * by NAME, and a `ref struct` nobody has written yet answers the same way. False for a non-injected class, and for one
+ * SHADOWED by a source declaration in this compile (as [clrInjectedDotNetName]): a Kotlin type is never byref-like,
+ * because Kotlin cannot declare one.
+ */
+internal fun clrByRefLikeType(classId: ClassId): Boolean =
+	classId !in ClrMetadataHolder.sourceShadowedClassIds && classId in ClrMetadataHolder.byRefLikeClassIds
 
 // A2 step 5 (interop member-slot -> bir2cir): the backend no longer reads an injected .NET MEMBER's slot name here. A
 // Kotlin member overriding a facadegen-injected .NET interface/base binds its slot in bir2cir's DeclarationRename, which
@@ -401,7 +421,7 @@ private object ClrMetadataHolder {
 			indexer = indexer, baseNoArgCtor = o["baseNoArgCtor"] != false,
 			staticMethods = funs("staticFuns"), staticProps = props("staticProps"), staticEvents = events("staticEvents"),
 			memberExtProps = memberExtProps, clrBinding = o["clrBinding"] as? String,
-			isFunInterface = o["funInterface"] == true, isSealed = o["sealed"] == true,
+			isFunInterface = o["funInterface"] == true, isSealed = o["sealed"] == true, byRefLike = o["byRefLike"] == true,
 			iteratorElem = o["iteratorElem"]?.let { typeOf(it) },
 		)
 	}
@@ -431,6 +451,11 @@ private object ClrMetadataHolder {
 	// (`Task\`1` -> Kotlin `Task1`) genuinely diverges from the ClassId simple name, so it must be carried (facadegen's
 	// fact), not re-derived from the ClassId string — hence this metadata read rather than `classId.asString()` alone.
 	val dotNetNameByClassId: Map<ClassId, String> by lazy { byClassId.mapValues { it.value.dotNetName.substringBefore('`') } }
+	// The BYREF-LIKE (`ref struct`) types, keyed by resolved ClassId — facadegen's own `IsByRefLike` reading of the
+	// referenced metadata, plus the kotc INTRINSIC that is byref-like by its own definition ([CLR_SPAN_CLASS_ID]
+	// surfaces `System.Span<T>`, whose byref-like-ness is a property of the type this intrinsic IS, not of a name kotc
+	// matches). See [clrByRefLikeType].
+	val byRefLikeClassIds: Set<ClassId> by lazy { byClassId.filterValues { it.byRefLike }.keys + CLR_SPAN_CLASS_ID }
 		// (A2 step 5: the injected-MEMBER .NET-slot-name map is GONE -- a member's slot is resolved in bir2cir's
 		// DeclarationRename by reflecting the owner .NET Type off the refs, not from a kotc-side metadata map.)
 	// A2 keystone (interop-no-registry stage 3): a restored DotKt top-level function's .NET file-facade class keyed by its
@@ -619,8 +644,9 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	// never real; kotc recognizes the `by clrEvent()` delegate initializer and synthesizes add_/remove_/raise_.
 	private val clrEventName = "clrEvent"
 	// `Span<T>`: a `kotlin.clr` intrinsic that maps to the real `System.Span<T>` (birType -> clrg:System.Span)
-	// — the surfaced form of a .NET Span parameter and the result of `StackBuffer.asSpan()`.
-	private val spanClassId = ClassId(clrPkg, Name.identifier("Span"))
+	// — the surfaced form of a .NET Span parameter and the result of `StackBuffer.asSpan()`. Its ClassId is declared
+	// at file level ([CLR_SPAN_CLASS_ID]) because the byref-like record shares that identity.
+	private val spanClassId = CLR_SPAN_CLASS_ID
 	// `ClrEvent<T>`: a compile-time-only fiction for `.NET event` subscription (`subscribe`).
 	// A .NET event is NOT a first-class value (you can only add/remove/raise it), so `w.Changed` NEVER materializes a
 	// ClrEvent<T> at runtime -- it is a handle whose only purpose is to make the Kotlin operation resolve. The

@@ -66,6 +66,7 @@ import org.jetbrains.kotlin.ir.util.fqNameWhenAvailable
 import org.jetbrains.kotlin.ir.util.resolveFakeOverride
 import org.jetbrains.kotlin.ir.declarations.IrTypeParameter
 import org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol
+import org.jetbrains.kotlin.ir.symbols.IrClassSymbol
 import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
 import org.jetbrains.kotlin.ir.types.IrType
 import org.jetbrains.kotlin.ir.types.classFqName
@@ -489,6 +490,35 @@ internal fun BirEmitter.clrName(decl: org.jetbrains.kotlin.ir.declarations.IrAnn
  *  keep [clrName] for its returned string. */
 internal fun BirEmitter.isExternalNetType(decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer): Boolean =
 	clrName(decl) != null
+
+/** Can a synthesized `var` TEMPORARY hold a value of this type?
+ *
+ *  THE one holdability test in kotc, for every pass that moves a value into a temp it introduces (today: the
+ *  single-evaluation pre-pass and [bindFilledDefaultOnce]). A temp is not merely a local: bir2cir's suspend lowering
+ *  promotes EVERY non-handler `var` of a coroutine body to an INSTANCE FIELD of the state machine, and kotc cannot know
+ *  which body a temp ends up in — an `inline` callee's body (and its own temps) is spliced into the CALLER's frame, so
+ *  a temp emitted while rendering a non-suspend lambda can land in a suspend function's state machine. So the test is
+ *  the one that holds for the strongest storage a temp can occupy, an instance field:
+ *
+ *  - a BYREF (`ClrRef<T>`, a managed pointer) is an addressable lvalue, not a value at all; and
+ *  - a BYREF-LIKE value (a .NET `ref struct` — [clrByRefLikeType], a declaration fact facadegen carries) may hold a
+ *    managed pointer, and the CLR rejects a type with such an instance field at LOAD time ("A ByRef or ByRef-like type
+ *    cannot be used as the type for an instance field in a non-ByRef-like type").
+ *
+ *  A caller-frame type VARIABLE is holdable and is deliberately not refused: the generated state machine is generic over
+ *  the suspend function's own type parameters, so an open `T` survives the promotion. Both tests look THROUGH a
+ *  nullability wrapper — `birType` wraps `T?` outside its core, so a `ClrRef<T>?` renders as `nullable(byRef T)` — and
+ *  through nothing else: a byref-like as a generic ARGUMENT is the outer type's problem, not this one's. */
+internal fun BirEmitter.canHoldInTemp(type: IrType): Boolean =
+	!isByRefNode(birType(type)) &&
+		(type.classifierOrNull as? IrClassSymbol)?.owner?.classId?.let { kotc.frontend.clrByRefLikeType(it) } != true
+
+private fun isByRefNode(t: TypeNode): Boolean = when (t) {
+	is TypeNode.ByRef -> true
+	is TypeNode.Nullable -> isByRefNode(t.of)
+	is TypeNode.Oblivious -> isByRefNode(t.of)
+	else -> false
+}
 
 /** JSON for a structured type in a node template — `str(typeNode)` emits the `{t:…}` object (no quotes).
  *  An overload of `str(String)` so every `"type":${str(x)}` site works whether x is a name or a Type. */

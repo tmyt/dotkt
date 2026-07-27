@@ -32,6 +32,7 @@ sealed partial class ReferenceMetadataIndex
     // Aggregate CALL-SUBSTITUTION index across all reference assemblies.
     readonly Dictionary<string, string> _ownerAlias = new(StringComparer.Ordinal);   // Kotlin FQN -> BCL alias
     readonly Dictionary<string, string> _ownerKind = new(StringComparer.Ordinal);    // Kotlin FQN -> class/struct/...
+    readonly HashSet<string> _byRefLikeOwners = new(StringComparer.Ordinal);         // Kotlin FQN -> is a `ref struct`
     readonly HashSet<string> _dotKtOwners = new(StringComparer.Ordinal);              // types authored by a DotKt-emitted assembly
     readonly Dictionary<string, int> _ownerArity = new(StringComparer.Ordinal);      // Kotlin FQN -> generic arity
     readonly Dictionary<string, string[]> _ownerTypeParams = new(StringComparer.Ordinal); // Kotlin FQN -> generic param names
@@ -157,6 +158,7 @@ sealed partial class ReferenceMetadataIndex
         {
             foreach (var kv in asm.DotKt.Aliases) _ownerAlias[kv.Key] = kv.Value;
             foreach (var kv in asm.DotKt.TypeKinds) _ownerKind[kv.Key] = kv.Value;
+            foreach (var owner in asm.DotKt.ByRefLikeOwners) _byRefLikeOwners.Add(owner);
             foreach (var owner in asm.DotKt.DotKtOwners) _dotKtOwners.Add(owner);
             foreach (var kv in asm.DotKt.TypeArity) _ownerArity[kv.Key] = kv.Value;
             foreach (var kv in asm.DotKt.TypeParamNames) _ownerTypeParams[kv.Key] = kv.Value;
@@ -566,6 +568,22 @@ sealed partial class ReferenceMetadataIndex
         var bare = StripGenericArity(fqn);
         var kind = _ownerKind.GetValueOrDefault(bare);
         return kind == "struct" || kind == "enum";
+    }
+
+    // The BYREF-LIKE oracle. True iff a concrete type FQN is a `ref struct` — a value the CLR refuses as the type of an
+    // INSTANCE FIELD of a non-byref-like type, hence one that cannot be spilled into a coroutine state machine. Read
+    // from the referenced metadata's `IsByRefLike` (see [IsByRefLikeType]), so a `ref struct` nobody has written yet
+    // answers the same way and no caller matches a type NAME.
+    // `kotlin.clr.Span` is the one spelling that needs canonicalizing: it is kotc's intrinsic name for `System.Span<T>`
+    // and [BirTypeLowering] rewrites it, but the default-arg splice runs BEFORE that pass and so sees the intrinsic
+    // token. Both spellings come from the ONE pair of constants there, so this is the same identity that lowering
+    // asserts, not a second fact.
+    public bool IsByRefLikeFqn(string fqn)
+    {
+        if (fqn == null) return false;
+        var bare = StripGenericArity(fqn);
+        if (bare == BirTypeLowering.SpanIntrinsicFqn) bare = BirTypeLowering.SpanClrFqn;
+        return _byRefLikeOwners.Contains(bare);
     }
 
     // The CLR generic-parameter constraint class of a type variable declared on `ownerFqn` at flattened index `i`:
@@ -1304,6 +1322,7 @@ sealed partial class ReferenceMetadataIndex
                     // binding) or, for any not-yet-renamed bound class, a class-level @ClrIntrinsic.
                     var ownerFqn = StripGenericArity(type.FullName ?? type.Name);
                     metadata.TypeKinds[ownerFqn] = TypeKind(type);
+                    if (IsByRefLikeType(type)) metadata.ByRefLikeOwners.Add(ownerFqn);
                     metadata.TypeShapes[DottedFqn(ownerFqn)] = new ReferenceTypeShape(
                         type.IsGenericType ? type.GetGenericArguments().Length : 0,
                         TypeKind(type),
@@ -1955,6 +1974,18 @@ sealed partial class ReferenceMetadataIndex
         _ => null,
     };
 
+    // A BYREF-LIKE type (`ref struct`): a value that may hold a managed pointer, which the CLR forbids as the type of an
+    // instance field of a non-byref-like type. The CLR encodes it as `IsByRefLikeAttribute`; `Type.IsByRefLike` reads
+    // that same attribute under MetadataLoadContext, so the attribute probe leads and the property is the fallback for
+    // the runtime-intrinsic byref-likes (TypedReference/ArgIterator/RuntimeArgumentHandle) that carry no attribute.
+    const string ByRefLikeAttrFqn = "System.Runtime.CompilerServices.IsByRefLikeAttribute";
+    static bool IsByRefLikeType(Type type)
+    {
+        if (!type.IsValueType) return false;
+        try { if (type.GetCustomAttributesData().Any(c => c.AttributeType?.FullName == ByRefLikeAttrFqn)) return true; } catch { }
+        try { return type.IsByRefLike; } catch { return false; }
+    }
+
     static string TypeKind(Type type)
     {
         if (type.IsInterface) return "interface";
@@ -2040,6 +2071,7 @@ sealed class ReferenceDotKtMetadata
     // class-level @ClrTypeAlias (the type-identity binding) or, for a not-yet-renamed bound class, a class-level @ClrIntrinsic.
     public readonly Dictionary<string, string> Aliases = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> TypeKinds = new(StringComparer.Ordinal);   // ownerFqn -> class/struct/interface/enum
+    public readonly HashSet<string> ByRefLikeOwners = new(StringComparer.Ordinal);        // ownerFqn -> is a `ref struct` (see IsByRefLikeFqn)
     public readonly HashSet<string> DotKtOwners = new(StringComparer.Ordinal);             // producer-marked DotKt assembly types
     public readonly Dictionary<string, int> TypeArity = new(StringComparer.Ordinal);       // ownerFqn -> generic arity
     public readonly Dictionary<string, string[]> TypeParamNames = new(StringComparer.Ordinal); // ownerFqn -> generic param names

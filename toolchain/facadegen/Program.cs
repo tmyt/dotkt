@@ -941,6 +941,10 @@ static class FacadeGen
             typeObj["name"] = KotlinName(t);
             typeObj["dotNet"] = t.IsGenericTypeDefinition ? ClrOpenName(t) : t.FullName;
             if (!isStatic && !isKotlinObject) typeObj["open"] = !t.IsSealed;
+            // A `ref struct` — see [IsByRefLikeType]. Carried so kotc can tell that a VALUE of this type cannot be put
+            // anywhere the CLR forbids a byref-like (an instance field, hence a coroutine state machine's spill slot)
+            // without recognizing the type by name.
+            if (IsByRefLikeType(t)) typeObj["byRefLike"] = true;
             // Round-trip: a Kotlin `sealed` class lowered to a CLR abstract (non-sealed) class.
             if (!isStatic && HasKotlinSealed(t)) typeObj["sealed"] = true;
             // Round-trip gap ①: upper bounds of the class's type params (a CLR class type param has no variance form).
@@ -1737,6 +1741,21 @@ static class FacadeGen
     {
         try { return t.GetCustomAttributesData().Any(c => IsDotKtMetadata(c, KObjectAttr)); }
         catch { return false; }
+    }
+
+    // A BYREF-LIKE type (`ref struct`): a value that may hold a managed pointer, so the CLR forbids it as the type of
+    // an instance field of a non-byref-like type, as an array element, and as a generic argument. That is a DECLARATION
+    // fact of the .NET type — carried across as `byRefLike` so a consumer never has to recognize one by NAME (this is
+    // the whole of `Span`/`ReadOnlySpan`/any user `ref struct`, without a list of any of them). The CLR encodes it as
+    // `IsByRefLikeAttribute`; `Type.IsByRefLike` reads that same attribute under MetadataLoadContext, so the attribute
+    // probe is the primary and the property a belt-and-suspenders fallback for the handful of runtime-intrinsic
+    // byref-likes (TypedReference/ArgIterator/RuntimeArgumentHandle) that carry no attribute.
+    const string ByRefLikeAttr = "System.Runtime.CompilerServices.IsByRefLikeAttribute";
+    static bool IsByRefLikeType(Type t)
+    {
+        if (!t.IsValueType) return false;
+        try { if (t.GetCustomAttributesData().Any(c => c.AttributeType?.FullName == ByRefLikeAttr)) return true; } catch { }
+        try { return t.IsByRefLike; } catch { return false; }
     }
 
     const string KReadOnlyAttr = "DotKt.Runtime.CompilerServices.KotlinReadOnlyAttribute";

@@ -178,11 +178,11 @@ static class DefaultArgSplice
         var bindable = lastRead >= 0;
         for (var j = 0; j <= lastRead && j < args.Count && bindable; j++)
         {
-            if (IsPlaceholder(args[j])) { if (TempType(declared, j, null) == null) bindable = false; }
-            else if (args[j] is JsonNode v && !IsStableValue(v) && TempType(declared, j, v) == null) bindable = false;
+            if (IsPlaceholder(args[j])) { if (TempType(declared, j, null, refs) == null) bindable = false; }
+            else if (args[j] is JsonNode v && !IsStableValue(v) && TempType(declared, j, v, refs) == null) bindable = false;
         }
         if (bindable && recvHost?["recv"] is JsonNode recvCheck && !IsStableValue(recvCheck)
-            && TempType(AsVector(recvHost["ownerType"]), 0, recvCheck) == null)
+            && TempType(AsVector(recvHost["ownerType"]), 0, recvCheck, refs) == null)
             bindable = false;
         var temps = new JsonArray();
         // 1) Replace POSITIONAL placeholders in place (a later provided arg keeps its slot). Fill by array index = the
@@ -203,7 +203,7 @@ static class DefaultArgSplice
             // default may read THIS slot, and a filled default must not be evaluated twice either), and including values
             // no fill reads, whose evaluation would otherwise slide after the temps.
             if (bindable && j <= lastRead && !IsPlaceholder(args[j]) && args[j] is JsonNode value && !IsStableValue(value)
-                && TempType(declared, j, value) is JsonNode argType)
+                && TempType(declared, j, value, refs) is JsonNode argType)
                 args[j] = Hoist(temps, value, argType);
         }
         // 2) Append any purely-TRAILING omitted args (callee carries @KotlinDefault but kotc dropped the tail). Unreachable
@@ -221,7 +221,7 @@ static class DefaultArgSplice
         // [TempType] rather than copied, since for an addressable receiver a temp is a copy and not the address the call
         // would take.
         if (temps.Count > 0 && recvHost?["recv"] is JsonNode recvNode && !IsStableValue(recvNode)
-            && TempType(AsVector(recvHost["ownerType"]), 0, recvNode) is JsonNode recvType)
+            && TempType(AsVector(recvHost["ownerType"]), 0, recvNode, refs) is JsonNode recvType)
             recvHost["recv"] = HoistFirst(temps, recvNode, recvType);
         return temps;
     }
@@ -318,20 +318,34 @@ static class DefaultArgSplice
     // CALLEE's positional type variable, which would resolve in the CALLER's frame (to the wrong parameter, or to
     // `object`) — then the VALUE's own static type, concrete at this call site, is used instead. `value` may be null for
     // a placeholder that is about to be FILLED: its fill takes the declared type, so only that slot is checked.
-    // Null -> not bindable: a byref slot is an addressable lvalue rather than a value a temp can hold, and a synthesized
-    // operand may carry no type at all.
-    static JsonNode TempType(JsonArray declared, int position, JsonNode value)
+    // Null -> not bindable: a byref slot is an addressable lvalue rather than a value a temp can hold; a BYREF-LIKE
+    // (`ref struct`) one is a value the CLR refuses as an instance FIELD, which is what this `var` becomes once
+    // SuspendColdLowering spills a coroutine body's locals ("A ByRef or ByRef-like type cannot be used as the type for
+    // an instance field in a non-ByRef-like type", thrown at type LOAD); and a synthesized operand may carry no type at
+    // all. This is the same holdability question kotc's `canHoldInTemp` asks of its own single-evaluation temps.
+    static JsonNode TempType(JsonArray declared, int position, JsonNode value, ReferenceMetadataIndex refs)
     {
         var slot = declared != null && declared.Count > position ? declared[position] : null;
         if (slot != null && TypeJson.Read(slot) is TypeNode d)
         {
-            if (d is TypeNode.ByRef) return null;
+            if (d is TypeNode.ByRef || IsByRefLike(d, refs)) return null;
             if (!IsOpen(d)) return slot.DeepClone();
         }
         var own = (value as JsonObject)?["sty"] ?? (value as JsonObject)?["type"];
-        if (own != null && TypeJson.Read(own) is TypeNode o && o is not TypeNode.ByRef && !IsOpen(o)) return own.DeepClone();
+        if (own != null && TypeJson.Read(own) is TypeNode o && o is not TypeNode.ByRef && !IsByRefLike(o, refs) && !IsOpen(o))
+            return own.DeepClone();
         return null;
     }
+
+    // A `ref struct` type, read from the referenced metadata ([ReferenceMetadataIndex.IsByRefLikeFqn]) rather than from a
+    // name. Nullable/oblivious wrappers are transparent — the CLR restriction is on the underlying type.
+    static bool IsByRefLike(TypeNode t, ReferenceMetadataIndex refs) => t switch
+    {
+        TypeNode.Nullable n => IsByRefLike(n.Of, refs),
+        TypeNode.Oblivious ob => IsByRefLike(ob.Of, refs),
+        TypeNode.Fqn f => refs != null && refs.IsByRefLikeFqn(f.Name),
+        _ => false,
+    };
 
     // A type mentioning a positional type VARIABLE: it names a slot in the declaring generic's frame, so it cannot be
     // written into a local of THIS body without re-resolving it there.

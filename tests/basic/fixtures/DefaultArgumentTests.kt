@@ -248,10 +248,11 @@ fun m2CopyVia(f: () -> Int): Pair<Int, Int> { M2CopyLambdaCounter.calls++; retur
 
 // A data class may ALSO declare a differently-signed `copy` OVERLOAD of its own — only the generated signature is
 // reserved. Its defaults are ordinary expressions, not `this.<field>` reads, so the synthetic-copy test must not claim
-// it (`copy` + `isData` alone did). A CONTROL, not a regression test: this class is same-module, so its defaults are
-// real IR and never reach the reconstruction. Reaching the mis-selection needs a data class with a `copy` overload in a
-// REFERENCED module, and the only cross-module source that preserves the `data` nature is the frontend KLIB, which we
-// do not author.
+// it (`copy` + `isData` alone did). A CONTROL, not a regression test — it passes with the selector reverted, and the
+// tightened selector is UNMEASURED: reaching the mis-selection needs a data class with a `copy` overload in a
+// REFERENCED module, and the only cross-module source that preserves the `data` nature is the frontend KLIB, i.e. the
+// stdlib, which declares no such class. What IS verified here is that the overload compiles, resolves and returns its
+// own ordinary default.
 data class M2CopyOver(val x: Int, val y: Int) {
     fun copy(tag: String, z: Int = x * 2): String = "$tag/$z/$y"
 }
@@ -284,6 +285,26 @@ fun M2ExtSource.m2ExtChain(a: Int = bump(), b: Int = a * 10): Int = a * 1000 + b
 class M2ExtOwner(val k: Int) {
     fun M2ExtSource.memChain(a: Int = bump(), b: Int = a * 10): Int = a * 1000 + b + k
     fun run(s: M2ExtSource): Int = s.memChain()
+}
+
+// A member extension inside an INNER class whose filled default reads an ENCLOSING instance — the shape where a call
+// has THREE live values (the enclosing chain, the dispatch receiver and the extension receiver) and the default reads
+// the one the call site never writes. Every side effect is logged so the count AND the order are asserted.
+object M2EncLog { var s = "" }
+class M2EncSrc(val n: Int) { fun bump(): Int { M2EncLog.s += "s"; return n } }
+fun m2EncSrc(): M2EncSrc { M2EncLog.s += "S"; return M2EncSrc(2) }
+class M2EncOuter(val k: Int) {
+    fun mark(): Int { M2EncLog.s += "K"; return k }
+    inner class M2EncInner {
+        // `mark()` is a member of the ENCLOSING class, so this default reads `this@M2EncOuter` — reached from the
+        // member extension's DISPATCH receiver, never from its extension receiver.
+        fun M2EncSrc.encOnly(a: Int = mark(), b: Int = a * 10): Int = a * 1000 + b
+        // …and one reading BOTH the enclosing instance and the extension receiver.
+        fun M2EncSrc.encAndExt(a: Int = mark() + bump(), b: Int = a * 10): Int = a * 1000 + b
+        fun goEncOnly(): Int = m2EncSrc().encOnly()
+        fun goEncAndExt(): Int = m2EncSrc().encAndExt()
+    }
+    fun inner(): M2EncInner { M2EncLog.s += "I"; return M2EncInner() }
 }
 
 class DefaultArgumentTests {
@@ -506,6 +527,24 @@ class DefaultArgumentTests {
         val b = M2ExtSource()
         assertEquals(3031, M2ExtOwner(1).run(b))                        // a MEMBER extension: both receivers live
         assertEquals(1, b.calls)                                        // 1  was 2
+    }
+
+    // A member extension in an INNER class whose filled default reads an ENCLOSING instance: the enclosing read is
+    // reached from the DISPATCH receiver, and it must be evaluated once and after the values the call supplies.
+    // NOTE ON ATTRIBUTION: this is red on `origin/main` (the `K`s below appeared TWICE) and green here, but the part
+    // of this change that fixes it is the fill binding + its ordering, NOT the `enclosingSyms`/`dispatchIdx` split.
+    // Reverting only the split and rebuilding leaves this test green, so the split is a hygiene tightening — it stops
+    // attributing an enclosing read to the EXTENSION receiver, which bound a temp nothing reads — with no behavioural
+    // difference this fixture (or any shape found) can observe.
+    @TestAttribute
+    fun defargsEnclosingReadAtAMemberExtension() {
+        M2EncLog.s = ""
+        assertEquals(7070, M2EncOuter(7).inner().goEncOnly())           // a = mark() = 7, b = 70
+        assertEquals("ISK", M2EncLog.s)                                 // ISK  inner, extension receiver, then the default (was "ISKK")
+
+        M2EncLog.s = ""
+        assertEquals(9090, M2EncOuter(7).inner().goEncAndExt())         // a = mark() + bump() = 7 + 2 = 9, b = 90
+        assertEquals("ISKs", M2EncLog.s)                                // ISKs (was "ISKsKs")
     }
 
     // #235: single evaluation at the two call sites that ride a DECLARATION rather than an expression.

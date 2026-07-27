@@ -1261,7 +1261,12 @@ internal fun BirEmitter.carriesKotlinDefault(fn: org.jetbrains.kotlin.ir.declara
  *  differently-signed `copy` OVERLOAD of its own (`data class D(val x: Int) { fun copy(tag: String, z: Int = x * 2) }`
  *  compiles and runs), whose defaults are ordinary expressions and are NOT field reads. The generated one mirrors the
  *  primary constructor parameter-for-parameter and name-for-name, which is exactly the property a `this.<field>`
- *  reconstruction depends on — so match on that. */
+ *  reconstruction depends on — so match on that.
+ *
+ *  UNMEASURED: the mis-selection this excludes is reasoned from the reconstruction's precondition, not observed. It
+ *  needs a data class carrying a `copy` OVERLOAD in a REFERENCED module, and the only cross-module source that
+ *  preserves the `data` nature is the frontend KLIB — the stdlib, which declares no such class. The same-module case
+ *  (verified to compile and run) never reaches the reconstruction, because its default is real IR. */
 internal fun BirEmitter.isDataClassCopy(fn: org.jetbrains.kotlin.ir.declarations.IrSimpleFunction): Boolean {
 	if (fn.name.asString() != "copy") return false
 	val cls = fn.parent as? IrClass ?: return false
