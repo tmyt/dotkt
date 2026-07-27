@@ -341,9 +341,11 @@ sealed partial class Emitter
             }
             case "staticFieldSet":
             {
-                var sfsf = FindField(SlotName(e.GetProperty("ownerType")), e.GetProperty("name").GetString())
-                    ?? throw new NotSupportedException($"static field {SlotName(e.GetProperty("ownerType"))}.{e.GetProperty("name").GetString()} not found");
-                EmitStoreCoerced(e.GetProperty("value"), sfsf.FieldType);
+                // Preserve the owner's instantiation exactly, for the same reason as the `staticField` READ above:
+                // collapsing through SlotName replaces `G<object>` with the open `G<!0>` and manufactures invalid IL.
+                var sfsf = ResolveField(
+                    ParseOwnerSlot(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out var sfsft);
+                EmitStoreCoerced(e.GetProperty("value"), sfsft);
                 MaybeVolatile(sfsf);
                 _il.Emit(OpCodes.Stsfld, sfsf);
                 return typeof(void);

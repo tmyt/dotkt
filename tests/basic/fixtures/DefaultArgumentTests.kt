@@ -119,6 +119,9 @@ class M2EnclMember(val k: Int) {
 // time. The values differ so a wrong receiver is a wrong VALUE, not merely a wrong type.
 class M2RecvKind(val k: Int) {
     fun Int.scaledV(f: Int = k): Int = this * f
+    // `inline` WITHOUT a function-typed argument does NOT splice (the gate is `isInline && hasLambdaArg`), so this
+    // takes the same ordinary filledArgs path as `scaledV` — pinned as that, not as splice coverage. A real splice
+    // with a receiver-reading default is still refused by the carrier's defaultUnsupported poison (#34).
     inline fun Int.scaledI(f: Int = k): Int = this * f
     fun Int.viaParam(base: Int, f: Int = base): Int = this * f
     fun run(): Int = 3.scaledV()
@@ -411,7 +414,7 @@ class DefaultArgumentTests {
     fun defargsReceiverKind() {
         val h = M2RecvKind(10)
         assertEquals(30, h.run())                                       // 3 * dispatch k=10
-        assertEquals(30, h.runInline())                                 // the same through the inline splice
+        assertEquals(30, h.runInline())                                 // a lambda-less `inline` callee: ordinary path
         assertEquals(21, h.runParam())                                  // 3 * 7 — the value-param arm, unchanged
         assertEquals(15, M2RecvOuter(5).R().run())                      // 3 * OUTER k=5, via the enclosing chain
         assertEquals(9, 3.m2SelfScaled())                               // 3 * extension receiver 3 — sound arm

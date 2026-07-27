@@ -251,7 +251,14 @@ internal fun BirEmitter.filledArgs(
 						val r = if (needsRecv) enclosingRecv else null
 						// Each receiver PARAM binds to the call's receiver of ITS OWN KIND — a member extension has two, and
 						// binding both to one expression reads an Owner member off the extension receiver's value.
-						if (refsAny(def, receiverSyms)) receiverParams.forEach { rp -> (if (rp.kind == IrParameterKind.ExtensionReceiver) extRecv.value else dispatchRecv.value)?.let { subst.add(rp to it) } }
+						// Per RECEIVER PARAM, and only one this default actually reads: a member extension has two, and
+						// forcing the unread one's `expr()` would append its lifted lambdas to the file class for a
+						// rendering that is then discarded (BirEmitterLifts' non-capturing-lambda lift).
+						if (refsAny(def, receiverSyms)) receiverParams.forEach { rp ->
+							if (refsAny(def, setOf(rp.symbol)))
+								(if (rp.kind == IrParameterKind.ExtensionReceiver) extRecv.value else dispatchRecv.value)
+									?.let { subst.add(rp to it) }
+						}
 						subst.addAll(enclosingThisSubst(enclosingThis, r, callee is IrConstructor))
 						// Save and RESTORE — a callee parameter can already be a captureSubst key (a closure that captured it,
 						// re-entered through a recursive call in its own body); dropping that binding would emit a bare local
@@ -575,13 +582,14 @@ internal fun BirEmitter.call(call: IrCall): String {
 	// no enclosing instance). `by lazy`: the local's `.Value`; custom delegate: getValue/setValue(null, KProperty).
 	localDelegates[callee]?.let { ldp ->
 		val dvar = ldp.delegate!!
-		val dlocal = """{"k":"local","name":${str(dvar.name.asString())}}"""
+		val dname = localSlotName(dvar)
+		val dlocal = """{"k":"local","name":${str(dname)}}"""
 		val elem = birType(ldp.getter.returnType)
 		// A `ClrRef<T>` delegate (byref local): getValue/setValue inline to ldobj/stobj through the managed pointer.
 		if (birType(dvar.type) is TypeNode.ByRef)
 			return if (callee === ldp.setter)
-				"""{"k":"byrefStore","local":${str(dvar.name.asString())},"elem":${str(elem)},"value":${expr(regularArgs(call).first())}}"""
-			else """{"k":"byrefLoad","local":${str(dvar.name.asString())},"elem":${str(elem)}}"""
+				"""{"k":"byrefStore","local":${str(dname)},"elem":${str(elem)},"value":${expr(regularArgs(call).first())}}"""
+			else """{"k":"byrefLoad","local":${str(dname)},"elem":${str(elem)}}"""
 		// `by lazy` (local): the delegate is a real `kotlin.Lazy<T>` (the stdlib `UnsafeLazyImpl`). Its accessor is
 		// the InlineOnly `Lazy<T>.getValue(…) = value` operator, whose stdlib inline body is absent from our IR;
 		// inline it (a pure Kotlin-frontend fact) to a plain read of the Lazy interface's `value` getter. bir2cir/

@@ -141,7 +141,7 @@ static class MemberCallSubstitution
         // local kept the PARAM's (possibly `gp:`) type — mis-routing Constrainify to a constrained dispatch on a
         // concrete-typed local. Recorded AFTER params so the local shadows; scoped to this decl's own body (the walk
         // stops at a nested param-bearing decl, so an inner lambda's locals don't leak up). Mirrors the SM's
-        // DisambiguateShadowedVars intent (a same-name local of a different type is a distinct binding).
+        // kotc now gives every IrVariable an identity-derived name, so a shadowing local is already a distinct binding.
         public SubstCtx Extend(JsonObject decl)
         {
             var ps = decl["params"] as JsonArray;

@@ -42,8 +42,8 @@ import org.jetbrains.kotlin.ir.expressions.IrComposite
 import org.jetbrains.kotlin.ir.expressions.IrDoWhileLoop
 import org.jetbrains.kotlin.ir.expressions.IrVararg
 import org.jetbrains.kotlin.ir.expressions.IrSpreadElement
-import org.jetbrains.kotlin.ir.expressions.IrFunctionExpression
 import org.jetbrains.kotlin.ir.expressions.IrPropertyReference
+import org.jetbrains.kotlin.ir.expressions.IrFunctionExpression
 import org.jetbrains.kotlin.ir.expressions.IrFunctionReference
 import org.jetbrains.kotlin.ir.expressions.IrGetClass
 import org.jetbrains.kotlin.ir.declarations.IrLocalDelegatedProperty
@@ -147,6 +147,19 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		messageCollector?.report(CompilerMessageSeverity.ERROR,
 			"the .NET backend does not support $what yet: $detail", locationOf(node))
 		return """{"k":"unsupportedExpr","of":${str("$what — $detail")}}"""
+	}
+
+	/**
+	 * Report a BROKEN EMITTER INVARIANT as a source-located compile error and return a placeholder BIR node. Unlike
+	 * [unsupported] this is never a statement about the language: the construct IS supported, and reaching here means
+	 * the emitter's own bookkeeping is inconsistent, so the message must name the invariant rather than tell the user
+	 * to rewrite working code. The build fails (hadError), so the placeholder never reaches ilemit.
+	 */
+	internal fun invariantBroken(node: IrElement?, invariant: String): String {
+		hadError = true
+		messageCollector?.report(CompilerMessageSeverity.ERROR,
+			"kotc internal error: broken emitter invariant — $invariant", locationOf(node))
+		return """{"k":"unsupportedExpr","of":${str("broken emitter invariant — $invariant")}}"""
 	}
 
 	// A `kotlin.clr.ClrEvent<T>` value is a compile-time-only fiction (the surfaced form of a .NET event); it may
@@ -261,6 +274,15 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	// name-keyed map can't tell them apart (it would capture C's `this` too). The dispatch `<this>` then falls
 	// through to `{"k":"this"}` and the extension receiver resolves here.
 	internal val selfSubst = java.util.IdentityHashMap<IrValueDeclaration, String>()
+	// A function frame is keyed by DECLARATION IDENTITY in Kotlin IR, not by the source spelling of a local. Give
+	// every IrVariable an unspellable, module-unique BIR slot name so no later phase has to reconstruct lexical
+	// binding from JSON scopes. Value parameters retain their observable metadata/ABI names. Inline-lambda capture
+	// descriptors use this same allocator, so payload materialization and ordinary bodies share one vocabulary.
+	private val localSlotNames = java.util.IdentityHashMap<IrVariable, String>()
+	private var localSlotCounter = 0
+	internal fun localSlotName(d: IrValueDeclaration): String =
+		if (d is IrVariable) localSlotNames.getOrPut(d) { "dotkt\$local${localSlotCounter++}" }
+		else d.name.asString()
 	// #235: a call value (its RECEIVER, or a provided ARGUMENT) bound to a temp local for exactly-once evaluation,
 	// because a filled default of that call splices the value into its default expression. Keyed by the value
 	// EXPRESSION's identity, so every reader of that one IR node — the call's own receiver/argument slot, an
@@ -379,37 +401,96 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	// generic stdlib interface identity (like `by lazy`'s `kotlin.Lazy<T>`), so delegate field/local types,
 	// the `Delegates.observable(…)` value, and the getValue/setValue dispatch owner share one type (ilverify-clean).
 
-	// heap ref-cell: local `var`s captured-and-mutated by a (non-inline) closure / object / local class are promoted
-	// to a shared `dotkt$Ref<T>{ var v }` so the mutation is visible across the capture boundary. Per top-level
-	// function (set in `method`/`ctor`); all reads/writes of such a var go through `.v`.
+	// heap ref-cell: local `var`s captured-and-mutated by a lambda / local `fun` / object expression / local class
+	// are promoted to a shared `dotkt$Ref<T>{ var v }` so the mutation is visible across the capture boundary; all
+	// reads/writes of such a var go through `.v`. No inline test: an inline-argument lambda is celled like any other,
+	// so the decision does not depend on which call the lambda is passed to.
+	// Needing a cell is a property of the VARIABLE — "something in its scope captures and WRITES it" — not of
+	// the frame that happens to be emitting it. So the set is computed ONCE for the whole module ([initRefCells],
+	// before any file is emitted) and is IDENTITY-keyed, which makes an entry for a declaration the tree at hand never
+	// mentions inert. Every emission root therefore sees the same decision for the same variable — a method body, a
+	// constructor / init block, a property or static-field initializer, a member or interface accessor, a default
+	// interface method, an enum-entry argument, a `@KotlinDefault` carrier — including the paths that emit ONE
+	// expression in TWO frames (a same-module omitted default is emitted both as the callee's carrier and inline at
+	// the caller), where a per-frame set would disagree with itself.
 	internal var refCellVars: Set<IrValueDeclaration> = emptySet()
-	internal val refTypes = LinkedHashMap<String, String>()   // element type JSON -> monomorphized Ref class name
+		private set
+
+	/** Compute the module-wide heap ref-cell set (see [refCellVars]). Called ONCE, before any file is emitted. */
+	internal fun initRefCells(module: IrElement) { refCellVars = computeRefCells(module) }
+
+	/** identity key -> (monomorphized Ref class name, element type JSON). One entry per DISTINCT cell in the file. */
+	internal val refTypes = LinkedHashMap<String, Pair<String, String>>()
+
+	/**
+	 * The cell class for a var, registered once per file.
+	 *
+	 * The element type ALONE does not identify a cell: a type variable prints as its positional `tv`, so `T` of one
+	 * class and `T` of another in the same file print identically while carrying DIFFERENT bounds. Sharing one cell
+	 * between them gives it one class's bounds and instantiates it with the other's argument — rejected downstream if
+	 * the bounds conflict, and a bound the argument does not satisfy if they merely differ. So the key closes over the
+	 * bounds of every variable the element mentions, and a second distinct cell for the same printed element gets a
+	 * suffixed name.
+	 */
 	internal fun refTypeName(d: IrValueDeclaration): String {
 		val elem = birType(d.type)
-		return refTypes.getOrPut(elem.toJson()) { "dotkt\$${synthScope}\$Ref\$" + mangle(elem) }
+		val elemJson = elem.toJson()
+		val key = elemJson + "|" + typeVarBoundsKey(d.type)
+		refTypes[key]?.let { return it.first }
+		val base = "dotkt\$${synthScope}\$Ref\$" + mangle(elem)
+		val taken = refTypes.values.count { (name, _) -> name == base || name.startsWith("$base\$") }
+		val name = if (taken == 0) base else "$base\$$taken"
+		refTypes[key] = name to elemJson
+		return name
+	}
+
+	/** A stable key for the BOUNDS of every type variable [t] mentions (see [refTypeName]); empty for a closed type. */
+	private fun typeVarBoundsKey(t: IrType): String {
+		val seen = java.util.Collections.newSetFromMap(
+			java.util.IdentityHashMap<org.jetbrains.kotlin.ir.declarations.IrTypeParameter, Boolean>())
+		val parts = ArrayList<String>()
+		fun walk(ty: IrType) {
+			(ty.classifierOrNull as? org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol)?.let { sym ->
+				if (!seen.add(sym.owner)) return
+				parts.add(tvOf(sym.owner).toJson() + ":" + sym.owner.superTypes.joinToString(",") { birType(it).toJson() })
+				sym.owner.superTypes.forEach(::walk)
+				return
+			}
+			(ty as? org.jetbrains.kotlin.ir.types.IrSimpleType)?.arguments?.forEach {
+				(it as? org.jetbrains.kotlin.ir.types.IrTypeProjection)?.type?.let(::walk)
+			}
+		}
+		walk(t)
+		return parts.sorted().joinToString(";")
 	}
 	// #52 (kotc-purity): the monomorphized heap cell `dotkt$Ref_<elem>{ var v }` is a CLR-representation synthetic.
 	// kotc emits ONLY the FACT — a file-level `refTypes` registry (each cell's name + element TYPE identity) plus the
 	// use-site `new`/`field`/`setField` on the cell. bir2cir's RefCellSynthesis assembles the actual trivial class
 	// (single `v` field + its init ctor) into the file `types` from this registry. The element type is unrecoverable
 	// from the use-site nodes alone (a bare `field .v` read carries no type), so the registry is the required fact.
-	internal fun refTypesJson(): String = refTypes.entries.joinToString(",") { (elemJson, name) ->
+	internal fun refTypesJson(): String = refTypes.values.joinToString(",") { (name, elemJson) ->
 		"""{"name":${str(name)},"elem":$elemJson}"""
 	}
 	internal fun isRefCell(d: IrValueDeclaration) = d in refCellVars
 	/** The Ref-typed base expression for a ref-cell var: its capture field inside a closure, else the local. */
-	internal fun refBase(d: IrValueDeclaration) = captureSubst[d] ?: """{"k":"local","name":${str(d.name.asString())}}"""
+	internal fun refBase(d: IrValueDeclaration) = captureSubst[d] ?: """{"k":"local","name":${str(localSlotName(d))}}"""
 	/** A captured value's type as held in the closure: the Ref cell for a ref-cell var, else its plain type. */
 	internal fun captureFieldType(d: IrValueDeclaration): TypeNode = if (isRefCell(d)) TypeNode.Fqn(refTypeName(d)) else birType(d.type)
 
-	/** Local `var`s captured AND mutated by a closure/object/local class within [node] (-> need a heap ref-cell). */
-	internal fun computeRefCells(node: IrElement): Set<IrValueDeclaration> {
+	/** Local `var`s captured AND mutated across a capture boundary within [node] (-> need a heap ref-cell). The
+	 *  boundaries are every class (an object expression or a local class) and every function — a lambda, whose
+	 *  `IrSimpleFunction` is visited as the `IrFunctionExpression`'s child, or a LOCAL `fun`, which lifts to a static
+	 *  method taking its captures as BY-VALUE params and would otherwise write its own parameter and lose the update.
+	 *  A class or function that captures nothing (every top-level/member one) contributes nothing, so those arms are
+	 *  inert for it — but note a local class's MEMBER is a function whose capture set is non-empty; it is redundant
+	 *  rather than inert, being a subset of what the enclosing class arm already contributes. */
+	private fun computeRefCells(node: IrElement): Set<IrValueDeclaration> {
 		val out = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<IrValueDeclaration, Boolean>())
 		node.acceptChildrenVoid(object : IrVisitorVoid() {
 			override fun visitElement(element: IrElement) {
 				val caps: List<IrValueDeclaration>? = when (element) {
 					is IrClass -> capturedVarsForObject(element)
-					is IrFunctionExpression -> capturedVars(element.function)
+					is IrSimpleFunction -> capturedVars(element)
 					else -> null
 				}
 				if (caps != null) {

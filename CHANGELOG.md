@@ -18,6 +18,68 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   the host RID and requires that replay to fail, so the assertion cannot pass vacuously. Previously the RID flow
   was only exercised at the host RID and cross-target selection had been confirmed by hand.
 ### Fixed
+- **kotc/bir2cir/ilemit ([tmyt/dotkt#68], area:kotc, area:bir2cir, area:ilemit): a captured `var` written from a
+  local class, an object expression, a lambda or a local `fun` is now heap ref-celled under EVERY emission root and
+  for every one of those boundaries — previously only a function body, and never a local `fun`.** The promotion of a
+  captured-and-mutated local to a shared `dotkt$Ref<T>` was decided per emission root, and only two roots decided it —
+  `method()` and `topLevelAccessorMethod()`. Everywhere else the emitter ran with an empty set, so a constructor body,
+  an `init` block, a property or field initializer, a member accessor, a default interface method, a static-field
+  initializer, a rich-enum entry argument and a `@KotlinDefault` default-value expression each aborted the compile
+  ("does not support an object expression / a local class that writes to a captured outer variable") — while the same
+  shape written with a LAMBDA hit no guard at all and emitted a `setLocal` against a local that does not exist in the
+  lifted closure, which bir2cir then rejected as an undeclared local. Needing a cell is a property of the VARIABLE,
+  not of the frame emitting it, so the set is now computed ONCE per module (`BirEmitter.initRefCells`, driven by
+  `ClrBackendPhase`) and is identity-keyed; the per-root save/restore is gone with it. This also makes the two frames
+  that emit ONE default-argument expression — the callee's `@KotlinDefault` carrier and the omitting call site —
+  agree. The two guards that used to reject the shape now report a broken emitter invariant instead of an unsupported
+  language construct (they can only fire on a mutated capture that is not a `var` local, which valid frontend IR
+  cannot produce).
+
+  A local `fun` is now a capture boundary too. It lifts to a static method whose captures are BY-VALUE parameters, so
+  `fun f(): Int { var n = 0; fun bump() { n++ }; bump(); bump(); return n }` compiled clean and returned 0 instead of
+  2 — the only boundary whose missing cell lost the write with no diagnostic. Reaching a capturing local fun from
+  another boundary failed loud, since the lift supplies its captures at the CALL SITE. Closing both halves took: one
+  capture scan shared by the lambda/local-fun and object/local-class walks, which follows a call INTO a local fun and
+  a CONSTRUCTION of a local class (cycle-guarded), so a lambda, object expression or local class that merely calls
+  `bump()` captures `bump`'s `n` too; a local declaration recognized by the frontend's own `Local` visibility rather
+  than by probing its IR parent, which is exact for a class as well and needs no `init { }` special case; both lifts
+  RESTORING the enclosing frame's capture binding instead of dropping it, so a local fun or local class declared
+  inside a closure/object/local-class member no longer leaves that frame reading a bare local it does not have (in an
+  `inner class` member, dropping it left every LATER member reading the enclosing instance off the inner one); a
+  capture keeping its own name unless something else already owns it in the same namespace — the lifted class's own
+  fields and constructor parameters, the lifted local fun's own value parameters, or an earlier capture — in which
+  case it moves into a `cap$` prefix; the lift also generic over the type operands in its BODY, like the lambda lift,
+  and over the BOUNDS of the type parameters it re-declares; kotc recording on the lifted method which enclosing type
+  variable each of its own type params re-declares (`_syntheticTypeArgs`, the same key and meaning ClosureSynthesis
+  already derives for a lifted closure CLASS) and bir2cir's `SharedSyntheticSynthesis` applying its synthetic-frame
+  remap to METHODS as well, so a generic cell used inside the lift is constructed in the method's own parameter space
+  and a lifted synthetic can supply the parameter constraints when the celled `var` is declared inside it; that binder
+  running collect/bind/construct in separate passes, so its result no longer depends on declaration order; and
+  ilemit's `setField`/`staticFieldSet` taking their owner through `ParseOwnerSlot` like the field READ paths beside
+  them instead of collapsing a constructed-generic owner to its open name — writing a `Cell<T>` field from a generic
+  static method emitted `Cell<!0>::v` where the frame has only `!!0`, which the runtime rejected as a bad image.
+
+  A lifted class also keeps the BOUNDS of the enclosing type parameters it re-declares (they were emitted as bare
+  names, so a member needing one had no constraint to dispatch through — wrong metadata, no diagnostic). A local class
+  INHERITING from a capturing local class, and a `this(...)` delegation between two constructors of one, both forward
+  the captures ahead of the source-level arguments. Ref-cell identity keys on the bounds of the variables its element
+  mentions, not the printed element alone, so two same-file generic classes no longer share one cell and one of them
+  its constraint. `::localFun` lowers through the lifted static — a plain delegate with no captures, and a closure
+  over the captured values when there are some, including the enclosing instance and enclosing generic parameters.
+  Callable references participate in the same transitive declaration-reachability scan as calls and constructions;
+  a capturing local-class constructor reference binds the hidden lifted-ctor arguments in a closure while preserving
+  its Kotlin-visible arity. Finally, every function-local variable is assigned a BIR frame slot by IR declaration
+  identity rather than source spelling, so shadowed locals and two distinct captures with the same name cannot alias
+  in ilemit's flat local table; capture names (including the preferred `__outer`) are collision-free bindings rather
+  than downstream semantic markers. Suspend-lambda captures likewise use compiler-only descriptor bindings and carry
+  their enclosing-frame value explicitly, so the body and construction site never depend on sharing a source name.
+  With declaration identity preserved in BIR, bir2cir's former `DisambiguateShadowedVars` JSON scope reconstruction
+  has been deleted; coroutine lowering now only spills the slots the frontend actually declared.
+
+  Regressions: `tests/basic/fixtures/CapturedVarRefCellTests.kt` and the asynchronous shadowed-slot case in
+  `tests/coroutines/fixtures/SuspendCaptureTests.kt`; the function-body root stays pinned by `LambdaTests.kt`'s
+  `localClassObject`. The two `tests/known-fail/localfun-capture-write*` reproductions this replaced are deleted.
+
 - **kotc (area:kotc): a default argument that reads the DISPATCH receiver of a member EXTENSION function no
   longer reads it off the extension receiver.** `filledArgs` collapsed the call's receivers to one expression
   (`extensionReceiver ?: dispatchReceiver`) and bound *every* receiver parameter to it, so a callee with two
@@ -26,9 +88,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   "value":3}` in the BIR — which bir2cir and ilemit projected faithfully into a `Host` member call on an `Int`:
   a `NullReferenceException` at runtime with nothing loud at compile time. Each receiver parameter now binds to
   the call's receiver of its own kind, and the enclosing-`this` chain hangs off the dispatch receiver rather than
-  the collapsed one (an inner class's member extension reading `this@Outer` failed identically). Each receiver is
-  still emitted at most once, so a side-effecting receiver is not evaluated twice. Both the plain member path and
-  the inline splice were affected; the value-param arm (`f: Int = base`) and the single-receiver top-level
+  the collapsed one (an inner class's member extension reading `this@Outer` failed identically). Only a receiver
+  the default actually READS is emitted, so an unread receiver's lifted lambdas cannot leak into the file class.
+  This is the same-module substitution path only: the cross-module `@KotlinDefault` carrier still refuses a
+  receiver-reading default, and a cross-module data-class `copy` still evaluates a non-stable receiver once per
+  omitted field — both unchanged here. The value-param arm (`f: Int = base`) and the single-receiver top-level
   extension arm (`fun Int.f(x: Int = this)`) are unchanged and pinned. Covered by
   `tests/basic/fixtures/DefaultArgumentTests.kt` `defargsReceiverKind`.
 - **bir2cir/ilemit ([tmyt/dotkt#46], area:bir2cir, area:ilemit): calls into referenced Kotlin helpers

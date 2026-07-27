@@ -566,13 +566,10 @@ internal fun BirEmitter.overridesJson(fn: IrSimpleFunction): String {
 internal fun BirEmitter.topLevelAccessorMethod(acc: IrSimpleFunction, propName: String, isGetter: Boolean): String {
 	val extRecv = acc.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
 	if (extRecv != null) selfSubst[extRecv] = """{"k":"local","name":"__self"}"""
-	val savedRefCells = refCellVars
-	refCellVars = refCellVars + computeRefCells(acc)
 	// #6 non-null parameter PRECONDITIONS + getter return POSTCONDITION (gates on the accessor's REAL IR visibility, not
 	// the hardcoded emitted "public" — a private top-level property's accessor is emitted public but is not the surface).
 	val bodyStmts = withReturnPostcondition(acc) { (acc.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
 	val body = (preconditionChecks(acc) + listOfNotNull(bodyStmts.takeIf { it.isNotEmpty() })).joinToString(",")
-	refCellVars = savedRefCells
 	if (extRecv != null) selfSubst.remove(extRecv)
 	val selfParam = extRecv?.let { """{"name":"__self","type":${birType(it.type).toJson()}}""" }
 	val ps = (listOfNotNull(selfParam) + paramsJsonList(acc.parameters)).joinToString(",")
@@ -727,6 +724,16 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 				}
 				else -> {}
 			}
+		}
+		// A captured param's own BOUND can name a FURTHER enclosing param (`<T, U> where T : Box<U>`): this class
+		// re-declares the bound along with the param, so it must re-declare that one too or the constraint references a
+		// variable the flattened class does not have. Close the set (worklist — a bound can pull in a param whose own
+		// bound pulls in another; `capturedTpParams` is a set, so a cyclic bound terminates).
+		val pending = ArrayDeque(capturedTpParams)
+		while (pending.isNotEmpty()) {
+			val before = capturedTpParams.size
+			pending.removeFirst().superTypes.forEach { scan(it, ownNames) }
+			if (capturedTpParams.size != before) pending.addAll(capturedTpParams.drop(before))
 		}
 	}
 	// Install the enclosing→own-generic-space remap for the captured params BEFORE any member is rendered.
@@ -906,8 +913,13 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 		objectSingleton = isObject
 	)
 	// typeParams = the anon/class's own params PLUS the captured enclosing params (scanned + installed at the top).
+	// The captured ones go through the SAME renderer as the class's own, so they keep their BOUNDS: emitting them as
+	// bare names dropped every constraint, and a member that needs one (`v.get()` on a `T : Box<U>` capture) then has no
+	// constraint to dispatch through — a silently wrong signature, not a diagnostic. Their bounds render through the
+	// typeArgSubst installed above, so a bound naming another captured param resolves in THIS class's space.
 	val ownTpsJson = typeParamsJson(ownTps).removePrefix(""","typeParams":[""").removeSuffix("]")
-	val extraJson = capturedTpParams.joinToString(",") { str(it.name.asString()) }
+	val extraJson = typeParamsJson(capturedTpParams.toList())
+		.removePrefix(""","typeParams":[""").removeSuffix("]")
 	val tpEntries = listOf(ownTpsJson, extraJson).filter { it.isNotEmpty() }.joinToString(",")
 	val tpJson = if (tpEntries.isEmpty()) "" else ""","typeParams":[$tpEntries]"""
 	// #68: a compiler-generated synthetic (a lifted anon-object / local class) carries `generated:true` — a STRUCTURAL
@@ -966,8 +978,20 @@ internal fun BirEmitter.ctor(klass: IrClass, ctor: IrConstructor, captures: List
 	}.let { (temps, a) -> declaringFirstArg(temps, a).joinToString(",") } else null
 	val baseArgs = if (!isThisDelegate) delegating?.let { d ->
 		val targetFq = delegateClass?.fqNameWhenAvailable?.asString()
-		if (targetFq != "kotlin.Any") withCallValuesBoundOnce(d) { delegatedCtorArgs(d) }
-			.let { (temps, a) -> declaringFirstArg(temps, a).joinToString(",") }
+		if (targetFq != "kotlin.Any") {
+			// A CAPTURING local base took its captures as hidden leading ctor parameters when lifted. The derived
+			// local class's transitive capture scan already added the same declarations to this ctor, so forward THIS
+			// ctor's capture parameters before the base's source-level/default-filled arguments. The capture fields
+			// are assigned only after the base call and cannot be read here.
+			val baseCaptureArgs = delegateClass?.let { localClassCaptures[it] }.orEmpty().map { baseCapture ->
+				val here = captures.firstOrNull { (own, _) -> own === baseCapture }?.second
+					?: return@let invariantBroken(delegating,
+						"a local base class's capture is not a capture of the derived local class")
+				"""{"k":"local","name":${str(here)}}"""
+			}
+			withCallValuesBoundOnce(d) { baseCaptureArgs + delegatedCtorArgs(d) }
+				.let { (temps, a) -> declaringFirstArg(temps, a).joinToString(",") }
+		}
 		else null
 	} else null
 	savedCapSubst.forEach { (d, prev) -> if (prev != null) captureSubst[d] = prev else captureSubst.remove(d) }
@@ -1026,9 +1050,6 @@ internal fun BirEmitter.method(fn: IrSimpleFunction, static: Boolean): String {
 	// but the stdlib no longer aliases any `fun interface` to a BCL interface — Comparator is a plain Kotlin fun
 	// interface (see ComparatorClr.kt: the old @ClrIntrinsic("System.Collections.IComparer") erasure was a misdiagnosis,
 	// fixed at the ilemit `unbox.any` source), so no object-erasure bridge is needed on the Kotlin side.
-	// Promote captured-mutated `var`s to ref-cells; accumulate (a nested closure inherits the enclosing set).
-	val savedRefCells = refCellVars
-	refCellVars = refCellVars + computeRefCells(fn)
 	// `tailrec` tail-call optimization (§2b): if this is a `tailrec` fn with an actual self-tail-call, install a
 	// TailrecCtx so each tail call emits a back-jump (tailrecJump) instead of recursing, and prefix the body with
 	// the entry label the jumps target. The frontend already validated the tail positions; we reuse its own
@@ -1045,7 +1066,6 @@ internal fun BirEmitter.method(fn: IrSimpleFunction, static: Boolean): String {
 	val coreBody = if (tailrecStart != null) """{"k":"label","id":$tailrecStart}${if (bodyStmts.isNotEmpty()) ",$bodyStmts" else ""}""" else bodyStmts
 	// #6 non-null parameter PRECONDITIONS run at entry, BEFORE the tailrec label so a self-tail-jump does not re-check.
 	val body = (preconditionChecks(fn) + listOfNotNull(coreBody.takeIf { it.isNotEmpty() })).joinToString(",")
-	refCellVars = savedRefCells
 	if (extRecv != null) selfSubst.remove(extRecv)
 	val selfParam = extRecv?.let { """{"name":"__self","type":${birType(it.type).toJson()}}""" }
 	val ps = (listOfNotNull(selfParam) + paramsJsonList(fn.parameters, ownerFn = fn)).joinToString(",")

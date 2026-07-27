@@ -355,7 +355,8 @@ static partial class SuspendColdLowering
                     var catchVar = Str(co["var"]);
                     // The recording clause binds the exception to a FRESH `$`-infixed catch var, never the source name:
                     // a source catch var (`e`) colliding with a spilled outer SM field of the same name would make the
-                    // recorder's `local(e)` rewrite to `FieldOf(e)` (catch vars aren't modeled by DisambiguateShadowedVars)
+                    // recorder's `local(e)` rewrite to `FieldOf(e)` (this catch binding is synthesized in bir2cir,
+                    // after kotc's declaration-identity slot allocation)
                     // → it would record the wrong object into the control-flow-load-bearing `__exc$K`. `__caught$K` cannot
                     // collide (no field uses that name). The hoisted handler rebinds the SOURCE name to `__exc$K` below.
                     var caughtName = "__caught$" + kc;
