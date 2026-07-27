@@ -44,6 +44,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   keeps writing `with(scale) { scaled(5) }`; without the marker the same physical method surfaced as a plain
   leading value parameter, a Kotlin SOURCE break at the module boundary. `docs/user/kotlin-on-clr-differences.md`
   and `docs/user/supported-features.md` claimed context parameters were rejected outright; both are corrected.
+  Known residual, recorded in `docs/dotkt-semantics.md` §5i: a context FUNCTION TYPE does not round-trip its
+  context arity across a module boundary (the marker rides a parameter; a context function type is a property of the
+  TYPE, the peer of `[KotlinExtensionFunctionType]`), so a consumer sees `(A, B) -> C` for a producer's
+  `context(A) (B) -> C` and must spell the context as a lambda parameter. Same-module it works fully. The failure
+  mode is a consumer-side arity compile error, never a miscompile.
   Regression coverage: `tests/basic/fixtures/ContextParameterTests.kt`,
   `tests/coroutines/fixtures/SuspendContextParameterTests.kt`, and `crossModuleContextParameters` in
   `tests/roundtrip/consumer/KotlinMetadataRoundtripTests.kt` over `tests/roundtrip/producer/Ctxparams.kt`.

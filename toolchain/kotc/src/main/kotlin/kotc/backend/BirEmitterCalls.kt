@@ -1898,7 +1898,10 @@ internal fun BirEmitter.byrefBackingField(inner: IrExpression): String? {
  *  (so the out/ref overload resolves + optional params still default-fill); a `byref(x)` arg unwraps to its lvalue
  *  `x`, which ilemit passes by address (EmitArg routes an IsByRef param through EmitAddr). */
 internal fun BirEmitter.clrCallArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression, callee: org.jetbrains.kotlin.ir.declarations.IrFunction): Pair<String, String> {
-	val params = callee.parameters.filter { it.kind == IrParameterKind.Regular }
+	// [isValueParameter], matching `regularArgs` below — a restored `context(...)` parameter is an ordinary
+	// positional slot, so counting it on one side of this pair and not the other would emit `argTypes` shorter
+	// than `args` and leave bir2cir's overload resolution one type short of the arg vector.
+	val params = regularParams(callee)
 	val tj = params.map { birType(it.type).toJson() }
 	val aj = regularArgs(call).map { val inner = byrefMarker(it); if (inner != null) (byrefBackingField(inner) ?: expr(inner)) else expr(it) }
 	return aj.joinToString(",") to tj.joinToString(",")

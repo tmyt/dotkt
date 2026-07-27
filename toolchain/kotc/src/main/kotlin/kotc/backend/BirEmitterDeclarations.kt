@@ -586,11 +586,17 @@ internal fun BirEmitter.accessorMethod(acc: IrSimpleFunction, propName: String, 
 	val extRecv = acc.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
 	if (extRecv != null) selfSubst[extRecv] = """{"k":"local","name":"__self"}"""
 	val selfParam = extRecv?.let { """{"name":"__self","type":${birType(it.type).toJson()}}""" }
-	// [paramsJsonList], the ONE physical projection — not a `Regular`-only re-derivation: `context(c: Ctx) val C.p`
-	// carries its context parameter as an ordinary slot here exactly as the top-level accessor path does (so the
-	// accessor's arity matches its call sites'), and the `mods.context` marker rides with it for the cross-module
-	// restore. `ownerFn` is deliberately absent: an accessor parameter never carries a Kotlin default.
-	val ps = (listOfNotNull(selfParam) + paramsJsonList(acc.parameters)).joinToString(",")
+	// [isValueParameter], not `Regular`: `context(c: Ctx) val C.p get() = c.n` carries its context parameter as an
+	// ordinary slot here exactly as the top-level accessor path does, so the accessor's arity matches its call sites'.
+	// The `mods.context` marker rides with it for the cross-module restore ([KotlinContextParameter]). Kept as this
+	// explicit {name,type} projection rather than routed through [paramsJsonList]: that helper would ALSO start
+	// emitting parameter ANNOTATIONS on a member accessor (a `@setparam:` on a setter's `value`), which this
+	// declaration has never carried — a change of subject, and one no test pins.
+	val ps = (listOfNotNull(selfParam) + acc.parameters.filter { isValueParameter(it) }
+		.map {
+			val ctxMod = if (it.kind == IrParameterKind.Context) ""","mods":{"context":true}""" else ""
+			"""{"name":${str(it.name.asString())},"type":${birType(it.type).toJson()}$ctxMod}"""
+		}).joinToString(",")
 	// #6 non-null parameter PRECONDITIONS (a setter's `value` param) at entry + a getter's non-null return POSTCONDITION
 	// (a setter returns Unit -> naturally out of scope).
 	val bodyStmts = withReturnPostcondition(acc) { (acc.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }

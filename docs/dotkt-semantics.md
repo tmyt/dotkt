@@ -765,6 +765,14 @@ it AS a context parameter. Without that marker the same physical method would su
 parameter and `with(scale) { scaled(5) }` would have to become `scaled(scale, 5)` — a Kotlin **source** break at
 the module boundary, which is the one thing the round-trip metadata exists to prevent.
 
+**Known residual — a context FUNCTION TYPE does not round-trip its context arity.** `context(A) (B) -> C` is
+physically `Function3<A, B, C>` and works fully within a module (declaration, lambda, delegate, inline carrier).
+Across a module boundary, though, the marker above rides a *parameter*, and a context function TYPE is a property of
+the type in a parameter's slot — the peer of `[KotlinExtensionFunctionType]`, which the type layer does carry. So a
+consumer sees `fun h(f: (A, B) -> C)` where the producer wrote `fun h(f: context(A) (B) -> C)`, and must spell the
+context as a lambda parameter (`h { a, b -> … }`). The failure mode is a consumer-side compile error (an arity
+mismatch), never a miscompile.
+
 Kotlin itself rules out the shapes this projection could not express: a callable reference to a context function, a
 context parameter on a constructor, a *delegated* context property, and a *field-backed* context property are all
 frontend errors, so no emitted form has to exist for them.

@@ -453,18 +453,22 @@ internal fun BirEmitter.emitInlineLambdaCarrier(lambda: IrFunctionExpression): S
 	val hadSelf = extParam != null && selfSubst.containsKey(extParam)
 	val savedSelf = extParam?.let { selfSubst[it] }
 	if (extParam != null) selfSubst[extParam] = """{"k":"local","name":${str(freshRecv!!)}}"""
-	val leading = if (extParam != null) listOf("""{"name":${str(freshRecv!!)},"type":${birType(extParam.type).toJson()}}""") else emptyList()
-	val regularParams = fn.parameters.filter { it.kind == IrParameterKind.Regular }
-	val regularJson = regularParams.map { p ->
-		"""{"name":${str(p.name.asString())},"type":${birType(p.type).toJson()}}"""
+	// The carrier's params are bound POSITIONALLY to the invoke's args, so they must be in the PHYSICAL delegate
+	// order [orderedLambdaParams] defines — contexts, the extension receiver, then the regulars. A lambda for a
+	// CONTEXT function type (`inline fun h(f: context(C) (Int) -> R)`) owns a context parameter of its own, and
+	// dropping it here left the carrier one slot short of the invoke that fills it: a silently wrong value.
+	val ordered = orderedLambdaParams(fn)
+	val paramsJson = ordered.joinToString(",") { p ->
+		val nm = if (p === extParam) freshRecv!! else p.name.asString()
+		"""{"name":${str(nm)},"type":${birType(p.type).toJson()}}"""
 	}
-	val paramsJson = (leading + regularJson).joinToString(",")
-	// SHADOW the lambda's own regular params in `valSubst` while emitting its body: an enclosing lambda carrier
+	// SHADOW the lambda's own params in `valSubst` while emitting its body: an enclosing lambda carrier
 	// may have bound the SAME name (e.g. `it`) to an outer local. Without removing it here, the body's ref to this
 	// lambda's param would resolve to the OUTER binding — the carrier param is named correctly but the body dangles
 	// on a foreign local. Emitting them as BARE `{"k":"local","name":<param>}` refs lets bir2cir bind the carrier
-	// param. (The ext-receiver already does this via `selfSubst`.) Saved + restored around the body emission.
-	val shadowed = regularParams.map { it.name.asString() }.associateWith { valSubst[it] }
+	// param. (The ext-receiver already does this via `selfSubst`, so it is excluded here.) Saved + restored around
+	// the body emission.
+	val shadowed = ordered.filter { it !== extParam }.map { it.name.asString() }.associateWith { valSubst[it] }
 	shadowed.keys.forEach { valSubst.remove(it) }
 	val body = ArrayList<String>()
 	// The `selfSubst[extParam]` binding above (restored just below) is the guarantee that the receiver's `this`/

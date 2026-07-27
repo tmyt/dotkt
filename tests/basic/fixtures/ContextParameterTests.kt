@@ -141,6 +141,10 @@ fun ctxLocalFun(a: Int): Int {
 // --- context FUNCTION TYPES: the lambda's own context parameter is a physical delegate argument ---------------
 fun ctxApplyFnType(f: context(CtxScale) (Int) -> Int): Int = with(CtxScale(10)) { f(5) }
 
+// The INLINE form of the same: the splice carrier's parameter list is bound positionally to the invoke's args, so
+// it must carry the lambda's OWN context parameter too.
+inline fun ctxApplyFnTypeInline(f: context(CtxScale) (Int) -> Int): Int = with(CtxScale(10)) { f(5) }
+
 class ContextParameterTests {
     @TestAttribute
     fun contextFunctions() {
@@ -215,5 +219,8 @@ class ContextParameterTests {
         // lambda's own context parameter is a physical delegate argument. It used to be dropped from the lifted
         // method's parameter list while the invoke passed it — a silently wrong result, not a verifier error.
         assertEquals(6, ctxApplyFnType { a -> a + 1 })           // 6
+        // The same lambda through an INLINE callee, where the body is spliced from a carrier rather than invoked
+        // through a delegate — a second parameter list that has to count the context slot.
+        assertEquals(6, ctxApplyFnTypeInline { a -> a + 1 })     // 6
     }
 }
