@@ -140,11 +140,22 @@ internal fun BirEmitter.filledArgs(
 	// bound separately (see [enclosingThisChain] / [enclosingThisSubst]).
 	val enclosingThis = enclosingThisChain(callee)
 	val enclosingSyms = enclosingThis.map { it.first.symbol }.toHashSet()
-	// The call's receiver expression (for `this`-referencing same-module defaults): the extension receiver if any, else
-	// the dispatch receiver (a data-class `copy` is a member, so its `this.y` default resolves to the dispatch receiver).
-	// Emitted lazily and reused by every omitted default. A non-stable receiver is a temp LOCAL read by then — `expr`
-	// hoisted it for exactly-once evaluation before this call was emitted — so reusing the string duplicates nothing.
-	val recvJson: String? by lazy { emittedRecv?.value ?: (extensionReceiver(call) ?: dispatchReceiver(call))?.let { expr(it) } }
+	// The call's receiver expressions for a `this`-referencing same-module default. ONE lazy per DISTINCT receiver: a
+	// receiver is emitted at most once (a second `expr()` of the same IR appends a second copy of any lifted lambda it
+	// contains, and evaluates a side-effecting receiver twice), and reused by every omitted default that reads it. A
+	// non-stable receiver is a temp LOCAL read by then — `expr` hoisted it for exactly-once evaluation before this call
+	// was emitted — so reusing the string duplicates nothing.
+	// A default's receiver read binds to the receiver OF ITS OWN KIND. A member EXTENSION has BOTH a dispatch and an
+	// extension receiver, so collapsing them to one expression rendered a `this@Owner.k` default as an Owner member
+	// read on the EXTENSION receiver's value — a wrong-typed `this` reaching CIL (NullReferenceException at runtime,
+	// nothing loud at compile time). Kind-directed binding is what keeps two receivers distinguishable here.
+	val dispatchRecv: Lazy<String?> = lazy { dispatchReceiver(call)?.let { expr(it) } }
+	val extRecv: Lazy<String?> = lazy { extensionReceiver(call)?.let { expr(it) } }
+	// The instance the ENCLOSING-this chain hangs off: what the caller already emitted (an inner-class `new` passes the
+	// enclosing instance as its leading arg), else this call's own dispatch receiver — an inner-class member reaches
+	// `this@Outer` from its own `this`, never from an extension receiver. Shares `dispatchRecv`, so reading it both
+	// here and for a dispatch-param binding still emits the expression once.
+	val enclosingRecv: String? by lazy { emittedRecv?.value ?: dispatchRecv.value }
 	val regs = callee.parameters.mapIndexedNotNull { i, p -> if (p.kind == IrParameterKind.Regular) i to p else null }
 	val provided = regs.map { (i, _) -> if (i < call.arguments.size) call.arguments[i] else null }
 	// A default value is itself a call-site value. If a LATER omitted default reads this parameter, a non-stable default
@@ -181,11 +192,11 @@ internal fun BirEmitter.filledArgs(
 						// kotc emits for a plain `pair.first` (owner = the actual `kotlin.Pair[Int,Int]`, so no generic `gp:` token
 						// leaks; the @KotlinDefault splice can't carry that instantiation). The Pair/Triple partial-`copy` fix (C3).
 						val copyField =
-							if ((callee as? org.jetbrains.kotlin.ir.declarations.IrSimpleFunction)?.let { isDataClassCopy(it) } == true && recvJson != null)
+							if ((callee as? org.jetbrains.kotlin.ir.declarations.IrSimpleFunction)?.let { isDataClassCopy(it) } == true && (dispatchRecv.value ?: extRecv.value) != null)
 								(dispatchReceiver(call) ?: extensionReceiver(call))?.let { r ->
 									// Owner via ownerSpec (the SAME token the plain `pair.first` property read uses — the referenced,
 									// instantiated `kotlin.Pair[Int,Int]`, no `@` this-assembly prefix, no open `gp:` param).
-									"""{"sty":${birType(p.type).toJson()},"k":"field","ownerType":${ownerSpec(callee.parent as? IrClass, r.type).toJson()},"recv":${recvJson},"name":${str(p.name.asString())}}"""
+									"""{"sty":${birType(p.type).toJson()},"k":"field","ownerType":${ownerSpec(callee.parent as? IrClass, r.type).toJson()},"recv":${dispatchRecv.value ?: extRecv.value},"name":${str(p.name.asString())}}"""
 								}
 							else null
 						// #134: the facadegen metadata's REAL constant default, synthesized as an IrConst, so a named-middle /
@@ -237,8 +248,10 @@ internal fun BirEmitter.filledArgs(
 						// The receiver is emitted ONLY for a default that actually reads it (or an enclosing instance): forcing
 						// it otherwise emits the receiver expression a second time — an inner-class `new` already emitted it as
 						// the enclosing-instance arg — leaking its lifted lambdas into the file class.
-						val r = if (needsRecv) recvJson else null
-						if (refsAny(def, receiverSyms)) receiverParams.forEach { rp -> r?.let { subst.add(rp to it) } }
+						val r = if (needsRecv) enclosingRecv else null
+						// Each receiver PARAM binds to the call's receiver of ITS OWN KIND — a member extension has two, and
+						// binding both to one expression reads an Owner member off the extension receiver's value.
+						if (refsAny(def, receiverSyms)) receiverParams.forEach { rp -> (if (rp.kind == IrParameterKind.ExtensionReceiver) extRecv.value else dispatchRecv.value)?.let { subst.add(rp to it) } }
 						subst.addAll(enclosingThisSubst(enclosingThis, r, callee is IrConstructor))
 						// Save and RESTORE — a callee parameter can already be a captureSubst key (a closure that captured it,
 						// re-entered through a recursive call in its own body); dropping that binding would emit a bare local

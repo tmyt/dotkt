@@ -18,6 +18,19 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   the host RID and requires that replay to fail, so the assertion cannot pass vacuously. Previously the RID flow
   was only exercised at the host RID and cross-target selection had been confirmed by hand.
 ### Fixed
+- **kotc (area:kotc): a default argument that reads the DISPATCH receiver of a member EXTENSION function no
+  longer reads it off the extension receiver.** `filledArgs` collapsed the call's receivers to one expression
+  (`extensionReceiver ?: dispatchReceiver`) and bound *every* receiver parameter to it, so a callee with two
+  receivers got the wrong one: `class Host(val k: Int) { fun Int.scaled(f: Int = k) = this * f }` emitted the
+  filled default as `Host.get_k()` on the extension receiver's value — `"recv": {"k":"const","type":"kotlin.Int",
+  "value":3}` in the BIR — which bir2cir and ilemit projected faithfully into a `Host` member call on an `Int`:
+  a `NullReferenceException` at runtime with nothing loud at compile time. Each receiver parameter now binds to
+  the call's receiver of its own kind, and the enclosing-`this` chain hangs off the dispatch receiver rather than
+  the collapsed one (an inner class's member extension reading `this@Outer` failed identically). Each receiver is
+  still emitted at most once, so a side-effecting receiver is not evaluated twice. Both the plain member path and
+  the inline splice were affected; the value-param arm (`f: Int = base`) and the single-receiver top-level
+  extension arm (`fun Int.f(x: Int = this)`) are unchanged and pinned. Covered by
+  `tests/basic/fixtures/DefaultArgumentTests.kt` `defargsReceiverKind`.
 - **bir2cir/ilemit ([tmyt/dotkt#46], area:bir2cir, area:ilemit): calls into referenced Kotlin helpers
   now carry and link the physical declaration signature instead of falling back to a same-name/same-arity method.**
   bir2cir preserves the frontend Kotlin descriptor before nullable-generic erasure, resolves the referenced
