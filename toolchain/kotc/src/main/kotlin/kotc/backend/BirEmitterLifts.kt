@@ -1327,9 +1327,11 @@ internal inline fun <T> BirEmitter.withLambdaSelf(fn: IrSimpleFunction, recvName
 	try { return block() } finally { if (had) selfSubst[ext] = saved!! else selfSubst.remove(ext) }
 }
 
-/** A fresh name for a lifted lambda's extension-receiver parameter, or null when it has none. */
+/** A fresh name for a lifted lambda's extension-receiver parameter, or null when it has none. Allocated against the
+ *  lambda's own frame ([BirEmitter.freshFrameName]) — `{ __recv0 -> this + __recv0 }` is legal Kotlin, and a bare
+ *  counter would have emitted two parameters called `__recv0`. */
 internal fun BirEmitter.lambdaRecvName(fn: IrSimpleFunction): String? =
-	if (fn.parameters.any { it.kind == IrParameterKind.ExtensionReceiver }) "__recv${inlCounter++}" else null
+	if (fn.parameters.any { it.kind == IrParameterKind.ExtensionReceiver }) freshFrameName("__recv", fn) else null
 
 /** Lift a local function to a file-class static method; captured vars become leading params (by their own names). */
 internal fun BirEmitter.liftLocalFn(fn: IrSimpleFunction) {

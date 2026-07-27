@@ -449,7 +449,9 @@ internal fun BirEmitter.paramSigOf(callee: IrSimpleFunction): String {
 internal fun BirEmitter.emitInlineLambdaCarrier(lambda: IrFunctionExpression): String {
 	val fn = lambda.function
 	val extParam = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
-	val freshRecv = extParam?.let { "__recv${inlCounter++}" }
+	// Allocated against the lambda's own frame, like every other minted frame name — the carrier's params sit in the
+	// same flat by-name namespace as the lambda's own, so an unchecked `__recvN` could alias one of them.
+	val freshRecv = extParam?.let { freshFrameName("__recv", fn) }
 	val hadSelf = extParam != null && selfSubst.containsKey(extParam)
 	val savedSelf = extParam?.let { selfSubst[it] }
 	if (extParam != null) selfSubst[extParam] = """{"k":"local","name":${str(freshRecv!!)}}"""

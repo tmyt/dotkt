@@ -168,6 +168,24 @@ class CtxRecvHolder(val k: Int) {
     val f: Int.(Int) -> Int = { d -> this + d + k }
 }
 
+// The minted receiver name must not ALIAS one of the lambda's own parameters. `__recvN` is a perfectly legal Kotlin
+// identifier, and the lifted method puts the receiver and the lambda's parameters in ONE flat namespace that ilemit
+// indexes BY NAME — two parameters called `__recv0` meant the later declaration silently won and both reads loaded
+// the regular argument (203 -> 303). `freshFrameName` allocates against the lambda's own frame so that cannot happen.
+// NOTE on what this pins: the mint counter is invocation-global, so which index a given lambda draws depends on how
+// many lambdas precede it across the whole suite — these assertions therefore guard the VALUES durably, but only
+// exercise the collision when the counter happens to land here. The red/green evidence for the collision itself is a
+// single-file compile (counter at 0), recorded in the commit that added this.
+class AliasRecvHolder(val k: Int) {
+    val f: Int.(Int) -> Int = { __recv1 -> this * 100 + __recv1 + k }
+}
+
+// The CAPTURED form of the same collision: `__recv0` is read inside the lambda but DECLARED outside it, so a frame
+// walk that collected only declarations did not see it — and a capture lands in the SAME emitted frame as the minted
+// receiver (a closure field, a leading lift parameter, a spliced carrier binding). This returned 202 for 201.
+inline fun aliasRunWith(f: Int.() -> Int): Int = 2.f()
+fun aliasCapturedOuter(__recv0: Int): Int = aliasRunWith { this * 100 + __recv0 }
+
 
 class ContextParameterTests {
     @TestAttribute
@@ -259,5 +277,16 @@ class ContextParameterTests {
         assertEquals(12, 7.plain(5))                             // 12  non-capturing static lift
         val capturing = CtxRecvHolder(100).f
         assertEquals(112, 7.capturing(5))                        // 112 capturing closure lift
+    }
+
+    // A lambda parameter whose name collides with the compiler's minted receiver name (see AliasRecvHolder above).
+    @TestAttribute
+    fun mintedReceiverNameDoesNotAliasALambdaParameter() {
+        val f: Int.(Int) -> Int = { __recv0 -> this * 100 + __recv0 }
+        assertEquals(203, 2.f(3))                                // 203 non-capturing static lift (was 303)
+        val g = AliasRecvHolder(1).f
+        assertEquals(204, 2.g(3))                                // 204 capturing closure lift (was 304)
+        // The CAPTURED form: the colliding name is declared OUTSIDE the lambda.
+        assertEquals(201, aliasCapturedOuter(1))                 // 201 inline splice carrier (was 202)
     }
 }
