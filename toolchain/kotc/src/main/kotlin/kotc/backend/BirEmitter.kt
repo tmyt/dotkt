@@ -211,16 +211,22 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	internal var scopeCounter = 0
 
 	/**
-	 * THE allocator for a compiler-minted local/parameter name inside a function's emitted FRAME. Every mint site
-	 * goes through it, and it takes the FRAME rather than a bare prefix, so a caller cannot mint a name without
-	 * declaring the scope it must be fresh in.
+	 * The allocator for the `__recv` family — a LIFTED LAMBDA's receiver parameter, minted by both the lift
+	 * ([kotc.backend.lambdaRecvName]) and the inline splice carrier. It takes the FRAME rather than a bare prefix, so
+	 * neither caller can mint a name without declaring the scope it must be fresh in.
 	 *
 	 * The scope argument is the point. A minted name lands in a FLAT per-frame namespace that ilemit indexes BY NAME,
 	 * and the frame also holds names the USER chose — `{ __recv0 -> this + __recv0 }` is perfectly legal Kotlin. A
 	 * counter alone only keeps minted names distinct from each OTHER: the lifted method got two parameters called
 	 * `__recv0`, the later declaration overwrote the earlier in ilemit's by-name index, and BOTH reads loaded the
-	 * regular argument (a silently wrong value, no diagnostic). Uniquing per site is how that keeps coming back;
-	 * this is the one place that knows the rule.
+	 * regular argument (a silently wrong value, no diagnostic).
+	 *
+	 * SCOPE OF THE GUARANTEE, precisely: this makes the `__recv` family fresh against its own frame. It is NOT yet a
+	 * universal frame allocator — the other compiler-minted families (`__nv`, `__nn`, `__subj`, `__inlRet`, `__sbp`/
+	 * `__sbl`, `__tailrec_<label>_<n>`) are still minted from a counter alone, so a user identifier spelled exactly
+	 * like one of them can still alias it. That family is tracked as a known limitation, not fixed here. Names in the
+	 * `dotkt$…` namespace are exempt by construction: the frontend rejects `$` in an identifier, backticks included
+	 * ("name contains illegal characters"), so no source can spell one.
 	 */
 	internal fun freshFrameName(prefix: String, scope: IrElement?): String {
 		val taken = frameNames(scope)

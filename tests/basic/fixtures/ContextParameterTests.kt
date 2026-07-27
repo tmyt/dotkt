@@ -186,6 +186,16 @@ class AliasRecvHolder(val k: Int) {
 inline fun aliasRunWith(f: Int.() -> Int): Int = 2.f()
 fun aliasCapturedOuter(__recv0: Int): Int = aliasRunWith { this * 100 + __recv0 }
 
+// TWO COUNTERS over one prefix. The lifted receiver parameter is minted from `inlCounter` before the body is
+// emitted; the call-site single-evaluation temps are minted from `scopeCounter` WHILE it is emitted. Both used to
+// draw the `__recv` prefix, so they could produce one name in one frame — and ilemit registers a local before
+// emitting its initializer and resolves locals ahead of arguments, so the initializer read its own zero-initialized
+// local instead of the receiver. `Box(7).f()` yielded 99. The temps now live in the `dotkt$` namespace, which no
+// `__`-prefixed mint (and no user identifier) can equal.
+class AliasBox(val n: Int) { fun pick(x: Int = n): Int = x }
+fun aliasNormalize(x: AliasBox?): AliasBox = x ?: AliasBox(99)
+inline fun <R> AliasBox.aliasUse(block: AliasBox.() -> R): R = block()
+
 
 class ContextParameterTests {
     @TestAttribute
@@ -288,5 +298,14 @@ class ContextParameterTests {
         assertEquals(204, 2.g(3))                                // 204 capturing closure lift (was 304)
         // The CAPTURED form: the colliding name is declared OUTSIDE the lambda.
         assertEquals(201, aliasCapturedOuter(1))                 // 201 inline splice carrier (was 202)
+    }
+
+    // A call-site default-argument temp minted into the same frame as the lifted receiver parameter — see the
+    // AliasBox declarations above. Both lift shapes; each yielded 99 before the two mints were made disjoint.
+    @TestAttribute
+    fun callSiteTempDoesNotAliasTheMintedReceiver() {
+        val f: AliasBox.() -> Int = { aliasNormalize(this).pick() }
+        assertEquals(7, AliasBox(7).f())                         // 7   non-inline lift (was 99)
+        assertEquals(7, AliasBox(7).aliasUse { aliasNormalize(this).pick() })  // 7 inline carrier (was 99)
     }
 }
