@@ -822,9 +822,16 @@ a constructor **DELEGATION** (`: this(…)` / `: super(…)`) and an **ENUM ENTR
 declared by the first argument (a `var` declares an ordinary method-body local, and the first argument is evaluated
 before every later one, so a later read is in scope and in order). Cross-module a DELEGATION is filled by a separate walk
 over the constructor declarations, since its arguments are not a call node; an enum entry is always same-module (its own
-constructor is being compiled). The one escape is deliberate: when some value in the bound range carries no usable type —
-a `byref` slot, an open generic slot, a synthesized operand with no type at all — NOTHING is bound, because a partial
-hoist would reorder the call, which is worse than the double evaluation it removes.
+constructor is being compiled). The one escape is deliberate, and BOTH paths take it: when some value in the bound range
+cannot be held by a temporary — a `byref` / `@ClrRefArgument` slot (an addressable lvalue, whose address-producing
+expression can itself have side effects), an open generic slot, a synthesized operand with no type at all — NOTHING is
+bound, because a partial hoist would reorder the call, which is worse than the double evaluation it removes.
+
+An omitted default is evaluated AFTER everything the call supplies (Kotlin: the receiver, then each argument, then the
+callee's defaults). A filled default that a later default reads is itself bound to a temporary, and that temporary is
+declared ahead of the call node — so binding one forces every supplied value to be bound with it. The temporaries are
+emitted in parameter order, and a receiver's parameter index precedes every regular parameter's, so the result is
+exactly Kotlin's order.
 
 The paths bind at different points, because they know different things. SAME-MODULE, kotc has the default's IR and hoists
 before emitting (`evalOnceSubst`, keyed by IR-node identity, so it can leave an immutable local or parameter read spliced
@@ -832,6 +839,20 @@ in place). CROSS-MODULE, only the `@KotlinDefault` carrier says which values a d
 as it fills — including a filled default a LATER default reads, which must not be evaluated per reader either
 (`chain(a, b = bump(), c = b * 10)` calls `bump()` once). Working on emitted JSON it cannot tell a `val` from a `var`, so
 there only a literal or `this` stays spliced in place and every local read is bound.
+
+A THIRD cross-module shape needs no carrier at all: a **data class's SYNTHETIC `copy`**, whose omitted field default is
+`this.<field>` by construction (a data class may also declare a differently-signed `copy` OVERLOAD of its own, whose
+defaults are ordinary expressions — the two are told apart by the generated signature, which mirrors the primary
+constructor, not by the name). `copy` is a member function, so it carries no `@KotlinDefault` (an enclosing-instance
+read cannot be carried — above); instead kotc RECONSTRUCTS each omitted field as a read of the call's receiver, owned
+and typed by the INSTANTIATED receiver type (`kotlin.Pair[Int,Int]` and `Int`, never the class's own positional type
+variables — an open type variable is unresolvable in the caller's frame, and a state machine would spill it into a
+field of an unresolvable type). That reconstruction reads the receiver's single-evaluation temporary like any other
+splice: ONE predicate (`reconstructedDefaultReceiver`) decides both which receiver a reconstruction reads and which
+receiver the pre-pass binds, so `nextPair().copy(second = 9)` evaluates `nextPair()` exactly once, ahead of the
+argument, however many fields the call omits. This path serves a data class whose `data` nature reaches the consumer —
+i.e. one resolved through the frontend KLIB (`kotlin.Pair`, `kotlin.Triple`). A data class RE-CONSUMED from a DotKt
+library dll does not reach it at all: see the `data class` row in §10.2.
 
 **#146 known gap (named, not silent):** a non-const default that references a PRIVATE/internal library symbol
 (`= privateHelper()`) is NOT poison-detected at stamp time — it is carried, then fails LOUDLY (imprecise) at the
@@ -1229,7 +1250,7 @@ that has lost the distinction.
 | **Declaration-site variance** (`class Box<out T>`, `interface Cmp<in T>`) | **NOW RESTORED for interfaces (gap ①, §10.1)** | `facadegen` now reads `GenericParameterAttributes` and emits `tvariance`, which `ClrTypeInjection` restores as `out`/`in`. **Class**-type-param variance still has no CLR form (stays invariant); **use-site** variance / **star projection** `Foo<*>`: no analog, lost. |
 | **`fun interface` (SAM)** | a plain interface | **The `fun interface` NATURE now round-trips (gap ③):** `ilemit` stamps `[KotlinFunInterface]`, `facadegen` emits a `funinterface` meta line, and `ClrTypeInjection` restores `status.isFun`. So a consumer sees it as a functional interface and can implement it (incl. via an anonymous `object : Handler { … }`). **What still degrades:** a bare **lambda** (SAM conversion) does NOT convert — blocked by the pinned Kotlin **2.4.0** FIR `FirSamResolver.computeSamCandidateNames`, which scans `FirRegularClass.declarations` **directly** for the single abstract method's name; a `FirDeclarationGenerationExtension`-injected interface serves its members lazily via scopes (empty `declarations`), so no SAM candidate is found. Same class of pinned-compiler limitation as `object`/companion (§10.4 #2) — not fixable from our side without materialising the SAM method into `declarations` (against the plugin contract) or a compiler bump. |
 | **`enum class`** | entry values | A *basic* enum → a real CLR `enum` → `facadegen` restores it as an **`object` of `val`s** (value access like `Color.GREEN` works); a *rich* enum (ctor args / methods / per-entry bodies, `isRichEnum`) → a singleton-field **class** → restored as a plain **`class`**. Either way it is **not** a Kotlin `enum class`: exhaustive `when`, `.entries`/`values()`/`valueOf`, `.ordinal`/`.name` identity degrade. **Not fixable via the injection path (gap ④):** a `FirDeclarationGenerationExtension` (2.4.0) cannot synthesize real `FirEnumEntry` declarations — the exhaustiveness checker (`FirWhenExhaustivenessTransformer`) enumerates `enumClass.declarations.filterIsInstance<FirEnumEntry>()`, and the plugin API exposes no `createEnumEntry`/entry hook (only `createTopLevelClass`/`createMemberProperty`/…). Generating `ClassKind.ENUM_CLASS` with enum-shaped `val`s would mislead FIR without giving exhaustiveness, so no `[KotlinEnum]` carrier is emitted. |
-| **`data class`** | generated members (10.1) | The **`data` modifier itself** is not carried (consumer sees an ordinary class). A `copy(field = x)` with the generated **self-referential defaults** (`y = this.y`) **now works** — same-module and cross-module — via the positional receiver-rewrite fill (§7). |
+| **`data class`** | generated members (10.1) | The **`data` modifier itself** is not carried, and that costs more than a missing modifier: a re-consumed data class's `copy` surfaces **every parameter REQUIRED**, so `q.copy(c = 9)` is a frontend error (`no value passed for parameter 'a'`). `copy`'s generated defaults are `this.<field>`, which is neither a `[DefaultParameterValue]` constant nor a carryable `@KotlinDefault` (an enclosing-instance read is poisoned, §7) — and without the `data` fact the consumer cannot reconstruct them either. Omitting a `copy` field therefore works **same-module**, and **cross-module only for a data class resolved through the frontend KLIB** (`kotlin.Pair`, `kotlin.Triple`), via the reconstruction in §7. Closing it needs three things together: facadegen carrying the `data` nature, kotc's injector restoring it, and a `copy` parameter surfaced OPTIONAL. |
 | **Annotations** | RUNTIME/BINARY-retained with CLR-legal args; `KClass`→`System.Type` | `ilemit` **skips** annotations whose ctor-arg shape the CLR encoder rejects (`BuildCab`/`TryCab` → diagnostic, e.g. a generic-instantiation parameter). **SOURCE**-retention annotations are gone. **Use-site targets** (`@get:`/`@field:`/`@param:`) are only as faithful as which CLR target they landed on — the Kotlin intent is ambiguous. Repeatable-annotation semantics differ. |
 | **Default arguments** | constants + non-constant defaults reading the receiver or an earlier value parameter (§7) | A non-constant default that references the RECEIVER (`= this`) or an earlier VALUE parameter (`b = a * 10`) round-trips (positional splice; the carrier's `{"k":"this"}` / `{"k":"defaultArgParam","idx":N}` bind to the call's receiver / arg N). Non-stable receiver/argument values spliced into a default are hoisted into temporaries so they evaluate exactly once (stable literals and `this` may remain inlined). |
 | **`internal` visibility** | hidden cross-assembly (correct for module≈assembly) | `kotc` lowers `internal`→ CLR `assembly`; `facadegen.Vis` skips assembly-visible members, so they don't inject — aligned with Kotlin's module boundary, but the **`internal` modifier is not itself restorable**, there is **no friend-module / `InternalsVisibleTo`** wiring, and no JVM-style name mangling. |

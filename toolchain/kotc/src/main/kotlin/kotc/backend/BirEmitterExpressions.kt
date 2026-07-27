@@ -113,9 +113,10 @@ private fun BirEmitter.styStamped(node: IrExpression, s: String): String =
 	if (styNodePrefixes.any { s.startsWith(it) }) """{"sty":${birType(node.type).toJson()},${s.substring(1)}""" else s
 
 /** #235: bind each value of THIS call that a filled default SPLICES — the receiver (or enclosing instance) a
- *  `= this` / `= outerProp` default reads, and each provided ARGUMENT an omitted default reads (`b: Int = a * 10`) —
- *  to a temp local, so it is evaluated EXACTLY ONCE however many times it is spliced. Kotlin evaluates a receiver and
- *  each argument once; splicing the rendered expression per reader would not.
+ *  `= this` / `= outerProp` default reads, each provided ARGUMENT an omitted default reads (`b: Int = a * 10`), and the
+ *  receiver a RECONSTRUCTED cross-module fill reads ([reconstructedDefaultReceiver]) — to a temp local, so it is
+ *  evaluated EXACTLY ONCE however many times it is spliced. Kotlin evaluates a receiver and each argument once;
+ *  splicing the rendered expression per reader would not.
  *
  *  Hoisting REORDERS: a temp's initializer runs before the call node, so every non-stable value to the LEFT of the last
  *  hoisted one is bound too, even when no default reads it — otherwise it would slide after a value Kotlin evaluates
@@ -134,38 +135,69 @@ private fun BirEmitter.hoistCallValuesReadByDefaults(node: IrExpression): List<T
 	// A SOURCE-SPLICED inline call fills nothing here (its omitted default rides the inline carrier and its lambda args
 	// are spliced, not emitted as values), so a temp would be dead — and emitting a lambda into one lifts it twice.
 	if (isInlineSplicedCall(call)) return emptyList()
-	// The defaults this call actually fills (a cross-module IrErrorExpression carries no readable expression: that
-	// omission becomes a positional placeholder bir2cir fills, and nothing of this call is spliced into it here).
-	val omitted = callee.parameters.withIndex().mapNotNull { (i, p) ->
-		if (p.kind != IrParameterKind.Regular || (i < call.arguments.size && call.arguments[i] != null)) null
-		else p.defaultValue?.expression?.takeIf { it !is org.jetbrains.kotlin.ir.expressions.IrErrorExpression }
+	// Which parameters this call OMITS, hence which defaults it fills. Their reads come from two sources:
+	//  - `omitted`: an omission whose default EXPRESSION this build can read (same-module) — [filledArgs] splices a call
+	//    value into it exactly where the expression reads the callee's own scope, so a symbol scan finds those reads;
+	//  - `reconstructedRecvs`: a CROSS-MODULE omission, whose default arrives as an unreadable `IrErrorExpression`.
+	//    [filledArgs] fills it either from a metadata CONSTANT / a positional placeholder bir2cir binds for itself
+	//    (neither reads a call value), or by RECONSTRUCTING a read of this call's RECEIVER — and
+	//    [reconstructedDefaultReceiver] is the one predicate that says which, so the binding here and the splice there
+	//    cannot disagree.
+	val omissions = callee.parameters.withIndex().filter { (i, p) ->
+		p.kind == IrParameterKind.Regular && (i >= call.arguments.size || call.arguments[i] == null)
 	}
-	if (omitted.isEmpty()) return emptyList()
-	// The receiver `filledArgs` splices is whichever of the two this call has: the extension receiver if any, else the
-	// dispatch receiver. Reads of ANY enclosing `this` render as that same expression (an inner-class ctor / member).
-	val recvIdx = callee.parameters.indexOfFirst { it.kind == IrParameterKind.ExtensionReceiver }
-		.takeIf { it >= 0 } ?: callee.parameters.indexOfFirst { it.kind == IrParameterKind.DispatchReceiver }
+	val omitted = omissions.mapNotNull { (_, p) ->
+		p.defaultValue?.expression?.takeIf { it !is org.jetbrains.kotlin.ir.expressions.IrErrorExpression }
+	}
+	val reconstructedRecvs = omissions.mapNotNullTo(HashSet()) { (_, p) ->
+		reconstructedDefaultReceiver(callee, p)?.symbol
+	}
+	if (omitted.isEmpty() && reconstructedRecvs.isEmpty()) return emptyList()
+	// A default's read of a receiver PARAM binds to the call's receiver of that param's OWN kind, so each receiver
+	// position answers for itself. The enclosing-`this` chain is different: it always hangs off the DISPATCH receiver
+	// ([filledArgs]'s `enclosingRecv` — an inner-class member reaches `this@Outer` from its own `this`, never from an
+	// extension receiver), so it is attributed to that index alone. Collapsing the two made a member extension bind its
+	// extension receiver for a default that reads only an enclosing instance — a temp nothing reads.
+	val extIdx = callee.parameters.indexOfFirst { it.kind == IrParameterKind.ExtensionReceiver }
+	val dispatchIdx = callee.parameters.indexOfFirst { it.kind == IrParameterKind.DispatchReceiver }
 	val enclosingSyms = enclosingThisChain(callee).map { it.first.symbol }
 	// Does a filled default read the value passed at parameter position `i`?
 	fun readsAt(i: Int): Boolean {
+		val p = callee.parameters.getOrNull(i) ?: return false
+		if (p.symbol in reconstructedRecvs) return true
 		val syms = HashSet<org.jetbrains.kotlin.ir.symbols.IrValueSymbol>()
-		callee.parameters.getOrNull(i)?.let { syms.add(it.symbol) }
-		if (i == recvIdx) syms.addAll(enclosingSyms)
-		return syms.isNotEmpty() && omitted.any { refsAny(it, syms) }
+		syms.add(p.symbol)
+		if (i == dispatchIdx) syms.addAll(enclosingSyms)
+		return omitted.any { refsAny(it, syms) }
 	}
 	val values = callee.parameters.indices.mapNotNull { i ->
 		(if (i < call.arguments.size) call.arguments[i] else null)?.let { i to it }
 	}
-	val last = values.lastOrNull { (i, _) -> readsAt(i) }?.first ?: return emptyList()
+	// A fill that a LATER fill reads is bound to a temp AFTER rendering ([bindFilledDefaultOnce]), and that temp is
+	// declared ahead of the call node. Kotlin evaluates the receiver, then each argument, and only then the callee's
+	// defaults — so when such a fill will be bound, EVERY supplied value binds with it (they sort ahead of it by
+	// parameter index). Without this the fill's initializer ran first: `host().f()` with `a = bump(), b = a * 10` ran
+	// `bump()` before `host()`, and `host().g(arg())` before both.
+	val boundFill = filledDefaultsReadByLater(call, callee).any { it }
+	val last = (if (boundFill) values.lastOrNull()?.first else null)
+		?: values.lastOrNull { (i, _) -> readsAt(i) }?.first ?: return emptyList()
+	// A byref / @ClrRefArgument argument is an ADDRESSABLE lvalue, never emitted through `expr()` on this node, so no
+	// temp can hold it — while the expression that PRODUCES the address can still have side effects
+	// (`byref(mk().field)`). Binding the values around it would move them across it, so an unbindable position in the
+	// bound range means NOTHING is bound: a partial hoist reorders the call, which is worse than the double evaluation
+	// it would have removed (the same trade bir2cir's DefaultArgSplice makes). A STABLE one reorders nothing and is
+	// simply skipped below.
+	if (values.any { (i, v) ->
+			i <= last && !isStableValue(v) &&
+				(birType(callee.parameters[i].type) is TypeNode.ByRef || isClrRefArgument(callee.parameters[i]))
+		}) return emptyList()
 	val out = ArrayList<Triple<Int, IrExpression, String>>()
 	for ((i, value) in values) {
 		if (i > last) break
 		val p = callee.parameters[i]
-		// A byref / @ClrRefArgument arg is emitted as an ADDRESSABLE lvalue, never through `expr()` on this node, so a
-		// temp would be dead. An lvalue read is side-effect-free anyway, so leaving it in place reorders nothing.
 		if (birType(p.type) is TypeNode.ByRef || isClrRefArgument(p)) continue
 		if (evalOnceSubst.containsKey(value) || isStableValue(value)) continue
-		val tv = if (i == recvIdx) "__recv${scopeCounter++}" else "__arg${scopeCounter++}"
+		val tv = if (i == extIdx || i == dispatchIdx) "__recv${scopeCounter++}" else "__arg${scopeCounter++}"
 		out.add(Triple(i, value, """{"k":"var","name":${str(tv)},"type":${birType(value.type).toJson()},"init":${expr(value)}}"""))
 		evalOnceSubst[value] = """{"k":"local","name":${str(tv)}}"""
 	}
@@ -175,16 +207,16 @@ private fun BirEmitter.hoistCallValuesReadByDefaults(node: IrExpression): List<T
 /** Bind an OMITTED default after [filledArgs] has rendered it in the callee's substituted scope. The ordinary pre-pass
  *  can bind only expressions present in `call.arguments`; a default absent from that array must join the same ordered
  *  temp list here when a later filled default reads its parameter. Returning the local makes both the call's own slot and
- *  every later symbolic substitution read the one value. */
+ *  every later symbolic substitution read the one value. Called exactly for the positions
+ *  [filledDefaultsReadByLater] reports, which the pre-pass has already answered for by binding every SUPPLIED value —
+ *  so this temp lands after the receiver's and each argument's in the parameter-ordered list. */
 internal fun BirEmitter.bindFilledDefaultOnce(
 	call: IrExpression,
 	paramIndex: Int,
 	param: IrValueParameter,
-	defaultExpr: IrExpression,
 	emitted: String,
 ): String {
 	val temps = callEvalOnceTemps[call] ?: return emitted
-	if (isStableValue(defaultExpr)) return emitted
 	if (birType(param.type) is TypeNode.ByRef)
 		return unsupported(call, "omitting a by-reference default argument that another default reads",
 			"the default value of parameter '${param.name.asString()}' cannot be copied into a temporary; pass it explicitly")
@@ -195,7 +227,7 @@ internal fun BirEmitter.bindFilledDefaultOnce(
 
 /** [bindOnce]'s stability test: a const or a read of an immutable non-ref-cell local/parameter re-reads for free and
  *  without side effects, so splicing it twice is safe and it needs no temp. */
-private fun BirEmitter.isStableValue(e: IrExpression): Boolean =
+internal fun BirEmitter.isStableValue(e: IrExpression): Boolean =
 	e is IrConst || (e as? IrGetValue)?.symbol?.owner?.let { o ->
 		!isRefCell(o) && (o is IrValueParameter || (o as? IrVariable)?.isVar == false)
 	} == true

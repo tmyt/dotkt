@@ -160,17 +160,8 @@ internal fun BirEmitter.filledArgs(
 	val provided = regs.map { (i, _) -> if (i < call.arguments.size) call.arguments[i] else null }
 	// A default value is itself a call-site value. If a LATER omitted default reads this parameter, a non-stable default
 	// must be bound after substitution just like a provided argument is bound by the expression pre-pass; otherwise
-	// `a = bump(), b = a * 10` renders two copies of `bump()`. Only defaults this call actually fills participate.
-	val realFilledDefaults = regs.mapIndexed { idx, (_, p) ->
-		if (provided[idx] != null) null
-		else p.defaultValue?.expression?.takeIf { it !is org.jetbrains.kotlin.ir.expressions.IrErrorExpression }
-	}
-	val readByLaterFilledDefault = BooleanArray(regs.size) { idx ->
-		val sym = regs[idx].second.symbol
-		(idx + 1 until regs.size).any { later ->
-			realFilledDefaults[later]?.let { refsAny(it, setOf(sym)) } == true
-		}
-	}
+	// `a = bump(), b = a * 10` renders two copies of `bump()`.
+	val boundFills = filledDefaultsReadByLater(call, callee)
 	val out = ArrayList<String>()
 	// The filled JSON for each already-processed value parameter — the substitution source for a same-module default
 	// that reads ANOTHER value parameter (`b: Int = a * 10`). A Kotlin default may reference only EARLIER params, so
@@ -186,22 +177,25 @@ internal fun BirEmitter.filledArgs(
 				when {
 					def == null -> null
 					def is org.jetbrains.kotlin.ir.expressions.IrErrorExpression -> {
-						// CROSS-MODULE: the frontend artifact dropped the default VALUE. A data-class `copy` (Pair/Triple, or any
-						// referenced data class) is a SPECIAL case: its omitted-field default is ALWAYS `this.<field>` by
-						// construction, so reconstruct it as a receiver FIELD read at the INSTANTIATED call site — the exact BIR
-						// kotc emits for a plain `pair.first` (owner = the actual `kotlin.Pair[Int,Int]`, so no generic `gp:` token
-						// leaks; the @KotlinDefault splice can't carry that instantiation). The Pair/Triple partial-`copy` fix (C3).
-						val copyField =
-							if ((callee as? org.jetbrains.kotlin.ir.declarations.IrSimpleFunction)?.let { isDataClassCopy(it) } == true && (dispatchRecv.value ?: extRecv.value) != null)
-								(dispatchReceiver(call) ?: extensionReceiver(call))?.let { r ->
-									// Owner via ownerSpec (the SAME token the plain `pair.first` property read uses — the referenced,
-									// instantiated `kotlin.Pair[Int,Int]`, no `@` this-assembly prefix, no open `gp:` param).
-									"""{"sty":${birType(p.type).toJson()},"k":"field","ownerType":${ownerSpec(callee.parent as? IrClass, r.type).toJson()},"recv":${dispatchRecv.value ?: extRecv.value},"name":${str(p.name.asString())}}"""
-								}
-							else null
+						// CROSS-MODULE: the frontend artifact dropped the default VALUE, so a fill can only be RECONSTRUCTED from
+						// a Kotlin fact about the callee. [reconstructedDefaultReceiver] owns that decision and names the receiver
+						// the reconstruction reads — the SAME predicate the single-evaluation pre-pass consulted to bind that
+						// receiver to a temp, so what is spliced below is a local read and the receiver is evaluated once.
+						val reconstructed = reconstructedDefaultReceiver(callee, p)?.let { rp ->
+							val ext = rp.kind == IrParameterKind.ExtensionReceiver
+							val r = if (ext) extensionReceiver(call) else dispatchReceiver(call)
+							val recvJson = if (ext) extRecv.value else dispatchRecv.value
+							if (r == null || recvJson == null) null
+							// Owner via ownerSpec off the RECEIVER EXPRESSION'S type (the SAME token the plain `pair.first`
+							// property read uses — the referenced, instantiated `kotlin.Pair[Int,Int]`, no `@` this-assembly
+							// prefix, no open `gp:` param; the @KotlinDefault splice can't carry that instantiation). Read from
+							// the receiver IR, which binding to a temp does not change. The `sty` static-type stamp is
+							// instantiated the same way — see [instantiatedInOwner].
+							else """{"sty":${birType(instantiatedInOwner(callee.parent as? IrClass, r.type, p.type)).toJson()},"k":"field","ownerType":${ownerSpec(callee.parent as? IrClass, r.type).toJson()},"recv":$recvJson,"name":${str(p.name.asString())}}"""
+						}
 						// #134: the facadegen metadata's REAL constant default, synthesized as an IrConst, so a named-middle /
 						// reordered omission of an injected .NET ctor's or top-level function's constant default is correct.
-						copyField ?: metaDefaults?.getOrNull(idx)?.let { metaConstArg(it, p.type) }?.let { expr(it) }
+						reconstructed ?: metaDefaults?.getOrNull(idx)?.let { metaConstArg(it, p.type) }?.let { expr(it) }
 						// A @KotlinDefault-carrying callee (any non-constant default — joinToString's CharSequence separators,
 						// substringAfter's `= this`, `b = a * 10`) gets a POSITIONAL placeholder for EVERY omitted arg so a later
 						// provided arg (the trailing transform lambda) keeps its slot; bir2cir fills each from the ref.dll
@@ -283,14 +277,81 @@ internal fun BirEmitter.filledArgs(
 		}
 		if (emitted != null) {
 			val finalEmitted =
-				if (arg == null && readByLaterFilledDefault[idx] && realFilledDefaults[idx] != null)
-					bindFilledDefaultOnce(call, pair.first, p, realFilledDefaults[idx]!!, emitted)
+				if (boundFills[idx]) bindFilledDefaultOnce(call, pair.first, p, emitted)
 				else emitted
 			out.add(finalEmitted)
 			filledByParam[p] = finalEmitted
 		}
 	}
 	return out
+}
+
+/** Per REGULAR-parameter position: does this call FILL that parameter's default with a non-stable expression that a
+ *  LATER filled default reads (`f(a: Int = bump(), b: Int = a * 10)`)? Those are exactly the fills
+ *  [bindFilledDefaultOnce] moves into a single-evaluation temp after [filledArgs] has rendered them.
+ *
+ *  THE single source of truth for that decision, for the same reason [reconstructedDefaultReceiver] is:
+ *  [filledArgs] consults it to bind the fill, and the single-evaluation pre-pass ([hoistCallValuesReadByDefaults])
+ *  consults it to learn that such a temp will be declared AHEAD of the call node — which is why every value the call
+ *  SUPPLIES has to be bound alongside it. Without that, `host().f()` ran `bump()` before `host()`, and
+ *  `host().g(arg())` ran it before both, where Kotlin evaluates the receiver first, then each argument, and only then
+ *  the callee's defaults. A CROSS-MODULE omission never appears here: its value is an `IrErrorExpression` this build
+ *  cannot read, and the placeholder bir2cir fills is bound by bir2cir's own splice. */
+internal fun BirEmitter.filledDefaultsReadByLater(
+	call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression,
+	callee: org.jetbrains.kotlin.ir.declarations.IrFunction,
+): BooleanArray {
+	val regs = callee.parameters.mapIndexedNotNull { i, p -> if (p.kind == IrParameterKind.Regular) i to p else null }
+	val filled = regs.map { (i, p) ->
+		if (i < call.arguments.size && call.arguments[i] != null) null
+		else p.defaultValue?.expression?.takeIf { it !is org.jetbrains.kotlin.ir.expressions.IrErrorExpression }
+	}
+	return BooleanArray(regs.size) { idx ->
+		val def = filled[idx]
+		def != null && !isStableValue(def) && (idx + 1 until regs.size).any { later ->
+			filled[later]?.let { refsAny(it, setOf(regs[idx].second.symbol)) } == true
+		}
+	}
+}
+
+/** `type` with `owner`'s type parameters replaced by `recvType`'s type ARGUMENTS — the instantiation the frontend
+ *  resolved for this receiver. A member declares its signature in its class's own type-parameter frame
+ *  (`kotlin.Triple.copy(first: A, second: B, third: C)`), so a reconstructed read of one of those members must be
+ *  stamped with the CALL SITE's type (`Int`), not with the positional type variable: an open `tv` in a caller frame that
+ *  has no type parameters is unresolvable there, and bir2cir spills it verbatim into a state-machine field when a later
+ *  argument suspends (`InvalidProgramException` at the first resume). Identity when `owner` is non-generic, or when
+ *  `recvType` carries no argument vector matching it. */
+private fun instantiatedInOwner(owner: IrClass?, recvType: IrType, type: IrType): IrType {
+	val tps = owner?.typeParameters?.map { it.symbol }.orEmpty()
+	if (tps.isEmpty()) return type
+	val args = (recvType as? IrSimpleType)?.arguments ?: return type
+	if (args.size != tps.size) return type
+	return org.jetbrains.kotlin.ir.types.IrTypeSubstitutor(tps, args, true).substitute(type)
+}
+
+/** The callee-scope RECEIVER parameter whose value [filledArgs] will splice when it RECONSTRUCTS the fill for the
+ *  omitted parameter `p` — null when no reconstruction applies.
+ *
+ *  A CROSS-MODULE default reaches this build as an `IrErrorExpression`: the frontend artifact preserves no default
+ *  VALUE, so a fill cannot come from the callee's own IR and must come from a Kotlin FACT about the callee. The one
+ *  such fact is a data class's SYNTHETIC `copy`, whose omitted field default is `this.<field>` by construction — and the
+ *  value that reconstruction reads is the call's receiver. A data class may also declare a differently-signed `copy`
+ *  OVERLOAD of its own, whose defaults are ordinary expressions; [isDataClassCopy] tells the two apart by the generated
+ *  signature rather than by the name.
+ *
+ *  THE single source of truth for that decision. [filledArgs] asks it WHICH receiver to splice; the single-evaluation
+ *  pre-pass [hoistCallValuesReadByDefaults] asks it which receiver to BIND first. Two independent notions of "a
+ *  default this call fills" is exactly what let a reconstruction splice a second RENDERING of the receiver into every
+ *  omitted slot while the pre-pass, seeing only an unreadable `IrErrorExpression`, bound nothing — so a side-effecting
+ *  `nextPair().copy(second = 9)` receiver ran once per omitted field on top of the call's own use of it. */
+internal fun BirEmitter.reconstructedDefaultReceiver(
+	callee: org.jetbrains.kotlin.ir.declarations.IrFunction,
+	p: IrValueParameter,
+): IrValueParameter? {
+	if (p.defaultValue?.expression !is org.jetbrains.kotlin.ir.expressions.IrErrorExpression) return null
+	if ((callee as? IrSimpleFunction)?.let { isDataClassCopy(it) } != true) return null
+	return callee.parameters.firstOrNull { it.kind == IrParameterKind.DispatchReceiver }
+		?: callee.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
 }
 
 /** #235: place a call's single-evaluation temps where the call site has no wrapping expression to hold them — a
@@ -1650,8 +1711,14 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// runs = status quo).
 		if (callNeedsSplice(call)) return inlineSpliceCallOwnerless(call, extRecv)
 	}
-	// Fill omitted constant default arguments at the call site (IL methods have no default mechanism).
-	val args = filledArgs(call).joinToString(",")
+	// Fill omitted default arguments at the call site (IL methods have no default mechanism). ONCE — every branch below
+	// shares this ONE list. Filling is not a pure rendering: it lifts a lambda default into the file class, and it binds
+	// a filled default a LATER default reads to a single-evaluation temp. Running it a second time for the extension
+	// branch therefore declared a SECOND temp initialized by the SAME default expression, and both ran
+	// (`"s".ext()` against `fun String.ext(a: Int = bump(), b: Int = a * 10)` called `bump()` twice, where the
+	// non-extension `plain()` called it once).
+	val regArgs = filledArgs(call)
+	val args = regArgs.joinToString(",")
 	// A generic method `fun <T> id(...)` -> carry the resolved type args so ilemit can MakeGenericMethod.
 	val ta = typeArgsJson(call)
 	// PLAIN Kotlin return type for the retType hint; a `suspend` callee is flagged by `suspendCallTag` on the node
@@ -1670,7 +1737,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 	// with the extension receiver as the first arg (mirrors the JVM `C.f(T $receiver)` shape).
 	val extRecv = extensionReceiver(call)
 	if (extRecv != null) {
-		val all = (listOf(expr(extRecv)) + filledArgs(call)).joinToString(",")
+		val all = (listOf(expr(extRecv)) + regArgs).joinToString(",")
 		if (recv != null) {
 			val ownerStr = ownerSpec(declaringClass, recv.type)
 			val virtual = isVirtualInstanceCall(call, callee)

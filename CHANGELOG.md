@@ -18,6 +18,41 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   the host RID and requires that replay to fail, so the assertion cannot pass vacuously. Previously the RID flow
   was only exercised at the host RID and cross-target selection had been confirmed by hand.
 ### Fixed
+- **kotc (area:kotc): a data-class `copy` on a CROSS-MODULE data class now evaluates its receiver exactly once, in
+  Kotlin's order, however many fields the call omits.** A referenced callee's default VALUE is absent from the
+  frontend artifact (fir2ir drops it to an `IrErrorExpression`), so kotc reconstructs each omitted `copy` field as a
+  read of the call's receiver. That reconstruction embedded a fresh RENDERING of the receiver expression, while the
+  call node rendered the receiver again — so `nextPair().copy(second = 9)` ran its receiver twice,
+  `nextTriple().copy(second = 9)` three times, `nextTriple().copy()` four times, and a receiver carrying a lambda was
+  lifted twice as well. Order was wrong too: with an argument provided, a receiver evaluation landed AFTER it
+  (`triple().copy(second = arg())` logged receiver, receiver, argument, receiver). The single-evaluation pre-pass that
+  binds a spliced call value to a temp had its own notion of "a default this call fills" and skipped every
+  cross-module omission, so it bound nothing; both passes now read ONE predicate
+  (`BirEmitterCalls.reconstructedDefaultReceiver`), which names the receiver a reconstruction will read, and the
+  reconstruction splices that receiver's temp. The same reconstruction also stamped the read's static type with the
+  data class's own positional type variable rather than the instantiated one; it is now substituted through the
+  receiver's type arguments, which is what lets the receiver temp cross a suspension (a `copy` on a suspending
+  receiver with a suspending argument previously reached an SM field of an unresolvable type and threw
+  `InvalidProgramException` on the first resume once the receiver was bound). The same audit found the default-filling
+  pass running TWICE at an EXTENSION call site (the first result discarded): filling is not a pure rendering — it binds
+  a filled default that a later default reads to a temp — so `"s".ext()` against
+  `fun String.ext(a: Int = bump(), b: Int = a * 10)` declared two temps and called `bump()` twice, where the
+  non-extension `plain()` called it once. It now runs once and every branch shares that one list. Three more defects in
+  the same rule went with it: (a) that bound fill's temp is declared ahead of the call node, so it ran BEFORE the
+  receiver and before every provided argument — `host().f()` ran `bump()` before `host()` and `host().g(arg())` before
+  both, where Kotlin evaluates the receiver, then each argument, and only then the callee's defaults; the pre-pass now
+  binds every supplied value whenever a fill will be bound, and the parameter-ordered temp list puts them back in
+  Kotlin's order. (b) A byref / `@ClrRefArgument` argument in the bound range was skipped while later values were still
+  hoisted, which moved them ahead of its (possibly side-effecting) address computation; an unbindable position now
+  binds NOTHING, matching what the code claimed and what bir2cir's splice already does. (c) The synthetic-`copy` test
+  was name + `isData`, but a data class may also declare a differently-signed `copy` OVERLOAD whose defaults are
+  ordinary expressions — it is now matched by the generated signature (parameters mirroring the primary constructor),
+  so an overload cannot be reconstructed as `this.<field>`.
+  Cross-module `copy`-field omission reaches only a data class resolved through the frontend KLIB
+  (`kotlin.Pair`/`kotlin.Triple`); a data class RE-CONSUMED from a DotKt library dll still cannot omit a `copy` field
+  at all (the `data` nature is not carried, so every `copy` parameter surfaces REQUIRED). That gap is now written down
+  in `docs/dotkt-semantics.md` §7 / §10.2, where the previous text claimed cross-module `copy` omission worked
+  generally.
 - **kotc/bir2cir/ilemit ([tmyt/dotkt#68], area:kotc, area:bir2cir, area:ilemit): a captured `var` written from a
   local class, an object expression, a lambda or a local `fun` is now heap ref-celled under EVERY emission root and
   for every one of those boundaries — previously only a function body, and never a local `fun`.** The promotion of a

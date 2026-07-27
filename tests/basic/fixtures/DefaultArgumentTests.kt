@@ -229,6 +229,57 @@ class M2Cell {
     fun bump(): Int { x = 5; return 1 }
 }
 
+// A CROSS-MODULE data-class `copy` that omits a field. The frontend artifact preserves no default VALUE for a
+// referenced callee, so kotc RECONSTRUCTS each omitted field as a read of the call's receiver; that read must take the
+// receiver's single-evaluation temp. Reconstructing it as a second RENDERING of the receiver expression ran the
+// receiver once per omitted field ON TOP of the call's own use of it. `kotlin.Pair`/`kotlin.Triple` come from the
+// stdlib, so every `copy` below is cross-module by construction.
+class M2CopyLog {
+    var calls = 0
+    var s = ""
+    fun pair(): Pair<Int, Int> { calls++; s += "P"; return 1 to 2 }
+    fun triple(): Triple<Int, Int, Int> { calls++; s += "T"; return Triple(1, 2, 3) }
+    fun arg(): Int { s += "a"; return 9 }
+}
+// A receiver expression carrying a LAMBDA: a second rendering would lift a second copy of the lambda as well as re-run
+// the call that takes it.
+object M2CopyLambdaCounter { var calls = 0 }
+fun m2CopyVia(f: () -> Int): Pair<Int, Int> { M2CopyLambdaCounter.calls++; return f() to 2 }
+
+// A data class may ALSO declare a differently-signed `copy` OVERLOAD of its own — only the generated signature is
+// reserved. Its defaults are ordinary expressions, not `this.<field>` reads, so the synthetic-copy test must not claim
+// it (`copy` + `isData` alone did).
+data class M2CopyOver(val x: Int, val y: Int) {
+    fun copy(tag: String, z: Int = x * 2): String = "$tag/$z/$y"
+}
+
+// A FILLED default that a later default reads is bound to a temp declared AHEAD of the call node. Kotlin evaluates the
+// receiver, then each argument, and only then the callee's defaults — so binding it must not move it in front of them.
+class M2FillOrder {
+    var s = ""
+    fun mk(): Int { s += "d"; return 3 }
+    fun arg(): Int { s += "p"; return 7 }
+    fun self(): M2FillOrder { s += "H"; return this }
+    fun f(a: Int = mk(), b: Int = a * 10): Int = a * 1000 + b
+    fun g(p: Int, a: Int = mk(), b: Int = a * 10): Int = p + a * 1000 + b
+}
+object M2FillLog {
+    var s = ""
+    fun mk(): Int { s += "d"; return 3 }
+    fun arg(): Int { s += "p"; return 7 }
+}
+class M2FillCtorHost(val p: Int, val a: Int = M2FillLog.mk(), val b: Int = a * 10)
+
+// An EXTENSION call site fills its omitted defaults through the same pass as every other call, and must run that pass
+// ONCE. Filling is not a pure rendering — it binds a filled default that a LATER default reads to a temp — so a second
+// run declared a SECOND temp holding the same default expression, and both initializers ran.
+class M2ExtSource { var calls = 0; fun bump(): Int { calls++; return 3 } }
+fun M2ExtSource.m2ExtChain(a: Int = bump(), b: Int = a * 10): Int = a * 1000 + b
+class M2ExtOwner(val k: Int) {
+    fun M2ExtSource.memChain(a: Int = bump(), b: Int = a * 10): Int = a * 1000 + b + k
+    fun run(s: M2ExtSource): Int = s.memChain()
+}
+
 class DefaultArgumentTests {
     @TestAttribute
     fun defargs() {
@@ -378,6 +429,72 @@ class DefaultArgumentTests {
 
         val c = M2Cell()
         assertEquals(10550, m2Order(c.bump(), c.x))                     // p=1, then q reads x=5, r=50
+    }
+
+    // Single evaluation of the receiver a CROSS-MODULE data-class `copy` reconstructs its omitted fields from. Each
+    // `calls`/`s` assertion is the load-bearing one — the copied VALUES were already right, the receiver just ran
+    // repeatedly. The pre-fix counts are noted per case.
+    @TestAttribute
+    fun defargsCrossModuleCopySingleEval() {
+        val a = M2CopyLog()
+        assertEquals("(1, 9)", a.pair().copy(second = 9).toString())     // (1, 9)
+        assertEquals(1, a.calls)                                        // 1  was 2 (one omitted field + the call)
+
+        val b = M2CopyLog()
+        assertEquals("(1, 9, 3)", b.triple().copy(second = 9).toString())
+        assertEquals(1, b.calls)                                        // 1  was 3 (two omitted fields + the call)
+
+        val c = M2CopyLog()
+        assertEquals("(1, 2, 3)", c.triple().copy().toString())          // every field omitted
+        assertEquals(1, c.calls)                                        // 1  was 4
+
+        // ORDER: Kotlin evaluates the receiver, then the argument. Re-rendering the receiver per omitted field also put
+        // a receiver evaluation AFTER the argument (the log read "TTaT").
+        val d = M2CopyLog()
+        assertEquals("(1, 9, 3)", d.triple().copy(second = d.arg()).toString())
+        assertEquals("Ta", d.s)                                         // Ta  receiver first, then the argument
+        assertEquals(1, d.calls)
+
+        // A receiver expression carrying a lambda: re-rendering it lifted a second copy of the lambda too.
+        M2CopyLambdaCounter.calls = 0
+        assertEquals("(7, 5)", m2CopyVia { 7 }.copy(second = 5).toString())
+        assertEquals(1, M2CopyLambdaCounter.calls)                       // 1  was 2
+
+        // A data class's own `copy` OVERLOAD is a different function with ordinary defaults — the synthetic-copy test
+        // must not claim it (name + `isData` alone did; the signature has to match the generated one).
+        assertEquals("t/2/2", M2CopyOver(1, 2).copy("t"))                // t/2/2  z = x * 2, an ordinary default
+        assertEquals("M2CopyOver(x=1, y=9)", M2CopyOver(1, 2).copy(y = 9).toString())
+    }
+
+    // A FILLED default bound for single evaluation must not move AHEAD of the values the call SUPPLIES: Kotlin
+    // evaluates the receiver, then each argument, and only then the callee's defaults.
+    @TestAttribute
+    fun defargsFilledDefaultOrder() {
+        val h = M2FillOrder()
+        assertEquals(3030, h.self().f())                                // a = mk() = 3, b = a * 10 = 30
+        assertEquals("Hd", h.s)                                         // Hd   receiver first (was "dH")
+
+        val h2 = M2FillOrder()
+        assertEquals(3037, h2.self().g(h2.arg()))                       // p = 7 + 3000 + 30
+        assertEquals("Hpd", h2.s)                                       // Hpd  receiver, argument, then the default (was "dHp")
+
+        M2FillLog.s = ""
+        val c = M2FillCtorHost(M2FillLog.arg())
+        assertEquals(3, c.a)
+        assertEquals(30, c.b)
+        assertEquals("pd", M2FillLog.s)                                 // pd   argument before the default (was "dp")
+    }
+
+    // The same single-evaluation rule at an EXTENSION call site, whose default-filling pass used to run twice.
+    @TestAttribute
+    fun defargsSingleEvalExtensionCall() {
+        val a = M2ExtSource()
+        assertEquals(3030, a.m2ExtChain())                              // a = bump() = 3, b = a * 10 = 30
+        assertEquals(1, a.calls)                                        // 1  was 2 (the fill ran once per rendering)
+
+        val b = M2ExtSource()
+        assertEquals(3031, M2ExtOwner(1).run(b))                        // a MEMBER extension: both receivers live
+        assertEquals(1, b.calls)                                        // 1  was 2
     }
 
     // #235: single evaluation at the two call sites that ride a DECLARATION rather than an expression.

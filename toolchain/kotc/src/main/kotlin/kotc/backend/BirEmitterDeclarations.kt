@@ -59,6 +59,7 @@ import org.jetbrains.kotlin.ir.util.classId
 import org.jetbrains.kotlin.name.CallableId
 import org.jetbrains.kotlin.ir.util.fqNameWhenAvailable
 import org.jetbrains.kotlin.ir.util.resolveFakeOverride
+import org.jetbrains.kotlin.ir.util.primaryConstructor
 import org.jetbrains.kotlin.ir.declarations.IrTypeParameter
 import org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol
 import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
@@ -1255,9 +1256,21 @@ internal fun BirEmitter.carriesKotlinDefault(fn: org.jetbrains.kotlin.ir.declara
 		else -> false
 	}
 
-/** A data-class `copy` synthetic — `copy` cannot be user-declared on a data class, so name + `isData` parent is exact. */
-internal fun BirEmitter.isDataClassCopy(fn: org.jetbrains.kotlin.ir.declarations.IrSimpleFunction): Boolean =
-	fn.name.asString() == "copy" && (fn.parent as? IrClass)?.isData == true
+/** The SYNTHETIC `copy` of a data class — the one whose omitted parameter defaults are `this.<field>` by construction.
+ *  Name + `isData` parent is NOT enough: only the generated SIGNATURE is reserved, so a data class may also declare a
+ *  differently-signed `copy` OVERLOAD of its own (`data class D(val x: Int) { fun copy(tag: String, z: Int = x * 2) }`
+ *  compiles and runs), whose defaults are ordinary expressions and are NOT field reads. The generated one mirrors the
+ *  primary constructor parameter-for-parameter and name-for-name, which is exactly the property a `this.<field>`
+ *  reconstruction depends on — so match on that. */
+internal fun BirEmitter.isDataClassCopy(fn: org.jetbrains.kotlin.ir.declarations.IrSimpleFunction): Boolean {
+	if (fn.name.asString() != "copy") return false
+	val cls = fn.parent as? IrClass ?: return false
+	if (!cls.isData) return false
+	val ctorParams = cls.primaryConstructor?.parameters?.filter { it.kind == IrParameterKind.Regular } ?: return false
+	val copyParams = fn.parameters.filter { it.kind == IrParameterKind.Regular }
+	return ctorParams.size == copyParams.size &&
+		ctorParams.indices.all { ctorParams[it].name == copyParams[it].name }
+}
 
 /** #146: the @KotlinDefault carrier BIR for a default expression, made CLOSED so bir2cir can re-emit it at a
  *  cross-module omitted call site. A constant / simple call (`= emptyList()`) emits NO lifted method, so its BIR is
