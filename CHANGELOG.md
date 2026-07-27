@@ -90,9 +90,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   the call's receiver of its own kind, and the enclosing-`this` chain hangs off the dispatch receiver rather than
   the collapsed one (an inner class's member extension reading `this@Outer` failed identically). Only a receiver
   the default actually READS is emitted, so an unread receiver's lifted lambdas cannot leak into the file class.
-  This is the same-module substitution path only: the cross-module `@KotlinDefault` carrier still refuses a
-  receiver-reading default, and a cross-module data-class `copy` still evaluates a non-stable receiver once per
-  omitted field — both unchanged here. The value-param arm (`f: Int = base`) and the single-receiver top-level
+  This is the same-module substitution path only: the cross-module `@KotlinDefault` carrier still refuses a default
+  that reads the DISPATCH or an enclosing-instance receiver (a pure extension-receiver default is carried and
+  filled), and a cross-module data-class `copy` still evaluates a non-stable receiver once per omitted field —
+  both unchanged here. The value-param arm (`f: Int = base`) and the single-receiver top-level
   extension arm (`fun Int.f(x: Int = this)`) are unchanged and pinned. Covered by
   `tests/basic/fixtures/DefaultArgumentTests.kt` `defargsReceiverKind`.
 - **bir2cir/ilemit ([tmyt/dotkt#46], area:bir2cir, area:ilemit): calls into referenced Kotlin helpers

@@ -121,7 +121,8 @@ class M2RecvKind(val k: Int) {
     fun Int.scaledV(f: Int = k): Int = this * f
     // `inline` WITHOUT a function-typed argument does NOT splice (the gate is `isInline && hasLambdaArg`), so this
     // takes the same ordinary filledArgs path as `scaledV` — pinned as that, not as splice coverage. A real splice
-    // with a receiver-reading default is still refused by the carrier's defaultUnsupported poison (#34).
+    // whose default reads the DISPATCH (or an enclosing-instance) receiver is still refused by the carrier's
+    // defaultUnsupported poison; a pure extension-receiver default is carried fine.
     inline fun Int.scaledI(f: Int = k): Int = this * f
     fun Int.viaParam(base: Int, f: Int = base): Int = this * f
     fun run(): Int = 3.scaledV()
@@ -408,15 +409,16 @@ class DefaultArgumentTests {
         assertEquals(2, M2EnumBodyCounter.calls)                        // 2 entries x once
     }
 
-    // A default's `this` read binds per RECEIVER KIND. Each assertion below was a runtime NullReferenceException
-    // before the kind-directed binding (the default read a dispatch-owner member off the extension receiver).
+    // A default's `this` read binds per RECEIVER KIND. Each assertion is tagged with what it was before the
+    // kind-directed binding: WAS-NRE threw a NullReferenceException (the default read a dispatch-owner member off
+    // the extension receiver's VALUE), CONTROL passed already and must keep passing.
     @TestAttribute
     fun defargsReceiverKind() {
         val h = M2RecvKind(10)
-        assertEquals(30, h.run())                                       // 3 * dispatch k=10
-        assertEquals(30, h.runInline())                                 // a lambda-less `inline` callee: ordinary path
-        assertEquals(21, h.runParam())                                  // 3 * 7 — the value-param arm, unchanged
-        assertEquals(15, M2RecvOuter(5).R().run())                      // 3 * OUTER k=5, via the enclosing chain
-        assertEquals(9, 3.m2SelfScaled())                               // 3 * extension receiver 3 — sound arm
+        assertEquals(30, h.run())                                       // WAS-NRE  3 * dispatch k=10
+        assertEquals(30, h.runInline())                                 // WAS-NRE  lambda-less `inline`: ordinary path
+        assertEquals(21, h.runParam())                                  // CONTROL  3 * 7 — the value-param arm
+        assertEquals(15, M2RecvOuter(5).R().run())                      // WAS-NRE  3 * OUTER k=5, enclosing chain
+        assertEquals(9, 3.m2SelfScaled())                               // CONTROL  3 * extension receiver 3
     }
 }
