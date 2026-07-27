@@ -244,22 +244,21 @@ internal fun BirEmitter.filledArgs(
 						// (docs/dotkt-semantics.md §7).
 						val subst = ArrayList<Pair<IrValueDeclaration, String>>()
 						filledByParam.forEach { (vp, js) -> subst.add(vp to js) }
-						val needsRecv = refsAny(def, receiverSyms) || refsAny(def, enclosingSyms)
-						// The receiver is emitted ONLY for a default that actually reads it (or an enclosing instance): forcing
-						// it otherwise emits the receiver expression a second time — an inner-class `new` already emitted it as
-						// the enclosing-instance arg — leaking its lifted lambdas into the file class.
-						val r = if (needsRecv) enclosingRecv else null
-						// Each receiver PARAM binds to the call's receiver of ITS OWN KIND — a member extension has two, and
-						// binding both to one expression reads an Owner member off the extension receiver's value.
-						// Per RECEIVER PARAM, and only one this default actually reads: a member extension has two, and
-						// forcing the unread one's `expr()` would append its lifted lambdas to the file class for a
-						// rendering that is then discarded (BirEmitterLifts' non-capturing-lambda lift).
+						// A receiver expression is emitted ONLY for a default that actually READS it. Forcing an unread one runs
+						// its `expr()` for a rendering that is then discarded, after the synthesis side effects have landed — a
+						// lifted method appended to the file class for a non-capturing lambda, or a consumed synth index. So each
+						// gate below names exactly the symbol whose value it needs:
+						//  - a receiver PARAM binds to the call's receiver of ITS OWN KIND (a member extension has two, and binding
+						//    both to one expression reads an owner member off the extension receiver's VALUE);
+						//  - the enclosing-`this` chain hangs off `enclosingRecv`, so it is forced only for a default that reads an
+						//    enclosing instance — never for one that merely reads the extension receiver.
 						if (refsAny(def, receiverSyms)) receiverParams.forEach { rp ->
 							if (refsAny(def, setOf(rp.symbol)))
 								(if (rp.kind == IrParameterKind.ExtensionReceiver) extRecv.value else dispatchRecv.value)
 									?.let { subst.add(rp to it) }
 						}
-						subst.addAll(enclosingThisSubst(enclosingThis, r, callee is IrConstructor))
+						val enclosing = if (refsAny(def, enclosingSyms)) enclosingRecv else null
+						subst.addAll(enclosingThisSubst(enclosingThis, enclosing, callee is IrConstructor))
 						// Save and RESTORE — a callee parameter can already be a captureSubst key (a closure that captured it,
 						// re-entered through a recursive call in its own body); dropping that binding would emit a bare local
 						// the closure has no slot for.
