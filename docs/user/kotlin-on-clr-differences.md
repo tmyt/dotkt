@@ -91,9 +91,11 @@ parameters. That is the whole physical story: a C# caller passes it like any oth
 Kotlin consumer of the emitted dll keeps writing `with(scale) { scaled(5) }` because the slot carries a
 `[KotlinContextParameter]` marker that facadegen restores as a real context parameter.
 
-Context parameters need no compiler flag at language version 2.4 (passing `-Xcontext-parameters` only
-warns that the argument is redundant). Functions, properties, members, extensions, `suspend`, `inline`,
-defaults that read a context parameter, and context function types (`context(A) (B) -> C`) all work.
+Context parameters need no compiler flag at language version 2.4 — they are on by default, and passing
+`-Xcontext-parameters` produces `warning: the argument '-Xcontext-parameters' is redundant for the
+current language version 2.4.` Functions, properties, members, extensions,
+`suspend`, `inline`, defaults that read a context parameter, and context function types
+(`context(A) (B) -> C`) all work.
 
 One gap: a context **function type** in a *public API you consume from another module* loses its
 context-ness — the consumer sees `(A, B) -> C` and passes the context as a lambda parameter. Context

@@ -549,14 +549,20 @@ internal fun BirEmitter.overridesJson(fn: IrSimpleFunction): String {
 		val ordered = LinkedHashSet<org.jetbrains.kotlin.ir.declarations.IrProperty>()
 		fun walkP(p: org.jetbrains.kotlin.ir.declarations.IrProperty) { for (ov in p.overriddenSymbols) { val o = ov.owner; if (ordered.add(o)) walkP(o) } }
 		walkP(prop)
+		// `arity` is the count of EMITTED parameters of this accessor — `[__self?] + contexts + regulars` ([isValueParameter],
+		// the same sequence `accessorMethod`/`topLevelAccessorMethod` lay out) — because every consumer compares it against a
+		// physical parameter count (bir2cir's InheritedDefaultFakeOverrideElision against `params.Count` / reflection, and
+		// DeclarationRename against the @ClrIntrinsic arity). A plain `val` override still reports 0 and a plain `var`
+		// setter 1, exactly as the emitted accessors have.
+		val accArity = emittedParamCount(fn)
 		ordered.mapNotNull { p -> (p.parent as? IrClass)?.fqNameWhenAvailable?.asString()?.let { owner ->
-			"""{"owner":${fqnJson(owner)},"member":${str(p.name.asString())},"kind":${str(kind)},"arity":0}""" } }
+			"""{"owner":${fqnJson(owner)},"member":${str(p.name.asString())},"kind":${str(kind)},"arity":$accArity}""" } }
 	} else {
 		val ordered = LinkedHashSet<IrSimpleFunction>()
 		fun walk(f: IrSimpleFunction) { for (ov in f.overriddenSymbols) { val o = ov.owner; if (ordered.add(o)) walk(o) } }
 		walk(fn)
 		ordered.mapNotNull { m -> (m.parent as? IrClass)?.fqNameWhenAvailable?.asString()?.let { owner ->
-			"""{"owner":${fqnJson(owner)},"member":${str(m.name.asString())},"kind":"method","arity":${m.parameters.count { it.kind == IrParameterKind.Regular }}}""" } }
+			"""{"owner":${fqnJson(owner)},"member":${str(m.name.asString())},"kind":"method","arity":${emittedParamCount(m)}}""" } }
 	}
 	return if (items.isEmpty()) "" else ""","overrides":[${items.joinToString(",")}]"""
 }
@@ -1222,6 +1228,12 @@ internal fun BirEmitter.paramsJson(params: List<org.jetbrains.kotlin.ir.declarat
 internal fun BirEmitter.isValueParameter(p: IrValueParameter): Boolean =
 	p.kind == IrParameterKind.Regular || p.kind == IrParameterKind.Context
 
+/** How many parameters `fn` EMITS: the [isValueParameter] physical sequence with the extension receiver's leading
+ *  `__self` counted first. The one number to hand any consumer that compares against a .NET parameter count. */
+internal fun BirEmitter.emittedParamCount(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): Int =
+	(if (fn.parameters.any { it.kind == IrParameterKind.ExtensionReceiver }) 1 else 0) +
+		fn.parameters.count { isValueParameter(it) }
+
 /** THE 2-TIER default-argument test (docs/dotkt-semantics.md): can the parameter's OWN CLR type carry its default as
  *  a `[DefaultParameterValue]` constant? TRUE (Tier 1) — a primitive/char/bool const on its primitive param, a String
  *  const on a `String` param, or a null const on any nullable/reference param → native `[Optional]`+`[DefaultParameterValue]`.
@@ -1398,7 +1410,10 @@ internal fun BirEmitter.isAnySlotMethod(fn: IrSimpleFunction): Boolean {
 	val hasDispatch = fn.parameters.any { it.kind == IrParameterKind.DispatchReceiver }
 	val hasExt = fn.parameters.any { it.kind == IrParameterKind.ExtensionReceiver }
 	if (!hasDispatch || hasExt) return false
-	val reg = fn.parameters.count { it.kind == IrParameterKind.Regular }
+	// [isValueParameter], not `Regular`: `context(c: C) fun toString(): String` is legal Kotlin and is NOT the
+	// universal slot — it takes an argument on the CLR. Counting only the regular parameters made it `reg == 0`,
+	// renaming `ToString(C)` onto System.Object's slot (the exact arity gate bir2cir's AnySlotRebind relies on).
+	val reg = fn.parameters.count { isValueParameter(it) }
 	return when (fn.name.asString()) {
 		"toString", "hashCode" -> reg == 0
 		"equals" -> reg == 1

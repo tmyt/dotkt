@@ -237,7 +237,9 @@ private fun BirEmitter.suspendLambda(node: IrFunctionExpression): String? {
  *  var` at ilemit). Removing them yields the correct bare `{"k":"local","name":<param>}`. Saved + restored,
  *  mirroring `emitInlineLambdaCarrier`. */
 private inline fun <T> BirEmitter.withLambdaParamShadow(fn: IrSimpleFunction, block: () -> T): T {
-	val names = fn.parameters.filter { it.kind == IrParameterKind.Regular }.map { it.name.asString() }
+	// [isValueParameter], matching what `lambdaParamsJson` DECLARES for this lift — shadowing only the regular ones
+	// would leave a context parameter's body read bound to an enclosing carrier's same-named local.
+	val names = fn.parameters.filter { isValueParameter(it) }.map { it.name.asString() }
 	val saved = names.associateWith { valSubst[it] }
 	names.forEach { valSubst.remove(it) }
 	try { return block() } finally {
@@ -1236,7 +1238,7 @@ internal fun BirEmitter.capValueExpr(d: IrValueDeclaration): String =
  * The lambda's value parameters in DELEGATE (physical `FunctionN` type-argument) order — everything but the
  * dispatch receiver, in `IrFunction.parameters` order, which fir2ir already lays out as the physical sequence:
  * CONTEXT parameters, then the EXTENSION RECEIVER, then the regular params. `context(A) B.(D) -> E` is
- * `@ExtensionFunctionType Function5<A, B, D, E>` — the contexts come BEFORE the receiver, so the IR order IS the
+ * `@ExtensionFunctionType Function3<A, B, D, E>` — the contexts come BEFORE the receiver, so the IR order IS the
  * delegate order and no re-sorting is needed. A receiver lambda `Scope.() -> Unit` is `Function1<Scope, Unit>`, so
  * its receiver is the first delegate argument (and the body's implicit-receiver refs resolve to it). Keeping this
  * consistent with `birType`'s view of the function type (which derives args from the FunctionN type arguments,
@@ -1252,7 +1254,7 @@ internal fun BirEmitter.orderedLambdaParams(fn: IrSimpleFunction): List<IrValueP
  *  For `context(A) B.(D) -> E` that puts the CONTEXT in `recv` and the real receiver in `params[0]`: the labels
  *  diverge from Kotlin's roles, but the PHYSICAL projection (`recv` prepended to `params` by `DelegateParams`) is
  *  the correct `A, B, D` — and physical agreement is the whole contract of this node. A non-extension context
- *  function type (`context(A) (D) -> E` = `Function3<A, D, E>`) has no recv and carries `[A, D]` in params.
+ *  function type (`context(A) (D) -> E` = `Function2<A, D, E>`) has no recv and carries `[A, D]` in params.
  *  A `suspend` lambda sets `fn.suspend=true`, carrying the suspend FACT for the SM builder. bir2cir ERASES a suspend
  *  `fn` to `object` wherever it appears in a TYPE slot; only the `funcType` node key itself keeps it. */
 internal fun BirEmitter.funcTypeOf(fn: IrSimpleFunction): TypeNode.Fn {

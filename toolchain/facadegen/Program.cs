@@ -1026,10 +1026,10 @@ static class FacadeGen
                 {
                     if (g.IsSpecialName || !g.Name.StartsWith("get_")) continue;
                     var gps = g.GetParameters();
-                    bool hasSelf = gps.Length > 0 && gps[0].Name == "__self";
+                    bool hasSelf = gps.Length > 0 && IsSelfSlot(gps[0]);
                     var ctxPs = gps.Skip(hasSelf ? 1 : 0).ToArray();
                     if (!hasSelf && ctxPs.Length == 0) continue;
-                    if (ctxPs.Length > 0 && !ctxPs.All(cp => HasCtxParamMarker(CustomAttributeData.GetCustomAttributes(cp)))) continue;
+                    if (ctxPs.Length > 0 && !ctxPs.All(IsCtxParam)) continue;
                     if (!Supported(g.ReturnType) || !gps.All(gp => Supported(gp.ParameterType))) continue;
                     var prot = Vis(g); if (prot == null) continue;
                     var pn = g.Name.Substring(4);
@@ -1056,8 +1056,15 @@ static class FacadeGen
                     events.Add(EventObj(ev, inv, t));
                 }
                 // Indexer (`this[i]`) -> `{indexType, valueType, rw}`; the injector synthesizes operator get/set.
+                // A DotKt member EXTENSION property (`class C { val T.p }`) and a member CONTEXT property
+                // (`class C { context(s: S) val p }`) also emit a one-parameter CLR property — their accessor takes
+                // `__self` / the context slot — but neither is a `this[i]` indexer, and surfacing one as one would
+                // inject an `operator fun get(...)` the producer never declared (and could shadow a real indexer on
+                // the same type). Both are already restored through the memberExtProps scan above; skip them here.
                 var ix = t.GetProperties(BindingFlags.Public | BindingFlags.Instance)
                     .FirstOrDefault(p => p.GetIndexParameters().Length == 1
+                        && !IsSelfSlot(p.GetIndexParameters()[0]) && !IsCtxParam(p.GetIndexParameters()[0])
+                        && p.GetIndexParameters()[0].Name != "__self"
                         && Supported(p.GetIndexParameters()[0].ParameterType) && Supported(p.PropertyType));
                 if (ix != null)
                     typeObj["indexer"] = new JsonObject {
@@ -1171,8 +1178,8 @@ static class FacadeGen
                 // names it `__self`; a C#-origin `[Extension]` static (`static int Twice(this W w)`) names it for real.
                 // Either way `ext:true` keeps it a member extension, reachable via `import Owner.f` (the C# `using static`
                 // analog). `inline` carries the spliceable body (composes with suspend/generic).
-                var csExt = ps.Length > 0 && ps[0].Name != "__self" && IsExtensionMethod(m);
-                var isExt = ps.Length > 0 && (ps[0].Name == "__self" || csExt);
+                var csExt = ps.Length > 0 && !IsSelfSlot(ps[0]) && !IsCtxParam(ps[0]) && IsExtensionMethod(m);
+                var isExt = ps.Length > 0 && (IsSelfSlot(ps[0]) || csExt);
                 // #179 round-trip (SYMBOL SURFACE — facadegen's half): a DotKt `class C : Comparable<X>` lowered its
                 // `operator fun compareTo` to the PascalCase `System.IComparable<X>.CompareTo(X)` slot (bir2cir
                 // DeclarationRename at lib emit). Restore the lowercase Kotlin operator name + `operator` flag so the
@@ -1993,6 +2000,12 @@ static class FacadeGen
             if (IsDotKtMetadata(cad, KCtxParamAttr)) return true;
         return false;
     }
+    static bool IsCtxParam(ParameterInfo p) => HasCtxParamMarker(CustomAttributeData.GetCustomAttributes(p));
+    // Slot 0 is the emitted extension receiver iff it is NAMED `__self` AND is not a context slot. The name alone is
+    // not enough: `context(__self: S) fun f(a: Int)` is legal Kotlin, so a user can put that exact name on a context
+    // parameter — reading it as a receiver would surface `fun S.f(a: Int)` and break `with(s) { f(1) }` at the module
+    // boundary, the very source break the marker exists to prevent.
+    static bool IsSelfSlot(ParameterInfo p) => p.Name == "__self" && !IsCtxParam(p);
     // Move a mapped delegate's FIRST arg into the fn receiver (through a nullable/oblivious wrapper). A non-delegate or
     // an argless delegate is returned unchanged (defensive — the marker only rides genuine `P.() -> R` positions).
     static TN WithExtRecv(TN t) => t switch
@@ -2271,9 +2284,9 @@ static class FacadeGen
             // a Kotlin `context(...)` parameter run, each context slot carrying [KotlinContextParameter]. A getter with
             // any OTHER parameter is not a property accessor at all (it stays a loose top-level `fun`). Without the
             // context split a `context(s: Scale) val gauge` would look like `val Scale.gauge` — a DIFFERENT declaration.
-            bool hasSelf = gps.Length > 0 && gps[0].Name == "__self";
+            bool hasSelf = gps.Length > 0 && IsSelfSlot(gps[0]);
             var ctxPs = gps.Skip(hasSelf ? 1 : 0).ToArray();
-            if (ctxPs.Length > 0 && !ctxPs.All(cp => HasCtxParamMarker(CustomAttributeData.GetCustomAttributes(cp)))) continue;
+            if (ctxPs.Length > 0 && !ctxPs.All(IsCtxParam)) continue;
             if (!hasSelf && ctxPs.Length == 0) continue;   // a 0-arg get_<n> is the #103 custom accessor of a field-backed prop
             if (!Supported(g.ReturnType) || !gps.All(gp => Supported(gp.ParameterType))) continue;
             var pn = g.Name.Substring(4);
@@ -2321,7 +2334,7 @@ static class FacadeGen
             var ret = k.suspend ? SuspendRetNode(m, t) : RetTypeSfxN(m, t);
             // An extension fun's receiver is the first param `__self` -> `mods.ext`. `mods.inline` carries the spliceable
             // body (in the assembly's [KotlinInline], read by the consumer's ilemit at splice time).
-            var isExt = ps.Length > 0 && ps[0].Name == "__self";
+            var isExt = ps.Length > 0 && IsSelfSlot(ps[0]);
             // ref/rt de-dup (Bug ④): skip a NON-EXTENSION factory (listOf/mapOf) whose return is an unresolvable kotlin
             // collection -> AMBIGUOUS with the jar's same-signature factory. Scoped to `kotlin.*` (a user `fun
             // makeList(): List<Int>` has no jar counterpart). EXTENSION funs are KEPT (receiver-based, no ambiguity).

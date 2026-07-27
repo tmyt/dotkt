@@ -80,6 +80,16 @@ var ctxGated: Int
     get() = ctxStore + s.factor
     set(v) { ctxStore = v - s.factor }
 
+// A `toString` that takes a CONTEXT parameter is NOT the universal System.Object slot — it takes an argument on the
+// CLR. The any-slot arity gate has to count the context slot; counting only the regular parameters made this
+// declaration `objectOverride:true`, renaming `ToString(CtxScale)` onto System.Object's own `ToString` slot so the
+// default `Any.toString()` no longer reached it. (Declaring BOTH this and an `override fun toString()` is an
+// overload-resolution ambiguity the frontend rejects, so the shape below is the reachable one.)
+class CtxNotAnySlot(val k: Int) {
+    context(s: CtxScale)
+    fun toString(): String = "k=" + (k * s.factor)
+}
+
 // --- members, inheritance -------------------------------------------------------------------------------------
 class CtxHolder(val base: Int) {
     context(s: CtxScale)
@@ -208,6 +218,9 @@ class ContextParameterTests {
             assertEquals(50, s.shape(5))                         // 50  interface member, virtual dispatch
             assertEquals(100, s.twice(5))                        // 100 a default interface method calling it
             assertEquals(50, (CtxDerived() as CtxBase).f(5))     // 50  (5 + 10 + 10) * 2 via `super.f`
+            // A context-parameterised `toString` does not take over System.Object's slot: `Any.toString()` still
+            // reaches the default implementation (which renders the type name).
+            assertEquals(true, (CtxNotAnySlot(7) as Any).toString().startsWith("CtxNotAnySlot"))  // true
         }
     }
 

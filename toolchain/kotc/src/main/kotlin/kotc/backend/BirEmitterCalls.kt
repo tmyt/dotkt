@@ -361,26 +361,26 @@ internal fun BirEmitter.enclosingThisSubst(
  *  function by resolved CallableId), matched by positional-param count ([isValueParameter]: contexts then regulars — the
  *  metadata's own param array is that same physical list). Null for a same-module callee or one with no such
  *  overload / ambiguous defaults. Shared by [filledArgs] (#134 const inline) and [filledInjectedArgs] (#146). */
-internal fun BirEmitter.injectedMetaDefaults(callee: org.jetbrains.kotlin.ir.declarations.IrFunction, regCount: Int): List<kotc.frontend.ClrConstDefault?>? =
+internal fun BirEmitter.injectedMetaDefaults(callee: org.jetbrains.kotlin.ir.declarations.IrFunction, valCount: Int): List<kotc.frontend.ClrConstDefault?>? =
 	when (callee) {
 		is org.jetbrains.kotlin.ir.declarations.IrConstructor ->
-			(callee.parent as? IrClass)?.classId?.let { kotc.frontend.clrInjectedCtorParamDefaults(it, regCount) }
+			(callee.parent as? IrClass)?.classId?.let { kotc.frontend.clrInjectedCtorParamDefaults(it, valCount) }
 		is org.jetbrains.kotlin.ir.declarations.IrSimpleFunction ->
 			(callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)
-				?.let { kotc.frontend.clrInjectedTopLevelParamDefaults(org.jetbrains.kotlin.name.CallableId(it.packageFqName, callee.name), regCount) }
+				?.let { kotc.frontend.clrInjectedTopLevelParamDefaults(org.jetbrains.kotlin.name.CallableId(it.packageFqName, callee.name), valCount) }
 		else -> null
 	}
 
 /** The non-constant Kotlin-default carrier slots restored by facadegen for an injected constructor/top-level function.
  * Unlike [carriesKotlinDefault], this survives the bodies-skipped dependency IR, where declaration-origin/default-body
  * details are intentionally incomplete. */
-internal fun injectedKotlinDefaultSlots(callee: org.jetbrains.kotlin.ir.declarations.IrFunction, regCount: Int): List<Boolean>? =
+internal fun injectedKotlinDefaultSlots(callee: org.jetbrains.kotlin.ir.declarations.IrFunction, valCount: Int): List<Boolean>? =
 	when (callee) {
 		is org.jetbrains.kotlin.ir.declarations.IrConstructor ->
-			(callee.parent as? IrClass)?.classId?.let { kotc.frontend.clrInjectedCtorKotlinDefaultSlots(it, regCount) }
+			(callee.parent as? IrClass)?.classId?.let { kotc.frontend.clrInjectedCtorKotlinDefaultSlots(it, valCount) }
 		is org.jetbrains.kotlin.ir.declarations.IrSimpleFunction ->
 			(callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)
-				?.let { kotc.frontend.clrInjectedTopLevelKotlinDefaultSlots(org.jetbrains.kotlin.name.CallableId(it.packageFqName, callee.name), regCount) }
+				?.let { kotc.frontend.clrInjectedTopLevelKotlinDefaultSlots(org.jetbrains.kotlin.name.CallableId(it.packageFqName, callee.name), valCount) }
 		else -> null
 	}
 
@@ -399,16 +399,16 @@ internal fun BirEmitter.filledInjectedArgs(call: org.jetbrains.kotlin.ir.express
 	val kotlinDefaultSlots = injectedKotlinDefaultSlots(callee, valCount)
 	val carries = carriesKotlinDefault(callee)
 	val out = ArrayList<String>()
-	var regIdx = -1
+	var valIdx = -1
 	callee.parameters.forEachIndexed { i, p ->
 		if (!isValueParameter(p)) return@forEachIndexed
-		regIdx++
+		valIdx++
 		val arg = if (i < call.arguments.size) call.arguments[i] else null
 		if (arg != null) { out.add(expr(arg)); return@forEachIndexed }
 		val def = p.defaultValue?.expression ?: return@forEachIndexed
 		if (def is org.jetbrains.kotlin.ir.expressions.IrErrorExpression) {
-			metaDefaults?.getOrNull(regIdx)?.let { metaConstArg(it, p.type) }?.let { out.add(expr(it)); return@forEachIndexed }
-			if (kotlinDefaultSlots?.getOrNull(regIdx) == true || carries) {
+			metaDefaults?.getOrNull(valIdx)?.let { metaConstArg(it, p.type) }?.let { out.add(expr(it)); return@forEachIndexed }
+			if (kotlinDefaultSlots?.getOrNull(valIdx) == true || carries) {
 				out.add(defaultArgPlaceholder)
 				return@forEachIndexed
 			}

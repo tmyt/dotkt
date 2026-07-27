@@ -745,9 +745,12 @@ counted only the regular parameters on one side of a call produced a short argum
 `InvalidProgramException` at run, or (for a generic context type) a silent `null` argument.
 
 A **property** with context parameters is the same rule applied to its accessors: `context(s: Scale) val gauge`
-emits `get_gauge(Scale)`, and `context(s: Scale) val Int.bumped` emits `get_bumped(int __self, Scale)`. Since a
-property whose accessor takes arguments is not a CLR property, these are plain `get_`/`set_` methods, exactly as a
-member extension property already was.
+emits `get_gauge(Scale)`, and `context(s: Scale) val Int.bumped` emits `get_bumped(int __self, Scale)`. A TOP-LEVEL
+one is a pair of `get_`/`set_` statics on the file class and no CLR property at all; a MEMBER one additionally gets a
+CLR property whose accessors take those arguments — a *parameterized* property, exactly as a member extension
+property (`class C { val T.p }`) already produced. Reflection therefore reports one index parameter for it, which is
+why facadegen's `this[i]` indexer probe has to exclude a `__self` / context slot rather than take the first
+one-parameter property it finds.
 
 **Deviations, both deliberate:**
 
@@ -755,7 +758,7 @@ member extension property already was.
   argument is resolved by the frontend from a value already in scope, so a Kotlin caller cannot pass null; this
   matches the existing treatment of receivers, which are also unchecked.
 - **`__self` precedes the contexts**, where Kotlin's own function-type layout puts contexts first
-  (`context(A) B.(D) -> E` is `Function4<A, B, D, E>`). The two orders coexist without ambiguity because they are
+  (`context(A) B.(D) -> E` is `@ExtensionFunctionType Function3<A, B, D, E>`). The two orders coexist without ambiguity because they are
   different surfaces: a *declaration* is `[__self] + contexts + regulars`, a *function type / lambda* keeps
   Kotlin's `contexts + receiver + params` (it must — that layout IS the `FunctionN` type argument order, and the
   delegate has to match it).
@@ -766,12 +769,15 @@ parameter and `with(scale) { scaled(5) }` would have to become `scaled(scale, 5)
 the module boundary, which is the one thing the round-trip metadata exists to prevent.
 
 **Known residual — a context FUNCTION TYPE does not round-trip its context arity.** `context(A) (B) -> C` is
-physically `Function3<A, B, C>` and works fully within a module (declaration, lambda, delegate, inline carrier).
+physically `Function2<A, B, C>` and works fully within a module (declaration, lambda, delegate, inline carrier).
 Across a module boundary, though, the marker above rides a *parameter*, and a context function TYPE is a property of
 the type in a parameter's slot — the peer of `[KotlinExtensionFunctionType]`, which the type layer does carry. So a
 consumer sees `fun h(f: (A, B) -> C)` where the producer wrote `fun h(f: context(A) (B) -> C)`, and must spell the
-context as a lambda parameter (`h { a, b -> … }`). The failure mode is a consumer-side compile error (an arity
-mismatch), never a miscompile.
+context as a lambda parameter (`h { a, b -> … }`) — a consumer-side arity compile error until they do. The
+RECEIVER-carrying form degrades more quietly: `funcTypeOf` puts the leading context in `recv`, so the slot is stamped
+`[KotlinExtensionFunctionType]` and the consumer restores `context(A) B.(D) -> E` as `A.(B, D) -> E` — physically the
+same delegate with the receiver relabelled, and no diagnostic. Neither form miscompiles; both change the source shape
+a consumer must write.
 
 Kotlin itself rules out the shapes this projection could not express: a callable reference to a context function, a
 context parameter on a constructor, a *delegated* context property, and a *field-backed* context property are all
