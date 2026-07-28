@@ -992,6 +992,14 @@ exactly once and ahead of the argument, however many fields the call omits. This
 nature reaches the consumer — i.e. one resolved through the frontend KLIB (`kotlin.Pair`, `kotlin.Triple`). A data
 class RE-CONSUMED from a DotKt library dll does not reach it at all: see the `data class` row in §10.2.
 
+**Known gap — a GENERIC callee's non-constant default, cross-module (named, not silent).** A `@KotlinDefault` carrier
+holds the default rendered in the CALLEE's own type frame, where its type parameter is erased; the splice binds the
+carrier's `{this}`/`{defaultArgParam n}` tokens to this call's values but does not substitute this call's TYPE
+arguments into it. So `fun <T> f(a: List<T> = emptyList(), n: Int = a.size)` omitted from a consumer as `f<String>()`
+fills `a` with a `List<Any>`-shaped value while the slot is `List<String>` — the values are right and the program runs,
+but the emitted IL does not verify. Closing it means substituting the call's type arguments into the materialized
+carrier at the splice, the way an inline body's splice already does.
+
 **#146 known gap (named, not silent):** a non-const default that references a PRIVATE/internal library symbol
 (`= privateHelper()`) is NOT poison-detected at stamp time — it is carried, then fails LOUDLY (imprecise) at the
 consumer's re-lower (the private symbol is absent from the public ref surface → an unresolved `callStatic`/`FindStatic`),

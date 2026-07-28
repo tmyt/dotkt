@@ -647,8 +647,26 @@ sealed partial class Emitter
                 EmitExpr(e.GetProperty("recv"));
                 _il.Emit(OpCodes.Ldflda, ResolveField(ParseOwnerSlot(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out _));
                 return;
+            case "staticField":
+                _il.Emit(OpCodes.Ldsflda, ResolveField(ParseOwnerSlot(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out _));
+                return;
+            case "arrayGet":
+                EmitExpr(e.GetProperty("array"));
+                EmitExpr(e.GetProperty("index"));
+                _il.Emit(OpCodes.Ldelema, MapType(e.GetProperty("elem")));
+                return;
+            case "stackGet":
+                // The stack-buffer slot's own address (the value path Ldobj's through exactly this).
+                EmitStackBounds(e);
+                EmitStackAddr(e, MapType(e.GetProperty("elem")));
+                return;
         }
+        // THE RVALUE FALLBACK: materialize the value and hand out the temporary's address. That is the right answer for
+        // an expression that designates no storage — but only when it is a VALUE. An expression that already yields a
+        // managed pointer (a `ref`-returning property accessor, say) IS the address; copying it into a `ref T` local and
+        // taking THAT address hands the callee a `ref ref T`.
         var t = EmitExpr(e);
+        if (t != null && t.IsByRef) return;
         var tmp = _il.DeclareLocal(t);
         _il.Emit(OpCodes.Stloc, tmp);
         _il.Emit(OpCodes.Ldloca, tmp);

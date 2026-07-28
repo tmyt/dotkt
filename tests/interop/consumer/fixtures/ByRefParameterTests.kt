@@ -71,6 +71,9 @@ private fun brOrderCallRvalue(): Int = brOrderTake(byref(brOrderPlain()))
 // argument is the address of a copy. The live-ref form is the delegate one (`var x by byref(c.Slot(1))`), which is
 // typed `ClrRef<Int>` and keeps the pointer — see `byrefDelegateForwardedToARefParameter`.
 private fun brOrderCallRefReturn(c: Calc): Int = brOrderTake(byref(c.Slot(brOrderIdx())))
+
+// A singleton's properties, so `byref(BrHold.a)` names a STATIC storage location rather than an instance field.
+object BrHold { var a = 1; var b = 2 }
 // The location's impure operand is an INLINE-SPLICED block, which carries no type stamp of its own — its type is its
 // result's. An untyped pin would abort the build on source the frontend accepted.
 private fun brOrderCallSplicedOperand(): Int = brOrderTake(byref(run { brOrderMk() }.n))
@@ -90,6 +93,24 @@ class ByRefParameterTests {
         c.Swap(byref(a), byref(b))                          // ref params -> must swap THROUGH the delegates
         assertEquals("20 10", "$a $b")                      // 20 10  (was "10 20": the swap hit two temporaries)
         assertEquals("20 10", "${c.Slot(0)} ${c.Slot(1)}")  // ...and it landed in the producer's array
+    }
+
+    // The other GENUINE lvalues a by-reference argument can name. `EmitAddr` had arms for a local, `this` and a
+    // direct field only; everything else fell to the rvalue path — materialize into a temporary and hand out ITS
+    // address — which is verifiable IL that swaps two temporaries and drops both writes. Same silent-lost-write class
+    // as the delegate read above, so these assert that the write LANDS in the storage the source named.
+    @TestAttribute
+    fun byrefOfAnArrayElementAndAStaticField() {
+        val c = Calc()
+
+        val xs = intArrayOf(10, 20)
+        c.Swap(byref(xs[0]), byref(xs[1]))                  // ldelema, not a copy
+        assertEquals("20 10", "${xs[0]} ${xs[1]}")          // 20 10  (was "10 20")
+
+        BrHold.a = 1
+        BrHold.b = 2
+        c.Swap(byref(BrHold.a), byref(BrHold.b))            // a static field's own address
+        assertEquals("2 1", "${BrHold.a} ${BrHold.b}")      // 2 1    (was "1 2")
     }
 
     @TestAttribute

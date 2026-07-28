@@ -227,7 +227,9 @@ internal fun BirEmitter.filledArgs(
 		val address = addressSlotExpr(arg, p)
 		val emitted =
 			if (address != null)
-				plan?.bind("arg", "address", isStableAddress(arg), birType(p.type).toJson(),
+				plan?.bind("arg", "address", isStableAddress(arg),
+					// The SLOT's type, so the callee's frame — closed here like every other callee type.
+					withDefaultTypeScope(call, callee) { birType(p.type).toJson() },
 					"argument '${p.name.asString()}' of '$label'", address) ?: address
 			else {
 				plan?.bindValue(arg, "arg", "argument '${p.name.asString()}' of '$label'")
@@ -243,28 +245,16 @@ internal fun BirEmitter.filledArgs(
 		if (provided[idx] != null) return@forEachIndexed
 		val p = pair.second
 		val def = p.defaultValue?.expression ?: return@forEachIndexed
-		// THE TYPE-FRAME SCOPE, around EVERY rendering of this default — not only the one that reads the callee's own
-		// values. A default's EXPRESSION may read nothing at all and still mention the callee's type parameters in its
-		// TYPES (`fun <U> f(x: List<Pair<T, U>> = emptyList())` in a `class C<T>`), and those types belong to the
-		// callee's frame whatever the expression does. Gating the closure on what the expression READS closed the
-		// value-reading defaults and left the type-only ones open, which is invalid metadata in the caller's frame.
-		//   COMPOSED, never replaced: a default may itself be a call filling a default of its own, and that inner frame
-		// closes against THIS one, which closes against the call site. Applying only the inner substitution would leave
-		// this frame's variables open — `class H<X>(val x: X) { fun get(a: X = x) }` read from
-		// `class O<T>(val h: H<T>) { fun outer(a: T = h.get()) }` closes `H.X` to `O.T` and stops, leaving `O.T` in a
-		// caller that has no such slot. Inner first, then outer, to any depth.
-		val savedSubst = defaultTypeSubst
-		val here = callSiteSubstitutor(call, callee)
-		defaultTypeSubst = when {
-			here == null -> savedSubst
-			savedSubst == null -> { t: IrType -> here.substitute(t) }
-			else -> { t: IrType -> savedSubst(here.substitute(t)) }
-		}
-		val filled = try {
+		// THE TYPE-FRAME SCOPE ([withDefaultTypeScope]), around EVERY rendering of this default AND the type its
+		// binding is declared with — not only the branch that reads the callee's own values. A default's EXPRESSION may
+		// read nothing at all and still mention the callee's type parameters in its TYPES
+		// (`fun <U> f(x: List<Pair<T, U>> = emptyList())` in a `class C<T>`), and those types belong to the callee's
+		// frame whatever the expression does.
+		val filled = withDefaultTypeScope(call, callee) {
 			fillOmitted(call, callee, plan, p, def, idx, vals, provided, metaDefaults, kotlinDefaultSlots, carries,
 				valueSyms, receiverSyms, enclosingSyms, receiverParams, enclosingThis, dispatchRecv, extRecv,
 				enclosingRecv, filledByParam, label)
-		} finally { defaultTypeSubst = savedSubst }
+		}
 		if (filled != null) { slots[idx] = filled; filledByParam[p] = filled }
 	}
 	return slots.filterNotNull()
@@ -615,7 +605,8 @@ internal fun BirEmitter.filledInjectedArgs(call: org.jetbrains.kotlin.ir.express
 		val address = byrefMarker(arg)?.let { inner -> byrefBackingField(inner) ?: expr(inner) }
 		slots[valIdx] =
 			if (address != null)
-				plan?.bind("arg", "address", isStableAddress(arg), birType(p.type).toJson(),
+				plan?.bind("arg", "address", isStableAddress(arg),
+					withDefaultTypeScope(call, callee) { birType(p.type).toJson() },
 					"argument '${p.name.asString()}' of '$label'", address) ?: address
 			else plan?.bindValue(arg, "arg", "argument '${p.name.asString()}' of '$label'") ?: expr(arg)
 	}
@@ -623,18 +614,10 @@ internal fun BirEmitter.filledInjectedArgs(call: org.jetbrains.kotlin.ir.express
 	vals.forEachIndexed { valIdx, (i, p) ->
 		if (i < call.arguments.size && call.arguments[i] != null) return@forEachIndexed
 		val def = p.defaultValue?.expression ?: return@forEachIndexed
-		// The same unconditional type-frame scope as [filledArgs]: an injected callee's default is rendered into THIS
-		// frame, and its types are the callee's whatever its expression reads.
-		val savedSubst = defaultTypeSubst
-		val here = callSiteSubstitutor(call, callee)
-		defaultTypeSubst = when {
-			here == null -> savedSubst
-			savedSubst == null -> { t: IrType -> here.substitute(t) }
-			else -> { t: IrType -> savedSubst(here.substitute(t)) }
-		}
+		// The same unconditional type-frame scope as [filledArgs], covering the binding TYPE as well as the rendering.
 		var stableFill = false
-		val emitted: String? = try {
-			if (def is org.jetbrains.kotlin.ir.expressions.IrErrorExpression) {
+		val bound: String? = withDefaultTypeScope(call, callee) {
+			val rendered: String? = if (def is org.jetbrains.kotlin.ir.expressions.IrErrorExpression) {
 				metaDefaults?.getOrNull(valIdx)?.let { metaConstArg(it, p.type) }?.let { stableFill = true; expr(it) }
 					?: if (kotlinDefaultSlots?.getOrNull(valIdx) == true || carries) defaultArgPlaceholder else {
 						val laterArgProvided = (i + 1 until call.arguments.size).any { j ->
@@ -646,10 +629,14 @@ internal fun BirEmitter.filledInjectedArgs(call: org.jetbrains.kotlin.ir.express
 						null
 					}
 			} else { stableFill = isStableValue(def); expr(def) }
-		} finally { defaultTypeSubst = savedSubst }
-		if (emitted == null) return@forEachIndexed
-		slots[valIdx] = plan?.bind("default", "value", stableFill, birType(p.type).toJson(),
-			"default of parameter '${p.name.asString()}'", emitted) ?: emitted
+			// The BINDING TYPE is rendered here too, INSIDE the scope. `p.type` is the callee's, so reading it after
+			// the restore leaves an injected generic callee's own `!!0` open in the consumer's frame — and a binding a
+			// later default reads becomes a local, which would then be declared with it.
+			if (rendered == null) null
+			else plan?.bind("default", "value", stableFill, birType(p.type).toJson(),
+				"default of parameter '${p.name.asString()}'", rendered) ?: rendered
+		}
+		if (bound != null) slots[valIdx] = bound
 	}
 	slots.forEach { if (it != null) out.add(it) }
 	return out

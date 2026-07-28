@@ -1,6 +1,7 @@
 package kotc.backend
 
 import org.jetbrains.kotlin.ir.expressions.IrExpression
+import org.jetbrains.kotlin.ir.types.IrType
 
 // THE CALL-EVALUATION PLAN (BIR `callEval` / `bindRef`; spec docs/bir-cir-spec.md §2.7).
 //
@@ -84,6 +85,31 @@ internal fun <T> BirEmitter.withCallPlan(call: IrExpression, emit: () -> T): Pai
 		if (previous != null) callPlans[call] = previous else callPlans.remove(call)
 	}
 	return plan to out
+}
+
+/** Run `emit` with `callee`'s type frame closed against this call site — the type-level half of the `$default` scope.
+ *
+ *  EVERY rendering of a callee type into the caller's frame goes through here, because a type written in the callee's
+ *  frame names a slot the caller either does not have or has filled with something else. That includes a default whose
+ *  EXPRESSION reads nothing at all (its types are still the callee's), and it includes the type a binding is DECLARED
+ *  with — reading `p.type` after the scope has been restored is the same bug one line later.
+ *
+ *  COMPOSES rather than replaces: a default may itself be a call filling a default of its own, and that inner frame
+ *  closes against THIS one, which closes against the call site. Inner first, then whatever was already installed, so
+ *  at any nesting depth every open type variable ends up closed against the outermost call site. */
+internal fun <T> BirEmitter.withDefaultTypeScope(
+	call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression,
+	callee: org.jetbrains.kotlin.ir.declarations.IrFunction,
+	emit: () -> T,
+): T {
+	val saved = defaultTypeSubst
+	val here = callSiteSubstitutor(call, callee)
+	defaultTypeSubst = when {
+		here == null -> saved
+		saved == null -> { t: IrType -> here.substitute(t) }
+		else -> { t: IrType -> saved(here.substitute(t)) }
+	}
+	try { return emit() } finally { defaultTypeSubst = saved }
 }
 
 /** The plan of the call currently being emitted. Every path that fills arguments runs inside a plan scope
