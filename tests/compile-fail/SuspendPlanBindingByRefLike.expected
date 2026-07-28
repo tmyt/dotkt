@@ -1,0 +1,7 @@
+# The refusal names the declaration, the SOURCE ROLE the evaluation plan carried (not the minted binding id), the
+# offending type and the suspension the value spans.
+suspend-lowering: in `SuspendPlanBindingByRefLikeKt.cfbSpanArgumentAcrossSuspension`
+the argument 's' of 'cfbLen'
+which is byref-like (a `ref struct`, via `System.Span`)
+lives across the suspending call to `cfbRelay`
+(mirrors C# CS4007)

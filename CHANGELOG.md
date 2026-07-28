@@ -58,6 +58,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
     inverted, because the compromise it recorded was a property of the old shape;
   - the synthetic data-class `copy` is selected by its generated SIGNATURE (parameter names AND types mirroring the
     primary constructor), not by the name alone, so a user-declared `copy` overload cannot be mistaken for it.
+  The negative lane gains the shape where the plan genuinely has no CLR form — a byref-like argument at a call whose
+  LATER value suspends — and its refusal names the value's source role rather than the minted binding id.
 - **bir2cir (area:bir2cir): a suspend function no longer promotes EVERY local to a state-machine field — storage
   is now decided by real liveness, behind one gate, and a value the CLR cannot put in a field is refused at
   compile time instead of crashing at run time.** `CollectVarFields` spilled every `var` in a suspend body into an

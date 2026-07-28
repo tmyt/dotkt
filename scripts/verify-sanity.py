@@ -150,6 +150,10 @@ class Sanity:
             if not isinstance(body, list):
                 continue
             roots = [body]
+            # `preStmts` (the delegation's call-evaluation plan lowered to `var`s, spec §2.7) is emitted in the same
+            # frame, ahead of the delegating call: it DECLARES what thisArgs/baseArgs read.
+            if isinstance(ct.get("preStmts"), list):
+                roots.append(ct["preStmts"])
             if isinstance(ct.get("thisArgs"), list):
                 roots.append(ct["thisArgs"])
             if isinstance(ct.get("baseArgs"), list):

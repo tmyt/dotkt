@@ -23,7 +23,7 @@
 //   5. `for` `cmp` ∈ {<=, <, >=} — an unknown cmp silently miscompiles to an infinite loop.
 //
 // SCOPE units mirror ilemit's `_locals`/`_cfgLabels` lifetimes exactly: a method = params ∪ body; a ctor ALSO folds
-// in thisArgs/baseArgs (emitted in the same frame); the static-field-initializer group shares ONE .cctor `_locals`
+// in preStmts/thisArgs/baseArgs (emitted in the same frame); the static-field-initializer group shares ONE .cctor `_locals`
 // scope across ALL of a type's static inits. Collection is a full generic JSON recursion (over-collecting can only
 // WEAKEN a check → never a false reject) and stays intra-declaration.
 using System.Text.Json;
@@ -91,8 +91,10 @@ public static class IrSanity
     {
         if (!c.TryGetProperty("body", out var body) || body.ValueKind != JsonValueKind.Array) return;
         var roots = new List<JsonElement> { body };
-        // `: this(...)` / `: base(...)` args are emitted in the SAME frame as the body (before it), so a temp
-        // declared inside them shares the ctor's `_locals` — fold them into the scope.
+        // `preStmts` and the `: this(...)` / `: base(...)` args are emitted in the SAME frame as the body (before it),
+        // so a local declared in any of them shares the ctor's `_locals` — fold them all into the scope. `preStmts` is
+        // the delegation's call-evaluation plan lowered to `var`s (spec §2.7): it DECLARES what the args READ.
+        if (c.TryGetProperty("preStmts", out var pre) && pre.ValueKind == JsonValueKind.Array) roots.Add(pre);
         if (c.TryGetProperty("thisArgs", out var ta) && ta.ValueKind == JsonValueKind.Array) roots.Add(ta);
         if (c.TryGetProperty("baseArgs", out var ba) && ba.ValueKind == JsonValueKind.Array) roots.Add(ba);
         CheckScope(owner + "..ctor", ParamNames(c), roots, decl: c);
