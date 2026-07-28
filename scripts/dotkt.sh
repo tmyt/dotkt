@@ -92,8 +92,12 @@ rsp="$work/references.rsp"
 printf '%s\n' "${FRAMEWORK_COMPILE_REF_PATHS[@]}" "${extra_refs[@]}" > "$rsp"
 jobs="${DOTKT_DLL2KLIB_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || printf '1')}"
 dotnet "$DLL2KLIB_DLL" --out "$klibs" --jobs "$jobs" @"$rsp" >/dev/null
+case "${OS:-}" in
+	Windows_NT) klib_cp_sep=';' ;;
+	*) klib_cp_sep=':' ;;
+esac
 cp="$FE_KLIB"
-while IFS= read -r klib; do cp+="${cp:+:}$klib"; done < <(find "$klibs" -maxdepth 1 -type f -name '*.klib' | LC_ALL=C sort)
+while IFS= read -r klib; do cp+="${cp:+$klib_cp_sep}$klib"; done < <(find "$klibs" -maxdepth 1 -type f -name '*.klib' | LC_ALL=C sort)
 
 # 2. kotc: .kt -> BIR.
 info "compiling ${#kts[@]} file(s) -> BIR" >&2

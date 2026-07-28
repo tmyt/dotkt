@@ -16,7 +16,7 @@ Probe ref.dll
   -> bir2cir (CLR reference setでbinding)
   -> ilemit
   -> Consumer.dll
-  -> 実行結果 100
+  -> 実行結果 132
 ```
 
 CLR nullability、DotKt round-trip metadata、events/default arguments、nested
