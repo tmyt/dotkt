@@ -123,6 +123,7 @@ delegate定義assemblyは利用側KLIBのstale判定へ含める。現在のsurf
 - DotKt file facade、top-level/member extension property/function
 - operator / infix / suspend / inline / default parameter flag
 - object / sealed / fun interface / value class flag
+- value classのstandard underlying-property name / type metadata
 - exact Kotlin type carrier、nullable generic、collection identity
 - context parameter、extension/context/suspend function type
 - Kotlin 2.4.0 standard `IS_STATIC_FUNCTION` / `IS_STATIC_PROPERTY` flag
@@ -133,8 +134,9 @@ delegate定義assemblyは利用側KLIBのstale判定へ含める。現在のsurf
 - conforming `GetAwaiter` patternからのmetadata-only suspend `await()`合成
 - packageに宣言がないassemblyを含む明示的empty root fragment
 
-既知の残件は、任意のuser annotation、explicit interface implementation、
-value class underlying-property metadata、明示的companion objectである。
+CLR宣言へ付与された任意のuser annotationのapplication roundtripは意図的な
+non-goalとする。既知の残件は、explicit interface implementationと
+明示的companion objectである。
 pointer / function pointerは現在`Any?`へ退避する。24引数以上を含むhigh-arity
 KFunc/KActionの一般ABIはissue #220で追跡し、この移行のscope外とする。
 

@@ -144,6 +144,8 @@ message Class {
   repeated Property property = 10;
   repeated EnumEntry enum_entry = 13;
   repeated int32 sealed_subclass_fq_name = 16 [packed = true];
+  optional int32 inline_class_underlying_property_name = 17;
+  optional Type inline_class_underlying_type = 18;
   repeated Annotation class_annotation = 170;
 }
 

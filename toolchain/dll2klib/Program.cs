@@ -649,6 +649,7 @@ internal sealed class AssemblyScanner
         var isAnnotation = IsAttributeType(handle);
         var isObject = _attrs.Has(handle, MetadataAttributes.DotKtNs + "KotlinObjectAttribute");
         var isKotlinSealed = _attrs.Has(handle, MetadataAttributes.DotKtNs + "KotlinSealedAttribute");
+        var isKotlinValue = _attrs.Has(handle, MetadataAttributes.DotKtNs + "KotlinValueAttribute");
         var kind = isObject ? 5 : isInterface ? 1 : isEnum ? 2 : isAnnotation ? 4 : 0;
         var modality = isKotlinSealed ? 3
             : kind == 1 || (def.Attributes & TypeAttributes.Abstract) != 0 ? 2
@@ -658,7 +659,7 @@ internal sealed class AssemblyScanner
             Flags = Flags.Declaration(
                 modality,
                 kind,
-                isValue: _attrs.Has(handle, MetadataAttributes.DotKtNs + "KotlinValueAttribute"),
+                isValue: isKotlinValue,
                 isFun: _attrs.Has(handle, MetadataAttributes.DotKtNs + "KotlinFunInterfaceAttribute"),
                 hasEnumEntries: isEnum),
         };
@@ -683,6 +684,8 @@ internal sealed class AssemblyScanner
         }
 
         var typeContext = new GenericContext(handle, default, typeParameterIds);
+        if (isKotlinValue)
+            AddValueClassRepresentation(handle, def, result, names, signatures, typeContext);
         var accessorPairs = KotlinAccessorPairs(def);
         var customFieldAccessors = CustomFieldAccessors(def);
         var accessorMethods = accessorPairs
@@ -1041,6 +1044,44 @@ internal sealed class AssemblyScanner
         MarkLowPriorityDelegateOverloads(result.Constructor, names);
         MarkLowPriorityDelegateOverloads(result.Function, names);
         return result;
+    }
+
+    private void AddValueClassRepresentation(
+        TypeDefinitionHandle ownerHandle,
+        TypeDefinition owner,
+        Class declaration,
+        NameTable names,
+        SignatureDecoder signatures,
+        GenericContext context)
+    {
+        // [KotlinValue] authenticates this as a DotKt value-class declaration. Its one
+        // declared instance field is the underlying value; static fields are unrelated
+        // implementation details. Preserve the Kotlin property name independently of
+        // constructor visibility/order so FIR need not reconstruct it from a projected
+        // primary constructor.
+        var instanceFields = owner.GetFields()
+            .Select(handle => (Handle: handle, Field: _md.GetFieldDefinition(handle)))
+            .Where(x => (x.Field.Attributes & FieldAttributes.Static) == 0)
+            .ToArray();
+        if (instanceFields.Length != 1) return;
+
+        var (fieldHandle, field) = instanceFields[0];
+        var fieldName = _md.GetString(field.Name);
+        var propertyName = owner.GetProperties()
+            .Select(handle => _md.GetString(_md.GetPropertyDefinition(handle).Name))
+            .FirstOrDefault(name =>
+                fieldName == name ||
+                fieldName == "<" + name + ">k__BackingField")
+            ?? fieldName;
+
+        declaration.InlineClassUnderlyingPropertyName = names.String(propertyName);
+        declaration.InlineClassUnderlyingType = ProjectType(
+            fieldHandle,
+            field.DecodeSignature(signatures, context),
+            ownerHandle,
+            names,
+            signatures,
+            context);
     }
 
     private void AddMemberAwaitBridges(
