@@ -669,10 +669,14 @@ internal sealed class AssemblyScanner
     private Class ReadClass(TypeDefinitionHandle handle, TypeDefinition def, NameTable names, SignatureDecoder signatures)
     {
         var metadataName = _md.GetString(def.Name);
-        var kotlinName = _arityNames.Simple(_md.GetString(def.Namespace), metadataName);
+        var metadataNamespace = _md.GetString(def.Namespace);
+        var kotlinName = _arityNames.Simple(metadataNamespace, metadataName);
         var isInterface = (def.Attributes & TypeAttributes.Interface) != 0;
         var isEnum = IsSystemType(def.BaseType, "System", "Enum");
         var isAnnotation = IsAttributeType(handle);
+        var isClrExceptionRoot =
+            metadataNamespace == "System" &&
+            metadataName == "Exception";
         var isObject = _attrs.Has(handle, MetadataAttributes.DotKtNs + "KotlinObjectAttribute");
         var isKotlinSealed = _attrs.Has(handle, MetadataAttributes.DotKtNs + "KotlinSealedAttribute");
         var isKotlinValue = _attrs.Has(handle, MetadataAttributes.DotKtNs + "KotlinValueAttribute");
@@ -739,7 +743,16 @@ internal sealed class AssemblyScanner
         }
         else
         {
-            if (!def.BaseType.IsNil &&
+            // Kotlin's frontend only permits Throwable subtypes in throw/catch,
+            // while ECMA-335 roots the physical CLR exception hierarchy at
+            // System.Exception : System.Object. Give that one CLR root its
+            // Kotlin vocabulary edge; every CLR exception subclass then
+            // inherits Throwable transitively. bir2cir still lowers the
+            // declaration itself to System.Exception, so no physical CLR
+            // inheritance is invented.
+            if (isClrExceptionRoot)
+                result.Supertype.Add(signatures.NamedType("kotlin.Throwable"));
+            else if (!def.BaseType.IsNil &&
                 !IsSystemType(def.BaseType, "System", "Object") &&
                 !IsSystemType(def.BaseType, "System", "ValueType") &&
                 !IsSystemType(def.BaseType, "System", "Attribute"))

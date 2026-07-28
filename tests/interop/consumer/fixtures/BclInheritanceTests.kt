@@ -14,6 +14,7 @@
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import System.Exception
+import System.InvalidOperationException
 
 // il-netbase : inherit a real .NET base class — base ctor call + SetParent + inherited .NET member.
 class IntropBNetBaseAppError(val code: Int) : Exception("app error")
@@ -41,5 +42,22 @@ class BclInheritanceTests {
     fun overrideNetVirtual() {
         assertEquals("AppError #7", intropBNetBase2Describe(IntropBNetBase2AppError(7)))    // AppError #7
         assertEquals("AppError #21", intropBNetBase2Describe(IntropBNetBase2FatalError(21))) // AppError #21
+    }
+
+    @TestAttribute
+    fun rawClrExceptionHierarchyIsThrowable() {
+        val root = try {
+            throw Exception("clr root")
+        } catch (e: Exception) {
+            e.Message
+        }
+        assertEquals("clr root", root)
+
+        val derived = try {
+            throw InvalidOperationException("clr derived")
+        } catch (e: InvalidOperationException) {
+            e.Message
+        }
+        assertEquals("clr derived", derived)
     }
 }

@@ -132,6 +132,7 @@ delegate定義assemblyは利用側KLIBのstale判定へ含める。現在のsurf
   `compile_time_value`射影
 - CLR `GetEnumerator` patternからのKotlin `iterator()`合成
 - conforming `GetAwaiter` patternからのmetadata-only suspend `await()`合成
+- `System.Exception`から`kotlin.Throwable`への論理supertype接続
 - explicit interface MethodImplのproperty / method / generic method surface
 - packageに宣言がないassemblyを含む明示的empty root fragment
 
