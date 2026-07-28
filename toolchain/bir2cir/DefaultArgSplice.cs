@@ -182,8 +182,16 @@ static class DefaultArgSplice
                     "carried by several referenced declarations whose defaults disagree; pass the argument explicitly");
             return;
         }
-        Fill(args, slotBinding, sigCount, defaults, ctorNoReceiver: isNew, label, refs, hoist, localOwner);
+        // The call site's TYPE arguments, for closing the carrier's own frame below: a generic callee's default is
+        // carried as the callee wrote it, with its type parameters as positional `tv`s.
+        var methodTypeArgs = node["typeArgs"] as JsonArray;
+        var ownerTypeArgs = TypeArgsOf(isNew ? node["type"] : node["ownerType"]);
+        Fill(args, slotBinding, sigCount, defaults, ctorNoReceiver: isNew, label, refs, hoist, localOwner,
+            methodTypeArgs, ownerTypeArgs);
     }
+
+    // The type ARGUMENTS of a `{t:fqn}` type reference, or null.
+    static JsonArray TypeArgsOf(JsonNode type) => (type as JsonObject)?["args"] as JsonArray;
 
     /// Materialise every omitted default of `args` from `defaults` and write it into the binding the slot READS.
     /// Nothing is hoisted and nothing is wrapped: the values a carrier binds are already bindings, so a
@@ -191,7 +199,8 @@ static class DefaultArgSplice
     /// evaluation. `ctorNoReceiver` marks the call shapes with no receiver at all (a `new`, a delegation), where a
     /// `{k:this}` token has nothing to bind and is refused.
     static void Fill(JsonArray args, JsonObject[] slotBinding, int sigCount, Dictionary<int, string> defaults,
-        bool ctorNoReceiver, string label, ReferenceMetadataIndex refs, JsonArray hoist, JsonNode localOwner)
+        bool ctorNoReceiver, string label, ReferenceMetadataIndex refs, JsonArray hoist, JsonNode localOwner,
+        JsonArray methodTypeArgs, JsonArray ownerTypeArgs)
     {
         // ASCENDING, mirroring the declaration order Kotlin evaluates defaults in — though the fills no longer depend
         // on it: a later default referencing an earlier slot gets that slot's binding read, whatever has been written
@@ -205,7 +214,8 @@ static class DefaultArgSplice
             // carrier binds to nothing (kotc refuses to carry one — `defaultReadsDispatch` poisons it — and
             // `SpliceOne` asserts it here).
             var receiver = ctorNoReceiver ? null : (args.Count > 0 ? args[0] : null);
-            if (SpliceOne(bir, receiver, args, hoist, refs, label, j, localOwner, ctorNoReceiver) is not JsonNode fill) continue;
+            if (SpliceOne(bir, receiver, args, hoist, refs, label, j, localOwner, ctorNoReceiver,
+                    methodTypeArgs, ownerTypeArgs) is not JsonNode fill) continue;
             binding["expr"] = fill;
             // kotc reserved this binding conservatively (it could not know what would fill it). Now that the value is
             // known, record whether reading it twice is free — a constant default then costs no local at all.
@@ -220,7 +230,8 @@ static class DefaultArgSplice
         {
             if (!defaults.TryGetValue(pos, out var bir)) break;
             var receiver = ctorNoReceiver ? null : (args.Count > 0 ? args[0] : null);
-            if (SpliceOne(bir, receiver, args, hoist, refs, label, pos, localOwner, ctorNoReceiver) is JsonNode fill)
+            if (SpliceOne(bir, receiver, args, hoist, refs, label, pos, localOwner, ctorNoReceiver,
+                    methodTypeArgs, ownerTypeArgs) is JsonNode fill)
             { args.Add(fill); Walk(fill, refs, hoist, localOwner); }
             else break;
         }
@@ -270,7 +281,10 @@ static class DefaultArgSplice
                         "that arity is carried by several constructors whose defaults disagree; pass the argument explicitly");
                 return;
             }
-            Fill(args, slotBinding, args.Count, defaults, ctorNoReceiver: true, owner + " constructor", refs, hoist, localOwner);
+            // A delegation names its target by TYPE, so the base's own type arguments are the frame to close against;
+            // a constructor declares no type parameters of its own.
+            Fill(args, slotBinding, args.Count, defaults, ctorNoReceiver: true, owner + " constructor", refs, hoist,
+                localOwner, null, TypeArgsOf(type["base"]));
         }
     }
 
@@ -288,10 +302,20 @@ static class DefaultArgSplice
     // Parse a @KotlinDefault BIR-json string, unwrap a `defaultCarrier` (re-hoisting its lifted methods app-local), and
     // bind the callee's default-expression tokens (`{this}` / `{defaultArgParam idx}`) to THIS call's args. A deep-fresh
     // subtree per occurrence.
-    static JsonNode SpliceOne(string bir, JsonNode receiver, JsonArray args, JsonArray hoist, ReferenceMetadataIndex refs, string method, int slot, JsonNode localOwner, bool ctorNoReceiver = false)
+    static JsonNode SpliceOne(string bir, JsonNode receiver, JsonArray args, JsonArray hoist, ReferenceMetadataIndex refs, string method, int slot, JsonNode localOwner, bool ctorNoReceiver = false,
+        JsonArray methodTypeArgs = null, JsonArray ownerTypeArgs = null)
     {
         var parsed = MaterializeDefault(bir, hoist, refs, method, slot, localOwner);
         if (parsed == null) return null;
+        // CLOSE THE CARRIER'S OWN TYPE FRAME, before its tokens are bound. The carrier is the default as the CALLEE
+        // wrote it, so a generic callee's type parameters ride it as positional `tv`s — `fun <T> f(xs: MutableList<T> =
+        // mutableListOf())` carries `mutableListOf<tv{method,0}>()`. Nothing downstream resolves those in the
+        // CONSUMER's frame: they erase to `object`, so the consumer built a `List<Object>` for a `MutableList<String>`
+        // slot — right values, wrong runtime type, and unverifiable IL. This is the last sibling of the same rule kotc
+        // applies to same-module and injected defaults (every open type variable closes against the call site); here
+        // the substitution is positional because the carrier is JSON, and it runs BEFORE token substitution so the
+        // consumer's own `bindRef`s, inserted afterwards, are never re-substituted.
+        InlineSplice.SubstTvIn(parsed, methodTypeArgs ?? new JsonArray(), methodTypeArgs?.Count ?? 0, ownerTypeArgs);
         // A ctor call site has no receiver to bind a `{k:this}` to. Checked on the CARRIER, never on the substituted
         // result — that legitimately carries `this` whenever the CONSUMER passed an argument reading its own instance
         // (`Rect(this.w)`), which is the shape the same-module path already binds by symbol rather than by token.

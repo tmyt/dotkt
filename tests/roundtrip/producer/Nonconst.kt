@@ -64,6 +64,13 @@ fun note(msg: Int, tag: Int = 7): String = "$msg/$tag"
 fun scaled(a: Int, b: Int = a * 10): Int = a + b
 fun tri3(a: Int, b: Int = a + 1, c: Int = a * 100 + b): Int = c
 fun order3(p: Int, q: Int, r: Int = q * 10): String = "$p/$q/$r"
+// A GENERIC callee whose non-constant defaults mention its own type parameter. The carrier holds the default rendered
+// in the CALLEE's own frame, with `T` as a positional type variable; the CONSUMER's call site is where `T` is known,
+// so the splice has to close that frame there. Left open it erased to `Any`, which builds a `List<Any>` for a
+// `List<String>` slot: right values, wrong runtime type.
+fun <T> genDefaults(a: List<T> = emptyList(), n: Int = a.size): Int = n
+fun <T> genPairDefaults(a: List<Pair<T, Int>> = emptyList(), n: Int = a.size + 1): Int = n
+fun <T> genMutable(xs: MutableList<T> = mutableListOf()): MutableList<T> = xs
 var bumps: Int = 0
 fun bump(): Int { bumps++; return 3 }
 fun chain(a: Int, b: Int = bump(), c: Int = b * 10): Int = b * 1000 + c

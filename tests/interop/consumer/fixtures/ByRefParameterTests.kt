@@ -9,6 +9,7 @@ import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import OutRef.Calc
 import kotlin.clr.byref
 import kotlin.clr.ClrRef
+import kotlin.clr.stackBuffer
 
 annotation class ClrField
 
@@ -111,6 +112,21 @@ class ByRefParameterTests {
         BrHold.b = 2
         c.Swap(byref(BrHold.a), byref(BrHold.b))            // a static field's own address
         assertEquals("2 1", "${BrHold.a} ${BrHold.b}")      // 2 1    (was "1 2")
+    }
+
+    // A STACK-BUFFER slot by reference, with a SIDE-EFFECTING index. The bounds check and the address computation are
+    // one access, so the index is evaluated once: emitting them as two pieces incremented `i` twice per argument, and
+    // the second bounds check then ran against a different element than the access.
+    @TestAttribute
+    fun byrefOfAStackSlotEvaluatesItsIndexOnce() {
+        val c = Calc()
+        val log = stackBuffer<Int, String>(4) { b ->
+            b[0] = 10; b[1] = 20
+            var i = 0
+            c.Swap(byref(b[i++]), byref(b[i++]))
+            "$i ${b[0]} ${b[1]}"
+        }
+        assertEquals("2 20 10", log)                        // 2 increments (not 4), and the slots swapped
     }
 
     @TestAttribute

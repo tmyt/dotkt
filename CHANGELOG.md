@@ -86,6 +86,15 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
     way;
   - nested defaults compose their type frames instead of replacing them, so a default filling a default filling a
     default closes every open type variable against the OUTERMOST call site, at any depth;
+  - a GENERIC callee's non-constant default no longer arrives with the callee's type parameters open. The
+    `@KotlinDefault` carrier holds the default as the callee wrote it, so its type parameters ride it as positional
+    type variables; the splice now substitutes the CALL's type arguments into the materialized carrier before binding
+    its value tokens, the way an inline body's splice already does. `fun <T> f(xs: MutableList<T> = mutableListOf())`
+    omitted as `f<String>()` built a `MutableList<Any>` holding the right values — an `EntryPointNotFoundException`
+    where the erased object met the declared slot, and unverifiable IL where it did not;
+  - a stack-buffer slot taken BY REFERENCE evaluates its index once. The bounds check and the address computation are
+    one access behind a single helper the read and the write share; as two independent pieces they each evaluated the
+    index, so `Swap(byref(b[i++]), byref(b[i++]))` incremented `i` four times and swapped the wrong slots;
   - a local pinned out of a by-reference argument's location is always typed. `bir-common/NodeType.cs` is the one
     node-local "what type does this expression produce" derivation, shared with the suspend lowering's spill typing;
     a `kotlin.Any` fallback would box a value type and hide a type the CLR refuses, so an underivable node is

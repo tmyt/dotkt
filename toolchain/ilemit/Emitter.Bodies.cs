@@ -657,8 +657,7 @@ sealed partial class Emitter
                 return;
             case "stackGet":
                 // The stack-buffer slot's own address (the value path Ldobj's through exactly this).
-                EmitStackBounds(e);
-                EmitStackAddr(e, MapType(e.GetProperty("elem")));
+                EmitStackCheckedAddr(e, MapType(e.GetProperty("elem")));
                 return;
         }
         // THE RVALUE FALLBACK: materialize the value and hand out the temporary's address. That is the right answer for
@@ -672,10 +671,21 @@ sealed partial class Emitter
         _il.Emit(OpCodes.Ldloca, tmp);
     }
 
-    // Throw IndexOutOfRangeException unless 0 <= index < len (unsigned compare catches negatives too).
-    void EmitStackBounds(JsonElement e)
+    /// Bounds-check a stack-buffer access and push the address of the element: `ptr + index * sizeof(elem)`.
+    ///
+    /// ONE helper for every stack-slot access — the read, the write and the by-reference argument — because the INDEX
+    /// must be evaluated exactly ONCE and both halves need it. Emitting the check and the address as two independent
+    /// pieces evaluated `e.index` twice, so `b[i++]` incremented twice and the check ran against a different element
+    /// than the access: `Swap(byref(b[i++]), byref(b[i++]))` with `i == 0` left `i == 3` and threw.
+    void EmitStackCheckedAddr(JsonElement e, Type elem)
     {
+        // The index first and once, into a temp both halves read. (Order is unchanged: index, then len, then ptr.)
         EmitExpr(e.GetProperty("index"));
+        var idx = _il.DeclareLocal(typeof(int));
+        _il.Emit(OpCodes.Stloc, idx);
+
+        // Throw IndexOutOfRangeException unless 0 <= index < len (unsigned compare catches negatives too).
+        _il.Emit(OpCodes.Ldloc, idx);
         EmitExpr(e.GetProperty("len"));
         var ok = _il.DefineLabel();
         _il.Emit(OpCodes.Blt_Un, ok);
@@ -683,13 +693,9 @@ sealed partial class Emitter
         _il.Emit(OpCodes.Newobj, typeof(IndexOutOfRangeException).GetConstructor(new[] { typeof(string) }));
         _il.Emit(OpCodes.Throw);
         _il.MarkLabel(ok);
-    }
 
-    // Push the address `ptr + index * sizeof(elem)` (a byte* into the stack buffer).
-    void EmitStackAddr(JsonElement e, Type elem)
-    {
         EmitExpr(e.GetProperty("ptr"));
-        EmitExpr(e.GetProperty("index"));
+        _il.Emit(OpCodes.Ldloc, idx);
         _il.Emit(OpCodes.Sizeof, elem);
         _il.Emit(OpCodes.Mul);
         _il.Emit(OpCodes.Add);

@@ -2195,7 +2195,7 @@ static class InlineSplice
     // `newSuspendLambda` encode their OWN class type params as `tv{scope:type,i}` — the OWNER-class dispatchTypeArgs must
     // NOT reach them. `typeScope` flips off descending through those; METHOD-scope subst continues everywhere (a closure
     // body legitimately references the enclosing `tv{scope:method,i}`).
-    static void SubstTvIn(JsonNode node, JsonArray typeArgs, int ga, JsonArray dispatchTypeArgs = null, bool typeScope = true)
+    internal static void SubstTvIn(JsonNode node, JsonArray typeArgs, int ga, JsonArray dispatchTypeArgs = null, bool typeScope = true)
     {
         if (node is JsonObject o)
         {

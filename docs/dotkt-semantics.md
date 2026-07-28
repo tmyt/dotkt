@@ -992,13 +992,12 @@ exactly once and ahead of the argument, however many fields the call omits. This
 nature reaches the consumer — i.e. one resolved through the frontend KLIB (`kotlin.Pair`, `kotlin.Triple`). A data
 class RE-CONSUMED from a DotKt library dll does not reach it at all: see the `data class` row in §10.2.
 
-**Known gap — a GENERIC callee's non-constant default, cross-module (named, not silent).** A `@KotlinDefault` carrier
-holds the default rendered in the CALLEE's own type frame, where its type parameter is erased; the splice binds the
-carrier's `{this}`/`{defaultArgParam n}` tokens to this call's values but does not substitute this call's TYPE
-arguments into it. So `fun <T> f(a: List<T> = emptyList(), n: Int = a.size)` omitted from a consumer as `f<String>()`
-fills `a` with a `List<Any>`-shaped value while the slot is `List<String>` — the values are right and the program runs,
-but the emitted IL does not verify. Closing it means substituting the call's type arguments into the materialized
-carrier at the splice, the way an inline body's splice already does.
+A GENERIC callee's non-constant default closes its type frame at the call site too, like every other default. A
+`@KotlinDefault` carrier holds the default as the CALLEE wrote it, so its type parameters ride it as positional type
+variables; the splice substitutes this call's TYPE arguments into the materialized carrier before binding its
+`{this}`/`{defaultArgParam n}` tokens — the same thing an inline body's splice does, and the cross-module half of the
+rule kotc applies to same-module and injected defaults. So `fun <T> f(xs: MutableList<T> = mutableListOf())` omitted
+from a consumer as `f<String>()` builds a `MutableList<String>`, not a `MutableList<Any>` holding the right values.
 
 **#146 known gap (named, not silent):** a non-const default that references a PRIVATE/internal library symbol
 (`= privateHelper()`) is NOT poison-detected at stamp time — it is carried, then fails LOUDLY (imprecise) at the
