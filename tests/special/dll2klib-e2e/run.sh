@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# End-to-end proof that a CLR reference assembly can be projected directly to a
+# End-to-end regression test for projecting a CLR reference assembly directly to a
 # standard Kotlin 2.4.0 KLIB, with no facadegen JSON and no kotc declaration
 # generation extension: CLR ref.dll -> .klib -> kotc -> BIR -> bir2cir -> ilemit.
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-SCRIPT_NAME=dll2klib-poc
+SCRIPT_NAME=dll2klib-e2e
 source "$ROOT/scripts/lib.sh"
 
 usage() { cat <<EOF
 usage: $SCRIPT_NAME
-Runs the CLR-reference-to-standard-KLIB proof of concept. -h for this help.
+Runs the CLR-reference-to-standard-KLIB regression test. -h for this help.
 EOF
 }
 while (( $# )); do
@@ -18,7 +18,7 @@ while (( $# )); do
 	esac
 done
 
-OUT="$ROOT/build/dll2klib-poc"
+OUT="$ROOT/build/dll2klib-e2e"
 rm -rf "$OUT"
 mkdir -p "$OUT/tools" "$OUT/klib" "$OUT/klib-second" "$OUT/bir" "$OUT/cir" "$OUT/il"
 case "${OS:-}" in
@@ -35,12 +35,12 @@ need_stdlib_rt
 need_dotnet_reference_sets
 
 dotnet build "$ROOT/toolchain/dll2klib/dll2klib.csproj" -c Release -o "$OUT/tools" -v:q --nologo
-dotnet build "$ROOT/tests/special/dll2klib-poc/reference/Probe.csproj" -c Release -v:q --nologo
+dotnet build "$ROOT/tests/special/dll2klib-e2e/reference/Probe.csproj" -c Release -v:q --nologo
 
-PROBE_REF="$ROOT/tests/special/dll2klib-poc/reference/obj/Release/net10.0/ref/Probe.dll"
-PROBE_IMPL="$ROOT/tests/special/dll2klib-poc/reference/bin/Release/net10.0/Probe.dll"
-CONTRACTS_REF="$ROOT/tests/special/dll2klib-poc/reference/obj/Release/net10.0/ref/Probe.Contracts.dll"
-CONTRACTS_IMPL="$ROOT/tests/special/dll2klib-poc/reference/bin/Release/net10.0/Probe.Contracts.dll"
+PROBE_REF="$ROOT/tests/special/dll2klib-e2e/reference/obj/Release/net10.0/ref/Probe.dll"
+PROBE_IMPL="$ROOT/tests/special/dll2klib-e2e/reference/bin/Release/net10.0/Probe.dll"
+CONTRACTS_REF="$ROOT/tests/special/dll2klib-e2e/reference/obj/Release/net10.0/ref/Probe.Contracts.dll"
+CONTRACTS_IMPL="$ROOT/tests/special/dll2klib-e2e/reference/bin/Release/net10.0/Probe.Contracts.dll"
 PROBE_KLIB="$OUT/klib/Probe.klib"
 CONTRACTS_KLIB="$OUT/klib/Probe.Contracts.klib"
 
@@ -97,7 +97,7 @@ done
 
 # The only classpath metadata for Probe.Widget is the packed KLIB. In particular,
 # CLR_TYPES_METADATA is absent, so the old FIR injector cannot participate.
-env -u CLR_TYPES_METADATA "$KOTC" "$ROOT/tests/special/dll2klib-poc/consumer.kt" \
+env -u CLR_TYPES_METADATA "$KOTC" "$ROOT/tests/special/dll2klib-e2e/consumer.kt" \
 	-no-stdlib \
 	-classpath "$FE_KLIB$KLIB_CP_SEP$PROBE_KLIB$KLIB_CP_SEP$CONTRACTS_KLIB" -d "$OUT/bir"
 

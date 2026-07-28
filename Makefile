@@ -41,7 +41,7 @@ tool_src    = $(shell find toolchain/$(1) toolchain/bir-common -name '*.cs' -o -
 .PHONY: all toolchain kotc $(TOOLS) stdlib stdlib-klib stdlib-ref stdlib-rt pack \
         verify verify-core verify-tests verify-schema verify-sanity verify-msbuild verify-packaged-sdk \
         verify-roundtrip verify-wide-delegates \
-        dev facades dll2klib-poc clean clean-tools clean-stdlib clean-pack help
+        dev facades dll2klib-e2e clean clean-tools clean-stdlib clean-pack help
 
 all: pack ## one-shot: toolchain -> stdlib -> the 5 NuGet packages in build/nuget-feed
 
@@ -136,8 +136,8 @@ dev: ## compile (and run) one .kt: make dev SRC=Foo.kt [RUN=1 EXE=1 REF=x.dll NO
 		$(if $(NO_STDLIB),--no-stdlib) $(if $(RETARGET),--retarget) \
 		$(if $(OUT),-o "$(OUT)") $(if $(DIR),-d "$(DIR)") $(SRC)
 
-dll2klib-poc: ## CLR reference DLL -> standard metadata-only KLIB end-to-end proof
-	bash tests/special/dll2klib-poc/run.sh
+dll2klib-e2e: ## CLR reference DLL -> standard metadata-only KLIB end-to-end regression
+	bash tests/special/dll2klib-e2e/run.sh
 
 facades: ## FIR-injection metadata for .NET types: make facades OUT=out.meta TYPES="System.Text.StringBuilder ..."
 	@test -n "$(OUT)" && test -n "$(TYPES)" || { echo 'usage: make facades OUT=out.meta TYPES="Full.Type.Name ..."'; exit 2; }

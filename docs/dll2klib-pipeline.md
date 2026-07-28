@@ -215,7 +215,7 @@ callには`owner`を出す。annotationの解釈はここで完了し、bir2cir�
 ## 実行方法
 
 ```bash
-bash tests/special/dll2klib-poc/run.sh
+bash tests/special/dll2klib-e2e/run.sh
 ```
 
 testは別途facadegen metadataを生成せず、`CLR_TYPES_METADATA`も明示的にunsetする。
