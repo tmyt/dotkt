@@ -418,10 +418,9 @@ internal fun BirEmitter.innerClassDef(inner: IrClass): String {
 	return def
 }
 
-/** `@ClrField` opt-out: emit this property as a plain (public) CLR FIELD, no accessor/property. Detected by short
- *  name so any user-declared `ClrField` annotation triggers it. */
+/** `@kotlin.clr.ClrField` opt-out: emit this property as a plain (public) CLR FIELD, no accessor/property. */
 internal fun BirEmitter.isClrField(p: IrProperty): Boolean =
-	p.annotations.any { it.type.classFqName?.shortName()?.asString() == "ClrField" }
+	p.annotations.any { it.type.classFqName?.asString() == "kotlin.clr.ClrField" }
 
 /** `@kotlin.concurrent.Volatile` on a `var`'s backing field: a pure Kotlin-language fact (like `suspend`/
  *  `@Synchronized`, NOT a `@Clr*` binding). Emit a `"volatile":true` FIELD flag; bir2cir threads it through and
@@ -1174,10 +1173,8 @@ internal fun BirEmitter.isInlineWithLambda(fn: IrSimpleFunction): Boolean =
 // kotc does NO coroutine lowering. A `suspend fun`/lambda body emits PLAINLY: decls carry `"suspend":true`
 // (+ `resultType`), suspend call sites carry `"suspendCall":true`, and a suspend lambda emits `newSuspendLambda`.
 // bir2cir consumes those facts to build the `ContinuationImpl` state machine + the public `Task<T>` bridge; kotc
-// bakes NO coroutine ABI. `isAwaitIntrinsic` is the ONLY coroutine helper left in kotc — it skips the await
-// intrinsic method from emission (the suspend-call tag itself is emitted by `suspendCallTag` on the call node).
-internal fun BirEmitter.isAwaitIntrinsic(fn: IrSimpleFunction): Boolean =
-	fn.annotations.any { it.type.classFqName?.shortName()?.asString() == "ClrAwait" }
+// bakes NO coroutine ABI. Platform await declarations arrive from reference KLIBs and therefore are never emitted as
+// source declarations; their `ClrAwaitBridge` fact is copied onto the suspend call for bir2cir.
 
 /**
  * `,"typeParams":[...]` for a generic class/interface/method (empty when non-generic). An unconstrained param
@@ -1315,30 +1312,14 @@ internal fun BirEmitter.isMetadataRepresentableDefault(p: org.jetbrains.kotlin.i
  *  native `[Optional]` + `[DefaultParameterValue]` metadata for a C#/VB/F# consumer — unchanged; `@KotlinDefault` is the
  *  kcc-consumer splice source, ref.dll-only, stripped from the runtime build.)
  *
- *  Coverage: a top-level / extension NON-suspend fn (the original cross-module scope, static-emitted), OR ANY `inline`
- *  fn. The inline branch is the #34 residual: a MEMBER or suspend `inline` fn's omitted non-const default is read by
- *  InlineSplice STEP 5 from THIS carrier (previously a member/suspend fn carried nothing → InlineSplice fail-loud
- *  "missing (non-defaulted) arg", e.g. kotlinx.coroutines `BufferedChannel.sendImpl(... onNoWaiterSuspend = { ... })`).
- *  The carrier always rides the ref.dll param attribute (both consumers read it there — a cross-module member
- *  `callInstance` fills via DefaultArgSplice too), so the member/suspend expansion being gated to `inline` is NOT a
- *  mechanism limit but an EMPIRICAL firewall: carrying every NON-inline suspend coroutine decl regressed the runtime
- *  stdlib emit ("ilemit: cannot resolve .NET type kotlin.Unit"), root-cause unestablished, so a non-inline
- *  member/suspend fn stays uncarried for now (its cross-module default is a separate, pre-existing gap — a Tier-2
- *  default drops to a null/zero backfill; see docs/dotkt-semantics.md §10.2). The one genuinely-unsafe default SHAPE
- *  that a carrier CANNOT represent even for an inline fn — one that reads an enclosing-instance (dispatch or outer)
- *  receiver — is poisoned per-expression in [defaultCarrierBir] (a `{k:this}` dispatch read binds correctly ONLY in
- *  InlineSplice's `recv==dispatch` path, not for a member-EXTENSION splice nor DefaultArgSplice — since the SAME carrier
- *  feeds all consumers, it is refused rather than risk a miscompile). */
+ *  Coverage is every function and constructor with a defaulted regular parameter. This must not be restricted by
+ *  dispatch/suspend/inline shape: a metadata reference declaration may deliberately retain a Kotlin frontend type
+ *  (`kotlin.Int`) that cannot legally carry an ECMA-335 `int32` constant, so the native constant is not a universal
+ *  carrier even for `= 0`. The ref-DLL-only KotlinDefault expression is the uniform source for bir2cir; the runtime
+ *  build strips it. The one genuinely-unsafe default SHAPE — one that reads an enclosing-instance (dispatch or outer)
+ *  receiver — is poisoned per-expression in [defaultCarrierBir] rather than narrowing declaration coverage. */
 internal fun BirEmitter.carriesKotlinDefault(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): Boolean =
-	fn.parameters.any { it.kind == IrParameterKind.Regular && it.defaultValue != null } && when (fn) {
-		// A CONSTRUCTOR always carries: it is never `suspend`, it is statically resolved, and its enclosing-instance
-		// read (an inner class) is poisoned per-expression by [defaultCarrierBir] exactly as a member fn's is. Without
-		// the carrier a re-consumed ctor's non-constant default has nowhere to come from, so facadegen surfaces the
-		// param REQUIRED and `P(3)` does not even resolve at the consumer's frontend.
-		is IrConstructor -> true
-		is IrSimpleFunction -> fn.isInline || (!fn.isSuspend && fn.parameters.none { it.kind == IrParameterKind.DispatchReceiver })
-		else -> false
-	}
+	fn.parameters.any { it.kind == IrParameterKind.Regular && it.defaultValue != null }
 
 /** A data-class `copy` synthetic — `copy` cannot be user-declared on a data class, so name + `isData` parent is exact. */
 internal fun BirEmitter.isDataClassCopy(fn: org.jetbrains.kotlin.ir.declarations.IrSimpleFunction): Boolean =

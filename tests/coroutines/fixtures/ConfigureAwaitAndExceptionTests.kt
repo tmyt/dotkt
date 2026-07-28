@@ -15,7 +15,6 @@ import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import System.Threading.Tasks.Task
 import System.Threading.Tasks.TaskCompletionSource1
 import System.InvalidOperationException
-import kotlin.clr.await
 import dotkt.support.blockOn
 
 // ---- il-cfgawait: `await(captureContext = false)` on a non-generic already-completed Task -------------------

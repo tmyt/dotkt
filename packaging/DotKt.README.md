@@ -10,7 +10,7 @@ the real thing) and replaces only the backend, lowering Kotlin IR → CIL that r
 |---|---|
 | `DotKt.Sdk` | The MSBuild SDK: build Kotlin (`.kt`) projects to .NET assemblies. Pulls in the toolchain (build-only) and the runtime stdlib. |
 | `DotKt.Sdk.Mpp` | The SDK for multiplatform projects (common/actual `expect`/`actual` in one CLR compilation). |
-| `DotKt.Toolchain` | The compiler toolchain (`kotc`, `bir2cir`, `ilemit`, `facadegen`, `dll2klib`, `retarget`) + the frontend stdlib klib + the compile-time stdlib reference assembly. Build-only. |
+| `DotKt.Toolchain` | The compiler toolchain (`kotc`, `bir2cir`, `ilemit`, `dll2klib`, `retarget`) + the frontend stdlib klib + the compile-time stdlib reference assembly. Build-only. |
 | `DotKt.Stdlib` | The Kotlin standard library **runtime** assembly (`DotKt.Stdlib.dll`) apps link and ship against. |
 | `DotKt.Templates` | `dotnet new` project templates (`dotkt-cli`). |
 

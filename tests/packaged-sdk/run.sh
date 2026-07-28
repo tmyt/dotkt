@@ -332,7 +332,6 @@ EOF
 package asyncgate
 
 import System.Threading.Tasks.Task
-import kotlin.clr.await
 
 suspend fun delayedValue(): Int {
     Task.Delay(500).await()

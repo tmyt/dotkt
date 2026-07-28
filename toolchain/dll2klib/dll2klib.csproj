@@ -7,6 +7,8 @@
     <AssemblyName>dll2klib</AssemblyName>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../bir-common/TypeNode.cs" Link="TypeNode.cs" />
+    <Compile Include="../bir-common/BirJson.cs" Link="BirJson.cs" />
     <PackageReference Include="Google.Protobuf" Version="3.35.1" />
     <PackageReference Include="Grpc.Tools" Version="2.83.0" PrivateAssets="All" />
     <Protobuf Include="KlibMetadata.proto" GrpcServices="None" />

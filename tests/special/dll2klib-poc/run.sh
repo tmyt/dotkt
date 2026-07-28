@@ -44,7 +44,7 @@ PROBE_KLIB="$OUT/Probe.klib"
 dotnet "$OUT/tools/dll2klib.dll" "$PROBE_REF" "$PROBE_KLIB"
 dotnet "$OUT/tools/dll2klib.dll" "$PROBE_REF" "$OUT/Probe.second.klib"
 cmp -s "$PROBE_KLIB" "$OUT/Probe.second.klib" || die "same MVID did not produce a deterministic KLIB"
-for entry in default/manifest default/linkdata/module default/linkdata/package_Probe/0_Probe.knm; do
+for entry in default/manifest default/linkdata/module default/linkdata/root_package/0_.knm default/linkdata/package_Probe/0_Probe.knm; do
 	unzip -Z1 "$PROBE_KLIB" | grep -qx "$entry" || die "generated KLIB is missing $entry"
 done
 
@@ -61,10 +61,10 @@ dotnet "$ILEMIT_DLL" "$OUT/il" Consumer --runtime-refs "$(refset_join "$STDLIB_R
 cp "$STDLIB_RT_DLL" "$PROBE_IMPL" "$OUT/il/"
 
 actual="$(dotnet "$OUT/il/Consumer.dll")"
-[[ "$actual" == "44" ]] || die "generated program returned '$actual', expected '44'"
+[[ "$actual" == "100" ]] || die "generated program returned '$actual', expected '100'"
 grep -q '"k": "clrInstance"' "$OUT/cir/consumer.cir.json" \
 	|| die "bir2cir did not bind the KLIB declaration to a CLR instance member"
 grep -q '"k": "clrStatic"' "$OUT/cir/consumer.cir.json" \
 	|| die "bir2cir did not bind the KLIB declaration to a CLR static member"
 
-info "PASS  CLR ref.dll -> standard KLIB (types, members, generics, platform types) -> kotc -> bir2cir -> ilemit -> run (44)"
+info "PASS  CLR ref.dll -> standard KLIB (types, nested types, members, generics, NRT, delegates, indexers, events, extensions, operators, byref) -> kotc -> bir2cir -> ilemit -> run (100)"

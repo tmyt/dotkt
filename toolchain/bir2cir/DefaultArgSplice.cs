@@ -7,11 +7,12 @@ using DotKt.Bir;
 
 // CROSS-MODULE DEFAULT-ARGUMENT SPLICE (#134/#146).
 //
-// A call that OMITS a defaulted argument reaches bir2cir with a POSITIONAL `{"k":"defaultArg"}` placeholder (kotc emits
-// one for every omitted default whose VALUE the frontend dropped to an IrErrorExpression — the cross-module case — so a
-// later provided arg keeps its slot). For a callee whose defaulted params carry `[kotlin.clr.KotlinDefault(index, bir)]`
-// on the referenced .dll, this pass reads the default-expression BIR and SPLICES it into each placeholder / trailing
-// omitted slot.
+// A call that OMITS a defaulted argument reaches bir2cir in either of two forms:
+// - a POSITIONAL `{"k":"defaultArg"}` placeholder when a later argument keeps the omitted slot observable; or
+// - a shorter `args` vector for a purely trailing omission.
+// The call still carries the frontend-selected declaration's complete `sig`/`shapeTypes` vector. For that exact
+// declaration this pass reads the default value from the referenced DLL (`KotlinDefault` carrier first, ECMA-335
+// parameter constant otherwise) and materializes a complete physical argument vector for CIR.
 //
 // PHASE 1 (#146): runs immediately AFTER InlineSplice — BEFORE ObjectSlotRename/ClosureSynthesis/MemberCallSubstitution/
 // BirTypeLowering — so the spliced RAW payload re-lowers IN THIS app's context (owner attribution for a payload's own
@@ -57,8 +58,8 @@ static class DefaultArgSplice
                 throw new InvalidOperationException("bir2cir: DefaultArgSplice re-hoisted a carried default lambda but the file root has no `methods` array");
             foreach (var h in hoist.ToList()) { hoist.Remove(h); methods.Add(h); }
         }
-        // CHOKEPOINT: kotc emits a `defaultArg` only for a cross-module omission it expects a @KotlinDefault to fill, and
-        // ilemit cannot emit a raw placeholder — a survivor is a fill failure. Fail here with the callee, not opaquely there.
+        // CHOKEPOINT: kotc uses `defaultArg` only to preserve an omitted positional slot. CIR and ilemit require the
+        // complete physical argument vector, so a survivor is a bir2cir fill failure.
         AssertNoPlaceholder(root);
     }
 
@@ -80,21 +81,14 @@ static class DefaultArgSplice
         if (node["args"] is not JsonArray args) return;
         var hasPlaceholder = false;
         for (var j = 0; j < args.Count; j++) if (IsPlaceholder(args[j])) { hasPlaceholder = true; break; }
-        // ONLY a POSITIONAL `defaultArg` placeholder marks a cross-module omission to fill. kotc emits a placeholder for
-        // EVERY omitted arg of a @KotlinDefault-carrying callee (never a bare trailing DROP), so `args.Count == sig.Count`
-        // here — a call merely SHORT of `sig` (a same-module trailing omit ilemit backfills, or any non-defaulted call
-        // carrying `sig`) must NOT be touched: appending a default off an ownerless name match would corrupt it. This is
-        // essential now the splice runs at phase 1 on EVERY build (a stdlib self-build call short of `sig` is not an omission).
-        if (!hasPlaceholder) return;
         string method, owner, sigKey = null;
         int sigCount;
         if (isNew)
         {
             // A `new` names its callee by TYPE — there is no `method`/`sig` to read. The ctor's splice identity is
             // `<type>|.ctor|<declared parameter count>` (#235), and `argTypes` IS that declared vector (kotc emits the
-            // resolved ctor's own parameter types). The args array must line up with it one-for-one: kotc fills every
-            // omitted slot with a placeholder, so each stamped @KotlinDefault index indexes that same array. A mismatch
-            // means an arg was dropped rather than placeheld — refuse instead of filling the wrong slot.
+            // resolved ctor's own parameter types). A positional omission has a placeholder; a purely trailing omission
+            // simply leaves `args` shorter. In both cases the full `argTypes` vector identifies every physical slot.
             owner = TypeJson.OwnerName(node["type"]);
             if (owner == null) return;
             method = ReferenceMetadataIndex.CtorKeyName;
@@ -103,11 +97,15 @@ static class DefaultArgSplice
             // `argTypes` IS the resolved ctor's declared parameter vector, in the same ParamKey space the reference scan
             // keys by — so same-arity ctor overloads resolve to the RIGHT one instead of being refused as ambiguous.
             sigKey = string.Join(",", ctorParamTypes.Select(t => ReferenceMetadataIndex.ParamKey(t)));
-            if (args.Count != sigCount)
+            // Generated local/anonymous classes carry captured values in `args`, while `argTypes` describes only the
+            // source constructor parameters. That is not a default-argument call at all. Ignore this synthetic shape
+            // unless kotc explicitly left a positional omission marker; in that case the physical slot mapping really
+            // is unknowable and must fail loudly.
+            if (args.Count > sigCount && !hasPlaceholder) return;
+            if (args.Count > sigCount)
                 throw new InvalidOperationException(
                     $"bir2cir: cannot fill an omitted default argument of '{owner}''s constructor — the call emits " +
-                    $"{args.Count} argument(s) for {sigCount} parameter(s), so the omitted slot is not identifiable; " +
-                    "pass the argument explicitly");
+                    $"{args.Count} argument(s) for only {sigCount} parameter(s)");
         }
         else
         {
@@ -125,6 +123,13 @@ static class DefaultArgSplice
             if (method == null) return;
             owner = TypeJson.OwnerName(node["ownerType"] ?? node["calleeOwner"] ?? node["owner"]);
         }
+        var hasTrailingOmission = args.Count < sigCount;
+        if (!hasPlaceholder && !hasTrailingOmission) return;
+        // A bare name is not enough authority to interpret a short vector: same-module Kotlin calls and unrelated
+        // declarations can share it. A trailing omission is filled only when kotc preserved the selected reference
+        // declaration's owner plus complete signature. Positional placeholders retain the conservative ownerless lookup
+        // used by older BIR because their omitted slot is explicit.
+        if (hasTrailingOmission && !hasPlaceholder && owner == null) return;
         // The callee as a DIAGNOSTIC names itself: `.ctor` is a key component, not something to show a reader.
         var label = isNew ? owner + " constructor" : method;
         var defaults = refs.KotlinDefaultsFor(owner, method, sigCount, sigKey);
@@ -140,6 +145,10 @@ static class DefaultArgSplice
         var declared = isNew ? node["argTypes"] as JsonArray : (node["sig"] as JsonArray ?? node["shapeTypes"] as JsonArray);
         var temps = FillAndBind(args, sigCount, defaults, declared, ctorNoReceiver: isNew,
             recvHost: isNew ? null : node, label, refs, hoist, localOwner);
+        if (args.Count != sigCount || args.Any(IsPlaceholder))
+            throw new InvalidOperationException(
+                $"bir2cir: cannot materialize every omitted default argument of '{label}' — the selected declaration " +
+                $"requires {sigCount} physical argument(s), but only {args.Count} could be produced");
         // The temps are declared by a `valueBlock` wrapping this very call. Rewritten IN PLACE (the node is parented, and
         // its parent slot is what must now hold the block): the original content becomes the block's `result`.
         if (temps.Count > 0)
@@ -206,9 +215,9 @@ static class DefaultArgSplice
                 && TempType(declared, j, value) is JsonNode argType)
                 args[j] = Hoist(temps, value, argType);
         }
-        // 2) Append any purely-TRAILING omitted args (callee carries @KotlinDefault but kotc dropped the tail). Unreachable
-        //    for a `new`: its `args.Count == sigCount` is asserted by the caller. A gap leaves the call PARTIALLY filled —
-        //    the chokepoint then reports the unfilled placeholder, and the temps still declare what the fills reference.
+        // 2) Append purely-TRAILING omitted args. The Kotlin frontend records that the declaration is callable with the
+        //    tail omitted, but its IR does not retain null value-argument slots at the end. The selected declaration's
+        //    complete signature and reference-DLL default map restore those physical CLR arguments here.
         for (var pos = args.Count; pos < sigCount; pos++)
         {
             if (!defaults.TryGetValue(pos, out var bir)) break;

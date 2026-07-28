@@ -480,7 +480,21 @@ internal fun BirEmitter.clrName(decl: org.jetbrains.kotlin.ir.declarations.IrAnn
 	// never a member slot. bir2cir reshapes those plain nodes to their CLR forms off the refs.
 	// A2 stage 1: the injected .NET type's .NET name is read straight off its IR `ClassId` (structural resolved
 	// identity) against facadegen's metadata.
-	return (decl as? IrClass)?.classId?.let { kotc.frontend.clrInjectedDotNetName(it) }
+	return clrExternalOwner(decl)
+		?: (decl as? IrClass)?.classId?.let { kotc.frontend.clrInjectedDotNetName(it) }
+}
+
+/** The opaque CLR declaration owner written by dll2klib into standard KLIB annotations.
+ * kotc does not interpret the owner or choose a CLR shape; it merely forwards the already
+ * resolved origin fact into BIR, where bir2cir owns physical binding. */
+internal fun BirEmitter.clrExternalOwner(
+	decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer
+): String? {
+	val host = (decl as? IrSimpleFunction)?.correspondingPropertySymbol?.owner ?: decl
+	val annotation = host.annotations.firstOrNull {
+		it.type.classFqName?.asString() == "kotlin.clr.ClrExternal"
+	} ?: return null
+	return (regularArgs(annotation).firstOrNull() as? IrConst)?.value as? String
 }
 
 /** Boolean ORIGIN-GATE: is `decl` a facadegen-injected .NET/CLR type (vs a pure-Kotlin/stdlib type)? The truthiness

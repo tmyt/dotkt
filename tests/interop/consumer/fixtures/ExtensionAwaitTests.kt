@@ -2,7 +2,7 @@ import ExtensionAwaitable.Operation
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import dotkt.support.blockOn
-import kotlin.clr.await
+import ExtensionAwaitable.OperationExtensions.await
 
 private suspend fun awaitExtensionOperation(value: Int, synchronous: Boolean): Int =
     Operation<Int>(value, synchronous).await() + 1

@@ -573,15 +573,13 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		// de-duplicated by ilemit, but lifted `__lambdaN` are file-class methods that are NOT — so the duplication is
 		// real metadata bloat and a correctness hazard.
 		liftedMethods.clear(); liftedTypes.clear(); refTypes.clear()
-		// The `@ClrAwait` await intrinsic (`fun <T> Task<T>.await(): T`) is never emitted as a real method —
-		// a suspend call site is flagged with `"suspendCall":true` and lowered by the deferred downstream layer. Skip it.
 		// The `byref` out/ref marker is an intrinsic consumed at its call sites (the arg becomes a `byref:` param) —
 		// never emitted as a real method.
 		// Only USER functions (origin DEFINED) — a consuming module's FIR also holds plugin-INJECTED top-level funs
 		// (stdlib ops restored from a referenced DotKt.Stdlib, in the synthetic `__GENERATED DECLARATIONS__` file);
 		// those are the library's to provide, not ours to re-emit (a re-emitted stub has no real body -> invalid IL).
 		val functions = file.declarations.filterIsInstance<IrSimpleFunction>()
-			.filter { it.origin.toString() == "DEFINED" && !isAwaitIntrinsic(it) && !isExternalNetType(it) && it.name.asString() !in setOf("byref", "stackBuffer") }
+			.filter { it.origin.toString() == "DEFINED" && !isExternalNetType(it) && it.name.asString() !in setOf("byref", "stackBuffer") }
 		// `ClrRef<T>` is an intrinsic managed-reference marker (erased on the argument path) -> never emitted as a class.
 		// @ClrTypeAlias classes (collections/StringBuilder/unsigned/primitives/String/…) are emitted here as ORDINARY
 		// types; bir2cir's AliasHelperHoist drops them (and hoists a class's rule-3 members). kotc no longer strips them.

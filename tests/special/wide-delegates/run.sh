@@ -4,8 +4,8 @@
 # module-local delegate types DotKt.Runtime.CompilerServices.KFunc`N / KAction`N when needed. Drives
 # tests/special/wide-delegates/wide.kt (17-arg function values) through the REAL pipeline — kotc -> bir2cir ->
 # ilemit, the same single path every other gate uses. Runs the app, checks the synthesized delegate types
-# exist in the dll, and that
-# facadegen restores the wide type as a Kotlin function type. Exits nonzero on any failure.
+# exist in the dll, and that dll2klib restores the wide type as a Kotlin function type
+# consumable from a second module. Exits nonzero on any failure.
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 SCRIPT_NAME=wide-delegate-tests
 source "$ROOT/scripts/lib.sh"
@@ -23,13 +23,13 @@ while (( $# )); do
 done
 
 OUT="$ROOT/build/wide-delegates"
-rm -rf "$OUT"; mkdir -p "$OUT/bir" "$OUT/cir" "$OUT/il"
+rm -rf "$OUT"; mkdir -p "$OUT/bir" "$OUT/cir" "$OUT/il" "$OUT/consumer-bir" "$OUT/consumer-cir" "$OUT/consumer-il" "$OUT/reference-klibs"
 
 # Unconditional tool builds: the gate tests the CURRENT sources. Stdlib artifact roles mirror verify-tests:
 # the frontend KLIB is kotc's -classpath (kotlin.* comes from the klib, never facadegen), the REFERENCE
 # dll feeds bir2cir's @Clr labels, the RUNTIME dll backs println at run time.
 "$ROOT/gradlew" -q :kotc:installDist >/dev/null 2>&1
-build_tool ilemit; build_tool bir2cir; build_tool facadegen; build_tool retarget
+build_tool ilemit; build_tool bir2cir; build_tool dll2klib; build_tool retarget
 need_fe_klib; need_stdlib_ref; need_stdlib_rt
 need_dotnet_reference_sets
 
@@ -73,22 +73,38 @@ for arity in $(seq 1 16); do
 	fi
 done
 
-# Round-trip surface: facadegen must restore the KFunc`18-typed parameter as a Kotlin function type.
-# facadegen reads the delegate's Invoke signature (17 params + Int return) directly, regardless of arity
-# or the [CompilerGenerated] stamp, and emits it as the JSON function-type node `{"t":"fn",...}` in the
-# FIR-injection meta. Assert `accept`'s `cb` param is that fn node with 17 Int params and an Int return.
+# Round-trip surface: dll2klib must restore the KFunc`18-typed parameter as a Kotlin function type.
+# Compile and run a second module whose 17-argument lambda can only bind if the standard KLIB metadata
+# carries all 17 Int parameters and the Int return.
 compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_RT_DLL")"
 dotnet "$RETARGET_DLL" "$OUT/il/Wide.dll" --compile-refs "$compile_refs" >/dev/null 2>&1 \
 	|| die "retarget failed"
-dotnet "$FACADEGEN_DLL" "$OUT/wide.meta" --compile-refs "$(refset_join "$compile_refs" "$OUT/il/Wide.dll")" WideKt >/dev/null 2>&1 \
-	|| die "facadegen failed"
-int='{"t":"fqn","name":"Int"}'
-ints="$int"; for _ in $(seq 2 17); do ints+=",$int"; done
-want="\"name\":\"accept\",\"ret\":$int,\"mods\":{},\"params\":[{\"name\":\"cb\",\"type\":{\"t\":\"fn\",\"suspend\":false,\"ret\":$int,\"params\":[$ints]}}]"
-if ! grep -qF "$want" "$OUT/wide.meta"; then
-	echo "FAIL  facadegen did not restore KFunc\`18 as a Kotlin function type" >&2
-	cat "$OUT/wide.meta" >&2
-	exit 1
-fi
+printf '%s\n' "${FRAMEWORK_COMPILE_REF_PATHS[@]}" > "$OUT/references.rsp"
+dotnet "$DLL2KLIB_DLL" --out "$OUT/reference-klibs" \
+	--jobs "${DOTKT_DLL2KLIB_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || printf '1')}" \
+	@"$OUT/references.rsp" >/dev/null
+dotnet "$DLL2KLIB_DLL" "$OUT/il/Wide.dll" "$OUT/Wide.klib" >/dev/null
+case "${OS:-}" in Windows_NT) cp_sep=';' ;; *) cp_sep=':' ;; esac
+consumer_cp="$FE_KLIB"
+while IFS= read -r klib; do consumer_cp+="$cp_sep$klib"; done \
+	< <(find "$OUT/reference-klibs" -maxdepth 1 -type f -name '*.klib' | LC_ALL=C sort)
+consumer_cp+="$cp_sep$OUT/Wide.klib"
+cat > "$OUT/consumer.kt" <<'EOF'
+fun main() {
+    println(accept { p1, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, p17 -> p1 + p17 })
+}
+EOF
+"$KOTC" "$OUT/consumer.kt" -no-stdlib -classpath "$consumer_cp" -d "$OUT/consumer-bir" >/dev/null 2>&1 \
+	|| die "kotc did not restore KFunc\`18 as a 17-argument Kotlin function type"
+dotnet "$BIR2CIR_DLL" "$OUT/consumer-cir" \
+	--compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL" "$OUT/il/Wide.dll")" \
+	"$OUT/consumer-bir"/*.bir.json >/dev/null 2>&1 || die "consumer bir2cir failed"
+dotnet "$ILEMIT_DLL" "$OUT/consumer-il" WideConsumer \
+	--runtime-refs "$(refset_join "$STDLIB_RT_DLL" "$OUT/il/Wide.dll")" \
+	"$OUT/consumer-cir"/*.cir.json >/dev/null 2>&1 || die "consumer ilemit failed"
+cp "$STDLIB_RT_DLL" "$OUT/il/Wide.dll" "$OUT/consumer-il/"
+consumer_actual="$(dotnet "$OUT/consumer-il/WideConsumer.dll" 2>/dev/null)" \
+	|| die "wide-delegate consumer failed at runtime"
+[[ "$consumer_actual" == 18 ]] || die "wide-delegate consumer returned '$consumer_actual', expected 18"
 
-info "PASS  wide synthetic delegates (kotc -> bir2cir -> ilemit; run + KFunc\`18/KAction\`17 + facadegen restore)"
+info "PASS  wide synthetic delegates (kotc -> bir2cir -> ilemit; run + KFunc\`18/KAction\`17 + dll2klib/KLIB re-consumption)"

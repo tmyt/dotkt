@@ -2,7 +2,7 @@
 # DotKt round-trip gate: a Kotlin assembly compiled by DotKt, consumed AS KOTLIN by another module — the
 # Kotlin modifiers with no .NET analog (infix / operator / suspend / top-level) survive the trip. They're
 # stamped onto the emitted IL as DotKt.Metadata attributes ([KotlinFunction]/[KotlinFileClass]) by ilemit,
-# then read back by facadegen and restored on the synthesized FIR by ClrTypeInjection. This is
+# then projected from the reference assembly into a standard KLIB by dll2klib. This is
 # the basis of consuming compiled Kotlin libraries as Kotlin. Inputs: inline heredoc samples
 # under build/roundtrip-*. EVERY section runs to completion regardless of earlier failures — results are
 # collected, and a crashing consumer app (SIGABRT from the deliberate suspend stub) is captured, never
@@ -63,11 +63,11 @@ declare -A RT_XFAIL=(
 #   BATCH 3 (1):
 #     roundtrip-toplevel-val -> toplevelValVar  (#195: facadegen --import-list now surfaces a field-backed top-level val/var)
 # The remaining sections below stay in this shell lane pending later increments (suspend/coharness, negative
-# compile-fail, dual-emit-path/meta-inspection cases). roundtrip-nothing still has a formal object/string IL gap.
+# compile-fail and dual-emit-path cases). roundtrip-nothing still has a formal object/string IL gap.
 # generic-hof and receiver-lambda are now formally clean after low-arity delegate ABI unification; they remain here
 # only because their migration to the in-process ProjectReference lane has not been done yet.
-# roundtrip-comparable-meta STAYS here: it asserts on the generated facadegen metadata JSON directly (no in-process
-# analog); only its END-TO-END twin migrated.
+# roundtrip-comparable remains a direct reference-KLIB projection check; its broader ProjectReference twin also
+# lives in the in-process lane.
 
 # ---- section result collection (no section may abort the script) -----------------------------------
 declare -a SUMMARY=() NEW_FAILS=()
@@ -110,13 +110,11 @@ run_app() {
 # kotc resolves the stdlib (kotlin.*) from the CLR FRONTEND KLIB (scripts/build-stdlib-klib.sh). (legacy
 # coroutines jar dropped 2026-07-03: the consumer drives suspend funs via the test-harness
 # dotkt.support.blockOn — see write_coharness.)
-CP="$FE_KLIB"
-
 # Build the toolchain once (UNCONDITIONALLY — the gate tests the current sources).
 "$ROOT/gradlew" -q :kotc:installDist >/dev/null 2>&1
 LAUNCHER="$KOTC"
 need_fe_klib
-build_tool ilemit; build_tool facadegen; build_tool retarget
+build_tool ilemit; build_tool bir2cir; build_tool dll2klib; build_tool retarget
 need_dotnet_reference_sets
 # The RUNTIME stdlib joins the reference set: a suspend-carrying DotKt lib references the coroutine runtime
 # (DotKt.Stdlib's kotlin.coroutines.Continuation) in its emitted CPS signatures, so retarget/facadegen must be
@@ -124,11 +122,28 @@ need_dotnet_reference_sets
 # consumer can't resolve the library). Harmless for the non-suspend sections (they reference no stdlib type).
 REFS="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_RT_DLL");"
 
+# Project the complete framework reference set once. Each emitted test library gets one additional KLIB,
+# exactly mirroring the SDK's ReferencePathWithRefAssemblies pipeline.
+REFERENCE_KLIBS="$ROOT/build/roundtrip-reference-klibs"
+rm -rf "$REFERENCE_KLIBS"; mkdir -p "$REFERENCE_KLIBS"
+printf '%s\n' "${FRAMEWORK_COMPILE_REF_PATHS[@]}" > "$REFERENCE_KLIBS/references.rsp"
+dotnet "$DLL2KLIB_DLL" --out "$REFERENCE_KLIBS/framework" \
+	--jobs "${DOTKT_DLL2KLIB_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || printf '1')}" \
+	@"$REFERENCE_KLIBS/references.rsp" >/dev/null
+case "${OS:-}" in Windows_NT) KLIB_CP_SEP=';' ;; *) KLIB_CP_SEP=':' ;; esac
+CP="$FE_KLIB"
+while IFS= read -r klib; do CP+="$KLIB_CP_SEP$klib"; done \
+	< <(find "$REFERENCE_KLIBS/framework" -maxdepth 1 -type f -name '*.klib' | LC_ALL=C sort)
+
+project_reference_klib() {
+	local dll="$1" klib="$2"
+	dotnet "$DLL2KLIB_DLL" "$dll" "$klib" >/dev/null
+}
+
 # kotc emits bare kotlin.* type tokens (the frontend klib resolves the stdlib to our real kotlin.* declarations); bir2cir
 # lowers them to the CLR-codegen vocabulary ilemit consumes. So route every emit through bir2cir (mirrors verify-tests) —
 # feeding BIR straight to ilemit would leave kotlin.* tokens un-lowered ("cannot resolve .NET type kotlin.String"). The
 # REFERENCE stdlib supplies bir2cir's @ClrTypeAlias labels (built once if missing; the roundtrip types are pure-Kotlin).
-build_tool bir2cir
 need_stdlib_ref; need_stdlib_rt
 # emit_il: drop-in for `ilemit <outdir> <asm> [--ref X]... <bir files...>`, inserting the BIR->CIR (bir2cir) lowering.
 # Both stages tolerate failure (|| true): a broken emit surfaces as its SECTION's FAIL, not a script abort.
@@ -230,12 +245,11 @@ fun main() {
     println(Color.GREEN)            // enum value access (non-regression)
 }
 EOF
-CLR_TYPES_METADATA="" "$LAUNCHER" "$M/lib" -no-stdlib -classpath "$CP" -d "$M/libbir" >/dev/null 2>&1 || true
+"$LAUNCHER" "$M/lib" -no-stdlib -classpath "$CP" -d "$M/libbir" >/dev/null 2>&1 || true
 emit_il "$M/libil" MarkLib "$M/libbir"/*.bir.json
 dotnet "$RETARGET_DLL" "$M/libil/MarkLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-"$LAUNCHER" --scan-imports --output "$M/imports.txt" "$M/app"/*.kt >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" "$M/meta" --compile-refs "$REFS$M/libil/MarkLib.dll" --import-list "$M/imports.txt" >/dev/null 2>&1 || true
-CLR_TYPES_METADATA="$M/meta" "$LAUNCHER" "$M/app" -no-stdlib -classpath "$CP" -d "$M/appbir" >/dev/null 2>&1 || true
+project_reference_klib "$M/libil/MarkLib.dll" "$M/MarkLib.klib"
+"$LAUNCHER" "$M/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$M/MarkLib.klib" -d "$M/appbir" >/dev/null 2>&1 || true
 emit_il "$M/appil" MarkApp --ref "$M/libil/MarkLib.dll" "$M/appbir"/*.bir.json
 cp "$M/libil/MarkLib.dll" "$M/appil/" 2>/dev/null || true
 mkexpected="$(printf '50\narea=12\nsquare\nGREEN')"
@@ -245,7 +259,7 @@ cat > "$M/rogue/rogue.kt" <<'EOF'
 import shapes.Shape
 class Rogue : Shape { override fun area(): Int = 0 }
 EOF
-if CLR_TYPES_METADATA="$M/meta" "$LAUNCHER" "$M/rogue" -no-stdlib -classpath "$CP" -d "$M/roguebir" >/dev/null 2>&1; then rogue_ok=1; else rogue_ok=0; fi
+if "$LAUNCHER" "$M/rogue" -no-stdlib -classpath "$CP$KLIB_CP_SEP$M/MarkLib.klib" -d "$M/roguebir" >/dev/null 2>&1; then rogue_ok=1; else rogue_ok=0; fi
 mk_ok=0; if [[ "$mkactual" == "$mkexpected" && "$rogue_ok" == 0 ]]; then mk_ok=1; fi
 section_result roundtrip-markers "$mk_ok" "fun interface nature; sealed modality+exhaustive-when+cross-module enforcement; enum" \
 	"$(printf -- '--- expected ---\n%s\n--- actual ---\n%s\n--- rogue accepted (want reject): %s ---' "$mkexpected" "$mkactual" "$rogue_ok")"
@@ -332,15 +346,11 @@ fun main() {
     println(r.value)                        // hi
 }
 EOF
-CLR_TYPES_METADATA="" "$LAUNCHER" "$AT/lib" -no-stdlib -classpath "$CP" -opt-in=kotlin.concurrent.atomics.ExperimentalAtomicApi -d "$AT/libbir" >/dev/null 2>&1 || true
+"$LAUNCHER" "$AT/lib" -no-stdlib -classpath "$CP" -opt-in=kotlin.concurrent.atomics.ExperimentalAtomicApi -d "$AT/libbir" >/dev/null 2>&1 || true
 emit_il "$AT/libil" AtomicLib "$AT/libbir"/*.bir.json
 dotnet "$RETARGET_DLL" "$AT/libil/AtomicLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-"$LAUNCHER" --scan-imports --output "$AT/imports.txt" "$AT/app"/*.kt >/dev/null 2>&1 || true
-# #73 TRIGGER: pass BOTH stdlib twins (REFERENCE + RUNTIME) on facadegen's compile set, exactly as a real MSBuild
-# consumer's @(ReferencePath) does — this is what the other sections do NOT do (they pass only the runtime twin).
-AT_TWIN_REFS="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL" "$STDLIB_RT_DLL");"
-dotnet "$FACADEGEN_DLL" "$AT/meta" --compile-refs "$AT_TWIN_REFS$AT/libil/AtomicLib.dll" --import-list "$AT/imports.txt" >/dev/null 2>&1 || true
-CLR_TYPES_METADATA="$AT/meta" "$LAUNCHER" "$AT/app" -no-stdlib -classpath "$CP" -opt-in=kotlin.concurrent.atomics.ExperimentalAtomicApi -d "$AT/appbir" >/dev/null 2>&1 || true
+project_reference_klib "$AT/libil/AtomicLib.dll" "$AT/AtomicLib.klib"
+"$LAUNCHER" "$AT/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$AT/AtomicLib.klib" -opt-in=kotlin.concurrent.atomics.ExperimentalAtomicApi -d "$AT/appbir" >/dev/null 2>&1 || true
 emit_il "$AT/appil" AtomicApp --ref "$AT/libil/AtomicLib.dll" "$AT/appbir"/*.bir.json
 cp "$AT/libil/AtomicLib.dll" "$AT/appil/" 2>/dev/null || true
 atexpected="$(printf '1\n42\nTrue\nTrue\nhi')"
@@ -371,11 +381,11 @@ fun pick(n: Int): String {
 }
 fun main() { println(pick(1)) }
 EOF
-CLR_TYPES_METADATA="" "$LAUNCHER" "$NO/lib" -no-stdlib -classpath "$CP" -d "$NO/libbir" >/dev/null 2>&1 || true
+"$LAUNCHER" "$NO/lib" -no-stdlib -classpath "$CP" -d "$NO/libbir" >/dev/null 2>&1 || true
 emit_il "$NO/libil" NothingLib "$NO/libbir"/*.bir.json
 dotnet "$RETARGET_DLL" "$NO/libil/NothingLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" "$NO/meta" --compile-refs "$REFS$NO/libil/NothingLib.dll" Boom LibKt >/dev/null 2>&1 || true
-CLR_TYPES_METADATA="$NO/meta" "$LAUNCHER" "$NO/app" -no-stdlib -classpath "$CP" -d "$NO/appbir" >/dev/null 2>&1 || true
+project_reference_klib "$NO/libil/NothingLib.dll" "$NO/NothingLib.klib"
+"$LAUNCHER" "$NO/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$NO/NothingLib.klib" -d "$NO/appbir" >/dev/null 2>&1 || true
 emit_il "$NO/appil" NothingApp --ref "$NO/libil/NothingLib.dll" "$NO/appbir"/*.bir.json
 cp "$NO/libil/NothingLib.dll" "$NO/appil/" 2>/dev/null || true
 noexpected="kept"
@@ -397,12 +407,12 @@ fun main() {
     println(z)
 }
 EOF
-CLR_TYPES_METADATA="" "$LAUNCHER" "$NS/lib" -no-stdlib -classpath "$CP" -d "$NS/libbir" >/dev/null 2>&1 || true
+"$LAUNCHER" "$NS/lib" -no-stdlib -classpath "$CP" -d "$NS/libbir" >/dev/null 2>&1 || true
 emit_il "$NS/libil" SNothingLib "$NS/libbir"/*.bir.json
 dotnet "$RETARGET_DLL" "$NS/libil/SNothingLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" "$NS/meta" --compile-refs "$REFS$NS/libil/SNothingLib.dll" LibKt System.Threading.Monitor >/dev/null 2>&1 || true
+project_reference_klib "$NS/libil/SNothingLib.dll" "$NS/SNothingLib.klib"
 write_coharness "$NS/app"
-CLR_TYPES_METADATA="$NS/meta" "$LAUNCHER" "$NS/app" -no-stdlib -classpath "$CP" -d "$NS/appbir" >/dev/null 2>&1 || true
+"$LAUNCHER" "$NS/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$NS/SNothingLib.klib" -d "$NS/appbir" >/dev/null 2>&1 || true
 emit_il "$NS/appil" SNothingApp --ref "$NS/libil/SNothingLib.dll" "$NS/appbir"/*.bir.json
 cp "$NS/libil/SNothingLib.dll" "$NS/appil/" 2>/dev/null || true
 run_app nsactual "$NS/appil/SNothingApp.dll"
@@ -437,14 +447,14 @@ fun main() {
 EOF
 
 # 1. compile + emit + retarget the library (the emit stamps [KotlinFunction]/[KotlinFileClass]).
-CLR_TYPES_METADATA="" "$LAUNCHER" "$R/lib" -no-stdlib -classpath "$CP" -d "$R/libbir" >/dev/null 2>&1 || true
+"$LAUNCHER" "$R/lib" -no-stdlib -classpath "$CP" -d "$R/libbir" >/dev/null 2>&1 || true
 emit_il "$R/libil" KLib "$R/libbir"/*.bir.json
 dotnet "$RETARGET_DLL" "$R/libil/KLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
 # 2. facadegen reads the attributes back into the injection metadata.
-dotnet "$FACADEGEN_DLL" "$R/k.meta" --compile-refs "$REFS$R/libil/KLib.dll" Vec LibKt System.Threading.Monitor >/dev/null 2>&1 || true
+project_reference_klib "$R/libil/KLib.dll" "$R/KLib.klib"
 write_coharness "$R/app"
 # 3. compile the consumer WITH the metadata (the injector restores infix/operator/suspend/top-level on FIR).
-CLR_TYPES_METADATA="$R/k.meta" "$LAUNCHER" "$R/app" -no-stdlib -classpath "$CP" -d "$R/appbir" >/dev/null 2>&1 || true
+"$LAUNCHER" "$R/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$R/KLib.klib" -d "$R/appbir" >/dev/null 2>&1 || true
 emit_il "$R/appil" KApp --ref "$R/libil/KLib.dll" "$R/appbir"/*.bir.json
 cp "$R/libil/KLib.dll" "$R/appil/" 2>/dev/null || true
 
@@ -504,12 +514,12 @@ fun main() {
     println(countAll(1, 2, 3, 4))             // 4    generic vararg
 }
 EOF
-CLR_TYPES_METADATA="" "$LAUNCHER" "$GG/lib" -no-stdlib -classpath "$CP" -d "$GG/libbir" >/dev/null 2>&1 || true
+"$LAUNCHER" "$GG/lib" -no-stdlib -classpath "$CP" -d "$GG/libbir" >/dev/null 2>&1 || true
 emit_il "$GG/libil" KLib "$GG/libbir"/*.bir.json
 dotnet "$RETARGET_DLL" "$GG/libil/KLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" "$GG/k.meta" --compile-refs "$REFS$GG/libil/KLib.dll" Box Pair2 Holder LibKt System.Threading.Monitor >/dev/null 2>&1 || true
+project_reference_klib "$GG/libil/KLib.dll" "$GG/KLib.klib"
 write_coharness "$GG/app"
-CLR_TYPES_METADATA="$GG/k.meta" "$LAUNCHER" "$GG/app" -no-stdlib -classpath "$CP" -d "$GG/appbir" >/dev/null 2>&1 || true
+"$LAUNCHER" "$GG/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$GG/KLib.klib" -d "$GG/appbir" >/dev/null 2>&1 || true
 emit_il "$GG/appil" KApp --ref "$GG/libil/KLib.dll" "$GG/appbir"/*.bir.json
 cp "$GG/libil/KLib.dll" "$GG/appil/" 2>/dev/null || true
 gexpected="$(printf '3\n4\n10\n5\n1/z\n99\n8\n6\n7\nhi\nnone\nset\n4')"
@@ -545,11 +555,11 @@ fun main() {
     println(firstOr<String>(null, "x"))  // x   reference-type non-regression
 }
 EOF
-CLR_TYPES_METADATA="" "$LAUNCHER" "$NV/lib" -no-stdlib -classpath "$CP" -d "$NV/libbir" >/dev/null 2>&1 || true
+"$LAUNCHER" "$NV/lib" -no-stdlib -classpath "$CP" -d "$NV/libbir" >/dev/null 2>&1 || true
 emit_il "$NV/libil" NvLib "$NV/libbir"/*.bir.json
 dotnet "$RETARGET_DLL" "$NV/libil/NvLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" "$NV/nv.meta" --compile-refs "$REFS$NV/libil/NvLib.dll" NBox LibKt >/dev/null 2>&1 || true
-CLR_TYPES_METADATA="$NV/nv.meta" "$LAUNCHER" "$NV/app" -no-stdlib -classpath "$CP" -d "$NV/appbir" >/dev/null 2>&1 || true
+project_reference_klib "$NV/libil/NvLib.dll" "$NV/NvLib.klib"
+"$LAUNCHER" "$NV/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$NV/NvLib.klib" -d "$NV/appbir" >/dev/null 2>&1 || true
 emit_il "$NV/appil" NvApp --ref "$NV/libil/NvLib.dll" "$NV/appbir"/*.bir.json
 cp "$NV/libil/NvLib.dll" "$NV/appil/" 2>/dev/null || true
 nvexpected="$(printf '7\n3\n9\n4\nx')"
@@ -583,11 +593,11 @@ fun main() {
     println(Box(1).alsoMap<Int, Int, String, Int>(inc, 42).get())  // 42 (inline ext, explicit type args)
 }
 EOF
-CLR_TYPES_METADATA="" "$LAUNCHER" "$HF/lib" -no-stdlib -classpath "$CP" -d "$HF/libbir" >/dev/null 2>&1 || true
+"$LAUNCHER" "$HF/lib" -no-stdlib -classpath "$CP" -d "$HF/libbir" >/dev/null 2>&1 || true
 emit_il "$HF/libil" KLib "$HF/libbir"/*.bir.json
 dotnet "$RETARGET_DLL" "$HF/libil/KLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" "$HF/k.meta" --compile-refs "$REFS$HF/libil/KLib.dll" Box Wrap LibKt >/dev/null 2>&1 || true
-CLR_TYPES_METADATA="$HF/k.meta" "$LAUNCHER" "$HF/app" -no-stdlib -classpath "$CP" -d "$HF/appbir" >/dev/null 2>&1 || true
+project_reference_klib "$HF/libil/KLib.dll" "$HF/KLib.klib"
+"$LAUNCHER" "$HF/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$HF/KLib.klib" -d "$HF/appbir" >/dev/null 2>&1 || true
 emit_il "$HF/appil" KApp --ref "$HF/libil/KLib.dll" "$HF/appbir"/*.bir.json
 cp "$HF/libil/KLib.dll" "$HF/appil/" 2>/dev/null || true
 hfexpected="$(printf '5!\n6!\n7!\n8!\n9!\n42')"
@@ -632,12 +642,11 @@ fun main() {
     val r = Panel(); Builder(0).preset.invoke(r); println(r.margin)    // 8   member receiver-typed property restored
 }
 EOF
-CLR_TYPES_METADATA="" "$LAUNCHER" "$RL/lib" -no-stdlib -classpath "$CP" -d "$RL/libbir" >/dev/null 2>&1 || true
+"$LAUNCHER" "$RL/lib" -no-stdlib -classpath "$CP" -d "$RL/libbir" >/dev/null 2>&1 || true
 emit_il "$RL/libil" UiLib "$RL/libbir"/*.bir.json
 dotnet "$RETARGET_DLL" "$RL/libil/UiLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-"$LAUNCHER" --scan-imports --output "$RL/imports.txt" "$RL/app"/*.kt >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" "$RL/meta" --compile-refs "$REFS$RL/libil/UiLib.dll" --import-list "$RL/imports.txt" >/dev/null 2>&1 || true
-CLR_TYPES_METADATA="$RL/meta" "$LAUNCHER" "$RL/app" -no-stdlib -classpath "$CP" -d "$RL/appbir" >/dev/null 2>&1 || true
+project_reference_klib "$RL/libil/UiLib.dll" "$RL/UiLib.klib"
+"$LAUNCHER" "$RL/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$RL/UiLib.klib" -d "$RL/appbir" >/dev/null 2>&1 || true
 emit_il "$RL/appil" UiApp --ref "$RL/libil/UiLib.dll" "$RL/appbir"/*.bir.json
 cp "$RL/libil/UiLib.dll" "$RL/appil/" 2>/dev/null || true
 rlexpected="$(printf '4\n7\n105\n9\n8')"
@@ -684,12 +693,12 @@ fun main() {
     println(blockOn { doHidden(lib, Box(2)) })  // 210  (protected suspend member ext via helper)
 }
 EOF
-CLR_TYPES_METADATA="" "$LAUNCHER" "$MP/lib" -no-stdlib -classpath "$CP" -d "$MP/libbir" >/dev/null 2>&1 || true
+"$LAUNCHER" "$MP/lib" -no-stdlib -classpath "$CP" -d "$MP/libbir" >/dev/null 2>&1 || true
 emit_il "$MP/libil" KLib "$MP/libbir"/*.bir.json
 dotnet "$RETARGET_DLL" "$MP/libil/KLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" "$MP/k.meta" --compile-refs "$REFS$MP/libil/KLib.dll" Box Lib System.Threading.Monitor >/dev/null 2>&1 || true
+project_reference_klib "$MP/libil/KLib.dll" "$MP/KLib.klib"
 write_coharness "$MP/app"
-CLR_TYPES_METADATA="$MP/k.meta" "$LAUNCHER" "$MP/app" -no-stdlib -classpath "$CP" -d "$MP/appbir" >/dev/null 2>&1 || true
+"$LAUNCHER" "$MP/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$MP/KLib.klib" -d "$MP/appbir" >/dev/null 2>&1 || true
 emit_il "$MP/appil" KApp --ref "$MP/libil/KLib.dll" "$MP/appbir"/*.bir.json
 cp "$MP/libil/KLib.dll" "$MP/appil/" 2>/dev/null || true
 mpexpected="$(printf 'lbl:17\n30\n15\n1002\n15\n210')"
@@ -734,11 +743,11 @@ fun main() {
     println(runBlock { val a = addAsync(10, 5); addAsync(a, 27) })  // 42 — two suspension points in the passed lambda
 }
 EOF
-CLR_TYPES_METADATA="" "$LAUNCHER" "$SF/lib" -no-stdlib -classpath "$CP" -d "$SF/libbir" >/dev/null 2>&1 || true
+"$LAUNCHER" "$SF/lib" -no-stdlib -classpath "$CP" -d "$SF/libbir" >/dev/null 2>&1 || true
 emit_il "$SF/libil" HofLib "$SF/libbir"/*.bir.json
 dotnet "$RETARGET_DLL" "$SF/libil/HofLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" "$SF/k.meta" --compile-refs "$REFS$SF/libil/HofLib.dll" hof.LibKt >/dev/null 2>&1 || true
-CLR_TYPES_METADATA="$SF/k.meta" "$LAUNCHER" "$SF/app" -no-stdlib -classpath "$CP" -d "$SF/appbir" >/dev/null 2>&1 || true
+project_reference_klib "$SF/libil/HofLib.dll" "$SF/HofLib.klib"
+"$LAUNCHER" "$SF/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$SF/HofLib.klib" -d "$SF/appbir" >/dev/null 2>&1 || true
 emit_il "$SF/appil" HofApp --ref "$SF/libil/HofLib.dll" "$SF/appbir"/*.bir.json
 cp "$SF/libil/HofLib.dll" "$SF/appil/" 2>/dev/null || true
 sfexpected="$(printf '42\n42')"
@@ -793,11 +802,11 @@ fun main() {
     println(runField())              // 107 — a suspend lambda STORED in an instance field, then driven
 }
 EOF
-CLR_TYPES_METADATA="" "$LAUNCHER" "$SR/lib" -no-stdlib -classpath "$CP" -d "$SR/libbir" >/dev/null 2>&1 || true
+"$LAUNCHER" "$SR/lib" -no-stdlib -classpath "$CP" -d "$SR/libbir" >/dev/null 2>&1 || true
 emit_il "$SR/libil" Hof2Lib "$SR/libbir"/*.bir.json
 dotnet "$RETARGET_DLL" "$SR/libil/Hof2Lib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" "$SR/k.meta" --compile-refs "$REFS$SR/libil/Hof2Lib.dll" hof2.LibKt >/dev/null 2>&1 || true
-CLR_TYPES_METADATA="$SR/k.meta" "$LAUNCHER" "$SR/app" -no-stdlib -classpath "$CP" -d "$SR/appbir" >/dev/null 2>&1 || true
+project_reference_klib "$SR/libil/Hof2Lib.dll" "$SR/Hof2Lib.klib"
+"$LAUNCHER" "$SR/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$SR/Hof2Lib.klib" -d "$SR/appbir" >/dev/null 2>&1 || true
 emit_il "$SR/appil" Hof2App --ref "$SR/libil/Hof2Lib.dll" "$SR/appbir"/*.bir.json
 cp "$SR/libil/Hof2Lib.dll" "$SR/appil/" 2>/dev/null || true
 srexpected="$(printf '42\n30\n107')"
@@ -838,12 +847,11 @@ fun main() {
     println(d.describe())   // d:woof    final describe, internal virtual sound() -> woof
 }
 EOF
-CLR_TYPES_METADATA="" "$LAUNCHER" "$VD/lib" -no-stdlib -classpath "$CP" -d "$VD/libbir" >/dev/null 2>&1 || true
+"$LAUNCHER" "$VD/lib" -no-stdlib -classpath "$CP" -d "$VD/libbir" >/dev/null 2>&1 || true
 emit_il "$VD/libil" AnimalLib "$VD/libbir"/*.bir.json
 dotnet "$RETARGET_DLL" "$VD/libil/AnimalLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-"$LAUNCHER" --scan-imports --output "$VD/imports.txt" "$VD/app"/*.kt >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" "$VD/meta" --compile-refs "$REFS$VD/libil/AnimalLib.dll" --import-list "$VD/imports.txt" >/dev/null 2>&1 || true
-CLR_TYPES_METADATA="$VD/meta" "$LAUNCHER" "$VD/app" -no-stdlib -classpath "$CP" -d "$VD/appbir" >/dev/null 2>&1 || true
+project_reference_klib "$VD/libil/AnimalLib.dll" "$VD/AnimalLib.klib"
+"$LAUNCHER" "$VD/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$VD/AnimalLib.klib" -d "$VD/appbir" >/dev/null 2>&1 || true
 # ROOT-fix guard: every callInstance on the reinjected dispatch.Animal owner carries a `virtual` flag (kotc #139).
 # A node WITH the flag serializes as `{"k":"callInstance","virtual":<b>,"ownerType":{...dispatch.Animal}}`; a
 # regression (missing flag) as `{"k":"callInstance","ownerType":{...dispatch.Animal}}` — assert the former exists and the latter never does.
@@ -935,6 +943,11 @@ EOF
 cat > "$PR/app/app.kt" <<'EOF'
 import dotkt.support.blockOn
 import rtprops.Holder
+import rtprops.FunctionSlots
+import rtprops.GenericSlots
+import rtprops.Slot
+import rtprops.SlotConsumer
+import rtprops.SlotDerived
 fun main() {
     val h = Holder()
     h.text = null                          // compiles ONLY IF text restored nullable (String?); a non-null degrade -> compile FAIL
@@ -942,85 +955,38 @@ fun main() {
     println(blockOn(h.block))              // 7         — block restored as suspend () -> Int, DRIVEN via startCoroutine
     val f: suspend Int.() -> Int = h.ext   // type-checks ONLY IF ext restored as suspend Int.() -> Int (a degraded Any?
     println(if (f === h.ext) "ext-ok" else "ext-bad")  //             or arity-0 suspend () -> Int would not assign -> FAIL)
+    val slot = Slot<String?>(null)
+    val slots = GenericSlots<String>(slot)
+    val functions = FunctionSlots<String> { it ?: "nil" }
+    val consumer: SlotConsumer<String> = SlotDerived<String>()
+    check(slots.fieldSlot.value == null)              // raw-field carrier
+    check(slots.propertySlot.value == null)           // property carrier
+    check(slots.accept(slot) == 0)                    // method parameter
+    check(slots.acceptMany(slot) == 1)                // vararg element
+    check(functions.functionField(null) == "nil")     // raw function-field carrier
+    check(functions.functionProperty(null) == "nil")  // function-property carrier
+    check(consumer.bridgeAccept(slot) == "null")      // late synthesized bridge
+    check(rtprops.acceptsNullable(slot) == 0)         // file function + method type variable
+    check(rtprops2.acceptsNullable(rtprops2.Slot<String?>(null)) == 0) // same-name packages stay distinct
+    println("slots-ok")
 }
 EOF
-CLR_TYPES_METADATA="" "$LAUNCHER" "$PR/lib" -no-stdlib -classpath "$CP" -d "$PR/libbir" >/dev/null 2>&1 || true
+"$LAUNCHER" "$PR/lib" -no-stdlib -classpath "$CP" -d "$PR/libbir" >/dev/null 2>&1 || true
 emit_il "$PR/libil" PropLib "$PR/libbir"/*.bir.json
 dotnet "$RETARGET_DLL" "$PR/libil/PropLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" "$PR/meta" --compile-refs "$REFS$PR/libil/PropLib.dll" rtprops.Holder rtprops.GenericSlots rtprops.FunctionSlots rtprops.SlotDerived rtprops.LibKt rtprops2.TwinKt System.Threading.Monitor >/dev/null 2>&1 || true
+project_reference_klib "$PR/libil/PropLib.dll" "$PR/PropLib.klib"
 write_coharness "$PR/app"
-CLR_TYPES_METADATA="$PR/meta" "$LAUNCHER" "$PR/app" -no-stdlib -classpath "$CP" -d "$PR/appbir" >/dev/null 2>&1 || true
+"$LAUNCHER" "$PR/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$PR/PropLib.klib" -d "$PR/appbir" >/dev/null 2>&1 || true
 emit_il "$PR/appil" PropApp --ref "$PR/libil/PropLib.dll" "$PR/appbir"/*.bir.json
 cp "$PR/libil/PropLib.dll" "$PR/appil/" 2>/dev/null || true
-prexpected="$(printf 'was-null\n7\next-ok')"
+prexpected="$(printf 'was-null\n7\next-ok\nslots-ok')"
 run_app practual "$PR/appil/PropApp.dll"
-# #47 receiver-preservation: ext's restored property type is a suspend `fn` node carrying `recv` (the extension receiver)
-# — a flattened `suspend (Int)->Int` (pre-fix kotc) would carry no recv. Assert the combined suspend+extension cone survived.
-pr_ext_recv=$(python3 - "$PR/meta" <<'PY'
-import json,sys
-try:
-    d=json.load(open(sys.argv[1])); ok=0
-    for t in d.get("types",[]):
-        for p in t.get("props",[]):
-            ty=p.get("type",{})
-            if p.get("name")=="ext" and ty.get("t")=="fn" and ty.get("suspend") and "recv" in ty: ok=1
-    print(ok)
-except Exception: print(0)
-PY
-)
-# #147 carrier surface: the constructor parameter, method parameter, CLR property, and raw FieldDef all restore
-# `Slot<T?>`. This direct metadata assertion deliberately isolates the raw-field TYPE from the separate external
-# raw-field access path; the ProjectReference consumer exercises constructor/method/property inference and runtime.
-pr_nullable_generic_slots=$(python3 - "$PR/meta" <<'PY'
-import json,sys
-try:
-    d=json.load(open(sys.argv[1]))
-    t=next(x for x in d.get("types",[]) if x.get("dotNet","").startswith("rtprops.GenericSlots`"))
-    def slot_tv(n):
-        name=n.get("name","") if isinstance(n,dict) else ""
-        a=n.get("args") if isinstance(n,dict) and n.get("t")=="fqn" and (name=="Slot" or name.endswith(".Slot")) else None
-        q=a[0] if isinstance(a,list) and len(a)==1 else {}
-        v=q.get("of",{}) if q.get("t")=="nullable" else {}
-        return v.get("t")=="tv" and v.get("scope")=="type" and v.get("i")==0
-    def fn_tv(n):
-        ps=n.get("params") if isinstance(n,dict) and n.get("t")=="fn" else None
-        q=ps[0] if isinstance(ps,list) and len(ps)==1 else {}
-        v=q.get("of",{}) if q.get("t")=="nullable" else {}
-        return v.get("t")=="tv" and v.get("scope")=="type" and v.get("i")==0
-    ctor=slot_tv(t.get("ctors",[{}])[0].get("params",[{}])[0].get("type",{}))
-    method=next((slot_tv(f.get("params",[{}])[0].get("type",{}))
-                 for f in t.get("funs",[]) if f.get("name")=="accept"),False)
-    vararg=next((slot_tv(f.get("params",[{}])[0].get("type",{}))
-                 and f.get("params",[{}])[0].get("mods",{}).get("vararg") is True
-                 for f in t.get("funs",[]) if f.get("name")=="acceptMany"),False)
-    props={p.get("name"):slot_tv(p.get("type",{})) for p in t.get("props",[])}
-    ft=next(x for x in d.get("types",[]) if x.get("dotNet","").startswith("rtprops.FunctionSlots`"))
-    fctor=fn_tv(ft.get("ctors",[{}])[0].get("params",[{}])[0].get("type",{}))
-    fprops={p.get("name"):fn_tv(p.get("type",{})) for p in ft.get("props",[])}
-    dt=next(x for x in d.get("types",[]) if x.get("dotNet","").startswith("rtprops.SlotDerived`"))
-    bridge=next((slot_tv(f.get("params",[{}])[0].get("type",{}))
-                 for f in dt.get("funs",[]) if f.get("name")=="bridgeAccept"),False)
-    def nullable_fun_slot(pkg, expected):
-        file=next(x for x in d.get("files",[]) if x.get("pkg")==pkg)
-        fun=next(x for x in file.get("funs",[]) if x.get("name")=="acceptsNullable")
-        n=fun.get("params",[{}])[0].get("type",{})
-        args=n.get("args") if n.get("t")=="fqn" and n.get("name")==expected else None
-        q=args[0] if isinstance(args,list) and len(args)==1 else {}
-        v=q.get("of",{}) if q.get("t")=="nullable" else {}
-        return v.get("t")=="tv" and v.get("scope")=="method" and v.get("i")==0
-    clash_a=nullable_fun_slot("rtprops", "rtprops.Slot")
-    clash_b=nullable_fun_slot("rtprops2", "rtprops2.Slot")
-    print(1 if ctor and method and vararg and props.get("propertySlot") and props.get("fieldSlot")
-          and fctor and fprops.get("functionProperty") and fprops.get("functionField") and bridge
-          and clash_a and clash_b else 0)
-except Exception: print(0)
-PY
-)
-pr_ok=0; [[ "$practual" == "$prexpected" && "$pr_ext_recv" -ge 1 ]] && pr_ok=1
+pr_ok=0; [[ "$practual" == "$prexpected" ]] && pr_ok=1
 section_result roundtrip-property-type "$pr_ok" "a property's nullability (String?) + suspend-fn-type (suspend ()->T, suspend R.()->T incl. restored receiver) re-import directly as the property type #47" \
-	"$(printf -- 'ext_recv_in_meta=%s\n--- expected ---\n%s\n--- actual ---\n%s' "$pr_ext_recv" "$prexpected" "$practual")"
-check_output roundtrip-nullable-generic-slots "1" "$pr_nullable_generic_slots" \
-	"the [KotlinNullableGeneric] pre-erasure shape restores on params/properties/raw fields, function types, and late synthesized bridges #147"
+	"$(printf -- '--- expected ---\n%s\n--- actual ---\n%s' "$prexpected" "$practual")"
+section_result roundtrip-nullable-generic-slots "$pr_ok" \
+	"nullable generic shape restores on constructors/methods/varargs/properties/raw fields, function types, late synthesized bridges, and same-name packages #147" \
+	"$(printf -- '--- expected ---\n%s\n--- actual ---\n%s' "$prexpected" "$practual")"
 
 # ----- INTERFACE-COMPANION statics round-trip (#132): `interface I { companion object { val X; fun f() } }` -----
 # kotc FLATTENS an interface's plain companion object to the interface's OWN static fields/methods (BirEmitterDeclarations
@@ -1052,33 +1018,18 @@ fun main() {
     println(Greeter.Companion.create().greet(Greeter.Companion.DEFAULT))  // Hi, Anon  both statics in one expr
 }
 EOF
-CLR_TYPES_METADATA="" "$LAUNCHER" "$IC/lib" -no-stdlib -classpath "$CP" -d "$IC/libbir" >/dev/null 2>&1 || true
+"$LAUNCHER" "$IC/lib" -no-stdlib -classpath "$CP" -d "$IC/libbir" >/dev/null 2>&1 || true
 emit_il "$IC/libil" GreeterLib "$IC/libbir"/*.bir.json
 dotnet "$RETARGET_DLL" "$IC/libil/GreeterLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-"$LAUNCHER" --scan-imports --output "$IC/imports.txt" "$IC/app"/*.kt >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" "$IC/meta" --compile-refs "$REFS$IC/libil/GreeterLib.dll" --import-list "$IC/imports.txt" >/dev/null 2>&1 || true
-CLR_TYPES_METADATA="$IC/meta" "$LAUNCHER" "$IC/app" -no-stdlib -classpath "$CP" -d "$IC/appbir" >/dev/null 2>&1 || true
+project_reference_klib "$IC/libil/GreeterLib.dll" "$IC/GreeterLib.klib"
+"$LAUNCHER" "$IC/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$IC/GreeterLib.klib" -d "$IC/appbir" >/dev/null 2>&1 || true
 emit_il "$IC/appil" GreeterApp --ref "$IC/libil/GreeterLib.dll" "$IC/appbir"/*.bir.json
 cp "$IC/libil/GreeterLib.dll" "$IC/appil/" 2>/dev/null || true
-# facadegen META assertion: the injected `Greeter` interface now carries staticProps(DEFAULT) + staticFuns(create).
-ic_statics=$(python3 - "$IC/meta" <<'PY'
-import json,sys
-try:
-    d=json.load(open(sys.argv[1])); ok=0
-    for t in d.get("types",[]):
-        if t.get("kind")=="interface" and t.get("name")=="Greeter":
-            sp={p.get("name") for p in t.get("staticProps",[])}
-            sf={f.get("name") for f in t.get("staticFuns",[])}
-            if "DEFAULT" in sp and "create" in sf: ok=1
-    print(ok)
-except Exception: print(0)
-PY
-)
 icexpected="$(printf 'Anon\nHi, Vec\nHi, Anon')"
 run_app icactual "$IC/appil/GreeterApp.dll"
-ic_ok=0; [[ "$icactual" == "$icexpected" && "$ic_statics" -ge 1 ]] && ic_ok=1
-section_result roundtrip-iface-companion "$ic_ok" "interface-companion statics (val+fun) surfaced by facadegen + injected as an interface companion, resolved cross-module #132" \
-	"$(printf -- 'statics_in_meta=%s\n--- expected ---\n%s\n--- actual ---\n%s' "$ic_statics" "$icexpected" "$icactual")"
+ic_ok=0; [[ "$icactual" == "$icexpected" ]] && ic_ok=1
+section_result roundtrip-iface-companion "$ic_ok" "interface-companion statics (val+fun) projected into KLIB and resolved cross-module #132" \
+	"$(printf -- '--- expected ---\n%s\n--- actual ---\n%s' "$icexpected" "$icactual")"
 
 # ----- `class C : Comparable<C>` round-trip (#179): PascalCase IComparable<T>.CompareTo -> operator compareTo -----
 # A Kotlin `class C : Comparable<C>` lowers `compareTo` to the CLR `System.IComparable<C>.CompareTo` PascalCase slot
@@ -1112,29 +1063,17 @@ fun main() {
     println(xs[2].n)                                      // 3      largest last
 }
 EOF
-CLR_TYPES_METADATA="" "$LAUNCHER" "$CM/lib" -no-stdlib -classpath "$CP" -d "$CM/libbir" >/dev/null 2>&1 || true
+"$LAUNCHER" "$CM/lib" -no-stdlib -classpath "$CP" -d "$CM/libbir" >/dev/null 2>&1 || true
 emit_il "$CM/libil" VerLib "$CM/libbir"/*.bir.json
 dotnet "$RETARGET_DLL" "$CM/libil/VerLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-"$LAUNCHER" --scan-imports --output "$CM/imports.txt" "$CM/app"/*.kt >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" "$CM/meta" --compile-refs "$REFS$CM/libil/VerLib.dll" --import-list "$CM/imports.txt" >/dev/null 2>&1 || true
-# facadegen SURFACE (must stay GREEN): the injected `Ver` carries an `operator compareTo` fun (clrName CompareTo) AND a
-# `kotlin.Comparable` supertype (the non-generic `System.IComparable` bridge dropped).
-cm_meta=$(python3 - "$CM/meta" <<'PY'
-import json,sys
-try:
-    d=json.load(open(sys.argv[1])); ok=0
-    for t in d.get("types",[]):
-        if t.get("name")!="Ver": continue
-        op=any(f.get("name")=="compareTo" and f.get("mods",{}).get("operator") and f.get("clrName")=="CompareTo"
-               for f in t.get("funs",[]))
-        sup=any(s.get("t")=="fqn" and s.get("name")=="kotlin.Comparable" for s in t.get("supers",[]))
-        noicmp=not any(s.get("t")=="fqn" and s.get("name")=="System.IComparable" for s in t.get("supers",[]))
-        if op and sup and noicmp: ok=1
-    print(ok)
-except Exception: print(0)
-PY
-)
-check_output roundtrip-comparable-meta "1" "$cm_meta" "facadegen surface: Ver gains operator compareTo (clrName CompareTo) + kotlin.Comparable<Ver> supertype, non-generic IComparable bridge dropped #179"
+project_reference_klib "$CM/libil/VerLib.dll" "$CM/VerLib.klib"
+"$LAUNCHER" "$CM/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$CM/VerLib.klib" -d "$CM/appbir" >/dev/null 2>&1 || true
+emit_il "$CM/appil" VerApp --ref "$CM/libil/VerLib.dll" "$CM/appbir"/*.bir.json
+cp "$CM/libil/VerLib.dll" "$CM/appil/" 2>/dev/null || true
+cmexpected="$(printf 'True\nTrue\nTrue\nFalse\n1\n3')"
+run_app cmactual "$CM/appil/VerApp.dll"
+check_output roundtrip-comparable-meta "$cmexpected" "$cmactual" \
+	"reference KLIB restores operator compareTo + kotlin.Comparable<Ver>; comparison operators and sorted() compile and run #179"
 
 # ---- verdict --------------------------------------------------------------------------------------
 echo "------------------------------------"

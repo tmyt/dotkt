@@ -73,7 +73,6 @@ cat > "$main_fault/app.ktproj" <<KTPROJ
 KTPROJ
 cat > "$main_fault/App.kt" <<'KOTLIN'
 import System.Threading.Tasks.Task
-import kotlin.clr.await
 
 suspend fun main() {
     Task.Delay(1).await()

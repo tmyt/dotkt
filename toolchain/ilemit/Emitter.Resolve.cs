@@ -794,6 +794,13 @@ sealed partial class Emitter
     // return, `IEnumerable[Double]` vs `[Tv]`) stays discriminating instead of collapsing onto the loose shape.
     bool Matches(DotKt.Bir.TypeNode t, Type p)
     {
+        // A CIR function type already carries bir2cir's exact nominal delegate
+        // family (`System.Func`/`Action` or module-local `KFunc`/`KAction`).
+        // Compare that descriptor structurally: a referenced assembly's KFunc
+        // and the equivalent local synthetic TypeBuilder are intentionally
+        // different Reflection Type identities but the same declared ABI.
+        if (t is DotKt.Bir.TypeNode.Fn)
+            return MatchesOpen(t, p);
         // A node mentioning a type variable is inherently OPEN — compare by SHAPE (MapType would resolve a `Tv` to a
         // placeholder that never ReferenceEquals the candidate's actual generic parameter, wrongly rejecting the right
         // overload). A suspend fn likewise routes to the structural path (-> false). Only a fully-concrete node uses MapType.

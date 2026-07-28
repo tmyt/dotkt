@@ -264,7 +264,10 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 			"""{"k":"staticField","ownerType":${fqnJson(typeName(parent))},"name":${str(entry.name.asString())}}"""
 		else {
 			val ord = parent?.declarations?.filterIsInstance<IrEnumEntry>()?.indexOf(entry) ?: 0
-			"""{"k":"enumValue","type":${fqnJson(parent?.let { typeName(it) } ?: "kotlin.Any")},"ordinal":$ord}"""
+			// The enum-entry NAME is Kotlin declaration identity. Its ordinal remains the complete physical value for a
+			// locally-declared Kotlin enum; bir2cir uses the name plus referenced-DLL metadata to resolve a sparse CLR
+			// enum's actual underlying constant.
+			"""{"k":"enumValue","type":${fqnJson(parent?.let { typeName(it) } ?: "kotlin.Any")},"entry":${str(entry.name.asString())},"ordinal":$ord}"""
 		}
 	}
 	// `object Foo` reference -> load the singleton `Foo.INSTANCE` static field (item 10). (.NET-injected objects

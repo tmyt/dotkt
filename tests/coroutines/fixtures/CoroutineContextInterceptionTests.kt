@@ -17,7 +17,6 @@ import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import System.Threading.Tasks.Task1
 import System.Threading.Tasks.TaskCompletionSource1
 import System.Threading.Thread
-import kotlin.clr.await
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.ContinuationInterceptor

@@ -19,7 +19,6 @@ import System.Threading.Tasks.Task
 import System.Threading.Tasks.Task1
 import System.Threading.Tasks.TaskCompletionSource1
 import System.Threading.Tasks.ValueTask1
-import kotlin.clr.await
 import dotkt.support.blockOn
 
 // ---- il-valueawait -------------------------------------------------------------------------------------------

@@ -27,6 +27,8 @@ import org.jetbrains.kotlin.cli.pipeline.metadata.MetadataFrontendPipelineArtifa
 import org.jetbrains.kotlin.compiler.plugin.CompilerPluginRegistrar
 import org.jetbrains.kotlin.config.CommonConfigurationKeys
 import org.jetbrains.kotlin.config.CompilerConfiguration
+import org.jetbrains.kotlin.config.LanguageFeature
+import org.jetbrains.kotlin.config.LanguageVersionSettings
 import org.jetbrains.kotlin.config.moduleName
 import org.jetbrains.kotlin.config.phaser.CompilerPhase
 import org.jetbrains.kotlin.fir.backend.Fir2IrConfiguration
@@ -86,6 +88,16 @@ object ClrMetadataConfigurationUpdater : ConfigurationUpdater<K2MetadataCompiler
 		configuration.put(CLIConfigurationKeys.RENDER_DIAGNOSTIC_INTERNAL_NAME, arguments.renderInternalDiagnosticNames)
 		configuration.putIfNotNull(K2MetadataConfigurationKeys.FRIEND_PATHS, arguments.friendPaths?.toList())
 		configuration.putIfNotNull(K2MetadataConfigurationKeys.REFINES_PATHS, arguments.refinesPaths?.toList())
+		// CLR reference KLIBs use Kotlin metadata's standard static-member flags. Upstream
+		// currently gates their deserialization behind CompanionBlocksAndExtensions, but for
+		// Kotlin/CLR this is a platform capability rather than a user-selected preview feature.
+		// Enable only feature lookup here, preserving the user's language/API versions, analysis
+		// flags, pre-release state, and every other customized feature.
+		val languageSettings = configuration.getNotNull(CommonConfigurationKeys.LANGUAGE_VERSION_SETTINGS)
+		configuration.put(
+			CommonConfigurationKeys.LANGUAGE_VERSION_SETTINGS,
+			ClrLanguageVersionSettings(languageSettings),
+		)
 		arguments.destination?.let {
 			configuration.put(CLIConfigurationKeys.METADATA_DESTINATION_DIRECTORY, File(it))
 		} ?: configuration.getNotNull(CommonConfigurationKeys.MESSAGE_COLLECTOR_KEY).report(
@@ -93,6 +105,21 @@ object ClrMetadataConfigurationUpdater : ConfigurationUpdater<K2MetadataCompiler
 			"Specify destination via -d",
 		)
 	}
+}
+
+private class ClrLanguageVersionSettings(
+	private val delegate: LanguageVersionSettings,
+) : LanguageVersionSettings by delegate {
+	override fun getFeatureSupport(feature: LanguageFeature): LanguageFeature.State =
+		if (feature == LanguageFeature.CompanionBlocksAndExtensions) {
+			LanguageFeature.State.ENABLED
+		} else {
+			delegate.getFeatureSupport(feature)
+		}
+
+	override fun getCustomizedLanguageFeatures(): Map<LanguageFeature, LanguageFeature.State> =
+		delegate.getCustomizedLanguageFeatures() +
+			(LanguageFeature.CompanionBlocksAndExtensions to LanguageFeature.State.ENABLED)
 }
 
 class ClrFir2IrPipelineArtifact(

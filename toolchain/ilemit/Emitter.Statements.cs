@@ -59,7 +59,8 @@ sealed partial class Emitter
                 // rejects as a bad image. `ParseOwnerSlot` preserves the instantiation, exactly as the field READ and
                 // `Ldflda` paths already do (Emitter.Expressions/Bodies).
                 var sfld = ResolveField(ParseOwnerSlot(s.GetProperty("ownerType")), fnm, out var sft);
-                EmitExpr(s.GetProperty("recv"));
+                if (ClrRef(s.GetProperty("ownerType")).IsValueType) EmitAddr(s.GetProperty("recv"));
+                else EmitExpr(s.GetProperty("recv"));
                 EmitStoreCoerced(s.GetProperty("value"), sft);
                 MaybeVolatile(sfld);
                 _il.Emit(OpCodes.Stfld, sfld);

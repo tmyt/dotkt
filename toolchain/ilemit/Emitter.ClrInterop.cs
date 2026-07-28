@@ -5,6 +5,7 @@ using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
 using System.Text.Json;
+using System.Globalization;
 
 // CLR interop emission: @Clr native calls, property/event access, ctor picking, BCL-intrinsic handlers.
 sealed partial class Emitter
@@ -107,7 +108,35 @@ sealed partial class Emitter
 
     Type EmitNativeClrEnumValue(JsonElement e)
     {
-        _il.Emit(OpCodes.Ldc_I4, e.GetProperty("ordinal").GetInt32());
+        if (e.TryGetProperty("physicalValue", out var pv)
+            && e.TryGetProperty("underlying", out var ut))
+        {
+            var text = pv.GetString();
+            switch (ut.GetString())
+            {
+                case "System.Int64":
+                    _il.Emit(OpCodes.Ldc_I8, long.Parse(text, CultureInfo.InvariantCulture));
+                    break;
+                case "System.UInt64":
+                    _il.Emit(OpCodes.Ldc_I8, unchecked((long)ulong.Parse(text, CultureInfo.InvariantCulture)));
+                    break;
+                case "System.UInt32":
+                    _il.Emit(OpCodes.Ldc_I4, unchecked((int)uint.Parse(text, CultureInfo.InvariantCulture)));
+                    break;
+                case "System.Byte":
+                case "System.UInt16":
+                    _il.Emit(OpCodes.Ldc_I4, int.Parse(text, CultureInfo.InvariantCulture));
+                    break;
+                default:
+                    _il.Emit(OpCodes.Ldc_I4, int.Parse(text, CultureInfo.InvariantCulture));
+                    break;
+            }
+        }
+        else
+        {
+            // A locally-declared Kotlin basic enum has contiguous 0..N values by construction.
+            _il.Emit(OpCodes.Ldc_I4, e.GetProperty("ordinal").GetInt32());
+        }
         return NativeType(e.GetProperty("type"));
     }
 
@@ -166,12 +195,12 @@ sealed partial class Emitter
             // A generic collection constructed with an EMITTED element type (`new HashSet<EmittedType>()`) is a
             // TypeBuilderInstantiation whose members can't be reflected — the winner was matched on the OPEN def. Emit
             // the args against the SUBSTITUTED param types (so a delegate/closure arg's rewrap target is the CLOSED
-            // param `Func<Box>`, not the open `Func<T>`), backfill trailing optional defaults, then re-anchor the ctor.
+            // param `Func<Box>`, not the open `Func<T>`), then re-anchor the ctor.
             var classArgs = type.GetGenericArguments();
             var openPs = openCtor.GetParameters();
             int ai = 0;
             foreach (var a in args.EnumerateArray()) { EmitArg(a, SubstituteIfaceArgs(openPs[ai].ParameterType, classArgs)); ai++; }
-            for (; ai < openPs.Length; ai++) EmitDefaultArg(openPs[ai]);
+            RequireArgCount(ai, openPs.Length, openCtor.ToString());
             _il.Emit(OpCodes.Newobj, TypeBuilder.GetConstructor(type, openCtor));
             return type;
         }

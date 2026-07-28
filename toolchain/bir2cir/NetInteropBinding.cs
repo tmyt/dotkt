@@ -74,6 +74,10 @@ static class NetInteropBinding
         // `new`, which flows to MemberCallSubstitution.TransformNew unchanged.
         if (k == "new") { ReshapeRegexCtorOptions(node); return; }
         if (k != "callStatic" && k != "callInstance") return;
+        // dll2klib's metadata-only await declaration deliberately has no CLR
+        // member to bind. Preserve the Kotlin call and its marker until
+        // SuspendColdLowering resolves the awaiter pattern from the refs.
+        if (node["clrAwaitBridge"]?.GetValue<bool>() == true) return;
         var ownerJson = node["ownerType"];
         // Peel Nullable/Oblivious/ByRef wrappers to reach the underlying .NET Fqn (a `List<Item>?` receiver's owner is
         // spelled `nullable(fqn List<Item>)`); the ORIGINAL wrapped node is preserved verbatim in the `type` slot below
@@ -118,6 +122,26 @@ static class NetInteropBinding
                 && MemberIsStaticPropertyOrField(netType, method));
         var hasTypeArgs = node["typeArgs"] is JsonArray ta && ta.Count > 0;
 
+        // A declaration loaded from a standard reference KLIB surfaces a CLR event as an ordinary read-only
+        // `ClrEvent<T>` property. Unlike the retired FIR-injected declaration, it has no plugin origin from which kotc
+        // could mint `clrEventGet`; recover that CLR shape here from the authoritative reference metadata.
+        var projectedPropKind = Str(node["prop"]);
+        var projectedEventName = method != null && method.StartsWith("get_", StringComparison.Ordinal)
+            ? method[4..]
+            : projectedPropKind == "get" ? method : null;
+        if (projectedEventName != null &&
+            _refs.TryClrEventIsStatic(bare, projectedEventName, out var eventIsStatic))
+        {
+            var recv = node["recv"];
+            node.Clear();
+            node["k"] = "clrEventGet";
+            node["type"] = ownerJson?.DeepClone();
+            node["name"] = projectedEventName;
+            node["static"] = eventIsStatic;
+            if (!eventIsStatic) node["recv"] = recv;
+            return;
+        }
+
         // Detach every current field (removing a key from a JsonObject detaches its value) so it can be re-added in the
         // CLR-shape order — byte-identical to what kotc used to emit directly, only the shape decision moved here.
         var v = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
@@ -128,6 +152,8 @@ static class NetInteropBinding
         // Once the owner resolves against the authoritative CLR reference set, both fields carry the same frontend
         // fact needed here. Accepting `sig` lets bir2cir own the CLR binding without teaching kotc a KLIB side channel.
         JsonNode TakeMemberSig(string preferred) => Take(preferred) ?? Take("sig") ?? new JsonArray();
+        JsonNode TakeDeclaredSig() =>
+            Take("sig") ?? Take("shapeTypes") ?? Take("argTypes") ?? new JsonArray();
         var owner = Take("ownerType");
         var args = Take("args") as JsonArray ?? new JsonArray();
         // A `super.X()` (issue #14) rides in as `"super":true` on the callInstance. kotc already forced this call
@@ -185,6 +211,12 @@ static class NetInteropBinding
         // produces); otherwise (a synthetic member-extension / top-level-extension accessor with no matching .NET member)
         // reconstruct the `get_`/`set_<name>` plain method call and fall through — byte-identical to the old kotc emission.
         var propKind = Str(Take("prop"));
+        // Standard KLIB metadata has an operator bit but no CLR-indexer side channel, so kotc emits plain operator
+        // `get`/`set` calls. A real default indexed property and absence of a literal same-name method is sufficient
+        // to recover the accessor without guessing its CLR name (custom IndexerName remains honored).
+        if (propKind == null && method is "get" or "set" &&
+            DefaultIndexerAccessor(netType, method == "set") is string projectedIndexerAccessor)
+            method = projectedIndexerAccessor;
         // .NET DEFAULT INDEXED PROPERTY (A2 step 4): kotc emits the faithful Kotlin get/set operator identity
         // (`method:"get"/"set"`) + an index marker; it does NOT bake the `get_Item`/`set_Item` slot (WRONG for a custom
         // `[IndexerName]`). Resolve the .NET type's default indexed property off the refs (its DefaultMember/[IndexerName]
@@ -313,7 +345,11 @@ static class NetInteropBinding
         node["k"] = isStatic ? "clrStatic" : "clrInstance";
         node["type"] = owner;
         node["method"] = method;
-        node["argTypes"] = TakeMemberSig("argTypes");
+        // Resolve the CLR slot from the callee's complete declaration
+        // signature. `args` may legitimately be shorter when Kotlin omits a
+        // trailing optional parameter; ilemit backfills that value from the
+        // resolved MethodInfo's DefaultParameterValue metadata.
+        node["argTypes"] = TakeDeclaredSig();
         node["ret"] = Take("ret");
         if (!isStatic) node["recv"] = Take("recv");
         node["args"] = args;

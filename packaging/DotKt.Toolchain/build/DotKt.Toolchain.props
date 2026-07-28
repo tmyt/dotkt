@@ -9,12 +9,15 @@
          'Windows_NT' on Windows and 'Unix'/'OSX' elsewhere; the extension-less script is the non-Windows fallback. -->
     <DotKtCompiler Condition="'$(DotKtCompiler)' == '' and '$(OS)' == 'Windows_NT'">$(DotKtToolchainDir)kotc/bin/kotc.bat</DotKtCompiler>
     <DotKtCompiler Condition="'$(DotKtCompiler)' == ''">$(DotKtToolchainDir)kotc/bin/kotc</DotKtCompiler>
+    <!-- The launcher is stable across compiler rebuilds; the jar timestamp is the actual frontend tool fingerprint. -->
+    <DotKtCompilerFingerprint Condition="'$(DotKtCompilerFingerprint)' == ''">$(DotKtToolchainDir)kotc/lib/kotc.jar</DotKtCompilerFingerprint>
     <!-- kotc -classpath: the CLR FRONTEND stdlib KLIB built FROM our CLR stdlib sources for the common frontend. -->
     <DotKtStdlib Condition="'$(DotKtStdlib)' == ''">$(DotKtToolchainDir)kotlin-stdlib-clr-frontend.klib</DotKtStdlib>
     <DotKtBir2Cir Condition="'$(DotKtBir2Cir)' == ''">$(DotKtToolchainDir)bir2cir/bir2cir.dll</DotKtBir2Cir>
     <DotKtIlEmit Condition="'$(DotKtIlEmit)' == ''">$(DotKtToolchainDir)ilemit/ilemit.dll</DotKtIlEmit>
-    <DotKtFacadeGen Condition="'$(DotKtFacadeGen)' == ''">$(DotKtToolchainDir)facadegen/facadegen.dll</DotKtFacadeGen>
     <DotKtDll2Klib Condition="'$(DotKtDll2Klib)' == ''">$(DotKtToolchainDir)dll2klib/dll2klib.dll</DotKtDll2Klib>
+    <!-- Worker-process concurrency for reference DLL -> KLIB projection. 0 means one worker per stale reference. -->
+    <DotKtDll2KlibJobs Condition="'$(DotKtDll2KlibJobs)' == ''">$([System.Environment]::ProcessorCount)</DotKtDll2KlibJobs>
     <!-- Repoints the emitted dll's BCL refs off System.Private.CoreLib so a C# project can <ProjectReference> it. -->
     <DotKtRetargetTool Condition="'$(DotKtRetargetTool)' == ''">$(DotKtToolchainDir)retarget/retarget.dll</DotKtRetargetTool>
     <!-- The @Clr-metadata REFERENCE stdlib (DotKt.Private.Stdlib.dll): COMPILE-TIME ONLY — bir2cir reads its

@@ -2,9 +2,9 @@
 # dotkt — compile Kotlin (.kt) to a .NET assembly with the DotKt toolchain (kotc -> BIR -> bir2cir ->
 # CIR -> ilemit -> CIL), from the command line. A thin dev wrapper over the same pipeline the MSBuild
 # targets / verify scripts drive, for quick one-shot builds (handy while iterating on the stdlib or
-# trying a snippet). `import System.X` in the sources is resolved automatically (the kotc PSI import
-# scan + facadegen, the same C-2 path the .ktproj uses) — no facade boilerplate needed. Inputs: .kt
-# files/dirs (+ the cached toolchain artifacts, built on demand). Output: <name>.dll in -d <dir>.
+# trying a snippet). Every resolved reference DLL is projected to a standard metadata-only KLIB before
+# kotc starts, so declarations are available independent of the source import set. Inputs: .kt files/dirs
+# (+ the cached toolchain artifacts, built on demand). Output: <name>.dll in -d <dir>.
 source "$(dirname "$0")/lib.sh"
 
 usage() {
@@ -53,10 +53,9 @@ done
 [[ -n "$out_name" ]] || { base="$(basename "${kts[0]}" .kt)"; out_name="${base^}"; [[ "$out_name" =~ Kt$ ]] || out_name="${out_name}Kt"; }
 
 # --- bootstrap the toolchain if missing -------------------------------------------------------------
-need_kotc; need_tool ilemit; need_tool bir2cir; need_tool facadegen
+need_kotc; need_tool ilemit; need_tool bir2cir; need_tool dll2klib
 # kotc -classpath: the CLR FRONTEND klib built FROM our CLR stdlib sources (scripts/build-stdlib-klib.sh).
-# kotlin.* resolves from THIS klib (full Kotlin semantics), never from facadegen — the
-# binding used by the compiler test gate.
+# kotlin.* resolves from THIS klib (full Kotlin semantics).
 need_fe_klib
 # The CLR stdlib ref/rt assemblies are the canonical CACHED builds (scripts/build-stdlib-{ref,rt}.sh
 # --emit). Do NOT auto-rebuild them here: the runtime emit is the slow, blocker-prone path; a cached
@@ -68,38 +67,37 @@ fi
 (( do_retarget )) && need_tool retarget
 
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
-bir="$work/bir"; cir="$work/cir"; mkdir -p "$bir" "$cir" "$out_dir"
-cp="$FE_KLIB"
+bir="$work/bir"; cir="$work/cir"; klibs="$work/reference-klibs"
+mkdir -p "$bir" "$cir" "$klibs" "$out_dir"
 
 # Reference assemblies. Mirroring verify-tests, the two backend stages take DIFFERENT stdlib refs: bir2cir
 # reads the @Clr-metadata REFERENCE stdlib (for @ClrTypeAlias/@ClrIntrinsic substitution), ilemit gets
 # the RUNTIME stdlib (the real Kotlin bodies). The [Kotlin*] round-trip attributes are SYNTHESIZED
-# per-assembly by ilemit (no DotKt.Runtime). The targeting pack is the compile universe for facadegen,
+# per-assembly by ilemit (no DotKt.Runtime). The targeting pack is the compile universe for dll2klib,
 # bir2cir, and retarget; ilemit resolves platform types from the runtime host and receives only implementation refs.
 need_dotnet_reference_sets
 extra_refset="$(refset_join "${extra_refs[@]}")"
 bir_compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$extra_refset")"
-facade_compile_refs="$bir_compile_refs"
 runtime_refs="$extra_refset"
 retarget_compile_refs="$bir_compile_refs"
 if (( use_stdlib )); then
 	bir_compile_refs="$(refset_join "$bir_compile_refs" "$STDLIB_REF_DLL")"
-	facade_compile_refs="$(refset_join "$facade_compile_refs" "$STDLIB_RT_DLL")"
 	runtime_refs="$(refset_join "$runtime_refs" "$STDLIB_RT_DLL")"
 	retarget_compile_refs="$(refset_join "$retarget_compile_refs" "$STDLIB_RT_DLL")"
 fi
 
-# 1. .NET type injection: scan the sources' .NET imports (PSI) -> facadegen generates ONLY .NET-space facades.
-#    kotlin.* (the WHOLE stdlib) is supplied to kotc via the KLIB (-classpath), which carries full Kotlin semantics
-#    (inline/reified/operator/...). facadegen must NEVER inject kotlin.* -- it cannot restore those semantics, and a
-#    facadegen-produced kotlin.* symbol collides with the klib's (e.g. non-reified vs reified arrayOf -> ambiguity).
-meta="$work/clrtypes.meta"; implist="$work/imports.txt"
-"$KOTC" --scan-imports --output "$implist" "${kts[@]}" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" "$meta" --compile-refs "$facade_compile_refs" --import-list "$implist" >/dev/null 2>&1 || true
+# 1. Project every resolved CLR reference to one standard KLIB. DotKt.Stdlib is deliberately represented by
+#    the authoritative frontend KLIB instead of projecting its physical runtime/reference assembly.
+rsp="$work/references.rsp"
+printf '%s\n' "${FRAMEWORK_COMPILE_REF_PATHS[@]}" "${extra_refs[@]}" > "$rsp"
+jobs="${DOTKT_DLL2KLIB_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || printf '1')}"
+dotnet "$DLL2KLIB_DLL" --out "$klibs" --jobs "$jobs" @"$rsp" >/dev/null
+cp="$FE_KLIB"
+while IFS= read -r klib; do cp+="${cp:+:}$klib"; done < <(find "$klibs" -maxdepth 1 -type f -name '*.klib' | LC_ALL=C sort)
 
 # 2. kotc: .kt -> BIR.
 info "compiling ${#kts[@]} file(s) -> BIR" >&2
-CLR_TYPES_METADATA="$meta" "$KOTC" "${kts[@]}" -no-stdlib -classpath "$cp" -d "$bir"
+"$KOTC" "${kts[@]}" -no-stdlib -classpath "$cp" -d "$bir"
 
 # 3. bir2cir: BIR -> CIR (the single type-lowering path; mode is env-gated, not a flag). Reads the
 #    @Clr-metadata REFERENCE stdlib for the @ClrTypeAlias/@ClrIntrinsic substitution.

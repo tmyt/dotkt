@@ -8,6 +8,30 @@
 //  - on a TOP-LEVEL fun -> a STATIC .NET method, splitting "Namespace.Type.Method" at the last '.'.
 package kotlin.clr
 
+// Opaque provenance attached by dll2klib to a projected CLR class or top-level
+// declaration. kotc only forwards `owner` into BIR as the declaration's resolved
+// external identity; bir2cir remains the sole layer that interprets that CLR
+// owner and chooses a physical call/property/field/operator shape.
+@Target(AnnotationTarget.CLASS, AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY)
+@Retention(AnnotationRetention.BINARY)
+public annotation class ClrExternal(val owner: String)
+
+// Marks a metadata-only suspend declaration synthesized by dll2klib beside a
+// conforming CLR GetAwaiter pattern. kotc forwards this declaration fact to
+// BIR; bir2cir resolves GetAwaiter/GetResult and realizes the suspension.
+// There is deliberately no CLR method with this name to bind or emit.
+@Target(AnnotationTarget.FUNCTION)
+@Retention(AnnotationRetention.BINARY)
+public annotation class ClrAwaitBridge
+
+// A projected CLR FieldDef has no exact declaration form in Kotlin metadata:
+// KLIB exposes it as a Kotlin property for frontend lookup, while this marker
+// preserves the storage fact so kotc emits a BIR field access. bir2cir still
+// resolves the actual CLR field and ilemit only emits the resulting CIR.
+@Target(AnnotationTarget.PROPERTY)
+@Retention(AnnotationRetention.BINARY)
+public annotation class ClrField
+
 @Target(AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY)
 public annotation class ClrIntrinsic(val name: String)
 

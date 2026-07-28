@@ -2,7 +2,7 @@
 # Build the FIVE DotKt NuGet packages into the local feed (build/nuget-feed):
 #   DotKt.Sdk       — the MSBuild SDK (Sdk.props/targets; implicit refs to Toolchain + Stdlib)
 #   DotKt.Sdk.Mpp   — thin composition SDK: base DotKt.Sdk + DotKtMultiplatform=true (expect/actual)
-#   DotKt.Toolchain — the compiler: kotc + bir2cir + ilemit + facadegen + dll2klib + retarget + the CLR frontend
+#   DotKt.Toolchain — the compiler: kotc + bir2cir + ilemit + dll2klib + retarget + the CLR frontend
 #                     stdlib KLIB + the COMPILE-TIME stdlib reference assembly (tools/stdlib/DotKt.Private.Stdlib.dll)
 #   DotKt.Stdlib    — the RUNTIME stdlib assembly (lib/net10.0/DotKt.Stdlib.dll, copy-local)
 #   DotKt.Templates — `dotnet new` templates
@@ -76,7 +76,6 @@ info "build compiler (installDist) + tools"
 ( cd "$ROOT" && ./gradlew -q :kotc:installDist )
 dotnet build "$ROOT/toolchain/ilemit"    -c Release -o "$ROOT/build/ilemit-bin"    -v q --nologo
 dotnet build "$ROOT/toolchain/bir2cir"   -c Release -o "$ROOT/build/bir2cir-bin"   -v q --nologo
-dotnet build "$ROOT/toolchain/facadegen" -c Release -o "$ROOT/build/facadegen-bin" -v q --nologo
 dotnet build "$ROOT/toolchain/dll2klib"   -c Release -o "$ROOT/build/dll2klib-bin"   -v q --nologo
 dotnet build "$ROOT/toolchain/retarget"  -c Release -o "$ROOT/build/retarget-bin"  -v q --nologo
 
@@ -101,7 +100,6 @@ cp -r "$ROOT/toolchain/kotc/build/install/kotc" "$TC/kotc"
 cp -r "$FE_KLIB" "$TC/kotlin-stdlib-clr-frontend.klib"
 cp -r "$ROOT/build/ilemit-bin"    "$TC/ilemit"
 cp -r "$ROOT/build/bir2cir-bin"   "$TC/bir2cir"
-cp -r "$ROOT/build/facadegen-bin" "$TC/facadegen"
 cp -r "$ROOT/build/dll2klib-bin"  "$TC/dll2klib"
 cp -r "$ROOT/build/retarget-bin"  "$TC/retarget"
 # The compile-time stdlib REFERENCE assembly rides with the compiler (DotKt.Toolchain.props points

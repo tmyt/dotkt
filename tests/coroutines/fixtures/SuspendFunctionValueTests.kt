@@ -18,7 +18,6 @@ import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import System.Threading.Tasks.Task
 import dotkt.support.blockOn
-import kotlin.clr.await
 
 // ---- il-suspendval2 ------------------------------------------------------------------------------------------
 suspend fun corBSv2AddA(a: Int, b: Int): Int = a + b

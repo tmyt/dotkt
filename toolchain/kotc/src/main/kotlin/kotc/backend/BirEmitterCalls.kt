@@ -90,24 +90,21 @@ import java.io.File
 
 /** The BIR placeholder for an OMITTED default argument this build cannot inline (a cross-module default whose VALUE
  *  the frontend KLIB dropped → IrErrorExpression). Emitted POSITIONALLY so a later provided arg keeps its slot;
- *  bir2cir's DefaultArgSplice replaces it (by array index) from the callee's ref.dll @KotlinDefault / [DefaultParameterValue]. */
+ *  bir2cir's DefaultArgSplice replaces it (by array index) from the selected reference DLL. */
 private val defaultArgPlaceholder = """{"k":"defaultArg"}"""
 
 /** Regular args, POSITIONALLY complete, filling omitted default arguments (IL has no default-parameter mechanism).
  *  ONE pass for every KOTLIN call shape whose callee IR carries its defaults — a function call, a `new`, an array ctor,
- *  a lifted local/class `new`, a constructor delegation, an enum entry. (Two neighbours do NOT come through here: a
- *  call to a facadegen-injected TOP-LEVEL function is filled by [filledInjectedArgs], and a .NET-interop call shape
- *  fills nothing at all — ilemit's `[DefaultParameterValue]` backfill serves it.)
+ *  a lifted local/class `new`, a constructor delegation, an enum entry. Reference-KLIB calls whose dependency IR has
+ *  no default expression use [filledInjectedArgs].
  *  Fill source by default KIND: a same-module CONSTANT/global default is inlined verbatim; a same-module default that
  *  reads the callee's OWN SCOPE — an earlier VALUE PARAMETER (`b: Int = a * 10`, a ctor's `h: Int = w * 2`), the
  *  RECEIVER (`missingDelimiterValue = this`, a data-class `copy`'s `y = this.y`), or an ENCLOSING instance
  *  (`inner class In(val x: Int = outerProp)`) — is inlined with each such read bound BY SYMBOL to THIS call's
  *  expression for it (the JVM `$default` scope, done at the JSON level);
- *  a CROSS-MODULE default (IrErrorExpression — the frontend artifact preserves no default VALUE) is filled from the
- *  facadegen metadata's constant (#134) if it has one, else becomes a `defaultArg` placeholder that bir2cir fills from
- *  the ref.dll @KotlinDefault. A slot with neither is dropped when purely TRAILING (ilemit's [DefaultParameterValue]
- *  backfill fills it), and refused loudly when a LATER slot still emits (a "gap" — silently omitting it would shift
- *  that value into the wrong parameter slot: the joinToString/substringAfter miscompile). */
+ *  a CROSS-MODULE default (IrErrorExpression — the frontend artifact preserves no default VALUE) becomes a
+ *  `defaultArg` placeholder. bir2cir reads the selected reference DLL and produces the complete physical CIR argument
+ *  vector; ilemit never reconstructs default semantics. */
 internal fun BirEmitter.filledArgs(
 	call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression,
 	/** The call's receiver JSON as the CALLER emits it for its own use (an inner-class `new` passes the enclosing
@@ -116,23 +113,6 @@ internal fun BirEmitter.filledArgs(
 	emittedRecv: Lazy<String?>? = null,
 ): List<String> {
 	val callee = (call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction) ?: return emptyList()
-	val carries = carriesKotlinDefault(callee)
-	// #134: the facadegen metadata's constant defaults for this callee's POSITIONAL params, keyed by resolved IR identity —
-	// a CROSS-MODULE facadegen constructor/top-level function's injected default deserializes as an IrErrorExpression
-	// (fir2ir drops the VALUE for a bodies-skipped dependency declaration), so the real value is read from here. Lazy:
-	// only an actually-omitted cross-module default needs the lookup. Null for a same-module callee (its default is real IR).
-	// The count (and the returned list's indices) are the [isValueParameter] PHYSICAL space, because the facadegen
-	// metadata's param array is physical too — one entry per emitted CLR parameter, a restored context parameter included
-	// (it simply never carries a default). Same space as `vals` below, so one index addresses both.
-	val metaDefaults: List<kotc.frontend.ClrConstDefault?>? by lazy {
-		injectedMetaDefaults(callee, callee.parameters.count { isValueParameter(it) })
-	}
-	// The non-constant @KotlinDefault carrier SLOTS facadegen restored for this callee. This is the AUTHORITATIVE signal
-	// for a cross-module omission (it reflects what the referenced assembly actually carries), where `carries` is only an
-	// IR-shape test over a bodies-skipped declaration — hence the sole signal for a CONSTRUCTOR below.
-	val kotlinDefaultSlots: List<Boolean>? by lazy {
-		injectedKotlinDefaultSlots(callee, callee.parameters.count { isValueParameter(it) })
-	}
 	val receiverParams = callee.parameters.filter {
 		it.kind == IrParameterKind.DispatchReceiver || it.kind == IrParameterKind.ExtensionReceiver
 	}
@@ -208,36 +188,10 @@ internal fun BirEmitter.filledArgs(
 									"""{"sty":${birType(p.type).toJson()},"k":"field","ownerType":${ownerSpec(callee.parent as? IrClass, r.type).toJson()},"recv":${dispatchRecv.value ?: extRecv.value},"name":${str(p.name.asString())}}"""
 								}
 							else null
-						// #134: the facadegen metadata's REAL constant default, synthesized as an IrConst, so a named-middle /
-						// reordered omission of an injected .NET ctor's or top-level function's constant default is correct.
-						copyField ?: metaDefaults?.getOrNull(idx)?.let { metaConstArg(it, p.type) }?.let { expr(it) }
-						// A @KotlinDefault-carrying callee (any non-constant default — joinToString's CharSequence separators,
-						// substringAfter's `= this`, `b = a * 10`) gets a POSITIONAL placeholder for EVERY omitted arg so a later
-						// provided arg (the trailing transform lambda) keeps its slot; bir2cir fills each from the ref.dll
-						// @KotlinDefault (its `{param n}` tokens → this call's args).
-						// For a CONSTRUCTOR the decision rests on the facadegen slot ALONE. `carries` is an IR-shape test, and a
-						// bodies-skipped dependency ctor satisfies it for every optional param — including a Tier-1 constant whose
-						// metadata lookup came back inconclusive (two same-arity ctors disagreeing), which must keep DROPPING to
-						// ilemit's [DefaultParameterValue] backfill rather than become a placeholder nothing can fill.
-						?: if (kotlinDefaultSlots?.getOrNull(idx) == true || (carries && callee !is IrConstructor)) defaultArgPlaceholder else {
-							// Neither a metadata constant NOR a @KotlinDefault carrier. A purely TRAILING omit is safe (ilemit's
-							// [DefaultParameterValue] backfill fills it). But if any LATER slot still EMITS — an explicitly
-							// provided arg, one this pass fills from the metadata, or one that becomes a positional
-							// placeholder — silently omitting THIS slot would slide that value into the wrong parameter (and
-							// leave the emitted args short of the callee's arity), so refuse loudly instead of miscompiling.
-							val laterArgProvided = vals.drop(idx + 1).withIndex().any { (k, later) ->
-								val j = later.first
-								val laterIdx = idx + 1 + k
-								(j < call.arguments.size && call.arguments[j] != null) ||
-									metaDefaults?.getOrNull(laterIdx) != null ||
-									kotlinDefaultSlots?.getOrNull(laterIdx) == true ||
-									(carries && callee !is IrConstructor && later.second.defaultValue != null)
-							}
-							if (laterArgProvided) unsupported(call, "omitting a cross-module default argument the metadata does not carry",
-								"the default value of parameter '${p.name.asString()}' is not available as a constant in the referenced " +
-								"assembly's metadata; pass the argument explicitly")
-							null
-						}
+						// CROSS-MODULE: the frontend has resolved this declaration and omission from KLIB, but dependency
+						// IR intentionally carries no default VALUE. Preserve only the missing positional slot; bir2cir
+						// owns reading either KotlinDefault or the ECMA-335 constant from the selected reference DLL.
+						copyField ?: defaultArgPlaceholder
 					}
 					refsAny(def, valueSyms) || refsAny(def, receiverSyms) || refsAny(def, enclosingSyms) -> {
 						// SAME-MODULE default reading the CALLEE'S OWN SCOPE — an earlier VALUE parameter (a CONTEXT
@@ -358,106 +312,22 @@ internal fun BirEmitter.enclosingThisSubst(
 	return out
 }
 
-/** The facadegen metadata's per-POSITIONAL-parameter constant defaults for `callee` (ctor by IR ClassId, or top-level
- *  function by resolved CallableId), matched by positional-param count ([isValueParameter]: contexts then regulars — the
- *  metadata's own param array is that same physical list). Null for a same-module callee or one with no such
- *  overload / ambiguous defaults. Shared by [filledArgs] (#134 const inline) and [filledInjectedArgs] (#146). */
-internal fun BirEmitter.injectedMetaDefaults(callee: org.jetbrains.kotlin.ir.declarations.IrFunction, valCount: Int): List<kotc.frontend.ClrConstDefault?>? =
-	when (callee) {
-		is org.jetbrains.kotlin.ir.declarations.IrConstructor ->
-			(callee.parent as? IrClass)?.classId?.let { kotc.frontend.clrInjectedCtorParamDefaults(it, valCount) }
-		is org.jetbrains.kotlin.ir.declarations.IrSimpleFunction ->
-			(callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)
-				?.let { kotc.frontend.clrInjectedTopLevelParamDefaults(org.jetbrains.kotlin.name.CallableId(it.packageFqName, callee.name), valCount) }
-			// A MEMBER of a facadegen-injected type: the metadata is the authority here too (see the member accessors'
-			// KDoc). Without it a member's omitted default had no carrier signal at all.
-				?: (callee.parent as? IrClass)?.classId?.let { kotc.frontend.clrInjectedMemberParamDefaults(it, callee.name, valCount) }
-		else -> null
-	}
-
-/** The non-constant Kotlin-default carrier slots restored by facadegen for an injected constructor/top-level function.
- * Unlike [carriesKotlinDefault], this survives the bodies-skipped dependency IR, where declaration-origin/default-body
- * details are intentionally incomplete. */
-internal fun injectedKotlinDefaultSlots(callee: org.jetbrains.kotlin.ir.declarations.IrFunction, valCount: Int): List<Boolean>? =
-	when (callee) {
-		is org.jetbrains.kotlin.ir.declarations.IrConstructor ->
-			(callee.parent as? IrClass)?.classId?.let { kotc.frontend.clrInjectedCtorKotlinDefaultSlots(it, valCount) }
-		is org.jetbrains.kotlin.ir.declarations.IrSimpleFunction ->
-			(callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)
-				?.let { kotc.frontend.clrInjectedTopLevelKotlinDefaultSlots(org.jetbrains.kotlin.name.CallableId(it.packageFqName, callee.name), valCount) }
-				?: (callee.parent as? IrClass)?.classId?.let { kotc.frontend.clrInjectedMemberKotlinDefaultSlots(it, callee.name, valCount) }
-		else -> null
-	}
-
-/** #146: the regular-arg BIR STRINGS for a call to a facadegen-injected TOP-LEVEL function, filling an OMITTED default:
- *  a metadata-representable CONSTANT is synthesized inline (#134, [metaConstArg]); a NON-CONSTANT default (`= {}`, a
- *  call, any expr the metadata can't carry) becomes a POSITIONAL `defaultArg` placeholder — bir2cir's DefaultArgSplice
- *  fills it from the callee's ref.dll `[kotlin.clr.KotlinDefault]` BIR sub-tree. Positional so a later provided arg keeps
- *  its slot (`col2(build = {...})` omitting a leading `configure`). A slot with neither a constant NOR a @KotlinDefault
- *  is dropped when purely trailing (ilemit's [DefaultParameterValue] backfill), else refused loudly (arg-shift guard).
- *  The extension receiver is prepended by the caller; the @KotlinDefault index counts it first, matching the final args
- *  array's positions. */
+/** Emit the regular arguments of a resolved reference-KLIB call. A missing dependency-IR default is represented only
+ * by its positional `defaultArg` fact; bir2cir resolves the value from the selected reference DLL. */
 internal fun BirEmitter.filledInjectedArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): List<String> {
 	val callee = (call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction) ?: return emptyList()
-	val valCount = callee.parameters.count { isValueParameter(it) }
-	val metaDefaults = injectedMetaDefaults(callee, valCount)
-	val kotlinDefaultSlots = injectedKotlinDefaultSlots(callee, valCount)
-	val carries = carriesKotlinDefault(callee)
 	val out = ArrayList<String>()
-	var valIdx = -1
 	callee.parameters.forEachIndexed { i, p ->
 		if (!isValueParameter(p)) return@forEachIndexed
-		valIdx++
 		val arg = if (i < call.arguments.size) call.arguments[i] else null
 		// A `byref(x)` / @ClrRefArgument arg is emitted as its ADDRESSABLE lvalue (ilemit's EmitArg passes it by
 		// address). `byrefMarker` is null for every ordinary argument, so this is a no-op everywhere else — it lets
 		// the .NET-interop member paths share this filler instead of keeping a second, non-filling renderer.
 		if (arg != null) { out.add(byrefMarker(arg)?.let { inner -> byrefBackingField(inner) ?: expr(inner) } ?: expr(arg)); return@forEachIndexed }
 		val def = p.defaultValue?.expression ?: return@forEachIndexed
-		if (def is org.jetbrains.kotlin.ir.expressions.IrErrorExpression) {
-			metaDefaults?.getOrNull(valIdx)?.let { metaConstArg(it, p.type) }?.let { out.add(expr(it)); return@forEachIndexed }
-			if (kotlinDefaultSlots?.getOrNull(valIdx) == true || carries) {
-				out.add(defaultArgPlaceholder)
-				return@forEachIndexed
-			}
-			val laterArgProvided = (i + 1 until call.arguments.size).any { j ->
-				call.arguments[j] != null && isValueParameter(callee.parameters[j])
-			}
-			if (laterArgProvided) unsupported(call, "omitting a cross-module default argument the metadata does not carry",
-				"the default value of parameter '${p.name.asString()}' is not available in the referenced assembly's " +
-				"metadata (no constant and no @KotlinDefault); pass the argument explicitly")
-			return@forEachIndexed
-		}
-		out.add(expr(def))
+		out.add(if (def is org.jetbrains.kotlin.ir.expressions.IrErrorExpression) defaultArgPlaceholder else expr(def))
 	}
 	return out
-}
-
-/** #134: synthesize an IrConst for a facadegen-metadata constant default (`ClrConstDefault`), typed with the omitted
- *  parameter's IR type, so `expr()` renders the ordinary `{"k":"const",…}` node a same-module default would produce.
- *  Mirrors ClrTypeInjection.optDefault's value parse (the SAME metadata the FIR injection reads). A null value or an
- *  unparseable/unhandled kind -> null (the arg is omitted; ilemit's [DefaultParameterValue] backfill covers a trailing
- *  slot). */
-private fun metaConstArg(d: kotc.frontend.ClrConstDefault, type: IrType): IrExpression? {
-	val so = org.jetbrains.kotlin.ir.util.SYNTHETIC_OFFSET
-	val C = org.jetbrains.kotlin.ir.expressions.impl.IrConstImpl
-	// A null default value (`= null`) -> the null literal, mirroring ClrTypeInjection.optDefault (which builds it
-	// UNCONDITIONALLY). A null default only sits on a reference/nullable param — the param's own IR type carries the
-	// (possibly flexible/oblivious `T!`) nullability, so keep it as the const's type rather than gating on isMarkedNullable
-	// (an oblivious `String!` reads non-null but still legitimately accepts a null default the frontend already admitted).
-	val v = d.value ?: return C.constNull(so, so, type)
-	return when (d.valueType) {
-		"Int" -> C.int(so, so, type, v.toIntOrNull() ?: return null)
-		"Long" -> C.long(so, so, type, v.toLongOrNull() ?: return null)
-		"Short" -> C.short(so, so, type, v.toShortOrNull() ?: return null)
-		"Byte" -> C.byte(so, so, type, v.toByteOrNull() ?: return null)
-		"Boolean" -> C.boolean(so, so, type, v == "true")
-		"Double" -> C.double(so, so, type, v.toDoubleOrNull() ?: return null)
-		"Float" -> C.float(so, so, type, v.toFloatOrNull() ?: return null)
-		"Char" -> C.char(so, so, type, v.firstOrNull() ?: return null)
-		"String" -> C.string(so, so, type, v)
-		else -> null
-	}
 }
 
 /** True if `expr` reads any of `locals` — detects a default-arg expression that references the callee's own
@@ -859,17 +729,36 @@ internal fun BirEmitter.call(call: IrCall): String {
 	// must not run in both comparison legs). The Kotlin<->CLR range relation lives in bir2cir.
 
 	// Enum rich API: Color.values()/entries -> Enum.GetValues<T>(); Color.valueOf(s) -> Enum.Parse<T>(s).
-	(callee.parent as? IrClass)?.takeIf { it.kind == ClassKind.ENUM_CLASS }?.let { ec ->
+	val enumDeclarationOwner = (callee.parent as? IrClass)
+		?: (callee.correspondingPropertySymbol?.owner?.parent as? IrClass)
+	val enumResultOwner = if (name == "entries" || name == "<get-entries>" || name == "get_entries")
+		((call.type as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)
+			?.type?.classifierOrNull?.owner as? IrClass
+	else null
+	val enumApiOwner = (enumDeclarationOwner ?: enumResultOwner)?.let { owner ->
+		when {
+			owner.kind == ClassKind.ENUM_CLASS -> owner
+			owner.isCompanion -> (owner.parent as? IrClass)?.takeIf { it.kind == ClassKind.ENUM_CLASS }
+			else -> null
+		}
+	}
+	enumApiOwner?.let { ec ->
+		// K2 may expose the synthesized entries getter without a corresponding
+		// property symbol after KLIB dependencies are present. Its special IR
+		// name still carries the same Kotlin declaration identity.
+		val isEntriesGetter =
+			callee.correspondingPropertySymbol?.owner?.name?.asString() == "entries" ||
+				name == "entries" || name == "<get-entries>" || name == "get_entries"
 		// Rich enum -> the synthesized static values()/valueOf() methods on the class.
 		if (isRichEnum(ec)) {
-			if (name == "values" || callee.correspondingPropertySymbol?.owner?.name?.asString() == "entries")
+			if (name == "values" || isEntriesGetter)
 				return """{"k":"callStatic","owner":${fqnJson(ec.name.asString())},"method":"values","args":[]}"""
 			if (name == "valueOf") return """{"k":"callStatic","owner":${fqnJson(ec.name.asString())},"method":"valueOf","args":[${expr(regularArgs(call).first())}]}"""
 		}
 		// Basic enum -> the semantic enumValues/enumParse node carrying the enum's FAITHFUL FQN identity (a
 		// structured Type, never the banned `@Name` type-token). bir2cir/ilemit resolve it to the local enum type,
 		// exactly as the reified `enumValues<T>()` path does (EnumIntrinsicLowering re-emits the same node shape).
-		if (name == "values" || callee.correspondingPropertySymbol?.owner?.name?.asString() == "entries")
+		if (name == "values" || isEntriesGetter)
 			return """{"k":"enumValues","type":${fqnJson(ec.name.asString())}}"""
 		if (name == "valueOf") return """{"k":"enumParse","type":${fqnJson(ec.name.asString())},"arg":${expr(regularArgs(call).first())}}"""
 	}
@@ -1076,6 +965,26 @@ internal fun BirEmitter.call(call: IrCall): String {
 		}
 		val prop = callee.correspondingPropertySymbol?.owner
 		if (prop != null) {
+			// KLIB has no field declaration in Kotlin vocabulary, so dll2klib
+			// exposes a CLR FieldDef as a property carrying @ClrField. Preserve
+			// that explicit storage fact in BIR; bir2cir resolves the physical
+			// field against the selected reference assembly.
+			if (isClrField(prop)) {
+				val fieldName = str(prop.name.asString())
+				val ownerType = memberType!!.toJson()
+				return if (isStatic) {
+					if (callee === prop.setter)
+						"""{"k":"staticFieldSet","ownerType":$ownerType,"name":$fieldName,"value":${expr(regularArgs(call).first())}}"""
+					else
+						"""{"k":"staticField","ownerType":$ownerType,"name":$fieldName${retHint((memberType as? TypeNode.Fqn)?.args != null, call.type)}}"""
+				} else {
+					val receiver = expr(recv!!)
+					if (callee === prop.setter)
+						"""{"k":"setFieldExpr","ownerType":$ownerType,"recv":$receiver,"name":$fieldName,"value":${expr(regularArgs(call).first())}}"""
+					else
+						"""{"k":"field","ownerType":$ownerType,"recv":$receiver,"name":$fieldName${retHint((memberType as? TypeNode.Fqn)?.args != null, call.type)}}"""
+				}
+			}
 			// A `kotlin.clr.ClrEvent<T>` property read is legal ONLY as the receiver of `.subscribe(h)`, where
 			// clrEventReceiverOk is set. A bare read (`val e = w.Changed`) would emit a
 			// `clrPropGet get_<Event>` that no bir2cir rule strips -> a distant, diagnostic-free downstream failure.
@@ -1228,8 +1137,9 @@ internal fun BirEmitter.call(call: IrCall): String {
 			// `CallableId` (`package` + name).
 			val callableId = (p.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)
 				?.let { CallableId(it.packageFqName, p.name) }
-			if (declaringClass == null) callableId
-				?.let { kotc.frontend.clrInjectedTopLevelPropFileClass(it) }?.let { fileClass ->
+			val externalPropertyOwner = clrExternalOwner(p)
+				?: callableId?.let { kotc.frontend.clrInjectedTopLevelPropFileClass(it) }
+			if (declaringClass == null) externalPropertyOwner?.let { fileClass ->
 				// An accessor that takes ANY argument — an extension receiver, or a `context(...)` parameter — is a
 				// `get_/set_<name>(...)` METHOD on the file class, never a static field: route it to the accessor path
 				// below. (A plain field-backed property's accessor takes none.)
@@ -1240,7 +1150,12 @@ internal fun BirEmitter.call(call: IrCall): String {
 					// receiver), NOT read/write the raw static field. bir2cir binds the `prop:get`/`prop:set` marker to
 					// the `get_`/`set_` method by convention. Read/write customness is independent (a `var` may pair a
 					// custom setter with a default getter, or vice versa); a default accessor stays a raw field access.
-					val (customGet, customSet) = callableId?.let { kotc.frontend.clrInjectedTopLevelPropCustomAccessor(it) } ?: (false to false)
+					val injectedCustom =
+						callableId?.let { kotc.frontend.clrInjectedTopLevelPropCustomAccessor(it) } ?: (false to false)
+					// A dll2klib KLIB uses the standard getter_flags/setter_flags IS_NOT_DEFAULT bit. The legacy
+					// facade JSON side table remains only for the old pipeline while it is being retired.
+					val customGet = injectedCustom.first || !hasDefaultGetter(p)
+					val customSet = injectedCustom.second || !hasDefaultSetter(p)
 					if (callee === p.setter) {
 						return if (customSet)
 							"""{"k":"callStatic","ownerType":${fqnJson(fileClass)},"method":${str(p.name.asString())},"prop":"set","argTypes":[${birType(regularArgs(call).first().type).toJson()}],"ret":${fqnJson("kotlin.Unit")},"args":[${expr(regularArgs(call).first())}]}"""
@@ -1686,8 +1601,10 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// (`package` + name). FIR/Fir2Ir already resolved this call to a UNIQUE callee, so there is nothing to
 		// disambiguate (a single fileClass per CallableId). `suspend` is read straight
 		// off the resolved callee by `suspendCallTag(callee)` below.
-		(callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)
-			?.let { kotc.frontend.clrInjectedTopLevelFileClass(CallableId(it.packageFqName, callee.name), regularParams(callee).size, injectedExtReceiverKey(callee)) }?.let { fileClass ->
+		val externalFileClass = clrExternalOwner(callee)
+			?: (callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)
+				?.let { kotc.frontend.clrInjectedTopLevelFileClass(CallableId(it.packageFqName, callee.name), regularParams(callee).size, injectedExtReceiverKey(callee)) }
+		externalFileClass?.let { fileClass ->
 			// A FACADEGEN-INJECTED cross-module `inline fun` taking ANY lambda arg (AXIS ①) MUST be source-inlined: emit a
 			// generic `callInline` node carrying the call bindings; bir2cir OWNS the splice (it re-lowers the carried body
 			// in the app context, so a non-local `return`/`break`/suspend through a spliced lambda works, and a noinline
@@ -1831,7 +1748,12 @@ internal fun BirEmitter.retHintStr(generic: Boolean, ret: TypeNode): String =
  *  (mirroring the `"suspend":true` fn-decl flag); the coroutine LOWERING (await / state machine / Task ABI)
  *  is a DEFERRED downstream layer that consumes this tag. kotc does NO coroutine lowering. */
 internal fun BirEmitter.suspendCallTag(callee: org.jetbrains.kotlin.ir.declarations.IrFunction): String =
-	if ((callee as? IrSimpleFunction)?.isSuspend == true) ""","suspendCall":true""" else ""
+	if ((callee as? IrSimpleFunction)?.isSuspend == true) {
+		val awaitBridge = callee.annotations.any {
+			it.type.classFqName?.asString() == "kotlin.clr.ClrAwaitBridge"
+		}
+		""","suspendCall":true${if (awaitBridge) ""","clrAwaitBridge":true,"awaitResult":${birType(callee.returnType).toJson()}""" else ""}"""
+	} else ""
 
 /** #199/#204: the `,"calleeOwner":<fileClassFqn>` mandatory DISPATCH identity on a top-level `callStatic` whose `owner` stays
  *  `null`. `owner:null` is the load-bearing "top-level call" axis ~12 bir2cir owner-null recognizers key on
@@ -1844,7 +1766,8 @@ internal fun BirEmitter.suspendCallTag(callee: org.jetbrains.kotlin.ir.declarati
  *  boundary. `decl` is the callee function (or, for a top-level
  *  extension property accessor, the property itself — its file class holds the static accessor). */
 internal fun BirEmitter.calleeOwnerTag(decl: org.jetbrains.kotlin.ir.declarations.IrDeclaration): String {
-	val owner = if (decl.parent is IrFile) fileClassOf(decl) else (decl as? IrSimpleFunction)?.let { fn ->
+	val owner = (decl as? org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer)?.let { clrExternalOwner(it) }
+		?: if (decl.parent is IrFile) fileClassOf(decl) else (decl as? IrSimpleFunction)?.let { fn ->
 		(fn.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)?.let { pkg ->
 			kotc.frontend.clrInjectedTopLevelFileClass(
 				CallableId(pkg.packageFqName, fn.name), regularParams(fn).size, injectedExtReceiverKey(fn))
@@ -1951,11 +1874,10 @@ internal fun BirEmitter.byrefBackingField(inner: IrExpression): String? {
  *
  *  Both halves derive from the callee's PARAMETERS, never from "the expressions that happen to be present". Building
  *  them from provided expressions (the previous shape here and at the three sibling member paths) silently DELETED an
- *  omitted default's slot: no `defaultArg` placeholder was emitted, so bir2cir's DefaultArgSplice never consulted the
- *  callee's `@KotlinDefault` carrier, and a later provided argument slid into the omitted parameter's position — a
- *  cross-module `h.pick(b = 3)` bound `3` to `a` and zero-filled `b`. `sig` (emitted by the callers via
- *  [overloadSigField]) is what lets DefaultArgSplice key the carrier; `argTypes` stays aligned with the args actually
- *  emitted, since a purely-trailing uncarried slot is still dropped for ilemit's [DefaultParameterValue] backfill.
+ *  omitted default's slot: no `defaultArg` placeholder was emitted, so a later provided argument slid into the omitted
+ *  parameter's position. `sig` (emitted by the callers via [overloadSigField]) identifies the frontend-selected
+ *  declaration; `argTypes` stays aligned with the args actually emitted. bir2cir fills both positional placeholders
+ *  and a purely trailing short vector from that declaration's reference-DLL defaults.
  *
  *  A `ClrRef<T>` param already maps to `byref:T` via birType (so the out/ref overload resolves + optional params still
  *  default-fill); a `byref(x)` arg unwraps to its lvalue `x`, which ilemit passes by address. */
