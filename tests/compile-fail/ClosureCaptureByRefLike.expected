@@ -1,0 +1,4 @@
+closure-synthesis: in `cfCapture`
+the value `s` of type `System.Span<kotlin.Int>` is captured by a lambda
+it is byref-like (a `ref struct`, via `System.Span`)
+(mirrors C# CS8352)

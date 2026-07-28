@@ -1,0 +1,5 @@
+suspend-lowering: in `SuspendLoopCarriedByRefLikeKt.cfLoopCarried`
+the local variable
+which is byref-like (a `ref struct`, via `System.Span`)
+lives across the suspending call to `cfLoopTick`
+(mirrors C# CS4007)

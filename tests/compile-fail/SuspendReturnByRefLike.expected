@@ -1,0 +1,5 @@
+suspend-lowering: in `SuspendReturnByRefLikeKt.cfMake`
+the result `<result>`
+which is byref-like (a `ref struct`, via `System.Span`)
+`suspend` declaration cannot mention it
+(mirrors C# CS4012)
