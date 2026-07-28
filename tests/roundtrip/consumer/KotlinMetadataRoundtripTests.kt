@@ -87,6 +87,9 @@ import roundtrip.nc.Panel2 as NcPanel2
 import roundtrip.nc.note as ncNote
 import roundtrip.nc.Seeded as NcSeeded
 import roundtrip.nc.seeds as ncSeeds
+import roundtrip.nc.SeededOrder as NcSeededOrder
+import roundtrip.nc.seedOrder as ncSeedOrder
+import roundtrip.nc.seedMarkP as ncSeedMarkP
 import roundtrip.nc.uf as ncUf
 import roundtrip.nc.Marker as NcMarker
 import roundtrip.nc.scaled as ncScaled
@@ -499,8 +502,15 @@ class PackageAndInlineRoundtripTests {
         val seedsBefore = ncSeeds
         val sub = NcSeededSub()
         ClassicAssert.AreEqual(3, sub.a)                                                // 3    a = seed()
-        ClassicAssert.AreEqual(30, sub.b)                                               // 30   b = a * 10, reading the temp
+        ClassicAssert.AreEqual(30, sub.b)                                               // 30   b = a * 10, reading the binding
         ClassicAssert.AreEqual(1, ncSeeds - seedsBefore)                                // 1    seed() ran once
+        // ORDER at that same delegation: the value the `: super(…)` SUPPLIES runs before the base's defaults. The args
+        // ride the constructor declaration, so the plan lowers to `preStmts` emitted ahead of the base call.
+        val ordered = NcSeededOrderSub()
+        ClassicAssert.AreEqual(2, ordered.p)                                            // 2    the supplied argument
+        ClassicAssert.AreEqual(3, ordered.a)                                            // 3    a = seedMarkD()
+        ClassicAssert.AreEqual(30, ordered.b)                                           // 30   b = a * 10
+        ClassicAssert.AreEqual("pd", ncSeedOrder)                                       // pd   supplied first, then the default
     }
 
     // roundtrip-comparable (#179): a `class C : Comparable<C>` — </>/<=/>= + sorted() resolve+run cross-module
@@ -521,6 +531,8 @@ class NcCtorDefaultHost(val n: Int) {
 // base's defaults where the first is side-effecting and the second reads it.
 class NcSuperSub(w: Int) : NcPanel2(w)
 class NcSeededSub : NcSeeded()
+// ...and one whose `: super(…)` SUPPLIES a side-effecting value ahead of the base's own filled defaults.
+class NcSeededOrderSub : NcSeededOrder(ncSeedMarkP())
 
 class NcEvalCounter {
     var calls = 0

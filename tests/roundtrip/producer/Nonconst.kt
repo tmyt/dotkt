@@ -24,6 +24,13 @@ open class Panel2(val w: Int, val h: Int = w * 2) { val area: Int get() = w * h 
 var seeds: Int = 0
 fun seed(): Int { seeds++; return 3 }
 open class Seeded(val a: Int = seed(), val b: Int = a * 10)
+// ...and one that also takes a SUPPLIED leading argument, so the delegation's ORDER is observable: Kotlin evaluates the
+// value the `: super(…)` supplies before any of the callee's defaults. A delegation's arguments ride the constructor
+// DECLARATION, so that order is carried by the plan's `preStmts` rather than by an expression.
+var seedOrder: String = ""
+fun seedMarkP(): Int { seedOrder += "p"; return 2 }
+fun seedMarkD(): Int { seedOrder += "d"; return 3 }
+open class SeededOrder(val p: Int, val a: Int = seedMarkD(), val b: Int = a * 10)
 // #235: an UNSIGNED parameter beside a class-typed sibling of the same arity. `UInt` is `kotlin.UInt` at a call site and
 // `System.UInt32` in a reference assembly; unless the signature key folds the two spellings, one overload's key collapses
 // onto the other's and the wrong default is spliced.

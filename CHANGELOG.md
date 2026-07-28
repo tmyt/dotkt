@@ -24,6 +24,40 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   It opens with the eight byref-like storage refusals below.
 
 ### Fixed
+- **kotc/bir2cir (area:kotc, area:bir2cir): a call's values are now ONE ordered evaluation plan, so a filled default
+  can no longer duplicate a value, reorder a call, or be traded away for storage.** A Kotlin call evaluates its
+  receiver, then each supplied argument, then the callee's omitted defaults, each exactly once — but on the CLR those
+  values had TWO representations: expressions substituted into filled defaults, and independently hoisted `var`s
+  sorted ahead of the call. Whenever a hoisted value turned out to be unholdable one of the two had to be abandoned,
+  and every possible choice lost single evaluation, Kotlin order, or legal storage. That is why the same defect kept
+  reappearing: three successive attempts each fixed one invariant by breaking another (the enumeration is at commit
+  `cb4ff8d`, reachable via `refs/pull/270/head`).
+  kotc now emits an ordered **call-evaluation plan** wherever a fill can give a value a second reader
+  (`docs/bir-cir-spec.md` §2.7): a `callEval` node carrying the call's bindings in Kotlin evaluation order, with every
+  reader — the call's own slot, a spliced same-module default, a reconstructed cross-module data-class `copy` field, a
+  `@KotlinDefault` carrier's `{this}` / `{defaultArgParam n}` token — a `bindRef`, a pure read. A constructor
+  delegation's plan rides the declaration as `delegationBindings`. bir2cir's `DefaultArgSplice` shrinks to
+  materialise-and-reference (it fills the reserved binding and clones only reads), and the new
+  `toolchain/bir2cir/CallEvalLowering.cs` turns each plan into locals once every splice has finished: a single-reader
+  binding straight back into its slot, a shared one into a `var`, a delegation's into `preStmts` that ilemit emits
+  ahead of the base call. Storage remains a separate decision, made later from liveness, and its refusals now name the
+  value's source role ("the receiver of `copy`") instead of a minted id.
+  Behavioural fixes that follow:
+  - a cross-module data-class `copy` evaluates its receiver ONCE — `nextTriple().copy(second = 9)` ran the receiver
+    once per omitted field ON TOP of the call's own use of it (three times for `Triple`, four when every field was
+    omitted), and re-rendering it also put a receiver evaluation AFTER the argument;
+  - a filled default no longer runs BEFORE the values the call supplies: `host().f()` logged the default before the
+    receiver, `host().g(arg())` before both, and `host().h(c = arg())` before the argument;
+  - an EXTENSION call site ran its whole default-filling pass twice, so a default that another default reads was
+    rendered — and evaluated — twice (`"s".ext()` against `fun String.ext(a: Int = bump(), b: Int = a * 10)` called
+    `bump()` twice where the non-extension form called it once);
+  - a call to a facadegen-injected TOP-LEVEL function bound none of its values, the same fault as the `copy`
+    receiver and unfired only because the splice happened to hoist values itself;
+  - a byref-like argument at a call with defaults keeps Kotlin's order instead of being jumped by the fill's
+    temporary — the test that asserted the reverse (`"dT"`) while its own comment said Kotlin required `"Td"` is
+    inverted, because the compromise it recorded was a property of the old shape;
+  - the synthetic data-class `copy` is selected by its generated SIGNATURE (parameter names AND types mirroring the
+    primary constructor), not by the name alone, so a user-declared `copy` overload cannot be mistaken for it.
 - **bir2cir (area:bir2cir): a suspend function no longer promotes EVERY local to a state-machine field — storage
   is now decided by real liveness, behind one gate, and a value the CLR cannot put in a field is refused at
   compile time instead of crashing at run time.** `CollectVarFields` spilled every `var` in a suspend body into an

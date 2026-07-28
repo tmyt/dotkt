@@ -44,6 +44,18 @@ suspend fun corAAoCompute(): Int {
     return a[0] + corAAoBump(a)                // a[0] read LEFT of the suspending bump(a) -> must be 10, not 100
 }
 
+// ---- a cross-module data-class `copy` whose omitted fields are reconstructed from a SUSPENDING receiver -------
+// kotlin.Triple comes from the stdlib, so kotc cannot read `copy`'s default value and reconstructs each omitted field
+// as a read of the call's receiver. The receiver must be bound to ONE single-evaluation temp — and when a later
+// argument suspends, that temp lives across the suspension, so the reconstructed read must also be stamped with the
+// INSTANTIATED field type (an open positional type variable is unresolvable in the state machine's own frame:
+// bir2cir spilled it into an SM field of that type and the first resume threw InvalidProgramException).
+val corACpLog = mutableListOf<String>()
+suspend fun corACpTriple(): Triple<Int, Int, Int> { corACpLog.add("T"); return Triple(1, 2, 3) }
+suspend fun corACpArg(): Int { corACpLog.add("A"); return 9 }
+suspend fun corACpOmitOnly(): String = corACpTriple().copy(second = 9).toString()
+suspend fun corACpSuspendingArg(): String = corACpTriple().copy(second = corACpArg()).toString()
+
 class SuspendEvaluationOrderTests {
     @TestAttribute
     fun sideEffectBeforeSuspend() {
@@ -65,5 +77,21 @@ class SuspendEvaluationOrderTests {
     @TestAttribute
     fun arrayElemReadBeforeSuspend() {
         assertEquals(15, blockOn { corAAoCompute() })   // 10 + 5 = 15 (a miscompile prints 105)
+    }
+
+    // A cross-module data-class `copy` with an omitted field, on a SUSPENDING receiver.
+    @TestAttribute
+    fun crossModuleCopyReceiverSuspends() {
+        corACpLog.clear()
+        assertEquals("(1, 9, 3)", blockOn { corACpOmitOnly() })
+        assertEquals(1, corACpLog.size)                 // the suspending receiver ran ONCE (was 3)
+        assertEquals("T", corACpLog[0])
+
+        // The provided argument suspends too, so the receiver temp must survive that suspension.
+        corACpLog.clear()
+        assertEquals("(1, 9, 3)", blockOn { corACpSuspendingArg() })
+        assertEquals(2, corACpLog.size)
+        assertEquals("T", corACpLog[0])                 // receiver first
+        assertEquals("A", corACpLog[1])                 // then the argument (was "T","T","A","T")
     }
 }
