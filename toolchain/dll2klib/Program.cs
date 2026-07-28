@@ -604,26 +604,17 @@ internal sealed class AssemblyScanner
 
             foreach (var (handle, def) in package.OrderBy(x => _md.GetString(x.Definition.Name), StringComparer.Ordinal))
             {
-                try
+                if (_attrs.Has(handle, MetadataAttributes.DotKtNs + "KotlinFileClassAttribute"))
                 {
-                    if (_attrs.Has(handle, MetadataAttributes.DotKtNs + "KotlinFileClassAttribute"))
-                    {
-                        ReadFileFacade(handle, def, fragment.Package, names, signatures);
-                        continue;
-                    }
-                    var klass = ReadClass(handle, def, names, signatures);
-                    fragment.Class.Add(klass);
-                    fragment.ClassName.Add(klass.FqName);
-                    AddStaticCompanion(handle, klass, fragment, names);
-                    ReadNestedClasses(handle, klass, fragment, names, signatures);
-                    ReadCSharpExtensions(handle, def, fragment.Package, names, signatures);
+                    ReadFileFacade(handle, def, fragment.Package, names, signatures);
+                    continue;
                 }
-                catch (Exception ex)
-                {
-                    Console.Error.WriteLine($"dll2klib: warning: skipped {FullName(def)}: {ex.Message}");
-                    if (Environment.GetEnvironmentVariable("DOTKT_DLL2KLIB_DEBUG") == "1")
-                        Console.Error.WriteLine(ex);
-                }
+                var klass = ReadClass(handle, def, names, signatures);
+                fragment.Class.Add(klass);
+                fragment.ClassName.Add(klass.FqName);
+                AddStaticCompanion(handle, klass, fragment, names);
+                ReadNestedClasses(handle, klass, fragment, names, signatures);
+                ReadCSharpExtensions(handle, def, fragment.Package, names, signatures);
             }
             MarkLowPriorityDelegateOverloads(fragment.Package.Function, names);
             fragment.Strings = names.Strings;
@@ -1874,19 +1865,12 @@ internal sealed class AssemblyScanner
         {
             var childDef = _md.GetTypeDefinition(childHandle);
             if (!IsPublicNested(childDef)) continue;
-            try
-            {
-                var child = ReadClass(childHandle, childDef, names, signatures);
-                parent.NestedClassName.Add(names.String(StripArity(_md.GetString(childDef.Name))));
-                fragment.Class.Add(child);
-                fragment.ClassName.Add(child.FqName);
-                AddStaticCompanion(childHandle, child, fragment, names);
-                ReadNestedClasses(childHandle, child, fragment, names, signatures);
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"dll2klib: warning: skipped nested {KotlinFullName(childHandle)}: {ex.Message}");
-            }
+            var child = ReadClass(childHandle, childDef, names, signatures);
+            parent.NestedClassName.Add(names.String(StripArity(_md.GetString(childDef.Name))));
+            fragment.Class.Add(child);
+            fragment.ClassName.Add(child.FqName);
+            AddStaticCompanion(childHandle, child, fragment, names);
+            ReadNestedClasses(childHandle, child, fragment, names, signatures);
         }
     }
 

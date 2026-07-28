@@ -224,11 +224,12 @@ testは別途facadegen metadataを生成せず、`CLR_TYPES_METADATA`も明示�
 1. reference assemblyを生成
 2. 2回のKLIB出力がbyte-identical
 3. standard KLIB layout
-4. kotcがconstructor、instance/static method、instance/static property/fieldを解決
+4. kotcがconstructor、instance/static method、instance/static property/field、
+   inherited instance propertyを解決
 5. bir2cirがCLR reference metadataから`clrInstance`/`clrStatic`へbind
 6. ilemitでassembly生成
 7. platform typeのnullable-input/non-null-output両方向を型検査
-8. interface dispatch、generic method、operator、byrefを含め、実行結果が`100`
+8. interface dispatch、generic method、operator、byrefを含め、実行結果が`132`
 
 ## MSBuild接続
 
@@ -263,7 +264,8 @@ KotlinCompileがMSBuildのInputs/Outputsでskipされる。
 全KLIBはOSのpath separatorでfrontend classpathへ追加する。
 `DotKt.Private.Stdlib` / `DotKt.Stdlib`はauthoritative frontend stdlib KLIBと重複するため
 projection対象から除外する。異なるDLLが同じsimple-name outputへ衝突した場合は
-launcherがhard errorにする。outputは
+launcherがhard errorにする。public top-level/nested typeの射影に1件でも失敗した場合も
+workerを失敗させ、不完全なKLIBを成果物として確定しない。outputは
 `$(BaseIntermediateOutputPath)dotkt-reference-klibs`配下だけに置き、共有cacheは
 使用しない。generator binaryとreference DLLのtimestampでstale判定し、KLIB manifestへ
 dependency graphは複製しない。MSBuildのpartial incremental target内でも、型名とdelegate
