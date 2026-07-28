@@ -194,6 +194,9 @@ object ClrAppFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtifact
 			},
 		)
 
+		// One pipeline execution = one set of context-function-type facts. `ClrContextFnTypes` is an object, so its map
+		// would otherwise outlive the compilation inside a HOSTED kotc and a later run could read a stale entry.
+		kotc.frontend.ClrContextFnTypes.reset()
 		val outputs = sessionsWithSources.map { (session, files) ->
 			installKotlinJvmDefaultImport(session)
 			val firFiles = session.buildFirFromKtFiles(files)

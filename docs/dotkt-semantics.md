@@ -797,10 +797,20 @@ wrong number instead. The lift now mints a name for the receiver parameter and b
 emission, exactly as the inline splice carrier already did; both shapes (non-capturing static lift and capturing
 closure) are covered, with and without contexts.
 
-Two further limits of the carrier, both by construction: it holds ONE arity per declaration slot, so a context
-function type NESTED inside another type (`fun use(xs: List<context(Ctx) () -> Unit>)`) is not carried; and the fact
-is keyed by the slot's file path plus source range, so a declaration with no source (a synthesized one) carries
-nothing — neither shape has a context function type to lose in practice, but neither is carried if it does.
+Limits of the carrier, all of them "the slot degrades to a plain function type", never a wrong arity:
+
+- It holds ONE arity per declaration slot, so a context function type NESTED inside another type
+  (`fun use(xs: List<context(Ctx) () -> Unit>)`) is not carried.
+- The fact is keyed by the slot's file path and its END source offset — the one offset FIR and IR always agree on (a
+  leading comment moves FIR's start off IR's; nothing moves the end). A declaration whose IR range is not the source
+  range therefore carries nothing: measured cases are a data class's GENERATED members (`component1`, `copy` — fir2ir
+  gives them `UNDEFINED_OFFSET`) and DELEGATED members (`class C(d: I) : I by d` — `SYNTHETIC_OFFSET`, and they are
+  scope-generated rather than declared). A default SETTER is in the same family and IS carried, by falling back to its
+  property's fact: the setter's parameter type is the property's type.
+- Only DECLARATIONS are recorded — classes, members, parameters, accessors — never a body, an initializer or a default
+  value. That is a correctness requirement, not an optimisation: a callable nested in an expression body ENDS where its
+  enclosing declaration ends (`fun f(block: context(A) (context(B, C) () -> Unit) -> Unit = { }) {}`), so recording
+  both would put two different arities on one key. Nothing inside a body is ever looked up, so nothing is lost.
 
 Kotlin itself rules out the shapes this projection could not express: a callable reference to a context function, a
 context parameter on a constructor, a *delegated* context property, and a *field-backed* context property are all

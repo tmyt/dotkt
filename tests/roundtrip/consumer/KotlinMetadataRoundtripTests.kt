@@ -133,6 +133,8 @@ import roundtrip.ctxparams.Boxy
 import roundtrip.ctxparams.evaluatePlain
 import roundtrip.ctxparams.evaluateRecv
 import roundtrip.ctxparams.makeCtxFn
+import roundtrip.ctxparams.pairFns
+import roundtrip.ctxparams.flushA
 import roundtrip.ctxparams.GenHolder
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert
@@ -193,6 +195,13 @@ class KotlinApiShapeRoundtripTests {
         ClassicAssert.AreEqual(3, evaluateRecv { this.v })           // 3
         // The RETURN position of the same type: the restored value takes a receiver AND a context, and `this` must
         // be the receiver. This returned 77 (the context's field, twice) before the lambda lift bound the receiver.
+        // Two adjacent context-function-type parameters with DIFFERENT arities (1 and 2): each slot must restore its
+        // OWN arity. p sees Scale; q sees Scale AND Boxy.
+        ClassicAssert.AreEqual(75, pairFns({ contextOf<Scale>().factor + 5 }, { contextOf<Boxy>().v }))  // 7*10+5
+        // The neighbour-meeting shape: `flushA`'s source range ends exactly where the next declaration's begins, and
+        // `flushA` also carries a leading comment that moves its FIR start. Its arity must still be 1.
+        val fa = flushA()
+        with(Scale(4)) { ClassicAssert.AreEqual(4, fa()) }       // 4
         val produced = makeCtxFn()
         with(Scale(7)) { ClassicAssert.AreEqual(37, Boxy(3).produced()) }  // 37  this.v*10 + context.factor
     }

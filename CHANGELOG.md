@@ -56,6 +56,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   now mints a name for the receiver parameter and binds `this` to it, as the inline splice carrier already did. That
   ALSO closes the context-free sibling, where the same gap made `val f: Int.(Int) -> Int = { d -> this + d }` throw a
   NullReferenceException; both lift shapes (non-capturing static and capturing closure) are covered.
+  The arity is keyed by the slot's file path and its END source offset — the one offset FIR and IR always agree on —
+  recorded from a DECLARATION-only walk (never a body, initializer or default value, because a callable nested in an
+  expression body ends where its enclosing declaration ends and the two arities would land on one key). Carried for
+  the stdlib's own `kotlin.context(...)` family too, which compiles through the other frontend phase. The table is
+  cleared once per pipeline execution: it hangs off an object, so a HOSTED kotc could otherwise read a previous
+  compilation's entry — a latent hazard closed by construction, not a bug that was reproducing (today's launcher
+  execs a fresh JVM per invocation and each pipeline runs once).
   Also fixed in the same family: a cross-module MEMBER (and member-extension) call never emitted a positional
   `defaultArg` placeholder for an omitted default — it built `args`/`argTypes` from the expressions that happened to
   be present, so the omitted slot was DELETED and a later provided argument slid into it (`h.pick(b = 3)` bound `3`

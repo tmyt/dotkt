@@ -601,7 +601,10 @@ internal fun BirEmitter.accessorMethod(acc: IrSimpleFunction, propName: String, 
 	val ps = (listOfNotNull(selfParam) + acc.parameters.filter { isValueParameter(it) }
 		.map {
 			val ctxMod = if (it.kind == IrParameterKind.Context) ""","mods":{"context":true}""" else ""
-			"""{"name":${str(it.name.asString())},"type":${birType(it.type).toJson()}$ctxMod}"""
+			// A setter's `value` slot can itself BE a context function type (`var p: context(A) () -> Unit`); its arity
+			// rides here exactly as it does on an ordinary parameter, via the property fallback in [ctxFnCountFor].
+			val ctxFn = ctxFnTypeField(ctxFnCountFor(it))
+			"""{"name":${str(it.name.asString())},"type":${birType(it.type).toJson()}$ctxFn$ctxMod}"""
 		}).joinToString(",")
 	// #6 non-null parameter PRECONDITIONS (a setter's `value` param) at entry + a getter's non-null return POSTCONDITION
 	// (a setter returns Unit -> naturally out of scope).
@@ -1242,6 +1245,22 @@ internal fun BirEmitter.isValueParameter(p: IrValueParameter): Boolean =
 internal fun ctxFnTypeField(ctxCount: Int): String =
 	if (ctxCount > 0) ""","ctxFnType":$ctxCount""" else ""
 
+/** The context-function-type arity of a PARAMETER slot, with the property fallback a default SETTER needs.
+ *
+ *  A default accessor's IR range is the property HEADER (fir2ir deliberately excludes the initializer), so a default
+ *  setter's `value` parameter has no range of its own that matches what the capture recorded, and
+ *  `var block: context(A) () -> Unit` lost the fact on `set_block` while `get_block` kept it (the return path already
+ *  falls back to the property). The setter's parameter type IS the property's type, so the property's own fact is the
+ *  right answer rather than an approximation. */
+internal fun BirEmitter.ctxFnCountFor(p: IrValueParameter): Int {
+	val own = kotc.frontend.ClrContextFnTypes.contextCountAt(sourcePathOf(p), p.startOffset, p.endOffset)
+	if (own > 0) return own
+	val fn = p.parent as? IrSimpleFunction ?: return 0
+	val prop = fn.correspondingPropertySymbol?.owner ?: return 0
+	if (prop.setter !== fn) return 0
+	return kotc.frontend.ClrContextFnTypes.returnContextCountAt(sourcePathOf(prop), prop.startOffset, prop.endOffset)
+}
+
 /** The RETURN-position twin of [ctxFnTypeField]: `,"retCtxFnType":N` for a declaration whose RETURN type is a
  *  context function type (`fun make(): context(A) B.() -> C`, and a property accessor's restored type). A property
  *  accessor is keyed by its OWN source offset when it has one and by the property's otherwise — a default accessor
@@ -1413,7 +1432,7 @@ internal fun BirEmitter.paramsJsonList(params: List<org.jetbrains.kotlin.ir.decl
 			} else null
 			val allAttrs = listOfNotNull(srcAttrs.takeIf { s -> s.isNotEmpty() }, kotlinDefault).joinToString(",")
 			val pattrs = if (allAttrs.isNotEmpty()) ""","attrs":[$allAttrs]""" else ""
-			val ctxFn = ctxFnTypeField(kotc.frontend.ClrContextFnTypes.contextCountAt(sourcePathOf(it), it.startOffset, it.endOffset))
+			val ctxFn = ctxFnTypeField(ctxFnCountFor(it))
 			"""{"name":${str(it.name.asString())},"type":${birType(it.type).toJson()}$vararg$default$ctxFn$pattrs}"""
 		}
 	if (emitKotlinDefault) valueParams.forEach { captureSubst.remove(it) }

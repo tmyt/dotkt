@@ -51,6 +51,18 @@ class GenHolder {
 }
 
 class Boxy(val v: Int)
+// TWO context-function-type parameters with DIFFERENT arities, adjacent — only a `,` separates their source ranges.
+// Each slot's arity is keyed by its own source position, so this is what catches one slot being handed another's:
+// a wrong pick changes the restored TYPE and the consumer's lambdas bind the wrong contexts.
+fun pairFns(p: context(Scale) () -> Int, q: context(Scale, Boxy) () -> Int): Int =
+    with(Scale(2)) { with(Boxy(5)) { p() * 10 + q() } }
+
+// The two positions that can genuinely share an offset. Source ranges are HALF-OPEN, so a declaration's end offset
+// IS its neighbour's start offset when no character separates them — `}val` below is legal Kotlin — and a leading
+// comment additionally moves the FIR start off the IR start. Both slots must still restore their OWN arity.
+// leading comment, deliberately: it shifts the FIR start of `flushA` off its IR start
+fun flushA(): context(Scale) () -> Int = { contextOf<Scale>().factor }val flushB: context(Scale, Boxy) () -> Int = { contextOf<Scale>().factor * 100 + contextOf<Boxy>().v }
+
 // The RETURN position of a receiver-carrying context function type, which restores through the method's `retAttrs`
 // channel and whose value is a lifted lambda — the shape that returned the CONTEXT's field instead of the receiver's.
 fun makeCtxFn(): context(Scale) Boxy.() -> Int = { this.v * 10 + contextOf<Scale>().factor }
