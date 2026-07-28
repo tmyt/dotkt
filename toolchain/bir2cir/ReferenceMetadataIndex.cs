@@ -1990,9 +1990,10 @@ sealed partial class ReferenceMetadataIndex
     }
 
     // A BYREF-LIKE type (`ref struct`): a value that may hold a managed pointer, which the CLR forbids as the type of an
-    // instance field of a non-byref-like type. The CLR encodes it as `IsByRefLikeAttribute`; `Type.IsByRefLike` reads
-    // that same attribute under MetadataLoadContext, so the attribute probe leads and the property is the fallback for
-    // the runtime-intrinsic byref-likes (TypedReference/ArgIterator/RuntimeArgumentHandle) that carry no attribute.
+    // instance field of a non-byref-like type. The CLR encodes it as `IsByRefLikeAttribute`, so the attribute probe is
+    // what actually answers here. `Type.IsByRefLike` follows only as a best-effort second try for the runtime-intrinsic
+    // byref-likes (TypedReference/ArgIterator/RuntimeArgumentHandle) that carry no attribute: MetadataLoadContext is not
+    // required to implement it, hence the catch-false — a throw means "unknown", which reads as not byref-like.
     const string ByRefLikeAttrFqn = "System.Runtime.CompilerServices.IsByRefLikeAttribute";
     static bool IsByRefLikeType(Type type)
     {

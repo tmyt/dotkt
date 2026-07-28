@@ -299,7 +299,11 @@ The rule, in three parts:
   spilled to a state-machine field, and a byref-like one there is a **compile-time error mirroring C# CS4007**
   ("instance of type cannot be preserved across await"). Liveness, not a lexical interval: a value created and
   consumed within each iteration of a loop whose body *also* suspends is accepted, exactly as C# accepts it,
-  while the same value carried across the loop's back edge is refused.
+  while the same value carried across the loop's back edge is refused. And "live" is judged against what the state
+  machine actually stores, not against source order: in `span.ToArray().size + f()` the `Int` is saved before the
+  suspension, so the `Span` itself never crosses the resume and is accepted. What is refused is a byref-like value
+  the machine would have to hold *itself* — one read after the resume, such as `g(span, f())`, where `span` is a
+  later argument the call consumes once `f` has resumed.
 - **The suspend ABI: never.** A `suspend` declaration's PARAMETERS, its RESULT and a suspend lambda's CAPTURES are
   refused **unconditionally** — even when the body never actually suspends. Once the body does suspend, the
   parameters and captures become fields written by the state machine's constructor and the result crosses the cold
@@ -307,8 +311,9 @@ The rule, in three parts:
   property of the DECLARATION rather than of the body is a deliberate choice: it keeps `suspend fun f(s: Span<Int>)`
   legal-or-not independently of whether someone later adds an `await` inside it, and it is the same shape C# takes
   with CS4012 ("parameters or locals of this type cannot be declared in async methods"), which is likewise
-  unconditional. (The suspension-free form is also not merely theoretical: before the check existed it reached run
-  time as `InvalidProgramException` at the generated cold entry.)
+  unconditional. (Neither form was merely theoretical: before the check existed, a byref-like parameter failed at
+  run time as `TypeLoadException` when the body suspended — the state machine's parameter field — and as
+  `InvalidProgramException` at the generated cold entry when it did not.)
 - **Closure captures: never.** A captured variable becomes an instance field of the synthesized closure class,
   with no liveness question to ask, so capturing a byref-like value in ANY lambda — suspend or not — is a
   compile-time error mirroring **C# CS8352**. An `inline` lambda is spliced into the caller's frame and mints no

@@ -38,9 +38,20 @@ static class SuspendLiveness
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
     static bool Bool(JsonNode n) => n is JsonValue v && v.TryGetValue<bool>(out var b) && b;
 
-    // A lambda/closure VALUE: its body is a different frame, so only its capture VALUES are evaluated here.
+    // A lambda/closure VALUE: only its capture VALUES are evaluated in THIS frame, so the walk visits those and
+    // nothing else. `newSam` belongs here for the same reason the others do — ClosureSynthesis has already lifted
+    // its `synthClass` out by the time this pass runs, so a `newSam` node is a capture list and type metadata.
     static readonly HashSet<string> ClosureValueKinds = new(StringComparer.Ordinal)
         { "newClosure", "newDelegate", "newSam", "newSuspendLambda", "lambda" };
+
+    // The closure kinds SuspendColdLowering.LambdaKinds also holds — the ones whose SUSPENSIONS belong to another
+    // state machine. `newSam` is deliberately NOT one: the emitter's HasOwnSuspension descends into it and
+    // SuspensionRefusalReason admits it, so a suspension in a `newSam` capture value is THIS frame's and must be
+    // visible to the same analyses. The two sets differing is the point; they are not interchangeable, and
+    // treating a `newSam` as opaque here while the emitter treats it as transparent would demote a local the
+    // emitter reads after the resume.
+    static readonly HashSet<string> OtherFrameKinds = new(StringComparer.Ordinal)
+        { "newClosure", "newDelegate", "newSuspendLambda", "lambda" };
 
     // Structured loops that survive normalization (a loop whose body spans a suspension was already flattened).
     // `forEachInline`/`repeatInline` are INLINE loops — their body runs in this frame — so they belong here.
@@ -270,7 +281,12 @@ static class SuspendLiveness
             {
                 case JsonObject o:
                     var k = Str(o["k"]);
-                    if (k != null && (ClosureValueKinds.Contains(k) || (!wide && InlineLoopKinds.Contains(k)))) return false;
+                    if (k != null && OtherFrameKinds.Contains(k))
+                        // Another state machine owns its body's suspensions, but its CAPTURE VALUES are evaluated
+                        // right here — a suspension in one is this frame's and defers the sibling captures.
+                        return wide && (AnySuspension(o["captures"], true) || AnySuspension(o["capValues"], true)
+                                        || AnySuspension(o["args"], true));
+                    if (k != null && !wide && InlineLoopKinds.Contains(k)) return false;
                     if (Bool(o["suspendCall"])) return true;
                     foreach (var kv in o) if (kv.Value != null && AnySuspension(kv.Value, wide)) return true;
                     return false;
@@ -306,8 +322,7 @@ static class SuspendLiveness
                     // not pruning where it did only adds it.
                     if ((k == "cond" || k == "if") && HasOwnSuspension(o)) return;
                     if (k == "valueBlock" && HasOwnSuspension(o)) { ReRead(o["result"]); return; }
-                    foreach (var kv in o)
-                        if (kv.Value != null && !NonOperandKeys.Contains(kv.Key)) ReRead(kv.Value);
+                    ReReadOperands(o);
                     return;
                 case JsonArray a:
                     foreach (var it in a) if (it != null) ReRead(it);
@@ -315,16 +330,45 @@ static class SuspendLiveness
             }
         }
 
+        // Re-read a node's operands, MINUS the ones the emitter stores into a temp before the suspension to their
+        // right. Those never cross the resume: `f(s) + tick()` evaluates `f(s)` and saves the Int into `__ord$`
+        // BEFORE suspending, so `s` itself is dead across the suspension and may stay a byref-like local. The spill
+        // decision is SuspendColdLowering's own (SpilledBeforeSuspension), not a second copy of it — the two
+        // disagreeing in this direction refuses source the emitter lowers fine, and in the other silently zeroes a
+        // local.
+        void ReReadOperands(JsonObject o)
+        {
+            var kids = SuspendColdLowering.EvalOrderOperands(o);
+            var spilled = kids == null ? null : new HashSet<JsonNode>(ReferenceEqualityComparer.Instance);
+            if (kids != null)
+                for (var i = 0; i < kids.Count; i++)
+                    if (SuspendColdLowering.SpilledBeforeSuspension(kids, i)) spilled.Add(kids[i]);
+            foreach (var kv in o)
+            {
+                if (kv.Value == null || NonOperandKeys.Contains(kv.Key)) continue;
+                // An operand key the eval-order list does not name (a `new`'s enclosing-instance slot, say) is
+                // copied verbatim into the assembled node and so IS deferred — walk it.
+                if (kv.Value is JsonArray arr)
+                {
+                    foreach (var it in arr) if (it != null && spilled?.Contains(it) != true) ReRead(it);
+                }
+                else if (spilled?.Contains(kv.Value) != true) ReRead(kv.Value);
+            }
+        }
+
+        // The mirror of Captures(): the same three keys, so nothing Captures() evaluates is missed on the re-read.
         void ReReadCaptures(JsonObject o)
         {
             var overrides = o["capValues"] as JsonArray;
-            if (o["captures"] is not JsonArray caps) { if (overrides != null) ReRead(overrides); return; }
-            for (var i = 0; i < caps.Count; i++)
-            {
-                if (overrides != null && i < overrides.Count && overrides[i] != null) { ReRead(overrides[i]); continue; }
-                if (caps[i] is JsonObject c && c["k"] == null) Use(Str(c["name"]));
-                else if (caps[i] != null) ReRead(caps[i]);
-            }
+            if (o["captures"] is not JsonArray caps) { if (overrides != null) ReRead(overrides); }
+            else
+                for (var i = 0; i < caps.Count; i++)
+                {
+                    if (overrides != null && i < overrides.Count && overrides[i] != null) { ReRead(overrides[i]); continue; }
+                    if (caps[i] is JsonObject c && c["k"] == null) Use(Str(c["name"]));
+                    else if (caps[i] != null) ReRead(caps[i]);
+                }
+            ReRead(o["args"]);
         }
 
         void Jump(string label, bool cont)
@@ -352,8 +396,7 @@ static class SuspendLiveness
             // through the same evaluation-order spill, so an operand it leaves inline is assembled into the call
             // after the nested suspension's segments — read at that resume point, just before this call runs.
             if (o.Any(kv => kv.Value != null && !NonOperandKeys.Contains(kv.Key) && HasSuspension(kv.Value)))
-                foreach (var kv in o)
-                    if (kv.Value != null && !NonOperandKeys.Contains(kv.Key)) ReRead(kv.Value);
+                ReReadOperands(o);
             // The suspension itself, AFTER the operands it consumes. Emitted on every path out of Operands, so a
             // `suspendCall` on a node kind Operands happens to know by name can never lose its event — losing one
             // would mean no liveness question is asked there and every variable live across it is demoted.

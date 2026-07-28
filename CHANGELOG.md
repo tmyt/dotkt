@@ -30,9 +30,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   instance field of the generated state-machine class. For a byref-like (`ref struct`) value — `System.Span<T>`,
   `kotlin.clr.Span<T>` from `stackBuffer { … }.asSpan()`, any `ref struct` from a referenced assembly — the CLR
   refuses such a field, so the state machine failed to load with `TypeLoadException` even when the value never
-  spanned a suspension; a byref-like parameter on a suspension-free `suspend fun` reached run time as
-  `InvalidProgramException` at the cold entry, and a byref-like value captured by an ordinary lambda produced the
-  same TypeLoad from the closure class.
+  spanned a suspension, and a byref-like value captured by an ordinary lambda produced the same TypeLoad from the
+  closure class. A byref-like PARAMETER failed either way, in a shape-dependent form: `TypeLoadException` when the
+  body suspends (the state machine's parameter field), `InvalidProgramException` at the generated cold entry when
+  it does not (no state machine is built, so there is no field to reject).
   New `toolchain/bir2cir/SuspendLiveness.cs` runs a precise backward liveness over the normalized body (an
   evaluation-order walk into use/def/susp/label/goto/brIf events, then a worklist solve over the induced CFG,
   with every point in a protected region reaching each catch entry and the region exit). A local needs a field

@@ -126,20 +126,18 @@ public static class FieldLegality
     }
 
     /// <summary>
-    /// The closure-capture refusal (mirrors C# CS8352). A capture is unconditionally heap storage — the closure
-    /// class's field — so no liveness question arises.
+    /// The capture refusal for a synthesized closure-shaped class (mirrors C# CS8352): the class a capturing
+    /// lambda becomes, or the fun-interface class a `newSam` carries. A capture is unconditionally heap storage —
+    /// the generated class's field — so no liveness question arises.
     /// </summary>
     public static string CaptureMessage(
         string posPrefix, string owner, string closureName, string name, TypeNode? type,
         string? offendingFqn, FieldRejection why)
     {
-        var kind = why == FieldRejection.ByRef
-            ? "a managed pointer (`ref`)"
-            : $"byref-like (a `ref struct`{(offendingFqn != null ? $", via `{offendingFqn}`" : "")})";
-        return $"{posPrefix}closure-synthesis: in `{owner}`, the lambda captures `{name}` of type `{Render(type)}`, "
-             + $"which is {kind}. A captured variable is stored in an instance field of the generated closure class "
-             + $"`{closureName}`, and the CLR forbids that for this type. Pass the value as a parameter instead of "
-             + "capturing it (mirrors C# CS8352).";
+        return $"{posPrefix}closure-synthesis: in `{owner}`, the value `{name}` of type `{Render(type)}` is captured "
+             + $"by a lambda, and it is {KindPhrase(why, offendingFqn)}. A captured value is stored in an instance "
+             + $"field of the generated class `{closureName}`, and the CLR forbids that for this type. Pass the "
+             + "value as a parameter instead of capturing it (mirrors C# CS8352).";
     }
 
     /// <summary>

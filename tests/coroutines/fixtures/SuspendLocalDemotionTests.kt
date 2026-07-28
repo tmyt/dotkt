@@ -17,6 +17,7 @@
 // unique across this assembly (the cold-core lowering keys top-level suspend funs by simple name).
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import System.Span
 import System.Threading.Tasks.Task
 import kotlin.clr.await
 import dotkt.support.blockOn
@@ -28,6 +29,10 @@ suspend fun corBrdTick(n: Int): Int {
 
 fun corBrdPair(a: Int, b: Int): Int = a * 100 + b
 fun corBrdBoom(): Int = throw IllegalStateException("boom")
+fun corBrdMax(a: Int, b: Int): Int = if (a > b) a else b
+class CorBrdBox(val a: Int, val b: Int) { val sum: Int get() = a * 100 + b }
+fun interface CorBrdHandler { fun h(x: Int): Int }
+fun corBrdUse(g: CorBrdHandler, n: Int): Int = g.h(n)
 
 // A sibling ARGUMENT of a suspending argument. `x` appears before the suspension in the source and is read
 // after it in the emitted code.
@@ -72,6 +77,33 @@ suspend fun corBrdHandlerRead(): Int {
     return 0
 }
 
+// The OTHER half of the deferral rule, and the reason it cannot be "re-read everything": an operand the emitter
+// SPILLS before the suspension does not cross the resume, so the local feeding it is dead across it. Here the
+// spilled value is an Int and the local is a byref-like Span — treating the operand as deferred would refuse
+// these three with the CS4007 mirror even though the state machine only ever stores the Int. The three positions
+// are the three the evaluation-order spill covers: a binary operand, a call argument and a constructor argument.
+suspend fun corBrdSpilledBinOp(): Int {
+    val s = Span<Int>(arrayOf(1, 2, 3))
+    return s.ToArray().size + corBrdTick(1)
+}
+
+suspend fun corBrdSpilledCallArg(): Int {
+    val s = Span<Int>(arrayOf(1, 2, 3, 4))
+    return corBrdMax(s.ToArray().size, corBrdTick(1))
+}
+
+suspend fun corBrdSpilledCtorArg(): Int {
+    val s = Span<Int>(arrayOf(1, 2, 3, 4, 5))
+    return CorBrdBox(s.ToArray().size, corBrdTick(1)).sum
+}
+
+// A SAM's capture VALUE is evaluated in this frame and, when a sibling argument suspends, is read at the resume —
+// so the capture list has to be walked on the re-read as well as on the first pass.
+suspend fun corBrdSamCapture(): Int {
+    val k = 3
+    return corBrdUse(CorBrdHandler { it * k }, corBrdTick(1))
+}
+
 class CorBrdSuspendLocalDemotionTests {
     @TestAttribute
     fun operandsDeferredPastAResumeKeepTheirValue() {
@@ -86,5 +118,19 @@ class CorBrdSuspendLocalDemotionTests {
     fun aHandlersReadsSurviveTheSuspensionBeforeTheRegion() {
         assertEquals(1, blockOn { corBrdWriteInTry() })
         assertEquals(7, blockOn { corBrdHandlerRead() })
+    }
+
+    @TestAttribute
+    fun aSpilledOperandDoesNotKeepItsSourceAlive() {
+        // Each returns a value only reachable if the byref-like local stayed a local — i.e. if the analysis
+        // agreed with the emitter that the spilled Int, not the Span, is what crosses the resume.
+        assertEquals(5, blockOn { corBrdSpilledBinOp() })       // 3 + tick(1)
+        assertEquals(4, blockOn { corBrdSpilledCallArg() })     // max(4, tick(1))
+        assertEquals(502, blockOn { corBrdSpilledCtorArg() })   // 5 * 100 + tick(1)
+    }
+
+    @TestAttribute
+    fun aSamCaptureDeferredPastAResumeKeepsItsValue() {
+        assertEquals(6, blockOn { corBrdSamCapture() })         // (tick(1)) * 3
     }
 }
