@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
+using DotKt.Bir;
 
 // #52 (kotc-purity): SYNTHESIZE the capturing-lambda closure CLASS here, in the Kotlin<->CLR layer, instead of in the
 // kotc frontend. A capturing lambda `{ … }` lowers to a closure class (fields = captured vars, instance `invoke`
@@ -28,19 +29,23 @@ static class ClosureSynthesis
 {
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
 
-    public static void Apply(JsonNode root)
+    // The referenced-metadata `ref struct` oracle, for the capture legality check (see CheckCaptureLegality).
+    static ReferenceMetadataIndex _refs;
+
+    public static void Apply(JsonNode root, ReferenceMetadataIndex refs)
     {
         if (root is not JsonObject file) return;
+        _refs = refs;
         var newTypes = new List<JsonNode>();
 
         if (file["methods"] is JsonArray methods)
-            foreach (var m in methods) Walk(m, newTypes);
+            foreach (var m in methods) Walk(m, newTypes, m);
         if (file["fields"] is JsonArray fields)
-            foreach (var f in fields) Walk(f, newTypes);
+            foreach (var f in fields) Walk(f, newTypes, f);
         if (file["types"] is JsonArray types)
             // ToList: the walk appends closure classes to `newTypes` (added below), but a closure can also live inside
             // an already-declared type's member body — walk the pre-existing types without mutating while enumerating.
-            foreach (var t in types.ToList()) Walk(t, newTypes);
+            foreach (var t in types.ToList()) Walk(t, newTypes, t);
 
         if (newTypes.Count > 0)
         {
@@ -57,7 +62,9 @@ static class ClosureSynthesis
         }
     }
 
-    static void Walk(JsonNode node, List<JsonNode> newTypes)
+    // `decl` is the nearest enclosing DECLARATION (method/field/type), carried only so a capture diagnostic can
+    // name it and print its source position.
+    static void Walk(JsonNode node, List<JsonNode> newTypes, JsonNode decl)
     {
         switch (node)
         {
@@ -66,7 +73,8 @@ static class ClosureSynthesis
                 {
                     // Bottom-up: synthesize any nested closures inside THIS closure's invoke body first, so the outer
                     // class is assembled over an already-lean body (inner `newClosure`s stripped, inner classes queued).
-                    if (sc["body"] is JsonNode body) Walk(body, newTypes);
+                    if (sc["body"] is JsonNode body) Walk(body, newTypes, decl);
+                    CheckCaptureLegality(sc, decl);
                     newTypes.Add(BuildClosureClass(RebindSyntheticTypeVariables(sc, o["typeArgs"] as JsonArray)));
                     o.Remove("synthClass");
                     return;   // the invoke `body` (above) was recursed for NESTED closures; return WITHOUT descending into
@@ -81,18 +89,41 @@ static class ClosureSynthesis
                 if (Str(o["k"]) == "newSam" && o["synthClass"] is JsonObject scSam)
                 {
                     if (scSam["methods"] is JsonArray sms)
-                        foreach (var m in sms) if (m is JsonObject mo && mo["body"] is JsonNode mb) Walk(mb, newTypes);
+                        foreach (var m in sms) if (m is JsonObject mo && mo["body"] is JsonNode mb) Walk(mb, newTypes, decl);
+                    CheckCaptureLegality(scSam, decl);
                     newTypes.Add(RebindSyntheticTypeVariables(scSam, o["typeArgs"] as JsonArray));
                     o.Remove("synthClass");
                     return;
                 }
+                // A nested declaration (a member of a walked type) becomes the diagnostic context for its own body.
+                var inner = o["name"] != null && (o["body"] != null || o["methods"] != null || o["ctors"] != null) ? o : decl;
                 foreach (var kv in o.ToList())
-                    if (kv.Value != null) Walk(kv.Value, newTypes);
+                    if (kv.Value != null) Walk(kv.Value, newTypes, inner);
                 break;
             case JsonArray a:
                 foreach (var it in a)
-                    if (it != null) Walk(it, newTypes);
+                    if (it != null) Walk(it, newTypes, decl);
                 break;
+        }
+    }
+
+    // A CAPTURE is unconditionally HEAP storage: it becomes an instance field of the synthesized closure class.
+    // A byref-like (`ref struct`) value therefore cannot be captured — the CLR rejects the class at load time with
+    // a TypeLoadException. Refuse it here, where the field is minted, with the same wording the suspend state
+    // machine's storage gate uses (FieldLegality is the single oracle for all three minting sites). No liveness
+    // question arises: unlike an SM spill, a capture is never demotable to a local.
+    static void CheckCaptureLegality(JsonObject synthClass, JsonNode decl)
+    {
+        if (_refs == null || synthClass["fields"] is not JsonArray fields) return;
+        foreach (var f in fields.OfType<JsonObject>())
+        {
+            if (f["type"] is not JsonNode tj) continue;
+            var t = TypeJson.Read(tj);
+            var why = FieldLegality.Classify(t, _refs.IsByRefLikeFqn, out var offending);
+            if (why == FieldRejection.None) continue;
+            throw new System.NotSupportedException(FieldLegality.CaptureMessage(
+                FieldLegality.PosPrefix(decl), Str((decl as JsonObject)?["name"]) ?? "<file>",
+                Str(synthClass["name"]) ?? "<closure>", Str(f["name"]), t, offending, why));
         }
     }
 

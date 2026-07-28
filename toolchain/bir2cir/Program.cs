@@ -296,7 +296,7 @@ sealed class Pipeline
             // (already-BCL names + already-stripped `anySlot` are no-ops), so a second whole-tree pass only fixes the
             // spliced-in nodes. (#75: splice-all made this live — e.g. `buildString{}` losing its `.toString()`.)
             ObjectSlotRename.Apply(bir.Root);
-            ClosureSynthesis.Apply(bir.Root);
+            ClosureSynthesis.Apply(bir.Root, refs);
             SharedSyntheticSynthesis.Apply(bir.Root);
             // FOR-LOOP SOURCE CLASSIFICATION (#73/#73-w3): kotc emits ONE faithful `forIn` carrying the source's
             // runtime type token (`srcType`) for every non-array source — it no longer decides range-vs-collection nor
@@ -503,7 +503,7 @@ sealed class Pipeline
             // `ClrEvent.subscribe` synthesizes the remove callback as a normal `newClosure` ingredient bag. The main
             // ClosureSynthesis pass ran earlier, before event binding; run the idempotent collector once more so only
             // these newly-created callback classes are assembled before the remaining whole-tree passes.
-            ClosureSynthesis.Apply(hoisted);
+            ClosureSynthesis.Apply(hoisted, refs);
             // ClosureSynthesis stamps the transient lifted-frame correspondence on a GENERIC closure class, and the pass
             // that consumes it (SharedSyntheticSynthesis) already ran. Drop it here so the invariant "it never reaches
             // CIR" holds for a class assembled by this late pass too, rather than only for the main one.

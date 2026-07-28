@@ -16,6 +16,10 @@
     <!-- Shared layer-agnostic IR SANITY invariants (#84 P4 / #112 P4). Run by BOTH bir2cir (on its CIR output) and
          ilemit (at the head of EmitAssembly); scripts/verify-sanity.py mirrors them offline. -->
     <Compile Include="../bir-common/IrSanity.cs" Link="IrSanity.cs" />
+    <!-- Shared "may this type be an instance field?" oracle + the diagnostics its three minting sites share
+         (suspend SM spills, suspend-lambda captures, closure captures). bir2cir is the only tool that mints
+         heap storage for a Kotlin value, so it is the only linker. -->
+    <Compile Include="../bir-common/FieldLegality.cs" Link="FieldLegality.cs" />
   </ItemGroup>
   <ItemGroup>
     <!-- Read the metadata-only reference stdlib (throw-stub bodies, kotlin.* signatures) WITHOUT a runtime load:

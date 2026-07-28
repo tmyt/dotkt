@@ -739,6 +739,25 @@ static partial class SuspendColdLowering
     // eval-order gate the suspension IS the enclosing fun's — HasOwnSuspension's LambdaKinds skip would hide it and
     // mis-account the try nesting (a nested-suspending-try bypass → branch-into-try → InvalidProgramException). Every
     // OTHER LambdaKinds node (genuine lambda/closure, repeatInline) stays skipped (its suspension is its own SM's).
+    // The method NAME of the first suspending call in a subtree — the "…lives across the suspending call to `f`"
+    // half of a storage diagnostic. Null when the subtree carries no suspension.
+    static string SuspendedCalleeIn(JsonNode node)
+    {
+        switch (node)
+        {
+            case JsonObject o:
+                if (Str(o["k"]) is string k && LambdaKinds.Contains(k)) return null;
+                if (Bool(o["suspendCall"])) return Str(o["method"]) ?? "a suspending call";
+                foreach (var kv in o) if (kv.Value != null && SuspendedCalleeIn(kv.Value) is string c) return c;
+                return null;
+            case JsonArray a:
+                foreach (var it in a) if (it != null && SuspendedCalleeIn(it) is string ac) return ac;
+                return null;
+            default:
+                return null;
+        }
+    }
+
     static bool HasLoopBorneSuspension(JsonNode node)
     {
         switch (node)
@@ -1036,9 +1055,11 @@ static partial class SuspendColdLowering
                         + $"({reason}) — emitting a call-time-throw SuspendLambda state machine (v1 limitation). "
                         + "The lambda COMPILES; invoking it throws NotSupportedException.");
                     // SmTypeLambda's ctor/create protocol still needs capture + lambda-param fields even though the
-                    // stub invokeSuspend never reads them.
-                    foreach (var (n, t) in _captures) AddField(n, t);
-                    foreach (var p in _params) AddField(Str(p["name"]), TypeJson.Read(p["type"]));
+                    // stub invokeSuspend never reads them — the fields are REAL on the emitted class, so they face
+                    // the same storage gate as a segmentable lambda's.
+                    foreach (var (n, t) in _captures) FieldStorage(n, t, RoleCapture, lives: true, across: null);
+                    foreach (var p in _params)
+                        FieldStorage(Str(p["name"]), TypeJson.Read(p["type"]), RoleParam, lives: true, across: null);
                     var msg = $"{_smType}: {reason} — this suspend lambda is not supported by bir2cir's v1 "
                         + "cold-lowering (docs/design-coroutine-cold-core-task-bridge.md §11/§14).";
                     newTypes.Add(SmTypeLambda(UnsupportedThrowBody(msg)));
@@ -1090,14 +1111,23 @@ static partial class SuspendColdLowering
             // block above — seed the label allocator here.
             if (!hasSuspension) _label = MaxLabelId(body) + 1000;
 
-            AddField("label", IntTn);
-            if (_needSuspendGuard) AddField(SuspendingField, BoolTn);   // BUG 1: the finally gate flag
-            if (_isMember) AddField(ThisField, _selfType);          // holds the enclosing (constructed) instance
+            // Which of this body's locals actually survive a suspension. Computed on the NORMALIZED body (the
+            // flatten/hoist above already ran) and BEFORE any storage decision, because it IS the storage
+            // decision for every `{k:var}`: a local that is dead across every suspension point stays a MoveNext
+            // local, which is both cheaper and the only way a byref-like value can live in a suspend function.
+            var live = SuspendLiveness.Analyze(body);
+
+            FieldStorage("label", IntTn, RoleMachinery, lives: true, across: null);
+            if (_needSuspendGuard) FieldStorage(SuspendingField, BoolTn, RoleMachinery, true, null);   // BUG 1: the finally gate flag
+            if (_isMember) FieldStorage(ThisField, _selfType, RoleMachinery, true, null);   // holds the enclosing (constructed) instance
             if (_isLambda)
-                foreach (var (n, t) in _captures) AddField(n, t);   // captured vars -> ctor-set fields
+                foreach (var (n, t) in _captures)
+                    FieldStorage(n, t, RoleCapture, lives: true, across: null);             // captured vars -> ctor-set fields
             foreach (var p in _params)
-                AddField(Str(p["name"]), TypeJson.Read(p["type"]));           // lambda: create()-set param field(s)
-            CollectVarFields(body, inHandler: false);
+                FieldStorage(Str(p["name"]), TypeJson.Read(p["type"]), RoleParam, true, null);  // lambda: create()-set param field(s)
+            foreach (var (vn, vt) in live.DeclaredVars)
+                FieldStorage(vn, TypeJson.Read(vt), RoleLocal,
+                    live.LivesAcrossSuspension(vn), live.FirstSuspensionAcross(vn));
 
             var bodyOut = new List<JsonNode>();
             foreach (var s in body) EmitStmt(s, bodyOut);
@@ -1165,44 +1195,52 @@ static partial class SuspendColdLowering
             return max;
         }
 
-        void AddField(string name, TypeNode type)
-        {
-            if (name == null || !_fields.Add(name)) return;
-            _fieldDecls.Add((name, type ?? AnyTn));
-        }
+        // ---- the storage gate ------------------------------------------------------------------------------
+        //
+        // The SINGLE decision "does this value get an SM instance field, a MoveNext local, or a compile error"
+        // (docs/dotkt-semantics.md §7.1). Every field this state machine mints goes through here — spilled
+        // locals, parameters, captures, `$this`/`label`/`$suspending`, and the synthesized `__aw$`/`__ord$`/
+        // `__cond$`/`__awaiter$` temporaries alike:
+        //
+        //   lives == false                        -> stays a MoveNext LOCAL (a byref-like value is legal there)
+        //   lives == true,  field-legal type      -> an SM instance field
+        //   lives == true,  byref-like / `ref T`  -> a compile-time diagnostic (the CS4007/CS4012 mirrors)
+        //
+        // A parameter, a capture and the machinery slots are unconditional storage (the SM ctor/create writes
+        // them), so they pass lives:true with a null `across`; a local's verdict comes from SuspendLiveness,
+        // which also names the first suspending callee it lives across for the diagnostic.
+        // Roles are the source-level words the diagnostic uses.
+        const string RoleLocal = "local variable";
+        const string RoleParam = "parameter";
+        const string RoleCapture = "captured variable";
+        const string RoleMachinery = "state-machine slot";
+        const string RoleAwaited = "awaited value";
+        const string RoleOrder = "evaluation-order temporary";
+        const string RoleCondResult = "conditional-result temporary";
 
-        void AddFieldTyped(string name, TypeNode type)
+        void FieldStorage(string name, TypeNode type, string role, bool lives, string across)
         {
+            if (name == null || !lives) return;                  // dead across every suspension -> stays a local
+            var why = FieldLegality.Classify(type, IsByRefLikeFqn, out var offending);
+            if (why != FieldRejection.None)
+                throw new NotSupportedException(FieldLegality.SuspendMessage(
+                    FieldLegality.PosPrefix(_m), DiagOwner, role, name, type, offending, why, across));
             if (_fields.Add(name)) _fieldDecls.Add((name, type ?? AnyTn));
         }
 
-        void CollectVarFields(JsonNode node, bool inHandler)
+        // The referenced-metadata `ref struct` oracle. Null refs (a unit-test/lambda path with no reference set)
+        // answers "not byref-like": a byref-like value cannot exist without a reference assembly declaring it.
+        static bool IsByRefLikeFqn(string fqn) => _refs != null && _refs.IsByRefLikeFqn(fqn);
+
+        // How a diagnostic names the thing being compiled.
+        string DiagOwner => _isLambda ? _smType : (_ownerClass ?? _fileClass) + "." + _name;
+
+        // A `{k:var}` that the storage gate left as a MoveNext LOCAL. The type slot is mandatory (ilemit declares
+        // the local from it), so an untyped var lands on the same `kotlin.Any` fallback its SM field would have had.
+        static JsonObject LocalVar(string name, JsonNode typeJson, JsonNode init) => new()
         {
-            switch (node)
-            {
-                case JsonObject o:
-                    var k = Str(o["k"]);
-                    // Nested lambda/closure subtrees (incl. the F2 suspendCoroutine block arg) own their own scope —
-                    // their captures resolve via capMap, not as SM fields.
-                    if (k != null && LambdaKinds.Contains(k)) return;
-                    if (k == "var" && !inHandler)
-                        AddField(Str(o["name"]), TypeJson.Read(o["type"]));
-                    if (k == "try")
-                    {
-                        CollectVarFields(o["body"] ?? JsonValue.Create(0), inHandler);
-                        if (o["catches"] is JsonArray cs)
-                            foreach (var c in cs)
-                                if (c is JsonObject co) CollectVarFields(co["body"] ?? JsonValue.Create(0), inHandler: true);
-                        if (o["finally"] != null) CollectVarFields(o["finally"], inHandler: true);
-                        return;
-                    }
-                    foreach (var kv in o) if (kv.Value != null) CollectVarFields(kv.Value, inHandler);
-                    return;
-                case JsonArray a:
-                    foreach (var it in a) if (it != null) CollectVarFields(it, inHandler);
-                    return;
-            }
-        }
+            ["k"] = "var", ["name"] = name, ["type"] = typeJson?.DeepClone() ?? Tw(AnyTn), ["init"] = init,
+        };
 
         // ---- statement lowering ----
 
@@ -1220,7 +1258,7 @@ static partial class SuspendColdLowering
                     // NullConst(valueType) would emit a null Int32 (ilemit: "requires Number, target is Null").
                     var val = init == null ? DefaultOf(TypeJson.Read(o["type"]) ?? AnyTn) : Rewrite(init, outp);
                     if (_fields.Contains(nm)) outp.Add(SetField(nm, val));
-                    else outp.Add(new JsonObject { ["k"] = "var", ["name"] = nm, ["type"] = o["type"]?.DeepClone(), ["init"] = val });
+                    else outp.Add(LocalVar(nm, o["type"], val));
                     break;
                 }
                 case "setLocal":
@@ -1371,9 +1409,12 @@ static partial class SuspendColdLowering
                     return sf0;
                 if (Str(o["k"]) == "setLocal" && Str(o["name"]) is string sln && _fields.Contains(sln))
                     return SetField(sln, RewriteNoSpill(o["value"]));
-                if (Str(o["k"]) == "var" && Str(o["name"]) is string vln && _fields.Contains(vln))
-                    return SetField(vln, o["init"] == null
-                        ? DefaultOf(TypeJson.Read(o["type"]) ?? AnyTn) : RewriteNoSpill(o["init"]));
+                if (Str(o["k"]) == "var" && Str(o["name"]) is string vln)
+                    return _fields.Contains(vln)
+                        ? SetField(vln, o["init"] == null
+                            ? DefaultOf(TypeJson.Read(o["type"]) ?? AnyTn) : RewriteNoSpill(o["init"]))
+                        : LocalVar(vln, o["type"], o["init"] == null
+                            ? DefaultOf(TypeJson.Read(o["type"]) ?? AnyTn) : RewriteNoSpill(o["init"]));
                 if (_isMember && Str(o["k"]) == "this")
                     return FieldOf(ThisField, new TypeNode.Fqn(_ownerClass));
                 if (Str(o["k"]) == "this" && CapturedOuterField() is JsonNode of0)
@@ -1426,9 +1467,12 @@ static partial class SuspendColdLowering
                 // here too — else a bare `setLocal index` to an SM FIELD reaches ilemit as `store unknown var index`.
                 if (k == "setLocal" && Str(o["name"]) is string sln && _fields.Contains(sln))
                     return SetField(sln, Rewrite(o["value"], outp));
-                if (k == "var" && Str(o["name"]) is string vln && _fields.Contains(vln))
-                    return SetField(vln, o["init"] == null
-                        ? DefaultOf(TypeJson.Read(o["type"]) ?? AnyTn) : Rewrite(o["init"], outp));
+                if (k == "var" && Str(o["name"]) is string vln)
+                    return _fields.Contains(vln)
+                        ? SetField(vln, o["init"] == null
+                            ? DefaultOf(TypeJson.Read(o["type"]) ?? AnyTn) : Rewrite(o["init"], outp))
+                        : LocalVar(vln, o["type"], o["init"] == null
+                            ? DefaultOf(TypeJson.Read(o["type"]) ?? AnyTn) : Rewrite(o["init"], outp));
                 if (_isMember && k == "this")
                     return FieldOf(ThisField, new TypeNode.Fqn(_ownerClass));
                 if (k == "this" && CapturedOuterField() is JsonNode of1)
@@ -1536,9 +1580,18 @@ static partial class SuspendColdLowering
                 var rw = Rewrite(child, outp);
                 if (i < lastSusp && !HasOwnSuspension(child) && !IsPureExpr(child))
                 {
-                    var ty = TypeOfExpr(child);
+                    // The spill's type must be KNOWN: it is a real field on the SM class, and a silent
+                    // `kotlin.Any` here would box a value type (or, worse, hide a type the CLR refuses as a
+                    // field). An operand whose static type cannot be read is a DROP by an earlier layer.
+                    var ty = TypeOfExpr(child)
+                        ?? throw new NotSupportedException(
+                            $"{FieldLegality.PosPrefix(_m)}suspend-lowering: in `{DiagOwner}`, the "
+                            + $"`{Str((child as JsonObject)?["k"]) ?? "?"}` operand evaluated before a suspending "
+                            + "operand carries no static type, so its evaluation-order spill slot cannot be typed. "
+                            + "An earlier lowering dropped the operand's type.");
                     var tmp = "__ord$" + (++_ordCounter);
-                    AddFieldTyped(tmp, ty);
+                    // By construction this spill outlives the suspension to its right (that is why it exists).
+                    FieldStorage(tmp, ty, RoleOrder, lives: true, across: SuspendedCalleeIn(kids[lastSusp]));
                     outp.Add(SetField(tmp, rw));
                     res.Add(FieldOf(tmp, ty));
                 }
@@ -1619,10 +1672,12 @@ static partial class SuspendColdLowering
         // every call/field/read node, BirEmitterExpressions.kt) — a PRECISE, per-node type that needs no owner
         // disambiguation and so is immune to the same-simple-name-across-packages collision that a name-keyed lookup
         // has; else the same-assembly method/field index (a name-keyed fallback for a rare node without `sty`); a
-        // `bin`'s result is its left-operand type (comparisons -> Boolean). Falls back to kotlin.Any.
+        // `bin`'s result is its left-operand type (comparisons -> Boolean).
+        // Returns NULL when the type is unknown — a spill slot is a real SM field, so its caller errors out rather
+        // than silently declaring it `kotlin.Any` (which boxes a value type and hides a field-illegal type).
         TypeNode TypeOfExpr(JsonNode n)
         {
-            if (n is not JsonObject o) return AnyTn;
+            if (n is not JsonObject o) return null;
             if (TypeJson.Read(o["ret"]) is TypeNode t0) return t0;
             if (TypeJson.Read(o["dynRet"]) is TypeNode t2) return t2;
             if (TypeJson.Read(o["sty"]) is TypeNode ts) return ts;
@@ -1665,25 +1720,32 @@ static partial class SuspendColdLowering
                 case "binOp":
                     return Str(o["op"]) is "==" or "!=" or "<" or ">" or "<=" or ">=" ? BoolTn : TypeOfExpr(o["lhs"]);
             }
-            return AnyTn;
+            return null;
         }
 
+        // Lower a `cond` (ternary) EXPRESSION to control flow, carrying its value in a temporary. The temporary
+        // goes through the same storage gate as everything else: it only has to survive a suspension when the
+        // conditional itself contains one. A conditional lowered purely because it ESCAPES (a `goto`/`return` in a
+        // branch, with no suspension anywhere in it) keeps its value in a MoveNext local, so a byref-like value can
+        // still flow through an escaping `if` inside a suspend function.
         JsonNode EmitCondValue(JsonObject c, List<JsonNode> outp)
         {
             var ty = TypeJson.Read(c["type"]) ?? AnyTn;
-            var resultField = "__cond$" + (++_condCounter);
-            AddFieldTyped(resultField, ty);
+            var spans = HasOwnSuspension(c);
+            var resultSlot = "__cond$" + (++_condCounter);
+            if (spans) FieldStorage(resultSlot, ty, RoleCondResult, lives: true, across: SuspendedCalleeIn(c));
+            else outp.Add(new JsonObject { ["k"] = "var", ["name"] = resultSlot, ["type"] = Tw(ty), ["init"] = DefaultOf(ty) });
             var elseL = NextLabel();
             var endL = NextLabel();
 
             var condExpr = Rewrite(c["cond"], outp);
             outp.Add(BrIf(condExpr, false, elseL));
-            EmitCondBranch(c["then"], outp, resultField, ty);
+            EmitCondBranch(c["then"], outp, resultSlot, ty);
             outp.Add(Goto(endL));
             outp.Add(Label(elseL));
-            EmitCondBranch(c["else"], outp, resultField, ty);
+            EmitCondBranch(c["else"], outp, resultSlot, ty);
             outp.Add(Label(endL));
-            return FieldOf(resultField, ty);
+            return spans ? FieldOf(resultSlot, ty) : new JsonObject { ["k"] = "local", ["name"] = resultSlot };
         }
 
         // A condition branch can be a suspension-free valueBlock whose statements perform a non-local control transfer
@@ -1692,7 +1754,7 @@ static partial class SuspendColdLowering
         // reaches its target with that receiver still on the CLR stack. Flatten the block while bir2cir still owns the
         // control-flow decision, then assign only its fallthrough result. Suspension-bearing valueBlocks are already
         // flattened by Rewrite itself.
-        void EmitCondBranch(JsonNode branch, List<JsonNode> outp, string resultField, TypeNode resultType)
+        void EmitCondBranch(JsonNode branch, List<JsonNode> outp, string resultSlot, TypeNode resultType)
         {
             JsonNode value;
             if (branch is JsonObject b && Str(b["k"]) == "valueBlock")
@@ -1727,7 +1789,9 @@ static partial class SuspendColdLowering
                     : value);
                 return;
             }
-            outp.Add(SetField(resultField, value));
+            outp.Add(_fields.Contains(resultSlot)
+                ? SetField(resultSlot, value)
+                : new JsonObject { ["k"] = "setLocal", ["name"] = resultSlot, ["value"] = value });
         }
 
         // A value expression containing a control transfer cannot remain nested under a CLR
@@ -1780,7 +1844,10 @@ static partial class SuspendColdLowering
             var resumeLabel = NextLabel();
             RegisterResume(state, resumeLabel);
             var field = "__aw$" + state;
-            AddFieldTyped(field, retTok);
+            // The awaited value is written at the RESUME point and read after it, so it is heap storage by
+            // construction — a byref-like result type is refused here (a suspend callee cannot return one anyway:
+            // the cold entry's return slot is `Any?`).
+            FieldStorage(field, retTok, RoleAwaited, lives: true, across: Str(callNode["method"]));
 
             outp.Add(SetField("label", IntConst(state)));
             outp.Add(new JsonObject { ["k"] = "setLocal", ["name"] = "result", ["value"] = ColdCall(callNode, outp) });
@@ -1830,13 +1897,13 @@ static partial class SuspendColdLowering
             var resumeLabel = NextLabel();
             RegisterResume(state, resumeLabel);
             var awField = "__aw$" + state;
-            AddFieldTyped(awField, retTok);
+            FieldStorage(awField, retTok, RoleAwaited, lives: true, across: method);
 
             JsonNode tail;
             if (wrapper)
             {
                 var safeField = "__safe$" + state;
-                AddFieldTyped(safeField, ContAnyTn);
+                FieldStorage(safeField, ContAnyTn, RoleMachinery, lives: true, across: null);
                 // this.__safe = newSafeContinuation((Continuation<Any?>) this)   — the SM is its own delegate.
                 outp.Add(SetField(safeField, new JsonObject
                 {
@@ -2070,7 +2137,7 @@ static partial class SuspendColdLowering
             RegisterResume(state, afterLabel);
 
             var awField = "__awaiter$" + state;
-            AddFieldTyped(awField, awaiterType);
+            FieldStorage(awField, awaiterType, RoleMachinery, lives: true, across: "await");
 
             // this.<aw> = <getAwaiter over the awaitable / its ConfigureAwait(false) / a referenced extension GetAwaiter>
             outp.Add(SetField(awField, BuildGetAwaiter(plan, awaitableType, awaiterType, task, noCapture, resultTok, generic)));
@@ -2119,7 +2186,7 @@ static partial class SuspendColdLowering
             if (generic)
             {
                 var valField = "__awval$" + state;
-                AddFieldTyped(valField, resultTok);
+                FieldStorage(valField, resultTok, RoleAwaited, lives: true, across: "await");
                 outp.Add(SetField(valField, getResult));
                 return FieldOf(valField, resultTok);
             }
