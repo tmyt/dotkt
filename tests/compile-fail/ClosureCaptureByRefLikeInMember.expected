@@ -1,0 +1,3 @@
+closure-synthesis: in `pick`
+which is byref-like (a `ref struct`, via `System.Span`)
+(mirrors C# CS8352)

@@ -1,0 +1,4 @@
+closure-synthesis: in `cfCapture`
+the lambda captures `s`
+which is byref-like (a `ref struct`, via `System.Span`)
+(mirrors C# CS8352)

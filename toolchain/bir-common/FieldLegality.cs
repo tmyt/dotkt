@@ -83,29 +83,44 @@ public static class FieldLegality
         _ => t.ToString() ?? "<type>",
     };
 
+    static string KindPhrase(FieldRejection why, string? offendingFqn) =>
+        why == FieldRejection.ByRef
+            ? "a managed pointer (`ref`)"
+            : $"byref-like (a `ref struct`{(offendingFqn != null ? $", via `{offendingFqn}`" : "")})";
+
     /// <summary>
-    /// The suspend-state-machine refusal (mirrors C# CS4007 for a local that spans an await, CS4012 for a
-    /// parameter). <paramref name="role"/> names the source-level thing ("local variable", "parameter",
-    /// "captured variable", "awaited value", ...); <paramref name="across"/> names the first suspending callee
-    /// the storage lives across, or null when the storage is unconditional (a parameter/capture/machinery slot).
+    /// A value that must SURVIVE a suspension: the state machine has to hold it in an instance field, which the
+    /// CLR forbids for this type. Mirrors C# CS4007. <paramref name="role"/> names the source-level thing ("local
+    /// variable", "awaited value", "evaluation-order temporary", ...); <paramref name="across"/> names the first
+    /// suspending callee it lives across.
     /// </summary>
     public static string SuspendMessage(
         string posPrefix, string owner, string role, string name, TypeNode? type,
         string? offendingFqn, FieldRejection why, string? across)
     {
-        var kind = why == FieldRejection.ByRef
-            ? "a managed pointer (`ref`)"
-            : $"byref-like (a `ref struct`{(offendingFqn != null ? $", via `{offendingFqn}`" : "")})";
-        var span = across != null
-            ? $" and lives across the suspending call to `{across}`"
-            : "";
-        var mirror = why == FieldRejection.ByRef ? "" : role == "parameter" || role == "captured variable"
-            ? " (mirrors C# CS4012)"
-            : " (mirrors C# CS4007)";
+        var span = across != null ? $" and lives across the suspending call to `{across}`" : "";
+        var mirror = why == FieldRejection.ByRef ? "" : " (mirrors C# CS4007)";
         return $"{posPrefix}suspend-lowering: in `{owner}`, the {role} `{name}` has type `{Render(type)}`, which is "
-             + $"{kind}{span}. A suspend function's state machine must hold it in an instance field of the generated "
-             + "state-machine class, and the CLR forbids that for this type. Restructure so the value does not span a "
-             + $"suspension point (compute it, or re-create it, after the call){mirror}.";
+             + $"{KindPhrase(why, offendingFqn)}{span}. A suspend function's state machine must hold it in an instance "
+             + "field of the generated state-machine class, and the CLR forbids that for this type. Restructure so the "
+             + $"value does not span a suspension point (compute it, or re-create it, after the call){mirror}.";
+    }
+
+    /// <summary>
+    /// A suspend function's own ABI cannot carry this type AT ALL — independently of whether its body suspends.
+    /// A parameter and a capture are written by the state machine's constructor, and the result crosses the cold
+    /// entry's `Any?` slot and the public `Task&lt;R&gt;` bridge; none of those can hold a byref-like value.
+    /// Mirrors C# CS4012 ("parameters or locals of this type cannot be declared in async methods").
+    /// </summary>
+    public static string SuspendAbiMessage(
+        string posPrefix, string owner, string role, string name, TypeNode? type,
+        string? offendingFqn, FieldRejection why)
+    {
+        var mirror = why == FieldRejection.ByRef ? "" : " (mirrors C# CS4012)";
+        return $"{posPrefix}suspend-lowering: in `{owner}`, the {role} `{name}` has type `{Render(type)}`, which is "
+             + $"{KindPhrase(why, offendingFqn)}. A suspend function carries its {role} through the generated state "
+             + "machine and its cold-entry/Task ABI, and the CLR forbids that for this type — a `suspend` declaration "
+             + $"cannot mention it. Take the value as a plain (non-suspend) function's {role} instead{mirror}.";
     }
 
     /// <summary>

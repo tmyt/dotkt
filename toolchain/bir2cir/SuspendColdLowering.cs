@@ -1027,6 +1027,7 @@ static partial class SuspendColdLowering
 
         public void Build(List<JsonNode> newMethods, List<JsonNode> newTypes)
         {
+            CheckSuspendAbi();
             if (_memberAbstract)
             {
                 // An abstract suspend member -> the abstract cold-entry DECLARATION (no SM, no drain). Concrete
@@ -1217,6 +1218,7 @@ static partial class SuspendColdLowering
         const string RoleAwaited = "awaited value";
         const string RoleOrder = "evaluation-order temporary";
         const string RoleCondResult = "conditional-result temporary";
+        const string RoleReturn = "result";
 
         void FieldStorage(string name, TypeNode type, string role, bool lives, string across)
         {
@@ -1226,6 +1228,26 @@ static partial class SuspendColdLowering
                 throw new NotSupportedException(FieldLegality.SuspendMessage(
                     FieldLegality.PosPrefix(_m), DiagOwner, role, name, type, offending, why, across));
             if (_fields.Add(name)) _fieldDecls.Add((name, type ?? AnyTn));
+        }
+
+        // The suspend ABI itself, checked for EVERY suspend declaration — abstract, stubbed, suspension-free or
+        // fully segmented alike. A parameter and a capture are written by the state machine's constructor, and the
+        // result crosses the cold entry's `Any?` slot and the public `Task<R>` bridge, so none of them can carry a
+        // byref-like value whatever the body does. (Only LOCALS get the liveness question; the ABI has no "dead
+        // across" escape.) Unconditional, exactly like C#'s CS4012 — and it is what turns a suspension-free
+        // `suspend fun f(s: Span<Int>)` from an InvalidProgramException at call time into a compile-time message.
+        void CheckSuspendAbi()
+        {
+            void Check(string role, string name, TypeNode t)
+            {
+                var why = FieldLegality.Classify(t, IsByRefLikeFqn, out var offending);
+                if (why != FieldRejection.None)
+                    throw new NotSupportedException(FieldLegality.SuspendAbiMessage(
+                        FieldLegality.PosPrefix(_m), DiagOwner, role, name, t, offending, why));
+            }
+            foreach (var p in _params) Check(RoleParam, Str(p["name"]), TypeJson.Read(p["type"]));
+            if (_captures != null) foreach (var (n, t) in _captures) Check(RoleCapture, n, t);
+            Check(RoleReturn, "<result>", _resultType);
         }
 
         // The referenced-metadata `ref struct` oracle. Null refs (a unit-test/lambda path with no reference set)

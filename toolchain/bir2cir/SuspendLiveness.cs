@@ -206,16 +206,83 @@ static class SuspendLiveness
             switch (Str(o["k"]))
             {
                 case "block": Stmts(o["body"]); return;
-                case "exprStmt": Expr(o["expr"]); return;
+                case "exprStmt": Value(o["expr"]); return;
                 case "label": Label(Id(o)); return;
                 case "goto": Goto(Id(o)); return;
-                case "brIf": Expr(o["cond"]); BrIf(Id(o)); return;
-                case "return": case "returnExpr": Expr(o["value"]); Stop(); return;
-                case "throw": case "throwExpr": Expr(o["value"]); Stop(); return;
+                case "brIf": Value(o["cond"]); BrIf(Id(o)); return;
+                case "return": case "returnExpr": Value(o["value"]); Stop(); return;
+                case "throw": case "throwExpr": Value(o["value"]); Stop(); return;
+                case "var": Value(o["init"]); Def(Str(o["name"])); return;
+                case "setLocal": Value(o["value"]); Def(Str(o["name"])); return;
                 case "break": Jump(Str(o["label"]), cont: false); return;
                 case "continue": Jump(Str(o["label"]), cont: true); return;
                 case "try": Try(o); return;
-                default: Expr(o); return;
+                default: Value(o); return;
+            }
+        }
+
+        // A statement's VALUE expression, with the re-ordering the emitter performs made visible.
+        //
+        // The state-machine emitter appends each suspension's segments to the statement list as it rewrites, then
+        // emits the statement itself — assembled from the rewritten operands — AFTER them. So an operand that was
+        // not spilled into its own slot is genuinely read at the RESUME point, not where it appears in the source.
+        // (`acc + f()` reads `acc` after `f` resumes; that is exactly why `acc` needs a field.) Re-emitting the
+        // subtree's reads after the walk models that, and it is the difference between a correct field and a
+        // silently zeroed local.
+        //
+        // The re-emission deliberately does NOT descend into a child that carries a suspension of its own: such a
+        // child was lowered to statements emitted IN PLACE (a flattened valueBlock, a `cond` turned into control
+        // flow, the segments of a nested suspension), so its reads really do happen where they appear.
+        void Value(JsonNode n)
+        {
+            Expr(n);
+            if (n != null && HasSuspension(n)) ReRead(n);
+        }
+
+        static bool HasSuspension(JsonNode n)
+        {
+            switch (n)
+            {
+                case JsonObject o:
+                    if (Str(o["k"]) is string k && ClosureValueKinds.Contains(k)) return false;
+                    if (Bool(o["suspendCall"])) return true;
+                    foreach (var kv in o) if (kv.Value != null && HasSuspension(kv.Value)) return true;
+                    return false;
+                case JsonArray a:
+                    foreach (var it in a) if (it != null && HasSuspension(it)) return true;
+                    return false;
+                default:
+                    return false;
+            }
+        }
+
+        void ReRead(JsonNode n)
+        {
+            switch (n)
+            {
+                case JsonObject o:
+                    var k = Str(o["k"]);
+                    if (k != null && ClosureValueKinds.Contains(k)) { ReReadCaptures(o); return; }
+                    if (k == "local") { Use(Str(o["name"])); return; }
+                    foreach (var kv in o)
+                        if (kv.Value != null && !NonOperandKeys.Contains(kv.Key) && !HasSuspension(kv.Value))
+                            ReRead(kv.Value);
+                    return;
+                case JsonArray a:
+                    foreach (var it in a) if (it != null && !HasSuspension(it)) ReRead(it);
+                    return;
+            }
+        }
+
+        void ReReadCaptures(JsonObject o)
+        {
+            var overrides = o["capValues"] as JsonArray;
+            if (o["captures"] is not JsonArray caps) { if (overrides != null) ReRead(overrides); return; }
+            for (var i = 0; i < caps.Count; i++)
+            {
+                if (overrides != null && i < overrides.Count && overrides[i] != null) { ReRead(overrides[i]); continue; }
+                if (caps[i] is JsonObject c && c["k"] == null) Use(Str(c["name"]));
+                else if (caps[i] != null) ReRead(caps[i]);
             }
         }
 
