@@ -28,11 +28,11 @@ esac
 
 need_kotc
 need_fe_klib
+build_tool bir2cir
+build_tool ilemit
 need_stdlib_ref
 need_stdlib_rt
 need_dotnet_reference_sets
-build_tool bir2cir
-build_tool ilemit
 
 dotnet build "$ROOT/toolchain/dll2klib/dll2klib.csproj" -c Release -o "$OUT/tools" -v:q --nologo
 dotnet build "$ROOT/tests/special/dll2klib-poc/reference/Probe.csproj" -c Release -v:q --nologo
@@ -43,6 +43,27 @@ CONTRACTS_REF="$ROOT/tests/special/dll2klib-poc/reference/obj/Release/net10.0/re
 CONTRACTS_IMPL="$ROOT/tests/special/dll2klib-poc/reference/bin/Release/net10.0/Probe.Contracts.dll"
 PROBE_KLIB="$OUT/klib/Probe.klib"
 CONTRACTS_KLIB="$OUT/klib/Probe.Contracts.klib"
+
+# Both stdlib CLR twins carry a semantic library-kind marker. A human asking for a direct projection gets an
+# actionable warning and no duplicate KLIB; the response-file/MSBuild reference-set path ignores the same inputs
+# silently because the authoritative frontend stdlib KLIB is already on kotc's classpath.
+for stdlib in "$STDLIB_REF_DLL" "$STDLIB_RT_DLL"; do
+	stdlib_out="$OUT/$(basename "${stdlib%.dll}").klib"
+	stdlib_warning="$(dotnet "$OUT/tools/dll2klib.dll" "$stdlib" "$stdlib_out" 2>&1)"
+	grep -q "warning: ignored Kotlin standard library assembly" <<<"$stdlib_warning" \
+		|| die "$(basename "$stdlib") lacks DotKt.LibraryKind=stdlib or direct dll2klib did not warn"
+	[[ ! -e "$stdlib_out" ]] \
+		|| die "direct dll2klib projected marked stdlib $(basename "$stdlib")"
+done
+printf '%s\n%s\n' "$STDLIB_REF_DLL" "$STDLIB_RT_DLL" > "$OUT/stdlib-references.rsp"
+stdlib_batch_stderr="$OUT/stdlib-batch.err"
+stdlib_batch="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/stdlib-klib" @"$OUT/stdlib-references.rsp" 2>"$stdlib_batch_stderr")"
+[[ ! -s "$stdlib_batch_stderr" ]] \
+	|| die "response-file dll2klib warned while silently ignoring marked stdlib inputs"
+grep -q '0 KLIB(s) up to date' <<<"$stdlib_batch" \
+	|| die "response-file dll2klib did not remove marked stdlib inputs from the projection set"
+[[ -z "$(find "$OUT/stdlib-klib" -maxdepth 1 -name '*.klib' -print -quit)" ]] \
+	|| die "response-file dll2klib projected a marked stdlib assembly"
 
 printf '%s\n%s\n' "$PROBE_REF" "$CONTRACTS_REF" > "$OUT/references.rsp"
 dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp"

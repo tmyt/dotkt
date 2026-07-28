@@ -23,7 +23,15 @@ internal static class Program
         {
             if (args.Length == 2 && !args[0].StartsWith("--", StringComparison.Ordinal))
             {
-                Convert(Path.GetFullPath(args[0]), Path.GetFullPath(args[1]));
+                var input = Path.GetFullPath(args[0]);
+                if (IsStandardLibrary(input))
+                {
+                    Console.Error.WriteLine(
+                        $"dll2klib: warning: ignored Kotlin standard library assembly '{Path.GetFileName(input)}'; " +
+                        "use the frontend standard-library KLIB instead");
+                    return 0;
+                }
+                Convert(input, Path.GetFullPath(args[1]));
                 return 0;
             }
             return await ConvertBatch(args);
@@ -67,6 +75,9 @@ internal static class Program
             .Where(x => x.Length != 0)
             .Select(Path.GetFullPath)
             .Distinct(StringComparer.Ordinal)
+            // Response-file mode is the MSBuild/reference-set contract. The authoritative stdlib declaration surface
+            // is already supplied as the frontend KLIB, so silently route marked CLR stdlib twins out of this set.
+            .Where(input => !IsStandardLibrary(input))
             .ToArray();
         var work = inputs.Select(input => (
             Input: input,
@@ -192,6 +203,14 @@ internal static class Program
             "  dll2klib --out <directory> [--jobs <N>] @<references.rsp>\n" +
             "  --jobs 0 starts one worker per stale reference");
         return 2;
+    }
+
+    private static bool IsStandardLibrary(string input)
+    {
+        using var file = File.OpenRead(input);
+        using var pe = new PEReader(file, PEStreamOptions.PrefetchMetadata);
+        if (!pe.HasMetadata || pe.PEHeaders.CorHeader is null) return false;
+        return new MetadataAttributes(pe.GetMetadataReader()).IsStandardLibrary;
     }
 
     private static void Convert(string input, string output)

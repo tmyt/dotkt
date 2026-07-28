@@ -34,6 +34,11 @@ sealed partial class Emitter
         var assemblyMetadataCtor = typeof(AssemblyMetadataAttribute).GetConstructor(new[] { typeof(string), typeof(string) });
         ab.SetCustomAttribute(new CustomAttributeBuilder(
             assemblyMetadataCtor, new object[] { dotKtMarkerKey, dotKtMarkerValue }));
+        // The frontend stdlib KLIB is the authoritative Kotlin declaration surface. Mark both CLR stdlib twins so
+        // generic CLR-reference projectors can route them away from dll2klib without guessing from assembly names.
+        if (_stdlibAssembly)
+            ab.SetCustomAttribute(new CustomAttributeBuilder(
+                assemblyMetadataCtor, new object[] { "DotKt.LibraryKind", "stdlib" }));
         _mod = ab.DefineDynamicModule(_asmName);
         // #71 S2: the DotKt.Runtime.CompilerServices.* + System.Runtime.CompilerServices.Nullable{,Context} attribute
         // CLASSES are now ordinary CIR type decls (bir2cir's synthetic `000-dotkt-roundtrip-attrs` file); pass 1 below

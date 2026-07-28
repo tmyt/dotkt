@@ -12,12 +12,14 @@ internal sealed class MetadataAttributes
 
     private readonly MetadataReader _md;
     private readonly bool _dotKtAssembly;
+    private readonly bool _standardLibrary;
     private readonly HashSet<string> _trustedCarriers = new(StringComparer.Ordinal);
 
     public MetadataAttributes(MetadataReader md)
     {
         _md = md;
         _dotKtAssembly = HasAssemblyMarker();
+        _standardLibrary = HasAssemblyMetadata("DotKt.LibraryKind", "stdlib");
         if (_dotKtAssembly)
         {
             foreach (var handle in md.TypeDefinitions)
@@ -33,6 +35,8 @@ internal sealed class MetadataAttributes
 
     public bool IsDotKtAssembly => _dotKtAssembly &&
         _trustedCarriers.Contains(DotKtNs + "KotlinFileClassAttribute");
+
+    public bool IsStandardLibrary => _standardLibrary;
 
     public bool Has(EntityHandle owner, string name, bool requireTrust = true) =>
         All(owner, requireTrust).Any(a => a.Name == name);
@@ -132,10 +136,13 @@ internal sealed class MetadataAttributes
     }
 
     private bool HasAssemblyMarker()
+        => HasAssemblyMetadata("DotKt.Compiler", "metadata-v1");
+
+    private bool HasAssemblyMetadata(string key, string value)
     {
         if (!_md.IsAssembly) return false;
         return All(_md.GetAssemblyDefinition().GetCustomAttributes(), "System.Reflection.AssemblyMetadataAttribute")
-            .Any(a => a.StringValue == "DotKt.Compiler" && a.StringValue2 == "metadata-v1");
+            .Any(a => a.StringValue == key && a.StringValue2 == value);
     }
 
     private IEnumerable<Attr> All(CustomAttributeHandleCollection handles, string expectedName)
