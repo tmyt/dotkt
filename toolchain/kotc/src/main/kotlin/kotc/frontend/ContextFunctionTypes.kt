@@ -33,9 +33,9 @@ import org.jetbrains.kotlin.fir.types.contextParameterNumberForFunctionType
  * arity. (`fun one(f: context(Ctx) () -> Unit)` in A.kt and `fun two(f: (Int) -> Unit)` in B.kt collide exactly when
  * their prefixes are the same length, which is neither rare nor detectable downstream.)
  *
- * BOTH ends of the range are recorded and either may match, because the two sides do not always agree on the START:
- * a FIR declaration's `source` covers its leading trivia, so a KDoc/line comment above `fun f()` moves FIR's start to
- * the comment while IR's stays on the `fun` keyword. The END is unaffected by leading trivia.
+ * Keyed by the END offset only: FIR and IR can disagree on the START (leading trivia can move FIR’s start),
+ * but they consistently agree on the END. The END is unaffected by leading trivia, so it is the only offset
+ * worth keying by for stable lookups.
  *
  * ONE entry per slot that actually has contexts; a plain function type records nothing, so every declaration without
  * a context function type is untouched.
