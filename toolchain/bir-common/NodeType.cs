@@ -42,9 +42,14 @@ public static class NodeType
         if (TypeJson.Read(o["sty"]) is TypeNode ts) return ts;
         switch (Str(o["k"]))
         {
-            case "const": case "cast": case "new": case "newClr": case "valueBlock": case "var": case "cond":
+            case "const": case "cast": case "new": case "newClr": case "var": case "cond":
             case "nullableWrap": case "nullableValue": case "safeCastValue": case "default":
                 return TypeJson.Read(o["type"]);
+            case "valueBlock":
+                // A spliced inline call is a `valueBlock {stmts, result}` and carries NO `type` stamp — its type is its
+                // RESULT's, resolved with the block's own `var`s in scope (an `apply`-splice's result is a local the
+                // block itself declares). Mirrors StaticType.Surface's arm.
+                return TypeJson.Read(o["type"]) ?? BlockResultType(o, recurse, primArrayElem);
             case "stackGet": case "byrefLoad":
                 return TypeJson.Read(o["elem"]);
             case "arrayGet":
@@ -88,6 +93,19 @@ public static class NodeType
             default:
                 return null;
         }
+    }
+
+    /// <summary>The type a `valueBlock` produces: its `result`, resolved against the `var`s the block declares.</summary>
+    static TypeNode? BlockResultType(JsonObject block, Func<JsonNode?, TypeNode?> recurse, Func<string, string?>? primArrayElem)
+    {
+        var result = block["result"];
+        if (result is JsonObject r && Str(r["k"]) == "local" && Str(r["name"]) is string want)
+            foreach (var key in new[] { "stmts", "body" })
+                if (block[key] is JsonArray arr)
+                    foreach (var st in arr)
+                        if (st is JsonObject so && Str(so["k"]) == "var" && Str(so["name"]) == want
+                            && TypeJson.Read(so["type"]) is TypeNode vt) return vt;
+        return recurse(result);
     }
 
     /// <summary>The ELEMENT of an array type: a structural `Array(E)`, or a specialized `kotlin.IntArray`-style FQN

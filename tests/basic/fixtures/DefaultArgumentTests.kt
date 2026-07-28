@@ -272,6 +272,20 @@ class M2FrameControls<T>(val v: T) {
 // frame closes against the one it is spliced into, not against the call site directly — so the substitutions have to
 // COMPOSE. Closing `M2NestB.X` against `M2NestC.T` and stopping leaves `M2NestC.T` open in a caller that has no such
 // slot, which is the same InvalidProgramException one level out.
+// A default whose EXPRESSION reads nothing of the call, but whose TYPES are the callee's. The closure has to apply to
+// every default rendered into another frame, not only the ones that splice a value — a type-only default left the
+// callee's positional type variables naming slots the caller's frame does not have.
+class M2TypeOnly<T>(val v: T) {
+    fun ownerTv(xs: List<T> = emptyList()): Int = xs.size                      // the OWNER's type parameter
+    fun <U> funTv(xs: List<U> = emptyList()): Int = xs.size                    // the CALLEE's own
+    fun <U> mixed(xs: List<Pair<T, U>> = emptyList()): Int = xs.size           // both
+    fun nested(xs: List<T> = emptyList(), n: Int = xs.size + 1): Int = n       // a later default reading the first
+}
+// ...and at the two call shapes that ride a DECLARATION rather than an expression.
+open class M2TypeOnlyBase<T>(val xs: List<T> = emptyList()) { val n: Int get() = xs.size }
+class M2TypeOnlySub<A, B> : M2TypeOnlyBase<B>()
+enum class M2TypeOnlyEnum(val xs: List<String> = emptyList()) { ONE, TWO(listOf("a")) }
+
 class M2NestB<X>(val x: X) { fun get(a: X = x): X = a }
 class M2NestC<T>(val b: M2NestB<T>) { fun one(a: T = b.get()): T = a }
 class M2NestD<U>(val c: M2NestC<U>) { fun two(a: U = c.one()): U = a }
@@ -700,6 +714,15 @@ class DefaultArgumentTests {
         assertEquals(7, M2NestD(M2NestC(M2NestB(7))).two())             // depth 2
         assertEquals(7, M2NestE(M2NestD(M2NestC(M2NestB(7)))).three())  // depth 3
         assertEquals("z", M2NestE(M2NestD(M2NestC(M2NestB("z")))).three())
+
+        // ...and where the default's EXPRESSION reads nothing at all and only its TYPES are the callee's.
+        assertEquals(0, M2TypeOnly(7).ownerTv())                        // the owner's type parameter
+        assertEquals(0, M2TypeOnly(7).funTv<String>())                  // the callee's own
+        assertEquals(0, M2TypeOnly(7).mixed<String>())                  // both
+        assertEquals(1, M2TypeOnly(7).nested())                         // a later default reading the first
+        assertEquals(0, M2TypeOnlySub<Int, String>().n)                 // a `: super(…)` delegation
+        assertEquals(0, M2TypeOnlyEnum.ONE.xs.size)                     // an enum entry
+        assertEquals(1, M2TypeOnlyEnum.TWO.xs.size)
     }
 
     // A default's `this` read binds per RECEIVER KIND. Each assertion is tagged with what it was before the

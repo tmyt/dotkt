@@ -73,10 +73,17 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
     parameter's own type;
   - a by-reference argument at a call with defaults keeps its position: an address is not a value, so the impure
     values its location is computed from (`byref(mk().f)`, `byref(a[i()])`) are evaluated at the argument's own
-    position and the address is taken off those; when the location is itself a ref-RETURNING call
-    (`byref(c.Slot(i()))`) the whole location moves into a `ref T` local there, since the invocation IS the
-    evaluation. A local holding a managed pointer now answers `EmitAddr` with its value rather than its own address,
-    which also fixes passing a `var x by byref(m())` delegate local on to another `ref` parameter;
+    position and the address is taken off those; when the location's root is a CALL, the invocation IS the evaluation,
+    so the whole location moves there — into a `ref T` local when its declared type is a byref, else into a plain `T`
+    local whose address the slot takes. A value read THROUGH a managed pointer now answers `EmitAddr` with that
+    pointer rather than with the address of a copy, which fixes passing a `var x by byref(m())` delegate on to another
+    `ref` parameter: `c.Swap(byref(a), byref(b))` swapped two temporaries and dropped both writes — verifiable IL and
+    a silently wrong program;
+  - a default's TYPE frame is closed whatever its expression reads. The closure was installed only for a default that
+    splices one of the call's values, so a default mentioning the callee's type parameters only through TYPES
+    (`fun <U> f(xs: List<Pair<T, U>> = emptyList())` in a `class C<T>`) rendered them open in the caller's frame —
+    an `EntryPointNotFoundException` at the first call. Constructor delegations and enum entries reached it the same
+    way;
   - nested defaults compose their type frames instead of replacing them, so a default filling a default filling a
     default closes every open type variable against the OUTERMOST call site, at any depth;
   - a local pinned out of a by-reference argument's location is always typed. `bir-common/NodeType.cs` is the one

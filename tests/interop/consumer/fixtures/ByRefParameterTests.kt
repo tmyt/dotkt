@@ -57,11 +57,41 @@ private fun brOrderCallUnshared(): Int =
 private class BrOrderCell(var n: Int)
 private fun brOrderCells(): Array<BrOrderCell> { brOrderLog += "c"; return arrayOf(BrOrderCell(1)) }
 private fun brOrderCallElem(): Int = brOrderTake(byref(brOrderCells()[0].n))
-// "id" — the location's ROOT is a ref-RETURNING call, so pinning its operands would still leave the invocation at the
-// slot: once, but after the fill's local. The whole location is evaluated at its own position into a `ref Int` local.
+// A location whose ROOT is a CALL is not an lvalue former: pinning its operands would still leave the invocation
+// running at the slot, once but after the fill's local. The whole location moves to its own plan position instead, and
+// WHICH local it moves into is decided by the location's own DECLARED type, never by its node shape — storing a `T`
+// into a `T&` slot is unverifiable IL, and the frontend accepts `byref(<rvalue call>)`.
+//
+// "md" — an ORDINARY call: a plain `Int` local at the plan position, and the slot takes THAT local's address, which is
+// what taking the address of an rvalue means.
+private fun brOrderPlain(): Int { brOrderLog += "m"; return 1 }
+private fun brOrderCallRvalue(): Int = brOrderTake(byref(brOrderPlain()))
+// "id" — a .NET ref-RETURNING member takes the SAME path, because the Kotlin surface erases its ref-ness: `Slot`
+// reads back as `fun Slot(i: Int): Int`, which is also why `val v = c.Slot(1)` is documented as a value copy. So this
+// argument is the address of a copy. The live-ref form is the delegate one (`var x by byref(c.Slot(1))`), which is
+// typed `ClrRef<Int>` and keeps the pointer — see `byrefDelegateForwardedToARefParameter`.
 private fun brOrderCallRefReturn(c: Calc): Int = brOrderTake(byref(c.Slot(brOrderIdx())))
+// The location's impure operand is an INLINE-SPLICED block, which carries no type stamp of its own — its type is its
+// result's. An untyped pin would abort the build on source the frontend accepted.
+private fun brOrderCallSplicedOperand(): Int = brOrderTake(byref(run { brOrderMk() }.n))
 
 class ByRefParameterTests {
+    // A `var x by byref(...)` delegate read passed ON to a `ref` parameter. The read is a `byrefLoad` — the pointee —
+    // and its ADDRESS is the pointer the delegate holds, not the address of a copy of it. Taking the copy's address is
+    // verifiable IL that swaps two temporaries and drops both writes, which is the worst direction for a defect to
+    // fail in: green ILVerify, green types, silently wrong program. No `ClrRef` PARAMETER is involved, so this one
+    // runs.
+    @TestAttribute
+    fun byrefDelegateForwardedToARefParameter() {
+        val c = Calc()
+        var a by byref(c.Slot(0))                           // live refs into the producer's own array
+        var b by byref(c.Slot(1))
+        assertEquals("10 20", "$a $b")                      // the array starts 10, 20, 30
+        c.Swap(byref(a), byref(b))                          // ref params -> must swap THROUGH the delegates
+        assertEquals("20 10", "$a $b")                      // 20 10  (was "10 20": the swap hit two temporaries)
+        assertEquals("20 10", "${c.Slot(0)} ${c.Slot(1)}")  // ...and it landed in the producer's array
+    }
+
     @TestAttribute
     fun outref() {
         val c = Calc()

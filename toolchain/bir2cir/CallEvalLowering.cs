@@ -189,10 +189,14 @@ static class CallEvalLowering
                 //  * an lvalue FORMER (`local`/`field`/`arrayGet`/…) has no side effect of its own, so only the values
                 //    it is computed from move: `byref(mk().f)` pins `mk()`, `byref(a[i()])` pins `i()`, `byref(x)`
                 //    pins nothing. The pure location stays in the slot, where the call takes its address.
-                //  * a CALL returning a byref (`byref(c.refSlot(i()))`) IS the side effect — pinning its operands
-                //    would still leave the invocation running at the slot, once but at the wrong time. The whole
-                //    location is evaluated here into a `ref T` local (`byrefOf`, the same shape `var x by byref(m())`
-                //    already produces), and the slot reads that local's pointer.
+                //  * anything else IS an evaluation — pinning its operands would still leave it running at the slot,
+                //    once but at the wrong time — so the whole thing moves here into a local, and the slot reads that
+                //    local. WHICH local is decided by the root's own DECLARED type, never by its shape: a
+                //    byref-RETURNING call (`byref(c.refSlot(i()))`) becomes a `ref T` local holding the pointer
+                //    (`byrefOf`, the shape `var x by byref(m())` already produces), while an ordinary rvalue call
+                //    (`byref(w.plainInt())`, which the frontend accepts) becomes a plain `T` local whose ADDRESS the
+                //    slot takes — the temporary-address lowering, just performed at the right point in the order.
+                //    Storing a `T` into a `T&` slot, which assuming ref-return would do, is unverifiable IL.
                 if (IsLvalueFormer(expr))
                 {
                     PinLocationOperands(expr, stmts);
@@ -200,16 +204,22 @@ static class CallEvalLowering
                 }
                 else
                 {
-                    var refType = (bindings[i] as JsonObject)["type"];
+                    var locType = StaticTypeOf(expr) ?? throw new InvalidOperationException(
+                        $"bir2cir: cannot type the `{Str((expr as JsonObject)?["k"])}` expression a by-reference " +
+                        "argument takes the address of, so the local that holds it would be untyped. Its node kind " +
+                        "needs an arm in bir-common/NodeType.cs.");
                     var refName = FreshLocal();
+                    var typeJson = TypeJson.Write(locType);
                     stmts.Add(new JsonObject
                     {
-                        ["k"] = "var", ["name"] = refName, ["type"] = refType?.DeepClone(),
-                        ["init"] = new JsonObject { ["k"] = "byrefOf", ["inner"] = expr.DeepClone() },
+                        ["k"] = "var", ["name"] = refName, ["type"] = typeJson,
+                        // A byref-returning root keeps its POINTER (`byrefOf`); an rvalue is stored by value.
+                        ["init"] = locType is TypeNode.ByRef
+                            ? new JsonObject { ["k"] = "byrefOf", ["inner"] = expr.DeepClone() }
+                            : expr.DeepClone(),
                     });
-                    var refRead = new JsonObject { ["k"] = "local", ["name"] = refName };
-                    if (refType != null) refRead["sty"] = refType.DeepClone();
-                    repl[ids[i]] = refRead;
+                    repl[ids[i]] = new JsonObject
+                    { ["k"] = "local", ["name"] = refName, ["sty"] = TypeJson.Write(locType) };
                 }
                 continue;
             }

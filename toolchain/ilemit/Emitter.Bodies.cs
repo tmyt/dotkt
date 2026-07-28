@@ -625,6 +625,17 @@ sealed partial class Emitter
                 { _il.Emit(_argTypes[name].IsByRef ? OpCodes.Ldarg : OpCodes.Ldarga, a); return; }
                 break;
             }
+            case "byrefLoad":
+            {
+                // Reading through a managed pointer yields the POINTEE; the address of that pointee is the pointer
+                // itself. A `var x by byref(...)` delegate read reaches here as `byrefLoad`, never as a raw local, so
+                // without this arm `swap(byref(x), byref(y))` fell to the rvalue path below and swapped two
+                // temporaries — verifiable IL that silently drops the write.
+                var bn = e.GetProperty("local").GetString();
+                if (_locals.TryGetValue(bn, out var bl) && bl.LocalType.IsByRef) { _il.Emit(OpCodes.Ldloc, bl); return; }
+                if (_args.TryGetValue(bn, out var ba) && _argTypes[bn].IsByRef) { _il.Emit(OpCodes.Ldarg, ba); return; }
+                break;
+            }
             case "this":
                 _il.Emit(OpCodes.Ldarg_0);
                 return;

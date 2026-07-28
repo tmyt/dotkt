@@ -386,10 +386,13 @@ that can add a reader has finished — and is the ONLY consumer of the vocabular
 - an `address` binding never becomes a `var` — no storage holds a managed pointer — and splits by what its location's
   ROOT is. An lvalue FORMER (`local`/`field`/`arrayGet`/…) designates storage without evaluating anything itself, so
   only the impure VALUES it is computed from move, in the location's own operand order, leaving a pure location in the
-  slot: `byref(mk().f)` pins `mk()`, `byref(a[i()])` pins `i()`, `byref(x)` pins nothing. A CALL returning a byref IS
-  the evaluation, so the whole location moves into a `ref T` local (`byrefOf`) at the binding's position and the slot
-  reads that local's pointer. Every pinned local is TYPED — an untyped local is unverifiable IL, so a node the shared
-  deriver (`bir-common/NodeType.cs`) cannot type is a hole in the deriver and says so, never a `kotlin.Any` fallback;
+  slot: `byref(mk().f)` pins `mk()`, `byref(a[i()])` pins `i()`, `byref(x)` pins nothing. Any other root IS an
+  evaluation, so the whole location moves to the binding's position — into a `ref T` local (`byrefOf`) when the
+  location's own DECLARED type is a byref, else into a plain `T` local whose ADDRESS the slot takes, which is what
+  taking the address of an rvalue means. The decision is by declared type, never by node shape: storing a `T` into a
+  `T&` slot is unverifiable IL, and the frontend accepts `byref(<rvalue call>)`. Every pinned local is TYPED — an
+  untyped local is unverifiable IL, so a node the shared deriver (`bir-common/NodeType.cs`) cannot type is a hole in
+  the deriver and says so, never a `kotlin.Any` fallback;
 - a delegation's plan becomes the constructor's `preStmts`, which ilemit emits ahead of the `this`/`base` call.
 
 It decides NOTHING about storage. A `var` here is a request for a scoped local; whether a coroutine state machine may

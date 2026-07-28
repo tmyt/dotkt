@@ -243,6 +243,60 @@ internal fun BirEmitter.filledArgs(
 		if (provided[idx] != null) return@forEachIndexed
 		val p = pair.second
 		val def = p.defaultValue?.expression ?: return@forEachIndexed
+		// THE TYPE-FRAME SCOPE, around EVERY rendering of this default — not only the one that reads the callee's own
+		// values. A default's EXPRESSION may read nothing at all and still mention the callee's type parameters in its
+		// TYPES (`fun <U> f(x: List<Pair<T, U>> = emptyList())` in a `class C<T>`), and those types belong to the
+		// callee's frame whatever the expression does. Gating the closure on what the expression READS closed the
+		// value-reading defaults and left the type-only ones open, which is invalid metadata in the caller's frame.
+		//   COMPOSED, never replaced: a default may itself be a call filling a default of its own, and that inner frame
+		// closes against THIS one, which closes against the call site. Applying only the inner substitution would leave
+		// this frame's variables open — `class H<X>(val x: X) { fun get(a: X = x) }` read from
+		// `class O<T>(val h: H<T>) { fun outer(a: T = h.get()) }` closes `H.X` to `O.T` and stops, leaving `O.T` in a
+		// caller that has no such slot. Inner first, then outer, to any depth.
+		val savedSubst = defaultTypeSubst
+		val here = callSiteSubstitutor(call, callee)
+		defaultTypeSubst = when {
+			here == null -> savedSubst
+			savedSubst == null -> { t: IrType -> here.substitute(t) }
+			else -> { t: IrType -> savedSubst(here.substitute(t)) }
+		}
+		val filled = try {
+			fillOmitted(call, callee, plan, p, def, idx, vals, provided, metaDefaults, kotlinDefaultSlots, carries,
+				valueSyms, receiverSyms, enclosingSyms, receiverParams, enclosingThis, dispatchRecv, extRecv,
+				enclosingRecv, filledByParam, label)
+		} finally { defaultTypeSubst = savedSubst }
+		if (filled != null) { slots[idx] = filled; filledByParam[p] = filled }
+	}
+	return slots.filterNotNull()
+}
+
+/** Render ONE omitted default of `call` and, under a plan, bind it — the body of [filledArgs]'s phase 2, extracted so
+ *  the type-frame scope wraps it whole. Every type read in here is the CALLEE's, and [BirEmitter.defaultTypeSubst] is
+ *  installed for the duration, so a plain `birType` already yields the caller-instantiated form. Null when this slot
+ *  emits nothing (a purely-trailing uncarried cross-module omission ilemit backfills). */
+private fun BirEmitter.fillOmitted(
+	call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression,
+	callee: org.jetbrains.kotlin.ir.declarations.IrFunction,
+	plan: CallPlan?,
+	p: IrValueParameter,
+	def: IrExpression,
+	idx: Int,
+	vals: List<Pair<Int, IrValueParameter>>,
+	provided: List<IrExpression?>,
+	metaDefaults: List<kotc.frontend.ClrConstDefault?>?,
+	kotlinDefaultSlots: List<Boolean>?,
+	carries: Boolean,
+	valueSyms: Set<org.jetbrains.kotlin.ir.symbols.IrValueSymbol>,
+	receiverSyms: Set<org.jetbrains.kotlin.ir.symbols.IrValueSymbol>,
+	enclosingSyms: Set<org.jetbrains.kotlin.ir.symbols.IrValueSymbol>,
+	receiverParams: List<IrValueParameter>,
+	enclosingThis: List<Pair<IrValueParameter, IrClass>>,
+	dispatchRecv: Lazy<String?>,
+	extRecv: Lazy<String?>,
+	enclosingRecv: String?,
+	filledByParam: java.util.IdentityHashMap<IrValueParameter, String>,
+	label: String,
+): String? {
 		// Is this fill free to be READ twice — a constant, or the metadata constant a cross-module slot resolves to?
 		var stableFill = false
 		val emitted: String? = when {
@@ -260,7 +314,7 @@ internal fun BirEmitter.filledArgs(
 					// property read uses — the referenced, instantiated `kotlin.Pair[Int,Int]`, no `@` this-assembly
 					// prefix, no open `gp:` param; the @KotlinDefault splice cannot carry that instantiation). The `sty`
 					// stamp is instantiated the same way — see [callSiteType].
-					else """{"sty":${birType(callSiteType(call, callee, p.type)).toJson()},"k":"field","ownerType":${ownerSpec(callee.parent as? IrClass, r.type).toJson()},"recv":$recvJson,"name":${str(p.name.asString())}}"""
+					else """{"sty":${birType(p.type).toJson()},"k":"field","ownerType":${ownerSpec(callee.parent as? IrClass, r.type).toJson()},"recv":$recvJson,"name":${str(p.name.asString())}}"""
 				}
 				// #134: the facadegen metadata's REAL constant default, synthesized as an IrConst, so a named-middle /
 				// reordered omission of an injected .NET ctor's or top-level function's constant default is correct.
@@ -334,37 +388,17 @@ internal fun BirEmitter.filledArgs(
 				// it passes on — is written in the CALLEE's frame. A positional type variable there names a slot the
 				// caller's frame does not have: `class G<T>(val v: T) { fun one(a: T = v) }` spliced into a
 				// non-generic caller left `G`'s `!0` as the owner of the `v` read (InvalidProgramException at load).
-				//   COMPOSED, never replaced: a default may itself be a call filling a default of its own, and that
-				// inner frame closes against THIS one, which closes against the call site. Applying only the inner
-				// substitution would leave this frame's variables open — `class H<X>(val x: X) { fun get(a: X = x) }`
-				// read from `class O<T>(val h: H<T>) { fun outer(a: T = h.get()) }` closes `H.X` to `O.T` and stops,
-				// leaving `O.T` in a caller that has no such slot. Inner first, then outer, to any depth.
-				val savedSubst = defaultTypeSubst
-				val here = callSiteSubstitutor(call, callee)
-				defaultTypeSubst = when {
-					here == null -> savedSubst
-					savedSubst == null -> { t: IrType -> here.substitute(t) }
-					else -> { t: IrType -> savedSubst(here.substitute(t)) }
-				}
 				try { expr(def) }
-				finally {
-					defaultTypeSubst = savedSubst
-					saved.forEach { (d, prev) -> if (prev != null) captureSubst[d] = prev else captureSubst.remove(d) }
-				}
+				finally { saved.forEach { (d, prev) -> if (prev != null) captureSubst[d] = prev else captureSubst.remove(d) } }
 			}
 			else -> { stableFill = isStableValue(def); argExpr(def, p) }   // constant / global — inline verbatim
 		}
-		if (emitted == null) return@forEachIndexed
+		if (emitted == null) return null
 		// A filled default is a call-site VALUE like any other: under a plan it becomes a default-phase binding, so a
 		// LATER default that reads this parameter reads the ONE binding instead of a second rendering of the expression
 		// (`a = bump(), b = a * 10` would otherwise run `bump()` twice).
-		val slot = plan?.bind("default", "value", stableFill,
-			birType(callSiteType(call, callee, p.type)).toJson(),
+		return plan?.bind("default", "value", stableFill, birType(p.type).toJson(),
 			"default of parameter '${p.name.asString()}'", emitted) ?: emitted
-		slots[idx] = slot
-		filledByParam[p] = slot
-	}
-	return slots.filterNotNull()
 }
 
 /** How a plan binding's ROLE names this callee to a reader: a constructor by its class, anything else by its name. */
@@ -382,16 +416,14 @@ internal fun calleeLabel(callee: org.jetbrains.kotlin.ir.declarations.IrFunction
  *  bir2cir spills it verbatim into a state-machine field when a later argument suspends (`InvalidProgramException` at
  *  the first resume). Identity whenever the frames do not line up — a wrong substitution would be worse than an open
  *  type, which CallEvalLowering can still resolve from the bound value's own static type. */
-internal fun BirEmitter.callSiteType(
-	call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression,
-	callee: org.jetbrains.kotlin.ir.declarations.IrFunction,
-	type: IrType,
-): IrType = callSiteSubstitutor(call, callee)?.substitute(type) ?: type
-
-/** The substitution [callSiteType] applies — the callee's whole type frame closed against this call site — or null
- *  when the frames do not line up. Installed as [BirEmitter.defaultTypeSubst] while a default expression is rendered,
- *  so EVERY type that default mentions is closed, not only the ones a caller thought to ask about: the parameter's own
- *  type, the owner of a member it reads off the receiver, the receiver's type, a type argument it passes on. */
+/** The callee's whole type frame closed against this call site — or null when the frames do not line up.
+ *
+ *  Installed as [BirEmitter.defaultTypeSubst] for the whole rendering of an omitted default, so EVERY type that
+ *  default mentions is closed, not only the ones a caller thought to ask about: the parameter's own type, the owner of
+ *  a member it reads off the receiver, a type argument it passes on, the element of a collection it constructs. That
+ *  is why installation is unconditional — a default's TYPES belong to the callee's frame however little its
+ *  EXPRESSION reads — and why the scopes COMPOSE rather than replace: a default filling a default closes against the
+ *  frame it is spliced into, which closes against the call site. */
 internal fun BirEmitter.callSiteSubstitutor(
 	call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression,
 	callee: org.jetbrains.kotlin.ir.declarations.IrFunction,
@@ -591,8 +623,17 @@ internal fun BirEmitter.filledInjectedArgs(call: org.jetbrains.kotlin.ir.express
 	vals.forEachIndexed { valIdx, (i, p) ->
 		if (i < call.arguments.size && call.arguments[i] != null) return@forEachIndexed
 		val def = p.defaultValue?.expression ?: return@forEachIndexed
+		// The same unconditional type-frame scope as [filledArgs]: an injected callee's default is rendered into THIS
+		// frame, and its types are the callee's whatever its expression reads.
+		val savedSubst = defaultTypeSubst
+		val here = callSiteSubstitutor(call, callee)
+		defaultTypeSubst = when {
+			here == null -> savedSubst
+			savedSubst == null -> { t: IrType -> here.substitute(t) }
+			else -> { t: IrType -> savedSubst(here.substitute(t)) }
+		}
 		var stableFill = false
-		val emitted: String? =
+		val emitted: String? = try {
 			if (def is org.jetbrains.kotlin.ir.expressions.IrErrorExpression) {
 				metaDefaults?.getOrNull(valIdx)?.let { metaConstArg(it, p.type) }?.let { stableFill = true; expr(it) }
 					?: if (kotlinDefaultSlots?.getOrNull(valIdx) == true || carries) defaultArgPlaceholder else {
@@ -605,9 +646,9 @@ internal fun BirEmitter.filledInjectedArgs(call: org.jetbrains.kotlin.ir.express
 						null
 					}
 			} else { stableFill = isStableValue(def); expr(def) }
+		} finally { defaultTypeSubst = savedSubst }
 		if (emitted == null) return@forEachIndexed
-		slots[valIdx] = plan?.bind("default", "value", stableFill,
-			birType(callSiteType(call, callee, p.type)).toJson(),
+		slots[valIdx] = plan?.bind("default", "value", stableFill, birType(p.type).toJson(),
 			"default of parameter '${p.name.asString()}'", emitted) ?: emitted
 	}
 	slots.forEach { if (it != null) out.add(it) }
