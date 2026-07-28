@@ -99,7 +99,11 @@ dll2klib --out <directory> [--jobs <N>] @<references.rsp>
 worker modeは1プロセスで1 DLLだけを読み、1 KLIBだけを書く。batch modeの親processは
 stale判定とworker schedulingだけを行い、`--jobs 0`はstale input数まで並列化する。
 metadataの読み取りには`PEReader`、`MetadataReader`、
-`ISignatureTypeProvider`を使い、assemblyをloadしない。現在のsurfaceは次である。
+`ISignatureTypeProvider`を使い、assemblyをloadしない。親processは全InputのTypeDefを
+一度だけ先読みし、generic arity衝突とcustom delegateの`Invoke`所在を小さなcatalogにする。
+workerは外部delegateのTypeRefに遭遇した場合だけ定義assemblyのmetadataを読み、
+Kotlin function typeへ射影する。出力KLIBへassembly dependencyは記録しないが、
+delegate定義assemblyは利用側KLIBのstale判定へ含める。現在のsurfaceは次である。
 
 - public top-level/nested class/interface
 - public/protected constructor
@@ -109,7 +113,7 @@ metadataの読み取りには`PEReader`、`MetadataReader`、
 - public/protected fieldのKotlin property射影
 - public/protected static property/field
 - enum entry
-- delegateと`Func`/`Action`のKotlin function type射影
+- same/cross-assembly custom delegateと`Func`/`Action`のKotlin function type射影
 - C# extension methodとCLR operator
 - primitive、class、array、generic、byref type
 - generic class/method declarationとgeneric parameter constraint
@@ -319,10 +323,10 @@ ownerful `callInline`は、bir2cir側のuser-package探索拡張なしで既存i
 
 ### 2. CLR surface coverage
 
-properties、fields、events、indexers、operators、delegates、enums、byref、
+properties、fields、events、indexers、operators、same/cross-assembly delegates、enums、byref、
 generic constraints、nested type namingは一般則として実装した。残件は上記の
-custom delegate cross-assembly、explicit interface implementation、pointer系など
-である。generic constraintsはclass/methodとも保持する。
+explicit interface implementation、pointer系などである。generic constraintsは
+class/methodとも保持する。
 
 ### 3. Kotlin metadata format compatibility
 

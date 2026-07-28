@@ -15,6 +15,8 @@ fun consume(): Int {
     widget[2] = 6
     val nested = Widget.Nested()
     val transformed = widget.Apply({ it + 2 }, 4)
+    val externalTransformed = widget.ApplyExternal({ it * 3 }, 4)
+    val externalGenericTransformed = widget.ApplyExternalGeneric({ it + 5 }, 4)
     val nullable: String? = widget.MaybeNull(true)
     val required: String = widget.Required()
     var changed = 0
@@ -28,6 +30,7 @@ fun consume(): Int {
     return widget.Add(4) + Widget.Twice(5) + definitely.length +
         widget.Value + widget.Field + Widget.Global + adder.Add(1) + widget.Identity(2) +
         widget[2] + nested.Triple(2) + transformed + widget.Bump(1) +
+        externalTransformed + externalGenericTransformed +
         (nullable?.length ?: 0) + required.length + changed + incremented + shifted.Add(0)
 }
 

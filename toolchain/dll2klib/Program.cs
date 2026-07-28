@@ -4,7 +4,9 @@ using System.IO.Compression;
 using System.Diagnostics;
 using System.Reflection;
 using System.Reflection.Metadata;
+using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
+using System.Text.Json;
 using DotKt.Bir;
 using DotKt.Klib.Metadata;
 using Google.Protobuf;
@@ -13,6 +15,7 @@ using KType = DotKt.Klib.Metadata.Type;
 internal static class Program
 {
     private const string ArityClashesEnvironment = "DOTKT_DLL2KLIB_ARITY_CLASHES";
+    private const string DelegateCatalogEnvironment = "DOTKT_DLL2KLIB_DELEGATE_CATALOG";
 
     public static async Task<int> Main(string[] args)
     {
@@ -75,6 +78,7 @@ internal static class Program
         // same tiny naming catalog (Task + Task`1 -> Task / Task1; a singleton
         // List`1 remains List).
         var arityClashes = DiscoverArityClashes(inputs);
+        var delegateCatalog = DelegateReferenceCatalog.Discover(inputs);
         var collisions = work.GroupBy(x => x.Output, StringComparer.OrdinalIgnoreCase)
             .Where(x => x.Select(y => y.Input).Distinct(StringComparer.Ordinal).Skip(1).Any())
             .ToArray();
@@ -87,54 +91,71 @@ internal static class Program
         var tool = Path.GetFullPath(typeof(Program).Assembly.Location);
         var toolTime = File.GetLastWriteTimeUtc(tool);
         var stale = work.Where(x =>
-            !File.Exists(x.Output) ||
-            File.GetLastWriteTimeUtc(x.Output) < File.GetLastWriteTimeUtc(x.Input) ||
-            File.GetLastWriteTimeUtc(x.Output) < toolTime).ToArray();
+        {
+            if (!File.Exists(x.Output)) return true;
+            var outputTime = File.GetLastWriteTimeUtc(x.Output);
+            return outputTime < File.GetLastWriteTimeUtc(x.Input) ||
+                outputTime < toolTime ||
+                delegateCatalog.DependenciesOf(x.Input).Any(path =>
+                    outputTime < File.GetLastWriteTimeUtc(path));
+        }).ToArray();
         if (stale.Length == 0)
         {
             Console.WriteLine($"dll2klib: {work.Length} KLIB(s) up to date");
             return 0;
         }
 
-        var parallelism = jobs == 0 ? stale.Length : Math.Max(1, Math.Min(jobs, stale.Length));
-        Console.WriteLine($"dll2klib: converting {stale.Length}/{work.Length} reference(s), jobs={parallelism}");
-        using var gate = new SemaphoreSlim(parallelism);
-        var failures = new List<string>();
-        var failureLock = new object();
-        await Task.WhenAll(stale.Select(async item =>
+        var catalogPath = Path.Combine(
+            outputDirectory,
+            $".dll2klib-delegates-{Environment.ProcessId}-{Guid.NewGuid():N}.json");
+        File.WriteAllText(catalogPath, delegateCatalog.Serialize());
+        try
         {
-            await gate.WaitAsync();
-            try
+            var parallelism = jobs == 0 ? stale.Length : Math.Max(1, Math.Min(jobs, stale.Length));
+            Console.WriteLine($"dll2klib: converting {stale.Length}/{work.Length} reference(s), jobs={parallelism}");
+            using var gate = new SemaphoreSlim(parallelism);
+            var failures = new List<string>();
+            var failureLock = new object();
+            await Task.WhenAll(stale.Select(async item =>
             {
-                var start = new ProcessStartInfo("dotnet") {
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                };
-                start.ArgumentList.Add(tool);
-                start.ArgumentList.Add(item.Input);
-                start.ArgumentList.Add(item.Output);
-                start.Environment[ArityClashesEnvironment] = string.Join(';', arityClashes);
-                using var child = Process.Start(start)
-                    ?? throw new InvalidOperationException($"failed to start worker for {item.Input}");
-                var stdout = child.StandardOutput.ReadToEndAsync();
-                var stderr = child.StandardError.ReadToEndAsync();
-                await child.WaitForExitAsync();
-                var output = await stdout;
-                var error = await stderr;
-                if (output.Length != 0) Console.Out.Write(output);
-                if (error.Length != 0) Console.Error.Write(error);
-                if (child.ExitCode != 0)
-                    lock (failureLock) failures.Add($"{item.Input} (exit {child.ExitCode})");
-            }
-            finally
-            {
-                gate.Release();
-            }
-        }));
-        if (failures.Count != 0)
-            throw new InvalidOperationException("worker conversion failed: " + string.Join(", ", failures));
-        return 0;
+                await gate.WaitAsync();
+                try
+                {
+                    var start = new ProcessStartInfo("dotnet") {
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                    };
+                    start.ArgumentList.Add(tool);
+                    start.ArgumentList.Add(item.Input);
+                    start.ArgumentList.Add(item.Output);
+                    start.Environment[ArityClashesEnvironment] = string.Join(';', arityClashes);
+                    start.Environment[DelegateCatalogEnvironment] = catalogPath;
+                    using var child = Process.Start(start)
+                        ?? throw new InvalidOperationException($"failed to start worker for {item.Input}");
+                    var stdout = child.StandardOutput.ReadToEndAsync();
+                    var stderr = child.StandardError.ReadToEndAsync();
+                    await child.WaitForExitAsync();
+                    var output = await stdout;
+                    var error = await stderr;
+                    if (output.Length != 0) Console.Out.Write(output);
+                    if (error.Length != 0) Console.Error.Write(error);
+                    if (child.ExitCode != 0)
+                        lock (failureLock) failures.Add($"{item.Input} (exit {child.ExitCode})");
+                }
+                finally
+                {
+                    gate.Release();
+                }
+            }));
+            if (failures.Count != 0)
+                throw new InvalidOperationException("worker conversion failed: " + string.Join(", ", failures));
+            return 0;
+        }
+        finally
+        {
+            if (File.Exists(catalogPath)) File.Delete(catalogPath);
+        }
     }
 
     private static int Usage()
@@ -158,7 +179,9 @@ internal static class Program
         var assemblyName = md.IsAssembly ? md.GetString(md.GetAssemblyDefinition().Name) : Path.GetFileNameWithoutExtension(input);
         var moduleName = $"clr.{assemblyName}.{md.GetGuid(md.GetModuleDefinition().Mvid):N}";
         var arityNames = ArityNames.Create(md, Environment.GetEnvironmentVariable(ArityClashesEnvironment));
-        var fragments = new AssemblyScanner(md, arityNames).Scan();
+        var delegateCatalog = DelegateReferenceCatalog.Load(
+            Environment.GetEnvironmentVariable(DelegateCatalogEnvironment));
+        var fragments = new AssemblyScanner(md, arityNames, delegateCatalog).Scan();
 
         Directory.CreateDirectory(Path.GetDirectoryName(output)!);
         var temp = output + "." + Guid.NewGuid().ToString("N") + ".tmp";
@@ -239,6 +262,214 @@ internal static class Program
     }
 }
 
+internal sealed record DelegateCatalogEntry(
+    string AssemblyName,
+    string MetadataName,
+    string DefinitionPath,
+    int TypeDefinitionRow);
+
+internal sealed class DelegateReferenceCatalog
+{
+    private readonly Dictionary<string, DelegateCatalogEntry> _entries;
+
+    private DelegateReferenceCatalog(IEnumerable<DelegateCatalogEntry> entries)
+    {
+        _entries = new Dictionary<string, DelegateCatalogEntry>(StringComparer.Ordinal);
+        foreach (var entry in entries)
+        {
+            var key = Key(entry.AssemblyName, entry.MetadataName);
+            if (_entries.TryGetValue(key, out var existing) &&
+                (!StringComparer.Ordinal.Equals(existing.DefinitionPath, entry.DefinitionPath) ||
+                 existing.TypeDefinitionRow != entry.TypeDefinitionRow))
+                throw new InvalidOperationException(
+                    $"delegate '{entry.MetadataName}' is defined more than once for assembly '{entry.AssemblyName}'");
+            _entries[key] = entry;
+        }
+    }
+
+    public static DelegateReferenceCatalog Empty { get; } = new(Array.Empty<DelegateCatalogEntry>());
+
+    public static DelegateReferenceCatalog Discover(IEnumerable<string> inputs)
+    {
+        var paths = inputs.Select(Path.GetFullPath).Distinct(StringComparer.Ordinal).ToArray();
+        var definitions = new List<DelegateCatalogEntry>();
+        foreach (var path in paths)
+        {
+            using var file = File.OpenRead(path);
+            using var pe = new PEReader(file, PEStreamOptions.PrefetchMetadata);
+            if (!pe.HasMetadata) continue;
+            var md = pe.GetMetadataReader();
+            var assemblyName = AssemblyName(md, path);
+            foreach (var handle in md.TypeDefinitions)
+            {
+                var def = md.GetTypeDefinition(handle);
+                if (!IsMulticastDelegate(md, def.BaseType)) continue;
+                var metadataName = DefinitionName(md, handle);
+                if (IsBuiltinDelegate(metadataName)) continue;
+                definitions.Add(new DelegateCatalogEntry(
+                    assemblyName,
+                    metadataName,
+                    path,
+                    MetadataTokens.GetRowNumber(handle)));
+            }
+        }
+
+        var result = new DelegateReferenceCatalog(definitions);
+        // Preserve type-forwarder identity. A consuming signature names the
+        // forwarding assembly in its TypeRef even though the delegate TypeDef
+        // and Invoke signature live in the implementation assembly.
+        var aliases = new List<DelegateCatalogEntry>();
+        foreach (var path in paths)
+        {
+            using var file = File.OpenRead(path);
+            using var pe = new PEReader(file, PEStreamOptions.PrefetchMetadata);
+            if (!pe.HasMetadata) continue;
+            var md = pe.GetMetadataReader();
+            var forwardingAssembly = AssemblyName(md, path);
+            foreach (var handle in md.ExportedTypes)
+            {
+                var exported = md.GetExportedType(handle);
+                const TypeAttributes Forwarder = (TypeAttributes)0x00200000;
+                if ((exported.Attributes & Forwarder) == 0) continue;
+                var targetAssembly = ExportedAssemblyName(md, handle);
+                if (targetAssembly is null) continue;
+                var metadataName = ExportedName(md, handle);
+                if (!result.TryGet(targetAssembly, metadataName, out var target)) continue;
+                aliases.Add(target with {
+                    AssemblyName = forwardingAssembly,
+                    MetadataName = metadataName,
+                });
+            }
+        }
+        return aliases.Count == 0
+            ? result
+            : new DelegateReferenceCatalog(definitions.Concat(aliases));
+    }
+
+    public static DelegateReferenceCatalog Load(string? path)
+    {
+        if (string.IsNullOrEmpty(path)) return Empty;
+        var entries = JsonSerializer.Deserialize<List<DelegateCatalogEntry>>(File.ReadAllText(path))
+            ?? throw new InvalidDataException($"invalid delegate catalog: {path}");
+        return new DelegateReferenceCatalog(entries);
+    }
+
+    public string Serialize() => JsonSerializer.Serialize(
+        _entries.Values
+            .OrderBy(x => x.AssemblyName, StringComparer.Ordinal)
+            .ThenBy(x => x.MetadataName, StringComparer.Ordinal)
+            .ToArray());
+
+    public bool TryResolve(
+        MetadataReader reader,
+        TypeReferenceHandle handle,
+        out DelegateCatalogEntry entry)
+    {
+        var assemblyName = ReferenceAssemblyName(reader, handle);
+        if (assemblyName is not null &&
+            TryGet(assemblyName, ReferenceName(reader, handle), out entry))
+            return true;
+        entry = null!;
+        return false;
+    }
+
+    public IReadOnlyList<string> DependenciesOf(string input)
+    {
+        using var file = File.OpenRead(input);
+        using var pe = new PEReader(file, PEStreamOptions.PrefetchMetadata);
+        if (!pe.HasMetadata) return Array.Empty<string>();
+        var md = pe.GetMetadataReader();
+        return md.TypeReferences
+            .Select(handle => TryResolve(md, handle, out var entry) ? entry.DefinitionPath : null)
+            .Where(path => path is not null && !StringComparer.Ordinal.Equals(path, input))
+            .Cast<string>()
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private bool TryGet(string assemblyName, string metadataName, out DelegateCatalogEntry entry) =>
+        _entries.TryGetValue(Key(assemblyName, metadataName), out entry!);
+
+    private static string Key(string assemblyName, string metadataName) =>
+        assemblyName + "\0" + metadataName;
+
+    private static string AssemblyName(MetadataReader md, string path) =>
+        md.IsAssembly
+            ? md.GetString(md.GetAssemblyDefinition().Name)
+            : Path.GetFileNameWithoutExtension(path);
+
+    private static bool IsMulticastDelegate(MetadataReader md, EntityHandle handle)
+    {
+        if (handle.Kind != HandleKind.TypeReference) return false;
+        var type = md.GetTypeReference((TypeReferenceHandle)handle);
+        return md.GetString(type.Namespace) == "System" &&
+            md.GetString(type.Name) == "MulticastDelegate";
+    }
+
+    private static bool IsBuiltinDelegate(string metadataName)
+    {
+        var simple = metadataName[(metadataName.LastIndexOfAny(['.', '+']) + 1)..];
+        return metadataName.StartsWith("System.", StringComparison.Ordinal) &&
+            (simple == "Action" ||
+             simple.StartsWith("Action`", StringComparison.Ordinal) ||
+             simple.StartsWith("Func`", StringComparison.Ordinal) ||
+             simple == "EventHandler" ||
+             simple.StartsWith("EventHandler`", StringComparison.Ordinal));
+    }
+
+    private static string DefinitionName(MetadataReader md, TypeDefinitionHandle handle)
+    {
+        var def = md.GetTypeDefinition(handle);
+        var simple = md.GetString(def.Name);
+        var parent = def.GetDeclaringType();
+        if (!parent.IsNil) return DefinitionName(md, parent) + "+" + simple;
+        var ns = md.GetString(def.Namespace);
+        return string.IsNullOrEmpty(ns) ? simple : ns + "." + simple;
+    }
+
+    private static string ReferenceName(MetadataReader md, TypeReferenceHandle handle)
+    {
+        var type = md.GetTypeReference(handle);
+        var simple = md.GetString(type.Name);
+        if (type.ResolutionScope.Kind == HandleKind.TypeReference)
+            return ReferenceName(md, (TypeReferenceHandle)type.ResolutionScope) + "+" + simple;
+        var ns = md.GetString(type.Namespace);
+        return string.IsNullOrEmpty(ns) ? simple : ns + "." + simple;
+    }
+
+    private static string? ReferenceAssemblyName(MetadataReader md, TypeReferenceHandle handle)
+    {
+        var scope = md.GetTypeReference(handle).ResolutionScope;
+        return scope.Kind switch {
+            HandleKind.AssemblyReference => md.GetString(
+                md.GetAssemblyReference((AssemblyReferenceHandle)scope).Name),
+            HandleKind.TypeReference => ReferenceAssemblyName(md, (TypeReferenceHandle)scope),
+            _ => null,
+        };
+    }
+
+    private static string ExportedName(MetadataReader md, ExportedTypeHandle handle)
+    {
+        var type = md.GetExportedType(handle);
+        var simple = md.GetString(type.Name);
+        if (type.Implementation.Kind == HandleKind.ExportedType)
+            return ExportedName(md, (ExportedTypeHandle)type.Implementation) + "+" + simple;
+        var ns = md.GetString(type.Namespace);
+        return string.IsNullOrEmpty(ns) ? simple : ns + "." + simple;
+    }
+
+    private static string? ExportedAssemblyName(MetadataReader md, ExportedTypeHandle handle)
+    {
+        var implementation = md.GetExportedType(handle).Implementation;
+        return implementation.Kind switch {
+            HandleKind.AssemblyReference => md.GetString(
+                md.GetAssemblyReference((AssemblyReferenceHandle)implementation).Name),
+            HandleKind.ExportedType => ExportedAssemblyName(md, (ExportedTypeHandle)implementation),
+            _ => null,
+        };
+    }
+}
+
 internal sealed record Fragment(string PackageName, PackageFragment Message);
 
 internal sealed class ArityNames
@@ -292,12 +523,17 @@ internal sealed class AssemblyScanner
     private readonly MetadataReader _md;
     private readonly MetadataAttributes _attrs;
     private readonly ArityNames _arityNames;
+    private readonly DelegateReferenceCatalog _delegateCatalog;
 
-    public AssemblyScanner(MetadataReader md, ArityNames arityNames)
+    public AssemblyScanner(
+        MetadataReader md,
+        ArityNames arityNames,
+        DelegateReferenceCatalog delegateCatalog)
     {
         _md = md;
         _attrs = new MetadataAttributes(md);
         _arityNames = arityNames;
+        _delegateCatalog = delegateCatalog;
     }
 
     public IReadOnlyList<Fragment> Scan()
@@ -318,7 +554,8 @@ internal sealed class AssemblyScanner
                 FqName = package.Key,
             };
             fragment.Package.PackageFqName = names.Package(package.Key);
-            var signatures = new SignatureDecoder(_md, names, _attrs, _arityNames);
+            var signatures = new SignatureDecoder(
+                _md, names, _attrs, _arityNames, _delegateCatalog);
 
             foreach (var (handle, def) in package.OrderBy(x => _md.GetString(x.Definition.Name), StringComparer.Ordinal))
             {
@@ -374,7 +611,8 @@ internal sealed class AssemblyScanner
                 IsEmpty = false,
                 FqName = group.Key,
             };
-            var signatures = new SignatureDecoder(_md, names, _attrs, _arityNames);
+            var signatures = new SignatureDecoder(
+                _md, names, _attrs, _arityNames, _delegateCatalog);
             foreach (var (handle, def) in group)
                 ReadCSharpExtensions(handle, def, package, names, signatures);
             MarkLowPriorityDelegateOverloads(package.Function, names);
@@ -2358,14 +2596,25 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     private readonly NameTable _names;
     private readonly MetadataAttributes _attrs;
     private readonly ArityNames _arityNames;
+    private readonly DelegateReferenceCatalog _delegateCatalog;
     private readonly bool _restoreKotlinCollections;
     private readonly Dictionary<string, TypeDefinitionHandle> _delegateDefinitions = new(StringComparer.Ordinal);
-    public SignatureDecoder(MetadataReader md, NameTable names, MetadataAttributes attrs, ArityNames arityNames)
+    private readonly Dictionary<KType, DelegateCatalogEntry> _externalDelegateTypes =
+        new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<string, KType> _externalDelegateShapes = new(StringComparer.Ordinal);
+
+    public SignatureDecoder(
+        MetadataReader md,
+        NameTable names,
+        MetadataAttributes attrs,
+        ArityNames arityNames,
+        DelegateReferenceCatalog delegateCatalog)
     {
         _md = md;
         _names = names;
         _attrs = attrs;
         _arityNames = arityNames;
+        _delegateCatalog = delegateCatalog;
         _restoreKotlinCollections = attrs.IsDotKtAssembly;
         foreach (var handle in md.TypeDefinitions)
         {
@@ -2380,6 +2629,8 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     public KType GetFunctionPointerType(MethodSignature<KType> signature) => Any(nullable: true);
     public KType GetGenericInstantiation(KType genericType, ImmutableArray<KType> typeArguments)
     {
+        if (_externalDelegateTypes.TryGetValue(genericType, out var externalDelegate))
+            return Substitute(DecodeExternalDelegate(externalDelegate), typeArguments);
         var genericName = genericType.HasClassName ? _names.ClassName(genericType.ClassName) : null;
         if (genericName is "System.Nullable" or "System.Nullable1" &&
             typeArguments.Length == 1)
@@ -2450,6 +2701,16 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         var metadataFull = string.IsNullOrEmpty(ns)
             ? StripArity(metadataName)
             : ns + "." + StripArity(metadataName);
+        if (_delegateCatalog.TryResolve(reader, handle, out var externalDelegate))
+        {
+            if (!metadataName.Contains('`'))
+                return DecodeExternalDelegate(externalDelegate);
+            var marker = rawTypeKind == (byte)SignatureTypeKind.Class
+                ? Platform(full)
+                : Named(full);
+            _externalDelegateTypes[marker] = externalDelegate;
+            return marker;
+        }
         if (_restoreKotlinCollections && KotlinCollection(full) is string collection)
             return Platform(collection);
         if (_restoreKotlinCollections && metadataFull == "System.IComparable")
@@ -2876,6 +3137,36 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         var context = new GenericContext(handle, invokeHandle, ids);
         var sig = _md.GetMethodDefinition(invokeHandle).DecodeSignature(this, context);
         return Function(sig.ParameterTypes, sig.ReturnType);
+    }
+
+    private KType DecodeExternalDelegate(DelegateCatalogEntry entry)
+    {
+        var key = entry.DefinitionPath + "\0" +
+            entry.TypeDefinitionRow.ToString(CultureInfo.InvariantCulture);
+        if (_externalDelegateShapes.TryGetValue(key, out var cached))
+            return cached.Clone();
+
+        using var file = File.OpenRead(entry.DefinitionPath);
+        using var pe = new PEReader(file, PEStreamOptions.PrefetchMetadata);
+        if (!pe.HasMetadata)
+            throw new InvalidDataException(
+                $"delegate catalog target is not a managed PE: {entry.DefinitionPath}");
+        var md = pe.GetMetadataReader();
+        var handle = MetadataTokens.TypeDefinitionHandle(entry.TypeDefinitionRow);
+        if (handle.IsNil || MetadataTokens.GetRowNumber(handle) > md.TypeDefinitions.Count)
+            throw new InvalidDataException(
+                $"delegate catalog contains an invalid TypeDef row for {entry.MetadataName}");
+        var decoder = new SignatureDecoder(
+            md,
+            _names,
+            new MetadataAttributes(md),
+            ArityNames.Create(
+                md,
+                Environment.GetEnvironmentVariable("DOTKT_DLL2KLIB_ARITY_CLASHES")),
+            _delegateCatalog);
+        var shape = decoder.DecodeDelegate(handle);
+        _externalDelegateShapes[key] = shape;
+        return shape.Clone();
     }
 
     private KType Function(IEnumerable<KType> parameters, KType returnType)

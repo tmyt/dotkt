@@ -20,7 +20,7 @@ done
 
 OUT="$ROOT/build/dll2klib-poc"
 rm -rf "$OUT"
-mkdir -p "$OUT/tools" "$OUT/bir" "$OUT/cir" "$OUT/il"
+mkdir -p "$OUT/tools" "$OUT/klib" "$OUT/klib-second" "$OUT/bir" "$OUT/cir" "$OUT/il"
 case "${OS:-}" in
 	Windows_NT) KLIB_CP_SEP=';' ;;
 	*) KLIB_CP_SEP=':' ;;
@@ -39,11 +39,26 @@ dotnet build "$ROOT/tests/special/dll2klib-poc/reference/Probe.csproj" -c Releas
 
 PROBE_REF="$ROOT/tests/special/dll2klib-poc/reference/obj/Release/net10.0/ref/Probe.dll"
 PROBE_IMPL="$ROOT/tests/special/dll2klib-poc/reference/bin/Release/net10.0/Probe.dll"
-PROBE_KLIB="$OUT/Probe.klib"
+CONTRACTS_REF="$ROOT/tests/special/dll2klib-poc/reference/obj/Release/net10.0/ref/Probe.Contracts.dll"
+CONTRACTS_IMPL="$ROOT/tests/special/dll2klib-poc/reference/bin/Release/net10.0/Probe.Contracts.dll"
+PROBE_KLIB="$OUT/klib/Probe.klib"
+CONTRACTS_KLIB="$OUT/klib/Probe.Contracts.klib"
 
-dotnet "$OUT/tools/dll2klib.dll" "$PROBE_REF" "$PROBE_KLIB"
-dotnet "$OUT/tools/dll2klib.dll" "$PROBE_REF" "$OUT/Probe.second.klib"
-cmp -s "$PROBE_KLIB" "$OUT/Probe.second.klib" || die "same MVID did not produce a deterministic KLIB"
+printf '%s\n%s\n' "$PROBE_REF" "$CONTRACTS_REF" > "$OUT/references.rsp"
+dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp"
+dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib-second" --jobs 0 @"$OUT/references.rsp"
+cmp -s "$PROBE_KLIB" "$OUT/klib-second/Probe.klib" \
+	|| die "same Probe MVID did not produce a deterministic KLIB"
+cmp -s "$CONTRACTS_KLIB" "$OUT/klib-second/Probe.Contracts.klib" \
+	|| die "same contracts MVID did not produce a deterministic KLIB"
+cache_hit="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp")"
+grep -q '2 KLIB(s) up to date' <<<"$cache_hit" \
+	|| die "unchanged reference set did not hit the per-assembly KLIB cache"
+sleep 1
+touch "$CONTRACTS_REF"
+dependency_rebuild="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp")"
+grep -q 'converting 2/2 reference(s)' <<<"$dependency_rebuild" \
+	|| die "external delegate change did not invalidate the consuming Probe KLIB"
 for entry in default/manifest default/linkdata/module default/linkdata/root_package/0_.knm default/linkdata/package_Probe/0_Probe.knm; do
 	unzip -Z1 "$PROBE_KLIB" | grep -qx "$entry" || die "generated KLIB is missing $entry"
 done
@@ -52,19 +67,19 @@ done
 # CLR_TYPES_METADATA is absent, so the old FIR injector cannot participate.
 env -u CLR_TYPES_METADATA "$KOTC" "$ROOT/tests/special/dll2klib-poc/consumer.kt" \
 	-no-stdlib \
-	-classpath "$FE_KLIB$KLIB_CP_SEP$PROBE_KLIB" -d "$OUT/bir"
+	-classpath "$FE_KLIB$KLIB_CP_SEP$PROBE_KLIB$KLIB_CP_SEP$CONTRACTS_KLIB" -d "$OUT/bir"
 
-compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL" "$PROBE_REF")"
+compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL" "$PROBE_REF" "$CONTRACTS_REF")"
 dotnet "$BIR2CIR_DLL" "$OUT/cir" --compile-refs "$compile_refs" "$OUT/bir/consumer.bir.json"
-dotnet "$ILEMIT_DLL" "$OUT/il" Consumer --runtime-refs "$(refset_join "$STDLIB_RT_DLL" "$PROBE_IMPL")" \
+dotnet "$ILEMIT_DLL" "$OUT/il" Consumer --runtime-refs "$(refset_join "$STDLIB_RT_DLL" "$PROBE_IMPL" "$CONTRACTS_IMPL")" \
 	"$OUT/cir/consumer.cir.json"
-cp "$STDLIB_RT_DLL" "$PROBE_IMPL" "$OUT/il/"
+cp "$STDLIB_RT_DLL" "$PROBE_IMPL" "$CONTRACTS_IMPL" "$OUT/il/"
 
 actual="$(dotnet "$OUT/il/Consumer.dll")"
-[[ "$actual" == "100" ]] || die "generated program returned '$actual', expected '100'"
+[[ "$actual" == "121" ]] || die "generated program returned '$actual', expected '121'"
 grep -q '"k": "clrInstance"' "$OUT/cir/consumer.cir.json" \
 	|| die "bir2cir did not bind the KLIB declaration to a CLR instance member"
 grep -q '"k": "clrStatic"' "$OUT/cir/consumer.cir.json" \
 	|| die "bir2cir did not bind the KLIB declaration to a CLR static member"
 
-info "PASS  CLR ref.dll -> standard KLIB (types, nested types, members, generics, NRT, delegates, indexers, events, extensions, operators, byref) -> kotc -> bir2cir -> ilemit -> run (100)"
+info "PASS  CLR ref.dll -> standard KLIB (types, nested types, members, generics, NRT, local/cross-assembly delegates, indexers, events, extensions, operators, byref) -> kotc -> bir2cir -> ilemit -> run (121)"

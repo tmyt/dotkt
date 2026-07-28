@@ -1,5 +1,7 @@
 namespace Probe;
 
+using Probe.Contracts;
+
 public delegate int Transformer(int value);
 
 public interface IAdder
@@ -42,6 +44,12 @@ public class Widget : IAdder
     public string Required() => "required";
 
     public int Apply(Transformer transform, int value) => transform(value);
+
+    public int ApplyExternal(ExternalTransformer transform, int value) => transform(value);
+
+    public int ApplyExternalGeneric(
+        ExternalGenericTransformer<int, int> transform,
+        int value) => transform(value);
 
     public void Increment(ref int value) => value += _seed;
 
