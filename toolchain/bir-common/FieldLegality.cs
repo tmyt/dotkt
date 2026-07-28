@@ -89,18 +89,27 @@ public static class FieldLegality
             : $"byref-like (a `ref struct`{(offendingFqn != null ? $", via `{offendingFqn}`" : "")})";
 
     /// <summary>
+    /// How a diagnostic refers to the value: its ROLE, plus the emitted NAME when the role alone does not identify
+    /// it. A plain local's role is a category ("local variable") and the name is what tells two of them apart; a
+    /// call-evaluation plan binding's role already names the source-level thing it is ("the argument 's' of
+    /// `cfbLen`"), and appending the minted `cir$b1` beside it only asks the reader to ignore a compiler artifact.
+    /// </summary>
+    static string Subject(string role, string? name) => name == null ? role : $"{role} `{name}`";
+
+    /// <summary>
     /// A value that must SURVIVE a suspension: the state machine has to hold it in an instance field, which the
     /// CLR forbids for this type. Mirrors C# CS4007. <paramref name="role"/> names the source-level thing ("local
-    /// variable", "awaited value", "evaluation-order temporary", ...); <paramref name="across"/> names the first
-    /// suspending callee it lives across.
+    /// variable", "awaited value", "the argument 'x' of `f`", ...); <paramref name="name"/> is the emitted name, or
+    /// null when the role already identifies the value; <paramref name="across"/> names the first suspending callee
+    /// it lives across.
     /// </summary>
     public static string SuspendMessage(
-        string posPrefix, string owner, string role, string name, TypeNode? type,
+        string posPrefix, string owner, string role, string? name, TypeNode? type,
         string? offendingFqn, FieldRejection why, string? across)
     {
         var span = across != null ? $" and lives across the suspending call to `{across}`" : "";
         var mirror = why == FieldRejection.ByRef ? "" : " (mirrors C# CS4007)";
-        return $"{posPrefix}suspend-lowering: in `{owner}`, the {role} `{name}` has type `{Render(type)}`, which is "
+        return $"{posPrefix}suspend-lowering: in `{owner}`, the {Subject(role, name)} has type `{Render(type)}`, which is "
              + $"{KindPhrase(why, offendingFqn)}{span}. A suspend function's state machine must hold it in an instance "
              + "field of the generated state-machine class, and the CLR forbids that for this type. Restructure so the "
              + $"value does not span a suspension point (compute it, or re-create it, after the call){mirror}.";

@@ -86,7 +86,14 @@ import org.jetbrains.kotlin.cli.common.messages.CompilerMessageSeverity
 import org.jetbrains.kotlin.cli.common.messages.CompilerMessageLocation
 import java.io.File
 
-internal fun BirEmitter.birType(t: IrType): TypeNode {
+internal fun BirEmitter.birType(t0: IrType): TypeNode {
+	// A default expression is the CALLEE's IR, rendered into the CALLER's frame (the `$default` scope at the JSON
+	// level, see [filledArgs]). Every type it mentions — a parameter type, a receiver's own type, the owner of a member
+	// it reads — is written in the CALLEE's type-parameter frame, where a positional type VARIABLE names a slot the
+	// caller's frame does not have. Closing them against THIS call site's instantiation is the type-level half of the
+	// same substitution, and it belongs at this one chokepoint: every rendered type reaches the emitted JSON through
+	// here, so no reader of a spliced default has to remember to ask. Identity outside a default (the field is null).
+	val t = defaultTypeSubst?.substitute(t0) ?: t0
 	// UNIFORM nullability: any `T?` -> `{t:nullable,of:<non-null core>}`, for VALUE, REFERENCE, and type-variable
 	// types alike (spec §1). kotc stays CLR-free — it does NOT distinguish struct from ref; nullability rides the
 	// type node only, and the decl-level `nullable`/`retNullable` flags are RETIRED. bir2cir DERIVES the CLR form

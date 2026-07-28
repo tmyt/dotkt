@@ -65,6 +65,15 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
     arguments, since a `: super(…)` is a statement whose own type is `Unit`;
   - the synthetic data-class `copy` is selected by its generated SIGNATURE (parameter names AND types mirroring the
     primary constructor), not by the name alone, so a user-declared `copy` overload cannot be mistaken for it.
+  - a default that reads its RECEIVER in a generic callee no longer produces an `InvalidProgramException` at load:
+    `class G<T>(val v: T) { fun one(a: T = v) }` left `G`'s positional type variable in a caller frame that has no
+    such slot. Splicing a default now closes the callee's WHOLE type frame against the call site — everything a
+    default may read (the receiver's property, a member call on it, the receiver inside a generic constructor's
+    default, an extension receiver, the callee's own type parameter beside the owner's), not just the omitted
+    parameter's own type;
+  - a by-reference argument at a call with defaults keeps its position: an address is not a value, so the impure
+    values its location is computed from (`byref(mk().f)`, `byref(a[i()])`) are evaluated at the argument's own
+    position and the address is taken off those.
   The negative lane gains the shape where the plan genuinely has no CLR form — a byref-like argument at a call whose
   LATER value suspends — and its refusal names the value's source role rather than the minted binding id.
 - **bir2cir (area:bir2cir): a suspend function no longer promotes EVERY local to a state-machine field — storage

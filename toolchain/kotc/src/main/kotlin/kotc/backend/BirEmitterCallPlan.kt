@@ -35,9 +35,11 @@ internal class CallPlan(private val e: BirEmitter) {
 	 *  instead of the minted id. Append order IS Kotlin evaluation order — the caller is responsible for calling
 	 *  this in that order, which is why [filledArgs] renders every supplied value before any filled default. */
 	fun bind(phase: String, kind: String, stable: Boolean, type: String, role: String, expr: String): String {
-		// `dotkt$b…` NAMESPACE, minted from `scopeCounter` — the same allocator ordinary locals (`dotkt$localN`) use,
-		// and disjoint by construction from the `__…` names `freshFrameName` mints from the OTHER counter. `$` is not
-		// writable in a plain Kotlin identifier, so a user name cannot alias one either.
+		// `dotkt$b…` NAMESPACE, minted from `scopeCounter` — the counter the emitter's other call-site synthesis uses,
+		// distinct from `localSlotCounter` (which renames ordinary locals to `dotkt$localN`) and from `inlCounter`
+		// (the `__…` frame names). The three prefixes are disjoint by construction, so no counter has to know the
+		// others exist, and `$` is not writable in a plain Kotlin identifier, so a user name cannot alias any of them.
+		// This id is the plan's own key, not a local name: bir2cir mints the local a binding lowers to (spec §2.7).
 		val id = "dotkt\$b${e.scopeCounter++}"
 		bindings.add("""{"id":${e.str(id)},"phase":${e.str(phase)},"kind":${e.str(kind)},"stable":$stable,"type":$type,"role":${e.str(role)},"expr":$expr}""")
 		return """{"k":"bindRef","id":${e.str(id)},"sty":$type}"""

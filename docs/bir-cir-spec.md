@@ -332,7 +332,7 @@ A binding is a plain object (not a `{k}` node):
 
 | field | meaning |
 |---|---|
-| `id` | the binding's name — also the `bindRef` key, and the name of the local it lowers to |
+| `id` | the binding's name, and the `bindRef` key. NOT the name of the local it may lower to — see *Id namespaces* below |
 | `phase` | `recv` \| `arg` \| `default` — where the value comes from (documentation and diagnostics; the array order already carries the evaluation order) |
 | `kind` | `value` \| `address`. An `address` is a byref / `@ClrRefArgument` slot's addressable lvalue: an ordering marker, never storage |
 | `stable` | may this value be READ more than once (a literal, an immutable local/parameter read)? Judged ONCE by the producer and consumed downstream, never re-derived |
@@ -379,9 +379,12 @@ that can add a reader has finished — and is the ONLY consumer of the vocabular
   at every reader instead;
 - a binding NOTHING reads is still evaluated as a `var` — Kotlin evaluates every value a call supplies — unless
   evaluating it is unobservable, in which case it is dropped;
-- **order is never traded**: if any binding becomes a `var`, every earlier non-stable binding becomes one too. An
-  `address` binding never becomes one — no storage holds a managed pointer — so what is pinned instead is the value
-  the lvalue is computed FROM (`byref(mk().field)` binds `mk()`, and `<local>.field` stays inline at its slot);
+- **order is never traded**, and every binding is handled at its own position in ONE ordered stream. An `address`
+  binding never becomes a `var` — no storage holds a managed pointer — so what is emitted at its position instead are
+  the impure VALUES its location is computed from, in the location's own operand order, leaving a pure location
+  expression in the slot: `byref(mk().f)` pins `mk()`, `byref(a[i()])` pins `i()`, `byref(x)` pins nothing. The rule
+  is shape-agnostic because a location is whatever the lvalue happens to be — the NODE is the location and stays, its
+  operand CHILDREN are values;
 - a delegation's plan becomes the constructor's `preStmts`, which ilemit emits ahead of the `this`/`base` call.
 
 It decides NOTHING about storage. A `var` here is a request for a scoped local; whether a coroutine state machine may

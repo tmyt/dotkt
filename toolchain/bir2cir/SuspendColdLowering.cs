@@ -1306,7 +1306,7 @@ static partial class SuspendColdLowering
                 // A call-evaluation plan binding names itself ("the receiver of `copy`", "the default of parameter
                 // `b`"); an ordinary local is just a local. Either way the refusal below reads the SAME sentence.
                 FieldStorage(vn, declared, role ?? RoleLocal,
-                    live.LivesAcrossSuspension(vn), live.FirstSuspensionAcross(vn));
+                    live.LivesAcrossSuspension(vn), live.FirstSuspensionAcross(vn), roleNamesIt: role != null);
             }
 
             var bodyOut = new List<JsonNode>();
@@ -1399,13 +1399,17 @@ static partial class SuspendColdLowering
         const string RoleCondResult = "conditional-result temporary";
         const string RoleReturn = "result";
 
-        void FieldStorage(string name, TypeNode type, string role, bool lives, string across)
+        // `roleNamesIt` = the role already identifies the value in source terms (a call-evaluation plan binding says
+        // "the argument 'x' of `f`"), so the diagnostic drops the emitted name rather than printing a minted
+        // `cir$b1` the author never wrote. An ordinary local's role is a category, and the name is what tells two of
+        // them apart, so it is kept.
+        void FieldStorage(string name, TypeNode type, string role, bool lives, string across, bool roleNamesIt = false)
         {
             if (name == null || !lives) return;                  // dead across every suspension -> stays a local
             var why = FieldLegality.Classify(type, IsByRefLikeFqn, out var offending);
             if (why != FieldRejection.None)
                 throw new NotSupportedException(FieldLegality.SuspendMessage(
-                    FieldLegality.PosPrefix(_m), DiagOwner, role, name, type, offending, why, across));
+                    FieldLegality.PosPrefix(_m), DiagOwner, role, roleNamesIt ? null : name, type, offending, why, across));
             if (_fields.Add(name)) _fieldDecls.Add((name, type ?? AnyTn));
         }
 

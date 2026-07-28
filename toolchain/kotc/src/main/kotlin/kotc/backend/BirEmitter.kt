@@ -347,6 +347,11 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	// [filledArgs]/[filledInjectedArgs] append their bindings to. Scoped by [withCallPlan]; a nested call installs its
 	// own, so a plan never collects another call site's values.
 	internal val callPlans = java.util.IdentityHashMap<org.jetbrains.kotlin.ir.expressions.IrExpression, CallPlan>()
+	// The type-level half of the `$default` scope: while a CALLEE's default expression is rendered into a CALLER's
+	// frame, this closes the callee's type parameters against the call site's instantiation. Consulted by [birType],
+	// which every emitted type passes through; null everywhere else. Installed and restored around the one `expr(def)`
+	// in [filledArgs] that renders a default reading the callee's own scope.
+	internal var defaultTypeSubst: org.jetbrains.kotlin.ir.types.IrTypeSubstitutor? = null
 	// Function-local classes lifted to top-level synthetic types: the outer locals they capture (prepended to the
 	// ctor at construction sites). Keyed by the IrClass.
 	internal val localClassCaptures = java.util.IdentityHashMap<IrClass, List<IrValueDeclaration>>()

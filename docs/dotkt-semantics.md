@@ -957,7 +957,14 @@ Order is never traded for storage. A value that turns out to need a local is mat
 earlier value is materialised with it — `host().f()` logs the receiver before the default, `host().g(arg())` logs
 receiver, argument, then default, and a byref-like argument at such a call keeps its position rather than being jumped.
 A value that is free to re-read (a literal, an immutable local or parameter read) is spliced directly and needs no
-local at all, so an ordinary call emits exactly what it did before.
+local at all, so an ordinary call emits exactly what it did before. A by-reference argument (`byref(x)`) is an
+ADDRESS rather than a value — no storage holds one — so what is pinned in its place is whatever its location is
+computed from: `byref(mk().f)` evaluates `mk()` at the argument's own position and takes the address off that.
+
+A default is the CALLEE's expression evaluated in the CALLER's frame, so every type it mentions is closed against the
+call site's instantiation — the omitted parameter's type, the owner of a member it reads off the receiver, a type
+argument it passes on. Without that, `class G<T>(val v: T) { fun one(a: T = v) }` spliced into a non-generic caller
+left `G`'s positional type variable naming a slot that frame does not have.
 
 The two call sites that ride a DECLARATION rather than an expression behave the same: a constructor **DELEGATION**
 (`: this(…)` / `: super(…)`, and a per-entry enum body's base call) carries its plan on the constructor declaration and

@@ -220,8 +220,10 @@ internal fun BirEmitter.filledArgs(
 		val p = pair.second
 		val arg = provided[idx] ?: return@forEachIndexed
 		// A `byref(x)` / @ClrRefArgument slot takes an ADDRESSABLE lvalue, not a copied value. Under a plan it is an
-		// ADDRESS binding: a placement marker that fixes where the address is taken in the evaluation order, with no
-		// storage minted for it (CallEvalLowering re-inlines it, and refuses loudly if that would break the order).
+		// ADDRESS binding: it marks WHERE in the evaluation order the location is computed, and no storage is minted
+		// for it — CallEvalLowering pins the impure VALUES the location is computed from at this position and leaves
+		// the pure location expression in the slot, so the address is taken at the call and its operands still run
+		// where Kotlin runs them.
 		val address = addressSlotExpr(arg, p)
 		val emitted =
 			if (address != null)
@@ -327,8 +329,18 @@ internal fun BirEmitter.filledArgs(
 					if (!saved.containsKey(d)) saved[d] = captureSubst[d]
 					captureSubst[d] = js
 				}
+				// ...and the TYPE-level half of the same scope: this default is the CALLEE's IR, so every type it
+				// mentions — its own parameter type, the owner of a member it reads off the receiver, a type argument
+				// it passes on — is written in the CALLEE's frame. A positional type variable there names a slot the
+				// caller's frame does not have: `class G<T>(val v: T) { fun one(a: T = v) }` spliced into a
+				// non-generic caller left `G`'s `!0` as the owner of the `v` read (InvalidProgramException at load).
+				val savedSubst = defaultTypeSubst
+				defaultTypeSubst = callSiteSubstitutor(call, callee)
 				try { expr(def) }
-				finally { saved.forEach { (d, prev) -> if (prev != null) captureSubst[d] = prev else captureSubst.remove(d) } }
+				finally {
+					defaultTypeSubst = savedSubst
+					saved.forEach { (d, prev) -> if (prev != null) captureSubst[d] = prev else captureSubst.remove(d) }
+				}
 			}
 			else -> { stableFill = isStableValue(def); argExpr(def, p) }   // constant / global — inline verbatim
 		}
@@ -364,7 +376,16 @@ internal fun BirEmitter.callSiteType(
 	call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression,
 	callee: org.jetbrains.kotlin.ir.declarations.IrFunction,
 	type: IrType,
-): IrType {
+): IrType = callSiteSubstitutor(call, callee)?.substitute(type) ?: type
+
+/** The substitution [callSiteType] applies — the callee's whole type frame closed against this call site — or null
+ *  when the frames do not line up. Installed as [BirEmitter.defaultTypeSubst] while a default expression is rendered,
+ *  so EVERY type that default mentions is closed, not only the ones a caller thought to ask about: the parameter's own
+ *  type, the owner of a member it reads off the receiver, the receiver's type, a type argument it passes on. */
+internal fun BirEmitter.callSiteSubstitutor(
+	call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression,
+	callee: org.jetbrains.kotlin.ir.declarations.IrFunction,
+): org.jetbrains.kotlin.ir.types.IrTypeSubstitutor? {
 	val params = ArrayList<IrTypeParameterSymbol>()
 	val args = ArrayList<org.jetbrains.kotlin.ir.types.IrTypeArgument>()
 	val ownerTps = (callee.parent as? IrClass)?.typeParameters.orEmpty()
@@ -396,8 +417,8 @@ internal fun BirEmitter.callSiteType(
 			}
 		}
 	}
-	if (params.isEmpty()) return type
-	return org.jetbrains.kotlin.ir.types.IrTypeSubstitutor(params, args, true).substitute(type)
+	if (params.isEmpty()) return null
+	return org.jetbrains.kotlin.ir.types.IrTypeSubstitutor(params, args, true)
 }
 
 /** The callee-scope RECEIVER parameter whose value [filledArgs] splices when it RECONSTRUCTS the fill for the omitted
@@ -425,16 +446,6 @@ internal fun BirEmitter.reconstructedDefaultReceiver(
 internal fun BirEmitter.isStableAddress(arg: IrExpression): Boolean {
 	val inner = byrefMarker(arg) ?: arg
 	return inner is IrGetValue && !isRefCell(inner.symbol.owner)
-}
-
-/** True if this call is SOURCE-SPLICED as an inline body (the same test [call] routes on): a same-module `inline` fn
- *  whose body is present, taking a lambda. Its args and omitted defaults are emitted by the splice, not by
- *  [filledArgs] — so nothing of the call site is spliced into a default expression here. */
-internal fun BirEmitter.isInlineSplicedCall(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): Boolean {
-	if (call !is IrCall) return false
-	val callee = call.symbol.owner
-	val decl = if (callee.isFakeOverride) callee.resolveFakeOverride() ?: callee else callee
-	return decl.body != null && callNeedsSplice(call)
 }
 
 /** The args of a constructor DELEGATION (`: this(…)` / `: super(…)`) or an enum-entry constructor call, POSITIONALLY

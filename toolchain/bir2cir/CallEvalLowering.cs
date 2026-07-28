@@ -134,9 +134,11 @@ static class CallEvalLowering
             // Nothing reads it and evaluating it cannot be observed — the emitted call shape simply has no slot for
             // this value (a companion object's dispatch receiver, say). Drop it rather than mint a dead local.
             drop[i] = count == 0 && BindingStability.IsTriviallyPure(expr);
-            // A STABLE value is free to re-read, so it inlines at every reader. Everything else needs a local unless
+            // A STABLE value is free to re-read, so it inlines at every reader. An ADDRESS is not a value at all —
+            // no storage holds a managed pointer — so it never becomes a local; what its LOCATION is computed from is
+            // pinned instead, at this binding's own position in the loop below. Everything else needs a local unless
             // exactly one reader puts it back where it already was.
-            asVar[i] = !drop[i] && !stable[i] && count != 1;
+            asVar[i] = !drop[i] && !stable[i] && kinds[i] != "address" && count != 1;
         }
         // ORDER, rule 1 — INVERSION. An inlined binding is evaluated at its reader's position, and a plan's order is
         // NOT the node's: an omitted default occupies a slot the callee declared, while Kotlin evaluates it after every
@@ -145,7 +147,7 @@ static class CallEvalLowering
         // be materialised — moving it ahead of the call, which is ahead of everything.
         for (var i = 0; i < n; i++)
         {
-            if (stable[i] || drop[i] || asVar[i]) continue;
+            if (stable[i] || drop[i] || asVar[i] || kinds[i] == "address") continue;
             for (var k = i + 1; k < n; k++)
                 if (!stable[k] && !drop[k] && ReadPos(pos, ids[k]) < ReadPos(pos, ids[i])) { asVar[i] = true; break; }
         }
@@ -154,21 +156,13 @@ static class CallEvalLowering
         // STABLE value is exempt by definition: re-reading it cannot observe a different value.
         var last = Array.FindLastIndex(asVar, x => x);
         for (var i = 0; i < last; i++)
-            if (!stable[i] && !drop[i]) asVar[i] = true;
-        // An ADDRESS is not a value: no storage holds a managed pointer, so the binding itself never becomes a local.
-        // What CAN be pinned is the value the address is computed FROM — `byref(mk().field)` binds `mk()`, and the
-        // lvalue `<local>.field` then stays inline at its slot, taken from a value already evaluated in plan order.
-        // A plain `byref(x)` needs nothing: reading an lvalue has no side effect and cannot be observed out of order.
-        var pinned = new JsonArray();
-        for (var i = 0; i < n; i++)
-        {
-            if (kinds[i] != "address") continue;
-            if (asVar[i]) PinAddressOperands((bindings[i] as JsonObject)["expr"], pinned);
-            asVar[i] = false;
-        }
+            if (!stable[i] && !drop[i] && kinds[i] != "address") asVar[i] = true;
 
-        var stmts = pinned;
+        var stmts = new JsonArray();
         var repl = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
+        // ONE ordered stream. Every binding is handled at its own plan position — a materialised value declares its
+        // local here, and an address pins the values its LOCATION is computed from here — so the statements come out
+        // in plan order, which is Kotlin's, whatever mix of kinds the plan holds.
         for (var i = 0; i < n; i++)
         {
             var b = (JsonObject)bindings[i];
@@ -176,6 +170,16 @@ static class CallEvalLowering
             // is materialised or inlined is already in the emitted vocabulary.
             var expr = Substitute(b["expr"], repl);
             if (drop[i]) { repl[ids[i]] = null; continue; }
+            if (kinds[i] == "address")
+            {
+                // An address is a LOCATION, not a value: it must be taken at the call, from operands evaluated HERE.
+                // `byref(mk().f)` pins `mk()`; `byref(a[i()])` pins `i()`; `byref(x)` pins nothing, because reading an
+                // lvalue has no side effect and cannot observe a different location. What is left in the slot is the
+                // pure location expression, so the address itself is free to sit wherever the call needs it.
+                PinLocationOperands(expr, stmts);
+                repl[ids[i]] = expr;
+                continue;
+            }
             if (!asVar[i]) { repl[ids[i]] = expr; continue; }
             var type = VarType(b);
             // A FRESH local name, not the binding id. A binding id is unique in its PRODUCER's counter, and a plan can
@@ -242,20 +246,49 @@ static class CallEvalLowering
     /// than tracking frames.
     static string FreshLocal() => "cir$b" + System.Threading.Interlocked.Increment(ref _counter);
 
-    /// Move the impure OPERANDS an addressable lvalue is computed from into locals, so the address stays at its own
-    /// slot while what it is taken from is evaluated in plan order. kotc emits an address as `{k:local}` (nothing to
-    /// pin) or `{k:field,recv:<expr>}` (the receiver is the operand); the walk is recursive so a field CHAIN pins its
-    /// outermost impure link only, which is all that carries a side effect.
-    static void PinAddressOperands(JsonNode address, JsonArray into)
+    /// Move every impure VALUE an addressable location is computed from into a local, in the location's own operand
+    /// order, leaving a pure location expression behind.
+    ///
+    /// Shape-agnostic on purpose: kotc renders an address through the ordinary expression emitter, so a location is
+    /// whatever the lvalue happens to be — a bare `local`, a `field` over a receiver chain, an `arrayGet` over an array
+    /// and an index, a member access. The rule is the same for all of them: the NODE is the location and stays, its
+    /// operand CHILDREN are values and are pinned when impure. Recursing through the pure ones keeps a chain
+    /// (`a.b.c[i()]`) pinning only the links that actually carry a side effect.
+    static void PinLocationOperands(JsonNode location, JsonArray into)
     {
-        if (address is not JsonObject o || o["recv"] is not JsonNode recv) return;
-        if (BindingStability.IsTriviallyPure(recv)) { PinAddressOperands(recv, into); return; }
-        var name = FreshLocal();
-        var type = (recv as JsonObject)?["sty"] ?? (recv as JsonObject)?["type"];
-        into.Add(new JsonObject { ["k"] = "var", ["name"] = name, ["type"] = type?.DeepClone(), ["init"] = recv.DeepClone() });
-        var read = new JsonObject { ["k"] = "local", ["name"] = name };
-        if (type != null) read["sty"] = type.DeepClone();
-        o["recv"] = read;
+        if (location is not JsonObject o) return;
+        foreach (var key in o.Select(kv => kv.Key).OrderBy(SuspendLiveness.OperandRank).ToList())
+        {
+            if (key == "k") continue;
+            switch (o[key])
+            {
+                case JsonObject child when IsNode(child):
+                    if (BindingStability.IsTriviallyPure(child)) PinLocationOperands(child, into);
+                    else o[key] = PinValue(child, into);
+                    break;
+                case JsonArray arr:
+                    for (var i = 0; i < arr.Count; i++)
+                        if (arr[i] is JsonObject e && IsNode(e))
+                        {
+                            if (BindingStability.IsTriviallyPure(e)) PinLocationOperands(e, into);
+                            else arr[i] = PinValue(e, into);
+                        }
+                    break;
+            }
+        }
+
+        // A type slot (`{t:…}`) and a descriptor are not operands; only a `{k:…}` node is a value this can pin.
+        static bool IsNode(JsonObject n) => Str(n["k"]) != null;
+
+        static JsonNode PinValue(JsonObject node, JsonArray into)
+        {
+            var name = FreshLocal();
+            var type = node["sty"] ?? node["type"];
+            into.Add(new JsonObject { ["k"] = "var", ["name"] = name, ["type"] = type?.DeepClone(), ["init"] = node.DeepClone() });
+            var read = new JsonObject { ["k"] = "local", ["name"] = name };
+            if (type != null) read["sty"] = type.DeepClone();
+            return read;
+        }
     }
 
     static int ReadPos(Dictionary<string, int> pos, string id) => pos.TryGetValue(id, out var p) ? p : int.MaxValue;

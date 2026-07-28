@@ -248,6 +248,27 @@ class M2SlotOrderCtor(val a: Int = M2SlotOrderLog.d(), val c: Int)
 open class M2GenBase<T>(val a: T, val b: T = a, val c: T = b)
 class M2GenDerived<X, Y>(y: Y) : M2GenBase<Y>(y) { fun probe(): String = "$a/$b/$c" }
 
+// A default is the CALLEE's expression evaluated in the CALLER's frame, so EVERY type it mentions has to be closed
+// against this call site's instantiation — not just the omitted parameter's own type. A positional type variable is a
+// slot in the callee's frame, and the caller's frame either has a different slot there or none at all. The battery
+// walks what a default is allowed to read: the RECEIVER's property, a member CALL on the receiver, the receiver inside
+// a generic CONSTRUCTOR's default, a receiver read chained into a later default, an EXTENSION receiver, and the
+// callee's OWN type parameter standing beside the owner's. The last two are controls that were already correct.
+//   NOT here, and not a type-frame question: a GENERIC inner class reading its outer instance
+// (`class O<T>(val v: T) { inner class In(val x: T = v) }`) NullReferenceExceptions — its `__outer` capture is null,
+// identically at `3fedd238` and with no default argument involved. Its non-generic twin is covered by
+// `defargsEnclosingReadAtAMemberExtension`.
+class M2FrameOwnerProp<T>(val v: T) { fun one(a: T = v): String = "$a" }
+class M2FrameOwnerCall<T>(val v: T) { fun tag(): String = "t$v"; fun one(a: String = tag()): String = a }
+class M2FrameOwnerCtor<T>(val v: T, val w: T = v, val x: T = w)
+class M2FrameOwnerChain<T>(val v: T) { fun pair(a: T = v, b: T = a): String = "$a$b" }
+fun <T> T.m2FrameExt(a: T = this): String = "$a"
+class M2FrameOwnAndOwner<T>(val v: T) { fun <U> two(u: U, a: T = v): String = "$u$a" }
+class M2FrameControls<T>(val v: T) {
+    fun konst(a: Int = 5): String = "$v$a"
+    fun prior(q: Int, a: Int = q * 2): String = "$v$q$a"
+}
+
 // #235: EVALUATION ORDER around a value bound for single evaluation. Binding one value moves its evaluation ahead of
 // the call, so every side-effecting value to its LEFT must move with it — Kotlin evaluates the receiver, then each
 // argument, left to right.
@@ -646,6 +667,23 @@ class DefaultArgumentTests {
     fun defargsGenericBaseDelegationChain() {
         assertEquals("7/7/7", M2GenDerived<String, Int>(7).probe())     // 7/7/7  (was InvalidProgramException)
         assertEquals("k/k/k", M2GenDerived<Int, String>("k").probe())   // k/k/k
+    }
+
+    // Splicing a default into a caller closes EVERY open type variable it mentions, across everything a default may
+    // read. Each of the first four was an InvalidProgramException at load; the last two are controls.
+    @TestAttribute
+    fun defargsCloseCalleeTypeFrame() {
+        assertEquals("7", M2FrameOwnerProp(7).one())                    // the receiver's property
+        assertEquals("s", M2FrameOwnerProp("s").one())                  // ...at a second instantiation
+        assertEquals("t7", M2FrameOwnerCall(7).one())                   // a member CALL on the receiver
+        val c = M2FrameOwnerCtor(7)
+        assertEquals(7, c.w); assertEquals(7, c.x)                      // the receiver inside a generic ctor's default
+        assertEquals("77", M2FrameOwnerChain(7).pair())                 // ...chained into a later default
+        assertEquals("7", 7.m2FrameExt())                               // an EXTENSION receiver
+        assertEquals("k", "k".m2FrameExt())
+        assertEquals("u7", M2FrameOwnAndOwner(7).two("u"))              // the callee's own type param beside the owner's
+        assertEquals("75", M2FrameControls(7).konst())                  // CONTROL: a const default
+        assertEquals("736", M2FrameControls(7).prior(3))                // CONTROL: a prior-param default
     }
 
     // A default's `this` read binds per RECEIVER KIND. Each assertion is tagged with what it was before the
