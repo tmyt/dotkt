@@ -1,6 +1,5 @@
 package roundtrip.valueclass
 
-@JvmInline
 value class Token internal constructor(internal val raw: Int) {
     fun doubled(): Int = raw * 2
 }

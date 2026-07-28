@@ -98,6 +98,7 @@ object ClrMetadataConfigurationUpdater : ConfigurationUpdater<K2MetadataCompiler
 			CommonConfigurationKeys.LANGUAGE_VERSION_SETTINGS,
 			ClrLanguageVersionSettings(languageSettings),
 		)
+		configuration.installClrDiagnosticsPolicy()
 		arguments.destination?.let {
 			configuration.put(CLIConfigurationKeys.METADATA_DESTINATION_DIRECTORY, File(it))
 		} ?: configuration.getNotNull(CommonConfigurationKeys.MESSAGE_COLLECTOR_KEY).report(

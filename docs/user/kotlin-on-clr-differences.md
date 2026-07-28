@@ -67,9 +67,9 @@ Kotlin `List`/`MutableList`/`Map`/... are bound to the real BCL collection types
 
 ## `value class` is a real class
 
-No inline-class erasure, no mangled names: `@JvmInline value class Money(val amount: Int)` emits
+No inline-class erasure, no mangled names: `value class Money(val amount: Int)` emits
 an ordinary class with structural equality. Simpler interop; the identityless-ness is not
-CLR-enforced.
+CLR-enforced. The JVM-specific `@JvmInline` annotation is not required.
 
 ## Enums have two shapes
 
