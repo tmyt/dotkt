@@ -355,9 +355,13 @@ reconstructed from the receiver). Without one the positional argument array IS t
 value, positional order. The standing invariant is the converse: **any transform that gives a call value a second
 consumer must go through a plan.** A `defaultArg` outside one is refused loudly by `DefaultArgSplice`.
 
-**Id namespaces.** kotc mints `dotkt$bN`; bir2cir mints `cir$bN` for a binding it synthesizes itself. Both are
-allocated from the producer's own counter, and `$` is not writable in a plain Kotlin identifier, so neither can alias
-a user name or the other's.
+**Id namespaces.** kotc mints `dotkt$bN`; bir2cir mints `cir$bN`, both from their own counters, and `$` is not
+writable in a plain Kotlin identifier, so neither can alias a user name or the other's. An id is unique only within
+its PRODUCER, which matters at the two points where a plan is CLONED into another document — an inline
+`[KotlinInline]` body spliced at a call site, a `@KotlinDefault` carrier materialised into a reserved binding. Both
+re-mint the ids they carry (`CallEvalLowering.FreshenPlanIds`), so a plan spliced twice into one frame, or a
+consumer's own `bindRef` substituted into a producer's carrier, cannot collide. For the same reason a binding id is
+NOT the name of the local it lowers to: `CallEvalLowering` mints that name, in the frame that will hold it.
 
 **Declaration-position call sites.** A constructor delegation (`: this(…)` / `: super(…)`, including a per-entry enum
 body's base call) has its arguments on the constructor DECLARATION, with no wrapping expression. Its plan rides the
@@ -368,13 +372,16 @@ declaration as `delegationBindings`, an array of the same bindings; `thisArgs`/`
 that can add a reader has finished — and is the ONLY consumer of the vocabulary:
 
 - a binding with exactly ONE reader is inlined back into that reader (the emitted CIR is what it would have been with
-  no plan at all);
+  no plan at all) — unless doing so would REORDER it: an inlined binding is evaluated at its reader's position, and
+  the plan's order is not the argument array's, so a binding read later in the node than a binding that follows it in
+  the plan is materialised instead;
 - a binding with SEVERAL readers becomes a `var`, evaluated once and loaded per reader; a `stable` binding is inlined
   at every reader instead;
 - a binding NOTHING reads is still evaluated as a `var` — Kotlin evaluates every value a call supplies — unless
   evaluating it is unobservable, in which case it is dropped;
-- **order is never traded**: if any binding becomes a `var`, every earlier non-stable binding becomes one too. A
-  non-stable `address` binding in that position has no CLR form and is refused with a diagnostic;
+- **order is never traded**: if any binding becomes a `var`, every earlier non-stable binding becomes one too. An
+  `address` binding never becomes one — no storage holds a managed pointer — so what is pinned instead is the value
+  the lvalue is computed FROM (`byref(mk().field)` binds `mk()`, and `<local>.field` stays inline at its slot);
 - a delegation's plan becomes the constructor's `preStmts`, which ilemit emits ahead of the `this`/`base` call.
 
 It decides NOTHING about storage. A `var` here is a request for a scoped local; whether a coroutine state machine may

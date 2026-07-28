@@ -160,22 +160,30 @@ internal fun BirEmitter.filledArgs(
 		if (provided[idx] != null) null
 		else pair.second.defaultValue?.expression?.takeIf { it !is org.jetbrains.kotlin.ir.expressions.IrErrorExpression }
 	}
-	// GRANULARITY (§2.7): a plan is emitted only where a value of this call can acquire a SECOND reader —
-	//  (a) a same-module default this call fills READS one of them (an earlier parameter, a receiver, an enclosing
-	//      instance): the captureSubst channel below splices the value into the default;
+	// GRANULARITY (§2.7): a plan is emitted only where the positional array below would NOT already be a faithful
+	// evaluation plan — i.e. where a value can acquire a SECOND reader, or where the array's ORDER is not Kotlin's:
+	//  (a) a same-module default this call fills READS one of the call's values (an earlier parameter, a receiver, an
+	//      enclosing instance): the captureSubst channel below splices the value into the default;
 	//  (b) a CROSS-MODULE omission: either a `defaultArg` placeholder, whose @KotlinDefault carrier binds `{this}` /
 	//      `{defaultArgParam n}` to THIS call's own values in bir2cir, or a data-class `copy` field reconstructed as a
 	//      read of the receiver. Taken WHOLE (any IrErrorExpression omission) rather than per fill kind, so the test can
 	//      never disagree with what the loop below actually emits — a placeholder outside a plan is a loud bir2cir
 	//      failure — and a plan whose values all turn out to have one reader costs nothing: CallEvalLowering inlines
 	//      every single-reader binding straight back into its slot.
-	// With neither, the positional array below IS the evaluation plan: one reader per value, positional order.
+	//  (c) a fill occupies a slot BEFORE a slot this call SUPPLIES. Kotlin evaluates every supplied value before any
+	//      default, whatever slots they sit in, so `f(a: Int = mk(), c: Int)` called `f(c = arg())` must run `arg()`
+	//      first — while the positional array puts the fill in slot 0. Only a plan can express that, because only a
+	//      plan carries an order distinct from the array's.
+	// With none of the three, the positional array below IS the evaluation plan: one reader per value, in Kotlin order.
+	val lastSupplied = provided.indexOfLast { it != null }
 	val planNeeded =
 		filledDefaults.any { d ->
 			d != null && (refsAny(d, valueSyms) || refsAny(d, receiverSyms) || refsAny(d, enclosingSyms))
 		} || vals.indices.any { idx ->
 			provided[idx] == null &&
 				vals[idx].second.defaultValue?.expression is org.jetbrains.kotlin.ir.expressions.IrErrorExpression
+		} || vals.indices.any { idx ->
+			idx < lastSupplied && provided[idx] == null && vals[idx].second.defaultValue != null
 		}
 	val plan = if (planNeeded) callPlan(call) else null
 	val label = calleeLabel(callee)
@@ -360,21 +368,32 @@ internal fun BirEmitter.callSiteType(
 	val params = ArrayList<IrTypeParameterSymbol>()
 	val args = ArrayList<org.jetbrains.kotlin.ir.types.IrTypeArgument>()
 	val ownerTps = (callee.parent as? IrClass)?.typeParameters.orEmpty()
-	if (ownerTps.isNotEmpty()) {
-		// A constructor's owner frame is instantiated by the type being CONSTRUCTED; a member's, by its receiver.
-		val src = if (callee is IrConstructor) call.type
-			else (dispatchReceiver(call) ?: extensionReceiver(call))?.type
-		(src as? IrSimpleType)?.arguments?.takeIf { it.size == ownerTps.size }?.let { a ->
+	if (callee is IrConstructor) {
+		// A Kotlin constructor declares no type parameters of its own, so the call's type ARGUMENTS are exactly its
+		// class's — and they ride the call node for EVERY constructor shape. `call.type` would only work for a `new`:
+		// a `: super(…)` delegation and an enum-entry call are statements whose type is `Unit`, and reading the owner
+		// frame from there left the base class's type variables unsubstituted in the DERIVED class's frame.
+		val ta = ownerTps.indices.map { call.typeArguments.getOrNull(it) }
+		if (ownerTps.isNotEmpty() && ta.all { it != null }) {
 			ownerTps.forEach { params.add(it.symbol) }
-			args.addAll(a)
-		}
-	}
-	val fnTps = callee.typeParameters
-	if (fnTps.isNotEmpty()) {
-		val ta = fnTps.indices.map { call.typeArguments.getOrNull(it) }
-		if (ta.all { it != null }) {
-			fnTps.forEach { params.add(it.symbol) }
 			ta.forEach { args.add(it!!) }
+		}
+	} else {
+		if (ownerTps.isNotEmpty()) {
+			// A member's owner frame is instantiated by its receiver.
+			((dispatchReceiver(call) ?: extensionReceiver(call))?.type as? IrSimpleType)
+				?.arguments?.takeIf { it.size == ownerTps.size }?.let { a ->
+					ownerTps.forEach { params.add(it.symbol) }
+					args.addAll(a)
+				}
+		}
+		val fnTps = callee.typeParameters
+		if (fnTps.isNotEmpty()) {
+			val ta = fnTps.indices.map { call.typeArguments.getOrNull(it) }
+			if (ta.all { it != null }) {
+				fnTps.forEach { params.add(it.symbol) }
+				ta.forEach { args.add(it!!) }
+			}
 		}
 	}
 	if (params.isEmpty()) return type

@@ -334,7 +334,7 @@
     "//== CALL-EVALUATION PLAN BINDING (§2.7) ==//": null,
     "binding": {
       "type": "object",
-      "description": "One value a call supplies, in the plan's evaluation-order position. `id` is minted in a per-producer namespace (kotc `dotkt$bN`, bir2cir `cir$bN`) and is BOTH the `bindRef` key and the name of the local it lowers to. `expr` is the value; for a cross-module omitted default it is the `{k:defaultArg}` RESERVATION DefaultArgSplice fills. BIR-only: CallEvalLowering consumes the whole array.",
+      "description": "One value a call supplies, in the plan's evaluation-order position. `id` is the `bindRef` key, minted in a per-producer namespace (kotc `dotkt$bN`, bir2cir `cir$bN`) and re-minted wherever a plan is cloned into another document; the local it may lower to gets its name from CallEvalLowering, in the frame that holds it. `expr` is the value; for a cross-module omitted default it is the `{k:defaultArg}` RESERVATION DefaultArgSplice fills. BIR-only: CallEvalLowering consumes the whole array.",
       "properties": {
         "id":     { "type": "string" },
         "phase":  { "enum": ["recv", "arg", "default"], "description": "where the value comes from; the array order already carries the evaluation order, so this is documentation and diagnostics, not a sort key" },

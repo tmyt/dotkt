@@ -100,6 +100,11 @@ static class SuspendLiveness
         ["stmts"] = 11, ["result"] = 12,
     };
 
+    /// The evaluation-order rank of an operand key — the toolchain's ONE statement of "which operand of a node runs
+    /// first". Shared with CallEvalLowering, which needs the same order to know where an inlined plan binding will be
+    /// evaluated; keeping it here keeps the two answers from drifting apart.
+    internal static int OperandRank(string key) => KeyRank.GetValueOrDefault(key, 50);
+
     // Keys that never carry an evaluated operand (type/dispatch/signature metadata). Skipping them keeps the
     // walk cheap; none of them can contain a `{k:local}`.
     static readonly HashSet<string> NonOperandKeys = new(StringComparer.Ordinal)

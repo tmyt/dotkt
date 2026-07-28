@@ -15,9 +15,14 @@ sealed partial class Emitter
         _methodRetType = typeof(void);
         _curTypeParams = EffectiveTps(ti); _curMethodParams = null;
         BeginMethod(cb.GetILGenerator(), c, isStatic: false);
-        // The whole ctor node, not just `body`: `preStmts` runs before the delegation and may carry CFG labels of its
-        // own (a `cond`/`try` inside a bound value).
-        PrescanCfgLabels(c);
+        // Exactly the trees this method EMITS: `preStmts` runs before the delegation and may carry CFG labels of its
+        // own (a `cond`/`try` inside a bound value), and the delegation args are emitted here too. Scanning the whole
+        // declaration would also define labels for subtrees that are never emitted (`params[].default`, `attrs`), and
+        // ILGenerator refuses a label that is defined and never marked.
+        PrescanCfgLabels(c.GetProperty("body"));
+        AddCfgLabels(c, "preStmts");
+        AddCfgLabels(c, "thisArgs");
+        AddCfgLabels(c, "baseArgs");
 
         // `preStmts` — the constructor DELEGATION's evaluation plan, lowered to `var` declarations by bir2cir's
         // CallEvalLowering. A delegation's arguments ride the declaration rather than an expression, so there is no
@@ -210,24 +215,33 @@ sealed partial class Emitter
     // Define an IL Label for every CFG `label` node anywhere in the body (forward refs from goto/brIf), so the
     // single emit pass can branch to not-yet-emitted blocks. Recursive: labels can sit inside nested structured
     // bodies (a CFG-lowered `while` spliced into a still-structured `if`). See docs/bir-cir-spec.md.
+    // Fold one more tree of the SAME frame into the label map [PrescanCfgLabels] just built (a constructor emits its
+    // `preStmts` and delegation args alongside its body).
+    void AddCfgLabels(JsonElement decl, string key)
+    {
+        if (decl.TryGetProperty(key, out var t) && t.ValueKind is JsonValueKind.Array or JsonValueKind.Object)
+            WalkCfgLabels(t);
+    }
+
     void PrescanCfgLabels(JsonElement node)
     {
         _cfgLabels = new Dictionary<int, Label>();
-        void Walk(JsonElement e)
+        WalkCfgLabels(node);
+    }
+
+    void WalkCfgLabels(JsonElement e)
+    {
+        if (e.ValueKind == JsonValueKind.Object)
         {
-            if (e.ValueKind == JsonValueKind.Object)
+            if (e.TryGetProperty("k", out var k) && k.GetString() == "label")
             {
-                if (e.TryGetProperty("k", out var k) && k.GetString() == "label")
-                {
-                    var id = e.GetProperty("id").GetInt32();
-                    if (!_cfgLabels.ContainsKey(id)) _cfgLabels[id] = _il.DefineLabel();
-                }
-                foreach (var p in e.EnumerateObject()) Walk(p.Value);
+                var id = e.GetProperty("id").GetInt32();
+                if (!_cfgLabels.ContainsKey(id)) _cfgLabels[id] = _il.DefineLabel();
             }
-            else if (e.ValueKind == JsonValueKind.Array)
-                foreach (var x in e.EnumerateArray()) Walk(x);
+            foreach (var p in e.EnumerateObject()) WalkCfgLabels(p.Value);
         }
-        Walk(node);
+        else if (e.ValueKind == JsonValueKind.Array)
+            foreach (var x in e.EnumerateArray()) WalkCfgLabels(x);
     }
 
     void EmitLdcI4(int n)

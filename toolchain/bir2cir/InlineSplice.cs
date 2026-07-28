@@ -316,6 +316,10 @@ static class InlineSplice
         string prefix = "__inls" + n + "$";
         FreshenLabels(pBody);
         PrefixLocals(pBody, prefix);
+        // The same hygiene, for the vocabulary PrefixLocals cannot see: a plan's binding ids are declarations of this
+        // frame too, and they arrive carrying the PRODUCING module's counter. Splicing one body twice into one method
+        // would otherwise declare the same local twice (§2.7).
+        CallEvalLowering.FreshenPlanIds(pBody);
 
         // STEP 4 — route the callee's OWN returns to a result-local + end-label (BEFORE lambda splicing: at this point
         // every `{k:return}` in the body is the origin fn's, not a caller-lambda's). Unit callee -> no result-local.

@@ -185,10 +185,11 @@ enum class M2DefaultChainE(val a: Int = M2DefaultEnumSource.bump(), val b: Int =
     ONLY
 }
 
-// #235: the two call sites that are not expressions — a constructor DELEGATION and an ENUM ENTRY. Their arguments ride a
-// declaration rather than an expression, so their single-evaluation temps are declared by the first argument; a value a
-// filled default reads must still run exactly once. The counter is a per-test instance except for the enum, whose entries
-// are initialized ONCE per process by the static initializer — so those two read a companion counter.
+// The two call sites that are not expressions — a constructor DELEGATION and an ENUM ENTRY. A delegation's arguments
+// ride the constructor DECLARATION, so its evaluation plan lowers to `preStmts` emitted ahead of the delegating call;
+// an enum entry's `NAME(args)` is an ordinary expression (a static field initializer). Either way a value a filled
+// default reads runs exactly once. The counter is a per-test instance except for the enum, whose entries are
+// initialized ONCE per process by the static initializer — so those two read a companion counter.
 class M2DelOnce(val p: Int, val q: Int = p * 10) {
     constructor(unused: String) : this(M2DelCounter.next())
 }
@@ -226,6 +227,26 @@ class M2DelOrder(val x: Int, val a: Int = M2DelOrderLog.d(), val b: Int = a * 10
 }
 open class M2DelOrderBase(val x: Int, val a: Int = M2DelOrderLog.d(), val b: Int = a * 10)
 class M2DelOrderSub : M2DelOrderBase(M2DelOrderLog.p())
+
+// A fill whose SLOT precedes a slot the call SUPPLIES. Kotlin evaluates every supplied value before ANY of the
+// callee's defaults, whatever slots they sit in — so the positional argument array is not an evaluation plan here,
+// and the call needs one even though nothing reads a second time. `M2SlotOrderChain` is the sibling where a later
+// default also reads the fill: it was already correct, because sharing forced a binding that pinned the order, which
+// is exactly the accident that hid this one.
+object M2SlotOrderLog {
+    var s = ""
+    fun d(): Int { s += "d"; return 3 }
+    fun p(): Int { s += "p"; return 7 }
+}
+fun m2SlotOrder(a: Int = M2SlotOrderLog.d(), c: Int): Int = a * 1000 + c
+fun m2SlotOrderChain(a: Int = M2SlotOrderLog.d(), b: Int = a * 10, c: Int): Int = a * 1000 + b + c
+class M2SlotOrderCtor(val a: Int = M2SlotOrderLog.d(), val c: Int)
+
+// A GENERIC base whose constructor defaults chain, delegated from a class with a DIFFERENT type-parameter frame. The
+// bound default's declared type is written in `M2GenBase`'s frame (`T`), which names a different slot in
+// `M2GenDerived`'s (`X`, `Y`) — a local declared with it is either wrongly typed or unloadable.
+open class M2GenBase<T>(val a: T, val b: T = a, val c: T = b)
+class M2GenDerived<X, Y>(y: Y) : M2GenBase<Y>(y) { fun probe(): String = "$a/$b/$c" }
 
 // #235: EVALUATION ORDER around a value bound for single evaluation. Binding one value moves its evaluation ahead of
 // the call, so every side-effecting value to its LEFT must move with it — Kotlin evaluates the receiver, then each
@@ -598,6 +619,33 @@ class DefaultArgumentTests {
         val ob = M2DelOrderSub()
         assertEquals(2, ob.x); assertEquals(3, ob.a); assertEquals(30, ob.b)
         assertEquals("pd", M2DelOrderLog.s)                             // pd   `: super(p())` before the base's default
+    }
+
+    // A fill sitting in a slot BEFORE the slot the call supplies: the emitted argument array's order is NOT Kotlin's,
+    // so the call needs an evaluation plan even though no value is read twice.
+    @TestAttribute
+    fun defargsFillBeforeASuppliedSlot() {
+        M2SlotOrderLog.s = ""
+        assertEquals(3007, m2SlotOrder(c = M2SlotOrderLog.p()))         // a = 3, c = 7
+        assertEquals("pd", M2SlotOrderLog.s)                            // pd   the argument, then the default (was "dp")
+
+        // The sibling where a later default also reads the fill — correct before, and it must stay correct.
+        M2SlotOrderLog.s = ""
+        assertEquals(3037, m2SlotOrderChain(c = M2SlotOrderLog.p()))    // a = 3, b = 30, c = 7
+        assertEquals("pd", M2SlotOrderLog.s)                            // pd
+
+        M2SlotOrderLog.s = ""
+        val k = M2SlotOrderCtor(c = M2SlotOrderLog.p())
+        assertEquals(3, k.a); assertEquals(7, k.c)
+        assertEquals("pd", M2SlotOrderLog.s)                            // pd   a constructor is the same call site
+    }
+
+    // A generic base's chained constructor defaults, bound in a derived class whose type-parameter frame differs. The
+    // bound local must be typed in the frame it LIVES in; the base's `T` names a different slot there.
+    @TestAttribute
+    fun defargsGenericBaseDelegationChain() {
+        assertEquals("7/7/7", M2GenDerived<String, Int>(7).probe())     // 7/7/7  (was InvalidProgramException)
+        assertEquals("k/k/k", M2GenDerived<Int, String>("k").probe())   // k/k/k
     }
 
     // A default's `this` read binds per RECEIVER KIND. Each assertion is tagged with what it was before the

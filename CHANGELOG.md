@@ -54,8 +54,15 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   - a call to a facadegen-injected TOP-LEVEL function bound none of its values, the same fault as the `copy`
     receiver and unfired only because the splice happened to hoist values itself;
   - a byref-like argument at a call with defaults keeps Kotlin's order instead of being jumped by the fill's
-    temporary — the test that asserted the reverse (`"dT"`) while its own comment said Kotlin required `"Td"` is
-    inverted, because the compromise it recorded was a property of the old shape;
+    temporary (the coverage arrives here inverted: the fixture as written on the branch it comes from asserted the
+    reverse, `"dT"`, while its own comment stated Kotlin required `"Td"` — the compromise it recorded was a property
+    of the old shape, not of the CLR);
+  - a filled default whose SLOT precedes a slot the call supplies no longer runs first: `f(a: Int = mk(), c: Int)`
+    called `f(c = arg())` ran `mk()` before `arg()`, because the positional argument array's order is not Kotlin's
+    when an omitted default sits to the left of a supplied one;
+  - a generic base class's chained constructor defaults no longer produce an `InvalidProgramException` in a derived
+    class with a different type-parameter frame — a delegation's owner instantiation is read from the call's type
+    arguments, since a `: super(…)` is a statement whose own type is `Unit`;
   - the synthetic data-class `copy` is selected by its generated SIGNATURE (parameter names AND types mirroring the
     primary constructor), not by the name alone, so a user-declared `copy` overload cannot be mistaken for it.
   The negative lane gains the shape where the plan genuinely has no CLR form — a byref-like argument at a call whose

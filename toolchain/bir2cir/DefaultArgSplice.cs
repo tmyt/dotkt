@@ -319,6 +319,11 @@ static class DefaultArgSplice
             if (envK == "defaultCarrier")
                 parsed = UnwrapCarrier(env, hoist, refs, localOwner);
         }
+        // The carrier is the PRODUCER's BIR, so any evaluation plan inside it carries the producer's binding ids. It is
+        // about to be substituted with the CONSUMER's own `bindRef`s and dropped into the consumer's frame, possibly
+        // once per omitting call site — re-mint the ids so neither copy can collide with the other or with a
+        // consumer-side id (§2.7).
+        if (parsed != null) CallEvalLowering.FreshenPlanIds(parsed);
         return parsed;
     }
 

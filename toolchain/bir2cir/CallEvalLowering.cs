@@ -113,12 +113,16 @@ static class CallEvalLowering
             stable[i] = (b["stable"] as JsonValue)?.TryGetValue<bool>(out var sv) == true && sv;
             roles[i] = Str(b["role"]);
         }
-        // READER COUNT, derived rather than stored: a plan records no `consumers` list, because a second
-        // representation of "who reads this" is exactly the disease the plan cures — every splice would have to
-        // maintain it. Counting a `bindRef` scan here is always right by construction.
+        // READER COUNT and READER POSITION, both DERIVED rather than stored: a plan records no `consumers` list,
+        // because a second representation of "who reads this" is exactly the disease the plan cures — every splice
+        // would have to maintain it. One ordered `bindRef` scan of the emitted node answers both, and is right by
+        // construction. `pos` is where a binding's FIRST read sits in the node's own evaluation order (receiver, then
+        // the argument slots left to right, recursively) — which is where an INLINED binding will be evaluated.
         var reads = new Dictionary<string, int>(StringComparer.Ordinal);
+        var pos = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var id in ids) reads[id] = 0;
-        foreach (var r in readers) CountReads(r, reads);
+        var rank = 0;
+        foreach (var r in readers) ScanReads(r, reads, pos, ref rank);
         for (var i = 0; i < n; i++) CountReads((bindings[i] as JsonObject)["expr"], reads);
 
         var drop = new bool[n];
@@ -130,28 +134,40 @@ static class CallEvalLowering
             // Nothing reads it and evaluating it cannot be observed — the emitted call shape simply has no slot for
             // this value (a companion object's dispatch receiver, say). Drop it rather than mint a dead local.
             drop[i] = count == 0 && BindingStability.IsTriviallyPure(expr);
-            // An ADDRESS binding is a placement marker, not a value: no storage can hold a managed pointer, so it is
-            // always re-inlined at its slot. A STABLE value is free to re-read, so it inlines at every reader.
-            asVar[i] = !drop[i] && kinds[i] == "value" && !stable[i] && count != 1;
+            // A STABLE value is free to re-read, so it inlines at every reader. Everything else needs a local unless
+            // exactly one reader puts it back where it already was.
+            asVar[i] = !drop[i] && !stable[i] && count != 1;
         }
-        // ORDER. A materialised binding is evaluated ahead of the call, so every earlier value must be materialised
-        // too or it would slide behind it — the `d` before `T` / `dH` before `Hd` class of reorder. A STABLE value is
-        // exempt by definition (re-reading it cannot observe a different value). An ADDRESS cannot be materialised at
-        // all, so a non-stable one to the left of a materialised binding has no representation: say so.
-        var last = Array.FindLastIndex(asVar, x => x);
-        for (var i = 0; i < last; i++)
+        // ORDER, rule 1 — INVERSION. An inlined binding is evaluated at its reader's position, and a plan's order is
+        // NOT the node's: an omitted default occupies a slot the callee declared, while Kotlin evaluates it after every
+        // value the call SUPPLIES, whatever slot that value sits in. So `f(a: Int = d(), y: Int)` called `f(y = p())`
+        // plans [y, a] but emits args [a, y]. Where a later binding reads an EARLIER position, the earlier binding must
+        // be materialised — moving it ahead of the call, which is ahead of everything.
+        for (var i = 0; i < n; i++)
         {
             if (stable[i] || drop[i] || asVar[i]) continue;
-            if (kinds[i] == "address")
-                throw new InvalidOperationException(
-                    $"bir2cir: in {site}, the {roles[i] ?? "argument"} passes an address that cannot be bound, while a " +
-                    "later value of the same call must be evaluated ahead of the call. There is no CLR form that keeps " +
-                    "both the address and Kotlin's evaluation order; pass the argument explicitly, or take the address " +
-                    "of a plain local.");
-            asVar[i] = true;
+            for (var k = i + 1; k < n; k++)
+                if (!stable[k] && !drop[k] && ReadPos(pos, ids[k]) < ReadPos(pos, ids[i])) { asVar[i] = true; break; }
+        }
+        // ORDER, rule 2 — PREFIX. A materialised binding is evaluated ahead of the call, so every earlier value must be
+        // materialised too or it would slide behind it (the `d` before `T` / `dH` before `Hd` class of reorder). A
+        // STABLE value is exempt by definition: re-reading it cannot observe a different value.
+        var last = Array.FindLastIndex(asVar, x => x);
+        for (var i = 0; i < last; i++)
+            if (!stable[i] && !drop[i]) asVar[i] = true;
+        // An ADDRESS is not a value: no storage holds a managed pointer, so the binding itself never becomes a local.
+        // What CAN be pinned is the value the address is computed FROM — `byref(mk().field)` binds `mk()`, and the
+        // lvalue `<local>.field` then stays inline at its slot, taken from a value already evaluated in plan order.
+        // A plain `byref(x)` needs nothing: reading an lvalue has no side effect and cannot be observed out of order.
+        var pinned = new JsonArray();
+        for (var i = 0; i < n; i++)
+        {
+            if (kinds[i] != "address") continue;
+            if (asVar[i]) PinAddressOperands((bindings[i] as JsonObject)["expr"], pinned);
+            asVar[i] = false;
         }
 
-        var stmts = new JsonArray();
+        var stmts = pinned;
         var repl = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
         for (var i = 0; i < n; i++)
         {
@@ -162,17 +178,87 @@ static class CallEvalLowering
             if (drop[i]) { repl[ids[i]] = null; continue; }
             if (!asVar[i]) { repl[ids[i]] = expr; continue; }
             var type = VarType(b);
-            var decl = new JsonObject { ["k"] = "var", ["name"] = ids[i], ["type"] = type?.DeepClone(), ["init"] = expr };
+            // A FRESH local name, not the binding id. A binding id is unique in its PRODUCER's counter, and a plan can
+            // arrive here having been cloned out of another module — a spliced `[KotlinInline]` body, a materialised
+            // `@KotlinDefault` carrier — so two plans in one frame can carry the same id. The name is minted here, in
+            // the frame that will hold it, which is the only counter that can promise uniqueness there.
+            var name = FreshLocal();
+            var decl = new JsonObject { ["k"] = "var", ["name"] = name, ["type"] = type?.DeepClone(), ["init"] = expr };
             // The source ROLE travels with the local so a storage refusal names "the receiver of `copy`" rather than
-            // the minted id (FieldLegality.SuspendMessage).
+            // the minted name (FieldLegality.SuspendMessage).
             if (roles[i] != null) decl["role"] = roles[i];
             stmts.Add(decl);
-            var read = new JsonObject { ["k"] = "local", ["name"] = ids[i] };
+            var read = new JsonObject { ["k"] = "local", ["name"] = name };
             if (type != null) read["sty"] = type.DeepClone();
             repl[ids[i]] = read;
         }
         return (stmts, repl);
     }
+
+    /// Re-mint the binding ids of every plan in `subtree`, and the reads that resolve to them.
+    ///
+    /// A binding id is unique only in its PRODUCER's counter. Two paths clone a plan out of another module into a
+    /// consumer document — an inline `[KotlinInline]` body spliced at a call site, and a `@KotlinDefault` carrier
+    /// materialised into a reserved binding — and both can land two copies of one plan, or two plans from different
+    /// producers, in a single frame. Worse, the carrier path SUBSTITUTES the consumer's own `bindRef`s into the
+    /// carrier's subtree, so a coincidental id would make the inner plan's lowering swallow an outer read. Freshening
+    /// at the clone is what keeps the ids a per-document fact, so nothing downstream has to reason about provenance.
+    internal static void FreshenPlanIds(JsonNode subtree)
+    {
+        if (subtree is JsonObject o)
+        {
+            if (Str(o["k"]) == "callEval" && o["bindings"] is JsonArray bs) Rename(o, bs);
+            else if (o["delegationBindings"] is JsonArray ds) Rename(o, ds);
+            foreach (var kv in o.ToList()) if (kv.Value != null) FreshenPlanIds(kv.Value);
+        }
+        else if (subtree is JsonArray a) foreach (var it in a.ToList()) if (it != null) FreshenPlanIds(it);
+
+        static void Rename(JsonObject host, JsonArray bindings)
+        {
+            var map = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var b in bindings)
+                if (b is JsonObject bo && Str(bo["id"]) is string old)
+                { var fresh = "cir$b" + System.Threading.Interlocked.Increment(ref _counter); map[old] = fresh; bo["id"] = fresh; }
+            if (map.Count > 0) RewriteReads(host, map);
+        }
+
+        // A NESTED plan's ids come from the same producer counter, so they are absent from this map and its reads pass
+        // through untouched — one whole-subtree walk per plan is therefore correct, not merely convenient.
+        static void RewriteReads(JsonNode node, Dictionary<string, string> map)
+        {
+            if (node is JsonObject o)
+            {
+                if (Str(o["k"]) == "bindRef" && Str(o["id"]) is string id && map.TryGetValue(id, out var fresh)) o["id"] = fresh;
+                foreach (var kv in o) if (kv.Value != null) RewriteReads(kv.Value, map);
+            }
+            else if (node is JsonArray a) foreach (var it in a) if (it != null) RewriteReads(it, map);
+        }
+    }
+
+    static int _counter;
+
+    /// A frame-unique local name in bir2cir's own `cir$b…` namespace (spec §2.7). Minted from one process-global
+    /// counter, so it is unique across every plan a compilation lowers — which is stronger than needed and cheaper
+    /// than tracking frames.
+    static string FreshLocal() => "cir$b" + System.Threading.Interlocked.Increment(ref _counter);
+
+    /// Move the impure OPERANDS an addressable lvalue is computed from into locals, so the address stays at its own
+    /// slot while what it is taken from is evaluated in plan order. kotc emits an address as `{k:local}` (nothing to
+    /// pin) or `{k:field,recv:<expr>}` (the receiver is the operand); the walk is recursive so a field CHAIN pins its
+    /// outermost impure link only, which is all that carries a side effect.
+    static void PinAddressOperands(JsonNode address, JsonArray into)
+    {
+        if (address is not JsonObject o || o["recv"] is not JsonNode recv) return;
+        if (BindingStability.IsTriviallyPure(recv)) { PinAddressOperands(recv, into); return; }
+        var name = FreshLocal();
+        var type = (recv as JsonObject)?["sty"] ?? (recv as JsonObject)?["type"];
+        into.Add(new JsonObject { ["k"] = "var", ["name"] = name, ["type"] = type?.DeepClone(), ["init"] = recv.DeepClone() });
+        var read = new JsonObject { ["k"] = "local", ["name"] = name };
+        if (type != null) read["sty"] = type.DeepClone();
+        o["recv"] = read;
+    }
+
+    static int ReadPos(Dictionary<string, int> pos, string id) => pos.TryGetValue(id, out var p) ? p : int.MaxValue;
 
     /// The local's declared type. The binding's own `type` is the caller-instantiated semantic type kotc resolved and
     /// is used whenever it is closed; a type that still names a positional type VARIABLE would resolve in the wrong
@@ -182,9 +268,11 @@ static class CallEvalLowering
     {
         var declared = binding["type"];
         if (declared != null && TypeJson.Read(declared) is TypeNode d && !IsOpen(d)) return declared;
+        // The declared type still names a positional type VARIABLE. The bound VALUE's own static type was stamped by
+        // kotc in the CALLER's frame, so it resolves where the local lives even when it is itself open — which the
+        // declared type, written in the CALLEE's frame, may not. Prefer it whenever there is one.
         var own = (binding["expr"] as JsonObject)?["sty"] ?? (binding["expr"] as JsonObject)?["type"];
-        if (own != null && TypeJson.Read(own) is TypeNode o && !IsOpen(o)) return own;
-        return declared ?? own;
+        return own ?? declared;
     }
 
     // A type mentioning a positional type VARIABLE: it names a slot in the DECLARING generic's frame, so it cannot be
@@ -200,6 +288,26 @@ static class CallEvalLowering
         TypeNode.Fn fn => fn.Params.Any(IsOpen) || IsOpen(fn.Ret),
         _ => false,
     };
+
+    /// One ordered walk of a reader root: counts every `bindRef` and records where each id is FIRST read. Operand
+    /// order comes from SuspendLiveness.KeyRank — the single statement of "which operand of a node runs first" this
+    /// toolchain has — so an inlined binding's position here is the position the emitted code will evaluate it at.
+    static void ScanReads(JsonNode node, Dictionary<string, int> counts, Dictionary<string, int> pos, ref int rank)
+    {
+        if (node is JsonObject o)
+        {
+            if (Str(o["k"]) == "bindRef" && Str(o["id"]) is string id && counts.ContainsKey(id))
+            {
+                counts[id]++;
+                if (!pos.ContainsKey(id)) pos[id] = rank;
+            }
+            rank++;
+            foreach (var kv in o.OrderBy(kv => SuspendLiveness.OperandRank(kv.Key)).ToList())
+                if (kv.Value != null) ScanReads(kv.Value, counts, pos, ref rank);
+        }
+        else if (node is JsonArray a)
+            foreach (var it in a) if (it != null) ScanReads(it, counts, pos, ref rank);
+    }
 
     static void CountReads(JsonNode node, Dictionary<string, int> into)
     {
