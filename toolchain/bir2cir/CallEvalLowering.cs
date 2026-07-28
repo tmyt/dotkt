@@ -151,10 +151,22 @@ static class CallEvalLowering
             for (var k = i + 1; k < n; k++)
                 if (!stable[k] && !drop[k] && ReadPos(pos, ids[k]) < ReadPos(pos, ids[i])) { asVar[i] = true; break; }
         }
-        // ORDER, rule 2 — PREFIX. A materialised binding is evaluated ahead of the call, so every earlier value must be
-        // materialised too or it would slide behind it (the `d` before `T` / `dH` before `Hd` class of reorder). A
-        // STABLE value is exempt by definition: re-reading it cannot observe a different value.
-        var last = Array.FindLastIndex(asVar, x => x);
+        // ORDER, rule 2 — PREFIX, over PRE-CALL WORK rather than over materialisation. THE invariant, in one place:
+        //
+        //     the emitted pre-call statement sequence is ordered by plan position, and a binding that emits ANY
+        //     pre-call statement forces every earlier non-stable binding to emit one too.
+        //
+        // A binding that emits a pre-call statement is evaluated ahead of the call; a binding that is inlined is
+        // evaluated at its slot, i.e. during it. So an earlier value left inline would slide behind a later one. This
+        // is stated over pre-call WORK, not over `asVar`, because an ADDRESS binding also emits pre-call statements —
+        // the pins for the values its location is computed from — and treating those as free was how an address pin
+        // came to overtake an earlier inline binding. A STABLE value is exempt by definition: re-reading it cannot
+        // observe a different value. An address needs no forcing of its own: its impure operands are already pinned at
+        // its position, and what is left in the slot is a pure location expression.
+        var work = new bool[n];
+        for (var i = 0; i < n; i++)
+            work[i] = asVar[i] || (kinds[i] == "address" && !drop[i] && LocationHasPinWork((bindings[i] as JsonObject)["expr"]));
+        var last = Array.FindLastIndex(work, x => x);
         for (var i = 0; i < last; i++)
             if (!stable[i] && !drop[i] && kinds[i] != "address") asVar[i] = true;
 
@@ -173,11 +185,32 @@ static class CallEvalLowering
             if (kinds[i] == "address")
             {
                 // An address is a LOCATION, not a value: it must be taken at the call, from operands evaluated HERE.
-                // `byref(mk().f)` pins `mk()`; `byref(a[i()])` pins `i()`; `byref(x)` pins nothing, because reading an
-                // lvalue has no side effect and cannot observe a different location. What is left in the slot is the
-                // pure location expression, so the address itself is free to sit wherever the call needs it.
-                PinLocationOperands(expr, stmts);
-                repl[ids[i]] = expr;
+                // Two shapes, by what the location's ROOT is:
+                //  * an lvalue FORMER (`local`/`field`/`arrayGet`/…) has no side effect of its own, so only the values
+                //    it is computed from move: `byref(mk().f)` pins `mk()`, `byref(a[i()])` pins `i()`, `byref(x)`
+                //    pins nothing. The pure location stays in the slot, where the call takes its address.
+                //  * a CALL returning a byref (`byref(c.refSlot(i()))`) IS the side effect — pinning its operands
+                //    would still leave the invocation running at the slot, once but at the wrong time. The whole
+                //    location is evaluated here into a `ref T` local (`byrefOf`, the same shape `var x by byref(m())`
+                //    already produces), and the slot reads that local's pointer.
+                if (IsLvalueFormer(expr))
+                {
+                    PinLocationOperands(expr, stmts);
+                    repl[ids[i]] = expr;
+                }
+                else
+                {
+                    var refType = (bindings[i] as JsonObject)["type"];
+                    var refName = FreshLocal();
+                    stmts.Add(new JsonObject
+                    {
+                        ["k"] = "var", ["name"] = refName, ["type"] = refType?.DeepClone(),
+                        ["init"] = new JsonObject { ["k"] = "byrefOf", ["inner"] = expr.DeepClone() },
+                    });
+                    var refRead = new JsonObject { ["k"] = "local", ["name"] = refName };
+                    if (refType != null) refRead["sty"] = refType.DeepClone();
+                    repl[ids[i]] = refRead;
+                }
                 continue;
             }
             if (!asVar[i]) { repl[ids[i]] = expr; continue; }
@@ -239,12 +272,39 @@ static class CallEvalLowering
         }
     }
 
+    /// The shared node-local deriver, bound to this toolchain's specialized-array table. One place, so an `arrayGet`
+    /// over a `kotlin.IntArray` answers the same here as it does in the suspend lowering's spill typing.
+    internal static TypeNode StaticTypeOf(JsonNode n) =>
+        NodeType.Of(n, StaticTypeOf, name => BirTypeLowering.PrimArrayElem.TryGetValue(name, out var e) ? e : null);
+
     static int _counter;
 
     /// A frame-unique local name in bir2cir's own `cir$b…` namespace (spec §2.7). Minted from one process-global
     /// counter, so it is unique across every plan a compilation lowers — which is stronger than needed and cheaper
     /// than tracking frames.
     static string FreshLocal() => "cir$b" + System.Threading.Interlocked.Increment(ref _counter);
+
+    /// Is this node an LVALUE FORMER — a shape that DESIGNATES storage without evaluating anything itself? Those are
+    /// the locations whose operands can be pinned while the location stays in the slot. Anything else producing an
+    /// address is a call whose invocation IS the evaluation, and has to move whole (see the address arm above).
+    static bool IsLvalueFormer(JsonNode node) =>
+        node is JsonObject o && Str(o["k"]) is
+            "local" or "this" or "field" or "staticField" or "arrayGet" or "stackGet" or "byrefLoad" or "nullableValue";
+
+    /// Would [PinLocationOperands] emit anything? Asked before the emission loop, because a binding that emits
+    /// pre-call statements participates in the ordering rule.
+    static bool LocationHasPinWork(JsonNode location)
+    {
+        if (!IsLvalueFormer(location)) return true;   // the whole location moves — see the address arm
+        var found = false;
+        WalkOperands(location as JsonObject, child =>
+        {
+            if (BindingStability.IsTriviallyPure(child)) return null;
+            found = true;
+            return null;                              // probe only: never rewrite
+        });
+        return found;
+    }
 
     /// Move every impure VALUE an addressable location is computed from into a local, in the location's own operand
     /// order, leaving a pure location expression behind.
@@ -254,41 +314,47 @@ static class CallEvalLowering
     /// and an index, a member access. The rule is the same for all of them: the NODE is the location and stays, its
     /// operand CHILDREN are values and are pinned when impure. Recursing through the pure ones keeps a chain
     /// (`a.b.c[i()]`) pinning only the links that actually carry a side effect.
-    static void PinLocationOperands(JsonNode location, JsonArray into)
+    static void PinLocationOperands(JsonNode location, JsonArray into) =>
+        WalkOperands(location as JsonObject, child =>
+        {
+            if (BindingStability.IsTriviallyPure(child)) { PinLocationOperands(child, into); return null; }
+            return PinValue(child, into);
+        });
+
+    /// Visit every OPERAND node of `o` in evaluation order, replacing it with whatever `visit` returns (null = keep).
+    /// A type slot (`{t:…}`) and a descriptor are not operands; only a `{k:…}` node is a value.
+    static void WalkOperands(JsonObject o, Func<JsonObject, JsonNode> visit)
     {
-        if (location is not JsonObject o) return;
+        if (o == null) return;
         foreach (var key in o.Select(kv => kv.Key).OrderBy(SuspendLiveness.OperandRank).ToList())
         {
             if (key == "k") continue;
             switch (o[key])
             {
-                case JsonObject child when IsNode(child):
-                    if (BindingStability.IsTriviallyPure(child)) PinLocationOperands(child, into);
-                    else o[key] = PinValue(child, into);
+                case JsonObject child when Str(child["k"]) != null:
+                    if (visit(child) is JsonNode rep) o[key] = rep;
                     break;
                 case JsonArray arr:
                     for (var i = 0; i < arr.Count; i++)
-                        if (arr[i] is JsonObject e && IsNode(e))
-                        {
-                            if (BindingStability.IsTriviallyPure(e)) PinLocationOperands(e, into);
-                            else arr[i] = PinValue(e, into);
-                        }
+                        if (arr[i] is JsonObject e && Str(e["k"]) != null && visit(e) is JsonNode r) arr[i] = r;
                     break;
             }
         }
+    }
 
-        // A type slot (`{t:…}`) and a descriptor are not operands; only a `{k:…}` node is a value this can pin.
-        static bool IsNode(JsonObject n) => Str(n["k"]) != null;
-
-        static JsonNode PinValue(JsonObject node, JsonArray into)
-        {
-            var name = FreshLocal();
-            var type = node["sty"] ?? node["type"];
-            into.Add(new JsonObject { ["k"] = "var", ["name"] = name, ["type"] = type?.DeepClone(), ["init"] = node.DeepClone() });
-            var read = new JsonObject { ["k"] = "local", ["name"] = name };
-            if (type != null) read["sty"] = type.DeepClone();
-            return read;
-        }
+    /// Move one impure value into a fresh local and return the read that replaces it. The local is ALWAYS typed: an
+    /// untyped local is not a lesser local, it is unverifiable IL (an `arrayGet` operand, for instance, carries
+    /// neither `sty` nor `type` and is typed from its `elem`). No `kotlin.Any` fallback — that would box a value type
+    /// and hide a type the CLR would refuse — so a node this cannot type is a hole in the shared deriver, and says so.
+    static JsonNode PinValue(JsonObject node, JsonArray into)
+    {
+        var type = StaticTypeOf(node)
+            ?? throw new InvalidOperationException(
+                $"bir2cir: cannot type the `{Str(node["k"])}` operand a by-reference argument's location is computed " +
+                "from, so the local that pins it would be untyped. Its node kind needs an arm in bir-common/NodeType.cs.");
+        var name = FreshLocal();
+        into.Add(new JsonObject { ["k"] = "var", ["name"] = name, ["type"] = TypeJson.Write(type), ["init"] = node.DeepClone() });
+        return new JsonObject { ["k"] = "local", ["name"] = name, ["sty"] = TypeJson.Write(type) };
     }
 
     static int ReadPos(Dictionary<string, int> pos, string id) => pos.TryGetValue(id, out var p) ? p : int.MaxValue;

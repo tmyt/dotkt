@@ -351,7 +351,11 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	// frame, this closes the callee's type parameters against the call site's instantiation. Consulted by [birType],
 	// which every emitted type passes through; null everywhere else. Installed and restored around the one `expr(def)`
 	// in [filledArgs] that renders a default reading the callee's own scope.
-	internal var defaultTypeSubst: org.jetbrains.kotlin.ir.types.IrTypeSubstitutor? = null
+	//   A FUNCTION rather than a substitutor, because defaults NEST: a default may itself be a call that fills a
+	// default of its own, and the inner frame closes against the OUTER's, which closes against the call site. Each
+	// level COMPOSES (inner applied first, then whatever was already installed), so at any depth every open type
+	// variable ends up closed against the outermost call site rather than against its immediate parent.
+	internal var defaultTypeSubst: ((IrType) -> IrType)? = null
 	// Function-local classes lifted to top-level synthetic types: the outer locals they capture (prepended to the
 	// ctor at construction sites). Keyed by the IrClass.
 	internal val localClassCaptures = java.util.IdentityHashMap<IrClass, List<IrValueDeclaration>>()

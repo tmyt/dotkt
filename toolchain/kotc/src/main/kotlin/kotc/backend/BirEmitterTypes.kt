@@ -93,7 +93,7 @@ internal fun BirEmitter.birType(t0: IrType): TypeNode {
 	// caller's frame does not have. Closing them against THIS call site's instantiation is the type-level half of the
 	// same substitution, and it belongs at this one chokepoint: every rendered type reaches the emitted JSON through
 	// here, so no reader of a spliced default has to remember to ask. Identity outside a default (the field is null).
-	val t = defaultTypeSubst?.substitute(t0) ?: t0
+	val t = defaultTypeSubst?.invoke(t0) ?: t0
 	// UNIFORM nullability: any `T?` -> `{t:nullable,of:<non-null core>}`, for VALUE, REFERENCE, and type-variable
 	// types alike (spec §1). kotc stays CLR-free — it does NOT distinguish struct from ref; nullability rides the
 	// type node only, and the decl-level `nullable`/`retNullable` flags are RETIRED. bir2cir DERIVES the CLR form

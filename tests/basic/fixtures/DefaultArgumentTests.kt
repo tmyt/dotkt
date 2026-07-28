@@ -268,6 +268,14 @@ class M2FrameControls<T>(val v: T) {
     fun konst(a: Int = 5): String = "$v$a"
     fun prior(q: Int, a: Int = q * 2): String = "$v$q$a"
 }
+// ...and the same rule at any NESTING DEPTH. A default may itself be a call that fills a default of its own, and each
+// frame closes against the one it is spliced into, not against the call site directly — so the substitutions have to
+// COMPOSE. Closing `M2NestB.X` against `M2NestC.T` and stopping leaves `M2NestC.T` open in a caller that has no such
+// slot, which is the same InvalidProgramException one level out.
+class M2NestB<X>(val x: X) { fun get(a: X = x): X = a }
+class M2NestC<T>(val b: M2NestB<T>) { fun one(a: T = b.get()): T = a }
+class M2NestD<U>(val c: M2NestC<U>) { fun two(a: U = c.one()): U = a }
+class M2NestE<V>(val d: M2NestD<V>) { fun three(a: V = d.two()): V = a }
 
 // #235: EVALUATION ORDER around a value bound for single evaluation. Binding one value moves its evaluation ahead of
 // the call, so every side-effecting value to its LEFT must move with it — Kotlin evaluates the receiver, then each
@@ -684,6 +692,14 @@ class DefaultArgumentTests {
         assertEquals("u7", M2FrameOwnAndOwner(7).two("u"))              // the callee's own type param beside the owner's
         assertEquals("75", M2FrameControls(7).konst())                  // CONTROL: a const default
         assertEquals("736", M2FrameControls(7).prior(3))                // CONTROL: a prior-param default
+
+        // ...at nesting depth 1, 2 and 3: a default filling a default filling a default. Each frame closes against
+        // the one it is spliced into, so the substitutions compose all the way out to the call site.
+        assertEquals(7, M2NestC(M2NestB(7)).one())                      // depth 1
+        assertEquals("s", M2NestC(M2NestB("s")).one())
+        assertEquals(7, M2NestD(M2NestC(M2NestB(7))).two())             // depth 2
+        assertEquals(7, M2NestE(M2NestD(M2NestC(M2NestB(7)))).three())  // depth 3
+        assertEquals("z", M2NestE(M2NestD(M2NestC(M2NestB("z")))).three())
     }
 
     // A default's `this` read binds per RECEIVER KIND. Each assertion is tagged with what it was before the

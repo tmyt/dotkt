@@ -73,7 +73,16 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
     parameter's own type;
   - a by-reference argument at a call with defaults keeps its position: an address is not a value, so the impure
     values its location is computed from (`byref(mk().f)`, `byref(a[i()])`) are evaluated at the argument's own
-    position and the address is taken off those.
+    position and the address is taken off those; when the location is itself a ref-RETURNING call
+    (`byref(c.Slot(i()))`) the whole location moves into a `ref T` local there, since the invocation IS the
+    evaluation. A local holding a managed pointer now answers `EmitAddr` with its value rather than its own address,
+    which also fixes passing a `var x by byref(m())` delegate local on to another `ref` parameter;
+  - nested defaults compose their type frames instead of replacing them, so a default filling a default filling a
+    default closes every open type variable against the OUTERMOST call site, at any depth;
+  - a local pinned out of a by-reference argument's location is always typed. `bir-common/NodeType.cs` is the one
+    node-local "what type does this expression produce" derivation, shared with the suspend lowering's spill typing;
+    a `kotlin.Any` fallback would box a value type and hide a type the CLR refuses, so an underivable node is
+    reported as a hole in the deriver.
   The negative lane gains the shape where the plan genuinely has no CLR form — a byref-like argument at a call whose
   LATER value suspends — and its refusal names the value's source role rather than the minted binding id.
 - **bir2cir (area:bir2cir): a suspend function no longer promotes EVERY local to a state-machine field — storage

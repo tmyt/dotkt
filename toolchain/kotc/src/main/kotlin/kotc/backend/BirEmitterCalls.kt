@@ -334,8 +334,18 @@ internal fun BirEmitter.filledArgs(
 				// it passes on — is written in the CALLEE's frame. A positional type variable there names a slot the
 				// caller's frame does not have: `class G<T>(val v: T) { fun one(a: T = v) }` spliced into a
 				// non-generic caller left `G`'s `!0` as the owner of the `v` read (InvalidProgramException at load).
+				//   COMPOSED, never replaced: a default may itself be a call filling a default of its own, and that
+				// inner frame closes against THIS one, which closes against the call site. Applying only the inner
+				// substitution would leave this frame's variables open — `class H<X>(val x: X) { fun get(a: X = x) }`
+				// read from `class O<T>(val h: H<T>) { fun outer(a: T = h.get()) }` closes `H.X` to `O.T` and stops,
+				// leaving `O.T` in a caller that has no such slot. Inner first, then outer, to any depth.
 				val savedSubst = defaultTypeSubst
-				defaultTypeSubst = callSiteSubstitutor(call, callee)
+				val here = callSiteSubstitutor(call, callee)
+				defaultTypeSubst = when {
+					here == null -> savedSubst
+					savedSubst == null -> { t: IrType -> here.substitute(t) }
+					else -> { t: IrType -> savedSubst(here.substitute(t)) }
+				}
 				try { expr(def) }
 				finally {
 					defaultTypeSubst = savedSubst

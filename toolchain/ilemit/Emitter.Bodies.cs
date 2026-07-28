@@ -616,8 +616,13 @@ sealed partial class Emitter
             case "local":
             {
                 var name = e.GetProperty("name").GetString();
-                if (_locals.TryGetValue(name, out var l)) { _il.Emit(OpCodes.Ldloca, l); return; }
-                if (_args.TryGetValue(name, out var a)) { _il.Emit(OpCodes.Ldarga, a); return; }
+                // A slot whose declared type is ALREADY a managed pointer (`ref T`) HOLDS the address — a `var x by
+                // byref(m())` delegate local, or the local a call-evaluation plan pins a ref-returning location into.
+                // Its address is its VALUE; `Ldloca` would hand out a `ref ref T` the callee cannot use.
+                if (_locals.TryGetValue(name, out var l))
+                { _il.Emit(l.LocalType.IsByRef ? OpCodes.Ldloc : OpCodes.Ldloca, l); return; }
+                if (_args.TryGetValue(name, out var a))
+                { _il.Emit(_argTypes[name].IsByRef ? OpCodes.Ldarg : OpCodes.Ldarga, a); return; }
                 break;
             }
             case "this":

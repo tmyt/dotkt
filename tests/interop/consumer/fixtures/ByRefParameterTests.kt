@@ -44,6 +44,22 @@ private fun brOrderCallP(): Int = brOrderTakeP(brOrderP(), byref(brOrderMk().n))
 // "id" — the impure operand is an INDEX, not a receiver. A walk that only knew about `recv` pinned nothing here and
 // left `idx()` to run at the slot, i.e. after the fill's local.
 private fun brOrderCallIndexed(arr: IntArray): Int = brOrderTake(byref(arr[brOrderIdx()]))
+// "pmd" — the fill is NOT shared by another default, so it needs no local of its own; the only reason anything moves
+// is ORDER. Its slot sits ahead of both supplied ones while Kotlin evaluates it last, and the address contributes a
+// pre-call pin. That makes the ordering rule one about pre-call WORK rather than about materialisation: a binding that
+// emits any pre-call statement forces every earlier non-stable binding to emit one too, or the earlier value is left
+// inline in the call and runs after it.
+private fun brOrderTakeUnshared(a: Int = brOrderD(), p: Int, r: ClrRef<Int>): Int = p + a
+private fun brOrderCallUnshared(): Int =
+    brOrderTakeUnshared(p = brOrderP(), r = byref(brOrderMk().n))
+// The pinned operand is an `arrayGet`, which carries neither `sty` nor `type` at the kotc boundary — it is typed from
+// its `elem`. An untyped pin is not a lesser local, it is unverifiable IL.
+private class BrOrderCell(var n: Int)
+private fun brOrderCells(): Array<BrOrderCell> { brOrderLog += "c"; return arrayOf(BrOrderCell(1)) }
+private fun brOrderCallElem(): Int = brOrderTake(byref(brOrderCells()[0].n))
+// "id" — the location's ROOT is a ref-RETURNING call, so pinning its operands would still leave the invocation at the
+// slot: once, but after the fill's local. The whole location is evaluated at its own position into a `ref Int` local.
+private fun brOrderCallRefReturn(c: Calc): Int = brOrderTake(byref(c.Slot(brOrderIdx())))
 
 class ByRefParameterTests {
     @TestAttribute

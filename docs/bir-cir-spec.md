@@ -379,12 +379,17 @@ that can add a reader has finished — and is the ONLY consumer of the vocabular
   at every reader instead;
 - a binding NOTHING reads is still evaluated as a `var` — Kotlin evaluates every value a call supplies — unless
   evaluating it is unobservable, in which case it is dropped;
-- **order is never traded**, and every binding is handled at its own position in ONE ordered stream. An `address`
-  binding never becomes a `var` — no storage holds a managed pointer — so what is emitted at its position instead are
-  the impure VALUES its location is computed from, in the location's own operand order, leaving a pure location
-  expression in the slot: `byref(mk().f)` pins `mk()`, `byref(a[i()])` pins `i()`, `byref(x)` pins nothing. The rule
-  is shape-agnostic because a location is whatever the lvalue happens to be — the NODE is the location and stays, its
-  operand CHILDREN are values;
+- **order is never traded.** The invariant, stated once: *the emitted pre-call statement sequence is ordered by plan
+  position, and a binding that emits ANY pre-call statement forces every earlier non-stable binding to emit one too.*
+  Every binding is handled at its own position in ONE stream, so this holds whatever mix of kinds a plan carries — it
+  is about pre-call WORK, not about which bindings happen to become `var`s;
+- an `address` binding never becomes a `var` — no storage holds a managed pointer — and splits by what its location's
+  ROOT is. An lvalue FORMER (`local`/`field`/`arrayGet`/…) designates storage without evaluating anything itself, so
+  only the impure VALUES it is computed from move, in the location's own operand order, leaving a pure location in the
+  slot: `byref(mk().f)` pins `mk()`, `byref(a[i()])` pins `i()`, `byref(x)` pins nothing. A CALL returning a byref IS
+  the evaluation, so the whole location moves into a `ref T` local (`byrefOf`) at the binding's position and the slot
+  reads that local's pointer. Every pinned local is TYPED — an untyped local is unverifiable IL, so a node the shared
+  deriver (`bir-common/NodeType.cs`) cannot type is a hole in the deriver and says so, never a `kotlin.Any` fallback;
 - a delegation's plan becomes the constructor's `preStmts`, which ilemit emits ahead of the `this`/`base` call.
 
 It decides NOTHING about storage. A `var` here is a request for a scoped local; whether a coroutine state machine may
