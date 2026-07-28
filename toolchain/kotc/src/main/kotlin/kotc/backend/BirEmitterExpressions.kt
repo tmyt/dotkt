@@ -165,7 +165,17 @@ private fun BirEmitter.hoistCallValuesReadByDefaults(node: IrExpression): List<T
 		// temp would be dead. An lvalue read is side-effect-free anyway, so leaving it in place reorders nothing.
 		if (birType(p.type) is TypeNode.ByRef || isClrRefArgument(p)) continue
 		if (evalOnceSubst.containsKey(value) || isStableValue(value)) continue
-		val tv = if (i == recvIdx) "__recv${scopeCounter++}" else "__arg${scopeCounter++}"
+		// `dotkt$` NAMESPACE, not `__recv`/`__arg`. These call-site temps are minted from `scopeCounter` while a body
+		// is being emitted, and the emitted FRAME may already hold a name minted from the OTHER counter
+		// (`BirEmitter.freshFrameName` allocates a lifted lambda's receiver parameter as `__recv<inlCounter>` before
+		// this body runs). Two counters over one prefix can produce one name: ilemit registers a local before emitting
+		// its initializer and resolves locals ahead of arguments, so the initializer read its own zero-initialized
+		// local instead of the receiver — `{ normalize(this).pick() }` on `Box(7)` yielded 99.
+		// Disjointness here is by CONSTRUCTION rather than by a check: `dotkt$…` and `__…` cannot be equal for any
+		// counter values, so neither site has to know the other exists. It is the same namespace ordinary locals are
+		// already renamed into (`dotkt$localN`), and `$` is not writable in a plain Kotlin identifier, so it also
+		// cannot alias a name the USER chose.
+		val tv = if (i == recvIdx) "dotkt\$recv${scopeCounter++}" else "dotkt\$arg${scopeCounter++}"
 		out.add(Triple(i, value, """{"k":"var","name":${str(tv)},"type":${birType(value.type).toJson()},"init":${expr(value)}}"""))
 		evalOnceSubst[value] = """{"k":"local","name":${str(tv)}}"""
 	}
@@ -188,7 +198,9 @@ internal fun BirEmitter.bindFilledDefaultOnce(
 	if (birType(param.type) is TypeNode.ByRef)
 		return unsupported(call, "omitting a by-reference default argument that another default reads",
 			"the default value of parameter '${param.name.asString()}' cannot be copied into a temporary; pass it explicitly")
-	val tv = "__arg${scopeCounter++}"
+	// Same `dotkt$` namespace as the pre-pass temps above (see the note there): minted from `scopeCounter` into a
+	// frame that may already hold an `inlCounter`-minted name.
+	val tv = "dotkt\$arg${scopeCounter++}"
 	temps.add(paramIndex to """{"k":"var","name":${str(tv)},"type":${birType(param.type).toJson()},"init":$emitted}""")
 	return """{"k":"local","name":${str(tv)}}"""
 }

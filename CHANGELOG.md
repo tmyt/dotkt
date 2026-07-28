@@ -18,6 +18,59 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   the host RID and requires that replay to fail, so the assertion cannot pass vacuously. Previously the RID flow
   was only exercised at the host RID and cross-target selection had been confirmed by hand.
 ### Fixed
+- **kotc/bir2cir/facadegen (area:kotc, area:bir2cir, area:facadegen): a declaration with a Kotlin `context`
+  parameter is now compiled correctly — previously every such call miscompiled.** Context parameters need no
+  opt-in at language version 2.4, so this was reachable from ordinary user source. kotc emitted the context
+  parameter into the declaration's parameter list but counted only the `Regular` parameters when building the
+  call's argument list, the `sig`/`paramSig` overload key, the inline payload's `pc`, the local-function lift and
+  the lambda/delegate parameter projection — so a call passed a SHORT argument list against a longer method. The
+  observed failures were `System.InvalidProgramException` at run for `with(c) { g(5) }` (no diagnostic at compile
+  time), a silent `null` argument when the context type was generic, `bir2cir: sanity: 'local' references
+  undeclared local 'c'` when an omitted default read the context parameter together with a value parameter, and
+  `inline splice: cannot splice … no [KotlinInline] payload found` for an `inline` context function. The fix is one
+  rule applied at every site: **`Context` and `Regular` parameters are one positional sequence — the emitted
+  parameter list, the argument list, the overload key and the `@KotlinDefault` index all count
+  `[__self?] + contexts + regulars`** (`docs/dotkt-semantics.md` §5i). The previous refusal for an omitted default
+  that reads a context parameter is deleted rather than widened: the default is now bound by symbol to this call's
+  context argument, exactly as an earlier value parameter or a receiver already was.
+  Fixed across functions (top-level, member, extension, member-extension, companion, interface/`override`,
+  `suspend`, `inline`, generic, `vararg`/overloaded, local), properties (top-level, extension, member, companion,
+  `var` get+set), multiple context parameters, defaults reading a context parameter alone or together with a value
+  parameter and a receiver, lambdas capturing a context parameter, the stdlib's own `contextOf<T>()`, and
+  **context function types** (`context(A) (B) -> C` — the lambda's context parameter is a physical delegate
+  argument and was dropped from the lifted method while the invoke passed it, a silently wrong result).
+  Cross-module, each context slot now carries a `[KotlinContextParameter]` marker (kotc `mods.context` ->
+  bir2cir -> facadegen -> the FIR injector), so a consuming Kotlin module restores it AS a context parameter and
+  keeps writing `with(scale) { scaled(5) }`; without the marker the same physical method surfaced as a plain
+  leading value parameter, a Kotlin SOURCE break at the module boundary. `docs/user/kotlin-on-clr-differences.md`
+  and `docs/user/supported-features.md` claimed context parameters were rejected outright; both are corrected.
+  A context FUNCTION TYPE (`context(A) B.(D) -> E`) round-trips too, which needed its own carrier: fir2ir ERASES
+  which of a function type's leading arguments were contexts (at IR level `context(A) B.(D) -> E` is *identical* to
+  `B.(A, D) -> E`), so bir2cir stamped `[KotlinExtensionFunctionType]` and facadegen promoted the delegate's first
+  argument — the CONTEXT — to the restored receiver. A consumer's `evaluate { this.n }` then read the context's field
+  instead of the receiver's and returned the wrong number with no diagnostic. kotc now captures the arity from FIR
+  before it is dropped (`kotc.frontend.ClrContextFnTypes`) and carries it as the slot fact `ctxFnType`/`retCtxFnType`
+  -> `[KotlinContextFunctionType(N)]` -> facadegen's context split -> the injector's `ContextFunctionTypeParams` cone
+  attribute. A lambda LITERAL of such a type needed one more fix: the lift had no binding for the lambda's own
+  receiver, so the body's `this` fell through to `{k:this}` — the enclosing instance, or nothing in a static lift. It
+  now mints a name for the receiver parameter and binds `this` to it, as the inline splice carrier already did. That
+  ALSO closes the context-free sibling, where the same gap made `val f: Int.(Int) -> Int = { d -> this + d }` throw a
+  NullReferenceException; both lift shapes (non-capturing static and capturing closure) are covered.
+  The arity is keyed by the slot's file path and its END source offset — the one offset FIR and IR always agree on —
+  recorded from a DECLARATION-only walk (never a body, initializer or default value, because a callable nested in an
+  expression body ends where its enclosing declaration ends and the two arities would land on one key). Carried for
+  the stdlib's own `kotlin.context(...)` family too, which compiles through the other frontend phase. The table is
+  cleared once per pipeline execution: it hangs off an object, so a HOSTED kotc could otherwise read a previous
+  compilation's entry — a latent hazard closed by construction, not a bug that was reproducing (today's launcher
+  execs a fresh JVM per invocation and each pipeline runs once).
+  Also fixed in the same family: a cross-module MEMBER (and member-extension) call never emitted a positional
+  `defaultArg` placeholder for an omitted default — it built `args`/`argTypes` from the expressions that happened to
+  be present, so the omitted slot was DELETED and a later provided argument slid into it (`h.pick(b = 3)` bound `3`
+  to `a` and zero-filled `b`). Those paths now use the same positional filler and carry `sig`, and the
+  `@KotlinDefault` metadata lookup — previously constructors and top-level functions only — covers members.
+  Regression coverage: `tests/basic/fixtures/ContextParameterTests.kt`,
+  `tests/coroutines/fixtures/SuspendContextParameterTests.kt`, and `crossModuleContextParameters` in
+  `tests/roundtrip/consumer/KotlinMetadataRoundtripTests.kt` over `tests/roundtrip/producer/Ctxparams.kt`.
 - **kotc/bir2cir/ilemit ([tmyt/dotkt#68], area:kotc, area:bir2cir, area:ilemit): a captured `var` written from a
   local class, an object expression, a lambda or a local `fun` is now heap ref-celled under EVERY emission root and
   for every one of those boundaries — previously only a function body, and never a local `fun`.** The promotion of a

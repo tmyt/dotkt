@@ -83,6 +83,20 @@ A primitive/String/null constant default is native .NET metadata — **C# caller
 free**. Non-constant defaults (and String defaults on interface-typed params) are carried as
 Kotlin metadata: Kotlin callers can omit the argument; C# callers must pass it explicitly.
 
+## Context parameters are ordinary leading parameters on the CLR
+
+`context(s: Scale) fun scaled(a: Int)` emits `scaled(Scale, int)` — a context parameter is a plain
+positional parameter, placed **after** an extension receiver's `__self` and **before** the regular
+parameters. That is the whole physical story: a C# caller passes it like any other argument, and a
+Kotlin consumer of the emitted dll keeps writing `with(scale) { scaled(5) }` because the slot carries a
+`[KotlinContextParameter]` marker that facadegen restores as a real context parameter.
+
+Context parameters need no compiler flag at language version 2.4 — they are on by default, and passing
+`-Xcontext-parameters` produces `warning: the argument '-Xcontext-parameters' is redundant for the
+current language version 2.4.` Functions, properties, members, extensions,
+`suspend`, `inline`, defaults that read a context parameter, and context function types
+(`context(A) (B) -> C`) all work.
+
 ## Not supported (current, honest list)
 
 - **kotlinx libraries** (kotlinx-coroutines, kotlinx-serialization, …) — DotKt binds the
@@ -90,7 +104,6 @@ Kotlin metadata: Kotlin callers can omit the argument; C# callers must pass it e
 - **Full coroutine machinery** (`Sequence` builders / `yield`, structured concurrency) — in
   progress; the `suspend`⇔`Task` ABI above is the settled design.
 - **Live `CharSequence` views** and user implementations of `Appendable` (use `StringBuilder`).
-- **Context parameters/receivers** (`-Xcontext-parameters` is rejected).
 - Consuming a DotKt dll **back as Kotlin** loses some declaration facts: `enum class`-ness,
   `object` singleton sugar, implicit companion access, SAM conversion of a bare lambda — each a
   pinned-Kotlin-2.4.0 limitation, documented in

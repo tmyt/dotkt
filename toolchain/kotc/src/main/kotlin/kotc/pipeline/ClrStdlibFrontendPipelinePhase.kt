@@ -75,9 +75,16 @@ object ClrStdlibFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtif
 			isCommonSourceForPsi,
 			fileBelongsToModuleForPsi,
 		)
+		// Same CONTEXT-FUNCTION-TYPE capture the app phase performs, and for a reachable reason: the stdlib itself
+		// declares six of them — `kotlin.context(with, block: context(T) () -> R)` and its 2..6-context siblings — and
+		// fir2ir erases which leading arguments were contexts. Without capturing here those public slots carry no
+		// arity, so a consuming module restores `(T) -> R` for `context(T) () -> R`. See [ClrContextFnTypes].
+		kotc.frontend.ClrContextFnTypes.reset()
 		val outputs = sessionsWithSources.map { (session, files) ->
 			installKotlinJvmDefaultImport(session)
-			resolveAndCheckFir(session, session.buildFirFromKtFiles(files), diagnosticsReporter)
+			resolveAndCheckFir(session, session.buildFirFromKtFiles(files), diagnosticsReporter).also {
+				kotc.frontend.ClrContextFnTypes.capture(it.fir)
+			}
 		}
 		outputs.runPlatformCheckers(diagnosticsReporter)
 		checkKotlinPackageUsageForPsi(configuration, ktFiles)

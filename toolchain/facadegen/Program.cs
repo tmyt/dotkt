@@ -582,6 +582,12 @@ static class FacadeGen
     {
         var o = new JsonObject { ["name"] = MetaParamName(p, i) };
         var attrs = CustomAttributeData.GetCustomAttributes(p);
+        // A Kotlin CONTEXT parameter: physically an ordinary positional parameter (that is how kotc projects one), so
+        // without this flag the consumer would restore `context(s: Scale) fun f(a: Int)` as `fun f(s: Scale, a: Int)`
+        // and `with(scale) { f(1) }` would stop resolving across the module boundary. The param STAYS in this physical
+        // array (every arity/index space downstream counts emitted CLR parameters); the consumer moves the flagged ones
+        // into the declaration's context-parameter list. Stamped before every type-shape branch below returns early.
+        if (HasCtxParamMarker(attrs)) o["mods"] = Mods(("context", true));
         var exact = KotlinTypeNode(attrs);
         if (exact != null) { o["type"] = Ty(exact); return o; }
         var sfn = SuspendFnNode(attrs);   // H2: a `suspend (…) -> T` parameter
@@ -615,7 +621,7 @@ static class FacadeGen
             : MapTFn(p.ParameterType, self, attrs, p.Member as MemberInfo);  // #150: NRT-threaded (delegate args)
         var pt = ApplyNrt(ng == null && ci != null ? FoldCollectionIdentity(plainP, ci) : plainP,
             p.ParameterType, attrs, p.Member as MemberInfo);
-        o["type"] = Ty(HasExtFnMarker(attrs) ? WithExtRecv(pt) : pt);   // #145: `block: P.() -> R` -> restore the receiver
+        o["type"] = Ty(RestoreFnShape(pt, attrs));   // #145 `block: P.() -> R` + the `context(A…)` split
         // #146: a NON-CONST default (`= {}` / a call / any non-metadata-representable expr) carries no CLR
         // [Optional]+[DefaultParameterValue] — it rides `[kotlin.clr.KotlinDefault]` (the BIR sub-tree bir2cir splices
         // at the omitted call site). Surface it as a `{"nonConst":true}` default so the consumer marks the param
@@ -1011,20 +1017,33 @@ static class FacadeGen
                     var (pm, pv) = ModVis(Vis(g).Value, g.IsAbstract, g.IsVirtual && !g.IsFinal);
                     props.Add(PropObj(pn, RetTypeSfxN(g, t), setter != null, pm, pv, null, null));
                 }
-                // MEMBER extension properties (`class C { val T.p get() }`): accessors get_X(__self)/set_X(__self, v).
+                // MEMBER extension / CONTEXT properties (`class C { val T.p get() }`, `class C { context(s: S) val p }`):
+                // accessors get_X([__self,] ctx...) / set_X([__self,] ctx..., v). The physical parameter run is the same
+                // `[__self?] + contexts` shape the top-level accessor path reads, each context slot carrying
+                // [KotlinContextParameter]; without the split a context property would surface as an extension property
+                // on the CONTEXT type — a different declaration that `with(scale) { h.reading }` cannot resolve.
                 foreach (var g in Methods(t, IM))
                 {
                     if (g.IsSpecialName || !g.Name.StartsWith("get_")) continue;
                     var gps = g.GetParameters();
-                    if (gps.Length != 1 || gps[0].Name != "__self" || !Supported(g.ReturnType) || !Supported(gps[0].ParameterType)) continue;
+                    bool hasSelf = gps.Length > 0 && IsSelfSlot(gps[0]);
+                    var ctxPs = gps.Skip(hasSelf ? 1 : 0).ToArray();
+                    if (!hasSelf && ctxPs.Length == 0) continue;
+                    if (ctxPs.Length > 0 && !ctxPs.All(IsCtxParam)) continue;
+                    if (!Supported(g.ReturnType) || !gps.All(gp => Supported(gp.ParameterType))) continue;
                     var prot = Vis(g); if (prot == null) continue;
                     var pn = g.Name.Substring(4);
                     if (!seen.Add("prop:" + pn)) continue;
                     var setter = Methods(t, IM).FirstOrDefault(m => !m.IsSpecialName && m.Name == "set_" + pn
-                        && m.GetParameters().Length == 2 && m.GetParameters()[0].Name == "__self" && Vis(m) != null);
+                        && m.GetParameters().Length == gps.Length + 1
+                        && (!hasSelf || m.GetParameters()[0].Name == "__self") && Vis(m) != null);
                     accessorMembers.Add(g.Name); if (setter != null) accessorMembers.Add(setter.Name);
-                    memberExtProps.Add(PropObj(pn, RetTypeSfxN(g, t), setter != null, new JsonObject(),
-                        prot.Value ? "protected" : "public", null, MapT(gps[0].ParameterType, t)));
+                    var mctx = new JsonArray();
+                    foreach (var cp in ctxPs) mctx.Add(Ty(MapT(cp.ParameterType, t)));
+                    var mprop = PropObj(pn, RetTypeSfxN(g, t), setter != null, new JsonObject(),
+                        prot.Value ? "protected" : "public", null, hasSelf ? MapT(gps[0].ParameterType, t) : null);
+                    if (mctx.Count > 0) mprop["ctx"] = mctx;
+                    memberExtProps.Add(mprop);
                 }
                 // Events (I4).
                 foreach (var ev in t.GetEvents(BindingFlags.Public | BindingFlags.Instance))
@@ -1037,8 +1056,15 @@ static class FacadeGen
                     events.Add(EventObj(ev, inv, t));
                 }
                 // Indexer (`this[i]`) -> `{indexType, valueType, rw}`; the injector synthesizes operator get/set.
+                // A DotKt member EXTENSION property (`class C { val T.p }`) and a member CONTEXT property
+                // (`class C { context(s: S) val p }`) also emit a one-parameter CLR property — their accessor takes
+                // `__self` / the context slot — but neither is a `this[i]` indexer, and surfacing one as one would
+                // inject an `operator fun get(...)` the producer never declared (and could shadow a real indexer on
+                // the same type). Both are already restored through the memberExtProps scan above; skip them here.
                 var ix = t.GetProperties(BindingFlags.Public | BindingFlags.Instance)
                     .FirstOrDefault(p => p.GetIndexParameters().Length == 1
+                        && !IsSelfSlot(p.GetIndexParameters()[0]) && !IsCtxParam(p.GetIndexParameters()[0])
+                        && p.GetIndexParameters()[0].Name != "__self"
                         && Supported(p.GetIndexParameters()[0].ParameterType) && Supported(p.PropertyType));
                 if (ix != null)
                     typeObj["indexer"] = new JsonObject {
@@ -1152,8 +1178,8 @@ static class FacadeGen
                 // names it `__self`; a C#-origin `[Extension]` static (`static int Twice(this W w)`) names it for real.
                 // Either way `ext:true` keeps it a member extension, reachable via `import Owner.f` (the C# `using static`
                 // analog). `inline` carries the spliceable body (composes with suspend/generic).
-                var csExt = ps.Length > 0 && ps[0].Name != "__self" && IsExtensionMethod(m);
-                var isExt = ps.Length > 0 && (ps[0].Name == "__self" || csExt);
+                var csExt = ps.Length > 0 && !IsSelfSlot(ps[0]) && !IsCtxParam(ps[0]) && IsExtensionMethod(m);
+                var isExt = ps.Length > 0 && (IsSelfSlot(ps[0]) || csExt);
                 // #179 round-trip (SYMBOL SURFACE — facadegen's half): a DotKt `class C : Comparable<X>` lowered its
                 // `operator fun compareTo` to the PascalCase `System.IComparable<X>.CompareTo(X)` slot (bir2cir
                 // DeclarationRename at lib emit). Restore the lowercase Kotlin operator name + `operator` flag so the
@@ -1909,7 +1935,7 @@ static class FacadeGen
         // AS a property from a CLR field re-imports nullable instead of degrading to non-null.
         var t = ApplyNrt(ng == null && ci != null ? FoldCollectionIdentity(plain, ci) : plain,
             f.FieldType, attrs, f);
-        return HasExtFnMarker(attrs) ? WithExtRecv(t) : t;   // #145: a `val handler: P.() -> R` field
+        return RestoreFnShape(t, attrs);   // #145 a `val handler: P.() -> R` field + the `context(A…)` split
     }
     // H2: a non-suspend method / property getter that RETURNS a `suspend (…) -> T` value -> restore it from the return
     // parameter's [KotlinSuspendFunctionType], else the plain mapped return type. (A `suspend fun` itself returns
@@ -1952,7 +1978,7 @@ static class FacadeGen
                 ? FoldCollectionIdentity(MapTFn(retT, self, attrs, m), ci)
                 : MapTFn(retT, self, attrs, m);
         var rt = ApplyFlowContract(ApplyNrt(mapped, m.ReturnType, attrs, m), m.ReturnType, attrs);
-        return HasExtFnMarker(attrs) ? WithExtRecv(rt) : rt;   // #145: a method returning `P.() -> R`
+        return RestoreFnShape(rt, attrs);   // #145 a method returning `P.() -> R` + the `context(A…)` split
     }
 
     // #145: the bare marker `[KotlinExtensionFunctionType]` -> the delegate at this position was a Kotlin RECEIVER
@@ -1966,6 +1992,58 @@ static class FacadeGen
             if (IsDotKtMetadata(cad, KExtFnAttr)) return true;
         return false;
     }
+    // `[KotlinContextFunctionType(N)]` -> the function type at this slot was `context(A…) …`, and N of the mapped
+    // delegate's LEADING arguments are those contexts. It rides BESIDE [KotlinExtensionFunctionType] for the
+    // receiver-carrying form: `context(A) B.(D) -> E` is `@ExtensionFunctionType Function3<A,B,D,E>`, so contexts come
+    // FIRST and the receiver is argument N. Applying WithExtRecv without splitting them off promoted argument 0 — the
+    // CONTEXT — to the restored receiver, and the consumer's lambda bound `this` to the wrong value at run.
+    const string KCtxFnTypeAttr = "DotKt.Runtime.CompilerServices.KotlinContextFunctionTypeAttribute";
+    static int CtxFnArity(IList<CustomAttributeData> attrs)
+    {
+        foreach (var cad in attrs)
+            if (IsDotKtMetadata(cad, KCtxFnTypeAttr) && cad.ConstructorArguments.Count == 1)
+                try { return Convert.ToInt32(cad.ConstructorArguments[0].Value); } catch { return 0; }
+        return 0;
+    }
+
+    /// Restore a slot's Kotlin function type from the mapped delegate: split the leading <paramref name="ctx"/>
+    /// arguments off as CONTEXTS, then (when the source wrote a receiver form) make the next one the receiver. `ctx`
+    /// is 0 for every ordinary slot, in which case this is exactly the previous `HasExtFnMarker ? WithExtRecv : id`.
+    static TN RestoreFnShape(TN t, IList<CustomAttributeData> attrs)
+    {
+        bool ext = HasExtFnMarker(attrs);
+        int ctx = CtxFnArity(attrs);
+        if (ctx <= 0) return ext ? WithExtRecv(t) : t;
+        return WithContexts(t, ctx, ext);
+    }
+
+    // Peel `ctx` leading delegate arguments into `Ctx`, then optionally the next one into the receiver.
+    static TN WithContexts(TN t, int ctx, bool ext) => t switch
+    {
+        TN.Fn f when f.Params.Length >= ctx + (ext ? 1 : 0) =>
+            new TN.Fn(f.Suspend, f.Ret,
+                f.Params.Skip(ctx + (ext ? 1 : 0)).ToArray(),
+                ext ? f.Params[ctx] : null,
+                Ctx: f.Params.Take(ctx).ToArray()),
+        TN.Nullable n => new TN.Nullable(WithContexts(n.Of, ctx, ext)),
+        TN.Oblivious o => new TN.Oblivious(WithContexts(o.Of, ctx, ext)),
+        _ => ext ? WithExtRecv(t) : t,   // defensive: an unexpected shape degrades to the previous behaviour
+    };
+
+    // The bare marker `[KotlinContextParameter]` -> this positional parameter WAS a Kotlin `context(...)` parameter.
+    const string KCtxParamAttr = "DotKt.Runtime.CompilerServices.KotlinContextParameterAttribute";
+    static bool HasCtxParamMarker(IList<CustomAttributeData> attrs)
+    {
+        foreach (var cad in attrs)
+            if (IsDotKtMetadata(cad, KCtxParamAttr)) return true;
+        return false;
+    }
+    static bool IsCtxParam(ParameterInfo p) => HasCtxParamMarker(CustomAttributeData.GetCustomAttributes(p));
+    // Slot 0 is the emitted extension receiver iff it is NAMED `__self` AND is not a context slot. The name alone is
+    // not enough: `context(__self: S) fun f(a: Int)` is legal Kotlin, so a user can put that exact name on a context
+    // parameter — reading it as a receiver would surface `fun S.f(a: Int)` and break `with(s) { f(1) }` at the module
+    // boundary, the very source break the marker exists to prevent.
+    static bool IsSelfSlot(ParameterInfo p) => p.Name == "__self" && !IsCtxParam(p);
     // Move a mapped delegate's FIRST arg into the fn receiver (through a nullable/oblivious wrapper). A non-delegate or
     // an argless delegate is returned unchanged (defensive — the marker only rides genuine `P.() -> R` positions).
     static TN WithExtRecv(TN t) => t switch
@@ -2010,7 +2088,7 @@ static class FacadeGen
         // return). Fold from both attribute sets. Demotes `ThreadLocal<T>.Value` to a platform `T!`.
         t = ApplyFlowContract(t, p.PropertyType, attrs);
         if (p.GetMethod != null) t = ApplyFlowContract(t, p.PropertyType, CustomAttributeData.GetCustomAttributes(p.GetMethod.ReturnParameter));
-        return HasExtFnMarker(attrs) ? WithExtRecv(t) : t;
+        return RestoreFnShape(t, attrs);
     }
 
     // #133: the bare marker `[KotlinNothing]` on a return parameter -> the erased `object` return was a Kotlin `Nothing`.
@@ -2240,15 +2318,28 @@ static class FacadeGen
         {
             if (g.IsSpecialName || IsCompilerGenerated(g) || !g.Name.StartsWith("get_")) continue;
             var gps = g.GetParameters();
-            if (gps.Length != 1 || gps[0].Name != "__self" || !Supported(g.ReturnType) || !Supported(gps[0].ParameterType)) continue;
+            // The getter's physical parameters are `[__self?] + contexts` — an extension receiver (named `__self`) and/or
+            // a Kotlin `context(...)` parameter run, each context slot carrying [KotlinContextParameter]. A getter with
+            // any OTHER parameter is not a property accessor at all (it stays a loose top-level `fun`). Without the
+            // context split a `context(s: Scale) val gauge` would look like `val Scale.gauge` — a DIFFERENT declaration.
+            bool hasSelf = gps.Length > 0 && IsSelfSlot(gps[0]);
+            var ctxPs = gps.Skip(hasSelf ? 1 : 0).ToArray();
+            if (ctxPs.Length > 0 && !ctxPs.All(IsCtxParam)) continue;
+            if (!hasSelf && ctxPs.Length == 0) continue;   // a 0-arg get_<n> is the #103 custom accessor of a field-backed prop
+            if (!Supported(g.ReturnType) || !gps.All(gp => Supported(gp.ParameterType))) continue;
             var pn = g.Name.Substring(4);
             if (!seen.Add("tlextprop:" + pn)) continue;
             var setter = t.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly)
-                .FirstOrDefault(s => !s.IsSpecialName && s.Name == "set_" + pn && s.GetParameters().Length == 2 && s.GetParameters()[0].Name == "__self");
+                .FirstOrDefault(s => !s.IsSpecialName && s.Name == "set_" + pn && s.GetParameters().Length == gps.Length + 1
+                    && (!hasSelf || s.GetParameters()[0].Name == "__self"));
             extPropMembers.Add(g.Name); if (setter != null) extPropMembers.Add(setter.Name);
-            tlProps.Add(PropObj(pn, RetTypeSfxN(g, t), setter != null, Mods(("ext", true)), "public", null,
-                MapT(gps[0].ParameterType, t),
-                g.IsGenericMethodDefinition ? TypeParamsArr(g.GetGenericArguments(), t, false, false) : null));
+            var ctxArr = new JsonArray();
+            foreach (var cp in ctxPs) ctxArr.Add(Ty(MapT(cp.ParameterType, t)));
+            var prop = PropObj(pn, RetTypeSfxN(g, t), setter != null, Mods(("ext", hasSelf)), "public", null,
+                hasSelf ? MapT(gps[0].ParameterType, t) : null,
+                g.IsGenericMethodDefinition ? TypeParamsArr(g.GetGenericArguments(), t, false, false) : null);
+            if (ctxArr.Count > 0) prop["ctx"] = ctxArr;
+            tlProps.Add(prop);
         }
         // #103: a top-level field-backed property with a CUSTOM accessor compiles to a public static FIELD `<name>`
         // PLUS a separate non-special-name `get_<name>`/`set_<name>` method (the custom accessor body). Detect the
@@ -2281,7 +2372,7 @@ static class FacadeGen
             var ret = k.suspend ? SuspendRetNode(m, t) : RetTypeSfxN(m, t);
             // An extension fun's receiver is the first param `__self` -> `mods.ext`. `mods.inline` carries the spliceable
             // body (in the assembly's [KotlinInline], read by the consumer's ilemit at splice time).
-            var isExt = ps.Length > 0 && ps[0].Name == "__self";
+            var isExt = ps.Length > 0 && IsSelfSlot(ps[0]);
             // ref/rt de-dup (Bug ④): skip a NON-EXTENSION factory (listOf/mapOf) whose return is an unresolvable kotlin
             // collection -> AMBIGUOUS with the jar's same-signature factory. Scoped to `kotlin.*` (a user `fun
             // makeList(): List<Int>` has no jar counterpart). EXTENSION funs are KEPT (receiver-based, no ambiguity).

@@ -194,10 +194,18 @@ object ClrAppFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtifact
 			},
 		)
 
+		// One pipeline execution = one set of context-function-type facts. `ClrContextFnTypes` is an object, so its map
+		// would otherwise outlive the compilation inside a HOSTED kotc and a later run could read a stale entry.
+		kotc.frontend.ClrContextFnTypes.reset()
 		val outputs = sessionsWithSources.map { (session, files) ->
 			installKotlinJvmDefaultImport(session)
 			val firFiles = session.buildFirFromKtFiles(files)
-			resolveAndCheckFir(session, firFiles, diagnosticsReporter)
+			resolveAndCheckFir(session, firFiles, diagnosticsReporter).also {
+				// Capture the CONTEXT-FUNCTION-TYPE arities while FIR still has them — fir2ir erases the
+				// `ContextFunctionTypeParams` cone attribute, and `context(A) B.(D) -> E` becomes indistinguishable
+				// from `B.(A, D) -> E` at IR level. See [kotc.frontend.ClrContextFnTypes].
+				kotc.frontend.ClrContextFnTypes.capture(it.fir)
+			}
 		}
 
 		outputs.runPlatformCheckers(diagnosticsReporter)

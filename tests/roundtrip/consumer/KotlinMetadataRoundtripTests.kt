@@ -25,6 +25,8 @@
 //   comparableClass             <- roundtrip-comparable      (#179)  class C : Comparable<C> </>/<=/>=/sorted()
 //   ubyteFidelity               <- roundtrip-ubyte                  UByte/UByteArray strict-mapping fidelity
 //   toplevelValVar              <- roundtrip-toplevel-val   (#195)  bare top-level val/var -> plain static FIELD (no accessor) resolved cross-module via facadegen --import-list
+//   crossModuleContextParameters                             context parameters restored AS context parameters from
+//                                                             [KotlinContextParameter] (functions, defaults, properties)
 // STAYED in the shell lane (tests/roundtrip/scenarios/run.sh):
 //   roundtrip-nothing         — a cross-module Nothing branch merges an `object`-returning call with `string`
 //                               (StackUnexpected object/string; else-branch throws so RUN is green). Tracked as #197.
@@ -113,10 +115,97 @@ import roundtrip.genclash.a.Cell as CellA
 import roundtrip.genclash.b.Cell as CellB
 import roundtrip.genclash.a.cellA
 import roundtrip.genclash.b.cellB
+// Context parameters (kotlin 2.4 needs no opt-in for them): the producer's `roundtrip.ctxparams` declarations are
+// consumed here THROUGH THE DLL, so this is the metadata half of the rule — kotc marks each context slot in the
+// emitted parameter list, bir2cir turns the mark into a `[KotlinContextParameter]` marker, and facadegen restores
+// the parameter AS a context parameter. Without the round-trip the same physical method surfaces as a plain leading
+// value parameter, and `with(Scale(10)) { scaled(5) }` stops resolving at the module boundary (`scaled(scale, 5)`
+// would be required) — a Kotlin SOURCE break, which is exactly what the round-trip metadata exists to prevent.
+import roundtrip.ctxparams.Scale
+import roundtrip.ctxparams.Holder as CtxHolder
+import roundtrip.ctxparams.scaled
+import roundtrip.ctxparams.tagged
+import roundtrip.ctxparams.labeled
+import roundtrip.ctxparams.deco
+import roundtrip.ctxparams.gauge
+import roundtrip.ctxparams.bumped
+import roundtrip.ctxparams.Boxy
+import roundtrip.ctxparams.evaluatePlain
+import roundtrip.ctxparams.evaluateRecv
+import roundtrip.ctxparams.makeCtxFn
+import roundtrip.ctxparams.pairFns
+import roundtrip.ctxparams.flushA
+import roundtrip.ctxparams.GenHolder
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert
 
 class KotlinApiShapeRoundtripTests {
+    @TestAttribute
+    fun crossModuleContextParameters() {
+        with(Scale(10)) {
+            ClassicAssert.AreEqual(50, scaled(5))                    // 50    top-level context fun
+            ClassicAssert.AreEqual("q:50", "q".deco(5))              // q:50  extension receiver + context
+            ClassicAssert.AreEqual(70, CtxHolder(20).combine(5))     // 70    member context fun
+            // An omitted NON-CONSTANT default that READS the context parameter: the @KotlinDefault carrier's index
+            // counts the context slot, so the splice fills the right position.
+            ClassicAssert.AreEqual("5/f10", tagged(5))               // 5/f10 label defaults to "f" + s.factor
+            ClassicAssert.AreEqual("5/x", tagged(5, "x"))            // 5/x   nothing omitted
+            // A TIER-1 CONSTANT default behind the context slot: filled from the facadegen metadata, whose
+            // per-parameter list is physical — so the context slot shifts `k`'s ordinal.
+            ClassicAssert.AreEqual(18, labeled(1))                   // 18    k defaults to 7
+            ClassicAssert.AreEqual(13, labeled(1, 2))                // 13    nothing omitted
+            // Context PROPERTIES: the accessor is a `get_<name>([__self,] ctx...)` method, restored as a context
+            // property rather than an extension property on the CONTEXT type (a different declaration).
+            ClassicAssert.AreEqual(30, gauge)                        // 30    top-level context property
+            ClassicAssert.AreEqual(12, 2.bumped)                     // 12    extension receiver + context
+            ClassicAssert.AreEqual(200, CtxHolder(20).reading)       // 200   member context property
+            // A cross-module MEMBER whose omitted default reads the context parameter, with a LATER required arg.
+            // The omitted slot must become a positional placeholder bir2cir fills from the callee's @KotlinDefault —
+            // dropping it slid `3` into `a` and zero-filled `b`.
+            ClassicAssert.AreEqual(1003, CtxHolder(1).pick(b = 3))    // 1003  a defaults to s.factor = 10
+            ClassicAssert.AreEqual(203, CtxHolder(1).pick(2, 3))      // 203   nothing omitted
+            // The member-EXTENSION form of the same shape (`__self` + context + omitted default + later required arg).
+            with(CtxHolder(1)) {
+                ClassicAssert.AreEqual(1203, "ab".pickExt(b = 3))     // 1203  a = s.factor + length = 12
+                ClassicAssert.AreEqual(203, "ab".pickExt(2, 3))       // 203   nothing omitted
+            }
+        }
+    }
+
+    // A cross-module GENERIC member with an omitted default and a later required argument — the generic call path
+    // builds its own argument vector and used to drop the omitted slot, sliding `3` into `a`.
+    @TestAttribute
+    fun crossModuleGenericMemberDefaultArgs() {
+        ClassicAssert.AreEqual("7/3", GenHolder().pick(b = 3))            // 7/3   a defaults to 7
+        ClassicAssert.AreEqual("2/3", GenHolder().pick(2, 3))             // 2/3   nothing omitted
+        with(GenHolder()) {
+            ClassicAssert.AreEqual("x:7/3", "x".pickExt(b = 3))           // x:7/3 __self + omitted default + later arg
+            ClassicAssert.AreEqual("x:2/3", "x".pickExt(2, 3))            // x:2/3 nothing omitted
+        }
+    }
+
+    // A cross-module context FUNCTION TYPE, both forms. The receiver-carrying form is the one that used to bind the
+    // CONTEXT argument to the restored extension receiver and silently return the wrong value.
+    @TestAttribute
+    fun crossModuleContextFunctionTypes() {
+        ClassicAssert.AreEqual(6, evaluatePlain { a -> a + 1 })      // 6   context(Boxy) (Int) -> Int, f(5)
+        // The RECEIVER-carrying form: `this` must be the RECEIVER Boxy(3), never the context Boxy(10). Restoring the
+        // context AS the receiver compiled fine (the ordinary parameter became the unused implicit `it`) and returned
+        // 10 — a silently wrong value with no diagnostic anywhere.
+        ClassicAssert.AreEqual(3, evaluateRecv { this.v })           // 3
+        // The RETURN position of the same type: the restored value takes a receiver AND a context, and `this` must
+        // be the receiver. This returned 77 (the context's field, twice) before the lambda lift bound the receiver.
+        // Two adjacent context-function-type parameters with DIFFERENT arities (1 and 2): each slot must restore its
+        // OWN arity. p sees Scale; q sees Scale AND Boxy.
+        ClassicAssert.AreEqual(75, pairFns({ contextOf<Scale>().factor + 5 }, { contextOf<Boxy>().v }))  // 7*10+5
+        // The neighbour-meeting shape: `flushA`'s source range ends exactly where the next declaration's begins, and
+        // `flushA` also carries a leading comment that moves its FIR start. Its arity must still be 1.
+        val fa = flushA()
+        with(Scale(4)) { ClassicAssert.AreEqual(4, fa()) }       // 4
+        val produced = makeCtxFn()
+        with(Scale(7)) { ClassicAssert.AreEqual(37, Boxy(3).produced()) }  // 37  this.v*10 + context.factor
+    }
+
     // #21: top-level generic extension-property accessors are restored from the producer DLL and remain callable
     // through both bound and unbound read/write property references.
     @TestAttribute

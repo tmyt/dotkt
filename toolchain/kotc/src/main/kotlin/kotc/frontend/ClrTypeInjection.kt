@@ -71,7 +71,12 @@ object ClrGeneratedKey : GeneratedDeclarationKey()
 // `[kotlin.clr.KotlinDefault]` BIR sub-tree at BIR->CIR (bir2cir's DefaultArgSplice), not from this meta.
 private class ClrDefault(val valueType: String, val value: String?, val nonConst: Boolean = false)
 // `type` is a structured TypeNode (spec §1); `vararg` -> the param is a vararg whose ELEMENT type is `type`.
-private class ClrParam(val name: String, val type: TypeNode, val vararg: Boolean = false, val default: ClrDefault? = null)
+// `context` -> the emitted CLR parameter WAS a Kotlin `context(...)` parameter (facadegen read the
+// `[KotlinContextParameter]` marker). It stays in this PHYSICAL list — every arity and index space downstream counts
+// emitted CLR parameters — but the FIR declaration built from it declares the param as a CONTEXT parameter, so the
+// consumer keeps writing `with(scale) { f(1) }` instead of `f(scale, 1)`.
+private class ClrParam(val name: String, val type: TypeNode, val vararg: Boolean = false, val default: ClrDefault? = null,
+	val context: Boolean = false)
 // A generic type parameter: its name, declaration-site `variance` (interfaces), and upper `bounds` (`<T : Comparable<T>>`).
 private class ClrTypeParam(val name: String, val variance: String? = null, val bounds: List<TypeNode> = emptyList())
 // `open`/`abstract` = .NET virtual/abstract (Kotlin OPEN/ABSTRACT modality); `protected` = .NET Family/FamORAssem.
@@ -122,10 +127,17 @@ private class ClrTopLevelProp(
 	val typeParams: List<ClrTypeParam> = emptyList(),
 	val customGet: Boolean = false,
 	val customSet: Boolean = false,
+	// `context(s: Scale) val gauge` — the accessor's [KotlinContextParameter]-marked parameters, in emitted order
+	// (after the `__self` extension receiver, if any). Restored as FIR context parameters, so the consumer keeps
+	// reading `with(scale) { gauge }` instead of having to spell the context as a receiver or an argument.
+	val contexts: List<TypeNode> = emptyList(),
 )
 private class ClrProperty(val name: String, val type: TypeNode, val mutable: Boolean, val open: Boolean, val abstract: Boolean, val protected: Boolean)
-// A MEMBER extension property (`class C { val T.p }`): restored as a member property of C with an extension receiver.
-private class ClrMemberExtProp(val name: String, val type: TypeNode, val mutable: Boolean, val receiver: TypeNode, val protected: Boolean)
+// A MEMBER extension and/or CONTEXT property (`class C { val T.p }`, `class C { context(s: S) val p }`): restored as a
+// member property of C with an extension receiver and/or context parameters. `receiver` is null for a pure context
+// property (its accessor takes only the context run) — `contexts` is then non-empty.
+private class ClrMemberExtProp(val name: String, val type: TypeNode, val mutable: Boolean, val receiver: TypeNode?, val protected: Boolean,
+	val contexts: List<TypeNode> = emptyList())
 private class ClrEvent(val name: String, val handlerReturn: TypeNode, val handlerParams: List<ClrParam>)
 // A `this[i]` indexer -> Kotlin `operator fun get/set` (`set` only when mutable).
 private class ClrIndexer(val indexType: TypeNode, val valueType: TypeNode, val mutable: Boolean)
@@ -285,6 +297,29 @@ internal fun clrInjectedTopLevelKotlinDefaultSlots(callableId: CallableId, param
 	else ClrMetadataHolder.topLevelParamsByCallableId[callableId]?.kotlinDefaultSlotsForArity(paramCount)
 
 /**
+ * The same two lookups for a facadegen-injected MEMBER function, keyed by its owner `ClassId` + name and matched by
+ * emitted-parameter count. Without them the backend had no authoritative answer for a member and fell back to
+ * `carriesKotlinDefault`, an IR-SHAPE test that is false for every member (it requires `isInline`, which facadegen
+ * does not surface on a member) — so an omitted cross-module member default was neither placeheld nor refused: its
+ * slot was silently DELETED and a later provided argument slid into it. The metadata is the authority here exactly as
+ * it already is for a constructor and a top-level function; `params` is the PHYSICAL list (a `__self` extension
+ * receiver and every restored `context(...)` slot included), so `paramCount` is the emitted parameter count.
+ */
+private fun ClrMethod.valueParams(): List<ClrParam> =
+	if (ext && params.isNotEmpty()) params.drop(1) else params   // an `ext` fun's leading `__self` is a receiver, not a value param
+
+private fun memberValueParams(classId: ClassId, name: Name): List<List<ClrParam>>? =
+	if (classId in ClrMetadataHolder.sourceShadowedClassIds) null
+	else ClrMetadataHolder.byClassId[classId]?.methods?.filter { it.name == name.asString() }
+		?.map { it.valueParams() }?.takeIf { it.isNotEmpty() }
+
+internal fun clrInjectedMemberParamDefaults(classId: ClassId, name: Name, paramCount: Int): List<ClrConstDefault?>? =
+	memberValueParams(classId, name)?.defaultsForArity(paramCount)
+
+internal fun clrInjectedMemberKotlinDefaultSlots(classId: ClassId, name: Name, paramCount: Int): List<Boolean>? =
+	memberValueParams(classId, name)?.kotlinDefaultSlotsForArity(paramCount)
+
+/**
  * A2 keystone (interop-no-registry, stage 3): the backend reads a restored DotKt TOP-LEVEL EXTENSION PROPERTY's .NET
  * file-facade class (its `get_`/`set_<name>` statics live there) off its resolved IR `CallableId` (`package` + name) —
  * facadegen's metadata keyed structurally.
@@ -341,7 +376,8 @@ private object ClrMetadataHolder {
 				topLevelProps.add(ClrTopLevelProp(pkg, fileClass, p["name"] as String, typeOf(p["type"]),
 					p["rw"] == true, (p["recv"])?.let { typeOf(it) },
 					typeParams = readTypeParams(p["typeParams"]),
-					customGet = mods["customGet"] == true, customSet = mods["customSet"] == true))
+					customGet = mods["customGet"] == true, customSet = mods["customSet"] == true,
+					contexts = (p["ctx"] as? List<Any?>).orEmpty().map { typeOf(it) }))
 			}
 		}
 		return ClrModule(types, topLevel, topLevelProps)
@@ -354,7 +390,8 @@ private object ClrMetadataHolder {
 	@Suppress("UNCHECKED_CAST")
 	private fun readParam(o: Map<String, Any?>): ClrParam {
 		val default = (o["default"] as? Map<String, Any?>)?.let { ClrDefault(it["valueType"] as? String ?: "", it["value"] as? String, it["nonConst"] == true) }
-		return ClrParam(o["name"] as String, typeOf(o["type"]), "vararg" in modsOf(o["mods"]), default)
+		val mods = modsOf(o["mods"])
+		return ClrParam(o["name"] as String, typeOf(o["type"]), "vararg" in mods, default, context = "context" in mods)
 	}
 	@Suppress("UNCHECKED_CAST")
 	private fun readParams(v: Any?): List<ClrParam> = (v as? List<Any?>).orEmpty().map { readParam(it as Map<String, Any?>) }
@@ -388,7 +425,8 @@ private object ClrMetadataHolder {
 		fun events(k: String) = (o[k] as? List<Any?>).orEmpty().map { readEvent(it as Map<String, Any?>) }
 		val memberExtProps = (o["memberExtProps"] as? List<Any?>).orEmpty().map {
 			val p = it as Map<String, Any?>
-			ClrMemberExtProp(p["name"] as String, typeOf(p["type"]), p["rw"] == true, typeOf(p["recv"]), (p["vis"] as? String) == "protected")
+			ClrMemberExtProp(p["name"] as String, typeOf(p["type"]), p["rw"] == true, p["recv"]?.let { r -> typeOf(r) },
+				(p["vis"] as? String) == "protected", (p["ctx"] as? List<Any?>).orEmpty().map { c -> typeOf(c) })
 		}
 		val ctors = (o["ctors"] as? List<Any?>).orEmpty().map { val c = it as Map<String, Any?>; ClrCtor(readParams(c["params"]), c["lowPriority"] == true) }
 		val indexer = (o["indexer"] as? Map<String, Any?>)?.let { ClrIndexer(typeOf(it["indexType"]), typeOf(it["valueType"]), it["rw"] == true) }
@@ -796,6 +834,10 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 							bound { tps -> boundConeOf(b, tps) ?: session.builtinTypes.nullableAnyType.coneType }
 					}
 				tp.receiver?.let { recv -> extensionReceiverType { tps -> coneOf(recv, null, tps) } }
+				// A restored `context(...)` property parameter is declared as a context parameter, never as the
+				// extension receiver — `context(s: Scale) val gauge` and `val Scale.gauge` are different declarations
+				// and only the first keeps resolving from `with(scale) { gauge }`.
+				for (c in tp.contexts) contextReceiver { tps -> coneOf(c, null, tps) }
 			}.symbol)
 		}
 		val owner = context?.owner ?: return emptyList()
@@ -818,7 +860,9 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		// backend routes `x.p` (inside `with(c)`) to C's get_/set_<p>(__self) method (dispatch on C, receiver as __self).
 		type.memberExtProps.firstOrNull { it.name == callableId.callableName.asString() }?.let { mp ->
 			return listOf(createMemberProperty(owner, ClrGeneratedKey, callableId.callableName, coneOf(mp.type, owner), !mp.mutable, false) {
-				extensionReceiverType(coneOf(mp.receiver, owner))
+				mp.receiver?.let { r -> extensionReceiverType(coneOf(r, owner)) }
+				// A restored `context(...)` property parameter stays a context parameter — see the top-level path.
+				for (c in mp.contexts) contextReceiver(coneOf(c, owner))
 				if (mp.protected) visibility = Visibilities.Protected
 			}.symbol)
 		}
@@ -933,9 +977,14 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 							if (m.infix || m.operator) status { isInfix = m.infix; isOperator = m.operator }   // top-level extension operators
 							if (extRecv != null) extensionReceiverType { tps -> coneOf(extRecv.type, null, tps) }
 							for (p in vps.take(arity))
-								if (p.vararg) valueParameter(Name.identifier(p.name), { tps -> coneOf(TypeNode.Array(p.type), null, tps, paramPos = true) }, isVararg = true)
+								// A restored CONTEXT parameter is declared as one, not as a leading value parameter — that is what
+								// keeps the consumer's `with(scale) { f(1) }` resolving. It stays in the PHYSICAL `vps` list (the
+								// arity range and the metadata index spaces count emitted CLR parameters), so only the FIR
+								// DECLARATION shape differs here.
+								if (p.context) contextReceiver { tps -> coneOf(p.type, null, tps, paramPos = true) }
+								else if (p.vararg) valueParameter(Name.identifier(p.name), { tps -> coneOf(TypeNode.Array(p.type), null, tps, paramPos = true) }, isVararg = true)
 								else valueParameter(Name.identifier(p.name), { tps -> coneOf(p.type, null, tps, paramPos = true) }, hasDefaultValue = real && p.default != null)
-						}.also { if (real) applyDefaults(it, vps) }.symbol
+						}.also { if (real) applyDefaults(it, vps.filter { p -> !p.context }) }.symbol
 					}
 				}
 			}
@@ -1034,7 +1083,8 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 							status { isInfix = m.infix; isOperator = m.operator; isSuspend = m.suspend }
 						if (m.inline) status { isInline = true }
 						for (p in m.params)
-							if (p.vararg) valueParameter(Name.identifier(p.name), coneOf(TypeNode.Array(p.type), owner, paramPos = true), isVararg = true)
+							if (p.context) contextReceiver(coneOf(p.type, owner, paramPos = true))   // restored `context(...)` parameter
+							else if (p.vararg) valueParameter(Name.identifier(p.name), coneOf(TypeNode.Array(p.type), owner, paramPos = true), isVararg = true)
 							else valueParameter(Name.identifier(p.name), coneOf(p.type, owner, paramPos = true))
 					}.also { if (m.lowPriority) applyLowPriority(it) }.symbol
 				else
@@ -1054,7 +1104,8 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 						// N3-deep: a GENERIC static's `vararg` param (`Task.WhenAll<T>(params Task<T>[])`) rebuilds as an
 						// `Array<elem>` vararg so it resolves to the real `params Task<T>[]` overload (not `Any?`).
 						for (p in m.params)
-							if (p.vararg) valueParameter(Name.identifier(p.name), { tps -> coneOf(TypeNode.Array(p.type), owner, tps, paramPos = true) }, isVararg = true)
+							if (p.context) contextReceiver { tps -> coneOf(p.type, owner, tps, paramPos = true) }   // restored `context(...)` parameter
+							else if (p.vararg) valueParameter(Name.identifier(p.name), { tps -> coneOf(TypeNode.Array(p.type), owner, tps, paramPos = true) }, isVararg = true)
 							else valueParameter(Name.identifier(p.name), { tps -> coneOf(p.type, owner, tps, paramPos = true) })
 					}.also { if (m.lowPriority) applyLowPriority(it) }.symbol
 			}
@@ -1117,9 +1168,10 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 					if (m.inline) status { isInline = true }
 					if (extRecv != null) extensionReceiverType(coneOf(extRecv.type, owner))
 					for (p in vps.take(arity))
-						if (p.vararg) valueParameter(Name.identifier(p.name), coneOf(TypeNode.Array(p.type), owner, paramPos = true), isVararg = true)
+						if (p.context) contextReceiver(coneOf(p.type, owner, paramPos = true))   // restored `context(...)` parameter
+						else if (p.vararg) valueParameter(Name.identifier(p.name), coneOf(TypeNode.Array(p.type), owner, paramPos = true), isVararg = true)
 						else valueParameter(Name.identifier(p.name), coneOf(p.type, owner, paramPos = true), hasDefaultValue = real && p.default != null)
-				}.also { if (real) applyDefaults(it, vps); if (m.lowPriority) applyLowPriority(it) }.symbol
+				}.also { if (real) applyDefaults(it, vps.filter { p -> !p.context }); if (m.lowPriority) applyLowPriority(it) }.symbol
 				}
 			} else listOf(
 				// A generic .NET method (`SizeOf<T>()`, `As<T>(o): T`). Declare its method type parameters, then resolve
@@ -1139,9 +1191,10 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 					if (extRecv != null) extensionReceiverType { tps -> coneOf(extRecv.type, owner, tps) }
 					// N3-deep: a GENERIC member method's `vararg` param rebuilds as an `Array<elem>` vararg so it resolves.
 					for (p in vps)
-						if (p.vararg) valueParameter(Name.identifier(p.name), { tps -> coneOf(TypeNode.Array(p.type), owner, tps, paramPos = true) }, isVararg = true)
+						if (p.context) contextReceiver { tps -> coneOf(p.type, owner, tps, paramPos = true) }   // restored `context(...)` parameter
+						else if (p.vararg) valueParameter(Name.identifier(p.name), { tps -> coneOf(TypeNode.Array(p.type), owner, tps, paramPos = true) }, isVararg = true)
 						else valueParameter(Name.identifier(p.name), { tps -> coneOf(p.type, owner, tps, paramPos = true) }, hasDefaultValue = realDefaults(vps) && p.default != null)
-				}.also { if (realDefaults(vps)) applyDefaults(it, vps); if (m.lowPriority) applyLowPriority(it) }.symbol
+				}.also { if (realDefaults(vps)) applyDefaults(it, vps.filter { p -> !p.context }); if (m.lowPriority) applyLowPriority(it) }.symbol
 			)
 		}
 	}
@@ -1265,6 +1318,26 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	 *  [KotlinExtensionFunctionType] marker (bir2cir did NOT erase the delegate — the receiver rode as its first CLR
 	 *  type arg). The receiver heads the type args, mirroring the frontend's own representation. Falls back to a plain
 	 *  function type if the synthetic FunctionN symbol can't be resolved (never a crash). */
+	/** A Kotlin CONTEXT function type `context(A…) [R.](P…) -> T`. Physically it is the plain
+	 *  `Function{ctx+recv+params}<A…, R?, P…, T>` — contexts FIRST, then the receiver, then the value params — and the
+	 *  context-ness is the `ContextFunctionTypeParams(n)` cone attribute (composed with `ExtensionFunctionType` when
+	 *  the source also wrote a receiver). Without the attribute the restored type is an ordinary extension function
+	 *  type whose receiver is the first CONTEXT, so a consumer's lambda binds `this` to the context — the silent
+	 *  cross-module miscompile the `[KotlinContextFunctionType]` round-trip exists to prevent. */
+	private fun coneContextFunctionType(contexts: List<ConeKotlinType>, recv: ConeKotlinType?, params: List<ConeKotlinType>,
+			ret: ConeKotlinType, suspend: Boolean): ConeKotlinType {
+		val physical = contexts + listOfNotNull(recv) + params
+		val cid = if (suspend) ClassId(FqName("kotlin.coroutines"), Name.identifier("SuspendFunction${physical.size}"))
+			else ClassId(FqName("kotlin"), Name.identifier("Function${physical.size}"))
+		val sym = session.symbolProvider.getClassLikeSymbolByClassId(cid) ?: return coneFunctionType(physical, ret)
+		@Suppress("UNCHECKED_CAST")
+		val args = (physical + ret).toTypedArray() as Array<org.jetbrains.kotlin.fir.types.ConeTypeProjection>
+		val attrs = ConeAttributes.create(
+			listOfNotNull(CompilerConeAttributes.ContextFunctionTypeParams(contexts.size),
+				CompilerConeAttributes.ExtensionFunctionType.takeIf { recv != null }))
+		return sym.constructType(args, false, attrs)
+	}
+
 	private fun coneExtensionFunctionType(recv: ConeKotlinType, params: List<ConeKotlinType>, ret: ConeKotlinType): ConeKotlinType {
 		val cid = ClassId(FqName("kotlin"), Name.identifier("Function${params.size + 1}"))
 		val sym = session.symbolProvider.getClassLikeSymbolByClassId(cid) ?: return coneFunctionType(listOf(recv) + params, ret)
@@ -1415,7 +1488,13 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			// A .NET delegate / a `suspend (…) -> T` position -> a Kotlin (suspend) function type, so a lambda binds and
 			// overloads disambiguate. A suspend fn makes a passed lambda a SUSPEND lambda (the H2 round-trip).
 			is TypeNode.Fn ->
-				if (node.recv != null && node.suspend)   // #47: `suspend R.() -> T` — compose suspend kind + ext receiver
+				// A CONTEXT function type (`ctx` non-empty — facadegen restored it from [KotlinContextFunctionType]).
+				if (node.ctx.isNotEmpty())
+					coneContextFunctionType(node.ctx.map { coneOf(it, owner, methodTps, paramPos) },
+						node.recv?.let { coneOf(it, owner, methodTps, paramPos) },
+						node.params.map { coneOf(it, owner, methodTps, paramPos) },
+						coneOf(node.ret, owner, methodTps, paramPos), node.suspend)
+				else if (node.recv != null && node.suspend)   // #47: `suspend R.() -> T` — compose suspend kind + ext receiver
 					coneSuspendExtensionFunctionType(coneOf(node.recv, owner, methodTps, paramPos), node.params.map { coneOf(it, owner, methodTps, paramPos) }, coneOf(node.ret, owner, methodTps, paramPos))
 				else if (node.recv != null)
 					coneExtensionFunctionType(coneOf(node.recv, owner, methodTps, paramPos), node.params.map { coneOf(it, owner, methodTps, paramPos) }, coneOf(node.ret, owner, methodTps, paramPos))

@@ -209,6 +209,61 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	internal fun cfgFresh(): Int = cfgLabelN++
 	internal var inlCounter = 0
 	internal var scopeCounter = 0
+
+	/**
+	 * The allocator for the `__recv` family — a LIFTED LAMBDA's receiver parameter, minted by both the lift
+	 * ([kotc.backend.lambdaRecvName]) and the inline splice carrier. It takes the FRAME rather than a bare prefix, so
+	 * neither caller can mint a name without declaring the scope it must be fresh in.
+	 *
+	 * The scope argument is the point. A minted name lands in a FLAT per-frame namespace that ilemit indexes BY NAME,
+	 * and the frame also holds names the USER chose — `{ __recv0 -> this + __recv0 }` is perfectly legal Kotlin. A
+	 * counter alone only keeps minted names distinct from each OTHER: the lifted method got two parameters called
+	 * `__recv0`, the later declaration overwrote the earlier in ilemit's by-name index, and BOTH reads loaded the
+	 * regular argument (a silently wrong value, no diagnostic).
+	 *
+	 * SCOPE OF THE GUARANTEE, precisely: this makes the `__recv` family fresh against its own frame. It is NOT yet a
+	 * universal frame allocator — the other compiler-minted families (`__nv`, `__nn`, `__subj`, `__inlRet`, `__sbp`/
+	 * `__sbl`, `__tailrec_<label>_<n>`) are still minted from a counter alone, so a user identifier spelled exactly
+	 * like one of them can still alias it. That family is tracked as a known limitation, not fixed here. Names in the
+	 * `dotkt$…` namespace are exempt by construction: the frontend rejects `$` in an identifier, backticks included
+	 * ("name contains illegal characters"), so no source can spell one.
+	 */
+	internal fun freshFrameName(prefix: String, scope: IrElement?): String {
+		val taken = frameNames(scope)
+		while (true) {
+			val candidate = "$prefix${inlCounter++}"
+			if (candidate !in taken) return candidate
+		}
+	}
+
+	/** Every value name VISIBLE inside `scope`: declared there (its own parameters, nested variables/parameters) AND
+	 *  every name it merely READS or WRITES — i.e. its CAPTURES, which are declared in an enclosing frame but land in
+	 *  the SAME emitted frame as the minted name (a closure field, a leading lift parameter, a spliced carrier
+	 *  binding). Collecting only declarations is not enough and was measured to be wrong: for
+	 *  `fun f(__recv0: Int) = runWith { this * 100 + __recv0 }` the lambda declares nothing, so the allocator handed
+	 *  back `__recv0`, and the captured read then resolved to the receiver (201 came out as 202).
+	 *
+	 *  Deliberately over-approximate — a nested lambda's own parameters end up in their own lifted frame, and a read
+	 *  of an unrelated outer local costs at most one skipped index. Over-approximating makes a minted name more
+	 *  conservative; under-approximating makes it silently wrong. */
+	private fun frameNames(scope: IrElement?): Set<String> {
+		if (scope == null) return emptySet()
+		val out = HashSet<String>()
+		scope.acceptVoid(object : org.jetbrains.kotlin.ir.visitors.IrVisitorVoid() {
+			override fun visitElement(element: org.jetbrains.kotlin.ir.IrElement) {
+				when (element) {
+					is org.jetbrains.kotlin.ir.declarations.IrVariable -> out.add(element.name.asString())
+					is org.jetbrains.kotlin.ir.declarations.IrValueParameter -> out.add(element.name.asString())
+					// A CAPTURE: read/written here, declared elsewhere, emitted into this frame.
+					is org.jetbrains.kotlin.ir.expressions.IrGetValue -> out.add(element.symbol.owner.name.asString())
+					is org.jetbrains.kotlin.ir.expressions.IrSetValue -> out.add(element.symbol.owner.name.asString())
+					else -> {}
+				}
+				element.acceptChildrenVoid(this)
+			}
+		})
+		return out
+	}
 	internal var fileClass = ""   // current file's static class name (for top-level property access)
 	// Per-file prefix for SYNTHETIC type names (closures, ref cells, sequence SMs). Each file is compiled by its own
 	// BirEmitter with a fresh `closureCounter`, so unprefixed names like `dotkt$Closure0` COLLIDE across files when

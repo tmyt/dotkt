@@ -116,25 +116,30 @@ internal fun BirEmitter.filledArgs(
 ): List<String> {
 	val callee = (call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction) ?: return emptyList()
 	val carries = carriesKotlinDefault(callee)
-	// #134: the facadegen metadata's constant defaults for this callee's regular params, keyed by resolved IR identity —
+	// #134: the facadegen metadata's constant defaults for this callee's POSITIONAL params, keyed by resolved IR identity —
 	// a CROSS-MODULE facadegen constructor/top-level function's injected default deserializes as an IrErrorExpression
 	// (fir2ir drops the VALUE for a bodies-skipped dependency declaration), so the real value is read from here. Lazy:
 	// only an actually-omitted cross-module default needs the lookup. Null for a same-module callee (its default is real IR).
+	// The count (and the returned list's indices) are the [isValueParameter] PHYSICAL space, because the facadegen
+	// metadata's param array is physical too — one entry per emitted CLR parameter, a restored context parameter included
+	// (it simply never carries a default). Same space as `vals` below, so one index addresses both.
 	val metaDefaults: List<kotc.frontend.ClrConstDefault?>? by lazy {
-		injectedMetaDefaults(callee, callee.parameters.count { it.kind == IrParameterKind.Regular })
+		injectedMetaDefaults(callee, callee.parameters.count { isValueParameter(it) })
 	}
 	// The non-constant @KotlinDefault carrier SLOTS facadegen restored for this callee. This is the AUTHORITATIVE signal
 	// for a cross-module omission (it reflects what the referenced assembly actually carries), where `carries` is only an
 	// IR-shape test over a bodies-skipped declaration — hence the sole signal for a CONSTRUCTOR below.
 	val kotlinDefaultSlots: List<Boolean>? by lazy {
-		injectedKotlinDefaultSlots(callee, callee.parameters.count { it.kind == IrParameterKind.Regular })
+		injectedKotlinDefaultSlots(callee, callee.parameters.count { isValueParameter(it) })
 	}
 	val receiverParams = callee.parameters.filter {
 		it.kind == IrParameterKind.DispatchReceiver || it.kind == IrParameterKind.ExtensionReceiver
 	}
 	val receiverSyms = receiverParams.map { it.symbol }.toHashSet()
-	val valueSyms = callee.parameters.filter { it.kind == IrParameterKind.Regular }.map { it.symbol }.toHashSet()
-	val contextSyms = callee.parameters.filter { it.kind == IrParameterKind.Context }.map { it.symbol }.toHashSet()
+	// Every POSITIONAL parameter ([isValueParameter]: contexts then regulars) — a default reading any of them is bound
+	// to this call's argument in that slot. A CONTEXT parameter belongs here for the same reason a regular one does: it
+	// is an ordinary argument of this call, so `b: Int = a + c.n` substitutes both `a` and `c` from the emitted args.
+	val valueSyms = callee.parameters.filter { isValueParameter(it) }.map { it.symbol }.toHashSet()
 	// A default may also read an ENCLOSING instance (`inner class In(val x: Int = outerProp)`, or a member of an inner
 	// class). That read is the enclosing class's own `thisReceiver` — NOT one of the callee's parameters — so it is
 	// bound separately (see [enclosingThisChain] / [enclosingThisSubst]).
@@ -156,18 +161,21 @@ internal fun BirEmitter.filledArgs(
 	// `this@Outer` from its own `this`, never from an extension receiver. Shares `dispatchRecv`, so reading it both
 	// here and for a dispatch-param binding still emits the expression once.
 	val enclosingRecv: String? by lazy { emittedRecv?.value ?: dispatchRecv.value }
-	val regs = callee.parameters.mapIndexedNotNull { i, p -> if (p.kind == IrParameterKind.Regular) i to p else null }
-	val provided = regs.map { (i, _) -> if (i < call.arguments.size) call.arguments[i] else null }
+	// The callee's POSITIONAL parameters with their `call.arguments` index — contexts then regulars, the SAME sequence
+	// [paramsJsonList] emits as `params` and [overloadSigField] keys `sig` by, so `out` below is index-for-index the
+	// declaration's arg array (the caller prepends `__self` on both sides).
+	val vals = callee.parameters.mapIndexedNotNull { i, p -> if (isValueParameter(p)) i to p else null }
+	val provided = vals.map { (i, _) -> if (i < call.arguments.size) call.arguments[i] else null }
 	// A default value is itself a call-site value. If a LATER omitted default reads this parameter, a non-stable default
 	// must be bound after substitution just like a provided argument is bound by the expression pre-pass; otherwise
 	// `a = bump(), b = a * 10` renders two copies of `bump()`. Only defaults this call actually fills participate.
-	val realFilledDefaults = regs.mapIndexed { idx, (_, p) ->
+	val realFilledDefaults = vals.mapIndexed { idx, (_, p) ->
 		if (provided[idx] != null) null
 		else p.defaultValue?.expression?.takeIf { it !is org.jetbrains.kotlin.ir.expressions.IrErrorExpression }
 	}
-	val readByLaterFilledDefault = BooleanArray(regs.size) { idx ->
-		val sym = regs[idx].second.symbol
-		(idx + 1 until regs.size).any { later ->
+	val readByLaterFilledDefault = BooleanArray(vals.size) { idx ->
+		val sym = vals[idx].second.symbol
+		(idx + 1 until vals.size).any { later ->
 			realFilledDefaults[later]?.let { refsAny(it, setOf(sym)) } == true
 		}
 	}
@@ -176,7 +184,7 @@ internal fun BirEmitter.filledArgs(
 	// that reads ANOTHER value parameter (`b: Int = a * 10`). A Kotlin default may reference only EARLIER params, so
 	// every referenced param is already recorded here by the time its reader is processed.
 	val filledByParam = java.util.IdentityHashMap<org.jetbrains.kotlin.ir.declarations.IrValueParameter, String>()
-	regs.forEachIndexed { idx, pair ->
+	vals.forEachIndexed { idx, pair ->
 		val p = pair.second
 		val arg = provided[idx]
 		val emitted: String? = when {
@@ -216,7 +224,7 @@ internal fun BirEmitter.filledArgs(
 							// provided arg, one this pass fills from the metadata, or one that becomes a positional
 							// placeholder — silently omitting THIS slot would slide that value into the wrong parameter (and
 							// leave the emitted args short of the callee's arity), so refuse loudly instead of miscompiling.
-							val laterArgProvided = regs.drop(idx + 1).withIndex().any { (k, later) ->
+							val laterArgProvided = vals.drop(idx + 1).withIndex().any { (k, later) ->
 								val j = later.first
 								val laterIdx = idx + 1 + k
 								(j < call.arguments.size && call.arguments[j] != null) ||
@@ -231,7 +239,8 @@ internal fun BirEmitter.filledArgs(
 						}
 					}
 					refsAny(def, valueSyms) || refsAny(def, receiverSyms) || refsAny(def, enclosingSyms) -> {
-						// SAME-MODULE default reading the CALLEE'S OWN SCOPE — an earlier VALUE parameter (`b: Int = a * 10`,
+						// SAME-MODULE default reading the CALLEE'S OWN SCOPE — an earlier VALUE parameter (a CONTEXT
+						// parameter, or an earlier regular one: `b: Int = a + c.n`, `b: Int = a * 10`,
 						// a ctor's `h: Int = w * 2`), the callee's RECEIVER (`missingDelimiterValue = this`, a data-class
 						// `copy`'s `y = this.y`), or an ENCLOSING instance (`inner class In(val x: Int = outerProp)`). Every one
 						// of them is bound BY SYMBOL through captureSubst, so each read renders as THIS call's expression for
@@ -270,13 +279,6 @@ internal fun BirEmitter.filledArgs(
 						try { expr(def) }
 						finally { saved.forEach { (d, prev) -> if (prev != null) captureSubst[d] = prev else captureSubst.remove(d) } }
 					}
-					// A default reading a callee parameter that is NEITHER a fillable value param NOR a rewritable receiver —
-					// a CONTEXT parameter, the only remaining IrParameterKind — has no call-site form: inlining it verbatim
-					// would leave a dangling local read for ilemit. Refuse at the omitting call, not at the declaration (a
-					// callee whose default is never omitted must still compile).
-					refsAny(def, contextSyms) -> unsupported(call, "omitting a default argument that reads a context parameter",
-						"the default value of parameter '${p.name.asString()}' references the callee's context parameter, " +
-						"which has no call-site form; pass the argument explicitly")
 					else -> argExpr(def, p)   // constant / global — inline verbatim (unchanged)
 				}
 			}
@@ -355,29 +357,34 @@ internal fun BirEmitter.enclosingThisSubst(
 	return out
 }
 
-/** The facadegen metadata's per-regular-parameter constant defaults for `callee` (ctor by IR ClassId, or top-level
- *  function by resolved CallableId), matched by regular-param count. Null for a same-module callee or one with no such
+/** The facadegen metadata's per-POSITIONAL-parameter constant defaults for `callee` (ctor by IR ClassId, or top-level
+ *  function by resolved CallableId), matched by positional-param count ([isValueParameter]: contexts then regulars — the
+ *  metadata's own param array is that same physical list). Null for a same-module callee or one with no such
  *  overload / ambiguous defaults. Shared by [filledArgs] (#134 const inline) and [filledInjectedArgs] (#146). */
-internal fun BirEmitter.injectedMetaDefaults(callee: org.jetbrains.kotlin.ir.declarations.IrFunction, regCount: Int): List<kotc.frontend.ClrConstDefault?>? =
+internal fun BirEmitter.injectedMetaDefaults(callee: org.jetbrains.kotlin.ir.declarations.IrFunction, valCount: Int): List<kotc.frontend.ClrConstDefault?>? =
 	when (callee) {
 		is org.jetbrains.kotlin.ir.declarations.IrConstructor ->
-			(callee.parent as? IrClass)?.classId?.let { kotc.frontend.clrInjectedCtorParamDefaults(it, regCount) }
+			(callee.parent as? IrClass)?.classId?.let { kotc.frontend.clrInjectedCtorParamDefaults(it, valCount) }
 		is org.jetbrains.kotlin.ir.declarations.IrSimpleFunction ->
 			(callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)
-				?.let { kotc.frontend.clrInjectedTopLevelParamDefaults(org.jetbrains.kotlin.name.CallableId(it.packageFqName, callee.name), regCount) }
+				?.let { kotc.frontend.clrInjectedTopLevelParamDefaults(org.jetbrains.kotlin.name.CallableId(it.packageFqName, callee.name), valCount) }
+			// A MEMBER of a facadegen-injected type: the metadata is the authority here too (see the member accessors'
+			// KDoc). Without it a member's omitted default had no carrier signal at all.
+				?: (callee.parent as? IrClass)?.classId?.let { kotc.frontend.clrInjectedMemberParamDefaults(it, callee.name, valCount) }
 		else -> null
 	}
 
 /** The non-constant Kotlin-default carrier slots restored by facadegen for an injected constructor/top-level function.
  * Unlike [carriesKotlinDefault], this survives the bodies-skipped dependency IR, where declaration-origin/default-body
  * details are intentionally incomplete. */
-internal fun injectedKotlinDefaultSlots(callee: org.jetbrains.kotlin.ir.declarations.IrFunction, regCount: Int): List<Boolean>? =
+internal fun injectedKotlinDefaultSlots(callee: org.jetbrains.kotlin.ir.declarations.IrFunction, valCount: Int): List<Boolean>? =
 	when (callee) {
 		is org.jetbrains.kotlin.ir.declarations.IrConstructor ->
-			(callee.parent as? IrClass)?.classId?.let { kotc.frontend.clrInjectedCtorKotlinDefaultSlots(it, regCount) }
+			(callee.parent as? IrClass)?.classId?.let { kotc.frontend.clrInjectedCtorKotlinDefaultSlots(it, valCount) }
 		is org.jetbrains.kotlin.ir.declarations.IrSimpleFunction ->
 			(callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)
-				?.let { kotc.frontend.clrInjectedTopLevelKotlinDefaultSlots(org.jetbrains.kotlin.name.CallableId(it.packageFqName, callee.name), regCount) }
+				?.let { kotc.frontend.clrInjectedTopLevelKotlinDefaultSlots(org.jetbrains.kotlin.name.CallableId(it.packageFqName, callee.name), valCount) }
+				?: (callee.parent as? IrClass)?.classId?.let { kotc.frontend.clrInjectedMemberKotlinDefaultSlots(it, callee.name, valCount) }
 		else -> null
 	}
 
@@ -391,26 +398,29 @@ internal fun injectedKotlinDefaultSlots(callee: org.jetbrains.kotlin.ir.declarat
  *  array's positions. */
 internal fun BirEmitter.filledInjectedArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): List<String> {
 	val callee = (call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction) ?: return emptyList()
-	val regCount = callee.parameters.count { it.kind == IrParameterKind.Regular }
-	val metaDefaults = injectedMetaDefaults(callee, regCount)
-	val kotlinDefaultSlots = injectedKotlinDefaultSlots(callee, regCount)
+	val valCount = callee.parameters.count { isValueParameter(it) }
+	val metaDefaults = injectedMetaDefaults(callee, valCount)
+	val kotlinDefaultSlots = injectedKotlinDefaultSlots(callee, valCount)
 	val carries = carriesKotlinDefault(callee)
 	val out = ArrayList<String>()
-	var regIdx = -1
+	var valIdx = -1
 	callee.parameters.forEachIndexed { i, p ->
-		if (p.kind != IrParameterKind.Regular) return@forEachIndexed
-		regIdx++
+		if (!isValueParameter(p)) return@forEachIndexed
+		valIdx++
 		val arg = if (i < call.arguments.size) call.arguments[i] else null
-		if (arg != null) { out.add(expr(arg)); return@forEachIndexed }
+		// A `byref(x)` / @ClrRefArgument arg is emitted as its ADDRESSABLE lvalue (ilemit's EmitArg passes it by
+		// address). `byrefMarker` is null for every ordinary argument, so this is a no-op everywhere else — it lets
+		// the .NET-interop member paths share this filler instead of keeping a second, non-filling renderer.
+		if (arg != null) { out.add(byrefMarker(arg)?.let { inner -> byrefBackingField(inner) ?: expr(inner) } ?: expr(arg)); return@forEachIndexed }
 		val def = p.defaultValue?.expression ?: return@forEachIndexed
 		if (def is org.jetbrains.kotlin.ir.expressions.IrErrorExpression) {
-			metaDefaults?.getOrNull(regIdx)?.let { metaConstArg(it, p.type) }?.let { out.add(expr(it)); return@forEachIndexed }
-			if (kotlinDefaultSlots?.getOrNull(regIdx) == true || carries) {
+			metaDefaults?.getOrNull(valIdx)?.let { metaConstArg(it, p.type) }?.let { out.add(expr(it)); return@forEachIndexed }
+			if (kotlinDefaultSlots?.getOrNull(valIdx) == true || carries) {
 				out.add(defaultArgPlaceholder)
 				return@forEachIndexed
 			}
 			val laterArgProvided = (i + 1 until call.arguments.size).any { j ->
-				call.arguments[j] != null && callee.parameters[j].kind == IrParameterKind.Regular
+				call.arguments[j] != null && isValueParameter(callee.parameters[j])
 			}
 			if (laterArgProvided) unsupported(call, "omitting a cross-module default argument the metadata does not carry",
 				"the default value of parameter '${p.name.asString()}' is not available in the referenced assembly's " +
@@ -1014,7 +1024,12 @@ internal fun BirEmitter.call(call: IrCall): String {
 				// DERIVES the ilemit `shapes` overload-matcher tokens (the .NET simple names Int64/SByte/… + gp/
 				// generic/ienum/func:N) off the @ClrTypeAlias index and drops `shapeTypes`. No CLR-shape knowledge here.
 				val shapeTypes = shapeParams.joinToString(",") { birType(it).toJson() }
-				val argsJson = (listOfNotNull(gExt) + regularArgs(call)).joinToString(",") { expr(it) }
+				// Positional filling, like every other .NET/restored-member call path: building `args` from the
+				// expressions that happen to be present DELETES an omitted default's slot, so a later provided
+				// argument slides into it (`g.pick(b = 3)` bound `3` to `a` and left the required `b` zero-filled)
+				// while `shapeTypes` above still describes the full parameter vector. `filledInjectedArgs` emits a
+				// metadata constant, a `defaultArg` placeholder for bir2cir's DefaultArgSplice, or a loud refusal.
+				val argsJson = (listOfNotNull(gExt?.let { expr(it) }) + filledInjectedArgs(call)).joinToString(",")
 				// A `suspend` generic .NET-member callee carries the `"suspendCall":true` FACT for bir2cir's deferred
 				// Task/await lowering, exactly like the non-generic call paths (suspendCallTag) — otherwise a generic
 				// .NET-member suspend call would silently drop out of the suspension lowering. (latent ⑤.)
@@ -1053,10 +1068,15 @@ internal fun BirEmitter.call(call: IrCall): String {
 			// A2 (#61): a PLAIN instance call by identity carrying the accessor KIND; bir2cir's NetInteropBinding
 			// finds NO .NET property `p` (it's a synthetic accessor method) and applies the convention -> a clrInstance
 			// get_p/set_p method call.
+			// The accessor's arg list is the one physical projection: `[__self?] + <positional args>`, where the
+			// positional part carries a restored `context(...)` parameter and, for a setter, the trailing `value`.
 			extensionReceiver(call)?.let { pExt ->
+				val accArgIrs = listOf(pExt) + regularArgs(call)
+				val accArgTypes = accArgIrs.joinToString(",") { birType(it.type).toJson() }
+				val accArgs = accArgIrs.joinToString(",") { expr(it) }
 				return if (callee === prop.setter)
-					"""{"k":"callInstance","virtual":$clrCallVirtual,"ownerType":${memberType!!.toJson()},"method":${str(pn)},"prop":"set","argTypes":[${birType(pExt.type).toJson()},${birType(regularArgs(call).first().type).toJson()}],"ret":${fqnJson("kotlin.Unit")},"recv":$recvJson,"args":[${expr(pExt)},${expr(regularArgs(call).first())}]${superTag(call)}}"""
-				else """{"k":"callInstance","virtual":$clrCallVirtual,"ownerType":${memberType!!.toJson()},"method":${str(pn)},"prop":"get","argTypes":[${birType(pExt.type).toJson()}],"ret":${birType(callee.returnType).toJson()},"recv":$recvJson,"args":[${expr(pExt)}]${superTag(call)}}"""
+					"""{"k":"callInstance","virtual":$clrCallVirtual,"ownerType":${memberType!!.toJson()},"method":${str(pn)},"prop":"set","argTypes":[$accArgTypes],"ret":${fqnJson("kotlin.Unit")},"recv":$recvJson,"args":[$accArgs]${superTag(call)}}"""
+				else """{"k":"callInstance","virtual":$clrCallVirtual,"ownerType":${memberType!!.toJson()},"method":${str(pn)},"prop":"get","argTypes":[$accArgTypes],"ret":${birType(callee.returnType).toJson()},"recv":$recvJson,"args":[$accArgs]${superTag(call)}}"""
 			}
 			// A2 (#61): a `kotlin.clr.ClrEvent<T>` read is CLR-ONLY vocabulary — a .NET event has no plain-Kotlin
 			// call form (it exposes add_/remove_, not a get_); facadegen injects it purely to typecheck, so kotc
@@ -1074,9 +1094,12 @@ internal fun BirEmitter.call(call: IrCall): String {
 			// A non-static property-accessor callInstance carries `virtual` too (moot once bir2cir reshapes it to
 			// clrPropGet/clrPropSet; consistent with the other .NET-interop callInstance nodes — #139).
 			val propVirtualField = if (isStatic) "" else ""","virtual":$clrCallVirtual"""
+			val plainAccArgIrs = regularArgs(call)
+			val plainAccArgTypes = plainAccArgIrs.joinToString(",") { birType(it.type).toJson() }
+			val plainAccArgs = plainAccArgIrs.joinToString(",") { expr(it) }
 			return if (callee === prop.setter)
-				"""{"k":"$propCallKind"$propVirtualField,"ownerType":${memberType!!.toJson()},"method":${str(pn)},"prop":"set","argTypes":[${birType(regularArgs(call).first().type).toJson()}]$propRecvField,"args":[${expr(regularArgs(call).first())}]${superTag(call)}}"""
-			else """{"k":"$propCallKind"$propVirtualField,"ownerType":${memberType!!.toJson()},"method":${str(pn)},"prop":"get","argTypes":[],"ret":${birType(callee.returnType).toJson()}$propRecvField,"args":[]${superTag(call)}}"""
+				"""{"k":"$propCallKind"$propVirtualField,"ownerType":${memberType!!.toJson()},"method":${str(pn)},"prop":"set","argTypes":[$plainAccArgTypes]$propRecvField,"args":[$plainAccArgs]${superTag(call)}}"""
+			else """{"k":"$propCallKind"$propVirtualField,"ownerType":${memberType!!.toJson()},"method":${str(pn)},"prop":"get","argTypes":[$plainAccArgTypes],"ret":${birType(callee.returnType).toJson()}$propRecvField,"args":[$plainAccArgs]${superTag(call)}}"""
 		}
 		val member = name
 		val anySlotTag = if (isAnySlotMethod(callee)) ""","anySlot":true""" else ""
@@ -1093,24 +1116,22 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// object: it's a STATIC call whose first argument is the extension receiver.
 		val extRecv = extensionReceiver(call)
 		if (isStatic && extRecv != null) {
-			val allArgs = (listOf(expr(extRecv)) + regularArgs(call).map { expr(it) }).joinToString(",")
-			val allArgTypes = (listOf(birType(extRecv.type).toJson()) + regularArgs(call).map { birType(it.type).toJson() }).joinToString(",")
-			return """{"k":"callStatic","ownerType":${clrType!!.toJson()},"method":${str(member)},"argTypes":[$allArgTypes],"ret":$ret,"args":[$allArgs]$suspendTag$anySlotTag}"""
+			val (allArgs, allArgTypes) = clrCallArgsWithRecv(call, callee, extRecv)
+			return """{"k":"callStatic","ownerType":${clrType!!.toJson()},"method":${str(member)}${overloadSigField(callee)},"argTypes":[$allArgTypes],"ret":$ret,"args":[$allArgs]$suspendTag$anySlotTag}"""
 		}
 		// A restored MEMBER extension function (`class C { fun T.f() }`): an INSTANCE method on the dispatch receiver
 		// (C) whose first .NET param `__self` is the extension receiver -> dispatch on `recv`, prepend the receiver.
 		if (!isStatic && extRecv != null && recv != null) {
-			val allArgs = (listOf(expr(extRecv)) + regularArgs(call).map { expr(it) }).joinToString(",")
-			val allArgTypes = (listOf(birType(extRecv.type).toJson()) + regularArgs(call).map { birType(it.type).toJson() }).joinToString(",")
-			return """{"k":"callInstance","virtual":$clrCallVirtual,"ownerType":${memberType!!.toJson()},"method":${str(member)},"argTypes":[$allArgTypes],"ret":$ret,"recv":${expr(recv)},"args":[$allArgs]$suspendTag$anySlotTag${superTag(call)}}"""
+			val (allArgs, allArgTypes) = clrCallArgsWithRecv(call, callee, extRecv)
+			return """{"k":"callInstance","virtual":$clrCallVirtual,"ownerType":${memberType!!.toJson()},"method":${str(member)}${overloadSigField(callee)},"argTypes":[$allArgTypes],"ret":$ret,"recv":${expr(recv)},"args":[$allArgs]$suspendTag$anySlotTag${superTag(call)}}"""
 		}
 		// A2 (#61): a PLAIN static/instance call by the .NET owner's FQN identity; bir2cir's NetInteropBinding
 		// resolves the owner off the .NET refs and shapes it (clrStatic/clrInstance). No .NET-shape decision here.
 		val (cArgs, cArgTypes) = clrCallArgs(call, callee)
 		return if (isStatic)
-			"""{"k":"callStatic","ownerType":${clrType!!.toJson()},"method":${str(member)},"argTypes":[$cArgTypes],"ret":$ret,"args":[$cArgs]$suspendTag$anySlotTag}"""
+			"""{"k":"callStatic","ownerType":${clrType!!.toJson()},"method":${str(member)}${overloadSigField(callee)},"argTypes":[$cArgTypes],"ret":$ret,"args":[$cArgs]$suspendTag$anySlotTag}"""
 		else
-			"""{"k":"callInstance","virtual":$clrCallVirtual,"ownerType":${memberType!!.toJson()},"method":${str(member)},"argTypes":[$cArgTypes],"ret":$ret,"recv":${expr(recv!!)},"args":[$cArgs]$suspendTag$anySlotTag${superTag(call)}}"""
+			"""{"k":"callInstance","virtual":$clrCallVirtual,"ownerType":${memberType!!.toJson()},"method":${str(member)}${overloadSigField(callee)},"argTypes":[$cArgTypes],"ret":$ret,"recv":${expr(recv!!)},"args":[$cArgs]$suspendTag$anySlotTag${superTag(call)}}"""
 	}
 
 	// Companion-object member -> a static member of the enclosing class (precedes user-property field access).
@@ -1133,7 +1154,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 				val args = listOf(ext) + regularArgs(call)
 				"""{"k":"callStatic","owner":${fqnJson(enclosing)},"method":${str(prop.name.asString())},"prop":"set"${overloadSigField(callee)},"args":[${args.joinToString(",") { expr(it) }}]}"""
 			} else
-				"""{"k":"callStatic","owner":${fqnJson(enclosing)},"method":${str(prop.name.asString())},"prop":"get"${overloadSigField(callee)},"args":[${expr(ext)}]${retHint(false, call.type)}}"""
+				"""{"k":"callStatic","owner":${fqnJson(enclosing)},"method":${str(prop.name.asString())},"prop":"get"${overloadSigField(callee)},"args":[${(listOf(ext) + regularArgs(call)).joinToString(",") { expr(it) }}]${retHint(false, call.type)}}"""
 			// A companion COMPUTED property (`val X.Companion.foo: T get() = ...`, no backing field) OR one with a
 			// backing field (initializer) but a CUSTOM accessor (`val foo = 7; get() = field + 100`, #89) -> a
 			// static call by the property's OWN bare Kotlin identity + a `"prop":"get"/"set"` marker (#78; the SAME
@@ -1149,7 +1170,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 				else
 					"""{"k":"staticFieldSet","ownerType":${fqnJson(enclosing)},"name":${str(prop.name.asString())},"value":${expr(regularArgs(call).first())}}"""
 			else if (!readsAsStaticField(prop))
-				"""{"k":"callStatic","owner":${fqnJson(enclosing)},"method":${str(prop.name.asString())},"prop":"get","args":[]${retHint(false, call.type)}}"""
+				"""{"k":"callStatic","owner":${fqnJson(enclosing)},"method":${str(prop.name.asString())},"prop":"get","args":[${regularArgs(call).joinToString(",") { expr(it) }}]${retHint(false, call.type)}}"""
 			else """{"k":"staticField","ownerType":${fqnJson(enclosing)},"name":${str(prop.name.asString())}}"""
 		}
 		// A generic companion fun (`Result.Companion.success<T>`) carries its resolved type args — without them
@@ -1177,7 +1198,10 @@ internal fun BirEmitter.call(call: IrCall): String {
 				?.let { CallableId(it.packageFqName, p.name) }
 			if (declaringClass == null) callableId
 				?.let { kotc.frontend.clrInjectedTopLevelPropFileClass(it) }?.let { fileClass ->
-				val isExt = p.getter?.parameters?.any { it.kind == IrParameterKind.ExtensionReceiver } == true
+				// An accessor that takes ANY argument — an extension receiver, or a `context(...)` parameter — is a
+				// `get_/set_<name>(...)` METHOD on the file class, never a static field: route it to the accessor path
+				// below. (A plain field-backed property's accessor takes none.)
+				val isExt = p.getter?.parameters?.any { it.kind == IrParameterKind.ExtensionReceiver || isValueParameter(it) } == true
 				if (!isExt) {
 					// #103: a field-backed prop with a CUSTOM getter/setter must INVOKE the accessor (a static
 					// `get_/set_<name>` method on the file class, like the extension-property path below but without a
@@ -1203,7 +1227,11 @@ internal fun BirEmitter.call(call: IrCall): String {
 					val args = listOfNotNull(recv) + regularArgs(call)
 					return """{"k":"callStatic","ownerType":${fqnJson(fileClass)},"method":${str(p.name.asString())},"prop":"set","argTypes":[${args.joinToString(",") { birType(it.type).toJson() }}],"ret":${fqnJson("kotlin.Unit")},"args":[${args.joinToString(",") { expr(it) }}]}"""
 				}
-				return """{"k":"callStatic","ownerType":${fqnJson(fileClass)},"method":${str(p.name.asString())},"prop":"get","argTypes":[${recv?.let { birType(it.type).toJson() } ?: ""}],"ret":${birType(callee.returnType).toJson()},"args":[${recv?.let { expr(it) } ?: ""}]}"""
+				// The getter's args are the SAME projection every other call uses: `[__self?] + <positional args>` —
+				// the positional part is empty for a plain extension property and carries the `context(...)` arguments
+				// for a context property.
+				val getArgs = listOfNotNull(recv) + regularArgs(call)
+				return """{"k":"callStatic","ownerType":${fqnJson(fileClass)},"method":${str(p.name.asString())},"prop":"get","argTypes":[${getArgs.joinToString(",") { birType(it.type).toJson() }}],"ret":${birType(callee.returnType).toJson()},"args":[${getArgs.joinToString(",") { expr(it) }}]}"""
 			}
 		}
 
@@ -1290,7 +1318,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 					val args = listOf(ext) + regularArgs(call)
 					"""{"k":"callStatic","owner":null,"method":${str(p.name.asString())},"prop":"set"${overloadSigField(callee)}$ta,"args":[${args.joinToString(",") { expr(it) }}]${calleeOwnerTag(p)}}"""
 				} else
-					"""{"k":"callStatic","owner":null,"method":${str(p.name.asString())},"prop":"get"${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), birType(call.type))},"args":[${expr(ext)}]${calleeOwnerTag(p)}}"""
+					"""{"k":"callStatic","owner":null,"method":${str(p.name.asString())},"prop":"get"${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), birType(call.type))},"args":[${(listOf(ext) + regularArgs(call)).joinToString(",") { expr(it) }}]${calleeOwnerTag(p)}}"""
 			}
 			// A plain top-level property (parent is the file/package, not a class) -> a static field of ITS DEFINING
 			// file's class. Use the property's own file, NOT the file currently being emitted — else a cross-file
@@ -1323,7 +1351,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 					"""{"k":"staticFieldSet","ownerType":${fqnJson(owner)},"name":${str(p.name.asString())},"value":${expr(regularArgs(call).first())}}"""
 			} else {
 				if (!readsAsStaticField(p))
-					"""{"k":"callStatic","owner":$accessorOwner,"method":${str(p.name.asString())},"prop":"get","args":[]${retHint(false, call.type)}}"""
+					"""{"k":"callStatic","owner":$accessorOwner,"method":${str(p.name.asString())},"prop":"get","args":[${regularArgs(call).joinToString(",") { expr(it) }}]${retHint(false, call.type)}}"""
 				else
 					"""{"k":"staticField","ownerType":${fqnJson(owner)},"name":${str(p.name.asString())}}"""
 			}
@@ -1434,9 +1462,13 @@ internal fun BirEmitter.call(call: IrCall): String {
 			// A MEMBER extension property (`class C { val T.p get() }`): dispatch on the enclosing C, but its `get_p`/
 			// `set_p` method takes the extension receiver as a leading `__self` arg -> prepend it.
 			val pExt = extensionReceiver(call)?.let { expr(it) }
+			// The accessor's arg list is the SAME projection a function call uses: the leading `__self` (member
+			// extension), then the [isValueParameter] sequence — a `context(c: Ctx) val p` accessor's context
+			// parameters, and for a setter the `value` parameter that follows them.
+			val accArgs = (listOfNotNull(pExt) + regularArgs(call).map { expr(it) }).joinToString(",")
 			return if (callee === property.setter)
-				"""{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":$recv,"method":${str("set_" + property.name.asString())},"args":[${listOfNotNull(pExt, expr(regularArgs(call).first())).joinToString(",")}]${overridesJson(callee)}${superTag(call)}}"""
-			else """{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":$recv,"method":${str("get_" + property.name.asString())},"args":[${pExt ?: ""}]${retHint((ownerStr as? TypeNode.Fqn)?.args != null, call.type)}${overridesJson(callee)}${superTag(call)}}"""
+				"""{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":$recv,"method":${str("set_" + property.name.asString())},"args":[$accArgs]${overridesJson(callee)}${superTag(call)}}"""
+			else """{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":$recv,"method":${str("get_" + property.name.asString())},"args":[$accArgs]${retHint((ownerStr as? TypeNode.Fqn)?.args != null, call.type)}${overridesJson(callee)}${superTag(call)}}"""
 		}
 		return if (callee === property.setter)
 			"""{"k":"setFieldExpr","ownerType":$owner,"recv":$recv,"name":${str(property.name.asString())},"value":${expr(regularArgs(call).first())}}"""
@@ -1872,14 +1904,36 @@ internal fun BirEmitter.byrefBackingField(inner: IrExpression): String? {
 	return """{"k":"field","ownerType":$owner,"recv":$recv,"name":${str(prop.name.asString())}}"""
 }
 
-/** (argsJson, argTypesJson) for an injected .NET call. A `ClrRef<T>` param already maps to `byref:T` via birType
- *  (so the out/ref overload resolves + optional params still default-fill); a `byref(x)` arg unwraps to its lvalue
- *  `x`, which ilemit passes by address (EmitArg routes an IsByRef param through EmitAddr). */
+/** (argsJson, argTypesJson) for an injected .NET / restored-DotKt call — the ONE builder every such call site uses,
+ *  so the two vectors are always the SAME physical sequence: `[__self?] + contexts + regulars`, positions filled by
+ *  [filledInjectedArgs].
+ *
+ *  Both halves derive from the callee's PARAMETERS, never from "the expressions that happen to be present". Building
+ *  them from provided expressions (the previous shape here and at the three sibling member paths) silently DELETED an
+ *  omitted default's slot: no `defaultArg` placeholder was emitted, so bir2cir's DefaultArgSplice never consulted the
+ *  callee's `@KotlinDefault` carrier, and a later provided argument slid into the omitted parameter's position — a
+ *  cross-module `h.pick(b = 3)` bound `3` to `a` and zero-filled `b`. `sig` (emitted by the callers via
+ *  [overloadSigField]) is what lets DefaultArgSplice key the carrier; `argTypes` stays aligned with the args actually
+ *  emitted, since a purely-trailing uncarried slot is still dropped for ilemit's [DefaultParameterValue] backfill.
+ *
+ *  A `ClrRef<T>` param already maps to `byref:T` via birType (so the out/ref overload resolves + optional params still
+ *  default-fill); a `byref(x)` arg unwraps to its lvalue `x`, which ilemit passes by address. */
 internal fun BirEmitter.clrCallArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression, callee: org.jetbrains.kotlin.ir.declarations.IrFunction): Pair<String, String> {
-	val params = callee.parameters.filter { it.kind == IrParameterKind.Regular }
-	val tj = params.map { birType(it.type).toJson() }
-	val aj = regularArgs(call).map { val inner = byrefMarker(it); if (inner != null) (byrefBackingField(inner) ?: expr(inner)) else expr(it) }
+	val aj = filledInjectedArgs(call)
+	val tj = regularParams(callee).map { birType(it.type).toJson() }.take(aj.size)
 	return aj.joinToString(",") to tj.joinToString(",")
+}
+
+/** [clrCallArgs] with the callee's EXTENSION receiver prepended to both vectors — a .NET `static M(this T self, …)`
+ *  surfaced as a Kotlin extension, or a restored DotKt member extension whose leading `__self` is that receiver. */
+internal fun BirEmitter.clrCallArgsWithRecv(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression,
+		callee: org.jetbrains.kotlin.ir.declarations.IrFunction, extRecv: IrExpression): Pair<String, String> {
+	val (aj, tj) = clrCallArgs(call, callee)
+	val extParamType = callee.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
+		?.let { birType(it.type) } ?: birType(extRecv.type)
+	val args = listOf(expr(extRecv)) + listOfNotNull(aj.takeIf { it.isNotEmpty() })
+	val types = listOf(extParamType.toJson()) + listOfNotNull(tj.takeIf { it.isNotEmpty() })
+	return args.joinToString(",") to types.joinToString(",")
 }
 
 // #82: whether an IrProperty is backed by a REAL static field vs a COMPUTED property whose cross-module

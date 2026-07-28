@@ -23,7 +23,8 @@ using DotKt.Bir;
 // ATTR ORDER (per emitted member) keeps the established order and inserts each newer carrier beside its slot peers:
 //   type:   [NullableContext, …user, KotlinFileClass?/KotlinFunInterface?, KotlinSealed?, KotlinValue?]
 //   method: [ …user, KotlinFunction?, KotlinInline? ]      ret: [ Nullable?, KotlinSuspendFunctionType?, KotlinExtensionFunctionType?, KotlinNothing? ]
-//   param:  [ Nullable?, KotlinSuspendFunctionType?, KotlinNullableGeneric?, …user, KotlinExtensionFunctionType? ]
+//   param:  [ Nullable?, KotlinSuspendFunctionType?, KotlinNullableGeneric?, …user, KotlinExtensionFunctionType?,
+//             KotlinContextParameter? ]
 //   field:  [ Nullable?, KotlinReadOnly?, KotlinSuspendFunctionType?, KotlinNullableGeneric?, …user,
 //             KotlinExtensionFunctionType? ]
 //   prop:   [ Nullable?, KotlinSuspendFunctionType?, KotlinNullableGeneric?, …user, KotlinExtensionFunctionType? ]
@@ -41,6 +42,8 @@ static class RoundtripMetadata
     const string AKObject       = Ns + "KotlinObjectAttribute";
     const string AKSuspendFn    = Ns + "KotlinSuspendFunctionTypeAttribute";
     const string AKExtFn        = Ns + "KotlinExtensionFunctionTypeAttribute";
+    const string AKCtxParam     = Ns + "KotlinContextParameterAttribute";
+    const string AKCtxFnType    = Ns + "KotlinContextFunctionTypeAttribute";
     const string AKNothing      = Ns + "KotlinNothingAttribute";
     const string AKNullableGen  = Ns + "KotlinNullableGenericAttribute";
     const string AKCollIdentity = Ns + "KotlinCollectionIdentityAttribute";
@@ -131,6 +134,7 @@ static class RoundtripMetadata
         }
         if (mo["retNullableFlags"] is JsonArray rnf && NullableAttr(rnf) is JsonObject rna) ret.Add(rna);
         if (mo["retSuspendFnType"] is JsonNode rsf) ret.Add(SuspendFnAttr(rsf));
+        if (TakeInt(mo, "retCtxFnType") is int rctx) ret.Add(Marker(AKCtxFnType, IntArg(rctx)));
         // [KotlinExtensionFunctionType] (#145) — a bare marker: a method returning `P.() -> R`. Unlike suspend, the
         // delegate is NOT erased (the receiver rides DelegateParams as the first CLR type arg), so no shape is carried —
         // facadegen reads the marker and moves the delegate's first arg back into the fn's receiver.
@@ -177,6 +181,25 @@ static class RoundtripMetadata
             // [KotlinExtensionFunctionType] (#145) — a `block: P.() -> R` param; the bare marker rides after any user
             // attr (order-independent — facadegen reads it by presence). The delegate keeps `P` as its first arg.
             if (HasRecvFn(po["type"])) Append(po, Marker(AKExtFn));
+            // [KotlinContextFunctionType(N)] — this slot's Kotlin TYPE was `context(A…) …`, and N of the delegate's
+            // LEADING arguments are those contexts. It rides BESIDE [KotlinExtensionFunctionType] rather than
+            // replacing it: `context(A) B.(D) -> E` is both (contexts first, then the receiver). Without it a consumer
+            // promotes argument 0 — the CONTEXT — to the restored receiver, and a lambda's `this` binds to the wrong
+            // value with no diagnostic.
+            if (TakeInt(po, "ctxFnType") is int pctx) Append(po, Marker(AKCtxFnType, IntArg(pctx)));
+            // [KotlinContextParameter] — a bare marker on a Kotlin CONTEXT parameter. It is physically an ordinary
+            // positional parameter (kotc projects it as one), so without the marker a consuming Kotlin module would
+            // restore it as a plain leading value parameter and the callee's SOURCE shape would change at the module
+            // boundary. The `mods.context` flag is CONSUMED here (removed) — its whole purpose is this attribute.
+            if (ModFlag(po, "context"))
+            {
+                Append(po, Marker(AKCtxParam));
+                if (po["mods"] is JsonObject pmods)
+                {
+                    pmods.Remove("context");
+                    if (pmods.Count == 0) po.Remove("mods");
+                }
+            }
             // [KotlinCollectionIdentity] (#29) — a param nesting a collapsed read-only collection.
             if ((po["collIdentity"] as JsonValue)?.GetValue<string>() is string ci) Append(po, CollIdentityAttr(ci));
         }
@@ -202,7 +225,8 @@ static class RoundtripMetadata
             }
             if (!topLevel && (fo["readOnly"] as JsonValue)?.GetValue<bool>() == true) Prepend(fo, Marker(AKReadOnly));
             if (fo["nullableFlags"] is JsonArray nf && NullableAttr(nf) is JsonObject na) Prepend(fo, na);
-            if (HasRecvFn(fo["type"])) Append(fo, Marker(AKExtFn));   // a `val handler: P.() -> R` field (#145)
+            if (HasRecvFn(fo["type"])) Append(fo, Marker(AKExtFn));
+            if (TakeInt(fo, "ctxFnType") is int fctx) Append(fo, Marker(AKCtxFnType, IntArg(fctx)));   // a `val handler: P.() -> R` field (#145)
             if ((fo["collIdentity"] as JsonValue)?.GetValue<string>() is string ci) Append(fo, CollIdentityAttr(ci));  // #29
         }
     }
@@ -230,6 +254,7 @@ static class RoundtripMetadata
             if (po["suspendFnType"] is JsonNode sf) Prepend(po, SuspendFnAttr(sf));
             if (po["nullableFlags"] is JsonArray nf && NullableAttr(nf) is JsonObject na) Prepend(po, na);
             if (HasRecvFn(po["type"])) Append(po, Marker(AKExtFn));   // a `val p: P.() -> R` property (#145)
+            if (TakeInt(po, "ctxFnType") is int pctx2) Append(po, Marker(AKCtxFnType, IntArg(pctx2)));
             if ((po["collIdentity"] as JsonValue)?.GetValue<string>() is string ci) Append(po, CollIdentityAttr(ci));  // #29
         }
     }
@@ -390,6 +415,15 @@ static class RoundtripMetadata
         a.Insert(0, attr);
     }
 
+    /// Read and REMOVE an int slot fact (`ctxFnType`/`retCtxFnType`, recorded by BirTypeLowering before it folds a
+    /// context function type to a physical delegate). Consumed here: it exists only to become the attribute.
+    static int? TakeInt(JsonObject o, string key)
+    {
+        if (o[key] is not JsonValue v || !v.TryGetValue<int>(out var n)) return null;
+        o.Remove(key);
+        return n;
+    }
+
     static bool ModFlag(JsonObject obj, string name) =>
         obj["mods"] is JsonObject m && (m[name] as JsonValue)?.GetValue<bool>() == true;
 
@@ -416,6 +450,8 @@ static class RoundtripMetadata
             AttrClass(AKObject, Ctor()),
             AttrClass(AKSuspendFn, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKExtFn, Ctor()),     // #145 — bare marker: a `P.() -> R` receiver function-type position
+            AttrClass(AKCtxParam, Ctor()),  // bare marker: a Kotlin `context(...)` parameter (physically positional)
+            AttrClass(AKCtxFnType, Ctor(Param("System.Int32"))),  // how many of a function-type slot's leading args are contexts
             AttrClass(AKNothing, Ctor()),   // #133 case3 — bare marker on a Kotlin `Nothing` return
             AttrClass(AKNullableGen, Ctor(Param("System.String"), Param(ByteArrayType()))),  // #18/#147 — pre-erasure `Holder<T?>` declaration slot
             AttrClass(AKCollIdentity, Ctor(Param("System.String"), Param(ByteArrayType()))), // #29 — carrier of a pre-collapse `Box<List<T>>` collection identity

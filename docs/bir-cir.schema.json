@@ -69,6 +69,10 @@
         "ret":     { "$ref": "#/$defs/type" },
         "params":  { "type": "array", "items": { "$ref": "#/$defs/type" } },
         "recv":    { "$ref": "#/$defs/type", "description": "extension receiver; absent = none" },
+        "ctx":     {
+          "type": "array", "items": { "$ref": "#/$defs/type" },
+          "description": "META-ONLY (facadegen -> the FIR injector), like `oblivious`: the CONTEXT parameters of a Kotlin context function type, restored from [KotlinContextFunctionType(N)]. `context(A) B.(D) -> E` reads back as ctx=[A], recv=B, params=[D]. kotc BIR MUST omit it — there the fact rides the declaration-slot key `ctxFnType`, because a type node is rebuilt by many lowering passes and would lose it."
+        },
         "clr":     {
           "enum": ["System.Func", "System.Action", "DotKt.Runtime.CompilerServices.KFunc", "DotKt.Runtime.CompilerServices.KAction"],
           "description": "CIR-only physical delegate family, authored by bir2cir after Kotlin-to-CLR lowering. kotc BIR MUST omit it; every fn that reaches ilemit MUST carry it."
@@ -135,7 +139,8 @@
         "const":      { "const": true },
         "lateinit":   { "const": true }, "vararg":    { "const": true },
         "noinline":   { "const": true }, "crossinline":{ "const": true },
-        "inlineOnly": { "const": true }
+        "inlineOnly": { "const": true },
+        "context":    { "const": true }
       },
       "additionalProperties": false
     },
@@ -159,8 +164,9 @@
         "name":     { "type": "string" },
         "type":     { "$ref": "#/$defs/type" },
         "nullableFlags": { "type": "array", "items": { "type": "integer", "enum": [0, 1, 2] }, "$comment": "bir2cir-derived flattened NullableAttribute bytes (0=oblivious,1=not-null,2=nullable) for this param's reference-nullable positions; RoundtripMetadata folds it into the param's `attrs` as a NullableAttribute entry, which ilemit stamps. Absent when the type carries no nullable-reference position." },
-        "mods":     { "$ref": "#/$defs/mods", "$comment": "only vararg/noinline/crossinline apply to a param" },
-        "default":  { "$ref": "#/$defs/node", "description": "a KotlinDefault expression; absent = required" }
+        "mods":     { "$ref": "#/$defs/mods", "$comment": "only vararg/noinline/crossinline/context apply to a param; `context` marks a Kotlin context parameter (physically an ordinary positional slot, restored AS a context parameter by a consuming Kotlin module)" },
+        "default":  { "$ref": "#/$defs/node", "description": "a KotlinDefault expression; absent = required" },
+        "ctxFnType": { "type": "integer", "minimum": 1, "description": "How many of the slot function type's LEADING physical arguments (recv first, then params) are Kotlin CONTEXT parameters: `context(A) B.(D) -> E` is `@ExtensionFunctionType Function3<A,B,D,E>`, so 1 — contexts precede the receiver. Absent = an ordinary function type. fir2ir ERASES the fact (it makes `context(A) B.(D) -> E` the SAME IrType as `B.(A,D) -> E`), so kotc recovers it from FIR and carries it here; bir2cir turns it into [KotlinContextFunctionType(N)]. Without it a consuming module restores the context AS the extension receiver and a lambda's `this` silently binds to the wrong value." }
       },
       "required": ["name", "type"],
       "additionalProperties": false
@@ -209,6 +215,7 @@
         "name":       { "type": "string" },
         "generated":  { "type": "boolean", "description": "Compiler-generated method declaration (lifted lambda/local-function/callable-reference target or a lowerer synthetic). ilemit maps this CIR fact 1:1 to [CompilerGenerated]; facadegen excludes the method from the restored Kotlin API." },
         "ret":        { "$ref": "#/$defs/type" },
+        "retCtxFnType": { "type": "integer", "minimum": 1, "$comment": "The RETURN-position twin of a parameter's `ctxFnType`: how many of the returned function type's LEADING physical arguments are Kotlin CONTEXT parameters. fir2ir erases the fact, so kotc recovers it from FIR; bir2cir folds it into the method's `retAttrs` as [KotlinContextFunctionType(N)]. Absent when the return is not a context function type." },
         "retNullableFlags": { "type": "array", "items": { "type": "integer", "enum": [0, 1, 2] }, "$comment": "#48: bir2cir-derived flattened NullableAttribute bytes for the RETURN's reference-nullable positions (the retired scalar `retNullable` flag's replacement); RoundtripMetadata folds it into the method's `retAttrs` as a NullableAttribute entry, which ilemit stamps on the return parameter. Absent when the return carries no nullable-reference position." },
         "mods":       { "$ref": "#/$defs/mods" },
         "vis":        { "$ref": "#/$defs/vis" },

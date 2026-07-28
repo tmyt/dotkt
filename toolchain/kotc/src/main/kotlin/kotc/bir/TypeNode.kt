@@ -28,11 +28,20 @@ sealed class TypeNode {
     data object Star : TypeNode()
 
     /** `fn`: a function type; [suspend] is a flag, [recv] is the extension receiver (subsumes func:/sfunc:). */
+    /**
+     * `fn`: a Kotlin function type. `recv` + `params` is the physical `FunctionN` argument order.
+     *
+     * `ctx` = the Kotlin CONTEXT parameters of a context function type (`context(A) B.(D) -> E` reads back as
+     * `ctx=[A]`, `recv=B`, `params=[D]`). META-ONLY, exactly like [Oblivious]: facadegen emits it and the FIR
+     * injector consumes it; kotc's own BIR never emits it (there the fact rides the declaration-slot key
+     * `ctxFnType`, because a type node is rebuilt by many bir2cir passes and would lose it).
+     */
     data class Fn(
         val suspend: Boolean,
         val ret: TypeNode,
         val params: List<TypeNode>,
         val recv: TypeNode? = null,
+        val ctx: List<TypeNode> = emptyList(),
     ) : TypeNode()
 
     /** `nullable`: `T?` (NullableAttribute=2). */
@@ -144,6 +153,7 @@ sealed class TypeNode {
                     fromValue(o["ret"]),
                     (o["params"] as List<Any?>).map { fromValue(it) },
                     o["recv"]?.let { fromValue(it) },
+                    (o["ctx"] as? List<Any?>).orEmpty().map { fromValue(it) },
                 )
                 "nullable" -> Nullable(fromValue(o["of"]))
                 "oblivious" -> Oblivious(fromValue(o["of"]))

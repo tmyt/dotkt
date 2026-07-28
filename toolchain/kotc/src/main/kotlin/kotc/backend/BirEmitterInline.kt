@@ -180,7 +180,7 @@ internal fun BirEmitter.defaultReadsDispatch(fn: org.jetbrains.kotlin.ir.declara
  *  its OWN naming: the enclosing type name for a member inline fun (`typeName`), else the top-level fun's file-facade
  *  class (`fileClassOf` — a cross-FILE same-module call works, the stash spans all files). A member fn's DISPATCH
  *  receiver rides `recvs.dispatch` (the payload's `{k:this}` refs bind to it, §4.3); an extension receiver rides
- *  `recvs.extension` (the leading `__self` payload param). One `args` entry per REGULAR param: a normal/crossinline
+ *  `recvs.extension` (the leading `__self` payload param). One `args` entry per POSITIONAL param: a normal/crossinline
  *  literal lambda -> `emitInlineLambdaCarrier` (splice carrier), a NOINLINE lambda / any other arg -> its `expr` (a real
  *  delegate value) — AXIS ②. NO fallback slot: the engine fails loud if it cannot splice. A lambda-less inline call
  *  never reaches here — it falls through to the ordinary member-call path (a real emitted generic method; the JIT
@@ -218,7 +218,7 @@ internal fun BirEmitter.inlineSpliceCallSameModule(call: IrCall): String {
  *  applies its OWN #20 dual-receiver risk guard first; the cross-module caller does NOT (kotc cannot inspect the body) —
  *  bir2cir's §4.3 splices the pure-extension idiom and FAILS LOUD on a dual-receiver body that reads the dispatch
  *  `{k:this}` (#23, until W2). The emitted shape — `owner`, `pc`, `ga`,
- *  `typeArgs`, `recvs` (dispatch/extension + F2A `dispatchTypeArgs`), the per-Regular-param `args`, `retType`, `paramSig`
+ *  `typeArgs`, `recvs` (dispatch/extension + F2A `dispatchTypeArgs`), the per-POSITIONAL-param `args`, `retType`, `paramSig`
  *  — is IDENTICAL for both callers, so bir2cir's InlineSplice consumes them the same whether the payload is same-module
  *  (`InlineBirStash.Index`) or cross-module (ref.dll `InlineCandidates`). */
 internal fun BirEmitter.emitOwnerfulInlineNode(call: IrCall): String {
@@ -237,15 +237,17 @@ internal fun BirEmitter.emitOwnerfulInlineNode(call: IrCall): String {
 	val extParam = callee.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
 	val extRecv = extensionReceiver(call)
 	val dispatchArg = dispatchReceiver(call)
-	val params = callee.parameters.filter { it.kind == IrParameterKind.Regular }
-	// One arg per Regular param, INDEX-ALIGNED with `params` (an omitted-default slot stays null): `regularArgs` drops
+	// The callee's POSITIONAL params ([isValueParameter]: contexts then regulars) — the SAME sequence the DECLARATION
+	// emits and `paramSigOf` keys by, so `pc` and `args` below index the payload's own `params` array one-for-one.
+	val params = callee.parameters.filter { isValueParameter(it) }
+	// One arg per positional param, INDEX-ALIGNED with `params` (an omitted-default slot stays null): `regularArgs` drops
 	// omitted-default nulls, which — now that ANY inline+lambda call splices (AXIS ①) — would shift the lambda into the
 	// wrong param slot (a wrong AXIS-② noinline read / a carrier in the wrong slot). A null here lands in the CORRECT
 	// param slot so bir2cir can attribute it to the right param; today bir2cir InlineSplice FAILS LOUD on a leftover
 	// null (filling it from the payload param's carried default is a bir2cir follow-up — DefaultArgSplice today rewrites
 	// only callStatic/callInstance, never callInline).
 	val args: List<IrExpression?> = callee.parameters.withIndex()
-		.filter { it.value.kind == IrParameterKind.Regular }
+		.filter { isValueParameter(it.value) }
 		.map { call.arguments.getOrNull(it.index) }
 	// owner = kotc's OWN name for the hosting .NET type: the enclosing type name for a member inline fun, else the
 	// top-level fun's file-facade class. Matches the stash key (a member is stashed under its type's `name`, a
@@ -253,7 +255,8 @@ internal fun BirEmitter.emitOwnerfulInlineNode(call: IrCall): String {
 	// cross-module member's `typeName(enclosingClass)` = the injected class's Kotlin FQN = the ref.dll's reflected
 	// `ownerFqn`, so `InlineCandidates` keys match.
 	val owner = (callee.parent as? IrClass)?.let { typeName(it) } ?: fileClassOf(callee)
-	// pc = emitted param count (extension receiver counted as a leading `__self`); ga = type-param arity. The
+	// pc = emitted param count (extension receiver counted as a leading `__self`, then contexts, then regulars — the
+	// [isValueParameter] sequence, so it matches the payload declaration's own `params.size`); ga = type-param arity. The
 	// `owner|name|pc|ga` key selects a candidate LIST; bir2cir picks the unique one whose `params[i].type` structurally
 	// equals `paramSig[i]` (see `paramSigOf`).
 	val pc = params.size + (if (extParam != null) 1 else 0)
@@ -262,13 +265,13 @@ internal fun BirEmitter.emitOwnerfulInlineNode(call: IrCall): String {
 		(call.typeArguments.getOrNull(i)?.let { birType(it) } ?: OBJ).toJson()
 	}
 	val recvs = inlineReceiverParts(callee, extRecv, dispatchArg)
-	// One entry per REGULAR param, in order: a literal lambda -> an `inlineLambda` carrier; any other arg -> its expr.
+	// One entry per POSITIONAL param, in order: a literal lambda -> an `inlineLambda` carrier; any other arg -> its expr.
 	val argsJson = params.indices.joinToString(",") { i ->
 		val arg = args.getOrNull(i)
 		// AXIS ②: a NOINLINE lambda arg is a REAL delegate value (emit via `expr` -> newDelegate/newClosure), NOT a
 		// splice carrier -> inside the spliced body its `param()` becomes a delegate INVOKE on the bound temp. A normal
 		// or CROSSINLINE lambda rides as an `inlineLambda` carrier bir2cir splices at its invoke sites. `params[i]` and
-		// `args[i]` are the i-th Regular param/arg (index-aligned above), so the noinline flag is read off the RIGHT param.
+		// `args[i]` are the i-th POSITIONAL param/arg (index-aligned above), so the noinline flag is read off the RIGHT param.
 		if (arg is IrFunctionExpression && !params[i].isNoinline) emitInlineLambdaCarrier(arg)
 		else if (arg != null) expr(arg)
 		else "null"
@@ -370,18 +373,20 @@ internal fun BirEmitter.inlineSpliceCall(call: IrCall, fileClass: String): Strin
 	// payload param[0] (`__self`). owner STAYS the facadegen file class so bir2cir resolves the [KotlinInline] payload via
 	// the OWNER-FUL ResolveInlinePayload (the owner-less path only searches `kotlin.*`, which a `LibKt` owner is not).
 	val extRecv = extensionReceiver(call)
-	val params = callee.parameters.filter { it.kind == IrParameterKind.Regular }
-	// One arg per Regular param, INDEX-ALIGNED with `params` (an omitted-default slot stays null): `regularArgs` drops
+	// The callee's POSITIONAL params ([isValueParameter]: contexts then regulars) — the SAME sequence the DECLARATION
+	// emits and `paramSigOf` keys by, so `pc` and `args` below index the payload's own `params` array one-for-one.
+	val params = callee.parameters.filter { isValueParameter(it) }
+	// One arg per positional param, INDEX-ALIGNED with `params` (an omitted-default slot stays null): `regularArgs` drops
 	// omitted-default nulls, which — now that ANY inline+lambda call splices (AXIS ①) — would shift the lambda into the
 	// wrong param slot (a wrong AXIS-② noinline read / a carrier in the wrong slot). A null here lands in the CORRECT
 	// param slot so bir2cir can attribute it to the right param; today bir2cir InlineSplice FAILS LOUD on a leftover
 	// null (filling it from the payload param's carried default is a bir2cir follow-up — DefaultArgSplice today rewrites
 	// only callStatic/callInstance, never callInline).
 	val args: List<IrExpression?> = callee.parameters.withIndex()
-		.filter { it.value.kind == IrParameterKind.Regular }
+		.filter { isValueParameter(it.value) }
 		.map { call.arguments.getOrNull(it.index) }
 	// Disambiguate the file-facade overload (forEach/count/... exist for Iterable/Array/CharSequence): the .NET method's
-	// param count = regular params + the receiver-as-__self, and its generic arity = the fn's type params. SAME as the
+	// param count = positional params (contexts + regulars) + the receiver-as-__self, and its generic arity = the fn's type params. SAME as the
 	// retired inlineSplice node's pc/ga.
 	val pc = params.size + (if (extRecv != null) 1 else 0)
 	val ga = callee.typeParameters.size
@@ -389,13 +394,13 @@ internal fun BirEmitter.inlineSpliceCall(call: IrCall, fileClass: String): Strin
 	val typeArgs = callee.typeParameters.indices.joinToString(",") { i ->
 		(call.typeArguments.getOrNull(i)?.let { birType(it) } ?: OBJ).toJson()
 	}
-	// One entry per REGULAR param, in order: a literal lambda -> an `inlineLambda` carrier; any other arg -> its expr.
+	// One entry per POSITIONAL param, in order: a literal lambda -> an `inlineLambda` carrier; any other arg -> its expr.
 	val argsJson = params.indices.joinToString(",") { i ->
 		val arg = args.getOrNull(i)
 		// AXIS ②: a NOINLINE lambda arg is a REAL delegate value (emit via `expr` -> newDelegate/newClosure), NOT a
 		// splice carrier -> inside the spliced body its `param()` becomes a delegate INVOKE on the bound temp. A normal
 		// or CROSSINLINE lambda rides as an `inlineLambda` carrier bir2cir splices at its invoke sites. `params[i]` and
-		// `args[i]` are the i-th Regular param/arg (index-aligned above), so the noinline flag is read off the RIGHT param.
+		// `args[i]` are the i-th POSITIONAL param/arg (index-aligned above), so the noinline flag is read off the RIGHT param.
 		if (arg is IrFunctionExpression && !params[i].isNoinline) emitInlineLambdaCarrier(arg)
 		else if (arg != null) expr(arg)
 		else "null"
@@ -444,22 +449,28 @@ internal fun BirEmitter.paramSigOf(callee: IrSimpleFunction): String {
 internal fun BirEmitter.emitInlineLambdaCarrier(lambda: IrFunctionExpression): String {
 	val fn = lambda.function
 	val extParam = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
-	val freshRecv = extParam?.let { "__recv${inlCounter++}" }
+	// Allocated against the lambda's own frame, like every other minted frame name — the carrier's params sit in the
+	// same flat by-name namespace as the lambda's own, so an unchecked `__recvN` could alias one of them.
+	val freshRecv = extParam?.let { freshFrameName("__recv", fn) }
 	val hadSelf = extParam != null && selfSubst.containsKey(extParam)
 	val savedSelf = extParam?.let { selfSubst[it] }
 	if (extParam != null) selfSubst[extParam] = """{"k":"local","name":${str(freshRecv!!)}}"""
-	val leading = if (extParam != null) listOf("""{"name":${str(freshRecv!!)},"type":${birType(extParam.type).toJson()}}""") else emptyList()
-	val regularParams = fn.parameters.filter { it.kind == IrParameterKind.Regular }
-	val regularJson = regularParams.map { p ->
-		"""{"name":${str(p.name.asString())},"type":${birType(p.type).toJson()}}"""
+	// The carrier's params are bound POSITIONALLY to the invoke's args, so they must be in the PHYSICAL delegate
+	// order [orderedLambdaParams] defines — contexts, the extension receiver, then the regulars. A lambda for a
+	// CONTEXT function type (`inline fun h(f: context(C) (Int) -> R)`) owns a context parameter of its own, and
+	// dropping it here left the carrier one slot short of the invoke that fills it: a silently wrong value.
+	val ordered = orderedLambdaParams(fn)
+	val paramsJson = ordered.joinToString(",") { p ->
+		val nm = if (p === extParam) freshRecv!! else p.name.asString()
+		"""{"name":${str(nm)},"type":${birType(p.type).toJson()}}"""
 	}
-	val paramsJson = (leading + regularJson).joinToString(",")
-	// SHADOW the lambda's own regular params in `valSubst` while emitting its body: an enclosing lambda carrier
+	// SHADOW the lambda's own params in `valSubst` while emitting its body: an enclosing lambda carrier
 	// may have bound the SAME name (e.g. `it`) to an outer local. Without removing it here, the body's ref to this
 	// lambda's param would resolve to the OUTER binding — the carrier param is named correctly but the body dangles
 	// on a foreign local. Emitting them as BARE `{"k":"local","name":<param>}` refs lets bir2cir bind the carrier
-	// param. (The ext-receiver already does this via `selfSubst`.) Saved + restored around the body emission.
-	val shadowed = regularParams.map { it.name.asString() }.associateWith { valSubst[it] }
+	// param. (The ext-receiver already does this via `selfSubst`, so it is excluded here.) Saved + restored around
+	// the body emission.
+	val shadowed = ordered.filter { it !== extParam }.map { it.name.asString() }.associateWith { valSubst[it] }
 	shadowed.keys.forEach { valSubst.remove(it) }
 	val body = ArrayList<String>()
 	// The `selfSubst[extParam]` binding above (restored just below) is the guarantee that the receiver's `this`/
@@ -512,17 +523,19 @@ internal fun BirEmitter.emitInlineLambdaCarrier(lambda: IrFunctionExpression): S
 internal fun BirEmitter.inlineSpliceCallOwnerless(call: IrCall, extRecv: IrExpression?): String {
 	val callee = call.symbol.owner
 	val name = callee.name.asString()
-	val params = callee.parameters.filter { it.kind == IrParameterKind.Regular }
-	// One arg per Regular param, INDEX-ALIGNED with `params` (an omitted-default slot stays null): `regularArgs` drops
+	// The callee's POSITIONAL params ([isValueParameter]: contexts then regulars) — the SAME sequence the DECLARATION
+	// emits and `paramSigOf` keys by, so `pc` and `args` below index the payload's own `params` array one-for-one.
+	val params = callee.parameters.filter { isValueParameter(it) }
+	// One arg per positional param, INDEX-ALIGNED with `params` (an omitted-default slot stays null): `regularArgs` drops
 	// omitted-default nulls, which — now that ANY inline+lambda call splices (AXIS ①) — would shift the lambda into the
 	// wrong param slot (a wrong AXIS-② noinline read / a carrier in the wrong slot). A null here lands in the CORRECT
 	// param slot so bir2cir can attribute it to the right param; today bir2cir InlineSplice FAILS LOUD on a leftover
 	// null (filling it from the payload param's carried default is a bir2cir follow-up — DefaultArgSplice today rewrites
 	// only callStatic/callInstance, never callInline).
 	val args: List<IrExpression?> = callee.parameters.withIndex()
-		.filter { it.value.kind == IrParameterKind.Regular }
+		.filter { isValueParameter(it.value) }
 		.map { call.arguments.getOrNull(it.index) }
-	// The .NET method param count = regular params + the receiver-as-__self; generic arity = the fn's type params.
+	// The .NET method param count = positional params (contexts + regulars) + the receiver-as-__self; generic arity = the fn's type params.
 	// Matches the ref.dll payload key owner|name|pc|ga.
 	val pc = params.size + (if (extRecv != null) 1 else 0)
 	val ga = callee.typeParameters.size
@@ -531,14 +544,14 @@ internal fun BirEmitter.inlineSpliceCallOwnerless(call: IrCall, extRecv: IrExpre
 	}
 	val extRecvJson = extRecv?.let { expr(it) }
 	val recvs = if (extRecvJson != null) """{"extension":$extRecvJson}""" else "{}"
-	// One entry per REGULAR param, in order: a literal lambda -> an `inlineLambda` carrier; any other arg -> its expr
+	// One entry per POSITIONAL param, in order: a literal lambda -> an `inlineLambda` carrier; any other arg -> its expr
 	// (for `with`, the receiver is regular param[0] and rides as a plain expr; the lambda is param[1]).
 	val argsJson = params.indices.joinToString(",") { i ->
 		val arg = args.getOrNull(i)
 		// AXIS ②: a NOINLINE lambda arg is a REAL delegate value (emit via `expr` -> newDelegate/newClosure), NOT a
 		// splice carrier -> inside the spliced body its `param()` becomes a delegate INVOKE on the bound temp. A normal
 		// or CROSSINLINE lambda rides as an `inlineLambda` carrier bir2cir splices at its invoke sites. `params[i]` and
-		// `args[i]` are the i-th Regular param/arg (index-aligned above), so the noinline flag is read off the RIGHT param.
+		// `args[i]` are the i-th POSITIONAL param/arg (index-aligned above), so the noinline flag is read off the RIGHT param.
 		if (arg is IrFunctionExpression && !params[i].isNoinline) emitInlineLambdaCarrier(arg)
 		else if (arg != null) expr(arg)
 		else "null"

@@ -723,6 +723,99 @@ Only a property whose storage **is** the user-visible member emits no CLR proper
 name: `lateinit var`, `const`, a delegated property's `p$delegate`, a companion/top-level `val`/`var` (a static field),
 and the `@ClrField` opt-out (§5f-adjacent: `@ClrField` deliberately emits a plain public field instead of a property).
 
+## 5i. A context parameter is an ordinary POSITIONAL parameter (`[__self?] + contexts + regulars`)
+
+Kotlin has four `IrParameterKind`s; DotKt gives each exactly one physical form:
+
+| kind | physical form |
+|---|---|
+| `DispatchReceiver` | the CLR call receiver (`this` in the body) — never a parameter slot |
+| `ExtensionReceiver` | the leading `__self` parameter |
+| `Context` | an ordinary positional parameter |
+| `Regular` | an ordinary positional parameter |
+
+So the emitted parameter sequence of ANY declaration is **`[__self?] + contexts + regulars`**, in
+`IrFunction.parameters` order (fir2ir already orders contexts before the extension receiver; DotKt keeps `__self`
+first so the receiver stays where every other extension puts it). `context(s: Scale) fun String.deco(a: Int)` emits
+`deco(string __self, Scale s, int a)`.
+
+That ONE sequence is what the declaration's parameter list, the call's argument list, the `sig`/`paramSig` overload
+key, the inline payload's `pc`, and the `@KotlinDefault` / `defaultArgParam` index space all count. A layer that
+counted only the regular parameters on one side of a call produced a short argument list against a longer method —
+`InvalidProgramException` at run, or (for a generic context type) a silent `null` argument.
+
+A **property** with context parameters is the same rule applied to its accessors: `context(s: Scale) val gauge`
+emits `get_gauge(Scale)`, and `context(s: Scale) val Int.bumped` emits `get_bumped(int __self, Scale)`. A TOP-LEVEL
+one is a pair of `get_`/`set_` statics on the file class and no CLR property at all; a MEMBER one additionally gets a
+CLR property whose accessors take those arguments — a *parameterized* property, exactly as a member extension
+property (`class C { val T.p }`) already produced. Reflection therefore reports one index parameter for it, which is
+why facadegen's `this[i]` indexer probe has to exclude a `__self` / context slot rather than take the first
+one-parameter property it finds.
+
+**Deviations, both deliberate:**
+
+- **No non-null precondition is emitted for a context parameter** (§6's `#6` precondition family). A context
+  argument is resolved by the frontend from a value already in scope, so a Kotlin caller cannot pass null; this
+  matches the existing treatment of receivers, which are also unchecked.
+- **`__self` precedes the contexts**, where Kotlin's own function-type layout puts contexts first
+  (`context(A) B.(D) -> E` is `@ExtensionFunctionType Function3<A, B, D, E>`). The two orders coexist without ambiguity because they are
+  different surfaces: a *declaration* is `[__self] + contexts + regulars`, a *function type / lambda* keeps
+  Kotlin's `contexts + receiver + params` (it must — that layout IS the `FunctionN` type argument order, and the
+  delegate has to match it).
+
+Cross-module, each context slot carries `[KotlinContextParameter]` (see §6) so a consuming Kotlin module restores
+it AS a context parameter. Without that marker the same physical method would surface as a plain leading value
+parameter and `with(scale) { scaled(5) }` would have to become `scaled(scale, 5)` — a Kotlin **source** break at
+the module boundary, which is the one thing the round-trip metadata exists to prevent.
+
+### A context FUNCTION TYPE carries its arity as a separate fact
+
+`context(A) B.(D) -> E` is physically `@ExtensionFunctionType Function4<A, B, D, E>` — **contexts first, then the
+receiver, then the value params** — and fir2ir ERASES which leading arguments were contexts: at IR level it is
+*identical* to `B.(A, D) -> E`. Kotlin treats them as the same type; on the JVM only `@kotlin.Metadata` tells them
+apart, and DotKt emits no `@Metadata`.
+
+That erasure was a silent miscompile across a module boundary. bir2cir stamped `[KotlinExtensionFunctionType]` from
+the presence of a receiver and facadegen promoted the delegate's FIRST argument to the restored receiver — but that
+argument is the CONTEXT. A consumer of `fun evaluate(f: context(Box) Box.() -> Int)` saw `Box.(Box) -> Int`; a bare
+lambda still compiled (its one ordinary parameter became the unused implicit `it`), and at run `this` bound to the
+context. `evaluate { this.n }` returned the context's field instead of the receiver's, with no diagnostic anywhere.
+
+So kotc CAPTURES the arity from FIR before fir2ir drops it (`kotc.frontend.ClrContextFnTypes`, keyed by the
+declaration slot's source range) and carries it as the slot fact `ctxFnType` / `retCtxFnType`. bir2cir turns that into
+`[KotlinContextFunctionType(N)]` beside the receiver marker, facadegen splits the leading N delegate arguments back
+off as contexts, and the FIR injector rebuilds the type with the `ContextFunctionTypeParams` cone attribute. It is a
+SLOT fact rather than a field of the type node because a type node is rebuilt by a dozen lowering passes, any of which
+would drop it — the same reason `suspendFnType` is one.
+
+A lambda LITERAL of such a type needed one more thing: its receiver had to become reachable. A lambda's receiver
+parameter is the anonymous `<this>`, and the lifted static / closure `invoke` had nothing to bind the body's `this`
+to — so it fell through to `{k:this}`, which is the ENCLOSING instance or nothing at all. That was already broken for
+the context-FREE form (`val f: Int.(Int) -> Int = { d -> this + d }` threw a NullReferenceException), and once
+contexts joined the physical sequence the same `this` began reading physical slot 0 — the CONTEXT — and returned a
+wrong number instead. The lift now mints a name for the receiver parameter and binds `this` to it for the body
+emission, exactly as the inline splice carrier already did; both shapes (non-capturing static lift and capturing
+closure) are covered, with and without contexts.
+
+Limits of the carrier, all of them "the slot degrades to a plain function type", never a wrong arity:
+
+- It holds ONE arity per declaration slot, so a context function type NESTED inside another type
+  (`fun use(xs: List<context(Ctx) () -> Unit>)`) is not carried.
+- The fact is keyed by the slot's file path and its END source offset — the one offset FIR and IR always agree on (a
+  leading comment moves FIR's start off IR's; nothing moves the end). A declaration whose IR range is not the source
+  range therefore carries nothing: measured cases are a data class's GENERATED members (`component1`, `copy` — fir2ir
+  gives them `UNDEFINED_OFFSET`) and DELEGATED members (`class C(d: I) : I by d` — `SYNTHETIC_OFFSET`, and they are
+  scope-generated rather than declared). A default SETTER is in the same family and IS carried, by falling back to its
+  property's fact: the setter's parameter type is the property's type.
+- Only DECLARATIONS are recorded — classes, members, parameters, accessors — never a body, an initializer or a default
+  value. That is a correctness requirement, not an optimisation: a callable nested in an expression body ENDS where its
+  enclosing declaration ends (`fun f(block: context(A) (context(B, C) () -> Unit) -> Unit = { }) {}`), so recording
+  both would put two different arities on one key. Nothing inside a body is ever looked up, so nothing is lost.
+
+Kotlin itself rules out the shapes this projection could not express: a callable reference to a context function, a
+context parameter on a constructor, a *delegated* context property, and a *field-backed* context property are all
+frontend errors, so no emitted form has to exist for them.
+
 ## 6. Consuming a DotKt assembly AS KOTLIN — what rides metadata vs. needs an attribute
 
 When another `.ktproj` consumes a DotKt assembly, the Kotlin facts with **no native .NET representation** are carried
@@ -738,6 +831,7 @@ runtime.
 | a `suspend (…) -> T` **function TYPE** (parameter / return / property / field) | `[KotlinSuspendFunctionType("sfunc:<ret>:<args>")]` preserves the pre-erasure shape because the CLR slot itself erases to `object`. bir2cir records it, ilemit stamps it, facadegen reads it, and kotc restores `kotlin.coroutines.SuspendFunctionN`. All four positions are covered by the roundtrip NUnit suite. |
 | top-level functions | `[KotlinFileClass]` on the `<File>Kt` facade → restored as package-level functions. Same-name overloads that live in **different** source files of the same package (`foo()` in `UtilsKt`, `foo(Int)` in `HelpersKt`) each route back to their **own** file-facade class — resolved by the call's arity, so no cross-file mis-routing. |
 | `inline` (with a lambda) | `[KotlinInline(birJson)]` (only for cross-module non-local return; see §3) |
+| a **context parameter** (`context(s: S) fun f()`) | `[KotlinContextParameter]` on the emitted positional parameter — a bare marker. The parameter is physically ordinary (§5i), so without it the consumer would restore a plain leading value parameter and `with(s) { f() }` would stop resolving. Covers functions and property accessors, top-level and member. |
 | **reference-type nullability** (`String?`) | **.NET's own NRT** `[Nullable]`/`[NullableContext]` (§9) — readable by C# too |
 | `final`/`open`/`abstract`, visibility | **none** — ride .NET virtual-ness / accessibility |
 | generics, `reified` | **none** — CLR generics are reified (§2) |
