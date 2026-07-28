@@ -107,24 +107,54 @@ static class ClosureSynthesis
         }
     }
 
-    // A CAPTURE is unconditionally HEAP storage: it becomes an instance field of the synthesized closure class.
-    // A byref-like (`ref struct`) value therefore cannot be captured — the CLR rejects the class at load time with
-    // a TypeLoadException. Refuse it here, where the field is minted, with the same wording the suspend state
-    // machine's storage gate uses (FieldLegality is the single oracle for all three minting sites). No liveness
-    // question arises: unlike an SM spill, a capture is never demotable to a local.
+    // A CAPTURE is unconditionally HEAP storage: it becomes an instance field of the synthesized class. A
+    // byref-like (`ref struct`) value therefore cannot be captured — the CLR rejects the class at load time with a
+    // TypeLoadException. The refusal is worded by the same oracle the suspend state machine's storage gate uses
+    // (FieldLegality is the single one for all three minting sites), and there is no liveness question: unlike an
+    // SM spill, a capture is never demotable to a local.
+    //
+    // But it is RECORDED here and REPORTED later. A class assembled here does not necessarily reach the emitted
+    // assembly: the cold suspend lowering reconstructs a `suspendCoroutine { c -> … }` block INLINE and prunes the
+    // closure class it came from, substituting each capture back into the enclosing frame — where an ordinary
+    // local, byref-like or not, is exactly what it becomes. Refusing at synthesis time would reject
+    // `suspendCoroutine { c -> c.resume(span.Length) }`, which emits no closure class at all. So the verdict waits
+    // for AssertSurvivingCapturesLegal, run once the passes that can delete a class have run. Keyed by CLASS NAME
+    // (unique per compilation), which is also how the pruning identifies its victims — never by predicting who
+    // will consume what.
+    static readonly Dictionary<string, string> _pendingCaptureRefusals = new(StringComparer.Ordinal);
+
     static void CheckCaptureLegality(JsonObject synthClass, JsonNode decl)
     {
         if (_refs == null || synthClass["fields"] is not JsonArray fields) return;
+        if (Str(synthClass["name"]) is not string typeName) return;
         foreach (var f in fields.OfType<JsonObject>())
         {
             if (f["type"] is not JsonNode tj) continue;
             var t = TypeJson.Read(tj);
             var why = FieldLegality.Classify(t, _refs.IsByRefLikeFqn, out var offending);
             if (why == FieldRejection.None) continue;
-            throw new System.NotSupportedException(FieldLegality.CaptureMessage(
+            _pendingCaptureRefusals[typeName] = FieldLegality.CaptureMessage(
                 FieldLegality.PosPrefix(decl), Str((decl as JsonObject)?["name"]) ?? "<file>",
-                Str(synthClass["name"]) ?? "<closure>", Str(f["name"]), t, offending, why));
+                typeName, Str(f["name"]), t, offending, why);
+            return;
         }
+    }
+
+    /// <summary>
+    /// Report a recorded capture refusal for every synthesized class that SURVIVED to the emitted assembly.
+    /// Run after the passes that can delete one (the cold suspend lowering's intrinsic-block pruning); a class no
+    /// longer in any file's `types` was reconstructed inline and never becomes a CLR type, so its "capture" is an
+    /// ordinary local of the enclosing frame and the suspend storage gate is what judges it.
+    /// </summary>
+    public static void AssertSurvivingCapturesLegal(IEnumerable<JsonNode> roots)
+    {
+        if (_pendingCaptureRefusals.Count == 0) return;
+        foreach (var root in roots)
+            if (root is JsonObject file && file["types"] is JsonArray types)
+                foreach (var t in types)
+                    if (t is JsonObject to && Str(to["name"]) is string n
+                        && _pendingCaptureRefusals.TryGetValue(n, out var message))
+                        throw new System.NotSupportedException(message);
     }
 
     // A synthClass is born inside a generic METHOD, so kotc faithfully describes its ingredients using that lexical

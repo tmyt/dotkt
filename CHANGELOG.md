@@ -50,7 +50,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   (`toolchain/bir-common/FieldLegality.cs`) serves the third minting site, `ClosureSynthesis`, so a byref-like
   closure capture is refused too. The three diagnostics mirror C# CS4007, CS4012 and CS8352 and are documented in
   `docs/dotkt-semantics.md` §4d. Two smaller drops closed on the way: an evaluation-order spill whose operand
-  type could not be read was silently typed `kotlin.Any` (now an error naming the drop), and a conditional
+  type could not be read was silently typed `kotlin.Any` — the spill now types every node kind that carries a
+  type, and where a type is genuinely absent it warns, naming the function and the node kind, before falling back
+  to `kotlin.Any` as before (the remaining source of untyped operands is InlineSplice, which mints its
+  `valueBlock`s without a `type` slot; erroring instead of warning waits on closing that) — and a conditional
   lowered only because a branch ESCAPES no longer mints a field for its result.
 - **kotc/bir2cir/facadegen (area:kotc, area:bir2cir, area:facadegen): a declaration with a Kotlin `context`
   parameter is now compiled correctly — previously every such call miscompiled.** Context parameters need no

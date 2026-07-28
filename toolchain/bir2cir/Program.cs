@@ -623,6 +623,13 @@ sealed class Pipeline
         if (!_options.RefBuild)
             SuspendLambdaLowering.ApplyAll(staged.Select(s => s.Root).ToList(), localTypeFqns, suspendCalleeRet, refs);
 
+        // A synthesized closure/SAM class holds each capture in an INSTANCE FIELD, which the CLR refuses for a
+        // byref-like (`ref struct`) type. ClosureSynthesis recorded those refusals rather than throwing, because the
+        // cold suspend lowering above reconstructs a `suspendCoroutine { … }` block inline and PRUNES the class it
+        // came from — its captures become ordinary locals of the enclosing frame, judged by the suspend storage
+        // gate instead. Report now, over the classes that actually survived.
+        ClosureSynthesis.AssertSurvivingCapturesLegal(staged.Select(s => s.Root));
+
         // PHASE 1.7 — CROSS-CLASS PRIVATE WIDENING (bundle-6 P5 BUG A): a LIFTED anon-object / closure class
         // (`dotkt_obj*`) is a SEPARATE top-level CLR class that reads its enclosing class's PRIVATE members
         // via its captured `__outer` — legal on the JVM (nested class), a System.MethodAccessException on the

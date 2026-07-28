@@ -16,6 +16,8 @@ import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import System.Span
 import System.Threading.Tasks.Task
 import kotlin.clr.await
+import kotlin.coroutines.resume
+import kotlin.coroutines.suspendCoroutine
 import dotkt.support.blockOn
 
 suspend fun corBrlTick(n: Int): Int {
@@ -66,6 +68,16 @@ suspend fun corBrlNoSuspension(): Int {
     return s.Length
 }
 
+// `suspendCoroutine { … }` materializes its block as a CAPTURING closure in BIR, but the cold lowering
+// reconstructs that block INLINE and deletes the closure class — so the "capture" is really a local of this
+// frame, consumed before the intrinsic suspension. Refusing it as a closure capture (the CS8352 mirror) would
+// reject a program that emits no closure class at all. Its live-across sibling is refused by the ordinary
+// storage gate instead: tests/compile-fail/SuspendCoroutineBlockByRefLikeLive.kt.
+suspend fun corBrlIntrinsicBlock(): Int {
+    val s = Span<Int>(arrayOf(1, 2, 3))
+    return suspendCoroutine { c -> c.resume(s.Length) }
+}
+
 class CorBrlByRefLikeStorageTests {
     @TestAttribute
     fun byRefLikeLocalScopedToALoopIterationStaysALocal() {
@@ -77,6 +89,11 @@ class CorBrlByRefLikeStorageTests {
     fun byRefLikeLocalDeadBeforeAndAfterASuspension() {
         assertEquals(9, blockOn { corBrlBeforeSuspension() })    // 4 + tick(4) = 4 + 5
         assertEquals(4, blockOn { corBrlAfterSuspension() })     // tick(1) = 2, + 2
+    }
+
+    @TestAttribute
+    fun byRefLikeSurvivesAnInlinedSuspendCoroutineBlock() {
+        assertEquals(3, blockOn { corBrlIntrinsicBlock() })
     }
 
     @TestAttribute

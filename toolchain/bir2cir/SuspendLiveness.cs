@@ -38,30 +38,47 @@ static class SuspendLiveness
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
     static bool Bool(JsonNode n) => n is JsonValue v && v.TryGetValue<bool>(out var b) && b;
 
-    // A lambda/closure VALUE: only its capture VALUES are evaluated in THIS frame, so the walk visits those and
-    // nothing else. `newSam` belongs here for the same reason the others do — ClosureSynthesis has already lifted
-    // its `synthClass` out by the time this pass runs, so a `newSam` node is a capture list and type metadata.
-    static readonly HashSet<string> ClosureValueKinds = new(StringComparer.Ordinal)
-        { "newClosure", "newDelegate", "newSam", "newSuspendLambda", "lambda" };
-
-    // The closure kinds SuspendColdLowering.LambdaKinds also holds — the ones whose SUSPENSIONS belong to another
-    // state machine. `newSam` is deliberately NOT one: the emitter's HasOwnSuspension descends into it and
-    // SuspensionRefusalReason admits it, so a suspension in a `newSam` capture value is THIS frame's and must be
-    // visible to the same analyses. The two sets differing is the point; they are not interchangeable, and
-    // treating a `newSam` as opaque here while the emitter treats it as transparent would demote a local the
-    // emitter reads after the resume.
-    static readonly HashSet<string> OtherFrameKinds = new(StringComparer.Ordinal)
-        { "newClosure", "newDelegate", "newSuspendLambda", "lambda" };
-
     // Structured loops that survive normalization (a loop whose body spans a suspension was already flattened).
     // `forEachInline`/`repeatInline` are INLINE loops — their body runs in this frame — so they belong here.
     static readonly HashSet<string> LoopKinds = new(StringComparer.Ordinal)
         { "for", "forArray", "forRange", "forEachInline", "repeatInline", "while", "dowhile" };
 
-    // The loops the EMITTER treats as a separate scope for its own-suspension question
-    // (SuspendColdLowering.LambdaKinds holds them for exactly that reason).
+    // The loops the EMITTER treats as a separate scope for its own-suspension question. They sit in
+    // SuspendColdLowering.LambdaKinds for exactly that reason, and the static constructor below fails loud if one
+    // is ever removed from there — this set is the one part of the relationship that cannot be derived, because
+    // "which LambdaKinds entries are loops" is not recoverable from the set itself.
+    // (Declared BEFORE OtherFrameKinds: static field initializers run in textual order.)
     static readonly HashSet<string> InlineLoopKinds = new(StringComparer.Ordinal)
         { "forEachInline", "repeatInline" };
+
+    // The kinds whose SUSPENSIONS belong to ANOTHER state machine — DERIVED from the emitter's own set
+    // (SuspendColdLowering.LambdaKinds) minus the inline loops, which are loops in this frame rather than values.
+    // Deriving rather than restating is the point: a kind added to LambdaKinds must reach this analysis in the
+    // same edit, and treating a value as opaque here while the emitter treats it as transparent demotes a local
+    // the emitter reads after the resume. `newSam` is deliberately absent from LambdaKinds — the emitter's
+    // HasOwnSuspension descends into it and SuspensionRefusalReason admits it — so it is transparent on both
+    // sides, exactly as it must be.
+    static readonly HashSet<string> OtherFrameKinds =
+        new(SuspendColdLowering.LambdaKinds.Except(InlineLoopKinds), StringComparer.Ordinal);
+
+    // A lambda/closure VALUE: only its capture VALUES are evaluated in THIS frame, so the walk visits those and
+    // nothing else. That is the OtherFrameKinds set plus `newSam`, whose suspensions are ours but whose remaining
+    // shape is still a capture list — ClosureSynthesis has lifted its `synthClass` out by the time this pass runs.
+    static readonly HashSet<string> ClosureValueKinds =
+        new(OtherFrameKinds.Append("newSam"), StringComparer.Ordinal);
+
+    static SuspendLiveness()
+    {
+        if (!InlineLoopKinds.IsSubsetOf(SuspendColdLowering.LambdaKinds))
+            throw new InvalidOperationException(
+                "bir2cir: suspend-lowering: the inline-loop kinds this analysis skips are no longer all in "
+                + "SuspendColdLowering.LambdaKinds — the two subtree-skipping rules have drifted, which silently "
+                + "demotes locals the emitter reads after a resume.");
+        if (OtherFrameKinds.Count == 0 || !ClosureValueKinds.Contains("newSam"))
+            throw new InvalidOperationException(
+                "bir2cir: suspend-lowering: the derived subtree-skipping sets came out empty — a static "
+                + "initialization order change would silently make every lambda body transparent to the analysis.");
+    }
 
     // Keys whose value is a STATEMENT list (elements are statements, not operand expressions).
     static readonly HashSet<string> StmtListKeys = new(StringComparer.Ordinal)
@@ -338,11 +355,14 @@ static class SuspendLiveness
         // local.
         void ReReadOperands(JsonObject o)
         {
-            var kids = SuspendColdLowering.EvalOrderOperands(o);
-            var spilled = kids == null ? null : new HashSet<JsonNode>(ReferenceEqualityComparer.Instance);
-            if (kids != null)
-                for (var i = 0; i < kids.Count; i++)
-                    if (SuspendColdLowering.SpilledBeforeSuspension(kids, i)) spilled.Add(kids[i]);
+            var order = SuspendColdLowering.EvalOrderOf(o);
+            HashSet<JsonNode> spilled = null;
+            if (order is { } eo)
+            {
+                spilled = new HashSet<JsonNode>(ReferenceEqualityComparer.Instance);
+                for (var i = 0; i < eo.Operands.Count; i++)
+                    if (SuspendColdLowering.SpilledBeforeSuspension(eo.Operands, i)) spilled.Add(eo.Operands[i]);
+            }
             foreach (var kv in o)
             {
                 if (kv.Value == null || NonOperandKeys.Contains(kv.Key)) continue;

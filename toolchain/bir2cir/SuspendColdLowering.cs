@@ -143,7 +143,9 @@ static partial class SuspendColdLowering
 
     // Node kinds whose PRESENCE around a suspension disqualifies the fun (leave untouched for the ilemit
     // throw-stub): suspend lambdas / closures / inline collection loops.
-    static readonly HashSet<string> LambdaKinds = new(StringComparer.Ordinal)
+    // INTERNAL, not private: SuspendLiveness derives its own subtree-skipping sets from this one rather than
+    // restating them, so a kind added here reaches both sides at once.
+    internal static readonly HashSet<string> LambdaKinds = new(StringComparer.Ordinal)
     {
         "newClosure", "newDelegate", "lambda", "forEachInline", "repeatInline",
         // A suspend-lambda VALUE built inside a suspend fun. Kept here so the SUBTREE-SKIPPING analyses
@@ -776,8 +778,8 @@ static partial class SuspendColdLowering
         {
             case JsonObject o:
                 if (Str(o["k"]) is string k && LambdaKinds.Contains(k)) return null;
-                if (EvalOrderOperands(o) is List<JsonNode> kids)
-                    foreach (var kid in kids)
+                if (EvalOrderOf(o) is { } order)
+                    foreach (var kid in order.Operands)
                         if (kid != null && SuspendedCalleeIn(kid) is string ec) return ec;
                 if (Bool(o["suspendCall"])) return Str(o["method"]) ?? "a suspending call";
                 foreach (var kv in o) if (kv.Value != null && SuspendedCalleeIn(kv.Value) is string c) return c;
@@ -872,32 +874,43 @@ static partial class SuspendColdLowering
         kids[i] != null && i < LastSuspending(kids)
         && !HasOwnSuspension(kids[i]) && !IsPureExpr(kids[i]);
 
-    // The operand list this node's lowering feeds to RewriteEvalOrder, in evaluation order — or null when the
-    // node's operands never reach it (an `.await()` marker and a `suspendCoroutine` intrinsic are reconstructed
-    // by their own emitters; every other node kind takes Rewrite's generic copy, which spills nothing).
-    internal static List<JsonNode> EvalOrderOperands(JsonObject o)
+    // A node's operands in EVALUATION ORDER, plus whether the first of them is the receiver. This is the SINGLE
+    // description of "what does this node evaluate, and in what order": the emitter arms rewrite `Operands` and
+    // put the results back by this shape, and SuspendLiveness reads the same list to learn which of them the
+    // spill saves. Neither side builds an equivalent list of its own — a node kind added to one copy and not the
+    // other is a wrong demotion, which shows up as a silently zeroed local rather than a build failure.
+    internal readonly record struct EvalOrder(List<JsonNode> Operands, bool HasReceiver)
+    {
+        public int ArgumentStart => HasReceiver ? 1 : 0;
+    }
+
+    // The operand description of a node whose lowering routes through RewriteEvalOrder — or null when it does not
+    // (an `.await()` marker and a `suspendCoroutine` intrinsic are reconstructed by their own emitters; every
+    // other node kind takes Rewrite's generic copy, which spills nothing).
+    internal static EvalOrder? EvalOrderOf(JsonObject o)
     {
         var k = Str(o["k"]);
-        if (k == "binOp") return new List<JsonNode> { o["lhs"], o["rhs"] };
+        if (k == "binOp") return new EvalOrder(new List<JsonNode> { o["lhs"], o["rhs"] }, HasReceiver: false);
+        var kids = new List<JsonNode>();
         if (Bool(o["suspendCall"]))
         {
             if (IsAwaitMarkerCall(o) || IsSuspendCoroutineCall(o)) return null;
             // ColdCall passes the receiver for the instance forms only. (The suspend-VALUE invoke, which always
             // passes one, is a `callInstance` — so the same test covers it.)
-            var cold = new List<JsonNode>();
-            if (k is "callInstance" or "clrInstance" or "clrGenericInstance") cold.Add(o["recv"]);
-            if (o["args"] is JsonArray sa) foreach (var a in sa) cold.Add(a);
-            return cold;
+            var coldInstance = k is "callInstance" or "clrInstance" or "clrGenericInstance";
+            if (coldInstance) kids.Add(o["recv"]);
+            if (o["args"] is JsonArray sa) foreach (var a in sa) kids.Add(a);
+            return new EvalOrder(kids, coldInstance);
         }
-        // RewriteCallOrdered's kind set, verbatim: a node kind outside it takes the generic copy even when it
-        // contains a suspension, so none of its operands is spilled.
+        // RewriteCallOrdered's kind set: a node kind outside it takes the generic copy even when it contains a
+        // suspension, so none of its operands is spilled.
         if (k is not ("callStatic" or "callInstance" or "clrStatic" or "clrInstance" or "clrGenericStatic"
                       or "new" or "newClr"))
             return null;
-        var kids = new List<JsonNode>();
-        if (o["recv"] != null) kids.Add(o["recv"]);
+        var hasRecv = o["recv"] != null;
+        if (hasRecv) kids.Add(o["recv"]);
         if (o["args"] is JsonArray args) foreach (var a in args) kids.Add(a);
-        return kids;
+        return new EvalOrder(kids, hasRecv);
     }
 
     // The facadegen-injected `.await()` marker (lowered by EmitAwaitPoint, not through the cold-call path).
@@ -1762,16 +1775,13 @@ static partial class SuspendColdLowering
         // eval order, spilling impure operands to the left of a suspending operand.
         JsonNode RewriteCallOrdered(JsonObject o, List<JsonNode> outp)
         {
-            var recv = o["recv"];
-            var argsArr = o["args"] as JsonArray;
-            var kids = new List<JsonNode>();
-            if (recv != null) kids.Add(recv);
-            if (argsArr != null) foreach (var arg in argsArr) kids.Add(arg);
-            var rw = RewriteEvalOrder(kids, outp);
-            var idx = 0;
-            var recvRw = recv != null ? rw[idx++] : null;
+            // The operand list comes from the shared description, never from a local re-derivation of it.
+            var order = EvalOrderOf(o).Value;
+            var rw = RewriteEvalOrder(order.Operands, outp);
+            var idx = order.ArgumentStart;
+            var recvRw = order.HasReceiver ? rw[0] : null;
             var argsRw = new JsonArray();
-            if (argsArr != null) foreach (var _ in argsArr) argsRw.Add(rw[idx++]);
+            for (; idx < rw.Count; idx++) argsRw.Add(rw[idx]);
             var copy = new JsonObject();
             foreach (var kv in o)
             {
@@ -2580,17 +2590,17 @@ static partial class SuspendColdLowering
 
             var k = Str(callNode["k"]);
             var method = Str(callNode["method"]) + "$dotkt_suspend";
-            var isInstance = k is "callInstance" or "clrInstance" or "clrGenericInstance";
             var isClr = k is "clrStatic" or "clrInstance" or "clrGenericStatic" or "clrGenericInstance";
             var isGeneric = k is "clrGenericStatic" or "clrGenericInstance";
             // Evaluate recv (instance) then args LEFT-TO-RIGHT, spilling any impure operand that precedes a later
-            // suspending operand (BUG 2 — a nested suspension inside a suspend call's own argument list).
-            var kids = new List<JsonNode>();
-            if (isInstance) kids.Add(callNode["recv"]);
-            if (callNode["args"] is JsonArray oa) foreach (var arg in oa) kids.Add(arg);
-            var rw = RewriteEvalOrder(kids, outp);
-            var ri = 0;
-            var recvRw = isInstance ? rw[ri++] : null;
+            // suspending operand (BUG 2 — a nested suspension inside a suspend call's own argument list). The
+            // operand list and the receiver's presence come from the shared description, so the spill the liveness
+            // analysis assumes is the spill that happens here.
+            var order = EvalOrderOf(callNode).Value;
+            var isInstance = order.HasReceiver;
+            var rw = RewriteEvalOrder(order.Operands, outp);
+            var ri = order.ArgumentStart;
+            var recvRw = isInstance ? rw[0] : null;
             var args = new JsonArray();
             for (; ri < rw.Count; ri++) args.Add(rw[ri]);
             var completion = new JsonObject
@@ -2742,12 +2752,13 @@ static partial class SuspendColdLowering
         //     args[i] into its param fields). The invoke args are the receiver + params in SuspendFunctionN order.
         JsonObject SuspendValueColdCall(JsonObject callNode, List<JsonNode> outp)
         {
-            // Evaluate the value receiver then any invoke arg LEFT-TO-RIGHT (BUG 2 — a nested suspension in an arg).
-            var kids = new List<JsonNode> { callNode["recv"] };
-            if (callNode["args"] is JsonArray oa) foreach (var arg in oa) kids.Add(arg);
-            var rw = RewriteEvalOrder(kids, outp);
+            // Evaluate the value receiver then any invoke arg LEFT-TO-RIGHT (BUG 2 — a nested suspension in an arg),
+            // over the shared operand description. A suspend-VALUE invoke is a `callInstance`, so that description
+            // always carries its receiver first.
+            var order = EvalOrderOf(callNode).Value;
+            var rw = RewriteEvalOrder(order.Operands, outp);
             var recvRw = rw[0];
-            var invokeArgs = rw.Skip(1).ToList();   // 0 / 1 / N (SuspendFunction0 / 1 / N)
+            var invokeArgs = rw.Skip(order.ArgumentStart).ToList();   // 0 / 1 / N (SuspendFunction0 / 1 / N)
 
             var completion = new JsonObject
             {
