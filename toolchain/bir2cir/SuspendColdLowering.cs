@@ -141,19 +141,41 @@ static partial class SuspendColdLowering
     // Top-level `throwOnFailure(result)` helper (ContinuationImpl.kt, package kotlin.coroutines.clr.internal).
     const string ThrowOnFailureOwner = "kotlin.coroutines.clr.internal.ContinuationImplKt";
 
+    // The two DISJOINT halves of "a subtree the enclosing state machine does not own". LambdaKinds below is their
+    // UNION, never the other way round: a new kind is placed in exactly one half and every consumer's view of it
+    // follows, so there is no "added to the union but missing from the half" state for a reader to get wrong.
+    // (SuspendLiveness needs the halves apart — it skips one and descends into the other — and derives both from
+    // here rather than restating them.)
+    //
+    // Half 1 — a lambda/closure VALUE: its body is ANOTHER frame (its own state machine or closure class), so the
+    // enclosing analyses never descend into it. `newSuspendLambda` is a suspend-lambda VALUE built inside a suspend
+    // fun: SuspensionRefusalReason and Rewrite SPECIAL-CASE it (GAP 2) — the enclosing fun IS cold-transformed and
+    // the lambda copied opaquely with SM-vocabulary `capValues`.
+    internal static readonly HashSet<string> OtherFrameBaseKinds = new(StringComparer.Ordinal)
+        { "newClosure", "newDelegate", "lambda", "newSuspendLambda" };
+
+    // Half 2 — an INLINE loop: its body runs in THIS frame, so the storage analysis walks it, but the emitter's
+    // own-suspension question treats it as a separate scope (a suspending one is flattened away before it is
+    // asked). `newSam` is deliberately in NEITHER half: the emitter descends into it and SuspensionRefusalReason
+    // admits it, so it is transparent to every consumer.
+    internal static readonly HashSet<string> InlineLoopKinds = new(StringComparer.Ordinal)
+        { "forEachInline", "repeatInline" };
+
     // Node kinds whose PRESENCE around a suspension disqualifies the fun (leave untouched for the ilemit
     // throw-stub): suspend lambdas / closures / inline collection loops.
-    // INTERNAL, not private: SuspendLiveness derives its own subtree-skipping sets from this one rather than
-    // restating them, so a kind added here reaches both sides at once.
-    internal static readonly HashSet<string> LambdaKinds = new(StringComparer.Ordinal)
+    internal static readonly HashSet<string> LambdaKinds =
+        new(OtherFrameBaseKinds.Concat(InlineLoopKinds), StringComparer.Ordinal);
+
+    static SuspendColdLowering()
     {
-        "newClosure", "newDelegate", "lambda", "forEachInline", "repeatInline",
-        // A suspend-lambda VALUE built inside a suspend fun. Kept here so the SUBTREE-SKIPPING analyses
-        // (the storage analysis) do not descend into the lambda's own body (its vars are
-        // the lambda SM's, not the enclosing SM's). SuspensionRefusalReason and Rewrite SPECIAL-CASE it (GAP 2): the
-        // enclosing fun IS cold-transformed, the lambda copied opaquely with SM-vocabulary `capValues`.
-        "newSuspendLambda",
-    };
+        if (OtherFrameBaseKinds.Overlaps(InlineLoopKinds)
+            || LambdaKinds.Count != OtherFrameBaseKinds.Count + InlineLoopKinds.Count)
+            throw new InvalidOperationException(
+                "bir2cir: suspend-lowering: the two halves of LambdaKinds are no longer disjoint. A kind in both "
+                + "(or in neither, having been added straight to the union) leaves the storage analysis and this "
+                + "pass disagreeing about whose frame its body belongs to, which silently demotes a local the "
+                + "emitter reads after a resume.");
+    }
 
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
     static bool Bool(JsonNode n) => n is JsonValue v && v.TryGetValue<bool>(out var b) && b;
@@ -874,12 +896,19 @@ static partial class SuspendColdLowering
         kids[i] != null && i < LastSuspending(kids)
         && !HasOwnSuspension(kids[i]) && !IsPureExpr(kids[i]);
 
-    // A node's operands in EVALUATION ORDER, plus whether the first of them is the receiver. This is the SINGLE
-    // description of "what does this node evaluate, and in what order": the emitter arms rewrite `Operands` and
-    // put the results back by this shape, and SuspendLiveness reads the same list to learn which of them the
-    // spill saves. Neither side builds an equivalent list of its own — a node kind added to one copy and not the
-    // other is a wrong demotion, which shows up as a silently zeroed local rather than a build failure.
-    internal readonly record struct EvalOrder(List<JsonNode> Operands, bool HasReceiver)
+    // Where an ordered-eval node's rewritten operands go back: a binary node's `lhs`/`rhs`, or a call/new node's
+    // `recv`/`args`. Part of the description so that ONE rewrite serves both and neither has to know the other's
+    // key names.
+    internal enum EvalOrderShape { Binary, Call }
+
+    // A node's operands in EVALUATION ORDER, plus whether the first of them is the receiver and where the results
+    // are written back. This is the SINGLE description of "what does this node evaluate, in what order, and how is
+    // it reassembled": Rewrite's dispatch ASKS it whether a node is ordered-eval at all, RewriteOrdered rewrites
+    // `Operands` and puts the results back by `Shape`, and SuspendLiveness reads the same list to learn which of
+    // them the spill saves. Nothing restates any part of it — a node kind added here reaches the emitter and the
+    // analysis in the same edit, so neither can believe an operand is spilled while the other takes a path that
+    // does not spill it (a wrong demotion, which shows up as a silently zeroed local rather than a build failure).
+    internal readonly record struct EvalOrder(List<JsonNode> Operands, bool HasReceiver, EvalOrderShape Shape)
     {
         public int ArgumentStart => HasReceiver ? 1 : 0;
     }
@@ -890,7 +919,8 @@ static partial class SuspendColdLowering
     internal static EvalOrder? EvalOrderOf(JsonObject o)
     {
         var k = Str(o["k"]);
-        if (k == "binOp") return new EvalOrder(new List<JsonNode> { o["lhs"], o["rhs"] }, HasReceiver: false);
+        if (k == "binOp")
+            return new EvalOrder(new List<JsonNode> { o["lhs"], o["rhs"] }, HasReceiver: false, EvalOrderShape.Binary);
         var kids = new List<JsonNode>();
         if (Bool(o["suspendCall"]))
         {
@@ -900,17 +930,18 @@ static partial class SuspendColdLowering
             var coldInstance = k is "callInstance" or "clrInstance" or "clrGenericInstance";
             if (coldInstance) kids.Add(o["recv"]);
             if (o["args"] is JsonArray sa) foreach (var a in sa) kids.Add(a);
-            return new EvalOrder(kids, coldInstance);
+            return new EvalOrder(kids, coldInstance, EvalOrderShape.Call);
         }
-        // RewriteCallOrdered's kind set: a node kind outside it takes the generic copy even when it contains a
-        // suspension, so none of its operands is spilled.
+        // The call/new kinds whose CONTAINED suspension routes them through the ordered rewrite. A kind outside
+        // this set takes Rewrite's generic copy, so none of its operands is spilled — and because Rewrite's
+        // dispatch selects its arm by asking THIS function, adding a kind here moves both sides at once.
         if (k is not ("callStatic" or "callInstance" or "clrStatic" or "clrInstance" or "clrGenericStatic"
                       or "new" or "newClr"))
             return null;
         var hasRecv = o["recv"] != null;
         if (hasRecv) kids.Add(o["recv"]);
         if (o["args"] is JsonArray args) foreach (var a in args) kids.Add(a);
-        return new EvalOrder(kids, hasRecv);
+        return new EvalOrder(kids, hasRecv, EvalOrderShape.Call);
     }
 
     // The facadegen-injected `.await()` marker (lowered by EmitAwaitPoint, not through the cold-call path).
@@ -1699,22 +1730,10 @@ static partial class SuspendColdLowering
                 // BUG 2 (left-to-right evaluation order across a suspension): when an ordered-eval node contains a
                 // suspension in a LATER operand, any impure earlier operand must be evaluated + SPILLED into a temp
                 // SM field BEFORE the suspension's segments are appended (else its side effects run after the
-                // suspension resumes). Applies to `bin` (l,r) and call/new arg lists (recv,args...).
-                if (HasOwnSuspension(o))
-                {
-                    if (k == "binOp")
-                    {
-                        var rw = RewriteEvalOrder(new List<JsonNode> { o["lhs"], o["rhs"] }, outp);
-                        var binCopy = new JsonObject();
-                        foreach (var kv in o) binCopy[kv.Key] = kv.Value?.DeepClone();
-                        binCopy["lhs"] = rw[0];
-                        binCopy["rhs"] = rw[1];
-                        return binCopy;
-                    }
-                    if (k is "callStatic" or "callInstance" or "clrStatic" or "clrInstance"
-                        or "clrGenericStatic" or "new" or "newClr")
-                        return RewriteCallOrdered(o, outp);
-                }
+                // suspension resumes). WHICH nodes those are is not restated here — the descriptor answers, so this
+                // arm and the liveness analysis that predicts its spills can never be taught different node sets.
+                if (HasOwnSuspension(o) && EvalOrderOf(o) is { } evalOrder)
+                    return RewriteOrdered(o, evalOrder, outp);
                 var copy = new JsonObject();
                 foreach (var kv in o) copy[kv.Key] = kv.Value == null ? null : Rewrite(kv.Value, outp);
                 return copy;
@@ -1771,18 +1790,24 @@ static partial class SuspendColdLowering
             return res;
         }
 
-        // BUG 2 for call/new nodes that CONTAIN (but are not themselves) a suspension: rewrite recv then args in
-        // eval order, spilling impure operands to the left of a suspending operand.
-        JsonNode RewriteCallOrdered(JsonObject o, List<JsonNode> outp)
+        // BUG 2 for a node that CONTAINS (but is not itself) a suspension: rewrite its operands in evaluation
+        // order, spilling the impure ones to the left of a suspending operand, then reassemble the node by the
+        // shape the description names. One rewrite for both a binary node's `lhs`/`rhs` and a call/new node's
+        // `recv`/`args`, so there is no per-shape operand list to keep in step with the description.
+        JsonNode RewriteOrdered(JsonObject o, EvalOrder order, List<JsonNode> outp)
         {
-            // The operand list comes from the shared description, never from a local re-derivation of it.
-            var order = EvalOrderOf(o).Value;
             var rw = RewriteEvalOrder(order.Operands, outp);
-            var idx = order.ArgumentStart;
+            var copy = new JsonObject();
+            if (order.Shape == EvalOrderShape.Binary)
+            {
+                foreach (var kv in o) copy[kv.Key] = kv.Value?.DeepClone();
+                copy["lhs"] = rw[0];
+                copy["rhs"] = rw[1];
+                return copy;
+            }
             var recvRw = order.HasReceiver ? rw[0] : null;
             var argsRw = new JsonArray();
-            for (; idx < rw.Count; idx++) argsRw.Add(rw[idx]);
-            var copy = new JsonObject();
+            for (var i = order.ArgumentStart; i < rw.Count; i++) argsRw.Add(rw[i]);
             foreach (var kv in o)
             {
                 if (kv.Key == "recv") copy["recv"] = recvRw;
