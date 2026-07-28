@@ -278,12 +278,14 @@ sealed partial class Emitter
             try { return TypeBuilder.GetMethod(type, hits[0]); }
             catch (ArgumentException) { return hits[0]; }
         }
-        // PREFER the owner's OWN members: a base-INTERFACE slot (`MoveNext` on the non-generic `IEnumerator`, inherited by
-        // `IEnumerator<T>`; interface GetMethods excludes base-interface members) is a FALLBACK consulted only when no own
-        // member matches — else `IEnumerable<T>.GetEnumerator()` is ambiguous with `IEnumerable.GetEnumerator()` (memberSig
-        // can't distinguish return-only slots). The base slot is DECLARED on that base interface and invoked DIRECTLY via
-        // the receiver's interface (no re-anchor onto `type`). Mirrors bir2cir ClrMemberResolution.Candidates + §12.8.10.2.
-        if (hits.Count == 0 && searchType.IsInterface)
+        // PREFER the owner's OWN members. An interface slot is a FALLBACK consulted only when no own member matches:
+        // this covers both an inherited base-interface member and a class member implemented by a private explicit
+        // MethodImpl body whose CLR name is qualified and therefore invisible under the Kotlin surface name. Consulting
+        // interfaces unconditionally would make `IEnumerable<T>.GetEnumerator()` ambiguous with
+        // `IEnumerable.GetEnumerator()` (memberSig cannot distinguish return-only slots). The resolved slot is invoked
+        // directly through the receiver's interface; no owner re-anchoring or semantic reconstruction occurs here.
+        // Mirrors bir2cir ClrMemberResolution.Candidates.
+        if (hits.Count == 0 && instance)
         {
             var baseCands = SafeInterfaces(searchType).SelectMany(Named);
             var baseHits = Match(baseCands);

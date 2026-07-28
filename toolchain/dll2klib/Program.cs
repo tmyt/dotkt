@@ -79,6 +79,7 @@ internal static class Program
         // List`1 remains List).
         var arityClashes = DiscoverArityClashes(inputs);
         var delegateCatalog = DelegateReferenceCatalog.Discover(inputs);
+        var delegateCatalogJson = delegateCatalog.Serialize();
         var collisions = work.GroupBy(x => x.Output, StringComparer.OrdinalIgnoreCase)
             .Where(x => x.Select(y => y.Input).Distinct(StringComparer.Ordinal).Skip(1).Any())
             .ToArray();
@@ -88,10 +89,20 @@ internal static class Program
                 string.Join(", ", collisions.Select(x => Path.GetFileName(x.Key))));
 
         Directory.CreateDirectory(outputDirectory);
+        var projectionCatalogPath = Path.Combine(outputDirectory, ".dll2klib-projection-catalog.json");
+        var projectionCatalog = JsonSerializer.Serialize(new {
+            Version = 1,
+            ArityClashes = arityClashes,
+            Delegates = JsonSerializer.Deserialize<JsonElement>(delegateCatalogJson),
+        });
+        var projectionCatalogChanged =
+            !File.Exists(projectionCatalogPath) ||
+            !StringComparer.Ordinal.Equals(File.ReadAllText(projectionCatalogPath), projectionCatalog);
         var tool = Path.GetFullPath(typeof(Program).Assembly.Location);
         var toolTime = File.GetLastWriteTimeUtc(tool);
         var stale = work.Where(x =>
         {
+            if (projectionCatalogChanged) return true;
             if (!File.Exists(x.Output)) return true;
             var outputTime = File.GetLastWriteTimeUtc(x.Output);
             return outputTime < File.GetLastWriteTimeUtc(x.Input) ||
@@ -108,7 +119,7 @@ internal static class Program
         var catalogPath = Path.Combine(
             outputDirectory,
             $".dll2klib-delegates-{Environment.ProcessId}-{Guid.NewGuid():N}.json");
-        File.WriteAllText(catalogPath, delegateCatalog.Serialize());
+        File.WriteAllText(catalogPath, delegateCatalogJson);
         try
         {
             var parallelism = jobs == 0 ? stale.Length : Math.Max(1, Math.Min(jobs, stale.Length));
@@ -150,11 +161,26 @@ internal static class Program
             }));
             if (failures.Count != 0)
                 throw new InvalidOperationException("worker conversion failed: " + string.Join(", ", failures));
+            WriteAllTextAtomically(projectionCatalogPath, projectionCatalog);
             return 0;
         }
         finally
         {
             if (File.Exists(catalogPath)) File.Delete(catalogPath);
+        }
+    }
+
+    private static void WriteAllTextAtomically(string path, string contents)
+    {
+        var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            File.WriteAllText(temp, contents);
+            File.Move(temp, path, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temp)) File.Delete(temp);
         }
     }
 
@@ -803,21 +829,7 @@ internal sealed class AssemblyScanner
                 };
                 PromoteContextParameters(method, function);
                 PromoteReceiver(methodHandle, method, function);
-                foreach (var gpHandle in method.GetGenericParameters())
-                {
-                    var gp = _md.GetGenericParameter(gpHandle);
-                    var parameter = new TypeParameter {
-                        Id = 10000 + gp.Index,
-                        Name = names.String(_md.GetString(gp.Name)),
-                        Variance = TypeParameter.Types.Variance.Inv,
-                    };
-                    foreach (var constraintHandle in gp.GetConstraints())
-                    {
-                        var constraint = _md.GetGenericParameterConstraint(constraintHandle);
-                        parameter.UpperBound.Add(signatures.DecodeEntity(constraint.Type, context, platform: false));
-                    }
-                    function.TypeParameter.Add(parameter);
-                }
+                AddMethodTypeParameters(method, function, names, signatures, context);
                 result.Function.Add(function);
             }
         }
@@ -910,10 +922,21 @@ internal sealed class AssemblyScanner
         // binding concern.
         var explicitAccessors = new Dictionary<string, (MethodDefinitionHandle Getter, MethodDefinitionHandle Setter)>(
             StringComparer.Ordinal);
+        var explicitFunctions = new List<(string Name, MethodDefinitionHandle Body)>();
+        var interfaceKeys = def.GetInterfaceImplementations()
+            .Select(h => _md.GetInterfaceImplementation(h).Interface)
+            .Select(h => TypeKey(signatures.DecodeEntity(h, typeContext, platform: false)))
+            .ToHashSet(StringComparer.Ordinal);
         foreach (var implementationHandle in def.GetMethodImplementations())
         {
             var implementation = _md.GetMethodImplementation(implementationHandle);
             if (implementation.MethodBody.Kind != HandleKind.MethodDefinition) continue;
+            if (!IsImplementedInterfaceDeclaration(
+                    implementation.MethodDeclaration,
+                    interfaceKeys,
+                    signatures,
+                    typeContext))
+                continue;
             var bodyHandle = (MethodDefinitionHandle)implementation.MethodBody;
             var declarationName = implementation.MethodDeclaration.Kind switch {
                 HandleKind.MemberReference => _md.GetString(
@@ -922,12 +945,19 @@ internal sealed class AssemblyScanner
                     _md.GetMethodDefinition((MethodDefinitionHandle)implementation.MethodDeclaration).Name),
                 _ => "",
             };
-            var marker = declarationName.LastIndexOf('.');
-            if (marker >= 0) declarationName = declarationName[(marker + 1)..];
+            declarationName = SimpleMethodName(declarationName);
             var accessorKind = declarationName.StartsWith("get_", StringComparison.Ordinal) ? 1
                 : declarationName.StartsWith("set_", StringComparison.Ordinal) ? 2
                 : 0;
-            if (accessorKind == 0) continue;
+            if (accessorKind == 0)
+            {
+                if (declarationName.Length != 0 &&
+                    !declarationName.StartsWith("add_", StringComparison.Ordinal) &&
+                    !declarationName.StartsWith("remove_", StringComparison.Ordinal) &&
+                    !declarationName.StartsWith("op_", StringComparison.Ordinal))
+                    explicitFunctions.Add((declarationName, bodyHandle));
+                continue;
+            }
             var propertyName = declarationName[4..];
             if (propertyNames.Contains(propertyName)) continue;
             explicitAccessors.TryGetValue(propertyName, out var pair);
@@ -974,6 +1004,43 @@ internal sealed class AssemblyScanner
                     : new ValueParameter { Name = names.String("value"), Type = type.Clone() },
             });
             propertyNames.Add(name);
+        }
+
+        // A private CLR MethodImpl body satisfies the interface slot, but is
+        // intentionally absent from the ordinary public-method scan above.
+        // Surface a concrete Kotlin function under the interface declaration's
+        // name. Its physical binding remains in bir2cir, which can resolve the
+        // class call through the implemented interface slot.
+        var functionKeys = result.Function.Select(f => FunctionKey(f, names))
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var (name, bodyHandle) in explicitFunctions)
+        {
+            var body = _md.GetMethodDefinition(bodyHandle);
+            var context = new GenericContext(handle, bodyHandle, typeParameterIds);
+            var signature = body.DecodeSignature(signatures, context);
+            var function = new Function {
+                Name = names.String(name),
+                Flags = Flags.Callable(MethodAttributes.Public, modality: 0),
+                ReturnType = ProjectReturn(
+                    bodyHandle,
+                    body,
+                    signature.ReturnType,
+                    names,
+                    signatures,
+                    context),
+                ValueParameter = {
+                    Parameters(
+                        bodyHandle,
+                        body,
+                        signature.ParameterTypes,
+                        names,
+                        signatures,
+                        context)
+                },
+            };
+            AddMethodTypeParameters(body, function, names, signatures, context);
+            if (functionKeys.Add(FunctionKey(function, names)))
+                result.Function.Add(function);
         }
 
         foreach (var fieldHandle in def.GetFields())
@@ -1044,6 +1111,60 @@ internal sealed class AssemblyScanner
         MarkLowPriorityDelegateOverloads(result.Constructor, names);
         MarkLowPriorityDelegateOverloads(result.Function, names);
         return result;
+    }
+
+    private static string SimpleMethodName(string metadataName)
+    {
+        var marker = metadataName.LastIndexOf('.');
+        return marker < 0 ? metadataName : metadataName[(marker + 1)..];
+    }
+
+    private static string TypeKey(KType type) =>
+        Convert.ToBase64String(type.ToByteArray());
+
+    private static string FunctionKey(Function function, NameTable names) =>
+        names.StringValue(function.Name) + "`" + function.TypeParameter.Count + "(" +
+        string.Join(",", function.ValueParameter.Select(p => TypeKey(p.Type))) + ")";
+
+    private bool IsImplementedInterfaceDeclaration(
+        EntityHandle declaration,
+        HashSet<string> interfaceKeys,
+        SignatureDecoder signatures,
+        GenericContext context)
+    {
+        var owner = declaration.Kind switch {
+            HandleKind.MemberReference => _md.GetMemberReference((MemberReferenceHandle)declaration).Parent,
+            HandleKind.MethodDefinition => _md.GetMethodDefinition((MethodDefinitionHandle)declaration).GetDeclaringType(),
+            _ => default,
+        };
+        if (owner.IsNil ||
+            owner.Kind is not (HandleKind.TypeDefinition or HandleKind.TypeReference or HandleKind.TypeSpecification))
+            return false;
+        return interfaceKeys.Contains(TypeKey(signatures.DecodeEntity(owner, context, platform: false)));
+    }
+
+    private void AddMethodTypeParameters(
+        MethodDefinition method,
+        Function function,
+        NameTable names,
+        SignatureDecoder signatures,
+        GenericContext context)
+    {
+        foreach (var gpHandle in method.GetGenericParameters())
+        {
+            var gp = _md.GetGenericParameter(gpHandle);
+            var parameter = new TypeParameter {
+                Id = 10000 + gp.Index,
+                Name = names.String(_md.GetString(gp.Name)),
+                Variance = TypeParameter.Types.Variance.Inv,
+            };
+            foreach (var constraintHandle in gp.GetConstraints())
+            {
+                var constraint = _md.GetGenericParameterConstraint(constraintHandle);
+                parameter.UpperBound.Add(signatures.DecodeEntity(constraint.Type, context, platform: false));
+            }
+            function.TypeParameter.Add(parameter);
+        }
     }
 
     private void AddValueClassRepresentation(

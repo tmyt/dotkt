@@ -556,21 +556,24 @@ static partial class ClrMemberResolution
     // declaration ownership filters cannot hide the CLR root array type while matching `T[]` to Array.Copy(Array,...).
     static Type SystemArrayMlc() => _sysArr ??= _refs.ResolveRefType("System.Array");
 
-    // The candidate set for `name`, PREFERRING the owner's OWN declared members over inherited base-INTERFACE members
-    // (C#'s "most-derived declaring type wins" — §12.8.10.2): reflection's GetMethods already surfaces inherited CLASS
-    // members, but for an INTERFACE owner the base-interface slots are only reached via GetInterfaces, and adding them
-    // unconditionally makes `IEnumerable<T>.GetEnumerator()` ambiguous with the inherited non-generic
-    // `IEnumerable.GetEnumerator()` (memberSig = [] can't distinguish return-type-differentiated slots). So the
-    // base-interface members are a FALLBACK, consulted only when NO own member of that name+arity is applicable.
+    // The candidate set for `name`, PREFERRING the owner's OWN declared members over interface members
+    // (C#'s "most-derived declaring type wins" — §12.8.10.2): reflection's GetMethods surfaces inherited CLASS
+    // members, but not an interface slot implemented by a private explicit MethodImpl body. GetInterfaces is therefore
+    // the fallback for class and interface owners alike. Adding those slots unconditionally would make
+    // `IEnumerable<T>.GetEnumerator()` ambiguous with the inherited non-generic `IEnumerable.GetEnumerator()`
+    // (memberSig = [] cannot distinguish return-type-only overloads), so consult them only when no own member is
+    // applicable. Static calls never bind an implemented-interface slot.
     static List<MethodInfo> Candidates(Type open, string name, List<TypeNode> argNodes, TypeNode[] ownerArgs, BindingFlags flags)
     {
         var own = new List<MethodInfo>();
         try { own.AddRange(open.GetMethods(flags).Where(m => m.Name == name && m.GetParameters().Length == argNodes.Count)); } catch { }
-        if (!open.IsInterface || own.Any(m => Match(m.GetParameters(), argNodes, ownerArgs) != MatchKind.No)) return own;
-        var withBases = new List<MethodInfo>(own);
+        if ((flags & BindingFlags.Instance) == 0 ||
+            own.Any(m => Match(m.GetParameters(), argNodes, ownerArgs) != MatchKind.No))
+            return own;
+        var withInterfaces = new List<MethodInfo>(own);
         foreach (var bi in SafeInterfaces(open))
-            try { withBases.AddRange(bi.GetMethods(flags).Where(m => m.Name == name && m.GetParameters().Length == argNodes.Count)); } catch { }
-        return withBases;
+            try { withInterfaces.AddRange(bi.GetMethods(flags).Where(m => m.Name == name && m.GetParameters().Length == argNodes.Count)); } catch { }
+        return withInterfaces;
     }
 
     static Type[] SafeInterfaces(Type t) { try { return t.GetInterfaces(); } catch { return Array.Empty<Type>(); } }

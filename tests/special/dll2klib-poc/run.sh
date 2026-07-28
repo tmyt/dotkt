@@ -59,6 +59,17 @@ touch "$CONTRACTS_REF"
 dependency_rebuild="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp")"
 grep -q 'converting 2/2 reference(s)' <<<"$dependency_rebuild" \
 	|| die "external delegate change did not invalidate the consuming Probe KLIB"
+# Removing or adding an input can change the shared arity/delegate catalog without changing any surviving DLL's
+# timestamp. Every surviving KLIB must be regenerated so cached and newly projected declarations keep one naming
+# universe.
+printf '%s\n' "$PROBE_REF" > "$OUT/references.rsp"
+catalog_remove="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp")"
+grep -q 'converting 1/1 reference(s)' <<<"$catalog_remove" \
+	|| die "reference-catalog removal did not invalidate the surviving Probe KLIB"
+printf '%s\n%s\n' "$PROBE_REF" "$CONTRACTS_REF" > "$OUT/references.rsp"
+catalog_restore="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp")"
+grep -q 'converting 2/2 reference(s)' <<<"$catalog_restore" \
+	|| die "reference-catalog restoration did not invalidate the complete KLIB set"
 for entry in default/manifest default/linkdata/module default/linkdata/root_package/0_.knm default/linkdata/package_Probe/0_Probe.knm; do
 	unzip -Z1 "$PROBE_KLIB" | grep -qx "$entry" || die "generated KLIB is missing $entry"
 done

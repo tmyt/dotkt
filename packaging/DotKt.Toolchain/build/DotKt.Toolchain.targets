@@ -50,22 +50,35 @@
     <PropertyGroup>
       <_DotKtCompileReferences>@(_DotKtCompileReference->'%(FullPath)', ';')</_DotKtCompileReferences>
       <_DotKtRuntimeReferences>@(_DotKtRuntimeReference->'%(FullPath)', ';')</_DotKtRuntimeReferences>
+      <!-- DotKtGenerateReferenceKlibs is a partially incremental target: inside its body MSBuild narrows
+           @(_DotKtKlibReference) to only the stale input/output pairs. dll2klib still needs the COMPLETE resolved
+           universe to derive one consistent arity/delegate catalog for both stale and cached KLIBs. Capture it in
+           properties here, before target batching narrows the item list. -->
+      <_DotKtAllKlibReferences>@(_DotKtKlibReference->'%(FullPath)', ';')</_DotKtAllKlibReferences>
+      <_DotKtAllKlibReferenceCount>@(_DotKtKlibReference->Count())</_DotKtAllKlibReferenceCount>
     </PropertyGroup>
+  </Target>
+
+  <!-- Materialize the COMPLETE resolved reference universe before the partially-incremental generation target.
+       The rsp is also an Input there: adding or removing a reference changes its timestamp, including the removal
+       case which an Inputs/Outputs item transform cannot observe once the removed item has left the current set. -->
+  <Target Name="DotKtWriteReferenceKlibRsp"
+          DependsOnTargets="DotKtResolveReferenceSets">
+    <MakeDir Directories="$(DotKtReferenceKlibDir)" />
+    <WriteLinesToFile File="$(DotKtReferenceKlibRsp)"
+                      Lines="$(_DotKtAllKlibReferences)"
+                      Overwrite="true"
+                      WriteOnlyWhenDifferent="true" />
   </Target>
 
   <!-- The launcher keeps the worker contract one process / one DLL / one project-local packed KLIB, but schedules
        independent stale references concurrently. It repeats the per-item timestamp check so a single changed reference
        does not regenerate the whole set when this aggregate MSBuild target runs. No shared cache participates. -->
   <Target Name="DotKtGenerateReferenceKlibs"
-          DependsOnTargets="DotKtResolveReferenceSets"
-          Inputs="@(_DotKtKlibReference);$(DotKtDll2Klib)"
+          DependsOnTargets="DotKtWriteReferenceKlibRsp"
+          Inputs="@(_DotKtKlibReference);$(DotKtDll2Klib);$(DotKtReferenceKlibRsp)"
           Outputs="@(_DotKtKlibReference->'%(KlibPath)')">
-    <MakeDir Directories="$(DotKtReferenceKlibDir)" />
-    <WriteLinesToFile File="$(DotKtReferenceKlibRsp)"
-                      Lines="@(_DotKtKlibReference->'%(FullPath)')"
-                      Overwrite="true"
-                      WriteOnlyWhenDifferent="true" />
-    <Message Importance="high" Text="DotKt: projecting @(_DotKtKlibReference->Count()) reference assembly/assemblies -> KLIB (jobs=$(DotKtDll2KlibJobs))" />
+    <Message Importance="high" Text="DotKt: projecting $(_DotKtAllKlibReferenceCount) reference assembly/assemblies -> KLIB (jobs=$(DotKtDll2KlibJobs))" />
     <Exec Command="dotnet &quot;$(DotKtDll2Klib)&quot; --out &quot;$(DotKtReferenceKlibDir)&quot; --jobs &quot;$(DotKtDll2KlibJobs)&quot; @&quot;$(DotKtReferenceKlibRsp)&quot;" />
   </Target>
 

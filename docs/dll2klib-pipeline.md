@@ -132,11 +132,11 @@ delegate定義assemblyは利用側KLIBのstale判定へ含める。現在のsurf
   `compile_time_value`射影
 - CLR `GetEnumerator` patternからのKotlin `iterator()`合成
 - conforming `GetAwaiter` patternからのmetadata-only suspend `await()`合成
+- explicit interface MethodImplのproperty / method / generic method surface
 - packageに宣言がないassemblyを含む明示的empty root fragment
 
 CLR宣言へ付与された任意のuser annotationのapplication roundtripは意図的な
-non-goalとする。既知の残件は、explicit interface implementationと
-明示的companion objectである。
+non-goalとする。既知の残件は、明示的companion objectである。
 pointer / function pointerは現在`Any?`へ退避する。24引数以上を含むhigh-arity
 KFunc/KActionの一般ABIはissue #220で追跡し、この移行のscope外とする。
 
@@ -264,7 +264,9 @@ projection対象から除外する。異なるDLLが同じsimple-name outputへ�
 launcherがhard errorにする。outputは
 `$(BaseIntermediateOutputPath)dotkt-reference-klibs`配下だけに置き、共有cacheは
 使用しない。generator binaryとreference DLLのtimestampでstale判定し、KLIB manifestへ
-dependency graphは複製しない。
+dependency graphは複製しない。MSBuildのpartial incremental target内でも、型名とdelegate
+判定に使うcatalogは常に解決済みreference全集合から作る。catalog fingerprintが変化した場合は
+既存KLIBを全てstaleにし、増分生成されたKLIBとcache済みKLIBの命名規則を混在させない。
 
 この経路をproduction defaultとし、shipping targetsからfacadegen fallbackと
 `DotKtImport` / import scanを削除した。legacy facadegen本体は比較用テスト資産として
@@ -326,9 +328,8 @@ ownerful `callInline`は、bir2cir側のuser-package探索拡張なしで既存i
 ### 2. CLR surface coverage
 
 properties、fields、events、indexers、operators、same/cross-assembly delegates、enums、byref、
-generic constraints、nested type namingは一般則として実装した。残件は上記の
-explicit interface implementation、pointer系などである。generic constraintsは
-class/methodとも保持する。
+generic constraints、nested type naming、explicit interface MethodImplは一般則として実装した。
+残件は上記のpointer系などである。generic constraintsはclass/methodとも保持する。
 
 ### 3. Kotlin metadata format compatibility
 

@@ -54,9 +54,10 @@ static partial class ClrMemberResolution
 
     // The property accessor MethodInfo for `name`: (1) a real .NET PropertyDef's authoritative get_/set_ accessor
     // (GetProperty walks base CLASSES for a class owner); else (2) a conventionally-named `get_X`/`set_X` METHOD (a DotKt
-    // custom-accessor property, emitted by our backend WITHOUT a PropertyDef). For an INTERFACE owner GetProperty does not
-    // traverse base interfaces, so both probes fall back to a base-interface walk (mirrors ilemit PropAccessor + S2
-    // Candidates). null when the name is not an accessor (a public field, or absent).
+    // custom-accessor property, emitted by our backend WITHOUT a PropertyDef). Reflection does not expose an explicitly
+    // implemented property on its class under the interface name, nor does interface GetProperty traverse base
+    // interfaces, so both probes fall back to the implemented/base-interface walk (mirrors S2 Candidates). null when
+    // the name is not an accessor (a public field, or absent).
     static MethodInfo FindPropAccessor(Type open, string name, bool write, BindingFlags flags)
     {
         try
@@ -70,15 +71,16 @@ static partial class ClrMemberResolution
     }
 
     // Find the UNIQUE method named `accName` with `argc` params on the owner (own members incl. inherited class members),
-    // else on its base interfaces (interface GetMethods excludes base-interface slots). Most-derived-declaring-type wins
-    // (shared MostDerived), matching S2's Candidates. A >1 survivor set is AMBIGUOUS -> hard error (never a first-pick, the
-    // pass charter). null when absent.
+    // else on its implemented/base interfaces (class GetMethods hides private explicit MethodImpl bodies under their
+    // qualified CLR names; interface GetMethods excludes base-interface slots). Most-derived-declaring-type wins
+    // (shared MostDerived), matching S2's Candidates. A >1 survivor set is AMBIGUOUS -> hard error (never a first-pick,
+    // the pass charter). null when absent.
     static MethodInfo FindAccessorMethod(Type open, string accName, int argc, BindingFlags flags)
     {
         MethodInfo[] Named(Type t) { try { return t.GetMethods(flags).Where(m => m.Name == accName && m.GetParameters().Length == argc).ToArray(); } catch { return Array.Empty<MethodInfo>(); } }
         var own = MostDerived(Named(open).ToList());
         if (own.Count > 0) return UniqueAccessor(own, open, accName);
-        if (!open.IsInterface) return null;
+        if ((flags & BindingFlags.Instance) == 0) return null;
         var baseHits = MostDerived(SafeInterfaces(open).SelectMany(Named).GroupBy(m => (m.Module, m.MetadataToken)).Select(g => g.First()).ToList());
         return baseHits.Count > 0 ? UniqueAccessor(baseHits, open, accName) : null;
     }
