@@ -1612,15 +1612,22 @@ static partial class SuspendColdLowering
                 var rw = Rewrite(child, outp);
                 if (i < lastSusp && !HasOwnSuspension(child) && !IsPureExpr(child))
                 {
-                    // The spill's type must be KNOWN: it is a real field on the SM class, and a silent
-                    // `kotlin.Any` here would box a value type (or, worse, hide a type the CLR refuses as a
-                    // field). An operand whose static type cannot be read is a DROP by an earlier layer.
-                    var ty = TypeOfExpr(child)
-                        ?? throw new NotSupportedException(
-                            $"{FieldLegality.PosPrefix(_m)}suspend-lowering: in `{DiagOwner}`, the "
+                    // The spill is a real field on the SM class, so its type matters: a `kotlin.Any` slot boxes a
+                    // value type and hides a type the CLR would refuse as a field. TypeOfExpr answers precisely
+                    // for every node that carries a type; when it cannot, the operand's type was DROPPED by an
+                    // earlier lowering (the known one is InlineSplice, which mints its `valueBlock`s without a
+                    // `type` slot — closing that is what makes an untyped spill an error rather than a warning).
+                    // Warn and keep today's `kotlin.Any` slot rather than refusing source that compiles now.
+                    var ty = TypeOfExpr(child);
+                    if (ty == null)
+                    {
+                        Console.Error.WriteLine(
+                            $"bir2cir: WARNING {FieldLegality.PosPrefix(_m)}suspend-lowering: in `{DiagOwner}`, the "
                             + $"`{Str((child as JsonObject)?["k"]) ?? "?"}` operand evaluated before a suspending "
-                            + "operand carries no static type, so its evaluation-order spill slot cannot be typed. "
-                            + "An earlier lowering dropped the operand's type.");
+                            + "operand carries no static type; its evaluation-order spill slot falls back to "
+                            + "`kotlin.Any` (an earlier lowering dropped the operand's type).");
+                        ty = AnyTn;
+                    }
                     var tmp = "__ord$" + (++_ordCounter);
                     // By construction this spill outlives the suspension to its right (that is why it exists).
                     FieldStorage(tmp, ty, RoleOrder, lives: true, across: SuspendedCalleeIn(kids[lastSusp]));
@@ -1683,6 +1690,12 @@ static partial class SuspendColdLowering
         // verbatim on `elem`, so the spill temp is typed precisely (no kotlin.Any box fallback — see TypeOfExpr). The
         // position guard keeps a same-node `arr[i]` with no suspension to its right inline. (`arrayLen`/`clr.ldlen`
         // stays pure: a .NET array's length is immutable, so a later suspension cannot change it.)
+        //
+        // KNOWN GAP (pre-existing, tracked separately): the N4 argument assumes a property read is already impure
+        // as a `callInstance`/`clrInstance`, but NetInteropBinding rewrites a .NET-owner property read to
+        // `clrPropGet`, which is absent here — so `sb.Length + susp()` still reads it after the resume. Same for
+        // `delegateInvoke`/`objMethod`/`constrainedCall`. It is an evaluation-ORDER defect only: SuspendLiveness
+        // re-reads all of them regardless, so no local is wrongly demoted on account of it.
         static readonly HashSet<string> ImpureKinds = new(StringComparer.Ordinal)
         {
             "callStatic", "callInstance", "clrStatic", "clrInstance", "clrGenericStatic",
@@ -1778,13 +1791,31 @@ static partial class SuspendColdLowering
                 case "newArray": case "newArrayInit": case "newArraySized":
                     if (TypeJson.Read(o["elem"]) is TypeNode ae) return new TypeNode.Array(ae);
                     break;
-                case "newClosure": case "newDelegate": case "newSam":
+                case "newClosure": case "newDelegate": case "newSam": case "newSuspendLambda":
                 case "newBoundDelegate": case "newBoundClrDelegate":
                     if (TypeJson.Read(o["funcType"]) is TypeNode ft) return ft;
                     if (TypeJson.OwnerName(o["closureType"]) is string cn) return new TypeNode.Fqn(cn);
                     break;
+                case "delegateInvoke":
+                    // The RESULT of invoking the delegate, not the delegate itself.
+                    if (TypeJson.Read(o["funcType"]) is TypeNode.Fn dfn) return dfn.Ret;
+                    break;
                 case "nullableWrap": case "nullableValue": case "safeCastValue": case "default":
                     if (TypeJson.Read(o["type"]) is TypeNode nt) return nt;
+                    break;
+                case "objMethod":
+                    // The three `Any` slots, by their Kotlin contract.
+                    return Str(o["method"]) switch
+                    {
+                        "toString" or "ToString" => new TypeNode.Fqn("kotlin.String"),
+                        "hashCode" or "GetHashCode" => IntTn,
+                        "equals" or "Equals" => BoolTn,
+                        _ => null,
+                    };
+                case "enumOrdinal":
+                    return IntTn;
+                case "stackGet": case "byrefLoad":
+                    if (TypeJson.Read(o["elem"]) is TypeNode se) return se;
                     break;
             }
             return null;

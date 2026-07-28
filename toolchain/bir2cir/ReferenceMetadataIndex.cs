@@ -1322,7 +1322,14 @@ sealed partial class ReferenceMetadataIndex
                     // binding) or, for any not-yet-renamed bound class, a class-level @ClrIntrinsic.
                     var ownerFqn = StripGenericArity(type.FullName ?? type.Name);
                     metadata.TypeKinds[ownerFqn] = TypeKind(type);
-                    if (IsByRefLikeType(type)) metadata.ByRefLikeOwners.Add(ownerFqn);
+                    // Both spellings: the reflection name nests with `+`, every bir2cir type token is DOTTED, and a
+                    // NESTED `ref struct` (`Span<T>.Enumerator`, `MemoryExtensions.SpanSplitEnumerator`) is exactly
+                    // the shape a spill of `for (x in span)` would mint a field of.
+                    if (IsByRefLikeType(type))
+                    {
+                        metadata.ByRefLikeOwners.Add(ownerFqn);
+                        metadata.ByRefLikeOwners.Add(DottedFqn(ownerFqn));
+                    }
                     metadata.TypeShapes[DottedFqn(ownerFqn)] = new ReferenceTypeShape(
                         type.IsGenericType ? type.GetGenericArguments().Length : 0,
                         TypeKind(type),

@@ -47,6 +47,11 @@ static class SuspendLiveness
     static readonly HashSet<string> LoopKinds = new(StringComparer.Ordinal)
         { "for", "forArray", "forRange", "forEachInline", "repeatInline", "while", "dowhile" };
 
+    // The loops the EMITTER treats as a separate scope for its own-suspension question
+    // (SuspendColdLowering.LambdaKinds holds them for exactly that reason).
+    static readonly HashSet<string> InlineLoopKinds = new(StringComparer.Ordinal)
+        { "forEachInline", "repeatInline" };
+
     // Keys whose value is a STATEMENT list (elements are statements, not operand expressions).
     static readonly HashSet<string> StmtListKeys = new(StringComparer.Ordinal)
         { "body", "stmts", "finally", "then", "else" };
@@ -143,6 +148,9 @@ static class SuspendLiveness
         readonly List<(string Name, JsonNode Type)> _declared = new();
         readonly Dictionary<string, int> _ids = new(StringComparer.Ordinal);   // tracked var -> dense id
         int _synth;                                                 // synthetic label allocator (counts DOWN from -1)
+        // Set when the walk meets a shape it cannot give a correct CFG edge for. Collapses the answer to the
+        // pre-liveness one — every local a field — which costs storage and never correctness.
+        bool _bailOut;
 
         int NewLabel() => --_synth;
 
@@ -245,17 +253,29 @@ static class SuspendLiveness
             if (n != null && HasSuspension(n)) ReRead(n);
         }
 
-        static bool HasSuspension(JsonNode n)
+        // "Is there a suspension anywhere the ENCLOSING frame owns?" — the WIDE form, used to decide whether a
+        // statement defers anything at all. It descends into an inline loop's body, because a suspension there is
+        // this frame's; answering true too often only adds re-reads, which adds liveness.
+        static bool HasSuspension(JsonNode n) => AnySuspension(n, wide: true);
+
+        // The EMITTER's own predicate (SuspendColdLowering.HasOwnSuspension): an inline loop's body is a separate
+        // scope for the "did Rewrite lower this node in place" question, because a suspending inline loop has
+        // already been flattened away by the time this pass runs. Used only where a WRONG true would prune a
+        // re-read and lose liveness.
+        static bool HasOwnSuspension(JsonNode n) => AnySuspension(n, wide: false);
+
+        static bool AnySuspension(JsonNode n, bool wide)
         {
             switch (n)
             {
                 case JsonObject o:
-                    if (Str(o["k"]) is string k && ClosureValueKinds.Contains(k)) return false;
+                    var k = Str(o["k"]);
+                    if (k != null && (ClosureValueKinds.Contains(k) || (!wide && InlineLoopKinds.Contains(k)))) return false;
                     if (Bool(o["suspendCall"])) return true;
-                    foreach (var kv in o) if (kv.Value != null && HasSuspension(kv.Value)) return true;
+                    foreach (var kv in o) if (kv.Value != null && AnySuspension(kv.Value, wide)) return true;
                     return false;
                 case JsonArray a:
-                    foreach (var it in a) if (it != null && HasSuspension(it)) return true;
+                    foreach (var it in a) if (it != null && AnySuspension(it, wide)) return true;
                     return false;
                 default:
                     return false;
@@ -281,9 +301,11 @@ static class SuspendLiveness
                     if (k != null && ByRefSlotKinds.Contains(k)) { Use(Str(o["local"])); ReRead(o["value"]); return; }
                     // A suspending `cond` became control flow and a `__cond$` slot; a suspending `valueBlock` was
                     // flattened into statements. Both ran IN PLACE — only the valueBlock's result stays in the
-                    // deferred expression.
-                    if ((k == "cond" || k == "if") && HasSuspension(o)) return;
-                    if (k == "valueBlock" && HasSuspension(o)) { ReRead(o["result"]); return; }
+                    // deferred expression. The test must be the EMITTER's (HasOwnSuspension, which treats an inline
+                    // loop's body as its own scope): pruning where the emitter did not lower loses liveness, while
+                    // not pruning where it did only adds it.
+                    if ((k == "cond" || k == "if") && HasOwnSuspension(o)) return;
+                    if (k == "valueBlock" && HasOwnSuspension(o)) { ReRead(o["result"]); return; }
                     foreach (var kv in o)
                         if (kv.Value != null && !NonOperandKeys.Contains(kv.Key)) ReRead(kv.Value);
                     return;
@@ -309,8 +331,13 @@ static class SuspendLiveness
         {
             for (var i = _loops.Count - 1; i >= 0; i--)
                 if (label == null || _loops[i].Label == label) { Goto(cont ? _loops[i].Cont : _loops[i].End); return; }
-            // No enclosing loop in this walk (a break/continue kotc already rewrote, or a shape we do not model):
-            // fall through rather than dropping edges — dropping a successor would REMOVE liveness.
+            // A break/continue with no enclosing loop in this walk. Falling through would SUBSTITUTE the wrong edge
+            // (the next statement instead of the loop exit), and a def between here and the real target would then
+            // kill a value the exit path reads. There is no cheap correct edge to invent, so give the whole body
+            // the pre-liveness answer: every local a field. Unreachable today — FlattenSuspendingLoops rewrites a
+            // flattened loop's break/continue into `goto`, and Loop() tracks every structured loop that survives —
+            // and it costs fields, never correctness, if it ever is.
+            _bailOut = true;
         }
 
         // ---- expressions --------------------------------------------------------------------------------
@@ -489,6 +516,11 @@ static class SuspendLiveness
         {
             var across = new Dictionary<string, string>(StringComparer.Ordinal);
             if (_declared.Count == 0 || _ev.Count == 0) return new Result(_declared, across);
+            if (_bailOut)
+            {
+                foreach (var (name, _) in _declared) across.TryAdd(name, "a suspending call");
+                return new Result(_declared, across);
+            }
 
             var n = _ev.Count;
             var labelAt = new Dictionary<int, int>();
