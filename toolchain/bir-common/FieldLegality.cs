@@ -107,10 +107,11 @@ public static class FieldLegality
     }
 
     /// <summary>
-    /// A suspend function's own ABI cannot carry this type AT ALL — independently of whether its body suspends.
-    /// A parameter and a capture are written by the state machine's constructor, and the result crosses the cold
-    /// entry's `Any?` slot and the public `Task&lt;R&gt;` bridge; none of those can hold a byref-like value.
-    /// Mirrors C# CS4012 ("parameters or locals of this type cannot be declared in async methods").
+    /// A suspend function's own ABI cannot carry this type. Once the body suspends, a parameter and a capture are
+    /// fields written by the state machine's constructor and the result crosses the cold entry's `Any?` slot and
+    /// the public `Task&lt;R&gt;` bridge, none of which can hold a byref-like value. The rule is stated on the
+    /// DECLARATION rather than on the body — as C# states CS4012 — so that adding a suspension to a suspend
+    /// function never changes whether its signature was legal.
     /// </summary>
     public static string SuspendAbiMessage(
         string posPrefix, string owner, string role, string name, TypeNode? type,
@@ -118,9 +119,10 @@ public static class FieldLegality
     {
         var mirror = why == FieldRejection.ByRef ? "" : " (mirrors C# CS4012)";
         return $"{posPrefix}suspend-lowering: in `{owner}`, the {role} `{name}` has type `{Render(type)}`, which is "
-             + $"{KindPhrase(why, offendingFqn)}. A suspend function carries its {role} through the generated state "
-             + "machine and its cold-entry/Task ABI, and the CLR forbids that for this type — a `suspend` declaration "
-             + $"cannot mention it. Take the value as a plain (non-suspend) function's {role} instead{mirror}.";
+             + $"{KindPhrase(why, offendingFqn)}. A `suspend` declaration cannot mention it: once the body suspends, "
+             + $"the {role} is carried by the generated state machine and its cold-entry/Task ABI, and the CLR forbids "
+             + "that for this type. The rule is on the declaration, not on the body, so adding a suspension later "
+             + $"cannot change it. Take the value as a plain (non-suspend) function's {role} instead{mirror}.";
     }
 
     /// <summary>

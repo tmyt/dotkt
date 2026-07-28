@@ -2,13 +2,14 @@
 //
 // FunGen.Build cannot segment a suspension that sits in a position the straight-line state machine has no
 // entry point for. Two such positions occur in the kotlinx.coroutines port; each is normalized into an
-// equivalent position the SM CAN segment, BEFORE CollectVarFields / EmitStmt run:
+// equivalent position the SM CAN segment, BEFORE the storage analysis (SuspendLiveness) / EmitStmt run:
 //
 //   #82/#98 FlattenSuspendingLoops — a STRUCTURED loop (`forArray` / `forEachInline` / counted `for`) whose body spans
 //        a suspension is desugared to flat `label`/`brIf`/`goto` CFG with its implicit loop machinery made
 //        EXPLICIT `{k:var}` (array + index; a non-generic IEnumerator; or the counted-loop variable), so
-//        CollectVarFields spills those temps into SM fields (the `load unknown var __inlsN$element` root) and the
-//        resume can re-enter the loop across the back-edge. `forRange`/`repeatInline` are NOT flattened (an app-build
+//        the liveness analysis sees them as ordinary locals and spills the ones that survive the resume into SM
+//        fields (the `load unknown var __inlsN$element` root), so the resume can re-enter the loop across the
+//        back-edge. `forRange`/`repeatInline` are NOT flattened (an app-build
 //        range is already realized as counted `for`; the remaining stdlib-only `forRange` and repeat shapes stay
 //        unsupported).
 //
@@ -362,7 +363,8 @@ static partial class SuspendColdLowering
                     var caughtName = "__caught$" + kc;
                     var excTn = TypeJson.Read(co["excType"]) ?? AnyTn;      // exceptions are reference types (nullable ref == ref)
                     var nullableExc = Tw(new TypeNode.Nullable(excTn));
-                    // Capture var (an SM field via CollectVarFields) declared BEFORE the try.
+                    // Capture var declared BEFORE the try and read after it, so the storage gate necessarily
+                    // gives it an SM field whenever the protected body suspends.
                     result.Add(new JsonObject { ["k"] = "var", ["name"] = excName, ["type"] = nullableExc, ["init"] = NullConst(new TypeNode.Nullable(excTn)) });
                     // The real catch only records the exception (via the fresh, collision-proof catch var).
                     newCatches.Add(new JsonObject
@@ -443,7 +445,8 @@ static partial class SuspendColdLowering
         // PROTECTED' rewrites function returns to save their value and leave to `route`; ilemit emits that goto as
         // `leave` because the target label is outside the protected region. FIN's own return/throw is deliberately
         // untouched and therefore overrides the pending outcome, exactly as Kotlin finally does. All route state is
-        // declared as ordinary BIR vars and is consequently spilled to SM fields by CollectVarFields.
+        // declared as ordinary BIR vars; each is written before the protected region and read after it, so the
+        // liveness-driven storage gate gives it an SM field on exactly the paths where the region suspends.
         void EmitSuspendingFinally(JsonArray protectedBody, JsonArray fin, JsonNode tryType, JsonArray result)
         {
             var kc = ++_excCounter;

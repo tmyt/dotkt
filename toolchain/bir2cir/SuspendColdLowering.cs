@@ -139,7 +139,7 @@ static partial class SuspendColdLowering
     {
         "newClosure", "newDelegate", "lambda", "forEachInline", "repeatInline",
         // A suspend-lambda VALUE built inside a suspend fun. Kept here so the SUBTREE-SKIPPING analyses
-        // (CollectVarFields) do not descend into the lambda's own body (its vars are
+        // (the storage analysis) do not descend into the lambda's own body (its vars are
         // the lambda SM's, not the enclosing SM's). SuspensionRefusalReason and Rewrite SPECIAL-CASE it (GAP 2): the
         // enclosing fun IS cold-transformed, the lambda copied opaquely with SM-vocabulary `capValues`.
         "newSuspendLambda",
@@ -643,9 +643,11 @@ static partial class SuspendColdLowering
                 // suspension is FLATTENED to flat CFG by FlattenSuspendingLoops (like the always-admitted `forArray`).
                 // Only forEachInline needs an exemption
                 // from the LambdaKinds refusal below (falling through to the generic child recursion, which validates its
-                // body). A SUSPENSION-FREE forEachInline stays REFUSED: it would reach Build as a structured loop whose
-                // LambdaKinds subtree CollectVarFields SKIPS but Rewrite DESCENDS — a loop-interior
-                // name colliding with a spilled outer var would silently miscompile, so it stays on the un-lowered path.
+                // body). A SUSPENSION-FREE forEachInline stays REFUSED — conservatively, not by necessity: the original
+                // reason was that its LambdaKinds subtree was invisible to the promote-all field collection while
+                // Rewrite descended into it, so a loop-interior name colliding with a spilled outer var miscompiled
+                // silently. The liveness analysis that replaced that collection DOES walk the loop body, so the
+                // collision is gone and lifting this refusal is a separate, gate-backed change.
                 // `repeatInline`/`forRange` with a body suspension stay refused (not flattened); app-build ranges have
                 // already become counted `for` nodes and are handled here.
                 // ANY OTHER lambda/closure/sequence node -> unsupported (genuine suspend lambdas, which emit a
@@ -739,6 +741,23 @@ static partial class SuspendColdLowering
     // eval-order gate the suspension IS the enclosing fun's — HasOwnSuspension's LambdaKinds skip would hide it and
     // mis-account the try nesting (a nested-suspending-try bypass → branch-into-try → InvalidProgramException). Every
     // OTHER LambdaKinds node (genuine lambda/closure, repeatInline) stays skipped (its suspension is its own SM's).
+    static bool HasLoopBorneSuspension(JsonNode node)
+    {
+        switch (node)
+        {
+            case JsonObject o:
+                if (Str(o["k"]) is string k && k != "forEachInline" && LambdaKinds.Contains(k)) return false;
+                if (o.ContainsKey("suspendCall") && Bool(o["suspendCall"])) return true;
+                foreach (var kv in o) if (kv.Value != null && HasLoopBorneSuspension(kv.Value)) return true;
+                return false;
+            case JsonArray a:
+                foreach (var it in a) if (it != null && HasLoopBorneSuspension(it)) return true;
+                return false;
+            default:
+                return false;
+        }
+    }
+
     // The method NAME of the first suspending call in a subtree — the "…lives across the suspending call to `f`"
     // half of a storage diagnostic. Null when the subtree carries no suspension.
     static string SuspendedCalleeIn(JsonNode node)
@@ -755,23 +774,6 @@ static partial class SuspendColdLowering
                 return null;
             default:
                 return null;
-        }
-    }
-
-    static bool HasLoopBorneSuspension(JsonNode node)
-    {
-        switch (node)
-        {
-            case JsonObject o:
-                if (Str(o["k"]) is string k && k != "forEachInline" && LambdaKinds.Contains(k)) return false;
-                if (o.ContainsKey("suspendCall") && Bool(o["suspendCall"])) return true;
-                foreach (var kv in o) if (kv.Value != null && HasLoopBorneSuspension(kv.Value)) return true;
-                return false;
-            case JsonArray a:
-                foreach (var it in a) if (it != null && HasLoopBorneSuspension(it)) return true;
-                return false;
-            default:
-                return false;
         }
     }
 
@@ -861,6 +863,9 @@ static partial class SuspendColdLowering
         readonly JsonArray _methodTypeParamDecls; // original names + constraints for emitted bridge/cold signatures
         readonly HashSet<string> _fields = new(StringComparer.Ordinal);
         readonly List<(string name, TypeNode type)> _fieldDecls = new();
+        // Declared type of every `{k:var}` of this body, INCLUDING the ones the storage gate leaves as MoveNext
+        // locals — so a lexical type lookup does not depend on a name having been promoted to a field.
+        readonly Dictionary<string, TypeNode> _localTypes = new(StringComparer.Ordinal);
         // Synthesized SM methods for each `task.await()` suspension point (the OnCompleted Action callback
         // that re-drives THIS SM via resumeWith). Populated during body emission; spliced into the SM type.
         readonly List<JsonObject> _awaitResumeMethods = new();
@@ -1081,7 +1086,8 @@ static partial class SuspendColdLowering
             // #78/#82/#98 — normalize a suspending body BEFORE segmentation so a suspension in a POSITION the straight-line
             // SM cannot segment is lifted into one it can: a structured loop whose body spans a suspension is
             // flattened to label/brIf/goto CFG (FlattenSuspendingLoops — its implicit loop vars become real `{k:var}` so
-            // CollectVarFields spills them), and a suspending catch handler is hoisted OUT of the CLR catch clause (a
+            // the storage gate spills the ones that survive a resume), and a suspending catch handler is hoisted OUT
+            // of the CLR catch clause (a
             // `leave`-in / resume-into a catch is illegal IL) into gated straight-line code (HoistSuspendingCatches).
             // Both clone-on-change (never mutate the shared/retained rt-stdlib original) and skip nested lambda scopes.
             // They allocate fresh label ids via NextLabel(), so seed the allocator first.
@@ -1127,8 +1133,12 @@ static partial class SuspendColdLowering
             foreach (var p in _params)
                 FieldStorage(Str(p["name"]), TypeJson.Read(p["type"]), RoleParam, true, null);  // lambda: create()-set param field(s)
             foreach (var (vn, vt) in live.DeclaredVars)
-                FieldStorage(vn, TypeJson.Read(vt), RoleLocal,
+            {
+                var declared = TypeJson.Read(vt);
+                if (vn != null) _localTypes[vn] = declared;
+                FieldStorage(vn, declared, RoleLocal,
                     live.LivesAcrossSuspension(vn), live.FirstSuspensionAcross(vn));
+            }
 
             var bodyOut = new List<JsonNode>();
             foreach (var s in body) EmitStmt(s, bodyOut);
@@ -1647,9 +1657,17 @@ static partial class SuspendColdLowering
         }
 
         // Impure kinds whose PRESENCE anywhere in a subtree makes it unsafe to defer past a suspension (a call,
-        // an allocation, or an assignment has an observable effect). A subtree free of them is "pure" — stable to
-        // read after the suspension resumes, so it stays inline. (A suspend fun's plain locals are its OWN private
-        // SM fields, unreachable by the callee it suspends into, so a `local` read is stable — treated pure.)
+        // an allocation, an assignment or a control transfer has an observable effect). A subtree free of them is
+        // "pure" — stable to read after the suspension resumes, so it stays inline. A plain `local` read counts as
+        // pure, and that is only sound because SuspendLiveness models this very deferral: a local an operand reads
+        // after a resume is reported LIVE at that suspension and therefore gets an SM field rather than a
+        // MoveNext local (see SuspendLiveness.Value/ReRead).
+        //
+        // A CONTROL TRANSFER (`goto`/`brIf`/`return`/`returnExpr`/`throw`/`throwExpr`) is impure for a second,
+        // stronger reason: `Rewrite` lowers an escaping `cond`/`valueBlock` to statements emitted IN PLACE and
+        // leaves behind only a temp read, so the transfer has already happened by the time the enclosing
+        // expression is assembled. Deferring that temp read past a suspension would read a resume-fresh slot —
+        // so such an operand must be spilled, exactly like a call's result. (EscapesExpression names the same set.)
         //
         // N4: a raw member/static FIELD read (`field`/`staticField`/`lateinitGet`) is NOT pure w.r.t. a later
         // suspension — the suspend callee can reach and MUTATE that field (a source property read goes through a
@@ -1668,9 +1686,10 @@ static partial class SuspendColdLowering
         static readonly HashSet<string> ImpureKinds = new(StringComparer.Ordinal)
         {
             "callStatic", "callInstance", "clrStatic", "clrInstance", "clrGenericStatic",
-            "new", "newClr", "setLocal", "setField", "throwExpr", "dynCall",
+            "new", "newClr", "setLocal", "setField", "dynCall",
             "field", "staticField", "lateinitGet",
             "arrayGet",
+            "goto", "brIf", "return", "returnExpr", "throw", "throwExpr",
         };
         static bool IsPureExpr(JsonNode n)
         {
@@ -1707,6 +1726,7 @@ static partial class SuspendColdLowering
             switch (k)
             {
                 case "const": case "cast": case "new": case "newClr": case "valueBlock": case "var":
+                case "cond":
                     if (TypeJson.Read(o["type"]) is TypeNode t) return t;
                     break;
                 case "callStatic":
@@ -1741,6 +1761,31 @@ static partial class SuspendColdLowering
                     break;
                 case "binOp":
                     return Str(o["op"]) is "==" or "!=" or "<" or ">" or "<=" or ">=" ? BoolTn : TypeOfExpr(o["lhs"]);
+                // The remaining kinds that carry their result type in a slot of their own rather than in `ret`/`sty`.
+                // A `cond` reaches the spill path routinely: an escaping conditional is lowered to control flow with
+                // its value in a temp, and that temp is an ordinary operand of the enclosing expression.
+                case "conv":
+                    if (TypeJson.Read(o["to"]) is TypeNode ct) return ct;
+                    break;
+                case "unaryOp":
+                    return Str(o["op"]) == "!" ? BoolTn : TypeOfExpr(o["e"]);
+                case "objEq": case "isInst": case "isInstRef": case "nullableHasValue":
+                    return BoolTn;
+                case "arrayLen":
+                    return IntTn;
+                case "concat":
+                    return new TypeNode.Fqn("kotlin.String");
+                case "newArray": case "newArrayInit": case "newArraySized":
+                    if (TypeJson.Read(o["elem"]) is TypeNode ae) return new TypeNode.Array(ae);
+                    break;
+                case "newClosure": case "newDelegate": case "newSam":
+                case "newBoundDelegate": case "newBoundClrDelegate":
+                    if (TypeJson.Read(o["funcType"]) is TypeNode ft) return ft;
+                    if (TypeJson.OwnerName(o["closureType"]) is string cn) return new TypeNode.Fqn(cn);
+                    break;
+                case "nullableWrap": case "nullableValue": case "safeCastValue": case "default":
+                    if (TypeJson.Read(o["type"]) is TypeNode nt) return nt;
+                    break;
             }
             return null;
         }
@@ -2346,10 +2391,13 @@ static partial class SuspendColdLowering
             };
         }
 
+        // The declared type of an SM slot by name. A slot is either an SM FIELD or — since the storage gate demotes
+        // every local that is dead across each suspension — a MoveNext LOCAL, and a lexical type lookup
+        // (IsSuspendValueCallInScope resolving a bare inline-materialized receiver's `fn` type) must find either.
         TypeNode FieldType(string name)
         {
             foreach (var (n, t) in _fieldDecls) if (n == name) return t;
-            return AnyTn;
+            return _localTypes.TryGetValue(name ?? "", out var lt) && lt != null ? lt : AnyTn;
         }
 
         // kotc names a suspend lambda's captured ENCLOSING extension receiver `__outer` (the `<this>` capture-field

@@ -1,5 +1,5 @@
 suspend-lowering: in `SuspendFreeParameterByRefLikeKt.cfFreeLen`
 the parameter `s`
 which is byref-like (a `ref struct`, via `System.Span`)
-a `suspend` declaration cannot mention it
+`suspend` declaration cannot mention it
 (mirrors C# CS4012)

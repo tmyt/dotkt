@@ -300,11 +300,15 @@ The rule, in three parts:
   ("instance of type cannot be preserved across await"). Liveness, not a lexical interval: a value created and
   consumed within each iteration of a loop whose body *also* suspends is accepted, exactly as C# accepts it,
   while the same value carried across the loop's back edge is refused.
-- **The suspend ABI: never.** A `suspend` declaration's PARAMETERS, its RESULT, and a suspend lambda's CAPTURES
-  are written by the state machine's constructor and cross the cold entry's `Any?` slot and the public `Task<R>`
-  bridge. None of those can hold a byref-like value whatever the body does, so the refusal is **unconditional** —
-  it applies even to a suspend function that never actually suspends. This mirrors C# CS4012 ("parameters or
-  locals of this type cannot be declared in async methods"), which is likewise unconditional.
+- **The suspend ABI: never.** A `suspend` declaration's PARAMETERS, its RESULT and a suspend lambda's CAPTURES are
+  refused **unconditionally** — even when the body never actually suspends. Once the body does suspend, the
+  parameters and captures become fields written by the state machine's constructor and the result crosses the cold
+  entry's `Any?` slot and the public `Task<R>` bridge, none of which can hold a byref-like value. Making the rule a
+  property of the DECLARATION rather than of the body is a deliberate choice: it keeps `suspend fun f(s: Span<Int>)`
+  legal-or-not independently of whether someone later adds an `await` inside it, and it is the same shape C# takes
+  with CS4012 ("parameters or locals of this type cannot be declared in async methods"), which is likewise
+  unconditional. (The suspension-free form is also not merely theoretical: before the check existed it reached run
+  time as `InvalidProgramException` at the generated cold entry.)
 - **Closure captures: never.** A captured variable becomes an instance field of the synthesized closure class,
   with no liveness question to ask, so capturing a byref-like value in ANY lambda — suspend or not — is a
   compile-time error mirroring **C# CS8352**. An `inline` lambda is spliced into the caller's frame and mints no

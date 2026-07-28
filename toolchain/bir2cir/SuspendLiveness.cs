@@ -62,11 +62,11 @@ static class SuspendLiveness
     static readonly Dictionary<string, int> KeyRank = new(StringComparer.Ordinal)
     {
         ["recv"] = 1,
-        ["array"] = 2, ["src"] = 2, ["target"] = 2,
+        ["array"] = 2, ["src"] = 2, ["target"] = 2, ["ptr"] = 2,
         ["lhs"] = 3,
-        ["index"] = 4,
+        ["index"] = 4, ["len"] = 4,
         ["from"] = 5, ["to"] = 5, ["step"] = 5, ["size"] = 5, ["count"] = 5,
-        ["e"] = 6,
+        ["e"] = 6, ["key"] = 6, ["inner"] = 6,
         ["value"] = 7,
         ["rhs"] = 8,
         ["args"] = 9, ["elems"] = 9, ["parts"] = 9, ["captures"] = 9, ["capValues"] = 9,
@@ -81,7 +81,13 @@ static class SuspendLiveness
         "k", "type", "ret", "sty", "dynRet", "owner", "ownerType", "sig", "argTypes", "memberSig",
         "clrOverrideSig", "typeArgs", "shapeTypes", "elem", "excType", "closureType", "funcType",
         "calleeOwner", "method", "name", "op", "member", "accessor", "dispatch", "pos", "mods",
+        "keyType", "valType", "local",
     };
+
+    // The node kinds that reference a local through a bare STRING property instead of a `{k:"local"}` node.
+    // `local`/`setLocal`/`byrefLoad`/`byrefStore` is the complete set (IrSanity.CheckRefs is the same list); the
+    // two byref forms name the managed-pointer local in `local`, which no generic walk would ever see.
+    static readonly HashSet<string> ByRefSlotKinds = new(StringComparer.Ordinal) { "byrefLoad", "byrefStore" };
 
     enum EvKind { Use, Def, Susp, Label, Goto, BrIf, Stop }
 
@@ -256,23 +262,33 @@ static class SuspendLiveness
             }
         }
 
+        // Pruning is by NODE KIND, never by "this subtree happens to contain a suspension": an ordinary call that
+        // merely HAS a suspending argument is still assembled and emitted after that argument's segments, so its
+        // other operands are exactly the deferred reads this models. Only three kinds are genuinely lowered to
+        // statements emitted in place, and only they are pruned.
         void ReRead(JsonNode n)
         {
             switch (n)
             {
                 case JsonObject o:
                     var k = Str(o["k"]);
-                    // The suspending call itself: every operand of it is consumed BY the call, so all of them are
-                    // evaluated before the suspension and none is re-read after it. Its result is the awaited field.
+                    // The suspending call: its operands are consumed BY the call at its own suspension point, so
+                    // nothing of it is read afterwards. (An operand deferred past a suspension NESTED inside it is
+                    // re-read by Expr, before that call's own Susp event.) Its result is the awaited field.
                     if (Bool(o["suspendCall"])) return;
                     if (k != null && ClosureValueKinds.Contains(k)) { ReReadCaptures(o); return; }
                     if (k == "local") { Use(Str(o["name"])); return; }
+                    if (k != null && ByRefSlotKinds.Contains(k)) { Use(Str(o["local"])); ReRead(o["value"]); return; }
+                    // A suspending `cond` became control flow and a `__cond$` slot; a suspending `valueBlock` was
+                    // flattened into statements. Both ran IN PLACE — only the valueBlock's result stays in the
+                    // deferred expression.
+                    if ((k == "cond" || k == "if") && HasSuspension(o)) return;
+                    if (k == "valueBlock" && HasSuspension(o)) { ReRead(o["result"]); return; }
                     foreach (var kv in o)
-                        if (kv.Value != null && !NonOperandKeys.Contains(kv.Key) && !HasSuspension(kv.Value))
-                            ReRead(kv.Value);
+                        if (kv.Value != null && !NonOperandKeys.Contains(kv.Key)) ReRead(kv.Value);
                     return;
                 case JsonArray a:
-                    foreach (var it in a) if (it != null && !HasSuspension(it)) ReRead(it);
+                    foreach (var it in a) if (it != null) ReRead(it);
                     return;
             }
         }
@@ -303,13 +319,37 @@ static class SuspendLiveness
         {
             if (n is JsonArray a) { foreach (var it in a) if (it != null) Expr(it); return; }
             if (n is not JsonObject o) return;
+            Operands(o);
+            if (!Bool(o["suspendCall"])) return;
+            // A suspending call whose OWN operands carry a nested suspension: `ColdCall` rewrites the operands
+            // through the same evaluation-order spill, so an operand it leaves inline is assembled into the call
+            // after the nested suspension's segments — read at that resume point, just before this call runs.
+            if (o.Any(kv => kv.Value != null && !NonOperandKeys.Contains(kv.Key) && HasSuspension(kv.Value)))
+                foreach (var kv in o)
+                    if (kv.Value != null && !NonOperandKeys.Contains(kv.Key)) ReRead(kv.Value);
+            // The suspension itself, AFTER the operands it consumes. Emitted on every path out of Operands, so a
+            // `suspendCall` on a node kind Operands happens to know by name can never lose its event — losing one
+            // would mean no liveness question is asked there and every variable live across it is demoted.
+            Susp(Str(o["method"]));
+        }
+
+        void Operands(JsonObject o)
+        {
             var k = Str(o["k"]);
             switch (k)
             {
                 case "local": Use(Str(o["name"])); return;
                 case "setLocal": Expr(o["value"]); Def(Str(o["name"])); return;
                 case "var": Expr(o["init"]); Def(Str(o["name"])); return;
-                case "cond": case "if": Branch(o); return;
+                // The managed-pointer local these read/write through is a bare STRING property, invisible to the
+                // generic walk. A read/write through it is a use of the pointer, never a definition of it.
+                case "byrefLoad": Use(Str(o["local"])); return;
+                case "byrefStore": Use(Str(o["local"])); Expr(o["value"]); return;
+                case "cond": Branch(o); return;
+                // The STATEMENT `if` is a `branches:[{cond?,body,else?}]` chain (ilemit Emitter.Statements.cs), a
+                // different shape from the `cond` ternary — reading `then`/`else` off it would silently skip the
+                // whole subtree.
+                case "if": IfChain(o); return;
                 case "valueBlock": Stmts(o["stmts"]); Stmts(o["body"]); Expr(o["result"]); return;
                 case "try": Try(o); return;
                 case null: Children(o); return;
@@ -324,7 +364,25 @@ static class SuspendLiveness
             if (ClosureValueKinds.Contains(k)) { Captures(o); return; }
             if (LoopKinds.Contains(k)) { Loop(o); return; }
             Children(o);
-            if (Bool(o["suspendCall"])) Susp(Str(o["method"]));
+        }
+
+        // The statement `if`: a branch chain. Each non-else branch tests and jumps past its body; an `else` branch
+        // is emitted inline with no test (ilemit Emitter.Statements.cs), so this mirrors that shape exactly.
+        void IfChain(JsonObject o)
+        {
+            if (o["branches"] is not JsonArray brs) { Children(o); return; }
+            var end = NewLabel();
+            foreach (var br in brs.OfType<JsonObject>())
+            {
+                if (br["cond"] == null) { Stmts(br["body"]); continue; }
+                var next = NewLabel();
+                Value(br["cond"]);
+                BrIf(next);
+                Stmts(br["body"]);
+                Goto(end);
+                Label(next);
+            }
+            Label(end);
         }
 
         // The ordered generic walk: operand children in evaluation-order rank, metadata keys skipped. A
@@ -403,6 +461,11 @@ static class SuspendLiveness
             var depth = _handlers.Count;
             _handlers.AddRange(catchLabels);
             _handlers.Add(end);
+            // The exceptional edges ride on EMITTED events, and a protected region can contain none at all (a
+            // no-argument call to a non-suspending function produces no event). Anchor one here so a value the
+            // handlers read is still live before the region — otherwise a suspension preceding the try would see
+            // it as dead.
+            Label(NewLabel());
             Stmts(o["body"]);
             _handlers.RemoveRange(depth, _handlers.Count - depth);
 
@@ -432,7 +495,11 @@ static class SuspendLiveness
             for (var i = 0; i < n; i++)
                 if (_ev[i].Kind == EvKind.Label) labelAt[_ev[i].Label] = i;
 
+            // Normal and EXCEPTIONAL successors are kept apart: an exception can be raised BEFORE this event's own
+            // write completes, so the handler's live set must not be killed by this event's def. (`try { x = f() }
+            // catch { use(x) }` needs the pre-assignment `x`.)
             var succ = new List<int>[n];
+            var hsucc = new List<int>[n];
             for (var i = 0; i < n; i++)
             {
                 var s = new List<int>();
@@ -442,7 +509,7 @@ static class SuspendLiveness
                         if (labelAt.TryGetValue(_ev[i].Label, out var g)) s.Add(g);
                         break;
                     case EvKind.Stop:
-                        break;                                       // only the handler edges below
+                        break;                                       // only the handler edges
                     case EvKind.BrIf:
                         if (labelAt.TryGetValue(_ev[i].Label, out var t)) s.Add(t);
                         if (i + 1 < n) s.Add(i + 1);
@@ -451,10 +518,12 @@ static class SuspendLiveness
                         if (i + 1 < n) s.Add(i + 1);
                         break;
                 }
+                var h = new List<int>();
                 if (_extraSucc.TryGetValue(i, out var extra))
                     foreach (var lbl in extra)
-                        if (labelAt.TryGetValue(lbl, out var h) && !s.Contains(h)) s.Add(h);
+                        if (labelAt.TryGetValue(lbl, out var hi) && !h.Contains(hi)) h.Add(hi);
                 succ[i] = s;
+                hsucc[i] = h;
             }
 
             var live = new HashSet<int>[n];
@@ -480,6 +549,7 @@ static class SuspendLiveness
                     foreach (var s in succ[i]) next.UnionWith(live[s]);
                     if (e.Kind == EvKind.Def && _ids.TryGetValue(e.Name, out var dId)) next.Remove(dId);
                     if (e.Kind == EvKind.Use && _ids.TryGetValue(e.Name, out var uId)) next.Add(uId);
+                    foreach (var h in hsucc[i]) next.UnionWith(live[h]);   // never killed by this event's def
                     if (next.Count != live[i].Count || !next.SetEquals(live[i])) { live[i] = next; changed = true; }
                 }
             } while (changed);
