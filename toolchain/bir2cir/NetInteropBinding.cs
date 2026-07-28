@@ -346,9 +346,9 @@ static class NetInteropBinding
         node["type"] = owner;
         node["method"] = method;
         // Resolve the CLR slot from the callee's complete declaration
-        // signature. `args` may legitimately be shorter when Kotlin omits a
-        // trailing optional parameter; ilemit backfills that value from the
-        // resolved MethodInfo's DefaultParameterValue metadata.
+        // signature. DefaultArgSplice has already materialized every omitted
+        // positional or trailing optional argument from the selected
+        // reference declaration; ilemit therefore receives a complete vector.
         node["argTypes"] = TakeDeclaredSig();
         node["ret"] = Take("ret");
         if (!isStatic) node["recv"] = Take("recv");

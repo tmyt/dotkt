@@ -162,10 +162,11 @@ MSBuildや利用者が実験的CLI flagを渡す必要はない。
 
 Kotlin 2.4.0ではKLIB static propertyのqualified accessがIR上でfake-override
 accessorになり、そのwrapperだけはsynthetic dispatch parameterを持つ。呼び出し側は
-そのdispatch argumentを省略し、setter valueだけを渡すため、BIR emitterは
-「class-owned property fake overrideで、供給引数がnon-dispatch parametersを
-ちょうど満たす」というKotlin IR shapeからstatic accessを保持する。CLR propertyか
-fieldかはここでも決めず、bir2cirがreference assemblyから解決する。
+そのdispatch argumentを省略し、setter valueだけを渡す。BIR emitterはfake overrideを
+元accessorへ解決し、標準IRの`isStaticMethodOfClass`（class memberかつdispatch
+receiverなし）からstatic accessを保持する。call argumentsはgetter/setter値の列を
+構築するためだけに読み、static性の推測には使わない。CLR propertyかfieldかはここでも
+決めず、bir2cirがreference assemblyから解決する。
 
 #### Java staticとcompanionの関係
 

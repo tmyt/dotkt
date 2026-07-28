@@ -9,7 +9,12 @@ public interface IAdder
     int Add(int value);
 }
 
-public class Widget : IAdder
+public class WidgetBase
+{
+    public int Inherited { get; set; } = 4;
+}
+
+public class Widget : WidgetBase, IAdder
 {
     private readonly int _seed;
     private readonly int[] _items = new int[4];

@@ -587,16 +587,14 @@ internal fun BirEmitter.call(call: IrCall): String {
 	// A property restored from KLIB with Flags.IS_STATIC_PROPERTY is represented by FIR/IR as a static declaration,
 	// but a qualified access arrives here through a generated fake-override accessor in Kotlin 2.4. That wrapper has
 	// a synthetic dispatch parameter even though the call omits it; for a setter, the value consequently occupies
-	// argument slot zero. The static fact is therefore the call shape: a class-owned property fake override whose
-	// supplied arguments exactly cover its non-dispatch parameters. Also accept the direct no-dispatch shape used by
-	// later compiler revisions. Preserve those Kotlin facts as a plain static property-accessor call; bir2cir still
-	// owns the physical CLR property-vs-field decision off the reference assembly.
-	val staticPropertyAccessor = callee.takeIf {
-		val hasDispatch = it.parameters.any { parameter -> parameter.kind == IrParameterKind.DispatchReceiver }
-		val supplied = call.arguments.count { argument -> argument != null }
-		val nonDispatch = it.parameters.count { parameter -> parameter.kind != IrParameterKind.DispatchReceiver }
-		it.parent is IrClass && it.correspondingPropertySymbol != null &&
-			(!hasDispatch || (it.isFakeOverride && supplied == nonDispatch))
+	// argument slot zero. Resolve that wrapper to the KLIB declaration before asking the standard IR static-member
+	// predicate; call-site argument counts are not declaration semantics and would be fragile under new receiver kinds.
+	// Preserve the resulting Kotlin fact as a plain static property-accessor call; bir2cir still owns the physical CLR
+	// property-vs-field decision off the reference assembly.
+	val propertyAccessorDeclaration =
+		if (callee.isFakeOverride) callee.resolveFakeOverride() ?: callee else callee
+	val staticPropertyAccessor = propertyAccessorDeclaration.takeIf {
+		it.isStaticMethodOfClass && it.correspondingPropertySymbol != null
 	}
 	if (staticPropertyAccessor != null) {
 		val staticProperty = staticPropertyAccessor.correspondingPropertySymbol!!.owner

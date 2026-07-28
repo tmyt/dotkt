@@ -10,6 +10,7 @@ fun consume(): Int {
     val widget = Widget(3)
     val definitely: String = widget.Echo("x")
     widget.Value = 5
+    widget.Inherited = 11
     widget.Field = 7
     Widget.Global = 8
     widget[2] = 6
@@ -28,7 +29,7 @@ fun consume(): Int {
     widget.Increment(byref(incremented))
     val shifted = widget + 4
     return widget.Add(4) + Widget.Twice(5) + definitely.length +
-        widget.Value + widget.Field + Widget.Global + adder.Add(1) + widget.Identity(2) +
+        widget.Value + widget.Inherited + widget.Field + Widget.Global + adder.Add(1) + widget.Identity(2) +
         widget[2] + nested.Triple(2) + transformed + widget.Bump(1) +
         externalTransformed + externalGenericTransformed +
         (nullable?.length ?: 0) + required.length + changed + incremented + shifted.Add(0)

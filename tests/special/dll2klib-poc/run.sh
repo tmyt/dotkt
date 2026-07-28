@@ -108,10 +108,10 @@ dotnet "$ILEMIT_DLL" "$OUT/il" Consumer --runtime-refs "$(refset_join "$STDLIB_R
 cp "$STDLIB_RT_DLL" "$PROBE_IMPL" "$CONTRACTS_IMPL" "$OUT/il/"
 
 actual="$(dotnet "$OUT/il/Consumer.dll")"
-[[ "$actual" == "121" ]] || die "generated program returned '$actual', expected '121'"
+[[ "$actual" == "132" ]] || die "generated program returned '$actual', expected '132'"
 grep -q '"k": "clrInstance"' "$OUT/cir/consumer.cir.json" \
 	|| die "bir2cir did not bind the KLIB declaration to a CLR instance member"
 grep -q '"k": "clrStatic"' "$OUT/cir/consumer.cir.json" \
 	|| die "bir2cir did not bind the KLIB declaration to a CLR static member"
 
-info "PASS  CLR ref.dll -> standard KLIB (types, nested types, members, generics, NRT, local/cross-assembly delegates, indexers, events, extensions, operators, byref) -> kotc -> bir2cir -> ilemit -> run (121)"
+info "PASS  CLR ref.dll -> standard KLIB (types, nested types, members incl. inherited instance/static properties, generics, NRT, local/cross-assembly delegates, indexers, events, extensions, operators, byref) -> kotc -> bir2cir -> ilemit -> run (132)"
