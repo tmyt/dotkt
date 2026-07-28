@@ -51,6 +51,11 @@ STR_OK = {
                                                 # — a BIR-only frontend fact (A2 step 3/4); bir2cir consumes it into
                                                 # clrPropGet/clrPropSet (get/set) or the default-indexed-property accessor
                                                 # (index-get/index-set), so it never survives to CIR. A marker, not a type slot.
+    "id", "phase", "role",                      # §2.7 CALL-EVALUATION PLAN binding fields: the minted binding id
+                                                # (`dotkt$bN` / `cir$bN`, also the `bindRef.id` that reads it), the
+                                                # evaluation PHASE enum (recv/arg/default) and the source-level ROLE a
+                                                # storage diagnostic names the value by ("receiver of 'copy'"). The
+                                                # role travels onto the lowered `var`. Names/enums, not type slots.
     "local",                                    # a byref*/delegate node's local-VARIABLE-NAME reference
     "nestedIn",                                 # enclosing-type name (owner-FQN island — §2.2.1). (The applied-attribute
                                                 # `attr` type is now a structured `{t:fqn}` node — #48; kotc flags an
@@ -126,6 +131,9 @@ KINDS = {
     "newList", "newSet", "newMap", "newClosure", "newDelegate", "newSam", "newSuspendLambda",
     "newBoundDelegate", "newBoundClrDelegate",
     "enumValue", "enumValues", "enumParse", "enumOrdinal", "default", "defaultArg", "classRef", "console",
+    # §2.7 CALL-EVALUATION PLAN — BIR-only. `callEval` wraps a call in its ordered bindings; `bindRef` is a pure READ
+    # of one. bir2cir's CallEvalLowering lowers both (to `var`+`valueBlock`, or to a ctor's `preStmts`) before CIR.
+    "callEval", "bindRef",
     "nullableWrap", "nullableValue", "nullableHasValue", "nullableNull",
     "block", "valueBlock", "exprStmt", "return", "returnExpr", "throw", "throwExpr",
     "if", "cond2", "while", "label", "goto", "brIf", "break", "continue",
@@ -247,6 +255,17 @@ class V:
                         self.err(f, path, "newSuspendLambda.params must be an array")
                     if not isinstance(arity, int) or not isinstance(ps, list) or arity != len(ps):
                         self.err(f, path, "newSuspendLambda.arity must equal the physical params length")
+            # §2.7 PHASE SPLIT. The call-evaluation plan is BIR vocabulary: `callEval`/`bindRef` and the ctor
+            # declaration's `delegationBindings` are lowered by CallEvalLowering, so a survivor in CIR means a plan
+            # reached ilemit, which has no notion of one. `preStmts` is the CIR form of a delegation's plan and is
+            # authored by that same pass, so it must not appear in kotc's BIR.
+            if f.endswith(".cir.json"):
+                if o.get("k") in ("callEval", "bindRef"):
+                    self.err(f, path, f"{o['k']!r} is a BIR call-evaluation plan node and must be lowered before CIR")
+                if "delegationBindings" in o:
+                    self.err(f, path, "delegationBindings is a BIR call-evaluation plan and must be lowered to preStmts before CIR")
+            if f.endswith(".bir.json") and "preStmts" in o:
+                self.err(f, path, "preStmts is the bir2cir-authored lowering of a delegation plan and must not appear in BIR")
             if isinstance(o.get("mods"), dict):
                 for mk in o["mods"]:
                     if mk not in MOD_KEYS:

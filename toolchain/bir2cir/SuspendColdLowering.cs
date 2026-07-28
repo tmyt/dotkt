@@ -1299,11 +1299,13 @@ static partial class SuspendColdLowering
                     FieldStorage(n, t, RoleCapture, lives: true, across: null);             // captured vars -> ctor-set fields
             foreach (var p in _params)
                 FieldStorage(Str(p["name"]), TypeJson.Read(p["type"]), RoleParam, true, null);  // lambda: create()-set param field(s)
-            foreach (var (vn, vt) in live.DeclaredVars)
+            foreach (var (vn, vt, role) in live.DeclaredVars)
             {
                 var declared = TypeJson.Read(vt);
                 if (vn != null) _localTypes[vn] = declared;
-                FieldStorage(vn, declared, RoleLocal,
+                // A call-evaluation plan binding names itself ("the receiver of `copy`", "the default of parameter
+                // `b`"); an ordinary local is just a local. Either way the refusal below reads the SAME sentence.
+                FieldStorage(vn, declared, role ?? RoleLocal,
                     live.LivesAcrossSuspension(vn), live.FirstSuspensionAcross(vn));
             }
 

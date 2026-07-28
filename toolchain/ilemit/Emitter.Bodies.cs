@@ -15,7 +15,16 @@ sealed partial class Emitter
         _methodRetType = typeof(void);
         _curTypeParams = EffectiveTps(ti); _curMethodParams = null;
         BeginMethod(cb.GetILGenerator(), c, isStatic: false);
-        PrescanCfgLabels(c.GetProperty("body"));
+        // The whole ctor node, not just `body`: `preStmts` runs before the delegation and may carry CFG labels of its
+        // own (a `cond`/`try` inside a bound value).
+        PrescanCfgLabels(c);
+
+        // `preStmts` — the constructor DELEGATION's evaluation plan, lowered to `var` declarations by bir2cir's
+        // CallEvalLowering. A delegation's arguments ride the declaration rather than an expression, so there is no
+        // `valueBlock` to hold the values it must evaluate exactly once; they are declared HERE, ahead of the
+        // `ldarg.0` that begins the `this`/`base` call, which is where Kotlin evaluates them.
+        if (c.TryGetProperty("preStmts", out var pre) && pre.ValueKind == JsonValueKind.Array)
+            foreach (var st in pre.EnumerateArray()) EmitStmt(st);
 
         _il.Emit(OpCodes.Ldarg_0);
         if (c.TryGetProperty("thisArgs", out var ta) && ta.ValueKind == JsonValueKind.Array)

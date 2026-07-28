@@ -272,7 +272,7 @@
         "field", "setField", "staticField",
         "new", "newArray", "newArraySized", "newArrayInit", "arrayGet", "arraySet", "arrayLen",
         "newList", "newSet", "newMap", "newClosure", "newDelegate", "newSam", "newSuspendLambda",
-        "enumValue", "enumOrdinal", "default",
+        "enumValue", "enumOrdinal", "default", "defaultArg", "callEval", "bindRef",
         "nullableWrap", "nullableValue", "nullableHasValue", "nullableNull",
         "block", "valueBlock", "exprStmt", "return", "returnExpr", "throw", "throwExpr",
         "if", "cond2", "label", "goto", "brIf", "break", "continue",
@@ -324,8 +324,27 @@
         { "properties": { "k": { "const": "forArray" }, "var": { "type": "string" }, "array": { "$ref": "#/$defs/node" }, "body": { "type": "array", "items": { "$ref": "#/$defs/node" } } }, "required": ["var", "array", "body"] },
         { "properties": { "k": { "const": "forEachInline" }, "elem": { "$ref": "#/$defs/type" }, "src": { "$ref": "#/$defs/node" }, "var": { "type": "string" }, "body": { "type": "array", "items": { "$ref": "#/$defs/node" } } }, "required": ["elem", "src", "var", "body"] },
         { "properties": { "k": { "const": "try" }, "body": { "type": "array", "items": { "$ref": "#/$defs/node" } }, "catches": { "type": "array" }, "finally": { "type": "array", "items": { "$ref": "#/$defs/node" } } }, "required": ["body"] },
+        { "properties": { "k": { "const": "defaultArg" } }, "$comment": "§2.7: the RESERVATION for a cross-module omitted default. Emitted by kotc ONLY as the `expr` of a default-phase plan binding; bir2cir's DefaultArgSplice materialises the callee's [kotlin.clr.KotlinDefault] carrier into that binding, and refuses one found anywhere else. Never in CIR." },
+        { "properties": { "k": { "const": "callEval" }, "type": { "$ref": "#/$defs/type" }, "bindings": { "type": "array", "items": { "$ref": "#/$defs/binding" } }, "expr": { "$ref": "#/$defs/node" } }, "required": ["bindings", "expr"], "$comment": "§2.7 CALL-EVALUATION PLAN, BIR-only. `bindings` is the call's supplied values in KOTLIN EVALUATION ORDER (dispatch receiver, extension receiver, positional arguments, then the filled defaults in declaration order); `expr` is the call, whose every read of one of them is a `bindRef`. bir2cir's CallEvalLowering lowers it to a `valueBlock` of `var`s (or, for a constructor delegation carried as the declaration's `delegationBindings`, to `preStmts`)." },
+        { "properties": { "k": { "const": "bindRef" }, "id": { "type": "string" }, "sty": { "$ref": "#/$defs/type" } }, "required": ["id"], "$comment": "§2.7: a pure READ of the plan binding `id`. Free to clone — cloning a read is not cloning an evaluation. BIR-only." },
         { "$comment": "…remaining kinds in the nodeKind enum follow the same {k, canonical-fields} pattern; enumerated in full by the m6 validator." }
       ]
+    },
+
+    "//== CALL-EVALUATION PLAN BINDING (§2.7) ==//": null,
+    "binding": {
+      "type": "object",
+      "description": "One value a call supplies, in the plan's evaluation-order position. `id` is minted in a per-producer namespace (kotc `dotkt$bN`, bir2cir `cir$bN`) and is BOTH the `bindRef` key and the name of the local it lowers to. `expr` is the value; for a cross-module omitted default it is the `{k:defaultArg}` RESERVATION DefaultArgSplice fills. BIR-only: CallEvalLowering consumes the whole array.",
+      "properties": {
+        "id":     { "type": "string" },
+        "phase":  { "enum": ["recv", "arg", "default"], "description": "where the value comes from; the array order already carries the evaluation order, so this is documentation and diagnostics, not a sort key" },
+        "kind":   { "enum": ["value", "address"], "description": "`address` = a byref/@ClrRefArgument slot's addressable lvalue: an ordering marker only, never storage" },
+        "stable": { "type": "boolean", "description": "may be READ more than once (a literal, an immutable local read) — judged ONCE by the producer and consumed, never re-derived" },
+        "type":   { "$ref": "#/$defs/type", "description": "the CALLER-instantiated semantic type of the value" },
+        "role":   { "type": "string", "description": "the source-level phrase a storage refusal names the value by (\"receiver of 'copy'\"); travels onto the lowered `var`" },
+        "expr":   { "$ref": "#/$defs/node" }
+      },
+      "required": ["id", "phase", "kind", "expr"]
     },
 
     "//== INJECTION METADATA (§5b) — facadegen→kotc, SAME vocabulary ==//": null,

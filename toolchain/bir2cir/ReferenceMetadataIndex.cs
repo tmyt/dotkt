@@ -81,8 +81,6 @@ sealed partial class ReferenceMetadataIndex
     readonly HashSet<string> _kotlinDefaultsAmbiguous = new(StringComparer.Ordinal);
     // OWNERFUL keys two same-arity declarations carry with different defaults (see ReferenceAssemblyMetadata).
     readonly HashSet<string> _kotlinDefaultsConflicted = new(StringComparer.Ordinal);
-    // The declared parameter types behind an arity key (see KotlinDefaultParamTypesFor).
-    readonly Dictionary<string, TypeNode[]> _kotlinDefaultParamTypes = new(StringComparer.Ordinal);
     // [KotlinInline] raw-BIR payloads (#71/#75): "owner|name|pc|ga" -> the CANDIDATE decoded carrier JSONs (one per overload
     // sharing that key; the raw pre-lowering decl facts InlineBirStash stashed). Read cross-module by InlineSplice, which
     // picks the UNIQUE candidate matching the call's `paramSig` (§4.2), then splices its body at the call site (so it
@@ -187,7 +185,6 @@ sealed partial class ReferenceMetadataIndex
                 lst.AddRange(kv.Value);
             }
             foreach (var key in asm.DotKt.KotlinDefaultsConflicted) _kotlinDefaultsConflicted.Add(key);
-            foreach (var kv in asm.DotKt.KotlinDefaultParamTypes) _kotlinDefaultParamTypes.TryAdd(kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.KotlinDefaults)
             {
                 _kotlinDefaults.TryAdd(kv.Key, kv.Value);
@@ -301,17 +298,6 @@ sealed partial class ReferenceMetadataIndex
         }
         return _kotlinDefaultsOwnerless.TryGetValue(method + "|" + paramCount, out var ownerless) ? ownerless : null;
     }
-    /// The declared parameter types behind a @KotlinDefault arity key, as a JSON type vector — for a call site with no
-    /// signature of its own (a constructor DELEGATION). Null when the callee carries no defaults.
-    public JsonArray KotlinDefaultParamTypesFor(string owner, string method, int paramCount)
-    {
-        if (owner == null || method == null) return null;
-        if (!_kotlinDefaultParamTypes.TryGetValue(owner + "|" + method + "|" + paramCount, out var types)) return null;
-        var arr = new JsonArray();
-        foreach (var t in types) arr.Add(t == null ? null : TypeJson.Write(t));
-        return arr;
-    }
-
     // True when the name+arity cannot identify ONE set of defaults: a genuinely ownerless name carried by >1 owner that
     // disagree, or an OWNERFUL key two same-arity declarations (ctor overloads) carry with different defaults.
     public bool KotlinDefaultsAmbiguous(string owner, string method, int paramCount) =>
@@ -1771,8 +1757,6 @@ sealed partial class ReferenceMetadataIndex
         // The callee's DECLARED parameter types, for a call site that carries none of its own — a constructor
         // DELEGATION rides the ctor declaration, so `baseArgs` is a bare array with no signature vector. The splice
         // needs them to type the temp it binds each spliced value to.
-        if (!metadata.KotlinDefaultParamTypes.ContainsKey(arityKey))
-            metadata.KotlinDefaultParamTypes[arityKey] = ps.Select(p => DeclarationTypeNode(p.ParameterType)).ToArray();
         Put(arityKey + "|" + sig, defaults);                        // the exact signature
         Put(arityKey + "|~" + RelaxedSigKey(sig), defaults);        // class positions collapsed, for cross-space compare
         if (metadata.KotlinDefaults.TryGetValue(arityKey, out var prior))
@@ -2133,9 +2117,6 @@ sealed class ReferenceDotKtMetadata
     // cannot tell them apart, so the splice must refuse instead of filling whichever was enumerated last. Populated for
     // both METHODS and CONSTRUCTORS (same-arity overloads are common; #235).
     public readonly HashSet<string> KotlinDefaultsConflicted = new(StringComparer.Ordinal);
-    // The declared parameter types behind a [KotlinDefaults] arity key, for a call site that carries no signature vector
-    // of its own (a constructor DELEGATION's `baseArgs`). First writer wins, exactly like the arity key it mirrors.
-    public readonly Dictionary<string, TypeNode[]> KotlinDefaultParamTypes = new(StringComparer.Ordinal);
 }
 
 // A single ref.dll member's call-substitution shape. Owner is the Kotlin FQN ("kotlin.String"); Intrinsic is the
