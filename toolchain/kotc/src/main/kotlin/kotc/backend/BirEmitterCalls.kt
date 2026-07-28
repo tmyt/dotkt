@@ -50,6 +50,7 @@ import org.jetbrains.kotlin.ir.expressions.IrGetClass
 import org.jetbrains.kotlin.ir.declarations.IrLocalDelegatedProperty
 import org.jetbrains.kotlin.ir.declarations.IrValueDeclaration
 import org.jetbrains.kotlin.ir.declarations.IrValueParameter
+import org.jetbrains.kotlin.ir.declarations.isStaticMethodOfClass
 import org.jetbrains.kotlin.ir.IrElement
 import org.jetbrains.kotlin.ir.visitors.IrVisitorVoid
 import org.jetbrains.kotlin.ir.visitors.acceptVoid
@@ -712,6 +713,37 @@ internal fun BirEmitter.call(call: IrCall): String {
 	// path — each matching where emitOwnerfulInlineNode now keys the [KotlinInline] owner (the real declaring class).
 	val inlineDecl = callee.let { if (it.isFakeOverride) it.resolveFakeOverride() ?: it else it }
 	if (inlineDecl.body != null && callNeedsSplice(call)) return inlineSpliceCallSameModule(call)
+
+	// A property restored from KLIB with Flags.IS_STATIC_PROPERTY is represented by FIR/IR as a static declaration,
+	// but a qualified access arrives here through a generated fake-override accessor in Kotlin 2.4. That wrapper has
+	// a synthetic dispatch parameter even though the call omits it; for a setter, the value consequently occupies
+	// argument slot zero. The static fact is therefore the call shape: a class-owned property fake override whose
+	// supplied arguments exactly cover its non-dispatch parameters. Also accept the direct no-dispatch shape used by
+	// later compiler revisions. Preserve those Kotlin facts as a plain static property-accessor call; bir2cir still
+	// owns the physical CLR property-vs-field decision off the reference assembly.
+	val staticPropertyAccessor = callee.takeIf {
+		val hasDispatch = it.parameters.any { parameter -> parameter.kind == IrParameterKind.DispatchReceiver }
+		val supplied = call.arguments.count { argument -> argument != null }
+		val nonDispatch = it.parameters.count { parameter -> parameter.kind != IrParameterKind.DispatchReceiver }
+		it.parent is IrClass && it.correspondingPropertySymbol != null &&
+			(!hasDispatch || (it.isFakeOverride && supplied == nonDispatch))
+	}
+	if (staticPropertyAccessor != null) {
+		val staticProperty = staticPropertyAccessor.correspondingPropertySymbol!!.owner
+		val staticOwner = staticPropertyAccessor.parent as? IrClass
+		if (staticOwner != null) {
+			val isSetter = staticPropertyAccessor === staticProperty.setter ||
+				callee === callee.correspondingPropertySymbol?.owner?.setter
+			// Do not classify by the fake accessor's parameter kinds: its setter value may occupy the synthetic
+			// dispatch slot. Every non-null expression is a real static accessor argument in source order.
+			val accessorArgs = call.arguments.filterNotNull()
+			val argTypes = accessorArgs.joinToString(",") { birType(it.type).toJson() }
+			val args = accessorArgs.joinToString(",") { expr(it) }
+			val propKind = if (isSetter) "set" else "get"
+			val ret = if (isSetter) "" else ""","ret":${birType(call.type).toJson()}"""
+			return """{"k":"callStatic","ownerType":${fqnJson(typeName(staticOwner))},"method":${str(staticProperty.name.asString())},"prop":"$propKind","argTypes":[$argTypes]$ret,"args":[$args]}"""
+		}
+	}
 
 	// `Delegates.observable/vetoable/notNull(…)` is NOT intercepted: it resolves to the REAL stdlib
 	// `Delegates.observable`/`vetoable`/`notNull` (emitted into DotKt.Stdlib.dll — each returns a real
@@ -1690,6 +1722,15 @@ internal fun BirEmitter.call(call: IrCall): String {
 	// (the kickoff/Task/await lowering is a deferred downstream layer). kotc bakes no coroutine ABI here.
 	val effRet = birType(call.type)
 	val recv = dispatchReceiver(call)
+	// Kotlin 2.4 KLIB metadata can carry a genuine static class member
+	// (Flags.IS_STATIC_FUNCTION). Preserve only the frontend facts here: the
+	// declaring class identity, static-ness, Kotlin name, and declared signature.
+	// Whether that identity is a CLR type and which physical member it binds to
+	// remains NetInteropBinding's decision in bir2cir.
+	if (recv == null && callee.isStaticMethodOfClass) {
+		val staticOwner = callee.parent as IrClass
+		return """{"k":"callStatic","ownerType":${fqnJson(typeName(staticOwner))},"method":${str(name)}${overloadSigField(callee)},"args":[$args]${suspendCallTag(callee)}}"""
+	}
 	// #199 DESIGN B — TWO-AXIS top-level call encoding. `owner:null` is LOAD-BEARING BIR vocabulary meaning "this is
 	// a top-level call": ~12 bir2cir recognizers key on it (@ClrIntrinsic/@ClrCollectionFactory/@ClrArrayFactory
 	// substitution, Precondition/Repeat/Enum/ForIn/CharSeq lowerings, …). So a same-module top-level call KEEPS

@@ -12,6 +12,7 @@
     <!-- kotc -classpath: the CLR FRONTEND KLIB built FROM our CLR stdlib sources for the common frontend. -->
     <DotKtStdlib Condition="'$(DotKtStdlib)' == ''">$(KotlinClrRoot)/build/clr-stdlib-frontend-klib/kotlin-stdlib-clr-frontend.klib</DotKtStdlib>
     <DotKtFacadeGen Condition="'$(DotKtFacadeGen)' == ''">$(KotlinClrRoot)/build/facadegen-bin/facadegen.dll</DotKtFacadeGen>
+    <DotKtDll2Klib Condition="'$(DotKtDll2Klib)' == ''">$(KotlinClrRoot)/build/dll2klib-bin/dll2klib.dll</DotKtDll2Klib>
     <DotKtBir2Cir Condition="'$(DotKtBir2Cir)' == ''">$(KotlinClrRoot)/build/bir2cir-bin/bir2cir.dll</DotKtBir2Cir>
     <DotKtIlEmit Condition="'$(DotKtIlEmit)' == ''">$(KotlinClrRoot)/build/ilemit-bin/ilemit.dll</DotKtIlEmit>
     <DotKtRetargetTool Condition="'$(DotKtRetargetTool)' == ''">$(KotlinClrRoot)/build/retarget-bin/retarget.dll</DotKtRetargetTool>
@@ -67,7 +68,11 @@
     <Message Importance="high" Text="kotlin/clr: building compiler launcher (first run)..." />
     <Exec Command="&quot;$(KotlinClrRoot)/gradlew&quot; -q :kotc:installDist" WorkingDirectory="$(KotlinClrRoot)" />
   </Target>
-  <Target Name="EnsureFacadeGen" BeforeTargets="DotKtInjectTypes" Condition="!Exists('$(DotKtFacadeGen)')">
+  <Target Name="EnsureDll2Klib" BeforeTargets="DotKtGenerateReferenceKlibs" Condition="!Exists('$(DotKtDll2Klib)')">
+    <Message Importance="high" Text="kotlin/clr: building dll2klib (first run)..." />
+    <Exec Command="dotnet build &quot;$(KotlinClrRoot)/toolchain/dll2klib&quot; -c Release -o &quot;$(KotlinClrRoot)/build/dll2klib-bin&quot; -v q --nologo" />
+  </Target>
+  <Target Name="EnsureFacadeGen" BeforeTargets="DotKtInjectTypes" Condition="'$(DotKtUseDll2Klib)' != 'true' and !Exists('$(DotKtFacadeGen)')">
     <Message Importance="high" Text="kotlin/clr: building facadegen (first run)..." />
     <Exec Command="dotnet build &quot;$(KotlinClrRoot)/toolchain/facadegen&quot; -c Release -o &quot;$(KotlinClrRoot)/build/facadegen-bin&quot; -v q --nologo" />
   </Target>

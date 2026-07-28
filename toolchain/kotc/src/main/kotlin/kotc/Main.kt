@@ -21,7 +21,18 @@ fun main(args: Array<String>) {
 		kotc.tools.ImportScan.run(args)
 		return
 	}
-	val normalizedArgs = args.filterNot { it == "-no-stdlib" }
+	// CLR reference KLIBs use Kotlin metadata's standard static-member flags. Upstream
+	// currently gates deserialized static declarations as companion-block members, so the
+	// embedded CLR compiler enables that language capability unconditionally. Keep this
+	// platform policy here, at the single compiler entrypoint, rather than duplicating an
+	// experimental switch across MSBuild, scripts, and user projects.
+	val staticFeature = "-XXLanguage:+CompanionBlocksAndExtensions"
+	val normalizedArgs = args
+		.filterNot {
+			it == "-no-stdlib" ||
+				it.startsWith("-XXLanguage:+CompanionBlocksAndExtensions") ||
+				it.startsWith("-XXLanguage:-CompanionBlocksAndExtensions")
+		} + staticFeature
 	val arguments = parseCommandLineArguments<K2MetadataCompilerArguments>(normalizedArgs)
 	arguments.multiPlatform = true
 	val collector = PrintingMessageCollector(System.err, MessageRenderer.PLAIN_RELATIVE_PATHS, arguments.verbose)

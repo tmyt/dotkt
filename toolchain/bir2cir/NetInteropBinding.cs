@@ -123,6 +123,11 @@ static class NetInteropBinding
         var v = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
         foreach (var key in node.Select(kv => kv.Key).ToList()) { var val = node[key]; node.Remove(key); v[key] = val; }
         JsonNode Take(string key) => v.TryGetValue(key, out var x) ? x : null;
+        // A declaration loaded from a regular Kotlin KLIB is not facadegen-injected, so kotc emits the ordinary
+        // external-member dialect: the declared parameter types are in `sig`, not `argTypes`/`shapeTypes`.
+        // Once the owner resolves against the authoritative CLR reference set, both fields carry the same frontend
+        // fact needed here. Accepting `sig` lets bir2cir own the CLR binding without teaching kotc a KLIB side channel.
+        JsonNode TakeMemberSig(string preferred) => Take(preferred) ?? Take("sig") ?? new JsonArray();
         var owner = Take("ownerType");
         var args = Take("args") as JsonArray ?? new JsonArray();
         // A `super.X()` (issue #14) rides in as `"super":true` on the callInstance. kotc already forced this call
@@ -148,7 +153,7 @@ static class NetInteropBinding
             node["type"] = owner;
             node["method"] = method;
             node["typeArgs"] = Take("typeArgs");
-            node["memberSig"] = NormalizeMemberSig(Take("shapeTypes") as JsonArray);
+            node["memberSig"] = NormalizeMemberSig(TakeMemberSig("shapeTypes") as JsonArray);
             if (!isStatic) node["recv"] = Take("recv");
             node["args"] = args;
             if (Take("suspendCall") is JsonNode sc1) node["suspendCall"] = sc1;
@@ -275,7 +280,7 @@ static class NetInteropBinding
             && DeclaresPublicStaticMethod(netType, opNet))
         {
             var recv = Take("recv");
-            var argTypes0 = Take("argTypes") as JsonArray ?? new JsonArray();
+            var argTypes0 = TakeMemberSig("argTypes") as JsonArray ?? new JsonArray();
             var newArgTypes = new JsonArray { owner.DeepClone() };
             while (argTypes0.Count > 0) { var at = argTypes0[0]; argTypes0.RemoveAt(0); newArgTypes.Add(at); }
             var newArgs = new JsonArray { recv };
@@ -308,7 +313,7 @@ static class NetInteropBinding
         node["k"] = isStatic ? "clrStatic" : "clrInstance";
         node["type"] = owner;
         node["method"] = method;
-        node["argTypes"] = Take("argTypes") ?? new JsonArray();
+        node["argTypes"] = TakeMemberSig("argTypes");
         node["ret"] = Take("ret");
         if (!isStatic) node["recv"] = Take("recv");
         node["args"] = args;

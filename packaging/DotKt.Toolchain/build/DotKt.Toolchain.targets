@@ -13,6 +13,8 @@
          wiped CIR/BIR dirs because retarget rewrites the emitted dll IN PLACE (output == input), so it needs its
          own out-of-band completion marker. -->
     <DotKtRetargetStamp>$(BaseIntermediateOutputPath)dotkt-retarget.stamp</DotKtRetargetStamp>
+    <DotKtUseDll2Klib Condition="'$(DotKtUseDll2Klib)' == ''">false</DotKtUseDll2Klib>
+    <DotKtReferenceKlibDir>$(BaseIntermediateOutputPath)dotkt-reference-klibs</DotKtReferenceKlibDir>
     <DotKtTypeMeta>$(BaseIntermediateOutputPath)dotkt-clrtypes.meta</DotKtTypeMeta>
     <!-- The .NET import list extracted from the .kt sources by the kotc scan-imports pass (PSI parser, not regex). -->
     <DotKtImportList>$(BaseIntermediateOutputPath)dotkt-clrimports.txt</DotKtImportList>
@@ -43,11 +45,35 @@
     <ItemGroup>
       <_DotKtCompileReference Include="@(ReferencePath)" />
       <_DotKtRuntimeReference Include="@(ReferenceCopyLocalPaths)" Condition="'%(Extension)' == '.dll'" />
+      <_DotKtKlibReference Include="@(ReferencePathWithRefAssemblies)"
+                           Condition="'$(DotKtUseDll2Klib)' == 'true' and '%(Extension)' == '.dll' and '%(Filename)' != 'DotKt.Private.Stdlib' and '%(Filename)' != 'DotKt.Stdlib'">
+        <KlibPath>$(DotKtReferenceKlibDir)/%(Filename).klib</KlibPath>
+      </_DotKtKlibReference>
+      <_DotKtKlibReference Include="@(_DotKtCompileReference)"
+                           Condition="'$(DotKtUseDll2Klib)' == 'true' and '@(ReferencePathWithRefAssemblies)' == '' and '%(Extension)' == '.dll' and '%(Filename)' != 'DotKt.Private.Stdlib' and '%(Filename)' != 'DotKt.Stdlib'">
+        <KlibPath>$(DotKtReferenceKlibDir)/%(Filename).klib</KlibPath>
+      </_DotKtKlibReference>
+      <_DotKtFrontendMetadataInput Include="@(_DotKtKlibReference->'%(KlibPath)')"
+                                   Condition="'$(DotKtUseDll2Klib)' == 'true'" />
+      <_DotKtFrontendMetadataInput Include="$(DotKtTypeMeta)"
+                                   Condition="'$(DotKtUseDll2Klib)' != 'true'" />
     </ItemGroup>
     <PropertyGroup>
       <_DotKtCompileReferences>@(_DotKtCompileReference->'%(FullPath)', ';')</_DotKtCompileReferences>
       <_DotKtRuntimeReferences>@(_DotKtRuntimeReference->'%(FullPath)', ';')</_DotKtRuntimeReferences>
     </PropertyGroup>
+  </Target>
+
+  <!-- One target batch per resolved reference: one stale DLL starts one process and
+       produces one project-local packed KLIB. No shared cache participates. -->
+  <Target Name="DotKtGenerateReferenceKlibs"
+          DependsOnTargets="DotKtResolveReferenceSets"
+          Condition="'$(DotKtUseDll2Klib)' == 'true'"
+          Inputs="%(_DotKtKlibReference.FullPath);$(DotKtDll2Klib)"
+          Outputs="%(_DotKtKlibReference.KlibPath)">
+    <MakeDir Directories="$(DotKtReferenceKlibDir)" />
+    <Message Importance="high" Text="DotKt: %(_DotKtKlibReference.Filename).dll -> %(_DotKtKlibReference.KlibPath)" />
+    <Exec Command="dotnet &quot;$(DotKtDll2Klib)&quot; &quot;%(_DotKtKlibReference.FullPath)&quot; &quot;%(_DotKtKlibReference.KlibPath)&quot;" />
   </Target>
 
   <!-- MPP (#119): opt-in multiplatform (common `expect` + CLR `actual`) for an ordinary user project.
@@ -97,7 +123,7 @@
        instead of bumping every build and forcing an unconditional recompile. -->
   <Target Name="DotKtInjectTypes" BeforeTargets="KotlinCompile"
           DependsOnTargets="DotKtResolveReferenceSets;DotKtComputeImportManifest"
-          Condition="'@(KotlinCompile)' != ''"
+          Condition="'@(KotlinCompile)' != '' and '$(DotKtUseDll2Klib)' != 'true'"
           Inputs="@(KotlinCompile);@(_DotKtCompileReference);$(DotKtCompiler);$(DotKtImportManifest)" Outputs="$(DotKtTypeMeta)">
     <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(DotKtTypeMeta)'))" />
     <!-- 1. Extract .NET imports via the compiler's PSI pass (robust where the old regex was not — item 5). -->
@@ -125,7 +151,7 @@
       <DotKtMppFlags>-Xmulti-platform -Xexpect-actual-classes -Xcommon-sources=&quot;@(DotKtCommon->'%(FullPath)', ',')&quot;</DotKtMppFlags>
     </PropertyGroup>
     <WriteLinesToFile File="$(DotKtOptionsManifest)" Overwrite="true" WriteOnlyWhenDifferent="true"
-                      Lines="$(DotKtKotcOptions);$(DotKtMppFlags);@(DotKtCommon->'%(FullPath)')" />
+                      Lines="DotKtUseDll2Klib=$(DotKtUseDll2Klib);$(DotKtKotcOptions);$(DotKtMppFlags);@(DotKtCommon->'%(FullPath)')" />
   </Target>
 
   <!-- Compile every .kt to BIR. CLR_TYPES_METADATA tells the FIR injector which façade-free .NET types to synthesize.
@@ -135,8 +161,8 @@
        @(_DotKtRuntimeReference)), or a non-file compile OPTION changes ($(DotKtOptionsManifest)). DotKtResolveReferenceSets
        is a direct dependency so the @(_DotKt*Reference) items exist when these Inputs are evaluated. -->
   <Target Name="KotlinCompile" BeforeTargets="CoreCompile"
-          DependsOnTargets="DotKtInjectTypes;DotKtResolveReferenceSets;DotKtComputeCompileOptions"
-          Inputs="@(KotlinCompile);$(DotKtCompiler);@(_DotKtStdlibInput);$(DotKtTypeMeta);$(DotKtOptionsManifest);@(_DotKtCompileReference);@(_DotKtRuntimeReference)"
+          DependsOnTargets="DotKtInjectTypes;DotKtGenerateReferenceKlibs;DotKtResolveReferenceSets;DotKtComputeCompileOptions"
+          Inputs="@(KotlinCompile);$(DotKtCompiler);@(_DotKtStdlibInput);@(_DotKtFrontendMetadataInput);$(DotKtOptionsManifest);@(_DotKtCompileReference);@(_DotKtRuntimeReference)"
           Outputs="$(DotKtOut)/.stamp">
     <!-- Deletion-safety (#50): the BIR is globbed from $(DotKtOut), which was never cleaned, so a deleted/renamed .kt
          left a stale *.bir.json behind → the deleted class/function survived into the emitted DLL. Wiping the dir on
@@ -149,8 +175,14 @@
     <!-- $(DotKtKotcOptions): extra raw kotc flags a project may pass through (e.g. compiling the stdlib ITSELF needs
          -Xallow-kotlin-package -opt-in=... ). Space-separated; appended verbatim to the compile command.
          $(DotKtMppFlags) is computed by DotKtComputeCompileOptions above. -->
-    <Exec Command="&quot;$(DotKtCompiler)&quot; @(KotlinCompile->'&quot;%(FullPath)&quot;', ' ') -no-stdlib -classpath &quot;$(DotKtStdlib)&quot; -d &quot;$(DotKtOut)&quot; $(DotKtMppFlags) $(DotKtKotcOptions)"
-          EnvironmentVariables="CLR_TYPES_METADATA=$(DotKtTypeMeta)" />
+    <PropertyGroup>
+      <_DotKtKlibPathSeparator>$([System.IO.Path]::PathSeparator)</_DotKtKlibPathSeparator>
+      <_DotKtFrontendClasspath Condition="'$(DotKtUseDll2Klib)' == 'true'">$(DotKtStdlib)$(_DotKtKlibPathSeparator)@(_DotKtKlibReference->'%(KlibPath)', '$(_DotKtKlibPathSeparator)')</_DotKtFrontendClasspath>
+      <_DotKtFrontendClasspath Condition="'$(DotKtUseDll2Klib)' != 'true'">$(DotKtStdlib)</_DotKtFrontendClasspath>
+      <_DotKtFrontendEnvironment Condition="'$(DotKtUseDll2Klib)' != 'true'">CLR_TYPES_METADATA=$(DotKtTypeMeta)</_DotKtFrontendEnvironment>
+    </PropertyGroup>
+    <Exec Command="&quot;$(DotKtCompiler)&quot; @(KotlinCompile->'&quot;%(FullPath)&quot;', ' ') -no-stdlib -classpath &quot;$(_DotKtFrontendClasspath)&quot; -d &quot;$(DotKtOut)&quot; $(DotKtMppFlags) $(DotKtKotcOptions)"
+          EnvironmentVariables="$(_DotKtFrontendEnvironment)" />
     <Touch Files="$(DotKtOut)/.stamp" AlwaysCreate="true" />
   </Target>
 
@@ -250,7 +282,7 @@
        behind and a rebuild reused the stale injection metadata. Wipe all of it before CoreClean so `dotnet clean`
        truly resets the DotKt state and the next build regenerates injection from scratch. -->
   <Target Name="DotKtClean" BeforeTargets="CoreClean">
-    <RemoveDir Directories="$(DotKtOut);$(DotKtCirOut)" />
+    <RemoveDir Directories="$(DotKtOut);$(DotKtCirOut);$(DotKtReferenceKlibDir)" />
     <Delete Files="$(DotKtTypeMeta);$(DotKtImportList);$(DotKtOptionsManifest);$(DotKtImportManifest);$(DotKtRetargetStamp)" />
   </Target>
 </Project>

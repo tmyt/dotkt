@@ -14,6 +14,7 @@
     <DotKtBir2Cir Condition="'$(DotKtBir2Cir)' == ''">$(DotKtToolchainDir)bir2cir/bir2cir.dll</DotKtBir2Cir>
     <DotKtIlEmit Condition="'$(DotKtIlEmit)' == ''">$(DotKtToolchainDir)ilemit/ilemit.dll</DotKtIlEmit>
     <DotKtFacadeGen Condition="'$(DotKtFacadeGen)' == ''">$(DotKtToolchainDir)facadegen/facadegen.dll</DotKtFacadeGen>
+    <DotKtDll2Klib Condition="'$(DotKtDll2Klib)' == ''">$(DotKtToolchainDir)dll2klib/dll2klib.dll</DotKtDll2Klib>
     <!-- Repoints the emitted dll's BCL refs off System.Private.CoreLib so a C# project can <ProjectReference> it. -->
     <DotKtRetargetTool Condition="'$(DotKtRetargetTool)' == ''">$(DotKtToolchainDir)retarget/retarget.dll</DotKtRetargetTool>
     <!-- The @Clr-metadata REFERENCE stdlib (DotKt.Private.Stdlib.dll): COMPILE-TIME ONLY — bir2cir reads its
