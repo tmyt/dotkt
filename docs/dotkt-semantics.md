@@ -281,6 +281,39 @@ embed no dialect.
   GetAwaiter directly; requesting `captureContext = false` on such a type is a compile-time error.
 - Coverage: `tests/coroutines/fixtures/TaskAndValueTaskAwaitTests.kt`; custom-awaitable gaps are tracked in GitHub Issues.
 
+## 4d. A byref-like (`ref struct`) value may live in a suspend function — but never ACROSS a suspension, and never in a capture
+
+The CLR forbids a byref-like type (a C# `ref struct`: `System.Span<T>`, `System.ReadOnlySpan<T>`, `TypedReference`,
+any user `ref struct`) as the type of an instance field of an ordinary type. Two of DotKt's lowerings put Kotlin
+values into exactly such fields — a suspend function's state machine, and a capturing lambda's closure class — so
+those two places refuse the type. **Kotlin/JVM has no analogue at all** (the JVM has no byref-like types); the
+reader reference here is C#, and DotKt mirrors its three diagnostics. There is no `ref struct` in the Kotlin
+language, so this can only arise through .NET interop (`import System.Span`, a `ref struct` from a referenced
+assembly, or `kotlin.clr.Span` from `stackBuffer { … }.asSpan()`).
+
+The rule, in three parts:
+
+- **Locals: allowed unless they live across a suspension.** bir2cir computes real backward LIVENESS over the
+  state-machine body (`toolchain/bir2cir/SuspendLiveness.cs`). A local that is dead at every suspension point
+  stays an ordinary `MoveNext` local and may be byref-like. Only a local that is still needed after a resume is
+  spilled to a state-machine field, and a byref-like one there is a **compile-time error mirroring C# CS4007**
+  ("instance of type cannot be preserved across await"). Liveness, not a lexical interval: a value created and
+  consumed within each iteration of a loop whose body *also* suspends is accepted, exactly as C# accepts it,
+  while the same value carried across the loop's back edge is refused.
+- **The suspend ABI: never.** A `suspend` declaration's PARAMETERS, its RESULT, and a suspend lambda's CAPTURES
+  are written by the state machine's constructor and cross the cold entry's `Any?` slot and the public `Task<R>`
+  bridge. None of those can hold a byref-like value whatever the body does, so the refusal is **unconditional** —
+  it applies even to a suspend function that never actually suspends. This mirrors C# CS4012 ("parameters or
+  locals of this type cannot be declared in async methods"), which is likewise unconditional.
+- **Closure captures: never.** A captured variable becomes an instance field of the synthesized closure class,
+  with no liveness question to ask, so capturing a byref-like value in ANY lambda — suspend or not — is a
+  compile-time error mirroring **C# CS8352**. An `inline` lambda is spliced into the caller's frame and mints no
+  closure class, so it captures byref-like values freely.
+
+All three refusals name the declaration, the storage role, the offending type and (for a spill) the suspending
+callee the value lives across. Coverage: `tests/compile-fail/` for the refusals,
+`tests/coroutines/fixtures/ByRefLikeStorageTests.kt` for the accepted shapes.
+
 ## 4b. The default `lazy { }` is thread-safe (a Monitor lock, matching Kotlin/JVM and `System.Lazy`)
 
 `lazy { }` on DotKt is thread-safe by default, exactly as on Kotlin/JVM (and matching .NET's own
@@ -1428,6 +1461,7 @@ residual is the **`object` singleton `.INSTANCE`** round-trip (#2), not implicit
   accepted. Failure throws `NumberFormatException`. §5.
 - `String.format` uses the .NET composite format (`"{0}"`), not Java printf (`"%d"`). §5.
 - `suspend fun` has no Continuation parameter — it returns `Task<T>`, and it starts **hot** (like C# `async`), not cold. §4.
+- A `Span`/`ref struct` value is fine inside a `suspend fun` — until it has to survive a suspension, or be captured by a (non-inline) lambda; both are compile-time errors, mirroring C# CS4007/CS4012/CS8352. §4d.
 - A `CharSequence` parameter surfaces to C# as `string`; a `StringBuilder` passed as `CharSequence` is **snapshotted** by an implicit `.toString()` — no live view. §5b.
 - A Kotlin `Map` surfaces to C# as a *mutable* `IDictionary<K,V>`; `keys`/`values`/`entries` are snapshots. §5c.
 - A `value class` is a real (reference) class on the CLR — never erased, never a struct. §5f.

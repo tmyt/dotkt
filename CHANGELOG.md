@@ -17,7 +17,40 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   selection is a red build rather than a subtly different program; the scenario additionally replays the emit at
   the host RID and requires that replay to fail, so the assertion cannot pass vacuously. Previously the RID flow
   was only exercised at the host RID and cross-target selection had been confirmed by hand.
+- **A negative-compile gate (`tests/compile-fail/`, wired into `make verify-tests`).** Some behavior is only
+  expressible as a REFUSAL — source the compiler must reject, with the message it owes the author. Each case is a
+  `.kt` plus an `.expected` list of substrings the diagnostic must contain; the lane is green iff every failing
+  case is listed in its (currently empty) `CF_XFAIL` baseline, and reports NEW-FAIL/FIXED like the other gates.
+  It opens with the eight byref-like storage refusals below.
+
 ### Fixed
+- **bir2cir (area:bir2cir): a suspend function no longer promotes EVERY local to a state-machine field — storage
+  is now decided by real liveness, behind one gate, and a value the CLR cannot put in a field is refused at
+  compile time instead of crashing at run time.** `CollectVarFields` spilled every `var` in a suspend body into an
+  instance field of the generated state-machine class. For a byref-like (`ref struct`) value — `System.Span<T>`,
+  `kotlin.clr.Span<T>` from `stackBuffer { … }.asSpan()`, any `ref struct` from a referenced assembly — the CLR
+  refuses such a field, so the state machine failed to load with `TypeLoadException` even when the value never
+  spanned a suspension; a byref-like parameter on a suspension-free `suspend fun` reached run time as
+  `InvalidProgramException` at the cold entry, and a byref-like value captured by an ordinary lambda produced the
+  same TypeLoad from the closure class.
+  New `toolchain/bir2cir/SuspendLiveness.cs` runs a precise backward liveness over the normalized body (an
+  evaluation-order walk into use/def/susp/label/goto/brIf events, then a worklist solve over the induced CFG,
+  with every point in a protected region reaching each catch entry and the region exit). A local needs a field
+  iff it is live at a suspension point; everything else stays a `MoveNext` local. It is liveness, not a lexical
+  interval: a value created and consumed inside each iteration of a loop whose body also suspends is accepted,
+  as C# accepts it, while the same value carried across the loop back edge is refused. The walk also models the
+  emitter reordering that makes an unspilled operand read at the RESUME point (`acc + f()` reads `acc` after `f`
+  resumes), so an accumulator still gets its field.
+  Every field the machine mints — spilled locals, parameters, captures, `$this`/`label`, and the synthesized
+  `__aw$`/`__ord$`/`__cond$`/`__awaiter$` temporaries — now goes through a single `FieldStorage` gate, and a
+  byref-like or `ref T` type reaching it is a diagnostic naming the declaration, the storage role, the type and
+  the suspending callee it lives across. The suspend ABI (parameters, result, suspend-lambda captures) is checked
+  unconditionally, since none of it has a "dead across" escape. The same legality oracle
+  (`toolchain/bir-common/FieldLegality.cs`) serves the third minting site, `ClosureSynthesis`, so a byref-like
+  closure capture is refused too. The three diagnostics mirror C# CS4007, CS4012 and CS8352 and are documented in
+  `docs/dotkt-semantics.md` §4d. Two smaller drops closed on the way: an evaluation-order spill whose operand
+  type could not be read was silently typed `kotlin.Any` (now an error naming the drop), and a conditional
+  lowered only because a branch ESCAPES no longer mints a field for its result.
 - **kotc/bir2cir/facadegen (area:kotc, area:bir2cir, area:facadegen): a declaration with a Kotlin `context`
   parameter is now compiled correctly — previously every such call miscompiled.** Context parameters need no
   opt-in at language version 2.4, so this was reachable from ordinary user source. kotc emitted the context

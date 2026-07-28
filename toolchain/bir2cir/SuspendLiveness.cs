@@ -262,6 +262,9 @@ static class SuspendLiveness
             {
                 case JsonObject o:
                     var k = Str(o["k"]);
+                    // The suspending call itself: every operand of it is consumed BY the call, so all of them are
+                    // evaluated before the suspension and none is re-read after it. Its result is the awaited field.
+                    if (Bool(o["suspendCall"])) return;
                     if (k != null && ClosureValueKinds.Contains(k)) { ReReadCaptures(o); return; }
                     if (k == "local") { Use(Str(o["name"])); return; }
                     foreach (var kv in o)
@@ -359,7 +362,7 @@ static class SuspendLiveness
         {
             var elseL = NewLabel();
             var endL = NewLabel();
-            Expr(o["cond"]);
+            Value(o["cond"]);
             BrIf(elseL);
             Stmts(o["then"]);
             Goto(endL);
