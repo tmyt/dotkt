@@ -1410,7 +1410,10 @@ static partial class SuspendColdLowering
             if (why != FieldRejection.None)
                 throw new NotSupportedException(FieldLegality.SuspendMessage(
                     FieldLegality.PosPrefix(_m), DiagOwner, role, roleNamesIt ? null : name, type, offending, why, across));
-            if (_fields.Add(name)) _fieldDecls.Add((name, type ?? AnyTn));
+            if (_fields.Add(name)) _fieldDecls.Add((name, type ?? throw new NotSupportedException(
+                $"bir2cir: {FieldLegality.PosPrefix(_m)}suspend-lowering: in `{DiagOwner}`, the {role} "
+                + $"`{name}` lives across a suspension but carries no static type, so its state-machine field would "
+                + "be untyped — an earlier lowering dropped the type.")));
         }
 
         // The suspend ABI itself, checked for EVERY suspend declaration — abstract, stubbed, suspension-free or
@@ -1440,11 +1443,22 @@ static partial class SuspendColdLowering
         // How a diagnostic names the thing being compiled.
         string DiagOwner => _isLambda ? _smType : (_ownerClass ?? _fileClass) + "." + _name;
 
-        // A `{k:var}` that the storage gate left as a MoveNext LOCAL. The type slot is mandatory (ilemit declares
-        // the local from it), so an untyped var lands on the same `kotlin.Any` fallback its SM field would have had.
-        static JsonObject LocalVar(string name, JsonNode typeJson, JsonNode init) => new()
+        // THE DECLARED TYPE of a `{k:var}` this lowering re-emits — as a MoveNext local or as an SM field. Mandatory,
+        // and an ERROR when absent: `kotlin.Any` is not a lesser slot, it BOXES a value type and hides a type the CLR
+        // would refuse as a field, so a silently-`Any` local is a miscompile waiting for a value type. Every lowering
+        // that mints a `var` stamps its type — the call-evaluation plan from the binding, the inline splice from the
+        // callee's closed return type and parameter types — so a var without one means an earlier layer DROPPED it,
+        // which is the drop to fix rather than to compensate for (docs/dotkt-semantics.md §7.1).
+        TypeNode VarType(JsonObject v) =>
+            TypeJson.Read(v["type"]) ?? throw new NotSupportedException(
+                $"bir2cir: {FieldLegality.PosPrefix(_m)}suspend-lowering: in `{DiagOwner}`, the local "
+                + $"`{Str(v["name"])}` is declared with no type, so the slot that holds it across a suspension would "
+                + "be untyped — an earlier lowering dropped the type.");
+
+        // A `{k:var}` that the storage gate left as a MoveNext LOCAL.
+        JsonObject LocalVar(JsonObject v, JsonNode init) => new()
         {
-            ["k"] = "var", ["name"] = name, ["type"] = typeJson?.DeepClone() ?? Tw(AnyTn), ["init"] = init,
+            ["k"] = "var", ["name"] = Str(v["name"]), ["type"] = Tw(VarType(v)), ["init"] = init,
         };
 
         // ---- statement lowering ----
@@ -1461,9 +1475,9 @@ static partial class SuspendColdLowering
                     // An init-less `var` (e.g. kotc's tryExpr `var dotkt_tryvalN`, assigned in the try/catch) default-inits:
                     // `{k:default}` is the zero value for BOTH a reference (ldnull) and a VALUE type (initobj) — a bare
                     // NullConst(valueType) would emit a null Int32 (ilemit: "requires Number, target is Null").
-                    var val = init == null ? DefaultOf(TypeJson.Read(o["type"]) ?? AnyTn) : Rewrite(init, outp);
+                    var val = init == null ? DefaultOf(VarType(o)) : Rewrite(init, outp);
                     if (_fields.Contains(nm)) outp.Add(SetField(nm, val));
-                    else outp.Add(LocalVar(nm, o["type"], val));
+                    else outp.Add(LocalVar(o, val));
                     break;
                 }
                 case "setLocal":
@@ -1617,9 +1631,9 @@ static partial class SuspendColdLowering
                 if (Str(o["k"]) == "var" && Str(o["name"]) is string vln)
                     return _fields.Contains(vln)
                         ? SetField(vln, o["init"] == null
-                            ? DefaultOf(TypeJson.Read(o["type"]) ?? AnyTn) : RewriteNoSpill(o["init"]))
-                        : LocalVar(vln, o["type"], o["init"] == null
-                            ? DefaultOf(TypeJson.Read(o["type"]) ?? AnyTn) : RewriteNoSpill(o["init"]));
+                            ? DefaultOf(VarType(o)) : RewriteNoSpill(o["init"]))
+                        : LocalVar(o, o["init"] == null
+                            ? DefaultOf(VarType(o)) : RewriteNoSpill(o["init"]));
                 if (_isMember && Str(o["k"]) == "this")
                     return FieldOf(ThisField, new TypeNode.Fqn(_ownerClass));
                 if (Str(o["k"]) == "this" && CapturedOuterField() is JsonNode of0)
@@ -1675,9 +1689,9 @@ static partial class SuspendColdLowering
                 if (k == "var" && Str(o["name"]) is string vln)
                     return _fields.Contains(vln)
                         ? SetField(vln, o["init"] == null
-                            ? DefaultOf(TypeJson.Read(o["type"]) ?? AnyTn) : Rewrite(o["init"], outp))
-                        : LocalVar(vln, o["type"], o["init"] == null
-                            ? DefaultOf(TypeJson.Read(o["type"]) ?? AnyTn) : Rewrite(o["init"], outp));
+                            ? DefaultOf(VarType(o)) : Rewrite(o["init"], outp))
+                        : LocalVar(o, o["init"] == null
+                            ? DefaultOf(VarType(o)) : Rewrite(o["init"], outp));
                 if (_isMember && k == "this")
                     return FieldOf(ThisField, new TypeNode.Fqn(_ownerClass));
                 if (k == "this" && CapturedOuterField() is JsonNode of1)
@@ -1770,21 +1784,16 @@ static partial class SuspendColdLowering
                 if (SpilledBeforeSuspension(kids, i))
                 {
                     // The spill is a real field on the SM class, so its type matters: a `kotlin.Any` slot boxes a
-                    // value type and hides a type the CLR would refuse as a field. TypeOfExpr answers precisely
-                    // for every node that carries a type; when it cannot, the operand's type was DROPPED by an
-                    // earlier lowering (the known one is InlineSplice, which mints its `valueBlock`s without a
-                    // `type` slot — closing that is what makes an untyped spill an error rather than a warning).
-                    // Warn and keep today's `kotlin.Any` slot rather than refusing source that compiles now.
-                    var ty = TypeOfExpr(child);
-                    if (ty == null)
-                    {
-                        Console.Error.WriteLine(
-                            $"bir2cir: WARNING {FieldLegality.PosPrefix(_m)}suspend-lowering: in `{DiagOwner}`, the "
-                            + $"`{Str((child as JsonObject)?["k"]) ?? "?"}` operand evaluated before a suspending "
-                            + "operand carries no static type; its evaluation-order spill slot falls back to "
-                            + "`kotlin.Any` (an earlier lowering dropped the operand's type).");
-                        ty = AnyTn;
-                    }
+                    // value type and hides a type the CLR would refuse as a field. TypeOfExpr answers precisely for
+                    // every node that carries a type, and every lowering that mints one stamps it — a spliced inline
+                    // call carries the callee's closed return type, a plan binding its caller-instantiated type. So a
+                    // node that cannot be typed here is a DROP by an earlier lowering, and saying so loudly is the
+                    // only answer that cannot silently box a value type.
+                    var ty = TypeOfExpr(child) ?? throw new NotSupportedException(
+                        $"bir2cir: {FieldLegality.PosPrefix(_m)}suspend-lowering: in `{DiagOwner}`, the "
+                        + $"`{Str((child as JsonObject)?["k"]) ?? "?"}` operand evaluated before a suspending operand "
+                        + "carries no static type, so its evaluation-order spill slot would be untyped — an earlier "
+                        + "lowering dropped the operand's type.");
                     var tmp = "__ord$" + (++_ordCounter);
                     // By construction this spill outlives the suspension to its right (that is why it exists).
                     FieldStorage(tmp, ty, RoleOrder, lives: true, across: SuspendedCalleeIn(kids[LastSuspending(kids)]));
