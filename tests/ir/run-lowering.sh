@@ -24,10 +24,24 @@ if [[ -f "$STDLIB_REF_DLL" ]]; then refs="$(refset_join "$refs" "$STDLIB_REF_DLL
 
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 rc=0
+cases=0
 echo "== verify-lowering: synthetic BIR -> bir2cir -> CIR assertions =="
 for bir in tests/ir/lowering/*.bir.json; do
 	[[ -e "$bir" ]] || continue
+	cases=$((cases + 1))
 	name="$(basename "$bir" .bir.json)"
+	assert="${bir%.bir.json}.assert"
+	# ANTI-VACUITY, the same guards the schema self-tests carry: a lane that silently checks nothing looks exactly
+	# like a lane that passes. A fixture with no assertion file, or one holding no effective +/- line, is RED —
+	# never "ok" — and a lane with no fixture at all is RED at the end.
+	if [[ ! -f "$assert" ]]; then
+		echo "  LOWERING FAIL  $name: no .assert file — a fixture that asserts nothing cannot pass"
+		rc=1; continue
+	fi
+	if ! grep -qE '^[+-].' "$assert"; then
+		echo "  LOWERING FAIL  $name: .assert holds no effective +/- assertion"
+		rc=1; continue
+	fi
 	out="$work/$name"; mkdir -p "$out"
 	if ! log="$(dotnet "$BIR2CIR_DLL" "$out" --compile-refs "$refs" "$bir" 2>&1)"; then
 		echo "  LOWERING FAIL  $name: bir2cir refused the document"
@@ -47,8 +61,12 @@ for bir in tests/ir/lowering/*.bir.json; do
 				fi ;;
 			*) echo "  LOWERING FAIL  $name: malformed assertion line: $line"; bad=1 ;;
 		esac
-	done < "${bir%.bir.json}.assert"
+	done < "$assert"
 	if [[ $bad -ne 0 ]]; then rc=1; printf '%s\n' "$cir" | sed 's/^/                 /'; else echo "  LOWERING ok    $name"; fi
 done
-if [[ $rc -eq 0 ]]; then echo "LOWERING GATE: GREEN"; else echo "LOWERING GATE: RED"; fi
+if [[ $cases -eq 0 ]]; then
+	echo "  LOWERING FAIL  no fixture found under tests/ir/lowering/ — the lane would pass vacuously"
+	rc=1
+fi
+if [[ $rc -eq 0 ]]; then echo "LOWERING GATE: GREEN ($cases fixture(s))"; else echo "LOWERING GATE: RED"; fi
 exit $rc

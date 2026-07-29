@@ -39,14 +39,18 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   the inline path without ever being asked whether its evaluation mattered ("may be read twice" was standing in
   for "may be read zero times"). `KClassMemberBinding`'s `value::class` const-fold, which asks the same question
   about the receiver it folds away, delegates to `IsDroppable` instead of restating a narrower ad-hoc set —
-  widening the fold to a `this`/plan-read receiver of a known-final builtin type.
+  widening the fold to a `this`/plan-read receiver of a known-final builtin type, while explicitly rejecting a
+  `classRef` receiver: the DOUBLE class literal `(Int::class)::class` reflects the `KClass` VALUE, and a
+  `classRef`'s type slot names the type it REFERS to rather than the type it IS, so folding it would answer "Int"
+  for a receiver that is not an `Int`.
   The one shape that relied on the old, too-generous answer is gone at the producer: a plain `companion object` is
-  flattened onto its enclosing class and a projected .NET static class has no instance either, so **kotc no longer
-  mints a call-evaluation-plan binding for an `object`-reference receiver** — at any receiver site, ordinary or
-  inline. It was a binding nothing could read, holding a read of an `INSTANCE` field this representation never
-  emits (the inline emitter already named it a "dangling token"), surviving only because the drop hid it. Nothing
-  is lost by not minting it: an object reference is a constant, and for a flattened companion there was never a
-  value there to evaluate.
+  flattened onto its enclosing class and a projected .NET static holder has no instance either, so **kotc no longer
+  mints a call-evaluation-plan binding for a receiver naming one** — at any receiver site, ordinary or inline. It
+  was a binding nothing could read, holding a read of an `INSTANCE` field this representation never emits (the
+  inline emitter already named it a "dangling token"), surviving only because the drop hid it; there was never a
+  value there to evaluate. A REAL `object` and a super-typed companion are the opposite case and keep their
+  binding: their `INSTANCE` exists and loading it runs the object's own body, so it is an observable evaluation
+  that Kotlin orders BEFORE every argument — without the binding, `O.f(side())` let `side()` run first.
 - **bir2cir (area:bir2cir): the by-reference argument's location pins ask their own question.**
   `CallEvalLowering`'s `LocationHasPinWork`/`PinLocationOperands` shared Q2's implementation, but they decide
   whether a node is a link of an addressable location's own path — pinning one into a local would take the address

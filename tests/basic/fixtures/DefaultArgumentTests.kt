@@ -403,6 +403,18 @@ class M2Flat {
     }
 }
 
+// …and the ORDER half of the same rule. A REAL object's `INSTANCE` load runs the object's own body, so it is an
+// observable evaluation and Kotlin runs it BEFORE every argument. `M2Ord.take(m2Mark("A"))` must therefore log
+// "O" then "A" — the qualifier needs a plan binding to hold that position, because the default reading an earlier
+// parameter forces the argument into a pre-call local that would otherwise overtake it.
+val m2OrdLog = StringBuilder()
+fun m2Mark(tag: String): Int { m2OrdLog.append(tag); return tag.length }
+
+object M2Ord {
+    init { m2OrdLog.append("O") }
+    fun take(a: Int, b: Int = a * 2): Int = a * 10 + b
+}
+
 object M2Solo {
     val k = 4
     // Reads the object's own member, so the default binds the call's DISPATCH RECEIVER — the qualifier now has two
@@ -779,5 +791,15 @@ class DefaultArgumentTests {
         assertEquals(15, M2Solo.scale(3))                               // a=3, b=3*4
         assertEquals(10, M2Solo.scale(b = 6))                           // named-middle omission: a fills to k=4
         assertEquals(30, M2Solo.twice(3) { it * 5 })                    // the inline site, qualifier in the payload
+    }
+
+    /** §7a — a REAL object's qualifier is an observable evaluation, and Kotlin runs it before the arguments. */
+    @TestAttribute
+    fun defargsRealObjectQualifierIsEvaluatedBeforeTheArguments() {
+        m2OrdLog.setLength(0)
+        assertEquals(12, M2Ord.take(m2Mark("A")))       // a=1 ("A".length), b=2
+        // "AO" would mean the object was initialized only when the call finally touched it — after the argument's
+        // side effect, and after an initializer that throws would have had to run.
+        assertEquals("OA", m2OrdLog.toString())
     }
 }

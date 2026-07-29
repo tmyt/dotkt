@@ -567,23 +567,28 @@ internal fun BirEmitter.regularArgs(call: org.jetbrains.kotlin.ir.expressions.Ir
 
 /** Does this receiver need a call-evaluation-plan BINDING of its own, or may it stay in its slot?
  *
- *  Everything does, EXCEPT an `object`/companion reference. A plan binding exists to make a value that can acquire a
- *  second reader evaluate exactly once, at its place in Kotlin's order (docs/bir-cir-spec.md §2.7). An object
- *  reference is not an evaluation: it is the singleton, a constant, and re-reading it can neither run something twice
- *  nor see a different object — so a second reader costs nothing and it is rendered in place.
+ *  Everything does, except a reference to an object THIS BACKEND GIVES NO INSTANCE: a plain `companion object`, which
+ *  is FLATTENED onto its enclosing class (the `callStatic` arm below, and [inlineReceiverParts] for the inline
+ *  payload), and a projected .NET static holder, which dll2klib surfaces as exactly such a companion. For those the
+ *  emitted call has no receiver slot to read a binding back from, so binding one leaves a binding NOTHING reads whose
+ *  expression is a read of an `INSTANCE` field that is never emitted. It only ever survived because bir2cir happened
+ *  to drop unread pure-looking loads; it is the producer's job not to mint it. Nothing is lost: there is no value
+ *  there to evaluate.
  *
- *  Binding it is not merely redundant, it is WRONG for the shape it most often takes. A plain companion is FLATTENED
- *  onto its enclosing class (the `callStatic` arm below, and [inlineReceiverParts] for the inline payload) and a
- *  projected .NET static class has no instance either, so the emitted call has no receiver slot to read the binding
- *  back from — leaving a binding NOTHING reads, whose expression is a read of an `INSTANCE` field that this
- *  representation never emits. That binding only ever survived because bir2cir happened to drop unread pure-looking
- *  loads; it is the producer's job not to mint it. The Kotlin fact the drop stood in for — evaluating the reference
- *  initializes the object — is unchanged either way: the emitted static member access on that very type triggers the
- *  same CLR type initializer.
+ *  A REAL `object`, and a SUPER-TYPED companion (lifted to its own `<Outer>.<N>CompanionObject` singleton, see
+ *  [superTypedCompanion]), are the opposite case and stay bound. Their `INSTANCE` exists, and loading it RUNS THE
+ *  TYPE INITIALIZER — the object's own body — which can print, throw, or mutate. That is an observable evaluation
+ *  (docs/dotkt-semantics.md §7a), and Kotlin evaluates the receiver BEFORE every argument, so it needs a binding to
+ *  hold that position: without one, `O.f(side())` lets `side()` run first, and if `O`'s initializer throws it must
+ *  not have run at all.
  *
  *  Asked at EVERY receiver binding site, ordinary and inline ([filledArgs], [filledExternalArgs], and the three in
  *  BirEmitterInline): the rule is about what the value IS, not about which emitter reached it. */
-internal fun needsPlanBinding(receiver: IrExpression): Boolean = receiver !is IrGetObjectValue
+internal fun BirEmitter.needsPlanBinding(receiver: IrExpression): Boolean {
+	val obj = (receiver as? IrGetObjectValue)?.symbol?.owner ?: return true
+	val enclosing = obj.parent as? IrClass ?: return true
+	return !(obj.isCompanion && superTypedCompanion(enclosing) == null)
+}
 
 internal fun BirEmitter.dispatchReceiver(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): IrExpression? {
 	val params = (call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction)?.parameters ?: return null

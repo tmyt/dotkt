@@ -1045,18 +1045,21 @@ The two entries that look like harmless loads and are not:
 The cost of the rule is at most one unread local, and only at a call site that supplies a value the emitted shape has
 nowhere to put — a rare shape, since a receiver and an argument normally each have exactly one slot.
 
-**An `object` qualifier is not an exception to this — it is not an evaluation.** `Solo.f(…)` and `Holder.bar(…)`
-name a singleton, not an expression: reading it can neither run something twice nor yield a different object, so it
-is emitted in place and never becomes a call-site value of its own. For a plain `companion object` there is no value
-at all — it is flattened onto its enclosing class (§5e), and a projected .NET static class has no instance either —
-so the emitted static call simply has no receiver.
+**An `object` qualifier splits on whether this backend gives it an instance**, and the split follows the same rule:
 
-**Where this deviates from Kotlin/JVM:** nowhere in *what* the call evaluates, only in *when* the object is
-initialized. Kotlin evaluates the qualifier before the arguments, so an `object`/companion body that prints would
-print before an argument's side effects; on the CLR nothing is loaded at the qualifier's position for a flattened
-companion, and initialization is instead the type initializer's to schedule. DotKt takes the CLR-native form here
-rather than emitting a synthetic touch to force the Kotlin point. (A real `object`'s body runs in the singleton's
-constructor, so reading `Solo.INSTANCE` — which the call still does — runs it.)
+- A **real `object`**, and a `companion object` with a supertype (lifted to its own singleton, §5e), have an
+  `INSTANCE`. Loading it runs the object's body, which can print, throw or mutate — an observable evaluation. So it
+  is evaluated where Kotlin evaluates it: **before every argument**. `O.f(side())` runs `O`'s initializer first, and
+  if that initializer throws, `side()` has not run.
+- A **plain `companion object`** is flattened onto its enclosing class (§5e), and a projected .NET static holder has
+  no instance either. There is no value to evaluate and the emitted static call has no receiver, so nothing is
+  emitted at the qualifier's position at all.
+
+**Where this deviates from Kotlin/JVM:** only in *when* a FLATTENED companion is initialized. Kotlin evaluates the
+qualifier before the arguments, so a companion body that prints would print before an argument's side effects;
+having no instance to load, DotKt leaves that to the CLR type initializer's own schedule rather than emitting a
+synthetic touch to force the Kotlin point. Note that a flattened companion's `init { }` block is currently not
+emitted at all — a separate gap, not a consequence of this rule.
 
 ## 8. Reverse / cross-assembly interop
 
