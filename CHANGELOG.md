@@ -46,7 +46,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
     type behind a warning;
   - the passes that run between the splice and the plan lowering peel a `callEval` exactly as they peel a
     `valueBlock` when they ask what an expression produces, so a covariant construction spliced under a plan
-    (`xs.partition { … }`'s `Pair`) is still widened to its declared slot.
+    (`xs.partition { … }`'s `Pair`) is still widened to its declared slot; and the plan lowering folds the layer it
+    creates — a block whose result is a block is one block — so a lambda body ending in a nested inline call
+    (`xs.map { s -> s.let { it.trim() } }`) keeps the single layer the splice's own flatten used to guarantee.
 - **kotc/bir2cir (area:kotc, area:bir2cir): a call's values are now ONE ordered evaluation plan, so a filled default
   can no longer duplicate a value, reorder a call, or be traded away for storage.** A Kotlin call evaluates its
   receiver, then each supplied argument, then the callee's omitted defaults, each exactly once — but on the CLR those

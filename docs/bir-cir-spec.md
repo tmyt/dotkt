@@ -376,10 +376,14 @@ payload body, and `CallEvalLowering` decides the physical form once, like any ot
 a SLOT — a closure/state-machine capture DESCRIPTOR and an assignment target — so a value left as a `bindRef` is
 pinned into a named local there, which is a pure read of the binding and not a second evaluation.
 
-The passes that run BETWEEN the splice and `CallEvalLowering` therefore see a `callEval` wrapping what they expect,
-and the ones that ask "what does this expression produce" peel it exactly as they peel a `valueBlock`: the bindings
-are statements evaluated ahead of the call, so the value is the wrapped call's (`StaticTypeResolver`,
-`bir-common/NodeType.cs`, and the splice's own covariant-construction widening).
+The passes that run BETWEEN the splice and `CallEvalLowering` therefore see a `callEval` where they expect a call.
+The ones that ask *what does this expression produce* peel it exactly as they peel a `valueBlock` — the bindings are
+statements evaluated ahead of the call, so the value is the wrapped call's (`StaticTypeResolver`,
+`bir-common/NodeType.cs`, the splice's own covariant-construction widening). The ones that MOVE statements cannot: a
+binding is not a statement until this pass makes it one, so a splice that wants a spliced block flattened into its own
+statements has to leave a plan alone. `CallEvalLowering` therefore folds what it created — a `valueBlock` whose
+`result` is a `valueBlock` becomes one block, in place, evaluation order untouched — which is what restores the single
+layer downstream expects.
 
 **Reading a plan's bindings.** A binding is inlined back into its reader only when that reader sits on the node's
 EAGER SPINE — the chain of operand positions evaluated once, in order, unconditionally, when the node itself is

@@ -496,6 +496,14 @@ static class InlineSplice
             subst[pn] = bound;
             RecordBound(boundArgs, i, bound);
         }
+        // D9 — a parameter the payload ASSIGNS to (rare; a tailrec `starg`). An assignment target is a SLOT, so the
+        // value needs a named local — and, unlike a capture, the WRITE and every READ must land on that SAME local.
+        // Pin it BEFORE the rewrite, so `subst` sends the reads there too; pinning it during the rewrite would retarget
+        // the write while the reads (already rewritten, the walk descends first) kept reading the binding, and the
+        // assignment would be silently lost.
+        foreach (var pn in AssignedLocals(pBody, result))
+            if (subst.TryGetValue(pn, out var bound) && !(bound is JsonObject bo && Str(bo["k"]) == "local"))
+                subst[pn] = Pin(pn, bound);
         RewriteLocalRefs(pBody, subst, Pin);
         RewriteLocalRefs(result, subst, Pin);   // D2: a tail-folded `result` (`= action(x)`) keeps raw param refs otherwise
 
@@ -2244,12 +2252,33 @@ static class InlineSplice
                 foreach (var key in new List<string>(((IDictionary<string, JsonNode>)o).Keys)) o.Remove(key);
                 if (b.DeepClone() is JsonObject bo) foreach (var kv in bo) o[kv.Key] = kv.Value?.DeepClone();
             }
-            // D9: an ASSIGNMENT to a bound value parameter (rare — a tailrec `starg`). An assignment target is a SLOT,
-            // so a value the plan left as a `bindRef` is pinned into a named local first, exactly like a capture.
+            // D9: an ASSIGNMENT to a bound value parameter (rare — a tailrec `starg`). The caller pinned every assigned
+            // parameter into a named local BEFORE this walk (so the reads go to the same local), so `subst` holds one
+            // here by construction; a non-local would mean the write and the reads had parted, so refuse rather than
+            // pin now — pinning mid-walk would retarget only the write.
             else if (k == "setLocal" && Str(o["name"]) is string sn && subst.TryGetValue(sn, out var sb))
-                o["name"] = DescriptorName(sn, sb, pin, null, "the payload assigns to", "");
+                o["name"] = DescriptorName(sn, sb, null, null, "the payload assigns to", "");
         }
         else if (node is JsonArray a) foreach (var c in a) if (c != null) RewriteLocalRefs(c, subst, pin);
+    }
+
+    /// Every name the payload ASSIGNS to (`setLocal`), across the roots given. A `typeDef`'s own scope is skipped, the
+    /// way every other rewrite here skips it; a `synthClass` likewise.
+    static HashSet<string> AssignedLocals(params JsonNode[] roots)
+    {
+        var found = new HashSet<string>(StringComparer.Ordinal);
+        void W(JsonNode n)
+        {
+            if (n is JsonObject o)
+            {
+                if (Str(o["k"]) == "typeDef") return;
+                if (Str(o["k"]) == "setLocal" && Str(o["name"]) is string sn) found.Add(sn);
+                foreach (var kv in o) if (kv.Key != "synthClass" && kv.Value != null) W(kv.Value);
+            }
+            else if (n is JsonArray a) foreach (var it in a) if (it != null) W(it);
+        }
+        foreach (var r in roots) if (r != null) W(r);
+        return found;
     }
 
     /// The LOCAL NAME a capture descriptor (or an assignment target) must use for the value `bound` to `cn`.

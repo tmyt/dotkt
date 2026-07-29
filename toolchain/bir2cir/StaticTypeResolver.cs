@@ -142,8 +142,10 @@ static class StaticType
                 return TypeJson.Read(o["type"]) ?? Surface(o["result"], inner);
             }
             // A call under its evaluation plan (§2.7, BIR-only — the passes that run before CallEvalLowering see it):
-            // the bindings are statements evaluated ahead of the call, so the VALUE is the wrapped call's.
+            // the bindings are statements evaluated ahead of the call, so the VALUE is the wrapped call's. A `bindRef`
+            // is a READ of one, stamped with the binding's own caller-instantiated type by its producer.
             case "callEval": return TypeJson.Read(o["type"]) ?? Surface(o["expr"], scope);
+            case "bindRef": return TypeJson.Read(o["sty"]);
             // A LOWERED primitive operator (PrimitiveOperatorLowering / RangeMembershipLowering synthesize these) —
             // recover its RESULT type structurally, matching kotc's former `birType(op.type)` for the un-lowered op.
             case "unaryOp":

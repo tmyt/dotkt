@@ -47,6 +47,12 @@ static class CallEvalLowering
             foreach (var kv in obj.ToList()) if (kv.Value != null) Walk(kv.Value);
             if (Str(obj["k"]) == "callEval") LowerExpression(obj);
             else if (obj["delegationBindings"] is JsonArray) LowerDelegation(obj);
+            // …and having lowered whatever this node's RESULT was, flatten the layer that created. A block whose result
+            // is a block is one block (its statements run, then the inner's, then the inner's value), and every pass
+            // downstream expects the single layer the inline splice's own flatten used to guarantee: a spliced lambda
+            // body ending in a nested inline call arrived here as `valueBlock{…, result: callEval{…}}`, which the
+            // splice could not flatten because a plan's bindings are not statements until this pass makes them ones.
+            if (Str(obj["k"]) == "valueBlock") MergeNestedResult(obj);
         }
         else if (node is JsonArray arr)
         {
@@ -73,6 +79,23 @@ static class CallEvalLowering
         if (type != null) plan["type"] = type;
         plan["stmts"] = stmts;
         plan["result"] = lowered;
+    }
+
+    /// Fold a `valueBlock` whose RESULT is a `valueBlock` into one block. Evaluation order is untouched — this block's
+    /// statements, then the inner's, then the inner's value — and every name in either is already frame-unique (splice
+    /// prefixes, `dotkt$local…`, `cir$b…`), so the merged scope cannot capture. The inner's `type` is the value's, so
+    /// it wins when this block carries none.
+    static void MergeNestedResult(JsonObject block)
+    {
+        while (block["result"] is JsonObject inner && Str(inner["k"]) == "valueBlock")
+        {
+            if (block["stmts"] is not JsonArray stmts) { stmts = new JsonArray(); block["stmts"] = stmts; }
+            foreach (var key in new[] { "stmts", "body" })
+                if (inner[key] is JsonArray arr)
+                    foreach (var st in arr.ToList()) { arr.Remove(st); stmts.Add(st); }
+            if (block["type"] == null && inner["type"] is JsonNode it) block["type"] = it.DeepClone();
+            block["result"] = inner["result"] is JsonNode r ? r.DeepClone() : null;
+        }
     }
 
     /// A constructor DELEGATION's plan. Its arguments ride the ctor DECLARATION (`thisArgs`/`baseArgs`), so there is
@@ -436,6 +459,10 @@ static class CallEvalLowering
     /// statements first, a `cond` takes one branch, a loop repeats its body, a closure runs at some later time, and a
     /// value read there is not a value evaluated at the call. Listing the eager kinds rather than the lazy ones is
     /// deliberate — an unfamiliar kind then costs one local, not a reordered evaluation.
+    ///
+    /// `binOp` is eager in BOTH operands here: the short-circuit forms do not exist at this phase — kotc lowers
+    /// `&amp;&amp;`/`||` to a `cond`, and the `binOp` spelling of them is minted by PrimitiveOperatorLowering, which runs
+    /// after this pass.
     static readonly HashSet<string> EagerKinds = new(StringComparer.Ordinal)
     {
         "callStatic", "callInstance", "callInline", "objMethod", "delegateInvoke", "new", "newClr",
