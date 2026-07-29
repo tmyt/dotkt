@@ -9,4 +9,5 @@ package roundtrip.cmp
 
 class Ver(val n: Int) : Comparable<Ver> {
     override fun compareTo(other: Ver): Int = n - other.n
+    operator fun compareTo(other: Int): Int = n - other
 }

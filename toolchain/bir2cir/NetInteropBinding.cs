@@ -101,15 +101,18 @@ static class NetInteropBinding
         // needs the emitted metadata, though: `Comparable<T>.compareTo` implements CLR IComparable<T>.CompareTo and the
         // exported slot is therefore PascalCase. Admit ONLY that structurally-proven seam to the existing binder. A
         // standalone Kotlin `operator fun compareTo` still declares lowercase `compareTo` and does not match, while an
-        // arbitrary package/type name is irrelevant. This keeps the decision in bir2cir and leaves ilemit an exact CIR
-        // method name, without reclassifying the rest of a referenced Kotlin library as C#.
+        // arbitrary package/type name is irrelevant. A Comparable class MAY also have an unrelated lowercase overload
+        // (`compareTo(Int)`); inspect the resolved call signature so only the self-typed Comparable slot enters this
+        // seam (#182). This keeps the decision in bir2cir and leaves ilemit an exact CIR method name, without
+        // reclassifying the rest of a referenced Kotlin library as C#.
         if (netType == null && k == "callInstance" && method == "compareTo"
             && dotKtEmittedType is Type dotKtComparable
-            && !DeclaresPublicMethodNamed(dotKtComparable, "compareTo")
             && DeclaresPublicMethodNamed(dotKtComparable, "CompareTo")
-            && ImplementsGenericIComparable(dotKtComparable))
+            && IsComparableSelfCall(dotKtComparable, ownerFqnNode, node))
             netType = dotKtComparable;
         if (netType == null) return;   // not a reachable .NET-interop owner -> leave for the other binders
+        var comparableSelfCall = k == "callInstance" && method == "compareTo"
+            && IsComparableSelfCall(netType, ownerFqnNode, node);
 
         // kotc preserves Kotlin object/companion semantics in BIR: a surfaced static member can be a callInstance whose
         // receiver is the synthetic `Owner.INSTANCE`. Resolve the actual property/field declaration's static bit here
@@ -331,13 +334,12 @@ static class NetInteropBinding
         // restored the `kotlin.Comparable<Self>` supertype), but kotc emits the plain Kotlin name `compareTo` (a member
         // clrName is not a kotc channel), so a cross-module `c1 < c2` (the frontend resolves `<` to `compareTo`) would
         // dangle on a non-existent lowercase slot. The INSTANCE-slot analog of the plus->op_Addition rule above: rebind
-        // `compareTo` -> `CompareTo` when the owner declares the `CompareTo` slot + a generic `IComparable` but NOT a
-        // verbatim lowercase `compareTo` (a standalone non-Comparable `operator fun compareTo` keeps its own slot), then
-        // fall through to the plain clrInstance path.
+        // `compareTo` -> `CompareTo` when the resolved call is the self-typed generic-IComparable slot. A verbatim
+        // lowercase sibling with a different parameter type (for example compareTo(Int)) stays on the Kotlin ABI path,
+        // while the self call still reaches this CLR seam (#182), then falls through to the plain clrInstance path.
         if (!isStatic && method == "compareTo"
-            && !DeclaresPublicMethodNamed(netType, "compareTo")
             && DeclaresPublicMethodNamed(netType, "CompareTo")
-            && ImplementsGenericIComparable(netType))
+            && comparableSelfCall)
             method = "CompareTo";
 
         // PLAIN static/instance method (incl. indexer get_Item/set_Item, member-extension synthetic accessor).
@@ -611,16 +613,30 @@ static class NetInteropBinding
         return false;
     }
 
-    // True iff the .NET type implements the GENERIC `System.IComparable<T>` (its GetInterfaces set contains a
-    // `System.IComparable`1` instantiation) — the marker that a DotKt owner's PascalCase `CompareTo` slot IS the
-    // Comparable<Self> operator slot (#179), so a Kotlin `operator fun compareTo` call rebinds to it (rather than
-    // dangling on the lowercased Kotlin name). The non-generic `System.IComparable` alone does NOT qualify.
-    static bool ImplementsGenericIComparable(Type type)
+    // True iff this resolved call is the owner's `Comparable<Self>.compareTo(Self)` slot. Both halves are load-bearing:
+    // the reflected owner must implement IComparable with ITSELF (not merely some unrelated T), and the frontend's
+    // resolved one-parameter signature must name that same owner. A sibling `compareTo(Int)` therefore remains
+    // lowercase even though the class also has the PascalCase CLR self slot (#182).
+    static bool IsComparableSelfCall(Type type, TypeNode.Fqn owner, JsonObject call)
     {
+        var sig = call["sig"] as JsonArray
+            ?? call["shapeTypes"] as JsonArray
+            ?? call["argTypes"] as JsonArray;
+        if (sig is not { Count: 1 } || sig[0] is not JsonNode argNode
+            || TypeJson.Read(argNode) is not TypeNode.Fqn arg
+            || arg != owner)
+            return false;
         try
         {
             return type.GetInterfaces().Any(i =>
-                (i.IsGenericType ? i.GetGenericTypeDefinition().FullName : i.FullName) == "System.IComparable`1");
+            {
+                if (!i.IsGenericType || i.GetGenericTypeDefinition().FullName != "System.IComparable`1") return false;
+                var target = i.GetGenericArguments()[0];
+                if (target == type) return true;
+                if (!type.IsGenericTypeDefinition || !target.IsGenericType
+                    || target.GetGenericTypeDefinition() != type) return false;
+                return target.GetGenericArguments().SequenceEqual(type.GetGenericArguments());
+            });
         }
         catch { return false; }
     }
