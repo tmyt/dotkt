@@ -127,7 +127,12 @@ public static class NodeType
                 return TypeJson.Read(o["elem"]) is TypeNode ae ? new TypeNode.Array(ae) : null;
             case "newClosure": case "newDelegate": case "newSam": case "newSuspendLambda":
             case "newBoundDelegate": case "newBoundClrDelegate":
+                // The FUNCTION type when the producer knew one; else the synthesized class the node constructs,
+                // which each of these names in its own slot — `newSam` the SAM implementation it lifted
+                // (`samType`), the others the closure class (`closureType`). The value IS an instance of that
+                // class, so it is the node's type even though the reader usually sees it as the interface.
                 if (TypeJson.Read(o["funcType"]) is TypeNode ft) return ft;
+                if (TypeJson.Read(o["samType"]) is TypeNode st) return st;
                 return TypeJson.OwnerName(o["closureType"]) is string cn ? new TypeNode.Fqn(cn) : null;
             case "delegateInvoke":
                 // The RESULT of invoking the delegate, not the delegate itself.

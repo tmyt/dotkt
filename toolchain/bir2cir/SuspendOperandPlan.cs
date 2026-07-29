@@ -178,9 +178,10 @@ static partial class SuspendColdLowering
     // --- the compilation-wide expression typer ---------------------------------------------------------
 
     /// The static type of an expression, for typing a plan binding's local. The shared node-local deriver
-    /// (bir-common/NodeType.cs) answers most of it; this adds the two arms only an INDEX of the compilation can
-    /// answer — a call carrying no `sty`, and a raw member/static field read — so a binding is typed the same way
-    /// here as everywhere else that mints a local.
+    /// (bir-common/NodeType.cs) answers most of it; this adds the arms it cannot — the two only an INDEX of the
+    /// compilation can answer (a call carrying no `sty`, a raw member/static field read) and the one only a lexical
+    /// SCOPE can (a `local` read, whose type lives on the `var` or parameter that declares it, not on the read). So
+    /// a binding is typed the same way here as everywhere else that mints a local.
     ///
     /// Returns NULL when the type is unknown. A local is not a lesser local for being untyped, it is unverifiable
     /// IL, and `kotlin.Any` is not a fallback: it boxes a value type and hides a type the CLR would refuse as a
@@ -196,13 +197,21 @@ static partial class SuspendColdLowering
             _fieldTypes = fieldTypes;
         }
 
-        internal TypeNode Of(JsonNode n)
+        /// <param name="locals">The enclosing frame's declared locals and parameters (name -> type), threaded by
+        /// the walk. A frame's local names are unique within it — ilemit keeps ONE `_locals` scope per method — so
+        /// a flat map is the whole lexical answer, not an approximation of one.</param>
+        internal TypeNode Of(JsonNode n, IReadOnlyDictionary<string, TypeNode> locals)
         {
             if (n is not JsonObject o) return null;
-            // The node-local answer first (an explicit `ret`/`dynRet`/`sty`, then whatever slot the kind carries its
+            // A `local` FIRST: the read carries a name and (usually) nothing else, and what types it is the `var` or
+            // parameter that DECLARES it — a statement of the enclosing frame, not part of this node. That is the one
+            // question the node-local core is defined not to answer (bir-common/NodeType.cs `case "this"` has the
+            // same shape of answer: only the owner knows).
+            if (Str(o["k"]) == "local" && Str(o["name"]) is string ln && locals.TryGetValue(ln, out var lt)) return lt;
+            // The node-local answer next (an explicit `ret`/`dynRet`/`sty`, then whatever slot the kind carries its
             // own result type in). `Of` is passed as the recursion so an operand of a `binOp` still resolves through
-            // the index arms below rather than falling back to the index-less core.
-            if (NodeType.Of(o, Of, name => BirTypeLowering.PrimArrayElem.TryGetValue(name, out var pe) ? pe : null)
+            // the scope and index arms rather than falling back to the index-less core.
+            if (NodeType.Of(o, x => Of(x, locals), name => BirTypeLowering.PrimArrayElem.TryGetValue(name, out var pe) ? pe : null)
                 is TypeNode nodeLocal) return nodeLocal;
             switch (Str(o["k"]))
             {
@@ -250,20 +259,74 @@ static partial class SuspendColdLowering
         // these — and "a read of one of these" is the property being asserted, not "some local", which would let
         // an operand the plan failed to bind pass for a bound one.
         var materialised = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var r in roots) PlanNode(r, typer, materialised);
+        foreach (var r in roots)
+            PlanNode(r, typer, materialised, new Dictionary<string, TypeNode>(StringComparer.Ordinal));
         AssertOperandsPlanned(roots, materialised);
     }
 
-    static void PlanNode(JsonNode node, ExprTyper typer, HashSet<string> materialised)
+    /// Walk one subtree, planning each node's operands POST-ORDER — so an inner node is already in its final shape
+    /// when the node around it binds it — while threading the LOCAL SCOPE a `local` operand is typed from.
+    ///
+    /// The scope is a flat name -> type map per FRAME, which is exactly how the frame's storage works: ilemit keeps
+    /// one `_locals` scope per method, so a name means one thing throughout it. A declaration (a method, a
+    /// constructor) opens a fresh map seeded with its parameters; a lambda/closure node opens a COPY of the
+    /// enclosing one, seeded with its own, so what it declares cannot leak back out onto a same-named local of the
+    /// frame that contains it. Every `var`, catch variable and loop variable registers itself as it is reached, and
+    /// a body is walked in statement order, so a read always sees the declaration that precedes it.
+    static void PlanNode(JsonNode node, ExprTyper typer, HashSet<string> materialised, Dictionary<string, TypeNode> locals)
     {
         switch (node)
         {
             case JsonObject o:
-                foreach (var kv in o.ToList()) if (kv.Value != null) PlanNode(kv.Value, typer, materialised);
-                PlanOperandsOf(o, typer, materialised);
+                var scope = OpensFrame(o) ? NewFrame(o, locals) : locals;
+                Declare(o, scope);
+                foreach (var kv in o.ToList()) if (kv.Value != null) PlanNode(kv.Value, typer, materialised, scope);
+                PlanOperandsOf(o, typer, materialised, scope);
                 return;
             case JsonArray a:
-                foreach (var it in a.ToList()) if (it != null) PlanNode(it, typer, materialised);
+                foreach (var it in a.ToList()) if (it != null) PlanNode(it, typer, materialised, locals);
+                return;
+        }
+    }
+
+    /// Does this object begin a new local FRAME? A method/constructor declaration (no `k`, but parameters), or a
+    /// lambda/closure VALUE whose body is another state machine's or another frame's scope.
+    static bool OpensFrame(JsonObject o) =>
+        (Str(o["k"]) is null && o["params"] is JsonArray)
+        || (Str(o["k"]) is string k && LambdaKinds.Contains(k));
+
+    /// A frame's initial scope: empty for a declaration, a COPY of the enclosing frame for a lambda (its captures
+    /// read under the same names), plus this frame's own parameters.
+    static Dictionary<string, TypeNode> NewFrame(JsonObject o, Dictionary<string, TypeNode> outer)
+    {
+        var scope = Str(o["k"]) is null
+            ? new Dictionary<string, TypeNode>(StringComparer.Ordinal)
+            : new Dictionary<string, TypeNode>(outer, StringComparer.Ordinal);
+        if (o["params"] is JsonArray ps)
+            foreach (var p in ps)
+                if (p is JsonObject po && Str(po["name"]) is string pn && TypeJson.Read(po["type"]) is TypeNode pt)
+                    scope[pn] = pt;
+        return scope;
+    }
+
+    /// Register whatever names this node DECLARES into the current frame: a `var`, a `try`'s catch variables, and a
+    /// loop's element variable. Each carries its type in a different slot, and all three are read back as a plain
+    /// `{k:local}` that has no type of its own.
+    static void Declare(JsonObject o, Dictionary<string, TypeNode> scope)
+    {
+        switch (Str(o["k"]))
+        {
+            case "var":
+                if (Str(o["name"]) is string vn && TypeJson.Read(o["type"]) is TypeNode vt) scope[vn] = vt;
+                return;
+            case "try":
+                if (o["catches"] is JsonArray cs)
+                    foreach (var c in cs)
+                        if (c is JsonObject co && Str(co["var"]) is string cn && TypeJson.Read(co["excType"]) is TypeNode ct)
+                            scope[cn] = ct;
+                return;
+            case "forArray": case "forRange": case "forEachInline": case "forIn": case "for":
+                if (Str(o["var"]) is string fn && TypeJson.Read(o["elem"]) is TypeNode ft) scope[fn] = ft;
                 return;
         }
     }
@@ -271,7 +334,8 @@ static partial class SuspendColdLowering
     /// Wrap ONE node's operands in a plan and lower it, in place. Leaves the node byte-untouched unless the plan
     /// actually materialises something — a node with no suspension in an operand, and a node whose only forced
     /// operands are re-readable, both emit exactly the CIR they emitted before this pass existed.
-    static void PlanOperandsOf(JsonObject o, ExprTyper typer, HashSet<string> materialised)
+    static void PlanOperandsOf(JsonObject o, ExprTyper typer, HashSet<string> materialised,
+                               Dictionary<string, TypeNode> locals)
     {
         if (EvalOrderOf(o) is not { } order) return;
         var ops = order.Operands;
@@ -284,7 +348,7 @@ static partial class SuspendColdLowering
         // terminal operand then leaves through the call that was going to consume it.
         var terminalAt = -1;
         for (var i = 0; i < ops.Count && terminalAt < 0; i++)
-            if (ops[i] != null && NodeType.IsNothing(typer.Of(ops[i]))) terminalAt = i;
+            if (ops[i] != null && NodeType.IsNothing(typer.Of(ops[i], locals))) terminalAt = i;
         if (terminalAt >= 0 && last <= terminalAt) terminalAt = -1;
 
         var n = terminalAt >= 0 ? terminalAt : ops.Count;
@@ -308,7 +372,7 @@ static partial class SuspendColdLowering
             var expr = ops[i];
             var id = CallEvalLowering.FreshBindingId();
             var stable = ValueStability.IsReReadable(expr);
-            var type = typer.Of(expr);
+            var type = typer.Of(expr, locals);
             if (type == null && force[i] && !stable)
                 throw new NotSupportedException(
                     $"bir2cir: suspend-lowering: the `{Str((expr as JsonObject)?["k"]) ?? "?"}` operand evaluated "
@@ -342,7 +406,7 @@ static partial class SuspendColdLowering
 
         // The block's value is what the node's value was: the truncated node's declared result type, or the
         // lowered node's own. Rewritten IN PLACE, because the node's parent holds this object.
-        var type0 = typer.Of(o);
+        var type0 = typer.Of(o, locals);
         o.Clear();
         o["k"] = "valueBlock";
         if (type0 != null) o["type"] = TypeJson.Write(type0);
