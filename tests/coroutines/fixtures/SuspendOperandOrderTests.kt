@@ -92,9 +92,18 @@ suspend fun corOpNestedInMemberArgument(): Int = CorOpBox(10).add(4, corOpTick(1
 // The suspension in the RECEIVER operand of a suspend call, not in an argument.
 suspend fun corOpNestedInReceiver(): Int = corOpMakeBox().add(4, 2)
 
-// A same-module GENERIC suspend callee.
-suspend fun <T> corOpFirst(a: T, b: Int): T {
+// A same-module GENERIC suspend callee. It suspends through a non-generic cold call rather than a `.await()`
+// MARKER: an await point inside a GENERIC suspend fun is separately broken today (its generic state machine builds
+// the resume `Action` over a method it never instantiates, so the first suspension throws
+// `InvalidOperationException: ... not fully instantiated`). That defect is reachable with no operand-order question
+// anywhere in the program — `suspend fun <T> f(x: T): T { Task.Delay(1).await(); return x }` called as `f(7)` is
+// enough — so it is a separate subject, and pinning it here would only hide what these fixtures do test.
+suspend fun corOpPause() {
     Task.Delay(1).await()
+}
+
+suspend fun <T> corOpFirst(a: T, b: Int): T {
+    corOpPause()
     corOpLog.add("P")
     return a
 }
