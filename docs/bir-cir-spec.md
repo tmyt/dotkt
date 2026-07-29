@@ -350,10 +350,47 @@ Every reader of a bound value is a `bindRef`. A `bindRef` is a pure READ and may
 not cloning an evaluation, which is the whole point.
 
 **Granularity.** A plan is emitted only where a value can acquire a SECOND reader: a same-module default that reads
-one of the call's values, or a cross-module omission (a `defaultArg` reservation, or a data-class `copy` field
-reconstructed from the receiver). Without one the positional argument array IS the evaluation plan — one reader per
-value, positional order. The standing invariant is the converse: **any transform that gives a call value a second
-consumer must go through a plan.** A `defaultArg` outside one is refused loudly by `DefaultArgSplice`.
+one of the call's values, a cross-module omission (a `defaultArg` reservation, or a data-class `copy` field
+reconstructed from the receiver), or a `callInline` (below). Without one the positional argument array IS the
+evaluation plan — one reader per value, positional order. The standing invariant is the converse: **any transform that
+gives a call value a second consumer must go through a plan.** A `defaultArg` outside one is refused loudly by
+`DefaultArgSplice`.
+
+**`callInline`.** A spliced inline call's body becomes the caller's, and it may read a parameter any number of times,
+in a loop, inside a closure, or not at all — so every value the call supplies has a second reader by construction, and
+a `callInline` always carries a plan for them:
+
+- the DISPATCH receiver, then the EXTENSION receiver, then the supplied arguments in positional order — the same order
+  rule as every other call. `recvs.dispatch` / `recvs.extension` / `args[i]` hold the `bindRef`s.
+- a SPLICED LAMBDA is not a value and is not bound: a literal carrier (`inlineLambda`) and a by-name forward of the
+  enclosing inline fn's own lambda parameter are the body `InlineSplice` splices, matched by the name it travels under.
+  A `noinline` lambda IS a value (a real delegate) and is bound like any other argument.
+- an OMITTED default is `null` in its slot. The callee supplies it, not the call, so `InlineSplice` fills it from the
+  callee's own carrier and binds it there — in a plan it synthesizes around the spliced block, whose bindings therefore
+  lower after every value the call site supplied, which is where Kotlin evaluates a default.
+
+`InlineSplice` consumes the bindings rather than minting a local per parameter: it substitutes each `bindRef` into the
+payload body, and `CallEvalLowering` decides the physical form once, like any other plan. Two positions can only name
+a SLOT — a closure/state-machine capture DESCRIPTOR and an assignment target — so a value left as a `bindRef` is
+pinned into a named local there, which is a pure read of the binding and not a second evaluation. The spliced block
+carries the callee's return type, closed against the call site, so a pass that must type the call (the suspend
+lowering's evaluation-order spill) reads a stamp instead of guessing.
+
+**Reading a plan's bindings.** A binding is inlined back into its reader only when that reader sits on the node's
+EAGER SPINE — the chain of operand positions evaluated once, in order, unconditionally, when the node itself is
+evaluated. A read reached through a statement list, a conditionally-taken branch, a loop body or a closure is
+evaluated at a different time, a different number of times, or not at all, so the binding is MATERIALISED instead.
+`CallEvalLowering` lists the eager kinds rather than the lazy ones, so an unfamiliar kind costs one local rather than a
+reordered evaluation. A `stable` binding is exempt: re-reading an immutable value observes neither a side effect nor a
+different value, wherever the read is.
+
+**Nesting.** Plans nest — a default that is itself a call with defaults, an inline splice's own bindings wrapped
+around a block that reads its caller's. `CallEvalLowering` walks POST-ORDER, so the inner plan lowers first and an id
+it does not know is left alone: it belongs to a plan further out, whose lowering substitutes it. The rule that makes
+that sound is that **every `bindRef` resolves OUTWARD to an enclosing plan's binding, declared before the reading
+position** — a binding's own `expr` sees only the bindings ahead of it in its plan, plus everything in scope outside.
+`scripts/verify-schema.py` checks it structurally on BIR; a `bindRef` naming nothing would otherwise survive to the
+pass's terminal chokepoint with no way back to the producer that emitted it.
 
 **Id namespaces.** kotc mints `dotkt$bN`; bir2cir mints `cir$bN`, both from their own counters, and `$` is not
 writable in a plain Kotlin identifier, so neither can alias a user name or the other's. An id is unique only within

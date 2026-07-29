@@ -120,9 +120,15 @@ static class CallEvalLowering
         // the argument slots left to right, recursively) — which is where an INLINED binding will be evaluated.
         var reads = new Dictionary<string, int>(StringComparer.Ordinal);
         var pos = new Dictionary<string, int>(StringComparer.Ordinal);
+        // DEFERRED READS. A binding is inlined back into its reader only when that reader sits where the CALL sits —
+        // on the node's eager operand spine, evaluated once and unconditionally. A read anywhere else (inside a
+        // spliced inline body's statements, a conditional branch, a loop, a closure) happens at a different time, a
+        // different number of times, or not at all, so the value is materialised instead. Kotlin evaluates what a call
+        // supplies AT the call, exactly once, whatever the callee then does with it.
+        var deferred = new HashSet<string>(StringComparer.Ordinal);
         foreach (var id in ids) reads[id] = 0;
         var rank = 0;
-        foreach (var r in readers) ScanReads(r, reads, pos, ref rank);
+        foreach (var r in readers) ScanReads(r, reads, pos, deferred, ref rank, eager: true);
         for (var i = 0; i < n; i++) CountReads((bindings[i] as JsonObject)["expr"], reads);
 
         var drop = new bool[n];
@@ -134,11 +140,13 @@ static class CallEvalLowering
             // Nothing reads it and evaluating it cannot be observed — the emitted call shape simply has no slot for
             // this value (a companion object's dispatch receiver, say). Drop it rather than mint a dead local.
             drop[i] = count == 0 && BindingStability.IsTriviallyPure(expr);
-            // A STABLE value is free to re-read, so it inlines at every reader. An ADDRESS is not a value at all —
-            // no storage holds a managed pointer — so it never becomes a local; what its LOCATION is computed from is
-            // pinned instead, at this binding's own position in the loop below. Everything else needs a local unless
-            // exactly one reader puts it back where it already was.
-            asVar[i] = !drop[i] && !stable[i] && kinds[i] != "address" && count != 1;
+            // A STABLE value is free to re-read, so it inlines at every reader — wherever the reader is, since re-reading
+            // it cannot observe a different value or a side effect. An ADDRESS is not a value at all — no storage holds a
+            // managed pointer — so it never becomes a local; what its LOCATION is computed from is pinned instead, at
+            // this binding's own position in the loop below. Everything else needs a local unless exactly one reader puts
+            // it back where it already was, at the point the call itself is evaluated.
+            asVar[i] = !drop[i] && !stable[i] && kinds[i] != "address"
+                && (count != 1 || deferred.Contains(ids[i]));
         }
         // ORDER, rule 1 — INVERSION. An inlined binding is evaluated at its reader's position, and a plan's order is
         // NOT the node's: an omitted default occupies a slot the callee declared, while Kotlin evaluates it after every
@@ -398,10 +406,12 @@ static class CallEvalLowering
         _ => false,
     };
 
-    /// One ordered walk of a reader root: counts every `bindRef` and records where each id is FIRST read. Operand
-    /// order comes from SuspendLiveness.KeyRank — the single statement of "which operand of a node runs first" this
-    /// toolchain has — so an inlined binding's position here is the position the emitted code will evaluate it at.
-    static void ScanReads(JsonNode node, Dictionary<string, int> counts, Dictionary<string, int> pos, ref int rank)
+    /// One ordered walk of a reader root: counts every `bindRef`, records where each id is FIRST read, and records the
+    /// ids read OFF the eager spine. Operand order comes from SuspendLiveness.KeyRank — the single statement of "which
+    /// operand of a node runs first" this toolchain has — so an inlined binding's position here is the position the
+    /// emitted code will evaluate it at.
+    static void ScanReads(JsonNode node, Dictionary<string, int> counts, Dictionary<string, int> pos,
+                          HashSet<string> deferred, ref int rank, bool eager)
     {
         if (node is JsonObject o)
         {
@@ -409,14 +419,35 @@ static class CallEvalLowering
             {
                 counts[id]++;
                 if (!pos.ContainsKey(id)) pos[id] = rank;
+                if (!eager) deferred.Add(id);
             }
             rank++;
             foreach (var kv in o.OrderBy(kv => SuspendLiveness.OperandRank(kv.Key)).ToList())
-                if (kv.Value != null) ScanReads(kv.Value, counts, pos, ref rank);
+                if (kv.Value != null) ScanReads(kv.Value, counts, pos, deferred, ref rank, eager && EagerSlot(o, kv.Key));
         }
         else if (node is JsonArray a)
-            foreach (var it in a) if (it != null) ScanReads(it, counts, pos, ref rank);
+            foreach (var it in a) if (it != null) ScanReads(it, counts, pos, deferred, ref rank, eager);
     }
+
+    /// The node kinds whose OPERANDS are evaluated once, in order, unconditionally, at the moment the node itself is
+    /// evaluated — the "eager spine" a binding may be inlined onto. A call's own argument and receiver slots are here,
+    /// as are the coercions kotc wraps a slot in (`argExpr`'s nullable unwrap / boxed-`Any` cast) and the ordinary
+    /// operator shapes a materialised default is built from. Everything NOT listed defers: a `valueBlock` runs its
+    /// statements first, a `cond` takes one branch, a loop repeats its body, a closure runs at some later time, and a
+    /// value read there is not a value evaluated at the call. Listing the eager kinds rather than the lazy ones is
+    /// deliberate — an unfamiliar kind then costs one local, not a reordered evaluation.
+    static readonly HashSet<string> EagerKinds = new(StringComparer.Ordinal)
+    {
+        "callStatic", "callInstance", "callInline", "objMethod", "delegateInvoke", "new", "newClr",
+        "newArray", "newArraySized", "newArrayInit", "newList", "newSet", "newMap",
+        "field", "setField", "staticField", "setStaticField", "arrayGet", "arraySet", "arrayLen",
+        "binOp", "unaryOp", "conv", "cast", "isInst", "isInstRef", "objEq", "concat",
+        "nullableWrap", "nullableValue", "nullableHasValue", "safeCastValue",
+        "byrefOf", "byrefLoad", "stackGet", "enumOrdinal", "lateinitGet", "exprStmt", "clrPropGet", "clrPropSet",
+    };
+
+    static bool EagerSlot(JsonObject parent, string key) =>
+        key != "synthClass" && Str(parent["k"]) is string k && EagerKinds.Contains(k);
 
     static void CountReads(JsonNode node, Dictionary<string, int> into)
     {

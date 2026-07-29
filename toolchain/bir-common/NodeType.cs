@@ -45,6 +45,10 @@ public static class NodeType
             case "const": case "cast": case "new": case "newClr": case "var": case "cond":
             case "nullableWrap": case "nullableValue": case "safeCastValue": case "default":
                 return TypeJson.Read(o["type"]);
+            case "callEval":
+                // A call under its evaluation plan (§2.7, BIR-only): the bindings are evaluated ahead of it, so the
+                // node's value — and its type — is the wrapped call's.
+                return TypeJson.Read(o["type"]) ?? recurse(o["expr"]);
             case "valueBlock":
                 // A spliced inline call is a `valueBlock {stmts, result}` and carries NO `type` stamp — its type is its
                 // RESULT's, resolved with the block's own `var`s in scope (an `apply`-splice's result is a local the
