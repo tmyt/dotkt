@@ -10,13 +10,18 @@
 //                       docs/bir-cir-spec.md §2.7); `IsReReadable` below for the bindings bir2cir itself fills.
 //   Q1ᴬ  stable ADDRESS — is the LOCATION, rather than the value, stable? kotc `isStableLocation`; IR-only.
 //   Q2  DROPPABLE     — is EVALUATING it unobservable, so a binding nothing reads may be skipped?
-//                       `IsDroppable` below (CallEvalLowering's zero-reader bindings and location pins).
+//                       `IsDroppable` below (CallEvalLowering's zero-reader bindings).
 //   Q3  RESUME-STABLE — may it be read AFTER a suspension resumes, or must it be spilled before?
 //                       SuspendColdLowering (`ImpureKinds`/`IsPureExpr`).
 //   Q4  STACK-NEUTRAL — may it stay in its operand slot when a LATER sibling hoists out of the expression?
 //                       TryValueOperandHoist (`StackNeutralKinds`/`IsStackNeutral`).
 //   Q5  LVALUE FORMER — does it DESIGNATE storage without evaluating anything itself?
 //                       CallEvalLowering (`IsLvalueFormer`).
+//
+// A SIXTH question lives in CallEvalLowering alone and is deliberately NOT here: `StaysInLocation` asks whether a
+// node is a link of an addressable LOCATION's own path (so pinning it into a local would copy the storage away)
+// rather than a value computed for it. That is about storage identity, not about side effects, and it is asked only
+// of the operands of a by-reference argument — see its own doc comment there.
 //
 // WORKED EXAMPLE, because these look like disagreements and are not. `arrayGet` and `arrayLen`:
 //   * Q2: NEITHER is droppable — an element load and a length load both dereference, so both can throw
@@ -64,15 +69,22 @@ public static class ValueStability
 
     /// <summary>
     /// Q2 — is EVALUATING this value unobservable, so a binding NOTHING reads may be dropped instead of evaluated
-    /// for its side effects? True only for pure loads (a literal, `this`, a local/binding read, a static or
-    /// instance field read whose receiver is itself pure, a default value). Everything else — any call, any
-    /// construction — is evaluated, because Kotlin evaluates every value a call supplies whether the emitted call
-    /// shape uses it or not.
+    /// for its side effects? Kotlin evaluates every value a call supplies whether the emitted call shape has a slot
+    /// for it or not, so the answer is YES only where the evaluation cannot be detected at all: a literal, `this`, a
+    /// local or binding read, a filled default, a class token.
     /// </summary>
+    /// <remarks>
+    /// NARROW ON PURPOSE, and narrower than "looks like a pure load" (docs/dotkt-semantics.md §7a). A FIELD read
+    /// dereferences, so it throws on a null receiver — and a null receiver is reachable, a platform type carrying no
+    /// null assertion (§9a). A STATIC FIELD read, and an ENUM VALUE read with it, runs the declaring type's
+    /// initializer — which on this backend is where a Kotlin top-level property initializer and an `object`'s body
+    /// live, so it can print, throw, or mutate global state. Those are evaluations with consequences, and skipping
+    /// one because the emitted shape has no slot for its value would delete a Kotlin side effect. The cost of being
+    /// wrong the other way is one local nobody reads.
+    /// </remarks>
     public static bool IsDroppable(JsonNode? n) => n is JsonObject o && Str(o["k"]) switch
     {
-        "const" or "this" or "local" or "bindRef" or "default" or "classRef" or "staticField" or "enumValue" => true,
-        "field" => IsDroppable(o["recv"]),
+        "const" or "this" or "local" or "bindRef" or "default" or "classRef" => true,
         _ => false,
     };
 

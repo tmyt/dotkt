@@ -292,8 +292,15 @@ internal fun BirEmitter.emitOwnerfulInlineNode(call: IrCall): String {
 	// inside a loop) still evaluates it exactly once, here, and an omitted default that bir2cir fills inside the splice
 	// lands after every supplied value rather than in its parameter's slot.
 	val label = calleeLabel(callee)
-	val dispatchJson = dispatchArg?.let { callPlan(call).bindValue(it, "recv", "receiver of '$label'") }
-	val extJson = extRecv?.let { callPlan(call).bindValue(it, "recv", "extension receiver of '$label'") }
+	// An OBJECT REFERENCE receiver is rendered in place instead of bound ([needsPlanBinding]) — it is a constant, and
+	// for the FLATTENED-companion case below it names an `INSTANCE` field this representation never emits, so a
+	// binding for it would ask the plan to evaluate a value that does not exist.
+	val dispatchJson = dispatchArg?.let {
+		if (needsPlanBinding(it)) callPlan(call).bindValue(it, "recv", "receiver of '$label'") else expr(it)
+	}
+	val extJson = extRecv?.let {
+		if (needsPlanBinding(it)) callPlan(call).bindValue(it, "recv", "extension receiver of '$label'") else expr(it)
+	}
 	val recvs = inlineReceiverParts(callee, extJson, dispatchJson, dispatchArg)
 	// One entry per POSITIONAL param, in order: a spliced lambda -> an `inlineLambda` carrier (or the forwarded
 	// carrier's own name); any other supplied arg -> a plan binding; an omitted default -> null.
@@ -427,7 +434,9 @@ internal fun BirEmitter.inlineSpliceCall(call: IrCall, fileClass: String): Strin
 	// §2.7 trigger (d) — see [inlineArgJson]. The extension receiver is bound FIRST (Kotlin evaluates a receiver
 	// before every argument), then the supplied arguments in positional order.
 	val label = calleeLabel(callee)
-	val extRecvJson = extRecv?.let { callPlan(call).bindValue(it, "recv", "extension receiver of '$label'") }
+	val extRecvJson = extRecv?.let {
+		if (needsPlanBinding(it)) callPlan(call).bindValue(it, "recv", "extension receiver of '$label'") else expr(it)
+	}
 	val recvs = if (extRecvJson != null) """{"extension":$extRecvJson}""" else "{}"
 	// One entry per POSITIONAL param, in order: a spliced lambda -> an `inlineLambda` carrier (or the forwarded
 	// carrier's own name); any other supplied arg -> a plan binding; an omitted default -> null.
@@ -571,7 +580,9 @@ internal fun BirEmitter.inlineSpliceCallOwnerless(call: IrCall, extRecv: IrExpre
 	// before every argument), then the supplied arguments in positional order (for `with`, the receiver is regular
 	// param[0] and rides as an ordinary bound argument; the lambda is param[1]).
 	val label = calleeLabel(callee)
-	val extRecvJson = extRecv?.let { callPlan(call).bindValue(it, "recv", "extension receiver of '$label'") }
+	val extRecvJson = extRecv?.let {
+		if (needsPlanBinding(it)) callPlan(call).bindValue(it, "recv", "extension receiver of '$label'") else expr(it)
+	}
 	val recvs = if (extRecvJson != null) """{"extension":$extRecvJson}""" else "{}"
 	val argsJson = params.indices.joinToString(",") { i -> inlineArgJson(call, args.getOrNull(i), params[i], label) }
 	val retType = birType(callee.returnType).toJson()

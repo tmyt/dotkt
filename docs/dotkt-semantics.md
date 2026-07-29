@@ -1023,6 +1023,41 @@ consumer's re-lower (the private symbol is absent from the public ref surface �
 not with a precise stamp-time diagnostic; a stamp-time IR-walk detection is a cheap later add. An authoring-time
 refusal, never a miscompile.
 
+## 7a. A call value NOTHING reads is still evaluated — unless evaluating it is genuinely unobservable
+
+Kotlin evaluates a call's receiver and every supplied argument, in order, whether or not the callee uses them. The
+emitted CLR call shape does not always have a slot for each of those values, and where it has none the value has no
+reader at all. **The evaluation still happens.** The one exception is a value whose evaluation cannot be detected:
+
+| Evaluating it is… | Kinds | With no reader |
+|---|---|---|
+| undetectable | a literal, `this`, a local read, a read of another value of the same call, a filled default, a class token | dropped |
+| detectable | everything else — including a **static field** read, an **enum value** read, and an **instance field** read | evaluated into a local nobody reads |
+
+The two entries that look like harmless loads and are not:
+
+- **A static-field (or enum-value) read runs the declaring type's initializer.** On this backend that initializer is
+  where a Kotlin top-level property initializer and an `object`'s body live, so it can print, throw, mutate global
+  state, or simply happen at a different moment than the program expects. Skipping the read deletes that.
+- **An instance-field read dereferences,** so it throws `NullReferenceException` on a null receiver — and a null
+  receiver is reachable, because a platform type carries no null assertion (§9a). A throw is observable.
+
+The cost of the rule is at most one unread local, and only at a call site that supplies a value the emitted shape has
+nowhere to put — a rare shape, since a receiver and an argument normally each have exactly one slot.
+
+**An `object` qualifier is not an exception to this — it is not an evaluation.** `Solo.f(…)` and `Holder.bar(…)`
+name a singleton, not an expression: reading it can neither run something twice nor yield a different object, so it
+is emitted in place and never becomes a call-site value of its own. For a plain `companion object` there is no value
+at all — it is flattened onto its enclosing class (§5e), and a projected .NET static class has no instance either —
+so the emitted static call simply has no receiver.
+
+**Where this deviates from Kotlin/JVM:** nowhere in *what* the call evaluates, only in *when* the object is
+initialized. Kotlin evaluates the qualifier before the arguments, so an `object`/companion body that prints would
+print before an argument's side effects; on the CLR nothing is loaded at the qualifier's position for a flattened
+companion, and initialization is instead the type initializer's to schedule. DotKt takes the CLR-native form here
+rather than emitting a synthetic touch to force the Kotlin point. (A real `object`'s body runs in the singleton's
+constructor, so reading `Solo.INSTANCE` — which the call still does — runs it.)
+
 ## 8. Reverse / cross-assembly interop
 
 - A DotKt assembly is a first-class .NET assembly; C# can reflection-load it. For **compile-time** `<Reference>`/
@@ -1394,6 +1429,7 @@ Current deliberate limits are:
 - A `CharSequence` parameter surfaces to C# as `string`; a `StringBuilder` passed as `CharSequence` is **snapshotted** by an implicit `.toString()` — no live view. §5b.
 - A Kotlin `Map` surfaces to C# as a *mutable* `IDictionary<K,V>`; `keys`/`values`/`entries` are snapshots. §5c.
 - A `value class` is a real (reference) class on the CLR — never erased, never a struct. §5f.
+- A value a call supplies that the emitted CLR shape has no slot for is still evaluated (a static-field read runs a type initializer; a field read can throw) — only a literal/local/`this`-class load is dropped. §7a.
 - An auto-property's backing field is named `<Name>k__BackingField` (C# convention, `[CompilerGenerated]`), not `Name` — so reflection never sees a property and a field under one name. §5h.
 - `System.Byte` is UNSIGNED → maps to `UByte` (and `byte[]` → `UByteArray`, a native `System.Byte[]`); `kotlin.Byte` is signed = `System.SByte`. `UByteArray.toByteArray()` is a reinterpret VIEW, not a copy. §9b.
 - `import System.Text.StringBuilder` and `kotlin.text.StringBuilder` are two distinct typed views of one CLR type; mixing them is a type error (cast to cross). §8b.
