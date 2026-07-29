@@ -481,8 +481,7 @@ one KLIB; kotc resolves those declarations through the ordinary KLIB symbol prov
 that must survive frontend resolution is carried by the projected `kotlin.clr.ClrExternal` annotation and
 forwarded into BIR without reinterpretation.
 
-The only compiler-generated frontend declarations are the fixed `kotlin.clr`
-intrinsic vocabulary in `ClrIntrinsicDeclarations.kt`.
+The fixed `kotlin.clr` intrinsic vocabulary is declared in the CLR stdlib and loaded from its frontend KLIB.
 
 ## 5. Validator (§7 of the plan)
 Validate live BIR/CIR + every emitted `[KotlinInline]` body against this spec: unknown `k`, a type that is

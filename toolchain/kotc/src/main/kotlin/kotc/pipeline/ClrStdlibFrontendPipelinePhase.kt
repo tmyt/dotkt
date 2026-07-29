@@ -3,7 +3,6 @@
 
 package kotc.pipeline
 
-import kotc.frontend.ClrCompilerPluginRegistrar
 import org.jetbrains.kotlin.KtPsiSourceFile
 import org.jetbrains.kotlin.cli.common.CLIConfigurationKeys
 import org.jetbrains.kotlin.cli.common.checkKotlinPackageUsageForPsi
@@ -23,7 +22,6 @@ import org.jetbrains.kotlin.cli.pipeline.ConfigurationPipelineArtifact
 import org.jetbrains.kotlin.cli.pipeline.PerformanceNotifications
 import org.jetbrains.kotlin.cli.pipeline.PipelinePhase
 import org.jetbrains.kotlin.cli.pipeline.metadata.MetadataFrontendPipelineArtifact
-import org.jetbrains.kotlin.compiler.plugin.CompilerPluginRegistrar
 import org.jetbrains.kotlin.compiler.plugin.getCompilerExtensions
 import org.jetbrains.kotlin.config.CommonConfigurationKeys
 import org.jetbrains.kotlin.config.messageCollector
@@ -44,7 +42,6 @@ object ClrStdlibFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtif
 	override fun executePhase(input: ConfigurationPipelineArtifact): MetadataFrontendPipelineArtifact {
 		val (configuration, rootDisposable) = input
 		val diagnosticsReporter = configuration.diagnosticsCollector
-		configuration.add(CompilerPluginRegistrar.COMPILER_PLUGIN_REGISTRARS, ClrCompilerPluginRegistrar())
 		val rootModuleName = Name.special("<${configuration.moduleName!!}>")
 		val libraryList = DependencyListForCliModule.build(rootModuleName) {
 			val refinedPaths = configuration.get(K2MetadataConfigurationKeys.REFINES_PATHS)?.map { File(it) }.orEmpty()

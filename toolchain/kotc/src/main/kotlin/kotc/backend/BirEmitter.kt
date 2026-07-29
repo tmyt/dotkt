@@ -98,6 +98,19 @@ import java.io.File
 // [irBuiltIns] is the module's IrBuiltIns (from Fir2IrActualizedResult) — needed by the type system to compute an
 // inherited member inline fn's owning-class instantiation for F2A (correspondingSupertypeInstantiation). Nullable
 // so a bare `BirEmitter()` still constructs; the F2A supertype path no-ops (falls back to the status-quo omit) when null.
+private val CLR_COMPILE_TIME_INTRINSIC_FUNCTIONS = setOf(
+	"kotlin.clr.byref",
+	"kotlin.clr.stackBuffer",
+	"kotlin.clr.clrEvent",
+)
+
+private val CLR_COMPILE_TIME_INTRINSIC_CLASSES = setOf(
+	"kotlin.clr.ClrRef",
+	"kotlin.clr.StackBuffer",
+	"kotlin.clr.Span",
+	"kotlin.clr.ClrEvent",
+)
+
 class BirEmitter(internal val messageCollector: MessageCollector? = null, internal val irBuiltIns: IrBuiltIns? = null) {
 
 	// Diagnostics: a construct the .NET backend can't lower yet is a COMPILE-TIME error with source location
@@ -578,14 +591,17 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		// de-duplicated by ilemit, but lifted `__lambdaN` are file-class methods that are NOT — so the duplication is
 		// real metadata bloat and a correctness hazard.
 		liftedMethods.clear(); liftedTypes.clear(); refTypes.clear()
-		// The `byref` out/ref marker is an intrinsic consumed at its call sites (the arg becomes a `byref:` param) —
-		// never emitted as a real method.
+		// Compile-time kotlin.clr intrinsics are consumed at their call sites and have no physical CLR method.
 		// Only USER functions (origin DEFINED) — a consuming module's FIR also holds external top-level functions
 		// loaded from reference KLIBs;
 		// those are the library's to provide, not ours to re-emit (a re-emitted stub has no real body -> invalid IL).
 		val functions = file.declarations.filterIsInstance<IrSimpleFunction>()
-			.filter { it.origin.toString() == "DEFINED" && !isExternalNetType(it) && it.name.asString() !in setOf("byref", "stackBuffer") }
-		// `ClrRef<T>` is an intrinsic managed-reference marker (erased on the argument path) -> never emitted as a class.
+			.filter {
+				it.origin.toString() == "DEFINED" &&
+					!isExternalNetType(it) &&
+					it.fqNameWhenAvailable?.asString() !in CLR_COMPILE_TIME_INTRINSIC_FUNCTIONS
+			}
+		// Compile-time kotlin.clr types are BIR vocabulary or handles and have no physical CLR class.
 		// @ClrTypeAlias classes (collections/StringBuilder/unsigned/primitives/String/…) are emitted here as ORDINARY
 		// types; bir2cir's AliasHelperHoist drops them (and hoists a class's rule-3 members). kotc no longer strips them.
 		// dll2klib-projected external .NET types (a `import P.Calc`/`P.SpanOps` host type, an inherited/implemented .NET
@@ -602,7 +618,10 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		// decomposes to `Array(elem)`). A native array is NEVER emitted as a type, so filter their class definitions out
 		// in ALL builds (read the IR predicate off the class's defaultType, not an FQN set).
 		val classes = file.declarations.filterIsInstance<IrClass>().filter {
-			it.kind == ClassKind.CLASS && userDefined(it) && it.name.asString() !in setOf("ClrRef", "StackBuffer", "Span") && !it.defaultType.isUnsignedArray()
+			it.kind == ClassKind.CLASS &&
+				userDefined(it) &&
+				it.fqNameWhenAvailable?.asString() !in CLR_COMPILE_TIME_INTRINSIC_CLASSES &&
+				!it.defaultType.isUnsignedArray()
 		}
 		// `object Foo { ... }` (non-companion) -> a singleton class with a static `INSTANCE` field; `IrGetObjectValue`
 		// loads it. The shared-state-via-`object` case (feedback item 10). Companion/anonymous objects are handled

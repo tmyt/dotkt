@@ -28,7 +28,7 @@ files, all found this way.
 ### 3. Compile-fix inside-out (the bulk — mechanical grind, ~1-2 days)
 Fix the CERTAIN-BREAKS in dependency order: `Main.kt` (removed args) → `ClrCliPipeline.kt` (pipeline artifacts/phases)
 → frontend phases (artifact ctors, `getCompilerExtensions`, klib loading) → `ClrDefaultImports.kt` (renames) →
-reference-KLIB loading → `ClrIntrinsicDeclarations.kt` (plugin/registrar DSL) →
+reference-KLIB loading →
 `BirEmitter*` residue (expected small — it sits on the stable IR tree). Each break is a compiler error pointing at it.
 
 ### 4. The metadata-klib serializer — the ONE recurring gating risk
@@ -41,8 +41,8 @@ holistically, do not patch the symptom. Do NOT trust the gate to find this indir
 
 ### 5. Fragile watch-points — verify empirically, never assume "unchanged"
 kotc pokes several **internal/unstable FIR surfaces**; a bump can silently break any of them:
-- **CLR intrinsic declaration generation** (`ClrIntrinsicDeclarations.kt`) — the compiler-plugin registrar and FIR
-  declaration-generation DSL must continue to expose only the fixed `byref` / `stackBuffer` / `clrEvent` vocabulary.
+- **CLR intrinsic declarations** (`libraries/stdlib/clr/kotlin/clr/CompilerIntrinsics.kt`) — verify that the frontend
+  KLIB continues to expose the fixed `byref` / `stackBuffer` / `clrEvent` vocabulary without a compiler plugin.
   CLR reference declarations and their static companions are loaded from reference KLIBs.
 - **fake-override linking** (`resolveFakeOverride`, default-accessor discrimination) — the classic wrong-dispatch
   miscompile source when Fir2Ir internals get rewritten.

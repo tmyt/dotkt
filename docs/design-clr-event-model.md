@@ -148,8 +148,7 @@ meaning; it is a compile-time lowering tag. Two consequences, both wanted:
 
 **Per appearance:**
 
-- **The `kotlin.clr.ClrEvent` type** (kotc `ClrIntrinsicDeclarationGenerator`): created with
-  `ClassKind.CLASS` + `Modality.ABSTRACT`. It carries
+- **The `kotlin.clr.ClrEvent` type** (CLR stdlib): an abstract compile-time handle. It carries
   abstract `fun subscribe(h: T): EventSubscription<T>` (consume), abstract
   `operator fun invoke(vararg args): R` (raise), and abstract `operator fun getValue(r: Any?, p: KProperty<*>): ClrEvent<T>`
   (so `by clrEvent()` typechecks under the delegate convention — see §5). None have bodies; none
@@ -209,7 +208,7 @@ The member obligation (§3) plus the `clrEvent()` marker (§5) triggers synthesi
 Layer split mirrors the consume path (kotc declares + wires overrides; bir2cir supplies the CLR
 relation; ilemit emits pure CLR codegen):
 
-- **kotc** (`ClrIntrinsicDeclarations` / `BirEmitter*`): on the implementing type, emit
+- **kotc** (`BirEmitter*`): on the implementing type, emit
   1. a backing field member `clrEventBacking{name:"<E>", handlerType:<Kotlin fn type>}` (kotc does not
      name `MulticastDelegate` — it carries the *handler Kotlin function type*; bir2cir resolves the
      concrete delegate);
@@ -275,12 +274,11 @@ Kotlin delegating class goes through the widened `clrEventGet` (§4.1) → `add_
 ## 5. Decision 3 — the `clrEvent()` intrinsic contract
 
 `clrEvent()` is the author-written marker meaning "**synthesize the field-like event impl here**". It
-is a `kotlin.clr` top-level intrinsic (registered in `ClrIntrinsicDeclarationGenerator`, beside
-`byref`/`stackBuffer`):
+is declared by the CLR stdlib beside `byref`/`stackBuffer` and recognized by kotc as a top-level intrinsic:
 
 ```kotlin
 package kotlin.clr
-fun <T> clrEvent(): ClrEvent<T>          // pure kotc intrinsic; the returned value is never real
+fun clrEvent(): ClrEvent<Nothing>        // covariant handle; the returned value is never real
 ```
 
 **Shape — a recognized property delegate, not a real one.** `override val E by clrEvent()` must
