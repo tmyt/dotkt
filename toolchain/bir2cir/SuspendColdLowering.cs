@@ -321,15 +321,15 @@ static partial class SuspendColdLowering
         foreach (var (k, e) in entries)
             calleeRet[k.Name] = TypeJson.Read(e.Method["suspendRet"]) ?? AnyTn;
 
-        // A global (owner#name -> resultType) index of EVERY method (not just suspend). The eval-order spill
-        // (BUG 2 fix, Rewrite/RewriteEvalOrder) uses it to type a temp SM field holding a left-of-suspension
-        // operand whose own node carries no return type. It is a SECONDARY fallback: TypeOfExpr reads the node's
-        // `sty` (the frontend static type kotc stamps on every call/field node) FIRST, so this index is consulted
-        // only for the rare node without one. Top-level -> "#name"; member -> "owner#name".
+        // A global (owner#name -> resultType) index of EVERY method (not just suspend). Stage 0's expression typer
+        // (SuspendOperandPlan.ExprTyper) uses it to type the local an operand plan materialises when the operand's
+        // own node carries no return type. It is a SECONDARY fallback: the typer reads the node's `sty` (the
+        // frontend static type kotc stamps on every call/field node) FIRST, so this index is consulted only for the
+        // rare node without one. Top-level -> "#name"; member -> "owner#name".
         var methodRets = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
         // A global (owner#name -> declared type) index of EVERY member/static FIELD, a SECONDARY fallback to `sty`
-        // (as methodRets). The eval-order spill (BUG 2 fix, N4) uses it to type the temp SM field holding a raw
-        // `field`/`staticField`/`lateinitGet` read spilled to the LEFT of a suspension.
+        // (as methodRets): a raw `field`/`staticField`/`lateinitGet` read carries no result type of its own, and one
+        // bound left of a suspension needs a typed local like any other.
         var fieldTypes = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
         foreach (var r in roots)
         {
@@ -356,6 +356,14 @@ static partial class SuspendColdLowering
                                     fieldTypes[ow + "#" + fn] = ft1;
                     }
         }
+
+        // STAGE 0 — OPERAND PLANS (SuspendOperandPlan.cs). Runs on EVERY input file, before any state machine is
+        // built, so that no node reaches the per-fun transform still holding a suspension where the segmented body
+        // cannot express one: a suspension inside a suspend call's own operand list, or an operand evaluated left
+        // of a suspension while sitting in a slot that is assembled after it. Ahead of the `entries` early return
+        // below, because a suspend LAMBDA in a file that declares no suspend fun is lowered by the separate
+        // SuspendLambdaLowering phase and needs the same normalization.
+        PlanSuspensionBearingOperands(roots, new ExprTyper(methodRets, fieldTypes));
 
         if (entries.Count == 0) return calleeRet;
 
@@ -443,7 +451,7 @@ static partial class SuspendColdLowering
             // `call` to the (interface-abstract) cold entry is unverifiable (ilverify CallAbstract). Concrete
             // implementations in classes fill both slots — ilemit's interface-impl pass binds them by name/sig.
             var ownerIsInterface = e.TypeNode != null && Str(e.TypeNode["kind"]) == "interface";
-            var gen = new FunGen(e.Method, key.Name, e.FileClass, e.Owner, calleeRet, baseIsLocal, tcsBcl, taskBcl, ownerTps, closures, smSuffix[key], coldSuffix[key], methodRets, fieldTypes, fileLambdas, ownerIsInterface, staticMember);
+            var gen = new FunGen(e.Method, key.Name, e.FileClass, e.Owner, calleeRet, baseIsLocal, tcsBcl, taskBcl, ownerTps, closures, smSuffix[key], coldSuffix[key], fileLambdas, ownerIsInterface, staticMember);
             var newMethods = new List<JsonNode>();
             var newTypes = new List<JsonNode>();
             gen.Build(newMethods, newTypes);
@@ -1056,160 +1064,12 @@ static partial class SuspendColdLowering
         }
     }
 
-    // The node kinds that TRANSFER CONTROL out of the expression they sit in. Two walks below need exactly this
-    // set — the resume-stability test (such an operand cannot be deferred past a suspension) and
-    // EscapesExpression (such a value cannot stay nested under a CLR operand) — and they must not be able to
-    // drift apart, so it is stated once. They differ only in where they STOP; see the note on IsPureExpr.
+    // The node kinds that TRANSFER CONTROL out of the expression they sit in — read by EscapesExpression, which
+    // flattens such a value out of a CLR operand slot while bir2cir still owns the control-flow decision.
     static readonly HashSet<string> ControlTransferKinds = new(StringComparer.Ordinal)
     {
         "goto", "brIf", "return", "returnExpr", "throw", "throwExpr",
     };
-
-    // Q3 of the five value questions (roster in bir-common/ValueStability.cs) — RESUME-STABLE: may this be read
-    // AFTER a suspension resumes, or must it be spilled before the suspension? It is deliberately NOT one of the
-    // other four: an operand can be resume-stable and still not droppable (Q2), and vice versa.
-    //
-    // SCHEDULED FOR REPLACEMENT, not for widening. The planned stage-0 operand plan wraps every
-    // suspension-bearing operand in a `callEval` plan derived from the existing `HasOwnSuspension`/`EvalOrderOf`
-    // descriptors, which retires this predicate together with the eval-order rewrite it feeds — and closes the
-    // KNOWN GAP below by construction rather than by growing the set.
-    //
-    // Impure kinds whose PRESENCE anywhere in a subtree makes it unsafe to defer past a suspension (a call,
-    // an allocation, an assignment or a control transfer has an observable effect). A subtree free of them is
-    // "pure" — stable to read after the suspension resumes, so it stays inline. A plain `local` read counts as
-    // pure, and that is only sound because SuspendLiveness models this very deferral: a local an operand reads
-    // after a resume is reported LIVE at that suspension and therefore gets an SM field rather than a
-    // MoveNext local (see SuspendLiveness.Value/ReRead).
-    //
-    // A CONTROL TRANSFER (`ControlTransferKinds` above) is impure for a second, stronger reason: `Rewrite`
-    // lowers an escaping `cond`/`valueBlock` to statements emitted IN PLACE and leaves behind only a temp read,
-    // so the transfer has already happened by the time the enclosing expression is assembled. Deferring that
-    // temp read past a suspension would read a resume-fresh slot — so such an operand must be spilled, exactly
-    // like a call's result.
-    //
-    // N4: a raw member/static FIELD read (`field`/`staticField`/`lateinitGet`) is NOT pure w.r.t. a later
-    // suspension — the suspend callee can reach and MUTATE that field (a source property read goes through a
-    // getter = `callInstance`/`clrInstance`, already impure; only the direct backing-field / `@ClrField` read
-    // slipped through). So `this.x + mutatingSuspendCall()` must SPILL `this.x` into an SM temp BEFORE the
-    // suspension, else the read happens after resume and observes the post-mutation value. Position still gates
-    // it: RewriteEvalOrder only spills an operand LEFT of a suspension (`i < lastSusp`), so a field read with no
-    // suspension to its right stays inline. (Captured locals are `local` in pre-Rewrite BIR, so unaffected.)
-    //
-    // N4-sibling: an ARRAY-ELEMENT read (`arrayGet`/`clr.ldelem`) has the SAME reorder hazard — the array is a
-    // shared reference the suspend callee can reach, so `arr[i] + mutatingSuspendCall()` must read the PRE-call
-    // element. It stayed scoped out over an element-type/over-spill worry, but the node carries its element type
-    // verbatim on `elem`, so the spill temp is typed precisely (no kotlin.Any box fallback — see TypeOfExpr). The
-    // position guard keeps a same-node `arr[i]` with no suspension to its right inline. (`arrayLen`/`clr.ldlen`
-    // stays pure: a .NET array's length is immutable, so a later suspension cannot change it.)
-    //
-    // KNOWN GAP (pre-existing, tracked separately): the N4 argument assumes a property read is already impure
-    // as a `callInstance`/`clrInstance`, but NetInteropBinding rewrites a .NET-owner property read to
-    // `clrPropGet`, which is absent here — so `sb.Length + susp()` still reads it after the resume. Same for
-    // `delegateInvoke`/`objMethod`/`constrainedCall`. It is an evaluation-ORDER defect only: SuspendLiveness
-    // re-reads all of them regardless, so no local is wrongly demoted on account of it.
-    static readonly HashSet<string> ImpureKinds = new(ControlTransferKinds, StringComparer.Ordinal)
-    {
-        "callStatic", "callInstance", "clrStatic", "clrInstance", "clrGenericStatic",
-        "new", "newClr", "setLocal", "setField", "dynCall",
-        "field", "staticField", "lateinitGet",
-        "arrayGet",
-    };
-
-    // NOTE — this walk DESCENDS INTO LAMBDA BODIES; EscapesExpression stops at `LambdaKinds`. That difference is
-    // required in both directions and must not be "unified" away:
-    //   * here, the walk has to reach a lambda-construction node's CAPTURE VALUES, which are evaluated at the
-    //     construction site and so are subject to the same reorder hazard as any other operand. Reaching the
-    //     `body` as well is merely conservative — it can cost one extra spill, never correctness.
-    //   * there, a control transfer inside a lambda body belongs to THAT lambda's frame, not the enclosing
-    //     expression's, so flattening the enclosing expression on account of it would be a regression.
-    static bool IsPureExpr(JsonNode n)
-    {
-        var impure = false;
-        void Walk(JsonNode x)
-        {
-            if (impure || x == null) return;
-            if (x is JsonObject o)
-            {
-                if (Str(o["k"]) is string k && ImpureKinds.Contains(k)) { impure = true; return; }
-                foreach (var kv in o) if (kv.Value != null) Walk(kv.Value);
-            }
-            else if (x is JsonArray a) foreach (var it in a) if (it != null) Walk(it);
-        }
-        Walk(n);
-        return !impure;
-    }
-
-    // --- the ONE evaluation-order spill decision ------------------------------------------------------
-    //
-    // Which operands of an ordered-eval node are STORED into a temp before the suspension to their right, and
-    // which are left inline and therefore read at the RESUME point. RewriteEvalOrder acts on this; SuspendLiveness
-    // reads it to know which operand reads actually cross a resume. It lives here, in one copy, because the two
-    // must never disagree: reading it as "spilled" where the emitter defers is a silently zeroed local, and as
-    // "deferred" where the emitter spills is a byref-like value refused for a field the CLR never had to mint.
-
-    // The position of the LAST operand that carries a suspension; -1 when none does. Everything to its left is
-    // evaluated before that suspension.
-    static int LastSuspending(IReadOnlyList<JsonNode> kids)
-    {
-        var last = -1;
-        for (var i = 0; i < kids.Count; i++)
-            if (kids[i] != null && HasOwnSuspension(kids[i])) last = i;
-        return last;
-    }
-
-    // Does operand `i` get stored before the suspension to its right? An operand that CARRIES the suspension is
-    // already spilled to its own `__aw` field; a PURE one is stable to read after the resume and stays inline.
-    internal static bool SpilledBeforeSuspension(IReadOnlyList<JsonNode> kids, int i) =>
-        kids[i] != null && i < LastSuspending(kids)
-        && !HasOwnSuspension(kids[i]) && !IsPureExpr(kids[i]);
-
-    // Where an ordered-eval node's rewritten operands go back: a binary node's `lhs`/`rhs`, or a call/new node's
-    // `recv`/`args`. Part of the description so that ONE rewrite serves both and neither has to know the other's
-    // key names.
-    internal enum EvalOrderShape { Binary, Call }
-
-    // A node's operands in EVALUATION ORDER, plus whether the first of them is the receiver and where the results
-    // are written back. This is the SINGLE description of "what does this node evaluate, in what order, and how is
-    // it reassembled": Rewrite's dispatch ASKS it whether a node is ordered-eval at all, RewriteOrdered rewrites
-    // `Operands` and puts the results back by `Shape`, and SuspendLiveness reads the same list to learn which of
-    // them the spill saves. Nothing restates any part of it — a node kind added here reaches the emitter and the
-    // analysis in the same edit, so neither can believe an operand is spilled while the other takes a path that
-    // does not spill it (a wrong demotion, which shows up as a silently zeroed local rather than a build failure).
-    internal readonly record struct EvalOrder(List<JsonNode> Operands, bool HasReceiver, EvalOrderShape Shape)
-    {
-        public int ArgumentStart => HasReceiver ? 1 : 0;
-    }
-
-    // The operand description of a node whose lowering routes through RewriteEvalOrder — or null when it does not
-    // (an `.await()` marker and a `suspendCoroutine` intrinsic are reconstructed by their own emitters; every
-    // other node kind takes Rewrite's generic copy, which spills nothing).
-    internal static EvalOrder? EvalOrderOf(JsonObject o)
-    {
-        var k = Str(o["k"]);
-        if (k == "binOp")
-            return new EvalOrder(new List<JsonNode> { o["lhs"], o["rhs"] }, HasReceiver: false, EvalOrderShape.Binary);
-        var kids = new List<JsonNode>();
-        if (Bool(o["suspendCall"]))
-        {
-            if (IsAwaitMarkerCall(o) || IsSuspendCoroutineCall(o)) return null;
-            // ColdCall passes the receiver for the instance forms only. (The suspend-VALUE invoke, which always
-            // passes one, is a `callInstance` — so the same test covers it.)
-            var coldInstance = k is "callInstance" or "clrInstance" or "clrGenericInstance";
-            if (coldInstance) kids.Add(o["recv"]);
-            if (o["args"] is JsonArray sa) foreach (var a in sa) kids.Add(a);
-            return new EvalOrder(kids, coldInstance, EvalOrderShape.Call);
-        }
-        // The call/new kinds whose CONTAINED suspension routes them through the ordered rewrite. A kind outside
-        // this set takes Rewrite's generic copy, so none of its operands is spilled — and because Rewrite's
-        // dispatch selects its arm by asking THIS function, adding a kind here moves both sides at once.
-        if (k is not ("callStatic" or "callInstance" or "clrStatic" or "clrInstance" or "clrGenericStatic"
-                      or "new" or "newClr"))
-            return null;
-        var hasRecv = o["recv"] != null;
-        if (hasRecv) kids.Add(o["recv"]);
-        if (o["args"] is JsonArray args) foreach (var a in args) kids.Add(a);
-        return new EvalOrder(kids, hasRecv, EvalOrderShape.Call);
-    }
 
     // A call to dll2klib's metadata-only @ClrAwaitBridge declaration. The marker, rather than a
     // source name or owner, keeps user-authored suspend functions named `await` on the ordinary cold-call path.
@@ -1307,14 +1167,9 @@ static partial class SuspendColdLowering
         // that re-drives THIS SM via resumeWith). Populated during body emission; spliced into the SM type.
         readonly List<JsonObject> _awaitResumeMethods = new();
 
-        // Global (owner#name -> resultType) index for typing eval-order spill fields (BUG 2). Empty in lambda mode.
-        readonly Dictionary<string, TypeNode> _methodRets;
-        readonly Dictionary<string, TypeNode> _fieldTypes;   // (owner#field / #field) -> declared type, for eval-order spill typing (N4)
-
         int _state;                              // resume-state counter (>=1)
         int _label;                              // label id allocator (above kotc's low ids)
         int _condCounter;
-        int _ordCounter;                         // eval-order spill temp-field counter (BUG 2)
         int _loopCounter;                        // #82 — fresh splice-loop temp counter (FlattenSuspendingLoops)
         int _excCounter;                         // #78 — fresh catch-hoist capture-var counter (HoistSuspendingCatches)
         bool _needSuspendGuard;                  // fun has a suspending try/finally -> emit the $suspending gate (BUG 1)
@@ -1324,8 +1179,7 @@ static partial class SuspendColdLowering
         public FunGen(JsonObject m, string name, string fileClass, string ownerClass,
             Dictionary<string, TypeNode> calleeRet, bool baseIsLocal, string tcsBcl = null, string taskBcl = null,
             List<string> ownerTypeParams = null, IReadOnlyDictionary<string, JsonObject> closures = null,
-            string smNameSuffix = "", string coldNameSuffix = "", Dictionary<string, TypeNode> methodRets = null,
-            Dictionary<string, TypeNode> fieldTypes = null,
+            string smNameSuffix = "", string coldNameSuffix = "",
             IReadOnlyDictionary<string, JsonObject> lambdaMethods = null,
             bool ownerIsInterface = false, bool staticMember = false)
         {
@@ -1333,8 +1187,6 @@ static partial class SuspendColdLowering
             _staticMember = staticMember;
             _isMember = ownerClass != null && !staticMember;   // an INSTANCE member (static/companion members are top-level-shaped)
             _calleeRet = calleeRet; _baseIsLocal = baseIsLocal;
-            _methodRets = methodRets ?? new Dictionary<string, TypeNode>(StringComparer.Ordinal);
-            _fieldTypes = fieldTypes ?? new Dictionary<string, TypeNode>(StringComparer.Ordinal);
             _tcsBcl = tcsBcl; _taskBcl = taskBcl;
             _closures = closures ?? new Dictionary<string, JsonObject>(StringComparer.Ordinal);
             _lambdaMethods = lambdaMethods ?? new Dictionary<string, JsonObject>(StringComparer.Ordinal);
@@ -1425,8 +1277,6 @@ static partial class SuspendColdLowering
         {
             _isLambda = true;
             _restrictedBase = restricted;
-            _methodRets = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
-            _fieldTypes = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
             _ownerTypeParams = new List<string>();
             _closures = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
             _lambdaMethods = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
@@ -1650,8 +1500,8 @@ static partial class SuspendColdLowering
         //
         // The SINGLE decision "does this value get an SM instance field, a MoveNext local, or a compile error"
         // (docs/dotkt-semantics.md §7.1). Every field this state machine mints goes through here — spilled
-        // locals, parameters, captures, `$this`/`label`/`$suspending`, and the synthesized `__aw$`/`__ord$`/
-        // `__cond$`/`__awaiter$` temporaries alike:
+        // locals, parameters, captures, `$this`/`label`/`$suspending`, and the synthesized `__aw$`/`__cond$`/
+        // `__awaiter$` temporaries alike:
         //
         //   lives == false                        -> stays a MoveNext LOCAL (a byref-like value is legal there)
         //   lives == true,  field-legal type      -> an SM instance field
@@ -1666,7 +1516,6 @@ static partial class SuspendColdLowering
         const string RoleCapture = "captured variable";
         const string RoleMachinery = "state-machine slot";
         const string RoleAwaited = "awaited value";
-        const string RoleOrder = "evaluation-order temporary";
         const string RoleCondResult = "conditional-result temporary";
         const string RoleReturn = "result";
 
@@ -2016,15 +1865,19 @@ static partial class SuspendColdLowering
                     return EmitSuspensionPoint(o, outp);
                 if (k == "cond" && (HasOwnSuspension(o) || EscapesExpression(o)))
                     return EmitCondValue(o, outp);
-                // BUG 2 (left-to-right evaluation order across a suspension): when an ordered-eval node contains a
-                // suspension in a LATER operand, any impure earlier operand must be evaluated + SPILLED into a temp
-                // SM field BEFORE the suspension's segments are appended (else its side effects run after the
-                // suspension resumes). WHICH nodes those are is not restated here — the descriptor answers, so this
-                // arm and the liveness analysis that predicts its spills can never be taught different node sets.
-                if (HasOwnSuspension(o) && EvalOrderOf(o) is { } evalOrder)
-                    return RewriteOrdered(o, evalOrder, outp);
+                // The generic copy — and it is ORDERED. A rewritten operand may append statements to `outp` (a
+                // suspension's segments, an escaping `cond`'s control flow), so the operands must be rewritten in
+                // EVALUATION order, not in JSON key order: `susp().f(escaping())` would otherwise emit the argument's
+                // control flow ahead of the receiver's suspension. The rank table is the toolchain's one statement of
+                // which operand of a node runs first, so this holds for every kind rather than for a listed few —
+                // which is why the suspension-bearing operands stage 0 has already lifted out (SuspendOperandPlan.cs)
+                // need no second arm here. The COPY is still built in the node's own key order, so the emitted CIR is
+                // byte-identical to what an unordered copy produced.
+                var rewritten = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
+                foreach (var kv in o.OrderBy(kv => SuspendLiveness.OperandRank(kv.Key)).ToList())
+                    rewritten[kv.Key] = kv.Value == null ? null : Rewrite(kv.Value, outp);
                 var copy = new JsonObject();
-                foreach (var kv in o) copy[kv.Key] = kv.Value == null ? null : Rewrite(kv.Value, outp);
+                foreach (var kv in o) copy[kv.Key] = rewritten[kv.Key];
                 return copy;
             }
             if (node is JsonArray a)
@@ -2034,150 +1887,6 @@ static partial class SuspendColdLowering
                 return copy;
             }
             return node?.DeepClone();
-        }
-
-        // BUG 2: rewrite a left-to-right eval sequence, SPILLING each impure operand that precedes a later
-        // suspension into a temp SM field NOW (so its side effects happen before the suspension's segments are
-        // appended by a subsequent Rewrite). An operand that itself carries the suspension is already spilled to
-        // its own `__aw` field by EmitSuspensionPoint, so it needs no extra spill; a pure operand (no call/new/
-        // assignment anywhere in it) is stable across the suspension and stays inline (keeps output byte-identical
-        // for the common `acc + one()` case where the left operand is a plain field/local read).
-        List<JsonNode> RewriteEvalOrder(List<JsonNode> kids, List<JsonNode> outp, out JsonNode terminal)
-        {
-            // A TERMINAL operand is one whose evaluation never completes — an expression-position `throw`/`return`,
-            // the `valueBlock` a spliced `run { throw … }` becomes, a `break`/`continue` in a value slot, a call to a
-            // `Nothing`-returning function. Kotlin evaluates it and then nothing else in this expression.
-            //
-            // It only needs saying here when a SUSPENSION sits to its RIGHT, because that is the only arrangement
-            // this rewrite would otherwise get wrong: the terminal operand precedes a suspension, so it is selected
-            // for an evaluation-order spill — and it is not a value to spill. There is no resume at which to reload
-            // it, and wrapping it in the spill's `SetField` would push the state machine's receiver and then leave
-            // through the throw with it still on the stack. Two more things follow once the shape is recognised:
-            // every operand to its RIGHT is unreachable, so it is not rewritten at all (rewriting one would append
-            // dead suspension segments the machine still has to number and label), and the terminal operand IS the
-            // enclosing expression's value — `pair(throw x, later())` is `throw x`.
-            //
-            // An operand to its LEFT keeps its ordinary treatment against the operands that remain, which is why the
-            // truncated list is what the spill decision is asked over: `pair(side(), later(), throw x)` has no
-            // suspension right of the terminal, so nothing is truncated and `side()` spills as always; only
-            // `pair(side(), throw x, later())` truncates, and there `side()` has no reachable suspension left to be
-            // ordered against.
-            //
-            // With NO suspension to its right the operand needs nothing special and gets nothing: `f(throw x)` and
-            // `f(later(), throw x)` lower exactly as they always did — everything left of the terminal evaluates
-            // (a suspension there completes and resumes normally), then the terminal leaves, and the emitted call
-            // it was an argument to is unreachable code that never runs.
-            var terminalAt = kids.FindIndex(k => k != null && NodeType.IsNothing(TypeOfExpr(k)));
-            if (terminalAt >= 0 && LastSuspending(kids) <= terminalAt) terminalAt = -1;
-            var live = terminalAt < 0 ? kids : kids.GetRange(0, terminalAt + 1);
-            terminal = null;
-            var res = new List<JsonNode>(live.Count);
-            for (var i = 0; i < live.Count; i++)
-            {
-                var child = live[i];
-                if (child == null) { res.Add(null); continue; }
-                var rw = Rewrite(child, outp);
-                if (SpilledBeforeSuspension(live, i))
-                {
-                    // The spill is a real field on the SM class, so its type matters: a `kotlin.Any` slot boxes a
-                    // value type and hides a type the CLR would refuse as a field. TypeOfExpr answers precisely for
-                    // every node that carries a type, and every lowering that mints one stamps it — a spliced inline
-                    // call carries the callee's closed return type, a plan binding its caller-instantiated type. So a
-                    // node that cannot be typed here is a DROP by an earlier lowering, and saying so loudly is the
-                    // only answer that cannot silently box a value type.
-                    var ty = TypeOfExpr(child) ?? throw new NotSupportedException(
-                        $"bir2cir: {FieldLegality.PosPrefix(_m)}suspend-lowering: in `{DiagOwner}`, the "
-                        + $"`{Str((child as JsonObject)?["k"]) ?? "?"}` operand evaluated before a suspending operand "
-                        + "carries no static type, so its evaluation-order spill slot would be untyped — an earlier "
-                        + "lowering dropped the operand's type.");
-                    var tmp = "__ord$" + (++_ordCounter);
-                    // By construction this spill outlives the suspension to its right (that is why it exists).
-                    FieldStorage(tmp, ty, RoleOrder, lives: true, across: SuspendedCalleeIn(live[LastSuspending(live)]));
-                    outp.Add(SetField(tmp, rw));
-                    res.Add(FieldOf(tmp, ty));
-                }
-                else res.Add(rw);
-            }
-            if (terminalAt >= 0) terminal = res[terminalAt];
-            return res;
-        }
-
-        // BUG 2 for a node that CONTAINS (but is not itself) a suspension: rewrite its operands in evaluation
-        // order, spilling the impure ones to the left of a suspending operand, then reassemble the node by the
-        // shape the description names. One rewrite for both a binary node's `lhs`/`rhs` and a call/new node's
-        // `recv`/`args`, so there is no per-shape operand list to keep in step with the description.
-        JsonNode RewriteOrdered(JsonObject o, EvalOrder order, List<JsonNode> outp)
-        {
-            var rw = RewriteEvalOrder(order.Operands, outp, out var terminal);
-            // An operand that never completes IS this expression's value — there is nothing to reassemble around it,
-            // and the node's own callee/operator would be emitted as unreachable code if we did.
-            if (terminal != null) return terminal;
-            var copy = new JsonObject();
-            if (order.Shape == EvalOrderShape.Binary)
-            {
-                foreach (var kv in o) copy[kv.Key] = kv.Value?.DeepClone();
-                copy["lhs"] = rw[0];
-                copy["rhs"] = rw[1];
-                return copy;
-            }
-            var recvRw = order.HasReceiver ? rw[0] : null;
-            var argsRw = new JsonArray();
-            for (var i = order.ArgumentStart; i < rw.Count; i++) argsRw.Add(rw[i]);
-            foreach (var kv in o)
-            {
-                if (kv.Key == "recv") copy["recv"] = recvRw;
-                else if (kv.Key == "args") copy["args"] = argsRw;
-                else copy[kv.Key] = kv.Value?.DeepClone();
-            }
-            return copy;
-        }
-
-        // The static type token of an expression, for typing an eval-order spill field. Reads an explicit type key
-        // when present; #199 — else the node's `sty` (the frontend-resolved instantiated static type kotc stamps on
-        // every call/field/read node, BirEmitterExpressions.kt) — a PRECISE, per-node type that needs no owner
-        // disambiguation and so is immune to the same-simple-name-across-packages collision that a name-keyed lookup
-        // has; else the same-assembly method/field index (a name-keyed fallback for a rare node without `sty`); a
-        // `bin`'s result is its left-operand type (comparisons -> Boolean).
-        // Returns NULL when the type is unknown — a spill slot is a real SM field, so its caller errors out rather
-        // than silently declaring it `kotlin.Any` (which boxes a value type and hides a field-illegal type).
-        TypeNode TypeOfExpr(JsonNode n)
-        {
-            if (n is not JsonObject o) return null;
-            // The node-local answer first (an explicit `ret`/`dynRet`/`sty`, then whatever slot the kind carries its
-            // own result type in). Shared with the call-evaluation plan's address pins, which mint locals for the same
-            // reason and must type them the same way — see bir-common/NodeType.cs.
-            if (NodeType.Of(o, TypeOfExpr, name => BirTypeLowering.PrimArrayElem.TryGetValue(name, out var pe) ? pe : null)
-                is TypeNode nodeLocal) return nodeLocal;
-            // ...then the arms only an INDEX of this compilation can answer: a call with no `sty`, and a raw field read.
-            switch (Str(o["k"]))
-            {
-                case "callStatic":
-                {
-                    var name = Str(o["method"]);
-                    var owner = TypeJson.OwnerName(o["owner"]);
-                    var key = (owner == null ? "#" : BareOwner(owner) + "#") + name;
-                    if (_methodRets.TryGetValue(key, out var rt)) return rt;
-                    if (_methodRets.TryGetValue("#" + name, out var rt2)) return rt2;
-                    break;
-                }
-                case "callInstance":
-                {
-                    var ot = BareOwner(TypeJson.OwnerName(o["ownerType"]));
-                    if (ot != null && _methodRets.TryGetValue(ot + "#" + Str(o["method"]), out var rt)) return rt;
-                    break;
-                }
-                case "field": case "staticField": case "lateinitGet":
-                {
-                    // N4 eval-order spill: type the temp SM field from the field's declared type (a raw field read
-                    // carries no `retType`). Owner-qualified first (`owner#name`), then top-level (`#name`).
-                    var fname = Str(o["name"]);
-                    var fowner = BareOwner(TypeJson.OwnerName(o["ownerType"]));
-                    if (fowner != null && _fieldTypes.TryGetValue(fowner + "#" + fname, out var fft)) return fft;
-                    if (_fieldTypes.TryGetValue("#" + fname, out var fft2)) return fft2;
-                    break;
-                }
-            }
-            return null;
         }
 
         // Lower a `cond` (ternary) EXPRESSION to control flow, carrying its value in a temporary. The temporary
@@ -2258,8 +1967,8 @@ static partial class SuspendColdLowering
         // Flatten such expressions while bir2cir still owns CFG construction.
         //
         // Stops at `LambdaKinds` on purpose — a transfer inside a lambda body belongs to that
-        // lambda's own frame. See the note on IsPureExpr, which shares `ControlTransferKinds`
-        // with this walk but deliberately does NOT stop there.
+        // lambda's own frame, so flattening the enclosing expression on account of it would be
+        // a regression.
         static bool EscapesExpression(JsonNode node)
         {
             bool Walk(JsonNode n)
@@ -2949,27 +2658,6 @@ static partial class SuspendColdLowering
             return new JsonObject { ["k"] = "local", ["name"] = name };
         }
 
-        // A TERMINAL operand (`throw`/`return`/`Nothing`) inside the argument list of the SUSPEND call itself, with a
-        // NESTED suspension to its RIGHT: `later(throw x, inner())`. Semantically the whole call is unreachable — the
-        // throw leaves before either suspension — but a suspension POINT is a label, a state save and a resume arm
-        // that this builder is in the middle of assembling, and it has no way to say "emit nothing here". Refusing is
-        // the honest answer, and it is not a narrowing: the shape aborted before this rule existed too (the spill it
-        // wanted had no derivable type), and it is the same family as the known nested-suspension-in-an-argument-list
-        // defect.
-        //
-        // ONLY that arrangement comes here. A terminal operand with no suspension to its right — `later(throw x)`,
-        // `later(inner(), throw x)` — needs no suspension point elided and never reaches this: RewriteEvalOrder
-        // reports a terminal only when one sits left of a suspension. So does the reachable form of the same fault in
-        // a NON-suspending call that merely CONTAINS a suspension (`pair(run { throw … }, later())`), which
-        // RewriteOrdered answers by making the terminal operand the expression's value.
-        JsonObject TerminalOperandInSuspendCall(JsonObject callNode) =>
-            throw new NotSupportedException(
-                $"bir2cir: {FieldLegality.PosPrefix(_m)}suspend-lowering: in `{DiagOwner}`, the suspending call to "
-                + $"`{Str(callNode["method"]) ?? "?"}` has an argument that never returns (a `throw`/`return`, or a "
-                + "`Nothing`-typed call) to the LEFT of another suspension in the same argument list. The call is "
-                + "unreachable, but the state machine cannot express a suspension point that is never taken — lift "
-                + "the argument into a statement before the call.");
-
         // The cold call. Shapes (same-assembly callStatic/callInstance, and — BUG 1 — the CROSS-ASSEMBLY
         // clr forms kotc emits for a referenced suspend callee):
         //   callStatic         -> <method>$dotkt_suspend(<args>, cast(this))                     (owner preserved)
@@ -2979,7 +2667,7 @@ static partial class SuspendColdLowering
         //   clrGenericStatic   -> LibKt.<method>$dotkt_suspend<T>(<args>, cast(this))
         //   clrGenericInstance -> recv.<method>$dotkt_suspend<T>(<args>, cast(this))
         // `this` (the caller SM, a Continuation) is the callee's completion. typeArgs are preserved. Args/receiver
-        // are rewritten (spilling nested suspensions, redirecting locals/`this`).
+        // are rewritten (redirecting locals/`this`).
         JsonObject ColdCall(JsonObject callNode, List<JsonNode> outp)
         {
             // GAP 1: a call to a suspend functional VALUE has no named cold entry — drive it through the stdlib
@@ -2990,14 +2678,13 @@ static partial class SuspendColdLowering
             var method = Str(callNode["method"]) + "$dotkt_suspend";
             var isClr = k is "clrStatic" or "clrInstance" or "clrGenericStatic" or "clrGenericInstance";
             var isGeneric = k is "clrGenericStatic" or "clrGenericInstance";
-            // Evaluate recv (instance) then args LEFT-TO-RIGHT, spilling any impure operand that precedes a later
-            // suspending operand (BUG 2 — a nested suspension inside a suspend call's own argument list). The
-            // operand list and the receiver's presence come from the shared description, so the spill the liveness
-            // analysis assumes is the spill that happens here.
+            // Evaluate recv (instance) then args LEFT-TO-RIGHT, over the shared operand description. Stage 0 has
+            // already lifted every suspension-bearing operand of a SUSPEND call into a `var` ahead of it
+            // (SuspendOperandPlan.cs), so what is left here appends no statements of its own and the rewrite is a
+            // plain ordered walk.
             var order = EvalOrderOf(callNode).Value;
             var isInstance = order.HasReceiver;
-            var rw = RewriteEvalOrder(order.Operands, outp, out var terminal);
-            if (terminal != null) return TerminalOperandInSuspendCall(callNode);
+            var rw = order.Operands.Select(x => x == null ? null : Rewrite(x, outp)).ToList();
             var ri = order.ArgumentStart;
             var recvRw = isInstance ? rw[0] : null;
             var args = new JsonArray();
@@ -3151,12 +2838,11 @@ static partial class SuspendColdLowering
         //     args[i] into its param fields). The invoke args are the receiver + params in SuspendFunctionN order.
         JsonObject SuspendValueColdCall(JsonObject callNode, List<JsonNode> outp)
         {
-            // Evaluate the value receiver then any invoke arg LEFT-TO-RIGHT (BUG 2 — a nested suspension in an arg),
-            // over the shared operand description. A suspend-VALUE invoke is a `callInstance`, so that description
-            // always carries its receiver first.
+            // Evaluate the value receiver then any invoke arg LEFT-TO-RIGHT, over the shared operand description. A
+            // suspend-VALUE invoke is a `callInstance`, so that description always carries its receiver first; stage 0
+            // has already lifted any suspension-bearing operand out of it (SuspendOperandPlan.cs).
             var order = EvalOrderOf(callNode).Value;
-            var rw = RewriteEvalOrder(order.Operands, outp, out var terminal);
-            if (terminal != null) return TerminalOperandInSuspendCall(callNode);
+            var rw = order.Operands.Select(x => x == null ? null : Rewrite(x, outp)).ToList();
             var recvRw = rw[0];
             var invokeArgs = rw.Skip(order.ArgumentStart).ToList();   // 0 / 1 / N (SuspendFunction0 / 1 / N)
 

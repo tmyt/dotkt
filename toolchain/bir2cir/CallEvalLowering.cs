@@ -133,8 +133,14 @@ static class CallEvalLowering
     /// Decide each binding's physical form. Returns the `var` statements in plan order, and how each binding id is to
     /// be READ: a `local` load for a materialised binding, the expression itself for an inlined one, null for a
     /// dropped one.
-    static (JsonArray Stmts, Dictionary<string, JsonNode> Repl) Materialise(
-        JsonArray bindings, List<JsonNode> readers, string site)
+    ///
+    /// `force` is supplied by a producer that has ALREADY decided the ordering — the suspend lowering's stage-0
+    /// operand plan (SuspendOperandPlan.cs), whose bindings are a node's own operands in the node's own order. It
+    /// then answers the two order rules below by construction (there is no inversion to repair, and the prefix rule
+    /// is exactly what `force` encodes), and deriving anything further here would move an operand from AFTER a
+    /// suspension to before it — the reorder that plan exists to prevent. So `force`, when given, IS the answer.
+    internal static (JsonArray Stmts, Dictionary<string, JsonNode> Repl) Materialise(
+        JsonArray bindings, List<JsonNode> readers, string site, bool[] force = null)
     {
         var n = bindings.Count;
         var ids = new string[n];
@@ -180,22 +186,25 @@ static class CallEvalLowering
             // it cannot observe a different value or a side effect. An ADDRESS is not a value at all — no storage holds a
             // managed pointer — so it never becomes a local; what its LOCATION is computed from is pinned instead, at
             // this binding's own position in the loop below. Everything else needs a local unless exactly one reader puts
-            // it back where it already was, at the point the call itself is evaluated.
+            // it back where it already was, at the point the call itself is evaluated — or unless the producer has
+            // already decided (`force`), in which case that decision is the whole answer.
             asVar[i] = !drop[i] && !stable[i] && kinds[i] != "address"
-                && (count != 1 || deferred.Contains(ids[i]));
+                && (force != null ? force[i] : count != 1 || deferred.Contains(ids[i]));
         }
-        // ORDER, rule 1 — INVERSION. An inlined binding is evaluated at its reader's position, and a plan's order is
+        // ORDER, rule 1 — INVERSION. Skipped under `force` (see above). An inlined binding is evaluated at its reader's position, and a plan's order is
         // NOT the node's: an omitted default occupies a slot the callee declared, while Kotlin evaluates it after every
         // value the call SUPPLIES, whatever slot that value sits in. So `f(a: Int = d(), y: Int)` called `f(y = p())`
         // plans [y, a] but emits args [a, y]. Where a later binding reads an EARLIER position, the earlier binding must
         // be materialised — moving it ahead of the call, which is ahead of everything.
-        for (var i = 0; i < n; i++)
-        {
-            if (stable[i] || drop[i] || asVar[i] || kinds[i] == "address") continue;
-            for (var k = i + 1; k < n; k++)
-                if (!stable[k] && !drop[k] && ReadPos(pos, ids[k]) < ReadPos(pos, ids[i])) { asVar[i] = true; break; }
-        }
-        // ORDER, rule 2 — PREFIX, over PRE-CALL WORK rather than over materialisation. THE invariant, in one place:
+        if (force == null)
+            for (var i = 0; i < n; i++)
+            {
+                if (stable[i] || drop[i] || asVar[i] || kinds[i] == "address") continue;
+                for (var k = i + 1; k < n; k++)
+                    if (!stable[k] && !drop[k] && ReadPos(pos, ids[k]) < ReadPos(pos, ids[i])) { asVar[i] = true; break; }
+            }
+        // ORDER, rule 2 — PREFIX, over PRE-CALL WORK rather than over materialisation. Skipped under `force`, which
+        // already encodes it. THE invariant, in one place:
         //
         //     the emitted pre-call statement sequence is ordered by plan position, and a binding that emits ANY
         //     pre-call statement forces every earlier non-stable binding to emit one too.
@@ -207,12 +216,15 @@ static class CallEvalLowering
         // came to overtake an earlier inline binding. A STABLE value is exempt by definition: re-reading it cannot
         // observe a different value. An address needs no forcing of its own: its impure operands are already pinned at
         // its position, and what is left in the slot is a pure location expression.
-        var work = new bool[n];
-        for (var i = 0; i < n; i++)
-            work[i] = asVar[i] || (kinds[i] == "address" && !drop[i] && LocationHasPinWork((bindings[i] as JsonObject)["expr"]));
-        var last = Array.FindLastIndex(work, x => x);
-        for (var i = 0; i < last; i++)
-            if (!stable[i] && !drop[i] && kinds[i] != "address") asVar[i] = true;
+        if (force == null)
+        {
+            var work = new bool[n];
+            for (var i = 0; i < n; i++)
+                work[i] = asVar[i] || (kinds[i] == "address" && !drop[i] && LocationHasPinWork((bindings[i] as JsonObject)["expr"]));
+            var last = Array.FindLastIndex(work, x => x);
+            for (var i = 0; i < last; i++)
+                if (!stable[i] && !drop[i] && kinds[i] != "address") asVar[i] = true;
+        }
 
         var stmts = new JsonArray();
         var repl = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
@@ -338,7 +350,12 @@ static class CallEvalLowering
     /// than tracking frames.
     static string FreshLocal() => "cir$b" + System.Threading.Interlocked.Increment(ref _counter);
 
-    /// Q5 of the five value questions (roster in bir-common/ValueStability.cs) — is this node an LVALUE FORMER, a
+    /// A binding ID for a plan bir2cir itself AUTHORS (the suspend lowering's stage-0 operand plan). Same `cir$b…`
+    /// namespace and the same counter as the local names above, so an id and a minted local can never coincide even
+    /// though they are different namespaces (spec §2.7 *Id namespaces*).
+    internal static string FreshBindingId() => FreshLocal();
+
+    /// Q5 of the four value questions (roster in bir-common/ValueStability.cs) — is this node an LVALUE FORMER, a
     /// shape that DESIGNATES storage without evaluating anything itself? Those are the locations whose operands can
     /// be pinned while the location stays in the slot. Anything else producing an address is a call whose invocation
     /// IS the evaluation, and has to move whole (see the address arm above).
@@ -513,7 +530,7 @@ static class CallEvalLowering
     /// Rebuild `node` with every `bindRef` of `repl` replaced by a fresh clone of its resolved form. Rebuilt (never
     /// mutated in place) so no node is double-parented, and cloned per occurrence because an inlined binding with more
     /// than one reader is stable — cloning a stable READ is not cloning an evaluation.
-    static JsonNode Substitute(JsonNode node, Dictionary<string, JsonNode> repl)
+    internal static JsonNode Substitute(JsonNode node, Dictionary<string, JsonNode> repl)
     {
         switch (node)
         {

@@ -25,6 +25,37 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir (area:bir2cir): a suspension inside a suspending call's own operand list no longer hangs forever
+  ([tmyt/dotkt#272]), and an operand that CONTAINS a suspension is no longer evaluated after the operand to its
+  right ([tmyt/dotkt#286]).** `corAdd(x, corTick(1))` never completed: the outer call wrote its resume label, the
+  inner suspension overwrote it, and every resume jumped back into the inner state. `h(f()) + g()` traced F,G,H
+  where Kotlin requires F,H,G: the suspension's segments were appended and the residual `h(<awaited>)` was left
+  in its slot, so it ran after the NEXT operand's suspension. Both are now unreachable by construction. A new
+  STAGE 0 of the suspend lowering (`toolchain/bir2cir/SuspendOperandPlan.cs`) runs before any state machine
+  exists and, for every node the shared operand descriptor recognises, wraps the operands in a call-evaluation
+  plan (spec §2.7) forced by POSITION: every operand left of the last suspension-bearing one becomes a `var`
+  ahead of the node, and — when the node is itself a suspend call — so does that operand, which lifts the nested
+  suspension out of the argument list entirely. Everything to the right stays in its slot and is still evaluated
+  after the resume. `tests/coroutines/fixtures/SuspendOperandOrderTests.kt` pins the issue's own repro plus the
+  instance, receiver-position, generic and four cross-module `clr*` arms of the same shape — one of which
+  (`clrGenericInstance`) the descriptor only listed for a call that WAS the suspension, never one that merely
+  contained it. The issue's string-valued sibling (`wrap(f()) + g()`, and the `"…${f()}…${g()}…"` template that
+  means the same thing) is covered too: both are a `concat` by the time the plan is made, which the descriptor
+  had never named.
+- **bir2cir (area:bir2cir): a .NET property read, a delegate invoke, an `Any`-slot method or an interface call on
+  a type-parameter receiver, sitting left of a suspending operand, now observes the state BEFORE the suspension.**
+  `sb.Length + susp()` read the length the suspending callee had already changed. The retired rule decided which
+  operands were evaluated before a suspension by KIND — a subtree free of calls, allocations, assignments and
+  control transfers was judged safe to defer past the resume — and that set never closed: a raw field read and an
+  array element had been added, `clrPropGet`/`delegateInvoke`/`objMethod`/`constrainedCall` never were. Stage 0
+  answers by position instead, so the whole family is covered without naming a kind, and the predicate, the
+  eval-order rewrite it fed and the liveness analysis's model of that rewrite are all deleted.
+- **bir2cir (area:bir2cir): an argument that never returns, left of a suspension in a suspending call, compiles
+  and runs instead of being refused.** `sum(run { throw … }, relay())` was a compile-time refusal, because the
+  cold-call builder met it half-way through assembling a suspension point it then had no way to elide. Stage 0
+  sees the same shape before any state machine exists, so the node and every operand right of the terminal one
+  are simply dropped and the throw is the expression's value. `tests/compile-fail/` loses that case (its runtime
+  twin is in `SuspendOperandOrderTests.kt`); the neighbouring arrangements it contrasted with are unchanged.
 - **bir2cir (area:bir2cir): a `!!`, an elvis or a safe call in an argument to the LEFT of a suspending argument
   no longer aborts the compile.** `h(x!!, susp())` was REJECTED — "the operand … carries no static type" — on
   source the frontend had accepted. kotc lowers `x!!` to `{ var __nn = x; if (__nn != null) __nn else throw }`
