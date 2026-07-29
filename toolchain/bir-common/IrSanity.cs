@@ -109,15 +109,26 @@ public static class IrSanity
         var declared = paramNames != null ? new HashSet<string>(paramNames) : new HashSet<string>();
         var labels = new HashSet<int>();
         foreach (var r in roots) { CollectDeclared(r, declared); CollectSanityLabels(r, labels); }
-        // Check 6 asks only of the bodies ilemit turns into IL. A declaration that STILL carries `mods.suspend` is
-        // not one: bir2cir deliberately leaves a disqualified suspend shape un-lowered (LambdaKinds, and in a stdlib
-        // build the coroutine PRIMITIVES whose call sites are reconstructed inline), and ilemit's own `mods.suspend`
-        // guard then emits a throwing stub in a stdlib build or fails LOUD in an app build — its body's statements are
-        // never walked. Checking those bodies would only restate ilemit's guard one layer earlier, in the one place it
-        // is expected. Measured at this commit: all 7 `suspendCall` survivors in the runtime stdlib CIR sit in such
-        // declarations (SequenceScope.yieldAll/yield, ContinuationKt.suspendCoroutine, DeepRecursiveScopeImpl.
-        // callRecursive), and ZERO sit in an emitted body; the 252-file reference CIR has none at all (its bodies are
-        // squashed to a throw stub by RefBodySquash before this runs, so a ref build needs no separate exemption).
+        // Check 6 asks only of the bodies ilemit turns into IL, and a declaration that STILL carries `mods.suspend`
+        // is not one: ilemit's guard on that exact flag (`ModFlag(m, "suspend")`, Emitter.Bodies.cs) returns before
+        // it ever reaches the statement walk — a throwing stub in a stdlib build, a loud refusal in an app build.
+        // Checking those bodies would only restate that guard one layer earlier, in the one place it is expected to
+        // be hit.
+        //
+        // Such a survivor is STDLIB-ONLY by construction, and not because a refused shape goes un-lowered — a
+        // non-segmentable suspend fun still gets a cold entry + bridge, with a call-time throw for a body. The two
+        // mechanisms that actually leave the flag on disk are both in SuspendColdLowering: the self-build RETAINS the
+        // original beside the cold entry (kotc's pre-ignition @RestrictsSuspension `sequence{}`/`iterator{}` path
+        // still calls SequenceScope.yield/yieldAll by name), where an app build removes it; and the admit gate
+        // excludes an `inline` suspend fun outside an app build, which is how the coroutine PRIMITIVES — whose call
+        // sites are reconstructed inline instead — keep their standalone bodies.
+        //
+        // Measured at this commit: all 7 `suspendCall` survivors in the runtime stdlib CIR sit in such declarations
+        // (SequenceScope.yieldAll x2, SequenceBuilderIterator.yield/yieldAll, ContinuationKt.suspendCoroutine,
+        // DeepRecursiveScopeImpl.callRecursive x2) and ZERO sit in an emitted body; the app corpus has none at all,
+        // and neither does the 252-file reference CIR (RefBodySquash replaces its bodies with a throw stub before
+        // this runs, so a ref build needs no separate exemption). The synthesized cold entries and state-machine
+        // `invokeSuspend` bodies — where an escape would actually land — carry no `mods.suspend` and ARE checked.
         var checkSuspension = !IsSuspendDecl(decl);
         foreach (var r in roots)
         {
@@ -209,9 +220,10 @@ public static class IrSanity
             if (node.TryGetProperty("k", out var kEl) && kEl.ValueKind == JsonValueKind.String)
             {
                 // 6. SUSPENSION LOWERED. `suspendCall:true` is kotc's FRONTEND FACT that this call site suspends;
-                // bir2cir's SuspendColdLowering is its only consumer, rewriting every suspending call into the cold
-                // Continuation shape (a resume label plus a call to the callee's `$dotkt_suspend` cold entry) out of
-                // FRESH nodes that carry no tag. So a survivor in a body that ilemit EMITS is a suspension that
+                // bir2cir's SuspendColdLowering is its only consumer, rewriting every suspending call into its cold
+                // shape — a resume label plus a call to the callee's `$dotkt_suspend` cold entry, or the awaiter
+                // sequence for a `.await()` CLR bridge — out of FRESH nodes that carry no tag. So a survivor in a
+                // body that ilemit EMITS is a suspension that
                 // ESCAPED the lowering, and ilemit, which has no notion of one, emits it as an ordinary invocation:
                 // the caller reads the raw `Task`/COROUTINE_SUSPENDED sentinel where the awaited value belongs, and
                 // the state machine never gets a resume point. Loud here beats an InvalidCastException at runtime.

@@ -81,8 +81,9 @@ class Sanity:
         labels = _collect_labels(roots)
         dl = _pos_prefix(decl) + decl_label
         # Check 6 asks only of the bodies ilemit turns into IL. A declaration that STILL carries `mods.suspend` is
-        # not one — bir2cir deliberately leaves a disqualified suspend shape un-lowered and ilemit's own
-        # `mods.suspend` guard stubs it (stdlib) or fails loud (app) without ever walking its statements.
+        # not one — ilemit's guard on that exact flag stubs it (stdlib build) or refuses it loudly (app build)
+        # without ever reaching the statement walk. IrSanity.CheckScope documents which declarations those are and
+        # why they are stdlib-only.
         mods = decl.get("mods") if isinstance(decl, dict) else None
         check_suspension = not (isinstance(mods, dict) and mods.get("suspend") is True)
         # dup labels — scoped per single tree

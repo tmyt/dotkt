@@ -9,17 +9,18 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 - **A suspension that escapes the cold lowering is now caught at the CIR boundary (area:bir2cir, area:ilemit).**
   `suspendCall:true` is kotc's frontend fact that a call site suspends, and bir2cir's `SuspendColdLowering` is its
-  only consumer — it rebuilds each suspending call as a resume label plus a `$dotkt_suspend` cold-entry call, out
-  of fresh nodes that carry no tag. Until now nothing said so: a suspension that slipped through reached ilemit as
-  an ordinary invocation, so the caller read the raw `Task`/`COROUTINE_SUSPENDED` sentinel where the awaited value
-  belonged and the state machine got no resume point — an `InvalidCastException` far from its cause, or a silently
-  wrong value. The shared `IrSanity` check set (run in-process by both bir2cir and ilemit, mirrored offline by
-  `scripts/verify-sanity.py` for `make verify-sanity`) gained the invariant, and the message names the declaration.
-  A declaration that still carries `mods.suspend` is exempt, because ilemit never walks its body: bir2cir
-  deliberately leaves a disqualified suspend shape un-lowered — in a stdlib build the coroutine primitives whose
-  call sites are reconstructed inline — and ilemit's own `mods.suspend` guard stubs it there and fails loud in an
-  app build. Calibrated against the current corpus: all seven survivors in the runtime stdlib CIR sit in exempt
-  declarations, and no emitted body carries one.
+  only consumer — it rebuilds each suspending call as a resume label plus the callee's cold-shape call (a
+  `$dotkt_suspend` cold entry, or the awaiter sequence for a `.await()` CLR bridge), out of fresh nodes that carry
+  no tag. Until now nothing said so: a suspension that slipped through reached ilemit as an ordinary invocation, so
+  the caller read the raw `Task`/`COROUTINE_SUSPENDED` sentinel where the awaited value belonged and the state
+  machine got no resume point — an `InvalidCastException` far from its cause, or a silently wrong value. The shared
+  `IrSanity` check set (run in-process by both bir2cir and ilemit, mirrored offline by `scripts/verify-sanity.py`
+  for `make verify-sanity`) gained the invariant, and the message names the declaration. A declaration that still
+  carries `mods.suspend` is exempt, because ilemit's guard on that exact flag returns before it reaches the
+  statement walk; such a survivor is stdlib-only, since the self-build deliberately retains the original beside its
+  cold entry and the admit gate excludes the inline coroutine primitives, where an app build removes the original
+  outright. Calibrated against the current corpus: all seven survivors in the runtime stdlib CIR sit in exempt
+  declarations, no emitted body carries one, and the app corpus has none at all.
 - **The IR sanity gate gained a self-test lane, and the schema gate a granularity fixture
   (`tests/ir/selftest/`).** Both gates validate whatever is on disk, so one that stopped checking would look
   exactly like a clean corpus. `tests/ir/run-sanity.sh` now runs the directory's `*.cir.json` half first
@@ -28,7 +29,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   side, `accept-unplanned-suspension-operand.bir.json` pins the §2.7 granularity rule for the shape the
   suspension work touches: a call whose operand merely suspends acquires no second reader, so `h(f(), 1)` is
   plain BIR with no `callEval` around it. Where a suspension is planned is bir2cir's decision, and a BIR-side
-  rule requiring one would make the emitter's own legal output illegal.
+  rule requiring one would make the emitter's own legal output illegal — the shape is ordinary emitter output,
+  present in the hundreds across the stdlib and coroutine corpora, so such a rule would redden real builds and
+  not just the fixture.
+  The sanity lane asserts each fixture against BOTH implementations, not only the offline mirror: the normative
+  checker is the C# `IrSanity` compiled into ilemit, and until now nothing exercised it — a check deleted there
+  would have left every gate green. Both lanes also now fail when they discover no fixture of either kind, and
+  when a `reject-*` case has no expectation text (an empty one matched any message, degrading the assertion to
+  "exited non-zero").
 
 - **Cross-target (target RID != host RID) reference-asset selection is now covered by the gate
   ([tmyt/dotkt#192], area:ilemit, area:packaging).** `tests/msbuild/run.sh` gained

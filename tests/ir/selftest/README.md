@@ -17,7 +17,14 @@ is BIR-only; the sanity invariants are post-lowering CIR):
   (`reject-<name>.expected`).
 - `accept-*` — the validator MUST accept each.
 
-Each runner runs its own half before the real corpus.
+Each runner runs its own half before the real corpus, and fails if it discovered no fixture of either
+kind — a lane that asserted nothing is indistinguishable from a lane that passed.
+
+The sanity lane asserts **both** implementations on every fixture: `scripts/verify-sanity.py` is only the corpus
+net, and the normative checker is the C# `IrSanity` compiled into ilemit, which is what actually stops a bad
+build. ilemit cannot fully emit a synthetic fixture — there are no references to resolve its types against — so
+the accept side asserts that no sanity diagnostic is raised rather than a zero exit; the sanity gate runs at the
+head of `EmitAssembly`, ahead of any resolution.
 
 ## What is pinned today
 

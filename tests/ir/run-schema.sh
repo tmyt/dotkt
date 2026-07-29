@@ -47,10 +47,18 @@ fi
 # the legitimate shape next door, so a validator that refused everything fails here too. Today this covers the
 # §2.7 NESTING RULE, whose whole purpose is a shape the emitted corpus never contains.
 echo "== verify-schema: self-test (the checks with no natural negative in the corpus) =="
-self_rc=0
+self_rc=0; n_reject=0; n_accept=0
 for f in tests/ir/selftest/reject-*.bir.json; do
   [ -e "$f" ] || continue
-  want="$(cat "${f%.bir.json}.expected")"
+  n_reject=$((n_reject + 1))
+  exp="${f%.bir.json}.expected"
+  # An absent/empty expectation would make `grep -F ""` match anything, degrading the assertion to "exited
+  # non-zero" — which a JSON parse failure satisfies too.
+  want="$(cat "$exp" 2>/dev/null)"
+  if [ -z "$want" ]; then
+    echo "  SELFTEST FAIL  $(basename "$f"): $(basename "$exp") is missing or empty (an empty expectation matches anything)"
+    self_rc=1; continue
+  fi
   out="$("$PY" scripts/verify-schema.py "$f" 2>&1)"; frc=$?
   if [ $frc -eq 0 ]; then
     echo "  SELFTEST FAIL  $(basename "$f"): the validator ACCEPTED a document it must refuse"; self_rc=1
@@ -62,6 +70,7 @@ for f in tests/ir/selftest/reject-*.bir.json; do
 done
 for f in tests/ir/selftest/accept-*.bir.json; do
   [ -e "$f" ] || continue
+  n_accept=$((n_accept + 1))
   if "$PY" scripts/verify-schema.py "$f" >/dev/null 2>&1; then
     echo "  SELFTEST ok    $(basename "$f") (accepted)"
   else
@@ -69,6 +78,12 @@ for f in tests/ir/selftest/accept-*.bir.json; do
     "$PY" scripts/verify-schema.py "$f" 2>&1 | sed 's/^/                 /'
   fi
 done
+# A lane that discovered nothing is indistinguishable from a lane that passed. Require one of EACH: an
+# accept-only set would stay green with the checks deleted, a reject-only set with the validator stuck rejecting.
+if [ $n_reject -eq 0 ] || [ $n_accept -eq 0 ]; then
+  echo "  SELFTEST FAIL  found $n_reject reject / $n_accept accept fixture(s) in tests/ir/selftest/*.bir.json — the lane needs at least one of EACH or it asserts nothing"
+  self_rc=1
+fi
 if [ $self_rc -ne 0 ]; then echo "SCHEMA GATE: RED (self-test)"; exit 1; fi
 
 echo "== verify-schema: validating freshly-emitted BIR/CIR against the frozen #37 contract =="
