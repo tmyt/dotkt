@@ -17,7 +17,7 @@ using DotKt.Bir;
 //     in its own slot, so the emitted CIR is what it would have been without a plan;
 //   * a binding with SEVERAL readers becomes a `var`, so the value is evaluated once and every reader loads it;
 //   * a binding NOTHING reads is evaluated as a `var` anyway, because Kotlin evaluates every value the call supplies —
-//     unless evaluating it is unobservable (BindingStability.IsTriviallyPure), in which case it is dropped;
+//     unless evaluating it is unobservable (ValueStability.IsDroppable), in which case it is dropped;
 //   * ORDER is never traded: if any binding becomes a `var`, every earlier non-stable binding becomes one too, or its
 //     evaluation would slide behind it. That rule is what the three failed attempts in PR #270 each gave up one of.
 //
@@ -175,7 +175,7 @@ static class CallEvalLowering
             var count = reads[ids[i]];
             // Nothing reads it and evaluating it cannot be observed — the emitted call shape simply has no slot for
             // this value (a companion object's dispatch receiver, say). Drop it rather than mint a dead local.
-            drop[i] = count == 0 && BindingStability.IsTriviallyPure(expr);
+            drop[i] = count == 0 && ValueStability.IsDroppable(expr);
             // A STABLE value is free to re-read, so it inlines at every reader — wherever the reader is, since re-reading
             // it cannot observe a different value or a side effect. An ADDRESS is not a value at all — no storage holds a
             // managed pointer — so it never becomes a local; what its LOCATION is computed from is pinned instead, at
@@ -338,9 +338,14 @@ static class CallEvalLowering
     /// than tracking frames.
     static string FreshLocal() => "cir$b" + System.Threading.Interlocked.Increment(ref _counter);
 
-    /// Is this node an LVALUE FORMER — a shape that DESIGNATES storage without evaluating anything itself? Those are
-    /// the locations whose operands can be pinned while the location stays in the slot. Anything else producing an
-    /// address is a call whose invocation IS the evaluation, and has to move whole (see the address arm above).
+    /// Q5 of the five value questions (roster in bir-common/ValueStability.cs) — is this node an LVALUE FORMER, a
+    /// shape that DESIGNATES storage without evaluating anything itself? Those are the locations whose operands can
+    /// be pinned while the location stays in the slot. Anything else producing an address is a call whose invocation
+    /// IS the evaluation, and has to move whole (see the address arm above).
+    ///
+    /// This asks about STORAGE, not about side effects, so its answer is unrelated to the other four questions and
+    /// must not be reconciled with them: `arrayGet` is here because `byref(a[i])` names an element slot, even though
+    /// the same kind is impure for the suspend lowering's Q3 and not droppable for Q2.
     static bool IsLvalueFormer(JsonNode node) =>
         node is JsonObject o && Str(o["k"]) is
             "local" or "this" or "field" or "staticField" or "arrayGet" or "stackGet" or "byrefLoad" or "nullableValue";
@@ -353,7 +358,7 @@ static class CallEvalLowering
         var found = false;
         WalkOperands(location as JsonObject, child =>
         {
-            if (BindingStability.IsTriviallyPure(child)) return null;
+            if (ValueStability.IsDroppable(child)) return null;
             found = true;
             return null;                              // probe only: never rewrite
         });
@@ -371,7 +376,7 @@ static class CallEvalLowering
     static void PinLocationOperands(JsonNode location, JsonArray into) =>
         WalkOperands(location as JsonObject, child =>
         {
-            if (BindingStability.IsTriviallyPure(child)) { PinLocationOperands(child, into); return null; }
+            if (ValueStability.IsDroppable(child)) { PinLocationOperands(child, into); return null; }
             return PinValue(child, into);
         });
 
@@ -476,14 +481,20 @@ static class CallEvalLowering
     /// `binOp` is eager in BOTH operands here: the short-circuit forms do not exist at this phase — kotc lowers
     /// `&amp;&amp;`/`||` to a `cond`, and the `binOp` spelling of them is minted by PrimitiveOperatorLowering, which runs
     /// after this pass.
+    ///
+    /// Only kinds that can REACH this pass are listed. This is the ninth pass bir2cir runs (Program.cs), so the set
+    /// is what kotc emits plus what the handful of passes before it mint; the collection-literal constructions
+    /// (`newList`/`newSet`/`newMap`) and the .NET property accesses (`clrPropGet`/`clrPropSet`) are NOT kotc
+    /// vocabulary — MemberCallSubstitution and NetInteropBinding mint them, hundreds of lines later — so listing
+    /// them here would only describe a node this pass cannot see.
     static readonly HashSet<string> EagerKinds = new(StringComparer.Ordinal)
     {
         "callStatic", "callInstance", "callInline", "objMethod", "delegateInvoke", "new", "newClr",
-        "newArray", "newArraySized", "newArrayInit", "newList", "newSet", "newMap",
+        "newArray", "newArraySized", "newArrayInit",
         "field", "setField", "staticField", "setStaticField", "arrayGet", "arraySet", "arrayLen",
         "binOp", "unaryOp", "conv", "cast", "isInst", "isInstRef", "objEq", "concat",
         "nullableWrap", "nullableValue", "nullableHasValue", "safeCastValue",
-        "byrefOf", "byrefLoad", "stackGet", "enumOrdinal", "lateinitGet", "exprStmt", "clrPropGet", "clrPropSet",
+        "byrefOf", "byrefLoad", "stackGet", "enumOrdinal", "lateinitGet", "exprStmt",
     };
 
     static bool EagerSlot(JsonObject parent, string key) =>
