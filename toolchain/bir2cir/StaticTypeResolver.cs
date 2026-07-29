@@ -84,24 +84,24 @@ static class StaticType
     // node.type, carried through lowering); a bir2cir-synthesized node reads its own structural type slot. null when
     // the node carries no recoverable static type — treated by callers as "not a bare primitive"/"not a collection",
     // the same posture the former re-resolution took on a miss.
+    //
+    // FOUNDED ON `bir-common/NodeType.cs`, which answers every kind whose type is IN the node (and is the same
+    // deriver the suspend spill and the plan's address pins type their locals with). Only three sorts of arm stay
+    // here — a kind that needs the enclosing lexical SCOPE, a kind whose answer is a bir2cir SPELLING rather than a
+    // node fact, and the call/field family, whose slot ORDER differs (below). Everything else delegates, so the two
+    // cannot classify a kind differently.
+    //
+    // PRECEDENCE, deliberately not unified yet: the core reads an explicit `ret`/`dynRet`/`sty` stamp before the
+    // kind's own slot, while the call/field arm here reads `sty` BEFORE `ret` (#199 — `ret` is emitted only on a
+    // generic-owner call and can name an un-instantiated type, `sty` is the frontend's instantiated answer). Making
+    // `sty` win everywhere is a change of its own, whose regressions are meant to name the passes that leave a stale
+    // `sty` behind; keeping this arm explicit is what holds today's answers fixed until then.
     public static TypeNode Surface(JsonNode node, BirScope scope)
     {
         if (node is not JsonObject o) return null;
-        var k = (o["k"] as JsonValue)?.GetValue<string>();
-        switch (k)
+        TypeNode Core() => NodeType.Of(o, x => Surface(x, scope), PrimArrayElem);
+        switch ((o["k"] as JsonValue)?.GetValue<string>())
         {
-            // A boxing/narrowing cast's TARGET is the surface type (kotc's `birType(op.type)` = the cast target).
-            case "cast": return TypeJson.Read(o["type"]);
-            case "const": return TypeJson.Read(o["type"]);
-            case "conv": return TypeJson.Read(o["to"]);
-            case "nullableValue": return TypeJson.Read(o["elem"]);
-            // A safe-call wrap (`a?.member` desugar, BirEmitterControlFlow): both arms produce `Nullable<elem>` — the
-            // `nullableWrap` present-value and the `nullableNull` absent-value. A BARE-LOCAL-receiver safe call returns
-            // the raw `cond` with NO `type` stamp (only the bindOnce path wraps it in a typed valueBlock), so its
-            // surface must be recovered from these arms — else a `b?.d == y` float `==` misses the value-nullable
-            // classification and keeps the raw `ceq` over `Nullable<T>` (unverifiable IL, #181).
-            case "nullableWrap" or "nullableNull":
-                return TypeJson.Read(o["elem"]) is TypeNode nwe ? new TypeNode.Nullable(nwe) : null;
             // A local read: the frontend stamp (accurate incl. smart-cast); else the declared type from the lexical
             // scope, for a bir2cir-SYNTHESIZED local (a spliced temp) that carries no stamp. NOTE the stamp SHADOWS a
             // later var-decl retype (InlineSplice.RetypeReceiverToConcrete / CharSeqStringLowering) — benign today
@@ -112,29 +112,17 @@ static class StaticType
                         && scope.VarTypes.TryGetValue(vn, out var vt) ? vt : null);
             // A call / member / property read: the stamped `sty` (kotc / carried through the clr* reshape), else the
             // carried `ret` (a generic call, or a clr* node whose synthesizer stamped only `ret`). Already the
-            // INSTANTIATED result type — no owner type-variable substitution needed.
+            // INSTANTIATED result type — no owner type-variable substitution needed. (See PRECEDENCE above.)
             case "callStatic" or "callInstance" or "clrInstance" or "clrStatic" or "clrPropGet":
             case "field" or "lateinitGet" or "staticField":
                 return TypeJson.Read(o["sty"]) ?? TypeJson.Read(o["ret"]);
-            case "new" or "newClr": return TypeJson.Read(o["type"]);
-            case "newArray" or "newArrayInit" or "newArraySized":            // an array factory / sized ctor -> Array<elem>
-                return TypeJson.Read(o["elem"]) is TypeNode ae ? new TypeNode.Fqn("kotlin.Array", new[] { ae }) : null;
-            case "arrayGet": return TypeJson.Read(o["elem"]);                 // `a[i]` -> the element type
-            case "enumValue": return TypeJson.Read(o["type"]);
-            // `enumValues<T>()`/`T.entries` -> Array<T>. `type` is the structured enum Type (both EnumIntrinsicLowering's
-            // re-emission and kotc's direct `.values()`/`.entries` recognition clone the faithful FQN node).
-            case "enumValues":
-                return TypeJson.Read(o["type"]) is TypeNode eet ? new TypeNode.Fqn("kotlin.Array", new[] { eet }) : null;
-            case "safeCastValue": return TypeJson.Read(o["elem"]);           // `x as? V` -> V (value)
-            case "concat": return new TypeNode.Fqn("kotlin.String");         // a template/`+` concat is always String
-            case "isInst" or "isInstRef" or "objEq": return new TypeNode.Fqn("kotlin.Boolean");
-            // An expression-level ternary (`if`-expr / elvis / when-expr) -> its unified branch type (`type`), else the
-            // then/else branch types (a statement-position / `!!`-desugar cond carries no `type`).
-            case "cond": return TypeJson.Read(o["type"]) ?? Surface(o["then"], scope) ?? Surface(o["else"], scope);
+            // A read of an evaluation plan's binding (§2.7, BIR-only): its producer stamps the caller-instantiated
+            // type and nothing else carries one.
+            case "bindRef":
+                return TypeJson.Read(o["sty"]);
             // A spliced inline call becomes a `valueBlock {stmts, result}` (InlineSplice) — its static type is the
-            // RESULT's, resolved with the block's OWN `var`s in scope (e.g. an `apply`-splice's result is a `local`
-            // declared in its stmts). A stamp is optional here: the splice emits none and the result is a stamped
-            // node, while a block a call-evaluation plan lowered into carries the call's own static type.
+            // RESULT's, resolved with the block's own `var`s AND the enclosing scope (the core resolves the block's
+            // own; only here are the enclosing ones visible, for a result that reads an outer synthesized temp).
             case "valueBlock":
             {
                 var inner = scope.Child();
@@ -142,23 +130,39 @@ static class StaticType
                     if (arr != null) foreach (var st in arr) if (st is JsonObject so) inner.Declare(so);
                 return TypeJson.Read(o["type"]) ?? Surface(o["result"], inner);
             }
-            // A call under its evaluation plan (§2.7, BIR-only — the passes that run before CallEvalLowering see it):
-            // the bindings are statements evaluated ahead of the call, so the VALUE is the wrapped call's. A `bindRef`
-            // is a READ of one, stamped with the binding's own caller-instantiated type by its producer.
-            case "callEval": return TypeJson.Read(o["type"]) ?? Surface(o["expr"], scope);
-            case "bindRef": return TypeJson.Read(o["sty"]);
-            // A LOWERED primitive operator (PrimitiveOperatorLowering / RangeMembershipLowering synthesize these) —
-            // recover its RESULT type structurally, matching kotc's former `birType(op.type)` for the un-lowered op.
-            case "unaryOp":
-                return (o["op"] as JsonValue)?.GetValue<string>() == "!" ? new TypeNode.Fqn("kotlin.Boolean") : Surface(o["e"], scope);
-            case "binOp":
-                return (o["op"] as JsonValue)?.GetValue<string>() is "<" or "<=" or ">" or ">=" or "==" or "!=" or "&&" or "||"
-                    ? new TypeNode.Fqn("kotlin.Boolean")
-                    : Surface(o["lhs"], scope) ?? Surface(o["rhs"], scope);
-            // A bare `this` and anything else remain null → the caller treats them as non-primitive/non-collection.
-            default: return null;
+            // The ABSENT arm of a safe-call wrap (`a?.member` desugar, BirEmitterControlFlow): it carries no value,
+            // so only its shape says the type is `Nullable<elem>` — the same type the `nullableWrap` present arm
+            // produces. A BARE-LOCAL-receiver safe call returns the raw `cond` with NO `type` stamp (only the
+            // bindOnce path wraps it in a typed valueBlock), so its surface is recovered from the two arms — else a
+            // `b?.d == y` float `==` misses the value-nullable classification and keeps the raw `ceq` over
+            // `Nullable<T>` (unverifiable IL, #181).
+            case "nullableNull":
+                return TypeJson.Read(o["elem"]) is TypeNode nne ? new TypeNode.Nullable(nne) : null;
+            // `enumValues<T>()`/`T.entries` -> Array<T>, in the name-keyed spelling (see ArrayAsFqn). `type` is the
+            // structured enum Type (both EnumIntrinsicLowering's re-emission and kotc's direct `.values()`/`.entries`
+            // recognition clone the faithful FQN node).
+            case "enumValues":
+                return TypeJson.Read(o["type"]) is TypeNode eet ? new TypeNode.Fqn("kotlin.Array", new[] { eet }) : null;
+            // An array factory / sized ctor: the core answers structurally, this reader's classifiers key on the name.
+            case "newArray" or "newArrayInit" or "newArraySized":
+                return ArrayAsFqn(Core());
+            // Everything else — const/cast/conv/new/arrayGet/cond/callEval/concat/isInst/objEq/unaryOp/binOp/the
+            // nullable wrap+unwrap, and the kinds neither of these two derivers used to answer — is node-local.
+            default:
+                return Core();
         }
     }
+
+    // The two SPELLINGS of an array type. The shared deriver answers structurally (`{t:"array"}`), which is what a
+    // spill slot's declared type has to be; this reader's consumers (FaithfulHints' collection classification,
+    // ArrayConstructionLowering's element recovery) are name-keyed and match `kotlin.Array<E>`. Converting once,
+    // here, on the arms that CONSTRUCT an array type is the whole of the difference between them — the alternative
+    // was one deriver arm in each file that silently disagreed.
+    static TypeNode ArrayAsFqn(TypeNode t) => t is TypeNode.Array a ? new TypeNode.Fqn("kotlin.Array", new[] { a.Elem }) : t;
+
+    // The specialized-array element table the shared deriver deliberately does not restate (`kotlin.IntArray` ->
+    // `kotlin.Int`), passed to it as the one table the toolchain already keeps.
+    static string PrimArrayElem(string name) => BirTypeLowering.PrimArrayElem.TryGetValue(name, out var e) ? e : null;
 
     // The operand's UNDERLYING value type: peel a `cast` (a compiler boxing/narrowing OR explicit `as`; the BIR does
     // not distinguish them, so this peels both — the CLR twin of kotc's `stripCast`) and the value-nullable unwrap,

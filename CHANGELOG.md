@@ -23,7 +23,36 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   case is listed in its (currently empty) `CF_XFAIL` baseline, and reports NEW-FAIL/FIXED like the other gates.
   It opens with the eight byref-like storage refusals below.
 
+### Fixed
+
+- **bir2cir (area:bir2cir): a `!!`, an elvis or a safe call in an argument to the LEFT of a suspending argument
+  no longer aborts the compile.** `h(x!!, susp())` was REJECTED — "the operand … carries no static type" — on
+  source the frontend had accepted. kotc lowers `x!!` to `{ var __nn = x; if (__nn != null) __nn else throw }`
+  and stamps a type on none of the three nodes, so the deriver that has to type the operand's evaluation-order
+  spill slot had nothing to read. It now reads a `cond` through its LIVE branch — a branch that never returns
+  says nothing about the type of the value the other branch produces, so a `throw` arm cannot answer while the
+  other arm can — and a `local` through the `var` the block itself declares. The value-nullable arms
+  (`nullableWrap`/`nullableValue`/`safeCastValue`) also read their `elem` instead of a `type` slot no producer
+  writes on them, so `n!!`, `n ?: 0` and `b?.size()` in the same position resolve too. Five shapes that were
+  compile aborts are pinned as running tests.
+- **bir2cir (area:bir2cir): a side-effecting operand to the left of an operand-position `try` no longer faults
+  at runtime.** `f() + try { … } catch { … }` spills `f()` to a temp so it keeps evaluating before the hoisted
+  try, and that temp's declared type was copied from whichever of `type`/`ret`/`dynRet` the node carried — a
+  call node carries none, so the spill was declared `kotlin.Any`, and the emitted unbox read a value that was
+  never boxed (`AccessViolationException`, process abort). The hoist now threads the lexical scope and derives
+  the type the way every other spill site does.
+
 ### Changed
+
+- **bir2cir (area:bir2cir): `StaticType.Surface` is founded on the shared node-local deriver
+  (`bir-common/NodeType.cs`) instead of restating it.** The two derivations had drifted into disagreeing about
+  five kinds — the nullable wrap/unwrap slots, an untyped `cond`, `Nothing`, the `&&`/`||` result, and the two
+  spellings of an array type — and a kind classified one way for a spill slot and another way for an operand
+  classifier is exactly the drift the shared file exists to prevent. Each disagreement is now either fixed in
+  the core (so both consumers inherit it) or one named adapter (`ArrayAsFqn`: the core answers structurally,
+  this reader's classifiers are name-keyed). `Surface` keeps only the arms the core cannot answer — the ones
+  needing the enclosing lexical scope, and the call/field family, which reads `sty` before `ret` (unifying that
+  precedence is a change of its own) — and delegates the rest.
 
 - **bir2cir (area:bir2cir): every "is this value pure / stable" predicate is now named after the question it
   answers, and each question has exactly one home.** Five different questions were being asked under three
