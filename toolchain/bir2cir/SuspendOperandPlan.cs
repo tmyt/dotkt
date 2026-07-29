@@ -175,6 +175,15 @@ static partial class SuspendColdLowering
         return copy;
     }
 
+    // --- the frame's declared locals -------------------------------------------------------------------
+
+    /// What a frame's scope records about one local: the DECLARED type (the only thing that types a `{k:local}`
+    /// read, which carries a name and nothing else) and, when the declaration is itself a call-evaluation plan
+    /// binding, the SOURCE ROLE a storage refusal names the value by. Carrying the role matters because a plan can
+    /// bind a READ of a value an earlier plan already materialised: the value is the same value, so the phrase that
+    /// names it must not be replaced by the outer node's generic one.
+    internal readonly record struct LocalDecl(TypeNode Type, string Role);
+
     // --- the compilation-wide expression typer ---------------------------------------------------------
 
     /// The static type of an expression, for typing a plan binding's local. The shared node-local deriver
@@ -200,14 +209,14 @@ static partial class SuspendColdLowering
         /// <param name="locals">The enclosing frame's declared locals and parameters (name -> type), threaded by
         /// the walk. A frame's local names are unique within it — ilemit keeps ONE `_locals` scope per method — so
         /// a flat map is the whole lexical answer, not an approximation of one.</param>
-        internal TypeNode Of(JsonNode n, IReadOnlyDictionary<string, TypeNode> locals)
+        internal TypeNode Of(JsonNode n, IReadOnlyDictionary<string, LocalDecl> locals)
         {
             if (n is not JsonObject o) return null;
             // A `local` FIRST: the read carries a name and (usually) nothing else, and what types it is the `var` or
             // parameter that DECLARES it — a statement of the enclosing frame, not part of this node. That is the one
             // question the node-local core is defined not to answer (bir-common/NodeType.cs `case "this"` has the
             // same shape of answer: only the owner knows).
-            if (Str(o["k"]) == "local" && Str(o["name"]) is string ln && locals.TryGetValue(ln, out var lt)) return lt;
+            if (Str(o["k"]) == "local" && Str(o["name"]) is string ln && locals.TryGetValue(ln, out var ld)) return ld.Type;
             // The node-local answer next (an explicit `ret`/`dynRet`/`sty`, then whatever slot the kind carries its
             // own result type in). `Of` is passed as the recursion so an operand of a `binOp` still resolves through
             // the scope and index arms rather than falling back to the index-less core.
@@ -260,7 +269,7 @@ static partial class SuspendColdLowering
         // an operand the plan failed to bind pass for a bound one.
         var materialised = new HashSet<string>(StringComparer.Ordinal);
         foreach (var r in roots)
-            PlanNode(r, typer, materialised, new Dictionary<string, TypeNode>(StringComparer.Ordinal),
+            PlanNode(r, typer, materialised, new Dictionary<string, LocalDecl>(StringComparer.Ordinal),
                      Str((r as JsonObject)?["fileClass"]) ?? "?");
         AssertOperandsPlanned(roots, materialised);
     }
@@ -275,7 +284,7 @@ static partial class SuspendColdLowering
     /// frame that contains it. Every `var`, catch variable and loop variable registers itself as it is reached, and
     /// a body is walked in statement order, so a read always sees the declaration that precedes it.
     static void PlanNode(JsonNode node, ExprTyper typer, HashSet<string> materialised,
-                         Dictionary<string, TypeNode> locals, string where)
+                         Dictionary<string, LocalDecl> locals, string where)
     {
         switch (node)
         {
@@ -303,36 +312,40 @@ static partial class SuspendColdLowering
 
     /// A frame's initial scope: empty for a declaration, a COPY of the enclosing frame for a lambda (its captures
     /// read under the same names), plus this frame's own parameters.
-    static Dictionary<string, TypeNode> NewFrame(JsonObject o, Dictionary<string, TypeNode> outer)
+    static Dictionary<string, LocalDecl> NewFrame(JsonObject o, Dictionary<string, LocalDecl> outer)
     {
         var scope = Str(o["k"]) is null
-            ? new Dictionary<string, TypeNode>(StringComparer.Ordinal)
-            : new Dictionary<string, TypeNode>(outer, StringComparer.Ordinal);
+            ? new Dictionary<string, LocalDecl>(StringComparer.Ordinal)
+            : new Dictionary<string, LocalDecl>(outer, StringComparer.Ordinal);
         if (o["params"] is JsonArray ps)
             foreach (var p in ps)
                 if (p is JsonObject po && Str(po["name"]) is string pn && TypeJson.Read(po["type"]) is TypeNode pt)
-                    scope[pn] = pt;
+                    scope[pn] = new LocalDecl(pt, null);
         return scope;
     }
 
     /// Register whatever names this node DECLARES into the current frame: a `var`, a `try`'s catch variables, and a
     /// loop's element variable. Each carries its type in a different slot, and all three are read back as a plain
     /// `{k:local}` that has no type of its own.
-    static void Declare(JsonObject o, Dictionary<string, TypeNode> scope)
+    static void Declare(JsonObject o, Dictionary<string, LocalDecl> scope)
     {
         switch (Str(o["k"]))
         {
             case "var":
-                if (Str(o["name"]) is string vn && TypeJson.Read(o["type"]) is TypeNode vt) scope[vn] = vt;
+                // A plan-materialised binding carries the SOURCE ROLE a storage refusal names it by; record it, so
+                // a later plan that binds a READ of this local inherits it instead of replacing it with its own.
+                if (Str(o["name"]) is string vn && TypeJson.Read(o["type"]) is TypeNode vt)
+                    scope[vn] = new LocalDecl(vt, Str(o["role"]));
                 return;
             case "try":
                 if (o["catches"] is JsonArray cs)
                     foreach (var c in cs)
                         if (c is JsonObject co && Str(co["var"]) is string cn && TypeJson.Read(co["excType"]) is TypeNode ct)
-                            scope[cn] = ct;
+                            scope[cn] = new LocalDecl(ct, null);
                 return;
             case "forArray": case "forRange": case "forEachInline": case "forIn": case "for":
-                if (Str(o["var"]) is string fn && TypeJson.Read(o["elem"]) is TypeNode ft) scope[fn] = ft;
+                if (Str(o["var"]) is string fn && TypeJson.Read(o["elem"]) is TypeNode ft)
+                    scope[fn] = new LocalDecl(ft, null);
                 return;
         }
     }
@@ -341,7 +354,7 @@ static partial class SuspendColdLowering
     /// actually materialises something — a node with no suspension in an operand, and a node whose only forced
     /// operands are re-readable, both emit exactly the CIR they emitted before this pass existed.
     static void PlanOperandsOf(JsonObject o, ExprTyper typer, HashSet<string> materialised,
-                               Dictionary<string, TypeNode> locals, string where)
+                               Dictionary<string, LocalDecl> locals, string where)
     {
         if (EvalOrderOf(o) is not { } order) return;
         var ops = order.Operands;
@@ -393,7 +406,10 @@ static partial class SuspendColdLowering
                 ["phase"] = order.HasReceiver && i == 0 ? "recv" : "arg",
                 ["kind"] = "value",
                 ["stable"] = stable,
-                ["role"] = role,
+                // The role a storage refusal names this value by — INHERITED when the operand is a read of a value
+                // an earlier plan already materialised. It is the same value, so it keeps the phrase kotc's plan gave
+                // it ("the argument 's' of `cfbLen`") rather than being renamed after the node that reads it.
+                ["role"] = InheritedRole(expr, locals) ?? role,
                 ["expr"] = expr?.DeepClone(),
             };
             if (type != null) binding["type"] = TypeJson.Write(type);
@@ -421,6 +437,12 @@ static partial class SuspendColdLowering
         o["stmts"] = stmts;
         o["result"] = lowered;
     }
+
+    /// The role of the value this operand READS, when it reads a local an earlier plan materialised — so a refusal
+    /// keeps naming the value in the words its own producer chose. Null when the operand is not such a read.
+    static string InheritedRole(JsonNode expr, IReadOnlyDictionary<string, LocalDecl> locals) =>
+        expr is JsonObject o && Str(o["k"]) == "local" && Str(o["name"]) is string n
+        && locals.TryGetValue(n, out var d) ? d.Role : null;
 
     /// The source-level phrase a storage refusal names a bound operand by — it travels onto the materialised local,
     /// so a refusal says "the operand of the call to `corAdd`" rather than the minted `cir$b7`.
