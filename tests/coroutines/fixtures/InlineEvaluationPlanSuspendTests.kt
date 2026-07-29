@@ -74,6 +74,29 @@ suspend fun corIepNothingLocal(): Int {
 
 fun corIepSum(a: Int, b: Int): Int = a + b
 
+// …and the same operand in the argument list of a SUSPENDING call, where the machinery it interacts with is the
+// suspension point itself rather than the evaluation-order spill. With no suspension to its RIGHT nothing has to be
+// elided, so these lower exactly as they always did: everything to its left evaluates — a suspension there completes
+// and resumes normally — then the operand leaves, and the call it was an argument to never runs.
+suspend fun corIepSuspSum(a: Int, b: Int): Int { corIepLog.add("O"); return a + b }
+suspend fun corIepSuspOne(a: Int): Int { corIepLog.add("O"); return a }
+
+suspend fun corIepSuspTerminalOnly(): Int =
+    corIepSuspOne(run<Int> { corIepLog.add("T"); throw IllegalStateException("one") })
+
+suspend fun corIepSuspAfterSuspension(): Int =
+    corIepSuspSum(corIepRelay("S"), run<Int> { corIepLog.add("T"); throw IllegalStateException("two") })
+
+// The suspend-function-VALUE forms of both: a different cold-call builder, the same rule.
+val corIepFnOne: suspend (Int) -> Int = { a -> corIepLog.add("V"); a }
+val corIepFnTwo: suspend (Int, Int) -> Int = { a, b -> corIepLog.add("V"); a + b }
+
+suspend fun corIepFnValueTerminalOnly(): Int =
+    corIepFnOne(run<Int> { corIepLog.add("T"); throw IllegalStateException("fnOne") })
+
+suspend fun corIepFnValueAfterSuspension(): Int =
+    corIepFnTwo(corIepRelay("S"), run<Int> { corIepLog.add("T"); throw IllegalStateException("fnTwo") })
+
 private inline fun corIepThrown(block: () -> Unit): String =
     try { block(); "no-throw" } catch (e: Throwable) { e.message ?: "?" }
 
@@ -150,5 +173,30 @@ class InlineEvaluationPlanSuspendTests {
         corIepLog.clear()
         assertEquals("local", corIepThrown { blockOn { corIepNothingLocal() } })
         assertEquals("X", corIepTrace())
+    }
+
+    /** A terminal operand in a SUSPENDING call's own argument list, with no suspension to its right: the operand
+     *  leaves and the call never runs — through both the named-callee and the suspend-function-value builder. */
+    @TestAttribute
+    fun terminalOperandInASuspendingCallsArguments() {
+        corIepLog.clear()
+        assertEquals("one", corIepThrown { blockOn { corIepSuspTerminalOnly() } })
+        assertEquals("T", corIepTrace())              // the suspending callee was never entered
+
+        corIepLog.clear()
+        assertEquals("fnOne", corIepThrown { blockOn { corIepFnValueTerminalOnly() } })
+        assertEquals("T", corIepTrace())
+    }
+
+    /** …and with a suspension to its LEFT: that one completes and resumes, then the operand leaves. */
+    @TestAttribute
+    fun terminalOperandAfterASuspendingArgument() {
+        corIepLog.clear()
+        assertEquals("two", corIepThrown { blockOn { corIepSuspAfterSuspension() } })
+        assertEquals("S,T", corIepTrace())
+
+        corIepLog.clear()
+        assertEquals("fnTwo", corIepThrown { blockOn { corIepFnValueAfterSuspension() } })
+        assertEquals("S,T", corIepTrace())
     }
 }

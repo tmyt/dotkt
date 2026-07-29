@@ -1777,22 +1777,29 @@ static partial class SuspendColdLowering
         {
             // A TERMINAL operand is one whose evaluation never completes — an expression-position `throw`/`return`,
             // the `valueBlock` a spliced `run { throw … }` becomes, a `break`/`continue` in a value slot, a call to a
-            // `Nothing`-returning function. Kotlin evaluates it and then nothing else in this expression, INCLUDING
-            // the suspension to its right, and three things follow:
+            // `Nothing`-returning function. Kotlin evaluates it and then nothing else in this expression.
             //
-            //   * it is NOT a value to spill. There is no resume at which to reload it, and wrapping it in the
-            //     spill's `SetField` would push the state machine's receiver and then leave through the throw with
-            //     that receiver still on the stack — unverifiable IL, so a `Nothing`-typed spill slot is not a lesser
-            //     slot but an invalid one;
-            //   * every operand to its RIGHT is unreachable, so it is not rewritten at all — rewriting one would
-            //     append dead suspension segments the state machine still has to number and label;
-            //   * and it IS the enclosing expression's value: `pair(throw x, later())` is `throw x`.
+            // It only needs saying here when a SUSPENSION sits to its RIGHT, because that is the only arrangement
+            // this rewrite would otherwise get wrong: the terminal operand precedes a suspension, so it is selected
+            // for an evaluation-order spill — and it is not a value to spill. There is no resume at which to reload
+            // it, and wrapping it in the spill's `SetField` would push the state machine's receiver and then leave
+            // through the throw with it still on the stack. Two more things follow once the shape is recognised:
+            // every operand to its RIGHT is unreachable, so it is not rewritten at all (rewriting one would append
+            // dead suspension segments the machine still has to number and label), and the terminal operand IS the
+            // enclosing expression's value — `pair(throw x, later())` is `throw x`.
             //
             // An operand to its LEFT keeps its ordinary treatment against the operands that remain, which is why the
-            // truncated list is what the spill decision is asked over: `pair(side(), later(), throw x)` still spills
-            // `side()` ahead of the suspension, while `pair(side(), throw x, later())` no longer spills anything,
-            // there being no reachable suspension for `side()` to be ordered against.
+            // truncated list is what the spill decision is asked over: `pair(side(), later(), throw x)` has no
+            // suspension right of the terminal, so nothing is truncated and `side()` spills as always; only
+            // `pair(side(), throw x, later())` truncates, and there `side()` has no reachable suspension left to be
+            // ordered against.
+            //
+            // With NO suspension to its right the operand needs nothing special and gets nothing: `f(throw x)` and
+            // `f(later(), throw x)` lower exactly as they always did — everything left of the terminal evaluates
+            // (a suspension there completes and resumes normally), then the terminal leaves, and the emitted call
+            // it was an argument to is unreachable code that never runs.
             var terminalAt = kids.FindIndex(k => k != null && NodeType.IsNothing(TypeOfExpr(k)));
+            if (terminalAt >= 0 && LastSuspending(kids) <= terminalAt) terminalAt = -1;
             var live = terminalAt < 0 ? kids : kids.GetRange(0, terminalAt + 1);
             terminal = null;
             var res = new List<JsonNode>(live.Count);
@@ -2584,19 +2591,24 @@ static partial class SuspendColdLowering
             return new JsonObject { ["k"] = "local", ["name"] = name };
         }
 
-        // A TERMINAL operand (`throw`/`return`/`Nothing`) inside the argument list of the SUSPEND call itself, to the
-        // left of a nested suspension: `later(throw x, inner())`. Semantically the whole call is unreachable — the
+        // A TERMINAL operand (`throw`/`return`/`Nothing`) inside the argument list of the SUSPEND call itself, with a
+        // NESTED suspension to its RIGHT: `later(throw x, inner())`. Semantically the whole call is unreachable — the
         // throw leaves before either suspension — but a suspension POINT is a label, a state save and a resume arm
         // that this builder is in the middle of assembling, and it has no way to say "emit nothing here". Refusing is
         // the honest answer, and it is not a narrowing: the shape aborted before this rule existed too (the spill it
         // wanted had no derivable type), and it is the same family as the known nested-suspension-in-an-argument-list
-        // defect. The reachable form — a terminal operand in a NON-suspending call that merely CONTAINS a suspension,
-        // `pair(run { throw … }, later())` — is handled in RewriteOrdered and does not come here.
+        // defect.
+        //
+        // ONLY that arrangement comes here. A terminal operand with no suspension to its right — `later(throw x)`,
+        // `later(inner(), throw x)` — needs no suspension point elided and never reaches this: RewriteEvalOrder
+        // reports a terminal only when one sits left of a suspension. So does the reachable form of the same fault in
+        // a NON-suspending call that merely CONTAINS a suspension (`pair(run { throw … }, later())`), which
+        // RewriteOrdered answers by making the terminal operand the expression's value.
         JsonObject TerminalOperandInSuspendCall(JsonObject callNode) =>
             throw new NotSupportedException(
                 $"bir2cir: {FieldLegality.PosPrefix(_m)}suspend-lowering: in `{DiagOwner}`, the suspending call to "
                 + $"`{Str(callNode["method"]) ?? "?"}` has an argument that never returns (a `throw`/`return`, or a "
-                + "`Nothing`-typed call) to the left of another suspension in the same argument list. The call is "
+                + "`Nothing`-typed call) to the LEFT of another suspension in the same argument list. The call is "
                 + "unreachable, but the state machine cannot express a suspension point that is never taken — lift "
                 + "the argument into a statement before the call.");
 

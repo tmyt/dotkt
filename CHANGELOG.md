@@ -34,7 +34,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   state machine's receiver on the stack when control left through the throw). `bir-common/NodeType.cs` answers
   `Nothing` for an expression-position `throw`/`return`, which is what lets "this has no value" be told apart from
   "I could not derive its type" — the first is ordinary code, the second the dropped type the spill reports.
-  An operand to the RIGHT of the suspension is unaffected: the suspension still runs first.
+  The rule applies exactly where it is needed: only an operand with a suspension to its RIGHT is treated specially,
+  because that is the only arrangement the spill would have got wrong. `pair(later(), run { throw … })` still
+  suspends, resumes and only then leaves, and an argument that never returns in a SUSPENDING call's own list
+  (`one(run { throw … })`, `sum(relay(), run { throw … })`) lowers as it always did. The one arrangement that
+  remains refused is a never-returning argument to the LEFT of a nested suspension in a suspending call's own list —
+  a suspension point that would have to be elided, which the state machine cannot express; the refusal names the
+  shape and the workaround (`tests/compile-fail/SuspendTerminalArgumentBeforeSuspension.kt`).
 - **kotc/bir2cir (area:kotc, area:bir2cir): an INLINE call's arguments now follow the same evaluation plan as every
   other call's — one evaluation each, in Kotlin's order, whatever the spliced body does with them.** `InlineSplice`
   bound each parameter to a temp in PARAMETER order, so a call that also filled a default ran the default in its own
