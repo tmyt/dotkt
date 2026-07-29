@@ -24,6 +24,17 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   It opens with the eight byref-like storage refusals below.
 
 ### Fixed
+- **bir2cir (area:bir2cir): an argument that never returns, to the left of a suspending one, is no longer treated
+  as a value to carry across the suspension.** `pair(run { throw IllegalStateException() }, later())` refused to
+  compile — the evaluation-order spill wanted a type for an operand that has no value — and the shapes it stood for
+  (`run { return … }`, `error(…)`, any `Nothing`-typed call) were the same. Kotlin evaluates such an operand and then
+  nothing else in the expression, *including* the suspension: it is the expression's value, not something to store
+  and reload after a resume, and the operands to its right are unreachable. The suspend lowering now says so — the
+  terminal operand becomes the value, the rest is dropped, and no spill slot is minted (one would also have left the
+  state machine's receiver on the stack when control left through the throw). `bir-common/NodeType.cs` answers
+  `Nothing` for an expression-position `throw`/`return`, which is what lets "this has no value" be told apart from
+  "I could not derive its type" — the first is ordinary code, the second the dropped type the spill reports.
+  An operand to the RIGHT of the suspension is unaffected: the suspension still runs first.
 - **kotc/bir2cir (area:kotc, area:bir2cir): an INLINE call's arguments now follow the same evaluation plan as every
   other call's — one evaluation each, in Kotlin's order, whatever the spliced body does with them.** `InlineSplice`
   bound each parameter to a temp in PARAMETER order, so a call that also filled a default ran the default in its own

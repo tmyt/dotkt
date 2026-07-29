@@ -24,6 +24,15 @@ public static class NodeType
     static readonly TypeNode IntTn = new TypeNode.Fqn("kotlin.Int");
     static readonly TypeNode BoolTn = new TypeNode.Fqn("kotlin.Boolean");
     static readonly TypeNode StringTn = new TypeNode.Fqn("kotlin.String");
+    static readonly TypeNode NothingTn = new TypeNode.Fqn("kotlin.Nothing");
+
+    /// <summary>
+    /// Does this expression produce NO value because control never leaves it normally — an expression-position
+    /// `throw` or `return`, a `break`/`continue` wrapped to sit in a value slot, a call to a `Nothing`-returning
+    /// function, or a block ending in any of those? Kotlin's name for that is `Nothing`, so the question is just
+    /// "did the type come out `Nothing`", asked through whichever deriver the caller owns.
+    /// </summary>
+    public static bool IsNothing(TypeNode? t) => t is TypeNode.Fqn { Args: null, Name: "kotlin.Nothing" };
 
     /// <summary>
     /// The node's own static type, or null when only an index could answer. <paramref name="recurse"/> is the
@@ -72,6 +81,14 @@ public static class NodeType
                 return Str(o["op"]) == "!" ? BoolTn : recurse(o["e"]);
             case "objEq": case "isInst": case "isInstRef": case "nullableHasValue":
                 return BoolTn;
+            case "throwExpr": case "returnExpr":
+                // A TERMINAL expression: control leaves and never comes back, so it produces no value — which in
+                // Kotlin is exactly `Nothing`. Answering it (rather than null) is what lets a caller tell "this
+                // expression has no value" apart from "I could not work out what its value is", and the two want
+                // opposite responses: the first is ordinary code to emit in place, the second a dropped type to
+                // report. `break`/`continue` in expression position arrive as a `valueBlock` whose result is one
+                // of these (kotc's `breakContinueExpr`), so the block arm below answers `Nothing` for them too.
+                return NothingTn;
             case "arrayLen": case "enumOrdinal":
                 return IntTn;
             case "concat":

@@ -45,6 +45,38 @@ suspend fun corIepSplicedLeftOfSuspendRef(x: Int): String =
 // ---- a generic inline call whose bound value lives across the suspension ---------------------------------------
 inline fun <T> corIepHold(v: T, block: () -> Unit): T { block(); return v }
 
+// ---- a TERMINAL operand left of a suspending one ---------------------------------------------------------------
+// An operand that never completes — an expression-position `throw`/`return`, a `Nothing`-returning call, or the
+// block a lambda-only inline call splices around one — makes the whole expression unreachable: Kotlin evaluates it
+// and NOTHING to its right, including the suspension. It is therefore not a value to spill across a resume; it IS
+// the expression's value. (`run { … }` supplies no value, so it carries no plan and its splice is an untyped block —
+// which is how the spill came to ask for a type that no longer existed and refuse.)
+suspend fun corIepTerminalThrow(): Int =
+    corIepSum(run<Int> { corIepLog.add("T"); throw IllegalStateException("boom") }, corIepRelay("S"))
+
+suspend fun corIepTerminalReturn(): Int {
+    return corIepSum(run<Int> { corIepLog.add("R"); return -7 }, corIepRelay("S"))
+}
+
+fun corIepNever(): Nothing { corIepLog.add("N"); throw IllegalArgumentException("nope") }
+suspend fun corIepTerminalNothingCall(): Int = corIepSum(corIepNever(), corIepRelay("S"))
+
+// …and the mirror: a terminal operand to the RIGHT of the suspension, where the suspension DOES run first.
+suspend fun corIepTerminalAfterSuspend(): Int =
+    corIepSum(corIepRelay("S"), run<Int> { corIepLog.add("T"); throw IllegalStateException("late") })
+
+// A `Nothing`-typed LOCAL is never live across anything — its initializer is what does not complete — so the
+// storage question never arises for it. This pins that, since the local read is an operand like any other.
+suspend fun corIepNothingLocal(): Int {
+    val x = run<Int> { corIepLog.add("X"); throw IllegalStateException("local") }
+    return corIepSum(x, corIepRelay("S"))
+}
+
+fun corIepSum(a: Int, b: Int): Int = a + b
+
+private inline fun corIepThrown(block: () -> Unit): String =
+    try { block(); "no-throw" } catch (e: Throwable) { e.message ?: "?" }
+
 class InlineEvaluationPlanSuspendTests {
     /** The bound value is evaluated once, before the body, and survives a suspension the body performs. */
     @TestAttribute
@@ -86,5 +118,37 @@ class InlineEvaluationPlanSuspendTests {
         corIepLog.clear()
         assertEquals("kept", blockOn { corIepHold("kept") { corIepRelay("R") } })
         assertEquals("R", corIepTrace())
+    }
+
+    /** An operand that never completes, left of a suspending one: it runs, and the suspension never does. */
+    @TestAttribute
+    fun terminalOperandLeftOfASuspension() {
+        corIepLog.clear()
+        assertEquals("boom", corIepThrown { blockOn { corIepTerminalThrow() } })
+        assertEquals("T", corIepTrace())              // the suspending operand was never reached
+
+        corIepLog.clear()
+        assertEquals(-7, blockOn { corIepTerminalReturn() })
+        assertEquals("R", corIepTrace())
+
+        corIepLog.clear()
+        assertEquals("nope", corIepThrown { blockOn { corIepTerminalNothingCall() } })
+        assertEquals("N", corIepTrace())
+    }
+
+    /** …and one to its RIGHT: the suspension runs first, then the operand leaves. */
+    @TestAttribute
+    fun terminalOperandRightOfASuspension() {
+        corIepLog.clear()
+        assertEquals("late", corIepThrown { blockOn { corIepTerminalAfterSuspend() } })
+        assertEquals("S,T", corIepTrace())
+    }
+
+    /** A `Nothing`-typed local: its initializer is what does not complete, so nothing is ever stored. */
+    @TestAttribute
+    fun nothingTypedLocalIsNeverStored() {
+        corIepLog.clear()
+        assertEquals("local", corIepThrown { blockOn { corIepNothingLocal() } })
+        assertEquals("X", corIepTrace())
     }
 }
