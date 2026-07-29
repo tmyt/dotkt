@@ -75,7 +75,7 @@ static class DeclarationRename
                         {
                             if (obj.ContainsKey("override")) obj["override"] = true;
                             if (obj.ContainsKey("vis")) obj["vis"] = "public";
-                            // #73 M4-c: an accessor overriding a facadegen-injected .NET base CLASS virtual property
+                            // #73 M4-c: an accessor overriding a reference-KLIB-projected .NET base CLASS virtual property
                             // needs the `clrOverride` field so ilemit's DefineMethodOverride reuses the base slot (an
                             // INTERFACE member binds by name at type-load, so it needs no clrOverride). kotc emits ONLY
                             // the plain override method + its `overrides` marker (its `clrAccessorMethod` producer was
@@ -167,8 +167,8 @@ static class DeclarationRename
                 && refs.TryMemberProperty(ReferenceMetadataIndex.BareOwnerFqn(owner), "get_" + member, 0, out _, out var bclPropName))
                 return bclPropName;
         }
-        // FACADEGEN-INJECTED .NET interface/base (A2 step 5): the override owner resolves to a REAL .NET Type (not a
-        // stdlib ref.dll alias). facadegen injects the Kotlin property identity EQUAL to the .NET property name, so the
+        // REFERENCE-KLIB-PROJECTED .NET interface/base (A2 step 5): the override owner resolves to a REAL .NET Type (not a
+        // stdlib ref.dll alias). dll2klib injects the Kotlin property identity EQUAL to the .NET property name, so the
         // bare property slot IS `member` (the caller re-applies get_/set_). Confirm the .NET type declares a property/
         // field of that name so a hand-named override isn't misresolved.
         foreach (var o in ovs)
@@ -213,7 +213,7 @@ static class DeclarationRename
         // renames to `get_Message` and the Walk caller stamps `clrOverride` (via ResolveNetClassOwner) — without which
         // ilemit emits a fresh newslot and the substituted `callvirt System.Exception.get_Message` binds the base value.
         // The @ClrProperty lives on the get_<name> accessor (arity 0) in the ref.dll for BOTH accessors; a setter
-        // re-prefixes set_. Runs AFTER @ClrIntrinsic (a direct intrinsic wins) and BEFORE the facadegen .NET fallback
+        // re-prefixes set_. Runs AFTER @ClrIntrinsic (a direct intrinsic wins) and BEFORE the dll2klib .NET fallback
         // (which would miss anyway — ResolveNetType skips kotlin.* aliases).
         foreach (var o in ovs)
         {
@@ -226,11 +226,11 @@ static class DeclarationRename
                 && refs.TryMemberProperty(ReferenceMetadataIndex.BareOwnerFqn(owner), "get_" + member, 0, out _, out var bclPropName))
                 return (kind == "getter" ? "get_" : "set_") + bclPropName;
         }
-        // FACADEGEN-INJECTED .NET interface/base (A2 step 5): the override owner resolves to a REAL .NET Type off the
+        // REFERENCE-KLIB-PROJECTED .NET interface/base (A2 step 5): the override owner resolves to a REAL .NET Type off the
         // refs (NOT a stdlib ref.dll alias — ResolveNetType excludes kotlin.*/dotkt$ synthetics and locals
         // type).
         // A Kotlin class implementing/overriding such a member binds the .NET slot HERE (kotc no longer bakes it). Because
-        // facadegen injects the Kotlin member identity EQUAL to the .NET name, the slot is the identity: a method ->
+        // dll2klib injects the Kotlin member identity EQUAL to the .NET name, the slot is the identity: a method ->
         // `member`; a property accessor -> get_/set_ + the .NET property name (confirmed to be a real .NET property/
         // field). This reproduces exactly what kotc's get_/set_+name / method-name fallback already emits (so it is a
         // no-op rename for a name-matching override), but routes the resolution through bir2cir + restores the

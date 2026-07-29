@@ -6,7 +6,7 @@ using DotKt.Bir;
 
 // FOR-LOOP SOURCE CLASSIFICATION (#73/#72/#73-w3). kotc no longer decides ANYTHING about a non-array for-loop source
 // — whether it is a counted RANGE, an `a downTo b` counter, a stdlib collection, a `kotlin.sequences.Sequence`, or a
-// facadegen-injected .NET enumerable are each a `kotlin.ranges.*`/`kotlin.collections.*` FQN, a `downTo` operator
+// reference-KLIB-projected .NET enumerable are each a `kotlin.ranges.*`/`kotlin.collections.*` FQN, a `downTo` operator
 // identity, or a `@Clr`/.NET-type resolution against the reference assemblies — a Kotlin<->CLR relation that lives
 // HERE. kotc emits ONE faithful node for every non-array source:
 //
@@ -18,7 +18,7 @@ using DotKt.Bir;
 //   forIn whose src is a stdlib `a downTo b` (consumer build) -> a counted `for` (>=, step -1) with temp bounds.
 //   forIn whose srcType is `kotlin.sequences.Sequence` OR resolves to a referenced .NET type (any build) -> a
 //     `forEachInline` (GetEnumerator). This is the exact set kotc's retired `forInEnumerable` gate routed
-//     (`clrName(src) != null` — a facadegen-injected .NET enumerable — OR the source's static type being exactly
+//     (`clrName(src) != null` — a reference-KLIB-projected .NET enumerable — OR the source's static type being exactly
 //     `kotlin.sequences.Sequence`), moved here (#73-w3) because it is a CLR-representation decision keyed on
 //     `@Clr`/.NET-type knowledge. Without it a .NET/Sequence source would fall to the Kotlin iterator protocol
 //     (iterator()/hasNext) and a consumer calling it hits EntryPointNotFound.
@@ -94,7 +94,7 @@ static class ForInLowering
 
     // The kotc-retired `forInEnumerable` gate, moved here (#73-w3): a for-loop source enumerates via GetEnumerator
     // (`forEachInline`) when its static type is EXACTLY `kotlin.sequences.Sequence`, OR it resolves to a referenced
-    // .NET type (a facadegen-injected `@Clr` owner — the faithful equivalent of kotc's old `clrName(src) != null`,
+    // .NET type (a reference-KLIB-projected `@Clr` owner — the faithful equivalent of kotc's old `clrName(src) != null`,
     // since ResolveNetType returns null for kotlin.*/dotkt$-synthetic/app-local owners and resolves only a
     // reachable .NET type). Applies in ALL builds (the gate was build-agnostic). A concrete `Sequence`-implementing
     // class is NOT matched here (its FQN is not `Sequence`) — it reaches `forEachInline` via the stdlib supertype walk.

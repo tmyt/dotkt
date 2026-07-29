@@ -544,16 +544,16 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 		val retT = fnType.ret
 		val retVoid = retT == TypeNode.Fqn("kotlin.Unit")   // the SUBSTITUTED return (fn's own T may resolve to Unit)
 		// A dll2klib declaration carries its physical file-class owner in @ClrExternal.
-		val injectedFileClass = clrExternalOwner(fn)
-		val callE = if (injectedFileClass != null) {
-			// `__self` = the ext receiver, so it heads both the args and the shape/argTypes (matches the injected
+		val externalFileClass = clrExternalOwner(fn)
+		val callE = if (externalFileClass != null) {
+			// `__self` = the ext receiver, so it heads both the args and the shape/argTypes (matches the external
 			// top-level ext-call branch in `call()`; declared param types are used for the facade signature lookup).
 			val extRecvParam = fn.parameters.first { it.kind == IrParameterKind.ExtensionReceiver }
 			val declShapeTypes = (listOf(extRecvParam) + regularParams(fn)).joinToString(",") { birType(it.type).toJson() }
 			if (hasRefTa)
-				"""{"k":"callStatic","ownerType":${fqnJson(injectedFileClass)},"method":${str(fn.name.asString())}$refTa,"shapeTypes":[$declShapeTypes],"args":[$callArgs]}"""
+				"""{"k":"callStatic","ownerType":${fqnJson(externalFileClass)},"method":${str(fn.name.asString())}$refTa,"shapeTypes":[$declShapeTypes],"args":[$callArgs]}"""
 			else
-				"""{"k":"callStatic","ownerType":${fqnJson(injectedFileClass)},"method":${str(fn.name.asString())},"argTypes":[$declShapeTypes],"ret":${retT.toJson()},"args":[$callArgs]}"""
+				"""{"k":"callStatic","ownerType":${fqnJson(externalFileClass)},"method":${str(fn.name.asString())},"argTypes":[$declShapeTypes],"ret":${retT.toJson()},"args":[$callArgs]}"""
 		} else {
 			"""{"k":"callStatic","owner":null,"method":${str(fn.name.asString())}${overloadSigField(fn)}$refTa${retHintStr(hasRefTa, retT)},"args":[$callArgs]${calleeOwnerTag(fn)}}"""
 		}
@@ -740,14 +740,14 @@ internal fun BirEmitter.boundExtFnRef(node: IrFunctionReference, fn: IrSimpleFun
 	val hasRefTa = refTps.isNotEmpty() && refTaArgs.all { it != null }
 	val refTa = if (!hasRefTa) "" else ""","typeArgs":[${refTaArgs.joinToString(",") { birType(it!!).toJson() }}]"""
 	// The forwarding call mirrors the direct top-level extension call. Only the receiver argument differs.
-	val injectedFileClass = clrExternalOwner(fn)
-	val callE = if (injectedFileClass != null) {
+	val externalFileClass = clrExternalOwner(fn)
+	val callE = if (externalFileClass != null) {
 		val extRecvParam = fn.parameters.first { it.kind == IrParameterKind.ExtensionReceiver }
 		val declShapeTypes = (listOf(extRecvParam) + regularParams(fn)).joinToString(",") { birType(it.type).toJson() }
 		if (hasRefTa)
-			"""{"k":"callStatic","ownerType":${fqnJson(injectedFileClass)},"method":${str(fn.name.asString())}$refTa,"shapeTypes":[$declShapeTypes],"args":[$callArgs]}"""
+			"""{"k":"callStatic","ownerType":${fqnJson(externalFileClass)},"method":${str(fn.name.asString())}$refTa,"shapeTypes":[$declShapeTypes],"args":[$callArgs]}"""
 		else
-			"""{"k":"callStatic","ownerType":${fqnJson(injectedFileClass)},"method":${str(fn.name.asString())},"argTypes":[$declShapeTypes],"ret":${retT.toJson()},"args":[$callArgs]}"""
+			"""{"k":"callStatic","ownerType":${fqnJson(externalFileClass)},"method":${str(fn.name.asString())},"argTypes":[$declShapeTypes],"ret":${retT.toJson()},"args":[$callArgs]}"""
 	} else {
 		"""{"k":"callStatic","owner":null,"method":${str(fn.name.asString())}${overloadSigField(fn)}$refTa${retHintStr(hasRefTa, retT)},"args":[$callArgs]${calleeOwnerTag(fn)}}"""
 	}
@@ -907,7 +907,7 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 		if (idx in 0 until node.arguments.size) node.arguments[idx] else null
 	} else null
 	// dll2klib carries the physical file-class owner directly on the projected property.
-	val injectedExtPropFileClass = if (hasExtRecv) clrExternalOwner(prop) else null
+	val externalExtPropFileClass = if (hasExtRecv) clrExternalOwner(prop) else null
 	// The receiver captured into the lift's `__recv` field for a BOUND reference: the dispatch receiver (a member
 	// property) or the extension receiver (a top-level ext property). Only one is ever present.
 	val capturedRecv = boundRecv ?: extBoundRecv
@@ -960,14 +960,14 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 		val refTa = if (!hasRefTa) "" else
 			""","typeArgs":[${refTaArgs.joinToString(",") { birType(it!!).toJson() }}]"""
 		val retT = if (isSetter) TypeNode.Fqn("kotlin.Unit") else vType
-		if (injectedExtPropFileClass != null) {
+		if (externalExtPropFileClass != null) {
 			val extRecvParam = sigFn.parameters.first { it.kind == IrParameterKind.ExtensionReceiver }
 			val declShapeTypes = (listOf(extRecvParam) + regularParams(sigFn))
 				.joinToString(",") { birType(it.type).toJson() }
 			return if (hasRefTa)
-				"""{"k":"callStatic","ownerType":${fqnJson(injectedExtPropFileClass)},"method":${str(name)},"prop":${str(kind)}$refTa,"shapeTypes":[$declShapeTypes],"args":[$args]}"""
+				"""{"k":"callStatic","ownerType":${fqnJson(externalExtPropFileClass)},"method":${str(name)},"prop":${str(kind)}$refTa,"shapeTypes":[$declShapeTypes],"args":[$args]}"""
 			else
-				"""{"k":"callStatic","ownerType":${fqnJson(injectedExtPropFileClass)},"method":${str(name)},"prop":${str(kind)},"argTypes":[$declShapeTypes],"ret":${retT.toJson()},"args":[$args]}"""
+				"""{"k":"callStatic","ownerType":${fqnJson(externalExtPropFileClass)},"method":${str(name)},"prop":${str(kind)},"argTypes":[$declShapeTypes],"ret":${retT.toJson()},"args":[$args]}"""
 		}
 		return """{"k":"callStatic","owner":null,"method":${str(name)},"prop":${str(kind)}${overloadSigField(sigFn)}$refTa${retHintStr(hasRefTa, retT)},"args":[$args]${calleeOwnerTag(sigFn)}}"""
 	}

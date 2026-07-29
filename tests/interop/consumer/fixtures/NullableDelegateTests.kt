@@ -1,5 +1,5 @@
 // C#-producer roundtrip consumer battery B — NULLABLE .NET DELEGATE interop (#150). Consumes the NRT-ENABLED
-// producer (../producer-nrt): DlgNrt.Api carries real [Nullable] delegate-type-arg bytes so facadegen surfaces
+// producer (../producer-nrt): DlgNrt.Api carries real [Nullable] delegate-type-arg bytes so dll2klib surfaces
 // Func<string?>/Action<string?> as nullable Kotlin lambda return/param.
 //   delegnull <- il-delegnull  a lambda returning null binds Func<string?> only when the return surfaces as
 //                              String?; an Action<string?> param is String?, so `s ?: "<n>"` is legal.

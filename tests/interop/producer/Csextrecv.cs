@@ -1,7 +1,7 @@
 // Producer source for the migrated il-csextrecv case (#144). SAME-NAME, SAME-ARITY `[Extension]` methods on DIFFERENT
 // receiver types (plain class AND primitive) spread across parallel static classes in ONE namespace (the Avalonia
 // `*Extensions` shape) — each must bind to its OWN receiver's static class, keyed by the receiver's classifier ClassId,
-// not arity alone. The primitive receivers (`this string`/`this int`) are named bare String/Int by facadegen; the
+// not arity alone. The primitive receivers (`this string`/`this int`) are named bare String/Int by dll2klib; the
 // ClassId key reconciles that with the backend's kotlin.String/kotlin.Int. Own namespace.
 namespace Csextrecv
 {

@@ -1,11 +1,9 @@
-// .NET method-ref / super-call interop battery (batch IntropB) — migrates the two misc BCL-interop cases
-// (il-mref, il-supernet) onto the in-process NUnit suite. The Interop consumer facadegen scan-imports pipeline
-// injects the .NET types from `import System.*`. Each old case's `main` + stdout-golden becomes one
-// @TestAttribute method preserving every asserted value 1:1 (see the `// <expected>` comments).
+// .NET method-reference / super-call interop battery (batch IntropB). The Interop consumer resolves
+// the .NET types through reference KLIBs.
 //
 // Coverage preserved (old case -> method):
 //   il-mref      -> mref_boundAndUnboundNetMethodRefs  bound (`obj::m`) + unbound (`NetType::m`) .NET method references over StringBuilder
-//   il-supernet  -> supernet_superToNetBase            #14 R2: super.<m>() to a facadegen-injected .NET base (System.Random) is a NON-virtual `call` (no re-dispatch → no infinite recursion)
+//   il-supernet  -> supernet_superToNetBase            #14 R2: super.<m>() to a reference-KLIB-projected .NET base (System.Random) is a NON-virtual `call` (no re-dispatch → no infinite recursion)
 //
 // NB: il-mref's old runtime.cs was a no-op (the sample uses only BCL StringBuilder), so it is dropped here.
 //
@@ -20,7 +18,7 @@ import System.Random
 // il-mref : a higher-order helper the unbound method ref flows through.
 fun <T> intropBMrefApply1(f: (StringBuilder) -> T, sb: StringBuilder): T = f(sb)
 
-// il-supernet : super.<m>() to a facadegen-injected .NET base (System.Random) must be a non-virtual base-slot call.
+// il-supernet : super.<m>() to a reference-KLIB-projected .NET base (System.Random) must be a non-virtual base-slot call.
 class IntropBSupernetSeededRandom(seed: Int) : Random(seed) {
     override fun Next(): Int = super.Next() + 1000   // super -> System.Random::Next (non-virtual base slot)
 }

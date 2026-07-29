@@ -1,12 +1,10 @@
-// Generic / enum BCL-interop battery (pilot batch IntropA) — migrates the facadegen `import System.*` interop cases
-// that exercise generic .NET types/methods and .NET enums onto the in-process NUnit suite. Each old case's `main` +
-// stdout-golden becomes one @TestAttribute method preserving every asserted value 1:1 (see the `// <expected>`
-// comments). These fixtures import real .NET types via the Interop consumer facadegen scan-imports pipeline.
+// Generic / enum BCL-interop battery (pilot batch IntropA). These fixtures import real .NET types through
+// the Interop consumer's reference KLIBs and cover generic types, methods, delegates, and enums.
 //
 // Coverage preserved (old case -> method):
 //   il-forin        -> forin_netEnumerableForLoop   for-in over a real .NET IEnumerable<T> (List<Int>) -> GetEnumerator/MoveNext/Current
 //   il-gendelegate  -> gendelegate_lambdaToGenericDelegateCtor  #140 lambda -> generic BCL delegate ctor over a USER type (Func<Box>/Action<Box>)
-//   il-jsongeneric  -> jsongeneric_genericMethodInteropSibling  #44 generic .NET method whose sibling param is a facadegen-injected interop type
+//   il-jsongeneric  -> jsongeneric_genericMethodInteropSibling  #44 generic .NET method whose sibling param is a reference-KLIB-projected interop type
 //   il-netenumbound -> netenumbound_boundEnumTypeParam           .NET enum bound to a Kotlin `<T : Enum<T>>` param + enumValues/enumValueOf
 //
 // Top-level names are family-prefixed with `IntropA` (one assembly = one namespace) to avoid clashing with sibling
@@ -56,7 +54,7 @@ class BclGenericInteropTests {
         assertTrue(pr != null)                                  // True
     }
 
-    // il-jsongeneric: #44 a generic .NET method (JsonSerializer.Serialize<T>) whose SIBLING param is a facadegen-injected
+    // il-jsongeneric: #44 a generic .NET method (JsonSerializer.Serialize<T>) whose SIBLING param is a reference-KLIB-projected
     // interop type (JsonSerializerOptions) — ShapeSynthesis resolves the leaf to its .NET simple name so the overload binds.
     @TestAttribute
     fun genericMethodInteropSibling() {

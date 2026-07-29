@@ -1,7 +1,4 @@
-// CLR value-type / intrinsic interop battery (batch IntropD) — migrates the facadegen `import System.*` interop
-// cases/il-* onto the in-process NUnit suite. Each old case's `main` + stdout-golden becomes one @TestAttribute
-// method whose per-value assert is strictly stronger (typed) than the old string diff; every asserted value is
-// preserved 1:1 (see the `// <expected>` comments).
+// CLR value-type / intrinsic interop battery (batch IntropD), resolved through reference KLIBs.
 //
 // Coverage preserved (old case -> method):
 //   il-vtboundref  -> boundRefOverStruct        #149 a bound callable-ref over a VALUE-TYPE (.NET struct, System.TimeSpan) receiver — the struct is BOXED before the delegate ctor (ilemit newBoundClrDelegate); covers non-virtual (ldftn) AND virtual (ldvirtftn) targets

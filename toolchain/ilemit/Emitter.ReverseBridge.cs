@@ -35,7 +35,7 @@ partial class Emitter
 
         var tb = _mod.DefineType("dotkt$EnumeratorOverKotlinIterator`1",
             TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit);
-        StampCompilerGenerated(tb);   // #68: an ilemit-authored synthetic — flag it so facadegen skips by attribute, not by name
+        StampCompilerGenerated(tb);   // #68: an ilemit-authored synthetic — flag it so dll2klib skips by attribute, not by name
         var T = tb.DefineGenericParameters("T")[0];
 
         var ienumGenDef = typeof(System.Collections.Generic.IEnumerator<>);

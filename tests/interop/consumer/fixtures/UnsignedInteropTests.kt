@@ -1,5 +1,5 @@
 // C#-producer roundtrip consumer battery B — UNSIGNED .NET surface. Consumes the plain C# producer's public API
-// façade-free (facadegen re-imports the built dll's types from `import <Ns>.<Type>`; DLL-not-source) and asserts
+// façade-free (dll2klib re-imports the built dll's types from `import <Ns>.<Type>`; DLL-not-source) and asserts
 // each migrated case's golden values 1:1 as `// <expected>` trailing comments (design D1).
 //   injuint  <- il-injuint   .NET UNSIGNED params: System.UInt32 -> kotlin.UInt, System.UInt64 -> kotlin.ULong
 //   ubyteinj <- il-ubyteinj  System.Byte -> kotlin.UByte, byte[] -> UByteArray (STRICT, #53)

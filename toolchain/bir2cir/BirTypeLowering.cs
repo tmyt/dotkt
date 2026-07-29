@@ -313,7 +313,7 @@ static class BirTypeLowering
             case TypeNode.ByRef b:
                 return new TypeNode.ByRef(LowerType(b.Of, refBuild, force, typeArg: false));
             case TypeNode.Oblivious ob:
-                // #8 — an NRT-OBLIVIOUS `T!` (a facadegen-injected `[MaybeNull]`/platform-flexible type: a value-type
+                // #8 — an NRT-OBLIVIOUS `T!` (a reference-KLIB-projected `[MaybeNull]`/platform-flexible type: a value-type
                 // arg OR a reference) lowers to the BARE lowered inner in EVERY build — NEVER a `Nullable<T>` wrapper. It
                 // is a pure nullability ANNOTATION (NullableAttribute=0), not a container: the inner keeps THIS node's
                 // position (typeArg propagated, unlike Nullable which is a value-position container). Distinct from `T?`
@@ -418,7 +418,7 @@ static class BirTypeLowering
             // its arg/return SHAPE in the CLR signature, so a re-consuming DotKt assembly can no longer tell
             // `fun run(block: suspend () -> T)` from a plain function-typed one. Record the RAW pre-erasure `sfunc:`
             // token alongside — mirroring the `nullable`/`retNullable` positional-fact model — so ilemit can stamp
-            // [KotlinSuspendFunctionType(raw)] and facadegen restore the suspend function type on re-consumption. This
+            // [KotlinSuspendFunctionType(raw)] and dll2klib restore the suspend function type on re-consumption. This
             // carries the SHAPE STRING (not a bare flag): the erased CLR type is `object`, from which the arg/return
             // types are otherwise unrecoverable. Additive — ilemit reads it only on param/return/field/property builders;
             // harmless on any other node that happens to carry an sfunc-typed `type`/`ret`.
@@ -428,7 +428,7 @@ static class BirTypeLowering
             // (KotlinAllToClr / the leaf map) — Nothing has no CLR analog. That fold destroys the "this never returns
             // normally" fact, so a re-consuming DotKt assembly widens `if (c) x else fail()` to Any? instead of keeping
             // x's type. Record the pre-erasure fact alongside (the `nullable`/`retSuspendFnType` positional-fact model)
-            // so RoundtripMetadata stamps a bare [KotlinNothing] on the return and facadegen restores Nothing. A
+            // so RoundtripMetadata stamps a bare [KotlinNothing] on the return and dll2klib restores Nothing. A
             // `Nothing?` return already stripped its reference-`?` (ReferenceNullableStrip) to a bare `kotlin.Nothing`
             // here, its nullability carried by the [Nullable] byte — so the bare-Fqn check covers both.
             if (IsNothingRet(obj["ret"])) copy["retNothing"] = true;
@@ -484,7 +484,7 @@ static class BirTypeLowering
     // If a `type`/`ret` slot holds a suspend function type (Fn{suspend:true}), return the STRUCTURED fn node for the
     // H2 suspendFnType/retSuspendFnType metadata stamping (the slot's type itself is erased to `object` by LowerType,
     // so its arg/return SHAPE would otherwise be unrecoverable). Spec §0/§1: the metadata IS the structured Type node
-    // (the old `sfunc:` string folds into it) — ilemit/facadegen consume the Fn directly, never a re-rendered string.
+    // (the old `sfunc:` string folds into it) — ilemit/dll2klib consume the Fn directly, never a re-rendered string.
     static JsonNode SuspendFnSlot(JsonNode slot)
     {
         if (slot is JsonObject o && o["t"] is JsonValue tv && tv.TryGetValue<string>(out var s) && s == "fn"
@@ -610,7 +610,7 @@ static class BirTypeLowering
     {
         // Function types are structured `fn` nodes now (#37 #49): the `func:`/`sfunc:` STRING type token is retired,
         // so this string resolver never receives one. It survives only for the bare-FQN + CLR-shorthand LEAF slots
-        // that kotc/bir2cir still emit as strings (synthetic interface names like `dotkt$CharSequence`, the injected
+        // that kotc/bir2cir still emit as strings (synthetic interface names like `dotkt$CharSequence`, the synthesized
         // StringCharSequenceBridge adapter's `kotlin.String` slots) — resolved by the kotlin.* map / LowerLeaf below.
         var t = raw.Trim();
         // The reference build keeps kotlin.* primitives verbatim (general path); the attribute force path lowers

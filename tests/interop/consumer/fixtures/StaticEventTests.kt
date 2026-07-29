@@ -1,5 +1,5 @@
 // C#-producer roundtrip consumer battery (batch A — static .NET events). N6: STATIC .NET events use closeable
-// subscriptions. facadegen surfaces them as `kotlin.clr.ClrEvent<T>` properties (a companion property for a
+// subscriptions. dll2klib surfaces them as `kotlin.clr.ClrEvent<T>` properties (a companion property for a
 // normal class; an object member for a `static class`) that bir2cir's ClrEventSubscriptionBinding binds to the event's
 // STATIC add/remove accessor. Side-effect prints are captured into an ordered value and asserted 1:1.
 import NUnit.Framework.TestAttribute

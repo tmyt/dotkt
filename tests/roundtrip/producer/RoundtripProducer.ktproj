@@ -1,6 +1,6 @@
 <!-- Round-trip PRODUCER: a DotKt Kotlin LIBRARY compiled to a CLR dll carrying DotKt.Metadata attributes
      ([KotlinFunction]/[KotlinFileClass]/[Kotlin*]...). It is consumed AS KOTLIN by ../consumer through a
-     <ProjectReference> — facadegen re-imports THIS dll's metadata (NEVER its source). The DLL-not-source
+     <ProjectReference> — dll2klib re-imports THIS dll's metadata (NEVER its source). The DLL-not-source
      invariant (docs/design-nunit-test-harness.md §3): the producer lives in a SIBLING directory of the
      consumer precisely so the consumer's `**/*.kt` glob cannot pull the source in — the round-trip is real
      only if the consumer resolves the API via the built dll.

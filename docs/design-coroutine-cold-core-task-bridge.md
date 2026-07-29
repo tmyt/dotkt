@@ -155,9 +155,8 @@ Instead:
 libraries/stdlib/clr/.../Task.kt
   CLR-platform source containing Task.await declarations/implementation or declarations that bind to helpers.
 
-facadegen
-  Injects Kotlin metadata for kotlin.clr.await(Task) and kotlin.clr.await(Task<T>) into the frontend-visible CLR
-  platform metadata.
+dll2klib
+  Projects metadata-only await declarations beside Task and Task<T> in their reference KLIBs.
 
 bir2cir
   Consumes the marker / intrinsic metadata for Task.await and lowers it to the TaskAwaiter + Continuation bridge.
@@ -172,7 +171,7 @@ This keeps the split:
 stdlib klib:
   kotlin.* pure frontend symbols
 
-facadegen metadata:
+reference KLIBs:
   .NET symbols + CLR platform extensions
 
 bir2cir:
@@ -318,9 +317,9 @@ kotc:
   - do not emit CLR Task bridges
   - do not emit sequenceNew-style CLR sink nodes
 
-facadegen:
+dll2klib:
   - expose .NET types to Kotlin metadata
-  - inject CLR platform extensions such as kotlin.clr.await(Task)
+  - project CLR platform extensions such as kotlin.clr.await(Task)
   - attach marker/intrinsic metadata for bir2cir
 
 bir2cir:
@@ -350,7 +349,7 @@ ilemit:
 
 3. Move Kotlin-to-Kotlin suspend calls to the internal continuation body, not the public Task wrapper.
 
-4. Add CLR platform `Task.await` metadata through facadegen and lower it in bir2cir.
+4. Project CLR platform `Task.await` metadata through dll2klib and lower it in bir2cir.
 
 5. Add target-type driven adapters:
 
@@ -479,12 +478,9 @@ Do NOT hand-care kotlin.clr coroutine symbols in kotc. Split by whether the SIGN
   (`= throw UnsupportedOperationException()`; the jar is a never-executed frontend classpath — EXACT precedent =
   the `JvmNameActual.kt`/`JvmInlineActual.kt` staging for the `@OptionalExpectation` JvmName/JvmInline expects),
   and the **real CLR actual** in `taskinterop/` (Monitor drain / `Task.Delay().await()`), ref/rt only.
-- **await → facadegen injection** (this section §5). `suspend fun Task<T>.await(): T` names Task → not an
-  expect/actual candidate. facadegen, surfacing `System.Threading.Tasks.Task<T>`, also injects the `.await()`
-  extension; bir2cir lowers the call site. Unifies on the one facadegen-surfaced Task (removes the "two Tasks").
-- Result: the "kotc kotlin.clr coroutine injection seam" is never built. Impl check: confirm K2 accepts the
-  two-actuals-across-two-builds arrangement (it is exactly the JvmName staging in build-stdlib-jar.sh).
-
+- **await → dll2klib projection** (this section §5). `suspend fun Task<T>.await(): T` names Task → not an
+  expect/actual candidate. dll2klib projects the `.await()` extension beside
+  `System.Threading.Tasks.Task<T>`; bir2cir lowers the call site.
 ### P2 → P3 handoff bugs (verified, must fix in P3)
 1. **kotc `override val context` getter not marked override.** The cold-core `ContinuationImpl.get_context`
    (and `RestrictedContinuationImpl`) emit as `virtual:true` NewSlot rather than filling
@@ -508,8 +504,8 @@ served natively by the `Task<T>` bridge + `.GetAwaiter().GetResult()` (.NET's ow
 **Decision:**
 - **`blockOn` and `delay` are REMOVED from `kotlin.clr`** (the `expect` in `common/src/kotlin/clr/CoroutinesH.kt`,
   the jar stub actual staged in `build-stdlib-jar.sh`, and the real actuals in `taskinterop/Coroutines.kt`).
-- **The core `kotlin.clr` coroutine surface is now JUST `await`** — the genuine CLR async boundary (facadegen-
-  injected, P4; kotc never sees it). Proper `blockOn`/`delay`/`launch`/`async` (with cancellation + dispatcher)
+- **The core `kotlin.clr` coroutine surface is now JUST `await`** — the genuine CLR async boundary (projected by
+  dll2klib in P4). Proper `blockOn`/`delay`/`launch`/`async` (with cancellation + dispatcher)
   are a future **Track 2** (kotlinx port).
 - **`blockOn`/`delay` are re-implemented IN THE TEST HARNESS, in pure Kotlin, over the PUBLIC stdlib primitives**
   (`startCoroutine`/`Continuation` for blockOn's drain; `Task.Delay(ms).await()` for delay). The coroutine test

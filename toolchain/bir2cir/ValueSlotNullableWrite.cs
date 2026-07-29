@@ -5,7 +5,7 @@ using System.Reflection;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// VALUE-TYPE PLATFORM SLOT WRITE COERCION (#11): the WRITE twin of #8. A facadegen-injected value-type platform
+// VALUE-TYPE PLATFORM SLOT WRITE COERCION (#11): the WRITE twin of #8. A reference-KLIB-projected value-type platform
 // property/field — e.g. `System.Threading.ThreadLocal<Int>.Value`, whose setter slot is a BARE `int32` (T reified to a
 // value type, §9a-bis / clr-all-type-args-reified) — can, under platform-type laxity, be assigned a NULLABLE or `null`
 // source (`ti.Value = someIntQ`, `ti.Value = null`). kotc is .NET-agnostic and emits the plain nullable source; the

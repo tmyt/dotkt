@@ -1,4 +1,4 @@
-// Producer source for the migrated il-injfqn case. Two `Args` types in DIFFERENT namespaces are both injected; the
+// Two `Args` types in DIFFERENT namespaces are both projected; the
 // override target's param type must resolve to the EXACT one (InjfqnAaa.Args), not whichever same-simple-name type
 // won the dedup, so the Kotlin override matches. Own (prefixed) namespaces.
 namespace InjfqnAaa { public class Args { public Args(){} } }

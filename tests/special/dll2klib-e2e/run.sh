@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end regression test for projecting a CLR reference assembly directly to a
-# standard Kotlin 2.4.0 KLIB, with no facadegen JSON and no kotc declaration
+# standard Kotlin 2.4.0 KLIB, with no dll2klib JSON and no kotc declaration
 # generation extension: CLR ref.dll -> .klib -> kotc -> BIR -> bir2cir -> ilemit.
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 SCRIPT_NAME=dll2klib-e2e

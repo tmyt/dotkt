@@ -83,7 +83,7 @@ cross-assembly inline matrix is:
 |---|---|
 | same-module inline (incl. non-local return, crossinline) | ✅ existing (`il-inline`/`il-inline2`/`il-xinline`) |
 | cross-module **non-reified** inline | ✅ emitted as a normal method; consumed as a regular (non-inlined) call |
-| cross-module **reified** inline | ✅ emitted as a real generic method; consumed as `f<Int>()` (CLR generics are reified, so the `T::class`/`is T` body works) — required restoring generic TYPE PARAMS on the top-level injector + a `clrGenericStatic` call |
+| cross-module **reified** inline | ✅ emitted as a real generic method; consumed as `f<Int>()` (CLR generics are reified, so the `T::class`/`is T` body works) |
 | cross-module inline + lambda with **non-local return** | ✅ carried as raw BIR and spliced by bir2cir |
 
 **Where inlining happens.** DotKt does NOT run the standard JVM IR `FunctionInlining` lowering — its pipeline is the
@@ -123,7 +123,7 @@ non-capturing lambdas, member inline functions, and non-local returns.
   return type open (`TaskAwaiter`1<!0>`), so the runBlocking/await path mis-typed its temp — now it trusts the BIR
   `ret` hint. Works through both a `suspend fun` and a `runBlocking { … }` lambda.
 - **Parameter names** — ilemit defined methods by type only (never `DefineParameter`), so names were lost and
-  facadegen fell back to `arg0`/`arg1`, blocking named-argument calls across a boundary. Now emitted; `f(b = 2, a = 1)`
+  dll2klib fell back to `arg0`/`arg1`, blocking named-argument calls across a boundary. Now emitted; `f(b = 2, a = 1)`
   round-trips. (The names were always in the BIR — it was purely an emit omission, not a FIR limitation.)
 
 - **Kotlin package → .NET namespace (was FOUNDATIONAL; FIXED 2026-06-24).** DotKt used to flatten all packages to the

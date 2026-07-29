@@ -1,4 +1,4 @@
-// .NET-interop battery (batch MigM, from cases/m-i1) — facadegen `import System.X` injects the real BCL
+// .NET-interop battery (batch MigM, from cases/m-i1) — dll2klib `import System.X` injects the real BCL
 // System.Text.StringBuilder façade-free (no @Clr facade); Append/ToString/Length route as direct .NET members,
 // and the fluent Append chain returns the same builder. Migrated onto the in-process NUnit suite; each old case's
 // `main` + il_check golden becomes one @TestAttribute method whose per-value assert is strictly stronger (typed)

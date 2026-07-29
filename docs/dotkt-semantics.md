@@ -41,7 +41,7 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
 | [7](#7-default-arguments--a-two-tier-rule-native-metadata-else-a-carried-bir-expression) | Default arguments — the two-tier rule |
 | [8](#8-reverse--cross-assembly-interop) | Reverse / cross-assembly interop |
 | [8b](#8b-dual-representation-import-systemtextstringbuilder-vs-kotlintextstringbuilder--two-typed-views-of-one-clr-type) | Dual view: imported .NET type vs. its stdlib alias |
-| [8c](#8c-injected-net-static-members-implicit-typemember-works-companion-optional) | Injected .NET statics: implicit `Type.member` works |
+| [8c](#8c-projected-net-static-members-implicit-typemember-works-companion-optional) | Projected .NET statics: implicit `Type.member` works |
 | [8d](#8d-net-event-subscriptions-and-closeable-tokens) | .NET events use closeable subscriptions |
 | [9](#9-reference-type-nullability--net-nrt-un-annotated-net-types-are-platform-types) | Nullability ⇔ .NET NRT; platform types `T!` |
 | [10](#10-round-trip-fidelity-audit--what-re-consuming-a-dotkt-assembly-as-kotlin-loses) | Round-trip fidelity audit (incl. pinned-2.4.0 limitations) |
@@ -57,8 +57,8 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
 - **Why it matters:** without this, two classes with the same simple name in different packages (`alpha.Box` +
   `beta.Box`) would both emit `.NET Box` and **collide** — a hard error. It's also the prerequisite for consuming a
   packaged DotKt library across an assembly boundary (`import geom.Vec`).
-- Gotcha: this is recent (2026-06-24). The injector derives the Kotlin package from the .NET namespace, so a
-  consumer's `import geom.Vec` resolves only because the emit side now qualifies the name.
+- `dll2klib` maps the .NET namespace back to the Kotlin package when producing a reference KLIB, so a
+  consumer's `import geom.Vec` resolves with the same qualified identity.
 
 ## 2. Generics are reified — so Kotlin `reified` is (almost) a no-op
 
@@ -136,7 +136,7 @@ This is the single most surprising deviation, so it gets the most detail.
 
 - **JVM:** inline functions are inlined during a frontend/IR lowering; the body is also serialized into `@Metadata`
   so other modules can re-inline at *their* call sites.
-- **DotKt pipeline (`dll2klib` reference projection, then `kotc` / `bir2cir` / `ilemit`).** The
+- **DotKt pipeline (`dll2klib`, then `kotc` / `bir2cir` / `ilemit`).** The
   frontend is `…Fir2Ir then ClrBackendPhase` — **there is NO JVM `FunctionInlining` lowering.** The IR that reaches the
   backend still has un-inlined `inline` calls. **Inlining (and the `[KotlinInline]` splice) is a `bir2cir` (BIR→CIR)
   responsibility.** kotc projects the call and caller-lambda body without introducing CLR vocabulary:
@@ -149,7 +149,7 @@ This is the single most surprising deviation, so it gets the most detail.
     The modifier does nothing in DotKt's own codegen.
   - Same-module inline with a lambda (incl. **non-local return** and **crossinline**) works — the IR body is present
     and spliced (`il-inline`, `il-inline2`, `il-xinline`).
-  - **Cross-module:** an injected stub has `body == null`, so it's never the IR-splice case. Lambda-less / no-non-local-
+  - **Cross-module:** an external KLIB declaration has `body == null`, so it's never the IR-splice case. Lambda-less / no-non-local-
     return inline degrades to a plain (or generic) call — correct. The ONE case that can't degrade is a **non-local
     `return` through a lambda** (it must return from the *caller's* frame, which only inlining achieves).
 - Cross-module non-local-return IS supported (2026-06-24), and — because inlining is over (near-)BIR — it's
@@ -167,7 +167,7 @@ This is the single most surprising deviation, so it gets the most detail.
   parameter in a loop, and evaluates it even for a body that ignores it. The only thing that is NOT a value is a
   spliced lambda: a literal carrier, and a by-name forward of the enclosing inline fn's own lambda parameter, are the
   body that gets spliced, not something evaluated.
-- Pitfall (verified, do NOT do this): marking an injected body-less function `inline` *without* carrying the body lets
+- Pitfall (verified, do NOT do this): marking a body-less external function `inline` *without* carrying the body lets
   the frontend accept a non-local return but leaves nothing to splice → `InvalidProgramException` at runtime (worse
   than the clean compile error). `inline` restoration and the carried body are a package deal.
 - **`repeat(n) { … }` honors a non-local `return`** (#75). For a literal-lambda `repeat`, kotc splices the lambda body
@@ -801,7 +801,7 @@ emits `get_gauge(Scale)`, and `context(s: Scale) val Int.bumped` emits `get_bump
 one is a pair of `get_`/`set_` statics on the file class and no CLR property at all; a MEMBER one additionally gets a
 CLR property whose accessors take those arguments — a *parameterized* property, exactly as a member extension
 property (`class C { val T.p }`) already produced. Reflection therefore reports one index parameter for it, which is
-why facadegen's `this[i]` indexer probe has to exclude a `__self` / context slot rather than take the first
+why dll2klib's `this[i]` indexer probe has to exclude a `__self` / context slot rather than take the first
 one-parameter property it finds.
 
 **Deviations, both deliberate:**
@@ -828,15 +828,15 @@ receiver, then the value params** — and fir2ir ERASES which leading arguments 
 apart, and DotKt emits no `@Metadata`.
 
 That erasure was a silent miscompile across a module boundary. bir2cir stamped `[KotlinExtensionFunctionType]` from
-the presence of a receiver and facadegen promoted the delegate's FIRST argument to the restored receiver — but that
+the presence of a receiver and dll2klib promoted the delegate's FIRST argument to the restored receiver — but that
 argument is the CONTEXT. A consumer of `fun evaluate(f: context(Box) Box.() -> Int)` saw `Box.(Box) -> Int`; a bare
 lambda still compiled (its one ordinary parameter became the unused implicit `it`), and at run `this` bound to the
 context. `evaluate { this.n }` returned the context's field instead of the receiver's, with no diagnostic anywhere.
 
 So kotc CAPTURES the arity from FIR before fir2ir drops it (`kotc.frontend.ClrContextFnTypes`, keyed by the
 declaration slot's source range) and carries it as the slot fact `ctxFnType` / `retCtxFnType`. bir2cir turns that into
-`[KotlinContextFunctionType(N)]` beside the receiver marker, facadegen splits the leading N delegate arguments back
-off as contexts, and the FIR injector rebuilds the type with the `ContextFunctionTypeParams` cone attribute. It is a
+`[KotlinContextFunctionType(N)]` beside the receiver marker, dll2klib splits the leading N delegate arguments back
+off as contexts in the reference KLIB's function type metadata. It is a
 SLOT fact rather than a field of the type node because a type node is rebuilt by a dozen lowering passes, any of which
 would drop it — the same reason `suspendFnType` is one.
 
@@ -880,7 +880,7 @@ runtime.
 |---|---|
 | `infix` / `operator` | `[KotlinFunction(Infix\|Operator)]` |
 | `suspend` (a `suspend fun`) | `[KotlinFunction(Suspend)]` (+ `Task<T>`→`T` unwrap) |
-| a `suspend (…) -> T` **function TYPE** (parameter / return / property / field) | `[KotlinSuspendFunctionType("sfunc:<ret>:<args>")]` preserves the pre-erasure shape because the CLR slot itself erases to `object`. bir2cir records it, ilemit stamps it, facadegen reads it, and kotc restores `kotlin.coroutines.SuspendFunctionN`. All four positions are covered by the roundtrip NUnit suite. |
+| a `suspend (…) -> T` **function TYPE** (parameter / return / property / field) | `[KotlinSuspendFunctionType("sfunc:<ret>:<args>")]` preserves the pre-erasure shape because the CLR slot itself erases to `object`. bir2cir records it, ilemit stamps it, dll2klib reads it, and kotc restores `kotlin.coroutines.SuspendFunctionN`. All four positions are covered by the roundtrip NUnit suite. |
 | top-level functions | `[KotlinFileClass]` on the `<File>Kt` facade → restored as package-level functions. Same-name overloads that live in **different** source files of the same package (`foo()` in `UtilsKt`, `foo(Int)` in `HelpersKt`) each route back to their **own** file-facade class — resolved by the call's arity, so no cross-file mis-routing. |
 | `inline` (with a lambda) | `[KotlinInline(birJson)]` (only for cross-module non-local return; see §3) |
 | a **context parameter** (`context(s: S) fun f()`) | `[KotlinContextParameter]` on the emitted positional parameter — a bare marker. The parameter is physically ordinary (§5i), so without it the consumer would restore a plain leading value parameter and `with(s) { f() }` would stop resolving. Covers functions and property accessors, top-level and member. |
@@ -909,7 +909,7 @@ default-omission works **everywhere** — trailing, named-middle, reordered, and
   param (a string constant cannot sit in a `[DefaultParameterValue]` on an interface type) and **any non-constant
   default** — a call (`= emptyList()`), an empty lambda (`= {}`, the Avalonia `configure: Panel.() -> Unit = {}` idiom),
   a receiver-reading default (`= this`). Such a parameter is emitted **REQUIRED** for a C# consumer (no `[Optional]`); a
-  **kcc** consumer instead sees it OPTIONAL, because facadegen surfaces the `@kotlin.clr.KotlinDefault`-carrying param
+  **kcc** consumer instead sees it OPTIONAL, because dll2klib surfaces the `@kotlin.clr.KotlinDefault`-carrying param
   with a `nonConst` default marker so the frontend accepts the omission (#146). The default EXPRESSION is carried as a
   **CLOSED** BIR sub-tree on the `@kotlin.clr.KotlinDefault(index, birJson)` attribute (mirroring `[KotlinInline]`): a
   non-capturing lambda default, whose `newDelegate` would point at a library-LOCAL lifted method, is carried as a
@@ -924,7 +924,7 @@ default-omission works **everywhere** — trailing, named-middle, reordered, and
   args[0], so it round-trips (below). For a CROSS-MODULE call kotc emits a POSITIONAL `{"k":"defaultArg"}` placeholder for each omitted
   arg of such a callee (so a later provided arg keeps its slot), and `bir2cir.DefaultArgSplice` — run at **PHASE 1**
   (right after `InlineSplice`, before owner attribution / the CharSequence bridge / type-lowering, so the spliced RAW
-  expression re-lowers in THIS app's context) — resolves the callee by the owner kotc already projected (a facadegen call
+  expression re-lowers in THIS app's context) — resolves the callee by the owner kotc already projected (a dll2klib call
   carries its file-facade `ownerType`; a `new` carries its `type`), falling back to method name + emitted arity only for a
   truly ownerless call, and replaces each placeholder in place by array index (matching the `@KotlinDefault` stamp
   index), RE-HOISTING a `defaultCarrier`'s lifted method into the consumer's file class under a fresh per-splice name.
@@ -1013,7 +1013,7 @@ A GENERIC callee's non-constant default closes its type frame at the call site t
 `@KotlinDefault` carrier holds the default as the CALLEE wrote it, so its type parameters ride it as positional type
 variables; the splice substitutes this call's TYPE arguments into the materialized carrier before binding its
 `{this}`/`{defaultArgParam n}` tokens — the same thing an inline body's splice does, and the cross-module half of the
-rule kotc applies to same-module and injected defaults. So `fun <T> f(xs: MutableList<T> = mutableListOf())` omitted
+rule kotc applies to same-module and external defaults. So `fun <T> f(xs: MutableList<T> = mutableListOf())` omitted
 from a consumer as `f<String>()` builds a `MutableList<String>`, not a `MutableList<Any>` holding the right values.
 
 **#146 known gap (named, not silent):** a non-const default that references a PRIVATE/internal library symbol
@@ -1029,9 +1029,8 @@ refusal, never a miscompile.
   Reflection.Emit produces) are repointed to the real contract assemblies (`Object`/`Task`→`System.Runtime`,
   `List`/`Dictionary`→`System.Collections`, …) by the build-time `retarget` (Mono.Cecil). See memory
   `r1-reverse-projectreference-retargeter`.
-- Forward (`Kotlin → .NET`): `import System.X` / a `<ProjectReference>` to a C# project just works (the import scan
-  injects the referenced types into FIR). See `docs/design-kotlin-metadata-attributes.md` and memory
-  `c2-import-driven-resolution`, `s5-fir-injection-seam`.
+- Forward (`Kotlin → .NET`): `dll2klib` projects every resolved reference assembly to a metadata-only KLIB, so
+  `import System.X` and C# `<ProjectReference>` declarations resolve through the ordinary frontend classpath.
 
 ## 8b. Dual representation: `import System.Text.StringBuilder` vs `kotlin.text.StringBuilder` — two typed VIEWS of one CLR type
 
@@ -1062,9 +1061,9 @@ frontend path, which the layer rules forbid (kotc reads no CLR-binding metadata)
 diagnostic is the clean 1.0 rule; an explicit `clrView<T>()`-style conversion intrinsic is possible later if the
 cast proves too blunt.
 
-## 8c. Injected .NET STATIC members: implicit `Type.member` works (`.Companion` optional)
+## 8c. Projected .NET STATIC members: implicit `Type.member` works (`.Companion` optional)
 
-A facadegen-injected .NET class's static members surface on a synthesized **companion object**, and resolve
+A reference-KLIB-projected .NET class's static members surface on a synthesized **companion object**, and resolve
 **implicitly** — exactly like a hand-written Kotlin companion:
 
 ```kotlin
@@ -1073,13 +1072,8 @@ Application.Start(...)             // implicit companion access — the natural 
 Application.Companion.Start(...)   // explicit form — still works, identical BIR
 ```
 
-The old rule requiring `.Companion` (2026-06-23; MEMORY `injected-static-members-need-companion`) was **retired
-2026-07-03**: it was a wiring gap, not a pinned-compiler limitation. Stock K2 only links `companionObjectSymbol`
-(the field the implicit-qualifier path consults) for source/deserialized classes — never for a fully-generated
-owner — so kotc now eagerly creates + links the companion itself and sets the FIR-internal `ownerGenerator`
-attribute through a bytecode-public Java shim (`kotc/frontend/FirInternals.java`; the eager link makes the
-framework's only assignment site unreachable, upstream `FirGeneratedScopes.kt:245-255`/`:290`). Instance members,
-constructors, properties, events, operators and extension methods resolve directly as before.
+The companion and its owner link come from standard KLIB static-member metadata. Instance members,
+constructors, properties, events, operators, and extension methods resolve directly.
 
 ## 8d. Same-name .NET arity families: `Task` stays `Task`, `Task<TResult>` becomes `Task1<TResult>`
 
@@ -1098,15 +1092,15 @@ DotKt therefore projects the names (the `kotlin.Function0/Function1/…` precede
 
 The family is computed against the **loaded reference universe** (all `--refs` assemblies + BCL), not the
 emitted closure, so a type's Kotlin name never changes when an unrelated import is added. `import
-System.Threading.Tasks.Task` injects the **whole family** (both `Task` and `Task1`); `import
-System.Threading.Tasks.Task1` also works (facadegen maps the trailing digits back to the CLR backtick arity).
-In the injection metadata the .NET-name token is the **true CLR name** (`System.Threading.Tasks.Task``1`), so
-the wire format itself is collision-free.
+System.Threading.Tasks.Task` resolves against the **whole family** (both `Task` and `Task1`); `import
+System.Threading.Tasks.Task1` also works (dll2klib maps the trailing digits back to the CLR backtick arity).
+The projected declaration retains the **true CLR name** (`System.Threading.Tasks.Task``1`), so the
+KLIB surface remains collision-free.
 
 **Implementing an arity-family generic interface uses the arity-qualified name + the VERBATIM .NET member surface.**
 `class Ver : IComparable1<Ver> { override fun CompareTo(other: Ver?): Int }` — the classifier is `IComparable1`
 (the generic member of the `System.IComparable` family), and its member is the .NET name `CompareTo` with an
-NRT-oblivious `Ver?` parameter, NOT the Kotlin operator `compareTo`. (facadegen surfaces .NET members verbatim — it
+NRT-oblivious `Ver?` parameter, NOT the Kotlin operator `compareTo`. (dll2klib surfaces .NET members verbatim — it
 does not camelCase or operator-map them; the `compareTo`/operator restoration applies only to **round-tripped DotKt**
 assemblies, whose members are already Kotlin-named.) The natural spelling `IComparable<Ver>` does **not** resolve to
 the generic — `IComparable` is the non-generic (arity-0) member, so it errors *"no type arguments expected"*; this is
@@ -1114,9 +1108,9 @@ the arity hard-limit above, not a bug. **For Kotlin comparability, implement `ko
 gives the `operator compareTo` / `<` and emits BOTH CLR faces (`System.IComparable``1<T>` and the non-generic
 `System.IComparable` cast-and-forward bridge), so a BCL consumer's natural-ordering dispatch works.
 
-**Nested generic types are not injected** (`List<T>.Enumerator` — no CLR-addressable open name in the meta
-grammar); members referencing them degrade to `Any?`. Iteration is unaffected (`for (x in list)` rides the
-injected `IEnumerable<T>` iterator marker, and the backend enumerates via `GetEnumerator/MoveNext/Current`).
+**Nested generic types are not projected** (`List<T>.Enumerator`); members referencing them degrade to `Any?`.
+Iteration is unaffected because the backend enumerates through `IEnumerable<T>` and
+`GetEnumerator/MoveNext/Current`.
 
 ## 8d. .NET event subscriptions and closeable tokens
 
@@ -1144,7 +1138,7 @@ c.CollectionChanged.subscribe { sender, e -> println("scoped") }.use {
 - **Static events** subscribe the same way. A **static** event on a normal class is reached through the companion
   (`TaskScheduler.UnobservedTaskException.subscribe(h)`); a static event on a `static class`/`object`
   (`System.Console.CancelKeyPress.subscribe(h)`) is a member of that object. Either binds to the event's **static** add/remove
-  accessor (a plain `Call`). (facadegen originally emitted only *instance* events of *non-static classes*.)
+  accessor (a plain `Call`).
 - **Interface events** (`INotifyPropertyChanged.PropertyChanged`) surface as a `ClrEvent<T>` member and **consume**
   the same way on an interface-typed receiver (`n.PropertyChanged.subscribe(h)`). When a Kotlin class **subclasses** a .NET
   class that already implements the interface (`class MyApp : Avalonia.Application`), the inherited concrete
@@ -1165,7 +1159,7 @@ c.CollectionChanged.subscribe { sender, e -> println("scoped") }.use {
 
 ## 8e. A .NET delegate parameter surfaces as a Kotlin FUNCTION TYPE — even when its Invoke takes/returns `object`
 
-A .NET method/ctor parameter typed as a delegate is injected as a Kotlin **function type** (`(A) -> R`), so a lambda
+A .NET method/ctor parameter typed as a delegate is projected as a Kotlin **function type** (`(A) -> R`), so a lambda
 binds directly and — when it is a `virtual` — a Kotlin subclass can **override** it naturally. This holds **even when
 the delegate's `Invoke` has an `object`/`Any?` param or return** (#1): `SendOrPostCallback.Invoke(object)` surfaces as
 `(Any?) -> Unit`, so `class MyCtx : SynchronizationContext() { override fun Post(cb: (Any?) -> Unit, state: Any?) }`
@@ -1175,7 +1169,7 @@ resolves. (Previously such a delegate collapsed to a bare `Any?`, and the overri
   a member on two delegates that differ only at their function positions — by adjacent **arity**
   (`Thread(ThreadStart)` = `() -> Unit` **and** `Thread(ParameterizedThreadStart)` = `(Any?) -> Unit`) or by a
   Unit-vs-value **return** (`Task.Run(Action)` = `() -> Unit` **and** `Task.Run(Func<T>)` = `() -> T`) — a bare no-arrow
-  `{ … }` lambda would be an *overload resolution ambiguity* (its arity/return is unspecified, matching both). facadegen
+  `{ … }` lambda would be an *overload resolution ambiguity* (its arity/return is unspecified, matching both). dll2klib
   — the only layer that sees the whole overload group — marks the **Pareto-dominated** sibling (the wider-arity /
   value-returning one) `lowPriority`, and kotc stamps `@kotlin.internal.LowPriorityInOverloadResolution` on the
   synthesized declaration. So a bare `Thread({ … })` binds `ThreadStart` and `Task.Run({ … })` binds `Action` with **no
@@ -1185,24 +1179,24 @@ resolves. (Previously such a delegate collapsed to a bare `Any?`, and the overri
   equally-preferred delegates tie and neither is deprioritized. Coverage:
   `tests/interop/consumer/fixtures/ThreadingInteropTests.kt` and `DelegateOverloadTests.kt`.
 
-## 8f. A SOURCE declaration wins over a facadegen-injected copy of the same identity (#15)
+## 8f. A SOURCE declaration wins over a reference-KLIB-projected copy of the same identity (#15)
 
-If the SAME top-level type or function is BOTH declared in the compiled Kotlin **source** AND injected by facadegen
-from a referenced .NET/DotKt assembly, the **source declaration wins** and the injected copy is suppressed. This
+If the SAME top-level type or function is BOTH declared in the compiled Kotlin **source** AND present in a
+reference KLIB, the **source declaration wins** and the external copy is suppressed. This
 arises from a project **mislayout** — the app's `**/*.kt` glob reaches a `<ProjectReference>`'d library's *own source
-files*, so the app compiles `class Plain` / `fun hello()` from source while facadegen *also* injects `demo.Plain` /
-`demo.hello` from the referenced dll. Before #15 the injected copy collided with the source (`overload resolution
+files*, so the app compiles `class Plain` / `fun hello()` from source while the referenced dll also supplies
+`demo.Plain` / `demo.hello`. Before #15 the external copy collided with the source (`overload resolution
 ambiguity` at the use site + `conflicting overloads/declarations` at the source decl site) — only when the name was
 actually used. Now the source declaration is authoritative and emits as a plain local type/call.
 
 - **Granularity is package + name, not signature.** Suppression is per (package, name) and per *kind* (a source `val
-  hello` does not suppress an injected `fun hello`, and vice versa), but a source top-level function of a **different
+  hello` does not suppress an external `fun hello`, and vice versa), but a source top-level function of a **different
   signature** (`fun hello(s: String)`) still suppresses the referenced dll's `fun hello(): Int` overload — so that
   referenced overload becomes unreferenceable (a **loud** unresolved-reference, never a silent miswire). The fix for
   this is to not compile the referenced library's source into the app (correct the glob / project layout); the
   source-wins rule only guarantees the compiler no longer *doubles* the declaration.
 - **MPP residual.** The shadow query sees only the current module's source, so a **common-module** source declaration
-  does not suppress a **platform-session** injection of the same identity.
+  does not suppress a platform dependency declaration of the same identity.
 
 ## 9. Reference-type nullability ⇔ .NET NRT; un-annotated .NET types are PLATFORM types
 
@@ -1220,7 +1214,7 @@ nullable reference return/parameter — the exact encoding the C# compiler uses,
 
 Reading the other direction, consuming **any** .NET assembly:
 
-| the .NET reference type's NRT info | injected Kotlin type |
+| the .NET reference type's NRT info | projected Kotlin type |
 |---|---|
 | `[Nullable(2)]` / nullable context | `T?` |
 | `[Nullable(1)]` / non-null context | `T` |
@@ -1232,8 +1226,8 @@ possibly-null .NET value into a Kotlin non-null type.
 
 ### 9a. Platform-type `T!` null-legitimacy — a null flows to the dereference (no eager boundary assertion)
 
-The flexibility of `T!` is settled between the frontend and `bir2cir`: `facadegen` emits a `TypeNode.Oblivious` for an
-NRT-oblivious .NET member (`NrtByteOf == 0`, `Program.cs:ApplyNrt`), and `kotc`'s `ClrTypeInjection.coneOf` maps it to a
+The flexibility of `T!` is settled between the frontend and `bir2cir`: `dll2klib` records flexible lower and
+upper bounds in the reference KLIB for an NRT-oblivious .NET member. The frontend loads this as
 `ConeFlexibleType(T, T?)` in an OUTPUT position (a getter/return) — where it stays flexible so a `[MaybeNull] T` keeps
 its platform-type null-checkability — while an INPUT/param `T!` type-variable collapses to the bare `T` (#157). Fir2Ir
 attaches the `@kotlin.internal.ir.FlexibleNullability` marker onto the flexible IR type (kotc installs the
@@ -1268,7 +1262,7 @@ call's entry (§9c). Prefer `T?` + a null check (or `?:`) at the boundary when t
 ### 9a-bis. A VALUE-type platform `T!` has NO null state — it is the CLR default (`0`), and `== null` is statically false (#8)
 
 §9a is written for REFERENCE platform types (a reference is always null-capable in IL). A VALUE-type platform member —
-a facadegen-injected `[MaybeNull]`/un-annotated .NET member whose type is a value type, e.g. `ThreadLocal<Int>.Value` —
+a reference-KLIB-projected `[MaybeNull]`/un-annotated .NET member whose type is a value type, e.g. `ThreadLocal<Int>.Value` —
 behaves differently, because a CLR value type has no null representation:
 
 - The oblivious `Int!` lowers to a **bare `int32`**, NOT `System.Nullable<Int32>`. Reading `ThreadLocal<Int>().Value`
@@ -1362,144 +1356,22 @@ Consequences:
   8-bit storage; on the CLR the two arrays are already the same bytes). Mutations through one view are visible through
   the other. The scalar `UByte.toByte()` / `Byte.toUByte()` remain bit-reinterprets of a single 8-bit value as before.
 
-## 10. Round-trip fidelity audit — what re-consuming a DotKt assembly as Kotlin LOSES
+## 10. Round-trip fidelity
 
-§6 lists what survives the round-trip (Kotlin → DotKt `.dll` → re-consumed as Kotlin: `dll2klib` reads the
-`[Kotlin*]`/NRT metadata into a reference KLIB and the standard frontend loads its declarations). **This section is the inverse: the
-Kotlin surface that the round-trip does NOT fully restore.** It is an *audit* (prioritized-task #8) — the gaps are
-documented here, not yet fixed. Findings are grounded in `toolchain/dll2klib/Program.cs` (the reconstructor),
-`toolchain/ilemit/Emitter.Metadata.cs` + `Emitter.CompilerServices.cs` (the attribute stampers), and
-`toolchain/kotc/.../BirEmitter.kt` (the emitter), and were cross-checked with Codex against the CLR-metadata surface.
+A DotKt assembly is re-consumed through a metadata-only reference KLIB. Standard KLIB declarations preserve
+classes, objects, enums, value classes, companions, functions, properties, generics, bounds, variance, sealed
+modality, function types, visibility, and Kotlin modifiers. DotKt carrier attributes supply the declaration facts
+that cannot be recovered from the lowered CLR signature alone, such as file-facade ownership, suspend and extension
+function shapes, inline payloads, collection identity, and Kotlin nullability.
 
-Three buckets — **Restored** (faithful), **Partial** (degraded), **Lost** (no carrier).
+Current deliberate limits are:
 
-### 10.1 Restored (faithful) — see §6
-
-`infix`/`operator`/`suspend`, top-level functions, cross-module `inline` non-local-return, `val`-vs-`var`,
-reference-type nullability, parameter names (named-arg calls), constant default args, `vararg`, extension receivers,
-reified generics, and `final`/`open`/`abstract` + `public`/`protected` visibility. **Data-class generated members
-also round-trip**: `componentN()` carries `operator` (via `[KotlinFunction(Operator)]`, set from `fn.isOperator` in
-`BirEmitter.kt`), so destructuring works cross-module, and `copy`/`equals`/`hashCode`/`toString` are real callable
-methods. **Generic constraints/bounds and declaration-site variance also round-trip** (gap ①, now fixed): `facadegen`
-reads `GetGenericParameterConstraints()`/`GenericParameterAttributes` and emits `tvariance`/`tbound`/`mbound` metadata,
-and `ClrTypeInjection` restores `out`/`in` (interfaces) + upper bounds — so `interface P<out T>`, `interface C<in T>`,
-`class SortedPair<T : Comparable<T>>`, and `fun <T : Comparable<T>> …` keep their variance and bounds cross-module.
-**`sealed` classes/interfaces also round-trip (gap ⑤, now fixed):** a Kotlin `sealed` type lowers to a CLR
-abstract-class / interface (which drops the sealed modality), so `ilemit` stamps `[KotlinSealed]`, `facadegen`
-emits a `sealed` meta line, and `ClrTypeInjection` restores `Modality.SEALED`. Cross-module this restores the full
-sealed contract: the modality, **cross-module inheritance enforcement** (a rogue subclass in another module is
-rejected), **and exhaustive `when`** with no `else` — the closed inheritor set is rediscovered because the sealed
-type's subtypes are themselves injected into the consumer's session via their `super` edges (importing
-`Circle`/`Square` alongside `Shape` makes `when (s) { is Circle -> …; is Square -> … }` exhaustive).
-**Function types with a receiver (`A.() -> B`, #145) and suspend function types (H2) also round-trip
-faithfully, not as a plain delegate:** the CLR signature slot itself either keeps the delegate with the
-receiver riding as its first type argument (receiver types — `bir2cir` does NOT erase it) or erases fully
-to `object` (suspend types — a suspend-lambda value is a `Continuation`-based state machine, not a
-`Func`), so in both cases `bir2cir`'s `RoundtripMetadata` stamps a carrier — a bare
-`[KotlinExtensionFunctionType]` marker, or a `[KotlinSuspendFunctionType(shape)]` pre-erasure TypeNode —
-across every param/return/field/property position. `facadegen` reads both back (`SuspendFnNode` /
-`HasExtFnMarker`+`WithExtRecv`) and `kotc`'s `ClrTypeInjection` reconstructs the real cone type: a genuine
-`kotlin.coroutines.SuspendFunctionN` (so a passed lambda re-binds as an actual suspend lambda), or a
-`FunctionN` carrying the `ExtensionFunctionType` cone attribute (so the lambda gets a real implicit
-`this: P` and its body's unqualified members resolve against the receiver) — not an ordinary `Func<>`
-that has lost the distinction.
-
-### 10.2 Partially restored (in metadata, but degraded on reconstruction)
-
-| Kotlin construct | What survives | What degrades / is lost |
-|---|---|---|
-| **Generic constraints / bounds** (`<T : Comparable<T>>`, `where`) | **NOW RESTORED (gap ①, §10.1)** | ~~`facadegen` never read `GetGenericParameterConstraints()`~~ — it now does, emitting `tbound`/`mbound` metadata that `ClrTypeInjection` restores as upper bounds (a `Comparable<T>` bound is reversed from the CLR `System.IComparable<T>` it lowers to). Multiple bounds (a `where` list) round-trip as several lines. |
-| **Declaration-site variance** (`class Box<out T>`, `interface Cmp<in T>`) | **NOW RESTORED for interfaces (gap ①, §10.1)** | `facadegen` now reads `GenericParameterAttributes` and emits `tvariance`, which `ClrTypeInjection` restores as `out`/`in`. **Class**-type-param variance still has no CLR form (stays invariant); **use-site** variance / **star projection** `Foo<*>`: no analog, lost. |
-| **`fun interface` (SAM)** | a plain interface | **The `fun interface` NATURE now round-trips (gap ③):** `ilemit` stamps `[KotlinFunInterface]`, `facadegen` emits a `funinterface` meta line, and `ClrTypeInjection` restores `status.isFun`. So a consumer sees it as a functional interface and can implement it (incl. via an anonymous `object : Handler { … }`). **What still degrades:** a bare **lambda** (SAM conversion) does NOT convert — blocked by the pinned Kotlin **2.4.0** FIR `FirSamResolver.computeSamCandidateNames`, which scans `FirRegularClass.declarations` **directly** for the single abstract method's name; a `FirDeclarationGenerationExtension`-injected interface serves its members lazily via scopes (empty `declarations`), so no SAM candidate is found. Same class of pinned-compiler limitation as `object`/companion (§10.4 #2) — not fixable from our side without materialising the SAM method into `declarations` (against the plugin contract) or a compiler bump. |
-| **`enum class`** | entry values | A *basic* enum → a real CLR `enum` → `facadegen` restores it as an **`object` of `val`s** (value access like `Color.GREEN` works); a *rich* enum (ctor args / methods / per-entry bodies, `isRichEnum`) → a singleton-field **class** → restored as a plain **`class`**. Either way it is **not** a Kotlin `enum class`: exhaustive `when`, `.entries`/`values()`/`valueOf`, `.ordinal`/`.name` identity degrade. **Not fixable via the injection path (gap ④):** a `FirDeclarationGenerationExtension` (2.4.0) cannot synthesize real `FirEnumEntry` declarations — the exhaustiveness checker (`FirWhenExhaustivenessTransformer`) enumerates `enumClass.declarations.filterIsInstance<FirEnumEntry>()`, and the plugin API exposes no `createEnumEntry`/entry hook (only `createTopLevelClass`/`createMemberProperty`/…). Generating `ClassKind.ENUM_CLASS` with enum-shaped `val`s would mislead FIR without giving exhaustiveness, so no `[KotlinEnum]` carrier is emitted. |
-| **`data class`** | generated members (10.1) | The **`data` modifier itself** is not carried, and that costs more than a missing modifier: a re-consumed data class's `copy` surfaces **every parameter REQUIRED**, so `q.copy(c = 9)` is a frontend error (`no value passed for parameter 'a'`). `copy`'s generated defaults are `this.<field>`, which is neither a `[DefaultParameterValue]` constant nor a carryable `@KotlinDefault` (an enclosing-instance read is poisoned, §7) — and without the `data` fact the consumer cannot reconstruct them either. Omitting a `copy` field therefore works **same-module**, and **cross-module only for a data class resolved through the frontend KLIB** (`kotlin.Pair`, `kotlin.Triple`), via the reconstruction in §7. Closing it needs three things together: facadegen carrying the `data` nature, kotc's injector restoring it, and a `copy` parameter surfaced OPTIONAL. |
-| **Annotations** | RUNTIME/BINARY-retained with CLR-legal args; `KClass`→`System.Type` | `ilemit` **skips** annotations whose ctor-arg shape the CLR encoder rejects (`BuildCab`/`TryCab` → diagnostic, e.g. a generic-instantiation parameter). **SOURCE**-retention annotations are gone. **Use-site targets** (`@get:`/`@field:`/`@param:`) are only as faithful as which CLR target they landed on — the Kotlin intent is ambiguous. Repeatable-annotation semantics differ. |
-| **Default arguments** | constants + non-constant defaults reading the receiver or an earlier value parameter (§7) | A non-constant default that references the RECEIVER (`= this`) or an earlier VALUE parameter (`b = a * 10`) round-trips (positional splice; the carrier's `{"k":"this"}` / `{"k":"defaultArgParam","idx":N}` bind to the call's receiver / arg N). Every value the call supplies is a binding of its evaluation plan, so it is evaluated exactly once and in Kotlin's order however many defaults read it (§7); a value free to re-read — a literal, `this` — is spliced directly and costs no local. |
-| **`internal` visibility** | hidden cross-assembly (correct for module≈assembly) | `kotc` lowers `internal`→ CLR `assembly`; `facadegen.Vis` skips assembly-visible members, so they don't inject — aligned with Kotlin's module boundary, but the **`internal` modifier is not itself restorable**, there is **no friend-module / `InternalsVisibleTo`** wiring, and no JVM-style name mangling. |
-
-### 10.3 Lost (no carrier — not reconstructable from the current metadata)
-
-| Kotlin construct | Closest .NET shape | What is lost |
-|---|---|---|
-| **`object` singleton** | class + static `INSTANCE` field | Restored as a plain **`class`**; the Kotlin singleton access `MyObject.member` does **not** round-trip (a consumer would need `.INSTANCE`/`.Companion`). |
-| **Companion implicit access** | synthesized companion (`sfun`/`sprop`) | ~~must be written `Class.Companion.member`~~ **LIFTED (2026-07-02, `50c2c9f`)**: implicit `Class.member` now resolves — kotc eagerly creates+links the injected class's companion and sets the FIR-internal `ownerGenerator` via a bytecode-public Java shim (`kotc/frontend/FirInternals.java`; the old NPE was a FIR wiring gap, not a K2 limit). Both forms compile to identical BIR. |
-| **`value`/inline class** (`@JvmInline`) | a **real wrapper class** (never erased, never a struct) | The OPPOSITE of Kotlin/JVM: no inline-class erasure and no name mangling — `Money` is emitted as an ordinary reference class (backing field + property + the synthesized `equals`/`hashCode`/`toString`), i.e. permanently "boxed". Structural equality survives; what is lost is the value-ness itself (identityless-ness is not enforced, no .NET `struct`, and the `value` modifier does not round-trip). The frontend still REQUIRES `@JvmInline` (JVM-frontend checker); the emitted `[kotlin.jvm.JvmInline]` attribute is skipped by ilemit. |
-| **`typealias`** | the expanded type | The alias name is not visible cross-module (it is expanded at use). |
-| **Contracts** (`@ExperimentalContracts`) | — | `callsInPlace`/returns-implies smart-cast facts are gone → consumer loses the smart-casts. |
-| **`Nothing`** (bottom type) | erased to `object` | The bottom-type semantics (unreachable, `List<Nothing>` covariance) have no CLR analog. **The RETURN position now round-trips (#133, FIXED):** a `fun f(): Nothing` return carries a `[KotlinNothing]` marker — `bir2cir` records the pre-erasure fact (`BirTypeLowering`, alongside the `object` erasure) and stamps the marker (`RoundtripMetadata`), `facadegen` reads it (`RetTypeSfxN`) and surfaces `kotlin.Nothing`, and `kotc`'s `coneOf` resolves the bare `Nothing` node to `bt.nothingType`. So a consumer's `val y: String = if (c) "ok" else f()` keeps `String` instead of widening to `Any?` (`roundtrip-nothing-return`). Nested occurrences (`List<Nothing>`, parameter positions, a `suspend fun`'s Task-wrapped result) stay lost. |
-| **`lateinit`** | a non-null `var` field | The definite-init contract / `isInitialized` is lost (restored as a plain non-null `var`). |
-| **`inner` class** | a nested type | The `inner` modifier (implicit outer `this` capture) is not marked vs. a plain nested class. |
-| **`const val`, `tailrec`, `crossinline`/`noinline`, property delegation `by`** | literal field / plain method / accessors | Compile-time-only facts: the value/behavior survives but the modifier/relationship is not a restorable declaration fact. (Mostly harmless — these don't change the callable API surface.) |
-
-### 10.4 Highest-impact gaps (for a follow-up fix pass)
-
-1. ~~**Generic constraints + interface variance dropped by `facadegen`**~~ — **FIXED (gap ①, 2026-07-01).** `facadegen`
-   now reads `GetGenericParameterConstraints()` / `GenericParameterAttributes` and emits `tvariance`/`tbound`/`mbound`
-   metadata; `ClrTypeInjection` restores `out`/`in` variance + upper bounds (lazy lookup-tag cones, self-ref-safe for the
-   BCL numeric tower, fail-soft). Covers every generic library API (`<T : Comparable<T>>`, `Comparator<in T>`, …). No new
-   attribute — reconstructor-side only (`facadegen` emission + injector consumption).
-2. **`object` singleton round-trip** — the **companion IMPLICIT access** (`Type.member`) is **FIXED (2026-07-02,
-   `50c2c9f`):** kotc eagerly creates + links the injected class's companion (setting the FIR-internal
-   `ownerGenerator` via the `FirInternals.java` shim — the old NPE was a FIR wiring gap, not a pinned-K2 limit), so
-   implicit `Class.member` resolves for both facadegen-injected .NET statics (§8c) and round-tripped Kotlin
-   companions (§10.3). MEMORY `injected-static-members-need-companion` is RESOLVED. **The residual (accepted):** a
-   re-consumed top-level **`object` singleton** restores as a plain **class**, so its members are reached through the
-   class / `.INSTANCE`, not the Kotlin singleton sugar `MyObject.member`.
-3. **`fun interface` SAM** — **PARTIALLY FIXED (gap ③, 2026-07-02).** The `fun interface` *nature* now round-trips
-   (`[KotlinFunInterface]` → `funinterface` meta → `status.isFun`), so a consumer sees a functional interface and can
-   implement it (anonymous `object`). A bare **lambda** still won't SAM-convert — pinned-2.4.0 FIR `computeSamCandidateNames`
-   reads `FirRegularClass.declarations` directly, which a generation-extension interface leaves empty (§10.2). **KNOWN /
-   ACCEPTED LIMITATION** on the same basis as #2. (**re-verified on 2.4.0 — task #114: still limited.** Empirically
-   re-run under the 2.4.0 pin: (a) a bare **lambda** where an injected `fun interface` is expected still does NOT
-   SAM-convert — `argument type mismatch: … but 'Handler' was expected` / `cannot infer type for value parameter` — while
-   the fun-interface *nature* still round-trips (`funInterface:true`) so an anonymous `object : Handler {…}` works; (b) a
-   re-consumed **`enum class`** still restores as an `object` of `val`s (value access `Color.GREEN` compiles, but an
-   exhaustive `when` over it fails `'when' expression must be exhaustive`) — see #4; (c) a re-consumed top-level **`object`
-   singleton** still restores as a plain **`class`** with a static `INSTANCE` field — `Config.member` is `unresolved`,
-   `Config.INSTANCE.member` compiles — see #2. All three are confirmed, not pending.)
-4. **`enum class`** — **NOT FIXED (gap ④).** Blocked at the injection layer: a `FirDeclarationGenerationExtension` (2.4.0)
-   cannot synthesize real `FirEnumEntry` declarations, which FIR's exhaustiveness checker requires; the plugin API has no
-   enum-entry hook (§10.2). A basic enum still round-trips as an `object` of `val`s (value access works). **KNOWN /
-   ACCEPTED LIMITATION.**
-5. **`sealed` hierarchies** — **FIXED (gap ⑤, 2026-07-02).** `[KotlinSealed]` → `sealed` meta → `Modality.SEALED`
-   restores the modality, cross-module inheritance enforcement, AND exhaustive `when` (the injected subtypes supply the
-   closed inheritor set). See §10.1.
-6. **Non-constant default args / `data class copy` self-defaults** — **FIXED (kcc review C3, 2026-07-06; constructors
-   #235).** The omitted middle default no longer shifts a later provided arg's slot: kotc fills positionally (a
-   `{"k":"defaultArg"}` placeholder for a @KotlinDefault-carrying cross-module callee, spliced by
-   `bir2cir.DefaultArgSplice`; a same-module default inlined directly). A RECEIVER-referencing default
-   (`missingDelimiterValue = this`, a `copy`'s `y = this.y`) round-trips via the `this`→call-receiver rewrite, and a
-   default reading an earlier VALUE parameter (`b = a * 10`) via the carrier's `{"k":"defaultArgParam","idx":N}`.
-   A **CONSTRUCTOR** round-trips the same way: kotc stamps `@KotlinDefault` on its defaulted params, facadegen surfaces
-   them OPTIONAL (`nonConst`), and `DefaultArgSplice` fills a `{"k":"new"}`'s placeholder from the reference dll, keyed
-   `<type>|.ctor|<declared parameter count>` — the stamped index is the parameter's position in the emitted constructor's
-   own parameter list, so a consumer's argument array lines up with it one-for-one. Lower slots fill first, so a CHAIN
-   works: `class Tri(a, b = a + 1, c = a * 100 + b)` consumed as `Tri(2)` yields `c == 203`. Same-arity constructor
-   OVERLOADS resolve by signature — the key also carries the declared parameter vector, which the `new`'s `argTypes`
-   reproduces exactly. Refused rather than guessed: a default that reads an ENCLOSING instance (`defaultUnsupported` at
-   stamp time, §7 / #34 — a `new` has no receiver to bind it to).
-   A lifted LOCAL class's constructor is not stamped when it captures anything: its captures ride as leading parameters
-   the index does not count, and it has no cross-module call site to carry them for.
-
-7. **Generic-fidelity gaps surfaced by the atomicfu CLR port (#133)** — **ALL THREE FIXED.** Three
-   DOWNSTREAM-of-facadegen gaps (the facadegen symbol surface was verified correct in each; the
-   `roundtrip-generic-inline-ext` / `roundtrip-generic-operator` / `roundtrip-nothing-return` sections now PASS).
-   (a) A **generic inline extension on a generic receiver** (`inline fun <T> Cell<T>.update(fn:(T)->T)`) — `kotc`'s
-   facadegen inline-**splice** path (`BirEmitterInline.inlineSpliceCall`) now threads the extension receiver in
-   `recvs.extension` (the same shape the owner-less splice uses; owner stays the facadegen file class so `bir2cir`'s
-   owner-ful `ResolveInlinePayload` finds the `[KotlinInline]` body); route: **kotc**. (b) A Kotlin **`operator get`/`set`
-   on a generic DotKt type** — `bir2cir`'s `NetInteropBinding` now keeps the plain emitted `get`/`set` method (which the
-   Kotlin type declares) instead of the BCL `get_Item`/`set_Item` fallback when the owner has no .NET indexer property;
-   route: **bir2cir**. (c) The **`Nothing` return** carrier (§10.3) — `bir2cir` records + stamps `[KotlinNothing]` and
-   `kotc` `coneOf` resolves it to `bt.nothingType`; facadegen's reader was already landed. Route: **bir2cir + kotc**.
-
-Status: **#1 (variance/bounds), #5 (sealed), #6 (default args), #7 (atomicfu generic-fidelity gaps) are FIXED; #2 companion IMPLICIT access is FIXED
-(`50c2c9f`); #3 (fun interface) is PARTIAL** (nature restored, SAM-lambda pinned-compiler-blocked). **#4 (enum
-class) remains a KNOWN / ACCEPTED limitation** — blocked by the pinned Kotlin 2.4.0 `FirDeclarationGenerationExtension`
-surface (no `FirEnumEntry` synthesis), not by a missing `[Kotlin*]` attribute we could add. The only object/companion
-residual is the **`object` singleton `.INSTANCE`** round-trip (#2), not implicit companion access.
-
----
+- pointer and function-pointer types project as `Any?`;
+- high-arity function/delegate ABI is tracked by issue #220;
+- arbitrary CLR custom-attribute applications are not reproduced as Kotlin annotation applications;
+- explicit Kotlin companion-object reconstruction is not part of CLR static projection;
+- SOURCE-retained annotations and compile-time-only facts such as contracts are not present in CLR metadata; and
+- `internal` is enforced by CLR assembly visibility, without friend-module or `InternalsVisibleTo` wiring.
 
 ## Quick "this surprised me" index
 
@@ -1524,8 +1396,8 @@ residual is the **`object` singleton `.INSTANCE`** round-trip (#2), not implicit
 - An auto-property's backing field is named `<Name>k__BackingField` (C# convention, `[CompilerGenerated]`), not `Name` — so reflection never sees a property and a field under one name. §5h.
 - `System.Byte` is UNSIGNED → maps to `UByte` (and `byte[]` → `UByteArray`, a native `System.Byte[]`); `kotlin.Byte` is signed = `System.SByte`. `UByteArray.toByteArray()` is a reinterpret VIEW, not a copy. §9b.
 - `import System.Text.StringBuilder` and `kotlin.text.StringBuilder` are two distinct typed views of one CLR type; mixing them is a type error (cast to cross). §8b.
-- An injected .NET class's statics resolve implicitly (`Application.Start(...)`); `.Companion` is optional. §8c.
+- A projected .NET class's statics resolve implicitly (`Application.Start(...)`); `.Companion` is optional. §8c.
 - Two same-simple-named classes in different packages coexist (packages are namespaces now). §1.
 - A reference type from a .NET assembly built WITHOUT `<Nullable>enable</Nullable>` arrives as a platform type `String!`, not `String`. §9.
 - A null platform-type `String!` used as non-null does **not** throw at the boundary — no assertion is inserted; the null flows to the first dereference, where the CLR throws `NullReferenceException` (faithful to Kotlin, = JVM with call/param assertions off). §9a.
-- Re-consuming a DotKt `.dll` as Kotlin now **restores** generic **bounds/interface variance** (gap ①), **`sealed`** (gap ⑤ — modality, cross-module enforcement, exhaustive `when`), the **`fun interface` nature** (gap ③ — usable, though a bare lambda still won't SAM-convert under the pinned 2.4.0 compiler), and **receiver function types / suspend function types** (`A.() -> B`, #145; `suspend (…) -> T`, H2 — a passed lambda gets a real implicit receiver / re-binds as a genuine suspend lambda, not a plain `Func<>`); a re-consumed **companion resolves implicitly** (`50c2c9f`); `enum class` and top-level **`object` singletons** still restore as a plain `class` (the `.INSTANCE` singleton sugar is lost). §10.
+- DotKt libraries are re-consumed through ordinary reference KLIB declarations; the deliberate projection limits are listed in §10.

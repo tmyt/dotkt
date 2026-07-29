@@ -2,7 +2,7 @@
 // TResult), so ilemit synthesizes module-local delegate types KFunc`18 / KAction`17 for these
 // shapes. This structural source drives the adjacent run.sh through the real pipeline
 // (kotc -> bir2cir -> ilemit); the script additionally asserts the synthesized delegate type names
-// exist in the dll and that facadegen restores `accept` with the full 17-arg Kotlin function type.
+// exist in the dll and that dll2klib restores `accept` with the full 17-arg Kotlin function type.
 fun accept(cb: (Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Int): Int =
     cb(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)
 

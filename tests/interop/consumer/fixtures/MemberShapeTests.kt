@@ -1,10 +1,10 @@
 // C#-producer roundtrip consumer battery B — .NET MEMBER-shape interop (custom-named indexer, value-type property
-// mutation, self-referential generic, transitive generic-member injection).
+// mutation, self-referential generic, transitive generic-member projection).
 //   ixname   <- il-ixname    a custom-named indexer [IndexerName("Cell")] binds `g[i]`/`g[i]=v` to get_Cell/set_Cell
 //   vtprop   <- il-vtprop    mutating a MUTABLE property/field on a .NET value-type (struct) receiver via ldloca
 //   selfref  <- il-selfref   Money : IComparable<Money> passed where IComparable<Money> is expected
 //   transinj <- il-transinj  constructed-generic members (IList/IReadOnlyList/Dictionary/IEnumerable) + 2-hop
-//                            transitive injection (Gadget/Sprocket never imported, reached via signatures)
+//                            transitive projection (Gadget/Sprocket are reached through signatures)
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 // il-ixname

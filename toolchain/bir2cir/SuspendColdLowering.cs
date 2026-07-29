@@ -110,7 +110,7 @@ static partial class SuspendColdLowering
     static bool IsAnyTn(TypeNode t) => t is TypeNode.Fqn { Args: null, Name: "kotlin.Any" };
     // #151 — the suspend RESULT type is `kotlin.Nothing` (`suspend fun f(): Nothing`, incl. `Nothing?` — the outer `?`
     // is peeled onto _resultNullable, leaving a bare `kotlin.Nothing`). The Task<Nothing> bridge return must carry the
-    // pre-erasure Nothing fact (retNothing) so RoundtripMetadata stamps [KotlinNothing] and facadegen restores it (#135).
+    // pre-erasure Nothing fact (retNothing) so RoundtripMetadata stamps [KotlinNothing] and dll2klib restores it (#135).
     static bool IsNothingTn(TypeNode t) => t is TypeNode.Fqn { Args: null, Name: "kotlin.Nothing" };
 
     const string ContinuationImplFqn = "kotlin.coroutines.clr.internal.ContinuationImpl";
@@ -1190,7 +1190,7 @@ static partial class SuspendColdLowering
                 // overrides fill the slot; a Kotlin virtual `scope.yield(x)` dispatches through it.
                 newMethods.Add(ColdEntryAbstract());
                 // BUG 3 (interface/abstract suspend round-trip): also emit the ABSTRACT Task<T> bridge SIGNATURE so the
-                // member carries the [KotlinFunction(Suspend)] trigger (via suspendBridge) — else facadegen sees only the
+                // member carries the [KotlinFunction(Suspend)] trigger (via suspendBridge) — else dll2klib sees only the
                 // object-returning `$dotkt_suspend` cold entry and cannot restore `suspend fun` on a re-consuming Kotlin.
                 // Concrete overrides emit the matching override bridge (below), filling this abstract slot.
                 if (WantsBridge) newMethods.Add(BuildBridge());
@@ -3615,7 +3615,7 @@ static partial class SuspendColdLowering
             // BUG 2 (nested return nullability): a `suspend fun f(): String?`'s bridge return `Task<string?>` needs the
             // inner `?` — the scalar retNullable can't express a nullability that rides an INNER type arg. Emit the
             // flattened NullableAttribute byte walk (RoundtripMetadata folds it into the return's `retAttrs` for ilemit
-            // to stamp; facadegen reads it back).
+            // to stamp; dll2klib reads it back).
             if (TaskReturnNullableFlags() is JsonArray rnf) method["retNullableFlags"] = rnf;
             // #151 — a `suspend fun f(): Nothing` bridge (Task<Nothing>): carry the pre-erasure Nothing fact so
             // RoundtripMetadata stamps [KotlinNothing] on the return (BirTypeLowering erases the inner Nothing to

@@ -5,9 +5,9 @@ using System.Reflection;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// VALUE-TYPE .NET-INTERFACE-SLOT BRIDGE (#128). A Kotlin class implementing a facadegen-injected .NET GENERIC
+// VALUE-TYPE .NET-INTERFACE-SLOT BRIDGE (#128). A Kotlin class implementing a reference-KLIB-projected .NET GENERIC
 // interface instantiated with a VALUE-TYPE arg (e.g. `class C : IComparer<Int>`) declares its override against the
-// injected member, whose unconstrained `T` surfaces as `T?` — so post-lowering the override reads
+// projected member, whose unconstrained `T` surfaces as `T?` — so post-lowering the override reads
 // `Compare(Nullable<int32>, Nullable<int32>)`. But the CONSTRUCTED CLR slot `IComparer<int32>.Compare` uses BARE
 // `int32` (a value type substituted into a .NET generic parameter is bare, never Nullable<>). ilemit binds the
 // override to that slot via DefineMethodOverride, and the `Nullable<int32>` vs `int32` mismatch throws

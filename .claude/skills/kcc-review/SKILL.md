@@ -33,15 +33,15 @@ The authoritative layer table and invariants are `docs/architecture.md`. The rev
 
 | Layer | Reads | Owns | Must NOT contain |
 |---|---|---|---|
-| facadegen | CLR dll | .NET→kotlin metadata, round-trip semantics | `@ClrIntrinsic` binding; any `kotlin.*` injection |
-| kotc | stdlib.klib + facadegen meta | source → FIR → BIR, symbol resolution | **any CLR/BCL knowledge** (names, slots, `clr:`/`clrg:`/primitive-shorthand type tokens) |
+| dll2klib | CLR reference dll | CLR declarations → metadata-only KLIB | call binding or CLR physical lowering |
+| kotc | stdlib KLIB + reference KLIBs | source → FIR → BIR, symbol resolution | **any CLR/BCL knowledge** (owners, slots, or physical type tokens) |
 | bir2cir | stdlib.ref.dll | BIR → CIR; inline/type-substitute/suspend lowering; consumes `@ClrIntrinsic`/`@ClrTypeAlias`/`@ClrProperty` | passing `@ClrIntrinsic` (or any intrinsic label) into CIR |
 | ilemit | stdlib.rt.dll | CIR → CIL, ilverify-clean | **any Kotlin knowledge** |
 | stdlib (`libraries/stdlib/`) | — | pure-Kotlin `kotlin.*` + `@Clr*` bindings | compiler special-casing on its behalf |
 
 Binding invariants every finding is judged against:
 1. `@ClrIntrinsic`: sourced from ref.dll → consumed by bir2cir → **never reaches ilemit**.
-2. `kotlin.*` comes from the frontend **klib**, never from facadegen.
+2. `kotlin.*` and referenced CLR declarations come from frontend **KLIBs**.
 3. The cardinal rule: a stdlib problem is fixed **stdlib-side**, never by a compiler
    special-case/denylist/stub. A kotc hardcode that shadows a working stdlib actual is itself a bug.
 4. NO compat shims / dual-track paths — legacy code kept "just in case" is a finding, not a courtesy.
@@ -77,13 +77,13 @@ was the bug).
 
 ### Phase 2 — Static passes (per-layer, parallel)
 
-Launch the layer specialists (`kotc`, `bir2cir`, `ilemit`, `facadegen`, `stdlib` subagent types)
+Launch the layer specialists (`dll2klib`, `kotc`, `bir2cir`, `ilemit`, `stdlib` subagent types)
 in parallel, each with the subagent contract below. Four sub-passes each:
 
 - **Layer purity**: does the layer hold only its own knowledge? kotc: grep for BCL names,
   `System.`, `get_`/`set_`/`add_`/`remove_` slot construction, `clr:`/`clrg:` emission. ilemit:
-  grep for `kotlin.` names and Kotlin-semantics branching. facadegen: is the `kotlin.*` exclusion
-  enforced *inside the layer* or only by downstream discipline?
+  grep for `kotlin.` names and Kotlin-semantics branching. dll2klib: does it limit itself to
+  declaration projection, leaving CLR call binding and physical lowering downstream?
 - **Failure posture**: classify every fallback/degradation site **loud vs silent**. Silent-wrong
   (degrade to `Any?`, ungated reflection dispatch, swallowed transform miss) outranks loud-crash
   at equal frequency. The make-it-loud fix is part of the finding.
@@ -151,7 +151,7 @@ the same idiom) — never "this IL looks bad" without a referent.
 
 ## Team & delegation
 
-Use the project layer agents (`kotc`, `bir2cir`, `ilemit`, `facadegen`, `stdlib`) for Phase 2, and
+Use the project layer agents (`dll2klib`, `kotc`, `bir2cir`, `ilemit`, `stdlib`) for Phase 2, and
 `general-purpose` agents for the cross-cutting roles (behavioral sweeper, coverage auditor,
 IL-quality) in Phases 3–5. Launch independent agents in parallel. Every subagent prompt (English)
 must include:
@@ -174,7 +174,7 @@ must include:
 - **stdlib `TODO()` is filler, not a backlog.** The `@kotlin.clr.ClrIntrinsic` annotation is the
   discriminator: a bound member keeps a filler `TODO()` body that is never emitted.
   `grep TODO | wc` is a false metric.
-- **Facadegen-injected interop in kotc is LEGIT**: `get_Item`/`set_Item` indexers (gated on
+- **Reference-KLIB interop in kotc is LEGIT**: `get_Item`/`set_Item` indexers (gated on
   `clrInteropName != null`), .NET event `add_`/`remove_` accessors, numeric `toInt`/`toLong` →
   `conv`, primitive `bin`/`un`/`ceq`. Codex has over-reported all of these as kotc layer
   violations; they are the .NET-interop surface, not `kotlin.*` leakage.

@@ -1,4 +1,4 @@
-// SHARED across bir2cir / ilemit / facadegen via a <Compile Link/> (NOT its own project — no
+// SHARED across bir2cir / ilemit / dll2klib via a <Compile Link/> (NOT its own project — no
 // build-order dependency). The single-source Type read/write helper of the BIR/CIR freeze (#37).
 //
 // NORMATIVE: docs/bir-cir-spec.md §1 (the Type schema) + §4 (the shared helper API).
@@ -52,7 +52,8 @@ public abstract record TypeNode
     /// `fn`: a function type; <c>Suspend</c> is a flag, <c>Recv</c> is the extension receiver
     /// (subsumes func:/sfunc:). <c>Clr</c> is a CIR-only physical delegate-family decision authored by bir2cir;
     /// kotc's BIR projection always omits it.
-    /// <c>Ctx</c> is META-ONLY (facadegen writes it, the FIR injector reads it), exactly like <c>Oblivious</c>:
+    /// <c>Ctx</c> is reference-metadata-only: dll2klib consumes it while serializing the
+    /// corresponding context-function shape into KLIB metadata.
     /// how many of the function type's LEADING arguments are Kotlin CONTEXT parameters. `context(A) B.(D) -&gt; E`
     /// restores as <c>Ctx=[A]</c>, <c>Recv=B</c>, <c>Params=[D]</c>. kotc's BIR carries the same fact as the
     /// declaration-slot key `ctxFnType` instead, because a type node is rebuilt by many lowering passes.
@@ -91,7 +92,7 @@ public abstract record TypeNode
     /// <summary>
     /// `oblivious`: <c>T!</c> — an NRT-oblivious reference type (NullableAttribute=0), the flexible/platform
     /// <c>(T..T?)</c> (spec §1 tri-state nullability). A sibling of <see cref="Nullable"/> with the same
-    /// <c>{of:T}</c> shape. facadegen META emits it for a .NET member with no NullableAttribute; the kotc
+    /// <c>{of:T}</c> shape. dll2klib META emits it for a .NET member with no NullableAttribute; the kotc
     /// frontend maps it to a <c>ConeFlexibleType</c>. It is frontend-only — resolved to not-null/nullable
     /// before the backend — so bir2cir/ilemit never emit it (they only Read it transparently).
     /// </summary>

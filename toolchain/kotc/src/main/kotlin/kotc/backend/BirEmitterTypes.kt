@@ -222,11 +222,11 @@ internal fun BirEmitter.birType(t0: IrType): TypeNode {
 	// kotc produces no per-element monomorphized synthetic: the reverse GetEnumerator bridge in ilemit + the real
 	// generic Iterator interface handle the IEnumerable<->Iterator read-as (roadmap step 3).
 	val klass = t.classifierOrNull?.owner as? IrClass
-	// A @Clr / FIR-injected .NET type ("clr:System.Text.StringBuilder"); a constructed generic .NET type
+	// A projected .NET type ("clr:System.Text.StringBuilder"); a constructed generic .NET type
 	// (`Collection<Int>`) carries its concrete args as `clrg:<openName>[int]`.
 	val clrTypeParams = klass?.typeParameters
 	klass?.let { clrName(it) }?.let { netName ->
-		// A .NET-injected / stdlib type identity: emit its Kotlin FQN (`netName`) as an `fqn`. bir2cir/ilemit
+		// A projected .NET / stdlib type identity: emit its Kotlin FQN (`netName`) as an `fqn`. bir2cir/ilemit
 		// resolve whether it is a referenced .NET type / generic (the old `clr:`/`clrg:` decision). A nested
 		// nullable type-parameter arg keeps its `nullable(tv)` marker (bir2cir erases it).
 		val args = (t as? IrSimpleType)?.arguments?.mapNotNull { arg ->

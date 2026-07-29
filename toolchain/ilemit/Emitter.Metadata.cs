@@ -157,7 +157,7 @@ sealed partial class Emitter
     }
 
     // Emit parameter NAMES into the metadata (DefineParameter is 1-based; 0 = return). ilemit otherwise defines
-    // methods by type only, so the names are lost — and facadegen falls back to arg0/arg1, which blocks named-argument
+    // methods by type only, so the names are lost — and dll2klib falls back to arg0/arg1, which blocks named-argument
     // calls across an assembly boundary. The names come straight from the BIR params.
     void DefineParamNames(MethodBuilder mb, JsonElement m) => DefineParamNames(mb.DefineParameter, m);
     void DefineParamNames(ConstructorBuilder cb, JsonElement m) => DefineParamNames(cb.DefineParameter, m);

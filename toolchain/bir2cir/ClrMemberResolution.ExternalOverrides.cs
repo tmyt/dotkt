@@ -5,9 +5,9 @@ using System.Reflection;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// DECLARATION-SIDE external class override binding. A facadegen-injected CLR base member normally survives Fir2Ir
+// DECLARATION-SIDE external class override binding. A reference-KLIB-projected CLR base member normally survives Fir2Ir
 // through `overriddenSymbols`; kotc then emits `override:true` + its pure-Kotlin `overrides` closure, and
-// DeclarationRename confirms the external slot. Fir2Ir can, however, lose that edge when two injected parameter
+// DeclarationRename confirms the external slot. Fir2Ir can, however, lose that edge when two projected parameter
 // classifiers share a simple name in different namespaces (InjfqnAaa.Args / InjfqnBbb.Args): the BIR still carries the
 // correct resolved FQNs, but the method arrives as a virtual NewSlot and silently hides the CLR base virtual.
 //
@@ -30,7 +30,7 @@ static partial class ClrMemberResolution
                 continue;
 
             // ResolveNetType intentionally excludes DotKt-authored dependencies and local types. Their Kotlin override
-            // edges must already be present in BIR; this fallback is only for raw CLR classes injected by facadegen.
+            // edges must already be present in BIR; this fallback is only for CLR classes loaded from reference KLIBs.
             var baseType = _refs.ResolveNetType(
                 ReferenceMetadataIndex.BareOwnerFqn(baseNode.Name),
                 baseNode.Args?.Length ?? 0);

@@ -1,6 +1,6 @@
 // ktproj-listparam (#27): a Kotlin LIBRARY exercising kotlin.collections.* PARAM/return types across the module
 // boundary. Each collection param compiles to its BCL @ClrTypeAlias interface in the emitted dll (List ->
-// IReadOnlyList, MutableList -> IList, Map -> IDictionary); facadegen must reverse-map those BACK to
+// IReadOnlyList, MutableList -> IList, Map -> IDictionary); dll2klib must reverse-map those BACK to
 // kotlin.collections.* when the consumer re-imports this dll's signatures, so a consumer's listOf(...)/mapOf(...)
 // value unifies with the param. (Package renamed from the case's `mylib` to `listparam` so it coexists with the
 // nestedlist producer's own types in this single producer assembly.)

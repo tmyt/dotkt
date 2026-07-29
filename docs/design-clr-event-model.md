@@ -119,7 +119,7 @@ meaning; it is a compile-time lowering tag. Two consequences, both wanted:
    obligation, but it **wrongly breaks the `class MyApp : Avalonia.Application` ELIDE case**: a .NET base
    (`AvaloniaObject`) explicitly implements `INotifyPropertyChanged.PropertyChanged` (handler
    `PropertyChangedEventHandler`) while ALSO exposing its **own** same-name public `PropertyChanged` event of a
-   **different** signature (`EventHandler<AvaloniaPropertyChangedEventArgs>`). facadegen can surface only ONE
+   **different** signature (`EventHandler<AvaloniaPropertyChangedEventArgs>`). dll2klib can surface only ONE
    `PropertyChanged` property (the public one, different handler), which therefore does **not** override the
    abstract interface slot — so an abstract member is *unsatisfiable* and `MyApp` fails to compile ("not
    abstract and does not implement abstract members"). **OPEN** lets `override val E by clrEvent()` typecheck
@@ -172,7 +172,7 @@ meaning; it is a compile-time lowering tag. Two consequences, both wanted:
 > member was the original plan, assuming a .NET base that implements the interface would satisfy the slot. It
 > does NOT: `AvaloniaObject` explicitly implements `INotifyPropertyChanged.PropertyChanged`
 > (`PropertyChangedEventHandler`) **and** exposes its own same-name public `PropertyChanged`
-> (`EventHandler<AvaloniaPropertyChangedEventArgs>`) — facadegen surfaces only the latter (different handler),
+> (`EventHandler<AvaloniaPropertyChangedEventArgs>`) — dll2klib surfaces only the latter (different handler),
 > which does not override the abstract interface slot, so `class MyApp : Avalonia.Application` fails to compile
 > ("not abstract and does not implement abstract members" — the `ktproj-avalonia` regression that proved this).
 > **OPEN** keeps `override val E by clrEvent()` typechecking (overridable) while imposing no obligation, so the
@@ -427,7 +427,7 @@ synthesis flavors, then hardening.
 
 | # | Layer | Work | Closes |
 |---|-------|------|--------|
-| **S0** | kotc + facadegen | `ClrEvent<T>` → **abstract** (add `invoke`, `getValue`); interface event member emitted **abstract** (revert `ClrTypeInjection.kt:774`); register `kotlin.clr.clrEvent` intrinsic. Adds the frontend obligation + the #187 missing-override diagnostic. | #187 (diagnostic) |
+| **S0** | kotc + dll2klib | `ClrEvent<T>` → **abstract** (add `invoke`, `getValue`); define the projected interface-event modality in `toolchain/dll2klib/Program.cs`; register `kotlin.clr.clrEvent` intrinsic. Adds the frontend obligation + the #187 missing-override diagnostic. | #187 (diagnostic) |
 | **S1** | kotc | Recognize `by clrEvent()`; synthesize the backing field + `add_/remove_/raise_` decls with tagged bodies + `overrides` closure (§4.2). Widen `clrEventGet` to any `ClrEvent<T>` member read (§4.1). Emit `clrEventRaise` for `handle.invoke(...)` (§4.3). | #187 |
 | **S2** | bir2cir | New `ClrEventImplBinding.cs`: resolve interface event → `EventHandlerType` + slot names off ref.dll; expand tagged accessor bodies → `clrEventAccessorImpl` CIR (CAS for field-like, forward for delegation); emit type-level `clrEventDecl`; bind `clrEventRaise` → `raise_<E>` call with the "no raise on consumed event" guard (§4.2/§4.3/§6). | #187 |
 | **S3** | ilemit | `EmitClrEventAccessorImpl` (CAS loop §1 for add/remove, `field?.Invoke` for raise) + `MethodImpl` wiring to the interface slots + `.event` metadata from `clrEventDecl`. | #187 |
@@ -451,7 +451,7 @@ concern in its own file (bir2cir `ClrEventImplBinding.cs`; ilemit `EmitClrEventA
 - **kotc reads no CLR metadata.** kotc carries the handler as a *Kotlin function type* and names
   override slots by *Kotlin identity* (`{owner FQN, member name, event-add/remove kind}`); bir2cir
   resolves the concrete `EventHandlerType` delegate + `add_E`/`remove_E` names off ref.dll. The
-  `.NET event` vocabulary (`clrEventGet`/`clrEventRaise`/`clrEvent()`) is facadegen-injected CLR-only
+  `.NET event` vocabulary (`clrEventGet`/`clrEventRaise`/`clrEvent()`) is reference-KLIB-projected CLR-only
   vocab kotc lowers as dialect — the sanctioned exception (like `byref`/`ClrRef<T>`), not a metadata read.
 - **bir2cir owns the Kotlin↔CLR relation.** All delegate-type resolution, accessor-slot naming, CAS
   vs. forward body choice, and the raise binding live in bir2cir — the one layer that reads ref.dll.

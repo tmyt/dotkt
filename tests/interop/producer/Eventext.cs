@@ -1,6 +1,6 @@
 // Producer source for the migrated il-eventext case (N6). STATIC .NET events on a NORMAL class (subscribed through the
 // synthesized companion) and on a `static class` -> Kotlin `object` (the Console.CancelKeyPress shape) — surfaced by
-// facadegen as `kotlin.clr.ClrEvent<T>` properties whose add/remove accessors emit a STATIC Call. Own namespace.
+// dll2klib as `kotlin.clr.ClrEvent<T>` properties whose add/remove accessors emit a STATIC Call. Own namespace.
 using System;
 namespace Eventext {
     public class Station {

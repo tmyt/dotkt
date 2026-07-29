@@ -61,7 +61,7 @@ declare -A RT_XFAIL=(
 #     roundtrip-dotfile -> dottedFileClass              roundtrip-nonconst-default -> nonConstDefaultArgs
 #     roundtrip-comparable -> comparableClass           roundtrip-ubyte -> ubyteFidelity
 #   BATCH 3 (1):
-#     roundtrip-toplevel-val -> toplevelValVar  (#195: facadegen --import-list now surfaces a field-backed top-level val/var)
+#     roundtrip-toplevel-val -> toplevelValVar  (#195: reference KLIB surfaces a field-backed top-level val/var)
 # The remaining sections below stay in this shell lane pending later increments (suspend/coharness, negative
 # compile-fail and dual-emit-path cases). roundtrip-nothing still has a formal object/string IL gap.
 # generic-hof and receiver-lambda are now formally clean after low-arity delegate ABI unification; they remain here
@@ -117,8 +117,8 @@ need_fe_klib
 build_tool ilemit; build_tool bir2cir; build_tool dll2klib; build_tool retarget
 need_dotnet_reference_sets
 # The RUNTIME stdlib joins the reference set: a suspend-carrying DotKt lib references the coroutine runtime
-# (DotKt.Stdlib's kotlin.coroutines.Continuation) in its emitted CPS signatures, so retarget/facadegen must be
-# able to LOAD it to walk KLib's type surface (else facadegen skips every seed type -> empty meta -> the
+# (DotKt.Stdlib's kotlin.coroutines.Continuation) in its emitted CPS signatures, so retarget/dll2klib must be
+# able to LOAD it to walk KLib's type surface (else dll2klib skips every seed type -> empty meta -> the
 # consumer can't resolve the library). Harmless for the non-suspend sections (they reference no stdlib type).
 REFS="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_RT_DLL");"
 
@@ -148,14 +148,14 @@ need_stdlib_ref; need_stdlib_rt
 # emit_il: drop-in for `ilemit <outdir> <asm> [--ref X]... <bir files...>`, inserting the BIR->CIR (bir2cir) lowering.
 # Both stages tolerate failure (|| true): a broken emit surfaces as its SECTION's FAIL, not a script abort.
 # ilemit references the RUNTIME stdlib (--ref) so REAL emitted kotlin.* types resolve — notably the coroutine
-# runtime (`kotlin.coroutines.Continuation`, injected into a suspend fun's CPS signature by bir2cir's suspend
+# runtime (`kotlin.coroutines.Continuation`, synthesized in a suspend fun's CPS signature by bir2cir's suspend
 # lowering); and the rt dll is dropped beside the emitted assembly so the run resolves it (mirrors verify-tests).
 emit_il() {
 	local out="$1" asm="$2"; shift 2
 	local refs=() birs=() usrrefs=()
 	while (( $# )); do
 		# A user `--ref X` (a retargeted DotKt library) goes to ilemit AND — A2 (#61) — to bir2cir, which RESOLVES
-		# the facadegen-injected owner FQN against it to bind the .NET call SHAPE (clrStatic/clrInstance/…). Mirrors
+		# the reference-KLIB-projected owner FQN against it to bind the .NET call SHAPE (clrStatic/clrInstance/…). Mirrors
 		# The compiler-test emit path uses the RUNTIME stdlib only for ilemit (bir2cir reads the REFERENCE stdlib).
 		if [[ "$1" == --ref ]]; then refs+=("$2"); usrrefs+=("$2"); shift 2; else birs+=("$1"); shift; fi
 	done
@@ -173,7 +173,7 @@ emit_il() {
 # write_coharness <appDir> — drop the coroutine TEST HARNESS (dotkt.support.blockOn) beside a suspend-consuming
 # app so it co-compiles. `blockOn` was DROPPED from kotlin.clr (docs/design-coroutine-cold-core-task-bridge.md §13);
 # it is a kotlinx/Track-2 primitive, re-implemented HERE in pure Kotlin over the PUBLIC stdlib primitives
-# (startCoroutine/Continuation) + System.Threading.Monitor (facadegen-seeded), with ZERO compiler special-casing.
+# (startCoroutine/Continuation) + System.Threading.Monitor (dll2klib-seeded), with ZERO compiler special-casing.
 write_coharness() {
 	cat > "$1/harness.kt" <<'EOF'
 @file:Suppress("UNCHECKED_CAST")
@@ -210,9 +210,8 @@ EOF
 }
 
 # ----- MARKER round-trip: Kotlin class-nature facts with no faithful .NET analog survive re-consumption -----
-# A `fun interface` (SAM), a `sealed` class/interface, and an `enum class` lower to a plain interface / abstract-class /
-# CLR-enum, LOSING the Kotlin nature. ilemit stamps [KotlinFunInterface]/[KotlinSealed]; facadegen reads them back
-# (`funinterface`/`sealed` meta lines); ClrTypeInjection restores `status.isFun` / `Modality.SEALED`.
+# A `fun interface`, sealed class/interface, and enum carry the Kotlin declaration flags needed by a consumer.
+# dll2klib writes those facts into standard reference-KLIB metadata.
 # See docs/dotkt-semantics.md §10.
 M="$ROOT/build/roundtrip-markers"; rm -rf "$M"; mkdir -p "$M/lib" "$M/app" "$M/rogue" "$M/libbir" "$M/libil" "$M/appbir" "$M/appil"
 cat > "$M/lib/lib.kt" <<'EOF'
@@ -269,11 +268,11 @@ section_result roundtrip-markers "$mk_ok" "fun interface nature; sealed modality
 # simple names that COLLIDE with kotlin.concurrent.atomics.* (AtomicInt/AtomicLong/AtomicBoolean/AtomicRef), each
 # backed by a `kotlin.concurrent.atomics.*` field and exposing the `getValue`/`setValue` property-delegate operators
 # (which reference `kotlin.reflect.KProperty`). The consumer imports the `atomic(...)` factory + the types and touches
-# their members. REGRESSION TARGET for #73: a real MSBuild consumer puts BOTH stdlib twins on facadegen's compile set
+# their members. REGRESSION TARGET for #73: a real MSBuild consumer puts BOTH stdlib twins on dll2klib's compile set
 # — the REFERENCE twin `DotKt.Private.Stdlib` (what a ref-reader reads) AND the RUNTIME twin `DotKt.Stdlib` (which the
-# consumed lib was emitted against, copy-local). So THIS section's facadegen call passes BOTH twins (unlike the other
+# consumed lib was emitted against, copy-local). So THIS section's dll2klib call passes BOTH twins (unlike the other
 # sections, which pass only the runtime twin). Pre-fix (#35/#37): every `kotlin.*` type resolved to TWO defining
-# assemblies -> facadegen's use-site duplicate-definition check threw -> EmitOneType skipped each atomic type -> the
+# assemblies -> dll2klib's use-site duplicate-definition check threw -> EmitOneType skipped each atomic type -> the
 # consumer got `unresolved reference` on every member (`value`, `incrementAndGet`, `compareAndSet`, ...). The lock-style
 # types were unaffected because their members touch only `System.Threading` (a single BCL definition). Fix: a ref-reader
 # collapses the twin pair to the reference twin (ManagedReferenceCatalog), so `kotlin.*` resolves once. If the atomic
@@ -359,9 +358,9 @@ check_output roundtrip-atomic-twin "$atexpected" "$atactual" "consumed types who
 
 # ----- KOTLIN `Nothing` RETURN round-trip (#135): companion-static + top-level `fun f(): Nothing` -----
 # A `fun f(): Nothing` erases to a CLR `object` return (Nothing has no CLR analog); bir2cir stamps [KotlinNothing]
-# on the return, facadegen restores `kotlin.Nothing`, so a consumer's `val r: String = if (c) x else f()` keeps x's
+# on the return, dll2klib restores `kotlin.Nothing`, so a consumer's `val r: String = if (c) x else f()` keeps x's
 # type instead of widening to Any?. #133 wired the PLAIN method/getter path; #135 extends the READER to the
-# companion-static return (which the facadegen companion-static loop read via raw MapRetT -> Any?, now RetTypeSfxN).
+# companion-static return (which the dll2klib companion-static loop read via raw MapRetT -> Any?, now RetTypeSfxN).
 # LOAD-BEARING: if either Nothing widened to Any?, the `val r: String = if/else` would fail to compile -> section FAIL.
 # STAYS in this shell lane (not migrated to the in-process ProjectReference consumer): a cross-module re-imported
 # Nothing branch merges an `object`-returning call with a `string`, which the in-process lane's ilverify phase
@@ -393,8 +392,8 @@ run_app noactual "$NO/appil/NothingApp.dll"
 check_output roundtrip-nothing "$noexpected" "$noactual" "companion-static + top-level fun f(): Nothing round-trips (does not widen to Any?) #135"
 
 # ----- SUSPEND `Nothing` return round-trip (#135/#151): `suspend fun f(): Nothing` -----
-# The facadegen READER reads [KotlinNothing] before the Task unwrap; bir2cir's SuspendColdLowering.BuildBridge stamps
-# retNothing on the Task<Nothing> bridge return (#151), so RoundtripMetadata emits [KotlinNothing] and facadegen
+# The dll2klib READER reads [KotlinNothing] before the Task unwrap; bir2cir's SuspendColdLowering.BuildBridge stamps
+# retNothing on the Task<Nothing> bridge return (#151), so RoundtripMetadata emits [KotlinNothing] and dll2klib
 # restores the Nothing return: `sfail()` does NOT widen to Any?, so the lambda types as `suspend () -> Int` and `z: Int`.
 NS="$ROOT/build/roundtrip-nothing-suspend"; rm -rf "$NS"; mkdir -p "$NS/lib" "$NS/app" "$NS/libbir" "$NS/libil" "$NS/appbir" "$NS/appil"
 cat > "$NS/lib/lib.kt" <<'EOF'
@@ -450,10 +449,10 @@ EOF
 "$LAUNCHER" "$R/lib" -no-stdlib -classpath "$CP" -d "$R/libbir" >/dev/null 2>&1 || true
 emit_il "$R/libil" KLib "$R/libbir"/*.bir.json
 dotnet "$RETARGET_DLL" "$R/libil/KLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-# 2. facadegen reads the attributes back into the injection metadata.
+# 2. dll2klib records the attributes in the reference KLIB.
 project_reference_klib "$R/libil/KLib.dll" "$R/KLib.klib"
 write_coharness "$R/app"
-# 3. compile the consumer WITH the metadata (the injector restores infix/operator/suspend/top-level on FIR).
+# 3. compile the consumer with the generated reference KLIB.
 "$LAUNCHER" "$R/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$R/KLib.klib" -d "$R/appbir" >/dev/null 2>&1 || true
 emit_il "$R/appil" KApp --ref "$R/libil/KLib.dll" "$R/appbir"/*.bir.json
 cp "$R/libil/KLib.dll" "$R/appil/" 2>/dev/null || true
@@ -465,15 +464,11 @@ check_output roundtrip "$expected" "$actual" "infix / operator / suspend / top-l
 # ----- GENERIC round-trip, COMBINED with every other round-tripping feature, consumed as Kotlin -----
 # Exercises user generics in every POSITION (class type param, member, return, parameter, two type params, generic
 # method on a generic class) AND combined with each restored modifier (operator, infix, extension, extension operator,
-# top-level suspend, nullable, default arg, vararg). Guards the coordinated fixes:
-#   - facadegen: a root-namespace generic open name was `.Box` (leading dot); `Supported`/`CrossType` dropped a generic
-#     user type in a signature (`Box<T>` -> Any?) so the whole function vanished.
+# top-level suspend, nullable, default arg, vararg). Guards the complete KLIB generic declaration surface:
+#   - dll2klib preserves root-package generic names and every generic type appearing in a signature.
 #   - ilemit: a generic type was named `Box` without the CLR `Box`1` arity (cross-assembly `GetType` missed it); a
 #     generic EXTENSION call omitted the `__self` receiver shape; a generic fn with a DEFAULT arg had fewer shapes than
 #     the single .NET method's params (now tolerated + default-filled).
-#   - injector: `coneOf` lost the method type variable inside `generic:Box:T` (resolved `T` -> Any?, so a returned
-#     `Box<T>` became `Box<object>` and crashed at the call site); the generic branch ignored ext receiver / inline /
-#     infix / operator / vararg / default-arg overloads (now one unified path).
 # (reified generics already worked — a generic method with no carried type. Generic-CLASS member `suspend` is a separate
 # pre-existing coroutine×generics limitation that fails the same way WITHOUT round-trip, so it's covered elsewhere.)
 GG="$ROOT/build/roundtrip-generic"; rm -rf "$GG"; mkdir -p "$GG/lib" "$GG/app" "$GG/libbir" "$GG/libil" "$GG/appbir" "$GG/appil"
@@ -527,7 +522,7 @@ run_app gactual "$GG/appil/KApp.dll"
 check_output roundtrip-generic "$gexpected" "$gactual" "user generics in every position × operator/infix/extension/suspend/nullable/default/vararg"
 
 # ----- NULLABLE VALUE-TYPE generic, CROSS-MODULE (#109) -----------------------------------------------
-# #86 is a CROSS-MODULE representation defect: a top-level `T?` PARAMETER kept as bare `T` so it can survive the facadegen
+# #86 is a CROSS-MODULE representation defect: a top-level `T?` PARAMETER kept as bare `T` so it can survive the dll2klib
 # round-trip is unsound at VALUE-TYPE instantiations (a bare struct T cannot hold null). But every existing cross-module
 # gate exercises this family only at T=String — roundtrip-generic drives `orDefault<String>` (a reference type, where
 # bare-T is trivially sound), the MSBuild nullable-generic sample consumes `holderOf<String>`, and the same-compilation
@@ -609,9 +604,9 @@ check_output roundtrip-generic-hof "$hfexpected" "$hfactual" "generic user types
 # so `apply1 { margin = 4 }` resolves `margin` to `Panel.margin`. Kotlin lowers `P.()->Unit` to `Function1<P,Unit>`
 # carrying the `kotlin.ExtensionFunctionType` annotation, then flattens the receiver to the first CLR delegate arg
 # (`KAction`1[Panel]`) — erasing the "was a receiver" bit. kotc now carries it in the BIR `fn.recv`; bir2cir stamps a
-# bare `[KotlinExtensionFunctionType]` on the delegate param; facadegen moves the delegate's first arg back into the
-# fn receiver; ClrTypeInjection restores `Panel.() -> Unit` (an ExtensionFunctionType cone) so the consumer's lambda
-# gets `this: Panel`. Without the round-trip the injected param degrades to a receiver-less `(Panel)->Unit` and the
+# bare `[KotlinExtensionFunctionType]` on the delegate param; dll2klib moves the delegate's first arg back into the
+# fn receiver; KLIB deserialization restores `Panel.() -> Unit` (an ExtensionFunctionType cone) so the consumer's lambda
+# gets `this: Panel`. Without the metadata the projected param degrades to a receiver-less `(Panel)->Unit` and the
 # consumer fails with `unresolved reference 'margin'`. Also covers a member `Panel.() -> Unit` and multi-param mix.
 # Still in this shell lane pending mechanical migration to the in-process ProjectReference consumer. The receiver
 # marker remains Kotlin metadata while the physical low-arity delegate is `System.Action`1` on both sides.
@@ -654,8 +649,8 @@ run_app rlactual "$RL/appil/UiApp.dll"
 check_output roundtrip-receiver-lambda "$rlexpected" "$rlactual" "receiver-lambda P.() -> Unit restored cross-module: param (top-level/member/multi) + top-level-val + member-property positions #145"
 
 # ----- MEMBER-declared extension PROPERTIES + SUSPEND member extensions -----
-# Member extension property (`class C { val T.p }`): restored via a `memextprop` meta line (a `get_p(__self)`/
-# `set_p(__self,v)` member method) as a member property with an extension receiver; read/write inside `with(c)` routes
+# Member extension property (`class C { val T.p }`): represented in KLIB metadata as a member property with an
+# extension receiver; read/write inside `with(c)` routes
 # to C's get_/set_ with the extension receiver prepended. Suspend member extension (`suspend fun T.f()` in a class):
 # emitted with the SM nested in C (so it reaches PROTECTED members), exposed via a normal suspend member the consumer
 # awaits. Both at public + protected visibility.
@@ -710,12 +705,12 @@ check_output roundtrip-memext2 "$mpexpected" "$mpactual" "member extension prope
 # suspend-lambda VALUE is a Continuation state-machine, not a Func), so WITHOUT the position metadata the consumer
 # would see a plain `Any?` and a passed lambda could NOT call a suspend function. bir2cir records the pre-erasure `fn`
 # shape (suspend:true) and generates a carrier-encoded [KotlinSuspendFunctionType(version, bytes)] on the parameter;
-# ilemit stamps it dumbly; facadegen reads the `fn` node back and ClrTypeInjection restores `block` as a suspend
+# ilemit stamps it dumbly; dll2klib reads the `fn` node back and KLIB deserialization restores `block` as a suspend
 # function type (`kotlin.coroutines.SuspendFunction0<Int>`). PROOF that suspend survives: the
 # consumer's `runBlock { addAsync(...) }` lambda BODY calls `addAsync` (itself a suspend fun) — which only compiles
 # if `block` is a suspend function type (else "suspend function called from non-suspend context"), and only runs if
 # the suspend lambda is driven as a state machine. (A suspend fn-type in a RETURN/property/field position is wired in
-# facadegen too, but blocked E2E on a separate suspend-lambda-VALUE emit limitation — `expr suspendLambdaNew`.)
+# dll2klib too, but blocked E2E on a separate suspend-lambda-VALUE emit limitation — `expr suspendLambdaNew`.)
 # See docs/dotkt-semantics.md §10.
 SF="$ROOT/build/roundtrip-suspendfn"; rm -rf "$SF"; mkdir -p "$SF/lib" "$SF/app" "$SF/libbir" "$SF/libil" "$SF/appbir" "$SF/appil"
 cat > "$SF/lib/lib.kt" <<'EOF'
@@ -762,10 +757,10 @@ check_output roundtrip-suspendfn "$sfexpected" "$sfactual" "a suspend (…) -> T
 # value everywhere (previously only method/ctor/accessor bodies were walked, so a static field initializer's
 # value-position node reached ilemit -> `NotSupportedException: expr suspendLambdaNew`).
 #   - RETURN position is proven cross-module directly: the app calls the LIB's `makeBlock()` (its restored
-#     `suspend () -> Int` return type comes back via facadegen's structured meta — a `fn` node with suspend:true) and DRIVES it.
+#     `suspend () -> Int` return type comes back via dll2klib's structured meta — a `fn` node with suspend:true) and DRIVES it.
 #   - PROPERTY + FIELD positions are proven by the LIB storing the suspend lambda in a top-level `val` and an
 #     instance `val`, then DRIVING each via `runBlock` inside restorable functions `runProp()`/`runField()`
-#     the app invokes. (kotc emits a top-level `val` as a plain static FIELD, which facadegen does not restore
+#     the app invokes. (kotc emits a top-level `val` as a plain static FIELD, which dll2klib does not restore
 #     as a Kotlin `val`, so the app consumes the VALUE through a function rather than the raw field.) A wrong
 #     value-position lowering would crash the LIB emit or mis-drive the SM. See docs/dotkt-semantics.md §10.
 SR="$ROOT/build/roundtrip-suspendfn-ret"; rm -rf "$SR"; mkdir -p "$SR/lib" "$SR/app" "$SR/libbir" "$SR/libil" "$SR/appbir" "$SR/appil"
@@ -814,16 +809,8 @@ run_app sractual "$SR/appil/Hof2App.dll"
 check_output roundtrip-suspendfn-ret "$srexpected" "$sractual" "a suspend (…) -> T VALUE round-trips in RETURN + PROPERTY + FIELD position: bir2cir lowers a value-position suspendLambdaNew to a SuspendLambda SM, the consumer drives it"
 
 # ----- VIRTUAL DISPATCH: an open/override instance method of a DotKt lib consumed AS KOTLIN dispatches virtually (#139) -----
-# kotc's .NET-interop callInstance path (a facadegen-reinjected owner) previously emitted NO `virtual` flag. bir2cir's
-# NetInteropBinding reshapes such a callInstance to a `clrInstance` (where virtual is moot) WHEN it resolves the owner
-# off the --ref DotKt assembly, so the normal path masks the gap. But when bir2cir CANNOT resolve the owner (an
-# asymmetry: kotc's clrName resolved it via the facadegen injection metadata, bir2cir's ResolveNetType did not), the
-# RAW callInstance reaches ilemit, which read `virtual` UNCONDITIONALLY -> KeyNotFoundException; and even null-tolerant,
-# a defaulted non-virtual `call` on an `open`/`override` member mis-dispatches. kotc now stamps `virtual`
-# (modality != FINAL || overrides) on every .NET-interop callInstance; ilemit reads it null-tolerantly (IsVirtual).
-# This section guards the ROOT (the app BIR carries `virtual`) AND both emit paths: (1) the normal reshaped clrInstance
-# path, (2) the FALLBACK where bir2cir is deliberately NOT given the DotKt --ref, forcing the raw callInstance into
-# ilemit — the exact uncovered path #139 crashed on. Both must print the same virtually-dispatched output + ilverify clean.
+# A projected external owner must preserve virtual dispatch. This section guards both the normal clrInstance
+# binding and the raw callInstance fallback when bir2cir is deliberately not given the DotKt reference.
 VD="$ROOT/build/roundtrip-virtual-dispatch"; rm -rf "$VD"; mkdir -p "$VD/lib" "$VD/app" "$VD/libbir" "$VD/libil" "$VD/appbir" "$VD/appil" "$VD/appil2"
 cat > "$VD/lib/lib.kt" <<'EOF'
 package dispatch
@@ -900,13 +887,13 @@ section_result roundtrip-virtual-dispatch "$vd_ok" "open/override instance metho
 #   * ext:   suspend Int.() -> Int  — assigned to a typed local `val f: suspend Int.() -> Int = h.ext`, which type-checks
 #                                    ONLY IF ext restored as a suspend fn-type of arity 1 (a degraded `Any?` / arity-0
 #                                    `suspend () -> T` would not assign -> compile FAIL). The RECEIVER preservation (the
-#                                    #47 combined suspend+extension cone) is separately asserted by grepping the facadegen
+#                                    #47 combined suspend+extension cone) is separately asserted by grepping the dll2klib
 #                                    meta for ext's `fn` node carrying `recv`. (ext is NOT driven at runtime: driving a
 #                                    suspend EXTENSION lambda VALUE via the receiver-form startCoroutine hits a pre-existing
 #                                    bir2cir coroutine-lowering gap — reproducible SAME-module, unrelated to this
 #                                    symbol-surface fix — so the restored TYPE is asserted by compile-dependency + meta.)
 # bir2cir: RoundtripMetadata StampProps emits [Nullable] (from DeclNullableFlags) + [KotlinSuspendFunctionType];
-# kotc BirEmitterTypes keeps recv on a suspend ext fn; facadegen PropTypeN reads the suspend carrier + ApplyNrt the
+# kotc BirEmitterTypes keeps recv on a suspend ext fn; dll2klib PropTypeN reads the suspend carrier + ApplyNrt the
 # nullable byte (recv-tolerant); kotc coneOf composes coneSuspendExtensionFunctionType.
 PR="$ROOT/build/roundtrip-property-type"; rm -rf "$PR"; mkdir -p "$PR/lib" "$PR/app" "$PR/libbir" "$PR/libil" "$PR/appbir" "$PR/appil"
 cat > "$PR/lib/lib.kt" <<'EOF'
@@ -989,13 +976,8 @@ section_result roundtrip-nullable-generic-slots "$pr_ok" \
 	"$(printf -- '--- expected ---\n%s\n--- actual ---\n%s' "$prexpected" "$practual")"
 
 # ----- INTERFACE-COMPANION statics round-trip (#132): `interface I { companion object { val X; fun f() } }` -----
-# kotc FLATTENS an interface's plain companion object to the interface's OWN static fields/methods (BirEmitterDeclarations
-# statFields/statMethods — the #83 SharingStarted.Eagerly path). Pre-fix, facadegen's interface branch enumerated ONLY
-# Public|Instance members and returned — so the flattened statics were SILENTLY DROPPED: a consumer re-importing the lib
-# could not resolve `I.X`/`I.f()` (round-trip asymmetry — emit had them, read dropped them). facadegen now surfaces the
-# interface's Public|Static fields/props/methods/events as companion members (staticProps/staticFuns/staticEvents), and
-# the injector materializes the interface companion. Reached via `.Companion` (injected-static-members-need-companion).
-# LOAD-BEARING: if the statics were still dropped, the app would fail to compile (unresolved `Greeter.Companion.DEFAULT`).
+# kotc flattens an interface companion to the interface's static fields and methods. dll2klib must project those
+# statics as companion members so `Greeter.Companion.DEFAULT` and `Greeter.Companion.greet` resolve cross-module.
 IC="$ROOT/build/roundtrip-iface-companion"; rm -rf "$IC"; mkdir -p "$IC/lib" "$IC/app" "$IC/libbir" "$IC/libil" "$IC/appbir" "$IC/appil"
 cat > "$IC/lib/lib.kt" <<'EOF'
 package svc
@@ -1032,18 +1014,9 @@ section_result roundtrip-iface-companion "$ic_ok" "interface-companion statics (
 	"$(printf -- '--- expected ---\n%s\n--- actual ---\n%s' "$icexpected" "$icactual")"
 
 # ----- `class C : Comparable<C>` round-trip (#179): PascalCase IComparable<T>.CompareTo -> operator compareTo -----
-# A Kotlin `class C : Comparable<C>` lowers `compareTo` to the CLR `System.IComparable<C>.CompareTo` PascalCase slot
-# (bir2cir DeclarationRename) and its supertype to `System.IComparable<C>` (+ a non-generic bridge). Pre-fix facadegen
-# left BOTH un-restored: the PascalCase `CompareTo` never became the lowercase `operator compareTo`, and the supertype
-# stayed `IComparable`, so a consumer's `c1 < c2` / `sorted()` was UNRESOLVED on re-import. facadegen now (a) renames the
-# DotKt IComparable<X> self slot `CompareTo` -> `compareTo` + forces the operator flag (so the FRONTEND resolves `<` to
-# C's own operator), and (b) restores the `IComparable<X>` supertype as `kotlin.Comparable<X>` (dropping the non-generic
-# bridge) so `sorted()`'s `Comparable<C>` constraint is satisfied. That is the SYMBOL-SURFACE half (facadegen's); the
-# section keeps ONLY the facadegen-surface half here:
-#   * roundtrip-comparable-meta  — the facadegen surface, asserted DIRECTLY on the generated metadata. A regression
-#                                  guard for the restore.
-# The END-TO-END run (`<`/`>`/`<=`/`>=`/sorted() resolve+run cross-module, bir2cir compareTo->CompareTo slot bind)
-# MIGRATED to the in-process ProjectReference round-trip lane (tests/roundtrip/consumer RoundtripTests::comparableClass).
+# A Kotlin `class C : Comparable<C>` lowers to the CLR `System.IComparable<C>.CompareTo` slot. The reference KLIB
+# must restore lowercase operator `compareTo` and the `kotlin.Comparable<C>` supertype so comparison operators and
+# `sorted()` resolve cross-module.
 CM="$ROOT/build/roundtrip-comparable"; rm -rf "$CM"; mkdir -p "$CM/lib" "$CM/app" "$CM/libbir" "$CM/libil" "$CM/appbir" "$CM/appil"
 cat > "$CM/lib/lib.kt" <<'EOF'
 package geo

@@ -1,5 +1,5 @@
 // C#-producer roundtrip consumer battery (batch A — extension / generic .NET interop). Consumes the producer's public
-// .NET API FAÇADE-FREE (facadegen re-imported the plain C# dll's types from `import <Ns>.<Type>`) and asserts each
+// .NET API FAÇADE-FREE (dll2klib re-imported the plain C# dll's types from `import <Ns>.<Type>`) and asserts each
 // migrated CLR-interop case's golden values 1:1 (design D1 value asserts). NONE of the producer's source is in this
 // compilation. Each C# runtime.cs was given its OWN namespace so the colliding simple names coexist.
 //
@@ -7,7 +7,7 @@
 //                           operators, struct value-type instance methods, C#-origin extension methods (member-import)
 //   csext    <- il-csext    #137: C#-origin `[Extension]` methods brought in AS top-level extensions via `import Ns.*`
 //   csextrecv<- il-csextrecv#144: same-name/same-arity `[Extension]`s on DIFFERENT receivers (class + primitive)
-//   genextval<- il-genextval#157: an inferred `Cell(40)` over an injected generic must construct `Cell<int32>`
+//   genextval<- il-genextval#157: an inferred `Cell(40)` over a projected generic must construct `Cell<int32>`
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 // il-c1net (`import Owner.member` form — the `using static` analog)

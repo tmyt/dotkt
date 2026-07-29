@@ -125,7 +125,7 @@ static class ArrayConstructionLowering
     {
         TypeNode.Array a => a.Elem,
         TypeNode.Nullable n => ArrayElementOf(n.Of),
-        // A flexible/platform array `int[]!` (a facadegen-injected NRT-oblivious .NET array return, #8) — peel the
+        // A flexible/platform array `int[]!` (a reference-KLIB-projected NRT-oblivious .NET array return, #8) — peel the
         // oblivious wrapper exactly like Nullable, else the arrayGet/arraySet/forArray `elem` stamp is dropped and
         // ilemit KeyNotFounds on the missing `elem`.
         TypeNode.Oblivious o => ArrayElementOf(o.Of),

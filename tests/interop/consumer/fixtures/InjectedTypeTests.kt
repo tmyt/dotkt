@@ -1,7 +1,7 @@
-// C#-producer roundtrip consumer battery (batch A — FIR-injection / subclass / interface-impl interop). Each producer
+// C#-producer interop battery (batch A — reference projection / subclass / interface implementation). Each producer
 // runtime.cs has its OWN namespace; top-level Kotlin helper decls are case-prefixed to avoid cross-battery collisions.
 //
-//   firgap      <- il-firgap      FIR injection of cross-.NET-type members (makeWidget -> Widget) + array members
+//   firgap      <- il-firgap      projected cross-.NET-type members (makeWidget -> Widget) + array members
 //   injbase     <- il-injbase     assignability survives a non-constructible base (TextBox -> Frame -> Element)
 //   injfqn      <- il-injfqn       two same-simple-name `Args` in different namespaces; the override binds the exact one
 //   fieldvis    <- il-fieldvis    a .NET host reflects the emitted Kotlin type -> honored CLR accessor visibility
@@ -43,7 +43,7 @@ class IfacechainvtCell(val v: Int) : IMid<Int> {
 class InjectedTypeTests {
     @TestAttribute
     fun firgap() {
-        assertEquals(42, Engine().makeWidget().value())  // 42  (cross-type return resolves to the injected Widget)
+        assertEquals(42, Engine().makeWidget().value())  // 42  (cross-type return resolves to the projected Widget)
         assertEquals(60, Arr.sumArr(Arr.range3()))       // 60  (array param + array return)
         assertEquals(3, Arr.words().size)                // 3   (string[] -> Array<String>)
         assertEquals(20, Arr.range3()[1])                // 20  (array return is indexable)

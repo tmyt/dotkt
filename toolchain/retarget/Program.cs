@@ -8,8 +8,8 @@
 //
 // WHAT: repoint each System.Private.CoreLib-scoped TypeReference to the contract assembly the REFERENCE PACK
 // says owns that type (Object/String/Task -> System.Runtime, List/Dictionary -> System.Collections, LINQ ->
-// System.Linq, …). The map is derived by reflecting the same --compile-refs the forward path already uses —
-// this is the mirror image of forward injection. Pure metadata surgery via Mono.Cecil (no Reflection.Emit, so
+// System.Linq, …). The map is derived from the same --compile-refs used for CLR reference binding.
+// Pure metadata surgery via Mono.Cecil (no Reflection.Emit, so
 // none of the TypeBuilder/MetadataLoadContext generic-instantiation limits that sank the two earlier attempts).
 //
 // USAGE: retarget <input.dll> [--out <path>] [--compile-refs "a.dll;b.dll;…"] [-v]

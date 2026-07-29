@@ -1,5 +1,5 @@
-// Producer source for the migrated il-firgap case. FIR injection of cross-.NET-type members (makeWidget -> Widget)
-// and array members (int[]/string[] params + returns). Own namespace.
+// Cross-.NET-type members (makeWidget -> Widget) and array members
+// (int[]/string[] params + returns) projected through a reference KLIB.
 namespace Firgap {
     public class Engine { public Widget makeWidget() => new Widget(); }   // returns another .NET type (cross-type)
     public class Widget { public int value() => 42; }

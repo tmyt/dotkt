@@ -2,7 +2,7 @@
 // A source file whose stem contains a dot (`Dotfile.common.kt`, the standard MPP common-fragment convention)
 // compiles to a file-facade class. kotc must sanitize the stem's non-identifier chars to `_` BEFORE deriving
 // the class name (`Dotfile_commonKt`) — else the raw `Dotfile.commonKt` is read by ilemit's DefineType as
-// Namespace=roundtrip.dotfile.Dotfile / Name=commonKt, so facadegen scanning the package never surfaces the
+// Namespace=roundtrip.dotfile.Dotfile / Name=commonKt, so dll2klib scanning the package never surfaces the
 // TOP-LEVEL functions -> a cross-module `unresolved reference` on `commonOnly`. Top-level CLASSES round-trip
 // either way (they carry their own type name).
 package roundtrip.dotfile

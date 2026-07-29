@@ -8,8 +8,8 @@
 // EXCLUDED from this family (matched the enum grep but the real subject is .NET interop, not Kotlin
 // `enum class` behavior — kept in the bash lane):
 //   il-netenum       -> for-loop over a raw .NET IEnumerable<T> (imports Kfc.*, ships runtime.cs;
-//                       il_check_inject injected-runtime interop lane, not an enum-class subject)
-//   il-netenumbound  -> a facadegen-injected .NET enum (System.DayOfWeek) satisfies `T : Enum<T>`
+//                       CLR-interop lane, not an enum-class subject)
+//   il-netenumbound  -> a reference-KLIB-projected .NET enum (System.DayOfWeek) satisfies `T : Enum<T>`
 //                       (il_check_imports .NET-interop lane; subject is .NET-enum binding, not Kotlin enums)
 //
 // Coverage preserved (old case -> method):

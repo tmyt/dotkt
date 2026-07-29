@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// .NET EVENT `subscribe` binding. A .NET event is surfaced by facadegen/kotc as a
+// .NET EVENT `subscribe` binding. A .NET event is surfaced by dll2klib/kotc as a
 // read-only `kotlin.clr.ClrEvent<T>` property (a compile-time fiction — a .NET event is NOT a first-class value), and
 // `w.Changed.subscribe(handler)` resolves through NORMAL Kotlin resolution. kotc emits it as a PLAIN call
 // `callInstance(ownerType = kotlin.clr.ClrEvent, method = subscribe,

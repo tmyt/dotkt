@@ -1,11 +1,8 @@
-// BCL-interop battery (pilot batch IntropA) — migrates the facadegen `import System.*` interop cases/il-* onto the
-// in-process NUnit suite. Each old case's `main` + stdout-golden becomes one @TestAttribute method whose per-value
-// assert is strictly stronger (typed) and self-documenting; every value the old il_check_imports asserted is preserved
-// 1:1 (see the `// <expected>` comments). These fixtures import real .NET types — the Interop consumer project runs the
-// facadegen scan-imports pipeline, so `import System.Text.StringBuilder` etc. inject the CLR type at compile.
+// BCL-interop battery (pilot batch IntropA). These fixtures resolve real .NET types from the Interop
+// consumer's dll2klib-generated reference KLIBs.
 //
 // Coverage preserved (old case -> method):
-//   il-alias     -> alias_aliasedImport        `import X as Y` injects the type AND binds the alias (PSI import scan)
+//   il-alias     -> alias_aliasedImport        `import X as Y` resolves the projected type and binds the alias
 //   il-dualrep   -> dualrep_twoViewsOneClass    System.Text.StringBuilder (raw) vs kotlin.text.StringBuilder coexist; cast crosses
 //   il-bclinject -> bclinject_genericFactoryCtorAndStatic  #143 generic value-factory ctor + reference-oblivious Value + static GetHashCode
 //   il-tlvalint  -> tlvalint_valueTypeObliviousValue        #8/#11 ThreadLocal<Int>.Value is a bare int32 (default 0), value/ref twin

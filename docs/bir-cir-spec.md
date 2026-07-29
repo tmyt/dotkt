@@ -1,7 +1,7 @@
 # BIR/CIR Specification (v1 — frozen contract)
 
 > NORMATIVE. This is the single source of truth for the BIR/CIR serialization format. Every layer
-> (kotc emit / bir2cir consume+produce / ilemit consume / facadegen meta / [KotlinInline] splice)
+> (kotc emit / bir2cir consume+produce / ilemit consume / dll2klib carrier decoding / [KotlinInline] splice)
 > implements to THIS. Earlier freeze proposals and producer/consumer audits are preserved in Git history.
 > Durable-ABI principles: uniformity, self-describing, additive-extensible,
 > codec-agnostic, single-source. **BIR contains NO stringly-typed compound tokens — types are nodes.**
@@ -17,7 +17,7 @@
   `KotlinSuspendFunctionTypeAttribute(string version, byte[] content)` (a `suspend (…) -> T` position's
   pre-erasure `fn` `Type` shape). The old bare `(string)` ctors are DELETED (no dual-track). Producers
   (`ilemit` `ApplyKotlinInline` / `ApplySuspendFnType`) and consumers (`bir2cir` cross-module splice,
-  `facadegen` `KotlinInlineBody` / `SuspendFnNode`) all route through the one codec.
+  `dll2klib` carrier decoding) all route through the one codec.
 - A decoded `[KotlinInline]` content is the current payload object
   `{v:1,fqn,owner,fileClass,recv,static,typeParams,params,ret,body,lifted}`. The numeric `v` identifies the
   payload shape and is independent of the carrier codec string (`bir-json/1`). `body` is the raw BIR body.
@@ -87,15 +87,15 @@ Notes:
     for `NullableAttribute`=0, NOT the Kotlin-consumer "platform" name — the node states the .NET metadata's
     actual annotation, not how a consumer treats it.
   This is ONE tri-state model shared by BIR and META: **kotc BIR emits not-null + nullable + oblivious** —
-  `{t:"oblivious"}` IS produced for a platform/flexible type `T!` (`(T..T?)`), i.e. a facadegen-injected
+  `{t:"oblivious"}` IS produced for a platform/flexible type `T!` (`(T..T?)`), i.e. a reference-KLIB-projected
   `[MaybeNull]`/un-annotated .NET member (`ThreadLocal<Int>.Value`, #8). Fir2Ir attaches the
   `@kotlin.internal.ir.FlexibleNullability` marker onto the flexible IR type (kotc installs the
   `JvmIrSpecialAnnotationSymbolProvider` — see `ClrCliPipeline`), and `BirEmitterTypes.birType` reads it to emit
   `{t:"oblivious"}` instead of collapsing the flexible type to a plain `{t:"nullable"}`. **bir2cir lowers it to the
   BARE inner** (a value `Int!` → bare `int32`, default `0`; a reference `String!` → a bare NRT-oblivious ref) —
   NEVER a `Nullable<T>` wrapper; ilemit has no oblivious case, so the wrapper must not survive bir2cir. A genuine
-  user `Int?` (no marker) stays `{t:"nullable"}` → `Nullable<Int32>`. **facadegen META emits all three** (a `.NET`
-  member with NO `NullableAttribute` → `oblivious`).
+  user `Int?` (no marker) stays `{t:"nullable"}` → `Nullable<Int32>`. `dll2klib` encodes all three states in
+  standard KLIB type metadata (a .NET member with no `NullableAttribute` gets flexible lower/upper bounds).
   `oblivious` is a coherent sibling node (each state names itself), NOT a `nullable`-node refinement flag —
   additive per principle 3. **STATUS (#48): FOLDED — landed.** The old duplicate nullability encodings — the type
   wrapper AND the separate decl-level `"nullable":true` / `"retNullable":true` flags — have collapsed onto the Type
@@ -114,13 +114,13 @@ Notes:
     `System.Nullable<T>`. An **unconstrained `T?`** (`{t:"nullable","of":{t:"tv"}}`) erases to `object` in every
     value-holding position (return / field / local accumulator / safe-call & delegate-invoke temp / forEach loop-var
     over a `<T?>` source) — the one CLR rep that carries a real null for BOTH a value and a reference instantiation —
-    EXCEPT a top-level generic **param** `T?`, which is kept as the bare `T` + its NRT byte so facadegen round-trips
+    EXCEPT a top-level generic **param** `T?`, which is kept as the bare `T` + its NRT byte so a reference KLIB round-trips
     the type-param identity (`orDefault<T>(x: T?)`, not a `T`-less `Any?`).
   - **ilemit** (`MapNullable`): a value `{t:"nullable"}` realizes `System.Nullable<T>` (via `TypeBuilder.GetConstructor`
     for an emitted-value-type inner — `EmitNullableCoerced`); a reference is the bare type; the scalar `nullable`/
     `retNullable` reads are retired. ilemit does NOT read `nullableFlags`/`retNullableFlags`: bir2cir's
     `RoundtripMetadata` folds them into the decl's `attrs`/`retAttrs` as a plain `NullableAttribute` entry, which
-    ilemit stamps through its generic attribute path (facadegen reads it back off the dll). The value-vs-reference
+    ilemit stamps through its generic attribute path (dll2klib projects it into KLIB metadata). The value-vs-reference
     decision is `IsValueType` + generic-constraint driven, per the tri-state model — never a hardcoded FQN set.
 - Examples:
   - `kotlin.Int` → `{"t":"fqn","name":"kotlin.Int"}`
@@ -176,7 +176,7 @@ additive (a new modifier = a new key). No comma strings, no `Contains`/`StartsWi
   bir2cir authors it when lifted code needs the CLR `FamORAssem` accessibility; kotc never emits it.
 - **Modifier semantics that drive lowering stay first-class** where a consumer keys on them (e.g. `suspend`
   already gates cold-lowering) — `mods.suspend` is the single source; a redundant top-level `suspend` field is removed.
-The meta side (facadegen tlfun/tlextprop/tlprop) emits the SAME `mods` object, not the `final,inline,ext` comma string.
+Reference KLIB declarations preserve the corresponding standard Kotlin modifier flags.
 
 (The full per-kind field table is enforced by the schema and validators; this section
 lists only the freeze DECISIONS. The validator (§4) enforces the canonical set.)
@@ -256,7 +256,7 @@ Also NOTE — the bare-FQN + CLR-shorthand string LEAF resolver (bir2cir `LowerT
 `kotlin.*`→shorthand map; ilemit `MapType(string)`'s `_ =>` FQN/shorthand switch + `TryMapEmittedType`) is
 NOT retired: it is the primary resolver for every structured `fqn` node's bare `name` (reached via
 `MapType(fqn.Name)`), and it is still fed a few genuinely-string type slots that kotc/bir2cir emit as
-strings — synthetic interface names (`<>dotkt_KProperty`) and the injected `StringCharSequenceBridge`
+strings — synthetic interface names (`<>dotkt_KProperty`) and the synthesized `StringCharSequenceBridge`
 adapter's `kotlin.String`/`<>dotkt_CharSequence` slots. Only the **prefix-scanning** logic tied to the
 retired string TYPE TOKENS is dead; the leaf that resolves a bare identity is load-bearing.
 
@@ -280,8 +280,7 @@ lossy type→string encoding is the same durable-ABI smell (structure hidden in 
 
 ### 2.6 Naming convention — ONE rule for the whole format vocabulary
 Every identifier in the serialization vocabulary is **lowerCamelCase**, uniformly: node `k` values, type
-`t` values (§1), ALL field names (§2.5.1), `mods` keys (§2.1), `vis` enum values, injection-decl kinds (§5b),
-carrier field names. Rules:
+`t` values (§1), ALL field names (§2.5.1), `mods` keys (§2.1), `vis` enum values, and carrier field names. Rules:
 - **Multi-word → camelCase boundaries; never case-hiding-flat.** `byref`→`byRef`, `isinst`→`isInst`,
   `staticfieldset`→`staticFieldSet`. A boundary between words is always a case change.
 - **No cryptic single letters / silent truncations** where they hide meaning: `l`/`r`→`lhs`/`rhs` (applied);
@@ -466,7 +465,7 @@ its `{this}` / `{defaultArgParam n}` tokens resolve to the call's `bindRef`s.
 
 ONE type read/write per language, used by EVERY site. No other code parses/builds a `Type`.
 
-**Kotlin (kotc)** — `kotc.bir.TypeNode` (sealed) + `TypeNode.toJson(): JsonValue` / `TypeNode.parse(json)`.
+**Kotlin (kotc)** — `kotc.bir.TypeNode` (sealed) + `TypeNode.toJson()`.
 `birType(IrType): TypeNode` produces the node; nothing emits a type string.
 
 **C# (bir2cir / ilemit / dll2klib)** — a shared `DotKt.Bir.TypeNode` record hierarchy (Fqn/Tv/Fn/Nullable/
@@ -482,9 +481,8 @@ one KLIB; kotc resolves those declarations through the ordinary KLIB symbol prov
 that must survive frontend resolution is carried by the projected `kotlin.clr.ClrExternal` annotation and
 forwarded into BIR without reinterpretation.
 
-There is no facade JSON, injection line grammar, `CLR_TYPES_METADATA` environment variable, or arbitrary
-CLR declaration-generation extension. The only compiler-generated frontend declarations are the fixed
-`kotlin.clr` intrinsic vocabulary in `ClrIntrinsicDeclarations.kt`.
+The only compiler-generated frontend declarations are the fixed `kotlin.clr`
+intrinsic vocabulary in `ClrIntrinsicDeclarations.kt`.
 
 ## 5. Validator (§7 of the plan)
 Validate live BIR/CIR + every emitted `[KotlinInline]` body against this spec: unknown `k`, a type that is
@@ -521,8 +519,8 @@ validator, and `make verify` includes the schema and sanity gates.
 **Carrier (§0) scope.** The `[KotlinInline]`/`[KotlinSuspendFunctionType]` carriers ride as CLR attributes on the
 emitted assembly, not as document nodes, so they are out of the document walk. Their version is guarded LOUDLY at
 decode time by `bir-common` `BirCarrier.DecodeBody` (an unknown version throws `NotSupportedException` — never a
-silent mis-decode) and is exercised end-to-end by the roundtrip tests (facadegen decodes every stdlib ref.dll
-inline body through the one codec). The decoded carrier BODY is itself a node/type that ALSO appears inline as the
+silent mis-decode) and is exercised end-to-end by the roundtrip tests (dll2klib decodes projected DotKt
+assembly carriers through the one codec). The decoded carrier BODY is itself a node/type that ALSO appears inline as the
 emitting method's body in the BIR/CIR — validated there by the document walk.
 
 **Residual string type slots structuralized to land the enforcer clean** (bir2cir/kotc were still injecting a few

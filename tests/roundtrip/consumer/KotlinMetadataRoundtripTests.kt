@@ -1,4 +1,4 @@
-// Round-trip consumer battery — consumes the producer's public API through the RE-IMPORTED dll (facadegen
+// Round-trip consumer battery — consumes the producer's public API through the RE-IMPORTED dll (dll2klib
 // restored the Kotlin nature from DotKt.Metadata) and asserts each Kotlin-only shape survived the emit ->
 // re-import round-trip. NONE of the producer's source is in this compilation — every `roundtrip.*` symbol
 // resolves from the built RoundtripProducer.dll (the DLL-not-source invariant, design §3).
@@ -24,7 +24,7 @@
 //   nonConstDefaultArgsEvaluateOnce                           (#235) a spliced receiver/argument runs exactly once
 //   comparableClass             <- roundtrip-comparable      (#179)  class C : Comparable<C> </>/<=/>=/sorted()
 //   ubyteFidelity               <- roundtrip-ubyte                  UByte/UByteArray strict-mapping fidelity
-//   toplevelValVar              <- roundtrip-toplevel-val   (#195)  bare top-level val/var -> plain static FIELD (no accessor) resolved cross-module via facadegen --import-list
+//   toplevelValVar              <- roundtrip-toplevel-val   (#195)  bare top-level val/var -> plain static FIELD (no accessor) resolved through the reference KLIB
 //   crossModuleContextParameters                             context parameters restored AS context parameters from
 //                                                             [KotlinContextParameter] (functions, defaults, properties)
 // STAYED in the shell lane (tests/roundtrip/scenarios/run.sh):
@@ -32,7 +32,7 @@
 //                               (StackUnexpected object/string; else-branch throws so RUN is green). Tracked as #197.
 //   roundtrip-generic-hof / roundtrip-receiver-lambda — now formally clean after low-arity delegate ABI unification;
 //                               pending only mechanical migration to this in-process lane.
-// (roundtrip-comparable-meta stays in shell: it asserts on the generated facadegen metadata JSON directly.)
+// (roundtrip-comparable-meta stays in shell as a full reference-KLIB round-trip.)
 @file:OptIn(kotlin.ExperimentalUnsignedTypes::class)
 import roundtrip.palette.Color
 import kotlinx.roundtrip.palette.StartMode
@@ -123,7 +123,7 @@ import roundtrip.genclash.a.cellA
 import roundtrip.genclash.b.cellB
 // Context parameters (kotlin 2.4 needs no opt-in for them): the producer's `roundtrip.ctxparams` declarations are
 // consumed here THROUGH THE DLL, so this is the metadata half of the rule — kotc marks each context slot in the
-// emitted parameter list, bir2cir turns the mark into a `[KotlinContextParameter]` marker, and facadegen restores
+// emitted parameter list, bir2cir turns the mark into a `[KotlinContextParameter]` marker, and dll2klib restores
 // the parameter AS a context parameter. Without the round-trip the same physical method surfaces as a plain leading
 // value parameter, and `with(Scale(10)) { scaled(5) }` stops resolving at the module boundary (`scaled(scale, 5)`
 // would be required) — a Kotlin SOURCE break, which is exactly what the round-trip metadata exists to prevent.
@@ -156,7 +156,7 @@ class KotlinApiShapeRoundtripTests {
             // counts the context slot, so the splice fills the right position.
             ClassicAssert.AreEqual("5/f10", tagged(5))               // 5/f10 label defaults to "f" + s.factor
             ClassicAssert.AreEqual("5/x", tagged(5, "x"))            // 5/x   nothing omitted
-            // A TIER-1 CONSTANT default behind the context slot: filled from the facadegen metadata, whose
+            // A TIER-1 CONSTANT default behind the context slot: filled from the dll2klib metadata, whose
             // per-parameter list is physical — so the context slot shifts `k`'s ordinal.
             ClassicAssert.AreEqual(18, labeled(1))                   // 18    k defaults to 7
             ClassicAssert.AreEqual(13, labeled(1, 2))                // 13    nothing omitted
@@ -262,7 +262,7 @@ class KotlinApiShapeRoundtripTests {
         ClassicAssert.AreEqual("RED", Color.RED.toString())   // RED    inherited System.Enum.ToString on a value-type receiver
         ClassicAssert.IsFalse(Color.RED == Color.GREEN)       // False  structural inequality
         ClassicAssert.AreEqual(0, Color.RED.hashCode())       // 0      inherited System.Enum.GetHashCode (RED underlying int = 0)
-        ClassicAssert.AreEqual(42, StartMode.DEFAULT.marker()) // class-like enum entry: injected static owner survives re-import
+        ClassicAssert.AreEqual(42, StartMode.DEFAULT.marker()) // class-like enum entry: projected static owner survives re-import
     }
 
     // roundtrip-customprop (#103): field-backed property with a CUSTOM accessor invokes the getter/setter
@@ -534,7 +534,7 @@ class PackageAndInlineRoundtripTests {
 
 
     // roundtrip-comparable (#179): a `class C : Comparable<C>` — </>/<=/>= + sorted() resolve+run cross-module
-    // (facadegen restores operator compareTo + the kotlin.Comparable supertype; bir2cir binds compareTo->CompareTo).
+    // (dll2klib restores operator compareTo + the kotlin.Comparable supertype; bir2cir binds compareTo->CompareTo).
 }
 
 // #235: omits a cross-module ctor's non-constant default while passing an argument that reads THIS instance — the
@@ -588,8 +588,8 @@ class ComparableUnsignedAndPropertyRoundtripTests {
 
     // roundtrip-toplevel-val (#195): a bare top-level `val`/`var` with NO custom accessor compiles to a plain
     // static FIELD (no get_/set_), reachable ONLY through the field. The consumer reads the library's top-level
-    // property DIRECTLY (`import roundtrip.tlval.greeting`), NOT via a re-exposing function — proving facadegen's
-    // --import-list now surfaces the field-backed val/var from the BUILT dll (the #195 facadegen gap). Covers a
+    // property DIRECTLY (`import roundtrip.tlval.greeting`), NOT via a re-exposing function — proving dll2klib's
+    // The reference KLIB surfaces the field-backed val/var from the BUILT dll. Covers a
     // `val: String`, a `var: Int` (read + cross-module write `+=`), and a `val` of a USER type.
     @TestAttribute
     fun toplevelValVar() {
@@ -601,7 +601,7 @@ class ComparableUnsignedAndPropertyRoundtripTests {
 
     // #199-①: two GENERIC types sharing the simple name `Cell` in DIFFERENT producer packages must stay DISTINCT on
     // re-import. Each factory's declared return type is annotated with the package-qualified `Cell` alias, so if
-    // facadegen dropped the namespace (bare `Cell`, last-wins) the return would resolve to the WRONG package's type
+    // dll2klib dropped the namespace (bare `Cell`, last-wins) the return would resolve to the WRONG package's type
     // and this assignment would not compile. The `var value` proves mutability survived; `.boxed()`/`.value` prove
     // members resolve on the correctly-qualified type.
 }

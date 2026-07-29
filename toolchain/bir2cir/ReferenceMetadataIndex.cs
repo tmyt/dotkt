@@ -1439,7 +1439,7 @@ sealed partial class ReferenceMetadataIndex
                             method.IsVirtual,
                             dotKtAuthored ? KotlinTypeOf(method.ReturnParameter.GetCustomAttributesData(), method.DeclaringType?.Assembly) : null));
                         // [KotlinInline] raw-BIR carrier (#71/#75 S1): decode the versioned carrier now (the codec is
-                        // BirCarrier, shared) and key it owner|name|pc|ga so InlineSplice can splice this injected inline
+                        // BirCarrier, shared) and key it owner|name|pc|ga so InlineSplice can splice this external inline
                         // fn's body at a cross-module call site. A malformed / pre-S1-shaped payload is swallowed (no
                         // cross-module splice for it -> the splicer's plain-call fallback). ga = generic arity.
                         var inlineCad = method.GetCustomAttributesData().FirstOrDefault(c => c.AttributeType.FullName == KotlinInlineAttr);

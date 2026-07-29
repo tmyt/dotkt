@@ -273,7 +273,7 @@ internal fun BirEmitter.emitOwnerfulInlineNode(call: IrCall): String {
 	// owner = kotc's OWN name for the hosting .NET type: the enclosing type name for a member inline fun, else the
 	// top-level fun's file-facade class. Matches the stash key (a member is stashed under its type's `name`, a
 	// top-level fun under the file's `fileClass` = `fileClassName`, which `fileClassOf` reproduces cross-file); the
-	// cross-module member's `typeName(enclosingClass)` = the injected class's Kotlin FQN = the ref.dll's reflected
+	// cross-module member's `typeName(enclosingClass)` = the projected class's Kotlin FQN = the ref.dll's reflected
 	// `ownerFqn`, so `InlineCandidates` keys match.
 	val owner = (callee.parent as? IrClass)?.let { typeName(it) }
 		?: clrExternalOwner(callee)

@@ -305,7 +305,7 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		if (stem.endsWith("Clr")) stem = stem.dropLast(3)
 		// A dotted MPP filename stem (`api.common.kt` → stem `api.common`) must NOT leak its dots into the file-class
 		// name: ilemit's DefineType reads a dot as a namespace separator, so `Api.commonKt` would emit as
-		// Namespace=<pkg>.Api / Name=commonKt and reference projection would never surface its top-level funcs
+		// Namespace=<pkg>.Api / Name=commonKt and dll2klib would never surface its top-level funcs
 		// (cross-module `unresolved reference`, #16). Sanitize non-identifier chars to `_` (stock Kotlin does the
 		// same: `AtomicFU.common.kt` → `AtomicFU_commonKt`) BEFORE capitalize+"Kt". Mirrors `synthScope`.
 		stem = stem.replace(Regex("[^A-Za-z0-9]"), "_")
@@ -343,7 +343,7 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	// binding through the ordinary `expr()`. Installed by [CallPlan.bindValue] and released with the plan's scope.
 	internal val planReads = java.util.IdentityHashMap<org.jetbrains.kotlin.ir.expressions.IrExpression, String>()
 	// The evaluation plan of each call whose emission is in progress, keyed by the CALL node's identity — what
-	// [filledArgs]/[filledInjectedArgs] append their bindings to. Scoped by [withCallPlan]; a nested call installs its
+	// [filledArgs]/[filledExternalArgs] append their bindings to. Scoped by [withCallPlan]; a nested call installs its
 	// own, so a plan never collects another call site's values.
 	internal val callPlans = java.util.IdentityHashMap<org.jetbrains.kotlin.ir.expressions.IrExpression, CallPlan>()
 	// The type-level half of the `$default` scope: while a CALLEE's default expression is rendered into a CALLER's
@@ -580,8 +580,8 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		liftedMethods.clear(); liftedTypes.clear(); refTypes.clear()
 		// The `byref` out/ref marker is an intrinsic consumed at its call sites (the arg becomes a `byref:` param) —
 		// never emitted as a real method.
-		// Only USER functions (origin DEFINED) — a consuming module's FIR also holds plugin-INJECTED top-level funs
-		// (stdlib ops restored from a referenced DotKt.Stdlib, in the synthetic `__GENERATED DECLARATIONS__` file);
+		// Only USER functions (origin DEFINED) — a consuming module's FIR also holds external top-level functions
+		// loaded from reference KLIBs;
 		// those are the library's to provide, not ours to re-emit (a re-emitted stub has no real body -> invalid IL).
 		val functions = file.declarations.filterIsInstance<IrSimpleFunction>()
 			.filter { it.origin.toString() == "DEFINED" && !isExternalNetType(it) && it.name.asString() !in setOf("byref", "stackBuffer") }
@@ -592,7 +592,7 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		// base) enter FIR through a reference KLIB with a library origin. They are REFERENCED types, never ours to
 		// emit — a re-emitted stub (empty ctor / a bogus `INSTANCE` singleton) collides with the referenced type and
 		// crashes ilemit (Save "not created" / newobj on a ctor-less type). So filter every type bucket to origin
-		// DEFINED, exactly as `functions`/`topProps` above already exclude the injected top-level MEMBERS. (@ClrTypeAlias
+		// DEFINED, exactly as `functions`/`topProps` above already exclude the external top-level MEMBERS. (@ClrTypeAlias
 		// stdlib types are origin DEFINED in the stdlib build and thus kept; in an app build they come from the -classpath
 		// jar and are not re-declared here at all.)
 		val userDefined: (IrClass) -> Boolean = { it.origin.toString() == "DEFINED" }
@@ -606,15 +606,15 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		}
 		// `object Foo { ... }` (non-companion) -> a singleton class with a static `INSTANCE` field; `IrGetObjectValue`
 		// loads it. The shared-state-via-`object` case (feedback item 10). Companion/anonymous objects are handled
-		// elsewhere; .NET-injected `object`s (Math, …) are static call sites, not user singletons.
+		// elsewhere; projected .NET `object`s (Math, …) are static call sites, not user singletons.
 		val objects = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.OBJECT && !it.isCompanion && userDefined(it) }
 		// @ClrTypeAlias interfaces (Comparable/Iterable/Collection/List/…) are emitted as ordinary interfaces; bir2cir
 		// drops them (no helper for a non-class kind). At use-sites BirTypeLowering substitutes them to the BCL interface.
 		val interfaces = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.INTERFACE && userDefined(it) }
 		val enums = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.ENUM_CLASS && userDefined(it) }
 		val annClasses = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.ANNOTATION_CLASS && userDefined(it) }
-		// Only USER properties (origin DEFINED) — a consuming module's FIR also holds plugin-INJECTED top-level props
-		// (restored extension properties from a referenced DotKt assembly); those are the library's, not ours to emit.
+		// Only USER properties (origin DEFINED) — a consuming module's FIR also holds external top-level properties
+		// loaded from reference KLIBs; those are the library's, not ours to emit.
 		val topProps = file.declarations.filterIsInstance<IrProperty>().filter { it.origin.toString() == "DEFINED" }
 		// A genuinely empty file emits nothing. (An "alias-only" file — e.g. String.kt / Primitives.kt / Comparable.kt —
 		// is NOT empty: its @ClrTypeAlias type flows through `classes`/`interfaces` above and is emitted as an

@@ -1,6 +1,6 @@
 // clr/taskinterop/: the CLR platform Task bridge (design note §5). Lives under libraries/stdlib/clr/,
 // so all three stdlib builds compile it (collect_stdlib_sources in lib.sh feeds klib/ref/rt alike);
-// frontend resolution for consumers rides kotc's kotlin.clr injection seam (bundle-6 P2).
+// consumers resolve these declarations from the standard-library KLIB.
 //
 // The stdlib Task-family alias classes (bundle-6 P1, names locked by
 // docs/design-coroutine-cold-core-task-bridge.md §11): `Task0` binds the non-generic
@@ -12,9 +12,9 @@
 // filler TODO body (pure metadata, never invoked — substituted at app-emit). Deliberately MINIMAL: the
 // `await` lowering (P4) targets the BCL awaiter directly in CIR and needs no members here.
 //
-// NOTE (interop, P4): a value typed by facadegen's `import System.Threading.Tasks.Task1` is a DIFFERENT
+// NOTE (interop, P4): a value typed by the projected `System.Threading.Tasks.Task1` is a DIFFERENT
 // frontend symbol than kotlin.clr.Task even though both lower to the same BCL type — unifying them so
-// `someClrApi().await()` resolves is the facadegen/bir2cir P4 wiring (design note §5), not a stdlib concern.
+// `someClrApi().await()` resolves is the dll2klib/bir2cir P4 wiring (design note §5), not a stdlib concern.
 
 package kotlin.clr
 

@@ -47,9 +47,9 @@ import java.io.File
 /**
  * Registers our CLR FIR extensions into the common frontend by adding a compiler-plugin
  * registrar to the configuration, after it is built and before the frontend creates the session.
- * The frontend picks up
- * `COMPILER_PLUGIN_REGISTRARS` when it sets up the project, and our registrar installs the FIR
- * type-injection extension (façade-free `import System.*`).
+ * The frontend picks up `COMPILER_PLUGIN_REGISTRARS` when it sets up the project. The registrar
+ * installs only the fixed Kotlin/CLR intrinsic declarations; reference assemblies are ordinary
+ * KLIB dependencies and require no declaration-generation side channel.
  */
 object ClrPluginRegistrationPhase : PipelinePhase<ConfigurationPipelineArtifact, ConfigurationPipelineArtifact>(
 	name = "ClrPluginRegistration",

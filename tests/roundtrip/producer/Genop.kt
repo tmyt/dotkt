@@ -1,6 +1,6 @@
 // Migrated verify-roundtrip.sh section `roundtrip-generic-operator` (#133) — the library half.
-// A Kotlin `operator fun get`/`set` on a GENERIC type. facadegen surfaces the operator bit + clrName:get;
-// bir2cir binds the facadegen-injected owner's operator to the plain get/set method Kotlin emitted (NOT the
+// A Kotlin `operator fun get`/`set` on a GENERIC type. dll2klib surfaces the operator bit + clrName:get;
+// bir2cir binds the reference-KLIB-projected owner's operator to the plain get/set method Kotlin emitted (NOT the
 // BCL get_Item/set_Item indexer). Consumed cross-module: `r[1]` / `r2[0] = x`.
 package roundtrip.genop
 

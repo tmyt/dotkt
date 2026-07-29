@@ -1,5 +1,5 @@
 // Producer for #205: a GENERIC interface (`IReader<T>`) deriving a member-bearing NON-generic base interface
-// (`IPingable`). facadegen's InterfaceSuperTypes used to emit ONLY generic supers, so `IReader`1` surfaced with no
+// (`IPingable`). The reference KLIB must include the non-generic supertype, so `IReader`1` does not surface with no
 // super edge and the inherited non-generic-base member `Ping` was dropped: `r.Ping()` -> unresolved reference and
 // `IReader<Doc>` was not assignable to `IPingable`. The fix emits the namespace-qualified non-generic super edge so
 // both hold. Own namespace so `Doc` does not collide with the other cases' types.

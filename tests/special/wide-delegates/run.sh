@@ -26,7 +26,7 @@ OUT="$ROOT/build/wide-delegates"
 rm -rf "$OUT"; mkdir -p "$OUT/bir" "$OUT/cir" "$OUT/il" "$OUT/consumer-bir" "$OUT/consumer-cir" "$OUT/consumer-il" "$OUT/reference-klibs"
 
 # Unconditional tool builds: the gate tests the CURRENT sources. Stdlib artifact roles mirror verify-tests:
-# the frontend KLIB is kotc's -classpath (kotlin.* comes from the klib, never facadegen), the REFERENCE
+# the frontend KLIB is kotc's -classpath (kotlin.* comes from the klib, never dll2klib), the REFERENCE
 # dll feeds bir2cir's @Clr labels, the RUNTIME dll backs println at run time.
 "$ROOT/gradlew" -q :kotc:installDist >/dev/null 2>&1
 build_tool ilemit; build_tool bir2cir; build_tool dll2klib; build_tool retarget

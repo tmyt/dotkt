@@ -1,11 +1,11 @@
 // ktproj-genq (#18/#147): generic types re-imported cross-module. Nested `Nullable(Tv)` declaration-slot shapes that
-// bir2cir's NullableGenericErasure object-erases to `<object>` and that facadegen would otherwise degrade to `Any?`
+// bir2cir's NullableGenericErasure object-erases to `<object>` and that dll2klib would otherwise degrade to `Any?`
 // (hiding members and breaking generic inference):
 //   * the FACTORY `holderOf(): Holder<T?>`  — a top-level generic function: `tv(method, 0)`.
 //   * the MEMBER `Holder<T>.cell(): Ref<T?>` — a method of a generic class over the class's OWN type param:
 //     `tv(type, 0)` — the exact `AtomicArray<T>.get(): AtomicRef<T?>` shape on the kotlinx.coroutines path.
 //   * #147's parameter / constructor / property / raw-field slots below.
-// [KotlinNullableGeneric] records each pre-erasure slot so facadegen restores its Kotlin shape.
+// [KotlinNullableGeneric] records each pre-erasure slot so dll2klib restores its Kotlin shape.
 package genq
 
 // `Slot`/`Vault` keep this fixture readable. The same-simple-name carrier case is tested separately with two namespaces

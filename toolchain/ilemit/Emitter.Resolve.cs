@@ -957,7 +957,7 @@ sealed partial class Emitter
         { "dotkt$CharSequence" };
 
     // #68: stamp the STANDARD [System.Runtime.CompilerServices.CompilerGenerated] on a compiler-generated type — the
-    // generated signal read from the `generated:true` BIR flag (and applied to ilemit's OWN synthetics too), so facadegen
+    // generated signal read from the `generated:true` BIR flag (and applied to ilemit's OWN synthetics too), so dll2klib
     // skips generated types by attribute rather than by `dotkt$` name-sniffing.
     internal static void StampCompilerGenerated(TypeBuilder tb) =>
         tb.SetCustomAttribute(new CustomAttributeBuilder(

@@ -612,7 +612,7 @@ static partial class ClrMemberResolution
     // A function-type arg binds an `object` param OR a delegate param (BCL Func/Action or a stdlib delegate, possibly
     // OPEN — `Func<T>`). Match arity + void-ness, and each param/return STRUCTURALLY — but ONLY reject on a genuine
     // mismatch of RESOLVABLE types (`(Int)->Unit` must NOT bind `Action<string>`). An UNRESOLVABLE lambda side (a local/
-    // kotlin.* type — `(MatchResult)->CharSequence` binding a facadegen `MatchEvaluator(System.Text..Match)`) is a
+    // kotlin.* type — `(MatchResult)->CharSequence` binding a dll2klib `MatchEvaluator(System.Text..Match)`) is a
     // WILDCARD (the delegate mapping bridges the Kotlin↔BCL types). A lambda->delegate is a CONVERSION -> Assignable.
     static MatchKind MatchFnToDelegate(TypeNode.Fn fn, Type p, TypeNode[] ownerArgs)
     {
@@ -633,7 +633,7 @@ static partial class ClrMemberResolution
     }
 
     // A RESOLVABLE lambda side that structurally fails against the delegate's Invoke type — a genuine element mismatch.
-    // An unresolvable side (MapMlc null) is a wildcard (No verdict), so the facadegen Kotlin↔BCL delegate bridge passes.
+    // An unresolvable side (MapMlc null) is a wildcard (No verdict), so the dll2klib Kotlin↔BCL delegate bridge passes.
     static bool Incompatible(TypeNode side, Type invokeType, TypeNode[] ownerArgs) =>
         MapMlc(side) != null && Applies(side, invokeType, ownerArgs) == MatchKind.No;
     static bool IsDelegateType(Type t)

@@ -5,7 +5,7 @@
   "description": "The durable ABI for kotlin/clr's backend interchange. BIR (kotc→bir2cir) and CIR (bir2cir→ilemit) share ONE schema; they differ only by lowering stage, not shape. Names shown are the post-m5 canonical form (the m6 validator enforces this document). Version tag: bir-json/1.",
 
   "type": "object",
-  "$comment": "A BIR/CIR file is a compilation unit. Injection metadata (facadegen→kotc, §5b) reuses $defs.type/$defs.decl but has its own root ($defs.injectionDoc). CARRIER (§0) is OUT OF SCOPE for this document schema: inline payloads and suspend fn-types are not document roots — they ride as CLR attributes on the EMITTED assembly ([KotlinInline(string version, byte[] content)] / [KotlinSuspendFunctionType(...)], codec version 'bir-json/1'). A decoded [KotlinInline] content is the §0 payload object {v,fqn,owner,fileClass,recv,static,typeParams,params,ret,body,lifted}; its body nodes, types, and lifted method declarations use this schema's vocabulary. [KotlinSuspendFunctionType] decodes to a $defs/type (an fn with suspend:true). The attribute ctor and inline-payload envelope live in spec §0, not here.",
+  "$comment": "A BIR/CIR file is a compilation unit. CARRIER (§0) is OUT OF SCOPE for this document schema: inline payloads and suspend fn-types are not document roots — they ride as CLR attributes on the EMITTED assembly ([KotlinInline(string version, byte[] content)] / [KotlinSuspendFunctionType(...)], codec version 'bir-json/1'). A decoded [KotlinInline] content is the §0 payload object {v,fqn,owner,fileClass,recv,static,typeParams,params,ret,body,lifted}; its body nodes, types, and lifted method declarations use this schema's vocabulary. [KotlinSuspendFunctionType] decodes to a $defs/type (an fn with suspend:true). The attribute ctor and inline-payload envelope live in spec §0, not here.",
   "properties": {
     "types":    { "type": "array", "items": { "$ref": "#/$defs/typeDecl" } },
     "topLevel": { "type": "array", "items": { "$ref": "#/$defs/decl" }, "description": "top-level funs/props (the file-class members)" },
@@ -71,7 +71,7 @@
         "recv":    { "$ref": "#/$defs/type", "description": "extension receiver; absent = none" },
         "ctx":     {
           "type": "array", "items": { "$ref": "#/$defs/type" },
-          "description": "META-ONLY (facadegen -> the FIR injector), like `oblivious`: the CONTEXT parameters of a Kotlin context function type, restored from [KotlinContextFunctionType(N)]. `context(A) B.(D) -> E` reads back as ctx=[A], recv=B, params=[D]. kotc BIR MUST omit it — there the fact rides the declaration-slot key `ctxFnType`, because a type node is rebuilt by many lowering passes and would lose it."
+          "description": "Reference-metadata-only: the CONTEXT parameters of a Kotlin context function type, restored from [KotlinContextFunctionType(N)] while constructing the reference KLIB. `context(A) B.(D) -> E` reads back as ctx=[A], recv=B, params=[D]. kotc BIR MUST omit it — there the fact rides the declaration-slot key `ctxFnType`, because a type node is rebuilt by many lowering passes and would lose it."
         },
         "clr":     {
           "enum": ["System.Func", "System.Action", "DotKt.Runtime.CompilerServices.KFunc", "DotKt.Runtime.CompilerServices.KAction"],
@@ -93,7 +93,7 @@
     },
     "tOblivious": {
       "type": "object",
-      "description": "T! — an NRT-OBLIVIOUS flexible type (T..T?) (NullableAttribute=0). `oblivious` is the CLR/Roslyn term, not the Kotlin-consumer 'platform' name. Frontend-only: kotc BIR NEVER emits it (resolved before the backend); facadegen META emits it for a .NET member with no NullableAttribute; kotc maps it to ConeFlexibleType(T,T?).",
+      "description": "T! — an NRT-OBLIVIOUS flexible type (T..T?) (NullableAttribute=0). `oblivious` is the CLR/Roslyn term, not the Kotlin-consumer 'platform' name. Reference-metadata-only: dll2klib serializes the flexible lower/upper bounds into the KLIB, so kotc BIR never emits this node.",
       "properties": {
         "t":  { "const": "oblivious" },
         "of": { "$ref": "#/$defs/type" }
@@ -213,7 +213,7 @@
       "type": "object",
       "properties": {
         "name":       { "type": "string" },
-        "generated":  { "type": "boolean", "description": "Compiler-generated method declaration (lifted lambda/local-function/callable-reference target or a lowerer synthetic). ilemit maps this CIR fact 1:1 to [CompilerGenerated]; facadegen excludes the method from the restored Kotlin API." },
+        "generated":  { "type": "boolean", "description": "Compiler-generated method declaration (lifted lambda/local-function/callable-reference target or a lowerer synthetic). ilemit maps this CIR fact 1:1 to [CompilerGenerated]; dll2klib excludes the method from the restored Kotlin API." },
         "ret":        { "$ref": "#/$defs/type" },
         "retCtxFnType": { "type": "integer", "minimum": 1, "$comment": "The RETURN-position twin of a parameter's `ctxFnType`: how many of the returned function type's LEADING physical arguments are Kotlin CONTEXT parameters. fir2ir erases the fact, so kotc recovers it from FIR; bir2cir folds it into the method's `retAttrs` as [KotlinContextFunctionType(N)]. Absent when the return is not a context function type." },
         "retNullableFlags": { "type": "array", "items": { "type": "integer", "enum": [0, 1, 2] }, "$comment": "#48: bir2cir-derived flattened NullableAttribute bytes for the RETURN's reference-nullable positions (the retired scalar `retNullable` flag's replacement); RoundtripMetadata folds it into the method's `retAttrs` as a NullableAttribute entry, which ilemit stamps on the return parameter. Absent when the return carries no nullable-reference position." },
@@ -345,27 +345,6 @@
         "expr":   { "$ref": "#/$defs/node" }
       },
       "required": ["id", "phase", "kind", "expr"]
-    },
-
-    "//== INJECTION METADATA (§5b) — facadegen→kotc, SAME vocabulary ==//": null,
-    "injectionDoc": {
-      "type": "object",
-      "description": "Structured JSON reusing $defs/type + $defs/mods + $defs/decl. The tlfun/tlextprop/tlprop/file LINE GRAMMAR is retired. BIR = META = one vocabulary.",
-      "properties": {
-        "types": { "type": "array", "items": { "$ref": "#/$defs/typeDecl" }, "$comment": ".NET-surfaced types; carry `dotNet` FQN + optional `clrBinding`" },
-        "files": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "pkg":       { "type": "string" },
-              "fileClass": { "type": "string" },
-              "funs":      { "type": "array", "items": { "$ref": "#/$defs/funDecl" } },
-              "props":     { "type": "array", "items": { "$ref": "#/$defs/propDecl" } }
-            }
-          }
-        }
-      }
     }
   }
 }

@@ -49,7 +49,7 @@ For-loops over BCL-bound collections lower to the CLR enumeration protocol. An e
 - The stdlib declares collection identities, bound members, and real fallback bodies.
 - bir2cir applies type/member substitutions and chooses the appropriate iteration protocol.
 - ilemit emits the resolved CIR and structural adapter types; it does not recognize Kotlin collection symbols.
-- facadegen maps CLR collection signatures back to their Kotlin-facing types for source consumption.
+- dll2klib maps CLR collection signatures back to their Kotlin-facing types for source consumption.
 
 These responsibilities follow [architecture.md](architecture.md). User-visible equality, mutability, and representation rules are documented in [dotkt-semantics.md](dotkt-semantics.md).
 

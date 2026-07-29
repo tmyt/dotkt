@@ -612,7 +612,7 @@ sealed partial class Emitter
 
     // `.NET event +=/-=` -> call the event's add/remove accessor with the handler bound as the event's OWN
     // delegate type (e.g. EventHandler), not the Func/Action the lambda would otherwise produce. The lifted
-    // method's signature matches the delegate's Invoke (the FIR injector typed the handler from the event's
+    // method's signature matches the delegate's Invoke (the reference KLIB typed the handler from the event's
     // handler signature), so `ldftn`+`newobj <EventDelegate>(object, IntPtr)` is verifiable — exactly what
     // `button.Click += (s,e)=>{}` lowers to in C#.
     // W1-S3 (#46 / #121 / #113) CONSUME-ONLY event add/remove. bir2cir (ClrMemberResolution) resolved the EventInfo off

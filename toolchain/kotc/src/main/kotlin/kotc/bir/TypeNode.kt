@@ -4,12 +4,10 @@ package kotc.bir
  * The universal type representation of the BIR/CIR freeze (#37), Kotlin side.
  *
  * NORMATIVE: docs/bir-cir-spec.md §1 (the Type schema) + §4 (the shared helper API).
- * A Type is ALWAYS a JSON object with a `t` discriminator — there is NO bare-string type. Readers
- * dispatch on `t`; they NEVER split/scan a string. This sealed class is the ONE place kotc parses/
- * builds a Type, and it MUST agree byte-for-byte with the C# `DotKt.Bir.TypeNode`
+ * A Type is ALWAYS a JSON object with a `t` discriminator — there is NO bare-string type. This
+ * sealed class is the ONE place kotc builds and serializes a Type, and it MUST agree byte-for-byte
+ * with the C# `DotKt.Bir.TypeNode`
  * (toolchain/bir-common/TypeNode.cs).
- *
- * ADDITIVE (phase 1b): the frozen contract in code, not yet wired to `birType()`/emit (phases 2-5).
  * JSON is hand-built compact (no spaces) with kotc's existing string-escape convention.
  */
 sealed class TypeNode {
@@ -124,135 +122,5 @@ sealed class TypeNode {
             return out.toString()
         }
 
-        /** Parse a canonical type JSON string back into a [TypeNode] (real recursive-descent parse, no string-splitting). */
-        fun parse(json: String): TypeNode = fromValue(JsonParser(json).parseValue())
-
-        /** Parse an arbitrary JSON document into raw values (Map/List/String/Number/Boolean/null) — the
-         *  metadata consumers walk this structured representation without reparsing type strings. */
-        fun parseJsonValue(json: String): Any? = JsonParser(json).parseValue()
-
-        /** Build a [TypeNode] from an already-parsed JSON sub-value (a `{t:…}` object). Used by the injection
-         *  reader to reconstruct an embedded Type node without re-serializing it to a string first. */
-        fun fromJsonValue(v: Any?): TypeNode = fromValue(v)
-
-        @Suppress("UNCHECKED_CAST")
-        private fun fromValue(v: Any?): TypeNode {
-            val o = v as? Map<String, Any?> ?: throw IllegalArgumentException("Type must be a JSON object, got $v")
-            return when (val t = o["t"] as? String ?: throw IllegalArgumentException("Type node missing `t`")) {
-                "fqn" -> Fqn(
-                    o["name"] as? String ?: throw IllegalArgumentException("fqn missing name"),
-                    (o["args"] as? List<Any?>)?.map { fromValue(it) },
-                )
-                "tv" -> Tv(
-                    o["scope"] as? String ?: throw IllegalArgumentException("tv missing scope"),
-                    (o["i"] as Number).toInt(),
-                )
-                "star" -> Star
-                "fn" -> Fn(
-                    o["suspend"] as Boolean,
-                    fromValue(o["ret"]),
-                    (o["params"] as List<Any?>).map { fromValue(it) },
-                    o["recv"]?.let { fromValue(it) },
-                    (o["ctx"] as? List<Any?>).orEmpty().map { fromValue(it) },
-                )
-                "nullable" -> Nullable(fromValue(o["of"]))
-                "oblivious" -> Oblivious(fromValue(o["of"]))
-                "array" -> Array(fromValue(o["elem"]))
-                "byRef" -> ByRef(fromValue(o["of"]))
-                else -> throw IllegalArgumentException("unknown Type discriminator `t`=\"$t\"")
-            }
-        }
     }
-}
-
-/** A minimal recursive-descent JSON parser (object/array/string/number/bool/null) for [TypeNode.parse]. */
-private class JsonParser(private val s: String) {
-    private var p = 0
-
-    fun parseValue(): Any? {
-        skipWs()
-        return when (val c = peek()) {
-            '{' -> parseObject()
-            '[' -> parseArray()
-            '"' -> parseString()
-            't', 'f' -> parseBool()
-            'n' -> parseNull()
-            else -> if (c == '-' || c in '0'..'9') parseNumber()
-                    else throw IllegalArgumentException("unexpected char '$c' at $p")
-        }
-    }
-
-    private fun parseObject(): Map<String, Any?> {
-        expect('{'); skipWs()
-        val m = LinkedHashMap<String, Any?>()
-        if (peek() == '}') { p++; return m }
-        while (true) {
-            skipWs()
-            val key = parseString()
-            skipWs(); expect(':')
-            m[key] = parseValue()
-            skipWs()
-            when (val c = next()) {
-                ',' -> continue
-                '}' -> return m
-                else -> throw IllegalArgumentException("expected ',' or '}' at $p, got '$c'")
-            }
-        }
-    }
-
-    private fun parseArray(): List<Any?> {
-        expect('['); skipWs()
-        val l = ArrayList<Any?>()
-        if (peek() == ']') { p++; return l }
-        while (true) {
-            l.add(parseValue())
-            skipWs()
-            when (val c = next()) {
-                ',' -> continue
-                ']' -> return l
-                else -> throw IllegalArgumentException("expected ',' or ']' at $p, got '$c'")
-            }
-        }
-    }
-
-    private fun parseString(): String {
-        expect('"')
-        val sb = StringBuilder()
-        while (true) {
-            when (val c = next()) {
-                '"' -> return sb.toString()
-                '\\' -> when (val e = next()) {
-                    '"' -> sb.append('"'); '\\' -> sb.append('\\'); '/' -> sb.append('/')
-                    'n' -> sb.append('\n'); 'r' -> sb.append('\r'); 't' -> sb.append('\t')
-                    'b' -> sb.append('\b'); 'f' -> sb.append('\u000C')
-                    'u' -> { sb.append(s.substring(p, p + 4).toInt(16).toChar()); p += 4 }
-                    else -> throw IllegalArgumentException("bad escape \\$e at $p")
-                }
-                else -> sb.append(c)
-            }
-        }
-    }
-
-    private fun parseNumber(): Number {
-        val start = p
-        if (peek() == '-') p++
-        while (p < s.length && (s[p] in '0'..'9' || s[p] == '.' || s[p] == 'e' || s[p] == 'E' || s[p] == '+' || s[p] == '-')) p++
-        val tok = s.substring(start, p)
-        return if (tok.any { it == '.' || it == 'e' || it == 'E' }) tok.toDouble() else tok.toLong()
-    }
-
-    private fun parseBool(): Boolean =
-        if (s.startsWith("true", p)) { p += 4; true }
-        else if (s.startsWith("false", p)) { p += 5; false }
-        else throw IllegalArgumentException("bad literal at $p")
-
-    private fun parseNull(): Any? {
-        if (s.startsWith("null", p)) { p += 4; return null }
-        throw IllegalArgumentException("bad literal at $p")
-    }
-
-    private fun peek(): Char { skipWs(); return s[p] }
-    private fun next(): Char = s[p++]
-    private fun expect(c: Char) { if (s[p] != c) throw IllegalArgumentException("expected '$c' at $p, got '${s[p]}'"); p++ }
-    private fun skipWs() { while (p < s.length && s[p].isWhitespace()) p++ }
 }

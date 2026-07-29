@@ -23,7 +23,7 @@ import org.jetbrains.kotlin.ir.types.IrType
 // through a plan.
 
 /** One call site's ordered evaluation plan, built while its arguments are rendered. Installed for the call node by
- *  [BirEmitter.withCallPlan] and read back by [filledArgs] / [filledInjectedArgs]. */
+ *  [BirEmitter.withCallPlan] and read back by [filledArgs] / [filledExternalArgs]. */
 internal class CallPlan(private val e: BirEmitter) {
 	private val bindings = ArrayList<String>()
 	private val registered = ArrayList<IrExpression>()

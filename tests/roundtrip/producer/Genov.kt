@@ -8,10 +8,8 @@
 package kotlinx.genov
 
 // `Arr<T>` DELIBERATELY shares its simple name with `kotlinx.genovc.Arr<T>` in the MPP producer's OTHER dll — the
-// #199-③ regression: facadegen must emit `arrOf`'s return as the NAMESPACE-QUALIFIED `kotlinx.genov.Arr`, not the bare
-// `Arr`. A bare name made the injector bind `arrOf<String>(3)` to the WRONG dll's `Arr` (by-simple-name last-wins), so
-// ilemit faithfully emitted a cross-assembly type mismatch that ilverify flagged as StackUnexpected (RUN passed only
-// because the two layouts coincide). `GenovRef` keeps a unique name (it has no cross-dll twin). Also tests #25.
+// #199-③ regression: dll2klib must emit `arrOf`'s return as the namespace-qualified `kotlinx.genov.Arr`, not a
+// bare simple name. `GenovRef` keeps a unique name (it has no cross-dll twin). Also tests #25.
 class GenovRef<T>(val tag: String)
 class Arr<T>(val size: Int)
 

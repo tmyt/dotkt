@@ -54,7 +54,7 @@ static class ContinuationErasure
 
     // The CLR coroutine ABI is deliberately monomorphic, but a referenced DLL must still re-expose the source-level
     // Kotlin signature. Preserve every declaration position changed by this pass as a pure TypeNode fact. Later,
-    // RoundtripMetadata turns the fact into [KotlinType]; facadegen restores it before FIR sees the declaration.
+    // RoundtripMetadata turns the fact into [KotlinType]; dll2klib restores it before FIR sees the declaration.
     static void RecordDeclarationSurfaces(JsonNode node)
     {
         switch (node)

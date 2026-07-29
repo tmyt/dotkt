@@ -126,7 +126,7 @@ internal fun BirEmitter.interfaceDef(iface: IrClass): String {
 		// that FIR/IR materialized on the derived interface.  Previously both shapes became identical empty methods,
 		// forcing ilemit to rediscover the hierarchy and synthesize DIM forwarders.
 		// Kotlin 2.4 does not consistently expose inherited declarations through the isFakeOverride convenience flag
-		// after FIR2IR (notably for an interface inheriting a declaration injected from a klib).  Prefer its typed IR
+		// after FIR2IR (notably for an interface inheriting a declaration loaded from a KLIB). Prefer its typed IR
 		// origin when present; otherwise the shape is still unambiguous: an override closure, no body, and no source offset.
 		val inheritedSynthetic = fn.isFakeOverride || fn.origin == IrDeclarationOrigin.FAKE_OVERRIDE ||
 			(fn.body == null && fn.overriddenSymbols.isNotEmpty() && fn.startOffset < 0)
@@ -880,7 +880,7 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 	// type spec (via birType) that ilemit resolves by reflection; a Kotlin-user base emits its bare FQN identity
 	// carrying its ACTUAL constructed type arguments.
 	val baseJson = base?.let {
-		// A .NET-injected base carries its full constructed identity (birType). A Kotlin-user/stdlib base emits its
+		// A projected .NET base carries its full constructed identity (birType). A Kotlin-user/stdlib base emits its
 		// IDENTITY via `ownerSpec` — the base supertype's OWN resolved type arguments: the subclass's type params as
 		// `tv` when the base is over them (`ArrayList<E> : AbstractList<E>` -> `AbstractList<tv E>`), the enclosing
 		// args for an inner-class base, AND CONCRETE types when the subclass supplies them (a non-generic `object Key :

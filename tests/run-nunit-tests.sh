@@ -32,18 +32,17 @@ PROJECTS=(
 	# family. tests/support/coroutines provides the shared dotkt.support.blockOn drive imported by the fixtures.
 	"tests/coroutines"
 	# ProjectReference round-trip consolidation lane (docs/design-nunit-test-harness.md §3; playbook §3): a producer
-	# DotKt LIBRARY (tests/roundtrip/producer) consumed via <ProjectReference> as its BUILT dll (facadegen re-import,
+	# DotKt LIBRARY (tests/roundtrip/producer) consumed via <ProjectReference> as its BUILT dll (dll2klib re-import,
 	# NOT source) by this NUnit consumer. (nothing stays in the shell lane due its formal IL gap; generic-hof and
 	# receiver-lambda are green after low-arity delegate ABI unification but have not yet been migrated.)
 	"tests/roundtrip/consumer"
 	# Bidirectional ProjectReference: Kotlin consumes C#, then a C# NUnit project consumes the emitted Kotlin library
 	# at compile time. This also supersedes the former reflection-only reverse-interop case.
 	"tests/roundtrip/bidirectional/consumer"
-	# C#-PRODUCER round-trip lane (playbook §3, "injected-runtime interop"): the migrated CLR-interop `cases/il-*`
+	# C#-PRODUCER interop lane: the CLR-interop cases
 	# that shipped a `runtime.cs` (a separately-compiled C# assembly the DotKt code references — cross-module BY
 	# CONSTRUCTION) become a PLAIN C# producer csproj (tests/interop/producer) <ProjectReference>'d by this NUnit
-	# consumer, which imports the built C# dll FAÇADE-FREE (`import <Ns>.<Type>`). Mechanically the MSBuild-graph
-	# equivalent of verify-compiler-tests.sh's il_check_inject (build runtime.cs -> dll -> pass as compile+runtime ref).
+	# consumer, which imports the built C# dll through its generated reference KLIB (`import <Ns>.<Type>`).
 	"tests/interop/consumer"
 )
 

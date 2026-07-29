@@ -12,7 +12,7 @@ import I4.Probe
 import I4.Color
 import I4.GenDel
 
-// il-netinterop top-level helper: a `when` over the injected .NET enum (unique name to avoid collisions).
+// il-netinterop top-level helper: a `when` over the projected .NET enum (unique name to avoid collisions).
 fun netInteropDescribe(c: Color): String = when (c) {
     Color.Red -> "warm"
     Color.Green -> "fresh"

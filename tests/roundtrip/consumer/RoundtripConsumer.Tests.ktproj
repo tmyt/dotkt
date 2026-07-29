@@ -1,6 +1,6 @@
 <!-- Round-trip CONSUMER: a DotKt NUnit test project that <ProjectReference>s ../producer and asserts the
      producer's Kotlin API survived the emit -> re-import round-trip. The producer is consumed through its BUILT
-     dll (facadegen re-import of DotKt.Metadata), NEVER its source — the producer sits in a SIBLING directory so
+     dll (dll2klib re-import of DotKt.Metadata), NEVER its source — the producer sits in a SIBLING directory so
      this project's `**/*.kt` glob cannot capture it (the DLL-not-source invariant, design §3).
 
      This single NUnit project replaces the hand-rolled compile-then-consume orchestration of
