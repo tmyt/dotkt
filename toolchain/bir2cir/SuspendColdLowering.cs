@@ -2793,16 +2793,21 @@ static partial class SuspendColdLowering
             // -> arg/param mismatch -> BadImageFormatException. (yield works today only because it has ONE overload.)
             // Structured sig (#37 m3b): the ORIGINAL call's param TypeNodes + the appended `completion` slot
             // (Continuation<Any>). ilemit resolves the `<method>$dotkt_suspend` overload by this structured signature.
-            // BIR spells the resolved descriptor of an instance call as `argTypes`; `sig` is the corresponding
-            // spelling used by static calls.  Preserve whichever descriptor the frontend supplied before appending
-            // the cold ABI's completion slot.  Falling back to an empty signature here used to be masked by ilemit's
-            // name/arity lookup and made every referenced non-zero-argument suspend member ambiguous or unlinkable
-            // once CIR signature consumption became exact.
+            // BIR spells the resolved descriptor of an instance call as `argTypes`, a static call's as `sig`, and a
+            // GENERIC member's as `shapeTypes` — the declared parameter vector with the callee's own type variables
+            // still open (`f<T>(a: T, b: Int)` -> `[tv method 0, kotlin.Int]`). All three are the same fact under
+            // three names, so preserve whichever the frontend supplied before appending the cold ABI's completion
+            // slot. Falling back to an empty signature here used to be masked by ilemit's name/arity lookup and made
+            // every referenced non-zero-argument suspend member ambiguous or unlinkable once CIR signature
+            // consumption became exact — and `shapeTypes` was the one spelling still missing, so a cross-module
+            // GENERIC suspend member call resolved to `<name>$dotkt_suspend(Continuation)` and did not link at all.
             var sigArr = callNode["sig"] is JsonArray os
                 ? (JsonArray)os.DeepClone()
                 : callNode["argTypes"] is JsonArray oat
                     ? (JsonArray)oat.DeepClone()
-                    : new JsonArray();
+                    : callNode["shapeTypes"] is JsonArray osh
+                        ? (JsonArray)osh.DeepClone()
+                        : new JsonArray();
             sigArr.Add(ContAny());
             call["sig"] = sigArr;
             return call;

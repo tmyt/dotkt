@@ -260,7 +260,8 @@ static partial class SuspendColdLowering
         // an operand the plan failed to bind pass for a bound one.
         var materialised = new HashSet<string>(StringComparer.Ordinal);
         foreach (var r in roots)
-            PlanNode(r, typer, materialised, new Dictionary<string, TypeNode>(StringComparer.Ordinal));
+            PlanNode(r, typer, materialised, new Dictionary<string, TypeNode>(StringComparer.Ordinal),
+                     Str((r as JsonObject)?["fileClass"]) ?? "?");
         AssertOperandsPlanned(roots, materialised);
     }
 
@@ -273,18 +274,23 @@ static partial class SuspendColdLowering
     /// enclosing one, seeded with its own, so what it declares cannot leak back out onto a same-named local of the
     /// frame that contains it. Every `var`, catch variable and loop variable registers itself as it is reached, and
     /// a body is walked in statement order, so a read always sees the declaration that precedes it.
-    static void PlanNode(JsonNode node, ExprTyper typer, HashSet<string> materialised, Dictionary<string, TypeNode> locals)
+    static void PlanNode(JsonNode node, ExprTyper typer, HashSet<string> materialised,
+                         Dictionary<string, TypeNode> locals, string where)
     {
         switch (node)
         {
             case JsonObject o:
-                var scope = OpensFrame(o) ? NewFrame(o, locals) : locals;
+                var frame = OpensFrame(o);
+                var scope = frame ? NewFrame(o, locals) : locals;
+                // The declaration a refusal names, updated at each frame — so it says WHICH function the operand it
+                // could not type is in, not only which node kind it was.
+                var site = frame && Str(o["name"]) is string dn ? dn : where;
                 Declare(o, scope);
-                foreach (var kv in o.ToList()) if (kv.Value != null) PlanNode(kv.Value, typer, materialised, scope);
-                PlanOperandsOf(o, typer, materialised, scope);
+                foreach (var kv in o.ToList()) if (kv.Value != null) PlanNode(kv.Value, typer, materialised, scope, site);
+                PlanOperandsOf(o, typer, materialised, scope, site);
                 return;
             case JsonArray a:
-                foreach (var it in a.ToList()) if (it != null) PlanNode(it, typer, materialised, locals);
+                foreach (var it in a.ToList()) if (it != null) PlanNode(it, typer, materialised, locals, where);
                 return;
         }
     }
@@ -335,7 +341,7 @@ static partial class SuspendColdLowering
     /// actually materialises something — a node with no suspension in an operand, and a node whose only forced
     /// operands are re-readable, both emit exactly the CIR they emitted before this pass existed.
     static void PlanOperandsOf(JsonObject o, ExprTyper typer, HashSet<string> materialised,
-                               Dictionary<string, TypeNode> locals)
+                               Dictionary<string, TypeNode> locals, string where)
     {
         if (EvalOrderOf(o) is not { } order) return;
         var ops = order.Operands;
@@ -375,9 +381,11 @@ static partial class SuspendColdLowering
             var type = typer.Of(expr, locals);
             if (type == null && force[i] && !stable)
                 throw new NotSupportedException(
-                    $"bir2cir: suspend-lowering: the `{Str((expr as JsonObject)?["k"]) ?? "?"}` operand evaluated "
-                    + "before a suspending operand carries no static type, so the local that holds its value across "
-                    + "the suspension would be untyped — an earlier lowering dropped the operand's type.");
+                    $"bir2cir: suspend-lowering: in `{where}`, the `{Str((expr as JsonObject)?["k"]) ?? "?"}` "
+                    + $"{(order.HasReceiver && i == 0 ? "receiver" : "argument " + i)} of an expression is evaluated "
+                    + "before a suspending operand and carries no static type, so the local that holds its value "
+                    + "across the suspension would be untyped — an earlier lowering dropped the operand's type, or "
+                    + "its node kind needs an arm in bir-common/NodeType.cs.");
             var binding = new JsonObject
             {
                 ["id"] = id,

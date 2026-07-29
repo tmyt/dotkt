@@ -196,10 +196,22 @@ suspend fun corOpRelay(): Int {
 }
 
 suspend fun corOpSum(a: Int, b: Int): Int = a + b
+suspend fun corOpSum3(a: Int, b: Int, c: Int): Int = a + b + c
+
+fun corOpSide(): Int {
+    corOpLog.add("E")
+    return 1
+}
 
 // Was a compile-time refusal; now runs, throws, and never evaluates the operand to the right of the throw.
 suspend fun corOpTerminalBeforeSuspension(): Int =
     corOpSum(run<Int> { corOpLog.add("L"); throw IllegalStateException("boom") }, corOpRelay())
+
+// An operand to the LEFT of the terminal one still runs: Kotlin evaluates it before reaching the throw. The
+// retired rewrite truncated the operand list at the terminal and then returned only the terminal, so everything
+// left of it was rewritten into a value nothing read — and its side effect vanished.
+suspend fun corOpSideBeforeTerminal(): Int =
+    corOpSum3(corOpSide(), run<Int> { corOpLog.add("L"); throw IllegalStateException("boom") }, corOpRelay())
 
 class SuspendOperandOrderTests {
     private fun order(): String = corOpLog.joinToString(",")
@@ -347,6 +359,21 @@ class SuspendOperandOrderTests {
         // The throw is the whole expression's value: the operand to its right is never evaluated, so `corOpRelay`
         // never runs and the enclosing suspending call is never made.
         assertEquals("L", order())
+        assertTrue(!corOpLog.contains("R"))
+    }
+
+    @TestAttribute
+    fun sideEffectBeforeATerminalOperandStillRuns() {
+        corOpLog.clear()
+        var message: String? = null
+        try {
+            blockOn { corOpSideBeforeTerminal() }
+        } catch (e: IllegalStateException) {
+            message = e.message
+        }
+        assertEquals("boom", message)
+        // The left operand ran, the terminal one then left, and nothing to its right was evaluated.
+        assertEquals("E,L", order())
         assertTrue(!corOpLog.contains("R"))
     }
 }
