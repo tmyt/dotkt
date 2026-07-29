@@ -365,16 +365,21 @@ a `callInline` always carries a plan for them:
 - a SPLICED LAMBDA is not a value and is not bound: a literal carrier (`inlineLambda`) and a by-name forward of the
   enclosing inline fn's own lambda parameter are the body `InlineSplice` splices, matched by the name it travels under.
   A `noinline` lambda IS a value (a real delegate) and is bound like any other argument.
-- an OMITTED default is `null` in its slot. The callee supplies it, not the call, so `InlineSplice` fills it from the
-  callee's own carrier and binds it there — in a plan it synthesizes around the spliced block, whose bindings therefore
-  lower after every value the call site supplied, which is where Kotlin evaluates a default.
+- an OMITTED default is `null` in its slot. It is NOT a call-site value: Kotlin evaluates a default in the CALLEE's
+  scope, after every supplied value, so `InlineSplice` fills it from the callee's own carrier and binds it to a local
+  of the spliced block — which is exactly that position, because the call site's bindings are materialised ahead of
+  the block. That local is always TYPED, from the callee's parameter closed against the call site; an untyped one
+  would reach the suspend lowering as a `kotlin.Any` slot, so it is refused at the splice instead.
 
 `InlineSplice` consumes the bindings rather than minting a local per parameter: it substitutes each `bindRef` into the
 payload body, and `CallEvalLowering` decides the physical form once, like any other plan. Two positions can only name
 a SLOT — a closure/state-machine capture DESCRIPTOR and an assignment target — so a value left as a `bindRef` is
-pinned into a named local there, which is a pure read of the binding and not a second evaluation. The spliced block
-carries the callee's return type, closed against the call site, so a pass that must type the call (the suspend
-lowering's evaluation-order spill) reads a stamp instead of guessing.
+pinned into a named local there, which is a pure read of the binding and not a second evaluation.
+
+The passes that run BETWEEN the splice and `CallEvalLowering` therefore see a `callEval` wrapping what they expect,
+and the ones that ask "what does this expression produce" peel it exactly as they peel a `valueBlock`: the bindings
+are statements evaluated ahead of the call, so the value is the wrapped call's (`StaticTypeResolver`,
+`bir-common/NodeType.cs`, and the splice's own covariant-construction widening).
 
 **Reading a plan's bindings.** A binding is inlined back into its reader only when that reader sits on the node's
 EAGER SPINE — the chain of operand positions evaluated once, in order, unconditionally, when the node itself is

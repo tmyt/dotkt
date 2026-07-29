@@ -24,6 +24,29 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   It opens with the eight byref-like storage refusals below.
 
 ### Fixed
+- **kotc/bir2cir (area:kotc, area:bir2cir): an INLINE call's arguments now follow the same evaluation plan as every
+  other call's — one evaluation each, in Kotlin's order, whatever the spliced body does with them.** `InlineSplice`
+  bound each parameter to a temp in PARAMETER order, so a call that also filled a default ran the default in its own
+  slot: `inline fun f(a: Int = t("A"), b: Int, c: Int = t("C"), block: (Int) -> Int)` called `f(b = t("B"))` ran
+  A, B, C where Kotlin runs B, A, C — the inline half of the ordering defect the plan fixed for ordinary calls.
+  kotc now emits a plan for a `callInline` too (`docs/bir-cir-spec.md` §2.7, granularity trigger (d)): the dispatch
+  receiver, the extension receiver and every supplied argument become bindings, in that order. A spliced lambda is not
+  a value and is not bound — a literal carrier and a by-name forward of the enclosing inline fn's own lambda parameter
+  are the body being spliced. `InlineSplice` consumes the bindings instead of minting a temp per parameter, so a body
+  that reads a parameter twice, in a loop, or not at all no longer costs a redundant local; a filled default becomes a
+  local of the spliced block, which is where Kotlin evaluates a default (in the callee's scope, after every supplied
+  value). Consequences:
+  - a binding is inlined back into its reader only when that reader sits on the node's EAGER SPINE. A read inside a
+    spliced body's statements, a conditional branch, a loop or a closure happens at a different time, a different
+    number of times, or not at all, so the value is materialised — which is what "evaluate it at the call, exactly
+    once" means once the callee's body is the reader;
+  - every value an inline call binds, and every default it fills, carries a type. That closes the staged hole the
+    liveness work had to leave open: an untyped local, and an untyped evaluation-order spill in the suspend lowering,
+    are now errors that name the lowering which dropped the type, not a `kotlin.Any` slot that silently boxes a value
+    type behind a warning;
+  - the passes that run between the splice and the plan lowering peel a `callEval` exactly as they peel a
+    `valueBlock` when they ask what an expression produces, so a covariant construction spliced under a plan
+    (`xs.partition { … }`'s `Pair`) is still widened to its declared slot.
 - **kotc/bir2cir (area:kotc, area:bir2cir): a call's values are now ONE ordered evaluation plan, so a filled default
   can no longer duplicate a value, reorder a call, or be traded away for storage.** A Kotlin call evaluates its
   receiver, then each supplied argument, then the callee's omitted defaults, each exactly once — but on the CLR those

@@ -979,8 +979,8 @@ An **INLINE** call is no exception, even though its callee's body ends up inside
 bound at the call, and each read of one in the spliced body is a read of that binding. So a body that reads a parameter
 twice, or in a loop, re-reads a local rather than re-running the argument; a body that never reads one still has the
 argument evaluated; and a default the splice fills runs after every supplied value rather than in its parameter's slot
-(§3). The inline splice's own values — the defaults it fills — ride a plan it synthesizes around the spliced block, so
-they lower through the same single mechanism, after the call site's.
+(§3). A filled default is the CALLEE's value — Kotlin evaluates it in the callee's scope — so it becomes a local of the
+spliced block, which is where the call site's own bindings have already been evaluated ahead of.
 
 The two call sites that ride a DECLARATION rather than an expression behave the same: a constructor **DELEGATION**
 (`: this(…)` / `: super(…)`, and a per-entry enum body's base call) carries its plan on the constructor declaration and
