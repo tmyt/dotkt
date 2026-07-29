@@ -567,6 +567,14 @@ sealed class Pipeline
             if (!_options.RefBuild && attributeTopLevelOwner && !hasUserCharSeqImpl)
                 substituted = CharSeqStringLowering.Apply(substituted, localTopLevelFns, out charSeqRetLambdas);
             if (!_options.RefBuild) substituted = StringCharSequenceBridge.Apply(substituted, refs, charSeqRetLambdas);
+            // The String/CharSequence call-boundary bridge may materialize a closure that captures a non-literal
+            // `(P...) -> String` delegate and exposes `(P...) -> CharSequence` (#190). Assemble those late closure
+            // ingredients now; all earlier source/inline/event closures were already consumed by the main passes.
+            if (!_options.RefBuild)
+            {
+                ClosureSynthesis.Apply(substituted, refs);
+                SharedSyntheticSynthesis.DropSyntheticTypeArgs(substituted);
+            }
             // CATCH-CLAUSE WIDENING (bundle-6 ④): a Kotlin `catch (IndexOutOfBoundsException)` @ClrTypeAlias-es to a
             // SINGLE .NET type, but .NET index ops throw TWO distinct ones (List.get_Item -> ArgumentOutOfRangeException,
             // array -> IndexOutOfRangeException). Expand each such clause into two clauses covering BOTH so the Kotlin
