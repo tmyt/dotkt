@@ -22,8 +22,6 @@
 #   scripts/gate.sh                    -> nothing (this wrapper itself, no pipeline effect)
 #   scripts/{lib,build-stdlib*,dotkt,  -> FULL   (shared build machinery — affects every stage)
 #     gen-*,pack-nuget}.sh
-#   toolchain/facadegen/**             -> facadegen is rebuilt by the suites; run verify-roundtrip +
-#                                          verify-msbuild + compiler tests (facadegen metadata feeds all three)
 #   toolchain/bir2cir/** | ilemit/**   -> stdlib EMIT (clean) + compiler tests +
 #                                          verify-schema + verify-sanity   (kotc unchanged: no installDist cost)
 #   toolchain/bir-common/**            -> FULL   (TypeNode/IrSanity are <Compile Link/>-shared into every tool)
@@ -104,9 +102,6 @@ classify() { # <path>
 		scripts/lib.sh|scripts/build-stdlib*.sh|scripts/dotkt.sh|scripts/gen-*|scripts/pack-nuget.sh|scripts/hooks/*)
 			NEED_FULL=1; reason "$p -> FULL (shared build machinery)" ;;
 		# ---- toolchain --------------------------------------------------------------------------
-		toolchain/facadegen/*)
-			want roundtrip; want msbuild; want compiler_tests
-			reason "$p -> facadegen: verify-roundtrip + verify-msbuild + compiler tests (metadata feeds all three)" ;;
 		toolchain/bir2cir/*|toolchain/ilemit/*)
 			want compiler_tests; want schema; want sanity; CLEAN=1
 			reason "$p -> bir2cir/ilemit: clean stdlib emit + compiler tests + verify-schema + verify-sanity" ;;

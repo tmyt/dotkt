@@ -396,8 +396,8 @@ Windows.
 
 The former `DotKtImport`, import scanner, facade JSON generation, and CLR FIR
 declaration-generation extension are not part of the production pipeline.
-`facadegen` may remain in the repository as a comparison fixture, but it is
-not included in normal builds or the packaged toolchain.
+The retired `facadegen` comparison tool has also been removed from the
+repository; `dll2klib` is the sole CLR-reference projection path.
 
 ## Incrementality
 

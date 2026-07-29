@@ -138,7 +138,7 @@ iff every actual failure is listed, and reports what is new or newly fixed. Read
 into docs.
 
 Two traps worth knowing: the toolchain binaries are only checked for existence, so after changing
-bir2cir/ilemit/facadegen you need `rm -rf build/*-bin` (plus `build/clr-stdlib*` for stdlib-affecting work)
+bir2cir/ilemit/dll2klib you need `rm -rf build/*-bin` (plus `build/clr-stdlib*` for stdlib-affecting work)
 before a gate result means anything; and after any kotc change, `./gradlew :kotc:installDist`, or a stale
 launcher fails the gate for the wrong reason.
 
@@ -147,8 +147,8 @@ procedure in `docs/kotlin-frontend-bump-playbook.md`).
 
 ## Layers
 
-The three principles above fix kotc, bir2cir and ilemit. The remaining two: facadegen projects .NET metadata
-into Kotlin-visible metadata, and retarget repoints emitted BCL references so a C# project can reference the
+The three principles above fix kotc, bir2cir and ilemit. The remaining two: dll2klib projects each resolved
+.NET reference assembly into a standard metadata-only KLIB, and retarget repoints emitted BCL references so a C# project can reference the
 dll. `docs/architecture.md` owns the full table, including which reference artifact each stage reads.
 
 So "which layer?" is a lookup, not a design question — a fix that consults a ref dll, `@Clr*` labels or BCL
@@ -157,12 +157,10 @@ interest: move it toward the boundary when you touch it, never entrench it.
 
 Two invariants that are easy to violate by accident:
 
-- `kotlin.*` comes from the frontend KLIB on kotc's `-classpath`, never from facadegen. facadegen cannot
-  restore Kotlin semantics (inline, reified, operator), and a facadegen copy of the stdlib collides with the
-  klib's. Any "stdlib symbol missing or ambiguous" is a klib problem.
-- facadegen may keep the stdlib in its `--compile-refs` resolver — the DotKt-library round-trip lane needs it
-  to materialize `[kotlin.clr.*]` attributes — but must never surface a `kotlin.*` type into the generated
-  surface. Resolver scope yes, surface set no.
+- `kotlin.*` comes from the dedicated frontend KLIB on kotc's `-classpath`. dll2klib ignores the CLR
+  stdlib twins, so a projected copy cannot collide with that authoritative Kotlin surface.
+- Every resolved non-stdlib reference assembly is projected independently and completely. Source imports do
+  not select the projected type set, and reference KLIBs do not embed assembly dependency graphs.
 
 ## The cardinal rule
 

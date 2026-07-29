@@ -89,7 +89,7 @@ Kotlin metadata: Kotlin callers can omit the argument; C# callers must pass it e
 positional parameter, placed **after** an extension receiver's `__self` and **before** the regular
 parameters. That is the whole physical story: a C# caller passes it like any other argument, and a
 Kotlin consumer of the emitted dll keeps writing `with(scale) { scaled(5) }` because the slot carries a
-`[KotlinContextParameter]` marker that facadegen restores as a real context parameter.
+`[KotlinContextParameter]` marker that dll2klib restores as a real context parameter in the reference KLIB.
 
 Context parameters need no compiler flag at language version 2.4 — they are on by default, and passing
 `-Xcontext-parameters` produces `warning: the argument '-Xcontext-parameters' is redundant for the

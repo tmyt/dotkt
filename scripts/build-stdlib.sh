@@ -66,7 +66,7 @@ if (( do_emit )); then
 	grep -vE '^\s+at ' "$REF_OUT/ilemit.err" | grep -iE 'exception|KeyNot|unresolved|no matching' | head -3 || true
 	[[ -f "$REF_DLL/DotKt.Private.Stdlib.dll" ]] || die "DotKt.Private.Stdlib.dll was not emitted (see $REF_OUT/ilemit.err)"
 	need_tool retarget
-	info "REF: retarget (so facadegen/ilverify can read it back)"
+	info "REF: retarget (so metadata readers/ILVerify can read it back)"
 	dotnet "$RETARGET_DLL" "$REF_DLL/DotKt.Private.Stdlib.dll" --compile-refs "$FRAMEWORK_COMPILE_REFS" 2>&1 | tail -1
 	info "*** DotKt.Private.Stdlib.dll emitted ***"
 
@@ -82,7 +82,7 @@ if (( do_emit )); then
 	{ dotnet "$ILEMIT_DLL" "$RT_DLL" DotKt.Stdlib --runtime-refs "" --build-stdlib=runtime "$RT_CIR"/*.cir.json 2>"$RT_OUT/ilemit.err" || true; } | tail -2
 	grep -vE '^\s+at ' "$RT_OUT/ilemit.err" | grep -iE 'exception|error|unresolved|no matching|not found|cannot' | head -3 || true
 	[[ -f "$RT_DLL/DotKt.Stdlib.dll" ]] || die "DotKt.Stdlib.dll was not emitted (see $RT_OUT/ilemit.err)"
-	info "RT: retarget (so facadegen can consume the runtime surface as a compile reference)"
+	info "RT: retarget (so ordinary CLR tooling can consume the runtime assembly)"
 	dotnet "$RETARGET_DLL" "$RT_DLL/DotKt.Stdlib.dll" --compile-refs "$FRAMEWORK_COMPILE_REFS" >/dev/null
 	info "*** DotKt.Stdlib.dll emitted ***"
 	info "*** unified stdlib build complete (ONE kotc run -> ref + rt) ***"

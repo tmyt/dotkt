@@ -136,7 +136,7 @@ This is the single most surprising deviation, so it gets the most detail.
 
 - **JVM:** inline functions are inlined during a frontend/IR lowering; the body is also serialized into `@Metadata`
   so other modules can re-inline at *their* call sites.
-- **DotKt pipeline (four layers: `facadegen` / `kotc` / `bir2cir` / `ilemit`).** The
+- **DotKt pipeline (`dll2klib` reference projection, then `kotc` / `bir2cir` / `ilemit`).** The
   frontend is `…Fir2Ir then ClrBackendPhase` — **there is NO JVM `FunctionInlining` lowering.** The IR that reaches the
   backend still has un-inlined `inline` calls. **Inlining (and the `[KotlinInline]` splice) is a `bir2cir` (BIR→CIR)
   responsibility.** kotc projects the call and caller-lambda body without introducing CLR vocabulary:
@@ -268,15 +268,16 @@ on the CLR — `CancellationExceptionClr.kt`), while .NET signals it with `Syste
 awaitable from Kotlin with zero per-type compiler support. A type `X` is awaitable IFF it has a `GetAwaiter()` — a public
 parameterless instance MEMBER, **or** a referenced `[Extension] static GetAwaiter(this X)` — returning an *awaiter* that
 has `bool IsCompleted { get; }`, `T GetResult()`, and implements `INotifyCompletion` (its `OnCompleted(Action)` is what the
-cold-core resume binds). This is the await analog of the `@ClrIntrinsic`/facadegen philosophy: bind by signature/metadata,
+cold-core resume binds). This is the await analog of the `@ClrIntrinsic`/metadata-projection philosophy: bind by signature/metadata,
 embed no dialect.
 
 - **What this covers:** `Task`/`Task<T>` (member `GetAwaiter` → `TaskAwaiter[<T>]`), `ValueTask`/`ValueTask<T>` (member
   → `ValueTaskAwaiter[<T>]`, no `.AsTask()`), a WinRT `IAsyncOperation<T>` (a GENERIC *extension* GetAwaiter, awaitable only
   when the projection/support assembly providing it is referenced — a LIBRARY fact, not a compiler dialect), and any
   custom awaitable. The result type is the awaiter's `GetResult()` return (`void` → `Unit`).
-- **Where it lives (layer split):** **facadegen** pattern-detects each surfaced .NET awaitable and injects a
-  `suspend fun X.await(): <Result>` platform extension in `kotlin.clr` (only when a conforming GetAwaiter exists).
+- **Where it lives (layer split):** **dll2klib** pattern-detects each projected .NET awaitable and adds a
+  metadata-only `@ClrAwaitBridge suspend fun X.await(): <Result>` declaration to its reference KLIB (only when a
+  conforming GetAwaiter exists).
   **bir2cir** (`SuspendColdLowering.EmitAwaitPoint`, via `ReferenceMetadataIndex.ResolveAwaitable`) discovers the awaiter
   type + members from ref metadata and lowers the marker to the awaiter dance (`GetAwaiter` → spill → `IsCompleted`
   fast-path → `OnCompleted(resume)` + return SUSPENDED → `GetResult`). **ilemit** has no await knowledge. A member
@@ -655,7 +656,7 @@ narrow, and closing either would add per-call reconciliation for an idiom that i
 ## 5c-quater. Cross-module collection surfacing: DotKt `kotlin.collections.*` restores; genuine C# BCL stays BCL (#27)
 
 When a Kotlin program consumes a **referenced assembly** as Kotlin (a `<ProjectReference>` / `<Reference>` to a
-DotKt library, or a façade-free `import` of a .NET type), facadegen reads each member signature's .NET types and
+DotKt library, or a façade-free `import` of a .NET type), dll2klib reads each member signature's .NET types and
 maps them to Kotlin tokens. The BCL collection interfaces the forward `@ClrTypeAlias` table emits are **reverse-mapped
 back** to `kotlin.collections.*` — but **only for a DotKt-emitted library**, detected by the conjunction of the
 assembly-level `[AssemblyMetadata("DotKt.Compiler", "metadata-v1")]` marker and a compiler-generated embedded
@@ -701,7 +702,7 @@ DotKt aliases `Appendable` to `System.Text.StringBuilder` (`@ClrTypeAlias` + `@C
   instance per entry, with real properties/methods; `name`/`ordinal`/`values()`/`valueOf()` synthesized).
 - Within a DotKt module both behave like Kotlin enums. **Across the round-trip** (re-consuming the dll as Kotlin)
   neither is restored as a Kotlin `enum class` — see §10.2 — so exhaustive `when` over a *consumed* enum degrades.
-  A facadegen-imported **.NET** enum arrives as an object of enum-typed `val`s (read, pass, `==`, `when` all work,
+  A reference-KLIB-projected **.NET** enum arrives as an object of enum-typed `val`s (read, pass, `==`, `when` all work,
   without exhaustiveness).
 
 ## 5f. `value class` is a real wrapper class — never erased
@@ -1363,10 +1364,10 @@ Consequences:
 
 ## 10. Round-trip fidelity audit — what re-consuming a DotKt assembly as Kotlin LOSES
 
-§6 lists what survives the round-trip (Kotlin → DotKt `.dll` → re-consumed as Kotlin: `facadegen` reflects the dll and
-reads the `[Kotlin*]`/NRT attributes, the FIR injector rebuilds the declarations). **This section is the inverse: the
+§6 lists what survives the round-trip (Kotlin → DotKt `.dll` → re-consumed as Kotlin: `dll2klib` reads the
+`[Kotlin*]`/NRT metadata into a reference KLIB and the standard frontend loads its declarations). **This section is the inverse: the
 Kotlin surface that the round-trip does NOT fully restore.** It is an *audit* (prioritized-task #8) — the gaps are
-documented here, not yet fixed. Findings are grounded in `toolchain/facadegen/Program.cs` (the reconstructor),
+documented here, not yet fixed. Findings are grounded in `toolchain/dll2klib/Program.cs` (the reconstructor),
 `toolchain/ilemit/Emitter.Metadata.cs` + `Emitter.CompilerServices.cs` (the attribute stampers), and
 `toolchain/kotc/.../BirEmitter.kt` (the emitter), and were cross-checked with Codex against the CLR-metadata surface.
 
