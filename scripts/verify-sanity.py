@@ -20,6 +20,8 @@
 #   3. STRUCTURAL        — binOp has lhs+rhs; cond has cond+then+else.
 #   4. OWNER PRESENCE    — fields carry ownerType; owner:null callStatic/newDelegate/newBoundDelegate carry calleeOwner.
 #   5. `for` cmp in {<=, <, >=}.
+#   6. SUSPENSION LOWERED — no node in a body ilemit EMITS still carries suspendCall:true (a declaration that
+#      still carries mods.suspend is exempt; IrSanity.CheckScope documents why).
 import json, sys, glob, os
 
 
@@ -78,6 +80,11 @@ class Sanity:
         declared = set(param_names) | _collect_declared(roots)
         labels = _collect_labels(roots)
         dl = _pos_prefix(decl) + decl_label
+        # Check 6 asks only of the bodies ilemit turns into IL. A declaration that STILL carries `mods.suspend` is
+        # not one — bir2cir deliberately leaves a disqualified suspend shape un-lowered and ilemit's own
+        # `mods.suspend` guard stubs it (stdlib) or fails loud (app) without ever walking its statements.
+        mods = decl.get("mods") if isinstance(decl, dict) else None
+        check_suspension = not (isinstance(mods, dict) and mods.get("suspend") is True)
         # dup labels — scoped per single tree
         for r in roots:
             seen = set()
@@ -88,8 +95,14 @@ class Sanity:
                     _seen.add(o["id"])
             _walk(r, dupf)
         # meaning refs
-        def reff(o, _dl=dl, _f=f):
+        def reff(o, _dl=dl, _f=f, _susp=check_suspension):
             k = o.get("k")
+            # 6. SUSPENSION LOWERED — kotc's frontend `suspendCall` fact is consumed by bir2cir's cold lowering,
+            # which rebuilds the call out of fresh untagged nodes. A survivor means a suspension escaped it and
+            # ilemit will emit an ordinary invocation with no resume point.
+            if _susp and isinstance(k, str) and o.get("suspendCall") is True:
+                self.err(_f, _dl, f"'{k}' still carries 'suspendCall': a suspension escaped the cold lowering "
+                                  "(every suspending call must be rewritten into its cold Continuation shape before CIR)")
             if k in ("local", "setLocal"):
                 n = o.get("name")
                 if isinstance(n, str) and n not in declared:

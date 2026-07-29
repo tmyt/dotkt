@@ -1,0 +1,25 @@
+{
+  "fileClass": "SelftestKt",
+  "methods": [
+    {
+      "name": "escapedSuspension$sm$invokeSuspend",
+      "params": [],
+      "ret": { "t": "fqn", "name": "kotlin.Int" },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "callStatic",
+            "owner": null,
+            "calleeOwner": { "t": "fqn", "name": "SelftestKt" },
+            "method": "f",
+            "sig": [],
+            "ret": { "t": "fqn", "name": "kotlin.Int" },
+            "args": [],
+            "suspendCall": true
+          }
+        }
+      ]
+    }
+  ]
+}

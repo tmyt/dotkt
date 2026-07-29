@@ -21,6 +21,7 @@
 //   3. STRUCTURAL — `binOp` has both `lhs`+`rhs`; `cond` has `cond`+`then`+`else`.
 //   4. OWNER PRESENCE — fields carry ownerType; owner:null callStatic/newDelegate/newBoundDelegate carry calleeOwner.
 //   5. `for` `cmp` ∈ {<=, <, >=} — an unknown cmp silently miscompiles to an infinite loop.
+//   6. SUSPENSION LOWERED — no node in a body ilemit EMITS still carries `suspendCall:true`.
 //
 // SCOPE units mirror ilemit's `_locals`/`_cfgLabels` lifetimes exactly: a method = params ∪ body; a ctor ALSO folds
 // in preStmts/thisArgs/baseArgs (emitted in the same frame); the static-field-initializer group shares ONE .cctor `_locals`
@@ -108,12 +109,29 @@ public static class IrSanity
         var declared = paramNames != null ? new HashSet<string>(paramNames) : new HashSet<string>();
         var labels = new HashSet<int>();
         foreach (var r in roots) { CollectDeclared(r, declared); CollectSanityLabels(r, labels); }
+        // Check 6 asks only of the bodies ilemit turns into IL. A declaration that STILL carries `mods.suspend` is
+        // not one: bir2cir deliberately leaves a disqualified suspend shape un-lowered (LambdaKinds, and in a stdlib
+        // build the coroutine PRIMITIVES whose call sites are reconstructed inline), and ilemit's own `mods.suspend`
+        // guard then emits a throwing stub in a stdlib build or fails LOUD in an app build — its body's statements are
+        // never walked. Checking those bodies would only restate ilemit's guard one layer earlier, in the one place it
+        // is expected. Measured at this commit: all 7 `suspendCall` survivors in the runtime stdlib CIR sit in such
+        // declarations (SequenceScope.yieldAll/yield, ContinuationKt.suspendCoroutine, DeepRecursiveScopeImpl.
+        // callRecursive), and ZERO sit in an emitted body; the 252-file reference CIR has none at all (its bodies are
+        // squashed to a throw stub by RefBodySquash before this runs, so a ref build needs no separate exemption).
+        var checkSuspension = !IsSuspendDecl(decl);
         foreach (var r in roots)
         {
             CheckNoDupLabels(pos + declLabel, r);
-            CheckRefs(pos + declLabel, r, declared, labels);
+            CheckRefs(pos + declLabel, r, declared, labels, checkSuspension);
         }
     }
+
+    // Does this declaration still carry `mods.suspend`? §2.1 makes `mods` the single source (a redundant top-level
+    // `suspend` field was removed), so this reads the structured slot only.
+    static bool IsSuspendDecl(JsonElement decl) =>
+        decl.ValueKind == JsonValueKind.Object
+        && decl.TryGetProperty("mods", out var mods) && mods.ValueKind == JsonValueKind.Object
+        && mods.TryGetProperty("suspend", out var s) && s.ValueKind == JsonValueKind.True;
 
     // The #112 Phase-2 `File.kt:line: ` decl-source prefix, or "" when the decl carries no `pos`. Optional (absent =
     // pre-#112 behavior); a synthetic decl with no source simply omits it.
@@ -184,11 +202,23 @@ public static class IrSanity
 
     // Walk the tree, checking each node's MEANING invariant. Unmatched kinds (and type nodes, whose `k` vocabulary is
     // disjoint from these) just recurse.
-    static void CheckRefs(string decl, JsonElement node, HashSet<string> declared, HashSet<int> labels)
+    static void CheckRefs(string decl, JsonElement node, HashSet<string> declared, HashSet<int> labels, bool checkSuspension)
     {
         if (node.ValueKind == JsonValueKind.Object)
         {
             if (node.TryGetProperty("k", out var kEl) && kEl.ValueKind == JsonValueKind.String)
+            {
+                // 6. SUSPENSION LOWERED. `suspendCall:true` is kotc's FRONTEND FACT that this call site suspends;
+                // bir2cir's SuspendColdLowering is its only consumer, rewriting every suspending call into the cold
+                // Continuation shape (a resume label plus a call to the callee's `$dotkt_suspend` cold entry) out of
+                // FRESH nodes that carry no tag. So a survivor in a body that ilemit EMITS is a suspension that
+                // ESCAPED the lowering, and ilemit, which has no notion of one, emits it as an ordinary invocation:
+                // the caller reads the raw `Task`/COROUTINE_SUSPENDED sentinel where the awaited value belongs, and
+                // the state machine never gets a resume point. Loud here beats an InvalidCastException at runtime.
+                //
+                // `checkSuspension` is false for exactly the bodies ilemit never emits — see CheckScope.
+                if (checkSuspension && node.TryGetProperty("suspendCall", out var scEl) && scEl.ValueKind == JsonValueKind.True)
+                    throw new IrSanityException(decl, $"'{kEl.GetString()}' still carries 'suspendCall': a suspension escaped the cold lowering (every suspending call must be rewritten into its cold Continuation shape before CIR)");
                 switch (kEl.GetString())
                 {
                     case "local":
@@ -241,10 +271,11 @@ public static class IrSanity
                         }
                         break;
                 }
-            foreach (var p in node.EnumerateObject()) CheckRefs(decl, p.Value, declared, labels);
+            }
+            foreach (var p in node.EnumerateObject()) CheckRefs(decl, p.Value, declared, labels, checkSuspension);
         }
         else if (node.ValueKind == JsonValueKind.Array)
-            foreach (var x in node.EnumerateArray()) CheckRefs(decl, x, declared, labels);
+            foreach (var x in node.EnumerateArray()) CheckRefs(decl, x, declared, labels, checkSuspension);
     }
 
     static HashSet<string> ParamNames(JsonElement m)

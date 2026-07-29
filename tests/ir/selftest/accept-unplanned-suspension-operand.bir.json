@@ -1,0 +1,39 @@
+{
+  "methods": [
+    {
+      "name": "suspensionBearingOperandNeedsNoPlan",
+      "mods": { "suspend": true },
+      "params": [],
+      "ret": { "t": "fqn", "name": "kotlin.Int" },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "callStatic",
+            "owner": null,
+            "calleeOwner": { "t": "fqn", "name": "SelftestKt" },
+            "method": "h",
+            "sig": [
+              { "t": "fqn", "name": "kotlin.Int" },
+              { "t": "fqn", "name": "kotlin.Int" }
+            ],
+            "ret": { "t": "fqn", "name": "kotlin.Int" },
+            "args": [
+              {
+                "k": "callStatic",
+                "owner": null,
+                "calleeOwner": { "t": "fqn", "name": "SelftestKt" },
+                "method": "f",
+                "sig": [],
+                "ret": { "t": "fqn", "name": "kotlin.Int" },
+                "args": [],
+                "suspendCall": true
+              },
+              { "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 1 }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
