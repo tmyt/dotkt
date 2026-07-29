@@ -7,16 +7,17 @@ using DotKt.Bir;
 
 // CROSS-MODULE DEFAULT-ARGUMENT SPLICE (#134/#146).
 //
-// A call that OMITS a defaulted argument reaches bir2cir with a POSITIONAL `{"k":"defaultArg"}` placeholder (kotc emits
-// one for every omitted default whose VALUE the frontend dropped to an IrErrorExpression — the cross-module case — so a
-// later provided arg keeps its slot). For a callee whose defaulted params carry `[kotlin.clr.KotlinDefault(index, bir)]`
-// on the referenced .dll, this pass reads the default-expression BIR and SPLICES it into each placeholder / trailing
-// omitted slot.
+// A call that OMITS a defaulted argument reaches bir2cir in either of two forms:
+// - a POSITIONAL `{"k":"defaultArg"}` placeholder when a later argument keeps the omitted slot observable; or
+// - a shorter `args` vector for a purely trailing omission.
+// The call still carries the frontend-selected declaration's complete `sig`/`shapeTypes` vector. For that exact
+// declaration this pass reads the default value from the referenced DLL (`KotlinDefault` carrier first, ECMA-335
+// parameter constant otherwise) and materializes a complete physical argument vector for CIR.
 //
 // PHASE 1 (#146): runs immediately AFTER InlineSplice — BEFORE ObjectSlotRename/ClosureSynthesis/MemberCallSubstitution/
 // BirTypeLowering — so the spliced RAW payload re-lowers IN THIS app's context (owner attribution for a payload's own
 // `callStatic owner:null`, @ClrIntrinsic binding, generic resolution), exactly like InlineSplice's body splice.
-// facadegen-injected cross-module calls already carry the callee's exact file-facade `ownerType`; use it. Only a truly
+// Reference-KLIB cross-module calls already carry the callee's exact file-facade `ownerType`; use it. Only a truly
 // ownerless Kotlin call falls back to `method name | emitted-arity`, where conflicting owners are refused loudly.
 //
 // CLOSED CARRIER (#146): a NON-CONSTANT default that lifts a helper — a non-capturing lambda `= {}` (the Avalonia
@@ -70,8 +71,8 @@ static class DefaultArgSplice
                 throw new InvalidOperationException("bir2cir: DefaultArgSplice re-hoisted a carried default lambda but the file root has no `methods` array");
             foreach (var h in hoist.ToList()) { hoist.Remove(h); methods.Add(h); }
         }
-        // CHOKEPOINT: kotc emits a `defaultArg` only for a cross-module omission it expects a @KotlinDefault to fill, and
-        // ilemit cannot emit a raw placeholder — a survivor is a fill failure. Fail here with the callee, not opaquely there.
+        // CHOKEPOINT: kotc uses `defaultArg` only to preserve an omitted positional slot. CIR and ilemit require the
+        // complete physical argument vector, so a survivor is a bir2cir fill failure.
         AssertNoPlaceholder(root);
     }
 

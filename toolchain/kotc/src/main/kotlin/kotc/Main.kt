@@ -14,14 +14,12 @@ import org.jetbrains.kotlin.util.PerformanceManagerImpl
  * source roots, ...) and run the common metadata frontend against KLIB dependencies.
  */
 fun main(args: Array<String>) {
-	// `--scan-imports --output <file> <src.kt>...` — a pre-compile subcommand that extracts the .NET-injectable
-	// imports with the real Kotlin PSI parser (the metadata pre-step facadegen consumes). Reuses this same jar/
-	// launcher so no extra distribution is needed; returns before the normal compile path.
-	if (args.firstOrNull() == "--scan-imports") {
-		kotc.tools.ImportScan.run(args)
-		return
-	}
-	val normalizedArgs = args.filterNot { it == "-no-stdlib" }
+	val normalizedArgs = args
+		.filterNot {
+			it == "-no-stdlib" ||
+				it.startsWith("-XXLanguage:+CompanionBlocksAndExtensions") ||
+				it.startsWith("-XXLanguage:-CompanionBlocksAndExtensions")
+		}
 	val arguments = parseCommandLineArguments<K2MetadataCompilerArguments>(normalizedArgs)
 	arguments.multiPlatform = true
 	val collector = PrintingMessageCollector(System.err, MessageRenderer.PLAIN_RELATIVE_PATHS, arguments.verbose)

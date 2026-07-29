@@ -350,6 +350,9 @@ sealed class Pipeline
             // implied. entries family: App-build sites only (stdlib self-build keeps the filler body — see
             // EnumIntrinsicLowering).
             EnumIntrinsicLowering.Apply(bir.Root, localRichEnums, localTopLevelFns, attributeTopLevelOwner);
+            // BASIC ENUM ENTRY VALUES: kotc preserves owner + entry-name Kotlin identity. Resolve a referenced CLR
+            // enum's potentially sparse/negative/aliased physical constant from the exact compile reference here.
+            EnumValueLowering.Apply(bir.Root, refs);
             // ARRAY CONSTRUCTION + INTRINSIC ELEMENT (#73 Phase 2b-A): kotc emits the faithful `kotlin.IntArray`
             // identity — the sized ctor as `new kotlin.IntArray(size, init)`, the arrayGet/arraySet/forArray
             // intrinsics with NO `elem`. Derive the sized-array construction (newArrayInit/newArraySized) + stamp the
@@ -616,7 +619,7 @@ sealed class Pipeline
         // stdlib code that must be cold-transformed in the rt build. Skipped ONLY in the REFERENCE build (metadata-
         // only; its bodies are body-squashed — so the ref.dll carries the [KotlinFunction(Suspend)] flag but no cold
         // entry, which is what R1b's cross-assembly guard consults). The rt-stdlib's CLR-interop suspend fns
-        // (kotlin.clr.await) are NOT genuine cold bodies and are excluded INSIDE ApplyAll (InteropBridgeFileClass).
+        // Reference-KLIB await bridges are declaration-only call-site facts and never enter this build's method set.
         IReadOnlyDictionary<string, DotKt.Bir.TypeNode> suspendCalleeRet = null;
         if (!_options.RefBuild)
             suspendCalleeRet = SuspendColdLowering.ApplyAll(staged.Select(s => s.Root).ToList(), refs, localTypeFqns, attributeTopLevelOwner);

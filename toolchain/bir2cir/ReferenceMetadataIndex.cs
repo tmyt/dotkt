@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -469,6 +470,27 @@ sealed partial class ReferenceMetadataIndex
         if (fqn.StartsWith("dotkt$", StringComparison.Ordinal)) return null;
         if (_localEmittedTypes.Contains(BareOwnerFqn(fqn))) return null;
         return ProbeNetType(fqn, genericArity);
+    }
+
+    // Resolve the physical ECMA-335 constant of a named entry on an external CLR enum. The BIR entry name is Kotlin
+    // declaration identity; the underlying value is a CLR representation fact and therefore enters CIR only here.
+    // String form preserves the complete UInt64 domain without lossy JSON-number conversion.
+    public EnumPhysicalConstant ResolveNetEnumConstant(string fqn, string entry)
+    {
+        var type = ResolveNetType(fqn);
+        if (type == null || !type.IsEnum || string.IsNullOrEmpty(entry)) return null;
+        var field = type.GetField(entry, BindingFlags.Public | BindingFlags.Static);
+        if (field == null || !field.IsLiteral) return null;
+        object raw;
+        try { raw = field.GetRawConstantValue(); }
+        catch { return null; }
+        if (raw == null) return null;
+        Type underlying;
+        try { underlying = type.GetEnumUnderlyingType(); }
+        catch { return null; }
+        return new EnumPhysicalConstant(
+            underlying.FullName ?? underlying.Name,
+            Convert.ToString(raw, CultureInfo.InvariantCulture));
     }
 
     // The shared MLC probe (cache + candidate spellings + forwarder collapse) — the caller applies the owner-universe
@@ -1386,14 +1408,12 @@ sealed partial class ReferenceMetadataIndex
                         // then lowers to System.Int64/etc. and ilemit picks the conv opcode.
                         var isConv = HasAttribute(method.GetCustomAttributesData(), "kotlin.clr.ClrConv");
                         var convTo = isConv ? TypeName(method.ReturnType) : null;
-                        // @KotlinDefault(index, bir) on the method's params -> the cross-module default-arg splice source.
-                        // Keyed BY SIGNATURE as well as by arity, exactly like the constructor scan below: two same-arity
-                        // overloads of one name (an extension `fun String.tagged(t: String = this)` beside a
-                        // `fun tagged(name: String, items: List<String> = emptyList())`) carry DIFFERENT defaults, and an
-                        // arity-only key would hand one's default to the other's call site. The arity key stays for the
-                        // single-declaration case and records a CONFLICT so that fallback refuses instead of guessing.
-                        if (KotlinDefaultsOf(method) is Dictionary<int, string> kdefaults)
-                            AddKotlinDefaults(metadata, ownerFqn, method.Name, method.GetParameters(), kdefaults);
+                        // Default argument VALUES remain authoritative in the selected reference DLL. KotlinDefault
+                        // contributes its raw Kotlin-expression BIR; an ordinary ECMA-335 constant contributes a plain
+                        // const expression. The reference KLIB carries only DECLARES_DEFAULT_VALUE for frontend
+                        // resolution, never either payload.
+                        if (CallableDefaultsOf(method) is Dictionary<int, string> defaults)
+                            AddKotlinDefaults(metadata, ownerFqn, method.Name, method.GetParameters(), defaults);
                         // The `suspend` bit from the DotKt round-trip [KotlinFunction(flags)] attribute (Suspend = 4,
                         // the flag word ilemit stamps; the dead Assembly.LoadFrom scan read it, this live scan didn't).
                         // Channelled into MemberBinding.Suspend for the coroutine bundle (bundle 6) — no consumer yet.
@@ -1481,7 +1501,9 @@ sealed partial class ReferenceMetadataIndex
                         // `set_X` — a file-class static with intrinsic==null) is indexed too. That is what lets a cross-module
                         // top-level `val` read (kotc emits owner:null + prop:get -> reconstructed `get_X`) resolve GENERICALLY
                         // through TryResolveTopLevelStatic (e.g. COROUTINE_SUSPENDED -> IntrinsicsKt), with no per-name special-case.
-                        if (isFileClass && method.IsStatic && intrinsic == null)
+                        var isCSharpExtension = method.IsStatic && method.GetCustomAttributesData().Any(a =>
+                            a.AttributeType.FullName == "System.Runtime.CompilerServices.ExtensionAttribute");
+                        if ((isFileClass || isCSharpExtension) && method.IsStatic && intrinsic == null)
                         {
                             var ps = method.GetParameters();
                             var rk = ps.Length >= 1 ? RecvKey(ps[0].ParameterType) : "";
@@ -1525,7 +1547,7 @@ sealed partial class ReferenceMetadataIndex
                     // the same ParamKey space, so same-arity ctor overloads resolve rather than collide.
                     foreach (var ctor in type.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly))
                     {
-                        if (KotlinDefaultsOf(ctor) is Dictionary<int, string> cdefaults)
+                        if (CallableDefaultsOf(ctor) is Dictionary<int, string> cdefaults)
                             AddKotlinDefaults(metadata, ownerFqn, CtorKeyName, ctor.GetParameters(), cdefaults);
                     }
                 }
@@ -1676,6 +1698,64 @@ sealed partial class ReferenceMetadataIndex
             (map ??= new Dictionary<int, string>())[Convert.ToInt32(a.ConstructorArguments[0].Value)] = bir;
         }
         return map;
+    }
+
+    // The complete default-value map for an already selected declaration. KotlinDefault wins because it carries the
+    // Kotlin expression (including reads of earlier parameters/receivers); otherwise use the ECMA-335 constant directly.
+    // This is deliberately a reference-DLL scan. Neither dll2klib nor kotc materializes a default value.
+    static Dictionary<int, string> CallableDefaultsOf(MethodBase method)
+    {
+        var map = KotlinDefaultsOf(method);
+        foreach (var p in method.GetParameters())
+        {
+            if (map?.ContainsKey(p.Position) == true || !p.HasDefaultValue) continue;
+            if (ConstantDefaultBir(p) is not string bir) continue;
+            (map ??= new Dictionary<int, string>())[p.Position] = bir;
+        }
+        return map;
+    }
+
+    static string ConstantDefaultBir(ParameterInfo parameter)
+    {
+        object value;
+        try { value = parameter.RawDefaultValue; }
+        catch { return null; }
+        if (ReferenceEquals(value, DBNull.Value) || ReferenceEquals(value, Missing.Value)) return null;
+
+        var type = parameter.ParameterType;
+        if (type.IsEnum)
+        {
+            type = Enum.GetUnderlyingType(type);
+            try { value = Convert.ChangeType(value, type, System.Globalization.CultureInfo.InvariantCulture); }
+            catch { return null; }
+        }
+
+        JsonNode jsonValue = value switch
+        {
+            null => null,
+            bool v => JsonValue.Create(v),
+            char v => JsonValue.Create(v.ToString()),
+            string v => JsonValue.Create(v),
+            sbyte v => JsonValue.Create((int)v),
+            byte v => JsonValue.Create((int)v),
+            short v => JsonValue.Create((int)v),
+            ushort v => JsonValue.Create((int)v),
+            int v => JsonValue.Create(v),
+            uint v => JsonValue.Create(unchecked((int)v)),
+            long v => JsonValue.Create(v),
+            ulong v => JsonValue.Create(unchecked((long)v)),
+            float v => JsonValue.Create(v),
+            double v => JsonValue.Create(v),
+            _ => null,
+        };
+        if (value is not null && jsonValue is null) return null;
+        var declaredType = DeclarationTypeNode(type);
+        if (declaredType is null) return null;
+        return new JsonObject {
+            ["k"] = "const",
+            ["type"] = TypeJson.Write(declaredType),
+            ["value"] = jsonValue,
+        }.ToJsonString();
     }
 
     // The member-level PROPERTY-accessor binding: @ClrProperty(access, name). `access` is the READ(1)/WRITE(2) flag word;

@@ -13,18 +13,12 @@
          wiped CIR/BIR dirs because retarget rewrites the emitted dll IN PLACE (output == input), so it needs its
          own out-of-band completion marker. -->
     <DotKtRetargetStamp>$(BaseIntermediateOutputPath)dotkt-retarget.stamp</DotKtRetargetStamp>
-    <DotKtTypeMeta>$(BaseIntermediateOutputPath)dotkt-clrtypes.meta</DotKtTypeMeta>
-    <!-- The .NET import list extracted from the .kt sources by the kotc scan-imports pass (PSI parser, not regex). -->
-    <DotKtImportList>$(BaseIntermediateOutputPath)dotkt-clrimports.txt</DotKtImportList>
+    <DotKtDll2KlibJobs Condition="'$(DotKtDll2KlibJobs)' == ''">$([System.Environment]::ProcessorCount)</DotKtDll2KlibJobs>
+    <DotKtReferenceKlibDir>$(BaseIntermediateOutputPath)dotkt-reference-klibs</DotKtReferenceKlibDir>
+    <DotKtReferenceKlibRsp>$(BaseIntermediateOutputPath)dotkt-reference-klibs.rsp</DotKtReferenceKlibRsp>
     <!-- Non-file compile options (raw kotc flags + MPP config) hashed into a manifest file so a change to an OPTION
          (not a source) still flips a timestamp and retriggers the incremental KotlinCompile (#50). -->
     <DotKtOptionsManifest>$(BaseIntermediateOutputPath)dotkt-compile-options.txt</DotKtOptionsManifest>
-    <!-- The EXPLICIT, ordered @(DotKtImport) list materialized into a manifest file so adding/removing/reordering a
-         <DotKtImport> flips a timestamp and retriggers DotKtInjectTypes below (#161). @(DotKtImport) is a non-file
-         item and cannot itself be a target Input, so without this a removed import left STALE injection metadata
-         ($(DotKtTypeMeta)) — a build that referenced the dropped .NET type kept succeeding until an unrelated .kt
-         edit finally forced a recompile. -->
-    <DotKtImportManifest>$(BaseIntermediateOutputPath)dotkt-clrimports-explicit.txt</DotKtImportManifest>
     <!-- ilemit emits real CIL (Reflection.Emit) and must load each referenced type's RUNTIME (implementation)
          assembly — it takes its refs from @(ReferenceCopyLocalPaths) (the runtime set), NOT @(ReferencePath) (which
          resolves to a package's ref/ reference assembly — method-body-less; deriving a class from one fails with
@@ -43,11 +37,49 @@
     <ItemGroup>
       <_DotKtCompileReference Include="@(ReferencePath)" />
       <_DotKtRuntimeReference Include="@(ReferenceCopyLocalPaths)" Condition="'%(Extension)' == '.dll'" />
+      <_DotKtKlibReference Include="@(ReferencePathWithRefAssemblies)"
+                           Condition="'%(Extension)' == '.dll' and '%(Filename)' != 'DotKt.Private.Stdlib' and '%(Filename)' != 'DotKt.Stdlib'">
+        <KlibPath>$(DotKtReferenceKlibDir)/%(Filename).klib</KlibPath>
+      </_DotKtKlibReference>
+      <_DotKtKlibReference Include="@(_DotKtCompileReference)"
+                           Condition="'@(ReferencePathWithRefAssemblies)' == '' and '%(Extension)' == '.dll' and '%(Filename)' != 'DotKt.Private.Stdlib' and '%(Filename)' != 'DotKt.Stdlib'">
+        <KlibPath>$(DotKtReferenceKlibDir)/%(Filename).klib</KlibPath>
+      </_DotKtKlibReference>
+      <_DotKtFrontendMetadataInput Include="@(_DotKtKlibReference->'%(KlibPath)')" />
     </ItemGroup>
     <PropertyGroup>
       <_DotKtCompileReferences>@(_DotKtCompileReference->'%(FullPath)', ';')</_DotKtCompileReferences>
       <_DotKtRuntimeReferences>@(_DotKtRuntimeReference->'%(FullPath)', ';')</_DotKtRuntimeReferences>
+      <!-- DotKtGenerateReferenceKlibs is a partially incremental target: inside its body MSBuild narrows
+           @(_DotKtKlibReference) to only the stale input/output pairs. dll2klib still needs the COMPLETE resolved
+           universe to derive one consistent arity/delegate catalog for both stale and cached KLIBs. Capture it in
+           properties here, before target batching narrows the item list. -->
+      <_DotKtAllKlibReferences>@(_DotKtKlibReference->'%(FullPath)', ';')</_DotKtAllKlibReferences>
+      <_DotKtAllKlibReferenceCount>@(_DotKtKlibReference->Count())</_DotKtAllKlibReferenceCount>
     </PropertyGroup>
+  </Target>
+
+  <!-- Materialize the COMPLETE resolved reference universe before the partially-incremental generation target.
+       The rsp is also an Input there: adding or removing a reference changes its timestamp, including the removal
+       case which an Inputs/Outputs item transform cannot observe once the removed item has left the current set. -->
+  <Target Name="DotKtWriteReferenceKlibRsp"
+          DependsOnTargets="DotKtResolveReferenceSets">
+    <MakeDir Directories="$(DotKtReferenceKlibDir)" />
+    <WriteLinesToFile File="$(DotKtReferenceKlibRsp)"
+                      Lines="$(_DotKtAllKlibReferences)"
+                      Overwrite="true"
+                      WriteOnlyWhenDifferent="true" />
+  </Target>
+
+  <!-- The launcher keeps the worker contract one process / one DLL / one project-local packed KLIB, but schedules
+       independent stale references concurrently. It repeats the per-item timestamp check so a single changed reference
+       does not regenerate the whole set when this aggregate MSBuild target runs. No shared cache participates. -->
+  <Target Name="DotKtGenerateReferenceKlibs"
+          DependsOnTargets="DotKtWriteReferenceKlibRsp"
+          Inputs="@(_DotKtKlibReference);$(DotKtDll2Klib);$(DotKtReferenceKlibRsp)"
+          Outputs="@(_DotKtKlibReference->'%(KlibPath)')">
+    <Message Importance="high" Text="DotKt: projecting $(_DotKtAllKlibReferenceCount) reference assembly/assemblies -> KLIB (jobs=$(DotKtDll2KlibJobs))" />
+    <Exec Command="dotnet &quot;$(DotKtDll2Klib)&quot; --out &quot;$(DotKtReferenceKlibDir)&quot; --jobs &quot;$(DotKtDll2KlibJobs)&quot; @&quot;$(DotKtReferenceKlibRsp)&quot;" />
   </Target>
 
   <!-- MPP (#119): opt-in multiplatform (common `expect` + CLR `actual`) for an ordinary user project.
@@ -75,43 +107,6 @@
     <_DotKtStdlibInput Include="$(DotKtStdlib)" Condition="!Exists('$(DotKtStdlib)/default/manifest') and Exists('$(DotKtStdlib)')" />
   </ItemGroup>
 
-  <!-- Materialize the ordered EXPLICIT @(DotKtImport) set into $(DotKtImportManifest) BEFORE DotKtInjectTypes'
-       incremental check (it is a DependsOnTargets of it), so the manifest is a valid Input there (#161).
-       WriteOnlyWhenDifferent keeps the timestamp stable when the imports are unchanged (no spurious re-injection)
-       and flips it the instant one is added/removed/reordered — which is exactly what makes a removed <DotKtImport>
-       re-run injection instead of leaving stale metadata. An empty @(DotKtImport) writes an empty manifest (still a
-       real file), so going non-empty -> empty also flips the timestamp. -->
-  <Target Name="DotKtComputeImportManifest" Condition="'@(KotlinCompile)' != ''">
-    <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(DotKtImportManifest)'))" />
-    <WriteLinesToFile File="$(DotKtImportManifest)" Overwrite="true" WriteOnlyWhenDifferent="true"
-                      Lines="@(DotKtImport->'%(Identity)')" />
-  </Target>
-
-  <!-- C-2: import-driven, façade-FREE .NET type injection. The .kt sources' imports are extracted with the real
-       Kotlin parser (PSI) and those .NET types injected straight into FIR (no .kt produced). @(ReferencePath)
-       (BCL + PackageReference/Reference) makes any referenced assembly's types injectable. -->
-  <!-- Incremental: the injection metadata is a pure function of the .kt sources (their imports), the EXPLICIT
-       @(DotKtImport) set (via $(DotKtImportManifest), materialized by DotKtComputeImportManifest below — #161), the
-       resolved compile references, and the compiler version (binary mtime). Guarding on those keeps $(DotKtTypeMeta)
-       BYTE- and TIMESTAMP-stable across a no-op rebuild, so it can serve as a precise KotlinCompile input below (#50)
-       instead of bumping every build and forcing an unconditional recompile. -->
-  <Target Name="DotKtInjectTypes" BeforeTargets="KotlinCompile"
-          DependsOnTargets="DotKtResolveReferenceSets;DotKtComputeImportManifest"
-          Condition="'@(KotlinCompile)' != ''"
-          Inputs="@(KotlinCompile);@(_DotKtCompileReference);$(DotKtCompiler);$(DotKtImportManifest)" Outputs="$(DotKtTypeMeta)">
-    <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(DotKtTypeMeta)'))" />
-    <!-- 1. Extract .NET imports via the compiler's PSI pass (robust where the old regex was not — item 5). -->
-    <Message Importance="high" Text="DotKt: scanning .NET imports from @(KotlinCompile->Count()) .kt file(s) (PSI parser)" />
-    <Exec Command="&quot;$(DotKtCompiler)&quot; --scan-imports --output &quot;$(DotKtImportList)&quot; @(KotlinCompile->'&quot;%(FullPath)&quot;', ' ')" />
-    <!-- 2. Reflect over the imported (+ explicit <DotKtImport>) types -> FIR-injection metadata for the .NET space ONLY.
-         The stdlib (kotlin.*) is deliberately NOT scanned here: kotc resolves it from the KLIB (-classpath), which
-         carries the full Kotlin semantics — Companion objects (the stdlib is implemented premised on them), inline,
-         operator, infix — that facadegen cannot fully restore. Feeding stdlib.dll to facadegen produced degraded and
-         DUPLICATE kotlin.* symbols (e.g. a non-reified arrayOf colliding with the klib's reified one -> ambiguity). -->
-    <Message Importance="high" Text="DotKt: resolving .NET types (import list + @(DotKtImport))" />
-    <Exec Command="dotnet &quot;$(DotKtFacadeGen)&quot; &quot;$(DotKtTypeMeta)&quot; --compile-refs &quot;$(_DotKtCompileReferences)&quot; @(DotKtImport->'%(Identity)', ' ') --import-list &quot;$(DotKtImportList)&quot;" />
-  </Target>
-
   <!-- Materialize the non-file compile options into $(DotKtOptionsManifest) BEFORE KotlinCompile's incremental check so
        the manifest is a valid Input there (#50). The MPP flags are computed here (not in the compile body) so both the
        manifest and the compile Exec see the same $(DotKtMppFlags). WriteOnlyWhenDifferent keeps the file's timestamp
@@ -128,15 +123,15 @@
                       Lines="$(DotKtKotcOptions);$(DotKtMppFlags);@(DotKtCommon->'%(FullPath)')" />
   </Target>
 
-  <!-- Compile every .kt to BIR. CLR_TYPES_METADATA tells the FIR injector which façade-free .NET types to synthesize.
+  <!-- Compile every .kt to BIR from the frontend stdlib plus the complete MSBuild-resolved reference-KLIB set.
        Incremental inputs (#50): besides the .kt sources, a recompile must also retrigger when the COMPILER changes
-       ($(DotKtCompiler) mtime = version proxy), the frontend KLIB changes ($(DotKtStdlib)), the injected .NET type
-       metadata changes ($(DotKtTypeMeta)), any resolved reference DLL changes (@(_DotKtCompileReference)/
+       ($(DotKtCompilerFingerprint) mtime = version proxy), the frontend KLIB changes ($(DotKtStdlib)), any reference KLIB or
+       resolved reference DLL changes (@(_DotKtCompileReference)/
        @(_DotKtRuntimeReference)), or a non-file compile OPTION changes ($(DotKtOptionsManifest)). DotKtResolveReferenceSets
        is a direct dependency so the @(_DotKt*Reference) items exist when these Inputs are evaluated. -->
   <Target Name="KotlinCompile" BeforeTargets="CoreCompile"
-          DependsOnTargets="DotKtInjectTypes;DotKtResolveReferenceSets;DotKtComputeCompileOptions"
-          Inputs="@(KotlinCompile);$(DotKtCompiler);@(_DotKtStdlibInput);$(DotKtTypeMeta);$(DotKtOptionsManifest);@(_DotKtCompileReference);@(_DotKtRuntimeReference)"
+          DependsOnTargets="DotKtGenerateReferenceKlibs;DotKtResolveReferenceSets;DotKtComputeCompileOptions"
+          Inputs="@(KotlinCompile);$(DotKtCompiler);$(DotKtCompilerFingerprint);@(_DotKtStdlibInput);@(_DotKtFrontendMetadataInput);$(DotKtOptionsManifest);@(_DotKtCompileReference);@(_DotKtRuntimeReference)"
           Outputs="$(DotKtOut)/.stamp">
     <!-- Deletion-safety (#50): the BIR is globbed from $(DotKtOut), which was never cleaned, so a deleted/renamed .kt
          left a stale *.bir.json behind → the deleted class/function survived into the emitted DLL. Wiping the dir on
@@ -149,8 +144,11 @@
     <!-- $(DotKtKotcOptions): extra raw kotc flags a project may pass through (e.g. compiling the stdlib ITSELF needs
          -Xallow-kotlin-package -opt-in=... ). Space-separated; appended verbatim to the compile command.
          $(DotKtMppFlags) is computed by DotKtComputeCompileOptions above. -->
-    <Exec Command="&quot;$(DotKtCompiler)&quot; @(KotlinCompile->'&quot;%(FullPath)&quot;', ' ') -no-stdlib -classpath &quot;$(DotKtStdlib)&quot; -d &quot;$(DotKtOut)&quot; $(DotKtMppFlags) $(DotKtKotcOptions)"
-          EnvironmentVariables="CLR_TYPES_METADATA=$(DotKtTypeMeta)" />
+    <PropertyGroup>
+      <_DotKtKlibPathSeparator>$([System.IO.Path]::PathSeparator)</_DotKtKlibPathSeparator>
+      <_DotKtFrontendClasspath>$(DotKtStdlib)$(_DotKtKlibPathSeparator)@(_DotKtKlibReference->'%(KlibPath)', '$(_DotKtKlibPathSeparator)')</_DotKtFrontendClasspath>
+    </PropertyGroup>
+    <Exec Command="&quot;$(DotKtCompiler)&quot; @(KotlinCompile->'&quot;%(FullPath)&quot;', ' ') -no-stdlib -classpath &quot;$(_DotKtFrontendClasspath)&quot; -d &quot;$(DotKtOut)&quot; $(DotKtMppFlags) $(DotKtKotcOptions)" />
     <Touch Files="$(DotKtOut)/.stamp" AlwaysCreate="true" />
   </Target>
 
@@ -244,13 +242,9 @@
     <Touch Files="$(DotKtRetargetStamp)" AlwaysCreate="true" />
   </Target>
 
-  <!-- `dotnet clean` (#161): the DotKt pipeline state under $(BaseIntermediateOutputPath) (the BIR/CIR dirs and the
-       injection-metadata / import-list / options / import manifest files) is written by our Exec/WriteLinesToFile
-       steps, NOT tracked in @(FileWrites), so CoreClean never removed it — a `dotnet clean` left stale $(DotKtTypeMeta)
-       behind and a rebuild reused the stale injection metadata. Wipe all of it before CoreClean so `dotnet clean`
-       truly resets the DotKt state and the next build regenerates injection from scratch. -->
+  <!-- `dotnet clean`: wipe project-local compiler state and generated reference KLIBs before CoreClean. -->
   <Target Name="DotKtClean" BeforeTargets="CoreClean">
-    <RemoveDir Directories="$(DotKtOut);$(DotKtCirOut)" />
-    <Delete Files="$(DotKtTypeMeta);$(DotKtImportList);$(DotKtOptionsManifest);$(DotKtImportManifest);$(DotKtRetargetStamp)" />
+    <RemoveDir Directories="$(DotKtOut);$(DotKtCirOut);$(DotKtReferenceKlibDir)" />
+    <Delete Files="$(DotKtReferenceKlibRsp);$(DotKtOptionsManifest);$(DotKtRetargetStamp)" />
   </Target>
 </Project>

@@ -503,23 +503,17 @@ sealed partial class Emitter
     }
 
     // Emit call args, boxing each value arg passed to a reference/object param (param types known explicitly).
-    // When `mb` is a REFERENCED (reflectable) method, backfill omitted trailing [Optional]/[DefaultParameterValue]
-    // args exactly like EmitCallArgs — a GENERIC (typeArgs) cross-module call may omit defaulted trailing params
-    // (the frontend KLIB strips default VALUES; kotc emits fewer args than the full sig, e.g. `windowed(3)` vs the
-    // 4-param `windowed(list, size, step=1, partialWindows=false)`), and the CLR caller must supply them or the
-    // stack is short -> InvalidProgram. In-assembly emitted methods (MethodBuilder / MethodBuilderInstantiation)
-    // can't be reflected pre-bake and carry no default metadata, so GetParameters() there is skipped (try/catch).
+    // CIR must already contain the complete physical argument vector. Default realization belongs to bir2cir.
     void EmitArgsTyped(JsonElement args, Type[] pt, MethodInfo mb = null)
     {
         int i = 0;
         foreach (var a in args.EnumerateArray()) { if (pt != null && i < pt.Length) EmitArg(a, pt[i]); else EmitExpr(a); i++; }
-        // Backfill omitted trailing defaults. Drive off the resolved method's own ParameterInfo (NOT `pt`, which is
-        // null for a generic METHOD on a NON-generic owner — `windowed<T>` on `_CollectionsKt` — where ApplyTypeArgs
-        // leaves paramTypes null).
-        if (mb == null) return;
-        ParameterInfo[] ps;
-        try { ps = mb.GetParameters(); } catch (NotSupportedException) { return; }  // un-baked builder: no defaults
-        for (; i < ps.Length; i++) EmitDefaultArg(ps[i]);
+        if (pt != null) RequireArgCount(i, pt.Length, mb?.ToString() ?? "typed call");
+        else if (mb != null)
+        {
+            try { RequireArgCount(i, mb.GetParameters().Length, mb.ToString()); }
+            catch (NotSupportedException) { }
+        }
     }
 
     // Emit `new T(..)` ctor args honoring the node's declared ctor param types (`argTypes`): a value/generic-param
@@ -705,29 +699,15 @@ sealed partial class Emitter
     {
         int i = 0;
         foreach (var a in args.EnumerateArray()) { EmitArg(a, ps[i].ParameterType); i++; }
-        // .NET optional parameters: Kotlin may omit trailing args that have a default — the CLR caller must
-        // supply them. Push each missing param's default value (filled from the method metadata).
-        for (; i < ps.Length; i++) EmitDefaultArg(ps[i]);
+        RequireArgCount(i, ps.Length, "CLR call");
     }
 
-    void EmitDefaultArg(ParameterInfo p)
+    static void RequireArgCount(int actual, int expected, string target)
     {
-        var pt = p.ParameterType;
-        // An omitted `vararg` ([ParamArray]) -> an EMPTY array, not null (the callee iterates it).
-        if (pt.IsArray && p.IsDefined(typeof(ParamArrayAttribute), false)) { EmitLdcI4(0); _il.Emit(OpCodes.Newarr, pt.GetElementType()); return; }
-        var dv = p.HasDefaultValue ? p.DefaultValue : null;
-        switch (dv)
-        {
-            case null when !pt.IsValueType: _il.Emit(OpCodes.Ldnull); break;
-            case null: var loc = _il.DeclareLocal(pt); _il.Emit(OpCodes.Ldloca, loc); _il.Emit(OpCodes.Initobj, pt); _il.Emit(OpCodes.Ldloc, loc); break;
-            case bool b: _il.Emit(b ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0); break;
-            case char c: _il.Emit(OpCodes.Ldc_I4, (int)c); break;
-            case string s: _il.Emit(OpCodes.Ldstr, s); break;
-            case long l: _il.Emit(OpCodes.Ldc_I8, l); break;
-            case double d: _il.Emit(OpCodes.Ldc_R8, d); break;
-            case float f: _il.Emit(OpCodes.Ldc_R4, f); break;
-            default: _il.Emit(OpCodes.Ldc_I4, Convert.ToInt32(dv)); break;  // int/short/byte/enum
-        }
+        if (actual != expected)
+            throw new InvalidOperationException(
+                $"ilemit: CIR argument count mismatch for {target}: got {actual}, expected {expected}; " +
+                "default and vararg realization must be completed by bir2cir");
     }
 
     void EmitArgs2(JsonElement[] args, ParameterInfo[] ps)
@@ -879,12 +859,7 @@ sealed partial class Emitter
             else EmitExpr(a);
             i++;
         }
-        // Fill omitted trailing default/params args (a cross-module caller may omit a `= <const>` default; kotc drops the
-        // unrecoverable-from-metadata default expression, so the real value is stamped as [Optional]/DefaultParameterValue
-        // on the callee). Only referenced methods carry that metadata (in-assembly emitted params live in `_mparams`, no
-        // defaults there), so this fills from `mb.GetParameters()`.
-        if (pt == null)
-            for (; i < ps.Length; i++) EmitDefaultArg(ps[i]);
+        RequireArgCount(i, pt?.Length ?? ps.Length, mb.ToString());
     }
 
 }

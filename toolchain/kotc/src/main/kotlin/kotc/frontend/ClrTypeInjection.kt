@@ -234,92 +234,6 @@ internal fun clrInjectedTopLevelFileClass(callableId: CallableId, arity: Int, re
 }
 
 /**
- * #134: a restored constant default-arg value carried in the facadegen metadata (the `valueType` primitive kind + raw
- * string, exactly as `applyDefaults` reads it). The backend synthesizes an IrConst from this to fill an omitted default
- * arg at a CROSS-MODULE call site — fir2ir converts the injected FIR default of a bodies-skipped dependency declaration
- * to an IrErrorExpression (the value is dropped), so the real value must come from the metadata, not the callee's IR.
- */
-internal class ClrConstDefault(val valueType: String, val value: String?)
-private fun ClrParam.constDefault(): ClrConstDefault? = default?.takeIf { !it.nonConst }?.let { ClrConstDefault(it.valueType, it.value) }
-
-/** Resolve the ONE default list for the overloads of the given arity, or null when it is ambiguous. Overloads share a
- *  key (ctor owner / top-level CallableId) and are matched by param count alone (FIR already picked the exact callee, but
- *  that identity is not carried to the backend), so two same-arity overloads with DIFFERENT defaults (`f(Int=1)` vs
- *  `f(String="")`) cannot be told apart here — filling either's constant would risk a kind/type-inconsistent value. In
- *  that (rare) case return null so the caller omits the arg (loud gap guard / ilemit backfill) rather than guess. */
-private fun List<List<ClrParam>>.defaultsForArity(paramCount: Int): List<ClrConstDefault?>? {
-	val candidates = filter { it.size == paramCount }.map { ps -> ps.map { it.constDefault() } }
-	if (candidates.isEmpty()) return null
-	val first = candidates[0]
-	if (candidates.any { c -> c.size != first.size || c.indices.any { i -> c[i]?.valueType != first[i]?.valueType || c[i]?.value != first[i]?.value } })
-		return null   // ambiguous: same-arity overloads disagree on defaults
-	return first
-}
-
-/**
- * #146: whether each parameter's restored default is backed by the library's non-constant
- * `[kotlin.clr.KotlinDefault]` carrier. Keep this distinct from [defaultsForArity]: `null` there means both
- * "not defaulted" and "defaulted, but not a CLR constant", while the backend must emit a positional `defaultArg` for
- * the latter. As with constant defaults, same-arity overloads that disagree are ambiguous and therefore return null.
- */
-private fun List<List<ClrParam>>.kotlinDefaultSlotsForArity(paramCount: Int): List<Boolean>? {
-	val candidates = filter { it.size == paramCount }.map { ps -> ps.map { it.default?.nonConst == true } }
-	if (candidates.isEmpty()) return null
-	val first = candidates[0]
-	if (candidates.any { it != first }) return null
-	return first
-}
-
-/**
- * #134: the per-regular-parameter constant defaults of a facadegen-injected CONSTRUCTOR (its owner resolved by IR
- * `ClassId`, the overload matched by regular-param count), or null if the owner isn't injected / has no such ctor (or
- * same-arity ctors disagree on defaults — see [defaultsForArity]). Each element is that parameter's default (null when
- * the parameter has none).
- */
-internal fun clrInjectedCtorParamDefaults(classId: ClassId, paramCount: Int): List<ClrConstDefault?>? =
-	if (classId in ClrMetadataHolder.sourceShadowedClassIds) null   // #15: source ctor wins — its defaults come from source
-	else ClrMetadataHolder.byClassId[classId]?.ctors?.map { it.params }?.defaultsForArity(paramCount)
-
-internal fun clrInjectedCtorKotlinDefaultSlots(classId: ClassId, paramCount: Int): List<Boolean>? =
-	if (classId in ClrMetadataHolder.sourceShadowedClassIds) null
-	else ClrMetadataHolder.byClassId[classId]?.ctors?.map { it.params }?.kotlinDefaultSlotsForArity(paramCount)
-
-/**
- * #134: the per-value-parameter constant defaults of a facadegen-injected TOP-LEVEL function (keyed by resolved IR
- * `CallableId`, the overload matched by value-param count), or null if not injected / no such overload (or ambiguous).
- */
-internal fun clrInjectedTopLevelParamDefaults(callableId: CallableId, paramCount: Int): List<ClrConstDefault?>? =
-	if (callableId in ClrMetadataHolder.sourceShadowedCallableIds) null   // #15: source fun wins
-	else ClrMetadataHolder.topLevelParamsByCallableId[callableId]?.defaultsForArity(paramCount)
-
-internal fun clrInjectedTopLevelKotlinDefaultSlots(callableId: CallableId, paramCount: Int): List<Boolean>? =
-	if (callableId in ClrMetadataHolder.sourceShadowedCallableIds) null
-	else ClrMetadataHolder.topLevelParamsByCallableId[callableId]?.kotlinDefaultSlotsForArity(paramCount)
-
-/**
- * The same two lookups for a facadegen-injected MEMBER function, keyed by its owner `ClassId` + name and matched by
- * emitted-parameter count. Without them the backend had no authoritative answer for a member and fell back to
- * `carriesKotlinDefault`, an IR-SHAPE test that is false for every member (it requires `isInline`, which facadegen
- * does not surface on a member) — so an omitted cross-module member default was neither placeheld nor refused: its
- * slot was silently DELETED and a later provided argument slid into it. The metadata is the authority here exactly as
- * it already is for a constructor and a top-level function; `params` is the PHYSICAL list (a `__self` extension
- * receiver and every restored `context(...)` slot included), so `paramCount` is the emitted parameter count.
- */
-private fun ClrMethod.valueParams(): List<ClrParam> =
-	if (ext && params.isNotEmpty()) params.drop(1) else params   // an `ext` fun's leading `__self` is a receiver, not a value param
-
-private fun memberValueParams(classId: ClassId, name: Name): List<List<ClrParam>>? =
-	if (classId in ClrMetadataHolder.sourceShadowedClassIds) null
-	else ClrMetadataHolder.byClassId[classId]?.methods?.filter { it.name == name.asString() }
-		?.map { it.valueParams() }?.takeIf { it.isNotEmpty() }
-
-internal fun clrInjectedMemberParamDefaults(classId: ClassId, name: Name, paramCount: Int): List<ClrConstDefault?>? =
-	memberValueParams(classId, name)?.defaultsForArity(paramCount)
-
-internal fun clrInjectedMemberKotlinDefaultSlots(classId: ClassId, name: Name, paramCount: Int): List<Boolean>? =
-	memberValueParams(classId, name)?.kotlinDefaultSlotsForArity(paramCount)
-
-/**
  * A2 keystone (interop-no-registry, stage 3): the backend reads a restored DotKt TOP-LEVEL EXTENSION PROPERTY's .NET
  * file-facade class (its `get_`/`set_<name>` statics live there) off its resolved IR `CallableId` (`package` + name) —
  * facadegen's metadata keyed structurally.
@@ -671,8 +585,10 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	// Runtime token returned by `ClrEvent<T>.subscribe(T)`. Unlike ClrEvent itself this is a real stdlib class;
 	// bir2cir constructs it after lowering the event add/remove pair.
 	private val eventSubscriptionClassId = ClassId(clrPkg, Name.identifier("EventSubscription"))
-	// The intrinsics are CLR-context features -> available whenever .NET interop is active (metadata loaded).
-	private val clrActive = module != null
+	// These are compiler intrinsics, not declarations derived from facadegen's import metadata. The reference-KLIB
+	// pipeline deliberately has no CLR_TYPES_METADATA document, but still needs the same stable kotlin.clr vocabulary
+	// for byref/event/Span operations resolved from ordinary KLIB declarations.
+	private val clrActive = true
 
 	// Companions created EAGERLY in generateTopLevelClassLikeDeclaration (statics -> implicit `App.Start` support),
 	// keyed by companion ClassId. Per-extension-instance (= per-session); generateNestedClassLikeDeclaration must

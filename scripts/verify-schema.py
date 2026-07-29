@@ -32,6 +32,9 @@ STR_OK = {
     "scope",                                    # tv.scope enum
     "op", "cmp",                                # binOp/unaryOp operator / structured-for comparison operator
     "value",                                    # const literal / attribute-arg scalar
+    "entry",                                    # enumValue's Kotlin entry-name identity
+    "underlying", "physicalValue",              # resolved external-enum underlying CLR type + invariant integral
+                                                # spelling (string preserves the full signed/unsigned 64-bit domain)
     "vis", "variance", "kind",                  # visibility / variance / decl-kind enums
     "clr",                                      # fn.clr: CIR-only physical delegate-family decision authored by
                                                 # bir2cir; validated structurally + by BIR/CIR phase in type_node

@@ -21,7 +21,7 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 KOTC="$ROOT/toolchain/kotc/build/install/kotc/bin/kotc"
 ILEMIT_DLL="$ROOT/build/ilemit-bin/ilemit.dll"
 BIR2CIR_DLL="$ROOT/build/bir2cir-bin/bir2cir.dll"
-FACADEGEN_DLL="$ROOT/build/facadegen-bin/facadegen.dll"
+DLL2KLIB_DLL="$ROOT/build/dll2klib-bin/dll2klib.dll"
 RETARGET_DLL="$ROOT/build/retarget-bin/retarget.dll"
 FE_KLIB="$ROOT/build/clr-stdlib-frontend-klib/kotlin-stdlib-clr-frontend.klib"
 STDLIB_REF_DLL="$ROOT/build/clr-stdlib/dll/DotKt.Private.Stdlib.dll"
@@ -100,7 +100,7 @@ xfail_diff() { # <prefix> <xfail-assoc-array-name> [actual-fail-name...]
 need_kotc() {
 	[[ -x "$KOTC" ]] || { info "building kotc (gradlew :kotc:installDist)" >&2; (cd "$ROOT" && ./gradlew -q :kotc:installDist); }
 }
-need_tool() { # <name> — ensure build/<name>-bin/<name>.dll exists (ilemit|bir2cir|facadegen|retarget); lazy
+need_tool() { # <name> — ensure build/<name>-bin/<name>.dll exists; lazy
 	local t="$1" dll="$ROOT/build/$1-bin/$1.dll"
 	[[ -f "$dll" ]] || { info "building $t" >&2; dotnet build "$ROOT/toolchain/$t" -c Release -o "$ROOT/build/$t-bin" -v q --nologo >/dev/null; }
 }

@@ -61,6 +61,39 @@ static class EnumIntrinsicLowering
 
     static void Rewrite(JsonObject o, ISet<string> rich, ISet<string> local, bool app)
     {
+        // The Kotlin frontend may preserve the synthesized `EnumClass.entries` property as an ownerful static
+        // property read. Its semantic identity is structural: a zero-argument `entries` getter on E returning
+        // EnumEntries<E>. Realize that Kotlin enum operation here, alongside the top-level enumEntries intrinsic,
+        // rather than asking ilemit to find a physical `E.get_entries` method (a CLR enum has no such member).
+        if (app && Str(o["k"]) == "callStatic"
+            && Str(o["prop"]) == "get"
+            && Str(o["method"]) is "entries" or "get_entries"
+            && o["ownerType"] is JsonNode ownerNode
+            && (o["args"] as JsonArray)?.Count == 0
+            && TypeJson.Read(ownerNode) is TypeNode.Fqn owner
+            && TypeJson.Read(o["ret"]) is TypeNode.Fqn ret
+            && ret.Name == "kotlin.enums.EnumEntries"
+            && ret.Args is { Length: 1 }
+            && ret.Args[0] is TypeNode.Fqn enumType
+            && enumType.Name == owner.Name)
+        {
+            JsonNode replacement = rich.Contains(owner.Name)
+                ? new JsonObject
+                {
+                    ["k"] = "callStatic",
+                    ["owner"] = TypeJson.Write(enumType),
+                    ["method"] = "values",
+                    ["args"] = new JsonArray(),
+                }
+                : new JsonObject
+                {
+                    ["k"] = "enumValues",
+                    ["type"] = TypeJson.Write(enumType),
+                };
+            Replace(o, replacement);
+            return;
+        }
+
         if (Str(o["k"]) != "callStatic" || o["owner"] != null) return;
         var method = Str(o["method"]);
         if (method == null || !Names.Contains(method)) return;
@@ -95,8 +128,13 @@ static class EnumIntrinsicLowering
         else
             repl = new JsonObject { ["k"] = "enumValues", ["type"] = tArg?.DeepClone() };
 
-        foreach (var key in o.Select(kv => kv.Key).ToList()) o.Remove(key);
-        foreach (var kv in (JsonObject)repl) o[kv.Key] = kv.Value?.DeepClone();
+        Replace(o, repl);
+    }
+
+    static void Replace(JsonObject target, JsonNode replacement)
+    {
+        foreach (var key in target.Select(kv => kv.Key).ToList()) target.Remove(key);
+        foreach (var kv in (JsonObject)replacement) target[kv.Key] = kv.Value?.DeepClone();
     }
 
     static string Str(JsonNode n) => (n as JsonValue)?.TryGetValue<string>(out var s) == true ? s : null;

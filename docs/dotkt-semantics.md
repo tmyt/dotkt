@@ -706,11 +706,11 @@ DotKt aliases `Appendable` to `System.Text.StringBuilder` (`@ClrTypeAlias` + `@C
 
 ## 5f. `value class` is a real wrapper class — never erased
 
-The OPPOSITE of Kotlin/JVM: a `@JvmInline value class Money(val amount: Int)` is emitted as an **ordinary reference
+The OPPOSITE of Kotlin/JVM: a `value class Money(val amount: Int)` is emitted as an **ordinary reference
 class** (an ordinary accessor-routed property — §5h — plus synthesized `equals`/`hashCode`/`toString`) — no inline-class erasure, no
 mangled `-impl` statics, no .NET `struct`. Structural equality survives; what is lost is the value-ness itself
-(identityless-ness is not enforced). The frontend still *requires* the `@JvmInline` annotation (a pinned-frontend
-checker); the attribute itself is not emitted. See §10.3 for the round-trip view.
+(identityless-ness is not enforced). Kotlin/CLR does not require the JVM-specific `@JvmInline` opt-in annotation.
+See §10.3 for the round-trip view.
 
 ## 5g. `KClass.simpleName`/`qualifiedName` report Kotlin names for the statically-known `::class` case (#138)
 

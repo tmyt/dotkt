@@ -9,7 +9,6 @@
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import System.Threading.Tasks.Task
-import kotlin.clr.await
 import dotkt.support.blockOn
 
 class SctxScale(val factor: Int)

@@ -1,0 +1,170 @@
+// Copyright 2010-2026 JetBrains s.r.o. and Kotlin Programming Language contributors.
+// Licensed under the Apache License, Version 2.0.
+//
+// Wire-compatible dll2klib authoring subset of Kotlin 2.4.0's:
+//   core/metadata/src/metadata.proto
+//   compiler/util-klib/src/KlibMetadataProtoBuf.proto
+//
+// Only fields emitted by dll2klib are declared. Fields 171-174 are KLIB protobuf
+// extensions upstream; declaring them as ordinary fields produces the identical
+// wire representation and Kotlin's registered extension parser sees them.
+syntax = "proto2";
+package dotkt.klib;
+option csharp_namespace = "DotKt.Klib.Metadata";
+
+message Header {
+  required string module_name = 1;
+  optional int32 flags = 2;
+  repeated string package_fragment_name = 7;
+  repeated string empty_package = 8;
+}
+
+message StringTable {
+  repeated string string = 1;
+}
+
+message QualifiedNameTable {
+  message QualifiedName {
+    enum Kind { CLASS = 0; PACKAGE = 1; LOCAL = 2; }
+    optional int32 parent_qualified_name = 1 [default = -1];
+    required int32 short_name = 2;
+    optional Kind kind = 3 [default = PACKAGE];
+  }
+  repeated QualifiedName qualified_name = 1;
+}
+
+message Annotation {
+  message Argument {
+    message Value {
+      enum Type {
+        BYTE = 0;
+        CHAR = 1;
+        SHORT = 2;
+        INT = 3;
+        LONG = 4;
+        FLOAT = 5;
+        DOUBLE = 6;
+        BOOLEAN = 7;
+        STRING = 8;
+        CLASS = 9;
+        ENUM = 10;
+        ANNOTATION = 11;
+        ARRAY = 12;
+      }
+      optional Type type = 1;
+      optional sint64 int_value = 2;
+      optional float float_value = 3;
+      optional double double_value = 4;
+      optional int32 string_value = 5;
+    }
+    required int32 name_id = 1;
+    required Value value = 2;
+  }
+  required int32 id = 1;
+  repeated Argument argument = 2;
+}
+
+message Type {
+  message Argument {
+    enum Projection { IN = 0; OUT = 1; INV = 2; STAR = 3; }
+    optional Projection projection = 1 [default = INV];
+    optional Type type = 2;
+  }
+  optional int32 flags = 1;
+  repeated Argument argument = 2;
+  optional bool nullable = 3 [default = false];
+  optional int32 flexible_type_capabilities_id = 4;
+  optional Type flexible_upper_bound = 5;
+  optional int32 class_name = 6;
+  optional int32 type_parameter = 7;
+  // KlibMetadataProtoBuf.type_annotation extension. Declaring the extension
+  // number as an ordinary field is wire-equivalent for the Kotlin reader.
+  repeated Annotation type_annotation = 170;
+}
+
+message TypeParameter {
+  enum Variance { IN = 0; OUT = 1; INV = 2; }
+  required int32 id = 1;
+  required int32 name = 2;
+  optional bool reified = 3 [default = false];
+  optional Variance variance = 4 [default = INV];
+  repeated Type upper_bound = 5;
+}
+
+message ValueParameter {
+  optional int32 flags = 1 [default = 0];
+  required int32 name = 2;
+  optional Type type = 3;
+  optional Type vararg_element_type = 4;
+  repeated Annotation parameter_annotation = 170;
+}
+
+message Constructor {
+  optional int32 flags = 1 [default = 6];
+  repeated ValueParameter value_parameter = 2;
+  repeated Annotation constructor_annotation = 170;
+}
+
+message Function {
+  optional int32 old_flags = 1 [default = 6];
+  required int32 name = 2;
+  optional Type return_type = 3;
+  repeated TypeParameter type_parameter = 4;
+  optional Type receiver_type = 5;
+  repeated ValueParameter value_parameter = 6;
+  optional int32 flags = 9 [default = 6];
+  repeated ValueParameter context_parameter = 13;
+  repeated Annotation function_annotation = 170;
+}
+
+message Property {
+  optional int32 old_flags = 1 [default = 2054];
+  required int32 name = 2;
+  optional Type return_type = 3;
+  repeated TypeParameter type_parameter = 4;
+  optional Type receiver_type = 5;
+  optional ValueParameter setter_value_parameter = 6;
+  optional int32 getter_flags = 7;
+  optional int32 setter_flags = 8;
+  optional int32 flags = 11 [default = 518];
+  repeated ValueParameter context_parameter = 17;
+  repeated Annotation property_annotation = 170;
+  optional Annotation.Argument.Value compile_time_value = 173;
+}
+
+message Class {
+  optional int32 flags = 1 [default = 6];
+  required int32 fq_name = 3;
+  optional int32 companion_object_name = 4;
+  repeated TypeParameter type_parameter = 5;
+  repeated Type supertype = 6;
+  repeated int32 nested_class_name = 7 [packed = true];
+  repeated Constructor constructor = 8;
+  repeated Function function = 9;
+  repeated Property property = 10;
+  repeated EnumEntry enum_entry = 13;
+  repeated int32 sealed_subclass_fq_name = 16 [packed = true];
+  optional int32 inline_class_underlying_property_name = 17;
+  optional Type inline_class_underlying_type = 18;
+  repeated Annotation class_annotation = 170;
+}
+
+message EnumEntry {
+  required int32 name = 1;
+}
+
+message Package {
+  repeated Function function = 3;
+  repeated Property property = 4;
+  optional int32 package_fq_name = 171;
+}
+
+message PackageFragment {
+  optional StringTable strings = 1;
+  optional QualifiedNameTable qualified_names = 2;
+  optional Package package = 3;
+  repeated Class class = 4;
+  optional bool is_empty = 172;
+  optional string fq_name = 173;
+  repeated int32 class_name = 174 [packed = true];
+}

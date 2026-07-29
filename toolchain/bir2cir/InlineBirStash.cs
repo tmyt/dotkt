@@ -163,10 +163,12 @@ static class InlineBirStash
     }
 
     // §4.2 (#75 S4b) — STRUCTURAL overload selection. From candidate decl-fact payloads sharing `owner|name|pc|ga`, return
-    // the UNIQUE one whose declared `params[i].type` equals the call site's `paramSig[i]` for every i (JsonNode.DeepEquals).
+    // the UNIQUE one whose declared `params[i].type` equals the call site's `paramSig[i]` for every i.
     // Both sides are kotc-emitted type-node JSON (`birType(param.type)`) in the callee's OWN un-substituted type-param frame
     // — the callInline's `paramSig`, the call's `sig`, and the round-tripped ref payload's `params` all share that source —
-    // so structural equality is exact and serializer-independent. `matchCount` reports how many matched; the caller fails
+    // dll2klib's external-origin FQN may retain ECMA-335's physical `` `N`` suffix while the KotlinInline payload uses
+    // the Kotlin classifier name. Normalize only that representation detail recursively; all Kotlin type structure
+    // (arguments, function shape, nullability, and type-variable scope/index) remains exact. `matchCount` reports how many matched; the caller fails
     // loud unless it is exactly 1 (0 = no signature match; >=2 = structurally-ambiguous overloads, e.g. differ only in
     // generic bounds like `ifEmpty`, which are never called with an escaping lambda so never reach the splicer).
     internal static JsonObject SelectByParamSig(IReadOnlyList<JsonObject> candidates, JsonArray paramSig, out int matchCount)
@@ -183,8 +185,45 @@ static class InlineBirStash
     {
         if (declParams == null || paramSig == null || declParams.Count != paramSig.Count) return false;
         for (int i = 0; i < declParams.Count; i++)
-            if (!JsonNode.DeepEquals((declParams[i] as JsonObject)?["type"], paramSig[i])) return false;
+            if (!JsonNode.DeepEquals(
+                NormalizeMetadataArity((declParams[i] as JsonObject)?["type"]),
+                NormalizeMetadataArity(paramSig[i]))) return false;
         return true;
+    }
+
+    static JsonNode NormalizeMetadataArity(JsonNode node)
+    {
+        if (node == null) return null;
+        var copy = node.DeepClone();
+        Walk(copy);
+        return copy;
+
+        static void Walk(JsonNode current)
+        {
+            if (current is JsonObject obj)
+            {
+                if (Str(obj["t"]) == "fqn" && Str(obj["name"]) is string name)
+                    obj["name"] = StripArities(name);
+                foreach (var child in obj.Select(x => x.Value).ToList())
+                    if (child != null) Walk(child);
+            }
+            else if (current is JsonArray array)
+                foreach (var child in array)
+                    if (child != null) Walk(child);
+        }
+
+        static string StripArities(string name)
+        {
+            var result = name;
+            var search = 0;
+            while ((search = result.IndexOf('`', search)) >= 0)
+            {
+                var end = search + 1;
+                while (end < result.Length && char.IsDigit(result[end])) end++;
+                result = result.Remove(search, end - search);
+            }
+            return result;
+        }
     }
 
     static string Str(JsonNode n) => (n as JsonValue)?.TryGetValue<string>(out var s) == true ? s : null;

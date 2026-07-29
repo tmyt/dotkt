@@ -216,6 +216,7 @@ sealed partial class Emitter
     {
         _outDir = outDir; _asmName = asmName;
         _stdlibStub = mode != BuildStdlibMode.App;           // either stdlib build stubs un-emittable methods
+        _stdlibAssembly = mode != BuildStdlibMode.App;       // both the metadata and runtime twins are stdlib artifacts
     }
 
     // A call to a generic method `fun <T> id(x:T)` carries `typeArgs` -> instantiate it (MakeGenericMethod).
@@ -225,6 +226,7 @@ sealed partial class Emitter
     // methods the backend can't yet emit are stubbed (throw) instead of aborting the whole assembly — the "= TODO()"
     // stdlib still emits and loads. Driven by the `--build-stdlib` flag (superseded the old stdlib-build env read).
     readonly bool _stdlibStub;
+    readonly bool _stdlibAssembly;
 
     // Whether the current FindReflectedMethodBySig owner is a CONSTRUCTED generic type — set per-lookup, read by the
     // `gp:` structural case (a `gp:T` token matches a concrete arg when the owner instantiation already bound it).

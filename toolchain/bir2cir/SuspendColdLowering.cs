@@ -122,22 +122,6 @@ static partial class SuspendColdLowering
     // BaseContinuationImpl.create returns Continuation<Unit> (ContinuationImpl.kt:82/87); a CLR virtual override needs
     // an EXACT return-type match (no covariance), so the SM's create() must return Continuation<Unit>, NOT <Any>.
     const string IntrinsicsKtFqn = "kotlin.coroutines.intrinsics.IntrinsicsKt";
-    // The CLR-interop coroutine bridge file-class (kotlin.clr.await). Its suspend fn is NOT a genuine cold
-    // coroutine body: `await` is a facadegen call-site MARKER (lowered by EmitAwaitPoint at CALL sites, its
-    // DEFINITION a plain suspend declaration kept for ref/rt signature symmetry). When the cold transform runs in
-    // the rt-stdlib build (bundle-6 P5), it must be EXCLUDED — transforming its definition into a cold entry / Task
-    // bridge would manufacture the wrong ABI (Codex-confirmed rt-gate decision). NOTE: this skips the whole
-    // file-class coarsely; the ideal is to narrow to the `await` marker. (`delay`/`blockOn` were DROPPED from
-    // the stdlib — the old `delay` here is gone.)
-    const string InteropBridgeFileClass = "kotlin.clr.CoroutinesKt";
-    // #10 — the facadegen-injected `.await()` marker (kotlin.clr.CoroutinesKt.await, suspendCall). EmitAwaitPoint
-    // resolves the .NET AWAITABLE PATTERN (GetAwaiter/awaiter/IsCompleted/GetResult/OnCompleted) for the marker's
-    // receiver type from ref metadata (ReferenceMetadataIndex.ResolveAwaitable) — Task / ValueTask / a WinRT
-    // IAsyncOperation<T> (extension GetAwaiter) / any custom awaitable — with ZERO per-type hardcode. The awaiter
-    // FQNs (TaskAwaiter / ConfiguredTaskAwaitable+ConfiguredTaskAwaiter / ValueTaskAwaiter / …) come from the plan.
-    // At the enclosing-class level because IsAwaitMarkerCall (the shared eval-order decision) needs it too.
-    const string AwaitMarkerOwner = "kotlin.clr.CoroutinesKt";
-
     // Top-level `throwOnFailure(result)` helper (ContinuationImpl.kt, package kotlin.coroutines.clr.internal).
     const string ThrowOnFailureOwner = "kotlin.coroutines.clr.internal.ContinuationImplKt";
 
@@ -294,9 +278,8 @@ static partial class SuspendColdLowering
         _appBuild = appBuild;
         _consumedIntrinsicClosures = new HashSet<string>(StringComparer.Ordinal);
         // 1. R1 — the UNCONDITIONAL registry of EVERY declared suspend fun across every input file. This is a
-        //    CLASSIFIER, not a filter: nothing is dropped for shape or resolvability. The only exclusions are the
-        //    stdlib carve-outs (the interop-bridge await marker, the old CPS/sequence path, stdlib inline intrinsics);
-        //    each admitted member is classified into abstract / segmentable / call-time-throw by FunGen.
+        //    CLASSIFIER, not a filter: nothing is dropped for shape or resolvability. Each admitted member is classified
+        //    into abstract / segmentable / call-time-throw by FunGen.
         var entries = new Dictionary<FunKey, Entry>();
         // Closure-class registry (for the suspendCoroutine intrinsic inliner): kotc materializes the intrinsic's
         // `{ c -> … }` block as a top-level closure class; the inliner resolves its `invoke` body by name here.
@@ -309,11 +292,7 @@ static partial class SuspendColdLowering
         {
             if (r is not JsonObject file) continue;
             var fileClass = Str(file["fileClass"]) ?? "Kt";
-            // Skip the CLR-interop bridge (kotlin.clr.await/delay): its suspend fns are call-site markers /
-            // interop declarations, not cold coroutine bodies (see InteropBridgeFileClass). Relevant only in the
-            // rt-stdlib build, where this file-class is present; a no-op in app builds.
-            var isInteropBridge = fileClass == InteropBridgeFileClass;
-            if (file["methods"] is JsonArray methods && !isInteropBridge)
+            if (file["methods"] is JsonArray methods)
                 foreach (var m in methods)
                     if (m is JsonObject mo && Str(mo["name"]) is string name && IsColdCandidate(mo))
                         entries[new FunKey(null, fileClass, name, SigOf(mo), TypeParamSigOf(mo))] = new Entry(mo, file, null, null, fileClass);
@@ -944,10 +923,10 @@ static partial class SuspendColdLowering
         return new EvalOrder(kids, hasRecv, EvalOrderShape.Call);
     }
 
-    // The facadegen-injected `.await()` marker (lowered by EmitAwaitPoint, not through the cold-call path).
+    // A call to dll2klib's metadata-only @ClrAwaitBridge declaration. The marker, rather than a
+    // source name or owner, keeps user-authored suspend functions named `await` on the ordinary cold-call path.
     static bool IsAwaitMarkerCall(JsonObject o) =>
-        Bool(o["suspendCall"]) && Str(o["method"]) == "await"
-        && TypeJson.OwnerName(o["ownerType"]) == AwaitMarkerOwner
+        Bool(o["suspendCall"]) && Bool(o["clrAwaitBridge"])
         && Str(o["k"]) is "callStatic" or "callInstance";
 
     // BUG 1: does the subtree contain a `try` whose finally is non-empty AND whose body spans a suspension?
@@ -985,6 +964,11 @@ static partial class SuspendColdLowering
         const string SuspendingField = "$suspending";
         // The Task-bridge root sink (a real emitted stdlib class, referenced cross-assembly like ContinuationImpl).
         const string RootContinuationFqn = "kotlin.coroutines.clr.internal.RootContinuation";
+        // #10 — dll2klib's metadata-only @ClrAwaitBridge declaration. EmitAwaitPoint
+        // resolves the .NET AWAITABLE PATTERN (GetAwaiter/awaiter/IsCompleted/GetResult/OnCompleted) for the marker's
+        // receiver type from ref metadata (ReferenceMetadataIndex.ResolveAwaitable) — Task / ValueTask / a WinRT
+        // IAsyncOperation<T> (extension GetAwaiter) / any custom awaitable — with ZERO per-type hardcode. The awaiter
+        // FQNs (TaskAwaiter / ConfiguredTaskAwaitable+ConfiguredTaskAwaiter / ValueTaskAwaiter / …) come from the plan.
         const string ActionFqn = "System.Action";
 
         readonly JsonObject _m;
@@ -1724,12 +1708,10 @@ static partial class SuspendColdLowering
                     if (o["body"] is JsonArray vbBody) foreach (var s in vbBody) EmitStmt(s, outp);
                     return o["result"] != null ? Rewrite(o["result"], outp) : NullConst(TypeJson.Read(o["type"]) ?? AnyTn);
                 }
-                // #10 REVERSE bridge — the facadegen-injected `.await()` marker (kotlin.clr.CoroutinesKt.await,
-                // suspendCall). A2 (#61): kotc emits it as a PLAIN callStatic/callInstance by identity; its kotlin.*
-                // owner is SKIPPED by NetInteropBinding (a stdlib owner), so it reaches here UNSHAPED — the awaitable
-                // receiver type intact in `shapeTypes[0]`/`sig[0]`, which EmitAwaitPoint reads to resolve the awaitable
-                // PATTERN. It MUST be caught BEFORE the generic callStatic/callInstance suspendCall path below — else it
-                // routes to a bogus same-assembly cold entry `await$dotkt_suspend` (unresolved).
+                // #10 REVERSE bridge — a call to dll2klib's metadata-only
+                // @ClrAwaitBridge declaration. The exact declaration marker,
+                // not its source name or owner, distinguishes it from an
+                // ordinary user-authored suspend function.
                 if (IsAwaitMarkerCall(o))
                     return EmitAwaitPoint(o, outp);
                 if ((k == "callStatic" || k == "callInstance") && Bool(o["suspendCall"]))
@@ -2245,7 +2227,7 @@ static partial class SuspendColdLowering
         }
 
         // An `x.await()` suspension point (#10 REVERSE bridge, design §4/§5) — the .NET-awaitable ⇒ Kotlin suspend
-        // boundary. The facadegen-injected marker (kotlin.clr.CoroutinesKt.await, suspendCall) becomes the cold-core
+        // boundary. The dll2klib-projected @ClrAwaitBridge marker becomes the cold-core
         // awaiter dance, structurally IDENTICAL to EmitSuspensionPoint but obtaining the resume value from a .NET AWAITER
         // instead of a cold `$dotkt_suspend` return. The awaiter shape is discovered from the awaitable's GetAwaiter via
         // ref metadata (ReferenceMetadataIndex.ResolveAwaitable) — Task/ValueTask/WinRT/custom, NO per-type hardcode:
@@ -2273,15 +2255,19 @@ static partial class SuspendColdLowering
         // spill/copy is safe.
         JsonNode EmitAwaitPoint(JsonObject awaitNode, List<JsonNode> outp)
         {
-            // Generic await is signaled by `typeArgs` presence (kotc emits a plain callStatic carrying the type-arg fact).
-            var generic = awaitNode["typeArgs"] is JsonArray ga && ga.Count > 0;
+            var isMember = Str(awaitNode["k"]) == "callInstance";
+            var methodTypeArgs = (awaitNode["typeArgs"] as JsonArray)?
+                .Select(TypeJson.Read)
+                .Where(x => x != null)
+                .ToArray() ?? System.Array.Empty<TypeNode>();
             // #3: `await(captureContext = false)` opt-out. The await marker is an extension fun `X.await(captureContext)`
-            // — args[0] is the awaitable (ext receiver), args[1] the captureContext value (present only when facadegen
-            // injected the param, i.e. the awaitable exposes ConfigureAwait). A LITERAL `false` selects the
+            // or a synthesized member. A LITERAL `false` selects the
             // ConfigureAwait(false) awaiter (OnCompleted does NOT capture the SynchronizationContext); `true`/absent
             // keeps the SynchronizationContext-capturing awaiter (the historical + default behavior).
-            JsonObject ccArgNode = (awaitNode["args"] as JsonArray) is JsonArray callArgs && callArgs.Count > 1
-                ? callArgs[1] as JsonObject : null;
+            var callArgs = awaitNode["args"] as JsonArray ?? new JsonArray();
+            var captureIndex = isMember ? 0 : 1;
+            JsonObject ccArgNode = callArgs.Count > captureIndex
+                ? callArgs[captureIndex] as JsonObject : null;
             // captureContext must be a COMPILE-TIME constant: a bool `const` (the omitted default is filled as one). A
             // dynamic arg (`await(captureContext = someBool)`) can't statically select the awaiter type, and — since args[1]
             // is never Rewrite'd here — would also drop any side effect un-evaluated. Refuse loudly rather than miscompile.
@@ -2290,10 +2276,15 @@ static partial class SuspendColdLowering
             var noCapture = ccArgNode != null && ccArgNode["value"] is JsonValue ccVal
                 && ccVal.TryGetValue<bool>(out var ccBool) && ccBool == false;
 
-            // The awaitable type CONSTRUCTOR from the marker's DECLARED receiver-param type — `shapeTypes[0]` (generic
-            // marker) / `sig[0]`/`argTypes[0]` (non-generic). Its generic arity = that node's own arg count. bir2cir
-            // resolves the awaitable PATTERN (GetAwaiter/awaiter members) off this from ref metadata.
-            var recvParam = ReceiverParamType(awaitNode) as TypeNode.Fqn;
+            // A member bridge uses its constructed owner type. An extension
+            // bridge uses its declared receiver type, substituting the
+            // call-site method arguments into the open signature.
+            var receiverType = isMember
+                ? TypeJson.Read(awaitNode["ownerType"])
+                : ReceiverParamType(awaitNode);
+            receiverType = SubstituteMethodTypeParameters(
+                receiverType, methodTypeArgs);
+            var recvParam = receiverType as TypeNode.Fqn;
             var awaitableName = recvParam?.Name;
             var awaitableArity = recvParam?.Args?.Length ?? 0;
             var plan = awaitableName != null ? _refs?.ResolveAwaitable(awaitableName, awaitableArity) : null;
@@ -2308,17 +2299,31 @@ static partial class SuspendColdLowering
                     $"await(captureContext = false) is unsupported for '{awaitableName}': the type has no "
                     + "ConfigureAwait(bool) member (the SynchronizationContext opt-out is Task-like only)");
 
-            var resultTok = generic
-                ? (((awaitNode["typeArgs"] as JsonArray)?.FirstOrDefault() is JsonNode ta0 ? TypeJson.Read(ta0) : null) ?? AnyTn)
-                : UnitTn;
-            // The concrete awaitable type (the marker receiver-param constructor instantiated with the result type arg).
-            var awaitableType = new TypeNode.Fqn(awaitableName, generic ? new[] { resultTok } : null);
+            // An extension bridge declares `awaitResult` in its own method-type-parameter space; a member bridge on a
+            // generic awaitable (`Task<T>`, `ValueTask<T>`) declares it in the owner's type-parameter space. Close both
+            // axes from the frontend-selected call before the result becomes a state-machine field / GetResult CIR
+            // signature. Leaving either `method.tv0` or `type.tv0` open produces invalid object arithmetic after resume.
+            var resultTok = SubstituteMethodTypeParameters(
+                TypeJson.Read(awaitNode["awaitResult"]) ?? UnitTn,
+                methodTypeArgs);
+            resultTok = SubstituteTypeParameters(
+                resultTok,
+                recvParam?.Args ?? System.Array.Empty<TypeNode>());
+            var hasResult = resultTok is not TypeNode.Fqn { Name: "kotlin.Unit" };
+            var awaitableType = recvParam;
             // The awaiter def + genericity, honoring the #3 ConfigureAwait(false) opt-out (a nested Configured*Awaiter).
             var awaiterDef = noCapture ? plan.ConfiguredAwaiterDefName : plan.AwaiterDefName;
             var awaiterGeneric = noCapture ? plan.ConfiguredAwaiterGeneric : plan.AwaiterGeneric;
-            var awaiterType = new TypeNode.Fqn(awaiterDef, awaiterGeneric && generic ? new[] { resultTok } : null);
+            var awaiterArguments = awaiterGeneric
+                ? awaitableType.Args is { Length: > 0 } args
+                    ? args
+                    : hasResult ? new[] { resultTok } : null
+                : null;
+            var awaiterType = new TypeNode.Fqn(awaiterDef, awaiterArguments);
 
-            var task = Rewrite((awaitNode["args"] as JsonArray)?[0], outp);
+            var awaitable = Rewrite(
+                isMember ? awaitNode["recv"] : callArgs.FirstOrDefault(),
+                outp);
 
             var state = ++_state;
             var afterLabel = NextLabel();
@@ -2328,7 +2333,16 @@ static partial class SuspendColdLowering
             FieldStorage(awField, awaiterType, RoleMachinery, lives: true, across: "await");
 
             // this.<aw> = <getAwaiter over the awaitable / its ConfigureAwait(false) / a referenced extension GetAwaiter>
-            outp.Add(SetField(awField, BuildGetAwaiter(plan, awaitableType, awaiterType, task, noCapture, resultTok, generic)));
+            outp.Add(SetField(
+                awField,
+                BuildGetAwaiter(
+                    plan,
+                    awaitableType,
+                    awaiterType,
+                    awaitable,
+                    noCapture,
+                    resultTok,
+                    methodTypeArgs)));
             // if (this.<aw>.IsCompleted) goto L_state;   (sync fast path — no suspension)
             outp.Add(BrIf(new JsonObject
             {
@@ -2369,9 +2383,9 @@ static partial class SuspendColdLowering
             {
                 ["k"] = "clrInstance", ["type"] = Tw(awaiterType), ["method"] = "GetResult",
                 ["recv"] = FieldOf(awField, awaiterType), ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(),
-                ["ret"] = Tw(generic ? resultTok : VoidTn),
+                ["ret"] = Tw(hasResult ? resultTok : VoidTn),
             };
-            if (generic)
+            if (hasResult)
             {
                 var valField = "__awval$" + state;
                 FieldStorage(valField, resultTok, RoleAwaited, lives: true, across: "await");
@@ -2393,19 +2407,67 @@ static partial class SuspendColdLowering
             return slot != null ? TypeJson.Read(slot) : null;
         }
 
+        static TypeNode SubstituteMethodTypeParameters(
+            TypeNode type,
+            TypeNode[] arguments) =>
+            SubstituteParameters(type, "method", arguments);
+
+        static TypeNode SubstituteTypeParameters(
+            TypeNode type,
+            TypeNode[] arguments) =>
+            SubstituteParameters(type, "type", arguments);
+
+        static TypeNode SubstituteParameters(
+            TypeNode type,
+            string scope,
+            TypeNode[] arguments) => type switch
+        {
+            TypeNode.Tv tv when tv.Scope == scope
+                && tv.I >= 0 && tv.I < arguments.Length => arguments[tv.I],
+            TypeNode.Fqn f => new TypeNode.Fqn(
+                f.Name,
+                f.Args?.Select(x => SubstituteParameters(x, scope, arguments)).ToArray()),
+            TypeNode.Nullable n => new TypeNode.Nullable(
+                SubstituteParameters(n.Of, scope, arguments)),
+            TypeNode.Oblivious o => new TypeNode.Oblivious(
+                SubstituteParameters(o.Of, scope, arguments)),
+            TypeNode.Array a => new TypeNode.Array(
+                SubstituteParameters(a.Elem, scope, arguments)),
+            TypeNode.ByRef b => new TypeNode.ByRef(
+                SubstituteParameters(b.Of, scope, arguments)),
+            TypeNode.Fn f => new TypeNode.Fn(
+                f.Suspend,
+                SubstituteParameters(f.Ret, scope, arguments),
+                f.Params.Select(x => SubstituteParameters(x, scope, arguments)).ToArray(),
+                f.Recv is null
+                    ? null
+                    : SubstituteParameters(f.Recv, scope, arguments),
+                f.Clr,
+                f.Ctx?.Select(x => SubstituteParameters(x, scope, arguments)).ToArray()),
+            _ => type,
+        };
+
         // `this.<aw> = <getAwaiter>()` for the resolved awaitable pattern. Three entry shapes:
         //   member GetAwaiter (Task/ValueTask)        -> clrInstance on the awaitable
         //   #3 ConfigureAwait(false) opt-out          -> clrInstance GetAwaiter on `awaitable.ConfigureAwait(false)`
         //   referenced extension GetAwaiter (WinRT)   -> clrStatic (non-generic) / clrGenericStatic (generic, over the
         //                                                result type) on the [Extension] static class, awaitable as arg0
-        JsonNode BuildGetAwaiter(AwaitPlan plan, TypeNode awaitableType, TypeNode awaiterType, JsonNode task,
-            bool noCapture, TypeNode resultTok, bool generic)
+        JsonNode BuildGetAwaiter(
+            AwaitPlan plan,
+            TypeNode awaitableType,
+            TypeNode awaiterType,
+            JsonNode task,
+            bool noCapture,
+            TypeNode resultTok,
+            TypeNode[] methodTypeArgs)
         {
             if (noCapture)
             {
                 // configured = awaitable.ConfigureAwait(false); this.<aw> = configured.GetAwaiter();
                 var configuredType = new TypeNode.Fqn(plan.ConfiguredAwaitableDefName,
-                    plan.ConfiguredAwaitableGeneric && generic ? new[] { resultTok } : null);
+                    plan.ConfiguredAwaitableGeneric
+                        ? (awaitableType as TypeNode.Fqn)?.Args
+                        : null);
                 var configured = new JsonObject
                 {
                     ["k"] = "clrInstance", ["type"] = Tw(awaitableType), ["method"] = "ConfigureAwait",
@@ -2428,12 +2490,17 @@ static partial class SuspendColdLowering
                     // member descriptor `memberSig` = the OPEN declared receiver param `Awaitable<T>` (the awaitable
                     // constructor over the method type-var), so ilemit exact-matches the `GetAwaiter<T>` extension def.
                     var openAwaitable = awaitableType is TypeNode.Fqn af
-                        ? new TypeNode.Fqn(af.Name, new TypeNode[] { new TypeNode.Tv("method", 0) })
+                        ? new TypeNode.Fqn(
+                            af.Name,
+                            af.Args?.Select((_, i) =>
+                                (TypeNode)new TypeNode.Tv("method", i)).ToArray())
                         : awaitableType;
                     return new JsonObject
                     {
                         ["k"] = "clrGenericStatic", ["type"] = Tw(extOwner), ["method"] = "GetAwaiter",
-                        ["typeArgs"] = new JsonArray { Tw(resultTok) }, ["memberSig"] = new JsonArray { TypeJson.Write(openAwaitable) },
+                        ["typeArgs"] = new JsonArray(
+                            methodTypeArgs.Select(TypeJson.Write).ToArray()),
+                        ["memberSig"] = new JsonArray { TypeJson.Write(openAwaitable) },
                         ["args"] = new JsonArray { task }, ["ret"] = Tw(awaiterType),
                     };
                 }
@@ -2662,7 +2729,7 @@ static partial class SuspendColdLowering
                 // through the referenced owner's reflected hierarchy (a suspend member declared on a super is inherited).
                 // ABSENT => the callee is not a cold-ABI Kotlin suspend member (a pre-cold-ABI DotKt lib, or a
                 // hand-written assembly): a HARD actionable error, not a silent rewrite to a nonexistent method (the
-                // #100 emit-time resolution failure this guard replaces). The facadegen await marker + suspendCoroutine
+                // #100 emit-time resolution failure this guard replaces). The CLR await bridge marker + suspendCoroutine
                 // intrinsics are intercepted upstream in Rewrite and a suspend functional VALUE is diverted at the top
                 // of ColdCall, so a flag-absent owner HERE is a genuine named cross-assembly suspend callee.
                 var refOwner = BareOwner(TypeJson.OwnerName(callNode["type"]));
@@ -3362,7 +3429,9 @@ static partial class SuspendColdLowering
                 ["recv"] = Local("__tcs"), ["ret"] = Tw(taskType),
             };
             var getAwaiter = BuildGetAwaiter(taskPlan, taskType, awaiterType, task,
-                noCapture: false, resultTok: UnitTn, generic: true);
+                noCapture: false,
+                resultTok: UnitTn,
+                methodTypeArgs: System.Array.Empty<TypeNode>());
             body.Add(new JsonObject
             {
                 ["k"] = "exprStmt",

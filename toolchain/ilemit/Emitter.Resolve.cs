@@ -794,6 +794,13 @@ sealed partial class Emitter
     // return, `IEnumerable[Double]` vs `[Tv]`) stays discriminating instead of collapsing onto the loose shape.
     bool Matches(DotKt.Bir.TypeNode t, Type p)
     {
+        // A CIR function type already carries bir2cir's exact nominal delegate
+        // family (`System.Func`/`Action` or module-local `KFunc`/`KAction`).
+        // Compare that descriptor structurally: a referenced assembly's KFunc
+        // and the equivalent local synthetic TypeBuilder are intentionally
+        // different Reflection Type identities but the same declared ABI.
+        if (t is DotKt.Bir.TypeNode.Fn)
+            return MatchesOpen(t, p);
         // A node mentioning a type variable is inherently OPEN — compare by SHAPE (MapType would resolve a `Tv` to a
         // placeholder that never ReferenceEquals the candidate's actual generic parameter, wrongly rejecting the right
         // overload). A suspend fn likewise routes to the structural path (-> false). Only a fully-concrete node uses MapType.
@@ -1013,14 +1020,41 @@ sealed partial class Emitter
         // Resolve a type-scope tv against the constructed owner's type args so the two line up.
         var ownerArgs = type != null && type.IsGenericType ? type.GetGenericArguments() : null;
         var flags = BindingFlags.Public | (instance ? BindingFlags.Instance : BindingFlags.Static);
-        var cands = type.GetMethods(flags)
+        List<MethodInfo> Candidates(Type owner) => owner.GetMethods(flags)
             .Where(m => m.Name == name && m.IsGenericMethodDefinition
                      && m.GetGenericArguments().Length == typeArgs.Length
                      && m.GetParameters().Length == declParams.Length)
             .ToList();
-        var hits = cands
-            .Where(m => m.GetParameters().Select((p, i) => GenericParamMatches(declParams[i], p.ParameterType, ownerArgs)).All(x => x))
-            .ToList();
+        bool MatchesCandidate(MethodInfo method)
+        {
+            var candidateOwnerArgs = method.DeclaringType?.IsConstructedGenericType == true
+                ? method.DeclaringType.GetGenericArguments()
+                : ownerArgs;
+            return method.GetParameters()
+                .Select((p, i) => GenericParamMatches(declParams[i], p.ParameterType, candidateOwnerArgs))
+                .All(x => x);
+        }
+        var cands = Candidates(type);
+        var hits = MostDerivedMethods(cands.Where(MatchesCandidate).ToList());
+        // A class may satisfy the Kotlin-surfaced method through a private explicit MethodImpl body. Its physical CLR
+        // name is qualified, so the public surface name exists only on the implemented interface. As with non-generic
+        // LinkClrMethod, consult interface slots only after the class's own members miss; memberSig still identifies
+        // the unique overload and ilemit performs no semantic selection.
+        if (hits.Count == 0 && instance)
+        {
+            var interfaceCandidates = SafeInterfaces(type)
+                .SelectMany(Candidates)
+                .GroupBy(m => (m.Module, m.MetadataToken))
+                .Select(g => g.First())
+                .ToList();
+            var interfaceHits = MostDerivedMethods(interfaceCandidates.Where(MatchesCandidate).ToList());
+            if (interfaceHits.Count == 1) return interfaceHits[0].MakeGenericMethod(typeArgs);
+            if (interfaceHits.Count > 1)
+                throw new InvalidOperationException(
+                    $"ilemit: resolved generic descriptor {type?.FullName}.{name}<{typeArgs.Length}>{sigEl} is " +
+                    $"AMBIGUOUS across implemented interfaces — {interfaceHits.Count} methods match " +
+                    $"(malformed memberSig): {string.Join("; ", interfaceHits.Select(m => m.ToString()))}");
+        }
         if (hits.Count == 1) return hits[0].MakeGenericMethod(typeArgs);
         var desc = $"{type?.FullName}.{name}<{typeArgs.Length}>{sigEl}";
         if (hits.Count == 0)

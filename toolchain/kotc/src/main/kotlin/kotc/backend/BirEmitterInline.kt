@@ -275,7 +275,9 @@ internal fun BirEmitter.emitOwnerfulInlineNode(call: IrCall): String {
 	// top-level fun under the file's `fileClass` = `fileClassName`, which `fileClassOf` reproduces cross-file); the
 	// cross-module member's `typeName(enclosingClass)` = the injected class's Kotlin FQN = the ref.dll's reflected
 	// `ownerFqn`, so `InlineCandidates` keys match.
-	val owner = (callee.parent as? IrClass)?.let { typeName(it) } ?: fileClassOf(callee)
+	val owner = (callee.parent as? IrClass)?.let { typeName(it) }
+		?: clrExternalOwner(callee)
+		?: fileClassOf(callee)
 	// pc = emitted param count (extension receiver counted as a leading `__self`, then contexts, then regulars — the
 	// [isValueParameter] sequence, so it matches the payload declaration's own `params.size`); ga = type-param arity. The
 	// `owner|name|pc|ga` key selects a candidate LIST; bir2cir picks the unique one whose `params[i].type` structurally

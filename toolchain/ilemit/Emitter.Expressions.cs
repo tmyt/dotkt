@@ -118,8 +118,13 @@ sealed partial class Emitter
                     return prDeclared;
                 }
                 var fon = ParseOwnerSlot(e.GetProperty("ownerType"));
-                EmitExpr(e.GetProperty("recv"));
                 var fb = ResolveField(fon, fnm, out var ft);
+                // ECMA-335 ldfld consumes a managed pointer for a value-type receiver.  Property access already takes
+                // this path through EmitAddr above; a genuine public CLR field must do the same.  The field token is the
+                // physical source of truth here (including a referenced constructed generic owner), so this is direct
+                // CIR -> CIL emission rather than reconstruction of Kotlin member semantics.
+                if (ClrRef(e.GetProperty("ownerType")).IsValueType) EmitAddr(e.GetProperty("recv"));
+                else EmitExpr(e.GetProperty("recv"));
                 MaybeVolatile(fb);                       // `volatile.` prefix on a @Volatile field (pairs with modreq)
                 _il.Emit(OpCodes.Ldfld, fb);
                 return RetOr(e, ft);
@@ -138,7 +143,8 @@ sealed partial class Emitter
                 }
                 var son = ParseOwnerSlot(e.GetProperty("ownerType"));
                 var sfefld = ResolveField(son, snm, out var sfet);
-                EmitExpr(e.GetProperty("recv"));
+                if (ClrRef(e.GetProperty("ownerType")).IsValueType) EmitAddr(e.GetProperty("recv"));
+                else EmitExpr(e.GetProperty("recv"));
                 EmitStoreCoerced(e.GetProperty("value"), sfet);
                 MaybeVolatile(sfefld);
                 _il.Emit(OpCodes.Stfld, sfefld);
@@ -388,7 +394,7 @@ sealed partial class Emitter
                 var mi = ResolveGenericMethod(type, e.GetProperty("method").GetString(), typeArgs, e, instance: false);
                 var ps = mi.GetParameters();
                 for (int i = 0; i < argEls.Count; i++) EmitArg(argEls[i], ps[i].ParameterType);
-                for (int i = argEls.Count; i < ps.Length; i++) EmitDefaultArg(ps[i]);   // fill omitted trailing default/params args
+                RequireArgCount(argEls.Count, ps.Length, mi.ToString());
                 _il.Emit(OpCodes.Call, mi);
                 return mi.ReturnType;
             }
@@ -403,7 +409,7 @@ sealed partial class Emitter
                 var ps = mi.GetParameters();
                 EmitExpr(e.GetProperty("recv"));
                 for (int i = 0; i < argEls.Count; i++) EmitArg(argEls[i], ps[i].ParameterType);
-                for (int i = argEls.Count; i < ps.Length; i++) EmitDefaultArg(ps[i]);   // fill omitted trailing default/params args
+                RequireArgCount(argEls.Count, ps.Length, mi.ToString());
                 // A `super.M<T>(...)` to a CLR-bound base (issue #14) forces a non-virtual `call` to the base slot on the
                 // (reference) `this` receiver — else the callvirt re-dispatches to THIS class's override -> recursion.
                 var genSuper = e.TryGetProperty("super", out var supGi) && supGi.GetBoolean() && !type.IsValueType;

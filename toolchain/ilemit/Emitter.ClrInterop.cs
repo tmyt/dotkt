@@ -5,6 +5,7 @@ using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
 using System.Text.Json;
+using System.Globalization;
 
 // CLR interop emission: @Clr native calls, property/event access, ctor picking, BCL-intrinsic handlers.
 sealed partial class Emitter
@@ -107,7 +108,35 @@ sealed partial class Emitter
 
     Type EmitNativeClrEnumValue(JsonElement e)
     {
-        _il.Emit(OpCodes.Ldc_I4, e.GetProperty("ordinal").GetInt32());
+        if (e.TryGetProperty("physicalValue", out var pv)
+            && e.TryGetProperty("underlying", out var ut))
+        {
+            var text = pv.GetString();
+            switch (ut.GetString())
+            {
+                case "System.Int64":
+                    _il.Emit(OpCodes.Ldc_I8, long.Parse(text, CultureInfo.InvariantCulture));
+                    break;
+                case "System.UInt64":
+                    _il.Emit(OpCodes.Ldc_I8, unchecked((long)ulong.Parse(text, CultureInfo.InvariantCulture)));
+                    break;
+                case "System.UInt32":
+                    _il.Emit(OpCodes.Ldc_I4, unchecked((int)uint.Parse(text, CultureInfo.InvariantCulture)));
+                    break;
+                case "System.Byte":
+                case "System.UInt16":
+                    _il.Emit(OpCodes.Ldc_I4, int.Parse(text, CultureInfo.InvariantCulture));
+                    break;
+                default:
+                    _il.Emit(OpCodes.Ldc_I4, int.Parse(text, CultureInfo.InvariantCulture));
+                    break;
+            }
+        }
+        else
+        {
+            // A locally-declared Kotlin basic enum has contiguous 0..N values by construction.
+            _il.Emit(OpCodes.Ldc_I4, e.GetProperty("ordinal").GetInt32());
+        }
         return NativeType(e.GetProperty("type"));
     }
 
@@ -166,12 +195,12 @@ sealed partial class Emitter
             // A generic collection constructed with an EMITTED element type (`new HashSet<EmittedType>()`) is a
             // TypeBuilderInstantiation whose members can't be reflected — the winner was matched on the OPEN def. Emit
             // the args against the SUBSTITUTED param types (so a delegate/closure arg's rewrap target is the CLOSED
-            // param `Func<Box>`, not the open `Func<T>`), backfill trailing optional defaults, then re-anchor the ctor.
+            // param `Func<Box>`, not the open `Func<T>`), then re-anchor the ctor.
             var classArgs = type.GetGenericArguments();
             var openPs = openCtor.GetParameters();
             int ai = 0;
             foreach (var a in args.EnumerateArray()) { EmitArg(a, SubstituteIfaceArgs(openPs[ai].ParameterType, classArgs)); ai++; }
-            for (; ai < openPs.Length; ai++) EmitDefaultArg(openPs[ai]);
+            RequireArgCount(ai, openPs.Length, openCtor.ToString());
             _il.Emit(OpCodes.Newobj, TypeBuilder.GetConstructor(type, openCtor));
             return type;
         }
@@ -249,12 +278,14 @@ sealed partial class Emitter
             try { return TypeBuilder.GetMethod(type, hits[0]); }
             catch (ArgumentException) { return hits[0]; }
         }
-        // PREFER the owner's OWN members: a base-INTERFACE slot (`MoveNext` on the non-generic `IEnumerator`, inherited by
-        // `IEnumerator<T>`; interface GetMethods excludes base-interface members) is a FALLBACK consulted only when no own
-        // member matches — else `IEnumerable<T>.GetEnumerator()` is ambiguous with `IEnumerable.GetEnumerator()` (memberSig
-        // can't distinguish return-only slots). The base slot is DECLARED on that base interface and invoked DIRECTLY via
-        // the receiver's interface (no re-anchor onto `type`). Mirrors bir2cir ClrMemberResolution.Candidates + §12.8.10.2.
-        if (hits.Count == 0 && searchType.IsInterface)
+        // PREFER the owner's OWN members. An interface slot is a FALLBACK consulted only when no own member matches:
+        // this covers both an inherited base-interface member and a class member implemented by a private explicit
+        // MethodImpl body whose CLR name is qualified and therefore invisible under the Kotlin surface name. Consulting
+        // interfaces unconditionally would make `IEnumerable<T>.GetEnumerator()` ambiguous with
+        // `IEnumerable.GetEnumerator()` (memberSig cannot distinguish return-only slots). The resolved slot is invoked
+        // directly through the receiver's interface; no owner re-anchoring or semantic reconstruction occurs here.
+        // Mirrors bir2cir ClrMemberResolution.Candidates.
+        if (hits.Count == 0 && instance)
         {
             var baseCands = SafeInterfaces(searchType).SelectMany(Named);
             var baseHits = Match(baseCands);
