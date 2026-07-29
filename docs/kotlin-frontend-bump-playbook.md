@@ -41,9 +41,9 @@ holistically, do not patch the symptom. Do NOT trust the gate to find this indir
 
 ### 5. Fragile watch-points — verify empirically, never assume "unchanged"
 kotc pokes several **internal/unstable FIR surfaces**; a bump can silently break any of them:
-- **`FirInternals.java` companion shim** (`ownerGenerator` / `replaceCompanionObjectSymbol` / `FirGeneratedScopes`
-  early-return) — the implicit-companion mechanism (§8c). 2.4.0: survived UNCHANGED; the green `il-injstatic` sample
-  is what *proved* it (a behavior-preserving gate is exactly how you check a fragile internal dependency didn't break).
+- **CLR intrinsic declaration generation** (`ClrIntrinsicDeclarations.kt`) — the compiler-plugin registrar and FIR
+  declaration-generation DSL must continue to expose only the fixed `byref` / `stackBuffer` / `clrEvent` vocabulary.
+  CLR reference declarations and their static companions are loaded from reference KLIBs.
 - **fake-override linking** (`resolveFakeOverride`, default-accessor discrimination) — the classic wrong-dispatch
   miscompile source when Fir2Ir internals get rewritten.
 - **default-import synthesis** — 2.4.0 made `FirDefaultImportsProviderHolder` composable, so `register` *composed*
@@ -80,4 +80,4 @@ Then the P6 sweep: `CLAUDE.md` / `README.md` / the docs' "pinned to X" lines. Do
 ## Effort
 2.4.0 (the TestFlight): compiler half ~3-5 days (mostly grind + the one const-serializer decision); stdlib refresh ~1
 day mechanical. A subsequent bump over a similar delta should be comparable or faster, since the playbook + the fragile
-watch-points are now known and the `FirInternals`/serializer patterns are established.
+watch-points are now known and the serializer pattern is established.
