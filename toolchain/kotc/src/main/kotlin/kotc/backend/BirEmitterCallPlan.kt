@@ -17,10 +17,22 @@ import org.jetbrains.kotlin.ir.types.IrType
 // CallEvalLowering then decides the physical form ONCE, after every splice has run, and SuspendColdLowering decides
 // the storage ONCE, from liveness. No layer may "decline to bind" and fall back to duplicating an expression.
 //
-// GRANULARITY — a plan is emitted only where a value can acquire a SECOND reader (see [BirEmitter.callNeedsPlan]).
-// Without one the positional argument array IS the evaluation plan: one reader per value, positional order = Kotlin
-// order. The standing invariant is the converse: any transform that gives a call value a second consumer must go
-// through a plan.
+// GRANULARITY — no single predicate decides this; a scope and the decision to BIND inside it compose. A plan SCOPE
+// is installed around EVERY call ([expr] via [withCallPlan], plus the declaration-position call sites that install
+// their own), but an empty scope costs nothing: an expression-position call unwraps through [CallPlan.wrap], which
+// emits a `callEval` only when the plan actually bound something and returns the bare call otherwise, and the
+// declaration-position sites drop their bindings on `isEmpty` the same way.
+// What BINDS inside the scope is two independent things:
+//  - the `planNeeded` test in [filledArgs] / [filledExternalArgs] (BirEmitterCalls.kt), whose triggers are
+//    enumerated at those two sites — a same-module default that READS one of the call's values (§2.7 trigger (a)),
+//    a cross-module omission (trigger (b)), and a fill sitting before a slot the call supplies (trigger (c));
+//  - a `callInline` (trigger (d), BirEmitterInline.kt), which binds UNCONDITIONALLY: a spliced body may read a
+//    supplied value any number of times, so every value such a call supplies has a second reader by construction.
+//    A call that supplies none — the lambda-only `run { … }` — still binds nothing and emits no plan.
+// So a plan is emitted only where a value can acquire a SECOND reader, or where the positional array's ORDER is not
+// Kotlin's. Without one the positional argument array IS the evaluation plan: one reader per value, positional
+// order = Kotlin order. The standing invariant is the converse: any transform that gives a call value a second
+// consumer must go through a plan.
 
 /** One call site's ordered evaluation plan, built while its arguments are rendered. Installed for the call node by
  *  [BirEmitter.withCallPlan] and read back by [filledArgs] / [filledExternalArgs]. */
@@ -112,9 +124,12 @@ internal fun <T> BirEmitter.withDefaultTypeScope(
 	try { return emit() } finally { defaultTypeSubst = saved }
 }
 
-/** The plan of the call currently being emitted. Every path that fills arguments runs inside a plan scope
- *  ([expr] installs one for a function-access node; the two DECLARATION-position call sites install their own), so a
- *  missing plan is an internal invariant break rather than a shape to work around. */
+/** The plan of the call currently being emitted. Every path that fills arguments runs inside a plan scope, so a
+ *  missing plan is an internal invariant break rather than a shape to work around. [expr] installs one for every
+ *  function-access node; four further sites install their own, because they emit a call from outside `expr`: an
+ *  enum entry's initializer (expression position, so it takes a [wrap]), and an entry subclass's enum-super args
+ *  plus a constructor's `this` and `super` delegation (DECLARATION position — no wrapping expression exists, so
+ *  their bindings ride the declaration as `delegationBindings`). */
 internal fun BirEmitter.callPlan(call: IrExpression): CallPlan =
 	callPlans[call] ?: run {
 		// Reported as a source-located compile error (which fails the build) rather than thrown: the emitter's own

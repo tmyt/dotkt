@@ -28,7 +28,6 @@ import org.jetbrains.kotlin.ir.declarations.IrEnumEntry
 import org.jetbrains.kotlin.ir.expressions.IrGetEnumValue
 import org.jetbrains.kotlin.ir.expressions.IrGetField
 import org.jetbrains.kotlin.ir.expressions.IrGetObjectValue
-import org.jetbrains.kotlin.ir.expressions.IrGetValue
 import org.jetbrains.kotlin.ir.expressions.IrInstanceInitializerCall
 import org.jetbrains.kotlin.ir.expressions.IrReturn
 import org.jetbrains.kotlin.ir.expressions.IrSetField
@@ -49,7 +48,6 @@ import org.jetbrains.kotlin.ir.expressions.IrFunctionReference
 import org.jetbrains.kotlin.ir.expressions.IrGetClass
 import org.jetbrains.kotlin.ir.declarations.IrLocalDelegatedProperty
 import org.jetbrains.kotlin.ir.declarations.IrValueDeclaration
-import org.jetbrains.kotlin.ir.declarations.IrValueParameter
 import org.jetbrains.kotlin.ir.IrElement
 import org.jetbrains.kotlin.ir.visitors.IrVisitorVoid
 import org.jetbrains.kotlin.ir.visitors.acceptVoid
@@ -287,18 +285,18 @@ internal fun BirEmitter.cfgWhen(node: IrWhen): String {
 
 /**
  * Bind a subject/receiver expression for exactly-ONCE evaluation before splicing it into several use sites.
- * A STABLE expression (a const, or a read of an immutable non-ref-cell local/parameter) splices directly —
- * re-reading it is free and side-effect-free. Anything else gets a temp local (returned as a `var` statement
- * for a wrapping valueBlock) and the use sites splice the local READ: splicing the rendered initializer JSON
- * itself re-evaluates it per splice (the when-subject / safe-call / range-membership double-eval defect).
+ * A STABLE expression splices directly — re-reading it is free and side-effect-free. Anything else gets a
+ * temp local (returned as a `var` statement for a wrapping valueBlock) and the use sites splice the local
+ * READ: splicing the rendered initializer JSON itself re-evaluates it per splice (the when-subject /
+ * safe-call / range-membership double-eval defect).
+ * The stability question has ONE implementation, [isStableValue] — the same one the call-evaluation plan
+ * records as a binding's `stable`. This site asks it about a splice rather than about a binding, but it is
+ * the same question ("re-readable, and free to move past another value"), so it must not be re-derived here.
  * Returns (varStmtJson or null-if-stable, useJson). Only safe where the expression is suspension-free —
  * expression position is; a suspend call there just renders plainly with `"suspendCall":true` for bir2cir.
  */
 internal fun BirEmitter.bindOnce(init: IrExpression, type: IrType, prefix: String): Pair<String?, String> {
-	val stable = init is IrConst || (init as? IrGetValue)?.symbol?.owner?.let { o ->
-		!isRefCell(o) && (o is IrValueParameter || (o as? IrVariable)?.isVar == false)
-	} == true
-	if (stable) return null to expr(init)
+	if (isStableValue(init)) return null to expr(init)
 	val tv = "$prefix${scopeCounter++}"
 	// A NULLABLE generic-param subject (`T?`, e.g. `x as? T`) must NOT become a `gp:T` local: `!T` cannot
 	// hold null when T is instantiated with a value type, and the `isinst` REF result stored into a `!T`
