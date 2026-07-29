@@ -48,6 +48,23 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   import-seeded JSON projection has no build, package, test, or developer entry point. The `facadegen` project,
   `make facades`, and `scripts/gen-facades.sh` are deleted; `make toolchain` now builds only the shipping tools.
 
+### Changed
+
+- **kotc (area:kotc): one home per stability question in the BIR emitter.** `bindOnce` — the splice-once binder
+  behind a when-subject, a safe call and a range membership — carried a byte-identical inline copy of the
+  call-evaluation plan's `isStableValue` predicate, so the two could drift apart while both claimed to answer
+  "is this value free to be re-read and to move past another value". It now calls `isStableValue`, which is the
+  single implementation. `isStableAddress` is renamed `isStableLocation`, because it answers a DIFFERENT question
+  — whether an argument's *address* may be taken twice and moved, which holds for a mutable `var` too — and a
+  name that echoed the value predicate invited the immutability clause to be "restored" into it; its doc now
+  states the question and why that clause is deliberately absent. The `BirEmitterCallPlan` granularity note
+  pointed at a `BirEmitter.callNeedsPlan` that does not exist and never did; it now describes what really gates a
+  `callEval` — a plan scope installed around every call that costs nothing when empty, and, inside it, the
+  `planNeeded` tests of `filledArgs`/`filledExternalArgs` (§2.7 triggers (a)-(c)) together with the unconditional
+  binding a `callInline` performs (trigger (d)), which the old note did not mention at all. Behavior-preserving:
+  emitted BIR and CIR are byte-identical over the full stdlib corpus (ref + runtime, 1001 files) and a
+  198-source fixture sweep.
+
 ### Fixed
 - **bir2cir (area:bir2cir): an argument that never returns, to the left of a suspending one, is no longer treated
   as a value to carry across the suspension.** `pair(run { throw IllegalStateException() }, later())` refused to
