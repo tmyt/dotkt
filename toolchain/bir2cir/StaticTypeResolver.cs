@@ -133,7 +133,8 @@ static class StaticType
             case "cond": return TypeJson.Read(o["type"]) ?? Surface(o["then"], scope) ?? Surface(o["else"], scope);
             // A spliced inline call becomes a `valueBlock {stmts, result}` (InlineSplice) — its static type is the
             // RESULT's, resolved with the block's OWN `var`s in scope (e.g. an `apply`-splice's result is a `local`
-            // declared in its stmts). The valueBlock itself carries no stamp; its result is a stamped node.
+            // declared in its stmts). A stamp is optional here: the splice emits none and the result is a stamped
+            // node, while a block a call-evaluation plan lowered into carries the call's own static type.
             case "valueBlock":
             {
                 var inner = scope.Child();

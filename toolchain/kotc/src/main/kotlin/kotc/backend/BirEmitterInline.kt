@@ -210,17 +210,6 @@ internal fun BirEmitter.inlineSpliceCallSameModule(call: IrCall): String {
 	return emitOwnerfulInlineNode(call)
 }
 
-/** The shared OWNER-FUL `callInline` node builder for an inline call whose hosting .NET type kotc CAN name — used by
- *  BOTH the same-module member/top-level splice (`inlineSpliceCallSameModule`, body present) and the CROSS-MODULE inline
- *  MEMBER call (#60/W1: `body==null`, a dispatch receiver present — a facadegen-injected DotKt member OR a klib stdlib
- *  member; the call-site gate in BirEmitterCalls invokes this DIRECTLY, unconditionally, because kotc is body-blind and
- *  bir2cir owns the splice-or-fail-loud decision off the ref.dll `[KotlinInline]` payload). The same-module caller
- *  applies its OWN #20 dual-receiver risk guard first; the cross-module caller does NOT (kotc cannot inspect the body) —
- *  bir2cir's §4.3 splices the pure-extension idiom and FAILS LOUD on a dual-receiver body that reads the dispatch
- *  `{k:this}` (#23, until W2). The emitted shape — `owner`, `pc`, `ga`,
- *  `typeArgs`, `recvs` (dispatch/extension + F2A `dispatchTypeArgs`), the per-POSITIONAL-param `args`, `retType`, `paramSig`
- *  — is IDENTICAL for both callers, so bir2cir's InlineSplice consumes them the same whether the payload is same-module
- *  (`InlineBirStash.Index`) or cross-module (ref.dll `InlineCandidates`). */
 /** Render one `callInline` argument slot — GRANULARITY trigger (d) of §2.7, shared by the three inline emitters.
  *
  *  A SPLICED LAMBDA is not a value and is never bound. A literal lambda in a non-`noinline` function-typed slot rides
@@ -242,6 +231,17 @@ private fun BirEmitter.inlineArgJson(call: IrCall, arg: IrExpression?, param: Ir
 		else -> callPlan(call).bindValue(arg, "arg", "argument '${param.name.asString()}' of '$label'")
 	}
 
+/** The shared OWNER-FUL `callInline` node builder for an inline call whose hosting .NET type kotc CAN name — used by
+ *  BOTH the same-module member/top-level splice (`inlineSpliceCallSameModule`, body present) and the CROSS-MODULE inline
+ *  MEMBER call (#60/W1: `body==null`, a dispatch receiver present — a facadegen-injected DotKt member OR a klib stdlib
+ *  member; the call-site gate in BirEmitterCalls invokes this DIRECTLY, unconditionally, because kotc is body-blind and
+ *  bir2cir owns the splice-or-fail-loud decision off the ref.dll `[KotlinInline]` payload). The same-module caller
+ *  applies its OWN #20 dual-receiver risk guard first; the cross-module caller does NOT (kotc cannot inspect the body) —
+ *  bir2cir's §4.3 splices the pure-extension idiom and FAILS LOUD on a dual-receiver body that reads the dispatch
+ *  `{k:this}` (#23, until W2). The emitted shape — `owner`, `pc`, `ga`,
+ *  `typeArgs`, `recvs` (dispatch/extension + F2A `dispatchTypeArgs`), the per-POSITIONAL-param `args`, `retType`, `paramSig`
+ *  — is IDENTICAL for both callers, so bir2cir's InlineSplice consumes them the same whether the payload is same-module
+ *  (`InlineBirStash.Index`) or cross-module (ref.dll `InlineCandidates`). */
 internal fun BirEmitter.emitOwnerfulInlineNode(call: IrCall): String {
 	// #87: an INHERITED inline member (declared on a superclass, called through a subclass receiver) resolves to a
 	// FAKE OVERRIDE whose `parent` is the subclass and whose `body` is null. The [KotlinInline] payload is stashed
@@ -422,7 +422,7 @@ internal fun BirEmitter.inlineSpliceCall(call: IrCall, fileClass: String): Strin
 	val typeArgs = callee.typeParameters.indices.joinToString(",") { i ->
 		(call.typeArguments.getOrNull(i)?.let { birType(it) } ?: OBJ).toJson()
 	}
-	// §2.7 trigger (d) — see [inlineArgIsSpliced]. The extension receiver is bound FIRST (Kotlin evaluates a receiver
+	// §2.7 trigger (d) — see [inlineArgJson]. The extension receiver is bound FIRST (Kotlin evaluates a receiver
 	// before every argument), then the supplied arguments in positional order.
 	val label = calleeLabel(callee)
 	val extRecvJson = extRecv?.let { callPlan(call).bindValue(it, "recv", "extension receiver of '$label'") }
@@ -565,7 +565,7 @@ internal fun BirEmitter.inlineSpliceCallOwnerless(call: IrCall, extRecv: IrExpre
 	val typeArgs = callee.typeParameters.indices.joinToString(",") { i ->
 		(call.typeArguments.getOrNull(i)?.let { birType(it) } ?: OBJ).toJson()
 	}
-	// §2.7 trigger (d) — see [inlineArgIsSpliced]. The extension receiver is bound FIRST (Kotlin evaluates a receiver
+	// §2.7 trigger (d) — see [inlineArgJson]. The extension receiver is bound FIRST (Kotlin evaluates a receiver
 	// before every argument), then the supplied arguments in positional order (for `with`, the receiver is regular
 	// param[0] and rides as an ordinary bound argument; the lambda is param[1]).
 	val label = calleeLabel(callee)

@@ -357,8 +357,11 @@ gives a call value a second consumer must go through a plan.** A `defaultArg` ou
 `DefaultArgSplice`.
 
 **`callInline`.** A spliced inline call's body becomes the caller's, and it may read a parameter any number of times,
-in a loop, inside a closure, or not at all — so every value the call supplies has a second reader by construction, and
-a `callInline` always carries a plan for them:
+in a loop, inside a closure, or not at all — so every value the call SUPPLIES has a second reader by construction, and
+a `callInline` binds every one of them. The general rule still decides whether a plan exists at all: a call that
+supplies NO value binds nothing and emits no plan — the lambda-only inline call, `run { … }` or a user
+`inline fun go(block: () -> Unit)` invoked as `go { }`, where the only argument is the body being spliced. The bound
+values are:
 
 - the DISPATCH receiver, then the EXTENSION receiver, then the supplied arguments in positional order — the same order
   rule as every other call. `recvs.dispatch` / `recvs.extension` / `args[i]` hold the `bindRef`s.

@@ -47,11 +47,13 @@ static class CallEvalLowering
             foreach (var kv in obj.ToList()) if (kv.Value != null) Walk(kv.Value);
             if (Str(obj["k"]) == "callEval") LowerExpression(obj);
             else if (obj["delegationBindings"] is JsonArray) LowerDelegation(obj);
-            // …and having lowered whatever this node's RESULT was, flatten the layer that created. A block whose result
-            // is a block is one block (its statements run, then the inner's, then the inner's value), and every pass
-            // downstream expects the single layer the inline splice's own flatten used to guarantee: a spliced lambda
-            // body ending in a nested inline call arrived here as `valueBlock{…, result: callEval{…}}`, which the
-            // splice could not flatten because a plan's bindings are not statements until this pass makes them ones.
+            // NORMALIZE, unconditionally: a block whose RESULT is a block is one block — its statements run, then the
+            // inner's, then the inner's value — and downstream expects the single layer the inline splice's own
+            // flatten guarantees. Not restricted to the nesting this pass just created: a nested block is the same
+            // shape whoever built it, and folding one that was already flat costs nothing. It matters here because a
+            // plan is what re-introduced the shape — a spliced lambda body ending in a nested inline call reaches this
+            // pass as `valueBlock{…, result: callEval{…}}`, which the splice could not flatten, a plan's bindings not
+            // being statements until the line above makes them ones.
             if (Str(obj["k"]) == "valueBlock") MergeNestedResult(obj);
         }
         else if (node is JsonArray arr)
@@ -85,10 +87,21 @@ static class CallEvalLowering
     /// statements, then the inner's, then the inner's value — and every name in either is already frame-unique (splice
     /// prefixes, `dotkt$local…`, `cir$b…`), so the merged scope cannot capture. The inner's `type` is the value's, so
     /// it wins when this block carries none.
+    ///
+    /// A `valueBlock` may carry EITHER of two statement lists, and its consumers run `stmts` and then `body`
+    /// (SuspendColdLowering, InlineSplice's carrier flatten). The inner block's two are appended in that order, which
+    /// is the order it would have run them in; the OUTER block's `body` would have to run AFTER the inner statements
+    /// arriving in its `stmts`, which appending cannot express. No producer emits an outer `body` beside a block
+    /// result today, so this refuses rather than reorders — the day one does, it says so instead of miscompiling.
     static void MergeNestedResult(JsonObject block)
     {
         while (block["result"] is JsonObject inner && Str(inner["k"]) == "valueBlock")
         {
+            if (block["body"] is JsonArray ob && ob.Count > 0)
+                throw new InvalidOperationException(
+                    "bir2cir: a valueBlock carrying `body` statements has another valueBlock as its result — folding "
+                    + "them would run this block's `body` after the inner block's statements instead of before. The "
+                    + "producer of this shape is new; teach CallEvalLowering.MergeNestedResult how to order it.");
             if (block["stmts"] is not JsonArray stmts) { stmts = new JsonArray(); block["stmts"] = stmts; }
             foreach (var key in new[] { "stmts", "body" })
                 if (inner[key] is JsonArray arr)

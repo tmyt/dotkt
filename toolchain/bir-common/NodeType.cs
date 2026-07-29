@@ -50,9 +50,12 @@ public static class NodeType
                 // node's value — and its type — is the wrapped call's.
                 return TypeJson.Read(o["type"]) ?? recurse(o["expr"]);
             case "valueBlock":
-                // A spliced inline call is a `valueBlock {stmts, result}` and carries NO `type` stamp — its type is its
-                // RESULT's, resolved with the block's own `var`s in scope (an `apply`-splice's result is a local the
-                // block itself declares). Mirrors StaticType.Surface's arm.
+                // The `type` stamp is OPTIONAL on a block, so both arms are live. The inline splice emits none — what
+                // a spliced call produces is its RESULT's own type, which can be strictly more derived than the
+                // callee's declared return — while a plan lowered into a block carries the call's static type, which
+                // its enclosing merge preserves. Absent a stamp the type is the RESULT's, resolved with the block's
+                // own `var`s in scope (an `apply`-splice's result is a local the block itself declares). Mirrors
+                // StaticType.Surface's arm.
                 return TypeJson.Read(o["type"]) ?? BlockResultType(o, recurse, primArrayElem);
             case "stackGet": case "byrefLoad":
                 return TypeJson.Read(o["elem"]);

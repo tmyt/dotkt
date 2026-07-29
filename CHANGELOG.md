@@ -32,7 +32,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   kotc now emits a plan for a `callInline` too (`docs/bir-cir-spec.md` §2.7, granularity trigger (d)): the dispatch
   receiver, the extension receiver and every supplied argument become bindings, in that order. A spliced lambda is not
   a value and is not bound — a literal carrier and a by-name forward of the enclosing inline fn's own lambda parameter
-  are the body being spliced. `InlineSplice` consumes the bindings instead of minting a temp per parameter, so a body
+  are the body being spliced — so a lambda-only inline call (`run { … }`) supplies nothing, binds nothing, and still
+  emits no plan, exactly as the granularity rule says. `InlineSplice` consumes the bindings instead of minting a temp per parameter, so a body
   that reads a parameter twice, in a loop, or not at all no longer costs a redundant local; a filled default becomes a
   local of the spliced block, which is where Kotlin evaluates a default (in the callee's scope, after every supplied
   value). Consequences:

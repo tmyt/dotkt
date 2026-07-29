@@ -519,8 +519,18 @@ static class InlineSplice
         // the extension `__self` — so the dispatch branch wins over the plain-extension one when both receivers are live.
         if (payloadDispatch || coBindDispatch)
             { var ov = new JsonObject { ["k"] = "local", ["name"] = prefix + "this" }; BindOuterCapValues(pBody, ov); BindOuterCapValues(result, ov); }
-        else if (ext && pParams.FirstOrDefault() is JsonObject selfParam && subst.TryGetValue(Str(selfParam["name"]) ?? "", out var selfBound))
-            { BindOuterCapValues(pBody, selfBound); BindOuterCapValues(result, selfBound); }
+        else if (ext)
+        {
+            // The extension receiver is payload param[0], and the loop above binds every param or fails loud — so an
+            // unbound one here is an internal break, not a shape. Say so: falling through would leave `__outer` to
+            // SuspendLambdaLowering's name fallback, which resolves it to the CALLER's receiver — a silently wrong
+            // `this` inside the lambda, which is exactly the fault this rebind exists to prevent.
+            if (pParams.FirstOrDefault() is not JsonObject selfParam
+                || !subst.TryGetValue(Str(selfParam["name"]) ?? "", out var selfBound))
+            { FailLoud(o, owner, name, pc, ga, "extension receiver param[0] was never bound, so a payload newSuspendLambda's `__outer` cannot be rebound"); return; }
+            BindOuterCapValues(pBody, selfBound);
+            BindOuterCapValues(result, selfBound);
+        }
 
         // B3 (#75 holistic) — a `{k:typeDef}` (a named local class in the payload — an `object :` literal) is a SCOPE
         // BOUNDARY that RewriteLocalRefs/PrefixLocals skip WHOLE, so an ORIGINAL (unprefixed) lambda-param `{k:local}` ref
@@ -584,12 +594,15 @@ static class InlineSplice
 
         // STEP 7 — assemble the value-producing valueBlock, swap it in-place.
         //
-        // The block carries NO `type` stamp: what it produces is its RESULT's own type, which is the type the emitted
-        // value actually has, and that can be strictly more derived than the callee's declared return
+        // The block this step emits carries NO `type` stamp: what it produces is its RESULT's own type, which is the
+        // type the emitted value actually has, and that can be strictly more derived than the callee's DECLARED return
         // (`partition` returns `Pair<List<T>,List<T>>` and builds a `Pair` of concrete `System…List`s — the widening
         // WidenCovariantConstruction performs below). Stamping the declared type would tell the coercion downstream
         // that no conversion is needed. `bir-common/NodeType.cs` derives a block's type from its result — with the
-        // block's own `var`s in scope — which is what the suspend lowering's evaluation-order spill types its slot from.
+        // block's own `var`s in scope — which is what the suspend lowering's evaluation-order spill types its slot
+        // from. (A block CallEvalLowering lowers a plan into does carry the call's static type; that is the plan's
+        // node type, not a claim about what the splice built, and the two never contradict because they are the
+        // Kotlin type and the emitted value's type of the same expression.)
         foreach (var st in pBody) if (st != null) stmts.Add(st.DeepClone());
         var repl = new JsonObject { ["k"] = "valueBlock", ["stmts"] = stmts, ["result"] = result };
         foreach (var key in new List<string>(((IDictionary<string, JsonNode>)o).Keys)) o.Remove(key);
