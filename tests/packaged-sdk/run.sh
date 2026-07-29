@@ -313,7 +313,7 @@ EOF
 # Case: coroutine-cross-module — #137's end-user path. The producer and consumer are separate Kotlin
 # compilations, both resolved through the freshly packed SDK. The producer's Task.Delay is incomplete when
 # startCoroutine returns to the consumer, so this covers a real cross-assembly suspend/resume rather than the
-# synchronous fast path. The producer is packed as an ordinary NuGet dependency to exercise the same facadegen
+# synchronous fast path. The producer is packed as an ordinary NuGet dependency to exercise the same dll2klib
 # re-import and reference-asset path an end user hits. Both DotKt-emitted assemblies must also be ILVerify-clean.
 # ---------------------------------------------------------------------------------------------------------
 case_coroutine_cross_module() {

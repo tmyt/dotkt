@@ -1,6 +1,6 @@
 // Ktp BCL-import battery — migrates the single-project cases/ktproj-import .ktproj sample onto the in-process NUnit
 // suite. Import-driven .NET resolution: just `import System.X`, no <KotlinClrType>, no façade, no clrgen — the
-// facadegen import scan injects the types. The UNIQUE coverage here (vs the StringBuilder-only BclStringBuilderTests and
+// dll2klib projects the complete reference types. The UNIQUE coverage here (vs the StringBuilder-only BclStringBuilderTests and
 // the kotlin.math-lowering MathTests) is a façade-free `import System.Math` and a STATIC call on that imported .NET
 // type (`Math.Max`) — the raw BCL System.Math, not the kotlin.math.* clrStatic lowering — combined with the fluent
 // System.Text.StringBuilder.Append chain. The old case's stdout golden is preserved 1:1 (see `// <expected>`).

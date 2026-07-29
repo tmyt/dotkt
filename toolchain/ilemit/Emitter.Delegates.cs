@@ -14,7 +14,7 @@ sealed partial class Emitter
     const string CompilerServicesNs = "DotKt.Runtime.CompilerServices.";
 
     // ilemit AUTHORS its own synthetic high-arity delegate types; mark each [KotlinFunction(0)] (a plain function
-    // type — no infix/operator/suspend) so facadegen restores it as a Kotlin function type. This is ilemit stamping
+    // type — no infix/operator/suspend) so dll2klib restores it as a Kotlin function type. This is ilemit stamping
     // its OWN emitted member (analogous to StampCompilerGenerated), NOT round-trip generation over user code: the
     // attribute CLASS is the ordinary CIR-defined `KotlinFunctionAttribute` in `_types` (bir2cir emits it, #71 S2),
     // whose (int) ctor is resolved generically. Absent (a --no-stdlib or runtime build that emits no attr class) -> skip.

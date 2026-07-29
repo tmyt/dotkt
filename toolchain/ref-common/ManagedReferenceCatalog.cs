@@ -18,7 +18,7 @@ sealed class ManagedReferenceCatalog
     readonly Dictionary<string, Entry> _bySimpleName = new(StringComparer.OrdinalIgnoreCase);
 
     // The ref/runtime stdlib split (docs/architecture.md): the REFERENCE stdlib
-    // (metadata twin, kept by ref-READERS bir2cir+facadegen) and the RUNTIME stdlib (shipped, loaded by
+    // (metadata twin, kept by ref-READERS bir2cir+dll2klib) and the RUNTIME stdlib (shipped, loaded by
     // ilemit) define the SAME `kotlin.clr.*` type shapes; only the assembly name differs.
     const string RefStdlibName = "DotKt.Private.Stdlib";
     const string RuntimeStdlibName = "DotKt.Stdlib";
@@ -50,7 +50,7 @@ sealed class ManagedReferenceCatalog
     /// <paramref name="runtimeSelection"/> distinguishes the two consumer classes:
     /// </para>
     /// <list type="bullet">
-    /// <item><b>false (compile set, from <c>@(ReferencePath)</c>)</b> — bir2cir/facadegen/retarget. One
+    /// <item><b>false (compile set, from <c>@(ReferencePath)</c>)</b> — bir2cir/dll2klib/retarget. One
     /// entry per identity, no RID variants; a repeated simple name is a genuine conflict → throw. Strict.</item>
     /// <item><b>true (runtime set, from <c>@(ReferenceCopyLocalPaths)</c>)</b> — ilemit. Copy-local
     /// legitimately carries BOTH <c>lib/&lt;tfm&gt;/Foo.dll</c> and <c>runtimes/&lt;rid&gt;/lib/&lt;tfm&gt;/Foo.dll</c>
@@ -59,7 +59,7 @@ sealed class ManagedReferenceCatalog
     /// else the RID-neutral <c>lib</c> asset). Throw ONLY on same simple name + CONFLICTING identity — that
     /// preserves the duplicate-identity detection and the shared-dependency dedup win.</item>
     /// </list>
-    /// <para><paramref name="refStdlibAliasesRuntime"/> (ref-readers bir2cir/facadegen ONLY): a consumed DotKt
+    /// <para><paramref name="refStdlibAliasesRuntime"/> (ref-readers bir2cir/dll2klib ONLY): a consumed DotKt
     /// library is emitted by ilemit against the RUNTIME stdlib (<c>DotKt.Stdlib</c>), so its members / round-trip
     /// <c>[kotlin.clr.*]</c> attributes reference <c>kotlin.*</c> types scoped to that assembly. A ref-reader holds
     /// the REFERENCE twin (<c>DotKt.Private.Stdlib</c>), the correct pure-Kotlin-shape metadata source. When BOTH
@@ -96,7 +96,7 @@ sealed class ManagedReferenceCatalog
             if (!File.Exists(full)) throw new ArgumentException($"{toolName}: reference not found: {full}");
             // #52 — a load failure is CLASSIFIED, never swallowed as "native". A genuinely native PE (valid image, no
             // CLI/COR directory) is always a legitimate silent skip. A broken/truncated PE or an I/O error is FATAL for
-            // the COMPILE set (facadegen/bir2cir/retarget consume `@(ReferencePath)` — pure managed reference assemblies,
+            // the COMPILE set (dll2klib/bir2cir/retarget consume `@(ReferencePath)` — pure managed reference assemblies,
             // so a corrupt one is a real error that must name the file + stage instead of silently dropping a type). The
             // RUNTIME copy-local set (ilemit, runtimeSelection) legitimately mixes managed + foreign-OS native assets
             // named `*.dll`, so there a non-loadable image is a loud WARN + skip, not a hard fail.
@@ -189,7 +189,7 @@ sealed class ManagedReferenceCatalog
 
         // Ref-READER twin collapse (#73): a consumed cross-module DotKt library is emitted by ilemit against the
         // RUNTIME stdlib, so a copy-local build puts BOTH stdlib twins on a ref-reader's compile set — the REFERENCE
-        // twin `DotKt.Private.Stdlib` (which bir2cir/facadegen are meant to read) AND the RUNTIME twin `DotKt.Stdlib`.
+        // twin `DotKt.Private.Stdlib` (which bir2cir/dll2klib are meant to read) AND the RUNTIME twin `DotKt.Stdlib`.
         // The runtime twin is the SUBSTITUTE build (its @Clr-bound types are dropped/BCL-substituted and its
         // `[Kotlin*]`/`[Clr]` metadata stripped — docs/architecture.md), so for a ref-reader it
         // is not just redundant but an actively WRONG metadata source. Worse, loading BOTH into one MetadataLoadContext

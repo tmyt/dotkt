@@ -1,9 +1,5 @@
-// .NET base-class interop battery (batch IntropB) — migrates the facadegen-driven cases/il-netbase* onto the
-// in-process NUnit suite. The old cases were driven by a pre-authored facadegen `.meta` (EXCMETA = a scan of
-// System.Exception/System.Console); the equivalent in-process form is a plain `import System.Exception` — the
-// the Interop consumer project runs the facadegen scan-imports pipeline, so the raw .NET Exception view (PascalCase
-// `.Message`, the virtual property to override) injects at compile. Each old case's `main` + stdout-golden
-// becomes one @TestAttribute method preserving every asserted value 1:1 (see the `// <expected>` comments).
+// .NET base-class interop battery (batch IntropB). The Interop consumer loads System.Exception from its
+// reference KLIB, including the PascalCase virtual Message property.
 //
 // Coverage preserved (old case -> method):
 //   il-netbase  -> netbase_inheritNetBaseClass     inherit System.Exception: base-ctor call + inherited .Message + own field

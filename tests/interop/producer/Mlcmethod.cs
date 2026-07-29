@@ -1,5 +1,5 @@
 // #202 regression: MetadataLoadContext's inherited GetMethods path throws while comparing these generic overrides.
-// facadegen must fall back to declared-only hierarchy enumeration so the ordinary Derived surface is still injectable.
+// dll2klib must fall back to declared-only hierarchy enumeration so the ordinary Derived surface is still injectable.
 namespace Mlcmethod;
 
 public abstract class GenericBase

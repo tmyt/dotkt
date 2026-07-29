@@ -21,8 +21,8 @@ public static class ByRefLikeApi
     public static ReadOnlySpan<char> Chars(string s) => s.AsSpan();
     public static int CharsLength(ReadOnlySpan<char> s) => s.Length;
 
-    // `System.Span<T>`, which facadegen surfaces as the kotc INTRINSIC `kotlin.clr.Span<T>` rather than as an
-    // injected metadata record — the one byref-like spelling that cannot come from the metadata flag.
+    // `System.Span<T>`, which dll2klib surfaces as the kotc INTRINSIC `kotlin.clr.Span<T>` rather than as an
+    // projected metadata record — the one byref-like spelling that cannot come from the metadata flag.
     public static Span<int> MakeSpan(int[] a) => a.AsSpan();
     public static int SpanLength(Span<int> s) => s.Length;
 }

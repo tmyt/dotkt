@@ -31,8 +31,9 @@ Kotlin IR → BirEmitter → BIR (JSON) → bir2cir → CIR (JSON) → ilemit �
 Each stage owns one concern: **kotc** (the Kotlin frontend, no CLR knowledge) emits BIR;
 **bir2cir** owns the Kotlin↔CLR relation (it reads the stdlib reference dll's
 `@ClrTypeAlias`/`@ClrIntrinsic` bindings and lowers Kotlin types/calls to their BCL forms);
-**ilemit** is pure CLR codegen via `Reflection.Emit` (no Kotlin knowledge); **facadegen** turns
-.NET metadata into FIR-injection metadata for façade-free `import System.X`. (An earlier
+**ilemit** is pure CLR codegen via `Reflection.Emit` (no Kotlin knowledge). **dll2klib** projects
+each resolved CLR reference assembly into a standard metadata-only KLIB before kotc runs, so
+façade-free `import System.X` participates in ordinary Kotlin frontend resolution. (An earlier
 Kotlin-IR→C#-text oracle backend, and the interim `--compat-bir`/`--native-cir` dual-track, were
 both retired and removed.)
 
@@ -76,8 +77,8 @@ round-trip, wide-delegate, and packaged-SDK scenarios. Test entry points live be
   on the CLR (lazy `Sequence`/coroutine builders are the in-progress tail)
 
 **Kotlin ↔ .NET interop**
-- `import System.X` façade-free (+ transitive closure injection of everything reachable);
-  statics via `.Companion`; events; lambdas → any delegate type (incl. custom generic
+- `import System.X` façade-free (the complete public surface of every resolved reference assembly
+  is projected to KLIB); statics; events; lambdas → any delegate type (incl. custom generic
   delegates); `out`/`ref` via `byref()`; nullable value types; .NET enums; C# operator
   overloads + extension methods; inherit .NET bases / implement .NET interfaces
 - Reverse interop: the emitted assembly is plain public IL — C# consumes it via
@@ -130,18 +131,18 @@ A DotKt project builds with plain `dotnet build` / `dotnet run` (and thus in Vis
 </Project>
 ```
 
-Every `.kt` under the project is compiled; `import System.X` in source injects .NET types
-automatically (an explicit `<DotKtImport Include="..." />` item does the same from MSBuild).
-See `docs/user/getting-started.md`.
+Every `.kt` under the project is compiled. MSBuild projects every resolved reference assembly to
+a project-local metadata KLIB, so `import System.X` resolves without an import-scanning or façade
+generation step. See `docs/user/getting-started.md`.
 
 ## Layout
 
 | Path | Role |
 |------|------|
 | `toolchain/kotc/` | the Kotlin→BIR compiler frontend (Kotlin/JVM gradle module; source package `kotc.*`) |
+| `toolchain/dll2klib/` | CLR reference assembly → standard metadata-only KLIB for frontend resolution |
 | `toolchain/bir2cir/` | **BIR (JSON) → CIR (JSON)**: the Kotlin↔CLR lowering (reads the stdlib ref.dll bindings) |
 | `toolchain/ilemit/` | **CIR (JSON) → CIL** via `System.Reflection.Emit` |
-| `toolchain/facadegen/` | .NET metadata → FIR-injection metadata (façade-free `import System.X`) |
 | `toolchain/retarget/` | repoint emitted BCL refs so a C# project can `<Reference>` the dll at compile time |
 | `libraries/stdlib/` | the **CLR Kotlin stdlib** sources (common Kotlin + `clr/` actuals + `@Clr*` bindings) |
 | `packaging/` | NuGet packages: `DotKt.Sdk`, `DotKt.Toolchain`, `DotKt.Stdlib`, `DotKt.Templates` |

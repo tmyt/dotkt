@@ -1,9 +1,5 @@
-// .NET event-CONSUME battery (batch IntropD) — migrates the facadegen `import System.*` event-consumer cases/il-*
-// onto the in-process NUnit suite. Each old case's `main` + stdout-golden becomes one @TestAttribute method whose
-// per-value assert is strictly stronger (typed Int/Boolean) than the old string diff. Every value the old case
-// asserted is preserved 1:1 (see the `// <expected>` comments); the side-effecting handler `println`s that the old
-// golden pinned by ORDER ("changed" / "h fired") become deterministic per-handler counters (synchronous raise) so the
-// exact fire multiplicities are asserted rather than an ordered stdout dump.
+// .NET event-consumption battery (batch IntropD), using events projected through reference KLIBs.
+// Deterministic per-handler counters assert exact synchronous fire multiplicities.
 //
 // These CONSUME .NET events (`subscribe` on an ObservableCollection<T>); they are NOT ClrEventTests, which is about
 // a Kotlin class IMPLEMENTING a .NET interface event. bir2cir's ClrEventSubscriptionBinding binds subscribe to the

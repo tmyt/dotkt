@@ -165,7 +165,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 			"""{"k":"enumValue","type":${fqnJson(parent?.let { typeName(it) } ?: "kotlin.Any")},"entry":${str(entry.name.asString())},"ordinal":$ord}"""
 		}
 	}
-	// `object Foo` reference -> load the singleton `Foo.INSTANCE` static field (item 10). (.NET-injected objects
+	// `object Foo` reference -> load the singleton `Foo.INSTANCE` static field (item 10). (Projected .NET objects
 	// like Math are static call sites handled at the call site; only user singletons reach here as a value.)
 	// The `Unit` object as a VALUE (e.g. `Result.success(Unit)`) is just another singleton: the stdlib's own
 	// `kotlin.Unit` object INSTANCE (this-assembly under stdlib-compile, else resolved against the referenced

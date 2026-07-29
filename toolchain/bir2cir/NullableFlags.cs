@@ -7,7 +7,7 @@ using DotKt.Bir;
 // returns / fields / properties) and the suspend Task-bridge return (#37/#48 nullability fold). A reference type's
 // `?` no longer rides a decl-level scalar flag nor a `System.Nullable<>` wrapper — it is stripped to the bare type by
 // BirTypeLowering, and its nullability is carried HERE as a `NullableAttribute` byte array (RoundtripMetadata folds it
-// into the decl's `attrs`/`retAttrs` for ilemit to stamp; facadegen reads it back off the dll). One byte per reference
+// into the decl's `attrs`/`retAttrs` for ilemit to stamp; dll2klib reads it back off the dll). One byte per reference
 // type NODE in pre-order (0 = oblivious, 1 = non-null, 2 = nullable);
 // a VALUE type / struct-constrained tv contributes NO byte (it is the structural `Nullable<T>`, not an NRT annotation).
 //
@@ -40,7 +40,7 @@ static class NullableFlags
                 // The wrapper is not itself a node — it marks the wrapped type as nullable.
                 return Walk(n.Of, nullableHere: true, flags, isValue);
             case TypeNode.Oblivious o:
-                // NRT-oblivious reference (NullableAttribute = 0). kotc never emits this; facadegen META round-trip only.
+                // NRT-oblivious reference (NullableAttribute = 0). kotc never emits this; dll2klib META round-trip only.
                 flags.Add(0);
                 var anyOb = false;
                 if (o.Of is TypeNode.Fqn { Args: { } oargs })

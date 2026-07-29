@@ -84,8 +84,8 @@ BCL-bound runtime face (`IReadOnlyList`, `System.Char`). The ref.dll is the pure
 
 A user library has **no** such dual representation. Its types are ordinary Kotlin types that emit as ordinary CLR types.
 `@ClrTypeAlias`/`@ClrIntrinsic` are **stdlib-only** bindings (bir2cir reads them from the stdlib ref.dll; a user library
-never authors them — MEMORY `clrtypealias-stdlib-only-apps-use-facadegen`). A user library's `.NET` interop goes through
-**facadegen** (`import System.X` → concrete .NET types resolved against the reference assemblies at that library's OWN
+never authors them — MEMORY `clrtypealias-stdlib-only-apps-use-dll2klib`). A user library's `.NET` interop goes through
+**dll2klib** (`import System.X` → concrete .NET types resolved against the reference assemblies at that library's OWN
 emit), not through a ref-metadata surface that a downstream build re-substitutes. So there is nothing for a user ref.dll
 to carry — it would be an empty indirection.
 
@@ -185,5 +185,5 @@ splat, #123 external-generic `new` over a free type-var) are fixed.
 - **`expect`-without-`actual` diagnostic quality.** A common `expect` with no CLR `actual` surfaces as a frontend
   actualization error; the message/position quality for the user-app case is a diagnostics-polish follow-up (aligns with
   the #84 diagnostics work).
-- **#129 — facadegen generic-interface import edges.** Some `.NET` generic-interface imports from a common fragment hit
-  facadegen edges; tracked separately.
+- **#129 — dll2klib generic-interface import edges.** Some `.NET` generic-interface imports from a common fragment hit
+  dll2klib edges; tracked separately.

@@ -1,7 +1,7 @@
 // .NET Task interop battery (batch IntropB) — migrates the SYNCHRONOUS (`.Result`/`.Wait()`, no suspend)
 // cases/il-task* onto the in-process NUnit suite. These exercise the seam that lets Kotlin BUILD a Task<T>
 // from a .NET generic static factory and unwrap it synchronously — NOT the coroutine cold-core, so they
-// migrate normally (not frozen). The Interop consumer project's facadegen scan-imports pipeline injects the .NET Task
+// migrate normally (not frozen). The Interop consumer project's reference KLIBs expose the .NET Task
 // types from `import System.Threading.Tasks.*`. Each old case's `main` + stdout-golden becomes one
 // @TestAttribute method preserving every asserted value 1:1 (see the `// <expected>` comments).
 //

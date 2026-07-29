@@ -1,4 +1,4 @@
-// .NET Task await / ConfigureAwait / cross-suspension-exception battery (CorA batch). The facadegen-injected
+// .NET Task await / ConfigureAwait / cross-suspension-exception battery (CorA batch). The reference-KLIB-projected
 // `Task.await()` extension is lowered by bir2cir (SuspendColdLowering.EmitAwaitPoint) into the cold-core awaiter
 // dance; `captureContext = false` selects the ConfiguredTaskAwaitable awaiter. Driven by the shared
 // `dotkt.support.blockOn` harness. Each old `main` + stdout golden becomes one @TestAttribute method (1:1 values).

@@ -24,7 +24,7 @@ sealed partial class ReferenceMetadataIndex
     // `expect` with no non-JVM actual), so value-ness now rides `mods.value` -> this synthetic attribute on the ref/rt DLL.
     const string KotlinValueAttr = "DotKt.Runtime.CompilerServices.KotlinValueAttribute";
     const string RestrictsSuspensionAttr = "kotlin.coroutines.RestrictsSuspension";
-    // [KotlinFunction(flags)] flag word (mirrors ilemit Program.cs pass 4 / facadegen): Infix=1, Operator=2, Suspend=4.
+    // [KotlinFunction(flags)] flag word (mirrors ilemit Program.cs pass 4 / dll2klib): Infix=1, Operator=2, Suspend=4.
     const int KotlinFunctionSuspendFlag = 4;
 
     readonly List<ReferenceAssembly> _assemblies;
@@ -76,8 +76,7 @@ sealed partial class ReferenceMetadataIndex
     // #146: OWNERLESS default-arg index "name|paramCount" -> defaults. DefaultArgSplice now runs at PHASE 1 (before
     // MemberCallSubstitution attributes the owner), so the omitted call is still `owner:null method:col2 sig:[…]`.
     // Built from _kotlinDefaults: a key with a SINGLE owner, or several owners whose defaults AGREE, maps to those
-    // defaults; owners that DISAGREE mark it AMBIGUOUS (the splice loud-refuses rather than guess) — mirrors kotc's
-    // ClrTypeInjection.defaultsForArity.
+    // defaults; owners that DISAGREE mark it AMBIGUOUS (the splice loud-refuses rather than guess).
     readonly Dictionary<string, Dictionary<int, string>> _kotlinDefaultsOwnerless = new(StringComparer.Ordinal);
     readonly HashSet<string> _kotlinDefaultsAmbiguous = new(StringComparer.Ordinal);
     // OWNERFUL keys two same-arity declarations carry with different defaults (see ReferenceAssemblyMetadata).
@@ -89,7 +88,7 @@ sealed partial class ReferenceMetadataIndex
     // GetParameters/GetGenericArguments counts (parity with InlineBirStash's params.Count / typeParams.Count).
     readonly Dictionary<string, List<string>> _inlinePayloads = new(StringComparer.Ordinal);
     // OWNER-LESS callInline index (S3, §4.2 #75 S4b): "name|pc|ga" -> the CANDIDATE payload JSONs across EVERY `kotlin.*`
-    // file-class hosting that shape. kotc cannot name the stdlib file class (facadegen supplies no `kotlin.*` metadata — the
+    // file-class hosting that shape. kotc cannot name the stdlib file class (the stdlib KLIB carries no physical owner —
     // whole stdlib rides the klib), so a scope-fn/@InlineOnly callInline carries owner=null. Since the bare `name|pc|ga`
     // collides across owners (Iterable/Array/IntArray/CharSequence `filter`/`map`/`forEach` etc.), the owner canNOT be picked
     // by the key alone — InlineSplice gathers ALL candidates here and picks the UNIQUE one whose declared params match the
@@ -98,7 +97,7 @@ sealed partial class ReferenceMetadataIndex
     readonly Dictionary<string, List<string>> _ownerlessInlineCandidates = new(StringComparer.Ordinal);
 
     // ---- .NET-interop resolution (A2 / #61): the LONG-LIVED metadata universe over the exact compile references.
-    // NetInteropBinding resolves a facadegen-injected owner FQN
+    // NetInteropBinding resolves a dll2klib-projected owner FQN
     // ("System.Console", "Kfc.App") to a metadata-only System.Reflection.Type here and reflects its member SHAPE
     // (static/instance/property/field/indexer/generic) to bind the plain callStatic/callInstance kotc emitted by
     // identity into the CLR-codegen `clr*` vocabulary. kotc no longer decides the .NET call shape (layer purity —
@@ -273,7 +272,7 @@ sealed partial class ReferenceMetadataIndex
     internal const string CtorKeyName = ".ctor";
 
     // The @KotlinDefault BIR splice map for a call's callee — (argPosition -> default-expression BIR-json). #146:
-    // facadegen-injected calls already carry their exact file-facade `ownerType` in BIR, so use that structural identity
+    // dll2klib-projected calls already carry their exact file-facade `ownerType` in BIR, so use that structural identity
     // first. Truly ownerless Kotlin calls retain the conservative name+arity index; conflicting owners remain ambiguous
     // and are refused. Running this at phase 1 does not imply throwing away an owner kotc has already projected.
     public Dictionary<int, string> KotlinDefaultsFor(string owner, string method, int paramCount, string sigKey = null)
@@ -428,7 +427,7 @@ sealed partial class ReferenceMetadataIndex
         bcl = null; kind = null; return false;
     }
 
-    // Resolve a facadegen-injected .NET owner FQN to its metadata-only reflection Type (A2 / #61), or null when the
+    // Resolve a dll2klib-projected .NET owner FQN to its metadata-only reflection Type (A2 / #61), or null when the
     // owner is `kotlin.*` stdlib vocabulary (bound by MemberCallSubstitution off the ref.dll, NOT here), compiler-owned
     // `dotkt$…` synthetic vocabulary, a local app-emitted type, or absent from the compile-reference set.
     // `genericArity` lets a constructed
@@ -442,7 +441,7 @@ sealed partial class ReferenceMetadataIndex
         // runtime, but are ordinary user FQNs now; skipping them breaks a referenced Kotlin library in that namespace
         // exactly like the former over-broad StartsWith("dotkt") broke `dotktx.*` packages.
         // `kotlinx.*` is intentionally NOT special: it is the ordinary namespace used by separately-built libraries
-        // such as atomicfu and coroutines. Treating that prefix as stdlib vocabulary prevents their facadegen-injected
+        // such as atomicfu and coroutines. Treating that prefix as stdlib vocabulary prevents their projected
         // members from reaching the normal reflection-backed external-assembly binding.
         if (fqn == "kotlin" || fqn.StartsWith("kotlin.", StringComparison.Ordinal)
             || fqn.StartsWith("dotkt$", StringComparison.Ordinal)) return null;
@@ -694,7 +693,7 @@ sealed partial class ReferenceMetadataIndex
         return true;
     }
 
-    // Recover the physical CLR signature hidden behind a KotlinType-restored existential surface. facadegen correctly
+    // Recover the physical CLR signature hidden behind a KotlinType-restored existential surface. dll2klib correctly
     // presents `G<*>` to the frontend, but calls in CIR must use the referenced DLL's actual `G$dotkt_star` slots.
     // Require a unique declaration by staticness/name/generic-arity/parameter-count and require that at least one
     // signature position names a provenance-verified existential owner.
@@ -1313,7 +1312,7 @@ sealed partial class ReferenceMetadataIndex
             catch (ReflectionTypeLoadException ex) { types = ex.Types.Where(t => t != null).Cast<Type>().ToArray(); }
 
             // DotKt ownership is provenance, not a namespace/type-name guess. ilemit stamps the versioned assembly
-            // marker and bir2cir emits a [CompilerGenerated] metadata carrier; require BOTH, matching facadegen's
+            // marker and bir2cir emits a [CompilerGenerated] metadata carrier; require BOTH, matching dll2klib's
             // classifier. A third-party C# assembly may legally define a full-name lookalike and must remain on the
             // ordinary CLR metadata path (including custom awaitables and BCL collection signatures).
             var dotKtAuthored = IsDotKtEmittedAssembly(asm);
@@ -1440,7 +1439,7 @@ sealed partial class ReferenceMetadataIndex
                             method.IsVirtual,
                             dotKtAuthored ? KotlinTypeOf(method.ReturnParameter.GetCustomAttributesData(), method.DeclaringType?.Assembly) : null));
                         // [KotlinInline] raw-BIR carrier (#71/#75 S1): decode the versioned carrier now (the codec is
-                        // BirCarrier, shared) and key it owner|name|pc|ga so InlineSplice can splice this injected inline
+                        // BirCarrier, shared) and key it owner|name|pc|ga so InlineSplice can splice this external inline
                         // fn's body at a cross-module call site. A malformed / pre-S1-shaped payload is swallowed (no
                         // cross-module splice for it -> the splicer's plain-call fallback). ga = generic arity.
                         var inlineCad = method.GetCustomAttributesData().FirstOrDefault(c => c.AttributeType.FullName == KotlinInlineAttr);
@@ -1604,7 +1603,7 @@ sealed partial class ReferenceMetadataIndex
     // Decode a compiler-owned round-trip [KotlinType] carrier.  Full-name equality is insufficient: a foreign
     // assembly may define a lookalike.  The containing assembly has already passed the DotKt marker + generated
     // carrier test; additionally require this embedded attribute type to come from that assembly and itself carry
-    // [CompilerGenerated], matching facadegen's provenance rule.
+    // [CompilerGenerated], matching dll2klib's provenance rule.
     static TypeNode KotlinTypeOf(IList<CustomAttributeData> attrs, Assembly declaringAssembly)
     {
         if (declaringAssembly == null) return null;

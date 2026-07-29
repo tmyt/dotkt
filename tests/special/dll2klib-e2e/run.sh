@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end regression test for projecting a CLR reference assembly directly to a
-# standard Kotlin 2.4.0 KLIB, with no facadegen JSON and no kotc declaration
+# standard Kotlin 2.4.0 KLIB, with no dll2klib JSON and no kotc declaration
 # generation extension: CLR ref.dll -> .klib -> kotc -> BIR -> bir2cir -> ilemit.
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 SCRIPT_NAME=dll2klib-e2e
@@ -95,9 +95,8 @@ for entry in default/manifest default/linkdata/module default/linkdata/root_pack
 	unzip -Z1 "$PROBE_KLIB" | grep -qx "$entry" || die "generated KLIB is missing $entry"
 done
 
-# The only classpath metadata for Probe.Widget is the packed KLIB. In particular,
-# CLR_TYPES_METADATA is absent, so the old FIR injector cannot participate.
-env -u CLR_TYPES_METADATA "$KOTC" "$ROOT/tests/special/dll2klib-e2e/consumer.kt" \
+# The only classpath metadata for Probe.Widget is the packed KLIB.
+"$KOTC" "$ROOT/tests/special/dll2klib-e2e/consumer.kt" \
 	-no-stdlib \
 	-classpath "$FE_KLIB$KLIB_CP_SEP$PROBE_KLIB$KLIB_CP_SEP$CONTRACTS_KLIB" -d "$OUT/bir"
 

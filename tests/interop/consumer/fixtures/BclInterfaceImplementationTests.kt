@@ -1,22 +1,19 @@
-// CLR-interop interface-implementation battery (batch IntropC) — migrates the facadegen `import System.*` cases where a
-// Kotlin class IMPLEMENTS a .NET interface (not merely extends a base class). Each old case's `main` + stdout-golden
-// becomes one @TestAttribute method asserting the value directly (every `il_check_imports` value preserved 1:1, see the
-// `// <expected>` comments). The Interop consumer project runs the facadegen scan-imports pipeline, so `import
-// System.Collections.Generic.IComparer` etc. inject the CLR interface at compile.
+// CLR-interop interface-implementation battery (batch IntropC): a Kotlin class implements a .NET interface
+// projected through a reference KLIB, rather than merely extending a base class.
 //
 // Coverage preserved (old case -> method):
 //   il-clrifaceimpl   -> clrifaceimpl_referenceTypeIfaceImpl        a class implements System.Collections.Generic.IComparer<String>
 //                                                                   (reference-type arg); bir2cir.DeclarationRename re-stamps the
-//                                                                   override off the injected member + fills the slot, so direct /
+//                                                                   override off the projected member + fills the slot, so direct /
 //                                                                   interface-upcast / BCL-consumer (List<T>.Sort) all dispatch in.
 //   il-clrifaceimplvt -> clrifaceimplvt_valueTypeIfaceSlotBridge    #128 the VALUE-TYPE sibling — IComparer<Int>/IEquatable<Int>.
-//                                                                   The injected `T?` override lowers to Nullable<int32> params but
+//                                                                   The projected `T?` override lowers to Nullable<int32> params but
 //                                                                   the constructed slot wants BARE int32; bir2cir's
 //                                                                   ValueTypeIfaceSlotBridge synthesizes a bare-signature bridge
 //                                                                   forwarding to the Nullable method (else TypeLoadException).
 //   il-icmparity      -> icmparity_arityClashInterfaceFamily        #129 an arity-clash .NET interface FAMILY
 //                                                                   (System.IComparable + System.IComparable`1). Kotlin cannot
-//                                                                   arity-overload a classifier, so facadegen names the generic
+//                                                                   arity-overload a classifier, so dll2klib names the generic
 //                                                                   member `IComparable1<T>`; implementing it uses the VERBATIM
 //                                                                   .NET member `CompareTo(other: Ver?)`, not the Kotlin operator.
 //
@@ -31,8 +28,8 @@ import System.IComparable1
 import System.Collections.Generic.IComparer
 import System.Collections.Generic.List
 
-// il-clrifaceimpl: implement System.Collections.Generic.IComparer<T> (a facadegen-injected .NET generic interface). The
-// injected Compare surfaces its unconstrained T params as nullable (`String?`), so the override matches that signature.
+// il-clrifaceimpl: implement System.Collections.Generic.IComparer<T> (a reference-KLIB-projected .NET generic interface). The
+// projected Compare surfaces its unconstrained T params as nullable (`String?`), so the override matches that signature.
 class IntropCLenCmp : IComparer<String> {
     override fun Compare(x: String?, y: String?): Int = (x ?: "").length - (y ?: "").length
 }
@@ -47,7 +44,7 @@ class IntropCBox(val v: Int) : IEquatable<Int> {
     override fun Equals(other: Int?): Boolean = v == (other ?: 0)
 }
 
-// il-icmparity: implement the GENERIC arm of the arity-clash family. facadegen renamed `System.IComparable`1` to
+// il-icmparity: implement the GENERIC arm of the arity-clash family. dll2klib renamed `System.IComparable`1` to
 // `IComparable1`; the override uses the verbatim .NET member `CompareTo(other: Ver?)`.
 class IntropCVer(val n: Int) : IComparable1<IntropCVer> {
     override fun CompareTo(other: IntropCVer?): Int = n - (other?.n ?: 0)
@@ -60,7 +57,7 @@ class BclInterfaceImplementationTests {
     fun referenceTypeIfaceImpl() {
         val c = IntropCLenCmp()
         assertEquals(1, c.Compare("ab", "z"))            // 1   direct call on the implementing class
-        val i: IComparer<String> = IntropCLenCmp()       // upcast to the injected .NET interface type
+        val i: IComparer<String> = IntropCLenCmp()       // upcast to the projected .NET interface type
         assertEquals(-3, i.Compare("z", "abcd"))         // -3  dispatched through the interface slot
 
         // The BCL itself dispatches into our override: List<T>.Sort(IComparer<T>).
@@ -76,7 +73,7 @@ class BclInterfaceImplementationTests {
     fun valueTypeIfaceSlotBridge() {
         val c = IntropCIntCmp()
         assertEquals(2, c.Compare(3, 1))                 // 2    direct call on the implementing class
-        val i: IComparer<Int> = IntropCIntCmp()          // upcast to the injected .NET interface type
+        val i: IComparer<Int> = IntropCIntCmp()          // upcast to the projected .NET interface type
         assertEquals(-2, i.Compare(1, 3))                // -2   dispatched through the value-type interface slot
 
         val b = IntropCBox(5)

@@ -173,7 +173,7 @@ static class InlineSplice
     static void Rewrite(JsonObject o, int depth)
     {
         // Every `callInline` kotc emits under splice-all carries `pc`/`ga`/`paramSig` (+ an `owner` that is a file-class
-        // string for a facadegen-injected user fn OR JSON-null for a stdlib scope-fn/@InlineOnly fn whose owner bir2cir
+        // string for a reference-KLIB-projected user fn OR JSON-null for a stdlib scope-fn/@InlineOnly fn whose owner bir2cir
         // resolves). `kotlin.repeat` now splices through this same path (kotc no longer emits the specialized loop node).
         if (Str(o["k"]) == "callInline" && o.ContainsKey("pc")) RewriteGeneric(o, depth);
     }
@@ -195,7 +195,7 @@ static class InlineSplice
         if (depth > 32) { FailLoud(o, owner, name, pc, ga, "inline splice depth > 32 (recursive-inline data corruption)"); return; }
 
         // RESOLVE (§4.2, #75 S4b): pick the UNIQUE inline overload whose declared params match the call's `paramSig`.
-        //  - OWNER-FUL (a facadegen-injected user fn, or a same-module kotc inlineSpliceCallSameModule): candidates come from
+        //  - OWNER-FUL (a reference-KLIB-projected user fn, or a same-module kotc inlineSpliceCallSameModule): candidates come from
         //    the same-module stash first, else the ref.dll [KotlinInline] under that owner (ResolveInlinePayload).
         //  - OWNER-LESS (a `kotlin.*` stdlib scope-fn/@InlineOnly fn — kotc can't name the klib file class): the bare
         //    name|pc|ga collides across owners (Iterable/Array/IntArray `filter`/`map`/…), so gather candidates across EVERY
@@ -740,7 +740,7 @@ static class InlineSplice
                         cargs[i] = lam.DeepClone();
             }
             // F3 (#62): a lambda param forwarded BY NAME into a nested inline call kotc emitted as a PLAIN call — an
-            // owner-less kotlin.* `callStatic` (map->mapTo), an owner-FUL `callStatic` (a facadegen-injected / user
+            // owner-less kotlin.* `callStatic` (map->mapTo), an owner-FUL `callStatic` (a reference-KLIB-projected / user
             // top-level inline fn), or a `callInstance` (a member inline fn — carries `recv` as the dispatch receiver).
             // Convert it into a `callInline` so STEP 8's fixpoint splices it; an unresolvable target is LEFT as-is
             // (D3-remainder / §4.4ii materialize handles a non-inline forward — never a silent drop).

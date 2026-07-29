@@ -1,5 +1,5 @@
 // .NET Task ⇒ Kotlin suspend REVERSE-bridge battery — migrates the `kotlin.clr.await` cases onto the in-process
-// NUnit suite. The facadegen-injected `Task.await()` extension (a suspendCall marker) is lowered by bir2cir
+// NUnit suite. The reference-KLIB-projected `Task.await()` extension (a suspendCall marker) is lowered by bir2cir
 // (SuspendColdLowering.EmitAwaitPoint) into the cold-core awaiter dance (GetAwaiter/IsCompleted/GetResult, else
 // OnCompleted+return COROUTINE_SUSPENDED). Driven by the shared `dotkt.support.blockOn` harness. Each old case's
 // `main` + stdout-golden becomes one @TestAttribute method preserving every asserted value 1:1 (see the

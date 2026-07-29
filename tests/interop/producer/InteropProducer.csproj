@@ -1,12 +1,10 @@
-<!-- C#-producer roundtrip PRODUCER: a PLAIN C# class library (Microsoft.NET.Sdk, net10.0) compiling the injected
-     .NET runtime source of each migrated CLR-interop `cases/il-*` case (the former per-case runtime.cs). It is
-     consumed AS A FAÇADE-FREE .NET LIBRARY by ../consumer through a <ProjectReference>: MSBuild builds this csproj
+<!-- C#-producer roundtrip PRODUCER: a plain C# class library consumed by ../consumer through a
+     <ProjectReference>. MSBuild builds this csproj
      first, its implementation dll lands on the consumer's @(ReferencePath)+@(ReferenceCopyLocalPaths), and the
-     DotKt pipeline's facadegen (`import <Ns>.<Type>` scan) / bir2cir / ilemit all resolve against it — mechanically
-     identical to the former per-case compiler runner's il_check_inject building runtime.cs to a dll and passing it as both a
-     compile-ref and a runtime reference (docs/design-nunit-test-harness.md).
+     DotKt pipeline projects its declarations to a reference KLIB while bir2cir and ilemit use the resolved CLR
+     references.
 
-     Each .cs here is one migrated case's runtime, given its OWN namespace so the many colliding simple names
+     Each .cs here has its OWN namespace so the many colliding simple names
      (Item/Bag/Sink from clrasm/clriface/geninj) coexist in this single producer assembly — the same per-package
      split the DotKt roundtrip producer uses. This is a plain csc-emitted assembly (no DotKt.Metadata / no retarget);
      the round-trip is "consume a separately-compiled .NET dll AS façade-free Kotlin", the very cross-module shape

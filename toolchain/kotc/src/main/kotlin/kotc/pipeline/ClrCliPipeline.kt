@@ -3,7 +3,6 @@
 package kotc.pipeline
 
 import kotc.backend.ClrBackendPhase
-import kotc.frontend.ClrCompilerPluginRegistrar
 import org.jetbrains.kotlin.backend.common.phaser.then
 import org.jetbrains.kotlin.builtins.DefaultBuiltIns
 import org.jetbrains.kotlin.cli.common.CLIConfigurationKeys
@@ -24,7 +23,6 @@ import org.jetbrains.kotlin.cli.pipeline.PipelineContext
 import org.jetbrains.kotlin.cli.pipeline.PipelinePhase
 import org.jetbrains.kotlin.cli.pipeline.PerformanceNotifications
 import org.jetbrains.kotlin.cli.pipeline.metadata.MetadataFrontendPipelineArtifact
-import org.jetbrains.kotlin.compiler.plugin.CompilerPluginRegistrar
 import org.jetbrains.kotlin.config.CommonConfigurationKeys
 import org.jetbrains.kotlin.config.CompilerConfiguration
 import org.jetbrains.kotlin.config.LanguageFeature
@@ -43,22 +41,6 @@ import org.jetbrains.kotlin.metadata.deserialization.MetadataVersion
 import org.jetbrains.kotlin.metadata.jvm.deserialization.JvmProtoBufUtil
 import org.jetbrains.kotlin.util.PerformanceManager
 import java.io.File
-
-/**
- * Registers our CLR FIR extensions into the common frontend by adding a compiler-plugin
- * registrar to the configuration, after it is built and before the frontend creates the session.
- * The frontend picks up
- * `COMPILER_PLUGIN_REGISTRARS` when it sets up the project, and our registrar installs the FIR
- * type-injection extension (façade-free `import System.*`).
- */
-object ClrPluginRegistrationPhase : PipelinePhase<ConfigurationPipelineArtifact, ConfigurationPipelineArtifact>(
-	name = "ClrPluginRegistration",
-) {
-	override fun executePhase(input: ConfigurationPipelineArtifact): ConfigurationPipelineArtifact {
-		input.configuration.add(CompilerPluginRegistrar.COMPILER_PLUGIN_REGISTRARS, ClrCompilerPluginRegistrar())
-		return input
-	}
-}
 
 object ClrMetadataConfigurationPipelinePhase : AbstractConfigurationPhase<K2MetadataCompilerArguments>(
 	name = "ClrMetadataConfigurationPipelinePhase",
@@ -148,7 +130,7 @@ object ClrCommonFir2IrPipelinePhase : PipelinePhase<MetadataFrontendPipelineArti
 			typeSystemContextProvider = ::IrTypeSystemContextImpl,
 			// Install the special-annotations provider so Fir2Ir attaches the `@kotlin.internal.ir.FlexibleNullability`
 			// marker onto a platform/flexible IR type `T!` (`(T..T?)`). Without it the flexible upper bound collapses to
-			// a plain `T?` indistinguishable from a genuine user `Int?`, so a facadegen-injected `[MaybeNull]` value-type
+			// a plain `T?` indistinguishable from a genuine user `Int?`, so a dll2klib-projected `[MaybeNull]` value-type
 			// getter (`ThreadLocal<Int>.Value`) would serialize as `nullable(kotlin.Int)` → bir2cir `Nullable<Int32>`
 			// instead of the correct bare `int32` (#8). BirEmitterTypes reads the marker to emit `{t:oblivious}`.
 			specialAnnotationsProvider = org.jetbrains.kotlin.backend.jvm.JvmIrSpecialAnnotationSymbolProvider,
@@ -193,7 +175,6 @@ class ClrCliPipeline(
 					ClrBackendPhase
 			else ->
 				ClrMetadataConfigurationPipelinePhase then
-					ClrPluginRegistrationPhase then
 					ClrAppFrontendPipelinePhase then
 					ClrCommonFir2IrPipelinePhase then
 					ClrBackendPhase

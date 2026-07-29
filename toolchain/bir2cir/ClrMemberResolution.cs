@@ -371,8 +371,8 @@ static partial class ClrMemberResolution
     }
 
     // Applicability of a DECLARED arg TypeNode `a` (from kotc's FIR-resolved `sig`) to a candidate OPEN-def param `p`.
-    // `p` is ALIAS-RESOLVED first (a ref.dll member param typed as a @ClrTypeAlias — `kotlin.clr.TaskCompletionSource<T>`
-    // — is compared/emitted as its BCL twin `System.Threading.Tasks.TaskCompletionSource<T>`, matching the lowered arg).
+    // `p` is ALIAS-RESOLVED first (a ref.dll member param typed through a stdlib @ClrTypeAlias is compared/emitted as
+    // its BCL twin, matching the lowered arg).
     //   CONCRETE param -> the C#-binder LEAF rule: resolve the arg to an MLC Type, exact-identity or IsAssignableFrom
     //     (so `sbyte[]` binds `Sort(System.Array)`); an UNRESOLVABLE arg (a local/synthetic ref such as
     //     `dotkt$CharSequence`, or a function-type) binds only `object` (+ an arity-matching delegate param for a function
@@ -380,7 +380,7 @@ static partial class ClrMemberResolution
     //   OPEN param (a type-var, or a constructed generic mentioning one) -> STRUCTURAL match under positional-tv
     //     equality: a class-var param at position i is satisfied by the DECLARED `tv(type,i)` (a method call carries the
     //     callee-owner's own class var) OR by the arg matching `ownerArgs[i]` (a ctor carries the SUBSTITUTED concrete
-    //     arg — `RootContinuation<Int>(TaskCompletionSource<Int>)`); a method tv by `tv(method,i)`; a constructed generic
+    //     arg — `Box<Int>(value: Int)`); a method tv by `tv(method,i)`; a constructed generic
     //     recurses, with a shallow def-derivation assignability (IReadOnlyCollection<E> -> IEnumerable<E>).
     static MatchKind Applies(TypeNode a, Type p, TypeNode[] ownerArgs)
     {
@@ -481,9 +481,8 @@ static partial class ClrMemberResolution
         return MatchKind.No;
     }
 
-    // Resolve a ref.dll-reflected type through the @ClrTypeAlias index to its BCL-MLC twin (a member param/return typed
-    // `kotlin.clr.TaskCompletionSource<T>` -> `System.Threading.Tasks.TaskCompletionSource<T>`), recursively over generic
-    // args / element types; a generic PARAMETER and a non-aliased type are returned unchanged.
+    // Resolve a ref.dll-reflected type through the @ClrTypeAlias index to its BCL-MLC twin, recursively over generic
+    // args / element types; a generic parameter and a non-aliased type are returned unchanged.
     static Type AliasResolve(Type t)
     {
         if (t == null || t.IsGenericParameter) return t;
@@ -612,7 +611,7 @@ static partial class ClrMemberResolution
     // A function-type arg binds an `object` param OR a delegate param (BCL Func/Action or a stdlib delegate, possibly
     // OPEN — `Func<T>`). Match arity + void-ness, and each param/return STRUCTURALLY — but ONLY reject on a genuine
     // mismatch of RESOLVABLE types (`(Int)->Unit` must NOT bind `Action<string>`). An UNRESOLVABLE lambda side (a local/
-    // kotlin.* type — `(MatchResult)->CharSequence` binding a facadegen `MatchEvaluator(System.Text..Match)`) is a
+    // kotlin.* type — `(MatchResult)->CharSequence` binding a dll2klib `MatchEvaluator(System.Text..Match)`) is a
     // WILDCARD (the delegate mapping bridges the Kotlin↔BCL types). A lambda->delegate is a CONVERSION -> Assignable.
     static MatchKind MatchFnToDelegate(TypeNode.Fn fn, Type p, TypeNode[] ownerArgs)
     {
@@ -633,7 +632,7 @@ static partial class ClrMemberResolution
     }
 
     // A RESOLVABLE lambda side that structurally fails against the delegate's Invoke type — a genuine element mismatch.
-    // An unresolvable side (MapMlc null) is a wildcard (No verdict), so the facadegen Kotlin↔BCL delegate bridge passes.
+    // An unresolvable side (MapMlc null) is a wildcard (No verdict), so the dll2klib Kotlin↔BCL delegate bridge passes.
     static bool Incompatible(TypeNode side, Type invokeType, TypeNode[] ownerArgs) =>
         MapMlc(side) != null && Applies(side, invokeType, ownerArgs) == MatchKind.No;
     static bool IsDelegateType(Type t)

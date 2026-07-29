@@ -1,5 +1,5 @@
 // Producer source for the migrated il-csext case (#137, Avalonia report B). Genuine C#-origin `[Extension]` statics
-// that facadegen must surface as Kotlin extension functions so a Kotlin/clr app can call them façade-free via
+// that dll2klib must surface as Kotlin extension functions so a Kotlin/clr app can call them façade-free via
 // `import Csext.*` (the `using Csext;` analog). Own namespace.
 namespace Csext
 {

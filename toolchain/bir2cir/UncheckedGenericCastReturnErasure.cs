@@ -132,7 +132,7 @@ static class UncheckedGenericCastReturnErasure
         if (root is not JsonObject obj) return;
 
         // Mutate each declaration exactly once.  The fact is the PRE-lowering Kotlin TypeNode; RoundtripMetadata
-        // consumes it after type lowering and facadegen restores the source signature for downstream Kotlin.
+        // consumes it after type lowering and dll2klib restores the source signature for downstream Kotlin.
         foreach (var decl in index.TopLevel.Concat(index.ByOwner.Values.SelectMany(x => x)))
         {
             if (TypeJson.Read(decl.Method["ret"]) is not TypeNode.Tv) continue;
@@ -147,7 +147,7 @@ static class UncheckedGenericCastReturnErasure
                 if (type != null) ApplyCallsOnly(type, index);
     }
 
-    // Consumer-side half of the object-return ABI.  facadegen has already restored the Kotlin expression type into
+    // Consumer-side half of the object-return ABI.  dll2klib has already restored the Kotlin expression type into
     // BIR's `sty`, while the reference index sees the producer's physical Object return and trusted [KotlinType]
     // declaration carrier.  Turn that exact pair into CIR's explicit `ret`: BirTypeLowering then lowers the concrete
     // Kotlin type and ilemit mechanically emits the required unbox/cast at the call boundary.

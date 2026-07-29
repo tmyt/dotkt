@@ -1,7 +1,6 @@
-// Migrated verify-roundtrip.sh section `roundtrip-operator-flag` (#146) — the library half.
 // A NON-Comparable class carrying an explicit `operator fun compareTo` (a standalone comparable-by-value
 // type, NOT `: Comparable<T>`): kotc keeps the LOWERCASE `compareTo` name and stamps the REAL operator flag,
-// so `<`/`>` resolve on the re-imported facade purely from the [KotlinFunction] flag (no name-hack). Plus an
+// so `<`/`>` resolve across the reference KLIB purely from the [KotlinFunction] flag. Plus an
 // infix restored the same way.
 package roundtrip.money
 

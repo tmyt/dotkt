@@ -16,7 +16,7 @@ static class NullableGenericErasure
         // #18/#147 ROUND-TRIP RECORD (runs BEFORE the erasure below): capture each declaration slot whose constructed
         // generic / array / byref / function type carries a NESTED `Nullable(Tv)` (`Holder<T?>` / `(T?)->R`, including
         // method and constructor params, returns, fields, and properties). The erasure turns that slot into `object`, which
-        // facadegen cannot infer back. Keep the pre-erasure TypeNode opaque until RoundtripMetadata stamps
+        // dll2klib cannot infer back. Keep the pre-erasure TypeNode opaque until RoundtripMetadata stamps
         // [KotlinNullableGeneric] on that exact CLR declaration slot.
         RecordNullableGenericSlots(o);
         ApplyRec(o);
@@ -82,7 +82,7 @@ static class NullableGenericErasure
     }
 
     // True iff `t` carries a `Nullable(Tv)` reachable through a CLR-representable declaration shape. A non-suspend `Fn`
-    // is a real delegate in CIR, so facadegen can walk its Invoke signature in parallel with the recorded Kotlin fn node.
+    // is a real delegate in CIR, so dll2klib can walk its Invoke signature in parallel with the recorded Kotlin fn node.
     // A suspend fn is excluded: BirTypeLowering erases the whole value to object and its distinct suspend-fn carrier owns
     // restoration, so there is no physical delegate shape for this carrier to align with.
     static bool HasRestorableNullableTv(TypeNode t) => t switch
@@ -465,7 +465,7 @@ static class NullableGenericErasure
                     // A declaration PARAM's TOP-LEVEL `T?` (`{t:nullable,of:{t:tv}}`) is NOT erased to `object` here (#37/#48
                     // round-trip): kept as `Nullable(Tv)`, DeclNullableFlags stamps its NRT byte [2] and BirTypeLowering
                     // strips it to the bare generic-param `T` + a `NullableAttribute(2)`. This preserves the type-param
-                    // IDENTITY in the emitted signature so facadegen reconstructs `x: T?` (not the T-less `Any?` that made
+                    // IDENTITY in the emitted signature so dll2klib reconstructs `x: T?` (not the T-less `Any?` that made
                     // `T` uninferable — roundtrip-generic `orDefault<T>(x: T?, …)`). Mirrors the pre-#48 bare-`gp:T`+flag
                     // param (the JVM-idiom object-erasure applied to inline `nullable:gp:` returns/locals, not to params).
                     // NESTED nullable-tv in a param (`Iterable<T?>`) still erases via EraseNullableTv (the Fqn recursion).

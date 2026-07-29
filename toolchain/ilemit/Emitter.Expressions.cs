@@ -10,7 +10,7 @@ using System.Text.Json;
 sealed partial class Emitter
 {
     // Null-tolerant read of the `virtual` flag on a callInstance / newBoundDelegate node. Defaults to FALSE (a plain
-    // `call`) when the key is absent: a facadegen-reinjected .NET-interop callInstance (e.g. a DotKt library consumed
+    // `call`) when the key is absent: a reference-KLIB .NET-interop callInstance (e.g. a DotKt library consumed
     // AS KOTLIN) is emitted by kotc's clrType path WITHOUT `virtual` when bir2cir leaves it un-reshaped, so an
     // unconditional GetProperty("virtual") would throw KeyNotFoundException (#139). A missing flag => non-virtual.
     static bool IsVirtual(JsonElement e) => e.TryGetProperty("virtual", out var v) && v.GetBoolean();
@@ -27,7 +27,7 @@ sealed partial class Emitter
     {
         var (open, _) = ParseOwner(ownerType);
         if (!_types.TryGetValue(open, out var ti) || ti.Def.ValueKind != JsonValueKind.Object || !ti.Def.TryGetProperty("interfaces", out var ifs)) return false;
-        // A CLR/BCL interface is a facadegen-injected .NET type: NOT emitted in THIS assembly AND not a Kotlin `kotlin.*`
+        // A CLR/BCL interface is a reference-KLIB-projected .NET type: NOT emitted in THIS assembly AND not a Kotlin `kotlin.*`
         // interface — the structured successor of the retired `clr:`/`clrg:` interface-token check (#48), kept narrow so
         // a referenced *Kotlin* interface does not spuriously widen the dynamic-dispatch fallback.
         foreach (var i in ifs.EnumerateArray())
@@ -181,7 +181,7 @@ sealed partial class Emitter
                     // the enclosing method's type var) is a TypeBuilderInstantiation: its `.GetConstructor(s)` throw
                     // "does not support resolving members". Resolve the ctor on the OPEN definition (by declared-arg
                     // signature, else arity) and re-anchor onto the instantiation via the static TypeBuilder.GetConstructor
-                    // — the exact mirror of EmitClrNew's IsTbInstantiation branch (which only fires for facadegen `clrNew`
+                    // — the exact mirror of EmitClrNew's IsTbInstantiation branch (which only fires for dll2klib `clrNew`
                     // System.* types; a stdlib `kotlin.*` generic arrives here as a plain `new`).
                     if (IsTbInstantiation(ext))
                     {

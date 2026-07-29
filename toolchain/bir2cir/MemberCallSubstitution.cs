@@ -304,12 +304,12 @@ static class MemberCallSubstitution
         var viaAlias = refs.TryResolveClrOwner(ownerFqn.Name, out var bcl, out var kind);
         if (!viaAlias)
         {
-            // FACADEGEN-INJECTED .NET owner (A2 tail / #73 M4 newClr): kotc emits a plain `new` by the .NET-FQN
+            // REFERENCE-KLIB-PROJECTED .NET owner (A2 tail / #73 M4 newClr): kotc emits a plain `new` by the .NET-FQN
             // identity (it no longer decides the ctor SHAPE); the newClr decision moves HERE, resolved off the loaded
-            // refs — the exact axis NetInteropBinding uses for an injected .NET CALL. Keep the .NET-FQN name verbatim
-            // (an arity-qualified `Task`1`/nested `Outer+Inner` injected name diverges from its Kotlin ClassId name, so
+            // refs — the exact axis NetInteropBinding uses for an external .NET CALL. Keep the .NET-FQN name verbatim
+            // (an arity-qualified `Task`1`/nested `Outer+Inner` projected name diverges from its Kotlin ClassId name, so
             // it must ride through unchanged — do NOT re-derive it from a Kotlin type token). No struct/enum skip: a
-            // .NET struct ctor is a valid `newobj`, and kotc emitted newClr for an injected struct too (parity). Also
+            // .NET struct ctor is a valid `newobj`, and kotc emitted newClr for a projected struct too. Also
             // catches a REFERENCED Kotlin library class (`new mylib.W(..)`, ktproj-pr) whose dll is on the refs — the
             // same axis #61 established for its CALLs; ilemit's EmitClrNew resolves it identically.
             if (refs.ResolveNetType(ReferenceMetadataIndex.BareOwnerFqn(ownerFqn.Name), ownerFqn.Args?.Length ?? 0) == null) return null;
@@ -352,7 +352,7 @@ static class MemberCallSubstitution
         var newClrArgs = (JsonArray)args.DeepClone();
         // M10 coercion applies ONLY to an @ClrTypeAlias owner (the alias route). A BCL type can never declare a
         // `kotlin.CharSequence`/`dotkt$CharSequence` ctor param, and a REFERENCED KOTLIN library class reached through
-        // the injected-owner fallback (`new mylib.W(cs: CharSequence)`) DOES — coercing there would corrupt its real
+        // the external-owner fallback (`new mylib.W(cs: CharSequence)`) DOES — coercing there would corrupt its real
         // `dotkt$CharSequence` param (its compiled ctor takes the adapter, not String). The M10 target
         // `kotlin.text.StringBuilder` is a @ClrTypeAlias, so it always resolves via the alias route.
         if (viaAlias) CoerceCharSequenceCtorArgs(newClrArgs, newClrArgTypes);
@@ -582,7 +582,7 @@ static class MemberCallSubstitution
             //                       sig type is the receiver type; the rest are the method args.
             var fn = (node["method"] as JsonValue)?.GetValue<string>();
             if (instance || string.IsNullOrEmpty(fn)) return null;
-            // A facadegen-injected STATIC property on a referenced DotKt type carries its declaring type in
+            // A reference-KLIB-projected STATIC property on a referenced DotKt type carries its declaring type in
             // `ownerType`, while callStatic's `owner` remains null. Bind a real CLR property/public field immediately,
             // before the owner-null top-level-property convention below rewrites its bare name to `get_`/`set_`.
             // The declaring type is resolved from the reference metadata universe, so this is independent of package
@@ -697,8 +697,8 @@ static class MemberCallSubstitution
                 // receiver-key is EMPTY — and TryResolveTopLevelStatic then can NOT disambiguate the owner whenever the
                 // bare fun name lives under more than one file-class in the ref index (two referenced libs, or a
                 // common-fragment `*CommonKt` file class stamped asymmetrically from its actual sibling — the reporter's
-                // atomicfu `atomicArrayOfNulls`). But kotc ALREADY carried the facadegen-injected file class in
-                // `ownerType`: every top-level path that emits `shapeTypes` (plainInjectedTopLevelCall + its
+                // atomicfu `atomicArrayOfNulls`). But kotc ALREADY carried the reference-KLIB-projected file class in
+                // `ownerType`: every top-level path that emits `shapeTypes` (plainExternalTopLevelCall + its
                 // lift-forwarder mirrors) stamps a non-empty referenced `ownerType` alongside it, so it is always
                 // present here — adopt it as the owner and promote `shapeTypes`->`sig`, so ilemit resolves the
                 // overload by sig then MakeGenericMethod instead of dropping to the name-only pick that reported
@@ -712,10 +712,10 @@ static class MemberCallSubstitution
                     return node;
                 }
 
-                // The non-generic counterpart of the residual path above. facadegen-injected static callables carry
+                // The non-generic counterpart of the residual path above. reference-KLIB-projected static callables carry
                 // their declaring type in `ownerType` and their exact parameter list in `argTypes`; kotc preserves
                 // both but emits the neutral callStatic owner slot as null. Once the top-level indexes have had first
-                // refusal, that injected declaring type is authoritative: move it onto callStatic's CLR owner axis.
+                // refusal, that projected declaring type is authoritative: move it onto callStatic's CLR owner axis.
                 // Some frontend paths already materialize `sig` while others leave only `argTypes`; both represent the
                 // same resolved declaration and must converge to the same CIR. The rule is structural and applies to
                 // every referenced non-generic static callable, without knowing a library, type, or member name.

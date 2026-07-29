@@ -1,4 +1,4 @@
-// C#-producer roundtrip consumer battery — consumes the producer's public .NET API FAÇADE-FREE (facadegen
+// C#-producer roundtrip consumer battery — consumes the producer's public .NET API FAÇADE-FREE (dll2klib
 // re-imported the plain C# dll's types from `import <Ns>.<Type>`) and asserts each migrated CLR-interop case's
 // golden values 1:1. NONE of the producer's source is in this compilation — every symbol resolves from the built
 // InteropProducer.dll (the DLL-not-source invariant; the producer is C# in a SIBLING dir, so `**/*.kt` can't
@@ -9,7 +9,7 @@
 //   clrasm   <- il-clrasm    List<Item> assignable to every generic interface (IEnumerable/ICollection/IList)
 //   clriface <- il-clriface  a property typed as a generic INTERFACE (IList<Item>); .Add via inherited ICollection<T>
 //   clrimpl  <- il-clrimpl   a C# class implementing a C# interface is assignable to the interface-typed param
-//   geninj   <- il-geninj    a constructed-generic member (List<Item>) resolves to injected open List<T> over Item
+//   geninj   <- il-geninj    a constructed-generic member (List<Item>) resolves to projected open List<T> over Item
 //   genim    <- il-genim     a generic method declared ON an interface; the impl class assignable to the interface
 //   inherit  <- il-inherit   subclass a C# base + override its PROTECTED VIRTUAL; subtype assignability
 import NUnit.Framework.TestAttribute
@@ -46,11 +46,11 @@ import Inherit.Button
 import Inherit.Host
 // ktproj-extlib (forward C#-library interop): Ext.Widget from an oblivious C# assembly. Its simple name DELIBERATELY
 // collides with Inherit.Widget (same producer, different namespace) — the #199-② regression. Aliased here because
-// Inherit.Widget is also used unqualified below; facadegen's namespace-qualified references keep the two distinct so
-// a subclass of Inherit.Widget no longer binds to Ext.Widget (whose missing no-arg ctor crashed the ctor injector).
+// Inherit.Widget is also used unqualified below; dll2klib's namespace-qualified references keep the two distinct so
+// a subclass of Inherit.Widget must not bind to the same-named Ext.Widget.
 import Ext.Widget as ExtWidget
 
-// il-inherit top-level helper: subclass an injected .NET class and override its PROTECTED VIRTUAL (the WinUI
+// il-inherit top-level helper: subclass a projected .NET class and override its PROTECTED VIRTUAL (the WinUI
 // App.OnLaunched pattern). Unique name so it can't collide with another battery's top-level decl.
 class InheritMyApp : Base() {
     override fun Tag(): String = "derived"
@@ -129,8 +129,8 @@ class CSharpInterfaceAndGenericTests {
     }
 
     // #205: a generic interface (IReader<Doc>) deriving a member-bearing non-generic base interface (IPingable).
-    // Ping is inherited from the NON-generic base; IReader<Doc> is assignable to IPingable — both require facadegen
-    // to emit the non-generic super edge on the injected generic interface (InterfaceSuperTypes).
+    // Ping is inherited from the NON-generic base; IReader<Doc> is assignable to IPingable — both require dll2klib
+    // to emit the non-generic super edge on the projected generic interface (InterfaceSuperTypes).
     @TestAttribute
     fun ifacebasegen() {
         val r = IfaceBaseSource().Reader
@@ -149,12 +149,12 @@ class CSharpInheritanceTests {
         val host = Host()
         assertEquals("show:button", host.Show(Button()))   // show:button — Button assignable to the Widget param
         val w: Widget = Button()                           // upcast holds at the type level
-        assertEquals("button", w.Name())                   // button — virtual dispatch through the injected hierarchy
+        assertEquals("button", w.Name())                   // button — virtual dispatch through the projected hierarchy
     }
 
     // ktproj-extlib: forward interop with a plain C# type from an oblivious (NON-NRT) referenced assembly, consumed
     // façade-free — a .NET method, a reference-type property surfaced as the PLATFORM type String! (usable without
-    // null ceremony), a nullable VALUE-type property (bool? == Nullable<bool>, facadegen maps Nullable<X> -> X?), and
+    // null ceremony), a nullable VALUE-type property (bool? == Nullable<bool>, dll2klib maps Nullable<X> -> X?), and
     // a real .NET `event` subscribed with a Kotlin lambda via a closeable ClrEvent<T> subscription. Golden (was printed
     // stdout: "Add(2,3) = 5 / name: gadget (len 6) / enabled: True / changed: 5 / changed: 9").
 }

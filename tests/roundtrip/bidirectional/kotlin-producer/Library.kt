@@ -15,7 +15,7 @@ class BidirectionalNullableCtor(val label: String?) {
     fun takeNullable(other: String?): Int = other?.length ?: -1
 
     // A CLR nested type's ctor param must be annotated too (a Kotlin consumer cannot name a nested DotKt class —
-    // facadegen does not surface one — so this axis is only assertable from C#).
+    // dll2klib does not surface one — so this axis is only assertable from C#).
     class Nested(val tag: String?) {
         fun tagLength(): Int = tag?.length ?: -1
     }

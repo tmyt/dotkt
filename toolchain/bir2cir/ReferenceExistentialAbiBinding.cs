@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// facadegen restores a compiler-generated existential's Kotlin surface (`G$dotkt_star` -> `G<*>`) before frontend
+// dll2klib restores a compiler-generated existential's Kotlin surface (`G$dotkt_star` -> `G<*>`) before frontend
 // analysis. That is the correct source signature, but a cross-module CIR call still has to name the referenced DLL's
 // physical parameter/return slots. Rebind only provenance-verified existential signatures from the reference index,
 // then align directly initialized locals with the physical result. Metadata remains the frontend authority; this pass

@@ -16,7 +16,7 @@ static class StringCharSequenceBridge
     static readonly HashSet<string> StringBuilderTokens = new(StringComparer.Ordinal)
         { "kotlin.text.StringBuilder", "java.lang.StringBuilder", "java.lang.AbstractStringBuilder", "System.Text.StringBuilder" };
 
-    // Injected exactly once per app assembly (dedup below). Pre-BirTypeLowering vocabulary: kotlin.* signature tokens
+    // Synthesized exactly once per app assembly (dedup below). Pre-BirTypeLowering vocabulary: kotlin.* signature tokens
     // (lowered by the next pass), CLR-call bodies (String.get_Chars/Length/Substring — the SAME shape kotc emits for a
     // user `class S(val s:String): CharSequence`). Structurally mirrors that verified S class, renamed s->value.
     // Type slots are STRUCTURED `{t:"fqn",…}` nodes (§1 — types are nodes, no bare strings), exactly as kotc emits
@@ -396,7 +396,7 @@ static class StringCharSequenceBridge
     // against the runtime stdlib.
     static JsonObject WrapAdapter(JsonNode strExpr)
     {
-        _fired = true;   // request the app-local adapter type injection for this file (Apply)
+        _fired = true;   // request app-local adapter synthesis for this file (Apply)
         // Structured type slots (§1 — types are nodes): the adapter owner + the `kotlin.String` ctor-arg type as
         // `{t:"fqn",…}` nodes; BirTypeLowering lowers `kotlin.String` -> `System.String` downstream.
         return new JsonObject
@@ -481,4 +481,3 @@ static class StringCharSequenceBridge
         return t;
     }
 }
-

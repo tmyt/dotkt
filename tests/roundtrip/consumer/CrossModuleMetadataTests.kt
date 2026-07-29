@@ -1,6 +1,6 @@
 // Migrated ktproj-* MSBuild-E2E battery (was the former MSBuild runner `kt <name> …` blocks): each cross-module
 // .ktproj graph became a producer (package-separated in ../producer, or ../producer-mpp for the MPP cases) consumed
-// here via <ProjectReference> as its BUILT dll (facadegen re-import, NOT source — the DLL-not-source invariant,
+// here via <ProjectReference> as its BUILT dll (dll2klib re-import, NOT source — the DLL-not-source invariant,
 // design §3), asserting the same golden 1:1 as ClassicAssert value asserts (`// <expected>` trailing comments).
 //
 // Migrated cases (9 -> 9 @TestAttribute methods; the golden was the .ktproj's printed stdout):
@@ -26,11 +26,11 @@
 // IReadOnlyCollection<int32>). verify-ktproj never ran ilverify, so these gaps surface for the first time here.
 //
 // Most producer types carry case-unique simple names (Signal/Vault/Slot/Crate/Store, GenovRef) so an unrelated case's
-// semantics aren't perturbed by a name clash. But the #199 same-simple-name collision is now FIXED (facadegen emits
+// semantics aren't perturbed by a name clash. But the #199 same-simple-name collision is now FIXED (dll2klib emits
 // namespace-qualified reference tokens), so three collisions are DELIBERATELY RESTORED as its regression guards: the
 // two `Arr<T>` (kotlinx.genov.Arr in RoundtripProducer + kotlinx.genovc.Arr in RoundtripProducerMpp — #199-③, a
 // generic factory RETURN across dlls) and `Ext.Widget` vs `Inherit.Widget` (#199-② in tests/interop). Each binds to
-// the correct type only because facadegen no longer drops the namespace. The cases test the #-numbered semantics.
+// the correct type only because dll2klib no longer drops the namespace. The cases test the #-numbered semantics.
 import dotkt.foo.bar.state
 import dotkt.foo.bar.register
 import dotkt.foo.bar.fire
@@ -149,8 +149,8 @@ class GenericMetadataRoundtripTests {
 
         // #147: unlike the return carrier above, parameter / constructor / property declaration slots also need the
         // pre-erasure Slot<T?> shape. `unwrapSlot` must infer T from its parameter without an expected return type.
-        // The raw-field slot is asserted directly on facadegen's structured metadata in verify-roundtrip: a separately
-        // tracked raw-field access path currently routes an injected member through a nonexistent getter.
+        // The raw-field slot is asserted directly on dll2klib's structured metadata in verify-roundtrip: a separately
+        // tracked raw-field access path currently routes a projected member through a nonexistent getter.
         val inferred = unwrapSlot(Slot<String?>("param"))
         ClassicAssert.AreEqual("param", inferred)
 
@@ -172,7 +172,7 @@ class GenericMetadataRoundtripTests {
         ClassicAssert.AreEqual("bridge", derived.accept(Slot<String?>("bridge")))
     }
 
-    // ktproj-listparam (#27): kotlin.collections.* params surface as BCL ifaces in the dll; facadegen reverse-maps
+    // ktproj-listparam (#27): kotlin.collections.* params surface as BCL ifaces in the dll; dll2klib reverse-maps
     // them back so listOf/mutableListOf/mapOf values unify with the params (+ generic inference through makeHolder).
     @TestAttribute
     fun collectionParametersRoundTrip() {
@@ -242,7 +242,7 @@ class MultiplatformMetadataTests {
 
     // ktproj-genov-common (#25 residual): a generic factory in the MPP producer's COMMON fragment (file class
     // GenovCommonKt); the bare name arrOfNulls also lives under GenovAltKt, so bir2cir must promote shapeTypes->sig
-    // via kotc's injected ownerType even when the by-name ref index can't disambiguate the owner.
+    // via kotc's external ownerType even when the by-name ref index can't disambiguate the owner.
     @TestAttribute
     fun commonFragmentGenericFactoryRoundTrip() {
         ClassicAssert.AreEqual(3, arrOfNulls<String>(3).size)  // 3  common-fragment generic factory
@@ -250,14 +250,14 @@ class MultiplatformMetadataTests {
 }
 
 class SuspendMetadataRoundtripTests {
-    // #148: a suspend member on a companion crosses the DLL boundary through facadegen metadata, is invoked from a
+    // #148: a suspend member on a companion crosses the DLL boundary through dll2klib metadata, is invoked from a
     // consumer-side suspend lambda, and completes through the Kotlin Continuation ABI (not merely declaration emit).
     @TestAttribute
     fun companionSuspendFunctionRoundTripsAndRuns() {
         ClassicAssert.AreEqual(42, runCrossModuleSuspend { CompanionSuspendApi.compute(41) })
     }
 
-    // #172: facadegen must compose the slot's CLR NRT nullable marker over its carried suspend-function shape. Wrapping
+    // #172: dll2klib must compose the slot's CLR NRT nullable marker over its carried suspend-function shape. Wrapping
     // each imported expression in an invariant probe first captures its independently inferred type: passing that probe
     // to requireNullableSuspendType then compiles only when the DLL slot restored exactly `(suspend () -> Int)?`.
     @TestAttribute

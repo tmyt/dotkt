@@ -98,7 +98,7 @@ the primitive types are pure `kotlin.*` reference types in the type system, BCL 
 positions — it is **not app-only** (see [[artifact-emission-policy]]).
 
 **Implementation sketch:** in `birType`/`netType` (these primitive maps live in `bir2cir` under the four-layer split —
-`facadegen`/`kotc`/`bir2cir`/`ilemit`), thread a "type-argument position" flag — a primitive at a type-arg
+`dll2klib`/`kotc`/`bir2cir`/`ilemit`), thread a "type-argument position" flag — a primitive at a type-arg
 position emits `@kotlin.Int`; bare stays `int`/`System.Int32`. Emit the primitive type definitions (Number subtypes,
 Comparable<self>, conversion members — with bodies that box/convert). Insert box/unbox coercions where a bare value
 crosses into a type-arg slot and back. (Supertype args are just the first type-arg case this covers.)

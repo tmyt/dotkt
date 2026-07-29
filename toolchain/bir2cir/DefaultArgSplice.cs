@@ -313,7 +313,7 @@ static class DefaultArgSplice
         // mutableListOf())` carries `mutableListOf<tv{method,0}>()`. Nothing downstream resolves those in the
         // CONSUMER's frame: they erase to `object`, so the consumer built a `List<Object>` for a `MutableList<String>`
         // slot — right values, wrong runtime type, and unverifiable IL. This is the last sibling of the same rule kotc
-        // applies to same-module and injected defaults (every open type variable closes against the call site); here
+        // applies to same-module and external defaults (every open type variable closes against the call site); here
         // the substitution is positional because the carrier is JSON, and it runs BEFORE token substitution so the
         // consumer's own `bindRef`s, inserted afterwards, are never re-substituted.
         InlineSplice.SubstTvIn(parsed, methodTypeArgs ?? new JsonArray(), methodTypeArgs?.Count ?? 0, ownerTypeArgs);

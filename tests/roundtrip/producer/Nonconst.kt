@@ -1,8 +1,8 @@
 // Migrated verify-roundtrip.sh section `roundtrip-nonconst-default` (#146) — the library half.
 // #134 carried a CONSTANT default as a metadata value; #146 extends the SAME @KotlinDefault mechanism to a
 // NON-CONST default — an empty receiver lambda `= {}` (the Avalonia DSL idiom), a plain empty lambda, and a
-// simple-expression default `= emptyList()`. kotc carries the default as a CLOSED BIR sub-tree; facadegen marks
-// the injected param OPTIONAL (nonConst); bir2cir's DefaultArgSplice fills the omitted slot cross-module.
+// simple-expression default `= emptyList()`. kotc carries the default as a CLOSED BIR sub-tree; dll2klib marks
+// the projected param is OPTIONAL (nonConst); bir2cir's DefaultArgSplice fills the omitted slot cross-module.
 package roundtrip.nc
 
 class Panel { var margin: Int = 0; fun add(s: String): Int { margin += s.length; return margin } }

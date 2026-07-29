@@ -1,9 +1,9 @@
 // Migrated verify-roundtrip.sh section `roundtrip-toplevel-val` (#195) — the library half.
 // A bare top-level `val greeting = "hi"` with NO custom accessor compiles (kotc) to a plain Public|Static
 // FIELD on the file class (`roundtrip.tlval.TlvalKt`), with NO get_/set_ accessor (only backing-field-LESS
-// props — extension/computed — get accessors). facadegen now surfaces each such field from the BUILT dll's
+// props — extension/computed — get accessors). dll2klib now surfaces each such field from the BUILT dll's
 // [KotlinFileClass] so `import roundtrip.tlval.greeting` resolves against the field DIRECTLY — the #195
-// facadegen gap (a field reachable ONLY through the field import was previously not surfaced by --import-list).
+// The reference KLIB must include fields regardless of which source imports reach them.
 // Cases: a `val: String`, a `var: Int` (read + cross-module write `+=`), and a `val` of a USER type.
 package roundtrip.tlval
 

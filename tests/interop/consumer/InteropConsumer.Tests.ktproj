@@ -1,7 +1,7 @@
 <!-- C#-producer roundtrip CONSUMER: a DotKt NUnit test project that <ProjectReference>s ../producer (a PLAIN C#
      class library) and asserts each migrated CLR-interop `cases/il-*` case's golden values 1:1 as ClassicAssert
      value asserts (design D1). The producer's public .NET types are consumed FAÇADE-FREE — the .kt say
-     `import ClrAsm.Bag`, facadegen re-imports the BUILT C# dll's metadata (NEVER its source; the producer is C#
+     `import ClrAsm.Bag`, dll2klib re-imports the BUILT C# dll's metadata (NEVER its source; the producer is C#
      and sits in a SIBLING dir, so this project's `**/*.kt` glob cannot capture it — the DLL-not-source invariant).
 
      This is the C#-PRODUCER variant of the tests/roundtrip lane (whose producer is a DotKt .ktproj). The 35

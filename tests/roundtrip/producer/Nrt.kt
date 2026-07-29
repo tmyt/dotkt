@@ -13,7 +13,7 @@ fun retNullableInt(flag: Boolean): Int? = if (flag) 1 else null    // value T? =
 
 // #251 — CONSTRUCTOR parameters carry the same NRT byte as method parameters: a PRIMARY and a SECONDARY ctor param
 // here, a CLR nested type's ctor param in tests/roundtrip/bidirectional (a nested Kotlin class is not surfaced to a
-// Kotlin consumer by facadegen, so only the C# lane can name it).
+// Kotlin consumer by dll2klib, so only the C# lane can name it).
 class NullableCtorHolder(val s: String?) {
     constructor(n: Int, tag: String?) : this(tag?.repeat(n))       // secondary ctor: nullable param delegating to this(…)
     fun len(): Int = s?.length ?: -1

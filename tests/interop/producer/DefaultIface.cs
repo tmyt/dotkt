@@ -1,5 +1,5 @@
 // Regression producer for CLR default interface implementations (DIM). A Kotlin implementation must provide only
-// Required; facadegen must preserve the concrete/default nature of Offset, Add, and Echo instead of surfacing every
+// Required; dll2klib must preserve the concrete/default nature of Offset, Add, and Echo instead of surfacing every
 // interface member as an abstract implementation obligation.
 namespace DefaultIface {
     public interface IDefaultArithmetic {

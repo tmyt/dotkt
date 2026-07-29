@@ -207,7 +207,7 @@ sealed class Pipeline
         // `System.Enum`-inherited Object-slot call (`E.A.toString()`) on such an owner to an `objMethod`. Must be
         // module-wide (not per-file): the call site can be in a different .bir.json than the enum declaration. Only the
         // LOCAL enums need it — a CROSS-ASSEMBLY enum's inherited-member call is closed one pass earlier by
-        // NetInteropBinding (facadegen-injected owner -> `clrInstance`, a `constrained. callvirt`), and a klib-external
+        // NetInteropBinding (reference-KLIB-projected owner -> `clrInstance`, a `constrained. callvirt`), and a klib-external
         // `kotlin.*` enum arrives from kotc already as an `objMethod`; neither reaches this local `callInstance` gap.
         var localBasicEnums = EnumMemberBinding.CollectBasicEnums(birFiles.Select(f => f.Root));
 
@@ -284,9 +284,9 @@ sealed class Pipeline
             // so the spliced RAW default expression (a `newDelegate` re-hoisted app-local, a `callStatic owner:null`, a
             // const) re-lowers IN THIS app's context, exactly like an inline-body splice. Ownerless (name|arity), because
             // the owner is not yet attributed. APP builds only (user libraries build in App mode too — Metadata/Runtime are
-            // stdlib-self-build flags): a `defaultArg` placeholder is born ONLY on a call to a facadegen-INJECTED callee
+            // stdlib-self-build flags): a `defaultArg` placeholder is born ONLY on a reference-KLIB callee
             // (the cross-module IrErrorExpression path), and the ref/rt stdlib self-builds reference no DotKt assembly, so no
-            // injected callee — hence no placeholder — exists there. The gate is not merely "harmless off": running on a
+            // external callee — hence no placeholder — exists there. The gate is not merely "harmless off": running on a
             // self-build would also disturb its byte-stable RefBodySquash/RoundtripMetadata decl set for zero benefit.
             if (attributeTopLevelOwner) DefaultArgSplice.Apply(bir.Root, refs);
             // CALL-EVALUATION PLAN LOWERING (§2.7). EVERY splice that can add a reader to one of a call's values has
@@ -377,7 +377,7 @@ sealed class Pipeline
             // + closure passes that CONSUME delegateInvoke / any type-erasing pass) and UNCONDITIONALLY (ref + app),
             // reproducing the flow that existed when kotc emitted conv/delegateInvoke directly.
             CharCodeInvokeLowering.Apply(bir.Root, refs);
-            // .NET-INTEROP CALL BINDING (A2 / #61): bind a facadegen-injected .NET member call — which kotc now emits as
+            // .NET-INTEROP CALL BINDING (A2 / #61): bind a reference-KLIB-projected .NET member call — which kotc now emits as
             // a PLAIN `callStatic`/`callInstance` by the .NET owner's FQN identity — to its CLR call SHAPE
             // (clrStatic/clrInstance/clrPropGet/clrPropSet/clrGeneric*), resolved off the loaded .NET reference
             // assemblies (ReferenceMetadataIndex's long-lived MetadataLoadContext). THIS is where .NET binding belongs
@@ -386,7 +386,7 @@ sealed class Pipeline
             // that existed when kotc emitted the `clr*` nodes directly. A no-op for a `kotlin.*`/local/unresolvable owner
             // (the stdlib is bound by MemberCallSubstitution off the ref.dll) and for the three CLR-only-vocab synthetics
             // kotc lowers itself (ClrEvent<T>/ClrRef<T>/byref — they don't exist in any ref, so they never resolve here).
-            // Non-ref only (the stdlib self-build injects no facadegen .NET interop).
+            // Non-ref only (the stdlib self-build injects no dll2klib .NET interop).
             if (!_options.RefBuild) NetInteropBinding.Apply(bir.Root, refs);
             // #11 — VALUE-TYPE PLATFORM SLOT WRITE COERCION: a `Nullable<V>`/`null` source assigned to a bare value-type
             // platform property/field slot (`ThreadLocal<Int>.Value = someIntQ`) — the WRITE twin of #8's oblivious read.
@@ -551,7 +551,7 @@ sealed class Pipeline
             // slot INTERNALLY (`CharSequence.indexOf(string: String)` -> the private `indexOf(other: CharSequence)`;
             // `String.trim()` -> `(this as CharSequence).trim()`), and without the wrap those compiled rt.dll bodies pass
             // a raw String where the interface is required -> InvalidProgram / EntryPointNotFound at run. The adapter is
-            // injected into the rt assembly exactly once (dedup), implementing the RT's canonical `dotkt$CharSequence`,
+            // synthesized in the rt assembly exactly once (dedup), implementing the RT's canonical `dotkt$CharSequence`,
             // so an app that then routes a String op to a real stdlib body works. Skipped only for the ref build (its
             // bodies are squashed to `throw` anyway). Purely additive: only positively-String values are wrapped.
             // CharSequence -> System.String (the 3-point model, point ①/②). In a "pure" APP assembly (no user
@@ -680,7 +680,7 @@ sealed class Pipeline
         if (!_options.RefBuild)
             InheritedMemberOwnerBinding.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
 
-        // facadegen restores G<*> for Kotlin source analysis while the referenced DLL physically exposes
+        // dll2klib restores G<*> for Kotlin source analysis while the referenced DLL physically exposes
         // G$dotkt_star. Re-apply that exact referenced ABI to call signatures and directly initialized locals before
         // CLR type lowering; ilemit must never infer the hidden physical signature.
         if (!_options.RefBuild)
@@ -766,8 +766,8 @@ sealed class Pipeline
             // Set/Collection` (Root V) to its invariant sibling `IList`/`ICollection` — colliding with the mutable
             // sibling's own alias and losing the Kotlin read-only-vs-mutable identity — stash the PRE-collapse Kotlin
             // type of each affected decl-surface slot as an opaque string. RoundtripMetadata reads it into
-            // [KotlinCollectionIdentity] so facadegen restores `List` vs `MutableList` cross-module. APP builds only
-            // (the collapse is non-ref; only an app-emitted library is facadegen-re-consumed). Mirrors the #18
+            // [KotlinCollectionIdentity] so dll2klib restores `List` vs `MutableList` cross-module. APP builds only
+            // (the collapse is non-ref; only an app-emitted library is dll2klib-re-consumed). Mirrors the #18
             // [KotlinNullableGeneric] pre-erasure record. Runs on kotlin.* names (BEFORE BirTypeLowering).
             if (attributeTopLevelOwner) CollectionIdentityRecord.Apply(substituted);
             // The type transform: lower the Kotlin type vocabulary into ilemit's CLR-codegen vocabulary, emitting a
@@ -807,8 +807,8 @@ sealed class Pipeline
             // each missing slot with an ordinary public forwarding member (wired by name by ilemit's interface loop). The
             // return-DROPPING slots (Add/set_Item/RemoveAt) are the separate family ilemit's void-drop bridge handles.
             if (!_options.RefBuild) CollectionBclSlotSynthesis.Apply(lowered);
-            // #128: a Kotlin class implementing a facadegen-injected .NET generic interface instantiated with a
-            // VALUE-TYPE arg (`class C : IComparer<Int>`) declares its override with the injected member's `T?` params,
+            // #128: a Kotlin class implementing a reference-KLIB-projected .NET generic interface instantiated with a
+            // VALUE-TYPE arg (`class C : IComparer<Int>`) declares its override with the projected member's `T?` params,
             // which lower to `Compare(Nullable<int32>,…)` — but the CONSTRUCTED CLR slot wants BARE `int32`. Synthesize a
             // bare-value-signature bridge that forwards to the Nullable method so the slot binds (ilemit re-wraps args);
             // else DefineMethodOverride mismatches the slot -> TypeLoadException. Value-type type-arg positions only.

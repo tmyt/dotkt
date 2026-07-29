@@ -79,11 +79,11 @@ STR_OK = {
     "nullableGeneric", "nullableGenericRet",     # #18/#147: PRE-erasure `Holder<T?>` declaration-slot TypeNodes, stashed
                                                  # as OPAQUE canonical-JSON strings by bir2cir NullableGenericErasure
                                                  # before nested `Nullable(Tv)` is object-erased. RoundtripMetadata
-                                                 # carrier-encodes them into [KotlinNullableGeneric] for facadegen.
+                                                 # carrier-encodes them into [KotlinNullableGeneric] for dll2klib.
                                                  # Payloads, NOT type slots.
     "collIdentity", "collIdentityRet",           # #29: PRE-collapse Kotlin collection TypeNodes stashed as canonical-JSON
                                                  # strings by CollectionIdentityRecord. RoundtripMetadata immediately turns
-                                                 # them into [KotlinCollectionIdentity] carrier bytes for facadegen; these
+                                                 # them into [KotlinCollectionIdentity] carrier bytes for dll2klib; these
                                                  # are opaque metadata payloads, not the CIR parameter/return type slots.
     "bytes",                                     # #71 S2: a base64 attribute-arg VALUE (RoundtripMetadata) — the carrier
                                                  # payload for [KotlinInline]/[KotlinSuspendFunctionType] and the nested
@@ -116,7 +116,7 @@ MOD_KEYS = {
     "object", "const", "lateinit", "vararg", "noinline", "crossinline",
     "inlineOnly",                                # #98: @InlineOnly → [MethodImpl(AggressiveInlining)] (ilemit reads mods.inlineOnly)
     "context",                                   # a Kotlin CONTEXT parameter (a param-only mod; bir2cir turns it into
-                                                 # the [KotlinContextParameter] marker facadegen restores from)
+                                                 # the [KotlinContextParameter] marker projected into reference KLIBs)
 }
 VIS = {"public", "private", "protected", "internal", "protectedInternal"}
 CARRIER_VERSIONS = {"bir-json/1"}

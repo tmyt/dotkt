@@ -1,4 +1,4 @@
-# DLL-to-KLIB reference projection
+# DLL-to-KLIB dll2klib
 
 ## Status
 
@@ -7,8 +7,7 @@ projection pipeline.
 
 `dll2klib` converts each MSBuild-resolved CLR reference assembly into one
 metadata-only Kotlin library. The generated KLIBs are ordinary Kotlin 2.4.0
-KLIBs and are supplied to the standard `kotc` KLIB loader. They replace the
-former import-driven facade JSON and FIR declaration-generation path.
+KLIBs and are supplied to the standard `kotc` KLIB loader.
 
 The design has four primary goals:
 
@@ -17,7 +16,7 @@ The design has four primary goals:
 2. preserve Kotlin vocabulary already recorded in DotKt-produced CLR
    assemblies;
 3. keep CLR physical representation decisions in `bir2cir`; and
-4. make reference projection parallel and incrementally cacheable per project.
+4. make dll2klib parallel and incrementally cacheable per project.
 
 ## Pipeline
 
@@ -394,11 +393,6 @@ KLIB on the normal `kotc -classpath`. The classpath uses
 `System.IO.Path.PathSeparator`, so it is `:` on Unix-like systems and `;` on
 Windows.
 
-The former `DotKtImport`, import scanner, facade JSON generation, and CLR FIR
-declaration-generation extension are not part of the production pipeline.
-`facadegen` may remain in the repository as a comparison fixture, but it is
-not included in normal builds or the packaged toolchain.
-
 ## Incrementality
 
 An output KLIB is stale when any of the following is true:
@@ -420,7 +414,7 @@ being duplicated into frontend metadata.
 
 ## Failure policy
 
-Reference projection fails the build when:
+Dll2klib fails the build when:
 
 - an input is not a valid managed metadata image;
 - a public top-level or nested declaration cannot be projected;
@@ -468,7 +462,7 @@ It verifies:
 1. generation of CLR reference assemblies;
 2. deterministic, byte-identical KLIB output;
 3. the standard packed KLIB layout;
-4. frontend resolution without facade metadata or `CLR_TYPES_METADATA`;
+4. frontend resolution exclusively from reference KLIB metadata;
 5. types, nested types, constructors, properties, fields, events, indexers,
    generics, nullability, delegates, extensions, operators, and by-reference
    calls;

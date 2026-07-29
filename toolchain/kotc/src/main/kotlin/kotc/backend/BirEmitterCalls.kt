@@ -63,7 +63,6 @@ import org.jetbrains.kotlin.ir.expressions.IrContinue
 import org.jetbrains.kotlin.ir.expressions.IrStatementOrigin
 import org.jetbrains.kotlin.ir.util.classId
 import org.jetbrains.kotlin.ir.types.classOrNull
-import org.jetbrains.kotlin.name.CallableId
 import org.jetbrains.kotlin.ir.util.fqNameWhenAvailable
 import org.jetbrains.kotlin.ir.util.resolveFakeOverride
 import org.jetbrains.kotlin.ir.declarations.IrTypeParameter
@@ -96,7 +95,7 @@ private val defaultArgPlaceholder = """{"k":"defaultArg"}"""
 /** Regular args, POSITIONALLY complete, filling omitted default arguments (IL has no default-parameter mechanism).
  *  ONE pass for every KOTLIN call shape whose callee IR carries its defaults — a function call, a `new`, an array ctor,
  *  a lifted local/class `new`, a constructor delegation, an enum entry. Reference-KLIB calls whose dependency IR has
- *  no default expression use [filledInjectedArgs].
+ *  no default expression use [filledExternalArgs].
  *  Fill source by default KIND: a same-module CONSTANT/global default is inlined verbatim; a same-module default that
  *  reads the callee's OWN SCOPE — an earlier VALUE PARAMETER (`b: Int = a * 10`, a ctor's `h: Int = w * 2`), the
  *  RECEIVER (`missingDelimiterValue = this`, a data-class `copy`'s `y = this.y`), or an ENCLOSING instance
@@ -478,7 +477,7 @@ internal fun BirEmitter.enclosingThisSubst(
  * positional `defaultArg` binding; bir2cir resolves its value from the selected reference DLL. The evaluation plan
  * gives a carried default only bindRef reads of the receiver and supplied arguments, preserving Kotlin evaluation
  * order and exactly-once evaluation. */
-internal fun BirEmitter.filledInjectedArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): List<String> {
+internal fun BirEmitter.filledExternalArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): List<String> {
 	val callee = (call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction) ?: return emptyList()
 	// Every default of a reference-KLIB callee arrives without a usable dependency-IR value,
 	// so any omission this pass fills is a cross-module one — see [filledArgs]'s granularity note for why the test is
@@ -524,7 +523,7 @@ internal fun BirEmitter.filledInjectedArgs(call: org.jetbrains.kotlin.ir.express
 				if (def is org.jetbrains.kotlin.ir.expressions.IrErrorExpression) defaultArgPlaceholder
 				else { stableFill = isStableValue(def); expr(def) }
 			// The BINDING TYPE is rendered here too, INSIDE the scope. `p.type` is the callee's, so reading it after
-			// the restore leaves an injected generic callee's own `!!0` open in the consumer's frame — and a binding a
+			// the restore leaves an external generic callee's own `!!0` open in the consumer's frame — and a binding a
 			// later default reads becomes a local, which would then be declared with it.
 			plan?.bind("default", "value", stableFill, birType(p.type).toJson(),
 				"default of parameter '${p.name.asString()}'", rendered) ?: rendered
@@ -573,17 +572,6 @@ internal fun BirEmitter.extensionReceiver(call: org.jetbrains.kotlin.ir.expressi
 	return if (idx in 0 until call.arguments.size) call.arguments[idx] else null
 }
 
-/** #144: the extension-receiver classifier-ClassId key of a top-level extension callee, for disambiguating a
- *  facadegen-injected `CallableId(package,name)` that two same-name/same-arity extensions on DIFFERENT receiver types
- *  share (they live in distinct .NET static classes / file classes). Read straight off the RESOLVED callee's declared
- *  extension-receiver `IrType` classifier `classId` — the SAME ClassId the injector's `coneOf` produced from the
- *  metadata, so it string-matches `TopLevelSig.receiverKey` across facadegen's name vocabulary (a raw type-name compare
- *  would diverge for `String`/primitive/generic/array receivers). Null for a non-extension callee, or a type-variable /
- *  function-type receiver (no class classifier) — the arity-only path stays byte-identical. See `clrInjectedTopLevelFileClass`. */
-internal fun BirEmitter.injectedExtReceiverKey(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String? =
-	fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
-		?.type?.classOrNull?.owner?.classId?.asString()
-
 /** Same index-by-parameter-kind approach as [dispatchReceiver]/[extensionReceiver], for an `IrPropertyReference`
  *  (which has no callee `IrFunction` of its own — the getter's parameter SHAPE is used to index its `arguments`).
  *  `IrMemberAccessExpression.dispatchReceiver`/`.extensionReceiver` (the convenience getters) are ERROR-level
@@ -623,7 +611,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 	if (callee.fqNameWhenAvailable?.asString() == "kotlin.clr.stackBuffer")
 		return emitStackBuffer(call)
 	// A .NET event subscription `w.Changed.subscribe(h)` resolves (normal Kotlin resolution) to a member of the
-	// injected `kotlin.clr.ClrEvent<T>` fiction (the surfaced form of a .NET event member — see ClrTypeInjection).
+	// compiler-owned `kotlin.clr.ClrEvent<T>` fiction (the surfaced form of a .NET event member).
 	// kotc emits the PLAIN Kotlin call identity: a
 	// `callInstance` on `kotlin.clr.ClrEvent` whose receiver is the event member-access `w.Changed` (a clrEventGet
 	// carrying the .NET owner type + event name). NO `add_`/`remove_` naming, NO clrEventAdd here — bir2cir's
@@ -707,7 +695,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 	}
 	val name = callee.name.asString()
 	val declaringClass = callee.parent as? IrClass
-	// A top-level fn has no declaringClass; fall back to the callee's OWN package so an injected/user top-level
+	// A top-level fn has no declaringClass; fall back to the callee's OWN package so an external/user top-level
 	// operator (e.g. a restored `operator fun Vec.plus`) isn't mistaken for a kotlin builtin and lowered to a `bin`.
 	val isBuiltin = (declaringClass?.fqNameWhenAvailable?.asString() ?: callee.fqNameWhenAvailable?.asString())?.startsWith("kotlin") ?: true
 	val pkgFqName = (callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)?.packageFqName?.asString()
@@ -715,7 +703,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 	
 	// A top-level fun annotated @ClrIntrinsic is NOT bound to a STATIC/INSTANCE .NET call here: that
 	// @ClrIntrinsic-driven member-call SUBSTITUTION belongs to bir2cir (sourced from the ref.dll), NOT kotc.
-	// kotc emits the PLAIN Kotlin top-level call (the clrStatic file-class path below for injected .NET top-level
+	// kotc emits the PLAIN Kotlin top-level call (the clrStatic file-class path below for external .NET top-level
 	// funs is metadata-driven and stays). See [clrName] / CLAUDE.md "kotc reads
 	// NEITHER @ClrIntrinsic NOR @ClrTypeAlias".
 
@@ -868,7 +856,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 	// relation and lives in bir2cir, not in this frontend.
 
 	// The scope functions (let/run/with/apply/also) and use{} are @kotlin.internal.InlineOnly cross-module
-	// inline+lambda funs: they route through the generic owner-less `callInline` node at the injected-top-level
+	// inline+lambda funs: they route through the generic owner-less `callInline` node at the external-top-level
 	// dispatch below (bir2cir splices their [KotlinInline] raw-BIR payloads off the ref.dll) — NOT special-cased here.
 
 	// `repeat(n) { i -> body }` is NOT special-cased (#75 — the dedicated inlineRepeat splicer is retired). It flows
@@ -1032,7 +1020,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// `clrInstance System.String.get_Chars` off the ref.dll — the Kotlin<->CLR relation lives in bir2cir, not kotc.
 		// kotlin.* List/Map indexing `list[i]`/`m[k]` is NOT intercepted: in FIR it's already an operator call to
 		// `get`/`set` — fall through to the ordinary call path so it emits as a real kotlin.* `get`/`set` call.
-		// Injected .NET indexer `c[i]` / `c[i] = v` -> the DEFAULT INDEXED PROPERTY of the constructed .NET type.
+		// Projected .NET indexer `c[i]` / `c[i] = v` -> the DEFAULT INDEXED PROPERTY of the constructed .NET type.
 		// kotc emits the FAITHFUL Kotlin get/set operator identity (`method:"get"/"set"`) plus an index marker
 		// (`"prop":"index-get"/"index-set"`, extending step 3's accessor-KIND mechanism); it does NOT bake the CLR
 		// slot name. bir2cir's NetInteropBinding reflects the .NET type's default indexed property off the refs (its
@@ -1059,12 +1047,12 @@ internal fun BirEmitter.call(call: IrCall): String {
 	}
 
 	// #60 (W1): a cross-module inline MEMBER (`body==null`, a DISPATCH receiver present) taking ANY lambda arg (AXIS ①)
-	// MUST be source-inlined — a facadegen-injected DotKt member AND a klib stdlib member alike. kotc is body-BLIND here
+	// MUST be source-inlined — a dll2klib-projected DotKt member AND a KLIB stdlib member alike. kotc is body-BLIND here
 	// (the klib is metadata-only; the [KotlinInline] payload lives on the ref.dll), so it emits the owner-ful `callInline`
 	// UNCONDITIONALLY and bir2cir — which holds the payload — makes the splice-or-fail-loud eligibility decision (it
 	// resolves the payload off the ref.dll `InlineCandidates`, and its §4.3 rebinds the payload's `{k:this}` to the
 	// caller-provided `recvs.dispatch`). This MUST run BEFORE the CLR-interop member block below: that block fires for ANY
-	// injected .NET owner (`clrName(declaringClass) != null`) and would otherwise emit a plain `callInstance` + a REAL
+	// projected .NET owner (`clrName(declaringClass) != null`) and would otherwise emit a plain `callInstance` + a REAL
 	// delegate for the block, whose non-local `return` returns from the DELEGATE, not the caller — a SILENT miscompile.
 	// The member-EXTENSION dual-receiver (#23) shape rides through too (both receivers carried): bir2cir splices the
 	// SOUND pure-extension idiom (body reads only the extension `this`) and FAILS LOUD on a body that reads the dispatch
@@ -1083,8 +1071,8 @@ internal fun BirEmitter.call(call: IrCall): String {
 	// independent of this gate. What differs from the plain-Kotlin member paths below is only the fact-carrier
 	// DIALECT (`ownerType`+`argTypes`+`ret`+`prop` marker vs `owner`+`sig`+`retHint`) — the kotc↔bir2cir
 	// serialization contract that routes a node to `NetInteropBinding` (ownerType-keyed) vs `MemberCallSubstitution`
-	// (owner-keyed) — NOT a CLR decision. The `clrName` gate is a pure ORIGIN fact ("this owner is facadegen-
-	// injected", read off the IR ClassId — a frontend fact kotc is allowed to hold, like `isExternalNetType`), NOT
+	// (owner-keyed) — NOT a CLR decision. The `clrName` gate is a pure ORIGIN fact ("this owner is external",
+	// read from the dll2klib-projected annotation — a frontend fact kotc is allowed to forward), NOT
 	// an interpretation of `@Clr*` metadata or a BCL shape. The sole dialect EXCEPTION emitted here is `clrEventGet`
 	// (a .NET event has no plain-Kotlin call form — CLR-only vocab, by design). An INHERITED .NET member (e.g.
 	// `appError.Message`) is a fake-override whose `parent` is the Kotlin subclass, so resolve through the fake
@@ -1092,19 +1080,19 @@ internal fun BirEmitter.call(call: IrCall): String {
 	// the plain Kotlin member-call path below (bir2cir substitutes it from the ref.dll).
 	val clrTypeName = declaringClass?.let { clrName(it) }
 		?: (callee.takeIf { it.isFakeOverride }?.resolveFakeOverride()?.parent as? IrClass)?.let { clrName(it) }
-		// A synthesized companion of an injected .NET type holds its STATIC members (`App.Start`) -> a static call
+		// A synthesized companion of a projected .NET type holds its STATIC members (`App.Start`) -> a static call
 		// on the .NET type itself.
 		?: declaringClass?.takeIf { it.isCompanion }?.let { it.parent as? IrClass }?.let { clrName(it) }
 	val clrType = clrTypeName?.let { TypeNode.Fqn(it) }
 	if (clrType != null) {
 		val recv = dispatchReceiver(call)
-		// A synthesized companion of a normal injected .NET class represents that class's CLR statics. A genuine Kotlin
+		// A synthesized companion of a normal projected .NET class represents that class's CLR statics. A genuine Kotlin
 		// `object`, however, is an instance singleton: keep its IrGetObjectValue receiver in BIR (`Owner.INSTANCE`) and
 		// let bir2cir decide whether the referenced owner is actually a CLR static class or an emitted Kotlin object.
 		// Treating every object receiver as CLR static here erased the receiver of cross-module `Dispatchers.Default`.
-		val injectedStaticCompanion = declaringClass?.isCompanion == true &&
+		val externalStaticCompanion = declaringClass?.isCompanion == true &&
 			(declaringClass.parent as? IrClass)?.let { clrName(it) } != null
-		val isStatic = recv == null || injectedStaticCompanion
+		val isStatic = recv == null || externalStaticCompanion
 		// A NON-static callInstance emitted here is normally reshaped to a `clrInstance` by bir2cir's
 		// NetInteropBinding (which resolves the owner off the .NET refs) — where `virtual` is irrelevant. But a
 		// DotKt library consumed AS KOTLIN whose owner bir2cir cannot resolve (netType == null -> left un-reshaped)
@@ -1154,11 +1142,11 @@ internal fun BirEmitter.call(call: IrCall): String {
 				// Positional filling, like every other .NET/restored-member call path: building `args` from the
 				// expressions that happen to be present DELETES an omitted default's slot, so a later provided
 				// argument slides into it (`g.pick(b = 3)` bound `3` to `a` and left the required `b` zero-filled)
-				// while `shapeTypes` above still describes the full parameter vector. `filledInjectedArgs` emits a
+				// while `shapeTypes` above still describes the full parameter vector. `filledExternalArgs` emits a
 				// metadata constant, a `defaultArg` placeholder for bir2cir's DefaultArgSplice, or a loud refusal.
 				// FILL FIRST, then read the receiver: under an evaluation plan the fill binds the receiver, and this
-				// read then renders that ONE binding (see [filledInjectedArgs]).
-				val gRegArgs = filledInjectedArgs(call)
+				// read then renders that ONE binding (see [filledExternalArgs]).
+				val gRegArgs = filledExternalArgs(call)
 				val argsJson = (listOfNotNull(gExt?.let { expr(it) }) + gRegArgs).joinToString(",")
 				// A `suspend` generic .NET-member callee carries the `"suspendCall":true` FACT for bir2cir's deferred
 				// Task/await lowering, exactly like the non-generic call paths (suspendCallTag) — otherwise a generic
@@ -1207,7 +1195,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 					locationOf(call))
 				return """{"k":"unsupportedExpr","of":"clr-event-read-outside-subscription: ${prop.name.asString()}"}"""
 			}
-			// A2 step 3: the property's OWN Kotlin name IS the .NET slot identity (facadegen injects the member under
+			// A2 step 3: the property's OWN Kotlin name IS the .NET slot identity (dll2klib projects the member under
 			// its .NET name), so kotc reads NO CLR name here — it emits the bare property name + the accessor KIND
 			// (`"prop":"get"/"set"`, a frontend fact from correspondingPropertySymbol). bir2cir's NetInteropBinding
 			// applies the .NET `get_`/`set_` accessor convention off the refs.
@@ -1229,7 +1217,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 				else """{"k":"callInstance","virtual":$clrCallVirtual,"ownerType":${memberType!!.toJson()},"method":${str(pn)},"prop":"get","argTypes":[$accArgTypes],"ret":${birType(callee.returnType).toJson()},"recv":$recvJson,"args":[$accArgs]${superTag(call)}}"""
 			}
 			// A2 (#61): a `kotlin.clr.ClrEvent<T>` read is CLR-ONLY vocabulary — a .NET event has no plain-Kotlin
-			// call form (it exposes add_/remove_, not a get_); facadegen injects it purely to typecheck, so kotc
+			// call form (it exposes add_/remove_, not a get_); dll2klib projects it purely to typecheck, so kotc
 			// LOWERS it directly to a DEDICATED dialect node `clrEventGet` (the ClrEvent<T> handle) — NOT the
 			// bir2cir-produced `clrPropGet` (which after A2 means a real .NET property). It exists ONLY to feed a
 			// `subscribe`: bir2cir's ClrEventSubscriptionBinding consumes the `clrEventGet + call` pair
@@ -1336,20 +1324,15 @@ internal fun BirEmitter.call(call: IrCall): String {
 		return """{"k":"callStatic","owner":${fqnJson(enclosing)},"method":${str(name)}${overloadSigField(callee)}${typeArgsJson(call)},"args":[${compArgs.joinToString(",")}]}"""
 	}
 
-		// An INJECTED top-level property (from a DotKt assembly) -> the referenced .NET file class holds it. An
+		// An EXTERNAL top-level property (from a DotKt assembly) -> the referenced .NET file class holds it. An
 		// EXTENSION property (`val T.p`) surfaces as get_/set_<name>(__self) statics with the extension receiver
 		// passed as `__self`; a plain field-backed NON-extension property (`val greeting`) is a STATIC FIELD, so
 		// read -> `staticField` / write -> `staticFieldSet` of that referenced file class (#34b). BUT a field-backed
 		// property with a CUSTOM accessor (`val x = 41; get() = field + 1`, #103) additionally emits a `get_`/`set_`
 		// method on the file class — reading/writing the raw field would SKIP it (a silent cross-module miscompile).
-		// (body==null = injected stub.)
+		// (body==null = external declaration.)
 		(callee.correspondingPropertySymbol?.owner)?.let { p ->
-			// A2 stage 3: read the restored top-level property's .NET file-facade class off its RESOLVED IR
-			// `CallableId` (`package` + name).
-			val callableId = (p.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)
-				?.let { CallableId(it.packageFqName, p.name) }
 			val externalPropertyOwner = clrExternalOwner(p)
-				?: callableId?.let { kotc.frontend.clrInjectedTopLevelPropFileClass(it) }
 			if (declaringClass == null) externalPropertyOwner?.let { fileClass ->
 				// An accessor that takes ANY argument — an extension receiver, or a `context(...)` parameter — is a
 				// `get_/set_<name>(...)` METHOD on the file class, never a static field: route it to the accessor path
@@ -1361,12 +1344,9 @@ internal fun BirEmitter.call(call: IrCall): String {
 					// receiver), NOT read/write the raw static field. bir2cir binds the `prop:get`/`prop:set` marker to
 					// the `get_`/`set_` method by convention. Read/write customness is independent (a `var` may pair a
 					// custom setter with a default getter, or vice versa); a default accessor stays a raw field access.
-					val injectedCustom =
-						callableId?.let { kotc.frontend.clrInjectedTopLevelPropCustomAccessor(it) } ?: (false to false)
-					// A dll2klib KLIB uses the standard getter_flags/setter_flags IS_NOT_DEFAULT bit. The legacy
-					// facade JSON side table remains only for the old pipeline while it is being retired.
-					val customGet = injectedCustom.first || !hasDefaultGetter(p)
-					val customSet = injectedCustom.second || !hasDefaultSetter(p)
+					// dll2klib preserves the standard getter_flags/setter_flags IS_NOT_DEFAULT bit.
+					val customGet = !hasDefaultGetter(p)
+					val customSet = !hasDefaultSetter(p)
 					if (callee === p.setter) {
 						return if (customSet)
 							"""{"k":"callStatic","ownerType":${fqnJson(fileClass)},"method":${str(p.name.asString())},"prop":"set","argTypes":[${birType(regularArgs(call).first().type).toJson()}],"ret":${fqnJson("kotlin.Unit")},"args":[${expr(regularArgs(call).first())}]}"""
@@ -1804,24 +1784,18 @@ internal fun BirEmitter.call(call: IrCall): String {
 	}
 
 	// DotKt round-trip: a call to a top-level function restored from a [KotlinFile] facade in a referenced
-	// assembly -> a .NET static call on that file-facade class. `body == null` distinguishes the injected symbol
+	// assembly -> a .NET static call on that file-facade class. `body == null` distinguishes the external symbol
 	// from a same-named local top-level fun. (A suspend top-level fun awaits via the coroutine path, not here.)
 	if (callee.body == null && dispatchReceiver(call) == null) {
 		val extRecv = extensionReceiver(call)
-		// A2 stage 3: read the restored top-level function's .NET file-facade class off its RESOLVED IR `CallableId`
-		// (`package` + name). FIR/Fir2Ir already resolved this call to a UNIQUE callee, so there is nothing to
-		// disambiguate (a single fileClass per CallableId). `suspend` is read straight
-		// off the resolved callee by `suspendCallTag(callee)` below.
 		val externalFileClass = clrExternalOwner(callee)
-			?: (callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)
-				?.let { kotc.frontend.clrInjectedTopLevelFileClass(CallableId(it.packageFqName, callee.name), regularParams(callee).size, injectedExtReceiverKey(callee)) }
 		externalFileClass?.let { fileClass ->
-			// A FACADEGEN-INJECTED cross-module `inline fun` taking ANY lambda arg (AXIS ①) MUST be source-inlined: emit a
+			// A dll2klib-projected cross-module `inline fun` taking ANY lambda arg (AXIS ①) MUST be source-inlined: emit a
 			// generic `callInline` node carrying the call bindings; bir2cir OWNS the splice (it re-lowers the carried body
 			// in the app context, so a non-local `return`/`break`/suspend through a spliced lambda works, and a noinline
 			// arg rides as a delegate — AXIS ②). A lambda-less inline call is NOT gated here — it falls through to the
 			// plain call below, where the callee is a real generic method (the JIT inlines it). This fires ONLY for a
-			// facadegen-named fileClass; the receiver-carrying stdlib scope/util fns have no fileClass and take the
+			// externally named fileClass; the receiver-carrying stdlib scope/util fns have no fileClass and take the
 			// owner-less path below. An EXTENSION receiver (`Cell<T>.update { … }`, #133 case1) rides through
 			// `inlineSpliceCall` in `recvs.extension` — the SAME shape the owner-less path threads, spliced onto payload
 			// param[0] (`__self`) by bir2cir.
@@ -1829,9 +1803,9 @@ internal fun BirEmitter.call(call: IrCall): String {
 			// PLAIN static call by identity to the referenced .NET file class (bir2cir's NetInteropBinding shapes it
 			// to clrStatic / clrGenericStatic). This is the fall-through for a lambda-less inline call (the callee is a
 			// real generic method) as well as every non-inline top-level fun.
-			return plainInjectedTopLevelCall(call, callee, fileClass, name, extRecv)
+			return plainExternalTopLevelCall(call, callee, fileClass, name, extRecv)
 		}
-		// Any OTHER cross-module inline+lambda fun with no facadegen fileClass — the whole stdlib rides the klib, so
+		// Any OTHER cross-module inline+lambda fun with no external fileClass — the whole stdlib rides the KLIB, so
 		// scope/util fns (let/run/with/apply/also/use), collection ops (forEach/map/filter), takeIf/takeUnless,
 		// require/check, Result extensions, etc. all land here. Gate on `callNeedsSplice` (AXIS ①): ANY lambda arg emits
 		// the OWNER-LESS `callInline` node — bir2cir resolves the hosting file class from the ref.dll [KotlinInline]
@@ -1909,10 +1883,10 @@ internal fun BirEmitter.call(call: IrCall): String {
 /**
  * The PLAIN `callStatic` node for a call to a top-level function restored from a `[KotlinFile]` facade on a
  * referenced assembly (owner = the .NET file-facade type; bir2cir's NetInteropBinding shapes it to
- * clrStatic / clrGenericStatic). This is the fall-through for a lambda-less facadegen inline call (the callee is a
+ * clrStatic / clrGenericStatic). This is the fall-through for a lambda-less external inline call (the callee is a
  * real generic method the JIT inlines) as well as every ordinary non-inline top-level fun.
  */
-internal fun BirEmitter.plainInjectedTopLevelCall(call: IrCall, callee: IrSimpleFunction, fileClass: String, name: String, extRecv: IrExpression?): String {
+internal fun BirEmitter.plainExternalTopLevelCall(call: IrCall, callee: IrSimpleFunction, fileClass: String, name: String, extRecv: IrExpression?): String {
 	// A GENERIC top-level fun (e.g. a `reified` inline restored as a generic method) -> a generic static
 	// call carrying the type args, so ilemit MakeGenericMethods it (the reified `typeof(T)`/`is T` body
 	// then sees the concrete type). CLR generics are reified, so no inlining is needed across assemblies.
@@ -1920,11 +1894,11 @@ internal fun BirEmitter.plainInjectedTopLevelCall(call: IrCall, callee: IrSimple
 		val targs = callee.typeParameters.indices.map { call.typeArguments.getOrNull(it) }
 		if (targs.all { it != null }) {
 			// An extension fun: its receiver is the .NET method's first param (`__self`), so prepend it to the args.
-			// Keep injected args as BIR strings: a non-constant cross-module default has no honest IrExpression and is
+			// Keep external args as BIR strings: a non-constant cross-module default has no honest IrExpression and is
 			// represented by a positional `defaultArg` for bir2cir to splice from `[KotlinDefault]`.
 			// FILL FIRST, then read the extension receiver (the fill binds it under an evaluation plan).
-			val injRegArgs = filledInjectedArgs(call)
-			val a = listOfNotNull(extRecv?.let { expr(it) }) + injRegArgs
+			val externalRegArgs = filledExternalArgs(call)
+			val a = listOfNotNull(extRecv?.let { expr(it) }) + externalRegArgs
 			val taJson = targs.joinToString(",") { birType(it!!).toJson() }
 			// `shapeTypes` must line up with `a` (= extension receiver, then regular args), so a GENERIC extension
 			// fun's `__self` receiver type is included — else bir2cir's by-shape overload pick finds 0 params.
@@ -1943,7 +1917,7 @@ internal fun BirEmitter.plainInjectedTopLevelCall(call: IrCall, callee: IrSimple
 	// DefaultArgSplice fills it from the callee's ref.dll @KotlinDefault). The extension receiver (arg[0] = `__self`) is
 	// prepended; each arg's type is its PARAMETER's type (a placeholder carries no expr type). `sig` (the callee's full
 	// .NET signature) drives DefaultArgSplice's arg-count match against the ref.dll @KotlinDefault key.
-	val regArgs = filledInjectedArgs(call)
+	val regArgs = filledExternalArgs(call)
 	val extStr = extRecv?.let { expr(it) }
 	val argStrs = (listOfNotNull(extStr) + regArgs).joinToString(",")
 	val extParamType = callee.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }?.let { birType(it.type) }
@@ -1986,12 +1960,7 @@ internal fun BirEmitter.suspendCallTag(callee: org.jetbrains.kotlin.ir.declarati
  *  extension property accessor, the property itself — its file class holds the static accessor). */
 internal fun BirEmitter.calleeOwnerTag(decl: org.jetbrains.kotlin.ir.declarations.IrDeclaration): String {
 	val owner = (decl as? org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer)?.let { clrExternalOwner(it) }
-		?: if (decl.parent is IrFile) fileClassOf(decl) else (decl as? IrSimpleFunction)?.let { fn ->
-		(fn.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)?.let { pkg ->
-			kotc.frontend.clrInjectedTopLevelFileClass(
-				CallableId(pkg.packageFqName, fn.name), regularParams(fn).size, injectedExtReceiverKey(fn))
-		}
-	}
+		?: if (decl.parent is IrFile) fileClassOf(decl) else null
 	return owner?.let { ""","calleeOwner":${fqnJson(it)}""" } ?: ""
 }
 
@@ -2004,7 +1973,7 @@ internal fun BirEmitter.localCalleeOwnerTag(): String = ""","calleeOwner":${fqnJ
  *  node to a `clrInstance`/`clrPropGet` (NetInteropBinding / MemberCallSubstitution drop the `virtual` field). This
  *  marker RIDES ALONG so those passes can re-stamp the produced CLR node non-virtual, and ilemit emits `call`
  *  (not `callvirt`) for a reference owner — a base-slot dispatch exactly like C#'s `base.M()`. Without it a super
- *  call to a CLR-bound base (kotlin.Any/System.Object, a facadegen-injected .NET base, a @ClrTypeAlias stdlib base)
+ *  call to a CLR-bound base (kotlin.Any/System.Object, a dll2klib-projected .NET base, a @ClrTypeAlias stdlib base)
  *  callvirt-re-dispatches to THIS class's override -> infinite recursion. */
 internal fun BirEmitter.superTag(call: IrCall): String =
 	if (call.superQualifierSymbol != null) ""","super":true""" else ""
@@ -2081,7 +2050,7 @@ internal fun BirEmitter.recvExpr(recv: IrExpression, ownerType: TypeNode, ownerI
 
 /** A `byref(...)` target that is an own-source-set property read -> its BACKING-FIELD node, so ilemit takes the
  *  field address (`ldflda <backing>`) instead of addressing an accessor's return value (Phase 5). The field is
- *  INTERNAL, hence reachable across types in-module. Null for a non-property, a .NET/injected property, or a
+ *  INTERNAL, hence reachable across types in-module. Null for a non-property, a .NET/external property, or a
  *  computed/delegated/lateinit/@ClrField property (no plain in-module backing field to address). */
 internal fun BirEmitter.byrefBackingField(inner: IrExpression): String? {
 	val call = inner as? IrCall ?: return null
@@ -2096,9 +2065,9 @@ internal fun BirEmitter.byrefBackingField(inner: IrExpression): String? {
 	return """{"k":"field","ownerType":$owner,"recv":$recv,"name":${str(prop.name.asString())}}"""
 }
 
-/** (argsJson, argTypesJson) for an injected .NET / restored-DotKt call — the ONE builder every such call site uses,
+/** (argsJson, argTypesJson) for an external .NET / restored-DotKt call — the ONE builder every such call site uses,
  *  so the two vectors are always the SAME physical sequence: `[__self?] + contexts + regulars`, positions filled by
- *  [filledInjectedArgs].
+ *  [filledExternalArgs].
  *
  *  Both halves derive from the callee's PARAMETERS, never from "the expressions that happen to be present". Building
  *  them from provided expressions (the previous shape here and at the three sibling member paths) silently DELETED an
@@ -2110,7 +2079,7 @@ internal fun BirEmitter.byrefBackingField(inner: IrExpression): String? {
  *  A `ClrRef<T>` param already maps to `byref:T` via birType (so the out/ref overload resolves + optional params still
  *  default-fill); a `byref(x)` arg unwraps to its lvalue `x`, which ilemit passes by address. */
 internal fun BirEmitter.clrCallArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression, callee: org.jetbrains.kotlin.ir.declarations.IrFunction): Pair<String, String> {
-	val aj = filledInjectedArgs(call)
+	val aj = filledExternalArgs(call)
 	val tj = regularParams(callee).map { birType(it.type).toJson() }.take(aj.size)
 	return aj.joinToString(",") to tj.joinToString(",")
 }

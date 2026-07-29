@@ -1,4 +1,4 @@
-// Producer source for the migrated il-ubyteinj case (#53). A .NET API with UNSIGNED byte surface: facadegen maps
+// A .NET API with an unsigned-byte surface (#53): dll2klib maps
 // System.Byte -> kotlin.UByte and byte[] -> UByteArray (STRICT) — the old collapse to signed Byte/ByteArray lost
 // the unsigned value (200 -> -56). Own namespace (Bt).
 namespace Bt {

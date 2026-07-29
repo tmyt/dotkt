@@ -72,7 +72,7 @@ static class RuntimeReferences
         // identity; the catalog dedups them by identity and picks the asset the TARGET runtime would load.
         // targetRid / ridGraphPath (#51) are MSBuild's $(RuntimeIdentifier) / $(RuntimeIdentifierGraphPath) (or unset
         // for a direct/host-targeted run → the catalog defaults to the HOST RID). ilemit is the ONLY consumer that
-        // reaches RID-asset selection: bir2cir/facadegen/retarget read RAR's RID-neutral compile set (@(ReferencePath),
+        // reaches RID-asset selection: bir2cir/dll2klib/retarget read RAR's RID-neutral compile set (@(ReferencePath),
         // one ref assembly per identity, no runtimes/<rid>/lib variants), so a target RID is meaningless there.
         var catalog = ManagedReferenceCatalog.Create(paths, "ilemit", runtimeSelection: true,
             targetRid: targetRid, ridGraphPath: ridGraphPath);

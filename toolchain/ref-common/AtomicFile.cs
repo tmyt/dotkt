@@ -7,7 +7,7 @@ namespace DotKt.Toolchain;
 /// Atomic file writes for the toolchain's assembly emitters (#52). An in-place truncate-then-write (FileMode.Create)
 /// is observable by a concurrent reader as a partial/torn image — the root cause of the flaky
 /// "retarget: Format of the executable (.dll) is invalid" / BadImageFormatException seen when one stage rewrites a dll
-/// (ilemit emit, retarget in-place repoint) while another (retarget/facadegen/bir2cir) is loading the SAME file. We
+/// (ilemit emit, retarget in-place repoint) while another (retarget/dll2klib/bir2cir) is loading the SAME file. We
 /// write to a sibling temp file and rename over the target: a same-directory rename is atomic on every OS the
 /// toolchain runs on, so a reader always sees either the whole old file or the whole new one — never a mid-write.
 /// </summary>

@@ -231,7 +231,7 @@ static class FaithfulHintRecognition
     static JsonNode TransformUnsignedByteArrayReinterpret(JsonObject o, BirScope scope)
     {
         // Only the plain stdlib-extension shape (`owner=null`, no `ownerType`): an `ownerType`-keyed callStatic is a
-        // facadegen .NET interop static (e.g. a user `SomeType.toByteArray(...)`), never the stdlib reinterpret.
+        // dll2klib .NET interop static (e.g. a user `SomeType.toByteArray(...)`), never the stdlib reinterpret.
         if (o["owner"] != null || o["ownerType"] != null) return o;
         var method = (o["method"] as JsonValue)?.GetValue<string>();
         var (need, elem) = method switch

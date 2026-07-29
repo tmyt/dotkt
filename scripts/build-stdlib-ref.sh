@@ -39,7 +39,7 @@ FLAGS=(-no-stdlib -Xallow-kotlin-package -Xexpect-actual-classes -Xstdlib-compil
 
 info "kotc: ${#STDLIB_COMMON[@]} common + ${#STDLIB_SRC[@]} src + ${#STDLIB_UNSIGNED[@]} unsigned + ${#STDLIB_CLR[@]} clr -> BIR (ref mode)"
 # kotc exits nonzero when there are frontend errors; this script's job is to REPORT them, so tolerate it.
-CLR_TYPES_METADATA="" "$KOTC" \
+"$KOTC" \
 	"${STDLIB_COMMON[@]}" "${STDLIB_SRC[@]}" "${STDLIB_UNSIGNED[@]}" "${STDLIB_CLR[@]}" \
 	"${FLAGS[@]}" "${STDLIB_FRAGMENT_ARGS[@]}" -d "$BIR" 2>"$OUT/kotc.err" || true
 bir_count="$(ls "$BIR"/*.bir.json 2>/dev/null | wc -l)"
@@ -60,10 +60,10 @@ if (( do_emit )); then
 	grep -vE '^\s+at ' "$OUT/ilemit.err" | grep -iE 'exception|KeyNot|unresolved|no matching' | head -3 || true
 	[[ -f "$DLL/DotKt.Private.Stdlib.dll" ]] || die "DotKt.Private.Stdlib.dll was not emitted (see $OUT/ilemit.err)"
 	# Retarget: the emitted dll references the IMPLEMENTATION core (System.Private.CoreLib); repoint those refs at
-	# the REFERENCE assemblies (+ self) so a downstream MetadataLoadContext reader — facadegen, ilverify —
+	# the REFERENCE assemblies (+ self) so downstream metadata readers and ILVerify
 	# can resolve its types. Self-contained (no DotKt.Runtime ref), so retarget against the BCL ref pack only.
 	need_tool retarget
-	info "retarget: repoint CoreLib refs (so facadegen/ilverify can read it back)"
+	info "retarget: repoint CoreLib refs (so metadata readers/ILVerify can read it back)"
 	dotnet "$RETARGET_DLL" "$DLL/DotKt.Private.Stdlib.dll" --compile-refs "$FRAMEWORK_COMPILE_REFS" 2>&1 | tail -1
 	ls -la "$DLL/DotKt.Private.Stdlib.dll"
 	info "*** DotKt.Private.Stdlib.dll emitted ***"

@@ -1,7 +1,5 @@
-// CLR synchronous-threading battery (batch IntropC) — migrates the two facadegen `import System.Threading.*` cases that
-// exercise GENUINE cross-thread monitor hand-off with a blocking `Thread.Join` (NO suspend/await — these are plain
-// synchronous threading, not the coroutine cold-core, so they migrate normally). Each old case's `main` + stdout-golden
-// becomes one @TestAttribute method asserting the value directly (every `il_check_imports` value preserved 1:1).
+// CLR synchronous-threading battery (batch IntropC). Exercises genuine cross-thread monitor hand-off with a
+// blocking Thread.Join; these are plain synchronous tests, not coroutine cold-core tests.
 //
 // Coverage preserved (old case -> method):
 //   il-atomicarraytry -> atomicarraytry_boundsThrowReleasesMonitorCrossThread   #129 an AtomicIntArray element op whose

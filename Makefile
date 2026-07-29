@@ -5,7 +5,7 @@
 # The artifact DAG:
 #
 #   kotc ──┬────────────────────────────────► stdlib-klib (frontend KLIB, kotc -classpath)
-#          ├─ ilemit/bir2cir/facadegen/dll2klib/retarget
+#          ├─ ilemit/bir2cir/dll2klib/retarget
 #          └────────────► stdlib-ref ──► stdlib-rt ──► pack (5 NuGet packages -> build/nuget-feed)
 #
 # Output paths are LOAD-BEARING (dotkt.sh, test runners, and eng/KotlinClr.targets hard-reference
@@ -21,7 +21,7 @@ SHELL := /bin/bash
 
 # ---- artifacts -----------------------------------------------------------------------------------
 KOTC       := toolchain/kotc/build/install/kotc/bin/kotc
-TOOLS      := ilemit bir2cir facadegen dll2klib retarget
+TOOLS      := ilemit bir2cir dll2klib retarget
 TOOL_DLLS  := $(foreach t,$(TOOLS),build/$(t)-bin/$(t).dll)
 FE_KLIB    := build/clr-stdlib-frontend-klib/kotlin-stdlib-clr-frontend.klib
 STDLIB_REF := build/clr-stdlib/dll/DotKt.Private.Stdlib.dll
@@ -31,7 +31,7 @@ FEED       := build/nuget-feed
 # ---- source sets (prerequisites for incrementality) ----------------------------------------------
 KOTC_SRC   := $(shell find toolchain/kotc/src -type f 2>/dev/null) toolchain/kotc/build.gradle.kts settings.gradle.kts
 STDLIB_SRC := $(shell find libraries/stdlib -name '*.kt' 2>/dev/null)
-# bir-common/TypeNode.cs is <Compile Link/>-shared into bir2cir/ilemit/facadegen, so it is a source
+# bir-common/TypeNode.cs is <Compile Link/>-shared into bir2cir/ilemit/dll2klib, so it is a source
 # prerequisite of every C# tool (harmless extra dep for retarget) — include it for incrementality.
 tool_src    = $(shell find toolchain/$(1) toolchain/bir-common -name '*.cs' -o -name '*.csproj' 2>/dev/null | grep -vE '/(obj|bin)/')
 
@@ -41,11 +41,11 @@ tool_src    = $(shell find toolchain/$(1) toolchain/bir-common -name '*.cs' -o -
 .PHONY: all toolchain kotc $(TOOLS) stdlib stdlib-klib stdlib-ref stdlib-rt pack \
         verify verify-core verify-tests verify-schema verify-sanity verify-msbuild verify-packaged-sdk \
         verify-roundtrip verify-wide-delegates \
-        dev facades dll2klib-e2e clean clean-tools clean-stdlib clean-pack help
+        dev dll2klib-e2e clean clean-tools clean-stdlib clean-pack help
 
 all: pack ## one-shot: toolchain -> stdlib -> the 5 NuGet packages in build/nuget-feed
 
-toolchain: $(KOTC) $(TOOL_DLLS) ## the compiler toolchain (facadegen remains during the opt-in migration)
+toolchain: $(KOTC) $(TOOL_DLLS) ## the compiler toolchain
 
 # ---- individual tools ----------------------------------------------------------------------------
 kotc: $(KOTC) ## the Kotlin frontend (FIR/IR -> BIR) launcher, via gradlew installDist
@@ -140,10 +140,6 @@ dev: ## compile (and run) one .kt: make dev SRC=Foo.kt [RUN=1 EXE=1 REF=x.dll NO
 dll2klib-e2e: ## CLR reference DLL -> standard metadata-only KLIB end-to-end regression
 	bash tests/special/dll2klib-e2e/run.sh
 
-facades: ## FIR-injection metadata for .NET types: make facades OUT=out.meta TYPES="System.Text.StringBuilder ..."
-	@test -n "$(OUT)" && test -n "$(TYPES)" || { echo 'usage: make facades OUT=out.meta TYPES="Full.Type.Name ..."'; exit 2; }
-	bash scripts/gen-facades.sh "$(OUT)" $(TYPES)
-
 # ==================================================================================================
 # Cleaning
 # ==================================================================================================
@@ -165,7 +161,7 @@ help: ## this help
 	@echo
 	@grep -hE '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) | \
 		awk -F':.*## ' '{ printf "  \033[1m%-22s\033[0m %s\n", $$1, $$2 }'
-	@printf "  \033[1m%-22s\033[0m %s\n" "ilemit|bir2cir|facadegen|dll2klib|retarget" "build one .NET tool -> build/<tool>-bin"
+	@printf "  \033[1m%-22s\033[0m %s\n" "ilemit|bir2cir|dll2klib|retarget" "build one .NET tool -> build/<tool>-bin"
 	@echo
 	@echo "Common flows:  make all   ·   make -j toolchain   ·   make stdlib   ·   make verify-tests"
 	@echo "               make dev SRC=path/to/Foo.kt RUN=1"

@@ -1,14 +1,10 @@
-// Generic .NET-type interop battery (batch IntropB) — migrates the facadegen-driven cases/il-netgen* onto the
-// in-process NUnit suite. The old cases were driven by a pre-authored facadegen `.meta` (COLLMETA/GMMETA = a
-// scan of System.Collections.ObjectModel.Collection + System.Runtime.CompilerServices.Unsafe/RuntimeHelpers);
-// the equivalent in-process form is a plain `import System.*` — the Interop consumer project runs the facadegen
-// scan-imports pipeline, so the generic .NET types/methods inject at compile. Each old case's `main` +
-// stdout-golden becomes one @TestAttribute method preserving every asserted value 1:1 (see `// <expected>`).
+// Generic .NET-type interop battery (batch IntropB). The Interop consumer's reference KLIBs expose
+// System.Collections.ObjectModel.Collection and Runtime.CompilerServices helpers to the frontend.
 //
 // Coverage preserved (old case -> method):
 //   il-netgen   -> netgen_useGenericNetType        use a generic .NET type (Collection<Int>) façade-free
 //   il-netgen2  -> netgen2_inheritGenericNetBase   inherit a GENERIC .NET base class (: Collection<Int>())
-//   il-netgen3  -> netgen3_genericMethodsAndIndexer generic .NET static methods (Unsafe.SizeOf<T>/IsReferenceOrContainsReferences<T>) + injected generic this[i] indexer
+//   il-netgen3  -> netgen3_genericMethodsAndIndexer generic .NET static methods (Unsafe.SizeOf<T>/IsReferenceOrContainsReferences<T>) + projected generic this[i] indexer
 //
 // Top-level names are family-prefixed with `IntropB` (one assembly = one namespace) to avoid clashing with
 // sibling batteries and the stdlib.
@@ -49,7 +45,7 @@ class BclGenericTypeTests {
     }
 
     // il-netgen3: generic .NET static methods (MakeGenericMethod'd against the call's type arg) + the
-    // injected generic `this[i]` indexer (get_Item / set_Item on the constructed type).
+    // projected generic `this[i]` indexer (get_Item / set_Item on the constructed type).
     @TestAttribute
     fun genericMethodsAndIndexer() {
         assertEquals(4, Unsafe.SizeOf<Int>())                                     // 4

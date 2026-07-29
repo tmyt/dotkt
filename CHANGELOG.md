@@ -23,6 +23,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   case is listed in its (currently empty) `CF_XFAIL` baseline, and reports NEW-FAIL/FIXED like the other gates.
   It opens with the eight byref-like storage refusals below.
 
+### Removed
+
+- **facadegen (area:toolchain): remove the retired CLR-to-FIR injection tool.** The production frontend now
+  consumes one standard metadata-only KLIB per resolved CLR reference assembly through `dll2klib`, so the old
+  import-seeded JSON projection has no build, package, test, or developer entry point. The `facadegen` project,
+  `make facades`, and `scripts/gen-facades.sh` are deleted; `make toolchain` now builds only the shipping tools.
+
 ### Fixed
 - **bir2cir (area:bir2cir): an argument that never returns, to the left of a suspending one, is no longer treated
   as a value to carry across the suspension.** `pair(run { throw IllegalStateException() }, later())` refused to

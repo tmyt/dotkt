@@ -28,7 +28,7 @@ files, all found this way.
 ### 3. Compile-fix inside-out (the bulk — mechanical grind, ~1-2 days)
 Fix the CERTAIN-BREAKS in dependency order: `Main.kt` (removed args) → `ClrCliPipeline.kt` (pipeline artifacts/phases)
 → frontend phases (artifact ctors, `getCompilerExtensions`, klib loading) → `ClrDefaultImports.kt` (renames) →
-`ClrMetadataKlibPipeline.kt` (**stop here — step 4 first**) → `ClrTypeInjection.kt` (plugin/registrar DSL) →
+reference-KLIB loading →
 `BirEmitter*` residue (expected small — it sits on the stable IR tree). Each break is a compiler error pointing at it.
 
 ### 4. The metadata-klib serializer — the ONE recurring gating risk
@@ -41,9 +41,9 @@ holistically, do not patch the symptom. Do NOT trust the gate to find this indir
 
 ### 5. Fragile watch-points — verify empirically, never assume "unchanged"
 kotc pokes several **internal/unstable FIR surfaces**; a bump can silently break any of them:
-- **`FirInternals.java` companion shim** (`ownerGenerator` / `replaceCompanionObjectSymbol` / `FirGeneratedScopes`
-  early-return) — the implicit-companion mechanism (§8c). 2.4.0: survived UNCHANGED; the green `il-injstatic` sample
-  is what *proved* it (a behavior-preserving gate is exactly how you check a fragile internal dependency didn't break).
+- **CLR intrinsic declarations** (`libraries/stdlib/clr/kotlin/clr/CompilerIntrinsics.kt`) — verify that the frontend
+  KLIB continues to expose the fixed `byref` / `stackBuffer` / `clrEvent` vocabulary without a compiler plugin.
+  CLR reference declarations and their static companions are loaded from reference KLIBs.
 - **fake-override linking** (`resolveFakeOverride`, default-accessor discrimination) — the classic wrong-dispatch
   miscompile source when Fir2Ir internals get rewritten.
 - **default-import synthesis** — 2.4.0 made `FirDefaultImportsProviderHolder` composable, so `register` *composed*
@@ -80,4 +80,4 @@ Then the P6 sweep: `CLAUDE.md` / `README.md` / the docs' "pinned to X" lines. Do
 ## Effort
 2.4.0 (the TestFlight): compiler half ~3-5 days (mostly grind + the one const-serializer decision); stdlib refresh ~1
 day mechanical. A subsequent bump over a similar delta should be comparable or faster, since the playbook + the fragile
-watch-points are now known and the `FirInternals`/serializer patterns are established.
+watch-points are now known and the serializer pattern is established.

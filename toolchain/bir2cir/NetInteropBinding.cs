@@ -7,7 +7,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// .NET-INTEROP CALL BINDING (A2 / #61): the Kotlin<->CLR binding for a facadegen-injected .NET member call. kotc
+// .NET-INTEROP CALL BINDING (A2 / #61): the Kotlin<->CLR binding for a reference-KLIB-projected .NET member call. kotc
 // emits a PLAIN `callStatic`/`callInstance` by the .NET owner's FQN IDENTITY (`callStatic Kfc.App.get_Count`,
 // `callInstance System.Text.StringBuilder.Append`) carrying only frontend FACTS — static-ness (callStatic vs
 // callInstance), the accessor name (`get_X`/`set_X`), `typeArgs`, the `op_` name with the receiver already
@@ -20,7 +20,7 @@ using DotKt.Bir;
 // property/field) stays a plain instance method call. A `kotlin.*`/local/unresolvable owner is left untouched (the
 // stdlib is bound by MemberCallSubstitution off the ref.dll; a local type is emitted here). CLR-ONLY vocabulary that
 // has no plain-Kotlin form — `.NET events` (ClrEvent<T>), `byref`/`ClrRef<T>` — is NOT emitted as a plain call by
-// kotc (kotc lowers it directly, as facadegen-injected CLR vocab), so it never reaches this pass. Runs BEFORE
+// kotc (kotc lowers it directly, as reference-KLIB-projected CLR vocab), so it never reaches this pass. Runs BEFORE
 // ClrEventSubscriptionBinding/KClassMemberBinding/MemberCallSubstitution and before BirTypeLowering, so the shaped `clr*`
 // nodes still carry pure-Kotlin type tokens that the subsequent lowering turns into the CLR forms — the CIR is
 // byte-identical to what kotc used to emit directly (the shape decision merely moved down a layer). Bottom-up walk,
@@ -52,7 +52,7 @@ static class NetInteropBinding
     static void Reshape(JsonObject node)
     {
         var k = Str(node["k"]);
-        // #73 M4-b: a FIELD read/write on a facadegen-injected .NET owner. kotc emits a plain `field`/`setField` by the
+        // #73 M4-b: a FIELD read/write on a reference-KLIB-projected .NET owner. kotc emits a plain `field`/`setField` by the
         // .NET-FQN identity (no shape decision); the .NET member SHAPE is bound HERE — the same axis #61 used for calls.
         // A `field`/`setField` whose owner resolves to a .NET type declaring a property OR field of that name (both, via
         // MemberIsPropertyOrField) -> clrPropGet/clrPropSet, whose EmitClrPropGet/Set is struct-receiver-safe + inlines a
@@ -123,8 +123,7 @@ static class NetInteropBinding
         var hasTypeArgs = node["typeArgs"] is JsonArray ta && ta.Count > 0;
 
         // A declaration loaded from a standard reference KLIB surfaces a CLR event as an ordinary read-only
-        // `ClrEvent<T>` property. Unlike the retired FIR-injected declaration, it has no plugin origin from which kotc
-        // could mint `clrEventGet`; recover that CLR shape here from the authoritative reference metadata.
+        // `ClrEvent<T>` property. Recover its CLR shape here from the authoritative reference metadata.
         var projectedPropKind = Str(node["prop"]);
         var projectedEventName = method != null && method.StartsWith("get_", StringComparison.Ordinal)
             ? method[4..]
@@ -147,7 +146,7 @@ static class NetInteropBinding
         var v = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
         foreach (var key in node.Select(kv => kv.Key).ToList()) { var val = node[key]; node.Remove(key); v[key] = val; }
         JsonNode Take(string key) => v.TryGetValue(key, out var x) ? x : null;
-        // A declaration loaded from a regular Kotlin KLIB is not facadegen-injected, so kotc emits the ordinary
+        // A declaration loaded from a regular Kotlin KLIB is not reference-KLIB-projected, so kotc emits the ordinary
         // external-member dialect: the declared parameter types are in `sig`, not `argTypes`/`shapeTypes`.
         // Once the owner resolves against the authoritative CLR reference set, both fields carry the same frontend
         // fact needed here. Accepting `sig` lets bir2cir own the CLR binding without teaching kotc a KLIB side channel.
@@ -187,8 +186,8 @@ static class NetInteropBinding
             return;
         }
 
-        // .NET ENUM consumed as a Kotlin Enum (#107): a facadegen-injected .NET enum carries a synthetic `kotlin.Enum<Self>`
-        // supertype (facadegen `IsEnum` branch), so kotc resolves the INHERITED Kotlin Enum contract on a CONCRETE
+        // .NET ENUM consumed as a Kotlin Enum (#107): a reference-KLIB-projected .NET enum carries a synthetic `kotlin.Enum<Self>`
+        // supertype (dll2klib `IsEnum` branch), so kotc resolves the INHERITED Kotlin Enum contract on a CONCRETE
         // .NET-enum receiver as a plain property-get by IDENTITY (`callInstance ownerType=System.DayOfWeek method=name/
         // ordinal prop=get`) — but System.Enum declares NEITHER as a .NET property (they'd fall through to a non-existent
         // `get_name`/`get_ordinal`). Bind them to the CLR enum semantics: `name` -> ToString() (the constant name, the
@@ -227,9 +226,9 @@ static class NetInteropBinding
         {
             var isIxSet = propKind == "index-set";
             // A genuine .NET indexer -> its `get_`/`set_` accessor (a custom `[IndexerName]` honored via DefaultMember).
-            // Otherwise (#133 case2): a facadegen-injected DotKt owner (a Kotlin-emitted type — e.g. `class Arr<T>` with
+            // Otherwise (#133 case2): a reference-KLIB-projected DotKt owner (a Kotlin-emitted type — e.g. `class Arr<T>` with
             // `operator fun get/set`) has NO .NET indexer property; it emitted the PLAIN operator method the frontend
-            // named (`method` = "get"/"set", facadegen's clrName). Bind to that REAL method when the type declares it —
+            // named (`method` = "get"/"set", dll2klib's clrName). Bind to that REAL method when the type declares it —
             // the get_Item/set_Item BCL fallback dangles on the Kotlin-emitted type. A DotKt owner declares the literal
             // `get`/`set`; a BCL indexer type declares `get_Item` (found by DefaultIndexerAccessor above), so this cleanly
             // separates the two. The get_Item/set_Item fallback survives for a BCL type whose indexer DefaultMember is
@@ -327,8 +326,8 @@ static class NetInteropBinding
             return;
         }
 
-        // #179 — a Kotlin `operator fun compareTo` on a facadegen-injected DotKt owner that implements Comparable<Self>.
-        // The DotKt class's CLR slot is the PascalCase `System.IComparable<T>.CompareTo` (facadegen renamed the member +
+        // #179 — a Kotlin `operator fun compareTo` on a reference-KLIB-projected DotKt owner that implements Comparable<Self>.
+        // The DotKt class's CLR slot is the PascalCase `System.IComparable<T>.CompareTo` (dll2klib renamed the member +
         // restored the `kotlin.Comparable<Self>` supertype), but kotc emits the plain Kotlin name `compareTo` (a member
         // clrName is not a kotc channel), so a cross-module `c1 < c2` (the frontend resolves `<` to `compareTo`) would
         // dangle on a non-existent lowercase slot. The INSTANCE-slot analog of the plus->op_Addition rule above: rebind
@@ -357,7 +356,7 @@ static class NetInteropBinding
         if (!isStatic) CarrySuper();
     }
 
-    // #73 M4-b — bind a `field`/`setField` on a facadegen-injected .NET owner to clrPropGet/clrPropSet. Resolves the
+    // #73 M4-b — bind a `field`/`setField` on a reference-KLIB-projected .NET owner to clrPropGet/clrPropSet. Resolves the
     // owner off the refs (skips kotlin.*/local owners); a name that is a real .NET property OR field (MemberIsProperty-
     // OrField matches both) is reshaped — EmitClrPropGet/Set falls through property -> get_ accessor -> field, so it
     // serves a genuine field too (with const-inlining + struct-safe receiver). A name the refs can't see stays plain.
@@ -381,7 +380,7 @@ static class NetInteropBinding
         if (write) node["value"] = Take("value");
     }
 
-    // #73 M4.4 — reshape a BOUND method-ref `newBoundDelegate` on a facadegen-injected .NET owner to the CLR
+    // #73 M4.4 — reshape a BOUND method-ref `newBoundDelegate` on a reference-KLIB-projected .NET owner to the CLR
     // `newBoundClrDelegate` dialect node (ilemit resolves the target by reflection over the .NET type). Resolves the
     // owner off the refs (skips kotlin.*/local owners — those stay a plain newBoundDelegate ilemit binds via FindMethod).
     // The field set + order mirror kotc's former newBoundClrDelegate emission exactly (clrType from the owner identity,
@@ -459,7 +458,7 @@ static class NetInteropBinding
             }
     }
 
-    // The INVERSE of facadegen's OPERATOR_NAMES (facadegen Program.cs): a Kotlin `operator fun` name -> the .NET `op_X`
+    // The INVERSE of dll2klib's OPERATOR_NAMES (dll2klib Program.cs): a Kotlin `operator fun` name -> the .NET `op_X`
     // static-method slot. kotc emits the Kotlin identity; this pass reconstructs the .NET operator off the refs.
     static readonly Dictionary<string, string> OperatorToNet = new(StringComparer.Ordinal)
     {
@@ -590,8 +589,8 @@ static class NetInteropBinding
 
     // True iff the .NET type (or a base/interface) declares a method of this name (any arity), public OR protected —
     // a Kotlin class can override a PROTECTED VIRTUAL .NET member (the WinUI OnLaunched pattern: `override fun Tag()`
-    // over a protected `Base.Tag`). Used by DeclarationRename's facadegen-override slot resolution (A2 step 5) to
-    // confirm a Kotlin override binds a REAL .NET method before it keeps the identity slot — facadegen injects the
+    // over a protected `Base.Tag`). Used by DeclarationRename's dll2klib-override slot resolution (A2 step 5) to
+    // confirm a Kotlin override binds a REAL .NET method before it keeps the identity slot — dll2klib injects the
     // Kotlin method identity EQUAL to the .NET name. NonPublic covers the protected/family case.
     internal static bool DeclaresPublicMethodNamed(Type type, string name)
     {

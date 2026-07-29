@@ -7,8 +7,9 @@ using System.Text.Json.Nodes;
 // (`attrExternal:true`, resolved from a referenced .NET assembly); a merely-referenced type is skipped.
 //
 // Two sources of an external applied attribute:
-//   (1) kotc flags an IMPORTED .NET attribute (a facadegen-injected annotation class, #54) with `"attrClr":true` — the
-//       frontend origin fact (kotc KNOWS the type was injected). Consume it: drop `attrClr` + set `attrExternal:true`
+//   (1) kotc flags an IMPORTED .NET attribute (a reference-KLIB-projected annotation class, #54) with `"attrClr":true` — the
+//       frontend origin fact (kotc knows the type came from a CLR reference). Consume it: drop `attrClr` +
+//       set `attrExternal:true`
 //       in EVERY build (the type lives in the BCL / a referenced assembly, resolvable from refs anywhere). This is the
 //       CLR-relation decision bir2cir owns; ilemit just reads the flag. (Ex-`clr:` string prefix, retired #48.)
 //   (2) #146 — a non-const-defaulted param carries `[kotlin.clr.KotlinDefault(index, bir)]` (DefaultArgSplice fills it

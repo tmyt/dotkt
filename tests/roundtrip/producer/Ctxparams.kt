@@ -14,7 +14,7 @@ context(s: Scale)
 fun tagged(a: Int, label: String = "f" + s.factor): String = "$a/$label"
 
 // A TIER-1 CONSTANT default behind a context slot: the constant rides native `[Optional]`+`[DefaultParameterValue]`
-// and the consumer fills it from the facadegen metadata, whose per-parameter list is PHYSICAL — so the context slot
+// and the consumer fills it from the dll2klib metadata, whose per-parameter list is PHYSICAL — so the context slot
 // shifts `k`'s ordinal, and a lookup that counted regular parameters only would read the wrong entry.
 context(s: Scale)
 fun labeled(a: Int, k: Int = 7): Int = a + k + s.factor

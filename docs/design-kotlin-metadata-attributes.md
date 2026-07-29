@@ -36,13 +36,13 @@ ELIMINATED; the real CLR stdlib superseded it). They are metadata-only, never ex
 
 Full-name equality is not enough to identify these internal carriers: an ordinary C# assembly can declare a
 lookalike. DotKt therefore stamps `[assembly: AssemblyMetadata("DotKt.Compiler", "metadata-v1")]` and stamps each
-embedded carrier definition with `[CompilerGenerated]`. `facadegen` accepts Kotlin metadata only when both signals are
+embedded carrier definition with `[CompilerGenerated]`. `dll2klib` accepts Kotlin metadata only when both signals are
 present. An unmarked `DotKt.Runtime.CompilerServices.Kotlin*Attribute` is treated as an ordinary third-party attribute
 and cannot enable Kotlin-only reverse mappings. Outputs from compilers predating this provenance contract must be
 rebuilt; there is deliberately no namespace-only compatibility fallback because it recreates the false-positive
 classification.
 
-## Pipeline (mirror of the forward `--refs` injection)
+## Pipeline
 
 ```
   emit:   BirEmitter records infix/operator/suspend, inline bodies, read-only fields, file classes,
@@ -51,18 +51,14 @@ classification.
                compiler-generated embedded carrier definitions,
                [KotlinFunction(flags)] / [KotlinFileClass] / [KotlinInline(body)] / [KotlinReadOnly] /
                .NET NRT [Nullable*]
-  retarget: dotkt-retarget repoints BCL refs (also needed so facadegen can MLC-load the dll)
-  read:   facadegen verifies assembly + carrier provenance, then reads the attributes -> meta tokens
-            `fun <name> <ret> final,infix|operator|suspend ...`   (suspend: Task<T> unwrapped to T)
+  project: dll2klib verifies assembly + carrier provenance, then writes standard KLIB metadata
+            (suspend: Task<T> unwrapped to T)
             CLR `op_*` methods map back to Kotlin operator names through the standard operator table
-            CLR events restore as CLREvent<T> endpoints from EventInfo + delegate Invoke
-            `file <package> <fileClassFqn>` + `tlfun <name> ...`  (top-level)
+            CLR events restore as ClrEvent<T> endpoints from EventInfo + delegate Invoke
+            top-level declarations carry their physical file-class owner in `@ClrExternal`
             field mutability, inline body availability, and NRT nullability
-  inject: ClrTypeInjection parses them and restores the Kotlin modifier on the synthesized FIR:
-            members -> status { isInfix/isOperator/isSuspend }
-            events -> ClrEvent<T> endpoint with a subscribe compiler-intrinsic operation
-            top-level -> getTopLevelCallableIds + generateFunctions(owner==null)
-  backend (consumer): a call to a restored top-level fun -> ClrTopLevelRegistry -> a static call on the file class;
+  resolve: kotc's ordinary KLIB symbol provider restores the projected Kotlin declarations
+  backend (consumer): a call to a restored top-level fun forwards its `@ClrExternal` owner into BIR;
             a restored suspend call's .NET return is Task<T> (coTaskType), awaited by the coroutine machinery;
             a restored event subscription lowers to add + an EventSubscription close-token whose callback invokes
             remove with the exact same handler bound to the event's exact CLR delegate type.
@@ -87,11 +83,11 @@ cross-assembly inline matrix is:
 |---|---|
 | same-module inline (incl. non-local return, crossinline) | ✅ existing (`il-inline`/`il-inline2`/`il-xinline`) |
 | cross-module **non-reified** inline | ✅ emitted as a normal method; consumed as a regular (non-inlined) call |
-| cross-module **reified** inline | ✅ emitted as a real generic method; consumed as `f<Int>()` (CLR generics are reified, so the `T::class`/`is T` body works) — required restoring generic TYPE PARAMS on the top-level injector + a `clrGenericStatic` call |
+| cross-module **reified** inline | ✅ emitted as a real generic method; consumed as `f<Int>()` (CLR generics are reified, so the `T::class`/`is T` body works) |
 | cross-module inline + lambda with **non-local return** | ✅ carried as raw BIR and spliced by bir2cir |
 
 **Where inlining happens.** DotKt does NOT run the standard JVM IR `FunctionInlining` lowering — its pipeline is the
-four layers `facadegen` / `kotc` / `bir2cir` / `ilemit` (`native-cir` is the target; the frontend is
+four layers `dll2klib` / `kotc` / `bir2cir` / `ilemit` (`native-cir` is the target; the frontend is
 `…Fir2Ir then ClrBackendPhase`, no JVM lowerings). **Inlining (the `[KotlinInline]` splice) is a `bir2cir` (BIR→CIR)
 responsibility.** kotc projects the call and caller-lambda body to a `callInline` BIR node; bir2cir resolves either
 the same-module raw stash or the referenced `[KotlinInline]` payload and performs the splice. Lambda-less inline funs
@@ -103,9 +99,10 @@ cross-module fix is **lighter than JVM's `@Metadata`** (no frontend IR deseriali
    `{v:1,fqn,owner,fileClass,recv,static,typeParams,params,ret,body,lifted}` before lowering; `ilemit` stamps those
    bytes verbatim as `[KotlinInline("bir-json/1", content)]`. `lifted` closes the body transitively over every
    `generated:true` file-class method reached by a `newDelegate`.
-2. **read** — `facadegen` flags the restored fn `,inline` in the meta; the body STAYS in the assembly (read at splice time).
-3. **inject** — `ClrTypeInjection` marks the fn `status { isInline = true }`, so the consumer's frontend ACCEPTS a
-   non-local `return` through the lambda (a body-less stub here, so BirEmitter's `callee.body == null`).
+2. **project** — `dll2klib` preserves the inline modifier in KLIB metadata; the body stays in the assembly
+   and is read at splice time.
+3. **resolve** — the ordinary KLIB frontend sees the function as inline, so the consumer frontend accepts a
+   non-local `return` through the lambda.
 4. **splice** — the consumer's `bir2cir` emits an `inlineSplice` node (the call's value/lambda bindings), reads
    `[KotlinInline].Body` from the `--ref`'d library, parses it, re-hoists carried generated methods into the
    consumer file class under fresh names, and splices the callee body HERE with substitution: a
@@ -126,7 +123,7 @@ non-capturing lambdas, member inline functions, and non-local returns.
   return type open (`TaskAwaiter`1<!0>`), so the runBlocking/await path mis-typed its temp — now it trusts the BIR
   `ret` hint. Works through both a `suspend fun` and a `runBlocking { … }` lambda.
 - **Parameter names** — ilemit defined methods by type only (never `DefineParameter`), so names were lost and
-  facadegen fell back to `arg0`/`arg1`, blocking named-argument calls across a boundary. Now emitted; `f(b = 2, a = 1)`
+  dll2klib fell back to `arg0`/`arg1`, blocking named-argument calls across a boundary. Now emitted; `f(b = 2, a = 1)`
   round-trips. (The names were always in the BIR — it was purely an emit omission, not a FIR limitation.)
 
 - **Kotlin package → .NET namespace (was FOUNDATIONAL; FIXED 2026-06-24).** DotKt used to flatten all packages to the

@@ -35,7 +35,7 @@ private fun brlTally(t: Tally, a: Int = brlBump(), b: Int = a * 10): Int = ByRef
 // A BCL byref-like arriving through an ordinary .NET signature.
 private fun brlSpanChars(s: ReadOnlySpan<Char>, a: Int = brlBump(), b: Int = a * 10): Int =
     ByRefLikeApi.CharsLength(s) + b
-// `kotlin.clr.Span<T>` — the kotc INTRINSIC spelling of System.Span<T>, which facadegen never emits a record for.
+// `kotlin.clr.Span<T>` — the kotc INTRINSIC spelling of System.Span<T>, which dll2klib never emits a record for.
 private fun brlSpanInts(s: Span<Int>, a: Int = brlBump(), b: Int = a * 10): Int = ByRefLikeApi.SpanLength(s) + b
 // A byref-like EXTENSION RECEIVER: bound by the same plan, under the same rule.
 private fun ReadOnlySpan<Char>.brlExt(a: Int = brlBump(), b: Int = a * 10): Int =

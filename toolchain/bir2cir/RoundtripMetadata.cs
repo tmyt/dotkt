@@ -110,7 +110,7 @@ static class RoundtripMetadata
     static void StampMethod(JsonObject mo)
     {
         // [KotlinFunction(flags)] — Kotlin modifiers with no .NET analog. suspendBridge is the bir2cir-synthesized
-        // Task<R> bridge that IS the suspend fun's CLR ABI (facadegen must see it as `suspend fun`).
+        // Task<R> bridge that IS the suspend fun's CLR ABI (dll2klib must see it as `suspend fun`).
         int flags = 0;
         if (ModFlag(mo, "infix")) flags |= 1;
         if (ModFlag(mo, "operator")) flags |= 2;
@@ -125,7 +125,7 @@ static class RoundtripMetadata
         // Return-position attrs ride `retAttrs` (ilemit stamps them on DefineParameter(0)). Order: [Nullable, SuspendFn,
         // Nothing]. [KotlinNothing] (#133 case3) rides the SAME channel; it goes AFTER the [Nullable] byte so a `Nothing?`
         // return's NRT byte (computed from the pre-erasure type via retNullableFlags, unperturbed here) composes on top —
-        // facadegen reads the marker by presence (HasNothingMarker), order-independent, and the Nullable byte separately.
+        // dll2klib reads the marker by presence (HasNothingMarker), order-independent, and the Nullable byte separately.
         var ret = new JsonArray();
         if ((mo["retKotlinType"] as JsonValue)?.GetValue<string>() is string rkt)
         {
@@ -137,12 +137,12 @@ static class RoundtripMetadata
         if (TakeInt(mo, "retCtxFnType") is int rctx) ret.Add(Marker(AKCtxFnType, IntArg(rctx)));
         // [KotlinExtensionFunctionType] (#145) — a bare marker: a method returning `P.() -> R`. Unlike suspend, the
         // delegate is NOT erased (the receiver rides DelegateParams as the first CLR type arg), so no shape is carried —
-        // facadegen reads the marker and moves the delegate's first arg back into the fn's receiver.
+        // dll2klib reads the marker and moves the delegate's first arg back into the fn's receiver.
         if (HasRecvFn(mo["ret"])) ret.Add(Marker(AKExtFn));
         if ((mo["retNothing"] as JsonValue)?.GetValue<bool>() == true) ret.Add(Marker(AKNothing));
         // [KotlinNullableGeneric(version, bytes)] (#18/#147) — a `fun <T> …(): Holder<T?>` whose nested `Nullable(Tv)`
         // arg NullableGenericErasure object-erased to `Holder<object>`. The carrier holds the PRE-erasure return
-        // TypeNode (recorded as the opaque `nullableGenericRet` string) so facadegen restores `Holder<T?>` instead of
+        // TypeNode (recorded as the opaque `nullableGenericRet` string) so dll2klib restores `Holder<T?>` instead of
         // degrading the re-imported factory/member return to `Any?`. Rides the SAME retAttrs channel as [Nullable]/[Nothing].
         if ((mo["nullableGenericRet"] as JsonValue)?.GetValue<string>() is string ngr)
         {
@@ -151,7 +151,7 @@ static class RoundtripMetadata
         }
         // [KotlinCollectionIdentity(version, bytes)] (#29) — a return that nests a read-only `List/Set/Collection`
         // whose Root-V collapse to `IList`/`ICollection` erased the read-only-vs-mutable identity. Carries the
-        // PRE-collapse Kotlin TypeNode (recorded as the opaque `collIdentityRet` string) so facadegen restores
+        // PRE-collapse Kotlin TypeNode (recorded as the opaque `collIdentityRet` string) so dll2klib restores
         // `List` vs `MutableList` at every nested position. Rides the retAttrs channel like [Nullable]/[Nothing].
         if ((mo["collIdentityRet"] as JsonValue)?.GetValue<string>() is string cir) ret.Add(CollIdentityAttr(cir));
         if (ret.Count > 0) mo["retAttrs"] = ret;
@@ -179,7 +179,7 @@ static class RoundtripMetadata
             }
             if (po["nullableFlags"] is JsonArray nf && NullableAttr(nf) is JsonObject na) Prepend(po, na);
             // [KotlinExtensionFunctionType] (#145) — a `block: P.() -> R` param; the bare marker rides after any user
-            // attr (order-independent — facadegen reads it by presence). The delegate keeps `P` as its first arg.
+            // attr (order-independent — dll2klib reads it by presence). The delegate keeps `P` as its first arg.
             if (HasRecvFn(po["type"])) Append(po, Marker(AKExtFn));
             // [KotlinContextFunctionType(N)] — this slot's Kotlin TYPE was `context(A…) …`, and N of the delegate's
             // LEADING arguments are those contexts. It rides BESIDE [KotlinExtensionFunctionType] rather than
@@ -247,10 +247,10 @@ static class RoundtripMetadata
                 po.Remove("kotlinType");
             }
             // Prepend [Nullable, KotlinSuspendFunctionType] (Nullable outermost — same order as params). #47: a
-            // `val/var x: T?` property carries its NRT byte here (from DeclNullableFlags' nullableFlags); facadegen's
+            // `val/var x: T?` property carries its NRT byte here (from DeclNullableFlags' nullableFlags); dll2klib's
             // PropTypeN reads it via ApplyNrt, so `val text: String?` re-imports nullable instead of degrading to
             // non-null. A `val/var x: suspend (…) -> T` carries the pre-erasure `fn` shape (incl. an extension recv)
-            // restored by facadegen's SuspendFnNode.
+            // restored by dll2klib's SuspendFnNode.
             if (po["suspendFnType"] is JsonNode sf) Prepend(po, SuspendFnAttr(sf));
             if (po["nullableFlags"] is JsonArray nf && NullableAttr(nf) is JsonObject na) Prepend(po, na);
             if (HasRecvFn(po["type"])) Append(po, Marker(AKExtFn));   // a `val p: P.() -> R` property (#145)
@@ -357,7 +357,7 @@ static class RoundtripMetadata
 
     // [KotlinNullableGeneric(version, bytes)] (#18/#147) — a pre-erasure declaration-slot TypeNode, carrier-encoded
     // with the same envelope as KotlinSuspendFunctionType. The slot hand-off was stashed as canonical TypeNode JSON;
-    // parse it back so the carrier payload is the structured node facadegen reads.
+    // parse it back so the carrier payload is the structured node dll2klib reads.
     static JsonObject NullableGenAttr(string typeJson)
     {
         byte[] content = BirCarrier.EncodeBody(BirCarrier.JsonV1, JsonNode.Parse(typeJson));
@@ -367,7 +367,7 @@ static class RoundtripMetadata
     // [KotlinCollectionIdentity(version, bytes)] (#29) — the PRE-collapse Kotlin TypeNode, carrier-encoded (same
     // envelope as KotlinNullableGeneric). `collIdentity`/`collIdentityRet` was stashed as a canonical TypeNode JSON
     // STRING (opaque to the intervening type-rewriting passes); parse it back to a JsonNode so the carrier payload is
-    // the structured node facadegen's TypeNode.Parse reads to restore `List` vs `MutableList` at each nested position.
+    // the structured node dll2klib's TypeNode.Parse reads to restore `List` vs `MutableList` at each nested position.
     static JsonObject CollIdentityAttr(string typeJson)
     {
         byte[] content = BirCarrier.EncodeBody(BirCarrier.JsonV1, JsonNode.Parse(typeJson));
@@ -375,7 +375,7 @@ static class RoundtripMetadata
     }
 
     // [KotlinType(version, bytes)] — the complete Kotlin surface TypeNode corresponding to a compiler-synthesized CLR
-    // type. The fact is kept opaque through CLR lowering and decoded only by facadegen.
+    // type. The fact is kept opaque through CLR lowering and decoded only by dll2klib.
     static JsonObject KotlinTypeAttr(string typeJson)
     {
         byte[] content = BirCarrier.EncodeBody(BirCarrier.JsonV1, JsonNode.Parse(typeJson));
@@ -431,7 +431,7 @@ static class RoundtripMetadata
     // The embedded attribute-class defs, emitted ONCE as a dedicated synthetic CIR file. Each is `internal sealed :
     // System.Attribute` with the same ctor overloads ilemit's DefineEmbeddedAttr{,N} used to synthesize. `final:true`
     // -> TypeAttributes.Sealed (matching the old NotPublic|Sealed|Class); `generated:true` makes ilemit stamp the
-    // STANDARD [CompilerGenerated] trust marker. facadegen accepts DotKt metadata only from carrier definitions bearing
+    // STANDARD [CompilerGenerated] trust marker. dll2klib accepts DotKt metadata only from carrier definitions bearing
     // that marker in an explicitly marked DotKt assembly, so a C# lookalike with the same full name is inert. Ctor params carry
     // NO name (a named ctor param would mint Param rows the embedded attrs never had); the empty body chains to
     // Attribute()'s protected ctor.

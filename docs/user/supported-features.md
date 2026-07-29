@@ -45,7 +45,7 @@ Status legend: ✅ works today (exercised by the test gates) · 🚧 in progress
 | C# operator overloads and extension methods | ✅ |
 | Inherit .NET base classes / implement .NET interfaces | ✅ |
 | Consume the output from C# (`ProjectReference`, NRT, `Task<T>`) | ✅ |
-| Re-consume a DotKt dll **as Kotlin** (`infix`/`operator`/`suspend`/`inline`/`sealed`/bounds restored) | ✅ (with documented losses: enum-class-ness, `object` sugar, SAM-lambda — [details](../dotkt-semantics.md)) |
+| Re-consume a DotKt dll **as Kotlin** through a reference KLIB | ✅ ([projection limits](../dotkt-semantics.md#10-round-trip-fidelity)) |
 
 Gates backing this table: `tests/run-nunit-tests.sh` (compile → NUnit assertions → `ilverify`),
 `tests/msbuild/run.sh` (stateful MSBuild), and `tests/roundtrip/scenarios/run.sh` (irreducible

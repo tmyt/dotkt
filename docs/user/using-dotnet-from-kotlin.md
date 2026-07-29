@@ -23,8 +23,8 @@ fun main() {
 - Constructors, instance methods, properties, indexers, and chaining all work as in C#.
 - **Import aliases** work: `import System.Text.StringBuilder as SB`.
 
-**Transitive reach:** you only import your entry points. Types that appear in *their* signatures
-(return types, parameters, supertypes — hop after hop) are injected automatically:
+Every public reference declaration is projected. Types appearing in signatures, including return types,
+parameters, and supertypes, therefore resolve without import-seeded discovery:
 
 ```kotlin
 import TX.Panel

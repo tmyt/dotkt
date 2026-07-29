@@ -27,7 +27,7 @@ sealed partial class Emitter
         // so refs become System.Runtime — a large, contained refactor (every typeof(Bcl) -> mlc lookup). Tracked #50.
         var ab = new PersistedAssemblyBuilder(new AssemblyName(_asmName), typeof(object).Assembly);
         // Assembly provenance: the emitter owns the final assembly in BOTH SDK and direct-CLI flows, so it stamps an
-        // explicit, versioned DotKt protocol marker here (not in MSBuild-only SDK plumbing). facadegen requires this
+        // explicit, versioned DotKt protocol marker here (not in MSBuild-only SDK plumbing). dll2klib requires this
         // signal together with compiler-generated embedded metadata carriers before applying Kotlin-only reverse maps.
         const string dotKtMarkerKey = "DotKt.Compiler";
         const string dotKtMarkerValue = "metadata-v1";
@@ -128,7 +128,7 @@ sealed partial class Emitter
                     var tb = nested ? _types[niEl.GetString()].TB.DefineNestedType(metaName, attrs) : _mod.DefineType(metaName, attrs);
                     // #68: a `generated:true` type (KProperty/CharSequence/closure/ref-cell/ClrH/lifted-anon) gets
                     // [CompilerGenerated] — the STANDARD generated signal, read from the structured flag (no `dotkt$`
-                    // name-sniff). facadegen skips these purely by the attribute; the `dotkt_` name prevents source collision.
+                    // name-sniff). dll2klib skips these purely by the attribute; the `dotkt_` name prevents source collision.
                     if (generated) StampCompilerGenerated(tb);
                     var nti = new TypeInfo
                     {
@@ -202,7 +202,7 @@ sealed partial class Emitter
                         ti.TB.SetParent(baseTb);
                     }
                     // A bare external .NET base (kotc's pure-FQN output for a non-`clr:`-marked .NET supertype, e.g.
-                    // `System.Exception` via facadegen `import`): not in `_types`, so resolve it by reflection. Record it
+                    // `System.Exception` via dll2klib `import`): not in `_types`, so resolve it by reflection. Record it
                     // as ClrBase — WITHOUT this the base-ctor emission has no external base and falls to `object::.ctor`,
                     // producing a `class : System.Object` (not the declared base) and an unchained base ctor (ilverify
                     // CallCtor/ThisUninitReturn). Pre-flip the `clr:`-marked base set ClrBase at the branch above.
@@ -372,7 +372,7 @@ sealed partial class Emitter
                     // dll — NOT re-emitted here, so absent from `_types` — is an EXTERNAL interface: bind the class's
                     // overrides to it by reflection, exactly like a `clr:` interface, so the interface slots are wired
                     // explicitly rather than relying on an implicit name/sig match a canonicalized supertype must not
-                    // depend on. (Covers both a user `class S : CharSequence` and the injected `dotkt$StringCharSequence`.)
+                    // depend on. (Covers both a user `class S : CharSequence` and the synthesized `dotkt$StringCharSequence`.)
                     // Checked on the RAW spec (a canonical synthetic interface spec is the bare name), so a `clr:`/`clrg:`
                     // spec is NOT ParseOwner'd here — doing so eagerly mis-strips a `clrg:` self-ref interface (crash).
                     bool externalSynthIface = CanonicalSynthetics.Contains(specName)
@@ -876,7 +876,7 @@ sealed partial class Emitter
             mb = ti.TB.DefineMethod(name, attrs, MapType(m.GetProperty("ret")), ps);
         }
         // A kotc-authored lifted method (`newDelegate` target) carries the same structural generated fact as
-        // synthesized types. Stamp the standard marker here; facadegen uses it to keep implementation-only helpers
+        // synthesized types. Stamp the standard marker here; dll2klib uses it to keep implementation-only helpers
         // out of the re-imported Kotlin surface. This is a direct CIR flag -> metadata mapping, not name inference.
         if (m.TryGetProperty("generated", out var generated) && generated.GetBoolean())
             StampCompilerGenerated(mb);
@@ -1319,7 +1319,7 @@ sealed partial class Emitter
         var blob = new BlobBuilder();
         peBuilder.Serialize(blob);
         // #52 — write ATOMICALLY (temp + rename): FileMode.Create truncates-then-writes in place, so a concurrent
-        // reader (retarget/facadegen/bir2cir loading this same dll) can observe a partial image and fail with a
+        // reader (retarget/dll2klib/bir2cir loading this same dll) can observe a partial image and fail with a
         // spurious "Format of the executable is invalid" / BadImageFormatException. A same-directory rename is atomic,
         // so a reader always sees either the whole old file or the whole new one — never a torn write.
         var dllPath = Path.Combine(_outDir, _asmName + ".dll");

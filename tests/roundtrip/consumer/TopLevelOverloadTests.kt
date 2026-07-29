@@ -1,4 +1,4 @@
-// Kotlin-producer roundtrip for il-tloverload: facadegen restores same-name top-level overloads from two real DotKt
+// Kotlin-producer roundtrip for il-tloverload: dll2klib restores same-name top-level overloads from two real DotKt
 // file facades (N5.UtilsKt and N5.HelpersKt), routing their shared CallableId(N5, "foo") by value-parameter arity.
 import N5.*
 import NUnit.Framework.TestAttribute

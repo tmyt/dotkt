@@ -7,7 +7,7 @@ using System.Reflection;
 // reading). A type is awaitable IFF it has a `GetAwaiter()` — a public parameterless instance MEMBER, or a referenced
 // `[Extension] static GetAwaiter(this X)` — returning an *awaiter* that has `bool IsCompleted { get; }`, `T GetResult()`,
 // and implements `INotifyCompletion` (the `OnCompleted(Action)` the cold-core resume binds). This is the await analog of
-// the @ClrIntrinsic/facadegen "bind by signature/metadata, embed no per-type dialect" philosophy: SuspendColdLowering's
+// the @ClrIntrinsic/dll2klib "bind by signature/metadata, embed no per-type dialect" philosophy: SuspendColdLowering's
 // EmitAwaitPoint consumes an AwaitPlan and emits the SAME awaiter dance for Task / ValueTask / a WinRT IAsyncOperation /
 // any custom awaitable — zero hardcoded per-type knowledge.
 //
@@ -30,7 +30,7 @@ sealed class AwaitPlan
 
     // #3 opt-out (`await(captureContext = false)`): the ConfigureAwait(false) awaiter family. Populated ONLY when the
     // awaitable exposes a member `ConfigureAwait(bool)` (Task-like: Task, ValueTask). A plain awaitable without it does
-    // not offer the opt-out (facadegen then injects `await()` with no captureContext param, so noCapture never arises).
+    // not offer the opt-out (dll2klib then injects `await()` with no captureContext param, so noCapture never arises).
     public bool SupportsNoCapture;
     public string ConfiguredAwaitableDefName;   // ConfigureAwait's return type (the object GetAwaiter is called on)
     public bool ConfiguredAwaitableGeneric;
@@ -168,7 +168,7 @@ partial class ReferenceMetadataIndex
     // The awaiter conforms iff it has PUBLIC `bool IsCompleted { get; }`, a public parameterless `GetResult()`, and a
     // PUBLIC `OnCompleted(Action)` — the members the lowering binds by direct instance call. We require the public
     // OnCompleted method (not merely an INotifyCompletion impl): an EXPLICIT-interface-only awaiter has no public member
-    // for the direct call, so it must be rejected here (facadegen then injects no `.await()` — an honest frontend miss
+    // for the direct call, so it must be rejected here (dll2klib then injects no `.await()` — an honest frontend miss
     // rather than a loud ilemit failure). The awaiter may be an open/constructed generic (TaskAwaiter<T>).
     static bool AwaiterConforms(Type awaiter)
     {
