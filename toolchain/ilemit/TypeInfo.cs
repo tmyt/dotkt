@@ -6,6 +6,16 @@ using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
 using System.Text.Json;
 
+// ECMA-335 I.8.6.1.6: a method's generic arity is part of its identity independently of its parameter vector.
+// Keep that CLR fact explicit in ilemit's in-memory index so `f(object)` and `f<T>(object)` remain distinct.
+readonly record struct MethodSigKey(string Name, int GenericArity, string Parameters)
+{
+    public override string ToString() =>
+        GenericArity == 0
+            ? Name + "(" + Parameters + ")"
+            : Name + "``" + GenericArity + "(" + Parameters + ")";
+}
+
 sealed class TypeInfo
 {
     public TypeBuilder TB;
@@ -18,9 +28,10 @@ sealed class TypeInfo
     public readonly Dictionary<string, FieldBuilder> Fields = new();
     public readonly Dictionary<string, MethodBuilder> Methods = new();
     // Overloaded methods share a name, so `Methods` (name-keyed) collides — the last-declared wins, and the others'
-    // bodies/calls get misrouted. `MethodsBySig` keys by name + parameter-type signature so each overload is distinct
-    // (e.g. `text(string)` vs `text(func:string:)`). Both body emission and call resolution prefer it.
-    public readonly Dictionary<string, MethodBuilder> MethodsBySig = new();
+    // bodies/calls get misrouted. `MethodsBySig` keys by the complete CLR method identity available before return-type
+    // emission: name + METHOD generic arity + parameter vector. Thus `f(object)` and `f<T>(object)` are distinct even
+    // though their physical params coincide (#86 Phase 0). Both body emission and call/MethodImpl linking prefer it.
+    public readonly Dictionary<MethodSigKey, MethodBuilder> MethodsBySig = new();
     // #139 reverse-enumerator-bridge markers: `clrBridgeRole` ("hasNext"/"next"/"iterator", bir2cir-stamped) -> the
     // method builder, so the GetEnumerator adapter is driven off a semantic marker not the Kotlin FQN/member names.
     public readonly Dictionary<string, MethodBuilder> BridgeRoles = new();

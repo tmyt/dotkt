@@ -131,12 +131,13 @@ sealed partial class Emitter
         _ctxType = ti.TB?.Name; _ctxMethod = "?"; _ctxNode = null; _ctxPos = PosOf(m); _curTi = ti;   // #112 P2: decl source pos
         var mname = m.GetProperty("name").GetString();
         _ctxMethod = mname;
-        // A DUPLICATE (name, params) def was define-phase-mangled to `name$dupN` (see DeclareMethod); body emission
-        // walks the same def array in the same order, so consume the occurrences symmetrically — without this, both
-        // bodies would be written into ONE MethodBuilder (concatenated IL -> BadImageFormatException). A CLASS abstract
-        // slot is DECLARED (holds a MethodBuilder) and DeclareMethod counts it for its $dupN mangling, so the body phase
-        // counts it here too (BEFORE the abstract-skip below) to stay in lockstep. (An INTERFACE bare slot is the one
-        // uncounted population: the pass-4 body driver skips it before EmitMethodBody — see Emitter.Assembly.cs.)
+        // A DUPLICATE (name, METHOD generic arity, params) def was define-phase-mangled to `name$dupN` (see
+        // DeclareMethod); body emission walks the same def array in the same order, so consume the occurrences
+        // symmetrically — without this, both bodies would be written into ONE MethodBuilder (concatenated IL ->
+        // BadImageFormatException). A CLASS abstract slot is DECLARED (holds a MethodBuilder) and DeclareMethod counts
+        // it for its $dupN mangling, so the body phase counts it here too (BEFORE the abstract-skip below) to stay in
+        // lockstep. (An INTERFACE bare slot is the one uncounted population: the pass-4 body driver skips it before
+        // EmitMethodBody — see Emitter.Assembly.cs.)
         var dupCount = _bodyDupSeen.TryGetValue((ti, SigKey(mname, m)), out var seen) ? seen : 0;
         _bodyDupSeen[(ti, SigKey(mname, m))] = dupCount + 1;
         if (dupCount > 0) mname = mname + "$dup" + (dupCount + 1);

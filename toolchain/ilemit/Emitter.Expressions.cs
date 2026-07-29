@@ -234,7 +234,7 @@ sealed partial class Emitter
                 // skips (e.g. AbstractMutableList.SubList calling get_Item on the IList slot) -- falls back to dynamic
                 // dispatch. Gated to nodes carrying "dynRet" (the @Clr member calls), so a genuine miss elsewhere throws.
                 var ciOwner = ParseOwnerSlot(e.GetProperty("ownerType"));   // keeps a constructed-generic owner's args
-                try { m0 = ResolveMethod(ciOwner, e.GetProperty("method").GetString(), out rt, cisig); }
+                try { m0 = ResolveMethod(ciOwner, e.GetProperty("method").GetString(), out rt, cisig, CalledMethodArity(e)); }
                 catch (NotSupportedException) when (e.TryGetProperty("dynRet", out _) && OwnerHasClrInterface(ciOwner.open)) { return EmitDynamicCall(e); }
                 var m = ApplyTypeArgs(m0, e, out var mrt, out var mps);
                 // #108 GUARD (defensive, contract-violation only — never fires on valid CIR). This path pushes the
@@ -273,7 +273,8 @@ sealed partial class Emitter
                     var ifaceNode = e.GetProperty("iface");
                     var ifaceSpec = ReadFqn(ifaceNode);
                     var mi2 = ifaceSpec != null && _types.ContainsKey(ifaceSpec.Name)
-                        ? ResolveMethod(ParseOwnerSlot(ifaceNode), e.GetProperty("method").GetString(), out _, SigNodes(e))
+                        ? ResolveMethod(ParseOwnerSlot(ifaceNode), e.GetProperty("method").GetString(), out _,
+                            SigNodes(e), CalledMethodArity(e))
                         : InterfaceMethodOn(if2, e.GetProperty("method").GetString());
                     EmitAddr(e.GetProperty("recv"));            // &C  (a managed pointer, required by `constrained.`)
                     EmitArgs(ccArgs, mi2.GetParameters());
@@ -319,9 +320,9 @@ sealed partial class Emitter
                 // CIR and must fail loud instead of silently binding another file class's same-simple-name function.
                 MethodInfo resolved;
                 if (e.TryGetProperty("owner", out var ow) && ow.ValueKind != JsonValueKind.Null && SlotName(ow) is string ownm)
-                    resolved = FindMethod(ownm, name, csig);
+                    resolved = FindMethod(ownm, name, csig, CalledMethodArity(e));
                 else
-                    resolved = FindCalleeOwnedStatic(e, "callStatic", name, csig);
+                    resolved = FindCalleeOwnedStatic(e, "callStatic", name, csig, CalledMethodArity(e));
                 var mb = ApplyTypeArgs(AnchorOpenGenericOwnerStatic(resolved), e, out var srt, out var sps);
                 if (e.TryGetProperty("typeArgs", out _)) EmitArgsTyped(e.GetProperty("args"), sps, mb);
                 else EmitCallArgs(e.GetProperty("args"), mb);
@@ -730,7 +731,7 @@ sealed partial class Emitter
                 // lifted __lambda/__ctorref/__mref targets carry their synthesizing file class too; no global fallback.
                 var dname = e.GetProperty("method").GetString();
                 var dsig = SigNodes(e);
-                MethodInfo mb = FindCalleeOwnedStatic(e, "newDelegate", dname, dsig);
+                MethodInfo mb = FindCalleeOwnedStatic(e, "newDelegate", dname, dsig, CalledMethodArity(e));
                 // A GENERIC lifted lambda (e.g. the comparator inside a generic `sort<T>`) MUST be instantiated with its
                 // typeArgs before Ldftn -- loading the open generic-method-DEFINITION's ftn throws "the method itself or
                 // the containing type is not fully instantiated" at runtime.
@@ -753,7 +754,7 @@ sealed partial class Emitter
                 if (!e.TryGetProperty("calleeOwner", out var bco) || bco.ValueKind == JsonValueKind.Null
                     || SlotName(bco) is not string bcoName || bcoName != boundOwner)
                     throw new NotSupportedException($"newBoundDelegate target '{boundOwner}.{boundName}' is missing or mismatches required calleeOwner");
-                var mb = FindMethod(boundOwner, boundName, SigNodes(e))
+                var mb = FindMethod(boundOwner, boundName, SigNodes(e), CalledMethodArity(e))
                     ?? throw new NotSupportedException($"newBoundDelegate target '{boundOwner}.{boundName}' was not found");
                 var recvT = EmitExpr(e.GetProperty("recv"));
                 // A value-type (or `gp:T`) receiver must be BOXED before it can back the delegate: the delegate ctor's

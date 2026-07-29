@@ -87,6 +87,11 @@ class M4OvBox {
     fun put(s: String): String = "bs:" + s
     fun put(f: () -> String): String = "bf:" + f()
 }
+// #86 Phase 0: CLR method identity includes METHOD generic arity. These have the same name and physical `object`
+// parameter vector but are distinct declarations (`arity=0` vs `arity=1`); ilemit must neither `$dup`-mangle the
+// generic sibling nor route its body/call through the non-generic MethodBuilder.
+fun m4OvByMethodArity(x: Any?): String = "plain"
+fun <T> m4OvByMethodArity(x: Any?): String = "generic"
 
 // ---- il-overrideprop : `override val` accessor fills the base/interface abstract slot ----------------------------
 interface M4OpHasCtx { val ctx: Int }
@@ -226,6 +231,8 @@ class OverloadPropertyAndTupleTests {
         val b = M4OvBox()
         assertEquals("bs:p", b.put("p"))         // bs:p
         assertEquals("bf:q", b.put { "q" })      // bf:q
+        assertEquals("plain", m4OvByMethodArity(null))
+        assertEquals("generic", m4OvByMethodArity<Int>(null))
     }
 
     // il-overrideprop: `override val` accessor fills the base/interface abstract slot (not a fresh NewSlot).

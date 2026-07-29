@@ -741,7 +741,7 @@ sealed partial class Emitter
                 // overload. Missing/misspelled ownership is malformed CIR, never a global name lookup (#204).
                 var dname = h.GetProperty("method").GetString();
                 var dsig = SigNodes(h);
-                var dtarget = FindCalleeOwnedStatic(h, "event newDelegate", dname, dsig);
+                var dtarget = FindCalleeOwnedStatic(h, "event newDelegate", dname, dsig, CalledMethodArity(h));
                 _il.Emit(OpCodes.Ldnull);
                 _il.Emit(OpCodes.Ldftn, dtarget);
                 EmitDelegateCtor(_il, want);
