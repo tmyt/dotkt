@@ -1,9 +1,12 @@
 // THE VALUE QUESTIONS a lowering asks about a BIR expression — and, for two of them, the answer.
 //
 // "Purity" and "stability" are not one property in this backend. FIVE distinct questions are asked about an
-// expression, each by a different lowering, for a different purpose. They are deliberately kept apart, one
-// question = one implementation = one question-shaped name, because a kind may legitimately answer YES to one
-// and NO to another. Where each question lives:
+// expression, for five different purposes, and a kind may legitimately answer YES to one and NO to another —
+// so they are deliberately kept apart, each named after the question it answers rather than after a shared
+// notion of "pure". What each question owns is its DEFINITION, not a single call site: one asker may need two
+// of them (CallEvalLowering asks Q2 and Q5), and Q1 has one definition realized twice, once per layer, because
+// kotc sees Kotlin IR and bir2cir sees only BIR kinds. What must never happen is the same question answered by
+// two independent classifiers that can drift. Where each question lives:
 //
 //   Q1  RE-READABLE   — may this value be READ more than once, with other evaluation in between?
 //                       kotc `isStableValue` over Kotlin IR, recorded on every binding kotc emits (`stable`,

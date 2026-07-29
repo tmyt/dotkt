@@ -482,11 +482,10 @@ static class CallEvalLowering
     /// `&amp;&amp;`/`||` to a `cond`, and the `binOp` spelling of them is minted by PrimitiveOperatorLowering, which runs
     /// after this pass.
     ///
-    /// Only kinds that can REACH this pass are listed. This is the ninth pass bir2cir runs (Program.cs), so the set
-    /// is what kotc emits plus what the handful of passes before it mint; the collection-literal constructions
-    /// (`newList`/`newSet`/`newMap`) and the .NET property accesses (`clrPropGet`/`clrPropSet`) are NOT kotc
-    /// vocabulary — MemberCallSubstitution and NetInteropBinding mint them, hundreds of lines later — so listing
-    /// them here would only describe a node this pass cannot see.
+    /// Only kinds that can REACH this pass are listed — what kotc emits, plus what the few passes ahead of this one
+    /// mint. The collection-literal constructions (`newList`/`newSet`/`newMap`) and the .NET property accesses
+    /// (`clrPropGet`/`clrPropSet`) are NOT kotc vocabulary: MemberCallSubstitution and NetInteropBinding mint them,
+    /// and both run after this pass (Program.cs), so listing them here would only describe a node it cannot see.
     static readonly HashSet<string> EagerKinds = new(StringComparer.Ordinal)
     {
         "callStatic", "callInstance", "callInline", "objMethod", "delegateInvoke", "new", "newClr",
