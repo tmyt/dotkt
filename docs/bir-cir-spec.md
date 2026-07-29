@@ -469,38 +469,22 @@ ONE type read/write per language, used by EVERY site. No other code parses/build
 **Kotlin (kotc)** — `kotc.bir.TypeNode` (sealed) + `TypeNode.toJson(): JsonValue` / `TypeNode.parse(json)`.
 `birType(IrType): TypeNode` produces the node; nothing emits a type string.
 
-**C# (bir2cir / ilemit / facadegen)** — a shared `DotKt.Bir.TypeNode` record hierarchy (Fqn/Tv/Fn/Nullable/
+**C# (bir2cir / ilemit / dll2klib)** — a shared `DotKt.Bir.TypeNode` record hierarchy (Fqn/Tv/Fn/Nullable/
 Array/Byref) + `TypeNode Read(JsonElement)` / `JsonNode Write(TypeNode)`, in ONE shared file referenced by
 all three C# tools. Its `Fn.Clr` member is the sole phase extension: absent in kotc BIR, required in
 ilemit-facing CIR (§1). Every `MapType`/`SplitTopLevel`/`FuncRetEnd`/`SkipTypeToken`/`BirTokenToMeta`/
 `BareOwner`/`CanonSig` is DELETED and replaced by walking `TypeNode`.
 
-## 5b. Injection metadata (facadegen → kotc) — structured, SAME vocabulary as BIR (retire the line grammar)
-Today facadegen emits injection metadata as **space-separated, positional TEXT LINES** — `file <pkg>
-<fileClassFQN>`, `tlfun <name> <ret> <mod=final[,inline][,ext][,suspend]…> [<TP>…] [<p>:<t>]*`,
-`tlextprop <name> <type> <ro|rw> <recvType>`, `tlprop <name> <type> <ro|rw>` — and kotc's `ClrTypeInjection`
-(`coneOf`/`generateProperties`/…) parses them. This is the SAME ad-hoc string DSL problem as the type tokens,
-one level up, AND it forced the dual BIR-colon vs META-bracket type vocabularies + the `BirTokenToMeta`
-translation.
+## 5b. Reference declarations (dll2klib → kotc)
 
-FREEZE: injection metadata is **structured JSON reusing the BIR decl / `Type` (§1) / `mods` (§2.1) vocabulary**.
-The `tlfun`/`tlextprop`/`tlprop`/`file` line grammar and its kotc parser are RETIRED. A file's injected surface
-is a list of structured declaration nodes:
-```jsonc
-{ "file": "mylib.LibKt", "pkg": "mylib",
-  "decls": [
-    { "k":"fun",  "name":"exposeFun", "ret":{"t":"fqn","name":"kotlin.String"}, "mods":{"inline":true},
-      "typeParams":[…], "params":[ {"name":"x","type":{"t":"fqn","name":"kotlin.Int"}} ] },
-    { "k":"prop", "name":"greeting",  "type":{"t":"fqn","name":"kotlin.String"}, "mods":{}, "vis":"public" },
-    { "k":"prop", "name":"lastIndex", "type":{"t":"fqn","name":"kotlin.Int"}, "mods":{"ext":true},
-      "recv":{"t":"fqn","name":"kotlin.collections.List","args":[{"t":"tv","scope":"type","i":0}]} }
-  ] }
-```
-- `tlfun` → `{k:"fun", …, "top":true}` (a top-level fun). `tlextprop` → a `prop` with a `recv` Type.
-  `tlprop` → a `prop` without `recv`. The `,inline`/`,ext`/`,suspend` modifier string → `mods` (§2.1).
-- The type slots are `Type` nodes (§1) — so BIR and META share ONE type vocabulary; `BirTokenToMeta`/
-  `BirSkipTypeToken`/`BirSplitTopLevel` and the meta bracket-grammar are DELETED.
-- Consumers (kotc `ClrTypeInjection`) walk the structured decls; no line-splitting, no `coneOf` string parse.
+CLR reference declarations are standard packed KLIB metadata. `dll2klib` projects one reference assembly to
+one KLIB; kotc resolves those declarations through the ordinary KLIB symbol provider. Physical CLR ownership
+that must survive frontend resolution is carried by the projected `kotlin.clr.ClrExternal` annotation and
+forwarded into BIR without reinterpretation.
+
+There is no facade JSON, injection line grammar, `CLR_TYPES_METADATA` environment variable, or arbitrary
+CLR declaration-generation extension. The only compiler-generated frontend declarations are the fixed
+`kotlin.clr` intrinsic vocabulary in `ClrIntrinsicDeclarations.kt`.
 
 ## 5. Validator (§7 of the plan)
 Validate live BIR/CIR + every emitted `[KotlinInline]` body against this spec: unknown `k`, a type that is

@@ -60,7 +60,6 @@ import org.jetbrains.kotlin.ir.expressions.IrBreak
 import org.jetbrains.kotlin.ir.expressions.IrContinue
 import org.jetbrains.kotlin.ir.expressions.IrStatementOrigin
 import org.jetbrains.kotlin.ir.util.classId
-import org.jetbrains.kotlin.name.CallableId
 import org.jetbrains.kotlin.ir.util.fqNameWhenAvailable
 import org.jetbrains.kotlin.ir.util.resolveFakeOverride
 import org.jetbrains.kotlin.ir.declarations.IrTypeParameter
@@ -306,7 +305,7 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		if (stem.endsWith("Clr")) stem = stem.dropLast(3)
 		// A dotted MPP filename stem (`api.common.kt` → stem `api.common`) must NOT leak its dots into the file-class
 		// name: ilemit's DefineType reads a dot as a namespace separator, so `Api.commonKt` would emit as
-		// Namespace=<pkg>.Api / Name=commonKt and facadegen scanning <pkg> would never surface its top-level funcs
+		// Namespace=<pkg>.Api / Name=commonKt and reference projection would never surface its top-level funcs
 		// (cross-module `unresolved reference`, #16). Sanitize non-identifier chars to `_` (stock Kotlin does the
 		// same: `AtomicFU.common.kt` → `AtomicFU_commonKt`) BEFORE capitalize+"Kt". Mirrors `synthScope`.
 		stem = stem.replace(Regex("[^A-Za-z0-9]"), "_")
@@ -589,9 +588,8 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		// `ClrRef<T>` is an intrinsic managed-reference marker (erased on the argument path) -> never emitted as a class.
 		// @ClrTypeAlias classes (collections/StringBuilder/unsigned/primitives/String/…) are emitted here as ORDINARY
 		// types; bir2cir's AliasHelperHoist drops them (and hoists a class's rule-3 members). kotc no longer strips them.
-		// facadegen-INJECTED external .NET types (a `import P.Calc`/`P.SpanOps` host type, an inherited/implemented .NET
-		// base) enter the FIR via CLR_TYPES_METADATA in the synthetic `__GENERATED DECLARATIONS__` file with a PLUGIN
-		// origin (ClrGeneratedKey), NOT origin DEFINED. They are REFERENCED types (resolved via --ref), never ours to
+		// dll2klib-projected external .NET types (a `import P.Calc`/`P.SpanOps` host type, an inherited/implemented .NET
+		// base) enter FIR through a reference KLIB with a library origin. They are REFERENCED types, never ours to
 		// emit — a re-emitted stub (empty ctor / a bogus `INSTANCE` singleton) collides with the referenced type and
 		// crashes ilemit (Save "not created" / newobj on a ctor-less type). So filter every type bucket to origin
 		// DEFINED, exactly as `functions`/`topProps` above already exclude the injected top-level MEMBERS. (@ClrTypeAlias
@@ -638,7 +636,7 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 			if (p.isConst) return@mapNotNull null
 			val init = (bf.initializer as? IrExpressionBody)?.expression?.let { expr(it) } ?: "null"
 			// A top-level `val` (or `var` with a non-public setter) -> mark the static field read-only so a downstream
-			// consuming module (facadegen `tlprop ... ro`) restores it as `val`, rejecting external writes (#34b, mirrors
+			// consuming module restores it as `val`, rejecting external writes (#34b, mirrors
 			// the member-field `readOnly` stamp).
 			val ro = if (!p.isVar || (p.setter != null && visOf(p.setter!!) != "public")) ""","readOnly":true""" else ""
 			"""{"name":${str(bf.name.asString())},"type":${birType(bf.type).toJson()},"static":true,"init":$init$ro${volatileFieldFlag(p)}}"""

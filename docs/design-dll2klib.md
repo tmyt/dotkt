@@ -468,7 +468,7 @@ It verifies:
 1. generation of CLR reference assemblies;
 2. deterministic, byte-identical KLIB output;
 3. the standard packed KLIB layout;
-4. frontend resolution without facade metadata or `CLR_TYPES_METADATA`;
+4. frontend resolution exclusively from reference KLIB metadata;
 5. types, nested types, constructors, properties, fields, events, indexers,
    generics, nullability, delegates, extensions, operators, and by-reference
    calls;

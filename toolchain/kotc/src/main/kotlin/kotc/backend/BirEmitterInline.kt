@@ -233,7 +233,7 @@ private fun BirEmitter.inlineArgJson(call: IrCall, arg: IrExpression?, param: Ir
 
 /** The shared OWNER-FUL `callInline` node builder for an inline call whose hosting .NET type kotc CAN name — used by
  *  BOTH the same-module member/top-level splice (`inlineSpliceCallSameModule`, body present) and the CROSS-MODULE inline
- *  MEMBER call (#60/W1: `body==null`, a dispatch receiver present — a facadegen-injected DotKt member OR a klib stdlib
+ *  MEMBER call (#60/W1: `body==null`, a dispatch receiver present — a dll2klib-projected DotKt member OR a KLIB stdlib
  *  member; the call-site gate in BirEmitterCalls invokes this DIRECTLY, unconditionally, because kotc is body-blind and
  *  bir2cir owns the splice-or-fail-loud decision off the ref.dll `[KotlinInline]` payload). The same-module caller
  *  applies its OWN #20 dual-receiver risk guard first; the cross-module caller does NOT (kotc cannot inspect the body) —
@@ -387,20 +387,20 @@ internal fun BirEmitter.correspondingSupertypeInstantiation(recvType: IrType, ow
 	return superType
 }
 
-/** CROSS-MODULE inline: a call to a facadegen-injected `inline fun` taking ANY lambda arg (AXIS ①; its `[KotlinInline]`
+/** CROSS-MODULE inline: a call to a dll2klib-projected `inline fun` taking ANY lambda arg (AXIS ①; its `[KotlinInline]`
  *  body lives on the referenced assembly). kotc emits a GENERIC `callInline` node carrying the call bindings — the type
  *  args, one entry per regular param (a normal/crossinline literal lambda as an `inlineLambda` carrier, a NOINLINE
  *  lambda / any other arg as its `expr` = a real delegate — AXIS ②). bir2cir OWNS the splice: it re-lowers the carried
  *  body in the app context (so it binds against app types). There is NO `fallback` slot — the engine fails loud if it
  *  cannot splice. An EXTENSION-receiver call (`Cell<T>.update { … }`, #133 case1) rides through here too: the receiver
- *  goes in `recvs.extension` (the SAME shape the owner-less path uses); owner stays the facadegen file class so bir2cir
+ *  goes in `recvs.extension` (the SAME shape the owner-less path uses); owner stays the projected file class so bir2cir
  *  resolves the payload via its OWNER-FUL path (the owner-less resolver only searches `kotlin.*`). */
 internal fun BirEmitter.inlineSpliceCall(call: IrCall, fileClass: String): String {
 	val callee = call.symbol.owner
 	val name = callee.name.asString()
-	// A facadegen-injected cross-module inline EXTENSION fun (`Cell<T>.update { … }`, #133 case1): the extension receiver
+	// A dll2klib-projected cross-module inline EXTENSION fun (`Cell<T>.update { … }`, #133 case1): the extension receiver
 	// rides in `recvs.extension` (the SAME shape the owner-less path threads) — bir2cir's InlineSplice binds it to
-	// payload param[0] (`__self`). owner STAYS the facadegen file class so bir2cir resolves the [KotlinInline] payload via
+	// payload param[0] (`__self`). owner STAYS the projected file class so bir2cir resolves the [KotlinInline] payload via
 	// the OWNER-FUL ResolveInlinePayload (the owner-less path only searches `kotlin.*`, which a `LibKt` owner is not).
 	val extRecv = extensionReceiver(call)
 	// The callee's POSITIONAL params ([isValueParameter]: contexts then regulars) — the SAME sequence the DECLARATION
@@ -539,7 +539,7 @@ internal fun BirEmitter.emitInlineLambdaCarrier(lambda: IrFunctionExpression): S
 /** CROSS-MODULE inline of ANY klib stdlib inline+lambda fn taking ANY lambda arg (AXIS ①) — the scope/util fns
  *  (let/run/with/apply/also/use), collection ops (forEach/map/filter), takeIf/takeUnless, etc. — whose `[KotlinInline]`
  *  raw-BIR body lives on the ref.dll. Unlike `inlineSpliceCall`, kotc CANNOT name the hosting file class — the whole
- *  stdlib rides the klib, facadegen supplies no `kotlin.*` metadata — so the node is OWNER-LESS: bir2cir resolves the
+ *  stdlib rides the KLIB without physical file-class annotations — so the node is OWNER-LESS: bir2cir resolves the
  *  hosting file class from the ref.dll `[KotlinInline]` index keyed `name|pc|ga` (a candidate list, disambiguated by
  *  structural `paramSig` match). An extension receiver rides in `recvs.extension`; `with`'s receiver is a REGULAR param
  *  and rides as a plain arg. Each regular arg splits per AXIS ②: a normal/crossinline literal lambda -> an `inlineLambda`

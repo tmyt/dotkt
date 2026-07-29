@@ -28,7 +28,7 @@ files, all found this way.
 ### 3. Compile-fix inside-out (the bulk — mechanical grind, ~1-2 days)
 Fix the CERTAIN-BREAKS in dependency order: `Main.kt` (removed args) → `ClrCliPipeline.kt` (pipeline artifacts/phases)
 → frontend phases (artifact ctors, `getCompilerExtensions`, klib loading) → `ClrDefaultImports.kt` (renames) →
-`ClrMetadataKlibPipeline.kt` (**stop here — step 4 first**) → `ClrTypeInjection.kt` (plugin/registrar DSL) →
+reference-KLIB loading → `ClrIntrinsicDeclarations.kt` (plugin/registrar DSL) →
 `BirEmitter*` residue (expected small — it sits on the stable IR tree). Each break is a compiler error pointing at it.
 
 ### 4. The metadata-klib serializer — the ONE recurring gating risk

@@ -173,7 +173,7 @@ internal fun BirEmitter.interfaceDef(iface: IrClass): String {
 		}.orEmpty()
 	val methods = (funMethods + propMethods + statMethods + companionAccessors).distinct().joinToString(",")
 	// 2B layer 1: a Kotlin interface property -> a REAL CLR property (PropertyBuilder over its get_/set_ interface
-	// methods), so a consumer (facadegen restoring the ref assembly) sees `size` as a PROPERTY, not a bare get_size
+	// methods), so a consumer (dll2klib projecting the ref assembly) sees `size` as a PROPERTY, not a bare get_size
 	// method. The accessor methods are already emitted (propMethods) named get_<n>/set_<n>; wire the property over them.
 	val ifaceProps = iface.declarations.filterIsInstance<IrProperty>().filter { it.getter != null }.joinToString(",") { p ->
 		val n = p.name.asString()
@@ -656,8 +656,8 @@ internal fun BirEmitter.annotationDef(klass: IrClass): String {
 /** The `attrs` JSON for a declaration: each annotation -> a .NET custom attribute application. The `attr` type is a
  *  structured `{t:fqn}` identity node (#48). A Kotlin-authored annotation is named by its plain Kotlin FQN (#46) —
  *  bir2cir derives its `: System.Attribute` base from the `"annotation":true` flag on the class def. An imported .NET
- *  attribute (a facadegen-injected annotation class) is named by its real .NET FQN and flagged `"attrClr":true` (a
- *  frontend origin fact — kotc KNOWS the type was injected, via clrName); bir2cir consumes that flag into the
+ *  attribute (a dll2klib-projected annotation class) is named by its real .NET FQN and flagged `"attrClr":true` (a
+ *  frontend origin fact carried by KLIB, via clrName); bir2cir consumes that flag into the
  *  `attrExternal` bit so ilemit binds the existing .NET constructor (#54/#48). kotc emits no `clr:` marker.
  *
  *  kotc does NOT filter/select annotations: from kotc's view an annotation is just METADATA, so EVERY annotation is
@@ -1318,7 +1318,7 @@ internal fun BirEmitter.isMetadataRepresentableDefault(p: org.jetbrains.kotlin.i
  *  bir2cir uses to fill an omitted arg POSITIONALLY (Tier-1 and Tier-2 alike). Two consumers read the carrier:
  *  DefaultArgSplice at a cross-module callStatic/callInstance, and InlineSplice STEP 5 at a callInline body splice.
  *  A CONSTRUCTOR carries it too (#235), consumed by DefaultArgSplice at a cross-module `new` (keyed
- *  `<type>|.ctor|<emitted arg count>`). Without the attribute facadegen would surface the param REQUIRED and the
+ *  `<type>|.ctor|<emitted arg count>`). Without the attribute dll2klib would surface the param REQUIRED and the
  *  omission would not even resolve at the consumer's frontend.
  *  This MUST cover Tier-1 too: at a CROSS-MODULE call kotc sees the callee's default as an IrErrorExpression (the
  *  frontend KLIB drops the VALUE) and so cannot tell Tier-1 from Tier-2 — it emits a `defaultArg` placeholder for EVERY
@@ -1424,7 +1424,7 @@ internal fun BirEmitter.paramsJsonList(params: List<org.jetbrains.kotlin.ir.decl
 			// consumer can then call `f(1, 2, 3)`). `context` marks a Kotlin CONTEXT parameter: physically an ordinary
 			// positional parameter, but a consuming Kotlin module must restore it AS a context parameter, else the callee's
 			// SOURCE shape changes at the module boundary (`with(s) { f(1) }` would have to become `f(s, 1)`). bir2cir turns
-			// the flag into the `[KotlinContextParameter]` marker facadegen reads back. Param nullability rides the `type`
+			// the flag into the `[KotlinContextParameter]` marker dll2klib reads back. Param nullability rides the `type`
 			// node itself (`{t:nullable,of:...}` from the uniform birType) — the decl-level `nullable` flag is RETIRED.
 			val modFlags = listOfNotNull(
 				"\"vararg\":true".takeIf { _ -> it.varargElementType != null },

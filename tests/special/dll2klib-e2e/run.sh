@@ -95,9 +95,8 @@ for entry in default/manifest default/linkdata/module default/linkdata/root_pack
 	unzip -Z1 "$PROBE_KLIB" | grep -qx "$entry" || die "generated KLIB is missing $entry"
 done
 
-# The only classpath metadata for Probe.Widget is the packed KLIB. In particular,
-# CLR_TYPES_METADATA is absent, so the old FIR injector cannot participate.
-env -u CLR_TYPES_METADATA "$KOTC" "$ROOT/tests/special/dll2klib-e2e/consumer.kt" \
+# The only classpath metadata for Probe.Widget is the packed KLIB.
+"$KOTC" "$ROOT/tests/special/dll2klib-e2e/consumer.kt" \
 	-no-stdlib \
 	-classpath "$FE_KLIB$KLIB_CP_SEP$PROBE_KLIB$KLIB_CP_SEP$CONTRACTS_KLIB" -d "$OUT/bir"
 

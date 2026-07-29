@@ -148,17 +148,17 @@ meaning; it is a compile-time lowering tag. Two consequences, both wanted:
 
 **Per appearance:**
 
-- **The `kotlin.clr.ClrEvent` type** (kotc `ClrTypeInjection.generateTopLevelClassLikeDeclaration`,
-  `ClrTypeInjection.kt:620-624`): created with `ClassKind.CLASS` + `Modality.ABSTRACT`. It carries
+- **The `kotlin.clr.ClrEvent` type** (kotc `ClrIntrinsicDeclarationGenerator`): created with
+  `ClassKind.CLASS` + `Modality.ABSTRACT`. It carries
   abstract `fun subscribe(h: T): EventSubscription<T>` (consume), abstract
   `operator fun invoke(vararg args): R` (raise), and abstract `operator fun getValue(r: Any?, p: KProperty<*>): ClrEvent<T>`
   (so `by clrEvent()` typechecks under the delegate convention — see §5). None have bodies; none
   are ever executed.
-- **The interface event member** (facadegen `Program.cs` `EventObj`/N6 → kotc
-  `ClrTypeInjection.generateProperties`): emitted **OPEN** on the interface — overridable (so `override val E by
+- **The interface event member** (dll2klib event projection): emitted **OPEN** on the interface — overridable
+  (so `override val E by
   clrEvent()` typechecks) but non-abstract (no frontend obligation; see the correction in consequence #2 — an
   abstract member breaks the ELIDE case of a .NET base that explicitly implements the event). A CLASS event
-  member stays final. facadegen owns *whether* the type is `ClrEvent<T>`; kotc owns the *modality*.
+  member stays final. dll2klib owns the projected declaration shape.
 - **The #187 obligation** (kotc `BirEmitterDeclarations.checkUnimplementedClrEvents`): a `ClrEvent<T>`
   FAKE-OVERRIDE with no provider (neither a base CLASS that declares it, nor an external .NET base class) is a
   compile error pointing at the missing `by clrEvent()`.
@@ -209,7 +209,7 @@ The member obligation (§3) plus the `clrEvent()` marker (§5) triggers synthesi
 Layer split mirrors the consume path (kotc declares + wires overrides; bir2cir supplies the CLR
 relation; ilemit emits pure CLR codegen):
 
-- **kotc** (`ClrTypeInjection` / `BirEmitter*`): on the implementing type, emit
+- **kotc** (`ClrIntrinsicDeclarations` / `BirEmitter*`): on the implementing type, emit
   1. a backing field member `clrEventBacking{name:"<E>", handlerType:<Kotlin fn type>}` (kotc does not
      name `MulticastDelegate` — it carries the *handler Kotlin function type*; bir2cir resolves the
      concrete delegate);
@@ -275,7 +275,7 @@ Kotlin delegating class goes through the widened `clrEventGet` (§4.1) → `add_
 ## 5. Decision 3 — the `clrEvent()` intrinsic contract
 
 `clrEvent()` is the author-written marker meaning "**synthesize the field-like event impl here**". It
-is a `kotlin.clr` top-level intrinsic (registered in `ClrTypeInjection.getTopLevelCallableIds`, beside
+is a `kotlin.clr` top-level intrinsic (registered in `ClrIntrinsicDeclarationGenerator`, beside
 `byref`/`stackBuffer`):
 
 ```kotlin

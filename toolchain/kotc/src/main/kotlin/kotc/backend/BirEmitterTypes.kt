@@ -61,7 +61,6 @@ import org.jetbrains.kotlin.ir.expressions.IrBreak
 import org.jetbrains.kotlin.ir.expressions.IrContinue
 import org.jetbrains.kotlin.ir.expressions.IrStatementOrigin
 import org.jetbrains.kotlin.ir.util.classId
-import org.jetbrains.kotlin.name.CallableId
 import org.jetbrains.kotlin.ir.util.fqNameWhenAvailable
 import org.jetbrains.kotlin.ir.util.resolveFakeOverride
 import org.jetbrains.kotlin.ir.declarations.IrTypeParameter
@@ -103,7 +102,7 @@ internal fun BirEmitter.birType(t0: IrType): TypeNode {
 		// A platform/flexible type `T!` (`(T..T?)`) surfaces in IR as the nullable upper bound carrying the
 		// `@kotlin.internal.ir.FlexibleNullability` marker (attached by Fir2Ir's specialAnnotationsProvider — see
 		// ClrCliPipeline). It is a pure nullability ANNOTATION, not a genuine `T?`: emit `{t:oblivious}` so bir2cir
-		// lowers a VALUE inner to the BARE `int32` (a facadegen-injected `[MaybeNull]` `ThreadLocal<Int>.Value` reads
+		// lowers a VALUE inner to the BARE `int32` (a dll2klib-projected `[MaybeNull]` `ThreadLocal<Int>.Value` reads
 		// `0` when unset, NOT `Nullable<int32>` — #8) and a REFERENCE inner to an NRT-oblivious ref. A genuine user
 		// `T?` has no marker and stays `{t:nullable}` (→ `Nullable<int32>` / a `?`-marked reference).
 		if (t.hasFlexibleNullability()) return TypeNode.Oblivious(birType(t.makeNotNull()))
@@ -168,10 +167,10 @@ internal fun BirEmitter.birType(t0: IrType): TypeNode {
 			// erases the "this was a receiver" bit — so a re-consuming DotKt assembly loses the implicit `this: P` in a
 			// `apply1 { … }` lambda (#145). Carry it in `fn.recv` (the FIRST type arg, dropped from params): the CLR
 			// delegate is unchanged (DelegateParams re-prepends recv), and bir2cir stamps [KotlinExtensionFunctionType]
-			// (non-suspend) / rides recv on [KotlinSuspendFunctionType] (suspend) so facadegen/ClrTypeInjection restore
+			// (non-suspend) / rides recv on [KotlinSuspendFunctionType] (suspend) so dll2klib restores
 			// `P.() -> R`. This covers `suspend P.() -> R` too (#47): the suspend arm keeps the recv in the erased
-			// carrier's `fn` node, and facadegen (recv-tolerant) + ClrTypeInjection.coneSuspendExtensionFunctionType
-			// restore the suspend EXTENSION function type. Non-ext function type keeps the flat shape. bir2cir still
+			// carrier's `fn` node, and dll2klib restores the suspend extension-function type in KLIB metadata.
+			// Non-ext function type keeps the flat shape. bir2cir still
 			// erases the suspend fn slot to `object` (SuspendFnSlot ignores recv) — the SequenceScope hot path routes
 			// SequenceScope.yield/yieldAll BY NAME, not by the fn-type recv, so recv is inert there.
 			val isExt = (t as? IrSimpleType)?.annotations?.any { it.type.classFqName?.asString() == "kotlin.ExtensionFunctionType" } == true
@@ -471,24 +470,9 @@ internal fun BirEmitter.ownerSpec(klass: IrClass?, recvType: IrType?): TypeNode 
 	return if (all.isEmpty()) TypeNode.Fqn(name) else TypeNode.Fqn(name, all)
 }
 
-/**
- * The .NET TYPE name for an S5 FIR-injected .NET type (synthesized into FIR without annotations): read off the injected
- * symbol's RESOLVED IR identity — the type's `ClassId` (`kotc.frontend.clrInjectedDotNetName`), a structural projection
- * of facadegen's metadata (A2 interop-no-registry, stage 1 — no injector-populated name-keyed side-table). The backend
- * must resolve this so injected types are real .NET types (otherwise they leak in as user classes). MEMBER slot names
- * are NOT resolved here — that is bir2cir's DeclarationRename off the `overrides` marker + the refs (A2 step 5).
- */
+/** The CLR owner projected by dll2klib onto a reference declaration. */
 internal fun BirEmitter.clrName(decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer): String? {
-	// TYPE IDENTITY ONLY. kotc no longer resolves any MEMBER slot name here: a facadegen-injected .NET member's slot
-	// AND a stdlib @ClrTypeAlias/@ClrIntrinsic member's slot are BOTH resolved by bir2cir's DeclarationRename off the
-	// `overrides` marker + the refs (A2 / #61 step 5). This accessor now yields only the .NET TYPE name for an
-	// injected .NET type (read off its IR `ClassId`) — used for type-origin decisions (routing a ctor to a plain
-	// `new` / a field to a plain `field` on a .NET owner, the `byrefBackingField`/delegate/for-in origin tests),
-	// never a member slot. bir2cir reshapes those plain nodes to their CLR forms off the refs.
-	// A2 stage 1: the injected .NET type's .NET name is read straight off its IR `ClassId` (structural resolved
-	// identity) against facadegen's metadata.
 	return clrExternalOwner(decl)
-		?: (decl as? IrClass)?.classId?.let { kotc.frontend.clrInjectedDotNetName(it) }
 }
 
 /** The opaque CLR declaration owner written by dll2klib into standard KLIB annotations.
@@ -504,7 +488,7 @@ internal fun BirEmitter.clrExternalOwner(
 	return (regularArgs(annotation).firstOrNull() as? IrConst)?.value as? String
 }
 
-/** Boolean ORIGIN-GATE: is `decl` a facadegen-injected .NET/CLR type (vs a pure-Kotlin/stdlib type)? The truthiness
+/** Boolean ORIGIN-GATE: is `decl` an external .NET/CLR type (vs a pure-Kotlin/stdlib type)? The truthiness
  *  half of [clrName] — call sites that only test "is this a .NET owner?" (routing a ctor to a plain `new`, a field to a
  *  plain `field`, excluding a .NET owner from a user-class path) use THIS; only sites that EMIT the .NET FQN identity
  *  keep [clrName] for its returned string. */

@@ -172,7 +172,7 @@ internal fun BirEmitter.birForLoop(block: IrBlock): String? {
 	if (source != null && isArrayType(source.type))
 		return """{"k":"forArray","label":$lbl,"var":${str(localSlotName(loopVar))},"array":${expr(source)},"body":[$body]}"""
 	// NON-array for-loops: kotc no longer classifies the source at all — whether it is a counted RANGE, an
-	// `a downTo b` counter, a stdlib collection, a `kotlin.sequences.Sequence`, or a facadegen-injected .NET
+	// `a downTo b` counter, a stdlib collection, a `kotlin.sequences.Sequence`, or a dll2klib-projected .NET
 	// enumerable are each a `kotlin.ranges.*`/`kotlin.collections.*` FQN, a `downTo` operator identity, or a
 	// .NET-type / `@Clr` resolution against the reference assemblies — a Kotlin<->CLR relation that belongs in
 	// bir2cir. kotc emits ONE faithful `forIn` for EVERY non-array source: the FAITHFUL source + its runtime type

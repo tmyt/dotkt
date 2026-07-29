@@ -63,7 +63,6 @@ import org.jetbrains.kotlin.ir.expressions.IrBreak
 import org.jetbrains.kotlin.ir.expressions.IrContinue
 import org.jetbrains.kotlin.ir.expressions.IrStatementOrigin
 import org.jetbrains.kotlin.ir.util.classId
-import org.jetbrains.kotlin.name.CallableId
 import org.jetbrains.kotlin.ir.util.fqNameWhenAvailable
 import org.jetbrains.kotlin.ir.util.resolveFakeOverride
 import org.jetbrains.kotlin.ir.declarations.IrTypeParameter
@@ -456,8 +455,8 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 	// B, the SAME two-axis contract as a top-level FUNCTION call in BirEmitterCalls): `method` + the resolved parameter
 	// `sig` select the overload, while the FIR-resolved callee file-class is the mandatory DISPATCH identity. Two
 	// same-simple-name top-level funcs in DIFFERENT
-	// packages (a.foo/b.foo) both emit `method:foo`; calleeOwner disambiguates to THIS package's foo. A facadegen-
-	// injected cross-module callee carries its injected file class too; any unresolved external shape fails at the
+	// packages (a.foo/b.foo) both emit `method:foo`; calleeOwner disambiguates to THIS package's foo. A dll2klib-
+	// projected cross-module callee carries its file class too; any unresolved external shape fails at the
 	// CIR invariant rather than falling back to a global first match.
 	// The substitution axis is unchanged: a delegate over a top-level fun stays owner-less (no `owner` field here).
 	// `::localFun` — a reference to a LOCAL fun, which is not a file-class member under its own name: it was lifted to
@@ -544,15 +543,8 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 		val refTa = if (!hasRefTa) "" else ""","typeArgs":[${refTaArgs.joinToString(",") { birType(it!!).toJson() }}]"""
 		val retT = fnType.ret
 		val retVoid = retT == TypeNode.Fqn("kotlin.Unit")   // the SUBSTITUTED return (fn's own T may resolve to Unit)
-		// The inner call MUST mirror the DIRECT top-level ext-call shape for this same callee, so bir2cir attributes
-		// the forwarded call identically to a direct one. A callee restored from a referenced-assembly [KotlinFile]
-		// facade (`body == null` + an injected file class) emits the `ownerType:fileClass` identity (mirrors the
-		// injected-facade ext-call gate in `call()`); every other top-level ext (stdlib-from-klib, this-module) emits
-		// the plain `owner:null` shape (the direct top-level ext-call `callStatic owner:null` in `call()`).
-		val injectedFileClass = if (fn.body == null)
-			(fn.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)?.let {
-				kotc.frontend.clrInjectedTopLevelFileClass(CallableId(it.packageFqName, fn.name), regularParams(fn).size, injectedExtReceiverKey(fn))
-			} else null
+		// A dll2klib declaration carries its physical file-class owner in @ClrExternal.
+		val injectedFileClass = clrExternalOwner(fn)
 		val callE = if (injectedFileClass != null) {
 			// `__self` = the ext receiver, so it heads both the args and the shape/argTypes (matches the injected
 			// top-level ext-call branch in `call()`; declared param types are used for the facade signature lookup).
@@ -747,13 +739,8 @@ internal fun BirEmitter.boundExtFnRef(node: IrFunctionReference, fn: IrSimpleFun
 	val refTaArgs = refTps.indices.map { node.typeArguments.getOrNull(it) }
 	val hasRefTa = refTps.isNotEmpty() && refTaArgs.all { it != null }
 	val refTa = if (!hasRefTa) "" else ""","typeArgs":[${refTaArgs.joinToString(",") { birType(it!!).toJson() }}]"""
-	// The forwarding call MUST mirror the DIRECT top-level ext-call shape for this same callee (see the UNBOUND branch):
-	// a referenced-assembly facade ext (body==null + injected file class) emits `ownerType:fileClass`; every other
-	// top-level ext emits the plain `owner:null` shape. Only the receiver arg differs (`this.__recv` vs `__self`).
-	val injectedFileClass = if (fn.body == null)
-		(fn.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)?.let {
-			kotc.frontend.clrInjectedTopLevelFileClass(CallableId(it.packageFqName, fn.name), regularParams(fn).size, injectedExtReceiverKey(fn))
-		} else null
+	// The forwarding call mirrors the direct top-level extension call. Only the receiver argument differs.
+	val injectedFileClass = clrExternalOwner(fn)
 	val callE = if (injectedFileClass != null) {
 		val extRecvParam = fn.parameters.first { it.kind == IrParameterKind.ExtensionReceiver }
 		val declShapeTypes = (listOf(extRecvParam) + regularParams(fn)).joinToString(",") { birType(it.type).toJson() }
@@ -919,14 +906,8 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 		val idx = params?.indexOfFirst { it.kind == IrParameterKind.ExtensionReceiver } ?: -1
 		if (idx in 0 until node.arguments.size) node.arguments[idx] else null
 	} else null
-	// A referenced DotKt top-level property is physically emitted on its source file's facade class. The frontend
-	// restores that structural owner from [KotlinTopLevelProperty] metadata; carry it into BIR just as direct
-	// extension-property calls and extension-function references do. A local/stdlib property has no injected record
-	// and stays owner-less for bir2cir's ordinary Kotlin-member substitution.
-	val injectedExtPropFileClass = if (hasExtRecv)
-		(prop.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)?.let {
-			kotc.frontend.clrInjectedTopLevelPropFileClass(CallableId(it.packageFqName, prop.name))
-		} else null
+	// dll2klib carries the physical file-class owner directly on the projected property.
+	val injectedExtPropFileClass = if (hasExtRecv) clrExternalOwner(prop) else null
 	// The receiver captured into the lift's `__recv` field for a BOUND reference: the dispatch receiver (a member
 	// property) or the extension receiver (a top-level ext property). Only one is ever present.
 	val capturedRecv = boundRecv ?: extBoundRecv

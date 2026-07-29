@@ -19,7 +19,7 @@ import org.jetbrains.kotlin.fir.types.contextParameterNumberForFunctionType
  * `@kotlin.Metadata`, which DotKt does not emit.
  *
  * Losing it is not cosmetic. bir2cir stamps `[KotlinExtensionFunctionType]` from the presence of a receiver, and
- * facadegen then promotes the delegate's FIRST physical argument to the restored extension receiver — but for a
+ * dll2klib then promotes the delegate's FIRST physical argument to the restored extension receiver — but for a
  * context function type that argument is the CONTEXT. A consumer of `fun evaluate(f: context(Box) Box.() -> Int)`
  * saw `Box.(Box) -> Int`; a bare lambda still compiled (its one ordinary parameter became the unused implicit `it`),
  * and at run `this` bound to the context instead of the receiver — a silently wrong value with no diagnostic.

@@ -32,9 +32,9 @@ sealed class TypeNode {
      * `fn`: a Kotlin function type. `recv` + `params` is the physical `FunctionN` argument order.
      *
      * `ctx` = the Kotlin CONTEXT parameters of a context function type (`context(A) B.(D) -> E` reads back as
-     * `ctx=[A]`, `recv=B`, `params=[D]`). META-ONLY, exactly like [Oblivious]: facadegen emits it and the FIR
-     * injector consumes it; kotc's own BIR never emits it (there the fact rides the declaration-slot key
-     * `ctxFnType`, because a type node is rebuilt by many bir2cir passes and would lose it).
+     * `ctx=[A]`, `recv=B`, `params=[D]`). dll2klib consumes the equivalent assembly metadata when producing
+     * KLIB declarations; kotc's own BIR carries the fact in the declaration-slot key `ctxFnType`, because a
+     * type node is rebuilt by many bir2cir passes and would lose it.
      */
     data class Fn(
         val suspend: Boolean,
@@ -50,8 +50,8 @@ sealed class TypeNode {
     /**
      * `oblivious`: `T!` — an NRT-oblivious reference type (NullableAttribute=0), the flexible/platform
      * `(T..T?)` (spec §1 tri-state nullability). A sibling of [Nullable] with the same `{of:T}` shape.
-     * facadegen META emits it; the frontend maps it to a `ConeFlexibleType`. Frontend-only — kotc BIR
-     * never emits it (resolved to not-null/nullable before the backend).
+     * Reference KLIB metadata maps it to a frontend flexible type. Frontend-only — kotc BIR normally
+     * resolves it to not-null/nullable before the backend.
      */
     data class Oblivious(val of: TypeNode) : TypeNode()
 
@@ -128,7 +128,7 @@ sealed class TypeNode {
         fun parse(json: String): TypeNode = fromValue(JsonParser(json).parseValue())
 
         /** Parse an arbitrary JSON document into raw values (Map/List/String/Number/Boolean/null) — the
-         *  injection-metadata reader ([kotc.frontend.ClrTypeInjection]) walks this, reusing the one JSON parser. */
+         *  metadata consumers walk this structured representation without reparsing type strings. */
         fun parseJsonValue(json: String): Any? = JsonParser(json).parseValue()
 
         /** Build a [TypeNode] from an already-parsed JSON sub-value (a `{t:…}` object). Used by the injection
