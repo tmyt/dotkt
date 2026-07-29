@@ -127,7 +127,7 @@ internal fun <T> BirEmitter.withDefaultTypeScope(
 /** The plan of the call currently being emitted. Every path that fills arguments runs inside a plan scope, so a
  *  missing plan is an internal invariant break rather than a shape to work around. [expr] installs one for every
  *  function-access node; four further sites install their own, because they emit a call from outside `expr`: an
- *  enum entry's initializer (expression position, so it takes a [wrap]), and an entry subclass's enum-super args
+ *  enum entry's initializer (expression position, so it takes a [CallPlan.wrap]), and an entry subclass's enum-super args
  *  plus a constructor's `this` and `super` delegation (DECLARATION position — no wrapping expression exists, so
  *  their bindings ride the declaration as `delegationBindings`). */
 internal fun BirEmitter.callPlan(call: IrExpression): CallPlan =
