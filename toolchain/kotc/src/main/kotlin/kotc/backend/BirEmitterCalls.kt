@@ -589,6 +589,35 @@ internal fun BirEmitter.propRefDispatchReceiver(node: IrPropertyReference): IrEx
 internal fun isVirtualInstanceCall(call: IrCall, callee: IrSimpleFunction): Boolean =
 	call.superQualifierSymbol == null && (callee.modality != Modality.FINAL || callee.overriddenSymbols.isNotEmpty())
 
+/**
+ * The declared owner of a delegated property's member `getValue`/`setValue` call.
+ *
+ * Whether the type came from this module or a referenced assembly does not change the Kotlin call: kotc carries the
+ * delegate value's resolved Kotlin type, including its constructed type arguments, and bir2cir decides how that owner
+ * is represented on the CLR. Stdlib convention delegates are handled by their dedicated paths (lazy) or by the
+ * resolved top-level extension fallback (Map); the Read(Write)Property interfaces are genuine member providers.
+ */
+private fun BirEmitter.delegatedProviderOwner(
+	delegateType: IrType,
+	access: IrCall? = null,
+	accessor: IrSimpleFunction? = null,
+): TypeNode? {
+	// A member property declared in `Host<T>` is accessed through a constructed `Host<String>` receiver. Its
+	// backing-field type is still written in Host's declaration frame (`Provider<T>`), so close that frame before
+	// carrying the provider owner into the caller. A top-level/local property has no owner frame and stays unchanged.
+	val closedType =
+		if (access != null && accessor != null)
+			callSiteSubstitutor(access, accessor)?.substitute(delegateType) ?: delegateType
+		else delegateType
+	val delegateClass = closedType.classifierOrNull?.owner as? IrClass ?: return null
+	val fq = closedType.classFqName?.asString()
+	val isPropertyInterface =
+		fq == "kotlin.properties.ReadWriteProperty" || fq == "kotlin.properties.ReadOnlyProperty"
+	val isStdlibConvention = fq == "kotlin" || fq?.startsWith("kotlin.") == true
+	if (!isPropertyInterface && isStdlibConvention) return null
+	return birType(closedType)
+}
+
 internal fun BirEmitter.call(call: IrCall): String {
 	// A `tailrec` self-tail-call -> a back-jump to the method entry (TCO, §2b) instead of a recursive call. Matched
 	// by IR identity against the frontend-validated tail-call set installed by `method()`.
@@ -671,20 +700,12 @@ internal fun BirEmitter.call(call: IrCall): String {
 			val owner = ownerSpec(dvar.type.classifierOrNull?.owner as? IrClass, dvar.type)
 			return """{"k":"callInstance","ownerType":${owner.toJson()},"virtual":true,"recv":$dlocal,"method":"get_value","args":[]${retHint((owner as? TypeNode.Fqn)?.args != null, ldp.getter.returnType)}}"""
 		}
-		val delegateClass = dvar.type.classifierOrNull?.owner as? IrClass
-		val dvFq = dvar.type.classFqName?.asString()
 		// A user delegate class -> its concrete type; a stdlib Read(Write)Property-typed delegate (e.g.
 		// `by Delegates.observable(…)`) -> the REAL generic stdlib interface (mirrors `by lazy` on real
 		// `kotlin.Lazy<T>`), binding to the actual emitted stdlib getValue/setValue.
-		val (owner, ownerGeneric) = when {
-			delegateClass != null && !isExternalNetType(delegateClass) &&
-				delegateClass.fqNameWhenAvailable?.asString()?.startsWith("kotlin") != true -> fqnJson(typeName(delegateClass)) to false
-			dvFq == "kotlin.properties.ReadWriteProperty" || dvFq == "kotlin.properties.ReadOnlyProperty" -> {
-				val os = ownerSpec(delegateClass, dvar.type)
-				os.toJson() to ((os as? TypeNode.Fqn)?.args != null)
-			}
-			else -> null to false
-		}
+		val providerOwner = delegatedProviderOwner(dvar.type)
+		val owner = providerOwner?.toJson()
+		val ownerGeneric = (providerOwner as? TypeNode.Fqn)?.args != null
 		if (owner != null) {
 			val kprop = kPropertyStub(ldp.name.asString())
 			val nullRef = """{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}"""
@@ -1397,23 +1418,14 @@ internal fun BirEmitter.call(call: IrCall): String {
 					val owner = ownerSpec(bf.type.classifierOrNull?.owner as? IrClass, bf.type)
 					return """{"k":"callInstance","ownerType":${owner.toJson()},"virtual":true,"recv":$delegate,"method":"get_value","args":[]${retHint((owner as? TypeNode.Fqn)?.args != null, callee.returnType)}}"""
 				}
-				val delegateClass = bf?.type?.classifierOrNull?.owner as? IrClass
-				val isUserDelegate = delegateClass != null && !isExternalNetType(delegateClass) &&
-					delegateClass.fqNameWhenAvailable?.asString()?.startsWith("kotlin") != true
-				val bfFq = bf?.type?.classFqName?.asString()
-				val (owner, ownerGeneric) = when {
-					isUserDelegate -> fqnJson(typeName(delegateClass!!)) to false
-					bf != null && (bfFq == "kotlin.properties.ReadWriteProperty" || bfFq == "kotlin.properties.ReadOnlyProperty") -> {
-						val os = ownerSpec(bf.type.classifierOrNull?.owner as? IrClass, bf.type)
-						os.toJson() to ((os as? TypeNode.Fqn)?.args != null)
-					}
-					else -> null to false
-				}
+				val providerOwner = bf?.let { delegatedProviderOwner(it.type, call, callee) }
+				val owner = providerOwner?.toJson()
+				val ownerGeneric = (providerOwner as? TypeNode.Fqn)?.args != null
 				if (delegate != null && owner != null) {
 					val kprop = kPropertyStub(p.name.asString())
 					return if (callee === p.setter)
 						"""{"k":"callInstance","ownerType":$owner,"virtual":true,"recv":$delegate,"method":"setValue","args":[$thisRef,$kprop,${expr(regularArgs(call).first())}]}"""
-					else """{"k":"callInstance","ownerType":$owner,"virtual":true,"recv":$delegate,"method":"getValue","args":[$thisRef,$kprop]${retHint(ownerGeneric, callee.returnType)}}"""
+					else """{"k":"callInstance","ownerType":$owner,"virtual":true,"recv":$delegate,"method":"getValue","args":[$thisRef,$kprop]${retHint(ownerGeneric, call.type)}}"""
 				}
 				// `val x by map` (top-level, extension-convention delegate): FIR resolved the accessor to the stdlib
 				// getValue/setValue extension — re-emit it as the owner-null static call the general top-level-extension
@@ -1547,24 +1559,15 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// `by lazy` path (dispatch on the real generic `kotlin.Lazy<T>`): the delegate value is the real
 		// emitted stdlib `ObservableProperty`/`NotNullVar`, which implements the real generic interface, so
 		// the call binds to the actual stdlib getValue/setValue — no compiler-synthesized delegate class.
-		val delegateClass = bf?.type?.classifierOrNull?.owner as? IrClass
-		val isUserDelegate = delegateClass != null && !isExternalNetType(delegateClass) &&
-			delegateClass.fqNameWhenAvailable?.asString()?.startsWith("kotlin") != true
-		val bfFq = bf?.type?.classFqName?.asString()
-		val (owner, ownerGeneric) = when {
-			isUserDelegate -> fqnJson(typeName(delegateClass!!)) to false
-			bf != null && (bfFq == "kotlin.properties.ReadWriteProperty" || bfFq == "kotlin.properties.ReadOnlyProperty") -> {
-				val os = ownerSpec(bf.type.classifierOrNull?.owner as? IrClass, bf.type)
-				os.toJson() to ((os as? TypeNode.Fqn)?.args != null)
-			}
-			else -> null to false
-		}
+		val providerOwner = bf?.let { delegatedProviderOwner(it.type, call, callee) }
+		val owner = providerOwner?.toJson()
+		val ownerGeneric = (providerOwner as? TypeNode.Fqn)?.args != null
 		if (delegate != null && owner != null) {
 			val kprop = kPropertyStub(property.name.asString())
 			// callvirt: getValue/setValue is virtual (interface impl) or final (duck-typed) — callvirt fits both.
 			return if (callee === property.setter)
 				"""{"k":"callInstance","ownerType":$owner,"virtual":true,"recv":$delegate,"method":"setValue","args":[$recv,$kprop,${expr(regularArgs(call).first())}]}"""
-			else """{"k":"callInstance","ownerType":$owner,"virtual":true,"recv":$delegate,"method":"getValue","args":[$recv,$kprop]${retHint(ownerGeneric, callee.returnType)}}"""
+			else """{"k":"callInstance","ownerType":$owner,"virtual":true,"recv":$delegate,"method":"getValue","args":[$recv,$kprop]${retHint(ownerGeneric, call.type)}}"""
 		}
 		// `val x by map` (a TOP-LEVEL-extension delegate convention): FIR resolved the accessor to the stdlib
 		// `kotlin.collections.getValue/setValue(thisRef, property)` extension (MapAccessors.kt) — the resolved
