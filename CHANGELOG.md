@@ -15,12 +15,15 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   the caller read the raw `Task`/`COROUTINE_SUSPENDED` sentinel where the awaited value belonged and the state
   machine got no resume point — an `InvalidCastException` far from its cause, or a silently wrong value. The shared
   `IrSanity` check set (run in-process by both bir2cir and ilemit, mirrored offline by `scripts/verify-sanity.py`
-  for `make verify-sanity`) gained the invariant, and the message names the declaration. A declaration that still
+  for `make verify-sanity`) gained the invariant, and the message names the declaration. A METHOD that still
   carries `mods.suspend` is exempt, because ilemit's guard on that exact flag returns before it reaches the
   statement walk; such a survivor is stdlib-only, since the self-build deliberately retains the original beside its
   cold entry and the admit gate excludes the inline coroutine primitives, where an app build removes the original
-  outright. Calibrated against the current corpus: all seven survivors in the runtime stdlib CIR sit in exempt
-  declarations, no emitted body carries one, and the app corpus has none at all.
+  outright. Only a method scope can be exempt: ilemit emits a constructor body, and builds a type initializer from
+  the fields, without consulting the flag at all, so a ctor and a static-initializer group are always checked —
+  deriving the exemption from the scope's declaration instead of its kind would have let a suspension through a
+  `.cctor` under a type that carried the modifier. Calibrated against the current corpus: all seven survivors in
+  the runtime stdlib CIR sit in exempt declarations, no emitted body carries one, and the app corpus has none.
 - **The IR sanity gate gained a self-test lane, and the schema gate a granularity fixture
   (`tests/ir/selftest/`).** Both gates validate whatever is on disk, so one that stopped checking would look
   exactly like a clean corpus. `tests/ir/run-sanity.sh` now runs the directory's `*.cir.json` half first

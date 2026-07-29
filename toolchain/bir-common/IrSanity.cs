@@ -21,7 +21,8 @@
 //   3. STRUCTURAL — `binOp` has both `lhs`+`rhs`; `cond` has `cond`+`then`+`else`.
 //   4. OWNER PRESENCE — fields carry ownerType; owner:null callStatic/newDelegate/newBoundDelegate carry calleeOwner.
 //   5. `for` `cmp` ∈ {<=, <, >=} — an unknown cmp silently miscompiles to an infinite loop.
-//   6. SUSPENSION LOWERED — no node in a body ilemit EMITS still carries `suspendCall:true`.
+//   6. SUSPENSION LOWERED — no node in a body ilemit EMITS still carries `suspendCall:true` (only a METHOD still
+//      carrying `mods.suspend` is exempt — a ctor / static-initializer group never is; see CheckScope).
 //
 // SCOPE units mirror ilemit's `_locals`/`_cfgLabels` lifetimes exactly: a method = params ∪ body; a ctor ALSO folds
 // in preStmts/thisArgs/baseArgs (emitted in the same frame); the static-field-initializer group shares ONE .cctor `_locals`
@@ -75,7 +76,10 @@ public static class IrSanity
                 if (f.TryGetProperty("init", out var iv) && iv.ValueKind != JsonValueKind.Null
                     && f.TryGetProperty("static", out var st) && st.ValueKind == JsonValueKind.True)
                     inits.Add(iv);
-            if (inits.Count > 0) CheckScope(owner + "..cctor", null, inits, decl: c);
+            // ALWAYS suspension-checked (checkSuspension: true). ilemit emits a type initializer from the fields
+            // alone and never consults `mods.suspend` on the containing type (Emitter.Assembly.cs pass 4b), so
+            // nothing here is exempt — and `decl` is the CONTAINER, whose modifiers say nothing about this body.
+            if (inits.Count > 0) CheckScope(owner + "..cctor", null, inits, decl: c, checkSuspension: true);
         }
     }
 
@@ -85,7 +89,9 @@ public static class IrSanity
         if (m.TryGetProperty("abstract", out var ab) && ab.ValueKind == JsonValueKind.True) return;
         if (!m.TryGetProperty("body", out var body) || body.ValueKind != JsonValueKind.Array) return;
         var name = m.TryGetProperty("name", out var nm) && nm.ValueKind == JsonValueKind.String ? nm.GetString() : "?";
-        CheckScope(owner + "." + name, ParamNames(m), new List<JsonElement> { body }, decl: m);
+        // The ONLY scope the suspension check exempts, and only when this METHOD still carries `mods.suspend` — the
+        // exact flag ilemit's own guard keys on before it walks a method body (see CheckRefs check 6).
+        CheckScope(owner + "." + name, ParamNames(m), new List<JsonElement> { body }, decl: m, checkSuspension: !IsSuspendDecl(m));
     }
 
     static void CheckCtorDecl(string owner, JsonElement c)
@@ -98,20 +104,29 @@ public static class IrSanity
         if (c.TryGetProperty("preStmts", out var pre) && pre.ValueKind == JsonValueKind.Array) roots.Add(pre);
         if (c.TryGetProperty("thisArgs", out var ta) && ta.ValueKind == JsonValueKind.Array) roots.Add(ta);
         if (c.TryGetProperty("baseArgs", out var ba) && ba.ValueKind == JsonValueKind.Array) roots.Add(ba);
-        CheckScope(owner + "..ctor", ParamNames(c), roots, decl: c);
+        // ALWAYS suspension-checked (checkSuspension: true). ilemit's suspend guard lives in EmitMethodBody only;
+        // EmitCtorBody has none, so a constructor body is emitted whatever modifiers it carries.
+        CheckScope(owner + "..ctor", ParamNames(c), roots, decl: c, checkSuspension: true);
     }
 
     // Validate one `_locals`/`_cfgLabels` scope: collect its declared local names + label ids across all root trees,
     // then check every reference against them. `decl` supplies the #112 Phase-2 source position for the message.
-    static void CheckScope(string declLabel, HashSet<string> paramNames, List<JsonElement> roots, JsonElement decl)
+    //
+    // `checkSuspension` is check 6's gate, and the CALLER owns it because the exemption is not a property of the
+    // tree — it is a property of whether ilemit will walk this particular KIND of body. Only a method scope can be
+    // exempt (and only for its own `mods.suspend`); a constructor and a static-initializer group never are, because
+    // ilemit emits those without consulting the flag. Deriving it here from `decl` was the bug: the .cctor scope's
+    // `decl` is the CONTAINING TYPE, so a type carrying `mods.suspend` silently disabled the check over a body
+    // ilemit really does emit.
+    static void CheckScope(string declLabel, HashSet<string> paramNames, List<JsonElement> roots, JsonElement decl, bool checkSuspension)
     {
         var pos = PosPrefix(decl);
         var declared = paramNames != null ? new HashSet<string>(paramNames) : new HashSet<string>();
         var labels = new HashSet<int>();
         foreach (var r in roots) { CollectDeclared(r, declared); CollectSanityLabels(r, labels); }
-        // Check 6 asks only of the bodies ilemit turns into IL, and a declaration that STILL carries `mods.suspend`
-        // is not one: ilemit's guard on that exact flag (`ModFlag(m, "suspend")`, Emitter.Bodies.cs) returns before
-        // it ever reaches the statement walk — a throwing stub in a stdlib build, a loud refusal in an app build.
+        // Check 6 asks only of the bodies ilemit turns into IL, and a METHOD that STILL carries `mods.suspend` is
+        // not one: ilemit's guard on that exact flag (`ModFlag(m, "suspend")`, Emitter.Bodies.cs) returns before it
+        // ever reaches the statement walk — a throwing stub in a stdlib build, a loud refusal in an app build.
         // Checking those bodies would only restate that guard one layer earlier, in the one place it is expected to
         // be hit.
         //
@@ -129,7 +144,6 @@ public static class IrSanity
         // and neither does the 252-file reference CIR (RefBodySquash replaces its bodies with a throw stub before
         // this runs, so a ref build needs no separate exemption). The synthesized cold entries and state-machine
         // `invokeSuspend` bodies — where an escape would actually land — carry no `mods.suspend` and ARE checked.
-        var checkSuspension = !IsSuspendDecl(decl);
         foreach (var r in roots)
         {
             CheckNoDupLabels(pos + declLabel, r);

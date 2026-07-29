@@ -46,3 +46,9 @@ head of `EmitAssembly`, ahead of any resolution.
   carries no tag, and the coroutine PRIMITIVE that bir2cir deliberately leaves un-lowered — still
   `mods.suspend`, so ilemit stubs or refuses it and never walks its body. The exemption has no negative in the
   corpus either, so it is pinned here rather than left to a comment.
+- The **width of that exemption**, which is the easy thing to get wrong — `reject-unlowered-suspension-in-ctor`
+  and `reject-unlowered-suspension-in-static-init` carry `mods.suspend` on the constructor and on the
+  containing type, and must STILL be refused. ilemit's suspend guard lives in `EmitMethodBody` alone: it emits
+  a constructor body, and builds a type initializer from the fields, without ever consulting the flag. An
+  exemption derived from the scope's declaration rather than from its KIND lets a suspension through exactly
+  there, and these two are what say so.
