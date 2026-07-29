@@ -87,12 +87,18 @@ import roundtrip.nc.Panel2 as NcPanel2
 import roundtrip.nc.note as ncNote
 import roundtrip.nc.Seeded as NcSeeded
 import roundtrip.nc.seeds as ncSeeds
+import roundtrip.nc.SeededOrder as NcSeededOrder
+import roundtrip.nc.seedOrder as ncSeedOrder
+import roundtrip.nc.seedMarkP as ncSeedMarkP
 import roundtrip.nc.uf as ncUf
 import roundtrip.nc.Marker as NcMarker
 import roundtrip.nc.scaled as ncScaled
 import roundtrip.nc.tri3 as ncTri3
 import roundtrip.nc.order3 as ncOrder3
 import roundtrip.nc.chain as ncChain
+import roundtrip.nc.genDefaults as ncGenDefaults
+import roundtrip.nc.genPairDefaults as ncGenPairDefaults
+import roundtrip.nc.genMutable as ncGenMutable
 import roundtrip.nc.bumps as ncBumps
 import roundtrip.cmp.Ver
 import roundtrip.ubyte.ub
@@ -499,9 +505,33 @@ class PackageAndInlineRoundtripTests {
         val seedsBefore = ncSeeds
         val sub = NcSeededSub()
         ClassicAssert.AreEqual(3, sub.a)                                                // 3    a = seed()
-        ClassicAssert.AreEqual(30, sub.b)                                               // 30   b = a * 10, reading the temp
+        ClassicAssert.AreEqual(30, sub.b)                                               // 30   b = a * 10, reading the binding
         ClassicAssert.AreEqual(1, ncSeeds - seedsBefore)                                // 1    seed() ran once
+        // ORDER at that same delegation: the value the `: super(…)` SUPPLIES runs before the base's defaults. The args
+        // ride the constructor declaration, so the plan lowers to `preStmts` emitted ahead of the base call.
+        val ordered = NcSeededOrderSub()
+        ClassicAssert.AreEqual(2, ordered.p)                                            // 2    the supplied argument
+        ClassicAssert.AreEqual(3, ordered.a)                                            // 3    a = seedMarkD()
+        ClassicAssert.AreEqual(30, ordered.b)                                           // 30   b = a * 10
+        ClassicAssert.AreEqual("pd", ncSeedOrder)                                       // pd   supplied first, then the default
+
+        // A GENERIC callee's non-constant default, filled in a NON-GENERIC consumer. The carrier is the default as the
+        // CALLEE wrote it, so its type parameter rides it as a positional type variable and the splice has to close
+        // that frame against THIS call site. Left open it erased to `Any`: the values were right and the program ran,
+        // but the object built for the slot had the wrong runtime type — and the IL did not verify.
+        ClassicAssert.AreEqual(0, ncGenDefaults<String>())                              // 0    both defaults filled
+        ClassicAssert.AreEqual(1, ncGenPairDefaults<String>())                          // 1    ...through a nested type arg
+        // Observable at RUNTIME, not only in the metadata: the constructed list's own element type.
+        val gm = ncGenMutable<String>()
+        gm.add("s")
+        ClassicAssert.AreEqual("s", gm[0])
+        ClassicAssert.IsTrue(elementTypeName(gm).contains("String"))                     // was System.Object
     }
+
+    // The runtime element type of a constructed list, read off the CLR type itself — the fact a value-only assertion
+    // cannot see, because the values are correct either way.
+    private fun elementTypeName(xs: MutableList<String>): String = (xs as Any)::class.qualifiedName ?: ""
+
 
     // roundtrip-comparable (#179): a `class C : Comparable<C>` — </>/<=/>= + sorted() resolve+run cross-module
     // (facadegen restores operator compareTo + the kotlin.Comparable supertype; bir2cir binds compareTo->CompareTo).
@@ -521,6 +551,8 @@ class NcCtorDefaultHost(val n: Int) {
 // base's defaults where the first is side-effecting and the second reads it.
 class NcSuperSub(w: Int) : NcPanel2(w)
 class NcSeededSub : NcSeeded()
+// ...and one whose `: super(…)` SUPPLIES a side-effecting value ahead of the base's own filled defaults.
+class NcSeededOrderSub : NcSeededOrder(ncSeedMarkP())
 
 class NcEvalCounter {
     var calls = 0

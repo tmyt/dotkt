@@ -316,6 +316,10 @@ static class InlineSplice
         string prefix = "__inls" + n + "$";
         FreshenLabels(pBody);
         PrefixLocals(pBody, prefix);
+        // The same hygiene, for the vocabulary PrefixLocals cannot see: a plan's binding ids are declarations of this
+        // frame too, and they arrive carrying the PRODUCING module's counter. Splicing one body twice into one method
+        // would otherwise declare the same local twice (§2.7).
+        CallEvalLowering.FreshenPlanIds(pBody);
 
         // STEP 4 — route the callee's OWN returns to a result-local + end-label (BEFORE lambda splicing: at this point
         // every `{k:return}` in the body is the origin fn's, not a caller-lambda's). Unit callee -> no result-local.
@@ -333,7 +337,20 @@ static class InlineSplice
             if (UnwrapNullableLocal(result, foldVt, pbTypes) is JsonNode folded) result = folded;
         }
 
-        // STEP 5 — bind extension receiver + value params to temps; register lambda args; rewrite body param refs.
+        // STEP 5 — CONSUME the call-evaluation plan (spec §2.7), then bind what the CALLEE supplies.
+        //
+        // A value the CALL SITE supplies — the two receivers and every argument — is a plan BINDING, and each payload
+        // reference to it is a `bindRef`, a pure read substituted straight into the body. The splice mints no temp for
+        // one: how it is stored is CallEvalLowering's single decision, after every splice has run, and how it is stored
+        // ACROSS A SUSPENSION is SuspendColdLowering's, from liveness. So a body that reads a parameter twice, in a
+        // loop, or not at all no longer costs a redundant local, and every such value carries the caller-instantiated
+        // type its binding was emitted with.
+        //
+        // A value the CALLEE supplies — an omitted DEFAULT this splice fills from the callee's own carrier — is not a
+        // call-site value: Kotlin evaluates a default in the callee's scope, after every supplied value. It is bound to
+        // a local of the spliced body, which is exactly that position, since the call site's bindings are materialised
+        // ahead of the block. The local is always TYPED (from the callee's parameter, closed against this call site);
+        // an untyped one would reach the suspend lowering as a `kotlin.Any` slot, so it is refused here instead.
         var stmts = new JsonArray();
         var subst = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
         var lambdaMap = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
@@ -342,17 +359,57 @@ static class InlineSplice
         var callArgs = o["args"] as JsonArray ?? new JsonArray();
         bool ext = Str(payload["recv"]) == "extensionParam";
         var recvs = o["recvs"] as JsonObject;
-        // #34: emitted-position i -> the temp its param bound to, so a TIER-2 default carrier's `{defaultArgParam idx}`
-        // token (a default reading an EARLIER param) resolves to that param's already-bound temp. `defaultThisRecv` binds a
-        // `{this}` token in a default (a `= this` extension-receiver default / a dispatch-receiver read).
+        // #34: emitted-position i -> the READ of the value its param bound to, so a TIER-2 default carrier's
+        // `{defaultArgParam idx}` token (a default reading an EARLIER param) resolves to that param's binding.
+        // `defaultThisRecv` binds a `{this}` token in a default (a `= this` extension-receiver default / a
+        // dispatch-receiver read).
         var boundArgs = new JsonArray();
         JsonNode defaultThisRecv = Str(payload["recv"]) == "dispatch" ? new JsonObject { ["k"] = "local", ["name"] = prefix + "this" } : null;
 
+        // Bind ONE value the CALLEE supplies (a filled default, or an argument of a call that arrived without a plan —
+        // bir2cir's own §4.4(i) forward, whose values were already lowered in this frame and have exactly one reader
+        // each). A value kotc BOUND arrives as its own `bindRef` and passes straight through: minting a temp for it
+        // would be a second representation of one evaluation, the fault the plan exists to remove.
+        JsonNode BindLocal(string paramName, JsonNode value, JsonNode type, string what)
+        {
+            if (value is JsonObject already && Str(already["k"]) == "bindRef") return already.DeepClone();
+            var ty = type?.DeepClone()
+                ?? (CallEvalLowering.StaticTypeOf(value) is TypeNode st ? TypeJson.Write(st) : null)
+                ?? throw new NotSupportedException(
+                    $"inline splice: cannot type the {what} of {owner}.{name} (a `{Str((value as JsonObject)?["k"]) ?? "?"}` node), "
+                    + "so the local that holds it would be untyped — the payload parameter carries no type and the node "
+                    + "kind needs an arm in bir-common/NodeType.cs.");
+            var nm = prefix + paramName;
+            stmts.Add(new JsonObject { ["k"] = "var", ["name"] = nm, ["type"] = ty.DeepClone(), ["init"] = value.DeepClone() });
+            return new JsonObject { ["k"] = "local", ["name"] = nm, ["sty"] = ty };
+        }
+        // A capture DESCRIPTOR names a SLOT, not an expression: a closure's ctor argument and a state machine's field
+        // are both bound BY NAME, and so is an assignment target. A value the plan leaves as a `bindRef` therefore
+        // needs a named local before it can be captured or written — so pin it into one. The pin is a pure READ of the
+        // binding, so the value is still evaluated exactly once, by the plan, at the call site.
+        var pinned = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
+        JsonNode Pin(string capturedName, JsonNode bound)
+        {
+            if (pinned.TryGetValue(capturedName, out var have)) return have.DeepClone();
+            var ty = (bound as JsonObject)?["sty"]?.DeepClone()
+                ?? (CallEvalLowering.StaticTypeOf(bound) is TypeNode st ? TypeJson.Write(st) : null)
+                ?? throw new NotSupportedException(
+                    $"inline splice: the payload of {owner}.{name} captures '{capturedName}', but the value bound to it "
+                    + "carries no static type, so the local that pins it for the capture would be untyped.");
+            var nm = prefix + "cap$" + capturedName;
+            stmts.Add(new JsonObject { ["k"] = "var", ["name"] = nm, ["type"] = ty.DeepClone(), ["init"] = bound.DeepClone() });
+            var read = new JsonObject { ["k"] = "local", ["name"] = nm, ["sty"] = ty };
+            pinned[capturedName] = read;
+            return read.DeepClone();
+        }
+
         // §4.3 — DISPATCH RECEIVER: the payload's `this` refs are the callee's dispatch (enclosing-class) receiver, not
-        // the CALLER's `this`. Bind kotc's carried `recvs.dispatch` to a fresh temp and rewrite the payload body's own
-        // `{k:this}` (not descending into nested closures/type-defs — their `this` is their own). Runs for a plain member
-        // inline (`recv==dispatch`) AND for a CO-BOUND real-instance member-extension (#23: `recv==extensionParam`,
-        // !static, body reads `{k:this}`) — in the latter STEP 5 additionally binds the extension `__self` below.
+        // the CALLER's `this`. Bind kotc's carried `recvs.dispatch` and rewrite the payload body's own `{k:this}` (not
+        // descending into nested closures/type-defs — their `this` is their own). Runs for a plain member inline
+        // (`recv==dispatch`) AND for a CO-BOUND real-instance member-extension (#23: `recv==extensionParam`, !static,
+        // body reads `{k:this}`) — in the latter STEP 5 additionally binds the extension `__self` below.
+        // The dispatch receiver keeps a NAMED temp: `{k:this}` is not a local reference, so the payload's nested
+        // closures capture it under the `__outer` descriptor whose construction value 2B rebinds to this name.
         if (payloadDispatch || coBindDispatch)
         {
             if (recvs?["dispatch"] is not JsonNode disp)
@@ -365,11 +422,18 @@ static class InlineSplice
             var thisType = dispatchTypeArgs != null
                 ? new JsonObject { ["t"] = "fqn", ["name"] = owner, ["args"] = dispatchTypeArgs.DeepClone() }
                 : (JsonNode)TypeJson.Fqn(owner);
-            stmts.Add(new JsonObject { ["k"] = "var", ["name"] = thisTemp, ["type"] = thisType, ["init"] = disp.DeepClone() });
+            stmts.Add(new JsonObject
+            {
+                ["k"] = "var", ["name"] = thisTemp, ["type"] = thisType.DeepClone(), ["init"] = disp.DeepClone(),
+            });
             RewriteThis(pBody, thisTemp);
             RewriteThis(result, thisTemp);
         }
 
+        // The payload's positional parameters (the extension receiver as param 0, then contexts, then regulars). A
+        // SUPPLIED value adopts its plan binding; an OMITTED default is filled from the callee's own carrier and bound
+        // to a local here — which is why nothing has to sort the two apart: the call site's bindings are materialised
+        // ahead of the whole block, so every filled default already lands after every supplied value.
         for (int i = 0; i < pParams.Count; i++)
         {
             if (pParams[i] is not JsonObject p) continue;
@@ -392,7 +456,7 @@ static class InlineSplice
                 if (ptype != null) lambdaFuncType[lname] = ptype;   // §4.4ii: the delegate/funcType for a materialized carrier
                 subst[pn] = new JsonObject { ["k"] = "local", ["name"] = lname };
                 origLambdaParams.Add(pn);   // #75 B3
-                RecordBound(boundArgs, i, lname);
+                RecordBound(boundArgs, i, new JsonObject { ["k"] = "local", ["name"] = lname });
                 continue;
             }
             // A null arg slot = an OMITTED DEFAULT (splice-all: kotc emits a `null` in the defaulted param's slot). Fill it
@@ -401,19 +465,21 @@ static class InlineSplice
             // carrier attr — the SAME default-value source DefaultArgSplice reads cross-module. Both are SubstTv'd into the
             // call's type frame like the body. An un-carried extension receiver, or a null slot with NO carried default, is
             // a real error -> fail loud (no fallback under #95).
+            string what = ext && i == 0 ? "extension receiver" : $"argument '{pn}'";
             if (argNode == null)
             {
                 if (ext && i == 0) { FailLoud(o, owner, name, pc, ga, "extension receiver not carried"); return; }
+                what = $"default of parameter '{pn}'";
                 if (p["default"] is JsonNode pdef)
                 {
                     argNode = pdef.DeepClone();
-                    RewriteLocalRefs(argNode, subst);   // a default that references an EARLIER param -> its already-bound temp
+                    RewriteLocalRefs(argNode, subst, Pin);   // a default that references an EARLIER param -> its binding
                 }
                 else if (KotlinDefaultCarrier(p) is string carrierBir)
                 {
                     // Parse the carrier (refuse a `defaultUnsupported` poison — a capturing/SAM/suspend lambda default; unwrap
                     // a `defaultCarrier`, re-hoisting its lifted `__lambdaN` into this file via `_hoist`), then bind its
-                    // `{defaultArgParam idx}` / `{this}` tokens to the ALREADY-bound earlier-param temps (Kotlin defaults
+                    // `{defaultArgParam idx}` / `{this}` tokens to the ALREADY-bound earlier params (Kotlin defaults
                     // reference only earlier params) — the shared DefaultArgSplice machinery.
                     var raw = DefaultArgSplice.MaterializeDefault(carrierBir, _hoist, _refs, name, i, _fileClassOwner);
                     if (raw == null) { FailLoud(o, owner, name, pc, ga, $"param '{pn}' default carrier BIR is unparseable"); return; }
@@ -426,26 +492,45 @@ static class InlineSplice
                 // flows through the same joint-hygiene rewriters as the body — the former fail-loud guard is retired.
                 // (A `defaultCarrier`'s own capturing/SAM/suspend lambda form is still refused as `defaultUnsupported`.)
             }
-            string temp = prefix + pn;
-            stmts.Add(new JsonObject { ["k"] = "var", ["name"] = temp, ["type"] = ptype?.DeepClone(), ["init"] = argNode.DeepClone() });
-            subst[pn] = new JsonObject { ["k"] = "local", ["name"] = temp };
-            RecordBound(boundArgs, i, temp);
+            var bound = BindLocal(pn, argNode, ptype, what);
+            subst[pn] = bound;
+            RecordBound(boundArgs, i, bound);
         }
-        RewriteLocalRefs(pBody, subst);
-        RewriteLocalRefs(result, subst);   // D2: a tail-folded `result` (`= action(x)`) keeps raw param refs otherwise
+        // D9 — a parameter the payload ASSIGNS to (rare; a tailrec `starg`). An assignment target is a SLOT, so the
+        // value needs a named local — and, unlike a capture, the WRITE and every READ must land on that SAME local.
+        // Pin it BEFORE the rewrite, so `subst` sends the reads there too; pinning it during the rewrite would retarget
+        // the write while the reads (already rewritten, the walk descends first) kept reading the binding, and the
+        // assignment would be silently lost.
+        foreach (var pn in AssignedLocals(pBody, result))
+            if (subst.TryGetValue(pn, out var bound) && !(bound is JsonObject bo && Str(bo["k"]) == "local"))
+                subst[pn] = Pin(pn, bound);
+        RewriteLocalRefs(pBody, subst, Pin);
+        RewriteLocalRefs(result, subst, Pin);   // D2: a tail-folded `result` (`= action(x)`) keeps raw param refs otherwise
 
         // 2B (#75 Batch B) — a PAYLOAD `newSuspendLambda` that captured `__outer` (the enclosing dispatch/extension
         // receiver of the inline fn being spliced, e.g. `flow { … this@transform … }` in an extension `transform`) has
         // its construction value synthesized LATER by SuspendLambdaLowering from the descriptor NAME `__outer`, which its
         // fallback resolves to the CALLER's `this`/`__self` — the wrong receiver. Rebind each payload-frame `__outer`
-        // construction value to the splice's bound receiver temp: extension -> `<prefix>__self` (STEP 5), dispatch ->
-        // `<prefix>this` (§4.3). SuspendLambdaLowering consumes the `capValues` override verbatim.
+        // construction value to what the splice bound the receiver to: the extension receiver's own binding (STEP 5),
+        // or the dispatch temp (§4.3). A capValue is a VALUE evaluated in the ENCLOSING frame, so reading it through
+        // the call's plan binding is exactly right — the receiver keeps its single evaluation.
+        // SuspendLambdaLowering consumes the `capValues` override verbatim.
         // A CO-BOUND member-extension's `__outer` is the enclosing CLASS instance (bound to `<prefix>this` by §4.3), not
         // the extension `__self` — so the dispatch branch wins over the plain-extension one when both receivers are live.
         if (payloadDispatch || coBindDispatch)
             { var ov = new JsonObject { ["k"] = "local", ["name"] = prefix + "this" }; BindOuterCapValues(pBody, ov); BindOuterCapValues(result, ov); }
         else if (ext)
-            { var ov = new JsonObject { ["k"] = "local", ["name"] = prefix + "__self" }; BindOuterCapValues(pBody, ov); BindOuterCapValues(result, ov); }
+        {
+            // The extension receiver is payload param[0], and the loop above binds every param or fails loud — so an
+            // unbound one here is an internal break, not a shape. Say so: falling through would leave `__outer` to
+            // SuspendLambdaLowering's name fallback, which resolves it to the CALLER's receiver — a silently wrong
+            // `this` inside the lambda, which is exactly the fault this rebind exists to prevent.
+            if (pParams.FirstOrDefault() is not JsonObject selfParam
+                || !subst.TryGetValue(Str(selfParam["name"]) ?? "", out var selfBound))
+            { FailLoud(o, owner, name, pc, ga, "extension receiver param[0] was never bound, so a payload newSuspendLambda's `__outer` cannot be rebound"); return; }
+            BindOuterCapValues(pBody, selfBound);
+            BindOuterCapValues(result, selfBound);
+        }
 
         // B3 (#75 holistic) — a `{k:typeDef}` (a named local class in the payload — an `object :` literal) is a SCOPE
         // BOUNDARY that RewriteLocalRefs/PrefixLocals skip WHOLE, so an ORIGINAL (unprefixed) lambda-param `{k:local}` ref
@@ -508,6 +593,16 @@ static class InlineSplice
         { FailLoud(o, owner, name, pc, ga, "lambda param survives only as a nested carrier's capture descriptor after §4.4(iii) retire + §4.4(ii) rebind"); return; }
 
         // STEP 7 — assemble the value-producing valueBlock, swap it in-place.
+        //
+        // The block this step emits carries NO `type` stamp: what it produces is its RESULT's own type, which is the
+        // type the emitted value actually has, and that can be strictly more derived than the callee's DECLARED return
+        // (`partition` returns `Pair<List<T>,List<T>>` and builds a `Pair` of concrete `System…List`s — the widening
+        // WidenCovariantConstruction performs below). Stamping the declared type would tell the coercion downstream
+        // that no conversion is needed. `bir-common/NodeType.cs` derives a block's type from its result — with the
+        // block's own `var`s in scope — which is what the suspend lowering's evaluation-order spill types its slot
+        // from. (A block CallEvalLowering lowers a plan into does carry the call's static type; that is the plan's
+        // node type, not a claim about what the splice built, and the two never contradict because they are the
+        // Kotlin type and the emitted value's type of the same expression.)
         foreach (var st in pBody) if (st != null) stmts.Add(st.DeepClone());
         var repl = new JsonObject { ["k"] = "valueBlock", ["stmts"] = stmts, ["result"] = result };
         foreach (var key in new List<string>(((IDictionary<string, JsonNode>)o).Keys)) o.Remove(key);
@@ -526,12 +621,13 @@ static class InlineSplice
             $"inline splice: cannot splice {owner}.{name} (pc={pc} ga={ga}): {reason} — "
             + "under splice-all a callInline arrives for every inline+lambda call, so there is no fallback; fix the splice shape or the kotc gate.");
 
-    // #34: record that emitted-position param `i` bound to local `name`, so a later param's TIER-2 default carrier token
-    // `{defaultArgParam idx=i}` (a default reading this earlier param) resolves to it.
-    static void RecordBound(JsonArray boundArgs, int i, string name)
+    // #34: record the READ that emitted-position param `i` bound to (a plan `bindRef`, or the local a lambda carrier /
+    // pinned capture named), so a later param's TIER-2 default carrier token `{defaultArgParam idx=i}` (a default
+    // reading this earlier param) resolves to the same single evaluation.
+    static void RecordBound(JsonArray boundArgs, int i, JsonNode read)
     {
         while (boundArgs.Count <= i) boundArgs.Add(null);
-        boundArgs[i] = new JsonObject { ["k"] = "local", ["name"] = name };
+        boundArgs[i] = read.DeepClone();
     }
 
     // #34: the TIER-2 default-value BIR string a param carries in its `@KotlinDefault(index, bir)` attr (kotc stamps it on
@@ -2084,7 +2180,12 @@ static class InlineSplice
 
     // Replace {k:local,name} references whose name is in `subst` with the bound node; retarget a {k:setLocal,name} on a
     // bound param to the temp's name (D9: assignment to an inline value param — rare, tailrec starg).
-    static void RewriteLocalRefs(JsonNode node, Dictionary<string, JsonNode> subst)
+    //
+    // `pin` is the splice's "give this value a NAMED local" service, for the two positions that can only name a slot —
+    // a capture descriptor and an assignment target — when the plan bound the value to a `bindRef` (see DescriptorName).
+    // Null on the paths that do not own a statement list to declare one in; the refusal then stands.
+    static void RewriteLocalRefs(JsonNode node, Dictionary<string, JsonNode> subst,
+                                 Func<string, JsonNode, JsonNode> pin = null)
     {
         if (node == null || subst.Count == 0) return;
         if (node is JsonObject o)
@@ -2103,24 +2204,23 @@ static class InlineSplice
             if (Str(o["k"]) == "newSuspendLambda")
             {
                 var inner = SuspendLambdaInnerScope(o);
+                var repin = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
                 if (o["captures"] is JsonArray caps)
                     foreach (var c in caps.OfType<JsonObject>())
                         if (Str(c["name"]) is string cn && !inner.Contains(cn) && subst.TryGetValue(cn, out var cb))
-                        {
-                            if (cb is JsonObject cbo && Str(cbo["k"]) == "local" && Str(cbo["name"]) is string tn) c["name"] = tn;
-                            else throw new NotSupportedException(
-                                $"inline splice: a payload newSuspendLambda captures '{cn}' but the splice binds it to a non-local expression — a suspend-lambda capture descriptor can only name a local/temp (#75 Batch B)");
-                        }
+                            c["name"] = DescriptorName(cn, cb, pin, repin,
+                                "a payload newSuspendLambda captures", "(#75 Batch B)");
                 if (o["body"] is JsonNode nb)
                 {
-                    var bodySubst = inner.Count == 0 ? subst
+                    var bodySubst = inner.Count == 0 && repin.Count == 0 ? subst
                         : subst.Where(kv => !inner.Contains(kv.Key)).ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
-                    RewriteLocalRefs(nb, bodySubst);
+                    foreach (var kv in repin) bodySubst[kv.Key] = kv.Value;
+                    RewriteLocalRefs(nb, bodySubst, pin);
                 }
                 // `capValues` are the captures' construction VALUES in the ENCLOSING (splice) frame — outer-frame refs, so
                 // rewrite them with the FULL `subst` (not the inner-scope-minus body subst). Skipped by the generic descent
                 // below (early return); descend explicitly here so a spliced payload's capValue local is rebound in lockstep.
-                if (o["capValues"] is JsonNode ncv) RewriteLocalRefs(ncv, subst);
+                if (o["capValues"] is JsonNode ncv) RewriteLocalRefs(ncv, subst, pin);
                 return;
             }
             // F2 (#61) SCOPE BOUNDARY: a nested `inlineLambda` carrier's OWN params shadow same-named outer callee params.
@@ -2138,39 +2238,80 @@ static class InlineSplice
                 // suspend arm, the body field-ref skews from the descriptor. Same doctrine as the newSuspendLambda case
                 // above. Skip the carrier's OWN params (bound, not free) and an `outer:true` capture (its value is the
                 // enclosing `{k:this}`, not a name-keyed local — MaterializeCarrier emits `{k:this}` for it).
+                var repin = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
                 if (o["captures"] is JsonArray ilCaps)
                     foreach (var c in ilCaps.OfType<JsonObject>())
                     {
                         if (Str(c["name"]) is string cn && !lamParams.Contains(cn)
                             && !(c["outer"] is JsonValue ov && ov.TryGetValue<bool>(out var ob) && ob)
                             && subst.TryGetValue(cn, out var cb))
-                        {
-                            if (cb is JsonObject cbo && Str(cbo["k"]) == "local" && Str(cbo["name"]) is string tn) c["name"] = tn;
-                            else throw new NotSupportedException(
-                                $"inline splice: a nested inlineLambda carrier captures '{cn}' but the splice binds it to a non-local expression — a carrier capture descriptor can only name a local/temp");
-                        }
+                            c["name"] = DescriptorName(cn, cb, pin, repin,
+                                "a nested inlineLambda carrier captures", "");
                         // #126: an ALPHA-CONVERTED capture's construction-source `value` is enclosing-frame vocab — rewrite it
                         // with the FULL subst in lockstep (the descriptor `name` is a fresh field name never in `subst`).
-                        if (c["value"] is JsonNode cval) RewriteLocalRefs(cval, subst);
+                        if (c["value"] is JsonNode cval) RewriteLocalRefs(cval, subst, pin);
                     }
-                var bodySubst = lamParams.Count == 0 ? subst
+                var bodySubst = lamParams.Count == 0 && repin.Count == 0 ? subst
                     : subst.Where(kv => !lamParams.Contains(kv.Key)).ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
-                if (o["body"] is JsonNode ib) RewriteLocalRefs(ib, bodySubst);
-                if (o["result"] is JsonNode ir) RewriteLocalRefs(ir, bodySubst);
+                foreach (var kv in repin) bodySubst[kv.Key] = kv.Value;
+                if (o["body"] is JsonNode ib) RewriteLocalRefs(ib, bodySubst, pin);
+                if (o["result"] is JsonNode ir) RewriteLocalRefs(ir, bodySubst, pin);
                 return;
             }
-            foreach (var kv in o) if (kv.Value != null && kv.Key != "synthClass") RewriteLocalRefs(kv.Value, subst);
+            foreach (var kv in o) if (kv.Value != null && kv.Key != "synthClass") RewriteLocalRefs(kv.Value, subst, pin);
             var k = Str(o["k"]);
             if (k == "local" && Str(o["name"]) is string nm && subst.TryGetValue(nm, out var b))
             {
                 foreach (var key in new List<string>(((IDictionary<string, JsonNode>)o).Keys)) o.Remove(key);
                 if (b.DeepClone() is JsonObject bo) foreach (var kv in bo) o[kv.Key] = kv.Value?.DeepClone();
             }
-            else if (k == "setLocal" && Str(o["name"]) is string sn && subst.TryGetValue(sn, out var sb)
-                     && sb is JsonObject sbo && Str(sbo["name"]) is string tn)
-                o["name"] = tn;
+            // D9: an ASSIGNMENT to a bound value parameter (rare — a tailrec `starg`). The caller pinned every assigned
+            // parameter into a named local BEFORE this walk (so the reads go to the same local), so `subst` holds one
+            // here by construction; a non-local would mean the write and the reads had parted, so refuse rather than
+            // pin now — pinning mid-walk would retarget only the write.
+            else if (k == "setLocal" && Str(o["name"]) is string sn && subst.TryGetValue(sn, out var sb))
+                o["name"] = DescriptorName(sn, sb, null, null, "the payload assigns to", "");
         }
-        else if (node is JsonArray a) foreach (var c in a) if (c != null) RewriteLocalRefs(c, subst);
+        else if (node is JsonArray a) foreach (var c in a) if (c != null) RewriteLocalRefs(c, subst, pin);
+    }
+
+    /// Every name the payload ASSIGNS to (`setLocal`), across the roots given. A `typeDef`'s own scope is skipped, the
+    /// way every other rewrite here skips it; a `synthClass` likewise.
+    static HashSet<string> AssignedLocals(params JsonNode[] roots)
+    {
+        var found = new HashSet<string>(StringComparer.Ordinal);
+        void W(JsonNode n)
+        {
+            if (n is JsonObject o)
+            {
+                if (Str(o["k"]) == "typeDef") return;
+                if (Str(o["k"]) == "setLocal" && Str(o["name"]) is string sn) found.Add(sn);
+                foreach (var kv in o) if (kv.Key != "synthClass" && kv.Value != null) W(kv.Value);
+            }
+            else if (n is JsonArray a) foreach (var it in a) if (it != null) W(it);
+        }
+        foreach (var r in roots) if (r != null) W(r);
+        return found;
+    }
+
+    /// The LOCAL NAME a capture descriptor (or an assignment target) must use for the value `bound` to `cn`.
+    ///
+    /// A descriptor and an assignment name a SLOT, not an expression: a closure's ctor argument and a state machine's
+    /// field are bound by name, so a bound value that is not already a local has to be pinned into one. `pin` mints
+    /// that local — a pure read of the plan binding, so the value is still evaluated exactly once, at the call site —
+    /// and `repin` (when the caller keeps one) records the override its BODY descent needs, so the body's refs and the
+    /// descriptor stay in lockstep. Without a pinner the old refusal stands: nothing may silently drop the capture.
+    static string DescriptorName(string cn, JsonNode bound, Func<string, JsonNode, JsonNode> pin,
+                                 Dictionary<string, JsonNode> repin, string what, string tag)
+    {
+        if (bound is JsonObject bo && Str(bo["k"]) == "local" && Str(bo["name"]) is string tn) return tn;
+        if (pin == null)
+            throw new NotSupportedException(
+                $"inline splice: {what} '{cn}' but the splice binds it to a non-local expression — "
+                + $"a capture descriptor can only name a local/temp {tag}".TrimEnd());
+        var pinned = pin(cn, bound);
+        repin?.Add(cn, pinned);
+        return Str((pinned as JsonObject)?["name"]);
     }
 
     // Positional type-param subst over a statement array (walks all nodes) — {t:tv,scope:method,i<ga} <- typeArgs[i],
@@ -2191,7 +2332,7 @@ static class InlineSplice
     // `newSuspendLambda` encode their OWN class type params as `tv{scope:type,i}` — the OWNER-class dispatchTypeArgs must
     // NOT reach them. `typeScope` flips off descending through those; METHOD-scope subst continues everywhere (a closure
     // body legitimately references the enclosing `tv{scope:method,i}`).
-    static void SubstTvIn(JsonNode node, JsonArray typeArgs, int ga, JsonArray dispatchTypeArgs = null, bool typeScope = true)
+    internal static void SubstTvIn(JsonNode node, JsonArray typeArgs, int ga, JsonArray dispatchTypeArgs = null, bool typeScope = true)
     {
         if (node is JsonObject o)
         {
@@ -2354,6 +2495,21 @@ static class InlineSplice
         FindScopes(root);
     }
 
+    // The node that actually PRODUCES an expression's value, peeling the wrappers that only add statements around it: a
+    // `valueBlock`'s statements run before its `result`, and a call-evaluation plan's bindings are evaluated ahead of
+    // its `expr` (§2.7). A spliced inline call is a `valueBlock` under the CALLER's plan, so both peels are needed to
+    // reach the construction a slot-widening or a branch-type comparison is about.
+    static JsonNode ValueProducer(JsonNode node)
+    {
+        while (node is JsonObject o)
+        {
+            if (Str(o["k"]) == "valueBlock" && o["result"] is JsonNode r) node = r;
+            else if (Str(o["k"]) == "callEval" && o["expr"] is JsonNode e) node = e;
+            else break;
+        }
+        return node;
+    }
+
     // The Kotlin declaration-site-COVARIANT classes whose covariance is unrepresentable on a CLR (invariant) class, so a
     // `new G<narrow>` stored into a `G<wide>` slot needs the construction widened to match the slot's stack type. Only
     // these two: both are `<out ...>` data classes routinely upcast (`partition`'s `Pair<List,List>` -> the declared
@@ -2375,8 +2531,7 @@ static class InlineSplice
                 && Str(vt["name"]) is string g && CovariantClasses.Contains(g) && vt["args"] is JsonArray wargs
                 && !HasTv(wargs))   // an unconcretized `tv` slot arg would corrupt (or dangle) the construction
             {
-                var ctor = o["init"] as JsonObject;
-                if (ctor != null && Str(ctor["k"]) == "valueBlock") ctor = ctor["result"] as JsonObject;
+                var ctor = ValueProducer(o["init"]) as JsonObject;
                 if (ctor != null && Str(ctor["k"]) == "new" && ctor["type"] is JsonObject ntn
                     && Str(ntn["t"]) == "fqn" && Str(ntn["name"]) == g && ntn["args"] is JsonArray nargs
                     && nargs.Count == wargs.Count && !JsonNode.DeepEquals(nargs, wargs)
@@ -2473,7 +2628,7 @@ static class InlineSplice
     // arm's store newly unverifiable. True (safe) for a non-cond or a cond whose arms agree.
     static bool CondArmsAgree(JsonNode node, BirScope scope)
     {
-        while (node is JsonObject vb && Str(vb["k"]) == "valueBlock" && vb["result"] is JsonNode r) node = r;
+        node = ValueProducer(node);
         if (node is not JsonObject o || Str(o["k"]) != "cond") return true;
         var thenT = o["then"] is JsonNode tn ? StaticType.Surface(tn, scope) : null;
         var elseT = o["else"] is JsonNode en ? StaticType.Surface(en, scope) : null;

@@ -289,6 +289,13 @@ sealed class Pipeline
             // injected callee — hence no placeholder — exists there. The gate is not merely "harmless off": running on a
             // self-build would also disturb its byte-stable RefBodySquash/RoundtripMetadata decl set for zero benefit.
             if (attributeTopLevelOwner) DefaultArgSplice.Apply(bir.Root, refs);
+            // CALL-EVALUATION PLAN LOWERING (§2.7). EVERY splice that can add a reader to one of a call's values has
+            // now run, so each plan's readers are final and its bindings lower to locals in Kotlin order: a
+            // single-reader binding back into its own slot, a shared one into a `var`, a constructor delegation's into
+            // `preStmts`. Unconditional (ref + rt + app): kotc emits a plan wherever a fill can duplicate a value, and
+            // a stdlib self-build has same-module fills of exactly that shape. From here down no pass sees plan
+            // vocabulary — the pass asserts that itself, and verify-schema enforces the same phase split.
+            CallEvalLowering.Apply(bir.Root);
             // RE-NORMALIZE the just-spliced RAW payload bodies: InlineSplice runs AFTER ObjectSlotRename (219), so a
             // cross-module inline body carries kotc's raw `objMethod toString`/`hashCode`/`equals` (and `anySlot` calls)
             // un-renamed — ilemit's EmitObjMethod keys on the BCL spelling (`ToString`), so an un-renamed `toString`
@@ -296,7 +303,7 @@ sealed class Pipeline
             // (already-BCL names + already-stripped `anySlot` are no-ops), so a second whole-tree pass only fixes the
             // spliced-in nodes. (#75: splice-all made this live — e.g. `buildString{}` losing its `.toString()`.)
             ObjectSlotRename.Apply(bir.Root);
-            ClosureSynthesis.Apply(bir.Root);
+            ClosureSynthesis.Apply(bir.Root, refs);
             SharedSyntheticSynthesis.Apply(bir.Root);
             // FOR-LOOP SOURCE CLASSIFICATION (#73/#73-w3): kotc emits ONE faithful `forIn` carrying the source's
             // runtime type token (`srcType`) for every non-array source — it no longer decides range-vs-collection nor
@@ -506,7 +513,7 @@ sealed class Pipeline
             // `ClrEvent.subscribe` synthesizes the remove callback as a normal `newClosure` ingredient bag. The main
             // ClosureSynthesis pass ran earlier, before event binding; run the idempotent collector once more so only
             // these newly-created callback classes are assembled before the remaining whole-tree passes.
-            ClosureSynthesis.Apply(hoisted);
+            ClosureSynthesis.Apply(hoisted, refs);
             // ClosureSynthesis stamps the transient lifted-frame correspondence on a GENERIC closure class, and the pass
             // that consumes it (SharedSyntheticSynthesis) already ran. Drop it here so the invariant "it never reaches
             // CIR" holds for a class assembled by this late pass too, rather than only for the main one.
@@ -625,6 +632,13 @@ sealed class Pipeline
         // `suspend` lambda literal (exercised by cases/il-lam1, il-lam2); same (non-ref) gate as the cold lowering.
         if (!_options.RefBuild)
             SuspendLambdaLowering.ApplyAll(staged.Select(s => s.Root).ToList(), localTypeFqns, suspendCalleeRet, refs);
+
+        // A synthesized closure/SAM class holds each capture in an INSTANCE FIELD, which the CLR refuses for a
+        // byref-like (`ref struct`) type. ClosureSynthesis recorded those refusals rather than throwing, because the
+        // cold suspend lowering above reconstructs a `suspendCoroutine { … }` block inline and PRUNES the class it
+        // came from — its captures become ordinary locals of the enclosing frame, judged by the suspend storage
+        // gate instead. Report now, over the classes that actually survived.
+        ClosureSynthesis.AssertSurvivingCapturesLegal(staged.Select(s => s.Root));
 
         // PHASE 1.7 — CROSS-CLASS PRIVATE WIDENING (bundle-6 P5 BUG A): a LIFTED anon-object / closure class
         // (`dotkt_obj*`) is a SEPARATE top-level CLR class that reads its enclosing class's PRIVATE members

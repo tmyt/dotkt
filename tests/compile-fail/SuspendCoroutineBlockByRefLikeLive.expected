@@ -1,0 +1,6 @@
+# The storage gate, not the closure-capture check: the value outlives the intrinsic suspension.
+suspend-lowering: in `SuspendCoroutineBlockByRefLikeLiveKt.cfIntrinsicLive`
+the local variable
+which is byref-like (a `ref struct`, via `System.Span`)
+lives across the suspending call to `suspendCoroutine`
+(mirrors C# CS4007)

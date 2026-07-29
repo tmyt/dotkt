@@ -1,0 +1,4 @@
+suspend-lowering: in `SuspendLambdaCaptureByRefLikeKt_cfBuild_lambda1$sm`
+the captured variable
+which is byref-like (a `ref struct`, via `System.Span`)
+(mirrors C# CS4012)

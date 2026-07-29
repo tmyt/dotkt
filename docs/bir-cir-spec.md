@@ -308,6 +308,154 @@ carrier field names. Rules:
   case-insensitive fallback and no alias table; the spelling in this spec is THE spelling. (The validator
   checks VOCABULARY spelling, never a `name`-value's payload.)
 
+### 2.7 Call-evaluation plan — `callEval` / `bindRef` / `delegationBindings` (BIR-only)
+
+**Why it exists.** A Kotlin call evaluates its receiver, then each supplied argument, then the callee's omitted
+defaults — each exactly once, however many emitted positions read it. On the CLR the readers are not one position: a
+same-module default splices an earlier value, a reconstructed cross-module data-class `copy` field reads the receiver,
+a `[kotlin.clr.KotlinDefault]` carrier binds `{this}` / `{defaultArgParam n}` to the call's own values. While a call
+was represented TWICE — as expressions substituted into those readers, and as independently hoisted `var`s sorted
+ahead of the call — an illegal storage answer forced one of the two to be abandoned, and **no point in that design
+satisfies all three of single evaluation, Kotlin order and legal storage at once**. That is a property of the
+representation, not of any gate: three successive attempts each fixed one invariant by breaking another (evidence:
+PR #270's three iterations and the read-only enumeration at commit `cb4ff8d`, reachable via `refs/pull/270/head`).
+The plan replaces the two representations with one.
+
+**Shape.**
+
+```json
+{"k":"callEval","type":<Type>,"bindings":[<binding>…],"expr":<the call node>}
+{"k":"bindRef","id":"dotkt$b3","sty":<Type>}
+```
+
+A binding is a plain object (not a `{k}` node):
+
+| field | meaning |
+|---|---|
+| `id` | the binding's name, and the `bindRef` key. NOT the name of the local it may lower to — see *Id namespaces* below |
+| `phase` | `recv` \| `arg` \| `default` — where the value comes from (documentation and diagnostics; the array order already carries the evaluation order) |
+| `kind` | `value` \| `address`. An `address` is a byref / `@ClrRefArgument` slot's addressable lvalue: an ordering marker, never storage |
+| `stable` | may this value be READ more than once (a literal, an immutable local/parameter read)? Judged ONCE by the producer and consumed downstream, never re-derived |
+| `type` | the CALLER-instantiated semantic type of the value |
+| `role` | the source-level phrase a storage refusal names the value by (`receiver of 'copy'`); travels onto the lowered `var` |
+| `expr` | the value. For a cross-module omitted default this is the `{"k":"defaultArg"}` RESERVATION `DefaultArgSplice` fills |
+
+**Order rules.** `bindings` is in Kotlin evaluation order, and that order IS the array order — there is no sort key:
+
+1. the dispatch receiver, then the extension receiver;
+2. the supplied arguments, in the declaration's positional sequence (contexts then regulars, §2.2);
+3. the filled defaults, in the callee's declaration order.
+
+Every reader of a bound value is a `bindRef`. A `bindRef` is a pure READ and may be cloned freely — cloning a read is
+not cloning an evaluation, which is the whole point.
+
+**Granularity.** A plan is emitted only where a value can acquire a SECOND reader: a same-module default that reads
+one of the call's values, a cross-module omission (a `defaultArg` reservation, or a data-class `copy` field
+reconstructed from the receiver), or a `callInline` (below). Without one the positional argument array IS the
+evaluation plan — one reader per value, positional order. The standing invariant is the converse: **any transform that
+gives a call value a second consumer must go through a plan.** A `defaultArg` outside one is refused loudly by
+`DefaultArgSplice`.
+
+**`callInline`.** A spliced inline call's body becomes the caller's, and it may read a parameter any number of times,
+in a loop, inside a closure, or not at all — so every value the call SUPPLIES has a second reader by construction, and
+a `callInline` binds every one of them. The general rule still decides whether a plan exists at all: a call that
+supplies NO value binds nothing and emits no plan — the lambda-only inline call, `run { … }` or a user
+`inline fun go(block: () -> Unit)` invoked as `go { }`, where the only argument is the body being spliced. The bound
+values are:
+
+- the DISPATCH receiver, then the EXTENSION receiver, then the supplied arguments in positional order — the same order
+  rule as every other call. `recvs.dispatch` / `recvs.extension` / `args[i]` hold the `bindRef`s.
+- a SPLICED LAMBDA is not a value and is not bound: a literal carrier (`inlineLambda`) and a by-name forward of the
+  enclosing inline fn's own lambda parameter are the body `InlineSplice` splices, matched by the name it travels under.
+  A `noinline` lambda IS a value (a real delegate) and is bound like any other argument.
+- an OMITTED default is `null` in its slot. It is NOT a call-site value: Kotlin evaluates a default in the CALLEE's
+  scope, after every supplied value, so `InlineSplice` fills it from the callee's own carrier and binds it to a local
+  of the spliced block — which is exactly that position, because the call site's bindings are materialised ahead of
+  the block. That local is always TYPED, from the callee's parameter closed against the call site; an untyped one
+  would reach the suspend lowering as a `kotlin.Any` slot, so it is refused at the splice instead.
+
+`InlineSplice` consumes the bindings rather than minting a local per parameter: it substitutes each `bindRef` into the
+payload body, and `CallEvalLowering` decides the physical form once, like any other plan. Two positions can only name
+a SLOT — a closure/state-machine capture DESCRIPTOR and an assignment target — so a value left as a `bindRef` is
+pinned into a named local there, which is a pure read of the binding and not a second evaluation.
+
+The passes that run BETWEEN the splice and `CallEvalLowering` therefore see a `callEval` where they expect a call.
+The ones that ask *what does this expression produce* peel it exactly as they peel a `valueBlock` — the bindings are
+statements evaluated ahead of the call, so the value is the wrapped call's (`StaticTypeResolver`,
+`bir-common/NodeType.cs`, the splice's own covariant-construction widening). The ones that MOVE statements cannot: a
+binding is not a statement until this pass makes it one, so a splice that wants a spliced block flattened into its own
+statements has to leave a plan alone. `CallEvalLowering` therefore folds what it created — a `valueBlock` whose
+`result` is a `valueBlock` becomes one block, in place, evaluation order untouched — which is what restores the single
+layer downstream expects.
+
+**Reading a plan's bindings.** A binding is inlined back into its reader only when that reader sits on the node's
+EAGER SPINE — the chain of operand positions evaluated once, in order, unconditionally, when the node itself is
+evaluated. A read reached through a statement list, a conditionally-taken branch, a loop body or a closure is
+evaluated at a different time, a different number of times, or not at all, so the binding is MATERIALISED instead.
+`CallEvalLowering` lists the eager kinds rather than the lazy ones, so an unfamiliar kind costs one local rather than a
+reordered evaluation. A `stable` binding is exempt: re-reading an immutable value observes neither a side effect nor a
+different value, wherever the read is.
+
+**Nesting.** Plans nest — a default that is itself a call with defaults, an inline splice's own bindings wrapped
+around a block that reads its caller's. `CallEvalLowering` walks POST-ORDER, so the inner plan lowers first and an id
+it does not know is left alone: it belongs to a plan further out, whose lowering substitutes it. The rule that makes
+that sound is that **every `bindRef` resolves OUTWARD to an enclosing plan's binding, declared before the reading
+position** — a binding's own `expr` sees only the bindings ahead of it in its plan, plus everything in scope outside.
+`scripts/verify-schema.py` checks it structurally on BIR; a `bindRef` naming nothing would otherwise survive to the
+pass's terminal chokepoint with no way back to the producer that emitted it.
+
+**Id namespaces.** kotc mints `dotkt$bN`; bir2cir mints `cir$bN`, both from their own counters, and `$` is not
+writable in a plain Kotlin identifier, so neither can alias a user name or the other's. An id is unique only within
+its PRODUCER, which matters at the two points where a plan is CLONED into another document — an inline
+`[KotlinInline]` body spliced at a call site, a `@KotlinDefault` carrier materialised into a reserved binding. Both
+re-mint the ids they carry (`CallEvalLowering.FreshenPlanIds`), so a plan spliced twice into one frame, or a
+consumer's own `bindRef` substituted into a producer's carrier, cannot collide. For the same reason a binding id is
+NOT the name of the local it lowers to: `CallEvalLowering` mints that name, in the frame that will hold it.
+
+**Declaration-position call sites.** A constructor delegation (`: this(…)` / `: super(…)`, including a per-entry enum
+body's base call) has its arguments on the constructor DECLARATION, with no wrapping expression. Its plan rides the
+declaration as `delegationBindings`, an array of the same bindings; `thisArgs`/`baseArgs` read them. An enum entry's
+`NAME(args)` needs nothing special — a static field initializer is an expression position.
+
+**Lowering contract.** bir2cir's `CallEvalLowering` runs immediately after `DefaultArgSplice` — i.e. once every splice
+that can add a reader has finished — and is the ONLY consumer of the vocabulary:
+
+- a binding with exactly ONE reader is inlined back into that reader (the emitted CIR is what it would have been with
+  no plan at all) — unless doing so would REORDER it: an inlined binding is evaluated at its reader's position, and
+  the plan's order is not the argument array's, so a binding read later in the node than a binding that follows it in
+  the plan is materialised instead;
+- a binding with SEVERAL readers becomes a `var`, evaluated once and loaded per reader; a `stable` binding is inlined
+  at every reader instead;
+- a binding NOTHING reads is still evaluated as a `var` — Kotlin evaluates every value a call supplies — unless
+  evaluating it is unobservable, in which case it is dropped;
+- **order is never traded.** The invariant, stated once: *the emitted pre-call statement sequence is ordered by plan
+  position, and a binding that emits ANY pre-call statement forces every earlier non-stable binding to emit one too.*
+  Every binding is handled at its own position in ONE stream, so this holds whatever mix of kinds a plan carries — it
+  is about pre-call WORK, not about which bindings happen to become `var`s;
+- an `address` binding never becomes a `var` — no storage holds a managed pointer — and splits by what its location's
+  ROOT is. An lvalue FORMER (`local`/`field`/`arrayGet`/…) designates storage without evaluating anything itself, so
+  only the impure VALUES it is computed from move, in the location's own operand order, leaving a pure location in the
+  slot: `byref(mk().f)` pins `mk()`, `byref(a[i()])` pins `i()`, `byref(x)` pins nothing. Any other root IS an
+  evaluation, so the whole location moves to the binding's position — into a `ref T` local (`byrefOf`) when the
+  location's own DECLARED type is a byref, else into a plain `T` local whose ADDRESS the slot takes, which is what
+  taking the address of an rvalue means. The decision is by declared type, never by node shape: storing a `T` into a
+  `T&` slot is unverifiable IL, and the frontend accepts `byref(<rvalue call>)`. Every pinned local is TYPED — an
+  untyped local is unverifiable IL, so a node the shared deriver (`bir-common/NodeType.cs`) cannot type is a hole in
+  the deriver and says so, never a `kotlin.Any` fallback;
+- a delegation's plan becomes the constructor's `preStmts`, which ilemit emits ahead of the `this`/`base` call.
+
+It decides NOTHING about storage. A `var` here is a request for a scoped local; whether a coroutine state machine may
+keep it in the frame or must promote it to an instance field — and whether the CLR admits the type at all — is
+`SuspendColdLowering`'s single decision, from liveness, ~300 passes later (`docs/dotkt-semantics.md` §4d/§7).
+
+**Phase.** `callEval`, `bindRef` and `delegationBindings` are BIR-only; `preStmts` is CIR-only. `CallEvalLowering`
+asserts the split at its own exit, and `scripts/verify-schema.py` enforces it structurally on both documents.
+
+**`defaultCarrier.lifted` is unchanged.** A carrier's lifted method declarations remain a RAW TOKEN payload parsed out
+of the `[kotlin.clr.KotlinDefault]` attribute string, not plan vocabulary: they are declarations re-hoisted into the
+consuming file class, and nothing about them is a call-site value. Only the carrier's `expr` is token-substituted, and
+its `{this}` / `{defaultArgParam n}` tokens resolve to the call's `bindRef`s.
+
 ## 3. Labels & naming (conventions consumed as opaque strings)
 - SM / coroutine method names: `<name>$dotkt_suspend` (cold entry), `<name>$sm` (state machine class) —
   chosen by bir2cir, opaque to ilemit. Resume labels: integer CFG `id`s (ilemit consumes only `label`/

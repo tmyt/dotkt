@@ -133,7 +133,8 @@ static class StaticType
             case "cond": return TypeJson.Read(o["type"]) ?? Surface(o["then"], scope) ?? Surface(o["else"], scope);
             // A spliced inline call becomes a `valueBlock {stmts, result}` (InlineSplice) — its static type is the
             // RESULT's, resolved with the block's OWN `var`s in scope (e.g. an `apply`-splice's result is a `local`
-            // declared in its stmts). The valueBlock itself carries no stamp; its result is a stamped node.
+            // declared in its stmts). A stamp is optional here: the splice emits none and the result is a stamped
+            // node, while a block a call-evaluation plan lowered into carries the call's own static type.
             case "valueBlock":
             {
                 var inner = scope.Child();
@@ -141,6 +142,11 @@ static class StaticType
                     if (arr != null) foreach (var st in arr) if (st is JsonObject so) inner.Declare(so);
                 return TypeJson.Read(o["type"]) ?? Surface(o["result"], inner);
             }
+            // A call under its evaluation plan (§2.7, BIR-only — the passes that run before CallEvalLowering see it):
+            // the bindings are statements evaluated ahead of the call, so the VALUE is the wrapped call's. A `bindRef`
+            // is a READ of one, stamped with the binding's own caller-instantiated type by its producer.
+            case "callEval": return TypeJson.Read(o["type"]) ?? Surface(o["expr"], scope);
+            case "bindRef": return TypeJson.Read(o["sty"]);
             // A LOWERED primitive operator (PrimitiveOperatorLowering / RangeMembershipLowering synthesize these) —
             // recover its RESULT type structurally, matching kotc's former `birType(op.type)` for the un-lowered op.
             case "unaryOp":

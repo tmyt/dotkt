@@ -1,0 +1,8 @@
+# The refusal names the declaration, the SOURCE ROLE the evaluation plan carried (not the minted binding id), the
+# offending type and the suspension the value spans. The role NAMES the value, so the minted local name is absent:
+# `the argument 's' of 'cfbLen' has type`, not `... of 'cfbLen' \`cir$b1\` has type`.
+suspend-lowering: in `SuspendPlanBindingByRefLikeKt.cfbSpanArgumentAcrossSuspension`
+the argument 's' of 'cfbLen' has type
+which is byref-like (a `ref struct`, via `System.Span`)
+lives across the suspending call to `cfbRelay`
+(mirrors C# CS4007)

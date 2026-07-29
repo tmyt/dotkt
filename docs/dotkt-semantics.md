@@ -158,6 +158,15 @@ This is the single most surprising deviation, so it gets the most detail.
   targets, and splices it before codegen (a `return` in the spliced lambda body becomes the caller's `ret`). Full
   mechanism + scope in
   `docs/design-kotlin-metadata-attributes.md`.
+- **An inline call's ARGUMENTS are ordinary call values.** Splicing changes where the callee's body runs, not when the
+  call's values are evaluated: the receiver, then each supplied argument, each exactly once, at the call — and every
+  default the callee fills after all of them, whatever slot it sits in. So the spliced call carries the same
+  **evaluation plan** as any other call (§7, `docs/bir-cir-spec.md` §2.7): the values it supplies are bindings, and
+  every read of one in the spliced body is a pure READ of that binding. That the body may then read a value twice, or
+  inside a loop, or never, changes nothing — `f(next()) { … }` calls `next()` once even for a body that reads the
+  parameter in a loop, and evaluates it even for a body that ignores it. The only thing that is NOT a value is a
+  spliced lambda: a literal carrier, and a by-name forward of the enclosing inline fn's own lambda parameter, are the
+  body that gets spliced, not something evaluated.
 - Pitfall (verified, do NOT do this): marking an injected body-less function `inline` *without* carrying the body lets
   the frontend accept a non-local return but leaves nothing to splice → `InvalidProgramException` at runtime (worse
   than the clean compile error). `inline` restoration and the carried body are a package deal.
@@ -280,6 +289,48 @@ embed no dialect.
   for an awaitable that exposes a `ConfigureAwait(bool)` member (Task, ValueTask). A generic awaitable without it uses
   GetAwaiter directly; requesting `captureContext = false` on such a type is a compile-time error.
 - Coverage: `tests/coroutines/fixtures/TaskAndValueTaskAwaitTests.kt`; custom-awaitable gaps are tracked in GitHub Issues.
+
+## 4d. A byref-like (`ref struct`) value may live in a suspend function — but never ACROSS a suspension, and never in a capture
+
+The CLR forbids a byref-like type (a C# `ref struct`: `System.Span<T>`, `System.ReadOnlySpan<T>`, `TypedReference`,
+any user `ref struct`) as the type of an instance field of an ordinary type. Two of DotKt's lowerings put Kotlin
+values into exactly such fields — a suspend function's state machine, and a capturing lambda's closure class — so
+those two places refuse the type. **Kotlin/JVM has no analogue at all** (the JVM has no byref-like types); the
+reader reference here is C#, and DotKt mirrors its three diagnostics. There is no `ref struct` in the Kotlin
+language, so this can only arise through .NET interop (`import System.Span`, a `ref struct` from a referenced
+assembly, or `kotlin.clr.Span` from `stackBuffer { … }.asSpan()`).
+
+The rule, in three parts:
+
+- **Locals: allowed unless they live across a suspension.** bir2cir computes real backward LIVENESS over the
+  state-machine body (`toolchain/bir2cir/SuspendLiveness.cs`). A local that is dead at every suspension point
+  stays an ordinary `MoveNext` local and may be byref-like. Only a local that is still needed after a resume is
+  spilled to a state-machine field, and a byref-like one there is a **compile-time error mirroring C# CS4007**
+  ("instance of type cannot be preserved across await"). Liveness, not a lexical interval: a value created and
+  consumed within each iteration of a loop whose body *also* suspends is accepted, exactly as C# accepts it,
+  while the same value carried across the loop's back edge is refused. And "live" is judged against what the state
+  machine actually stores, not against source order: in `span.ToArray().size + f()` the `Int` is saved before the
+  suspension, so the `Span` itself never crosses the resume and is accepted. What is refused is a byref-like value
+  the machine would have to hold *itself* — one read after the resume, such as `g(span, f())`, where `span` is a
+  later argument the call consumes once `f` has resumed.
+- **The suspend ABI: never.** A `suspend` declaration's PARAMETERS, its RESULT and a suspend lambda's CAPTURES are
+  refused **unconditionally** — even when the body never actually suspends. Once the body does suspend, the
+  parameters and captures become fields written by the state machine's constructor and the result crosses the cold
+  entry's `Any?` slot and the public `Task<R>` bridge, none of which can hold a byref-like value. Making the rule a
+  property of the DECLARATION rather than of the body is a deliberate choice: it keeps `suspend fun f(s: Span<Int>)`
+  legal-or-not independently of whether someone later adds an `await` inside it, and it is the same shape C# takes
+  with CS4012 ("parameters or locals of this type cannot be declared in async methods"), which is likewise
+  unconditional. (Neither form was merely theoretical: before the check existed, a byref-like parameter failed at
+  run time as `TypeLoadException` when the body suspended — the state machine's parameter field — and as
+  `InvalidProgramException` at the generated cold entry when it did not.)
+- **Closure captures: never.** A captured variable becomes an instance field of the synthesized closure class,
+  with no liveness question to ask, so capturing a byref-like value in ANY lambda — suspend or not — is a
+  compile-time error mirroring **C# CS8352**. An `inline` lambda is spliced into the caller's frame and mints no
+  closure class, so it captures byref-like values freely.
+
+All three refusals name the declaration, the storage role, the offending type and (for a spill) the suspending
+callee the value lives across. Coverage: `tests/compile-fail/` for the refusals,
+`tests/coroutines/fixtures/ByRefLikeStorageTests.kt` for the accepted shapes.
 
 ## 4b. The default `lazy { }` is thread-safe (a Monitor lock, matching Kotlin/JVM and `System.Lazy`)
 
@@ -899,33 +950,70 @@ entry**'s `NAME(args)` (including a per-entry body's base call) — so a class, 
 delegation or enum entry omits such a default exactly as a function does. (A .NET-interop call shape fills nothing
 here: `[DefaultParameterValue]` is native metadata and ilemit's call path backfills it.)
 
-**A value a filled default splices is evaluated exactly once — same-module and cross-module alike.** Both the RECEIVER
-(or enclosing instance) a `= this` / `= outerProp` default reads and the earlier ARGUMENT a `= a * 10` default reads are
-bound to a call-site temporary: the call is wrapped in a `valueBlock` whose `var` holds the value, and every reader — the
-call's own receiver and argument slots, an inner-class `new`'s enclosing-instance argument, and each spliced default —
-reads that local. So `mkOuter().In()` runs `mkOuter()` once (the constructor and its default see the SAME instance),
-`f(next())` with `b: Int = a * 10` calls `next()` once however many defaults read `a`, and `sideEffect().substringAfter(".")`
-— whose `missingDelimiterValue: String = this` rides a cross-module carrier — evaluates `sideEffect()` once. A STABLE
-value is spliced directly, so an ordinary call emits no temporary at all (what counts as stable differs slightly by path
-— see below). Binding one value moves
-its evaluation ahead of the call, so every non-stable value to its LEFT is bound with it: the order stays Kotlin's
-(receiver, then arguments left to right), including when an argument reads a variable a preceding argument writes.
+**Every value a call supplies is evaluated exactly once, in Kotlin's order — same-module and cross-module alike.**
+Kotlin evaluates the receiver, then each supplied argument, then the callee's defaults, and DotKt reproduces that
+literally: at any call site where a fill can give one of those values a second reader, kotc emits the call's
+**evaluation plan** — the values in that order, each a BINDING, with every reader a pure READ of it
+(`docs/bir-cir-spec.md` §2.7). The readers are the call's own receiver and argument slots, an inner-class `new`'s
+enclosing-instance argument, each spliced same-module default, each field a cross-module data-class `copy`
+reconstructs, and each `{this}` / `{defaultArgParam n}` token a `@KotlinDefault` carrier binds. So `mkOuter().In()`
+runs `mkOuter()` once (the constructor and its default see the SAME instance); `f(next())` with `b: Int = a * 10`
+calls `next()` once however many defaults read `a`; `sideEffect().substringAfter(".")` — whose
+`missingDelimiterValue: String = this` rides a cross-module carrier — evaluates `sideEffect()` once; and
+`nextPair().copy(second = 9)` evaluates `nextPair()` once, not once per omitted field.
 
-This holds at every call site that fills a default, including the two that ride a DECLARATION rather than an expression —
-a constructor **DELEGATION** (`: this(…)` / `: super(…)`) and an **ENUM ENTRY**'s `NAME(args)`, whose temporaries are
-declared by the first argument (a `var` declares an ordinary method-body local, and the first argument is evaluated
-before every later one, so a later read is in scope and in order). Cross-module a DELEGATION is filled by a separate walk
-over the constructor declarations, since its arguments are not a call node; an enum entry is always same-module (its own
-constructor is being compiled). The one escape is deliberate: when some value in the bound range carries no usable type —
-a `byref` slot, an open generic slot, a synthesized operand with no type at all — NOTHING is bound, because a partial
-hoist would reorder the call, which is worse than the double evaluation it removes.
+Order is never traded for storage. A value that turns out to need a local is materialised ahead of the call, so every
+earlier value is materialised with it — `host().f()` logs the receiver before the default, `host().g(arg())` logs
+receiver, argument, then default, and a byref-like argument at such a call keeps its position rather than being jumped.
+A value that is free to re-read (a literal, an immutable local or parameter read) is spliced directly and needs no
+local at all, so an ordinary call emits exactly what it did before. A by-reference argument (`byref(x)`) is an
+ADDRESS rather than a value — no storage holds one — so what is pinned in its place is whatever its location is
+computed from: `byref(mk().f)` evaluates `mk()` at the argument's own position and takes the address off that.
 
-The paths bind at different points, because they know different things. SAME-MODULE, kotc has the default's IR and hoists
-before emitting (`evalOnceSubst`, keyed by IR-node identity, so it can leave an immutable local or parameter read spliced
-in place). CROSS-MODULE, only the `@KotlinDefault` carrier says which values a default reads, so `DefaultArgSplice` hoists
-as it fills — including a filled default a LATER default reads, which must not be evaluated per reader either
-(`chain(a, b = bump(), c = b * 10)` calls `bump()` once). Working on emitted JSON it cannot tell a `val` from a `var`, so
-there only a literal or `this` stays spliced in place and every local read is bound.
+A default is the CALLEE's expression evaluated in the CALLER's frame, so every type it mentions is closed against the
+call site's instantiation — the omitted parameter's type, the owner of a member it reads off the receiver, a type
+argument it passes on. Without that, `class G<T>(val v: T) { fun one(a: T = v) }` spliced into a non-generic caller
+left `G`'s positional type variable naming a slot that frame does not have.
+
+An **INLINE** call is no exception, even though its callee's body ends up inside the caller: the values it supplies are
+bound at the call, and each read of one in the spliced body is a read of that binding. So a body that reads a parameter
+twice, or in a loop, re-reads a local rather than re-running the argument; a body that never reads one still has the
+argument evaluated; and a default the splice fills runs after every supplied value rather than in its parameter's slot
+(§3). A filled default is the CALLEE's value — Kotlin evaluates it in the callee's scope — so it becomes a local of the
+spliced block, which is where the call site's own bindings have already been evaluated ahead of.
+
+The two call sites that ride a DECLARATION rather than an expression behave the same: a constructor **DELEGATION**
+(`: this(…)` / `: super(…)`, and a per-entry enum body's base call) carries its plan on the constructor declaration and
+evaluates it as the first thing the constructor does, ahead of the `this`/`base` call; an **ENUM ENTRY**'s `NAME(args)`
+is an ordinary expression (its static initializer).
+
+**Storage is a separate decision, made once and later.** A plan says which values exist and in what order; whether a
+value needs a CLR local at all, and whether a coroutine state machine may keep that local in its frame or must promote
+it to an instance field, is decided by liveness after every splice has run (§4d). No layer may answer the storage
+question by declining to bind — that is what previously produced, by turns, a duplicated evaluation, a reordered call,
+or an unloadable state machine. Where the CLR genuinely has no representation — a byref-like value that must SURVIVE a
+suspension — the result is a compile-time error naming the value's source role ("the receiver of `copy`"), mirroring
+C#'s CS4007; never a silent duplication or reorder.
+
+A THIRD cross-module shape needs no carrier at all: a **data class's SYNTHETIC `copy`**, whose omitted field default is
+`this.<field>` by construction (a data class may also declare a differently-signed `copy` OVERLOAD of its own, whose
+defaults are ordinary expressions — the two are told apart by the generated signature, which mirrors the primary
+constructor parameter-for-parameter in name AND type, not by the name alone). `copy` is a member function, so it
+carries no `@KotlinDefault` (an enclosing-instance read cannot be carried — above); instead kotc RECONSTRUCTS each
+omitted field as a read of the call's receiver, owned and typed by the INSTANTIATED receiver type
+(`kotlin.Pair[Int,Int]` and `Int`, never the class's own positional type variables — an open type variable is
+unresolvable in the caller's frame, and a state machine would spill it into a field of an unresolvable type). Each
+reconstruction is a READ of the receiver's plan binding, so `nextPair().copy(second = 9)` evaluates `nextPair()`
+exactly once and ahead of the argument, however many fields the call omits. This path serves a data class whose `data`
+nature reaches the consumer — i.e. one resolved through the frontend KLIB (`kotlin.Pair`, `kotlin.Triple`). A data
+class RE-CONSUMED from a DotKt library dll does not reach it at all: see the `data class` row in §10.2.
+
+A GENERIC callee's non-constant default closes its type frame at the call site too, like every other default. A
+`@KotlinDefault` carrier holds the default as the CALLEE wrote it, so its type parameters ride it as positional type
+variables; the splice substitutes this call's TYPE arguments into the materialized carrier before binding its
+`{this}`/`{defaultArgParam n}` tokens — the same thing an inline body's splice does, and the cross-module half of the
+rule kotc applies to same-module and injected defaults. So `fun <T> f(xs: MutableList<T> = mutableListOf())` omitted
+from a consumer as `f<String>()` builds a `MutableList<String>`, not a `MutableList<Any>` holding the right values.
 
 **#146 known gap (named, not silent):** a non-const default that references a PRIVATE/internal library symbol
 (`= privateHelper()`) is NOT poison-detected at stamp time — it is carried, then fails LOUDLY (imprecise) at the
@@ -1323,9 +1411,9 @@ that has lost the distinction.
 | **Declaration-site variance** (`class Box<out T>`, `interface Cmp<in T>`) | **NOW RESTORED for interfaces (gap ①, §10.1)** | `facadegen` now reads `GenericParameterAttributes` and emits `tvariance`, which `ClrTypeInjection` restores as `out`/`in`. **Class**-type-param variance still has no CLR form (stays invariant); **use-site** variance / **star projection** `Foo<*>`: no analog, lost. |
 | **`fun interface` (SAM)** | a plain interface | **The `fun interface` NATURE now round-trips (gap ③):** `ilemit` stamps `[KotlinFunInterface]`, `facadegen` emits a `funinterface` meta line, and `ClrTypeInjection` restores `status.isFun`. So a consumer sees it as a functional interface and can implement it (incl. via an anonymous `object : Handler { … }`). **What still degrades:** a bare **lambda** (SAM conversion) does NOT convert — blocked by the pinned Kotlin **2.4.0** FIR `FirSamResolver.computeSamCandidateNames`, which scans `FirRegularClass.declarations` **directly** for the single abstract method's name; a `FirDeclarationGenerationExtension`-injected interface serves its members lazily via scopes (empty `declarations`), so no SAM candidate is found. Same class of pinned-compiler limitation as `object`/companion (§10.4 #2) — not fixable from our side without materialising the SAM method into `declarations` (against the plugin contract) or a compiler bump. |
 | **`enum class`** | entry values | A *basic* enum → a real CLR `enum` → `facadegen` restores it as an **`object` of `val`s** (value access like `Color.GREEN` works); a *rich* enum (ctor args / methods / per-entry bodies, `isRichEnum`) → a singleton-field **class** → restored as a plain **`class`**. Either way it is **not** a Kotlin `enum class`: exhaustive `when`, `.entries`/`values()`/`valueOf`, `.ordinal`/`.name` identity degrade. **Not fixable via the injection path (gap ④):** a `FirDeclarationGenerationExtension` (2.4.0) cannot synthesize real `FirEnumEntry` declarations — the exhaustiveness checker (`FirWhenExhaustivenessTransformer`) enumerates `enumClass.declarations.filterIsInstance<FirEnumEntry>()`, and the plugin API exposes no `createEnumEntry`/entry hook (only `createTopLevelClass`/`createMemberProperty`/…). Generating `ClassKind.ENUM_CLASS` with enum-shaped `val`s would mislead FIR without giving exhaustiveness, so no `[KotlinEnum]` carrier is emitted. |
-| **`data class`** | generated members (10.1) | The **`data` modifier itself** is not carried (consumer sees an ordinary class). A `copy(field = x)` with the generated **self-referential defaults** (`y = this.y`) **now works** — same-module and cross-module — via the positional receiver-rewrite fill (§7). |
+| **`data class`** | generated members (10.1) | The **`data` modifier itself** is not carried, and that costs more than a missing modifier: a re-consumed data class's `copy` surfaces **every parameter REQUIRED**, so `q.copy(c = 9)` is a frontend error (`no value passed for parameter 'a'`). `copy`'s generated defaults are `this.<field>`, which is neither a `[DefaultParameterValue]` constant nor a carryable `@KotlinDefault` (an enclosing-instance read is poisoned, §7) — and without the `data` fact the consumer cannot reconstruct them either. Omitting a `copy` field therefore works **same-module**, and **cross-module only for a data class resolved through the frontend KLIB** (`kotlin.Pair`, `kotlin.Triple`), via the reconstruction in §7. Closing it needs three things together: facadegen carrying the `data` nature, kotc's injector restoring it, and a `copy` parameter surfaced OPTIONAL. |
 | **Annotations** | RUNTIME/BINARY-retained with CLR-legal args; `KClass`→`System.Type` | `ilemit` **skips** annotations whose ctor-arg shape the CLR encoder rejects (`BuildCab`/`TryCab` → diagnostic, e.g. a generic-instantiation parameter). **SOURCE**-retention annotations are gone. **Use-site targets** (`@get:`/`@field:`/`@param:`) are only as faithful as which CLR target they landed on — the Kotlin intent is ambiguous. Repeatable-annotation semantics differ. |
-| **Default arguments** | constants + non-constant defaults reading the receiver or an earlier value parameter (§7) | A non-constant default that references the RECEIVER (`= this`) or an earlier VALUE parameter (`b = a * 10`) round-trips (positional splice; the carrier's `{"k":"this"}` / `{"k":"defaultArgParam","idx":N}` bind to the call's receiver / arg N). Non-stable receiver/argument values spliced into a default are hoisted into temporaries so they evaluate exactly once (stable literals and `this` may remain inlined). |
+| **Default arguments** | constants + non-constant defaults reading the receiver or an earlier value parameter (§7) | A non-constant default that references the RECEIVER (`= this`) or an earlier VALUE parameter (`b = a * 10`) round-trips (positional splice; the carrier's `{"k":"this"}` / `{"k":"defaultArgParam","idx":N}` bind to the call's receiver / arg N). Every value the call supplies is a binding of its evaluation plan, so it is evaluated exactly once and in Kotlin's order however many defaults read it (§7); a value free to re-read — a literal, `this` — is spliced directly and costs no local. |
 | **`internal` visibility** | hidden cross-assembly (correct for module≈assembly) | `kotc` lowers `internal`→ CLR `assembly`; `facadegen.Vis` skips assembly-visible members, so they don't inject — aligned with Kotlin's module boundary, but the **`internal` modifier is not itself restorable**, there is **no friend-module / `InternalsVisibleTo`** wiring, and no JVM-style name mangling. |
 
 ### 10.3 Lost (no carrier — not reconstructable from the current metadata)
@@ -1428,6 +1516,7 @@ residual is the **`object` singleton `.INSTANCE`** round-trip (#2), not implicit
   accepted. Failure throws `NumberFormatException`. §5.
 - `String.format` uses the .NET composite format (`"{0}"`), not Java printf (`"%d"`). §5.
 - `suspend fun` has no Continuation parameter — it returns `Task<T>`, and it starts **hot** (like C# `async`), not cold. §4.
+- A `Span`/`ref struct` value is fine inside a `suspend fun` — until it has to survive a suspension, or be captured by a (non-inline) lambda; both are compile-time errors, mirroring C# CS4007/CS4012/CS8352. §4d.
 - A `CharSequence` parameter surfaces to C# as `string`; a `StringBuilder` passed as `CharSequence` is **snapshotted** by an implicit `.toString()` — no live view. §5b.
 - A Kotlin `Map` surfaces to C# as a *mutable* `IDictionary<K,V>`; `keys`/`values`/`entries` are snapshots. §5c.
 - A `value class` is a real (reference) class on the CLR — never erased, never a struct. §5f.

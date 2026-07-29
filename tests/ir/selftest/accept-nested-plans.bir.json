@@ -1,0 +1,72 @@
+{
+  "methods": [
+    {
+      "name": "nestedPlansResolveOutward",
+      "params": [],
+      "ret": { "t": "fqn", "name": "kotlin.Int" },
+      "body": [
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "callEval",
+            "type": { "t": "fqn", "name": "kotlin.Int" },
+            "bindings": [
+              {
+                "id": "dotkt$b0",
+                "phase": "recv",
+                "kind": "value",
+                "stable": false,
+                "type": { "t": "fqn", "name": "kotlin.Int" },
+                "role": "receiver of 'outer'",
+                "expr": { "k": "callStatic", "owner": null, "method": "mk", "sig": [], "args": [] }
+              },
+              {
+                "id": "dotkt$b1",
+                "phase": "default",
+                "kind": "value",
+                "stable": false,
+                "type": { "t": "fqn", "name": "kotlin.Int" },
+                "role": "default of parameter 'a' of 'outer'",
+                "expr": { "k": "bindRef", "id": "dotkt$b0", "sty": { "t": "fqn", "name": "kotlin.Int" } }
+              }
+            ],
+            "expr": {
+              "k": "callStatic",
+              "owner": null,
+              "method": "outer",
+              "sig": [
+                { "t": "fqn", "name": "kotlin.Int" },
+                { "t": "fqn", "name": "kotlin.Int" }
+              ],
+              "args": [
+                { "k": "bindRef", "id": "dotkt$b0", "sty": { "t": "fqn", "name": "kotlin.Int" } },
+                {
+                  "k": "callEval",
+                  "type": { "t": "fqn", "name": "kotlin.Int" },
+                  "bindings": [
+                    {
+                      "id": "cir$b7",
+                      "phase": "arg",
+                      "kind": "value",
+                      "stable": false,
+                      "type": { "t": "fqn", "name": "kotlin.Int" },
+                      "role": "argument 'x' of 'inner'",
+                      "expr": { "k": "bindRef", "id": "dotkt$b1", "sty": { "t": "fqn", "name": "kotlin.Int" } }
+                    }
+                  ],
+                  "expr": {
+                    "k": "callStatic",
+                    "owner": null,
+                    "method": "inner",
+                    "sig": [{ "t": "fqn", "name": "kotlin.Int" }],
+                    "args": [{ "k": "bindRef", "id": "cir$b7", "sty": { "t": "fqn", "name": "kotlin.Int" } }]
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

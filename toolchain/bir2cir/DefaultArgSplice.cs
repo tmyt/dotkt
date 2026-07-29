@@ -17,7 +17,7 @@ using DotKt.Bir;
 // PHASE 1 (#146): runs immediately AFTER InlineSplice — BEFORE ObjectSlotRename/ClosureSynthesis/MemberCallSubstitution/
 // BirTypeLowering — so the spliced RAW payload re-lowers IN THIS app's context (owner attribution for a payload's own
 // `callStatic owner:null`, @ClrIntrinsic binding, generic resolution), exactly like InlineSplice's body splice.
-// facadegen-injected cross-module calls already carry the callee's exact file-facade `ownerType`; use it. Only a truly
+// Reference-KLIB cross-module calls already carry the callee's exact file-facade `ownerType`; use it. Only a truly
 // ownerless Kotlin call falls back to `method name | emitted-arity`, where conflicting owners are refused loudly.
 //
 // CLOSED CARRIER (#146): a NON-CONSTANT default that lifts a helper — a non-capturing lambda `= {}` (the Avalonia
@@ -33,6 +33,15 @@ using DotKt.Bir;
 // param rides `{k:defaultArgParam, idx}` -> the call's arg[idx] (Kotlin defaults reference only earlier params; lower
 // indices fill first). Unconditional across builds (a ref/rt stdlib self-build simply carries no cross-module omission).
 //
+// MATERIALISE AND REFERENCE, nothing else (docs/bir-cir-spec.md §2.7). kotc reserves a default-phase BINDING for every
+// cross-module omission — the placeholder is that binding's `expr` — and every value of the call is a binding too, so
+// each arg slot the carrier reads is already a `bindRef`, a pure READ. This pass therefore only materialises the
+// carrier and drops it into the reserved binding: it discovers no prefix, creates no temp, wraps nothing, and clones
+// only reads. Which of those bindings needs a local, and in what order, is CallEvalLowering's single decision
+// immediately afterwards. The temp machinery this pass used to carry — a read-position scan, an all-or-nothing
+// `bindable` prefix and a second storage-legality oracle — is what made a legal fill jump ahead of an unbindable
+// supplied value; there is no longer a place for that choice to be made.
+//
 // CONSTRUCTORS (#235) come through the same machinery with two differences: a `{"k":"new"}` names its callee by TYPE, so
 // it is always OWNERFUL (`<type>|.ctor|<declared param count>`, the count read off `argTypes`) and never falls back to the
 // name+arity index; and it has no receiver, so a carrier that reads one is refused rather than bound to `args[0]` (which
@@ -46,6 +55,10 @@ static class DefaultArgSplice
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs)
     {
         var hoist = new JsonArray();
+        // Every `defaultArg` kotc emits is the `expr` of a reserved plan binding. One anywhere else means a value of
+        // that call has a second reader with no binding to hold it — the exact shape that duplicated an evaluation
+        // before the plan existed — so refuse it here rather than fill it into a call nothing bound.
+        AssertPlaceholdersPlanned(root, inBindingExpr: false);
         var localOwner = root is JsonObject ro && Str(ro["fileClass"]) is string fc ? TypeJson.Fqn(fc) : null;
         Walk(root, refs, hoist, localOwner);
         // A constructor delegation's args are not a call node, so `Walk` never reaches them as one.
@@ -68,27 +81,67 @@ static class DefaultArgSplice
         if (node is JsonObject obj)
         {
             foreach (var kv in obj.ToList()) if (kv.Value != null) Walk(kv.Value, refs, hoist, localOwner);
-            TrySplice(obj, refs, hoist, localOwner);
+            // A placeholder only ever lives in a plan binding, so the PLAN is the splice site: it names both the call
+            // whose callee identifies the carriers and the bindings the fill is written into and reads from.
+            if (Str(obj["k"]) == "callEval" && obj["expr"] is JsonObject call && obj["bindings"] is JsonArray bindings)
+                TrySplice(call, bindings, refs, hoist, localOwner);
         }
         else if (node is JsonArray arr) foreach (var it in arr.ToList()) if (it != null) Walk(it, refs, hoist, localOwner);
     }
 
-    static void TrySplice(JsonObject node, ReferenceMetadataIndex refs, JsonArray hoist, JsonNode localOwner)
+    // The binding an argument slot READS, or null when the slot is not a plan read.
+    static JsonObject BindingOf(JsonNode slot, JsonArray bindings)
+    {
+        if (slot is not JsonObject o || Str(o["k"]) != "bindRef" || Str(o["id"]) is not string id) return null;
+        foreach (var b in bindings) if (b is JsonObject bo && Str(bo["id"]) == id) return bo;
+        return null;
+    }
+
+    /// Refuse a `defaultArg` that is not the reserved `expr` of a plan binding (§2.7's standing invariant: any
+    /// transform that gives a call value a second reader must go through a plan).
+    static void AssertPlaceholdersPlanned(JsonNode node, bool inBindingExpr)
+    {
+        if (node is JsonObject o)
+        {
+            if (Str(o["k"]) == "defaultArg" && !inBindingExpr)
+                throw new InvalidOperationException(
+                    "bir2cir: an omitted cross-module default argument reached the splice outside a call-evaluation " +
+                    "plan. Its carrier binds this call's own receiver and arguments, so without bindings to read they " +
+                    "would each be evaluated a second time; the call site must emit a plan (docs/bir-cir-spec.md §2.7).");
+            var isBinding = o["id"] != null && o["phase"] != null && o.ContainsKey("expr");
+            foreach (var kv in o) if (kv.Value != null) AssertPlaceholdersPlanned(kv.Value, isBinding && kv.Key == "expr");
+        }
+        else if (node is JsonArray a) foreach (var it in a) if (it != null) AssertPlaceholdersPlanned(it, false);
+    }
+
+    static void TrySplice(JsonObject node, JsonArray bindings, ReferenceMetadataIndex refs, JsonArray hoist, JsonNode localOwner)
     {
         var k = Str(node["k"]);
         var isNew = k == "new";
         if (!isNew && k != "callStatic" && k != "callInstance") return;
         if (node["args"] is not JsonArray args) return;
+        // The reserved binding behind each argument slot, and whether it is still awaiting a cross-module fill. kotc
+        // emits a placeholder for EVERY omitted arg of a @KotlinDefault-carrying callee (never a bare trailing DROP),
+        // so `args.Count == sig.Count` here — a call merely SHORT of `sig` (a same-module trailing omit ilemit
+        // backfills, or any non-defaulted call carrying `sig`) must NOT be touched: appending a default off an
+        // ownerless name match would corrupt it.
+        var slotBinding = new JsonObject[args.Count];
         var hasPlaceholder = false;
-        for (var j = 0; j < args.Count; j++) if (IsPlaceholder(args[j])) { hasPlaceholder = true; break; }
+        for (var j = 0; j < args.Count; j++)
+        {
+            slotBinding[j] = BindingOf(args[j], bindings);
+            if (IsPlaceholder(slotBinding[j]?["expr"])) hasPlaceholder = true;
+        }
+        if (!hasPlaceholder) return;
         string method, owner, sigKey = null;
         int sigCount;
         if (isNew)
         {
             // A `new` names its callee by TYPE — there is no `method`/`sig` to read. The ctor's splice identity is
             // `<type>|.ctor|<declared parameter count>` (#235), and `argTypes` IS that declared vector (kotc emits the
-            // resolved ctor's own parameter types). A positional omission has a placeholder; a purely trailing omission
-            // simply leaves `args` shorter. In both cases the full `argTypes` vector identifies every physical slot.
+            // resolved ctor's own parameter types). The args array must line up with it one-for-one: kotc fills every
+            // omitted slot with a placeholder, so each stamped @KotlinDefault index indexes that same array. A mismatch
+            // means an arg was dropped rather than placeheld — refuse instead of filling the wrong slot.
             owner = TypeJson.OwnerName(node["type"]);
             if (owner == null) return;
             method = ReferenceMetadataIndex.CtorKeyName;
@@ -97,15 +150,11 @@ static class DefaultArgSplice
             // `argTypes` IS the resolved ctor's declared parameter vector, in the same ParamKey space the reference scan
             // keys by — so same-arity ctor overloads resolve to the RIGHT one instead of being refused as ambiguous.
             sigKey = string.Join(",", ctorParamTypes.Select(t => ReferenceMetadataIndex.ParamKey(t)));
-            // Generated local/anonymous classes carry captured values in `args`, while `argTypes` describes only the
-            // source constructor parameters. That is not a default-argument call at all. Ignore this synthetic shape
-            // unless kotc explicitly left a positional omission marker; in that case the physical slot mapping really
-            // is unknowable and must fail loudly.
-            if (args.Count > sigCount && !hasPlaceholder) return;
-            if (args.Count > sigCount)
+            if (args.Count != sigCount)
                 throw new InvalidOperationException(
                     $"bir2cir: cannot fill an omitted default argument of '{owner}''s constructor — the call emits " +
-                    $"{args.Count} argument(s) for only {sigCount} parameter(s)");
+                    $"{args.Count} argument(s) for {sigCount} parameter(s), so the omitted slot is not identifiable; " +
+                    "pass the argument explicitly");
         }
         else
         {
@@ -123,128 +172,78 @@ static class DefaultArgSplice
             if (method == null) return;
             owner = TypeJson.OwnerName(node["ownerType"] ?? node["calleeOwner"] ?? node["owner"]);
         }
-        var hasTrailingOmission = args.Count < sigCount;
-        if (!hasPlaceholder && !hasTrailingOmission) return;
-        // A bare name is not enough authority to interpret a short vector: same-module Kotlin calls and unrelated
-        // declarations can share it. A trailing omission is filled only when kotc preserved the selected reference
-        // declaration's owner plus complete signature. Positional placeholders retain the conservative ownerless lookup
-        // used by older BIR because their omitted slot is explicit.
-        if (hasTrailingOmission && !hasPlaceholder && owner == null) return;
         // The callee as a DIAGNOSTIC names itself: `.ctor` is a key component, not something to show a reader.
         var label = isNew ? owner + " constructor" : method;
         var defaults = refs.KotlinDefaultsFor(owner, method, sigCount, sigKey);
         if (defaults == null)
         {
-            if (hasPlaceholder && refs.KotlinDefaultsAmbiguous(owner, method, sigCount))
+            if (refs.KotlinDefaultsAmbiguous(owner, method, sigCount))
                 throw new InvalidOperationException(
                     $"bir2cir: cannot fill an omitted default argument of '{label}' (arity {sigCount}) — that name+arity is " +
                     "carried by several referenced declarations whose defaults disagree; pass the argument explicitly");
             return;
         }
-        // The declared parameter vector — the primary type for a hoisted temp (see [TempType]).
-        var declared = isNew ? node["argTypes"] as JsonArray : (node["sig"] as JsonArray ?? node["shapeTypes"] as JsonArray);
-        var temps = FillAndBind(args, sigCount, defaults, declared, ctorNoReceiver: isNew,
-            recvHost: isNew ? null : node, label, refs, hoist, localOwner);
-        if (args.Count != sigCount || args.Any(IsPlaceholder))
-            throw new InvalidOperationException(
-                $"bir2cir: cannot materialize every omitted default argument of '{label}' — the selected declaration " +
-                $"requires {sigCount} physical argument(s), but only {args.Count} could be produced");
-        // The temps are declared by a `valueBlock` wrapping this very call. Rewritten IN PLACE (the node is parented, and
-        // its parent slot is what must now hold the block): the original content becomes the block's `result`.
-        if (temps.Count > 0)
-        {
-            var inner = node.DeepClone();
-            node.Clear();
-            node["k"] = "valueBlock";
-            node["stmts"] = temps;
-            node["result"] = inner;
-        }
+        // The call site's TYPE arguments, for closing the carrier's own frame below: a generic callee's default is
+        // carried as the callee wrote it, with its type parameters as positional `tv`s.
+        var methodTypeArgs = node["typeArgs"] as JsonArray;
+        var ownerTypeArgs = TypeArgsOf(isNew ? node["type"] : node["ownerType"]);
+        Fill(args, slotBinding, sigCount, defaults, ctorNoReceiver: isNew, label, refs, hoist, localOwner,
+            methodTypeArgs, ownerTypeArgs);
     }
 
-    /// Fill every positional (and trailing) `defaultArg` in `args` from `defaults`, binding each value a fill SPLICES to
-    /// a temp so it is evaluated exactly once (#235). Returns the `var` statements the caller must declare — an
-    /// expression call site wraps itself in a `valueBlock`; a constructor DELEGATION, whose args ride a declaration,
-    /// puts them on its first argument. `recvHost` is the node whose `recv` slot binds with them (null when the call
-    /// site has no receiver, i.e. a `new` or a delegation).
-    static JsonArray FillAndBind(JsonArray args, int sigCount, Dictionary<int, string> defaults, JsonArray declared,
-        bool ctorNoReceiver, JsonObject recvHost, string label,
-        ReferenceMetadataIndex refs, JsonArray hoist, JsonNode localOwner)
+    // The type ARGUMENTS of a `{t:fqn}` type reference, or null.
+    static JsonArray TypeArgsOf(JsonNode type) => (type as JsonObject)?["args"] as JsonArray;
+
+    /// Materialise every omitted default of `args` from `defaults` and write it into the binding the slot READS.
+    /// Nothing is hoisted and nothing is wrapped: the values a carrier binds are already bindings, so a
+    /// `{defaultArgParam n}` token becomes a clone of that slot's `bindRef` — a duplicated READ, never a duplicated
+    /// evaluation. `ctorNoReceiver` marks the call shapes with no receiver at all (a `new`, a delegation), where a
+    /// `{k:this}` token has nothing to bind and is refused.
+    static void Fill(JsonArray args, JsonObject[] slotBinding, int sigCount, Dictionary<int, string> defaults,
+        bool ctorNoReceiver, string label, ReferenceMetadataIndex refs, JsonArray hoist, JsonNode localOwner,
+        JsonArray methodTypeArgs, JsonArray ownerTypeArgs)
     {
-        // A fill SPLICES this call's receiver / argument into the default expression, while the call keeps using it too —
-        // so a non-trivial value would run twice, where Kotlin evaluates a receiver and each argument exactly once. The
-        // positions a fill reads come from the carriers themselves, so collect them before filling anything — from the
-        // TRAILING carriers too (they bind the same tokens against the same args array).
-        var read = new HashSet<int>();
-        for (var pos = 0; pos < sigCount; pos++)
-            if ((pos >= args.Count || IsPlaceholder(args[pos])) && defaults.TryGetValue(pos, out var peek))
-                CollectReadPositions(peek, read);
-        var lastRead = read.Count == 0 ? -1 : read.Max();
-        // Binding a value moves its evaluation ahead of the call, so EVERY non-stable value up to `lastRead` binds with it
-        // or it would slide after the temps — the receiver included, since it is evaluated before any argument. If even
-        // one of them cannot be typed, bind NOTHING: a partial hoist reorders the call, which is worse than the double
-        // evaluation it would have removed. A PLACEHOLDER is checked against the declared vector, which is what its fill
-        // will be typed by.
-        var bindable = lastRead >= 0;
-        for (var j = 0; j <= lastRead && j < args.Count && bindable; j++)
-        {
-            if (IsPlaceholder(args[j])) { if (TempType(declared, j, null) == null) bindable = false; }
-            else if (args[j] is JsonNode v && !IsStableValue(v) && TempType(declared, j, v) == null) bindable = false;
-        }
-        if (bindable && recvHost?["recv"] is JsonNode recvCheck && !IsStableValue(recvCheck)
-            && TempType(AsVector(recvHost["ownerType"]), 0, recvCheck) == null)
-            bindable = false;
-        var temps = new JsonArray();
-        // 1) Replace POSITIONAL placeholders in place (a later provided arg keeps its slot). Fill by array index = the
-        //    @KotlinDefault index (extension receiver counted first, matching kotc's stamp). ASCENDING, so a lower slot a
-        //    later default reads is already filled — and already bound, so reading it again costs nothing.
+        // ASCENDING, mirroring the declaration order Kotlin evaluates defaults in — though the fills no longer depend
+        // on it: a later default referencing an earlier slot gets that slot's binding read, whatever has been written
+        // into it yet.
         for (var j = 0; j < args.Count; j++)
         {
-            if (IsPlaceholder(args[j]) && defaults.TryGetValue(j, out var bir))
-            {
-                // An extension receiver rides args[0] (the emitted extension fun's `__self`). A `= this` default binds to
-                // it — re-read per fill because a bind may have replaced it with the temp. A `new` / delegation has NO
-                // receiver: args[0] is the first ARGUMENT, so a `{k:this}` in such a carrier binds to nothing (kotc
-                // refuses to carry one — `defaultReadsDispatch` poisons it — and `SpliceOne` asserts it here).
-                var receiver = ctorNoReceiver ? null : (args.Count > 0 ? args[0] : null);
-                if (SpliceOne(bir, receiver, args, hoist, refs, label, j, localOwner, ctorNoReceiver) is JsonNode fill) { args[j] = fill; Walk(fill, refs, hoist, localOwner); }
-            }
-            // Bind every non-stable value up to the last one a fill reads — including the fill just spliced in (a later
-            // default may read THIS slot, and a filled default must not be evaluated twice either), and including values
-            // no fill reads, whose evaluation would otherwise slide after the temps.
-            if (bindable && j <= lastRead && !IsPlaceholder(args[j]) && args[j] is JsonNode value && !IsStableValue(value)
-                && TempType(declared, j, value) is JsonNode argType)
-                args[j] = Hoist(temps, value, argType);
+            var binding = slotBinding[j];
+            if (!IsPlaceholder(binding?["expr"]) || !defaults.TryGetValue(j, out var bir)) continue;
+            // An extension receiver rides args[0] (the emitted extension fun's `__self`). A `= this` default binds to
+            // it. A `new` / delegation has NO receiver: args[0] is the first ARGUMENT, so a `{k:this}` in such a
+            // carrier binds to nothing (kotc refuses to carry one — `defaultReadsDispatch` poisons it — and
+            // `SpliceOne` asserts it here).
+            var receiver = ctorNoReceiver ? null : (args.Count > 0 ? args[0] : null);
+            if (SpliceOne(bir, receiver, args, hoist, refs, label, j, localOwner, ctorNoReceiver,
+                    methodTypeArgs, ownerTypeArgs) is not JsonNode fill) continue;
+            binding["expr"] = fill;
+            // kotc reserved this binding conservatively (it could not know what would fill it). Now that the value is
+            // known, record whether reading it twice is free — a constant default then costs no local at all.
+            binding["stable"] = BindingStability.IsStable(fill);
+            Walk(fill, refs, hoist, localOwner);
         }
-        // 2) Append purely-TRAILING omitted args. The Kotlin frontend records that the declaration is callable with the
-        //    tail omitted, but its IR does not retain null value-argument slots at the end. The selected declaration's
-        //    complete signature and reference-DLL default map restore those physical CLR arguments here.
+        // Any purely-TRAILING omitted arg (the callee carries @KotlinDefault but kotc dropped the tail) is APPENDED as
+        // a plain value: it has one reader, its own new slot, and it is evaluated last, which is where Kotlin
+        // evaluates it. Unreachable for a `new` (its `args.Count == sigCount` is asserted by the caller). A gap leaves
+        // the call PARTIALLY filled — the chokepoint then reports the unfilled placeholder.
         for (var pos = args.Count; pos < sigCount; pos++)
         {
             if (!defaults.TryGetValue(pos, out var bir)) break;
             var receiver = ctorNoReceiver ? null : (args.Count > 0 ? args[0] : null);
-            if (SpliceOne(bir, receiver, args, hoist, refs, label, pos, localOwner, ctorNoReceiver) is JsonNode fill) { args.Add(fill); Walk(fill, refs, hoist, localOwner); } else break;
+            if (SpliceOne(bir, receiver, args, hoist, refs, label, pos, localOwner, ctorNoReceiver,
+                    methodTypeArgs, ownerTypeArgs) is JsonNode fill)
+            { args.Add(fill); Walk(fill, refs, hoist, localOwner); }
+            else break;
         }
-        // The RECEIVER is evaluated before any argument, so it binds only when an argument did — and then FIRST, ahead of
-        // them. (`bindable` above already refused the whole call if it could not be typed.) Its declared type is the
-        // member's OWNER: a temp of the owner type is what the call slot expects, and a `byref` owner is refused by
-        // [TempType] rather than copied, since for an addressable receiver a temp is a copy and not the address the call
-        // would take.
-        if (temps.Count > 0 && recvHost?["recv"] is JsonNode recvNode && !IsStableValue(recvNode)
-            && TempType(AsVector(recvHost["ownerType"]), 0, recvNode) is JsonNode recvType)
-            recvHost["recv"] = HoistFirst(temps, recvNode, recvType);
-        return temps;
     }
 
-    // The owner type as a one-element "declared vector", so a receiver goes through [TempType]'s rules unchanged.
-    static JsonArray AsVector(JsonNode type) => type == null ? null : new JsonArray(type.DeepClone());
-
     /// A constructor DELEGATION (`: super(…)` / `: this(…)`) is an omitting call site like any other, but its arguments
-    /// ride the constructor DECLARATION — there is no call node for [TrySplice] to see, and the callee is named by the
-    /// enclosing type's `base` (or the type itself). Fills them from the target ctor's `@KotlinDefault` carriers, with
-    /// the single-evaluation temps declared by the first argument (a `var` declares an ordinary method-body local, and
-    /// the first argument is evaluated before every later one — the same placement kotc uses for a same-module
-    /// delegation). Without this a `class Sub : RefBase(3)` against a referenced `RefBase(w: Int, h: Int = w * 2)`
-    /// reaches the chokepoint with an unfilled placeholder.
+    /// ride the constructor DECLARATION — there is no call node for [Walk] to see, and the callee is named by the
+    /// enclosing type's `base` (or the type itself). Its evaluation plan rides the declaration too, as
+    /// `delegationBindings`; the fills go into those bindings exactly as at an expression call site, and
+    /// CallEvalLowering turns them into the ctor's `preStmts`. Without this a `class Sub : RefBase(3)` against a
+    /// referenced `RefBase(w: Int, h: Int = w * 2)` reaches the chokepoint with an unfilled placeholder.
     static void SpliceCtorDelegations(JsonNode node, ReferenceMetadataIndex refs, JsonArray hoist, JsonNode localOwner)
     {
         if (node is JsonArray arr) { foreach (var it in arr) if (it != null) SpliceCtorDelegations(it, refs, hoist, localOwner); return; }
@@ -256,15 +255,21 @@ static class DefaultArgSplice
         foreach (var c in ctors)
         {
             if (c is not JsonObject ctor) continue;
-            Fill(ctor["baseArgs"] as JsonArray, baseName);
-            Fill(ctor["thisArgs"] as JsonArray, selfName);
+            var bindings = ctor["delegationBindings"] as JsonArray;
+            FillDelegation(ctor["baseArgs"] as JsonArray, bindings, baseName);
+            FillDelegation(ctor["thisArgs"] as JsonArray, bindings, selfName);
         }
 
-        void Fill(JsonArray args, string owner)
+        void FillDelegation(JsonArray args, JsonArray bindings, string owner)
         {
-            if (args == null || owner == null) return;
+            if (args == null || owner == null || bindings == null) return;
+            var slotBinding = new JsonObject[args.Count];
             var has = false;
-            for (var j = 0; j < args.Count; j++) if (IsPlaceholder(args[j])) { has = true; break; }
+            for (var j = 0; j < args.Count; j++)
+            {
+                slotBinding[j] = BindingOf(args[j], bindings);
+                if (IsPlaceholder(slotBinding[j]?["expr"])) has = true;
+            }
             if (!has) return;
             // No `argTypes` rides a delegation, so the target ctor is identified by arity alone — which refuses when two
             // same-arity ctors carry disagreeing defaults, rather than serving one of them.
@@ -277,96 +282,11 @@ static class DefaultArgSplice
                         "that arity is carried by several constructors whose defaults disagree; pass the argument explicitly");
                 return;
             }
-            // The target ctor's DECLARED parameter types: a delegation carries no signature vector of its own, and
-            // without them a placeholder slot inside the bound range would be untypable and the whole call would decline
-            // to bind — silently reverting to per-reader evaluation.
-            var declared = refs.KotlinDefaultParamTypesFor(owner, ReferenceMetadataIndex.CtorKeyName, args.Count);
-            var temps = FillAndBind(args, args.Count, defaults, declared, ctorNoReceiver: true,
-                recvHost: null, owner + " constructor", refs, hoist, localOwner);
-            if (temps.Count == 0) return;
-            if (args.Count == 0)
-                throw new InvalidOperationException("bir2cir: a constructor delegation bound a single-evaluation temp but has no argument to declare it in");
-            var first = args[0].DeepClone();
-            args[0] = new JsonObject { ["k"] = "valueBlock", ["stmts"] = temps, ["result"] = first };
+            // A delegation names its target by TYPE, so the base's own type arguments are the frame to close against;
+            // a constructor declares no type parameters of its own.
+            Fill(args, slotBinding, args.Count, defaults, ctorNoReceiver: true, owner + " constructor", refs, hoist,
+                localOwner, null, TypeArgsOf(type["base"]));
         }
-    }
-
-    // The positions of THIS call's values that a carrier reads: `{k:this}` -> args[0] (an extension receiver), and
-    // `{k:defaultArgParam,idx}` -> args[idx]. Parsed WITHOUT materializing (no lifted-method hoisting): this only needs
-    // the token positions, and MaterializeDefault runs later for the real fill.
-    static void CollectReadPositions(string bir, HashSet<int> into)
-    {
-        JsonNode parsed; try { parsed = JsonNode.Parse(bir, documentOptions: BirJson.DocOptions); } catch { return; }
-        // Only the carrier's EXPRESSION is token-substituted; a `defaultCarrier`'s `lifted` method bodies are re-hoisted
-        // verbatim, so a token inside one binds nothing and must not force a hoist.
-        if (parsed is JsonObject env && Str(env["k"]) == "defaultCarrier") parsed = env["expr"];
-        void Scan(JsonNode n)
-        {
-            if (n is JsonObject o)
-            {
-                switch (Str(o["k"]))
-                {
-                    case "this": into.Add(0); break;
-                    case "defaultArgParam" when (o["idx"] as JsonValue)?.GetValue<int>() is int i && i >= 0: into.Add(i); break;
-                }
-                foreach (var kv in o) if (kv.Value != null) Scan(kv.Value);
-            }
-            else if (n is JsonArray a) foreach (var it in a) if (it != null) Scan(it);
-        }
-        if (parsed != null) Scan(parsed);
-    }
-
-    // A value that is free to RE-READ: a literal or `this` (immutable, no side effect). Everything else — including a
-    // plain local read, which another argument's evaluation could write between the two reads — is bound to a temp.
-    static bool IsStableValue(JsonNode n) =>
-        n is not JsonObject o || Str(o["k"]) is "const" or "this";
-
-    // The type slot for a hoisted temp: the callee's DECLARED type for that position — what the call slot and the
-    // carrier's parameter read both expect, so a widening conversion still happens at the `var` store rather than at
-    // every use. It is unusable when OPEN: `sig`/`shapeTypes`/`argTypes` render a generic callee's parameter as the
-    // CALLEE's positional type variable, which would resolve in the CALLER's frame (to the wrong parameter, or to
-    // `object`) — then the VALUE's own static type, concrete at this call site, is used instead. `value` may be null for
-    // a placeholder that is about to be FILLED: its fill takes the declared type, so only that slot is checked.
-    // Null -> not bindable: a byref slot is an addressable lvalue rather than a value a temp can hold, and a synthesized
-    // operand may carry no type at all.
-    static JsonNode TempType(JsonArray declared, int position, JsonNode value)
-    {
-        var slot = declared != null && declared.Count > position ? declared[position] : null;
-        if (slot != null && TypeJson.Read(slot) is TypeNode d)
-        {
-            if (d is TypeNode.ByRef) return null;
-            if (!IsOpen(d)) return slot.DeepClone();
-        }
-        var own = (value as JsonObject)?["sty"] ?? (value as JsonObject)?["type"];
-        if (own != null && TypeJson.Read(own) is TypeNode o && o is not TypeNode.ByRef && !IsOpen(o)) return own.DeepClone();
-        return null;
-    }
-
-    // A type mentioning a positional type VARIABLE: it names a slot in the declaring generic's frame, so it cannot be
-    // written into a local of THIS body without re-resolving it there.
-    static bool IsOpen(TypeNode t) => t switch
-    {
-        TypeNode.Tv => true,
-        TypeNode.ByRef b => IsOpen(b.Of),
-        TypeNode.Array a => IsOpen(a.Elem),
-        TypeNode.Nullable n => IsOpen(n.Of),
-        TypeNode.Oblivious ob => IsOpen(ob.Of),
-        TypeNode.Fqn f => f.Args != null && f.Args.Any(IsOpen),
-        TypeNode.Fn fn => fn.Params.Any(IsOpen) || IsOpen(fn.Ret),
-        _ => false,
-    };
-
-    // Move `value` into a fresh `var` on `temps` and return the local read that replaces it.
-    static JsonNode Hoist(JsonArray temps, JsonNode value, JsonNode type) => HoistAt(temps, temps.Count, value, type);
-
-    // The RECEIVER binds ahead of the arguments already bound (Kotlin evaluates it first).
-    static JsonNode HoistFirst(JsonArray temps, JsonNode value, JsonNode type) => HoistAt(temps, 0, value, type);
-
-    static JsonNode HoistAt(JsonArray temps, int at, JsonNode value, JsonNode type)
-    {
-        var name = "__dflt$tmp$" + Interlocked.Increment(ref _counter);
-        temps.Insert(at, new JsonObject { ["k"] = "var", ["name"] = name, ["type"] = type, ["init"] = value.DeepClone() });
-        return new JsonObject { ["k"] = "local", ["name"] = name, ["sty"] = type.DeepClone() };
     }
 
     // A `{"k":"this"}` in the CARRIER — the callee's own default expression, before this call's args are substituted in.
@@ -383,10 +303,20 @@ static class DefaultArgSplice
     // Parse a @KotlinDefault BIR-json string, unwrap a `defaultCarrier` (re-hoisting its lifted methods app-local), and
     // bind the callee's default-expression tokens (`{this}` / `{defaultArgParam idx}`) to THIS call's args. A deep-fresh
     // subtree per occurrence.
-    static JsonNode SpliceOne(string bir, JsonNode receiver, JsonArray args, JsonArray hoist, ReferenceMetadataIndex refs, string method, int slot, JsonNode localOwner, bool ctorNoReceiver = false)
+    static JsonNode SpliceOne(string bir, JsonNode receiver, JsonArray args, JsonArray hoist, ReferenceMetadataIndex refs, string method, int slot, JsonNode localOwner, bool ctorNoReceiver = false,
+        JsonArray methodTypeArgs = null, JsonArray ownerTypeArgs = null)
     {
         var parsed = MaterializeDefault(bir, hoist, refs, method, slot, localOwner);
         if (parsed == null) return null;
+        // CLOSE THE CARRIER'S OWN TYPE FRAME, before its tokens are bound. The carrier is the default as the CALLEE
+        // wrote it, so a generic callee's type parameters ride it as positional `tv`s — `fun <T> f(xs: MutableList<T> =
+        // mutableListOf())` carries `mutableListOf<tv{method,0}>()`. Nothing downstream resolves those in the
+        // CONSUMER's frame: they erase to `object`, so the consumer built a `List<Object>` for a `MutableList<String>`
+        // slot — right values, wrong runtime type, and unverifiable IL. This is the last sibling of the same rule kotc
+        // applies to same-module and injected defaults (every open type variable closes against the call site); here
+        // the substitution is positional because the carrier is JSON, and it runs BEFORE token substitution so the
+        // consumer's own `bindRef`s, inserted afterwards, are never re-substituted.
+        InlineSplice.SubstTvIn(parsed, methodTypeArgs ?? new JsonArray(), methodTypeArgs?.Count ?? 0, ownerTypeArgs);
         // A ctor call site has no receiver to bind a `{k:this}` to. Checked on the CARRIER, never on the substituted
         // result — that legitimately carries `this` whenever the CONSUMER passed an argument reading its own instance
         // (`Rect(this.w)`), which is the shape the same-module path already binds by symbol rather than by token.
@@ -414,6 +344,11 @@ static class DefaultArgSplice
             if (envK == "defaultCarrier")
                 parsed = UnwrapCarrier(env, hoist, refs, localOwner);
         }
+        // The carrier is the PRODUCER's BIR, so any evaluation plan inside it carries the producer's binding ids. It is
+        // about to be substituted with the CONSUMER's own `bindRef`s and dropped into the consumer's frame, possibly
+        // once per omitting call site — re-mint the ids so neither copy can collide with the other or with a
+        // consumer-side id (§2.7).
+        if (parsed != null) CallEvalLowering.FreshenPlanIds(parsed);
         return parsed;
     }
 

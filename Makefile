@@ -106,8 +106,9 @@ verify: verify-core verify-packaged-sdk ## run ALL gates (the canonical set + th
 # copied into the workflow YAML. `make verify` still runs the complete set (verify-core + packaged-sdk).
 verify-core: verify-tests verify-schema verify-sanity verify-msbuild verify-roundtrip verify-wide-delegates ## every gate except the packaged-SDK release gate
 
-verify-tests: pack ## canonical compiler behavior gate (categorized NUnit suites + ILVerify)
+verify-tests: pack ## canonical compiler behavior gate (categorized NUnit suites + ILVerify + the negative compile lane)
 	bash tests/run-nunit-tests.sh
+	bash tests/compile-fail/run.sh
 
 verify-schema: ## the #37 BIR/CIR freeze enforcer (types-are-nodes + canonical k over fresh BIR/CIR); run AFTER verify-tests
 	bash tests/ir/run-schema.sh
