@@ -31,7 +31,7 @@ At a CLR export boundary, DotKt creates a root continuation backed by `TaskCompl
 
 ## Awaiting .NET tasks from Kotlin
 
-The reverse bridge is supplied as Kotlin-facing suspend extensions:
+The reverse bridge is supplied as metadata-only suspend members in the corresponding reference KLIBs:
 
 ```kotlin
 suspend fun Task.await(): Unit

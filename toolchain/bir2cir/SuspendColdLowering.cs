@@ -115,6 +115,13 @@ static partial class SuspendColdLowering
 
     const string ContinuationImplFqn = "kotlin.coroutines.clr.internal.ContinuationImpl";
     const string SuspendLambdaFqn = "kotlin.coroutines.clr.internal.SuspendLambda";
+    // The CLR Task ABI is a physical lowering decision owned here. These identities are resolved and validated
+    // against the exact compile-reference universe; no kotlin.clr alias declaration participates in the bridge.
+    const string TaskBclFqn = "System.Threading.Tasks.Task";
+    const string TaskCompletionSourceBclFqn = "System.Threading.Tasks.TaskCompletionSource";
+    // One module-private sink is synthesized into each app assembly that needs a Task bridge or suspend-main drain.
+    // It implements the Kotlin Continuation protocol but completes a CLR TaskCompletionSource<T>.
+    const string RootContinuationFqn = "kotlin.coroutines.clr.internal.RootContinuation";
     // A @RestrictsSuspension-scope (e.g. SequenceScope) suspend lambda's SM base. Same 2-arg (arity, completion)
     // ctor + create() protocol as SuspendLambda; RestrictedContinuationImpl pins EmptyCoroutineContext.
     const string RestrictedSuspendLambdaFqn = "kotlin.coroutines.clr.internal.RestrictedSuspendLambda";
@@ -360,23 +367,19 @@ static partial class SuspendColdLowering
 
         var baseIsLocal = localTypeFqns.Contains(ContinuationImplFqn);
 
-        // The public Task<R> bridge (bundle-6 P4, design §11): resolve the Task-family BCL owners from the ref.dll
-        // @ClrTypeAlias index (the SAME ref.dll-sourced substitution the member-call pass reads). `TaskCompletionSource`
-        // is the sink the RootContinuation completes; `Task` is the hot public return.
-        var tcsBcl = refs.TryResolveClrOwner("kotlin.clr.TaskCompletionSource", out var tb, out _) ? tb : null;
-        var taskBcl = refs.TryResolveClrOwner("kotlin.clr.Task", out var kb, out _) ? kb : null;
-        // #55 — in an APP build the Task ABI is MANDATORY: a suspend fun's public shape is `Task<R>` and its
-        // main-drain blocks on `tcs.Task`. If the ref.dll lacks the kotlin.clr.Task/TaskCompletionSource aliases
-        // (a stdlib predating the taskinterop set) the bridge would silently degrade to the known-broken
-        // null-completion scheme (a genuinely-suspending main dereferences null on resume — NRE/lost result). Per
-        // the no-dual-track rule the null-completion fallback is DELETED, so a missing alias is a hard compile error
-        // here, not a silent skip. rt-stdlib builds (baseIsLocal — no `main`, aliases legitimately absent) are exempt.
-        if (appBuild && !baseIsLocal && (tcsBcl == null || taskBcl == null))
+        // The public Task<R> bridge is physical CLR representation, so resolve it from the compile references that
+        // bir2cir already owns. The former stdlib @ClrTypeAlias lookup inverted ownership: a Kotlin declaration was
+        // acting as a registry for a representation selected entirely after BIR.
+        var tcsBcl = TaskCompletionSourceBclFqn;
+        var taskBcl = TaskBclFqn;
+        if (appBuild && !baseIsLocal
+            && (refs.ResolveNetType(TaskBclFqn, 0) == null
+                || refs.ResolveNetType(TaskBclFqn + "`1", 1) == null
+                || refs.ResolveNetType(TaskCompletionSourceBclFqn + "`1", 1) == null))
             throw new NotSupportedException(
-                "bir2cir: suspend-lowering: the stdlib ref.dll lacks the kotlin.clr.Task / "
-                + "kotlin.clr.TaskCompletionSource @ClrTypeAlias bindings (a stdlib predating taskinterop) — "
-                + "refusing to emit the known-broken null-completion suspend ABI. Rebuild the stdlib with the "
-                + "taskinterop sources present.");
+                "bir2cir: suspend-lowering: the compile-reference set does not provide "
+                + "System.Threading.Tasks.Task, Task<T>, and TaskCompletionSource<T>; "
+                + "the public suspend ABI cannot be emitted.");
 
         // SM-type-name disambiguation for OVERLOADED members (same Owner+Name, differing only by param type):
         // each overload needs a UNIQUE SM class name (the cold-entry NAME stays `<name>$dotkt_suspend` — they are
@@ -408,6 +411,7 @@ static partial class SuspendColdLowering
 
         // 2. Transform each declared suspend fun, splicing the cold entry (into its declaring container) and the
         //    SM type (into its file's top-level types).
+        JsonObject rootContinuationHost = null;
         foreach (var key in entries.Keys)
         {
             var e = entries[key];
@@ -443,6 +447,8 @@ static partial class SuspendColdLowering
             var newMethods = new List<JsonNode>();
             var newTypes = new List<JsonNode>();
             gen.Build(newMethods, newTypes);
+            if (gen.NeedsRootContinuation)
+                rootContinuationHost ??= e.Root;
 
             var container = e.TypeNode != null
                 ? (e.TypeNode["methods"] as JsonArray) ?? EnsureArray(e.TypeNode, "methods")
@@ -476,6 +482,12 @@ static partial class SuspendColdLowering
             if (e.TypeNode != null) WidenPrivatesAccessedBySm(e.TypeNode, newTypes);
         }
 
+        // The root Task sink is concrete CLR adapter machinery, not standard-library vocabulary. Emit one internal
+        // helper into the app assembly that actually constructs it; abstract-only suspend surfaces need no helper.
+        if (rootContinuationHost != null)
+            ((rootContinuationHost["types"] as JsonArray) ?? EnsureArray(rootContinuationHost, "types"))
+                .Add(BuildRootContinuationType(tcsBcl));
+
         // #22 — prune the intrinsic-block closure classes the cold lowering reconstructed inline (now dead; see
         // _consumedIntrinsicClosures). Only the SM-consumed closure NAMES are removed, so a `newClosure` used
         // anywhere else survives. GATED on `!baseIsLocal`: an rt-stdlib build (baseIsLocal) RETAINS the original
@@ -490,6 +502,257 @@ static partial class SuspendColdLowering
                         if (ts[i] is JsonObject to && Str(to["name"]) is string tn && _consumedIntrinsicClosures.Contains(tn))
                             ts.RemoveAt(i);
         return calleeRet;
+    }
+
+    static JsonObject BuildRootContinuationType(string tcsBcl)
+    {
+        var tv = new TypeNode.Tv("type", 0);
+        var rootType = new TypeNode.Fqn(RootContinuationFqn, new TypeNode[] { tv });
+        var tcsType = new TypeNode.Fqn(tcsBcl, new TypeNode[] { tv });
+        var resultType = new TypeNode.Fqn("kotlin.Result", new TypeNode[] { tv });
+        var nullableThrowable = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Throwable"));
+        const string fieldName = "$tcs";
+        const string exceptionName = "$exception";
+        const int failureLabel = 9101;
+        const int kotlinCancellationLabel = 9102;
+        const int faultLabel = 9103;
+        const int doneLabel = 9104;
+
+        JsonObject This() => new() { ["k"] = "this" };
+        JsonObject LocalValue(string name) => new() { ["k"] = "local", ["name"] = name };
+        JsonObject TcsField() => new()
+        {
+            ["k"] = "field",
+            ["ownerType"] = Tw(rootType),
+            ["recv"] = This(),
+            ["name"] = fieldName,
+        };
+        JsonObject TcsCall(string method, TypeNode[] memberSig, params JsonNode[] args) => new()
+        {
+            ["k"] = "clrInstance",
+            ["type"] = Tw(tcsType),
+            ["method"] = method,
+            ["recv"] = TcsField(),
+            ["argTypes"] = new JsonArray(memberSig.Select(Tw).ToArray()),
+            ["args"] = new JsonArray(args),
+            ["ret"] = Tw(BoolTn),
+        };
+        JsonObject Expr(JsonNode value) => new() { ["k"] = "exprStmt", ["expr"] = value };
+
+        var resultValue = new JsonObject
+        {
+            ["k"] = "callInstance",
+            ["ownerType"] = Tw(resultType),
+            ["virtual"] = false,
+            ["recv"] = LocalValue("result"),
+            ["method"] = "get_value",
+            ["args"] = new JsonArray(),
+            ["ret"] = Tw(AnyTn),
+        };
+        var exceptionValue = new JsonObject
+        {
+            ["k"] = "callInstance",
+            ["ownerType"] = Tw(resultType),
+            ["virtual"] = false,
+            ["recv"] = LocalValue("result"),
+            ["method"] = "exceptionOrNull",
+            ["sig"] = new JsonArray(),
+            ["args"] = new JsonArray(),
+            ["ret"] = Tw(nullableThrowable),
+        };
+        var resumeBody = new JsonArray
+        {
+            new JsonObject
+            {
+                ["k"] = "var",
+                ["name"] = exceptionName,
+                ["type"] = Tw(nullableThrowable),
+                ["init"] = exceptionValue,
+            },
+            new JsonObject
+            {
+                ["k"] = "block",
+                ["body"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["k"] = "brIf", ["id"] = failureLabel, ["on"] = false,
+                        ["cond"] = new JsonObject
+                        {
+                            ["k"] = "objEq",
+                            ["lhs"] = LocalValue(exceptionName),
+                            ["rhs"] = new JsonObject
+                            {
+                                ["k"] = "const",
+                                ["type"] = Tw(nullableThrowable),
+                                ["value"] = null,
+                            },
+                        },
+                    },
+                    Expr(TcsCall(
+                        "TrySetResult",
+                        new TypeNode[] { tv },
+                        new JsonObject { ["k"] = "cast", ["type"] = Tw(tv), ["e"] = resultValue })),
+                    new JsonObject { ["k"] = "goto", ["id"] = doneLabel },
+                    new JsonObject { ["k"] = "label", ["id"] = failureLabel },
+                    new JsonObject
+                    {
+                        ["k"] = "brIf", ["id"] = kotlinCancellationLabel, ["on"] = false,
+                        ["cond"] = new JsonObject
+                        {
+                            ["k"] = "isInst",
+                            ["type"] = Tn("System.OperationCanceledException"),
+                            ["e"] = LocalValue(exceptionName),
+                        },
+                    },
+                    Expr(TcsCall(
+                        "TrySetCanceled",
+                        new TypeNode[] { new TypeNode.Fqn("System.Threading.CancellationToken") },
+                        new JsonObject
+                        {
+                            ["k"] = "clrPropGet",
+                            ["type"] = Tn("System.OperationCanceledException"),
+                            ["name"] = "CancellationToken",
+                            ["static"] = false,
+                            ["recv"] = new JsonObject
+                            {
+                                ["k"] = "cast",
+                                ["type"] = Tn("System.OperationCanceledException"),
+                                ["e"] = LocalValue(exceptionName),
+                            },
+                            ["ret"] = Tn("System.Threading.CancellationToken"),
+                        })),
+                    new JsonObject { ["k"] = "goto", ["id"] = doneLabel },
+                    new JsonObject { ["k"] = "label", ["id"] = kotlinCancellationLabel },
+                    new JsonObject
+                    {
+                        ["k"] = "brIf", ["id"] = faultLabel, ["on"] = false,
+                        ["cond"] = new JsonObject
+                        {
+                            ["k"] = "isInst",
+                            ["type"] = Tn("kotlin.coroutines.cancellation.CancellationException"),
+                            ["e"] = LocalValue(exceptionName),
+                        },
+                    },
+                    Expr(TcsCall("TrySetCanceled", System.Array.Empty<TypeNode>())),
+                    new JsonObject { ["k"] = "goto", ["id"] = doneLabel },
+                    new JsonObject { ["k"] = "label", ["id"] = faultLabel },
+                    Expr(TcsCall(
+                        "TrySetException",
+                        new TypeNode[] { new TypeNode.Fqn("kotlin.Throwable") },
+                        new JsonObject
+                        {
+                            ["k"] = "cast",
+                            ["type"] = Tn("kotlin.Throwable"),
+                            ["e"] = LocalValue(exceptionName),
+                        })),
+                    new JsonObject { ["k"] = "label", ["id"] = doneLabel },
+                },
+            },
+        };
+
+        return new JsonObject
+        {
+            ["name"] = RootContinuationFqn,
+            ["kind"] = "class",
+            ["abstract"] = false,
+            ["vis"] = "internal",
+            ["typeParams"] = new JsonArray("T"),
+            ["base"] = null,
+            ["interfaces"] = new JsonArray(Tw(new TypeNode.Fqn(
+                "kotlin.coroutines.Continuation", new TypeNode[] { tv }))),
+            ["fields"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["name"] = fieldName,
+                    ["type"] = Tw(tcsType),
+                    ["vis"] = "private",
+                    ["attrs"] = new JsonArray(),
+                },
+            },
+            ["ctors"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["params"] = new JsonArray
+                    {
+                        new JsonObject { ["name"] = "tcs", ["type"] = Tw(tcsType) },
+                    },
+                    ["baseArgs"] = null,
+                    ["thisArgs"] = null,
+                    ["vis"] = "internal",
+                    ["body"] = new JsonArray
+                    {
+                        new JsonObject
+                        {
+                            ["k"] = "setField",
+                            ["ownerType"] = Tw(rootType),
+                            ["recv"] = This(),
+                            ["name"] = fieldName,
+                            ["value"] = LocalValue("tcs"),
+                        },
+                    },
+                },
+            },
+            ["methods"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["name"] = "resumeWith",
+                    ["static"] = false,
+                    ["override"] = false,
+                    ["virtual"] = true,
+                    ["abstract"] = false,
+                    ["objectOverride"] = false,
+                    ["vis"] = "public",
+                    ["params"] = new JsonArray
+                    {
+                        new JsonObject { ["name"] = "result", ["type"] = Tw(resultType) },
+                    },
+                    ["ret"] = Tw(VoidTn),
+                    ["body"] = resumeBody,
+                    ["attrs"] = new JsonArray(),
+                },
+                new JsonObject
+                {
+                    ["name"] = "get_context",
+                    ["static"] = false,
+                    ["override"] = false,
+                    ["virtual"] = true,
+                    ["abstract"] = false,
+                    ["objectOverride"] = false,
+                    ["vis"] = "public",
+                    ["params"] = new JsonArray(),
+                    ["ret"] = Tn("kotlin.coroutines.CoroutineContext"),
+                    ["body"] = new JsonArray
+                    {
+                        new JsonObject
+                        {
+                            ["k"] = "return",
+                            ["value"] = new JsonObject
+                            {
+                                ["k"] = "staticField",
+                                ["ownerType"] = Tn("kotlin.coroutines.EmptyCoroutineContext"),
+                                ["name"] = "INSTANCE",
+                            },
+                        },
+                    },
+                    ["attrs"] = new JsonArray(),
+                },
+            },
+            ["properties"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["name"] = "context",
+                    ["type"] = Tn("kotlin.coroutines.CoroutineContext"),
+                    ["get"] = "get_context",
+                    ["set"] = null,
+                },
+            },
+            ["attrs"] = new JsonArray(),
+        };
     }
 
     // Collect every member name a synthesized SM reads/writes through its `$this` field, then relax any matching
@@ -962,8 +1225,6 @@ static partial class SuspendColdLowering
         // This mirrors the C#/JVM state-gated finally (a per-label finally-route table collapsed to one flag,
         // valid because SuspensionRefusalReason admits only a SINGLE level of suspending try).
         const string SuspendingField = "$suspending";
-        // The Task-bridge root sink (a real emitted stdlib class, referenced cross-assembly like ContinuationImpl).
-        const string RootContinuationFqn = "kotlin.coroutines.clr.internal.RootContinuation";
         // #10 — dll2klib's metadata-only @ClrAwaitBridge declaration. EmitAwaitPoint
         // resolves the .NET AWAITABLE PATTERN (GetAwaiter/awaiter/IsCompleted/GetResult/OnCompleted) for the marker's
         // receiver type from ref metadata (ReferenceMetadataIndex.ResolveAwaitable) — Task / ValueTask / a WinRT
@@ -1325,21 +1586,22 @@ static partial class SuspendColdLowering
             if (WantsBridge) newMethods.Add(BuildBridge());
         }
 
-        // A named (non-lambda), non-`main` suspend fun whose Task-family aliases resolved gets a public Task<R>
-        // bridge. `main` is excluded (it is the entry point, drained by the synthesized plain `main`).
+        // A named (non-lambda), non-`main` suspend fun gets a public Task<R> bridge. `main` is excluded (it is the
+        // entry point, drained by the synthesized plain `main`).
         // EXCLUDED too:
-        //  - `_baseIsLocal` (the rt-STDLIB build): the bridge's RootContinuation/TCS/Task sinks are the coroutine
-        //    primitives being DEFINED here, not external .NET refs — a bridge would `newClr` a local type as if it
-        //    were referenced (NotSupported). The stdlib's own suspend members (yield/yieldAll/callRecursive) are
-        //    internal machinery, not C#-facing Task APIs; the bridge is an APP-build concern (consumers of the dll).
+        //  - `_baseIsLocal` (the rt-STDLIB build): the stdlib's own suspend members
+        //    (yield/yieldAll/callRecursive) are internal machinery, not C#-facing Task APIs; the bridge is an
+        //    APP-build concern (consumers of the dll).
         // A virtual/abstract/override member DOES get a bridge (BUG 3): the bridge's virtuality rides in lockstep with
         // the cold entry (abstract -> an abstract signature; open -> virtual; override -> override), so an interface
         // `suspend fun` round-trips (its [KotlinFunction(Suspend)] trigger lives on the bridge) and its concrete
         // overrides fill both the bridge and the cold-entry slots.
-        // #55 — an app build (!_baseIsLocal) is guaranteed the Task aliases (ApplyAll hard-errors otherwise), so the
-        // former `_tcsBcl != null && _taskBcl != null` silent-skip is gone: every non-main non-lambda cold entry in an
-        // app build gets the public Task bridge. rt-stdlib self-builds (_baseIsLocal) keep NO bridge (internal machinery).
+        // The compile-reference validation in ApplyAll makes the Task ABI mandatory: every non-main non-lambda cold
+        // entry in an app build gets the public Task bridge. rt-stdlib self-builds keep no bridge.
         bool WantsBridge => !_isLambda && _name != "main" && !_baseIsLocal;
+        public bool NeedsRootContinuation =>
+            !_memberAbstract
+            && ((_name == "main" && _ownerClass == null) || WantsBridge);
 
         static int MaxLabelId(JsonNode node)
         {
@@ -3369,8 +3631,8 @@ static partial class SuspendColdLowering
         // threadpool thread and completes the TCS, so main must BLOCK on `tcs.Task` until then. Drain it through
         // `GetAwaiter().GetResult()` (not `Task.Wait()`) so an asynchronous fault/cancellation is rethrown with normal
         // .NET await semantics instead of being wrapped in AggregateException (#140). With a
-        // null completion the resume dereferenced null (NRE / lost result). #55: the Task aliases are GUARANTEED present
-        // in an app build (ApplyAll hard-errors otherwise), so the old null-completion fallback is DELETED (no dual-track).
+        // null completion the resume dereferenced null (NRE / lost result). The required BCL Task types are validated
+        // against the compile references in ApplyAll, so there is no null-completion fallback.
         JsonObject DrainMain()
         {
             var ps = new JsonArray();
@@ -3402,7 +3664,7 @@ static partial class SuspendColdLowering
                     ["k"] = "var", ["name"] = "__root", ["type"] = Tw(rootType),
                     ["init"] = new JsonObject
                     {
-                        ["k"] = "newClr", ["type"] = Tw(rootType),
+                        ["k"] = "new", ["type"] = Tw(rootType),
                         ["argTypes"] = new JsonArray { Tw(tcsType) }, ["args"] = new JsonArray { Local("__tcs") },
                     },
                 },
@@ -3541,7 +3803,7 @@ static partial class SuspendColdLowering
                     ["k"] = "var", ["name"] = "__root", ["type"] = Tw(rootType),
                     ["init"] = new JsonObject
                     {
-                        ["k"] = "newClr", ["type"] = Tw(rootType),
+                        ["k"] = "new", ["type"] = Tw(rootType),
                         ["argTypes"] = new JsonArray { Tw(tcsType) },
                         ["args"] = new JsonArray { Local("__tcs") },
                     },

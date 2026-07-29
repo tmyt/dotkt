@@ -190,9 +190,9 @@ This is a user-stated foundational deviation, not an implementation detail.
 - **JVM:** a `suspend fun f(): T` compiles to `Object f(…, Continuation)` — the Continuation is an explicit parameter,
   CPS the public ABI.
 - **DotKt:** the **public CLR ABI is `Task<T> f(…)`** — the Continuation never appears in the signature (it's the
-  internal lowered form, with a `Task` sink). Calling a suspend function from suspend context is emitted as an
-  **await** of that `Task<T>`. A C# caller `await`s it natively; a Kotlin caller in another module sees a
-  `suspend fun` again (restored from a `[KotlinFunction(Suspend)]` attribute, with the `Task<T>` unwrapped to `T`).
+  internal lowered form, with a `Task` sink). A C# caller `await`s it natively. A Kotlin caller in another module sees a
+  `suspend fun` again (restored from a `[KotlinFunction(Suspend)]` attribute, with the `Task<T>` unwrapped to `T`) and
+  calls its continuation-based cold entry directly, avoiding an intermediate Task allocation.
 - **Execution is HOT, not cold.** A .NET `Task` starts running when created — so invoking a suspend function starts
   its execution immediately, exactly like C# `async`. This deliberately deviates from the kotlinx-coroutines
   cold-by-default framing (a `suspend` body that only runs when awaited/launched). Kotlin's *language* semantics for
@@ -246,8 +246,9 @@ on the CLR — `CancellationExceptionClr.kt`), while .NET signals it with `Syste
 `TaskCanceledException` subtype) plus the type-signaled `Task.IsCanceled` protocol. These are DISJOINT type hierarchies
 (a Kotlin CE is NOT an OCE), so the bridge maps them explicitly, and only the **Kotlin→.NET** direction is mapped:
 
-- **Kotlin→.NET (FIXED, #105).** When a coroutine completes by throwing — either kind of cancellation — `RootContinuation`
-  (the Task-bridge sink) completes the bridge `Task` as **CANCELED** (`TrySetCanceled` → `IsCanceled == true`), not
+- **Kotlin→.NET (FIXED, #105).** When a coroutine completes by throwing — either kind of cancellation — the
+  module-private root continuation synthesized with the Task bridge completes the bridge `Task` as **CANCELED**
+  (`TrySetCanceled` → `IsCanceled == true`), not
   FAULTED. Both a .NET `OperationCanceledException` (its originating `CancellationToken` carried through, #116) AND a
   Kotlin `CancellationException` (no token — .NET's canceled-Task protocol is type-signaled, so the CE object is NOT
   preserved into the .NET exception; carrying it via `TrySetException` would leave `IsCanceled == false` and break every

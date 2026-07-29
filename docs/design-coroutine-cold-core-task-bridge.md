@@ -108,13 +108,10 @@ Going through `Task` would:
 
 ## 4. `.NET Task` consumed from Kotlin: `Task.await`
 
-The reverse bridge is a Kotlin-facing suspend extension:
+The reverse bridge is a metadata-only suspend member synthesized into each conforming Task reference KLIB:
 
 ```kotlin
-package kotlin.clr
-
-public suspend fun Task.await(): Unit
-public suspend fun <T> Task<T>.await(): T
+task.await()
 ```
 
 This API is for Kotlin users on the CLR. C# already has `await task`, so the extension should not be treated as a C#
@@ -152,17 +149,16 @@ and should not contain `System.Threading.Tasks.Task`.
 Instead:
 
 ```text
-libraries/stdlib/clr/taskinterop/kotlin/clr/Tasks.kt
-  CLR-platform source containing Task.await declarations/implementation or declarations that bind to helpers.
-
 dll2klib
-  Projects metadata-only await declarations beside Task and Task<T> in their reference KLIBs.
+  Projects a metadata-only @ClrAwaitBridge suspend declaration directly onto each conforming
+  awaitable in its reference KLIB.
+
+kotc
+  Resolves that ordinary KLIB declaration and preserves the await marker as a BIR fact.
 
 bir2cir
-  Consumes the marker / intrinsic metadata for Task.await and lowers it to the TaskAwaiter + Continuation bridge.
-
-stdlib.ref.dll / stdlib.rt.dll
-  Contain the CLR-facing declaration and runtime/helper body as needed.
+  Resolves the awaitable pattern from compile-reference metadata and lowers the marked call to
+  GetAwaiter / IsCompleted / OnCompleted / GetResult.
 ```
 
 This keeps the split:
@@ -416,17 +412,14 @@ suspend fun f(x: Int): String        (in class C / top-level file class FKt)
   `suspend fun f(x: Int): String`; their suspend CALLS lower to the cold entry, non-suspend contexts
   and C# use the bridge).
 
-### The kotlin.clr surface (names locked)
+### Await and blocking surfaces
 
 ```kotlin
-package kotlin.clr
-public suspend fun <T> Task<T>.await(): T      // bir2cir-lowered: awaiter fast path / OnCompleted resume
-public suspend fun Task0.await()               // non-generic System.Threading.Tasks.Task
-public fun <T> blockOn(block: suspend () -> T): T   // start on the cold core + drain (the runBlocking analog)
-public suspend fun delay(ms: Long)             // Task.Delay(ms).await()
+task.await() // metadata-only member synthesized into the task's reference KLIB
 ```
 
-(`Task`/`Task0` = the stdlib alias classes binding `System.Threading.Tasks.Task`1`/`Task`.)
+Blocking or scheduling helpers such as `runBlocking` and `delay` are library APIs layered over the coroutine core;
+they are not compiler-provided `kotlin.clr` declarations.
 
 ### v1 limits (policy = call-time NotSupportedException, never an emit crash)
 
@@ -452,35 +445,16 @@ public suspend fun delay(ms: Long)             // Task.Delay(ms).await()
   They remain available in Git history. The implemented state machine is `ContinuationImpl`-based
   plain CIR, while the hot-Task public ABI remains unchanged.
 
-## 12. Status + refinements (P0-P2 landed, 2026-07-03)
+## 12. Ownership
 
-### Landed
-- **P0** design-lock (§11). **P1** stdlib cold-core (`kotlin.coroutines.clr.internal` bases + RootContinuation
-  + `kotlin.clr` await/blockOn/delay + Task/TCS aliases) — Task-facing files isolated in the jar-EXCLUDED
-  `libraries/stdlib/clr/taskinterop/` source set (K2JVMCompiler can't resolve CLR names; §5). **P1b** kotlinx
-  PURGED (breaking). **P2** bir2cir `SuspendColdLowering` v1: straight-line non-generic static top-level
-  `suspend fun` → cold-entry `f$dotkt_suspend` + plain-CIR SM class (`ContinuationImpl` subclass) + synthesized
-  draining `fun main`. Gate GREEN. Every other suspend shape is LEFT UNTOUCHED (keeps `"suspend":true` for the
-  existing ilemit throw-stub → zero regression, rt-stdlib no-op via the app-build gate).
+- The standard library owns the Kotlin continuation protocol and its reusable cold-core bases.
+- `dll2klib` recognizes the CLR awaitable pattern and projects metadata-only `await` declarations into reference KLIBs.
+- `kotc` resolves those declarations normally and preserves only Kotlin suspend semantics plus the await marker in BIR.
+- `bir2cir` owns both physical directions at the CLR boundary: awaiter calls for `.await()` and the public
+  `Task`/`Task<T>` bridge for exported suspend functions. It resolves the BCL Task family from compile-reference
+  metadata and synthesizes a module-private root continuation backed by `TaskCompletionSource<T>`.
+- `ilemit` emits the resulting CIR without reconstructing coroutine or Task semantics.
 
-### The public Task bridge moved to P4 (P2 scope call, accepted)
-P2 delivered the cold entry + SM + main-drain but NOT the public `Task<T>` bridge (deliverables c/d): the rungs
-don't need it (suspend `main` drains; Kotlin→Kotlin suspend calls hit the cold entry directly), and the bridge
-needs the TCS/Task CIR shapes that pair naturally with P4's `Task.await` interop + the real `blockOn` drain. So
-the bridge + the ilemit `suspendBridge` stamp land in **P4**, alongside await.
-
-### P4 symbol-surfacing mechanism (user, 2026-07-03) — kotc cares about ZERO coroutine symbols
-Do NOT hand-care kotlin.clr coroutine symbols in kotc. Split by whether the SIGNATURE is CLR-free:
-- **blockOn / delay → `expect`/`actual`.** CLR-free signatures → `expect` in `libraries/stdlib/common/src`
-  (jar-INCLUDED → the frontend resolves `import kotlin.clr.blockOn` from the classpath, kotc untouched). Two
-  actuals across the two builds (jar and ref/rt are separate K2 compilations; the jar already runs
-  `-Xmulti-platform -Xcommon-sources -Xexpect-actual-classes`): a staged **jar-side stub actual**
-  (`= throw UnsupportedOperationException()`; the jar is a never-executed frontend classpath — EXACT precedent =
-  the `JvmNameActual.kt`/`JvmInlineActual.kt` staging for the `@OptionalExpectation` JvmName/JvmInline expects),
-  and the **real CLR actual** in `taskinterop/` (Monitor drain / `Task.Delay().await()`), ref/rt only.
-- **await → dll2klib projection** (this section §5). `suspend fun Task<T>.await(): T` names Task → not an
-  expect/actual candidate. dll2klib projects the `.await()` extension beside
-  `System.Threading.Tasks.Task<T>`; bir2cir lowers the call site.
 ### P2 → P3 handoff bugs (verified, must fix in P3)
 1. **kotc `override val context` getter not marked override.** The cold-core `ContinuationImpl.get_context`
    (and `RestrictedContinuationImpl`) emit as `virtual:true` NewSlot rather than filling
@@ -504,8 +478,8 @@ served natively by the `Task<T>` bridge + `.GetAwaiter().GetResult()` (.NET's ow
 **Decision:**
 - **`blockOn` and `delay` are REMOVED from `kotlin.clr`** (the `expect` in `common/src/kotlin/clr/CoroutinesH.kt`,
   the jar stub actual staged in `build-stdlib-jar.sh`, and the real actuals in `taskinterop/Coroutines.kt`).
-- **The core `kotlin.clr` coroutine surface is now JUST `await`** — the genuine CLR async boundary (projected by
-  dll2klib in P4). Proper `blockOn`/`delay`/`launch`/`async` (with cancellation + dispatcher)
+- **The compiler-projected CLR coroutine surface is just `await`** — the genuine CLR async boundary.
+  Proper `blockOn`/`delay`/`launch`/`async` (with cancellation + dispatcher)
   are a future **Track 2** (kotlinx port).
 - **`blockOn`/`delay` are re-implemented IN THE TEST HARNESS, in pure Kotlin, over the PUBLIC stdlib primitives**
   (`startCoroutine`/`Continuation` for blockOn's drain; `Task.Delay(ms).await()` for delay). The coroutine test
@@ -544,8 +518,8 @@ UNCONDITIONALLY. The classifier assigns each admitted member one of three shapes
 | concrete + segmentable (`SuspensionRefusalReason == null`) | SM class + cold entry + bridge (the full transform) |
 | concrete + NOT segmentable (v1 limit, or M4 own-generic-on-generic-class) | a call-time `throw NotSupportedException(reason)` cold entry + bridge, and a bir2cir WARNING naming the fun + the refusal site |
 
-The only members NOT admitted are the stdlib carve-outs: the interop-bridge `await` marker
-(`kotlin.clr.CoroutinesKt`), the old kotc CPS/sequence path (`steps`/`coClass`), and stdlib inline coroutine
+The only members NOT admitted are the reference-KLIB `@ClrAwaitBridge` declarations, the old kotc CPS/sequence
+path (`steps`/`coClass`), and stdlib inline coroutine
 intrinsics (`suspendCoroutine*`, un-lowered in stdlib builds for the ilemit `_stdlibStub`).
 
 **Consequences (all deletions land in the same change):**
