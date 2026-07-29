@@ -1011,10 +1011,21 @@ static class MemberCallSubstitution
         {
             var elem = OwnerElemArg(ownerFqnNode);
             if (member == "iterator" && args.Count == 0)
+            {
+                // MutableList's CLR face only exposes IEnumerable<T>.GetEnumerator, which cannot implement Kotlin's
+                // MutableIterator.remove contract. The resolved Kotlin owner is authoritative here: route it to the
+                // live IList-backed mutable adapter instead of narrowing its declared return to Iterator<T>.
+                if (ownerFqn == "kotlin.collections.MutableList")
+                    return CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt",
+                        "clrMutableListIterator", elem, args);
                 return CollDefaultCall(node, "kotlin.collections.ClrIteratorBridgeKt", "iteratorOverEnumerable", elem, args);
+            }
             if (member == "listIterator")
             {
                 var idx = args.Count >= 1 ? args : new JsonArray { new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("int"), ["value"] = 0 } };
+                if (ownerFqn == "kotlin.collections.MutableList")
+                    return CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt",
+                        "clrMutableListListIterator", elem, idx);
                 return CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt", "clrListListIterator", elem, idx);
             }
             if (CollectionDefaults.TryGetValue(member, out var helperMethod))

@@ -111,6 +111,59 @@ private class ClrListIterator<T>(private val list: List<T>, index: Int) : ListIt
 
 public fun <T> clrListListIterator(list: List<T>, index: Int): ListIterator<T> = ClrListIterator(list, index)
 
+// MutableList aliases IList<T>, whose IEnumerable<T>.GetEnumerator surface cannot represent Kotlin's
+// remove/set/add iterator contract. Keep that semantic adapter here, beside the other Kotlin<->CLR list defaults,
+// and build it only from MutableList operations that bir2cir already maps to IList<T>.
+private class ClrMutableListIterator<T>(
+    private val list: MutableList<T>,
+    index: Int
+) : MutableListIterator<T> {
+    private var cursor = index
+    private var last = -1
+
+    init {
+        if (index < 0 || index > list.size) throw IndexOutOfBoundsException()
+    }
+
+    override fun hasNext(): Boolean = cursor < list.size
+    override fun next(): T {
+        if (!hasNext()) throw NoSuchElementException()
+        last = cursor
+        cursor++
+        return list[last]
+    }
+    override fun hasPrevious(): Boolean = cursor > 0
+    override fun previous(): T {
+        if (!hasPrevious()) throw NoSuchElementException()
+        cursor--
+        last = cursor
+        return list[last]
+    }
+    override fun nextIndex(): Int = cursor
+    override fun previousIndex(): Int = cursor - 1
+    override fun remove() {
+        if (last < 0) throw IllegalStateException()
+        list.removeAt(last)
+        if (last < cursor) cursor--
+        last = -1
+    }
+    override fun set(element: T) {
+        if (last < 0) throw IllegalStateException()
+        list[last] = element
+    }
+    override fun add(element: T) {
+        list.add(cursor, element)
+        cursor++
+        last = -1
+    }
+}
+
+public fun <T> clrMutableListIterator(list: MutableList<T>): MutableIterator<T> =
+    ClrMutableListIterator(list, 0)
+
+public fun <T> clrMutableListListIterator(list: MutableList<T>, index: Int): MutableListIterator<T> =
+    ClrMutableListIterator(list, index)
+
 // subList -> a copying view. ClrSubList implements List (@Clr) so it gets get_Count/get_Item (C3a) + a generated
 // GetEnumerator (the reverse bridge). It only needs size/get; the non-BCL members route to the helpers above.
 private class ClrSubList<T>(private val backing: List<T>, private val fromIndex: Int, private val toIndex: Int) : List<T> {
