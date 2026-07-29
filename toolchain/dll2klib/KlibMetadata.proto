@@ -5,7 +5,7 @@
 //   core/metadata/src/metadata.proto
 //   compiler/util-klib/src/KlibMetadataProtoBuf.proto
 //
-// Only fields emitted by the PoC are declared. Fields 171-174 are KLIB protobuf
+// Only fields emitted by dll2klib are declared. Fields 171-174 are KLIB protobuf
 // extensions upstream; declaring them as ordinary fields produces the identical
 // wire representation and Kotlin's registered extension parser sees them.
 syntax = "proto2";
