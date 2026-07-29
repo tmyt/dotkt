@@ -152,7 +152,7 @@ and should not contain `System.Threading.Tasks.Task`.
 Instead:
 
 ```text
-libraries/stdlib/clr/.../Task.kt
+libraries/stdlib/clr/taskinterop/kotlin/clr/Tasks.kt
   CLR-platform source containing Task.await declarations/implementation or declarations that bind to helpers.
 
 dll2klib
