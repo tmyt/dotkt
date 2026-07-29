@@ -1,0 +1,15 @@
+{
+  "methods": [
+    {
+      "name": "danglingRead",
+      "params": [],
+      "ret": { "t": "fqn", "name": "kotlin.Int" },
+      "body": [
+        {
+          "k": "exprStmt",
+          "expr": { "k": "bindRef", "id": "dotkt$b0", "sty": { "t": "fqn", "name": "kotlin.Int" } }
+        }
+      ]
+    }
+  ]
+}

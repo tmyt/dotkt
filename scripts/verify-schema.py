@@ -215,6 +215,44 @@ class V:
         if t == "star" and f.endswith(".cir.json"):
             self.err(f, path, "Kotlin star projection must be lowered by bir2cir before CIR")
 
+    def plan_scope(self, f, o, path, bound):
+        """§2.7 NESTING RULE: every `bindRef` resolves OUTWARD to an enclosing plan's binding.
+
+        A plan may nest — a default that is itself a call with defaults, and an inline splice's own bindings wrapped
+        around the spliced block that reads its caller's — and `CallEvalLowering` lowers the inner one first, leaving
+        an unknown id alone precisely because it belongs to a plan further out. That is only sound while every id
+        HAS an enclosing declaration: a `bindRef` naming nothing is a value that will never be evaluated, and the
+        chokepoint at the end of the pass would report it as an unlowerable leftover with no way back to the producer.
+        Checking it here names the producer's own document instead.
+
+        A binding's own `expr` reads only bindings DECLARED BEFORE IT (Kotlin defaults reference earlier parameters
+        only), so each binding is checked against the prefix of its plan, not the whole of it.
+        """
+        if isinstance(o, dict):
+            plan = o.get("bindings") if o.get("k") == "callEval" else o.get("delegationBindings")
+            if isinstance(plan, list):
+                inner = bound
+                for i, b in enumerate(plan):
+                    if not isinstance(b, dict):
+                        continue
+                    self.plan_scope(f, b.get("expr"), f"{path}/bindings[{i}]/expr", inner)
+                    if isinstance(b.get("id"), str):
+                        inner = inner | {b["id"]}
+                for key, val in o.items():
+                    if key not in ("bindings", "delegationBindings"):
+                        self.plan_scope(f, val, path + "/" + key, inner)
+                return
+            if o.get("k") == "bindRef":
+                if o.get("id") not in bound:
+                    self.err(f, path, f"bindRef id={o.get('id')!r} resolves to no enclosing call-evaluation plan "
+                                      "(§2.7 nesting rule: a bindRef reads a binding of an ancestor plan)")
+                return
+            for key, val in o.items():
+                self.plan_scope(f, val, path + "/" + key, bound)
+        elif isinstance(o, list):
+            for i, x in enumerate(o):
+                self.plan_scope(f, x, path + f"[{i}]", bound)
+
     def walk(self, f, o, path):
         if isinstance(o, dict):
             if "t" in o and "k" in o:
@@ -327,6 +365,8 @@ def main(argv):
             v.err(f, "", f"JSON parse failure: {e}")
             continue
         v.walk(f, d, "")
+        if f.endswith(".bir.json"):
+            v.plan_scope(f, d, "", frozenset())
     # report
     if v.viol:
         # group by message-prefix for a readable summary; cap examples per kind

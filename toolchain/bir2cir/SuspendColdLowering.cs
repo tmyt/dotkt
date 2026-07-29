@@ -1410,7 +1410,10 @@ static partial class SuspendColdLowering
             if (why != FieldRejection.None)
                 throw new NotSupportedException(FieldLegality.SuspendMessage(
                     FieldLegality.PosPrefix(_m), DiagOwner, role, roleNamesIt ? null : name, type, offending, why, across));
-            if (_fields.Add(name)) _fieldDecls.Add((name, type ?? AnyTn));
+            if (_fields.Add(name)) _fieldDecls.Add((name, type ?? throw new NotSupportedException(
+                $"bir2cir: {FieldLegality.PosPrefix(_m)}suspend-lowering: in `{DiagOwner}`, the {role} "
+                + $"`{name}` lives across a suspension but carries no static type, so its state-machine field would "
+                + "be untyped — an earlier lowering dropped the type.")));
         }
 
         // The suspend ABI itself, checked for EVERY suspend declaration — abstract, stubbed, suspension-free or
@@ -1440,11 +1443,22 @@ static partial class SuspendColdLowering
         // How a diagnostic names the thing being compiled.
         string DiagOwner => _isLambda ? _smType : (_ownerClass ?? _fileClass) + "." + _name;
 
-        // A `{k:var}` that the storage gate left as a MoveNext LOCAL. The type slot is mandatory (ilemit declares
-        // the local from it), so an untyped var lands on the same `kotlin.Any` fallback its SM field would have had.
-        static JsonObject LocalVar(string name, JsonNode typeJson, JsonNode init) => new()
+        // THE DECLARED TYPE of a `{k:var}` this lowering re-emits — as a MoveNext local or as an SM field. Mandatory,
+        // and an ERROR when absent: `kotlin.Any` is not a lesser slot, it BOXES a value type and hides a type the CLR
+        // would refuse as a field, so a silently-`Any` local is a miscompile waiting for a value type. Every lowering
+        // that mints a `var` stamps its type — the call-evaluation plan from the binding, the inline splice from the
+        // callee's closed return type and parameter types — so a var without one means an earlier layer DROPPED it,
+        // which is the drop to fix rather than to compensate for (docs/dotkt-semantics.md §7.1).
+        TypeNode VarType(JsonObject v) =>
+            TypeJson.Read(v["type"]) ?? throw new NotSupportedException(
+                $"bir2cir: {FieldLegality.PosPrefix(_m)}suspend-lowering: in `{DiagOwner}`, the local "
+                + $"`{Str(v["name"])}` is declared with no type, so the slot that holds it across a suspension would "
+                + "be untyped — an earlier lowering dropped the type.");
+
+        // A `{k:var}` that the storage gate left as a MoveNext LOCAL.
+        JsonObject LocalVar(JsonObject v, JsonNode init) => new()
         {
-            ["k"] = "var", ["name"] = name, ["type"] = typeJson?.DeepClone() ?? Tw(AnyTn), ["init"] = init,
+            ["k"] = "var", ["name"] = Str(v["name"]), ["type"] = Tw(VarType(v)), ["init"] = init,
         };
 
         // ---- statement lowering ----
@@ -1461,9 +1475,9 @@ static partial class SuspendColdLowering
                     // An init-less `var` (e.g. kotc's tryExpr `var dotkt_tryvalN`, assigned in the try/catch) default-inits:
                     // `{k:default}` is the zero value for BOTH a reference (ldnull) and a VALUE type (initobj) — a bare
                     // NullConst(valueType) would emit a null Int32 (ilemit: "requires Number, target is Null").
-                    var val = init == null ? DefaultOf(TypeJson.Read(o["type"]) ?? AnyTn) : Rewrite(init, outp);
+                    var val = init == null ? DefaultOf(VarType(o)) : Rewrite(init, outp);
                     if (_fields.Contains(nm)) outp.Add(SetField(nm, val));
-                    else outp.Add(LocalVar(nm, o["type"], val));
+                    else outp.Add(LocalVar(o, val));
                     break;
                 }
                 case "setLocal":
@@ -1617,9 +1631,9 @@ static partial class SuspendColdLowering
                 if (Str(o["k"]) == "var" && Str(o["name"]) is string vln)
                     return _fields.Contains(vln)
                         ? SetField(vln, o["init"] == null
-                            ? DefaultOf(TypeJson.Read(o["type"]) ?? AnyTn) : RewriteNoSpill(o["init"]))
-                        : LocalVar(vln, o["type"], o["init"] == null
-                            ? DefaultOf(TypeJson.Read(o["type"]) ?? AnyTn) : RewriteNoSpill(o["init"]));
+                            ? DefaultOf(VarType(o)) : RewriteNoSpill(o["init"]))
+                        : LocalVar(o, o["init"] == null
+                            ? DefaultOf(VarType(o)) : RewriteNoSpill(o["init"]));
                 if (_isMember && Str(o["k"]) == "this")
                     return FieldOf(ThisField, new TypeNode.Fqn(_ownerClass));
                 if (Str(o["k"]) == "this" && CapturedOuterField() is JsonNode of0)
@@ -1675,9 +1689,9 @@ static partial class SuspendColdLowering
                 if (k == "var" && Str(o["name"]) is string vln)
                     return _fields.Contains(vln)
                         ? SetField(vln, o["init"] == null
-                            ? DefaultOf(TypeJson.Read(o["type"]) ?? AnyTn) : Rewrite(o["init"], outp))
-                        : LocalVar(vln, o["type"], o["init"] == null
-                            ? DefaultOf(TypeJson.Read(o["type"]) ?? AnyTn) : Rewrite(o["init"], outp));
+                            ? DefaultOf(VarType(o)) : Rewrite(o["init"], outp))
+                        : LocalVar(o, o["init"] == null
+                            ? DefaultOf(VarType(o)) : Rewrite(o["init"], outp));
                 if (_isMember && k == "this")
                     return FieldOf(ThisField, new TypeNode.Fqn(_ownerClass));
                 if (k == "this" && CapturedOuterField() is JsonNode of1)
@@ -1759,40 +1773,63 @@ static partial class SuspendColdLowering
         // its own `__aw` field by EmitSuspensionPoint, so it needs no extra spill; a pure operand (no call/new/
         // assignment anywhere in it) is stable across the suspension and stays inline (keeps output byte-identical
         // for the common `acc + one()` case where the left operand is a plain field/local read).
-        List<JsonNode> RewriteEvalOrder(List<JsonNode> kids, List<JsonNode> outp)
+        List<JsonNode> RewriteEvalOrder(List<JsonNode> kids, List<JsonNode> outp, out JsonNode terminal)
         {
-            var res = new List<JsonNode>(kids.Count);
-            for (var i = 0; i < kids.Count; i++)
+            // A TERMINAL operand is one whose evaluation never completes — an expression-position `throw`/`return`,
+            // the `valueBlock` a spliced `run { throw … }` becomes, a `break`/`continue` in a value slot, a call to a
+            // `Nothing`-returning function. Kotlin evaluates it and then nothing else in this expression.
+            //
+            // It only needs saying here when a SUSPENSION sits to its RIGHT, because that is the only arrangement
+            // this rewrite would otherwise get wrong: the terminal operand precedes a suspension, so it is selected
+            // for an evaluation-order spill — and it is not a value to spill. There is no resume at which to reload
+            // it, and wrapping it in the spill's `SetField` would push the state machine's receiver and then leave
+            // through the throw with it still on the stack. Two more things follow once the shape is recognised:
+            // every operand to its RIGHT is unreachable, so it is not rewritten at all (rewriting one would append
+            // dead suspension segments the machine still has to number and label), and the terminal operand IS the
+            // enclosing expression's value — `pair(throw x, later())` is `throw x`.
+            //
+            // An operand to its LEFT keeps its ordinary treatment against the operands that remain, which is why the
+            // truncated list is what the spill decision is asked over: `pair(side(), later(), throw x)` has no
+            // suspension right of the terminal, so nothing is truncated and `side()` spills as always; only
+            // `pair(side(), throw x, later())` truncates, and there `side()` has no reachable suspension left to be
+            // ordered against.
+            //
+            // With NO suspension to its right the operand needs nothing special and gets nothing: `f(throw x)` and
+            // `f(later(), throw x)` lower exactly as they always did — everything left of the terminal evaluates
+            // (a suspension there completes and resumes normally), then the terminal leaves, and the emitted call
+            // it was an argument to is unreachable code that never runs.
+            var terminalAt = kids.FindIndex(k => k != null && NodeType.IsNothing(TypeOfExpr(k)));
+            if (terminalAt >= 0 && LastSuspending(kids) <= terminalAt) terminalAt = -1;
+            var live = terminalAt < 0 ? kids : kids.GetRange(0, terminalAt + 1);
+            terminal = null;
+            var res = new List<JsonNode>(live.Count);
+            for (var i = 0; i < live.Count; i++)
             {
-                var child = kids[i];
+                var child = live[i];
                 if (child == null) { res.Add(null); continue; }
                 var rw = Rewrite(child, outp);
-                if (SpilledBeforeSuspension(kids, i))
+                if (SpilledBeforeSuspension(live, i))
                 {
                     // The spill is a real field on the SM class, so its type matters: a `kotlin.Any` slot boxes a
-                    // value type and hides a type the CLR would refuse as a field. TypeOfExpr answers precisely
-                    // for every node that carries a type; when it cannot, the operand's type was DROPPED by an
-                    // earlier lowering (the known one is InlineSplice, which mints its `valueBlock`s without a
-                    // `type` slot — closing that is what makes an untyped spill an error rather than a warning).
-                    // Warn and keep today's `kotlin.Any` slot rather than refusing source that compiles now.
-                    var ty = TypeOfExpr(child);
-                    if (ty == null)
-                    {
-                        Console.Error.WriteLine(
-                            $"bir2cir: WARNING {FieldLegality.PosPrefix(_m)}suspend-lowering: in `{DiagOwner}`, the "
-                            + $"`{Str((child as JsonObject)?["k"]) ?? "?"}` operand evaluated before a suspending "
-                            + "operand carries no static type; its evaluation-order spill slot falls back to "
-                            + "`kotlin.Any` (an earlier lowering dropped the operand's type).");
-                        ty = AnyTn;
-                    }
+                    // value type and hides a type the CLR would refuse as a field. TypeOfExpr answers precisely for
+                    // every node that carries a type, and every lowering that mints one stamps it — a spliced inline
+                    // call carries the callee's closed return type, a plan binding its caller-instantiated type. So a
+                    // node that cannot be typed here is a DROP by an earlier lowering, and saying so loudly is the
+                    // only answer that cannot silently box a value type.
+                    var ty = TypeOfExpr(child) ?? throw new NotSupportedException(
+                        $"bir2cir: {FieldLegality.PosPrefix(_m)}suspend-lowering: in `{DiagOwner}`, the "
+                        + $"`{Str((child as JsonObject)?["k"]) ?? "?"}` operand evaluated before a suspending operand "
+                        + "carries no static type, so its evaluation-order spill slot would be untyped — an earlier "
+                        + "lowering dropped the operand's type.");
                     var tmp = "__ord$" + (++_ordCounter);
                     // By construction this spill outlives the suspension to its right (that is why it exists).
-                    FieldStorage(tmp, ty, RoleOrder, lives: true, across: SuspendedCalleeIn(kids[LastSuspending(kids)]));
+                    FieldStorage(tmp, ty, RoleOrder, lives: true, across: SuspendedCalleeIn(live[LastSuspending(live)]));
                     outp.Add(SetField(tmp, rw));
                     res.Add(FieldOf(tmp, ty));
                 }
                 else res.Add(rw);
             }
+            if (terminalAt >= 0) terminal = res[terminalAt];
             return res;
         }
 
@@ -1802,7 +1839,10 @@ static partial class SuspendColdLowering
         // `recv`/`args`, so there is no per-shape operand list to keep in step with the description.
         JsonNode RewriteOrdered(JsonObject o, EvalOrder order, List<JsonNode> outp)
         {
-            var rw = RewriteEvalOrder(order.Operands, outp);
+            var rw = RewriteEvalOrder(order.Operands, outp, out var terminal);
+            // An operand that never completes IS this expression's value — there is nothing to reassemble around it,
+            // and the node's own callee/operator would be emitted as unreachable code if we did.
+            if (terminal != null) return terminal;
             var copy = new JsonObject();
             if (order.Shape == EvalOrderShape.Binary)
             {
@@ -2551,6 +2591,27 @@ static partial class SuspendColdLowering
             return new JsonObject { ["k"] = "local", ["name"] = name };
         }
 
+        // A TERMINAL operand (`throw`/`return`/`Nothing`) inside the argument list of the SUSPEND call itself, with a
+        // NESTED suspension to its RIGHT: `later(throw x, inner())`. Semantically the whole call is unreachable — the
+        // throw leaves before either suspension — but a suspension POINT is a label, a state save and a resume arm
+        // that this builder is in the middle of assembling, and it has no way to say "emit nothing here". Refusing is
+        // the honest answer, and it is not a narrowing: the shape aborted before this rule existed too (the spill it
+        // wanted had no derivable type), and it is the same family as the known nested-suspension-in-an-argument-list
+        // defect.
+        //
+        // ONLY that arrangement comes here. A terminal operand with no suspension to its right — `later(throw x)`,
+        // `later(inner(), throw x)` — needs no suspension point elided and never reaches this: RewriteEvalOrder
+        // reports a terminal only when one sits left of a suspension. So does the reachable form of the same fault in
+        // a NON-suspending call that merely CONTAINS a suspension (`pair(run { throw … }, later())`), which
+        // RewriteOrdered answers by making the terminal operand the expression's value.
+        JsonObject TerminalOperandInSuspendCall(JsonObject callNode) =>
+            throw new NotSupportedException(
+                $"bir2cir: {FieldLegality.PosPrefix(_m)}suspend-lowering: in `{DiagOwner}`, the suspending call to "
+                + $"`{Str(callNode["method"]) ?? "?"}` has an argument that never returns (a `throw`/`return`, or a "
+                + "`Nothing`-typed call) to the LEFT of another suspension in the same argument list. The call is "
+                + "unreachable, but the state machine cannot express a suspension point that is never taken — lift "
+                + "the argument into a statement before the call.");
+
         // The cold call. Shapes (same-assembly callStatic/callInstance, and — BUG 1 — the CROSS-ASSEMBLY
         // clr forms kotc emits for a referenced suspend callee):
         //   callStatic         -> <method>$dotkt_suspend(<args>, cast(this))                     (owner preserved)
@@ -2577,7 +2638,8 @@ static partial class SuspendColdLowering
             // analysis assumes is the spill that happens here.
             var order = EvalOrderOf(callNode).Value;
             var isInstance = order.HasReceiver;
-            var rw = RewriteEvalOrder(order.Operands, outp);
+            var rw = RewriteEvalOrder(order.Operands, outp, out var terminal);
+            if (terminal != null) return TerminalOperandInSuspendCall(callNode);
             var ri = order.ArgumentStart;
             var recvRw = isInstance ? rw[0] : null;
             var args = new JsonArray();
@@ -2735,7 +2797,8 @@ static partial class SuspendColdLowering
             // over the shared operand description. A suspend-VALUE invoke is a `callInstance`, so that description
             // always carries its receiver first.
             var order = EvalOrderOf(callNode).Value;
-            var rw = RewriteEvalOrder(order.Operands, outp);
+            var rw = RewriteEvalOrder(order.Operands, outp, out var terminal);
+            if (terminal != null) return TerminalOperandInSuspendCall(callNode);
             var recvRw = rw[0];
             var invokeArgs = rw.Skip(order.ArgumentStart).ToList();   // 0 / 1 / N (SuspendFunction0 / 1 / N)
 

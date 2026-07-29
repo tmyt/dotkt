@@ -210,6 +210,27 @@ internal fun BirEmitter.inlineSpliceCallSameModule(call: IrCall): String {
 	return emitOwnerfulInlineNode(call)
 }
 
+/** Render one `callInline` argument slot — GRANULARITY trigger (d) of §2.7, shared by the three inline emitters.
+ *
+ *  A SPLICED LAMBDA is not a value and is never bound. A literal lambda in a non-`noinline` function-typed slot rides
+ *  as an `inlineLambda` CARRIER — bir2cir splices its body at each invoke — and a bare forward of the enclosing inline
+ *  fn's own lambda parameter ([isForwardedInlineParam]) is that same carrier travelling BY NAME, which bir2cir's
+ *  §4.4(i) forwarding re-binds through `lambdaMap`. Binding either would replace the name bir2cir matches on with a
+ *  `bindRef` and break the splice.
+ *
+ *  Everything else the call SUPPLIES — a `noinline` lambda (a real delegate value), an ordinary argument — is
+ *  evaluated exactly once at the call site, whatever number of times the spliced body reads it (N times, zero times,
+ *  or inside a loop), so it is a plan binding. An OMITTED default is `null`: it is not supplied by this call, and
+ *  bir2cir fills it from the callee's own carrier INSIDE the splice — which is where Kotlin evaluates it, after every
+ *  supplied value. */
+private fun BirEmitter.inlineArgJson(call: IrCall, arg: IrExpression?, param: IrValueParameter, label: String): String =
+	when {
+		arg == null -> "null"
+		arg is IrFunctionExpression && !param.isNoinline -> emitInlineLambdaCarrier(arg)
+		isForwardedInlineParam(arg) -> expr(arg)
+		else -> callPlan(call).bindValue(arg, "arg", "argument '${param.name.asString()}' of '$label'")
+	}
+
 /** The shared OWNER-FUL `callInline` node builder for an inline call whose hosting .NET type kotc CAN name — used by
  *  BOTH the same-module member/top-level splice (`inlineSpliceCallSameModule`, body present) and the CROSS-MODULE inline
  *  MEMBER call (#60/W1: `body==null`, a dispatch receiver present — a facadegen-injected DotKt member OR a klib stdlib
@@ -264,18 +285,17 @@ internal fun BirEmitter.emitOwnerfulInlineNode(call: IrCall): String {
 	val typeArgs = callee.typeParameters.indices.joinToString(",") { i ->
 		(call.typeArguments.getOrNull(i)?.let { birType(it) } ?: OBJ).toJson()
 	}
-	val recvs = inlineReceiverParts(callee, extRecv, dispatchArg)
-	// One entry per POSITIONAL param, in order: a literal lambda -> an `inlineLambda` carrier; any other arg -> its expr.
-	val argsJson = params.indices.joinToString(",") { i ->
-		val arg = args.getOrNull(i)
-		// AXIS ②: a NOINLINE lambda arg is a REAL delegate value (emit via `expr` -> newDelegate/newClosure), NOT a
-		// splice carrier -> inside the spliced body its `param()` becomes a delegate INVOKE on the bound temp. A normal
-		// or CROSSINLINE lambda rides as an `inlineLambda` carrier bir2cir splices at its invoke sites. `params[i]` and
-		// `args[i]` are the i-th POSITIONAL param/arg (index-aligned above), so the noinline flag is read off the RIGHT param.
-		if (arg is IrFunctionExpression && !params[i].isNoinline) emitInlineLambdaCarrier(arg)
-		else if (arg != null) expr(arg)
-		else "null"
-	}
+	// §2.7 trigger (d): the values THIS call site evaluates are bound, in Kotlin evaluation order — dispatch receiver,
+	// extension receiver, then the positional arguments — so a body that reads one of them N times (or zero times, or
+	// inside a loop) still evaluates it exactly once, here, and an omitted default that bir2cir fills inside the splice
+	// lands after every supplied value rather than in its parameter's slot.
+	val label = calleeLabel(callee)
+	val dispatchJson = dispatchArg?.let { callPlan(call).bindValue(it, "recv", "receiver of '$label'") }
+	val extJson = extRecv?.let { callPlan(call).bindValue(it, "recv", "extension receiver of '$label'") }
+	val recvs = inlineReceiverParts(callee, extJson, dispatchJson, dispatchArg)
+	// One entry per POSITIONAL param, in order: a spliced lambda -> an `inlineLambda` carrier (or the forwarded
+	// carrier's own name); any other supplied arg -> a plan binding; an omitted default -> null.
+	val argsJson = params.indices.joinToString(",") { i -> inlineArgJson(call, args.getOrNull(i), params[i], label) }
 	val retType = birType(callee.returnType).toJson()
 	return """{"k":"callInline","callee":${fqnJson(callee.fqNameWhenAvailable?.asString() ?: name)},"owner":${fqnJson(owner)},"pc":$pc,"ga":$ga,"typeArgs":[$typeArgs],"recvs":$recvs,"args":[$argsJson],"retType":$retType,"paramSig":[${paramSigOf(callee)}]}"""
 }
@@ -290,10 +310,18 @@ internal fun BirEmitter.emitOwnerfulInlineNode(call: IrCall): String {
  *  for a `recv==dispatch` plain member AND for a `recv==extensionParam` REAL-INSTANCE (!static) member-extension, but
  *  NEVER for a flattened companion / top-level (static) payload — so this dangling companion token is correctly ignored
  *  (the same-module producer above also fails loud for the flattened-companion dispatch-reading case before emitting). */
-internal fun BirEmitter.inlineReceiverParts(callee: IrSimpleFunction, extRecv: IrExpression?, dispatchArg: IrExpression?): String {
+internal fun BirEmitter.inlineReceiverParts(
+	callee: IrSimpleFunction,
+	extJson: String?,
+	dispatchJson: String?,
+	dispatchArg: IrExpression?,
+): String {
 	val recvParts = ArrayList<String>()
-	extRecv?.let { recvParts.add(""""extension":${expr(it)}""") }
-	dispatchArg?.let { recvParts.add(""""dispatch":${expr(it)}""") }
+	// The two receivers arrive ALREADY RENDERED (as plan `bindRef`s): a receiver is evaluated before every argument and
+	// the dispatch receiver before the extension one, and the plan's binding order IS the evaluation order — so the
+	// caller renders them in that order, and this builder only lays them out in the node.
+	extJson?.let { recvParts.add(""""extension":$it""") }
+	dispatchJson?.let { recvParts.add(""""dispatch":$it""") }
 	// F2A (#75 finding 2A): carry the dispatch receiver's CONCRETIZED class type args as `recvs.dispatchTypeArgs` so
 	// bir2cir can substitute the payload's `tv{scope:type,i}` (the i-th type param of the callee's OWNING generic class)
 	// with the i-th carried arg — exactly as it substitutes `tv{scope:method,i}` from the node's `typeArgs`. Without
@@ -394,20 +422,15 @@ internal fun BirEmitter.inlineSpliceCall(call: IrCall, fileClass: String): Strin
 	val typeArgs = callee.typeParameters.indices.joinToString(",") { i ->
 		(call.typeArguments.getOrNull(i)?.let { birType(it) } ?: OBJ).toJson()
 	}
-	// One entry per POSITIONAL param, in order: a literal lambda -> an `inlineLambda` carrier; any other arg -> its expr.
-	val argsJson = params.indices.joinToString(",") { i ->
-		val arg = args.getOrNull(i)
-		// AXIS ②: a NOINLINE lambda arg is a REAL delegate value (emit via `expr` -> newDelegate/newClosure), NOT a
-		// splice carrier -> inside the spliced body its `param()` becomes a delegate INVOKE on the bound temp. A normal
-		// or CROSSINLINE lambda rides as an `inlineLambda` carrier bir2cir splices at its invoke sites. `params[i]` and
-		// `args[i]` are the i-th POSITIONAL param/arg (index-aligned above), so the noinline flag is read off the RIGHT param.
-		if (arg is IrFunctionExpression && !params[i].isNoinline) emitInlineLambdaCarrier(arg)
-		else if (arg != null) expr(arg)
-		else "null"
-	}
-	val retType = birType(callee.returnType).toJson()
-	val extRecvJson = extRecv?.let { expr(it) }
+	// §2.7 trigger (d) — see [inlineArgJson]. The extension receiver is bound FIRST (Kotlin evaluates a receiver
+	// before every argument), then the supplied arguments in positional order.
+	val label = calleeLabel(callee)
+	val extRecvJson = extRecv?.let { callPlan(call).bindValue(it, "recv", "extension receiver of '$label'") }
 	val recvs = if (extRecvJson != null) """{"extension":$extRecvJson}""" else "{}"
+	// One entry per POSITIONAL param, in order: a spliced lambda -> an `inlineLambda` carrier (or the forwarded
+	// carrier's own name); any other supplied arg -> a plan binding; an omitted default -> null.
+	val argsJson = params.indices.joinToString(",") { i -> inlineArgJson(call, args.getOrNull(i), params[i], label) }
+	val retType = birType(callee.returnType).toJson()
 	return """{"k":"callInline","callee":${fqnJson(callee.fqNameWhenAvailable?.asString() ?: name)},"owner":${fqnJson(fileClass)},"pc":$pc,"ga":$ga,"typeArgs":[$typeArgs],"recvs":$recvs,"args":[$argsJson],"retType":$retType,"paramSig":[${paramSigOf(callee)}]}"""
 }
 
@@ -542,20 +565,13 @@ internal fun BirEmitter.inlineSpliceCallOwnerless(call: IrCall, extRecv: IrExpre
 	val typeArgs = callee.typeParameters.indices.joinToString(",") { i ->
 		(call.typeArguments.getOrNull(i)?.let { birType(it) } ?: OBJ).toJson()
 	}
-	val extRecvJson = extRecv?.let { expr(it) }
+	// §2.7 trigger (d) — see [inlineArgJson]. The extension receiver is bound FIRST (Kotlin evaluates a receiver
+	// before every argument), then the supplied arguments in positional order (for `with`, the receiver is regular
+	// param[0] and rides as an ordinary bound argument; the lambda is param[1]).
+	val label = calleeLabel(callee)
+	val extRecvJson = extRecv?.let { callPlan(call).bindValue(it, "recv", "extension receiver of '$label'") }
 	val recvs = if (extRecvJson != null) """{"extension":$extRecvJson}""" else "{}"
-	// One entry per POSITIONAL param, in order: a literal lambda -> an `inlineLambda` carrier; any other arg -> its expr
-	// (for `with`, the receiver is regular param[0] and rides as a plain expr; the lambda is param[1]).
-	val argsJson = params.indices.joinToString(",") { i ->
-		val arg = args.getOrNull(i)
-		// AXIS ②: a NOINLINE lambda arg is a REAL delegate value (emit via `expr` -> newDelegate/newClosure), NOT a
-		// splice carrier -> inside the spliced body its `param()` becomes a delegate INVOKE on the bound temp. A normal
-		// or CROSSINLINE lambda rides as an `inlineLambda` carrier bir2cir splices at its invoke sites. `params[i]` and
-		// `args[i]` are the i-th POSITIONAL param/arg (index-aligned above), so the noinline flag is read off the RIGHT param.
-		if (arg is IrFunctionExpression && !params[i].isNoinline) emitInlineLambdaCarrier(arg)
-		else if (arg != null) expr(arg)
-		else "null"
-	}
+	val argsJson = params.indices.joinToString(",") { i -> inlineArgJson(call, args.getOrNull(i), params[i], label) }
 	val retType = birType(callee.returnType).toJson()
 	// The §4.2 overload disambiguator (see `paramSigOf`): one TYPE NODE per callee declared param (extension receiver as
 	// element 0), in the callee's OWN un-instantiated frame. bir2cir keys the ref.dll payload by owner(null)|name|pc|ga

@@ -24,6 +24,49 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   It opens with the eight byref-like storage refusals below.
 
 ### Fixed
+- **bir2cir (area:bir2cir): an argument that never returns, to the left of a suspending one, is no longer treated
+  as a value to carry across the suspension.** `pair(run { throw IllegalStateException() }, later())` refused to
+  compile — the evaluation-order spill wanted a type for an operand that has no value — and the shapes it stood for
+  (`run { return … }`, `error(…)`, any `Nothing`-typed call) were the same. Kotlin evaluates such an operand and then
+  nothing else in the expression, *including* the suspension: it is the expression's value, not something to store
+  and reload after a resume, and the operands to its right are unreachable. The suspend lowering now says so — the
+  terminal operand becomes the value, the rest is dropped, and no spill slot is minted (one would also have left the
+  state machine's receiver on the stack when control left through the throw). `bir-common/NodeType.cs` answers
+  `Nothing` for an expression-position `throw`/`return`, which is what lets "this has no value" be told apart from
+  "I could not derive its type" — the first is ordinary code, the second the dropped type the spill reports.
+  The rule applies exactly where it is needed: only an operand with a suspension to its RIGHT is treated specially,
+  because that is the only arrangement the spill would have got wrong. `pair(later(), run { throw … })` still
+  suspends, resumes and only then leaves, and an argument that never returns in a SUSPENDING call's own list
+  (`one(run { throw … })`, `sum(relay(), run { throw … })`) lowers as it always did. The one arrangement that
+  remains refused is a never-returning argument to the LEFT of a nested suspension in a suspending call's own list —
+  a suspension point that would have to be elided, which the state machine cannot express; the refusal names the
+  shape and the workaround (`tests/compile-fail/SuspendTerminalArgumentBeforeSuspension.kt`).
+- **kotc/bir2cir (area:kotc, area:bir2cir): an INLINE call's arguments now follow the same evaluation plan as every
+  other call's — one evaluation each, in Kotlin's order, whatever the spliced body does with them.** `InlineSplice`
+  bound each parameter to a temp in PARAMETER order, so a call that also filled a default ran the default in its own
+  slot: `inline fun f(a: Int = t("A"), b: Int, c: Int = t("C"), block: (Int) -> Int)` called `f(b = t("B"))` ran
+  A, B, C where Kotlin runs B, A, C — the inline half of the ordering defect the plan fixed for ordinary calls.
+  kotc now emits a plan for a `callInline` too (`docs/bir-cir-spec.md` §2.7, granularity trigger (d)): the dispatch
+  receiver, the extension receiver and every supplied argument become bindings, in that order. A spliced lambda is not
+  a value and is not bound — a literal carrier and a by-name forward of the enclosing inline fn's own lambda parameter
+  are the body being spliced — so a lambda-only inline call (`run { … }`) supplies nothing, binds nothing, and still
+  emits no plan, exactly as the granularity rule says. `InlineSplice` consumes the bindings instead of minting a temp per parameter, so a body
+  that reads a parameter twice, in a loop, or not at all no longer costs a redundant local; a filled default becomes a
+  local of the spliced block, which is where Kotlin evaluates a default (in the callee's scope, after every supplied
+  value). Consequences:
+  - a binding is inlined back into its reader only when that reader sits on the node's EAGER SPINE. A read inside a
+    spliced body's statements, a conditional branch, a loop or a closure happens at a different time, a different
+    number of times, or not at all, so the value is materialised — which is what "evaluate it at the call, exactly
+    once" means once the callee's body is the reader;
+  - every value an inline call binds, and every default it fills, carries a type. That closes the staged hole the
+    liveness work had to leave open: an untyped local, and an untyped evaluation-order spill in the suspend lowering,
+    are now errors that name the lowering which dropped the type, not a `kotlin.Any` slot that silently boxes a value
+    type behind a warning;
+  - the passes that run between the splice and the plan lowering peel a `callEval` exactly as they peel a
+    `valueBlock` when they ask what an expression produces, so a covariant construction spliced under a plan
+    (`xs.partition { … }`'s `Pair`) is still widened to its declared slot; and the plan lowering folds the layer it
+    creates — a block whose result is a block is one block — so a lambda body ending in a nested inline call
+    (`xs.map { s -> s.let { it.trim() } }`) keeps the single layer the splice's own flatten used to guarantee.
 - **kotc/bir2cir (area:kotc, area:bir2cir): a call's values are now ONE ordered evaluation plan, so a filled default
   can no longer duplicate a value, reorder a call, or be traded away for storage.** A Kotlin call evaluates its
   receiver, then each supplied argument, then the callee's omitted defaults, each exactly once — but on the CLR those

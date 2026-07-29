@@ -232,6 +232,15 @@ static class TryValueOperandHoist
 
     // Best-effort static type for a spilled temp (only needed for a side-effecting operand that precedes
     // a hoisted try — absent from the repro; the `pure`-left cases never spill).
+    //
+    // KNOWN GAP — the last `kotlin.Any` type fallback in the spill family. Everywhere else an untyped slot is now an
+    // ERROR: `kotlin.Any` boxes a value type and hides a type the CLR would refuse, so a lowering that cannot type a
+    // spill is reporting a DROP by an earlier one (SuspendColdLowering's evaluation-order spill and field gate,
+    // CallEvalLowering's address pins). This hoist is plan-external and runs BEFORE the suspend lowering, so it was
+    // deliberately left as-is rather than errorized alongside them. The intended replacement is the one shared
+    // node-local deriver, `bir-common/NodeType.cs` — which already answers this question for both of those callers —
+    // with the same "no fallback, an underivable node is a hole in the deriver" contract. It belongs with the
+    // follow-up that unifies the remaining duplicated purity/stability predicates, not with a plan change.
     static JsonNode GuessType(JsonNode n)
     {
         if (n is JsonObject o)

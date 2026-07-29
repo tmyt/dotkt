@@ -1,0 +1,51 @@
+{
+  "methods": [
+    {
+      "name": "readsALaterBinding",
+      "params": [],
+      "ret": { "t": "fqn", "name": "kotlin.Int" },
+      "body": [
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "callEval",
+            "type": { "t": "fqn", "name": "kotlin.Int" },
+            "bindings": [
+              {
+                "id": "dotkt$b0",
+                "phase": "arg",
+                "kind": "value",
+                "stable": false,
+                "type": { "t": "fqn", "name": "kotlin.Int" },
+                "role": "argument 'a' of 'f'",
+                "expr": { "k": "bindRef", "id": "dotkt$b1", "sty": { "t": "fqn", "name": "kotlin.Int" } }
+              },
+              {
+                "id": "dotkt$b1",
+                "phase": "arg",
+                "kind": "value",
+                "stable": false,
+                "type": { "t": "fqn", "name": "kotlin.Int" },
+                "role": "argument 'b' of 'f'",
+                "expr": { "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 1 }
+              }
+            ],
+            "expr": {
+              "k": "callStatic",
+              "owner": null,
+              "method": "f",
+              "sig": [
+                { "t": "fqn", "name": "kotlin.Int" },
+                { "t": "fqn", "name": "kotlin.Int" }
+              ],
+              "args": [
+                { "k": "bindRef", "id": "dotkt$b0", "sty": { "t": "fqn", "name": "kotlin.Int" } },
+                { "k": "bindRef", "id": "dotkt$b1", "sty": { "t": "fqn", "name": "kotlin.Int" } }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

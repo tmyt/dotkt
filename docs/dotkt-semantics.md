@@ -158,6 +158,15 @@ This is the single most surprising deviation, so it gets the most detail.
   targets, and splices it before codegen (a `return` in the spliced lambda body becomes the caller's `ret`). Full
   mechanism + scope in
   `docs/design-kotlin-metadata-attributes.md`.
+- **An inline call's ARGUMENTS are ordinary call values.** Splicing changes where the callee's body runs, not when the
+  call's values are evaluated: the receiver, then each supplied argument, each exactly once, at the call — and every
+  default the callee fills after all of them, whatever slot it sits in. So the spliced call carries the same
+  **evaluation plan** as any other call (§7, `docs/bir-cir-spec.md` §2.7): the values it supplies are bindings, and
+  every read of one in the spliced body is a pure READ of that binding. That the body may then read a value twice, or
+  inside a loop, or never, changes nothing — `f(next()) { … }` calls `next()` once even for a body that reads the
+  parameter in a loop, and evaluates it even for a body that ignores it. The only thing that is NOT a value is a
+  spliced lambda: a literal carrier, and a by-name forward of the enclosing inline fn's own lambda parameter, are the
+  body that gets spliced, not something evaluated.
 - Pitfall (verified, do NOT do this): marking an injected body-less function `inline` *without* carrying the body lets
   the frontend accept a non-local return but leaves nothing to splice → `InvalidProgramException` at runtime (worse
   than the clean compile error). `inline` restoration and the carried body are a package deal.
@@ -965,6 +974,13 @@ A default is the CALLEE's expression evaluated in the CALLER's frame, so every t
 call site's instantiation — the omitted parameter's type, the owner of a member it reads off the receiver, a type
 argument it passes on. Without that, `class G<T>(val v: T) { fun one(a: T = v) }` spliced into a non-generic caller
 left `G`'s positional type variable naming a slot that frame does not have.
+
+An **INLINE** call is no exception, even though its callee's body ends up inside the caller: the values it supplies are
+bound at the call, and each read of one in the spliced body is a read of that binding. So a body that reads a parameter
+twice, or in a loop, re-reads a local rather than re-running the argument; a body that never reads one still has the
+argument evaluated; and a default the splice fills runs after every supplied value rather than in its parameter's slot
+(§3). A filled default is the CALLEE's value — Kotlin evaluates it in the callee's scope — so it becomes a local of the
+spliced block, which is where the call site's own bindings have already been evaluated ahead of.
 
 The two call sites that ride a DECLARATION rather than an expression behave the same: a constructor **DELEGATION**
 (`: this(…)` / `: super(…)`, and a per-entry enum body's base call) carries its plan on the constructor declaration and
