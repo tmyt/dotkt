@@ -24,6 +24,13 @@ open class Panel2(val w: Int, val h: Int = w * 2) { val area: Int get() = w * h 
 var seeds: Int = 0
 fun seed(): Int { seeds++; return 3 }
 open class Seeded(val a: Int = seed(), val b: Int = a * 10)
+// ...and one that also takes a SUPPLIED leading argument, so the delegation's ORDER is observable: Kotlin evaluates the
+// value the `: super(…)` supplies before any of the callee's defaults. A delegation's arguments ride the constructor
+// DECLARATION, so that order is carried by the plan's `preStmts` rather than by an expression.
+var seedOrder: String = ""
+fun seedMarkP(): Int { seedOrder += "p"; return 2 }
+fun seedMarkD(): Int { seedOrder += "d"; return 3 }
+open class SeededOrder(val p: Int, val a: Int = seedMarkD(), val b: Int = a * 10)
 // #235: an UNSIGNED parameter beside a class-typed sibling of the same arity. `UInt` is `kotlin.UInt` at a call site and
 // `System.UInt32` in a reference assembly; unless the signature key folds the two spellings, one overload's key collapses
 // onto the other's and the wrong default is spliced.
@@ -57,6 +64,13 @@ fun note(msg: Int, tag: Int = 7): String = "$msg/$tag"
 fun scaled(a: Int, b: Int = a * 10): Int = a + b
 fun tri3(a: Int, b: Int = a + 1, c: Int = a * 100 + b): Int = c
 fun order3(p: Int, q: Int, r: Int = q * 10): String = "$p/$q/$r"
+// A GENERIC callee whose non-constant defaults mention its own type parameter. The carrier holds the default rendered
+// in the CALLEE's own frame, with `T` as a positional type variable; the CONSUMER's call site is where `T` is known,
+// so the splice has to close that frame there. Left open it erased to `Any`, which builds a `List<Any>` for a
+// `List<String>` slot: right values, wrong runtime type.
+fun <T> genDefaults(a: List<T> = emptyList(), n: Int = a.size): Int = n
+fun <T> genPairDefaults(a: List<Pair<T, Int>> = emptyList(), n: Int = a.size + 1): Int = n
+fun <T> genMutable(xs: MutableList<T> = mutableListOf()): MutableList<T> = xs
 var bumps: Int = 0
 fun bump(): Int { bumps++; return 3 }
 fun chain(a: Int, b: Int = bump(), c: Int = b * 10): Int = b * 1000 + c

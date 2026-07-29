@@ -20,6 +20,11 @@
          (suspend SM spills, suspend-lambda captures, closure captures). bir2cir is the only tool that mints
          heap storage for a Kotlin value, so it is the only linker. -->
     <Compile Include="../bir-common/FieldLegality.cs" Link="FieldLegality.cs" />
+    <!-- The call-evaluation plan's value predicates for the bindings bir2cir itself fills (§2.7). -->
+    <Compile Include="../bir-common/BindingStability.cs" Link="BindingStability.cs" />
+    <!-- Shared node-local "what type does this expression node produce?" derivation — the suspend lowering's
+         evaluation-order spill and the call-evaluation plan's address pins both mint locals and need one answer. -->
+    <Compile Include="../bir-common/NodeType.cs" Link="NodeType.cs" />
   </ItemGroup>
   <ItemGroup>
     <!-- Read the metadata-only reference stdlib (throw-stub bodies, kotlin.* signatures) WITHOUT a runtime load:

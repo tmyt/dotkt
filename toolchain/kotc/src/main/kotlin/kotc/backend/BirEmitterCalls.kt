@@ -106,13 +106,17 @@ private val defaultArgPlaceholder = """{"k":"defaultArg"}"""
  *  facadegen metadata's constant (#134) if it has one, else becomes a `defaultArg` placeholder that bir2cir fills from
  *  the ref.dll @KotlinDefault. A slot with neither is dropped when purely TRAILING (ilemit's [DefaultParameterValue]
  *  backfill fills it), and refused loudly when a LATER slot still emits (a "gap" — silently omitting it would shift
- *  that value into the wrong parameter slot: the joinToString/substringAfter miscompile). */
+ *  that value into the wrong parameter slot: the joinToString/substringAfter miscompile).
+ *
+ *  EVALUATION (docs/bir-cir-spec.md §2.7): a fill can give one of this call's values a SECOND reader — a same-module
+ *  default splices it, a reconstructed data-class `copy` field reads the receiver, a cross-module `@KotlinDefault`
+ *  carrier binds it. Where that is possible this pass builds the call's EVALUATION PLAN: every value the call supplies
+ *  becomes an ordered BINDING (receivers, then the supplied arguments, then the filled defaults in declaration order —
+ *  Kotlin's order), and every reader is a `bindRef` READ of it. Where it is not possible no plan is emitted and the
+ *  positional array below IS the evaluation plan. bir2cir's CallEvalLowering turns the plan into locals;
+ *  SuspendColdLowering decides their storage. Nothing here decides whether a value CAN be held. */
 internal fun BirEmitter.filledArgs(
 	call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression,
-	/** The call's receiver JSON as the CALLER emits it for its own use (an inner-class `new` passes the enclosing
-	 *  instance as the leading arg). Shared so the expression is emitted ONCE — a second `expr()` of the same IR would
-	 *  append a second copy of any lifted lambda it contains. Lazy: neither side forces an emission it does not use. */
-	emittedRecv: Lazy<String?>? = null,
 ): List<String> {
 	val callee = (call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction) ?: return emptyList()
 	val carries = carriesKotlinDefault(callee)
@@ -145,174 +149,335 @@ internal fun BirEmitter.filledArgs(
 	// bound separately (see [enclosingThisChain] / [enclosingThisSubst]).
 	val enclosingThis = enclosingThisChain(callee)
 	val enclosingSyms = enclosingThis.map { it.first.symbol }.toHashSet()
-	// The call's receiver expressions for a `this`-referencing same-module default. ONE lazy per DISTINCT receiver: a
-	// receiver is emitted at most once (a second `expr()` of the same IR appends a second copy of any lifted lambda it
-	// contains, and evaluates a side-effecting receiver twice), and reused by every omitted default that reads it. A
-	// non-stable receiver is a temp LOCAL read by then — `expr` hoisted it for exactly-once evaluation before this call
-	// was emitted — so reusing the string duplicates nothing.
-	// A default's receiver read binds to the receiver OF ITS OWN KIND. A member EXTENSION has BOTH a dispatch and an
-	// extension receiver, so collapsing them to one expression rendered a `this@Owner.k` default as an Owner member
-	// read on the EXTENSION receiver's value — a wrong-typed `this` reaching CIL (NullReferenceException at runtime,
-	// nothing loud at compile time). Kind-directed binding is what keeps two receivers distinguishable here.
-	val dispatchRecv: Lazy<String?> = lazy { dispatchReceiver(call)?.let { expr(it) } }
-	val extRecv: Lazy<String?> = lazy { extensionReceiver(call)?.let { expr(it) } }
-	// The instance the ENCLOSING-this chain hangs off: what the caller already emitted (an inner-class `new` passes the
-	// enclosing instance as its leading arg), else this call's own dispatch receiver — an inner-class member reaches
-	// `this@Outer` from its own `this`, never from an extension receiver. Shares `dispatchRecv`, so reading it both
-	// here and for a dispatch-param binding still emits the expression once.
-	val enclosingRecv: String? by lazy { emittedRecv?.value ?: dispatchRecv.value }
 	// The callee's POSITIONAL parameters with their `call.arguments` index — contexts then regulars, the SAME sequence
-	// [paramsJsonList] emits as `params` and [overloadSigField] keys `sig` by, so `out` below is index-for-index the
-	// declaration's arg array (the caller prepends `__self` on both sides).
+	// [paramsJsonList] emits as `params` and [overloadSigField] keys `sig` by, so the returned list is index-for-index
+	// the declaration's arg array (the caller prepends `__self` on both sides).
 	val vals = callee.parameters.mapIndexedNotNull { i, p -> if (isValueParameter(p)) i to p else null }
 	val provided = vals.map { (i, _) -> if (i < call.arguments.size) call.arguments[i] else null }
-	// A default value is itself a call-site value. If a LATER omitted default reads this parameter, a non-stable default
-	// must be bound after substitution just like a provided argument is bound by the expression pre-pass; otherwise
-	// `a = bump(), b = a * 10` renders two copies of `bump()`. Only defaults this call actually fills participate.
-	val realFilledDefaults = vals.mapIndexed { idx, (_, p) ->
+	// The SAME-MODULE defaults this call actually fills. A CROSS-MODULE omission's value is an IrErrorExpression the
+	// frontend artifact dropped: nothing of this call is spliced into it HERE (bir2cir's carrier splice does that).
+	val filledDefaults = vals.mapIndexed { idx, pair ->
 		if (provided[idx] != null) null
-		else p.defaultValue?.expression?.takeIf { it !is org.jetbrains.kotlin.ir.expressions.IrErrorExpression }
+		else pair.second.defaultValue?.expression?.takeIf { it !is org.jetbrains.kotlin.ir.expressions.IrErrorExpression }
 	}
-	val readByLaterFilledDefault = BooleanArray(vals.size) { idx ->
-		val sym = vals[idx].second.symbol
-		(idx + 1 until vals.size).any { later ->
-			realFilledDefaults[later]?.let { refsAny(it, setOf(sym)) } == true
+	// GRANULARITY (§2.7): a plan is emitted only where the positional array below would NOT already be a faithful
+	// evaluation plan — i.e. where a value can acquire a SECOND reader, or where the array's ORDER is not Kotlin's:
+	//  (a) a same-module default this call fills READS one of the call's values (an earlier parameter, a receiver, an
+	//      enclosing instance): the captureSubst channel below splices the value into the default;
+	//  (b) a CROSS-MODULE omission: either a `defaultArg` placeholder, whose @KotlinDefault carrier binds `{this}` /
+	//      `{defaultArgParam n}` to THIS call's own values in bir2cir, or a data-class `copy` field reconstructed as a
+	//      read of the receiver. Taken WHOLE (any IrErrorExpression omission) rather than per fill kind, so the test can
+	//      never disagree with what the loop below actually emits — a placeholder outside a plan is a loud bir2cir
+	//      failure — and a plan whose values all turn out to have one reader costs nothing: CallEvalLowering inlines
+	//      every single-reader binding straight back into its slot.
+	//  (c) a fill occupies a slot BEFORE a slot this call SUPPLIES. Kotlin evaluates every supplied value before any
+	//      default, whatever slots they sit in, so `f(a: Int = mk(), c: Int)` called `f(c = arg())` must run `arg()`
+	//      first — while the positional array puts the fill in slot 0. Only a plan can express that, because only a
+	//      plan carries an order distinct from the array's.
+	// With none of the three, the positional array below IS the evaluation plan: one reader per value, in Kotlin order.
+	val lastSupplied = provided.indexOfLast { it != null }
+	val planNeeded =
+		filledDefaults.any { d ->
+			d != null && (refsAny(d, valueSyms) || refsAny(d, receiverSyms) || refsAny(d, enclosingSyms))
+		} || vals.indices.any { idx ->
+			provided[idx] == null &&
+				vals[idx].second.defaultValue?.expression is org.jetbrains.kotlin.ir.expressions.IrErrorExpression
+		} || vals.indices.any { idx ->
+			idx < lastSupplied && provided[idx] == null && vals[idx].second.defaultValue != null
 		}
+	val plan = if (planNeeded) callPlan(call) else null
+	val label = calleeLabel(callee)
+	// The call's RECEIVERS. A default's receiver read binds to the receiver OF ITS OWN KIND: a member EXTENSION has
+	// BOTH a dispatch and an extension receiver, so collapsing them to one expression rendered a `this@Owner.k` default
+	// as an Owner member read on the EXTENSION receiver's value — a wrong-typed `this` reaching CIL
+	// (NullReferenceException at runtime, nothing loud at compile time).
+	//   Under a plan both are bound EAGERLY and dispatch-first, because Kotlin evaluates a receiver before every
+	// argument and the binding order IS the evaluation order. Without a plan they stay lazy: rendering a receiver has
+	// synthesis side effects (a lifted method appended to the file class for a non-capturing lambda, a consumed synth
+	// index), so an unread one must not be forced for a rendering that is then discarded.
+	val dispatchRecv: Lazy<String?> = lazy {
+		dispatchReceiver(call)?.let { r -> plan?.bindValue(r, "recv", "receiver of '$label'") ?: expr(r) }
 	}
-	val out = ArrayList<String>()
+	val extRecv: Lazy<String?> = lazy {
+		extensionReceiver(call)?.let { r -> plan?.bindValue(r, "recv", "extension receiver of '$label'") ?: expr(r) }
+	}
+	if (plan != null) { dispatchRecv.value; extRecv.value }
+	// The instance the ENCLOSING-this chain hangs off: this call's own dispatch receiver — an inner-class member reaches
+	// `this@Outer` from its own `this`, and an inner-class `new` takes the enclosing instance AS its dispatch receiver
+	// (the leading arg the caller emits, which reads this same value through `expr`).
+	val enclosingRecv: String? by lazy { dispatchRecv.value }
+	// The emitted JSON per POSITIONAL slot — a `bindRef` under a plan, the rendered expression without one. Null for a
+	// slot this pass drops (a purely-trailing uncarried cross-module omission ilemit backfills).
+	val slots = arrayOfNulls<String>(vals.size)
 	// The filled JSON for each already-processed value parameter — the substitution source for a same-module default
-	// that reads ANOTHER value parameter (`b: Int = a * 10`). A Kotlin default may reference only EARLIER params, so
-	// every referenced param is already recorded here by the time its reader is processed.
+	// that reads ANOTHER value parameter (`b: Int = a * 10`). A Kotlin default may reference only EARLIER params, and
+	// every supplied value is processed before any default, so every referenced param is recorded by then.
 	val filledByParam = java.util.IdentityHashMap<org.jetbrains.kotlin.ir.declarations.IrValueParameter, String>()
+
+	// PHASE 1 — every value the call SUPPLIES, in positional order (contexts then regulars). Kotlin evaluates all of
+	// them before ANY of the callee's defaults, which is why they are bound first and the defaults follow in phase 2.
 	vals.forEachIndexed { idx, pair ->
 		val p = pair.second
-		val arg = provided[idx]
+		val arg = provided[idx] ?: return@forEachIndexed
+		// A `byref(x)` / @ClrRefArgument slot takes an ADDRESSABLE lvalue, not a copied value. Under a plan it is an
+		// ADDRESS binding: it marks WHERE in the evaluation order the location is computed, and no storage is minted
+		// for it — CallEvalLowering pins the impure VALUES the location is computed from at this position and leaves
+		// the pure location expression in the slot, so the address is taken at the call and its operands still run
+		// where Kotlin runs them.
+		val address = addressSlotExpr(arg, p)
+		val emitted =
+			if (address != null)
+				plan?.bind("arg", "address", isStableAddress(arg),
+					// The SLOT's type, so the callee's frame — closed here like every other callee type.
+					withDefaultTypeScope(call, callee) { birType(p.type).toJson() },
+					"argument '${p.name.asString()}' of '$label'", address) ?: address
+			else {
+				plan?.bindValue(arg, "arg", "argument '${p.name.asString()}' of '$label'")
+				argExpr(arg, p)   // the slot's own coercion (nullable unwrap / boxed-Any cast) wraps the bound read
+			}
+		slots[idx] = emitted
+		filledByParam[p] = emitted
+	}
+
+	// PHASE 2 — every OMITTED default this call FILLS, in the callee's DECLARATION order (the order the `$default`
+	// scope would evaluate them in, and the order a later default's read of an earlier one depends on).
+	vals.forEachIndexed { idx, pair ->
+		if (provided[idx] != null) return@forEachIndexed
+		val p = pair.second
+		val def = p.defaultValue?.expression ?: return@forEachIndexed
+		// THE TYPE-FRAME SCOPE ([withDefaultTypeScope]), around EVERY rendering of this default AND the type its
+		// binding is declared with — not only the branch that reads the callee's own values. A default's EXPRESSION may
+		// read nothing at all and still mention the callee's type parameters in its TYPES
+		// (`fun <U> f(x: List<Pair<T, U>> = emptyList())` in a `class C<T>`), and those types belong to the callee's
+		// frame whatever the expression does.
+		val filled = withDefaultTypeScope(call, callee) {
+			fillOmitted(call, callee, plan, p, def, idx, vals, provided, metaDefaults, kotlinDefaultSlots, carries,
+				valueSyms, receiverSyms, enclosingSyms, receiverParams, enclosingThis, dispatchRecv, extRecv,
+				enclosingRecv, filledByParam, label)
+		}
+		if (filled != null) { slots[idx] = filled; filledByParam[p] = filled }
+	}
+	return slots.filterNotNull()
+}
+
+/** Render ONE omitted default of `call` and, under a plan, bind it — the body of [filledArgs]'s phase 2, extracted so
+ *  the type-frame scope wraps it whole. Every type read in here is the CALLEE's, and [BirEmitter.defaultTypeSubst] is
+ *  installed for the duration, so a plain `birType` already yields the caller-instantiated form. Null when this slot
+ *  emits nothing (a purely-trailing uncarried cross-module omission ilemit backfills). */
+private fun BirEmitter.fillOmitted(
+	call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression,
+	callee: org.jetbrains.kotlin.ir.declarations.IrFunction,
+	plan: CallPlan?,
+	p: IrValueParameter,
+	def: IrExpression,
+	idx: Int,
+	vals: List<Pair<Int, IrValueParameter>>,
+	provided: List<IrExpression?>,
+	metaDefaults: List<kotc.frontend.ClrConstDefault?>?,
+	kotlinDefaultSlots: List<Boolean>?,
+	carries: Boolean,
+	valueSyms: Set<org.jetbrains.kotlin.ir.symbols.IrValueSymbol>,
+	receiverSyms: Set<org.jetbrains.kotlin.ir.symbols.IrValueSymbol>,
+	enclosingSyms: Set<org.jetbrains.kotlin.ir.symbols.IrValueSymbol>,
+	receiverParams: List<IrValueParameter>,
+	enclosingThis: List<Pair<IrValueParameter, IrClass>>,
+	dispatchRecv: Lazy<String?>,
+	extRecv: Lazy<String?>,
+	enclosingRecv: String?,
+	filledByParam: java.util.IdentityHashMap<IrValueParameter, String>,
+	label: String,
+): String? {
+		// Is this fill free to be READ twice — a constant, or the metadata constant a cross-module slot resolves to?
+		var stableFill = false
 		val emitted: String? = when {
-			arg != null -> argExpr(arg, p)
-			else -> {
-				val def = p.defaultValue?.expression
-				when {
-					def == null -> null
-					def is org.jetbrains.kotlin.ir.expressions.IrErrorExpression -> {
-						// CROSS-MODULE: the frontend artifact dropped the default VALUE. A data-class `copy` (Pair/Triple, or any
-						// referenced data class) is a SPECIAL case: its omitted-field default is ALWAYS `this.<field>` by
-						// construction, so reconstruct it as a receiver FIELD read at the INSTANTIATED call site — the exact BIR
-						// kotc emits for a plain `pair.first` (owner = the actual `kotlin.Pair[Int,Int]`, so no generic `gp:` token
-						// leaks; the @KotlinDefault splice can't carry that instantiation). The Pair/Triple partial-`copy` fix (C3).
-						val copyField =
-							if ((callee as? org.jetbrains.kotlin.ir.declarations.IrSimpleFunction)?.let { isDataClassCopy(it) } == true && (dispatchRecv.value ?: extRecv.value) != null)
-								(dispatchReceiver(call) ?: extensionReceiver(call))?.let { r ->
-									// Owner via ownerSpec (the SAME token the plain `pair.first` property read uses — the referenced,
-									// instantiated `kotlin.Pair[Int,Int]`, no `@` this-assembly prefix, no open `gp:` param).
-									"""{"sty":${birType(p.type).toJson()},"k":"field","ownerType":${ownerSpec(callee.parent as? IrClass, r.type).toJson()},"recv":${dispatchRecv.value ?: extRecv.value},"name":${str(p.name.asString())}}"""
-								}
-							else null
-						// #134: the facadegen metadata's REAL constant default, synthesized as an IrConst, so a named-middle /
-						// reordered omission of an injected .NET ctor's or top-level function's constant default is correct.
-						copyField ?: metaDefaults?.getOrNull(idx)?.let { metaConstArg(it, p.type) }?.let { expr(it) }
-						// A @KotlinDefault-carrying callee (any non-constant default — joinToString's CharSequence separators,
-						// substringAfter's `= this`, `b = a * 10`) gets a POSITIONAL placeholder for EVERY omitted arg so a later
-						// provided arg (the trailing transform lambda) keeps its slot; bir2cir fills each from the ref.dll
-						// @KotlinDefault (its `{param n}` tokens → this call's args).
-						// For a CONSTRUCTOR the decision rests on the facadegen slot ALONE. `carries` is an IR-shape test, and a
-						// bodies-skipped dependency ctor satisfies it for every optional param — including a Tier-1 constant whose
-						// metadata lookup came back inconclusive (two same-arity ctors disagreeing), which must keep DROPPING to
-						// ilemit's [DefaultParameterValue] backfill rather than become a placeholder nothing can fill.
-						?: if (kotlinDefaultSlots?.getOrNull(idx) == true || (carries && callee !is IrConstructor)) defaultArgPlaceholder else {
-							// Neither a metadata constant NOR a @KotlinDefault carrier. A purely TRAILING omit is safe (ilemit's
-							// [DefaultParameterValue] backfill fills it). But if any LATER slot still EMITS — an explicitly
-							// provided arg, one this pass fills from the metadata, or one that becomes a positional
-							// placeholder — silently omitting THIS slot would slide that value into the wrong parameter (and
-							// leave the emitted args short of the callee's arity), so refuse loudly instead of miscompiling.
-							val laterArgProvided = vals.drop(idx + 1).withIndex().any { (k, later) ->
-								val j = later.first
-								val laterIdx = idx + 1 + k
-								(j < call.arguments.size && call.arguments[j] != null) ||
-									metaDefaults?.getOrNull(laterIdx) != null ||
-									kotlinDefaultSlots?.getOrNull(laterIdx) == true ||
-									(carries && callee !is IrConstructor && later.second.defaultValue != null)
-							}
-							if (laterArgProvided) unsupported(call, "omitting a cross-module default argument the metadata does not carry",
-								"the default value of parameter '${p.name.asString()}' is not available as a constant in the referenced " +
-								"assembly's metadata; pass the argument explicitly")
-							null
-						}
-					}
-					refsAny(def, valueSyms) || refsAny(def, receiverSyms) || refsAny(def, enclosingSyms) -> {
-						// SAME-MODULE default reading the CALLEE'S OWN SCOPE — an earlier VALUE parameter (a CONTEXT
-						// parameter, or an earlier regular one: `b: Int = a + c.n`, `b: Int = a * 10`,
-						// a ctor's `h: Int = w * 2`), the callee's RECEIVER (`missingDelimiterValue = this`, a data-class
-						// `copy`'s `y = this.y`), or an ENCLOSING instance (`inner class In(val x: Int = outerProp)`). Every one
-						// of them is bound BY SYMBOL through captureSubst, so each read renders as THIS call's expression for
-						// that exact value — the `$default` scope, at the emitted-JSON level. Binding by symbol (never a
-						// string rewrite of the emitted `{"k":"this"}` token) is what keeps a substituted expression that itself
-						// contains `this` — a `c.m(this.k)` argument, or the receiver expression bound for an enclosing
-						// instance — from being rewritten a second time into a wrong-receiver call.
-						// Each bound value is evaluated exactly once: `expr` hoisted any non-stable receiver/argument this default
-						// reads into a call-site temp before the call was emitted, so what gets spliced here is a local read
-						// (docs/dotkt-semantics.md §7).
-						val subst = ArrayList<Pair<IrValueDeclaration, String>>()
-						filledByParam.forEach { (vp, js) -> subst.add(vp to js) }
-						// A receiver expression is emitted ONLY for a default that actually READS it. Forcing an unread one runs
-						// its `expr()` for a rendering that is then discarded, after the synthesis side effects have landed — a
-						// lifted method appended to the file class for a non-capturing lambda, or a consumed synth index. So each
-						// gate below names exactly the symbol whose value it needs:
-						//  - a receiver PARAM binds to the call's receiver of ITS OWN KIND (a member extension has two, and binding
-						//    both to one expression reads an owner member off the extension receiver's VALUE);
-						//  - the enclosing-`this` chain hangs off `enclosingRecv`, so it is forced only for a default that reads an
-						//    enclosing instance — never for one that merely reads the extension receiver.
-						if (refsAny(def, receiverSyms)) receiverParams.forEach { rp ->
-							if (refsAny(def, setOf(rp.symbol)))
-								(if (rp.kind == IrParameterKind.ExtensionReceiver) extRecv.value else dispatchRecv.value)
-									?.let { subst.add(rp to it) }
-						}
-						val enclosing = if (refsAny(def, enclosingSyms)) enclosingRecv else null
-						subst.addAll(enclosingThisSubst(enclosingThis, enclosing, callee is IrConstructor))
-						// Save and RESTORE — a callee parameter can already be a captureSubst key (a closure that captured it,
-						// re-entered through a recursive call in its own body); dropping that binding would emit a bare local
-						// the closure has no slot for.
-						val saved = java.util.IdentityHashMap<IrValueDeclaration, String?>()
-						subst.forEach { (d, js) ->
-							if (!saved.containsKey(d)) saved[d] = captureSubst[d]
-							captureSubst[d] = js
-						}
-						try { expr(def) }
-						finally { saved.forEach { (d, prev) -> if (prev != null) captureSubst[d] = prev else captureSubst.remove(d) } }
-					}
-					else -> argExpr(def, p)   // constant / global — inline verbatim (unchanged)
+			def is org.jetbrains.kotlin.ir.expressions.IrErrorExpression -> {
+				// CROSS-MODULE: the frontend artifact dropped the default VALUE, so a fill can only be RECONSTRUCTED from
+				// a Kotlin fact about the callee. [reconstructedDefaultReceiver] owns that decision and names the receiver
+				// the reconstruction reads — the receiver this call already bound, so what is read here is that ONE
+				// binding and the receiver is evaluated once however many fields are omitted.
+				val reconstructed = reconstructedDefaultReceiver(callee, p)?.let { rp ->
+					val ext = rp.kind == IrParameterKind.ExtensionReceiver
+					val r = if (ext) extensionReceiver(call) else dispatchReceiver(call)
+					val recvJson = if (ext) extRecv.value else dispatchRecv.value
+					if (r == null || recvJson == null) null
+					// Owner via ownerSpec off the RECEIVER EXPRESSION's type (the SAME token the plain `pair.first`
+					// property read uses — the referenced, instantiated `kotlin.Pair[Int,Int]`, no `@` this-assembly
+					// prefix, no open `gp:` param; the @KotlinDefault splice cannot carry that instantiation). The `sty`
+					// stamp is instantiated the same way — see [callSiteType].
+					else """{"sty":${birType(p.type).toJson()},"k":"field","ownerType":${ownerSpec(callee.parent as? IrClass, r.type).toJson()},"recv":$recvJson,"name":${str(p.name.asString())}}"""
 				}
+				// #134: the facadegen metadata's REAL constant default, synthesized as an IrConst, so a named-middle /
+				// reordered omission of an injected .NET ctor's or top-level function's constant default is correct.
+				reconstructed
+					?: metaDefaults?.getOrNull(idx)?.let { metaConstArg(it, p.type) }?.let { stableFill = true; expr(it) }
+					// A @KotlinDefault-carrying callee (any non-constant default — joinToString's CharSequence separators,
+					// substringAfter's `= this`, `b = a * 10`) gets a POSITIONAL placeholder for EVERY omitted arg so a later
+					// provided arg (the trailing transform lambda) keeps its slot; bir2cir fills each from the ref.dll
+					// @KotlinDefault (its `{param n}` tokens → this call's bindings).
+					// For a CONSTRUCTOR the decision rests on the facadegen slot ALONE. `carries` is an IR-shape test, and a
+					// bodies-skipped dependency ctor satisfies it for every optional param — including a Tier-1 constant whose
+					// metadata lookup came back inconclusive (two same-arity ctors disagreeing), which must keep DROPPING to
+					// ilemit's [DefaultParameterValue] backfill rather than become a placeholder nothing can fill.
+					?: if (kotlinDefaultSlots?.getOrNull(idx) == true || (carries && callee !is IrConstructor)) defaultArgPlaceholder else {
+						// Neither a metadata constant NOR a @KotlinDefault carrier. A purely TRAILING omit is safe (ilemit's
+						// [DefaultParameterValue] backfill fills it). But if any LATER slot still EMITS — an explicitly
+						// provided arg, one this pass fills from the metadata, or one that becomes a positional
+						// placeholder — silently omitting THIS slot would slide that value into the wrong parameter (and
+						// leave the emitted args short of the callee's arity), so refuse loudly instead of miscompiling.
+						val laterArgProvided = vals.drop(idx + 1).withIndex().any { (k, later) ->
+							val j = later.first
+							val laterIdx = idx + 1 + k
+							(j < call.arguments.size && call.arguments[j] != null) ||
+								metaDefaults?.getOrNull(laterIdx) != null ||
+								kotlinDefaultSlots?.getOrNull(laterIdx) == true ||
+								(carries && callee !is IrConstructor && later.second.defaultValue != null)
+						}
+						if (laterArgProvided) unsupported(call, "omitting a cross-module default argument the metadata does not carry",
+							"the default value of parameter '${p.name.asString()}' is not available as a constant in the referenced " +
+							"assembly's metadata; pass the argument explicitly")
+						null
+					}
+			}
+			refsAny(def, valueSyms) || refsAny(def, receiverSyms) || refsAny(def, enclosingSyms) -> {
+				// SAME-MODULE default reading the CALLEE'S OWN SCOPE — an earlier VALUE parameter (a CONTEXT
+				// parameter, or an earlier regular one: `b: Int = a + c.n`, `b: Int = a * 10`,
+				// a ctor's `h: Int = w * 2`), the callee's RECEIVER (`missingDelimiterValue = this`, a data-class
+				// `copy`'s `y = this.y`), or an ENCLOSING instance (`inner class In(val x: Int = outerProp)`). Every one
+				// of them is bound BY SYMBOL through captureSubst, so each read renders as THIS call's BINDING for that
+				// exact value — the `$default` scope, at the emitted-JSON level. Binding by symbol (never a string
+				// rewrite of the emitted `{"k":"this"}` token) is what keeps a substituted expression that itself
+				// contains `this` — a `c.m(this.k)` argument, or the receiver expression bound for an enclosing
+				// instance — from being rewritten a second time into a wrong-receiver call.
+				// What gets spliced is a `bindRef`, a pure READ of the one binding, so the value is evaluated exactly
+				// once however many defaults read it.
+				val subst = ArrayList<Pair<IrValueDeclaration, String>>()
+				filledByParam.forEach { (vp, js) -> subst.add(vp to js) }
+				// A receiver expression is read ONLY for a default that actually READS it (see the lazies above). So each
+				// gate below names exactly the symbol whose value it needs:
+				//  - a receiver PARAM binds to the call's receiver of ITS OWN KIND (a member extension has two, and binding
+				//    both to one expression reads an owner member off the extension receiver's VALUE);
+				//  - the enclosing-`this` chain hangs off `enclosingRecv`, so it is read only for a default that reads an
+				//    enclosing instance — never for one that merely reads the extension receiver.
+				if (refsAny(def, receiverSyms)) receiverParams.forEach { rp ->
+					if (refsAny(def, setOf(rp.symbol)))
+						(if (rp.kind == IrParameterKind.ExtensionReceiver) extRecv.value else dispatchRecv.value)
+							?.let { subst.add(rp to it) }
+				}
+				val enclosing = if (refsAny(def, enclosingSyms)) enclosingRecv else null
+				subst.addAll(enclosingThisSubst(enclosingThis, enclosing, callee is IrConstructor))
+				// Save and RESTORE — a callee parameter can already be a captureSubst key (a closure that captured it,
+				// re-entered through a recursive call in its own body); dropping that binding would emit a bare local
+				// the closure has no slot for.
+				val saved = java.util.IdentityHashMap<IrValueDeclaration, String?>()
+				subst.forEach { (d, js) ->
+					if (!saved.containsKey(d)) saved[d] = captureSubst[d]
+					captureSubst[d] = js
+				}
+				// ...and the TYPE-level half of the same scope: this default is the CALLEE's IR, so every type it
+				// mentions — its own parameter type, the owner of a member it reads off the receiver, a type argument
+				// it passes on — is written in the CALLEE's frame. A positional type variable there names a slot the
+				// caller's frame does not have: `class G<T>(val v: T) { fun one(a: T = v) }` spliced into a
+				// non-generic caller left `G`'s `!0` as the owner of the `v` read (InvalidProgramException at load).
+				try { expr(def) }
+				finally { saved.forEach { (d, prev) -> if (prev != null) captureSubst[d] = prev else captureSubst.remove(d) } }
+			}
+			else -> { stableFill = isStableValue(def); argExpr(def, p) }   // constant / global — inline verbatim
+		}
+		if (emitted == null) return null
+		// A filled default is a call-site VALUE like any other: under a plan it becomes a default-phase binding, so a
+		// LATER default that reads this parameter reads the ONE binding instead of a second rendering of the expression
+		// (`a = bump(), b = a * 10` would otherwise run `bump()` twice).
+		return plan?.bind("default", "value", stableFill, birType(p.type).toJson(),
+			"default of parameter '${p.name.asString()}'", emitted) ?: emitted
+}
+
+/** How a plan binding's ROLE names this callee to a reader: a constructor by its class, anything else by its name. */
+internal fun calleeLabel(callee: org.jetbrains.kotlin.ir.declarations.IrFunction): String =
+	if (callee is IrConstructor) ((callee.parent as? IrClass)?.name?.asString() ?: "constructor")
+	else callee.name.asString()
+
+/** `type` as the CALLER sees it: the DECLARING class's type parameters replaced by this call site's instantiation
+ *  (the receiver's type arguments, or a constructor's own constructed type), and the callee's own type parameters by
+ *  this call's resolved type ARGUMENTS.
+ *
+ *  A member declares its signature in its class's type-parameter frame (`kotlin.Triple.copy(first: A, second: B,
+ *  third: C)`), so a value reconstructed or bound at the call site must carry the CALL SITE's type (`Int`), not the
+ *  positional type variable: an open `tv` in a caller frame that has no type parameters is unresolvable there, and
+ *  bir2cir spills it verbatim into a state-machine field when a later argument suspends (`InvalidProgramException` at
+ *  the first resume). Identity whenever the frames do not line up — a wrong substitution would be worse than an open
+ *  type, which CallEvalLowering can still resolve from the bound value's own static type. */
+/** The callee's whole type frame closed against this call site — or null when the frames do not line up.
+ *
+ *  Installed as [BirEmitter.defaultTypeSubst] for the whole rendering of an omitted default, so EVERY type that
+ *  default mentions is closed, not only the ones a caller thought to ask about: the parameter's own type, the owner of
+ *  a member it reads off the receiver, a type argument it passes on, the element of a collection it constructs. That
+ *  is why installation is unconditional — a default's TYPES belong to the callee's frame however little its
+ *  EXPRESSION reads — and why the scopes COMPOSE rather than replace: a default filling a default closes against the
+ *  frame it is spliced into, which closes against the call site. */
+internal fun BirEmitter.callSiteSubstitutor(
+	call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression,
+	callee: org.jetbrains.kotlin.ir.declarations.IrFunction,
+): org.jetbrains.kotlin.ir.types.IrTypeSubstitutor? {
+	val params = ArrayList<IrTypeParameterSymbol>()
+	val args = ArrayList<org.jetbrains.kotlin.ir.types.IrTypeArgument>()
+	val ownerTps = (callee.parent as? IrClass)?.typeParameters.orEmpty()
+	if (callee is IrConstructor) {
+		// A Kotlin constructor declares no type parameters of its own, so the call's type ARGUMENTS are exactly its
+		// class's — and they ride the call node for EVERY constructor shape. `call.type` would only work for a `new`:
+		// a `: super(…)` delegation and an enum-entry call are statements whose type is `Unit`, and reading the owner
+		// frame from there left the base class's type variables unsubstituted in the DERIVED class's frame.
+		val ta = ownerTps.indices.map { call.typeArguments.getOrNull(it) }
+		if (ownerTps.isNotEmpty() && ta.all { it != null }) {
+			ownerTps.forEach { params.add(it.symbol) }
+			ta.forEach { args.add(it!!) }
+		}
+	} else {
+		if (ownerTps.isNotEmpty()) {
+			// A member's owner frame is instantiated by its receiver.
+			((dispatchReceiver(call) ?: extensionReceiver(call))?.type as? IrSimpleType)
+				?.arguments?.takeIf { it.size == ownerTps.size }?.let { a ->
+					ownerTps.forEach { params.add(it.symbol) }
+					args.addAll(a)
+				}
+		}
+		val fnTps = callee.typeParameters
+		if (fnTps.isNotEmpty()) {
+			val ta = fnTps.indices.map { call.typeArguments.getOrNull(it) }
+			if (ta.all { it != null }) {
+				fnTps.forEach { params.add(it.symbol) }
+				ta.forEach { args.add(it!!) }
 			}
 		}
-		if (emitted != null) {
-			val finalEmitted =
-				if (arg == null && readByLaterFilledDefault[idx] && realFilledDefaults[idx] != null)
-					bindFilledDefaultOnce(call, pair.first, p, realFilledDefaults[idx]!!, emitted)
-				else emitted
-			out.add(finalEmitted)
-			filledByParam[p] = finalEmitted
-		}
 	}
-	return out
+	if (params.isEmpty()) return null
+	return org.jetbrains.kotlin.ir.types.IrTypeSubstitutor(params, args, true)
 }
 
-/** #235: place a call's single-evaluation temps where the call site has no wrapping expression to hold them — a
- *  constructor DELEGATION's `thisArgs`/`baseArgs` and an enum entry's base call, both plain JSON arg ARRAYS on a
- *  declaration. The `var` statements ride a `valueBlock` around the FIRST argument, which is evaluated before every
- *  later one, and a `var` declares an ordinary method-body local — so a later argument's read of a temp is both in
- *  scope and correctly ordered. No temps ⇒ the arg list is returned untouched. */
-internal fun declaringFirstArg(temps: List<String>, args: List<String>): List<String> {
-	if (temps.isEmpty() || args.isEmpty()) return args
-	return listOf("""{"k":"valueBlock","stmts":[${temps.joinToString(",")}],"result":${args[0]}}""") + args.drop(1)
+/** The callee-scope RECEIVER parameter whose value [filledArgs] splices when it RECONSTRUCTS the fill for the omitted
+ *  parameter `p` — null when no reconstruction applies.
+ *
+ *  A CROSS-MODULE default reaches this build as an `IrErrorExpression`: the frontend artifact preserves no default
+ *  VALUE, so a fill cannot come from the callee's own IR and must come from a Kotlin FACT about the callee. The one
+ *  such fact is a data class's SYNTHETIC `copy`, whose omitted field default is `this.<field>` by construction — and the
+ *  value that reconstruction reads is the call's receiver. A data class may also declare a differently-signed `copy`
+ *  OVERLOAD of its own, whose defaults are ordinary expressions; [isDataClassCopy] tells the two apart by the generated
+ *  signature rather than by the name. */
+internal fun BirEmitter.reconstructedDefaultReceiver(
+	callee: org.jetbrains.kotlin.ir.declarations.IrFunction,
+	p: IrValueParameter,
+): IrValueParameter? {
+	if (p.defaultValue?.expression !is org.jetbrains.kotlin.ir.expressions.IrErrorExpression) return null
+	if ((callee as? IrSimpleFunction)?.let { isDataClassCopy(it) } != true) return null
+	return callee.parameters.firstOrNull { it.kind == IrParameterKind.DispatchReceiver }
+		?: callee.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
 }
 
-/** True if this call is SOURCE-SPLICED as an inline body (the same test [call] routes on): a same-module `inline` fn
- *  whose body is present, taking a lambda. Its args and omitted defaults are emitted by the splice, not by
- *  [filledArgs] — so nothing of the call site is spliced into a default expression here. */
-internal fun BirEmitter.isInlineSplicedCall(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): Boolean {
-	if (call !is IrCall) return false
-	val callee = call.symbol.owner
-	val decl = if (callee.isFakeOverride) callee.resolveFakeOverride() ?: callee else callee
-	return decl.body != null && callNeedsSplice(call)
+/** Is this argument's ADDRESS free to be taken twice, and free to move past another value? True for a plain
+ *  local/parameter lvalue (`byref(x)`), whose address expression has no side effect and cannot be observed out of
+ *  order. Any computed lvalue (`byref(mk().field)`) is not, so its plan binding pins the order instead. */
+internal fun BirEmitter.isStableAddress(arg: IrExpression): Boolean {
+	val inner = byrefMarker(arg) ?: arg
+	return inner is IrGetValue && !isRefCell(inner.symbol.owner)
 }
 
 /** The args of a constructor DELEGATION (`: this(…)` / `: super(…)`) or an enum-entry constructor call, POSITIONALLY
@@ -320,8 +485,12 @@ internal fun BirEmitter.isInlineSplicedCall(call: org.jetbrains.kotlin.ir.expres
  *  the `new` path), then the regular args with omitted defaults filled by [filledArgs]. A delegation is an ordinary
  *  omitting call site — `class D(val a: Int, val b: Int = a * 2) { constructor() : this(3) }` omits `b` exactly as
  *  `D(3)` does — so it must not simply drop the missing argument (that shifts every later arg's slot). */
-internal fun BirEmitter.delegatedCtorArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): List<String> =
-	listOfNotNull(dispatchReceiver(call)?.let { expr(it) }) + filledArgs(call)
+internal fun BirEmitter.delegatedCtorArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): List<String> {
+	// FILL FIRST: an INNER target's enclosing instance is this delegation's dispatch receiver, so when the call needs an
+	// evaluation plan `filledArgs` binds it and the leading-argument read below renders that ONE binding's `bindRef`.
+	val args = filledArgs(call)
+	return listOfNotNull(dispatchReceiver(call)?.let { expr(it) }) + args
+}
 
 /** The `this` of each class ENCLOSING the callee's own class, innermost FIRST — the enclosing instances a default can
  *  read (`inner class In(val x: Int = outerProp)`, or a member of an inner class). Each is paired with the INNER class
@@ -395,40 +564,81 @@ internal fun injectedKotlinDefaultSlots(callee: org.jetbrains.kotlin.ir.declarat
  *  its slot (`col2(build = {...})` omitting a leading `configure`). A slot with neither a constant NOR a @KotlinDefault
  *  is dropped when purely trailing (ilemit's [DefaultParameterValue] backfill), else refused loudly (arg-shift guard).
  *  The extension receiver is prepended by the caller; the @KotlinDefault index counts it first, matching the final args
- *  array's positions. */
+ *  array's positions.
+ *
+ *  Same EVALUATION protocol as [filledArgs] (§2.7). A `@KotlinDefault` carrier binds `{this}` / `{defaultArgParam n}`
+ *  to this call's own receiver and arguments at the splice, which is a SECOND reader of each of them — so where this
+ *  pass emits a cross-module fill it builds the call's evaluation plan and every value becomes an ordered binding. This
+ *  path used to bind nothing at all: the same fault as the data-class `copy` receiver, unfired only because the splice
+ *  hoisted values itself. Now the splice materializes the default and references the bindings, and nothing else. */
 internal fun BirEmitter.filledInjectedArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): List<String> {
 	val callee = (call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction) ?: return emptyList()
 	val valCount = callee.parameters.count { isValueParameter(it) }
 	val metaDefaults = injectedMetaDefaults(callee, valCount)
 	val kotlinDefaultSlots = injectedKotlinDefaultSlots(callee, valCount)
 	val carries = carriesKotlinDefault(callee)
-	val out = ArrayList<String>()
-	var valIdx = -1
-	callee.parameters.forEachIndexed { i, p ->
-		if (!isValueParameter(p)) return@forEachIndexed
-		valIdx++
-		val arg = if (i < call.arguments.size) call.arguments[i] else null
-		// A `byref(x)` / @ClrRefArgument arg is emitted as its ADDRESSABLE lvalue (ilemit's EmitArg passes it by
-		// address). `byrefMarker` is null for every ordinary argument, so this is a no-op everywhere else — it lets
-		// the .NET-interop member paths share this filler instead of keeping a second, non-filling renderer.
-		if (arg != null) { out.add(byrefMarker(arg)?.let { inner -> byrefBackingField(inner) ?: expr(inner) } ?: expr(arg)); return@forEachIndexed }
-		val def = p.defaultValue?.expression ?: return@forEachIndexed
-		if (def is org.jetbrains.kotlin.ir.expressions.IrErrorExpression) {
-			metaDefaults?.getOrNull(valIdx)?.let { metaConstArg(it, p.type) }?.let { out.add(expr(it)); return@forEachIndexed }
-			if (kotlinDefaultSlots?.getOrNull(valIdx) == true || carries) {
-				out.add(defaultArgPlaceholder)
-				return@forEachIndexed
-			}
-			val laterArgProvided = (i + 1 until call.arguments.size).any { j ->
-				call.arguments[j] != null && isValueParameter(callee.parameters[j])
-			}
-			if (laterArgProvided) unsupported(call, "omitting a cross-module default argument the metadata does not carry",
-				"the default value of parameter '${p.name.asString()}' is not available in the referenced assembly's " +
-				"metadata (no constant and no @KotlinDefault); pass the argument explicitly")
-			return@forEachIndexed
-		}
-		out.add(expr(def))
+	// Every default of an injected callee arrives as an IrErrorExpression (the referenced artifact preserves no VALUE),
+	// so any omission this pass fills is a cross-module one — see [filledArgs]'s granularity note for why the test is
+	// taken whole rather than per fill kind.
+	val planNeeded = callee.parameters.withIndex().any { (i, p) ->
+		isValueParameter(p) && (i >= call.arguments.size || call.arguments[i] == null) &&
+			p.defaultValue?.expression is org.jetbrains.kotlin.ir.expressions.IrErrorExpression
 	}
+	val plan = if (planNeeded) callPlan(call) else null
+	val label = calleeLabel(callee)
+	// The receivers, bound FIRST and dispatch-first — Kotlin evaluates them before every argument, and the binding
+	// order IS the evaluation order. The caller reads them back through the ordinary `expr()`.
+	if (plan != null) {
+		dispatchReceiver(call)?.let { plan.bindValue(it, "recv", "receiver of '$label'") }
+		extensionReceiver(call)?.let { plan.bindValue(it, "recv", "extension receiver of '$label'") }
+	}
+	val out = ArrayList<String>()
+	// PHASE 1 — the SUPPLIED values, positionally; PHASE 2 below fills the omissions, which Kotlin evaluates after all
+	// of them. `slots` keeps each fill in its own position while the two phases run in evaluation order.
+	val vals = callee.parameters.withIndex().filter { isValueParameter(it.value) }
+	val slots = arrayOfNulls<String>(vals.size)
+	vals.forEachIndexed { valIdx, (i, p) ->
+		val arg = (if (i < call.arguments.size) call.arguments[i] else null) ?: return@forEachIndexed
+		// A `byref(x)` / @ClrRefArgument arg is emitted as its ADDRESSABLE lvalue (ilemit's EmitArg passes it by
+		// address); under a plan that is an `address` binding — an ordering marker, never storage. `addressSlotExpr` is
+		// null for every ordinary argument, so this is a no-op everywhere else.
+		val address = byrefMarker(arg)?.let { inner -> byrefBackingField(inner) ?: expr(inner) }
+		slots[valIdx] =
+			if (address != null)
+				plan?.bind("arg", "address", isStableAddress(arg),
+					withDefaultTypeScope(call, callee) { birType(p.type).toJson() },
+					"argument '${p.name.asString()}' of '$label'", address) ?: address
+			else plan?.bindValue(arg, "arg", "argument '${p.name.asString()}' of '$label'") ?: expr(arg)
+	}
+	// PHASE 2 — the omitted defaults, in declaration order.
+	vals.forEachIndexed { valIdx, (i, p) ->
+		if (i < call.arguments.size && call.arguments[i] != null) return@forEachIndexed
+		val def = p.defaultValue?.expression ?: return@forEachIndexed
+		// The same unconditional type-frame scope as [filledArgs], covering the binding TYPE as well as the rendering.
+		var stableFill = false
+		val bound: String? = withDefaultTypeScope(call, callee) {
+			val rendered: String? = if (def is org.jetbrains.kotlin.ir.expressions.IrErrorExpression) {
+				metaDefaults?.getOrNull(valIdx)?.let { metaConstArg(it, p.type) }?.let { stableFill = true; expr(it) }
+					?: if (kotlinDefaultSlots?.getOrNull(valIdx) == true || carries) defaultArgPlaceholder else {
+						val laterArgProvided = (i + 1 until call.arguments.size).any { j ->
+							call.arguments[j] != null && isValueParameter(callee.parameters[j])
+						}
+						if (laterArgProvided) unsupported(call, "omitting a cross-module default argument the metadata does not carry",
+							"the default value of parameter '${p.name.asString()}' is not available in the referenced assembly's " +
+							"metadata (no constant and no @KotlinDefault); pass the argument explicitly")
+						null
+					}
+			} else { stableFill = isStableValue(def); expr(def) }
+			// The BINDING TYPE is rendered here too, INSIDE the scope. `p.type` is the callee's, so reading it after
+			// the restore leaves an injected generic callee's own `!!0` open in the consumer's frame — and a binding a
+			// later default reads becomes a local, which would then be declared with it.
+			if (rendered == null) null
+			else plan?.bind("default", "value", stableFill, birType(p.type).toJson(),
+				"default of parameter '${p.name.asString()}'", rendered) ?: rendered
+		}
+		if (bound != null) slots[valIdx] = bound
+	}
+	slots.forEach { if (it != null) out.add(it) }
 	return out
 }
 
@@ -656,6 +866,9 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// so a receiver-bearing local (a local extension fun called as `x.f()`) must pass its dispatch/extension receiver
 		// value in that SAME slot, between the captures and the regular args. (A plain local fn has no receiver params →
 		// empty → byte-identical to before.)
+		// FILL FIRST: under an evaluation plan the fill binds this call's receivers, and the reads below render those
+		// bindings rather than a second emission of the receiver expressions.
+		val localRegArgs = filledArgs(call)
 		val recvArgs = callee.parameters.filter {
 			it.kind == IrParameterKind.DispatchReceiver || it.kind == IrParameterKind.ExtensionReceiver
 		}.mapNotNull { p ->
@@ -681,7 +894,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// A lift changes only the declaration's location/parameter list; it does not stop being a Kotlin suspend
 		// call. Preserve the same call-site fact as every other suspend call so bir2cir can route it to the lowered
 		// continuation entry. kotc deliberately does not name that CLR entry here.
-		return """{"k":"callStatic","owner":null,"method":${str(lname)},"args":[${(capArgs + recvArgs + filledArgs(call)).joinToString(",")}]$typeArgs${suspendCallTag(callee)},"calleeOwner":${fqnJson(fileClass)}}"""
+		return """{"k":"callStatic","owner":null,"method":${str(lname)},"args":[${(capArgs + recvArgs + localRegArgs).joinToString(",")}]$typeArgs${suspendCallTag(callee)},"calleeOwner":${fqnJson(fileClass)}}"""
 	}
 
 	// Inlining (lambda-param inline funs only; lambda-less inline = JIT's job — see [[clr-not-jvm-discard-jvmisms]]).
@@ -1029,7 +1242,10 @@ internal fun BirEmitter.call(call: IrCall): String {
 				// argument slides into it (`g.pick(b = 3)` bound `3` to `a` and left the required `b` zero-filled)
 				// while `shapeTypes` above still describes the full parameter vector. `filledInjectedArgs` emits a
 				// metadata constant, a `defaultArg` placeholder for bir2cir's DefaultArgSplice, or a loud refusal.
-				val argsJson = (listOfNotNull(gExt?.let { expr(it) }) + filledInjectedArgs(call)).joinToString(",")
+				// FILL FIRST, then read the receiver: under an evaluation plan the fill binds the receiver, and this
+				// read then renders that ONE binding (see [filledInjectedArgs]).
+				val gRegArgs = filledInjectedArgs(call)
+				val argsJson = (listOfNotNull(gExt?.let { expr(it) }) + gRegArgs).joinToString(",")
 				// A `suspend` generic .NET-member callee carries the `"suspendCall":true` FACT for bir2cir's deferred
 				// Task/await lowering, exactly like the non-generic call paths (suspendCallTag) — otherwise a generic
 				// .NET-member suspend call would silently drop out of the suspension lowering. (latent ⑤.)
@@ -1180,7 +1396,9 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// that receiver as the LEADING arg — matching the declaration signature — else the receiver is dropped and
 		// the call arity mismatches the method (#177). Mirrors the member extension-fun path above (~line 903).
 		val compExt = extensionReceiver(call)
-		val compArgs = (if (compExt != null) listOf(expr(compExt)) else emptyList()) + filledArgs(call)
+		// FILL FIRST, then read the extension receiver (see [filledArgs]: the fill is what binds it under a plan).
+		val compRegArgs = filledArgs(call)
+		val compArgs = (if (compExt != null) listOf(expr(compExt)) else emptyList()) + compRegArgs
 		return """{"k":"callStatic","owner":${fqnJson(enclosing)},"method":${str(name)}${overloadSigField(callee)}${typeArgsJson(call)},"args":[${compArgs.joinToString(",")}]}"""
 	}
 
@@ -1682,8 +1900,14 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// runs = status quo).
 		if (callNeedsSplice(call)) return inlineSpliceCallOwnerless(call, extRecv)
 	}
-	// Fill omitted constant default arguments at the call site (IL methods have no default mechanism).
-	val args = filledArgs(call).joinToString(",")
+	// Fill omitted default arguments at the call site (IL methods have no default mechanism). ONCE — every branch below
+	// shares this ONE list. Filling is not a pure rendering: it lifts a lambda default into the file class, and it binds
+	// this call's values into an evaluation plan. Running it a second time for the extension branch therefore rendered
+	// every default twice (`"s".ext()` against `fun String.ext(a: Int = bump(), b: Int = a * 10)` called `bump()` twice,
+	// where the non-extension `plain()` called it once). It also runs BEFORE either receiver is read, so a plan's
+	// receiver binding is the one thing both this call node and any spliced default read.
+	val regArgs = filledArgs(call)
+	val args = regArgs.joinToString(",")
 	// A generic method `fun <T> id(...)` -> carry the resolved type args so ilemit can MakeGenericMethod.
 	val ta = typeArgsJson(call)
 	// PLAIN Kotlin return type for the retType hint; a `suspend` callee is flagged by `suspendCallTag` on the node
@@ -1702,7 +1926,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 	// with the extension receiver as the first arg (mirrors the JVM `C.f(T $receiver)` shape).
 	val extRecv = extensionReceiver(call)
 	if (extRecv != null) {
-		val all = (listOf(expr(extRecv)) + filledArgs(call)).joinToString(",")
+		val all = (listOf(expr(extRecv)) + regArgs).joinToString(",")
 		if (recv != null) {
 			val ownerStr = ownerSpec(declaringClass, recv.type)
 			val virtual = isVirtualInstanceCall(call, callee)
@@ -1747,7 +1971,9 @@ internal fun BirEmitter.plainInjectedTopLevelCall(call: IrCall, callee: IrSimple
 			// An extension fun: its receiver is the .NET method's first param (`__self`), so prepend it to the args.
 			// Keep injected args as BIR strings: a non-constant cross-module default has no honest IrExpression and is
 			// represented by a positional `defaultArg` for bir2cir to splice from `[KotlinDefault]`.
-			val a = listOfNotNull(extRecv?.let { expr(it) }) + filledInjectedArgs(call)
+			// FILL FIRST, then read the extension receiver (the fill binds it under an evaluation plan).
+			val injRegArgs = filledInjectedArgs(call)
+			val a = listOfNotNull(extRecv?.let { expr(it) }) + injRegArgs
 			val taJson = targs.joinToString(",") { birType(it!!).toJson() }
 			// `shapeTypes` must line up with `a` (= extension receiver, then regular args), so a GENERIC extension
 			// fun's `__self` receiver type is included — else bir2cir's by-shape overload pick finds 0 params.
@@ -1846,6 +2072,18 @@ internal fun BirEmitter.byrefMarker(a: IrExpression): IrExpression? =
 internal fun BirEmitter.isClrRefArgument(p: IrValueParameter): Boolean =
 	p.annotations.any { it.type.classFqName?.asString() == "kotlin.clr.ClrRefArgument" }
 
+/** The ADDRESSABLE lvalue a byref call slot takes, or null when the slot takes an ordinary copied VALUE. Two byref
+ *  shapes: a USER `ClrRef<T>` param (`byref:`) unwraps its explicit `byref(x)` marker; a STDLIB `@ClrRefArgument`
+ *  param (a PLAIN type, no marker) shapes the bare arg directly. An address is not a value: no storage can hold it, so
+ *  a call-evaluation plan records it as an `address` binding — an ordering marker — rather than as a bound value.
+ *  THE single source of truth for "is this slot an address": [argExpr] renders it and [filledArgs] classifies by it. */
+internal fun BirEmitter.addressSlotExpr(arg: IrExpression, param: IrValueParameter?): String? {
+	if (param == null) return null
+	if (birType(param.type) is TypeNode.ByRef) return byrefMarker(arg)?.let { inner -> byrefBackingField(inner) ?: expr(inner) }
+	if (isClrRefArgument(param)) return byrefBackingField(arg) ?: expr(arg)
+	return null
+}
+
 /** Emit one regular call argument as its ADDRESSABLE lvalue (a property's backing FIELD node, else the lvalue
  *  itself) when the matching callee parameter is byref, so ilemit's EmitArg(want.IsByRef) can `ldflda`/`ldloca` it.
  *  Two byref shapes: a USER `ClrRef<T>` param (`byref:`) unwraps its explicit `byref(x)` marker; a STDLIB
@@ -1853,11 +2091,8 @@ internal fun BirEmitter.isClrRefArgument(p: IrValueParameter): Boolean =
  *  Interlocked/TryParse/DivRem helpers, plain calls in the ref build, substituted to BCL `ref`/`out` calls by
  *  bir2cir in the rt build. A non-byref parameter is unaffected (inert for every existing call). */
 internal fun BirEmitter.argExpr(arg: IrExpression, param: IrValueParameter?): String {
+	addressSlotExpr(arg, param)?.let { return it }
 	if (param != null) {
-		if (birType(param.type) is TypeNode.ByRef) byrefMarker(arg)?.let { inner ->
-			return byrefBackingField(inner) ?: expr(inner)
-		}
-		else if (isClrRefArgument(param)) return byrefBackingField(arg) ?: expr(arg)
 		// A value-type-nullable arg (`Int?` smart-cast to `Int`) passed to a non-null value param must UNWRAP
 		// `Nullable<T>.Value` — the CLR twin of JVM's implicit `Integer.intValue()` arg coercion (no IR node). C1.
 		if (!isPreUnwrappedRead(arg)) nullableValueUnwrapElem(arg.type, param.type)?.let { elem ->

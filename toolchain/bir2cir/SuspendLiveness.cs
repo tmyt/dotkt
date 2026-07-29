@@ -100,6 +100,11 @@ static class SuspendLiveness
         ["stmts"] = 11, ["result"] = 12,
     };
 
+    /// The evaluation-order rank of an operand key — the toolchain's ONE statement of "which operand of a node runs
+    /// first". Shared with CallEvalLowering, which needs the same order to know where an inlined plan binding will be
+    /// evaluated; keeping it here keeps the two answers from drifting apart.
+    internal static int OperandRank(string key) => KeyRank.GetValueOrDefault(key, 50);
+
     // Keys that never carry an evaluated operand (type/dispatch/signature metadata). Skipping them keeps the
     // walk cheap; none of them can contain a `{k:local}`.
     static readonly HashSet<string> NonOperandKeys = new(StringComparer.Ordinal)
@@ -128,14 +133,15 @@ static class SuspendLiveness
     /// <summary>
     /// The verdict for one suspend function body: the `{k:var}` declarations it owns (in walk order, the order
     /// their SM fields are minted in) and, for each, whether it lives across a suspension and which suspending
-    /// callee it first lives across.
+    /// callee it first lives across. `Role` is the source-level phrase a storage refusal names the local by — a
+    /// call-evaluation plan binding carries one ("the receiver of `copy`"); an ordinary local has none.
     /// </summary>
     public sealed class Result
     {
         readonly Dictionary<string, string> _across;   // var name -> first suspending callee it lives across
-        public IReadOnlyList<(string Name, JsonNode Type)> DeclaredVars { get; }
+        public IReadOnlyList<(string Name, JsonNode Type, string Role)> DeclaredVars { get; }
 
-        internal Result(List<(string, JsonNode)> declared, Dictionary<string, string> across)
+        internal Result(List<(string, JsonNode, string)> declared, Dictionary<string, string> across)
         {
             DeclaredVars = declared;
             _across = across;
@@ -166,7 +172,7 @@ static class SuspendLiveness
         readonly Dictionary<int, List<int>> _extraSucc = new();     // event index -> extra successor label ids
         readonly List<int> _handlers = new();                       // active handler/exit label ids (innermost last)
         readonly List<(string Label, int Cont, int End)> _loops = new();
-        readonly List<(string Name, JsonNode Type)> _declared = new();
+        readonly List<(string Name, JsonNode Type, string Role)> _declared = new();
         readonly Dictionary<string, int> _ids = new(StringComparer.Ordinal);   // tracked var -> dense id
         int _synth;                                                 // synthetic label allocator (counts DOWN from -1)
         // Set when the walk meets a shape it cannot give a correct CFG edge for. Collapses the answer to the
@@ -195,7 +201,7 @@ static class SuspendLiveness
                         return;
                     }
                     if (k == "var" && Str(o["name"]) is string vn && _ids.TryAdd(vn, _ids.Count))
-                        _declared.Add((vn, o["type"]));
+                        _declared.Add((vn, o["type"], Str(o["role"])));
                     foreach (var kv in o) if (kv.Value != null) CollectDeclarations(kv.Value);
                     return;
                 case JsonArray a:
@@ -574,7 +580,7 @@ static class SuspendLiveness
             if (_declared.Count == 0 || _ev.Count == 0) return new Result(_declared, across);
             if (_bailOut)
             {
-                foreach (var (name, _) in _declared) across.TryAdd(name, "a suspending call");
+                foreach (var (name, _, _) in _declared) across.TryAdd(name, "a suspending call");
                 return new Result(_declared, across);
             }
 

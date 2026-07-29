@@ -874,17 +874,15 @@ sealed partial class Emitter
             }
             case "stackGet":
             {
-                EmitStackBounds(e);
                 var elem = MapType(e.GetProperty("elem"));
-                EmitStackAddr(e, elem);
+                EmitStackCheckedAddr(e, elem);
                 _il.Emit(OpCodes.Ldobj, elem);
                 return elem;
             }
             case "stackSet":
             {
-                EmitStackBounds(e);
                 var elem = MapType(e.GetProperty("elem"));
-                EmitStackAddr(e, elem);
+                EmitStackCheckedAddr(e, elem);
                 EmitArg(e.GetProperty("value"), elem);
                 _il.Emit(OpCodes.Stobj, elem);
                 return typeof(void);

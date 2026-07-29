@@ -289,6 +289,13 @@ sealed class Pipeline
             // injected callee — hence no placeholder — exists there. The gate is not merely "harmless off": running on a
             // self-build would also disturb its byte-stable RefBodySquash/RoundtripMetadata decl set for zero benefit.
             if (attributeTopLevelOwner) DefaultArgSplice.Apply(bir.Root, refs);
+            // CALL-EVALUATION PLAN LOWERING (§2.7). EVERY splice that can add a reader to one of a call's values has
+            // now run, so each plan's readers are final and its bindings lower to locals in Kotlin order: a
+            // single-reader binding back into its own slot, a shared one into a `var`, a constructor delegation's into
+            // `preStmts`. Unconditional (ref + rt + app): kotc emits a plan wherever a fill can duplicate a value, and
+            // a stdlib self-build has same-module fills of exactly that shape. From here down no pass sees plan
+            // vocabulary — the pass asserts that itself, and verify-schema enforces the same phase split.
+            CallEvalLowering.Apply(bir.Root);
             // RE-NORMALIZE the just-spliced RAW payload bodies: InlineSplice runs AFTER ObjectSlotRename (219), so a
             // cross-module inline body carries kotc's raw `objMethod toString`/`hashCode`/`equals` (and `anySlot` calls)
             // un-renamed — ilemit's EmitObjMethod keys on the BCL spelling (`ToString`), so an un-renamed `toString`

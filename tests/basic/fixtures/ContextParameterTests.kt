@@ -187,7 +187,7 @@ inline fun aliasRunWith(f: Int.() -> Int): Int = 2.f()
 fun aliasCapturedOuter(__recv0: Int): Int = aliasRunWith { this * 100 + __recv0 }
 
 // TWO COUNTERS over one prefix. The lifted receiver parameter is minted from `inlCounter` before the body is
-// emitted; the call-site single-evaluation temps are minted from `scopeCounter` WHILE it is emitted. Both used to
+// emitted; the call-evaluation plan's binding ids are minted from `scopeCounter` WHILE it is emitted. Both used to
 // draw the `__recv` prefix, so they could produce one name in one frame — and ilemit registers a local before
 // emitting its initializer and resolves locals ahead of arguments, so the initializer read its own zero-initialized
 // local instead of the receiver. `Box(7).f()` yielded 99. The temps now live in the `dotkt$` namespace, which no

@@ -15,7 +15,21 @@ sealed partial class Emitter
         _methodRetType = typeof(void);
         _curTypeParams = EffectiveTps(ti); _curMethodParams = null;
         BeginMethod(cb.GetILGenerator(), c, isStatic: false);
+        // Exactly the trees this method EMITS: `preStmts` runs before the delegation and may carry CFG labels of its
+        // own (a `cond`/`try` inside a bound value), and the delegation args are emitted here too. Scanning the whole
+        // declaration would also define labels for subtrees that are never emitted (`params[].default`, `attrs`), and
+        // ILGenerator refuses a label that is defined and never marked.
         PrescanCfgLabels(c.GetProperty("body"));
+        AddCfgLabels(c, "preStmts");
+        AddCfgLabels(c, "thisArgs");
+        AddCfgLabels(c, "baseArgs");
+
+        // `preStmts` — the constructor DELEGATION's evaluation plan, lowered to `var` declarations by bir2cir's
+        // CallEvalLowering. A delegation's arguments ride the declaration rather than an expression, so there is no
+        // `valueBlock` to hold the values it must evaluate exactly once; they are declared HERE, ahead of the
+        // `ldarg.0` that begins the `this`/`base` call, which is where Kotlin evaluates them.
+        if (c.TryGetProperty("preStmts", out var pre) && pre.ValueKind == JsonValueKind.Array)
+            foreach (var st in pre.EnumerateArray()) EmitStmt(st);
 
         _il.Emit(OpCodes.Ldarg_0);
         if (c.TryGetProperty("thisArgs", out var ta) && ta.ValueKind == JsonValueKind.Array)
@@ -201,24 +215,33 @@ sealed partial class Emitter
     // Define an IL Label for every CFG `label` node anywhere in the body (forward refs from goto/brIf), so the
     // single emit pass can branch to not-yet-emitted blocks. Recursive: labels can sit inside nested structured
     // bodies (a CFG-lowered `while` spliced into a still-structured `if`). See docs/bir-cir-spec.md.
+    // Fold one more tree of the SAME frame into the label map [PrescanCfgLabels] just built (a constructor emits its
+    // `preStmts` and delegation args alongside its body).
+    void AddCfgLabels(JsonElement decl, string key)
+    {
+        if (decl.TryGetProperty(key, out var t) && t.ValueKind is JsonValueKind.Array or JsonValueKind.Object)
+            WalkCfgLabels(t);
+    }
+
     void PrescanCfgLabels(JsonElement node)
     {
         _cfgLabels = new Dictionary<int, Label>();
-        void Walk(JsonElement e)
+        WalkCfgLabels(node);
+    }
+
+    void WalkCfgLabels(JsonElement e)
+    {
+        if (e.ValueKind == JsonValueKind.Object)
         {
-            if (e.ValueKind == JsonValueKind.Object)
+            if (e.TryGetProperty("k", out var k) && k.GetString() == "label")
             {
-                if (e.TryGetProperty("k", out var k) && k.GetString() == "label")
-                {
-                    var id = e.GetProperty("id").GetInt32();
-                    if (!_cfgLabels.ContainsKey(id)) _cfgLabels[id] = _il.DefineLabel();
-                }
-                foreach (var p in e.EnumerateObject()) Walk(p.Value);
+                var id = e.GetProperty("id").GetInt32();
+                if (!_cfgLabels.ContainsKey(id)) _cfgLabels[id] = _il.DefineLabel();
             }
-            else if (e.ValueKind == JsonValueKind.Array)
-                foreach (var x in e.EnumerateArray()) Walk(x);
+            foreach (var p in e.EnumerateObject()) WalkCfgLabels(p.Value);
         }
-        Walk(node);
+        else if (e.ValueKind == JsonValueKind.Array)
+            foreach (var x in e.EnumerateArray()) WalkCfgLabels(x);
     }
 
     void EmitLdcI4(int n)
@@ -593,8 +616,24 @@ sealed partial class Emitter
             case "local":
             {
                 var name = e.GetProperty("name").GetString();
-                if (_locals.TryGetValue(name, out var l)) { _il.Emit(OpCodes.Ldloca, l); return; }
-                if (_args.TryGetValue(name, out var a)) { _il.Emit(OpCodes.Ldarga, a); return; }
+                // A slot whose declared type is ALREADY a managed pointer (`ref T`) HOLDS the address — a `var x by
+                // byref(m())` delegate local, or the local a call-evaluation plan pins a ref-returning location into.
+                // Its address is its VALUE; `Ldloca` would hand out a `ref ref T` the callee cannot use.
+                if (_locals.TryGetValue(name, out var l))
+                { _il.Emit(l.LocalType.IsByRef ? OpCodes.Ldloc : OpCodes.Ldloca, l); return; }
+                if (_args.TryGetValue(name, out var a))
+                { _il.Emit(_argTypes[name].IsByRef ? OpCodes.Ldarg : OpCodes.Ldarga, a); return; }
+                break;
+            }
+            case "byrefLoad":
+            {
+                // Reading through a managed pointer yields the POINTEE; the address of that pointee is the pointer
+                // itself. A `var x by byref(...)` delegate read reaches here as `byrefLoad`, never as a raw local, so
+                // without this arm `swap(byref(x), byref(y))` fell to the rvalue path below and swapped two
+                // temporaries — verifiable IL that silently drops the write.
+                var bn = e.GetProperty("local").GetString();
+                if (_locals.TryGetValue(bn, out var bl) && bl.LocalType.IsByRef) { _il.Emit(OpCodes.Ldloc, bl); return; }
+                if (_args.TryGetValue(bn, out var ba) && _argTypes[bn].IsByRef) { _il.Emit(OpCodes.Ldarg, ba); return; }
                 break;
             }
             case "this":
@@ -608,17 +647,45 @@ sealed partial class Emitter
                 EmitExpr(e.GetProperty("recv"));
                 _il.Emit(OpCodes.Ldflda, ResolveField(ParseOwnerSlot(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out _));
                 return;
+            case "staticField":
+                _il.Emit(OpCodes.Ldsflda, ResolveField(ParseOwnerSlot(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out _));
+                return;
+            case "arrayGet":
+                EmitExpr(e.GetProperty("array"));
+                EmitExpr(e.GetProperty("index"));
+                _il.Emit(OpCodes.Ldelema, MapType(e.GetProperty("elem")));
+                return;
+            case "stackGet":
+                // The stack-buffer slot's own address (the value path Ldobj's through exactly this).
+                EmitStackCheckedAddr(e, MapType(e.GetProperty("elem")));
+                return;
         }
+        // THE RVALUE FALLBACK: materialize the value and hand out the temporary's address. That is the right answer for
+        // an expression that designates no storage — but only when it is a VALUE. An expression that already yields a
+        // managed pointer (a `ref`-returning property accessor, say) IS the address; copying it into a `ref T` local and
+        // taking THAT address hands the callee a `ref ref T`.
         var t = EmitExpr(e);
+        if (t != null && t.IsByRef) return;
         var tmp = _il.DeclareLocal(t);
         _il.Emit(OpCodes.Stloc, tmp);
         _il.Emit(OpCodes.Ldloca, tmp);
     }
 
-    // Throw IndexOutOfRangeException unless 0 <= index < len (unsigned compare catches negatives too).
-    void EmitStackBounds(JsonElement e)
+    /// Bounds-check a stack-buffer access and push the address of the element: `ptr + index * sizeof(elem)`.
+    ///
+    /// ONE helper for every stack-slot access — the read, the write and the by-reference argument — because the INDEX
+    /// must be evaluated exactly ONCE and both halves need it. Emitting the check and the address as two independent
+    /// pieces evaluated `e.index` twice, so `b[i++]` incremented twice and the check ran against a different element
+    /// than the access: `Swap(byref(b[i++]), byref(b[i++]))` with `i == 0` left `i == 3` and threw.
+    void EmitStackCheckedAddr(JsonElement e, Type elem)
     {
+        // The index first and once, into a temp both halves read. (Order is unchanged: index, then len, then ptr.)
         EmitExpr(e.GetProperty("index"));
+        var idx = _il.DeclareLocal(typeof(int));
+        _il.Emit(OpCodes.Stloc, idx);
+
+        // Throw IndexOutOfRangeException unless 0 <= index < len (unsigned compare catches negatives too).
+        _il.Emit(OpCodes.Ldloc, idx);
         EmitExpr(e.GetProperty("len"));
         var ok = _il.DefineLabel();
         _il.Emit(OpCodes.Blt_Un, ok);
@@ -626,13 +693,9 @@ sealed partial class Emitter
         _il.Emit(OpCodes.Newobj, typeof(IndexOutOfRangeException).GetConstructor(new[] { typeof(string) }));
         _il.Emit(OpCodes.Throw);
         _il.MarkLabel(ok);
-    }
 
-    // Push the address `ptr + index * sizeof(elem)` (a byte* into the stack buffer).
-    void EmitStackAddr(JsonElement e, Type elem)
-    {
         EmitExpr(e.GetProperty("ptr"));
-        EmitExpr(e.GetProperty("index"));
+        _il.Emit(OpCodes.Ldloc, idx);
         _il.Emit(OpCodes.Sizeof, elem);
         _il.Emit(OpCodes.Mul);
         _il.Emit(OpCodes.Add);

@@ -36,6 +36,7 @@ declare -A ILVERIFY_XFAIL=(
 	["ArrayTests::copyOfGrowsWithNullTail()"]="#127/#86 nullable value-array object erasure: copyOf returns object[] where Nullable<Int>[] is formally expected — runtime-safe (RUN green)"
 	# localloc is intentionally unverifiable ECMA-335 IL. The runtime test validates the resulting Span writes/reads.
 	["StackBufferTests::stackAllocationAndSpanInterop()"]="by design: stackalloc emits localloc, which ILVerify must report as unverifiable; runtime assertions are green"
+	["ByRefParameterTests::byrefOfAStackSlotEvaluatesItsIndexOnce()"]="by design: the same stackalloc/localloc unverifiability as its StackBufferTests sibling — this case takes the ADDRESS of a stack slot, so the pointer arithmetic is equally formal-only; runtime assertions are green"
 )
 
 ILV="$(find "$HOME/.dotnet" -name 'ILVerify.dll' 2>/dev/null | head -1)"

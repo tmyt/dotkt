@@ -1299,12 +1299,14 @@ static partial class SuspendColdLowering
                     FieldStorage(n, t, RoleCapture, lives: true, across: null);             // captured vars -> ctor-set fields
             foreach (var p in _params)
                 FieldStorage(Str(p["name"]), TypeJson.Read(p["type"]), RoleParam, true, null);  // lambda: create()-set param field(s)
-            foreach (var (vn, vt) in live.DeclaredVars)
+            foreach (var (vn, vt, role) in live.DeclaredVars)
             {
                 var declared = TypeJson.Read(vt);
                 if (vn != null) _localTypes[vn] = declared;
-                FieldStorage(vn, declared, RoleLocal,
-                    live.LivesAcrossSuspension(vn), live.FirstSuspensionAcross(vn));
+                // A call-evaluation plan binding names itself ("the receiver of `copy`", "the default of parameter
+                // `b`"); an ordinary local is just a local. Either way the refusal below reads the SAME sentence.
+                FieldStorage(vn, declared, role ?? RoleLocal,
+                    live.LivesAcrossSuspension(vn), live.FirstSuspensionAcross(vn), roleNamesIt: role != null);
             }
 
             var bodyOut = new List<JsonNode>();
@@ -1397,13 +1399,17 @@ static partial class SuspendColdLowering
         const string RoleCondResult = "conditional-result temporary";
         const string RoleReturn = "result";
 
-        void FieldStorage(string name, TypeNode type, string role, bool lives, string across)
+        // `roleNamesIt` = the role already identifies the value in source terms (a call-evaluation plan binding says
+        // "the argument 'x' of `f`"), so the diagnostic drops the emitted name rather than printing a minted
+        // `cir$b1` the author never wrote. An ordinary local's role is a category, and the name is what tells two of
+        // them apart, so it is kept.
+        void FieldStorage(string name, TypeNode type, string role, bool lives, string across, bool roleNamesIt = false)
         {
             if (name == null || !lives) return;                  // dead across every suspension -> stays a local
             var why = FieldLegality.Classify(type, IsByRefLikeFqn, out var offending);
             if (why != FieldRejection.None)
                 throw new NotSupportedException(FieldLegality.SuspendMessage(
-                    FieldLegality.PosPrefix(_m), DiagOwner, role, name, type, offending, why, across));
+                    FieldLegality.PosPrefix(_m), DiagOwner, role, roleNamesIt ? null : name, type, offending, why, across));
             if (_fields.Add(name)) _fieldDecls.Add((name, type ?? AnyTn));
         }
 
@@ -1828,16 +1834,14 @@ static partial class SuspendColdLowering
         TypeNode TypeOfExpr(JsonNode n)
         {
             if (n is not JsonObject o) return null;
-            if (TypeJson.Read(o["ret"]) is TypeNode t0) return t0;
-            if (TypeJson.Read(o["dynRet"]) is TypeNode t2) return t2;
-            if (TypeJson.Read(o["sty"]) is TypeNode ts) return ts;
-            var k = Str(o["k"]);
-            switch (k)
+            // The node-local answer first (an explicit `ret`/`dynRet`/`sty`, then whatever slot the kind carries its
+            // own result type in). Shared with the call-evaluation plan's address pins, which mint locals for the same
+            // reason and must type them the same way — see bir-common/NodeType.cs.
+            if (NodeType.Of(o, TypeOfExpr, name => BirTypeLowering.PrimArrayElem.TryGetValue(name, out var pe) ? pe : null)
+                is TypeNode nodeLocal) return nodeLocal;
+            // ...then the arms only an INDEX of this compilation can answer: a call with no `sty`, and a raw field read.
+            switch (Str(o["k"]))
             {
-                case "const": case "cast": case "new": case "newClr": case "valueBlock": case "var":
-                case "cond":
-                    if (TypeJson.Read(o["type"]) is TypeNode t) return t;
-                    break;
                 case "callStatic":
                 {
                     var name = Str(o["method"]);
@@ -1863,56 +1867,6 @@ static partial class SuspendColdLowering
                     if (_fieldTypes.TryGetValue("#" + fname, out var fft2)) return fft2;
                     break;
                 }
-                case "arrayGet":
-                    // N4-sibling eval-order spill: an array-element read carries its element type verbatim on `elem`,
-                    // so the temp SM field is typed precisely (avoids a kotlin.Any box of a value-type element).
-                    if (TypeJson.Read(o["elem"]) is TypeNode et) return et;
-                    break;
-                case "binOp":
-                    return Str(o["op"]) is "==" or "!=" or "<" or ">" or "<=" or ">=" ? BoolTn : TypeOfExpr(o["lhs"]);
-                // The remaining kinds that carry their result type in a slot of their own rather than in `ret`/`sty`.
-                // A `cond` reaches the spill path routinely: an escaping conditional is lowered to control flow with
-                // its value in a temp, and that temp is an ordinary operand of the enclosing expression.
-                case "conv":
-                    if (TypeJson.Read(o["to"]) is TypeNode ct) return ct;
-                    break;
-                case "unaryOp":
-                    return Str(o["op"]) == "!" ? BoolTn : TypeOfExpr(o["e"]);
-                case "objEq": case "isInst": case "isInstRef": case "nullableHasValue":
-                    return BoolTn;
-                case "arrayLen":
-                    return IntTn;
-                case "concat":
-                    return new TypeNode.Fqn("kotlin.String");
-                case "newArray": case "newArrayInit": case "newArraySized":
-                    if (TypeJson.Read(o["elem"]) is TypeNode ae) return new TypeNode.Array(ae);
-                    break;
-                case "newClosure": case "newDelegate": case "newSam": case "newSuspendLambda":
-                case "newBoundDelegate": case "newBoundClrDelegate":
-                    if (TypeJson.Read(o["funcType"]) is TypeNode ft) return ft;
-                    if (TypeJson.OwnerName(o["closureType"]) is string cn) return new TypeNode.Fqn(cn);
-                    break;
-                case "delegateInvoke":
-                    // The RESULT of invoking the delegate, not the delegate itself.
-                    if (TypeJson.Read(o["funcType"]) is TypeNode.Fn dfn) return dfn.Ret;
-                    break;
-                case "nullableWrap": case "nullableValue": case "safeCastValue": case "default":
-                    if (TypeJson.Read(o["type"]) is TypeNode nt) return nt;
-                    break;
-                case "objMethod":
-                    // The three `Any` slots, by their Kotlin contract.
-                    return Str(o["method"]) switch
-                    {
-                        "toString" or "ToString" => new TypeNode.Fqn("kotlin.String"),
-                        "hashCode" or "GetHashCode" => IntTn,
-                        "equals" or "Equals" => BoolTn,
-                        _ => null,
-                    };
-                case "enumOrdinal":
-                    return IntTn;
-                case "stackGet": case "byrefLoad":
-                    if (TypeJson.Read(o["elem"]) is TypeNode se) return se;
-                    break;
             }
             return null;
         }

@@ -59,6 +59,7 @@ import org.jetbrains.kotlin.ir.util.classId
 import org.jetbrains.kotlin.name.CallableId
 import org.jetbrains.kotlin.ir.util.fqNameWhenAvailable
 import org.jetbrains.kotlin.ir.util.resolveFakeOverride
+import org.jetbrains.kotlin.ir.util.primaryConstructor
 import org.jetbrains.kotlin.ir.declarations.IrTypeParameter
 import org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol
 import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
@@ -284,18 +285,20 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 			// args (the `args`) are baked into the subclass's base() call; the entry field constructs it with
 			// just (__name, __ordinal) so the subclass ctor is uniform regardless of user params.
 			val sub = "<>${name}_${ent.name.asString()}"
-			subDefs.add(enumEntrySubclass(sub, name, cc, enumSuperArgs(cc)))
+			val (superArgs, superBindings) = enumSuperArgs(cc)
+			subDefs.add(enumEntrySubclass(sub, name, cc, superArgs, superBindings))
 			fields.add("""{"name":${str(ent.name.asString())},"type":${fqnJson(name)},"static":true,"init":{"k":"new","type":${fqnJson(sub)},"args":[${nameOrd(i, ent).joinToString(",")}]}}""")
 		} else {
 			val ecc = (ent.initializerExpression as? IrExpressionBody)?.expression as? IrEnumConstructorCall
 			// An entry's `NAME(args)` is an omitting call site too (`R(1)` on `enum class Col(val rgb: Int, val
-			// label: String = "c")`), so it fills omitted defaults like every other call shape — and binds a value a
-			// filled default splices to a temp (#235), declared by a `valueBlock` around this initializer.
-			val (entryTemps, entryArgs) = ecc?.let { c -> withCallValuesBoundOnce(c) { filledArgs(c) } } ?: (emptyList<String>() to emptyList())
+			// label: String = "c")`), so it fills omitted defaults like every other call shape — under its own
+			// evaluation plan (§2.7), which rides a `callEval` around this initializer because a static field's
+			// initializer IS an expression position.
+			val (entryPlan, entryArgs) = ecc?.let { c -> withCallPlan(c) { filledArgs(c) } }
+				?: (null to emptyList<String>())
 			val newArgs = (nameOrd(i, ent) + entryArgs).joinToString(",")
 			val newEntry = """{"k":"new","type":${fqnJson(name)},"args":[$newArgs]}"""
-			val init = if (entryTemps.isEmpty()) newEntry
-				else """{"k":"valueBlock","type":${fqnJson(name)},"stmts":[${entryTemps.joinToString(",")}],"result":$newEntry}"""
+			val init = entryPlan?.wrap(newEntry, fqnJson(name)) ?: newEntry
 			fields.add("""{"name":${str(ent.name.asString())},"type":${fqnJson(name)},"static":true,"init":$init}""")
 		}
 	}
@@ -325,25 +328,28 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 }
 
 /** The enum-super args a per-entry body's anonymous subclass passes (the `NAME(args)` args), as expr JSON —
- *  omitted defaults filled, like every other constructor call site. */
-internal fun BirEmitter.enumSuperArgs(cc: IrClass): List<String> {
-	val ctor = cc.declarations.filterIsInstance<IrConstructor>().firstOrNull() ?: return emptyList()
+ *  omitted defaults filled, like every other constructor call site — paired with the call's evaluation plan
+ *  BINDINGS (§2.7). These args ride the subclass ctor's `baseArgs`, a DECLARATION slot with no wrapping expression, so
+ *  the bindings ride the ctor's `delegationBindings` and bir2cir's CallEvalLowering lowers them to `preStmts` that
+ *  ilemit emits ahead of the base call. */
+internal fun BirEmitter.enumSuperArgs(cc: IrClass): Pair<List<String>, String?> {
+	val ctor = cc.declarations.filterIsInstance<IrConstructor>().firstOrNull() ?: return emptyList<String>() to null
 	val call = (ctor.body as? IrBlockBody)?.statements?.firstNotNullOfOrNull { it as? IrEnumConstructorCall }
-		?: return emptyList()
-	// These args ride the subclass ctor's `baseArgs`, so a single-evaluation temp is declared by the FIRST of them
-	// (the same placement a constructor delegation uses — see [declaringFirstArg]).
-	val (temps, args) = withCallValuesBoundOnce(call) { filledArgs(call) }
-	return declaringFirstArg(temps, args)
+		?: return emptyList<String>() to null
+	val (plan, args) = withCallPlan(call) { filledArgs(call) }
+	return args to plan.bindingsJson().takeIf { !plan.isEmpty }
 }
 
 /** A per-entry enum body `NAME(args) { override fun … }` -> a subclass `<>Enum_NAME : Enum` whose ctor takes only
  *  (__name, __ordinal) and forwards them plus the baked-in `args` to the base ctor; carries the overriding methods. */
-internal fun BirEmitter.enumEntrySubclass(subName: String, baseName: String, cc: IrClass, userArgs: List<String>): String {
+internal fun BirEmitter.enumEntrySubclass(subName: String, baseName: String, cc: IrClass,
+		userArgs: List<String>, delegationBindings: String?): String {
 	val overrides = cc.declarations.filterIsInstance<IrSimpleFunction>()
 		.filter { it.body != null && it.correspondingPropertySymbol == null }
 		.joinToString(",") { method(it, static = false) }
 	val baseArgs = (listOf("""{"k":"local","name":"__name"}""", """{"k":"local","name":"__ordinal"}""") + userArgs).joinToString(",")
-	val subCtor = """{"params":[{"name":"__name","type":${fqnJson("kotlin.String")}},{"name":"__ordinal","type":${fqnJson("kotlin.Int")}}],"baseArgs":[$baseArgs],"thisArgs":null,"vis":"public","body":[]}"""
+	val bindings = delegationBindings?.let { ""","delegationBindings":$it""" } ?: ""
+	val subCtor = """{"params":[{"name":"__name","type":${fqnJson("kotlin.String")}},{"name":"__ordinal","type":${fqnJson("kotlin.Int")}}],"baseArgs":[$baseArgs],"thisArgs":null$bindings,"vis":"public","body":[]}"""
 	return """{"name":${str(subName)},"kind":"class","abstract":false,"vis":"public","base":${fqnJson(baseName)},"interfaces":[],"fields":[],"ctors":[$subCtor],"methods":[$overrides]}"""
 }
 
@@ -986,14 +992,18 @@ internal fun BirEmitter.ctor(klass: IrClass, ctor: IrConstructor, captures: List
 		captureSubst[d] = """{"k":"local","name":${str(fname)}}"""
 	}
 	val capForwardArgs = if (klass.isInner) emptyList() else captures.map { (_, f) -> """{"k":"local","name":${str(f)}}""" }
-	// A value a filled default SPLICES is bound to a temp so it is evaluated once (#235), like at every other call site.
-	// A delegation is not an expression — it rides the ctor declaration, ahead of the body — so there is no wrapping
-	// `valueBlock` to declare the temps in. They go in the FIRST argument instead: `var` statements in a `valueBlock`
-	// declare method-body locals, and the first argument is evaluated before every later one, so each later argument's
-	// read of a temp is in scope and in order.
-	val thisArgs = if (isThisDelegate) withCallValuesBoundOnce(delegating!!) {
+	// A delegation is an ordinary call site with its own EVALUATION PLAN (§2.7), but it is not an expression — it rides
+	// the ctor declaration, ahead of the body — so there is no wrapping `valueBlock` to lower the plan into. The
+	// bindings ride the declaration instead, as `delegationBindings`; bir2cir's CallEvalLowering turns them into
+	// `preStmts`, which ilemit emits before the `this`/`base` call itself. At most one delegation exists per
+	// constructor, so the two arms below share the one slot.
+	var delegationBindings: String? = null
+	val thisArgs = if (isThisDelegate) withCallPlan(delegating!!) {
 		capForwardArgs + delegatedCtorArgs(delegating)
-	}.let { (temps, a) -> declaringFirstArg(temps, a).joinToString(",") } else null
+	}.let { (plan, a) ->
+		delegationBindings = plan.bindingsJson().takeIf { !plan.isEmpty }
+		a.joinToString(",")
+	} else null
 	val baseArgs = if (!isThisDelegate) delegating?.let { d ->
 		val targetFq = delegateClass?.fqNameWhenAvailable?.asString()
 		if (targetFq != "kotlin.Any") {
@@ -1007,8 +1017,11 @@ internal fun BirEmitter.ctor(klass: IrClass, ctor: IrConstructor, captures: List
 						"a local base class's capture is not a capture of the derived local class")
 				"""{"k":"local","name":${str(here)}}"""
 			}
-			withCallValuesBoundOnce(d) { baseCaptureArgs + delegatedCtorArgs(d) }
-				.let { (temps, a) -> declaringFirstArg(temps, a).joinToString(",") }
+			withCallPlan(d) { baseCaptureArgs + delegatedCtorArgs(d) }
+				.let { (plan, a) ->
+					delegationBindings = plan.bindingsJson().takeIf { !plan.isEmpty }
+					a.joinToString(",")
+				}
 		}
 		else null
 	} else null
@@ -1046,7 +1059,8 @@ internal fun BirEmitter.ctor(klass: IrClass, ctor: IrConstructor, captures: List
 	// ride a separate field), so a null user param dereferenced by a base-ctor arg NREs before this friendly NPE — an
 	// accepted ordering deviation from JVM's before-super() insertion (docs/dotkt-semantics.md).
 	val ctorBody = (preconditionChecks(ctor) + stmts).joinToString(",")
-	return """{"params":[$params],"baseArgs":$baseJson,"thisArgs":$thisJson,"vis":${str(visOf(ctor))},"body":[$ctorBody]}"""
+	val bindingsJson = delegationBindings?.let { ""","delegationBindings":$it""" } ?: ""
+	return """{"params":[$params],"baseArgs":$baseJson,"thisArgs":$thisJson$bindingsJson,"vis":${str(visOf(ctor))},"body":[$ctorBody]}"""
 }
 
 internal fun BirEmitter.method(fn: IrSimpleFunction, static: Boolean): String {
@@ -1340,9 +1354,28 @@ internal fun BirEmitter.carriesKotlinDefault(fn: org.jetbrains.kotlin.ir.declara
 		else -> false
 	}
 
-/** A data-class `copy` synthetic — `copy` cannot be user-declared on a data class, so name + `isData` parent is exact. */
-internal fun BirEmitter.isDataClassCopy(fn: org.jetbrains.kotlin.ir.declarations.IrSimpleFunction): Boolean =
-	fn.name.asString() == "copy" && (fn.parent as? IrClass)?.isData == true
+/** The SYNTHETIC `copy` of a data class — the one whose omitted parameter defaults are `this.<field>` by construction.
+ *  Name + `isData` parent is NOT enough: only the generated SIGNATURE is reserved, so a data class may also declare a
+ *  differently-signed `copy` OVERLOAD of its own (`data class D(val x: Int) { fun copy(tag: String, z: Int = x * 2) }`
+ *  compiles and runs), whose defaults are ordinary expressions and are NOT field reads. The generated one mirrors the
+ *  primary constructor parameter-for-parameter, name-for-name AND type-for-type (both signatures are written in the
+ *  class's own type-parameter frame, so the `birType` identities compare directly) — exactly the property a
+ *  `this.<field>` reconstruction depends on.
+ *
+ *  UNMEASURED: the mis-selection this excludes is reasoned from the reconstruction's precondition, not observed. It
+ *  needs a data class carrying a `copy` OVERLOAD in a REFERENCED module, and the only cross-module source that
+ *  preserves the `data` nature is the frontend KLIB — the stdlib, which declares no such class. The same-module case
+ *  (verified to compile and run) never reaches the reconstruction, because its default is real IR. */
+internal fun BirEmitter.isDataClassCopy(fn: org.jetbrains.kotlin.ir.declarations.IrSimpleFunction): Boolean {
+	if (fn.name.asString() != "copy") return false
+	val cls = fn.parent as? IrClass ?: return false
+	if (!cls.isData) return false
+	val ctorParams = cls.primaryConstructor?.parameters?.filter { it.kind == IrParameterKind.Regular } ?: return false
+	val copyParams = fn.parameters.filter { it.kind == IrParameterKind.Regular }
+	return ctorParams.size == copyParams.size && ctorParams.indices.all {
+		ctorParams[it].name == copyParams[it].name && birType(ctorParams[it].type) == birType(copyParams[it].type)
+	}
+}
 
 /** #146: the @KotlinDefault carrier BIR for a default expression, made CLOSED so bir2cir can re-emit it at a
  *  cross-module omitted call site. A constant / simple call (`= emptyList()`) emits NO lifted method, so its BIR is
