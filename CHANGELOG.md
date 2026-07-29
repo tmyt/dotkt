@@ -49,6 +49,19 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `make facades`, and `scripts/gen-facades.sh` are deleted; `make toolchain` now builds only the shipping tools.
 
 ### Fixed
+- **bir2cir (area:bir2cir): `x in a..b` now evaluates `a`, `b` and `x` exactly once each, in that order.** Range
+  membership is `(a..b).contains(x)`: the range is constructed first, so BOTH bounds always run, left to right, and
+  the subject is read after them. The short-circuit fast path (`x >= a && x <op> b`) put the upper-bound test inside
+  the lower-bound test's `then`, so a subject below `a` never ran `b` — `0 in lo()..hi()` silently dropped `hi()`'s
+  side effect — and it read the subject before either bound, so a subject a bound assigns (`var x = -1;
+  x in run { x = 5; 0 }..50`) compared the stale value and answered `false` where Kotlin answers `true`. The three
+  operands are now bound to temps up front in Kotlin's order and the comparison legs read the temps. An operand is
+  still spliced in place when re-reading it is free — `ValueStability.IsReReadable`, the one answer to that question
+  (Q1), replaces a local "stable" set that had wrongly accepted any `local`, mutable or not — so an all-constant
+  membership (`5 in 1..10`) still lowers to bare comparisons with no temp at all. The fix covers every form the fast
+  path handles: `..`, `..<`, the `until` extension, `!in`, and the `Int`/`Long`/`Char` element types.
+  `StringCharSequenceBridge`'s copy of that same "stable" set — harmless, because nothing evaluates between its two
+  reads — is gone the same way, so there is no second answer left to drift.
 - **bir2cir (area:bir2cir): an argument that never returns, to the left of a suspending one, is no longer treated
   as a value to carry across the suspension.** `pair(run { throw IllegalStateException() }, later())` refused to
   compile — the evaluation-order spill wanted a type for an operand that has no value — and the shapes it stood for

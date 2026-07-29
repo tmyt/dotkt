@@ -919,8 +919,9 @@ internal fun BirEmitter.call(call: IrCall): String {
 	// so a USER type with `operator fun rangeTo`+`contains` stays a real method dispatch (the bare-name lowering
 	// here MISCOMPILED it to primitive comparisons). bir2cir (RangeMembershipLowering) lowers `x in a..b` /
 	// `x in a until b` to the short-circuit `(x >= a && x <op> b)` fast path FQN-keyed — only when the range is an
-	// un-materialized primitive `kotlin.<Prim>.rangeTo/rangeUntil` — binding `x` ONCE (a side-effecting operand
-	// must not run in both comparison legs). The Kotlin<->CLR range relation lives in bir2cir.
+	// un-materialized primitive `kotlin.<Prim>.rangeTo/rangeUntil` — binding the two bounds and the subject ONCE
+	// EACH, in that (Kotlin) order, so the short circuit neither skips a bound nor reads the subject early.
+	// The Kotlin<->CLR range relation lives in bir2cir.
 
 	// Enum rich API: Color.values()/entries -> Enum.GetValues<T>(); Color.valueOf(s) -> Enum.Parse<T>(s).
 	val enumDeclarationOwner = (callee.parent as? IrClass)

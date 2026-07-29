@@ -15,6 +15,8 @@
 //   il-usermember     -> userMember_universalMethods     #96 declared vs inherited hashCode/equals/toString dispatch
 //   il-userrange      -> userRange_userContains          #73 `x in a..b` on a USER rangeTo/contains dispatches the real method
 //   il-rangein        -> rangeIn_primitiveMembership     #73 primitive range membership; subject evaluated exactly once
+//                     -> rangeIn_bothBoundsAlwaysEvaluated / rangeIn_subjectReadAfterBounds — and in Kotlin's order
+//                        (lo, hi, subject), which the short-circuit fast path used to skip and invert
 //   il-whensubj       -> whenSubject_singleEval          A5 `when (subject)` in expr position evaluates subject exactly once
 //   il-smartcast      -> smartCast_safeCast              `as?` safe cast — value type (-> T?) and reference type (-> isinst)
 //   il-scope          -> scopeFunctions_inlined          let/run/with/also/apply -> inlined value-blocks (no delegate)
@@ -124,6 +126,20 @@ var riC = 0
 fun riH(): Int { riC++; return 5 }
 fun riHl(): Long { riC++; return 5L }
 fun riHc(): Char { riC++; return 'e' }
+
+// ...and range membership is `(lo..hi).contains(x)`, so EVALUATION ORDER is part of the meaning: the range is built
+// first, which runs BOTH bounds unconditionally, left to right, and only then the subject. The short-circuit fast
+// path (`x >= lo && x <op> hi`) would otherwise skip `hi` whenever the subject sits below `lo`, and would read a
+// mutable subject before a bound had assigned it. Each function tags the log with the ROLE it plays.
+val riLog = mutableListOf<String>()
+fun riLo(): Int { riLog.add("lo"); return 1 }
+fun riHi(): Int { riLog.add("hi"); return 10 }
+fun riSubj(): Int { riLog.add("x"); return 5 }
+fun riLoL(): Long { riLog.add("lo"); return 1L }
+fun riHiL(): Long { riLog.add("hi"); return 10L }
+fun riLoC(): Char { riLog.add("lo"); return 'a' }
+fun riHiC(): Char { riLog.add("hi"); return 'z' }
+private fun riTrace(): String = riLog.joinToString(",")
 
 // ---- il-whensubj : A5 `when (subject)` in expression position evaluates its subject exactly ONCE ----------------
 var wsN = 0
@@ -251,7 +267,7 @@ class LanguageCoreTests {
         assertEquals(1, riC)             // 1 — not 2 (single evaluation)
         assertFalse(riH() in 1 until 5)  // False (5 excluded)
         assertEquals(2, riC)             // 2
-        val i = 7                        // stable operand: the direct-splice fast path
+        val i = 7                        // local subject over CONST bounds
         assertTrue(i in 1..10)           // True
         assertFalse(riH() in 1..<5)      // rangeUntil (..<): 5 in 1..4 -> False
         assertFalse(riH() !in 1..10)     // !in: 5 !in 1..10 -> False
@@ -260,6 +276,45 @@ class LanguageCoreTests {
         assertEquals(6, riC)             // 6
         val r = 3..8                     // variable-held range: NOT the inline-construction fast path
         assertTrue(5 in r)               // real IntRange.contains binding: True
+        // Every operand is re-readable, so nothing needs binding — the emitted shape is the bare comparison pair
+        // (that part is the lowering's own contract; what a runtime assertion can pin is the value).
+        assertTrue(5 in 1..10)           // True
+        assertFalse(5 in 1..<5)          // False (5 excluded)
+    }
+
+    /** Both bounds build the range, so both run — even when the subject makes the comparison short-circuit. */
+    @TestAttribute
+    fun rangeIn_bothBoundsAlwaysEvaluated() {
+        riLog.clear(); assertFalse(0 in riLo()..riHi()); assertEquals("lo,hi", riTrace())     // subject BELOW lo
+        riLog.clear(); assertFalse(99 in riLo()..riHi()); assertEquals("lo,hi", riTrace())    // subject ABOVE hi
+        riLog.clear(); assertTrue(riSubj() in riLo()..riHi()); assertEquals("lo,hi,x", riTrace())
+        riLog.clear(); assertTrue(0 !in riLo()..riHi()); assertEquals("lo,hi", riTrace())     // !in
+        riLog.clear(); assertFalse(0 in riLo() until riHi()); assertEquals("lo,hi", riTrace())
+        riLog.clear(); assertFalse(0 in riLo()..<riHi()); assertEquals("lo,hi", riTrace())
+        riLog.clear(); assertFalse(0L in riLoL()..riHiL()); assertEquals("lo,hi", riTrace())  // LongRange
+        riLog.clear(); assertFalse('A' in riLoC()..riHiC()); assertEquals("lo,hi", riTrace()) // CharRange
+        // `downTo` builds an IntProgression, not a *Range, so the real contains() runs — same bound order.
+        riLog.clear(); assertFalse(0 in riHi() downTo riLo()); assertEquals("hi,lo", riTrace())
+    }
+
+    /** A mutable subject is read AFTER the bounds, so a bound that assigns it is visible to the comparison. */
+    @TestAttribute
+    fun rangeIn_subjectReadAfterBounds() {
+        var x = -1
+        assertTrue(x in run { x = 5; 0 }..50)   // lo assigns x -> 5 in 0..50
+        assertEquals(5, x)
+        var y = 100
+        assertTrue(y in 0..run { y = 3; 10 })   // hi assigns y -> 3 in 0..10
+        assertEquals(3, y)
+        var z = 0
+        assertTrue(z in run { z = 7; 5 }..9)    // 7 in 5..9 (reading z first would compare 0 >= 5)
+        var w = 0
+        assertTrue(w in run { w = 7; 5 } until 9)   // 7 in 5..8 (reading w first would compare 0 >= 5)
+        // No lambda anywhere, so the subject stays a PLAIN local rather than a captured ref cell — the shape that a
+        // "any local is safe to re-read" rule gets wrong on its own terms.
+        var q = -1
+        assertTrue(q in (if (q < 0) { q = 5; 0 } else 0)..50)
+        assertEquals(5, q)
     }
 
     @TestAttribute
