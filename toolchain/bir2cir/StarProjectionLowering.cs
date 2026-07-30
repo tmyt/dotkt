@@ -64,7 +64,8 @@ static class StarProjectionLowering
     // `Set` is @ClrTypeAlias'd to the SAME `IReadOnlyCollection<T>` as `Collection` (and `MutableSet` to the same
     // `ICollection<T>` as `MutableCollection`), so the two Kotlin types are ONE CLR type and no runtime check —
     // reflection included, for user implementations as much as for HashSet — can separate them. Giving Set/MutableSet a
-    // distinct CLR identity is a stdlib collection-ABI decision, not a lowering one; see docs/dotkt-semantics.md §5f.
+    // distinct CLR identity is a stdlib collection-ABI decision, not a lowering one; see docs/dotkt-semantics.md §2
+    // (the star-projection corollary), which is where the star-projected collection lowering is written up.
     static readonly Dictionary<string, string> NonGenericIface = new(StringComparer.Ordinal)
     {
         ["kotlin.collections.Collection"] = "System.Collections.ICollection",
