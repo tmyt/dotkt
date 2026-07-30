@@ -225,7 +225,7 @@ static class TryValueOperandHoist
         }
         if (IsStackNeutral(resolved)) return resolved;
         var tmp = "dotkt$hoist" + System.Threading.Interlocked.Increment(ref _tmp);
-        pre.Add(new JsonObject { ["k"] = "var", ["name"] = tmp, ["type"] = GuessType(resolved, scope), ["init"] = resolved.DeepClone() });
+        pre.Add(new JsonObject { ["k"] = "var", ["name"] = tmp, ["type"] = SpillType(resolved, scope), ["init"] = resolved.DeepClone() });
         return new JsonObject { ["k"] = "local", ["name"] = tmp };
     }
 
@@ -276,12 +276,16 @@ static class TryValueOperandHoist
     // whichever of `type`/`ret`/`dynRet` the node happened to carry, as this did, typed `f() + try{…}`'s spilled
     // `f()` as `kotlin.Any` and the emitted unbox faulted at runtime.
     //
-    // KNOWN GAP — the `kotlin.Any` fallback is the last one in the spill family. Everywhere else an underivable slot
-    // is an ERROR: `kotlin.Any` boxes a value type and hides a type the CLR would refuse, so a lowering that cannot
-    // type a spill is reporting a DROP by an earlier one (SuspendColdLowering's evaluation-order spill and field
-    // gate, CallEvalLowering's address pins). This hoist is plan-external and runs BEFORE the suspend lowering, so
-    // it keeps the fallback until the change that errorizes the remaining `kotlin.Any` slots takes it; it now fires
-    // only for a node the shared deriver itself cannot answer, which is a hole in the deriver.
-    static JsonNode GuessType(JsonNode n, BirScope scope)
-        => StaticType.Surface(n, scope) is DotKt.Bir.TypeNode t ? TypeJson.Write(t) : TypeJson.Fqn("kotlin.Any");
+    // An underivable spill is an ERROR here, the same contract as every other spill site (SuspendOperandPlan's
+    // binding typing, CallEvalLowering's address pins): `kotlin.Any` boxes a value type and hides a type the CLR
+    // would refuse, so substituting it turns an earlier layer's DROP into a runtime fault instead of a diagnostic.
+    // A null from the shared deriver at this point is a hole in the DERIVER, and the message says so.
+    static JsonNode SpillType(JsonNode n, BirScope scope)
+        => StaticType.Surface(n, scope) is DotKt.Bir.TypeNode t
+            ? TypeJson.Write(t)
+            : throw new System.NotSupportedException(
+                $"bir2cir: try-value hoist: the `{K(n) ?? "?"}` operand evaluated before a hoisted `try` expression "
+                + "carries no static type, so the temporary that holds its value across the hoist would be untyped. "
+                + "An earlier lowering dropped the operand's type, or its node kind needs an arm in "
+                + "bir-common/NodeType.cs.");
 }

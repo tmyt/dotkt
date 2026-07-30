@@ -1061,6 +1061,39 @@ having no instance to load, DotKt leaves that to the CLR type initializer's own 
 synthetic touch to force the Kotlin point. Note that a flattened companion's `init { }` block is currently not
 emitted at all — a separate gap, not a consequence of this rule.
 
+## 7b. A slot whose type cannot be derived is a REFUSAL, not `kotlin.Any`
+
+Every local, state-machine field and plan binding the backend mints needs a declared type. Where the type could not
+be derived, bir2cir used to write `kotlin.Any`. That is never a neutral choice: it BOXES a value type, it makes the
+CLR refuse the read unless an unbox is emitted, and it turns *an earlier layer dropped this stamp* — a diagnosable
+compiler bug — into a runtime `InvalidCastException` at whatever later read happens to want the real type. So the
+rule is: **an underivable slot type is a compile-time refusal that names the shape**, and derivation is one shared
+answer (`bir-common/NodeType.cs`, spec §2.7) rather than a per-site guess.
+
+The refusals cannot fire on the BIR the frontend produces — that is what makes them invariant asserts rather than
+diagnostics. They are witnessed instead by synthetic documents under `tests/ir/lowering/reject-*.bir.json`, so an
+assert cannot be silently defeated by a later change.
+
+The `kotlin.Any` that remains is **ABI**, not fallback: the cold entry's return slot genuinely IS `Any?`, a
+continuation genuinely IS `Continuation<Any>`, a resume result genuinely IS `Result<Any?>`. Site by site:
+
+| Site | Class | Why |
+|---|---|---|
+| `SuspendColdLowering.EmitCondValue` — the `cond` temporary | RETIRED | A conditional's value slot is typed from its LIVE branch through the shared deriver (a `throw`/`return` arm produces no value, so it cannot answer for the arm that does). This is what made every value-type `x?.suspendFoo()` across a suspension box and unbox. Refuses otherwise. |
+| `TryValueOperandHoist.SpillType` (was `GuessType`) | RETIRED | An operand spilled ahead of a hoisted `try` is typed by `StaticType.Surface` against the walk's lexical scope. A null there is a hole in the DERIVER, and the refusal says so. |
+| `SuspendColdLowering` `_methodRets` index (2 sites) → `MethodDeclRet` | RETIRED | Surveyed: **0 of 7308** stdlib method declarations lack both `suspendRet` and `ret`, and every kotc method emitter writes `ret` unconditionally. A miss is a slot dropped by a pass that synthesized the declaration. |
+| `SuspendColdLowering` `calleeRet` index | RETIRED | Admission to the suspend registry requires the `suspend` modifier, and kotc stamps `suspendRet` on exactly the declarations that carry it — the two cannot disagree on valid input. |
+| `EmitSuspensionPoint` resume slot; `IsUnitTn(retTok) -> AnyTn` | LEGITIMATE-ABI | The cold entry returns `Any?` and a `Unit` suspension resumes no value. The slot IS `Any?`; naming it so is not a fallback. |
+| `EmitSuspendCoroutineCall` result slot | LEGITIMATE-ABI | `suspendCoroutineUninterceptedOrReturn`'s block yields `Any?` by contract (its value may be `COROUTINE_SUSPENDED`). |
+| `Continuation<Any>` / `Result<Any?>` / the cold `resumeWith` and `create` signatures | LEGITIMATE-ABI | The published cold-core ABI (§ the coroutine design). Substituting the Kotlin `T` there would be the bug. |
+| `SuspendColdLowering.Normalize` `forEachInline` element | LEGITIMATE-ABI | The lowering deliberately takes the NON-GENERIC `IEnumerable`/`IEnumerator` path, whose `get_Current` returns `object`, so with no `elem` the cast target genuinely IS `object`. |
+| `SuspendColdLowering.Normalize` catch `excType` | LEGITIMATE-ABI | A catch with no declared exception type catches everything; exceptions are reference types, so the widest reference type is the correct filter. |
+| `FaithfulHintRecognition` missing `argTypes` entry | LEGITIMATE | A CLASSIFIER's "not a bare primitive / not a collection" posture. It types no slot, so it cannot box anything. |
+| `FunGen`'s cold `create`/`resumeWith` param types (2 sites); `SuspendLambdaLowering.ReadNameTypes`; `FBoundStarProjectionErasure` bridge params | FOLLOW-UP | Same construction argument as `MethodDeclRet` — surveyed **0 of 10980** stdlib param declarations lack `type`. Retiring them buys a diagnostic, not a correctness fix (they only choose between a verbatim store and a `cast`), so it wants its own change with its own witness fixtures. |
+| `SuspendLambdaLowering` ctor `typeArgs` entry | FOLLOW-UP | A `typeArgs` entry is a type node by schema (`verify-schema` enforces it), so this is dead. Precondition: assert it against the schema rather than restating the check here. |
+| `FunGen.FieldType` SM-slot lookup | FOLLOW-UP | Its callers are guarded on the slot EXISTING (`_fields.Contains`), so the fallback is unreachable through them. Precondition: prove the remaining caller (`IsSuspendValueCallInScope`) cannot ask for an untracked name, then the lookup returns null and the caller decides. |
+| `Rewrite`'s result-less suspension-bearing `valueBlock` | FOLLOW-UP | A block with no `result` produces no value, so the null constant's type is the type of a value nobody has. Precondition: thread the ENCLOSING slot's expected type in — the node itself carries no fact that could answer. |
+
 ## 8. Reverse / cross-assembly interop
 
 - A DotKt assembly is a first-class .NET assembly; C# can reflection-load it. For **compile-time** `<Reference>`/
@@ -1433,6 +1466,7 @@ Current deliberate limits are:
 - A Kotlin `Map` surfaces to C# as a *mutable* `IDictionary<K,V>`; `keys`/`values`/`entries` are snapshots. §5c.
 - A `value class` is a real (reference) class on the CLR — never erased, never a struct. §5f.
 - A value a call supplies that the emitted CLR shape has no slot for is still evaluated (a static-field read runs a type initializer; a field read can throw) — only a literal/local/`this`-class load is dropped. §7a.
+- A value-type `x?.suspendFoo()` across a suspension is no longer boxed: the conditional's slot is typed from its live branch, and a slot the backend cannot type is a compile-time refusal rather than a `kotlin.Any` box. §7b.
 - An auto-property's backing field is named `<Name>k__BackingField` (C# convention, `[CompilerGenerated]`), not `Name` — so reflection never sees a property and a field under one name. §5h.
 - `System.Byte` is UNSIGNED → maps to `UByte` (and `byte[]` → `UByteArray`, a native `System.Byte[]`); `kotlin.Byte` is signed = `System.SByte`. `UByteArray.toByteArray()` is a reinterpret VIEW, not a copy. §9b.
 - `import System.Text.StringBuilder` and `kotlin.text.StringBuilder` are two distinct typed views of one CLR type; mixing them is a type error (cast to cross). §8b.

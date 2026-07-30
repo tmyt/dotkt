@@ -1,0 +1,24 @@
+{
+  "fileClass": "RejectNoRetKt",
+  "hasMain": false,
+  "fields": [],
+  "types": [],
+  "refTypes": [],
+  "methods": [
+    {
+      "name": "coldEntryAnchor",
+      "static": true,
+      "mods": { "suspend": true },
+      "params": [],
+      "ret": { "t": "fqn", "name": "kotlin.Int" },
+      "suspendRet": { "t": "fqn", "name": "kotlin.Int" },
+      "body": [{ "k": "return", "value": { "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 1 } }]
+    },
+    {
+      "name": "declarationWithNoResultType",
+      "static": true,
+      "params": [],
+      "body": []
+    }
+  ]
+}

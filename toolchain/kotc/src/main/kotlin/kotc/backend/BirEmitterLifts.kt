@@ -341,7 +341,11 @@ internal fun BirEmitter.samConversion(node: IrTypeOperatorCall): String {
 	// suspend SAM `emit` body keeps its raw `suspendCall`-tagged nodes (never cold-transformed) — the whole flow
 	// operator surface (the FlowCollector{} SAM emits: Combine/Merge/Transform/…) would dangle in ilemit. kotc reads
 	// only `sam.isSuspend` (a pure Kotlin fact); the coroutine ABI lowering is entirely downstream.
-	val samMods = if (sam.isSuspend) ""","mods":{"suspend":true}""" else ""
+	// `suspendRet` rides ALONGSIDE `mods.suspend` (the pairing `resultTypeJson` states for every other declaration
+	// emitter): the modifier is the FACT, the slot is the Kotlin RESULT TYPE, and bir2cir's cold registry reads the
+	// slot — a declaration carrying the modifier without it has had its result type dropped, which cost the suspend
+	// SAM's awaited values their type. Same value as `ret` here, since `ret` is the lambda's own Kotlin return type.
+	val samMods = if (sam.isSuspend) ""","mods":{"suspend":true},"suspendRet":${str(ret)}""" else ""
 	val samMethod = """{"name":${str(samName)},"static":false,"override":true,"virtual":true,"params":[$samParams],"ret":${str(ret)}$samMods,"body":[$body]}"""
 	savedSubst.forEach { (decl, prev) -> if (prev != null) captureSubst[decl] = prev else captureSubst.remove(decl) }
 	val fields = capPairs.joinToString(",") { (decl, fname) -> """{"name":${str(fname)},"type":${str(captureFieldType(decl))}}""" }

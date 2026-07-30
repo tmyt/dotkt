@@ -601,3 +601,26 @@ a declared slot needs. A stamp-less desugar is typed through its own shape — a
 `throw`/`return` arm produces no value, so it cannot answer for one that does), a `valueBlock` by the `var` it
 declares — because the alternative is a spill slot with no type, which is unverifiable IL and so a refusal to
 compile accepted source.
+
+**Stamp PRECEDENCE — `sty`, then `ret`, then `dynRet`.** One order, stated once in `bir-common/NodeType.cs` and
+inherited by every reader (#199). `sty` is the frontend's INSTANTIATED type, stamped per CALL SITE, so where it
+exists it is the precise answer. `ret` is emitted only when the callee or its owner is GENERIC — exactly where it
+may name the UNinstantiated declared type — so reading it first typed a generic-owner call by its declaration
+instead of by its use. `dynRet` is last: on a kotc-emitted `callInstance` it duplicates the instantiated type, and
+a bir2cir synthesizer that stamps only `dynRet` means it. No reader restates this order; a second copy is how the
+four variants that preceded this paragraph came to disagree.
+
+> **INVARIANT — a pass that changes a node's RESULT TYPE rewrites or deletes its `sty`.** The stamp is a claim
+> about the value the node produces, not a historical note about the node it used to be. A pass that re-owns,
+> erases, substitutes or narrows a call/field result (`UncheckedGenericCastReturnErasure`,
+> `ConstructedMemberReturnSubstitution`, `CharSeqStringLowering`, `InheritedMemberOwnerBinding`, the `clr*`
+> reshapes) must carry `sty` with the change or drop it, alongside the `ret`/`dynRet` it already updates. A stale
+> `sty` surviving on a retyped node is a bug in THAT pass — never a reason to demote the stamp below `ret`.
+
+**No `kotlin.Any` for a slot whose type could not be derived.** A declared slot — a state-machine field, a spill
+local, a plan binding — with an underivable type is a REFUSAL that names the shape, not a box: `kotlin.Any` hides
+a type the CLR would refuse and converts an earlier layer's dropped stamp into a runtime unbox fault. The
+`kotlin.Any` occurrences that remain are ABI, not fallback (the cold entry's `Any?` return, `Continuation<Any>`,
+`Result<Any?>`); `docs/dotkt-semantics.md` §7b holds the site-by-site triage. The refusals cannot fire on the BIR
+the frontend produces, which is why they are witnessed by synthetic documents under `tests/ir/lowering/reject-*`
+rather than by Kotlin source.

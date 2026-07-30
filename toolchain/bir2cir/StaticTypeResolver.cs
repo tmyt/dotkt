@@ -86,16 +86,12 @@ static class StaticType
     // the same posture the former re-resolution took on a miss.
     //
     // FOUNDED ON `bir-common/NodeType.cs`, which answers every kind whose type is IN the node (and is the same
-    // deriver the suspend spill and the plan's address pins type their locals with). Only three sorts of arm stay
-    // here — a kind that needs the enclosing lexical SCOPE, a kind whose answer is a bir2cir SPELLING rather than a
-    // node fact, and the call/field family, whose slot ORDER differs (below). Everything else delegates, so the two
-    // cannot classify a kind differently.
-    //
-    // PRECEDENCE, deliberately not unified yet: the core reads an explicit `ret`/`dynRet`/`sty` stamp before the
-    // kind's own slot, while the call/field arm here reads `sty` BEFORE `ret` (#199 — `ret` is emitted only on a
-    // generic-owner call and can name an un-instantiated type, `sty` is the frontend's instantiated answer). Making
-    // `sty` win everywhere is a change of its own, whose regressions are meant to name the passes that leave a stale
-    // `sty` behind; keeping this arm explicit is what holds today's answers fixed until then.
+    // deriver the suspend spill and the plan's address pins type their locals with) — INCLUDING the precedence of the
+    // three result-type stamps, which that file now states once for the whole toolchain (`sty` before `ret` before
+    // `dynRet`, #199). Only two sorts of arm stay here — a kind that needs the enclosing lexical SCOPE, and a kind
+    // whose answer is a bir2cir SPELLING rather than a node fact. Everything else delegates, so the two cannot
+    // classify a kind differently. The call/field/`bindRef` family needs NO arm at all: reading `sty` first IS the
+    // core's order, so those kinds are node-local answers like any other.
     public static TypeNode Surface(JsonNode node, BirScope scope)
     {
         if (node is not JsonObject o) return null;
@@ -110,16 +106,6 @@ static class StaticType
                 return TypeJson.Read(o["sty"])
                     ?? ((o["name"] as JsonValue)?.GetValue<string>() is string vn
                         && scope.VarTypes.TryGetValue(vn, out var vt) ? vt : null);
-            // A call / member / property read: the stamped `sty` (kotc / carried through the clr* reshape), else the
-            // carried `ret` (a generic call, or a clr* node whose synthesizer stamped only `ret`). Already the
-            // INSTANTIATED result type — no owner type-variable substitution needed. (See PRECEDENCE above.)
-            case "callStatic" or "callInstance" or "clrInstance" or "clrStatic" or "clrPropGet":
-            case "field" or "lateinitGet" or "staticField":
-                return TypeJson.Read(o["sty"]) ?? TypeJson.Read(o["ret"]);
-            // A read of an evaluation plan's binding (§2.7, BIR-only): its producer stamps the caller-instantiated
-            // type and nothing else carries one.
-            case "bindRef":
-                return TypeJson.Read(o["sty"]);
             // A spliced inline call becomes a `valueBlock {stmts, result}` (InlineSplice) — its static type is the
             // RESULT's, resolved with the block's own `var`s AND the enclosing scope (the core resolves the block's
             // own; only here are the enclosing ones visible, for a result that reads an outer synthesized temp).
@@ -141,8 +127,9 @@ static class StaticType
             // and keeps the raw `ceq` over `Nullable<T>`, which is unverifiable IL (#181).)
             case "newArray" or "newArrayInit" or "newArraySized" or "spreadConcat" or "enumValues":
                 return ArrayAsFqn(Core());
-            // Everything else — const/cast/conv/new/arrayGet/cond/callEval/concat/isInst/objEq/unaryOp/binOp/the
-            // nullable wrap+unwrap, and the kinds neither of these two derivers used to answer — is node-local.
+            // Everything else — the call/member/field family and its `clr*` reshapes, a plan's `bindRef` read,
+            // const/cast/conv/new/arrayGet/cond/callEval/concat/isInst/objEq/unaryOp/binOp/the nullable wrap+unwrap,
+            // and the kinds neither of these two derivers used to answer — is node-local.
             default:
                 return Core();
         }

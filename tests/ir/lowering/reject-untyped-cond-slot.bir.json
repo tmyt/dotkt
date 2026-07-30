@@ -1,0 +1,45 @@
+{
+  "fileClass": "RejectUntypedCondKt",
+  "hasMain": false,
+  "fields": [],
+  "types": [],
+  "refTypes": [],
+  "methods": [
+    {
+      "name": "untypedCondSlot",
+      "static": true,
+      "mods": { "suspend": true },
+      "params": [],
+      "ret": { "t": "fqn", "name": "kotlin.Any" },
+      "suspendRet": { "t": "fqn", "name": "kotlin.Any" },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "cond",
+            "cond": {
+              "k": "callStatic",
+              "owner": { "t": "fqn", "name": "RejectUntypedCondKt" },
+              "method": "condAnchor",
+              "sig": [],
+              "args": [],
+              "suspendCall": true,
+              "sty": { "t": "fqn", "name": "kotlin.Boolean" }
+            },
+            "then": { "k": "this" },
+            "else": { "k": "this" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "condAnchor",
+      "static": true,
+      "mods": { "suspend": true },
+      "params": [],
+      "ret": { "t": "fqn", "name": "kotlin.Boolean" },
+      "suspendRet": { "t": "fqn", "name": "kotlin.Boolean" },
+      "body": [{ "k": "return", "value": { "k": "const", "type": { "t": "fqn", "name": "kotlin.Boolean" }, "value": true } }]
+    }
+  ]
+}

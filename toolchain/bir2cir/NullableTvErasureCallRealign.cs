@@ -174,7 +174,10 @@ static class NullableTvErasureCallRealign
                     // of the stamped one (same discipline as every other rewrite here) — caps the blast radius to
                     // the erasure family even if a flat-env local type is stale.
                     if (TypeJson.Read(obj["elem"]) is TypeNode cur && !cur.Equals(arr.Elem) && IsObjectErasureOf(arr.Elem, cur))
+                    {
                         obj["elem"] = TypeJson.Write(arr.Elem);
+                        RestampSty(obj, arr.Elem);   // `elem` IS this node's result slot
+                    }
                     return arr.Elem;
                 }
                 return TypeJson.Read(obj["elem"]);
@@ -186,6 +189,22 @@ static class NullableTvErasureCallRealign
                 foreach (var kv in obj) if (kv.Value != null) Eval(kv.Value, env, idx);
                 return TypeJson.Read(obj["type"]) ?? TypeJson.Read(obj["dynRet"]) ?? TypeJson.Read(obj["ret"]);
         }
+    }
+
+    // A node's RESULT TYPE just changed, so the frontend `sty` stamp on it changes with it — the spec §2.7
+    // invariant, which is a contract on every pass that retypes a result and not on the deriver that reads one.
+    // `sty` is a claim about the value the node produces, never a historical note about the node it used to be,
+    // and every downstream deriver reads it FIRST (bir-common/NodeType.cs PRECEDENCE).
+    //
+    // Here the stale stamp is not merely imprecise. `List<object>` (what the erased declaration actually returns)
+    // and `List<Nullable<int32>>` (what kotc stamped at the substituted call site) are UNRELATED invariant reified
+    // generics — the very reason this pass exists — so a slot declared from the pre-erasure stamp is INVALID IL
+    // rather than a diagnosable drop. Two compositions reach it: the erased call sitting LEFT of a suspending
+    // operand, where stage 0 declares the plan's spill local from the stamp, and the erased call BEING the
+    // suspension, where the awaited state-machine field is declared from it.
+    static void RestampSty(JsonObject obj, TypeNode derived)
+    {
+        if (obj["sty"] != null) obj["sty"] = TypeJson.Write(derived);
     }
 
     static void EvalChildrenOf(JsonObject obj, string arrayKey, Dictionary<string, TypeNode> env, DeclIndex idx)
@@ -257,6 +276,7 @@ static class NullableTvErasureCallRealign
             {
                 if (obj["ret"] != null) obj["ret"] = TypeJson.Write(recvDerived);
                 if (obj["dynRet"] != null) obj["dynRet"] = TypeJson.Write(recvDerived);
+                RestampSty(obj, recvDerived);
                 stampedRet = recvDerived;
             }
         }
@@ -275,6 +295,7 @@ static class NullableTvErasureCallRealign
         {
             if (obj["ret"] != null) obj["ret"] = TypeJson.Write(derived);
             if (obj["dynRet"] != null) obj["dynRet"] = TypeJson.Write(derived);
+            RestampSty(obj, derived);
             return derived;
         }
         return stampedRet;
@@ -295,6 +316,7 @@ static class NullableTvErasureCallRealign
         {
             if (obj["ret"] != null) obj["ret"] = TypeJson.Write(derived);
             if (obj["dynRet"] != null) obj["dynRet"] = TypeJson.Write(derived);
+            RestampSty(obj, derived);
             return derived;
         }
         return stampedRet;

@@ -9,8 +9,9 @@
 // arms that need a lexical SCOPE this file cannot see and the one array SPELLING its readers key on, and delegates
 // every other kind here. So a kind cannot be typed one way for a spill slot and another way for a classifier.
 //
-// SCOPE: node-local facts only. An explicit `ret`/`dynRet`/`sty` stamp, then whatever slot the kind carries its own
-// result type in (`arrayGet.elem`, `conv.to`, `delegateInvoke.funcType.ret`, …). A kind whose type is only knowable
+// SCOPE: node-local facts only. An explicit `sty`/`ret`/`dynRet` stamp — in THAT order, see PRECEDENCE on `Of` — then
+// whatever slot the kind carries its own result type in (`arrayGet.elem`, `conv.to`, `delegateInvoke.funcType.ret`,
+// …). A kind whose type is only knowable
 // from an INDEX — a `callStatic`/`callInstance` with no `sty`, a raw `field` read — returns null here; a caller that
 // owns such an index (SuspendColdLowering does) supplies it and passes itself as `recurse`, so an operand of a
 // `binOp` still resolves through the caller's full deriver rather than falling back to this core.
@@ -47,14 +48,29 @@ public static class NodeType
     /// (`kotlin.IntArray` -> `kotlin.Int`) — a Kotlin fact this file deliberately does not restate, so the caller
     /// passes the one table the toolchain already keeps (bir2cir's <c>BirTypeLowering.PrimArrayElem</c>).
     /// </summary>
+    ///
+    /// PRECEDENCE of the three result-type stamps — `sty`, then `ret`, then `dynRet` — stated ONCE, here, for every
+    /// reader in the toolchain (#199; spec §2.7 *One deriver, two layers*):
+    ///
+    ///   `sty` is the FRONTEND's INSTANTIATED static type, stamped per CALL SITE at kotc's `expr()` chokepoint, so
+    ///   where it exists it is the precise answer to "what does THIS node produce".
+    ///   `ret` is emitted only when the callee or its owner is GENERIC (`retHintStr`) — that is, exactly where it may
+    ///   name the UNinstantiated DECLARED type (`T`, not `kotlin.Int`). Reading it first typed every generic-owner
+    ///   call by its declaration instead of by its use.
+    ///   `dynRet` (the @Clr dynamic-dispatch return) is last: on a kotc-emitted `callInstance` it is a copy of the
+    ///   same instantiated type as `sty`, and a bir2cir synthesizer that stamps only `dynRet` means it.
+    ///
+    /// This rests on one INVARIANT, which is a contract on every pass and not on this file: A PASS THAT CHANGES A
+    /// NODE'S RESULT TYPE REWRITES OR DELETES ITS `sty` (spec §2.7). A stale `sty` surviving on a retyped node is a
+    /// bug in the pass that retyped it — never a reason to demote the stamp back below `ret`.
     public static TypeNode? Of(JsonNode? n, Func<JsonNode?, TypeNode?>? recurse = null,
                                Func<string, string?>? primArrayElem = null)
     {
         if (n is not JsonObject o) return null;
         recurse ??= x => Of(x, null, primArrayElem);
+        if (TypeJson.Read(o["sty"]) is TypeNode ts) return ts;
         if (TypeJson.Read(o["ret"]) is TypeNode t0) return t0;
         if (TypeJson.Read(o["dynRet"]) is TypeNode t2) return t2;
-        if (TypeJson.Read(o["sty"]) is TypeNode ts) return ts;
         switch (Str(o["k"]))
         {
             case "const": case "cast": case "new": case "newClr": case "var": case "enumValue": case "default":
