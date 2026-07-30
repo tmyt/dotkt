@@ -110,6 +110,8 @@ fun corCcCompleted(v: Int): Task1<Int> {
 }
 
 class DynamicCaptureContextTests {
+    private fun order(): String = corCcLog.joinToString(",")
+
     // A runtime `true`: the capturing policy, requested through a value the compiler cannot read.
     @TestAttribute
     fun runtimeTrueSuspends() {
@@ -163,9 +165,7 @@ class DynamicCaptureContextTests {
     fun receiverThenArgumentExactlyOnce() {
         corCcLog.clear()
         assertEquals(21, blockOn { corCcOrdered(corCcCompleted(21)) })
-        assertEquals(2, corCcLog.size)
-        assertEquals("R", corCcLog[0])
-        assertEquals("C", corCcLog[1])
+        assertEquals("R,C", order())
     }
 
     // The same when the argument SUSPENDS: the receiver was evaluated before the suspension and is still the
@@ -179,8 +179,6 @@ class DynamicCaptureContextTests {
         corCcDrain(sink)
         assertEquals(true, sink.done)
         assertEquals(22, sink.value)
-        assertEquals(2, corCcLog.size)
-        assertEquals("R", corCcLog[0])
-        assertEquals("C", corCcLog[1])
+        assertEquals("R,C", order())
     }
 }
