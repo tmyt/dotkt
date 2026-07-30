@@ -59,6 +59,20 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir (area:bir2cir): a member called on a TYPE-PARAMETER receiver now emits constrained dispatch for every
+  spelling of the receiver, and for a non-generic constraint.** `fun <T : Tagged> f(t: T) = t.tag()` put a `!!T` on
+  the evaluation stack and then a plain `callvirt Tagged::tag()` — ECMA-335 requires `constrained. !!T ; callvirt`
+  there, so the verifier reported `[found value 'T'][expected ref 'Tagged']` and a value-type instantiation of T
+  would have dispatched through a boxed copy. The old binding covered exactly one slice of this: a receiver spelled
+  as a plain LOCAL, whose constraint owner was GENERIC (`fun <N : Node<N>> N.close()`), because that is the slice
+  where the MemberRef is invalid as well. Everything else was emitted unverifiably — an ordinary non-suspend
+  function, a local copy of the parameter, a field read, a `T`-returning call result, and (the shape that had an
+  ilverify baseline entry) the state-machine field the suspend lowering spills a suspend function's receiver into.
+  The binding is now keyed on the receiver's STATIC TYPE, read through the one uniform source
+  (`StaticType.Surface`), so the spelling no longer decides; and the owner is closed from the type parameter's
+  lexical bound only where BIR names it bare, an already-constructed or non-generic owner being closed already. It
+  moved out of `InheritedMemberOwnerBinding` — whose subject is the hierarchy substitution `Derived<T>.m` ->
+  `Base<T>.m`, not a constraint — into its own `ConstrainedTypeParameterReceiverBinding`.
 - **bir2cir (area:bir2cir): a nullable-generic return that was object-erased no longer crosses a suspension under
   its PRE-erasure type.** `fun <T> f(x: T): List<T?>` has its `Nullable(T)` erased to `object` on the declaration
   side, so the emitted method returns `List<object>`, while the call site — emitted with `T` already substituted —
@@ -129,6 +143,20 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- **tests: an ilverify baseline entry that masks NOTHING now reddens the gate.** `ILVERIFY_XFAIL` in
+  `tests/run-ilverify.sh` only ever classified findings, so a key whose defect had been fixed stayed in the list
+  silently — and kept masking, ready to absorb whatever finding lands on that method next. (One had already
+  rotted that way: `GenericMetadataRoundtripTests::nestedGenericCollectionsRoundTrip()`, whose finding was fixed
+  in the same commit that added the key; it is pruned here.) `tests/run-ilverify.sh --audit-baseline` reports
+  every unmatched key as `FIXED … remove it from the xfail list` and exits non-zero, the verdict wording every
+  other lane gets from `scripts/lib.sh`'s `xfail_diff`. `tests/run-nunit-tests.sh` passes the flag because it
+  verifies the COMPLETE emitted set; `tests/packaged-sdk/run.sh` verifies a two-assembly subset, where an
+  unmatched key means "not in this subset" and the audit would be a false red.
+- **tests: the surviving ilverify/round-trip baseline reasons name the issue that actually owns them.**
+  `ArrayTests::copyOfGrowsWithNullTail`, `GenericMetadataRoundtripTests::nullableGenericMembersRoundTrip` and the
+  `roundtrip-nullable-vt-generic` scenario cited #127, #18 and #109/#127 — all closed, and #18 unrelated. All
+  three are the one open nullable-generic representation design, #86. The two dead `tests/known-fail/` references
+  (`tests/README.md`, `scripts/gate.sh`'s routing table) are dropped; the directory does not exist.
 - **bir2cir (area:bir2cir): the three result-type stamps have ONE precedence — `sty`, then `ret`, then `dynRet` —
   stated once in `bir-common/NodeType.cs`.** `sty` is the frontend's INSTANTIATED static type, stamped per call
   site; `ret` is emitted only when the callee or its owner is GENERIC, which is exactly where it may name the

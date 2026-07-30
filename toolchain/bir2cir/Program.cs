@@ -684,6 +684,16 @@ sealed class Pipeline
         if (!_options.RefBuild)
             GenericStaticOwnerBinding.ApplyAll(staged.Select(s => s.Root).ToList());
 
+        // CONSTRAINED TYPE-PARAMETER RECEIVER: a member called on a receiver whose static type is a type PARAMETER
+        // (`fun <T : Tagged> f(t: T) = t.tag()`) cannot be a plain `callvirt` — the stack holds a `!!T`, not an
+        // interface reference. Author the `constrained. !!T ; callvirt` dispatch here, closing the owner from the
+        // parameter's lexical bound where BIR names it bare. AFTER the suspend lowerings (the SM bodies are then in
+        // their final type vocabulary, so a spilled receiver field's `T` is the SM class's own parameter) and
+        // BEFORE the inherited-owner walk below (a type-parameter receiver's owner comes from its constraint, not
+        // from a receiver-type hierarchy substitution).
+        if (!_options.RefBuild)
+            ConstrainedTypeParameterReceiverBinding.ApplyAll(staged.Select(s => s.Root).ToList());
+
         // INHERITED GENERIC MEMBER OWNER BINDING: BIR keeps the Kotlin receiver owner (`Derived<T>.m`), while a CLR
         // MemberRef must name the exact CONSTRUCTED declaring owner (`Base<T>.m`). Resolve that hierarchy substitution
         // here, from local declarations + kotc's override facts, before type lowering. This removes a semantic inference

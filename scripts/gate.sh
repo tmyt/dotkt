@@ -123,8 +123,6 @@ classify() { # <path>
 			want compiler_tests; reason "$p -> categorized compiler tests" ;;
 		tests/special/wide-delegates/*)
 			want widedelegates; reason "$p -> wide-delegate structural test" ;;
-		tests/known-fail/*)
-			reason "$p -> documented known-failure repro (not a green gate)" ;;
 		eng/KotlinClr.targets)
 			want msbuild; reason "$p -> in-repo MSBuild integration" ;;
 		# ---- anything else ----------------------------------------------------------------------

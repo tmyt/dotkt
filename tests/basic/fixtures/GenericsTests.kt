@@ -68,6 +68,33 @@ class AnyConsumer : Consumer<Any> { override fun consume(t: Any): String = "cons
 fun useProducer(p: Producer<Any>): String = p.produce().toString()   // covariance: Producer<String> flows in
 fun useConsumer(c: Consumer<String>): String = c.consume("world")    // contravariance: Consumer<Any> flows in
 
+// G-7: a member called on a receiver whose STATIC TYPE IS THE TYPE PARAMETER. The stack holds a `!!T`, not an
+// interface reference, so the only verifiable dispatch is `constrained. !!T ; callvirt` — for every spelling of
+// the receiver (a parameter, a local copy, a field, a T-returning call result) and for a NON-generic constraint
+// (`Tagged`) as much as a generic one (`Keyed<Int>`).
+interface Tagged {
+    fun tag(): Int
+}
+
+interface Keyed<K> {
+    fun key(): K
+}
+
+class TaggedKeyed(val n: Int) : Tagged, Keyed<Int> {
+    override fun tag(): Int = n
+    override fun key(): Int = n * 10
+}
+
+fun <T : Tagged> tagOfParam(t: T): Int = t.tag()
+fun <T : Tagged> tagOfLocal(t: T): Int { val copy = t; return copy.tag() }
+fun <T : Keyed<Int>> keyOfParam(t: T): Int = t.key()
+
+class TaggedHolder<T : Tagged>(val item: T) {
+    fun tagOfField(): Int = item.tag()
+    fun tagOfCallResult(): Int = get().tag()
+    fun get(): T = item
+}
+
 class GenericsTests {
     @TestAttribute
     fun classAndFunction() {
@@ -124,5 +151,16 @@ class GenericsTests {
     fun variance() {
         assertEquals("hello", useProducer(HelloProducer()))       // hello
         assertEquals("consumed: world", useConsumer(AnyConsumer())) // consumed: world
+    }
+
+    @TestAttribute
+    fun typeParameterReceiverDispatch() {
+        val v = TaggedKeyed(4)
+        assertEquals(4, tagOfParam(v))
+        assertEquals(4, tagOfLocal(v))
+        assertEquals(40, keyOfParam(v))
+        val h = TaggedHolder(v)
+        assertEquals(4, h.tagOfField())
+        assertEquals(4, h.tagOfCallResult())
     }
 }
