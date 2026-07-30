@@ -57,6 +57,24 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   case is listed in its (currently empty) `CF_XFAIL` baseline, and reports NEW-FAIL/FIXED like the other gates.
   It opens with the eight byref-like storage refusals below.
 
+### Changed
+
+- **bir2cir (area:bir2cir): every "is this value pure / stable" predicate is now named after the question it
+  answers, and each question has exactly one home.** Five different questions were being asked under three
+  interchangeable-sounding names, which invited the assumption that a kind classified one way in one of them was
+  a bug in another. `bir-common/BindingStability.cs` becomes `ValueStability.cs` and heads the roster of all
+  five; `IsStable` becomes `IsReReadable` (Q1 — may this value be read more than once, with other evaluation in
+  between) and `IsTriviallyPure` becomes `IsDroppable` (Q2 — is evaluating it unobservable, so a binding nothing
+  reads may be skipped); `TryValueOperandHoist`'s `PureKinds`/`IsPure` become `StackNeutralKinds`/`IsStackNeutral`
+  (Q4 — may it stay in its slot when a later sibling hoists out of the protected region). `CallEvalLowering`'s
+  `IsLvalueFormer` (Q5) and the suspend lowering's resume-stability set (Q3) keep their code and gain the
+  question they answer. The control-transfer kind set that the suspend lowering stated twice — once inside its
+  impure set, once inside `EscapesExpression` — is now one named constant both read, so the two cannot drift
+  apart. Two kind sets lost entries no producer mints at the point they are consulted: `TryValueOperandHoist`
+  (`param`, `constNull`, `null` — no producer anywhere) and `CallEvalLowering.EagerKinds` (`newList`, `newSet`,
+  `newMap`, `clrPropGet`, `clrPropSet` — minted by passes that run hundreds of lines after it). Pure refactor:
+  the emitted CIR corpus is byte-identical.
+
 ### Removed
 
 - **facadegen (area:toolchain): remove the retired CLR-to-FIR injection tool.** The production frontend now

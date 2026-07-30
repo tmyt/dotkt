@@ -33,8 +33,16 @@ static class TryValueOperandHoist
     static readonly HashSet<string> StmtListKeys = new(StringComparer.Ordinal) { "body", "stmts", "finally" };
     // Keys the generic operand recurse must NOT descend into (they are statement lists, handled by Walk).
     static readonly HashSet<string> SkipGenericKeys = new(StringComparer.Ordinal) { "body", "stmts", "finally", "catches", "branches" };
-    // Side-effect-free operand kinds — safe to leave in place even when a later sibling hoists.
-    static readonly HashSet<string> PureKinds = new(StringComparer.Ordinal) { "const", "local", "this", "param", "constNull", "null" };
+    // Q4 of the five value questions (roster in bir-common/ValueStability.cs) — STACK-NEUTRAL: may this operand stay
+    // in its slot when a LATER sibling hoists out of the expression? A hoist moves the sibling's evaluation to a
+    // PRECEDING statement, so every operand left of it now runs after what used to run after it. That is invisible
+    // only for an operand whose evaluation neither has an effect nor can fail — a literal, a local read, `this`.
+    // Anything else (including a load that merely dereferences, so `arrayGet`/`field` too) is spilled to a temp by
+    // SpillIfNeeded, which is what preserves left-to-right order.
+    //
+    // Not a restatement of Q2 (droppable) or Q3 (resume-stable): this one asks about ORDER against a hoisted try,
+    // not about skipping an evaluation or about surviving a resume, and the three land differently per kind.
+    static readonly HashSet<string> StackNeutralKinds = new(StringComparer.Ordinal) { "const", "local", "this" };
 
     static string K(JsonNode n) => (n as JsonObject)?["k"] is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
 
@@ -175,8 +183,8 @@ static class TryValueOperandHoist
     }
 
     // A slot evaluated before a hoisted try: a leftover leading try-valueBlock (safe-at-empty but now
-    // reordered) is hoisted; any other side-effecting operand is spilled to a preceding temp; a pure
-    // operand (const/local) is left untouched.
+    // reordered) is hoisted; any other side-effecting operand is spilled to a preceding temp; a
+    // stack-neutral operand (const/local/this) is left untouched.
     static JsonNode SpillIfNeeded(JsonNode resolved, List<JsonNode> pre)
     {
         if (resolved is JsonObject ro && K(ro) == "valueBlock" && IsTryValueBlock(ro))
@@ -184,7 +192,7 @@ static class TryValueOperandHoist
             HoistTryValueBlock(ro, pre);
             return ro["result"] is JsonNode r ? r.DeepClone() : resolved;
         }
-        if (IsPure(resolved)) return resolved;
+        if (IsStackNeutral(resolved)) return resolved;
         var tmp = "dotkt$hoist" + System.Threading.Interlocked.Increment(ref _tmp);
         pre.Add(new JsonObject { ["k"] = "var", ["name"] = tmp, ["type"] = GuessType(resolved), ["init"] = resolved.DeepClone() });
         return new JsonObject { ["k"] = "local", ["name"] = tmp };
@@ -228,10 +236,10 @@ static class TryValueOperandHoist
     static bool IsTryValueBlock(JsonObject o)
         => o["stmts"] is JsonArray st && st.Any(s => K(s) == "try") && o["result"] != null;
 
-    static bool IsPure(JsonNode n) => n is JsonObject o && PureKinds.Contains(K(o));
+    static bool IsStackNeutral(JsonNode n) => n is JsonObject o && StackNeutralKinds.Contains(K(o));
 
     // Best-effort static type for a spilled temp (only needed for a side-effecting operand that precedes
-    // a hoisted try — absent from the repro; the `pure`-left cases never spill).
+    // a hoisted try — absent from the repro; the stack-neutral operands left in place never spill).
     //
     // KNOWN GAP — the last `kotlin.Any` type fallback in the spill family. Everywhere else an untyped slot is now an
     // ERROR: `kotlin.Any` boxes a value type and hides a type the CLR would refuse, so a lowering that cannot type a
@@ -240,7 +248,8 @@ static class TryValueOperandHoist
     // deliberately left as-is rather than errorized alongside them. The intended replacement is the one shared
     // node-local deriver, `bir-common/NodeType.cs` — which already answers this question for both of those callers —
     // with the same "no fallback, an underivable node is a hole in the deriver" contract. It belongs with the
-    // follow-up that unifies the remaining duplicated purity/stability predicates, not with a plan change.
+    // follow-up that rebases the type derivations onto that one deriver, not with a plan change. (The naming pass
+    // that gave each value question its single home left this untouched: it is a TYPE gap, not a predicate one.)
     static JsonNode GuessType(JsonNode n)
     {
         if (n is JsonObject o)

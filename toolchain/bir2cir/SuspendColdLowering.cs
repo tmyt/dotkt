@@ -1056,6 +1056,24 @@ static partial class SuspendColdLowering
         }
     }
 
+    // The node kinds that TRANSFER CONTROL out of the expression they sit in. Two walks below need exactly this
+    // set — the resume-stability test (such an operand cannot be deferred past a suspension) and
+    // EscapesExpression (such a value cannot stay nested under a CLR operand) — and they must not be able to
+    // drift apart, so it is stated once. They differ only in where they STOP; see the note on IsPureExpr.
+    static readonly HashSet<string> ControlTransferKinds = new(StringComparer.Ordinal)
+    {
+        "goto", "brIf", "return", "returnExpr", "throw", "throwExpr",
+    };
+
+    // Q3 of the five value questions (roster in bir-common/ValueStability.cs) — RESUME-STABLE: may this be read
+    // AFTER a suspension resumes, or must it be spilled before the suspension? It is deliberately NOT one of the
+    // other four: an operand can be resume-stable and still not droppable (Q2), and vice versa.
+    //
+    // SCHEDULED FOR REPLACEMENT, not for widening. The planned stage-0 operand plan wraps every
+    // suspension-bearing operand in a `callEval` plan derived from the existing `HasOwnSuspension`/`EvalOrderOf`
+    // descriptors, which retires this predicate together with the eval-order rewrite it feeds — and closes the
+    // KNOWN GAP below by construction rather than by growing the set.
+    //
     // Impure kinds whose PRESENCE anywhere in a subtree makes it unsafe to defer past a suspension (a call,
     // an allocation, an assignment or a control transfer has an observable effect). A subtree free of them is
     // "pure" — stable to read after the suspension resumes, so it stays inline. A plain `local` read counts as
@@ -1063,11 +1081,11 @@ static partial class SuspendColdLowering
     // after a resume is reported LIVE at that suspension and therefore gets an SM field rather than a
     // MoveNext local (see SuspendLiveness.Value/ReRead).
     //
-    // A CONTROL TRANSFER (`goto`/`brIf`/`return`/`returnExpr`/`throw`/`throwExpr`) is impure for a second,
-    // stronger reason: `Rewrite` lowers an escaping `cond`/`valueBlock` to statements emitted IN PLACE and
-    // leaves behind only a temp read, so the transfer has already happened by the time the enclosing
-    // expression is assembled. Deferring that temp read past a suspension would read a resume-fresh slot —
-    // so such an operand must be spilled, exactly like a call's result. (EscapesExpression names the same set.)
+    // A CONTROL TRANSFER (`ControlTransferKinds` above) is impure for a second, stronger reason: `Rewrite`
+    // lowers an escaping `cond`/`valueBlock` to statements emitted IN PLACE and leaves behind only a temp read,
+    // so the transfer has already happened by the time the enclosing expression is assembled. Deferring that
+    // temp read past a suspension would read a resume-fresh slot — so such an operand must be spilled, exactly
+    // like a call's result.
     //
     // N4: a raw member/static FIELD read (`field`/`staticField`/`lateinitGet`) is NOT pure w.r.t. a later
     // suspension — the suspend callee can reach and MUTATE that field (a source property read goes through a
@@ -1089,14 +1107,21 @@ static partial class SuspendColdLowering
     // `clrPropGet`, which is absent here — so `sb.Length + susp()` still reads it after the resume. Same for
     // `delegateInvoke`/`objMethod`/`constrainedCall`. It is an evaluation-ORDER defect only: SuspendLiveness
     // re-reads all of them regardless, so no local is wrongly demoted on account of it.
-    static readonly HashSet<string> ImpureKinds = new(StringComparer.Ordinal)
+    static readonly HashSet<string> ImpureKinds = new(ControlTransferKinds, StringComparer.Ordinal)
     {
         "callStatic", "callInstance", "clrStatic", "clrInstance", "clrGenericStatic",
         "new", "newClr", "setLocal", "setField", "dynCall",
         "field", "staticField", "lateinitGet",
         "arrayGet",
-        "goto", "brIf", "return", "returnExpr", "throw", "throwExpr",
     };
+
+    // NOTE — this walk DESCENDS INTO LAMBDA BODIES; EscapesExpression stops at `LambdaKinds`. That difference is
+    // required in both directions and must not be "unified" away:
+    //   * here, the walk has to reach a lambda-construction node's CAPTURE VALUES, which are evaluated at the
+    //     construction site and so are subject to the same reorder hazard as any other operand. Reaching the
+    //     `body` as well is merely conservative — it can cost one extra spill, never correctness.
+    //   * there, a control transfer inside a lambda body belongs to THAT lambda's frame, not the enclosing
+    //     expression's, so flattening the enclosing expression on account of it would be a regression.
     static bool IsPureExpr(JsonNode n)
     {
         var impure = false;
@@ -2231,6 +2256,10 @@ static partial class SuspendColdLowering
         // CIR mechanically and would necessarily push the parent operand before entering the
         // nested block; a jump/return/throw then escapes with that pending value on the stack.
         // Flatten such expressions while bir2cir still owns CFG construction.
+        //
+        // Stops at `LambdaKinds` on purpose — a transfer inside a lambda body belongs to that
+        // lambda's own frame. See the note on IsPureExpr, which shares `ControlTransferKinds`
+        // with this walk but deliberately does NOT stop there.
         static bool EscapesExpression(JsonNode node)
         {
             bool Walk(JsonNode n)
@@ -2239,7 +2268,7 @@ static partial class SuspendColdLowering
                 {
                     var k = Str(o["k"]);
                     if (k != null && LambdaKinds.Contains(k)) return false;
-                    if (k is "goto" or "brIf" or "return" or "returnExpr" or "throw" or "throwExpr") return true;
+                    if (k != null && ControlTransferKinds.Contains(k)) return true;
                     foreach (var kv in o)
                         if (kv.Value != null && Walk(kv.Value)) return true;
                 }

@@ -219,8 +219,13 @@ static class DefaultArgSplice
                     methodTypeArgs, ownerTypeArgs) is not JsonNode fill) continue;
             binding["expr"] = fill;
             // kotc reserved this binding conservatively (it could not know what would fill it). Now that the value is
-            // known, record whether reading it twice is free — a constant default then costs no local at all.
-            binding["stable"] = BindingStability.IsStable(fill);
+            // known, answer Q1 (re-readable) for it — a constant default then costs no local at all.
+            //
+            // The answer is COARSER than the one kotc writes on the bindings it fills itself, and that is deliberate:
+            // kotc judges Q1 over Kotlin IR, where `val` is distinguishable from `var`, so it accepts an immutable
+            // local read; BIR spells both as `local`, so this refuses the kind outright. A "no" costs one local; a
+            // wrong "yes" duplicates an evaluation. See bir-common/ValueStability.cs.
+            binding["stable"] = ValueStability.IsReReadable(fill);
             Walk(fill, refs, hoist, localOwner);
         }
         // Any purely-TRAILING omitted arg (the callee carries @KotlinDefault but kotc dropped the tail) is APPENDED as
