@@ -84,8 +84,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   mapped-away constructor argument above. The hazard is identical and the hoist missed all of them, so
   `f("z", (try { 1 } catch { 2 }) in 1..5)` compiled to an `InvalidProgramException` from source the frontend had
   accepted. The hoist now searches a block's inline statements — both statement lists and the result, stopping at a
-  nested declaration whose body runs on its own stack — and moves them in the order their consumers run them.
-  `ExceptionTests.tryInsideAMintedOperandBlock` pins the shape.
+  nested declaration whose body runs on its own stack — and moves them in the order their consumers run them. Two
+  assumptions that only held for kotc's own spelling went with it: a hoisted block's RESULT is now spilled like any
+  other operand rather than left in the slot (kotc's result is a stack-neutral `local`, but a minted block's can be
+  a `newClr` whose constructor throws, and leaving it behind let a LATER argument's side effect overtake it), and
+  recognizing a block no longer ends the walk inside it (a `when` with a try-valued subject is such a block, and a
+  try in one of its branches' operand slots still needs hoisting). `ExceptionTests.tryInsideAMintedOperandBlock`
+  and `.tryInABranchOfATrySubjectedWhen` pin the shapes, with the ordering half in
+  `MappedConstructorArgumentTests.laterArgumentDoesNotOvertakeTheConstruction`.
 - **bir2cir (area:bir2cir): a nullable-generic return that was object-erased no longer crosses a suspension under
   its PRE-erasure type.** `fun <T> f(x: T): List<T?>` has its `Nullable(T)` erased to `object` on the declaration
   side, so the emitted method returns `List<object>`, while the call site — emitted with `T` already substituted —

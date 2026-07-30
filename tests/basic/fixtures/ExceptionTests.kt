@@ -22,6 +22,7 @@
 //   il-tryexprop  -> tryexprop_tryInOperand       try-expression as a VALUE in an operand slot (empty-stack hoist)
 //                    + sideEffectingOperandBeforeHoistedTry (the LEFT operand's spill temp, typed from the operand)
 //                    + tryInsideAMintedOperandBlock (the try is a `var` init inside a lowering-minted operand block)
+//                    + tryInABranchOfATrySubjectedWhen (recognizing the outer block must not stop the walk inside it)
 //
 // Top-level names are unique within this single battery assembly (one project = one namespace) and `exc`-prefixed
 // to avoid clashing with sibling batteries and stdlib names.
@@ -79,6 +80,7 @@ fun excHoistConcat(): String = excHoistSide().toString() + try { "7".toInt() } c
 // Two operands, so the second is evaluated with the first already on the CLR evaluation stack — the position that
 // makes an inline protected region illegal.
 fun excPair(a: Any, b: Any): String = "$a/$b"
+fun excPairInt(a: Int, b: Int): Int = a + b
 
 // ---- il-nestedtry : nested try/finally, captured run order (return threads through both finallys) -------------
 fun excNestedF(log: MutableList<String>): Int {
@@ -207,5 +209,18 @@ class ExceptionTests {
         assertEquals("z/true", membership.lowercase())
         val nested = excPair("z", (try { 9 } catch (e: Exception) { 0 }) in (try { 1 } catch (e: Exception) { 2 })..10)
         assertEquals("z/true", nested.lowercase())
+    }
+
+    // Recognizing a block as hazardous must not stop the walk INSIDE it. A `when` with a try-valued subject is a
+    // block whose statements bind that subject, so it answers "yes, this runs a try" — and a try sitting in a
+    // later operand slot of one of its branches still has to be hoisted. Classifying the outer block and then
+    // returning early left that inner one inline, at a non-empty stack.
+    @TestAttribute
+    fun tryInABranchOfATrySubjectedWhen() {
+        val v = when (try { 1 } catch (e: Exception) { 0 }) {
+            1 -> excPairInt(0, try { 2 } catch (e: Exception) { 3 })
+            else -> 0
+        }
+        assertEquals(2, v)
     }
 }

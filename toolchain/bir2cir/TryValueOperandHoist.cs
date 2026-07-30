@@ -157,9 +157,13 @@ static class TryValueOperandHoist
         if (node is not JsonObject o) return node;
         var k = K(o);
 
-        if (k == "valueBlock" && IsTryValueBlock(o))
+        // A hazardous block at a NON-EMPTY stack moves; one at an empty stack is already safe and stays. Being safe
+        // is not being finished, though: the block's own subexpressions still need normalizing, so the empty-stack
+        // case FALLS THROUGH to the generic descent below rather than returning. Returning early there is what made
+        // widening the predicate a regression — a `when` whose subject is a try became "hazardous", and the descent
+        // that used to reach a try in one of its branches' operand slots stopped happening.
+        if (k == "valueBlock" && IsTryValueBlock(o) && !atEmpty)
         {
-            if (atEmpty) return o;              // safe: enters the try with an empty stack
             HoistTryValueBlock(o, pre);
             // The RESULT is still evaluated in the slot, at the same non-empty stack, so a block nested there is
             // hoisted in turn — after this block's own statements, which is the order it ran in.
@@ -232,7 +236,12 @@ static class TryValueOperandHoist
         if (resolved is JsonObject ro && K(ro) == "valueBlock" && IsTryValueBlock(ro))
         {
             HoistTryValueBlock(ro, pre);
-            return ro["result"] is JsonNode r ? r.DeepClone() : resolved;
+            // …and then the block's RESULT is spilled like any other operand. Moving only the statements would
+            // leave the result to be evaluated after the LATER slot's hoisted try, which is the reorder this
+            // function exists to prevent. It was invisible while the only such block was kotc's own try-value
+            // form, whose result is a stack-neutral `local`; a block a lowering mints has an arbitrary result —
+            // a `newClr` whose constructor can throw — and that one has to move with its statements.
+            return ro["result"] is JsonNode r ? SpillIfNeeded(r.DeepClone(), pre, scope) : resolved;
         }
         if (IsStackNeutral(resolved)) return resolved;
         var tmp = "dotkt$hoist" + System.Threading.Interlocked.Increment(ref _tmp);

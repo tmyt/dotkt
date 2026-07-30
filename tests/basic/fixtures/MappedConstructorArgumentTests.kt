@@ -42,6 +42,9 @@ class McaFieldOwner {
 /** Two operands, so the mapped construction sits in a NON-FIRST slot with the first already on the stack. */
 fun mcaPair(a: Any, b: Any): String = "$a/$b"
 
+/** …and the mirror: the mapped construction FIRST, with a later operand whose evaluation must not overtake it. */
+fun mcaTake(set: HashSet<Int>, n: Int): Int = set.size + n
+
 class MappedConstructorArgumentTests {
     /** HashSet: the mapped-away load factor runs, after the capacity it is written after. */
     @TestAttribute
@@ -145,6 +148,26 @@ class MappedConstructorArgumentTests {
         val r = mcaPair("x", HashSet<Int>(try { 16 } catch (e: Exception) { 8 }, mcaLf("K")).size)
         assertEquals("x/0", r)
         assertEquals("lfK", mcaTrace())
+    }
+
+    /** The construction FIRST, with a LATER argument that has to be hoisted ahead of the whole expression. The
+     *  construction itself must still run before that argument: a negative capacity throws, and the later
+     *  argument's side effect must therefore never happen. Moving only the mapping's statements — and leaving the
+     *  construction in its slot — let the later argument overtake it. */
+    @TestAttribute
+    fun laterArgumentDoesNotOvertakeTheConstruction() {
+        mcaLog.clear()
+        val outcome = try {
+            mcaTake(
+                HashSet<Int>(-1, mcaLf("L")),
+                try { mcaLog.add("later"); 0 } catch (e: Exception) { 0 }
+            )
+            "constructed"
+        } catch (e: Exception) {
+            "rejected"
+        }
+        assertEquals("rejected", outcome)
+        assertEquals("lfL", mcaTrace())   // the later argument never ran: the construction threw first
     }
 
     /** EXACTLY once per construction: a lambda invoked twice evaluates both arguments twice, in order. */
