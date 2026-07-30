@@ -146,8 +146,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - **tests: an ilverify baseline entry that masks NOTHING now reddens the gate.** `ILVERIFY_XFAIL` in
   `tests/run-ilverify.sh` only ever classified findings, so a key whose defect had been fixed stayed in the list
   silently — and kept masking, ready to absorb whatever finding lands on that method next. (One had already
-  rotted that way: `GenericMetadataRoundtripTests::nestedGenericCollectionsRoundTrip()`, whose finding was fixed
-  in the same commit that added the key; it is pruned here.) `tests/run-ilverify.sh --audit-baseline` reports
+  rotted that way: `GenericMetadataRoundtripTests::nestedGenericCollectionsRoundTrip()` never produced the
+  finding its key describes — the same commit that added the key wrote the fixture to omit the generic-member
+  read that would have surfaced the Root-V variance collapse, and says so in the fixture's own comment. It is
+  pruned here.) `tests/run-ilverify.sh --audit-baseline` reports
   every unmatched key as `FIXED … remove it from the xfail list` and exits non-zero, the verdict wording every
   other lane gets from `scripts/lib.sh`'s `xfail_diff`. `tests/run-nunit-tests.sh` passes the flag because it
   verifies the COMPLETE emitted set; `tests/packaged-sdk/run.sh` verifies a two-assembly subset, where an
