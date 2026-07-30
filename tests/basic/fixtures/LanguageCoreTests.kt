@@ -141,6 +141,20 @@ fun riLoC(): Char { riLog.add("lo"); return 'a' }
 fun riHiC(): Char { riLog.add("hi"); return 'z' }
 private fun riTrace(): String = riLog.joinToString(",")
 
+/**
+ * One row of the evaluation-order matrix: clear the log, evaluate ONE membership expression, and assert in a
+ * SINGLE comparison both what it answered and the order its operands ran in. [form] names the range form and
+ * rides inside the compared strings, so a failure reads as `Expected: "CharRange -> False, evaluated lo,hi"` /
+ * `But was: "CharRange -> False, evaluated lo"` — the row and the defect are both in the diff, with nothing to
+ * deduce from an assertion's position. Only forms whose subject is a literal or a top-level call go through here:
+ * a `var` subject must stay a PLAIN local, which passing it through a lambda would turn into a ref cell.
+ */
+private fun checkRangeForm(form: String, expect: Boolean, trace: String, membership: () -> Boolean) {
+    riLog.clear()
+    val answer = membership()
+    assertEquals("$form -> $expect, evaluated $trace", "$form -> $answer, evaluated ${riTrace()}")
+}
+
 // ---- il-whensubj : A5 `when (subject)` in expression position evaluates its subject exactly ONCE ----------------
 var wsN = 0
 fun wsF(): Int { wsN++; return 2 }
@@ -285,16 +299,16 @@ class LanguageCoreTests {
     /** Both bounds build the range, so both run — even when the subject makes the comparison short-circuit. */
     @TestAttribute
     fun rangeIn_bothBoundsAlwaysEvaluated() {
-        riLog.clear(); assertFalse(0 in riLo()..riHi()); assertEquals("lo,hi", riTrace())     // subject BELOW lo
-        riLog.clear(); assertFalse(99 in riLo()..riHi()); assertEquals("lo,hi", riTrace())    // subject ABOVE hi
-        riLog.clear(); assertTrue(riSubj() in riLo()..riHi()); assertEquals("lo,hi,x", riTrace())
-        riLog.clear(); assertTrue(0 !in riLo()..riHi()); assertEquals("lo,hi", riTrace())     // !in
-        riLog.clear(); assertFalse(0 in riLo() until riHi()); assertEquals("lo,hi", riTrace())
-        riLog.clear(); assertFalse(0 in riLo()..<riHi()); assertEquals("lo,hi", riTrace())
-        riLog.clear(); assertFalse(0L in riLoL()..riHiL()); assertEquals("lo,hi", riTrace())  // LongRange
-        riLog.clear(); assertFalse('A' in riLoC()..riHiC()); assertEquals("lo,hi", riTrace()) // CharRange
+        checkRangeForm("subject below lo", expect = false, trace = "lo,hi") { 0 in riLo()..riHi() }
+        checkRangeForm("subject above hi", expect = false, trace = "lo,hi") { 99 in riLo()..riHi() }
+        checkRangeForm("side-effecting subject", expect = true, trace = "lo,hi,x") { riSubj() in riLo()..riHi() }
+        checkRangeForm("!in", expect = true, trace = "lo,hi") { 0 !in riLo()..riHi() }
+        checkRangeForm("until extension", expect = false, trace = "lo,hi") { 0 in riLo() until riHi() }
+        checkRangeForm("..< rangeUntil", expect = false, trace = "lo,hi") { 0 in riLo()..<riHi() }
+        checkRangeForm("LongRange", expect = false, trace = "lo,hi") { 0L in riLoL()..riHiL() }
+        checkRangeForm("CharRange", expect = false, trace = "lo,hi") { 'A' in riLoC()..riHiC() }
         // `downTo` builds an IntProgression, not a *Range, so the real contains() runs — same bound order.
-        riLog.clear(); assertFalse(0 in riHi() downTo riLo()); assertEquals("hi,lo", riTrace())
+        checkRangeForm("downTo IntProgression", expect = false, trace = "hi,lo") { 0 in riHi() downTo riLo() }
     }
 
     /** A mutable subject is read AFTER the bounds, so a bound that assigns it is visible to the comparison. */
