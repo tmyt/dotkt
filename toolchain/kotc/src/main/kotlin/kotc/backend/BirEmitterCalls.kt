@@ -590,12 +590,13 @@ internal fun isVirtualInstanceCall(call: IrCall, callee: IrSimpleFunction): Bool
 	call.superQualifierSymbol == null && (callee.modality != Modality.FINAL || callee.overriddenSymbols.isNotEmpty())
 
 /**
- * The declared owner of a delegated property's member `getValue`/`setValue` call.
+ * The declared provider owner of a delegated property's resolved `getValue`/`setValue` call.
  *
  * Whether the type came from this module or a referenced assembly does not change the Kotlin call: kotc carries the
  * delegate value's resolved Kotlin type, including its constructed type arguments, and bir2cir decides how that owner
- * is represented on the CLR. Stdlib convention delegates are handled by their dedicated paths (lazy) or by the
- * resolved top-level extension fallback (Map); the Read(Write)Property interfaces are genuine member providers.
+ * is represented on the CLR. This one rule is shared by local, top-level, and member delegated properties. Stdlib
+ * convention delegates are handled by their dedicated paths (lazy) or by the resolved top-level extension fallback
+ * (Map); the Read(Write)Property interfaces are genuine member providers.
  */
 private fun BirEmitter.delegatedProviderOwner(
 	delegateType: IrType,
@@ -609,7 +610,7 @@ private fun BirEmitter.delegatedProviderOwner(
 		if (access != null && accessor != null)
 			callSiteSubstitutor(access, accessor)?.substitute(delegateType) ?: delegateType
 		else delegateType
-	val delegateClass = closedType.classifierOrNull?.owner as? IrClass ?: return null
+	if (closedType.classifierOrNull?.owner !is IrClass) return null
 	val fq = closedType.classFqName?.asString()
 	val isPropertyInterface =
 		fq == "kotlin.properties.ReadWriteProperty" || fq == "kotlin.properties.ReadOnlyProperty"
