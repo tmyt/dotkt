@@ -566,11 +566,14 @@ sealed class Pipeline
             CharSeqStringLowering.CharSeqRetLambdas charSeqRetLambdas = null;
             if (!_options.RefBuild && attributeTopLevelOwner && !hasUserCharSeqImpl)
                 substituted = CharSeqStringLowering.Apply(substituted, localTopLevelFns, out charSeqRetLambdas);
-            if (!_options.RefBuild) substituted = StringCharSequenceBridge.Apply(substituted, refs, charSeqRetLambdas);
+            var materializedDelegateAdapter = false;
+            if (!_options.RefBuild)
+                substituted = StringCharSequenceBridge.Apply(
+                    substituted, refs, charSeqRetLambdas, out materializedDelegateAdapter);
             // The String/CharSequence call-boundary bridge may materialize a closure that captures a non-literal
             // `(P...) -> String` delegate and exposes `(P...) -> CharSequence` (#190). Assemble those late closure
             // ingredients now; all earlier source/inline/event closures were already consumed by the main passes.
-            if (!_options.RefBuild)
+            if (materializedDelegateAdapter)
             {
                 ClosureSynthesis.Apply(substituted, refs);
                 SharedSyntheticSynthesis.DropSyntheticTypeArgs(substituted);

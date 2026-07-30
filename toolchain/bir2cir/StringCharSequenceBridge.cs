@@ -106,11 +106,12 @@ static class StringCharSequenceBridge
         }
     }
 
-    public static JsonNode Apply(JsonNode root, ReferenceMetadataIndex refs = null,
-        CharSeqStringLowering.CharSeqRetLambdas retLambdas = null)
+    public static JsonNode Apply(JsonNode root, ReferenceMetadataIndex refs,
+        CharSeqStringLowering.CharSeqRetLambdas retLambdas, out bool materializedDelegateAdapter)
     {
         _refs = refs;
         _fired = false;
+        _delegateAdapterFired = false;
         _retLambdas = retLambdas;
         // #170 — a lifted lambda bound into a delegate whose declared RETURN is the synthetic `dotkt$CharSequence`
         // (CharSeqStringLowering recorded these before it collapsed the CharSequence-return signal to `string`). Retype
@@ -131,6 +132,7 @@ static class StringCharSequenceBridge
             types.Add(JsonNode.Parse(AdapterTypeJson));
             _adapterEmitted = true;
         }
+        materializedDelegateAdapter = _delegateAdapterFired;
         return walked;
     }
 
@@ -268,7 +270,10 @@ static class StringCharSequenceBridge
     {
         var sp = source.DelegateParams;
         var tp = target.DelegateParams;
-        return sp.Length == tp.Length && sp.Zip(tp, (a, b) => a == b).All(x => x);
+        if (sp.Length != tp.Length) return false;
+        for (var i = 0; i < sp.Length; i++)
+            if (sp[i] != tp[i]) return false;
+        return true;
     }
 
     static TypeNode SpecializeCallType(TypeNode type, JsonObject call)
@@ -307,6 +312,7 @@ static class StringCharSequenceBridge
     static JsonObject BuildDelegateReturnAdapter(JsonNode value, TypeNode.Fn source, TypeNode.Fn target)
     {
         _fired = true;
+        _delegateAdapterFired = true;
         var n = System.Threading.Interlocked.Increment(ref _delegateAdapterCounter);
         var name = "dotkt$StringCharSequenceDelegateAdapter$" + n;
         var owner = TypeJson.Fqn(name);
@@ -391,6 +397,7 @@ static class StringCharSequenceBridge
     }
 
     static int _delegateAdapterCounter;
+    static bool _delegateAdapterFired;
 
     // Coerce a value flowing into a `dotkt$CharSequence` slot into an interface-implementing value:
     //   - a statically-String value            -> `new dotkt$StringCharSequence(str)` (WrapAdapter).
