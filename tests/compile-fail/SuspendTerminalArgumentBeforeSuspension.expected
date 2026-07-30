@@ -1,8 +1,0 @@
-# The refusal names the declaration, the callee, WHICH arrangement it is refusing (a never-returning argument to the
-# LEFT of another suspension in the same list — not merely "a never-returning argument"), why the state machine
-# cannot express it, and the source-level workaround.
-suspend-lowering: in `SuspendTerminalArgumentBeforeSuspensionKt.ctaTerminalBeforeSuspension`
-the suspending call to `ctaSum` has an argument that never returns
-to the LEFT of another suspension in the same argument list
-the state machine cannot express a suspension point that is never taken
-lift the argument into a statement before the call

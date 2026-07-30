@@ -67,7 +67,9 @@ public static class NodeType
                 // a value-nullable unwrap left of a suspension had no type and aborted the compile.)
                 return TypeJson.Read(o["elem"]);
             case "nullableWrap":
-                // The inverse: a bare `elem` value lifted into `Nullable<elem>`.
+            case "nullableNull":
+                // The inverse: a bare `elem` value lifted into `Nullable<elem>` — and the ABSENT arm of a safe-call
+                // wrap, which carries no value at all, so only its `elem` says what the wrap produces.
                 return TypeJson.Read(o["elem"]) is TypeNode nwe ? new TypeNode.Nullable(nwe) : null;
             case "cond":
             {
@@ -123,11 +125,35 @@ public static class NodeType
                 return IntTn;
             case "concat":
                 return StringTn;
-            case "newArray": case "newArrayInit": case "newArraySized":
+            case "newArray": case "newArrayInit": case "newArraySized": case "spreadConcat":
+                // Every array-producing construction names its ELEMENT and nothing else — including the vararg
+                // `spreadConcat`, which flattens its `parts` into one fresh `Array<elem>`.
                 return TypeJson.Read(o["elem"]) is TypeNode ae ? new TypeNode.Array(ae) : null;
+            case "enumValues":
+                // `enumValues<T>()` / `T.entries` -> `Array<T>`. `type` is the structured enum type both producers
+                // (kotc's direct `.values()`/`.entries` recognition and EnumIntrinsicLowering's re-emission) clone.
+                return TypeJson.Read(o["type"]) is TypeNode evt ? new TypeNode.Array(evt) : null;
+            case "classRef": case "getType":
+                // `Foo::class` (`ldtoken` + `Type.GetTypeFromHandle`) and `x::class` (`object.GetType()`) both
+                // produce a `System.Type`. NOT the class they name: `classRef`'s `type` slot is the SUBJECT of the
+                // reflection, not what the node leaves on the stack (ilemit Emitter.ClrInterop.cs).
+                return new TypeNode.Fqn("System.Type");
+            case "stackAsSpan":
+                // `new System.Span<elem>(ptr, len)` over a stack buffer.
+                return TypeJson.Read(o["elem"]) is TypeNode sse
+                    ? new TypeNode.Fqn("System.Span", new[] { sse }) : null;
+            case "stackAlloc":
+                // A raw `localloc` pointer, which this backend spells with the marker FQN its own `var` declarations
+                // use (kotc BirEmitterInline).
+                return new TypeNode.Fqn("dotkt$stackptr");
             case "newClosure": case "newDelegate": case "newSam": case "newSuspendLambda":
             case "newBoundDelegate": case "newBoundClrDelegate":
+                // The FUNCTION type when the producer knew one; else the synthesized class the node constructs,
+                // which each of these names in its own slot — `newSam` the SAM implementation it lifted
+                // (`samType`), the others the closure class (`closureType`). The value IS an instance of that
+                // class, so it is the node's type even though the reader usually sees it as the interface.
                 if (TypeJson.Read(o["funcType"]) is TypeNode ft) return ft;
+                if (TypeJson.Read(o["samType"]) is TypeNode st) return st;
                 return TypeJson.OwnerName(o["closureType"]) is string cn ? new TypeNode.Fqn(cn) : null;
             case "delegateInvoke":
                 // The RESULT of invoking the delegate, not the delegate itself.

@@ -130,21 +130,16 @@ static class StaticType
                     if (arr != null) foreach (var st in arr) if (st is JsonObject so) inner.Declare(so);
                 return TypeJson.Read(o["type"]) ?? Surface(o["result"], inner);
             }
-            // The ABSENT arm of a safe-call wrap (`a?.member` desugar, BirEmitterControlFlow): it carries no value,
-            // so only its shape says the type is `Nullable<elem>` — the same type the `nullableWrap` present arm
-            // produces. A BARE-LOCAL-receiver safe call returns the raw `cond` with NO `type` stamp (only the
-            // bindOnce path wraps it in a typed valueBlock), so its surface is recovered from the two arms — else a
-            // `b?.d == y` float `==` misses the value-nullable classification and keeps the raw `ceq` over
-            // `Nullable<T>` (unverifiable IL, #181).
-            case "nullableNull":
-                return TypeJson.Read(o["elem"]) is TypeNode nne ? new TypeNode.Nullable(nne) : null;
-            // `enumValues<T>()`/`T.entries` -> Array<T>, in the name-keyed spelling (see ArrayAsFqn). `type` is the
-            // structured enum Type (both EnumIntrinsicLowering's re-emission and kotc's direct `.values()`/`.entries`
-            // recognition clone the faithful FQN node).
-            case "enumValues":
-                return TypeJson.Read(o["type"]) is TypeNode eet ? new TypeNode.Fqn("kotlin.Array", new[] { eet }) : null;
-            // An array factory / sized ctor: the core answers structurally, this reader's classifiers key on the name.
-            case "newArray" or "newArrayInit" or "newArraySized":
+            // An array-producing construction: the core answers structurally, this reader's classifiers key on the
+            // name. `enumValues<T>()`/`T.entries` is one of them (-> `Array<T>`), which is why it needs the SPELLING
+            // conversion here and nothing else — the derivation itself is the core's.
+            //
+            // (The safe-call wrap's ABSENT arm, `nullableNull`, is node-local and answered entirely by the core: it
+            // carries no value, so only its `elem` says the type is `Nullable<elem>`. It matters to this reader
+            // because a BARE-LOCAL-receiver safe call returns the raw `cond` with no `type` stamp, so the surface is
+            // recovered from the two arms — else a `b?.d == y` float `==` misses the value-nullable classification
+            // and keeps the raw `ceq` over `Nullable<T>`, which is unverifiable IL (#181).)
+            case "newArray" or "newArrayInit" or "newArraySized" or "spreadConcat" or "enumValues":
                 return ArrayAsFqn(Core());
             // Everything else — const/cast/conv/new/arrayGet/cond/callEval/concat/isInst/objEq/unaryOp/binOp/the
             // nullable wrap+unwrap, and the kinds neither of these two derivers used to answer — is node-local.

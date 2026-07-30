@@ -33,7 +33,7 @@ static class TryValueOperandHoist
     static readonly HashSet<string> StmtListKeys = new(StringComparer.Ordinal) { "body", "stmts", "finally" };
     // Keys the generic operand recurse must NOT descend into (they are statement lists, handled by Walk).
     static readonly HashSet<string> SkipGenericKeys = new(StringComparer.Ordinal) { "body", "stmts", "finally", "catches", "branches" };
-    // Q4 of the five value questions (roster in bir-common/ValueStability.cs) — STACK-NEUTRAL: may this operand stay
+    // Q4 of the four value questions (roster in bir-common/ValueStability.cs) — STACK-NEUTRAL: may this operand stay
     // in its slot when a LATER sibling hoists out of the expression? A hoist moves the sibling's evaluation to a
     // PRECEDING statement, so every operand left of it now runs after what used to run after it. That is invisible
     // only for an operand whose evaluation neither has an effect nor can fail — a literal, a local read, `this`.

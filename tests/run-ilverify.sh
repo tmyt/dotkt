@@ -37,6 +37,23 @@ declare -A ILVERIFY_XFAIL=(
 	# localloc is intentionally unverifiable ECMA-335 IL. The runtime test validates the resulting Span writes/reads.
 	["StackBufferTests::stackAllocationAndSpanInterop()"]="by design: stackalloc emits localloc, which ILVerify must report as unverifiable; runtime assertions are green"
 	["ByRefParameterTests::byrefOfAStackSlotEvaluatesItsIndexOnce()"]="by design: the same stackalloc/localloc unverifiability as its StackBufferTests sibling — this case takes the ADDRESS of a stack slot, so the pointer arithmetic is equally formal-only; runtime assertions are green"
+	# A call on a TYPE-PARAMETER receiver inside a GENERIC suspend state machine: the SM holds the value in a `T`
+	# field and the interface call reaches ilemit without the `constrained.` prefix, so the verifier sees a `T` value
+	# where the interface reference is expected. It is a defect of the constrained-call emission inside a generic SM,
+	# not of the operand plans that first exercised it — reproducible with NO evaluation-order question in the
+	# program at all:
+	#   interface I { fun tag(): Int }
+	#   suspend fun <T : I> f(t: T): Int { val a = t.tag(); val b = relay(); return a + b }
+	#
+	# WHAT IS TESTED, and no more: the fixture instantiates T with a REFERENCE type, and that instantiation runs and
+	# asserts its values. A missing `constrained.` prefix is NOT safe in general — a VALUE-type implementation of the
+	# interface needs the prefix to box (or to call the unboxed override), so this entry claims only what the lane
+	# measured, not that the emitted shape is sound for every T.
+	#
+	# Keyed by the emitted METHOD, not the SM type: the type has one method today, so a type-scoped key would
+	# silently absorb a future finding on any other member of it. SINGLE-quoted, which is what lets the key carry
+	# the generic-arity backtick and the `$` literally (the double-quoted keys above cannot — see their note).
+	['corOpConstrainedBeforeSuspension$sm`1::invokeSuspend(object)']="constrained call on a type-parameter receiver inside a GENERIC suspend state machine reaches ilemit without the constrained. prefix; the fixture's REFERENCE-type instantiation runs and asserts green — reproducible with no operand-order question in the program"
 )
 
 ILV="$(find "$HOME/.dotnet" -name 'ILVerify.dll' 2>/dev/null | head -1)"

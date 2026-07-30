@@ -447,8 +447,38 @@ It decides NOTHING about storage. A `var` here is a request for a scoped local; 
 keep it in the frame or must promote it to an instance field — and whether the CLR admits the type at all — is
 `SuspendColdLowering`'s single decision, from liveness, ~300 passes later (`docs/dotkt-semantics.md` §4d/§7).
 
+**A SECOND producer, for a second reason: suspension order.** kotc emits a plan where a value can acquire a second
+READER. bir2cir's suspend lowering emits one where a value must be evaluated on a particular SIDE of a suspension, which
+is a different question with the same answer. Its stage 0 (`SuspendOperandPlan.cs`, inside `SuspendColdLowering.ApplyAll`
+and therefore ~300 passes after `CallEvalLowering`) wraps a node whose operands contain a suspension in a plan binding
+every operand in array order, and lowers it on the spot through the same `Materialise`, supplying the ordering itself:
+every operand LEFT of the last suspension-bearing one is forced to a `var`, and so is that operand when the node is
+itself a suspend call — which is what lifts a nested suspension out of a suspending call's own argument list, where the
+state machine would otherwise write the outer resume label and let the inner suspension overwrite it. Operands to the
+RIGHT are left in their slots, because Kotlin evaluates them after the resume; forcing one would be the very reorder the
+plan prevents. So the plan's `force` input, when present, IS the ordering answer and the two general order rules above
+are skipped — they would only re-derive it, or contradict it.
+
+**WHICH nodes, exactly — this is coverage, not a universal rule.** Stage 0 acts on the kinds its operand descriptor
+(`EvalOrderOf`) names: `binOp`, `concat`, and the call/new set (`callStatic`/`callInstance`, the four `clr*` call forms,
+`new`/`newClr`). Every other multi-operand kind is NOT normalized, so a suspension in a later operand of one still
+reorders an earlier operand — `arrayGet`/`arraySet`, `setField`/`clrPropSet`, `delegateInvoke`, `objMethod`,
+`constrainedCall`, `dynCall`, `newArray*`, the collection literals, the event add/remove forms. `makeArray()[susp()]` is
+the shortest example. That gap is PRE-EXISTING (the retired eval-order rewrite named the same call/new set) and is
+recorded here rather than in a comment because a later change must not assume otherwise: **nothing downstream may treat
+"a descriptor-bearing node" and "any node" as the same set** — in particular the storage/liveness analysis stays
+conservative about operands generally (`SuspendLiveness.ReReadOperands` re-reads every operand it finds) precisely
+because the un-normalized kinds are still out there. Stage 0's own chokepoint shares `EvalOrderOf`, so it cannot see
+them either; widening the descriptor is a behavioral change with its own gate.
+
+Nothing else changes: the bindings are ordinary `cir$b…` bindings in bir2cir's own id namespace, `stable` is the
+same Q1 answer (`ValueStability.IsReReadable`), and the vocabulary still does not survive its own lowering. A stage-0
+plan that materialises nothing rewrites nothing — a node with no suspension among its operands is left byte-identical,
+which is what keeps suspension-free code out of the diff.
+
 **Phase.** `callEval`, `bindRef` and `delegationBindings` are BIR-only; `preStmts` is CIR-only. `CallEvalLowering`
-asserts the split at its own exit, and `scripts/verify-schema.py` enforces it structurally on both documents.
+asserts the split at its own exit, and `scripts/verify-schema.py` enforces it structurally on both documents. Stage 0's
+plans are made and lowered within one pass, so they too never appear in a serialized document.
 
 **`defaultCarrier.lifted` is unchanged.** A carrier's lifted method declarations remain a RAW TOKEN payload parsed out
 of the `[kotlin.clr.KotlinDefault]` attribute string, not plan vocabulary: they are declarations re-hoisted into the

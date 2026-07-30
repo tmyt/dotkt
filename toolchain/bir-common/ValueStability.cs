@@ -1,7 +1,7 @@
 // THE VALUE QUESTIONS a lowering asks about a BIR expression — and, for two of them, the answer.
 //
-// "Purity" and "stability" are not one property in this backend. FIVE distinct questions are asked about an
-// expression, for five different purposes, and a kind may legitimately answer YES to one and NO to another —
+// "Purity" and "stability" are not one property in this backend. FOUR distinct questions are asked about an
+// expression, for four different purposes, and a kind may legitimately answer YES to one and NO to another —
 // so they are deliberately kept apart, each named after the question it answers rather than after a shared
 // notion of "pure". What each question owns is its DEFINITION, not a single call site: one asker may need two
 // of them (CallEvalLowering asks Q2 and Q5), and Q1 has one definition realized twice, once per layer, because
@@ -16,14 +16,21 @@
 //                       `IsDroppable` below. Asked wherever a lowering is about to make a value UNREAD — by
 //                       CallEvalLowering of a plan binding with no reader, and by KClassMemberBinding of the
 //                       receiver its `value::class` const-fold folds away.
-//   Q3  RESUME-STABLE — may it be read AFTER a suspension resumes, or must it be spilled before?
-//                       SuspendColdLowering (`ImpureKinds`/`IsPureExpr`).
 //   Q4  STACK-NEUTRAL — may it stay in its operand slot when a LATER sibling hoists out of the expression?
 //                       TryValueOperandHoist (`StackNeutralKinds`/`IsStackNeutral`).
 //   Q5  LVALUE FORMER — does it DESIGNATE storage without evaluating anything itself?
 //                       CallEvalLowering (`IsLvalueFormer`).
 //
-// A SIXTH question lives in CallEvalLowering alone and is deliberately NOT here: `StaysInLocation` asks whether a
+// THERE WAS A Q3 — "may this be read AFTER a suspension resumes, or must it be spilled before?" — and it is GONE,
+// not merged into one of the others. The suspend lowering answered it by KIND (a subtree free of
+// calls/allocations/assignments/control transfers was judged safe to defer past a resume) and the set never
+// stopped growing: a raw field read, then an array element, then a gap that never closed at all (a .NET property
+// read, a delegate invoke, an interface-constrained call). Stage 0 of the suspend lowering
+// (bir2cir/SuspendOperandPlan.cs) answers the same question by POSITION instead — an operand left of a suspension
+// is bound and evaluated left of it, whatever it is made of — so Q1 below is the only exemption left. The number
+// Q3 is retired with it rather than reused: a future question numbered 3 would read as this one coming back.
+//
+// ONE MORE question lives in CallEvalLowering alone and is deliberately NOT here: `StaysInLocation` asks whether a
 // node is a link of an addressable LOCATION's own path (so pinning it into a local would copy the storage away)
 // rather than a value computed for it. That is about storage identity, not about side effects, and it is asked only
 // of the operands of a by-reference argument — see its own doc comment there.
@@ -31,13 +38,11 @@
 // WORKED EXAMPLE, because these look like disagreements and are not. `arrayGet` and `arrayLen`:
 //   * Q2: NEITHER is droppable — an element load and a length load both dereference, so both can throw
 //     (NullReferenceException, IndexOutOfRangeException). Throwing is observable.
-//   * Q3: `arrayGet` is NOT resume-stable (the array is a shared reference the suspend callee can reach and
-//     mutate) while `arrayLen` IS (a .NET array's length is fixed for the array's lifetime).
 //   * Q4: NEITHER is stack-neutral — both can throw, so their order relative to a hoisted try's side effects
 //     is observable and they are spilled rather than left in place.
 //   * Q5: `arrayGet` IS an lvalue former (it names an element slot, and `byref(a[i])` takes that slot's
 //     address); `arrayLen` is not — it produces a value, and no storage holds it.
-// Four different answers for two kinds, all correct, because four different questions were asked.
+// Three different answers for two kinds, all correct, because three different questions were asked.
 //
 // Q1 AND Q2 LIVE HERE. Both are pure facts about the shared node vocabulary, with no reference-metadata or
 // lowering context, so they sit in bir-common beside TypeNode/FieldLegality.

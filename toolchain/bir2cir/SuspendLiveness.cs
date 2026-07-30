@@ -346,32 +346,17 @@ static class SuspendLiveness
             }
         }
 
-        // Re-read a node's operands, MINUS the ones the emitter stores into a temp before the suspension to their
-        // right. Those never cross the resume: `f(s) + tick()` evaluates `f(s)` and saves the Int into `__ord$`
-        // BEFORE suspending, so `s` itself is dead across the suspension and may stay a byref-like local. The spill
-        // decision is SuspendColdLowering's own (SpilledBeforeSuspension), not a second copy of it — the two
-        // disagreeing in this direction refuses source the emitter lowers fine, and in the other silently zeroes a
-        // local.
+        // Re-read a node's operands — ALL of them, plainly. An operand evaluated before a suspension to its right is
+        // no longer part of this expression at all: the stage-0 operand plan (SuspendOperandPlan.cs) has already made
+        // it a `var` STATEMENT ahead of the node, and this walk sees that statement in its own right. So whatever is
+        // still IN the expression genuinely is read after the resume, and modelling an exception here would be
+        // modelling a spill that no longer happens — which silently zeroes a local when it is wrong.
         void ReReadOperands(JsonObject o)
         {
-            var order = SuspendColdLowering.EvalOrderOf(o);
-            HashSet<JsonNode> spilled = null;
-            if (order is { } eo)
-            {
-                spilled = new HashSet<JsonNode>(ReferenceEqualityComparer.Instance);
-                for (var i = 0; i < eo.Operands.Count; i++)
-                    if (SuspendColdLowering.SpilledBeforeSuspension(eo.Operands, i)) spilled.Add(eo.Operands[i]);
-            }
             foreach (var kv in o)
             {
                 if (kv.Value == null || NonOperandKeys.Contains(kv.Key)) continue;
-                // An operand key the eval-order list does not name (a `new`'s enclosing-instance slot, say) is
-                // copied verbatim into the assembled node and so IS deferred — walk it.
-                if (kv.Value is JsonArray arr)
-                {
-                    foreach (var it in arr) if (it != null && spilled?.Contains(it) != true) ReRead(it);
-                }
-                else if (spilled?.Contains(kv.Value) != true) ReRead(kv.Value);
+                ReRead(kv.Value);
             }
         }
 
