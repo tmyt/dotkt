@@ -1,0 +1,54 @@
+{
+  "fileClass": "RejectUntypedHoistKt",
+  "hasMain": false,
+  "fields": [],
+  "types": [],
+  "refTypes": [],
+  "methods": [
+    {
+      "name": "untypedOperandBeforeHoistedTry",
+      "static": true,
+      "params": [],
+      "ret": { "t": "fqn", "name": "kotlin.Int" },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "binOp",
+            "op": "+",
+            "lhs": {
+              "k": "callStatic",
+              "owner": { "t": "fqn", "name": "RejectUntypedHoistKt" },
+              "method": "sideEffect",
+              "sig": [],
+              "args": []
+            },
+            "rhs": {
+              "k": "valueBlock",
+              "stmts": [
+                { "k": "var", "name": "dotkt_tryval0", "type": { "t": "fqn", "name": "kotlin.Int" } },
+                {
+                  "k": "try",
+                  "body": [
+                    { "k": "setLocal", "name": "dotkt_tryval0",
+                      "value": { "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 2 } }
+                  ],
+                  "catches": [],
+                  "finally": []
+                }
+              ],
+              "result": { "k": "local", "name": "dotkt_tryval0", "sty": { "t": "fqn", "name": "kotlin.Int" } }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sideEffect",
+      "static": true,
+      "params": [],
+      "ret": { "t": "fqn", "name": "kotlin.Int" },
+      "body": [{ "k": "return", "value": { "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 1 } }]
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+declarationWithNoResultType
+carries neither a `suspendRet` nor a `ret` slot

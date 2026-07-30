@@ -211,17 +211,12 @@ static partial class SuspendColdLowering
     // `startSuspendUninterceptedOrReturn(fn, [receiver,] completion)` (= `create(completion).invokeSuspend(Unit)`),
     // NOT a virtual invoke (the SM implements no SuspendFunctionN interface / carries no `invoke` bridge).
     const string StartSuspendOwner = "kotlin.coroutines.clr.internal.ContinuationImplKt";
+    // The receiver's static type comes from the SHARED node-local deriver, so this asks the question in the one stamp
+    // order the toolchain has (`sty`, then `ret`, then `dynRet`, then the kind's own slot — bir-common/NodeType.cs).
+    // Inline materialization can replace a local receiver with a typed field/call expression; its equivalent fact
+    // rides that node's ordinary result slot, which the deriver reads for it.
     static bool IsSuspendFunctionValue(JsonNode n)
-    {
-        if (n is not JsonObject o) return false;
-        // `sty` is kotc's canonical resolved-type fact. Inline materialization can replace a local receiver with a
-        // typed field/call expression, whose equivalent fact lives in its ordinary result/type slot instead.
-        var type = TypeJson.Read(o["sty"])
-            ?? TypeJson.Read(o["ret"])
-            ?? TypeJson.Read(o["dynRet"])
-            ?? TypeJson.Read(o["type"]);
-        return type is TypeNode.Fn { Suspend: true };
-    }
+        => CallEvalLowering.StaticTypeOf(n) is TypeNode.Fn { Suspend: true };
     // #79 — the top-level `suspend inline val coroutineContext` read (Continuation.kt:157). Its getter is
     // intentionally `throw NotImplementedError("Implemented as intrinsic")`, so RESOLUTION can never make it work — a
     // real binding is required, and it lives HERE (the only layer that knows the current-continuation identity). kotc
@@ -319,7 +314,12 @@ static partial class SuspendColdLowering
         // kotc-origin suspension point precisely per call, so this fallback only serves rare synthesized nodes.
         var calleeRet = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
         foreach (var (k, e) in entries)
-            calleeRet[k.Name] = TypeJson.Read(e.Method["suspendRet"]) ?? AnyTn;
+            calleeRet[k.Name] = TypeJson.Read(e.Method["suspendRet"])
+                ?? throw new InvalidOperationException(
+                    $"bir2cir: suspend-lowering: the suspend declaration `{k.Owner ?? k.FileClass}.{k.Name}` carries no "
+                    + "`suspendRet` slot. kotc stamps it on EVERY `isSuspend` declaration (BirEmitterDeclarations "
+                    + "`resultTypeJson`) and admission to this registry requires the same `suspend` modifier, so the two "
+                    + "cannot disagree on valid input: the slot was dropped by a pass that rewrote the declaration.");
 
         // A global (owner#name -> resultType) index of EVERY method (not just suspend). Stage 0's expression typer
         // (SuspendOperandPlan.ExprTyper) uses it to type the local an operand plan materialises when the operand's
@@ -337,7 +337,7 @@ static partial class SuspendColdLowering
             if (file["methods"] is JsonArray fms)
                 foreach (var m in fms)
                     if (m is JsonObject mo && Str(mo["name"]) is string mn)
-                        methodRets["#" + mn] = TypeJson.Read(mo["suspendRet"]) ?? TypeJson.Read(mo["ret"]) ?? AnyTn;
+                        methodRets["#" + mn] = MethodDeclRet(mo, null, mn);
             if (file["fields"] is JsonArray ffs)
                 foreach (var f in ffs)
                     if (f is JsonObject fo && Str(fo["name"]) is string fn && TypeJson.Read(fo["type"]) is TypeNode ft0)
@@ -349,7 +349,7 @@ static partial class SuspendColdLowering
                         if (to["methods"] is JsonArray tms)
                             foreach (var m in tms)
                                 if (m is JsonObject mo && Str(mo["name"]) is string mn)
-                                    methodRets[ow + "#" + mn] = TypeJson.Read(mo["suspendRet"]) ?? TypeJson.Read(mo["ret"]) ?? AnyTn;
+                                    methodRets[ow + "#" + mn] = MethodDeclRet(mo, ow, mn);
                         if (to["fields"] is JsonArray tfs)
                             foreach (var f in tfs)
                                 if (f is JsonObject fo && Str(fo["name"]) is string fn && TypeJson.Read(fo["type"]) is TypeNode ft1)
@@ -863,6 +863,24 @@ static partial class SuspendColdLowering
     // carve-outs. FunGen then classifies each admitted member into abstract / segmentable / call-time-throw.
 
     // A TOP-LEVEL suspend fun (kotc emits top-level funs + extension funs as `static`).
+    // The declared result type of a method DECLARATION, for the secondary `owner#name` index that stage 0's typer and
+    // the suspension points consult when a node itself carries no stamp. A suspend declaration answers with
+    // `suspendRet` (the `T` of its `Continuation<T>`); every other with `ret`.
+    //
+    // NO `kotlin.Any` fallback. Every kotc method emitter writes `ret` UNCONDITIONALLY (BirEmitterDeclarations'
+    // member/accessor/enum/event emitters, BirEmitterLifts' lifted lambdas and SAM slots — surveyed: 0 of 7308 stdlib
+    // declarations lack it), and a bir2cir-synthesized method that omits it is malformed for ilemit as well. So a miss
+    // here is a DROPPED slot, not an untyped-but-valid declaration, and `kotlin.Any` merely boxed the value and moved
+    // the failure to a runtime unbox at whichever spill later consulted this index.
+    static TypeNode MethodDeclRet(JsonObject m, string owner, string name)
+        => TypeJson.Read(m["suspendRet"])
+           ?? TypeJson.Read(m["ret"])
+           ?? throw new InvalidOperationException(
+               $"bir2cir: suspend-lowering: the declaration `{(owner is null ? "" : owner + ".")}{name}` carries neither "
+               + "a `suspendRet` nor a `ret` slot, so its result type cannot be indexed for the operand typing that "
+               + "spills values across suspensions. kotc stamps `ret` on every method declaration, so this is a slot "
+               + "dropped by a pass that synthesized or rewrote the declaration.");
+
     static bool IsColdCandidate(JsonObject m)
     {
         if (!Mod(m, "suspend")) return false;
@@ -1896,7 +1914,13 @@ static partial class SuspendColdLowering
         // still flow through an escaping `if` inside a suspend function.
         JsonNode EmitCondValue(JsonObject c, List<JsonNode> outp)
         {
-            var ty = TypeJson.Read(c["type"]) ?? AnyTn;
+            var ty = FrameType(c)
+                ?? throw new NotSupportedException(
+                    $"bir2cir: suspend-lowering: a conditional expression in "
+                    + $"`{(_ownerClass ?? _fileClass)}.{_name}` carries no result type of its own and neither branch "
+                    + $"yields one (`then` = {Kind(c["then"])}, `else` = {Kind(c["else"])}), so the temporary that "
+                    + "carries its value through the lowering would be untyped. An earlier lowering dropped a "
+                    + "branch's type, or a branch's node kind needs an arm in bir-common/NodeType.cs.");
             var spans = HasOwnSuspension(c);
             var resultSlot = "__cond$" + (++_condCounter);
             if (spans) FieldStorage(resultSlot, ty, RoleCondResult, lives: true, across: SuspendedCalleeIn(c));
@@ -1996,17 +2020,14 @@ static partial class SuspendColdLowering
         // (inline); else fall through to the merge label, rethrow a failed resume, store the awaited value.
         JsonNode EmitSuspensionPoint(JsonObject callNode, List<JsonNode> outp)
         {
-            var retTok = TypeJson.Read(callNode["ret"])
-                ?? TypeJson.Read(callNode["dynRet"])
-                // #199 — `sty`, the frontend-resolved instantiated static type kotc stamps on every call node
-                // (BirEmitterExpressions.kt), is the callee's return type PER CALL. It is precise and needs no owner
-                // disambiguation, so it types the awaited value correctly even for two same-simple-name suspend funs
-                // in different packages (a bare same-file `one()` carries no `ret`/`dynRet`, only `sty`). This
-                // supersedes the name-keyed `_calleeRet` fallback below, which cannot distinguish such a pair.
-                ?? TypeJson.Read(callNode["sty"])
-                // A CROSS-ASSEMBLY suspend call arrives in the `clr*` vocabulary, whose declared return type rides `ret`
-                // (handled first above). The name-keyed same-assembly fallback remains for a rare synthesized node
-                // that carries none of ret/dynRet/sty; `sty` above makes it unreachable for kotc-origin nodes.
+            // The awaited value's Kotlin type, in the toolchain's ONE stamp order — `sty`, then `ret`, then `dynRet`
+            // (bir-common/NodeType.cs PRECEDENCE, #199). `sty` is the frontend-resolved INSTANTIATED type kotc stamps
+            // per call site, so it types the awaited value correctly even for two same-simple-name suspend funs in
+            // different packages, and for a generic-owner call whose `ret` names the un-instantiated `T`. A
+            // CROSS-ASSEMBLY suspend call arrives in the `clr*` vocabulary carrying `ret`, which the second read
+            // covers. The name-keyed same-assembly fallback below remains for a rare synthesized node carrying no
+            // stamp at all.
+            var retTok = CallEvalLowering.StaticTypeOf(callNode)
                 ?? (_calleeRet.TryGetValue(Str(callNode["method"]) ?? "", out var d) ? d : null)
                 ?? AnyTn;
             if (IsUnitTn(retTok)) retTok = AnyTn;
@@ -2060,7 +2081,11 @@ static partial class SuspendColdLowering
                     $"unresolved {method} block in '{(_ownerClass ?? _fileClass)}.{_name}': the `{{ c -> … }}` block " +
                     $"(newClosure/newDelegate) could not be resolved in the compilation — refusing to emit a broken coroutine");
 
-            var resultT = TypeJson.Read(callNode["ret"]) ?? AnyTn;
+            // The intrinsic's Kotlin result type, in the toolchain's ONE stamp order (bir-common/NodeType.cs
+            // PRECEDENCE): `suspendCoroutine<T>` is generic, so `ret` here is the DECLARED `T` while `sty` is the
+            // instantiated one at this call site. AnyTn survives as the LEGITIMATE cold-ABI type for the un-stamped
+            // and the Unit case — the resume slot is `Any?` either way.
+            var resultT = CallEvalLowering.StaticTypeOf(callNode) ?? AnyTn;
             var retTok = IsUnitTn(resultT) ? AnyTn : resultT;
 
             var state = ++_state;
@@ -2578,6 +2603,30 @@ static partial class SuspendColdLowering
                 ["attrs"] = new JsonArray(),
             };
         }
+
+        // The static type of a value node in THIS frame's vocabulary. It is the SHARED node-local deriver
+        // (bir-common/NodeType.cs — which owns the stamp precedence `sty`/`ret`/`dynRet` and every kind's own result
+        // slot, including a stamp-less `cond` typed by its LIVE branch) plus the ONE arm only the frame can answer: a
+        // `local` read, whose type lives on the `var`/parameter that DECLARES it rather than on the read. Same shape
+        // as SuspendOperandPlan.ExprTyper's scope arm; the declaration wins over a read's stamp because what this
+        // types is a DECLARED slot, which must hold the local's full declared type and not a smart-cast narrowing.
+        //
+        // Structural array spelling on purpose (NOT StaticType.Surface's name-keyed `kotlin.Array<E>`, which its
+        // classifiers match): a declared slot needs the structural form (spec §2.7 *One deriver, two layers*).
+        //
+        // NULL is a real answer and callers must report it — `kotlin.Any` is not a fallback for a slot type, it boxes
+        // a value type and hides a type the CLR would refuse.
+        TypeNode FrameType(JsonNode n)
+        {
+            if (n is JsonObject o && Str(o["k"]) == "local" && Str(o["name"]) is string ln
+                && _localTypes.TryGetValue(ln, out var lt) && lt != null)
+                return lt;
+            return NodeType.Of(n, FrameType,
+                               name => BirTypeLowering.PrimArrayElem.TryGetValue(name, out var e) ? e : null);
+        }
+
+        // A node's kind for a diagnostic.
+        static string Kind(JsonNode n) => Str((n as JsonObject)?["k"]) ?? "<none>";
 
         // The declared type of an SM slot by name. A slot is either an SM FIELD or — since the storage gate demotes
         // every local that is dead across each suspension — a MoveNext LOCAL, and a lexical type lookup

@@ -109,6 +109,33 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- **bir2cir (area:bir2cir): the three result-type stamps have ONE precedence — `sty`, then `ret`, then `dynRet` —
+  stated once in `bir-common/NodeType.cs`.** `sty` is the frontend's INSTANTIATED static type, stamped per call
+  site; `ret` is emitted only when the callee or its owner is GENERIC, which is exactly where it may name the
+  UNinstantiated declared type. Reading `ret` first therefore typed a generic-owner call by its declaration
+  instead of by its use, and four separate restatements of the order had accumulated — the core, an explicit
+  "deliberately not unified yet" override on `StaticType.Surface`'s call/field arm, the awaited-value read in
+  `EmitSuspensionPoint`, and `IsSuspendFunctionValue`'s own copy. The core is flipped and the other three are
+  gone: the call/field/`bindRef` family needs no arm at all now that `sty` wins everywhere, and the two suspend
+  readers ask the shared deriver. The order rests on an invariant now written into `docs/bir-cir-spec.md` §2.7
+  and cited at the flip site: **a pass that changes a node's result type rewrites or deletes its `sty`** — a
+  stale stamp on a retyped node is a bug in that pass, not a reason to demote the stamp. Byte-identical CIR
+  across the reference and runtime stdlib corpora (497 files) and across the test corpora.
+- **bir2cir (area:bir2cir): a slot whose type cannot be derived is a REFUSAL, not a `kotlin.Any` box.**
+  `kotlin.Any` in a declared slot is never neutral — it boxes a value type, it makes the read unverifiable
+  without an unbox, and it turns an earlier layer's dropped stamp into a runtime `InvalidCastException` far from
+  the cause. Four fallbacks are retired. The suspend lowering's conditional temporary is now typed from the
+  conditional's LIVE branch, which is what made every value-type `x?.suspendFoo()` crossing a suspension box and
+  unbox; `TryValueOperandHoist`'s spill type (formerly `GuessType`, carried as a KNOWN GAP) refuses instead of
+  boxing, since a null from the shared deriver there is a hole in the DERIVER; and the two method-return indexes
+  the stage-0 typer consults refuse a declaration carrying neither `suspendRet` nor `ret` — surveyed as
+  impossible by construction (0 of 7308 stdlib declarations, and every kotc method emitter writes `ret`
+  unconditionally). What remains is ABI rather than fallback (the cold entry's `Any?` return, `Continuation<Any>`,
+  `Result<Any?>`, the non-generic `IEnumerable` element, an undeclared catch filter), and the site-by-site triage
+  — LEGITIMATE-ABI / RETIRED / FOLLOW-UP with its precondition — is `docs/dotkt-semantics.md` §7b.
+  These refusals cannot fire on frontend-produced BIR, so `tests/ir/run-lowering.sh` gained a `reject-*` half
+  (synthetic BIR that bir2cir must refuse, with the wording pinned) to keep them from being silently defeated;
+  all four fixtures are calibrated — the previous binary accepted each one.
 - **bir2cir (area:bir2cir): `StaticType.Surface` is founded on the shared node-local deriver
   (`bir-common/NodeType.cs`) instead of restating it.** The two derivations had drifted into disagreeing about
   five kinds — the nullable wrap/unwrap slots, an untyped `cond`, `Nothing`, the `&&`/`||` result, and the two
@@ -116,8 +143,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   classifier is exactly the drift the shared file exists to prevent. Each disagreement is now either fixed in
   the core (so both consumers inherit it) or one named adapter (`ArrayAsFqn`: the core answers structurally,
   this reader's classifiers are name-keyed). `Surface` keeps only the arms the core cannot answer — the ones
-  needing the enclosing lexical scope, and the call/field family, which reads `sty` before `ret` (unifying that
-  precedence is a change of its own) — and delegates the rest.
+  needing the enclosing lexical scope — and delegates the rest, including the whole call/field family once the
+  stamp precedence was unified (see the `sty`-first entry above).
 - **A call value NOTHING reads is now evaluated unless evaluating it is genuinely unobservable
   (area:bir2cir, area:kotc; recorded as `docs/dotkt-semantics.md` §7a).** Kotlin evaluates a call's receiver and
   every supplied argument whether the emitted CLR shape has a slot for the value or not; the backend was skipping
