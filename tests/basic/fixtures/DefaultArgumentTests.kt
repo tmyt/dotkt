@@ -120,13 +120,14 @@ class M2EnclMember(val k: Int) {
 class M2RecvKind(val k: Int) {
     fun Int.scaledV(f: Int = k): Int = this * f
     // `inline` WITHOUT a function-typed argument does NOT splice (the gate is `isInline && hasLambdaArg`), so this
-    // takes the same ordinary filledArgs path as `scaledV` — pinned as that, not as splice coverage. A real splice
-    // whose default reads the DISPATCH (or an enclosing-instance) receiver is still refused by the carrier's
-    // defaultUnsupported poison; a pure extension-receiver default is carried fine.
+    // takes the same ordinary filledArgs path as `scaledV`.
     inline fun Int.scaledI(f: Int = k): Int = this * f
+    // The real InlineSplice arm: the default reads dispatch while the body also has an extension receiver.
+    inline fun Int.scaledCarrier(f: Int = k, body: (Int) -> Int): Int = body(this * f)
     fun Int.viaParam(base: Int, f: Int = base): Int = this * f
     fun run(): Int = 3.scaledV()
     fun runInline(): Int = 3.scaledI()
+    fun runCarrier(): Int = 3.scaledCarrier { it }
     fun runParam(): Int = 3.viaParam(7)
 }
 
@@ -135,7 +136,9 @@ class M2RecvKind(val k: Int) {
 class M2RecvOuter(val k: Int) {
     inner class R {
         fun Int.viaOuter(f: Int = k): Int = this * f
+        inline fun Int.viaOuterCarrier(f: Int = k, body: (Int) -> Int): Int = body(this * f)
         fun run(): Int = 3.viaOuter()
+        fun runCarrier(): Int = 3.viaOuterCarrier { it }
     }
 }
 
@@ -772,8 +775,10 @@ class DefaultArgumentTests {
         val h = M2RecvKind(10)
         assertEquals(30, h.run())                                       // WAS-NRE  3 * dispatch k=10
         assertEquals(30, h.runInline())                                 // WAS-NRE  lambda-less `inline`: ordinary path
+        assertEquals(30, h.runCarrier())                                // carrier: dispatch and extension stay distinct
         assertEquals(21, h.runParam())                                  // CONTROL  3 * 7 — the value-param arm
         assertEquals(15, M2RecvOuter(5).R().run())                      // WAS-NRE  3 * OUTER k=5, enclosing chain
+        assertEquals(15, M2RecvOuter(5).R().runCarrier())               // carrier: outer chain roots at dispatch
         assertEquals(9, 3.m2SelfScaled())                               // CONTROL  3 * extension receiver 3
     }
 

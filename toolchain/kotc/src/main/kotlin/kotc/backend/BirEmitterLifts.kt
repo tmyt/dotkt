@@ -204,13 +204,17 @@ private fun BirEmitter.suspendLambda(node: IrFunctionExpression): String? {
 	// `captureSubst` by declaration identity, so the body names the capture EXACTLY as the descriptor declares it (the
 	// name bir2cir's spill rewrite keys on). This deliberately does NOT touch name-keyed `valSubst`: a same-spelled
 	// declaration is not the captured declaration. Saved + restored around the emission, mirroring samConversion.
-	// `<this>` is skipped so its enclosing
-	// `{k:field}`/`{k:this}` body resolution — and thus bir2cir's `__outer` handling — stays byte-identical.
+	// `<this>` is the one descriptor with an established body spelling: ordinary `{k:this}`. In the lambda's OWN
+	// frame bir2cir rewrites that spelling to its `__outer` capture field. Force that spelling after capValues was
+	// computed so an enclosing carrier/closure substitution remains solely a CONSTRUCTION value and cannot leak a
+	// caller-frame token/local into the lambda body.
 	val shadowCap = java.util.IdentityHashMap<IrValueDeclaration, String?>()
 	for ((d, name) in capturePairs) {
-		if (d.name.asString() == "<this>") continue
 		shadowCap[d] = captureSubst[d]
-		captureSubst[d] = """{"k":"local","name":${str(name)}}"""
+		captureSubst[d] = if (d.name.asString() == "<this>")
+			"""{"k":"this"}"""
+		else
+			"""{"k":"local","name":${str(name)}}"""
 	}
 	// A suspend extension lambda has two distinct `this` candidates: its own extension receiver and a captured
 	// enclosing dispatch receiver. Preserve that distinction in BIR instead of asking bir2cir to infer it from a bare

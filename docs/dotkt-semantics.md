@@ -915,25 +915,24 @@ default-omission works **everywhere** — trailing, named-middle, reordered, and
   **CLOSED** BIR sub-tree on the `@kotlin.clr.KotlinDefault(index, birJson)` attribute (mirroring `[KotlinInline]`): a
   non-capturing lambda default, whose `newDelegate` would point at a library-LOCAL lifted method, is carried as a
   `{"k":"defaultCarrier","expr":…,"lifted":[…]}` envelope embedding that method so it is self-contained (kotc detaches
-  the dead method from the library dll). A capturing / SAM / suspend lambda default, OR a default that reads its
-  **enclosing-instance receiver** — a member fn's own dispatch `this@Owner` or an inner-class member's outer
-  `this@Outer` (detected by an IR-symbol scan of the dispatch-receiver param + every enclosing class `thisReceiver`) —
-  cannot be reconstructed positionally cross-module → a `{"k":"defaultUnsupported"}` poison carrier the consumer's
-  splice refuses on (a precise diagnostic, never a miscompile: the one uniform carrier binds `{"k":"this"}` to args[0] —
-  and at a `new`, which has no receiver, to nothing, so a ctor carrier holding the token is refused outright —
-  never to an enclosing instance). An EXTENSION-receiver `= this` is NOT this case — the extension receiver DOES bind to
-  args[0], so it round-trips (below). For a CROSS-MODULE call kotc emits a POSITIONAL `{"k":"defaultArg"}` placeholder for each omitted
-  arg of such a callee (so a later provided arg keeps its slot), and `bir2cir.DefaultArgSplice` — run at **PHASE 1**
+  the dead method from the library dll). Capturing closures, SAMs and suspend lambdas need no lifted-declaration
+  envelope: their construction nodes carry their capture descriptors, construction values and synthesis facts.
+  For a CROSS-MODULE call kotc emits a POSITIONAL `{"k":"defaultArg"}` placeholder for each omitted arg of such a
+  callee (so a later provided arg keeps its slot), and `bir2cir.DefaultArgSplice` — run at **PHASE 1**
   (right after `InlineSplice`, before owner attribution / the CharSequence bridge / type-lowering, so the spliced RAW
   expression re-lowers in THIS app's context) — resolves the callee by the owner kotc already projected (a dll2klib call
   carries its file-facade `ownerType`; a `new` carries its `type`), falling back to method name + emitted arity only for a
   truly ownerless call, and replaces each placeholder in place by array index (matching the `@KotlinDefault` stamp
   index), RE-HOISTING a `defaultCarrier`'s lifted method into the consumer's file class under a fresh per-splice name.
-  An EXTENSION-receiver `= this` default carries `{"k":"this"}` → the call's receiver (args[0]); a default reading an earlier value param carries
-  `{"k":"defaultArgParam","idx":N}` → the call's arg N. For a SAME-MODULE call kotc has the real default IR and inlines
-  it directly. A **C#** consumer sees a required parameter and passes it explicitly. A function with ≥1 Tier-2 parameter
-  carries `@KotlinDefault` on ALL its defaulted parameters, so a run of omitted params that interleaves Tier-1 and Tier-2
-  fills contiguously from one source. Example — `Iterable.joinToString`: `limit: Int = -1` is Tier 1;
+  Every read of the callee's scope is explicit: an earlier value parameter carries
+  `{"k":"defaultArgParam","idx":N}`, while a receiver carries
+  `{"k":"defaultArgReceiver","kind":"dispatch|extension|enclosing"}`. The consumer binds each kind to the matching
+  call-plan value: an instance-call receiver, an extension argument, or an inner constructor's hidden enclosing
+  argument. Ordinary `{"k":"this"}` inside a carried closure/SAM/suspend-lambda remains that synthesized object's own
+  receiver and is never rebound. For a SAME-MODULE call kotc has the real default IR and inlines it directly. A
+  **C#** consumer sees a required parameter and passes it explicitly. A function with ≥1 Tier-2 parameter carries
+  `@KotlinDefault` on ALL its defaulted parameters, so a run of omitted params that interleaves Tier-1 and Tier-2 fills
+  contiguously from one source. Example — `Iterable.joinToString`: `limit: Int = -1` is Tier 1;
   `separator`/`prefix`/`postfix`/`truncated` (`CharSequence = "…"`) and `transform (…)? = null` are Tier 2, so
   `list.joinToString("-") { … }` fills the omitted CharSequence defaults by positional splice (kcc) — keeping the
   trailing `transform` lambda in its own slot — or requires them (C#).
@@ -958,8 +957,9 @@ literally: at any call site where a fill can give one of those values a second r
 **evaluation plan** — the values in that order, each a BINDING, with every reader a pure READ of it
 (`docs/bir-cir-spec.md` §2.7). The readers are the call's own receiver and argument slots, an inner-class `new`'s
 enclosing-instance argument, each spliced same-module default, each field a cross-module data-class `copy`
-reconstructs, and each `{this}` / `{defaultArgParam n}` token a `@KotlinDefault` carrier binds. So `mkOuter().In()`
-runs `mkOuter()` once (the constructor and its default see the SAME instance); `f(next())` with `b: Int = a * 10`
+reconstructs, and each `{defaultArgReceiver kind}` / `{defaultArgParam n}` token a `@KotlinDefault` carrier binds. So
+`mkOuter().In()` runs `mkOuter()` once (the constructor and its default see the SAME instance); `f(next())` with
+`b: Int = a * 10`
 calls `next()` once however many defaults read `a`; `sideEffect().substringAfter(".")` — whose
 `missingDelimiterValue: String = this` rides a cross-module carrier — evaluates `sideEffect()` once; and
 `nextPair().copy(second = 9)` evaluates `nextPair()` once, not once per omitted field.
@@ -1000,9 +1000,9 @@ C#'s CS4007; never a silent duplication or reorder.
 A THIRD cross-module shape needs no carrier at all: a **data class's SYNTHETIC `copy`**, whose omitted field default is
 `this.<field>` by construction (a data class may also declare a differently-signed `copy` OVERLOAD of its own, whose
 defaults are ordinary expressions — the two are told apart by the generated signature, which mirrors the primary
-constructor parameter-for-parameter in name AND type, not by the name alone). `copy` is a member function, so it
-carries no `@KotlinDefault` (an enclosing-instance read cannot be carried — above); instead kotc RECONSTRUCTS each
-omitted field as a read of the call's receiver, owned and typed by the INSTANTIATED receiver type
+constructor parameter-for-parameter in name AND type, not by the name alone). The synthetic `copy` carries no
+`@KotlinDefault`; kotc already knows its canonical field-default rule and RECONSTRUCTS each omitted field as a read of
+the call's receiver, owned and typed by the INSTANTIATED receiver type
 (`kotlin.Pair[Int,Int]` and `Int`, never the class's own positional type variables — an open type variable is
 unresolvable in the caller's frame, and a state machine would spill it into a field of an unresolvable type). Each
 reconstruction is a READ of the receiver's plan binding, so `nextPair().copy(second = 9)` evaluates `nextPair()`
@@ -1013,8 +1013,9 @@ class RE-CONSUMED from a DotKt library dll does not reach it at all: see the `da
 A GENERIC callee's non-constant default closes its type frame at the call site too, like every other default. A
 `@KotlinDefault` carrier holds the default as the CALLEE wrote it, so its type parameters ride it as positional type
 variables; the splice substitutes this call's TYPE arguments into the materialized carrier before binding its
-`{this}`/`{defaultArgParam n}` tokens — the same thing an inline body's splice does, and the cross-module half of the
-rule kotc applies to same-module and external defaults. So `fun <T> f(xs: MutableList<T> = mutableListOf())` omitted
+`{defaultArgReceiver kind}`/`{defaultArgParam n}` tokens — the same thing an inline body's splice does, and the
+cross-module half of the rule kotc applies to same-module and external defaults. So
+`fun <T> f(xs: MutableList<T> = mutableListOf())` omitted
 from a consumer as `f<String>()` builds a `MutableList<String>`, not a `MutableList<Any>` holding the right values.
 
 **#146 known gap (named, not silent):** a non-const default that references a PRIVATE/internal library symbol
