@@ -102,6 +102,22 @@ suspend fun corCcEscapingCaptureUnderClosure(task: Task1<Int>, bail: Boolean): I
     corCcReceiver(task).await(
         captureContext = corCcPolicy((if (bail) throw IllegalStateException("bail") else "s")::corCcMark))
 
+// A LOOP-BORNE suspension in the argument: an inline collection loop is not a separate frame — its suspension is
+// flattened into this state machine — so it crosses the receiver's binding and that binding must be a
+// state-machine field, not a MoveNext local the resume no longer sees. This is the arm on the other side of the
+// storage question from the two control-transfer shapes above, reached without a suspending call in the argument's
+// own operand list.
+fun corCcAnyOdd(values: List<Int>): Boolean = values.any { it % 2 == 1 }
+
+suspend fun corCcTick(v: Int): Int {
+    Task.Delay(1).await()
+    corCcLog.add("C")
+    return v
+}
+
+suspend fun corCcLoopBorneCapture(task: Task1<Int>): Int =
+    corCcReceiver(task).await(captureContext = corCcAnyOdd(listOf(2, 4).map { corCcTick(it) }))
+
 // ---- the drive ---------------------------------------------------------------------------------------------------
 
 // A terminal sink + bounded drain (the CoroutineContextInterceptionTests pattern): a GENUINE suspension is needed
@@ -238,5 +254,20 @@ class DynamicCaptureContextTests {
         corCcLog.clear()
         assertEquals(42, blockOn { corCcEscapingCaptureUnderClosure(corCcCompleted(42), false) })
         assertEquals("R", order())
+    }
+
+    // A suspension the argument reaches through an inline collection loop rather than through its own operand
+    // list: it still crosses the receiver's binding, so the binding is a state-machine field and the awaitable is
+    // intact after both resumes.
+    @TestAttribute
+    fun receiverSurvivesALoopBorneSuspensionInTheArgument() {
+        corCcLog.clear()
+        val sink = CorCcSink()
+        val block: suspend () -> Int = { corCcLoopBorneCapture(corCcCompleted(51)) }
+        block.startCoroutine(sink)
+        corCcDrain(sink)
+        assertEquals(true, sink.done)
+        assertEquals(51, sink.value)
+        assertEquals("R,C,C", order())   // the receiver, then one resume per element
     }
 }

@@ -2044,7 +2044,15 @@ static partial class SuspendColdLowering
         // MAINTENANCE: its arms are `Rewrite`'s statement-appending dispatch, one for one — each is marked below with
         // the emitter it stands for. A new arm there that appends to `outp` needs one here, or the operand left of it
         // stops being ordered against it.
-        static bool LowersToStatements(JsonNode node)
+        static bool LowersToStatements(JsonNode node) => OperandLowering(node, suspensionOnly: false);
+
+        /// Of those statements, is any of them a SUSPENSION — the question that decides whether the value bound
+        /// before this operand needs a state-machine field rather than a local. Asked over the SAME subtree, by the
+        /// same walk, so it cannot miss a suspension the statement question above saw: the two answers are about one
+        /// operand, and a disagreement between them is a value stored where the resume cannot read it.
+        static bool LowersToSuspension(JsonNode node) => OperandLowering(node, suspensionOnly: true);
+
+        static bool OperandLowering(JsonNode node, bool suspensionOnly)
         {
             switch (node)
             {
@@ -2053,13 +2061,15 @@ static partial class SuspendColdLowering
                     if (k == "newSuspendLambda") return false;
                     if (Bool(o["suspendCall"])) return true;               // -> EmitSuspensionPoint / EmitAwaitPoint
                     if (IsSuspendCoroutineCall(o)) return true;            // -> EmitSuspendCoroutineCall
-                    if (k != null && ControlTransferKinds.Contains(k)) return true;   // -> the escaping-value flatten
+                    if (!suspensionOnly && k != null && ControlTransferKinds.Contains(k))
+                        return true;                                       // -> the escaping-value flatten
                     foreach (var kv in o)
-                        if (kv.Key != "synthClass" && kv.Value != null && LowersToStatements(kv.Value)) return true;
+                        if (kv.Key != "synthClass" && kv.Value != null && OperandLowering(kv.Value, suspensionOnly))
+                            return true;
                     return false;
                 case JsonArray a:
                     foreach (var it in a)
-                        if (it != null && LowersToStatements(it)) return true;
+                        if (it != null && OperandLowering(it, suspensionOnly)) return true;
                     return false;
                 default:
                     return false;
@@ -2418,10 +2428,18 @@ static partial class SuspendColdLowering
                 // flattened into control flow) run inside ONE invocation, so the local is enough — and a local is what
                 // a byref-like awaitable can be. A field for those would refuse `Span`-like awaitables that the CLR
                 // only forbids as FIELDS (docs/dotkt-semantics.md §4d), which is a refusal on valid IR.
+                //
+                // BOTH questions are asked by the SAME walk over the SAME subtree. Asking the second one with the
+                // frame-ownership predicates instead would reintroduce the disagreement the first one exists to
+                // avoid: they stop at every lambda kind, so a suspension inside a `newClosure` capture would be
+                // invisible to the storage question and visible to the statement question — a local written before a
+                // suspension the resume then reads. `SuspensionRefusalReason` refuses such a function outright today
+                // (a `newClosure` holding any suspension is not segmentable), so the disagreement had no witness;
+                // agreement by construction does not depend on that refusal staying where it is.
                 if (LowersToStatements(ccArgNode))
                 {
                     var bound = "__awaitable$" + (++_awaitTarget);
-                    if (HasOwnSuspension(ccArgNode) || HasLoopBorneSuspension(ccArgNode))
+                    if (LowersToSuspension(ccArgNode))
                     {
                         FieldStorage(bound, awaitableType, RoleMachinery, lives: true, across: "await");
                         outp.Add(SetField(bound, awaitable));
