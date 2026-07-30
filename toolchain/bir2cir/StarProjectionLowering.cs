@@ -53,16 +53,24 @@ using DotKt.Bir;
 static class StarProjectionLowering
 {
     // Kotlin generic collection alias -> the non-generic BCL interface a `List<int>`/`Dictionary<int,int>` implements
-    // regardless of element type. (Set/MutableSet map to ICollection for the Count/is-test path; HashSet<T> implements
-    // the non-generic ICollection.)
+    // regardless of element type.
+    //
+    // SET AND MUTABLESET ARE DELIBERATELY ABSENT. They used to map to the non-generic `System.Collections.ICollection`,
+    // which identifies a set in NEITHER direction: `setOf(1)` is a `HashSet<int>`, and HashSet<T> implements only the
+    // GENERIC ICollection<T>/ISet<T> (so a real set answered FALSE), while `List<T>` DOES implement the non-generic one
+    // (so `listOf(1) is Set<*>` answered TRUE — an unsound smart-cast, the worse of the two errors). Leaving them out
+    // keeps the reified `IReadOnlyCollection<object>` test, which is false for both, so the check is merely incomplete
+    // rather than wrong. A correct test needs an identity a Kotlin set HAS on the CLR, and it currently has none:
+    // `Set` is @ClrTypeAlias'd to the SAME `IReadOnlyCollection<T>` as `Collection` (and `MutableSet` to the same
+    // `ICollection<T>` as `MutableCollection`), so the two Kotlin types are ONE CLR type and no runtime check —
+    // reflection included, for user implementations as much as for HashSet — can separate them. Giving Set/MutableSet a
+    // distinct CLR identity is a stdlib collection-ABI decision, not a lowering one; see docs/dotkt-semantics.md §5f.
     static readonly Dictionary<string, string> NonGenericIface = new(StringComparer.Ordinal)
     {
         ["kotlin.collections.Collection"] = "System.Collections.ICollection",
         ["kotlin.collections.MutableCollection"] = "System.Collections.ICollection",
         ["kotlin.collections.List"] = "System.Collections.IList",
         ["kotlin.collections.MutableList"] = "System.Collections.IList",
-        ["kotlin.collections.Set"] = "System.Collections.ICollection",
-        ["kotlin.collections.MutableSet"] = "System.Collections.ICollection",
         ["kotlin.collections.Iterable"] = "System.Collections.IEnumerable",
         ["kotlin.collections.MutableIterable"] = "System.Collections.IEnumerable",
         ["kotlin.collections.Map"] = "System.Collections.IDictionary",

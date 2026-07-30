@@ -260,6 +260,63 @@ class CollectionsTests {
         assertTrue(nothing is Collection<*>?)           // True   null IS an instance of the nullable type
     }
 
+    // The INVARIANT this battery owes `x is T?`: for a non-null receiver it answers exactly what `x is T` answers,
+    // and for null it answers true. That has to hold even where `is T` is itself wrong — the two spellings must never
+    // disagree, or a `?` silently changes which branch a `when` takes.
+    //
+    // KNOWN-WRONG (tracked separately, NOT fixed here): a Kotlin `Set` has NO distinct CLR identity. `Set` is
+    // @ClrTypeAlias'd to the same `IReadOnlyCollection<T>` as `Collection`, and `MutableSet` to the same
+    // `ICollection<T>` as `MutableCollection`, so two Kotlin types are one CLR type and NO runtime test — reflection
+    // included — can separate them. `is Set<*>` therefore answers a `Collection` question through the reified
+    // interface: true for any REFERENCE-element collection (IReadOnlyCollection<out T> is covariant, so a
+    // `List<String>` passes), false for a value-element one (no value-type covariance). `is MutableSet<*>` is always
+    // false (ICollection<T> is invariant). Asserted at today's values so the contract violation is visible and a
+    // change in either direction reds the gate; fixing it means giving the Kotlin collection interfaces distinct CLR
+    // identities, a stdlib collection-ABI decision. See docs/dotkt-semantics.md §2.
+    @TestAttribute
+    fun starProjectedSetIdentity() {
+        val setInt: Any = setOf(1, 2)
+        val setStr: Any = setOf("a")
+        val mutSetStr: Any = mutableSetOf("a")
+        val listInt: Any = listOf(1)
+        val listStr: Any = listOf("a")
+        val mapInt: Any = mapOf(1 to 2)
+
+        // `is Set<*>` — today's answers. Correct only for the reference-element set and the value-element list.
+        assertFalse(setInt is Set<*>)                   // False  KNOWN-WRONG: Kotlin says true
+        assertTrue(setStr is Set<*>)                    // True   correct, but only via reference covariance
+        assertTrue(mutSetStr is Set<*>)                 // True   correct, same reason
+        assertFalse(listInt is Set<*>)                  // False  correct
+        assertTrue(listStr is Set<*>)                   // True   KNOWN-WRONG: Kotlin says false (a List is not a Set)
+        assertFalse(mapInt is Set<*>)                   // False  correct
+        assertFalse(mutSetStr is MutableSet<*>)         // False  KNOWN-WRONG: Kotlin says true (invariant ICollection<T>)
+
+        // The `?` spelling agrees with the plain one on every non-null receiver, and adds null. This is what #287
+        // guarantees, and it holds regardless of the wrongness above.
+        assertEquals(setInt is Set<*>, setInt is Set<*>?)
+        assertEquals(setStr is Set<*>, setStr is Set<*>?)
+        assertEquals(listInt is Set<*>, listInt is Set<*>?)
+        assertEquals(listStr is Set<*>, listStr is Set<*>?)
+        assertEquals(mutSetStr is MutableSet<*>, mutSetStr is MutableSet<*>?)
+        assertTrue(collNullSrc() is Set<*>?)            // True   null IS an instance of the nullable type
+        assertFalse(collNullSrc() is Set<*>)            // False  the non-null spelling still rejects null
+        assertTrue(collNullSrc() !is Set<*>)            // True   the `!is` twin
+
+        // `is Collection<*>` reaches the non-generic ICollection, which a HashSet does not implement and a
+        // Dictionary does — wrong in both directions, and likewise pinned rather than fixed here.
+        assertFalse(setInt is Collection<*>)            // False  KNOWN-WRONG: Kotlin says true
+        assertFalse(setStr is Collection<*>)            // False  KNOWN-WRONG: Kotlin says true
+        assertTrue(mapInt is Collection<*>)             // True   KNOWN-WRONG: Kotlin says false (a Map is not a Collection)
+        assertEquals(setInt is Collection<*>, setInt is Collection<*>?)
+        assertEquals(mapInt is Collection<*>, mapInt is Collection<*>?)
+
+        // List and Map DO have exact non-generic BCL twins, so those star tests are sound in both directions.
+        assertTrue(listInt is List<*>)                  // True
+        assertFalse(setInt is List<*>)                  // False
+        assertTrue(mapInt is Map<*, *>)                 // True
+        assertFalse(listInt is Map<*, *>)               // False
+    }
+
     @TestAttribute
     fun operatorIterator() {
         val box = IterIntBox(intArrayOf(10, 20, 30))

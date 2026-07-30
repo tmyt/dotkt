@@ -72,7 +72,18 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   instead of rendering `null, null`, on every join receiver (array, list, sequence, `joinTo`), with or without a
   transform, and at any null position. bir2cir's new `NullableIsInstMatch` marks the node `nullMatches` while the
   `?` is still on it, and ilemit projects the one extra `dup; brtrue` that answers true for null — the operand is
-  still evaluated exactly once, and a non-nullable type operand is untouched. (#287)
+  still evaluated exactly once, and a non-nullable type operand is untouched.
+  The invariant the `?` spelling owes is now uniform: for a non-null receiver `x is T?` answers exactly what
+  `x is T` answers, and for null it answers true. That required the star-projected form to reach the same
+  non-generic BCL facade as its plain twin (`x is Collection<*>?`/`List<*>?`/`Map<*,*>?` were stuck on the reified
+  interface, which a value-argument `List<int>`/`Dictionary<int,int>` does not implement), and it required
+  `Set`/`MutableSet` to leave that facade table: they mapped to the non-generic `ICollection`, which identifies a
+  set in NEITHER direction — a `HashSet<T>` does not implement it, while a `List<T>` does, so `listOf(1) is Set<*>`
+  was true. That unsound answer is gone. What remains wrong is recorded rather than fixed, with fixtures asserting
+  today's values so it cannot drift silently: a Kotlin `Set` has no distinct CLR identity to test against (it shares
+  `IReadOnlyCollection<T>` with `Collection`), `Collection<*>` misses sets and admits maps, and a nullable REIFIED
+  type ARGUMENT still loses its `?` because one generic method serves every instantiation. Both boundaries are
+  written up in `docs/dotkt-semantics.md` §2. (#287)
 - **bir2cir (area:bir2cir): a nullable-generic return that was object-erased no longer crosses a suspension under
   its PRE-erasure type.** `fun <T> f(x: T): List<T?>` has its `Nullable(T)` erased to `object` on the declaration
   side, so the emitted method returns `List<object>`, while the call site — emitted with `T` already substituted —

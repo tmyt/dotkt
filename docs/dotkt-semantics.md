@@ -81,6 +81,26 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   `IEnumerable`, which every value-type-arg BCL collection implements; `println` of such an erased value renders via
   the runtime-detecting `clrElemToString`. (A `<*>` value can only be used non-generically anyway.) This is the same
   invariance that forces §5c (`Map`/`MutableMap` both → `IDictionary<K,V>`). #60.
+  **`List<*>` and `Map<*,*>` are exact** — `IList`/`IDictionary` are their non-generic twins. **`Collection<*>` and
+  `Set<*>` are NOT, and answer wrongly today.** A `Set` has no distinct CLR identity at all: it is aliased to the same
+  `IReadOnlyCollection<T>` as `Collection` (and `MutableSet` to the same `ICollection<T>` as `MutableCollection`), so
+  the two Kotlin types are ONE CLR type and no runtime test — reflection included, for a user implementation as much
+  as for a `HashSet` — can separate them. Concretely: `setOf(1) is Collection<*>` is **false** (a `HashSet<T>`
+  implements only the generic `ICollection<T>`), `mapOf(1 to 2) is Collection<*>` is **true** (a `Dictionary`
+  implements the non-generic `ICollection`), `listOf("a") is Set<*>` is **true** and `setOf(1) is Set<*>` is
+  **false** (the reified `IReadOnlyCollection<out T>` is covariant, so the answer tracks whether the element type is
+  a reference type, not whether the value is a set), and `is MutableSet<*>` is always **false** (`ICollection<T>` is
+  invariant). Fixing this means giving the Kotlin collection interfaces distinct CLR identities — a stdlib
+  collection-ABI decision, not a lowering one. Pinned by `CollectionsTests.starProjectedSetIdentity`.
+- **`x is T?` accepts null, but a NULLABLE REIFIED TYPE ARGUMENT does not.** A nullable type OPERAND is written in
+  the source, so `null is String?` / `null is Int?` / `x !is T?` / a `when (x) { is T? -> }` branch all answer as
+  Kotlin specifies. A nullable INSTANTIATION of a reified parameter does not: `inline fun <reified T> m(x: Any?) =
+  x is T` compiled as one real generic method makes `m<String?>` and `m<String>` the SAME `m<string>` instantiation,
+  and a CLR type argument carries no nullability — so `m<String?>(null)` is **false** where Kotlin says true. It is
+  not recoverable at the call site either: a type argument can arrive through another generic's parameter
+  (`inline fun <reified U> f(x: Any?) = m<U>(x)`), which makes the fact dynamic, so a fix needs a nullability witness
+  threaded through every reified generic call — the value-level form of the carrier problem in §10. Pinned by
+  `NullableTests.nullableReifiedTypeArgumentIsTest`.
 - **Corollary — an UNCHECKED generic cast (`as T`, incl. `@Suppress("UNCHECKED_CAST")`) is checked
   EAGERLY at the cast site, not erased.** kotc emits every `x as T` (including a smart-cast) as a
   plain `cast` BIR node regardless of whether `T` is reified (`BirEmitterExpressions.kt:226-229`);
