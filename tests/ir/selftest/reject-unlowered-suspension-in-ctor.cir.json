@@ -1,0 +1,30 @@
+{
+  "fileClass": "SelftestKt",
+  "types": [
+    {
+      "name": "SelftestCtorHolder",
+      "kind": "class",
+      "ctors": [
+        {
+          "mods": { "suspend": true },
+          "params": [],
+          "body": [
+            {
+              "k": "exprStmt",
+              "expr": {
+                "k": "callStatic",
+                "owner": null,
+                "calleeOwner": { "t": "fqn", "name": "SelftestKt" },
+                "method": "f",
+                "sig": [],
+                "ret": { "t": "fqn", "name": "kotlin.Int" },
+                "args": [],
+                "suspendCall": true
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

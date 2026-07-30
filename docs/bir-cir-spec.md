@@ -561,3 +561,13 @@ new nodes (MemberCallSubstitution / NetInteropBinding stamp `sty` onto the clr* 
 VALUE is a `{t:…}` node, so `verify-schema` validates it as a type node with no `STR_OK` entry. The
 primitive-shorthand LEAF vocabulary (`int`/`void`/`object`) inside a structured `fqn.name` stays a sanctioned
 below-kotc CLR-resolution form (ilemit normalizes toward it via `PrimShorthandName`), NOT a value-slot string.
+
+**One deriver, two layers.** *What type does this node produce* is answered in ONE place per fact. `bir-common/
+NodeType.cs` owns the NODE-LOCAL answer — a stamp, then whatever slot the kind carries its own result type in,
+recursing through the caller's deriver for the kinds whose type is an operand's. `StaticType.Surface` is founded
+on it and adds ONLY what a node cannot know about itself: the enclosing lexical scope (a synthesized `local`
+read), and the name-keyed `kotlin.Array<E>` spelling its classifiers match instead of the structural `{t:array}`
+a declared slot needs. A stamp-less desugar is typed through its own shape — a `cond` by its LIVE branch (a
+`throw`/`return` arm produces no value, so it cannot answer for one that does), a `valueBlock` by the `var` it
+declares — because the alternative is a spill slot with no type, which is unverifiable IL and so a refusal to
+compile accepted source.

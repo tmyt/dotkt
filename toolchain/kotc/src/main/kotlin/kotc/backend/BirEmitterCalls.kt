@@ -216,7 +216,7 @@ internal fun BirEmitter.filledArgs(
 		val address = addressSlotExpr(arg, p)
 		val emitted =
 			if (address != null)
-				plan?.bind("arg", "address", isStableAddress(arg),
+				plan?.bind("arg", "address", isStableLocation(arg),
 					// The SLOT's type, so the callee's frame — closed here like every other callee type.
 					withDefaultTypeScope(call, callee) { birType(p.type).toJson() },
 					"argument '${p.name.asString()}' of '$label'", address) ?: address
@@ -430,8 +430,15 @@ internal fun BirEmitter.reconstructedDefaultReceiver(
 
 /** Is this argument's ADDRESS free to be taken twice, and free to move past another value? True for a plain
  *  local/parameter lvalue (`byref(x)`), whose address expression has no side effect and cannot be observed out of
- *  order. Any computed lvalue (`byref(mk().field)`) is not, so its plan binding pins the order instead. */
-internal fun BirEmitter.isStableAddress(arg: IrExpression): Boolean {
+ *  order. Any computed lvalue (`byref(mk().field)`) is not, so its plan binding pins the order instead.
+ *
+ *  A DIFFERENT question from [isStableValue], which is why it is a different predicate rather than a call to that
+ *  one. `isStableValue` asks whether the VALUE re-reads to the same thing, so it excludes a `var`; a LOCATION is
+ *  stable for a mutable `var` too, because computing `&x` twice yields the same address however often the storage
+ *  it names is written. The absence of the immutability clause below is that distinction, not an omission. The
+ *  ref-cell clause it does keep is a different exclusion: a CAPTURED `var` lives in a heap cell, so its location is
+ *  a field of an expression rather than a slot of this frame. */
+internal fun BirEmitter.isStableLocation(arg: IrExpression): Boolean {
 	val inner = byrefMarker(arg) ?: arg
 	return inner is IrGetValue && !isRefCell(inner.symbol.owner)
 }
@@ -519,7 +526,7 @@ internal fun BirEmitter.filledExternalArgs(call: org.jetbrains.kotlin.ir.express
 		val address = byrefMarker(arg)?.let { inner -> byrefBackingField(inner) ?: expr(inner) }
 		slots[valIdx] =
 			if (address != null)
-				plan?.bind("arg", "address", isStableAddress(arg),
+				plan?.bind("arg", "address", isStableLocation(arg),
 					withDefaultTypeScope(call, callee) { birType(p.type).toJson() },
 					"argument '${p.name.asString()}' of '$label'", address) ?: address
 			else plan?.bindValue(arg, "arg", "argument '${p.name.asString()}' of '$label'") ?: expr(arg)
@@ -956,8 +963,9 @@ internal fun BirEmitter.call(call: IrCall): String {
 	// so a USER type with `operator fun rangeTo`+`contains` stays a real method dispatch (the bare-name lowering
 	// here MISCOMPILED it to primitive comparisons). bir2cir (RangeMembershipLowering) lowers `x in a..b` /
 	// `x in a until b` to the short-circuit `(x >= a && x <op> b)` fast path FQN-keyed — only when the range is an
-	// un-materialized primitive `kotlin.<Prim>.rangeTo/rangeUntil` — binding `x` ONCE (a side-effecting operand
-	// must not run in both comparison legs). The Kotlin<->CLR range relation lives in bir2cir.
+	// un-materialized primitive `kotlin.<Prim>.rangeTo/rangeUntil` — binding the two bounds and the subject ONCE
+	// EACH, in that (Kotlin) order, so the short circuit neither skips a bound nor reads the subject early.
+	// The Kotlin<->CLR range relation lives in bir2cir.
 
 	// Enum rich API: Color.values()/entries -> Enum.GetValues<T>(); Color.valueOf(s) -> Enum.Parse<T>(s).
 	val enumDeclarationOwner = (callee.parent as? IrClass)

@@ -20,8 +20,10 @@
 //
 // Node -> value: the suspend-lambda VALUE is the cold, unstarted SM instance
 //   new <mangled>_lambdaN$sm(<captureVals>..., /*completion*/ null)
-// (create() rebinds the completion when a builder/intrinsic starts it). Runs in APP builds only, right after
-// SuspendColdLowering and BEFORE BirTypeLowering (its kotlin.* type tokens flow through the type lowering).
+// (create() rebinds the completion when a builder/intrinsic starts it). Runs in every NON-REFERENCE build — the
+// app build and the rt-stdlib build alike (Program.cs gates it on `!RefBuild`, the same gate as the cold
+// lowering; a reference build is metadata-only and its bodies are squashed) — right after SuspendColdLowering and
+// BEFORE BirTypeLowering (its kotlin.* type tokens flow through the type lowering).
 
 using System.Linq;
 using System.Text.Json.Nodes;
