@@ -59,6 +59,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **kotc (area:kotc): a `suspend fun interface`'s SAM shim carries its Kotlin RESULT TYPE, not just the suspend
+  modifier.** `suspendRet` rides alongside `mods.suspend` on every declaration — the modifier is the fact, the slot
+  is the type — and the SAM lift (`BirEmitterLifts`, the shim behind `FlowCollector { … }` and every other suspend
+  `fun interface` lambda) emitted the modifier alone. bir2cir's cold registry reads the slot, so the shim's awaited
+  values were typed `kotlin.Any`: boxed on the way into the state machine and unboxed on the way out, at every
+  suspension inside a suspend SAM body. Found by the refusal that replaced that `kotlin.Any` (see §7b), which is
+  what a fallback hides — the drop had been silent since the shim was introduced.
 - **bir2cir (area:bir2cir): a suspension inside a suspending call's own operand list no longer hangs forever
   ([tmyt/dotkt#272]), and an operand that CONTAINS a suspension is no longer evaluated after the operand to its
   right ([tmyt/dotkt#286]).** `corAdd(x, corTick(1))` never completed: the outer call wrote its resume label, the

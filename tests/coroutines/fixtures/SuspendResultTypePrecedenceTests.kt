@@ -68,11 +68,18 @@ fun corRtSum(a: Int, b: Int): Int = a + b
 suspend fun corRtSafeInOperands(b: CorRtBox?): Int = corRtSum(b?.corRtNext() ?: 0, corRtTick(100))
 
 // ---- 3. a generic-owner suspend call: `sty` and `ret` disagree ------------------------------------------------
+//
+// The suspension in these two is a suspend CALL, not a `.await()` marker, and deliberately so: a `.await()` inside
+// a GENERIC cold state machine binds its completion `Action` to a method on the still-open `…$sm`1` type, which
+// ilverify rejects (`DelegateCtor`: unrecognized arguments for delegate .ctor) and which faults at runtime with
+// "the method itself or the containing type is not fully instantiated". That gap is INDEPENDENT of result typing —
+// it reproduces identically with the previous bir2cir — and no existing fixture reached it; typing a generic call's
+// resumed value is what this section is for, so it uses the shape that isolates it.
 class CorRtCell<T>(val value: T) {
     // The declared return is the type parameter `T`; the call site below resolves it to `Int`, so the call node
     // carries `ret` = `T` and `sty` = `Int`.
     suspend fun unwrap(): T {
-        Task.Delay(1).await()
+        corRtTick(0)
         return value
     }
 }
@@ -84,7 +91,7 @@ suspend fun corRtGenericOwner(): Int {
 
 // A generic suspend FUNCTION (rather than a generic owner), whose `ret` names its own type parameter.
 suspend fun <T> corRtIdentity(v: T): T {
-    Task.Delay(1).await()
+    corRtTick(0)
     return v
 }
 
@@ -96,41 +103,41 @@ class CorRtHolder(val f: suspend (Int) -> Int)
 suspend fun corRtValueThroughSafeCall(h: CorRtHolder?): Int = h?.f?.invoke(5) ?: -1
 
 class SuspendResultTypePrecedenceTests {
-    @Test
+    @TestAttribute
     fun safeCallValueTypeResultIsNotBoxed() {
         assertEquals(8, blockOn { corRtSafeInt(CorRtBox(7)) })
         assertNull(blockOn { corRtSafeInt(null) })
     }
 
-    @Test
+    @TestAttribute
     fun safeCallThroughElvis() {
         assertEquals(4, blockOn { corRtSafeOrElse(CorRtBox(3)) })
         assertEquals(-7, blockOn { corRtSafeOrElse(null) })
     }
 
-    @Test
+    @TestAttribute
     fun safeCallReferenceTypeResult() {
         assertEquals("box5", blockOn { corRtSafeString(CorRtBox(5)) })
         assertNull(blockOn { corRtSafeString(null) })
     }
 
-    @Test
+    @TestAttribute
     fun safeCallInsideOperandList() {
-        assertEquals(103, blockOn { corRtSafeInOperands(CorRtBox(2)) })
-        assertEquals(101, blockOn { corRtSafeInOperands(null) })
+        assertEquals(104, blockOn { corRtSafeInOperands(CorRtBox(2)) })   // (2+1) + (100+1)
+        assertEquals(101, blockOn { corRtSafeInOperands(null) })          //     0 + (100+1)
     }
 
-    @Test
+    @TestAttribute
     fun genericOwnerCallResumesInstantiatedType() {
         assertEquals(42, blockOn { corRtGenericOwner() })
     }
 
-    @Test
+    @TestAttribute
     fun genericCalleeResumesInstantiatedType() {
         assertEquals(42, blockOn { corRtGenericCallee() })
     }
 
-    @Test
+    @TestAttribute
     fun suspendFunctionValueBehindSafeCall() {
         assertEquals(6, blockOn { corRtValueThroughSafeCall(CorRtHolder { v -> corRtTick(v) }) })
         assertEquals(-1, blockOn { corRtValueThroughSafeCall(null) })
