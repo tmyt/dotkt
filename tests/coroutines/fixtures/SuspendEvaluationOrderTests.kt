@@ -56,6 +56,33 @@ suspend fun corACpArg(): Int { corACpLog.add("A"); return 9 }
 suspend fun corACpOmitOnly(): String = corACpTriple().copy(second = 9).toString()
 suspend fun corACpSuspendingArg(): String = corACpTriple().copy(second = corACpArg()).toString()
 
+// ---- an operand whose DESUGAR carries no type stamp, spilled left of a suspension ---------------------------
+// `h(x!!, susp())`: kotc lowers `x!!` to `{ var __nn = x; if (__nn != null) __nn else throw NPE }` — a valueBlock
+// and a cond, neither stamped with a type, over a `local` read of the temp the block itself declares. The operand
+// is impure, so it spills into an SM field ahead of the suspending argument, and a spill field must be TYPED.
+// Until the shared node-local deriver read a cond through its LIVE branch (a `throw` arm says nothing about the
+// value's type) and a `local` through the block's own `var`, nothing could type these and the whole function was
+// REJECTED at compile time — an abort on frontend-accepted source. Four desugars reach the same stamp-less shape
+// and each answers through a different slot: the reference `!!` (the block's `var`), the value-type `!!` and the
+// elvis (`nullableValue.elem`), and a bare-receiver safe call (a raw `cond` whose live arm is a `nullableWrap`).
+val corAUtLog = mutableListOf<String>()
+suspend fun corAUtSusp(): Int { corAUtLog.add("S"); return 2 }
+fun corAUtHs(a: String, b: Int): String = "$a/$b"
+fun corAUtHi(a: Int, b: Int): String = "$a/$b"
+fun corAUtHq(a: Int?, b: Int): String = "$a/$b"
+
+class CorAUtBox(val name: String?) { fun size(): Int = 7 }
+
+fun corAUtSideRef(): String? { corAUtLog.add("L"); return "v" }
+fun corAUtSideVal(): Int? { corAUtLog.add("L"); return 7 }
+fun corAUtSideBox(): CorAUtBox { corAUtLog.add("L"); return CorAUtBox("n") }
+
+suspend fun corAUtRefBang(): String = corAUtHs(corAUtSideRef()!!, corAUtSusp())
+suspend fun corAUtValueBang(): String = corAUtHi(corAUtSideVal()!!, corAUtSusp())
+suspend fun corAUtFieldBang(): String = corAUtHs(corAUtSideBox().name!!, corAUtSusp())
+suspend fun corAUtElvis(): String = corAUtHi(corAUtSideVal() ?: 0, corAUtSusp())
+suspend fun corAUtSafeCall(b: CorAUtBox?): String = corAUtHq(b?.size(), corAUtSusp())
+
 class SuspendEvaluationOrderTests {
     @TestAttribute
     fun sideEffectBeforeSuspend() {
@@ -93,5 +120,47 @@ class SuspendEvaluationOrderTests {
         assertEquals(2, corACpLog.size)
         assertEquals("T", corACpLog[0])                 // receiver first
         assertEquals("A", corACpLog[1])                 // then the argument (was "T","T","A","T")
+    }
+
+    // Each of these was a COMPILE ABORT ("the operand ... carries no static type") before the desugars' own type
+    // slots were read; the assertions additionally pin the left-to-right order the spill exists to preserve.
+    @TestAttribute
+    fun notNullAssertedReferenceBeforeSuspension() {
+        corAUtLog.clear()
+        assertEquals("v/2", blockOn { corAUtRefBang() })
+        assertEquals(2, corAUtLog.size)
+        assertEquals("L", corAUtLog[0])                 // the `!!` operand ran BEFORE the suspending argument
+        assertEquals("S", corAUtLog[1])
+    }
+
+    @TestAttribute
+    fun notNullAssertedValueTypeBeforeSuspension() {
+        corAUtLog.clear()
+        assertEquals("7/2", blockOn { corAUtValueBang() })   // `Nullable<Int>.Value`, not a boxed slot
+        assertEquals(2, corAUtLog.size)
+        assertEquals("L", corAUtLog[0])
+    }
+
+    @TestAttribute
+    fun notNullAssertedFieldReadBeforeSuspension() {
+        corAUtLog.clear()
+        assertEquals("n/2", blockOn { corAUtFieldBang() })
+        assertEquals(2, corAUtLog.size)
+        assertEquals("L", corAUtLog[0])
+    }
+
+    @TestAttribute
+    fun elvisOperandBeforeSuspension() {
+        corAUtLog.clear()
+        assertEquals("7/2", blockOn { corAUtElvis() })
+        assertEquals(2, corAUtLog.size)
+        assertEquals("L", corAUtLog[0])
+    }
+
+    @TestAttribute
+    fun safeCallOperandBeforeSuspension() {
+        // A bare-local receiver, so the safe call is a RAW `cond` with no `type` stamp at all.
+        assertEquals("7/2", blockOn { corAUtSafeCall(CorAUtBox("q")) })
+        assertEquals("null/2", blockOn { corAUtSafeCall(null) })
     }
 }

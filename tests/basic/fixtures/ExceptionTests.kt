@@ -20,6 +20,7 @@
 //   il-throwexpr  -> throwexpr_throwInExpression  `throw` in expression position (Nothing) + exact thrown type
 //   il-tryexpr    -> tryexpr_tryAsValue           try/catch in value position: expr-body, val init, inside a lambda
 //   il-tryexprop  -> tryexprop_tryInOperand       try-expression as a VALUE in an operand slot (empty-stack hoist)
+//                    + sideEffectingOperandBeforeHoistedTry (the LEFT operand's spill temp, typed from the operand)
 //
 // Top-level names are unique within this single battery assembly (one project = one namespace) and `exc`-prefixed
 // to avoid clashing with sibling batteries and stdlib names.
@@ -62,6 +63,17 @@ fun excParse(s: String): Int = try { s.toInt() } catch (e: Exception) { -1 }
 
 // ---- il-tryexprop : try-expression as a value in an operand slot ---------------------------------------------
 fun excRiskyOp(): Int = "5".toInt()
+
+// A SIDE-EFFECTING operand to the LEFT of an operand-position try: the hoist moves the try's statements ahead of
+// the whole expression, so the left operand has to be spilled to a temp first to keep it evaluating before them.
+// That temp is the one place the hoist declares a type, and it used to copy whichever type slot the node happened
+// to carry — a call node carries none, so the spill was declared `kotlin.Any`, the emitted unbox read a boxed
+// value that was never boxed, and the process died with an AccessViolationException. It now derives the type the
+// way every other spill site does.
+val excHoistLog = mutableListOf<String>()
+fun excHoistSide(): Int { excHoistLog.add("L"); return 4 }
+fun excHoistSum(): Int = excHoistSide() + try { "x".toInt() } catch (e: Exception) { 6 }        // catch arm
+fun excHoistConcat(): String = excHoistSide().toString() + try { "7".toInt() } catch (e: Exception) { 0 }  // try arm
 
 // ---- il-nestedtry : nested try/finally, captured run order (return threads through both finallys) -------------
 fun excNestedF(log: MutableList<String>): Int {
@@ -167,5 +179,15 @@ class ExceptionTests {
         assertEquals(6, 1 + try { excRiskyOp() } catch (e: Exception) { 0 })      // 6
         assertEquals("bad=-1", "bad=" + try { "x".toInt() } catch (e: Exception) { -1 })  // bad=-1
         assertEquals(30, 10 + try { 20 } finally { })                            // 30  (try/finally as operand)
+    }
+
+    // The left operand is a CALL, so it is spilled to a temp ahead of the hoisted try (a const/local is left in
+    // place). The spill's declared type has to be the operand's own — a `kotlin.Any` slot faulted at runtime.
+    @TestAttribute
+    fun sideEffectingOperandBeforeHoistedTry() {
+        excHoistLog.clear()
+        assertEquals(10, excHoistSum())          // 4 + 6 (the try throws, so the catch arm supplies the value)
+        assertEquals("47", excHoistConcat())     // "4" + 7 (the try arm supplies it)
+        assertEquals(2, excHoistLog.size)        // the left operand ran once per call, in its lexical position
     }
 }

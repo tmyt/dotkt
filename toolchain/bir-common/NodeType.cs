@@ -4,6 +4,11 @@
 // spill, and the call-evaluation plan's address pins — and a local without a type is not a lesser local, it is
 // unverifiable IL. Both need the same answer, derived the same way, so the derivation lives here once.
 //
+// bir2cir's `StaticType.Surface` (StaticTypeResolver.cs) — the operand-classification reader the early passes ask
+// what an expression's Kotlin static type is — is FOUNDED on this file rather than restating it: it adds only the
+// arms that need a lexical SCOPE this file cannot see and the one array SPELLING its readers key on, and delegates
+// every other kind here. So a kind cannot be typed one way for a spill slot and another way for a classifier.
+//
 // SCOPE: node-local facts only. An explicit `ret`/`dynRet`/`sty` stamp, then whatever slot the kind carries its own
 // result type in (`arrayGet.elem`, `conv.to`, `delegateInvoke.funcType.ret`, …). A kind whose type is only knowable
 // from an INDEX — a `callStatic`/`callInstance` with no `sty`, a raw `field` read — returns null here; a caller that
@@ -15,6 +20,7 @@
 
 #nullable enable
 using System;
+using System.Collections.Generic;
 using System.Text.Json.Nodes;
 
 namespace DotKt.Bir;
@@ -51,9 +57,30 @@ public static class NodeType
         if (TypeJson.Read(o["sty"]) is TypeNode ts) return ts;
         switch (Str(o["k"]))
         {
-            case "const": case "cast": case "new": case "newClr": case "var": case "cond":
-            case "nullableWrap": case "nullableValue": case "safeCastValue": case "default":
+            case "const": case "cast": case "new": case "newClr": case "var": case "enumValue": case "default":
+                // A structural kind carries its own type in `type` — including a `cast`, whose TARGET is what the
+                // node produces (the boxing/narrowing conversion is the point of the node).
                 return TypeJson.Read(o["type"]);
+            case "nullableValue": case "safeCastValue":
+                // The UNWRAPPED value: `Nullable<T>.Value` and `x as? V` both produce the ELEMENT, and `elem` is the
+                // only type slot their producers write. (Reading `type` here — a slot nothing writes on them — is why
+                // a value-nullable unwrap left of a suspension had no type and aborted the compile.)
+                return TypeJson.Read(o["elem"]);
+            case "nullableWrap":
+                // The inverse: a bare `elem` value lifted into `Nullable<elem>`.
+                return TypeJson.Read(o["elem"]) is TypeNode nwe ? new TypeNode.Nullable(nwe) : null;
+            case "cond":
+            {
+                // An expression-level ternary (`if`-expr / elvis / when-expr): its unified branch type when the
+                // producer stamped one — and kotc's `!!`, elvis and safe-call desugars stamp NONE — else a BRANCH's.
+                // A branch that never yields a value (`x!!`'s `throw`, an elvis `return`) says nothing about the type
+                // of the value the OTHER branch produces, so it may not answer while the other one can: the value of
+                // `{ var __nn = x; __nn != null ? __nn : throw }` is an `x`, not a `Nothing`.
+                if (TypeJson.Read(o["type"]) is TypeNode ct) return ct;
+                var thenT = recurse(o["then"]);
+                if (thenT is not null && !IsNothing(thenT)) return thenT;
+                return recurse(o["else"]) ?? thenT;
+            }
             case "callEval":
                 // A call under its evaluation plan (§2.7, BIR-only): the bindings are evaluated ahead of it, so the
                 // node's value — and its type — is the wrapped call's.
@@ -63,8 +90,7 @@ public static class NodeType
                 // a spliced call produces is its RESULT's own type, which can be strictly more derived than the
                 // callee's declared return — while a plan lowered into a block carries the call's static type, which
                 // its enclosing merge preserves. Absent a stamp the type is the RESULT's, resolved with the block's
-                // own `var`s in scope (an `apply`-splice's result is a local the block itself declares). Mirrors
-                // StaticType.Surface's arm.
+                // own `var`s in scope (an `apply`-splice's result is a local the block itself declares).
                 return TypeJson.Read(o["type"]) ?? BlockResultType(o, recurse, primArrayElem);
             case "stackGet": case "byrefLoad":
                 return TypeJson.Read(o["elem"]);
@@ -76,7 +102,11 @@ public static class NodeType
             case "conv":
                 return TypeJson.Read(o["to"]);
             case "binOp":
-                return Str(o["op"]) is "==" or "!=" or "<" or ">" or "<=" or ">=" ? BoolTn : recurse(o["lhs"]);
+                // A comparison or a short-circuit yields Boolean; every other operator yields its OPERANDS' type,
+                // which either side reports — so an `lhs` the caller's deriver cannot answer falls through to the
+                // `rhs` rather than to null.
+                return Str(o["op"]) is "==" or "!=" or "<" or ">" or "<=" or ">=" or "&&" or "||"
+                    ? BoolTn : recurse(o["lhs"]) ?? recurse(o["rhs"]);
             case "unaryOp":
                 return Str(o["op"]) == "!" ? BoolTn : recurse(o["e"]);
             case "objEq": case "isInst": case "isInstRef": case "nullableHasValue":
@@ -119,17 +149,37 @@ public static class NodeType
         }
     }
 
-    /// <summary>The type a `valueBlock` produces: its `result`, resolved against the `var`s the block declares.</summary>
+    /// <summary>
+    /// The type a `valueBlock` produces: its `result`, derived with the block's OWN `var` declarations in scope. The
+    /// block IS their declaration site, so reading them keeps this node-local — and it is the only way the `!!`,
+    /// elvis and safe-call desugars can be typed at all, since kotc stamps neither the block, nor the `cond` it
+    /// results in, nor the `local` read of the temp the block declares: `{ var __nn = e; __nn != null ? __nn : throw }`
+    /// is typed only by `__nn`'s own declaration, one level below the result. A node the block does not declare falls
+    /// back to the caller's FULL deriver, so an index-only kind (a call carrying no `sty`) still resolves there.
+    /// </summary>
     static TypeNode? BlockResultType(JsonObject block, Func<JsonNode?, TypeNode?> recurse, Func<string, string?>? primArrayElem)
     {
-        var result = block["result"];
-        if (result is JsonObject r && Str(r["k"]) == "local" && Str(r["name"]) is string want)
-            foreach (var key in new[] { "stmts", "body" })
-                if (block[key] is JsonArray arr)
-                    foreach (var st in arr)
-                        if (st is JsonObject so && Str(so["k"]) == "var" && Str(so["name"]) == want
-                            && TypeJson.Read(so["type"]) is TypeNode vt) return vt;
-        return recurse(result);
+        var vars = BlockVars(block);
+        if (vars is null) return recurse(block["result"]);
+        TypeNode? InBlock(JsonNode? x)
+            => x is JsonObject xo && Str(xo["k"]) == "local" && Str(xo["name"]) is string nm
+               && vars.TryGetValue(nm, out var vt)
+                ? vt
+                : Of(x, InBlock, primArrayElem) ?? recurse(x);
+        return InBlock(block["result"]);
+    }
+
+    /// <summary>The `var` declarations a block makes, name -> declared type; null when it declares none.</summary>
+    static Dictionary<string, TypeNode>? BlockVars(JsonObject block)
+    {
+        Dictionary<string, TypeNode>? vars = null;
+        foreach (var key in new[] { "stmts", "body" })
+            if (block[key] is JsonArray arr)
+                foreach (var st in arr)
+                    if (st is JsonObject so && Str(so["k"]) == "var" && Str(so["name"]) is string nm
+                        && TypeJson.Read(so["type"]) is TypeNode vt)
+                        (vars ??= new Dictionary<string, TypeNode>(StringComparer.Ordinal))[nm] = vt;
+        return vars;
     }
 
     /// <summary>The ELEMENT of an array type: a structural `Array(E)`, or a specialized `kotlin.IntArray`-style FQN
