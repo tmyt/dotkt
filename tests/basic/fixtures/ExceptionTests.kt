@@ -22,6 +22,10 @@
 //   il-tryexprop  -> tryexprop_tryInOperand       try-expression as a VALUE in an operand slot (empty-stack hoist)
 //                    + sideEffectingOperandBeforeHoistedTry (the LEFT operand's spill temp, typed from the operand)
 //
+// Added here rather than migrated: nothingReturningCallInValuePosition (#197) — a `fun f(): Nothing` CALL in a
+// value position, the in-module twin of the cross-module round-trip case. It belongs to this battery because a
+// `Nothing`-typed expression is a control transfer, the same subject as `throw` in expression position.
+//
 // Top-level names are unique within this single battery assembly (one project = one namespace) and `exc`-prefixed
 // to avoid clashing with sibling batteries and stdlib names.
 import NUnit.Framework.TestAttribute
@@ -74,6 +78,29 @@ val excHoistLog = mutableListOf<String>()
 fun excHoistSide(): Int { excHoistLog.add("L"); return 4 }
 fun excHoistSum(): Int = excHoistSide() + try { "x".toInt() } catch (e: Exception) { 6 }        // catch arm
 fun excHoistConcat(): String = excHoistSide().toString() + try { "7".toInt() } catch (e: Exception) { 0 }  // try arm
+
+// ---- #197 : a `fun f(): Nothing` in a VALUE position — the erased `object` must never reach the slot ----------
+// `Nothing` has no CLR analog, so a `fun f(): Nothing` returns `object`. A lowering that let the call sit in a
+// value slot handed that `object` to whatever read it: the other arm of an if/when merge, the method's `ret`, a
+// typed local. `object` is not a `string`, so the verifier rejected a merge the program never performs (ilverify
+// StackUnexpected object/string) even though the arm always throws first, so the RUN was green. bir2cir now
+// TERMINATES a Nothing-typed value position (`else boom()` -> `else throw boom()`), so nothing merges at all.
+// The shapes below are the fault class, not one example: else-arm, then-arm, a `when` arm, an elvis right-hand
+// side, a block whose LAST expression is the Nothing call, BOTH arms, a bare `ret`, and a VALUE-typed merge
+// (whose branch coercion is the one that lands after the terminator).
+class ExcBoom { companion object { fun boom(): Nothing = throw IllegalStateException("boom") } }
+fun excFail(msg: String): Nothing = throw IllegalStateException(msg)
+val excNothingLog = mutableListOf<String>()
+fun excNothingElseArm(n: Int): String { val r: String = if (n >= 0) "kept" else ExcBoom.boom(); return r }
+fun excNothingThenArm(n: Int): String = if (n < 0) excFail("then") else "kept2"
+fun excNothingWhenArm(n: Int): String = when { n > 5 -> "big"; n > 0 -> excFail("mid"); else -> "small" }
+fun excNothingElvis(s: String?): String = s ?: excFail("elvis")
+fun excNothingBlockTail(n: Int): String = if (n >= 0) "ok" else { excNothingLog.add("side"); excFail("tail") }
+fun excNothingBothArms(n: Int): String = if (n >= 0) excFail("a") else excFail("b")
+fun excNothingWholeBody(n: Int): String = excFail("body$n")
+fun excNothingValueSlot(n: Int): Int = if (n >= 0) 7 else excFail("int")
+fun excNothingSubjectWhen(n: Int): String =
+    when (n) { 0 -> "zero"; 1 -> excFail("one"); 2 -> ExcBoom.boom(); else -> "many" }
 
 // ---- il-nestedtry : nested try/finally, captured run order (return threads through both finallys) -------------
 fun excNestedF(log: MutableList<String>): Int {
@@ -158,6 +185,37 @@ class ExceptionTests {
         assertEquals(-9, b)
         val c = try { excGuard(-1) } catch (e: RuntimeException) { -9 }
         assertEquals(-9, c)
+    }
+
+    // #197: every one of these compiled and ran before — the fault was formal (StackUnexpected object/string at the
+    // merge). The value asserts pin the SURVIVING arm; the sentinel catches pin that the Nothing arm still throws
+    // its own exception rather than the terminator the lowering adds behind it.
+    @TestAttribute
+    fun nothingReturningCallInValuePosition() {
+        excNothingLog.clear()
+        assertEquals("kept", excNothingElseArm(1))      // kept    companion-static Nothing in the else arm
+        assertEquals("kept2", excNothingThenArm(1))     // kept2   Nothing in the then arm
+        assertEquals("big", excNothingWhenArm(9))       // big     a subject-LESS `when` with a Nothing arm
+        assertEquals("small", excNothingWhenArm(-1))    // small
+        assertEquals("zero", excNothingSubjectWhen(0))  // zero    a `when` WITH a subject (a different node path)
+        assertEquals("many", excNothingSubjectWhen(9))  // many
+        assertEquals("e", excNothingElvis("e"))         // e       elvis whose right-hand side is Nothing
+        assertEquals("ok", excNothingBlockTail(1))      // ok      block arm whose LAST expression is the Nothing call
+        assertEquals(7, excNothingValueSlot(1))         // 7       a VALUE-typed merge (Int), not a reference one
+        assertEquals(0, excNothingLog.size)             // the untaken block arm did not run
+        // The Nothing arms: each still throws ITS OWN exception, from the call, at the call.
+        assertEquals("boom", try { excNothingElseArm(-1) } catch (e: IllegalStateException) { e.message })
+        assertEquals("then", try { excNothingThenArm(-1) } catch (e: IllegalStateException) { e.message })
+        assertEquals("mid", try { excNothingWhenArm(3) } catch (e: IllegalStateException) { e.message })
+        assertEquals("elvis", try { excNothingElvis(null) } catch (e: IllegalStateException) { e.message })
+        assertEquals("tail", try { excNothingBlockTail(-1) } catch (e: IllegalStateException) { e.message })
+        assertEquals(1, excNothingLog.size)             // ...and the taken block arm ran its statements first
+        assertEquals("a", try { excNothingBothArms(1) } catch (e: IllegalStateException) { e.message })
+        assertEquals("b", try { excNothingBothArms(-1) } catch (e: IllegalStateException) { e.message })
+        assertEquals("body7", try { excNothingWholeBody(7) } catch (e: IllegalStateException) { e.message })
+        assertEquals("int", try { excNothingValueSlot(-1).toString() } catch (e: IllegalStateException) { e.message })
+        assertEquals("one", try { excNothingSubjectWhen(1) } catch (e: IllegalStateException) { e.message })
+        assertEquals("boom", try { excNothingSubjectWhen(2) } catch (e: IllegalStateException) { e.message })
     }
 
     @TestAttribute
