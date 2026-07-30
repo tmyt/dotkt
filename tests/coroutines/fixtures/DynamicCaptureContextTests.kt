@@ -16,8 +16,10 @@
 // behaviorally identical to GetAwaiter()), so it is pinned by CIR shape in tests/ir/lowering/await-capture-*.
 //
 // The order sections assert POSITIONALLY through `corCcLog`: the captureContext expression is a value Kotlin
-// evaluates exactly ONCE and AFTER the awaitable receiver — including when the expression itself suspends, which
-// splits the marker's own operand list across a resume.
+// evaluates exactly ONCE and AFTER the awaitable receiver. Three shapes, because each takes a different path
+// through the lowering: an ordinary expression (evaluated in its own slot), one that SUSPENDS (which splits the
+// marker's own operand list across a resume), and one that TRANSFERS CONTROL instead of producing a value —
+// including from inside a closure capture, where the transfer sits one frame down but still runs in this one.
 //
 // `.await()` inside a GENERIC suspend fun is separately broken (open-generic delegate binding, GitHub #303), so
 // every function here is non-generic — the same exclusion SuspendOperandOrderTests.kt carries.
