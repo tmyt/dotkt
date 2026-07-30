@@ -93,8 +93,9 @@ partial class ReferenceMetadataIndex
         if (!AwaiterConforms(awaiterRet)) return null;
         (plan.AwaiterDefName, plan.AwaiterGeneric) = NetDefName(awaiterRet);
 
-        // #3/#64 ConfigureAwait capture control — only when the awaitable exposes it (Task-like). The configured
-        // awaitable's own GetAwaiter must ALSO conform (it always does for Task/ValueTask).
+        // #3/#64 ConfigureAwait capture control — only when the awaitable exposes it (Task-like) AND the configured
+        // awaitable's own GetAwaiter ALSO conforms (it always does for Task/ValueTask). Each miss records the words
+        // the refusal uses, because dll2klib publishes the one-argument bridge on the first fact alone.
         var cfg = ConfigureAwaitBoolMember(awaitable);
         if (cfg == null)
         {
