@@ -623,7 +623,8 @@ static class NetInteropBinding
             ?? call["shapeTypes"] as JsonArray
             ?? call["argTypes"] as JsonArray;
         if (sig is not { Count: 1 } || sig[0] is not JsonNode argNode
-            || TypeJson.Read(argNode) is not TypeNode.Fqn arg
+            || TypeJson.Read(argNode) is not TypeNode argType
+            || NormSigTv(argType) is not TypeNode.Fqn arg
             || arg != owner)
             return false;
         try
