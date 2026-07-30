@@ -1,0 +1,41 @@
+{
+  "fileClass": "LoweringProbeKt",
+  "hasMain": false,
+  "fields": [],
+  "types": [],
+  "refTypes": [],
+  "methods": [
+    {
+      "name": "zeroReaderUnobservableIsDropped",
+      "params": [],
+      "ret": { "t": "fqn", "name": "kotlin.Int" },
+      "body": [
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "callEval",
+            "type": { "t": "fqn", "name": "kotlin.Int" },
+            "bindings": [
+              {
+                "id": "dotkt$b0",
+                "phase": "recv",
+                "kind": "value",
+                "stable": false,
+                "type": { "t": "fqn", "name": "kotlin.Int" },
+                "role": "receiver of 'sink'",
+                "expr": { "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 7 }
+              }
+            ],
+            "expr": {
+              "k": "callStatic",
+              "owner": { "t": "fqn", "name": "LoweringProbeKt" },
+              "method": "sink",
+              "sig": [{ "t": "fqn", "name": "kotlin.Int" }],
+              "args": [{ "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 1 }]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

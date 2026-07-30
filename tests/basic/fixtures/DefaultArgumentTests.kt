@@ -385,6 +385,45 @@ class M2EncOuter(val k: Int) {
     fun inner(): M2EncInner { M2EncLog.s += "I"; return M2EncInner() }
 }
 
+// §7a — the QUALIFIER of an `object`/companion call, at a call site that needs an evaluation plan.
+//
+// A plain `companion object` is flattened onto its enclosing class, so `M2Flat.make(…)` emits a receiver-less static
+// call: the qualifier is not a value the emitted shape can hold, and the plan must not mint one for it (a binding
+// nothing reads, holding a read of an `INSTANCE` field this representation never emits, is not an evaluation that
+// was skipped — there is nothing there to evaluate). A real `object` keeps its singleton and its `INSTANCE` read,
+// and a default that reads the object's own member makes the qualifier a second reader of it.
+//
+// These assert VALUES, not initialization ORDER: when a companion's initialization runs is the CLR type
+// initializer's schedule (§7a), and this backend has separate, older gaps there — a flattened companion's `init { }`
+// block is not emitted at all — which are not what this battery is about and must not be pinned here by accident.
+class M2Flat {
+    companion object {
+        // A default reading an EARLIER parameter forces a plan at every call site, supplied or not.
+        fun make(width: Int = 2, height: Int = width * 3): Int = width * 100 + height
+    }
+}
+
+// …and the ORDER half of the same rule. A REAL object's `INSTANCE` load runs the object's own body, so it is an
+// observable evaluation and Kotlin runs it BEFORE every argument. `M2Ord.take(m2Mark("A"))` must therefore log
+// "O" then "A" — the qualifier needs a plan binding to hold that position, because the default reading an earlier
+// parameter forces the argument into a pre-call local that would otherwise overtake it.
+val m2OrdLog = StringBuilder()
+fun m2Mark(tag: String): Int { m2OrdLog.append(tag); return tag.length }
+
+object M2Ord {
+    init { m2OrdLog.append("O") }
+    fun take(a: Int, b: Int = a * 2): Int = a * 10 + b
+}
+
+object M2Solo {
+    val k = 4
+    // Reads the object's own member, so the default binds the call's DISPATCH RECEIVER — the qualifier now has two
+    // readers (the call's own receiver slot and this default) and is read in place at both.
+    fun scale(a: Int = k, b: Int = a * k): Int = a + b
+    // An inline member: the third receiver-binding site, where the qualifier reaches the payload rather than a slot.
+    inline fun twice(n: Int, f: (Int) -> Int): Int = f(n) + f(n)
+}
+
 class DefaultArgumentTests {
     @TestAttribute
     fun defargs() {
@@ -736,5 +775,31 @@ class DefaultArgumentTests {
         assertEquals(21, h.runParam())                                  // CONTROL  3 * 7 — the value-param arm
         assertEquals(15, M2RecvOuter(5).R().run())                      // WAS-NRE  3 * OUTER k=5, enclosing chain
         assertEquals(9, 3.m2SelfScaled())                               // CONTROL  3 * extension receiver 3
+    }
+
+    /** §7a — an `object`/companion qualifier at a call site that carries an evaluation plan. */
+    @TestAttribute
+    fun defargsObjectQualifierIsNotAPlanValue() {
+        // FLATTENED companion: the emitted static call has no receiver slot at all.
+        assertEquals(206, M2Flat.make())                                // width=2, height=2*3
+        assertEquals(515, M2Flat.make(5))                               // height still filled from the supplied width
+        assertEquals(202, M2Flat.make(height = 2))                      // named-middle omission: `width` fills to 2
+
+        // REAL singleton: the qualifier IS a value, read by the call's receiver slot AND by the default that reads
+        // the object's own member. Reading it twice is free — it is the same singleton either way.
+        assertEquals(20, M2Solo.scale())                                // a=k=4, b=4*4
+        assertEquals(15, M2Solo.scale(3))                               // a=3, b=3*4
+        assertEquals(10, M2Solo.scale(b = 6))                           // named-middle omission: a fills to k=4
+        assertEquals(30, M2Solo.twice(3) { it * 5 })                    // the inline site, qualifier in the payload
+    }
+
+    /** §7a — a REAL object's qualifier is an observable evaluation, and Kotlin runs it before the arguments. */
+    @TestAttribute
+    fun defargsRealObjectQualifierIsEvaluatedBeforeTheArguments() {
+        m2OrdLog.setLength(0)
+        assertEquals(12, M2Ord.take(m2Mark("A")))       // a=1 ("A".length), b=2
+        // "AO" would mean the object was initialized only when the call finally touched it — after the argument's
+        // side effect, and after an initializer that throws would have had to run.
+        assertEquals("OA", m2OrdLog.toString())
     }
 }

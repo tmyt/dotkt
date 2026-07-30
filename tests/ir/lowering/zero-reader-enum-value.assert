@@ -1,0 +1,4 @@
+# The enum-value sibling of zero-reader-observable: reading an entry runs the enum type's initializer just as a
+# plain static-field read does, so a binding nothing reads is EVALUATED rather than skipped.
++"k":"var"
++"entry":"ONE"

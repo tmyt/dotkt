@@ -1,0 +1,5 @@
+# A static-field read runs its declaring type's initializer, so the plan binding nothing reads is EVALUATED:
+# a `var` is minted for it, initialized from the read, ahead of the call.
++"k":"var"
++"k":"staticField"
++"name":"ticks"

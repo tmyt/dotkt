@@ -1,0 +1,5 @@
+# A literal's evaluation cannot be detected, so the binding nothing reads is DROPPED rather than turned into a
+# local nobody reads. The 7 is gone; the call's own argument (1) survives.
+-"k":"var"
+-"value":7
++"value":1

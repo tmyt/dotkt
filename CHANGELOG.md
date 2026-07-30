@@ -87,7 +87,38 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   this reader's classifiers are name-keyed). `Surface` keeps only the arms the core cannot answer — the ones
   needing the enclosing lexical scope, and the call/field family, which reads `sty` before `ret` (unifying that
   precedence is a change of its own) — and delegates the rest.
-
+- **A call value NOTHING reads is now evaluated unless evaluating it is genuinely unobservable
+  (area:bir2cir, area:kotc; recorded as `docs/dotkt-semantics.md` §7a).** Kotlin evaluates a call's receiver and
+  every supplied argument whether the emitted CLR shape has a slot for the value or not; the backend was skipping
+  the evaluation for anything that *looked* like a pure load. Two of those are not: a **static-field** read (and an
+  **enum-value** read with it) runs the declaring type's initializer — which on this backend is where a top-level
+  property initializer and an `object`'s body live, so it can print, throw or mutate — and an **instance-field**
+  read dereferences, so it throws on a null receiver, which a platform type makes reachable (§9a). `IsDroppable`
+  (Q2 of the value questions) is narrowed to the loads whose evaluation genuinely cannot be detected: `const`,
+  `this`, `local`, `bindRef`, `default`, `classRef`. Anything else with no reader becomes a local nobody reads —
+  at most one local, and only at a call site that supplies a value the emitted shape cannot place. The
+  zero-reader case is now decided by that question ALONE: a `stable` binding used to vanish the same way through
+  the inline path without ever being asked whether its evaluation mattered ("may be read twice" was standing in
+  for "may be read zero times"). `KClassMemberBinding`'s `value::class` const-fold, which asks the same question
+  about the receiver it folds away, delegates to `IsDroppable` instead of restating a narrower ad-hoc set —
+  widening the fold to a `this`/plan-read receiver of a known-final builtin type, while explicitly rejecting a
+  `classRef` receiver: the DOUBLE class literal `(Int::class)::class` reflects the `KClass` VALUE, and a
+  `classRef`'s type slot names the type it REFERS to rather than the type it IS, so folding it would answer "Int"
+  for a receiver that is not an `Int`.
+  The one shape that relied on the old, too-generous answer is gone at the producer: a plain `companion object` is
+  flattened onto its enclosing class and a projected .NET static holder has no instance either, so **kotc no longer
+  mints a call-evaluation-plan binding for a receiver naming one** — at any receiver site, ordinary or inline. It
+  was a binding nothing could read, holding a read of an `INSTANCE` field this representation never emits (the
+  inline emitter already named it a "dangling token"), surviving only because the drop hid it; there was never a
+  value there to evaluate. A REAL `object` and a super-typed companion are the opposite case and keep their
+  binding: their `INSTANCE` exists and loading it runs the object's own body, so it is an observable evaluation
+  that Kotlin orders BEFORE every argument — without the binding, `O.f(side())` let `side()` run first.
+- **bir2cir (area:bir2cir): the by-reference argument's location pins ask their own question.**
+  `CallEvalLowering`'s `LocationHasPinWork`/`PinLocationOperands` shared Q2's implementation, but they decide
+  whether a node is a link of an addressable location's own path — pinning one into a local would take the address
+  of a COPY for a value type, so a callee writing through the `byref` would miss the real storage. That is storage
+  identity, not side effects; it is now `StaysInLocation`, next to the code that asks it, and the Q2 narrowing
+  above leaves it untouched.
 - **bir2cir (area:bir2cir): every "is this value pure / stable" predicate is now named after the question it
   answers, and each question has exactly one home.** Five different questions were being asked under three
   interchangeable-sounding names, which invited the assumption that a kind classified one way in one of them was
