@@ -28,11 +28,6 @@ declare -A ILVERIFY_XFAIL=(
 	# consumer's restored `Vault<string>` slot — StackUnexpected. Runtime-SAFE (object/string are reference-compatible;
 	# the erased Vault holds the string; the value-assert RUN lane is green). Same object-erasure formal-only family.
 	["GenericMetadataRoundtripTests::nullableGenericMembersRoundTrip()"]="#86 nullable-generic object-erasure: holderOf's erased Vault<object> return vs the restored Vault<string> slot — runtime-safe (RUN green)"
-	# #29 (migrated ktproj-nestedlist): the Root-V variance collapse lowers a nested read-only `List<T>` to its
-	# INVARIANT CLR sibling `IList<T>`; at a use site the read-only `IReadOnlyCollection<T>` shape is expected, so the
-	# collapsed `IList<int32>` meets an `IReadOnlyCollection<int32>` slot — StackUnexpected. Runtime-SAFE (the concrete
-	# list implements both interfaces; the value-assert RUN lane is green). Same covariant-collection formal-only family.
-	["GenericMetadataRoundtripTests::nestedGenericCollectionsRoundTrip()"]="#29 Root-V collapse: nested List<T> lowered to invariant IList<int32> vs an expected IReadOnlyCollection<int32> — runtime-safe (RUN green)"
 	# #86: copyOf on a value-element array returns Array<T?>, represented as object[] while the formal callsite
 	# expects Nullable<Int>[]; all prefix/tail value assertions run green.
 	["ArrayTests::copyOfGrowsWithNullTail()"]="#86 nullable value-array object erasure: copyOf returns object[] where Nullable<Int>[] is formally expected — runtime-safe (RUN green)"
