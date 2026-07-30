@@ -83,6 +83,23 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   The refusal that remains — an awaitable whose `ConfigureAwait(bool)` returns something that is not itself
   awaitable, which dll2klib publishes the overload for because the returned type may live in an assembly it does not
   read — now names THAT as the reason instead of reporting a missing `ConfigureAwait(bool)` member.
+- **bir2cir (area:bir2cir): the capture-control hop is read from the awaitable's metadata instead of being rebuilt
+  from its receiver, so an awaitable that is not shaped like `Task` works.** Three defects, all reachable through
+  `await(captureContext = …)` and the first two of them older than it. (1) The configured awaitable's type was
+  reconstructed by repeating the RECEIVER's type arguments under `ConfigureAwait`'s return type NAME, so a
+  declaration that permutes them — `Awaitable<A,B>.ConfigureAwait(bool): Configured<B,A>` — produced
+  `Configured<A,B>`: a real type on which none of the members then called exist, i.e. unverifiable IL and a run-time
+  failure. This already broke a constant `false`. The plan now carries every awaiter and configured type as a
+  TEMPLATE of the DECLARED type, closed at the call site, so a permuted, dropped or fixed type argument comes out as
+  declared. (2) The configured awaitable's `GetAwaiter` was looked for as an instance member only, though the
+  awaitable contract has always accepted a referenced `[Extension] static GetAwaiter` — so capture control on such a
+  type was REFUSED although C# `await` compiles the same shape. It is now resolved and emitted through both halves of
+  the contract, a generic extension's type arguments unified from its declared receiver rather than copied. (3) The
+  receiver binding introduced above always took a state-machine FIELD, which the CLR forbids for a byref-like
+  (`ref struct`) awaitable — turning a legal program into a compile-time refusal. Only a SUSPENSION between the
+  binding and its use needs a field; suspension-free statements need a typed local, which is exactly what §4d says a
+  byref-like value may be. `tests/interop/consumer/fixtures/CaptureContextAwaitTests.kt` covers all three against
+  producer types written for them (`tests/interop/producer/CaptureAwaitable.cs`).
 - **bir2cir (area:bir2cir): a nullable-generic return that was object-erased no longer crosses a suspension under
   its PRE-erasure type.** `fun <T> f(x: T): List<T?>` has its `Nullable(T)` erased to `object` on the declaration
   side, so the emitted method returns `List<object>`, while the call site — emitted with `T` already substituted —

@@ -293,14 +293,20 @@ embed no dialect.
 - **We bind `OnCompleted` (INotifyCompletion), not `UnsafeOnCompleted` (ICriticalNotifyCompletion):** the cold core carries
   no ExecutionContext-flowing state-machine box, so `OnCompleted` (which flows EC) is correct; `UnsafeOnCompleted` would drop
   `AsyncLocal` flow across every await. UnsafeOnCompleted is a future optimization gated on SM-level EC capture.
-- **`ConfigureAwait`/`captureContext` stays Task-like:** the `await(captureContext = …)` capture control (§4a) is offered
-  ONLY for an awaitable that exposes a `ConfigureAwait(bool)` member (Task, ValueTask) — dll2klib publishes the
-  one-argument bridge only for those, so a custom awaitable without the member has no `captureContext` overload to
-  call and the frontend rejects the call. One gap remains, and it is a REFUSAL rather than a wrong lowering: dll2klib
-  publishes on the `ConfigureAwait(bool)` DECLARATION alone (the configured awaitable it returns may live in an
-  assembly that projection does not read), so a type whose ConfigureAwait returns something that is not itself
-  awaitable gets the overload published and bir2cir then refuses the call, naming that as the reason.
-- Coverage: `tests/coroutines/fixtures/TaskAndValueTaskAwaitTests.kt`; custom-awaitable gaps are tracked in GitHub Issues.
+- **`ConfigureAwait`/`captureContext` is a shape, not a Task privilege:** the `await(captureContext = …)` capture
+  control (§4a) is offered for ANY awaitable that exposes a `ConfigureAwait(bool)` member whose returned value is
+  itself awaitable — dll2klib publishes the one-argument bridge on the member, so a custom awaitable without it has no
+  `captureContext` overload to call and the frontend rejects the call. The configured awaitable is an awaitable like
+  any other: its type is the DECLARED return type (a declaration that permutes, drops or fixes the awaitable's type
+  arguments is lowered as written, not as the receiver's arguments repeated), and it is entered through a member
+  `GetAwaiter` or a referenced `[Extension] static GetAwaiter`, the same two halves the primary awaitable has. One gap
+  remains, and it is a REFUSAL rather than a wrong lowering: dll2klib publishes on the `ConfigureAwait(bool)`
+  DECLARATION alone (the type it returns may live in an assembly that projection does not read), so a type whose
+  ConfigureAwait returns something that is not awaitable at all gets the overload published and bir2cir then refuses
+  the call, naming that as the reason.
+- Coverage: `tests/coroutines/fixtures/TaskAndValueTaskAwaitTests.kt` and, for the capture-control shapes Task does
+  not exercise (a permuted configured type, an extension-entered configured awaitable, a byref-like awaitable),
+  `tests/interop/consumer/fixtures/CaptureContextAwaitTests.kt`; remaining custom-awaitable gaps are tracked in GitHub Issues.
 
 ## 4d. A byref-like (`ref struct`) value may live in a suspend function — but never ACROSS a suspension, and never in a capture
 

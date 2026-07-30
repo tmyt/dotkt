@@ -2381,17 +2381,14 @@ static partial class SuspendColdLowering
                 recvParam?.Args ?? System.Array.Empty<TypeNode>());
             var hasResult = resultTok is not TypeNode.Fqn { Name: "kotlin.Unit" };
             var awaitableType = recvParam;
-            // The awaiter def + genericity, one per arm: the awaitable's own awaiter, or the nested
-            // Configured*Awaiter the configured awaitable returns — statically known in both arms, because the
-            // Boolean the configured arm passes cannot change it.
-            var awaiterDef = configured ? plan.ConfiguredAwaiterDefName : plan.AwaiterDefName;
-            var awaiterGeneric = configured ? plan.ConfiguredAwaiterGeneric : plan.AwaiterGeneric;
-            var awaiterArguments = awaiterGeneric
-                ? awaitableType.Args is { Length: > 0 } args
-                    ? args
-                    : hasResult ? new[] { resultTok } : null
-                : null;
-            var awaiterType = new TypeNode.Fqn(awaiterDef, awaiterArguments);
+            // The awaiter type, one per arm: the awaitable's own awaiter, or the one its configured awaitable returns
+            // — statically known in BOTH arms, because the Boolean the configured arm passes cannot change it. Each
+            // comes from the plan as a TEMPLATE of the DECLARED type (ReferenceMetadataIndex.Awaitable.cs), closed
+            // here from this call site: the awaitable's type arguments, and an extension GetAwaiter's method
+            // arguments. It is not rebuilt from the receiver's arguments — a declaration is free to permute, drop or
+            // fix them, and copying them positionally named a type the awaiter's members do not live on.
+            var awaiterType = CloseAwaitTemplate(
+                configured ? plan.ConfiguredAwaiterTemplate : plan.AwaiterTemplate, awaitableType, methodTypeArgs);
 
             // KOTLIN ORDER, exactly once each: the awaitable receiver, then the captureContext argument. This emitter
             // rewrites its own operands (the marker is excluded from the stage-0 operand plan, SuspendOperandPlan.cs),
@@ -2403,17 +2400,36 @@ static partial class SuspendColdLowering
             if (configured)
             {
                 // When the argument's own lowering APPENDS STATEMENTS, the receiver's value is still an expression
-                // sitting in a slot — so it would be evaluated after them (and, across a suspension, in a later
-                // invokeSuspend invocation, where the expression's operands no longer hold). Bind it into a
-                // state-machine field first, which is where a value that must survive a suspension lives. Nothing is
-                // bound when the argument emits no statements: the receiver is then evaluated by the ConfigureAwait
-                // call itself, ahead of its argument, which is the order Kotlin asks for.
+                // sitting in a slot — so it would be evaluated after them. Bind it first. Nothing is bound when the
+                // argument emits no statements: the receiver is then evaluated by the ConfigureAwait call itself,
+                // ahead of its argument, which is the order Kotlin asks for.
+                //
+                // WHICH STORAGE is a separate question, and only a SUSPENSION between the binding and its use makes it
+                // a state-machine field: invokeSuspend is re-entered at the resume label, so a MoveNext local written
+                // before the suspension no longer holds. Suspension-free statements (an escaping `throw`/`return`
+                // flattened into control flow) run inside ONE invocation, so the local is enough — and a local is what
+                // a byref-like awaitable can be. A field for those would refuse `Span`-like awaitables that the CLR
+                // only forbids as FIELDS (docs/dotkt-semantics.md §4d), which is a refusal on valid IR.
                 if (LowersToStatements(ccArgNode))
                 {
-                    var targetField = "__awaitable$" + (++_awaitTarget);
-                    FieldStorage(targetField, awaitableType, RoleMachinery, lives: true, across: "await");
-                    outp.Add(SetField(targetField, awaitable));
-                    awaitable = FieldOf(targetField, awaitableType);
+                    var bound = "__awaitable$" + (++_awaitTarget);
+                    if (HasOwnSuspension(ccArgNode) || HasLoopBorneSuspension(ccArgNode))
+                    {
+                        FieldStorage(bound, awaitableType, RoleMachinery, lives: true, across: "await");
+                        outp.Add(SetField(bound, awaitable));
+                        awaitable = FieldOf(bound, awaitableType);
+                    }
+                    else
+                    {
+                        outp.Add(new JsonObject
+                        {
+                            ["k"] = "var", ["name"] = bound, ["type"] = Tw(awaitableType), ["init"] = awaitable,
+                        });
+                        awaitable = new JsonObject
+                        {
+                            ["k"] = "local", ["name"] = bound, ["sty"] = Tw(awaitableType),
+                        };
+                    }
                 }
                 captureValue = Rewrite(ccArgNode, outp);
             }
@@ -2500,6 +2516,14 @@ static partial class SuspendColdLowering
             return slot != null ? TypeJson.Read(slot) : null;
         }
 
+        // Close an AwaitPlan template at this call site: the extension-method arguments the marker carries, then the
+        // awaitable's own. Both scopes in one place, because a plan template can mention either — an extension
+        // GetAwaiter's awaiter is written in the method's parameters, a member's in the awaitable's.
+        static TypeNode CloseAwaitTemplate(TypeNode template, TypeNode.Fqn awaitableType, TypeNode[] methodTypeArgs) =>
+            SubstituteTypeParameters(
+                SubstituteMethodTypeParameters(template, methodTypeArgs),
+                awaitableType?.Args ?? System.Array.Empty<TypeNode>());
+
         static TypeNode SubstituteMethodTypeParameters(
             TypeNode type,
             TypeNode[] arguments) =>
@@ -2540,12 +2564,16 @@ static partial class SuspendColdLowering
             _ => type,
         };
 
-        // `this.<aw> = <getAwaiter>()` for the resolved awaitable pattern. Three entry shapes:
+        // `this.<aw> = <getAwaiter>()` for the resolved awaitable pattern. The awaitable is entered in one of two
+        // ways, and a captureContext argument inserts one hop before it:
         //   member GetAwaiter (Task/ValueTask)        -> clrInstance on the awaitable
-        //   a captureContext argument (#3/#64)        -> clrInstance GetAwaiter on `awaitable.ConfigureAwait(<value>)`,
-        //                                                the value being whatever the call passed — constant or not
         //   referenced extension GetAwaiter (WinRT)   -> clrStatic (non-generic) / clrGenericStatic (generic, over the
         //                                                result type) on the [Extension] static class, awaitable as arg0
+        //   a captureContext argument (#3/#64)        -> the same two shapes, on `awaitable.ConfigureAwait(<value>)`
+        //                                                instead of on the awaitable — the configured awaitable is an
+        //                                                awaitable like any other, and its GetAwaiter may equally be a
+        //                                                member or a referenced extension. The value is whatever the
+        //                                                call passed, constant or not.
         JsonNode BuildGetAwaiter(
             AwaitPlan plan,
             TypeNode awaitableType,
@@ -2557,22 +2585,43 @@ static partial class SuspendColdLowering
         {
             if (captureValue != null)
             {
-                // configured = awaitable.ConfigureAwait(<captureContext>); this.<aw> = configured.GetAwaiter();
-                var configuredType = new TypeNode.Fqn(plan.ConfiguredAwaitableDefName,
-                    plan.ConfiguredAwaitableGeneric
-                        ? (awaitableType as TypeNode.Fqn)?.Args
-                        : null);
+                // configured = awaitable.ConfigureAwait(<captureContext>); this.<aw> = <getAwaiter on configured>.
+                // The configured type is the DECLARED return type closed at this call site, never the receiver's
+                // arguments reused: `Awaitable<A,B>.ConfigureAwait(bool): Configured<B,A>` is `Configured<B,A>`.
+                var configuredType = CloseAwaitTemplate(
+                    plan.ConfiguredAwaitableTemplate, awaitableType as TypeNode.Fqn, methodTypeArgs);
                 var configured = new JsonObject
                 {
                     ["k"] = "clrInstance", ["type"] = Tw(awaitableType), ["method"] = "ConfigureAwait",
                     ["recv"] = task, ["argTypes"] = new JsonArray { Tw(BoolTn) },
                     ["args"] = new JsonArray { captureValue }, ["ret"] = Tw(configuredType),
                 };
+                if (!plan.ConfiguredGetAwaiterExtension)
+                    return new JsonObject
+                    {
+                        ["k"] = "clrInstance", ["type"] = Tw(configuredType), ["method"] = "GetAwaiter",
+                        ["recv"] = configured, ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(),
+                        ["ret"] = Tw(awaiterType),
+                    };
+                var cfgExtOwner = new TypeNode.Fqn(plan.ConfiguredGetAwaiterExtOwner);
+                if (!plan.ConfiguredGetAwaiterExtGeneric)
+                    return new JsonObject
+                    {
+                        ["k"] = "clrStatic", ["type"] = Tw(cfgExtOwner), ["method"] = "GetAwaiter",
+                        ["argTypes"] = new JsonArray { Tw(configuredType) },
+                        ["args"] = new JsonArray { configured }, ["ret"] = Tw(awaiterType),
+                    };
+                // A GENERIC extension: the plan resolved its type arguments by unifying the declared receiver against
+                // the configured type, and carries that receiver open over `method.tvN` as the `memberSig` ilemit
+                // exact-matches the definition with.
                 return new JsonObject
                 {
-                    ["k"] = "clrInstance", ["type"] = Tw(configuredType), ["method"] = "GetAwaiter",
-                    ["recv"] = configured, ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(),
-                    ["ret"] = Tw(awaiterType),
+                    ["k"] = "clrGenericStatic", ["type"] = Tw(cfgExtOwner), ["method"] = "GetAwaiter",
+                    ["typeArgs"] = new JsonArray(plan.ConfiguredGetAwaiterExtTypeArgs
+                        .Select(t => TypeJson.Write(CloseAwaitTemplate(t, awaitableType as TypeNode.Fqn, methodTypeArgs)))
+                        .ToArray()),
+                    ["memberSig"] = new JsonArray { TypeJson.Write(plan.ConfiguredGetAwaiterExtOpenRecv) },
+                    ["args"] = new JsonArray { configured }, ["ret"] = Tw(awaiterType),
                 };
             }
             if (plan.GetAwaiterExtension)
@@ -3483,8 +3532,9 @@ static partial class SuspendColdLowering
             var taskPlan = _refs?.ResolveAwaitable(_taskBcl, 1)
                 ?? throw new InvalidOperationException(
                     $"suspend main drain: '{_taskBcl}<Unit>' has no conforming GetAwaiter in referenced metadata");
-            var awaiterType = new TypeNode.Fqn(taskPlan.AwaiterDefName,
-                taskPlan.AwaiterGeneric ? new[] { UnitTn } : null);
+            // `Task<Unit>`'s own awaiter, from the plan template closed over that one type argument.
+            var awaiterType = CloseAwaitTemplate(
+                taskPlan.AwaiterTemplate, taskType as TypeNode.Fqn, System.Array.Empty<TypeNode>());
 
             var coldArgs = new JsonArray();
             foreach (var p in _params) coldArgs.Add(new JsonObject { ["k"] = "local", ["name"] = Str(p["name"]) });
