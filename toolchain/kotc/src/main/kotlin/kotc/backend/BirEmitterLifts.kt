@@ -377,8 +377,8 @@ internal fun BirEmitter.samConversion(node: IrTypeOperatorCall): String {
  * to a BCL call) — the CALL node gives bir2cir something to substitute. (Plain @InlineOnly funs without @ClrIntrinsic
  * DO get real rt.dll bodies; @ClrIntrinsic is the body-removing discriminator.) DEFERRED (clean `unsupported`, each
  * with its concrete blocker): a BOUND extension reference (`expr::extFn` — a closed static delegate is not
- * ilverify-clean), a suspend reference
- * (needs the coroutine SM), and a .NET-method deferral case.
+ * ilverify-clean), and a .NET-method deferral case. Suspend references do not take any of these delegate paths:
+ * [suspendFunctionRef] uniformly adapts top-level/member/extension references to `newSuspendLambda`.
  */
 internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 	// `::Ctor` (constructor reference) -> a lifted static factory `__ctorref_N(args) = new T(args)`, bound as a
@@ -452,9 +452,9 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 	// suspend lambda `{ args -> target(args) }` whose body is a suspendCall to the target. A plain `newDelegate`
 	// cannot carry the cold-suspend protocol (bir2cir has no suspend-delegate lowering; it DOES build a SuspendLambda
 	// SM from `newSuspendLambda`). kotc emits ONLY the pure suspend FACTS (the `sfunc:`/suspend-`fn` funcType +
-	// `suspendCall:true` on the inner call); bir2cir owns the SM transform. Covers top-level, bound and unbound MEMBER
-	// references; an ext-receiver suspend ref (rarer) falls through to the clean deferral below.
-	if (fn.isSuspend && !hasExt) return suspendFunctionRef(node, fn, dispatchIdx)
+	// `suspendCall:true` on the inner call); bir2cir owns the SM transform. Covers top-level, member, and extension
+	// references, whether their declaration is local or restored from a referenced DotKt assembly.
+	if (fn.isSuspend) return suspendFunctionRef(node, fn, dispatchIdx)
 	// `::topLevelFun` — no receiver: a delegate over the static file-class method. Carries `calleeOwner` (#199 Design
 	// B, the SAME two-axis contract as a top-level FUNCTION call in BirEmitterCalls): `method` + the resolved parameter
 	// `sig` select the overload, while the FIR-resolved callee file-class is the mandatory DISPATCH identity. Two
@@ -507,10 +507,6 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 	if (hasExt) {
 		val extIdx = fn.parameters.indexOfFirst { it.kind == IrParameterKind.ExtensionReceiver }
 		val boundExt = if (extIdx >= 0) node.arguments.getOrNull(extIdx) else null
-		// A suspend ext reference (KSuspendFunctionN) needs the coroutine state-machine lowering — separate machinery.
-		if (fn.isSuspend)
-			return unsupported(node, "a suspend function reference",
-				"a suspend callable reference needs the coroutine state-machine lowering (KSuspendFunction), not yet wired")
 		// BOUND (`expr::extFn`): a closed static delegate over the ext forwarder is NOT ilverify-clean (ECMA-335 wants
 		// `ldnull` for a static-method delegate target). Lift a CAPTURE CLASS — exactly a capturing lambda
 		// `{ args -> expr.extFn(args) }`: a synth closure with a `__recv` field holding the receiver (evaluated ONCE,
@@ -539,28 +535,9 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			regTypes.mapIndexed { i, t -> """{"name":${str("__a${i + 1}")},"type":${t.toJson()}}""" }).joinToString(",")
 		val callArgs = (listOf("""{"k":"local","name":"__self"}""") +
 			regTypes.indices.map { """{"k":"local","name":${str("__a${it + 1}")}}""" }).joinToString(",")
-		// The reference's OWN instantiated type args (a generic ext `List<T>::foo` referenced as `List<Int>::foo`) ->
-		// the inner call's `typeArgs` so bir2cir/ilemit MakeGenericMethod. Empty for `isNotBlank`/`indentWidth`.
-		val refTps = fn.typeParameters
-		val refTaArgs = refTps.indices.map { node.typeArguments.getOrNull(it) }
-		val hasRefTa = refTps.isNotEmpty() && refTaArgs.all { it != null }
-		val refTa = if (!hasRefTa) "" else ""","typeArgs":[${refTaArgs.joinToString(",") { birType(it!!).toJson() }}]"""
 		val retT = fnType.ret
 		val retVoid = retT == TypeNode.Fqn("kotlin.Unit")   // the SUBSTITUTED return (fn's own T may resolve to Unit)
-		// A dll2klib declaration carries its physical file-class owner in @ClrExternal.
-		val externalFileClass = clrExternalOwner(fn)
-		val callE = if (externalFileClass != null) {
-			// `__self` = the ext receiver, so it heads both the args and the shape/argTypes (matches the external
-			// top-level ext-call branch in `call()`; declared param types are used for the facade signature lookup).
-			val extRecvParam = fn.parameters.first { it.kind == IrParameterKind.ExtensionReceiver }
-			val declShapeTypes = (listOf(extRecvParam) + regularParams(fn)).joinToString(",") { birType(it.type).toJson() }
-			if (hasRefTa)
-				"""{"k":"callStatic","ownerType":${fqnJson(externalFileClass)},"method":${str(fn.name.asString())}$refTa,"shapeTypes":[$declShapeTypes],"args":[$callArgs]}"""
-			else
-				"""{"k":"callStatic","ownerType":${fqnJson(externalFileClass)},"method":${str(fn.name.asString())},"argTypes":[$declShapeTypes],"ret":${retT.toJson()},"args":[$callArgs]}"""
-		} else {
-			"""{"k":"callStatic","owner":null,"method":${str(fn.name.asString())}${overloadSigField(fn)}$refTa${retHintStr(hasRefTa, retT)},"args":[$callArgs]${calleeOwnerTag(fn)}}"""
-		}
+		val callE = extensionReferenceCall(node, fn, retT, callArgs)
 		val body = if (retVoid) """{"k":"exprStmt","expr":$callE}""" else """{"k":"return","value":$callE}"""
 		// freeTypeParams over node.type's SUBSTITUTED args (not the declared fn params — same call-site-type trap):
 		// picks up only genuine ENCLOSING-context type vars (a `fun <E> …` scope), never the ext fn's OWN T (already
@@ -659,41 +636,72 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
  * `suspendCall`-tagged call to the referenced function. kotc emits ONLY pure Kotlin facts (the suspend `fn` funcType +
  * `suspendCall:true`); bir2cir's SuspendLambdaLowering builds the SuspendLambda state machine from this node — a plain
  * suspend `newDelegate` has no cold-suspend lowering. The lambda's params come from the reference's RESOLVED type
- * (`birType(node.type)` as a suspend `Fn`, receiver-FIRST for an unbound member ref). A BOUND receiver is captured into
+ * (`birType(node.type)` as a suspend `Fn`, receiver-FIRST for an unbound reference). A BOUND receiver is captured into
  * a `__recv` field (evaluated once, eagerly, at reference-creation time) through the `capValues` channel
- * SuspendLambdaLowering consumes; an UNBOUND member's receiver is the lambda's leading param. Only user/stdlib targets
- * (top-level, bound/unbound MEMBER); an ext-receiver or .NET-owned suspend ref is a clean deferral in the caller.
+ * SuspendLambdaLowering consumes; an UNBOUND receiver is the lambda's leading param. This is one adapter for
+ * top-level/member/extension references, including members restored from a referenced DotKt assembly.
  */
 internal fun BirEmitter.suspendFunctionRef(node: IrFunctionReference, fn: IrSimpleFunction, dispatchIdx: Int): String {
 	val fnType = birType(node.type) as? TypeNode.Fn
 		?: return unsupported(node, "a suspend function reference",
 			"its inferred type was not a resolvable suspend function type")
 	val boundRecv = if (dispatchIdx >= 0) node.arguments.getOrNull(dispatchIdx) else null
+	val extIdx = fn.parameters.indexOfFirst { it.kind == IrParameterKind.ExtensionReceiver }
+	val boundExt = if (extIdx >= 0) node.arguments.getOrNull(extIdx) else null
 	val ownerClass = fn.parent as? IrClass
 	val member = fn.name.asString()
 	val ret = fnType.ret
 	val virtual = fn.modality != Modality.FINAL || fn.overriddenSymbols.isNotEmpty()
 	val anySlotTag = if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""
-	// The lambda's OWN params = the reference type's params (receiver-first for an unbound member ref), named __p0..__pn.
-	val paramNames = fnType.params.indices.map { "__p$it" }
-	val paramsJson = fnType.params.mapIndexed { i, t -> """{"name":${str(paramNames[i])},"type":${t.toJson()}}""" }.joinToString(",")
+	// The lambda's OWN physical params = its extension receiver (when the callable type has one), then ordinary
+	// params. TypeNode.Fn deliberately keeps a Kotlin extension receiver in `recv` rather than duplicating it in
+	// `params`; newSuspendLambda's invoke/create protocol still receives it as physical arg0, exactly like source
+	// receiver lambdas (`suspend T.() -> R`).
+	val physicalParamTypes = listOfNotNull(fnType.recv) + fnType.params
+	val paramNames = physicalParamTypes.indices.map { "__p$it" }
+	val paramsJson = physicalParamTypes.mapIndexed { i, t ->
+		"""{"name":${str(paramNames[i])},"type":${t.toJson()}}"""
+	}.joinToString(",")
 	fun localArg(name: String) = """{"k":"local","name":${str(name)}}"""
 	// Build (captures, capValues, bodyCall) by reference kind. The inner call MIRRORS the direct-call shape for this
 	// callee so bir2cir attributes it identically; `suspendCall:true` is the fact SuspendColdLowering's FunGen segments on.
 	val captures: String; val capValues: String?; val bodyCall: String
 	when {
-		dispatchIdx >= 0 && boundRecv != null && ownerClass != null && !isExternalNetType(ownerClass) -> {
+		extIdx >= 0 && dispatchIdx >= 0 ->
+			return unsupported(node, "a suspend member extension-function reference",
+				"a member extension function cannot be referenced as a callable in Kotlin")
+		extIdx >= 0 && boundExt != null -> {
+			// Bound top-level extension `value::ext`: capture the extension receiver exactly once, just as the
+			// dispatch receiver of `value::member`; the lambda's own params are the target's regular args.
+			captures = """{"name":"__recv","type":${birType(boundExt.type).toJson()}}"""
+			capValues = expr(boundExt)
+			val args = (listOf(localArg("__recv")) + paramNames.map(::localArg)).joinToString(",")
+			bodyCall = extensionReferenceCall(node, fn, ret, args, suspending = true)
+		}
+		extIdx >= 0 -> {
+			// Unbound top-level extension `Type::ext`: the extension receiver is the leading lambda parameter.
+			if (paramNames.isEmpty())
+				return unsupported(node, "a suspend extension-function reference",
+					"its inferred type carries no extension-receiver parameter")
+			captures = ""; capValues = null
+			val args = paramNames.map(::localArg).joinToString(",")
+			bodyCall = extensionReferenceCall(node, fn, ret, args, suspending = true)
+		}
+		dispatchIdx >= 0 && boundRecv != null && ownerClass != null -> {
 			// Bound member `obj::m` — receiver captured into `__recv`; all lambda params are the target's regular args.
 			val args = paramNames.joinToString(",") { localArg(it) }
 			captures = """{"name":"__recv","type":${birType(boundRecv.type).toJson()}}"""
 			capValues = expr(boundRecv)
-			bodyCall = """{"k":"callInstance","ownerType":${fqnJson(typeName(ownerClass))},"virtual":$virtual,"recv":${localArg("__recv")},"method":${str(member)}${overloadSigField(fn)},"args":[$args]$anySlotTag,"suspendCall":true}"""
+			bodyCall = """{"k":"callInstance","ownerType":${ownerSpec(ownerClass, boundRecv.type).toJson()},"virtual":$virtual,"recv":${localArg("__recv")},"method":${str(member)}${overloadSigField(fn)},"args":[$args]$anySlotTag,"suspendCall":true}"""
 		}
-		dispatchIdx >= 0 && boundRecv == null && ownerClass != null && !isExternalNetType(ownerClass) -> {
+		dispatchIdx >= 0 && boundRecv == null && ownerClass != null -> {
 			// Unbound member `Type::m` — the leading lambda param is the receiver, the rest are the target's regular args.
+			if (paramNames.isEmpty())
+				return unsupported(node, "a suspend function reference",
+					"its inferred type carries no dispatch-receiver parameter")
 			val args = paramNames.drop(1).joinToString(",") { localArg(it) }
 			captures = ""; capValues = null
-			bodyCall = """{"k":"callInstance","ownerType":${fqnJson(typeName(ownerClass))},"virtual":$virtual,"recv":${localArg(paramNames.first())},"method":${str(member)}${overloadSigField(fn)},"args":[$args]$anySlotTag,"suspendCall":true}"""
+			bodyCall = """{"k":"callInstance","ownerType":${ownerSpec(ownerClass, fn.parameters[dispatchIdx].type).toJson()},"virtual":$virtual,"recv":${localArg(paramNames.first())},"method":${str(member)}${overloadSigField(fn)},"args":[$args]$anySlotTag,"suspendCall":true}"""
 		}
 		dispatchIdx < 0 -> {
 			// Top-level `::fn` — all lambda params are the target's regular args; an owner:null static call.
@@ -710,7 +718,39 @@ internal fun BirEmitter.suspendFunctionRef(node: IrFunctionReference, fn: IrSimp
 	// names (bir2cir prepends `gp:`), consistent with suspendLambda().
 	val freeTps = freeTypeParams(fn.parameters.map { it.type } + listOf(fn.returnType))
 	val typeParamsBare = freeTps.joinToString(",") { str(it.name.asString()) }
-	return """{"k":"newSuspendLambda","arity":${fnType.params.size},"captures":[$captures]$capValuesJson,"params":[$paramsJson],"suspendRet":${ret.toJson()},"typeParams":[$typeParamsBare],"body":[$body],"funcType":${fnType.toJson()}}"""
+	return """{"k":"newSuspendLambda","arity":${physicalParamTypes.size},"captures":[$captures]$capValuesJson,"params":[$paramsJson],"suspendRet":${ret.toJson()},"typeParams":[$typeParamsBare],"body":[$body],"funcType":${fnType.toJson()}}"""
+}
+
+/**
+ * Builds the forwarding call shared by bound/unbound, ordinary/suspend top-level extension references. The receiver
+ * is already the first item in [callArgs]. A dll2klib declaration carries its referenced file-facade identity in
+ * `@ClrExternal`; a source-graph declaration keeps `owner:null` plus `calleeOwner`. Generic references carry their
+ * call-site-instantiated type arguments so bir2cir/ilemit can bind the physical method consistently.
+ */
+internal fun BirEmitter.extensionReferenceCall(
+	node: IrFunctionReference,
+	fn: IrSimpleFunction,
+	ret: TypeNode,
+	callArgs: String,
+	suspending: Boolean = false,
+): String {
+	val refTps = fn.typeParameters
+	val refTaArgs = refTps.indices.map { node.typeArguments.getOrNull(it) }
+	val hasRefTa = refTps.isNotEmpty() && refTaArgs.all { it != null }
+	val refTa = if (!hasRefTa) "" else
+		""","typeArgs":[${refTaArgs.joinToString(",") { birType(it!!).toJson() }}]"""
+	val suspendTag = if (suspending) ""","suspendCall":true""" else ""
+	val externalFileClass = clrExternalOwner(fn)
+	if (externalFileClass != null) {
+		val extRecvParam = fn.parameters.first { it.kind == IrParameterKind.ExtensionReceiver }
+		val declShapeTypes = (listOf(extRecvParam) + regularParams(fn))
+			.joinToString(",") { birType(it.type).toJson() }
+		return if (hasRefTa)
+			"""{"k":"callStatic","ownerType":${fqnJson(externalFileClass)},"method":${str(fn.name.asString())}$refTa,"shapeTypes":[$declShapeTypes],"args":[$callArgs]$suspendTag}"""
+		else
+			"""{"k":"callStatic","ownerType":${fqnJson(externalFileClass)},"method":${str(fn.name.asString())},"argTypes":[$declShapeTypes],"ret":${ret.toJson()},"args":[$callArgs]$suspendTag}"""
+	}
+	return """{"k":"callStatic","owner":null,"method":${str(fn.name.asString())}${overloadSigField(fn)}$refTa${retHintStr(hasRefTa, ret)},"args":[$callArgs]$suspendTag${calleeOwnerTag(fn)}}"""
 }
 
 /**
@@ -737,24 +777,7 @@ internal fun BirEmitter.boundExtFnRef(node: IrFunctionReference, fn: IrSimpleFun
 	val invokeParams = regTypes.mapIndexed { i, t -> """{"name":${str("__a${i + 1}")},"type":${t.toJson()}}""" }.joinToString(",")
 	val recvArg = """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":"__recv"}"""
 	val callArgs = (listOf(recvArg) + regTypes.indices.map { """{"k":"local","name":${str("__a${it + 1}")}}""" }).joinToString(",")
-	// The reference's OWN instantiated type args (a generic ext referenced as `expr::foo<Int>`) -> the inner call's
-	// `typeArgs` so bir2cir/ilemit MakeGenericMethod (mirrors the unbound branch).
-	val refTps = fn.typeParameters
-	val refTaArgs = refTps.indices.map { node.typeArguments.getOrNull(it) }
-	val hasRefTa = refTps.isNotEmpty() && refTaArgs.all { it != null }
-	val refTa = if (!hasRefTa) "" else ""","typeArgs":[${refTaArgs.joinToString(",") { birType(it!!).toJson() }}]"""
-	// The forwarding call mirrors the direct top-level extension call. Only the receiver argument differs.
-	val externalFileClass = clrExternalOwner(fn)
-	val callE = if (externalFileClass != null) {
-		val extRecvParam = fn.parameters.first { it.kind == IrParameterKind.ExtensionReceiver }
-		val declShapeTypes = (listOf(extRecvParam) + regularParams(fn)).joinToString(",") { birType(it.type).toJson() }
-		if (hasRefTa)
-			"""{"k":"callStatic","ownerType":${fqnJson(externalFileClass)},"method":${str(fn.name.asString())}$refTa,"shapeTypes":[$declShapeTypes],"args":[$callArgs]}"""
-		else
-			"""{"k":"callStatic","ownerType":${fqnJson(externalFileClass)},"method":${str(fn.name.asString())},"argTypes":[$declShapeTypes],"ret":${retT.toJson()},"args":[$callArgs]}"""
-	} else {
-		"""{"k":"callStatic","owner":null,"method":${str(fn.name.asString())}${overloadSigField(fn)}$refTa${retHintStr(hasRefTa, retT)},"args":[$callArgs]${calleeOwnerTag(fn)}}"""
-	}
+	val callE = extensionReferenceCall(node, fn, retT, callArgs)
 	val forwardBody = if (retVoid) """{"k":"exprStmt","expr":$callE}""" else """{"k":"return","value":$callE}"""
 	// The closure must be GENERIC over any enclosing type params referenced by the captured receiver or the invoke
 	// signature (reified CLR generics) — mirrors `lambda()`'s freeTps over capture+param+ret types.

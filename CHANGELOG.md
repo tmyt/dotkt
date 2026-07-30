@@ -59,6 +59,16 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **kotc (area:kotc, #67): suspend extension and re-imported DotKt member callable references now lower through
+  the general suspend-reference adapter.** Suspend callable references are represented by `newSuspendLambda`, whose
+  body carries the same Kotlin call facts as a direct invocation. The router previously admitted only non-extension
+  references and rejected member declarations restored by dll2klib; extension references also keep their receiver in
+  the function type's receiver slot rather than its ordinary parameter list. The adapter now derives its physical
+  parameters from both slots, captures bound receivers exactly once, and handles local and referenced top-level/member
+  provenance uniformly. Bound and unbound extension forwarding share one call-shape builder with ordinary callable
+  references, so generic arguments and referenced file-facade ownership cannot drift between the suspend and
+  non-suspend paths. Coroutine fixtures cover both extension shapes, and the ProjectReference lane covers bound and
+  unbound suspend members imported from another DotKt assembly.
 - **bir2cir (area:bir2cir): a nullable-generic return that was object-erased no longer crosses a suspension under
   its PRE-erasure type.** `fun <T> f(x: T): List<T?>` has its `Nullable(T)` erased to `object` on the declaration
   side, so the emitted method returns `List<object>`, while the call site — emitted with `T` already substituted —

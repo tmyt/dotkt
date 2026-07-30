@@ -38,7 +38,12 @@ class CorBSrefDoubler(val base: Int) {
     suspend fun apply(x: Int): Int = base * x
 }
 
+suspend fun String.corBSrefAddLength(x: Int): Int = length + x
+
 fun corBSrefRunRef(f: suspend (Int) -> Int, arg: Int): Int = blockOn { f(arg) }
+
+fun corBSrefRunExtRef(f: suspend (String, Int) -> Int, recv: String, arg: Int): Int =
+    blockOn { f(recv, arg) }
 
 // ---- il-lam2 -------------------------------------------------------------------------------------------------
 suspend fun corBLam2H(): Int = 5
@@ -76,6 +81,17 @@ class SuspendFunctionValueTests {
         assertEquals(6, corBSrefRunRef(::corBSrefWork, 5))   // 6   (top-level suspend fn ref)
         val d = CorBSrefDoubler(10)
         assertEquals(40, corBSrefRunRef(d::apply, 4))        // 40  (bound member suspend fn ref, receiver captured)
+
+        // #67 residual: extension receivers use the same newSuspendLambda adapter as dispatch receivers.
+        assertEquals(42, corBSrefRunExtRef(String::corBSrefAddLength, "abcd", 38))
+        var receiverReads = 0
+        fun receiver(): String {
+            receiverReads += 1
+            return "abc"
+        }
+        val bound: suspend (Int) -> Int = receiver()::corBSrefAddLength
+        assertEquals(42, corBSrefRunRef(bound, 39))
+        assertEquals(1, receiverReads)                        // a bound extension receiver is captured exactly once
     }
 
     @TestAttribute
