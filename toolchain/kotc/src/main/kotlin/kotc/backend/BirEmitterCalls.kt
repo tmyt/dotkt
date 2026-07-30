@@ -174,8 +174,9 @@ internal fun BirEmitter.filledArgs(
 	//   Under a plan both are bound EAGERLY and dispatch-first, because Kotlin evaluates a receiver before every
 	// argument and the binding order IS the evaluation order. Without a plan they stay lazy: rendering a receiver has
 	// synthesis side effects (a lifted method appended to the file class for a non-capturing lambda, a consumed synth
-	// index), so an unread one must not be forced for a rendering that is then discarded. An OBJECT REFERENCE receiver
-	// is neither bound nor forced — see [needsPlanBinding].
+	// index), so an unread one must not be forced for a rendering that is then discarded. A receiver naming an object
+	// this backend gives NO INSTANCE (a flattened plain companion, a projected static holder) is neither bound nor
+	// forced; a real `object` and a super-typed companion are bound like anything else — see [needsPlanBinding].
 	val dispatchRecv: Lazy<String?> = lazy {
 		dispatchReceiver(call)?.let { r ->
 			(if (needsPlanBinding(r)) plan else null)?.bindValue(r, "recv", "receiver of '$label'") ?: expr(r)
@@ -497,8 +498,10 @@ internal fun BirEmitter.filledExternalArgs(call: org.jetbrains.kotlin.ir.express
 	val plan = if (planNeeded) callPlan(call) else null
 	val label = calleeLabel(callee)
 	// The receivers, bound FIRST and dispatch-first — Kotlin evaluates them before every argument, and the binding
-	// order IS the evaluation order. The caller reads them back through the ordinary `expr()`. An OBJECT REFERENCE
-	// receiver is not bound (see [needsPlanBinding]); the caller's `expr()` renders it in place.
+	// order IS the evaluation order. The caller reads them back through the ordinary `expr()`. A receiver naming an
+	// object this backend gives NO INSTANCE is not bound (see [needsPlanBinding]) and the caller's `expr()` renders it
+	// in place; a real `object` and a super-typed companion are bound, because loading their `INSTANCE` is an
+	// evaluation whose position matters.
 	if (plan != null) {
 		dispatchReceiver(call)?.let { if (needsPlanBinding(it)) plan.bindValue(it, "recv", "receiver of '$label'") }
 		extensionReceiver(call)?.let { if (needsPlanBinding(it)) plan.bindValue(it, "recv", "extension receiver of '$label'") }

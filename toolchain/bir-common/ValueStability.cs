@@ -9,8 +9,10 @@
 //                       kotc `isStableValue` over Kotlin IR, recorded on every binding kotc emits (`stable`,
 //                       docs/bir-cir-spec.md §2.7); `IsReReadable` below for the bindings bir2cir itself fills.
 //   Q1ᴬ  stable ADDRESS — is the LOCATION, rather than the value, stable? kotc `isStableLocation`; IR-only.
-//   Q2  DROPPABLE     — is EVALUATING it unobservable, so a binding nothing reads may be skipped?
-//                       `IsDroppable` below (CallEvalLowering's zero-reader bindings).
+//   Q2  DROPPABLE     — is EVALUATING it unobservable, so a value nothing will read may be skipped?
+//                       `IsDroppable` below. Asked wherever a lowering is about to make a value UNREAD — by
+//                       CallEvalLowering of a plan binding with no reader, and by KClassMemberBinding of the
+//                       receiver its `value::class` const-fold folds away.
 //   Q3  RESUME-STABLE — may it be read AFTER a suspension resumes, or must it be spilled before?
 //                       SuspendColdLowering (`ImpureKinds`/`IsPureExpr`).
 //   Q4  STACK-NEUTRAL — may it stay in its operand slot when a LATER sibling hoists out of the expression?
