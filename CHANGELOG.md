@@ -59,6 +59,22 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir (area:bir2cir): a constructor argument the collection mapping maps AWAY is now evaluated (#278).**
+  `HashSet(initialCapacity, loadFactor)` has no CLR counterpart for its load factor — the concept is a JVM hashtable
+  one — so `MemberCallSubstitution` maps the call onto the capacity-only BCL constructor. It dropped the argument's
+  EVALUATION with its value: `HashSet<Int>(16, computeLoadFactor())` never called `computeLoadFactor()`, and an
+  exception that argument would have thrown simply never happened, which is the same fault class as evaluating a
+  call value twice, at zero instead. The mapping now re-expresses the arguments as a call-evaluation plan — one
+  binding per original argument in Kotlin order, the kept ones read from their slots, the mapped-away ones read by
+  nobody — and hands it to `CallEvalLowering.Materialise`, so the existing rules decide: an unread binding is
+  evaluated into a local unless Q2 (`ValueStability.IsDroppable`) says the evaluation is unobservable, and the
+  prefix rule materialises every earlier argument so a kept value cannot slide behind a mapped-away one. Building a
+  plan rather than prepending an evaluate-and-discard statement is what keeps those two rules in one place; the
+  literal `HashSet(16, 0.75f)` idiom materialises nothing and emits the same bare `newClr` as before. The rule holds
+  for every constructor the table covers, so `HashMap` (`Dictionary`) and `LinkedHashMap` (`OrderedDictionary`) are
+  fixed with it, and `LinkedHashSet` — a real Kotlin class whose constructor keeps both arguments — is unaffected.
+  `MappedConstructorArgumentTests` pins the order, the single evaluation, the propagated throw, and the delegation
+  /property-initializer/lambda positions.
 - **bir2cir (area:bir2cir): a nullable-generic return that was object-erased no longer crosses a suspension under
   its PRE-erasure type.** `fun <T> f(x: T): List<T?>` has its `Nullable(T)` erased to `object` on the declaration
   side, so the emitted method returns `List<object>`, while the call site — emitted with `T` already substituted —

@@ -338,13 +338,22 @@ static class MemberCallSubstitution
         // JVM (initialCapacity: Int, loadFactor: Float) collection ctor -> the capacity-only (int) BCL ctor. .NET's
         // HashSet/Dictionary have NO (int, float) constructor (loadFactor is a JVM hashtable concept), so a
         // `HashSet<Int>(16, 0.75f)` call would mis-resolve to the `(IEnumerable, IEqualityComparer)` overload and throw
-        // at run. Drop the trailing loadFactor arg (and its declared argType) so the overload key becomes a bare (int).
-        // Gated on a @ClrTypeAlias owner whose declared 2nd ctor param is a Float — the loadFactor idiom is unique to
-        // the stdlib collection aliases (no BCL type reaching here has a genuine (int, float) ctor).
+        // at run. Map away the trailing loadFactor SLOT (and its declared argType) so the overload key becomes a bare
+        // (int). Gated on a @ClrTypeAlias owner whose declared 2nd ctor param is a Float — the loadFactor idiom is
+        // unique to the stdlib collection aliases (no BCL type reaching here has a genuine (int, float) ctor), and it
+        // covers every alias that declares one at once (HashSet, HashMap's Dictionary, LinkedHashMap's
+        // OrderedDictionary), which is what makes this a rule about mapped-away parameters rather than a HashSet case.
+        //
+        // The mapped-away argument still EVALUATES (#278). Kotlin evaluates every argument expression a call supplies
+        // exactly once, in argument order, whether or not the emitted CLR shape has a slot for its VALUE — so losing
+        // the loadFactor SLOT must not lose the `HashSet(16, computeLoadFactor())` CALL. `plan` re-expresses the
+        // arguments as the call-evaluation plan they always were, and the decision is deferred to the pass that owns
+        // it (see MapAwayArguments).
+        JsonArray plan = null;
         if (args.Count == 2 && refs.Aliases.ContainsKey(ownerFqn.Name)
             && node["argTypes"] is JsonArray dat && dat.Count == 2 && IsFloatArg(dat[1]))
         {
-            args = new JsonArray { args[0].DeepClone() };
+            plan = MapAwayArguments(args, dat, keep: 1, out args);
             node["argTypes"] = new JsonArray { dat[0].DeepClone() };
         }
 
@@ -356,12 +365,62 @@ static class MemberCallSubstitution
         // `dotkt$CharSequence` param (its compiled ctor takes the adapter, not String). The M10 target
         // `kotlin.text.StringBuilder` is a @ClrTypeAlias, so it always resolves via the alias route.
         if (viaAlias) CoerceCharSequenceCtorArgs(newClrArgs, newClrArgTypes);
-        return new JsonObject
+        var lowered = new JsonObject
         {
             ["k"] = "newClr",
             ["type"] = TypeJson.Write(typeNode),
             ["argTypes"] = newClrArgTypes,
             ["args"] = newClrArgs,
+        };
+        return plan == null ? lowered : MaterialiseMappedArguments(plan, lowered, typeNode);
+    }
+
+    /// Re-express the arguments of a call whose CLR shape KEEPS only the leading `keep` of them as a call-evaluation
+    /// plan: one binding per ORIGINAL argument, in Kotlin argument order, carrying its declared type. The kept ones
+    /// become a `bindRef` read in their own slot (returned through `slots`); the mapped-away ones are bound and read by
+    /// NOBODY, which is precisely the shape that says "Kotlin evaluated this value and the emitted call has no slot
+    /// for it". `stable` is bir2cir's own Q1 answer (ValueStability.IsReReadable) — this pass supplied the expressions,
+    /// so kotc had no binding here to judge.
+    static JsonArray MapAwayArguments(JsonArray args, JsonArray argTypes, int keep, out JsonArray slots)
+    {
+        var bindings = new JsonArray();
+        slots = new JsonArray();
+        for (var i = 0; i < args.Count; i++)
+        {
+            var id = CallEvalLowering.FreshBindingId();
+            var binding = new JsonObject
+            {
+                ["id"] = id,
+                ["expr"] = args[i].DeepClone(),
+                ["stable"] = ValueStability.IsReReadable(args[i]),
+            };
+            if (i < argTypes.Count && argTypes[i] != null) binding["type"] = argTypes[i].DeepClone();
+            bindings.Add(binding);
+            if (i < keep) slots.Add(new JsonObject { ["k"] = "bindRef", ["id"] = id });
+        }
+        return bindings;
+    }
+
+    /// Give the plan to the pass that decides what an unread binding costs. CallEvalLowering.Materialise answers BOTH
+    /// questions this site must not answer twice: a binding nothing reads is evaluated into a local unless Q2
+    /// (ValueStability.IsDroppable) says the evaluation is unobservable, and its PREFIX rule then materialises every
+    /// earlier non-stable argument so a kept value cannot slide behind a mapped-away one. That is why the mapping
+    /// builds a plan instead of prepending an evaluate-and-discard statement of its own — an ad-hoc discard would be a
+    /// second, drifting copy of those two rules, and it would evaluate the loadFactor ahead of the capacity.
+    ///
+    /// The common `HashSet(16, 0.75f)` literal idiom materialises NOTHING (a const is droppable, and the surviving
+    /// argument then inlines back into its slot), so it emits the same bare `newClr` as before — no dead temp.
+    static JsonNode MaterialiseMappedArguments(JsonArray plan, JsonObject lowered, TypeNode type)
+    {
+        var (stmts, repl) = CallEvalLowering.Materialise(plan, new List<JsonNode> { lowered }, "a mapped constructor");
+        var result = CallEvalLowering.Substitute(lowered, repl);
+        if (stmts.Count == 0) return result;
+        return new JsonObject
+        {
+            ["k"] = "valueBlock",
+            ["type"] = TypeJson.Write(type),
+            ["stmts"] = stmts,
+            ["result"] = result,
         };
     }
 
