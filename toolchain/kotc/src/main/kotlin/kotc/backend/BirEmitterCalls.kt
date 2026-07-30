@@ -144,8 +144,9 @@ internal fun BirEmitter.filledArgs(
 	// evaluation plan — i.e. where a value can acquire a SECOND reader, or where the array's ORDER is not Kotlin's:
 	//  (a) a same-module default this call fills READS one of the call's values (an earlier parameter, a receiver, an
 	//      enclosing instance): the captureSubst channel below splices the value into the default;
-	//  (b) a CROSS-MODULE omission: either a `defaultArg` placeholder, whose @KotlinDefault carrier binds `{this}` /
-	//      `{defaultArgParam n}` to THIS call's own values in bir2cir, or a data-class `copy` field reconstructed as a
+	//  (b) a CROSS-MODULE omission: either a `defaultArg` placeholder, whose @KotlinDefault carrier binds
+	//      `{defaultArgReceiver kind}` / `{defaultArgParam n}` to THIS call's own values in bir2cir, or a data-class
+	//      `copy` field reconstructed as a
 	//      read of the receiver. Taken WHOLE (any IrErrorExpression omission) rather than per fill kind, so the test can
 	//      never disagree with what the loop below actually emits — a placeholder outside a plan is a loud bir2cir
 	//      failure — and a plan whose values all turn out to have one reader costs nothing: CallEvalLowering inlines

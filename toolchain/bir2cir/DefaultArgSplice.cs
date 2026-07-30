@@ -25,13 +25,14 @@ using DotKt.Bir;
 // `{"k":"defaultCarrier","expr":<newDelegate>,"lifted":[<method decls>]}` envelope (kotc BirEmitterDeclarations
 // .defaultCarrierBir). At the splice we RE-HOIST each carried method into THIS file's file-class methods under a fresh
 // per-splice name and rewrite both `newDelegate.method` and its mandatory `calleeOwner` to this consuming file class —
-// no cross-assembly `ldftn`. A constant / simple-call default (`= emptyList()`) carries its BIR
-// verbatim (no envelope). A `{"k":"defaultUnsupported"}` poison carrier (a capturing/SAM/suspend lambda default kotc
-// could not close) is refused loudly here.
+// no cross-assembly `ldftn`. A constant / simple-call default (`= emptyList()`) carries its BIR verbatim (no envelope).
+// Capturing closures, SAMs and suspend lambdas already self-carry their synthesis facts on the construction node.
 //
-// A `= this` (an extension receiver) default rides a `{k:this}` token -> the call's arg[0]; a default reading an EARLIER
-// param rides `{k:defaultArgParam, idx}` -> the call's arg[idx] (Kotlin defaults reference only earlier params; lower
-// indices fill first). Unconditional across builds (a ref/rt stdlib self-build simply carries no cross-module omission).
+// A receiver read rides a `{k:defaultArgReceiver,kind}` token: `dispatch` -> callInstance.recv, `extension` -> arg[0],
+// and an inner constructor's `enclosing` -> its hidden arg[0]. A default reading an EARLIER parameter rides
+// `{k:defaultArgParam,idx}` -> the call's arg[idx] (Kotlin defaults reference only earlier params; lower indices fill
+// first). Ordinary `{k:this}` inside a carried closure/SAM/suspend-lambda is that synthesized object's OWN receiver and
+// is never rewritten. Unconditional across builds (a ref/rt stdlib self-build carries no cross-module omission).
 //
 // MATERIALISE AND REFERENCE, nothing else (docs/bir-cir-spec.md §2.7). kotc reserves a default-phase BINDING for every
 // cross-module omission — the placeholder is that binding's `expr` — and every value of the call is a binding too, so
@@ -44,9 +45,9 @@ using DotKt.Bir;
 //
 // CONSTRUCTORS (#235) come through the same machinery with two differences: a `{"k":"new"}` names its callee by TYPE, so
 // it is always OWNERFUL (`<type>|.ctor|<declared param count>`, the count read off `argTypes`) and never falls back to the
-// name+arity index; and it has no receiver, so a carrier that reads one is refused rather than bound to `args[0]` (which
-// is a plain constructor argument). Two same-arity ctor overloads carrying DIFFERENT defaults make the key ambiguous and
-// are refused (ReferenceMetadataIndex.KotlinDefaultsConflicted).
+// name+arity index; and its hidden leading argument is explicitly the `enclosing` receiver of an inner constructor,
+// never an inferred dispatch/extension receiver. Two same-arity ctor overloads carrying DIFFERENT defaults make the key
+// ambiguous and are refused (ReferenceMetadataIndex.KotlinDefaultsConflicted).
 static class DefaultArgSplice
 {
     static int _counter;   // global unique id for fresh re-hoisted lifted-method names (per splice instance)
@@ -187,8 +188,14 @@ static class DefaultArgSplice
         // carried as the callee wrote it, with its type parameters as positional `tv`s.
         var methodTypeArgs = node["typeArgs"] as JsonArray;
         var ownerTypeArgs = TypeArgsOf(isNew ? node["type"] : node["ownerType"]);
-        Fill(args, slotBinding, sigCount, defaults, ctorNoReceiver: isNew, label, refs, hoist, localOwner,
-            methodTypeArgs, ownerTypeArgs);
+        // Receiver identity comes from the CALL SHAPE, never from an argument-position guess. A member extension has
+        // both: dispatch is callInstance.recv, extension is physical arg[0]. A constructor has no dispatch receiver,
+        // but an inner constructor's hidden enclosing instance is physical arg[0].
+        var dispatchReceiver = k == "callInstance" ? node["recv"] : null;
+        var extensionReceiver = args.Count > 0 ? args[0] : null;
+        var enclosingReceiver = isNew && args.Count > 0 ? args[0] : null;
+        Fill(args, slotBinding, sigCount, defaults, label, refs, hoist, localOwner,
+            methodTypeArgs, ownerTypeArgs, dispatchReceiver, extensionReceiver, enclosingReceiver);
     }
 
     // The type ARGUMENTS of a `{t:fqn}` type reference, or null.
@@ -197,11 +204,12 @@ static class DefaultArgSplice
     /// Materialise every omitted default of `args` from `defaults` and write it into the binding the slot READS.
     /// Nothing is hoisted and nothing is wrapped: the values a carrier binds are already bindings, so a
     /// `{defaultArgParam n}` token becomes a clone of that slot's `bindRef` — a duplicated READ, never a duplicated
-    /// evaluation. `ctorNoReceiver` marks the call shapes with no receiver at all (a `new`, a delegation), where a
-    /// `{k:this}` token has nothing to bind and is refused.
+    /// evaluation. Receiver tokens are supplied separately from the call shape so dispatch/extension/enclosing values
+    /// can coexist without sharing a positional meaning.
     static void Fill(JsonArray args, JsonObject[] slotBinding, int sigCount, Dictionary<int, string> defaults,
-        bool ctorNoReceiver, string label, ReferenceMetadataIndex refs, JsonArray hoist, JsonNode localOwner,
-        JsonArray methodTypeArgs, JsonArray ownerTypeArgs)
+        string label, ReferenceMetadataIndex refs, JsonArray hoist, JsonNode localOwner,
+        JsonArray methodTypeArgs, JsonArray ownerTypeArgs, JsonNode dispatchReceiver, JsonNode extensionReceiver,
+        JsonNode enclosingReceiver)
     {
         // ASCENDING, mirroring the declaration order Kotlin evaluates defaults in — though the fills no longer depend
         // on it: a later default referencing an earlier slot gets that slot's binding read, whatever has been written
@@ -210,13 +218,8 @@ static class DefaultArgSplice
         {
             var binding = slotBinding[j];
             if (!IsPlaceholder(binding?["expr"]) || !defaults.TryGetValue(j, out var bir)) continue;
-            // An extension receiver rides args[0] (the emitted extension fun's `__self`). A `= this` default binds to
-            // it. A `new` / delegation has NO receiver: args[0] is the first ARGUMENT, so a `{k:this}` in such a
-            // carrier binds to nothing (kotc refuses to carry one — `defaultReadsDispatch` poisons it — and
-            // `SpliceOne` asserts it here).
-            var receiver = ctorNoReceiver ? null : (args.Count > 0 ? args[0] : null);
-            if (SpliceOne(bir, receiver, args, hoist, refs, label, j, localOwner, ctorNoReceiver,
-                    methodTypeArgs, ownerTypeArgs) is not JsonNode fill) continue;
+            if (SpliceOne(bir, dispatchReceiver, extensionReceiver, enclosingReceiver, args, hoist, refs, label, j,
+                    localOwner, methodTypeArgs, ownerTypeArgs) is not JsonNode fill) continue;
             binding["expr"] = fill;
             // kotc reserved this binding conservatively (it could not know what would fill it). Now that the value is
             // known, answer Q1 (re-readable) for it — a constant default then costs no local at all.
@@ -235,9 +238,8 @@ static class DefaultArgSplice
         for (var pos = args.Count; pos < sigCount; pos++)
         {
             if (!defaults.TryGetValue(pos, out var bir)) break;
-            var receiver = ctorNoReceiver ? null : (args.Count > 0 ? args[0] : null);
-            if (SpliceOne(bir, receiver, args, hoist, refs, label, pos, localOwner, ctorNoReceiver,
-                    methodTypeArgs, ownerTypeArgs) is JsonNode fill)
+            if (SpliceOne(bir, dispatchReceiver, extensionReceiver, enclosingReceiver, args, hoist, refs, label, pos,
+                    localOwner, methodTypeArgs, ownerTypeArgs) is JsonNode fill)
             { args.Add(fill); Walk(fill, refs, hoist, localOwner); }
             else break;
         }
@@ -289,26 +291,21 @@ static class DefaultArgSplice
             }
             // A delegation names its target by TYPE, so the base's own type arguments are the frame to close against;
             // a constructor declares no type parameters of its own.
-            Fill(args, slotBinding, args.Count, defaults, ctorNoReceiver: true, owner + " constructor", refs, hoist,
-                localOwner, null, TypeArgsOf(type["base"]));
+            // A constructor delegation has no dispatch/extension receiver. For an inner target its hidden leading
+            // argument is the enclosing instance and is already part of this positional vector.
+            Fill(args, slotBinding, args.Count, defaults, owner + " constructor", refs, hoist,
+                localOwner, null, TypeArgsOf(type["base"]), null, null, args.Count > 0 ? args[0] : null);
         }
     }
-
-    // A `{"k":"this"}` in the CARRIER — the callee's own default expression, before this call's args are substituted in.
-    // (The substituted result may legitimately contain `this`: an argument the CONSUMER wrote reading its own instance.)
-    static bool CarrierReadsReceiver(JsonNode node) => node switch
-    {
-        JsonObject obj => Str(obj["k"]) == "this" || obj.Any(kv => kv.Value != null && CarrierReadsReceiver(kv.Value)),
-        JsonArray arr => arr.Any(it => it != null && CarrierReadsReceiver(it)),
-        _ => false,
-    };
 
     static bool IsPlaceholder(JsonNode n) => n is JsonObject o && Str(o["k"]) == "defaultArg";
 
     // Parse a @KotlinDefault BIR-json string, unwrap a `defaultCarrier` (re-hoisting its lifted methods app-local), and
-    // bind the callee's default-expression tokens (`{this}` / `{defaultArgParam idx}`) to THIS call's args. A deep-fresh
-    // subtree per occurrence.
-    static JsonNode SpliceOne(string bir, JsonNode receiver, JsonArray args, JsonArray hoist, ReferenceMetadataIndex refs, string method, int slot, JsonNode localOwner, bool ctorNoReceiver = false,
+    // bind the callee's explicit receiver/parameter tokens to THIS call's own bound values. A deep-fresh subtree per
+    // occurrence.
+    static JsonNode SpliceOne(string bir, JsonNode dispatchReceiver, JsonNode extensionReceiver,
+        JsonNode enclosingReceiver, JsonArray args, JsonArray hoist, ReferenceMetadataIndex refs, string method,
+        int slot, JsonNode localOwner,
         JsonArray methodTypeArgs = null, JsonArray ownerTypeArgs = null)
     {
         var parsed = MaterializeDefault(bir, hoist, refs, method, slot, localOwner);
@@ -322,30 +319,24 @@ static class DefaultArgSplice
         // the substitution is positional because the carrier is JSON, and it runs BEFORE token substitution so the
         // consumer's own `bindRef`s, inserted afterwards, are never re-substituted.
         InlineSplice.SubstTvIn(parsed, methodTypeArgs ?? new JsonArray(), methodTypeArgs?.Count ?? 0, ownerTypeArgs);
-        // A ctor call site has no receiver to bind a `{k:this}` to. Checked on the CARRIER, never on the substituted
-        // result — that legitimately carries `this` whenever the CONSUMER passed an argument reading its own instance
-        // (`Rect(this.w)`), which is the shape the same-module path already binds by symbol rather than by token.
-        if (ctorNoReceiver && CarrierReadsReceiver(parsed))
+        var result = SubstituteTokens(parsed, dispatchReceiver, extensionReceiver, enclosingReceiver, args);
+        if (FirstUnboundReceiver(result) is string kind)
             throw new InvalidOperationException(
-                $"bir2cir: cannot fill the omitted default argument at slot {slot} of {method}: its default reads an " +
-                "enclosing instance, which a constructor call site cannot bind; pass the argument explicitly");
-        return SubstituteTokens(parsed, receiver, args);
+                $"bir2cir: cannot fill the omitted default argument at slot {slot} of {method}: its default reads the " +
+                $"{kind} receiver, but this call shape carries no value for that receiver kind");
+        return result;
     }
 
     // SHARED with InlineSplice (#34 — omitted defaulted param of an inline callee): parse a @KotlinDefault BIR string,
-    // refuse a `defaultUnsupported` poison loudly, unwrap a `defaultCarrier` (re-hoisting its lifted methods into `hoist`),
-    // and return the raw default EXPR (still carrying `{this}` / `{defaultArgParam idx}` tokens — the caller binds them to
-    // its own arg/param frame via SubstituteTokens). Returns null on an unparseable string.
+    // unwrap a `defaultCarrier` (re-hoisting its lifted methods into `hoist`),
+    // and return the raw default EXPR (still carrying `{defaultArgReceiver kind}` / `{defaultArgParam idx}` tokens — the
+    // caller binds them to its own receiver/param frame via SubstituteTokens). Returns null on an unparseable string.
     internal static JsonNode MaterializeDefault(string bir, JsonArray hoist, ReferenceMetadataIndex refs, string method, int slot, JsonNode localOwner)
     {
         JsonNode parsed; try { parsed = JsonNode.Parse(bir, documentOptions: BirJson.DocOptions); } catch { return null; }
         if (parsed is JsonObject env)
         {
             var envK = Str(env["k"]);
-            if (envK == "defaultUnsupported")
-                throw new InvalidOperationException(
-                    $"bir2cir: cannot fill the omitted default argument at slot {slot} of '{method}': " +
-                    (Str(env["reason"]) ?? "the default is not representable at a cross-module call site"));
             if (envK == "defaultCarrier")
                 parsed = UnwrapCarrier(env, hoist, refs, localOwner);
         }
@@ -404,16 +395,26 @@ static class DefaultArgSplice
         else if (node is JsonArray arr) foreach (var it in arr.ToList()) if (it != null) RewriteDelegateNames(it, map, localOwner);
     }
 
-    // Rebuild `node`, replacing every `{"k":"this"}` with a deep clone of `receiver` and every
-    // `{"k":"defaultArgParam","idx":N}` with a deep clone of `args[N]`. Rebuilds fresh so no node is double-parented.
-    // Shared with InlineSplice (#34): there `args[N]` = the bound temp for the emitted-position-N param, `receiver` = the
-    // bound extension/dispatch temp.
-    internal static JsonNode SubstituteTokens(JsonNode node, JsonNode receiver, JsonArray args)
+    // Rebuild `node`, replacing each DISCRIMINATED receiver token with the corresponding call value and every
+    // `{defaultArgParam,idx:N}` with `args[N]`. Ordinary `{k:this}` is deliberately NOT a token: inside a carried
+    // closure/SAM/suspend-lambda it denotes that synthesized object's own receiver. Rebuilds fresh so no node is
+    // double-parented. Shared with InlineSplice (#34).
+    internal static JsonNode SubstituteTokens(JsonNode node, JsonNode dispatchReceiver, JsonNode extensionReceiver,
+        JsonNode enclosingReceiver, JsonArray args)
     {
         switch (node)
         {
-            case JsonObject obj when Str(obj["k"]) == "this":
+            case JsonObject obj when Str(obj["k"]) == "defaultArgReceiver":
+            {
+                var receiver = Str(obj["kind"]) switch
+                {
+                    "dispatch" => dispatchReceiver,
+                    "extension" => extensionReceiver,
+                    "enclosing" => enclosingReceiver,
+                    _ => null,
+                };
                 return receiver == null ? obj.DeepClone() : receiver.DeepClone();
+            }
             case JsonObject obj when Str(obj["k"]) == "defaultArgParam":
             {
                 var idx = (obj["idx"] as JsonValue)?.GetValue<int>() ?? -1;
@@ -422,17 +423,33 @@ static class DefaultArgSplice
             case JsonObject obj:
             {
                 var res = new JsonObject();
-                foreach (var kv in obj) res[kv.Key] = kv.Value == null ? null : SubstituteTokens(kv.Value, receiver, args);
+                foreach (var kv in obj) res[kv.Key] = kv.Value == null ? null
+                    : SubstituteTokens(kv.Value, dispatchReceiver, extensionReceiver, enclosingReceiver, args);
                 return res;
             }
             case JsonArray arr:
             {
                 var res = new JsonArray();
-                foreach (var it in arr) res.Add(it == null ? null : SubstituteTokens(it, receiver, args));
+                foreach (var it in arr) res.Add(it == null ? null
+                    : SubstituteTokens(it, dispatchReceiver, extensionReceiver, enclosingReceiver, args));
                 return res;
             }
             default: return node.DeepClone();
         }
+    }
+
+    static string FirstUnboundReceiver(JsonNode node)
+    {
+        if (node is JsonObject obj)
+        {
+            if (Str(obj["k"]) == "defaultArgReceiver") return Str(obj["kind"]) ?? "unknown";
+            foreach (var kv in obj)
+                if (kv.Value != null && FirstUnboundReceiver(kv.Value) is string found) return found;
+        }
+        else if (node is JsonArray arr)
+            foreach (var it in arr)
+                if (it != null && FirstUnboundReceiver(it) is string found) return found;
+        return null;
     }
 
     static void AssertNoPlaceholder(JsonNode node)

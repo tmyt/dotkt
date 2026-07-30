@@ -42,6 +42,18 @@ public static class NodeType
     public static bool IsNothing(TypeNode? t) => t is TypeNode.Fqn { Args: null, Name: "kotlin.Nothing" };
 
     /// <summary>
+    /// The node's EXPLICIT result-type stamp — `sty`, then `ret`, then `dynRet`, in the PRECEDENCE stated on
+    /// <see cref="Of"/> — or null when the node carries none. This is the frontend's own answer to "what does this
+    /// node produce", carried across by the lowering; everything <see cref="Of"/> adds beyond it is DERIVED from a
+    /// node's kind and operands. A caller that must not act on a derivation asks for the stamp alone: the derived
+    /// arms answer best-effort, and a best-effort `kotlin.Nothing` is not a licence to delete a value (bir2cir's
+    /// NothingValueTermination). Reading the stamp through here rather than re-spelling the three slots is what keeps
+    /// that caller and <see cref="Of"/> from disagreeing about which slot wins.
+    /// </summary>
+    public static TypeNode? Stamp(JsonObject o)
+        => TypeJson.Read(o["sty"]) ?? TypeJson.Read(o["ret"]) ?? TypeJson.Read(o["dynRet"]);
+
+    /// <summary>
     /// The node's own static type, or null when only an index could answer. <paramref name="recurse"/> is the
     /// caller's FULL deriver, used for the kinds whose type is an OPERAND's type (`binOp`, `unaryOp`, `arrayGet`);
     /// it defaults to this core. <paramref name="primArrayElem"/> maps a SPECIALIZED array FQN to its element
@@ -68,9 +80,7 @@ public static class NodeType
     {
         if (n is not JsonObject o) return null;
         recurse ??= x => Of(x, null, primArrayElem);
-        if (TypeJson.Read(o["sty"]) is TypeNode ts) return ts;
-        if (TypeJson.Read(o["ret"]) is TypeNode t0) return t0;
-        if (TypeJson.Read(o["dynRet"]) is TypeNode t2) return t2;
+        if (Stamp(o) is TypeNode stamped) return stamped;
         switch (Str(o["k"]))
         {
             case "const": case "cast": case "new": case "newClr": case "var": case "enumValue": case "default":
