@@ -2331,8 +2331,7 @@ static partial class SuspendColdLowering
                     + "(no conforming GetAwaiter found in the referenced metadata)");
             if (configured && !plan.SupportsConfigureAwait)
                 throw new NotSupportedException(
-                    $"await(captureContext = …) is unsupported for '{awaitableName}': the type has no "
-                    + "ConfigureAwait(bool) member (the SynchronizationContext control is Task-like only)");
+                    $"await(captureContext = …) is unsupported for '{awaitableName}': {plan.ConfigureAwaitGap}");
 
             // An extension bridge declares `awaitResult` in its own method-type-parameter space; a member bridge on a
             // generic awaitable (`Task<T>`, `ValueTask<T>`) declares it in the owner's type-parameter space. Close both

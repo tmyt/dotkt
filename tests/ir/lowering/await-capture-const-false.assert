@@ -1,7 +1,9 @@
 # `t.await(captureContext = false)` — the CONFIGURED arm, reached as an ordinary expression rather than through an
-# arm of its own (GitHub #64). The constant is passed to `ConfigureAwait` as the value it is, which is what makes
-# the dynamic case a generalization of this one instead of a second path beside it: a `false` beside a
-# synthesized-literal arm would be indistinguishable at run time, so the shape is the only witness.
+# arm of its own (GitHub #64). Folding the former constant-`false` arm into the general one is OUTPUT-NEUTRAL — the
+# arm used to synthesize the literal it now receives, and the trailing type substitution normalizes both to
+# `System.Boolean` — so this document lowers identically before and after that change. It is here as the REGRESSION
+# pin for the configured arm's shape on a constant: the value reaches ConfigureAwait as an argument like any other,
+# which is what makes the dynamic case a generalization of this one rather than a second path beside it.
 +"method":"ConfigureAwait"
 +"args":[{"k":"const","type":{"t":"fqn","name":"System.Boolean"},"value":false}]
 +"method":"GetAwaiter"

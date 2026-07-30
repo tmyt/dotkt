@@ -82,6 +82,12 @@ suspend fun corCcSuspendingCapture(v: Boolean): Boolean {
 suspend fun corCcOrderedAcrossSuspension(task: Task1<Int>): Int =
     corCcReceiver(task).await(captureContext = corCcSuspendingCapture(true))
 
+// The captureContext expression ESCAPES instead of producing a value (a `throw` in expression position). That is the
+// other shape whose lowering emits statements, so it takes the same receiver-binding path as a suspending argument:
+// the receiver has already been evaluated when the argument transfers control, and nothing is awaited.
+suspend fun corCcEscapingCapture(task: Task1<Int>, bail: Boolean): Int =
+    corCcReceiver(task).await(captureContext = if (bail) throw IllegalStateException("bail") else false)
+
 // ---- the drive ---------------------------------------------------------------------------------------------------
 
 // A terminal sink + bounded drain (the CoroutineContextInterceptionTests pattern): a GENUINE suspension is needed
@@ -180,5 +186,24 @@ class DynamicCaptureContextTests {
         assertEquals(true, sink.done)
         assertEquals(22, sink.value)
         assertEquals("R,C", order())
+    }
+
+    // An argument that TRANSFERS CONTROL rather than producing a value: the receiver was evaluated (Kotlin evaluates
+    // it first), the throw leaves through the call that was going to consume it, and nothing is awaited.
+    @TestAttribute
+    fun escapingCaptureArgument() {
+        corCcLog.clear()
+        var message: String? = null
+        try {
+            blockOn { corCcEscapingCapture(corCcCompleted(31), true) }
+        } catch (e: IllegalStateException) {
+            message = e.message
+        }
+        assertEquals("bail", message)
+        assertEquals("R", order())   // the receiver ran; the argument never yielded a value
+
+        corCcLog.clear()
+        assertEquals(32, blockOn { corCcEscapingCapture(corCcCompleted(32), false) })
+        assertEquals("R", order())
     }
 }

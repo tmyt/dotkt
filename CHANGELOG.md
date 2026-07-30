@@ -71,9 +71,15 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   own passing a synthesized literal — is `ConfigureAwait(<the expression>).GetAwaiter()`. The expression is
   evaluated exactly once and after the awaitable receiver, including when it suspends: the await marker rewrites
   its own operands (it is excluded from the stage-0 operand plan), so the receiver is bound into a state-machine
-  field whenever the argument's own lowering emits statements. `tests/coroutines/fixtures/DynamicCaptureContextTests.kt`
-  drives the runtime shapes; the four `tests/ir/lowering/await-capture-*` documents pin the arm SELECTION, which
-  no runtime assertion can witness — `ConfigureAwait(true)` and `GetAwaiter()` behave identically.
+  field whenever the argument's own lowering emits statements — an argument that suspends, or one that transfers
+  control instead of producing a value. `tests/coroutines/fixtures/DynamicCaptureContextTests.kt` drives the runtime
+  shapes; the five `tests/ir/lowering/await-capture-*` documents pin what no runtime assertion can witness — the arm
+  SELECTION (`ConfigureAwait(true)` and `GetAwaiter()` behave identically, so only the emitted shape shows which was
+  chosen), the receiver binding a suspending argument forces, and the configured awaiter's field type. Folding the
+  constant-`false` arm is output-neutral, and its document says so rather than claiming a difference.
+  The refusal that remains — an awaitable whose `ConfigureAwait(bool)` returns something that is not itself
+  awaitable, which dll2klib publishes the overload for because the returned type may live in an assembly it does not
+  read — now names THAT as the reason instead of reporting a missing `ConfigureAwait(bool)` member.
 - **bir2cir (area:bir2cir): a nullable-generic return that was object-erased no longer crosses a suspension under
   its PRE-erasure type.** `fun <T> f(x: T): List<T?>` has its `Nullable(T)` erased to `object` on the declaration
   side, so the emitted method returns `List<object>`, while the call site — emitted with `T` already substituted —

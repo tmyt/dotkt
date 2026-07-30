@@ -295,8 +295,11 @@ embed no dialect.
   `AsyncLocal` flow across every await. UnsafeOnCompleted is a future optimization gated on SM-level EC capture.
 - **`ConfigureAwait`/`captureContext` stays Task-like:** the `await(captureContext = …)` capture control (§4a) is offered
   ONLY for an awaitable that exposes a `ConfigureAwait(bool)` member (Task, ValueTask) — dll2klib publishes the
-  one-argument bridge only for those. A custom awaitable without it uses GetAwaiter directly, and gets no
-  `captureContext` overload to call, so the frontend rejects the call.
+  one-argument bridge only for those, so a custom awaitable without the member has no `captureContext` overload to
+  call and the frontend rejects the call. One gap remains, and it is a REFUSAL rather than a wrong lowering: dll2klib
+  publishes on the `ConfigureAwait(bool)` DECLARATION alone (the configured awaitable it returns may live in an
+  assembly that projection does not read), so a type whose ConfigureAwait returns something that is not itself
+  awaitable gets the overload published and bir2cir then refuses the call, naming that as the reason.
 - Coverage: `tests/coroutines/fixtures/TaskAndValueTaskAwaitTests.kt`; custom-awaitable gaps are tracked in GitHub Issues.
 
 ## 4d. A byref-like (`ref struct`) value may live in a suspend function — but never ACROSS a suspension, and never in a capture

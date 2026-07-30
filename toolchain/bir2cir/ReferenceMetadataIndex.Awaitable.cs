@@ -29,15 +29,20 @@ sealed class AwaitPlan
     public bool GetAwaiterExtGeneric;    // the extension method is itself generic over the result type (WinRT)
 
     // #3/#64 capture control (`await(captureContext = <bool>)`): the ConfigureAwait awaiter family. Populated ONLY when
-    // the awaitable exposes a member `ConfigureAwait(bool)` (Task-like: Task, ValueTask). ONE family for either
-    // Boolean value — `ConfigureAwait(true)` and `ConfigureAwait(false)` return the same configured awaitable type —
-    // so a runtime Boolean picks no type here. A plain awaitable without the member offers no capture control at all
-    // (dll2klib then publishes only `await()` with no captureContext param, so the configured arm never arises).
+    // the awaitable exposes a member `ConfigureAwait(bool)` AND the configured awaitable it returns has a conforming
+    // GetAwaiter of its own (Task-like: Task, ValueTask). ONE family for either Boolean value — `ConfigureAwait(true)`
+    // and `ConfigureAwait(false)` return the same configured awaitable type — so a runtime Boolean picks no type here.
     public bool SupportsConfigureAwait;
     public string ConfiguredAwaitableDefName;   // ConfigureAwait's return type (the object GetAwaiter is called on)
     public bool ConfiguredAwaitableGeneric;
     public string ConfiguredAwaiterDefName;
     public bool ConfiguredAwaiterGeneric;
+    // WHY there is no capture control, in the words the refusal uses. Two different facts, and dll2klib can only see
+    // the first: it publishes the one-argument bridge on the `ConfigureAwait(bool)` DECLARATION alone, because the
+    // configured awaitable it returns may live in an assembly that projection does not read (dll2klib's
+    // `SupportsConfigureAwait` says so). So a type whose ConfigureAwait returns a NON-conforming awaitable reaches
+    // this pass with the overload already published, and the refusal must not tell its author the member is missing.
+    public string ConfigureAwaitGap;
 }
 
 partial class ReferenceMetadataIndex
@@ -91,18 +96,24 @@ partial class ReferenceMetadataIndex
         // #3/#64 ConfigureAwait capture control — only when the awaitable exposes it (Task-like). The configured
         // awaitable's own GetAwaiter must ALSO conform (it always does for Task/ValueTask).
         var cfg = ConfigureAwaitBoolMember(awaitable);
-        if (cfg != null)
+        if (cfg == null)
         {
-            var configured = cfg.ReturnType;
-            var configuredDef = configured.IsGenericType ? configured.GetGenericTypeDefinition() : configured;
-            var cfgGetAwaiter = GetAwaiterMember(configuredDef);
-            if (cfgGetAwaiter != null && AwaiterConforms(cfgGetAwaiter.ReturnType))
-            {
-                plan.SupportsConfigureAwait = true;
-                (plan.ConfiguredAwaitableDefName, plan.ConfiguredAwaitableGeneric) = NetDefName(configured);
-                (plan.ConfiguredAwaiterDefName, plan.ConfiguredAwaiterGeneric) = NetDefName(cfgGetAwaiter.ReturnType);
-            }
+            plan.ConfigureAwaitGap = "the type has no `ConfigureAwait(bool)` member "
+                + "(the SynchronizationContext control is Task-like only)";
+            return plan;
         }
+        var configured = cfg.ReturnType;
+        var configuredDef = configured.IsGenericType ? configured.GetGenericTypeDefinition() : configured;
+        var cfgGetAwaiter = GetAwaiterMember(configuredDef);
+        if (cfgGetAwaiter == null || !AwaiterConforms(cfgGetAwaiter.ReturnType))
+        {
+            plan.ConfigureAwaitGap = $"its `ConfigureAwait(bool)` returns `{configuredDef.FullName}`, which is not "
+                + "itself awaitable (no conforming GetAwaiter), so there is no configured awaiter to store";
+            return plan;
+        }
+        plan.SupportsConfigureAwait = true;
+        (plan.ConfiguredAwaitableDefName, plan.ConfiguredAwaitableGeneric) = NetDefName(configured);
+        (plan.ConfiguredAwaiterDefName, plan.ConfiguredAwaiterGeneric) = NetDefName(cfgGetAwaiter.ReturnType);
         return plan;
     }
 
