@@ -390,7 +390,6 @@ sealed partial class Emitter
                         // (whose abstract iterator produced no base GetEnumerator) still gets its adapter; a non-overriding
                         // child no-ops and inherits the base's.
                         GenerateGetEnumeratorIfNeeded(ti, itype);
-                        var have = ti.Methods.Keys.ToHashSet();
                         // A SELF-REFERENTIAL constructed generic interface (e.g. `V : IComparable<V>`, V the emitted
                         // type) is a TypeBuilderInstantiation whose .GetMethods() throws. Enumerate the OPEN
                         // definition's methods and re-anchor each to the instantiation via TypeBuilder.GetMethod
@@ -404,26 +403,27 @@ sealed partial class Emitter
                         catch (NotSupportedException) { ifaceMs = itype.GetGenericTypeDefinition().GetMethods(); reanchor = true; }
                         foreach (var im in ifaceMs)
                         {
-                            if (im.Name == "GetEnumerator" || !have.Contains(im.Name)) continue;   // GetEnumerator: handled by the reverse bridge above
+                            if (im.Name == "GetEnumerator") continue;   // handled by the reverse bridge above
                             // OVERLOADED body methods (e.g. the generic CompareTo(V) + the non-generic IComparable bridge
                             // CompareTo(object)) collide in the name-keyed ti.Methods — wiring the wrong one to the slot
                             // is a TypeLoad "signature ... do not match". Disambiguate by the interface method's
                             // (instantiation-substituted) parameter types against each overload's recorded params.
-                            var body = ti.Methods[im.Name];
                             // The interface method's (instantiation-substituted) param + return types — used both to
                             // disambiguate an overloaded body AND to decide whether the body needs a return-adapting bridge.
                             var ips = im.GetParameters().Select(p => reanchor
                                 ? SubstituteIfaceArgs(p.ParameterType, itype.GetGenericArguments())
                                 : p.ParameterType).ToArray();
-                            var cands = ti.MethodsBySig.Values.Where(b => b.Name == im.Name).Distinct().ToList();
-                            if (cands.Count > 1)
-                            {
-                                var match = cands.FirstOrDefault(b => _mparams.TryGetValue(b, out var bps)
+                            var methodArity = im.GetGenericArguments().Length;
+                            var cands = ti.MethodsBySig
+                                .Where(kv => kv.Key.Name == im.Name && kv.Key.GenericArity == methodArity)
+                                .Select(kv => kv.Value)
+                                .Where(b => _mparams.TryGetValue(b, out var bps)
                                     && bps.Length == ips.Length
-                                    && bps.Zip(ips, SlotParamMatches).All(x => x));
-                                if (match == null) continue;   // no exact overload -> skip rather than mis-wire
-                                body = match;
-                            }
+                                    && bps.Zip(ips, SlotParamMatches).All(x => x))
+                                .Distinct()
+                                .ToList();
+                            if (cands.Count != 1) continue;   // no unique exact CLR identity -> skip, never mis-wire
+                            var body = cands[0];
                             var ifaceM = reanchor ? TypeBuilder.GetMethod(itype, im) : im;
                             // A @ClrTypeAlias'd (referenced) interface slot whose return type the Kotlin body DROPS: the
                             // Kotlin member returns a value but the BCL slot is void (MutableCollection.add():Boolean ->
@@ -470,8 +470,9 @@ sealed partial class Emitter
                             // The interface method's params with each Tv{type,i} re-anchored to specArgs[i], rendered to
                             // the sig-token spelling — matched against the class's own MethodsBySig (a nested value-class
                             // arg like Continuation.resumeWith(Result<T>) substitutes correctly, not just a bare gp).
-                            var subSig = imName + "(" + string.Join(",", imDef.GetProperty("params").EnumerateArray()
-                                .Select(p => SigCanon(SubstTv(DotKt.Bir.TypeNode.Read(p.GetProperty("type")), specArgs)))) + ")";
+                            var subSig = SigKey(imName, DeclaredMethodArity(imDef),
+                                imDef.GetProperty("params").EnumerateArray()
+                                    .Select(p => SubstTv(DotKt.Bir.TypeNode.Read(p.GetProperty("type")), specArgs)));
                             var ifaceMethod = constructed != null ? TypeBuilder.GetMethod(constructed, ifaceBuilder) : (MethodInfo)ifaceBuilder;
                             // A bir2cir-resolved exact MethodImpl bridge. The decision and exact slot signature are
                             // already CIR facts; this is mechanical consumption only. In particular, do not also wire
@@ -539,11 +540,11 @@ sealed partial class Emitter
             if (!ti.IsInterface || ti.Def.ValueKind != JsonValueKind.Object || !ti.Def.TryGetProperty("interfaces", out var extIbs)) continue;
             _curTypeParams = EffectiveTps(ti);
             // Only a BODIED method (a DIM) can implement an external slot; an abstract redeclaration stays for the class.
-            var bodied = new HashSet<string>();
+            var bodied = new HashSet<MethodSigKey>();
             foreach (var m in ti.Def.GetProperty("methods").EnumerateArray())
                 if (m.TryGetProperty("name", out var bn) && m.TryGetProperty("body", out var bb)
                     && bb.ValueKind == JsonValueKind.Array && bb.GetArrayLength() > 0)
-                    bodied.Add(bn.GetString());
+                    bodied.Add(SigKey(bn.GetString(), m));
             if (bodied.Count == 0) continue;
             // De-dup across a diamond (`I : A, B` with `A, B : C`): one methodimpl per (baseOwner :: subSig).
             var dimImplSeen = new HashSet<string>();
@@ -564,19 +565,22 @@ sealed partial class Emitter
                 catch (NotSupportedException) { ifaceMs = itype.GetGenericTypeDefinition().GetMethods(); reanchor = true; }
                 foreach (var im in ifaceMs)
                 {
-                    if (!bodied.Contains(im.Name) || !ti.Methods.TryGetValue(im.Name, out MethodBuilder dim)) continue;
                     var ips = im.GetParameters().Select(p => reanchor
                         ? SubstituteIfaceArgs(p.ParameterType, itype.GetGenericArguments())
                         : p.ParameterType).ToArray();
-                    // Overload disambiguation by the slot's (substituted) param types — mirrors the class wiring.
-                    var cands = ti.MethodsBySig.Values.Where(b => b.Name == im.Name).Distinct().ToList();
-                    if (cands.Count > 1)
-                    {
-                        var match = cands.FirstOrDefault(b => _mparams.TryGetValue(b, out var bps)
-                            && bps.Length == ips.Length && bps.Zip(ips, SlotParamMatches).All(x => x));
-                        if (match == null) continue;   // no exact overload -> skip rather than mis-wire
-                        dim = match;
-                    }
+                    // Match the complete CLR method identity, including method generic arity. A same-name/same-param
+                    // generic/non-generic pair is two distinct slots, never an overload ambiguity (#86 Phase 0).
+                    var methodArity = im.GetGenericArguments().Length;
+                    var cands = ti.MethodsBySig
+                        .Where(kv => bodied.Contains(kv.Key)
+                            && kv.Key.Name == im.Name && kv.Key.GenericArity == methodArity)
+                        .Select(kv => kv.Value)
+                        .Where(b => _mparams.TryGetValue(b, out var bps)
+                            && bps.Length == ips.Length && bps.Zip(ips, SlotParamMatches).All(x => x))
+                        .Distinct()
+                        .ToList();
+                    if (cands.Count != 1) continue;   // no unique exact DIM -> skip rather than mis-wire
+                    var dim = cands[0];
                     var iret = reanchor ? SubstituteIfaceArgs(im.ReturnType, itype.GetGenericArguments()) : im.ReturnType;
                     var bridge = ti.TB.DefineMethod("dotkt$dimimpl$" + im.Name + "$" + (_covarBridge++),
                         MethodAttributes.Private | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.NewSlot | MethodAttributes.HideBySig,
@@ -792,18 +796,19 @@ sealed partial class Emitter
     // Method-level generic params, keyed by MethodInfo, so call sites can MakeGenericMethod.
     readonly Dictionary<MethodBuilder, Dictionary<string, GenericTypeParameterBuilder>> _methodTypeParams = new();
 
-    // Body-phase occurrence counter for duplicate (name, params) defs — mirrors DeclareMethod's $dupN mangling.
-    readonly Dictionary<(TypeInfo, string), int> _bodyDupSeen = new();
+    // Body-phase occurrence counter for duplicate (name, method generic arity, params) defs — mirrors
+    // DeclareMethod's $dupN mangling.
+    readonly Dictionary<(TypeInfo, MethodSigKey), int> _bodyDupSeen = new();
 
     void DeclareMethod(TypeInfo ti, JsonElement m, bool isStatic)
     {
         var name = m.GetProperty("name").GetString();
-        // DUPLICATE (name, params) defs — Kotlin overloads distinguished ONLY by receiver types that COLLAPSE under a
-        // @ClrTypeAlias (Map.iterator() vs MutableMap.iterator(): both receivers lower to IDictionary<K,V>) — would
-        // otherwise share one MethodsBySig slot, concatenating BOTH bodies into a single MethodBuilder (malformed IL,
-        // BadImageFormatException). Mangle the SECOND-and-later defs' emitted names (deterministic, def order — the
-        // FIRST def keeps the clean name, so by-(name,params) reflection callers bind it unambiguously). EmitMethodBody
-        // consumes the same #dupN keys in the same def order.
+        // DUPLICATE (name, METHOD generic arity, params) defs — Kotlin overloads distinguished ONLY by receiver types
+        // that COLLAPSE under a @ClrTypeAlias (Map.iterator() vs MutableMap.iterator(): both receivers lower to
+        // IDictionary<K,V>) — would otherwise share one MethodsBySig slot, concatenating BOTH bodies into a single
+        // MethodBuilder (malformed IL, BadImageFormatException). Mangle the SECOND-and-later defs' emitted names
+        // (deterministic, def order — the FIRST def keeps the clean name, so exact-signature reflection callers bind it
+        // unambiguously). EmitMethodBody consumes the same #dupN keys in the same def order.
         var dupKey = SigKey(name, m);
         if (ti.MethodsBySig.ContainsKey(dupKey))
         {
@@ -1143,7 +1148,8 @@ sealed partial class Emitter
     // `CoroutineContext.Element.get` to fill Job's compiler-materialized abstract `get` slot. The CLR doesn't treat that
     // inherited DIM as implementing the distinct redeclared slot, so emit a class-level forwarding bridge that calls the
     // inherited DIM and put the MethodImpl for the interface method on the bridge.
-    void TryEmitDimForwardBridge(TypeInfo ti, JsonElement imDef, DotKt.Bir.TypeNode[] specArgs, string subSig, Type constructed, MethodBuilder ifaceBuilder)
+    void TryEmitDimForwardBridge(TypeInfo ti, JsonElement imDef, DotKt.Bir.TypeNode[] specArgs,
+        MethodSigKey subSig, Type constructed, MethodBuilder ifaceBuilder)
     {
         if (ti.Def.ValueKind != JsonValueKind.Object || !ti.Def.TryGetProperty("interfaces", out var dirIfs)) return;
         // A GENERIC default-interface-method (`get<E : Element>(key: Key<E>)`) must be forwarded by a GENERIC bridge of
@@ -1180,8 +1186,9 @@ sealed partial class Emitter
                 {
                     if (!candDef.TryGetProperty("name", out var cn) || cn.GetString() != imDef.GetProperty("name").GetString()
                         || !candDef.TryGetProperty("params", out var cps)) continue;
-                    var candSig = cn.GetString() + "(" + string.Join(",", cps.EnumerateArray()
-                        .Select(p => SigCanon(SubstTv(DotKt.Bir.TypeNode.Read(p.GetProperty("type")), diArgs)))) + ")";
+                    var candSig = SigKey(cn.GetString(), DeclaredMethodArity(candDef),
+                        cps.EnumerateArray()
+                            .Select(p => SubstTv(DotKt.Bir.TypeNode.Read(p.GetProperty("type")), diArgs)));
                     if (candSig != subSig) continue;
                     var raw = diTi.MethodsBySig.TryGetValue(SigKey(cn.GetString(), candDef), out var bySig) ? bySig
                             : (diTi.Methods.TryGetValue(cn.GetString(), out var byName) ? byName : null);
@@ -1201,7 +1208,11 @@ sealed partial class Emitter
                 var slotSig = imDef.GetProperty("params").EnumerateArray()
                     .Select(p => SubstTv(DotKt.Bir.TypeNode.Read(p.GetProperty("type")), specArgs)).ToArray();
                 MethodInfo reflected = null;
-                try { reflected = FindReflectedMethodBySig(ext, imDef.GetProperty("name").GetString(), slotSig); }
+                try
+                {
+                    reflected = FindReflectedMethodBySig(
+                        ext, imDef.GetProperty("name").GetString(), slotSig, DeclaredMethodArity(imDef));
+                }
                 catch (NotSupportedException)
                 {
                     // A referenced generic interface instantiated with an emitted TypeBuilder argument cannot reflect
@@ -1210,7 +1221,8 @@ sealed partial class Emitter
                     try
                     {
                         var openExt = ext.GetGenericTypeDefinition();
-                        var openMethod = FindReflectedMethodBySig(openExt, imDef.GetProperty("name").GetString(), slotSig);
+                        var openMethod = FindReflectedMethodBySig(
+                            openExt, imDef.GetProperty("name").GetString(), slotSig, DeclaredMethodArity(imDef));
                         if (openMethod != null) reflected = TypeBuilder.GetMethod(ext, openMethod);
                     }
                     catch (NotSupportedException) { }
@@ -1223,7 +1235,8 @@ sealed partial class Emitter
                     {
                         foreach (var rb in ext.GetInterfaces())
                         {
-                            var rm = FindReflectedMethodBySig(rb, imDef.GetProperty("name").GetString(), slotSig);
+                            var rm = FindReflectedMethodBySig(
+                                rb, imDef.GetProperty("name").GetString(), slotSig, DeclaredMethodArity(imDef));
                             if (rm != null && !rm.IsAbstract) { dimTarget = rm; break; }
                         }
                     }

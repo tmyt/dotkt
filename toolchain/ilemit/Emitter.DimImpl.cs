@@ -12,10 +12,11 @@ using System.Text.Json;
 sealed partial class Emitter
 {
     // For interface `ti` and one of its DIRECT emitted base interfaces `firstBase`, emit a private-final methodimpl
-    // bridge for every base-declared method that `ti` DEFAULTS (name in `bodied`), transitively up the emitted base
-    // chain (so a DIM two levels up — `ContinuationInterceptor.get` over both `Element::get` and `CoroutineContext::get`
-    // — wires BOTH slots). `_curTypeParams` is already `EffectiveTps(ti)` at the call site.
-    void EmitEmittedBaseDimImpls(TypeInfo ti, DotKt.Bir.TypeNode.Fqn firstBase, HashSet<string> bodied, HashSet<string> seen)
+    // bridge for every base-declared method that `ti` DEFAULTS (complete MethodSigKey in `bodied`), transitively up the
+    // emitted base chain (so a DIM two levels up — `ContinuationInterceptor.get` over both `Element::get` and
+    // `CoroutineContext::get` — wires BOTH slots). `_curTypeParams` is already `EffectiveTps(ti)` at the call site.
+    void EmitEmittedBaseDimImpls(TypeInfo ti, DotKt.Bir.TypeNode.Fqn firstBase,
+        HashSet<MethodSigKey> bodied, HashSet<string> seen)
     {
         var work = new Queue<DotKt.Bir.TypeNode.Fqn>();
         work.Enqueue(firstBase);
@@ -43,11 +44,12 @@ sealed partial class Emitter
             {
                 if (!bmDef.TryGetProperty("name", out var bmn) || !bmDef.TryGetProperty("params", out _)) continue;
                 var name = bmn.GetString();
-                if (!bodied.Contains(name)) continue;   // `ti` does not DEFAULT this base method -> nothing to re-wire
                 // The base method's params/ret with each Tv{type,i} re-anchored to `ti`'s args -> the overload key `ti`'s
                 // own DIM is registered under (a method-scope tv collapses to `gp:T` on both sides, so they agree).
-                var subSig = name + "(" + string.Join(",", bmDef.GetProperty("params").EnumerateArray()
-                    .Select(p => SigCanon(SubstTv(DotKt.Bir.TypeNode.Read(p.GetProperty("type")), specArgs)))) + ")";
+                var subSig = SigKey(name, DeclaredMethodArity(bmDef),
+                    bmDef.GetProperty("params").EnumerateArray()
+                        .Select(p => SubstTv(DotKt.Bir.TypeNode.Read(p.GetProperty("type")), specArgs)));
+                if (!bodied.Contains(subSig)) continue;   // `ti` does not DEFAULT this exact base method -> no re-wire
                 if (!ti.MethodsBySig.TryGetValue(subSig, out var dim) || dim.Attributes.HasFlag(MethodAttributes.Abstract)) continue;
                 if (!seen.Add(dopen + "::" + subSig)) continue;   // diamond de-dup (per ECMA: no duplicate methodimpl rows)
                 var baseSlot = baseTi.MethodsBySig.TryGetValue(SigKey(name, bmDef), out var bs) ? bs
