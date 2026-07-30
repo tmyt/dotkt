@@ -28,10 +28,12 @@ sealed class AwaitPlan
     public string GetAwaiterExtOwner;    // the [Extension] static class FQN (extension path only)
     public bool GetAwaiterExtGeneric;    // the extension method is itself generic over the result type (WinRT)
 
-    // #3 opt-out (`await(captureContext = false)`): the ConfigureAwait(false) awaiter family. Populated ONLY when the
-    // awaitable exposes a member `ConfigureAwait(bool)` (Task-like: Task, ValueTask). A plain awaitable without it does
-    // not offer the opt-out (dll2klib then injects `await()` with no captureContext param, so noCapture never arises).
-    public bool SupportsNoCapture;
+    // #3/#64 capture control (`await(captureContext = <bool>)`): the ConfigureAwait awaiter family. Populated ONLY when
+    // the awaitable exposes a member `ConfigureAwait(bool)` (Task-like: Task, ValueTask). ONE family for either
+    // Boolean value — `ConfigureAwait(true)` and `ConfigureAwait(false)` return the same configured awaitable type —
+    // so a runtime Boolean picks no type here. A plain awaitable without the member offers no capture control at all
+    // (dll2klib then publishes only `await()` with no captureContext param, so the configured arm never arises).
+    public bool SupportsConfigureAwait;
     public string ConfiguredAwaitableDefName;   // ConfigureAwait's return type (the object GetAwaiter is called on)
     public bool ConfiguredAwaitableGeneric;
     public string ConfiguredAwaiterDefName;
@@ -86,8 +88,8 @@ partial class ReferenceMetadataIndex
         if (!AwaiterConforms(awaiterRet)) return null;
         (plan.AwaiterDefName, plan.AwaiterGeneric) = NetDefName(awaiterRet);
 
-        // #3 ConfigureAwait(false) opt-out — only when the awaitable exposes it (Task-like). The configured awaitable's
-        // own GetAwaiter must ALSO conform (it always does for Task/ValueTask).
+        // #3/#64 ConfigureAwait capture control — only when the awaitable exposes it (Task-like). The configured
+        // awaitable's own GetAwaiter must ALSO conform (it always does for Task/ValueTask).
         var cfg = ConfigureAwaitBoolMember(awaitable);
         if (cfg != null)
         {
@@ -96,7 +98,7 @@ partial class ReferenceMetadataIndex
             var cfgGetAwaiter = GetAwaiterMember(configuredDef);
             if (cfgGetAwaiter != null && AwaiterConforms(cfgGetAwaiter.ReturnType))
             {
-                plan.SupportsNoCapture = true;
+                plan.SupportsConfigureAwait = true;
                 (plan.ConfiguredAwaitableDefName, plan.ConfiguredAwaitableGeneric) = NetDefName(configured);
                 (plan.ConfiguredAwaiterDefName, plan.ConfiguredAwaiterGeneric) = NetDefName(cfgGetAwaiter.ReturnType);
             }

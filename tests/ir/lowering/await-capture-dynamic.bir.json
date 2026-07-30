@@ -1,0 +1,174 @@
+{
+  "fileClass": "AwaitCaptureDynamicKt",
+  "hasMain": false,
+  "fields": [],
+  "methods": [
+    {
+      "name": "awaitCaptureDynamic",
+      "static": true,
+      "override": false,
+      "virtual": false,
+      "abstract": false,
+      "objectOverride": false,
+      "vis": "public",
+      "mods": {
+        "suspend": true
+      },
+      "suspendRet": {
+        "t": "fqn",
+        "name": "kotlin.Int"
+      },
+      "params": [
+        {
+          "name": "t",
+          "type": {
+            "t": "fqn",
+            "name": "System.Threading.Tasks.Task",
+            "args": [
+              {
+                "t": "fqn",
+                "name": "kotlin.Int"
+              }
+            ]
+          }
+        },
+        {
+          "name": "capture",
+          "type": {
+            "t": "fqn",
+            "name": "kotlin.Boolean"
+          }
+        }
+      ],
+      "ret": {
+        "t": "fqn",
+        "name": "kotlin.Int"
+      },
+      "body": [
+        {
+          "k": "if",
+          "branches": [
+            {
+              "cond": {
+                "k": "objEq",
+                "lhs": {
+                  "k": "local",
+                  "name": "t"
+                },
+                "rhs": {
+                  "k": "const",
+                  "type": {
+                    "t": "fqn",
+                    "name": "kotlin.Unit"
+                  },
+                  "value": null
+                }
+              },
+              "body": [
+                {
+                  "k": "throw",
+                  "value": {
+                    "k": "new",
+                    "type": {
+                      "t": "fqn",
+                      "name": "kotlin.NullPointerException"
+                    },
+                    "argTypes": [
+                      {
+                        "t": "fqn",
+                        "name": "kotlin.String"
+                      }
+                    ],
+                    "args": [
+                      {
+                        "k": "const",
+                        "type": {
+                          "t": "fqn",
+                          "name": "kotlin.String"
+                        },
+                        "value": "Parameter specified as non-null is null: awaitCaptureDynamic, parameter t"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "k": "return",
+          "value": {
+            "sty": {
+              "t": "fqn",
+              "name": "kotlin.Int"
+            },
+            "k": "callInstance",
+            "virtual": true,
+            "ownerType": {
+              "t": "fqn",
+              "name": "System.Threading.Tasks.Task",
+              "args": [
+                {
+                  "t": "fqn",
+                  "name": "kotlin.Int"
+                }
+              ]
+            },
+            "method": "await",
+            "sig": [
+              {
+                "t": "fqn",
+                "name": "kotlin.Boolean"
+              }
+            ],
+            "argTypes": [
+              {
+                "t": "fqn",
+                "name": "kotlin.Boolean"
+              }
+            ],
+            "ret": {
+              "t": "tv",
+              "scope": "type",
+              "i": 0
+            },
+            "recv": {
+              "sty": {
+                "t": "fqn",
+                "name": "System.Threading.Tasks.Task",
+                "args": [
+                  {
+                    "t": "fqn",
+                    "name": "kotlin.Int"
+                  }
+                ]
+              },
+              "k": "local",
+              "name": "t"
+            },
+            "args": [
+              {
+                "sty": {
+                  "t": "fqn",
+                  "name": "kotlin.Boolean"
+                },
+                "k": "local",
+                "name": "capture"
+              }
+            ],
+            "suspendCall": true,
+            "clrAwaitBridge": true,
+            "awaitResult": {
+              "t": "tv",
+              "scope": "type",
+              "i": 0
+            }
+          }
+        }
+      ],
+      "attrs": []
+    }
+  ],
+  "types": [],
+  "refTypes": []
+}

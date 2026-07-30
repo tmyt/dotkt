@@ -1,0 +1,7 @@
+# `t.await(captureContext = true)` — the SAME fast path as the omitted argument. A constant `true` asks for the
+# behavior `GetAwaiter()` already has, so it must not pay for the configured awaitable; and since the two are
+# behaviorally identical, no runtime assertion can tell them apart (GitHub #64).
++"method":"GetAwaiter"
++System.Runtime.CompilerServices.TaskAwaiter
+-"method":"ConfigureAwait"
+-ConfiguredTaskAwaitable

@@ -59,6 +59,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir (area:bir2cir): `await(captureContext = <expression>)` no longer refuses a non-constant Boolean
+  ([tmyt/dotkt#64]).** dll2klib publishes two await bridges for an awaitable that exposes `ConfigureAwait(bool)` —
+  `await()` and `await(captureContext: Boolean)` — so `task.await(captureContext = policy)` is a frontend-resolved
+  call; `EmitAwaitPoint` accepted only a constant in that slot and threw, aborting the whole compile. The awaiter
+  never needed the value: `ConfigureAwait(true)` and `ConfigureAwait(false)` return the same configured awaitable,
+  hence the same awaiter type, so a runtime Boolean selects no state-machine field type and needs no branch — the
+  configured awaiter is stored statically and the Boolean only reaches the .NET call. The lowering is now TWO arms
+  picked by the argument's SHAPE: an omitted argument or a constant `true` keeps the direct `GetAwaiter()` (which
+  is what capturing already means), and everything else — including a constant `false`, which had an arm of its
+  own passing a synthesized literal — is `ConfigureAwait(<the expression>).GetAwaiter()`. The expression is
+  evaluated exactly once and after the awaitable receiver, including when it suspends: the await marker rewrites
+  its own operands (it is excluded from the stage-0 operand plan), so the receiver is bound into a state-machine
+  field whenever the argument's own lowering emits statements. `tests/coroutines/fixtures/DynamicCaptureContextTests.kt`
+  drives the runtime shapes; the four `tests/ir/lowering/await-capture-*` documents pin the arm SELECTION, which
+  no runtime assertion can witness — `ConfigureAwait(true)` and `GetAwaiter()` behave identically.
 - **bir2cir (area:bir2cir): a nullable-generic return that was object-erased no longer crosses a suspension under
   its PRE-erasure type.** `fun <T> f(x: T): List<T?>` has its `Nullable(T)` erased to `object` on the declaration
   side, so the emitted method returns `List<object>`, while the call site — emitted with `T` already substituted —

@@ -225,11 +225,17 @@ policy":
    resume). This is Kotlin's dispatcher mechanism (e.g. a UI dispatcher) and it takes PRECEDENCE. The cold-core
    `ContinuationImpl.intercepted()` performs the lookup+wrap (cached, JVM parity); bir2cir routes the await-point
    `OnCompleted` callback through `this.intercepted().resumeWith(...)`.
-2. **No interceptor, `await(captureContext = true)` (the default)** → the CLR `TaskAwaiter` captures
+2. **No interceptor, capture requested** (`await()`, or `await(captureContext = <true>)`) → the awaiter captures
    `SynchronizationContext.Current` and `Post`s the resume onto it (mirrors .NET
    `ConfigureAwaitOptions.ContinueOnCapturedContext`).
-3. **No interceptor, `await(captureContext = false)`** → `ConfigureAwait(false)` awaiter, resume runs inline on the
-   completing thread (no SyncContext capture).
+3. **No interceptor, capture declined** (`await(captureContext = <false>)`) → the `ConfigureAwait(false)` awaiter,
+   resume runs inline on the completing thread (no SyncContext capture).
+
+The argument may be ANY Boolean expression, not only a literal (#64): `await(captureContext = policy.capture)` is
+lowered as `awaitable.ConfigureAwait(<the expression>).GetAwaiter()`, evaluated once and after the awaitable
+receiver. The value picks no type — `ConfigureAwait(true)` and `ConfigureAwait(false)` return the same configured
+awaiter — so nothing branches at run time. Only an OMITTED argument or a compile-time-constant `true` takes the
+direct `GetAwaiter()` path, which is the same behavior without the configured-awaitable hop.
 - The coroutine context propagates DOWN the cold-entry call chain: a nested `suspend fun`'s state machine inherits its
   completion's context, so an interceptor installed at the coroutine root is honored at a nested-fun await too.
 - Caveat (double-hop, an accepted follow-up): with an interceptor AND the default capturing awaiter, the awaiter's
@@ -287,9 +293,10 @@ embed no dialect.
 - **We bind `OnCompleted` (INotifyCompletion), not `UnsafeOnCompleted` (ICriticalNotifyCompletion):** the cold core carries
   no ExecutionContext-flowing state-machine box, so `OnCompleted` (which flows EC) is correct; `UnsafeOnCompleted` would drop
   `AsyncLocal` flow across every await. UnsafeOnCompleted is a future optimization gated on SM-level EC capture.
-- **`ConfigureAwait`/`captureContext` stays Task-like:** the `await(captureContext = false)` opt-out (§4a) is offered ONLY
-  for an awaitable that exposes a `ConfigureAwait(bool)` member (Task, ValueTask). A generic awaitable without it uses
-  GetAwaiter directly; requesting `captureContext = false` on such a type is a compile-time error.
+- **`ConfigureAwait`/`captureContext` stays Task-like:** the `await(captureContext = …)` capture control (§4a) is offered
+  ONLY for an awaitable that exposes a `ConfigureAwait(bool)` member (Task, ValueTask) — dll2klib publishes the
+  one-argument bridge only for those. A custom awaitable without it uses GetAwaiter directly, and gets no
+  `captureContext` overload to call, so the frontend rejects the call.
 - Coverage: `tests/coroutines/fixtures/TaskAndValueTaskAwaitTests.kt`; custom-awaitable gaps are tracked in GitHub Issues.
 
 ## 4d. A byref-like (`ref struct`) value may live in a suspend function — but never ACROSS a suspension, and never in a capture

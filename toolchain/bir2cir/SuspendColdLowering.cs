@@ -1095,6 +1095,12 @@ static partial class SuspendColdLowering
         Bool(o["suspendCall"]) && Bool(o["clrAwaitBridge"])
         && Str(o["k"]) is "callStatic" or "callInstance";
 
+    // A literal `true` — the ONE argument shape `await(captureContext = …)` lowers as the plain capturing awaiter,
+    // because that is what the awaitable's own `GetAwaiter()` already does. Everything else, constant or not, goes
+    // through `ConfigureAwait(<the argument>)` (EmitAwaitPoint).
+    static bool IsConstTrue(JsonObject o) =>
+        Str(o["k"]) == "const" && o["value"] is JsonValue v && v.TryGetValue<bool>(out var b) && b;
+
     // BUG 1: does the subtree contain a `try` whose finally is non-empty AND whose body spans a suspension?
     // Such a finally needs the $suspending gate (it would otherwise run on the suspend-return leave and again at
     // exit). SuspensionRefusalReason guarantees at most one such level (nested suspending try is left untransformed).
@@ -1190,6 +1196,7 @@ static partial class SuspendColdLowering
         int _condCounter;
         int _loopCounter;                        // #82 — fresh splice-loop temp counter (FlattenSuspendingLoops)
         int _excCounter;                         // #78 — fresh catch-hoist capture-var counter (HoistSuspendingCatches)
+        int _awaitTarget;                        // #64 — fresh `__awaitable$n` field counter (EmitAwaitPoint's receiver bind)
         bool _needSuspendGuard;                  // fun has a suspending try/finally -> emit the $suspending gate (BUG 1)
         readonly List<(int state, int label)> _dispatch = new();
         readonly Stack<(List<(int state, int label)> inner, int tryEntry)> _tryStack = new();
@@ -2285,21 +2292,24 @@ static partial class SuspendColdLowering
                 .Select(TypeJson.Read)
                 .Where(x => x != null)
                 .ToArray() ?? System.Array.Empty<TypeNode>();
-            // #3: `await(captureContext = false)` opt-out. The await marker is an extension fun `X.await(captureContext)`
-            // or a synthesized member. A LITERAL `false` selects the
-            // ConfigureAwait(false) awaiter (OnCompleted does NOT capture the SynchronizationContext); `true`/absent
-            // keeps the SynchronizationContext-capturing awaiter (the historical + default behavior).
+            // #3/#64: the SynchronizationContext-capture control. dll2klib publishes TWO await bridges for an
+            // awaitable that has `ConfigureAwait(bool)` — `await()` and `await(captureContext: Boolean)` — so the
+            // argument is present or absent, never defaulted. TWO arms, chosen by the argument's SHAPE and never by
+            // its VALUE:
+            //
+            //   omitted, or a constant `true`  ->  awaitable.GetAwaiter()                     (the capturing default)
+            //   anything else                  ->  awaitable.ConfigureAwait(<arg>).GetAwaiter()
+            //
+            // A constant `false` is not a case of its own: it flows through the second arm as the expression `false`.
+            // `ConfigureAwait(b)` returns the SAME configured awaitable — hence the same awaiter type — for either
+            // value, so the runtime Boolean changes no CLR type and needs no branch between two state-machine field
+            // types. The first arm exists because `GetAwaiter()` already IS the capturing behavior, so only the
+            // capture-controlling call pays for the configured awaitable.
             var callArgs = awaitNode["args"] as JsonArray ?? new JsonArray();
             var captureIndex = isMember ? 0 : 1;
             JsonObject ccArgNode = callArgs.Count > captureIndex
                 ? callArgs[captureIndex] as JsonObject : null;
-            // captureContext must be a COMPILE-TIME constant: a bool `const` (the omitted default is filled as one). A
-            // dynamic arg (`await(captureContext = someBool)`) can't statically select the awaiter type, and — since args[1]
-            // is never Rewrite'd here — would also drop any side effect un-evaluated. Refuse loudly rather than miscompile.
-            if (ccArgNode != null && Str(ccArgNode["k"]) != "const")
-                throw new NotSupportedException("await(captureContext = …) requires a compile-time constant Boolean (a dynamic captureContext is not supported)");
-            var noCapture = ccArgNode != null && ccArgNode["value"] is JsonValue ccVal
-                && ccVal.TryGetValue<bool>(out var ccBool) && ccBool == false;
+            var configured = ccArgNode != null && !IsConstTrue(ccArgNode);
 
             // A member bridge uses its constructed owner type. An extension
             // bridge uses its declared receiver type, substituting the
@@ -2319,10 +2329,10 @@ static partial class SuspendColdLowering
                 throw new NotSupportedException(
                     $"await: '{awaitableName ?? "<unknown>"}' is not a resolvable .NET awaitable "
                     + "(no conforming GetAwaiter found in the referenced metadata)");
-            if (noCapture && !plan.SupportsNoCapture)
+            if (configured && !plan.SupportsConfigureAwait)
                 throw new NotSupportedException(
-                    $"await(captureContext = false) is unsupported for '{awaitableName}': the type has no "
-                    + "ConfigureAwait(bool) member (the SynchronizationContext opt-out is Task-like only)");
+                    $"await(captureContext = …) is unsupported for '{awaitableName}': the type has no "
+                    + "ConfigureAwait(bool) member (the SynchronizationContext control is Task-like only)");
 
             // An extension bridge declares `awaitResult` in its own method-type-parameter space; a member bridge on a
             // generic awaitable (`Task<T>`, `ValueTask<T>`) declares it in the owner's type-parameter space. Close both
@@ -2336,9 +2346,11 @@ static partial class SuspendColdLowering
                 recvParam?.Args ?? System.Array.Empty<TypeNode>());
             var hasResult = resultTok is not TypeNode.Fqn { Name: "kotlin.Unit" };
             var awaitableType = recvParam;
-            // The awaiter def + genericity, honoring the #3 ConfigureAwait(false) opt-out (a nested Configured*Awaiter).
-            var awaiterDef = noCapture ? plan.ConfiguredAwaiterDefName : plan.AwaiterDefName;
-            var awaiterGeneric = noCapture ? plan.ConfiguredAwaiterGeneric : plan.AwaiterGeneric;
+            // The awaiter def + genericity, one per arm: the awaitable's own awaiter, or the nested
+            // Configured*Awaiter the configured awaitable returns — statically known in both arms, because the
+            // Boolean the configured arm passes cannot change it.
+            var awaiterDef = configured ? plan.ConfiguredAwaiterDefName : plan.AwaiterDefName;
+            var awaiterGeneric = configured ? plan.ConfiguredAwaiterGeneric : plan.AwaiterGeneric;
             var awaiterArguments = awaiterGeneric
                 ? awaitableType.Args is { Length: > 0 } args
                     ? args
@@ -2346,9 +2358,30 @@ static partial class SuspendColdLowering
                 : null;
             var awaiterType = new TypeNode.Fqn(awaiterDef, awaiterArguments);
 
+            // KOTLIN ORDER, exactly once each: the awaitable receiver, then the captureContext argument. This emitter
+            // rewrites its own operands (the marker is excluded from the stage-0 operand plan, SuspendOperandPlan.cs),
+            // so the ordering rule that plan states is stated here for the two operands a marker has.
             var awaitable = Rewrite(
                 isMember ? awaitNode["recv"] : callArgs.FirstOrDefault(),
                 outp);
+            JsonNode captureValue = null;
+            if (configured)
+            {
+                // The argument's lowering APPENDS STATEMENTS when it carries a suspension of its own or an escaping
+                // control transfer, while the receiver's value is still an expression sitting in a slot — so it would
+                // be evaluated after them (and, across a suspension, in a later invokeSuspend invocation, where the
+                // expression's operands no longer hold). Bind it into a state-machine field first, which is where a
+                // value that must survive a suspension lives. Nothing is spilled when the argument emits no
+                // statements: the receiver is then evaluated by the ConfigureAwait call itself, ahead of its argument.
+                if (HasOwnSuspension(ccArgNode) || EscapesExpression(ccArgNode))
+                {
+                    var targetField = "__awaitable$" + (++_awaitTarget);
+                    FieldStorage(targetField, awaitableType, RoleMachinery, lives: true, across: "await");
+                    outp.Add(SetField(targetField, awaitable));
+                    awaitable = FieldOf(targetField, awaitableType);
+                }
+                captureValue = Rewrite(ccArgNode, outp);
+            }
 
             var state = ++_state;
             var afterLabel = NextLabel();
@@ -2357,7 +2390,7 @@ static partial class SuspendColdLowering
             var awField = "__awaiter$" + state;
             FieldStorage(awField, awaiterType, RoleMachinery, lives: true, across: "await");
 
-            // this.<aw> = <getAwaiter over the awaitable / its ConfigureAwait(false) / a referenced extension GetAwaiter>
+            // this.<aw> = <getAwaiter over the awaitable / its ConfigureAwait(<captureContext>) / a referenced extension GetAwaiter>
             outp.Add(SetField(
                 awField,
                 BuildGetAwaiter(
@@ -2365,7 +2398,7 @@ static partial class SuspendColdLowering
                     awaitableType,
                     awaiterType,
                     awaitable,
-                    noCapture,
+                    captureValue,
                     resultTok,
                     methodTypeArgs)));
             // if (this.<aw>.IsCompleted) goto L_state;   (sync fast path — no suspension)
@@ -2474,7 +2507,8 @@ static partial class SuspendColdLowering
 
         // `this.<aw> = <getAwaiter>()` for the resolved awaitable pattern. Three entry shapes:
         //   member GetAwaiter (Task/ValueTask)        -> clrInstance on the awaitable
-        //   #3 ConfigureAwait(false) opt-out          -> clrInstance GetAwaiter on `awaitable.ConfigureAwait(false)`
+        //   a captureContext argument (#3/#64)        -> clrInstance GetAwaiter on `awaitable.ConfigureAwait(<value>)`,
+        //                                                the value being whatever the call passed — constant or not
         //   referenced extension GetAwaiter (WinRT)   -> clrStatic (non-generic) / clrGenericStatic (generic, over the
         //                                                result type) on the [Extension] static class, awaitable as arg0
         JsonNode BuildGetAwaiter(
@@ -2482,13 +2516,13 @@ static partial class SuspendColdLowering
             TypeNode awaitableType,
             TypeNode awaiterType,
             JsonNode task,
-            bool noCapture,
+            JsonNode captureValue,
             TypeNode resultTok,
             TypeNode[] methodTypeArgs)
         {
-            if (noCapture)
+            if (captureValue != null)
             {
-                // configured = awaitable.ConfigureAwait(false); this.<aw> = configured.GetAwaiter();
+                // configured = awaitable.ConfigureAwait(<captureContext>); this.<aw> = configured.GetAwaiter();
                 var configuredType = new TypeNode.Fqn(plan.ConfiguredAwaitableDefName,
                     plan.ConfiguredAwaitableGeneric
                         ? (awaitableType as TypeNode.Fqn)?.Args
@@ -2497,7 +2531,7 @@ static partial class SuspendColdLowering
                 {
                     ["k"] = "clrInstance", ["type"] = Tw(awaitableType), ["method"] = "ConfigureAwait",
                     ["recv"] = task, ["argTypes"] = new JsonArray { Tw(BoolTn) },
-                    ["args"] = new JsonArray { BoolConst(false) }, ["ret"] = Tw(configuredType),
+                    ["args"] = new JsonArray { captureValue }, ["ret"] = Tw(configuredType),
                 };
                 return new JsonObject
                 {
@@ -3460,7 +3494,7 @@ static partial class SuspendColdLowering
                 ["recv"] = Local("__tcs"), ["ret"] = Tw(taskType),
             };
             var getAwaiter = BuildGetAwaiter(taskPlan, taskType, awaiterType, task,
-                noCapture: false,
+                captureValue: null,
                 resultTok: UnitTn,
                 methodTypeArgs: System.Array.Empty<TypeNode>());
             body.Add(new JsonObject
