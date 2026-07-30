@@ -15,11 +15,6 @@ set -euo pipefail
 # one of these substrings to be tolerated. Keys are narrow fixture/method or emitted-type identifiers so they only mask
 # the documented shape.
 declare -A ILVERIFY_XFAIL=(
-	# #174: the generic class-delegation (#81) forwarder narrows the MutableList iterator()/listIterator() return to the
-	# read-only Iterator/ListIterator where the Mutable slot is formally expected. Runtime-safe (the backing MutableList
-	# returns a real Mutable iterator; RUN green). Keyed by the emitted type name (backtick-free — a raw generic-arity
-	# backtick in a bash double-quoted map key triggers command substitution) to cover all three narrowed forwarders.
-	["CorADelTracked"]="#174: class-delegation (#81) forwarder narrows MutableList iterator()/listIterator() return to the read-only Iterator/ListIterator where Mutable is expected — runtime-safe covariance-erasure (RUN green)"
 	# #18 (migrated ktproj-genq): a re-imported generic factory `holderOf(): Vault<T?>` whose bir2cir
 	# NullableGenericErasure object-erases the nested Nullable(Tv) to `Vault<object>`; the [KotlinNullableGeneric]
 	# round-trip restores `Vault<String?>` at the frontend, so the call's erased `Vault<object>` return meets the

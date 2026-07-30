@@ -3,11 +3,6 @@
 // drive; each old `main` + stdout golden becomes one @TestAttribute method asserting values 1:1 (side effects that
 // were `println`'d are captured into a list and asserted positionally).
 //
-// ILVERIFY NOTE: classdeleg carries a runtime-safe formal-only finding (GitHub #174, same covariance-erasure class as
-// #12/#46): the generic class-delegation forwarder narrows MutableList iterator()/listIterator() to the read-only
-// Iterator/ListIterator where the Mutable* slot is formally expected. The RUN lane is green; the finding is baselined
-// for DotKt.Tests.Coroutines.dll in tests/run-ilverify.sh.
-//
 // Coverage preserved (old case -> method):
 //   il-classdeleg    -> classDelegation_forwarders            (#81: single/two/expr/generic $$delegate_N fields)
 //   il-adapterref    -> adapterRef_memberReferenceCoercion    (#84 G: bound/unbound member ref -> inline forEach)
@@ -64,6 +59,23 @@ class DelegationCallableReferenceTests {
         t.add("c")
         assertEquals(3, t.size)   // 3
         assertEquals("c", t[2])   // c
+
+        val listIterator = t.listIterator()
+        assertEquals("a", listIterator.next())
+        listIterator.set("A")
+        listIterator.add("x")
+        assertEquals("x", listIterator.previous())
+        listIterator.remove()
+        assertEquals(3, t.size)
+        assertEquals("A", t[0])
+        assertEquals("b", t[1])
+
+        val iterator = t.iterator()
+        assertEquals("A", iterator.next())
+        iterator.remove()
+        assertEquals(2, t.size)
+        assertEquals("b", t[0])
+        assertEquals("c", t[1])
     }
 
     @TestAttribute
