@@ -27,9 +27,10 @@
 //   toplevelValVar              <- roundtrip-toplevel-val   (#195)  bare top-level val/var -> plain static FIELD (no accessor) resolved through the reference KLIB
 //   crossModuleContextParameters                             context parameters restored AS context parameters from
 //                                                             [KotlinContextParameter] (functions, defaults, properties)
+//   crossModuleNothingBranchMerge <- roundtrip-nothing       (#135/#197) companion-static + top-level `fun f(): Nothing`
+//                                                             in a value merge; the merge is now well-typed IL, which
+//                                                             is what let this section leave the stdout-only shell lane
 // STAYED in the shell lane (tests/roundtrip/scenarios/run.sh):
-//   roundtrip-nothing         — a cross-module Nothing branch merges an `object`-returning call with `string`
-//                               (StackUnexpected object/string; else-branch throws so RUN is green). Tracked as #197.
 //   roundtrip-generic-hof / roundtrip-receiver-lambda — now formally clean after low-arity delegate ABI unification;
 //                               pending only mechanical migration to this in-process lane.
 // (roundtrip-comparable-meta stays in shell as a full reference-KLIB round-trip.)
@@ -57,6 +58,7 @@ import roundtrip.memext.Lib
 import roundtrip.money.Money
 import roundtrip.genop.Arr
 import roundtrip.nothingret.pick
+import roundtrip.nothingret.Boom
 import roundtrip.nothingret.fail as nothingretFail
 import roundtrip.pkg.Vec
 import roundtrip.pkg.Dir
@@ -369,6 +371,64 @@ class KotlinApiShapeRoundtripTests {
         val y: String = if (true) "ok" else nothingretFail("x")             // String only if fail(): Nothing round-tripped
         ClassicAssert.AreEqual("ok", y)                          // ok
     }
+
+    // roundtrip-nothing (#135/#197): a CROSS-MODULE re-imported `fun f(): Nothing` — companion-static and
+    // top-level — used in a VALUE MERGE. Two facts at once, and both are load-bearing here:
+    //   (a) the Nothing return round-trips, so `val r: String = if (c) "kept" else Boom.Companion.boom()` still types as
+    //       String rather than widening to Any? — if it widened, this file would not COMPILE;
+    //   (b) the merge is well-typed IL. Nothing erases to a CLR `object` return, and letting that reach the merge
+    //       put an `object` where a `string` belongs (ilverify StackUnexpected) though the arm always throws, so
+    //       the RUN was green. That formal-only gap is exactly what kept this case in the shell lane, which
+    //       asserts stdout and never ilverifies; bir2cir now terminates the Nothing arm, so it runs HERE.
+    @TestAttribute
+    fun crossModuleNothingBranchMerge() {
+        ClassicAssert.AreEqual("kept", pickNothing(1))           // kept   the section's golden stdout value
+        ClassicAssert.AreEqual("kept2", nothingInThenArm(1))     // kept2  Nothing in the THEN arm
+        ClassicAssert.AreEqual("big", nothingInWhenArm(9))       // big    a `when` with a Nothing arm
+        ClassicAssert.AreEqual("e", nothingInElvis("e"))         // e      elvis whose right-hand side is Nothing
+        ClassicAssert.AreEqual("ok", nothingAsBlockTail(1))      // ok     block arm ENDING in the Nothing call
+        ClassicAssert.AreEqual(7, nothingIntoValueSlot(1))       // 7      a VALUE-typed (Int) merge
+        // The Nothing arms still throw their own exception, across the module boundary.
+        ClassicAssert.AreEqual("boom", try { pickNothing(-1) } catch (e: RuntimeException) { e.message })
+        ClassicAssert.AreEqual("x", try { nothingInThenArm(-1) } catch (e: RuntimeException) { e.message })
+        ClassicAssert.AreEqual("mid", try { nothingInWhenArm(3) } catch (e: RuntimeException) { e.message })
+        ClassicAssert.AreEqual("nul", try { nothingInElvis(null) } catch (e: RuntimeException) { e.message })
+        ClassicAssert.AreEqual("tail", try { nothingAsBlockTail(-1) } catch (e: RuntimeException) { e.message })
+        ClassicAssert.AreEqual("int", try { nothingIntoValueSlot(-1).toString() } catch (e: RuntimeException) { e.message })
+        // BOTH arms Nothing — the conditional itself produces no value. Each arm has a different producer, so both
+        // have to run: `n = 1` is the top-level one, `n = -1` the companion-static one.
+        ClassicAssert.AreEqual("both", try { nothingInBothArms(1) } catch (e: RuntimeException) { e.message })
+        ClassicAssert.AreEqual("boom", try { nothingInBothArms(-1) } catch (e: RuntimeException) { e.message })
+        // DEFAULT-PACKAGE producers (Nothingdefault.kt): a root-namespace file class and a root-namespace companion,
+        // both resolved with no package qualifier. The `val r: String =` typing is the load-bearing part — it holds
+        // only if [KotlinNothing] survived the round trip through default-package attribution.
+        val d: String = if (1 >= 0) "kept" else rtDefaultFail("d")
+        ClassicAssert.AreEqual("kept", d)
+        ClassicAssert.AreEqual("dflt", try { defaultPkgPick(-1) } catch (e: RuntimeException) { e.message })
+        ClassicAssert.AreEqual("default-boom", try { defaultPkgBoom(-1) } catch (e: RuntimeException) { e.message })
+        ClassicAssert.AreEqual("kept", defaultPkgPick(1))
+    }
+    private fun defaultPkgPick(n: Int): String = if (n >= 0) "kept" else rtDefaultFail("dflt")
+    private fun defaultPkgBoom(n: Int): String = if (n >= 0) "kept" else RtDefaultBoom.Companion.boom()
+    // The section's own consumer shape: a companion-static Nothing in the else arm, then a top-level one.
+    private fun pickNothing(n: Int): String {
+        val r: String = if (n >= 0) "kept" else Boom.Companion.boom()
+        return if (n >= 0) r else nothingretFail("x")
+    }
+    private fun nothingInThenArm(n: Int): String = if (n < 0) nothingretFail("x") else "kept2"
+    private fun nothingInWhenArm(n: Int): String =
+        when { n > 5 -> "big"; n > 0 -> nothingretFail("mid"); else -> "small" }
+    private fun nothingInElvis(s: String?): String = s ?: nothingretFail("nul")
+    private val nothingLog = mutableListOf<String>()
+    private fun nothingAsBlockTail(n: Int): String =
+        if (n >= 0) "ok" else { nothingLog.add("side"); nothingretFail("tail") }
+    private fun nothingInBothArms(n: Int): String = if (n >= 0) nothingretFail("both") else Boom.Companion.boom()
+    private fun nothingIntoValueSlot(n: Int): Int = if (n >= 0) 7 else nothingretFail("int")
+    // NOT covered here: a covariant override returning `Nothing` against a RE-IMPORTED interface. The in-module twin
+    // is tests/basic CovariantInterfaceReturnTests.covariantOverrideReturningNothing; cross-module, bir2cir never
+    // synthesizes the bridge at all (its synthesizer resolves interface slots from the staged BIR only, so a
+    // reference-KLIB interface is invisible to it) and the override claims the slot directly with its erased
+    // signature — a TypeLoadException at class load, not this issue's value-merge, and not Nothing-specific.
 
     // roundtrip-pkg: namespaces; reified inline -> generic method; cross-module inline + non-local return;
     // properties (custom getter + mutable write); top-level ext operator + ext property; vararg; default; nullable.
