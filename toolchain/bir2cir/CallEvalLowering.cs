@@ -17,7 +17,8 @@ using DotKt.Bir;
 //     in its own slot, so the emitted CIR is what it would have been without a plan;
 //   * a binding with SEVERAL readers becomes a `var`, so the value is evaluated once and every reader loads it;
 //   * a binding NOTHING reads is evaluated as a `var` anyway, because Kotlin evaluates every value the call supplies —
-//     unless evaluating it is unobservable (ValueStability.IsDroppable), in which case it is dropped;
+//     unless evaluating it is unobservable (ValueStability.IsDroppable), in which case it is dropped
+//     (docs/dotkt-semantics.md §7a);
 //   * ORDER is never traded: if any binding becomes a `var`, every earlier non-stable binding becomes one too, or its
 //     evaluation would slide behind it. That rule is what the three failed attempts in PR #270 each gave up one of.
 //
@@ -179,8 +180,10 @@ static class CallEvalLowering
         {
             var expr = (bindings[i] as JsonObject)["expr"];
             var count = reads[ids[i]];
-            // Nothing reads it and evaluating it cannot be observed — the emitted call shape simply has no slot for
-            // this value (a companion object's dispatch receiver, say). Drop it rather than mint a dead local.
+            // NOTHING READS IT: the emitted call shape has no slot for this value. Q2 alone decides what happens then
+            // (docs/dotkt-semantics.md §7a) — drop it if evaluating it cannot be observed, otherwise evaluate it into
+            // a local nobody reads, because Kotlin evaluated it. `stable` has no say here: it answers whether a value
+            // may be read TWICE, which is not a licence to read it ZERO times.
             drop[i] = count == 0 && ValueStability.IsDroppable(expr);
             // A STABLE value is free to re-read, so it inlines at every reader — wherever the reader is, since re-reading
             // it cannot observe a different value or a side effect. An ADDRESS is not a value at all — no storage holds a
@@ -188,8 +191,15 @@ static class CallEvalLowering
             // this binding's own position in the loop below. Everything else needs a local unless exactly one reader puts
             // it back where it already was, at the point the call itself is evaluated — or unless the producer has
             // already decided (`force`), in which case that decision is the whole answer.
-            asVar[i] = !drop[i] && !stable[i] && kinds[i] != "address"
-                && (force != null ? force[i] : count != 1 || deferred.Contains(ids[i]));
+            //
+            // The zero-reader arm and `force` are ORTHOGONAL and both apply. `count == 0` is not an ordering question at
+            // all — it asks whether an evaluation Kotlin performed may be skipped, which only Q2 above answers — so it
+            // outranks `stable` AND is asked whether or not the producer supplied an ordering. A stage-0 plan reaches it
+            // through its own terminal rule: the operands left of a never-returning one lose their reader when the node
+            // is truncated, and they must still be evaluated unless evaluating them is unobservable.
+            asVar[i] = !drop[i] && kinds[i] != "address"
+                && (count == 0
+                    || (!stable[i] && (force != null ? force[i] : count != 1 || deferred.Contains(ids[i]))));
         }
         // ORDER, rule 1 — INVERSION. Skipped under `force` (see above). An inlined binding is evaluated at its reader's position, and a plan's order is
         // NOT the node's: an omitted default occupies a slot the callee declared, while Kotlin evaluates it after every
@@ -367,6 +377,25 @@ static class CallEvalLowering
         node is JsonObject o && Str(o["k"]) is
             "local" or "this" or "field" or "staticField" or "arrayGet" or "stackGet" or "byrefLoad" or "nullableValue";
 
+    /// May this child of an addressable location STAY where it is, or must it be pinned into a local?
+    ///
+    /// NOT Q2, though it once shared Q2's implementation and reads like it. Q2 asks whether an evaluation may be
+    /// SKIPPED; nothing is skipped here — every operand of a location is evaluated, the only question is whether it
+    /// is evaluated in the slot or one statement earlier, out of a local. What decides that is STORAGE IDENTITY: a
+    /// `this`/`local`/`field`/`staticField` chain is the location's own path, and pinning a link of it would take the
+    /// address of the LOCAL — a copy for a value type, so a callee writing through the `byref` would update the copy
+    /// and not `a.b.c`. A `const` or `classRef` is not a location link but has nothing to pin either.
+    ///
+    /// Deliberately says nothing about side effects. A `field` link can throw and a `staticField` link can run a type
+    /// initializer; both stay, and both then happen at the location's own position, which is where Kotlin puts them.
+    static bool StaysInLocation(JsonNode? node) => node is JsonObject o && Str(o["k"]) switch
+    {
+        "const" or "this" or "local" or "bindRef" or "default" or "classRef"
+            or "staticField" or "enumValue" => true,
+        "field" => StaysInLocation(o["recv"]),
+        _ => false,
+    };
+
     /// Would [PinLocationOperands] emit anything? Asked before the emission loop, because a binding that emits
     /// pre-call statements participates in the ordering rule.
     static bool LocationHasPinWork(JsonNode location)
@@ -375,7 +404,7 @@ static class CallEvalLowering
         var found = false;
         WalkOperands(location as JsonObject, child =>
         {
-            if (ValueStability.IsDroppable(child)) return null;
+            if (StaysInLocation(child)) return null;
             found = true;
             return null;                              // probe only: never rewrite
         });
@@ -388,12 +417,12 @@ static class CallEvalLowering
     /// Shape-agnostic on purpose: kotc renders an address through the ordinary expression emitter, so a location is
     /// whatever the lvalue happens to be — a bare `local`, a `field` over a receiver chain, an `arrayGet` over an array
     /// and an index, a member access. The rule is the same for all of them: the NODE is the location and stays, its
-    /// operand CHILDREN are values and are pinned when impure. Recursing through the pure ones keeps a chain
-    /// (`a.b.c[i()]`) pinning only the links that actually carry a side effect.
+    /// operand CHILDREN are values and are pinned when impure. Recursing through the links that STAY ([StaysInLocation])
+    /// keeps a chain (`a.b.c[i()]`) pinning only the operands that actually carry a side effect.
     static void PinLocationOperands(JsonNode location, JsonArray into) =>
         WalkOperands(location as JsonObject, child =>
         {
-            if (ValueStability.IsDroppable(child)) { PinLocationOperands(child, into); return null; }
+            if (StaysInLocation(child)) { PinLocationOperands(child, into); return null; }
             return PinValue(child, into);
         });
 

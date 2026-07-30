@@ -174,14 +174,22 @@ internal fun BirEmitter.filledArgs(
 	//   Under a plan both are bound EAGERLY and dispatch-first, because Kotlin evaluates a receiver before every
 	// argument and the binding order IS the evaluation order. Without a plan they stay lazy: rendering a receiver has
 	// synthesis side effects (a lifted method appended to the file class for a non-capturing lambda, a consumed synth
-	// index), so an unread one must not be forced for a rendering that is then discarded.
+	// index), so an unread one must not be forced for a rendering that is then discarded. An OBJECT REFERENCE receiver
+	// is neither bound nor forced — see [needsPlanBinding].
 	val dispatchRecv: Lazy<String?> = lazy {
-		dispatchReceiver(call)?.let { r -> plan?.bindValue(r, "recv", "receiver of '$label'") ?: expr(r) }
+		dispatchReceiver(call)?.let { r ->
+			(if (needsPlanBinding(r)) plan else null)?.bindValue(r, "recv", "receiver of '$label'") ?: expr(r)
+		}
 	}
 	val extRecv: Lazy<String?> = lazy {
-		extensionReceiver(call)?.let { r -> plan?.bindValue(r, "recv", "extension receiver of '$label'") ?: expr(r) }
+		extensionReceiver(call)?.let { r ->
+			(if (needsPlanBinding(r)) plan else null)?.bindValue(r, "recv", "extension receiver of '$label'") ?: expr(r)
+		}
 	}
-	if (plan != null) { dispatchRecv.value; extRecv.value }
+	if (plan != null) {
+		if (dispatchReceiver(call)?.let { needsPlanBinding(it) } == true) dispatchRecv.value
+		if (extensionReceiver(call)?.let { needsPlanBinding(it) } == true) extRecv.value
+	}
 	// The instance the ENCLOSING-this chain hangs off: this call's own dispatch receiver — an inner-class member reaches
 	// `this@Outer` from its own `this`, and an inner-class `new` takes the enclosing instance AS its dispatch receiver
 	// (the leading arg the caller emits, which reads this same value through `expr`).
@@ -489,10 +497,11 @@ internal fun BirEmitter.filledExternalArgs(call: org.jetbrains.kotlin.ir.express
 	val plan = if (planNeeded) callPlan(call) else null
 	val label = calleeLabel(callee)
 	// The receivers, bound FIRST and dispatch-first — Kotlin evaluates them before every argument, and the binding
-	// order IS the evaluation order. The caller reads them back through the ordinary `expr()`.
+	// order IS the evaluation order. The caller reads them back through the ordinary `expr()`. An OBJECT REFERENCE
+	// receiver is not bound (see [needsPlanBinding]); the caller's `expr()` renders it in place.
 	if (plan != null) {
-		dispatchReceiver(call)?.let { plan.bindValue(it, "recv", "receiver of '$label'") }
-		extensionReceiver(call)?.let { plan.bindValue(it, "recv", "extension receiver of '$label'") }
+		dispatchReceiver(call)?.let { if (needsPlanBinding(it)) plan.bindValue(it, "recv", "receiver of '$label'") }
+		extensionReceiver(call)?.let { if (needsPlanBinding(it)) plan.bindValue(it, "recv", "extension receiver of '$label'") }
 	}
 	val out = ArrayList<String>()
 	// PHASE 1 — the SUPPLIED values, positionally; PHASE 2 below fills the omissions, which Kotlin evaluates after all
@@ -554,6 +563,31 @@ internal fun BirEmitter.regularArgs(call: org.jetbrains.kotlin.ir.expressions.Ir
 	return call.arguments.mapIndexedNotNull { i, a ->
 		if (a != null && i < params.size && isValueParameter(params[i])) a else null
 	}
+}
+
+/** Does this receiver need a call-evaluation-plan BINDING of its own, or may it stay in its slot?
+ *
+ *  Everything does, except a reference to an object THIS BACKEND GIVES NO INSTANCE: a plain `companion object`, which
+ *  is FLATTENED onto its enclosing class (the `callStatic` arm below, and [inlineReceiverParts] for the inline
+ *  payload), and a projected .NET static holder, which dll2klib surfaces as exactly such a companion. For those the
+ *  emitted call has no receiver slot to read a binding back from, so binding one leaves a binding NOTHING reads whose
+ *  expression is a read of an `INSTANCE` field that is never emitted. It only ever survived because bir2cir happened
+ *  to drop unread pure-looking loads; it is the producer's job not to mint it. Nothing is lost: there is no value
+ *  there to evaluate.
+ *
+ *  A REAL `object`, and a SUPER-TYPED companion (lifted to its own `<Outer>.<N>CompanionObject` singleton, see
+ *  [superTypedCompanion]), are the opposite case and stay bound. Their `INSTANCE` exists, and loading it RUNS THE
+ *  TYPE INITIALIZER — the object's own body — which can print, throw, or mutate. That is an observable evaluation
+ *  (docs/dotkt-semantics.md §7a), and Kotlin evaluates the receiver BEFORE every argument, so it needs a binding to
+ *  hold that position: without one, `O.f(side())` lets `side()` run first, and if `O`'s initializer throws it must
+ *  not have run at all.
+ *
+ *  Asked at EVERY receiver binding site, ordinary and inline ([filledArgs], [filledExternalArgs], and the three in
+ *  BirEmitterInline): the rule is about what the value IS, not about which emitter reached it. */
+internal fun BirEmitter.needsPlanBinding(receiver: IrExpression): Boolean {
+	val obj = (receiver as? IrGetObjectValue)?.symbol?.owner ?: return true
+	val enclosing = obj.parent as? IrClass ?: return true
+	return !(obj.isCompanion && superTypedCompanion(enclosing) == null)
 }
 
 internal fun BirEmitter.dispatchReceiver(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): IrExpression? {

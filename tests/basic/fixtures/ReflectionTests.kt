@@ -59,6 +59,18 @@ class ReflectionTests {
         assertEquals("kotlin.Byte", Byte::class.qualifiedName)
     }
 
+    // The DOUBLE class literal: `(Int::class)::class` reflects the KClass VALUE, not the class it names. The
+    // receiver reaching the const-fold is a `classRef`, whose type slot carries the type it REFERS TO — reading that
+    // as the value's own static type folded this to "Int", i.e. the answer for `Int::class` one level down. The
+    // receiver is statically a `KClass`, so it takes the run-time read like every other KClass-typed receiver (§5g:
+    // that read still reports the CLR name — a KNOWN GAP, but the identity is the right one).
+    @TestAttribute
+    fun doubleClassLiteralReflectsTheKClassNotTheClassItNames() {
+        assertEquals("RuntimeType", (Int::class)::class.simpleName)          // was "Int"
+        assertEquals("System.RuntimeType", (Int::class)::class.qualifiedName) // was "kotlin.Int"
+        assertEquals("Int", Int::class.simpleName)                           // CONTROL: one level down still folds
+    }
+
     // A generic class literal drops its type args -> the raw type name, never a backtick-mangled `IList``1`.
     @TestAttribute
     fun reportsRawName() {

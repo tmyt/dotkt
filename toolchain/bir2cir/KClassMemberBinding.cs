@@ -16,8 +16,9 @@ using DotKt.Bir;
 // Kotlin identity is still in hand. Foldable cases:
 //   • classRef — ALWAYS: the token IS the literal type (`Int::class` -> "Int"/"kotlin.Int", `Box::class` -> "Box").
 //   • getType — when the argument's static type is a KNOWN-FINAL builtin (the primitive tower, String, the specialized
-//     arrays, Unit/Nothing) AND the argument is side-effect-free (a `const`/`local`, NOT a wrapper/call — see below). A
-//     final type has no subtypes, so the RUNTIME class == the static type;
+//     arrays, Unit/Nothing) AND folding the argument away drops no evaluation (Q2, `ValueStability.IsDroppable`: a
+//     `const`/`local`/`this`/plan read, NOT a wrapper/call — see below). A final type has no subtypes, so the RUNTIME
+//     class == the static type;
 //     `1::class` -> "Int"/"kotlin.Int", `"x"::class` -> "String"/"kotlin.String" — the reported failures. (Not folding a
 //     side-effecting `foo()::class` receiver keeps `foo()`'s evaluation.)
 // Everything else keeps the faithful run-time `System.Type.Name`/`.FullName` read:
@@ -29,8 +30,11 @@ using DotKt.Bir;
 //     ARE the Kotlin qualified/simple name (no CLR rename), so the run-time read is correct. A GENERIC user class reads
 //     back backtick-mangled (`Box`1`) and a NESTED one uses the CLR `+` separator (`Outer+Inner`); those two shapes join
 //     the §5g dynamic follow-up (an UNBOUND `Box::class`/`Outer.Inner::class` is already exact via the classRef fold).
-//   • a BOUND `getType` whose receiver is a SMART-CAST wrapper (`cast`/`nullableValue`) or a bare `this` — not folded
-//     (a `cast` node also carries a throwing explicit `as`, so it is not safe to drop); §5g dynamic follow-up.
+//   • a BOUND `getType` whose receiver is a SMART-CAST wrapper (`cast`/`nullableValue`) — not folded (a `cast` node
+//     also carries a throwing explicit `as`, so dropping it would drop the throw); §5g dynamic follow-up.
+//   • a BOUND `getType` on a `classRef` — the DOUBLE class literal `(Int::class)::class`, whose receiver is a KClass,
+//     not an Int. A classRef's type slot names the REFERENCED type, so reading it as the value's type would fold to
+//     the wrong name; see [CarriesItsOwnType]. Routed to the run-time read like any other KClass-typed receiver.
 // Non-ref only (the ref stdlib keeps KClass pure Kotlin). Bottom-up rewrite, mirroring ClrEventSubscriptionBinding.
 static class KClassMemberBinding
 {
@@ -112,11 +116,21 @@ static class KClassMemberBinding
         // not a reflected instance).
         "classRef" => FqnOf(recv["type"]),
         // Bound `value::class` — resolvable iff the value's static type is a known-final builtin (runtime class == static
-        // type) AND the value is side-effect-free, so folding away the receiver drops no evaluation.
-        "getType" when recv["e"] is JsonObject e && (Str(e["k"]) is "const" or "local")
+        // type) AND folding the receiver away drops no evaluation. That last test is Q2 of the value questions
+        // (bir-common/ValueStability.cs), asked here for the same reason CallEvalLowering asks it of a binding nothing
+        // reads: this fold makes the receiver unread, so it may only be removed where evaluating it is unobservable.
+        "getType" when recv["e"] is JsonObject e && ValueStability.IsDroppable(e) && CarriesItsOwnType(e)
             && FqnOf(e["sty"] ?? e["type"]) is string st && KnownFinal.Contains(st) => st,
         _ => null,
     };
+
+    // Does this node's `sty`/`type` slot name the type of the VALUE it produces? For almost every kind it does, which
+    // is what lets the bound-`::class` fold above read the receiver's static type straight off it. `classRef` is the
+    // exception and the reason this test exists: its `type` is the type the token REFERS TO, not the type it IS
+    // (kotc emits `{"k":"classRef","type":<the referenced type>}`, BirEmitterExpressions `IrClassReference`) — the
+    // value is a `System.Type`. Reading it as the value's type folds `(Int::class)::class.simpleName` to "Int",
+    // which is the name of the class the token names, not of the token. The receiver there is a `KClass`.
+    static bool CarriesItsOwnType(JsonObject o) => Str(o["k"]) != "classRef";
 
     // The Kotlin FQN a type slot names — the bare Fqn, or a nullable-of-Fqn unwrapped to its core (an inline-spliced
     // `T::class` with a nullable T arg, or a `String?` receiver; the Kotlin answer is the non-null identity's name).

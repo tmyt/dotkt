@@ -39,7 +39,7 @@ tool_src    = $(shell find toolchain/$(1) toolchain/bir-common -name '*.cs' -o -
 # Aggregate targets
 # ==================================================================================================
 .PHONY: all toolchain kotc $(TOOLS) stdlib stdlib-klib stdlib-ref stdlib-rt pack \
-        verify verify-core verify-tests verify-schema verify-sanity verify-msbuild verify-packaged-sdk \
+        verify verify-core verify-tests verify-schema verify-sanity verify-lowering verify-msbuild verify-packaged-sdk \
         verify-roundtrip verify-wide-delegates \
         dev dll2klib-e2e clean clean-tools clean-stdlib clean-pack help
 
@@ -104,7 +104,7 @@ verify: verify-core verify-packaged-sdk ## run ALL gates (the canonical set + th
 # The canonical gate set EXCEPT the packaged-SDK gate. CI runs verify-core in the main job and
 # verify-packaged-sdk as a DISTINCT release-blocking job (GitHub #160), so the split lives here — not
 # copied into the workflow YAML. `make verify` still runs the complete set (verify-core + packaged-sdk).
-verify-core: verify-tests verify-schema verify-sanity verify-msbuild verify-roundtrip verify-wide-delegates ## every gate except the packaged-SDK release gate
+verify-core: verify-tests verify-schema verify-sanity verify-lowering verify-msbuild verify-roundtrip verify-wide-delegates ## every gate except the packaged-SDK release gate
 
 verify-tests: pack ## canonical compiler behavior gate (categorized NUnit suites + ILVerify + the negative compile lane)
 	bash tests/run-nunit-tests.sh
@@ -115,6 +115,9 @@ verify-schema: ## the #37 BIR/CIR freeze enforcer (types-are-nodes + canonical k
 
 verify-sanity: ## the offline IR-sanity gate (#112 P4 — semantic invariants over fresh BIR/CIR); run AFTER verify-tests
 	bash tests/ir/run-sanity.sh
+
+verify-lowering: ## lowering self-tests (synthetic BIR -> bir2cir -> CIR assertions, for rules the corpus no longer witnesses)
+	bash tests/ir/run-lowering.sh
 
 verify-msbuild: ## stateful MSBuild integration (same obj/ across source mutation)
 	bash tests/msbuild/run.sh
