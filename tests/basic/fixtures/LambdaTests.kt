@@ -76,6 +76,9 @@ fun wcCounterViaObject(): Int {
 fun funrefIsEven(n: Int): Boolean = n % 2 == 0
 fun funrefSquare(n: Int): Int = n * n
 fun funrefGreet(name: String): String = "Hi, $name"
+fun funrefRender(n: Int): String = "n=$n"
+fun <T> funrefJoinRendered(xs: List<T>, render: (T) -> String): String =
+    xs.joinToString(",", transform = render)
 class FunrefCalc(val base: Int) {
     fun addTo(x: Int): Int = base + x
     open fun label(): String = "calc$base"
@@ -163,6 +166,12 @@ class LambdaTests {
         val unb = FunrefCalc::addTo                                                   // unbound (FunrefCalc, Int) -> Int
         assertEquals(203, unb(FunrefCalc(200), 3))                                    // 203
         assertEquals(42, funrefApplyTo(FunrefCalc::addTo, FunrefCalc(40), 2))         // 42
+        // #190: a non-literal `(Int) -> String` must be adapted at the call boundary when
+        // `joinToString` requires `(Int) -> CharSequence`; both stored and callable-reference values.
+        val render: (Int) -> String = { n -> "v=$n" }
+        assertEquals("v=1,v=2,v=3", listOf(1, 2, 3).joinToString(",", transform = render))
+        assertEquals("n=4,n=5", listOf(4, 5).joinToString(",", transform = ::funrefRender))
+        assertEquals("g=6,g=7", funrefJoinRendered(listOf(6, 7)) { n -> "g=$n" })
     }
 
     @TestAttribute

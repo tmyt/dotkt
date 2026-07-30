@@ -106,11 +106,12 @@ static class StringCharSequenceBridge
         }
     }
 
-    public static JsonNode Apply(JsonNode root, ReferenceMetadataIndex refs = null,
-        CharSeqStringLowering.CharSeqRetLambdas retLambdas = null)
+    public static JsonNode Apply(JsonNode root, ReferenceMetadataIndex refs,
+        CharSeqStringLowering.CharSeqRetLambdas retLambdas, out bool materializedDelegateAdapter)
     {
         _refs = refs;
         _fired = false;
+        _delegateAdapterFired = false;
         _retLambdas = retLambdas;
         // #170 — a lifted lambda bound into a delegate whose declared RETURN is the synthetic `dotkt$CharSequence`
         // (CharSeqStringLowering recorded these before it collapsed the CharSequence-return signal to `string`). Retype
@@ -131,6 +132,7 @@ static class StringCharSequenceBridge
             types.Add(JsonNode.Parse(AdapterTypeJson));
             _adapterEmitted = true;
         }
+        materializedDelegateAdapter = _delegateAdapterFired;
         return walked;
     }
 
@@ -216,11 +218,186 @@ static class StringCharSequenceBridge
         var n = Math.Min(sig.Count, args.Count);
         for (var i = 0; i < n; i++)
         {
-            if (TypeJson.Read(sig[i]) is not TypeNode tn || !IsCharSeqT(tn) || args[i] is not JsonNode a) continue;
-            var c = CoerceCharSeqArg(a, env, nonNullSlot: tn is TypeNode.Fqn);
-            if (!ReferenceEquals(c, a)) args[i] = c;
+            if (TypeJson.Read(sig[i]) is not TypeNode tn || args[i] is not JsonNode a) continue;
+            if (IsCharSeqT(tn))
+            {
+                var c = CoerceCharSeqArg(a, env, nonNullSlot: tn is TypeNode.Fqn);
+                if (!ReferenceEquals(c, a)) args[i] = c;
+                continue;
+            }
+            // #190: Kotlin function-return covariance is not CLR delegate covariance when the logical relation
+            // `String : CharSequence` is represented physically by `String` plus an adapter object. A stored
+            // `(P...) -> String` value (or a callable reference) therefore cannot flow directly into a
+            // `(P...) -> CharSequence` call slot: Func<P...,String> is not assignable to
+            // Func<P...,dotkt$CharSequence>. Materialize a closure that captures the SOURCE delegate, forwards the
+            // same parameters, invokes it exactly once, and wraps its String result. This is a call-boundary rule,
+            // not a lambda-kind rule, so locals, callable refs, bound refs, and future delegate producers agree.
+            //
+            // A generic callee's sig is declaration-relative (`tv{method,i}` / `tv{type,i}`); specialize it with
+            // the call's own typeArgs/owner args before comparing its delegate parameters with the caller-static
+            // source type. The synthesized closure remains generic over any CALLER-frame TVs that survive.
+            if (TryDelegateReturnAdapter(node, tn, a, env) is JsonNode adapted)
+                args[i] = adapted;
         }
     }
+
+    static JsonNode TryDelegateReturnAdapter(JsonObject call, TypeNode slotType, JsonNode value, Env env)
+    {
+        if (UnwrapFn(slotType) is not TypeNode.Fn openTarget || !IsCharSeqT(openTarget.Ret)) return null;
+        var target = SpecializeCallType(openTarget, call) as TypeNode.Fn;
+        var source = ExprType(value, env) is TypeNode st ? UnwrapFn(st) : null;
+        if (target == null || source == null || source.Suspend || target.Suspend
+            || !IsStringTokT(source.Ret) || !SameDelegateParams(source, target))
+            return null;
+        return BuildDelegateReturnAdapter(value, source, target);
+    }
+
+    static TypeNode.Fn UnwrapFn(TypeNode t) => t switch
+    {
+        TypeNode.Fn f => f,
+        TypeNode.Nullable { Of: TypeNode.Fn f } => f,
+        TypeNode.Oblivious { Of: TypeNode.Fn f } => f,
+        _ => null,
+    };
+
+    static TypeNode ExprType(JsonNode value, Env env)
+    {
+        if (value is JsonObject o && TypeJson.Read(o["funcType"]) is TypeNode ft) return ft;
+        return StaticType.Surface(value, BirScope.FromVars(env.Vars));
+    }
+
+    static bool SameDelegateParams(TypeNode.Fn source, TypeNode.Fn target)
+    {
+        var sp = source.DelegateParams;
+        var tp = target.DelegateParams;
+        if (sp.Length != tp.Length) return false;
+        for (var i = 0; i < sp.Length; i++)
+            if (sp[i] != tp[i]) return false;
+        return true;
+    }
+
+    static TypeNode SpecializeCallType(TypeNode type, JsonObject call)
+    {
+        var methodArgs = ReadTypes(call["typeArgs"]);
+        TypeNode[] ownerArgs = Array.Empty<TypeNode>();
+        if (TypeJson.Read(call["ownerType"] ?? call["owner"]) is TypeNode.Fqn { Args: { } oa })
+            ownerArgs = oa;
+        return SubstCallTvs(type, ownerArgs, methodArgs);
+    }
+
+    static TypeNode[] ReadTypes(JsonNode node)
+    {
+        if (node is not JsonArray arr) return Array.Empty<TypeNode>();
+        var result = arr.Select(TypeJson.Read).ToArray();
+        return result.Any(t => t == null) ? Array.Empty<TypeNode>() : result;
+    }
+
+    static TypeNode SubstCallTvs(TypeNode type, TypeNode[] ownerArgs, TypeNode[] methodArgs) => type switch
+    {
+        TypeNode.Tv { Scope: "type" } tv when tv.I >= 0 && tv.I < ownerArgs.Length => ownerArgs[tv.I],
+        TypeNode.Tv { Scope: "method" } tv when tv.I >= 0 && tv.I < methodArgs.Length => methodArgs[tv.I],
+        TypeNode.Fqn { Args: { } args } f =>
+            new TypeNode.Fqn(f.Name, args.Select(a => SubstCallTvs(a, ownerArgs, methodArgs)).ToArray()),
+        TypeNode.Nullable n => new TypeNode.Nullable(SubstCallTvs(n.Of, ownerArgs, methodArgs)),
+        TypeNode.Oblivious o => new TypeNode.Oblivious(SubstCallTvs(o.Of, ownerArgs, methodArgs)),
+        TypeNode.Array a => new TypeNode.Array(SubstCallTvs(a.Elem, ownerArgs, methodArgs)),
+        TypeNode.ByRef b => new TypeNode.ByRef(SubstCallTvs(b.Of, ownerArgs, methodArgs)),
+        TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, SubstCallTvs(fn.Ret, ownerArgs, methodArgs),
+            fn.Params.Select(p => SubstCallTvs(p, ownerArgs, methodArgs)).ToArray(),
+            fn.Recv == null ? null : SubstCallTvs(fn.Recv, ownerArgs, methodArgs),
+            fn.Clr, fn.Ctx?.Select(c => SubstCallTvs(c, ownerArgs, methodArgs)).ToArray()),
+        _ => type,
+    };
+
+    static JsonObject BuildDelegateReturnAdapter(JsonNode value, TypeNode.Fn source, TypeNode.Fn target)
+    {
+        _fired = true;
+        _delegateAdapterFired = true;
+        var n = System.Threading.Interlocked.Increment(ref _delegateAdapterCounter);
+        var name = "dotkt$StringCharSequenceDelegateAdapter$" + n;
+        var owner = TypeJson.Fqn(name);
+        var sourceType = TypeNode.Write(source);
+        var targetType = TypeNode.Write(target);
+        var fields = new JsonArray
+        {
+            new JsonObject { ["name"] = "source", ["type"] = sourceType.DeepClone() },
+        };
+        var parameters = new JsonArray();
+        var invokeArgs = new JsonArray();
+        var p = target.DelegateParams;
+        for (var i = 0; i < p.Length; i++)
+        {
+            var pn = "p" + i;
+            parameters.Add(new JsonObject { ["name"] = pn, ["type"] = TypeNode.Write(p[i]) });
+            invokeArgs.Add(new JsonObject { ["k"] = "local", ["name"] = pn });
+        }
+        var sourceRead = new JsonObject
+        {
+            ["k"] = "field", ["sty"] = sourceType.DeepClone(), ["ownerType"] = owner.DeepClone(),
+            ["recv"] = new JsonObject { ["k"] = "this" }, ["name"] = "source",
+        };
+        var invoke = new JsonObject
+        {
+            ["k"] = "delegateInvoke", ["funcType"] = sourceType.DeepClone(), ["recv"] = sourceRead, ["args"] = invokeArgs,
+        };
+        var body = new JsonArray
+        {
+            new JsonObject { ["k"] = "return", ["value"] = WrapAdapter(invoke) },
+        };
+
+        // ClosureSynthesis rebinds each surviving caller-frame TV to this generated class's type-parameter frame.
+        // List a TV once, in deterministic first-use order, and pass the same outer tokens as construction typeArgs.
+        var typeArgs = new List<TypeNode.Tv>();
+        CollectTvs(source, typeArgs);
+        CollectTvs(target, typeArgs);
+        var synth = new JsonObject
+        {
+            ["name"] = name,
+            ["fields"] = fields,
+            ["params"] = parameters,
+            ["ret"] = TypeNode.Write(target.Ret),
+            ["body"] = body,
+        };
+        if (typeArgs.Count > 0)
+            synth["typeParams"] = new JsonArray(typeArgs.Select((_, i) => (JsonNode)JsonValue.Create("T" + i)).ToArray());
+
+        var closure = new JsonObject
+        {
+            ["k"] = "newClosure",
+            ["closureType"] = owner,
+            ["captures"] = new JsonArray { value.DeepClone() },
+            ["method"] = "invoke",
+            ["funcType"] = targetType,
+            ["synthClass"] = synth,
+        };
+        if (typeArgs.Count > 0)
+            closure["typeArgs"] = new JsonArray(typeArgs.Select(t => TypeNode.Write(t)).ToArray());
+        return closure;
+    }
+
+    static void CollectTvs(TypeNode type, List<TypeNode.Tv> result)
+    {
+        switch (type)
+        {
+            case TypeNode.Tv tv:
+                if (!result.Contains(tv)) result.Add(tv);
+                break;
+            case TypeNode.Fqn { Args: { } args }:
+                foreach (var a in args) CollectTvs(a, result);
+                break;
+            case TypeNode.Nullable n: CollectTvs(n.Of, result); break;
+            case TypeNode.Oblivious o: CollectTvs(o.Of, result); break;
+            case TypeNode.Array a: CollectTvs(a.Elem, result); break;
+            case TypeNode.ByRef b: CollectTvs(b.Of, result); break;
+            case TypeNode.Fn fn:
+                CollectTvs(fn.Ret, result);
+                foreach (var a in fn.DelegateParams) CollectTvs(a, result);
+                break;
+        }
+    }
+
+    static int _delegateAdapterCounter;
+    static bool _delegateAdapterFired;
 
     // Coerce a value flowing into a `dotkt$CharSequence` slot into an interface-implementing value:
     //   - a statically-String value            -> `new dotkt$StringCharSequence(str)` (WrapAdapter).
