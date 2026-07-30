@@ -43,6 +43,10 @@ import NUnit.Framework.Legacy.ClassicAssert.Companion.IsFalse as assertFalse
 fun <T> nullIsStringQ(t: T): Boolean = t is String?
 fun <T> nullIsIntQ(t: T): Boolean = t is Int?
 fun <T> nullIsStringNonNullQ(t: T): Boolean = t is String
+// A SIDE-EFFECTING operand: the null answer is reached by branching on the value already on the stack, so the
+// operand must still be evaluated exactly ONCE — on the null path as much as the non-null one.
+var nullIsCalls = 0
+fun nullIsSrc(n: Int): Any? { nullIsCalls++; return if (n > 0) "hi" else null }
 
 // ---- il-null : elvis / safe-call / not-null ------------------------------------------------------------------
 fun nullUp(s: String?): String = s?.uppercase() ?: "none"
@@ -115,6 +119,12 @@ class NullableTests {
         assertTrue(nullIsIntQ<Int?>(null))               // true
         assertTrue(nullIsIntQ<Int?>(3))                  // true
         assertFalse(nullIsStringNonNullQ<String?>(null)) // false   non-nullable operand through a generic T
+        nullIsCalls = 0
+        assertTrue(nullIsSrc(-1) is String?)             // true    null operand…
+        assertEquals(1, nullIsCalls)                     // 1       …evaluated exactly once
+        nullIsCalls = 0
+        assertTrue(nullIsSrc(1) is String?)              // true    non-null operand…
+        assertEquals(1, nullIsCalls)                     // 1       …evaluated exactly once
     }
 
     @TestAttribute

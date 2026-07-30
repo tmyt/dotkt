@@ -49,6 +49,9 @@ fun <T> List<T>.crkGetOrElseE(index: Int, defaultValue: (Int) -> T): T =
 fun <T> MutableList<T>.crkSwap01() { val t = this[0]; this[0] = this[1]; this[1] = t }
 fun <K, V> Map<K, V>.crkValAt(k: K): V = this[k]!!
 
+// ---- #287 : a null that the frontend cannot const-fold, for the nullable star-projected is-test ---------------
+fun collNullSrc(): Any? = null
+
 // ---- il-collrevview : #100 H1 reverse variance-collapse seam -- make() returns the readonly List<Int> head ------
 fun collRevMake(): List<Int> = listOf(1, 2)
 
@@ -246,6 +249,15 @@ class CollectionsTests {
         val notList: Any = "hi"
         assertFalse(notColl is Collection<*>)           // False
         assertFalse(notList is List<*>)                 // False
+        // #287: the NULLABLE star-projected test names the same classifier, so it must reach the same non-generic
+        // BCL facade — the reified `IReadOnlyCollection<object>`/`IDictionary<object,object>` it would otherwise
+        // hit is not implemented by a value-arg List<int>/Dictionary<int,int>, so the test would answer false.
+        assertTrue(c is Collection<*>?)                 // True
+        assertTrue(c is List<*>?)                       // True
+        assertTrue(m is Map<*, *>?)                     // True
+        assertFalse(notColl is Collection<*>?)          // False
+        val nothing: Any? = collNullSrc()
+        assertTrue(nothing is Collection<*>?)           // True   null IS an instance of the nullable type
     }
 
     @TestAttribute

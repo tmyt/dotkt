@@ -73,10 +73,15 @@ static class StarProjectionLowering
 
     // True for a star-projected (or `object`-erased) generic collection type: owner is a known collection alias and
     // every type arg is `object`/`Any` (Kotlin allows only `<*>` in an is/as of these, so the args are always erased).
+    // A NULLABLE slot (`x is Collection<*>?`, `x as Map<*,*>?`) names the same classifier — the `?` is carried by the
+    // node's own `nullMatches` (is) or by CLR reference nullability (cast), and dropping it here is what lets the
+    // non-generic rewrite below reach a nullable star test at all. Unwrap it before the classifier check.
     static bool IsStarCollection(JsonNode slot, out string iface)
     {
         iface = null;
-        if (TypeJson.Read(slot) is not TypeNode.Fqn f) return false;
+        var read = TypeJson.Read(slot);
+        while (read is TypeNode.Nullable nn) read = nn.Of;
+        if (read is not TypeNode.Fqn f) return false;
         if (!NonGenericIface.TryGetValue(f.Name, out iface)) return false;
         if (f.Args == null) return true;                            // raw / bare collection alias
         return f.Args.All(IsObjectArg);
