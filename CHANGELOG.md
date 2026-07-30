@@ -75,6 +75,17 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   fixed with it, and `LinkedHashSet` — a real Kotlin class whose constructor keeps both arguments — is unaffected.
   `MappedConstructorArgumentTests` pins the order, the single evaluation, the propagated throw, and the delegation
   /property-initializer/lambda positions.
+- **bir2cir (area:bir2cir): a `try` expression inside a lowering-MINTED operand block no longer produces invalid
+  IL.** A CLR protected region must be entered with an empty evaluation stack, which is why `TryValueOperandHoist`
+  moves a try-valued operand out of a non-first slot into preceding statements. It recognised only kotc's own
+  spelling — a block whose `stmts` contain a `try` DIRECTLY — but several lowerings materialise an operand into a
+  minted `valueBlock` whose `var` initializer is then the try-valued expression: a call-evaluation plan's bindings,
+  `RangeMembershipLowering`'s bounds, `PreconditionLowering`'s subject, `NetInteropBinding`'s adapters, and now the
+  mapped-away constructor argument above. The hazard is identical and the hoist missed all of them, so
+  `f("z", (try { 1 } catch { 2 }) in 1..5)` compiled to an `InvalidProgramException` from source the frontend had
+  accepted. The hoist now searches a block's inline statements — both statement lists and the result, stopping at a
+  nested declaration whose body runs on its own stack — and moves them in the order their consumers run them.
+  `ExceptionTests.tryInsideAMintedOperandBlock` pins the shape.
 - **bir2cir (area:bir2cir): a nullable-generic return that was object-erased no longer crosses a suspension under
   its PRE-erasure type.** `fun <T> f(x: T): List<T?>` has its `Nullable(T)` erased to `object` on the declaration
   side, so the emitted method returns `List<object>`, while the call site — emitted with `T` already substituted —

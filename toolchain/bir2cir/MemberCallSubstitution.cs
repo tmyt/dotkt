@@ -414,6 +414,11 @@ static class MemberCallSubstitution
     {
         var (stmts, repl) = CallEvalLowering.Materialise(plan, new List<JsonNode> { lowered }, "a mapped constructor");
         var result = CallEvalLowering.Substitute(lowered, repl);
+        // CHOKEPOINT, the same one `CallEvalLowering.Apply` asserts after its own lowering: the plan vocabulary must
+        // not survive the pass that authored it. A kept argument's `bindRef` sits in an eager `newClr` slot, so it is
+        // always resolved — but that is a property of how the slots are built above, and a later change to `keep` or
+        // to the coercions the slots pass through could break it silently. This says so instead.
+        AssertNoPlanVocabulary(result);
         if (stmts.Count == 0) return result;
         return new JsonObject
         {
@@ -422,6 +427,28 @@ static class MemberCallSubstitution
             ["stmts"] = stmts,
             ["result"] = result,
         };
+    }
+
+    /// A `bindRef` left in the emitted node would reach ilemit as an unknown kind. It cannot happen for the plans
+    /// built above — a kept argument's read sits in the `newClr`'s own argument slot, which is eager, so `Materialise`
+    /// always resolves it — and that is exactly why this is an invariant assert rather than a diagnostic.
+    static void AssertNoPlanVocabulary(JsonNode node)
+    {
+        switch (node)
+        {
+            case JsonObject o:
+                if ((o["k"] as JsonValue)?.GetValue<string>() == "bindRef")
+                    throw new InvalidOperationException(
+                        "bir2cir: a mapped constructor argument's plan binding was not resolved into its slot — the "
+                        + "read is not on the emitted node's eager operand spine, so CallEvalLowering.Materialise "
+                        + "could not inline it. Whatever now wraps the kept arguments needs an arm in "
+                        + "CallEvalLowering.EagerKinds.");
+                foreach (var kv in o) if (kv.Value != null) AssertNoPlanVocabulary(kv.Value);
+                break;
+            case JsonArray a:
+                foreach (var it in a) if (it != null) AssertNoPlanVocabulary(it);
+                break;
+        }
     }
 
     // M10 (#73) — the CharSequence -> String ctor-argument coercion. A ctor param typed CharSequence (the stdlib's

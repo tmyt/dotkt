@@ -39,6 +39,9 @@ class McaFieldOwner {
     val map: HashMap<Int, Int> = HashMap(mcaCap("F"), mcaLf("F"))
 }
 
+/** Two operands, so the mapped construction sits in a NON-FIRST slot with the first already on the stack. */
+fun mcaPair(a: Any, b: Any): String = "$a/$b"
+
 class MappedConstructorArgumentTests {
     /** HashSet: the mapped-away load factor runs, after the capacity it is written after. */
     @TestAttribute
@@ -91,7 +94,7 @@ class MappedConstructorArgumentTests {
         assertEquals("capE", mcaTrace())
     }
 
-    /** …and a CONST capacity does not force the mapped-away argument to move ahead of anything. */
+    /** …and a CONST capacity is a literal push, so nothing observable orders against the mapped-away argument. */
     @TestAttribute
     fun constantCapacityStillEvaluatesTheLoadFactor() {
         mcaLog.clear()
@@ -131,6 +134,17 @@ class MappedConstructorArgumentTests {
         val owner = McaFieldOwner()
         assertEquals(0, owner.map.size)
         assertEquals("capF,lfF", mcaTrace())
+    }
+
+    /** The construction in a NON-FIRST operand slot: the statements the mapping emits run with the first operand
+     *  already on the evaluation stack. Harmless in itself — but a `try` among them would enter a protected region
+     *  with a non-empty stack, which the CLR refuses, so this pins that the hoist sees inside the minted block. */
+    @TestAttribute
+    fun mappedConstructionInALaterOperandSlot() {
+        mcaLog.clear()
+        val r = mcaPair("x", HashSet<Int>(try { 16 } catch (e: Exception) { 8 }, mcaLf("K")).size)
+        assertEquals("x/0", r)
+        assertEquals("lfK", mcaTrace())
     }
 
     /** EXACTLY once per construction: a lambda invoked twice evaluates both arguments twice, in order. */

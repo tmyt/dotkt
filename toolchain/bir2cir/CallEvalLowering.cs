@@ -10,8 +10,11 @@ using DotKt.Bir;
 // the receiver, the supplied arguments and the filled defaults, in Kotlin evaluation order, each a BINDING; every
 // reader — the call's own slot, a spliced default, a reconstructed `copy` field — is a `bindRef`, a pure READ.
 //
-// This pass runs once all splices have finished (right after DefaultArgSplice, which materialises the cross-module
-// fills into the bindings kotc reserved for them) and turns each plan into locals:
+// `Apply` runs once all splices have finished (right after DefaultArgSplice, which materialises the cross-module
+// fills into the bindings kotc reserved for them) and turns each plan into locals. `Materialise`, the decision itself,
+// is also called directly by the two passes that AUTHOR a plan of their own and lower it on the spot (spec §2.7): the
+// suspend lowering's stage-0 operand plan, and MemberCallSubstitution's mapping of a constructor parameter the CLR has
+// no slot for. The rules below are the whole answer in every case:
 //
 //   * a binding with exactly ONE reader is INLINED back into that reader — it was never anything but the expression
 //     in its own slot, so the emitted CIR is what it would have been without a plan;
@@ -360,9 +363,10 @@ static class CallEvalLowering
     /// than tracking frames.
     static string FreshLocal() => "cir$b" + System.Threading.Interlocked.Increment(ref _counter);
 
-    /// A binding ID for a plan bir2cir itself AUTHORS (the suspend lowering's stage-0 operand plan). Same `cir$b…`
-    /// namespace and the same counter as the local names above, so an id and a minted local can never coincide even
-    /// though they are different namespaces (spec §2.7 *Id namespaces*).
+    /// A binding ID for a plan bir2cir itself AUTHORS — the suspend lowering's stage-0 operand plan, and
+    /// MemberCallSubstitution's mapping of a constructor parameter the CLR has no slot for. Same `cir$b…` namespace
+    /// and the same counter as the local names above, so an id and a minted local can never coincide even though they
+    /// are different namespaces (spec §2.7 *Id namespaces*).
     internal static string FreshBindingId() => FreshLocal();
 
     /// Q5 of the four value questions (roster in bir-common/ValueStability.cs) — is this node an LVALUE FORMER, a
@@ -530,10 +534,13 @@ static class CallEvalLowering
     /// `&amp;&amp;`/`||` to a `cond`, and the `binOp` spelling of them is minted by PrimitiveOperatorLowering, which runs
     /// after this pass.
     ///
-    /// Only kinds that can REACH this pass are listed — what kotc emits, plus what the few passes ahead of this one
-    /// mint. The collection-literal constructions (`newList`/`newSet`/`newMap`) and the .NET property accesses
-    /// (`clrPropGet`/`clrPropSet`) are NOT kotc vocabulary: MemberCallSubstitution and NetInteropBinding mint them,
-    /// and both run after this pass (Program.cs), so listing them here would only describe a node it cannot see.
+    /// Only kinds that can reach a plan are listed — what kotc emits, plus what the passes that author their own plans
+    /// build them over. The collection-literal constructions (`newList`/`newSet`/`newMap`) and the .NET property
+    /// accesses (`clrPropGet`/`clrPropSet`) are NOT kotc vocabulary, so `Apply` never sees them; a later author can,
+    /// since `Materialise` is reachable from MemberCallSubstitution and from the suspend lowering. Both of those
+    /// supply their own reader node, and neither is one of those kinds today. An unlisted kind is the CONSERVATIVE
+    /// direction — the value is materialised into a local instead of being inlined — so a new one costs a local, never
+    /// a reordered evaluation, which is why the list is of eager kinds rather than of lazy ones.
     static readonly HashSet<string> EagerKinds = new(StringComparer.Ordinal)
     {
         "callStatic", "callInstance", "callInline", "objMethod", "delegateInvoke", "new", "newClr",

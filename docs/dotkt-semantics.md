@@ -1050,9 +1050,11 @@ nowhere to put — a rare shape, since a receiver and an argument normally each 
 discarding the value, never the evaluation. `HashSet(initialCapacity, loadFactor)` is mapped onto the capacity-only
 BCL constructor because `System.Collections.Generic.HashSet<T>` has no load-factor concept (likewise `HashMap` onto
 `Dictionary` and `LinkedHashMap` onto `OrderedDictionary`), so the load factor's slot disappears — but
-`HashSet<Int>(16, computeLoadFactor())` still calls `computeLoadFactor()`, still calls it after the capacity, and
-still propagates what it throws. Because the mapped-away argument is expressed as a plan binding nothing reads, the
-table above decides it: the `HashSet(16, 0.75f)` literal idiom is dropped and costs nothing.
+`HashSet<Int>(cap(), computeLoadFactor())` still calls `computeLoadFactor()`, still calls it after `cap()`, and still
+propagates what it throws. Because the mapped-away argument is expressed as a plan binding nothing reads, the table
+above decides it: the `HashSet(16, 0.75f)` literal idiom is dropped and costs nothing. Ordering is preserved where it
+is observable, not textually — a capacity that is a literal stays in its slot and is therefore pushed after the load
+factor's evaluation, which no program can tell apart.
 
 **An `object` qualifier splits on whether this backend gives it an instance**, and the split follows the same rule:
 
