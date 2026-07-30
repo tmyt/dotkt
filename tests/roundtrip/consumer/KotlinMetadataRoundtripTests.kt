@@ -398,7 +398,17 @@ class KotlinApiShapeRoundtripTests {
         // have to run: `n = 1` is the top-level one, `n = -1` the companion-static one.
         ClassicAssert.AreEqual("both", try { nothingInBothArms(1) } catch (e: RuntimeException) { e.message })
         ClassicAssert.AreEqual("boom", try { nothingInBothArms(-1) } catch (e: RuntimeException) { e.message })
+        // DEFAULT-PACKAGE producers (Nothingdefault.kt): a root-namespace file class and a root-namespace companion,
+        // both resolved with no package qualifier. The `val r: String =` typing is the load-bearing part — it holds
+        // only if [KotlinNothing] survived the round trip through default-package attribution.
+        val d: String = if (1 >= 0) "kept" else rtDefaultFail("d")
+        ClassicAssert.AreEqual("kept", d)
+        ClassicAssert.AreEqual("dflt", try { defaultPkgPick(-1) } catch (e: RuntimeException) { e.message })
+        ClassicAssert.AreEqual("default-boom", try { defaultPkgBoom(-1) } catch (e: RuntimeException) { e.message })
+        ClassicAssert.AreEqual("kept", defaultPkgPick(1))
     }
+    private fun defaultPkgPick(n: Int): String = if (n >= 0) "kept" else rtDefaultFail("dflt")
+    private fun defaultPkgBoom(n: Int): String = if (n >= 0) "kept" else RtDefaultBoom.Companion.boom()
     // The section's own consumer shape: a companion-static Nothing in the else arm, then a top-level one.
     private fun pickNothing(n: Int): String {
         val r: String = if (n >= 0) "kept" else Boom.Companion.boom()
@@ -413,6 +423,11 @@ class KotlinApiShapeRoundtripTests {
         if (n >= 0) "ok" else { nothingLog.add("side"); nothingretFail("tail") }
     private fun nothingInBothArms(n: Int): String = if (n >= 0) nothingretFail("both") else Boom.Companion.boom()
     private fun nothingIntoValueSlot(n: Int): Int = if (n >= 0) 7 else nothingretFail("int")
+    // NOT covered here: a covariant override returning `Nothing` against a RE-IMPORTED interface. The in-module twin
+    // is tests/basic CovariantInterfaceReturnTests.covariantOverrideReturningNothing; cross-module, bir2cir never
+    // synthesizes the bridge at all (its synthesizer resolves interface slots from the staged BIR only, so a
+    // reference-KLIB interface is invisible to it) and the override claims the slot directly with its erased
+    // signature — a TypeLoadException at class load, not this issue's value-merge, and not Nothing-specific.
 
     // roundtrip-pkg: namespaces; reified inline -> generic method; cross-module inline + non-local return;
     // properties (custom getter + mutable write); top-level ext operator + ext property; vararg; default; nullable.

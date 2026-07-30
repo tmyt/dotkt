@@ -69,7 +69,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   value position where it stands — `else boom()` becomes `else throw boom()` — so nothing is merged and no cast
   papers over an arm that delivers nothing. The fix is the fault class, not the reported example: same-module and
   cross-module, `then` arm and `else` arm, a `when` arm, an elvis right-hand side, a block whose LAST expression is
-  the call, BOTH arms, a bare expression-body `ret`, and a value-typed (`Int`) merge. Because it runs before the
+  the call, BOTH arms, a bare expression-body `ret`, and a value-typed (`Int`) merge — plus one instance the
+  termination has to be run TWICE to catch: a covariant `override fun f(): Nothing` (legal, since `Nothing` is below
+  every type) makes bir2cir synthesize an exact-CLR-slot bridge that forwards to it, minting a fresh
+  `Nothing`-stamped call in a method that did not exist during the per-file sweep, whose erased `object` then met the
+  slot's return at the bridge's own `ret`. A second sweep runs after the two interface-bridge synthesizers; it is
+  idempotent (an already-terminated position is a `throwExpr`, whose operand the pass does not re-enter — measured,
+  not assumed), and it does not replace the first, because passes in between rewrite or drop a node's stamp.
+  Because it runs before the
   suspend transform, the state-machine lowering — which already stores nothing for a `throwExpr` arm — is covered
   by the same rule; that axis was previously unexercised anywhere and now has its own battery
   (`SuspendNothingValueTests`), which matters because terminating an arm WIDENS what the suspend lowering handles:
@@ -80,7 +87,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   desugar derives as `Nothing` while its value is plainly the non-null operand — terminating on that would delete a
   live value. The stamp lookup itself moved into `NodeType.Stamp`, so the `sty`-then-`ret`-then-`dynRet` precedence
   stays stated once. `roundtrip-nothing` was the case this gap held in the stdout-only shell lane; it is now
-  `crossModuleNothingBranchMerge` in the in-process ProjectReference lane, which ilverifies.
+  `crossModuleNothingBranchMerge` in the in-process ProjectReference lane, which ilverifies — including the
+  DEFAULT-package producer the shell scenario had and the migration would otherwise have dropped, so a regression in
+  root-namespace file-class attribution or in `[KotlinNothing]` restoration through it cannot pass silently.
 - **bir2cir (area:bir2cir): a nullable-generic return that was object-erased no longer crosses a suspension under
   its PRE-erasure type.** `fun <T> f(x: T): List<T?>` has its `Nullable(T)` erased to `object` on the declaration
   side, so the emitted method returns `List<object>`, while the call site — emitted with `T` already substituted —

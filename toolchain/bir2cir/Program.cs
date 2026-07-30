@@ -626,6 +626,23 @@ sealed class Pipeline
         // inherited declaring-owner binding; both passes are structural and idempotent.
         ConstructedMemberReturnSubstitution.ApplyAll(staged.Select(s => s.Root).ToList());
 
+        // NOTHING-VALUE TERMINATION, SECOND SWEEP (#197). The two bridge synthesizers above build a forwarding call
+        // out of the TARGET declaration's return type, so a covariant `override fun make(): Nothing` (legal — Nothing
+        // is below every type, so it satisfies any slot) yields a FRESH `kotlin.Nothing`-stamped call inside a bridge
+        // that did not exist when the per-file sweep ran. Its erased `object` then meets the slot's exact return at
+        // the bridge's `ret` — the same defect, one synthesis later.
+        //
+        // Both sweeps are needed, and MOVING the first one here instead would be wrong: several reshapes between the
+        // two (MemberCallSubstitution and the erasure realigns) rewrite or drop a node's frontend stamp, so a position
+        // only the early sweep can still see would be lost. Re-walking is safe because the pass is IDEMPOTENT — a
+        // position it already terminated is a `throwExpr`, whose operand it does not re-enter (see `Consumes`) — so
+        // for a file with no late synthesis this changes nothing at all.
+        //
+        // HERE and not later: this is the last point at which the type is still spelled `kotlin.Nothing` for a
+        // BODY-carrying declaration, and it is before the suspend transform, so a bridge inside a suspend-lowered
+        // class is terminated before that lowering reads it.
+        foreach (var stagedFile in staged) NothingValueTermination.Apply(stagedFile.Root);
+
         // PHASE 1.5 — SUSPEND COLD LOWERING (R1 classifier): rewrite EVERY declared `suspend fun` (top-level statics,
         // extensions, instance members, static/companion members, abstract/interface members) into the cold
         // Continuation shape (SM class + `f$dotkt_suspend` cold entry + Task bridge + suspend-main drain), and rewrite

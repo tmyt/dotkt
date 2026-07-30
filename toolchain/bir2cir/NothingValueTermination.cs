@@ -46,11 +46,17 @@ using DotKt.Bir;
 // slot. A slot that DISCARDS its value (a statement, an `exprStmt`) is left alone: nothing reads it, so nothing is
 // mistyped, and terminating it would only add a dead `throw` to every statement-position `fail()`.
 //
-// WHERE IT RUNS: right after CallEvalLowering — every splice that can introduce a `Nothing` call (PreconditionLowering
-// synthesizing `error`/`TODO`, InlineSplice pulling in a cross-module inline body, DefaultArgSplice filling a default)
-// has run, the plan vocabulary is gone, and the type is still spelled `kotlin.Nothing` (BirTypeLowering erases it far
-// downstream). Unconditional (ref + rt + app): a ref build squashes its bodies later, so the pass is inert there,
-// and the rt/app views of the same source must agree.
+// WHERE IT RUNS — TWICE, and both are needed (Program.cs states the reasoning at each call site):
+//   1. per file, right after CallEvalLowering. Every splice that can introduce a `Nothing` call
+//      (PreconditionLowering synthesizing `error`/`TODO`, InlineSplice pulling in a cross-module inline body,
+//      DefaultArgSplice filling a default) has run, and the plan vocabulary is gone.
+//   2. across the staged set, after the two interface-bridge synthesizers and before the suspend transform. A bridge
+//      forwards to the declaration it bridges, so a covariant `override fun f(): Nothing` mints a fresh
+//      `Nothing`-stamped call long after (1). The first sweep cannot be dropped in favour of this one: passes in
+//      between rewrite or drop a node's stamp, so a position only (1) can see would be lost.
+// Both are before BirTypeLowering, which erases `kotlin.Nothing` to `object` and ends this pass's window. The pass is
+// IDEMPOTENT, so re-walking a file is a no-op. Unconditional (ref + rt + app): a ref build squashes its bodies later,
+// so the pass is inert there, and the rt/app views of the same source must agree.
 static class NothingValueTermination
 {
     public static void Apply(JsonNode root)
@@ -67,15 +73,21 @@ static class NothingValueTermination
     // own slots are classified by their own kind once the walk reaches them.
     static readonly HashSet<string> RecordListKeys = new(StringComparer.Ordinal) { "catches", "branches" };
 
-    /// <summary>Does the slot <paramref name="key"/> of a node of kind <paramref name="kind"/> CONSUME the value it
-    /// holds? Everything does except a statement list, a structural record list, and the three slots that exist
-    /// purely to evaluate for effect: an `exprStmt`'s expression, a `forIn`'s non-array `fallback` block, and a
-    /// statement `if`'s branch bodies.</summary>
+    /// <summary>Does the slot <paramref name="key"/> of a node of kind <paramref name="kind"/> need a terminator when
+    /// it holds a value that can never be delivered? Everything does except a statement list, a structural record
+    /// list, and the four slots below.</summary>
     ///
-    /// This governs TIDINESS, not correctness. Only a `Nothing`-STAMPED node is ever rewritten, and appending a
-    /// terminator to an expression that never returns cannot change what the program does — so a slot mis-called
-    /// consuming costs one dead `throw`, and one mis-called discarding costs the fix at that slot. That asymmetry is
-    /// why the discarding set is the short, enumerated one and everything else consumes.
+    /// The three "evaluated for effect" ones — an `exprStmt`'s expression, a `forIn`'s non-array `fallback` block, a
+    /// statement `if`'s branch bodies — govern TIDINESS, not correctness. Only a `Nothing`-STAMPED node is ever
+    /// rewritten, and appending a terminator to an expression that never returns cannot change what the program does,
+    /// so a slot mis-called consuming costs one dead `throw` while one mis-called discarding costs the fix at that
+    /// slot. That asymmetry is why the excluded set is the short, enumerated one and everything else is included.
+    ///
+    /// The fourth — a `throw`'s own operand — is IDEMPOTENCE, and it is load-bearing. This pass runs more than once
+    /// (see its call sites), and every position it terminates becomes a `throwExpr` whose `value` is the original
+    /// still-`Nothing`-stamped expression. Without this arm a second sweep would wrap that operand again, nesting one
+    /// `throw` per sweep. It is also simply unnecessary: the `throw` opcode takes any object reference, so an erased
+    /// `object` is well-typed there, and the path already terminates.
     static bool Consumes(string kind, string key)
     {
         if (StmtListKeys.Contains(key) || RecordListKeys.Contains(key)) return false;
@@ -86,6 +98,7 @@ static class NothingValueTermination
         // statements. Today's producers emit the `branches` chain instead, so this arm is a schema guard, not a
         // description of emitted BIR.
         if (kind == "if" && (key == "then" || key == "else")) return false;
+        if ((kind == "throwExpr" || kind == "throw") && key == "value") return false;
         return true;
     }
 
