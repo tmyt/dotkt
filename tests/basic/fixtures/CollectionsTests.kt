@@ -121,6 +121,29 @@ class CollectionsTests {
         assertEquals(100, xs.map { it * 10 }.fold(0) { a, b -> a + b }) // 100
     }
 
+    // #287: every join path renders a NULL element as the four characters "null" — the contract `joinTo`/`joinToString`
+    // inherit from `Appendable.append(CharSequence?)`. The shared `appendElement` reaches it through `element is
+    // CharSequence?`, whose nullable type operand accepts null (NullableTests.nullableTypeOperandIsTest pins that);
+    // when the operand answered false the frontend's else-branch smart-cast dereferenced the null and the whole join
+    // threw. Swept across the receiver families and over first/middle/last null positions.
+    @TestAttribute
+    fun joinNullElements() {
+        assertEquals("null, null", arrayOfNulls<String>(2).joinToString())                              // the issue repro
+        assertEquals("null, b, null, d, null", arrayOf<String?>(null, "b", null, "d", null).joinToString())
+        assertEquals("null-1-s", arrayOf<Any?>(null, 1, "s").joinToString("-"))                         // generic array
+        assertEquals("null, x, null", listOf<String?>(null, "x", null).joinToString())                  // list
+        assertEquals("null, 2", listOf<Int?>(null, 2).joinToString())                                   // nullable VALUE element
+        // sequence receiver (via asSequence — `sequenceOf` itself is blocked on the unrelated #284 iteration crash)
+        assertEquals("null, y", listOf<String?>(null, "y").asSequence().joinToString())
+        assertEquals("null, y", listOf<String?>(null, "y").asSequence().map { it }.joinToString())
+        assertEquals("N, z", listOf<String?>(null, "z").joinToString { it ?: "N" })                     // transform wins
+        assertEquals("null, null, ...", listOf<String?>(null, null, null).joinToString(limit = 2))      // limit + truncated
+        assertEquals("ab", listOf('a', 'b').joinToString(""))                                           // Char branch intact
+        val sb = StringBuilder()
+        listOf<Int?>(null, 1, null).joinTo(sb, "|", "<", ">")
+        assertEquals("<null|1|null>", sb.toString())                                                    // joinTo + affixes
+    }
+
     @TestAttribute
     fun forEach() {
         val xs = listOf(10, 20, 30)

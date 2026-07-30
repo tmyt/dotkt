@@ -59,6 +59,20 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **`x is T?` answers TRUE for null again, and with it every `joinToString` over a null element (area:bir2cir,
+  area:ilemit).** Kotlin's `is` against a NULLABLE type operand accepts null — `null is String?`, `null is Int?`,
+  `null is Any?` are all true — and the frontend DEPENDS on it: the `else` branch of `when { x is T? -> … }` is
+  reachable only for a non-null `x`, so it carries a smart-cast, and `x.toString()` there resolves to the
+  `kotlin.Any` MEMBER rather than the null-safe `Any?.toString()` extension. kotc emitted the type operand's `?`
+  faithfully, but nothing downstream read it: type lowering erases nullability from every reference type (every CLR
+  reference is nullable, so the lowered type cannot carry the signal), leaving a bare `isinst`, which matches no
+  null. The test went false for null and the smart-cast the frontend had already granted dereferenced one. The
+  stdlib's `appendElement` is exactly that shape — `element is CharSequence?`, else `element.toString()` — so
+  `arrayOfNulls<String>(2).joinToString()` threw a `NullReferenceException` inside `AppendableKt.appendElement`
+  instead of rendering `null, null`, on every join receiver (array, list, sequence, `joinTo`), with or without a
+  transform, and at any null position. bir2cir's new `NullableIsInstMatch` marks the node `nullMatches` while the
+  `?` is still on it, and ilemit projects the one extra `dup; brtrue` that answers true for null — the operand is
+  still evaluated exactly once, and a non-nullable type operand is untouched. (#287)
 - **bir2cir (area:bir2cir): a nullable-generic return that was object-erased no longer crosses a suspension under
   its PRE-erasure type.** `fun <T> f(x: T): List<T?>` has its `Nullable(T)` erased to `object` on the declaration
   side, so the emitted method returns `List<object>`, while the call site — emitted with `T` already substituted —

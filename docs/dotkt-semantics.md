@@ -694,6 +694,10 @@ DotKt aliases `Appendable` to `System.Text.StringBuilder` (`@ClrTypeAlias` + `@C
   what makes `joinTo(StringBuilder(), …)`-style stdlib generics verifiable on the CLR.
 - A **user class implementing `Appendable`** is therefore NOT supported (you cannot subclass the sealed-in-practice
   role); write to a `StringBuilder` instead. This is narrower than the JVM, and deliberate.
+- **A null `CharSequence?` argument still renders as the four characters `null`**, per the Kotlin contract, even
+  though .NET's `StringBuilder.Append`/`Insert` treat null as a no-op: the §5b collapse routes every `CharSequence`
+  argument through `Any?.toString()`, which answers `"null"`. This is what makes `joinToString` over a collection
+  containing nulls produce `null, null` — `appendElement` reaches the buffer through that overload.
 
 ## 5e. Enum classes have two CLR shapes
 
