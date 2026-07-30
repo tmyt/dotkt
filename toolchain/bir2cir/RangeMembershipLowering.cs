@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Text.Json.Nodes;
+using DotKt.Bir;
 
 // RANGE MEMBERSHIP `x in a..b` (#73 M2). kotc emits the FAITHFUL `contains` member call on the range receiver
 // (`callInstance kotlin.ranges.IntRange.contains(x)`, recv = the un-materialized `a.rangeTo(b)` / `a until b`) — by
@@ -10,18 +11,36 @@ using System.Text.Json.Nodes;
 //   x in a..b   (rangeTo)                 -> (x >= a && x <= b)
 //   x in a..<b  (rangeUntil) / a until b  -> (x >= a && x <  b)
 //
-// The subject `x` renders into BOTH comparison legs, so a side-effecting operand is bound ONCE via a temp local
-// (bindOnce): a `const`/`local` operand splices directly, anything else becomes a `valueBlock { var __rangein$N = x }`.
-// The bounds a/b each appear in exactly one leg, so they need no temp.
+// EVALUATION ORDER IS PART OF THE MEANING, and the fast path must not change it. `x in a()..b()` is
+// `(a()..b()).contains(x)`: the RANGE is constructed first, so `a()` and `b()` BOTH run — unconditionally, in that
+// order — and only then `x`. The short-circuit `cond` reverses that on its own (the `<= b` leg sits under the `>= a`
+// test, and the subject renders into both legs), so the three operands are BOUND HERE, each exactly once, in Kotlin
+// order lo, hi, subject:
+//
+//   valueBlock { var __rangelo$N = a; var __rangehi$N = b; var __rangein$N = x
+//                result = if (__rangein$N >= __rangelo$N) __rangein$N <op> __rangehi$N else false }
+//
+// An operand is spliced in place INSTEAD of bound only when `ValueStability.IsReReadable` accepts it (Q1, the roster
+// in bir-common/ValueStability.cs: `const`/`this`/`bindRef`). Those are exactly the operands whose value cannot
+// depend on when they are read, so moving the read later — or duplicating it across both legs — is unobservable.
+// Everything else, INCLUDING a plain `local` (BIR does not distinguish `val` from `var`, and a sibling bound can
+// assign it), gets a temp. So `5 in 1..10` still lowers to bare comparisons with no temps at all.
+//
+// The temp's declared type is the FRONTEND-RESOLVED slot type, never re-derived: the bounds take the `rangeTo`/
+// `until` receiver+parameter types, the subject takes `contains`' parameter type (`IntRange.contains(Int)`,
+// `LongRange.contains(Long)`, `CharRange.contains(Char)`). A mis-typed Long/Char temp is invalid IL, so if a needed
+// slot type is absent we leave the membership alone and let the real `contains` dispatch handle it — which evaluates
+// both bounds and the subject in the same order anyway.
 //
 // Gate: the `contains` owner is `kotlin.ranges.{IntRange,LongRange,CharRange}` AND the recv is the primitive range
 // construction (`callInstance kotlin.<Prim>.rangeTo/rangeUntil` or the `callStatic until` extension over a primitive).
 // A variable-held range (`val r = a..b; x in r`) has a `local` recv -> not matched -> the real IntRange.contains
-// binding handles it, exactly as kotc's old `range as? IrCall` gate required an inline range call.
+// binding handles it, exactly as kotc's old `range as? IrCall` gate required an inline range call. `downTo`/`step`
+// build an `IntProgression`, not a `*Range`, so they never reach here either.
 //
 // Runs BEFORE RangeConstructionLowering (which would otherwise materialize the recv rangeTo into `new IntRange`) and
 // before MemberCallSubstitution (which would bind the unresolved `contains`/`until`) — so the produced binOp/cond
-// nodes flow through every downstream pass exactly as kotc's retired call-site lowering did (byte-identical IL).
+// nodes flow through every downstream pass exactly as kotc's retired call-site lowering did.
 static class RangeMembershipLowering
 {
     static int _counter;
@@ -56,56 +75,71 @@ static class RangeMembershipLowering
         if (TypeJson.OwnerName(o["ownerType"]) is not string owner || !RangeOwners.Contains(owner)) return;
         if (o["args"] is not JsonArray cargs || cargs.Count != 1 || cargs[0] is not JsonNode x) return;
         if (o["recv"] is not JsonObject recv) return;
-        if (ExtractBounds(recv, localTopLevelFns, appBuild) is not (JsonNode lo, JsonNode hi, string cmp)) return;
+        if (ExtractBounds(recv, localTopLevelFns, appBuild) is not { } bounds) return;
+        var (lo, hi, loType, hiType, cmp) = bounds;
+        // The subject's slot is `contains`' parameter = the range element (IntRange.contains(Int),
+        // LongRange.contains(Long), CharRange.contains(Char)). kotc emits the overload sig unconditionally.
+        var xType = (o["sig"] as JsonArray) is { Count: > 0 } sig ? sig[0] : null;
 
-        // bindOnce: a side-effecting subject must not run in both legs. A const / plain local / `this` read is stable
-        // (side-effect-free, deterministic) — mirrors kotc's bindOnce (const | non-refcell param/val | receiver).
-        var subjKind = Str(x["k"]);
-        var stable = subjKind is "const" or "local" or "this";
-        JsonNode read, tempStmt = null;
-        if (stable)
-            read = x;
-        else
-        {
-            // x is the `contains` parameter type = the range element (IntRange.contains(Int), LongRange.contains(Long),
-            // CharRange.contains(Char)). It is always attached (kotc emits the overload sig unconditionally); if it is
-            // ever absent we cannot type the temp correctly (a mis-typed Long/Char temp is invalid IL), so bail to the
-            // real `contains` dispatch rather than guess.
-            if ((o["sig"] as JsonArray) is not { Count: > 0 } sig || sig[0] is not JsonNode xType) return;
-            var name = "__rangein$" + System.Threading.Interlocked.Increment(ref _counter);
-            tempStmt = new JsonObject { ["k"] = "var", ["name"] = name, ["type"] = xType.DeepClone(), ["init"] = x.DeepClone() };
-            read = new JsonObject { ["k"] = "local", ["name"] = name };
-        }
+        // Bind lo, hi and the subject in KOTLIN order — the range's two bounds, then the membership subject — each
+        // exactly once. An `IsReReadable` operand (Q1) is spliced instead: its value cannot change with when it is
+        // read, so the `cond` may read it late and twice. Anything else gets a temp evaluated up front.
+        var stmts = new JsonArray();
+        var site = System.Threading.Interlocked.Increment(ref _counter);
+        var readLo = Bind(lo, loType, "lo", site, stmts);
+        var readHi = Bind(hi, hiType, "hi", site, stmts);
+        var readX = Bind(x, xType, "in", site, stmts);
+        // A needed slot type was absent — a mis-typed temp is invalid IL, so leave the real `contains` dispatch in
+        // place (it evaluates both bounds and the subject in the same order) rather than guess.
+        if (readLo == null || readHi == null || readX == null) return;
 
         var core = new JsonObject
         {
             ["k"] = "cond",
-            ["cond"] = new JsonObject { ["k"] = "binOp", ["op"] = ">=", ["lhs"] = read.DeepClone(), ["rhs"] = lo.DeepClone() },
-            ["then"] = new JsonObject { ["k"] = "binOp", ["op"] = cmp, ["lhs"] = read.DeepClone(), ["rhs"] = hi.DeepClone() },
+            ["cond"] = new JsonObject { ["k"] = "binOp", ["op"] = ">=", ["lhs"] = readX.DeepClone(), ["rhs"] = readLo.DeepClone() },
+            ["then"] = new JsonObject { ["k"] = "binOp", ["op"] = cmp, ["lhs"] = readX.DeepClone(), ["rhs"] = readHi.DeepClone() },
             ["else"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Boolean"), ["value"] = false },
         };
 
-        JsonNode repl = tempStmt == null
+        JsonNode repl = stmts.Count == 0
             ? core
-            : new JsonObject { ["k"] = "valueBlock", ["stmts"] = new JsonArray { tempStmt }, ["result"] = core };
+            : new JsonObject { ["k"] = "valueBlock", ["stmts"] = stmts, ["result"] = core };
 
         foreach (var key in new List<string>(((IDictionary<string, JsonNode>)o).Keys)) o.Remove(key);
         foreach (var kv in (JsonObject)repl) o[kv.Key] = kv.Value?.DeepClone();
     }
 
-    // The (lo, hi, comparison-op) of a PRIMITIVE range construction used as a `contains` receiver, or null if the recv
-    // is not one (a user rangeTo, a variable-held range, a non-primitive receiver).
-    static (JsonNode Lo, JsonNode Hi, string Cmp)? ExtractBounds(JsonObject recv, ISet<string> localTopLevelFns, bool appBuild)
+    // One operand of the membership, rendered so the `cond` may read it: the operand itself when re-reading it is
+    // order-immune, else a read of a fresh `__range<role>$N` temp appended to `stmts` (so it evaluates where Kotlin
+    // evaluates it). Null iff a temp is required and `slotType` — the frontend-resolved type of the slot the operand
+    // fills — is missing, which is the caller's signal to abandon the fast path.
+    static JsonNode Bind(JsonNode value, JsonNode slotType, string role, int site, JsonArray stmts)
+    {
+        if (ValueStability.IsReReadable(value)) return value;
+        // A `var`'s `type` must be a STRUCTURED Type node (#37 types-are-nodes). An owner/sig slot may still hold a
+        // legacy type STRING, which would be an invalid declaration — treat that as "no slot type" and bail.
+        if (!TypeJson.IsType(slotType)) return null;
+        var name = "__range" + role + "$" + site;
+        stmts.Add(new JsonObject { ["k"] = "var", ["name"] = name, ["type"] = slotType.DeepClone(), ["init"] = value.DeepClone() });
+        return new JsonObject { ["k"] = "local", ["name"] = name };
+    }
+
+    // The (lo, hi, their declared slot types, comparison-op) of a PRIMITIVE range construction used as a `contains`
+    // receiver, or null if the recv is not one (a user rangeTo, a variable-held range, a non-primitive receiver).
+    static (JsonNode Lo, JsonNode Hi, JsonNode LoType, JsonNode HiType, string Cmp)? ExtractBounds(
+        JsonObject recv, ISet<string> localTopLevelFns, bool appBuild)
     {
         var k = Str(recv["k"]);
         var method = Str(recv["method"]);
-        // Member operator: `a.rangeTo(b)` / `a.rangeUntil(b)` -> recv=a, args[0]=b.
+        // Member operator: `a.rangeTo(b)` / `a.rangeUntil(b)` -> recv=a, args[0]=b. The slots are the operator's own
+        // receiver type (`ownerType`, the primitive this gate already read) and its single parameter (`sig[0]`).
         if (k == "callInstance" && (method == "rangeTo" || method == "rangeUntil"))
         {
-            if (!PrimReceivers.Contains(TypeJson.OwnerName(recv["ownerType"]) ?? "")) return null;
+            if (recv["ownerType"] is not JsonNode loType || !PrimReceivers.Contains(TypeJson.OwnerName(loType) ?? "")) return null;
             if (recv["recv"] is not JsonNode lo) return null;
             if (recv["args"] is not JsonArray a || a.Count != 1 || a[0] is not JsonNode hi) return null;
-            return (lo, hi, method == "rangeUntil" ? "<" : "<=");
+            var hiType = (recv["sig"] as JsonArray) is { Count: > 0 } rsig ? rsig[0] : null;
+            return (lo, hi, loType, hiType, method == "rangeUntil" ? "<" : "<=");
         }
         // Infix extension: `a until b` -> callStatic owner:null method:until sig:[recvPrim, boundPrim] args:[a, b].
         if (k == "callStatic" && recv["owner"] == null && method == "until")
@@ -115,7 +149,7 @@ static class RangeMembershipLowering
             if (recv["sig"] is not JsonArray sig || sig.Count == 0
                 || !PrimReceivers.Contains(TypeJson.OwnerName(sig[0]) ?? "")) return null;
             if (recv["args"] is not JsonArray a || a.Count != 2 || a[0] is not JsonNode lo || a[1] is not JsonNode hi) return null;
-            return (lo, hi, "<");
+            return (lo, hi, sig[0], sig.Count > 1 ? sig[1] : null, "<");
         }
         return null;
     }

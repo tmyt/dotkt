@@ -20,6 +20,8 @@
 #   3. STRUCTURAL        — binOp has lhs+rhs; cond has cond+then+else.
 #   4. OWNER PRESENCE    — fields carry ownerType; owner:null callStatic/newDelegate/newBoundDelegate carry calleeOwner.
 #   5. `for` cmp in {<=, <, >=}.
+#   6. SUSPENSION LOWERED — no node in a body ilemit EMITS still carries suspendCall:true (only a METHOD
+#      still carrying mods.suspend is exempt; IrSanity.CheckScope documents why, and why a ctor/.cctor is not).
 import json, sys, glob, os
 
 
@@ -74,7 +76,12 @@ class Sanity:
     def err(self, f, decl, msg):
         self.viol.append((f, decl, msg))
 
-    def check_scope(self, f, decl_label, param_names, roots, decl):
+    def check_scope(self, f, decl_label, param_names, roots, decl, check_suspension):
+        # Check 6 asks only of the bodies ilemit turns into IL. A METHOD that STILL carries `mods.suspend` is not
+        # one — ilemit's guard on that exact flag stubs it (stdlib build) or refuses it loudly (app build) without
+        # ever reaching the statement walk. The CALLER decides, because only a method scope can be exempt: ilemit
+        # emits constructors and type initializers without consulting the flag. IrSanity.CheckScope has the full
+        # reasoning and the corpus calibration.
         declared = set(param_names) | _collect_declared(roots)
         labels = _collect_labels(roots)
         dl = _pos_prefix(decl) + decl_label
@@ -88,8 +95,14 @@ class Sanity:
                     _seen.add(o["id"])
             _walk(r, dupf)
         # meaning refs
-        def reff(o, _dl=dl, _f=f):
+        def reff(o, _dl=dl, _f=f, _susp=check_suspension):
             k = o.get("k")
+            # 6. SUSPENSION LOWERED — kotc's frontend `suspendCall` fact is consumed by bir2cir's cold lowering,
+            # which rebuilds the call out of fresh untagged nodes. A survivor means a suspension escaped it and
+            # ilemit will emit an ordinary invocation with no resume point.
+            if _susp and isinstance(k, str) and o.get("suspendCall") is True:
+                self.err(_f, _dl, f"'{k}' still carries 'suspendCall': a suspension escaped the cold lowering "
+                                  "(every suspending call must be rewritten into its cold Continuation shape before CIR)")
             if k in ("local", "setLocal"):
                 n = o.get("name")
                 if isinstance(n, str) and n not in declared:
@@ -142,7 +155,10 @@ class Sanity:
             if not isinstance(body, list):
                 continue
             name = m.get("name") if isinstance(m.get("name"), str) else "?"
-            self.check_scope(f, f"{owner}.{name}", self._param_names(m), [body], m)
+            # The ONLY exemptible scope, and only for this METHOD's own mods.suspend (see check_scope).
+            mods = m.get("mods")
+            susp = isinstance(mods, dict) and mods.get("suspend") is True
+            self.check_scope(f, f"{owner}.{name}", self._param_names(m), [body], m, check_suspension=not susp)
         for ct in (c.get("ctors") or []):
             if not isinstance(ct, dict):
                 continue
@@ -158,12 +174,14 @@ class Sanity:
                 roots.append(ct["thisArgs"])
             if isinstance(ct.get("baseArgs"), list):
                 roots.append(ct["baseArgs"])
-            self.check_scope(f, f"{owner}..ctor", self._param_names(ct), roots, ct)
+            # ilemit's suspend guard is in EmitMethodBody only; a ctor body is emitted regardless.
+            self.check_scope(f, f"{owner}..ctor", self._param_names(ct), roots, ct, check_suspension=True)
         if not is_interface:
             inits = [fd["init"] for fd in (c.get("fields") or [])
                      if isinstance(fd, dict) and fd.get("init") is not None and fd.get("static") is True]
             if inits:
-                self.check_scope(f, f"{owner}..cctor", set(), inits, c)
+                # ilemit builds a type initializer from the fields alone; the CONTAINER's modifiers say nothing about it.
+                self.check_scope(f, f"{owner}..cctor", set(), inits, c, check_suspension=True)
 
     def check_file(self, f, doc):
         if not isinstance(doc, dict):

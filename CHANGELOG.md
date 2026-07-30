@@ -7,6 +7,40 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Added
 
+- **A suspension that escapes the cold lowering is now caught at the CIR boundary (area:bir2cir, area:ilemit).**
+  `suspendCall:true` is kotc's frontend fact that a call site suspends, and bir2cir's `SuspendColdLowering` is its
+  only consumer — it rebuilds each suspending call as a resume label plus the callee's cold-shape call (a
+  `$dotkt_suspend` cold entry, or the awaiter sequence for a `.await()` CLR bridge), out of fresh nodes that carry
+  no tag. Until now nothing said so: a suspension that slipped through reached ilemit as an ordinary invocation, so
+  the caller read the raw `Task`/`COROUTINE_SUSPENDED` sentinel where the awaited value belonged and the state
+  machine got no resume point — an `InvalidCastException` far from its cause, or a silently wrong value. The shared
+  `IrSanity` check set (run in-process by both bir2cir and ilemit, mirrored offline by `scripts/verify-sanity.py`
+  for `make verify-sanity`) gained the invariant, and the message names the declaration. A METHOD that still
+  carries `mods.suspend` is exempt, because ilemit's guard on that exact flag returns before it reaches the
+  statement walk; such a survivor is stdlib-only, since the self-build deliberately retains the original beside its
+  cold entry and the admit gate excludes the inline coroutine primitives, where an app build removes the original
+  outright. Only a method scope can be exempt: ilemit emits a constructor body, and builds a type initializer from
+  the fields, without consulting the flag at all, so a ctor and a static-initializer group are always checked —
+  deriving the exemption from the scope's declaration instead of its kind would have let a suspension through a
+  `.cctor` under a type that carried the modifier. Calibrated against the current corpus: all seven survivors in
+  the runtime stdlib CIR sit in exempt declarations, no emitted body carries one, and the app corpus has none.
+- **The IR sanity gate gained a self-test lane, and the schema gate a granularity fixture
+  (`tests/ir/selftest/`).** Both gates validate whatever is on disk, so one that stopped checking would look
+  exactly like a clean corpus. `tests/ir/run-sanity.sh` now runs the directory's `*.cir.json` half first
+  (`run-schema.sh` keeps the `*.bir.json` half), pinning both the suspension invariant above and the
+  `mods.suspend` exemption it is calibrated against — neither has a natural negative in the corpus. On the schema
+  side, `accept-unplanned-suspension-operand.bir.json` pins the §2.7 granularity rule for the shape the
+  suspension work touches: a call whose operand merely suspends acquires no second reader, so `h(f(), 1)` is
+  plain BIR with no `callEval` around it. Where a suspension is planned is bir2cir's decision, and a BIR-side
+  rule requiring one would make the emitter's own legal output illegal — the shape is ordinary emitter output,
+  present in the hundreds across the stdlib and coroutine corpora, so such a rule would redden real builds and
+  not just the fixture.
+  The sanity lane asserts each fixture against BOTH implementations, not only the offline mirror: the normative
+  checker is the C# `IrSanity` compiled into ilemit, and until now nothing exercised it — a check deleted there
+  would have left every gate green. Both lanes also now fail when they discover no fixture of either kind, and
+  when a `reject-*` case has no expectation text (an empty one matched any message, degrading the assertion to
+  "exited non-zero").
+
 - **Cross-target (target RID != host RID) reference-asset selection is now covered by the gate
   ([tmyt/dotkt#192], area:ilemit, area:packaging).** `tests/msbuild/run.sh` gained
   `ktproj-crosstarget-rid-assets`: it builds a throwaway RID-implementation package from
@@ -84,7 +118,6 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   this reader's classifiers are name-keyed). `Surface` keeps only the arms the core cannot answer — the ones
   needing the enclosing lexical scope, and the call/field family, which reads `sty` before `ret` (unifying that
   precedence is a change of its own) — and delegates the rest.
-
 - **A call value NOTHING reads is now evaluated unless evaluating it is genuinely unobservable
   (area:bir2cir, area:kotc; recorded as `docs/dotkt-semantics.md` §7a).** Kotlin evaluates a call's receiver and
   every supplied argument whether the emitted CLR shape has a slot for the value or not; the backend was skipping
@@ -141,7 +174,37 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   import-seeded JSON projection has no build, package, test, or developer entry point. The `facadegen` project,
   `make facades`, and `scripts/gen-facades.sh` are deleted; `make toolchain` now builds only the shipping tools.
 
+### Changed
+
+- **kotc (area:kotc): one home per stability question in the BIR emitter.** `bindOnce` — the splice-once binder
+  behind a when-subject, a safe call and a range membership — carried a byte-identical inline copy of the
+  call-evaluation plan's `isStableValue` predicate, so the two could drift apart while both claimed to answer
+  "is this value free to be re-read and to move past another value". It now calls `isStableValue`, which is the
+  single implementation. `isStableAddress` is renamed `isStableLocation`, because it answers a DIFFERENT question
+  — whether an argument's *address* may be taken twice and moved, which holds for a mutable `var` too — and a
+  name that echoed the value predicate invited the immutability clause to be "restored" into it; its doc now
+  states the question and why that clause is deliberately absent. The `BirEmitterCallPlan` granularity note
+  pointed at a `BirEmitter.callNeedsPlan` that does not exist and never did; it now describes what really gates a
+  `callEval` — a plan scope installed around every call that costs nothing when empty, and, inside it, the
+  `planNeeded` tests of `filledArgs`/`filledExternalArgs` (§2.7 triggers (a)-(c)) together with the unconditional
+  binding a `callInline` performs (trigger (d)), which the old note did not mention at all. Behavior-preserving:
+  emitted BIR and CIR are byte-identical over the full stdlib corpus (ref + runtime, 1001 files) and a
+  198-source fixture sweep.
+
 ### Fixed
+- **bir2cir (area:bir2cir): `x in a..b` now evaluates `a`, `b` and `x` exactly once each, in that order.** Range
+  membership is `(a..b).contains(x)`: the range is constructed first, so BOTH bounds always run, left to right, and
+  the subject is read after them. The short-circuit fast path (`x >= a && x <op> b`) put the upper-bound test inside
+  the lower-bound test's `then`, so a subject below `a` never ran `b` — `0 in lo()..hi()` silently dropped `hi()`'s
+  side effect — and it read the subject before either bound, so a subject a bound assigns (`var x = -1;
+  x in run { x = 5; 0 }..50`) compared the stale value and answered `false` where Kotlin answers `true`. The three
+  operands are now bound to temps up front in Kotlin's order and the comparison legs read the temps. An operand is
+  still spliced in place when re-reading it is free — `ValueStability.IsReReadable`, the one answer to that question
+  (Q1), replaces a local "stable" set that had wrongly accepted any `local`, mutable or not — so an all-constant
+  membership (`5 in 1..10`) still lowers to bare comparisons with no temp at all. The fix covers every form the fast
+  path handles: `..`, `..<`, the `until` extension, `!in`, and the `Int`/`Long`/`Char` element types.
+  `StringCharSequenceBridge`'s copy of that same "stable" set — harmless, because nothing evaluates between its two
+  reads — is gone the same way, so there is no second answer left to drift.
 - **bir2cir (area:bir2cir): an argument that never returns, to the left of a suspending one, is no longer treated
   as a value to carry across the suspension.** `pair(run { throw IllegalStateException() }, later())` refused to
   compile — the evaluation-order spill wanted a type for an operand that has no value — and the shapes it stood for

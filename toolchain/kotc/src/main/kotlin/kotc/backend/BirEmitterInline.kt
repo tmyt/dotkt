@@ -292,9 +292,10 @@ internal fun BirEmitter.emitOwnerfulInlineNode(call: IrCall): String {
 	// inside a loop) still evaluates it exactly once, here, and an omitted default that bir2cir fills inside the splice
 	// lands after every supplied value rather than in its parameter's slot.
 	val label = calleeLabel(callee)
-	// An OBJECT REFERENCE receiver is rendered in place instead of bound ([needsPlanBinding]) — it is a constant, and
-	// for the FLATTENED-companion case below it names an `INSTANCE` field this representation never emits, so a
-	// binding for it would ask the plan to evaluate a value that does not exist.
+	// A receiver naming an object this backend gives NO INSTANCE — the FLATTENED plain companion described below, or a
+	// projected static holder — is rendered in place instead of bound ([needsPlanBinding]): a binding for it would ask
+	// the plan to evaluate a value that does not exist. A real `object` and a super-typed companion DO have an
+	// `INSTANCE`, loading it runs the object's body, and so they are bound like any other receiver.
 	val dispatchJson = dispatchArg?.let {
 		if (needsPlanBinding(it)) callPlan(call).bindValue(it, "recv", "receiver of '$label'") else expr(it)
 	}

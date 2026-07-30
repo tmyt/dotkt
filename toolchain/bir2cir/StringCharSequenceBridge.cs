@@ -416,15 +416,14 @@ static class StringCharSequenceBridge
 
     // #156 — the runtime-conditional adapter wrap for a nullable String into a `CharSequence?` slot:
     //   v == null ? (dotkt$CharSequence)null : new dotkt$StringCharSequence(v)
-    // bindOnce (mirrors RangeMembershipLowering): a stable subject (const/local/this — side-effect-free) is read in both
-    // legs directly; anything else is bound to a temp via a valueBlock so a side-effecting value runs exactly once. The
-    // temp's declared type is the value's own static type (a `String?` -> the nullable token, stripped downstream).
+    // The value is read in BOTH legs (the null test and the adapter construction), so it is bound to a temp via a
+    // valueBlock unless re-reading it is free — `ValueStability.IsReReadable` (Q1, the roster in
+    // bir-common/ValueStability.cs) is the one answer to that question. The temp's declared type is the value's own
+    // static type (a `String?` -> the nullable token, stripped downstream).
     static JsonNode WrapAdapterNullable(JsonNode v, Env env)
     {
-        var subjKind = Str((v as JsonObject)?["k"]);
-        var stable = subjKind is "const" or "local" or "this";
         JsonNode read; JsonNode tempStmt = null;
-        if (stable) read = v;
+        if (ValueStability.IsReReadable(v)) read = v;
         else
         {
             var name = "__cswrap$" + System.Threading.Interlocked.Increment(ref _counter);

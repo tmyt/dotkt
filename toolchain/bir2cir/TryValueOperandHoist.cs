@@ -54,6 +54,16 @@ static class TryValueOperandHoist
     {
         if (node is JsonObject obj)
         {
+            // A TYPE node (`{t:…}`, docs/bir-cir-spec.md §1) declares nothing and carries no statement, so the walk
+            // STOPS at it. That is not tidiness: a function type spells its parameter TYPES as `params`, the same
+            // key a declaration spells its parameters with, so descending asked `Extend` for a scope at every
+            // `(A) -> B` in the file — 2909 of them in `_Arrays.bir` alone, each copying the whole environment to
+            // harvest nothing (a type node's `params` entries are types, which carry no `name` + `type` pair, so
+            // none of them could ever enter a scope). Types and value nodes are disjoint by the schema — a `{t:…}`
+            // node never carries `k` — so this cannot skip a node the hoist owns.
+            if (TypeJson.IsType(obj)) return;
+            // `Extend` returns `this` unless the node really has parameters, so after the skip above the only nodes
+            // that pay for a scope copy are the ones that declare some (a method/accessor/constructor, a lambda).
             var child = scope.Extend(obj);
             foreach (var kv in obj) if (kv.Value != null) Walk(kv.Value, child);
             NormalizeLists(obj, child);

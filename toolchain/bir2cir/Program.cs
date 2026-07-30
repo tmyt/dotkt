@@ -325,8 +325,9 @@ sealed class Pipeline
             // membership to the short-circuit `(x >= a && x <op> b)` fast path FQN-keyed — only for a stdlib primitive
             // range (`kotlin.ranges.{Int,Long,Char}Range` contains over an un-materialized `rangeTo`/`until`/`rangeUntil`).
             // Runs BEFORE RangeConstructionLowering (which would else materialize the recv rangeTo into `new IntRange`)
-            // so the recv still carries the inline bounds; the produced binOp/cond flows through every downstream pass
-            // exactly as kotc's retired membership lowering did (byte-identical).
+            // so the recv still carries the inline bounds. The fast path must not reorder the membership: `x in a()..b()`
+            // builds the range first, so both bounds run, in order, before the subject — the pass binds lo/hi/subject to
+            // temps to keep that, and splices only an operand re-reading cannot move (ValueStability.IsReReadable).
             RangeMembershipLowering.Apply(bir.Root, localTopLevelFns, attributeTopLevelOwner);
             // VALUE-POSITION RANGE CONSTRUCTION (#73 Phase 2b-1): kotc emits the FAITHFUL `callInstance
             // kotlin.Int.rangeTo(b)` for `a..b` / `a..<b`; materialize the stdlib `new IntRange/LongRange/CharRange`

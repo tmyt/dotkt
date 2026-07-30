@@ -1,0 +1,28 @@
+{
+  "fileClass": "SelftestKt",
+  "types": [
+    {
+      "name": "SelftestHolder",
+      "kind": "class",
+      "mods": { "suspend": true },
+      "fields": [
+        {
+          "name": "escaped",
+          "static": true,
+          "ownerType": { "t": "fqn", "name": "SelftestHolder" },
+          "type": { "t": "fqn", "name": "kotlin.Int" },
+          "init": {
+            "k": "callStatic",
+            "owner": null,
+            "calleeOwner": { "t": "fqn", "name": "SelftestKt" },
+            "method": "f",
+            "sig": [],
+            "ret": { "t": "fqn", "name": "kotlin.Int" },
+            "args": [],
+            "suspendCall": true
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -388,7 +388,7 @@ static class CallEvalLowering
     ///
     /// Deliberately says nothing about side effects. A `field` link can throw and a `staticField` link can run a type
     /// initializer; both stay, and both then happen at the location's own position, which is where Kotlin puts them.
-    static bool StaysInLocation(JsonNode? node) => node is JsonObject o && Str(o["k"]) switch
+    static bool StaysInLocation(JsonNode node) => node is JsonObject o && Str(o["k"]) switch
     {
         "const" or "this" or "local" or "bindRef" or "default" or "classRef"
             or "staticField" or "enumValue" => true,
@@ -411,14 +411,16 @@ static class CallEvalLowering
         return found;
     }
 
-    /// Move every impure VALUE an addressable location is computed from into a local, in the location's own operand
-    /// order, leaving a pure location expression behind.
+    /// Move every operand that is NOT part of an addressable location's own path into a local, in the location's own
+    /// operand order, leaving a location expression the call can still take the address of.
     ///
     /// Shape-agnostic on purpose: kotc renders an address through the ordinary expression emitter, so a location is
     /// whatever the lvalue happens to be — a bare `local`, a `field` over a receiver chain, an `arrayGet` over an array
-    /// and an index, a member access. The rule is the same for all of them: the NODE is the location and stays, its
-    /// operand CHILDREN are values and are pinned when impure. Recursing through the links that STAY ([StaysInLocation])
-    /// keeps a chain (`a.b.c[i()]`) pinning only the operands that actually carry a side effect.
+    /// and an index, a member access. The rule is the same for all of them, and it is keyed on STORAGE-PATH IDENTITY
+    /// rather than on side effects ([StaysInLocation]): a link of the location's own path stays and is recursed into,
+    /// because pinning it would take the address of a local — a copy, for a value type. Everything else is a value
+    /// computed FOR the location and is pinned. So `a.b.c[i()]` pins `i()` and keeps the whole `a.b.c[…]` path, even
+    /// though a `field` link in it can throw.
     static void PinLocationOperands(JsonNode location, JsonArray into) =>
         WalkOperands(location as JsonObject, child =>
         {
@@ -528,11 +530,10 @@ static class CallEvalLowering
     /// `&amp;&amp;`/`||` to a `cond`, and the `binOp` spelling of them is minted by PrimitiveOperatorLowering, which runs
     /// after this pass.
     ///
-    /// Only kinds that can REACH this pass are listed. This is the ninth pass bir2cir runs (Program.cs), so the set
-    /// is what kotc emits plus what the handful of passes before it mint; the collection-literal constructions
-    /// (`newList`/`newSet`/`newMap`) and the .NET property accesses (`clrPropGet`/`clrPropSet`) are NOT kotc
-    /// vocabulary — MemberCallSubstitution and NetInteropBinding mint them, hundreds of lines later — so listing
-    /// them here would only describe a node this pass cannot see.
+    /// Only kinds that can REACH this pass are listed — what kotc emits, plus what the few passes ahead of this one
+    /// mint. The collection-literal constructions (`newList`/`newSet`/`newMap`) and the .NET property accesses
+    /// (`clrPropGet`/`clrPropSet`) are NOT kotc vocabulary: MemberCallSubstitution and NetInteropBinding mint them,
+    /// and both run after this pass (Program.cs), so listing them here would only describe a node it cannot see.
     static readonly HashSet<string> EagerKinds = new(StringComparer.Ordinal)
     {
         "callStatic", "callInstance", "callInline", "objMethod", "delegateInvoke", "new", "newClr",

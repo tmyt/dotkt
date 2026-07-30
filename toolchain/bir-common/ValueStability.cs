@@ -1,16 +1,21 @@
 // THE VALUE QUESTIONS a lowering asks about a BIR expression — and, for two of them, the answer.
 //
 // "Purity" and "stability" are not one property in this backend. FOUR distinct questions are asked about an
-// expression, each by a different lowering, for a different purpose. They are deliberately kept apart, one
-// question = one implementation = one question-shaped name, because a kind may legitimately answer YES to one
-// and NO to another. Where each question lives:
+// expression, for four different purposes, and a kind may legitimately answer YES to one and NO to another —
+// so they are deliberately kept apart, each named after the question it answers rather than after a shared
+// notion of "pure". What each question owns is its DEFINITION, not a single call site: one asker may need two
+// of them (CallEvalLowering asks Q2 and Q5), and Q1 has one definition realized twice, once per layer, because
+// kotc sees Kotlin IR and bir2cir sees only BIR kinds. What must never happen is the same question answered by
+// two independent classifiers that can drift. Where each question lives:
 //
 //   Q1  RE-READABLE   — may this value be READ more than once, with other evaluation in between?
 //                       kotc `isStableValue` over Kotlin IR, recorded on every binding kotc emits (`stable`,
 //                       docs/bir-cir-spec.md §2.7); `IsReReadable` below for the bindings bir2cir itself fills.
 //   Q1ᴬ  stable ADDRESS — is the LOCATION, rather than the value, stable? kotc `isStableLocation`; IR-only.
-//   Q2  DROPPABLE     — is EVALUATING it unobservable, so a binding nothing reads may be skipped?
-//                       `IsDroppable` below (CallEvalLowering's zero-reader bindings).
+//   Q2  DROPPABLE     — is EVALUATING it unobservable, so a value nothing will read may be skipped?
+//                       `IsDroppable` below. Asked wherever a lowering is about to make a value UNREAD — by
+//                       CallEvalLowering of a plan binding with no reader, and by KClassMemberBinding of the
+//                       receiver its `value::class` const-fold folds away.
 //   Q4  STACK-NEUTRAL — may it stay in its operand slot when a LATER sibling hoists out of the expression?
 //                       TryValueOperandHoist (`StackNeutralKinds`/`IsStackNeutral`).
 //   Q5  LVALUE FORMER — does it DESIGNATE storage without evaluating anything itself?
@@ -43,11 +48,13 @@
 // lowering context, so they sit in bir-common beside TypeNode/FieldLegality.
 //
 // Q1's home is kotc: it judges `stable` ONCE per binding it emits, from the Kotlin expression, and records the
-// answer on the binding — bir2cir consumes that answer and never re-derives it. `IsReReadable` covers only the
-// narrow case bir2cir owns: a binding whose EXPRESSION bir2cir supplied, which is a cross-module default
-// materialized from a `[kotlin.clr.KotlinDefault]` carrier (kotc reserved the binding with a placeholder and
-// could not know what would fill it). Deliberately conservative — answering "no" costs one local, answering
-// "yes" wrongly duplicates an evaluation.
+// answer on the binding — bir2cir consumes that answer and never re-derives it. `IsReReadable` covers the cases
+// bir2cir owns, where kotc had nothing to judge because bir2cir supplied the expression itself or synthesized the
+// read: a cross-module default materialized from a `[kotlin.clr.KotlinDefault]` carrier (DefaultArgSplice — kotc
+// reserved the binding with a placeholder and could not know what would fill it), and the operands a lowering
+// re-renders into more than one slot of the shape it builds (RangeMembershipLowering's bounds and membership
+// subject, StringCharSequenceBridge's nullable adapter wrap). Deliberately conservative — answering "no" costs
+// one local, answering "yes" wrongly duplicates an evaluation or moves it past a side effect.
 
 #nullable enable
 using System.Text.Json.Nodes;

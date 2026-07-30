@@ -21,6 +21,8 @@
 //   3. STRUCTURAL — `binOp` has both `lhs`+`rhs`; `cond` has `cond`+`then`+`else`.
 //   4. OWNER PRESENCE — fields carry ownerType; owner:null callStatic/newDelegate/newBoundDelegate carry calleeOwner.
 //   5. `for` `cmp` ∈ {<=, <, >=} — an unknown cmp silently miscompiles to an infinite loop.
+//   6. SUSPENSION LOWERED — no node in a body ilemit EMITS still carries `suspendCall:true` (only a METHOD still
+//      carrying `mods.suspend` is exempt — a ctor / static-initializer group never is; see CheckScope).
 //
 // SCOPE units mirror ilemit's `_locals`/`_cfgLabels` lifetimes exactly: a method = params ∪ body; a ctor ALSO folds
 // in preStmts/thisArgs/baseArgs (emitted in the same frame); the static-field-initializer group shares ONE .cctor `_locals`
@@ -74,7 +76,10 @@ public static class IrSanity
                 if (f.TryGetProperty("init", out var iv) && iv.ValueKind != JsonValueKind.Null
                     && f.TryGetProperty("static", out var st) && st.ValueKind == JsonValueKind.True)
                     inits.Add(iv);
-            if (inits.Count > 0) CheckScope(owner + "..cctor", null, inits, decl: c);
+            // ALWAYS suspension-checked (checkSuspension: true). ilemit emits a type initializer from the fields
+            // alone and never consults `mods.suspend` on the containing type (Emitter.Assembly.cs pass 4b), so
+            // nothing here is exempt — and `decl` is the CONTAINER, whose modifiers say nothing about this body.
+            if (inits.Count > 0) CheckScope(owner + "..cctor", null, inits, decl: c, checkSuspension: true);
         }
     }
 
@@ -84,7 +89,9 @@ public static class IrSanity
         if (m.TryGetProperty("abstract", out var ab) && ab.ValueKind == JsonValueKind.True) return;
         if (!m.TryGetProperty("body", out var body) || body.ValueKind != JsonValueKind.Array) return;
         var name = m.TryGetProperty("name", out var nm) && nm.ValueKind == JsonValueKind.String ? nm.GetString() : "?";
-        CheckScope(owner + "." + name, ParamNames(m), new List<JsonElement> { body }, decl: m);
+        // The ONLY scope the suspension check exempts, and only when this METHOD still carries `mods.suspend` — the
+        // exact flag ilemit's own guard keys on before it walks a method body (see CheckRefs check 6).
+        CheckScope(owner + "." + name, ParamNames(m), new List<JsonElement> { body }, decl: m, checkSuspension: !IsSuspendDecl(m));
     }
 
     static void CheckCtorDecl(string owner, JsonElement c)
@@ -97,23 +104,59 @@ public static class IrSanity
         if (c.TryGetProperty("preStmts", out var pre) && pre.ValueKind == JsonValueKind.Array) roots.Add(pre);
         if (c.TryGetProperty("thisArgs", out var ta) && ta.ValueKind == JsonValueKind.Array) roots.Add(ta);
         if (c.TryGetProperty("baseArgs", out var ba) && ba.ValueKind == JsonValueKind.Array) roots.Add(ba);
-        CheckScope(owner + "..ctor", ParamNames(c), roots, decl: c);
+        // ALWAYS suspension-checked (checkSuspension: true). ilemit's suspend guard lives in EmitMethodBody only;
+        // EmitCtorBody has none, so a constructor body is emitted whatever modifiers it carries.
+        CheckScope(owner + "..ctor", ParamNames(c), roots, decl: c, checkSuspension: true);
     }
 
     // Validate one `_locals`/`_cfgLabels` scope: collect its declared local names + label ids across all root trees,
     // then check every reference against them. `decl` supplies the #112 Phase-2 source position for the message.
-    static void CheckScope(string declLabel, HashSet<string> paramNames, List<JsonElement> roots, JsonElement decl)
+    //
+    // `checkSuspension` is check 6's gate, and the CALLER owns it because the exemption is not a property of the
+    // tree — it is a property of whether ilemit will walk this particular KIND of body. Only a method scope can be
+    // exempt (and only for its own `mods.suspend`); a constructor and a static-initializer group never are, because
+    // ilemit emits those without consulting the flag. Deriving it here from `decl` was the bug: the .cctor scope's
+    // `decl` is the CONTAINING TYPE, so a type carrying `mods.suspend` silently disabled the check over a body
+    // ilemit really does emit.
+    static void CheckScope(string declLabel, HashSet<string> paramNames, List<JsonElement> roots, JsonElement decl, bool checkSuspension)
     {
         var pos = PosPrefix(decl);
         var declared = paramNames != null ? new HashSet<string>(paramNames) : new HashSet<string>();
         var labels = new HashSet<int>();
         foreach (var r in roots) { CollectDeclared(r, declared); CollectSanityLabels(r, labels); }
+        // Check 6 asks only of the bodies ilemit turns into IL, and a METHOD that STILL carries `mods.suspend` is
+        // not one: ilemit's guard on that exact flag (`ModFlag(m, "suspend")`, Emitter.Bodies.cs) returns before it
+        // ever reaches the statement walk — a throwing stub in a stdlib build, a loud refusal in an app build.
+        // Checking those bodies would only restate that guard one layer earlier, in the one place it is expected to
+        // be hit.
+        //
+        // Such a survivor is STDLIB-ONLY by construction, and not because a refused shape goes un-lowered — a
+        // non-segmentable suspend fun still gets a cold entry + bridge, with a call-time throw for a body. The two
+        // mechanisms that actually leave the flag on disk are both in SuspendColdLowering: the self-build RETAINS the
+        // original beside the cold entry (kotc's pre-ignition @RestrictsSuspension `sequence{}`/`iterator{}` path
+        // still calls SequenceScope.yield/yieldAll by name), where an app build removes it; and the admit gate
+        // excludes an `inline` suspend fun outside an app build, which is how the coroutine PRIMITIVES — whose call
+        // sites are reconstructed inline instead — keep their standalone bodies.
+        //
+        // Measured at this commit: all 7 `suspendCall` survivors in the runtime stdlib CIR sit in such declarations
+        // (SequenceScope.yieldAll x2, SequenceBuilderIterator.yield/yieldAll, ContinuationKt.suspendCoroutine,
+        // DeepRecursiveScopeImpl.callRecursive x2) and ZERO sit in an emitted body; the app corpus has none at all,
+        // and neither does the 252-file reference CIR (RefBodySquash replaces its bodies with a throw stub before
+        // this runs, so a ref build needs no separate exemption). The synthesized cold entries and state-machine
+        // `invokeSuspend` bodies — where an escape would actually land — carry no `mods.suspend` and ARE checked.
         foreach (var r in roots)
         {
             CheckNoDupLabels(pos + declLabel, r);
-            CheckRefs(pos + declLabel, r, declared, labels);
+            CheckRefs(pos + declLabel, r, declared, labels, checkSuspension);
         }
     }
+
+    // Does this declaration still carry `mods.suspend`? §2.1 makes `mods` the single source (a redundant top-level
+    // `suspend` field was removed), so this reads the structured slot only.
+    static bool IsSuspendDecl(JsonElement decl) =>
+        decl.ValueKind == JsonValueKind.Object
+        && decl.TryGetProperty("mods", out var mods) && mods.ValueKind == JsonValueKind.Object
+        && mods.TryGetProperty("suspend", out var s) && s.ValueKind == JsonValueKind.True;
 
     // The #112 Phase-2 `File.kt:line: ` decl-source prefix, or "" when the decl carries no `pos`. Optional (absent =
     // pre-#112 behavior); a synthetic decl with no source simply omits it.
@@ -184,11 +227,24 @@ public static class IrSanity
 
     // Walk the tree, checking each node's MEANING invariant. Unmatched kinds (and type nodes, whose `k` vocabulary is
     // disjoint from these) just recurse.
-    static void CheckRefs(string decl, JsonElement node, HashSet<string> declared, HashSet<int> labels)
+    static void CheckRefs(string decl, JsonElement node, HashSet<string> declared, HashSet<int> labels, bool checkSuspension)
     {
         if (node.ValueKind == JsonValueKind.Object)
         {
             if (node.TryGetProperty("k", out var kEl) && kEl.ValueKind == JsonValueKind.String)
+            {
+                // 6. SUSPENSION LOWERED. `suspendCall:true` is kotc's FRONTEND FACT that this call site suspends;
+                // bir2cir's SuspendColdLowering is its only consumer, rewriting every suspending call into its cold
+                // shape — a resume label plus a call to the callee's `$dotkt_suspend` cold entry, or the awaiter
+                // sequence for a `.await()` CLR bridge — out of FRESH nodes that carry no tag. So a survivor in a
+                // body that ilemit EMITS is a suspension that
+                // ESCAPED the lowering, and ilemit, which has no notion of one, emits it as an ordinary invocation:
+                // the caller reads the raw `Task`/COROUTINE_SUSPENDED sentinel where the awaited value belongs, and
+                // the state machine never gets a resume point. Loud here beats an InvalidCastException at runtime.
+                //
+                // `checkSuspension` is false for exactly the bodies ilemit never emits — see CheckScope.
+                if (checkSuspension && node.TryGetProperty("suspendCall", out var scEl) && scEl.ValueKind == JsonValueKind.True)
+                    throw new IrSanityException(decl, $"'{kEl.GetString()}' still carries 'suspendCall': a suspension escaped the cold lowering (every suspending call must be rewritten into its cold Continuation shape before CIR)");
                 switch (kEl.GetString())
                 {
                     case "local":
@@ -241,10 +297,11 @@ public static class IrSanity
                         }
                         break;
                 }
-            foreach (var p in node.EnumerateObject()) CheckRefs(decl, p.Value, declared, labels);
+            }
+            foreach (var p in node.EnumerateObject()) CheckRefs(decl, p.Value, declared, labels, checkSuspension);
         }
         else if (node.ValueKind == JsonValueKind.Array)
-            foreach (var x in node.EnumerateArray()) CheckRefs(decl, x, declared, labels);
+            foreach (var x in node.EnumerateArray()) CheckRefs(decl, x, declared, labels, checkSuspension);
     }
 
     static HashSet<string> ParamNames(JsonElement m)
