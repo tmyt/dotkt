@@ -296,6 +296,14 @@ sealed class Pipeline
             // a stdlib self-build has same-module fills of exactly that shape. From here down no pass sees plan
             // vocabulary — the pass asserts that itself, and verify-schema enforces the same phase split.
             CallEvalLowering.Apply(bir.Root);
+            // NOTHING-VALUE TERMINATION (#197): a `kotlin.Nothing`-typed expression delivers no value, but its CLR
+            // erasure (`object`) still reaches whatever slot reads it — the other arm of an if/when merge, a `ret`, a
+            // typed local — so the verifier sees an `object` where a `string` belongs. Terminate such a position in
+            // place (`else boom()` -> `else throw boom()`) so nothing is merged at all. Runs HERE: every splice that
+            // can introduce a `Nothing` call has run, the plan vocabulary is gone, and the type is still spelled
+            // `kotlin.Nothing`. BEFORE the suspend transform, whose `__cond$` machinery already stores nothing for a
+            // `throwExpr` arm — so one rule covers the plain and the state-machine lowering alike.
+            NothingValueTermination.Apply(bir.Root);
             // RE-NORMALIZE the just-spliced RAW payload bodies: InlineSplice runs AFTER ObjectSlotRename (219), so a
             // cross-module inline body carries kotc's raw `objMethod toString`/`hashCode`/`equals` (and `anySlot` calls)
             // un-renamed — ilemit's EmitObjMethod keys on the BCL spelling (`ToString`), so an un-renamed `toString`
