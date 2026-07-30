@@ -17,7 +17,7 @@ package dotkt.support
 
 import System.Threading.Tasks.Task
 
-/** A real suspension point that is NOT an await marker: a cold call the caller's state machine drives. */
+/** A real suspension point via the .await() bridge/marker, used by generic suspend callees to avoid the currently-broken generic-await emission path. */
 public suspend fun corOpXPause() {
     Task.Delay(1).await()
 }
