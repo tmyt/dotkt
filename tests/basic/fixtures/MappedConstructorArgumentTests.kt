@@ -12,7 +12,9 @@
 // covers is asserted here — HashSet, HashMap (Dictionary) and LinkedHashMap (OrderedDictionary) all lose the
 // load-factor slot — alongside LinkedHashSet, which is a real Kotlin class whose constructor keeps both arguments
 // and must be unaffected. Every side effect is captured into `mcaLog` and asserted positionally, which is stronger
-// than a value assertion: a mapped-away argument evaluated zero or twice only shows up in the log.
+// than a value assertion: a mapped-away argument evaluated zero or twice only shows up in the log. The two
+// `Nothing`-typed shapes are where this meets #197's termination: an argument that both must be evaluated and
+// never returns.
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 
@@ -44,6 +46,11 @@ fun mcaPair(a: Any, b: Any): String = "$a/$b"
 
 /** …and the mirror: the mapped construction FIRST, with a later operand whose evaluation must not overtake it. */
 fun mcaTake(set: HashSet<Int>, n: Int): Int = set.size + n
+
+/** A `Nothing`-returning argument: it evaluates, and it does not return. `Nothing` has no CLR analog, so such a
+ *  call is erased to `object` and `NothingValueTermination` (#197) rewrites its value position into a `throw` —
+ *  including the value position a mapped-away argument's binding is. */
+fun mcaFail(msg: String): Nothing = throw IllegalStateException(msg)
 
 class MappedConstructorArgumentTests {
     /** HashSet: the mapped-away load factor runs, after the capacity it is written after. */
@@ -168,6 +175,35 @@ class MappedConstructorArgumentTests {
         }
         assertEquals("rejected", outcome)
         assertEquals("lfL", mcaTrace())   // the later argument never ran: the construction threw first
+    }
+
+    /** A `Nothing`-typed MAPPED-AWAY argument: the one value position where "evaluated but unread" and "never
+     *  returns" meet. The capacity runs, the load factor throws, the construction never happens. */
+    @TestAttribute
+    fun nothingTypedMappedAwayArgument() {
+        mcaLog.clear()
+        val outcome = try {
+            HashSet<Int>(mcaCap("M"), mcaFail("dropped"))
+            "constructed"
+        } catch (e: IllegalStateException) {
+            e.message ?: "?"
+        }
+        assertEquals("dropped", outcome)
+        assertEquals("capM", mcaTrace())
+    }
+
+    /** …and a `Nothing`-typed KEPT argument stops the whole call before the mapped-away one is reached. */
+    @TestAttribute
+    fun nothingTypedKeptArgument() {
+        mcaLog.clear()
+        val outcome = try {
+            HashSet<Int>(mcaFail("kept"), mcaLf("N"))
+            "constructed"
+        } catch (e: IllegalStateException) {
+            e.message ?: "?"
+        }
+        assertEquals("kept", outcome)
+        assertEquals("", mcaTrace())
     }
 
     /** EXACTLY once per construction: a lambda invoked twice evaluates both arguments twice, in order. */
