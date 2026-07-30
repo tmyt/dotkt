@@ -60,10 +60,12 @@ declare -A RT_XFAIL=(
 #     roundtrip-inline-member -> inlineMemberNonLocalReturn   roundtrip-generic-inline-ext -> genericInlineExtension
 #     roundtrip-dotfile -> dottedFileClass              roundtrip-nonconst-default -> nonConstDefaultArgs
 #     roundtrip-comparable -> comparableClass           roundtrip-ubyte -> ubyteFidelity
-#   BATCH 3 (1):
+#   BATCH 3 (2):
 #     roundtrip-toplevel-val -> toplevelValVar  (#195: reference KLIB surfaces a field-backed top-level val/var)
+#     roundtrip-nothing -> crossModuleNothingBranchMerge  (#197: the Nothing value merge is well-typed IL, so the
+#                                                          case no longer needs a lane that skips ilverify)
 # The remaining sections below stay in this shell lane pending later increments (suspend/coharness, negative
-# compile-fail and dual-emit-path cases). roundtrip-nothing still has a formal object/string IL gap.
+# compile-fail and dual-emit-path cases).
 # generic-hof and receiver-lambda are now formally clean after low-arity delegate ABI unification; they remain here
 # only because their migration to the in-process ProjectReference lane has not been done yet.
 # roundtrip-comparable remains a direct reference-KLIB projection check; its broader ProjectReference twin also
@@ -355,41 +357,6 @@ cp "$AT/libil/AtomicLib.dll" "$AT/appil/" 2>/dev/null || true
 atexpected="$(printf '1\n42\nTrue\nTrue\nhi')"
 run_app atactual "$AT/appil/AtomicApp.dll"
 check_output roundtrip-atomic-twin "$atexpected" "$atactual" "consumed types whose members reference kotlin.* re-import with BOTH stdlib twins on the ref-reader set #73"
-
-# ----- KOTLIN `Nothing` RETURN round-trip (#135): companion-static + top-level `fun f(): Nothing` -----
-# A `fun f(): Nothing` erases to a CLR `object` return (Nothing has no CLR analog); bir2cir stamps [KotlinNothing]
-# on the return, dll2klib restores `kotlin.Nothing`, so a consumer's `val r: String = if (c) x else f()` keeps x's
-# type instead of widening to Any?. #133 wired the PLAIN method/getter path; #135 extends the READER to the
-# companion-static return (which the dll2klib companion-static loop read via raw MapRetT -> Any?, now RetTypeSfxN).
-# LOAD-BEARING: if either Nothing widened to Any?, the `val r: String = if/else` would fail to compile -> section FAIL.
-# STAYS in this shell lane (not migrated to the in-process ProjectReference consumer): a cross-module re-imported
-# Nothing branch merges an `object`-returning call with a `string`, which the in-process lane's ilverify phase
-# rejects (StackUnexpected object/string) though it RUNS green (the else branch throws) — a formal-only cross-module
-# Nothing IL gap tracked as #197; the shell lane asserts only stdout so it keeps this RUN coverage.
-NO="$ROOT/build/roundtrip-nothing"; rm -rf "$NO"; mkdir -p "$NO/lib" "$NO/app" "$NO/libbir" "$NO/libil" "$NO/appbir" "$NO/appil"
-cat > "$NO/lib/lib.kt" <<'EOF'
-class Boom {
-    companion object { fun boom(): Nothing = throw RuntimeException("boom") }   // companion-static Nothing (#135)
-}
-fun fail(msg: String): Nothing = throw RuntimeException(msg)                    // top-level Nothing (#133 baseline)
-EOF
-cat > "$NO/app/app.kt" <<'EOF'
-fun pick(n: Int): String {
-    val r: String = if (n >= 0) "kept" else Boom.Companion.boom()   // companion-static Nothing keeps r: String
-    return if (n >= 0) r else fail("x")                             // top-level Nothing keeps the expr: String
-}
-fun main() { println(pick(1)) }
-EOF
-"$LAUNCHER" "$NO/lib" -no-stdlib -classpath "$CP" -d "$NO/libbir" >/dev/null 2>&1 || true
-emit_il "$NO/libil" NothingLib "$NO/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$NO/libil/NothingLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-project_reference_klib "$NO/libil/NothingLib.dll" "$NO/NothingLib.klib"
-"$LAUNCHER" "$NO/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$NO/NothingLib.klib" -d "$NO/appbir" >/dev/null 2>&1 || true
-emit_il "$NO/appil" NothingApp --ref "$NO/libil/NothingLib.dll" "$NO/appbir"/*.bir.json
-cp "$NO/libil/NothingLib.dll" "$NO/appil/" 2>/dev/null || true
-noexpected="kept"
-run_app noactual "$NO/appil/NothingApp.dll"
-check_output roundtrip-nothing "$noexpected" "$noactual" "companion-static + top-level fun f(): Nothing round-trips (does not widen to Any?) #135"
 
 # ----- SUSPEND `Nothing` return round-trip (#135/#151): `suspend fun f(): Nothing` -----
 # The dll2klib READER reads [KotlinNothing] before the Task unwrap; bir2cir's SuspendColdLowering.BuildBridge stamps

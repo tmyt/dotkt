@@ -1119,6 +1119,27 @@ continuation genuinely IS `Continuation<Any>`, a resume result genuinely IS `Res
 | `FunGen.FieldType` SM-slot lookup | FOLLOW-UP | Its callers are guarded on the slot EXISTING (`_fields.Contains`), so the fallback is unreachable through them. Precondition: prove the remaining caller (`IsSuspendValueCallInScope`) cannot ask for an untracked name, then the lookup returns null and the caller decides. |
 | `Rewrite`'s result-less suspension-bearing `valueBlock` | FOLLOW-UP | A block with no `result` produces no value, so the null constant's type is the type of a value nobody has. Precondition: thread the ENCLOSING slot's expected type in — the node itself carries no fact that could answer. |
 
+## 7c. `Nothing` is a CLR `object` return, and a call to one is TERMINATED where it stands (#197)
+
+`kotlin.Nothing` has no CLR analog — it is the type of an expression that never produces a value — so a
+`fun f(): Nothing` is emitted as a method returning `object`, with `[KotlinNothing]` on the return so a re-consuming
+DotKt module recovers the Kotlin type (§10). Nothing on the CLR side records "this never returns", which matters
+wherever such a call sits in a **value** position:
+
+```kotlin
+val r: String = if (n >= 0) "kept" else boom()      // boom(): Nothing
+```
+
+There is no value to merge here — the `else` arm throws — but the arm's emitted type is `object`, and `object` is
+not a `string`. bir2cir therefore terminates a `Nothing`-typed value position rather than letting it reach the
+reader: `else boom()` is emitted as `else throw boom()`. The added `throw` is unreachable by construction, so the
+program's behavior is unchanged; what changes is that no ill-typed merge, and no papering-over cast, is emitted.
+
+**If a `Nothing` declaration returns anyway** — only possible from a foreign assembly whose implementation violates
+the contract — the returned reference is thrown, wrapped in a `RuntimeWrappedException` when it is not an exception.
+Kotlin leaves this unspecified (a `Nothing` function returning is a contract violation, not a program state), and
+failing closed is the same shape Kotlin/JVM emits (`ACONST_NULL; ATHROW` after such a call).
+
 ## 8. Reverse / cross-assembly interop
 
 - A DotKt assembly is a first-class .NET assembly; C# can reflection-load it. For **compile-time** `<Reference>`/
@@ -1492,6 +1513,7 @@ Current deliberate limits are:
 - A `value class` is a real (reference) class on the CLR — never erased, never a struct. §5f.
 - A value a call supplies that the emitted CLR shape has no slot for is still evaluated (a static-field read runs a type initializer; a field read can throw) — only a literal/local/`this`-class load is dropped. §7a.
 - A value-type `x?.suspendFoo()` across a suspension is no longer boxed: the conditional's slot is typed from its live branch, and a slot the backend cannot type is a compile-time refusal rather than a `kotlin.Any` box. §7b.
+- A `fun f(): Nothing` returns `object` on the CLR, and a call to one in a value position is emitted as `throw f()` — nothing is merged, so `val r: String = if (c) x else f()` carries no cast and no ill-typed join. §7c.
 - An auto-property's backing field is named `<Name>k__BackingField` (C# convention, `[CompilerGenerated]`), not `Name` — so reflection never sees a property and a field under one name. §5h.
 - `System.Byte` is UNSIGNED → maps to `UByte` (and `byte[]` → `UByteArray`, a native `System.Byte[]`); `kotlin.Byte` is signed = `System.SByte`. `UByteArray.toByteArray()` is a reinterpret VIEW, not a copy. §9b.
 - `import System.Text.StringBuilder` and `kotlin.text.StringBuilder` are two distinct typed views of one CLR type; mixing them is a type error (cast to cross). §8b.
