@@ -59,6 +59,19 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir (area:bir2cir): a nullable-generic return that was object-erased no longer crosses a suspension under
+  its PRE-erasure type.** `fun <T> f(x: T): List<T?>` has its `Nullable(T)` erased to `object` on the declaration
+  side, so the emitted method returns `List<object>`, while the call site — emitted with `T` already substituted —
+  is stamped `List<Nullable<Int>>`. `NullableTvErasureCallRealign` realigned the call's `ret`/`dynRet` to the erased
+  form but left the frontend `sty` stamp behind, and the deriver reads `sty` first. `List<object>` and
+  `List<Nullable<int32>>` are UNRELATED invariant reified generics — the very reason that pass exists — so any slot
+  declared from the stale stamp is invalid IL rather than a diagnosable drop. A suspension is what makes such a slot
+  exist, in two shapes: the erased call sitting LEFT of a suspending operand, where stage 0 declares the plan's
+  spill local from the stamp, and the erased call BEING the suspension, where the awaited state-machine field is.
+  Both produced an ilverify `StackUnexpected` (`IReadOnlyList<object>` where `IReadOnlyList<Nullable<int32>>` was
+  expected, and the reverse at the read). The pass now restamps `sty` at each of its four result-retype sites, per
+  the spec §2.7 invariant. The corpus had never composed nullable-generic erasure with a suspension, which is why
+  no gate saw it; `SuspendResultTypePrecedenceTests` composes both shapes now.
 - **kotc (area:kotc): a `suspend fun interface`'s SAM shim carries its Kotlin RESULT TYPE, not just the suspend
   modifier.** `suspendRet` rides alongside `mods.suspend` on every declaration — the modifier is the fact, the slot
   is the type — and the SAM lift (`BirEmitterLifts`, the shim behind `FlowCollector { … }` and every other suspend

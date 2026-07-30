@@ -102,6 +102,67 @@ class CorRtHolder(val f: suspend (Int) -> Int)
 
 suspend fun corRtValueThroughSafeCall(h: CorRtHolder?): Int = h?.f?.invoke(5) ?: -1
 
+// ---- 5. an object-ERASED nullable-generic return crossing a suspension ----------------------------------------
+//
+// `fun <T> f(x: T): List<T?>` has its `Nullable(T)` erased to `object` on the DECLARATION side — `object` is the
+// only uniform CLR storage carrying a real null for both a reference and a value instantiation of an
+// unconstrained `T` — so the emitted method returns `List<object>`. The CALL site is emitted with `T` already
+// substituted, so kotc stamps `List<Nullable<Int>>`; NullableTvErasureCallRealign realigns the call's result to
+// the erased form, and must realign the frontend `sty` stamp with it. The two are UNRELATED invariant reified
+// generics (no cast reconciles them), so a slot declared from the pre-erasure stamp is invalid IL, not a
+// diagnosable drop — and a SUSPENSION is what makes such a slot exist. Both compositions:
+//
+//   (a) the erased call is an operand evaluated LEFT of a suspending one, so stage 0 declares the plan's spill
+//       local from the stamp;
+//   (b) the erased call IS the suspension, so the awaited state-machine field is declared from it.
+fun <T> corRtNullBoxes(x: T): List<T?> = listOf(x, null)
+
+// The consumer's parameter is `List<Any?>`, whose CLR slot is the same `IReadOnlyList<object>` the erased return
+// produces, so the argument position agrees with the value by construction and this fixture pins result TYPING and
+// nothing else. Two neighbouring subjects are deliberately kept out: a parameter written as the substituted
+// `List<Int?>` would hit the erasure family's documented STORE/pass-side gap (reconciling an erased value with a
+// directly-written target), and a GENERIC consumer is reshaped to `clrGenericStatic`, whose stamps the reshape
+// drops — stage 0 refuses that operand outright, at HEAD and at origin/main alike.
+fun corRtCountNulls(l: List<Any?>, extra: Int): Int {
+    var n = 0
+    for (v in l) if (v == null) n++
+    return n + extra
+}
+
+suspend fun corRtErasedLeftOfSuspension(): Int = corRtCountNulls(corRtNullBoxes(7), corRtTick(0))
+
+suspend fun <T> corRtNullBoxesSuspend(x: T): List<T?> {
+    corRtTick(0)
+    return listOf(x, null)
+}
+
+suspend fun corRtErasedAwaited(): Int {
+    val l = corRtNullBoxesSuspend(7)
+    var n = 0
+    for (v in l) if (v == null) n++
+    return n
+}
+
+// ---- 6. the suspend `fun interface` SAM shim's result type ----------------------------------------------------
+//
+// The shim kotc lifts for a suspend `fun interface` lambda carries `mods.suspend`; `suspendRet` rides alongside
+// it, and bir2cir's cold registry reads THAT slot. A shim with the modifier but no slot had its awaited values
+// typed `kotlin.Any` — boxed into the state machine and unboxed out of it. These pin the two shapes whose result
+// type is least likely to survive by accident: a GENERIC interface with a NON-Unit result (so the slot is a type
+// parameter's instantiation rather than `Unit`), and a suspend member with an EXTENSION receiver (so the shim's
+// parameter list is shifted by the receiver).
+fun interface CorRtSuspendMapper<T, R> {
+    suspend fun map(v: T): R
+}
+
+fun interface CorRtSuspendOnInt {
+    suspend fun Int.transform(): Int
+}
+
+suspend fun <T, R> corRtApplyMapper(v: T, m: CorRtSuspendMapper<T, R>): R = m.map(v)
+
+suspend fun corRtApplyOnInt(v: Int, f: CorRtSuspendOnInt): Int = with(f) { v.transform() }
+
 class SuspendResultTypePrecedenceTests {
     @TestAttribute
     fun safeCallValueTypeResultIsNotBoxed() {
@@ -141,5 +202,26 @@ class SuspendResultTypePrecedenceTests {
     fun suspendFunctionValueBehindSafeCall() {
         assertEquals(6, blockOn { corRtValueThroughSafeCall(CorRtHolder { v -> corRtTick(v) }) })
         assertEquals(-1, blockOn { corRtValueThroughSafeCall(null) })
+    }
+
+    @TestAttribute
+    fun erasedNullableGenericReturnLeftOfSuspension() {
+        assertEquals(2, blockOn { corRtErasedLeftOfSuspension() })   // 1 null in [7, null] + tick(0) = 1
+    }
+
+    @TestAttribute
+    fun erasedNullableGenericReturnIsTheSuspension() {
+        assertEquals(1, blockOn { corRtErasedAwaited() })            // 1 null in [7, null]
+    }
+
+    @TestAttribute
+    fun suspendFunInterfaceGenericNonUnitResult() {
+        assertEquals(15, blockOn { corRtApplyMapper(7) { v -> corRtTick(v) + 7 } })
+        assertEquals("v8", blockOn { corRtApplyMapper(7) { v -> "v" + corRtTick(v) } })
+    }
+
+    @TestAttribute
+    fun suspendFunInterfaceExtensionReceiver() {
+        assertEquals(11, blockOn { corRtApplyOnInt(10) { corRtTick(this) } })
     }
 }
