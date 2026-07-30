@@ -482,7 +482,7 @@ sealed partial class Emitter
                 .Select(p => DotKt.Bir.TypeNode.Read(p.GetProperty("type"))));
 
     static MethodSigKey SigKey(string name, int methodArity, IEnumerable<DotKt.Bir.TypeNode> sig) =>
-        new(name, methodArity, string.Join(",", sig.Select(SigCanon)));
+        new(name, methodArity, string.Join("|", sig.Select(SigCanon)));
 
     static int DeclaredMethodArity(JsonElement methodDef) =>
         methodDef.TryGetProperty("typeParams", out var tps) && tps.ValueKind == JsonValueKind.Array
