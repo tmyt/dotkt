@@ -92,6 +92,47 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   try in one of its branches' operand slots still needs hoisting). `ExceptionTests.tryInsideAMintedOperandBlock`
   and `.tryInABranchOfATrySubjectedWhen` pin the shapes, with the ordering half in
   `MappedConstructorArgumentTests.laterArgumentDoesNotOvertakeTheConstruction`.
+- **kotc (area:kotc, #67): suspend extension and re-imported DotKt member callable references now lower through
+  the general suspend-reference adapter.** Suspend callable references are represented by `newSuspendLambda`, whose
+  body carries the same Kotlin call facts as a direct invocation. The router previously admitted only non-extension
+  references and rejected member declarations restored by dll2klib; extension references also keep their receiver in
+  the function type's receiver slot rather than its ordinary parameter list. The adapter now derives its physical
+  parameters from both slots, captures bound receivers exactly once, and handles local and referenced top-level/member
+  provenance uniformly. Bound and unbound extension forwarding share one call-shape builder with ordinary callable
+  references, so generic arguments and referenced file-facade ownership cannot drift between the suspend and
+  non-suspend paths. Coroutine fixtures cover both extension shapes, and the ProjectReference lane covers bound and
+  unbound suspend members imported from another DotKt assembly.
+- **bir2cir (area:bir2cir): a call to a `fun f(): Nothing` no longer leaves its erased `object` in a value slot
+  (#197).** `Nothing` has no CLR analog, so such a function returns `object`. A `throw`/`return` in expression
+  position announces "no value" in its own node kind and ilemit emits it as the terminator it is, but a CALL
+  announces it only in its type stamp — so the erased `object` reached whatever read the expression: the other arm
+  of an `if`/`when` merge, the method's `ret`, a typed local. `object` is not assignable to `string`, so `ilverify`
+  reported `StackUnexpected [found ref 'object'][expected ref 'string']` on a merge the program never performs (the
+  arm always throws first, so every affected program RAN correctly). bir2cir now TERMINATES a `Nothing`-stamped
+  value position where it stands — `else boom()` becomes `else throw boom()` — so nothing is merged and no cast
+  papers over an arm that delivers nothing. The fix is the fault class, not the reported example: same-module and
+  cross-module, `then` arm and `else` arm, a `when` arm, an elvis right-hand side, a block whose LAST expression is
+  the call, BOTH arms, a bare expression-body `ret`, and a value-typed (`Int`) merge — plus one instance the
+  termination has to be run TWICE to catch: a covariant `override fun f(): Nothing` (legal, since `Nothing` is below
+  every type) makes bir2cir synthesize an exact-CLR-slot bridge that forwards to it, minting a fresh
+  `Nothing`-stamped call in a method that did not exist during the per-file sweep, whose erased `object` then met the
+  slot's return at the bridge's own `ret`. A second sweep runs after the two interface-bridge synthesizers; it is
+  idempotent (an already-terminated position is a `throwExpr`, whose operand the pass does not re-enter — measured,
+  not assumed), and it does not replace the first, because passes in between rewrite or drop a node's stamp.
+  Because it runs before the
+  suspend transform, the state-machine lowering — which already stores nothing for a `throwExpr` arm — is covered
+  by the same rule; that axis was previously unexercised anywhere and now has its own battery
+  (`SuspendNothingValueTests`), which matters because terminating an arm WIDENS what the suspend lowering handles:
+  its escape check is a whole-subtree walk, so a terminated arm anywhere under a conditional now routes the whole
+  node through the `__cond$` control-flow path, where a slot it cannot type would be a hard refusal.
+  The termination keys on the frontend's explicit `sty`/`ret`/`dynRet` STAMP and never on a
+  derived type: `NodeType.Of` answers a `cond` it cannot fully type from whichever arm it can, so kotc's `!!`
+  desugar derives as `Nothing` while its value is plainly the non-null operand — terminating on that would delete a
+  live value. The stamp lookup itself moved into `NodeType.Stamp`, so the `sty`-then-`ret`-then-`dynRet` precedence
+  stays stated once. `roundtrip-nothing` was the case this gap held in the stdout-only shell lane; it is now
+  `crossModuleNothingBranchMerge` in the in-process ProjectReference lane, which ilverifies — including the
+  DEFAULT-package producer the shell scenario had and the migration would otherwise have dropped, so a regression in
+  root-namespace file-class attribution or in `[KotlinNothing]` restoration through it cannot pass silently.
 - **bir2cir (area:bir2cir): a nullable-generic return that was object-erased no longer crosses a suspension under
   its PRE-erasure type.** `fun <T> f(x: T): List<T?>` has its `Nullable(T)` erased to `object` on the declaration
   side, so the emitted method returns `List<object>`, while the call site — emitted with `T` already substituted —
