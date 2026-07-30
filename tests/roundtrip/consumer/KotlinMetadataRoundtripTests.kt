@@ -567,6 +567,7 @@ class ComparableUnsignedAndPropertyRoundtripTests {
     @TestAttribute
     fun comparableClass() {
         ClassicAssert.IsTrue(Ver(3) < Ver(5))                   // True   `<`  -> restored operator compareTo
+        ClassicAssert.IsTrue(Ver(3) < 5)                        // True   lowercase sibling compareTo(Int) stays verbatim
         ClassicAssert.IsTrue(Ver(9) > Ver(2))                   // True   `>`
         ClassicAssert.IsTrue(Ver(4) <= Ver(4))                  // True   `<=`
         ClassicAssert.IsFalse(Ver(7) >= Ver(8))                 // False  `>=`
