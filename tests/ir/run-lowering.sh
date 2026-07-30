@@ -45,7 +45,7 @@ for bir in tests/ir/lowering/reject-*.bir.json; do
 	rejects=$((rejects + 1))
 	name="$(basename "$bir" .bir.json)"
 	expected="${bir%.bir.json}.expected"
-	if [[ ! -f "$expected" ]] || ! grep -qE '\S' "$expected"; then
+	if [[ ! -f "$expected" ]] || ! grep -q '[^[:space:]]' "$expected"; then
 		echo "  LOWERING FAIL  $name: no non-empty .expected file — a refusal fixture that pins no wording asserts nothing"
 		rc=1; continue
 	fi
