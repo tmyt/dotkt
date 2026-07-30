@@ -1801,6 +1801,10 @@ static partial class SuspendColdLowering
         // Rewrite an expression: lower a suspending `cond` to control flow, spill each suspend call (post-order)
         // into a suspension segment + await field, redirect param/local reads to SM field reads, and (for an
         // instance member) redirect `this`/implicit-receiver to the SM's `$this` field. Appends to `outp`.
+        //
+        // WHICH arms append to `outp` is a fact one caller has to predict before calling: `LowersToStatements`
+        // (below) mirrors them, so an operand can be bound before a neighbour that emits statements. Add an
+        // appending arm here and add it there.
         JsonNode Rewrite(JsonNode node, List<JsonNode> outp)
         {
             if (node is JsonObject o)
@@ -2036,6 +2040,10 @@ static partial class SuspendColdLowering
         //
         // Over-answering is safe (one bound receiver more than strictly needed); under-answering reorders operands,
         // so an unfamiliar shape must land on `true`.
+        //
+        // MAINTENANCE: its arms are `Rewrite`'s statement-appending dispatch, one for one — each is marked below with
+        // the emitter it stands for. A new arm there that appends to `outp` needs one here, or the operand left of it
+        // stops being ordered against it.
         static bool LowersToStatements(JsonNode node)
         {
             switch (node)
