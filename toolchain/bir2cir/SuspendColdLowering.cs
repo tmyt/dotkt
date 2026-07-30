@@ -2022,6 +2022,42 @@ static partial class SuspendColdLowering
             return Walk(node);
         }
 
+        // Does rewriting this operand APPEND STATEMENTS to `outp` — a suspension's segments, or the control flow an
+        // escaping value is flattened into? `EmitAwaitPoint` asks it of the captureContext argument: an operand that
+        // emits statements is what can leave an earlier operand's expression stranded behind them.
+        //
+        // NOT `HasOwnSuspension || EscapesExpression`. Those two answer "whose frame does this belong to" and stop at
+        // every `LambdaKinds` node; `Rewrite` treats only `newSuspendLambda` as opaque and descends into everything
+        // else — including a `newClosure`'s CAPTURES, which are ordinary expressions evaluated where the closure is
+        // constructed. A bound callable reference `(<expr>)::f` puts an ARBITRARY expression there (kotc's
+        // `boundExtRef`), so an escaping value can sit under a lambda kind and still be flattened into this frame.
+        // The `synthClass` is not an operand — it is the closure's own body — and is skipped for the same reason the
+        // call-evaluation plan's eager-spine scan skips it.
+        //
+        // Over-answering is safe (one bound receiver more than strictly needed); under-answering reorders operands,
+        // so an unfamiliar shape must land on `true`.
+        static bool LowersToStatements(JsonNode node)
+        {
+            switch (node)
+            {
+                case JsonObject o:
+                    var k = Str(o["k"]);
+                    if (k == "newSuspendLambda") return false;
+                    if (Bool(o["suspendCall"])) return true;               // -> EmitSuspensionPoint / EmitAwaitPoint
+                    if (IsSuspendCoroutineCall(o)) return true;            // -> EmitSuspendCoroutineCall
+                    if (k != null && ControlTransferKinds.Contains(k)) return true;   // -> the escaping-value flatten
+                    foreach (var kv in o)
+                        if (kv.Key != "synthClass" && kv.Value != null && LowersToStatements(kv.Value)) return true;
+                    return false;
+                case JsonArray a:
+                    foreach (var it in a)
+                        if (it != null && LowersToStatements(it)) return true;
+                    return false;
+                default:
+                    return false;
+            }
+        }
+
         // A suspension point (mirrors kotc emitSuspend): set label, start the cold call passing `this` (the SM,
         // a Continuation) as the callee's completion; if it returns COROUTINE_SUSPENDED, return SUSPENDED
         // (inline); else fall through to the merge label, rethrow a failed resume, store the awaited value.
@@ -2366,13 +2402,13 @@ static partial class SuspendColdLowering
             JsonNode captureValue = null;
             if (configured)
             {
-                // The argument's lowering APPENDS STATEMENTS when it carries a suspension of its own or an escaping
-                // control transfer, while the receiver's value is still an expression sitting in a slot — so it would
-                // be evaluated after them (and, across a suspension, in a later invokeSuspend invocation, where the
-                // expression's operands no longer hold). Bind it into a state-machine field first, which is where a
-                // value that must survive a suspension lives. Nothing is spilled when the argument emits no
-                // statements: the receiver is then evaluated by the ConfigureAwait call itself, ahead of its argument.
-                if (HasOwnSuspension(ccArgNode) || EscapesExpression(ccArgNode))
+                // When the argument's own lowering APPENDS STATEMENTS, the receiver's value is still an expression
+                // sitting in a slot — so it would be evaluated after them (and, across a suspension, in a later
+                // invokeSuspend invocation, where the expression's operands no longer hold). Bind it into a
+                // state-machine field first, which is where a value that must survive a suspension lives. Nothing is
+                // bound when the argument emits no statements: the receiver is then evaluated by the ConfigureAwait
+                // call itself, ahead of its argument, which is the order Kotlin asks for.
+                if (LowersToStatements(ccArgNode))
                 {
                     var targetField = "__awaitable$" + (++_awaitTarget);
                     FieldStorage(targetField, awaitableType, RoleMachinery, lives: true, across: "await");

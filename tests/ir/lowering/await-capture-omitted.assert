@@ -2,6 +2,10 @@
 # invisible at run time: `ConfigureAwait(true).GetAwaiter()` behaves exactly like `GetAwaiter()`, so only the
 # emitted shape can witness that the direct awaiter survived. The state machine awaits the awaitable's OWN
 # `TaskAwaiter` and the configured awaitable is never constructed.
+#
+# REVERT-INSENSITIVE by construction: the lowering before #64 chose the direct awaiter for this input too, so this
+# document passes either way. It is a regression pin, not a demonstration — the arm it guards is the one a later
+# simplification ("everything goes through ConfigureAwait") would silently take away.
 +"method":"GetAwaiter"
 +System.Runtime.CompilerServices.TaskAwaiter
 -"method":"ConfigureAwait"

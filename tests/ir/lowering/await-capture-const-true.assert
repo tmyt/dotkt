@@ -1,6 +1,9 @@
 # `t.await(captureContext = true)` — the SAME fast path as the omitted argument. A constant `true` asks for the
 # behavior `GetAwaiter()` already has, so it must not pay for the configured awaitable; and since the two are
 # behaviorally identical, no runtime assertion can tell them apart (GitHub #64).
+#
+# REVERT-INSENSITIVE by construction, like its omitted sibling: the pre-#64 lowering also read a constant `true` as
+# the capturing default. It is the regression pin for the arm, not evidence that the change created it.
 +"method":"GetAwaiter"
 +System.Runtime.CompilerServices.TaskAwaiter
 -"method":"ConfigureAwait"

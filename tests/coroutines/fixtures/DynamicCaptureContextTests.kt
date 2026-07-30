@@ -88,6 +88,18 @@ suspend fun corCcOrderedAcrossSuspension(task: Task1<Int>): Int =
 suspend fun corCcEscapingCapture(task: Task1<Int>, bail: Boolean): Int =
     corCcReceiver(task).await(captureContext = if (bail) throw IllegalStateException("bail") else false)
 
+// The same control transfer, one frame down: a BOUND CALLABLE REFERENCE puts an arbitrary expression into a
+// closure's capture list, and that expression is evaluated where the closure is CONSTRUCTED — here, inside the
+// captureContext argument. The two "whose frame is this" predicates stop at every lambda kind, so a receiver bound
+// on their answer was not bound here, and the throwing path evaluated `corCcReceiver` ZERO times.
+fun String.corCcMark() {}
+
+fun corCcPolicy(f: () -> Unit): Boolean = false
+
+suspend fun corCcEscapingCaptureUnderClosure(task: Task1<Int>, bail: Boolean): Int =
+    corCcReceiver(task).await(
+        captureContext = corCcPolicy((if (bail) throw IllegalStateException("bail") else "s")::corCcMark))
+
 // ---- the drive ---------------------------------------------------------------------------------------------------
 
 // A terminal sink + bounded drain (the CoroutineContextInterceptionTests pattern): a GENUINE suspension is needed
@@ -204,6 +216,25 @@ class DynamicCaptureContextTests {
 
         corCcLog.clear()
         assertEquals(32, blockOn { corCcEscapingCapture(corCcCompleted(32), false) })
+        assertEquals("R", order())
+    }
+
+    // The transfer one frame down, inside a closure capture. Same assertion, and it is the one that was wrong:
+    // the receiver was evaluated ZERO times on the throwing path.
+    @TestAttribute
+    fun escapingCaptureUnderAClosureCapture() {
+        corCcLog.clear()
+        var message: String? = null
+        try {
+            blockOn { corCcEscapingCaptureUnderClosure(corCcCompleted(41), true) }
+        } catch (e: IllegalStateException) {
+            message = e.message
+        }
+        assertEquals("bail", message)
+        assertEquals("R", order())
+
+        corCcLog.clear()
+        assertEquals(42, blockOn { corCcEscapingCaptureUnderClosure(corCcCompleted(42), false) })
         assertEquals("R", order())
     }
 }

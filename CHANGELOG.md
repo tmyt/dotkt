@@ -72,7 +72,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   evaluated exactly once and after the awaitable receiver, including when it suspends: the await marker rewrites
   its own operands (it is excluded from the stage-0 operand plan), so the receiver is bound into a state-machine
   field whenever the argument's own lowering emits statements — an argument that suspends, or one that transfers
-  control instead of producing a value. `tests/coroutines/fixtures/DynamicCaptureContextTests.kt` drives the runtime
+  control instead of producing a value. That question is asked by a predicate written for it rather than by the two
+  frame-ownership predicates next door: those stop at every lambda kind, while the rewrite descends into a
+  `newClosure`'s CAPTURES, where a bound callable reference `(<expr>)::f` puts an arbitrary expression — so a
+  `throw` there left the receiver evaluated ZERO times on the throwing path. `tests/coroutines/fixtures/DynamicCaptureContextTests.kt` drives the runtime
   shapes; the five `tests/ir/lowering/await-capture-*` documents pin what no runtime assertion can witness — the arm
   SELECTION (`ConfigureAwait(true)` and `GetAwaiter()` behave identically, so only the emitted shape shows which was
   chosen), the receiver binding a suspending argument forces, and the configured awaiter's field type. Folding the
