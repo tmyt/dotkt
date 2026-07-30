@@ -361,10 +361,13 @@ static class InlineSplice
         var recvs = o["recvs"] as JsonObject;
         // #34: emitted-position i -> the READ of the value its param bound to, so a TIER-2 default carrier's
         // `{defaultArgParam idx}` token (a default reading an EARLIER param) resolves to that param's binding.
-        // `defaultThisRecv` binds a `{this}` token in a default (a `= this` extension-receiver default / a
-        // dispatch-receiver read).
+        // Receiver tokens are kept distinct: dispatch is the named §4.3 temp when the BODY also needs it, otherwise
+        // the call plan's dispatch binding directly; extension is boundArgs[0]. A member-extension body need not read
+        // dispatch even when one of its DEFAULTS does, so `payloadReadsDispatch` is not a valid carrier gate.
         var boundArgs = new JsonArray();
-        JsonNode defaultThisRecv = Str(payload["recv"]) == "dispatch" ? new JsonObject { ["k"] = "local", ["name"] = prefix + "this" } : null;
+        JsonNode defaultDispatchRecv = payloadDispatch || coBindDispatch
+            ? new JsonObject { ["k"] = "local", ["name"] = prefix + "this" }
+            : recvs?["dispatch"]?.DeepClone();
 
         // Bind ONE value the CALLEE supplies (a filled default, or an argument of a call that arrived without a plan —
         // bir2cir's own §4.4(i) forward, whose values were already lowered in this frame and have exactly one reader
@@ -477,20 +480,20 @@ static class InlineSplice
                 }
                 else if (KotlinDefaultCarrier(p) is string carrierBir)
                 {
-                    // Parse the carrier (refuse a `defaultUnsupported` poison — a capturing/SAM/suspend lambda default; unwrap
-                    // a `defaultCarrier`, re-hoisting its lifted `__lambdaN` into this file via `_hoist`), then bind its
-                    // `{defaultArgParam idx}` / `{this}` tokens to the ALREADY-bound earlier params (Kotlin defaults
-                    // reference only earlier params) — the shared DefaultArgSplice machinery.
+                    // Parse the carrier, unwrap a `defaultCarrier` (re-hoisting any lifted `__lambdaN` into this file via
+                    // `_hoist`), then bind its discriminated receiver tokens and `{defaultArgParam idx}` tokens to the
+                    // ALREADY-bound receiver/earlier-param values — the shared DefaultArgSplice machinery.
                     var raw = DefaultArgSplice.MaterializeDefault(carrierBir, _hoist, _refs, name, i, _fileClassOwner);
                     if (raw == null) { FailLoud(o, owner, name, pc, ga, $"param '{pn}' default carrier BIR is unparseable"); return; }
-                    var recvForTokens = defaultThisRecv ?? (ext ? boundArgs.ElementAtOrDefault(0) : null);
-                    argNode = DefaultArgSplice.SubstituteTokens(raw, recvForTokens, boundArgs);
+                    var extensionRecv = ext ? boundArgs.ElementAtOrDefault(0) : null;
+                    argNode = DefaultArgSplice.SubstituteTokens(
+                        raw, defaultDispatchRecv, extensionRecv, null, boundArgs);
                 }
                 else { FailLoud(o, owner, name, pc, ga, $"missing (non-defaulted) arg for param {pn}"); return; }
                 SubstTvIn(argNode, typeArgs, ga, dispatchTypeArgs);
                 // BATCH B (#75): a capturing newSuspendLambda built inside a param default binds to a temp whose init
                 // flows through the same joint-hygiene rewriters as the body — the former fail-loud guard is retired.
-                // (A `defaultCarrier`'s own capturing/SAM/suspend lambda form is still refused as `defaultUnsupported`.)
+                // Capturing/SAM/suspend-lambda defaults self-carry their synthesis facts and flow through the same path.
             }
             var bound = BindLocal(pn, argNode, ptype, what);
             subst[pn] = bound;

@@ -1365,20 +1365,14 @@ internal fun BirEmitter.isDataClassCopy(fn: org.jetbrains.kotlin.ir.declarations
  *  and returns a `newDelegate` referencing it — an OPEN term (the method is library-local). Detach that lift DELTA from
  *  this library's file class (it is dead here — only the default's call sites materialize it) and wrap it with its
  *  `newDelegate` in a `defaultCarrier` envelope; bir2cir's DefaultArgSplice re-hoists the carried method app-local (fresh
- *  name) at the consumer. A CAPTURING closure / SAM / suspend lambda default cannot be positionally reconstructed
- *  cross-module → a `defaultUnsupported` poison carrier the consumer's splice refuses on (a precise diagnostic, not a
- *  miscompile). A default that reads `ownerFn`'s ENCLOSING-INSTANCE receiver — its own DISPATCH receiver (`this@Owner`)
- *  OR an OUTER class's `this@Outer` (inner-class member) — is EQUALLY poisoned: the carrier is consumed by BOTH
- *  InlineSplice (which binds a `{k:this}` to the dispatch temp only when `recv==dispatch` — NOT for a member-extension
- *  splice) AND DefaultArgSplice (which binds `{k:this}` to args[0] = the first regular arg on a `callInstance`, never an
- *  enclosing instance), so such a read cannot be filled safely from one uniform carrier. Detected by an IR-symbol scan
- *  of the dispatch-receiver param AND every enclosing class thisReceiver ([defaultReadsDispatch], NOT a `{k:this}`
- *  substring — a nested object/lambda `this` is a different receiver, and a pure-extension `this` is the extension
- *  receiver, which binds correctly to args[0]). */
-internal fun BirEmitter.defaultCarrierBir(def: org.jetbrains.kotlin.ir.expressions.IrExpression,
-		ownerFn: org.jetbrains.kotlin.ir.declarations.IrFunction? = null): String {
-	if (ownerFn != null && defaultReadsDispatch(ownerFn, def))
-		return """{"k":"defaultUnsupported","reason":${str("a default that reads an enclosing-instance (dispatch or outer-class) receiver cannot be filled at an omitting call site — pass the argument explicitly")}}"""
+ *  name) at the consumer. Capturing closures, SAMs and suspend lambdas already carry their raw synthesis facts on their
+ *  construction node (`synthClass`, captures/body, or suspend-lambda descriptor), so they need no second envelope.
+ *
+ *  Receiver reads are closed by [paramsJsonList] before this renderer runs. The carrier therefore contains explicit
+ *  `{k:defaultArgReceiver,kind:dispatch|extension|enclosing}` leaves rather than the ambiguous ordinary BIR `{k:this}`.
+ *  A nested closure/SAM/suspend-lambda's OWN `{k:this}` remains ordinary BIR and is never mistaken for the callee's
+ *  receiver by the consumer-side token substitution. */
+internal fun BirEmitter.defaultCarrierBir(def: org.jetbrains.kotlin.ir.expressions.IrExpression): String {
 	val before = liftedMethods.size
 	val bir = expr(def)
 	val delta = if (liftedMethods.size > before) {
@@ -1386,8 +1380,6 @@ internal fun BirEmitter.defaultCarrierBir(def: org.jetbrains.kotlin.ir.expressio
 		while (liftedMethods.size > before) liftedMethods.removeAt(liftedMethods.size - 1)
 		d
 	} else emptyList()
-	if (bir.contains(""""k":"newClosure"""") || bir.contains(""""k":"newSam"""") || bir.contains(""""k":"newSuspendLambda""""))
-		return """{"k":"defaultUnsupported","reason":${str("a capturing / SAM / suspend lambda default cannot be filled at a cross-module call site — pass the argument explicitly")}}"""
 	if (delta.isEmpty()) return bir
 	return """{"k":"defaultCarrier","expr":$bir,"lifted":[${delta.joinToString(",")}]}"""
 }
@@ -1410,15 +1402,51 @@ internal fun BirEmitter.paramsJsonList(params: List<org.jetbrains.kotlin.ir.decl
 		else -> 0
 	}
 	val valueParams = params.filter { isValueParameter(it) }
-	// A @KotlinDefault BIR whose default expression reads ANOTHER value parameter (`b: Int = a * 10`) must encode that
-	// read as a call-index token, NOT a bare `local a` (which would resolve to a non-existent local in the CALLER after
-	// bir2cir's cross-module splice). Install a `{"k":"defaultArgParam","idx":N}` captureSubst for every value param
-	// (N = its emitted call index, extension receiver counted first) around the bir emission; bir2cir's DefaultArgSplice
-	// substitutes each token with this call's arg at that index (the peer of its `{this}` → receiver substitution).
-	if (emitKotlinDefault) valueParams.forEachIndexed { valueIdx, vp ->
-		captureSubst[vp] = """{"k":"defaultArgParam","idx":${valueIdx + extOffset}}"""
+	// Close every declaration-scoped value a carrier may read into an EXPLICIT call-site token. Parameters use their
+	// emitted position. Receiver kinds do not: a member extension has BOTH dispatch and extension receivers, while an
+	// inner constructor has an enclosing instance but no constructed `this` yet. Collapsing those facts into ordinary
+	// `{k:this}` was the common cause of #34/#42.
+	//
+	// An inner/member body reaches an OUTER `this` through an ambient captureSubst such as
+	// `field(recv=this,name=__outer)`. Rewrite only that ROOT `this` to the dispatch token while carrying the default;
+	// nested closure/SAM bodies keep their own ordinary `{k:this}` untouched. For an INNER constructor the immediate
+	// outer instance is already the hidden leading argument, so bind that declaration directly to `enclosing`.
+	val savedCarrierSubst = java.util.IdentityHashMap<org.jetbrains.kotlin.ir.declarations.IrValueDeclaration, String?>()
+	fun installCarrierSubst(d: org.jetbrains.kotlin.ir.declarations.IrValueDeclaration, json: String) {
+		if (!savedCarrierSubst.containsKey(d)) savedCarrierSubst[d] = captureSubst[d]
+		captureSubst[d] = json
 	}
-	val result = valueParams
+	if (emitKotlinDefault) {
+		valueParams.forEachIndexed { valueIdx, vp ->
+			installCarrierSubst(vp, """{"k":"defaultArgParam","idx":${valueIdx + extOffset}}""")
+		}
+		ownerFn.parameters.firstOrNull { it.kind == IrParameterKind.DispatchReceiver }?.let {
+			installCarrierSubst(it, """{"k":"defaultArgReceiver","kind":"dispatch"}""")
+		}
+		ownerFn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }?.let {
+			installCarrierSubst(it, """{"k":"defaultArgReceiver","kind":"extension"}""")
+		}
+		val ownerClass = ownerFn.parent as? IrClass
+		val immediateOuter = ownerClass?.takeIf { it.isInner }?.parent as? IrClass
+		var p: IrClass? = ownerClass
+		while (p != null) {
+			p.thisReceiver?.let { recv ->
+				val prior = captureSubst[recv]
+				when {
+					ownerFn is IrConstructor && p === immediateOuter ->
+						installCarrierSubst(recv, """{"k":"defaultArgReceiver","kind":"enclosing"}""")
+					p === ownerClass && prior == null ->
+						installCarrierSubst(recv, """{"k":"defaultArgReceiver","kind":"dispatch"}""")
+					prior != null && prior.contains("""{"k":"this"}""") ->
+						installCarrierSubst(recv, prior.replace(
+							"""{"k":"this"}""",
+							"""{"k":"defaultArgReceiver","kind":"dispatch"}"""))
+				}
+			}
+			p = p.parent as? IrClass
+		}
+	}
+	val result = try { valueParams
 		.mapIndexed { valueIdx, it ->
 			// `vararg xs: T` -> mark the param so ilemit stamps [ParamArray] (native .NET varargs; a cross-module
 			// consumer can then call `f(1, 2, 3)`). `context` marks a Kotlin CONTEXT parameter: physically an ordinary
@@ -1441,7 +1469,7 @@ internal fun BirEmitter.paramsJsonList(params: List<org.jetbrains.kotlin.ir.decl
 			// build (`--build-stdlib=runtime`), so param attrs ride only the ref.dll — exactly bir2cir's read surface.
 			val srcAttrs = attrsJson(it.annotations)
 			val kotlinDefault = if (emitKotlinDefault) it.defaultValue?.expression?.let { def ->
-				val bir = defaultCarrierBir(def, ownerFn)   // BIR of the default (real IR — the callee's own build), CLOSED for cross-module splice
+				val bir = defaultCarrierBir(def)   // BIR of the default (real IR — the callee's own build), CLOSED for cross-module splice
 				"""{"attr":${fqnJson("kotlin.clr.KotlinDefault")},"argTypes":[${fqnJson("kotlin.Int")},${fqnJson("kotlin.String")}],"args":[{"k":"const","type":${fqnJson("kotlin.Int")},"value":${valueIdx + extOffset}},{"k":"const","type":${fqnJson("kotlin.String")},"value":${str(bir)}}]}"""
 			} else null
 			val allAttrs = listOfNotNull(srcAttrs.takeIf { s -> s.isNotEmpty() }, kotlinDefault).joinToString(",")
@@ -1449,7 +1477,11 @@ internal fun BirEmitter.paramsJsonList(params: List<org.jetbrains.kotlin.ir.decl
 			val ctxFn = ctxFnTypeField(ctxFnCountFor(it))
 			"""{"name":${str(it.name.asString())},"type":${birType(it.type).toJson()}$vararg$default$ctxFn$pattrs}"""
 		}
-	if (emitKotlinDefault) valueParams.forEach { captureSubst.remove(it) }
+	} finally {
+		savedCarrierSubst.forEach { (d, prev) ->
+			if (prev != null) captureSubst[d] = prev else captureSubst.remove(d)
+		}
+	}
 	return result
 }
 

@@ -100,6 +100,7 @@ import roundtrip.nc.genDefaults as ncGenDefaults
 import roundtrip.nc.genPairDefaults as ncGenPairDefaults
 import roundtrip.nc.genMutable as ncGenMutable
 import roundtrip.nc.bumps as ncBumps
+import roundtrip.nc.MemberDefaults as NcMemberDefaults
 import roundtrip.cmp.Ver
 import roundtrip.ubyte.ub
 import roundtrip.ubyte.uba
@@ -471,6 +472,23 @@ class PackageAndInlineRoundtripTests {
         ClassicAssert.AreEqual("mx/2", ncUf(NcMarker("x")))                             // mx/2 the class overload's own default
         // A `: super(…)` omitting a cross-module base's non-constant default: a delegation is a call site too.
         ClassicAssert.AreEqual(18, NcSuperSub(3).area)                                  // 18   h = w * 2 = 6
+    }
+
+    // #34/#42: the cross-module carrier distinguishes dispatch, extension and enclosing receivers, and carries
+    // closure/SAM/suspend-lambda construction facts instead of poisoning those default shapes.
+    @TestAttribute
+    fun receiverAwareDefaultCarriers() {
+        val m = NcMemberDefaults(3)
+        ClassicAssert.AreEqual(22003, m.scale(2, c = 3))                                // middle omission + later arg
+        ClassicAssert.AreEqual(106, m.viaDispatch(1))                                  // dispatch receiver
+        ClassicAssert.AreEqual(5, m.viaCapture(2))                                     // capturing lambda: a + k
+        ClassicAssert.AreEqual(5, m.viaSam(2))                                         // capturing SAM: a + k
+        ClassicAssert.AreEqual(5, m.viaSuspendCarrier(2))                              // capturing suspend lambda
+        ClassicAssert.AreEqual(3, m.inlineDispatch { it })                             // inline dispatch receiver
+        with(m) {
+            ClassicAssert.AreEqual(6, 3.inlineBoth { it })                             // dispatch + extension
+        }
+        ClassicAssert.AreEqual(5, m.inlineCapture(2, body = { it }))                    // inline capturing default
     }
 
     // #235: a value the CROSS-MODULE carrier splices is evaluated exactly ONCE, and binding it does not reorder the
