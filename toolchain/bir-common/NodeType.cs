@@ -70,13 +70,14 @@ public static class NodeType
     public static void DropStampIfStale(JsonObject o)
     {
         if (TypeJson.Read(o["sty"]) is not TypeNode sty) return;
-        foreach (var slot in new[] { "ret", "dynRet" })
-            if (TypeJson.Read(o[slot]) is TypeNode result && !IrSanity.StampAgrees(sty, result))
-            {
-                o.Remove("sty");
-                return;
-            }
+        // The two result slots read straight, not through a loop over a slot-name array: every retyping pass calls
+        // this on every node it touches, and the `sty` guard above already returned for the majority that carry no
+        // stamp — the remainder should not pay an allocation to learn the same two names each time.
+        if (Refutes(sty, o["ret"]) || Refutes(sty, o["dynRet"])) o.Remove("sty");
     }
+
+    static bool Refutes(TypeNode sty, JsonNode? slot)
+        => TypeJson.Read(slot) is TypeNode result && !IrSanity.StampAgrees(sty, result);
 
     /// <summary>
     /// The node's own static type, or null when only an index could answer. <paramref name="recurse"/> is the

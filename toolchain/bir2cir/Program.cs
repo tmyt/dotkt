@@ -965,7 +965,11 @@ sealed class Pipeline
     // the shared JsonElement-based checker a view of the JsonNode tree the passes work on.
     static void CheckStySanity(string outputName, JsonNode root)
     {
-        using var doc = JsonDocument.Parse(root.ToJsonString(), BirJson.DocOptions);
+        // BOTH ends of the round trip carry the #147 depth bound: `BirJson.Writer` to write and `BirJson.DocOptions`
+        // to read back. System.Text.Json defaults MaxDepth to 64 on each independently, and one Kotlin function with
+        // deeply-nested inlined lambdas nests a method body past that — so a plain `ToJsonString()` here would crash
+        // the sanity CHECKPOINT on exactly the input a checkpoint exists to survive.
+        using var doc = JsonDocument.Parse(root.ToJsonString(BirJson.Writer), BirJson.DocOptions);
         try { IrSanity.Check(new[] { doc.RootElement }, IrSanityChecks.StyStampsOnly); }
         catch (IrSanityException ex) { throw new InvalidOperationException($"{outputName}: {ex.Decl}: sanity: {ex.Message}"); }
     }

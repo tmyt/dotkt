@@ -86,6 +86,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir (area:bir2cir): a suspend state machine's `create()` no longer puts a live CLR object in the document.**
+  The synthesized `new SM(capture…, completion)` added each capture's `TypeNode` RECORD straight into its `argTypes`
+  array instead of the wire node `TypeJson.Write` produces, so the BIR carried a `JsonValueCustomized<TypeNode>` — a
+  slot no reader can parse, and one that makes any full-document write of that tree throw unless the writer happens
+  to be carrying System.Text.Json's default reflection resolver. Nothing noticed because those entries are dropped
+  again before the CIR is written and the CIR writer's own options are only ever handed already-clean trees; the
+  #305 chokepoint, which serializes the post-pass BIR, is the first thing that had to write one.
 - **bir2cir (area:bir2cir): `await(captureContext = <expression>)` no longer refuses a non-constant Boolean
   ([tmyt/dotkt#64]).** dll2klib publishes two await bridges for an awaitable that exposes `ConfigureAwait(bool)` —
   `await()` and `await(captureContext: Boolean)` — so `task.await(captureContext = policy)` is a frontend-resolved
