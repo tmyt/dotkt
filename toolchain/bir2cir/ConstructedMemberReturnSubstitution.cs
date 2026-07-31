@@ -21,8 +21,17 @@ static class ConstructedMemberReturnSubstitution
                 if (Str(obj["k"]) == "callInstance"
                     && TypeJson.Read(obj["ownerType"]) is TypeNode.Fqn { Args: { } args })
                 {
-                    RewriteSlot(obj, "ret", args);
-                    RewriteSlot(obj, "dynRet", args);
+                    var changed = RewriteSlot(obj, "ret", args) | RewriteSlot(obj, "dynRet", args);
+                    // Spec §2.7 — a pass that changes a node's RESULT TYPE rewrites or deletes its `sty`, and this is
+                    // one of the passes that paragraph names. Where the owner is an ordinary constructed generic the
+                    // substituted result IS what the stamp said, so dropping it costs nothing (readers fall through to
+                    // `ret`, the same answer). Where the owner was ERASED first — a cross-module `Slot<T?>` bound as
+                    // `Slot<object>` — the substituted result is `object` while the frontend stamp still names the
+                    // pre-erasure instantiation `kotlin.String`, and the stamp is read FIRST by every deriver: a spill
+                    // slot or state-machine field declared from it names a type the value does not have. The
+                    // instantiation is not recoverable from the erased owner, so the stamp is DROPPED — the other
+                    // thing §2.7 permits.
+                    if (changed && obj["sty"] != null) obj.Remove("sty");
                 }
                 foreach (var value in obj.Select(kv => kv.Value).ToList()) if (value != null) Walk(value);
                 break;
@@ -32,10 +41,12 @@ static class ConstructedMemberReturnSubstitution
         }
     }
 
-    static void RewriteSlot(JsonObject obj, string key, TypeNode[] args)
+    // TRUE when the slot was actually rewritten — the caller owns the §2.7 `sty` consequence of that.
+    static bool RewriteSlot(JsonObject obj, string key, TypeNode[] args)
     {
-        if (TypeJson.Read(obj[key]) is TypeNode type && ContainsOwnerTv(type))
-            obj[key] = TypeJson.Write(Subst(type, args));
+        if (TypeJson.Read(obj[key]) is not TypeNode type || !ContainsOwnerTv(type)) return false;
+        obj[key] = TypeJson.Write(Subst(type, args));
+        return true;
     }
 
     static TypeNode Subst(TypeNode type, TypeNode[] args) => type switch

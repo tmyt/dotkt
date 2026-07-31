@@ -18,12 +18,17 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   REFUTATION test calibrated on the 442-file stdlib reference + runtime pre-lowering corpus (16,070 stamp pairs)
   and the app corpus: a type variable, a `*`, `kotlin.Nothing`, a `$dotkt_star` existential view, a nullability
   wrapper, a spelling difference between the `kotlin.*`/shorthand/`System.*` vocabularies, and any pair of unlike
-  or different-arity shapes all AGREE, and a missing stamp is not a disagreement. Calibrating it found one live
-  violator, fixed here: `ContinuationErasure` promoted a discarded `Result` accessor's `ret` from `Unit` to
+  or different-arity shapes all AGREE, and a missing stamp is not a disagreement. Calibrating it found four live
+  violators, all fixed here. `ContinuationErasure` promoted a discarded `Result` accessor's `ret` from `Unit` to
   `kotlin.Any` so ilemit would pop the value, and left `sty` at `kotlin.Unit` — restoring for every deriver the
-  exact stale `void` hint the promotion exists to remove. `tests/ir/selftest` pins the check against BOTH
-  implementations and `tests/ir/lowering` pins the chokepoint itself, each with the legitimate neighbours beside
-  it.
+  exact stale `void` hint the promotion exists to remove. The other three are one family, the CROSS-MODULE generic
+  erasure the FU-⑧ sweep did not reach: `NullableGenericErasure`, `ReferenceExistentialAbiBinding` and
+  `ConstructedMemberReturnSubstitution` each replace a call's declared result with the PHYSICAL one — a
+  `Slot<T?>`/`Slot<String>` bound as `Slot<object>`, unrelated invariant reified generics — while the frontend stamp
+  still named the pre-erasure instantiation. None can rewrite the stamp (the instantiation is not recoverable from
+  an erased owner), so each now DROPS it, which is the other thing §2.7 permits: readers fall through to `ret`,
+  which is exactly the physical answer. `tests/ir/selftest` pins the check against BOTH implementations and
+  `tests/ir/lowering` pins the chokepoint itself, each with the legitimate neighbours beside it.
 - **A suspension that escapes the cold lowering is now caught at the CIR boundary (area:bir2cir, area:ilemit).**
   `suspendCall:true` is kotc's frontend fact that a call site suspends, and bir2cir's `SuspendColdLowering` is its
   only consumer — it rebuilds each suspending call as a resume label plus the callee's cold-shape call (a
