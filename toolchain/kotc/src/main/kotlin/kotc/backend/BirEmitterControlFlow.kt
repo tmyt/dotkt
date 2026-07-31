@@ -298,17 +298,17 @@ internal fun BirEmitter.cfgWhen(node: IrWhen): String {
 internal fun BirEmitter.bindOnce(init: IrExpression, type: IrType, prefix: String): Pair<String?, String> {
 	if (isStableValue(init)) return null to expr(init)
 	val tv = "$prefix${scopeCounter++}"
-	// A NULLABLE generic-param subject (`T?`, e.g. `x as? T`) must NOT become a `gp:T` local: `!T` cannot
-	// hold null when T is instantiated with a value type, and the `isinst` REF result stored into a `!T`
-	// slot is unverifiable ([found ref 'T'][expected value 'T'] — the stdlib's documented "never hold a V?
-	// in a local" rule, ClrMapDefaults.kt). Erase to object: every use site of a nullable subject is
+	// A FLEXIBLE/PLATFORM generic-param subject `T!` (`{t:oblivious,of:tv}`, a .NET generic's un-annotated member, #8)
+	// must NOT become a `gp:T` local: `!T` cannot hold null when T is instantiated with a value type, and the `isinst`
+	// REF result stored into a `!T` slot is unverifiable ([found ref 'T'][expected value 'T'] — the stdlib's documented
+	// "never hold a V? in a local" rule, ClrMapDefaults.kt). Erase to object: every use site of such a subject is
 	// ref-typed (objEq null-check / objMethod / ref member).
+	// The NULLABLE twin (`{t:nullable,of:tv}`, `x as? T`) is NOT decided here: `Nullable(Tv)` is object-erased at
+	// every slot — body locals included — by bir2cir's uniform erasure (#86), which is where a CLR-representation
+	// decision belongs. `Oblivious(Tv)` is not part of that family (an open platform `T!` reaching a REFERENCED .NET
+	// generic's `!T` member must stay `!T` there), so its subject-temp erasure still has no bir2cir counterpart.
 	val bt = birType(type)
-	// A nullable generic-param subject now surfaces as `{t:nullable,of:tv}` (uniform birType) — erase THAT to object.
-	// A flexible/platform generic-param subject `T!` (`{t:oblivious,of:tv}`, a .NET generic's un-annotated member, #8)
-	// is ref-used at every site just like the nullable one — erase it to object too, else its isinst-ref result would
-	// land in a bare `!T` slot (the same unverifiable [found ref 'T'][expected value 'T'] miscompile).
-	val vt = if ((bt is TypeNode.Nullable && bt.of is TypeNode.Tv) || (bt is TypeNode.Oblivious && bt.of is TypeNode.Tv)) OBJ else bt
+	val vt = if (bt is TypeNode.Oblivious && bt.of is TypeNode.Tv) OBJ else bt
 	return """{"k":"var","name":${str(tv)},"type":${vt.toJson()},"init":${expr(init)}}""" to
 		"""{"k":"local","name":${str(tv)}}"""
 }

@@ -37,24 +37,38 @@ using DotKt.Bir;
 // reconciles a boxed value / genuine null). Runs in BIR-space (kotlin.* names) right after the DEF-side
 // EraseNullableTv, before BirTypeLowering. Body-only, so naturally inert in the ref build.
 //
-// SCOPE (GitHub #4/#28): the READ positions — a local generic call into a `var`, a chained `…[i].v`
-// receiver, collection member dispatch (`List<T?>.size` / iterator), and a value-typed consumer
-// (`val x: Int? = …`). Referenced declarations are not indexed (their ref.dll surface has already erased the
-// original `Nullable(Tv)`), but a referenced generic member's owner/return is realigned from the corrected
-// receiver args. STORE-side and join positions of the SAME erasure family are NOT yet handled (a documented
-// follow-up): reassigning an erased read into a direct-written slot, `return`ing / passing / `setField`ing an
-// erased value into a `Ref<T?>`-typed target, and an `if/else` value-join whose branches are erased. The
-// verify-il gate (cases/il-genarrlam + cases/il-nullable-generic-list) is the arbiter for the covered set.
-static class NullableTvErasureCallRealign
+// SCOPE (#4/#28/#86): every USE position of an object-erased slot, read and write alike.
+//   READ  — a local generic call into a `var`, a chained `…[i].v` receiver, collection member dispatch
+//           (`List<T?>.size` / iterator), an array element read, a field read, a value-typed consumer
+//           (`val x: Int? = …`).
+//   WRITE — the positions where a value flows INTO a fixed slot, which is the other half of the same formula:
+//           `setLocal`, `setField`, `arraySet`, `return`, an `if/else` value-join, and every call/ctor ARGUMENT
+//           (whose target is the callee's `Subst(Erase(declared param))`, sig included). See the Writes half.
+// Referenced declarations are not indexed (their ref.dll surface has already erased the original `Nullable(Tv)`),
+// but a referenced generic member's owner/return is realigned from the corrected receiver args.
+static partial class NullableTvErasureCallRealign
 {
-    // Local owner/top-level call key -> declared return TypeNode, captured across ALL roots BEFORE the per-file
-    // DEF-side EraseNullableTv mutates declarations in place. ALL generic-owner members are stored (not only
-    // erasure-affected ones): re-deriving `get_v` on a rewritten `Ref<object>` receiver needs the plain
-    // `tv{type,0}` declaration too. Ambiguous same-name/same-arity returns are poisoned to null.
+    // The pre-erasure declaration of one member: its return AND its parameter vector. A use is typed
+    // `Subst(Erase(<the matching component>), typeArgs)` — never `Erase(Subst(...))`.
+    public sealed class DeclSig
+    {
+        public TypeNode Ret;
+        public TypeNode[] Params;
+    }
+
+    // Local owner/top-level declarations, captured across ALL roots BEFORE the per-file DEF-side EraseNullableTv
+    // mutates declarations in place. ALL members are stored (not only erasure-affected ones): re-deriving `get_v`
+    // on a rewritten `Ref<object>` receiver needs the plain `tv{type,0}` declaration too. Ambiguous
+    // same-name/same-arity entries are poisoned to null.
     public sealed class DeclIndex
     {
-        public readonly Dictionary<string, Dictionary<string, TypeNode>> ByOwner = new(StringComparer.Ordinal);
-        public readonly Dictionary<string, TypeNode> TopLevel = new(StringComparer.Ordinal);
+        public readonly Dictionary<string, Dictionary<string, DeclSig>> ByOwner = new(StringComparer.Ordinal);
+        public readonly Dictionary<string, DeclSig> TopLevel = new(StringComparer.Ordinal);
+        // owner -> ctor arity -> parameter vector. A `new`'s args/argTypes are typed against it, the same way a
+        // call's are typed against a method's — a ctor param is a declaration slot like any other (`Cell<T>(x: T?)`).
+        public readonly Dictionary<string, Dictionary<int, TypeNode[]>> Ctors = new(StringComparer.Ordinal);
+        // owner -> field/property name -> declared type. The target of a `setField` and the result of a `field` read.
+        public readonly Dictionary<string, Dictionary<string, TypeNode>> Slots = new(StringComparer.Ordinal);
     }
 
     public static DeclIndex CollectDeclaredMemberRets(IEnumerable<JsonNode> roots)
@@ -67,53 +81,185 @@ static class NullableTvErasureCallRealign
     static void CollectFrom(JsonNode node, DeclIndex idx, bool topLevel)
     {
         if (node is not JsonObject o) return;
+        // TOP-LEVEL functions are keyed by bare name + arity across every root. EVERY one is indexed, generic or not:
+        // the entry is only usable when it is UNAMBIGUOUS, so a non-generic same-name/same-arity sibling is not
+        // noise — it is what poisons the key and stops a generic declaration from being applied to a call that meant
+        // the other one. (`Int.coerceIn(min, max)` beside `<T : Comparable<T>> T.coerceIn(min: T?, max: T?)` is
+        // exactly that pair: index only the generic half and every `coerceIn` call gets the erased parameter vector.)
         if (topLevel && o["methods"] is JsonArray topMethods)
             foreach (var m in topMethods)
-                if (m is JsonObject mo && mo["typeParams"] is JsonArray mtps && mtps.Count > 0
-                    && Str(mo["name"]) is string mn && TypeJson.Read(mo["ret"]) is TypeNode rt)
-                    AddUnambiguous(idx.TopLevel, mn + "|" + ((mo["params"] as JsonArray)?.Count ?? 0), rt);
+                if (m is JsonObject mo && Str(mo["name"]) is string mn && ReadSig(mo) is DeclSig sig)
+                    AddUnambiguous(idx.TopLevel, mn + "|" + sig.Params.Length, sig);
         if (o["types"] is JsonArray types)
             foreach (var t in types)
                 if (t is JsonObject to)
                 {
-                    // A generic owner only (a non-generic type's members never carry a `Nullable(Tv)`).
-                    if (Str(to["name"]) is string nm && to["typeParams"] is JsonArray tps && tps.Count > 0
-                        && !idx.ByOwner.ContainsKey(nm))
+                    if (Str(to["name"]) is string nm && !idx.ByOwner.ContainsKey(nm))
                     {
-                        var rets = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
+                        var sigs = new Dictionary<string, DeclSig>(StringComparer.Ordinal);
                         if (to["methods"] is JsonArray ms)
                             foreach (var m in ms)
-                                if (m is JsonObject mo && Str(mo["name"]) is string mn && TypeJson.Read(mo["ret"]) is TypeNode rt)
+                                if (m is JsonObject mo && Str(mo["name"]) is string mn2 && ReadSig(mo) is DeclSig sig)
+                                    // AMBIGUOUS overload guard: two same-name/same-arity members whose declarations
+                                    // DISAGREE (`g(Int): Ref<T?>` vs `g(String): Ref<T>`) would otherwise collapse
+                                    // first-wins and could derive the WRONG type for a use — manufacturing the very
+                                    // mismatch this pass fixes. A conflicting key is poisoned to `null` (the lookups
+                                    // then skip it).
+                                    AddUnambiguous(sigs, mn2 + "|" + sig.Params.Length, sig);
+                        idx.ByOwner[nm] = sigs;
+                        var ctors = new Dictionary<int, TypeNode[]>();
+                        if (to["ctors"] is JsonArray cs)
+                            foreach (var c in cs)
+                                if (c is JsonObject co && ReadParams(co["params"]) is TypeNode[] cp)
                                 {
-                                    var key = mn + "|" + ((mo["params"] as JsonArray)?.Count ?? 0);
-                                    // AMBIGUOUS overload guard: two same-name/same-arity members whose returns DISAGREE
-                                    // (`g(Int): Ref<T?>` vs `g(String): Ref<T>`) would otherwise collapse first-wins and
-                                    // could derive the WRONG return for a call — manufacturing the very mismatch this pass
-                                    // fixes. A conflicting key is poisoned to `null` (LookupDeclRet then skips it).
-                                    AddUnambiguous(rets, key, rt);
+                                    if (ctors.TryGetValue(cp.Length, out var prior))
+                                    {
+                                        if (prior != null && !SameVector(prior, cp)) ctors[cp.Length] = null;
+                                    }
+                                    else ctors[cp.Length] = cp;
                                 }
-                        idx.ByOwner[nm] = rets;
+                        idx.Ctors[nm] = ctors;
+                        var slots = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
+                        CollectSlots(to["fields"], slots);
+                        CollectSlots(to["properties"], slots);
+                        idx.Slots[nm] = slots;
                     }
                     CollectFrom(to, idx, topLevel: false);   // nested types
                 }
     }
 
-    static void AddUnambiguous(Dictionary<string, TypeNode> entries, string key, TypeNode type)
+    static void CollectSlots(JsonNode decls, Dictionary<string, TypeNode> slots)
     {
-        if (entries.TryGetValue(key, out var prior))
-        {
-            if (prior != null && !prior.Equals(type)) entries[key] = null;
-        }
-        else entries[key] = type;
+        if (decls is not JsonArray a) return;
+        foreach (var d in a)
+            if (d is JsonObject o && Str(o["name"]) is string n && TypeJson.Read(o["type"]) is TypeNode t)
+            {
+                if (slots.TryGetValue(n, out var prior))
+                {
+                    if (prior != null && !prior.Equals(t)) slots[n] = null;
+                }
+                else slots[n] = t;
+            }
     }
 
-    public static void Apply(JsonNode root, DeclIndex idx)
+    static DeclSig ReadSig(JsonObject mo)
+    {
+        if (TypeJson.Read(mo["ret"]) is not TypeNode rt) return null;
+        return ReadParams(mo["params"]) is TypeNode[] ps ? new DeclSig { Ret = rt, Params = ps } : null;
+    }
+
+    // The declared parameter vector, or null when any slot is untyped — a partially-read vector would silently
+    // realign the wrong positions.
+    static TypeNode[] ReadParams(JsonNode ps)
+    {
+        if (ps is not JsonArray a) return Array.Empty<TypeNode>();
+        var result = new TypeNode[a.Count];
+        for (var i = 0; i < a.Count; i++)
+        {
+            if (a[i] is not JsonObject po || TypeJson.Read(po["type"]) is not TypeNode t) return null;
+            result[i] = t;
+        }
+        return result;
+    }
+
+    // Two same-name/same-arity members whose declarations DISAGREE poison the whole entry. Name+arity is all a call
+    // site gives us, so a surviving entry would be a GUESS at which overload was meant — and deriving the wrong
+    // member's types manufactures exactly the mismatch this pass exists to remove. A poisoned key falls back to the
+    // call's own descriptor, which is at least what the member will be resolved by. (Keeping the components apart —
+    // a conflicting return poisoning only the return — was tried and is unsound for the same reason: the surviving
+    // component still names one arbitrary overload of the set.)
+    static void AddUnambiguous(Dictionary<string, DeclSig> entries, string key, DeclSig sig)
+    {
+        if (!entries.TryGetValue(key, out var prior)) { entries[key] = sig; return; }
+        if (prior == null) return;                                          // already fully poisoned
+        if (!prior.Ret.Equals(sig.Ret) || !SameVector(prior.Params, sig.Params)) entries[key] = null;
+    }
+
+    static bool SameVector(TypeNode[] a, TypeNode[] b)
+    {
+        if (a.Length != b.Length) return false;
+        for (var i = 0; i < a.Length; i++) if (!a[i].Equals(b[i])) return false;
+        return true;
+    }
+
+    // The struct-ness oracle, needed by the WRITE axis to tell an `object` seam that genuinely needs a conversion
+    // (a value / type-variable slot) from one that is plain reference assignment.
+    static Func<string, bool> _isValue = _ => false;
+
+    public static void Apply(JsonNode root, DeclIndex idx, Func<string, bool> isValue)
+    {
+        _isValue = isValue ?? (_ => false);
+        ApplyRec(root, idx);
+    }
+
+    static void ApplyRec(JsonNode root, DeclIndex idx)
     {
         if (root is not JsonObject o) return;
         ProcessMethods(o["methods"], idx);
         if (o["types"] is JsonArray types)
             foreach (var t in types)
-                if (t != null) Apply(t, idx);
+                if (t is JsonObject to)
+                {
+                    ProcessCtors(to, idx);
+                    ApplyRec(to, idx);
+                }
+    }
+
+    // A CONSTRUCTOR body is a body, and its base/this DELEGATION arguments are call arguments — into the delegated
+    // constructor's own (erased) parameter vector. `class Derived(y: Int?) : Base<Int>(y)` hands a `Nullable<int32>`
+    // to a `Base<T>..ctor(object)` and is invalid IL without the box, exactly as `Base<Int>(y)` written as an
+    // expression would be. Skipping `ctors` left that whole surface out of the use axis.
+    static void ProcessCtors(JsonObject to, DeclIndex idx)
+    {
+        if (to["ctors"] is not JsonArray ctors) return;
+        var ownerArgs = OwnTypeArgs(to);
+        var baseType = TypeJson.Read(to["base"]) as TypeNode.Fqn;
+        var baseParams = baseType != null && idx.Ctors.TryGetValue(baseType.Name, out var byArity) ? byArity : null;
+        var ownName = Str(to["name"]);
+        foreach (var c in ctors)
+        {
+            if (c is not JsonObject co) continue;
+            var ctx = new Ctx { Idx = idx };
+            if (co["params"] is JsonArray ps)
+                foreach (var p in ps)
+                    if (p is JsonObject po && Str(po["name"]) is string pn && TypeJson.Read(po["type"]) is TypeNode pt)
+                        ctx.Env[pn] = pt;
+            DelegationArgs(co, "baseArgs", baseParams, baseType?.Args, ctx);
+            DelegationArgs(co, "thisArgs",
+                ownName != null && idx.Ctors.TryGetValue(ownName, out var own) ? own : null, ownerArgs, ctx);
+            if (co["body"] is JsonNode body) Eval(body, ctx);
+        }
+    }
+
+    static void DelegationArgs(JsonObject co, string key, Dictionary<int, TypeNode[]> byArity,
+        TypeNode[] ownerArgs, Ctx ctx)
+    {
+        if (co[key] is not JsonArray args) return;
+        var argTypes = new TypeNode[args.Count];
+        for (var i = 0; i < args.Count; i++)
+            if (args[i] != null) argTypes[i] = Eval(args[i], ctx);
+        TypeNode[] declParams = null;
+        byArity?.TryGetValue(args.Count, out declParams);
+        RealignDelegation(args, declParams, ownerArgs, argTypes);
+    }
+
+    // A generic owner's own type parameters, as the arguments a `this(...)` delegation substitutes with (a ctor
+    // delegating within `Holder<T>` stays at `Holder<T>`).
+    static TypeNode[] OwnTypeArgs(JsonObject to)
+    {
+        if (to["typeParams"] is not JsonArray tps || tps.Count == 0) return null;
+        var args = new TypeNode[tps.Count];
+        for (var i = 0; i < tps.Count; i++) args[i] = new TypeNode.Tv("type", i);
+        return args;
+    }
+
+    // The per-method type environment: local/param slot types, plus the method's own (already-erased) return type,
+    // which is the target of every `return` in the body.
+    sealed class Ctx
+    {
+        public readonly Dictionary<string, TypeNode> Env = new(StringComparer.Ordinal);
+        public DeclIndex Idx;
+        public TypeNode Ret;
     }
 
     static void ProcessMethods(JsonNode methods, DeclIndex idx)
@@ -122,24 +268,24 @@ static class NullableTvErasureCallRealign
         foreach (var m in arr)
             if (m is JsonObject mo)
             {
-                var env = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
+                var ctx = new Ctx { Idx = idx, Ret = TypeJson.Read(mo["ret"]) };
                 if (mo["params"] is JsonArray ps)
                     foreach (var p in ps)
                         if (p is JsonObject po && Str(po["name"]) is string pn && TypeJson.Read(po["type"]) is TypeNode pt)
-                            env[pn] = pt;
-                if (mo["body"] is JsonNode body) Eval(body, env, idx);
+                            ctx.Env[pn] = pt;
+                if (mo["body"] is JsonNode body) Eval(body, ctx);
             }
     }
 
-    // Forward type-flow evaluation of a body node: rewrites erasure-boundary reads in place and returns the
+    // Forward type-flow evaluation of a body node: rewrites erasure-boundary uses in place and returns the
     // node's static type (null for statements / unknown). A `var` registers its (possibly-retyped) type in
-    // `env` before its siblings are visited, so a later read of that local re-derives against the corrected type.
-    static TypeNode Eval(JsonNode node, Dictionary<string, TypeNode> env, DeclIndex idx)
+    // `ctx.Env` before its siblings are visited, so a later read of that local re-derives against the corrected type.
+    static TypeNode Eval(JsonNode node, Ctx ctx)
     {
         switch (node)
         {
             case JsonArray a:
-                foreach (var it in a) if (it != null) Eval(it, env, idx);
+                foreach (var it in a) if (it != null) Eval(it, ctx);
                 return null;
             case JsonObject o:
                 break;
@@ -150,24 +296,23 @@ static class NullableTvErasureCallRealign
         switch (Str(obj["k"]))
         {
             case "var":
-                EvalVar(obj, env, idx);
+                EvalVar(obj, ctx);
                 return null;
             case "local":
-                return Str(obj["name"]) is string ln ? env.GetValueOrDefault(ln) : null;
+                return Str(obj["name"]) is string ln ? ctx.Env.GetValueOrDefault(ln) : null;
             case "const":
                 return TypeJson.Read(obj["type"]);
             case "new":
-                EvalChildrenOf(obj, "args", env, idx);
-                return TypeJson.Read(obj["type"]);
+                return EvalNew(obj, ctx);
             case "cast":
-                if (obj["e"] != null) Eval(obj["e"], env, idx);
+                if (obj["e"] != null) Eval(obj["e"], ctx);
                 return TypeJson.Read(obj["type"]);
             case "callStatic":
-                return EvalCallStatic(obj, env, idx);
+                return EvalCallStatic(obj, ctx);
             case "arrayGet":
             {
-                var arrType = obj["array"] != null ? Eval(obj["array"], env, idx) : null;
-                if (obj["index"] != null) Eval(obj["index"], env, idx);
+                var arrType = obj["array"] != null ? Eval(obj["array"], ctx) : null;
+                if (obj["index"] != null) Eval(obj["index"], ctx);
                 if (arrType is TypeNode.Array arr)
                 {
                     // Re-stamp the ldelem `elem` token ONLY when the flowed array element is the object-erasure
@@ -183,10 +328,59 @@ static class NullableTvErasureCallRealign
                 return TypeJson.Read(obj["elem"]);
             }
             case "callInstance":
-                return EvalCallInstance(obj, env, idx);
+                return EvalCallInstance(obj, ctx);
+            case "delegateInvoke":
+                // The value a `(…) -> R` invocation produces is the function type's RETURN, which the erasure has
+                // already rewritten in the `funcType` slot. Without this the node reports no type at all and every
+                // consumer of a lambda result falls outside the realignment.
+                if (obj["recv"] != null) Eval(obj["recv"], ctx);
+                EvalChildrenOf(obj, "args", ctx);
+                return TypeJson.Read(obj["funcType"]) is TypeNode.Fn dfn ? dfn.Ret : null;
+            case "field":
+                return EvalField(obj, ctx);
+            case "setLocal":
+                EvalSetLocal(obj, ctx);
+                return null;
+            case "setField":
+                EvalSetField(obj, ctx);
+                return null;
+            case "arraySet":
+                EvalArraySet(obj, ctx);
+                return null;
+            case "return":
+                EvalReturn(obj, ctx);
+                return null;
+            case "cond":
+                return EvalCond(obj, ctx);
+            case "newArray":
+            case "newArrayInit":
+            case "newArraySized":
+                // An array CONSTRUCTION — including the pack a `vararg xs: T?` call site builds. Its `elem` is the
+                // array's element type, so it is both this node's result type and the target its own elements fill.
+                return EvalNewArray(obj, ctx);
+            case "forEachInline":
+                // A loop VARIABLE is a slot, and this node states its type in `elem`. Binding it is what lets a value
+                // consumer inside the loop body be reconciled at all. (`forArray` carries no `elem` — its loop var is
+                // the array's element and needs no separate statement — so it stays on the default walk.)
+                return EvalForEach(obj, ctx);
+            case "nullableHasValue":
+            case "nullableValue":
+                // Both read a structural `Nullable<V>` — `HasValue` and `Value`. An erased slot hands them an
+                // `object` instead, which has neither, so the operand narrows first: `unbox.any Nullable<V>` turns a
+                // boxed value into a present one and a genuine null into an empty one, which is exactly the pair of
+                // states the erasure represents. `x?.f()` on a `T?` param at `T = Int` is this shape.
+                return EvalNullableUnwrap(obj, ctx);
+            case "valueBlock":
+                // The value a statement-then-expression block produces is its `result`'s. Reporting nothing here
+                // blinds every use whose operand is one — `t!!.x` puts its null-check temp inside exactly this shape.
+                // A valueBlock may carry EITHER of two statement lists and its consumers run `stmts` then `body`, so
+                // both are walked; missing one silently drops a whole subtree out of the realignment.
+                if (obj["stmts"] != null) Eval(obj["stmts"], ctx);
+                if (obj["body"] != null) Eval(obj["body"], ctx);
+                return obj["result"] != null ? Eval(obj["result"], ctx) : null;
             default:
                 // Unknown statement/expression: recurse every child, then report a `type`/`ret` if it has one.
-                foreach (var kv in obj) if (kv.Value != null) Eval(kv.Value, env, idx);
+                foreach (var kv in obj) if (kv.Value != null) Eval(kv.Value, ctx);
                 return TypeJson.Read(obj["type"]) ?? TypeJson.Read(obj["dynRet"]) ?? TypeJson.Read(obj["ret"]);
         }
     }
@@ -207,18 +401,28 @@ static class NullableTvErasureCallRealign
         if (obj["sty"] != null) obj["sty"] = TypeJson.Write(derived);
     }
 
-    static void EvalChildrenOf(JsonObject obj, string arrayKey, Dictionary<string, TypeNode> env, DeclIndex idx)
+    static void EvalChildrenOf(JsonObject obj, string arrayKey, Ctx ctx)
     {
         if (obj[arrayKey] is JsonArray args)
-            foreach (var arg in args) if (arg != null) Eval(arg, env, idx);
+            foreach (var arg in args) if (arg != null) Eval(arg, ctx);
     }
 
-    static void EvalVar(JsonObject obj, Dictionary<string, TypeNode> env, DeclIndex idx)
+    static void EvalVar(JsonObject obj, Ctx ctx)
     {
-        var initType = obj["init"] != null ? Eval(obj["init"], env, idx) : null;
+        var env = ctx.Env;
+        var initType = obj["init"] != null ? Eval(obj["init"], ctx) : null;
         var name = Str(obj["name"]);
         var declType = TypeJson.Read(obj["type"]);
         if (name == null) return;
+        // A #120 reify-back local is a deliberate, chain-consistent `!T[]`: its allocation, its element tokens and its
+        // trailing `as Array<T>` were collapsed together. Re-deriving its slot from `arrayOfNulls`' declared
+        // `Array<T?>` would widen it to `object[]` over a `newarr !T` — the value-type miscompile that collapse exists
+        // to prevent (`arrayOf(1,2,3).plus(4)` printing random ints).
+        if (NullableGenericErasure.ReifiedArrayVars.Contains(obj))
+        {
+            env[name] = declType;
+            return;
+        }
         if (declType != null && initType != null && !initType.Equals(declType) && IsObjectErasureOf(initType, declType))
         {
             if (initType is TypeNode.Fqn { Name: "object", Args: null })
@@ -247,20 +451,20 @@ static class NullableTvErasureCallRealign
         env[name] = declType ?? initType;
     }
 
-    static TypeNode EvalCallInstance(JsonObject obj, Dictionary<string, TypeNode> env, DeclIndex idx)
+    static TypeNode EvalCallInstance(JsonObject obj, Ctx ctx)
     {
-        var recvType = obj["recv"] != null ? Eval(obj["recv"], env, idx) : null;
-        if (obj["args"] is JsonArray args)
-            foreach (var arg in args) if (arg != null) Eval(arg, env, idx);
-
+        var idx = ctx.Idx;
+        var recvType = obj["recv"] != null ? Eval(obj["recv"], ctx) : null;
         var stampedRet = TypeJson.Read(obj["dynRet"]) ?? TypeJson.Read(obj["ret"]);
-        if (Str(obj["method"]) is not string method) return stampedRet;
+        if (Str(obj["method"]) is not string method) { RealignArgs(obj, null, null, null, ctx); return stampedRet; }
 
         var nodeOwner = TypeJson.Read(obj["ownerType"]);
-        // The corrected owner: prefer the receiver's flowed static type (it may be an erased `Ref<object>`),
-        // else the stamped ownerType.
-        var owner = recvType as TypeNode.Fqn ?? nodeOwner as TypeNode.Fqn;
-        if (owner == null) return stampedRet;
+        // The corrected owner: prefer the receiver's flowed static type (it may be an erased `Ref<object>`), else the
+        // stamped ownerType. A receiver that erased to a BARE `object` names no member at all, so it is not an owner
+        // — it is a receiver needing narrowing (below), and the stamped ownerType stays authoritative.
+        var erasedRecv = recvType is TypeNode.Fqn { Name: "object", Args: null };
+        var owner = (erasedRecv ? null : recvType as TypeNode.Fqn) ?? nodeOwner as TypeNode.Fqn;
+        if (owner == null) { RealignArgs(obj, null, null, null, ctx); return stampedRet; }
 
         // A value returned through an object-erased generic boundary carries the erased instantiation in the
         // receiver flow. Keep every subsequent member dispatch on that same instantiation. For a generic member
@@ -281,12 +485,31 @@ static class NullableTvErasureCallRealign
             }
         }
 
-        var argCount = (obj["args"] as JsonArray)?.Count ?? 0;
-        var declRet = LookupDeclRet(owner.Name, method, argCount, idx);
-        if (declRet == null) return stampedRet;
+        // THE RECEIVER IS A USE POSITION TOO. A member call whose receiver flowed out of the erasure as a bare
+        // `object` — `t!!.tag()` on a `t: T?`, whose null-check temp is the erased slot — must narrow to the
+        // member's own owner before dispatch: `callvirt Tagged::tag` on an `object` is not verifiable IL, and at a
+        // value instantiation the narrowing is the `unbox.any` that produces a callable receiver at all. Fires only
+        // for a bare-`object` receiver against a non-object owner, which is ill-typed however it arose.
+        if (erasedRecv && obj["recv"] is JsonObject recvNode
+            && owner is not TypeNode.Fqn { Name: "object" or "System.Object" or "kotlin.Any", Args: null }
+            && !(Str(recvNode["k"]) == "cast" && TypeJson.Read(recvNode["type"]) is TypeNode rc && rc.Equals(owner)))
+        {
+            obj["recv"] = new JsonObject
+            {
+                ["k"] = "cast",
+                ["type"] = TypeJson.Write(owner),
+                ["e"] = recvNode.DeepClone(),
+            };
+        }
 
+        var decl = LookupDecl(owner.Name, method, (obj["args"] as JsonArray)?.Count ?? 0, idx);
         var methodArgs = (obj["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray();
-        var derived = Subst(NullableGenericErasure.EraseNullableTv(declRet), owner.Args, methodArgs);
+        // THE ARGUMENT AXIS: each parameter slot is `Subst(Erase(declared param))` exactly as the return is; with no
+        // local declaration the call's own descriptor stands in (see RealignArgs).
+        RealignArgs(obj, decl?.Params, owner.Args, methodArgs, ctx);
+        if (decl == null) return stampedRet;   // no declaration, or an ambiguous same-name/same-arity overload set
+
+        var derived = Subst(NullableGenericErasure.EraseNullableTv(decl.Ret), owner.Args, methodArgs);
         if (derived == null) return stampedRet;
 
         // Rewrite the return ONLY when `derived` is the object-erasure of the stamped return — the exact erasure
@@ -301,17 +524,18 @@ static class NullableTvErasureCallRealign
         return stampedRet;
     }
 
-    static TypeNode EvalCallStatic(JsonObject obj, Dictionary<string, TypeNode> env, DeclIndex idx)
+    static TypeNode EvalCallStatic(JsonObject obj, Ctx ctx)
     {
-        EvalChildrenOf(obj, "args", env, idx);
         var stampedRet = TypeJson.Read(obj["dynRet"]) ?? TypeJson.Read(obj["ret"]);
-        // A same-module top-level call has no owner at this stage. Re-derive a generic function's return from its
-        // pre-erasure declaration, just as EvalCallInstance does for a generic class member.
-        if (obj["owner"] != null || Str(obj["method"]) is not string method) return stampedRet;
-        var key = method + "|" + ((obj["args"] as JsonArray)?.Count ?? 0);
-        if (!idx.TopLevel.TryGetValue(key, out var declRet) || declRet == null) return stampedRet;
         var methodArgs = (obj["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray();
-        var derived = Subst(NullableGenericErasure.EraseNullableTv(declRet), null, methodArgs);
+        // A same-module top-level call has no owner at this stage. Re-derive a generic function's declaration from
+        // its pre-erasure form, just as EvalCallInstance does for a generic class member.
+        NullableTvErasureCallRealign.DeclSig decl = null;
+        if (obj["owner"] == null && Str(obj["method"]) is string method)
+            ctx.Idx.TopLevel.TryGetValue(method + "|" + ((obj["args"] as JsonArray)?.Count ?? 0), out decl);
+        RealignArgs(obj, decl?.Params, null, methodArgs, ctx);
+        if (decl == null) return stampedRet;   // no declaration, or an ambiguous same-name/same-arity overload set
+        var derived = Subst(NullableGenericErasure.EraseNullableTv(decl.Ret), null, methodArgs);
         if (stampedRet != null && derived != null && !derived.Equals(stampedRet) && IsObjectErasureOf(derived, stampedRet))
         {
             if (obj["ret"] != null) obj["ret"] = TypeJson.Write(derived);
@@ -320,6 +544,20 @@ static class NullableTvErasureCallRealign
             return derived;
         }
         return stampedRet;
+    }
+
+    // A CONSTRUCTION is a call whose declaration is the owner's constructor: its args are typed
+    // `Subst(Erase(ctor param), the constructed type's own args)`. `Cell<Int>(null)` is the ctor twin of
+    // `pickOr<Int>(null, 7)` and fails identically without this.
+    static TypeNode EvalNew(JsonObject obj, Ctx ctx)
+    {
+        var type = TypeJson.Read(obj["type"]);
+        TypeNode[] declParams = null;
+        if (type is TypeNode.Fqn owner && ctx.Idx.Ctors.TryGetValue(owner.Name, out var byArity))
+            byArity.TryGetValue((obj["args"] as JsonArray)?.Count ?? 0, out declParams);
+        RealignArgs(obj, declParams, (type as TypeNode.Fqn)?.Args, null, ctx);
+        // The construction may have been RETYPED by the caller's argument realignment before this ran.
+        return TypeJson.Read(obj["type"]);
     }
 
     static readonly HashSet<string> CollectionOwners = new(StringComparer.Ordinal)
@@ -368,17 +606,14 @@ static class NullableTvErasureCallRealign
         return stampedRet;
     }
 
-    // The declared return of a LOCAL generic owner's member, keyed by EXACT name+arity (DefaultArgSplice has already
-    // run, so an app-build call carries its real arity). A poisoned `null` value = an ambiguous same-name/same-arity
-    // overload set (CollectFrom) — skip the rewrite rather than risk deriving the wrong member's return. Referenced
-    // (stdlib) owners are intentionally OUT of scope for #4: the ref.dll surface names `object` (not a bare `Tv`) so a
-    // reflected member return cannot be re-derived here safely — see the header note.
-    static TypeNode LookupDeclRet(string ownerFqn, string method, int argCount, DeclIndex idx)
-    {
-        if (idx.ByOwner.TryGetValue(ownerFqn, out var rets) && rets.TryGetValue(method + "|" + argCount, out var local))
-            return local;   // may be null (poisoned/ambiguous) -> caller skips
-        return null;
-    }
+    // The declaration of a LOCAL owner's member, keyed by EXACT name+arity (DefaultArgSplice has already run, so an
+    // app-build call carries its real arity). Either component may be a poisoned `null` — an ambiguous
+    // same-name/same-arity overload set (AddUnambiguous) — and each caller skips only the component it cannot trust.
+    // Referenced (stdlib) owners are intentionally OUT of scope here: the ref.dll surface names `object` (not a bare
+    // `Tv`) so a reflected member cannot be re-derived safely — see the header note.
+    static DeclSig LookupDecl(string ownerFqn, string method, int argCount, DeclIndex idx)
+        => idx.ByOwner.TryGetValue(ownerFqn, out var sigs) && sigs.TryGetValue(method + "|" + argCount, out var local)
+            ? local : null;
 
     // Substitute class-scope `tv{type,i}` with `typeArgs[i]` and method-scope `tv{method,i}` with `methodArgs[i]`,
     // recursively. Returns null when a needed binding is unavailable (caller skips the rewrite).

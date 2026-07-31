@@ -127,6 +127,113 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir (area:bir2cir): a nullable generic `T?` now has ONE physical CLR representation — `System.Object` — at
+  every position (#86).** `Nullable<T>` is inexpressible for an unconstrained `T` and a bare `!T` slot collapses a
+  null to `default(T)`, so a `T?` slot has exactly one sound CLR form; the backend nevertheless kept two, erasing
+  most positions to `object` while holding **method params, constructor params and body locals** back as the bare
+  `!T`. Two representations of one Kotlin type meet at every value instantiation, and they cannot: `pickOr<Int>(null,
+  7)` and `Cell<Int>(null)` pushed `ldnull` into an `int32` slot, so the *whole enclosing method* failed JIT
+  verification and the program printed nothing before dying with `InvalidProgramException` — with no module boundary
+  and no metadata involved. The carve-outs are gone, and with them the positional exception is gone as a category:
+  the rule is now `physical(s) = Erase(declaredKotlinType(s))` for every declaration slot, and a `Nullable(Tv)`
+  surviving anywhere in emitted CIR is a defect a lowering document asserts against directly.
+  A function type's return now obeys the same rule as its parameters instead of being handed to a second owner, and
+  the `as?` subject-temp erasure that kotc performed above the layer boundary is deleted — a body local is a slot,
+  so the uniform rule covers it, and the CLR-representation decision belongs in bir2cir.
+
+- **bir2cir (area:bir2cir): a top-level `T?` return no longer re-imports as a non-null `Any` (#86).** It carried
+  neither channel: the `[KotlinNullableGeneric]` recorder skipped a head-position `Nullable(Tv)` outright, and the
+  NRT byte walk runs *after* the erasure, so it walked `object` — whose non-null default emits no override at all.
+  A reader strips the carrier's outer nullability by contract, so only the byte can restore the `?`, and with
+  neither present the slot came back as non-null `Any` and the consumer **stopped compiling**. Unlike the parameter
+  axis this was never confined to value types — a `String?` return degraded identically — and being a consumer
+  *compile* failure it was invisible to every runtime-shaped gate. The recorder now records the head position and
+  stamps its NRT byte from the pre-erasure type.
+
+- **bir2cir (area:bir2cir): the erasure's WRITE positions are reconciled, not just its reads (#86).** A use of an
+  erased slot is typed `Subst(Erase(declared), typeArgs)` — never `Erase(Subst(...))`, which substitutes away the
+  very type variable that says the position was erased. That formula was applied only where a value is *produced*;
+  where one is *consumed* it was not, so a store, a `return`, an `if/else` join and every call or constructor
+  ARGUMENT met the erased slot with the callsite's substituted type. For an argument that is worse than a mistyped
+  stack slot: the signature descriptor a call is resolved by drifted with it, so the emitter looked for a member
+  that does not exist. `setLocal`, `setField`, `arraySet`, `return`, the value-position `cond`, call and ctor
+  arguments (descriptor included) and the call RECEIVER now derive their target the same way the read side derives
+  a result, and a value is converted only across a bare `object` seam — the only one the CLR can express, since
+  `Ref<object>` and `Ref<Nullable<int32>>` are unrelated invariant reified generics that no cast reconciles.
+
+- **bir2cir (area:bir2cir): an overload the erasure collapses is REFUSED, not silently mis-bound (#86 §5.3).**
+  `class C<T> { fun f(x: T?) ; fun f(x: Any?) }` is two Kotlin declarations the frontend accepts, and Kotlin's own
+  resolution picks `f(T?)` for `c.f(3)` at `C<Int>`. Both emit `f(object)` — `T?` reaches it through the erasure and
+  `Any?` through the reference-nullable strip — so one member occupies the slot and the other is unreachable:
+  measured, `c.f(3)` and `c.f("s")` both ran the `Any?` body, with no diagnostic. A program with no valid CIL lowering
+  owes its author an actionable message, so this now refuses and names both source signatures and the one signature
+  they collapse onto. The condition is DIFFERENTIAL — distinct parameter vectors before the erasure, identical after —
+  because pairs that were always one CLR signature are not this rule's business: the stdlib's two `contains`
+  overloads differ only in their type-parameter constraints, which no CLR signature ever carried, and refusing those
+  would reject code that emits exactly as it did before. Generic arity stays part of the key, so
+  `fun <T> f(x: T?)` beside `fun f(x: Any?)` is still two slots (ECMA-335 I.8.6.1.6).
+
+- **bir2cir (area:bir2cir): a `vararg xs: T?` pack is built at the erased element type (#86).** The packed array and
+  its elements are ONE decision: the pack fills an `Array<T?>` slot erased to `object[]`, and built as
+  `Nullable<int32>[]` it cannot be converted afterwards — the `newarr` and the `stelem` filling it disagreed and
+  `count<Int>(1, null, 3)` segfaulted. An array construction is now a typed use like any other: the caller's argument
+  realignment corrects its element type before it is evaluated, and its elements are then reconciled against that
+  element, so allocation and stores agree by construction.
+
+- **bir2cir (area:bir2cir): a `T?` through the two SUSPEND channels keeps its Kotlin surface (#86).** Both re-imported
+  as `Any` and a cross-module consumer stopped compiling — invisible to every runtime-shaped gate, which is why
+  neither had been seen. A suspend declaration's result rides `suspendRet`, and the Task bridge that becomes its
+  public ABI is constructed fresh, so it inherited nothing from the declaration it replaces; it now transfers the
+  pre-erasure result on both channels, the carrier and the NRT byte the reader needs past the `Task` node. A
+  `suspend (…) -> T?` VALUE erases whole to `object` and its shape rides the dedicated `[KotlinSuspendFunctionType]`
+  carrier — which is built during type lowering, after the erasure, and so faithfully recorded
+  `suspend () -> object`; it is now built from the pre-erasure shape stashed before the sweep. The nullable-generic
+  carrier still excludes suspend function types for the reason it always did — there is no physical delegate for it
+  to align with — so this makes the one carrier truthful rather than adding a second.
+
+- **bir2cir (area:bir2cir): the hand-written special cases the uniform erasure subsumes are DELETED, and the one
+  that survives is narrowed to a real oracle (#86).** Each was the erasure formula applied by hand at one node kind,
+  and each existed because the formula was not applied everywhere — so with the rule uniform they say nothing the
+  rule does not. Gone: the property-accessor retype (a `get_x` return and a `set_x` parameter are declaration slots
+  of the same declared type, erased on their own, so row and accessors are coherent by construction) with its
+  accessor-name collection, its reader-local retype, its call-return retype and its setter-argument wrap; the
+  init-gated body-local retype with all three of its idiom gates — the gates existed to tell a genuine accumulator
+  from a synthesized safe-call temp, a distinction that stops mattering once BOTH are erased and both re-narrow at
+  their typed uses; and the return-value retype, subsumed by `return` becoming a use position like any other.
+  `ValueTypeNullableCollectionArg` stays, because a value-element collection genuinely is not covariantly the
+  `IEnumerable<object>` an erased `Iterable<T?>` receiver names — but its hardcoded primitive list becomes the
+  struct-ness oracle (a `value class`, a projected .NET struct and a local enum are value elements for the same CLR
+  reason as `Int`), and it stops reading its element off `typeArgs[0]`, which is the DESTINATION type parameter and
+  never a value for a two-parameter `filterNotNullTo`; it now reads the type variable that actually sits under the
+  **receiver's** nullable element, and it consults the receiver alone. Both halves matter, and they are the same
+  mistake in opposite directions: accumulating the predicates across every parameter let an unrelated `Box<T?>`
+  argument wrap an ordinary `Iterable<String>` receiver, while reading `typeArgs[0]` asked about the wrong type
+  variable. That closes `List<Int?>.filterNotNullTo` at a value element, and **#324** —
+  `countG(nullBoxes(7), 2)`, where the wrap fired on a user generic's `List<A?>` parameter and the `Cast<object>`
+  result did not inhabit the parameter slot — now returns 3 rather than throwing. Both are pinned as fixtures.
+
+- **bir2cir (area:bir2cir): an override of an object-erased `T?` slot is now an override, not a new overload
+  (#86 D3).** `class TextSink : Sink<String> { override fun accept(x: String?) }` writes a CONCRETE type, so no
+  `Nullable(Tv)` sweep can reach it — but the slot it must fill is the base's `accept(object)`, at every
+  instantiation, because the erasure is a property of the declaration and not of the type argument. Emitted as
+  `accept(string)` it filled nothing: the interface method stayed unimplemented and the type failed to load. Erasure
+  now propagates from the overridden slot, read out of the same-compilation declaration index, and the override's own
+  Kotlin type is recorded on the carrier and NRT-byte channels so its surface still round-trips. The base slot's
+  erasure PATTERN propagates, not a blanket `object`: a base `Box<T?>` erases to `Box<object>`, so an override's
+  `Box<Int?>` becomes `Box<object>` and every position the base did not erase keeps the override's own concrete
+  type. This closes the narrowed override at a value instantiation, same-module and cross-module, which had been
+  failing with `TypeLoadException` and an emitter abort — reached through the base slot, which is how an override is
+  normally called. Reaching it through its OWN declared type cross-module still does not bind: the physical slot is
+  `accept(object)` while the re-imported Kotlin surface is truthfully `accept(x: Int?)`, and converting between them
+  needs the referenced declaration. That is the `.override` bridge half of D3, and it is now a documented red rather
+  than an unmeasured shape.
+
+- **bir2cir (area:bir2cir): constructor bodies and base/`this` delegation arguments are part of the use axis
+  (#86).** The walk visited `methods` only, so `class Derived(y: Int?) : Base<Int>(y)` handed a `Nullable<int32>`
+  straight to `Base<T>`'s erased `object` constructor slot and `Derived`'s own constructor failed JIT verification.
+  A delegation argument is a call argument into the delegated constructor's parameter vector, and a constructor body
+  is a body; both are now reconciled like every other use.
+
 - **bir2cir (area:bir2cir): the `.NET`-interop reshapes carry the node's result-type stamp, so a `.NET` operand
   left of a suspension compiles again ([tmyt/dotkt#304]).** `NetInteropBinding` re-forms the plain call/read kotc
   emits by a .NET owner's identity into the CLR vocabulary. That changes a node's SHAPE and not what it produces,

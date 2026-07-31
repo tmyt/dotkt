@@ -1,0 +1,20 @@
+{
+  "fileClass": "NullableTvCarrierProbeKt",
+  "hasMain": false,
+  "fields": [],
+  "types": [],
+  "refTypes": [],
+  "methods": [
+    {
+      "name": "carry",
+      "typeParams": [{ "name": "T" }],
+      "params": [
+        { "name": "x", "type": { "t": "nullable", "of": { "t": "tv", "scope": "method", "i": 0 } } }
+      ],
+      "ret": { "t": "nullable", "of": { "t": "tv", "scope": "method", "i": 0 } },
+      "body": [
+        { "k": "return", "value": { "k": "local", "name": "x" } }
+      ]
+    }
+  ]
+}

@@ -23,6 +23,7 @@ Only Kotlin facts that plain .NET metadata cannot express or cannot express with
 | inline function body needed for cross-module lambda/non-local-return splicing | ordinary method | no | `[KotlinInline(body)]` |
 | Kotlin `val` backed by a **`@ClrField` public field** | public field | no; a plain public field looks writable | `[KotlinReadOnly]` — survives **only** for the `@ClrField` plain-field case; a normal `val` is now a get-only CLR property, recoverable from plain metadata (see [design-clr-property-model.md](design-clr-property-model.md)) |
 | reference-type nullability (`String?`) | .NET nullable reference metadata | yes for NRT-aware tools; must be emitted | `[Nullable]` / `[NullableContext]` |
+| a nullable GENERIC `T?` on an unconstrained `T` (`fun <T> f(x: T?): T?`, `Holder<T?>`, `Array<T?>`, `(T) -> T?`) | `System.Object` at that position — the one CLR slot that carries a real null for a value AND a reference instantiation (#86) | no; `object` names neither `T` nor the `?` | `[KotlinNullableGeneric(pre-erasure type node)]` **plus** the slot's own `[Nullable(2)]` byte |
 | imported CLR event endpoint (`CLREvent<T>`) | real CLR event metadata + add/remove accessors | yes for the event itself; Kotlin endpoint syntax must be synthesized | plain CLR event metadata, no DotKt attribute by default |
 | `final`/`open`/`abstract` (modality) | non-virtual / virtual / abstract | **yes** — rides .NET virtual-ness | (none) |
 | visibility | public/assembly/family | **yes** | (none) |
@@ -63,6 +64,33 @@ classification.
             a restored event subscription lowers to add + an EventSubscription close-token whose callback invokes
             remove with the exact same handler bound to the event's exact CLR delegate type.
 ```
+
+### `[KotlinNullableGeneric]` — which slots carry it, and why it needs the NRT byte too
+
+`bir2cir` erases `Nullable(Tv)` to `object` at **every** slot (`docs/dotkt-semantics.md` §9c-bis), and records the
+pre-erasure type node on the same slot. The position set is therefore the full declaration surface, not a subset:
+
+| slot | carrier rides |
+|---|---|
+| method return | `retAttrs` |
+| method parameter | the parameter's `attrs` |
+| **constructor** parameter | the parameter's `attrs` |
+| field | the field's `attrs` |
+| property | the property's `attrs` |
+
+At each, the erased `Nullable(Tv)` may be the slot's **head** (`x: T?`) or **nested** (`Holder<T?>`, `Array<T?>`,
+`(T) -> T?`, `Holder<T?>?`). The two need different amounts of help on the way back:
+
+- A reader **strips the carrier's outer nullability** before use — the carrier owns the inner tree, and the slot's own
+  `[Nullable]` byte owns the outer `?`, exactly as it does for `[KotlinSuspendFunctionType]`. So a nested erasure
+  round-trips on the carrier alone, while a **head** erasure additionally needs a `[Nullable(2)]` byte or it restores
+  as a non-null `T`.
+- That byte cannot come from the ordinary decl-position NRT walk, which runs **after** the erasure and would walk
+  `object` — whose non-null default emits no override at all. It is computed from the **pre-erasure** type by the
+  recorder, and rides `DeclNullableFlags`' never-overwrite contract.
+
+Dropping either channel is invisible to every runtime-shaped gate: the producer is unchanged and only a separately
+compiled Kotlin **consumer** fails, at compile time, with a type mismatch against the degraded slot.
 
 ## `inline` / `reified` — deliberately NOT round-tripped (design conclusion)
 

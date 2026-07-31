@@ -56,8 +56,11 @@ declare -A XFAIL_PKG=(
 	# #86, both halves of case_csharp_consumer. Their assertions are written against the POST-erasure ABI — the ABI
 	# break is the sanctioned decision in #86 — so they are red until it lands, and they are the reason the case
 	# exists: no other gate sees the physical signature, because every other one re-imports the library as Kotlin.
-	[nullable-generic-shape]='#86: a nullable-generic slot is not object-erased at every position yet — a top-level T? param/ctor param keeps the bare struct-incapable T, a top-level T? return is erased but records no carrier, and Array<Int?> is Nullable<int32>[]; pruned by the uniform-erasure core step (param/ctor/return slots + carrier) and the Array<X?>-is-object[] step of #86'
-	[csharp-consumer]='#86: a C# consumer cannot pass null at T=int through firstOr/NBox (the slot is a bare int32, so the call does not COMPILE) and cannot bind an Array<Int?> to object[]; pruned by the uniform-erasure core step and the Array<X?>-is-object[] step of #86, with the cross-module carrier read making the re-derived slots consistent'
+	# The uniform-erasure core step landed: the top-level T? param, ctor param and return are `System.Object` with a
+	# carrier, and a C# caller passes `null` through all three. What is left in BOTH halves is `Array<X?>` alone —
+	# the one position where the two representations are unrelated CLR types rather than convertible ones.
+	[nullable-generic-shape]='#86 D2: Array<Int?> is still Nullable<int32>[] where the erased/open form is object[], and the two are unrelated CLR types (ECMA-335 I.8.7.1); pruned by the Array<X?>-is-object[] step of #86'
+	[csharp-consumer]='#86 D2: a C# consumer cannot bind an Array<Int?> to object[] in either direction (the null-at-T=int calls through firstOr/NBox now compile and run); pruned by the Array<X?>-is-object[] step of #86'
 )
 
 # The two XFAIL-listed verdicts above are per-case booleans, so on their own they only say "it did not work" —
@@ -73,17 +76,12 @@ CS_EXPECTED_DIAGNOSTICS="$(LC_ALL=C sort -u <<'EOF'
 line 16: error CS0029: Cannot implicitly convert type 'int?[]' to 'object[]'
 line 17: error CS1503: Argument 1: cannot convert from 'object[]' to 'int?[]'
 line 18: error CS1503: Argument 1: cannot convert from 'object[]' to 'int?[]'
-line 9: error CS1503: Argument 1: cannot convert from '<null>' to 'int'
-line 13: error CS1503: Argument 1: cannot convert from '<null>' to 'int'
 EOF
 )"
 
 # The refcheck --shape mismatches the erasure has not yet fixed. `System.Int32`'s assembly qualification inside
 # Nullable`1[[…]] carries a runtime version, so it is collapsed before comparison; nothing else is normalized.
 NG_SHAPE_EXPECTED="$(LC_ALL=C sort <<'EOF'
-refcheck: nglib.ApiKt.firstOr slot p0 is [T] carrier=0; expected [System.Object] carrier=1
-refcheck: nglib.ApiKt.pick slot ret is [System.Object] carrier=0; expected [System.Object] carrier=1
-refcheck: nglib.NBox`1..ctor slot p0 is [T] carrier=0; expected [System.Object] carrier=1
 refcheck: nglib.NgArrays.boxedPair slot ret is [System.Nullable`1[[System.Int32]][]] carrier=0; expected [System.Object[]] carrier=any
 refcheck: nglib.NgArrays.sumPresent slot p0 is [System.Nullable`1[[System.Int32]][]] carrier=0; expected [System.Object[]] carrier=any
 EOF

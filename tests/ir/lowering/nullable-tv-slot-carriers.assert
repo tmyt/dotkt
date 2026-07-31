@@ -1,0 +1,17 @@
+# The other half of the erasure invariant (#86): the Kotlin surface must SURVIVE the erasure, at the head position
+# as well as nested. A top-level `T?` param and a top-level `T?` return both become `object`, so a reader has two
+# things to recover and needs both channels — and this document is the witness that neither is dropped.
+#
+#  * [KotlinNullableGeneric] carries the pre-erasure TypeNode, but a reader strips its OUTER nullability (the carrier
+#    owns the inner tree, the slot's NRT byte owns the outer `?`), so on its own it restores a NON-null `T`.
+#  * the NullableAttribute(2) byte is what puts the `?` back. It cannot come from the ordinary decl-position byte
+#    walk, which runs after the erasure and would walk `object` — a non-null default that stamps nothing at all. It
+#    is computed from the PRE-erasure type by the recorder.
+#
+# Drop either and the slot re-imports as a non-null `Any`: a cross-module CONSUMER stops compiling, which no
+# runtime-shaped gate can see.
++"name":"DotKt.Runtime.CompilerServices.KotlinNullableGenericAttribute"
++"name":"System.Runtime.CompilerServices.NullableAttribute"},"args":[{"value":2,"type":{"t":"fqn","name":"System.Byte"}}]
+# The param and the return are reached by different walks and can regress apart, so both slots are pinned as erased.
++"name":"x","type":{"t":"fqn","name":"object"}
+-{"t":"nullable","of":{"t":"tv"
