@@ -7,6 +7,47 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Added
 
+- **The nullable-generic family is now measured at VALUE instantiations, and the C#-visible ABI is measured at
+  all (#86).** Every gate that touched `T?` over an unconstrained type parameter drove it at `T=String`, where the
+  whole family is invisible — a bare `T?` slot is trivially sound for a reference type — so the representation
+  could be wrong in either direction without a single red gate. `tests/basic` gained the `T=Int`/`T=Boolean`
+  instantiations of the idioms that work today (`mapNotNull`/`mapNotNullTo`, `filterNotNull`, `chunked`,
+  `Sequence.single`/`singleOrNull`/`filter`, `getOrPut` and `merge`'s remove-on-null over a value-typed map value,
+  `toTypedArray`/`plus`/`plusElement`, and a top-level `T?` return), which is the regression armor the erasure work
+  will be measured against.
+  Driving the value axis also showed that several shapes assumed working are not, so they land in
+  `tests/roundtrip/scenarios` as documented reds rather than as fixtures. With **no module boundary at all**, a
+  null through a top-level `T?` param or a `T?` constructor param faults with `InvalidProgramException` at
+  `T=Int`, and an override narrowing a base `T?` slot to a concrete `Int?` faults with `TypeLoadException` — so
+  the defect is the representation, not the cross-module carrier, and the comment claiming otherwise is
+  corrected. Cross-module, a top-level `T?` **return** re-imports as non-null `Any` and the consumer no longer
+  compiles (and that one is not confined to value types); an `Array<Int?>` **param** re-imports as `IntArray`,
+  while an `Array<Int?>` **return** re-imports with a non-null `Int` element, so the consumer indexes a
+  `Nullable<int32>[]` as an `int32[]` and reads the layout words back as elements — an array of `4/null/8`
+  reports `3/1/4/0`, with no diagnostic and no exception; and carrying a **value** — not a null — through a
+  nested `Slot<T?>` param or property at `T=Int` corrupts memory in `CastHelpers.Unbox_Nullable`.
+  Every one of those is its own section with its own app: a section verdict is one stdout comparison, so an app
+  driving several faulty shapes reports one result and the first fault hides the rest. That is not a hypothetical
+  — a bundled app made the nested-`Slot<T?>` axis look like param-vs-property-vs-return when it is actually
+  present-vs-null, with the whole null path green. Each entry now also pins the SHAPE of its failure (exception
+  type, compiler diagnostic, or the wrong value itself) against the section's captured evidence: compiler and
+  emitter diagnostics, the app's stderr and exit status, and its stdout. A listed entry that fails for some other
+  reason reddens as an `XFAIL SHAPE MISMATCH` instead of absorbing it, and a listed entry with no documented
+  shape is rejected outright. The green control sections — the same shapes at a reference instantiation, at a
+  non-nullable slot, and on the null path — are load-bearing for the same reason: they are what makes "the value
+  axis is the subject" a measurement rather than a claim.
+  `tests/packaged-sdk` gained `csharp-consumer`: a real C# Exe that `ProjectReference`s a packaged-SDK Kotlin
+  library and binds its emitted CLR signatures **literally**. Every other gate re-imports an emitted library as
+  Kotlin, so it measures what the compiler can restore rather than what the ABI is; this one cannot. It reports two
+  verdicts — the erased slot's physical type plus its `[KotlinNullableGeneric]` carrier (asserted by reflection
+  through a new `refcheck --shape` mode), and whether a C# program compiles and runs against those slots. Both are
+  written against the post-erasure ABI and are `XFAIL_PKG`-listed until it lands, and both baseline their exact
+  expected failure — the five C# diagnostics and the five slot mismatches — under names that are *not* listed, so
+  a missing tool, a restore failure, or a changed or extra diagnostic reddens instead of hiding inside the
+  expected red. `refcheck` itself is now generated and built in a staging directory and swapped in atomically,
+  keyed on a hash of its actual generated sources, so neither a source change nor a failed rebuild can leave a
+  stale tool answering.
+
 - **A stale `sty` stamp is now caught mechanically, right where the stamp dies (area:bir2cir).** The spec §2.7
   invariant — *a pass that changes a node's result type rewrites or deletes its `sty`* — was stated and swept by
   hand once, but nothing caught the next pass that reintroduced the drift, and the stamp is read FIRST by every

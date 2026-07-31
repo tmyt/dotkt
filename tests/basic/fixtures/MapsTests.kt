@@ -19,6 +19,9 @@
 //   il-maptostr  -> maptostr_toString    Map operand prints Kotlin-style {a=1, b=2}, not the raw Dictionary`2
 //   il-mapvalues -> mapvalues_mapValues  groupBy().mapValues{} + direct size/containsKey on a groupBy result (#29)
 //
+// nullableGenericMapIdiomsAtValueTypes is not migrated from a case: it is the #86 value-instantiation armor for
+// getOrPut's erased Map.get local and merge's nullable-generic remap result (see the comment on the method).
+//
 // Top-level names are unique within this single battery assembly (one project = one namespace); il-mapdes's `sum`
 // vararg helper is renamed varargSum to avoid shadowing the stdlib Iterable.sum extension.
 import NUnit.Framework.TestAttribute
@@ -173,6 +176,33 @@ class MapsTests {
         val s = mutableMapOf("x" to "a")
         assertEquals("ab", s.merge("x", "b") { o, n -> o + n }) // ab
         assertEquals("z", s.merge("y", "z") { o, n -> o + n })  // z
+    }
+
+    // #86 — the VALUE-typed value axis of the two nullable-generic map idioms. `getOrPut`'s `val value = get(key)`
+    // local receives the erased `V?` result of Map.get, and `merge`'s remap result is a nullable-generic function
+    // return; both must hold a genuine null in an object slot. The DEFAULT-VALUED cases are the point: at
+    // V=Int/V=Boolean a bare `V` slot reads a missing key as 0/false, so `getOrPut(k) { 0 }` returns 0 whether or
+    // not it inserted, and the map silently stays empty. Storing the zero value is what makes that observable.
+    @TestAttribute
+    fun nullableGenericMapIdiomsAtValueTypes() {
+        val counts = mutableMapOf<String, Int>()
+        assertEquals(0, counts.getOrPut("a") { 0 })     // 0 — indistinguishable from "absent" in a bare-V slot
+        assertEquals(1, counts.size)                    // 1 — the insert really happened
+        assertTrue(counts.containsKey("a"))             // True
+        assertEquals(0, counts.getOrPut("a") { 99 })    // 0 — the STORED zero, not the default
+        assertEquals(1, counts.size)                    // 1
+        val flags = mutableMapOf<Int, Boolean>()
+        assertFalse(flags.getOrPut(1) { false })        // False — the same trap at V=Boolean
+        assertEquals(1, flags.size)                     // 1
+        assertFalse(flags.getOrPut(1) { true })         // False — stored, not re-computed
+        val bm = mutableMapOf(1 to true)
+        assertNull(bm.merge(1, false) { _, _ -> null }) // null (remove) at V=Boolean
+        assertEquals(0, bm.size)                        // 0
+        assertTrue(bm.merge(1, true) { a, b -> a && b })  // True (absent -> insert)
+        val im = mutableMapOf(1 to 10)
+        assertEquals(0, im.merge(1, 0) { _, b -> b })   // 0 — a zero remap result must NOT read as "remove"
+        assertEquals(1, im.size)                        // 1
+        assertEquals(0, im[1])                          // 0
     }
 
     @TestAttribute
