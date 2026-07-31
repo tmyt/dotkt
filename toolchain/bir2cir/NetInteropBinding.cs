@@ -25,6 +25,18 @@ using DotKt.Bir;
 // nodes still carry pure-Kotlin type tokens that the subsequent lowering turns into the CLR forms — the CIR is
 // byte-identical to what kotc used to emit directly (the shape decision merely moved down a layer). Bottom-up walk,
 // mirroring ClrEventSubscriptionBinding/KClassMemberBinding.
+//
+// RESULT STAMPS (#304, spec §2.7). Every reshape here changes a node's SHAPE and not what it produces: the `clr*`
+// node stands for the same call/read, resolved to its CLR member, and leaves the same value behind. So every
+// result-type stamp the plain node carried is still TRUE of the reshaped one and travels with it — `sty` (the
+// frontend's instantiated stamp) and `ret` alike. This is a contract, not a nicety: `bir-common/NodeType.cs` has no
+// derivation arm for ANY `clr*` kind, so those two slots ARE the reshaped node's static type. A reshape that lands a
+// stamp-less node therefore leaves an operand nothing downstream can type, and an operand with no static type LEFT of
+// a suspension is a stage-0 refusal (SuspendOperandPlan) of source the frontend accepted — which is what a dropped
+// stamp on a `.NET`-field read (ReshapeField) and on the generic branch each produced. `dynRet` deliberately does NOT
+// travel: it is the UNBOUND Kotlin call's dynamic-dispatch channel (ilemit falls back to reflection on its presence),
+// so on a node already bound to a concrete CLR slot it would be a dispatch instruction rather than a type fact — and
+// `sty` carries the same instantiated type without it.
 static class NetInteropBinding
 {
     static ReferenceMetadataIndex _refs;
@@ -135,12 +147,18 @@ static class NetInteropBinding
             _refs.TryClrEventIsStatic(bare, projectedEventName, out var eventIsStatic))
         {
             var recv = node["recv"];
+            // Captured BEFORE the Clear detaches them: the handle this reads is the same `ClrEvent<T>` value the
+            // property-get produced, so its result stamps travel like every other reshape's (RESULT STAMPS above).
+            var evSty = node["sty"];
+            var evRet = node["ret"];
             node.Clear();
             node["k"] = "clrEventGet";
             node["type"] = ownerJson?.DeepClone();
             node["name"] = projectedEventName;
             node["static"] = eventIsStatic;
             if (!eventIsStatic) node["recv"] = recv;
+            if (evSty != null) node["sty"] = evSty;
+            if (evRet != null) node["ret"] = evRet;
             return;
         }
 
@@ -164,10 +182,13 @@ static class NetInteropBinding
         // dispatch like C#'s `base.M()`) instead of a `callvirt` that would re-dispatch to THIS class's override.
         var superNode = Take("super");
         void CarrySuper() { if (superNode != null) node["super"] = superNode; }
-        // Carry the frontend static-type stamp (#122) across the reshape (every key was detached above). Re-added once
-        // here — the branches only ADD keys, never re-clear — so a LATE consumer (StringCharSequenceBridge) recovers the
-        // reshaped node's Kotlin static type even when it is non-generic (no `ret`), e.g. a String-typed .NET property.
+        // RESULT STAMPS (see the top of this file), re-added after the detach above. `sty` (#122) is carried HERE, once
+        // for every branch, so a LATE consumer (StringCharSequenceBridge) recovers the reshaped node's Kotlin static
+        // type even where the node is non-generic and has no `ret` at all — a String-typed .NET property, say. `ret`
+        // rides in each branch's OWN key position, so it is carried by the branches through `CarryRet`, which leaves a
+        // `ret` a branch has already written where that branch put it.
         if (Take("sty") is JsonNode styCarry) node["sty"] = styCarry;
+        void CarryRet() { if (node["ret"] == null && Take("ret") is JsonNode retCarry) node["ret"] = retCarry; }
 
         // GENERIC .NET method: the presence of `typeArgs` (a frontend fact) is the signal. ilemit MakeGenericMethods it.
         // W1-S1 (#46/#44): carry the FIR-RESOLVED member reference into CIR as `memberSig` — the callee's DECLARED
@@ -182,6 +203,8 @@ static class NetInteropBinding
             node["method"] = method;
             node["typeArgs"] = Take("typeArgs");
             node["memberSig"] = NormalizeMemberSig(TakeMemberSig("shapeTypes") as JsonArray);
+            CarryRet();   // the generic branch's own result stamp (RESULT STAMPS above); ilemit reads the reflected
+                          // definition's return type, so this is read inside bir2cir only — where it is the answer.
             if (!isStatic) node["recv"] = Take("recv");
             node["args"] = args;
             if (Take("suspendCall") is JsonNode sc1) node["suspendCall"] = sc1;
@@ -380,6 +403,13 @@ static class NetInteropBinding
         node["static"] = false;
         node["recv"] = Take("recv");
         if (write) node["value"] = Take("value");
+        // A READ produces the field's value, so the plain `field` node's result stamps are still true of the
+        // clrPropGet and travel with it (RESULT STAMPS at the top of this file). Without them a `.NET` field read is a
+        // node NOTHING can type — `v.X + suspending()` was a stage-0 refusal of source the frontend accepted (#304).
+        // A WRITE leaves no value; there is no result to stamp.
+        if (write) return;
+        if (Take("sty") is JsonNode fieldSty) node["sty"] = fieldSty;
+        if (Take("ret") is JsonNode fieldRet) node["ret"] = fieldRet;
     }
 
     // #73 M4.4 — reshape a BOUND method-ref `newBoundDelegate` on a reference-KLIB-projected .NET owner to the CLR

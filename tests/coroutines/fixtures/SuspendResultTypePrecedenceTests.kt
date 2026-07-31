@@ -31,6 +31,10 @@
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.Companion.IsNull as assertNull
+import System.Activator
+import System.Math
+import System.Numerics.Vector3
+import System.Text.StringBuilder
 import System.Threading.Tasks.Task
 import dotkt.support.blockOn
 
@@ -119,10 +123,13 @@ fun <T> corRtNullBoxes(x: T): List<T?> = listOf(x, null)
 
 // The consumer's parameter is `List<Any?>`, whose CLR slot is the same `IReadOnlyList<object>` the erased return
 // produces, so the argument position agrees with the value by construction and this fixture pins result TYPING and
-// nothing else. Two neighbouring subjects are deliberately kept out: a parameter written as the substituted
+// nothing else. One neighbouring subject is deliberately kept out: a parameter written as the substituted
 // `List<Int?>` would hit the erasure family's documented STORE/pass-side gap (reconciling an erased value with a
-// directly-written target), and a GENERIC consumer is reshaped to `clrGenericStatic`, whose stamps the reshape
-// drops — stage 0 refuses that operand outright, at HEAD and at origin/main alike.
+// directly-written target). A GENERIC consumer (`fun <A> f(l: List<A?>, extra: Int)`) is a second one, and one this
+// fixture must not be read as covering: bir2cir wraps its collection argument in `Enumerable.Cast<object>` and the
+// wrap's `IEnumerable<object>` result does not inhabit the consumer's `IReadOnlyList<object>` parameter, which
+// faults at run with NO suspension anywhere in the program. Section 7 covers the STAMP half of that composition
+// (which is #304, and is fixed) on shapes whose non-suspend twin is sound.
 fun corRtCountNulls(l: List<Any?>, extra: Int): Int {
     var n = 0
     for (v in l) if (v == null) n++
@@ -162,6 +169,61 @@ fun interface CorRtSuspendOnInt {
 suspend fun <T, R> corRtApplyMapper(v: T, m: CorRtSuspendMapper<T, R>): R = m.map(v)
 
 suspend fun corRtApplyOnInt(v: Int, f: CorRtSuspendOnInt): Int = with(f) { v.transform() }
+
+// ---- 7. a `.NET`-bound operand's stamp surviving the `clr*` reshape (#304) -------------------------------------
+//
+// bir2cir's NetInteropBinding takes the plain call/read kotc emits by the .NET owner's IDENTITY and reshapes it
+// into the CLR vocabulary — `clrStatic`/`clrGenericStatic` for a call on a referenced owner, `clrPropGet` for a
+// `.NET` FIELD read. The reshape changes the node's SHAPE and not what it produces, so its result-type stamps stay
+// true and must travel with it: `bir-common/NodeType.cs` has no derivation arm for ANY `clr*` kind, which makes
+// those stamps the whole of the reshaped node's static type. Where a reshape dropped them, the node became
+// untypable — and an operand with no static type standing LEFT of a suspension is a stage-0 REFUSAL
+// (SuspendOperandPlan: "carries no static type"), so `v.X + susp()` was a compile-time rejection of source the
+// frontend accepts, while the same expression without the suspension compiled and ran.
+//
+// Each shape below is therefore paired with its NON-suspend twin asserting the identical value: the twin is what
+// says the refusal was about the suspension and not about the expression. The suspending operand is the SECOND one,
+// so the operand plan really does have to spill the first into a typed local across the suspension.
+//
+//   A `.NET` FIELD read (`Vector3.X` -> ReshapeField -> `clrPropGet`) — the reshape that dropped the stamp
+//   outright, and the shape this fixture is RED on without the fix.
+//   A `.NET` static call (`Math.Max` -> `clrStatic`) and a GENERIC one (`Activator.CreateInstance<T>()` ->
+//   `clrGenericStatic`) — the kinds the issue names. Both already carried a `sty` the reshape forwarded, so they
+//   pin the shape rather than reproduce the drop.
+//
+// The owner has to be a GENUINE .NET type. A referenced DotKt assembly is deliberately NOT one: NetInteropBinding
+// leaves a Kotlin-emitted owner on the Kotlin ABI path (only the enum and Comparable seams are admitted), so a
+// cross-module Kotlin callee stays a plain `callStatic` and never reaches the reshape at all — it would look like
+// coverage while asserting nothing about it.
+//
+// The `ret` half of the carry has no Kotlin witness in either direction (kotc's generic .NET-call emitter writes
+// only `sty`, and its `field` emitter writes `ret` only for a generic owner), so it is pinned structurally instead:
+// tests/ir/lowering/net-interop-reshape-result-stamp.
+//
+// The consumers take the operand's OWN type, so the reshaped node is the operand ITSELF: a conversion around it
+// (`v.X.toInt()`) would be a `conv`, which the deriver types from its own `to` slot whatever its operand is, and the
+// composition would no longer reach the drop at all.
+fun corRtJoinF(a: Float, b: Int): String = "" + a.toInt() + "," + b
+fun corRtJoinI(a: Int, b: Int): String = "" + a + "," + b
+fun corRtJoinB(a: StringBuilder, b: Int): String = "" + a.Length + "," + b
+
+suspend fun corRtNetInstanceField(): String {
+    val v = Vector3(4.0f, 2.0f, 3.0f)
+    return corRtJoinF(v.X, corRtTick(1))
+}
+
+fun corRtNetInstanceFieldPlain(): String {
+    val v = Vector3(4.0f, 2.0f, 3.0f)
+    return corRtJoinF(v.X, 2)
+}
+
+suspend fun corRtNetStaticCall(): String = corRtJoinI(Math.Max(7, 1), corRtTick(1))
+
+fun corRtNetStaticCallPlain(): String = corRtJoinI(Math.Max(7, 1), 2)
+
+suspend fun corRtNetGenericCall(): String = corRtJoinB(Activator.CreateInstance<StringBuilder>(), corRtTick(1))
+
+fun corRtNetGenericCallPlain(): String = corRtJoinB(Activator.CreateInstance<StringBuilder>(), 2)
 
 class SuspendResultTypePrecedenceTests {
     @TestAttribute
@@ -223,5 +285,26 @@ class SuspendResultTypePrecedenceTests {
     @TestAttribute
     fun suspendFunInterfaceExtensionReceiver() {
         assertEquals(11, blockOn { corRtApplyOnInt(10) { corRtTick(this) } })
+    }
+
+    // ---- 7 ----
+    // Each pair is the same expression with and without the suspension: without it the program always compiled,
+    // with it the reshaped operand had no static type and bir2cir refused the compilation outright (#304).
+    @TestAttribute
+    fun netInstanceFieldLeftOfSuspension() {
+        assertEquals("4,2", corRtNetInstanceFieldPlain())
+        assertEquals("4,2", blockOn { corRtNetInstanceField() })
+    }
+
+    @TestAttribute
+    fun netStaticCallLeftOfSuspension() {
+        assertEquals("7,2", corRtNetStaticCallPlain())
+        assertEquals("7,2", blockOn { corRtNetStaticCall() })
+    }
+
+    @TestAttribute
+    fun netGenericCallLeftOfSuspension() {
+        assertEquals("0,2", corRtNetGenericCallPlain())
+        assertEquals("0,2", blockOn { corRtNetGenericCall() })
     }
 }
