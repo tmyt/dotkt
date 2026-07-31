@@ -131,7 +131,8 @@ done
 if (( ${#EMITTED[@]} )); then
 	echo "=========================================================="
 	echo "ilverify (once per emitted suite assembly)"
-	bash "$ROOT/tests/run-ilverify.sh" "${EMITTED[@]}" || rc=1
+	# --audit-baseline: this is the COMPLETE emitted set, so a baseline key that masked nothing is a dead entry.
+	bash "$ROOT/tests/run-ilverify.sh" --audit-baseline "${EMITTED[@]}" || rc=1
 fi
 
 echo "=========================================================="

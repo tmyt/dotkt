@@ -10,7 +10,6 @@ backend batch that happened to create them:
 - `support/` — shared test-only projects, currently the coroutine driver used by coroutine and interop fixtures.
 - `special/` — valid compiler tests whose required build shape does not fit an NUnit method (for example a
   greater-than-16-parameter delegate assembly-shape check).
-- `known-fail/` — documented reproducers that intentionally stay outside the green gate.
 
 Fixture files and classes use feature names. Historical migration batches such as `MigratedM2`, `CorA`, and the
 old undifferentiated `il` suite are not categories.
