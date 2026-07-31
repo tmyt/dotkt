@@ -1,0 +1,11 @@
+# `t.await(captureContext = capture)` — a NON-CONSTANT Boolean (GitHub #64). This whole document was a compile ABORT
+# before the fix (`EmitAwaitPoint` threw on anything but a constant), so its acceptance is half the assertion. The
+# other half is that the value is simply handed to `ConfigureAwait`: ONE substring covering the receiver and the
+# argument, so it pins their order and that the parameter is read in the argument slot, not merely somewhere.
++"method":"ConfigureAwait","recv":{"k":"field","ownerType":{"t":"fqn","name":"AwaitCaptureDynamicKt_awaitCaptureDynamic$sm"},"recv":{"k":"this"},"name":"t","ret":{"t":"fqn","name":"System.Threading.Tasks.Task","args":[{"t":"fqn","name":"System.Int32"}]}},"args":[{"k":"field","ownerType":{"t":"fqn","name":"AwaitCaptureDynamicKt_awaitCaptureDynamic$sm"},"recv":{"k":"this"},"name":"capture","ret":{"t":"fqn","name":"System.Boolean"}}]
++"method":"GetAwaiter"
+# The awaiter FIELD type, as the emitted document escapes it (` is the arity backtick, + the nested-type
+# separator): the nested ConfiguredTaskAwaiter, statically — the Boolean selected no type, and nothing branches.
++"name":"__awaiter$1","type":{"t":"fqn","name":"System.Runtime.CompilerServices.ConfiguredTaskAwaitable\u00601\u002BConfiguredTaskAwaiter"
+# Runtime behavior is asserted by tests/coroutines/fixtures/DynamicCaptureContextTests.kt; what only the shape can
+# show is the arm selection and the field type.

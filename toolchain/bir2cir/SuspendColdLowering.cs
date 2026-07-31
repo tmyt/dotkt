@@ -1095,6 +1095,12 @@ static partial class SuspendColdLowering
         Bool(o["suspendCall"]) && Bool(o["clrAwaitBridge"])
         && Str(o["k"]) is "callStatic" or "callInstance";
 
+    // A literal `true` — the ONE argument shape `await(captureContext = …)` lowers as the plain capturing awaiter,
+    // because that is what the awaitable's own `GetAwaiter()` already does. Everything else, constant or not, goes
+    // through `ConfigureAwait(<the argument>)` (EmitAwaitPoint).
+    static bool IsConstTrue(JsonObject o) =>
+        Str(o["k"]) == "const" && o["value"] is JsonValue v && v.TryGetValue<bool>(out var b) && b;
+
     // BUG 1: does the subtree contain a `try` whose finally is non-empty AND whose body spans a suspension?
     // Such a finally needs the $suspending gate (it would otherwise run on the suspend-return leave and again at
     // exit). SuspensionRefusalReason guarantees at most one such level (nested suspending try is left untransformed).
@@ -1190,6 +1196,7 @@ static partial class SuspendColdLowering
         int _condCounter;
         int _loopCounter;                        // #82 — fresh splice-loop temp counter (FlattenSuspendingLoops)
         int _excCounter;                         // #78 — fresh catch-hoist capture-var counter (HoistSuspendingCatches)
+        int _awaitTarget;                        // #64 — fresh `__awaitable$n` field counter (EmitAwaitPoint's receiver bind)
         bool _needSuspendGuard;                  // fun has a suspending try/finally -> emit the $suspending gate (BUG 1)
         readonly List<(int state, int label)> _dispatch = new();
         readonly Stack<(List<(int state, int label)> inner, int tryEntry)> _tryStack = new();
@@ -1794,6 +1801,10 @@ static partial class SuspendColdLowering
         // Rewrite an expression: lower a suspending `cond` to control flow, spill each suspend call (post-order)
         // into a suspension segment + await field, redirect param/local reads to SM field reads, and (for an
         // instance member) redirect `this`/implicit-receiver to the SM's `$this` field. Appends to `outp`.
+        //
+        // WHICH arms append to `outp` is a fact one caller has to predict before calling: `LowersToStatements`
+        // (below) mirrors them, so an operand can be bound before a neighbour that emits statements. Add an
+        // appending arm here and add it there.
         JsonNode Rewrite(JsonNode node, List<JsonNode> outp)
         {
             if (node is JsonObject o)
@@ -2013,6 +2024,56 @@ static partial class SuspendColdLowering
                 return false;
             }
             return Walk(node);
+        }
+
+        // Does rewriting this operand APPEND STATEMENTS to `outp` — a suspension's segments, or the control flow an
+        // escaping value is flattened into? `EmitAwaitPoint` asks it of the captureContext argument: an operand that
+        // emits statements is what can leave an earlier operand's expression stranded behind them.
+        //
+        // NOT `HasOwnSuspension || EscapesExpression`. Those two answer "whose frame does this belong to" and stop at
+        // every `LambdaKinds` node; `Rewrite` treats only `newSuspendLambda` as opaque and descends into everything
+        // else — including a `newClosure`'s CAPTURES, which are ordinary expressions evaluated where the closure is
+        // constructed. A bound callable reference `(<expr>)::f` puts an ARBITRARY expression there (kotc's
+        // `boundExtRef`), so an escaping value can sit under a lambda kind and still be flattened into this frame.
+        // The `synthClass` is not an operand — it is the closure's own body — and is skipped for the same reason the
+        // call-evaluation plan's eager-spine scan skips it.
+        //
+        // Over-answering is safe (one bound receiver more than strictly needed); under-answering reorders operands,
+        // so an unfamiliar shape must land on `true`.
+        //
+        // MAINTENANCE: its arms are `Rewrite`'s statement-appending dispatch, one for one — each is marked below with
+        // the emitter it stands for. A new arm there that appends to `outp` needs one here, or the operand left of it
+        // stops being ordered against it.
+        static bool LowersToStatements(JsonNode node) => OperandLowering(node, suspensionOnly: false);
+
+        /// Of those statements, is any of them a SUSPENSION — the question that decides whether the value bound
+        /// before this operand needs a state-machine field rather than a local. Asked over the SAME subtree, by the
+        /// same walk, so it cannot miss a suspension the statement question above saw: the two answers are about one
+        /// operand, and a disagreement between them is a value stored where the resume cannot read it.
+        static bool LowersToSuspension(JsonNode node) => OperandLowering(node, suspensionOnly: true);
+
+        static bool OperandLowering(JsonNode node, bool suspensionOnly)
+        {
+            switch (node)
+            {
+                case JsonObject o:
+                    var k = Str(o["k"]);
+                    if (k == "newSuspendLambda") return false;
+                    if (Bool(o["suspendCall"])) return true;               // -> EmitSuspensionPoint / EmitAwaitPoint
+                    if (IsSuspendCoroutineCall(o)) return true;            // -> EmitSuspendCoroutineCall
+                    if (!suspensionOnly && k != null && ControlTransferKinds.Contains(k))
+                        return true;                                       // -> the escaping-value flatten
+                    foreach (var kv in o)
+                        if (kv.Key != "synthClass" && kv.Value != null && OperandLowering(kv.Value, suspensionOnly))
+                            return true;
+                    return false;
+                case JsonArray a:
+                    foreach (var it in a)
+                        if (it != null && OperandLowering(it, suspensionOnly)) return true;
+                    return false;
+                default:
+                    return false;
+            }
         }
 
         // A suspension point (mirrors kotc emitSuspend): set label, start the cold call passing `this` (the SM,
@@ -2285,21 +2346,24 @@ static partial class SuspendColdLowering
                 .Select(TypeJson.Read)
                 .Where(x => x != null)
                 .ToArray() ?? System.Array.Empty<TypeNode>();
-            // #3: `await(captureContext = false)` opt-out. The await marker is an extension fun `X.await(captureContext)`
-            // or a synthesized member. A LITERAL `false` selects the
-            // ConfigureAwait(false) awaiter (OnCompleted does NOT capture the SynchronizationContext); `true`/absent
-            // keeps the SynchronizationContext-capturing awaiter (the historical + default behavior).
+            // #3/#64: the SynchronizationContext-capture control. dll2klib publishes TWO await bridges for an
+            // awaitable that has `ConfigureAwait(bool)` — `await()` and `await(captureContext: Boolean)` — so the
+            // argument is present or absent, never defaulted. TWO arms, chosen by the argument's SHAPE and never by
+            // its VALUE:
+            //
+            //   omitted, or a constant `true`  ->  awaitable.GetAwaiter()                     (the capturing default)
+            //   anything else                  ->  awaitable.ConfigureAwait(<arg>).GetAwaiter()
+            //
+            // A constant `false` is not a case of its own: it flows through the second arm as the expression `false`.
+            // `ConfigureAwait(b)` returns the SAME configured awaitable — hence the same awaiter type — for either
+            // value, so the runtime Boolean changes no CLR type and needs no branch between two state-machine field
+            // types. The first arm exists because `GetAwaiter()` already IS the capturing behavior, so only the
+            // capture-controlling call pays for the configured awaitable.
             var callArgs = awaitNode["args"] as JsonArray ?? new JsonArray();
             var captureIndex = isMember ? 0 : 1;
             JsonObject ccArgNode = callArgs.Count > captureIndex
                 ? callArgs[captureIndex] as JsonObject : null;
-            // captureContext must be a COMPILE-TIME constant: a bool `const` (the omitted default is filled as one). A
-            // dynamic arg (`await(captureContext = someBool)`) can't statically select the awaiter type, and — since args[1]
-            // is never Rewrite'd here — would also drop any side effect un-evaluated. Refuse loudly rather than miscompile.
-            if (ccArgNode != null && Str(ccArgNode["k"]) != "const")
-                throw new NotSupportedException("await(captureContext = …) requires a compile-time constant Boolean (a dynamic captureContext is not supported)");
-            var noCapture = ccArgNode != null && ccArgNode["value"] is JsonValue ccVal
-                && ccVal.TryGetValue<bool>(out var ccBool) && ccBool == false;
+            var configured = ccArgNode != null && !IsConstTrue(ccArgNode);
 
             // A member bridge uses its constructed owner type. An extension
             // bridge uses its declared receiver type, substituting the
@@ -2319,10 +2383,9 @@ static partial class SuspendColdLowering
                 throw new NotSupportedException(
                     $"await: '{awaitableName ?? "<unknown>"}' is not a resolvable .NET awaitable "
                     + "(no conforming GetAwaiter found in the referenced metadata)");
-            if (noCapture && !plan.SupportsNoCapture)
+            if (configured && !plan.SupportsConfigureAwait)
                 throw new NotSupportedException(
-                    $"await(captureContext = false) is unsupported for '{awaitableName}': the type has no "
-                    + "ConfigureAwait(bool) member (the SynchronizationContext opt-out is Task-like only)");
+                    $"await(captureContext = …) is unsupported for '{awaitableName}': {plan.ConfigureAwaitGap}");
 
             // An extension bridge declares `awaitResult` in its own method-type-parameter space; a member bridge on a
             // generic awaitable (`Task<T>`, `ValueTask<T>`) declares it in the owner's type-parameter space. Close both
@@ -2336,19 +2399,66 @@ static partial class SuspendColdLowering
                 recvParam?.Args ?? System.Array.Empty<TypeNode>());
             var hasResult = resultTok is not TypeNode.Fqn { Name: "kotlin.Unit" };
             var awaitableType = recvParam;
-            // The awaiter def + genericity, honoring the #3 ConfigureAwait(false) opt-out (a nested Configured*Awaiter).
-            var awaiterDef = noCapture ? plan.ConfiguredAwaiterDefName : plan.AwaiterDefName;
-            var awaiterGeneric = noCapture ? plan.ConfiguredAwaiterGeneric : plan.AwaiterGeneric;
-            var awaiterArguments = awaiterGeneric
-                ? awaitableType.Args is { Length: > 0 } args
-                    ? args
-                    : hasResult ? new[] { resultTok } : null
-                : null;
-            var awaiterType = new TypeNode.Fqn(awaiterDef, awaiterArguments);
+            // The awaiter type, one per arm: the awaitable's own awaiter, or the one its configured awaitable returns
+            // — statically known in BOTH arms, because the Boolean the configured arm passes cannot change it. Each
+            // comes from the plan as a TEMPLATE of the DECLARED type (ReferenceMetadataIndex.Awaitable.cs), closed
+            // here from this call site: the awaitable's type arguments, and an extension GetAwaiter's method
+            // arguments. It is not rebuilt from the receiver's arguments — a declaration is free to permute, drop or
+            // fix them, and copying them positionally named a type the awaiter's members do not live on.
+            var awaiterType = CloseAwaitTemplate(
+                configured ? plan.ConfiguredAwaiterTemplate : plan.AwaiterTemplate, awaitableType, methodTypeArgs);
 
+            // KOTLIN ORDER, exactly once each: the awaitable receiver, then the captureContext argument. This emitter
+            // rewrites its own operands (the marker is excluded from the stage-0 operand plan, SuspendOperandPlan.cs),
+            // so the ordering rule that plan states is stated here for the two operands a marker has.
             var awaitable = Rewrite(
                 isMember ? awaitNode["recv"] : callArgs.FirstOrDefault(),
                 outp);
+            JsonNode captureValue = null;
+            if (configured)
+            {
+                // When the argument's own lowering APPENDS STATEMENTS, the receiver's value is still an expression
+                // sitting in a slot — so it would be evaluated after them. Bind it first. Nothing is bound when the
+                // argument emits no statements: the receiver is then evaluated by the ConfigureAwait call itself,
+                // ahead of its argument, which is the order Kotlin asks for.
+                //
+                // WHICH STORAGE is a separate question, and only a SUSPENSION between the binding and its use makes it
+                // a state-machine field: invokeSuspend is re-entered at the resume label, so a MoveNext local written
+                // before the suspension no longer holds. Suspension-free statements (an escaping `throw`/`return`
+                // flattened into control flow) run inside ONE invocation, so the local is enough — and a local is what
+                // a byref-like awaitable can be. A field for those would refuse `Span`-like awaitables that the CLR
+                // only forbids as FIELDS (docs/dotkt-semantics.md §4d), which is a refusal on valid IR.
+                //
+                // BOTH questions are asked by the SAME walk over the SAME subtree. Asking the second one with the
+                // frame-ownership predicates instead would reintroduce the disagreement the first one exists to
+                // avoid: they stop at every lambda kind, so a suspension inside a `newClosure` capture would be
+                // invisible to the storage question and visible to the statement question — a local written before a
+                // suspension the resume then reads. `SuspensionRefusalReason` refuses such a function outright today
+                // (a `newClosure` holding any suspension is not segmentable), so the disagreement had no witness;
+                // agreement by construction does not depend on that refusal staying where it is.
+                if (LowersToStatements(ccArgNode))
+                {
+                    var bound = "__awaitable$" + (++_awaitTarget);
+                    if (LowersToSuspension(ccArgNode))
+                    {
+                        FieldStorage(bound, awaitableType, RoleMachinery, lives: true, across: "await");
+                        outp.Add(SetField(bound, awaitable));
+                        awaitable = FieldOf(bound, awaitableType);
+                    }
+                    else
+                    {
+                        outp.Add(new JsonObject
+                        {
+                            ["k"] = "var", ["name"] = bound, ["type"] = Tw(awaitableType), ["init"] = awaitable,
+                        });
+                        awaitable = new JsonObject
+                        {
+                            ["k"] = "local", ["name"] = bound, ["sty"] = Tw(awaitableType),
+                        };
+                    }
+                }
+                captureValue = Rewrite(ccArgNode, outp);
+            }
 
             var state = ++_state;
             var afterLabel = NextLabel();
@@ -2357,7 +2467,7 @@ static partial class SuspendColdLowering
             var awField = "__awaiter$" + state;
             FieldStorage(awField, awaiterType, RoleMachinery, lives: true, across: "await");
 
-            // this.<aw> = <getAwaiter over the awaitable / its ConfigureAwait(false) / a referenced extension GetAwaiter>
+            // this.<aw> = <getAwaiter over the awaitable / its ConfigureAwait(<captureContext>) / a referenced extension GetAwaiter>
             outp.Add(SetField(
                 awField,
                 BuildGetAwaiter(
@@ -2365,7 +2475,7 @@ static partial class SuspendColdLowering
                     awaitableType,
                     awaiterType,
                     awaitable,
-                    noCapture,
+                    captureValue,
                     resultTok,
                     methodTypeArgs)));
             // if (this.<aw>.IsCompleted) goto L_state;   (sync fast path — no suspension)
@@ -2432,6 +2542,14 @@ static partial class SuspendColdLowering
             return slot != null ? TypeJson.Read(slot) : null;
         }
 
+        // Close an AwaitPlan template at this call site: the extension-method arguments the marker carries, then the
+        // awaitable's own. Both scopes in one place, because a plan template can mention either — an extension
+        // GetAwaiter's awaiter is written in the method's parameters, a member's in the awaitable's.
+        static TypeNode CloseAwaitTemplate(TypeNode template, TypeNode.Fqn awaitableType, TypeNode[] methodTypeArgs) =>
+            SubstituteTypeParameters(
+                SubstituteMethodTypeParameters(template, methodTypeArgs),
+                awaitableType?.Args ?? System.Array.Empty<TypeNode>());
+
         static TypeNode SubstituteMethodTypeParameters(
             TypeNode type,
             TypeNode[] arguments) =>
@@ -2472,38 +2590,64 @@ static partial class SuspendColdLowering
             _ => type,
         };
 
-        // `this.<aw> = <getAwaiter>()` for the resolved awaitable pattern. Three entry shapes:
+        // `this.<aw> = <getAwaiter>()` for the resolved awaitable pattern. The awaitable is entered in one of two
+        // ways, and a captureContext argument inserts one hop before it:
         //   member GetAwaiter (Task/ValueTask)        -> clrInstance on the awaitable
-        //   #3 ConfigureAwait(false) opt-out          -> clrInstance GetAwaiter on `awaitable.ConfigureAwait(false)`
         //   referenced extension GetAwaiter (WinRT)   -> clrStatic (non-generic) / clrGenericStatic (generic, over the
         //                                                result type) on the [Extension] static class, awaitable as arg0
+        //   a captureContext argument (#3/#64)        -> the same two shapes, on `awaitable.ConfigureAwait(<value>)`
+        //                                                instead of on the awaitable — the configured awaitable is an
+        //                                                awaitable like any other, and its GetAwaiter may equally be a
+        //                                                member or a referenced extension. The value is whatever the
+        //                                                call passed, constant or not.
         JsonNode BuildGetAwaiter(
             AwaitPlan plan,
             TypeNode awaitableType,
             TypeNode awaiterType,
             JsonNode task,
-            bool noCapture,
+            JsonNode captureValue,
             TypeNode resultTok,
             TypeNode[] methodTypeArgs)
         {
-            if (noCapture)
+            if (captureValue != null)
             {
-                // configured = awaitable.ConfigureAwait(false); this.<aw> = configured.GetAwaiter();
-                var configuredType = new TypeNode.Fqn(plan.ConfiguredAwaitableDefName,
-                    plan.ConfiguredAwaitableGeneric
-                        ? (awaitableType as TypeNode.Fqn)?.Args
-                        : null);
+                // configured = awaitable.ConfigureAwait(<captureContext>); this.<aw> = <getAwaiter on configured>.
+                // The configured type is the DECLARED return type closed at this call site, never the receiver's
+                // arguments reused: `Awaitable<A,B>.ConfigureAwait(bool): Configured<B,A>` is `Configured<B,A>`.
+                var configuredType = CloseAwaitTemplate(
+                    plan.ConfiguredAwaitableTemplate, awaitableType as TypeNode.Fqn, methodTypeArgs);
                 var configured = new JsonObject
                 {
                     ["k"] = "clrInstance", ["type"] = Tw(awaitableType), ["method"] = "ConfigureAwait",
                     ["recv"] = task, ["argTypes"] = new JsonArray { Tw(BoolTn) },
-                    ["args"] = new JsonArray { BoolConst(false) }, ["ret"] = Tw(configuredType),
+                    ["args"] = new JsonArray { captureValue }, ["ret"] = Tw(configuredType),
                 };
+                if (!plan.ConfiguredGetAwaiterExtension)
+                    return new JsonObject
+                    {
+                        ["k"] = "clrInstance", ["type"] = Tw(configuredType), ["method"] = "GetAwaiter",
+                        ["recv"] = configured, ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(),
+                        ["ret"] = Tw(awaiterType),
+                    };
+                var cfgExtOwner = new TypeNode.Fqn(plan.ConfiguredGetAwaiterExtOwner);
+                if (!plan.ConfiguredGetAwaiterExtGeneric)
+                    return new JsonObject
+                    {
+                        ["k"] = "clrStatic", ["type"] = Tw(cfgExtOwner), ["method"] = "GetAwaiter",
+                        ["argTypes"] = new JsonArray { Tw(configuredType) },
+                        ["args"] = new JsonArray { configured }, ["ret"] = Tw(awaiterType),
+                    };
+                // A GENERIC extension: the plan resolved its type arguments by unifying the declared receiver against
+                // the configured type, and carries that receiver open over `method.tvN` as the `memberSig` ilemit
+                // exact-matches the definition with.
                 return new JsonObject
                 {
-                    ["k"] = "clrInstance", ["type"] = Tw(configuredType), ["method"] = "GetAwaiter",
-                    ["recv"] = configured, ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(),
-                    ["ret"] = Tw(awaiterType),
+                    ["k"] = "clrGenericStatic", ["type"] = Tw(cfgExtOwner), ["method"] = "GetAwaiter",
+                    ["typeArgs"] = new JsonArray(plan.ConfiguredGetAwaiterExtTypeArgs
+                        .Select(t => TypeJson.Write(CloseAwaitTemplate(t, awaitableType as TypeNode.Fqn, methodTypeArgs)))
+                        .ToArray()),
+                    ["memberSig"] = new JsonArray { TypeJson.Write(plan.ConfiguredGetAwaiterExtOpenRecv) },
+                    ["args"] = new JsonArray { configured }, ["ret"] = Tw(awaiterType),
                 };
             }
             if (plan.GetAwaiterExtension)
@@ -3414,8 +3558,9 @@ static partial class SuspendColdLowering
             var taskPlan = _refs?.ResolveAwaitable(_taskBcl, 1)
                 ?? throw new InvalidOperationException(
                     $"suspend main drain: '{_taskBcl}<Unit>' has no conforming GetAwaiter in referenced metadata");
-            var awaiterType = new TypeNode.Fqn(taskPlan.AwaiterDefName,
-                taskPlan.AwaiterGeneric ? new[] { UnitTn } : null);
+            // `Task<Unit>`'s own awaiter, from the plan template closed over that one type argument.
+            var awaiterType = CloseAwaitTemplate(
+                taskPlan.AwaiterTemplate, taskType as TypeNode.Fqn, System.Array.Empty<TypeNode>());
 
             var coldArgs = new JsonArray();
             foreach (var p in _params) coldArgs.Add(new JsonObject { ["k"] = "local", ["name"] = Str(p["name"]) });
@@ -3460,7 +3605,7 @@ static partial class SuspendColdLowering
                 ["recv"] = Local("__tcs"), ["ret"] = Tw(taskType),
             };
             var getAwaiter = BuildGetAwaiter(taskPlan, taskType, awaiterType, task,
-                noCapture: false,
+                captureValue: null,
                 resultTok: UnitTn,
                 methodTypeArgs: System.Array.Empty<TypeNode>());
             body.Add(new JsonObject

@@ -49,6 +49,9 @@ fun <T> List<T>.crkGetOrElseE(index: Int, defaultValue: (Int) -> T): T =
 fun <T> MutableList<T>.crkSwap01() { val t = this[0]; this[0] = this[1]; this[1] = t }
 fun <K, V> Map<K, V>.crkValAt(k: K): V = this[k]!!
 
+// ---- #287 : a null that the frontend cannot const-fold, for the nullable star-projected is-test ---------------
+fun collNullSrc(): Any? = null
+
 // ---- il-collrevview : #100 H1 reverse variance-collapse seam -- make() returns the readonly List<Int> head ------
 fun collRevMake(): List<Int> = listOf(1, 2)
 
@@ -119,6 +122,29 @@ class CollectionsTests {
         assertEquals("1-2-3-4", xs.joinToString("-"))               // 1-2-3-4
         assertEquals("1, 2, 3, 4", xs.joinToString())               // 1, 2, 3, 4
         assertEquals(100, xs.map { it * 10 }.fold(0) { a, b -> a + b }) // 100
+    }
+
+    // #287: every join path renders a NULL element as the four characters "null" — the contract `joinTo`/`joinToString`
+    // inherit from `Appendable.append(CharSequence?)`. The shared `appendElement` reaches it through `element is
+    // CharSequence?`, whose nullable type operand accepts null (NullableTests.nullableTypeOperandIsTest pins that);
+    // when the operand answered false the frontend's else-branch smart-cast dereferenced the null and the whole join
+    // threw. Swept across the receiver families and over first/middle/last null positions.
+    @TestAttribute
+    fun joinNullElements() {
+        assertEquals("null, null", arrayOfNulls<String>(2).joinToString())                              // the issue repro
+        assertEquals("null, b, null, d, null", arrayOf<String?>(null, "b", null, "d", null).joinToString())
+        assertEquals("null-1-s", arrayOf<Any?>(null, 1, "s").joinToString("-"))                         // generic array
+        assertEquals("null, x, null", listOf<String?>(null, "x", null).joinToString())                  // list
+        assertEquals("null, 2", listOf<Int?>(null, 2).joinToString())                                   // nullable VALUE element
+        // sequence receiver (via asSequence — `sequenceOf` itself is blocked on the unrelated #284 iteration crash)
+        assertEquals("null, y", listOf<String?>(null, "y").asSequence().joinToString())
+        assertEquals("null, y", listOf<String?>(null, "y").asSequence().map { it }.joinToString())
+        assertEquals("N, z", listOf<String?>(null, "z").joinToString { it ?: "N" })                     // transform wins
+        assertEquals("null, null, ...", listOf<String?>(null, null, null).joinToString(limit = 2))      // limit + truncated
+        assertEquals("ab", listOf('a', 'b').joinToString(""))                                           // Char branch intact
+        val sb = StringBuilder()
+        listOf<Int?>(null, 1, null).joinTo(sb, "|", "<", ">")
+        assertEquals("<null|1|null>", sb.toString())                                                    // joinTo + affixes
     }
 
     @TestAttribute
@@ -223,6 +249,72 @@ class CollectionsTests {
         val notList: Any = "hi"
         assertFalse(notColl is Collection<*>)           // False
         assertFalse(notList is List<*>)                 // False
+        // #287: the NULLABLE star-projected test names the same classifier, so it must reach the same non-generic
+        // BCL facade — the reified `IReadOnlyCollection<object>`/`IDictionary<object,object>` it would otherwise
+        // hit is not implemented by a value-arg List<int>/Dictionary<int,int>, so the test would answer false.
+        assertTrue(c is Collection<*>?)                 // True
+        assertTrue(c is List<*>?)                       // True
+        assertTrue(m is Map<*, *>?)                     // True
+        assertFalse(notColl is Collection<*>?)          // False
+        val nothing: Any? = collNullSrc()
+        assertTrue(nothing is Collection<*>?)           // True   null IS an instance of the nullable type
+    }
+
+    // The INVARIANT this battery owes `x is T?`: for a non-null receiver it answers exactly what `x is T` answers,
+    // and for null it answers true. That has to hold even where `is T` is itself wrong — the two spellings must never
+    // disagree, or a `?` silently changes which branch a `when` takes.
+    //
+    // KNOWN-WRONG (tracked separately, NOT fixed here): a Kotlin `Set` has NO distinct CLR identity. `Set` is
+    // @ClrTypeAlias'd to the same `IReadOnlyCollection<T>` as `Collection`, and `MutableSet` to the same
+    // `ICollection<T>` as `MutableCollection`, so two Kotlin types are one CLR type and NO runtime test — reflection
+    // included — can separate them. `is Set<*>` therefore answers a `Collection` question through the reified
+    // interface: true for any REFERENCE-element collection (IReadOnlyCollection<out T> is covariant, so a
+    // `List<String>` passes), false for a value-element one (no value-type covariance). `is MutableSet<*>` is always
+    // false (ICollection<T> is invariant). Asserted at today's values so the contract violation is visible and a
+    // change in either direction reds the gate; fixing it means giving the Kotlin collection interfaces distinct CLR
+    // identities, a stdlib collection-ABI decision. See docs/dotkt-semantics.md §2.
+    @TestAttribute
+    fun starProjectedSetIdentity() {
+        val setInt: Any = setOf(1, 2)
+        val setStr: Any = setOf("a")
+        val mutSetStr: Any = mutableSetOf("a")
+        val listInt: Any = listOf(1)
+        val listStr: Any = listOf("a")
+        val mapInt: Any = mapOf(1 to 2)
+
+        // `is Set<*>` — today's answers. Correct only for the reference-element set and the value-element list.
+        assertFalse(setInt is Set<*>)                   // False  KNOWN-WRONG: Kotlin says true
+        assertTrue(setStr is Set<*>)                    // True   correct, but only via reference covariance
+        assertTrue(mutSetStr is Set<*>)                 // True   correct, same reason
+        assertFalse(listInt is Set<*>)                  // False  correct
+        assertTrue(listStr is Set<*>)                   // True   KNOWN-WRONG: Kotlin says false (a List is not a Set)
+        assertFalse(mapInt is Set<*>)                   // False  correct
+        assertFalse(mutSetStr is MutableSet<*>)         // False  KNOWN-WRONG: Kotlin says true (invariant ICollection<T>)
+
+        // The `?` spelling agrees with the plain one on every non-null receiver, and adds null. This is what #287
+        // guarantees, and it holds regardless of the wrongness above.
+        assertEquals(setInt is Set<*>, setInt is Set<*>?)
+        assertEquals(setStr is Set<*>, setStr is Set<*>?)
+        assertEquals(listInt is Set<*>, listInt is Set<*>?)
+        assertEquals(listStr is Set<*>, listStr is Set<*>?)
+        assertEquals(mutSetStr is MutableSet<*>, mutSetStr is MutableSet<*>?)
+        assertTrue(collNullSrc() is Set<*>?)            // True   null IS an instance of the nullable type
+        assertFalse(collNullSrc() is Set<*>)            // False  the non-null spelling still rejects null
+        assertTrue(collNullSrc() !is Set<*>)            // True   the `!is` twin
+
+        // `is Collection<*>` reaches the non-generic ICollection, which a HashSet does not implement and a
+        // Dictionary does — wrong in both directions, and likewise pinned rather than fixed here.
+        assertFalse(setInt is Collection<*>)            // False  KNOWN-WRONG: Kotlin says true
+        assertFalse(setStr is Collection<*>)            // False  KNOWN-WRONG: Kotlin says true
+        assertTrue(mapInt is Collection<*>)             // True   KNOWN-WRONG: Kotlin says false (a Map is not a Collection)
+        assertEquals(setInt is Collection<*>, setInt is Collection<*>?)
+        assertEquals(mapInt is Collection<*>, mapInt is Collection<*>?)
+
+        // List and Map DO have exact non-generic BCL twins, so those star tests are sound in both directions.
+        assertTrue(listInt is List<*>)                  // True
+        assertFalse(setInt is List<*>)                  // False
+        assertTrue(mapInt is Map<*, *>)                 // True
+        assertFalse(listInt is Map<*, *>)               // False
     }
 
     @TestAttribute

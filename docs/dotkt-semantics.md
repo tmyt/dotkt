@@ -81,6 +81,26 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   `IEnumerable`, which every value-type-arg BCL collection implements; `println` of such an erased value renders via
   the runtime-detecting `clrElemToString`. (A `<*>` value can only be used non-generically anyway.) This is the same
   invariance that forces §5c (`Map`/`MutableMap` both → `IDictionary<K,V>`). #60.
+  **`List<*>` and `Map<*,*>` are exact** — `IList`/`IDictionary` are their non-generic twins. **`Collection<*>` and
+  `Set<*>` are NOT, and answer wrongly today.** A `Set` has no distinct CLR identity at all: it is aliased to the same
+  `IReadOnlyCollection<T>` as `Collection` (and `MutableSet` to the same `ICollection<T>` as `MutableCollection`), so
+  the two Kotlin types are ONE CLR type and no runtime test — reflection included, for a user implementation as much
+  as for a `HashSet` — can separate them. Concretely: `setOf(1) is Collection<*>` is **false** (a `HashSet<T>`
+  implements only the generic `ICollection<T>`), `mapOf(1 to 2) is Collection<*>` is **true** (a `Dictionary`
+  implements the non-generic `ICollection`), `listOf("a") is Set<*>` is **true** and `setOf(1) is Set<*>` is
+  **false** (the reified `IReadOnlyCollection<out T>` is covariant, so the answer tracks whether the element type is
+  a reference type, not whether the value is a set), and `is MutableSet<*>` is always **false** (`ICollection<T>` is
+  invariant). Fixing this means giving the Kotlin collection interfaces distinct CLR identities — a stdlib
+  collection-ABI decision, not a lowering one. Pinned by `CollectionsTests.starProjectedSetIdentity`.
+- **`x is T?` accepts null, but a NULLABLE REIFIED TYPE ARGUMENT does not.** A nullable type OPERAND is written in
+  the source, so `null is String?` / `null is Int?` / `x !is T?` / a `when (x) { is T? -> }` branch all answer as
+  Kotlin specifies. A nullable INSTANTIATION of a reified parameter does not: `inline fun <reified T> m(x: Any?) =
+  x is T` compiled as one real generic method makes `m<String?>` and `m<String>` the SAME `m<string>` instantiation,
+  and a CLR type argument carries no nullability — so `m<String?>(null)` is **false** where Kotlin says true. It is
+  not recoverable at the call site either: a type argument can arrive through another generic's parameter
+  (`inline fun <reified U> f(x: Any?) = m<U>(x)`), which makes the fact dynamic, so a fix needs a nullability witness
+  threaded through every reified generic call — the value-level form of the carrier problem in §10. Pinned by
+  `NullableTests.nullableReifiedTypeArgumentIsTest`.
 - **Corollary — an UNCHECKED generic cast (`as T`, incl. `@Suppress("UNCHECKED_CAST")`) is checked
   EAGERLY at the cast site, not erased.** kotc emits every `x as T` (including a smart-cast) as a
   plain `cast` BIR node regardless of whether `T` is reified (`BirEmitterExpressions.kt:226-229`);
@@ -225,11 +245,17 @@ policy":
    resume). This is Kotlin's dispatcher mechanism (e.g. a UI dispatcher) and it takes PRECEDENCE. The cold-core
    `ContinuationImpl.intercepted()` performs the lookup+wrap (cached, JVM parity); bir2cir routes the await-point
    `OnCompleted` callback through `this.intercepted().resumeWith(...)`.
-2. **No interceptor, `await(captureContext = true)` (the default)** → the CLR `TaskAwaiter` captures
+2. **No interceptor, capture requested** (`await()`, or `await(captureContext = <true>)`) → the awaiter captures
    `SynchronizationContext.Current` and `Post`s the resume onto it (mirrors .NET
    `ConfigureAwaitOptions.ContinueOnCapturedContext`).
-3. **No interceptor, `await(captureContext = false)`** → `ConfigureAwait(false)` awaiter, resume runs inline on the
-   completing thread (no SyncContext capture).
+3. **No interceptor, capture declined** (`await(captureContext = <false>)`) → the `ConfigureAwait(false)` awaiter,
+   resume runs inline on the completing thread (no SyncContext capture).
+
+The argument may be ANY Boolean expression, not only a literal (#64): `await(captureContext = policy.capture)` is
+lowered as `awaitable.ConfigureAwait(<the expression>).GetAwaiter()`, evaluated once and after the awaitable
+receiver. The value picks no type — `ConfigureAwait(true)` and `ConfigureAwait(false)` return the same configured
+awaiter — so nothing branches at run time. Only an OMITTED argument or a compile-time-constant `true` takes the
+direct `GetAwaiter()` path, which is the same behavior without the configured-awaitable hop.
 - The coroutine context propagates DOWN the cold-entry call chain: a nested `suspend fun`'s state machine inherits its
   completion's context, so an interceptor installed at the coroutine root is honored at a nested-fun await too.
 - Caveat (double-hop, an accepted follow-up): with an interceptor AND the default capturing awaiter, the awaiter's
@@ -287,10 +313,20 @@ embed no dialect.
 - **We bind `OnCompleted` (INotifyCompletion), not `UnsafeOnCompleted` (ICriticalNotifyCompletion):** the cold core carries
   no ExecutionContext-flowing state-machine box, so `OnCompleted` (which flows EC) is correct; `UnsafeOnCompleted` would drop
   `AsyncLocal` flow across every await. UnsafeOnCompleted is a future optimization gated on SM-level EC capture.
-- **`ConfigureAwait`/`captureContext` stays Task-like:** the `await(captureContext = false)` opt-out (§4a) is offered ONLY
-  for an awaitable that exposes a `ConfigureAwait(bool)` member (Task, ValueTask). A generic awaitable without it uses
-  GetAwaiter directly; requesting `captureContext = false` on such a type is a compile-time error.
-- Coverage: `tests/coroutines/fixtures/TaskAndValueTaskAwaitTests.kt`; custom-awaitable gaps are tracked in GitHub Issues.
+- **`ConfigureAwait`/`captureContext` is a shape, not a Task privilege:** the `await(captureContext = …)` capture
+  control (§4a) is offered for ANY awaitable that exposes a `ConfigureAwait(bool)` member whose returned value is
+  itself awaitable — dll2klib publishes the one-argument bridge on the member, so a custom awaitable without it has no
+  `captureContext` overload to call and the frontend rejects the call. The configured awaitable is an awaitable like
+  any other: its type is the DECLARED return type (a declaration that permutes, drops or fixes the awaitable's type
+  arguments is lowered as written, not as the receiver's arguments repeated), and it is entered through a member
+  `GetAwaiter` or a referenced `[Extension] static GetAwaiter`, the same two halves the primary awaitable has. One gap
+  remains, and it is a REFUSAL rather than a wrong lowering: dll2klib publishes on the `ConfigureAwait(bool)`
+  DECLARATION alone (the type it returns may live in an assembly that projection does not read), so a type whose
+  ConfigureAwait returns something that is not awaitable at all gets the overload published and bir2cir then refuses
+  the call, naming that as the reason.
+- Coverage: `tests/coroutines/fixtures/TaskAndValueTaskAwaitTests.kt` and, for the capture-control shapes Task does
+  not exercise (a permuted configured type, an extension-entered configured awaitable, a byref-like awaitable),
+  `tests/interop/consumer/fixtures/CaptureContextAwaitTests.kt`; remaining custom-awaitable gaps are tracked in GitHub Issues.
 
 ## 4d. A byref-like (`ref struct`) value may live in a suspend function — but never ACROSS a suspension, and never in a capture
 
@@ -694,6 +730,10 @@ DotKt aliases `Appendable` to `System.Text.StringBuilder` (`@ClrTypeAlias` + `@C
   what makes `joinTo(StringBuilder(), …)`-style stdlib generics verifiable on the CLR.
 - A **user class implementing `Appendable`** is therefore NOT supported (you cannot subclass the sealed-in-practice
   role); write to a `StringBuilder` instead. This is narrower than the JVM, and deliberate.
+- **A null `CharSequence?` argument still renders as the four characters `null`**, per the Kotlin contract, even
+  though .NET's `StringBuilder.Append`/`Insert` treat null as a no-op: the §5b collapse routes every `CharSequence`
+  argument through `Any?.toString()`, which answers `"null"`. This is what makes `joinToString` over a collection
+  containing nulls produce `null, null` — `appendElement` reaches the buffer through that overload.
 
 ## 5e. Enum classes have two CLR shapes
 

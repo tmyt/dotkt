@@ -420,6 +420,12 @@ sealed class Pipeline
             // that corrupts memory. Realign the creation's `elem` to the declared array type's `nullable:` element so a
             // real `Nullable<int>[]` is allocated. Runs BEFORE type lowering (elem tokens are still `kotlin.*`).
             ArrayNullableElemRealign.Apply(bir.Root);
+            // NULLABLE IS-TEST (`x is T?`): null IS a member of a nullable type in Kotlin, and the frontend's
+            // else-branch smart-cast to a NON-null `x` depends on it. `isinst` never matches null, so mark the node
+            // and let ilemit add the null-accepting branch. Runs BEFORE type lowering, which erases the `?` on the
+            // type operand (every CLR reference is nullable, so the lowered type cannot carry the signal), and AFTER
+            // InlineSplice so a spliced inline body's own is-tests are marked too.
+            NullableIsInstMatch.Apply(bir.Root);
             // GENERIC-ENUM member binding (C2): `e.name` on a `T : Enum<T>` receiver -> `System.Enum.ToString()`
             // (kotc lowers a CONCRETE enum receiver directly, but a generic `gp:T` receiver falls through to a
             // `callInstance kotlin.Enum.get_name` that TypeLoadExceptions — `kotlin.Enum` lives only in the stdlib).
