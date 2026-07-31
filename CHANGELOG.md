@@ -234,6 +234,36 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   A delegation argument is a call argument into the delegated constructor's parameter vector, and a constructor body
   is a body; both are now reconciled like every other use.
 
+- **bir2cir (area:bir2cir): the `.NET`-interop reshapes carry the node's result-type stamp, so a `.NET` operand
+  left of a suspension compiles again ([tmyt/dotkt#304]).** `NetInteropBinding` re-forms the plain call/read kotc
+  emits by a .NET owner's identity into the CLR vocabulary. That changes a node's SHAPE and not what it produces,
+  so every result-type stamp it carried stays true of the `clr*` node — but three of the reshapes dropped one:
+  the FIELD reshape (`field` → `clrPropGet`) dropped both `sty` and `ret`, the generic branch
+  (`clrGenericStatic`/`clrGenericInstance`) dropped `ret`, and the `.NET`-event branch cleared the node before
+  either was re-added. `bir-common/NodeType.cs` has no derivation arm for any `clr*` kind, so those stamps ARE the
+  reshaped node's static type; without one the node cannot be typed at all, and an operand with no static type
+  standing LEFT of a suspension is refused by the stage-0 operand planner (it would declare an untyped spill
+  local). `v.X + suspending()` on a `.NET` field was therefore a compile-time rejection of source the frontend
+  accepts, while the same expression without the suspension compiled and ran. The stamps now travel with every
+  reshape, stated once at the top of the pass. `dynRet` deliberately does not travel: it is the UNBOUND Kotlin
+  call's dynamic-dispatch channel (ilemit falls back to reflection on its presence), so on a node already bound to
+  a concrete CLR slot it would be a dispatch instruction rather than a type fact, and `sty` carries the same
+  instantiated type without it.
+  The sibling audit found one more node in the same class, synthesized rather than reshaped:
+  `ValueTypeNullableCollectionArg` wraps a value-element collection argument in
+  `System.Linq.Enumerable.Cast<object>` and left the wrap unstamped. That one RETYPES the operand, so it is
+  stamped with what the wrap itself produces (`IEnumerable<object>`) rather than with the wrapped node's stamp —
+  which would be a lie, not merely an imprecision, exactly as at the `NullableTvErasureCallRealign` restamp sites.
+  CIR is unchanged across the whole gated corpus and on the measured non-suspend control (byte-identical): `sty` is
+  bir2cir-internal and stripped before CIR, and the `ret` carries only add a slot where the reshaped node had none.
+  One shape is a deliberate, semantically-neutral exception rather than a no-op — `CharSeqStringLowering` reads
+  `ret` while classifying an operand, so a now-`ret`-carrying `.NET` String field read (a generic owner, the only
+  case where kotc stamps `ret` on a `field`) flowing into a `CharSequence` slot is recognized as the statically
+  non-null String it is, and loses the null-safe `toString` wrapper it used to get for want of a type. The value is
+  the same; there is simply no longer a null check on a reference that cannot be null.
+  The `ret` half of the carry has no Kotlin-source witness in either branch, so it is pinned by a pass-level
+  document instead: `tests/ir/lowering/net-interop-reshape-result-stamp` asserts the slot survives both reshapes,
+  and goes red if either carry is removed.
 - **bir2cir (area:bir2cir): a member called on a TYPE-PARAMETER receiver now emits constrained dispatch for every
   spelling of the receiver, and for a non-generic constraint.** `fun <T : Tagged> f(t: T) = t.tag()` put a `!!T` on
   the evaluation stack and then a plain `callvirt Tagged::tag()` — ECMA-335 requires `constrained. !!T ; callvirt`

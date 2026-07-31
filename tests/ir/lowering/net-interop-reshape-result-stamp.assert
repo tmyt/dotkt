@@ -1,0 +1,17 @@
+# #304 — the .NET-interop reshapes (bir2cir NetInteropBinding) carry the node's RESULT-TYPE STAMP across the
+# shape change. `sty` is bir2cir-internal and stripped before CIR, so `ret` is the half a CIR assertion can see —
+# and it is exactly the half no Kotlin source witnesses: kotc's generic .NET-call emitter writes NO `ret` (it
+# stamps `sty` only), and its `field` emitter writes one only for a generic owner. A document is therefore the
+# only witness that the carry happens at all, which is what this lane exists for.
+#
+# Each line pins the slot IN PLACE — the neighbours on both sides are part of the match — so a reshape that stops
+# carrying `ret` fails here rather than silently producing an untypable node. An untypable node is not a cosmetic
+# loss: with no stamp the shared deriver (bir-common/NodeType.cs, which has no arm for any `clr*` kind) cannot type
+# the node, and an operand it cannot type standing left of a suspension is refused outright by the stage-0 operand
+# planner — a compile-time rejection of source the frontend accepts.
+
+# The GENERIC branch: `Activator.CreateInstance<StringBuilder>()` -> clrGenericStatic, `ret` intact after memberSig.
++"k":"clrGenericStatic","type":{"t":"fqn","name":"System.Activator"},"method":"CreateInstance","typeArgs":[{"t":"fqn","name":"System.Text.StringBuilder"}],"memberSig":[],"ret":{"t":"fqn","name":"System.Text.StringBuilder"}
+
+# The FIELD branch: a .NET field read (`Vector3.X`) -> clrPropGet, `ret` intact after the receiver.
++"k":"clrPropGet","type":{"t":"fqn","name":"System.Numerics.Vector3"},"name":"X","static":false,"recv":{"k":"local","name":"v"},"ret":{"t":"fqn","name":"System.Single"}
