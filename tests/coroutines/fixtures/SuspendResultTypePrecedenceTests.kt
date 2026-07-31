@@ -31,11 +31,12 @@
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.Companion.IsNull as assertNull
+import System.Activator
+import System.Math
 import System.Numerics.Vector3
+import System.Text.StringBuilder
 import System.Threading.Tasks.Task
 import dotkt.support.blockOn
-import dotkt.support.corStampPack
-import dotkt.support.corStampPlain
 
 // A real suspension on every path — a defect that only shows once the outer call genuinely returns
 // COROUTINE_SUSPENDED is invisible without one.
@@ -186,15 +187,25 @@ suspend fun corRtApplyOnInt(v: Int, f: CorRtSuspendOnInt): Int = with(f) { v.tra
 //
 //   A `.NET` FIELD read (`Vector3.X` -> ReshapeField -> `clrPropGet`) — the reshape that dropped the stamp
 //   outright, and the shape this fixture is RED on without the fix.
-//   A cross-module GENERIC top-level call (`clrGenericStatic`) and its non-generic sibling (`clrStatic`) — the kind
-//   the issue names. Both carry a `sty` the reshape already forwarded, so they pin the shape rather than reproduce
-//   the drop; what they guard is the `ret` half of the same carry, which no Kotlin source reaches on its own.
+//   A `.NET` static call (`Math.Max` -> `clrStatic`) and a GENERIC one (`Activator.CreateInstance<T>()` ->
+//   `clrGenericStatic`) — the kinds the issue names. Both already carried a `sty` the reshape forwarded, so they
+//   pin the shape rather than reproduce the drop.
 //
-// The consumers take the field's OWN type, so the reshaped node is the operand ITSELF: a conversion around it
+// The owner has to be a GENUINE .NET type. A referenced DotKt assembly is deliberately NOT one: NetInteropBinding
+// leaves a Kotlin-emitted owner on the Kotlin ABI path (only the enum and Comparable seams are admitted), so a
+// cross-module Kotlin callee stays a plain `callStatic` and never reaches the reshape at all — it would look like
+// coverage while asserting nothing about it.
+//
+// The `ret` half of the carry has no Kotlin witness in either direction (kotc's generic .NET-call emitter writes
+// only `sty`, and its `field` emitter writes `ret` only for a generic owner), so it is pinned structurally instead:
+// tests/ir/lowering/net-interop-reshape-result-stamp.
+//
+// The consumers take the operand's OWN type, so the reshaped node is the operand ITSELF: a conversion around it
 // (`v.X.toInt()`) would be a `conv`, which the deriver types from its own `to` slot whatever its operand is, and the
 // composition would no longer reach the drop at all.
 fun corRtJoinF(a: Float, b: Int): String = "" + a.toInt() + "," + b
-fun corRtJoinS(a: String, b: Int): String = a + "," + b
+fun corRtJoinI(a: Int, b: Int): String = "" + a + "," + b
+fun corRtJoinB(a: StringBuilder, b: Int): String = "" + a.Length + "," + b
 
 suspend fun corRtNetInstanceField(): String {
     val v = Vector3(4.0f, 2.0f, 3.0f)
@@ -206,13 +217,13 @@ fun corRtNetInstanceFieldPlain(): String {
     return corRtJoinF(v.X, 2)
 }
 
-suspend fun corRtCrossModuleGeneric(): String = corRtJoinS(corStampPack(7, 1), corRtTick(1))
+suspend fun corRtNetStaticCall(): String = corRtJoinI(Math.Max(7, 1), corRtTick(1))
 
-fun corRtCrossModuleGenericPlain(): String = corRtJoinS(corStampPack(7, 1), 2)
+fun corRtNetStaticCallPlain(): String = corRtJoinI(Math.Max(7, 1), 2)
 
-suspend fun corRtCrossModulePlainCall(): String = corRtJoinS(corStampPlain(7, 1), corRtTick(1))
+suspend fun corRtNetGenericCall(): String = corRtJoinB(Activator.CreateInstance<StringBuilder>(), corRtTick(1))
 
-fun corRtCrossModulePlainCallPlain(): String = corRtJoinS(corStampPlain(7, 1), 2)
+fun corRtNetGenericCallPlain(): String = corRtJoinB(Activator.CreateInstance<StringBuilder>(), 2)
 
 class SuspendResultTypePrecedenceTests {
     @TestAttribute
@@ -286,14 +297,14 @@ class SuspendResultTypePrecedenceTests {
     }
 
     @TestAttribute
-    fun crossModuleGenericCallLeftOfSuspension() {
-        assertEquals("7/1,2", corRtCrossModuleGenericPlain())
-        assertEquals("7/1,2", blockOn { corRtCrossModuleGeneric() })
+    fun netStaticCallLeftOfSuspension() {
+        assertEquals("7,2", corRtNetStaticCallPlain())
+        assertEquals("7,2", blockOn { corRtNetStaticCall() })
     }
 
     @TestAttribute
-    fun crossModulePlainCallLeftOfSuspension() {
-        assertEquals("7/1,2", corRtCrossModulePlainCallPlain())
-        assertEquals("7/1,2", blockOn { corRtCrossModulePlainCall() })
+    fun netGenericCallLeftOfSuspension() {
+        assertEquals("0,2", corRtNetGenericCallPlain())
+        assertEquals("0,2", blockOn { corRtNetGenericCall() })
     }
 }

@@ -79,8 +79,16 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `System.Linq.Enumerable.Cast<object>` and left the wrap unstamped. That one RETYPES the operand, so it is
   stamped with what the wrap itself produces (`IEnumerable<object>`) rather than with the wrapped node's stamp —
   which would be a lie, not merely an imprecision, exactly as at the `NullableTvErasureCallRealign` restamp sites.
-  CIR is unchanged for every program that already compiled: `sty` is bir2cir-internal and stripped before CIR, and
-  the `ret` carries only add a slot where the reshaped node had none.
+  CIR is unchanged across the whole gated corpus and on the measured non-suspend control (byte-identical): `sty` is
+  bir2cir-internal and stripped before CIR, and the `ret` carries only add a slot where the reshaped node had none.
+  One shape is a deliberate, semantically-neutral exception rather than a no-op — `CharSeqStringLowering` reads
+  `ret` while classifying an operand, so a now-`ret`-carrying `.NET` String field read (a generic owner, the only
+  case where kotc stamps `ret` on a `field`) flowing into a `CharSequence` slot is recognized as the statically
+  non-null String it is, and loses the null-safe `toString` wrapper it used to get for want of a type. The value is
+  the same; there is simply no longer a null check on a reference that cannot be null.
+  The `ret` half of the carry has no Kotlin-source witness in either branch, so it is pinned by a pass-level
+  document instead: `tests/ir/lowering/net-interop-reshape-result-stamp` asserts the slot survives both reshapes,
+  and goes red if either carry is removed.
 - **bir2cir (area:bir2cir): `await(captureContext = <expression>)` no longer refuses a non-constant Boolean
   ([tmyt/dotkt#64]).** dll2klib publishes two await bridges for an awaitable that exposes `ConfigureAwait(bool)` —
   `await()` and `await(captureContext: Boolean)` — so `task.await(captureContext = policy)` is a frontend-resolved
