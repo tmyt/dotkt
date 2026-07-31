@@ -1,0 +1,212 @@
+{
+  "fileClass": "SelftestKt",
+  "methods": [
+    {
+      "name": "a_typeVariableIsAWildcard",
+      "params": [],
+      "ret": { "t": "fqn", "name": "object" },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "callStatic",
+            "owner": null,
+            "calleeOwner": { "t": "fqn", "name": "SelftestKt" },
+            "method": "genericRead",
+            "sig": [],
+            "sty": { "t": "fqn", "name": "kotlin.sequences.Sequence", "args": [{ "t": "tv", "scope": "type", "i": 1 }] },
+            "ret": { "t": "fqn", "name": "kotlin.sequences.Sequence", "args": [{ "t": "tv", "scope": "type", "i": 0 }] },
+            "args": []
+          }
+        },
+        {
+          "k": "return",
+          "value": {
+            "k": "callStatic",
+            "owner": null,
+            "calleeOwner": { "t": "fqn", "name": "SelftestKt" },
+            "method": "erasedGenericRead",
+            "sig": [],
+            "sty": { "t": "tv", "scope": "method", "i": 0 },
+            "ret": { "t": "fqn", "name": "object" },
+            "args": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "b_oneClrTypeInThreeVocabularies",
+      "params": [],
+      "ret": { "t": "fqn", "name": "bool" },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "callStatic",
+            "owner": null,
+            "calleeOwner": { "t": "fqn", "name": "SelftestKt" },
+            "method": "predicate",
+            "sig": [],
+            "sty": { "t": "fqn", "name": "kotlin.Boolean" },
+            "ret": { "t": "fqn", "name": "bool" },
+            "args": []
+          }
+        },
+        {
+          "k": "return",
+          "value": {
+            "k": "callStatic",
+            "owner": null,
+            "calleeOwner": { "t": "fqn", "name": "SelftestKt" },
+            "method": "discarded",
+            "sig": [],
+            "sty": { "t": "fqn", "name": "kotlin.Unit" },
+            "ret": { "t": "fqn", "name": "System.Void" },
+            "args": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "c_bottomInhabitsEverySlot",
+      "params": [],
+      "ret": { "t": "fqn", "name": "string" },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "callStatic",
+            "owner": null,
+            "calleeOwner": { "t": "fqn", "name": "SelftestKt" },
+            "method": "alwaysThrows",
+            "sig": [],
+            "sty": { "t": "fqn", "name": "kotlin.Nothing" },
+            "ret": { "t": "fqn", "name": "string" },
+            "args": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "d_existentialViewOfAStarProjection",
+      "params": [],
+      "ret": { "t": "fqn", "name": "kotlin.Comparator$dotkt_star" },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "callStatic",
+            "owner": null,
+            "calleeOwner": { "t": "fqn", "name": "SelftestKt" },
+            "method": "comparatorRead",
+            "sig": [],
+            "sty": { "t": "fqn", "name": "kotlin.Comparator", "args": [{ "t": "tv", "scope": "method", "i": 0 }] },
+            "ret": { "t": "fqn", "name": "kotlin.Comparator$dotkt_star" },
+            "args": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "e_nullabilityIsAnAnnotationAxis",
+      "params": [],
+      "ret": { "t": "fqn", "name": "string" },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "callStatic",
+            "owner": null,
+            "calleeOwner": { "t": "fqn", "name": "SelftestKt" },
+            "method": "maybeText",
+            "sig": [],
+            "sty": { "t": "nullable", "of": { "t": "fqn", "name": "kotlin.String" } },
+            "ret": { "t": "fqn", "name": "string" },
+            "args": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "f_arrayInTwoSpellings",
+      "params": [],
+      "ret": { "t": "array", "elem": { "t": "fqn", "name": "int" } },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "callStatic",
+            "owner": null,
+            "calleeOwner": { "t": "fqn", "name": "SelftestKt" },
+            "method": "numbers",
+            "sig": [],
+            "sty": { "t": "fqn", "name": "kotlin.Array", "args": [{ "t": "fqn", "name": "kotlin.Int" }] },
+            "ret": { "t": "array", "elem": { "t": "fqn", "name": "int" } },
+            "args": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "g_shapesThisCheckDeclinesToJudge",
+      "params": [],
+      "ret": { "t": "fqn", "name": "kotlin.collections.List" },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "callStatic",
+            "owner": null,
+            "calleeOwner": { "t": "fqn", "name": "SelftestKt" },
+            "method": "rawened",
+            "sig": [],
+            "sty": { "t": "fqn", "name": "kotlin.collections.List", "args": [{ "t": "fqn", "name": "kotlin.String" }] },
+            "ret": { "t": "fqn", "name": "kotlin.collections.List" },
+            "args": []
+          }
+        },
+        {
+          "k": "return",
+          "value": {
+            "k": "callStatic",
+            "owner": null,
+            "calleeOwner": { "t": "fqn", "name": "SelftestKt" },
+            "method": "reshaped",
+            "sig": [],
+            "sty": { "t": "fn", "suspend": false, "ret": { "t": "fqn", "name": "int" }, "params": [] },
+            "ret": { "t": "fqn", "name": "System.Delegate" },
+            "args": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "missingIsNotDisagreement",
+      "params": [],
+      "ret": { "t": "fqn", "name": "int" },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "callStatic",
+            "owner": null,
+            "calleeOwner": { "t": "fqn", "name": "SelftestKt" },
+            "method": "stampDropped",
+            "sig": [],
+            "ret": { "t": "fqn", "name": "int" },
+            "args": []
+          }
+        },
+        { "k": "var", "name": "noRetSlotAtAll", "type": { "t": "fqn", "name": "string" } },
+        {
+          "k": "return",
+          "value": {
+            "k": "local",
+            "name": "noRetSlotAtAll",
+            "sty": { "t": "fqn", "name": "kotlin.String" }
+          }
+        }
+      ]
+    }
+  ]
+}

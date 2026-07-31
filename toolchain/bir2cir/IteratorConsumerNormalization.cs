@@ -119,6 +119,11 @@ static class IteratorConsumerNormalization
                 obj["method"] = method;
                 obj["argTypes"] = new JsonArray();
                 obj["ret"] = method == "next" ? TypeJson.Write(e) : TypeJson.Fqn("kotlin.Boolean");
+                // Spec §2.7 — this rewrote the node's result. `IteratorDispatchElem` answers `object` for an element
+                // token it cannot parse or that is already erased, so a `for ((k, v) in map)` over a `Map<String,Int>`
+                // can land a `Map$Entry<object,object>` result under a stamp still naming `Map$Entry<String,Int>`;
+                // the erased owner is what the value actually is, so the stamp goes where it contradicts that.
+                NodeType.DropStampIfStale(obj);
             }
             foreach (var kv in obj) if (kv.Value != null) Process(kv.Value);
         }

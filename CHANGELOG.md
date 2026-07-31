@@ -7,6 +7,33 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Added
 
+- **A stale `sty` stamp is now caught mechanically, right where the stamp dies (area:bir2cir).** The spec §2.7
+  invariant — *a pass that changes a node's result type rewrites or deletes its `sty`* — was stated and swept by
+  hand once, but nothing caught the next pass that reintroduced the drift, and the stamp is read FIRST by every
+  type deriver: a spill local or state-machine field declared from `List<Int?>` while the call actually returns
+  `List<object>` is invalid IL, not a diagnosable drop. bir2cir now runs the shared `bir-common/IrSanity` over each
+  file's fully-passed BIR immediately before `BirTypeLowering` (which strips `sty`, so this is the last point the
+  stamp exists) and refuses a `sty` that names a different type than the `ret`/`dynRet` beside it; the same check
+  runs on the CIR in both bir2cir and ilemit, and `scripts/verify-sanity.py` mirrors it offline. The relation is a
+  REFUTATION test calibrated on the 442-file stdlib reference + runtime pre-lowering corpus (16,070 stamp pairs)
+  and the app corpus: a type variable, a `*`, `kotlin.Nothing`, a `$dotkt_star` existential view, a nullability
+  wrapper, a spelling difference between the `kotlin.*`/shorthand/`System.*` vocabularies, and any pair of unlike
+  or different-arity shapes all AGREE, and a missing stamp is not a disagreement. Calibrating it found four live
+  violators, all fixed here. `ContinuationErasure` promoted a discarded `Result` accessor's `ret` from `Unit` to
+  `kotlin.Any` so ilemit would pop the value, and left `sty` at `kotlin.Unit` — restoring for every deriver the
+  exact stale `void` hint the promotion exists to remove; it now restamps. The other three are one family, the
+  CROSS-MODULE generic erasure the FU-⑧ sweep did not reach: `NullableGenericErasure`,
+  `ReferenceExistentialAbiBinding` and `ConstructedMemberReturnSubstitution` each replace a call's declared result
+  with the PHYSICAL one — a `Slot<T?>`/`Slot<String>` bound as `Slot<object>`, unrelated invariant reified generics
+  — while the frontend stamp still named the pre-erasure instantiation. None can rewrite the stamp (the
+  instantiation is not recoverable from an erased owner), so each DELETES it, which is the other thing §2.7 permits
+  — but only where the new result REFUTES it, through one shared `NodeType.DropStampIfStale`. That qualifier is
+  correctness, not caution: `ConstructedMemberReturnSubstitution` cannot tell a callee-relative `tv` from one kotc
+  already instantiated, so it can re-substitute `Map$Entry<K,V>` into `Map$Entry<Map$Entry<K,V>,V>`, and there the
+  stamp is the more trustworthy of the two and survives. `IteratorConsumerNormalization` — which retypes a
+  `hasNext`/`next` call onto the owner's element, `object` when that element is erased — carries the same
+  obligation and now discharges it too. `tests/ir/selftest` pins the check against BOTH implementations and
+  `tests/ir/lowering` pins the chokepoint itself, each with the legitimate neighbours beside it.
 - **A suspension that escapes the cold lowering is now caught at the CIR boundary (area:bir2cir, area:ilemit).**
   `suspendCall:true` is kotc's frontend fact that a call site suspends, and bir2cir's `SuspendColdLowering` is its
   only consumer — it rebuilds each suspending call as a resume label plus the callee's cold-shape call (a
@@ -125,6 +152,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   try in one of its branches' operand slots still needs hoisting). `ExceptionTests.tryInsideAMintedOperandBlock`
   and `.tryInABranchOfATrySubjectedWhen` pin the shapes, with the ordering half in
   `MappedConstructorArgumentTests.laterArgumentDoesNotOvertakeTheConstruction`.
+- **bir2cir (area:bir2cir): a suspend state machine's `create()` no longer puts a live CLR object in the document.**
+  The synthesized `new SM(capture…, completion)` added each capture's `TypeNode` RECORD straight into its `argTypes`
+  array instead of the wire node `TypeJson.Write` produces, so the BIR carried a `JsonValueCustomized<TypeNode>` — a
+  slot no reader can parse, and one that makes any full-document write of that tree throw unless the writer happens
+  to be carrying System.Text.Json's default reflection resolver. Nothing noticed because those entries are dropped
+  again before the CIR is written and the CIR writer's own options are only ever handed already-clean trees; the
+  #305 chokepoint, which serializes the post-pass BIR, is the first thing that had to write one.
 - **bir2cir (area:bir2cir): `await(captureContext = <expression>)` no longer refuses a non-constant Boolean
   ([tmyt/dotkt#64]).** dll2klib publishes two await bridges for an awaitable that exposes `ConfigureAwait(bool)` —
   `await()` and `await(captureContext: Boolean)` — so `task.await(captureContext = policy)` is a frontend-resolved
