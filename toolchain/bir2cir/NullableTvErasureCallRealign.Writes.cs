@@ -65,6 +65,27 @@ static partial class NullableTvErasureCallRealign
         var haveDecl = declParams != null && declParams.Length == args.Count;
         var haveRefusals = declRefused != null && declRefused.Length == args.Count;
         var argTypes = new TypeNode[args.Count];
+        // SETTLE THE METHOD TYPE ARGUMENTS FIRST (#86 D2). What flows into one parameter can force the callee's
+        // instantiation — an `object[]` inhabits `!!i[]` at `T = object` and nowhere else — and that instantiation is
+        // what every OTHER position is then derived against. Doing it inside the main loop made the result depend on
+        // ARGUMENT ORDER: in `fun <T> g(x: T, xs: Array<T>)` called as `g(v, arrayOfNulls<Int>(2))`, `x` was targeted,
+        // converted and descriptor-rewritten at `T = Nullable<int32>` before `xs` moved `T` to `object`, and nothing
+        // revisited it — so the emitted `g<object>` carried a first argument reconciled against an instantiation that
+        // no longer existed. One pass to settle, then one pass that derives everything from a fixed answer.
+        //
+        // A CONSTRUCTION still naming its OWN element is skipped: it is built here, so it states nothing the
+        // instantiation must match — the main loop types it against the parameter instead, which is the ordering its
+        // `new`/pack retyping depends on. A construction whose element is already the bare `object` is the opposite
+        // case and is NOT skipped: that is an `arrayOf<Int?>(…)` the factory has already canonicalized, a real
+        // `Array<X?>` value, and it settles the instantiation exactly as a variable holding one would.
+        // Everything else is evaluated here and again below; every rewrite on that path is guarded by
+        // `IsObjectErasureOf` or an idempotence check, so the second visit finds its own work already done.
+        if (haveDecl && methodArgs != null)
+            for (var i = 0; i < args.Count; i++)
+                if (declParams[i] != null && !(haveRefusals && declRefused[i])
+                    && args[i] is JsonObject pre && !BuildsItsOwnElement(pre)
+                    && Eval(args[i], ctx) is TypeNode flowed)
+                    UnifyMethodArgs(declParams[i], flowed, methodArgs, call);
         for (var i = 0; i < args.Count; i++)
         {
             // A REFUSED slot is not an unknown one. The reader saw this parameter's carrier and decided it must not
@@ -105,15 +126,6 @@ static partial class NullableTvErasureCallRealign
                 && !se.Equals(ta.Elem) && IsObjectErasureOf(ta.Elem, se))
                 ar["elem"] = TypeJson.Write(ta.Elem);
             argTypes[i] = args[i] != null ? Eval(args[i], ctx) : null;
-            // #86 D2, the type-argument axis: what actually FLOWED into this slot can settle a method type argument
-            // the declaration alone leaves open. An `Array<Int?>` IS an `object[]`, so a value reaching a `!!i`-shaped
-            // position as a bare `object` says the callee has to be instantiated at `object` — and the whole rest of
-            // the signature, this call's remaining arguments and its return included, follows from that.
-            if (haveDecl && declParams[i] != null && argTypes[i] != null && methodArgs != null
-                && UnifyMethodArgs(declParams[i], argTypes[i], methodArgs, call))
-                target = declParams[i] != null
-                    ? Subst(NullableGenericErasure.EraseNullableTv(declParams[i], _isValue), ownerArgs, methodArgs)
-                    : target;
             if (target != null)
             {
                 if (descriptor != null && TypeJson.Read(descriptor[i]) is TypeNode stamped
@@ -441,17 +453,28 @@ static partial class NullableTvErasureCallRealign
 
     static bool IsBareObject(TypeNode t) => t is TypeNode.Fqn { Name: "object", Args: null };
 
+    // A construction whose element type is its OWN choice rather than a fact about the callee: an array built at this
+    // call site and still naming a concrete element. `f<Int?>(1, null)` packs a `Nullable<int32>[]` that agrees with
+    // whatever `!!0[]` is instantiated at, so it must not be read as evidence of an instantiation. Once its element is
+    // the bare `object` it has stopped being a free choice — the array factory canonicalized it (#86 D2) and it is a
+    // real `Array<X?>` value like any other.
+    static bool BuildsItsOwnElement(JsonObject arg)
+        => Str(arg["k"]) is "new" or "newArray" or "newArrayInit" or "newArraySized"
+           && !IsBareObject(TypeJson.Read(arg["elem"]));
+
     // `Unit`/`void` is the absence of a value, not a type to convert into.
     static bool IsVoidish(TypeNode t) => t is TypeNode.Fqn { Name: "void" or "kotlin.Unit" or "kotlin.Nothing", Args: null };
 
     // Whether widening this type into `object` needs a real IL conversion. A `Tv` does (it may be instantiated with a
     // struct, and `box` on a type variable is the verifier-clean form for both instantiations); a structural
-    // `Nullable<V>` does; a struct does. A reference is already an `object` and needs nothing.
+    // `Nullable<V>` does; a struct does — INCLUDING a constructed one, since `KeyValuePair<K,V>` needs the same `box`
+    // its argument-less siblings do and the oracle strips generic arity to say so. A reference is already an `object`
+    // and needs nothing.
     static bool NeedsObjectSeam(TypeNode t) => t switch
     {
         TypeNode.Tv => true,
         TypeNode.Nullable n => NeedsObjectSeam(n.Of),
-        TypeNode.Fqn { Args: null } f => _isValue(f.Name),
+        TypeNode.Fqn f => _isValue(f.Name),
         _ => false,
     };
 }

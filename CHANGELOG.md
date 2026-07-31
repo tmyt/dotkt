@@ -136,7 +136,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `T=Int` segfaulted the process, a cross-module `Array<Int?>` param re-imported as `IntArray` (the consumer would
   not compile), and a cross-module `Array<Int?>` return was indexed as an `int32[]` so its LAYOUT WORDS came back as
   elements — `4/null/8` read as `3/1/4/0`, with no diagnostic and no exception.
-  `Erase` now maps an array element that is `X?` for a possibly-value `X` — an open `Tv` or a value FQN — to
+  `Erase` now maps an array element that is `X?` for a possibly-value `X` — ANY type variable, or a value FQN
+  including a CONSTRUCTED one like `KeyValuePair<K,V>` or `ArraySegment<T>` — to
   `object`, at declaration slots, at `newarr`/`ldelem`/`stelem` tokens and at the element a `for (x in arr)` binds
   alike; the pre-erasure `Array<Int?>` rides the same `[KotlinNullableGeneric]` carrier every other erased slot does,
   so the Kotlin surface survives the round trip; and the carrier reader, which refused an `Array<X?>` slot precisely
@@ -162,6 +163,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   same-module as `roundtrip-nullable-vt-generic-array-to-collection` and blocked on the type-argument half of the
   decision: either `X?` is `object` at every type-argument position (`List<Int?>` becomes `List<object>`), or the
   concrete `Array<Int?>` keeps a representation of its own after all.
+  Two gate entries #86 predicted this step would prune are **not** pruned, and the difference matters when reading the
+  issue's checklist against the code. `ArrayTests::copyOfGrowsWithNullTail` keeps its `ILVERIFY_XFAIL` entry: the
+  `object[]`-vs-`Nullable<int32>[]` cause #86 named IS gone, but the same method now carries a different, formal-only
+  one at its REFERENCE element (`copyOf` at `T=String` yields an `object[]` whose `toList()` meets a
+  `Collection<string>` slot; the array really is a `string[]`, so it RUNS green). The cross-module `Array<Int?>`
+  entries and the whole packaged-SDK baseline did prune.
 - **bir2cir (area:bir2cir): a nullable generic `T?` now has ONE physical CLR representation — `System.Object` — at
   every position (#86).** `Nullable<T>` is inexpressible for an unconstrained `T` and a bare `!T` slot collapses a
   null to `default(T)`, so a `T?` slot has exactly one sound CLR form; the backend nevertheless kept two, erasing

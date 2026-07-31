@@ -70,12 +70,10 @@ declare -A XFAIL_PKG=(
 #
 # Sorted, one per line, with paths and the trailing [project] suffix stripped — a diagnostic's identity here is
 # its line, code and message, not where the scratch workspace happened to be.
-CS_EXPECTED_DIAGNOSTICS="$(LC_ALL=C sort -u <<'EOF'
-line 16: error CS0029: Cannot implicitly convert type 'int?[]' to 'object[]'
-line 17: error CS1503: Argument 1: cannot convert from 'object[]' to 'int?[]'
-line 18: error CS1503: Argument 1: cannot convert from 'object[]' to 'int?[]'
-EOF
-)"
+# EMPTY, like its NG_SHAPE_EXPECTED sibling: the three `int?[]` / `object[]` conversion errors it used to pin were
+# the C# consumer's view of `Array<Int?>` before #86 D2 made it `object[]`, and the case now builds and runs. The
+# drift check below is reached only while the case is FAILING, so an empty set means it has nothing left to guard.
+CS_EXPECTED_DIAGNOSTICS=""
 
 # The refcheck --shape mismatches the erasure has not yet fixed — EMPTY now that every probed slot is its
 # declaration's erasure. The drift check below only runs while mismatches exist, so an empty set means the verdict

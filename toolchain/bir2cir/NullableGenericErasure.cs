@@ -401,15 +401,26 @@ static class NullableGenericErasure
     internal static TypeNode EraseArrayElem(TypeNode elem, Func<string, bool> isValue)
         => IsNullableMaybeValue(elem, isValue) ? new TypeNode.Fqn("object") : EraseNullableTv(elem, isValue);
 
-    // `X?` where `X` may be a value type at SOME instantiation: an open type variable (any of them can be a struct)
-    // or a concrete value FQN. A reference `X` is excluded — its `?` is not a physical difference on the CLR.
+    // `X?` where `X` may be a value type: an open type variable, or a concrete value FQN. A reference `X` is excluded —
+    // its `?` is not a physical difference on the CLR.
+    //
+    // EVERY type variable qualifies, whatever its bound. `fun <T : CharSequence> f(xs: Array<T?>)` has no value
+    // instantiation and still erases, because the rule is uniform rather than bound-consulting: one physical form per
+    // declaration, decided without resolving where each bound leads. The cost is a `CharSequence`-bounded array that
+    // boxes for nothing; the alternative is a slot whose representation depends on a bound the reader has to chase,
+    // and two `Array<T?>` declarations that cannot meet when one is bounded and one is not.
     internal static bool IsNullableMaybeValue(TypeNode t, Func<string, bool> isValue)
         => t is TypeNode.Nullable n && MayBeValue(n.Of, isValue);
 
+    // A CONSTRUCTED name is classified like any other: `KeyValuePair<K,V>` and `ArraySegment<T>` are structs, and the
+    // oracle strips generic arity to answer. Matching only the argument-less shape left every constructed BCL struct
+    // classified as a reference, so `Array<KeyValuePair<K,V>?>` stayed a `Nullable<KVP>[]` while the open `Array<T?>`
+    // it has to meet was `object[]` — the unrelated pair this whole decision exists to delete, and it segfaulted the
+    // process rather than failing loudly.
     static bool MayBeValue(TypeNode t, Func<string, bool> isValue) => t switch
     {
         TypeNode.Tv => true,
-        TypeNode.Fqn { Args: null } f => isValue?.Invoke(f.Name) == true,
+        TypeNode.Fqn f => isValue?.Invoke(f.Name) == true,
         TypeNode.Oblivious o => MayBeValue(o.Of, isValue),
         _ => false,
     };

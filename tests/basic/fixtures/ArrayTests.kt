@@ -45,6 +45,13 @@ fun <T> arrPresentCount(xs: Array<T?>): Int {
 
 fun <T> arrLengthOf(xs: Array<T>): Int = xs.size
 
+// #86 D2 — ONE type variable at two positions, the array one LAST. What flows into `xs` forces the callee to be
+// instantiated at `object`; `x` is a plain `T` slot of that same variable, and it is reconciled against whatever the
+// instantiation settles on. Deriving positions in argument order made the answer depend on that order — `x` was
+// converted and its descriptor rewritten before `xs` moved `T` — so the pair is pinned in both orders here.
+fun <T> arrPairFirst(x: T, xs: Array<T>): Int = xs.size
+fun <T> arrPairLast(xs: Array<T>, x: T): Int = xs.size
+
 // ---- il-genarrlam : Array(size){ mk<T?>(null) } inside a generic class (nested Nullable(Tv) erasure) ------------
 class ArrRef<X>(val v: X)
 fun <X> arrMk(x: X): ArrRef<X> = ArrRef(x)
@@ -241,6 +248,13 @@ class ArrayTests {
         // `object[]` the caller holds, so the callee has to be instantiated at the type that names it.
         assertEquals(3, arrLengthOf(explicit))                               // 3
         assertEquals(2, arrLengthOf(arrayOf("a", null)))                     // 2  (reference control)
+
+        // ONE type variable bound at a scalar AND an array position, in both argument orders: the instantiation the
+        // array forces has to be the one the scalar is reconciled against, whichever is seen first.
+        val v: Int? = 5
+        assertEquals(3, arrPairFirst(v, explicit))                           // 3
+        assertEquals(3, arrPairLast(explicit, v))                            // 3
+        assertEquals(2, arrPairFirst("a", arrayOf("x", null)))               // 2  (reference control)
 
         // The REFERENCE instantiation keeps its typed array end to end.
         val refs = arrayOfNulls<String>(2)

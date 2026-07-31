@@ -1553,12 +1553,22 @@ An array element is the single position where the erasure is *observable in the 
 (ECMA-335 I.8.7.1), and no cast converts one to the other. There is therefore one representation and it is the erased
 one:
 
-> **`Array<X?>` is `System.Object[]` whenever `X` may be a value type** — an open type variable (some instantiation
-> is a struct) or a concrete value type. `Array<String?>` keeps `string[]`, `Array<Int>` keeps `int32[]`, and
-> `IntArray` is untouched.
+> **`Array<X?>` is `System.Object[]` whenever `X` may be a value type** — **any** type variable, or a concrete value
+> type (a constructed `KeyValuePair<K,V>` counts, exactly as `Int` does). `Array<String?>` keeps `string[]`,
+> `Array<Int>` keeps `int32[]`, and `IntArray` is untouched.
+
+Every type variable qualifies, whatever its bound: `fun <T : CharSequence> f(xs: Array<T?>)` erases too, although no
+instantiation of it can be a struct. That is uniformity chosen deliberately over consulting the bound — one physical
+form per declaration, decided without resolving where each bound leads — and it costs a bounded array that boxes for
+nothing. The alternative is a slot whose representation depends on a bound the reader has to chase, and two
+`Array<T?>` declarations that cannot meet because one is bounded and one is not.
 
 What this is observable as, beyond the boxing already listed above:
 
+- **A .NET `int?[]` re-imports as `Array<Int?>`, which is `object[]`** — so the inbound direction is no more usable
+  than the outbound one, and a `Nullable<int32>[]` coming from C# has to be converted at the boundary rather than
+  passed. It was not usable before either (it collapsed to `IntArray`, dropping the element's `?`), so this is the
+  same gap named honestly rather than a new one.
 - **`Array<Int?>` surfaces to C# as `object[]`, not `int?[]`.** A C# caller passes and receives `object[]`, and each
   element is a boxed `int` or a null.
 - **Elements box on the way in and unbox on the way out.** `a[0] = 5` boxes; `a[0]` reads the box back. This is the
