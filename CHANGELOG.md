@@ -100,6 +100,80 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir (area:bir2cir): a constructor argument the collection mapping maps AWAY is now evaluated (#278).**
+  `HashSet(initialCapacity, loadFactor)` has no CLR counterpart for its load factor — the concept is a JVM hashtable
+  one — so `MemberCallSubstitution` maps the call onto the capacity-only BCL constructor. It dropped the argument's
+  EVALUATION with its value: `HashSet<Int>(16, computeLoadFactor())` never called `computeLoadFactor()`, and an
+  exception that argument would have thrown simply never happened, which is the same fault class as evaluating a
+  call value twice, at zero instead. The mapping now re-expresses the arguments as a call-evaluation plan — one
+  binding per original argument in Kotlin order, the kept ones read from their slots, the mapped-away ones read by
+  nobody — and hands it to `CallEvalLowering.Materialise`, so the existing rules decide: an unread binding is
+  evaluated into a local unless Q2 (`ValueStability.IsDroppable`) says the evaluation is unobservable, and the
+  prefix rule materialises every earlier argument so a kept value cannot slide behind a mapped-away one. Building a
+  plan rather than prepending an evaluate-and-discard statement is what keeps those two rules in one place; the
+  literal `HashSet(16, 0.75f)` idiom materialises nothing and emits the same bare `newClr` as before. The rule holds
+  for every constructor the table covers, so `HashMap` (`Dictionary`) and `LinkedHashMap` (`OrderedDictionary`) are
+  fixed with it, and `LinkedHashSet` — a real Kotlin class whose constructor keeps both arguments — is unaffected.
+  `MappedConstructorArgumentTests` pins the order, the single evaluation, the propagated throw, and the delegation
+  /property-initializer/lambda positions.
+- **bir2cir (area:bir2cir): a `try` expression inside a lowering-MINTED operand block no longer produces invalid
+  IL.** A CLR protected region must be entered with an empty evaluation stack, which is why `TryValueOperandHoist`
+  moves a try-valued operand out of a non-first slot into preceding statements. It recognised only kotc's own
+  spelling — a block whose `stmts` contain a `try` DIRECTLY — but several lowerings materialise an operand into a
+  minted `valueBlock` whose `var` initializer is then the try-valued expression: a call-evaluation plan's bindings,
+  `RangeMembershipLowering`'s bounds, `PreconditionLowering`'s subject, `NetInteropBinding`'s adapters, and now the
+  mapped-away constructor argument above. The hazard is identical and the hoist missed all of them, so
+  `f("z", (try { 1 } catch { 2 }) in 1..5)` compiled to an `InvalidProgramException` from source the frontend had
+  accepted. The hoist now searches a block's inline statements — both statement lists and the result, stopping at a
+  nested declaration whose body runs on its own stack — and moves them in the order their consumers run them. Two
+  assumptions that only held for kotc's own spelling went with it: a hoisted block's RESULT is now spilled like any
+  other operand rather than left in the slot (kotc's result is a stack-neutral `local`, but a minted block's can be
+  a `newClr` whose constructor throws, and leaving it behind let a LATER argument's side effect overtake it), and
+  recognizing a block no longer ends the walk inside it (a `when` with a try-valued subject is such a block, and a
+  try in one of its branches' operand slots still needs hoisting). `ExceptionTests.tryInsideAMintedOperandBlock`
+  and `.tryInABranchOfATrySubjectedWhen` pin the shapes, with the ordering half in
+  `MappedConstructorArgumentTests.laterArgumentDoesNotOvertakeTheConstruction`.
+- **bir2cir (area:bir2cir): `await(captureContext = <expression>)` no longer refuses a non-constant Boolean
+  ([tmyt/dotkt#64]).** dll2klib publishes two await bridges for an awaitable that exposes `ConfigureAwait(bool)` —
+  `await()` and `await(captureContext: Boolean)` — so `task.await(captureContext = policy)` is a frontend-resolved
+  call; `EmitAwaitPoint` accepted only a constant in that slot and threw, aborting the whole compile. The awaiter
+  never needed the value: `ConfigureAwait(true)` and `ConfigureAwait(false)` return the same configured awaitable,
+  hence the same awaiter type, so a runtime Boolean selects no state-machine field type and needs no branch — the
+  configured awaiter is stored statically and the Boolean only reaches the .NET call. The lowering is now TWO arms
+  picked by the argument's SHAPE: an omitted argument or a constant `true` keeps the direct `GetAwaiter()` (which
+  is what capturing already means), and everything else — including a constant `false`, which had an arm of its
+  own passing a synthesized literal — is `ConfigureAwait(<the expression>).GetAwaiter()`. The expression is
+  evaluated exactly once and after the awaitable receiver, including when it suspends: the await marker rewrites
+  its own operands (it is excluded from the stage-0 operand plan), so the receiver is bound into a state-machine
+  field whenever the argument's own lowering emits statements — an argument that suspends, or one that transfers
+  control instead of producing a value. That question is asked by a predicate written for it rather than by the two
+  frame-ownership predicates next door: those stop at every lambda kind, while the rewrite descends into a
+  `newClosure`'s CAPTURES, where a bound callable reference `(<expr>)::f` puts an arbitrary expression — so a
+  `throw` there left the receiver evaluated ZERO times on the throwing path. `tests/coroutines/fixtures/DynamicCaptureContextTests.kt` drives the runtime
+  shapes; the five `tests/ir/lowering/await-capture-*` documents pin what no runtime assertion can witness — the arm
+  SELECTION (`ConfigureAwait(true)` and `GetAwaiter()` behave identically, so only the emitted shape shows which was
+  chosen), the receiver binding a suspending argument forces, and the configured awaiter's field type. Folding the
+  constant-`false` arm is output-neutral, and its document says so rather than claiming a difference.
+  The refusal that remains — an awaitable whose `ConfigureAwait(bool)` returns something that is not itself
+  awaitable, which dll2klib publishes the overload for because the returned type may live in an assembly it does not
+  read — now names THAT as the reason instead of reporting a missing `ConfigureAwait(bool)` member.
+- **bir2cir (area:bir2cir): the capture-control hop is read from the awaitable's metadata instead of being rebuilt
+  from its receiver, so an awaitable that is not shaped like `Task` works.** Three defects, all reachable through
+  `await(captureContext = …)` and the first two of them older than it. (1) The configured awaitable's type was
+  reconstructed by repeating the RECEIVER's type arguments under `ConfigureAwait`'s return type NAME, so a
+  declaration that permutes them — `Awaitable<A,B>.ConfigureAwait(bool): Configured<B,A>` — produced
+  `Configured<A,B>`: a real type on which none of the members then called exist, i.e. unverifiable IL and a run-time
+  failure. This already broke a constant `false`. The plan now carries every awaiter and configured type as a
+  TEMPLATE of the DECLARED type, closed at the call site, so a permuted, dropped or fixed type argument comes out as
+  declared. (2) The configured awaitable's `GetAwaiter` was looked for as an instance member only, though the
+  awaitable contract has always accepted a referenced `[Extension] static GetAwaiter` — so capture control on such a
+  type was REFUSED although C# `await` compiles the same shape. It is now resolved and emitted through both halves of
+  the contract, a generic extension's type arguments unified from its declared receiver rather than copied. (3) The
+  receiver binding introduced above always took a state-machine FIELD, which the CLR forbids for a byref-like
+  (`ref struct`) awaitable — turning a legal program into a compile-time refusal. Only a SUSPENSION between the
+  binding and its use needs a field; suspension-free statements need a typed local, which is exactly what §4d says a
+  byref-like value may be. `tests/interop/consumer/fixtures/CaptureContextAwaitTests.kt` covers all three against
+  producer types written for them (`tests/interop/producer/CaptureAwaitable.cs`).
 - **kotc (area:kotc, #67): suspend extension and re-imported DotKt member callable references now lower through
   the general suspend-reference adapter.** Suspend callable references are represented by `newSuspendLambda`, whose
   body carries the same Kotlin call facts as a direct invocation. The router previously admitted only non-extension
@@ -141,6 +215,31 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `crossModuleNothingBranchMerge` in the in-process ProjectReference lane, which ilverifies — including the
   DEFAULT-package producer the shell scenario had and the migration would otherwise have dropped, so a regression in
   root-namespace file-class attribution or in `[KotlinNothing]` restoration through it cannot pass silently.
+- **`x is T?` answers TRUE for null again, and with it every `joinToString` over a null element (area:bir2cir,
+  area:ilemit).** Kotlin's `is` against a NULLABLE type operand accepts null — `null is String?`, `null is Int?`,
+  `null is Any?` are all true — and the frontend DEPENDS on it: the `else` branch of `when { x is T? -> … }` is
+  reachable only for a non-null `x`, so it carries a smart-cast, and `x.toString()` there resolves to the
+  `kotlin.Any` MEMBER rather than the null-safe `Any?.toString()` extension. kotc emitted the type operand's `?`
+  faithfully, but nothing downstream read it: type lowering erases nullability from every reference type (every CLR
+  reference is nullable, so the lowered type cannot carry the signal), leaving a bare `isinst`, which matches no
+  null. The test went false for null and the smart-cast the frontend had already granted dereferenced one. The
+  stdlib's `appendElement` is exactly that shape — `element is CharSequence?`, else `element.toString()` — so
+  `arrayOfNulls<String>(2).joinToString()` threw a `NullReferenceException` inside `AppendableKt.appendElement`
+  instead of rendering `null, null`, on every join receiver (array, list, sequence, `joinTo`), with or without a
+  transform, and at any null position. bir2cir's new `NullableIsInstMatch` marks the node `nullMatches` while the
+  `?` is still on it, and ilemit projects the one extra `dup; brtrue` that answers true for null — the operand is
+  still evaluated exactly once, and a non-nullable type operand is untouched.
+  The invariant the `?` spelling owes is now uniform: for a non-null receiver `x is T?` answers exactly what
+  `x is T` answers, and for null it answers true. That required the star-projected form to reach the same
+  non-generic BCL facade as its plain twin (`x is Collection<*>?`/`List<*>?`/`Map<*,*>?` were stuck on the reified
+  interface, which a value-argument `List<int>`/`Dictionary<int,int>` does not implement), and it required
+  `Set`/`MutableSet` to leave that facade table: they mapped to the non-generic `ICollection`, which identifies a
+  set in NEITHER direction — a `HashSet<T>` does not implement it, while a `List<T>` does, so `listOf(1) is Set<*>`
+  was true. That unsound answer is gone. What remains wrong is recorded rather than fixed, with fixtures asserting
+  today's values so it cannot drift silently: a Kotlin `Set` has no distinct CLR identity to test against (it shares
+  `IReadOnlyCollection<T>` with `Collection`), `Collection<*>` misses sets and admits maps, and a nullable REIFIED
+  type ARGUMENT still loses its `?` because one generic method serves every instantiation. Both boundaries are
+  written up in `docs/dotkt-semantics.md` §2. (#287)
 - **bir2cir (area:bir2cir): a nullable-generic return that was object-erased no longer crosses a suspension under
   its PRE-erasure type.** `fun <T> f(x: T): List<T?>` has its `Nullable(T)` erased to `object` on the declaration
   side, so the emitted method returns `List<object>`, while the call site — emitted with `T` already substituted —

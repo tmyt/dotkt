@@ -564,6 +564,24 @@ sealed partial class Emitter
                 // `element is X` when `element` is a generic `T` (box !!T; isinst X).
                 var rt0 = EmitExpr(e.GetProperty("e"));
                 if (NeedsBoxToRef(rt0)) _il.Emit(OpCodes.Box, rt0);
+                // `nullMatches` (bir2cir NullableIsInstMatch): the Kotlin type operand was NULLABLE (`x is T?`), whose
+                // instances include null — but `isinst` never matches a null reference. Answer true for null before the
+                // isinst, keeping the operand's single evaluation: dup the reference, and on null pop it and push 1.
+                if (e.TryGetProperty("nullMatches", out var nm) && nm.ValueKind == JsonValueKind.True)
+                {
+                    var notNull = _il.DefineLabel(); var done = _il.DefineLabel();
+                    _il.Emit(OpCodes.Dup);
+                    _il.Emit(OpCodes.Brtrue, notNull);
+                    _il.Emit(OpCodes.Pop);
+                    _il.Emit(OpCodes.Ldc_I4_1);
+                    _il.Emit(OpCodes.Br, done);
+                    _il.MarkLabel(notNull);
+                    _il.Emit(OpCodes.Isinst, MapType(e.GetProperty("type")));
+                    _il.Emit(OpCodes.Ldnull);
+                    _il.Emit(OpCodes.Cgt_Un);
+                    _il.MarkLabel(done);
+                    return typeof(bool);
+                }
                 _il.Emit(OpCodes.Isinst, MapType(e.GetProperty("type")));
                 _il.Emit(OpCodes.Ldnull);
                 _il.Emit(OpCodes.Cgt_Un);

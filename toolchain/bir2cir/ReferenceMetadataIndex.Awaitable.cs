@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using DotKt.Bir;
 
 // GitHub #10 — the .NET AWAITABLE PATTERN, resolved from reference metadata (the bir2cir layer owns all CLR-metadata
 // reading). A type is awaitable IFF it has a `GetAwaiter()` — a public parameterless instance MEMBER, or a referenced
@@ -18,9 +19,15 @@ using System.Reflection;
 
 sealed class AwaitPlan
 {
+    // EVERY type this plan names is a TEMPLATE, not a name plus a guess at its type arguments: a `TypeNode` in which
+    // the awaitable's own type parameters appear as `Tv("type", i)` and an extension METHOD's as `Tv("method", i)`.
+    // The consumer closes them with the call site's arguments (`SubstituteTypeParameters` /
+    // `SubstituteMethodTypeParameters`), so a declaration that PERMUTES, drops or fixes a type argument —
+    // `Awaitable<A,B>.ConfigureAwait(bool): Configured<B,A>` — lowers to what the metadata says rather than to the
+    // receiver's arguments copied positionally, which was `Configured<A,B>` and unverifiable IL.
+    //
     // Default (SynchronizationContext-capturing) path: GetAwaiter on the awaitable itself.
-    public string AwaiterDefName;        // e.g. "System.Runtime.CompilerServices.TaskAwaiter" (simple generic: no `arity — ilemit appends it)
-    public bool AwaiterGeneric;
+    public TypeNode AwaiterTemplate;      // e.g. `System.Runtime.CompilerServices.TaskAwaiter<Tv(type,0)>`
     // GetAwaiter entry shape. A member -> clrInstance on the awaitable; an extension -> a static call with the awaitable
     // passed as arg0 (WinRT IAsyncOperation<T>). A GENERIC extension (`GetAwaiter<TResult>(this IAsyncOperation<TResult>)`)
     // is instantiated with the result type arg — the receiver-type-constructor unifies TResult to the concrete arg.
@@ -28,14 +35,28 @@ sealed class AwaitPlan
     public string GetAwaiterExtOwner;    // the [Extension] static class FQN (extension path only)
     public bool GetAwaiterExtGeneric;    // the extension method is itself generic over the result type (WinRT)
 
-    // #3 opt-out (`await(captureContext = false)`): the ConfigureAwait(false) awaiter family. Populated ONLY when the
-    // awaitable exposes a member `ConfigureAwait(bool)` (Task-like: Task, ValueTask). A plain awaitable without it does
-    // not offer the opt-out (dll2klib then injects `await()` with no captureContext param, so noCapture never arises).
-    public bool SupportsNoCapture;
-    public string ConfiguredAwaitableDefName;   // ConfigureAwait's return type (the object GetAwaiter is called on)
-    public bool ConfiguredAwaitableGeneric;
-    public string ConfiguredAwaiterDefName;
-    public bool ConfiguredAwaiterGeneric;
+    // #3/#64 capture control (`await(captureContext = <bool>)`): the ConfigureAwait awaiter family. Populated ONLY when
+    // the awaitable exposes a member `ConfigureAwait(bool)` AND the configured awaitable it returns is itself awaitable
+    // by the SAME contract as the primary one (a member GetAwaiter, or a referenced `[Extension] static GetAwaiter`).
+    // ONE family for either Boolean value — `ConfigureAwait(true)` and `ConfigureAwait(false)` return the same
+    // configured awaitable type — so a runtime Boolean picks no type here.
+    public bool SupportsConfigureAwait;
+    public TypeNode ConfiguredAwaitableTemplate;   // ConfigureAwait's return type (the object GetAwaiter is called on)
+    public TypeNode ConfiguredAwaiterTemplate;
+    // The configured awaitable's own GetAwaiter entry shape — the same three shapes the primary one has. The type
+    // arguments of a GENERIC extension are resolved HERE, by unifying its declared receiver against the configured
+    // type, so the emitter passes what the metadata determined rather than re-deriving it.
+    public bool ConfiguredGetAwaiterExtension;
+    public string ConfiguredGetAwaiterExtOwner;
+    public bool ConfiguredGetAwaiterExtGeneric;
+    public TypeNode[] ConfiguredGetAwaiterExtTypeArgs;   // templates, one per extension method type parameter
+    public TypeNode ConfiguredGetAwaiterExtOpenRecv;     // its declared receiver param, open over `Tv("method", i)`
+    // WHY there is no capture control, in the words the refusal uses. Two different facts, and dll2klib can only see
+    // the first: it publishes the one-argument bridge on the `ConfigureAwait(bool)` DECLARATION alone, because the
+    // configured awaitable it returns may live in an assembly that projection does not read (dll2klib's
+    // `SupportsConfigureAwait` says so). So a type whose ConfigureAwait returns a NON-conforming awaitable reaches
+    // this pass with the overload already published, and the refusal must not tell its author the member is missing.
+    public string ConfigureAwaitGap;
 }
 
 partial class ReferenceMetadataIndex
@@ -84,23 +105,74 @@ partial class ReferenceMetadataIndex
             plan.GetAwaiterExtGeneric = ext.IsGenericMethodDefinition;
         }
         if (!AwaiterConforms(awaiterRet)) return null;
-        (plan.AwaiterDefName, plan.AwaiterGeneric) = NetDefName(awaiterRet);
+        plan.AwaiterTemplate = NetTypeTemplate(awaiterRet);
 
-        // #3 ConfigureAwait(false) opt-out — only when the awaitable exposes it (Task-like). The configured awaitable's
-        // own GetAwaiter must ALSO conform (it always does for Task/ValueTask).
+        // #3/#64 ConfigureAwait capture control — only when the awaitable exposes it (Task-like) AND the configured
+        // awaitable it returns is itself awaitable by the SAME contract (a member GetAwaiter, or a referenced
+        // `[Extension] static GetAwaiter` — the awaitable contract has always had both halves, and the configured type
+        // is an awaitable like any other). Each miss records the words the refusal uses, because dll2klib publishes the
+        // one-argument bridge on the ConfigureAwait declaration alone.
         var cfg = ConfigureAwaitBoolMember(awaitable);
-        if (cfg != null)
+        if (cfg == null)
         {
-            var configured = cfg.ReturnType;
-            var configuredDef = configured.IsGenericType ? configured.GetGenericTypeDefinition() : configured;
-            var cfgGetAwaiter = GetAwaiterMember(configuredDef);
-            if (cfgGetAwaiter != null && AwaiterConforms(cfgGetAwaiter.ReturnType))
-            {
-                plan.SupportsNoCapture = true;
-                (plan.ConfiguredAwaitableDefName, plan.ConfiguredAwaitableGeneric) = NetDefName(configured);
-                (plan.ConfiguredAwaiterDefName, plan.ConfiguredAwaiterGeneric) = NetDefName(cfgGetAwaiter.ReturnType);
-            }
+            plan.ConfigureAwaitGap = "the type has no `ConfigureAwait(bool)` member "
+                + "(the SynchronizationContext control is Task-like only)";
+            return plan;
         }
+        // `configured` is written in the AWAITABLE's type parameters (`Configured<B,A>`); the members found on its
+        // DEFINITION are written in its own (`Configured<X,Y>`), so every type the definition names is re-expressed
+        // through `configured`'s arguments — that composition is what makes a permuted declaration come out permuted.
+        var configured = cfg.ReturnType;
+        var configuredDef = configured.IsGenericType ? configured.GetGenericTypeDefinition() : configured;
+        var viaConfigured = configured.IsGenericType ? configured.GetGenericArguments() : Type.EmptyTypes;
+        var cfgMember = GetAwaiterMember(configuredDef);
+        var cfgExt = cfgMember == null ? FindGetAwaiterExtension(configuredDef) : null;
+        var cfgAwaiterRet = cfgMember?.ReturnType ?? cfgExt?.ReturnType;
+        if (cfgAwaiterRet == null || !AwaiterConforms(cfgAwaiterRet))
+        {
+            plan.ConfigureAwaitGap = $"its `ConfigureAwait(bool)` returns `{configuredDef.FullName}`, which is not "
+                + "itself awaitable (no conforming GetAwaiter), so there is no configured awaiter to store";
+            return plan;
+        }
+        TypeNode[] cfgExtTypeArgs = null;
+        if (cfgExt != null)
+        {
+            // A GENERIC extension is instantiated by unifying its DECLARED receiver against the configured type: the
+            // method's parameter #p sits at some position in the receiver's arguments, and the configured type's
+            // argument at that position is what closes it. Positional copying would be the same defect as the one
+            // above, one level down.
+            var extRecv = cfgExt.GetParameters()[0].ParameterType;
+            var recvArgs = extRecv.IsGenericType ? extRecv.GetGenericArguments() : Type.EmptyTypes;
+            var methodParams = cfgExt.IsGenericMethodDefinition ? cfgExt.GetGenericArguments() : Type.EmptyTypes;
+            var extTypeArgs = new TypeNode[methodParams.Length];
+            for (var p = 0; p < methodParams.Length; p++)
+            {
+                var at = System.Array.FindIndex(recvArgs, a => a.IsGenericParameter
+                    && a.DeclaringMethod != null && a.GenericParameterPosition == p);
+                if (at < 0 || at >= viaConfigured.Length)
+                {
+                    plan.ConfigureAwaitGap =
+                        $"its `ConfigureAwait(bool)` returns `{configuredDef.FullName}`, whose only GetAwaiter is the "
+                        + $"extension `{cfgExt.DeclaringType?.FullName}.GetAwaiter`, and that method's type parameter "
+                        + $"`{methodParams[p].Name}` does not appear in its declared receiver — nothing determines it "
+                        + "from the awaited value";
+                    return plan;
+                }
+                extTypeArgs[p] = NetTypeTemplate(viaConfigured[at]);
+            }
+            cfgExtTypeArgs = extTypeArgs;
+            plan.ConfiguredGetAwaiterExtension = true;
+            plan.ConfiguredGetAwaiterExtOwner = cfgExt.DeclaringType?.FullName;
+            plan.ConfiguredGetAwaiterExtGeneric = cfgExt.IsGenericMethodDefinition;
+            plan.ConfiguredGetAwaiterExtTypeArgs = extTypeArgs;
+            plan.ConfiguredGetAwaiterExtOpenRecv = NetTypeTemplate(extRecv);
+        }
+        plan.SupportsConfigureAwait = true;
+        plan.ConfiguredAwaitableTemplate = NetTypeTemplate(configured);
+        // The configured awaiter is written in the configured type's parameters (a member GetAwaiter) or in the
+        // extension method's (an extension one); both are closed here, so what the plan carries is already a template
+        // over the AWAITABLE's parameters and the consumer has one substitution to make, not two vocabularies to mix.
+        plan.ConfiguredAwaiterTemplate = NetTypeTemplate(cfgAwaiterRet, viaConfigured, cfgExtTypeArgs);
         return plan;
     }
 
@@ -195,5 +267,32 @@ partial class ReferenceMetadataIndex
         if (bt > full.LastIndexOf('+') && bt >= 0 && full.Skip(bt + 1).All(char.IsDigit))
             full = full.Substring(0, bt);
         return (full, generic);
+    }
+
+    /// A .NET type as a CIR type TEMPLATE: its structure kept whole, with each generic parameter left as the
+    /// positional variable the consumer closes — `Tv("type", i)` for the awaitable's own, `Tv("method", i)` for an
+    /// extension method's. This is why a declaration is lowered as DECLARED: `Configured<B,A>` comes out with its
+    /// arguments in the declaration's order, and a fixed argument (`Configured<int>`) comes out fixed, where reusing
+    /// the receiver's arguments positionally produced a type the member does not live on.
+    ///
+    /// The two `via` maps RE-EXPRESS a parameter that belongs to an inner declaration: a member found on
+    /// `Configured<X,Y>`'s definition speaks in X,Y, and `viaType` says which of the awaitable's arguments each of
+    /// those IS; `viaMethod` does the same for an extension method's parameters, already resolved to templates. One
+    /// composition here means the plan carries a single vocabulary and its consumer makes a single substitution.
+    static TypeNode NetTypeTemplate(Type t, Type[] viaType = null, TypeNode[] viaMethod = null)
+    {
+        if (t.IsGenericParameter)
+        {
+            var pos = t.GenericParameterPosition;
+            if (t.DeclaringMethod != null)
+                return viaMethod != null && pos < viaMethod.Length
+                    ? viaMethod[pos] : new TypeNode.Tv("method", pos);
+            return viaType != null && pos < viaType.Length
+                ? NetTypeTemplate(viaType[pos]) : new TypeNode.Tv("type", pos);
+        }
+        var (name, generic) = NetDefName(t);
+        return new TypeNode.Fqn(name, generic
+            ? t.GetGenericArguments().Select(a => NetTypeTemplate(a, viaType, viaMethod)).ToArray()
+            : null);
     }
 }
