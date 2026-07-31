@@ -33,26 +33,32 @@ static partial class NullableTvErasureCallRealign
     // because it is what the emitter resolves the member by: leave it substituted and the emitter looks for a member
     // that does not exist.
     //
-    // With no declaration — a REFERENCED callee, whose ref.dll surface already names `object` rather than a bare `Tv`
-    // — the descriptor is the only statement of the slot there is, and it is authoritative precisely because it is
-    // what the member will be resolved by. That fallback is restricted to the `object` seam: a value flowed out of
-    // the erasure as a bare `object` and the descriptor names a slot the CLR cannot hand an `object` to. Anything
-    // wider would be guessing against a descriptor that may itself be the substituted (pre-erasure) view.
+    // With no declaration — a callee whose owner names no indexed declaration, or an ambiguous overload set the
+    // reference index refuses to guess at — the descriptor is the only statement of the slot there is, and it is
+    // authoritative precisely because it is what the member will be resolved by. That fallback is restricted to the
+    // `object` seam: a value flowed out of the erasure as a bare `object` and the descriptor names a slot the CLR
+    // cannot hand an `object` to. Anything wider would be guessing against a descriptor that may itself be the
+    // substituted (pre-erasure) view.
     // Evaluates the arguments as it goes, because one rewrite has to happen BEFORE an argument is evaluated: see the
     // construction case below. Reports the flowed argument types (null when the node has no `args`).
     static TypeNode[] RealignArgs(JsonObject call, TypeNode[] declParams, TypeNode[] ownerArgs, TypeNode[] methodArgs,
         Ctx ctx)
     {
         if (call["args"] is not JsonArray args) return null;
-        // A callStatic/callInstance carries `sig`; a `new` carries `argTypes`. Either may be absent (resolution then
-        // falls back to arity), which is not an error.
-        var descriptor = call["sig"] as JsonArray ?? call["argTypes"] as JsonArray;
+        // A callStatic/callInstance carries `sig`; a `new` carries `argTypes`; a call NetInteropBinding has already
+        // bound to a .NET member carries the same vector as `memberSig` — the name changes, the fact does not, and
+        // reading only two of the three left every .NET-interop argument outside the axis (an `object` from an erased
+        // stdlib return handed to a `Nullable<bool>` parameter, with nothing to narrow it). Any of them may be absent
+        // (resolution then falls back to arity), which is not an error.
+        var descriptor = call["sig"] as JsonArray ?? call["argTypes"] as JsonArray ?? call["memberSig"] as JsonArray;
         if (descriptor != null && descriptor.Count != args.Count) descriptor = null;
         var haveDecl = declParams != null && declParams.Length == args.Count;
         var argTypes = new TypeNode[args.Count];
         for (var i = 0; i < args.Count; i++)
         {
-            var target = haveDecl
+            // A declared slot may be individually unknown (a referenced parameter whose declaration the producing
+            // assembly could not state structurally); that position falls back to the descriptor like an undeclared call.
+            var target = haveDecl && declParams[i] != null
                 ? Subst(NullableGenericErasure.EraseNullableTv(declParams[i]), ownerArgs, methodArgs)
                 : null;
             // A CONSTRUCTION whose instantiation is the erasure counterpart of the slot is RETYPED rather than
@@ -86,6 +92,27 @@ static partial class NullableTvErasureCallRealign
                 args[i] = wrapped;
         }
         return argTypes;
+    }
+
+    // A call NetInteropBinding has already BOUND to a .NET member. Only the WRITE axis applies to it: the callee is
+    // .NET, so its declared parameter types (`memberSig`) ARE the declaration and there is nothing Kotlin to
+    // re-derive — but an argument that flowed out of the erasure as a bare `object` still has to be narrowed into the
+    // slot that member declares, or the emitter pushes an `object` where a `Nullable<bool>` is required and the whole
+    // method fails verification. Its own result is the .NET member's and is never re-derived.
+    //
+    // This is the arm the erasure family reaches once a call crosses into .NET: `assertTrue(map.merge(…))` hands an
+    // erased stdlib return straight to `ClassicAssert.IsTrue(bool?)`.
+    static TypeNode EvalClrCall(JsonObject obj, Ctx ctx)
+    {
+        if (obj["recv"] != null) Eval(obj["recv"], ctx);
+        RealignArgs(obj, null, null, null, ctx);
+        // Whatever else the node carries (an index expression, a value) still needs walking; the descriptor keys and
+        // the owner `type` are not operands.
+        foreach (var kv in obj)
+            if (kv.Value != null
+                && kv.Key is not ("recv" or "args" or "k" or "sty" or "type" or "ret" or "memberSig" or "argTypes" or "sig"))
+                Eval(kv.Value, ctx);
+        return Str(obj["k"]) == "newClr" ? TypeJson.Read(obj["type"]) : TypeJson.Read(obj["ret"]);
     }
 
     // An array construction, and the ELEMENTS it is built from, are one operation. The `elem` may already have been
@@ -150,7 +177,8 @@ static partial class NullableTvErasureCallRealign
     {
         if (declParams == null || declParams.Length != args.Count) return;
         for (var i = 0; i < args.Count; i++)
-            if (Subst(NullableGenericErasure.EraseNullableTv(declParams[i]), ownerArgs, null) is TypeNode target
+            if (declParams[i] != null
+                && Subst(NullableGenericErasure.EraseNullableTv(declParams[i]), ownerArgs, null) is TypeNode target
                 && args[i] is JsonObject arg && CastForTarget(arg, argTypes[i], target) is JsonNode wrapped)
                 args[i] = wrapped;
     }

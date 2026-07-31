@@ -44,8 +44,13 @@ using DotKt.Bir;
 //   WRITE — the positions where a value flows INTO a fixed slot, which is the other half of the same formula:
 //           `setLocal`, `setField`, `arraySet`, `return`, an `if/else` value-join, and every call/ctor ARGUMENT
 //           (whose target is the callee's `Subst(Erase(declared param))`, sig included). See the Writes half.
-// Referenced declarations are not indexed (their ref.dll surface has already erased the original `Nullable(Tv)`),
-// but a referenced generic member's owner/return is realigned from the corrected receiver args.
+// REFERENCED declarations are read the same way (#86 D1): the producing assembly states each erased slot's pre-erasure
+// Kotlin type on its `[KotlinNullableGeneric]` carrier, and its physical signature — which IS `Erase(declared)`, with
+// generic parameters retained — states the rest. So a cross-module call's return, arguments and constructor slots are
+// DERIVED from the real declaration exactly as a local one's are, rather than guessed from the call site. The lookup
+// refuses a same-shape overload set outright (ReferenceMetadataIndex.TryNullableGenericSlot): name, static-ness, arity
+// and generic arity are all a call gives us, and picking one sibling of an overload set would manufacture the very
+// mismatch this pass removes.
 static partial class NullableTvErasureCallRealign
 {
     // The pre-erasure declaration of one member: its return AND its parameter vector. A use is typed
@@ -64,6 +69,11 @@ static partial class NullableTvErasureCallRealign
     {
         public readonly Dictionary<string, Dictionary<string, DeclSig>> ByOwner = new(StringComparer.Ordinal);
         public readonly Dictionary<string, DeclSig> TopLevel = new(StringComparer.Ordinal);
+        // The file classes THIS compilation declares. A `callStatic` naming one of them is a same-module top-level
+        // call — its declaration is in `TopLevel`, keyed by bare name+arity — and a `callStatic` naming any other
+        // owner is a call into a referenced assembly. kotc names the owner in both cases, and MemberCallSubstitution
+        // fills it in for the referenced calls that arrived without one, so the owner alone cannot tell them apart.
+        public readonly HashSet<string> FileClasses = new(StringComparer.Ordinal);
         // owner -> ctor arity -> parameter vector. A `new`'s args/argTypes are typed against it, the same way a
         // call's are typed against a method's — a ctor param is a declaration slot like any other (`Cell<T>(x: T?)`).
         public readonly Dictionary<string, Dictionary<int, TypeNode[]>> Ctors = new(StringComparer.Ordinal);
@@ -86,6 +96,7 @@ static partial class NullableTvErasureCallRealign
         // noise — it is what poisons the key and stops a generic declaration from being applied to a call that meant
         // the other one. (`Int.coerceIn(min, max)` beside `<T : Comparable<T>> T.coerceIn(min: T?, max: T?)` is
         // exactly that pair: index only the generic half and every `coerceIn` call gets the erased parameter vector.)
+        if (topLevel && Str(o["fileClass"]) is string fc && fc.Length > 0) idx.FileClasses.Add(fc);
         if (topLevel && o["methods"] is JsonArray topMethods)
             foreach (var m in topMethods)
                 if (m is JsonObject mo && Str(mo["name"]) is string mn && ReadSig(mo) is DeclSig sig)
@@ -185,12 +196,25 @@ static partial class NullableTvErasureCallRealign
     // The struct-ness oracle, needed by the WRITE axis to tell an `object` seam that genuinely needs a conversion
     // (a value / type-variable slot) from one that is plain reference assignment.
     static Func<string, bool> _isValue = _ => false;
+    // The REFERENCED declarations (#86 D1). A slot whose declaration is not in this compilation is read off the
+    // producing assembly instead — its `[KotlinNullableGeneric]` carrier where the erasure recorded one, its physical
+    // signature otherwise — and typed by the identical formula. Null when the build has no references.
+    static ReferenceMetadataIndex _refs;
 
-    public static void Apply(JsonNode root, DeclIndex idx, Func<string, bool> isValue)
+    public static void Apply(JsonNode root, DeclIndex idx, Func<string, bool> isValue, ReferenceMetadataIndex refs)
     {
         _isValue = isValue ?? (_ => false);
+        _refs = refs;
         ApplyRec(root, idx);
     }
+
+    // The CROSS-MODULE half (#86 D1) — the same formula and the same code, run once more at a later point in the
+    // pipeline. It exists because of WHEN a referenced callee acquires an owner: kotc emits a referenced top-level call
+    // as `callStatic owner=null`, and only MemberCallSubstitution attributes it to the file class the reference index
+    // is keyed by, so those calls have no resolvable declaration on the first run. Every rewrite here is gated on a
+    // difference plus the object-erasure relation, so re-deriving a slot the first run already corrected is a no-op.
+    public static void ApplyReferenced(JsonNode root, DeclIndex idx, Func<string, bool> isValue, ReferenceMetadataIndex refs)
+        => Apply(root, idx, isValue, refs);
 
     static void ApplyRec(JsonNode root, DeclIndex idx)
     {
@@ -329,6 +353,12 @@ static partial class NullableTvErasureCallRealign
             }
             case "callInstance":
                 return EvalCallInstance(obj, ctx);
+            case "clrStatic":
+            case "clrInstance":
+            case "clrGenericStatic":
+            case "clrGenericInstance":
+            case "newClr":
+                return EvalClrCall(obj, ctx);
             case "delegateInvoke":
                 // The value a `(…) -> R` invocation produces is the function type's RETURN, which the erasure has
                 // already rewritten in the `funcType` slot. Without this the node reports no type at all and every
@@ -455,7 +485,7 @@ static partial class NullableTvErasureCallRealign
     {
         var idx = ctx.Idx;
         var recvType = obj["recv"] != null ? Eval(obj["recv"], ctx) : null;
-        var stampedRet = TypeJson.Read(obj["dynRet"]) ?? TypeJson.Read(obj["ret"]);
+        var stampedRet = StampedResult(obj);
         if (Str(obj["method"]) is not string method) { RealignArgs(obj, null, null, null, ctx); return stampedRet; }
 
         var nodeOwner = TypeJson.Read(obj["ownerType"]);
@@ -467,23 +497,11 @@ static partial class NullableTvErasureCallRealign
         if (owner == null) { RealignArgs(obj, null, null, null, ctx); return stampedRet; }
 
         // A value returned through an object-erased generic boundary carries the erased instantiation in the
-        // receiver flow. Keep every subsequent member dispatch on that same instantiation. For a generic member
-        // return (Iterator<T>.next(): T, List<T>.iterator(): Iterator<T>, etc.), substitute the corrected receiver
-        // args into the stamped return too; the exact object-erasure gate prevents ordinary widening/narrowing.
+        // receiver flow. Keep every subsequent member dispatch on that same instantiation; the member's own return is
+        // then re-derived from its declaration against those corrected owner args, below.
         if (nodeOwner is TypeNode.Fqn stampedOwner && !owner.Equals(stampedOwner)
             && IsObjectErasureOf(owner, stampedOwner))
-        {
             obj["ownerType"] = TypeJson.Write(owner);
-            if (stampedRet != null
-                && DeriveKnownReceiverReturn(stampedRet, stampedOwner, owner, method) is TypeNode recvDerived
-                && !recvDerived.Equals(stampedRet) && IsObjectErasureOf(recvDerived, stampedRet))
-            {
-                if (obj["ret"] != null) obj["ret"] = TypeJson.Write(recvDerived);
-                if (obj["dynRet"] != null) obj["dynRet"] = TypeJson.Write(recvDerived);
-                RestampSty(obj, recvDerived);
-                stampedRet = recvDerived;
-            }
-        }
 
         // THE RECEIVER IS A USE POSITION TOO. A member call whose receiver flowed out of the erasure as a bare
         // `object` — `t!!.tag()` on a `t: T?`, whose null-check temp is the erased slot — must narrow to the
@@ -502,49 +520,83 @@ static partial class NullableTvErasureCallRealign
             };
         }
 
-        var decl = LookupDecl(owner.Name, method, (obj["args"] as JsonArray)?.Count ?? 0, idx);
         var methodArgs = (obj["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray();
+        var decl = LookupDecl(owner.Name, method, (obj["args"] as JsonArray)?.Count ?? 0,
+            methodArgs?.Length ?? 0, isStatic: false, idx);
         // THE ARGUMENT AXIS: each parameter slot is `Subst(Erase(declared param))` exactly as the return is; with no
-        // local declaration the call's own descriptor stands in (see RealignArgs).
+        // declaration the call's own descriptor stands in (see RealignArgs).
         RealignArgs(obj, decl?.Params, owner.Args, methodArgs, ctx);
-        if (decl == null) return stampedRet;   // no declaration, or an ambiguous same-name/same-arity overload set
+        if (decl?.Ret == null) return stampedRet;   // no declaration, or an ambiguous same-name/same-arity overload set
 
         var derived = Subst(NullableGenericErasure.EraseNullableTv(decl.Ret), owner.Args, methodArgs);
-        if (derived == null) return stampedRet;
-
-        // Rewrite the return ONLY when `derived` is the object-erasure of the stamped return — the exact erasure
-        // boundary, never a genuine widen/narrow. Keeps a direct-write `Ref<Int?>` (derived == stamped) untouched.
-        if (stampedRet != null && !derived.Equals(stampedRet) && IsObjectErasureOf(derived, stampedRet))
-        {
-            if (obj["ret"] != null) obj["ret"] = TypeJson.Write(derived);
-            if (obj["dynRet"] != null) obj["dynRet"] = TypeJson.Write(derived);
-            RestampSty(obj, derived);
-            return derived;
-        }
-        return stampedRet;
+        return ApplyDerivedRet(obj, derived, stampedRet);
     }
 
     static TypeNode EvalCallStatic(JsonObject obj, Ctx ctx)
     {
-        var stampedRet = TypeJson.Read(obj["dynRet"]) ?? TypeJson.Read(obj["ret"]);
+        var stampedRet = StampedResult(obj);
         var methodArgs = (obj["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray();
-        // A same-module top-level call has no owner at this stage. Re-derive a generic function's declaration from
-        // its pre-erasure form, just as EvalCallInstance does for a generic class member.
+        var argCount = (obj["args"] as JsonArray)?.Count ?? 0;
+        // A top-level fun's declaration lives in one of two indexes, and the OWNER decides which: this compilation's own
+        // file class means the same-module `TopLevel` index (keyed by bare name+arity), anything else means a call into
+        // a referenced assembly. Both re-derive the generic function's declaration from its pre-erasure form, just as
+        // EvalCallInstance does for a generic class member.
         NullableTvErasureCallRealign.DeclSig decl = null;
-        if (obj["owner"] == null && Str(obj["method"]) is string method)
-            ctx.Idx.TopLevel.TryGetValue(method + "|" + ((obj["args"] as JsonArray)?.Count ?? 0), out decl);
-        RealignArgs(obj, decl?.Params, null, methodArgs, ctx);
-        if (decl == null) return stampedRet;   // no declaration, or an ambiguous same-name/same-arity overload set
-        var derived = Subst(NullableGenericErasure.EraseNullableTv(decl.Ret), null, methodArgs);
-        if (stampedRet != null && derived != null && !derived.Equals(stampedRet) && IsObjectErasureOf(derived, stampedRet))
+        TypeNode[] ownerArgs = null;
+        if (Str(obj["method"]) is string method)
         {
-            if (obj["ret"] != null) obj["ret"] = TypeJson.Write(derived);
-            if (obj["dynRet"] != null) obj["dynRet"] = TypeJson.Write(derived);
-            RestampSty(obj, derived);
-            return derived;
+            var owner = StaticOwner(obj) as TypeNode.Fqn;
+            if (owner != null && !ctx.Idx.FileClasses.Contains(owner.Name))
+            {
+                decl = LookupDecl(owner.Name, method, argCount, methodArgs?.Length ?? 0, isStatic: true, ctx.Idx);
+                ownerArgs = owner.Args;
+            }
+            else
+                ctx.Idx.TopLevel.TryGetValue(method + "|" + argCount, out decl);
         }
-        return stampedRet;
+        RealignArgs(obj, decl?.Params, ownerArgs, methodArgs, ctx);
+        if (decl?.Ret == null) return stampedRet;   // no declaration, or an ambiguous same-name/same-arity overload set
+        var derived = Subst(NullableGenericErasure.EraseNullableTv(decl.Ret), ownerArgs, methodArgs);
+        return ApplyDerivedRet(obj, derived, stampedRet);
     }
+
+    // What the CALL SITE says its result is: the explicit `ret`/`dynRet` it carries.
+    //
+    // NOT the frontend `sty` stamp, and that is a MEASURED limit rather than an oversight. kotc writes an explicit
+    // `ret` for some generic calls and, for the rest, only `sty` — so a cross-module generic factory
+    // (`holderOf<String>(3)`, which says `Vault<String?>` in `sty` and nothing else) is outside this axis, and its
+    // erased `Vault<object>` return still meets the consumer's restored `Vault<string>` slot as a formal-only
+    // ilverify finding. Deriving from `sty` and WRITING the `ret` does close that one, and was tried: it then reaches
+    // the same call's function-type ARGUMENT, whose delegate the consumer cannot yet build at the erased shape (the
+    // parameter half of the func-slot erasure), turning one formal finding into two `DelegateCtor` ones. So the
+    // `sty`-only call shape lands with the func-slot parameter erasure, not before it.
+    static TypeNode StampedResult(JsonObject obj)
+        => TypeJson.Read(obj["dynRet"]) ?? TypeJson.Read(obj["ret"]);
+
+    // Take the derived result type, ONLY when it is the object-erasure of what the call site stamped — the exact
+    // erasure boundary, never a genuine widen/narrow. A direct-write `Ref<Int?>` (derived == stamped) is untouched.
+    //
+    // A call may state its result in `ret`/`dynRet` or only in the frontend `sty` stamp — kotc emits an explicit `ret`
+    // for some generic calls and leaves others to be resolved from the member. Both are the same claim about the same
+    // value, so both are read, and a rewrite STATES the corrected type in `ret` even where none was written before:
+    // that is what stops ilemit re-inferring the member's return from a call whose surrounding slots have moved, and
+    // it is the same shape UncheckedGenericCastReturnErasure.ApplyReferenced uses at this boundary. `sty` moves with
+    // it, per spec §2.7 — a stamp is a claim about the value produced, never a note about the node it used to be.
+    static TypeNode ApplyDerivedRet(JsonObject obj, TypeNode derived, TypeNode stampedRet)
+    {
+        if (derived == null || stampedRet == null
+            || derived.Equals(stampedRet) || !IsObjectErasureOf(derived, stampedRet))
+            return stampedRet;
+        obj["ret"] = TypeJson.Write(derived);
+        if (obj["dynRet"] != null) obj["dynRet"] = TypeJson.Write(derived);
+        RestampSty(obj, derived);
+        return derived;
+    }
+
+    // The owner of a static call. kotc names a cross-module callee's file class in `ownerType`; MemberCallSubstitution
+    // later restates it as `owner`. A same-module top-level call has neither, and falls to the TopLevel index.
+    static TypeNode StaticOwner(JsonObject obj)
+        => TypeJson.Read(obj["ownerType"]) ?? TypeJson.Read(obj["owner"]) ?? TypeJson.Read(obj["calleeOwner"]);
 
     // A CONSTRUCTION is a call whose declaration is the owner's constructor: its args are typed
     // `Subst(Erase(ctor param), the constructed type's own args)`. `Cell<Int>(null)` is the ctor twin of
@@ -552,68 +604,43 @@ static partial class NullableTvErasureCallRealign
     static TypeNode EvalNew(JsonObject obj, Ctx ctx)
     {
         var type = TypeJson.Read(obj["type"]);
+        var argCount = (obj["args"] as JsonArray)?.Count ?? 0;
         TypeNode[] declParams = null;
-        if (type is TypeNode.Fqn owner && ctx.Idx.Ctors.TryGetValue(owner.Name, out var byArity))
-            byArity.TryGetValue((obj["args"] as JsonArray)?.Count ?? 0, out declParams);
+        if (type is TypeNode.Fqn owner)
+        {
+            if (ctx.Idx.Ctors.TryGetValue(owner.Name, out var byArity)) byArity.TryGetValue(argCount, out declParams);
+            // A REFERENCED owner's constructor is a declaration like any other (#86 D1): `Slot<T>(value: T)` erases to
+            // `.ctor(!0)`, so a `Slot<object>` retyped by the caller's argument realignment must BOX its argument.
+            else if (_refs != null && _refs.TryNullableGenericCtorSlot(owner.Name, argCount, out var refParams))
+                declParams = refParams;
+        }
         RealignArgs(obj, declParams, (type as TypeNode.Fqn)?.Args, null, ctx);
         // The construction may have been RETYPED by the caller's argument realignment before this ran.
         return TypeJson.Read(obj["type"]);
     }
 
-    static readonly HashSet<string> CollectionOwners = new(StringComparer.Ordinal)
+    // The declaration of a member, keyed by EXACT name+arity (DefaultArgSplice has already run, so an app-build call
+    // carries its real arity). A LOCAL owner's declaration is the pre-erasure one this compilation collected; either
+    // component may be a poisoned `null` — an ambiguous same-name/same-arity overload set (AddUnambiguous) — and each
+    // caller skips only the component it cannot trust.
+    //
+    // A REFERENCED owner's declaration comes from the producing assembly (#86 D1): its `[KotlinNullableGeneric]`
+    // carrier at each slot the erasure rewrote, its physical signature (which IS `Erase(declared)`) elsewhere. That is
+    // the real declaration, so the general `Subst(Erase(decl))` rule covers a referenced generic member — including
+    // `Iterable<E>.iterator()`, `Iterator<E>.next()` and `List<E>.get(i)` on a receiver corrected to its erased
+    // instantiation, which a hardcoded member table used to approximate.
+    static DeclSig LookupDecl(string ownerFqn, string method, int argCount, int methodArity, bool isStatic, DeclIndex idx)
     {
-        "kotlin.collections.Iterable", "kotlin.collections.MutableIterable",
-        "kotlin.collections.Collection", "kotlin.collections.MutableCollection",
-        "kotlin.collections.List", "kotlin.collections.MutableList",
-        "kotlin.collections.Set", "kotlin.collections.MutableSet",
-    };
-
-    static readonly HashSet<string> IteratorOwners = new(StringComparer.Ordinal)
-    {
-        "kotlin.collections.Iterator", "kotlin.collections.MutableIterator",
-        "kotlin.collections.ListIterator", "kotlin.collections.MutableListIterator",
-    };
-
-    // Referenced declarations cannot generally be re-derived here: the ref metadata's structured return intentionally
-    // drops unresolved generic parameters. Avoid guessing that every occurrence equal to an owner arg came from that
-    // arg (a member could independently return String on Owner<String>). Propagate only for Kotlin collection members
-    // whose declared owner-arg relationship is fixed and checked structurally below. Local generic owners use their
-    // actual pre-erasure declarations through LookupDeclRet instead.
-    static TypeNode DeriveKnownReceiverReturn(TypeNode stampedRet, TypeNode.Fqn stampedOwner,
-        TypeNode.Fqn correctedOwner, string method)
-    {
-        if (stampedOwner.Args is not { Length: 1 } fromArgs
-            || correctedOwner.Args is not { Length: 1 } toArgs) return stampedRet;
-        var from = fromArgs[0];
-        var to = toArgs[0];
-
-        // Iterable<E>.iterator(): Iterator<E> (and the mutable/list iterator variants).
-        if ((method == "iterator" || method == "listIterator") && CollectionOwners.Contains(stampedOwner.Name)
-            && stampedRet is TypeNode.Fqn { Args: { Length: 1 } retArgs } ret
-            && IteratorOwners.Contains(ret.Name) && retArgs[0].Equals(from))
-            return new TypeNode.Fqn(ret.Name, new[] { to });
-
-        // Iterator<E>.next()/ListIterator<E>.previous(): E.
-        if ((method == "next" || method == "previous") && IteratorOwners.Contains(stampedOwner.Name)
-            && stampedRet.Equals(from))
-            return to;
-
-        // List<E>.get(index): E.
-        if (method == "get" && stampedOwner.Name is "kotlin.collections.List" or "kotlin.collections.MutableList"
-            && stampedRet.Equals(from))
-            return to;
-
-        return stampedRet;
+        if (idx.ByOwner.TryGetValue(ownerFqn, out var sigs))
+            return sigs.TryGetValue(method + "|" + argCount, out var local) ? local : null;
+        return LookupReferencedDecl(ownerFqn, method, argCount, methodArity, isStatic);
     }
 
-    // The declaration of a LOCAL owner's member, keyed by EXACT name+arity (DefaultArgSplice has already run, so an
-    // app-build call carries its real arity). Either component may be a poisoned `null` — an ambiguous
-    // same-name/same-arity overload set (AddUnambiguous) — and each caller skips only the component it cannot trust.
-    // Referenced (stdlib) owners are intentionally OUT of scope here: the ref.dll surface names `object` (not a bare
-    // `Tv`) so a reflected member cannot be re-derived safely — see the header note.
-    static DeclSig LookupDecl(string ownerFqn, string method, int argCount, DeclIndex idx)
-        => idx.ByOwner.TryGetValue(ownerFqn, out var sigs) && sigs.TryGetValue(method + "|" + argCount, out var local)
-            ? local : null;
+    static DeclSig LookupReferencedDecl(string ownerFqn, string method, int argCount, int methodArity, bool isStatic)
+        => _refs != null
+           && _refs.TryNullableGenericSlot(ownerFqn, method, isStatic, argCount, methodArity, out var ret, out var ps)
+            ? new DeclSig { Ret = ret, Params = ps }
+            : null;
 
     // Substitute class-scope `tv{type,i}` with `typeArgs[i]` and method-scope `tv{method,i}` with `methodArgs[i]`,
     // recursively. Returns null when a needed binding is unavailable (caller skips the rewrite).
