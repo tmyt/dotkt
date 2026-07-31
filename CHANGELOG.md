@@ -70,13 +70,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   exactly one slice of this: a receiver spelled
   as a plain LOCAL, whose constraint owner was GENERIC (`fun <N : Node<N>> N.close()`), because that is the slice
   where the MemberRef is invalid as well. Everything else was emitted unverifiably — an ordinary non-suspend
-  function, a local copy of the parameter, a field read, a `T`-returning call result, and (the shape that had an
-  ilverify baseline entry) the state-machine field the suspend lowering spills a suspend function's receiver into.
+  function, a local copy of the parameter, a field read, a `T`-returning call result, a property accessor body, a
+  nullable `T?` receiver behind `!!`, and (the shape that had an ilverify baseline entry) the state-machine field
+  the suspend lowering spills a suspend function's receiver into.
   The binding is now keyed on the receiver's STATIC TYPE, read through the one uniform source
   (`StaticType.Surface`), so the spelling no longer decides; and the owner is closed from the type parameter's
-  lexical bound only where BIR names it bare, an already-constructed or non-generic owner being closed already. It
+  lexical bound only where BIR names it bare, an already-constructed or non-generic owner being closed already —
+  or, for a member declared on a generic BASE of the bound, by the inherited-owner hierarchy substitution this
+  pass now runs after. It
   moved out of `InheritedMemberOwnerBinding` — whose subject is the hierarchy substitution `Derived<T>.m` ->
   `Base<T>.m`, not a constraint — into its own `ConstrainedTypeParameterReceiverBinding`.
+  Only the DISPATCH changes: the call's overload key, a generic member's instantiation and its declared result
+  view all ride the node into ilemit, which applies them on the constrained arm exactly as on the ordinary one.
+  (Without that, the constrained form dispatches `t.describe(7)` to the `String` overload and calls a generic
+  member's uninstantiated definition — a silently wrong answer and a runtime `InvalidOperationException`; both
+  are now pinned by value in `tests/basic`.)
 - **bir2cir (area:bir2cir): `await(captureContext = <expression>)` no longer refuses a non-constant Boolean
   ([tmyt/dotkt#64]).** dll2klib publishes two await bridges for an awaitable that exposes `ConfigureAwait(bool)` —
   `await()` and `await(captureContext: Boolean)` — so `task.await(captureContext = policy)` is a frontend-resolved
