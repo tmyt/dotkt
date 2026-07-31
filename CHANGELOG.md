@@ -218,6 +218,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `memberSig` states the callee's parameters OPEN and stays that way for member matching, so
   `Enumerable.Repeat<Int?>` was casting an erased argument to whatever `!!0` lowered to in the CALLER — an
   `InvalidProgramException` before the method printed anything, now covered by a fixture.
+  Whether a call is `.NET`-bound is now read off its KIND rather than off which descriptor key holds its parameter
+  vector. A GENERIC .NET call carries `memberSig` from the moment it is bound; a NON-GENERIC one carries `argTypes`
+  until member resolution stamps `memberSig`, which happens long after this narrowing is decided — so every
+  non-generic .NET call was taking the Kotlin fallback, whose widening screen drops reference slots. An erased
+  `object` therefore reached a `string` parameter with no `castclass`: `Path.GetExtension(…)`,
+  `StringBuilder.Append(…)` and `StringBuilder(…)` all ran (both sides are references) while the emitted method
+  failed verification with `[found ref 'object'][expected ref 'string']`. All three shapes are fixtures now, in the
+  suite whose ILVerify lane is what catches a fault a RUN assertion cannot see.
 
 - **bir2cir (area:bir2cir): a `vararg xs: T?` pack is built at the erased element type (#86).** The packed array and
   its elements are ONE decision: the pack fills an `Array<T?>` slot erased to `object[]`, and built as

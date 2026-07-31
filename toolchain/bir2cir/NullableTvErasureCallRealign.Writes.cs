@@ -49,12 +49,18 @@ static partial class NullableTvErasureCallRealign
         // bound to a .NET member carries the same vector as `memberSig` — the name changes, the fact does not, and
         // reading only two of the three left every .NET-interop argument outside the axis (an `object` from an erased
         // stdlib return handed to a `Nullable<bool>` parameter, with nothing to narrow it). Any of them may be absent
-        // (resolution then falls back to arity), which is not an error. WHICH one answered is remembered: the .NET
-        // arm's descriptor is a resolved CLR signature, the other two are Kotlin vocabulary, and the fallback below
-        // trusts them to different depths.
-        var clrBound = false;
-        var descriptor = call["sig"] as JsonArray ?? call["argTypes"] as JsonArray;
-        if (descriptor == null && call["memberSig"] is JsonArray memberSig) { descriptor = memberSig; clrBound = true; }
+        // (resolution then falls back to arity), which is not an error.
+        //
+        // WHETHER the descriptor is a resolved CLR signature or Kotlin vocabulary is remembered, because the fallback
+        // below trusts the two to different depths — and that is decided by the call's KIND, never by which key holds
+        // the vector. A `clr*` node is .NET-bound by construction; its key only records how far resolution has got. A
+        // GENERIC .NET call carries `memberSig` from the moment NetInteropBinding reshapes it, while a NON-GENERIC one
+        // carries `argTypes` until ClrMemberResolution stamps `memberSig` — which happens long AFTER this pass runs.
+        // Reading .NET-boundness off `memberSig`'s presence therefore left every non-generic .NET call on the Kotlin
+        // fallback, where the widening screen below drops every reference slot: an erased `object` reached a `string`
+        // parameter with no `castclass` at all, and the emitter pushed it into a slot the CLR does not accept.
+        var clrBound = IsClrBoundKind(Str(call["k"]));
+        var descriptor = call["sig"] as JsonArray ?? call["argTypes"] as JsonArray ?? call["memberSig"] as JsonArray;
         if (descriptor != null && descriptor.Count != args.Count) descriptor = null;
         var haveDecl = declParams != null && declParams.Length == args.Count;
         var haveRefusals = declRefused != null && declRefused.Length == args.Count;
@@ -110,11 +116,12 @@ static partial class NullableTvErasureCallRealign
             // direction — and narrowing out of `object` needs a conversion whatever the target is, `unbox.any` for a
             // value and `castclass` for a reference. Which one, and whether one is needed at all, is CastForTarget's
             // asymmetric rule. Screening it with the WIDENING test (`NeedsObjectSeam`) drops every reference target,
-            // which for the .NET arm left an `object` where a `string` was required — measured, and the reason that
-            // arm is unscreened. The Kotlin `sig` / ctor `argTypes` arms KEEP the screen: their descriptor is the
-            // call's own substituted view rather than a resolved CLR signature, so an unrestricted reference cast
-            // there would be typed by something that may not be the callee's slot at all. Widening the two Kotlin
-            // arms needs its own evidence, and there is none yet.
+            // which for the .NET arm left an `object` where a `string` was required — measured at BOTH arities, and
+            // the reason that arm is unscreened whatever key its descriptor arrived under. The KOTLIN arms — a
+            // `callStatic`/`callInstance`'s `sig` and a Kotlin `new`'s `argTypes` — KEEP the screen: their descriptor
+            // is the call's own substituted view rather than a resolved CLR signature, so an unrestricted reference
+            // cast there would be typed by something that may not be the callee's slot at all. Widening those needs
+            // its own evidence, and there is none yet.
             else if (!refused && descriptor != null && TypeJson.Read(descriptor[i]) is TypeNode slot
                      && IsBareObject(argTypes[i])
                      && Subst(slot, ownerArgs, methodArgs) is TypeNode closed
@@ -125,6 +132,13 @@ static partial class NullableTvErasureCallRealign
         }
         return argTypes;
     }
+
+    // The call kinds NetInteropBinding (and MemberCallSubstitution, for a constructor) produces once a call is BOUND to
+    // a .NET member. Being one of these is what makes the node's argument descriptor a .NET declaration rather than the
+    // caller's own Kotlin view — the single statement of that fact, read both by the walk that routes these nodes to
+    // EvalClrCall and by the argument realignment that decides how far to trust their descriptor.
+    static bool IsClrBoundKind(string k) =>
+        k is "clrStatic" or "clrInstance" or "clrGenericStatic" or "clrGenericInstance" or "newClr";
 
     // A call NetInteropBinding has already BOUND to a .NET member. Only the WRITE axis applies to it: the callee is
     // .NET, so its declared parameter types (`memberSig`) ARE the declaration and there is nothing Kotlin to

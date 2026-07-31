@@ -358,11 +358,7 @@ static partial class NullableTvErasureCallRealign
             }
             case "callInstance":
                 return EvalCallInstance(obj, ctx);
-            case "clrStatic":
-            case "clrInstance":
-            case "clrGenericStatic":
-            case "clrGenericInstance":
-            case "newClr":
+            case string ck when IsClrBoundKind(ck):
                 return EvalClrCall(obj, ctx);
             case "delegateInvoke":
                 // The value a `(…) -> R` invocation produces is the function type's RETURN, which the erasure has
