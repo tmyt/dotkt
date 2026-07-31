@@ -1575,6 +1575,18 @@ What this is observable as, beyond the boxing already listed above:
 - **`copyOf(newSize)` decides at runtime.** Its generic body has no `T : struct` constraint and no reified `T`, so it
   reads the receiver's own element type: a value element allocates `object[]`, a reference element allocates
   `elem[]`. Both inhabit the erased `object[]` the declaration states — the reference one by array covariance.
+- **The `arrayOfNulls<T>(n) … as Array<T>` idiom no longer works.** `arrayOfNulls` honestly returns `Array<T?>`, which
+  is `object[]`, and `object[]` is not castable to `int32[]`. Allocate the real thing instead: the array constructor
+  `Array(n) { … }` for a concrete element, or `System.Array.CreateInstance(T::class, n)` for a reified one.
+
+`Int?` therefore has **two physical forms by position** — `object` as an array element, `Nullable<int32>` as an
+ordinary type argument — and a generic that carries the element from one into the other can satisfy only one of them.
+`fun f(xs: Array<Int?>): List<Int?> = xs.toList()` is the shape: the receiver forces `T = object`, so the result is a
+`List<object>` where the declared `List<Int?>` slot is an `IReadOnlyCollection<Nullable<int32>>`. A local `val` is
+unaffected (its slot is retyped from the value); a declared return, field or parameter of a constructed generic over
+`Int?` has nowhere to move. Closing it needs the type-argument half of the same decision — whether `X?` is `object` at
+every type-argument position, making `List<Int?>` a `List<object>` — and that is not settled; the shape is carried as
+`roundtrip-nullable-vt-generic-array-to-collection` in `tests/roundtrip/scenarios/run.sh`.
 
 One shape is incomplete rather than non-uniform: an override that narrows a base `T?` slot fills the base's erased
 slot correctly and dispatches, but calling it through its **own** declared type does not bind cross-module — that

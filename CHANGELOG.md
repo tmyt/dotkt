@@ -154,6 +154,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   the real `string[]` its `Array<String?>` slot names. The user-visible consequences are recorded in
   `docs/dotkt-semantics.md` §9c-bis: `Array<Int?>` surfaces to C# as `object[]` rather than `int?[]`, its elements
   box, and `is Array<Int?>` loses precision.
+  **One shape regresses and is listed rather than hidden**, because it is what says D2 cannot be finished on its own:
+  `Int?` now has two physical forms by POSITION — `object` as an array element, `Nullable<int32>` as an ordinary type
+  argument — so a generic carrying the element across that boundary can satisfy one end or the other, not both.
+  `fun f(xs: Array<Int?>): List<Int?> = xs.toList()` instantiates at `object` (nothing else accepts an `object[]`) and
+  hands back a `List<object>` where the declared slot is an `IReadOnlyCollection<Nullable<int32>>`. It is driven
+  same-module as `roundtrip-nullable-vt-generic-array-to-collection` and blocked on the type-argument half of the
+  decision: either `X?` is `object` at every type-argument position (`List<Int?>` becomes `List<object>`), or the
+  concrete `Array<Int?>` keeps a representation of its own after all.
 - **bir2cir (area:bir2cir): a nullable generic `T?` now has ONE physical CLR representation — `System.Object` — at
   every position (#86).** `Nullable<T>` is inexpressible for an unconstrained `T` and a bare `!T` slot collapses a
   null to `default(T)`, so a `T?` slot has exactly one sound CLR form; the backend nevertheless kept two, erasing
