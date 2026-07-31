@@ -38,7 +38,18 @@ declare -A ILVERIFY_XFAIL=(
 	# type argument against the flowed `List<object>` as well, which is deliberately NOT done for a reference binding:
 	# pairing constructed types by argument position is only sound for the family D2 moves, and widening it reached
 	# ordinary generic calls (a contravariant `Comparator<in T>`, a `Derived<U> : Base<String>` seen through its base).
-	["ArrayTests::copyOfGrowsWithNullTail()"]="#86 D2: an object-erased Array<T?> result instantiates Array<T>.toList() at T=object, so its List<object> meets a Collection<string> slot at the REFERENCE element — runtime-safe (RUN green); closed by unifying a consumer's type argument for reference bindings too, which needs a sound base-view pairing first"
+	["ArrayTests::copyOfGrowsWithNullTail()"]="#86 D2: an object-erased Array<T?> result instantiates Array<T>.toList() at T=object, so its List<object> meets a Collection<string> slot at the REFERENCE element — runtime-safe (RUN green); closed by unifying a consumer's type argument across DIFFERENT generic heads, which needs a sound base-view projection first"
+	# The same shape at the VALUE element, and it is here because the type-argument unification now requires the flowed
+	# and declared generic HEADS to be the same definition. `Array<Int?>.toList()` yields an `IReadOnlyList<object>`
+	# and its consumer's slot is an `IReadOnlyCollection<!!0>` — a different head, so nothing is inferred from it and
+	# the consumer stays at `Nullable<int32>`. Pairing those two by ARGUMENT POSITION would close the finding and did,
+	# until it was measured against `class Fixed<U> : Base<Int?>`: a `Fixed<object>` arriving at a `Base<T>` parameter
+	# zips `T` to `object` although the argument is a `Base<Nullable<int32>>` and never was a `Base<object>`, which
+	# resolves a member the emitted call does not have. Position-pairing is only sound within one definition; across
+	# heads it needs the supertype walk to project the flowed type onto the declared head first. Both fixtures RUN
+	# green — only object-level members are dispatched on the result.
+	["ArrayTests::boxedGenericValues()"]="#86 D2: an Array<Int?> instantiates Array<T>.toList() at T=object, so its IReadOnlyList<object> meets an IReadOnlyCollection<Nullable<int32>> slot — runtime-safe (RUN green); the consumer's own type argument is not inferred across DIFFERENT generic heads, which would need a base-view projection to be sound"
+	["ArrayTests::arrayOfNulls()"]="#86 D2: an Array<Int?> instantiates Array<T>.toList() at T=object, so its IReadOnlyList<object> meets an IReadOnlyCollection<Nullable<int32>> slot — runtime-safe (RUN green); the consumer's own type argument is not inferred across DIFFERENT generic heads, which would need a base-view projection to be sound"
 	# #324: the value-element collection receiver conversion produces an `IEnumerable<object>` (all
 	# `Enumerable.Cast<object>` can produce), which does not FORMALLY inhabit a `List<T?>` slot's
 	# `IReadOnlyList<object>`. The conversion is now keyed correctly — on the receiver's own nullable element, not on

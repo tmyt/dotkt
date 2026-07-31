@@ -198,12 +198,14 @@ static class BirTypeLowering
     };
 
     // Whether the INNER of a `{t:nullable}` node is a value type — evaluated on the SEMANTIC (pre-lowering) inner so a
-    // struct/enum/primitive FQN is recognized before it is rewritten to a CLR shorthand / BCL name. A generic
-    // application, function type, array, byRef, or type variable is treated as a reference (stripped). A value FQN
-    // keeps the wrapper (a value `T?` is the structural `System.Nullable<T>`).
+    // struct/enum/primitive FQN is recognized before it is rewritten to a CLR shorthand / BCL name. A function type,
+    // array, byRef, or type variable is treated as a reference (stripped). A value FQN keeps the wrapper (a value `T?`
+    // is the structural `System.Nullable<T>`) — INCLUDING a constructed one: `ArraySegment<String>` is a struct and
+    // `ArraySegment<String>?` is a `Nullable<ArraySegment<String>>`. The oracle answers false for a constructed
+    // REFERENCE generic, so `List<String>?` still strips.
     static bool IsValueNullableInner(TypeNode of) => of switch
     {
-        TypeNode.Fqn { Args: null } f => _isValueFqn(f.Name),
+        TypeNode.Fqn f => _isValueFqn(f.Name),
         _ => false,
     };
 

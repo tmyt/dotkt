@@ -140,7 +140,9 @@ static class ValueTypeNullableCollectionArg
         _ => null,
     };
 
-    // Is this type argument a value type, per the struct-ness oracle, on the pre-lowering structured Type node?
+    // Is this type argument a value type, per the struct-ness oracle, on the pre-lowering structured Type node? A
+    // CONSTRUCTED name is asked like any other — `KeyValuePair<K,V>` is a struct — and the oracle, which strips
+    // generic arity, answers false for a constructed reference generic.
     static bool IsValueTypeArg(JsonNode n)
-        => TypeJson.Read(n) is TypeNode.Fqn { Args: null } f && _isValue(f.Name);
+        => TypeJson.Read(n) is TypeNode.Fqn f && _isValue(f.Name);
 }

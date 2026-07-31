@@ -19,9 +19,11 @@ static class NullableFuncReturnErasure
     // confirmed ECMA-335 rule: the ldftn target's return must be assignable-TO the delegate `Invoke` return.
     static Func<string, bool> _isValue = _ => false;
 
+    // A CONSTRUCTED struct is a struct: `ArraySegment<String>?` in a function-type return needs the same erasure its
+    // argument-less siblings do, and the oracle answers false for a constructed reference generic.
     static bool ShouldEraseNullableInner(TypeNode of) => of switch
     {
-        TypeNode.Fqn { Args: null } f => _isValue(f.Name),
+        TypeNode.Fqn f => _isValue(f.Name),
         _ => false,
     };
 

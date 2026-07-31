@@ -207,8 +207,16 @@ static partial class NullableTvErasureCallRealign
                 case (TypeNode.Nullable dn, TypeNode.Nullable fn): Walk(dn.Of, fn.Of, nested, underArray); break;
                 case (TypeNode.Oblivious dobl, TypeNode.Oblivious fo): Walk(dobl.Of, fo.Of, nested, underArray); break;
                 case (TypeNode.ByRef db, TypeNode.ByRef fb): Walk(db.Of, fb.Of, nested, underArray); break;
-                case (TypeNode.Fqn { Args: { } dargs }, TypeNode.Fqn { Args: { } fargs })
-                    when dargs.Length == fargs.Length:
+                // SAME HEAD, or nothing. Two constructed types pair position-by-position only when they are the same
+                // definition; across different heads the declared type's arguments are not the flowed type's, they are
+                // whatever its supertype declaration fixed them to. `class Fixed<U> : Base<Int?>` flowing as
+                // `Fixed<object>` into a `Base<T>` parameter would zip `T` against `object` and instantiate the callee
+                // at `object`, though the argument is a `Base<Nullable<int32>>` and never was a `Base<object>` — an
+                // argument the emitted member does not accept. Projecting onto the declared head instead of skipping
+                // means walking the supertype chain, which is a subtyping question this pass does not need to answer:
+                // it exists to notice an `object[]`, and an array pairs by its own shape, not by a head.
+                case (TypeNode.Fqn { Args: { } dargs } df, TypeNode.Fqn { Args: { } fargs } ff)
+                    when dargs.Length == fargs.Length && df.Name == ff.Name:
                     for (var i = 0; i < dargs.Length; i++) Walk(dargs[i], fargs[i], nested: true);
                     break;
             }
