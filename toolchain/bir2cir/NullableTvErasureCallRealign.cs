@@ -292,6 +292,12 @@ static partial class NullableTvErasureCallRealign
                 return null;
             case "cond":
                 return EvalCond(obj, ctx);
+            case "forEachInline":
+            case "forArray":
+                // A loop VARIABLE is a slot, and its type is the source's element type — the iteration twin of
+                // `arrayGet`'s `elem`. An erased source (`Iterable<T?>` is `IEnumerable<object>`) yields `object`, so
+                // a stamped bare `!T` element would unbox every element, including a null one.
+                return EvalForEach(obj, ctx);
             case "nullableHasValue":
             case "nullableValue":
                 // Both read a structural `Nullable<V>` — `HasValue` and `Value`. An erased slot hands them an
@@ -384,7 +390,7 @@ static partial class NullableTvErasureCallRealign
         var argTypes = EvalArgs(obj, ctx);
 
         var stampedRet = TypeJson.Read(obj["dynRet"]) ?? TypeJson.Read(obj["ret"]);
-        if (Str(obj["method"]) is not string method) return stampedRet;
+        if (Str(obj["method"]) is not string method) { RealignArgs(obj, null, null, null, argTypes, ctx); return stampedRet; }
 
         var nodeOwner = TypeJson.Read(obj["ownerType"]);
         // The corrected owner: prefer the receiver's flowed static type (it may be an erased `Ref<object>`), else the
@@ -392,7 +398,7 @@ static partial class NullableTvErasureCallRealign
         // — it is a receiver needing narrowing (below), and the stamped ownerType stays authoritative.
         var erasedRecv = recvType is TypeNode.Fqn { Name: "object", Args: null };
         var owner = (erasedRecv ? null : recvType as TypeNode.Fqn) ?? nodeOwner as TypeNode.Fqn;
-        if (owner == null) return stampedRet;
+        if (owner == null) { RealignArgs(obj, null, null, null, argTypes, ctx); return stampedRet; }
 
         // A value returned through an object-erased generic boundary carries the erased instantiation in the
         // receiver flow. Keep every subsequent member dispatch on that same instantiation. For a generic member
@@ -432,11 +438,11 @@ static partial class NullableTvErasureCallRealign
 
         var argCount = argTypes?.Length ?? 0;
         var decl = LookupDecl(owner.Name, method, argCount, idx);
-        if (decl == null) return stampedRet;
-
         var methodArgs = (obj["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray();
-        // THE ARGUMENT AXIS: each parameter slot is `Subst(Erase(declared param))` exactly as the return is.
-        RealignArgs(obj, decl.Params, owner.Args, methodArgs, argTypes, ctx);
+        // THE ARGUMENT AXIS: each parameter slot is `Subst(Erase(declared param))` exactly as the return is; with no
+        // local declaration the call's own descriptor stands in (see RealignArgs).
+        RealignArgs(obj, decl?.Params, owner.Args, methodArgs, argTypes, ctx);
+        if (decl == null) return stampedRet;
 
         var derived = Subst(NullableGenericErasure.EraseNullableTv(decl.Ret), owner.Args, methodArgs);
         if (derived == null) return stampedRet;
@@ -457,13 +463,14 @@ static partial class NullableTvErasureCallRealign
     {
         var argTypes = EvalArgs(obj, ctx);
         var stampedRet = TypeJson.Read(obj["dynRet"]) ?? TypeJson.Read(obj["ret"]);
+        var methodArgs = (obj["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray();
         // A same-module top-level call has no owner at this stage. Re-derive a generic function's declaration from
         // its pre-erasure form, just as EvalCallInstance does for a generic class member.
-        if (obj["owner"] != null || Str(obj["method"]) is not string method) return stampedRet;
-        var key = method + "|" + (argTypes?.Length ?? 0);
-        if (!ctx.Idx.TopLevel.TryGetValue(key, out var decl) || decl == null) return stampedRet;
-        var methodArgs = (obj["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray();
-        RealignArgs(obj, decl.Params, null, methodArgs, argTypes, ctx);
+        NullableTvErasureCallRealign.DeclSig decl = null;
+        if (obj["owner"] == null && Str(obj["method"]) is string method)
+            ctx.Idx.TopLevel.TryGetValue(method + "|" + (argTypes?.Length ?? 0), out decl);
+        RealignArgs(obj, decl?.Params, null, methodArgs, argTypes, ctx);
+        if (decl == null) return stampedRet;
         var derived = Subst(NullableGenericErasure.EraseNullableTv(decl.Ret), null, methodArgs);
         if (stampedRet != null && derived != null && !derived.Equals(stampedRet) && IsObjectErasureOf(derived, stampedRet))
         {
@@ -482,10 +489,11 @@ static partial class NullableTvErasureCallRealign
     {
         var argTypes = EvalArgs(obj, ctx);
         var type = TypeJson.Read(obj["type"]);
+        TypeNode[] declParams = null;
         if (type is TypeNode.Fqn owner && argTypes != null
-            && ctx.Idx.Ctors.TryGetValue(owner.Name, out var byArity)
-            && byArity.TryGetValue(argTypes.Length, out var declParams) && declParams != null)
-            RealignArgs(obj, declParams, owner.Args, null, argTypes, ctx);
+            && ctx.Idx.Ctors.TryGetValue(owner.Name, out var byArity))
+            byArity.TryGetValue(argTypes.Length, out declParams);
+        RealignArgs(obj, declParams, (type as TypeNode.Fqn)?.Args, null, argTypes, ctx);
         return type;
     }
 

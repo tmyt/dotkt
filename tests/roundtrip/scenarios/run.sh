@@ -46,14 +46,14 @@ declare -A RT_XFAIL=(
 	# siblings, the same-module and cross-module override narrowings, and all three top-level-`T?`-RETURN
 	# entries. Their sections are green and unlisted now; the shapes they drove stay as the controls they were.
 	#
-	# The stdlib idioms whose VALUE instantiations do not resolve. Their reference-element and eager twins are
-	# green in the NUnit lane, which is what makes the pair a measurement rather than a note. The declaration
-	# axis is no longer the variable — the uniform erasure landed and neither moved — so what remains is the
-	# CALL-SITE receiver conversion: a value-element collection is not covariantly the `IEnumerable<object>` an
-	# erased `Iterable<T?>` receiver names, and `ValueTypeNullableCollectionArg` picks its element off
-	# `typeArgs[0]`, which is `C` and not `T` for a two-parameter `filterNotNullTo`.
-	[roundtrip-nullable-vt-generic-filternotnullto]="#86: List<Int?>/List<Boolean?>.filterNotNullTo does not resolve at a VALUE element — System.EntryPointNotFoundException — while the same call at a REFERENCE element is green; pruned by the struct-ness-oracle narrowing of ValueTypeNullableCollectionArg (its element is read off typeArgs[0], which is C rather than T here)"
-	[roundtrip-nullable-vt-generic-seq-mapnotnull]="#86: Sequence.mapNotNull does not resolve at a VALUE element — System.EntryPointNotFoundException — while the eager Iterable.mapNotNull twin is green; pruned by the struct-ness-oracle narrowing of ValueTypeNullableCollectionArg"
+	# The LAZY half of the pair. Its eager twin (`Iterable.mapNotNull`, and `filterNotNullTo` at a value element,
+	# which this list used to carry) is green, so neither the declaration axis nor the collection-receiver
+	# conversion is the variable any more. What is left is specific to the sequence path and is NOT a receiver
+	# argument at all: a Kotlin `Sequence` is not `@ClrTypeAlias`'d to `IEnumerable`, so nothing converts the
+	# receiver — the mismatch is the sequence's OWN element type, erased to `object` by the `(T) -> R?` transform
+	# while the declared result stays `Sequence<R>`, and the terminal then looks for a member of the declared
+	# instantiation on a sequence that does not implement it.
+	[roundtrip-nullable-vt-generic-seq-mapnotnull]="#86: Sequence.mapNotNull at a VALUE element yields a sequence whose elements are the erased object while its declared result stays Sequence<Int>, so the terminal toList's IEnumerable<int32>.GetEnumerator is not found on it — System.EntryPointNotFoundException — while the eager Iterable.mapNotNull twin is green; needs the erased-to-declared element conversion on the sequence path, which is not the collection-receiver conversion (a Kotlin Sequence is not @ClrTypeAlias'd to IEnumerable, so no receiver argument is involved)"
 	# D2 — `Array<X?>` has no single representation: a CONCRETE Array<Int?> is Nullable<int32>[] while the
 	# erased/open form is object[], and the two are unrelated CLR types (ECMA-335 I.8.7.1 — array
 	# compatibility requires reference-compatible elements). Measured, the re-imported slot is not even an
@@ -87,7 +87,6 @@ declare -A RT_XFAIL=(
 # here reddens as an XFAIL SHAPE MISMATCH instead. Every entry above carries one; a listed name with no shape
 # would be a name-only XFAIL again.
 declare -A RT_XFAIL_SHAPE=(
-	[roundtrip-nullable-vt-generic-filternotnullto]='System.EntryPointNotFoundException'
 	[roundtrip-nullable-vt-generic-seq-mapnotnull]='System.EntryPointNotFoundException'
 	[roundtrip-nullable-vt-generic-array-param]="but 'IntArray' was expected"
 	# No diagnostic and no exception: this one fails by printing a WRONG VALUE, so the shape is the value.

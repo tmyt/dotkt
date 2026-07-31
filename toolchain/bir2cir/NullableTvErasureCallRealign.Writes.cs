@@ -35,29 +35,65 @@ static partial class NullableTvErasureCallRealign
         return types;
     }
 
-    // Realign every argument position of a call/construction against the callee's declared parameter vector.
-    // `declParams` is PRE-erasure, so the target is `Subst(Erase(p), ownerArgs, methodArgs)` — never
+    // Realign every argument position of a call/construction against the slot it fills.
+    //
+    // With the callee's DECLARATION in hand the target is `Subst(Erase(p), ownerArgs, methodArgs)` — never
     // `Erase(Subst(...))`, which is the distinction the whole family turns on: substituting first destroys the `Tv`
-    // that tells `Erase` this position was erased at all.
+    // that tells `Erase` this position was erased at all. The signature DESCRIPTOR is corrected to the same type,
+    // because it is what the emitter resolves the member by: leave it substituted and the emitter looks for a member
+    // that does not exist.
+    //
+    // With no declaration — a REFERENCED callee, whose ref.dll surface already names `object` rather than a bare `Tv`
+    // — the descriptor is the only statement of the slot there is, and it is authoritative precisely because it is
+    // what the member will be resolved by. That fallback is restricted to the `object` seam: a value flowed out of
+    // the erasure as a bare `object` and the descriptor names a slot the CLR cannot hand an `object` to. Anything
+    // wider would be guessing against a descriptor that may itself be the substituted (pre-erasure) view.
     static void RealignArgs(JsonObject call, TypeNode[] declParams, TypeNode[] ownerArgs, TypeNode[] methodArgs,
         TypeNode[] argTypes, Ctx ctx)
     {
-        if (declParams == null || argTypes == null || declParams.Length != argTypes.Length) return;
-        if (call["args"] is not JsonArray args || args.Count != declParams.Length) return;
-        // The descriptor ilemit resolves the member by. A callStatic/callInstance carries `sig`; a `new` carries
-        // `argTypes`. Either may be absent (resolution then falls back to arity), which is not an error.
+        if (argTypes == null || call["args"] is not JsonArray args || args.Count != argTypes.Length) return;
+        // A callStatic/callInstance carries `sig`; a `new` carries `argTypes`. Either may be absent (resolution then
+        // falls back to arity), which is not an error.
         var descriptor = call["sig"] as JsonArray ?? call["argTypes"] as JsonArray;
-        if (descriptor != null && descriptor.Count != declParams.Length) descriptor = null;
-        for (var i = 0; i < declParams.Length; i++)
+        if (descriptor != null && descriptor.Count != args.Count) descriptor = null;
+        var haveDecl = declParams != null && declParams.Length == args.Count;
+        for (var i = 0; i < args.Count; i++)
         {
-            if (Subst(NullableGenericErasure.EraseNullableTv(declParams[i]), ownerArgs, methodArgs) is not TypeNode target)
-                continue;
-            if (descriptor != null && TypeJson.Read(descriptor[i]) is TypeNode stamped
-                && !stamped.Equals(target) && IsObjectErasureOf(target, stamped))
-                descriptor[i] = TypeJson.Write(target);
-            if (args[i] is JsonObject arg && CastForTarget(arg, argTypes[i], target) is JsonNode wrapped)
+            TypeNode target = null;
+            if (haveDecl
+                && Subst(NullableGenericErasure.EraseNullableTv(declParams[i]), ownerArgs, methodArgs) is TypeNode derived)
+            {
+                target = derived;
+                if (descriptor != null && TypeJson.Read(descriptor[i]) is TypeNode stamped
+                    && !stamped.Equals(derived) && IsObjectErasureOf(derived, stamped))
+                    descriptor[i] = TypeJson.Write(derived);
+            }
+            else if (!haveDecl && descriptor != null && TypeJson.Read(descriptor[i]) is TypeNode slot
+                     && IsBareObject(argTypes[i]) && NeedsObjectSeam(slot))
+                target = slot;
+            if (target != null && args[i] is JsonObject arg && CastForTarget(arg, argTypes[i], target) is JsonNode wrapped)
                 args[i] = wrapped;
         }
+    }
+
+    // An inline iteration binds a loop VARIABLE, whose type is the node's `elem`. Registering it makes the body's
+    // reads of that variable flow with a type instead of none, which is what lets a value consumer inside the loop be
+    // reconciled at all.
+    //
+    // The `elem` itself is NOT re-derived from the source here. Erasing a loop element and re-narrowing it at its
+    // value consumers is one atomic decision, and the narrowing target is the element's PRE-erasure type, which no
+    // longer exists at this point in the pipeline — so both halves stay together in the declaration-axis pass that
+    // still has it (NullableGenericErasure's forEach handling). Restamping here without the matching narrow is
+    // precisely the `stelem`-over-a-typed-slot miscompile that pairing exists to prevent.
+    static TypeNode EvalForEach(JsonObject obj, Ctx ctx)
+    {
+        if (obj["src"] != null) Eval(obj["src"], ctx);
+        if (Str(obj["var"]) is string v && TypeJson.Read(obj["elem"]) is TypeNode elem) ctx.Env[v] = elem;
+        if (obj["body"] != null) Eval(obj["body"], ctx);
+        foreach (var kv in obj)
+            if (kv.Value != null && kv.Key is not ("src" or "body" or "elem" or "k" or "var" or "label"))
+                Eval(kv.Value, ctx);
+        return null;
     }
 
     // `nullableHasValue`/`nullableValue` unwrap a structural `Nullable<V>`; the node's own `elem` names the `V`.

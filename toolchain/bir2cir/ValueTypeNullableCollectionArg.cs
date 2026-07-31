@@ -25,14 +25,17 @@ using DotKt.Bir;
 // and self-gates to concrete value instantiations, so it is a no-op in the rt-stdlib self-build (open `gp:T` args).
 static class ValueTypeNullableCollectionArg
 {
-    static readonly HashSet<string> ValueTypeTokens = new(StringComparer.Ordinal)
-    {
-        "kotlin.Boolean", "kotlin.Byte", "kotlin.Char", "kotlin.Double", "kotlin.Float", "kotlin.Int",
-        "kotlin.Long", "kotlin.Short", "kotlin.UByte", "kotlin.UInt", "kotlin.ULong", "kotlin.UShort",
-        "bool", "sbyte", "char", "double", "float", "int", "long", "short", "byte", "uint", "ulong", "ushort",
-    };
+    // The struct-ness ORACLE (ReferenceMetadataIndex.IsValueTypeFqn + the local enum/struct types), not a hardcoded
+    // primitive list: a Kotlin `value class` over a struct, a projected .NET struct and a local enum are value
+    // elements for exactly the same CLR reason as `Int`, and a list that names only the primitives answers "no" for
+    // them and silently drops the conversion.
+    static Func<string, bool> _isValue = _ => false;
 
-    public static void Apply(JsonNode root) => Walk(root);
+    public static void Apply(JsonNode root, Func<string, bool> isValue)
+    {
+        _isValue = isValue ?? (_ => false);
+        Walk(root);
+    }
 
     static void Walk(JsonNode node)
     {
@@ -64,8 +67,14 @@ static class ValueTypeNullableCollectionArg
                 if (HasArray(tn)) hasArray = true;
             }
         if (!hasColl || !hasNullableTvArg || hasArray) return;
-        if (call["typeArgs"] is not JsonArray ta || ta.Count == 0) return;
-        if (!IsValueTypeArg(ta[0])) return;
+        // WHICH type argument is the element. The nullable element is `Nullable(Tv)` in the RECEIVER parameter, and
+        // that `Tv`'s own index is the position to read — `filterNotNull()` declares `<T : Any>` so it is `typeArgs[0]`,
+        // but `filterNotNullTo(destination: C)` declares `<C, T>` and it is `typeArgs[1]`. Reading position 0
+        // unconditionally answers about `C` — a collection type, never a value — so the conversion never fires for the
+        // two-parameter form.
+        if (ElementTvIndex(sig) is not int ti) return;
+        if (call["typeArgs"] is not JsonArray ta || ti >= ta.Count) return;
+        if (!IsValueTypeArg(ta[ti])) return;
         if (call["args"] is not JsonArray args || args.Count == 0) return;
         // Idempotence: never re-wrap an already-cast receiver.
         if (args[0] is JsonObject ro && (ro["k"] as JsonValue)?.GetValue<string>() == "clrGenericStatic"
@@ -120,12 +129,28 @@ static class ValueTypeNullableCollectionArg
         _ => false,
     };
 
-    // A `typeArgs[0]` value-type test on the pre-lowering structured Type node (a bare-primitive Fqn), with a legacy
-    // string fallback. ValueTypeTokens carries both the kotlin.* and the CLR-shorthand spellings.
-    static bool IsValueTypeArg(JsonNode n)
+    // The METHOD-scope index of the `Tv` inside the receiver's `Nullable(Tv)` element — the type-argument position
+    // whose value-ness decides the conversion. Null when the sig carries no method-scope nullable element (an open
+    // self-build call, or a class-scope variable, both of which this pass is deliberately inert for).
+    static int? ElementTvIndex(JsonArray sig)
     {
-        if (TypeJson.Read(n) is TypeNode.Fqn { Args: null } f) return ValueTypeTokens.Contains(f.Name);
-        if (n is JsonValue v && v.TryGetValue<string>(out var s)) return ValueTypeTokens.Contains(s);
-        return false;
+        foreach (var el in sig)
+            if (TypeJson.Read(el) is TypeNode tn && FindNullableTv(tn) is TypeNode.Tv { Scope: "method" } tv)
+                return tv.I;
+        return null;
     }
+
+    static TypeNode.Tv FindNullableTv(TypeNode t) => t switch
+    {
+        TypeNode.Nullable { Of: TypeNode.Tv tv } => tv,
+        TypeNode.Nullable n => FindNullableTv(n.Of),
+        TypeNode.Fqn { Args: { } args } => args.Select(FindNullableTv).FirstOrDefault(x => x != null),
+        TypeNode.Array a => FindNullableTv(a.Elem),
+        TypeNode.ByRef b => FindNullableTv(b.Of),
+        _ => null,
+    };
+
+    // Is this type argument a value type, per the struct-ness oracle, on the pre-lowering structured Type node?
+    static bool IsValueTypeArg(JsonNode n)
+        => TypeJson.Read(n) is TypeNode.Fqn { Args: null } f && _isValue(f.Name);
 }

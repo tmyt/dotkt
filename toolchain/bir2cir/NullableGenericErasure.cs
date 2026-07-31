@@ -128,85 +128,26 @@ static class NullableGenericErasure
     {
         if (o["methods"] is JsonArray methods)
             foreach (var m in methods) ApplyToMethod(m);
-        // FIELD / PROPERTY nullable-generic erasure (FIX 1 part-1). kotc marks a nullable-generic field/property
-        // slot with a SEPARATE `"nullable":true` boolean next to `"type":"gp:T"` (a bare `gp:T` slot silently drops
-        // the `?`, so a value-type instantiation stores default(T)=0 instead of a real null). Rewrite the `type` to
-        // `object` so the slot becomes a reference slot holding a genuine null; ilemit boxes the value store and the
-        // read boundary re-narrows (unbox.any / castclass), mirroring the return-erasure boundary handling.
-        //
-        // ACCESSOR + READER consistency (bundle-6 BUG-1: value-type `asSequence().filter{}` InvalidProgram). The
-        // erased-to-`object` property must ALSO drag its ACCESSOR methods to `object` — otherwise `get_nextItem():gp:T`
-        // reads the object field and returns an unboxed gp:T (invalid), and `set_nextItem(null)` pushes ldnull into a
-        // value-type gp:T param slot (invalid). ilemit boxes a value arg into an object param and unbox.any's an
-        // `as T` cast, but it does NOT unbox object->gp:T on a bare store/return. So we (a) retype the getter return
-        // and setter param to `object`, and (b) retype any local `var` initialized from that getter to `object`, so
-        // the trailing `result as T` (already present: `return result as T`) performs the single unbox.any. The
-        // property METADATA row was already erased to object above, keeping row/getter/setter coherent (ilverify-clean).
-        var getters = new HashSet<string>(StringComparer.Ordinal);
-        var setters = new HashSet<string>(StringComparer.Ordinal);
-        CollectNullableAccessors(o["properties"], getters, setters);
+        // A field/property whose slot is `T?` becomes the reference `object` slot, so a value instantiation holds a
+        // real null rather than `default(T)`. Its ACCESSORS need no separate treatment: `get_x`'s return and
+        // `set_x`'s parameter are declaration slots of the same declared type, erased by ApplyToMethod and the
+        // blanket sweep on their own, which keeps the property row and both accessors coherent by construction.
         EraseNullableGpDecls(o["fields"]);
         EraseNullableGpDecls(o["properties"]);
-        // GENERAL body-local nullable-generic erasure (bundle-6 value-type-nullable LOCAL, the twin of the field/property
-        // pass above). kotc marks a `var single: T? = null` value-type-nullable accumulator LOCAL with a sibling
-        // `"nullable":true` next to `"type":"gp:T"`. Left as-is, the value-type `T` slot holds a null → the trailing
-        // `single as T` unbox.any NREs (Sequence.single{}'s terminal). RetypeNullableGpVars erases the slot to `object`
-        // (a real null survives; value stores box; the `as T` read re-narrows) — see there for why it gates on a
-        // null-const init (to skip kotc's synthetic safe-call temps, whose implicit reads would corrupt).
-        if (o["methods"] is JsonArray msLocals)
-            foreach (var m in msLocals)
-                if (m is JsonObject mo) RetypeNullableGpVars(mo["body"]);
         // #120 REIFIED-ARRAY reify-back idiom. Runs BEFORE the blanket EraseNullableGpAllStrings sweep (Apply, after
         // ApplyRec) so the kept chain is already bare `!T` when the sweep (a no-op on bare tv) runs. See there.
         if (o["methods"] is JsonArray msArrays)
             foreach (var m in msArrays)
                 if (m is JsonObject mo) CollapseReifiedArrayVars(mo);
-        // FOREACH-OVER-NULLABLE-GENERIC-SOURCE erasure (bundle-6 BUG-1, value-type filterNotNull). A stdlib method
-        // whose extension receiver is `Iterable<T?>` (kotc token `@kotlin.collections.Iterable[nullable:gp:T]`, erased
-        // by the EraseNullableGpAllStrings sweep below to `IEnumerable<object>`) iterates it with a `forEachInline`
-        // whose loop-var `elem` is the bare `gp:T`. When T is instantiated with a VALUE type, storing the object
-        // `Current` (the typed enumerator is unavailable — ilemit falls back to the non-generic enumerator + Unbox_Any
-        // for a `gp:T` elem) into the value slot unbox.any's a null element -> NRE (filterNotNullTo). Erase the loop-var
-        // to `object` (the object enumerator yields object; a null survives), and re-narrow the loop var where it flows
-        // into a value-typed call arg (clrCollAdd's `gp:T` param) via a `cast`->`gp:T` (unbox.any for value, castclass
-        // for ref). The RECEIVER-side boxing (a value-type collection is NOT covariantly IEnumerable<object> on the CLR)
-        // is the call-site's job (ValueTypeNullableCollectionArg). This is the loop-var twin of EraseNullableGpDecls.
+        // FOREACH-OVER-NULLABLE-GENERIC-SOURCE erasure, and NOT YET DELETABLE (#86). The loop variable of a
+        // `forEachInline` over an object-erased `Iterable<T?>` source is a slot like any other, so the uniform rule
+        // covers the ERASURE half. Its second half cannot move to the use axis yet: the loop var has to be RE-NARROWED
+        // where it flows into a value-typed consumer, and the narrowing target is the PRE-erasure element type, which
+        // exists only here — the blanket sweep below consumes it, and by the time the use axis runs both the slot and
+        // the element token read `object`. The consumer is a REFERENCED collection member whose declared parameter is
+        // not readable either. It dies with `DeriveKnownReceiverReturn` and the collection/iterator owner tables, in
+        // the cross-module carrier-read step, and for the same reason.
         EraseForEachOverNullableGpSource(o);
-        if ((getters.Count > 0 || setters.Count > 0) && o["methods"] is JsonArray ms2)
-        {
-            foreach (var m in ms2)
-                if (m is JsonObject mo && (mo["name"] as JsonValue)?.GetValue<string>() is string nm)
-                {
-                    if (getters.Contains(nm)) mo["ret"] = TypeJson.Fqn("object");
-                    if (setters.Contains(nm) && mo["params"] is JsonArray ps)
-                        foreach (var p in ps)
-                            if (p is JsonObject po && TypeJson.Read(po["type"]) is TypeNode.Tv or TypeNode.Nullable { Of: TypeNode.Tv })
-                                po["type"] = TypeJson.Fqn("object");
-                }
-            if (getters.Count > 0)
-                foreach (var m in ms2)
-                    if (m is JsonObject mo) RetypeGetterReaderVars(mo["body"], getters);
-            // Re-narrow the CALL-NODE `retType` of every read of an erased getter to `object`. kotc stamped the
-            // call node with the property's declared (nullable-generic) return `gp:T`; the getter now RETURNS
-            // `object`, so a stale `gp:T` retType makes ilemit insert a coercion unbox.any right after the call —
-            // and when the read is ALSO wrapped in an explicit `as T` cast (`nextValue as T`, the common
-            // `T?`-property reader), the cast unbox.any's AGAIN → a DOUBLE `unbox.any !T` that NREs on the
-            // second (the first already produced a bare value, not a boxed reference). This is the reader twin of
-            // the `mo["ret"]="object"` accessor erasure above: the call node's retType must agree with the
-            // callee's (now-object) return so exactly ONE narrow (the source `as T`) survives. (SequenceBuilder
-            // `next()`'s `nextValue as T` on a VALUE element was the symptom — a cold-sequence NRE.)
-            if (getters.Count > 0)
-                foreach (var m in ms2)
-                    if (m is JsonObject mo) RetypeErasedGetterCalls(mo["body"], getters);
-            // Force the value->object box at each CALL to an erased setter. ilemit cannot read the param types off a
-            // TypeBuilder-re-anchored generic self-call (`set_nextItem` on `dotkt_obj146[gp:T]`), so its arg-coercion
-            // silently skips the box: a `gp:T` value arg lands on the stack unboxed where the now-`object` param wants a
-            // reference -> InvalidProgram in calcNext. Wrapping the arg in an explicit `cast`->object boxes it from the
-            // SOURCE type (ilemit's cast emitter boxes a value/generic-param source), independent of param-type lookup.
-            if (setters.Count > 0)
-                foreach (var m in ms2)
-                    if (m is JsonObject mo) WrapErasedSetterArgs(mo["body"], setters);
-        }
         // Nested types (a generic class' member methods / fields) carry their own declaration lists.
         if (o["types"] is JsonArray types)
             foreach (var t in types) if (t is JsonObject to) ApplyRec(to);
@@ -215,85 +156,16 @@ static class NullableGenericErasure
     // Wrap each argument of a `callInstance` to an erased setter (`set_X` in `setters`) in a `cast`->`object`, so ilemit
     // boxes a value/generic-param arg into the erased `object` param even when it can't resolve the re-anchored generic
     // method's param types. A `null`/already-reference arg becomes a redundant `castclass object` (valid, no box).
-    static void WrapErasedSetterArgs(JsonNode node, HashSet<string> setters)
-    {
-        switch (node)
-        {
-            case JsonObject obj:
-                if ((obj["k"] as JsonValue)?.TryGetValue<string>(out var k) == true && k == "callInstance"
-                    && (obj["method"] as JsonValue)?.TryGetValue<string>(out var mn) == true && setters.Contains(mn)
-                    && obj["args"] is JsonArray a)
-                    for (var i = 0; i < a.Count; i++)
-                        if (a[i] is JsonObject arg && (arg["k"] as JsonValue)?.GetValue<string>() != "cast")
-                            a[i] = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Fqn("object"), ["e"] = arg.DeepClone() };
-                foreach (var kv in obj) WrapErasedSetterArgs(kv.Value, setters);
-                break;
-            case JsonArray arr:
-                foreach (var it in arr) WrapErasedSetterArgs(it, setters);
-                break;
-        }
-    }
-
-    // Record the get_/set_ accessor names of every nullable generic-parameter PROPERTY (`type:"gp:T"` + `nullable:true`)
+        // Record the get_/set_ accessor names of every nullable generic-parameter PROPERTY (`type:"gp:T"` + `nullable:true`)
     // — captured BEFORE EraseNullableGpDecls rewrites the property type to `object` (the `gp:` test would then miss).
-    static void CollectNullableAccessors(JsonNode arr, HashSet<string> getters, HashSet<string> setters)
-    {
-        if (arr is not JsonArray a) return;
-        foreach (var d in a)
-            // #37/#48: a nullable generic-parameter property is the TYPE NODE `{t:nullable,of:{t:tv}}` (was `gp:T` +
-            // the retired scalar `nullable` flag). Capture its accessor names BEFORE the type is erased to `object`.
-            if (d is JsonObject po
-                && TypeJson.Read(po["type"]) is TypeNode.Nullable { Of: TypeNode.Tv })
-            {
-                if ((po["get"] as JsonValue)?.TryGetValue<string>(out var g) == true && g != null) getters.Add(g);
-                if ((po["set"] as JsonValue)?.TryGetValue<string>(out var s) == true && s != null) setters.Add(s);
-            }
-    }
-
-    // Retype a local `var x: gp:T = <call to an erased getter>()` slot to `object`, so the object value read from the
+        // Retype a local `var x: gp:T = <call to an erased getter>()` slot to `object`, so the object value read from the
     // now-`object` getter is held in a reference local until an explicit `as T` re-narrows it. Only the direct
     // reader-local pattern (init is a callInstance to a getter in `getters`); other uses re-narrow via their own cast.
-    static void RetypeGetterReaderVars(JsonNode node, HashSet<string> getters)
-    {
-        switch (node)
-        {
-            case JsonObject obj:
-                if ((obj["k"] as JsonValue)?.TryGetValue<string>(out var k) == true && k == "var"
-                    && TypeJson.Read(obj["type"]) is TypeNode.Tv or TypeNode.Nullable { Of: TypeNode.Tv }
-                    && obj["init"] is JsonObject init
-                    && (init["k"] as JsonValue)?.TryGetValue<string>(out var ik) == true && ik == "callInstance"
-                    && (init["method"] as JsonValue)?.TryGetValue<string>(out var im) == true && getters.Contains(im))
-                    obj["type"] = TypeJson.Fqn("object");
-                foreach (var kv in obj) RetypeGetterReaderVars(kv.Value, getters);
-                break;
-            case JsonArray arr:
-                foreach (var it in arr) RetypeGetterReaderVars(it, getters);
-                break;
-        }
-    }
-
-    // Retype the `retType` of every `callInstance` reading an erased getter (`get_X` in `getters`) to `object`, so
+        // Retype the `retType` of every `callInstance` reading an erased getter (`get_X` in `getters`) to `object`, so
     // the CIR call node agrees with the getter's now-`object` return. Without this, a stale `retType:"gp:T"` makes
     // ilemit coerce (unbox.any) the object result to the value type at the call — and a wrapping `as T` cast then
     // unbox.any's the already-unboxed value AGAIN, NREing. Retyping to `object` leaves a single narrow (the `as T`).
-    static void RetypeErasedGetterCalls(JsonNode node, HashSet<string> getters)
-    {
-        switch (node)
-        {
-            case JsonObject obj:
-                if ((obj["k"] as JsonValue)?.TryGetValue<string>(out var k) == true && k == "callInstance"
-                    && (obj["method"] as JsonValue)?.TryGetValue<string>(out var mn) == true && getters.Contains(mn)
-                    && TypeJson.Read(obj["ret"]) is TypeNode.Tv or TypeNode.Nullable { Of: TypeNode.Tv })
-                    obj["ret"] = TypeJson.Fqn("object");
-                foreach (var kv in obj) RetypeErasedGetterCalls(kv.Value, getters);
-                break;
-            case JsonArray arr:
-                foreach (var it in arr) RetypeErasedGetterCalls(it, getters);
-                break;
-        }
-    }
-
-    // GENERAL body-local twin of EraseNullableGpDecls: retype a NULL-INITIALIZED `k=="var"` local marked `type:"gp:T"`
+        // GENERAL body-local twin of EraseNullableGpDecls: retype a NULL-INITIALIZED `k=="var"` local marked `type:"gp:T"`
     // + sibling `nullable:true` to `object`. The local counterpart of the field/property erasure — a value-type-nullable
     // accumulator local (`var single: T? = null` in Sequence.single{}) must hold a genuine null in a reference slot,
     // with value stores boxing and the read boundary (`single as T`) re-narrowing (unbox.any/castclass).
@@ -308,31 +180,7 @@ static class NullableGenericErasure
     // this: Iterable<T?>)` — is a DISTINCT axis needing a value-type-nullable COLLECTION receiver conversion the call
     // sites lack; broad erasure there corrupts hashCode/collectionToArray iterations. Left to the collection
     // dual-representation track — NOT erased here.)
-    static void RetypeNullableGpVars(JsonNode node)
-    {
-        switch (node)
-        {
-            case JsonObject obj:
-                // #37/#48: a value-type-nullable accumulator local is `{t:nullable,of:{t:tv}}` (was `gp:T` + the retired
-                // scalar `nullable` flag). The blanket EraseNullableGpAllStrings sweep deliberately SKIPS body-local var
-                // type slots (it can no longer tell an accumulator from a safe-call temp — both are now identical nodes),
-                // so this init-gated pass OWNS them: erase to `object` ONLY the null-const / Map.get idiom (the case that
-                // genuinely needs a surviving null), leaving safe-call temps to lower to the bare `gp:T` (see the WHY-GATE
-                // note above) — the surviving safe-call temp's `{t:nullable,of:{t:tv}}` is stripped to bare `gp:T` by
-                // BirTypeLowering (an unconstrained tv is reference-treated), preserving the old bare-`gp:T` behavior.
-                if ((obj["k"] as JsonValue)?.TryGetValue<string>(out var k) == true && k == "var"
-                    && TypeJson.Read(obj["type"]) is TypeNode.Nullable { Of: TypeNode.Tv }
-                    && (IsNullConstInit(obj["init"]) || IsNullableGenericMapGet(obj["init"]) || IsNullableFuncReturnInvoke(obj["init"])))
-                    obj["type"] = TypeJson.Fqn("object");
-                foreach (var kv in obj) RetypeNullableGpVars(kv.Value);
-                break;
-            case JsonArray arr:
-                foreach (var it in arr) RetypeNullableGpVars(it);
-                break;
-        }
-    }
-
-    // True when a var initializer is a `Map`/`MutableMap` `.get(key)` call — its Kotlin result is `V?`, which
+        // True when a var initializer is a `Map`/`MutableMap` `.get(key)` call — its Kotlin result is `V?`, which
     // MemberCallSubstitution rewrites to the erased nullable-generic `clrMapGet<K,V>: object` (a present value boxes,
     // a missing key is a genuine `null`). A `var value: gp:V nullable:true = get(key)` slot (getOrPut's explicit
     // `val value = get(key)`, unlike getOrElse's `?:`-synthesized `object` subject) must therefore be an `object`
@@ -341,21 +189,7 @@ static class NullableGenericErasure
     // `objEq(value, null)` reads it as `object`; the `else value` branch (cond typed `gp:V`) unbox.any's it back
     // (EmitNullableCoerced). Gated on the `overrides` marker (owner Map/MutableMap, member `get`), so it never hits
     // the safe-call receiver temps RetypeNullableGpVars deliberately excludes (those init from a `transform(x)` invoke).
-    static bool IsNullableGenericMapGet(JsonNode init)
-    {
-        if (init is not JsonObject io) return false;
-        if ((io["k"] as JsonValue)?.TryGetValue<string>(out var ik) != true || ik != "callInstance") return false;
-        if (io["overrides"] is not JsonArray ovs) return false;
-        foreach (var ov in ovs)
-            if (ov is JsonObject oo
-                && (oo["member"] as JsonValue)?.TryGetValue<string>(out var mem) == true && mem == "get"
-                && TypeJson.OwnerName(oo["owner"]) is string own
-                && (own == "kotlin.collections.Map" || own == "kotlin.collections.MutableMap"))
-                return true;
-        return false;
-    }
-
-    // True when a var initializer is a `delegateInvoke` whose function-type RETURN is a nullable generic (`(…) -> V?`,
+        // True when a var initializer is a `delegateInvoke` whose function-type RETURN is a nullable generic (`(…) -> V?`,
     // `{t:nullable,of:{t:tv}}`). NullableFuncReturnErasure lowers such a delegate's `Invoke` return to `object` (the one
     // rep a value/reference instantiation agree on), so a local receiving it must be an `object` slot too — covering BOTH
     //   * a genuine `val computed = remappingFunction(…)` accumulator read through an explicit null-check + `as V`
@@ -366,21 +200,16 @@ static class NullableGenericErasure
     //     transform result. The alias reader chain (`__inlN = tmp; __lamN = __inl`) re-narrows at the value consumer.
     // These are the delegate-invoke initializers — the safe-call temps that init from a plain callInstance/callStatic
     // (a genuine `foo?.bar` receiver read implicitly) are NOT matched here and lower to the bare `gp:V` as before.
-    static bool IsNullableFuncReturnInvoke(JsonNode init)
-    {
-        if (init is not JsonObject io) return false;
-        if ((io["k"] as JsonValue)?.TryGetValue<string>(out var ik) != true || ik != "delegateInvoke") return false;
-        return TypeJson.Read(io["funcType"]) is TypeNode.Fn { Ret: TypeNode.Nullable { Of: TypeNode.Tv } };
-    }
-
-    // True when a var initializer is the null literal (`{k:"const", value:null}`) — the `T? = null` accumulator idiom.
+        // True when a var initializer is the null literal (`{k:"const", value:null}`) — the `T? = null` accumulator idiom.
     // A JSON null property surfaces as a C# null JsonNode, so a `const` whose `value` node is null IS the null literal.
-    static bool IsNullConstInit(JsonNode init) =>
-        init is JsonObject io
-        && (io["k"] as JsonValue)?.TryGetValue<string>(out var ik) == true && ik == "const"
-        && io.ContainsKey("value") && io["value"] is null;
-
-    // BUG-1 Part B: for each method, find a `forEachInline` whose SOURCE is a param typed as a nullable-generic
+        // BUG-1 Part B: for each method, find a `forEachInline` whose SOURCE is a param typed as a nullable-generic
+    // collection (`...[nullable:gp:X]`) and whose loop-var `elem` is the bare `gp:X`; erase the loop-var to `object`
+    // (so the iteration yields boxed/null objects, not an unbox.any that NREs on a null value element) and re-narrow
+    // the loop var wherever it flows into a call arg back to the original `gp:X` (unbox.any at the value consumer).
+            // Wrap every reference to the (now-`object`) loop var `lv` that appears as a CALL argument in a `cast`->`origElem`
+    // (the Tv), so a value-type consumer unbox.any's the boxed element. The null-check use (`objEq(element, null)`) is
+    // NOT a call arg and is correctly left as `object`.
+        // BUG-1 Part B: for each method, find a `forEachInline` whose SOURCE is a param typed as a nullable-generic
     // collection (`...[nullable:gp:X]`) and whose loop-var `elem` is the bare `gp:X`; erase the loop-var to `object`
     // (so the iteration yields boxed/null objects, not an unbox.any that NREs on a null value element) and re-narrow
     // the loop var wherever it flows into a call arg back to the original `gp:X` (unbox.any at the value consumer).
@@ -452,6 +281,17 @@ static class NullableGenericErasure
                 break;
         }
     }
+
+    // The Tv of a Nullable(Tv) somewhere in a type (a nullable-generic collection element `…<T?>`), else null.
+    static TypeNode.Tv ExtractNullableTv(TypeNode t) => t switch
+    {
+        TypeNode.Nullable { Of: TypeNode.Tv tv } => tv,
+        TypeNode.Nullable n => ExtractNullableTv(n.Of),
+        TypeNode.Fqn { Args: { } args } => args.Select(ExtractNullableTv).FirstOrDefault(x => x != null),
+        TypeNode.Array a => ExtractNullableTv(a.Elem),
+        TypeNode.ByRef b => ExtractNullableTv(b.Of),
+        _ => null,
+    };
 
     // A field/property whose slot is a nullable generic parameter (`type:"gp:T"` + sibling `nullable:true`) -> the
     // reference `object` slot. Only the boolean-marked `gp:` form; the inline `nullable:gp:T` form (should it appear
@@ -644,47 +484,14 @@ static class NullableGenericErasure
         _ => t,
     };
 
-    // The Tv of a Nullable(Tv) somewhere in a type (a nullable-generic collection element `…<T?>`), else null.
-    static TypeNode.Tv ExtractNullableTv(TypeNode t) => t switch
-    {
-        TypeNode.Nullable { Of: TypeNode.Tv tv } => tv,
-        TypeNode.Nullable n => ExtractNullableTv(n.Of),
-        TypeNode.Fqn { Args: { } args } => args.Select(ExtractNullableTv).FirstOrDefault(x => x != null),
-        TypeNode.Array a => ExtractNullableTv(a.Elem),
-        TypeNode.ByRef b => ExtractNullableTv(b.Of),
-        _ => null,
-    };
-
+    // A nullable generic RETURN `{t:nullable,of:{t:tv}}` -> `object`, the only CLR rep of a generic `T?` that carries
+    // a real null for a value-type instantiation. The `return` statements in the body are NOT rewritten here: a
+    // `return` is a use position like any other, and the use axis reconciles the returned value against this
+    // (now-erased) slot — see NullableTvErasureCallRealign's write half.
     static void ApplyToMethod(JsonNode m)
     {
         if (m is not JsonObject mo) return;
-        // #37/#48: the nullable generic return is the TYPE NODE `{t:nullable,of:{t:tv}}` (was a bare `gp:X` ret + a
-        // retired scalar `retNullable` flag). Erase it to `object` — the only CLR rep of a generic `T?` that carries a
-        // real null for a value-type instantiation.
-        if (TypeJson.Read(mo["ret"]) is not TypeNode.Nullable { Of: TypeNode.Tv gp }) return;
+        if (TypeJson.Read(mo["ret"]) is not TypeNode.Nullable { Of: TypeNode.Tv }) return;
         mo["ret"] = TypeJson.Fqn("object");
-        // A return-value expression whose STATIC type is the (now-erased) `gp:X` must also flow as object so its
-        // null/value coercion targets object: a `return (cond typed gp:X)` (if-empty-null-else-elem) and a
-        // `return (delegating call retType=gp:X)` (find -> firstOrNull) both become object end-to-end.
-        RetypeReturns(mo["body"], gp);
-    }
-
-    static void RetypeReturns(JsonNode node, TypeNode.Tv gp)
-    {
-        switch (node)
-        {
-            case JsonObject obj:
-                if ((obj["k"] as JsonValue)?.TryGetValue<string>(out var k) == true && k == "return"
-                    && obj["value"] is JsonObject v)
-                {
-                    if (TypeJson.Read(v["type"]) is TypeNode.Tv vt && vt == gp) v["type"] = TypeJson.Fqn("object");
-                    if (TypeJson.Read(v["ret"]) is TypeNode.Tv vr && vr == gp) v["ret"] = TypeJson.Fqn("object");
-                }
-                foreach (var kv in obj) RetypeReturns(kv.Value, gp);
-                break;
-            case JsonArray arr:
-                foreach (var it in arr) RetypeReturns(it, gp);
-                break;
-        }
     }
 }

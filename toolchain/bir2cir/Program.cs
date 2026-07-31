@@ -413,7 +413,7 @@ sealed class Pipeline
             // into a real object-enumerable. Runs FIRST, before NullableGenericErasure sweeps the `nullable:gp:`
             // receiver token to `object` (this pass keys on that token). Self-gates to concrete value instantiations
             // (an open `gp:T` arg is not a value type) so it is a no-op in the rt-stdlib self-build.
-            if (!_options.RefBuild) ValueTypeNullableCollectionArg.Apply(bir.Root);
+            if (!_options.RefBuild) ValueTypeNullableCollectionArg.Apply(bir.Root, isValueFqn);
             // ARRAY-ELEMENT NULLABILITY realign (C2): kotc emits `arrayOfNulls<Int>(3)` as `newArraySized elem=kotlin.Int`
             // (the non-null element) while the declaring var is `Array<Int?>` = `array:nullable:int` = `Nullable<int>[]`.
             // The array-creation then builds an `int[]`, but element stores `stelem Nullable<int>` — a struct-size mismatch

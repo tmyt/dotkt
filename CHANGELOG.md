@@ -134,6 +134,24 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   a result, and a value is converted only across a bare `object` seam — the only one the CLR can express, since
   `Ref<object>` and `Ref<Nullable<int32>>` are unrelated invariant reified generics that no cast reconciles.
 
+- **bir2cir (area:bir2cir): the hand-written special cases the uniform erasure subsumes are DELETED, and the one
+  that survives is narrowed to a real oracle (#86).** Each was the erasure formula applied by hand at one node kind,
+  and each existed because the formula was not applied everywhere — so with the rule uniform they say nothing the
+  rule does not. Gone: the property-accessor retype (a `get_x` return and a `set_x` parameter are declaration slots
+  of the same declared type, erased on their own, so row and accessors are coherent by construction) with its
+  accessor-name collection, its reader-local retype, its call-return retype and its setter-argument wrap; the
+  init-gated body-local retype with all three of its idiom gates — the gates existed to tell a genuine accumulator
+  from a synthesized safe-call temp, a distinction that stops mattering once BOTH are erased and both re-narrow at
+  their typed uses; and the return-value retype, subsumed by `return` becoming a use position like any other.
+  `ValueTypeNullableCollectionArg` stays, because a value-element collection genuinely is not covariantly the
+  `IEnumerable<object>` an erased `Iterable<T?>` receiver names — but its hardcoded primitive list becomes the
+  struct-ness oracle (a `value class`, a projected .NET struct and a local enum are value elements for the same CLR
+  reason as `Int`), and it stops reading its element off `typeArgs[0]`, which is the DESTINATION type parameter and
+  never a value for a two-parameter `filterNotNullTo`; it now finds the position of the type variable that actually
+  sits under the receiver's nullable element. That closes `List<Int?>.filterNotNullTo` at a value element, and
+  **#324** — `countG(nullBoxes(7), 2)`, where the wrap fired on a user generic it did not belong on and the
+  `Cast<object>` result did not inhabit the parameter slot — no longer over-fires and returns 3 rather than throwing.
+
 - **bir2cir (area:bir2cir): an override of an object-erased `T?` slot is now an override, not a new overload
   (#86 D3).** `class TextSink : Sink<String> { override fun accept(x: String?) }` writes a CONCRETE type, so no
   `Nullable(Tv)` sweep can reach it — but the slot it must fill is the base's `accept(object)`, at every
