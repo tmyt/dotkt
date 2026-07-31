@@ -655,14 +655,11 @@ static class NullableGenericErasure
     // whole reason the erasure exists, while the frontend stamp still names the INSTANTIATED pre-erasure type
     // (`Slot<String>`). The stamp is read FIRST by every deriver (bir-common/NodeType.cs), so leaving it declares a
     // spill slot or a state-machine field at a type the value does not have — invalid IL, the same fault
-    // NullableTvErasureCallRealign was fixed for. It cannot be REWRITTEN from here: the erased `ret` is the
-    // UNinstantiated declared shape, not this call site's instantiation. So it is DROPPED — the other thing §2.7
-    // permits — and readers fall through to `ret`, which is exactly the physical answer. (The #305 chokepoint found
-    // both of these sites.)
-    static void DropStaleSty(JsonObject obj)
-    {
-        if (obj["sty"] != null) obj.Remove("sty");
-    }
+    // NullableTvErasureCallRealign was fixed for. It cannot be REWRITTEN from here: the erased result is the
+    // UNinstantiated declared shape, not this call site's instantiation, so the stamp is DROPPED — but only where
+    // the erasure actually invalidated it, which is `DropStampIfStale`'s whole job. (The #305 chokepoint found these
+    // three sites.)
+    static void DropStaleSty(JsonObject obj) => NodeType.DropStampIfStale(obj);
 
     // The Tv of a Nullable(Tv) somewhere in a type (a nullable-generic collection element `…<T?>`), else null.
     static TypeNode.Tv ExtractNullableTv(TypeNode t) => t switch

@@ -54,6 +54,31 @@ public static class NodeType
         => TypeJson.Read(o["sty"]) ?? TypeJson.Read(o["ret"]) ?? TypeJson.Read(o["dynRet"]);
 
     /// <summary>
+    /// A pass has just retyped this node's `ret`/`dynRet`; discharge the spec §2.7 obligation that comes with that —
+    /// *a pass that changes a node's RESULT TYPE rewrites or deletes its `sty`* — by DELETING the stamp when, and
+    /// only when, the change made it wrong. A pass that can compute the new INSTANTIATED type restamps instead; this
+    /// is for the passes that cannot, because what they wrote is the physical/erased/declared shape rather than this
+    /// call site's instantiation.
+    ///
+    /// "When, and only when" is the whole point, and it is asked through <see cref="IrSanity.StampAgrees"/> so that
+    /// the pass and the #305 chokepoint cannot answer it differently. Dropping unconditionally would be wrong in both
+    /// directions: it discards a stamp that still describes the value (`ret` then answers the same thing, so nothing
+    /// is gained), and where a pass's own substitution is the LESS trustworthy of the two — a callee-relative `tv`
+    /// re-substituted into an already-instantiated result — the stamp is what protects every downstream deriver from
+    /// it, so deleting it would turn a tolerated imprecision into a wrong spill-slot or state-machine-field type.
+    /// </summary>
+    public static void DropStampIfStale(JsonObject o)
+    {
+        if (TypeJson.Read(o["sty"]) is not TypeNode sty) return;
+        foreach (var slot in new[] { "ret", "dynRet" })
+            if (TypeJson.Read(o[slot]) is TypeNode result && !IrSanity.StampAgrees(sty, result))
+            {
+                o.Remove("sty");
+                return;
+            }
+    }
+
+    /// <summary>
     /// The node's own static type, or null when only an index could answer. <paramref name="recurse"/> is the
     /// caller's FULL deriver, used for the kinds whose type is an OPERAND's type (`binOp`, `unaryOp`, `arrayGet`);
     /// it defaults to this core. <paramref name="primArrayElem"/> maps a SPECIALIZED array FQN to its element

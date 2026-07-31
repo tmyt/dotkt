@@ -366,8 +366,11 @@ public static class IrSanity
     // ACCEPTED EQUIVALENCES — the relation is deliberately a REFUTATION test: it reports a violation only where two
     // CONCRETE, structurally comparable types are confidently different, and accepts everything else. `sty` is the
     // frontend's INSTANTIATED type and `ret` the callee's DECLARED one, so they differ legitimately in ways that are
-    // not a difference of type IDENTITY. Measured over the 442-file stdlib reference + runtime pre-lowering corpus
-    // (16,070 sty/ret pairs, 58 of them not byte-equal), every legitimate difference falls in one of these classes:
+    // not a difference of type IDENTITY. CALIBRATION is the gate itself — bir2cir runs this over every stdlib and
+    // test-project file, so `make verify` reddens the moment the relation is too strict. The classes below were
+    // enumerated from an offline study of 442 pre-lowering documents from the stdlib reference and runtime builds
+    // (16,070 sty/ret pairs, 58 of them not byte-equal) plus the app corpus, and every legitimate difference in it
+    // falls in one of them:
     //
     //   (a) A TYPE VARIABLE or a `*` projection on EITHER side matches anything. `ret` may name the UNinstantiated
     //       declared type (`Sequence<!0>` against an instantiated `Sequence<!1>`, `object` against a `!!0`), and a
@@ -405,7 +408,7 @@ public static class IrSanity
         {
             if (!node.TryGetProperty(slot, out var otherEl) || otherEl.ValueKind != JsonValueKind.Object) continue;
             var other = TryReadType(otherEl);
-            if (other == null || Agree(sty, other)) continue;
+            if (other == null || StampAgrees(sty, other)) continue;
             throw new IrSanityException(decl,
                 $"'{kind}' carries a stale 'sty': the stamp names {TypeNode.ToJson(sty)} while its '{slot}' names "
                 + $"{TypeNode.ToJson(other)} — a pass that changes a node's result type must rewrite or delete its 'sty' (spec §2.7)");
@@ -413,11 +416,16 @@ public static class IrSanity
     }
 
     // A malformed type node is the SCHEMA validator's business (scripts/verify-schema.py), never this gate's — an
-    // unreadable slot is skipped rather than turned into a meaning violation.
+    // unreadable slot is SKIPPED rather than turned into a meaning violation, and rather than crashing the build with
+    // whatever exception the reader happens to raise. `TypeNode.Read` signals malformed input three different ways
+    // (FormatException for an unknown/absent `t`, KeyNotFoundException for a missing required property,
+    // InvalidOperationException for a property of the wrong JSON kind), so the catch is deliberately total: the
+    // python mirror's `isinstance` guards accept the same shapes, and a checker that is stricter than its mirror on
+    // documents neither is meant to judge is a difference with no upside.
     static TypeNode TryReadType(JsonElement e)
     {
         try { return TypeNode.Read(e); }
-        catch (FormatException) { return null; }
+        catch (Exception) { return null; }
     }
 
     // The canonical token for a named type, collapsing the kotlin.* / CLR-shorthand / System.* spellings of one CLR
@@ -456,8 +464,15 @@ public static class IrSanity
             }
     }
 
-    // TRUE unless the two types confidently name DIFFERENT types. Every arm's rationale is in the block above.
-    static bool Agree(TypeNode a, TypeNode b)
+    /// <summary>
+    /// TRUE unless the two types confidently name DIFFERENT types — the spec §2.7 stamp-agreement relation, every
+    /// arm's rationale in the block above. PUBLIC because check 7 is not its only caller: a pass that retypes a
+    /// node's result asks the same question this asks — *does the stamp still describe this value?* — to decide
+    /// whether ITS change is what invalidated the stamp. That keeps a pass from dropping a stamp that is still the
+    /// better answer (bir-common/NodeType.cs `DropStampIfStale`), and it means the relation exists once rather than
+    /// as a checker and a differently-worded restatement inside each pass.
+    /// </summary>
+    public static bool StampAgrees(TypeNode a, TypeNode b)
     {
         a = Unwrap(a);
         b = Unwrap(b);
@@ -465,12 +480,12 @@ public static class IrSanity
         if (a is TypeNode.Array aa)
             return b switch
             {
-                TypeNode.Array ba => Agree(aa.Elem, ba.Elem),
-                TypeNode.Fqn { Name: "kotlin.Array", Args: { Length: 1 } bg } => Agree(aa.Elem, bg[0]),   // (f)
+                TypeNode.Array ba => StampAgrees(aa.Elem, ba.Elem),
+                TypeNode.Fqn { Name: "kotlin.Array", Args: { Length: 1 } bg } => StampAgrees(aa.Elem, bg[0]),   // (f)
                 _ => true,                                                                                // (g)
             };
         if (b is TypeNode.Array bb)
-            return a is TypeNode.Fqn { Name: "kotlin.Array", Args: { Length: 1 } ag } ? Agree(ag[0], bb.Elem) : true;
+            return a is TypeNode.Fqn { Name: "kotlin.Array", Args: { Length: 1 } ag } ? StampAgrees(ag[0], bb.Elem) : true;
         if (a is TypeNode.Fqn fa && b is TypeNode.Fqn fb)
         {
             if (fa.Name == Bottom || fb.Name == Bottom) return true;                                       // (c)
@@ -478,17 +493,17 @@ public static class IrSanity
             if (Canon(fa.Name) != Canon(fb.Name)) return false;                                            // REFUTED
             if (fa.Args == null || fb.Args == null || fa.Args.Length != fb.Args.Length) return true;        // (g)
             for (var i = 0; i < fa.Args.Length; i++)
-                if (!Agree(fa.Args[i], fb.Args[i])) return false;
+                if (!StampAgrees(fa.Args[i], fb.Args[i])) return false;
             return true;
         }
         if (a is TypeNode.Fn na && b is TypeNode.Fn nb)
         {
-            if (!Agree(na.Ret, nb.Ret)) return false;
+            if (!StampAgrees(na.Ret, nb.Ret)) return false;
             var pa = na.DelegateParams;
             var pb = nb.DelegateParams;
             if (pa.Length != pb.Length) return true;                                                       // (g)
             for (var i = 0; i < pa.Length; i++)
-                if (!Agree(pa[i], pb[i])) return false;
+                if (!StampAgrees(pa[i], pb[i])) return false;
             return true;
         }
         return true;                                                                                       // (g)
