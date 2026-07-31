@@ -59,6 +59,28 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir (area:bir2cir): the `.NET`-interop reshapes carry the node's result-type stamp, so a `.NET` operand
+  left of a suspension compiles again ([tmyt/dotkt#304]).** `NetInteropBinding` re-forms the plain call/read kotc
+  emits by a .NET owner's identity into the CLR vocabulary. That changes a node's SHAPE and not what it produces,
+  so every result-type stamp it carried stays true of the `clr*` node — but three of the reshapes dropped one:
+  the FIELD reshape (`field` → `clrPropGet`) dropped both `sty` and `ret`, the generic branch
+  (`clrGenericStatic`/`clrGenericInstance`) dropped `ret`, and the `.NET`-event branch cleared the node before
+  either was re-added. `bir-common/NodeType.cs` has no derivation arm for any `clr*` kind, so those stamps ARE the
+  reshaped node's static type; without one the node cannot be typed at all, and an operand with no static type
+  standing LEFT of a suspension is refused by the stage-0 operand planner (it would declare an untyped spill
+  local). `v.X + suspending()` on a `.NET` field was therefore a compile-time rejection of source the frontend
+  accepts, while the same expression without the suspension compiled and ran. The stamps now travel with every
+  reshape, stated once at the top of the pass. `dynRet` deliberately does not travel: it is the UNBOUND Kotlin
+  call's dynamic-dispatch channel (ilemit falls back to reflection on its presence), so on a node already bound to
+  a concrete CLR slot it would be a dispatch instruction rather than a type fact, and `sty` carries the same
+  instantiated type without it.
+  The sibling audit found one more node in the same class, synthesized rather than reshaped:
+  `ValueTypeNullableCollectionArg` wraps a value-element collection argument in
+  `System.Linq.Enumerable.Cast<object>` and left the wrap unstamped. That one RETYPES the operand, so it is
+  stamped with what the wrap itself produces (`IEnumerable<object>`) rather than with the wrapped node's stamp —
+  which would be a lie, not merely an imprecision, exactly as at the `NullableTvErasureCallRealign` restamp sites.
+  CIR is unchanged for every program that already compiled: `sty` is bir2cir-internal and stripped before CIR, and
+  the `ret` carries only add a slot where the reshaped node had none.
 - **bir2cir (area:bir2cir): `await(captureContext = <expression>)` no longer refuses a non-constant Boolean
   ([tmyt/dotkt#64]).** dll2klib publishes two await bridges for an awaitable that exposes `ConfigureAwait(bool)` —
   `await()` and `await(captureContext: Boolean)` — so `task.await(captureContext = policy)` is a frontend-resolved

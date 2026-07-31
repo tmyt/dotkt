@@ -31,8 +31,11 @@
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.Companion.IsNull as assertNull
+import System.Numerics.Vector3
 import System.Threading.Tasks.Task
 import dotkt.support.blockOn
+import dotkt.support.corStampPack
+import dotkt.support.corStampPlain
 
 // A real suspension on every path — a defect that only shows once the outer call genuinely returns
 // COROUTINE_SUSPENDED is invisible without one.
@@ -119,10 +122,13 @@ fun <T> corRtNullBoxes(x: T): List<T?> = listOf(x, null)
 
 // The consumer's parameter is `List<Any?>`, whose CLR slot is the same `IReadOnlyList<object>` the erased return
 // produces, so the argument position agrees with the value by construction and this fixture pins result TYPING and
-// nothing else. Two neighbouring subjects are deliberately kept out: a parameter written as the substituted
+// nothing else. One neighbouring subject is deliberately kept out: a parameter written as the substituted
 // `List<Int?>` would hit the erasure family's documented STORE/pass-side gap (reconciling an erased value with a
-// directly-written target), and a GENERIC consumer is reshaped to `clrGenericStatic`, whose stamps the reshape
-// drops — stage 0 refuses that operand outright, at HEAD and at origin/main alike.
+// directly-written target). A GENERIC consumer (`fun <A> f(l: List<A?>, extra: Int)`) is a second one, and one this
+// fixture must not be read as covering: bir2cir wraps its collection argument in `Enumerable.Cast<object>` and the
+// wrap's `IEnumerable<object>` result does not inhabit the consumer's `IReadOnlyList<object>` parameter, which
+// faults at run with NO suspension anywhere in the program. Section 7 covers the STAMP half of that composition
+// (which is #304, and is fixed) on shapes whose non-suspend twin is sound.
 fun corRtCountNulls(l: List<Any?>, extra: Int): Int {
     var n = 0
     for (v in l) if (v == null) n++
@@ -162,6 +168,51 @@ fun interface CorRtSuspendOnInt {
 suspend fun <T, R> corRtApplyMapper(v: T, m: CorRtSuspendMapper<T, R>): R = m.map(v)
 
 suspend fun corRtApplyOnInt(v: Int, f: CorRtSuspendOnInt): Int = with(f) { v.transform() }
+
+// ---- 7. a `.NET`-bound operand's stamp surviving the `clr*` reshape (#304) -------------------------------------
+//
+// bir2cir's NetInteropBinding takes the plain call/read kotc emits by the .NET owner's IDENTITY and reshapes it
+// into the CLR vocabulary — `clrStatic`/`clrGenericStatic` for a call on a referenced owner, `clrPropGet` for a
+// `.NET` FIELD read. The reshape changes the node's SHAPE and not what it produces, so its result-type stamps stay
+// true and must travel with it: `bir-common/NodeType.cs` has no derivation arm for ANY `clr*` kind, which makes
+// those stamps the whole of the reshaped node's static type. Where a reshape dropped them, the node became
+// untypable — and an operand with no static type standing LEFT of a suspension is a stage-0 REFUSAL
+// (SuspendOperandPlan: "carries no static type"), so `v.X + susp()` was a compile-time rejection of source the
+// frontend accepts, while the same expression without the suspension compiled and ran.
+//
+// Each shape below is therefore paired with its NON-suspend twin asserting the identical value: the twin is what
+// says the refusal was about the suspension and not about the expression. The suspending operand is the SECOND one,
+// so the operand plan really does have to spill the first into a typed local across the suspension.
+//
+//   A `.NET` FIELD read (`Vector3.X` -> ReshapeField -> `clrPropGet`) — the reshape that dropped the stamp
+//   outright, and the shape this fixture is RED on without the fix.
+//   A cross-module GENERIC top-level call (`clrGenericStatic`) and its non-generic sibling (`clrStatic`) — the kind
+//   the issue names. Both carry a `sty` the reshape already forwarded, so they pin the shape rather than reproduce
+//   the drop; what they guard is the `ret` half of the same carry, which no Kotlin source reaches on its own.
+//
+// The consumers take the field's OWN type, so the reshaped node is the operand ITSELF: a conversion around it
+// (`v.X.toInt()`) would be a `conv`, which the deriver types from its own `to` slot whatever its operand is, and the
+// composition would no longer reach the drop at all.
+fun corRtJoinF(a: Float, b: Int): String = "" + a.toInt() + "," + b
+fun corRtJoinS(a: String, b: Int): String = a + "," + b
+
+suspend fun corRtNetInstanceField(): String {
+    val v = Vector3(4.0f, 2.0f, 3.0f)
+    return corRtJoinF(v.X, corRtTick(1))
+}
+
+fun corRtNetInstanceFieldPlain(): String {
+    val v = Vector3(4.0f, 2.0f, 3.0f)
+    return corRtJoinF(v.X, 2)
+}
+
+suspend fun corRtCrossModuleGeneric(): String = corRtJoinS(corStampPack(7, 1), corRtTick(1))
+
+fun corRtCrossModuleGenericPlain(): String = corRtJoinS(corStampPack(7, 1), 2)
+
+suspend fun corRtCrossModulePlainCall(): String = corRtJoinS(corStampPlain(7, 1), corRtTick(1))
+
+fun corRtCrossModulePlainCallPlain(): String = corRtJoinS(corStampPlain(7, 1), 2)
 
 class SuspendResultTypePrecedenceTests {
     @TestAttribute
@@ -223,5 +274,26 @@ class SuspendResultTypePrecedenceTests {
     @TestAttribute
     fun suspendFunInterfaceExtensionReceiver() {
         assertEquals(11, blockOn { corRtApplyOnInt(10) { corRtTick(this) } })
+    }
+
+    // ---- 7 ----
+    // Each pair is the same expression with and without the suspension: without it the program always compiled,
+    // with it the reshaped operand had no static type and bir2cir refused the compilation outright (#304).
+    @TestAttribute
+    fun netInstanceFieldLeftOfSuspension() {
+        assertEquals("4,2", corRtNetInstanceFieldPlain())
+        assertEquals("4,2", blockOn { corRtNetInstanceField() })
+    }
+
+    @TestAttribute
+    fun crossModuleGenericCallLeftOfSuspension() {
+        assertEquals("7/1,2", corRtCrossModuleGenericPlain())
+        assertEquals("7/1,2", blockOn { corRtCrossModuleGeneric() })
+    }
+
+    @TestAttribute
+    fun crossModulePlainCallLeftOfSuspension() {
+        assertEquals("7/1,2", corRtCrossModulePlainCallPlain())
+        assertEquals("7/1,2", blockOn { corRtCrossModulePlainCall() })
     }
 }
