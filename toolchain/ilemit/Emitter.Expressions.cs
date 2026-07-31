@@ -284,7 +284,11 @@ sealed partial class Emitter
                     // method DEFINITION.
                     var mi2 = ApplyTypeArgs(mi20, e, out var ccRet, out var ccPs);
                     EmitAddr(e.GetProperty("recv"));            // &C  (a managed pointer, required by `constrained.`)
-                    if (mi2 == mi20) EmitArgs(ccArgs, mi2.GetParameters()); else EmitArgsTyped(ccArgs, ccPs, mi2);
+                    // The RECORDED parameter vector wins whenever there is one: `GetParameters()` on a MethodBuilder
+                    // whose declaring TypeBuilder is not baked yet is not answerable, and a constrained call whose
+                    // constraint is an EMITTED Kotlin interface resolves to exactly such a builder. Reflection is the
+                    // fallback, for a referenced owner that has no recorded vector.
+                    if (ccPs != null) EmitArgsTyped(ccArgs, ccPs, mi2); else EmitArgs(ccArgs, mi2.GetParameters());
                     _il.Emit(OpCodes.Constrained, rt2);
                     _il.Emit(OpCodes.Callvirt, mi2);
                     // …and the declared call-RESULT view still has to be reconciled with the resolved return type —

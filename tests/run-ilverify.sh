@@ -10,7 +10,7 @@
 #
 # --audit-baseline additionally reddens on a DEAD key: a baseline entry that matched no finding at all has
 # rotted into a mask for whatever finding lands on that method next. It is reported with scripts/lib.sh's
-# xfail_diff wording, `FIXED … remove it from the xfail list`, but DELIBERATELY NOT with its verdict — there a
+# xfail_diff wording, `FIXED … remove it from the xfail list`, but DELIBERATELY NOT with its verdict — where a
 # FIXED line is green and merely advisory. A stale ilverify key is worse than a stale name in a fail-set,
 # because it is a live substring filter over future findings, so this lane stays red until the entry is pruned.
 # Opt-in because the audit is only meaningful over the COMPLETE emitted set: tests/packaged-sdk/run.sh verifies
@@ -95,7 +95,7 @@ done
 if (( audit )); then
 	mapfile -t audit_keys < <(printf '%s\n' "${!ILVERIFY_XFAIL[@]}" | LC_ALL=C sort)
 	for key in ${audit_keys[@]+"${audit_keys[@]}"}; do
-		[[ -v MATCHED[$key] ]] && continue
+		[[ -v MATCHED["$key"] ]] && continue
 		echo "FIXED     ilverify:$key — fixed; remove it from the xfail list"
 		rc=1
 	done
