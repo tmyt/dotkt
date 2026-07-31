@@ -23,6 +23,9 @@
 //   5. `for` `cmp` ∈ {<=, <, >=} — an unknown cmp silently miscompiles to an infinite loop.
 //   6. SUSPENSION LOWERED — no node in a body ilemit EMITS still carries `suspendCall:true` (only a METHOD still
 //      carrying `mods.suspend` is exempt — a ctor / static-initializer group never is; see CheckScope).
+//   7. STAMP AGREEMENT — a node's `sty` must not name a DIFFERENT TYPE than the `ret`/`dynRet` beside it (spec §2.7:
+//      a pass that changes a node's RESULT TYPE rewrites or deletes its `sty`). See CheckStampAgreement for the
+//      accepted-equivalence set and why it is what it is.
 //
 // SCOPE units mirror ilemit's `_locals`/`_cfgLabels` lifetimes exactly: a method = params ∪ body; a ctor ALSO folds
 // in preStmts/thisArgs/baseArgs (emitted in the same frame); the static-field-initializer group shares ONE .cctor `_locals`
@@ -40,33 +43,48 @@ public sealed class IrSanityException : Exception
     public IrSanityException(string decl, string message) : base(message) { Decl = decl; }
 }
 
+// WHICH invariants one traversal runs. The declaration walk, the scope units and the message attribution are the
+// same either way — only the per-node predicate set differs, so the two entry points share one definition of "what
+// counts as a declaration" rather than growing a second walker that could disagree with this one.
+public enum IrSanityChecks
+{
+    /// <summary>Checks 1-7 — the POST-LOWERING CIR gate (bir2cir on its CIR output; ilemit at EmitAssembly).</summary>
+    All,
+    /// <summary>
+    /// Check 7 alone — the spec §2.7 `sty` chokepoint, run by bir2cir on the fully-passed BIR while the stamp still
+    /// exists (BirTypeLowering strips it on the way to CIR). Checks 1-6 are CIR invariants and several of them do not
+    /// hold of a pre-lowering tree, so this mode runs the one check that is meaningful there and nothing else.
+    /// </summary>
+    StyStampsOnly,
+}
+
 public static class IrSanity
 {
     // Run the sanity invariants over every method/ctor/static-field-initializer in the document, attributing each
     // violation to its declaration. Every check is intra-declaration and needs no codegen state.
-    public static void Check(IEnumerable<JsonElement> files)
+    public static void Check(IEnumerable<JsonElement> files, IrSanityChecks which = IrSanityChecks.All)
     {
         foreach (var file in files)
         {
             var fileClass = file.TryGetProperty("fileClass", out var fc) && fc.ValueKind == JsonValueKind.String ? fc.GetString() : "?";
-            CheckContainer(fileClass, file, isInterface: false);
+            CheckContainer(fileClass, file, isInterface: false, which);
             if (file.TryGetProperty("types", out var ts) && ts.ValueKind == JsonValueKind.Array)
                 foreach (var t in ts.EnumerateArray())
                 {
                     var tn = t.TryGetProperty("name", out var nm) && nm.ValueKind == JsonValueKind.String ? nm.GetString() : "?";
                     var iface = t.TryGetProperty("kind", out var k) && k.ValueKind == JsonValueKind.String && k.GetString() == "interface";
-                    CheckContainer(tn, t, iface);
+                    CheckContainer(tn, t, iface, which);
                 }
         }
     }
 
     // A file class OR a user type: its methods, its ctors, and its static-field-initializer group (one .cctor scope).
-    static void CheckContainer(string owner, JsonElement c, bool isInterface)
+    static void CheckContainer(string owner, JsonElement c, bool isInterface, IrSanityChecks which)
     {
         if (c.TryGetProperty("methods", out var ms) && ms.ValueKind == JsonValueKind.Array)
-            foreach (var m in ms.EnumerateArray()) CheckMethodDecl(owner, m);
+            foreach (var m in ms.EnumerateArray()) CheckMethodDecl(owner, m, which);
         if (c.TryGetProperty("ctors", out var cs) && cs.ValueKind == JsonValueKind.Array)
-            foreach (var ct in cs.EnumerateArray()) CheckCtorDecl(owner, ct);
+            foreach (var ct in cs.EnumerateArray()) CheckCtorDecl(owner, ct, which);
         // Static field initializers share ONE .cctor `_locals` scope (a temp declared in field A's init is
         // resolvable from field B's) — check them as a single scope over the UNION of the inits.
         if (!isInterface && c.TryGetProperty("fields", out var fs) && fs.ValueKind == JsonValueKind.Array)
@@ -79,11 +97,11 @@ public static class IrSanity
             // ALWAYS suspension-checked (checkSuspension: true). ilemit emits a type initializer from the fields
             // alone and never consults `mods.suspend` on the containing type (Emitter.Assembly.cs pass 4b), so
             // nothing here is exempt — and `decl` is the CONTAINER, whose modifiers say nothing about this body.
-            if (inits.Count > 0) CheckScope(owner + "..cctor", null, inits, decl: c, checkSuspension: true);
+            if (inits.Count > 0) CheckScope(owner + "..cctor", null, inits, decl: c, checkSuspension: true, which);
         }
     }
 
-    static void CheckMethodDecl(string owner, JsonElement m)
+    static void CheckMethodDecl(string owner, JsonElement m, IrSanityChecks which)
     {
         // Abstract / bodiless methods (interface members, abstract decls) emit no IL — nothing to check.
         if (m.TryGetProperty("abstract", out var ab) && ab.ValueKind == JsonValueKind.True) return;
@@ -91,10 +109,10 @@ public static class IrSanity
         var name = m.TryGetProperty("name", out var nm) && nm.ValueKind == JsonValueKind.String ? nm.GetString() : "?";
         // The ONLY scope the suspension check exempts, and only when this METHOD still carries `mods.suspend` — the
         // exact flag ilemit's own guard keys on before it walks a method body (see CheckRefs check 6).
-        CheckScope(owner + "." + name, ParamNames(m), new List<JsonElement> { body }, decl: m, checkSuspension: !IsSuspendDecl(m));
+        CheckScope(owner + "." + name, ParamNames(m), new List<JsonElement> { body }, decl: m, checkSuspension: !IsSuspendDecl(m), which);
     }
 
-    static void CheckCtorDecl(string owner, JsonElement c)
+    static void CheckCtorDecl(string owner, JsonElement c, IrSanityChecks which)
     {
         if (!c.TryGetProperty("body", out var body) || body.ValueKind != JsonValueKind.Array) return;
         var roots = new List<JsonElement> { body };
@@ -106,7 +124,7 @@ public static class IrSanity
         if (c.TryGetProperty("baseArgs", out var ba) && ba.ValueKind == JsonValueKind.Array) roots.Add(ba);
         // ALWAYS suspension-checked (checkSuspension: true). ilemit's suspend guard lives in EmitMethodBody only;
         // EmitCtorBody has none, so a constructor body is emitted whatever modifiers it carries.
-        CheckScope(owner + "..ctor", ParamNames(c), roots, decl: c, checkSuspension: true);
+        CheckScope(owner + "..ctor", ParamNames(c), roots, decl: c, checkSuspension: true, which);
     }
 
     // Validate one `_locals`/`_cfgLabels` scope: collect its declared local names + label ids across all root trees,
@@ -118,9 +136,17 @@ public static class IrSanity
     // ilemit emits those without consulting the flag. Deriving it here from `decl` was the bug: the .cctor scope's
     // `decl` is the CONTAINING TYPE, so a type carrying `mods.suspend` silently disabled the check over a body
     // ilemit really does emit.
-    static void CheckScope(string declLabel, HashSet<string> paramNames, List<JsonElement> roots, JsonElement decl, bool checkSuspension)
+    static void CheckScope(string declLabel, HashSet<string> paramNames, List<JsonElement> roots, JsonElement decl, bool checkSuspension,
+                           IrSanityChecks which)
     {
         var pos = PosPrefix(decl);
+        // Check 7 is NODE-LOCAL — it compares two slots of one node — so the `StyStampsOnly` traversal needs neither
+        // the declared-name set nor the label set, and skips collecting them.
+        if (which == IrSanityChecks.StyStampsOnly)
+        {
+            foreach (var r in roots) CheckRefs(pos + declLabel, r, null, null, checkSuspension: false, which);
+            return;
+        }
         var declared = paramNames != null ? new HashSet<string>(paramNames) : new HashSet<string>();
         var labels = new HashSet<int>();
         foreach (var r in roots) { CollectDeclared(r, declared); CollectSanityLabels(r, labels); }
@@ -147,7 +173,7 @@ public static class IrSanity
         foreach (var r in roots)
         {
             CheckNoDupLabels(pos + declLabel, r);
-            CheckRefs(pos + declLabel, r, declared, labels, checkSuspension);
+            CheckRefs(pos + declLabel, r, declared, labels, checkSuspension, which);
         }
     }
 
@@ -227,12 +253,22 @@ public static class IrSanity
 
     // Walk the tree, checking each node's MEANING invariant. Unmatched kinds (and type nodes, whose `k` vocabulary is
     // disjoint from these) just recurse.
-    static void CheckRefs(string decl, JsonElement node, HashSet<string> declared, HashSet<int> labels, bool checkSuspension)
+    static void CheckRefs(string decl, JsonElement node, HashSet<string> declared, HashSet<int> labels, bool checkSuspension,
+                          IrSanityChecks which)
     {
         if (node.ValueKind == JsonValueKind.Object)
         {
             if (node.TryGetProperty("k", out var kEl) && kEl.ValueKind == JsonValueKind.String)
             {
+                // 7. STAMP AGREEMENT — runs in BOTH modes and on EVERY scope: unlike check 6, its subject is not what
+                // ilemit emits. `sty` is consumed by bir2cir's own type derivers, which walk every body whatever its
+                // modifiers say, so a stale stamp is a bug wherever it sits.
+                CheckStampAgreement(decl, node, kEl.GetString());
+                if (which == IrSanityChecks.StyStampsOnly)
+                {
+                    foreach (var p0 in node.EnumerateObject()) CheckRefs(decl, p0.Value, declared, labels, checkSuspension, which);
+                    return;
+                }
                 // 6. SUSPENSION LOWERED. `suspendCall:true` is kotc's FRONTEND FACT that this call site suspends;
                 // bir2cir's SuspendColdLowering is its only consumer, rewriting every suspending call into its cold
                 // shape — a resume label plus a call to the callee's `$dotkt_suspend` cold entry, or the awaiter
@@ -298,10 +334,10 @@ public static class IrSanity
                         break;
                 }
             }
-            foreach (var p in node.EnumerateObject()) CheckRefs(decl, p.Value, declared, labels, checkSuspension);
+            foreach (var p in node.EnumerateObject()) CheckRefs(decl, p.Value, declared, labels, checkSuspension, which);
         }
         else if (node.ValueKind == JsonValueKind.Array)
-            foreach (var x in node.EnumerateArray()) CheckRefs(decl, x, declared, labels, checkSuspension);
+            foreach (var x in node.EnumerateArray()) CheckRefs(decl, x, declared, labels, checkSuspension, which);
     }
 
     static HashSet<string> ParamNames(JsonElement m)
@@ -313,4 +349,150 @@ public static class IrSanity
                     s.Add(pn.GetString());
         return s;
     }
+
+    // ==== CHECK 7 — `sty` vs `ret`/`dynRet` STAMP AGREEMENT (spec §2.7) ===========================================
+    //
+    // The invariant: A PASS THAT CHANGES A NODE'S RESULT TYPE REWRITES OR DELETES ITS `sty`. `sty` is a CLAIM about
+    // the value the node produces now, not a historical note about the node it used to be, and every deriver reads it
+    // FIRST (bir-common/NodeType.cs PRECEDENCE). A stale stamp is therefore not merely imprecise: a spill local or a
+    // state-machine field declared from `List<Nullable<int32>>` while the call actually returns `List<object>` — two
+    // UNRELATED invariant reified generics — is invalid IL, not a diagnosable drop (that is exactly what
+    // NullableTvErasureCallRealign left behind before commit c17dea34).
+    //
+    // MISSING IS NOT DISAGREEMENT. A node with no `sty`, or with no `ret`/`dynRet`, is skipped: dropping the stamp is
+    // one of the two things §2.7 permits a retyping pass to do, and a node that arrives with no stamp at all belongs
+    // to the separate (already loud) stamp-drop family.
+    //
+    // ACCEPTED EQUIVALENCES — the relation is deliberately a REFUTATION test: it reports a violation only where two
+    // CONCRETE, structurally comparable types are confidently different, and accepts everything else. `sty` is the
+    // frontend's INSTANTIATED type and `ret` the callee's DECLARED one, so they differ legitimately in ways that are
+    // not a difference of type IDENTITY. Measured over the 442-file stdlib reference + runtime pre-lowering corpus
+    // (16,070 sty/ret pairs, 58 of them not byte-equal), every legitimate difference falls in one of these classes:
+    //
+    //   (a) A TYPE VARIABLE or a `*` projection on EITHER side matches anything. `ret` may name the UNinstantiated
+    //       declared type (`Sequence<!0>` against an instantiated `Sequence<!1>`, `object` against a `!!0`), and a
+    //       substituted `Map$Entry<K,V>` legitimately faces a deeper re-substituted spelling of the same nest. 50 of
+    //       the 58 differing pairs are this.
+    //   (b) The three spellings of one CLR type — `kotlin.Boolean` / `bool` / `System.Boolean`, `kotlin.Unit` /
+    //       `void` / `System.Void`, `kotlin.Any` / `object`, … — are one canonical token. bir2cir lowers a type token
+    //       when its pass runs, so a node retyped by an early pass and one retyped by a late pass carry the same type
+    //       in different vocabularies (8 of the 58: `kotlin.Boolean` vs `bool`, `kotlin.Unit` vs `System.Void`).
+    //   (c) `kotlin.Nothing` matches anything — the bottom type inhabits every slot, and it also erases to `object`.
+    //   (d) A `$dotkt_star` name matches anything — those are the synthesized non-generic EXISTENTIAL views
+    //       (ExistentialReceiverBinding / FBoundStarProjectionErasure) of a star-projected generic, i.e. a deliberate
+    //       re-spelling of the same value (`kotlin.Comparator<!!0>` vs `kotlin.Comparator$dotkt_star`).
+    //   (e) `nullable`/`oblivious` wrappers are stripped on both sides before comparing: nullability is an annotation
+    //       axis that DeclNullableFlags/ReferenceNullableStrip move off the type at their own point in the pipeline,
+    //       not a difference of which type the node produces.
+    //   (f) `{t:array,elem:E}` and the name-keyed `kotlin.Array<E>` are the same type in two spellings (spec §2.7
+    //       *One deriver, two layers* — `StaticType.Surface` mints the name-keyed one on purpose).
+    //   (g) Anything not structurally comparable — two different `t` discriminators, two `fqn`s of the same name with
+    //       DIFFERENT arities, two `fn`s of different arity — is ACCEPTED. An erasure that drops or adds a generic
+    //       argument is a shape this check declines to judge; the check exists for the class that bit in FU-⑧, which
+    //       is a same-shape, same-arity pair whose ARGUMENT NAMES a different type.
+    //
+    // What is left is exactly the refutation: two `fqn`s whose canonical names differ, or whose same-arity arguments
+    // recursively refute. The whole corpus above is green under it — with ONE genuine violation it found, since fixed
+    // (ContinuationErasure promoted a `getOrThrow` call's `ret` Unit->Any and left `sty` at Unit).
+    static readonly string[] StampSlots = { "ret", "dynRet" };
+
+    static void CheckStampAgreement(string decl, JsonElement node, string kind)
+    {
+        if (!node.TryGetProperty("sty", out var styEl) || styEl.ValueKind != JsonValueKind.Object) return;
+        var sty = TryReadType(styEl);
+        if (sty == null) return;
+        foreach (var slot in StampSlots)
+        {
+            if (!node.TryGetProperty(slot, out var otherEl) || otherEl.ValueKind != JsonValueKind.Object) continue;
+            var other = TryReadType(otherEl);
+            if (other == null || Agree(sty, other)) continue;
+            throw new IrSanityException(decl,
+                $"'{kind}' carries a stale 'sty': the stamp names {TypeNode.ToJson(sty)} while its '{slot}' names "
+                + $"{TypeNode.ToJson(other)} — a pass that changes a node's result type must rewrite or delete its 'sty' (spec §2.7)");
+        }
+    }
+
+    // A malformed type node is the SCHEMA validator's business (scripts/verify-schema.py), never this gate's — an
+    // unreadable slot is skipped rather than turned into a meaning violation.
+    static TypeNode TryReadType(JsonElement e)
+    {
+        try { return TypeNode.Read(e); }
+        catch (FormatException) { return null; }
+    }
+
+    // The canonical token for a named type, collapsing the kotlin.* / CLR-shorthand / System.* spellings of one CLR
+    // type (equivalence (b)). The alphabet is bir2cir's `BirTypeLowering.KotlinAllToClr` and ilemit's
+    // `PrimShorthandName` — the two ends this gate sits between — joined at the shorthand.
+    static readonly IReadOnlyDictionary<string, string> CanonName = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["kotlin.Int"] = "int", ["System.Int32"] = "int",
+        ["kotlin.Long"] = "long", ["System.Int64"] = "long",
+        ["kotlin.Short"] = "short", ["System.Int16"] = "short",
+        ["kotlin.Byte"] = "sbyte", ["System.SByte"] = "sbyte",
+        ["kotlin.Double"] = "double", ["System.Double"] = "double",
+        ["kotlin.Float"] = "float", ["System.Single"] = "float",
+        ["kotlin.Boolean"] = "bool", ["System.Boolean"] = "bool",
+        ["kotlin.Char"] = "char", ["System.Char"] = "char",
+        ["kotlin.String"] = "string", ["System.String"] = "string",
+        ["kotlin.Any"] = "object", ["System.Object"] = "object",
+        ["kotlin.Unit"] = "void", ["System.Void"] = "void",
+        ["kotlin.UInt"] = "uint", ["System.UInt32"] = "uint",
+        ["kotlin.ULong"] = "ulong", ["System.UInt64"] = "ulong",
+        ["kotlin.UByte"] = "byte", ["System.Byte"] = "byte",
+        ["kotlin.UShort"] = "ushort", ["System.UInt16"] = "ushort",
+    };
+
+    const string Bottom = "kotlin.Nothing";
+    const string ExistentialMark = "$dotkt_star";
+
+    static TypeNode Unwrap(TypeNode t)
+    {
+        while (true)
+            switch (t)
+            {
+                case TypeNode.Nullable n: t = n.Of; break;
+                case TypeNode.Oblivious o: t = o.Of; break;
+                default: return t;
+            }
+    }
+
+    // TRUE unless the two types confidently name DIFFERENT types. Every arm's rationale is in the block above.
+    static bool Agree(TypeNode a, TypeNode b)
+    {
+        a = Unwrap(a);
+        b = Unwrap(b);
+        if (a is TypeNode.Tv or TypeNode.Star || b is TypeNode.Tv or TypeNode.Star) return true;   // (a)
+        if (a is TypeNode.Array aa)
+            return b switch
+            {
+                TypeNode.Array ba => Agree(aa.Elem, ba.Elem),
+                TypeNode.Fqn { Name: "kotlin.Array", Args: { Length: 1 } bg } => Agree(aa.Elem, bg[0]),   // (f)
+                _ => true,                                                                                // (g)
+            };
+        if (b is TypeNode.Array bb)
+            return a is TypeNode.Fqn { Name: "kotlin.Array", Args: { Length: 1 } ag } ? Agree(ag[0], bb.Elem) : true;
+        if (a is TypeNode.Fqn fa && b is TypeNode.Fqn fb)
+        {
+            if (fa.Name == Bottom || fb.Name == Bottom) return true;                                       // (c)
+            if (fa.Name.Contains(ExistentialMark) || fb.Name.Contains(ExistentialMark)) return true;       // (d)
+            if (Canon(fa.Name) != Canon(fb.Name)) return false;                                            // REFUTED
+            if (fa.Args == null || fb.Args == null || fa.Args.Length != fb.Args.Length) return true;        // (g)
+            for (var i = 0; i < fa.Args.Length; i++)
+                if (!Agree(fa.Args[i], fb.Args[i])) return false;
+            return true;
+        }
+        if (a is TypeNode.Fn na && b is TypeNode.Fn nb)
+        {
+            if (!Agree(na.Ret, nb.Ret)) return false;
+            var pa = na.DelegateParams;
+            var pb = nb.DelegateParams;
+            if (pa.Length != pb.Length) return true;                                                       // (g)
+            for (var i = 0; i < pa.Length; i++)
+                if (!Agree(pa[i], pb[i])) return false;
+            return true;
+        }
+        return true;                                                                                       // (g)
+    }
+
+    static string Canon(string name) => CanonName.TryGetValue(name, out var c) ? c : name;
 }

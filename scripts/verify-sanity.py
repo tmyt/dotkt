@@ -22,6 +22,11 @@
 #   5. `for` cmp in {<=, <, >=}.
 #   6. SUSPENSION LOWERED — no node in a body ilemit EMITS still carries suspendCall:true (only a METHOD
 #      still carrying mods.suspend is exempt; IrSanity.CheckScope documents why, and why a ctor/.cctor is not).
+#   7. STAMP AGREEMENT — a node's `sty` does not name a DIFFERENT type than the `ret`/`dynRet` beside it
+#      (spec 2.7). IrSanity.CheckStampAgreement carries the accepted-equivalence set and its corpus evidence;
+#      `_stamps_agree` below is its mirror, arm for arm. NOTE that the emitted CIR corpus contains no `sty`
+#      at all (BirTypeLowering strips it), so the CHOKEPOINT for this check is bir2cir's own pre-lowering
+#      call — here it is pinned by the tests/ir/selftest fixtures, exactly like check 6.
 import json, sys, glob, os
 
 
@@ -56,6 +61,92 @@ def _collect_labels(roots):
     for r in roots:
         _walk(r, f)
     return ids
+
+
+# ---- check 7: `sty` vs `ret`/`dynRet` (spec 2.7) --------------------------------------------------------
+# The mirror of IrSanity.CheckStampAgreement — read the block comment there for WHY each arm accepts. In
+# short: the relation is a REFUTATION test that reports only two concrete, structurally comparable types that
+# are confidently different, because `sty` is the frontend's INSTANTIATED type and `ret` the callee's DECLARED
+# one, and they legitimately differ in ways that are not a difference of type IDENTITY.
+
+# (b) the kotlin.* / CLR-shorthand / System.* spellings of one CLR type, collapsed to one token.
+_CANON = {
+    "kotlin.Int": "int", "System.Int32": "int",
+    "kotlin.Long": "long", "System.Int64": "long",
+    "kotlin.Short": "short", "System.Int16": "short",
+    "kotlin.Byte": "sbyte", "System.SByte": "sbyte",
+    "kotlin.Double": "double", "System.Double": "double",
+    "kotlin.Float": "float", "System.Single": "float",
+    "kotlin.Boolean": "bool", "System.Boolean": "bool",
+    "kotlin.Char": "char", "System.Char": "char",
+    "kotlin.String": "string", "System.String": "string",
+    "kotlin.Any": "object", "System.Object": "object",
+    "kotlin.Unit": "void", "System.Void": "void",
+    "kotlin.UInt": "uint", "System.UInt32": "uint",
+    "kotlin.ULong": "ulong", "System.UInt64": "ulong",
+    "kotlin.UByte": "byte", "System.Byte": "byte",
+    "kotlin.UShort": "ushort", "System.UInt16": "ushort",
+}
+_BOTTOM = "kotlin.Nothing"
+_EXISTENTIAL = "$dotkt_star"
+
+
+def _unwrap(t):
+    """(e) nullability is an annotation axis, not a difference of which type the node produces."""
+    while isinstance(t, dict) and t.get("t") in ("nullable", "oblivious"):
+        t = t.get("of")
+    return t
+
+
+def _fn_params(t):
+    """The delegate ARG list — an extension receiver is the first argument (TypeNode.Fn.DelegateParams)."""
+    ps = t.get("params")
+    ps = list(ps) if isinstance(ps, list) else []
+    return ([t["recv"]] + ps) if t.get("recv") is not None else ps
+
+
+def _stamps_agree(a, b):
+    """True unless the two types confidently name DIFFERENT types."""
+    a, b = _unwrap(a), _unwrap(b)
+    if not isinstance(a, dict) or not isinstance(b, dict):
+        return True
+    ta, tb = a.get("t"), b.get("t")
+    if ta in ("tv", "star") or tb in ("tv", "star"):            # (a)
+        return True
+    if ta == "array" or tb == "array":                          # (f)
+        arr, other = (a, b) if ta == "array" else (b, a)
+        if other.get("t") == "array":
+            return _stamps_agree(a.get("elem"), b.get("elem"))
+        if other.get("t") == "fqn" and other.get("name") == "kotlin.Array" \
+                and isinstance(other.get("args"), list) and len(other["args"]) == 1:
+            return _stamps_agree(arr.get("elem"), other["args"][0])
+        return True                                             # (g)
+    if ta == "fqn" and tb == "fqn":
+        na, nb = a.get("name"), b.get("name")
+        if not isinstance(na, str) or not isinstance(nb, str):
+            return True
+        if na == _BOTTOM or nb == _BOTTOM:                      # (c)
+            return True
+        if _EXISTENTIAL in na or _EXISTENTIAL in nb:            # (d)
+            return True
+        if _CANON.get(na, na) != _CANON.get(nb, nb):            # REFUTED
+            return False
+        aa, ab = a.get("args"), b.get("args")
+        if not isinstance(aa, list) or not isinstance(ab, list) or len(aa) != len(ab):
+            return True                                         # (g)
+        return all(_stamps_agree(x, y) for x, y in zip(aa, ab))
+    if ta == "fn" and tb == "fn":
+        if not _stamps_agree(a.get("ret"), b.get("ret")):
+            return False
+        pa, pb = _fn_params(a), _fn_params(b)
+        if len(pa) != len(pb):
+            return True                                         # (g)
+        return all(_stamps_agree(x, y) for x, y in zip(pa, pb))
+    return True                                                 # (g)
+
+
+def _compact(t):
+    return json.dumps(t, separators=(",", ":"))
 
 
 def _pos_prefix(decl):
@@ -103,6 +194,16 @@ class Sanity:
             if _susp and isinstance(k, str) and o.get("suspendCall") is True:
                 self.err(_f, _dl, f"'{k}' still carries 'suspendCall': a suspension escaped the cold lowering "
                                   "(every suspending call must be rewritten into its cold Continuation shape before CIR)")
+            # 7. STAMP AGREEMENT — unlike check 6 this asks of EVERY scope: `sty` is consumed by bir2cir's type
+            # derivers, which walk every body whatever its modifiers say, so a stale stamp is a bug wherever it
+            # sits. A MISSING stamp is not a disagreement (dropping it is what 2.7 permits) and is skipped.
+            if isinstance(k, str) and isinstance(o.get("sty"), dict):
+                for slot in ("ret", "dynRet"):
+                    other = o.get(slot)
+                    if isinstance(other, dict) and not _stamps_agree(o["sty"], other):
+                        self.err(_f, _dl, f"'{k}' carries a stale 'sty': the stamp names {_compact(o['sty'])} "
+                                          f"while its '{slot}' names {_compact(other)} — a pass that changes a node's "
+                                          "result type must rewrite or delete its 'sty' (spec §2.7)")
             if k in ("local", "setLocal"):
                 n = o.get("name")
                 if isinstance(n, str) and n not in declared:

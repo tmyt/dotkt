@@ -7,6 +7,23 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Added
 
+- **A stale `sty` stamp is now caught mechanically, right where the stamp dies (area:bir2cir).** The spec §2.7
+  invariant — *a pass that changes a node's result type rewrites or deletes its `sty`* — was stated and swept by
+  hand once, but nothing caught the next pass that reintroduced the drift, and the stamp is read FIRST by every
+  type deriver: a spill local or state-machine field declared from `List<Int?>` while the call actually returns
+  `List<object>` is invalid IL, not a diagnosable drop. bir2cir now runs the shared `bir-common/IrSanity` over each
+  file's fully-passed BIR immediately before `BirTypeLowering` (which strips `sty`, so this is the last point the
+  stamp exists) and refuses a `sty` that names a different type than the `ret`/`dynRet` beside it; the same check
+  runs on the CIR in both bir2cir and ilemit, and `scripts/verify-sanity.py` mirrors it offline. The relation is a
+  REFUTATION test calibrated on the 442-file stdlib reference + runtime pre-lowering corpus (16,070 stamp pairs)
+  and the app corpus: a type variable, a `*`, `kotlin.Nothing`, a `$dotkt_star` existential view, a nullability
+  wrapper, a spelling difference between the `kotlin.*`/shorthand/`System.*` vocabularies, and any pair of unlike
+  or different-arity shapes all AGREE, and a missing stamp is not a disagreement. Calibrating it found one live
+  violator, fixed here: `ContinuationErasure` promoted a discarded `Result` accessor's `ret` from `Unit` to
+  `kotlin.Any` so ilemit would pop the value, and left `sty` at `kotlin.Unit` — restoring for every deriver the
+  exact stale `void` hint the promotion exists to remove. `tests/ir/selftest` pins the check against BOTH
+  implementations and `tests/ir/lowering` pins the chokepoint itself, each with the legitimate neighbours beside
+  it.
 - **A suspension that escapes the cold lowering is now caught at the CIR boundary (area:bir2cir, area:ilemit).**
   `suspendCall:true` is kotc's frontend fact that a call site suspends, and bir2cir's `SuspendColdLowering` is its
   only consumer — it rebuilds each suspending call as a resume label plus the callee's cold-shape call (a

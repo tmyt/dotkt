@@ -620,6 +620,16 @@ four variants that preceded this paragraph came to disagree.
 > reshapes) must carry `sty` with the change or drop it, alongside the `ret`/`dynRet` it already updates. A stale
 > `sty` surviving on a retyped node is a bug in THAT pass — never a reason to demote the stamp below `ret`.
 
+That invariant is MECHANICALLY CHECKED, not merely stated (#305). bir2cir runs the shared `bir-common/IrSanity`
+check 7 over each file's fully-passed BIR immediately before `BirTypeLowering` — the last point at which the stamp
+still exists — and refuses a `sty` that names a different type than the `ret`/`dynRet` beside it. `IrSanity`'s
+`CheckStampAgreement` documents the accepted-equivalence set and the corpus it is calibrated on; the short version
+is that the relation is a REFUTATION test (a type VARIABLE, a `*`, `kotlin.Nothing`, a `$dotkt_star` existential
+view, a nullability wrapper, a spelling difference between the kotlin.*/shorthand/System.* vocabularies, and any
+pair of unlike or different-arity shapes all AGREE), so it names only the class that motivated it: a same-shape
+pair whose argument names a genuinely different type. A MISSING stamp is not a disagreement — dropping it is one of
+the two things this invariant permits.
+
 **No `kotlin.Any` for a slot whose type could not be derived.** A declared slot — a state-machine field, a spill
 local, a plan binding — with an underivable type is a REFUSAL that names the shape, not a box: `kotlin.Any` hides
 a type the CLR would refuse and converts an earlier layer's dropped stamp into a runtime unbox fault. The
