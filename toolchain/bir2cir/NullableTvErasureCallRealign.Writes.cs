@@ -41,8 +41,8 @@ static partial class NullableTvErasureCallRealign
     // substituted (pre-erasure) view.
     // Evaluates the arguments as it goes, because one rewrite has to happen BEFORE an argument is evaluated: see the
     // construction case below. Reports the flowed argument types (null when the node has no `args`).
-    static TypeNode[] RealignArgs(JsonObject call, TypeNode[] declParams, TypeNode[] ownerArgs, TypeNode[] methodArgs,
-        Ctx ctx)
+    static TypeNode[] RealignArgs(JsonObject call, TypeNode[] declParams, bool[] declRefused, TypeNode[] ownerArgs,
+        TypeNode[] methodArgs, Ctx ctx)
     {
         if (call["args"] is not JsonArray args) return null;
         // A callStatic/callInstance carries `sig`; a `new` carries `argTypes`; a call NetInteropBinding has already
@@ -50,15 +50,34 @@ static partial class NullableTvErasureCallRealign
         // reading only two of the three left every .NET-interop argument outside the axis (an `object` from an erased
         // stdlib return handed to a `Nullable<bool>` parameter, with nothing to narrow it). Any of them may be absent
         // (resolution then falls back to arity), which is not an error.
+        //
+        // WHETHER the descriptor is a resolved CLR signature or Kotlin vocabulary is remembered, because the fallback
+        // below trusts the two to different depths — and that is decided by the call's KIND, never by which key holds
+        // the vector. A `clr*` node is .NET-bound by construction; its key only records how far resolution has got. A
+        // GENERIC .NET call carries `memberSig` from the moment NetInteropBinding reshapes it, while a NON-GENERIC one
+        // carries `argTypes` until ClrMemberResolution stamps `memberSig` — which happens long AFTER this pass runs.
+        // Reading .NET-boundness off `memberSig`'s presence therefore left every non-generic .NET call on the Kotlin
+        // fallback, where the widening screen below drops every reference slot: an erased `object` reached a `string`
+        // parameter with no `castclass` at all, and the emitter pushed it into a slot the CLR does not accept.
+        var clrBound = IsClrBoundKind(Str(call["k"]));
         var descriptor = call["sig"] as JsonArray ?? call["argTypes"] as JsonArray ?? call["memberSig"] as JsonArray;
         if (descriptor != null && descriptor.Count != args.Count) descriptor = null;
         var haveDecl = declParams != null && declParams.Length == args.Count;
+        var haveRefusals = declRefused != null && declRefused.Length == args.Count;
         var argTypes = new TypeNode[args.Count];
         for (var i = 0; i < args.Count; i++)
         {
-            // A declared slot may be individually unknown (a referenced parameter whose declaration the producing
-            // assembly could not state structurally); that position falls back to the descriptor like an undeclared call.
-            var target = haveDecl && declParams[i] != null
+            // A REFUSED slot is not an unknown one. The reader saw this parameter's carrier and decided it must not
+            // be stated, and the call's descriptor is that same erasure written in the call's substituted vocabulary.
+            // Falling back to it applies precisely the derivation the refusal exists to prevent, so this position gets
+            // no target from either source and the argument is left exactly as the frontend typed it. Nothing produces
+            // a refusal today — the `Array<X?>` slot that did is served now that #86 D2 made the erasure uniform there
+            // — so this is the channel standing ready for the next one rather than a live path.
+            var refused = haveRefusals && declRefused[i];
+            // A declared slot may instead be individually unknown (a referenced parameter whose declaration the
+            // producing assembly could not state structurally); THAT position falls back to the descriptor like an
+            // undeclared call.
+            var target = !refused && haveDecl && declParams[i] != null
                 ? Subst(NullableGenericErasure.EraseNullableTv(declParams[i], _isValue), ownerArgs, methodArgs)
                 : null;
             // A CONSTRUCTION whose instantiation is the erasure counterpart of the slot is RETYPED rather than
@@ -113,11 +132,17 @@ static partial class NullableTvErasureCallRealign
             // The arm is reached only when the value flowed out as a bare `object`, so this is always the NARROWING
             // direction — and narrowing out of `object` needs a conversion whatever the target is, `unbox.any` for a
             // value and `castclass` for a reference. Which one, and whether one is needed at all, is CastForTarget's
-            // asymmetric rule; screening here with the WIDENING test (`NeedsObjectSeam`) silently dropped every
-            // reference target, leaving an `object` where a `string` was required.
-            else if (descriptor != null && TypeJson.Read(descriptor[i]) is TypeNode slot
+            // asymmetric rule. Screening it with the WIDENING test (`NeedsObjectSeam`) drops every reference target,
+            // which for the .NET arm left an `object` where a `string` was required — measured at BOTH arities, and
+            // the reason that arm is unscreened whatever key its descriptor arrived under. The KOTLIN arms — a
+            // `callStatic`/`callInstance`'s `sig` and a Kotlin `new`'s `argTypes` — KEEP the screen: their descriptor
+            // is the call's own substituted view rather than a resolved CLR signature, so an unrestricted reference
+            // cast there would be typed by something that may not be the callee's slot at all. Widening those needs
+            // its own evidence, and there is none yet.
+            else if (!refused && descriptor != null && TypeJson.Read(descriptor[i]) is TypeNode slot
                      && IsBareObject(argTypes[i])
-                     && Subst(slot, ownerArgs, methodArgs) is TypeNode closed)
+                     && Subst(slot, ownerArgs, methodArgs) is TypeNode closed
+                     && (clrBound || NeedsObjectSeam(closed)))
                 target = closed;
             if (target != null && args[i] is JsonObject arg && CastForTarget(arg, argTypes[i], target) is JsonNode wrapped)
                 args[i] = wrapped;
@@ -139,8 +164,8 @@ static partial class NullableTvErasureCallRealign
     // types by ARGUMENT POSITION rather than by name, because the two sides are legitimately different types (a
     // `List<object>` arrives at a `Collection<!!0>` slot) and position is what the CLR's assignability rule aligns.
     //
-    // And ONLY for this family, which `Unifiable` pins: either the binding is the nullable-possibly-value type D2
-    // moves, or the position is an ARRAY ELEMENT, where `object[]` genuinely inhabits one instantiation. Without that
+    // And ONLY for this family: either the binding is the nullable-possibly-value type D2 moves, or the position is
+    // an ARRAY ELEMENT, where `object[]` genuinely inhabits one instantiation. Without that
     // gate the pairing-by-position reaches ordinary generic calls it has no business re-instantiating — a
     // `Comparator<object>` arriving at a contravariant `Comparator<in T>` would rewrite `T = String` to `object` and
     // drop it through its own `T : CharSequence` bound, and a `Derived<U> : Base<String>` arriving at a `Base<T>`
@@ -178,6 +203,13 @@ static partial class NullableTvErasureCallRealign
         }
     }
 
+    // The call kinds NetInteropBinding (and MemberCallSubstitution, for a constructor) produces once a call is BOUND to
+    // a .NET member. Being one of these is what makes the node's argument descriptor a .NET declaration rather than the
+    // caller's own Kotlin view — the single statement of that fact, read both by the walk that routes these nodes to
+    // EvalClrCall and by the argument realignment that decides how far to trust their descriptor.
+    static bool IsClrBoundKind(string k) =>
+        k is "clrStatic" or "clrInstance" or "clrGenericStatic" or "clrGenericInstance" or "newClr";
+
     // A call NetInteropBinding has already BOUND to a .NET member. Only the WRITE axis applies to it: the callee is
     // .NET, so its declared parameter types (`memberSig`) ARE the declaration and there is nothing Kotlin to
     // re-derive — but an argument that flowed out of the erasure as a bare `object` still has to be narrowed into the
@@ -195,7 +227,8 @@ static partial class NullableTvErasureCallRealign
         if (obj["recv"] != null) Eval(obj["recv"], ctx);
         var ownerArgs = (TypeJson.Read(obj["type"]) as TypeNode.Fqn)?.Args;
         var methodArgs = (obj["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray();
-        RealignArgs(obj, null, ownerArgs, methodArgs, ctx);
+        // No declaration and nothing to refuse: the callee is .NET, so `memberSig` IS its declaration.
+        RealignArgs(obj, null, null, ownerArgs, methodArgs, ctx);
         // Whatever else the node carries (an index expression, a value) still needs walking; the descriptor keys and
         // the owner `type` are not operands.
         foreach (var kv in obj)

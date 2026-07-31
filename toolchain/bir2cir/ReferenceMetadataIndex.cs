@@ -1165,31 +1165,38 @@ sealed partial class ReferenceMetadataIndex
     // generic arity is all a call site gives us, so a same-shape overload SET is refused outright rather than resolved
     // to whichever sibling was enumerated first — deriving the wrong member's slot types manufactures exactly the
     // mismatch the consuming pass exists to remove.
+    // `paramsRefused[i]` marks a parameter whose carrier the reader DELIBERATELY would not state. It is not the same
+    // fact as `declaredParams[i] == null`, which also covers "the producer stated nothing here", and the consumer
+    // must treat them differently: an absent declaration falls back to the call's own descriptor, while a REFUSED one
+    // must not — the descriptor is that same erasure written in the call's substituted vocabulary, so falling back to
+    // it applies exactly the derivation the refusal exists to prevent.
+    //
+    // The RETURN needs no such flag: a return the reader will not state simply leaves the call site's stamped result
+    // standing, which is the pre-reader behaviour and has no fallback to bypass.
     public bool TryNullableGenericSlot(string ownerFqn, string name, bool isStatic, int argCount, int methodArity,
-        out TypeNode declaredRet, out TypeNode[] declaredParams)
+        out TypeNode declaredRet, out TypeNode[] declaredParams, out bool[] paramsRefused)
     {
         declaredRet = null;
         declaredParams = null;
+        paramsRefused = null;
         if (ownerFqn == null || name == null) return false;
-        if (FindDeclaredSlot(ownerFqn, name, isStatic, argCount, methodArity,
-                new HashSet<string>(StringComparer.Ordinal), 0, out var ret, out var ps) != SlotLookup.Declared)
+        var path = new HashSet<string>(StringComparer.Ordinal) { BareOwnerFqn(ownerFqn) };
+        if (FindDeclaredSlot(ownerFqn, name, isStatic, argCount, methodArity, path, out var ret, out var ps)
+            != SlotLookup.Declared)
             return false;
-        declaredRet = ret;
-        declaredParams = ps;
-        // Declared, but with nothing this reader may state about it — the caller has no use for that.
-        return declaredRet != null || declaredParams.Any(p => p != null);
+        declaredRet = ret.Node;
+        declaredParams = ps.Select(p => p.Node).ToArray();
+        paramsRefused = ps.Select(p => p.Refused).ToArray();
+        // Declared, but with nothing this reader may state about it — the caller has no use for that. A REFUSAL is
+        // something to state, though: it is what stops the caller reaching for the descriptor instead.
+        return declaredRet != null || ps.Any(p => p.Node != null || p.Refused);
     }
 
-    // Deepest supertype chain the search will walk. A constructed hierarchy can grow its own arguments
-    // (`A<T> : B<A<T>>`), so the path key alone does not bound the walk; nothing real is this deep.
-    const int MaxSupertypeDepth = 16;
-
     SlotLookup FindDeclaredSlot(string ownerFqn, string name, bool isStatic, int argCount, int methodArity,
-        HashSet<string> path, int depth, out TypeNode declaredRet, out TypeNode[] declaredParams)
+        HashSet<string> path, out SlotFact declaredRet, out SlotFact[] declaredParams)
     {
-        declaredRet = null;
+        declaredRet = default;
         declaredParams = null;
-        if (depth > MaxSupertypeDepth) return SlotLookup.NotDeclared;
         var bare = BareOwnerFqn(ownerFqn);
         if (TryMembersByBirOwner(bare, out var list))
         {
@@ -1208,7 +1215,7 @@ sealed partial class ReferenceMetadataIndex
             {
                 var member = shapeMatches[0];
                 declaredRet = DeclaredSlot(member.NullableGenericRet, member.ReturnTypeNode);
-                declaredParams = new TypeNode[argCount];
+                declaredParams = new SlotFact[argCount];
                 for (var i = 0; i < argCount; i++)
                     declaredParams[i] = DeclaredSlot(member.NullableGenericParams?[i], member.ParamTypeNodes[i]);
                 // DECLARED HERE TERMINATES THE SEARCH, facts or no facts. A concrete member that shadows or
@@ -1222,19 +1229,21 @@ sealed partial class ReferenceMetadataIndex
         // Reflection reports the interface set TRANSITIVELY, so one hop reaches every interface declaration; the base
         // chain is walked one link at a time. Every supertype that answers is collected and they must AGREE — an
         // inherited member the call cannot distinguish is not a declaration this pass may act on.
-        TypeNode foundRet = null;
-        TypeNode[] foundParams = null;
+        SlotFact foundRet = default;
+        SlotFact[] foundParams = null;
         var answers = 0;
         foreach (var super in Supertypes(shape))
         {
-            // The cycle guard is PATH-LOCAL and keyed on the CONSTRUCTED supertype. `I<int>` and `I<string>` are two
-            // different declarations of the same member and both have to be visited before they can be compared; a
-            // set of BARE names shared across siblings suppressed the second one outright, so the answer was
-            // whichever the reflection interface order reached first. Removing the key on the way out keeps a shared
-            // base reachable on every path rather than only the first.
-            var key = TypeNode.ToJson(super);
+            // The guard is PATH-LOCAL and keyed on the TYPE DEFINITION. Repeating a definition on ONE path is cyclic
+            // metadata and the only thing worth stopping; repeating it on a SIBLING path is not, so the key is dropped
+            // on the way out and `I<int>` / `I<string>` are both visited and then compared rather than the answer
+            // being whichever the reflection interface order reached first. Because a definition can appear at most
+            // once per path, the walk terminates on its own — a base chain is as deep as the program declares it, and
+            // an arbitrary hop limit would silently drop a carrier declared past the limit AND let a shallower
+            // same-shape interface answer win instead of triggering the disagreement refusal.
+            var key = BareOwnerFqn(super.Name);
             if (!path.Add(key)) continue;
-            var found = FindDeclaredSlot(super.Name, name, isStatic, argCount, methodArity, path, depth + 1,
+            var found = FindDeclaredSlot(super.Name, name, isStatic, argCount, methodArity, path,
                 out var sret, out var sps);
             path.Remove(key);
             if (found == SlotLookup.Refused) return SlotLookup.Refused;
@@ -1256,6 +1265,11 @@ sealed partial class ReferenceMetadataIndex
         foreach (var i in shape.Interfaces ?? Array.Empty<TypeNode.Fqn>()) yield return i;
     }
 
+    // A refusal survives the hop unchanged: which supertype declared the slot has no bearing on whether the reader
+    // may state it.
+    static SlotFact MapThroughSupertype(SlotFact f, TypeNode[] superArgs)
+        => new(MapThroughSupertype(f.Node, superArgs), f.Refused);
+
     // Rewrite a declaration expressed in a SUPERTYPE's type-parameter space into the derived type's, using the
     // supertype arguments the derived type declared (`List<E> : Iterable<E>` maps `Iterable`'s `!0` to `List`'s `!0`;
     // `IntSlots : Slots<Int>` maps it to `Int`). Method-scope parameters belong to the member and are left alone.
@@ -1275,24 +1289,31 @@ sealed partial class ReferenceMetadataIndex
         _ => t,
     };
 
-    static bool SameSlots(TypeNode aRet, TypeNode[] aps, TypeNode bRet, TypeNode[] bps)
+    // Two supertypes agree only if they agree on the REFUSAL too: one that may be stated and one that may not are
+    // different answers, and taking either would be a guess.
+    static bool SameSlots(SlotFact aRet, SlotFact[] aps, SlotFact bRet, SlotFact[] bps)
     {
-        if ((aRet == null) != (bRet == null)) return false;
-        if (aRet != null && !aRet.Equals(bRet)) return false;
+        if (!SameSlot(aRet, bRet)) return false;
         if (aps.Length != bps.Length) return false;
         for (var i = 0; i < aps.Length; i++)
-        {
-            if ((aps[i] == null) != (bps[i] == null)) return false;
-            if (aps[i] != null && !aps[i].Equals(bps[i])) return false;
-        }
+            if (!SameSlot(aps[i], bps[i])) return false;
         return true;
+    }
+
+    static bool SameSlot(SlotFact a, SlotFact b)
+    {
+        if (a.Refused != b.Refused) return false;
+        if ((a.Node == null) != (b.Node == null)) return false;
+        return a.Node == null || a.Node.Equals(b.Node);
     }
 
     // The same for a CONSTRUCTOR, keyed by owner + declared parameter count (a ctor has no name). A same-arity overload
     // set is refused for the same reason a same-shape method set is.
-    public bool TryNullableGenericCtorSlot(string ownerFqn, int argCount, out TypeNode[] declaredParams)
+    public bool TryNullableGenericCtorSlot(string ownerFqn, int argCount, out TypeNode[] declaredParams,
+        out bool[] paramsRefused)
     {
         declaredParams = null;
+        paramsRefused = null;
         if (ownerFqn == null) return false;
         var bare = BareOwnerFqn(ownerFqn);
         if (!_ctorsByOwner.TryGetValue(bare, out var byArity))
@@ -1304,22 +1325,28 @@ sealed partial class ReferenceMetadataIndex
         if (!byArity.TryGetValue(argCount, out var ctors) || ctors.Count != 1) return false;
         var ctor = ctors[0];
         if (ctor.ParamTypeNodes == null || ctor.ParamTypeNodes.Length != argCount) return false;
-        declaredParams = new TypeNode[argCount];
+        var facts = new SlotFact[argCount];
         for (var i = 0; i < argCount; i++)
-            declaredParams[i] = DeclaredSlot(ctor.NullableGenericParams?[i], ctor.ParamTypeNodes[i]);
-        return declaredParams.Any(p => p != null);
+            facts[i] = DeclaredSlot(ctor.NullableGenericParams?[i], ctor.ParamTypeNodes[i]);
+        declaredParams = facts.Select(f => f.Node).ToArray();
+        paramsRefused = facts.Select(f => f.Refused).ToArray();
+        return facts.Any(f => f.Node != null || f.Refused);
     }
 
-    // ONE slot's declaration:
+    // ONE slot's declaration. Still a SlotFact rather than a bare TypeNode, because a REFUSAL is a fact of its own and
+    // has to travel as one: the physical declaration is not a substitute for a refused carrier — that is the same
+    // erasure spelled WITHOUT the evidence that it was one — and neither is the call's own descriptor, which is that
+    // erasure again in the call's substituted vocabulary. A refusal that degrades to "no information" is not a refusal.
     //   * a carrier — the exact pre-erasure Kotlin type, and the best answer there is;
-    //   * no carrier — the physical declaration, while it is still open.
+    //   * no carrier at all — the physical declaration, while it is still open.
     //
-    // An `Array<X?>` carrier used to be REFUSED here, because the erasure was not uniform at an array element: the
-    // producing assembly's slot said `object[]` while the value it handed back was a `Nullable<V>[]`, and those are
-    // unrelated CLR types (ECMA-335 I.8.7.1). #86 D2 canonicalizes `Array<X?>` to `object[]` at every position, so the
-    // carrier's `Erase` and the producer's physical slot now AGREE and the slot is served like any other.
-    static TypeNode DeclaredSlot(TypeNode carrier, TypeNode physical)
-        => carrier ?? OpenPhysical(physical);
+    // The one carrier this reader used to refuse was an `Array<X?>`, because the erasure was not uniform at an array
+    // element: the producing assembly's slot said `object[]` while the value it handed back was a `Nullable<V>[]`, and
+    // those are unrelated CLR types (ECMA-335 I.8.7.1). #86 D2 canonicalizes `Array<X?>` to `object[]` at every
+    // position, so the carrier's `Erase` and the producer's physical slot now AGREE and the slot is served like any
+    // other. Nothing produces a per-parameter refusal today; the channel is what would carry the next one.
+    static SlotFact DeclaredSlot(TypeNode carrier, TypeNode physical)
+        => new(carrier ?? OpenPhysical(physical), false);
 
     // The physical declaration of a slot, admitted only while it still says something the call site's type arguments
     // complete — see the refusal reasoning on TryNullableGenericSlot.
@@ -2465,6 +2492,11 @@ sealed record ReferenceTypeShape(int TypeParamCount, string Kind, TypeNode.Fqn B
 // carries erasure facts, and `Refused` is a decision — an overload set or a disagreeing diamond — that no other level
 // may overturn.
 enum SlotLookup { NotDeclared, Declared, Refused }
+
+// ONE declaration slot as the reader may report it (#86 D1). `Refused` is not `Node == null`: the first says the
+// reader saw a carrier and decided it must not be stated, the second says the producer stated nothing. Only the
+// second may fall back to anything.
+readonly record struct SlotFact(TypeNode Node, bool Refused);
 
 // `ReturnType` is the best-effort STATIC-RESULT projection (TypeNodeOf): it drops a generic parameter, because its
 // consumers want a usable concrete identity or nothing. `ReturnTypeNode` is the DECLARATION projection

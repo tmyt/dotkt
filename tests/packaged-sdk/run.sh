@@ -38,7 +38,7 @@ source "$ROOT/scripts/lib.sh"
 
 usage() { cat <<EOF
 usage: $SCRIPT_NAME
-Packs the 5 nupkgs to build/nuget-feed and drives 6 packaged SDK/template scenarios from that feed only.
+Packs the 5 nupkgs to build/nuget-feed and drives 7 packaged SDK/template scenarios from that feed only.
 Green (exit 0) = no fail name outside the XFAIL_PKG baseline declared in this script.
 EOF
 }

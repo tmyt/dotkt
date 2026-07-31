@@ -31,6 +31,12 @@ static class ValueTypeNullableCollectionArg
     // them and silently drops the conversion.
     static Func<string, bool> _isValue = _ => false;
 
+    // What `System.Linq.Enumerable.Cast<object>(IEnumerable)` produces — the STATIC TYPE the wrap below stamps on
+    // itself. Spelled in the CLR vocabulary the wrap is already written in (its `memberSig` names the non-generic
+    // `System.Collections.IEnumerable` the same way); BirTypeLowering passes a resolved BCL FQN through unchanged.
+    static readonly TypeNode CastResultTn =
+        new TypeNode.Fqn("System.Collections.Generic.IEnumerable", new TypeNode[] { new TypeNode.Fqn("object") });
+
     public static void Apply(JsonNode root, Func<string, bool> isValue)
     {
         _isValue = isValue ?? (_ => false);
@@ -83,6 +89,14 @@ static class ValueTypeNullableCollectionArg
             ["typeArgs"] = new JsonArray { new JsonObject { ["t"] = "fqn", ["name"] = "object" } },
             ["memberSig"] = new JsonArray { new JsonObject { ["t"] = "fqn", ["name"] = "System.Collections.IEnumerable" } },
             ["args"] = new JsonArray { args[0].DeepClone() },
+            // The wrap RETYPES the operand — `Cast<object>` turns the receiver's own `List<Int?>` into
+            // `IEnumerable<object>` — so the new node is stamped with what IT produces, not with what the value it
+            // wraps used to be (spec §2.7; the stamp is a claim about the value the node produces, and the two are
+            // unrelated invariant reified generics, so the wrapped node's stamp would be a LIE here rather than an
+            // imprecision). Unstamped, this node had no derivable static type at all — `bir-common/NodeType.cs` has no
+            // arm for a `clr*` kind — and an operand with no static type left of a suspension is a stage-0 refusal of
+            // source the frontend accepted (#304).
+            ["sty"] = TypeJson.Write(CastResultTn),
         };
     }
 

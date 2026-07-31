@@ -59,6 +59,11 @@ static partial class NullableTvErasureCallRealign
     {
         public TypeNode Ret;
         public TypeNode[] Params;
+        // Parameter positions whose declaration the REFERENCED reader deliberately would not state (#86 D1). Null for
+        // a same-compilation declaration, which has nothing to refuse. A refused position is NOT the same as an
+        // absent one: an absent declaration falls back to the call's own descriptor, a refused one must not, because
+        // the descriptor is that same erasure written in the call's substituted vocabulary.
+        public bool[] ParamsRefused;
     }
 
     // Local owner/top-level declarations, captured across ALL roots BEFORE the per-file DEF-side EraseNullableTv
@@ -353,11 +358,7 @@ static partial class NullableTvErasureCallRealign
             }
             case "callInstance":
                 return EvalCallInstance(obj, ctx);
-            case "clrStatic":
-            case "clrInstance":
-            case "clrGenericStatic":
-            case "clrGenericInstance":
-            case "newClr":
+            case string ck when IsClrBoundKind(ck):
                 return EvalClrCall(obj, ctx);
             case "delegateInvoke":
                 // The value a `(…) -> R` invocation produces is the function type's RETURN, which the erasure has
@@ -478,7 +479,7 @@ static partial class NullableTvErasureCallRealign
         var idx = ctx.Idx;
         var recvType = obj["recv"] != null ? Eval(obj["recv"], ctx) : null;
         var stampedRet = StampedResult(obj);
-        if (Str(obj["method"]) is not string method) { RealignArgs(obj, null, null, null, ctx); return stampedRet; }
+        if (Str(obj["method"]) is not string method) { RealignArgs(obj, null, null, null, null, ctx); return stampedRet; }
 
         var nodeOwner = TypeJson.Read(obj["ownerType"]);
         // The corrected owner: prefer the receiver's flowed static type (it may be an erased `Ref<object>`), else the
@@ -486,7 +487,7 @@ static partial class NullableTvErasureCallRealign
         // — it is a receiver needing narrowing (below), and the stamped ownerType stays authoritative.
         var erasedRecv = recvType is TypeNode.Fqn { Name: "object", Args: null };
         var owner = (erasedRecv ? null : recvType as TypeNode.Fqn) ?? nodeOwner as TypeNode.Fqn;
-        if (owner == null) { RealignArgs(obj, null, null, null, ctx); return stampedRet; }
+        if (owner == null) { RealignArgs(obj, null, null, null, null, ctx); return stampedRet; }
 
         // A value returned through an object-erased generic boundary carries the erased instantiation in the
         // receiver flow. Keep every subsequent member dispatch on that same instantiation; the member's own return is
@@ -519,7 +520,7 @@ static partial class NullableTvErasureCallRealign
         CanonicalizeArrayTypeArgs(obj, decl, methodArgs);
         // THE ARGUMENT AXIS: each parameter slot is `Subst(Erase(declared param))` exactly as the return is; with no
         // declaration the call's own descriptor stands in (see RealignArgs).
-        RealignArgs(obj, decl?.Params, owner.Args, methodArgs, ctx);
+        RealignArgs(obj, decl?.Params, decl?.ParamsRefused, owner.Args, methodArgs, ctx);
         if (decl?.Ret == null) return stampedRet;   // no declaration, or an ambiguous same-name/same-arity overload set
 
         var erasedRet = NullableGenericErasure.EraseNullableTv(decl.Ret, _isValue);
@@ -551,7 +552,7 @@ static partial class NullableTvErasureCallRealign
         }
         // Before anything is derived FROM the type arguments, give them their physical form (#86 D2).
         CanonicalizeArrayTypeArgs(obj, decl, methodArgs);
-        RealignArgs(obj, decl?.Params, ownerArgs, methodArgs, ctx);
+        RealignArgs(obj, decl?.Params, decl?.ParamsRefused, ownerArgs, methodArgs, ctx);
         if (decl?.Ret == null) return stampedRet;   // no declaration, or an ambiguous same-name/same-arity overload set
         var erasedRet = NullableGenericErasure.EraseNullableTv(decl.Ret, _isValue);
         var derived = Subst(erasedRet, ownerArgs, methodArgs);
@@ -615,15 +616,20 @@ static partial class NullableTvErasureCallRealign
         var type = TypeJson.Read(obj["type"]);
         var argCount = (obj["args"] as JsonArray)?.Count ?? 0;
         TypeNode[] declParams = null;
+        bool[] declRefused = null;
         if (type is TypeNode.Fqn owner)
         {
             if (ctx.Idx.Ctors.TryGetValue(owner.Name, out var byArity)) byArity.TryGetValue(argCount, out declParams);
             // A REFERENCED owner's constructor is a declaration like any other (#86 D1): `Slot<T>(value: T)` erases to
             // `.ctor(!0)`, so a `Slot<object>` retyped by the caller's argument realignment must BOX its argument.
-            else if (_refs != null && _refs.TryNullableGenericCtorSlot(owner.Name, argCount, out var refParams))
+            else if (_refs != null
+                     && _refs.TryNullableGenericCtorSlot(owner.Name, argCount, out var refParams, out var refRefused))
+            {
                 declParams = refParams;
+                declRefused = refRefused;
+            }
         }
-        RealignArgs(obj, declParams, (type as TypeNode.Fqn)?.Args, null, ctx);
+        RealignArgs(obj, declParams, declRefused, (type as TypeNode.Fqn)?.Args, null, ctx);
         // The construction may have been RETYPED by the caller's argument realignment before this ran.
         return TypeJson.Read(obj["type"]);
     }
@@ -647,8 +653,9 @@ static partial class NullableTvErasureCallRealign
 
     static DeclSig LookupReferencedDecl(string ownerFqn, string method, int argCount, int methodArity, bool isStatic)
         => _refs != null
-           && _refs.TryNullableGenericSlot(ownerFqn, method, isStatic, argCount, methodArity, out var ret, out var ps)
-            ? new DeclSig { Ret = ret, Params = ps }
+           && _refs.TryNullableGenericSlot(ownerFqn, method, isStatic, argCount, methodArity,
+               out var ret, out var ps, out var refused)
+            ? new DeclSig { Ret = ret, Params = ps, ParamsRefused = refused }
             : null;
 
     // D2'S TYPE-ARGUMENT HALF, at the RESULT. A callee that hands back a bare `Array<T>` produces a physical `!!T[]`,
