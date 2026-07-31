@@ -21,6 +21,7 @@
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
+import NUnit.Framework.Legacy.ClassicAssert.Companion.IsNull as assertNull
 
 fun <T : Comparable<T>> collectionGenericMax(values: Collection<T>): T? = values.maxOrNull()
 
@@ -43,6 +44,22 @@ class CollectionAggregateTests {
         assertEquals(3, listOf(3, 1, 2).maxOrNull())
         assertEquals(3, collectionGenericMax(listOf(3, 1, 2)))
         assertEquals("z", collectionGenericMax(listOf("a", "z", "m")))
+    }
+
+    // #86 — `collectionGenericMax` above declares a top-level `T?` RETURN over an unconstrained T. Same-compilation,
+    // so no cross-module carrier is involved: the erased `object` return has to re-narrow at each typed use, and the
+    // EMPTY-collection lines are what prove a real null crosses it. At T=Int/T=Boolean a bare `T` return would read
+    // the absent maximum as 0/false instead. The existing coverage of this shape is T=Int-non-null and T=String only.
+    @TestAttribute
+    fun genericNullableReturnAtValueTypes() {
+        assertEquals(4, collectionGenericMax(listOf(3, 1, 4)))    // 4
+        assertNull(collectionGenericMax(listOf<Int>()))           // null (empty -> genuine null, not 0)
+        val flag: Boolean? = collectionGenericMax(listOf(false, true))
+        assertTrue(flag == true)                                  // true
+        assertNull(collectionGenericMax(listOf<Boolean>()))       // null (empty -> genuine null, not false)
+        assertNull(collectionGenericMax(listOf<String>()))        // null (reference control)
+        val typed: Int? = collectionGenericMax(listOf(7, 2))
+        assertEquals(7, typed)                                    // 7 (erased return into a declared Int? slot)
     }
 
     // ---- m-b9 : firstOrNull / lastOrNull / none / sumOf / maxByOrNull ----

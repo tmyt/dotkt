@@ -27,11 +27,34 @@
 //   il-safecallnv            -> safecallnv_safeCallNullableValue A5 `a?.member` value-type result; receiver once, unwrap
 //   il-trynullable           -> trynullable_returnThroughFinally nullable Int? return through try/finally; finally runs
 //
+// nullableGenericSurfaceAtValueTypes is not migrated from a case: it is the #86 value-instantiation armor for the
+// same-compilation `T?` DECLARATION surface (see the comment on the method).
+//
 // Top-level names are unique within this single battery assembly (one project = one namespace) and prefixed
-// (`null`/`nv`/`tryNull`/`nullcs`) to avoid clashing with sibling batteries and stdlib names.
+// (`null`/`nv`/`tryNull`/`nullcs`/`ng`) to avoid clashing with sibling batteries and stdlib names.
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.Companion.IsNull as assertNull
+import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
+import NUnit.Framework.Legacy.ClassicAssert.Companion.IsFalse as assertFalse
+
+// ---- #86 : the same-compilation `T?` DECLARATION surface at a VALUE instantiation ------------------------------
+// A slot's physical type is a function of its DECLARED type, so each `T?` position has to hold a genuine null at a
+// value instantiation and re-narrow at the typed read. The existing coverage of this surface is entirely T=String,
+// where the whole family is invisible: a bare `T?` slot is trivially sound for a reference type.
+//
+// Only the positions that RUN today are declared here — the `T?` RETURN, and a `T?` param carrying a non-null. The
+// remaining positions are red at a value instantiation and cannot live in this lane, which has no XFAIL mechanism:
+// a null through a `T?` PARAM or CTOR PARAM, and a `T?` backing field / property on a generic owner, all fault with
+// System.InvalidProgramException at T=Int (the bare struct-incapable `T` slot). That axis is driven as a documented
+// red in tests/roundtrip/scenarios/run.sh (roundtrip-nullable-vt-generic-samemodule).
+fun <T> ngPick(x: T?, d: T): T = x ?: d             // `T?` PARAM
+fun <T> ngFirstOrNull(xs: List<T>): T? = if (xs.isEmpty()) null else xs[0]   // `T?` RETURN
+fun <T> ngRoundTrip(x: T?): T? {                    // `T?` param -> `T?` body-local -> `T?` return
+    var local: T? = null
+    local = x
+    return local
+}
 
 // ---- il-null : elvis / safe-call / not-null ------------------------------------------------------------------
 fun nullUp(s: String?): String = s?.uppercase() ?: "none"
@@ -83,6 +106,24 @@ fun reqnnFirstChar(s: String?): Char = requireNotNull(s)[0]
 fun reqnnMust(n: Int?): Int = checkNotNull(n)
 
 class NullableTests {
+    // #86 — the same-compilation `T?` declaration surface at T=Int / T=Boolean, restricted to the positions that
+    // run today (see the declarations above for the ones that do not). The `T?` RETURN's EMPTY lines are the real
+    // measurement: a return that cannot carry null reads back 0/false instead, which no non-null case would catch.
+    @TestAttribute
+    fun nullableGenericSurfaceAtValueTypes() {
+        assertNull(ngFirstOrNull(listOf<Int>()))         // null  `T?` RETURN, empty at T=Int
+        assertEquals(5, ngFirstOrNull(listOf(5, 6)))     // 5     same return, present
+        assertNull(ngFirstOrNull(listOf<Boolean>()))     // null  `T?` RETURN, empty at T=Boolean
+        val flag: Boolean? = ngFirstOrNull(listOf(true, false))
+        assertTrue(flag == true)                         // true
+        assertNull(ngFirstOrNull(listOf<String>()))      // null  reference control
+        assertEquals(3, ngPick(3, 7))                    // 3     `T?` param carrying a value at T=Int
+        assertEquals("x", ngPick<String>(null, "x"))     // x     null through the same param at a REFERENCE type
+        assertEquals(8, ngRoundTrip(8))                  // 8     param -> body-local -> return, all `T?`
+        assertFalse(ngRoundTrip(false) ?: true)          // False  same chain at T=Boolean
+        assertNull(ngRoundTrip<String>(null))            // null   the chain carrying a null at a reference type
+    }
+
     @TestAttribute
     fun elvisSafeCallBang() {
         assertEquals("none", nullUp(null))               // none    s?.uppercase() ?: "none" when null

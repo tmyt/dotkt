@@ -10,6 +10,9 @@
 //   il-cwindowed  -> charSequenceWindowed     CharSequence.windowed (break-in-EXPRESSION-position body lowering)
 //   il-bmore      -> stringFormat_mapIndexed  String.format -> System.String.Format (.NET composite {0:F2}/{0:D5}) + mapIndexed
 //
+// nullableGenericIdiomsAtValueTypes is not migrated from a case: it is the #86 value-instantiation armor for the
+// mapNotNull(To)/filterNotNull(To)/chunked family (see the comment on the method).
+//
 // Batch-M1 collision rule: the sole top-level helper is `M1`-prefixed (il-arraydeque's `Holder` -> `M1DequeHolder`).
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
@@ -48,6 +51,38 @@ class CollectionOperationsTests {
         val vs: List<Int?> = listOf(1, null, 3, null, 5)
         assertEquals("1,3,5", vs.filterNotNull().joinToString(","))  // 1,3,5  (value-type Nullable<Int> unwrap)
         assertEquals(9, vs.filterNotNull().sum())                    // 9
+    }
+
+    // #86 — the VALUE instantiations of the nullable-generic collection idioms. The whole `Nullable(Tv)` family is
+    // invisible at T=String (a bare `T?` slot is trivially sound for a reference type), so these are the only
+    // measurement of it in this lane: a `mapNotNull`/`mapNotNullTo` transform result and a `filterNotNull(To)`
+    // element are `T?` slots that must hold a genuine null in an erased object slot and re-narrow (unbox.any) at the
+    // typed store. Both destination-taking forms are covered because the destination's element type is the one the
+    // erased element must convert BACK to. Every value here is asserted, not printed, so a wrong representation
+    // surfaces as a typed diff rather than garbage output.
+    @TestAttribute
+    fun nullableGenericIdiomsAtValueTypes() {
+        val xs = listOf(1, 2, 3, 4, 5)
+        assertEquals("20,40", xs.mapNotNull { if (it % 2 == 0) it * 10 else null }.joinToString(","))  // 20,40
+        assertEquals(60, xs.mapNotNull { if (it % 2 == 0) it * 10 else null }.sum())                   // 60
+        val dest = mutableListOf<Int>()
+        xs.mapNotNullTo(dest) { if (it > 3) it * 2 else null }
+        assertEquals("8,10", dest.joinToString(","))                 // 8,10
+        val bdest = mutableListOf<Boolean>()
+        xs.mapNotNullTo(bdest) { if (it % 2 == 0) it > 2 else null }
+        assertEquals("False,True", bdest.joinToString(","))          // False,True  (T=Boolean, CLR rendering)
+        val bs: List<Boolean?> = listOf(true, null, false)
+        assertEquals("True,False", bs.filterNotNull().joinToString(","))  // True,False
+        assertEquals(2, bs.filterNotNull().size)                     // 2
+        assertEquals("[True, False]", listOf(true, false).chunked(2)[0].toString())  // [True, False]
+        // `filterNotNullTo` is driven at a REFERENCE element only. Its VALUE instantiations do not run today —
+        // `List<Int?>.filterNotNullTo` / `List<Boolean?>.filterNotNullTo` throw EntryPointNotFoundException, the
+        // destination-taking sibling of the erasure gap this method measures. A red case cannot live in this lane
+        // (it has no XFAIL mechanism); the value axis is driven in tests/roundtrip/scenarios/run.sh instead.
+        val ss: List<String?> = listOf("a", null, "b")
+        val sdest = mutableListOf<String>()
+        ss.filterNotNullTo(sdest)
+        assertEquals("a,b", sdest.joinToString(","))                 // a,b
     }
 
     @TestAttribute

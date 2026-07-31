@@ -25,6 +25,9 @@
 //   il-ubytearr       -> ubytearr_unsignedArray        #53 UByteArray -> native Byte[]; to(U)ByteArray reinterpret
 //   il-genarrlam      -> genarrlam_nullableTvArray     #142/#4 Array(size){ mk<T?>(null) } in a generic class; nested Nullable(Tv) erasure read-back
 //
+// toTypedArrayAtValueElements is not migrated from a case: it is the #86 value-instantiation armor for the
+// `arrayOfNulls`-backed Array<T> factories (toTypedArray/plus/plusElement) — see the comment on the method.
+//
 // Top-level names are unique within this single battery assembly (one project = one namespace) and `Arr`-prefixed
 // to avoid clashing with sibling batteries and stdlib names.
 import NUnit.Framework.TestAttribute
@@ -180,6 +183,30 @@ class ArrayTests {
         val s = arrayOf("a", "b")
         assertEquals("[a, b, c]", s.plus("c").toList().toString())           // [a, b, c]
         assertEquals("[a, b, d]", s.plusElement("d").toList().toString())    // [a, b, d]
+    }
+
+    // #86 — `toTypedArray` joins plus/plusElement as an `Array<T>` factory that allocates through the
+    // `arrayOfNulls<T>(n)` chain: the allocation's element slot is a nullable generic, and every element store has
+    // to agree with it on one representation. A producer/consumer disagreement there does not throw — it prints
+    // whatever the stale slot held — so each element is asserted individually at T=Int and T=Boolean, the two
+    // instantiations where the erased element and the declared element genuinely differ.
+    @TestAttribute
+    fun toTypedArrayAtValueElements() {
+        val ints = listOf(1, 2, 3).toTypedArray()
+        assertEquals(3, ints.size)                                              // 3
+        assertEquals(1, ints[0])                                                // 1
+        assertEquals(3, ints[2])                                                // 3
+        assertEquals("[1, 2, 3]", ints.toList().toString())                     // [1, 2, 3]
+        assertEquals("[1, 2, 3, 4]", ints.plus(4).toList().toString())          // [1, 2, 3, 4]
+        assertEquals("[1, 2, 3, 5]", ints.plusElement(5).toList().toString())   // [1, 2, 3, 5]
+        val bools = listOf(true, false).toTypedArray()
+        assertEquals(2, bools.size)                                             // 2
+        assertEquals("[True, False]", bools.toList().toString())                // [True, False] (CLR rendering)
+        assertEquals("[True, False, True]", bools.plus(true).toList().toString())        // [True, False, True]
+        assertEquals("[True, False, False]", bools.plusElement(false).toList().toString()) // [True, False, False]
+        val strs = listOf("a", "b").toTypedArray()
+        assertEquals("[a, b, c]", strs.plus("c").toList().toString())           // [a, b, c] (reference control)
+        assertEquals(0, listOf<Int>().toTypedArray().size)                      // 0 (empty allocation)
     }
 
     @OptIn(kotlin.ExperimentalUnsignedTypes::class)

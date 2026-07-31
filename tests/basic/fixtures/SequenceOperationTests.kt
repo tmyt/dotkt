@@ -9,10 +9,16 @@
 //   il-seqfilter -> sequences_valueTypeFilter  value-type (Int) FilteringSequence: nextItem:T? erased to object, calcNext boxes the element
 //   il-sort      -> sorting_linqOrder          sortedDescending / sortedBy / sortedByDescending -> LINQ Order/OrderBy/OrderByDescending
 //
+// valueAccumulatorSingle is not migrated from a case: it is the #86 value-instantiation armor for the
+// `T? = null` accumulator behind Sequence.single/singleOrNull (see the comment on the method).
+//
 // Method bodies are self-contained; there are no shared top-level declarations, so nothing here needs the M5 prefix
 // beyond the fixture class name.
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.Companion.IsNull as assertNull
+import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
+import NUnit.Framework.Legacy.ClassicAssert.Companion.IsFalse as assertFalse
 
 class SequenceOperationTests {
     // il-seq: lazy map/filter/take chains, materialized/short-circuited by terminals.
@@ -39,6 +45,29 @@ class SequenceOperationTests {
         assertEquals(4, xs.asSequence().filter { it > 3 }.first())                       // 4
         assertEquals("3,4,5,6", xs.asSequence().filterNot { it < 3 }.toList().joinToString(",")) // 3,4,5,6
         assertEquals(3, xs.asSequence().filter { it % 2 == 1 }.count())                  // 3
+    }
+
+    // #86 — `Sequence.single{}` keeps a `var single: T? = null` ACCUMULATOR local, the exact shape whose erased
+    // object slot has to survive a real null and unbox at the `single as T` read; at T=Int/T=Boolean a bare `T`
+    // slot cannot distinguish "not seen yet" from the value 0/false. Receivers are List.asSequence() throughout —
+    // #284 tracks the sequenceOf/Array.asSequence surfaces, which fault for an unrelated reason and would make
+    // this measure the wrong thing.
+    @TestAttribute
+    fun valueAccumulatorSingle() {
+        val xs = listOf(1, 2, 3, 4, 5, 6)
+        assertEquals(4, xs.asSequence().single { it == 4 })                       // 4
+        assertEquals(1, xs.asSequence().filter { it < 2 }.single())               // 1
+        assertEquals(6, xs.asSequence().singleOrNull { it > 5 })                  // 6
+        assertNull(xs.asSequence().singleOrNull { it > 10 })                      // null (accumulator never set)
+        val bs = listOf(true, false, false)
+        assertTrue(bs.asSequence().single { it })                                 // true
+        assertFalse(bs.asSequence().filter { !it }.first())                       // false
+        assertEquals(2, bs.asSequence().filter { !it }.count())                   // 2
+        // `Sequence.mapNotNull` is deliberately NOT driven here: at a value element it throws
+        // EntryPointNotFoundException (and NullReferenceException on the all-null shape) today. A red case cannot
+        // live in this lane — it has no XFAIL mechanism — so that axis is driven in
+        // tests/roundtrip/scenarios/run.sh, where a documented red is machine-readable. The eager
+        // `Iterable.mapNotNull` twin IS green and lives in CollectionOperationsTests.
     }
 
     // il-sort: sortedDescending / sortedBy / sortedByDescending -> LINQ ordering, materialized by joinToString.

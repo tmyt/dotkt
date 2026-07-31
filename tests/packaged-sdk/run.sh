@@ -4,13 +4,18 @@
 # from real .nupkgs in a NuGet feed. `tests/msbuild/run.sh` uses the IN-REPO dev entry (eng/KotlinClr.targets,
 # hard-coded tool paths) and never restores a nupkg, so packaging-only bugs slip past it — 0.9.5 shipped
 # broken twice for exactly this reason (#131 stale SDK version, #132 a Library's non-copy-local reference
-# never reaching bir2cir/ilemit). This suite packs the 5 nupkgs to a local feed and drives SIX isolated
+# never reaching bir2cir/ilemit). This suite packs the 5 nupkgs to a local feed and drives SEVEN isolated
 # scenarios through `dotnet build`/`dotnet run` from that feed only:
 #   exe      — a plain `Sdk="DotKt.Sdk"` Exe: build + RUN, assert stdout.
 #   library  — a `Library` that PackageReferences a SECOND DotKt library (packed as its own nupkg) and calls
 #              into it. A package runtime dll is NOT copy-local for OutputType=Library, so under the old
 #              copy-local-glob targets that reference never reached ilemit -> the emit FAILED (#132-general).
 #              This is the case the gate exists to hold: build succeeds + the emitted dll carries the call.
+#   csharp-consumer — a real C# Exe ProjectReferences a packaged-SDK Kotlin library and binds its emitted CLR
+#              signatures LITERALLY (no Kotlin re-import), so it is the only lane that measures what the ABI is
+#              rather than what the compiler can restore. Reports two verdicts: `nullable-generic-shape` (the
+#              erased slot's physical type + [KotlinNullableGeneric] carrier, by reflection) and `csharp-consumer`
+#              (the C# program compiles against those slots and runs). Both #86, both XFAIL_PKG-listed today.
 #   coroutine-cross-module — a packaged Kotlin library exports a suspend function that genuinely suspends on
 #              Task.Delay; a separately compiled packaged-SDK Kotlin Exe restores and drives that function across
 #              the assembly boundary, observes return-before-resume, and both emitted assemblies pass ILVerify (#137).
@@ -44,10 +49,15 @@ while (( $# )); do
 	esac
 done
 
-# The authoritative XFAIL baseline (fail name -> reason). Empty: all six packaged cases must pass. A listed
-# name that starts passing prints "FIXED — remove it" WITHOUT reddening the gate; any name NOT listed that
-# fails prints NEW-FAIL and reddens. Computed by lib.sh xfail_diff at the bottom.
+# The authoritative XFAIL baseline (fail name -> reason). A listed name that starts passing prints
+# "FIXED — remove it" WITHOUT reddening the gate; any name NOT listed that fails prints NEW-FAIL and reddens.
+# Computed by lib.sh xfail_diff at the bottom.
 declare -A XFAIL_PKG=(
+	# #86, both halves of case_csharp_consumer. Their assertions are written against the POST-erasure ABI — the ABI
+	# break is the sanctioned decision in #86 — so they are red until it lands, and they are the reason the case
+	# exists: no other gate sees the physical signature, because every other one re-imports the library as Kotlin.
+	[nullable-generic-shape]='#86: a nullable-generic slot is not object-erased at every position yet — a top-level T? param/ctor param keeps the bare struct-incapable T, a top-level T? return is erased but records no carrier, and Array<Int?> is Nullable<int32>[]; pruned by the uniform-erasure core step (param/ctor/return slots + carrier) and the Array<X?>-is-object[] step of #86'
+	[csharp-consumer]='#86: a C# consumer cannot pass null at T=int through firstOr/NBox (the slot is a bare int32, so the call does not COMPILE) and cannot bind an Array<Int?> to object[]; pruned by the uniform-erasure core step and the Array<X?>-is-object[] step of #86, with the cross-module carrier read making the re-derived slots consistent'
 )
 
 # The package version the pack stamps (single-sourced in DotKt.Versions.props). The Sdk="DotKt.Sdk/$VER"
@@ -166,37 +176,80 @@ build_refcheck() {
 EOF
 	cat > "$REFCHECK/src/Program.cs" <<'EOF'
 using System; using System.Linq; using System.Reflection;
-// refcheck <dll> <ownerFqn> <memberName> [exactRefs] -> exit 0 iff the dll declares the requested member.
+// refcheck <dll> <ownerFqn> <memberName> [exactRefs]
+//     -> exit 0 iff the dll declares the requested member (the DECLARATION mode).
+// refcheck --shape <dll> <ownerFqn> <methodName> <slot> <clrTypeFullName> <carrier:0|1|any> [exactRefs]
+//     -> exit 0 iff that method's SLOT has EXACTLY <clrTypeFullName> as its CLR type and does (1) / does not (0)
+//        carry [DotKt.Runtime.CompilerServices.KotlinNullableGeneric]; `any` asserts the physical type only.
+//        <slot> is `ret` or `pN` (0-based param).
+// The shape mode pins the ERASURE INVARIANT at the metadata level: a nullable-generic slot's physical type is
+// `System.Object` and its pre-erasure Kotlin shape travels in the carrier attribute. That is one assertion a
+// behavioral case cannot make — a slot can be physically wrong and still run when nothing crosses it.
 class P {
     static int Main(string[] a) {
+        var shape = a.Length > 0 && a[0] == "--shape";
+        if (shape) a = a.Skip(1).ToArray();
         var dll = System.IO.Path.GetFullPath(a[0]);
         // The TPA list is the runtime host's resolved platform set. Non-platform dependencies are explicit; never
         // turn the input assembly's parent directory into an implicit reference universe.
         var paths = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES"))
             .Split(System.IO.Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries).ToList();
-        if (a.Length > 3) paths.AddRange(a[3].Split(';', StringSplitOptions.RemoveEmptyEntries));
+        var extraRefs = shape ? (a.Length > 6 ? a[6] : null) : (a.Length > 3 ? a[3] : null);
+        if (extraRefs != null) paths.AddRange(extraRefs.Split(';', StringSplitOptions.RemoveEmptyEntries));
         paths.Add(dll);
         using var mlc = new MetadataLoadContext(new PathAssemblyResolver(paths.Distinct()));
         var asm = mlc.LoadFromAssemblyPath(dll);
         Type[] ts; try { ts = asm.GetTypes(); } catch (ReflectionTypeLoadException e) { ts = e.Types.Where(t => t != null).ToArray(); }
         var owner = ts.FirstOrDefault(t => t.FullName == a[1]);
         if (owner == null) { Console.Error.WriteLine($"refcheck: type {a[1]} not found"); return 1; }
-        var m = owner.GetMembers(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly)
-                     .FirstOrDefault(x => x.Name == a[2]);
-        if (m == null) { Console.Error.WriteLine($"refcheck: {a[1]}.{a[2]} not found"); return 1; }
-        return 0;
+        const BindingFlags All = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly;
+        if (!shape) {
+            var m = owner.GetMembers(All).FirstOrDefault(x => x.Name == a[2]);
+            if (m == null) { Console.Error.WriteLine($"refcheck: {a[1]}.{a[2]} not found"); return 1; }
+            return 0;
+        }
+        // A ctor is named `.ctor`; anything else is a method. Refuse an ambiguous name rather than guessing which
+        // overload was meant — the same refusal discipline the reference readers use.
+        MethodBase[] cands = a[2] == ".ctor"
+            ? owner.GetConstructors(All).Cast<MethodBase>().ToArray()
+            : owner.GetMethods(All).Where(x => x.Name == a[2]).Cast<MethodBase>().ToArray();
+        if (cands.Length == 0) { Console.Error.WriteLine($"refcheck: {a[1]}.{a[2]} not found"); return 1; }
+        if (cands.Length > 1) { Console.Error.WriteLine($"refcheck: {a[1]}.{a[2]} is an overload set ({cands.Length}); shape mode needs one declaration"); return 1; }
+        var target = cands[0];
+        Type slotType; System.Collections.Generic.IList<CustomAttributeData> attrs;
+        if (a[3] == "ret") {
+            if (target is not MethodInfo mi) { Console.Error.WriteLine("refcheck: `ret` is not a slot of a constructor"); return 1; }
+            slotType = mi.ReturnType; attrs = mi.ReturnParameter.GetCustomAttributesData();
+        } else if (a[3].Length > 1 && a[3][0] == 'p' && int.TryParse(a[3].Substring(1), out var pi)) {
+            var ps = target.GetParameters();
+            if (pi >= ps.Length) { Console.Error.WriteLine($"refcheck: {a[1]}.{a[2]} has {ps.Length} parameter(s), no {a[3]}"); return 1; }
+            slotType = ps[pi].ParameterType; attrs = ps[pi].GetCustomAttributesData();
+        } else { Console.Error.WriteLine($"refcheck: unknown slot '{a[3]}' (expected `ret` or `pN`)"); return 1; }
+        var actual = slotType.FullName ?? slotType.Name;   // an open type parameter has no FullName; its Name is `T`
+        var carrier = attrs.Any(x => x.AttributeType.FullName == "DotKt.Runtime.CompilerServices.KotlinNullableGenericAttribute");
+        var ok = actual == a[4] && (a[5] == "any" || carrier == (a[5] == "1"));
+        if (!ok) Console.Error.WriteLine($"refcheck: {a[1]}.{a[2]} slot {a[3]} is [{actual}] carrier={(carrier ? 1 : 0)}; expected [{a[4]}] carrier={a[5]}");
+        return ok ? 0 : 1;
     }
 }
 EOF
 	dotnet build "$REFCHECK/src" -c Release -o "$REFCHECK/bin" -v q --nologo >/dev/null 2>&1 || return 1
 }
 
-if [[ -f "$REFCHECK/bin/refcheck.dll" ]]; then
+# The tool is cached across runs, so the cache key must be its SOURCE — an existence-only check would keep serving
+# a stale binary after this script's heredocs change (the same lazy-need_tool staleness that makes a toolchain
+# result meaningless). The hash is written only after a successful build.
+refcheck_src_hash() { printf '%s' "$(sed -n '/^build_refcheck() {$/,/^}$/p' "${BASH_SOURCE[0]}" | sha256sum)"; }
+REFCHECK_HASH="$(refcheck_src_hash)"
+
+if [[ -f "$REFCHECK/bin/refcheck.dll" && "$(cat "$REFCHECK/src/.srchash" 2>/dev/null)" == "$REFCHECK_HASH" ]]; then
 	info "reflection checker cached"
 else
 	info "building reflection checker"
-	build_refcheck || warn "refcheck build failed — library case will assert build-success only"
+	if build_refcheck; then printf '%s' "$REFCHECK_HASH" > "$REFCHECK/src/.srchash"
+	else warn "refcheck build failed — library case will assert build-success only"; fi
 fi
+have_refcheck() { [[ -x "$REFCHECK/bin/refcheck" || -f "$REFCHECK/bin/refcheck.dll" ]]; }
 
 # ---------------------------------------------------------------------------------------------------------
 # Case: exe — a plain packaged Exe, build + run.
@@ -307,6 +360,141 @@ EOF
 		fi
 	fi
 	pass library
+}
+
+# ---------------------------------------------------------------------------------------------------------
+# Case: csharp-consumer + nullable-generic-shape (#86) — the C#-VISIBLE surface of the nullable-generic family.
+# Every other gate consumes an emitted DotKt library AS KOTLIN, so it re-imports whatever the compiler emitted and
+# is blind to the physical signature by construction. A real C# project cannot re-import anything: it binds the CLR
+# signature literally, so it is the only lane that measures what the ABI actually IS. Two independent verdicts over
+# one library, because they prune at different points:
+#   nullable-generic-shape — METADATA: a nullable-generic slot's physical type is `System.Object` and its
+#                            pre-erasure Kotlin shape rides the [KotlinNullableGeneric] carrier. A slot can be
+#                            physically wrong and still run when nothing crosses it, so this is asserted directly.
+#   csharp-consumer        — BEHAVIOR: a C# program COMPILES against those slots (passing `null` at T=int, which
+#                            no bare-`T` slot admits) and RUNS to the expected output.
+# Both are written against the POST-erasure ABI (the ABI break is sanctioned by the decision in #86), so they start
+# XFAIL_PKG-listed and prune as the erasure lands — see the reasons in the baseline at the top of this file.
+# ---------------------------------------------------------------------------------------------------------
+case_csharp_consumer() {
+	local d="$WS/csharp-consumer"; mkdir -p "$d"; cp "$NUGET_CONFIG" "$d/nuget.config"
+
+	# (a) the Kotlin library: one declaration per nullable-generic POSITION the C# side then binds literally.
+	local lib="$d/lib"; mkdir -p "$lib"
+	cat > "$lib/NgLib.ktproj" <<EOF
+<Project Sdk="DotKt.Sdk/$VER">
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+</Project>
+EOF
+	cat > "$lib/Api.kt" <<'EOF'
+package nglib
+
+fun <T> firstOr(x: T?, d: T): T = x ?: d          // top-level T? PARAM
+fun <T> pick(x: T, use: Boolean): T? = if (use) x else null   // top-level T? RETURN
+
+class NBox<T>(val value: T?) {                    // T? CTOR PARAM + backing field
+    fun orElse(d: T): T = value ?: d
+}
+
+class NgArrays {
+    fun boxedPair(n: Int): Array<Int?> {          // Array<Int?> RETURN
+        val a = arrayOfNulls<Int>(3)
+        a[0] = n
+        a[2] = n * 2
+        return a
+    }
+    fun sumPresent(xs: Array<Int?>): Int {        // Array<Int?> PARAM
+        var s = 0
+        for (x in xs) if (x != null) s += x
+        return s
+    }
+}
+EOF
+	if ! (cd "$lib" && dotnet build -v q --nologo >"$lib/build.log" 2>&1); then
+		fail nullable-generic-shape "nullable-generic library build failed" "$(tail -25 "$lib/build.log")"
+		fail csharp-consumer "nullable-generic library build failed" "$(tail -5 "$lib/build.log")"; return
+	fi
+	local libdll; libdll="$(find "$lib/bin" -name 'NgLib.dll' | head -1)"
+	if [[ ! -f "$libdll" ]]; then
+		fail nullable-generic-shape "NgLib.dll not emitted"; fail csharp-consumer "NgLib.dll not emitted"; return
+	fi
+
+	# (b) METADATA verdict. Each slot's physical type must be the erasure of its DECLARED Kotlin type, with the
+	#     pre-erasure shape in the carrier. Single-quoted where a generic arity backtick appears — an unquoted one
+	#     is command substitution and would silently assert against an empty type name.
+	if have_refcheck; then
+		local shape_fail="" probe
+		# owner | member | slot | expected CLR type | carrier
+		for probe in \
+			"nglib.ApiKt|firstOr|p0|System.Object|1" \
+			"nglib.ApiKt|pick|ret|System.Object|1" \
+			'nglib.NBox`1|.ctor|p0|System.Object|1' \
+			"nglib.NgArrays|boxedPair|ret|System.Object[]|any" \
+			"nglib.NgArrays|sumPresent|p0|System.Object[]|any"
+		do
+			IFS='|' read -r pOwner pMember pSlot pType pCarrier <<<"$probe"
+			if ! dotnet "$REFCHECK/bin/refcheck.dll" --shape "$libdll" "$pOwner" "$pMember" "$pSlot" "$pType" "$pCarrier" \
+				>"$d/shape.log" 2>&1; then
+				shape_fail+="$(cat "$d/shape.log")"$'\n'
+			fi
+		done
+		if [[ -n "$shape_fail" ]]; then fail nullable-generic-shape "erased slot shape mismatch" "$shape_fail"
+		else pass nullable-generic-shape; fi
+	else
+		fail nullable-generic-shape "refcheck unavailable — the metadata verdict cannot be taken"
+	fi
+
+	# (c) BEHAVIOR verdict: a plain C# Exe ProjectReferences the .ktproj and binds the emitted signatures literally.
+	local app="$d/app"; mkdir -p "$app"
+	cat > "$app/CsConsumer.csproj" <<'EOF'
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>CsConsumer</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../lib/NgLib.ktproj" />
+  </ItemGroup>
+</Project>
+EOF
+	cat > "$app/Program.cs" <<'EOF'
+using System;
+using nglib;
+
+// Every line below needs the nullable-generic slot to be `object`: a bare `T` slot at T=int cannot take `null`,
+// so a wrong ABI fails at COMPILE here rather than producing a wrong value. The array lines additionally need
+// Array<Int?> to be `object[]` — `Nullable<int>[]` is not array-compatible with it.
+class Program {
+    static int Main() {
+        int viaNull = ApiKt.firstOr<int>(null, 7);
+        int viaValue = ApiKt.firstOr<int>(3, 7);
+        object absent = ApiKt.pick<int>(5, false);
+        object present = ApiKt.pick<int>(5, true);
+        int boxNull = new NBox<int>(null).orElse(9);
+        int boxValue = new NBox<int>(4).orElse(9);
+        var arrays = new NgArrays();
+        object[] boxed = arrays.boxedPair(4);
+        int sum = arrays.sumPresent(boxed);
+        int noneSum = arrays.sumPresent(new object[] { null, null });
+        Console.WriteLine("{0} {1} {2} {3} {4} {5} {6} {7} {8} {9}",
+            viaNull, viaValue, absent == null ? "null" : absent.ToString(), present,
+            boxNull, boxValue, boxed.Length, boxed[1] == null ? "null" : "set", sum, noneSum);
+        return 0;
+    }
+}
+EOF
+	local expected="7 3 null 5 9 4 3 null 12 0" actual rc=0
+	actual="$(run_project "$app" "$app/run.err")" || rc=$?
+	if (( rc != 0 )); then fail csharp-consumer "C# consumer build/run exit $rc" "$(printf -- '--- expected ---\n%s\n--- stdout ---\n%s\n--- stderr/build ---\n%s' "$expected" "$actual" "$(tail -30 "$app/run.err" 2>/dev/null)")"
+	elif [[ "$actual" == "$expected" ]]; then pass csharp-consumer
+	else fail csharp-consumer "output mismatch" "$(printf -- '--- expected ---\n%s\n--- actual ---\n%s' "$expected" "$actual")"; fi
 }
 
 # ---------------------------------------------------------------------------------------------------------
@@ -581,6 +769,7 @@ selftest
 
 case_exe
 case_library
+case_csharp_consumer
 case_coroutine_cross_module
 case_mpp
 case_template

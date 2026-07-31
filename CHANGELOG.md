@@ -7,6 +7,30 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Added
 
+- **The nullable-generic family is now measured at VALUE instantiations, and the C#-visible ABI is measured at
+  all (#86).** Every gate that touched `T?` over an unconstrained type parameter drove it at `T=String`, where the
+  whole family is invisible — a bare `T?` slot is trivially sound for a reference type — so the representation
+  could be wrong in either direction without a single red gate. `tests/basic` gained the `T=Int`/`T=Boolean`
+  instantiations of the idioms that work today (`mapNotNull`/`mapNotNullTo`, `filterNotNull`, `chunked`,
+  `Sequence.single`/`singleOrNull`/`filter`, `getOrPut` and `merge`'s remove-on-null over a value-typed map value,
+  `toTypedArray`/`plus`/`plusElement`, and a top-level `T?` return), which is the regression armor the erasure work
+  will be measured against.
+  Driving the value axis also showed that several shapes assumed working are not, so they land as documented reds
+  rather than as fixtures: with **no module boundary at all**, a null through a top-level `T?` param or a `T?`
+  constructor param faults with `InvalidProgramException` at `T=Int`, and an override narrowing a base `T?` slot to
+  a concrete `Int?` faults with `TypeLoadException` (the interface slot is left unimplemented) — so the defect is
+  the representation, not the cross-module carrier, and the comment claiming otherwise is corrected.
+  `tests/roundtrip/scenarios` gained that same-module control plus the cross-module `T?` RETURN, `Array<Int?>`
+  param/return, and narrowed-override sections, and a value-element `filterNotNullTo` / `Sequence.mapNotNull`
+  section; each carries an `RT_XFAIL` reason naming the step that prunes it.
+  `tests/packaged-sdk` gained `csharp-consumer`: a real C# Exe that `ProjectReference`s a packaged-SDK Kotlin
+  library and binds its emitted CLR signatures **literally**. Every other gate re-imports an emitted library as
+  Kotlin, so it measures what the compiler can restore rather than what the ABI is; this one cannot. It reports two
+  verdicts — the erased slot's physical type plus its `[KotlinNullableGeneric]` carrier (asserted by reflection
+  through a new `refcheck --shape` mode), and whether a C# program compiles and runs against those slots. Both are
+  written against the post-erasure ABI and are `XFAIL_PKG`-listed until it lands. `refcheck` itself is now cached
+  on a hash of its source rather than on the binary's existence, so a change to it can no longer serve a stale tool.
+
 - **A suspension that escapes the cold lowering is now caught at the CIR boundary (area:bir2cir, area:ilemit).**
   `suspendCall:true` is kotc's frontend fact that a call site suspends, and bir2cir's `SuspendColdLowering` is its
   only consumer — it rebuilds each suspending call as a resume label plus the callee's cold-shape call (a
