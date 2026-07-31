@@ -48,6 +48,33 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   keyed on a hash of its actual generated sources, so neither a source change nor a failed rebuild can leave a
   stale tool answering.
 
+- **A stale `sty` stamp is now caught mechanically, right where the stamp dies (area:bir2cir).** The spec §2.7
+  invariant — *a pass that changes a node's result type rewrites or deletes its `sty`* — was stated and swept by
+  hand once, but nothing caught the next pass that reintroduced the drift, and the stamp is read FIRST by every
+  type deriver: a spill local or state-machine field declared from `List<Int?>` while the call actually returns
+  `List<object>` is invalid IL, not a diagnosable drop. bir2cir now runs the shared `bir-common/IrSanity` over each
+  file's fully-passed BIR immediately before `BirTypeLowering` (which strips `sty`, so this is the last point the
+  stamp exists) and refuses a `sty` that names a different type than the `ret`/`dynRet` beside it; the same check
+  runs on the CIR in both bir2cir and ilemit, and `scripts/verify-sanity.py` mirrors it offline. The relation is a
+  REFUTATION test calibrated on the 442-file stdlib reference + runtime pre-lowering corpus (16,070 stamp pairs)
+  and the app corpus: a type variable, a `*`, `kotlin.Nothing`, a `$dotkt_star` existential view, a nullability
+  wrapper, a spelling difference between the `kotlin.*`/shorthand/`System.*` vocabularies, and any pair of unlike
+  or different-arity shapes all AGREE, and a missing stamp is not a disagreement. Calibrating it found four live
+  violators, all fixed here. `ContinuationErasure` promoted a discarded `Result` accessor's `ret` from `Unit` to
+  `kotlin.Any` so ilemit would pop the value, and left `sty` at `kotlin.Unit` — restoring for every deriver the
+  exact stale `void` hint the promotion exists to remove; it now restamps. The other three are one family, the
+  CROSS-MODULE generic erasure the FU-⑧ sweep did not reach: `NullableGenericErasure`,
+  `ReferenceExistentialAbiBinding` and `ConstructedMemberReturnSubstitution` each replace a call's declared result
+  with the PHYSICAL one — a `Slot<T?>`/`Slot<String>` bound as `Slot<object>`, unrelated invariant reified generics
+  — while the frontend stamp still named the pre-erasure instantiation. None can rewrite the stamp (the
+  instantiation is not recoverable from an erased owner), so each DELETES it, which is the other thing §2.7 permits
+  — but only where the new result REFUTES it, through one shared `NodeType.DropStampIfStale`. That qualifier is
+  correctness, not caution: `ConstructedMemberReturnSubstitution` cannot tell a callee-relative `tv` from one kotc
+  already instantiated, so it can re-substitute `Map$Entry<K,V>` into `Map$Entry<Map$Entry<K,V>,V>`, and there the
+  stamp is the more trustworthy of the two and survives. `IteratorConsumerNormalization` — which retypes a
+  `hasNext`/`next` call onto the owner's element, `object` when that element is erased — carries the same
+  obligation and now discharges it too. `tests/ir/selftest` pins the check against BOTH implementations and
+  `tests/ir/lowering` pins the chokepoint itself, each with the legitimate neighbours beside it.
 - **A suspension that escapes the cold lowering is now caught at the CIR boundary (area:bir2cir, area:ilemit).**
   `suspendCall:true` is kotc's frontend fact that a call site suspends, and bir2cir's `SuspendColdLowering` is its
   only consumer — it rebuilds each suspending call as a resume label plus the callee's cold-shape call (a
@@ -100,6 +127,36 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir (area:bir2cir): the `.NET`-interop reshapes carry the node's result-type stamp, so a `.NET` operand
+  left of a suspension compiles again ([tmyt/dotkt#304]).** `NetInteropBinding` re-forms the plain call/read kotc
+  emits by a .NET owner's identity into the CLR vocabulary. That changes a node's SHAPE and not what it produces,
+  so every result-type stamp it carried stays true of the `clr*` node — but three of the reshapes dropped one:
+  the FIELD reshape (`field` → `clrPropGet`) dropped both `sty` and `ret`, the generic branch
+  (`clrGenericStatic`/`clrGenericInstance`) dropped `ret`, and the `.NET`-event branch cleared the node before
+  either was re-added. `bir-common/NodeType.cs` has no derivation arm for any `clr*` kind, so those stamps ARE the
+  reshaped node's static type; without one the node cannot be typed at all, and an operand with no static type
+  standing LEFT of a suspension is refused by the stage-0 operand planner (it would declare an untyped spill
+  local). `v.X + suspending()` on a `.NET` field was therefore a compile-time rejection of source the frontend
+  accepts, while the same expression without the suspension compiled and ran. The stamps now travel with every
+  reshape, stated once at the top of the pass. `dynRet` deliberately does not travel: it is the UNBOUND Kotlin
+  call's dynamic-dispatch channel (ilemit falls back to reflection on its presence), so on a node already bound to
+  a concrete CLR slot it would be a dispatch instruction rather than a type fact, and `sty` carries the same
+  instantiated type without it.
+  The sibling audit found one more node in the same class, synthesized rather than reshaped:
+  `ValueTypeNullableCollectionArg` wraps a value-element collection argument in
+  `System.Linq.Enumerable.Cast<object>` and left the wrap unstamped. That one RETYPES the operand, so it is
+  stamped with what the wrap itself produces (`IEnumerable<object>`) rather than with the wrapped node's stamp —
+  which would be a lie, not merely an imprecision, exactly as at the `NullableTvErasureCallRealign` restamp sites.
+  CIR is unchanged across the whole gated corpus and on the measured non-suspend control (byte-identical): `sty` is
+  bir2cir-internal and stripped before CIR, and the `ret` carries only add a slot where the reshaped node had none.
+  One shape is a deliberate, semantically-neutral exception rather than a no-op — `CharSeqStringLowering` reads
+  `ret` while classifying an operand, so a now-`ret`-carrying `.NET` String field read (a generic owner, the only
+  case where kotc stamps `ret` on a `field`) flowing into a `CharSequence` slot is recognized as the statically
+  non-null String it is, and loses the null-safe `toString` wrapper it used to get for want of a type. The value is
+  the same; there is simply no longer a null check on a reference that cannot be null.
+  The `ret` half of the carry has no Kotlin-source witness in either branch, so it is pinned by a pass-level
+  document instead: `tests/ir/lowering/net-interop-reshape-result-stamp` asserts the slot survives both reshapes,
+  and goes red if either carry is removed.
 - **bir2cir (area:bir2cir): a member called on a TYPE-PARAMETER receiver now emits constrained dispatch for every
   spelling of the receiver, and for a non-generic constraint.** `fun <T : Tagged> f(t: T) = t.tag()` put a `!!T` on
   the evaluation stack and then a plain `callvirt Tagged::tag()` — ECMA-335 requires `constrained. !!T ; callvirt`
@@ -166,6 +223,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   try in one of its branches' operand slots still needs hoisting). `ExceptionTests.tryInsideAMintedOperandBlock`
   and `.tryInABranchOfATrySubjectedWhen` pin the shapes, with the ordering half in
   `MappedConstructorArgumentTests.laterArgumentDoesNotOvertakeTheConstruction`.
+- **bir2cir (area:bir2cir): a suspend state machine's `create()` no longer puts a live CLR object in the document.**
+  The synthesized `new SM(capture…, completion)` added each capture's `TypeNode` RECORD straight into its `argTypes`
+  array instead of the wire node `TypeJson.Write` produces, so the BIR carried a `JsonValueCustomized<TypeNode>` — a
+  slot no reader can parse, and one that makes any full-document write of that tree throw unless the writer happens
+  to be carrying System.Text.Json's default reflection resolver. Nothing noticed because those entries are dropped
+  again before the CIR is written and the CIR writer's own options are only ever handed already-clean trees; the
+  #305 chokepoint, which serializes the post-pass BIR, is the first thing that had to write one.
 - **bir2cir (area:bir2cir): `await(captureContext = <expression>)` no longer refuses a non-constant Boolean
   ([tmyt/dotkt#64]).** dll2klib publishes two await bridges for an awaitable that exposes `ConfigureAwait(bool)` —
   `await()` and `await(captureContext: Boolean)` — so `task.await(captureContext = policy)` is a frontend-resolved

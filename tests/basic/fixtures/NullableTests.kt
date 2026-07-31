@@ -46,8 +46,10 @@ import NUnit.Framework.Legacy.ClassicAssert.Companion.IsFalse as assertFalse
 // Only the positions that RUN today are declared here — the `T?` RETURN, and a `T?` param carrying a non-null. The
 // remaining positions are red at a value instantiation and cannot live in this lane, which has no XFAIL mechanism:
 // a null through a `T?` PARAM or CTOR PARAM, and a `T?` backing field / property on a generic owner, all fault with
-// System.InvalidProgramException at T=Int (the bare struct-incapable `T` slot). That axis is driven as a documented
-// red in tests/roundtrip/scenarios/run.sh (roundtrip-nullable-vt-generic-samemodule).
+// System.InvalidProgramException at T=Int (the bare struct-incapable `T` slot). That axis is driven as documented
+// reds in tests/roundtrip/scenarios/run.sh — one section per observable, so each prunes on its own:
+// roundtrip-nullable-vt-generic-local-param, -local-ctor and -local-override, with -local-reference as the green
+// control that keeps those three statements about the VALUE axis rather than about nullable generics in general.
 fun <T> ngPick(x: T?, d: T): T = x ?: d             // `T?` PARAM
 fun <T> ngFirstOrNull(xs: List<T>): T? = if (xs.isEmpty()) null else xs[0]   // `T?` RETURN
 fun <T> ngRoundTrip(x: T?): T? {                    // `T?` param -> `T?` body-local -> `T?` return

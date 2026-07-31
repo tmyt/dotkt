@@ -1,0 +1,69 @@
+{
+  "fileClass": "LoweringProbeKt",
+  "hasMain": false,
+  "fields": [],
+  "types": [],
+  "refTypes": [],
+  "methods": [
+    {
+      "name": "netInteropReshapeKeepsResultStamp",
+      "params": [
+        {
+          "name": "v",
+          "type": {
+            "t": "fqn",
+            "name": "System.Numerics.Vector3"
+          }
+        }
+      ],
+      "ret": {
+        "t": "fqn",
+        "name": "kotlin.Unit"
+      },
+      "body": [
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "callStatic",
+            "ownerType": {
+              "t": "fqn",
+              "name": "System.Activator"
+            },
+            "method": "CreateInstance",
+            "typeArgs": [
+              {
+                "t": "fqn",
+                "name": "System.Text.StringBuilder"
+              }
+            ],
+            "shapeTypes": [],
+            "ret": {
+              "t": "fqn",
+              "name": "System.Text.StringBuilder"
+            },
+            "args": []
+          }
+        },
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "field",
+            "ownerType": {
+              "t": "fqn",
+              "name": "System.Numerics.Vector3"
+            },
+            "recv": {
+              "k": "local",
+              "name": "v"
+            },
+            "name": "X",
+            "ret": {
+              "t": "fqn",
+              "name": "System.Single"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

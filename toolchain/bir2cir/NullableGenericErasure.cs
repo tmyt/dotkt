@@ -259,7 +259,10 @@ static class NullableGenericErasure
                 if ((obj["k"] as JsonValue)?.TryGetValue<string>(out var k) == true && k == "callInstance"
                     && (obj["method"] as JsonValue)?.TryGetValue<string>(out var mn) == true && getters.Contains(mn)
                     && TypeJson.Read(obj["ret"]) is TypeNode.Tv or TypeNode.Nullable { Of: TypeNode.Tv })
+                {
                     obj["ret"] = TypeJson.Fqn("object");
+                    DropStaleSty(obj);
+                }
                 foreach (var kv in obj) RetypeErasedGetterCalls(kv.Value, getters);
                 break;
             case JsonArray arr:
@@ -457,6 +460,7 @@ static class NullableGenericErasure
                 // is still erased. Every non-var / structural position (fields, returns, generic args, call sigs)
                 // keeps the uniform erasure.
                 var isVar = (obj["k"] as JsonValue)?.GetValue<string>() == "var";
+                var retSlotErased = false;
                 foreach (var key in obj.Select(kv => kv.Key).ToList())
                 {
                     var child = obj[key];
@@ -473,9 +477,15 @@ static class NullableGenericErasure
                     // A call's `sig` is a STRUCTURED TypeNode array (#37 m3b), so its `nullable:gp:X` (Nullable(Tv))
                     // elements erase to `object` for free via the array-recursion below (EraseNullableTv) — DEF and CALL
                     // sigs stay in agreement structurally, no sig-string special case needed.
-                    if (TypeJson.Read(child) is TypeNode tn) obj[key] = TypeJson.Write(EraseNullableTv(tn));
+                    if (TypeJson.Read(child) is TypeNode tn)
+                    {
+                        var erased = EraseNullableTv(tn);
+                        if ((key == "ret" || key == "dynRet") && !erased.Equals(tn)) retSlotErased = true;
+                        obj[key] = TypeJson.Write(erased);
+                    }
                     else EraseNullableGpAllStrings(child, inParams: key == "params");
                 }
+                if (retSlotErased) DropStaleSty(obj);
                 break;
             case JsonArray arr:
                 for (var i = 0; i < arr.Count; i++)
@@ -640,6 +650,17 @@ static class NullableGenericErasure
         _ => t,
     };
 
+    // Spec §2.7 — a pass that changes a node's RESULT TYPE rewrites or deletes its `sty`. This pass changes what a
+    // call PHYSICALLY produces: `Slot<T?>` and `Slot<object>` are unrelated invariant reified generics, which is the
+    // whole reason the erasure exists, while the frontend stamp still names the INSTANTIATED pre-erasure type
+    // (`Slot<String>`). The stamp is read FIRST by every deriver (bir-common/NodeType.cs), so leaving it declares a
+    // spill slot or a state-machine field at a type the value does not have — invalid IL, the same fault
+    // NullableTvErasureCallRealign was fixed for. It cannot be REWRITTEN from here: the erased result is the
+    // UNinstantiated declared shape, not this call site's instantiation, so the stamp is DROPPED — but only where
+    // the erasure actually invalidated it, which is `DropStampIfStale`'s whole job. (The #305 chokepoint found these
+    // three sites.)
+    static void DropStaleSty(JsonObject obj) => NodeType.DropStampIfStale(obj);
+
     // The Tv of a Nullable(Tv) somewhere in a type (a nullable-generic collection element `…<T?>`), else null.
     static TypeNode.Tv ExtractNullableTv(TypeNode t) => t switch
     {
@@ -674,7 +695,11 @@ static class NullableGenericErasure
                     && obj["value"] is JsonObject v)
                 {
                     if (TypeJson.Read(v["type"]) is TypeNode.Tv vt && vt == gp) v["type"] = TypeJson.Fqn("object");
-                    if (TypeJson.Read(v["ret"]) is TypeNode.Tv vr && vr == gp) v["ret"] = TypeJson.Fqn("object");
+                    if (TypeJson.Read(v["ret"]) is TypeNode.Tv vr && vr == gp)
+                    {
+                        v["ret"] = TypeJson.Fqn("object");
+                        DropStaleSty(v);
+                    }
                 }
                 foreach (var kv in obj) RetypeReturns(kv.Value, gp);
                 break;
