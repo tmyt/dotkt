@@ -41,24 +41,36 @@ static partial class NullableTvErasureCallRealign
     // substituted (pre-erasure) view.
     // Evaluates the arguments as it goes, because one rewrite has to happen BEFORE an argument is evaluated: see the
     // construction case below. Reports the flowed argument types (null when the node has no `args`).
-    static TypeNode[] RealignArgs(JsonObject call, TypeNode[] declParams, TypeNode[] ownerArgs, TypeNode[] methodArgs,
-        Ctx ctx)
+    static TypeNode[] RealignArgs(JsonObject call, TypeNode[] declParams, bool[] declRefused, TypeNode[] ownerArgs,
+        TypeNode[] methodArgs, Ctx ctx)
     {
         if (call["args"] is not JsonArray args) return null;
         // A callStatic/callInstance carries `sig`; a `new` carries `argTypes`; a call NetInteropBinding has already
         // bound to a .NET member carries the same vector as `memberSig` — the name changes, the fact does not, and
         // reading only two of the three left every .NET-interop argument outside the axis (an `object` from an erased
         // stdlib return handed to a `Nullable<bool>` parameter, with nothing to narrow it). Any of them may be absent
-        // (resolution then falls back to arity), which is not an error.
-        var descriptor = call["sig"] as JsonArray ?? call["argTypes"] as JsonArray ?? call["memberSig"] as JsonArray;
+        // (resolution then falls back to arity), which is not an error. WHICH one answered is remembered: the .NET
+        // arm's descriptor is a resolved CLR signature, the other two are Kotlin vocabulary, and the fallback below
+        // trusts them to different depths.
+        var clrBound = false;
+        var descriptor = call["sig"] as JsonArray ?? call["argTypes"] as JsonArray;
+        if (descriptor == null && call["memberSig"] is JsonArray memberSig) { descriptor = memberSig; clrBound = true; }
         if (descriptor != null && descriptor.Count != args.Count) descriptor = null;
         var haveDecl = declParams != null && declParams.Length == args.Count;
+        var haveRefusals = declRefused != null && declRefused.Length == args.Count;
         var argTypes = new TypeNode[args.Count];
         for (var i = 0; i < args.Count; i++)
         {
-            // A declared slot may be individually unknown (a referenced parameter whose declaration the producing
-            // assembly could not state structurally); that position falls back to the descriptor like an undeclared call.
-            var target = haveDecl && declParams[i] != null
+            // A REFUSED slot is not an unknown one. The reader saw this parameter's carrier and decided it must not
+            // be stated (today: an erasure under an array element, which the producer does not implement — #86 D2),
+            // and the call's descriptor is that same erasure written in the call's substituted vocabulary. Falling
+            // back to it applies precisely the derivation the refusal exists to prevent, so this position gets no
+            // target from either source and the argument is left exactly as the frontend typed it.
+            var refused = haveRefusals && declRefused[i];
+            // A declared slot may instead be individually unknown (a referenced parameter whose declaration the
+            // producing assembly could not state structurally); THAT position falls back to the descriptor like an
+            // undeclared call.
+            var target = !refused && haveDecl && declParams[i] != null
                 ? Subst(NullableGenericErasure.EraseNullableTv(declParams[i]), ownerArgs, methodArgs)
                 : null;
             // A CONSTRUCTION whose instantiation is the erasure counterpart of the slot is RETYPED rather than
@@ -97,11 +109,16 @@ static partial class NullableTvErasureCallRealign
             // The arm is reached only when the value flowed out as a bare `object`, so this is always the NARROWING
             // direction — and narrowing out of `object` needs a conversion whatever the target is, `unbox.any` for a
             // value and `castclass` for a reference. Which one, and whether one is needed at all, is CastForTarget's
-            // asymmetric rule; screening here with the WIDENING test (`NeedsObjectSeam`) silently dropped every
-            // reference target, leaving an `object` where a `string` was required.
-            else if (descriptor != null && TypeJson.Read(descriptor[i]) is TypeNode slot
+            // asymmetric rule. Screening it with the WIDENING test (`NeedsObjectSeam`) drops every reference target,
+            // which for the .NET arm left an `object` where a `string` was required — measured, and the reason that
+            // arm is unscreened. The Kotlin `sig` / ctor `argTypes` arms KEEP the screen: their descriptor is the
+            // call's own substituted view rather than a resolved CLR signature, so an unrestricted reference cast
+            // there would be typed by something that may not be the callee's slot at all. Widening the two Kotlin
+            // arms needs its own evidence, and there is none yet.
+            else if (!refused && descriptor != null && TypeJson.Read(descriptor[i]) is TypeNode slot
                      && IsBareObject(argTypes[i])
-                     && Subst(slot, ownerArgs, methodArgs) is TypeNode closed)
+                     && Subst(slot, ownerArgs, methodArgs) is TypeNode closed
+                     && (clrBound || NeedsObjectSeam(closed)))
                 target = closed;
             if (target != null && args[i] is JsonObject arg && CastForTarget(arg, argTypes[i], target) is JsonNode wrapped)
                 args[i] = wrapped;
@@ -126,7 +143,8 @@ static partial class NullableTvErasureCallRealign
         if (obj["recv"] != null) Eval(obj["recv"], ctx);
         var ownerArgs = (TypeJson.Read(obj["type"]) as TypeNode.Fqn)?.Args;
         var methodArgs = (obj["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray();
-        RealignArgs(obj, null, ownerArgs, methodArgs, ctx);
+        // No declaration and nothing to refuse: the callee is .NET, so `memberSig` IS its declaration.
+        RealignArgs(obj, null, null, ownerArgs, methodArgs, ctx);
         // Whatever else the node carries (an index expression, a value) still needs walking; the descriptor keys and
         // the owner `type` are not operands.
         foreach (var kv in obj)
