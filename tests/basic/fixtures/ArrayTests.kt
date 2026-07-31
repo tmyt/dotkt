@@ -85,19 +85,32 @@ class ArrayTests {
     @TestAttribute
     fun copyOfGrowsWithNullTail() {
         val ints = arrayOf(1, 2, 3)
-        assertEquals("[1, 2, 3, null, null]", ints.copyOf(5).toList().toString())
-        assertEquals("[1, 2]", ints.copyOf(2).toList().toString())
-        assertEquals("[1, 2, 3]", ints.copyOf(3).toList().toString())
         val grown = ints.copyOf(5)
         assertEquals(1, grown[0])
         assertNull(grown[4])
         var sum = 0
         for (i in 0 until 3) sum += grown[i]!!
         assertEquals(6, sum)
+        assertEquals("[x, y, null]", arrayOf("x", "y").copyOf(3).toList().toString())   // reference element
+    }
+
+    // SPLIT OUT of copyOfGrowsWithNullTail so one ILVERIFY_XFAIL entry describes one cause. The baseline is keyed by
+    // METHOD NAME, so leaving these here let the sibling entry — whose reason is about the REFERENCE element — silently
+    // absorb a different shape at the VALUE element, and the baseline stopped saying which was which.
+    //
+    // These chains carry the value-element remainder of #86 D2: `copyOf` hands back the `object[]` its `Array<T?>`
+    // return erases to, `toList()` over it is instantiated at `object`, and the resulting `IReadOnlyList<object>` meets
+    // an `IReadOnlyCollection<Nullable<int32>>` slot. Runtime-safe — only object-level members are dispatched on the
+    // list — and closed by the same base-view projection as `boxedGenericValues` / `arrayOfNulls`.
+    @TestAttribute
+    fun copyOfGrowsWithNullTailAtValueElements() {
+        val ints = arrayOf(1, 2, 3)
+        assertEquals("[1, 2, 3, null, null]", ints.copyOf(5).toList().toString())
+        assertEquals("[1, 2]", ints.copyOf(2).toList().toString())
+        assertEquals("[1, 2, 3]", ints.copyOf(3).toList().toString())
         assertEquals("[1, 2, null]", arrayOf(1L, 2L).copyOf(3).toList().toString())
         assertEquals("[2.5, 3.5, null]", arrayOf(2.5, 3.5).copyOf(3).toList().toString())
         assertEquals("[a, b, null]", arrayOf('a', 'b').copyOf(3).toList().toString())
-        assertEquals("[x, y, null]", arrayOf("x", "y").copyOf(3).toList().toString())
         val nullable = arrayOfNulls<Int>(2)
         nullable[0] = 7
         assertEquals("[7, null, null]", nullable.copyOf(3).toList().toString())
