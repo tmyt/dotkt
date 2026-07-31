@@ -46,20 +46,31 @@ declare -A RT_XFAIL=(
 	# siblings, the same-module and cross-module override narrowings, and all three top-level-`T?`-RETURN
 	# entries. Their sections are green and unlisted now; the shapes they drove stay as the controls they were.
 	#
-	# The LAZY half of the pair. Its eager twin (`Iterable.mapNotNull`, and `filterNotNullTo` at a value element,
-	# which this list used to carry) is green, so neither the declaration axis nor the collection-receiver
-	# conversion is the variable any more. What is left is specific to the sequence path and is NOT a receiver
-	# argument at all: a Kotlin `Sequence` is not `@ClrTypeAlias`'d to `IEnumerable`, so nothing converts the
-	# receiver — the mismatch is the sequence's OWN element type, erased to `object` by the `(T) -> R?` transform
-	# while the declared result stays `Sequence<R>`, and the terminal then looks for a member of the declared
-	# instantiation on a sequence that does not implement it.
-	[roundtrip-nullable-vt-generic-seq-mapnotnull]="#86: Sequence.mapNotNull at a VALUE element yields a sequence whose elements are the erased object while its declared result stays Sequence<Int>, so the terminal toList's IEnumerable<int32>.GetEnumerator is not found on it — System.EntryPointNotFoundException — while the eager Iterable.mapNotNull twin is green; needs the erased-to-declared element conversion on the sequence path, which is not the collection-receiver conversion (a Kotlin Sequence is not @ClrTypeAlias'd to IEnumerable, so no receiver argument is involved)"
-	# D3, the half the erasure alone cannot close. An override narrowing a base `T?` slot now fills the base's
-	# erased `object` slot, so dispatch through the INTERFACE works and the type loads (that entry is pruned). Called
-	# through its OWN declared type it does not: the re-imported Kotlin surface is truthfully `accept(x: Int?)`, the
-	# physical slot is `accept(object)`, and converting the consumer's argument between them needs the REFERENCED
-	# declaration. The `.override` bridge in #86 D3 is what keeps a typed entry point alongside the erased slot.
-	[roundtrip-nullable-vt-generic-override-direct]="#86 D3: a narrowed override called through its OWN declared type does not bind — the CLR slot is accept(object) (it must be, or the interface method is unimplemented) while the re-imported Kotlin surface is accept(x: Int?), and the consumer's emit aborts with 'no referenced method matches the resolved descriptor IntSink.accept(nullable:System.Int32)'; the same override reached through the BASE slot passes, as does the reference instantiation — pruned by the override-slot-bridge step of #86 D3, or by the cross-module carrier read re-deriving the argument"
+	# PRUNED by the cross-module carrier READ (bir2cir reads `[KotlinNullableGeneric]` off the REFERENCED assembly
+	# and types the consumer's use as `Subst(Erase(declared))`): the three nested-`Slot<T?>`-at-a-VALUE sections
+	# below this list — the param, the property and the T=Boolean param. They now run 5 / 7 / False and are green
+	# and unlisted; the null-path and reference-instantiation controls beside them stay as the controls they were.
+	#
+	# The LAZY half of the pair, and it is NOT the carrier read — measured. Its eager twin (`Iterable.mapNotNull`,
+	# and `filterNotNullTo` at a value element, which this list used to carry) is green, so neither the declaration
+	# axis nor the collection-receiver conversion is the variable. The defect is inside the stdlib's own lazy path
+	# and needs no module boundary: `Sequence.mapNotNull` builds a `TransformingSequence<T, object>` — its
+	# `(T) -> R?` transform erases `R?` to `object` — and hands it to `filterNotNull`, whose body is
+	# `filterNot { it == null } as Sequence<T>`, an UNCHECKED cast over a lazily-WRAPPED object-elemented sequence.
+	# On the CLR a `Sequence<T>` genuinely IS a reified `IEnumerable<T>`, so at T=Int the wrapper does not implement
+	# `IEnumerable<int32>` and the terminal's `GetEnumerator` is not found. The eager twin is green because it
+	# MATERIALIZES a fresh, correctly-typed list rather than wrapping. So the fix is an element-converting adapter
+	# on the lazy path, stdlib-side — not a declaration any consumer can re-derive.
+	[roundtrip-nullable-vt-generic-seq-mapnotnull]="#86: NOT the cross-module carrier read (measured) — the defect is same-module, inside the stdlib's lazy path. Sequence.mapNotNull builds TransformingSequence<T, object> (its (T) -> R? transform erases R? to object) and hands it to filterNotNull, whose body unchecked-casts a lazily-wrapped object-elemented sequence to Sequence<T>; on the CLR that IS a reified IEnumerable<T>, so at T=Int the wrapper does not implement IEnumerable<int32> and the terminal toList's GetEnumerator is not found — System.EntryPointNotFoundException. The eager Iterable.mapNotNull twin is green because it materializes a fresh typed list instead of wrapping. Needs an element-converting adapter on the lazy sequence path, stdlib-side."
+	# D3, the half the erasure alone cannot close, and the carrier read does not close it either — measured. An
+	# override narrowing a base `T?` slot now fills the base's erased `object` slot, so dispatch through the
+	# INTERFACE works and the type loads (that entry is pruned). Called through its OWN declared type it still does
+	# not: the re-imported Kotlin surface is truthfully `accept(x: Int?)` and the physical slot is `accept(object)`,
+	# so there is no member of the resolved descriptor to bind AT ALL — the consumer aborts before any argument
+	# conversion could apply, which is exactly why re-deriving the argument cannot reach it. What is missing is a
+	# second, typed ENTRY POINT: the `.override` bridge of #86 D3, emitting `object accept(object)` beside the
+	# narrowed body.
+	[roundtrip-nullable-vt-generic-override-direct]="#86 D3: a narrowed override called through its OWN declared type does not bind — the CLR slot is accept(object) (it must be, or the interface method is unimplemented) while the re-imported Kotlin surface is accept(x: Int?), and the consumer's emit aborts with 'no referenced method matches the resolved descriptor IntSink.accept(nullable:System.Int32)'; the same override reached through the BASE slot passes, as does the reference instantiation. Measured against the cross-module carrier read: it does NOT prune this — the abort is a missing MEMBER, not a mistyped argument, so there is nothing for an argument derivation to fix. Pruned by the override-slot-bridge step of #86 D3."
 	# D2 — `Array<X?>` has no single representation: a CONCRETE Array<Int?> is Nullable<int32>[] while the
 	# erased/open form is object[], and the two are unrelated CLR types (ECMA-335 I.8.7.1 — array
 	# compatibility requires reference-compatible elements). Measured, the re-imported slot is not even an
@@ -70,20 +81,6 @@ declare -A RT_XFAIL=(
 	# Nullable<int32>[] as an int32[] and reads the LAYOUT WORDS as elements. No diagnostic, no exception —
 	# which is why this entry pins the observed OUTPUT as its shape.
 	[roundtrip-nullable-vt-generic-array-ret]="#86 D2: a cross-module Array<Int?> RETURN re-imports with a NON-NULL Int element, so the consumer indexes a Nullable<int32>[] as an int32[] and reads the layout words as elements — an array of 4/null/8 reports 3/1/4/0 (hasValue, value, then the null element's zeroed flag) with no diagnostic and no exception; pruned by the Array<X?>-is-object[] canonicalisation step of #86"
-	# #18/#86 — the VALUE instantiation of #147's NESTED carrier positions. At T=String the erased
-	# Slot<object> and the restored Slot<string> are reference-compatible, so the in-process consumer runs
-	# green with a formal-only ilverify finding (ILVERIFY_XFAIL nullableGenericMembersRoundTrip). At T=Int
-	# they are not. The axis is PRESENT-vs-NULL, which a bundled app hid: carrying a NULL through the param,
-	# the property and the member return all WORK — the green control sections drive all four — and it is
-	# carrying a VALUE that corrupts memory. That is also why this axis cannot be an NUnit sibling: an
-	# AccessViolationException takes the test host down, and the whole assembly then reports zero tests.
-	# The core step landed and did not move them: their mismatch is inside a CONSTRUCTED generic
-	# (`Slot<object>` against `Slot<Nullable<int32>>`), which no cast can reconcile — those are unrelated
-	# invariant reified generics — so the use has to be DERIVED as `Slot<object>`, and deriving it needs the
-	# referenced library's declaration. Pruned by the cross-module carrier read.
-	[roundtrip-nullable-generic-slot-param-value]="#18/#86: carrying a VALUE — not a null, the null path is green — through a cross-module nested Slot<T?> PARAM at T=Int meets the erased Slot<object> against the restored Slot<Nullable<int32>> and corrupts memory: System.AccessViolationException in CastHelpers.Unbox_Nullable, where the T=String twin is merely formally unverifiable; pruned by the uniform-erasure core step plus the cross-module carrier read of #86"
-	[roundtrip-nullable-generic-slot-property-value]="#18/#86: the same Slot<object>-vs-Slot<Nullable<int32>> mismatch reading a VALUE back from a nested Slot<T?> PROPERTY at T=Int — System.AccessViolationException in CastHelpers.Unbox_Nullable; pruned by the uniform-erasure core step plus the cross-module carrier read of #86"
-	[roundtrip-nullable-generic-slot-param-bool]="#18/#86: the same nested Slot<T?> PARAM carrying a VALUE at T=Boolean surfaces one step earlier than its Int twin — System.NullReferenceException rather than an access violation; tracked apart because the shapes differ and a fix owes a value, not merely a different fault; pruned by the uniform-erasure core step plus the cross-module carrier read of #86"
 )
 
 # The documented failure SHAPE of each RT_XFAIL entry: a substring the section's EVIDENCE (every compiler /
@@ -98,9 +95,6 @@ declare -A RT_XFAIL_SHAPE=(
 	[roundtrip-nullable-vt-generic-array-param]="but 'IntArray' was expected"
 	# No diagnostic and no exception: this one fails by printing a WRONG VALUE, so the shape is the value.
 	[roundtrip-nullable-vt-generic-array-ret]='(stdout) 3/1/4/0'
-	[roundtrip-nullable-generic-slot-param-value]='System.AccessViolationException'
-	[roundtrip-nullable-generic-slot-property-value]='System.AccessViolationException'
-	[roundtrip-nullable-generic-slot-param-bool]='System.NullReferenceException'
 )
 
 # A listed name with no documented shape is the hole this map exists to close, so it is rejected here rather
@@ -947,15 +941,18 @@ EOF
 # ----- CROSS-MODULE: a NESTED `Slot<T?>` declaration slot at a VALUE instantiation (#18/#86) ------------
 # #147's carrier covers the NESTED Nullable(Tv) positions — a `Slot<T?>` param / property / member return —
 # and the in-process consumer already drives them, but only at T=String. There the erased `Slot<object>` and
-# the restored `Slot<string>` are reference-compatible, so the mismatch is formal-only and the case runs
-# green (its ILVERIFY_XFAIL entry records exactly that). At T=Int the same mismatch is `Slot<object>` against
-# `Slot<Nullable<int32>>`, which are not — and the split here is NOT param-vs-property-vs-return, which is
-# what a bundled app made it look like. Measured per line, the axis is PRESENT-vs-NULL: carrying a null
-# through any of the three positions WORKS (the sections below prove it, and they must stay green), while
-# carrying a VALUE corrupts memory — `CastHelpers.Unbox_Nullable` on a `Slot<object>` that the callee reads
-# as `Slot<Nullable<int32>>`. At T=Boolean the same shape surfaces one step earlier as a NullReferenceException.
-# These cannot live in the in-process lane at all: an AccessViolationException takes the test host down before
-# any assertion runs, so the whole assembly reports zero tests.
+# the restored `Slot<string>` are reference-compatible, so the mismatch was formal-only. At T=Int the same
+# mismatch is `Slot<object>` against `Slot<Nullable<int32>>`, which are unrelated invariant reified generics
+# that no cast reconciles — and the split here is NOT param-vs-property-vs-return, which is what a bundled app
+# made it look like. Measured per line, the axis was PRESENT-vs-NULL: carrying a null through any of the three
+# positions always worked, while carrying a VALUE corrupted memory in `CastHelpers.Unbox_Nullable` (at
+# T=Boolean the same shape surfaced one step earlier as a NullReferenceException).
+#
+# All three are GREEN now: bir2cir reads `[KotlinNullableGeneric]` off the REFERENCED library and types the
+# consumer's use as `Subst(Erase(declared))`, so the construction is BUILT as `Slot<object>` instead of being
+# built wrongly and then not convertible. They stay here rather than moving to the in-process lane because that
+# is the lane that cannot host them: an AccessViolationException takes the test host down before any assertion
+# runs, so a regression would report zero tests instead of one failure.
 NG="$ROOT/build/roundtrip-nullable-generic-slot-group"
 ng_lib "$NG" NgSlotLib <<'EOF'
 class Slot<T>(val value: T)

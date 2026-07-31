@@ -1522,6 +1522,13 @@ stays a stack `Nullable<int32>`. Kotlin/Native, free to monomorphize, made the s
 The Kotlin surface survives on two channels, which a re-consuming DotKt reader recombines: `[KotlinNullableGeneric]`
 carries the pre-erasure type node, and the ordinary `[Nullable(2)]` NRT byte carries the outer `?`.
 
+**Restoring the surface is only half of consuming it.** A consumer that re-imports `unwrapSlot(slot: Slot<T?>)` writes
+`unwrapSlot(Slot<Int?>(5))`, and `Slot<Nullable<int32>>` is not the `Slot<object>` the producer's slot actually is —
+those are unrelated invariant reified generics that no cast reconciles. So the same carrier is read a second time, by
+`bir2cir`, to type the consumer's *use* as `Subst(Erase(declared), typeArgs)`: the construction is built as
+`Slot<object>` instead of being built wrongly and converted afterwards. The rule is the one above with no
+cross-module exception — a slot's physical type is a function of its declaration, wherever that declaration lives.
+
 What this is observable as:
 
 - **Boxing.** A `T?` argument, return, field or local at a value instantiation allocates. `Cell<Int>(5)` where the

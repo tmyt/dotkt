@@ -92,6 +92,33 @@ At each, the erased `Nullable(Tv)` may be the slot's **head** (`x: T?`) or **nes
 Dropping either channel is invisible to every runtime-shaped gate: the producer is unchanged and only a separately
 compiled Kotlin **consumer** fails, at compile time, with a type mismatch against the degraded slot.
 
+#### The carrier has two readers, and `bir2cir` is one of them
+
+`dll2klib` reads it to restore the **Kotlin surface** a consumer compiles against. That is not the whole job: the
+consumer then emits calls against the *restored* surface — `unwrapSlot(Slot<Int?>)` — while the producer's CLR slot is
+`Slot<object>`, and the two are unrelated invariant reified generics that no cast reconciles. So `bir2cir` reads the
+same carrier off the referenced assembly (`ReferenceMetadataIndex.TryNullableGenericSlot`) and types every USE of that
+slot as `Subst(Erase(declared), typeArgs)` — the identical formula it applies to a same-module declaration. Without
+that second reader the consumer compiles and then corrupts memory: a `Slot<Nullable<int32>>` handed to a callee that
+reads it as `Slot<object>` faults in `CastHelpers.Unbox_Nullable`.
+
+The reader's discipline, in order:
+
+- **the carrier first.** It is the only statement that a given `object` came from an erasure at all.
+- **the physical declaration second, and only while it still carries a `Tv`.** The producer emitted its signature
+  through the same `Erase`, so a `Slot<T>.get_value(): !0` or a `List<E>.get(i): !0` is the real declaration and
+  substituting the call's type arguments into it is exact. A `Tv`-free physical slot is refused: the one thing it
+  could contribute is a bare `System.Object`, which without a carrier beside it is indistinguishable from a declared
+  `Any` — and deriving every `Any`-returning member's use as `object` is not this family, it is all of them.
+- **a same-shape overload set is refused, never guessed.** Name, static-ness, parameter count and generic arity are
+  all a call site gives; picking a sibling would manufacture the mismatch the pass exists to remove.
+- **an `Array<X?>` slot is refused until `Array<X?>` is canonically `object[]` (#86 D2).** Alone among the positions,
+  the producer does not yet implement what its own slot says: `Array<T>.copyOf(newSize)` declares `Array<T?>`
+  (physically `object[]`) and reflectively allocates a `Nullable<V>[]`.
+- **a call that states its result only in `sty` is out of the axis**, so a cross-module generic factory's erased
+  return is still a formal-only finding. Deriving it needs the parameter half of the func-slot erasure first: the
+  same call's function-type argument would otherwise be handed a delegate the consumer cannot build erased.
+
 ## `inline` / `reified` — deliberately NOT round-tripped (design conclusion)
 
 From the **consumer surface**, whether an imported function was `reified`/`inline` is irrelevant:
