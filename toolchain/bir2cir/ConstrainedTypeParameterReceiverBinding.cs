@@ -29,10 +29,12 @@ using DotKt.Bir;
 // When neither route yields a closed owner the node is left untouched — this pass never guesses an
 // instantiation, the same conservatism InheritedMemberOwnerBinding applies to overload resolution.
 //
-// Runs before InheritedMemberOwnerBinding's hierarchy walk (a type-parameter receiver's declaring owner comes
-// from its constraint, not from a receiver-type hierarchy substitution) and after the suspend lowerings, so the
-// state-machine bodies are already in their final type vocabulary and an SM field's `T` is the SM class's own
-// type parameter.
+// Runs after the suspend lowerings — the state-machine bodies are then in their final type vocabulary, so an SM
+// field's `T` is the SM class's own type parameter — and after InheritedMemberOwnerBinding, whose hierarchy
+// substitution has by then named the exact constructed declaring owner. That ordering matters for the second
+// route above: a member declared on a GENERIC BASE of the constraint (`T : Derived<Int>` calling
+// `Base<X>.m()`) has no `Base` entry in T's constraint list, so the bound cannot close it — but the inherited
+// owner binding already has.
 static class ConstrainedTypeParameterReceiverBinding
 {
     public static void ApplyAll(IEnumerable<JsonNode> roots)
@@ -68,6 +70,7 @@ static class ConstrainedTypeParameterReceiverBinding
         if (file["methods"] is JsonArray methods)
             foreach (var method in methods.OfType<JsonObject>())
                 BindMethod(method, noTypeParams, arity);
+        BindAccessors(file["properties"] as JsonArray, noTypeParams, arity);
         if (file["types"] is JsonArray declared)
             foreach (var type in declared.OfType<JsonObject>())
                 BindType(type, arity);
@@ -82,9 +85,22 @@ static class ConstrainedTypeParameterReceiverBinding
         if (type["methods"] is JsonArray methods)
             foreach (var method in methods.OfType<JsonObject>())
                 BindMethod(method, typeParams, arity);
+        // A property ACCESSOR body is executable code like any other, and `class H<T : Tagged>(val item: T) { val v
+        // get() = item.tag() }` reaches this pass only through here — BIR keeps accessors under `properties`, not
+        // `methods`.
+        BindAccessors(type["properties"] as JsonArray, typeParams, arity);
         if (type["types"] is JsonArray nested)
             foreach (var child in nested.OfType<JsonObject>())
                 BindType(child, arity);
+    }
+
+    static void BindAccessors(JsonArray properties, JsonArray typeParams, Dictionary<string, int> arity)
+    {
+        if (properties == null) return;
+        foreach (var property in properties.OfType<JsonObject>())
+            foreach (var slot in new[] { "getter", "setter" })
+                if (property[slot] is JsonObject accessor)
+                    BindMethod(accessor, typeParams, arity);
     }
 
     static void BindMethod(JsonObject method, JsonArray typeParams, Dictionary<string, int> arity)
@@ -137,12 +153,16 @@ static class ConstrainedTypeParameterReceiverBinding
                     if (Str(call["k"]) == "callInstance"
                         && TypeJson.Read(call["ownerType"]) is TypeNode.Fqn owner
                         && call["recv"] is JsonObject recv
-                        && ReceiverTypeVariable(recv, scope) is TypeNode.Tv tv
+                        && ReceiverTypeVariable(recv, scope, locals) is TypeNode.Tv tv
                         && ClosedOwner(owner, tv, typeParams, methodParams, arity) is TypeNode.Fqn iface)
                     {
                         // A !!T receiver is not an interface reference on the evaluation stack. Even with the
                         // exact constructed MemberRef, ECMA-335 requires an address plus `constrained. !!T;
                         // callvirt`. Author that dispatch explicitly in CIR; ilemit emits this node one-to-one.
+                        // Only the DISPATCH changes. `sig` (the overload key), `typeArgs` (a generic member's
+                        // instantiation) and `ret` (the declared call-result view) are facts about the CALL and are
+                        // carried through untouched — ilemit consumes all three on this node exactly as it does on a
+                        // callInstance, and dropping any of them would make it guess.
                         call["k"] = "constrainedCall";
                         call["recvType"] = TypeJson.Write(tv);
                         call["iface"] = TypeJson.Write(iface);
@@ -150,7 +170,6 @@ static class ConstrainedTypeParameterReceiverBinding
                             call["ret"] = dynRet.DeepClone();
                         call.Remove("ownerType");
                         call.Remove("virtual");
-                        call.Remove("sig");
                         call.Remove("dynRet");
                     }
                     foreach (var kv in call)
@@ -165,16 +184,31 @@ static class ConstrainedTypeParameterReceiverBinding
         if (method["body"] is JsonNode methodBody) Bind(methodBody);
     }
 
-    // The receiver's own static type when it is a bare type VARIABLE. A platform-type (`Oblivious`) wrapper is
-    // peeled — a `T!` receiver is still a `!!T` on the stack. Anything else (an interface-typed expression, a
-    // cast, a concrete class) dispatches fine as an ordinary callvirt and is not this pass's business.
-    static TypeNode.Tv ReceiverTypeVariable(JsonObject recv, BirScope scope) =>
-        StaticType.Surface(recv, scope) switch
-        {
-            TypeNode.Oblivious o => o.Of as TypeNode.Tv,
-            TypeNode t => t as TypeNode.Tv,
-            _ => null,
-        };
+    // The receiver's own static type when it is a bare type VARIABLE. The platform-type and value-nullable wrappers
+    // are peeled — a `T!` or `T?` receiver is still a `!!T` on the stack once the dispatch happens (the same two
+    // MemberCallSubstitution.RecvStaticType peels, so the two readers agree). Anything else (an interface-typed
+    // expression, a cast, a concrete class) dispatches fine as an ordinary callvirt and is not this pass's business.
+    //
+    // A `local` read is confirmed against its DECLARATION as well: `StaticType.Surface` prefers the frontend `sty`
+    // stamp, which a later bir2cir retype of the same slot (InlineSplice.RetypeReceiverToConcrete) deliberately
+    // shadows. That shadowing is harmless to a name-keyed classifier but not to a decision about the physical call
+    // shape — so a stamp that says `T` over a slot re-declared CONCRETE does not get to author `constrained. !!T`.
+    static TypeNode.Tv ReceiverTypeVariable(
+        JsonObject recv, BirScope scope, Dictionary<string, TypeNode> locals)
+    {
+        if (Peel(StaticType.Surface(recv, scope)) is not TypeNode.Tv tv) return null;
+        if (Str(recv["k"]) == "local" && Str(recv["name"]) is string name
+            && locals.TryGetValue(name, out var declared) && Peel(declared) is not TypeNode.Tv)
+            return null;
+        return tv;
+    }
+
+    static TypeNode Peel(TypeNode t) => t switch
+    {
+        TypeNode.Oblivious o => Peel(o.Of),
+        TypeNode.Nullable n => Peel(n.Of),
+        _ => t,
+    };
 
     // The CLOSED owner token for a member called on `tv`. See the pass header for the three routes; null means
     // "no closed owner is derivable", which leaves the call untouched.

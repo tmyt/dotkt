@@ -715,16 +715,6 @@ sealed class Pipeline
         if (!_options.RefBuild)
             GenericStaticOwnerBinding.ApplyAll(staged.Select(s => s.Root).ToList());
 
-        // CONSTRAINED TYPE-PARAMETER RECEIVER: a member called on a receiver whose static type is a type PARAMETER
-        // (`fun <T : Tagged> f(t: T) = t.tag()`) cannot be a plain `callvirt` — the stack holds a `!!T`, not an
-        // interface reference. Author the `constrained. !!T ; callvirt` dispatch here, closing the owner from the
-        // parameter's lexical bound where BIR names it bare. AFTER the suspend lowerings (the SM bodies are then in
-        // their final type vocabulary, so a spilled receiver field's `T` is the SM class's own parameter) and
-        // BEFORE the inherited-owner walk below (a type-parameter receiver's owner comes from its constraint, not
-        // from a receiver-type hierarchy substitution).
-        if (!_options.RefBuild)
-            ConstrainedTypeParameterReceiverBinding.ApplyAll(staged.Select(s => s.Root).ToList());
-
         // INHERITED GENERIC MEMBER OWNER BINDING: BIR keeps the Kotlin receiver owner (`Derived<T>.m`), while a CLR
         // MemberRef must name the exact CONSTRUCTED declaring owner (`Base<T>.m`). Resolve that hierarchy substitution
         // here, from local declarations + kotc's override facts, before type lowering. This removes a semantic inference
@@ -732,6 +722,17 @@ sealed class Pipeline
         // signature/arity matches only; ambiguous overloads are never guessed. No library/member names are special.
         if (!_options.RefBuild)
             InheritedMemberOwnerBinding.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
+
+        // CONSTRAINED TYPE-PARAMETER RECEIVER: a member called on a receiver whose static type is a type PARAMETER
+        // (`fun <T : Tagged> f(t: T) = t.tag()`) cannot be a plain `callvirt` — the stack holds a `!!T`, not an
+        // interface reference, so ECMA-335 requires an address plus `constrained. !!T ; callvirt`. Author that
+        // dispatch here. AFTER the suspend lowerings, so a state-machine body is already in its final type
+        // vocabulary and a spilled receiver field's `T` is the SM class's own parameter; and AFTER the inherited
+        // owner binding directly above, whose hierarchy substitution has by then named the exact CONSTRUCTED
+        // declaring owner — which is the token the constrained call needs, and which the type parameter's own
+        // constraint list can only supply when the constraint IS the declaring type.
+        if (!_options.RefBuild)
+            ConstrainedTypeParameterReceiverBinding.ApplyAll(staged.Select(s => s.Root).ToList());
 
         // dll2klib restores G<*> for Kotlin source analysis while the referenced DLL physically exposes
         // G$dotkt_star. Re-apply that exact referenced ABI to call signatures and directly initialized locals before

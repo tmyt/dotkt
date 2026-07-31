@@ -88,12 +88,68 @@ class TaggedKeyed(val n: Int) : Tagged, Keyed<Int> {
 fun <T : Tagged> tagOfParam(t: T): Int = t.tag()
 fun <T : Tagged> tagOfLocal(t: T): Int { val copy = t; return copy.tag() }
 fun <T : Keyed<Int>> keyOfParam(t: T): Int = t.key()
+fun <T : Tagged> tagOfNotNull(t: T?): Int = t!!.tag()
 
 class TaggedHolder<T : Tagged>(val item: T) {
     fun tagOfField(): Int = item.tag()
     fun tagOfCallResult(): Int = get().tag()
     fun get(): T = item
+    // A property ACCESSOR body — executable code that lives under `properties`, not `methods`.
+    val accessorTag: Int get() = item.tag()
 }
+
+// The accessor case again with an OVERLOADED member, where a mis-selected overload is a wrong VALUE.
+class DescribedHolder<T : Described>(val item: T) {
+    val accessorDescription: String get() = item.describe(4)
+}
+
+// Changing the DISPATCH must not change WHICH member is called, nor how it is instantiated: an OVERLOAD still
+// has to be selected by signature (dispatching a `describe(Int)` call to `describe(String)` is a silent wrong
+// answer, not a verifier complaint), and a GENERIC member still needs its instantiation.
+interface Described {
+    fun describe(x: Int): String
+    fun describe(x: String): String
+    fun <R> firstOf(a: R, b: R): R
+}
+
+class DescribedTag(val n: Int) : Tagged, Described {
+    override fun tag(): Int = n
+    override fun describe(x: Int): String = "int:$x"
+    override fun describe(x: String): String = "str:$x"
+    override fun <R> firstOf(a: R, b: R): R = a
+}
+
+fun <T : Described> describeOverloads(t: T): String = t.describe(7) + "/" + t.describe("s")
+fun <T : Described> genericMemberOnTypeParam(t: T): String = t.firstOf("a", "b")
+
+// The called member is declared on a GENERIC BASE of the bound, which the bound's own constraint list does not
+// name — the constructed owner comes from the hierarchy substitution, not from the constraint.
+interface RootProducer<X> {
+    fun produceRoot(): X
+}
+
+interface LeafProducer<X> : RootProducer<X> {
+    fun leaf(): Int
+}
+
+class IntLeaf : LeafProducer<Int> {
+    override fun produceRoot(): Int = 55
+    override fun leaf(): Int = 5
+}
+
+fun <T : LeafProducer<Int>> rootThroughBase(t: T): Int = t.produceRoot() + t.leaf()
+
+// An open CLASS bound rather than an interface: a virtual and a non-virtual member on the same receiver.
+open class TagBase {
+    open fun openValue(): Int = 6
+    fun finalValue(): Int = 60
+}
+
+class TagDerived : TagBase() {
+    override fun openValue(): Int = 66
+}
+
+fun <T : TagBase> classBoundReceiver(t: T): Int = t.openValue() + t.finalValue()
 
 class GenericsTests {
     @TestAttribute
@@ -159,8 +215,20 @@ class GenericsTests {
         assertEquals(4, tagOfParam(v))
         assertEquals(4, tagOfLocal(v))
         assertEquals(40, keyOfParam(v))
+        assertEquals(4, tagOfNotNull(v))
         val h = TaggedHolder(v)
         assertEquals(4, h.tagOfField())
         assertEquals(4, h.tagOfCallResult())
+        assertEquals(4, h.accessorTag)
+    }
+
+    @TestAttribute
+    fun typeParameterReceiverKeepsMemberSelection() {
+        val d = DescribedTag(9)
+        assertEquals("int:7/str:s", describeOverloads(d))   // NOT "str:7/..." — the Int overload
+        assertEquals("a", genericMemberOnTypeParam(d))
+        assertEquals("int:4", DescribedHolder(d).accessorDescription)
+        assertEquals(60, rootThroughBase(IntLeaf()))        // 55 (declared on the generic BASE) + 5
+        assertEquals(126, classBoundReceiver(TagDerived())) // 66 (virtual) + 60 (non-virtual)
     }
 }

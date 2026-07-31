@@ -8,12 +8,14 @@
 # machine-readable "one reason per known finding" discipline. Any finding
 # outside the baseline is a NEW-FAIL and reddens the gate.
 #
-# --audit-baseline additionally reddens on a DEAD key: a baseline entry that matched no finding at all is a
-# defect that has since been fixed, and its entry has rotted into a mask for whatever finding lands on that
-# method next. It is reported as `FIXED … remove it from the xfail list` — the same verdict wording every other
-# lane gets from scripts/lib.sh's xfail_diff. Opt-in because the audit is only meaningful over the COMPLETE
-# emitted set: tests/packaged-sdk/run.sh verifies a two-assembly subset, where an unmatched key means "not in
-# this subset", not "fixed". tests/run-nunit-tests.sh, which verifies every emitted suite assembly, passes it.
+# --audit-baseline additionally reddens on a DEAD key: a baseline entry that matched no finding at all has
+# rotted into a mask for whatever finding lands on that method next. It is reported with scripts/lib.sh's
+# xfail_diff wording, `FIXED … remove it from the xfail list`, but DELIBERATELY NOT with its verdict — there a
+# FIXED line is green and merely advisory. A stale ilverify key is worse than a stale name in a fail-set,
+# because it is a live substring filter over future findings, so this lane stays red until the entry is pruned.
+# Opt-in because the audit is only meaningful over the COMPLETE emitted set: tests/packaged-sdk/run.sh verifies
+# a two-assembly subset, where an unmatched key means "not in this subset", not "fixed".
+# tests/run-nunit-tests.sh, which verifies every emitted suite assembly, passes it.
 #
 # Usage: tests/run-ilverify.sh [--audit-baseline] <emitted-test-assembly.dll> [<more.dll> ...]
 set -euo pipefail
@@ -88,8 +90,8 @@ for dll in "${DLLS[@]}"; do
 	unset newfails xfailed
 done
 
-# DEAD-KEY VERDICT: every baseline key that masked nothing over the complete emitted set. Same wording, and the
-# same "red until the entry is pruned" posture, as scripts/lib.sh's xfail_diff FIXED line.
+# DEAD-KEY VERDICT: every baseline key that masked nothing over the complete emitted set. xfail_diff's wording,
+# but red rather than its advisory green — see the header note on why this lane is deliberately stricter.
 if (( audit )); then
 	mapfile -t audit_keys < <(printf '%s\n' "${!ILVERIFY_XFAIL[@]}" | LC_ALL=C sort)
 	for key in ${audit_keys[@]+"${audit_keys[@]}"}; do

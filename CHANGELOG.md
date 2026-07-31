@@ -62,8 +62,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - **bir2cir (area:bir2cir): a member called on a TYPE-PARAMETER receiver now emits constrained dispatch for every
   spelling of the receiver, and for a non-generic constraint.** `fun <T : Tagged> f(t: T) = t.tag()` put a `!!T` on
   the evaluation stack and then a plain `callvirt Tagged::tag()` — ECMA-335 requires `constrained. !!T ; callvirt`
-  there, so the verifier reported `[found value 'T'][expected ref 'Tagged']` and a value-type instantiation of T
-  would have dispatched through a boxed copy. The old binding covered exactly one slice of this: a receiver spelled
+  there, so the verifier reported `[found value 'T'][expected ref 'Tagged']`. (The boxing half of that argument is
+  formal here rather than measured: a Kotlin-declared constraint cannot be satisfied by a CLR value type, because
+  every Kotlin class is a reference type on this platform — §5f. `T : Comparable<T>` at `T = Int` is the one
+  value-type instantiation Kotlin source can express, and it reaches constrained dispatch through
+  `MemberCallSubstitution`, not through this pass; it is pinned as a test either way.) The old binding covered
+  exactly one slice of this: a receiver spelled
   as a plain LOCAL, whose constraint owner was GENERIC (`fun <N : Node<N>> N.close()`), because that is the slice
   where the MemberRef is invalid as well. Everything else was emitted unverifiably — an ordinary non-suspend
   function, a local copy of the parameter, a field read, a `T`-returning call result, and (the shape that had an
@@ -257,8 +261,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   finding its key describes — the same commit that added the key wrote the fixture to omit the generic-member
   read that would have surfaced the Root-V variance collapse, and says so in the fixture's own comment. It is
   pruned here.) `tests/run-ilverify.sh --audit-baseline` reports
-  every unmatched key as `FIXED … remove it from the xfail list` and exits non-zero, the verdict wording every
-  other lane gets from `scripts/lib.sh`'s `xfail_diff`. `tests/run-nunit-tests.sh` passes the flag because it
+  every unmatched key with `scripts/lib.sh`'s `xfail_diff` wording, `FIXED … remove it from the xfail list`, and
+  then exits non-zero — deliberately stricter than `xfail_diff`, where a FIXED line is green and advisory. A
+  stale ilverify key is a live substring filter over future findings, not just a stale name in a fail-set, so
+  this lane stays red until the entry is pruned. `tests/run-nunit-tests.sh` passes the flag because it
   verifies the COMPLETE emitted set; `tests/packaged-sdk/run.sh` verifies a two-assembly subset, where an
   unmatched key means "not in this subset" and the audit would be a false red.
 - **tests: the surviving ilverify/round-trip baseline reasons name the issue that actually owns them.**

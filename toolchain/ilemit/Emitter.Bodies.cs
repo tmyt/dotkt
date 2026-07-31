@@ -591,14 +591,41 @@ sealed partial class Emitter
 
     // Resolve a method on a (possibly generic) interface. When the instantiation carries a TypeBuilder/generic
     // param arg (e.g. IComparable<!!0>), its own GetMethod throws on the persisted builder -> use the static helper.
-    MethodInfo InterfaceMethodOn(Type iface, string name)
+    MethodInfo InterfaceMethodOn(Type iface, string name, DotKt.Bir.TypeNode[] sig = null, int methodArity = 0)
     {
         if (iface.IsGenericType && (IsTbInstantiation(iface) || iface.GetGenericArguments().Any(a => a.IsGenericParameter || a is TypeBuilder)))
-            return TypeBuilder.GetMethod(iface, iface.GetGenericTypeDefinition().GetMethod(name));
-        try { return iface.GetMethod(name); }
+            return TypeBuilder.GetMethod(iface, NamedMethodOn(iface.GetGenericTypeDefinition(), name, sig, methodArity));
+        try { return NamedMethodOn(iface, name, sig, methodArity); }
         catch (NotSupportedException) when (iface.IsGenericType)
         {
-            return TypeBuilder.GetMethod(iface, iface.GetGenericTypeDefinition().GetMethod(name));
+            return TypeBuilder.GetMethod(iface, NamedMethodOn(iface.GetGenericTypeDefinition(), name, sig, methodArity));
+        }
+    }
+
+    // `Type.GetMethod(name)` throws AmbiguousMatchException the moment the owner declares an OVERLOAD of `name` —
+    // which a Kotlin interface reached through a type-parameter receiver routinely does. Select among the candidates
+    // with the signature CIR already carries; this consumes the producer's answer, it does not re-resolve one (an
+    // unusable `sig` narrows to nothing and the miss is reported, rather than silently taking the first overload).
+    MethodInfo NamedMethodOn(Type owner, string name, DotKt.Bir.TypeNode[] sig, int methodArity)
+    {
+        try { return owner.GetMethod(name); }
+        catch (AmbiguousMatchException)
+        {
+            var candidates = owner.GetMethods()
+                .Where(m => m.Name == name
+                    && (methodArity == 0 ? !m.IsGenericMethodDefinition
+                        : m.IsGenericMethodDefinition && m.GetGenericArguments().Length == methodArity)
+                    && (sig == null || m.GetParameters().Length == sig.Length))
+                .ToList();
+            if (candidates.Count > 1 && sig != null)
+                candidates = candidates
+                    .Where(m => m.GetParameters().Select((p, i) => Matches(sig[i], p.ParameterType)).All(ok => ok))
+                    .ToList();
+            if (candidates.Count == 1) return candidates[0];
+            throw new NotSupportedException(
+                $"ambiguous member '{owner}.{name}': {candidates.Count} candidate(s) match the call's "
+                + $"{(sig == null ? "unknown" : sig.Length.ToString())}-parameter signature — the CIR node lost the "
+                + "signature that selects the overload");
         }
     }
 
