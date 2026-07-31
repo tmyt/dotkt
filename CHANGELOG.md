@@ -141,6 +141,31 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `crossModuleNothingBranchMerge` in the in-process ProjectReference lane, which ilverifies — including the
   DEFAULT-package producer the shell scenario had and the migration would otherwise have dropped, so a regression in
   root-namespace file-class attribution or in `[KotlinNothing]` restoration through it cannot pass silently.
+- **`x is T?` answers TRUE for null again, and with it every `joinToString` over a null element (area:bir2cir,
+  area:ilemit).** Kotlin's `is` against a NULLABLE type operand accepts null — `null is String?`, `null is Int?`,
+  `null is Any?` are all true — and the frontend DEPENDS on it: the `else` branch of `when { x is T? -> … }` is
+  reachable only for a non-null `x`, so it carries a smart-cast, and `x.toString()` there resolves to the
+  `kotlin.Any` MEMBER rather than the null-safe `Any?.toString()` extension. kotc emitted the type operand's `?`
+  faithfully, but nothing downstream read it: type lowering erases nullability from every reference type (every CLR
+  reference is nullable, so the lowered type cannot carry the signal), leaving a bare `isinst`, which matches no
+  null. The test went false for null and the smart-cast the frontend had already granted dereferenced one. The
+  stdlib's `appendElement` is exactly that shape — `element is CharSequence?`, else `element.toString()` — so
+  `arrayOfNulls<String>(2).joinToString()` threw a `NullReferenceException` inside `AppendableKt.appendElement`
+  instead of rendering `null, null`, on every join receiver (array, list, sequence, `joinTo`), with or without a
+  transform, and at any null position. bir2cir's new `NullableIsInstMatch` marks the node `nullMatches` while the
+  `?` is still on it, and ilemit projects the one extra `dup; brtrue` that answers true for null — the operand is
+  still evaluated exactly once, and a non-nullable type operand is untouched.
+  The invariant the `?` spelling owes is now uniform: for a non-null receiver `x is T?` answers exactly what
+  `x is T` answers, and for null it answers true. That required the star-projected form to reach the same
+  non-generic BCL facade as its plain twin (`x is Collection<*>?`/`List<*>?`/`Map<*,*>?` were stuck on the reified
+  interface, which a value-argument `List<int>`/`Dictionary<int,int>` does not implement), and it required
+  `Set`/`MutableSet` to leave that facade table: they mapped to the non-generic `ICollection`, which identifies a
+  set in NEITHER direction — a `HashSet<T>` does not implement it, while a `List<T>` does, so `listOf(1) is Set<*>`
+  was true. That unsound answer is gone. What remains wrong is recorded rather than fixed, with fixtures asserting
+  today's values so it cannot drift silently: a Kotlin `Set` has no distinct CLR identity to test against (it shares
+  `IReadOnlyCollection<T>` with `Collection`), `Collection<*>` misses sets and admits maps, and a nullable REIFIED
+  type ARGUMENT still loses its `?` because one generic method serves every instantiation. Both boundaries are
+  written up in `docs/dotkt-semantics.md` §2. (#287)
 - **bir2cir (area:bir2cir): a nullable-generic return that was object-erased no longer crosses a suspension under
   its PRE-erasure type.** `fun <T> f(x: T): List<T?>` has its `Nullable(T)` erased to `object` on the declaration
   side, so the emitted method returns `List<object>`, while the call site — emitted with `T` already substituted —
