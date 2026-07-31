@@ -312,7 +312,8 @@ Every identifier in the serialization vocabulary is **lowerCamelCase**, uniforml
 **Why it exists.** A Kotlin call evaluates its receiver, then each supplied argument, then the callee's omitted
 defaults — each exactly once, however many emitted positions read it. On the CLR the readers are not one position: a
 same-module default splices an earlier value, a reconstructed cross-module data-class `copy` field reads the receiver,
-a `[kotlin.clr.KotlinDefault]` carrier binds `{this}` / `{defaultArgParam n}` to the call's own values. While a call
+a `[kotlin.clr.KotlinDefault]` carrier binds `{defaultArgReceiver kind}` / `{defaultArgParam n}` to the call's own
+values. While a call
 was represented TWICE — as expressions substituted into those readers, and as independently hoisted `var`s sorted
 ahead of the call — an illegal storage answer forced one of the two to be abandoned, and **no point in that design
 satisfies all three of single evaluation, Kotlin order and legal storage at once**. That is a property of the
@@ -483,7 +484,9 @@ plans are made and lowered within one pass, so they too never appear in a serial
 **`defaultCarrier.lifted` is unchanged.** A carrier's lifted method declarations remain a RAW TOKEN payload parsed out
 of the `[kotlin.clr.KotlinDefault]` attribute string, not plan vocabulary: they are declarations re-hoisted into the
 consuming file class, and nothing about them is a call-site value. Only the carrier's `expr` is token-substituted, and
-its `{this}` / `{defaultArgParam n}` tokens resolve to the call's `bindRef`s.
+its `{defaultArgReceiver kind}` / `{defaultArgParam n}` tokens resolve to the call's `bindRef`s. Receiver `kind`
+distinguishes `dispatch`, `extension` and an inner constructor's `enclosing` instance; an ordinary `{this}` nested
+inside a closure/SAM/suspend-lambda is that synthesized frame's own receiver and is not a carrier token.
 
 ## 3. Labels & naming (conventions consumed as opaque strings)
 - SM / coroutine method names: `<name>$dotkt_suspend` (cold entry), `<name>$sm` (state machine class) —

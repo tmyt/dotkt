@@ -44,6 +44,9 @@ import NUnit.Framework.Legacy.ClassicAssert.Companion.IsNull as assertNull
 import kotlin.reflect.KProperty0
 import kotlin.reflect.KProperty1
 
+// ---- #287 : a null source for the append/insert contract (a call, so the null is not const-folded) ------------
+fun strNullSeq(): CharSequence? = null
+
 // ---- il-charseq : user class : CharSequence ------------------------------------------------------------------
 class StrSeqS(val s: String) : CharSequence {
     override val length: Int get() = s.length
@@ -89,6 +92,27 @@ var strSubSeqCalls = 0
 fun strSubSeqStart(): Int { strSubSeqCalls++; return 1 }
 
 class StringsTests {
+    // #287: a null `CharSequence?` renders as the four characters "null" — the KDoc contract of
+    // `Appendable.append(CharSequence?)` / `insert(Int, CharSequence?)`, and the append this issue's `joinToString`
+    // path bottoms out in. .NET's Append(string)/Insert(int,string) no-op on null instead; the CharSequence->String
+    // collapse is what keeps the contract, by routing every `CharSequence` argument through `Any?.toString()`.
+    @TestAttribute
+    fun appendNullCharSequenceRendersNullString() {
+        val c: CharSequence? = strNullSeq()
+        assertEquals("null", StringBuilder().append(c).toString())                 // append(CharSequence?)
+        assertEquals("nullX", StringBuilder("X").insert(0, c).toString())          // insert(Int, CharSequence?)
+        assertEquals("null", StringBuilder().appendLine(c).toString().trim())      // appendLine(CharSequence?)
+        val ap: Appendable = StringBuilder()
+        ap.append(c)
+        assertEquals("null", ap.toString())                                        // through the Appendable face
+        val ap2: Appendable = StringBuilder()
+        ap2.append(c, 0, 4)
+        assertEquals("null", ap2.toString())                                       // the 3-arg overload
+        // the NON-null arguments are unchanged
+        assertEquals("ab", StringBuilder().append("a").append("b").toString())
+        assertEquals("aXb", StringBuilder("ab").insert(1, "X").toString())
+    }
+
     @TestAttribute
     fun isBlankIsNotBlank() {
         assertTrue("".isBlank())            // True

@@ -32,6 +32,32 @@
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.Companion.IsNull as assertNull
+import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
+import NUnit.Framework.Legacy.ClassicAssert.Companion.IsFalse as assertFalse
+
+// ---- #287 : `is` against a NULLABLE type operand ACCEPTS null -------------------------------------------------
+// `null is String?` / `null is Int?` are true in Kotlin, and the frontend RELIES on it: the else branch of
+// `when { x is T? -> … }` carries a smart-cast to a NON-null `x`, which is what makes `x.toString()` there resolve
+// to the `kotlin.Any` MEMBER rather than the null-safe `Any?.toString()` extension. `isinst` matches no null, so
+// the `?` on the type operand must survive into the emit (bir2cir marks the node, ilemit adds the null branch).
+fun <T> nullIsStringQ(t: T): Boolean = t is String?
+fun <T> nullIsIntQ(t: T): Boolean = t is Int?
+fun <T> nullIsStringNonNullQ(t: T): Boolean = t is String
+// A SIDE-EFFECTING operand: the null answer is reached by branching on the value already on the stack, so the
+// operand must still be evaluated exactly ONCE — on the null path as much as the non-null one.
+var nullIsCalls = 0
+fun nullIsSrc(n: Int): Any? { nullIsCalls++; return if (n > 0) "hi" else null }
+
+// ---- #287 KNOWN-WRONG boundary : a NULLABLE REIFIED type ARGUMENT loses its `?` -------------------------------
+// `x is T?` above is a nullable type OPERAND, written in the source and visible to the lowering. `x is T` where the
+// INSTANTIATION is nullable is a different thing and is NOT fixed: DotKt emits a reified function as one real CLR
+// generic method (§2), so `matches<String?>` and `matches<String>` are the same `matches<string>` instantiation and
+// the body is a single `isinst !!T`. CLR type arguments carry no nullability, and a type argument can flow in
+// through another generic's parameter (`fun <reified U> f(x: Any?) = matches<U>(x)`), so the fact is genuinely
+// DYNAMIC — recovering it needs a nullability witness threaded through every reified generic call, an ABI change.
+// Pinned at today's values so the violation is visible rather than silently absent. See docs/dotkt-semantics.md §2.
+inline fun <reified T> nullReifiedIs(x: Any?): Boolean = x is T
+inline fun <reified U> nullReifiedForward(x: Any?): Boolean = nullReifiedIs<U>(x)
 
 // ---- il-null : elvis / safe-call / not-null ------------------------------------------------------------------
 fun nullUp(s: String?): String = s?.uppercase() ?: "none"
@@ -83,6 +109,53 @@ fun reqnnFirstChar(s: String?): Char = requireNotNull(s)[0]
 fun reqnnMust(n: Int?): Int = checkNotNull(n)
 
 class NullableTests {
+    @TestAttribute
+    fun nullableTypeOperandIsTest() {
+        val n: Any? = nullcsPick(-1)                      // null, through a call so it is not const-folded
+        val s: Any? = nullcsPick(1)                       // "hi"
+        val i: Any? = 5
+        assertTrue(n is String?)                         // true    null IS an instance of a nullable type
+        assertTrue(n is Int?)                            // true    …of a nullable VALUE type too
+        assertFalse(n !is String?)                       // false   the `!is` twin
+        assertTrue(s is String?)                         // true    the non-null member still matches
+        assertTrue(i is Int?)                            // true
+        assertFalse(s is Int?)                           // false   a nullable operand widens null only, not the type
+        assertFalse(i is String?)                        // false
+        assertFalse(n is String)                         // false   a NON-nullable operand still rejects null
+        assertFalse(n is Int)                            // false
+        assertEquals("cs", when (n) { is String? -> "cs"; else -> "other" })  // cs  `when` subject branch
+        assertTrue(nullIsStringQ<String?>(null))         // true    through a generic T (boxed `!!T` receiver)
+        assertTrue(nullIsStringQ<String?>("a"))          // true
+        assertFalse(nullIsStringQ<Int?>(3))              // false
+        assertTrue(nullIsIntQ<Int?>(null))               // true
+        assertTrue(nullIsIntQ<Int?>(3))                  // true
+        assertFalse(nullIsStringNonNullQ<String?>(null)) // false   non-nullable operand through a generic T
+        nullIsCalls = 0
+        assertTrue(nullIsSrc(-1) is String?)             // true    null operand…
+        assertEquals(1, nullIsCalls)                     // 1       …evaluated exactly once
+        nullIsCalls = 0
+        assertTrue(nullIsSrc(1) is String?)              // true    non-null operand…
+        assertEquals(1, nullIsCalls)                     // 1       …evaluated exactly once
+    }
+
+    @TestAttribute
+    fun nullableReifiedTypeArgumentIsTest() {
+        val n: Any? = nullcsPick(-1)
+        // KNOWN-WRONG: Kotlin says true — `null is String?` holds however the type reaches the is-test. The `?` is
+        // gone by the time the shared generic body runs, so the reified spelling answers false where the written-out
+        // `x is String?` (pinned above) answers true. The two disagree, deliberately and visibly.
+        assertFalse(nullReifiedIs<String?>(n))           // False  KNOWN-WRONG: Kotlin says true
+        assertFalse(nullReifiedIs<Int?>(n))              // False  KNOWN-WRONG: Kotlin says true
+        assertFalse(nullReifiedIs<Any?>(n))              // False  KNOWN-WRONG: Kotlin says true
+        assertFalse(nullReifiedForward<String?>(n))      // False  KNOWN-WRONG: through another generic's parameter
+        // Everything a reified is-test CAN answer without the `?` is unaffected.
+        assertTrue(nullReifiedIs<String?>("a"))          // True   non-null member of a nullable instantiation
+        assertTrue(nullReifiedIs<String>("a"))           // True
+        assertFalse(nullReifiedIs<String>(n))            // False  correct: null is not a String
+        assertTrue(nullReifiedIs<Int?>(5))               // True
+        assertFalse(nullReifiedIs<Int>("a"))             // False
+    }
+
     @TestAttribute
     fun elvisSafeCallBang() {
         assertEquals("none", nullUp(null))               // none    s?.uppercase() ?: "none" when null

@@ -69,6 +69,7 @@ import suspendnullable.makeNullableSuspend
 import suspendnullable.nullTopLevelBlock
 import suspendnullable.nullableTopLevelBlock
 import suspendnullable.nullableSuspendStep
+import suspendref.SuspendRefService
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert
 import kotlin.coroutines.Continuation
@@ -255,6 +256,18 @@ class SuspendMetadataRoundtripTests {
     @TestAttribute
     fun companionSuspendFunctionRoundTripsAndRuns() {
         ClassicAssert.AreEqual(42, runCrossModuleSuspend { CompanionSuspendApi.compute(41) })
+    }
+
+    // #67 residual: a DotKt member re-imported from a ProjectReference remains a suspend declaration. Its callable
+    // reference must target that member's cold entry through the same newSuspendLambda adapter used in-module.
+    @TestAttribute
+    fun referencedSuspendMemberCallableReferencesRun() {
+        val service = SuspendRefService(40)
+        val bound: suspend (Int) -> Int = service::fetch
+        ClassicAssert.AreEqual(42, runCrossModuleSuspend { bound(2) })
+
+        val unbound: suspend (SuspendRefService, Int) -> Int = SuspendRefService::fetch
+        ClassicAssert.AreEqual(42, runCrossModuleSuspend { unbound(service, 2) })
     }
 
     // #172: dll2klib must compose the slot's CLR NRT nullable marker over its carried suspend-function shape. Wrapping

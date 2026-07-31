@@ -1,0 +1,418 @@
+{
+  "fileClass": "AwaitCaptureSuspendingArgumentKt",
+  "hasMain": false,
+  "fields": [],
+  "methods": [
+    {
+      "name": "awaitCaptureReceiver",
+      "static": true,
+      "override": false,
+      "virtual": false,
+      "abstract": false,
+      "objectOverride": false,
+      "vis": "public",
+      "params": [
+        {
+          "name": "t",
+          "type": {
+            "t": "fqn",
+            "name": "System.Threading.Tasks.Task",
+            "args": [
+              {
+                "t": "fqn",
+                "name": "kotlin.Int"
+              }
+            ]
+          }
+        }
+      ],
+      "ret": {
+        "t": "fqn",
+        "name": "System.Threading.Tasks.Task",
+        "args": [
+          {
+            "t": "fqn",
+            "name": "kotlin.Int"
+          }
+        ]
+      },
+      "body": [
+        {
+          "k": "if",
+          "branches": [
+            {
+              "cond": {
+                "k": "objEq",
+                "lhs": {
+                  "k": "local",
+                  "name": "t"
+                },
+                "rhs": {
+                  "k": "const",
+                  "type": {
+                    "t": "fqn",
+                    "name": "kotlin.Unit"
+                  },
+                  "value": null
+                }
+              },
+              "body": [
+                {
+                  "k": "throw",
+                  "value": {
+                    "k": "new",
+                    "type": {
+                      "t": "fqn",
+                      "name": "kotlin.NullPointerException"
+                    },
+                    "argTypes": [
+                      {
+                        "t": "fqn",
+                        "name": "kotlin.String"
+                      }
+                    ],
+                    "args": [
+                      {
+                        "k": "const",
+                        "type": {
+                          "t": "fqn",
+                          "name": "kotlin.String"
+                        },
+                        "value": "Parameter specified as non-null is null: awaitCaptureReceiver, parameter t"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "k": "return",
+          "value": {
+            "k": "valueBlock",
+            "stmts": [
+              {
+                "k": "var",
+                "name": "__nn0",
+                "type": {
+                  "t": "fqn",
+                  "name": "System.Threading.Tasks.Task",
+                  "args": [
+                    {
+                      "t": "fqn",
+                      "name": "kotlin.Int"
+                    }
+                  ]
+                },
+                "init": {
+                  "sty": {
+                    "t": "fqn",
+                    "name": "System.Threading.Tasks.Task",
+                    "args": [
+                      {
+                        "t": "fqn",
+                        "name": "kotlin.Int"
+                      }
+                    ]
+                  },
+                  "k": "local",
+                  "name": "t"
+                }
+              }
+            ],
+            "result": {
+              "k": "cond",
+              "cond": {
+                "k": "unaryOp",
+                "op": "!",
+                "e": {
+                  "k": "objEq",
+                  "lhs": {
+                    "k": "local",
+                    "name": "__nn0"
+                  },
+                  "rhs": {
+                    "k": "const",
+                    "type": {
+                      "t": "fqn",
+                      "name": "kotlin.Unit"
+                    },
+                    "value": null
+                  }
+                }
+              },
+              "then": {
+                "k": "local",
+                "name": "__nn0"
+              },
+              "else": {
+                "k": "throwExpr",
+                "value": {
+                  "k": "new",
+                  "type": {
+                    "t": "fqn",
+                    "name": "kotlin.NullPointerException"
+                  },
+                  "argTypes": [
+                    {
+                      "t": "fqn",
+                      "name": "kotlin.String"
+                    }
+                  ],
+                  "args": [
+                    {
+                      "k": "const",
+                      "type": {
+                        "t": "fqn",
+                        "name": "kotlin.String"
+                      },
+                      "value": "awaitCaptureReceiver, non-null return value is null"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ],
+      "attrs": []
+    },
+    {
+      "name": "awaitCaptureFlag",
+      "static": true,
+      "override": false,
+      "virtual": false,
+      "abstract": false,
+      "objectOverride": false,
+      "vis": "public",
+      "mods": {
+        "suspend": true
+      },
+      "suspendRet": {
+        "t": "fqn",
+        "name": "kotlin.Boolean"
+      },
+      "params": [],
+      "ret": {
+        "t": "fqn",
+        "name": "kotlin.Boolean"
+      },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "const",
+            "type": {
+              "t": "fqn",
+              "name": "kotlin.Boolean"
+            },
+            "value": true
+          }
+        }
+      ],
+      "attrs": []
+    },
+    {
+      "name": "awaitCaptureSuspendingArgument",
+      "static": true,
+      "override": false,
+      "virtual": false,
+      "abstract": false,
+      "objectOverride": false,
+      "vis": "public",
+      "mods": {
+        "suspend": true
+      },
+      "suspendRet": {
+        "t": "fqn",
+        "name": "kotlin.Int"
+      },
+      "params": [
+        {
+          "name": "t",
+          "type": {
+            "t": "fqn",
+            "name": "System.Threading.Tasks.Task",
+            "args": [
+              {
+                "t": "fqn",
+                "name": "kotlin.Int"
+              }
+            ]
+          }
+        }
+      ],
+      "ret": {
+        "t": "fqn",
+        "name": "kotlin.Int"
+      },
+      "body": [
+        {
+          "k": "if",
+          "branches": [
+            {
+              "cond": {
+                "k": "objEq",
+                "lhs": {
+                  "k": "local",
+                  "name": "t"
+                },
+                "rhs": {
+                  "k": "const",
+                  "type": {
+                    "t": "fqn",
+                    "name": "kotlin.Unit"
+                  },
+                  "value": null
+                }
+              },
+              "body": [
+                {
+                  "k": "throw",
+                  "value": {
+                    "k": "new",
+                    "type": {
+                      "t": "fqn",
+                      "name": "kotlin.NullPointerException"
+                    },
+                    "argTypes": [
+                      {
+                        "t": "fqn",
+                        "name": "kotlin.String"
+                      }
+                    ],
+                    "args": [
+                      {
+                        "k": "const",
+                        "type": {
+                          "t": "fqn",
+                          "name": "kotlin.String"
+                        },
+                        "value": "Parameter specified as non-null is null: awaitCaptureSuspendingArgument, parameter t"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "k": "return",
+          "value": {
+            "sty": {
+              "t": "fqn",
+              "name": "kotlin.Int"
+            },
+            "k": "callInstance",
+            "virtual": true,
+            "ownerType": {
+              "t": "fqn",
+              "name": "System.Threading.Tasks.Task",
+              "args": [
+                {
+                  "t": "fqn",
+                  "name": "kotlin.Int"
+                }
+              ]
+            },
+            "method": "await",
+            "sig": [
+              {
+                "t": "fqn",
+                "name": "kotlin.Boolean"
+              }
+            ],
+            "argTypes": [
+              {
+                "t": "fqn",
+                "name": "kotlin.Boolean"
+              }
+            ],
+            "ret": {
+              "t": "tv",
+              "scope": "type",
+              "i": 0
+            },
+            "recv": {
+              "sty": {
+                "t": "fqn",
+                "name": "System.Threading.Tasks.Task",
+                "args": [
+                  {
+                    "t": "fqn",
+                    "name": "kotlin.Int"
+                  }
+                ]
+              },
+              "k": "callStatic",
+              "owner": null,
+              "method": "awaitCaptureReceiver",
+              "sig": [
+                {
+                  "t": "fqn",
+                  "name": "System.Threading.Tasks.Task",
+                  "args": [
+                    {
+                      "t": "fqn",
+                      "name": "kotlin.Int"
+                    }
+                  ]
+                }
+              ],
+              "args": [
+                {
+                  "sty": {
+                    "t": "fqn",
+                    "name": "System.Threading.Tasks.Task",
+                    "args": [
+                      {
+                        "t": "fqn",
+                        "name": "kotlin.Int"
+                      }
+                    ]
+                  },
+                  "k": "local",
+                  "name": "t"
+                }
+              ],
+              "calleeOwner": {
+                "t": "fqn",
+                "name": "AwaitCaptureSuspendingArgumentKt"
+              }
+            },
+            "args": [
+              {
+                "sty": {
+                  "t": "fqn",
+                  "name": "kotlin.Boolean"
+                },
+                "k": "callStatic",
+                "owner": null,
+                "method": "awaitCaptureFlag",
+                "sig": [],
+                "args": [],
+                "suspendCall": true,
+                "calleeOwner": {
+                  "t": "fqn",
+                  "name": "AwaitCaptureSuspendingArgumentKt"
+                }
+              }
+            ],
+            "suspendCall": true,
+            "clrAwaitBridge": true,
+            "awaitResult": {
+              "t": "tv",
+              "scope": "type",
+              "i": 0
+            }
+          }
+        }
+      ],
+      "attrs": []
+    }
+  ],
+  "types": [],
+  "refTypes": []
+}

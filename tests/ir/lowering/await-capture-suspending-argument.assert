@@ -1,0 +1,14 @@
+# `awaitCaptureReceiver(t).await(captureContext = awaitCaptureFlag())` — a captureContext argument that SUSPENDS
+# (GitHub #64). The await marker is excluded from the stage-0 operand plan (SuspendOperandPlan.cs) because it
+# reconstructs its own operands, so the ordering rule that plan enforces everywhere else is EmitAwaitPoint's own
+# obligation here — and this document is its only emitted-shape witness. Kotlin evaluates the awaitable receiver
+# before the argument; the argument's suspension then splits the marker in half, so the receiver's value must be in
+# a state-machine field before the suspension rather than left in the ConfigureAwait slot, where it would be
+# evaluated after the resume instead (`awaitCaptureReceiver` would run on the wrong side of it).
+#
+# The receiver CALL, evaluated into the bound field ahead of the suspension:
++"name":"__awaitable$1","value":{"k":"callStatic","owner":null,"method":"awaitCaptureReceiver"
+# a field, so it survives the resume — a MoveNext local would not:
++"name":"__awaitable$1","type":{"t":"fqn","name":"System.Threading.Tasks.Task","args":[{"t":"fqn","name":"System.Int32"}]}
+# and it is what ConfigureAwait is called on after the resume:
++"method":"ConfigureAwait","recv":{"k":"field","ownerType":{"t":"fqn","name":"AwaitCaptureSuspendingArgumentKt_awaitCaptureSuspendingArgument$sm"},"recv":{"k":"this"},"name":"__awaitable$1"

@@ -5,6 +5,11 @@
 // the projected param is OPTIONAL (nonConst); bir2cir's DefaultArgSplice fills the omitted slot cross-module.
 package roundtrip.nc
 
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.coroutines.startCoroutine
+
 class Panel { var margin: Int = 0; fun add(s: String): Int { margin += s.length; return margin } }
 fun column(configure: Panel.() -> Unit = {}, build: Panel.() -> Unit): Int { val p = Panel(); p.configure(); p.build(); return p.margin }
 fun run2(pre: () -> Unit = {}, body: () -> Unit): String { pre(); body(); return "ok" }
@@ -74,3 +79,29 @@ fun <T> genMutable(xs: MutableList<T> = mutableListOf()): MutableList<T> = xs
 var bumps: Int = 0
 fun bump(): Int { bumps++; return 3 }
 fun chain(a: Int, b: Int = bump(), c: Int = b * 10): Int = b * 1000 + c
+
+// #34/#42: every receiver named by a carried default stays distinct across the module boundary. The same carrier
+// serves ordinary and inline calls, and self-carries the raw ingredients for capturing, SAM and suspend lambdas.
+fun interface DefaultIntSource { fun get(): Int }
+
+private class DefaultSuspendSink : Continuation<Int> {
+    var value: Int = 0
+    override val context: CoroutineContext get() = EmptyCoroutineContext
+    override fun resumeWith(result: Result<Int>) { value = result.getOrThrow() }
+}
+
+class MemberDefaults(val k: Int) {
+    fun scale(a: Int, b: Int = a * 10, c: Int = 7): Int = a * 10000 + b * 100 + c
+    fun viaDispatch(a: Int, b: Int = k * 2): Int = a * 100 + b
+    fun viaCapture(a: Int, f: () -> Int = { a + k }): Int = f()
+    fun viaSam(a: Int, f: DefaultIntSource = DefaultIntSource { a + k }): Int = f.get()
+    fun viaSuspendCarrier(a: Int, f: suspend () -> Int = { a + k }): Int {
+        val sink = DefaultSuspendSink()
+        f.startCoroutine(sink)
+        return sink.value
+    }
+
+    inline fun inlineDispatch(a: Int = k, body: (Int) -> Int): Int = body(a)
+    inline fun Int.inlineBoth(a: Int = k + this, body: (Int) -> Int): Int = body(a)
+    inline fun inlineCapture(a: Int, f: () -> Int = { a + k }, body: (Int) -> Int): Int = body(f())
+}

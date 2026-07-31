@@ -12,6 +12,12 @@ package kotlin.text
 // StringBuilder (itself @ClrTypeAlias("System.Text.StringBuilder")) no longer violates it. `append(Char)`/
 // `append(CharSequence?)` carry @ClrIntrinsic("Append") so a call through a generic `A : Appendable` receiver routes to
 // System.Text.StringBuilder.Append (CharSequence lowers to string, matching Append(char)/Append(string?)).
+//
+// The KDoc contract "if [value] is null, the four characters `null` are appended" survives that direct binding even
+// though .NET's Append(string) treats null as a NO-OP: the CharSequence->String collapse routes every argument of a
+// `CharSequence` PARAMETER through `Any?.toString()`, whose null answer is exactly "null". It is the parameter's
+// type that puts the conversion there, so the guarantee is structural and holds for any argument shape — including
+// the null element `appendElement` hands over on the joinTo/joinToString path.
 @kotlin.clr.ClrTypeAlias("System.Text.StringBuilder")
 public actual interface Appendable {
     @kotlin.clr.ClrIntrinsic("Append")

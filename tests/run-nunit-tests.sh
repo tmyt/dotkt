@@ -33,8 +33,9 @@ PROJECTS=(
 	"tests/coroutines"
 	# ProjectReference round-trip consolidation lane (docs/design-nunit-test-harness.md §3; playbook §3): a producer
 	# DotKt LIBRARY (tests/roundtrip/producer) consumed via <ProjectReference> as its BUILT dll (dll2klib re-import,
-	# NOT source) by this NUnit consumer. (nothing stays in the shell lane due its formal IL gap; generic-hof and
-	# receiver-lambda are green after low-arity delegate ABI unification but have not yet been migrated.)
+	# NOT source) by this NUnit consumer. (generic-hof and receiver-lambda are green after low-arity delegate ABI
+	# unification but have not yet been migrated; roundtrip-nothing moved here once #197 made its value merge
+	# well-typed IL, which is what a lane that ilverifies requires.)
 	"tests/roundtrip/consumer"
 	# Bidirectional ProjectReference: Kotlin consumes C#, then a C# NUnit project consumes the emitted Kotlin library
 	# at compile time. This also supersedes the former reflection-only reverse-interop case.
