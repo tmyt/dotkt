@@ -1539,11 +1539,17 @@ What this is observable as:
 - **A C# consumer sees `object`.** `fun <T> firstOr(x: T?, d: T): T` surfaces as
   `static T firstOr<T>(object x, T d)`, so a C# caller passes `null` or a boxed value rather than a `T?`.
 
-One position is deliberately **not** uniform yet: a *concrete* `Array<Int?>` is still `System.Nullable<int32>[]`,
-which is an unrelated CLR type from the `object[]` an open `Array<T?>` erases to (array compatibility requires
-reference-compatible elements, ECMA-335 I.8.7.1). Canonicalising both to `object[]` is decided but not landed; it is
-tracked as sub-decision D2 of #86, together with the override-slot bridging a concrete override of an erased `T?`
-slot needs.
+Two positions are deliberately **not** uniform yet, and both are the same unfinished decision:
+
+- a *concrete* `Array<Int?>` is still `System.Nullable<int32>[]`, an unrelated CLR type from the `object[]` an open
+  `Array<T?>` erases to (array compatibility requires reference-compatible elements, ECMA-335 I.8.7.1); and
+- the `arrayOfNulls<T>(n) … as Array<T>` reify-back chain keeps a bare `!T[]` end to end, because its allocation is a
+  genuine `newarr !T` and widening only the slot would store `object` references into it.
+
+Canonicalising every one of them to `object[]` is decided but not landed; it is tracked as sub-decision D2 of #86.
+One more shape is incomplete rather than non-uniform: an override that narrows a base `T?` slot fills the base's
+erased slot correctly and dispatches, but calling it through its **own** declared type does not bind cross-module —
+that entry point needs the `.override` bridge of sub-decision D3.
 
 ## 10. Round-trip fidelity
 

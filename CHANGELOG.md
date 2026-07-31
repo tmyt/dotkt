@@ -147,10 +147,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `IEnumerable<object>` an erased `Iterable<T?>` receiver names — but its hardcoded primitive list becomes the
   struct-ness oracle (a `value class`, a projected .NET struct and a local enum are value elements for the same CLR
   reason as `Int`), and it stops reading its element off `typeArgs[0]`, which is the DESTINATION type parameter and
-  never a value for a two-parameter `filterNotNullTo`; it now finds the position of the type variable that actually
-  sits under the receiver's nullable element. That closes `List<Int?>.filterNotNullTo` at a value element, and
-  **#324** — `countG(nullBoxes(7), 2)`, where the wrap fired on a user generic it did not belong on and the
-  `Cast<object>` result did not inhabit the parameter slot — no longer over-fires and returns 3 rather than throwing.
+  never a value for a two-parameter `filterNotNullTo`; it now reads the type variable that actually sits under the
+  **receiver's** nullable element, and it consults the receiver alone. Both halves matter, and they are the same
+  mistake in opposite directions: accumulating the predicates across every parameter let an unrelated `Box<T?>`
+  argument wrap an ordinary `Iterable<String>` receiver, while reading `typeArgs[0]` asked about the wrong type
+  variable. That closes `List<Int?>.filterNotNullTo` at a value element, and **#324** —
+  `countG(nullBoxes(7), 2)`, where the wrap fired on a user generic's `List<A?>` parameter and the `Cast<object>`
+  result did not inhabit the parameter slot — now returns 3 rather than throwing. Both are pinned as fixtures.
 
 - **bir2cir (area:bir2cir): an override of an object-erased `T?` slot is now an override, not a new overload
   (#86 D3).** `class TextSink : Sink<String> { override fun accept(x: String?) }` writes a CONCRETE type, so no
@@ -158,9 +161,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   instantiation, because the erasure is a property of the declaration and not of the type argument. Emitted as
   `accept(string)` it filled nothing: the interface method stayed unimplemented and the type failed to load. Erasure
   now propagates from the overridden slot, read out of the same-compilation declaration index, and the override's own
-  Kotlin type is recorded on the carrier and NRT-byte channels so its surface still round-trips. This closes the
-  same-module and cross-module override narrowings at a value instantiation as well, which had been failing with
-  `TypeLoadException` and an emitter abort.
+  Kotlin type is recorded on the carrier and NRT-byte channels so its surface still round-trips. The base slot's
+  erasure PATTERN propagates, not a blanket `object`: a base `Box<T?>` erases to `Box<object>`, so an override's
+  `Box<Int?>` becomes `Box<object>` and every position the base did not erase keeps the override's own concrete
+  type. This closes the narrowed override at a value instantiation, same-module and cross-module, which had been
+  failing with `TypeLoadException` and an emitter abort — reached through the base slot, which is how an override is
+  normally called. Reaching it through its OWN declared type cross-module still does not bind: the physical slot is
+  `accept(object)` while the re-imported Kotlin surface is truthfully `accept(x: Int?)`, and converting between them
+  needs the referenced declaration. That is the `.override` bridge half of D3, and it is now a documented red rather
+  than an unmeasured shape.
+
+- **bir2cir (area:bir2cir): constructor bodies and base/`this` delegation arguments are part of the use axis
+  (#86).** The walk visited `methods` only, so `class Derived(y: Int?) : Base<Int>(y)` handed a `Nullable<int32>`
+  straight to `Base<T>`'s erased `object` constructor slot and `Derived`'s own constructor failed JIT verification.
+  A delegation argument is a call argument into the delegated constructor's parameter vector, and a constructor body
+  is a body; both are now reconciled like every other use.
 
 - **bir2cir (area:bir2cir): a member called on a TYPE-PARAMETER receiver now emits constrained dispatch for every
   spelling of the receiver, and for a non-generic constraint.** `fun <T : Tagged> f(t: T) = t.tag()` put a `!!T` on

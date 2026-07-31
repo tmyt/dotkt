@@ -54,27 +54,20 @@ static class ValueTypeNullableCollectionArg
     static void MaybeWrap(JsonObject call)
     {
         if ((call["k"] as JsonValue)?.TryGetValue<string>(out var k) != true || k != "callStatic") return;
-        if (call["sig"] is not JsonArray sig) return;   // sig is a structured TypeNode array (#37 m3b)
-        // A kotlin.collections collection receiver whose element is a nullable type variable (`X<T?>`) — NOT an array
-        // param. Walk the sig's structured TypeNodes: the old string checks (`kotlin.collections.`, `[nullable:gp:`,
-        // `array:`) become structural predicates over the parameter type tree.
-        bool hasColl = false, hasNullableTvArg = false, hasArray = false;
-        foreach (var el in sig)
-            if (TypeJson.Read(el) is TypeNode tn)
-            {
-                if (HasKotlinCollections(tn)) hasColl = true;
-                if (HasNullableTvDirectArg(tn)) hasNullableTvArg = true;
-                if (HasArray(tn)) hasArray = true;
-            }
-        if (!hasColl || !hasNullableTvArg || hasArray) return;
-        // WHICH type argument is the element. The nullable element is `Nullable(Tv)` in the RECEIVER parameter, and
-        // that `Tv`'s own index is the position to read — `filterNotNull()` declares `<T : Any>` so it is `typeArgs[0]`,
-        // but `filterNotNullTo(destination: C)` declares `<C, T>` and it is `typeArgs[1]`. Reading position 0
-        // unconditionally answers about `C` — a collection type, never a value — so the conversion never fires for the
-        // two-parameter form.
-        if (ElementTvIndex(sig) is not int ti) return;
-        if (call["typeArgs"] is not JsonArray ta || ti >= ta.Count) return;
-        if (!IsValueTypeArg(ta[ti])) return;
+        if (call["sig"] is not JsonArray sig || sig.Count == 0) return;   // sig is a structured TypeNode array (#37 m3b)
+        // The subject is the RECEIVER — `sig[0]`, the extension's `this` — and ONLY it. Accumulating the predicates
+        // across every parameter lets an unrelated one decide: `fun <C, T> Iterable<C>.f(box: Box<T?>)` would see the
+        // `T?` in its second parameter and wrap a perfectly ordinary `Iterable<String>` receiver, and an unrelated
+        // array parameter would suppress a conversion the receiver genuinely needs.
+        if (TypeJson.Read(sig[0]) is not TypeNode recv) return;
+        if (!IsKotlinCollection(recv) || !HasNullableTvDirectArg(recv) || HasArray(recv)) return;
+        // WHICH type argument is the element: the index of the `Tv` under the receiver's own `Nullable(Tv)`.
+        // `filterNotNull()` declares `<T : Any>` so it is `typeArgs[0]`, but `filterNotNullTo(destination: C)`
+        // declares `<C, T>` and it is `typeArgs[1]`. Reading position 0 unconditionally answers about `C` — a
+        // collection type, never a value — so the conversion never fired at all for the two-parameter form.
+        if (FindNullableTv(recv) is not TypeNode.Tv { Scope: "method" } tv) return;
+        if (call["typeArgs"] is not JsonArray ta || tv.I < 0 || tv.I >= ta.Count) return;
+        if (!IsValueTypeArg(ta[tv.I])) return;
         if (call["args"] is not JsonArray args || args.Count == 0) return;
         // Idempotence: never re-wrap an already-cast receiver.
         if (args[0] is JsonObject ro && (ro["k"] as JsonValue)?.GetValue<string>() == "clrGenericStatic"
@@ -93,17 +86,10 @@ static class ValueTypeNullableCollectionArg
         };
     }
 
-    // Any Fqn in the type tree named `kotlin.collections.*` (the old `sig.Contains("kotlin.collections.")`).
-    static bool HasKotlinCollections(TypeNode t) => t switch
-    {
-        TypeNode.Fqn f => f.Name.StartsWith("kotlin.collections.", StringComparison.Ordinal)
-                          || (f.Args?.Any(HasKotlinCollections) ?? false),
-        TypeNode.Nullable n => HasKotlinCollections(n.Of),
-        TypeNode.Array a => HasKotlinCollections(a.Elem),
-        TypeNode.ByRef b => HasKotlinCollections(b.Of),
-        TypeNode.Fn fn => HasKotlinCollections(fn.Ret) || fn.DelegateParams.Any(HasKotlinCollections),   // incl. a `T.() -> R` receiver (#145)
-        _ => false,
-    };
+    // The receiver's own head is a `kotlin.collections.*` type. Its ARGUMENTS are not consulted: an
+    // `Iterable<Map<K, V?>>` receiver is not a nullable-element collection, and reading the head alone says so.
+    static bool IsKotlinCollection(TypeNode t)
+        => t is TypeNode.Fqn f && f.Name.StartsWith("kotlin.collections.", StringComparison.Ordinal);
 
     // A `Nullable(Tv)` sitting DIRECTLY in some Fqn's type-argument list (the old `sig.Contains("[nullable:gp:")` —
     // a `[` before `nullable:gp:` only comes from an Fqn's `[...]` arg list, and the tv must be its immediate arg).
@@ -129,17 +115,7 @@ static class ValueTypeNullableCollectionArg
         _ => false,
     };
 
-    // The METHOD-scope index of the `Tv` inside the receiver's `Nullable(Tv)` element — the type-argument position
-    // whose value-ness decides the conversion. Null when the sig carries no method-scope nullable element (an open
-    // self-build call, or a class-scope variable, both of which this pass is deliberately inert for).
-    static int? ElementTvIndex(JsonArray sig)
-    {
-        foreach (var el in sig)
-            if (TypeJson.Read(el) is TypeNode tn && FindNullableTv(tn) is TypeNode.Tv { Scope: "method" } tv)
-                return tv.I;
-        return null;
-    }
-
+    // The `Tv` under a `Nullable(Tv)` somewhere in the type, else null.
     static TypeNode.Tv FindNullableTv(TypeNode t) => t switch
     {
         TypeNode.Nullable { Of: TypeNode.Tv tv } => tv,

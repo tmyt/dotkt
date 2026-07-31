@@ -43,17 +43,41 @@ import NUnit.Framework.Legacy.ClassicAssert.Companion.IsFalse as assertFalse
 // value instantiation and re-narrow at the typed read. The existing coverage of this surface is entirely T=String,
 // where the whole family is invisible: a bare `T?` slot is trivially sound for a reference type.
 //
-// Only the positions that RUN today are declared here — the `T?` RETURN, and a `T?` param carrying a non-null. The
-// remaining positions are red at a value instantiation and cannot live in this lane, which has no XFAIL mechanism:
-// a null through a `T?` PARAM or CTOR PARAM, and a `T?` backing field / property on a generic owner, all fault with
-// System.InvalidProgramException at T=Int (the bare struct-incapable `T` slot). That axis is driven as a documented
-// red in tests/roundtrip/scenarios/run.sh (roundtrip-nullable-vt-generic-samemodule).
+// Every position is driven at a value instantiation, carrying a NULL as well as a value — the whole surface, since
+// `Nullable(Tv)` is now `System.Object` everywhere and each of these used to fail JIT verification at T=Int.
 fun <T> ngPick(x: T?, d: T): T = x ?: d             // `T?` PARAM
 fun <T> ngFirstOrNull(xs: List<T>): T? = if (xs.isEmpty()) null else xs[0]   // `T?` RETURN
 fun <T> ngRoundTrip(x: T?): T? {                    // `T?` param -> `T?` body-local -> `T?` return
     var local: T? = null
     local = x
     return local
+}
+class NgCell<T>(private val slot: T?) {             // `T?` CTOR PARAM + backing field + property
+    val stored: T? get() = slot
+    fun orElse(d: T): T = slot ?: d
+}
+open class NgBase<T>(val held: T?)                  // a ctor DELEGATION target whose param is erased
+class NgDerived(y: Int?) : NgBase<Int>(y)           // `Base<Int>(y)` hands a Nullable<int32> to an `object` slot
+// An OVERRIDE narrowing a base `T?` slot to a concrete one — at the HEAD and NESTED in a constructed generic. The
+// derived declaration holds `Int?`/`NgBox<Int?>`, which no `Nullable(Tv)` sweep can see, yet the CLR slot it must
+// fill is the base's erased one; emitted narrowed it is a new overload and the type does not load.
+class NgBox<T>(val v: T?)
+interface NgSink<T> { fun accept(x: T?): String; fun boxed(b: NgBox<T?>): String }
+class NgIntSink : NgSink<Int> {
+    override fun accept(x: Int?): String = x?.toString() ?: "none"
+    override fun boxed(b: NgBox<Int?>): String = b.v?.toString() ?: "none"
+}
+class NgTextSink : NgSink<String> {
+    override fun accept(x: String?): String = x ?: "none"
+    override fun boxed(b: NgBox<String?>): String = b.v ?: "none"
+}
+// #324 — a user generic taking a `List<A?>`. The value-element receiver conversion must fire on the RECEIVER's own
+// nullable element and nowhere else; wrapping this ordinary parameter threw at run time.
+fun <T> ngNullBoxes(x: T): List<T?> = listOf(x, null)
+fun <A> ngCountPresent(l: List<A?>, extra: Int): Int {
+    var n = 0
+    for (e in l) if (e != null) n++
+    return n + extra
 }
 
 // ---- #287 : `is` against a NULLABLE type operand ACCEPTS null -------------------------------------------------
@@ -130,9 +154,8 @@ fun reqnnFirstChar(s: String?): Char = requireNotNull(s)[0]
 fun reqnnMust(n: Int?): Int = checkNotNull(n)
 
 class NullableTests {
-    // #86 — the same-compilation `T?` declaration surface at T=Int / T=Boolean, restricted to the positions that
-    // run today (see the declarations above for the ones that do not). The `T?` RETURN's EMPTY lines are the real
-    // measurement: a return that cannot carry null reads back 0/false instead, which no non-null case would catch.
+    // #86 — the same-compilation `T?` declaration surface at T=Int / T=Boolean. The EMPTY / null lines are the real
+    // measurement: a slot that cannot carry null reads back 0/false instead, which no non-null case would catch.
     @TestAttribute
     fun nullableGenericSurfaceAtValueTypes() {
         assertNull(ngFirstOrNull(listOf<Int>()))         // null  `T?` RETURN, empty at T=Int
@@ -142,10 +165,52 @@ class NullableTests {
         assertTrue(flag == true)                         // true
         assertNull(ngFirstOrNull(listOf<String>()))      // null  reference control
         assertEquals(3, ngPick(3, 7))                    // 3     `T?` param carrying a value at T=Int
-        assertEquals("x", ngPick<String>(null, "x"))     // x     null through the same param at a REFERENCE type
+        assertEquals(7, ngPick<Int>(null, 7))            // 7     a NULL through the same param at T=Int
+        assertTrue(ngPick<Boolean>(null, true))          // true  …and at T=Boolean
+        assertEquals("x", ngPick<String>(null, "x"))     // x     …and at a REFERENCE type
         assertEquals(8, ngRoundTrip(8))                  // 8     param -> body-local -> return, all `T?`
         assertFalse(ngRoundTrip(false) ?: true)          // False  same chain at T=Boolean
+        assertNull(ngRoundTrip<Int>(null))               // null   the chain carrying a null at T=Int
         assertNull(ngRoundTrip<String>(null))            // null   the chain carrying a null at a reference type
+    }
+
+    // #86 — the `T?` positions that are NOT a plain method slot: a constructor parameter with its backing field and
+    // property, a constructor DELEGATION into an erased base slot, and an override narrowing a base `T?` to a
+    // concrete one. Each is reached by its own walk and each failed differently before the erasure was uniform:
+    // InvalidProgramException for the ctor slots, TypeLoadException for the override.
+    @TestAttribute
+    fun nullableGenericCtorAndOverrideSlots() {
+        assertEquals(9, NgCell<Int>(null).orElse(9))     // 9     a null through a `T?` CTOR PARAM at T=Int
+        assertEquals(4, NgCell(4).orElse(9))             // 4     the same slot carrying a value
+        assertNull(NgCell<Int>(null).stored)             // null  the backing field/property read back
+        assertEquals(2, NgCell(2).stored)                // 2
+        assertEquals("s", NgCell<String>(null).orElse("s"))   // s   reference control
+        assertNull(NgDerived(null).held)                 // null  ctor DELEGATION into an erased base slot at T=Int
+        assertEquals(4, NgDerived(4).held)               // 4
+        val si: NgSink<Int> = NgIntSink()
+        assertEquals("none", si.accept(null))            // none  override narrowed to Int?, through the BASE slot
+        assertEquals("3", si.accept(3))                  // 3
+        assertEquals("none", si.boxed(NgBox(null)))      // none  the same, NESTED in a constructed generic
+        assertEquals("6", si.boxed(NgBox(6)))            // 6
+        val ss: NgSink<String> = NgTextSink()
+        assertEquals("none", ss.accept(null))            // none  reference control: dispatch must still find it
+        assertEquals("none", ss.boxed(NgBox(null)))      // none
+    }
+
+    // #324 — the value-element collection conversion must key on the RECEIVER's own nullable element. Reading the
+    // element off `typeArgs[0]` made it both miss `filterNotNullTo` (whose first type parameter is the destination)
+    // and fire on an ordinary `List<A?>` parameter of a user generic, whose wrapped receiver then did not inhabit
+    // the parameter slot at all.
+    @TestAttribute
+    fun nullableGenericCollectionArgKeysOnTheReceiver() {
+        assertEquals(3, ngCountPresent(ngNullBoxes(7), 2))       // 3   one present element + 2, at T=Int
+        assertEquals(2, ngCountPresent(ngNullBoxes("a"), 1))     // 2   reference control
+        val vs: List<Int?> = listOf(1, null, 3, null, 5)
+        val dest = mutableListOf<Int>()
+        vs.filterNotNullTo(dest)
+        assertEquals("1,3,5", dest.joinToString(","))            // 1,3,5  a two-type-parameter receiver conversion
+        val bs: List<Boolean?> = listOf(true, null, false)
+        assertEquals("True,False", bs.filterNotNull().joinToString(","))   // CLR-native Boolean stringification (§5)
     }
 
     @TestAttribute

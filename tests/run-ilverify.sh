@@ -33,6 +33,12 @@ declare -A ILVERIFY_XFAIL=(
 	# #86: copyOf on a value-element array returns Array<T?>, represented as object[] while the formal callsite
 	# expects Nullable<Int>[]; all prefix/tail value assertions run green.
 	["ArrayTests::copyOfGrowsWithNullTail()"]="#86 nullable value-array object erasure: copyOf returns object[] where Nullable<Int>[] is formally expected — runtime-safe (RUN green)"
+	# #324: the value-element collection receiver conversion produces an `IEnumerable<object>` (that is all
+	# `Enumerable.Cast<object>` can produce), which does not FORMALLY inhabit a `List<T?>` slot's
+	# `IReadOnlyList<object>`. The conversion itself is now keyed correctly — on the receiver's own nullable element,
+	# not on `typeArgs[0]` — so it no longer fires where it does not belong, and every assertion in this fixture RUNS
+	# green. What is left is the interface-compatibility half named in #324: a wrapper that satisfies the list slot.
+	["NullableTests::nullableGenericCollectionArgKeysOnTheReceiver()"]="#324 nullable value-element collection receiver: Enumerable.Cast<object> yields IEnumerable<object> where a List<T?> slot formally wants IReadOnlyList<object> — runtime-safe (RUN green)"
 	# localloc is intentionally unverifiable ECMA-335 IL. The runtime test validates the resulting Span writes/reads.
 	["StackBufferTests::stackAllocationAndSpanInterop()"]="by design: stackalloc emits localloc, which ILVerify must report as unverifiable; runtime assertions are green"
 	["ByRefParameterTests::byrefOfAStackSlotEvaluatesItsIndexOnce()"]="by design: the same stackalloc/localloc unverifiability as its StackBufferTests sibling — this case takes the ADDRESS of a stack slot, so the pointer arithmetic is equally formal-only; runtime assertions are green"

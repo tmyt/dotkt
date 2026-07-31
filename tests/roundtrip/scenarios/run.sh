@@ -54,6 +54,12 @@ declare -A RT_XFAIL=(
 	# while the declared result stays `Sequence<R>`, and the terminal then looks for a member of the declared
 	# instantiation on a sequence that does not implement it.
 	[roundtrip-nullable-vt-generic-seq-mapnotnull]="#86: Sequence.mapNotNull at a VALUE element yields a sequence whose elements are the erased object while its declared result stays Sequence<Int>, so the terminal toList's IEnumerable<int32>.GetEnumerator is not found on it — System.EntryPointNotFoundException — while the eager Iterable.mapNotNull twin is green; needs the erased-to-declared element conversion on the sequence path, which is not the collection-receiver conversion (a Kotlin Sequence is not @ClrTypeAlias'd to IEnumerable, so no receiver argument is involved)"
+	# D3, the half the erasure alone cannot close. An override narrowing a base `T?` slot now fills the base's
+	# erased `object` slot, so dispatch through the INTERFACE works and the type loads (that entry is pruned). Called
+	# through its OWN declared type it does not: the re-imported Kotlin surface is truthfully `accept(x: Int?)`, the
+	# physical slot is `accept(object)`, and converting the consumer's argument between them needs the REFERENCED
+	# declaration. The `.override` bridge in #86 D3 is what keeps a typed entry point alongside the erased slot.
+	[roundtrip-nullable-vt-generic-override-direct]="#86 D3: a narrowed override called through its OWN declared type does not bind — the CLR slot is accept(object) (it must be, or the interface method is unimplemented) while the re-imported Kotlin surface is accept(x: Int?), and the consumer's emit aborts with 'no referenced method matches the resolved descriptor IntSink.accept(nullable:System.Int32)'; the same override reached through the BASE slot passes, as does the reference instantiation — pruned by the override-slot-bridge step of #86 D3, or by the cross-module carrier read re-deriving the argument"
 	# D2 — `Array<X?>` has no single representation: a CONCRETE Array<Int?> is Nullable<int32>[] while the
 	# erased/open form is object[], and the two are unrelated CLR types (ECMA-335 I.8.7.1 — array
 	# compatibility requires reference-compatible elements). Measured, the re-imported slot is not even an
@@ -88,6 +94,7 @@ declare -A RT_XFAIL=(
 # would be a name-only XFAIL again.
 declare -A RT_XFAIL_SHAPE=(
 	[roundtrip-nullable-vt-generic-seq-mapnotnull]='System.EntryPointNotFoundException'
+	[roundtrip-nullable-vt-generic-override-direct]='no referenced method matches the resolved descriptor'
 	[roundtrip-nullable-vt-generic-array-param]="but 'IntArray' was expected"
 	# No diagnostic and no exception: this one fails by printing a WRONG VALUE, so the shape is the value.
 	[roundtrip-nullable-vt-generic-array-ret]='(stdout) 3/1/4/0'
@@ -863,6 +870,19 @@ ng_app "$NO" NoLib roundtrip-nullable-vt-generic-override 'none' \
 fun main() {
     val s: Sink<Int> = IntSink()
     println(s.accept(null))                // none  through the INTERFACE-typed receiver
+}
+EOF
+
+# The same override reached through its OWN declared type rather than the base slot. The two are different
+# observables and the erasure makes them diverge: the CLR slot is `accept(object)` (it has to be, or the interface
+# method goes unimplemented and the type never loads), while the re-imported Kotlin surface is the override's own
+# `accept(x: Int?)` — which is truthful, and is what a consumer type-checks against. Nothing then converts the
+# consumer's `Nullable<int32>` argument to the physical `object` slot, because doing so needs the REFERENCED
+# declaration. Its sibling above, and the reference-instantiation control below, both pass.
+ng_app "$NO" NoLib roundtrip-nullable-vt-generic-override-direct 'none' \
+	'cross-module: the same narrowed override called through its OWN type, not the base slot (#86 D3)' <<'EOF'
+fun main() {
+    println(IntSink().accept(null))        // none  the DECLARED type, so the typed entry point
 }
 EOF
 

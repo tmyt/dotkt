@@ -5,13 +5,18 @@ using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 // THE ERASURE INVARIANT (#86). For any declaration slot `s`, `physical(s) = Erase(declaredKotlinType(s))`, where
-// `Erase` maps `Nullable(Tv)` to `System.Object` recursively, at
-// EVERY position with no exceptions: method return, method param, constructor param, field, property, body local,
-// generic type-argument, array element, function-type return and parameter, and call signature alike. `object` is the
+// `Erase` maps `Nullable(Tv)` to `System.Object` recursively, at EVERY position: method return, method param,
+// constructor param, field, property, body local, generic type-argument, array element, function-type return and
+// parameter, and call signature alike. `object` is the
 // only uniform CLR storage that carries a real null for BOTH a reference and a value instantiation of an unconstrained
 // `T`, and the CLR's own `Nullable<V>` boxing collapse makes it the spec-defined boxed form (`box` of an empty
 // `Nullable<V>` IS a null reference; `unbox.any Nullable<V>` accepts null). The pre-erasure Kotlin TypeNode rides
 // `[KotlinNullableGeneric]` so the Kotlin surface survives the trip.
+//
+// ONE position is not uniform, and it is named rather than implicit: the #120 reify-back local (`ReifiedArrayVars`
+// below), whose whole chain is deliberately collapsed to a bare `!T[]` to match a genuine `newarr !T`. It dies with
+// representation C when `Array<X?>` becomes canonically `object[]` (#86 D2), and until then it is the single
+// documented exception — `docs/dotkt-semantics.md` §9c-bis lists it alongside the concrete `Array<Int?>`.
 //
 // USES of a slot are typed `Subst(Erase(declaredKotlinType(s)), typeArgs)` and NEVER `Erase(Subst(...))` — that is
 // NullableTvErasureCallRealign's job, on both the read and the write axis. This pass owns only the declaration axis.
@@ -38,14 +43,11 @@ static class NullableGenericErasure
         // [KotlinNullableGeneric] on that exact CLR declaration slot.
         RecordNullableGenericSlots(o, isValue);
         ApplyRec(o);
-        // NESTED / STANDALONE nullable-generic TYPE-ARG erasure (FIX 1 part-2). A `T?` that kotc left as the
-        // inline token `nullable:gp:T` — nested in a `clrg:Owner[...]` arg list (e.g.
-        // `clrg:System.Collections.Generic.IEnumerable[nullable:gp:T]`) or standalone as a param/field type —
-        // has the SAME value-type-null fault as the return case: `nullable:gp:T` lowers to `Nullable<T>`, invalid
-        // for an unconstrained (reference-allowed) T. Erase every such token to `object` (the boxed/erased nullable
-        // rep that carries a real null), everywhere a type token appears (params, returns, fields, `sig`). ilemit
-        // must NEVER see `nullable:gp:` — this fully consumes it, exactly as NullableFuncReturnErasure consumes the
-        // `func:nullable:` returns (which this pass deliberately leaves for that twin — see EraseNullableGpToken).
+        // The blanket type-slot sweep: every REMAINING `Nullable(Tv)` anywhere in the tree — nested in a constructed
+        // generic's argument list, an array element, a byref referent, a function type's return or parameter, a
+        // standalone param/field/local slot, a call `sig` element — becomes `object`. `Nullable(Tv)` lowers to
+        // `Nullable<T>`, which is not even expressible for an unconstrained (reference-allowed) `T`, so ilemit must
+        // NEVER see one; this sweep is what makes that true, function-type returns included.
         EraseNullableGpAllStrings(o);
     }
 
@@ -153,66 +155,11 @@ static class NullableGenericErasure
             foreach (var t in types) if (t is JsonObject to) ApplyRec(to);
     }
 
-    // Wrap each argument of a `callInstance` to an erased setter (`set_X` in `setters`) in a `cast`->`object`, so ilemit
-    // boxes a value/generic-param arg into the erased `object` param even when it can't resolve the re-anchored generic
-    // method's param types. A `null`/already-reference arg becomes a redundant `castclass object` (valid, no box).
-        // Record the get_/set_ accessor names of every nullable generic-parameter PROPERTY (`type:"gp:T"` + `nullable:true`)
-    // — captured BEFORE EraseNullableGpDecls rewrites the property type to `object` (the `gp:` test would then miss).
-        // Retype a local `var x: gp:T = <call to an erased getter>()` slot to `object`, so the object value read from the
-    // now-`object` getter is held in a reference local until an explicit `as T` re-narrows it. Only the direct
-    // reader-local pattern (init is a callInstance to a getter in `getters`); other uses re-narrow via their own cast.
-        // Retype the `retType` of every `callInstance` reading an erased getter (`get_X` in `getters`) to `object`, so
-    // the CIR call node agrees with the getter's now-`object` return. Without this, a stale `retType:"gp:T"` makes
-    // ilemit coerce (unbox.any) the object result to the value type at the call — and a wrapping `as T` cast then
-    // unbox.any's the already-unboxed value AGAIN, NREing. Retyping to `object` leaves a single narrow (the `as T`).
-        // GENERAL body-local twin of EraseNullableGpDecls: retype a NULL-INITIALIZED `k=="var"` local marked `type:"gp:T"`
-    // + sibling `nullable:true` to `object`. The local counterpart of the field/property erasure — a value-type-nullable
-    // accumulator local (`var single: T? = null` in Sequence.single{}) must hold a genuine null in a reference slot,
-    // with value stores boxing and the read boundary (`single as T`) re-narrowing (unbox.any/castclass).
-    //
-    // WHY GATE ON A NULL-CONST INIT (not the bare marker). kotc stamps `nullable:true` on EVERY value-type-nullable `gp:`
-    // local, INCLUDING compiler-synthesized safe-call receiver temps (`tmp0_safe_receiver` for `transform(x)?.let{…}` in
-    // mapNotNullTo). Those temps init from an object-returning call and are read IMPLICITLY (`?.`/`.let`) with no explicit
-    // `as T`, so erasing them to `object` corrupts the unbox (mapNotNull -> garbage; collmore NEW-FAIL). The `var x: T? =
-    // null` accumulator idiom — the case that genuinely needs a surviving null — always inits to a null const and is read
-    // through an explicit `as T`; keying on the null-const init selects exactly that idiom and excludes the synthetic
-    // temps. (The `forEachInline` loop var over a nullable-generic SOURCE — filterNotNullTo's `for (element in
-    // this: Iterable<T?>)` — is a DISTINCT axis needing a value-type-nullable COLLECTION receiver conversion the call
-    // sites lack; broad erasure there corrupts hashCode/collectionToArray iterations. Left to the collection
-    // dual-representation track — NOT erased here.)
-        // True when a var initializer is a `Map`/`MutableMap` `.get(key)` call — its Kotlin result is `V?`, which
-    // MemberCallSubstitution rewrites to the erased nullable-generic `clrMapGet<K,V>: object` (a present value boxes,
-    // a missing key is a genuine `null`). A `var value: gp:V nullable:true = get(key)` slot (getOrPut's explicit
-    // `val value = get(key)`, unlike getOrElse's `?:`-synthesized `object` subject) must therefore be an `object`
-    // slot — else the object init is stored raw into a `!!V` slot and the `value == null` check never sees the null
-    // (getOrPut on `MutableMap<K,primitive>` silently returned 0 and never inserted). The read boundary re-narrows:
-    // `objEq(value, null)` reads it as `object`; the `else value` branch (cond typed `gp:V`) unbox.any's it back
-    // (EmitNullableCoerced). Gated on the `overrides` marker (owner Map/MutableMap, member `get`), so it never hits
-    // the safe-call receiver temps RetypeNullableGpVars deliberately excludes (those init from a `transform(x)` invoke).
-        // True when a var initializer is a `delegateInvoke` whose function-type RETURN is a nullable generic (`(…) -> V?`,
-    // `{t:nullable,of:{t:tv}}`). NullableFuncReturnErasure lowers such a delegate's `Invoke` return to `object` (the one
-    // rep a value/reference instantiation agree on), so a local receiving it must be an `object` slot too — covering BOTH
-    //   * a genuine `val computed = remappingFunction(…)` accumulator read through an explicit null-check + `as V`
-    //     (clrMapMerge's remove-on-null path; il-mapmerge), AND
-    //   * a kotc-synthesized safe-call receiver temp `val tmpN_safe_receiver = transform(x)` for `transform(x)?.let{…}`
-    //     (mapNotNullTo; il-collmore) — pre-#48 this WAS an `object` slot (the blanket `nullable:gp:` sweep erased it);
-    //     leaving it a bare value `V` made bir2cir insert an eager `cast<V>(…:object)` that unbox.any-NREs on a null
-    //     transform result. The alias reader chain (`__inlN = tmp; __lamN = __inl`) re-narrows at the value consumer.
-    // These are the delegate-invoke initializers — the safe-call temps that init from a plain callInstance/callStatic
-    // (a genuine `foo?.bar` receiver read implicitly) are NOT matched here and lower to the bare `gp:V` as before.
-        // True when a var initializer is the null literal (`{k:"const", value:null}`) — the `T? = null` accumulator idiom.
-    // A JSON null property surfaces as a C# null JsonNode, so a `const` whose `value` node is null IS the null literal.
-        // BUG-1 Part B: for each method, find a `forEachInline` whose SOURCE is a param typed as a nullable-generic
-    // collection (`...[nullable:gp:X]`) and whose loop-var `elem` is the bare `gp:X`; erase the loop-var to `object`
-    // (so the iteration yields boxed/null objects, not an unbox.any that NREs on a null value element) and re-narrow
-    // the loop var wherever it flows into a call arg back to the original `gp:X` (unbox.any at the value consumer).
-            // Wrap every reference to the (now-`object`) loop var `lv` that appears as a CALL argument in a `cast`->`origElem`
-    // (the Tv), so a value-type consumer unbox.any's the boxed element. The null-check use (`objEq(element, null)`) is
-    // NOT a call arg and is correctly left as `object`.
-        // BUG-1 Part B: for each method, find a `forEachInline` whose SOURCE is a param typed as a nullable-generic
-    // collection (`...[nullable:gp:X]`) and whose loop-var `elem` is the bare `gp:X`; erase the loop-var to `object`
-    // (so the iteration yields boxed/null objects, not an unbox.any that NREs on a null value element) and re-narrow
-    // the loop var wherever it flows into a call arg back to the original `gp:X` (unbox.any at the value consumer).
+    // For each method, find a `forEachInline` whose SOURCE is a parameter typed as a nullable-generic collection
+    // (`Iterable<T?>`) and whose loop-var `elem` is that `T`; erase the loop var to `object` — the iteration yields
+    // boxed elements, and a null one must survive rather than being unbox.any'd into a value slot — and re-narrow the
+    // loop var back to `T` wherever it flows into a call argument, which is where a value consumer needs it unboxed.
+    // The null-check use (`objEq(element, null)`) is not a call argument and correctly stays `object`.
     static void EraseForEachOverNullableGpSource(JsonObject o)
     {
         if (o["methods"] is not JsonArray methods) return;
@@ -293,9 +240,8 @@ static class NullableGenericErasure
         _ => null,
     };
 
-    // A field/property whose slot is a nullable generic parameter (`type:"gp:T"` + sibling `nullable:true`) -> the
-    // reference `object` slot. Only the boolean-marked `gp:` form; the inline `nullable:gp:T` form (should it appear
-    // on a decl `type`) is caught by the blanket EraseNullableGpAllStrings sweep.
+    // A field/property whose slot is a HEAD `Nullable(Tv)` -> the reference `object` slot, so a value instantiation
+    // holds a genuine null rather than `default(T)`. A NESTED one is reached by the blanket sweep instead.
     static void EraseNullableGpDecls(JsonNode arr)
     {
         if (arr is not JsonArray a) return;

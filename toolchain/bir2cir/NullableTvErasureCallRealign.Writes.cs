@@ -25,16 +25,6 @@ using DotKt.Bir;
 // type (the read axis), never by converting the value, so this half leaves them alone.
 static partial class NullableTvErasureCallRealign
 {
-    // Evaluate a call/construction's arguments and report their flowed types (null when the node has no `args`).
-    static TypeNode[] EvalArgs(JsonObject obj, Ctx ctx)
-    {
-        if (obj["args"] is not JsonArray args) return null;
-        var types = new TypeNode[args.Count];
-        for (var i = 0; i < args.Count; i++)
-            if (args[i] != null) types[i] = Eval(args[i], ctx);
-        return types;
-    }
-
     // Realign every argument position of a call/construction against the slot it fills.
     //
     // With the callee's DECLARATION in hand the target is `Subst(Erase(p), ownerArgs, methodArgs)` — never
@@ -48,32 +38,46 @@ static partial class NullableTvErasureCallRealign
     // what the member will be resolved by. That fallback is restricted to the `object` seam: a value flowed out of
     // the erasure as a bare `object` and the descriptor names a slot the CLR cannot hand an `object` to. Anything
     // wider would be guessing against a descriptor that may itself be the substituted (pre-erasure) view.
-    static void RealignArgs(JsonObject call, TypeNode[] declParams, TypeNode[] ownerArgs, TypeNode[] methodArgs,
-        TypeNode[] argTypes, Ctx ctx)
+    // Evaluates the arguments as it goes, because one rewrite has to happen BEFORE an argument is evaluated: see the
+    // construction case below. Reports the flowed argument types (null when the node has no `args`).
+    static TypeNode[] RealignArgs(JsonObject call, TypeNode[] declParams, TypeNode[] ownerArgs, TypeNode[] methodArgs,
+        Ctx ctx)
     {
-        if (argTypes == null || call["args"] is not JsonArray args || args.Count != argTypes.Length) return;
+        if (call["args"] is not JsonArray args) return null;
         // A callStatic/callInstance carries `sig`; a `new` carries `argTypes`. Either may be absent (resolution then
         // falls back to arity), which is not an error.
         var descriptor = call["sig"] as JsonArray ?? call["argTypes"] as JsonArray;
         if (descriptor != null && descriptor.Count != args.Count) descriptor = null;
         var haveDecl = declParams != null && declParams.Length == args.Count;
+        var argTypes = new TypeNode[args.Count];
         for (var i = 0; i < args.Count; i++)
         {
-            TypeNode target = null;
-            if (haveDecl
-                && Subst(NullableGenericErasure.EraseNullableTv(declParams[i]), ownerArgs, methodArgs) is TypeNode derived)
+            var target = haveDecl
+                ? Subst(NullableGenericErasure.EraseNullableTv(declParams[i]), ownerArgs, methodArgs)
+                : null;
+            // A CONSTRUCTION whose instantiation is the erasure counterpart of the slot is RETYPED rather than
+            // converted, and before it is evaluated so its own constructor arguments are reconciled against the
+            // corrected instantiation. `Box<Nullable<int32>>` and `Box<object>` are unrelated invariant reified
+            // generics that no cast reconciles — but the construction is ours to type, so we build the one the slot
+            // names instead of building the wrong one and failing to convert it.
+            if (target is TypeNode.Fqn tf && args[i] is JsonObject na && Str(na["k"]) == "new"
+                && TypeJson.Read(na["type"]) is TypeNode.Fqn sf
+                && sf.Name == tf.Name && !sf.Equals(tf) && IsObjectErasureOf(tf, sf))
+                na["type"] = TypeJson.Write(tf);
+            argTypes[i] = args[i] != null ? Eval(args[i], ctx) : null;
+            if (target != null)
             {
-                target = derived;
                 if (descriptor != null && TypeJson.Read(descriptor[i]) is TypeNode stamped
-                    && !stamped.Equals(derived) && IsObjectErasureOf(derived, stamped))
-                    descriptor[i] = TypeJson.Write(derived);
+                    && !stamped.Equals(target) && IsObjectErasureOf(target, stamped))
+                    descriptor[i] = TypeJson.Write(target);
             }
-            else if (!haveDecl && descriptor != null && TypeJson.Read(descriptor[i]) is TypeNode slot
+            else if (descriptor != null && TypeJson.Read(descriptor[i]) is TypeNode slot
                      && IsBareObject(argTypes[i]) && NeedsObjectSeam(slot))
                 target = slot;
             if (target != null && args[i] is JsonObject arg && CastForTarget(arg, argTypes[i], target) is JsonNode wrapped)
                 args[i] = wrapped;
         }
+        return argTypes;
     }
 
     // An inline iteration binds a loop VARIABLE, whose type is the node's `elem`. Registering it makes the body's
@@ -107,6 +111,17 @@ static partial class NullableTvErasureCallRealign
             && CastForTarget(e, srcType, new TypeNode.Nullable(elem)) is JsonNode wrapped)
             obj["e"] = wrapped;
         return Str(obj["k"]) == "nullableValue" ? elem : new TypeNode.Fqn("kotlin.Boolean");
+    }
+
+    // A base/this DELEGATION argument list. Unlike a call it carries no signature descriptor — the delegated
+    // constructor is selected by arity — so there is nothing to correct but the values themselves.
+    static void RealignDelegation(JsonArray args, TypeNode[] declParams, TypeNode[] ownerArgs, TypeNode[] argTypes)
+    {
+        if (declParams == null || declParams.Length != args.Count) return;
+        for (var i = 0; i < args.Count; i++)
+            if (Subst(NullableGenericErasure.EraseNullableTv(declParams[i]), ownerArgs, null) is TypeNode target
+                && args[i] is JsonObject arg && CastForTarget(arg, argTypes[i], target) is JsonNode wrapped)
+                args[i] = wrapped;
     }
 
     static void EvalSetLocal(JsonObject obj, Ctx ctx)
