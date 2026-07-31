@@ -715,6 +715,13 @@ sealed class Pipeline
         if (!_options.RefBuild)
             GenericStaticOwnerBinding.ApplyAll(staged.Select(s => s.Root).ToList());
 
+        // CONSTRAINED TYPE-PARAMETER RECEIVER, phase 1 of 2: kotc names a type-parameter receiver's classifier with
+        // a BARE token (`fun <N : Node<N>> N.close()` -> `Node`). Close it from N's own lexical bound, which source
+        // writes constructed, so the inherited-owner walk immediately below has a constructed type to substitute the
+        // exact DECLARING owner into. The node stays a callInstance; only the token changes.
+        if (!_options.RefBuild)
+            ConstrainedTypeParameterReceiverBinding.CloseOpenOwners(staged.Select(s => s.Root).ToList());
+
         // INHERITED GENERIC MEMBER OWNER BINDING: BIR keeps the Kotlin receiver owner (`Derived<T>.m`), while a CLR
         // MemberRef must name the exact CONSTRUCTED declaring owner (`Base<T>.m`). Resolve that hierarchy substitution
         // here, from local declarations + kotc's override facts, before type lowering. This removes a semantic inference
@@ -722,6 +729,15 @@ sealed class Pipeline
         // signature/arity matches only; ambiguous overloads are never guessed. No library/member names are special.
         if (!_options.RefBuild)
             InheritedMemberOwnerBinding.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
+
+        // CONSTRAINED TYPE-PARAMETER RECEIVER, phase 2 of 2: a member called on a receiver whose static type is a
+        // type PARAMETER (`fun <T : Tagged> f(t: T) = t.tag()`) cannot be a plain `callvirt` — the stack holds a
+        // `!!T`, not an interface reference, so ECMA-335 requires an address plus `constrained. !!T ; callvirt`.
+        // Author that dispatch now that the walk above has named the exact constructed DECLARING owner: naming the
+        // receiver's bound instead would emit a MemberRef on a type that merely inherits the member, which binds
+        // locally only through a fake override and has nothing to bind to across an assembly boundary.
+        if (!_options.RefBuild)
+            ConstrainedTypeParameterReceiverBinding.ApplyAll(staged.Select(s => s.Root).ToList());
 
         // dll2klib restores G<*> for Kotlin source analysis while the referenced DLL physically exposes
         // G$dotkt_star. Re-apply that exact referenced ABI to call signatures and directly initialized locals before
@@ -818,6 +834,10 @@ sealed class Pipeline
             // @ClrTypeAlias index lowers EVERY CLR-bound type (collections/StringBuilder/Regex/... not just the
             // hardcoded primitives) wherever it appears as a type token. The struct-ness oracle drives the reference
             // `{t:nullable}` strip (a value `T?` stays `Nullable<T>`; a reference `T?` -> bare + the NRT byte above).
+            // #305 §2.7 CHOKEPOINT — every pass that can retype a node has now run, and BirTypeLowering below STRIPS
+            // `sty`, so this is the last point at which the stamp exists to be checked. A stale stamp surviving here
+            // is a pass that changed a node's result type without carrying `sty` with it.
+            CheckStySanity(outputName, substituted);
             var lowered = BirTypeLowering.Lower(substituted, _options.RefBuild, refs.Aliases, isValueFqn);
             // A mutable/spilled collection value can lower to IList<T> while a Kotlin read-only call slot lowers to
             // IReadOnlyList<T>. These are sibling CLR interfaces, so make the conversion an explicit CIR cast after
@@ -952,6 +972,22 @@ sealed class Pipeline
                     if (TypeJson.OwnerName(i)?.TrimStart('@') == "dotkt$CharSequence")
                         return true;
         return false;
+    }
+
+    // #305: the spec §2.7 `sty` chokepoint, run on the FULLY-PASSED BIR of one file. `sty` is bir2cir-internal and
+    // BirTypeLowering strips it, so the CIR gate below can never see one — the stamp has to be checked here, while it
+    // still exists, or the invariant has no mechanical witness at all. Same bir-common checker, restricted to the one
+    // check that is meaningful pre-lowering (IrSanityChecks.StyStampsOnly); the JsonDocument round-trip is what gives
+    // the shared JsonElement-based checker a view of the JsonNode tree the passes work on.
+    static void CheckStySanity(string outputName, JsonNode root)
+    {
+        // BOTH ends of the round trip carry the #147 depth bound: `BirJson.Writer` to write and `BirJson.DocOptions`
+        // to read back. System.Text.Json defaults MaxDepth to 64 on each independently, and one Kotlin function with
+        // deeply-nested inlined lambdas nests a method body past that — so a plain `ToJsonString()` here would crash
+        // the sanity CHECKPOINT on exactly the input a checkpoint exists to survive.
+        using var doc = JsonDocument.Parse(root.ToJsonString(BirJson.Writer), BirJson.DocOptions);
+        try { IrSanity.Check(new[] { doc.RootElement }, IrSanityChecks.StyStampsOnly); }
+        catch (IrSanityException ex) { throw new InvalidOperationException($"{outputName}: {ex.Decl}: sanity: {ex.Message}"); }
     }
 
     // #112 Phase 4: run the shared bir-common IrSanity over the produced CIR. Parse each CirFile once, hold the

@@ -32,8 +32,11 @@ SELF_OUT="build/ir-selftest-out"
 # stopped checking would look exactly like a clean corpus. Each `reject-*.cir.json` is a shape the compiler must
 # never emit and the validators must refuse, with the message its `.expected` file names; each `accept-*.cir.json`
 # is the legitimate shape next door, so a validator that refused everything fails here too. Today this covers the
-# SUSPENSION-LOWERED invariant: the emitted corpus contains no escaped suspension (that is the point), and the
-# `mods.suspend` exemption it is calibrated against has no negative either.
+# SUSPENSION-LOWERED invariant (the emitted corpus contains no escaped suspension — that is the point — and the
+# `mods.suspend` exemption it is calibrated against has no negative either) and the §2.7 STAMP-AGREEMENT invariant,
+# whose subject `sty` does not survive into CIR at all: bir2cir checks that one on the PRE-lowering BIR
+# (tests/ir/lowering/reject-stale-sty-after-passes pins the chokepoint), and the fixtures here are what hold both
+# implementations of the relation to the same accepted-equivalence set.
 #
 # BOTH implementations are asserted. scripts/verify-sanity.py is only the corpus net; the NORMATIVE checker is the
 # C# IrSanity compiled into ilemit, which is what actually stops a bad build. Asserting only the mirror would leave

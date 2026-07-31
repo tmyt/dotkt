@@ -477,6 +477,21 @@ same Q1 answer (`ValueStability.IsReReadable`), and the vocabulary still does no
 plan that materialises nothing rewrites nothing — a node with no suspension among its operands is left byte-identical,
 which is what keeps suspension-free code out of the diff.
 
+**A THIRD producer, for a third reason: a parameter the CLR mapping maps AWAY.** `MemberCallSubstitution` lowers a
+Kotlin constructor onto a BCL one that has no slot for one of its arguments — `HashSet(initialCapacity, loadFactor)`
+onto the capacity-only overload, because the CLR has no load-factor concept. Kotlin evaluated that argument, so the
+question "what does a value with no reader cost" is exactly the one the plan already answers: the mapping binds every
+ORIGINAL argument in Kotlin order, gives the KEPT ones a `bindRef` in their slot and the mapped-away ones no reader at
+all, and lowers it on the spot through the same `Materialise` (no `force`, so both general order rules apply — the
+prefix rule is what stops a kept value sliding behind a mapped-away one). Asking Q2 a second time at that site instead
+is what the single-classifier rule forbids. The result is a `valueBlock`, or the bare call when nothing materialises —
+which is every construction whose mapped-away argument is a literal, so the `HashSet(16, 0.75f)` idiom is unchanged.
+
+Because this producer runs ~240 passes after `CallEvalLowering.Apply`, the block it mints is NOT folded by
+`MergeNestedResult` and may nest inside another block's `result`. Consumers recurse, so nesting is tolerated rather
+than normalized here; what is NOT tolerated is a `try` inside such a block reaching an operand slot, which
+`TryValueOperandHoist` hoists (it searches a block's inline statements for one, not just its top level).
+
 **Phase.** `callEval`, `bindRef` and `delegationBindings` are BIR-only; `preStmts` is CIR-only. `CallEvalLowering`
 asserts the split at its own exit, and `scripts/verify-schema.py` enforces it structurally on both documents. Stage 0's
 plans are made and lowered within one pass, so they too never appear in a serialized document.
@@ -619,6 +634,28 @@ four variants that preceded this paragraph came to disagree.
 > `ConstructedMemberReturnSubstitution`, `CharSeqStringLowering`, `InheritedMemberOwnerBinding`, the `clr*`
 > reshapes) must carry `sty` with the change or drop it, alongside the `ret`/`dynRet` it already updates. A stale
 > `sty` surviving on a retyped node is a bug in THAT pass — never a reason to demote the stamp below `ret`.
+
+That invariant is MECHANICALLY CHECKED, not merely stated (#305). bir2cir runs the shared `bir-common/IrSanity`
+check 7 over each file's fully-passed BIR immediately before `BirTypeLowering` — the last point at which the stamp
+still exists — and refuses a `sty` that names a different type than the `ret`/`dynRet` beside it. `IrSanity`'s
+`CheckStampAgreement` documents the accepted-equivalence set and the corpus it is calibrated on; the short version
+is that the relation is a REFUTATION test (a type VARIABLE, a `*`, `kotlin.Nothing`, a `$dotkt_star` existential
+view, a nullability wrapper, a spelling difference between the kotlin.*/shorthand/System.* vocabularies, and any
+pair of unlike or different-arity shapes all AGREE), so it names only the class that motivated it: a same-shape
+pair whose argument names a genuinely different type. A MISSING stamp is not a disagreement — dropping it is one of
+the two things this invariant permits.
+
+A pass that CAN compute the new instantiated type rewrites the stamp; a pass that cannot — because what it wrote is
+the physical, erased or declared shape rather than this call site's instantiation — deletes it through
+`bir-common/NodeType.cs` `DropStampIfStale`, which deletes it *when, and only when, the new result refutes it*. The
+qualifier is not caution, it is correctness in both directions: a stamp the new result still describes is worth
+keeping (`ret` would answer the same, so nothing is gained by dropping), and where a pass's own rewrite is the LESS
+trustworthy of the two — `ConstructedMemberReturnSubstitution` cannot tell a callee-relative `tv` from one kotc
+already instantiated, so it can re-substitute an instantiated `Map$Entry<K,V>` into `Map$Entry<Map$Entry<K,V>,V>` —
+the stamp is what shields every downstream deriver from it. That helper asks `IrSanity.StampAgrees`, the same
+relation the check refutes with, so a pass and the chokepoint cannot answer the question differently; the check
+consequently cannot fire on a pass that discharges its obligation this way, which is the intended outcome and not a
+gap. The chokepoint is for the pass that has not been written yet.
 
 **No `kotlin.Any` for a slot whose type could not be derived.** A declared slot — a state-machine field, a spill
 local, a plan binding — with an underivable type is a REFUSAL that names the shape, not a box: `kotlin.Any` hides

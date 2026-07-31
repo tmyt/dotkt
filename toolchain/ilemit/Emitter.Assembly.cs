@@ -886,6 +886,7 @@ sealed partial class Emitter
         if (m.TryGetProperty("generated", out var generated) && generated.GetBoolean())
             StampCompilerGenerated(mb);
         ti.Methods[name] = mb; ti.MethodsBySig[SigKey(name, m)] = mb;
+        ti.MethodNameCounts[name] = ti.MethodNameCounts.TryGetValue(name, out var nameCount) ? nameCount + 1 : 1;
         // #139: record the bir2cir reverse-enumerator-bridge role marker (never a Kotlin name). A "hasNext"/"next" role
         // identifies THE Kotlin iterator interface the adapter wraps; an "iterator" role is the this.iterator() a
         // synthesized GetEnumerator calls. Read by Emitter.ReverseBridge.cs; no effect on emitted metadata.

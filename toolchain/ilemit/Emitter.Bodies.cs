@@ -591,15 +591,44 @@ sealed partial class Emitter
 
     // Resolve a method on a (possibly generic) interface. When the instantiation carries a TypeBuilder/generic
     // param arg (e.g. IComparable<!!0>), its own GetMethod throws on the persisted builder -> use the static helper.
-    MethodInfo InterfaceMethodOn(Type iface, string name)
+    MethodInfo InterfaceMethodOn(Type iface, string name, DotKt.Bir.TypeNode[] sig = null, int methodArity = 0)
     {
         if (iface.IsGenericType && (IsTbInstantiation(iface) || iface.GetGenericArguments().Any(a => a.IsGenericParameter || a is TypeBuilder)))
-            return TypeBuilder.GetMethod(iface, iface.GetGenericTypeDefinition().GetMethod(name));
-        try { return iface.GetMethod(name); }
+            return TypeBuilder.GetMethod(iface, NamedMethodOn(iface.GetGenericTypeDefinition(), name, sig, methodArity));
+        try { return NamedMethodOn(iface, name, sig, methodArity); }
         catch (NotSupportedException) when (iface.IsGenericType)
         {
-            return TypeBuilder.GetMethod(iface, iface.GetGenericTypeDefinition().GetMethod(name));
+            return TypeBuilder.GetMethod(iface, NamedMethodOn(iface.GetGenericTypeDefinition(), name, sig, methodArity));
         }
+    }
+
+    // The member `name` on `owner`, selected by the descriptor CIR already carries. EXACT and FAIL-CLOSED: the
+    // candidate must agree on generic arity, parameter count and — when the node carries a `sig` — every parameter
+    // type, and anything other than exactly one survivor is refused. `Type.GetMethod(name)` alone is neither: it
+    // throws AmbiguousMatchException as soon as the owner declares an overload, and when it does NOT throw it hands
+    // back a member no one checked against the call, so `describe(int)` silently became `describe(string)`. This
+    // consumes the producer's answer rather than re-resolving one; a node that arrives without a usable descriptor
+    // is a drop upstream, and the message says so instead of guessing an overload.
+    MethodInfo NamedMethodOn(Type owner, string name, DotKt.Bir.TypeNode[] sig, int methodArity)
+    {
+        var byName = owner.GetMethods().Where(m => m.Name == name).ToList();
+        var candidates = byName
+            .Where(m => (methodArity == 0 ? !m.IsGenericMethodDefinition
+                    : m.IsGenericMethodDefinition && m.GetGenericArguments().Length == methodArity)
+                && (sig == null || m.GetParameters().Length == sig.Length))
+            .ToList();
+        if (candidates.Count > 1 && sig != null)
+            candidates = candidates
+                .Where(m => m.GetParameters().Select((p, i) => Matches(sig[i], p.ParameterType)).All(ok => ok))
+                .ToList();
+        if (candidates.Count == 1) return candidates[0];
+        throw new NotSupportedException(
+            $"cannot select '{owner}.{name}' for the call's descriptor "
+            + $"({(sig == null ? "no signature" : sig.Length + " parameter(s)")}, generic arity {methodArity}): "
+            + $"{candidates.Count} of {byName.Count} same-name member(s) match. "
+            + (byName.Count == 0
+                ? "The owner does not declare it — the CIR names a type that only INHERITS the member."
+                : "The CIR node lost the signature that selects the overload."));
     }
 
     // Load a managed pointer (&) to an addressable lvalue (for `constrained.` / struct-member calls). Falls back

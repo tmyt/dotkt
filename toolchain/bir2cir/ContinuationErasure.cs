@@ -180,7 +180,14 @@ static class ContinuationErasure
             // kotlin.Any so ilemit pops the discarded getOrThrow value.
             if (rk != null && TypeJson.Read(obj[rk]) is TypeNode.Fqn { Args: null } rf
                 && rf.Name is "void" or "kotlin.Unit")
+            {
                 obj[rk] = TypeJson.Fqn("kotlin.Any");
+                // Spec §2.7: a pass that changes a node's RESULT TYPE rewrites or deletes its `sty`. The frontend
+                // stamped this call site at the SOURCE element (`kotlin.Unit` for a `Result<Unit>`), which every
+                // deriver reads FIRST — leaving it behind restores the stale `void` hint the promotion above exists
+                // to remove. (The #305 chokepoint is what found it.)
+                if (obj["sty"] != null) obj["sty"] = TypeJson.Fqn("kotlin.Any");
+            }
         }
     }
 

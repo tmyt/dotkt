@@ -7,6 +7,33 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Added
 
+- **A stale `sty` stamp is now caught mechanically, right where the stamp dies (area:bir2cir).** The spec §2.7
+  invariant — *a pass that changes a node's result type rewrites or deletes its `sty`* — was stated and swept by
+  hand once, but nothing caught the next pass that reintroduced the drift, and the stamp is read FIRST by every
+  type deriver: a spill local or state-machine field declared from `List<Int?>` while the call actually returns
+  `List<object>` is invalid IL, not a diagnosable drop. bir2cir now runs the shared `bir-common/IrSanity` over each
+  file's fully-passed BIR immediately before `BirTypeLowering` (which strips `sty`, so this is the last point the
+  stamp exists) and refuses a `sty` that names a different type than the `ret`/`dynRet` beside it; the same check
+  runs on the CIR in both bir2cir and ilemit, and `scripts/verify-sanity.py` mirrors it offline. The relation is a
+  REFUTATION test calibrated on the 442-file stdlib reference + runtime pre-lowering corpus (16,070 stamp pairs)
+  and the app corpus: a type variable, a `*`, `kotlin.Nothing`, a `$dotkt_star` existential view, a nullability
+  wrapper, a spelling difference between the `kotlin.*`/shorthand/`System.*` vocabularies, and any pair of unlike
+  or different-arity shapes all AGREE, and a missing stamp is not a disagreement. Calibrating it found four live
+  violators, all fixed here. `ContinuationErasure` promoted a discarded `Result` accessor's `ret` from `Unit` to
+  `kotlin.Any` so ilemit would pop the value, and left `sty` at `kotlin.Unit` — restoring for every deriver the
+  exact stale `void` hint the promotion exists to remove; it now restamps. The other three are one family, the
+  CROSS-MODULE generic erasure the FU-⑧ sweep did not reach: `NullableGenericErasure`,
+  `ReferenceExistentialAbiBinding` and `ConstructedMemberReturnSubstitution` each replace a call's declared result
+  with the PHYSICAL one — a `Slot<T?>`/`Slot<String>` bound as `Slot<object>`, unrelated invariant reified generics
+  — while the frontend stamp still named the pre-erasure instantiation. None can rewrite the stamp (the
+  instantiation is not recoverable from an erased owner), so each DELETES it, which is the other thing §2.7 permits
+  — but only where the new result REFUTES it, through one shared `NodeType.DropStampIfStale`. That qualifier is
+  correctness, not caution: `ConstructedMemberReturnSubstitution` cannot tell a callee-relative `tv` from one kotc
+  already instantiated, so it can re-substitute `Map$Entry<K,V>` into `Map$Entry<Map$Entry<K,V>,V>`, and there the
+  stamp is the more trustworthy of the two and survives. `IteratorConsumerNormalization` — which retypes a
+  `hasNext`/`next` call onto the owner's element, `object` when that element is erased — carries the same
+  obligation and now discharges it too. `tests/ir/selftest` pins the check against BOTH implementations and
+  `tests/ir/lowering` pins the chokepoint itself, each with the legitimate neighbours beside it.
 - **A suspension that escapes the cold lowering is now caught at the CIR boundary (area:bir2cir, area:ilemit).**
   `suspendCall:true` is kotc's frontend fact that a call site suspends, and bir2cir's `SuspendColdLowering` is its
   only consumer — it rebuilds each suspending call as a resume label plus the callee's cold-shape call (a
@@ -89,6 +116,79 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   The `ret` half of the carry has no Kotlin-source witness in either branch, so it is pinned by a pass-level
   document instead: `tests/ir/lowering/net-interop-reshape-result-stamp` asserts the slot survives both reshapes,
   and goes red if either carry is removed.
+- **bir2cir (area:bir2cir): a member called on a TYPE-PARAMETER receiver now emits constrained dispatch for every
+  spelling of the receiver, and for a non-generic constraint.** `fun <T : Tagged> f(t: T) = t.tag()` put a `!!T` on
+  the evaluation stack and then a plain `callvirt Tagged::tag()` — ECMA-335 requires `constrained. !!T ; callvirt`
+  there, so the verifier reported `[found value 'T'][expected ref 'Tagged']`. (The boxing half of that argument is
+  formal here rather than measured: a Kotlin-declared constraint cannot be satisfied by a CLR value type, because
+  every Kotlin class is a reference type on this platform — §5f. `T : Comparable<T>` at `T = Int` is the one
+  value-type instantiation Kotlin source can express, and it reaches constrained dispatch through
+  `MemberCallSubstitution`, not through this pass; it is pinned as a test either way.) The old binding covered
+  exactly one slice of this: a receiver spelled
+  as a plain LOCAL, whose constraint owner was GENERIC (`fun <N : Node<N>> N.close()`), because that is the slice
+  where the MemberRef is invalid as well. Everything else was emitted unverifiably — an ordinary non-suspend
+  function, a local copy of the parameter, a field read, a `T`-returning call result, a property accessor body, a
+  nullable `T?` receiver behind `!!`, and (the shape that had an ilverify baseline entry) the state-machine field
+  the suspend lowering spills a suspend function's receiver into.
+  The binding is now keyed on the receiver's STATIC TYPE, read through the one uniform source
+  (`StaticType.Surface`), so the spelling no longer decides; and the owner is closed from the type parameter's
+  lexical bound only where BIR names it bare, an already-constructed or non-generic owner being closed already —
+  or, for a member declared on a generic BASE of the bound, by the inherited-owner hierarchy substitution this
+  pass now runs after. It
+  moved out of `InheritedMemberOwnerBinding` — whose subject is the hierarchy substitution `Derived<T>.m` ->
+  `Base<T>.m`, not a constraint — into its own `ConstrainedTypeParameterReceiverBinding`.
+  The owner it names is the member's DECLARING type: closing the bare token from the bound is a separate step from
+  rewriting the dispatch, and it runs BEFORE the inherited-owner walk so the walk still has a constructed type to
+  substitute into. Naming the bound instead — `Leaf<Int>` for a member `Root<X>` declares — is a MemberRef on a
+  type that does not declare the member, which binds only through the emitted fake override that happens to sit
+  there. Only the DISPATCH changes: the call's overload key, a generic member's instantiation and its declared
+  result view all ride the node into ilemit, which applies them on the constrained arm exactly as on the ordinary
+  one, and ilemit now SELECTS a member by that descriptor — name, generic arity, parameter count and parameter
+  types — refusing when nothing matches exactly instead of falling through to a name-only lookup that returns
+  whichever overload was declared last.
+  (Without that, the constrained form dispatches `t.describe(7)` to the `String` overload and calls a generic
+  member's uninstantiated definition — a silently wrong answer and a runtime `InvalidOperationException`; both
+  are now pinned by value in `tests/basic`.)
+- **bir2cir (area:bir2cir): a constructor argument the collection mapping maps AWAY is now evaluated (#278).**
+  `HashSet(initialCapacity, loadFactor)` has no CLR counterpart for its load factor — the concept is a JVM hashtable
+  one — so `MemberCallSubstitution` maps the call onto the capacity-only BCL constructor. It dropped the argument's
+  EVALUATION with its value: `HashSet<Int>(16, computeLoadFactor())` never called `computeLoadFactor()`, and an
+  exception that argument would have thrown simply never happened, which is the same fault class as evaluating a
+  call value twice, at zero instead. The mapping now re-expresses the arguments as a call-evaluation plan — one
+  binding per original argument in Kotlin order, the kept ones read from their slots, the mapped-away ones read by
+  nobody — and hands it to `CallEvalLowering.Materialise`, so the existing rules decide: an unread binding is
+  evaluated into a local unless Q2 (`ValueStability.IsDroppable`) says the evaluation is unobservable, and the
+  prefix rule materialises every earlier argument so a kept value cannot slide behind a mapped-away one. Building a
+  plan rather than prepending an evaluate-and-discard statement is what keeps those two rules in one place; the
+  literal `HashSet(16, 0.75f)` idiom materialises nothing and emits the same bare `newClr` as before. The rule holds
+  for every constructor the table covers, so `HashMap` (`Dictionary`) and `LinkedHashMap` (`OrderedDictionary`) are
+  fixed with it, and `LinkedHashSet` — a real Kotlin class whose constructor keeps both arguments — is unaffected.
+  `MappedConstructorArgumentTests` pins the order, the single evaluation, the propagated throw, and the delegation
+  /property-initializer/lambda positions.
+- **bir2cir (area:bir2cir): a `try` expression inside a lowering-MINTED operand block no longer produces invalid
+  IL.** A CLR protected region must be entered with an empty evaluation stack, which is why `TryValueOperandHoist`
+  moves a try-valued operand out of a non-first slot into preceding statements. It recognised only kotc's own
+  spelling — a block whose `stmts` contain a `try` DIRECTLY — but several lowerings materialise an operand into a
+  minted `valueBlock` whose `var` initializer is then the try-valued expression: a call-evaluation plan's bindings,
+  `RangeMembershipLowering`'s bounds, `PreconditionLowering`'s subject, `NetInteropBinding`'s adapters, and now the
+  mapped-away constructor argument above. The hazard is identical and the hoist missed all of them, so
+  `f("z", (try { 1 } catch { 2 }) in 1..5)` compiled to an `InvalidProgramException` from source the frontend had
+  accepted. The hoist now searches a block's inline statements — both statement lists and the result, stopping at a
+  nested declaration whose body runs on its own stack — and moves them in the order their consumers run them. Two
+  assumptions that only held for kotc's own spelling went with it: a hoisted block's RESULT is now spilled like any
+  other operand rather than left in the slot (kotc's result is a stack-neutral `local`, but a minted block's can be
+  a `newClr` whose constructor throws, and leaving it behind let a LATER argument's side effect overtake it), and
+  recognizing a block no longer ends the walk inside it (a `when` with a try-valued subject is such a block, and a
+  try in one of its branches' operand slots still needs hoisting). `ExceptionTests.tryInsideAMintedOperandBlock`
+  and `.tryInABranchOfATrySubjectedWhen` pin the shapes, with the ordering half in
+  `MappedConstructorArgumentTests.laterArgumentDoesNotOvertakeTheConstruction`.
+- **bir2cir (area:bir2cir): a suspend state machine's `create()` no longer puts a live CLR object in the document.**
+  The synthesized `new SM(capture…, completion)` added each capture's `TypeNode` RECORD straight into its `argTypes`
+  array instead of the wire node `TypeJson.Write` produces, so the BIR carried a `JsonValueCustomized<TypeNode>` — a
+  slot no reader can parse, and one that makes any full-document write of that tree throw unless the writer happens
+  to be carrying System.Text.Json's default reflection resolver. Nothing noticed because those entries are dropped
+  again before the CIR is written and the CIR writer's own options are only ever handed already-clean trees; the
+  #305 chokepoint, which serializes the post-pass BIR, is the first thing that had to write one.
 - **bir2cir (area:bir2cir): `await(captureContext = <expression>)` no longer refuses a non-constant Boolean
   ([tmyt/dotkt#64]).** dll2klib publishes two await bridges for an awaitable that exposes `ConfigureAwait(bool)` —
   `await()` and `await(captureContext: Boolean)` — so `task.await(captureContext = policy)` is a frontend-resolved
@@ -266,6 +366,24 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- **tests: an ilverify baseline entry that masks NOTHING now reddens the gate.** `ILVERIFY_XFAIL` in
+  `tests/run-ilverify.sh` only ever classified findings, so a key whose defect had been fixed stayed in the list
+  silently — and kept masking, ready to absorb whatever finding lands on that method next. (One had already
+  rotted that way: `GenericMetadataRoundtripTests::nestedGenericCollectionsRoundTrip()` never produced the
+  finding its key describes — the same commit that added the key wrote the fixture to omit the generic-member
+  read that would have surfaced the Root-V variance collapse, and says so in the fixture's own comment. It is
+  pruned here.) `tests/run-ilverify.sh --audit-baseline` reports
+  every unmatched key with `scripts/lib.sh`'s `xfail_diff` wording, `FIXED … remove it from the xfail list`, and
+  then exits non-zero — deliberately stricter than `xfail_diff`, where a FIXED line is green and advisory. A
+  stale ilverify key is a live substring filter over future findings, not just a stale name in a fail-set, so
+  this lane stays red until the entry is pruned. `tests/run-nunit-tests.sh` passes the flag because it
+  verifies the COMPLETE emitted set; `tests/packaged-sdk/run.sh` verifies a two-assembly subset, where an
+  unmatched key means "not in this subset" and the audit would be a false red.
+- **tests: the surviving ilverify/round-trip baseline reasons name the issue that actually owns them.**
+  `ArrayTests::copyOfGrowsWithNullTail`, `GenericMetadataRoundtripTests::nullableGenericMembersRoundTrip` and the
+  `roundtrip-nullable-vt-generic` scenario cited #127, #18 and #109/#127 — all closed, and #18 unrelated. All
+  three are the one open nullable-generic representation design, #86. The two dead `tests/known-fail/` references
+  (`tests/README.md`, `scripts/gate.sh`'s routing table) are dropped; the directory does not exist.
 - **bir2cir (area:bir2cir): the three result-type stamps have ONE precedence — `sty`, then `ret`, then `dynRet` —
   stated once in `bir-common/NodeType.cs`.** `sty` is the frontend's INSTANTIATED static type, stamped per call
   site; `ret` is emitted only when the callee or its owner is GENERIC, which is exactly where it may name the
