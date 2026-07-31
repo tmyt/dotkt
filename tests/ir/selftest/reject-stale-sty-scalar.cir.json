@@ -1,0 +1,31 @@
+{
+  "fileClass": "SelftestKt",
+  "types": [
+    {
+      "name": "Holder",
+      "kind": "class",
+      "methods": [
+        {
+          "name": "retypedResultKeptItsStamp",
+          "params": [],
+          "ret": { "t": "fqn", "name": "string" },
+          "body": [
+            {
+              "k": "return",
+              "value": {
+                "k": "callInstance",
+                "ownerType": { "t": "fqn", "name": "Holder" },
+                "method": "widened",
+                "recv": { "k": "this" },
+                "sig": [],
+                "sty": { "t": "fqn", "name": "kotlin.Int" },
+                "dynRet": { "t": "fqn", "name": "string" },
+                "args": []
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

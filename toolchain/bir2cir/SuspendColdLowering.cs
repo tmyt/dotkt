@@ -3366,7 +3366,12 @@ static partial class SuspendColdLowering
         {
             var args = new JsonArray();
             var argTypes = new JsonArray();
-            foreach (var (n, t) in _captures) { args.Add(FieldOf(n, t)); argTypes.Add(t); }
+            // `Tw(t)`, not the bare record: a document slot holds a WIRE type node. Adding the `TypeNode` itself
+            // made the JsonArray hold a `JsonValueCustomized<TypeNode>` — a live CLR object in the tree, which no
+            // reader can parse and which makes any full-document write of this BIR throw. It went unnoticed because
+            // these entries are dropped again before the CIR is written; the #305 chokepoint, which serializes the
+            // post-pass BIR, is the first thing that had to write one.
+            foreach (var (n, t) in _captures) { args.Add(FieldOf(n, t)); argTypes.Add(Tw(t)); }
             // The create ABI accepts the existential Continuation<*> view, while every generated SM/base ctor stores
             // the uniform erased Continuation<Any>. Compiled coroutine completions are BaseContinuationImpl/root
             // continuations and implement that physical slot; make the representation narrowing explicit in CIR.

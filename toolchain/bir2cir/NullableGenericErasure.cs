@@ -266,13 +266,20 @@ static class NullableGenericErasure
         switch (node)
         {
             case JsonObject obj:
+                var retSlotErased = false;
                 foreach (var key in obj.Select(kv => kv.Key).ToList())
                 {
                     var child = obj[key];
                     if (child == null) continue;
-                    if (TypeJson.Read(child) is TypeNode tn) obj[key] = TypeJson.Write(EraseNullableTv(tn));
+                    if (TypeJson.Read(child) is TypeNode tn)
+                    {
+                        var erased = EraseNullableTv(tn);
+                        if ((key == "ret" || key == "dynRet") && !erased.Equals(tn)) retSlotErased = true;
+                        obj[key] = TypeJson.Write(erased);
+                    }
                     else EraseNullableGpAllStrings(child);
                 }
+                if (retSlotErased) DropStaleSty(obj);
                 break;
             case JsonArray arr:
                 for (var i = 0; i < arr.Count; i++)
@@ -429,6 +436,16 @@ static class NullableGenericErasure
             fn.Recv == null ? null : EraseNullableTv(fn.Recv)),
         _ => t,
     };
+
+    // Spec §2.7 — a pass that changes a node's RESULT TYPE rewrites or deletes its `sty`. This pass changes what a
+    // call PHYSICALLY produces: `Slot<T?>` and `Slot<object>` are unrelated invariant reified generics, which is the
+    // whole reason the erasure exists, while the frontend stamp still names the INSTANTIATED pre-erasure type
+    // (`Slot<String>`). The stamp is read FIRST by every deriver (bir-common/NodeType.cs), so leaving it declares a
+    // spill slot or a state-machine field at a type the value does not have — invalid IL, the same fault the use-axis
+    // realign was fixed for. It cannot be REWRITTEN from here: the erased result is the UNinstantiated declared shape,
+    // not this call site's instantiation, so the stamp is DROPPED — but only where the erasure actually invalidated
+    // it, which is `DropStampIfStale`'s whole job. (The #305 chokepoint found these sites.)
+    static void DropStaleSty(JsonObject obj) => NodeType.DropStampIfStale(obj);
 
     // A nullable generic RETURN `{t:nullable,of:{t:tv}}` -> `object`, the only CLR rep of a generic `T?` that carries
     // a real null for a value-type instantiation. The `return` statements in the body are NOT rewritten here: a

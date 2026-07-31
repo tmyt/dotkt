@@ -1,0 +1,25 @@
+{
+  "fileClass": "SelftestKt",
+  "methods": [
+    {
+      "name": "twoNullablesOfDifferentTypes",
+      "params": [],
+      "ret": { "t": "nullable", "of": { "t": "fqn", "name": "kotlin.Int" } },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "callStatic",
+            "owner": null,
+            "calleeOwner": { "t": "fqn", "name": "SelftestKt" },
+            "method": "retypedUnderItsWrapper",
+            "sig": [],
+            "sty": { "t": "nullable", "of": { "t": "fqn", "name": "kotlin.String" } },
+            "ret": { "t": "nullable", "of": { "t": "fqn", "name": "kotlin.Int" } },
+            "args": []
+          }
+        }
+      ]
+    }
+  ]
+}

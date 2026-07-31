@@ -1,0 +1,66 @@
+{
+  "fileClass": "RejectStaleStyKt",
+  "hasMain": false,
+  "fields": [],
+  "types": [],
+  "refTypes": [],
+  "methods": [
+    {
+      "name": "nullableGenericRead",
+      "static": true,
+      "params": [],
+      "ret": {
+        "t": "fqn",
+        "name": "kotlin.collections.List",
+        "args": [{ "t": "fqn", "name": "kotlin.Any" }]
+      },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "const",
+            "type": {
+              "t": "fqn",
+              "name": "kotlin.collections.List",
+              "args": [{ "t": "fqn", "name": "kotlin.Any" }]
+            },
+            "value": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "erasedReadKeptItsFrontendStamp",
+      "static": true,
+      "params": [],
+      "ret": {
+        "t": "fqn",
+        "name": "kotlin.collections.List",
+        "args": [{ "t": "fqn", "name": "kotlin.Any" }]
+      },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "callStatic",
+            "owner": null,
+            "calleeOwner": { "t": "fqn", "name": "RejectStaleStyKt" },
+            "method": "nullableGenericRead",
+            "sig": [],
+            "sty": {
+              "t": "fqn",
+              "name": "kotlin.collections.List",
+              "args": [{ "t": "nullable", "of": { "t": "fqn", "name": "kotlin.Int" } }]
+            },
+            "ret": {
+              "t": "fqn",
+              "name": "kotlin.collections.List",
+              "args": [{ "t": "fqn", "name": "kotlin.Any" }]
+            },
+            "args": []
+          }
+        }
+      ]
+    }
+  ]
+}

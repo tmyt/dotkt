@@ -844,6 +844,10 @@ sealed class Pipeline
             // @ClrTypeAlias index lowers EVERY CLR-bound type (collections/StringBuilder/Regex/... not just the
             // hardcoded primitives) wherever it appears as a type token. The struct-ness oracle drives the reference
             // `{t:nullable}` strip (a value `T?` stays `Nullable<T>`; a reference `T?` -> bare + the NRT byte above).
+            // #305 §2.7 CHOKEPOINT — every pass that can retype a node has now run, and BirTypeLowering below STRIPS
+            // `sty`, so this is the last point at which the stamp exists to be checked. A stale stamp surviving here
+            // is a pass that changed a node's result type without carrying `sty` with it.
+            CheckStySanity(outputName, substituted);
             var lowered = BirTypeLowering.Lower(substituted, _options.RefBuild, refs.Aliases, isValueFqn);
             // A mutable/spilled collection value can lower to IList<T> while a Kotlin read-only call slot lowers to
             // IReadOnlyList<T>. These are sibling CLR interfaces, so make the conversion an explicit CIR cast after
@@ -978,6 +982,22 @@ sealed class Pipeline
                     if (TypeJson.OwnerName(i)?.TrimStart('@') == "dotkt$CharSequence")
                         return true;
         return false;
+    }
+
+    // #305: the spec §2.7 `sty` chokepoint, run on the FULLY-PASSED BIR of one file. `sty` is bir2cir-internal and
+    // BirTypeLowering strips it, so the CIR gate below can never see one — the stamp has to be checked here, while it
+    // still exists, or the invariant has no mechanical witness at all. Same bir-common checker, restricted to the one
+    // check that is meaningful pre-lowering (IrSanityChecks.StyStampsOnly); the JsonDocument round-trip is what gives
+    // the shared JsonElement-based checker a view of the JsonNode tree the passes work on.
+    static void CheckStySanity(string outputName, JsonNode root)
+    {
+        // BOTH ends of the round trip carry the #147 depth bound: `BirJson.Writer` to write and `BirJson.DocOptions`
+        // to read back. System.Text.Json defaults MaxDepth to 64 on each independently, and one Kotlin function with
+        // deeply-nested inlined lambdas nests a method body past that — so a plain `ToJsonString()` here would crash
+        // the sanity CHECKPOINT on exactly the input a checkpoint exists to survive.
+        using var doc = JsonDocument.Parse(root.ToJsonString(BirJson.Writer), BirJson.DocOptions);
+        try { IrSanity.Check(new[] { doc.RootElement }, IrSanityChecks.StyStampsOnly); }
+        catch (IrSanityException ex) { throw new InvalidOperationException($"{outputName}: {ex.Decl}: sanity: {ex.Message}"); }
     }
 
     // #112 Phase 4: run the shared bir-common IrSanity over the produced CIR. Parse each CirFile once, hold the

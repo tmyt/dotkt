@@ -21,8 +21,21 @@ static class ConstructedMemberReturnSubstitution
                 if (Str(obj["k"]) == "callInstance"
                     && TypeJson.Read(obj["ownerType"]) is TypeNode.Fqn { Args: { } args })
                 {
-                    RewriteSlot(obj, "ret", args);
-                    RewriteSlot(obj, "dynRet", args);
+                    var changed = RewriteSlot(obj, "ret", args) | RewriteSlot(obj, "dynRet", args);
+                    // Spec §2.7 — a pass that changes a node's RESULT TYPE rewrites or deletes its `sty`, and this is
+                    // one of the passes that paragraph names. Where the owner was ERASED first — a cross-module
+                    // `Slot<T?>` bound as `Slot<object>` — the substituted result is `object` while the frontend stamp
+                    // still names the pre-erasure instantiation `kotlin.String`; the stamp is read FIRST by every
+                    // deriver, so a spill slot or state-machine field declared from it names a type the value does not
+                    // have, and since the instantiation is not recoverable from an erased owner the stamp is DROPPED.
+                    //
+                    // Only where the substitution CONTRADICTS it, though, and that qualifier is load-bearing here more
+                    // than anywhere else: this pass cannot tell a callee-relative `tv` from one kotc already
+                    // instantiated (both are `tv{scope:type,i}`), so on an `Iterator<Map$Entry<K,V>>` receiver whose
+                    // `ret` is already the instantiated `Map$Entry<K,V>` it re-substitutes into the nonsense
+                    // `Map$Entry<Map$Entry<K,V>,V>`. The stamp is what shields every downstream deriver from that, and
+                    // it survives — `DropStampIfStale` keeps a stamp the new result does not refute.
+                    if (changed) NodeType.DropStampIfStale(obj);
                 }
                 foreach (var value in obj.Select(kv => kv.Value).ToList()) if (value != null) Walk(value);
                 break;
@@ -32,10 +45,12 @@ static class ConstructedMemberReturnSubstitution
         }
     }
 
-    static void RewriteSlot(JsonObject obj, string key, TypeNode[] args)
+    // TRUE when the slot was actually rewritten — the caller owns the §2.7 `sty` consequence of that.
+    static bool RewriteSlot(JsonObject obj, string key, TypeNode[] args)
     {
-        if (TypeJson.Read(obj[key]) is TypeNode type && ContainsOwnerTv(type))
-            obj[key] = TypeJson.Write(Subst(type, args));
+        if (TypeJson.Read(obj[key]) is not TypeNode type || !ContainsOwnerTv(type)) return false;
+        obj[key] = TypeJson.Write(Subst(type, args));
+        return true;
     }
 
     static TypeNode Subst(TypeNode type, TypeNode[] args) => type switch

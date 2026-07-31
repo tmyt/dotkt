@@ -5,7 +5,12 @@
 # it — not because they are unimportant, but because the producer has been fixed so the shape they guard no longer
 # reaches them. A rule with no witness quietly stops being a rule; these documents are the witness.
 #
-# Two rules are covered today.
+# Three rules are covered today.
+#
+#   docs/bir-cir-spec.md §2.7 — a pass that changes a node's RESULT TYPE rewrites or deletes its `sty`. bir2cir
+#   checks this on the fully-passed BIR, just before BirTypeLowering strips the stamp, so the emitted CIR corpus
+#   can never witness it and neither can Kotlin source (the violation is a pass bug, not a program).
+#   `reject-stale-sty-after-passes` is that witness.
 #
 #   docs/dotkt-semantics.md §7a — a call-evaluation-plan binding that NOTHING reads is EVALUATED anyway, unless
 #   evaluating it is genuinely unobservable (bir-common/ValueStability.cs, Q2). Two fixtures are the same plan either
