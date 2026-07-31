@@ -59,6 +59,47 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir (area:bir2cir): `await(captureContext = <expression>)` no longer refuses a non-constant Boolean
+  ([tmyt/dotkt#64]).** dll2klib publishes two await bridges for an awaitable that exposes `ConfigureAwait(bool)` —
+  `await()` and `await(captureContext: Boolean)` — so `task.await(captureContext = policy)` is a frontend-resolved
+  call; `EmitAwaitPoint` accepted only a constant in that slot and threw, aborting the whole compile. The awaiter
+  never needed the value: `ConfigureAwait(true)` and `ConfigureAwait(false)` return the same configured awaitable,
+  hence the same awaiter type, so a runtime Boolean selects no state-machine field type and needs no branch — the
+  configured awaiter is stored statically and the Boolean only reaches the .NET call. The lowering is now TWO arms
+  picked by the argument's SHAPE: an omitted argument or a constant `true` keeps the direct `GetAwaiter()` (which
+  is what capturing already means), and everything else — including a constant `false`, which had an arm of its
+  own passing a synthesized literal — is `ConfigureAwait(<the expression>).GetAwaiter()`. The expression is
+  evaluated exactly once and after the awaitable receiver, including when it suspends: the await marker rewrites
+  its own operands (it is excluded from the stage-0 operand plan), so the receiver is bound into a state-machine
+  field whenever the argument's own lowering emits statements — an argument that suspends, or one that transfers
+  control instead of producing a value. That question is asked by a predicate written for it rather than by the two
+  frame-ownership predicates next door: those stop at every lambda kind, while the rewrite descends into a
+  `newClosure`'s CAPTURES, where a bound callable reference `(<expr>)::f` puts an arbitrary expression — so a
+  `throw` there left the receiver evaluated ZERO times on the throwing path. `tests/coroutines/fixtures/DynamicCaptureContextTests.kt` drives the runtime
+  shapes; the five `tests/ir/lowering/await-capture-*` documents pin what no runtime assertion can witness — the arm
+  SELECTION (`ConfigureAwait(true)` and `GetAwaiter()` behave identically, so only the emitted shape shows which was
+  chosen), the receiver binding a suspending argument forces, and the configured awaiter's field type. Folding the
+  constant-`false` arm is output-neutral, and its document says so rather than claiming a difference.
+  The refusal that remains — an awaitable whose `ConfigureAwait(bool)` returns something that is not itself
+  awaitable, which dll2klib publishes the overload for because the returned type may live in an assembly it does not
+  read — now names THAT as the reason instead of reporting a missing `ConfigureAwait(bool)` member.
+- **bir2cir (area:bir2cir): the capture-control hop is read from the awaitable's metadata instead of being rebuilt
+  from its receiver, so an awaitable that is not shaped like `Task` works.** Three defects, all reachable through
+  `await(captureContext = …)` and the first two of them older than it. (1) The configured awaitable's type was
+  reconstructed by repeating the RECEIVER's type arguments under `ConfigureAwait`'s return type NAME, so a
+  declaration that permutes them — `Awaitable<A,B>.ConfigureAwait(bool): Configured<B,A>` — produced
+  `Configured<A,B>`: a real type on which none of the members then called exist, i.e. unverifiable IL and a run-time
+  failure. This already broke a constant `false`. The plan now carries every awaiter and configured type as a
+  TEMPLATE of the DECLARED type, closed at the call site, so a permuted, dropped or fixed type argument comes out as
+  declared. (2) The configured awaitable's `GetAwaiter` was looked for as an instance member only, though the
+  awaitable contract has always accepted a referenced `[Extension] static GetAwaiter` — so capture control on such a
+  type was REFUSED although C# `await` compiles the same shape. It is now resolved and emitted through both halves of
+  the contract, a generic extension's type arguments unified from its declared receiver rather than copied. (3) The
+  receiver binding introduced above always took a state-machine FIELD, which the CLR forbids for a byref-like
+  (`ref struct`) awaitable — turning a legal program into a compile-time refusal. Only a SUSPENSION between the
+  binding and its use needs a field; suspension-free statements need a typed local, which is exactly what §4d says a
+  byref-like value may be. `tests/interop/consumer/fixtures/CaptureContextAwaitTests.kt` covers all three against
+  producer types written for them (`tests/interop/producer/CaptureAwaitable.cs`).
 - **kotc (area:kotc, #67): suspend extension and re-imported DotKt member callable references now lower through
   the general suspend-reference adapter.** Suspend callable references are represented by `newSuspendLambda`, whose
   body carries the same Kotlin call facts as a direct invocation. The router previously admitted only non-extension
