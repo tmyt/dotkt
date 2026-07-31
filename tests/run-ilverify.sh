@@ -30,6 +30,15 @@ declare -A ILVERIFY_XFAIL=(
 	# consumer's restored `Vault<string>` slot — StackUnexpected. Runtime-SAFE (object/string are reference-compatible;
 	# the erased Vault holds the string; the value-assert RUN lane is green). Same object-erasure formal-only family.
 	["GenericMetadataRoundtripTests::nullableGenericMembersRoundTrip()"]="#86 nullable-generic object-erasure: holderOf's erased Vault<object> return vs the restored Vault<string> slot — runtime-safe (RUN green)"
+	# #86 D2, the same object-erased instantiation one hop further out, at a REFERENCE element. `Array<T?>` erases
+	# T-independently to `object[]`, so `arrayOf("x","y").copyOf(3)` produces one and the `toList()` over it is
+	# instantiated at `object` — its `List<object>` result then meets a `Collection<string>` slot. Runtime-safe: the
+	# array really is a `string[]` (copyOf reflects on the receiver's element type) and only object-level members are
+	# dispatched on the list, so every assertion in the fixture RUNS green. Closing it means unifying the CONSUMER's
+	# type argument against the flowed `List<object>` as well, which is deliberately NOT done for a reference binding:
+	# pairing constructed types by argument position is only sound for the family D2 moves, and widening it reached
+	# ordinary generic calls (a contravariant `Comparator<in T>`, a `Derived<U> : Base<String>` seen through its base).
+	["ArrayTests::copyOfGrowsWithNullTail()"]="#86 D2: an object-erased Array<T?> result instantiates Array<T>.toList() at T=object, so its List<object> meets a Collection<string> slot at the REFERENCE element — runtime-safe (RUN green); closed by unifying a consumer's type argument for reference bindings too, which needs a sound base-view pairing first"
 	# #324: the value-element collection receiver conversion produces an `IEnumerable<object>` (all
 	# `Enumerable.Cast<object>` can produce), which does not FORMALLY inhabit a `List<T?>` slot's
 	# `IReadOnlyList<object>`. The conversion is now keyed correctly — on the receiver's own nullable element, not on

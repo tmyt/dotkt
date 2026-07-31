@@ -84,6 +84,9 @@ declare -A RT_XFAIL=(
 	# keeps a representation of its own after all. Local `val`s are unaffected (their slot is retyped from the value);
 	# it is a declared RETURN / field / parameter of a constructed generic over `Int?` that has nowhere to move.
 	[roundtrip-nullable-vt-generic-array-to-collection]="#86 D2: an Array<Int?> is object[], so an Array<T> stdlib extension over it instantiates at T=object and returns a List<object> — where the declared List<Int?> slot is IReadOnlyCollection<Nullable<int32>>, and the first member call on the result throws System.EntryPointNotFoundException. A REGRESSION against the pre-D2 representation (Array<Int?> was Nullable<int32>[], so T bound to Nullable<int32> and both ends agreed). Blocked on the type-argument half of the decision: either X? is object at every type-argument position (List<Int?> becomes List<object>) or the concrete Array<Int?> keeps its own representation."
+	# The same split reached from the other side, and a separate observable: here the generic's RESULT is the array, so
+	# the instantiation that suits the `Collection<T>` argument is the one that does not suit the result.
+	[roundtrip-nullable-vt-generic-collection-to-array]="#86 D2: Array<Int?>.plus(Collection<Int?>) binds one T to an argument whose element is Nullable<int32> and a result whose element must be object; the body's 'as Array<T>' then castclasses the object[] it built from the object[] receiver to Nullable<int32>[] — System.InvalidCastException. Same REGRESSION and same blocker as its array-to-collection sibling above."
 	#
 	# PRUNED by the `Array<X?>`-is-`object[]` canonicalisation (#86 D2): both cross-module `Array<Int?>` sections,
 	# param and return. `Array<X?>` is now `object[]` at every position for a possibly-value `X`, the pre-erasure
@@ -103,6 +106,7 @@ declare -A RT_XFAIL_SHAPE=(
 	[roundtrip-nullable-vt-generic-seq-mapnotnull]='System.EntryPointNotFoundException'
 	[roundtrip-nullable-vt-generic-override-direct]='no referenced method matches the resolved descriptor'
 	[roundtrip-nullable-vt-generic-array-to-collection]='System.EntryPointNotFoundException'
+	[roundtrip-nullable-vt-generic-collection-to-array]='System.InvalidCastException'
 )
 
 # A listed name with no documented shape is the hole this map exists to close, so it is rejected here rather
@@ -714,6 +718,16 @@ fun main() {
     a[0] = 1
     val l = toL(a)
     println("${l.size}/${l[0]}")           // 3/1
+}
+EOF
+
+# The same split in the OTHER direction: a `Collection<Int?>` (whose element IS `Nullable<int32>`) handed to a generic
+# whose RESULT is an `Array<T>` (whose element must be `object`). One `T`, two required answers.
+ng_local roundtrip-nullable-vt-generic-collection-to-array '3/3' \
+	'same-module: a List<Int?> element carried into an Array<Int?> by a generic Array<T> extension (#86 D2)' <<'EOF'
+fun main() {
+    val p = arrayOfNulls<Int>(2).plus(listOf<Int?>(3))   // receiver element object, Collection element Nullable<int32>
+    println("${p.size}/${p[2]}")           // 3/3
 }
 EOF
 

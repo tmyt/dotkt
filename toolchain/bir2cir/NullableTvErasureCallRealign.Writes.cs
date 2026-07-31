@@ -138,6 +138,13 @@ static partial class NullableTvErasureCallRealign
     // unifying there would weaken `f<String>(erasedValue)` into `f<object>` for nothing. The walk pairs constructed
     // types by ARGUMENT POSITION rather than by name, because the two sides are legitimately different types (a
     // `List<object>` arrives at a `Collection<!!0>` slot) and position is what the CLR's assignability rule aligns.
+    //
+    // And ONLY for this family, which `Unifiable` pins: either the binding is the nullable-possibly-value type D2
+    // moves, or the position is an ARRAY ELEMENT, where `object[]` genuinely inhabits one instantiation. Without that
+    // gate the pairing-by-position reaches ordinary generic calls it has no business re-instantiating — a
+    // `Comparator<object>` arriving at a contravariant `Comparator<in T>` would rewrite `T = String` to `object` and
+    // drop it through its own `T : CharSequence` bound, and a `Derived<U> : Base<String>` arriving at a `Base<T>`
+    // would be zipped against the DERIVED arity rather than the base view it is actually seen through.
     static bool UnifyMethodArgs(TypeNode declared, TypeNode flowed, TypeNode[] methodArgs, JsonObject call)
     {
         var moved = false;
@@ -147,21 +154,22 @@ static partial class NullableTvErasureCallRealign
                 typeArgs[i] = TypeJson.Write(methodArgs[i]);
         return moved;
 
-        void Walk(TypeNode d, TypeNode f, bool nested)
+        void Walk(TypeNode d, TypeNode f, bool nested, bool underArray = false)
         {
             switch (d, f)
             {
                 case (TypeNode.Tv { Scope: "method" } tv, _) when tv.I >= 0 && tv.I < methodArgs.Length:
-                    if (nested && IsBareObject(f) && !IsBareObject(methodArgs[tv.I]))
+                    if (nested && IsBareObject(f) && !IsBareObject(methodArgs[tv.I])
+                        && (underArray || NullableGenericErasure.IsNullableMaybeValue(methodArgs[tv.I], _isValue)))
                     {
                         methodArgs[tv.I] = new TypeNode.Fqn("object");
                         moved = true;
                     }
                     break;
-                case (TypeNode.Array da, TypeNode.Array fa): Walk(da.Elem, fa.Elem, nested: true); break;
-                case (TypeNode.Nullable dn, TypeNode.Nullable fn): Walk(dn.Of, fn.Of, nested); break;
-                case (TypeNode.Oblivious dobl, TypeNode.Oblivious fo): Walk(dobl.Of, fo.Of, nested); break;
-                case (TypeNode.ByRef db, TypeNode.ByRef fb): Walk(db.Of, fb.Of, nested); break;
+                case (TypeNode.Array da, TypeNode.Array fa): Walk(da.Elem, fa.Elem, nested: true, underArray: true); break;
+                case (TypeNode.Nullable dn, TypeNode.Nullable fn): Walk(dn.Of, fn.Of, nested, underArray); break;
+                case (TypeNode.Oblivious dobl, TypeNode.Oblivious fo): Walk(dobl.Of, fo.Of, nested, underArray); break;
+                case (TypeNode.ByRef db, TypeNode.ByRef fb): Walk(db.Of, fb.Of, nested, underArray); break;
                 case (TypeNode.Fqn { Args: { } dargs }, TypeNode.Fqn { Args: { } fargs })
                     when dargs.Length == fargs.Length:
                     for (var i = 0; i < dargs.Length; i++) Walk(dargs[i], fargs[i], nested: true);
