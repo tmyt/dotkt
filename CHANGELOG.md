@@ -161,6 +161,36 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   a result, and a value is converted only across a bare `object` seam — the only one the CLR can express, since
   `Ref<object>` and `Ref<Nullable<int32>>` are unrelated invariant reified generics that no cast reconciles.
 
+- **bir2cir (area:bir2cir): an overload the erasure collapses is REFUSED, not silently mis-bound (#86 §5.3).**
+  `class C<T> { fun f(x: T?) ; fun f(x: Any?) }` is two Kotlin declarations the frontend accepts, and Kotlin's own
+  resolution picks `f(T?)` for `c.f(3)` at `C<Int>`. Both emit `f(object)` — `T?` reaches it through the erasure and
+  `Any?` through the reference-nullable strip — so one member occupies the slot and the other is unreachable:
+  measured, `c.f(3)` and `c.f("s")` both ran the `Any?` body, with no diagnostic. A program with no valid CIL lowering
+  owes its author an actionable message, so this now refuses and names both source signatures and the one signature
+  they collapse onto. The condition is DIFFERENTIAL — distinct parameter vectors before the erasure, identical after —
+  because pairs that were always one CLR signature are not this rule's business: the stdlib's two `contains`
+  overloads differ only in their type-parameter constraints, which no CLR signature ever carried, and refusing those
+  would reject code that emits exactly as it did before. Generic arity stays part of the key, so
+  `fun <T> f(x: T?)` beside `fun f(x: Any?)` is still two slots (ECMA-335 I.8.6.1.6).
+
+- **bir2cir (area:bir2cir): a `vararg xs: T?` pack is built at the erased element type (#86).** The packed array and
+  its elements are ONE decision: the pack fills an `Array<T?>` slot erased to `object[]`, and built as
+  `Nullable<int32>[]` it cannot be converted afterwards — the `newarr` and the `stelem` filling it disagreed and
+  `count<Int>(1, null, 3)` segfaulted. An array construction is now a typed use like any other: the caller's argument
+  realignment corrects its element type before it is evaluated, and its elements are then reconciled against that
+  element, so allocation and stores agree by construction.
+
+- **bir2cir (area:bir2cir): a `T?` through the two SUSPEND channels keeps its Kotlin surface (#86).** Both re-imported
+  as `Any` and a cross-module consumer stopped compiling — invisible to every runtime-shaped gate, which is why
+  neither had been seen. A suspend declaration's result rides `suspendRet`, and the Task bridge that becomes its
+  public ABI is constructed fresh, so it inherited nothing from the declaration it replaces; it now transfers the
+  pre-erasure result on both channels, the carrier and the NRT byte the reader needs past the `Task` node. A
+  `suspend (…) -> T?` VALUE erases whole to `object` and its shape rides the dedicated `[KotlinSuspendFunctionType]`
+  carrier — which is built during type lowering, after the erasure, and so faithfully recorded
+  `suspend () -> object`; it is now built from the pre-erasure shape stashed before the sweep. The nullable-generic
+  carrier still excludes suspend function types for the reason it always did — there is no physical delegate for it
+  to align with — so this makes the one carrier truthful rather than adding a second.
+
 - **bir2cir (area:bir2cir): the hand-written special cases the uniform erasure subsumes are DELETED, and the one
   that survives is narrowed to a real oracle (#86).** Each was the erasure formula applied by hand at one node kind,
   and each existed because the formula was not applied everywhere — so with the rule uniform they say nothing the

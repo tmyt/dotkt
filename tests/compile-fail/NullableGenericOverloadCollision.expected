@@ -1,0 +1,5 @@
+# The refusal must name the OWNER, both SOURCE signatures, and the one CLR signature they collapse onto —
+# a message that only said "duplicate signature" would not tell the author which declaration to change.
+two declarations of 'f' erase to one CLR signature
+f(T?)
+both become 'f(object)'

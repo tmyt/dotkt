@@ -64,6 +64,14 @@ static partial class NullableTvErasureCallRealign
                 && TypeJson.Read(na["type"]) is TypeNode.Fqn sf
                 && sf.Name == tf.Name && !sf.Equals(tf) && IsObjectErasureOf(tf, sf))
                 na["type"] = TypeJson.Write(tf);
+            // The same rule for an ARRAY construction, which is how a `vararg` argument list is packed: build the
+            // element type the slot names. `EvalNewArray` then reconciles the elements against it, so the `newarr`
+            // and every `stelem` filling it agree by construction.
+            if (target is TypeNode.Array ta && args[i] is JsonObject ar
+                && Str(ar["k"]) is "newArray" or "newArrayInit" or "newArraySized"
+                && TypeJson.Read(ar["elem"]) is TypeNode se
+                && !se.Equals(ta.Elem) && IsObjectErasureOf(ta.Elem, se))
+                ar["elem"] = TypeJson.Write(ta.Elem);
             argTypes[i] = args[i] != null ? Eval(args[i], ctx) : null;
             if (target != null)
             {
@@ -78,6 +86,29 @@ static partial class NullableTvErasureCallRealign
                 args[i] = wrapped;
         }
         return argTypes;
+    }
+
+    // An array construction, and the ELEMENTS it is built from, are one operation. The `elem` may already have been
+    // corrected by the caller's argument realignment (a `vararg xs: T?` pack fills an `Array<T?>` slot, erased to
+    // `object[]`), and each element must then be reconciled against THAT element type — a pack built as
+    // `Nullable<int32>[]` and handed to an `object[]` slot is not convertible after the fact, while a pack built as
+    // `object[]` with boxed elements is exactly right. Splitting the two is what makes a `stelem` disagree with the
+    // `newarr` that produced the array.
+    static TypeNode EvalNewArray(JsonObject obj, Ctx ctx)
+    {
+        var elem = TypeJson.Read(obj["elem"]);
+        if (obj["size"] != null) Eval(obj["size"], ctx);
+        if (obj["elems"] is JsonArray elems)
+            for (var i = 0; i < elems.Count; i++)
+            {
+                if (elems[i] is not JsonObject e) continue;
+                var t = Eval(e, ctx);
+                if (elem != null && CastForTarget(e, t, elem) is JsonNode wrapped) elems[i] = wrapped;
+            }
+        foreach (var kv in obj)
+            if (kv.Value != null && kv.Key is not ("elem" or "elems" or "size" or "k" or "sty"))
+                Eval(kv.Value, ctx);
+        return elem == null ? null : new TypeNode.Array(elem);
     }
 
     // An inline iteration binds a loop VARIABLE, whose type is the node's `elem`. Registering it makes the body's

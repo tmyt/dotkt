@@ -42,6 +42,7 @@ static class NullableGenericErasure
         // dll2klib cannot infer back. Keep the pre-erasure TypeNode opaque until RoundtripMetadata stamps
         // [KotlinNullableGeneric] on that exact CLR declaration slot.
         RecordNullableGenericSlots(o, isValue);
+        RecordSuspendFnShapes(o);
         ApplyRec(o);
         // The blanket type-slot sweep: every REMAINING `Nullable(Tv)` anywhere in the tree — nested in a constructed
         // generic's argument list, an array element, a byref referent, a function type's return or parameter, a
@@ -62,6 +63,12 @@ static class NullableGenericErasure
                 if (m is JsonObject mo)
                 {
                     RecordNullableGenericSlot(mo, "ret", "nullableGenericRet", "retNullableFlags", isValue);
+                    // A SUSPEND declaration's Kotlin result rides `suspendRet`, not `ret` — its `ret` is the cold
+                    // entry's. The Task bridge that BECOMES its public ABI is built fresh later, so it cannot inherit
+                    // a carrier from a declaration it replaces; it reads this stash instead (SuspendColdLowering).
+                    // Recorded unconditionally of the erasure, because the sweep flattens `suspendRet` too.
+                    if (TypeJson.Read(mo["suspendRet"]) is TypeNode.Nullable { Of: TypeNode.Tv } sr)
+                        mo["nullableGenericSuspendRet"] = TypeNode.ToJson(sr);
                     RecordNullableGenericParams(mo["params"], isValue);
                 }
         RecordNullableGenericCtorParams(o["ctors"], isValue);
@@ -70,6 +77,56 @@ static class NullableGenericErasure
         if (o["types"] is JsonArray types)
             foreach (var t in types) if (t is JsonObject to) RecordNullableGenericSlots(to, isValue);
     }
+
+    // The keys the pre-erasure SUSPEND function shape is stashed under, for BirTypeLowering's suspend-fn carrier.
+    internal const string SuspendFnPre = "suspendFnTypePre";
+    internal const string RetSuspendFnPre = "retSuspendFnTypePre";
+
+    // A `suspend (…) -> T?` slot has TWO facts to preserve and only one of them is this pass's. The whole VALUE erases
+    // to `object` at lowering — a suspend lambda is a Continuation state machine, not a delegate — so the arg/return
+    // shape is carried by the DEDICATED `[KotlinSuspendFunctionType]` carrier, which is why `HasRestorableNullableTv`
+    // excludes a suspend `Fn` from the nullable-generic carrier: there is no physical delegate for that carrier to
+    // align with, and two carriers on one slot would disagree.
+    //
+    // But that dedicated carrier is built LATER, in BirTypeLowering, off the slot as it stands — and by then the sweep
+    // below has erased the `Nullable(Tv)` inside it, so the carrier faithfully records `suspend () -> object` and a
+    // consumer re-imports exactly that. So the pre-erasure shape is stashed here, as an opaque string the intervening
+    // passes leave alone, and BirTypeLowering builds the carrier from it instead. The exclusion above is unchanged:
+    // this does not add a second carrier, it makes the one carrier truthful.
+    static void RecordSuspendFnShapes(JsonNode node)
+    {
+        switch (node)
+        {
+            case JsonObject obj:
+                Stash(obj, "type", SuspendFnPre);
+                Stash(obj, "ret", RetSuspendFnPre);
+                foreach (var kv in obj.ToList()) if (kv.Value != null) RecordSuspendFnShapes(kv.Value);
+                break;
+            case JsonArray arr:
+                foreach (var it in arr) if (it != null) RecordSuspendFnShapes(it);
+                break;
+        }
+
+        static void Stash(JsonObject obj, string typeKey, string factKey)
+        {
+            if (obj.ContainsKey(factKey)) return;
+            if (TypeJson.Read(obj[typeKey]) is TypeNode.Fn { Suspend: true } fn && HasNullableTv(fn))
+                obj[factKey] = TypeNode.ToJson(fn);
+        }
+    }
+
+    static bool HasNullableTv(TypeNode t) => t switch
+    {
+        TypeNode.Nullable { Of: TypeNode.Tv } => true,
+        TypeNode.Nullable n => HasNullableTv(n.Of),
+        TypeNode.Oblivious o => HasNullableTv(o.Of),
+        TypeNode.Fqn { Args: { } args } => args.Any(HasNullableTv),
+        TypeNode.Array a => HasNullableTv(a.Elem),
+        TypeNode.ByRef b => HasNullableTv(b.Of),
+        TypeNode.Fn fn => HasNullableTv(fn.Ret) || fn.Params.Any(HasNullableTv)
+                          || (fn.Recv != null && HasNullableTv(fn.Recv)),
+        _ => false,
+    };
 
     static void RecordNullableGenericCtorParams(JsonNode node, Func<string, bool> isValue)
     {

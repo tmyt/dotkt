@@ -352,6 +352,12 @@ static partial class NullableTvErasureCallRealign
                 return null;
             case "cond":
                 return EvalCond(obj, ctx);
+            case "newArray":
+            case "newArrayInit":
+            case "newArraySized":
+                // An array CONSTRUCTION — including the pack a `vararg xs: T?` call site builds. Its `elem` is the
+                // array's element type, so it is both this node's result type and the target its own elements fill.
+                return EvalNewArray(obj, ctx);
             case "forEachInline":
                 // A loop VARIABLE is a slot, and this node states its type in `elem`. Binding it is what lets a value
                 // consumer inside the loop body be reconciled at all. (`forArray` carries no `elem` — its loop var is

@@ -900,6 +900,36 @@ fun main() {
 }
 EOF
 
+# ----- CROSS-MODULE: `T?` through the SUSPEND channels (#86) -------------------------------------------
+# A suspend declaration's Kotlin result does not ride `ret` — it rides `suspendRet`, and the public ABI is a
+# Task bridge CONSTRUCTED fresh, so it inherits nothing from the declaration it replaces. A `suspend (…) -> T?`
+# VALUE is not a delegate either: it erases to `object` and its shape rides a DEDICATED suspend-function
+# carrier, which is built after the erasure and so recorded the erased shape. Both re-imported as `Any` /
+# `suspend () -> object` and the consumer did not type-check — a COMPILE failure, invisible to every
+# runtime-shaped gate, which is why this section's assertion is that the consumer builds and runs at all.
+NS="$ROOT/build/roundtrip-nullable-vt-generic-suspend-group"
+ng_lib "$NS" NsLib <<'EOF'
+suspend fun <T> nullableSuspend(x: T?): T? = x                     // the suspend DECLARATION return
+fun <T> takesSuspendFn(f: suspend () -> T?): suspend () -> T? = f  // a suspend FUNCTION-TYPE slot
+class SBox<T>(private val held: T?) {
+    suspend fun get(): T? = held                                   // the same return on a generic OWNER
+}
+EOF
+
+ng_app "$NS" NsLib roundtrip-nullable-vt-generic-suspend 'ok' \
+	'cross-module: a T? through a suspend RETURN and a suspend FUNCTION-TYPE slot, at T=Int (#86)' <<'EOF'
+fun mkFn(): suspend () -> Int? = { 5 }
+// Each of these names `Int?` at a slot the library declared as `T?`, so a re-import as `Any` (the suspend
+// declaration return) or `suspend () -> object` (the function-type slot) fails to compile right here — which is
+// the whole failure mode: a CONSUMER compile error that no runtime-shaped gate can see.
+suspend fun useRet(): Int? = nullableSuspend<Int>(null)
+suspend fun useBox(): Int? = SBox(3).get()
+fun main() {
+    val g: suspend () -> Int? = takesSuspendFn(mkFn())
+    println(if (g !== null && ::useRet !== null && ::useBox !== null) "ok" else "no")
+}
+EOF
+
 NOP="$ROOT/build/roundtrip-nullable-vt-generic-override-plain-group"
 ng_lib "$NOP" NopLib <<'EOF'
 interface Plain<T> { fun accept(x: T): String }    // the SAME shape with a NON-nullable slot

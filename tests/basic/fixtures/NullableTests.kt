@@ -71,6 +71,16 @@ class NgTextSink : NgSink<String> {
     override fun accept(x: String?): String = x ?: "none"
     override fun boxed(b: NgBox<String?>): String = b.v ?: "none"
 }
+// A `vararg xs: T?` packs its arguments into an `Array<T?>` — erased to `object[]`. The PACK and its ELEMENTS are
+// one operation: build the array at the erased element type and box each element into it. Built as
+// `Nullable<int32>[]` it cannot be converted to the `object[]` the slot names afterwards, and the mismatched
+// `newarr`/`stelem` pair corrupted memory (a segfault, not a diagnostic).
+fun <T> ngVarargCount(vararg xs: T?): Int = xs.size
+fun <T> ngVarargFirstNonNull(vararg xs: T?): T? {
+    for (x in xs) if (x != null) return x
+    return null
+}
+
 // #324 — a user generic taking a `List<A?>`. The value-element receiver conversion must fire on the RECEIVER's own
 // nullable element and nowhere else; wrapping this ordinary parameter threw at run time.
 fun <T> ngNullBoxes(x: T): List<T?> = listOf(x, null)
@@ -195,6 +205,21 @@ class NullableTests {
         val ss: NgSink<String> = NgTextSink()
         assertEquals("none", ss.accept(null))            // none  reference control: dispatch must still find it
         assertEquals("none", ss.boxed(NgBox(null)))      // none
+    }
+
+    // #86 — a `vararg xs: T?` argument list at a VALUE instantiation. The pack is an array CONSTRUCTION filling an
+    // erased `object[]` slot, so it must be BUILT at the erased element type rather than converted afterwards.
+    @TestAttribute
+    fun nullableGenericVarargPack() {
+        assertEquals(3, ngVarargCount<Int>(1, null, 3))          // 3     nulls and values in one pack at T=Int
+        assertEquals(2, ngVarargCount<Boolean>(true, null))      // 2     …and at T=Boolean
+        assertEquals(2, ngVarargCount<String>("a", null))        // 2     reference control
+        // NOT driven here: an EMPTY vararg call. `f()` on a `vararg` emits no pack at all and the emitter refuses
+        // ("CIR argument count mismatch … got 0, expected 1"), which has nothing to do with the erasure — a plain
+        // `fun f(vararg xs: Int)` called as `f()` fails identically, with no generic and no `T?` in sight.
+        assertEquals(5, ngVarargFirstNonNull<Int>(null, 5))      // 5     reading an element back out at T=Int
+        assertNull(ngVarargFirstNonNull<Int>(null, null))        // null  every element absent
+        assertEquals("b", ngVarargFirstNonNull<String>(null, "b"))
     }
 
     // #324 — the value-element collection conversion must key on the RECEIVER's own nullable element. Reading the

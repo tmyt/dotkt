@@ -849,6 +849,12 @@ sealed class Pipeline
             // is a pass that changed a node's result type without carrying `sty` with it.
             CheckStySanity(outputName, substituted);
             var lowered = BirTypeLowering.Lower(substituted, _options.RefBuild, refs.Aliases, isValueFqn);
+            // The erasure can collapse two Kotlin declarations onto ONE CLR signature, where only one of them can
+            // ever be called and the other is unreachable. Checked HERE, on the lowered tree, because that is where
+            // the physical signature is final: `T?` reaches `object` through this pass and `Any?` reaches it through
+            // the reference-nullable strip, so nothing earlier sees the two meet. Refuses loudly, naming both source
+            // signatures — a silent wrong binding is the one outcome a program with no valid lowering must not get.
+            NullableGenericOverloadCollision.Check(lowered, outputName);
             // A mutable/spilled collection value can lower to IList<T> while a Kotlin read-only call slot lowers to
             // IReadOnlyList<T>. These are sibling CLR interfaces, so make the conversion an explicit CIR cast after
             // substituting method type args. ilemit then emits the stated cast instead of inferring a stack seam.

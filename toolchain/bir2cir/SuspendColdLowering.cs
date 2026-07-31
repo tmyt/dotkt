@@ -1179,6 +1179,7 @@ static partial class SuspendColdLowering
         readonly string _coldName;
         readonly TypeNode _resultType;           // Kotlin resultType, OUTER `?` stripped (VoidTn for Unit)
         readonly bool _resultNullable;           // the suspend fn's result had an outer `?` (#37/#48: read off the type node)
+        readonly string _resultNullableGeneric;  // #86: the PRE-erasure `T?` result, for the bridge's carrier (else null)
         readonly List<JsonObject> _params;       // original params (extension: leading __self)
         readonly List<string> _typeParams;       // generic type-param names ([] when non-generic)
         readonly JsonArray _methodTypeParamDecls; // original names + constraints for emitted bridge/cold signatures
@@ -1232,7 +1233,13 @@ static partial class SuspendColdLowering
             // scalar `retNullable` flag. Strip the outer `?` so `_resultType` is the bare R (as it always was for the
             // reference case) and record it in `_resultNullable` for the Task-bridge NRT walk.
             var suspendRetRaw = TypeJson.Read(m["suspendRet"]);
-            _resultNullable = suspendRetRaw is TypeNode.Nullable;
+            // #86: a `suspend fun <T> f(): T?` had its result object-erased before this pass ran, so `suspendRet`
+            // reads a bare `object` and the outer `?` is no longer visible on it. The pre-erasure result was stashed
+            // by NullableGenericErasure; it restores BOTH channels the bridge return needs — the NRT byte (below,
+            // via `_resultNullable`) and the Kotlin type itself (the carrier). Without them the bridge's `Task<object>`
+            // return re-imports as a non-null `Any` and a cross-module consumer stops compiling.
+            _resultNullableGeneric = (m["nullableGenericSuspendRet"] as JsonValue)?.GetValue<string>();
+            _resultNullable = suspendRetRaw is TypeNode.Nullable || _resultNullableGeneric != null;
             _resultType = (suspendRetRaw is TypeNode.Nullable srn ? srn.Of : suspendRetRaw) ?? VoidTn;
             _params = (m["params"] as JsonArray)?.OfType<JsonObject>().ToList() ?? new List<JsonObject>();
             _typeParams = ReadTypeParamNames(m["typeParams"]);
@@ -3700,6 +3707,7 @@ static partial class SuspendColdLowering
                 if (_typeParams.Count > 0)
                     am["typeParams"] = _methodTypeParamDecls.DeepClone();
                 if (TaskReturnNullableFlags() is JsonArray arnf) am["retNullableFlags"] = arnf;
+                if (_resultNullableGeneric != null) am["nullableGenericRet"] = _resultNullableGeneric;
                 // #151 — a `suspend fun f(): Nothing` bridge (Task<Nothing>): carry the pre-erasure Nothing fact so
                 // RoundtripMetadata stamps [KotlinNothing] on the return (BirTypeLowering erases the inner Nothing to
                 // object, so its own bare-Fqn IsNothingRet check can't see it on the Task<...> return — set it here).
@@ -3798,6 +3806,10 @@ static partial class SuspendColdLowering
             // flattened NullableAttribute byte walk (RoundtripMetadata folds it into the return's `retAttrs` for ilemit
             // to stamp; dll2klib reads it back).
             if (TaskReturnNullableFlags() is JsonArray rnf) method["retNullableFlags"] = rnf;
+            // #86: the Kotlin type of an object-erased `T?` result. dll2klib unwraps the bridge's `Task<R>` to `R`
+            // FIRST and only then reads the slot's carrier, so the carrier holds the UNWRAPPED Kotlin result — and the
+            // NRT byte above (offset past the Task node) is what puts its `?` back.
+            if (_resultNullableGeneric != null) method["nullableGenericRet"] = _resultNullableGeneric;
             // #151 — a `suspend fun f(): Nothing` bridge (Task<Nothing>): carry the pre-erasure Nothing fact so
             // RoundtripMetadata stamps [KotlinNothing] on the return (BirTypeLowering erases the inner Nothing to
             // object, so its own bare-Fqn IsNothingRet check can't see it on the Task<...> return — set it here).

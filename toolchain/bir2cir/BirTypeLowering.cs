@@ -422,8 +422,17 @@ static class BirTypeLowering
             // carries the SHAPE STRING (not a bare flag): the erased CLR type is `object`, from which the arg/return
             // types are otherwise unrecoverable. Additive — ilemit reads it only on param/return/field/property builders;
             // harmless on any other node that happens to carry an sfunc-typed `type`/`ret`.
-            if (SuspendFnSlot(obj["type"]) is JsonNode h2t) copy["suspendFnType"] = h2t;
-            if (SuspendFnSlot(obj["ret"]) is JsonNode h2r) copy["retSuspendFnType"] = h2r;
+            // The PRE-erasure shape wins where one was stashed: a `suspend (…) -> T?` has had its `Nullable(Tv)`
+            // object-erased by now (#86), and recording the erased shape would make this carrier faithfully restore
+            // `suspend () -> object` — a consumer then cannot bind the slot at all. See NullableGenericErasure's
+            // RecordSuspendFnShapes for why the fact is stashed there rather than carried by the nullable-generic
+            // carrier. The stash is consumed here and dropped: it is a bir2cir hand-off and never reaches CIR.
+            var h2t = StashedSuspendFn(obj, NullableGenericErasure.SuspendFnPre) ?? SuspendFnSlot(obj["type"]);
+            var h2r = StashedSuspendFn(obj, NullableGenericErasure.RetSuspendFnPre) ?? SuspendFnSlot(obj["ret"]);
+            if (h2t != null) copy["suspendFnType"] = h2t;
+            if (h2r != null) copy["retSuspendFnType"] = h2r;
+            copy.Remove(NullableGenericErasure.SuspendFnPre);
+            copy.Remove(NullableGenericErasure.RetSuspendFnPre);
             // #133 case3 — KOTLIN `Nothing` RETURN metadata. LowerType erases a `kotlin.Nothing` return to `object`
             // (KotlinAllToClr / the leaf map) — Nothing has no CLR analog. That fold destroys the "this never returns
             // normally" fact, so a re-consuming DotKt assembly widens `if (c) x else fail()` to Any? instead of keeping
@@ -485,6 +494,12 @@ static class BirTypeLowering
     // H2 suspendFnType/retSuspendFnType metadata stamping (the slot's type itself is erased to `object` by LowerType,
     // so its arg/return SHAPE would otherwise be unrecoverable). Spec §0/§1: the metadata IS the structured Type node
     // (the old `sfunc:` string folds into it) — ilemit/dll2klib consume the Fn directly, never a re-rendered string.
+    // The PRE-erasure suspend function shape NullableGenericErasure stashed on this node, as the structured Fn node
+    // the carrier wants, or null when nothing was stashed.
+    static JsonNode StashedSuspendFn(JsonObject obj, string factKey)
+        => (obj[factKey] as JsonValue)?.TryGetValue<string>(out var s) == true && s != null
+            ? System.Text.Json.Nodes.JsonNode.Parse(s) : null;
+
     static JsonNode SuspendFnSlot(JsonNode slot)
     {
         if (slot is JsonObject o && o["t"] is JsonValue tv && tv.TryGetValue<string>(out var s) && s == "fn"
