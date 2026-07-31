@@ -118,9 +118,10 @@ The reader's discipline, in order:
   visited and must agree rather than the first one reflection happens to report winning.
 - **a refusal is not a fallback.** Where the carrier is refused the slot yields nothing; the physical declaration is
   not substituted for it, because it is the same erasure spelled without the evidence that it was one.
-- **an `Array<X?>` slot is refused until `Array<X?>` is canonically `object[]` (#86 D2).** Alone among the positions,
-  the producer does not yet implement what its own slot says: `Array<T>.copyOf(newSize)` declares `Array<T?>`
-  (physically `object[]`) and reflectively allocates a `Nullable<V>[]`.
+- **an `Array<X?>` slot is served like any other (#86 D2).** It used to be refused, because it was the one position
+  where the producer did not implement what its own slot said — `Array<T>.copyOf(newSize)` declared `Array<T?>`
+  (physically `object[]`) and reflectively allocated a `Nullable<V>[]`. `Array<X?>` is now canonically `object[]` for
+  every possibly-value `X`, so the carrier's erasure and the emitted signature agree and the slot is derivable.
 - **a call that states its result only in `sty` is out of the axis**, so a cross-module generic factory's erased
   return is still a formal-only finding. Deriving it needs the parameter half of the func-slot erasure first: the
   same call's function-type argument would otherwise be handed a delegate the consumer cannot build erased.

@@ -71,16 +71,13 @@ declare -A RT_XFAIL=(
 	# second, typed ENTRY POINT: the `.override` bridge of #86 D3, emitting `object accept(object)` beside the
 	# narrowed body.
 	[roundtrip-nullable-vt-generic-override-direct]="#86 D3: a narrowed override called through its OWN declared type does not bind — the CLR slot is accept(object) (it must be, or the interface method is unimplemented) while the re-imported Kotlin surface is accept(x: Int?), and the consumer's emit aborts with 'no referenced method matches the resolved descriptor IntSink.accept(nullable:System.Int32)'; the same override reached through the BASE slot passes, as does the reference instantiation. Measured against the cross-module carrier read: it does NOT prune this — the abort is a missing MEMBER, not a mistyped argument, so there is nothing for an argument derivation to fix. Pruned by the override-slot-bridge step of #86 D3."
-	# D2 — `Array<X?>` has no single representation: a CONCRETE Array<Int?> is Nullable<int32>[] while the
-	# erased/open form is object[], and the two are unrelated CLR types (ECMA-335 I.8.7.1 — array
-	# compatibility requires reference-compatible elements). Measured, the re-imported slot is not even an
-	# array of a nullable element. Pruned by the Array<X?>-is-object[] canonicalisation step.
-	[roundtrip-nullable-vt-generic-array-param]="#86 D2: a cross-module Array<Int?> PARAM re-imports as IntArray, so the consumer fails to compile: argument type mismatch: actual type is 'Array<Int?>', but 'IntArray' was expected — pruned by the Array<X?>-is-object[] canonicalisation step of #86"
-	# The RETURN position fails differently from the param position, and far worse: the consumer COMPILES and
-	# RUNS and prints garbage. The element re-imports as a NON-NULL Int, so the consumer indexes a
-	# Nullable<int32>[] as an int32[] and reads the LAYOUT WORDS as elements. No diagnostic, no exception —
-	# which is why this entry pins the observed OUTPUT as its shape.
-	[roundtrip-nullable-vt-generic-array-ret]="#86 D2: a cross-module Array<Int?> RETURN re-imports with a NON-NULL Int element, so the consumer indexes a Nullable<int32>[] as an int32[] and reads the layout words as elements — an array of 4/null/8 reports 3/1/4/0 (hasValue, value, then the null element's zeroed flag) with no diagnostic and no exception; pruned by the Array<X?>-is-object[] canonicalisation step of #86"
+	#
+	# PRUNED by the `Array<X?>`-is-`object[]` canonicalisation (#86 D2): both cross-module `Array<Int?>` sections,
+	# param and return. `Array<X?>` is now `object[]` at every position for a possibly-value `X`, the pre-erasure
+	# `Array<Int?>` rides the same `[KotlinNullableGeneric]` carrier every other erased slot does, and the reader
+	# serves it — so the consumer's own `Array<Int?>` compiles against the re-imported slot and the null element
+	# survives the boundary. Their `Array<String?>` control stays as the control it was: a reference element keeps
+	# its `string[]`, which is the half of D2 that did NOT move.
 )
 
 # The documented failure SHAPE of each RT_XFAIL entry: a substring the section's EVIDENCE (every compiler /
@@ -92,9 +89,6 @@ declare -A RT_XFAIL=(
 declare -A RT_XFAIL_SHAPE=(
 	[roundtrip-nullable-vt-generic-seq-mapnotnull]='System.EntryPointNotFoundException'
 	[roundtrip-nullable-vt-generic-override-direct]='no referenced method matches the resolved descriptor'
-	[roundtrip-nullable-vt-generic-array-param]="but 'IntArray' was expected"
-	# No diagnostic and no exception: this one fails by printing a WRONG VALUE, so the shape is the value.
-	[roundtrip-nullable-vt-generic-array-ret]='(stdout) 3/1/4/0'
 )
 
 # A listed name with no documented shape is the hole this map exists to close, so it is rejected here rather

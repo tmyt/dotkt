@@ -1546,17 +1546,39 @@ What this is observable as:
 - **A C# consumer sees `object`.** `fun <T> firstOr(x: T?, d: T): T` surfaces as
   `static T firstOr<T>(object x, T d)`, so a C# caller passes `null` or a boxed value rather than a `T?`.
 
-Two positions are deliberately **not** uniform yet, and both are the same unfinished decision:
+### `Array<X?>` is `object[]` — the one erasure that is not transparent
 
-- a *concrete* `Array<Int?>` is still `System.Nullable<int32>[]`, an unrelated CLR type from the `object[]` an open
-  `Array<T?>` erases to (array compatibility requires reference-compatible elements, ECMA-335 I.8.7.1); and
-- the `arrayOfNulls<T>(n) … as Array<T>` reify-back chain keeps a bare `!T[]` end to end, because its allocation is a
-  genuine `newarr !T` and widening only the slot would store `object` references into it.
+An array element is the single position where the erasure is *observable in the type*, because `object[]` and
+`Nullable<int32>[]` are **unrelated** CLR types: array compatibility requires reference-compatible elements
+(ECMA-335 I.8.7.1), and no cast converts one to the other. There is therefore one representation and it is the erased
+one:
 
-Canonicalising every one of them to `object[]` is decided but not landed; it is tracked as sub-decision D2 of #86.
-One more shape is incomplete rather than non-uniform: an override that narrows a base `T?` slot fills the base's
-erased slot correctly and dispatches, but calling it through its **own** declared type does not bind cross-module —
-that entry point needs the `.override` bridge of sub-decision D3.
+> **`Array<X?>` is `System.Object[]` whenever `X` may be a value type** — an open type variable (some instantiation
+> is a struct) or a concrete value type. `Array<String?>` keeps `string[]`, `Array<Int>` keeps `int32[]`, and
+> `IntArray` is untouched.
+
+What this is observable as, beyond the boxing already listed above:
+
+- **`Array<Int?>` surfaces to C# as `object[]`, not `int?[]`.** A C# caller passes and receives `object[]`, and each
+  element is a boxed `int` or a null.
+- **Elements box on the way in and unbox on the way out.** `a[0] = 5` boxes; `a[0]` reads the box back. This is the
+  Kotlin/JVM `Integer[]` shape rather than the CLR `int?[]` one.
+- **`is Array<Int?>` loses precision.** Every `Array<X?>` at a possibly-value `X` has the same runtime type, so a
+  runtime test cannot tell `Array<Int?>` from `Array<Boolean?>` — the semantic element comes from the DotKt metadata,
+  as it does for every other erased slot.
+- **A generic instantiated *through* such an array is instantiated at `object`.** `arrayOfNulls<Int>(3).copyOf(4)`
+  binds `T = Int?`, whose array is the `object[]` the receiver already is, so the callee is instantiated at `object`
+  rather than at `Nullable<int32>` — the only instantiation whose `T[]` parameter that receiver inhabits. The result
+  follows: an `Array<T>` extension over an `Array<Int?>` yields `List<object>`, not `List<Nullable<int32>>`. The type
+  argument of a generic that does **not** reach an array is unaffected: `listOf<Int?>(null, 2)` is still a
+  `List<Nullable<int32>>`.
+- **`copyOf(newSize)` decides at runtime.** Its generic body has no `T : struct` constraint and no reified `T`, so it
+  reads the receiver's own element type: a value element allocates `object[]`, a reference element allocates
+  `elem[]`. Both inhabit the erased `object[]` the declaration states — the reference one by array covariance.
+
+One shape is incomplete rather than non-uniform: an override that narrows a base `T?` slot fills the base's erased
+slot correctly and dispatches, but calling it through its **own** declared type does not bind cross-module — that
+entry point needs the `.override` bridge of sub-decision D3 of #86.
 
 ## 10. Round-trip fidelity
 

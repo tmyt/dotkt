@@ -414,12 +414,13 @@ sealed class Pipeline
             // receiver token to `object` (this pass keys on that token). Self-gates to concrete value instantiations
             // (an open `gp:T` arg is not a value type) so it is a no-op in the rt-stdlib self-build.
             if (!_options.RefBuild) ValueTypeNullableCollectionArg.Apply(bir.Root, isValueFqn);
-            // ARRAY-ELEMENT NULLABILITY realign (C2): kotc emits `arrayOfNulls<Int>(3)` as `newArraySized elem=kotlin.Int`
-            // (the non-null element) while the declaring var is `Array<Int?>` = `array:nullable:int` = `Nullable<int>[]`.
-            // The array-creation then builds an `int[]`, but element stores `stelem Nullable<int>` — a struct-size mismatch
-            // that corrupts memory. Realign the creation's `elem` to the declared array type's `nullable:` element so a
-            // real `Nullable<int>[]` is allocated. Runs BEFORE type lowering (elem tokens are still `kotlin.*`).
-            ArrayNullableElemRealign.Apply(bir.Root);
+            // ARRAY-ELEMENT CANONICALIZATION (#86 D2): an `Array<X?>` with a possibly-value `X` is `object[]`, so an
+            // array CREATION filling such a slot allocates `object[]` too. kotc writes the source's own element there
+            // (`arrayOf(1,2,3)` into an `Array<Int?>` says `kotlin.Int`), which is not a `Nullable(...)` the erasure
+            // sweep below could see — leaving it allocates an `int32[]` under an `object[]` slot, and the boxed
+            // element stores then corrupt memory rather than failing to type-check. Runs BEFORE type lowering (elem
+            // tokens are still `kotlin.*`) and before the erasure, which then finds the two already agreeing.
+            ArrayNullableElemCanonicalization.Apply(bir.Root, isValueFqn);
             // NULLABLE IS-TEST (`x is T?`): null IS a member of a nullable type in Kotlin, and the frontend's
             // else-branch smart-cast to a NON-null `x` depends on it. `isinst` never matches null, so mark the node
             // and let ilemit add the null-accepting branch. Runs BEFORE type lowering, which erases the `?` on the
@@ -560,7 +561,7 @@ sealed class Pipeline
             // sequenced stdlib follow-up, §5g). The System.Type/BCL knowledge lives HERE, never in the kotc frontend
             // (layer purity, mirrors the exception-map / annotation-base migrations). Non-ref only: ref keeps KClass pure.
             if (!_options.RefBuild) hoisted = KClassMemberBinding.Apply(hoisted);
-            var substituted = _options.RefBuild ? PropertyMarkerReconstruct.Apply(hoisted) : MemberCallSubstitution.Apply(hoisted, refs, localTopLevelFns, attributeTopLevelOwner);
+            var substituted = _options.RefBuild ? PropertyMarkerReconstruct.Apply(hoisted) : MemberCallSubstitution.Apply(hoisted, refs, localTopLevelFns, attributeTopLevelOwner, isValueFqn);
             // Cross-module half of UncheckedGenericCastReturnErasure.  MemberCallSubstitution has now attributed a
             // referenced top-level call to its real file-class owner; bind the trusted physical-Object/logical-T
             // metadata boundary to an explicit CIR return conversion before `sty` is consumed by type lowering.

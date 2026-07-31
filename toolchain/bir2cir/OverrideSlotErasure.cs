@@ -76,7 +76,7 @@ static class OverrideSlotErasure
         Func<string, bool> isValue)
     {
         if (TypeJson.Read(decl[typeKey]) is not TypeNode t) return;
-        var erased = ApplyErasurePattern(baseSlot, NullableGenericErasure.EraseNullableTv(baseSlot), t);
+        var erased = ApplyErasurePattern(baseSlot, NullableGenericErasure.EraseNullableTv(baseSlot, isValue), t);
         if (erased.Equals(t)) return;
         decl[typeKey] = TypeJson.Write(erased);
         decl[factKey] ??= TypeNode.ToJson(t);

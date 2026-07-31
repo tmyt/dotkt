@@ -3239,7 +3239,11 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     }
     private KType Any(bool nullable) => Named("kotlin.Any", nullable);
     private KType Array(KType element) {
-        if (element.HasClassName && _names.ClassName(element.ClassName) is string elementName &&
+        // A Kotlin specialized array is an array of the NON-NULL primitive: `IntArray` is `int32[]`, while
+        // `Array<Int?>` is a different Kotlin type with a different physical form (`object[]` — #86 D2). Collapsing a
+        // nullable element onto the specialized name dropped the `?` and re-imported `Array<Int?>` as `IntArray`, so a
+        // consumer holding the real thing could not pass it to the slot that declared it.
+        if (element.HasClassName && !element.Nullable && _names.ClassName(element.ClassName) is string elementName &&
             PrimitiveArray(elementName) is string specialized)
             return Named(specialized);
         var t = Named("kotlin.Array");

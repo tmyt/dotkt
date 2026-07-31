@@ -59,7 +59,7 @@ static partial class NullableTvErasureCallRealign
             // A declared slot may be individually unknown (a referenced parameter whose declaration the producing
             // assembly could not state structurally); that position falls back to the descriptor like an undeclared call.
             var target = haveDecl && declParams[i] != null
-                ? Subst(NullableGenericErasure.EraseNullableTv(declParams[i]), ownerArgs, methodArgs)
+                ? Subst(NullableGenericErasure.EraseNullableTv(declParams[i], _isValue), ownerArgs, methodArgs)
                 : null;
             // A CONSTRUCTION whose instantiation is the erasure counterpart of the slot is RETYPED rather than
             // converted, and before it is evaluated so its own constructor arguments are reconciled against the
@@ -73,12 +73,28 @@ static partial class NullableTvErasureCallRealign
             // The same rule for an ARRAY construction, which is how a `vararg` argument list is packed: build the
             // element type the slot names. `EvalNewArray` then reconciles the elements against it, so the `newarr`
             // and every `stelem` filling it agree by construction.
-            if (target is TypeNode.Array ta && args[i] is JsonObject ar
+            //
+            // ONLY when that element is the bare `object` seam — `vararg xs: T?`, whose pack is an `object[]` the
+            // elements box into. An element erased INSIDE a constructed generic (`vararg slots: Slot<T?>`, packed as
+            // `Slot<object>[]`) is not reconcilable: a `Slot<String?>` the caller holds is a `Slot<string>`, unrelated
+            // to `Slot<object>`, so retyping the pack would emit a `stelem Slot<object>` over it and turn a formal
+            // stack-type difference into an ArrayTypeMismatchException. The pack keeps the element it was built with
+            // there; only the DESCRIPTOR follows the callee, because that is what resolves the member.
+            if (target is TypeNode.Array ta && IsBareObject(ta.Elem) && args[i] is JsonObject ar
                 && Str(ar["k"]) is "newArray" or "newArrayInit" or "newArraySized"
                 && TypeJson.Read(ar["elem"]) is TypeNode se
                 && !se.Equals(ta.Elem) && IsObjectErasureOf(ta.Elem, se))
                 ar["elem"] = TypeJson.Write(ta.Elem);
             argTypes[i] = args[i] != null ? Eval(args[i], ctx) : null;
+            // #86 D2, the type-argument axis: what actually FLOWED into this slot can settle a method type argument
+            // the declaration alone leaves open. An `Array<Int?>` IS an `object[]`, so a value reaching a `!!i`-shaped
+            // position as a bare `object` says the callee has to be instantiated at `object` — and the whole rest of
+            // the signature, this call's remaining arguments and its return included, follows from that.
+            if (haveDecl && declParams[i] != null && argTypes[i] != null && methodArgs != null
+                && UnifyMethodArgs(declParams[i], argTypes[i], methodArgs, call))
+                target = declParams[i] != null
+                    ? Subst(NullableGenericErasure.EraseNullableTv(declParams[i], _isValue), ownerArgs, methodArgs)
+                    : target;
             if (target != null)
             {
                 if (descriptor != null && TypeJson.Read(descriptor[i]) is TypeNode stamped
@@ -107,6 +123,51 @@ static partial class NullableTvErasureCallRealign
                 args[i] = wrapped;
         }
         return argTypes;
+    }
+
+    // Settle method type arguments against the type that FLOWED into a parameter (#86 D2). Walks the DECLARED
+    // parameter beside the flowed type; wherever the declaration says `!!i` INSIDE an array or a constructed generic
+    // and what arrives there says a bare `object`, `!!i` must BE `object`. That is forced by what the value IS, not
+    // chosen: `object[]` inhabits `!!i[]` at that instantiation and no other (array compatibility needs
+    // reference-compatible elements, ECMA-335 I.8.7.1), and `X<object>` inhabits `X<!!i>` at that one and no other
+    // (a reified generic is invariant; a covariant one only ever widens TOWARDS `object`). Reports whether anything
+    // moved, and writes the corrected arguments back onto the node so the emitter resolves the same instantiation.
+    //
+    // NOT at the top-level scalar position. A bare `!!i` parameter handed an erased `object` needs no
+    // re-instantiation — the object seam narrows the value into it, keeping the caller's own type argument — so
+    // unifying there would weaken `f<String>(erasedValue)` into `f<object>` for nothing. The walk pairs constructed
+    // types by ARGUMENT POSITION rather than by name, because the two sides are legitimately different types (a
+    // `List<object>` arrives at a `Collection<!!0>` slot) and position is what the CLR's assignability rule aligns.
+    static bool UnifyMethodArgs(TypeNode declared, TypeNode flowed, TypeNode[] methodArgs, JsonObject call)
+    {
+        var moved = false;
+        Walk(declared, flowed, nested: false);
+        if (moved && call["typeArgs"] is JsonArray typeArgs)
+            for (var i = 0; i < methodArgs.Length && i < typeArgs.Count; i++)
+                typeArgs[i] = TypeJson.Write(methodArgs[i]);
+        return moved;
+
+        void Walk(TypeNode d, TypeNode f, bool nested)
+        {
+            switch (d, f)
+            {
+                case (TypeNode.Tv { Scope: "method" } tv, _) when tv.I >= 0 && tv.I < methodArgs.Length:
+                    if (nested && IsBareObject(f) && !IsBareObject(methodArgs[tv.I]))
+                    {
+                        methodArgs[tv.I] = new TypeNode.Fqn("object");
+                        moved = true;
+                    }
+                    break;
+                case (TypeNode.Array da, TypeNode.Array fa): Walk(da.Elem, fa.Elem, nested: true); break;
+                case (TypeNode.Nullable dn, TypeNode.Nullable fn): Walk(dn.Of, fn.Of, nested); break;
+                case (TypeNode.Oblivious dobl, TypeNode.Oblivious fo): Walk(dobl.Of, fo.Of, nested); break;
+                case (TypeNode.ByRef db, TypeNode.ByRef fb): Walk(db.Of, fb.Of, nested); break;
+                case (TypeNode.Fqn { Args: { } dargs }, TypeNode.Fqn { Args: { } fargs })
+                    when dargs.Length == fargs.Length:
+                    for (var i = 0; i < dargs.Length; i++) Walk(dargs[i], fargs[i], nested: true);
+                    break;
+            }
+        }
     }
 
     // A call NetInteropBinding has already BOUND to a .NET member. Only the WRITE axis applies to it: the callee is
@@ -179,6 +240,27 @@ static partial class NullableTvErasureCallRealign
         return null;
     }
 
+    // `for (x in arr)` over an object-erased array. The node's `elem` is simultaneously the `ldelem` token and the loop
+    // variable's declared slot, so BOTH follow the array that flows: re-stamp it to the flowed element (the same
+    // object-erasure gate every other rewrite here uses) and register the loop var at that type, so a value consumer
+    // inside the body — `x!!`, `x?.f()`, an argument — narrows out of `object` once, where it is used.
+    static TypeNode EvalForArray(JsonObject obj, Ctx ctx)
+    {
+        var arrType = obj["array"] != null ? Eval(obj["array"], ctx) : null;
+        var elem = TypeJson.Read(obj["elem"]);
+        if (arrType is TypeNode.Array arr && elem != null && !elem.Equals(arr.Elem) && IsObjectErasureOf(arr.Elem, elem))
+        {
+            obj["elem"] = TypeJson.Write(arr.Elem);
+            elem = arr.Elem;
+        }
+        if (Str(obj["var"]) is string v && elem != null) ctx.Env[v] = elem;
+        if (obj["body"] != null) Eval(obj["body"], ctx);
+        foreach (var kv in obj)
+            if (kv.Value != null && kv.Key is not ("array" or "body" or "elem" or "k" or "var" or "label"))
+                Eval(kv.Value, ctx);
+        return null;
+    }
+
     // `nullableHasValue`/`nullableValue` unwrap a structural `Nullable<V>`; the node's own `elem` names the `V`.
     // Narrow an erased `object` operand to that `Nullable<V>` first. The result is `bool` for the test and the bare
     // `V` for the read.
@@ -199,7 +281,7 @@ static partial class NullableTvErasureCallRealign
         if (declParams == null || declParams.Length != args.Count) return;
         for (var i = 0; i < args.Count; i++)
             if (declParams[i] != null
-                && Subst(NullableGenericErasure.EraseNullableTv(declParams[i]), ownerArgs, null) is TypeNode target
+                && Subst(NullableGenericErasure.EraseNullableTv(declParams[i], _isValue), ownerArgs, null) is TypeNode target
                 && args[i] is JsonObject arg && CastForTarget(arg, argTypes[i], target) is JsonNode wrapped)
                 args[i] = wrapped;
     }
@@ -243,7 +325,7 @@ static partial class NullableTvErasureCallRealign
         if (TypeJson.Read(obj["ownerType"]) is not TypeNode.Fqn owner || Str(obj["name"]) is not string name) return null;
         if (!ctx.Idx.Slots.TryGetValue(owner.Name, out var slots)) return null;
         if (!slots.TryGetValue(name, out var declared) || declared == null) return null;
-        return Subst(NullableGenericErasure.EraseNullableTv(declared), owner.Args, null);
+        return Subst(NullableGenericErasure.EraseNullableTv(declared, _isValue), owner.Args, null);
     }
 
     static void EvalArraySet(JsonObject obj, Ctx ctx)

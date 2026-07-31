@@ -30,9 +30,6 @@ declare -A ILVERIFY_XFAIL=(
 	# consumer's restored `Vault<string>` slot — StackUnexpected. Runtime-SAFE (object/string are reference-compatible;
 	# the erased Vault holds the string; the value-assert RUN lane is green). Same object-erasure formal-only family.
 	["GenericMetadataRoundtripTests::nullableGenericMembersRoundTrip()"]="#86 nullable-generic object-erasure: holderOf's erased Vault<object> return vs the restored Vault<string> slot — runtime-safe (RUN green)"
-	# #86: copyOf on a value-element array returns Array<T?>, represented as object[] while the formal callsite
-	# expects Nullable<Int>[]; all prefix/tail value assertions run green. Dies with the Array<X?>-is-object[] step.
-	["ArrayTests::copyOfGrowsWithNullTail()"]="#86 nullable value-array object erasure: copyOf returns object[] where Nullable<Int>[] is formally expected — runtime-safe (RUN green)"
 	# #324: the value-element collection receiver conversion produces an `IEnumerable<object>` (all
 	# `Enumerable.Cast<object>` can produce), which does not FORMALLY inhabit a `List<T?>` slot's
 	# `IReadOnlyList<object>`. The conversion is now keyed correctly — on the receiver's own nullable element, not on

@@ -85,11 +85,15 @@ static class MemberCallSubstitution
         _ => false,
     };
 
+    // The struct-ness oracle, for the `Array<X?>` element canonicalization (#86 D2) the array factories below apply.
+    static Func<string, bool> _isValue = _ => false;
+
     public static JsonNode Apply(JsonNode root, ReferenceMetadataIndex refs,
-        IReadOnlySet<string> localTopLevelFns, bool attributeTopLevelOwner)
+        IReadOnlySet<string> localTopLevelFns, bool attributeTopLevelOwner, Func<string, bool> isValue)
     {
         _localTopLevelFns = localTopLevelFns;
         _attributeTopLevelOwner = attributeTopLevelOwner;
+        _isValue = isValue ?? (_ => false);
         _typesWithConcreteIterator = CollectConcreteIteratorTypes(root);
         return Rewrite(root, refs, new SubstCtx());
     }
@@ -593,22 +597,20 @@ static class MemberCallSubstitution
                 var elemT = TypeArgAt(typeArgs, 0);
                 if (elemT == null || args.Count < 1) return null;
                 // `arrayOfNulls<T>` returns `Array<T?>` — the element is the NULLABLE form of the type argument, NOT the
-                // bare T. The call's typeArgs[0] is the non-null T (`kotlin.Int`), so wrap it in Nullable so a value-type
-                // element allocates a genuine `Nullable<int>[]` (not a native `int[]`, whose 4-byte slots would corrupt on
-                // `stelem Nullable<int>`). Uniformity comes from ReferenceNullableStrip (runs after substitution): it keeps
-                // `Nullable(value)` but COLLAPSES `Nullable(reference)` AND `Nullable(Tv)` back to the bare inner. So a
-                // reference `T` -> bare `System.String[]`, and an OPEN type-variable `T` (a non-inlined generic body — the
-                // `plus`/two-arg-`arrayOfNulls` actuals) -> bare `newarr !T` (the exact-reified path those bodies' trailing
-                // `as Array<T>` identity casts depend on — LOAD-BEARING, this wrap must stay a no-op there). Its SIBLING is
-                // NullableGenericErasure.CollapseReifiedArrayVars (#120): for the fresh-local reify-back idiom
-                // (`val result = arrayOfNulls<T>(n); ...; return result as Array<T>` — plus/plusElement/toTypedArray) it
-                // collapses the matching body-local `var result: Array<T?>` SLOT + its `arraySet`/`arrayGet` `elem` to bare
-                // `!T`, so var slot / newarr / stelem / ldelem / cast all agree; an `object[]` slot over this `newarr !T`
-                // would corrupt a value-type instantiation. Skip an already-nullable typeArg (`arrayOfNulls<Int?>`) to
-                // avoid a malformed `Nullable(Nullable)` double-wrap.
+                // bare T, and the call's typeArgs[0] is the non-null T (`kotlin.Int`). Wrapping it in `Nullable` states
+                // that, and `CanonicalArrayElem` then gives it its ONE physical form (#86 D2): `object` for a
+                // possibly-value element (an open `T` or a value `Int`/`Boolean` — the array is `object[]` either way,
+                // so an open body and a value instantiation of it meet), and the bare element for a reference `T`
+                // (`arrayOfNulls<String>` is a `string[]`; ReferenceNullableStrip drops the `?` there anyway). Skip an
+                // already-nullable typeArg (`arrayOfNulls<Int?>`) to avoid a malformed `Nullable(Nullable)` double-wrap.
                 var elemNode = TypeJson.Read(elemT);
-                var nullableElem = elemNode is TypeNode.Nullable ? elemT.DeepClone() : TypeJson.Write(new TypeNode.Nullable(elemNode));
-                return new JsonObject { ["k"] = "newArraySized", ["elem"] = nullableElem, ["size"] = args[0].DeepClone() };
+                var nullableElem = elemNode is TypeNode.Nullable ? elemNode : new TypeNode.Nullable(elemNode);
+                return new JsonObject
+                {
+                    ["k"] = "newArraySized",
+                    ["elem"] = TypeJson.Write(CanonicalArrayElem(nullableElem)),
+                    ["size"] = args[0].DeepClone(),
+                };
             }
             // "vararg": arrayOf<T>(...) / intArrayOf(...) -> newArray. kotc emits the vararg as a single `newArray` arg
             // (an EMPTY vararg is dropped -> args=[]). The elem source, in precedence: typeArgs[0] (the generic
@@ -621,10 +623,23 @@ static class MemberCallSubstitution
             if (arrElem == null) return null;                                   // no element source -> plain call
             var arrElems = new JsonArray();
             foreach (var el in (wrapper?["elems"] as JsonArray) ?? new JsonArray()) arrElems.Add(el.DeepClone());
-            return new JsonObject { ["k"] = "newArray", ["elem"] = arrElem.DeepClone(), ["elems"] = arrElems };
+            // `arrayOf<Int?>(1, null)` names a NULLABLE value element in its own type argument, which is the same
+            // `Array<Int?>` the declaration axis makes `object[]` — so the allocation obeys the same rule (#86 D2).
+            return new JsonObject
+            {
+                ["k"] = "newArray",
+                ["elem"] = TypeJson.Write(CanonicalArrayElem(TypeJson.Read(arrElem))),
+                ["elems"] = arrElems,
+            };
         }
         return null;
     }
+
+    // The physical element of an array whose Kotlin element type is `elem` (#86 D2, owned by NullableGenericErasure).
+    // The factories above build arrays AFTER the declaration-axis erasure has run, so they apply the rule themselves
+    // rather than inheriting it from a sweep that has already gone by.
+    static TypeNode CanonicalArrayElem(TypeNode elem)
+        => elem == null ? null : NullableGenericErasure.EraseArrayElem(elem, _isValue);
 
     // An INLINE Pair construction's two operands (key, value), or null if `el` is not one. Two shapes: a `new
     // kotlin.Pair(k,v)` literal, or a `callStatic .to(k,v)` — the `a to b` idiom whose stdlib body is `Pair(this,
