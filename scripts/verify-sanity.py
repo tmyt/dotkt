@@ -64,10 +64,13 @@ def _collect_labels(roots):
 
 
 # ---- check 7: `sty` vs `ret`/`dynRet` (spec 2.7) --------------------------------------------------------
-# The mirror of IrSanity.CheckStampAgreement — read the block comment there for WHY each arm accepts. In
-# short: the relation is a REFUTATION test that reports only two concrete, structurally comparable types that
-# are confidently different, because `sty` is the frontend's INSTANTIATED type and `ret` the callee's DECLARED
-# one, and they legitimately differ in ways that are not a difference of type IDENTITY.
+# The mirror of IrSanity.CheckStampAgreement — read the block comment there for WHY each arm is what it is,
+# and for the two LIMITS a green run does not cover. In short: the relation is a REFUTATION test that reports
+# only two concrete, structurally comparable types that are confidently different, because `sty` is the
+# frontend's INSTANTIATED type and `ret` the callee's DECLARED one, and they legitimately differ in ways that
+# are not a difference of type IDENTITY. On a MALFORMED type node the two sides skip different amounts (this
+# one abandons only the unreadable subtree, the C# abandons the whole node) — a difference of conservatism on
+# input verify-schema rejects first, never of the relation.
 
 # (b) the kotlin.* / CLR-shorthand / System.* spellings of one CLR type, collapsed to one token.
 _CANON = {

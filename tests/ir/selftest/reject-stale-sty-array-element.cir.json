@@ -1,0 +1,25 @@
+{
+  "fileClass": "SelftestKt",
+  "methods": [
+    {
+      "name": "twoArraysOfDifferentElements",
+      "params": [],
+      "ret": { "t": "array", "elem": { "t": "fqn", "name": "int" } },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "callStatic",
+            "owner": null,
+            "calleeOwner": { "t": "fqn", "name": "SelftestKt" },
+            "method": "retypedAcrossTheArraySpellings",
+            "sig": [],
+            "sty": { "t": "fqn", "name": "kotlin.Array", "args": [{ "t": "fqn", "name": "kotlin.String" }] },
+            "ret": { "t": "array", "elem": { "t": "fqn", "name": "int" } },
+            "args": []
+          }
+        }
+      ]
+    }
+  ]
+}

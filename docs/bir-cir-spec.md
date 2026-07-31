@@ -630,6 +630,18 @@ pair of unlike or different-arity shapes all AGREE), so it names only the class 
 pair whose argument names a genuinely different type. A MISSING stamp is not a disagreement — dropping it is one of
 the two things this invariant permits.
 
+A pass that CAN compute the new instantiated type rewrites the stamp; a pass that cannot — because what it wrote is
+the physical, erased or declared shape rather than this call site's instantiation — deletes it through
+`bir-common/NodeType.cs` `DropStampIfStale`, which deletes it *when, and only when, the new result refutes it*. The
+qualifier is not caution, it is correctness in both directions: a stamp the new result still describes is worth
+keeping (`ret` would answer the same, so nothing is gained by dropping), and where a pass's own rewrite is the LESS
+trustworthy of the two — `ConstructedMemberReturnSubstitution` cannot tell a callee-relative `tv` from one kotc
+already instantiated, so it can re-substitute an instantiated `Map$Entry<K,V>` into `Map$Entry<Map$Entry<K,V>,V>` —
+the stamp is what shields every downstream deriver from it. That helper asks `IrSanity.StampAgrees`, the same
+relation the check refutes with, so a pass and the chokepoint cannot answer the question differently; the check
+consequently cannot fire on a pass that discharges its obligation this way, which is the intended outcome and not a
+gap. The chokepoint is for the pass that has not been written yet.
+
 **No `kotlin.Any` for a slot whose type could not be derived.** A declared slot — a state-machine field, a spill
 local, a plan binding — with an underivable type is a REFUSAL that names the shape, not a box: `kotlin.Any` hides
 a type the CLR would refuse and converts an earlier layer's dropped stamp into a runtime unbox fault. The

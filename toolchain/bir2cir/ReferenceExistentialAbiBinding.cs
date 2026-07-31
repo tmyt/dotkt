@@ -34,6 +34,7 @@ static class ReferenceExistentialAbiBinding
                         kind == "callStatic", methodArity, paramCount, out var physicalParams, out var physicalResult))
                     {
                         call["sig"] = new JsonArray(physicalParams.Select(TypeJson.Write).ToArray());
+                        var previousResult = TypeJson.Read(call["ret"]);
                         call["ret"] = TypeJson.Write(physicalResult);
                         // Spec §2.7: a pass that changes a node's RESULT TYPE rewrites or deletes its `sty`. Binding
                         // the referenced DLL's PHYSICAL result is such a change — the existential erasure can make it
@@ -41,7 +42,11 @@ static class ReferenceExistentialAbiBinding
                         // deriver, so a slot declared from it would name a type the value does not have. The
                         // instantiation cannot be recovered from the physical signature, so the stamp is DROPPED (the
                         // other thing §2.7 permits) where the binding invalidated it, and kept where it did not.
-                        NodeType.DropStampIfStale(call);
+                        //
+                        // Gated on THIS pass having actually changed the result: §2.7 is an obligation on the pass
+                        // that retypes, and a pass that silently laundered another pass's stale stamp would remove the
+                        // evidence the chokepoint exists to surface.
+                        if (!physicalResult.Equals(previousResult)) NodeType.DropStampIfStale(call);
                     }
                 }
                 foreach (var value in call.Select(kv => kv.Value).ToList())

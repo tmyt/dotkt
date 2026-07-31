@@ -260,9 +260,10 @@ public static class IrSanity
         {
             if (node.TryGetProperty("k", out var kEl) && kEl.ValueKind == JsonValueKind.String)
             {
-                // 7. STAMP AGREEMENT — runs in BOTH modes and on EVERY scope: unlike check 6, its subject is not what
-                // ilemit emits. `sty` is consumed by bir2cir's own type derivers, which walk every body whatever its
-                // modifiers say, so a stale stamp is a bug wherever it sits.
+                // 7. STAMP AGREEMENT — runs in BOTH modes and in EVERY scope this walk reaches: unlike check 6, its
+                // subject is not what ilemit emits. `sty` is consumed by bir2cir's own type derivers, which walk every
+                // body whatever its modifiers say, so no scope is exempt. (Which scopes the walk REACHES is a
+                // separate, narrower question — see the LIMITS note on CheckStampAgreement.)
                 CheckStampAgreement(decl, node, kEl.GetString());
                 if (which == IrSanityChecks.StyStampsOnly)
                 {
@@ -386,17 +387,38 @@ public static class IrSanity
     //       re-spelling of the same value (`kotlin.Comparator<!!0>` vs `kotlin.Comparator$dotkt_star`).
     //   (e) `nullable`/`oblivious` wrappers are stripped on both sides before comparing: nullability is an annotation
     //       axis that DeclNullableFlags/ReferenceNullableStrip move off the type at their own point in the pipeline,
-    //       not a difference of which type the node produces.
+    //       not a difference of which type the node produces. (Stripping does not ADD acceptance — it makes the type
+    //       UNDER the wrapper comparable, so it is what lets `String?` vs `Int?` be refuted at all.)
     //   (f) `{t:array,elem:E}` and the name-keyed `kotlin.Array<E>` are the same type in two spellings (spec §2.7
-    //       *One deriver, two layers* — `StaticType.Surface` mints the name-keyed one on purpose).
+    //       *One deriver, two layers* — `StaticType.Surface` mints the name-keyed one on purpose). Like (e), this
+    //       makes the ELEMENTS comparable rather than accepting more.
     //   (g) Anything not structurally comparable — two different `t` discriminators, two `fqn`s of the same name with
     //       DIFFERENT arities, two `fn`s of different arity — is ACCEPTED. An erasure that drops or adds a generic
     //       argument is a shape this check declines to judge; the check exists for the class that bit in FU-⑧, which
     //       is a same-shape, same-arity pair whose ARGUMENT NAMES a different type.
     //
     // What is left is exactly the refutation: two `fqn`s whose canonical names differ, or whose same-arity arguments
-    // recursively refute. The whole corpus above is green under it — with ONE genuine violation it found, since fixed
-    // (ContinuationErasure promoted a `getOrThrow` call's `ret` Unit->Any and left `sty` at Unit).
+    // recursively refute (likewise two `fn`s). Note which arms therefore do WORK: (e) and (f) are what make a
+    // refutation REACHABLE through a wrapper or across the two array spellings — without them `String?` vs `Int?`
+    // and `Array<String>` vs `int[]` would fall to the catch-all and be accepted — while (a) restates, for a reader,
+    // an acceptance the catch-all already gives (a `tv` is neither `Fqn` nor `Fn`, so nothing refutes it). The
+    // `tests/ir/selftest` fixtures pin (b), (c), (d), the arity guard in (g), and the two refutations (e)/(f) unlock.
+    //
+    // TWO LIMITS, stated because they bound what a green gate means. (1) `CanonName` knows the PRIMITIVE vocabulary
+    // only, not the whole `@ClrTypeAlias` index (`kotlin.collections.List` vs `IReadOnlyList`, `kotlin.Throwable` vs
+    // `System.Exception`): those conversions all live in `BirTypeLowering`, downstream of the chokepoint, so no node
+    // can carry the two spellings on one pair yet — a pass that moved alias resolution earlier would have to extend
+    // the table with it. (2) The declaration walk descends one level of `types`, so a stale stamp inside a NESTED
+    // type synthesized by bir2cir is not reached; measured over the calibration corpus that set is empty (every
+    // sty/ret pair in it is inside a top-level declaration), but it is a hole, not a proof.
+    //
+    // The whole corpus above is green under this — after the FOUR genuine violations calibration found, all fixed in
+    // the same change (ContinuationErasure, NullableGenericErasure, ReferenceExistentialAbiBinding,
+    // ConstructedMemberReturnSubstitution). Those four discharge §2.7 through `NodeType.DropStampIfStale`, which asks
+    // `StampAgrees` itself, so this check cannot fire on them by construction — DELIBERATELY: a pass that complies is
+    // the outcome, and the purpose of a chokepoint is the pass that has not been written yet. The cost of that choice
+    // is that weakening this relation silently weakens those four repairs too, which is the reason it lives here,
+    // stated once, rather than as a checker plus four restatements.
     static readonly string[] StampSlots = { "ret", "dynRet" };
 
     static void CheckStampAgreement(string decl, JsonElement node, string kind)
@@ -421,7 +443,10 @@ public static class IrSanity
     // (FormatException for an unknown/absent `t`, KeyNotFoundException for a missing required property,
     // InvalidOperationException for a property of the wrong JSON kind), so the catch is deliberately total: the
     // python mirror's `isinstance` guards accept the same shapes, and a checker that is stricter than its mirror on
-    // documents neither is meant to judge is a difference with no upside.
+    // documents neither is meant to judge is a difference with no upside. The two do still SKIP different amounts on
+    // such a document — an unreadable subtree makes this side abandon the whole node, while the mirror's guards
+    // abandon only that subtree and keep comparing the heads — which is a difference of conservatism on input the
+    // schema validator rejects first, not of the relation.
     static TypeNode TryReadType(JsonElement e)
     {
         try { return TypeNode.Read(e); }

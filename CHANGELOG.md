@@ -21,13 +21,18 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   or different-arity shapes all AGREE, and a missing stamp is not a disagreement. Calibrating it found four live
   violators, all fixed here. `ContinuationErasure` promoted a discarded `Result` accessor's `ret` from `Unit` to
   `kotlin.Any` so ilemit would pop the value, and left `sty` at `kotlin.Unit` — restoring for every deriver the
-  exact stale `void` hint the promotion exists to remove. The other three are one family, the CROSS-MODULE generic
-  erasure the FU-⑧ sweep did not reach: `NullableGenericErasure`, `ReferenceExistentialAbiBinding` and
-  `ConstructedMemberReturnSubstitution` each replace a call's declared result with the PHYSICAL one — a
-  `Slot<T?>`/`Slot<String>` bound as `Slot<object>`, unrelated invariant reified generics — while the frontend stamp
-  still named the pre-erasure instantiation. None can rewrite the stamp (the instantiation is not recoverable from
-  an erased owner), so each now DROPS it, which is the other thing §2.7 permits: readers fall through to `ret`,
-  which is exactly the physical answer. `tests/ir/selftest` pins the check against BOTH implementations and
+  exact stale `void` hint the promotion exists to remove; it now restamps. The other three are one family, the
+  CROSS-MODULE generic erasure the FU-⑧ sweep did not reach: `NullableGenericErasure`,
+  `ReferenceExistentialAbiBinding` and `ConstructedMemberReturnSubstitution` each replace a call's declared result
+  with the PHYSICAL one — a `Slot<T?>`/`Slot<String>` bound as `Slot<object>`, unrelated invariant reified generics
+  — while the frontend stamp still named the pre-erasure instantiation. None can rewrite the stamp (the
+  instantiation is not recoverable from an erased owner), so each DELETES it, which is the other thing §2.7 permits
+  — but only where the new result REFUTES it, through one shared `NodeType.DropStampIfStale`. That qualifier is
+  correctness, not caution: `ConstructedMemberReturnSubstitution` cannot tell a callee-relative `tv` from one kotc
+  already instantiated, so it can re-substitute `Map$Entry<K,V>` into `Map$Entry<Map$Entry<K,V>,V>`, and there the
+  stamp is the more trustworthy of the two and survives. `IteratorConsumerNormalization` — which retypes a
+  `hasNext`/`next` call onto the owner's element, `object` when that element is erased — carries the same
+  obligation and now discharges it too. `tests/ir/selftest` pins the check against BOTH implementations and
   `tests/ir/lowering` pins the chokepoint itself, each with the legitimate neighbours beside it.
 - **A suspension that escapes the cold lowering is now caught at the CIR boundary (area:bir2cir, area:ilemit).**
   `suspendCall:true` is kotc's frontend fact that a call site suspends, and bir2cir's `SuspendColdLowering` is its

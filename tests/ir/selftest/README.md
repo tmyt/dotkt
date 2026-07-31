@@ -46,14 +46,18 @@ head of `EmitAssembly`, ahead of any resolution.
   carries no tag, and the coroutine PRIMITIVE that bir2cir deliberately leaves un-lowered — still
   `mods.suspend`, so ilemit stubs or refuses it and never walks its body. The exemption has no negative in the
   corpus either, so it is pinned here rather than left to a comment.
-- The **stamp-agreement** invariant (check 7, spec §2.7) — `reject-stale-sty` is the shape that motivated it: a
-  call retyped to `List<object>` whose frontend `sty` still claims `List<Int?>`, two unrelated invariant reified
-  generics, so a slot declared from the stamp is invalid IL. `reject-stale-sty-scalar` is the other refutation
-  path, a `dynRet` whose head name simply differs. `accept-sty-stamp-equivalences` holds one method per accepted
-  equivalence — a type variable, a spelling difference between the `kotlin.*`/shorthand/`System.*` vocabularies,
-  `kotlin.Nothing`, a `$dotkt_star` existential view, a nullability wrapper, the two spellings of an array, the
-  shapes the check declines to judge, and a stamp that is simply absent. That fixture is the calibration made
-  executable: the check is worth nothing if it reddens on any of them.
+- The **stamp-agreement** invariant (check 7, spec §2.7). Four refusals, one per way the relation can refute:
+  `reject-stale-sty` is the shape that motivated the check — a call retyped to `List<object>` whose frontend `sty`
+  still claims `List<Int?>`, two unrelated invariant reified generics, so a slot declared from the stamp is invalid
+  IL; `reject-stale-sty-scalar` is a `dynRet` whose head name simply differs; `reject-stale-sty-under-nullable` and
+  `reject-stale-sty-array-element` are what hold the wrapper-stripping and the two array spellings in place, since
+  those two arms exist to make a refutation REACHABLE (delete either and its fixture is silently accepted).
+  `accept-sty-stamp-equivalences` is the other direction — one method per documented equivalence, so the check is
+  RED the day it starts reddening on a legitimate pair. Read it as a guard against a future arm that over-refutes
+  rather than as a pin on each present arm: several of its cases (a type variable, an absent stamp, a shape of
+  unlike arity) are accepted by the relation's catch-all, so they would still pass with the arm that names them
+  deleted. The arms a fixture genuinely pins are the vocabulary table, `kotlin.Nothing`, the `$dotkt_star`
+  existential view, and the two above.
   Note the CHOKEPOINT for this invariant is not here — `sty` is stripped on the way to CIR, so bir2cir checks it on
   the pre-lowering BIR and `tests/ir/lowering/reject-stale-sty-after-passes` is what pins that call.
 - The **width of that exemption**, which is the easy thing to get wrong — `reject-unlowered-suspension-in-ctor`
