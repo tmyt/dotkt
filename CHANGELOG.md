@@ -80,8 +80,15 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   pass now runs after. It
   moved out of `InheritedMemberOwnerBinding` — whose subject is the hierarchy substitution `Derived<T>.m` ->
   `Base<T>.m`, not a constraint — into its own `ConstrainedTypeParameterReceiverBinding`.
-  Only the DISPATCH changes: the call's overload key, a generic member's instantiation and its declared result
-  view all ride the node into ilemit, which applies them on the constrained arm exactly as on the ordinary one.
+  The owner it names is the member's DECLARING type: closing the bare token from the bound is a separate step from
+  rewriting the dispatch, and it runs BEFORE the inherited-owner walk so the walk still has a constructed type to
+  substitute into. Naming the bound instead — `Leaf<Int>` for a member `Root<X>` declares — is a MemberRef on a
+  type that does not declare the member, which binds only through the emitted fake override that happens to sit
+  there. Only the DISPATCH changes: the call's overload key, a generic member's instantiation and its declared
+  result view all ride the node into ilemit, which applies them on the constrained arm exactly as on the ordinary
+  one, and ilemit now SELECTS a member by that descriptor — name, generic arity, parameter count and parameter
+  types — refusing when nothing matches exactly instead of falling through to a name-only lookup that returns
+  whichever overload was declared last.
   (Without that, the constrained form dispatches `t.describe(7)` to the `String` overload and calls a generic
   member's uninstantiated definition — a silently wrong answer and a runtime `InvalidOperationException`; both
   are now pinned by value in `tests/basic`.)

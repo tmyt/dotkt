@@ -74,14 +74,16 @@ fun useConsumer(c: Consumer<String>): String = c.consume("world")    // contrava
 // (`Tagged`) as much as a generic one (`Keyed<Int>`).
 interface Tagged {
     fun tag(): Int
+    fun retag(n: Int)
 }
 
 interface Keyed<K> {
     fun key(): K
 }
 
-class TaggedKeyed(val n: Int) : Tagged, Keyed<Int> {
+class TaggedKeyed(var n: Int) : Tagged, Keyed<Int> {
     override fun tag(): Int = n
+    override fun retag(n: Int) { this.n = n }
     override fun key(): Int = n * 10
 }
 
@@ -94,8 +96,11 @@ class TaggedHolder<T : Tagged>(val item: T) {
     fun tagOfField(): Int = item.tag()
     fun tagOfCallResult(): Int = get().tag()
     fun get(): T = item
-    // A property ACCESSOR body — executable code that lives under `properties`, not `methods`.
-    val accessorTag: Int get() = item.tag()
+    // Property ACCESSOR bodies — executable code that lives under `properties`, not `methods`. The SETTER is a
+    // separate body from the getter and reaches the emitter through its own walk.
+    var accessorTag: Int
+        get() = item.tag()
+        set(value) { item.retag(value) }
 }
 
 // The accessor case again with an OVERLOADED member, where a mis-selected overload is a wrong VALUE.
@@ -112,8 +117,9 @@ interface Described {
     fun <R> firstOf(a: R, b: R): R
 }
 
-class DescribedTag(val n: Int) : Tagged, Described {
+class DescribedTag(var n: Int) : Tagged, Described {
     override fun tag(): Int = n
+    override fun retag(n: Int) { this.n = n }
     override fun describe(x: Int): String = "int:$x"
     override fun describe(x: String): String = "str:$x"
     override fun <R> firstOf(a: R, b: R): R = a
@@ -220,6 +226,9 @@ class GenericsTests {
         assertEquals(4, h.tagOfField())
         assertEquals(4, h.tagOfCallResult())
         assertEquals(4, h.accessorTag)
+        h.accessorTag = 11                                 // the SETTER body, a separate walk from the getter
+        assertEquals(11, h.accessorTag)
+        assertEquals(110, keyOfParam(v))
     }
 
     @TestAttribute

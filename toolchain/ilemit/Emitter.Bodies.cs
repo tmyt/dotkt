@@ -602,31 +602,33 @@ sealed partial class Emitter
         }
     }
 
-    // `Type.GetMethod(name)` throws AmbiguousMatchException the moment the owner declares an OVERLOAD of `name` —
-    // which a Kotlin interface reached through a type-parameter receiver routinely does. Select among the candidates
-    // with the signature CIR already carries; this consumes the producer's answer, it does not re-resolve one (an
-    // unusable `sig` narrows to nothing and the miss is reported, rather than silently taking the first overload).
+    // The member `name` on `owner`, selected by the descriptor CIR already carries. EXACT and FAIL-CLOSED: the
+    // candidate must agree on generic arity, parameter count and — when the node carries a `sig` — every parameter
+    // type, and anything other than exactly one survivor is refused. `Type.GetMethod(name)` alone is neither: it
+    // throws AmbiguousMatchException as soon as the owner declares an overload, and when it does NOT throw it hands
+    // back a member no one checked against the call, so `describe(int)` silently became `describe(string)`. This
+    // consumes the producer's answer rather than re-resolving one; a node that arrives without a usable descriptor
+    // is a drop upstream, and the message says so instead of guessing an overload.
     MethodInfo NamedMethodOn(Type owner, string name, DotKt.Bir.TypeNode[] sig, int methodArity)
     {
-        try { return owner.GetMethod(name); }
-        catch (AmbiguousMatchException)
-        {
-            var candidates = owner.GetMethods()
-                .Where(m => m.Name == name
-                    && (methodArity == 0 ? !m.IsGenericMethodDefinition
-                        : m.IsGenericMethodDefinition && m.GetGenericArguments().Length == methodArity)
-                    && (sig == null || m.GetParameters().Length == sig.Length))
+        var byName = owner.GetMethods().Where(m => m.Name == name).ToList();
+        var candidates = byName
+            .Where(m => (methodArity == 0 ? !m.IsGenericMethodDefinition
+                    : m.IsGenericMethodDefinition && m.GetGenericArguments().Length == methodArity)
+                && (sig == null || m.GetParameters().Length == sig.Length))
+            .ToList();
+        if (candidates.Count > 1 && sig != null)
+            candidates = candidates
+                .Where(m => m.GetParameters().Select((p, i) => Matches(sig[i], p.ParameterType)).All(ok => ok))
                 .ToList();
-            if (candidates.Count > 1 && sig != null)
-                candidates = candidates
-                    .Where(m => m.GetParameters().Select((p, i) => Matches(sig[i], p.ParameterType)).All(ok => ok))
-                    .ToList();
-            if (candidates.Count == 1) return candidates[0];
-            throw new NotSupportedException(
-                $"ambiguous member '{owner}.{name}': {candidates.Count} candidate(s) match the call's "
-                + $"{(sig == null ? "unknown" : sig.Length.ToString())}-parameter signature — the CIR node lost the "
-                + "signature that selects the overload");
-        }
+        if (candidates.Count == 1) return candidates[0];
+        throw new NotSupportedException(
+            $"cannot select '{owner}.{name}' for the call's descriptor "
+            + $"({(sig == null ? "no signature" : sig.Length + " parameter(s)")}, generic arity {methodArity}): "
+            + $"{candidates.Count} of {byName.Count} same-name member(s) match. "
+            + (byName.Count == 0
+                ? "The owner does not declare it — the CIR names a type that only INHERITS the member."
+                : "The CIR node lost the signature that selects the overload."));
     }
 
     // Load a managed pointer (&) to an addressable lvalue (for `constrained.` / struct-member calls). Falls back

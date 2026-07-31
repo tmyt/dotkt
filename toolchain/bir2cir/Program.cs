@@ -715,6 +715,13 @@ sealed class Pipeline
         if (!_options.RefBuild)
             GenericStaticOwnerBinding.ApplyAll(staged.Select(s => s.Root).ToList());
 
+        // CONSTRAINED TYPE-PARAMETER RECEIVER, phase 1 of 2: kotc names a type-parameter receiver's classifier with
+        // a BARE token (`fun <N : Node<N>> N.close()` -> `Node`). Close it from N's own lexical bound, which source
+        // writes constructed, so the inherited-owner walk immediately below has a constructed type to substitute the
+        // exact DECLARING owner into. The node stays a callInstance; only the token changes.
+        if (!_options.RefBuild)
+            ConstrainedTypeParameterReceiverBinding.CloseOpenOwners(staged.Select(s => s.Root).ToList());
+
         // INHERITED GENERIC MEMBER OWNER BINDING: BIR keeps the Kotlin receiver owner (`Derived<T>.m`), while a CLR
         // MemberRef must name the exact CONSTRUCTED declaring owner (`Base<T>.m`). Resolve that hierarchy substitution
         // here, from local declarations + kotc's override facts, before type lowering. This removes a semantic inference
@@ -723,14 +730,12 @@ sealed class Pipeline
         if (!_options.RefBuild)
             InheritedMemberOwnerBinding.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
 
-        // CONSTRAINED TYPE-PARAMETER RECEIVER: a member called on a receiver whose static type is a type PARAMETER
-        // (`fun <T : Tagged> f(t: T) = t.tag()`) cannot be a plain `callvirt` — the stack holds a `!!T`, not an
-        // interface reference, so ECMA-335 requires an address plus `constrained. !!T ; callvirt`. Author that
-        // dispatch here. AFTER the suspend lowerings, so a state-machine body is already in its final type
-        // vocabulary and a spilled receiver field's `T` is the SM class's own parameter; and AFTER the inherited
-        // owner binding directly above, whose hierarchy substitution has by then named the exact CONSTRUCTED
-        // declaring owner — which is the token the constrained call needs, and which the type parameter's own
-        // constraint list can only supply when the constraint IS the declaring type.
+        // CONSTRAINED TYPE-PARAMETER RECEIVER, phase 2 of 2: a member called on a receiver whose static type is a
+        // type PARAMETER (`fun <T : Tagged> f(t: T) = t.tag()`) cannot be a plain `callvirt` — the stack holds a
+        // `!!T`, not an interface reference, so ECMA-335 requires an address plus `constrained. !!T ; callvirt`.
+        // Author that dispatch now that the walk above has named the exact constructed DECLARING owner: naming the
+        // receiver's bound instead would emit a MemberRef on a type that merely inherits the member, which binds
+        // locally only through a fake override and has nothing to bind to across an assembly boundary.
         if (!_options.RefBuild)
             ConstrainedTypeParameterReceiverBinding.ApplyAll(staged.Select(s => s.Root).ToList());
 

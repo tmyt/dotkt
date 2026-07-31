@@ -649,7 +649,15 @@ sealed partial class Emitter
         {
             if (sig != null && ti.MethodsBySig.TryGetValue(SigKey(name, methodArity, sig), out var ms)) return ms;
             if (sig != null && UniqueGenericOverload(ti, name, methodArity) is { } gm) return gm;
-            if (ti.Methods.TryGetValue(name, out var m)) return m;
+            // NAME-ONLY is the last resort, and only where it cannot pick the wrong member: this type declares a
+            // single member by that name, or the node carries no descriptor at all. With a carried `sig` that missed
+            // both keyed lookups AND a real overload set here, the name-keyed map (last-wins) would hand back some
+            // other overload than the one bir2cir resolved — silently. Keep walking the base/interface chain instead;
+            // an exhausted walk is reported as an unresolved method, which is diagnosable. The referenced-owner
+            // branch above already refuses on the same grounds.
+            if (ti.Methods.TryGetValue(name, out var m)
+                && (sig == null || !ti.MethodNameCounts.TryGetValue(name, out var overloads) || overloads <= 1))
+                return m;
             var im = FindInInterfaces(ti);
             if (im != null) return im;
             // A REFERENCED (.NET) interface the emitted type implements (MutableList -> System...IList): reflect the

@@ -20,28 +20,44 @@ using DotKt.Bir;
 // static-type source (StaticTypeResolver's `StaticType.Surface`). A receiver already cast/boxed to the
 // interface has a non-type-variable surface type and is left alone.
 //
-// The owner has to be a CLOSED type token, because a MemberRef cannot name an open generic:
-//   * BIR that already names the constructed owner (`Keyed<Int>`) is used as-is;
-//   * otherwise the type parameter's own lexical BOUND supplies it — `fun <N : Node<N>> N.close()` has receiver
-//     static type !!N while faithful BIR names the declaration classifier as bare `Node` (kotc decides no CLR
-//     construction), so `Node<N>` comes from N's constraint list;
-//   * a locally declared NON-generic owner (`Tagged`) is already closed and needs no such recovery.
-// When neither route yields a closed owner the node is left untouched — this pass never guesses an
-// instantiation, the same conservatism InheritedMemberOwnerBinding applies to overload resolution.
+// The owner the constrained call names must be the member's DECLARING type, constructed. Those are two separate
+// facts, and this pass therefore runs in TWO phases around InheritedMemberOwnerBinding:
 //
-// Runs after the suspend lowerings — the state-machine bodies are then in their final type vocabulary, so an SM
-// field's `T` is the SM class's own type parameter — and after InheritedMemberOwnerBinding, whose hierarchy
-// substitution has by then named the exact constructed declaring owner. That ordering matters for the second
-// route above: a member declared on a GENERIC BASE of the constraint (`T : Derived<Int>` calling
-// `Base<X>.m()`) has no `Base` entry in T's constraint list, so the bound cannot close it — but the inherited
-// owner binding already has.
+//   CloseOpenOwners (BEFORE the inherited-owner walk) — kotc names the receiver's classifier and decides no CLR
+//     construction, so `fun <N : Node<N>> N.close()` arrives with the bare token `Node`. Close it from N's own
+//     lexical BOUND, which is written closed in source. The node stays a `callInstance`, because closing the
+//     token is all this phase knows: the bound is where the receiver's type is pinned, not necessarily where the
+//     member is declared.
+//   ApplyAll (AFTER it) — rewrite to `constrainedCall`. By now the hierarchy substitution has replaced a bound
+//     that merely INHERITS the member with the type that declares it (`T : Leaf<Int>` calling a member of
+//     `Root<X>` names `Root<Int>`), which it could only do because the phase above handed it a constructed
+//     token. Naming the bound instead is a MemberRef on a type that does not declare the member: it survives
+//     locally only because the emitted type carries a fake override, and a referenced interface hierarchy —
+//     where reflection does not surface an inherited declaration — has nothing to bind to.
+//
+// A locally declared NON-generic owner (`Tagged`) is closed already and needs neither phase. When no route
+// yields a closed owner the node is left untouched — this pass never guesses an instantiation, the same
+// conservatism InheritedMemberOwnerBinding applies to overload resolution.
+//
+// Both phases run after the suspend lowerings, so the state-machine bodies are already in their final type
+// vocabulary and an SM field's `T` is the SM class's own type parameter.
 static class ConstrainedTypeParameterReceiverBinding
 {
+    // PHASE 1 — close a bare owner token from the receiver type parameter's bound, leaving the node a
+    // callInstance so the inherited-owner walk can still substitute the declaring type into it.
+    public static void CloseOpenOwners(IEnumerable<JsonNode> roots)
+    {
+        var rootList = roots.ToList();
+        var arity = CollectTypeArity(rootList);
+        foreach (var root in rootList) BindFile(root, arity, close: true);
+    }
+
+    // PHASE 2 — author the constrained dispatch over the now-declaring, now-constructed owner.
     public static void ApplyAll(IEnumerable<JsonNode> roots)
     {
         var rootList = roots.ToList();
         var arity = CollectTypeArity(rootList);
-        foreach (var root in rootList) BindFile(root, arity);
+        foreach (var root in rootList) BindFile(root, arity, close: false);
     }
 
     // name -> declared type-parameter count, for every type declared in this compilation. Only the ARITY is
@@ -63,47 +79,47 @@ static class ConstrainedTypeParameterReceiverBinding
         return result;
     }
 
-    static void BindFile(JsonNode root, Dictionary<string, int> arity)
+    static void BindFile(JsonNode root, Dictionary<string, int> arity, bool close)
     {
         if (root is not JsonObject file) return;
         var noTypeParams = new JsonArray();
         if (file["methods"] is JsonArray methods)
             foreach (var method in methods.OfType<JsonObject>())
-                BindMethod(method, noTypeParams, arity);
-        BindAccessors(file["properties"] as JsonArray, noTypeParams, arity);
+                BindMethod(method, noTypeParams, arity, close);
+        BindAccessors(file["properties"] as JsonArray, noTypeParams, arity, close);
         if (file["types"] is JsonArray declared)
             foreach (var type in declared.OfType<JsonObject>())
-                BindType(type, arity);
+                BindType(type, arity, close);
     }
 
-    static void BindType(JsonObject type, Dictionary<string, int> arity)
+    static void BindType(JsonObject type, Dictionary<string, int> arity, bool close)
     {
         var typeParams = type["typeParams"] as JsonArray ?? new JsonArray();
         if (type["ctors"] is JsonArray ctors)
             foreach (var ctor in ctors.OfType<JsonObject>())
-                BindMethod(ctor, typeParams, arity);
+                BindMethod(ctor, typeParams, arity, close);
         if (type["methods"] is JsonArray methods)
             foreach (var method in methods.OfType<JsonObject>())
-                BindMethod(method, typeParams, arity);
+                BindMethod(method, typeParams, arity, close);
         // A property ACCESSOR body is executable code like any other, and `class H<T : Tagged>(val item: T) { val v
         // get() = item.tag() }` reaches this pass only through here — BIR keeps accessors under `properties`, not
         // `methods`.
-        BindAccessors(type["properties"] as JsonArray, typeParams, arity);
+        BindAccessors(type["properties"] as JsonArray, typeParams, arity, close);
         if (type["types"] is JsonArray nested)
             foreach (var child in nested.OfType<JsonObject>())
-                BindType(child, arity);
+                BindType(child, arity, close);
     }
 
-    static void BindAccessors(JsonArray properties, JsonArray typeParams, Dictionary<string, int> arity)
+    static void BindAccessors(JsonArray properties, JsonArray typeParams, Dictionary<string, int> arity, bool close)
     {
         if (properties == null) return;
         foreach (var property in properties.OfType<JsonObject>())
             foreach (var slot in new[] { "getter", "setter" })
                 if (property[slot] is JsonObject accessor)
-                    BindMethod(accessor, typeParams, arity);
+                    BindMethod(accessor, typeParams, arity, close);
     }
 
-    static void BindMethod(JsonObject method, JsonArray typeParams, Dictionary<string, int> arity)
+    static void BindMethod(JsonObject method, JsonArray typeParams, Dictionary<string, int> arity, bool close)
     {
         var methodParams = method["typeParams"] as JsonArray ?? new JsonArray();
         // The declaration's local/param type environment, for a receiver read that carries no frontend `sty`
@@ -153,24 +169,37 @@ static class ConstrainedTypeParameterReceiverBinding
                     if (Str(call["k"]) == "callInstance"
                         && TypeJson.Read(call["ownerType"]) is TypeNode.Fqn owner
                         && call["recv"] is JsonObject recv
-                        && ReceiverTypeVariable(recv, scope, locals) is TypeNode.Tv tv
-                        && ClosedOwner(owner, tv, typeParams, methodParams, arity) is TypeNode.Fqn iface)
+                        && ReceiverTypeVariable(recv, scope, locals) is TypeNode.Tv tv)
                     {
-                        // A !!T receiver is not an interface reference on the evaluation stack. Even with the
-                        // exact constructed MemberRef, ECMA-335 requires an address plus `constrained. !!T;
-                        // callvirt`. Author that dispatch explicitly in CIR; ilemit emits this node one-to-one.
-                        // Only the DISPATCH changes. `sig` (the overload key), `typeArgs` (a generic member's
-                        // instantiation) and `ret` (the declared call-result view) are facts about the CALL and are
-                        // carried through untouched — ilemit consumes all three on this node exactly as it does on a
-                        // callInstance, and dropping any of them would make it guess.
-                        call["k"] = "constrainedCall";
-                        call["recvType"] = TypeJson.Write(tv);
-                        call["iface"] = TypeJson.Write(iface);
-                        if (call["ret"] == null && call["dynRet"] is JsonNode dynRet)
-                            call["ret"] = dynRet.DeepClone();
-                        call.Remove("ownerType");
-                        call.Remove("virtual");
-                        call.Remove("dynRet");
+                        if (close)
+                        {
+                            // PHASE 1. Only the TOKEN changes: a bare owner gets the construction its receiver's
+                            // bound already spells out, so the inherited-owner walk that follows has a constructed
+                            // type to substitute the declaring owner into.
+                            if (owner.Args == null
+                                && ConstraintAt(tv, owner.Name, typeParams, methodParams) is TypeNode.Fqn bound
+                                && bound.Args != null)
+                                call["ownerType"] = TypeJson.Write(bound);
+                        }
+                        else if (ClosedOwner(owner, arity) is TypeNode.Fqn iface)
+                        {
+                            // PHASE 2. A !!T receiver is not an interface reference on the evaluation stack. Even
+                            // with the exact constructed MemberRef, ECMA-335 requires an address plus
+                            // `constrained. !!T; callvirt`. Author that dispatch explicitly in CIR; ilemit emits
+                            // this node one-to-one.
+                            // Only the DISPATCH changes. `sig` (the overload key), `typeArgs` (a generic member's
+                            // instantiation) and `ret` (the declared call-result view) are facts about the CALL and
+                            // are carried through untouched — ilemit consumes all three on this node exactly as it
+                            // does on a callInstance, and dropping any of them would make it guess.
+                            call["k"] = "constrainedCall";
+                            call["recvType"] = TypeJson.Write(tv);
+                            call["iface"] = TypeJson.Write(iface);
+                            if (call["ret"] == null && call["dynRet"] is JsonNode dynRet)
+                                call["ret"] = dynRet.DeepClone();
+                            call.Remove("ownerType");
+                            call.Remove("virtual");
+                            call.Remove("dynRet");
+                        }
                     }
                     foreach (var kv in call)
                         if (kv.Value != null) Bind(kv.Value);
@@ -210,20 +239,16 @@ static class ConstrainedTypeParameterReceiverBinding
         _ => t,
     };
 
-    // The CLOSED owner token for a member called on `tv`. See the pass header for the three routes; null means
-    // "no closed owner is derivable", which leaves the call untouched.
-    static TypeNode.Fqn ClosedOwner(
-        TypeNode.Fqn owner,
-        TypeNode.Tv tv,
-        JsonArray typeParams,
-        JsonArray methodParams,
-        Dictionary<string, int> arity)
+    // The owner token to name in the constrained call, or null to leave the node alone. By phase 2 the token is
+    // whatever the inherited-owner walk settled on, so the only judgement left is whether it is CLOSED: a
+    // constructed token stands; a bare one is closed already iff its type is non-generic — a locally declared
+    // type says so by its arity, and a referenced one that phase 1 could not construct from the bound has no
+    // generic construction to be missing. A locally declared GENERIC type still bare here was never closed by
+    // either route, and a MemberRef cannot name it.
+    static TypeNode.Fqn ClosedOwner(TypeNode.Fqn owner, Dictionary<string, int> arity)
     {
         if (owner.Args != null) return owner;
-        var bound = ConstraintAt(tv, owner.Name, typeParams, methodParams);
-        if (!arity.TryGetValue(owner.Name, out var count)) return bound;   // referenced type: only the bound closes it
-        if (count == 0) return owner;
-        return bound?.Args?.Length == count ? bound : null;
+        return arity.TryGetValue(owner.Name, out var count) && count > 0 ? null : owner;
     }
 
     // The unique constraint of `tv` naming `ownerName`, as written in source — a closed type token by
