@@ -436,26 +436,36 @@ sealed class Pipeline
             // rebind to an `objMethod` (virtual dispatch to the runtime slot). Fires ONLY where FindMethod would throw, so
             // a type declaring its own override is untouched. Runs AFTER ObjectSlotRename (call `method` is BCL here).
             if (!_options.RefBuild) AnySlotRebind.Apply(bir.Root, localRefTypes);
-            // NULLABLE-GENERIC erasure (ALL builds, so ref.dll + rt.dll signatures agree): a Kotlin declaration
-            // declaring a nullable generic-parameter return (`fun <T> …(): T?`) has its nullability erased by kotc to
-            // a bare `gp:T` return (Nullable<T> is inexpressible for an unconstrained T). That is CORRECT for a
-            // reference T (`ldnull` is a real null) but for a VALUE T `ldnull; ret !!T` collapses to default(T)=0 —
-            // null-ness is LOST (firstOrNull on a value-type list returns 0, not the element / not null-for-empty).
-            // The CLR-faithful representation of a generic `T?` is `System.Object` (the boxed/erased nullable form).
-            // Rewrite the return to `object`; ilemit boxes value returns and the CALL boundary converts object ->
-            // the caller's Nullable<V> / reference type. Runs BEFORE the rest so type-lowering/substitution see it.
+            // NULLABLE-GENERIC erasure — THE DECLARATION AXIS of #86's erasure invariant (ALL builds, so ref.dll +
+            // rt.dll + the app's view of a signature agree). `Nullable(Tv)` (a nullable UNCONSTRAINED type variable
+            // `T?`) has no CLR type of its own: `Nullable<T>` is inexpressible for an unconstrained T, and a bare `!T`
+            // slot collapses a null to `default(T)` = 0 at a value instantiation (firstOrNull on a value-type list
+            // returning 0 rather than null-for-empty; `ldnull` into an int32 slot failing JIT verification). The one
+            // CLR-faithful representation is `System.Object` — the spec-defined boxed form of `Nullable<V>`, which
+            // carries a real null for a value AND a reference instantiation alike. This pass applies
+            // `physical(s) = Erase(declaredKotlinType(s))` to EVERY declaration slot (return, method param, ctor param,
+            // field, property, body local, nested type-arg, array element, function-type position, call `sig`) and
+            // records the pre-erasure Kotlin type — plus, at an erased HEAD, its NRT byte — for the
+            // [KotlinNullableGeneric] round-trip. Runs BEFORE the rest so type-lowering/substitution see it.
             if (attributeTopLevelOwner) ClrMemberResolution.CaptureReferencedStaticCallSignatures(bir.Root);
-            NullableGenericErasure.Apply(bir.Root);
-            // GENERIC-BOUNDARY nullable-Tv READ realignment (#4; #113/#117/#120/#142 read side). The DEF-side erasure
-            // above turns a member's `…Ref<T?>…` into `…Ref<object>…`, but a CALL site kotc emitted with T already
-            // substituted carries the concrete `…Ref<Nullable(kotlin.Int)>…` (no bare `Tv` for the sweep to catch),
-            // which lowers to the irreconcilable `Ref<Nullable<int32>>` where the member actually returns `Ref<object>`
-            // (ilverify StackUnexpected). Re-derive each such call's return by substituting the owner's type-args into
-            // the EraseNullableTv-applied declaration, gated to the exact object-erasure boundary, and flow the corrected
-            // receiver type through so a chained read re-stamps `get_v`'s owner/return too. Each rewrite is gated to
-            // the exact object-erasure boundary (IsObjectErasureOf); local generic declarations plus member flow from
-            // a corrected receiver. BEFORE BirTypeLowering.
-            NullableTvErasureCallRealign.Apply(bir.Root, nullableTvDeclRets);
+            // OVERRIDE SLOTS inherit the erasure of what they override (#86 D3). A derived declaration narrowing a
+            // base `T?` slot holds a CONCRETE `Int?`/`String?`, which no `Nullable(Tv)` sweep can see — so left to
+            // the sweep below it emits a NEW OVERLOAD against an interface slot that stays unimplemented, and the
+            // type never loads. Runs FIRST so the sweep and the carrier recorder both see the corrected slots.
+            OverrideSlotErasure.Apply(bir.Root, nullableTvDeclRets, isValueFqn);
+            NullableGenericErasure.Apply(bir.Root, isValueFqn);
+            // GENERIC-BOUNDARY nullable-Tv USE realignment — THE USE AXIS of #86's erasure invariant (#4;
+            // #113/#117/#120/#142). The DEF-side erasure above turns a member's `T?`/`…Ref<T?>…` into
+            // `object`/`…Ref<object>…`, but a CALL site kotc emitted with T already substituted carries the concrete
+            // `Nullable(kotlin.Int)`/`…Ref<Nullable(kotlin.Int)>…` (no bare `Tv` for the sweep to catch), which lowers
+            // to a slot the member neither returns nor accepts — an ilverify StackUnexpected at a nested position, a
+            // member that does not exist at all when the call's `sig` descriptor is what drifted. So every USE is
+            // re-derived as `Subst(Erase(declaration), typeArgs)` and never `Erase(Subst(...))`: call returns, call
+            // and constructor ARGUMENTS (descriptor included), field reads, and the WRITE positions — setLocal,
+            // setField, arraySet, return, and the `if/else` value join. Each rewrite is gated to the exact
+            // object-erasure boundary (IsObjectErasureOf), and a value is only ever converted across a bare `object`
+            // seam, which is the only one the CLR can express. BEFORE BirTypeLowering.
+            NullableTvErasureCallRealign.Apply(bir.Root, nullableTvDeclRets, isValueFqn);
             // UNCHECKED OBJECT->Tv RETURN ERASURE: the non-null-T sibling of nullable-generic return erasure.  A JVM
             // `Any? as T` physically returns Object; spelling the CLR return as reified T would insert `unbox.any T`
             // inside the callee and throw even when a null result is stored but never consumed.  Emit object physically,

@@ -1500,6 +1500,51 @@ Consequences:
   8-bit storage; on the CLR the two arrays are already the same bytes). Mutations through one view are visible through
   the other. The scalar `UByte.toByte()` / `Byte.toUByte()` remain bit-reinterprets of a single 8-bit value as before.
 
+## 9c-bis. A nullable GENERIC `T?` is `System.Object` at every position (#86)
+
+`Int?` is `System.Nullable<int32>` and `String?` is a bare `string` plus an NRT byte (§9). Neither shape can express
+`T?` for an **unconstrained** type variable: `Nullable<T>` requires `T : struct`, and a bare `!T` slot collapses a
+null to `default(T)` — at `T = Int` a `null` written through it reads back as `0`, and `ldnull` into an `int32` slot
+does not even pass JIT verification. So a `T?` on an unconstrained `T` has exactly one CLR representation:
+
+> **For any declaration slot `s`, `physical(s) = Erase(declaredKotlinType(s))`, where `Erase` maps `T?` (a nullable
+> unconstrained type variable) to `System.Object`, recursively and at every position.** Method return, method
+> parameter, constructor parameter, field, property, body local, generic type-argument, array element, function-type
+> parameter and return, and the signature a call is resolved by — no exceptions. A **use** of `s` is typed
+> `Subst(Erase(declared), typeArgs)` and never `Erase(Subst(...))`.
+
+`object` is not an approximation here, it is the CLR's own boxed form of a nullable value: boxing an empty
+`Nullable<V>` produces a genuine null reference, and `unbox.any Nullable<V>` accepts a null back into an empty one, so
+the two interconvert in one verifier-clean instruction and **null stays distinct from `0`**. Only `T?`-generic
+positions box — a bare `T` stays monomorphized and unboxed, `List<Int>` keeps `int32` storage, and a concrete `Int?`
+stays a stack `Nullable<int32>`. Kotlin/Native, free to monomorphize, made the same choice.
+
+The Kotlin surface survives on two channels, which a re-consuming DotKt reader recombines: `[KotlinNullableGeneric]`
+carries the pre-erasure type node, and the ordinary `[Nullable(2)]` NRT byte carries the outer `?`.
+
+What this is observable as:
+
+- **Boxing.** A `T?` argument, return, field or local at a value instantiation allocates. `Cell<Int>(5)` where the
+  slot is `T?` boxes the `5`; `Cell<Int>(x)` where the slot is `T` does not.
+- **`===` on two boxed values is `false`** even when they are equal, because each crossing produces a fresh box and
+  the CLR has no small-integer cache. This is the same rule as §5a-bis, reached through the erasure instead of
+  through an explicit `Any` — `val a: Int? = 1; val b: Int? = 1` compared as `T?` through a generic slot is `false`.
+- **`null as T` throws AT THE CAST** when `T` is a value type, not at the first use, because the narrowing is a real
+  `unbox.any` on a null reference (`NullReferenceException`). Kotlin/JVM defers it to the first use; the Kotlin
+  contract does not specify where an unchecked cast fails, and failing at the cast is the more locatable of the two.
+- **Reflection loses intensionality.** `GetType()` on a value read out of an erased slot reports `Int32`, not
+  `Nullable<Int32>` (the CLR has no boxed `Nullable<V>` — that is the same collapse the representation relies on),
+  and an absent value has no object to ask at all. The semantic type comes from the DotKt metadata, not from
+  reflection.
+- **A C# consumer sees `object`.** `fun <T> firstOr(x: T?, d: T): T` surfaces as
+  `static T firstOr<T>(object x, T d)`, so a C# caller passes `null` or a boxed value rather than a `T?`.
+
+One position is deliberately **not** uniform yet: a *concrete* `Array<Int?>` is still `System.Nullable<int32>[]`,
+which is an unrelated CLR type from the `object[]` an open `Array<T?>` erases to (array compatibility requires
+reference-compatible elements, ECMA-335 I.8.7.1). Canonicalising both to `object[]` is decided but not landed; it is
+tracked as sub-decision D2 of #86, together with the override-slot bridging a concrete override of an erased `T?`
+slot needs.
+
 ## 10. Round-trip fidelity
 
 A DotKt assembly is re-consumed through a metadata-only reference KLIB. Standard KLIB declarations preserve

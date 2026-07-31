@@ -100,6 +100,50 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir (area:bir2cir): a nullable generic `T?` now has ONE physical CLR representation — `System.Object` — at
+  every position (#86).** `Nullable<T>` is inexpressible for an unconstrained `T` and a bare `!T` slot collapses a
+  null to `default(T)`, so a `T?` slot has exactly one sound CLR form; the backend nevertheless kept two, erasing
+  most positions to `object` while holding **method params, constructor params and body locals** back as the bare
+  `!T`. Two representations of one Kotlin type meet at every value instantiation, and they cannot: `pickOr<Int>(null,
+  7)` and `Cell<Int>(null)` pushed `ldnull` into an `int32` slot, so the *whole enclosing method* failed JIT
+  verification and the program printed nothing before dying with `InvalidProgramException` — with no module boundary
+  and no metadata involved. The carve-outs are gone, and with them the positional exception is gone as a category:
+  the rule is now `physical(s) = Erase(declaredKotlinType(s))` for every declaration slot, and a `Nullable(Tv)`
+  surviving anywhere in emitted CIR is a defect a lowering document asserts against directly.
+  A function type's return now obeys the same rule as its parameters instead of being handed to a second owner, and
+  the `as?` subject-temp erasure that kotc performed above the layer boundary is deleted — a body local is a slot,
+  so the uniform rule covers it, and the CLR-representation decision belongs in bir2cir.
+
+- **bir2cir (area:bir2cir): a top-level `T?` return no longer re-imports as a non-null `Any` (#86).** It carried
+  neither channel: the `[KotlinNullableGeneric]` recorder skipped a head-position `Nullable(Tv)` outright, and the
+  NRT byte walk runs *after* the erasure, so it walked `object` — whose non-null default emits no override at all.
+  A reader strips the carrier's outer nullability by contract, so only the byte can restore the `?`, and with
+  neither present the slot came back as non-null `Any` and the consumer **stopped compiling**. Unlike the parameter
+  axis this was never confined to value types — a `String?` return degraded identically — and being a consumer
+  *compile* failure it was invisible to every runtime-shaped gate. The recorder now records the head position and
+  stamps its NRT byte from the pre-erasure type.
+
+- **bir2cir (area:bir2cir): the erasure's WRITE positions are reconciled, not just its reads (#86).** A use of an
+  erased slot is typed `Subst(Erase(declared), typeArgs)` — never `Erase(Subst(...))`, which substitutes away the
+  very type variable that says the position was erased. That formula was applied only where a value is *produced*;
+  where one is *consumed* it was not, so a store, a `return`, an `if/else` join and every call or constructor
+  ARGUMENT met the erased slot with the callsite's substituted type. For an argument that is worse than a mistyped
+  stack slot: the signature descriptor a call is resolved by drifted with it, so the emitter looked for a member
+  that does not exist. `setLocal`, `setField`, `arraySet`, `return`, the value-position `cond`, call and ctor
+  arguments (descriptor included) and the call RECEIVER now derive their target the same way the read side derives
+  a result, and a value is converted only across a bare `object` seam — the only one the CLR can express, since
+  `Ref<object>` and `Ref<Nullable<int32>>` are unrelated invariant reified generics that no cast reconciles.
+
+- **bir2cir (area:bir2cir): an override of an object-erased `T?` slot is now an override, not a new overload
+  (#86 D3).** `class TextSink : Sink<String> { override fun accept(x: String?) }` writes a CONCRETE type, so no
+  `Nullable(Tv)` sweep can reach it — but the slot it must fill is the base's `accept(object)`, at every
+  instantiation, because the erasure is a property of the declaration and not of the type argument. Emitted as
+  `accept(string)` it filled nothing: the interface method stayed unimplemented and the type failed to load. Erasure
+  now propagates from the overridden slot, read out of the same-compilation declaration index, and the override's own
+  Kotlin type is recorded on the carrier and NRT-byte channels so its surface still round-trips. This closes the
+  same-module and cross-module override narrowings at a value instantiation as well, which had been failing with
+  `TypeLoadException` and an emitter abort.
+
 - **bir2cir (area:bir2cir): a member called on a TYPE-PARAMETER receiver now emits constrained dispatch for every
   spelling of the receiver, and for a non-generic constraint.** `fun <T : Tagged> f(t: T) = t.tag()` put a `!!T` on
   the evaluation stack and then a plain `callvirt Tagged::tag()` — ECMA-335 requires `constrained. !!T ; callvirt`

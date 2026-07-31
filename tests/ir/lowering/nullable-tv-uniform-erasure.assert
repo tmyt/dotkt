@@ -1,0 +1,7 @@
+# THE ERASURE INVARIANT (#86), machine-readable. `physical(s) = Erase(declaredKotlinType(s))` erases `Nullable(Tv)`
+# to `object` at EVERY position, so a `Nullable(Tv)` node surviving anywhere in the emitted CIR IS the defect: a
+# second physical representation of one Kotlin type, which at a value instantiation is a null pushed into a struct
+# slot. The document drives every position at once — method param, method return, constructor param, field,
+# property, body local, array element, nested generic argument, and a function type's return — so one negative
+# assertion covers them all, and no positional carve-out can be reintroduced without reddening here.
+-{"t":"nullable","of":{"t":"tv"

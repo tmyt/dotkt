@@ -4,21 +4,39 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// Erase nullable generic-parameter positions into their CLR-safe representation and preserve their Kotlin surface.
-// A bare generic `T?` return and every nested `Nullable(Tv)` position use `System.Object` where a uniform CLR slot must
-// carry either a real null or a boxed value-type instance. Call/read boundaries re-narrow to the statically known type.
+// THE ERASURE INVARIANT (#86). For any declaration slot `s`, `physical(s) = Erase(declaredKotlinType(s))`, where
+// `Erase` maps `Nullable(Tv)` to `System.Object` recursively, at
+// EVERY position with no exceptions: method return, method param, constructor param, field, property, body local,
+// generic type-argument, array element, function-type return and parameter, and call signature alike. `object` is the
+// only uniform CLR storage that carries a real null for BOTH a reference and a value instantiation of an unconstrained
+// `T`, and the CLR's own `Nullable<V>` boxing collapse makes it the spec-defined boxed form (`box` of an empty
+// `Nullable<V>` IS a null reference; `unbox.any Nullable<V>` accepts null). The pre-erasure Kotlin TypeNode rides
+// `[KotlinNullableGeneric]` so the Kotlin surface survives the trip.
+//
+// USES of a slot are typed `Subst(Erase(declaredKotlinType(s)), typeArgs)` and NEVER `Erase(Subst(...))` — that is
+// NullableTvErasureCallRealign's job, on both the read and the write axis. This pass owns only the declaration axis.
 // Runs in every build so ref.dll, rt.dll, and the app's view of their signatures agree.
 static class NullableGenericErasure
 {
-    public static void Apply(JsonNode root)
+    // The #120 reify-back locals this file's CollapseReifiedArrayVars kept as a bare `!T[]` chain, by node identity.
+    // They are the ONE local divergence from the uniform erasure: the allocation is a genuine `newarr !T` and the
+    // whole chain (slot, `stelem`/`ldelem` token, trailing `as Array<T>`) is collapsed to match it. The use-axis
+    // realign must therefore NOT re-derive their slot from `arrayOfNulls`' declared `Array<T?>`, which would widen the
+    // slot to `object[]` over a `!T[]` allocation. Dies together with representation C when `Array<X?>` becomes
+    // canonically `object[]` (#86 D2).
+    public static readonly HashSet<JsonObject> ReifiedArrayVars = new();
+
+    public static void Apply(JsonNode root, Func<string, bool> isValue)
     {
         if (root is not JsonObject o) return;
-        // #18/#147 ROUND-TRIP RECORD (runs BEFORE the erasure below): capture each declaration slot whose constructed
-        // generic / array / byref / function type carries a NESTED `Nullable(Tv)` (`Holder<T?>` / `(T?)->R`, including
-        // method and constructor params, returns, fields, and properties). The erasure turns that slot into `object`, which
+        ReifiedArrayVars.Clear();
+        // #18/#147/#86 ROUND-TRIP RECORD (runs BEFORE the erasure below): capture each declaration slot whose type
+        // carries a `Nullable(Tv)` anywhere — at the HEAD (`fun <T> f(x: T?)`, `T?` returns, `T?` fields/properties)
+        // or NESTED in a constructed generic / array / byref / function type (`Holder<T?>` / `(T?)->R`) — for method
+        // and constructor params, returns, fields, and properties. The erasure turns that slot into `object`, which
         // dll2klib cannot infer back. Keep the pre-erasure TypeNode opaque until RoundtripMetadata stamps
         // [KotlinNullableGeneric] on that exact CLR declaration slot.
-        RecordNullableGenericSlots(o);
+        RecordNullableGenericSlots(o, isValue);
         ApplyRec(o);
         // NESTED / STANDALONE nullable-generic TYPE-ARG erasure (FIX 1 part-2). A `T?` that kotc left as the
         // inline token `nullable:gp:T` — nested in a `clrg:Owner[...]` arg list (e.g.
@@ -31,54 +49,61 @@ static class NullableGenericErasure
         EraseNullableGpAllStrings(o);
     }
 
-    // Record the PRE-erasure TypeNode on every declaration slot carrying a nested `Nullable(Tv)`. Return slots use the
-    // existing `nullableGenericRet` hand-off; params/fields/properties use `nullableGeneric` on the slot itself. These
-    // are opaque JSON STRINGS (not structured type slots), so ReferenceNullableStrip / BirTypeLowering leave them
-    // untouched until RoundtripMetadata carrier-encodes them. A bare top-level `T?` is deliberately excluded: it is the
-    // distinct dual-representation problem tracked by #86, not the nested constructed-type carrier handled here.
-    static void RecordNullableGenericSlots(JsonObject o)
+    // Record the PRE-erasure TypeNode on every declaration slot carrying a `Nullable(Tv)`, at the head or nested.
+    // Return slots use the `nullableGenericRet` hand-off; params/fields/properties use `nullableGeneric` on the slot
+    // itself. These are opaque JSON STRINGS (not structured type slots), so ReferenceNullableStrip / BirTypeLowering
+    // leave them untouched until RoundtripMetadata carrier-encodes them.
+    static void RecordNullableGenericSlots(JsonObject o, Func<string, bool> isValue)
     {
         if (o["methods"] is JsonArray methods)
             foreach (var m in methods)
                 if (m is JsonObject mo)
                 {
-                    RecordNullableGenericSlot(mo, "ret", "nullableGenericRet");
-                    RecordNullableGenericParams(mo["params"]);
+                    RecordNullableGenericSlot(mo, "ret", "nullableGenericRet", "retNullableFlags", isValue);
+                    RecordNullableGenericParams(mo["params"], isValue);
                 }
-        RecordNullableGenericCtorParams(o["ctors"]);
-        RecordNullableGenericDecls(o["fields"]);
-        RecordNullableGenericDecls(o["properties"]);
+        RecordNullableGenericCtorParams(o["ctors"], isValue);
+        RecordNullableGenericDecls(o["fields"], isValue);
+        RecordNullableGenericDecls(o["properties"], isValue);
         if (o["types"] is JsonArray types)
-            foreach (var t in types) if (t is JsonObject to) RecordNullableGenericSlots(to);
+            foreach (var t in types) if (t is JsonObject to) RecordNullableGenericSlots(to, isValue);
     }
 
-    static void RecordNullableGenericCtorParams(JsonNode node)
+    static void RecordNullableGenericCtorParams(JsonNode node, Func<string, bool> isValue)
     {
         if (node is not JsonArray a) return;
         foreach (var item in a)
-            if (item is JsonObject ctor) RecordNullableGenericParams(ctor["params"]);
+            if (item is JsonObject ctor) RecordNullableGenericParams(ctor["params"], isValue);
     }
 
-    static void RecordNullableGenericParams(JsonNode node)
+    static void RecordNullableGenericParams(JsonNode node, Func<string, bool> isValue)
     {
         if (node is not JsonArray a) return;
         foreach (var item in a)
-            if (item is JsonObject p) RecordNullableGenericSlot(p, "type", "nullableGeneric");
+            if (item is JsonObject p) RecordNullableGenericSlot(p, "type", "nullableGeneric", "nullableFlags", isValue);
     }
 
-    static void RecordNullableGenericDecls(JsonNode node)
+    static void RecordNullableGenericDecls(JsonNode node, Func<string, bool> isValue)
     {
         if (node is not JsonArray a) return;
         foreach (var item in a)
-            if (item is JsonObject d) RecordNullableGenericSlot(d, "type", "nullableGeneric");
+            if (item is JsonObject d) RecordNullableGenericSlot(d, "type", "nullableGeneric", "nullableFlags", isValue);
     }
 
-    static void RecordNullableGenericSlot(JsonObject decl, string typeKey, string factKey)
+    static void RecordNullableGenericSlot(JsonObject decl, string typeKey, string factKey, string flagsKey,
+        Func<string, bool> isValue)
     {
-        if (TypeJson.Read(decl[typeKey]) is TypeNode t
-            && t is not TypeNode.Nullable { Of: TypeNode.Tv }
-            && HasRestorableNullableTv(t))
-            decl[factKey] = TypeNode.ToJson(t);
+        if (TypeJson.Read(decl[typeKey]) is not TypeNode t || !HasRestorableNullableTv(t)) return;
+        decl[factKey] = TypeNode.ToJson(t);
+        // THE NRT BYTE OF AN OBJECT-ERASED HEAD IS COMPUTED HERE, FROM THE PRE-ERASURE TYPE (#86). dll2klib splits
+        // restoration in two: the carrier owns the INNER tree but is read through StripOuterNullability, so a
+        // `Nullable(Tv)` carrier arrives as the bare `Tv` and only the slot's NRT byte can put the `?` back
+        // (dll2klib ApplyOuterNullability). DeclNullableFlags cannot supply it — it runs after this erasure and would
+        // walk `object`, whose non-null default stamps nothing at all, and the slot re-imports as a non-null `Any`.
+        // Only the HEAD position needs the pre-stamp: a nested `Nullable(Tv)` leaves the head intact, so the ordinary
+        // post-erasure byte walk still describes it exactly. Rides DeclNullableFlags' never-overwrite contract.
+        if (t is TypeNode.Nullable { Of: TypeNode.Tv } && NullableFlags.Compute(t, isValue) is JsonArray f)
+            decl[flagsKey] = f;
     }
 
     // True iff `t` carries a `Nullable(Tv)` reachable through a CLR-representable declaration shape. A non-suspend `Fn`
@@ -443,38 +468,24 @@ static class NullableGenericErasure
     }
 
     // Blanket type-slot sweep applying EraseNullableTv to every structured Type in the tree — a `Nullable(Tv)` (a
-    // value-type-nullable type variable `T?`) erases to `object` wherever it sits (a clrg-nested type-arg / field /
-    // standalone-param), the same value-type-null fault as the return case. Mirrors NullableFuncReturnErasure.
-    static void EraseNullableGpAllStrings(JsonNode node, bool inParams = false)
+    // value-type-nullable type variable `T?`) erases to `object` wherever it sits, with NO positional exception: a
+    // declaration param, a constructor param, a body-local `var` slot, a clrg-nested type-arg, a field, an array
+    // element, a call `sig` element. That uniformity IS the invariant (#86): one position kept back is a second
+    // physical representation of one Kotlin type, and the two never meet at a value instantiation.
+    //
+    // A call's `sig` is a STRUCTURED TypeNode array (#37 m3b), so its `Nullable(Tv)` elements erase for free through
+    // the same recursion — DEF and CALL sigs stay in agreement structurally, no sig-string special case needed.
+    static void EraseNullableGpAllStrings(JsonNode node)
     {
         switch (node)
         {
             case JsonObject obj:
-                // #37/#48 (Codex-confirmed Option A): a body-local `var`'s TOP-LEVEL `{t:nullable,of:{t:tv}}` type slot
-                // is NOT erased here — under the unified type-node encoding a safe-call receiver temp and a genuine
-                // accumulator are IDENTICAL nodes, and the init-gated RetypeNullableGpVars (which already ran) owns that
-                // discrimination. NESTED nullable-tv (a `var x: List<T?>` generic arg — a value-instantiation lifeline)
-                // is still erased. Every non-var / structural position (fields, returns, generic args, call sigs)
-                // keeps the uniform erasure.
-                var isVar = (obj["k"] as JsonValue)?.GetValue<string>() == "var";
                 foreach (var key in obj.Select(kv => kv.Key).ToList())
                 {
                     var child = obj[key];
                     if (child == null) continue;
-                    if (isVar && key == "type" && TypeJson.Read(child) is TypeNode.Nullable { Of: TypeNode.Tv }) continue;
-                    // A declaration PARAM's TOP-LEVEL `T?` (`{t:nullable,of:{t:tv}}`) is NOT erased to `object` here (#37/#48
-                    // round-trip): kept as `Nullable(Tv)`, DeclNullableFlags stamps its NRT byte [2] and BirTypeLowering
-                    // strips it to the bare generic-param `T` + a `NullableAttribute(2)`. This preserves the type-param
-                    // IDENTITY in the emitted signature so dll2klib reconstructs `x: T?` (not the T-less `Any?` that made
-                    // `T` uninferable — roundtrip-generic `orDefault<T>(x: T?, …)`). Mirrors the pre-#48 bare-`gp:T`+flag
-                    // param (the JVM-idiom object-erasure applied to inline `nullable:gp:` returns/locals, not to params).
-                    // NESTED nullable-tv in a param (`Iterable<T?>`) still erases via EraseNullableTv (the Fqn recursion).
-                    if (inParams && key == "type" && TypeJson.Read(child) is TypeNode.Nullable { Of: TypeNode.Tv }) continue;
-                    // A call's `sig` is a STRUCTURED TypeNode array (#37 m3b), so its `nullable:gp:X` (Nullable(Tv))
-                    // elements erase to `object` for free via the array-recursion below (EraseNullableTv) — DEF and CALL
-                    // sigs stay in agreement structurally, no sig-string special case needed.
                     if (TypeJson.Read(child) is TypeNode tn) obj[key] = TypeJson.Write(EraseNullableTv(tn));
-                    else EraseNullableGpAllStrings(child, inParams: key == "params");
+                    else EraseNullableGpAllStrings(child);
                 }
                 break;
             case JsonArray arr:
@@ -482,10 +493,7 @@ static class NullableGenericErasure
                 {
                     var child = arr[i];
                     if (child == null) continue;
-                    // A `params` element's OWN top-level nullable-tv is preserved (handled in the JsonObject case via
-                    // `inParams`); its nested nullable-tv still erases. Non-param arrays (`sig`, generic args) erase fully.
-                    if (inParams && child is JsonObject) EraseNullableGpAllStrings(child, inParams: true);
-                    else if (TypeJson.Read(child) is TypeNode tn) arr[i] = TypeJson.Write(EraseNullableTv(tn));
+                    if (TypeJson.Read(child) is TypeNode tn) arr[i] = TypeJson.Write(EraseNullableTv(tn));
                     else EraseNullableGpAllStrings(child);
                 }
                 break;
@@ -527,6 +535,7 @@ static class NullableGenericErasure
         foreach (var name in kept)
         {
             var v = fresh[name];
+            ReifiedArrayVars.Add(v);
             if (TypeJson.Read(v["type"]) is TypeNode.Array { Elem: TypeNode.Nullable { Of: TypeNode.Tv tv } })
                 v["type"] = TypeJson.Write(new TypeNode.Array(tv));
             if (v["init"] is JsonObject vi
@@ -615,16 +624,12 @@ static class NullableGenericErasure
         }
     }
 
-    // Replace every `Nullable(Tv)` (a value-type-nullable type variable) with `object`, recursively. LEAVES a func
-    // return that is a TOP-LEVEL `T?` (`Fn.Ret` = `Nullable(Tv)`) for NullableFuncReturnErasure (erasing it here would
-    // blind that pass); a func param/receiver nullable-tv — and a NESTED nullable-tv inside a CONSTRUCTED-generic return
-    // (`AtomicRef<T?>`, a `Fqn` with a `Nullable(Tv)` arg) — is erased. #142: the old blanket `fn.Ret` verbatim carve-out
-    // let `AtomicRef<Nullable(Tv)>` survive in the `newDelegate.funcType.ret` position ONLY (a `Fqn`, so NullableFunc-
-    // ReturnErasure — which only fires on a top-level `Nullable(Tv)` ret — skips it too), while the SAME type erased to
-    // `AtomicRef<object>` in the method-return/array-elem positions; ReferenceNullableStrip then stripped the surviving
-    // `Nullable(Tv)` arg to a bare `tv`, leaving the funcType.ret `AtomicRef<!T>` internally inconsistent with the
-    // `__lambda0` method signature `AtomicRef<object>` → ilverify DelegateCtor "Unrecognized arguments". Narrowing the
-    // carve-out to the top-level `Nullable(Tv)` return makes funcType / method-signature / array-elem agree end-to-end.
+    // `Erase`: replace every `Nullable(Tv)` (a value-type-nullable type variable) with `object`, recursively and at
+    // every position. A function type's RETURN obeys the same rule as its params and receiver — `Fn.Ret` had a verbatim
+    // carve-out that handed a top-level `T?` return to NullableFuncReturnErasure, which is one Kotlin type constructor
+    // with two owners and, before #142 narrowed it, produced a `newDelegate.funcType.ret` inconsistent with the lifted
+    // lambda's own signature (ilverify DelegateCtor "Unrecognized arguments"). NullableFuncReturnErasure keeps only its
+    // CONCRETE-value-inner half (`(T) -> Int?`), a different family that this rule does not reach.
     internal static TypeNode EraseNullableTv(TypeNode t) => t switch
     {
         TypeNode.Nullable { Of: TypeNode.Tv } => new TypeNode.Fqn("object"),
@@ -633,8 +638,7 @@ static class NullableGenericErasure
         TypeNode.Fqn f => new TypeNode.Fqn(f.Name, f.Args.Select(EraseNullableTv).ToArray()),
         TypeNode.Array a => new TypeNode.Array(EraseNullableTv(a.Elem)),
         TypeNode.ByRef b => new TypeNode.ByRef(EraseNullableTv(b.Of)),
-        TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend,
-            fn.Ret is TypeNode.Nullable { Of: TypeNode.Tv } ? fn.Ret : EraseNullableTv(fn.Ret),
+        TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, EraseNullableTv(fn.Ret),
             fn.Params.Select(EraseNullableTv).ToArray(),
             fn.Recv == null ? null : EraseNullableTv(fn.Recv)),
         _ => t,

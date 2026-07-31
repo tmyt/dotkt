@@ -1,0 +1,93 @@
+{
+  "fileClass": "NullableTvProbeKt",
+  "hasMain": false,
+  "fields": [],
+  "refTypes": [],
+  "types": [
+    {
+      "name": "NullableTvProbeBox",
+      "typeParams": [{ "name": "T" }],
+      "ctors": [
+        {
+          "params": [
+            { "name": "slot", "type": { "t": "nullable", "of": { "t": "tv", "scope": "type", "i": 0 } } }
+          ],
+          "body": [
+            {
+              "k": "setField",
+              "ownerType": { "t": "fqn", "name": "NullableTvProbeBox", "args": [{ "t": "tv", "scope": "type", "i": 0 }] },
+              "recv": { "k": "this" },
+              "name": "slot",
+              "value": { "k": "local", "name": "slot" }
+            }
+          ]
+        }
+      ],
+      "fields": [
+        { "name": "slot", "type": { "t": "nullable", "of": { "t": "tv", "scope": "type", "i": 0 } } }
+      ],
+      "properties": [
+        {
+          "name": "held",
+          "type": { "t": "nullable", "of": { "t": "tv", "scope": "type", "i": 0 } },
+          "get": "get_held"
+        }
+      ],
+      "methods": [
+        {
+          "name": "get_held",
+          "params": [],
+          "ret": { "t": "nullable", "of": { "t": "tv", "scope": "type", "i": 0 } },
+          "body": [
+            {
+              "k": "return",
+              "value": {
+                "k": "field",
+                "ownerType": { "t": "fqn", "name": "NullableTvProbeBox", "args": [{ "t": "tv", "scope": "type", "i": 0 }] },
+                "recv": { "k": "this" },
+                "name": "slot"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "methods": [
+    {
+      "name": "pick",
+      "typeParams": [{ "name": "T" }],
+      "params": [
+        { "name": "x", "type": { "t": "nullable", "of": { "t": "tv", "scope": "method", "i": 0 } } },
+        { "name": "cells", "type": { "t": "array", "elem": { "t": "nullable", "of": { "t": "tv", "scope": "method", "i": 0 } } } },
+        { "name": "holder", "type": { "t": "fqn", "name": "NullableTvProbeBox", "args": [{ "t": "nullable", "of": { "t": "tv", "scope": "method", "i": 0 } }] } },
+        { "name": "map", "type": { "t": "fn", "suspend": false, "ret": { "t": "nullable", "of": { "t": "tv", "scope": "method", "i": 0 } }, "params": [{ "t": "tv", "scope": "method", "i": 0 }] } }
+      ],
+      "ret": { "t": "nullable", "of": { "t": "tv", "scope": "method", "i": 0 } },
+      "body": [
+        {
+          "k": "var",
+          "name": "acc",
+          "type": { "t": "nullable", "of": { "t": "tv", "scope": "method", "i": 0 } },
+          "init": { "k": "const", "type": { "t": "fqn", "name": "void" }, "value": null }
+        },
+        {
+          "k": "setLocal",
+          "name": "acc",
+          "value": { "k": "local", "name": "x" }
+        },
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "arraySet",
+            "elem": { "t": "nullable", "of": { "t": "tv", "scope": "method", "i": 0 } },
+            "array": { "k": "local", "name": "cells" },
+            "index": { "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 0 },
+            "value": { "k": "local", "name": "acc" }
+          }
+        },
+        { "k": "return", "value": { "k": "local", "name": "acc" } }
+      ]
+    }
+  ]
+}

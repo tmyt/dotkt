@@ -33,19 +33,6 @@ done
 # bare `kotlin.coroutines.Continuation` at emit; they surface the REMAINING *cross-module* coroutine gaps
 # (below). This gate is the coroutine bundle's cross-module E2E check: when these flip to FIXED, prune them.
 declare -A RT_XFAIL=(
-	# #86: the cross-module nullable VALUE-TYPE generic gap this section was ADDED to expose. A top-level `T?`
-	# in METHOD-PARAM position (firstOr<T>(x: T?, …)) and CTOR-PARAM position (NBox<T>(val value: T?)) keeps the
-	# type-param IDENTITY in the emitted signature: the CLR slot is the bare non-null `T` plus a NullableAttribute(2)
-	# byte (#86; #147's [KotlinNullableGeneric] carrier covers `Holder<T?>`-style NESTED positions, not this bare
-	# top-level dual representation). The consumer therefore COMPILES — the byte restores both slots as `T?` — but the
-	# bare `T` slot is a struct at T=Int, so a null cannot cross it: `firstOr<Int>(null, 7)` and `NBox<Int>(null)`
-	# emit `ldnull` into an int32 slot (ilverify: StackUnexpected, found Nullobjref, expected Int32). Both live in
-	# `main`, so the WHOLE method fails JIT verification: the app prints NOTHING and dies with
-	# System.InvalidProgramException at AppKt::main — the observed output is empty, not a partial 7/3/9/4/x. Compiling
-	# the same lib against an app WITHOUT the two T=Int null crossings runs 3/4/x, so the fault is confined to the
-	# value-type axis of #86 (invisible to every other gate, which drives only T=String); when #86 lands a null-capable
-	# representation for a bare `T?` slot the section runs 7/3/9/4/x -> prune it.
-	[roundtrip-nullable-vt-generic]="#86: cross-module nullable value-type generic — a top-level T? method/ctor param is emitted as the bare struct-incapable T slot, so the consumer COMPILES (NullableAttribute(2) restores T?) but firstOr<Int>(null,7)/NBox<Int>(null) push null into an int32 slot, so main fails JIT verification and the app produces NO output (System.InvalidProgramException); distinct from #147's nested constructed-type carrier"
 	# ---- #86, one entry per OBSERVABLE ---------------------------------------------------------------
 	# These are deliberately NOT bundled. A section is a single stdout comparison, so an app driving three
 	# faulty shapes reports one verdict and the FIRST fault hides the rest — a `main` that dies of
@@ -53,30 +40,20 @@ declare -A RT_XFAIL=(
 	# both long after one was fixed. So each shape gets its own app, its own section, and its own
 	# RT_XFAIL_SHAPE below; each prunes independently and flips to FIXED on its own.
 	#
-	# SAME-MODULE (no module boundary, no metadata round-trip): the control that separates a CARRIER defect
-	# from a REPRESENTATION one. Measured, not assumed — and it corrects a claim the section above used to
-	# make, that #86 is a cross-module defect. Pruned by the uniform-erasure core step (param/ctor carve-out)
-	# and, for the override, by the override-slot-bridge step.
-	[roundtrip-nullable-vt-generic-local-param]="#86: with NO module boundary, a null through a top-level T? PARAM at T=Int fails JIT verification (the bare struct-incapable T slot) — System.InvalidProgramException, so the fault is the REPRESENTATION, not the cross-module carrier; pruned by the uniform-erasure core step of #86"
-	[roundtrip-nullable-vt-generic-local-ctor]="#86: with NO module boundary, a T? CTOR PARAM plus its backing field/property on a generic owner fails JIT verification at T=Int (both the null and the present case) — System.InvalidProgramException; pruned by the uniform-erasure core step of #86"
-	[roundtrip-nullable-vt-generic-local-override]="#86 D3: with NO module boundary, an override narrowing a base T? slot to a concrete Int? is emitted as a new overload, so the interface slot is left unimplemented and the type never loads — System.TypeLoadException; pruned by the override-slot-bridge step of #86"
+	# PRUNED by the uniform-erasure core step (`physical(s) = Erase(declaredKotlinType(s))` at every position,
+	# the carrier and its NRT byte recorded from the PRE-erasure type, every USE typed `Subst(Erase(decl))`, and
+	# the erasure propagated through override slots): the cross-module param/ctor section, its two same-module
+	# siblings, the same-module and cross-module override narrowings, and all three top-level-`T?`-RETURN
+	# entries. Their sections are green and unlisted now; the shapes they drove stay as the controls they were.
+	#
 	# The stdlib idioms whose VALUE instantiations do not resolve. Their reference-element and eager twins are
-	# green in the NUnit lane, which is what makes the pair a measurement rather than a note. Pruned by the
-	# uniform-erasure core step (both are the same Nullable(Tv) slot) plus the struct-ness-oracle narrowing of
-	# ValueTypeNullableCollectionArg for the collection receiver.
-	[roundtrip-nullable-vt-generic-filternotnullto]="#86: List<Int?>/List<Boolean?>.filterNotNullTo does not resolve at a VALUE element — System.EntryPointNotFoundException — while the same call at a REFERENCE element is green; pruned by the uniform-erasure core step of #86 plus the struct-ness-oracle narrowing of ValueTypeNullableCollectionArg"
-	[roundtrip-nullable-vt-generic-seq-mapnotnull]="#86: Sequence.mapNotNull does not resolve at a VALUE element — System.EntryPointNotFoundException — while the eager Iterable.mapNotNull twin is green; pruned by the uniform-erasure core step of #86"
-	# CROSS-MODULE. The top-level T? RETURN carries neither channel: the [KotlinNullableGeneric] recorder
-	# skips a top-level Nullable(Tv), and the NRT byte walk runs AFTER the erasure so it sees `object` and
-	# stamps no `2`. dll2klib therefore re-imports the slot as a NON-NULL Any and the consumer does not
-	# type-check — a COMPILE failure, invisible to every runtime-shaped gate. Pruned by the core step, which
-	# records the carrier at the top-level position and stamps the NRT byte from the PRE-erasure type.
-	[roundtrip-nullable-vt-generic-ret]="#86: a top-level T? RETURN carries neither the [KotlinNullableGeneric] carrier (the recorder skips a top-level Nullable(Tv)) nor an NRT 2 byte (the byte walk runs after the erasure and sees object), so dll2klib re-imports it as non-null Any and the consumer fails to compile: initializer type mismatch: expected 'Int?', actual 'Any' — pruned by the uniform-erasure core step of #86 (record + stamp the top-level T? carrier)"
-	[roundtrip-nullable-vt-generic-ret-member]="#86: the same top-level-position defect on a GENERIC OWNER's member return (Picker<T>.get(): T?) — re-imported as non-null Any, so the consumer fails to compile with initializer type mismatch: expected 'Int?', actual 'Any'; tracked apart from the top-level entry because the recorder reaches the two positions by different walks and they can be fixed apart — pruned by the uniform-erasure core step of #86"
-	# The return axis, unlike the param axis, is NOT confined to value types: with no channel carrying the `?`
-	# a REFERENCE instantiation re-imports as non-null Any too. Recorded as its own entry so the breadth is a
-	# measurement rather than a remark, and so it can flip to FIXED independently.
-	[roundtrip-nullable-vt-generic-ret-reference]="#86: the top-level T? RETURN gap is not confined to value types — at a REFERENCE instantiation the slot also re-imports as non-null Any and the consumer fails to compile: initializer type mismatch: expected 'String?', actual 'Any'; pruned by the uniform-erasure core step of #86"
+	# green in the NUnit lane, which is what makes the pair a measurement rather than a note. The declaration
+	# axis is no longer the variable — the uniform erasure landed and neither moved — so what remains is the
+	# CALL-SITE receiver conversion: a value-element collection is not covariantly the `IEnumerable<object>` an
+	# erased `Iterable<T?>` receiver names, and `ValueTypeNullableCollectionArg` picks its element off
+	# `typeArgs[0]`, which is `C` and not `T` for a two-parameter `filterNotNullTo`.
+	[roundtrip-nullable-vt-generic-filternotnullto]="#86: List<Int?>/List<Boolean?>.filterNotNullTo does not resolve at a VALUE element — System.EntryPointNotFoundException — while the same call at a REFERENCE element is green; pruned by the struct-ness-oracle narrowing of ValueTypeNullableCollectionArg (its element is read off typeArgs[0], which is C rather than T here)"
+	[roundtrip-nullable-vt-generic-seq-mapnotnull]="#86: Sequence.mapNotNull does not resolve at a VALUE element — System.EntryPointNotFoundException — while the eager Iterable.mapNotNull twin is green; pruned by the struct-ness-oracle narrowing of ValueTypeNullableCollectionArg"
 	# D2 — `Array<X?>` has no single representation: a CONCRETE Array<Int?> is Nullable<int32>[] while the
 	# erased/open form is object[], and the two are unrelated CLR types (ECMA-335 I.8.7.1 — array
 	# compatibility requires reference-compatible elements). Measured, the re-imported slot is not even an
@@ -87,12 +64,6 @@ declare -A RT_XFAIL=(
 	# Nullable<int32>[] as an int32[] and reads the LAYOUT WORDS as elements. No diagnostic, no exception —
 	# which is why this entry pins the observed OUTPUT as its shape.
 	[roundtrip-nullable-vt-generic-array-ret]="#86 D2: a cross-module Array<Int?> RETURN re-imports with a NON-NULL Int element, so the consumer indexes a Nullable<int32>[] as an int32[] and reads the layout words as elements — an array of 4/null/8 reports 3/1/4/0 (hasValue, value, then the null element's zeroed flag) with no diagnostic and no exception; pruned by the Array<X?>-is-object[] canonicalisation step of #86"
-	# D3 cross-module — erasure propagates from the OVERRIDDEN slot, not from syntax, so a derived
-	# declaration holding a concrete Int? is invisible to a Nullable(Tv) sweep. Discriminated against two
-	# controls through the identical pipeline (the same interface at a REFERENCE instantiation, and the same
-	# value instantiation with a NON-nullable slot), both of which pass — so the narrowed T? slot at a value
-	# type is the sole variable. Pruned by the override-slot-bridge step.
-	[roundtrip-nullable-vt-generic-override]="#86 D3: a Kotlin override narrowing a base T? slot to a concrete Int? does not match the erased object slot, and the consumer emit aborts with 'ilemit: … cannot resolve .NET type IntSink' so no assembly is produced, while the same shape at a REFERENCE instantiation and the same value instantiation with a NON-nullable slot both pass — pruned by the override-slot-bridge step of #86"
 	# #18/#86 — the VALUE instantiation of #147's NESTED carrier positions. At T=String the erased
 	# Slot<object> and the restored Slot<string> are reference-compatible, so the in-process consumer runs
 	# green with a formal-only ilverify finding (ILVERIFY_XFAIL nullableGenericMembersRoundTrip). At T=Int
@@ -100,8 +71,10 @@ declare -A RT_XFAIL=(
 	# the property and the member return all WORK — the green control sections drive all four — and it is
 	# carrying a VALUE that corrupts memory. That is also why this axis cannot be an NUnit sibling: an
 	# AccessViolationException takes the test host down, and the whole assembly then reports zero tests.
-	# Pruned by the core step (a use must be typed Subst(Erase(decl)), never Erase(Subst(...))) plus the
-	# cross-module carrier read.
+	# The core step landed and did not move them: their mismatch is inside a CONSTRUCTED generic
+	# (`Slot<object>` against `Slot<Nullable<int32>>`), which no cast can reconcile — those are unrelated
+	# invariant reified generics — so the use has to be DERIVED as `Slot<object>`, and deriving it needs the
+	# referenced library's declaration. Pruned by the cross-module carrier read.
 	[roundtrip-nullable-generic-slot-param-value]="#18/#86: carrying a VALUE — not a null, the null path is green — through a cross-module nested Slot<T?> PARAM at T=Int meets the erased Slot<object> against the restored Slot<Nullable<int32>> and corrupts memory: System.AccessViolationException in CastHelpers.Unbox_Nullable, where the T=String twin is merely formally unverifiable; pruned by the uniform-erasure core step plus the cross-module carrier read of #86"
 	[roundtrip-nullable-generic-slot-property-value]="#18/#86: the same Slot<object>-vs-Slot<Nullable<int32>> mismatch reading a VALUE back from a nested Slot<T?> PROPERTY at T=Int — System.AccessViolationException in CastHelpers.Unbox_Nullable; pruned by the uniform-erasure core step plus the cross-module carrier read of #86"
 	[roundtrip-nullable-generic-slot-param-bool]="#18/#86: the same nested Slot<T?> PARAM carrying a VALUE at T=Boolean surfaces one step earlier than its Int twin — System.NullReferenceException rather than an access violation; tracked apart because the shapes differ and a fix owes a value, not merely a different fault; pruned by the uniform-erasure core step plus the cross-module carrier read of #86"
@@ -114,19 +87,11 @@ declare -A RT_XFAIL=(
 # here reddens as an XFAIL SHAPE MISMATCH instead. Every entry above carries one; a listed name with no shape
 # would be a name-only XFAIL again.
 declare -A RT_XFAIL_SHAPE=(
-	[roundtrip-nullable-vt-generic]='System.InvalidProgramException'
-	[roundtrip-nullable-vt-generic-local-param]='System.InvalidProgramException'
-	[roundtrip-nullable-vt-generic-local-ctor]='System.InvalidProgramException'
-	[roundtrip-nullable-vt-generic-local-override]='System.TypeLoadException'
 	[roundtrip-nullable-vt-generic-filternotnullto]='System.EntryPointNotFoundException'
 	[roundtrip-nullable-vt-generic-seq-mapnotnull]='System.EntryPointNotFoundException'
-	[roundtrip-nullable-vt-generic-ret]="initializer type mismatch: expected 'Int?', actual 'Any'"
-	[roundtrip-nullable-vt-generic-ret-member]="initializer type mismatch: expected 'Int?', actual 'Any'"
-	[roundtrip-nullable-vt-generic-ret-reference]="initializer type mismatch: expected 'String?', actual 'Any'"
 	[roundtrip-nullable-vt-generic-array-param]="but 'IntArray' was expected"
 	# No diagnostic and no exception: this one fails by printing a WRONG VALUE, so the shape is the value.
 	[roundtrip-nullable-vt-generic-array-ret]='(stdout) 3/1/4/0'
-	[roundtrip-nullable-vt-generic-override]='cannot resolve .NET type IntSink'
 	[roundtrip-nullable-generic-slot-param-value]='System.AccessViolationException'
 	[roundtrip-nullable-generic-slot-property-value]='System.AccessViolationException'
 	[roundtrip-nullable-generic-slot-param-bool]='System.NullReferenceException'

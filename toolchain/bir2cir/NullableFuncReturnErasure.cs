@@ -7,8 +7,10 @@ using DotKt.Bir;
 static class NullableFuncReturnErasure
 {
     // A nullable func-RETURN is erased to `object` ONLY when a plain reference type cannot carry its null faithfully:
-    // a VALUE-type inner (`Int?` — `Nullable<int>` can't ride a delegate's `out TResult` covariance while keeping
-    // null) or an UNCONSTRAINED open generic (`T?` — `Nullable<T>` is inexpressible for an unconstrained T). A
+    // a CONCRETE VALUE-type inner (`Int?` — `Nullable<int>` can't ride a delegate's `out TResult` covariance while
+    // keeping null). The open-generic inner (`(…) -> T?`) is NOT this pass's: `Nullable(Tv)` is object-erased at every
+    // position, function-type return included, by NullableGenericErasure.EraseNullableTv (#86), which runs first — so
+    // this pass never sees one. A
     // REFERENCE inner (`String?`, `List<T>?`) already carries null as a plain reference, so it stays the
     // (nullable-stripped, by ReferenceNullableStrip) reference type — erasing it to `object` would make the lifted
     // lambda return `object` where the concrete delegate slot (`Func<string>` from a .NET signature) demands a
@@ -19,7 +21,6 @@ static class NullableFuncReturnErasure
 
     static bool ShouldEraseNullableInner(TypeNode of) => of switch
     {
-        TypeNode.Tv => true,
         TypeNode.Fqn { Args: null } f => _isValue(f.Name),
         _ => false,
     };
