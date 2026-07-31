@@ -85,9 +85,24 @@ static partial class NullableTvErasureCallRealign
                     && !stamped.Equals(target) && IsObjectErasureOf(target, stamped))
                     descriptor[i] = TypeJson.Write(target);
             }
+            // THE DESCRIPTOR IS OPEN; THE TARGET MUST BE CLOSED. A descriptor states the callee's DECLARED parameter
+            // vector, so a generic callee's slot is still `!!0` there — and `.NET`-bound calls (`memberSig`) keep it
+            // that way deliberately, because that open form is what the emitter matches the member by. Converting a
+            // value INTO it needs the closed type: substituting the call's own owner/type arguments turns
+            // `Enumerable.Repeat<Int?>`'s `!!0` into `Nullable<int32>`, where using the open node emitted a cast to
+            // whatever `!!0` lowered to in the CALLER (its own type parameter, or `object`) and pushed an `object`
+            // where a `Nullable<int32>` was required. The descriptor itself is left untouched. (Same closed/open
+            // split as the #64 await-plan template and its substitution.)
+            //
+            // The arm is reached only when the value flowed out as a bare `object`, so this is always the NARROWING
+            // direction — and narrowing out of `object` needs a conversion whatever the target is, `unbox.any` for a
+            // value and `castclass` for a reference. Which one, and whether one is needed at all, is CastForTarget's
+            // asymmetric rule; screening here with the WIDENING test (`NeedsObjectSeam`) silently dropped every
+            // reference target, leaving an `object` where a `string` was required.
             else if (descriptor != null && TypeJson.Read(descriptor[i]) is TypeNode slot
-                     && IsBareObject(argTypes[i]) && NeedsObjectSeam(slot))
-                target = slot;
+                     && IsBareObject(argTypes[i])
+                     && Subst(slot, ownerArgs, methodArgs) is TypeNode closed)
+                target = closed;
             if (target != null && args[i] is JsonObject arg && CastForTarget(arg, argTypes[i], target) is JsonNode wrapped)
                 args[i] = wrapped;
         }
@@ -102,10 +117,16 @@ static partial class NullableTvErasureCallRealign
     //
     // This is the arm the erasure family reaches once a call crosses into .NET: `assertTrue(map.merge(…))` hands an
     // erased stdlib return straight to `ClassicAssert.IsTrue(bool?)`.
+    //
+    // The call's own owner and type arguments come along, because `memberSig` is the callee's OPEN declaration —
+    // `Enumerable.Repeat<T>`'s first parameter is `!!0` there and stays `!!0` for the emitter to match the member by.
+    // RealignArgs closes it over these before converting anything into it.
     static TypeNode EvalClrCall(JsonObject obj, Ctx ctx)
     {
         if (obj["recv"] != null) Eval(obj["recv"], ctx);
-        RealignArgs(obj, null, null, null, ctx);
+        var ownerArgs = (TypeJson.Read(obj["type"]) as TypeNode.Fqn)?.Args;
+        var methodArgs = (obj["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray();
+        RealignArgs(obj, null, ownerArgs, methodArgs, ctx);
         // Whatever else the node carries (an index expression, a value) still needs walking; the descriptor keys and
         // the owner `type` are not operands.
         foreach (var kv in obj)

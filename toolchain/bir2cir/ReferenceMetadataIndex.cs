@@ -1171,17 +1171,26 @@ sealed partial class ReferenceMetadataIndex
         declaredRet = null;
         declaredParams = null;
         if (ownerFqn == null || name == null) return false;
-        return TryDeclaredSlot(ownerFqn, name, isStatic, argCount, methodArity,
-            new HashSet<string>(StringComparer.Ordinal), out declaredRet, out declaredParams);
+        if (FindDeclaredSlot(ownerFqn, name, isStatic, argCount, methodArity,
+                new HashSet<string>(StringComparer.Ordinal), 0, out var ret, out var ps) != SlotLookup.Declared)
+            return false;
+        declaredRet = ret;
+        declaredParams = ps;
+        // Declared, but with nothing this reader may state about it — the caller has no use for that.
+        return declaredRet != null || declaredParams.Any(p => p != null);
     }
 
-    bool TryDeclaredSlot(string ownerFqn, string name, bool isStatic, int argCount, int methodArity,
-        HashSet<string> seen, out TypeNode declaredRet, out TypeNode[] declaredParams)
+    // Deepest supertype chain the search will walk. A constructed hierarchy can grow its own arguments
+    // (`A<T> : B<A<T>>`), so the path key alone does not bound the walk; nothing real is this deep.
+    const int MaxSupertypeDepth = 16;
+
+    SlotLookup FindDeclaredSlot(string ownerFqn, string name, bool isStatic, int argCount, int methodArity,
+        HashSet<string> path, int depth, out TypeNode declaredRet, out TypeNode[] declaredParams)
     {
         declaredRet = null;
         declaredParams = null;
+        if (depth > MaxSupertypeDepth) return SlotLookup.NotDeclared;
         var bare = BareOwnerFqn(ownerFqn);
-        if (!seen.Add(bare)) return false;
         if (TryMembersByBirOwner(bare, out var list))
         {
             var shapeMatches = list.Where(m =>
@@ -1194,37 +1203,51 @@ sealed partial class ReferenceMetadataIndex
                 .ToArray();
             // Declared HERE, ambiguously: refuse outright rather than walking upward, where an unrelated base member
             // of the same shape would look like an answer to a call this type's own overload set already owns.
-            if (shapeMatches.Length > 1) return false;
+            if (shapeMatches.Length > 1) return SlotLookup.Refused;
             if (shapeMatches.Length == 1)
             {
                 var member = shapeMatches[0];
-                declaredRet = Serviceable(member.NullableGenericRet) ?? OpenPhysical(member.ReturnTypeNode);
+                declaredRet = DeclaredSlot(member.NullableGenericRet, member.ReturnTypeNode);
                 declaredParams = new TypeNode[argCount];
                 for (var i = 0; i < argCount; i++)
-                    declaredParams[i] = Serviceable(member.NullableGenericParams?[i]) ?? OpenPhysical(member.ParamTypeNodes[i]);
-                return declaredRet != null || declaredParams.Any(p => p != null);
+                    declaredParams[i] = DeclaredSlot(member.NullableGenericParams?[i], member.ParamTypeNodes[i]);
+                // DECLARED HERE TERMINATES THE SEARCH, facts or no facts. A concrete member that shadows or
+                // implements an inherited namesake IS the declaration the call binds to; continuing upward because
+                // this one happens to carry no erasure fact would hand the call the BASE's carrier and rewrite a
+                // descriptor the derived member never had.
+                return SlotLookup.Declared;
             }
         }
-        if (!_referenceTypeShapes.TryGetValue(DottedFqn(bare), out var shape)) return false;
+        if (!_referenceTypeShapes.TryGetValue(DottedFqn(bare), out var shape)) return SlotLookup.NotDeclared;
         // Reflection reports the interface set TRANSITIVELY, so one hop reaches every interface declaration; the base
-        // chain is walked one link at a time. Two supertypes that both answer are refused unless they say the same
-        // thing — an inherited member the call cannot distinguish is not a declaration this pass may act on.
+        // chain is walked one link at a time. Every supertype that answers is collected and they must AGREE — an
+        // inherited member the call cannot distinguish is not a declaration this pass may act on.
         TypeNode foundRet = null;
         TypeNode[] foundParams = null;
         var answers = 0;
         foreach (var super in Supertypes(shape))
         {
-            if (!TryDeclaredSlot(super.Name, name, isStatic, argCount, methodArity, seen, out var sret, out var sps))
-                continue;
+            // The cycle guard is PATH-LOCAL and keyed on the CONSTRUCTED supertype. `I<int>` and `I<string>` are two
+            // different declarations of the same member and both have to be visited before they can be compared; a
+            // set of BARE names shared across siblings suppressed the second one outright, so the answer was
+            // whichever the reflection interface order reached first. Removing the key on the way out keeps a shared
+            // base reachable on every path rather than only the first.
+            var key = TypeNode.ToJson(super);
+            if (!path.Add(key)) continue;
+            var found = FindDeclaredSlot(super.Name, name, isStatic, argCount, methodArity, path, depth + 1,
+                out var sret, out var sps);
+            path.Remove(key);
+            if (found == SlotLookup.Refused) return SlotLookup.Refused;
+            if (found != SlotLookup.Declared) continue;
             var mret = MapThroughSupertype(sret, super.Args);
             var mps = sps.Select(p => MapThroughSupertype(p, super.Args)).ToArray();
             if (answers++ == 0) { foundRet = mret; foundParams = mps; continue; }
-            if (!SameSlots(foundRet, foundParams, mret, mps)) return false;
+            if (!SameSlots(foundRet, foundParams, mret, mps)) return SlotLookup.Refused;
         }
-        if (answers == 0) return false;
+        if (answers == 0) return SlotLookup.NotDeclared;
         declaredRet = foundRet;
         declaredParams = foundParams;
-        return true;
+        return SlotLookup.Declared;
     }
 
     static IEnumerable<TypeNode.Fqn> Supertypes(ReferenceTypeShape shape)
@@ -1283,9 +1306,19 @@ sealed partial class ReferenceMetadataIndex
         if (ctor.ParamTypeNodes == null || ctor.ParamTypeNodes.Length != argCount) return false;
         declaredParams = new TypeNode[argCount];
         for (var i = 0; i < argCount; i++)
-            declaredParams[i] = Serviceable(ctor.NullableGenericParams?[i]) ?? OpenPhysical(ctor.ParamTypeNodes[i]);
+            declaredParams[i] = DeclaredSlot(ctor.NullableGenericParams?[i], ctor.ParamTypeNodes[i]);
         return declaredParams.Any(p => p != null);
     }
+
+    // ONE slot's declaration. Three outcomes, which is why this is not a `carrier ?? physical` chain:
+    //   * a carrier the reader may state — the exact pre-erasure Kotlin type, and the best answer there is;
+    //   * a carrier it must NOT state — then NOTHING, because the physical declaration is not a substitute for a
+    //     refused carrier: it is the same erasure spelled WITHOUT the evidence that it was one. `Pair<Array<T?>, U>`
+    //     is physically `Pair<object[], !1>`, which still carries a `Tv` and so passes the open-physical test, so a
+    //     fallback served exactly the `object[]` derivation the refusal exists to prevent;
+    //   * no carrier at all — the physical declaration, while it is still open.
+    static TypeNode DeclaredSlot(TypeNode carrier, TypeNode physical)
+        => carrier != null ? Serviceable(carrier) : OpenPhysical(physical);
 
     // A carrier is served unless its erasure lands at an ARRAY ELEMENT. `Array<X?>` is the one position where the
     // erasure has not yet been made uniform (#86 D2): the producing assembly's slot says `object[]` while the value it
@@ -2458,6 +2491,12 @@ sealed class ReferenceDotKtMetadata
 // a cross-module call site must know "is this referenced callee suspend?" (its CLR shape is the Task<T> kickoff).
 // NO consumer reads it yet — bundle 6 wires it.
 sealed record ReferenceTypeShape(int TypeParamCount, string Kind, TypeNode.Fqn Base, TypeNode.Fqn[] Interfaces);
+
+// The outcome of looking for one member at one owner (#86 D1). `NotDeclared` is the ONLY one that lets the search
+// continue to the supertypes: a member declared at this level is the declaration the call binds to whether or not it
+// carries erasure facts, and `Refused` is a decision — an overload set or a disagreeing diamond — that no other level
+// may overturn.
+enum SlotLookup { NotDeclared, Declared, Refused }
 
 // `ReturnType` is the best-effort STATIC-RESULT projection (TypeNodeOf): it drops a generic parameter, because its
 // consumers want a usable concrete identity or nothing. `ReturnTypeNode` is the DECLARATION projection

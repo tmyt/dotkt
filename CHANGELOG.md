@@ -207,6 +207,17 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   PRE-erasure element type, which the blanket sweep has already consumed by the time any use axis runs — a missing
   TYPE, not a missing declaration, so no reader can supply it. Deleting it reproduced the `filterNotNullTo`
   `InvalidProgramException` at a value element, and its comment now says that instead of pointing at the table.
+  Four refusal-discipline holes closed on review, each one a place where a refusal was stated and then not honoured.
+  A refused carrier no longer falls back to the physical declaration — that fallback is the same erasure spelled
+  *without* the evidence that it was one, so a `Pair<Array<T?>, U>` slot (physically `Pair<object[], !1>`, still
+  generic-parameter-bearing) served precisely the `object[]` derivation the array refusal exists to prevent. A member
+  DECLARED at a level now terminates the search whether or not it carries erasure facts, so a concrete member that
+  shadows an inherited namesake can no longer be handed the base's carrier. The supertype cycle guard is path-local
+  and keyed on the CONSTRUCTED supertype, so `I<int>` and `I<string>` are both visited and compared instead of the
+  answer depending on reflection interface order. And a `.NET`-bound call's argument is converted to the CLOSED slot:
+  `memberSig` states the callee's parameters OPEN and stays that way for member matching, so
+  `Enumerable.Repeat<Int?>` was casting an erased argument to whatever `!!0` lowered to in the CALLER — an
+  `InvalidProgramException` before the method printed anything, now covered by a fixture.
 
 - **bir2cir (area:bir2cir): a `vararg xs: T?` pack is built at the erased element type (#86).** The packed array and
   its elements are ONE decision: the pack fills an `Array<T?>` slot erased to `object[]`, and built as

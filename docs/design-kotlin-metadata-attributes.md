@@ -112,6 +112,12 @@ The reader's discipline, in order:
   `Any` — and deriving every `Any`-returning member's use as `object` is not this family, it is all of them.
 - **a same-shape overload set is refused, never guessed.** Name, static-ness, parameter count and generic arity are
   all a call site gives; picking a sibling would manufacture the mismatch the pass exists to remove.
+- **a member declared at a level ends the search**, facts or no facts — a concrete member that shadows an inherited
+  namesake IS the declaration the call binds to, and the base's carrier is not a stand-in for it. The walk over
+  base and interfaces is path-local and keyed on the CONSTRUCTED supertype, so `I<int>` and `I<string>` are both
+  visited and must agree rather than the first one reflection happens to report winning.
+- **a refusal is not a fallback.** Where the carrier is refused the slot yields nothing; the physical declaration is
+  not substituted for it, because it is the same erasure spelled without the evidence that it was one.
 - **an `Array<X?>` slot is refused until `Array<X?>` is canonically `object[]` (#86 D2).** Alone among the positions,
   the producer does not yet implement what its own slot says: `Array<T>.copyOf(newSize)` declares `Array<T?>`
   (physically `object[]`) and reflectively allocates a `Nullable<V>[]`.
