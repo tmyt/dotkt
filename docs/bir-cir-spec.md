@@ -477,6 +477,21 @@ same Q1 answer (`ValueStability.IsReReadable`), and the vocabulary still does no
 plan that materialises nothing rewrites nothing — a node with no suspension among its operands is left byte-identical,
 which is what keeps suspension-free code out of the diff.
 
+**A THIRD producer, for a third reason: a parameter the CLR mapping maps AWAY.** `MemberCallSubstitution` lowers a
+Kotlin constructor onto a BCL one that has no slot for one of its arguments — `HashSet(initialCapacity, loadFactor)`
+onto the capacity-only overload, because the CLR has no load-factor concept. Kotlin evaluated that argument, so the
+question "what does a value with no reader cost" is exactly the one the plan already answers: the mapping binds every
+ORIGINAL argument in Kotlin order, gives the KEPT ones a `bindRef` in their slot and the mapped-away ones no reader at
+all, and lowers it on the spot through the same `Materialise` (no `force`, so both general order rules apply — the
+prefix rule is what stops a kept value sliding behind a mapped-away one). Asking Q2 a second time at that site instead
+is what the single-classifier rule forbids. The result is a `valueBlock`, or the bare call when nothing materialises —
+which is every construction whose mapped-away argument is a literal, so the `HashSet(16, 0.75f)` idiom is unchanged.
+
+Because this producer runs ~240 passes after `CallEvalLowering.Apply`, the block it mints is NOT folded by
+`MergeNestedResult` and may nest inside another block's `result`. Consumers recurse, so nesting is tolerated rather
+than normalized here; what is NOT tolerated is a `try` inside such a block reaching an operand slot, which
+`TryValueOperandHoist` hoists (it searches a block's inline statements for one, not just its top level).
+
 **Phase.** `callEval`, `bindRef` and `delegationBindings` are BIR-only; `preStmts` is CIR-only. `CallEvalLowering`
 asserts the split at its own exit, and `scripts/verify-schema.py` enforces it structurally on both documents. Stage 0's
 plans are made and lowered within one pass, so they too never appear in a serialized document.

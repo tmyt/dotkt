@@ -272,15 +272,29 @@ sealed partial class Emitter
                     // owner or overload; bir2cir has already made both decisions.
                     var ifaceNode = e.GetProperty("iface");
                     var ifaceSpec = ReadFqn(ifaceNode);
-                    var mi2 = ifaceSpec != null && _types.ContainsKey(ifaceSpec.Name)
+                    var ccSig = SigNodes(e);
+                    var ccArity = CalledMethodArity(e);
+                    var mi20 = ifaceSpec != null && _types.ContainsKey(ifaceSpec.Name)
                         ? ResolveMethod(ParseOwnerSlot(ifaceNode), e.GetProperty("method").GetString(), out _,
-                            SigNodes(e), CalledMethodArity(e))
-                        : InterfaceMethodOn(if2, e.GetProperty("method").GetString());
+                            ccSig, ccArity)
+                        : InterfaceMethodOn(if2, e.GetProperty("method").GetString(), ccSig, ccArity);
+                    // The receiver being a type variable changes the DISPATCH, not the member: a generic member still
+                    // needs its `typeArgs` instantiation, exactly as the callInstance arm applies it. Without this a
+                    // `fun <R> pick(a: R, b: R): R` called on a `!!T` receiver emitted a callvirt on the generic
+                    // method DEFINITION.
+                    var mi2 = ApplyTypeArgs(mi20, e, out var ccRet, out var ccPs);
                     EmitAddr(e.GetProperty("recv"));            // &C  (a managed pointer, required by `constrained.`)
-                    EmitArgs(ccArgs, mi2.GetParameters());
+                    // The RECORDED parameter vector wins whenever there is one: `GetParameters()` on a MethodBuilder
+                    // whose declaring TypeBuilder is not baked yet is not answerable, and a constrained call whose
+                    // constraint is an EMITTED Kotlin interface resolves to exactly such a builder. Reflection is the
+                    // fallback, for a referenced owner that has no recorded vector.
+                    if (ccPs != null) EmitArgsTyped(ccArgs, ccPs, mi2); else EmitArgs(ccArgs, mi2.GetParameters());
                     _il.Emit(OpCodes.Constrained, rt2);
                     _il.Emit(OpCodes.Callvirt, mi2);
-                    return mi2.ReturnType;
+                    // …and the declared call-RESULT view still has to be reconciled with the resolved return type —
+                    // the object-erasure unbox/castclass and the collapsed-variance collection seam are properties of
+                    // the CALL, not of how its receiver was addressed.
+                    return CoerceReturn(e, mi2 == mi20 ? mi2.ReturnType : ccRet);
                 }
                 // `a.compareTo(b)` on a Comparable -> `constrained. recvType; callvirt IComparable::CompareTo`.
                 // The receiver must be a managed pointer; `constrained.` then dispatches for value/ref/generic T.

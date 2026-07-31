@@ -21,6 +21,8 @@
 //   il-tryexpr    -> tryexpr_tryAsValue           try/catch in value position: expr-body, val init, inside a lambda
 //   il-tryexprop  -> tryexprop_tryInOperand       try-expression as a VALUE in an operand slot (empty-stack hoist)
 //                    + sideEffectingOperandBeforeHoistedTry (the LEFT operand's spill temp, typed from the operand)
+//                    + tryInsideAMintedOperandBlock (the try is a `var` init inside a lowering-minted operand block)
+//                    + tryInABranchOfATrySubjectedWhen (recognizing the outer block must not stop the walk inside it)
 //
 // Added here rather than migrated: nothingReturningCallInValuePosition (#197) — a `fun f(): Nothing` CALL in a
 // value position, the in-module twin of the cross-module round-trip case. It belongs to this battery because a
@@ -78,6 +80,11 @@ val excHoistLog = mutableListOf<String>()
 fun excHoistSide(): Int { excHoistLog.add("L"); return 4 }
 fun excHoistSum(): Int = excHoistSide() + try { "x".toInt() } catch (e: Exception) { 6 }        // catch arm
 fun excHoistConcat(): String = excHoistSide().toString() + try { "7".toInt() } catch (e: Exception) { 0 }  // try arm
+
+// Two operands, so the second is evaluated with the first already on the CLR evaluation stack — the position that
+// makes an inline protected region illegal.
+fun excPair(a: Any, b: Any): String = "$a/$b"
+fun excPairInt(a: Int, b: Int): Int = a + b
 
 // ---- #197 : a `fun f(): Nothing` in a VALUE position — the erased `object` must never reach the slot ----------
 // `Nothing` has no CLR analog, so a `fun f(): Nothing` returns `object`. A lowering that let the call sit in a
@@ -247,5 +254,31 @@ class ExceptionTests {
         assertEquals(10, excHoistSum())          // 4 + 6 (the try throws, so the catch arm supplies the value)
         assertEquals("47", excHoistConcat())     // "4" + 7 (the try arm supplies it)
         assertEquals(2, excHoistLog.size)        // the left operand ran once per call, in its lexical position
+    }
+
+    // The hazard is the BLOCK, not kotc's spelling of it. Several lowerings materialise an operand into a MINTED
+    // `valueBlock` whose `var` initializer is then the try-valued expression — a range-membership test's bounds
+    // here — so the `try` is no longer a direct statement of the block. It still enters a protected region with the
+    // enclosing operands on the stack, and the hoist used to look only at the block's top level: an
+    // InvalidProgramException, from source the frontend accepted.
+    @TestAttribute
+    fun tryInsideAMintedOperandBlock() {
+        val membership = excPair("z", (try { 1 } catch (e: Exception) { 2 }) in 1..5)
+        assertEquals("z/true", membership.lowercase())
+        val nested = excPair("z", (try { 9 } catch (e: Exception) { 0 }) in (try { 1 } catch (e: Exception) { 2 })..10)
+        assertEquals("z/true", nested.lowercase())
+    }
+
+    // Recognizing a block as hazardous must not stop the walk INSIDE it. A `when` with a try-valued subject is a
+    // block whose statements bind that subject, so it answers "yes, this runs a try" — and a try sitting in a
+    // later operand slot of one of its branches still has to be hoisted. Classifying the outer block and then
+    // returning early left that inner one inline, at a non-empty stack.
+    @TestAttribute
+    fun tryInABranchOfATrySubjectedWhen() {
+        val v = when (try { 1 } catch (e: Exception) { 0 }) {
+            1 -> excPairInt(0, try { 2 } catch (e: Exception) { 3 })
+            else -> 0
+        }
+        assertEquals(2, v)
     }
 }
