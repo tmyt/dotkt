@@ -46,54 +46,98 @@ declare -A RT_XFAIL=(
 	# value-type axis of #86 (invisible to every other gate, which drives only T=String); when #86 lands a null-capable
 	# representation for a bare `T?` slot the section runs 7/3/9/4/x -> prune it.
 	[roundtrip-nullable-vt-generic]="#109/#86/#127: cross-module nullable value-type generic — a top-level T? method/ctor param is emitted as the bare struct-incapable T slot, so the consumer COMPILES (NullableAttribute(2) restores T?) but firstOr<Int>(null,7)/NBox<Int>(null) push null into an int32 slot, so main fails JIT verification and the app produces NO output (System.InvalidProgramException); distinct from #147's nested constructed-type carrier"
-	# #86 RETURN axis — the sibling gap the param entry above does not cover, and the one that is WORSE than a bare
-	# `T` slot. A top-level `T?` RETURN is object-erased at the declaration, and the pre-erasure shape is recorded
-	# nowhere: the [KotlinNullableGeneric] recorder deliberately skips a TOP-LEVEL Nullable(Tv), and the NRT byte
-	# walk runs AFTER the erasure, so it computes its bytes from `object` and stamps no `2`. With neither channel
-	# carrying the `?`, dll2klib re-imports the slot as a NON-NULL `Any` and the consumer's `val v: Int? = pick(5,
-	# false)` no longer type-checks. Pruned by the uniform-erasure core change, which records the carrier at the
-	# top-level position too and stamps the NRT byte from the PRE-erasure declared type.
-	[roundtrip-nullable-vt-generic-ret]="#86: a top-level T? RETURN carries neither the [KotlinNullableGeneric] carrier (the recorder skips a top-level Nullable(Tv)) nor an NRT 2 byte (the byte walk runs after the erasure and sees object), so dll2klib re-imports it as non-null Any and the consumer cannot bind it to an Int? slot — pruned by the uniform-erasure core change (issue #86 core step: record + stamp the top-level T? carrier)"
-	# #86 D2 — `Array<X?>` has no single representation today: a CONCRETE `Array<Int?>` is `Nullable<int32>[]` while
-	# the erased/open form is `object[]`, and the two are unrelated CLR types (ECMA-335 I.8.7.1 — array
-	# compatibility needs reference-compatible elements). Measured symptom: the re-imported PARAM is not even an
-	# array of a nullable element — the consumer compile stops at `argument type mismatch: actual type is
-	# 'Array<Int?>', but 'IntArray' was expected`, so no consumer IL is produced at all. Pruned by the Array<X?>
-	# canonicalisation step, which makes `object[]` the one representation whenever the element may be a value type.
-	[roundtrip-nullable-vt-generic-array]="#86 D2: Array<Int?> has two coexisting CLR representations (Nullable<int32>[] concrete vs object[] erased) which are not array-compatible; measured, a cross-module Array<Int?> PARAM re-imports as IntArray and the consumer fails to compile ('actual type is Array<Int?>, but IntArray was expected') — pruned by the Array<X?>-is-object[] canonicalisation step of #86"
-	# #86 D3 — an override that NARROWS a base `T?` slot. The derived declaration contains a concrete `Int?`, not
-	# `Nullable(Tv)`, so no syntactic sweep can see it: the base slot erases to `object` while the override emits a
-	# typed slot. Measured symptom, and it is earlier than a dispatch miss: the consumer's emit ABORTS with
-	# `ilemit: cannot resolve .NET type IntSink`, so no consumer assembly exists. Discriminated against two
-	# controls that both pass through the identical pipeline — the same interface at a REFERENCE instantiation
-	# (`Sink<String>` / `String?`), and the same value instantiation with a NON-nullable slot (`Sink<Int>` /
-	# `Int`) — so the narrowed `T?` slot at a value type is the sole variable. Pruned by the override-slot bridge
-	# step, which emits `object f(object)` with a `.override` forwarding to the typed body.
-	[roundtrip-nullable-vt-generic-override]="#86 D3: a Kotlin override narrowing a base T? slot to a concrete Int? does not match the erased object slot; measured, the consumer emit aborts with 'ilemit: cannot resolve .NET type IntSink' and no assembly is produced, while the same shape at a REFERENCE instantiation and the same value instantiation with a NON-nullable slot both pass — pruned by the override-slot-bridge step of #86"
-	# #86 SAME-MODULE control. Measured, not assumed: with no module boundary at all, a null through a top-level
-	# `T?` param, a `T?` ctor param, and a narrowed override are each independently red at T=Int — the first two
-	# with System.InvalidProgramException (the bare struct-incapable `T` slot fails JIT verification), the third
-	# with `TypeLoadException: Method 'accept' in type 'IntSink' does not have an implementation` (the narrowed
-	# override is emitted as a new overload, so the interface slot is left unimplemented). This corrects a claim
-	# the cross-module section above used to make: the defect does not need a module boundary, so the carrier and
-	# the representation are two separate gaps, and only the representation one is measured here. Pruned by the
-	# uniform-erasure core step (the param/ctor carve-out) plus the override-slot-bridge step.
-	[roundtrip-nullable-vt-generic-samemodule]="#86: with NO module boundary, a null through a top-level T? param and a T? ctor param fault with System.InvalidProgramException at T=Int, and an override narrowing a base T? slot to Int? faults with TypeLoadException (method has no implementation) — so the fault is the REPRESENTATION, not the cross-module carrier; pruned by the uniform-erasure core step and the override-slot-bridge step of #86"
-	# #86 stdlib idioms at a VALUE element. Measured: `List<Int?>.filterNotNullTo` / `List<Boolean?>.filterNotNullTo`
-	# throw System.EntryPointNotFoundException and `Sequence.mapNotNull` throws EntryPointNotFoundException (and
-	# NullReferenceException on the all-null shape), while their reference-element and eager twins are green in the
-	# NUnit lane. Pruned by the uniform-erasure core step — the destination/element slots are the same
-	# `Nullable(Tv)` positions — together with the narrowed ValueTypeNullableCollectionArg receiver conversion.
-	[roundtrip-nullable-vt-generic-stdlib]="#86: at a VALUE element List<T?>.filterNotNullTo and Sequence.mapNotNull throw EntryPointNotFoundException while their reference-element and eager twins are green — pruned by the uniform-erasure core step of #86 plus the struct-ness-oracle narrowing of ValueTypeNullableCollectionArg"
-	# #18/#86 — the VALUE instantiation of #147's NESTED carrier positions. At T=String the erased Slot<object> and
-	# the restored Slot<string> are reference-compatible, so the in-process consumer runs green with a formal-only
-	# ilverify finding (ILVERIFY_XFAIL nullableGenericMembersRoundTrip). At T=Int the same mismatch is Slot<object>
-	# against Slot<Nullable<int32>>, which are not compatible: measured, the call CORRUPTS MEMORY — an
-	# AccessViolationException that takes the whole test host down, which is why this axis is a shell section and
-	# not an NUnit sibling. Pruned by the uniform-erasure core step (the use position must be typed
-	# Subst(Erase(decl)), never Erase(Subst(...))) together with the cross-module carrier read.
-	[roundtrip-nullable-generic-slot-value]="#18/#86: a cross-module nested Slot<T?> param/property/member-return at T=Int meets the erased Slot<object> against the restored Slot<Nullable<int32>> — not reference-compatible, so the call corrupts memory (AccessViolationException) where the T=String twin is merely formally unverifiable; pruned by the uniform-erasure core step plus the cross-module carrier read of #86"
+	# ---- #86, one entry per OBSERVABLE ---------------------------------------------------------------
+	# These are deliberately NOT bundled. A section is a single stdout comparison, so an app driving three
+	# faulty shapes reports one verdict and the FIRST fault hides the rest — a `main` that dies of
+	# InvalidProgramException never reaches the TypeLoadException line, and the entry would keep claiming
+	# both long after one was fixed. So each shape gets its own app, its own section, and its own
+	# RT_XFAIL_SHAPE below; each prunes independently and flips to FIXED on its own.
+	#
+	# SAME-MODULE (no module boundary, no metadata round-trip): the control that separates a CARRIER defect
+	# from a REPRESENTATION one. Measured, not assumed — and it corrects a claim the section above used to
+	# make, that #86 is a cross-module defect. Pruned by the uniform-erasure core step (param/ctor carve-out)
+	# and, for the override, by the override-slot-bridge step.
+	[roundtrip-nullable-vt-generic-local-param]="#86: with NO module boundary, a null through a top-level T? PARAM at T=Int fails JIT verification (the bare struct-incapable T slot) — System.InvalidProgramException, so the fault is the REPRESENTATION, not the cross-module carrier; pruned by the uniform-erasure core step of #86"
+	[roundtrip-nullable-vt-generic-local-ctor]="#86: with NO module boundary, a T? CTOR PARAM plus its backing field/property on a generic owner fails JIT verification at T=Int (both the null and the present case) — System.InvalidProgramException; pruned by the uniform-erasure core step of #86"
+	[roundtrip-nullable-vt-generic-local-override]="#86 D3: with NO module boundary, an override narrowing a base T? slot to a concrete Int? is emitted as a new overload, so the interface slot is left unimplemented and the type never loads — System.TypeLoadException; pruned by the override-slot-bridge step of #86"
+	# The stdlib idioms whose VALUE instantiations do not resolve. Their reference-element and eager twins are
+	# green in the NUnit lane, which is what makes the pair a measurement rather than a note. Pruned by the
+	# uniform-erasure core step (both are the same Nullable(Tv) slot) plus the struct-ness-oracle narrowing of
+	# ValueTypeNullableCollectionArg for the collection receiver.
+	[roundtrip-nullable-vt-generic-filternotnullto]="#86: List<Int?>/List<Boolean?>.filterNotNullTo does not resolve at a VALUE element — System.EntryPointNotFoundException — while the same call at a REFERENCE element is green; pruned by the uniform-erasure core step of #86 plus the struct-ness-oracle narrowing of ValueTypeNullableCollectionArg"
+	[roundtrip-nullable-vt-generic-seq-mapnotnull]="#86: Sequence.mapNotNull does not resolve at a VALUE element — System.EntryPointNotFoundException — while the eager Iterable.mapNotNull twin is green; pruned by the uniform-erasure core step of #86"
+	# CROSS-MODULE. The top-level T? RETURN carries neither channel: the [KotlinNullableGeneric] recorder
+	# skips a top-level Nullable(Tv), and the NRT byte walk runs AFTER the erasure so it sees `object` and
+	# stamps no `2`. dll2klib therefore re-imports the slot as a NON-NULL Any and the consumer does not
+	# type-check — a COMPILE failure, invisible to every runtime-shaped gate. Pruned by the core step, which
+	# records the carrier at the top-level position and stamps the NRT byte from the PRE-erasure type.
+	[roundtrip-nullable-vt-generic-ret]="#86: a top-level T? RETURN carries neither the [KotlinNullableGeneric] carrier (the recorder skips a top-level Nullable(Tv)) nor an NRT 2 byte (the byte walk runs after the erasure and sees object), so dll2klib re-imports it as non-null Any and the consumer fails to compile: initializer type mismatch: expected 'Int?', actual 'Any' — pruned by the uniform-erasure core step of #86 (record + stamp the top-level T? carrier)"
+	[roundtrip-nullable-vt-generic-ret-member]="#86: the same top-level-position defect on a GENERIC OWNER's member return (Picker<T>.get(): T?) — re-imported as non-null Any, so the consumer fails to compile with initializer type mismatch: expected 'Int?', actual 'Any'; tracked apart from the top-level entry because the recorder reaches the two positions by different walks and they can be fixed apart — pruned by the uniform-erasure core step of #86"
+	# The return axis, unlike the param axis, is NOT confined to value types: with no channel carrying the `?`
+	# a REFERENCE instantiation re-imports as non-null Any too. Recorded as its own entry so the breadth is a
+	# measurement rather than a remark, and so it can flip to FIXED independently.
+	[roundtrip-nullable-vt-generic-ret-reference]="#86: the top-level T? RETURN gap is not confined to value types — at a REFERENCE instantiation the slot also re-imports as non-null Any and the consumer fails to compile: initializer type mismatch: expected 'String?', actual 'Any'; pruned by the uniform-erasure core step of #86"
+	# D2 — `Array<X?>` has no single representation: a CONCRETE Array<Int?> is Nullable<int32>[] while the
+	# erased/open form is object[], and the two are unrelated CLR types (ECMA-335 I.8.7.1 — array
+	# compatibility requires reference-compatible elements). Measured, the re-imported slot is not even an
+	# array of a nullable element. Pruned by the Array<X?>-is-object[] canonicalisation step.
+	[roundtrip-nullable-vt-generic-array-param]="#86 D2: a cross-module Array<Int?> PARAM re-imports as IntArray, so the consumer fails to compile: argument type mismatch: actual type is 'Array<Int?>', but 'IntArray' was expected — pruned by the Array<X?>-is-object[] canonicalisation step of #86"
+	# The RETURN position fails differently from the param position, and far worse: the consumer COMPILES and
+	# RUNS and prints garbage. The element re-imports as a NON-NULL Int, so the consumer indexes a
+	# Nullable<int32>[] as an int32[] and reads the LAYOUT WORDS as elements. No diagnostic, no exception —
+	# which is why this entry pins the observed OUTPUT as its shape.
+	[roundtrip-nullable-vt-generic-array-ret]="#86 D2: a cross-module Array<Int?> RETURN re-imports with a NON-NULL Int element, so the consumer indexes a Nullable<int32>[] as an int32[] and reads the layout words as elements — an array of 4/null/8 reports 3/1/4/0 (hasValue, value, then the null element's zeroed flag) with no diagnostic and no exception; pruned by the Array<X?>-is-object[] canonicalisation step of #86"
+	# D3 cross-module — erasure propagates from the OVERRIDDEN slot, not from syntax, so a derived
+	# declaration holding a concrete Int? is invisible to a Nullable(Tv) sweep. Discriminated against two
+	# controls through the identical pipeline (the same interface at a REFERENCE instantiation, and the same
+	# value instantiation with a NON-nullable slot), both of which pass — so the narrowed T? slot at a value
+	# type is the sole variable. Pruned by the override-slot-bridge step.
+	[roundtrip-nullable-vt-generic-override]="#86 D3: a Kotlin override narrowing a base T? slot to a concrete Int? does not match the erased object slot, and the consumer emit aborts with 'ilemit: … cannot resolve .NET type IntSink' so no assembly is produced, while the same shape at a REFERENCE instantiation and the same value instantiation with a NON-nullable slot both pass — pruned by the override-slot-bridge step of #86"
+	# #18/#86 — the VALUE instantiation of #147's NESTED carrier positions. At T=String the erased
+	# Slot<object> and the restored Slot<string> are reference-compatible, so the in-process consumer runs
+	# green with a formal-only ilverify finding (ILVERIFY_XFAIL nullableGenericMembersRoundTrip). At T=Int
+	# they are not. The axis is PRESENT-vs-NULL, which a bundled app hid: carrying a NULL through the param,
+	# the property and the member return all WORK — the green control sections drive all four — and it is
+	# carrying a VALUE that corrupts memory. That is also why this axis cannot be an NUnit sibling: an
+	# AccessViolationException takes the test host down, and the whole assembly then reports zero tests.
+	# Pruned by the core step (a use must be typed Subst(Erase(decl)), never Erase(Subst(...))) plus the
+	# cross-module carrier read.
+	[roundtrip-nullable-generic-slot-param-value]="#18/#86: carrying a VALUE — not a null, the null path is green — through a cross-module nested Slot<T?> PARAM at T=Int meets the erased Slot<object> against the restored Slot<Nullable<int32>> and corrupts memory: System.AccessViolationException in CastHelpers.Unbox_Nullable, where the T=String twin is merely formally unverifiable; pruned by the uniform-erasure core step plus the cross-module carrier read of #86"
+	[roundtrip-nullable-generic-slot-property-value]="#18/#86: the same Slot<object>-vs-Slot<Nullable<int32>> mismatch reading a VALUE back from a nested Slot<T?> PROPERTY at T=Int — System.AccessViolationException in CastHelpers.Unbox_Nullable; pruned by the uniform-erasure core step plus the cross-module carrier read of #86"
+	[roundtrip-nullable-generic-slot-param-bool]="#18/#86: the same nested Slot<T?> PARAM carrying a VALUE at T=Boolean surfaces one step earlier than its Int twin — System.NullReferenceException rather than an access violation; tracked apart because the shapes differ and a fix owes a value, not merely a different fault; pruned by the uniform-erasure core step plus the cross-module carrier read of #86"
 )
+
+# The documented failure SHAPE of each RT_XFAIL entry: a substring the section's EVIDENCE (every compiler /
+# emitter diagnostic plus the app's stderr and exit status) must contain for the entry to absorb the failure.
+# Without it an XFAIL is keyed on a section NAME alone, and any other cause — a missing assembly, an unrelated
+# compiler break, a different exception — silently satisfies it. An entry that fails for a shape not listed
+# here reddens as an XFAIL SHAPE MISMATCH instead. Every entry above carries one; a listed name with no shape
+# would be a name-only XFAIL again.
+declare -A RT_XFAIL_SHAPE=(
+	[roundtrip-nullable-vt-generic]='System.InvalidProgramException'
+	[roundtrip-nullable-vt-generic-local-param]='System.InvalidProgramException'
+	[roundtrip-nullable-vt-generic-local-ctor]='System.InvalidProgramException'
+	[roundtrip-nullable-vt-generic-local-override]='System.TypeLoadException'
+	[roundtrip-nullable-vt-generic-filternotnullto]='System.EntryPointNotFoundException'
+	[roundtrip-nullable-vt-generic-seq-mapnotnull]='System.EntryPointNotFoundException'
+	[roundtrip-nullable-vt-generic-ret]="initializer type mismatch: expected 'Int?', actual 'Any'"
+	[roundtrip-nullable-vt-generic-ret-member]="initializer type mismatch: expected 'Int?', actual 'Any'"
+	[roundtrip-nullable-vt-generic-ret-reference]="initializer type mismatch: expected 'String?', actual 'Any'"
+	[roundtrip-nullable-vt-generic-array-param]="but 'IntArray' was expected"
+	# No diagnostic and no exception: this one fails by printing a WRONG VALUE, so the shape is the value.
+	[roundtrip-nullable-vt-generic-array-ret]='(stdout) 3/1/4/0'
+	[roundtrip-nullable-vt-generic-override]='cannot resolve .NET type IntSink'
+	[roundtrip-nullable-generic-slot-param-value]='System.AccessViolationException'
+	[roundtrip-nullable-generic-slot-property-value]='System.AccessViolationException'
+	[roundtrip-nullable-generic-slot-param-bool]='System.NullReferenceException'
+)
+
+# A listed name with no documented shape is the hole this map exists to close, so it is rejected here rather
+# than discovered later as a silently-absorbed failure.
+for _n in "${!RT_XFAIL[@]}"; do
+	[[ -n "${RT_XFAIL_SHAPE[$_n]:-}" ]] || die "RT_XFAIL[$_n] has no RT_XFAIL_SHAPE — a name-only XFAIL cannot verify its own failure mode"
+done
+unset _n
 
 # MIGRATED to the in-process ProjectReference round-trip lane (tests/roundtrip/consumer RoundtripTests, driven by
 # tests/run-nunit-tests.sh) — these sections no longer run here (docs/design-nunit-test-harness.md §3, playbook §3):
@@ -118,12 +162,25 @@ declare -A RT_XFAIL=(
 # roundtrip-comparable remains a direct reference-KLIB projection check; its broader ProjectReference twin also
 # lives in the in-process lane.
 
+# ---- section EVIDENCE: what an XFAIL's documented failure SHAPE is matched against ------------------
+# A section verdict is an stdout comparison, so on its own it cannot tell WHY a section failed — a missing
+# assembly, an unrelated compiler break, a different exception and a plain wrong value all produce the same
+# "not equal". That makes a name-only XFAIL a hole: it stays green while the documented cause is replaced by
+# some other one. So every compiler / emitter diagnostic and the app's stderr + exit status are accumulated
+# here, and RT_XFAIL_SHAPE (below) pins a substring each listed entry's evidence must contain. This is the
+# discipline tests/compile-fail/run.sh and tests/run-ilverify.sh already apply to their own baselines.
+RT_EVIDENCE=""
+evidence_reset() { RT_EVIDENCE=""; }
+evidence_add() { [[ -n "${1:-}" ]] && RT_EVIDENCE+="$1"$'\n'; return 0; }
+
 # ---- section result collection (no section may abort the script) -----------------------------------
 declare -a SUMMARY=() NEW_FAILS=()
 # section_result <name> <ok 0|1> <pass-descr> [fail-detail]
 # PASS / FAIL(+detail, reddens) / XFAIL(reason, green) / FIXED(xfail now passing, green).
+# A listed entry that fails for a shape its RT_XFAIL_SHAPE does not describe is NOT absorbed: it reddens as
+# an XFAIL SHAPE MISMATCH, because the baseline's claim about that section has stopped being true.
 section_result() {
-	local name="$1" ok="$2" descr="$3" detail="${4:-}" line
+	local name="$1" ok="$2" descr="$3" detail="${4:-}" line shape
 	if (( ok )); then
 		if [[ -v RT_XFAIL[$name] ]]; then
 			line="FIXED $name — fixed; remove it from the RT_XFAIL baseline"
@@ -131,29 +188,60 @@ section_result() {
 			line="PASS  $name ($descr)"
 		fi
 	elif [[ -v RT_XFAIL[$name] ]]; then
-		line="XFAIL $name (${RT_XFAIL[$name]})"
+		shape="${RT_XFAIL_SHAPE[$name]:-}"
+		if [[ -n "$shape" && "$RT_EVIDENCE" != *"$shape"* ]]; then
+			line="FAIL  $name — XFAIL SHAPE MISMATCH: the documented failure no longer describes this section"
+			detail="$(printf -- '--- documented shape (RT_XFAIL_SHAPE) ---\n%s\n--- observed evidence ---\n%s\n--- stdout diff ---\n%s' \
+				"$shape" "$RT_EVIDENCE" "$detail")"
+			NEW_FAILS+=("$name")
+		else
+			line="XFAIL $name (${RT_XFAIL[$name]})"
+		fi
 	else
 		line="FAIL  $name"
+		detail="$(printf -- '%s\n--- evidence ---\n%s' "$detail" "$RT_EVIDENCE")"
 		NEW_FAILS+=("$name")
 	fi
 	echo "$line"
 	if [[ "$line" == FAIL* && -n "$detail" ]]; then printf '%s\n' "$detail"; fi
 	SUMMARY+=("$line")
+	# A verdict closes a section, so it is also the evidence boundary: whatever accumulates next belongs to
+	# the next section. Resetting HERE rather than at each section's top means no section can forget to.
+	evidence_reset
 }
 # check_output <name> <expected> <actual> <pass-descr> — the common expected==actual section verdict.
+# The ACTUAL output joins the evidence: a section can fail by producing a silently WRONG VALUE, with no
+# diagnostic and no exception anywhere, and then the observed value is the only thing a documented shape can
+# be matched against.
 check_output() {
 	local ok=0
 	if [[ "$3" == "$2" ]]; then ok=1; fi
+	evidence_add "(stdout) $3"
 	section_result "$1" "$ok" "$4" "$(printf -- '--- expected ---\n%s\n--- actual ---\n%s' "$2" "$3")"
 }
 # run_app <outvar> <dll> — capture stdout of a possibly-crashing app. The suspend-stub abort exits 134
 # (SIGABRT) INSIDE the command substitution; naked `x="$(...)"` would kill the whole gate under set -e,
 # so the assignment runs as an `if` condition (errexit-exempt) and the crash is folded into the output.
+# stderr is NOT discarded: it is the only place the exception type appears, and that type is what an
+# RT_XFAIL_SHAPE matches. The section VERDICT is still stdout-only, so nothing about it changes here.
 run_app() {
 	local -n _out="$1"
-	if _out="$(dotnet "$2" 2>/dev/null)"; then :; else
-		_out+="${_out:+$'\n'}(app crashed: exit $?)"
+	local err rc=0
+	err="$(mktemp)"
+	if _out="$(dotnet "$2" 2>"$err")"; then :; else
+		rc=$?
+		_out+="${_out:+$'\n'}(app crashed: exit $rc)"
 	fi
+	evidence_add "$(cat "$err")"
+	evidence_add "(app exit $rc)"
+	rm -f "$err"
+}
+
+# compile_kt <srcdir> <bir-outdir> <classpath> — kotc, with its diagnostics kept as section evidence. A
+# consumer that fails to COMPILE emits no assembly, and the section then fails on empty stdout; without the
+# diagnostic there is nothing to tell that apart from a crash, so an XFAIL could not name either.
+compile_kt() {
+	evidence_add "$("$LAUNCHER" "$1" -no-stdlib -classpath "$3" -d "$2" 2>&1 || true)"
 }
 
 # kotc resolves the stdlib (kotlin.*) from the CLR FRONTEND KLIB (scripts/build-stdlib-klib.sh). (legacy
@@ -214,8 +302,11 @@ emit_il() {
 	# the RUNTIME stdlib (DotKt.Stdlib) in its `[kotlin.clr.*]` round-trip metadata, but bir2cir's ManagedReferenceCatalog
 	# ALIASES that reference to the ref twin (same type shapes) — so the runtime stdlib is NOT on --compile-refs here.
 	local compile_refs; compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL" "$(refset_join "${usrrefs[@]}")")"
-	dotnet "$BIR2CIR_DLL" "$cir" --compile-refs "$compile_refs" "${birs[@]}" >/dev/null 2>&1 || true
-	dotnet "$ILEMIT_DLL" "$out" "$asm" --runtime-refs "$(refset_join "${refs[@]}")" "$cir"/*.cir.json >/dev/null 2>&1 || true
+	# Both stages tolerate failure, but their diagnostics are KEPT as section evidence: an emit that aborts
+	# (`ilemit: … cannot resolve .NET type X`) produces no assembly, and the section then fails on empty
+	# stdout — indistinguishable from a crash unless the abort message survives.
+	evidence_add "$(dotnet "$BIR2CIR_DLL" "$cir" --compile-refs "$compile_refs" "${birs[@]}" 2>&1 || true)"
+	evidence_add "$(dotnet "$ILEMIT_DLL" "$out" "$asm" --runtime-refs "$(refset_join "${refs[@]}")" "$cir"/*.cir.json 2>&1 || true)"
 	[[ -f "$STDLIB_RT_DLL" ]] && cp "$STDLIB_RT_DLL" "$out/" 2>/dev/null || true
 }
 
@@ -540,8 +631,8 @@ check_output roundtrip-generic "$gexpected" "$gactual" "user generics in every p
 # instantiations (a bare struct T cannot hold null). Every existing gate exercises this family only at T=String —
 # roundtrip-generic drives `orDefault<String>` (a reference type, where bare-T is trivially sound) and the MSBuild
 # nullable-generic sample consumes `holderOf<String>` — so a regression in bare-T handling at a value type would be
-# INVISIBLE. This section closes the cross-module axis; the SAME-MODULE axis is the section after next
-# (roundtrip-nullable-vt-generic-samemodule), which measures that the fault does not need a module boundary at all.
+# INVISIBLE. This section closes the cross-module axis; the SAME-MODULE axis is the roundtrip-nullable-vt-generic-local-*
+# sections below, which measure that the fault does not need a module boundary at all.
 # A lib declares a nullable-value-type generic METHOD param (`firstOr<T>(x: T?, d: T)`) and CTOR param
 # (`NBox<T>(value: T?)`),
 # compiled SEPARATELY, then consumed by an app that instantiates BOTH at T=Int (a value type) with a null argument
@@ -576,171 +667,177 @@ nvexpected="$(printf '7\n3\n9\n4\nx')"
 run_app nvactual "$NV/appil/NvApp.dll"
 check_output roundtrip-nullable-vt-generic "$nvexpected" "$nvactual" "cross-module nullable VALUE-TYPE generic (T? method param + ctor param) instantiated at T=Int (#109/#86)"
 
-# ----- the SAME-MODULE control for the section above (#86) --------------------------------------------
-# One compilation, no module boundary, no metadata round-trip: the declarations and their uses are lowered together.
-# That makes this the control the cross-module sections need — without it a reader cannot tell a CARRIER defect (a
-# shape lost across the boundary) from a REPRESENTATION defect (a shape that never worked). It is a shell section
-# rather than an NUnit fixture because it is red, and only the four XFAIL-carrying lanes may hold a documented red;
-# the green half of this surface (the `T?` RETURN, and a `T?` param carrying a value) lives in
-# tests/basic/fixtures/NullableTests.kt. Three shapes, each independently red at a VALUE instantiation:
-#   * a null through a top-level `T?` PARAM and through a `T?` CTOR PARAM;
-#   * a `T?` backing field / property on a generic owner, whose ctor is the bare-T slot above;
-#   * an override NARROWING a base `T?` slot to a concrete `Int?` — emitted as a new overload, so type load fails.
-# The reference instantiations of all three are green, which is the whole point: the value axis is the subject.
-SM="$ROOT/build/roundtrip-nullable-vt-generic-samemodule"; rm -rf "$SM"; mkdir -p "$SM/app" "$SM/appbir" "$SM/appil"
-cat > "$SM/app/app.kt" <<'EOF'
-class Cell<T>(private val slot: T?) {   // `T?` CTOR PARAM + backing field + property, on a generic owner
+# ===== #86 nullable-generic VALUE axis ===============================================================
+# One app per OBSERVABLE. A section's verdict is a single stdout comparison, so an app driving several faulty
+# shapes reports one result and the FIRST fault hides the rest — a `main` that dies of InvalidProgramException
+# never reaches the TypeLoadException line. Bundling would therefore let one entry keep claiming three causes
+# long after two were fixed. Each section below has exactly one thing that can fail, and each RT_XFAIL entry
+# pins the shape (exception type / diagnostic) its evidence must contain.
+#
+# The GREEN control sections are load-bearing, not decoration: they run the identical shape at a REFERENCE
+# instantiation (and, for the override axis, at a NON-nullable slot) through the identical pipeline. They are
+# what makes "the value axis is the subject" a measurement rather than a claim — if the whole family broke,
+# they would redden as NEW-FAILs rather than being absorbed by a sibling's XFAIL.
+
+# ng_local <name> <expected-stdout> <descr>   (Kotlin source on stdin)
+# A SAME-MODULE case: one compilation, no library, no metadata round trip — the control that separates a
+# CARRIER defect (a shape lost across the module boundary) from a REPRESENTATION defect (a shape that never
+# worked). Without it a reader of the cross-module sections cannot tell the two apart.
+ng_local() {
+	local name="$1" expected="$2" descr="$3"
+	local d="$ROOT/build/$name"; rm -rf "$d"; mkdir -p "$d/app" "$d/bir" "$d/il"
+	cat > "$d/app/app.kt"
+	compile_kt "$d/app" "$d/bir" "$CP"
+	emit_il "$d/il" NgApp "$d/bir"/*.bir.json
+	local out; run_app out "$d/il/NgApp.dll"
+	check_output "$name" "$expected" "$out" "$descr"
+}
+
+# ng_lib <workdir> <asm>   (Kotlin library source on stdin)
+# Builds one section-GROUP's library: compile, emit, retarget, project to a reference KLIB. Sections in a
+# group share it deliberately — the library is not the subject, one consumer's use of one slot is.
+ng_lib() {
+	local d="$1" asm="$2"; rm -rf "$d"; mkdir -p "$d/lib" "$d/libbir" "$d/libil"
+	cat > "$d/lib/lib.kt"
+	compile_kt "$d/lib" "$d/libbir" "$CP"
+	emit_il "$d/libil" "$asm" "$d/libbir"/*.bir.json
+	dotnet "$RETARGET_DLL" "$d/libil/$asm.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
+	project_reference_klib "$d/libil/$asm.dll" "$d/$asm.klib"
+}
+
+# ng_app <workdir> <libasm> <name> <expected-stdout> <descr>   (Kotlin consumer source on stdin)
+# One CONSUMER per observable against a group's library. A consumer that fails to COMPILE, or whose emit
+# aborts, produces no assembly and the section fails on empty stdout — which is exactly why the diagnostics
+# are kept as evidence: the RT_XFAIL_SHAPE is matched against them, not against the empty output.
+ng_app() {
+	local d="$1" asm="$2" name="$3" expected="$4" descr="$5"
+	local a="$d/$name"; rm -rf "$a"; mkdir -p "$a/app" "$a/bir" "$a/il"
+	cat > "$a/app/app.kt"
+	compile_kt "$a/app" "$a/bir" "$CP$KLIB_CP_SEP$d/$asm.klib"
+	emit_il "$a/il" NgApp --ref "$d/libil/$asm.dll" "$a/bir"/*.bir.json
+	cp "$d/libil/$asm.dll" "$a/il/" 2>/dev/null || true
+	local out; run_app out "$a/il/NgApp.dll"
+	check_output "$name" "$expected" "$out" "$descr"
+}
+
+# ----- SAME-MODULE: the representation, with no boundary and no metadata in play (#86) ------------------
+ng_local roundtrip-nullable-vt-generic-local-param '7' \
+	'same-module: a null through a top-level T? PARAM at T=Int (#86)' <<'EOF'
+fun <T> pickOr(x: T?, d: T): T = x ?: d
+fun main() {
+    println(pickOr<Int>(null, 7))          // 7   null through a top-level T? param at T=Int
+}
+EOF
+
+ng_local roundtrip-nullable-vt-generic-local-ctor '9' \
+	'same-module: a T? CTOR PARAM plus its backing field on a generic owner at T=Int (#86)' <<'EOF'
+class Cell<T>(private val slot: T?) {   // T? ctor param + backing field, on a generic owner
     val stored: T? get() = slot
     fun orElse(d: T): T = slot ?: d
 }
-fun <T> pickOr(x: T?, d: T): T = x ?: d              // top-level `T?` PARAM
+fun main() {
+    println(Cell<Int>(null).orElse(9))     // 9   null through the T? ctor param
+}
+EOF
+
+ng_local roundtrip-nullable-vt-generic-local-override 'none' \
+	'same-module: an override narrowing a base T? slot to a concrete Int? (#86 D3)' <<'EOF'
 interface Sink<T> { fun accept(x: T?): String }      // the base slot an override narrows
 class IntSink : Sink<Int> { override fun accept(x: Int?): String = x?.toString() ?: "none" }
-class TextSink : Sink<String> { override fun accept(x: String?): String = x ?: "none" }
-
 fun main() {
-    println(pickOr<Int>(null, 7))          // 7    null through a top-level T? param at T=Int
-    println(pickOr(3, 7))                  // 3    the same param carrying a value
-    println(pickOr<String>(null, "x"))     // x    reference-type control
-    println(Cell<Int>(null).orElse(9))     // 9    null through the T? ctor param
-    println(Cell(4).stored)                // 4    the T? property read at T=Int
-    println(Cell<String>(null).orElse("s"))  // s  reference-type control
     val s: Sink<Int> = IntSink()
-    println(s.accept(null))                // none the narrowed override, reached through the base slot
-    println(s.accept(5))                   // 5
-    println((TextSink() as Sink<String>).accept(null))  // none reference-type control
+    println(s.accept(null))                // none  the narrowed override, reached through the base slot
 }
 EOF
-"$LAUNCHER" "$SM/app" -no-stdlib -classpath "$CP" -d "$SM/appbir" >/dev/null 2>&1 || true
-emit_il "$SM/appil" SmApp "$SM/appbir"/*.bir.json
-smexpected="$(printf '7\n3\nx\n9\n4\ns\nnone\n5\nnone')"
-run_app smactual "$SM/appil/SmApp.dll"
-check_output roundtrip-nullable-vt-generic-samemodule "$smexpected" "$smactual" "SAME-MODULE nullable value-type generic: T? param, T? ctor param/property, narrowed override (#86)"
 
-# ----- the STDLIB idioms of the same family, at a VALUE element (#86) ---------------------------------
-# The stdlib half of the surface above, and the reason it is here and not in tests/basic: these two calls are red,
-# and the NUnit lane carries no XFAIL. Their green siblings DO live there (Iterable.mapNotNull/mapNotNullTo,
-# filterNotNull, chunked, Sequence.single/singleOrNull/filter, getOrPut, merge, toTypedArray) — that split is what
-# makes the pair meaningful: everything around these two works at a value element, so a fix that only makes the
-# green set pass has not touched the gap. `filterNotNullTo`'s `Iterable<T?>` receiver and `Sequence.mapNotNull`'s
-# per-element `T?` result both fault where their destination-less / eager twins do not. Reference elements are
-# driven alongside, and they pass — the value axis is the subject.
-NS="$ROOT/build/roundtrip-nullable-vt-generic-stdlib"; rm -rf "$NS"; mkdir -p "$NS/app" "$NS/appbir" "$NS/appil"
-cat > "$NS/app/app.kt" <<'EOF'
+# The reference-type control for all three shapes above: identical declarations, T instantiated with a
+# reference type. It must stay GREEN — a bare `T?` slot is trivially sound there — which is what makes the
+# three XFAILs above statements about the VALUE axis rather than about nullable generics in general.
+ng_local roundtrip-nullable-vt-generic-local-reference "$(printf 'x\ns\nnone')" \
+	'same-module control: the same three T? shapes at a REFERENCE instantiation (#86)' <<'EOF'
+fun <T> pickOr(x: T?, d: T): T = x ?: d
+class Cell<T>(private val slot: T?) { fun orElse(d: T): T = slot ?: d }
+interface Sink<T> { fun accept(x: T?): String }
+class TextSink : Sink<String> { override fun accept(x: String?): String = x ?: "none" }
 fun main() {
-    val ss: List<String?> = listOf("a", null, "b")
-    val sdest = mutableListOf<String>()
-    ss.filterNotNullTo(sdest)
-    println(sdest.joinToString(","))                 // a,b   reference element: already green
+    println(pickOr<String>(null, "x"))                 // x     top-level T? param
+    println(Cell<String>(null).orElse("s"))            // s     T? ctor param + field
+    println((TextSink() as Sink<String>).accept(null)) // none  override through the base slot
+}
+EOF
+
+# ----- the stdlib idioms whose VALUE instantiations do not resolve (#86) -------------------------------
+# Their reference-element and eager twins are green in the NUnit lane (tests/basic/fixtures:
+# CollectionOperationsTests.filterNotNullTo at a String element, Iterable.mapNotNull at Int/Boolean), which
+# is what makes each of these a measurement: everything around them works at a value element, so a fix that
+# only keeps the green set green has not touched the gap.
+ng_local roundtrip-nullable-vt-generic-filternotnullto '1,3,5' \
+	'List<Int?>.filterNotNullTo at a VALUE element (#86)' <<'EOF'
+fun main() {
     val vs: List<Int?> = listOf(1, null, 3, null, 5)
-    val vdest = mutableListOf<Int>()
-    vs.filterNotNullTo(vdest)
-    println(vdest.joinToString(","))                 // 1,3,5 value element
-    val bs: List<Boolean?> = listOf(true, null, false)
-    val bdest = mutableListOf<Boolean>()
-    bs.filterNotNullTo(bdest)
-    println(bdest.size)                              // 2
-    val xs = listOf(1, 2, 3, 4, 5, 6)
-    println(xs.asSequence().mapNotNull { if (it % 2 == 0 && it < 5) it * 10 else null }.toList().joinToString(","))  // 20,40
-    println(xs.asSequence().mapNotNull { if (it > 100) it else null }.count())   // 0  every transform result null
+    val dest = mutableListOf<Int>()
+    vs.filterNotNullTo(dest)
+    println(dest.joinToString(","))        // 1,3,5
 }
 EOF
-"$LAUNCHER" "$NS/app" -no-stdlib -classpath "$CP" -d "$NS/appbir" >/dev/null 2>&1 || true
-emit_il "$NS/appil" NsApp "$NS/appbir"/*.bir.json
-nsexpected="$(printf 'a,b\n1,3,5\n2\n20,40\n0')"
-run_app nsactual "$NS/appil/NsApp.dll"
-check_output roundtrip-nullable-vt-generic-stdlib "$nsexpected" "$nsactual" "value-element filterNotNullTo + Sequence.mapNotNull (#86)"
 
-# ----- a NESTED `Slot<T?>` declaration slot at a VALUE instantiation, CROSS-MODULE (#18/#86) -----------
-# #147's carrier covers the NESTED `Nullable(Tv)` positions — a `Slot<T?>` param / property / member return — and
-# the in-process consumer already drives them, but only at T=String. There the erased `Slot<object>` and the
-# restored `Slot<string>` are reference-compatible, so the mismatch is formal-only and the case runs green (that is
-# exactly what its ILVERIFY_XFAIL entry records). At T=Int the same mismatch is `Slot<object>` against
-# `Slot<Nullable<int32>>`, which are NOT compatible, and the call corrupts memory rather than merely failing
-# verification — so the value instantiation cannot live in the in-process lane at all: it takes the test host down
-# with an AccessViolationException before any assertion runs. It is driven here instead, where a red is a
-# documented section rather than a lost gate. The T=String control runs alongside, and passes.
-NG="$ROOT/build/roundtrip-nullable-generic-slot-value"; rm -rf "$NG"; mkdir -p "$NG/lib" "$NG/app" "$NG/libbir" "$NG/libil" "$NG/appbir" "$NG/appil"
-cat > "$NG/lib/lib.kt" <<'EOF'
-class Slot<T>(val value: T)
-class Vault<T>(private val fill: T) {
-    fun cell(): Slot<T?> = Slot(null)            // member return whose type arg is the OWNER's Nullable(Tv)
-}
-class SlotHolder<T>(private val initial: Slot<T?>) {
-    val slot: Slot<T?> get() = initial           // property whose type arg is Nullable(Tv)
-}
-fun <T> vaultOf(fill: T): Vault<T> = Vault(fill)
-fun <T> unwrapSlot(slot: Slot<T?>): T? = slot.value   // PARAM whose type arg is Nullable(Tv)
-EOF
-cat > "$NG/app/app.kt" <<'EOF'
+ng_local roundtrip-nullable-vt-generic-seq-mapnotnull '20,40' \
+	'Sequence.mapNotNull at a VALUE element (#86)' <<'EOF'
 fun main() {
-    println(unwrapSlot(Slot<Int?>(5)) ?: -1)          // 5     value present through a Slot<T?> param at T=Int
-    println(unwrapSlot(Slot<Int?>(null)) ?: -1)       // -1    a genuine null through the same param
-    println(unwrapSlot(Slot<Boolean?>(null)) ?: true) // True
-    println(unwrapSlot(Slot<String?>("param")))       // param reference-type control
-    println(SlotHolder(Slot<Int?>(null)).slot.value ?: -1)  // -1  the Slot<T?> PROPERTY at T=Int
-    println(vaultOf(2).cell().value ?: -1)            // -1  the Slot<T?> member RETURN at T=Int
+    val xs = listOf(1, 2, 3, 4, 5, 6)      // List.asSequence() only — #284 covers sequenceOf/Array.asSequence
+    println(xs.asSequence().mapNotNull { if (it % 2 == 0 && it < 5) it * 10 else null }
+        .toList().joinToString(","))       // 20,40
 }
 EOF
-"$LAUNCHER" "$NG/lib" -no-stdlib -classpath "$CP" -d "$NG/libbir" >/dev/null 2>&1 || true
-emit_il "$NG/libil" NgLib "$NG/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$NG/libil/NgLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-project_reference_klib "$NG/libil/NgLib.dll" "$NG/NgLib.klib"
-"$LAUNCHER" "$NG/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$NG/NgLib.klib" -d "$NG/appbir" >/dev/null 2>&1 || true
-emit_il "$NG/appil" NgApp --ref "$NG/libil/NgLib.dll" "$NG/appbir"/*.bir.json
-cp "$NG/libil/NgLib.dll" "$NG/appil/" 2>/dev/null || true
-ngexpected="$(printf -- '5\n-1\nTrue\nparam\n-1\n-1')"
-run_app ngactual "$NG/appil/NgApp.dll"
-check_output roundtrip-nullable-generic-slot-value "$ngexpected" "$ngactual" "cross-module nested Slot<T?> param/property/member-return at T=Int (#18/#86)"
 
-# ----- NULLABLE VALUE-TYPE generic RETURN, CROSS-MODULE (#86) -----------------------------------------
-# The RETURN sibling of the section above, and a DIFFERENT defect: the param axis at least keeps a bare `T` slot plus
-# an NRT byte, so the consumer compiles and only faults at run time. A top-level `T?` RETURN keeps nothing — it is
-# object-erased at the declaration and neither metadata channel records the `?` (see the RT_XFAIL entry) — so the
-# re-imported slot is a non-null `Any` and the failure is at the consumer's COMPILE, before any IL exists. That makes
-# it invisible to every runtime-shaped gate, including the one above. `pick` returns `T?` from a bare-`T` parameter so
-# the return is the only nullable-generic position in the signature; the T=String line is the non-regression control.
-NR="$ROOT/build/roundtrip-nullable-vt-generic-ret"; rm -rf "$NR"; mkdir -p "$NR/lib" "$NR/app" "$NR/libbir" "$NR/libil" "$NR/appbir" "$NR/appil"
-cat > "$NR/lib/lib.kt" <<'EOF'
-fun <T> pick(x: T, use: Boolean): T? = if (use) x else null   // top-level nullable value-type generic RETURN
+# ----- CROSS-MODULE: a top-level `T?` RETURN (#86) ----------------------------------------------------
+# The RETURN axis is a DIFFERENT defect from the param axis, and worse. The param axis keeps a bare `T` slot
+# plus an NRT byte, so the consumer compiles and only faults at run time. A top-level `T?` return keeps
+# nothing: it is object-erased at the declaration, the carrier recorder skips a top-level Nullable(Tv), and
+# the NRT byte walk runs AFTER the erasure so it sees `object` and stamps no `2`. The slot re-imports as a
+# non-null `Any` and the failure is at the consumer's COMPILE, before any IL exists — invisible to every
+# runtime-shaped gate. Note the third section: unlike the param axis, this one is NOT confined to value
+# types, which is why there is no green reference control here.
+NR="$ROOT/build/roundtrip-nullable-vt-generic-ret-group"
+ng_lib "$NR" NrLib <<'EOF'
+fun <T> pick(x: T, use: Boolean): T? = if (use) x else null   // top-level T? RETURN
 class Picker<T>(private val held: T) {
-    fun get(use: Boolean): T? = if (use) held else null       // the same return position on a generic OWNER
+    fun get(use: Boolean): T? = if (use) held else null        // the same return position on a generic OWNER
 }
 EOF
-cat > "$NR/app/app.kt" <<'EOF'
-fun main() {
-    val absent: Int? = pick(5, false)     // the re-imported return must bind to an Int? slot
-    println(absent ?: -1)                 // -1  null crosses the boundary at T=Int
-    val present: Int? = pick(5, true)
-    println(present ?: -1)                // 5
-    val member: Int? = Picker(8).get(false)
-    println(member ?: -1)                 // -1  same return position on a generic owner
-    println(Picker(8).get(true) ?: -1)    // 8
-    val text: String? = pick("a", false)
-    println(text ?: "none")               // none  reference-type non-regression
-}
-EOF
-"$LAUNCHER" "$NR/lib" -no-stdlib -classpath "$CP" -d "$NR/libbir" >/dev/null 2>&1 || true
-emit_il "$NR/libil" NrLib "$NR/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$NR/libil/NrLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-project_reference_klib "$NR/libil/NrLib.dll" "$NR/NrLib.klib"
-"$LAUNCHER" "$NR/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$NR/NrLib.klib" -d "$NR/appbir" >/dev/null 2>&1 || true
-emit_il "$NR/appil" NrApp --ref "$NR/libil/NrLib.dll" "$NR/appbir"/*.bir.json
-cp "$NR/libil/NrLib.dll" "$NR/appil/" 2>/dev/null || true
-nrexpected="$(printf -- '-1\n5\n-1\n8\nnone')"
-run_app nractual "$NR/appil/NrApp.dll"
-check_output roundtrip-nullable-vt-generic-ret "$nrexpected" "$nractual" "cross-module nullable VALUE-TYPE generic RETURN (top-level + member) instantiated at T=Int (#86)"
 
-# ----- Array<Int?> ACROSS THE MODULE BOUNDARY (#86 D2) ------------------------------------------------
+ng_app "$NR" NrLib roundtrip-nullable-vt-generic-ret '-1' \
+	'cross-module: a top-level T? RETURN bound to an Int? slot (#86)' <<'EOF'
+fun main() {
+    val absent: Int? = pick(5, false)      // the re-imported return must bind to an Int? slot
+    println(absent ?: -1)                  // -1
+}
+EOF
+
+ng_app "$NR" NrLib roundtrip-nullable-vt-generic-ret-member '-1' \
+	'cross-module: a generic OWNER member T? RETURN bound to an Int? slot (#86)' <<'EOF'
+fun main() {
+    val member: Int? = Picker(8).get(false)
+    println(member ?: -1)                  // -1
+}
+EOF
+
+ng_app "$NR" NrLib roundtrip-nullable-vt-generic-ret-reference 'none' \
+	'cross-module: the same T? RETURN at a REFERENCE instantiation (#86)' <<'EOF'
+fun main() {
+    val text: String? = pick("a", false)   // the return axis is NOT confined to value types
+    println(text ?: "none")                // none
+}
+EOF
+
+# ----- CROSS-MODULE: `Array<Int?>` in both directions (#86 D2) ----------------------------------------
 # A nullable VALUE element array is the one position where the erasure cannot be transparent: `object[]` and
-# `Nullable<int32>[]` are unrelated CLR types (array compatibility requires reference-compatible elements), so the
-# two representations that coexist today cannot meet. Same-compilation fixtures never notice, because producer and
-# consumer of the array are then lowered together and agree by construction; only a separately compiled consumer
-# forces the two to meet. Both directions are driven — the library RETURNS an `Array<Int?>` the app reads, and the
-# app PASSES one back — plus an `Array<String?>` control, which must keep its `string[]` representation throughout.
-# The measured failure is at the consumer's COMPILE, not at run time: the param re-imports as `IntArray`.
-NA="$ROOT/build/roundtrip-nullable-vt-generic-array"; rm -rf "$NA"; mkdir -p "$NA/lib" "$NA/app" "$NA/libbir" "$NA/libil" "$NA/appbir" "$NA/appil"
-cat > "$NA/lib/lib.kt" <<'EOF'
+# `Nullable<int32>[]` are unrelated CLR types (array compatibility requires reference-compatible elements),
+# so the two representations that coexist today cannot meet. A same-compilation fixture never notices — the
+# producer and consumer of the array are lowered together and agree by construction — so only a separately
+# compiled consumer forces it. The `Array<String?>` control must keep its `string[]` representation.
+NA="$ROOT/build/roundtrip-nullable-vt-generic-array-group"
+ng_lib "$NA" NaLib <<'EOF'
 fun boxedPair(n: Int): Array<Int?> {        // Array<Int?> RETURN across the boundary
     val a = arrayOfNulls<Int>(3)
     a[0] = n
@@ -754,63 +851,150 @@ fun sumPresent(xs: Array<Int?>): Int {      // Array<Int?> PARAM across the boun
 }
 fun joinPresent(xs: Array<String?>): String = xs.filterNotNull().joinToString(",")
 EOF
-cat > "$NA/app/app.kt" <<'EOF'
+
+ng_app "$NA" NaLib roundtrip-nullable-vt-generic-array-param '0' \
+	'cross-module: an Array<Int?> PARAM built by the consumer (#86 D2)' <<'EOF'
+fun main() {
+    println(sumPresent(arrayOfNulls<Int>(2)))   // 0   an all-null array built by the CONSUMER
+}
+EOF
+
+# The RETURN position fails DIFFERENTLY from the param position, and far worse: the consumer compiles, runs,
+# and prints garbage. The element type re-imports as a NON-NULL `Int`, so the consumer indexes a
+# `Nullable<int32>[]` as an `int32[]` and reads the LAYOUT WORDS as elements — for an array of 4/null/8 it
+# reports `3/1/4/0`: the hasValue flag, then the value, then the null element's zeroed flag.
+# Read index by index and printed as ONE line: no elvis (kotc folds it away once the element is non-null), no
+# generic-array stdlib extension (`Array<Int>.joinToString` has an overload-resolution gap of its own, which
+# would make this section measure a different defect), and one line so the observed value is a single
+# matchable shape.
+ng_app "$NA" NaLib roundtrip-nullable-vt-generic-array-ret '3/4/null/8' \
+	'cross-module: an Array<Int?> RETURN read index by index (#86 D2)' <<'EOF'
 fun main() {
     val a = boxedPair(4)
-    println(a.size)                              // 3
-    println(a[0] ?: -1)                          // 4
-    println(a[1] ?: -1)                          // -1  the null element survives the boundary
-    println(sumPresent(a))                       // 12  the returned array passed straight back
-    println(sumPresent(arrayOfNulls<Int>(2)))    // 0   an all-null array built by the CONSUMER
-    println(joinPresent(arrayOf("a", null, "b")))  // a,b  reference-element non-regression
+    println("${a.size}/${a[0]}/${a[1]}/${a[2]}")   // 3/4/null/8   the null element survives the boundary
 }
 EOF
-"$LAUNCHER" "$NA/lib" -no-stdlib -classpath "$CP" -d "$NA/libbir" >/dev/null 2>&1 || true
-emit_il "$NA/libil" NaLib "$NA/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$NA/libil/NaLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-project_reference_klib "$NA/libil/NaLib.dll" "$NA/NaLib.klib"
-"$LAUNCHER" "$NA/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$NA/NaLib.klib" -d "$NA/appbir" >/dev/null 2>&1 || true
-emit_il "$NA/appil" NaApp --ref "$NA/libil/NaLib.dll" "$NA/appbir"/*.bir.json
-cp "$NA/libil/NaLib.dll" "$NA/appil/" 2>/dev/null || true
-naexpected="$(printf '3\n4\n-1\n12\n0\na,b')"
-run_app naactual "$NA/appil/NaApp.dll"
-check_output roundtrip-nullable-vt-generic-array "$naexpected" "$naactual" "cross-module Array<Int?> param + return, both directions (#86 D2)"
 
-# ----- an OVERRIDE narrowing a base T? slot, CROSS-MODULE (#86 D3) -----------------------------------
-# Erasure propagates from the OVERRIDDEN slot, not from syntax: `IntSink.accept` declares a concrete `Int?`, so a
-# sweep looking for `Nullable(Tv)` cannot see it, while the base `Sink<T>.accept(T?)` slot erases to `object`. If the
-# two disagree the derived type is not a valid implementation of the interface at all. The library declares both
-# halves and the app drives the slot through the INTERFACE-typed receiver (the only shape where a missed override
-# is observable — a concrete-typed receiver would bind the overload directly and pass), plus a reference
-# instantiation as the control and a value instantiation reached through a library-side generic driver. The
-# measured failure is EARLIER than a dispatch miss: the consumer's emit aborts (see the RT_XFAIL entry).
-NO="$ROOT/build/roundtrip-nullable-vt-generic-override"; rm -rf "$NO"; mkdir -p "$NO/lib" "$NO/app" "$NO/libbir" "$NO/libil" "$NO/appbir" "$NO/appil"
-cat > "$NO/lib/lib.kt" <<'EOF'
-interface Sink<T> { fun accept(x: T?): String }             // the base slot: Nullable(Tv) -> object
-class IntSink : Sink<Int> { override fun accept(x: Int?): String = x?.toString() ?: "none" }   // narrows to Int?
-class TextSink : Sink<String> { override fun accept(x: String?): String = x ?: "none" }
-fun <T> drive(s: Sink<T>, x: T?): String = s.accept(x)      // dispatch through the OPEN slot
+ng_app "$NA" NaLib roundtrip-nullable-vt-generic-array-reference 'a,b' \
+	'cross-module control: an Array<String?> PARAM keeps its string[] representation (#86 D2)' <<'EOF'
+fun main() {
+    println(joinPresent(arrayOf("a", null, "b")))  // a,b
+}
 EOF
-cat > "$NO/app/app.kt" <<'EOF'
+
+# ----- CROSS-MODULE: an override NARROWING a base `T?` slot (#86 D3) ----------------------------------
+# Erasure propagates from the OVERRIDDEN slot, not from syntax: the derived declaration holds a concrete
+# `Int?`, not `Nullable(Tv)`, so a syntactic sweep cannot see it while the base slot erases to `object`. The
+# two controls below are the discrimination, kept in the lane rather than as a one-off probe: the SAME
+# interface at a REFERENCE instantiation, and the SAME value instantiation with a NON-nullable slot. Each
+# gets its own library so the three cases differ in exactly one thing.
+NO="$ROOT/build/roundtrip-nullable-vt-generic-override-group"
+ng_lib "$NO" NoLib <<'EOF'
+interface Sink<T> { fun accept(x: T?): String }    // the base slot: Nullable(Tv) -> object
+class IntSink : Sink<Int> { override fun accept(x: Int?): String = x?.toString() ?: "none" }
+EOF
+
+ng_app "$NO" NoLib roundtrip-nullable-vt-generic-override 'none' \
+	'cross-module: an override narrowing a base T? slot to a concrete Int? (#86 D3)' <<'EOF'
 fun main() {
     val s: Sink<Int> = IntSink()
-    println(s.accept(null))            // none  interface-typed receiver, narrowed override at T=Int
-    println(s.accept(7))               // 7
-    println(drive(IntSink(), null))    // none  dispatch through the library's own open driver
-    println(drive(IntSink(), 3))       // 3
-    println((TextSink() as Sink<String>).accept(null))  // none  reference-type non-regression
+    println(s.accept(null))                // none  through the INTERFACE-typed receiver
 }
 EOF
-"$LAUNCHER" "$NO/lib" -no-stdlib -classpath "$CP" -d "$NO/libbir" >/dev/null 2>&1 || true
-emit_il "$NO/libil" NoLib "$NO/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$NO/libil/NoLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-project_reference_klib "$NO/libil/NoLib.dll" "$NO/NoLib.klib"
-"$LAUNCHER" "$NO/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$NO/NoLib.klib" -d "$NO/appbir" >/dev/null 2>&1 || true
-emit_il "$NO/appil" NoApp --ref "$NO/libil/NoLib.dll" "$NO/appbir"/*.bir.json
-cp "$NO/libil/NoLib.dll" "$NO/appil/" 2>/dev/null || true
-noexpected="$(printf 'none\n7\nnone\n3\nnone')"
-run_app noactual "$NO/appil/NoApp.dll"
-check_output roundtrip-nullable-vt-generic-override "$noexpected" "$noactual" "cross-module override narrowing a base T? slot to a concrete Int? (#86 D3)"
+
+NOR="$ROOT/build/roundtrip-nullable-vt-generic-override-ref-group"
+ng_lib "$NOR" NorLib <<'EOF'
+interface Sink<T> { fun accept(x: T?): String }
+class TextSink : Sink<String> { override fun accept(x: String?): String = x ?: "none" }
+EOF
+
+ng_app "$NOR" NorLib roundtrip-nullable-vt-generic-override-reference 'none' \
+	'cross-module control: the same T? override slot at a REFERENCE instantiation (#86 D3)' <<'EOF'
+fun main() {
+    val s: Sink<String> = TextSink()
+    println(s.accept(null))                // none
+}
+EOF
+
+NOP="$ROOT/build/roundtrip-nullable-vt-generic-override-plain-group"
+ng_lib "$NOP" NopLib <<'EOF'
+interface Plain<T> { fun accept(x: T): String }    // the SAME shape with a NON-nullable slot
+class IntPlain : Plain<Int> { override fun accept(x: Int): String = x.toString() }
+EOF
+
+ng_app "$NOP" NopLib roundtrip-nullable-vt-generic-override-nonnull '7' \
+	'cross-module control: the same VALUE instantiation with a NON-nullable override slot (#86 D3)' <<'EOF'
+fun main() {
+    val s: Plain<Int> = IntPlain()
+    println(s.accept(7))                   // 7
+}
+EOF
+
+# ----- CROSS-MODULE: a NESTED `Slot<T?>` declaration slot at a VALUE instantiation (#18/#86) ------------
+# #147's carrier covers the NESTED Nullable(Tv) positions — a `Slot<T?>` param / property / member return —
+# and the in-process consumer already drives them, but only at T=String. There the erased `Slot<object>` and
+# the restored `Slot<string>` are reference-compatible, so the mismatch is formal-only and the case runs
+# green (its ILVERIFY_XFAIL entry records exactly that). At T=Int the same mismatch is `Slot<object>` against
+# `Slot<Nullable<int32>>`, which are not — and the split here is NOT param-vs-property-vs-return, which is
+# what a bundled app made it look like. Measured per line, the axis is PRESENT-vs-NULL: carrying a null
+# through any of the three positions WORKS (the sections below prove it, and they must stay green), while
+# carrying a VALUE corrupts memory — `CastHelpers.Unbox_Nullable` on a `Slot<object>` that the callee reads
+# as `Slot<Nullable<int32>>`. At T=Boolean the same shape surfaces one step earlier as a NullReferenceException.
+# These cannot live in the in-process lane at all: an AccessViolationException takes the test host down before
+# any assertion runs, so the whole assembly reports zero tests.
+NG="$ROOT/build/roundtrip-nullable-generic-slot-group"
+ng_lib "$NG" NgSlotLib <<'EOF'
+class Slot<T>(val value: T)
+class Vault<T>(private val fill: T) {
+    fun cell(): Slot<T?> = Slot(null)            // member return whose type arg is the OWNER's Nullable(Tv)
+}
+class SlotHolder<T>(private val initial: Slot<T?>) {
+    val slot: Slot<T?> get() = initial           // property whose type arg is Nullable(Tv)
+}
+fun <T> vaultOf(fill: T): Vault<T> = Vault(fill)
+fun <T> unwrapSlot(slot: Slot<T?>): T? = slot.value   // PARAM whose type arg is Nullable(Tv)
+EOF
+
+ng_app "$NG" NgSlotLib roundtrip-nullable-generic-slot-param-value '5' \
+	'cross-module: a VALUE carried through a nested Slot<T?> PARAM at T=Int (#18/#86)' <<'EOF'
+fun main() {
+    println(unwrapSlot(Slot<Int?>(5)) ?: -1)          // 5   a value through a Slot<T?> param
+}
+EOF
+
+ng_app "$NG" NgSlotLib roundtrip-nullable-generic-slot-property-value '7' \
+	'cross-module: a VALUE read back from a nested Slot<T?> PROPERTY at T=Int (#18/#86)' <<'EOF'
+fun main() {
+    println(SlotHolder(Slot<Int?>(7)).slot.value ?: -1)   // 7
+}
+EOF
+
+ng_app "$NG" NgSlotLib roundtrip-nullable-generic-slot-param-bool 'False' \
+	'cross-module: a VALUE carried through a nested Slot<T?> PARAM at T=Boolean (#18/#86)' <<'EOF'
+fun main() {
+    println(unwrapSlot(Slot<Boolean?>(false)) ?: true)    // False
+}
+EOF
+
+# The NULL half of the same three positions, and the reference instantiation. All GREEN today, and they are
+# the reason the entries above can claim the PRESENT axis specifically: if the whole nested-carrier family
+# broke, these would redden as NEW-FAILs rather than being absorbed by a sibling's XFAIL.
+ng_app "$NG" NgSlotLib roundtrip-nullable-generic-slot-null "$(printf -- '-1\n-1\n-1\nTrue')" \
+	'cross-module control: a NULL through the nested Slot<T?> param / property / member return at T=Int (#18/#86)' <<'EOF'
+fun main() {
+    println(unwrapSlot(Slot<Int?>(null)) ?: -1)           // -1  PARAM
+    println(SlotHolder(Slot<Int?>(null)).slot.value ?: -1)  // -1  PROPERTY
+    println(vaultOf(2).cell().value ?: -1)                // -1  member RETURN (owner Nullable(Tv))
+    println(unwrapSlot(Slot<Boolean?>(null)) ?: true)     // True
+}
+EOF
+
+ng_app "$NG" NgSlotLib roundtrip-nullable-generic-slot-reference 'param' \
+	'cross-module control: the same nested Slot<T?> PARAM at a REFERENCE instantiation (#18/#86)' <<'EOF'
+fun main() {
+    println(unwrapSlot(Slot<String?>("param")))       // param
+}
+EOF
 
 # ----- HIGHER-ORDER generics: a function-type parameter whose ARG/RETURN is a generic user type (`(Box<U>)->Box<V>`) -----
 # The metadata type grammar is a recursive structured type-node tree (an `fn` node's `ret`/`params` are themselves type

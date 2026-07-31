@@ -60,6 +60,35 @@ declare -A XFAIL_PKG=(
 	[csharp-consumer]='#86: a C# consumer cannot pass null at T=int through firstOr/NBox (the slot is a bare int32, so the call does not COMPILE) and cannot bind an Array<Int?> to object[]; pruned by the uniform-erasure core step and the Array<X?>-is-object[] step of #86, with the cross-module carrier read making the re-derived slots consistent'
 )
 
+# The two XFAIL-listed verdicts above are per-case booleans, so on their own they only say "it did not work" —
+# and a missing tool, a restore failure, a changed diagnostic or a NEW wrong slot would satisfy them exactly as
+# well as the documented #86 break. These are the EXACT failures they are allowed to be. A mismatch reddens
+# under csharp-consumer-diagnostics / nullable-generic-shape-drift, neither of which is baseline-listed, so a
+# drift cannot hide inside an expected red. Both are checked only while the case is failing; once the erasure
+# lands the sets are empty, the verdicts pass, and there is nothing left to compare.
+#
+# Sorted, one per line, with paths and the trailing [project] suffix stripped — a diagnostic's identity here is
+# its line, code and message, not where the scratch workspace happened to be.
+CS_EXPECTED_DIAGNOSTICS="$(LC_ALL=C sort -u <<'EOF'
+line 16: error CS0029: Cannot implicitly convert type 'int?[]' to 'object[]'
+line 17: error CS1503: Argument 1: cannot convert from 'object[]' to 'int?[]'
+line 18: error CS1503: Argument 1: cannot convert from 'object[]' to 'int?[]'
+line 9: error CS1503: Argument 1: cannot convert from '<null>' to 'int'
+line 13: error CS1503: Argument 1: cannot convert from '<null>' to 'int'
+EOF
+)"
+
+# The refcheck --shape mismatches the erasure has not yet fixed. `System.Int32`'s assembly qualification inside
+# Nullable`1[[…]] carries a runtime version, so it is collapsed before comparison; nothing else is normalized.
+NG_SHAPE_EXPECTED="$(LC_ALL=C sort <<'EOF'
+refcheck: nglib.ApiKt.firstOr slot p0 is [T] carrier=0; expected [System.Object] carrier=1
+refcheck: nglib.ApiKt.pick slot ret is [System.Object] carrier=0; expected [System.Object] carrier=1
+refcheck: nglib.NBox`1..ctor slot p0 is [T] carrier=0; expected [System.Object] carrier=1
+refcheck: nglib.NgArrays.boxedPair slot ret is [System.Nullable`1[[System.Int32]][]] carrier=0; expected [System.Object[]] carrier=any
+refcheck: nglib.NgArrays.sumPresent slot p0 is [System.Nullable`1[[System.Int32]][]] carrier=0; expected [System.Object[]] carrier=any
+EOF
+)"
+
 # The package version the pack stamps (single-sourced in DotKt.Versions.props). The Sdk="DotKt.Sdk/$VER"
 # reference, the second library's PackageReference, and the MPP global.json all pin THIS version, so a
 # version skew between the props and the SDK's embedded DotKtVersion (the #131 class of bug) surfaces here as
@@ -166,15 +195,19 @@ run_project() { # <dir> <stderr-logfile> [timeout]
 # tool, NOT part of the isolated SDK-resolution test). Lives OUTSIDE $WS so the isolated local-only
 # nuget.config there does not govern its restore, and is cached across runs.
 REFCHECK="$ROOT/build/verify-packaged-sdk-tool"
-build_refcheck() {
-	mkdir -p "$REFCHECK/src"
-	cat > "$REFCHECK/src/refcheck.csproj" <<'EOF'
+# gen_refcheck_src <dir> — write the tool's sources. Kept separate from the build so the cache key can be a
+# hash of the ACTUAL generated files rather than of a text range of this script: a range is not the source
+# (its end delimiter drifts the moment another `}` appears inside), and hashing the files themselves cannot
+# drift by construction.
+gen_refcheck_src() {
+	mkdir -p "$1"
+	cat > "$1/refcheck.csproj" <<'EOF'
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><Nullable>disable</Nullable><ImplicitUsings>disable</ImplicitUsings><AssemblyName>refcheck</AssemblyName></PropertyGroup>
   <ItemGroup><PackageReference Include="System.Reflection.MetadataLoadContext" Version="9.0.0" /></ItemGroup>
 </Project>
 EOF
-	cat > "$REFCHECK/src/Program.cs" <<'EOF'
+	cat > "$1/Program.cs" <<'EOF'
 using System; using System.Linq; using System.Reflection;
 // refcheck <dll> <ownerFqn> <memberName> [exactRefs]
 //     -> exit 0 iff the dll declares the requested member (the DECLARATION mode).
@@ -233,23 +266,39 @@ class P {
     }
 }
 EOF
-	dotnet build "$REFCHECK/src" -c Release -o "$REFCHECK/bin" -v q --nologo >/dev/null 2>&1 || return 1
 }
 
-# The tool is cached across runs, so the cache key must be its SOURCE — an existence-only check would keep serving
-# a stale binary after this script's heredocs change (the same lazy-need_tool staleness that makes a toolchain
-# result meaningless). The hash is written only after a successful build.
-refcheck_src_hash() { printf '%s' "$(sed -n '/^build_refcheck() {$/,/^}$/p' "${BASH_SOURCE[0]}" | sha256sum)"; }
-REFCHECK_HASH="$(refcheck_src_hash)"
+# The tool is cached across runs, so an existence-only check would keep serving a stale binary after the
+# heredocs above change — the same lazy-need_tool staleness that makes a toolchain result meaningless. The
+# cache key is a hash of the generated sources, and the whole build happens in a STAGING directory:
+#   * a rebuild never writes into the live cache, so a run that fails halfway cannot leave a half-built tool;
+#   * the directory and its hash marker are swapped in together, only on success;
+#   * a FAILED rebuild removes the marker, so have_refcheck rejects the previous binary instead of accepting
+#     a tool that does not match this script.
+# have_refcheck re-checks the marker rather than the file's existence, which is what makes that last point hold.
+REFCHECK_STAGE="$REFCHECK.stage"
+rm -rf "$REFCHECK_STAGE"; mkdir -p "$REFCHECK_STAGE/src"
+gen_refcheck_src "$REFCHECK_STAGE/src"
+REFCHECK_HASH="$(cat "$REFCHECK_STAGE/src/refcheck.csproj" "$REFCHECK_STAGE/src/Program.cs" | sha256sum | cut -d' ' -f1)"
+have_refcheck() { [[ -f "$REFCHECK/bin/refcheck.dll" && "$(cat "$REFCHECK/.srchash" 2>/dev/null)" == "$REFCHECK_HASH" ]]; }
 
-if [[ -f "$REFCHECK/bin/refcheck.dll" && "$(cat "$REFCHECK/src/.srchash" 2>/dev/null)" == "$REFCHECK_HASH" ]]; then
+if have_refcheck; then
 	info "reflection checker cached"
+	rm -rf "$REFCHECK_STAGE"
 else
 	info "building reflection checker"
-	if build_refcheck; then printf '%s' "$REFCHECK_HASH" > "$REFCHECK/src/.srchash"
-	else warn "refcheck build failed — library case will assert build-success only"; fi
+	if dotnet build "$REFCHECK_STAGE/src" -c Release -o "$REFCHECK_STAGE/bin" -v q --nologo >"$REFCHECK_STAGE/build.log" 2>&1; then
+		rm -rf "$REFCHECK"; mkdir -p "$REFCHECK"
+		mv "$REFCHECK_STAGE/src" "$REFCHECK/src"; mv "$REFCHECK_STAGE/bin" "$REFCHECK/bin"
+		printf '%s' "$REFCHECK_HASH" > "$REFCHECK/.srchash"
+		rm -rf "$REFCHECK_STAGE"
+	else
+		# Leave nothing usable: a stale binary that does not match these sources must not silently answer.
+		# The staging dir stays for its build log — nothing reads the tool from there.
+		rm -f "$REFCHECK/.srchash"
+		warn "refcheck build failed — the metadata verdict cannot be taken (see ${REFCHECK_STAGE#"$ROOT/"}/build.log)"
+	fi
 fi
-have_refcheck() { [[ -x "$REFCHECK/bin/refcheck" || -f "$REFCHECK/bin/refcheck.dll" ]]; }
 
 # ---------------------------------------------------------------------------------------------------------
 # Case: exe — a plain packaged Exe, build + run.
@@ -414,19 +463,29 @@ class NgArrays {
     }
 }
 EOF
+	# The library building is a PRECONDITION of both verdicts, not one of the documented failures — so it gets
+	# its own name. Absorbing it into the XFAIL-listed pair would let a broken library masquerade as the
+	# expected #86 red and keep the gate green.
 	if ! (cd "$lib" && dotnet build -v q --nologo >"$lib/build.log" 2>&1); then
-		fail nullable-generic-shape "nullable-generic library build failed" "$(tail -25 "$lib/build.log")"
-		fail csharp-consumer "nullable-generic library build failed" "$(tail -5 "$lib/build.log")"; return
+		fail csharp-consumer-library "nullable-generic library build failed" "$(tail -25 "$lib/build.log")"; return
 	fi
 	local libdll; libdll="$(find "$lib/bin" -name 'NgLib.dll' | head -1)"
 	if [[ ! -f "$libdll" ]]; then
-		fail nullable-generic-shape "NgLib.dll not emitted"; fail csharp-consumer "NgLib.dll not emitted"; return
+		fail csharp-consumer-library "NgLib.dll not emitted"; return
 	fi
 
 	# (b) METADATA verdict. Each slot's physical type must be the erasure of its DECLARED Kotlin type, with the
 	#     pre-erasure shape in the carrier. Single-quoted where a generic arity backtick appears — an unquoted one
 	#     is command substitution and would silently assert against an empty type name.
-	if have_refcheck; then
+	#
+	#     The verdict is XFAIL-listed today, so it also carries a DRIFT check: the observed mismatch set must be
+	#     exactly the documented one. Without it the XFAIL only says "some slot is wrong", and a new wrong slot,
+	#     a differently-wrong slot, or a probe that stopped resolving would all be absorbed silently. The drift
+	#     name is NOT baseline-listed, so any of those reddens. It is checked only while mismatches exist; once
+	#     the erasure lands the set is empty, the verdict passes, and there is nothing left to drift.
+	if ! have_refcheck; then
+		fail refcheck-unavailable "the metadata verdict cannot be taken — refcheck did not build"
+	else
 		local shape_fail="" probe
 		# owner | member | slot | expected CLR type | carrier
 		for probe in \
@@ -442,10 +501,19 @@ EOF
 				shape_fail+="$(cat "$d/shape.log")"$'\n'
 			fi
 		done
-		if [[ -n "$shape_fail" ]]; then fail nullable-generic-shape "erased slot shape mismatch" "$shape_fail"
-		else pass nullable-generic-shape; fi
-	else
-		fail nullable-generic-shape "refcheck unavailable — the metadata verdict cannot be taken"
+		if [[ -z "$shape_fail" ]]; then
+			pass nullable-generic-shape
+		else
+			fail nullable-generic-shape "erased slot shape mismatch" "$shape_fail"
+			# The System.Int32 assembly-qualification inside Nullable`1[[...]] carries a runtime version, so it
+			# is collapsed before comparison; nothing else is normalized.
+			local observed
+			observed="$(printf '%s' "$shape_fail" | sed -E 's/System\.Nullable`1\[\[System\.Int32,[^]]*\]\]/System.Nullable`1[[System.Int32]]/g' | sed '/^$/d' | LC_ALL=C sort)"
+			if [[ "$observed" != "$NG_SHAPE_EXPECTED" ]]; then
+				fail nullable-generic-shape-drift "the observed slot-shape mismatches are not the documented set" \
+					"$(printf -- '--- documented ---\n%s\n--- observed ---\n%s' "$NG_SHAPE_EXPECTED" "$observed")"
+			fi
+		fi
 	fi
 
 	# (c) BEHAVIOR verdict: a plain C# Exe ProjectReferences the .ktproj and binds the emitted signatures literally.
@@ -492,9 +560,27 @@ class Program {
 EOF
 	local expected="7 3 null 5 9 4 3 null 12 0" actual rc=0
 	actual="$(run_project "$app" "$app/run.err")" || rc=$?
+	if (( rc == 0 )) && [[ "$actual" == "$expected" ]]; then pass csharp-consumer; return; fi
+
 	if (( rc != 0 )); then fail csharp-consumer "C# consumer build/run exit $rc" "$(printf -- '--- expected ---\n%s\n--- stdout ---\n%s\n--- stderr/build ---\n%s' "$expected" "$actual" "$(tail -30 "$app/run.err" 2>/dev/null)")"
-	elif [[ "$actual" == "$expected" ]]; then pass csharp-consumer
 	else fail csharp-consumer "output mismatch" "$(printf -- '--- expected ---\n%s\n--- actual ---\n%s' "$expected" "$actual")"; fi
+
+	# The verdict above is XFAIL-listed, so on its own it only says "the C# consumer did not work" — which a
+	# restore failure, a missing SDK, a changed diagnostic or a NEW diagnostic would each satisfy just as well
+	# as the documented #86 ABI break. So the csc diagnostics are compared against the documented set, exactly:
+	# an extra, a missing, or a differently-worded one reddens under a name that is NOT baseline-listed.
+	# Normalized to `line N: error CSxxxx: message` — the leading path and the trailing [project] suffix are
+	# location, not claim, and MSBuild prints each diagnostic twice (once inline, once in its error summary),
+	# which is why the set is deduplicated. The message text itself is compared verbatim, brackets included.
+	local observed
+	observed="$(grep -E ': error CS[0-9]+: ' "$app/run.err" 2>/dev/null \
+		| sed -E 's/^[^(]*\(([0-9]+),[0-9]+\): error/line \1: error/; s/ \[[^]]*\.csproj\]$//; s/[[:space:]]+$//' \
+		| LC_ALL=C sort -u)"
+	if [[ "$observed" != "$CS_EXPECTED_DIAGNOSTICS" ]]; then
+		fail csharp-consumer-diagnostics "the C# consumer did not fail with the documented diagnostics" \
+			"$(printf -- '--- documented ---\n%s\n--- observed ---\n%s\n--- raw build output ---\n%s' \
+				"$CS_EXPECTED_DIAGNOSTICS" "$observed" "$(tail -40 "$app/run.err" 2>/dev/null)")"
+	fi
 }
 
 # ---------------------------------------------------------------------------------------------------------

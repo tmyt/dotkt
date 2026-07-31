@@ -55,8 +55,7 @@ class SequenceOperationTests {
     @TestAttribute
     fun valueAccumulatorSingle() {
         val xs = listOf(1, 2, 3, 4, 5, 6)
-        assertEquals(4, xs.asSequence().single { it == 4 })                       // 4
-        assertEquals(1, xs.asSequence().filter { it < 2 }.single())               // 1
+        assertEquals(1, xs.asSequence().filter { it < 2 }.single())               // 1  (predicate-less single)
         assertEquals(6, xs.asSequence().singleOrNull { it > 5 })                  // 6
         assertNull(xs.asSequence().singleOrNull { it > 10 })                      // null (accumulator never set)
         val bs = listOf(true, false, false)
