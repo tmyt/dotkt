@@ -59,6 +59,39 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir (area:bir2cir): a constructor argument the collection mapping maps AWAY is now evaluated (#278).**
+  `HashSet(initialCapacity, loadFactor)` has no CLR counterpart for its load factor — the concept is a JVM hashtable
+  one — so `MemberCallSubstitution` maps the call onto the capacity-only BCL constructor. It dropped the argument's
+  EVALUATION with its value: `HashSet<Int>(16, computeLoadFactor())` never called `computeLoadFactor()`, and an
+  exception that argument would have thrown simply never happened, which is the same fault class as evaluating a
+  call value twice, at zero instead. The mapping now re-expresses the arguments as a call-evaluation plan — one
+  binding per original argument in Kotlin order, the kept ones read from their slots, the mapped-away ones read by
+  nobody — and hands it to `CallEvalLowering.Materialise`, so the existing rules decide: an unread binding is
+  evaluated into a local unless Q2 (`ValueStability.IsDroppable`) says the evaluation is unobservable, and the
+  prefix rule materialises every earlier argument so a kept value cannot slide behind a mapped-away one. Building a
+  plan rather than prepending an evaluate-and-discard statement is what keeps those two rules in one place; the
+  literal `HashSet(16, 0.75f)` idiom materialises nothing and emits the same bare `newClr` as before. The rule holds
+  for every constructor the table covers, so `HashMap` (`Dictionary`) and `LinkedHashMap` (`OrderedDictionary`) are
+  fixed with it, and `LinkedHashSet` — a real Kotlin class whose constructor keeps both arguments — is unaffected.
+  `MappedConstructorArgumentTests` pins the order, the single evaluation, the propagated throw, and the delegation
+  /property-initializer/lambda positions.
+- **bir2cir (area:bir2cir): a `try` expression inside a lowering-MINTED operand block no longer produces invalid
+  IL.** A CLR protected region must be entered with an empty evaluation stack, which is why `TryValueOperandHoist`
+  moves a try-valued operand out of a non-first slot into preceding statements. It recognised only kotc's own
+  spelling — a block whose `stmts` contain a `try` DIRECTLY — but several lowerings materialise an operand into a
+  minted `valueBlock` whose `var` initializer is then the try-valued expression: a call-evaluation plan's bindings,
+  `RangeMembershipLowering`'s bounds, `PreconditionLowering`'s subject, `NetInteropBinding`'s adapters, and now the
+  mapped-away constructor argument above. The hazard is identical and the hoist missed all of them, so
+  `f("z", (try { 1 } catch { 2 }) in 1..5)` compiled to an `InvalidProgramException` from source the frontend had
+  accepted. The hoist now searches a block's inline statements — both statement lists and the result, stopping at a
+  nested declaration whose body runs on its own stack — and moves them in the order their consumers run them. Two
+  assumptions that only held for kotc's own spelling went with it: a hoisted block's RESULT is now spilled like any
+  other operand rather than left in the slot (kotc's result is a stack-neutral `local`, but a minted block's can be
+  a `newClr` whose constructor throws, and leaving it behind let a LATER argument's side effect overtake it), and
+  recognizing a block no longer ends the walk inside it (a `when` with a try-valued subject is such a block, and a
+  try in one of its branches' operand slots still needs hoisting). `ExceptionTests.tryInsideAMintedOperandBlock`
+  and `.tryInABranchOfATrySubjectedWhen` pin the shapes, with the ordering half in
+  `MappedConstructorArgumentTests.laterArgumentDoesNotOvertakeTheConstruction`.
 - **bir2cir (area:bir2cir): `await(captureContext = <expression>)` no longer refuses a non-constant Boolean
   ([tmyt/dotkt#64]).** dll2klib publishes two await bridges for an awaitable that exposes `ConfigureAwait(bool)` —
   `await()` and `await(captureContext: Boolean)` — so `task.await(captureContext = policy)` is a frontend-resolved

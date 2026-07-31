@@ -14,13 +14,22 @@ using System.Text.Json.Nodes;
 // the try wipes it -> InvalidProgramException.
 //
 // The fix belongs to bir2cir (Kotlin<->CLR relation; kotc has no CLR-stack knowledge, ilemit has no
-// Kotlin-aware rescheduling). Mirroring the suspend-spill precedent (SuspendColdLowering), we HOIST a
-// try-valueBlock out of the operand position to PRECEDING statements: its `stmts` (the var + the try)
-// become statements of the enclosing statement, and the operand slot is replaced with the result local
-// `{"k":"local","name":"dotkt_tryvalN"}`. Left-to-right Kotlin evaluation order is preserved: any
-// side-effecting operand evaluated BEFORE a hoisted try is itself spilled to a preceding temp first.
+// Kotlin-aware rescheduling). Mirroring the suspend-spill precedent (SuspendColdLowering), we HOIST such
+// a block out of the operand position to PRECEDING statements: its inline statements (the var + the try)
+// become statements of the enclosing statement, and the operand slot is replaced with the block's
+// `result`. Left-to-right Kotlin evaluation order is preserved: any side-effecting operand evaluated
+// BEFORE a hoisted try is itself spilled to a preceding temp first.
 //
-// A try-valueBlock that is ALREADY at an empty-stack position (the first thing evaluated in its
+// THE HAZARD IS THE BLOCK, NOT kotc's SPELLING OF IT. kotc's try-value form has the `try` as a direct
+// statement, but it is not the only producer of an inline block in an operand slot: several lowerings
+// materialise an operand into a MINTED `valueBlock` whose `var` initializer is then a try-valued
+// expression — a call-evaluation plan's bindings (CallEvalLowering, and MemberCallSubstitution for a
+// constructor argument the CLR mapping maps away), RangeMembershipLowering's bounds, PreconditionLowering's
+// subject, NetInteropBinding's adapters. The stack is just as non-empty when those statements run, so the
+// hoist looks for a `try` ANYWHERE the block runs inline (`RunsATry`) rather than only at its top level.
+// Missing that was an InvalidProgramException in shapes like `f("x", g(try { 1 } catch { 2 }) in 1..5)`.
+//
+// A hazardous block that is ALREADY at an empty-stack position (the first thing evaluated in its
 // statement — e.g. `val x = try{..}` directly, or the sole/leading argument of a call) is left inline;
 // ilemit handles it fine there.
 static class TryValueOperandHoist
@@ -148,11 +157,17 @@ static class TryValueOperandHoist
         if (node is not JsonObject o) return node;
         var k = K(o);
 
-        if (k == "valueBlock" && IsTryValueBlock(o))
+        // A hazardous block at a NON-EMPTY stack moves; one at an empty stack is already safe and stays. Being safe
+        // is not being finished, though: the block's own subexpressions still need normalizing, so the empty-stack
+        // case FALLS THROUGH to the generic descent below rather than returning. Returning early there is what made
+        // widening the predicate a regression — a `when` whose subject is a try became "hazardous", and the descent
+        // that used to reach a try in one of its branches' operand slots stopped happening.
+        if (k == "valueBlock" && IsTryValueBlock(o) && !atEmpty)
         {
-            if (atEmpty) return o;              // safe: enters the try with an empty stack
             HoistTryValueBlock(o, pre);
-            return o["result"] is JsonNode r ? r.DeepClone() : o;
+            // The RESULT is still evaluated in the slot, at the same non-empty stack, so a block nested there is
+            // hoisted in turn — after this block's own statements, which is the order it ran in.
+            return o["result"] is JsonNode r ? HoistExpr(r.DeepClone(), pre, atEmpty, scope) : o;
         }
 
         if (k == "binOp" && o["lhs"] != null && o["rhs"] != null)
@@ -221,7 +236,12 @@ static class TryValueOperandHoist
         if (resolved is JsonObject ro && K(ro) == "valueBlock" && IsTryValueBlock(ro))
         {
             HoistTryValueBlock(ro, pre);
-            return ro["result"] is JsonNode r ? r.DeepClone() : resolved;
+            // …and then the block's RESULT is spilled like any other operand. Moving only the statements would
+            // leave the result to be evaluated after the LATER slot's hoisted try, which is the reorder this
+            // function exists to prevent. It was invisible while the only such block was kotc's own try-value
+            // form, whose result is a stack-neutral `local`; a block a lowering mints has an arbitrary result —
+            // a `newClr` whose constructor can throw — and that one has to move with its statements.
+            return ro["result"] is JsonNode r ? SpillIfNeeded(r.DeepClone(), pre, scope) : resolved;
         }
         if (IsStackNeutral(resolved)) return resolved;
         var tmp = "dotkt$hoist" + System.Threading.Interlocked.Increment(ref _tmp);
@@ -229,12 +249,14 @@ static class TryValueOperandHoist
         return new JsonObject { ["k"] = "local", ["name"] = tmp };
     }
 
-    // Move a try-valueBlock's `stmts` (the `var dotkt_tryvalN` + the `try`) into the preceding-statement
-    // buffer; the caller replaces the node with `result` (a `local`).
+    // Move a hazardous block's INLINE statements into the preceding-statement buffer; the caller replaces
+    // the node with its `result`. A `valueBlock` may carry either statement list and its consumers run
+    // `stmts` and then `body` (CallEvalLowering.MergeNestedResult), so they are moved in that order.
     static void HoistTryValueBlock(JsonObject o, List<JsonNode> pre)
     {
-        if (o["stmts"] is JsonArray st)
-            foreach (var s in st) if (s != null) pre.Add(s.DeepClone());
+        foreach (var key in new[] { "stmts", "body" })
+            if (o[key] is JsonArray st)
+                foreach (var s in st) if (s != null) pre.Add(s.DeepClone());
     }
 
     // Would HoistExpr append any preceding statement for this subtree? (i.e. does it contain a
@@ -264,8 +286,34 @@ static class TryValueOperandHoist
         return false;
     }
 
+    // A `valueBlock` that ENTERS A PROTECTED REGION while the enclosing expression's operands are on the stack.
+    // Every part of it except the enclosing slot itself runs inline — the two statement lists and then the result —
+    // so a `try` in any of them is the same hazard, whether it is kotc's own top-level try statement or a
+    // try-valued initializer a later lowering wrapped in a minted block.
     static bool IsTryValueBlock(JsonObject o)
-        => o["stmts"] is JsonArray st && st.Any(s => K(s) == "try") && o["result"] != null;
+        => o["result"] != null && (RunsATry(o["stmts"]) || RunsATry(o["body"]) || RunsATry(o["result"]));
+
+    // Does evaluating this subtree ENTER a protected region here, on the current evaluation stack? The walk stops at
+    // a nested DECLARATION (anything carrying `params` — a lambda, a local function): its body runs when it is
+    // invoked, on an evaluation stack of its own, so a `try` in there is not this expression's hazard. It also stops
+    // at a type node, which carries no code (and spells its parameter TYPES as `params`).
+    static bool RunsATry(JsonNode n)
+    {
+        switch (n)
+        {
+            case JsonObject o:
+                if (TypeJson.IsType(o)) return false;
+                if (K(o) == "try") return true;
+                if (o["params"] is JsonArray) return false;
+                foreach (var kv in o) if (kv.Value != null && RunsATry(kv.Value)) return true;
+                return false;
+            case JsonArray a:
+                foreach (var it in a) if (it != null && RunsATry(it)) return true;
+                return false;
+            default:
+                return false;
+        }
+    }
 
     static bool IsStackNeutral(JsonNode n) => n is JsonObject o && StackNeutralKinds.Contains(K(o));
 
