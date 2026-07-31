@@ -8,47 +8,34 @@
 # machine-readable "one reason per known finding" discipline. Any finding
 # outside the baseline is a NEW-FAIL and reddens the gate.
 #
-# Usage: tests/run-ilverify.sh <emitted-test-assembly.dll> [<more.dll> ...]
+# --audit-baseline additionally reddens on a DEAD key: a baseline entry that matched no finding at all has
+# rotted into a mask for whatever finding lands on that method next. It is reported with scripts/lib.sh's
+# xfail_diff wording, `FIXED … remove it from the xfail list`, but DELIBERATELY NOT with its verdict — where a
+# FIXED line is green and merely advisory. A stale ilverify key is worse than a stale name in a fail-set,
+# because it is a live substring filter over future findings, so this lane stays red until the entry is pruned.
+# Opt-in because the audit is only meaningful over the COMPLETE emitted set: tests/packaged-sdk/run.sh verifies
+# a two-assembly subset, where an unmatched key means "not in this subset", not "fixed".
+# tests/run-nunit-tests.sh, which verifies every emitted suite assembly, passes it.
+#
+# Usage: tests/run-ilverify.sh [--audit-baseline] <emitted-test-assembly.dll> [<more.dll> ...]
 set -euo pipefail
 
 # Known runtime-safe, formal-only findings (substring -> tracking issue + reason). A finding line must contain
 # one of these substrings to be tolerated. Keys are narrow fixture/method or emitted-type identifiers so they only mask
 # the documented shape.
 declare -A ILVERIFY_XFAIL=(
-	# #18 (migrated ktproj-genq): a re-imported generic factory `holderOf(): Vault<T?>` whose bir2cir
+	# #86 (migrated ktproj-genq): a re-imported generic factory `holderOf(): Vault<T?>` whose bir2cir
 	# NullableGenericErasure object-erases the nested Nullable(Tv) to `Vault<object>`; the [KotlinNullableGeneric]
 	# round-trip restores `Vault<String?>` at the frontend, so the call's erased `Vault<object>` return meets the
 	# consumer's restored `Vault<string>` slot — StackUnexpected. Runtime-SAFE (object/string are reference-compatible;
 	# the erased Vault holds the string; the value-assert RUN lane is green). Same object-erasure formal-only family.
-	["GenericMetadataRoundtripTests::nullableGenericMembersRoundTrip()"]="#18 nullable-generic object-erasure: holderOf's erased Vault<object> return vs the restored Vault<string> slot — runtime-safe (RUN green)"
-	# #29 (migrated ktproj-nestedlist): the Root-V variance collapse lowers a nested read-only `List<T>` to its
-	# INVARIANT CLR sibling `IList<T>`; at a use site the read-only `IReadOnlyCollection<T>` shape is expected, so the
-	# collapsed `IList<int32>` meets an `IReadOnlyCollection<int32>` slot — StackUnexpected. Runtime-SAFE (the concrete
-	# list implements both interfaces; the value-assert RUN lane is green). Same covariant-collection formal-only family.
-	["GenericMetadataRoundtripTests::nestedGenericCollectionsRoundTrip()"]="#29 Root-V collapse: nested List<T> lowered to invariant IList<int32> vs an expected IReadOnlyCollection<int32> — runtime-safe (RUN green)"
-	# #127/#86: copyOf on a value-element array returns Array<T?>, represented as object[] while the formal callsite
+	["GenericMetadataRoundtripTests::nullableGenericMembersRoundTrip()"]="#86 nullable-generic object-erasure: holderOf's erased Vault<object> return vs the restored Vault<string> slot — runtime-safe (RUN green)"
+	# #86: copyOf on a value-element array returns Array<T?>, represented as object[] while the formal callsite
 	# expects Nullable<Int>[]; all prefix/tail value assertions run green.
-	["ArrayTests::copyOfGrowsWithNullTail()"]="#127/#86 nullable value-array object erasure: copyOf returns object[] where Nullable<Int>[] is formally expected — runtime-safe (RUN green)"
+	["ArrayTests::copyOfGrowsWithNullTail()"]="#86 nullable value-array object erasure: copyOf returns object[] where Nullable<Int>[] is formally expected — runtime-safe (RUN green)"
 	# localloc is intentionally unverifiable ECMA-335 IL. The runtime test validates the resulting Span writes/reads.
 	["StackBufferTests::stackAllocationAndSpanInterop()"]="by design: stackalloc emits localloc, which ILVerify must report as unverifiable; runtime assertions are green"
 	["ByRefParameterTests::byrefOfAStackSlotEvaluatesItsIndexOnce()"]="by design: the same stackalloc/localloc unverifiability as its StackBufferTests sibling — this case takes the ADDRESS of a stack slot, so the pointer arithmetic is equally formal-only; runtime assertions are green"
-	# A call on a TYPE-PARAMETER receiver inside a GENERIC suspend state machine: the SM holds the value in a `T`
-	# field and the interface call reaches ilemit without the `constrained.` prefix, so the verifier sees a `T` value
-	# where the interface reference is expected. It is a defect of the constrained-call emission inside a generic SM,
-	# not of the operand plans that first exercised it — reproducible with NO evaluation-order question in the
-	# program at all:
-	#   interface I { fun tag(): Int }
-	#   suspend fun <T : I> f(t: T): Int { val a = t.tag(); val b = relay(); return a + b }
-	#
-	# WHAT IS TESTED, and no more: the fixture instantiates T with a REFERENCE type, and that instantiation runs and
-	# asserts its values. A missing `constrained.` prefix is NOT safe in general — a VALUE-type implementation of the
-	# interface needs the prefix to box (or to call the unboxed override), so this entry claims only what the lane
-	# measured, not that the emitted shape is sound for every T.
-	#
-	# Keyed by the emitted METHOD, not the SM type: the type has one method today, so a type-scoped key would
-	# silently absorb a future finding on any other member of it. SINGLE-quoted, which is what lets the key carry
-	# the generic-arity backtick and the `$` literally (the double-quoted keys above cannot — see their note).
-	['corOpConstrainedBeforeSuspension$sm`1::invokeSuspend(object)']="constrained call on a type-parameter receiver inside a GENERIC suspend state machine reaches ilemit without the constrained. prefix; the fixture's REFERENCE-type instantiation runs and asserts green — reproducible with no operand-order question in the program"
 )
 
 ILV="$(find "$HOME/.dotnet" -name 'ILVerify.dll' 2>/dev/null | head -1)"
@@ -56,14 +43,33 @@ ILV="$(find "$HOME/.dotnet" -name 'ILVerify.dll' 2>/dev/null | head -1)"
 RTDIR="$(ls -d /usr/share/dotnet/shared/Microsoft.NETCore.App/* 2>/dev/null | sort -V | tail -1)"
 [[ -d "$RTDIR" ]] || { echo "ilverify: Microsoft.NETCore.App shared framework not found"; exit 1; }
 
-is_xfail() { # <finding line> -> 0 if it matches a baseline substring
+audit=0
+declare -a DLLS=()
+for arg in "$@"; do
+	case "$arg" in
+		--audit-baseline) audit=1 ;;
+		-*) echo "run-ilverify: unknown option '$arg'" >&2; exit 2 ;;
+		*) DLLS+=("$arg") ;;
+	esac
+done
+(( ${#DLLS[@]} )) || { echo "run-ilverify: no assembly given" >&2; exit 2; }
+
+# Which baseline keys actually masked a finding, accumulated across every verified assembly (a key is expected
+# to match in exactly one of them). Read by the --audit-baseline dead-key verdict below.
+declare -A MATCHED=()
+
+is_xfail() { # <finding line> -> 0 if it matches a baseline substring (recording the key that matched)
 	local line="$1" key
-	for key in "${!ILVERIFY_XFAIL[@]}"; do [[ "$line" == *"$key"* ]] && return 0; done
+	for key in "${!ILVERIFY_XFAIL[@]}"; do
+		[[ "$line" == *"$key"* ]] || continue
+		MATCHED["$key"]=1
+		return 0
+	done
 	return 1
 }
 
 rc=0
-for dll in "$@"; do
+for dll in "${DLLS[@]}"; do
 	[[ -f "$dll" ]] || { echo "ilverify: MISSING $dll"; rc=1; continue; }
 	bindir="$(dirname "$dll")"
 	out="$(dotnet "$ILV" "$dll" -r "$RTDIR/*.dll" -r "$bindir/*.dll" 2>&1 || true)"
@@ -83,4 +89,15 @@ for dll in "$@"; do
 	fi
 	unset newfails xfailed
 done
+
+# DEAD-KEY VERDICT: every baseline key that masked nothing over the complete emitted set. xfail_diff's wording,
+# but red rather than its advisory green — see the header note on why this lane is deliberately stricter.
+if (( audit )); then
+	mapfile -t audit_keys < <(printf '%s\n' "${!ILVERIFY_XFAIL[@]}" | LC_ALL=C sort)
+	for key in ${audit_keys[@]+"${audit_keys[@]}"}; do
+		[[ -v MATCHED["$key"] ]] && continue
+		echo "FIXED     ilverify:$key — fixed; remove it from the xfail list"
+		rc=1
+	done
+fi
 exit $rc

@@ -32,6 +32,10 @@ sealed class TypeInfo
     // emission: name + METHOD generic arity + parameter vector. Thus `f(object)` and `f<T>(object)` are distinct even
     // though their physical params coincide (#86 Phase 0). Both body emission and call/MethodImpl linking prefer it.
     public readonly Dictionary<MethodSigKey, MethodBuilder> MethodsBySig = new();
+    // How many members share each NAME. `Methods` cannot say (it is last-wins), and the difference decides whether a
+    // name-only lookup is safe: with one member there is no overload to mis-select, with several the descriptor is
+    // the only thing that picks the right one.
+    public readonly Dictionary<string, int> MethodNameCounts = new();
     // #139 reverse-enumerator-bridge markers: `clrBridgeRole` ("hasNext"/"next"/"iterator", bir2cir-stamped) -> the
     // method builder, so the GetEnumerator adapter is driven off a semantic marker not the Kotlin FQN/member names.
     public readonly Dictionary<string, MethodBuilder> BridgeRoles = new();

@@ -33,7 +33,7 @@ done
 # bare `kotlin.coroutines.Continuation` at emit; they surface the REMAINING *cross-module* coroutine gaps
 # (below). This gate is the coroutine bundle's cross-module E2E check: when these flip to FIXED, prune them.
 declare -A RT_XFAIL=(
-	# #109/#86: the cross-module nullable VALUE-TYPE generic gap this section was ADDED to expose. A top-level `T?`
+	# #86: the cross-module nullable VALUE-TYPE generic gap this section was ADDED to expose. A top-level `T?`
 	# in METHOD-PARAM position (firstOr<T>(x: T?, …)) and CTOR-PARAM position (NBox<T>(val value: T?)) keeps the
 	# type-param IDENTITY in the emitted signature: the CLR slot is the bare non-null `T` plus a NullableAttribute(2)
 	# byte (#86; #147's [KotlinNullableGeneric] carrier covers `Holder<T?>`-style NESTED positions, not this bare
@@ -45,7 +45,7 @@ declare -A RT_XFAIL=(
 	# the same lib against an app WITHOUT the two T=Int null crossings runs 3/4/x, so the fault is confined to the
 	# value-type axis of #86 (invisible to every other gate, which drives only T=String); when #86 lands a null-capable
 	# representation for a bare `T?` slot the section runs 7/3/9/4/x -> prune it.
-	[roundtrip-nullable-vt-generic]="#109/#86/#127: cross-module nullable value-type generic — a top-level T? method/ctor param is emitted as the bare struct-incapable T slot, so the consumer COMPILES (NullableAttribute(2) restores T?) but firstOr<Int>(null,7)/NBox<Int>(null) push null into an int32 slot, so main fails JIT verification and the app produces NO output (System.InvalidProgramException); distinct from #147's nested constructed-type carrier"
+	[roundtrip-nullable-vt-generic]="#86: cross-module nullable value-type generic — a top-level T? method/ctor param is emitted as the bare struct-incapable T slot, so the consumer COMPILES (NullableAttribute(2) restores T?) but firstOr<Int>(null,7)/NBox<Int>(null) push null into an int32 slot, so main fails JIT verification and the app produces NO output (System.InvalidProgramException); distinct from #147's nested constructed-type carrier"
 	# ---- #86, one entry per OBSERVABLE ---------------------------------------------------------------
 	# These are deliberately NOT bundled. A section is a single stdout comparison, so an app driving three
 	# faulty shapes reports one verdict and the FIRST fault hides the rest — a `main` that dies of

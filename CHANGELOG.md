@@ -100,6 +100,39 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir (area:bir2cir): a member called on a TYPE-PARAMETER receiver now emits constrained dispatch for every
+  spelling of the receiver, and for a non-generic constraint.** `fun <T : Tagged> f(t: T) = t.tag()` put a `!!T` on
+  the evaluation stack and then a plain `callvirt Tagged::tag()` — ECMA-335 requires `constrained. !!T ; callvirt`
+  there, so the verifier reported `[found value 'T'][expected ref 'Tagged']`. (The boxing half of that argument is
+  formal here rather than measured: a Kotlin-declared constraint cannot be satisfied by a CLR value type, because
+  every Kotlin class is a reference type on this platform — §5f. `T : Comparable<T>` at `T = Int` is the one
+  value-type instantiation Kotlin source can express, and it reaches constrained dispatch through
+  `MemberCallSubstitution`, not through this pass; it is pinned as a test either way.) The old binding covered
+  exactly one slice of this: a receiver spelled
+  as a plain LOCAL, whose constraint owner was GENERIC (`fun <N : Node<N>> N.close()`), because that is the slice
+  where the MemberRef is invalid as well. Everything else was emitted unverifiably — an ordinary non-suspend
+  function, a local copy of the parameter, a field read, a `T`-returning call result, a property accessor body, a
+  nullable `T?` receiver behind `!!`, and (the shape that had an ilverify baseline entry) the state-machine field
+  the suspend lowering spills a suspend function's receiver into.
+  The binding is now keyed on the receiver's STATIC TYPE, read through the one uniform source
+  (`StaticType.Surface`), so the spelling no longer decides; and the owner is closed from the type parameter's
+  lexical bound only where BIR names it bare, an already-constructed or non-generic owner being closed already —
+  or, for a member declared on a generic BASE of the bound, by the inherited-owner hierarchy substitution this
+  pass now runs after. It
+  moved out of `InheritedMemberOwnerBinding` — whose subject is the hierarchy substitution `Derived<T>.m` ->
+  `Base<T>.m`, not a constraint — into its own `ConstrainedTypeParameterReceiverBinding`.
+  The owner it names is the member's DECLARING type: closing the bare token from the bound is a separate step from
+  rewriting the dispatch, and it runs BEFORE the inherited-owner walk so the walk still has a constructed type to
+  substitute into. Naming the bound instead — `Leaf<Int>` for a member `Root<X>` declares — is a MemberRef on a
+  type that does not declare the member, which binds only through the emitted fake override that happens to sit
+  there. Only the DISPATCH changes: the call's overload key, a generic member's instantiation and its declared
+  result view all ride the node into ilemit, which applies them on the constrained arm exactly as on the ordinary
+  one, and ilemit now SELECTS a member by that descriptor — name, generic arity, parameter count and parameter
+  types — refusing when nothing matches exactly instead of falling through to a name-only lookup that returns
+  whichever overload was declared last.
+  (Without that, the constrained form dispatches `t.describe(7)` to the `String` overload and calls a generic
+  member's uninstantiated definition — a silently wrong answer and a runtime `InvalidOperationException`; both
+  are now pinned by value in `tests/basic`.)
 - **bir2cir (area:bir2cir): a constructor argument the collection mapping maps AWAY is now evaluated (#278).**
   `HashSet(initialCapacity, loadFactor)` has no CLR counterpart for its load factor — the concept is a JVM hashtable
   one — so `MemberCallSubstitution` maps the call onto the capacity-only BCL constructor. It dropped the argument's
@@ -310,6 +343,24 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- **tests: an ilverify baseline entry that masks NOTHING now reddens the gate.** `ILVERIFY_XFAIL` in
+  `tests/run-ilverify.sh` only ever classified findings, so a key whose defect had been fixed stayed in the list
+  silently — and kept masking, ready to absorb whatever finding lands on that method next. (One had already
+  rotted that way: `GenericMetadataRoundtripTests::nestedGenericCollectionsRoundTrip()` never produced the
+  finding its key describes — the same commit that added the key wrote the fixture to omit the generic-member
+  read that would have surfaced the Root-V variance collapse, and says so in the fixture's own comment. It is
+  pruned here.) `tests/run-ilverify.sh --audit-baseline` reports
+  every unmatched key with `scripts/lib.sh`'s `xfail_diff` wording, `FIXED … remove it from the xfail list`, and
+  then exits non-zero — deliberately stricter than `xfail_diff`, where a FIXED line is green and advisory. A
+  stale ilverify key is a live substring filter over future findings, not just a stale name in a fail-set, so
+  this lane stays red until the entry is pruned. `tests/run-nunit-tests.sh` passes the flag because it
+  verifies the COMPLETE emitted set; `tests/packaged-sdk/run.sh` verifies a two-assembly subset, where an
+  unmatched key means "not in this subset" and the audit would be a false red.
+- **tests: the surviving ilverify/round-trip baseline reasons name the issue that actually owns them.**
+  `ArrayTests::copyOfGrowsWithNullTail`, `GenericMetadataRoundtripTests::nullableGenericMembersRoundTrip` and the
+  `roundtrip-nullable-vt-generic` scenario cited #127, #18 and #109/#127 — all closed, and #18 unrelated. All
+  three are the one open nullable-generic representation design, #86. The two dead `tests/known-fail/` references
+  (`tests/README.md`, `scripts/gate.sh`'s routing table) are dropped; the directory does not exist.
 - **bir2cir (area:bir2cir): the three result-type stamps have ONE precedence — `sty`, then `ret`, then `dynRet` —
   stated once in `bir-common/NodeType.cs`.** `sty` is the frontend's INSTANTIATED static type, stamped per call
   site; `ret` is emitted only when the callee or its owner is GENERIC, which is exactly where it may name the
