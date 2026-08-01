@@ -240,12 +240,11 @@ static partial class NullableTvErasureCallRealign
         }
     }
 
-    // The call kinds NetInteropBinding (and MemberCallSubstitution, for a constructor) produces once a call is BOUND to
-    // a .NET member. Being one of these is what makes the node's argument descriptor a .NET declaration rather than the
-    // caller's own Kotlin view — the single statement of that fact, read both by the walk that routes these nodes to
-    // EvalClrCall and by the argument realignment that decides how far to trust their descriptor.
-    static bool IsClrBoundKind(string k) =>
-        k is "clrStatic" or "clrInstance" or "clrGenericStatic" or "clrGenericInstance" or "newClr";
+    // Being a .NET-bound CALL is what makes the node's argument descriptor a .NET declaration rather than the caller's
+    // own Kotlin view — read both by the walk that routes these nodes to EvalClrCall and by the argument realignment
+    // that decides how far to trust their descriptor. The property/field accessors are deliberately NOT here: they
+    // carry no argument vector, and this axis is about arguments (ClrBoundNode states the split once).
+    static bool IsClrBoundKind(string k) => ClrBoundNode.IsCall(k);
 
     // A call NetInteropBinding has already BOUND to a .NET member. Only the WRITE axis applies to it: the callee is
     // .NET, so its declared parameter types (`memberSig`) ARE the declaration and there is nothing Kotlin to

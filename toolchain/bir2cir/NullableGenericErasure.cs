@@ -400,7 +400,7 @@ static class NullableGenericErasure
                         // another name once a call is `clr*`-bound (NetInteropBinding writes the callee's declared
                         // signature there), while on a Kotlin `new` it is the caller's own substituted view.
                         "memberSig" => Pos.Bound,
-                        "argTypes" when IsClrBoundKind(k) => Pos.Bound,
+                        "argTypes" when ClrBoundNode.IsCall(k) => Pos.Bound,
                         _ => pos,
                     };
                     if (TypeJson.Read(child) is TypeNode tn)
@@ -443,13 +443,6 @@ static class NullableGenericErasure
         "newArray", "newArraySized", "newArrayInit", "arrayGet", "arraySet", "forArray",
         "forEachInline", "forIn", "spreadConcat",
     };
-
-    // The call kinds bound to a .NET member, whose argument descriptor is that member's declaration rather than the
-    // caller's view of it. Mirrors NullableTvErasureCallRealign.IsClrBoundKind, which reads the same fact off the
-    // same key; the two are the same statement about one node.
-    static bool IsClrBoundKind(string k) =>
-        k is "clrStatic" or "clrInstance" or "clrGenericStatic" or "clrGenericInstance" or "newClr"
-          or "clrPropGet" or "clrPropSet";
 
     static string Str(JsonNode n) => (n as JsonValue)?.TryGetValue<string>(out var s) == true ? s : null;
 
@@ -500,6 +493,45 @@ static class NullableGenericErasure
             _ => t,
         };
     }
+
+    // THE OTHER DIRECTION OF THE SAME POSITIONAL RULE: does this LOWERED declaration put a `System.Nullable<V>`
+    // where `Erase` would have put an `object`? That is exactly the shape no Kotlin type inhabits, and
+    // ForeignNullableGenericCrossing refuses a .NET member that declares one.
+    //
+    // It lives beside `Erase` and its arms are read against `Erase`'s, position for position, because the two ARE one
+    // statement and stating them in two files is how they drift apart. They did: a delegate PARAMETER is `Pos.Slot`
+    // here (a concrete `V?` keeps its `Nullable<V>`, see the header), and a copy of this walk that called it an
+    // argument refused a `Func<int?, string>` parameter Kotlin inhabits exactly.
+    //
+    // The HEAD is not a crossing in either arm: a direct `Nullable<V>` parameter or return IS what a Kotlin scalar
+    // `Int?` is, and it crosses without any adaptation at all. That includes a `Nullable<!!0>` on a `T : struct` .NET
+    // generic, which a Kotlin `T?` inhabits at every instantiation.
+    internal static bool ErasureWouldMove(TypeNode lowered) => AtSlot(lowered);
+
+    // `Erase` at Pos.Slot: the head is not moved; an Fqn's arguments, an array's element and a delegate's RETURN are
+    // arguments; a byref referent, a nullable's inner and a delegate's PARAMETERS are slots.
+    static bool AtSlot(TypeNode t) => t switch
+    {
+        TypeNode.Fqn { Args: { } args } => args.Any(AtArgument),
+        TypeNode.Array a => AtArgument(a.Elem),
+        TypeNode.ByRef b => AtSlot(b.Of),
+        TypeNode.Nullable n => AtSlot(n.Of),
+        TypeNode.Oblivious o => AtSlot(o.Of),
+        TypeNode.Fn fn => AtArgument(fn.Ret) || fn.Params.Any(AtSlot)
+                          || (fn.Recv != null && AtSlot(fn.Recv)),
+        _ => false,
+    };
+
+    // `Erase` at Pos.Argument: a `Nullable` node HERE is the position that moves. By this point the tree is lowered,
+    // so every surviving `Nullable` is a real `System.Nullable<V>` over a value type — BirTypeLowering strips each
+    // reference `?` before then. An NRT-OBLIVIOUS wrapper is a pure annotation and is looked through, so a
+    // `[MaybeNull] List<int?>` is the same crossing as a plain one.
+    static bool AtArgument(TypeNode t) => t switch
+    {
+        TypeNode.Nullable => true,
+        TypeNode.Oblivious o => AtArgument(o.Of),
+        _ => AtSlot(t),
+    };
 
     // `X?` where `X` may be a value type: an open type variable, or a concrete value FQN. A reference `X` is excluded —
     // its `?` is not a physical difference on the CLR.

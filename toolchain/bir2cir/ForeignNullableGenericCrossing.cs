@@ -24,6 +24,12 @@ using DotKt.Bir;
 // a `Nullable<V>` inside a reified argument, which the BCL surface almost never does — and a DIRECT `Nullable<V>`
 // parameter or return is untouched, because a Kotlin scalar `Int?` IS a `System.Nullable<int32>` and crosses exactly.
 //
+// WHICH POSITIONS COUNT is not decided here. `NullableGenericErasure.ErasureWouldMove` answers it, beside the `Erase`
+// it has to agree with position for position: a delegate PARAMETER keeps a concrete `V?` in that rule, so a foreign
+// `Func<int?, string>` parameter is inhabited exactly and is NOT a crossing, while a delegate RETURN, a type argument
+// and an array element are. A second copy of that walk lived here and said the opposite about delegate parameters,
+// which refused programs Kotlin runs.
+//
 // Runs on the LOWERED tree, where `memberSig`/`ret` are the final CLR signature: earlier the same node may still be
 // mid-resolution and a Kotlin-vocabulary `Nullable(Tv)` would be read as a foreign declaration it is not.
 static class ForeignNullableGenericCrossing
@@ -38,7 +44,9 @@ static class ForeignNullableGenericCrossing
         switch (node)
         {
             case JsonObject obj:
-                if (IsClrBoundKind(Str(obj["k"]))) CheckCall(obj, file);
+                // A property/field ACCESS counts as well as a call: its `ret` is the member's declared type, and a
+                // `Dictionary<string, int?>` property is the same crossing as a parameter of that type.
+                if (ClrBoundNode.IsAny(Str(obj["k"]))) CheckCall(obj, file);
                 foreach (var kv in obj) if (kv.Value != null) Walk(kv.Value, file);
                 break;
             case JsonArray arr:
@@ -47,11 +55,6 @@ static class ForeignNullableGenericCrossing
         }
     }
 
-    // The call kinds bound to a .NET member. Their `memberSig` is that member's declared parameter vector and their
-    // `ret`/`type` is its result; both are the foreign declaration, not a Kotlin view of one.
-    static bool IsClrBoundKind(string k) =>
-        k is "clrStatic" or "clrInstance" or "clrGenericStatic" or "clrGenericInstance" or "newClr"
-          or "clrPropGet" or "clrPropSet";
 
     static void CheckCall(JsonObject call, string file)
     {
@@ -60,46 +63,27 @@ static class ForeignNullableGenericCrossing
         var owner = TypeJson.Read(call["type"]) is TypeNode.Fqn f ? f.Name : "<unknown>";
         if (call["memberSig"] is JsonArray sig)
             for (var i = 0; i < sig.Count; i++)
-                if (TypeJson.Read(sig[i]) is TypeNode p && NestedValueNullable(p))
+                if (TypeJson.Read(sig[i]) is TypeNode p && NullableGenericErasure.ErasureWouldMove(p))
                     throw Refuse(file, owner, member, "parameter " + i, p);
-        if (TypeJson.Read(call["ret"]) is TypeNode ret && NestedValueNullable(ret))
+        if (TypeJson.Read(call["ret"]) is TypeNode ret && NullableGenericErasure.ErasureWouldMove(ret))
             throw Refuse(file, owner, member, "return", ret);
     }
 
+    // WHAT THE MESSAGE MAY OFFER is only what actually works. Constructing the .NET type by hand does NOT: a Kotlin
+    // `System.Collections.Generic.List<Int?>()` erases its own argument the same way and builds a `List<object>`, so
+    // there is no expression in the language whose physical type is `List<Nullable<Int32>>`. Naming that as a remedy
+    // sends the author around a loop that ends where it started, so the refusal names the two things that do move:
+    // a different .NET surface, or keeping the value on the .NET side of the boundary.
     static InvalidOperationException Refuse(string file, string owner, string member, string slot, TypeNode t)
         => new(
-            $"bir2cir: {file}: the .NET member '{owner}.{member}' declares '{Render(t)}' at its {slot}, which no "
-            + "Kotlin type inhabits. A nullable value type inside a generic argument, an array element or a delegate "
-            + "component is System.Object in Kotlin (#86), so a Kotlin 'List<Int?>' is an IReadOnlyList<object> and "
-            + "is not a List<Nullable<Int32>> — the two are unrelated invariant reified generics and no conversion "
-            + "relates them. Call an overload whose argument is not a nullable value type, or build the .NET "
-            + "collection explicitly and pass it through a slot declared with that .NET type.");
+            $"bir2cir: {file}: the .NET member '{owner}.{member}' declares '{Render(t)}' at its {slot}, which NO "
+            + "Kotlin expression inhabits. A nullable value type inside a generic argument, an array element or a "
+            + "delegate return is System.Object in Kotlin (#86), so a Kotlin 'List<Int?>' is an "
+            + "IReadOnlyList<object> and is not a List<Nullable<Int32>> — unrelated invariant reified generics that "
+            + "no conversion relates, and constructing the .NET type from Kotlin erases its argument the same way. "
+            + "Change the .NET surface (an overload whose argument is object-typed, or whose element is not a "
+            + "nullable value type), or build and pass the value entirely on the .NET side.");
 
-    // A `Nullable<V>` sitting inside a REIFIED ARGUMENT — a generic type argument, an array element, a delegate
-    // component. The head is deliberately excluded: a DIRECT `Nullable<V>` parameter or return is exactly what a
-    // Kotlin scalar `Int?` is, and it crosses without any adaptation at all.
-    static bool NestedValueNullable(TypeNode t) => t switch
-    {
-        TypeNode.Fqn { Args: { } args } => args.Any(InArgument),
-        TypeNode.Array a => InArgument(a.Elem),
-        TypeNode.ByRef b => NestedValueNullable(b.Of),
-        TypeNode.Nullable n => NestedValueNullable(n.Of),
-        TypeNode.Oblivious o => NestedValueNullable(o.Of),
-        TypeNode.Fn fn => InArgument(fn.Ret) || fn.Params.Any(InArgument)
-                          || (fn.Recv != null && InArgument(fn.Recv)),
-        _ => false,
-    };
-
-    // One reified argument: either it IS the `Nullable<V>` Kotlin cannot put there, or it contains one deeper down.
-    // By this point the tree is lowered, so a `Nullable` node is always a real `System.Nullable<V>` over a value
-    // type — BirTypeLowering strips every reference `?` before it gets here. An NRT-OBLIVIOUS wrapper is a pure
-    // annotation and is looked through, so a `[MaybeNull] List<int?>` is the same crossing as a plain one.
-    static bool InArgument(TypeNode t) => t switch
-    {
-        TypeNode.Nullable => true,
-        TypeNode.Oblivious o => InArgument(o.Of),
-        _ => NestedValueNullable(t),
-    };
 
     static string Render(TypeNode t) => t switch
     {
