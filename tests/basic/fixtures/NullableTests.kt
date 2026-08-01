@@ -78,6 +78,40 @@ class NgTextSink : NgSink<String> {
     override fun accept(x: String?): String = x ?: "none"
     override fun boxed(b: NgBox<String?>): String = b.v ?: "none"
 }
+// The two shapes that put an ordinary `var` beside a value-position `try` inside ONE expression-position block —
+// the layout a shape-keyed widening could not tell apart from the join's own temp. Both need the `if` branch block:
+// that is what makes the enclosing block a value block rather than a statement list.
+fun ngJoinNeighbourStatementTry(c: Boolean): Int {
+    return if (c) {
+        var x: Int = 5
+        try { ngJoinNeighbourSide(); null } finally { ngJoinNeighbourSide() }
+        x = x + 1
+        x
+    } else 0
+}
+fun ngJoinNeighbourSwallow(s: String, c: Boolean): Int {
+    return if (c) {
+        var n: Int = -1
+        try { n = s.length } catch (e: Exception) { null }
+        n
+    } else 0
+}
+fun ngJoinNeighbourSide() {}
+// A `T?` RETURN slot narrowed by an override, with a THIRD level below it. The return axis is where two bridge
+// synthesizers can both see a divergence — the covariant-return one and this erasure's — and emitting both puts two
+// private members with the same signature and the same MethodImpl descriptor on one class, of which the emitter
+// binds whichever it matches first. Only the erasure's bridge forwards VIRTUALLY, so `NgSubSrc`'s override is
+// reachable through the interface only when exactly one bridge owns the slot and it is that one.
+interface NgSrc<T> { fun get(): T?; val v: T?; var w: T? }
+open class NgBaseSrc : NgSrc<Int> {
+    override fun get(): Int? = 4
+    override val v: Int? = 40
+    override var w: Int? = 400
+}
+class NgSubSrc : NgBaseSrc() {
+    override fun get(): Int? = 9
+    override val v: Int? get() = 90
+}
 // The same narrowing over a base CLASS. A class slot is wired by different CLR metadata than an interface slot, so
 // it is a separate observable — an abstract slot left unfilled is a TypeLoadException at type LOAD, which no
 // verification pass reports and only running the code can catch.
@@ -254,6 +288,38 @@ class NullableTests {
         val sub: NgHolder<Int> = NgIntHolderSub()
         assertEquals("sub:9", sub.take(9))                    // sub:9  through the base slot, dispatched one deeper
         assertEquals("sub:none", NgIntHolderSub().take(null)) // sub:none
+    }
+
+    // #86 D3 — a `T?` RETURN slot, where TWO bridge synthesizers can see the divergence. Both emitting leaves the
+    // class with two same-signature MethodImpls for one slot and the emitter picking between them; only the erasure
+    // bridge forwards virtually, so a further-derived override is reachable through the base slot only if that one
+    // owns it. Driven through the interface, through the concrete type, and one level down, for a method and for
+    // read-only and mutable properties alike.
+    @TestAttribute
+    fun nullableGenericReturnSlotOverrideDispatch() {
+        val s: NgSrc<Int> = NgSubSrc()
+        assertEquals(9, s.get())                  // 9    the sub-override, through the erased interface slot
+        assertEquals(90, s.v)                     // 90   the same for a read-only property
+        s.w = 4000
+        assertEquals(4000, s.w)                   // 4000 and for a mutable one, whose setter takes the erased slot
+        assertEquals(9, NgSubSrc().get())         // 9    through the declared type
+        assertEquals(90, NgSubSrc().v)
+        val b: NgSrc<Int> = NgBaseSrc()
+        assertEquals(4, b.get())                  // 4    the base's own body, so the sub-override is not just always winning
+        assertEquals(40, b.v)
+    }
+
+    // #86 §3 — a value-position JOIN one branch leaves `null`, and the LOCAL that must not be dragged into it.
+    // The widening is keyed on a frontend fact stamped on the join's own temp; keyed on the emitted shape instead,
+    // an ordinary `var` standing next to a `try` inside an expression-position block was retyped to `Nullable<V>`
+    // over an `int32` initializer — an AccessViolationException for the first shape below, and a silently wrong
+    // answer for the second, which is the ordinary swallow-and-null idiom.
+    @TestAttribute
+    fun valuePositionJoinLeavesNeighbouringLocalsAlone() {
+        assertEquals(6, ngJoinNeighbourStatementTry(true))    // 6  the local keeps its own int32 slot
+        assertEquals(0, ngJoinNeighbourStatementTry(false))
+        assertEquals(4, ngJoinNeighbourSwallow("abcd", true)) // 4  the try's own assignment survives
+        assertEquals(0, ngJoinNeighbourSwallow("", true))     // 0  and an empty string is a length, not the sentinel
     }
 
     // #86 §5.3 — the arity boundary of the overload-collision refusal, pinned from the COMPILING side. Its refusing

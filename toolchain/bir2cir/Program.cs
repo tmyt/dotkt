@@ -287,6 +287,14 @@ sealed class Pipeline
             // returns, hygiene) into a value-producing valueBlock — which then re-lowers IN THIS app's context. Runs here
             // (before ClosureSynthesis, like RepeatInlineLowering) so nested closures in the spliced body synthesize once.
             InlineSplice.Apply(bir.Root, refs, appLocalFileClassMethods, inlineDispatchHierarchy);
+            // VALUE-POSITION JOIN WIDENING (#86 §3): a `try`/`catch` or `if/when` join the frontend resolved to a
+            // NON-nullable type while one branch yields a literal `null` — kotc records exactly that fact on the
+            // declaration it mints for the join, and the physical consequence is decided HERE: a VALUE join widens to
+            // `Nullable<V>` (a null into a bare `int32` slot is a reference stored over a value), a reference join
+            // does not. Runs immediately after InlineSplice, so a spliced stdlib inline body's own joins — the shape
+            // that drops the `?` — are widened before anything downstream reads their type, and long before type
+            // lowering, while the join type is still `kotlin.*`.
+            ValueJoinNullWidening.Apply(bir.Root, isValueFqn);
             // CROSS-MODULE DEFAULT-ARG SPLICE (#146): fill a call's OMITTED defaulted args (kotc's `defaultArg`
             // placeholders) from the callee's `[kotlin.clr.KotlinDefault]` BIR on the referenced .dll. Runs HERE — phase 1,
             // right after InlineSplice, before ObjectSlotRename/ClosureSynthesis/MemberCallSubstitution/BirTypeLowering —
@@ -430,13 +438,6 @@ sealed class Pipeline
             // element stores then corrupt memory rather than failing to type-check. Runs BEFORE type lowering (elem
             // tokens are still `kotlin.*`) and before the erasure, which then finds the two already agreeing.
             ArrayNullableElemCanonicalization.Apply(bir.Root, isValueFqn);
-            // VALUE-POSITION `try` JOIN WIDENING (#86 §3): a `try`/`catch` join the frontend resolved to a bare VALUE
-            // type while one branch still yields a literal `null` cannot use that type for its temp — `null` into a
-            // bare `int32` slot is a reference stored over a value. Widen the temp to `Nullable<V>`. Was decided in
-            // kotc, which decides no physical slot; the struct-ness oracle replaces the primitive list it used to ask.
-            // Runs before type lowering (the join type is still `kotlin.*`) and AFTER InlineSplice, so a spliced
-            // stdlib inline body's own joins — the shape that drops the `?` — are seen too.
-            TryValueJoinWidening.Apply(bir.Root, isValueFqn);
             // NULLABLE IS-TEST (`x is T?`): null IS a member of a nullable type in Kotlin, and the frontend's
             // else-branch smart-cast to a NON-null `x` depends on it. `isinst` never matches null, so mark the node
             // and let ilemit add the null-accepting branch. Runs BEFORE type lowering, which erases the `?` on the

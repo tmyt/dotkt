@@ -1,5 +1,5 @@
 {
-  "fileClass": "TryValueJoinKt",
+  "fileClass": "ValueJoinKt",
   "hasMain": false,
   "fields": [],
   "types": [],
@@ -17,7 +17,12 @@
           "value": {
             "k": "valueBlock",
             "stmts": [
-              { "k": "var", "name": "dotkt$tryval0", "type": { "t": "fqn", "name": "kotlin.Int" } },
+              {
+                "k": "var",
+                "name": "dotkt$tryval0",
+                "type": { "t": "fqn", "name": "kotlin.Int" },
+                "joinNullBranch": true
+              },
               {
                 "k": "try",
                 "type": { "t": "fqn", "name": "kotlin.Unit" },
@@ -52,6 +57,60 @@
       ]
     },
     {
+      "name": "neighbourLocalIsNotTheJoin",
+      "static": true,
+      "vis": "public",
+      "params": [],
+      "ret": { "t": "fqn", "name": "kotlin.Int" },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "valueBlock",
+            "stmts": [
+              {
+                "k": "var",
+                "name": "userLocal",
+                "type": { "t": "fqn", "name": "kotlin.Int" },
+                "init": { "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 5 }
+              },
+              {
+                "k": "try",
+                "type": { "t": "fqn", "name": "kotlin.Unit" },
+                "body": [
+                  {
+                    "k": "exprStmt",
+                    "expr": {
+                      "k": "const",
+                      "type": { "t": "nullable", "of": { "t": "fqn", "name": "kotlin.Nothing" } },
+                      "value": null
+                    }
+                  }
+                ],
+                "catches": [
+                  {
+                    "excType": { "t": "fqn", "name": "kotlin.NumberFormatException" },
+                    "var": "e1",
+                    "body": [
+                      {
+                        "k": "exprStmt",
+                        "expr": {
+                          "k": "const",
+                          "type": { "t": "nullable", "of": { "t": "fqn", "name": "kotlin.Nothing" } },
+                          "value": null
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "result": { "k": "local", "name": "userLocal" }
+          }
+        }
+      ]
+    },
+    {
       "name": "joinYieldsValues",
       "static": true,
       "vis": "public",
@@ -77,7 +136,7 @@
                 "catches": [
                   {
                     "excType": { "t": "fqn", "name": "kotlin.NumberFormatException" },
-                    "var": "e1",
+                    "var": "e2",
                     "body": [
                       {
                         "k": "setLocal",
@@ -106,7 +165,12 @@
           "value": {
             "k": "valueBlock",
             "stmts": [
-              { "k": "var", "name": "dotkt$tryval2", "type": { "t": "fqn", "name": "kotlin.String" } },
+              {
+                "k": "var",
+                "name": "dotkt$tryval2",
+                "type": { "t": "fqn", "name": "kotlin.String" },
+                "joinNullBranch": true
+              },
               {
                 "k": "try",
                 "type": { "t": "fqn", "name": "kotlin.Unit" },
@@ -120,7 +184,7 @@
                 "catches": [
                   {
                     "excType": { "t": "fqn", "name": "kotlin.NumberFormatException" },
-                    "var": "e2",
+                    "var": "e3",
                     "body": [
                       {
                         "k": "exprStmt",
@@ -136,6 +200,30 @@
               }
             ],
             "result": { "k": "local", "name": "dotkt$tryval2" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "condJoinYieldsNull",
+      "static": true,
+      "vis": "public",
+      "params": [{ "name": "c", "type": { "t": "fqn", "name": "kotlin.Boolean" } }],
+      "ret": { "t": "nullable", "of": { "t": "fqn", "name": "kotlin.Int" } },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "cond",
+            "type": { "t": "fqn", "name": "kotlin.Int" },
+            "joinNullBranch": true,
+            "cond": { "k": "local", "name": "c" },
+            "then": { "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 7 },
+            "else": {
+              "k": "const",
+              "type": { "t": "nullable", "of": { "t": "fqn", "name": "kotlin.Nothing" } },
+              "value": null
+            }
           }
         }
       ]

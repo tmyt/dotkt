@@ -618,10 +618,20 @@ sealed partial class Emitter
                         || !impl.TryGetProperty("member", out var memberNode)
                         || !impl.TryGetProperty("params", out var ps)) continue;
                     var (open, constructed) = ParseOwnerT(ownerFqn);
-                    if (!_types.TryGetValue(open, out var baseTi)) continue;
+                    // A RESOLVED DESCRIPTOR THIS LAYER CANNOT BIND IS AN EARLIER-LAYER DROP, and dropping it here
+                    // would leave the base slot unimplemented — a TypeLoadException at run time with nothing pointing
+                    // back at the producer. bir2cir states `clrBaseImpls` only against a base class of THIS assembly,
+                    // so both misses below are diagnosable producer bugs, not shapes a program can reach.
+                    if (!_types.TryGetValue(open, out var baseTi))
+                        throw new InvalidOperationException(
+                            $"ilemit: {ti.TB.Name}.{bridgeName.GetString()}: clrBaseImpls names '{open}', which is not "
+                            + "emitted in this assembly — bir2cir resolved a base-class MethodImpl against a type that is not here");
                     var slotSig = SigKey(memberNode.GetString(), DeclaredMethodArity(m),
                         ps.EnumerateArray().Select(DotKt.Bir.TypeNode.Read));
-                    if (!baseTi.MethodsBySig.TryGetValue(slotSig, out var slot)) continue;
+                    if (!baseTi.MethodsBySig.TryGetValue(slotSig, out var slot))
+                        throw new InvalidOperationException(
+                            $"ilemit: {ti.TB.Name}.{bridgeName.GetString()}: clrBaseImpls names {open}.{slotSig}, "
+                            + "which that type does not declare — bir2cir resolved a base-class MethodImpl against a missing slot");
                     ti.TB.DefineMethodOverride(bridge,
                         constructed != null ? TypeBuilder.GetMethod(constructed, slot) : (MethodInfo)slot);
                 }

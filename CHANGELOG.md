@@ -138,9 +138,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   re-derivation can reach — and a C# consumer saw a parameter the declaration never named.
   The override now keeps `accept(Nullable<int32>)` and a compiler-generated PRIVATE bridge with the slot's exact
   signature carries the MethodImpl and forwards to it across the `object` seam, virtually, so a further-derived
-  override is still what runs. One bridge fills every slot of that shape the supertype graph declares — the
-  constructed interface, its own base interfaces (including a synthesized `G$dotkt_star` existential view), and the
-  base-CLASS chain, which is wired by different CLR metadata and had no path at all before. Private is what keeps it
+  override is still what runs. One bridge — exactly one, since the covariant-return synthesizer now yields any slot
+  whose divergence is this erasure rather than bridging it a second time with a non-virtual forward — fills every
+  slot of that shape the supertype graph declares: the constructed interface, its own base interfaces (including a
+  synthesized `G$dotkt_star` existential view), and the base-CLASS chain, which is wired by different CLR metadata
+  and had no path at all before. That graph is the COMPILATION's: a base declared in a referenced assembly is still
+  not indexed, so its narrowed override still fails to load — a pre-existing cross-module reader gap the erase-in-
+  place design had too, now measured as `roundtrip-nullable-vt-generic-override-crossmodule-base` instead of being
+  stated away. Private is what keeps it
   off the Kotlin surface: dll2klib projects public and protected members only, so the re-imported type carries the one
   declaration the author wrote, where a public bridge would appear as a second `accept(x: Any?)` overload and make
   `IntSink().accept("s")` compile. The one position that still moves the declaration is a `T?` NESTED in a constructed
@@ -171,15 +176,25 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   colliding pair, and a `tests/basic` fixture for the neighbouring pair that differs in method GENERIC ARITY and so
   stays two reachable slots.
 
-- **kotc/bir2cir (area:kotc): the value-position `try` join no longer decides a CLR slot in kotc (#86 §3).** A
-  `try`/`catch` join the frontend resolved to a bare VALUE type while one branch still yields a literal `null` had its
-  temp widened to `Nullable<V>` by the BIR emitter, reasoning in-comment about `HasValue=false` and "a bare `int`
-  slot" — a physical-representation decision two layers above where representation is decided. kotc now states the
-  join's Kotlin type and nothing more; bir2cir's `TryValueJoinWidening` makes the call off the emitted shape, and asks
-  the struct-ness oracle instead of the hardcoded primitive/unsigned list, so a `value class` or a BCL struct join is
-  covered by the same rule. The whole stdlib (reference + runtime) lowers byte-identically across the move; the shape
-  itself has no natural instance in the corpus, so it is pinned by a `tests/ir/lowering` document with both
-  discriminations — an all-values join and a REFERENCE join must keep their bare types.
+- **kotc/bir2cir (area:kotc): a value-position join no longer decides a CLR slot in kotc (#86 §3).** A `try`/`catch`
+  or `if`/`when` join the frontend resolved to a bare VALUE type while one branch still yields a literal `null` had
+  its slot widened to `Nullable<V>` by the BIR emitter, reasoning in-comment about `HasValue=false` and "a bare `int`
+  slot" — a physical-representation decision two layers above where representation is decided, and one that asked a
+  hardcoded primitive/unsigned list where every other erasure decision asks the struct-ness oracle.
+  The split now runs along the layer boundary: kotc records the FRONTEND FACT (`joinNullBranch`) on the declaration
+  it *mints* for the join — the `try`-expression temp, each `cond` of a `when` chain — and bir2cir's
+  `ValueJoinNullWidening` decides the physical consequence, off the oracle, so a `value class` or a BCL struct join is
+  covered by the rule that covers `Int`. Both halves of the decision moved, so the two can no longer disagree.
+  That the fact comes from the producer is load-bearing, not tidiness: a first attempt recognized the join by its
+  emitted SHAPE instead — a `var` beside a `try` in a `valueBlock` — which is also the shape of an ordinary user local
+  written before a `try` in an expression-position block, and it retyped that local to `Nullable<int32>` over an
+  `int32` initializer. Measured: an `AccessViolationException`, and, for the plain swallow-and-null idiom
+  (`try { n = s.length } catch { null }`), a silently wrong answer. Nothing in the BIR could separate the two — the
+  temp's name is not stable across `InlineSplice` and the `try`'s own type is `Unit` either way.
+  The whole stdlib (reference + runtime) lowers byte-identically across the move; the arming shape has no natural
+  instance in the corpus, so it is pinned by a `tests/ir/lowering` document whose discriminations now include the
+  axis that broke — a neighbouring user local of the same type must keep it — beside an all-values join and a
+  REFERENCE join, and by runtime fixtures for both measured miscompiles.
 
 - **bir2cir/stdlib (area:bir2cir): `Array<X?>` is `object[]` — the last two representations of the nullable-generic
   array are gone (#86 D2).** One Kotlin type constructor had three physical forms: a concrete `Array<Int?>` was a

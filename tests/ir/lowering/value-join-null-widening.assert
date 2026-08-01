@@ -1,0 +1,31 @@
+# A value-position join one branch leaves `null` (#86 §3). The join carries its type, and a branch whose result is a
+# bare `null` literal assigns NOTHING — the temp keeps its default — so a bare `int32` join would answer that branch
+# with `0` and not with a null. Widened to `Nullable<int32>`, the default IS `HasValue=false`.
+#
+# No Kotlin source in the corpus reaches the arming shape today: the frontend keeps the `?` on the join type wherever
+# it can, and the whole stdlib lowers byte-identically with the widening in place. The shape is nonetheless real — a
+# substituted generic or a spliced inline body resolves the join to a bare `Int` with the `?` on the enclosing return
+# — so this document is the witness, exactly as the reject-* documents are for the refusals.
++"name":"dotkt$tryval0","type":{"t":"nullable","of":{"t":"fqn","name":"System.Int32"}}
+-"name":"dotkt$tryval0","type":{"t":"fqn","name":"System.Int32"}
+
+# THE AXIS THAT BROKE, and the reason the fact is stamped by the producer rather than recognized from shape here: an
+# ordinary user local of the same bare value type, declared beside a `try` in the same value block, carrying no fact
+# and an initializer of its own. Retyping it to `Nullable<int32>` over an `int32` init is an AccessViolationException,
+# or a silently wrong answer when the `try` assigns it. The var IDENTITY is what separates the two, and only the
+# frontend has it.
++"name":"userLocal","type":{"t":"fqn","name":"System.Int32"}
+-"name":"userLocal","type":{"t":"nullable"
+
+# The other two DISCRIMINATIONS, without which the first assertion would also pass a pass that widened every join. A
+# join whose branches all yield values keeps its bare value type; a REFERENCE join keeps its bare reference type,
+# because a reference slot holds a null already and `Nullable<string>` is not a CLR type at all.
++"name":"dotkt$tryval1","type":{"t":"fqn","name":"System.Int32"}
++"name":"dotkt$tryval2","type":{"t":"fqn","name":"System.String"}
+
+# The SAME fact on the `if`/`when` join, which the same pass answers — the two halves of one decision, where the cond
+# half used to live in kotc and ask a hardcoded primitive list instead of the struct-ness oracle.
++"k":"cond","type":{"t":"nullable","of":{"t":"fqn","name":"System.Int32"}}
+
+# The fact is a producer-to-consumer hint and is CONSUMED: no CIR node may still carry it.
+-"joinNullBranch"
