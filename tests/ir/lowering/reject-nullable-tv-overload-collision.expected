@@ -1,0 +1,10 @@
+# #86 §5.3 — `T?` and `Any?` both emit `object`, so a same-arity pair of them is ONE CLR signature and only one of
+# them could ever be called. The refusal must name the OWNER, both SOURCE signatures as written, and the single
+# signature they collapse onto: a message that only said "duplicate signature" would not tell the author which
+# declaration to change. Its compiling twin — the pair that differs in method GENERIC ARITY and so stays two slots —
+# is pinned by tests/basic/fixtures/NullableTests.kt::nullableGenericOverloadArityBoundary.
+two declarations of 'f' erase to one CLR signature
+Coll
+f(T?)
+f(Any?)
+both become 'f(object)'

@@ -187,6 +187,15 @@ sealed class Pipeline
         // MapVarianceRealign needs the callee's declared type-param order to map a sig's `gp:NAME` to its typeArg index.
         var calleeTypeParams = MapVarianceRealign.CollectCalleeTypeParams(birFiles.Select(f => f.Root));
 
+        // OVERRIDE SLOTS, THE HALF THAT MOVES A DECLARATION (#86 D3). An override narrowing a base `T?` NESTED in a
+        // constructed generic (`Box<T?>` overridden as `Box<Int?>`) has no conversion available in either direction —
+        // `Box<object>` and `Box<Nullable<int32>>` are unrelated invariant reified generics — so that slot must adopt
+        // the base's shape. It happens over every file at once, because a base may be declared in another one, and
+        // BEFORE the declaration snapshot below: a call reached through the DERIVED type is typed against that
+        // declaration, so a snapshot taken first would type it against the slot the override no longer has. The
+        // top-level `object` seam is bridged instead, beside the other bridge synthesizers.
+        KotlinOverrideSlotBridge.PropagateErasedSlots(birFiles.Select(f => f.Root), isValueFqn);
+
         // Snapshot every LOCAL generic type's declared member returns BEFORE the per-file DEF-side EraseNullableTv
         // (NullableGenericErasure runs inside the transform loop, mutating declarations in place). Feeds
         // NullableTvErasureCallRealign so a `Box<Int>.get_a()` call across the generic boundary re-derives its
@@ -278,6 +287,14 @@ sealed class Pipeline
             // returns, hygiene) into a value-producing valueBlock — which then re-lowers IN THIS app's context. Runs here
             // (before ClosureSynthesis, like RepeatInlineLowering) so nested closures in the spliced body synthesize once.
             InlineSplice.Apply(bir.Root, refs, appLocalFileClassMethods, inlineDispatchHierarchy);
+            // VALUE-POSITION JOIN WIDENING (#86 §3): a `try`/`catch` or `if/when` join the frontend resolved to a
+            // NON-nullable type while one branch yields a literal `null` — kotc records exactly that fact on the
+            // declaration it mints for the join, and the physical consequence is decided HERE: a VALUE join widens to
+            // `Nullable<V>` (a null into a bare `int32` slot is a reference stored over a value), a reference join
+            // does not. Runs immediately after InlineSplice, so a spliced stdlib inline body's own joins — the shape
+            // that drops the `?` — are widened before anything downstream reads their type, and long before type
+            // lowering, while the join type is still `kotlin.*`.
+            ValueJoinNullWidening.Apply(bir.Root, isValueFqn);
             // CROSS-MODULE DEFAULT-ARG SPLICE (#146): fill a call's OMITTED defaulted args (kotc's `defaultArg`
             // placeholders) from the callee's `[kotlin.clr.KotlinDefault]` BIR on the referenced .dll. Runs HERE — phase 1,
             // right after InlineSplice, before ObjectSlotRename/ClosureSynthesis/MemberCallSubstitution/BirTypeLowering —
@@ -449,11 +466,6 @@ sealed class Pipeline
             // records the pre-erasure Kotlin type — plus, at an erased HEAD, its NRT byte — for the
             // [KotlinNullableGeneric] round-trip. Runs BEFORE the rest so type-lowering/substitution see it.
             if (attributeTopLevelOwner) ClrMemberResolution.CaptureReferencedStaticCallSignatures(bir.Root);
-            // OVERRIDE SLOTS inherit the erasure of what they override (#86 D3). A derived declaration narrowing a
-            // base `T?` slot holds a CONCRETE `Int?`/`String?`, which no `Nullable(Tv)` sweep can see — so left to
-            // the sweep below it emits a NEW OVERLOAD against an interface slot that stays unimplemented, and the
-            // type never loads. Runs FIRST so the sweep and the carrier recorder both see the corrected slots.
-            OverrideSlotErasure.Apply(bir.Root, nullableTvDeclRets, isValueFqn);
             NullableGenericErasure.Apply(bir.Root, isValueFqn);
             // GENERIC-BOUNDARY nullable-Tv USE realignment — THE USE AXIS of #86's erasure invariant (#4;
             // #113/#117/#120/#142). The DEF-side erasure above turns a member's `T?`/`…Ref<T?>…` into
@@ -642,6 +654,14 @@ sealed class Pipeline
         // private forwarding bridge with the interface slot's exact return. The bridge carries a resolved
         // `clrInterfaceImpls` instruction; ilemit only consumes that instruction and does not infer covariance.
         CovariantInterfaceReturnBridge.ApplyAll(staged.Select(s => s.Root).ToList());
+
+        // KOTLIN ERASURE-NARROWED OVERRIDE -> EXACT CLR METHODIMPL (#86 D3): an override that narrows a base `T?` slot
+        // to a concrete `Int?`/`String?` keeps its own physical type — so its Kotlin surface and the assembly agree,
+        // here and for a separately compiled consumer — and the base's erased `object` slot is filled by a private
+        // forwarding bridge carrying a resolved MethodImpl instruction. Only a position no cast reaches (one under a
+        // constructed generic) moves the declaration itself. Runs beside the other two bridge synthesizers and AFTER
+        // the star-projection erasure, so the synthesized `G$dotkt_star` slots are in the supertype graph it walks.
+        KotlinOverrideSlotBridge.ApplyAll(staged.Select(s => s.Root).ToList(), isValueFqn);
 
         // CONSTRUCTED MEMBER RESULT SUBSTITUTION (early): suspend lowering copies a call's result type into
         // state-machine fields/locals. Close every already-constructed receiver-relative return BEFORE that copy

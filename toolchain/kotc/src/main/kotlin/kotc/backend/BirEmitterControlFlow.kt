@@ -98,7 +98,12 @@ internal fun BirEmitter.loopBody(body: IrExpression?): String = when (body) {
  *  away; the `throw null` result is unreachable dead code that gives the valueBlock a well-formed result which
  *  never falls through to the surrounding merge — so the merge keeps only the live branch's type. */
 internal fun BirEmitter.breakContinueExpr(xfer: String): String =
-	"""{"k":"valueBlock","stmts":[$xfer],"result":{"k":"throwExpr","value":{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}}}"""
+	valueBlockJson(type = null, stmts = xfer, result = unreachableResultJson())
+
+/** The result of a valueBlock that never falls through (a control transfer already left it): `throw null`, dead code
+ *  the surrounding merge must not take a type from. Typed `kotlin.Unit`, so it is not a null VALUE. */
+private fun BirEmitter.unreachableResultJson(): String =
+	"""{"k":"throwExpr","value":{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}}"""
 
 /** The standard tail-call optimization: a self-tail-call in a `tailrec` fn becomes a back-jump to the method's
  *  entry after reassigning the parameters to the call's arguments (Kotlin/JVM's own `tailrec` lowering, which our
@@ -122,7 +127,7 @@ internal fun BirEmitter.tailrecJump(call: IrCall, ctx: BirEmitter.TailrecCtx): S
 	reassigns.forEach { stmts.add("""{"k":"var","name":${str(it.tmp)},"type":${birType(it.type).toJson()},"init":${it.valueJson}}""") }
 	reassigns.forEach { stmts.add("""{"k":"setLocal","name":${str(it.name)},"value":{"k":"local","name":${str(it.tmp)}}}""") }
 	stmts.add("""{"k":"goto","id":${ctx.startLabel}}""")
-	return """{"k":"valueBlock","stmts":[${stmts.joinToString(",")}],"result":{"k":"throwExpr","value":{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}}}"""
+	return valueBlockJson(type = null, stmts = stmts.joinToString(","), result = unreachableResultJson())
 }
 
 /** `while(c){B}` -> CFG block: `START: if(!c) goto END; B; goto START; END:`. continue->START, break->END. */
@@ -207,56 +212,79 @@ internal fun BirEmitter.bodyStmts(e: IrExpression): String =
 /** `try`/`catch` in value position -> a temp local assigned in each branch, returned via a valueBlock. */
 internal fun BirEmitter.tryExpr(node: IrTry): String {
 	val tv = "dotkt\$tryval${scopeCounter++}"
-	val tryBody = bodyStmtsAssign(node.tryResult, tv)
+	var anyNull = false
+	val (tryBody, tryNull) = assignBranch(node.tryResult, tv)
+	if (tryNull) anyNull = true
 	val catches = node.catches.joinToString(",") { c ->
 		val p = c.catchParameter
+		val (body, catchNull) = assignBranch(c.result, tv)
+		if (catchNull) anyNull = true
 		// birType (matching tryStmt) so the catch type stays the Kotlin FQN that bir2cir lowers via @ClrTypeAlias —
 		// a USER exception class catches as its own `@AppErr`, a stdlib one as its BCL alias.
-		"""{"excType":${birType(p.type).toJson()},"var":${str(localSlotName(p))},"body":[${bodyStmtsAssign(c.result, tv)}]}"""
+		"""{"excType":${birType(p.type).toJson()},"var":${str(localSlotName(p))},"body":[$body]}"""
 	}
 	val finally = node.finallyExpression?.let { ""","finally":[${bodyStmts(it)}]""" } ?: ""
 	val tryS = """{"k":"try","type":${fqnJson("kotlin.Unit")},"body":[$tryBody],"catches":[$catches]$finally}"""
-	// #127: mirror ternary()'s value+null-branch join tagging onto the try's value-position join. The branches all
-	// assign into the shared temp `tv`, so `tv`'s DECLARED type is this join's type (the ternary analogue is the
-	// `cond` node's `type`). If a branch yields a bare `null` while birType(node.type) resolved to a bare non-nullable
-	// value Fqn — the substituted-generic / stdlib-inline-splice shape that drops the `?` (#56/#126) — `tv` must be
-	// typed Nullable<T> so the null branch materializes as HasValue=false instead of assigning `null` into a bare
-	// `int` slot (the raw-Nullable<T>/InvalidProgram miscompile class). Gated on isPrimitiveOrUnsigned (signed +
-	// unsigned identically — a join-SHAPE gap, not a signedness seam). Under uniform nullability a real null branch
-	// keeps node.type nullable (bt is already Nullable) so this only arms on the drop-`?` shape.
+	// The branches all assign into the shared temp `tv`, so `tv`'s declared type IS this join's Kotlin type.
+	// `joinNullBranch` is the FRONTEND FACT beside it: the frontend resolved the join to a NON-nullable type while
+	// some branch's result may be `null` — the substituted-generic / stdlib-inline-splice shape that drops the `?`
+	// (#56/#126). Whether the physical slot must then widen to `Nullable<V>` is a question about VALUE-ness, and
+	// bir2cir's ValueJoinNullWidening answers it. The fact rides the declaration this emitter just MINTED, which is
+	// what makes it a statement about this join and not a guess about some local that happens to sit nearby.
+	// It also rides the valueBlock ROOT, which carries no type and so widens nothing: that copy is what lets an
+	// ENCLOSING join see this one as a null-yielding branch (see [emittedYieldsNull]). The `result` here is a read of
+	// the temp, so the root fact cannot be re-derived from it — this join states it directly.
 	val bt = birType(node.type)
-	val elem: TypeNode? = if (bt is TypeNode.Nullable) null else (bt as? TypeNode.Fqn)?.takeIf { node.type.isPrimitiveOrUnsigned() }
-	val nullBranch = elem != null && (branchYieldsNull(node.tryResult) || node.catches.any { branchYieldsNull(it.result) })
-	val tvType = (if (nullBranch) TypeNode.Nullable(elem!!) else bt).toJson()
-	return """{"k":"valueBlock","stmts":[{"k":"var","name":${str(tv)},"type":$tvType},$tryS],"result":{"k":"local","name":${str(tv)}}}"""
+	val nullBranch = bt !is TypeNode.Nullable && anyNull
+	val varFact = if (nullBranch) ""","joinNullBranch":true""" else ""
+	return valueBlockJson(
+		type = null,
+		stmts = """{"k":"var","name":${str(tv)},"type":${bt.toJson()}$varFact},$tryS""",
+		result = """{"k":"local","name":${str(tv)}}""",
+		yieldsNull = nullBranch,
+	)
 }
 
-/** True iff the value-position result [bodyStmtsAssign] would emit for branch [e] is a bare top-level `null` const —
- *  the IR analogue of [isEmittedNullConst], computed WITHOUT re-emitting the branch (which would perturb scopeCounter
- *  and, for a lambda/object-literal tail, double-register a lifted type). Deliberately as NARROW as
- *  [isEmittedNullConst]: [bodyStmtsAssign] takes exactly ONE block level (`e.statements.lastOrNull()`) and emits
- *  `setLocal tv = expr(last)`; only a BARE null literal there renders as the top-level `{"k":"const",…null}` that
- *  ilemit's EmitNullableCoerced materializes as HasValue=false. A valueBlock-wrapped null (from a deeper nested
- *  block) or a `{"k":"cast",…}` (an IMPLICIT_CAST over the null) is NOT that shape, so it must not arm the widening —
- *  hence no deeper recursion and no cast unwrap. */
-internal fun BirEmitter.branchYieldsNull(e: IrExpression): Boolean {
-	val last = (if (e is IrBlock) e.statements.lastOrNull() else e) as? IrConst ?: return false
-	return last.value == null
+/** Mint a `valueBlock`, stamping `joinNullBranch` on its ROOT exactly when its VALUE may leave an enclosing join null.
+ *
+ *  A `valueBlock` is the emitter's one PASS-THROUGH wrapper: its statements are side effects and its `result` IS the
+ *  node's value, so it yields null exactly when that result does. Every site that mints one goes through here, which
+ *  is what lets [emittedYieldsNull] stay a ROOT test instead of re-reading the emitted JSON. The `yieldsNull`
+ *  override exists for the one producer whose verdict is not readable from `result` — [tryExpr], whose result is a
+ *  read of the temp its branches assigned into. */
+internal fun BirEmitter.valueBlockJson(
+	type: String?,
+	stmts: String,
+	result: String,
+	yieldsNull: Boolean = emittedYieldsNull(result),
+): String {
+	val fact = if (yieldsNull) """"joinNullBranch":true,""" else ""
+	val ty = if (type != null) """"type":$type,""" else ""
+	return """{"k":"valueBlock",$fact$ty"stmts":[$stmts],"result":$result}"""
 }
 
 /** Like [bodyStmts], but the branch's final value-expression is assigned to `tv` (a value already throws/returns
- *  -> emitted as-is). For try-as-expression: each branch leaves its result in the temp. */
-internal fun BirEmitter.bodyStmtsAssign(e: IrExpression, tv: String): String {
+ *  -> emitted as-is). For try-as-expression: each branch leaves its result in the temp. Returns the emitted
+ *  statements paired with whether this branch MAY LEAVE THE JOIN NULL — decided on the EMITTED result, because that
+ *  is where a nested join's own verdict and the emitter's own `valueBlock` wrapping are visible; [emittedYieldsNull]
+ *  states which emitted shapes count. A bare `null` literal is `Nothing?`-typed, so it is emitted as a plain
+ *  statement and assigns nothing at all: the temp keeps its default, which is exactly why that default has to be
+ *  able to BE null. */
+internal fun BirEmitter.assignBranch(e: IrExpression, tv: String): Pair<String, Boolean> {
 	val stmts = if (e is IrBlock) e.statements else listOf(e)
 	val pre = stmts.dropLast(1).joinToString(",") { stmt(it) }
 	val last = stmts.lastOrNull()
+	var yieldsNull = false
 	val tail = when {
-		last is IrExpression && !last.type.isUnit() && last.type.classFqName?.asString() != "kotlin.Nothing" ->
-			"""{"k":"setLocal","name":${str(tv)},"value":${expr(last)}}"""
-		last != null -> stmt(last)
+		last is IrExpression && !last.type.isUnit() && last.type.classFqName?.asString() != "kotlin.Nothing" -> {
+			val value = expr(last)
+			yieldsNull = emittedYieldsNull(value)
+			"""{"k":"setLocal","name":${str(tv)},"value":$value}"""
+		}
+		last != null -> stmt(last).also { yieldsNull = emittedStmtYieldsNull(it) }
 		else -> ""
 	}
-	return listOf(pre, tail).filter { it.isNotEmpty() }.joinToString(",")
+	return listOf(pre, tail).filter { it.isNotEmpty() }.joinToString(",") to yieldsNull
 }
 
 /**
@@ -398,7 +426,7 @@ internal fun BirEmitter.blockExpr(block: IrBlock): String {
 			}
 			restore()
 			return if (subjVar == null) core
-			else """{"k":"valueBlock","type":${birType(block.type).toJson()},"stmts":[$subjVar],"result":$core}"""
+			else valueBlockJson(type = birType(block.type).toJson(), stmts = subjVar, result = core)
 		}
 		// `nv ?: d` where nv is a Nullable<T> -> evaluate once, then HasValue ? Value : d.
 		if (origin == "ELVIS") nullableElem(tmp.type)?.let { elem ->
@@ -408,7 +436,11 @@ internal fun BirEmitter.blockExpr(block: IrBlock): String {
 			// branches[0].result is the fallback; branches.last() is tmp (ignored — we read .Value).
 			val elseResult = expr(whenExpr.branches.first().result)
 			val nvLoc = """{"k":"local","name":${str(nv)}}"""
-			return """{"k":"valueBlock","stmts":[{"k":"var","name":${str(nv)},"type":${TypeNode.Nullable(elem).toJson()},"init":$init}],"result":{"k":"cond","cond":{"k":"nullableHasValue","elem":${elem.toJson()},"e":$nvLoc},"then":{"k":"nullableValue","elem":${elem.toJson()},"e":$nvLoc},"else":$elseResult}}"""
+			return valueBlockJson(
+				type = null,
+				stmts = """{"k":"var","name":${str(nv)},"type":${TypeNode.Nullable(elem).toJson()},"init":$init}""",
+				result = """{"k":"cond","cond":{"k":"nullableHasValue","elem":${elem.toJson()},"e":$nvLoc},"then":{"k":"nullableValue","elem":${elem.toJson()},"e":$nvLoc},"else":$elseResult}""",
+			)
 		}
 		val (subjVar, subj) = bindOnce(tmp.initializer!!, tmp.type, "__subj")
 		valSubst[key] = subj
@@ -417,7 +449,7 @@ internal fun BirEmitter.blockExpr(block: IrBlock): String {
 		// The wrapping valueBlock carries the when's result type: the old bare `cond` surfaced it (ternary's
 		// "type"), and bir2cir's call-arg type inference sniffs the argument node's type field.
 		return if (subjVar == null) result
-		else """{"k":"valueBlock","type":${birType(whenExpr.type).toJson()},"stmts":[$subjVar],"result":$result}"""
+		else valueBlockJson(type = birType(whenExpr.type).toJson(), stmts = subjVar, result = result)
 	}
 	// A general block in value position: emit its preceding (side-effecting) statements, then the last value.
 	// e.g. `{ counter++ }` lowers to `{ val <unary> = counter; counter = counter + 1; <unary> }` — dropping the
@@ -425,7 +457,7 @@ internal fun BirEmitter.blockExpr(block: IrBlock): String {
 	val last = block.statements.lastOrNull()
 	if (block.statements.size > 1 && last is IrExpression) {
 		val pre = block.statements.dropLast(1).joinToString(",") { stmt(it) }
-		return """{"k":"valueBlock","stmts":[$pre],"result":${expr(last)}}"""
+		return valueBlockJson(type = null, stmts = pre, result = expr(last))
 	}
 	return (last as? IrExpression)?.let { expr(it) } ?: """{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}"""
 }
@@ -436,25 +468,57 @@ internal fun BirEmitter.ternary(node: IrWhen): String {
 	// GOTCHA: an inlined `takeIf` etc. yields `if (c) x else null` whose joined type is a value primitive with
 	// a bare `null` branch — but the emitted cond type comes out non-nullable (`kotlin.Int`). Two shapes reach
 	// here: (1) the FIR `.type` is the non-null `Int` (the `T?` rides the fn return), or (2) `takeIf`'s generic
-	// `T?` result, where `birType` substitutes `T -> kotlin.Int` and DROPS the `?`. In both, tag the cond
-	// `nullable:<elem>` so ilemit joins the value branch (wrap to Nullable<T>) and the null branch (HasValue=false);
-	// leaving it `int` mismatches `then:int` vs `else:null-ref`. The `null` may arrive IR-wrapped (IMPLICIT_CAST /
-	// inline block — as from `takeIf`), so detect it on the EMITTED result (a bare `const … null`), emitting each
-	// branch result exactly once. A reference-typed join with a null branch keeps its type (null is a valid ref).
+	// `T?` result, where `birType` substitutes `T -> kotlin.Int` and DROPS the `?`. Both are the same FRONTEND
+	// FACT — a non-nullable join type with a `null`-yielding branch — recorded here as `joinNullBranch` on every
+	// level of the emitted chain; bir2cir's ValueJoinNullWidening decides whether the physical slot has to widen
+	// (it does for a VALUE join, where the alternative is a null reference stored over an `int`; a reference join
+	// keeps its type, since a reference holds null already). The verdict is taken on the EMITTED result, because
+	// that is where a nested join's own verdict and this emitter's own `valueBlock` wrapping are visible —
+	// [emittedYieldsNull] states exactly which emitted shapes count. Each branch result is emitted exactly once.
 	val branches = node.branches.map { b -> Triple((b.condition as? IrConst)?.value == true, b.condition, expr(b.result)) }
-	val nullBranch = branches.any { isEmittedNullConst(it.third) }
+	val nullBranch = branches.any { emittedYieldsNull(it.third) }
 	val bt = birType(node.type)
-	// #126: an unsigned inline-class (`UInt`/…) join is a value type on the CLR too, so a value+null branch join
-	// whose resolved type is a bare `UInt` must be tagged `nullable:<elem>` exactly like a signed `Int` — mirror
-	// #118's isPrimitiveOrUnsigned so the null branch materializes as `Nullable<uint>`, not a raw reference.
-	val elem: TypeNode? = if (bt is TypeNode.Nullable) null else (bt as? TypeNode.Fqn)?.takeIf { node.type.isPrimitiveOrUnsigned() }
-	val ty = (if (nullBranch && elem != null) TypeNode.Nullable(elem) else bt).toJson()
+	val ty = bt.toJson()
+	val joinFact = if (nullBranch && bt !is TypeNode.Nullable) """"joinNullBranch":true,""" else ""
 	var acc = """{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}"""
 	for ((isElse, cond, result) in branches.asReversed()) {
 		acc = if (isElse) result
-		else """{"k":"cond","type":$ty,"cond":${expr(cond)},"then":$result,"else":$acc}"""
+		else """{"k":"cond",$joinFact"type":$ty,"cond":${expr(cond)},"then":$result,"else":$acc}"""
 	}
 	return acc
+}
+
+/** True iff an emitted branch VALUE may leave its join null — the compositional half of `joinNullBranch`.
+ *
+ *  A bare `null` const is the leaf case. The other case is a node that already decided it is one and says so on its
+ *  ROOT: a NESTED JOIN (`if (a) (if (b) v else null) else w` shows the outer join a `cond` for its `then`, never a
+ *  null const, and if only the inner widened, the inner's `Nullable<V>` would flow into a bare `V` join), or a
+ *  `valueBlock` — the emitter's one PASS-THROUGH wrapper, which yields whatever its `result` yields and which every
+ *  minting site stamps accordingly ([valueBlockJson]). Both stamp the fact as the FIRST key after `k` precisely so
+ *  this test can be a ROOT test rather than a search — a `joinNullBranch` buried anywhere deeper belongs to a join
+ *  that is not this branch's value and must not arm anything here.
+ *
+ *  THE RULE FOR WHAT ELSE IS TRANSPARENT, and it is short: nothing. The widening this arms only ever matters at a
+ *  VALUE join, and at a value join the branch's static type IS that value type — so the only emitted forms that can
+ *  leave a null in the slot are the ones carrying no value of that type at all (a `null` const, whose Kotlin type is
+ *  `Nothing?`) and the pass-through of such a form. Every other wrapper the emitter can put around a `null` PRODUCES
+ *  A VALUE of the wrapped-to type instead: a `cast` (`x as T`, IMPLICIT_CAST) asserts the branch has the join's own
+ *  type, so at a value join it unboxes to a real value or throws — `if (c) 1 else (null as Int)` throws
+ *  NullReferenceException, it does not answer null; `nullableValue` unwraps to a bare `V`, and
+ *  `safeCastValue`/`nullableWrap` build a `Nullable<V>` struct, never a null reference; `isInstRef` can answer null
+ *  but only at a REFERENCE join, which never widens. Seeing through those would over-stamp the fact and widen a join
+ *  that never holds a null. */
+internal fun BirEmitter.emittedYieldsNull(emitted: String): Boolean =
+	isEmittedNullConst(emitted) ||
+		emitted.startsWith("""{"k":"cond","joinNullBranch":true""") ||
+		emitted.startsWith("""{"k":"valueBlock","joinNullBranch":true""")
+
+/** The statement form of [emittedYieldsNull]: a branch whose result type is `Unit`/`Nothing` is emitted as a plain
+ *  expression statement rather than an assignment, and a bare `null` literal (typed `Nothing?`) is exactly that. */
+internal fun BirEmitter.emittedStmtYieldsNull(emitted: String): Boolean {
+	val prefix = """{"k":"exprStmt","expr":"""
+	return emitted.startsWith(prefix) && emitted.endsWith("}") &&
+		emittedYieldsNull(emitted.substring(prefix.length, emitted.length - 1))
 }
 
 /** True if an EMITTED BIR expression is a bare `null` const — `{"k":"const",…,"value":null}` (a

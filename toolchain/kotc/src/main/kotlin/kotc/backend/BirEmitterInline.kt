@@ -705,7 +705,7 @@ internal fun BirEmitter.emitStackBuffer(call: IrCall): String {
 	stackBufSubst[bufParam] = BirEmitter.StackBufInfo(ptrName, lenName, elemT)
 	val result = spliceBody(bodyStatements(fn.body), fn.returnType.isUnit() || call.type.isUnit(), pre, fn.symbol)
 	stackBufSubst.remove(bufParam)
-	return """{"k":"valueBlock","stmts":[${pre.joinToString(",")}],"result":$result}"""
+	return valueBlockJson(type = null, stmts = pre.joinToString(","), result = result)
 }
 
 /** A `StackBuffer<T>` member access (`buf[i]` / `buf[i]=v` / `buf.size`) inside the spliced block -> a stack op. */

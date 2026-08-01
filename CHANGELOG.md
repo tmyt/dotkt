@@ -127,6 +127,85 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir/ilemit (area:bir2cir): an override that narrows a base `T?` slot now keeps its own signature, and a
+  bridge fills the slot (#86 D3).** `class IntSink : Sink<Int>` overriding `Sink<T>.accept(x: T?)` has to satisfy the
+  base's erased `accept(object)` — the erasure belongs to the declaration, not to the type argument — while its own
+  declaration is `Int?`, which erases to `Nullable<int32>` like any other concrete `Int?`. Both were true and only one
+  was emitted: the override's signature was rewritten to the base slot, so the type loaded and dispatched through the
+  interface, but its Kotlin surface and its physical members permanently disagreed. A separately compiled consumer
+  type-checks against the re-imported `accept(x: Int?)` and then aborts with *no referenced method matches the
+  resolved descriptor `IntSink.accept(nullable:System.Int32)`* — a missing MEMBER, which no amount of argument
+  re-derivation can reach — and a C# consumer saw a parameter the declaration never named.
+  The override now keeps `accept(Nullable<int32>)` and a compiler-generated PRIVATE bridge with the slot's exact
+  signature carries the MethodImpl and forwards to it across the `object` seam, virtually, so a further-derived
+  override is still what runs. One bridge — exactly one, since the covariant-return synthesizer now yields any slot
+  whose divergence is this erasure rather than bridging it a second time with a non-virtual forward — fills every
+  slot of that shape the supertype graph declares: the constructed interface, its own base interfaces (including a
+  synthesized `G$dotkt_star` existential view), and the base-CLASS chain, which is wired by different CLR metadata
+  and had no path at all before. That graph is the COMPILATION's: a base declared in a referenced assembly is still
+  not indexed, so its narrowed override still fails to load — a pre-existing cross-module reader gap the erase-in-
+  place design had too, now measured as `roundtrip-nullable-vt-generic-override-crossmodule-base` instead of being
+  stated away. Private is what keeps it
+  off the Kotlin surface: dll2klib projects public and protected members only, so the re-imported type carries the one
+  declaration the author wrote, where a public bridge would appear as a second `accept(x: Any?)` overload and make
+  `IntSink().accept("s")` compile. The one position that still moves the declaration is a `T?` NESTED in a constructed
+  generic (`Box<T?>` overridden as `Box<Int?>`), where `Box<object>` and `Box<Nullable<int32>>` are unrelated
+  invariant reified generics and no forwarding body exists; its Kotlin type rides `[KotlinNullableGeneric]`, so the
+  surface survives the move. A difference this erasure did NOT create — a covariantly narrowed return over an
+  otherwise-exact signature — is left to the pass that owns it.
+  Two carrier facts had to become true for the private bridge to be genuinely invisible, and both were latent holes.
+  dll2klib deliberately re-surfaces a private MethodImpl body under the interface member's name — a class that
+  satisfies a slot only privately would otherwise re-import still carrying the abstract obligation — and it
+  de-duplicates that against the class's public functions by signature, so the bridge now carries its slots' Kotlin
+  types and de-duplicates away instead of appearing as a second `accept(x: Any)` overload. And a
+  `[KotlinNullableGeneric]` carrier whose outer `?` sits over a VALUE type now keeps that `?` in the carrier rather
+  than delegating it to the slot's NRT byte: an NRT byte array describes reference nodes only, so a stripped `Int?`
+  came back as a non-null `Int` and the re-imported member did not exist. Pins: the cross-module round-trip sections for both
+  entry points at an interface and at a base class, and `tests/basic` fixtures for the same at both, one level
+  deeper, and at a reference instantiation — the failure mode is a `TypeLoadException` at type LOAD, which ilverify
+  does not see.
+
+- **bir2cir (area:bir2cir): the overload-collision refusal names both declarations as the author wrote them
+  (#86 §5.3).** The refusal for two declarations that erase to one CLR signature printed the half whose `?` rides the
+  NRT byte rather than the `[KotlinNullableGeneric]` carrier as `System.Object` — naming a declaration that is not in
+  the file, in the one message whose whole job is to say which of two declarations to change. It reads the byte back
+  now and prints `Any?`; the DIFFERENTIAL that decides whether to refuse at all deliberately does not, because a
+  reference `?` was never a CLR distinction and restoring it there would refuse pairs like the stdlib's own
+  `contentDeepEquals(Array<T>, …)` / `contentDeepEquals(Array<T>?, …)`, which have emitted as one signature since
+  long before this erasure existed. Pinned in both directions: a `tests/ir/lowering` refusal document holding the
+  colliding pair, and a `tests/basic` fixture for the neighbouring pair that differs in method GENERIC ARITY and so
+  stays two reachable slots.
+
+- **kotc/bir2cir (area:kotc): a value-position join no longer decides a CLR slot in kotc (#86 §3).** A `try`/`catch`
+  or `if`/`when` join the frontend resolved to a bare VALUE type while one branch still yields a literal `null` had
+  its slot widened to `Nullable<V>` by the BIR emitter, reasoning in-comment about `HasValue=false` and "a bare `int`
+  slot" — a physical-representation decision two layers above where representation is decided, and one that asked a
+  hardcoded primitive/unsigned list where every other erasure decision asks the struct-ness oracle.
+  The split now runs along the layer boundary: kotc records the FRONTEND FACT (`joinNullBranch`) on the declaration
+  it *mints* for the join — the `try`-expression temp, each `cond` of a `when` chain — and bir2cir's
+  `ValueJoinNullWidening` decides the physical consequence, off the oracle, so a `value class` or a BCL struct join is
+  covered by the rule that covers `Int`. Both halves of the decision moved, so the two can no longer disagree.
+  That the fact comes from the producer is load-bearing, not tidiness: a first attempt recognized the join by its
+  emitted SHAPE instead — a `var` beside a `try` in a `valueBlock` — which is also the shape of an ordinary user local
+  written before a `try` in an expression-position block, and it retyped that local to `Nullable<int32>` over an
+  `int32` initializer. Measured: an `AccessViolationException`, and, for the plain swallow-and-null idiom
+  (`try { n = s.length } catch { null }`), a silently wrong answer. Nothing in the BIR could separate the two — the
+  temp's name is not stable across `InlineSplice` and the `try`'s own type is `Unit` either way.
+  The fact is COMPOSITIONAL, so it has to survive the emitter's own wrapping: a `when (subject)` needing a temp, or
+  any block in value position, hands the enclosing join a `valueBlock` rather than the `cond` or the `null` inside it,
+  and an enclosing join that cannot see through that wrapper never learns there is a `null` below it. Every
+  `valueBlock` the emitter mints now goes through one constructor that stamps the fact exactly when its `result`
+  yields null — a `valueBlock` is the one PASS-THROUGH wrapper, its statements being side effects and its result being
+  its value. Nothing else is transparent, and that is a rule rather than an omission: the widening only ever matters
+  at a VALUE join, where the branch's static type IS that value type, so every other wrapper produces a value of the
+  wrapped-to type instead of a null (`if (c) 1 else (null as Int)` throws `NullReferenceException`; `nullableValue` /
+  `safeCastValue` / `nullableWrap` yield a `Nullable<V>` struct; `isInstRef` can answer null but only at a reference
+  join, which never widens).
+  The whole stdlib (reference + runtime) lowers byte-identically across the move; the arming shape has no natural
+  instance in the corpus, so it is pinned by a `tests/ir/lowering` document whose discriminations now include the
+  axis that broke — a neighbouring user local of the same type must keep it — beside an all-values join, a REFERENCE
+  join, and a join reached through the `valueBlock` wrapper, and by runtime fixtures for both measured miscompiles.
+
 - **bir2cir/stdlib (area:bir2cir): `Array<X?>` is `object[]` — the last two representations of the nullable-generic
   array are gone (#86 D2).** One Kotlin type constructor had three physical forms: a concrete `Array<Int?>` was a
   `Nullable<int32>[]`, an open `Array<T?>` was an `object[]`, and the `arrayOfNulls<T>(n) … as Array<T>` reify-back

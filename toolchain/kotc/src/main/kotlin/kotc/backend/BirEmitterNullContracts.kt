@@ -141,5 +141,9 @@ internal fun BirEmitter.wrapReturnNonNull(valueJson: String, retType: IrType, ms
 	val nv = "__nn${scopeCounter++}"
 	val nvLoc = """{"k":"local","name":${str(nv)}}"""
 	val throwNpe = throwExpr(newExc("kotlin.NullPointerException", msgJson))
-	return """{"k":"valueBlock","stmts":[{"k":"var","name":${str(nv)},"type":${birType(retType).toJson()},"init":$valueJson}],"result":{"k":"cond","cond":{"k":"unaryOp","op":"!","e":{"k":"objEq","lhs":$nvLoc,"rhs":${nullConstJson()}}},"then":$nvLoc,"else":$throwNpe}}"""
+	return valueBlockJson(
+		type = null,
+		stmts = """{"k":"var","name":${str(nv)},"type":${birType(retType).toJson()},"init":$valueJson}""",
+		result = """{"k":"cond","cond":{"k":"unaryOp","op":"!","e":{"k":"objEq","lhs":$nvLoc,"rhs":${nullConstJson()}}},"then":$nvLoc,"else":$throwNpe}""",
+	)
 }

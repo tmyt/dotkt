@@ -61,6 +61,13 @@ class NgDerived(y: Int?) : NgBase<Int>(y)           // `Base<Int>(y)` hands a Nu
 // An OVERRIDE narrowing a base `T?` slot to a concrete one — at the HEAD and NESTED in a constructed generic. The
 // derived declaration holds `Int?`/`NgBox<Int?>`, which no `Nullable(Tv)` sweep can see, yet the CLR slot it must
 // fill is the base's erased one; emitted narrowed it is a new overload and the type does not load.
+//
+// The two positions are closed DIFFERENTLY, and the test below drives each through BOTH of its entry points — the
+// base slot and the override's own declared type — because that is what tells them apart. At the HEAD the override
+// keeps `accept(Nullable<int32>)` and a private bridge fills the base's `accept(object)`, so both entry points name
+// a real member. NESTED, no conversion exists in either direction (`NgBox<object>` and `NgBox<Nullable<int32>>` are
+// unrelated invariant reified generics), so the declaration itself has to move onto the base's shape and the two
+// entry points are one member.
 class NgBox<T>(val v: T?)
 interface NgSink<T> { fun accept(x: T?): String; fun boxed(b: NgBox<T?>): String }
 class NgIntSink : NgSink<Int> {
@@ -70,6 +77,70 @@ class NgIntSink : NgSink<Int> {
 class NgTextSink : NgSink<String> {
     override fun accept(x: String?): String = x ?: "none"
     override fun boxed(b: NgBox<String?>): String = b.v ?: "none"
+}
+// The two shapes that put an ordinary `var` beside a value-position `try` inside ONE expression-position block —
+// the layout a shape-keyed widening could not tell apart from the join's own temp. Both need the `if` branch block:
+// that is what makes the enclosing block a value block rather than a statement list.
+fun ngJoinNeighbourStatementTry(c: Boolean): Int {
+    return if (c) {
+        var x: Int = 5
+        try { ngJoinNeighbourSide(); null } finally { ngJoinNeighbourSide() }
+        x = x + 1
+        x
+    } else 0
+}
+fun ngJoinNeighbourSwallow(s: String, c: Boolean): Int {
+    return if (c) {
+        var n: Int = -1
+        try { n = s.length } catch (e: Exception) { null }
+        n
+    } else 0
+}
+fun ngJoinNeighbourSide() {}
+// A `T?` RETURN slot narrowed by an override, with a THIRD level below it. The return axis is where two bridge
+// synthesizers can both see a divergence — the covariant-return one and this erasure's — and emitting both puts two
+// private members with the same signature and the same MethodImpl descriptor on one class, of which the emitter
+// binds whichever it matches first. Only the erasure's bridge forwards VIRTUALLY, so `NgSubSrc`'s override is
+// reachable through the interface only when exactly one bridge owns the slot and it is that one.
+interface NgSrc<T> { fun get(): T?; val v: T?; var w: T? }
+open class NgBaseSrc : NgSrc<Int> {
+    override fun get(): Int? = 4
+    override val v: Int? = 40
+    override var w: Int? = 400
+}
+class NgSubSrc : NgBaseSrc() {
+    override fun get(): Int? = 9
+    override val v: Int? get() = 90
+}
+// The same narrowing over a base CLASS. A class slot is wired by different CLR metadata than an interface slot, so
+// it is a separate observable — an abstract slot left unfilled is a TypeLoadException at type LOAD, which no
+// verification pass reports and only running the code can catch.
+abstract class NgHolder<T> { abstract fun take(x: T?): String }
+// The MIXED generic base slot: one parameter the erasure moves and one it does not. The bridge's descriptor states
+// the CONSTRUCTED slot `(int32, object)` while the base method is emitted once, keyed by its DECLARATION `(T, object)`
+// — so binding the MethodImpl has to go through the declaration and re-anchor onto the constructed base, exactly as
+// the interface wiring does. Matching the constructed signature against the builder key instead refused this program.
+abstract class NgMixed<T> { abstract fun take(x: T, narrowed: T?): String }
+open class NgIntMixed : NgMixed<Int>() {
+    override fun take(x: Int, narrowed: Int?): String = "" + x + "/" + narrowed
+}
+class NgIntMixedSub : NgIntMixed() {
+    override fun take(x: Int, narrowed: Int?): String = "sub:" + super.take(x, narrowed)
+}
+open class NgIntHolder : NgHolder<Int>() { override fun take(x: Int?): String = x?.toString() ?: "none" }
+// A THIRD level: the bridge in `NgIntHolder` forwards VIRTUALLY, so an override of the typed body one level down is
+// what runs when the call comes through the erased base slot.
+class NgIntHolderSub : NgIntHolder() { override fun take(x: Int?): String = "sub:" + super.take(x) }
+// #86 §5.3 — the boundary of the overload-collision refusal, from the side that must KEEP COMPILING. `T?` and `Any?`
+// both emit `object`, so a same-arity pair of them is one CLR signature and bir2cir refuses it
+// (tests/compile-fail/NullableGenericOverloadCollision.kt). A pair differing in METHOD GENERIC ARITY is not: generic
+// arity is part of the CLI signature (ECMA-335 I.8.6.1.6), so these are two slots, and each is reachable — Kotlin's
+// own resolution picks the generic one for an explicit type argument and the non-generic one otherwise.
+fun <T> ngArity(x: T?): String = "tv"
+fun ngArity(x: Any?): String = "any"
+class NgArityOwner {
+    fun <T> pick(x: T?): String = "tv"
+    fun pick(x: Any?): String = "any"
 }
 // A `vararg xs: T?` packs its arguments into an `Array<T?>` — erased to `object[]`. The PACK and its ELEMENTS are
 // one operation: build the array at the erased element type and box each element into it. Built as
@@ -202,9 +273,82 @@ class NullableTests {
         assertEquals("3", si.accept(3))                  // 3
         assertEquals("none", si.boxed(NgBox(null)))      // none  the same, NESTED in a constructed generic
         assertEquals("6", si.boxed(NgBox(6)))            // 6
+        // The OTHER entry point: the same override reached through its OWN declared type. It is a distinct member
+        // from the erased base slot, and both must be callable — one of them silently missing is the shape a
+        // consumer compiled against this assembly discovers, not one this assembly discovers about itself.
+        assertEquals("none", NgIntSink().accept(null))   // none  own declared type, null
+        assertEquals("7", NgIntSink().accept(7))         // 7     own declared type, a value
+        assertEquals("8", NgIntSink().boxed(NgBox(8)))   // 8     the nested slot through its own type
         val ss: NgSink<String> = NgTextSink()
         assertEquals("none", ss.accept(null))            // none  reference control: dispatch must still find it
         assertEquals("none", ss.boxed(NgBox(null)))      // none
+        assertEquals("x", NgTextSink().accept("x"))      // x     the reference control's own entry point
+    }
+
+    // #86 D3 — the same narrowing over a base CLASS. Its slot is wired by different CLR metadata than an interface
+    // slot's, and the failure it guards is a TypeLoadException at type LOAD: no verification pass reports it, so
+    // only RUNNING the code catches it. Driven through the base slot, through the override's own declared type, and
+    // one level further down, where the bridge's virtual forward is what makes the sub-override reachable.
+    @TestAttribute
+    fun nullableGenericBaseClassOverrideSlot() {
+        val h: NgHolder<Int> = NgIntHolder()
+        assertEquals("none", h.take(null))                    // none  the abstract base-CLASS slot, null
+        assertEquals("5", h.take(5))                          // 5     the same slot, a value
+        assertEquals("none", NgIntHolder().take(null))        // none  the override's own declared type
+        assertEquals("6", NgIntHolder().take(6))              // 6
+        val sub: NgHolder<Int> = NgIntHolderSub()
+        assertEquals("sub:9", sub.take(9))                    // sub:9  through the base slot, dispatched one deeper
+        assertEquals("sub:none", NgIntHolderSub().take(null)) // sub:none
+        // A generic base whose slot mixes a moved and an unmoved parameter, through the base slot and one deeper.
+        val m: NgMixed<Int> = NgIntMixed()
+        assertEquals("1/null", m.take(1, null))               // 1/null  the constructed (int32, object) slot
+        assertEquals("2/3", NgIntMixed().take(2, 3))          // 2/3     its own declared type
+        val ms: NgMixed<Int> = NgIntMixedSub()
+        assertEquals("sub:4/null", ms.take(4, null))          // sub:4/null
+    }
+
+    // #86 D3 — a `T?` RETURN slot, where TWO bridge synthesizers can see the divergence. Both emitting leaves the
+    // class with two same-signature MethodImpls for one slot and the emitter picking between them; only the erasure
+    // bridge forwards virtually, so a further-derived override is reachable through the base slot only if that one
+    // owns it. Driven through the interface, through the concrete type, and one level down, for a method and for
+    // read-only and mutable properties alike.
+    @TestAttribute
+    fun nullableGenericReturnSlotOverrideDispatch() {
+        val s: NgSrc<Int> = NgSubSrc()
+        assertEquals(9, s.get())                  // 9    the sub-override, through the erased interface slot
+        assertEquals(90, s.v)                     // 90   the same for a read-only property
+        s.w = 4000
+        assertEquals(4000, s.w)                   // 4000 and for a mutable one, whose setter takes the erased slot
+        assertEquals(9, NgSubSrc().get())         // 9    through the declared type
+        assertEquals(90, NgSubSrc().v)
+        val b: NgSrc<Int> = NgBaseSrc()
+        assertEquals(4, b.get())                  // 4    the base's own body, so the sub-override is not just always winning
+        assertEquals(40, b.v)
+    }
+
+    // #86 §3 — a value-position JOIN one branch leaves `null`, and the LOCAL that must not be dragged into it.
+    // The widening is keyed on a frontend fact stamped on the join's own temp; keyed on the emitted shape instead,
+    // an ordinary `var` standing next to a `try` inside an expression-position block was retyped to `Nullable<V>`
+    // over an `int32` initializer — an AccessViolationException for the first shape below, and a silently wrong
+    // answer for the second, which is the ordinary swallow-and-null idiom.
+    @TestAttribute
+    fun valuePositionJoinLeavesNeighbouringLocalsAlone() {
+        assertEquals(6, ngJoinNeighbourStatementTry(true))    // 6  the local keeps its own int32 slot
+        assertEquals(0, ngJoinNeighbourStatementTry(false))
+        assertEquals(4, ngJoinNeighbourSwallow("abcd", true)) // 4  the try's own assignment survives
+        assertEquals(0, ngJoinNeighbourSwallow("", true))     // 0  and an empty string is a length, not the sentinel
+    }
+
+    // #86 §5.3 — the arity boundary of the overload-collision refusal, pinned from the COMPILING side. Its refusing
+    // twin is tests/compile-fail/NullableGenericOverloadCollision.kt; without this half the refusal could widen to
+    // reject a legal pair and no gate would notice.
+    @TestAttribute
+    fun nullableGenericOverloadArityBoundary() {
+        assertEquals("tv", ngArity<Int>(3))              // tv    the GENERIC slot, selected by an explicit type arg
+        assertEquals("tv", ngArity<String>(null))        // tv    the same slot at a reference instantiation
+        assertEquals("any", ngArity(3))                  // any   the NON-generic slot — a distinct CLR signature
+        assertEquals("tv", NgArityOwner().pick<Int>(3))  // tv    the same pair as members of a type
+        assertEquals("any", NgArityOwner().pick(3))      // any
     }
 
     // #86 — a `vararg xs: T?` argument list at a VALUE instantiation. The pack is an array CONSTRUCTION filling an

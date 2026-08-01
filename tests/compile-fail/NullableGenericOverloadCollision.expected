@@ -1,5 +1,9 @@
 # The refusal must name the OWNER, both SOURCE signatures, and the one CLR signature they collapse onto —
 # a message that only said "duplicate signature" would not tell the author which declaration to change.
+# BOTH signatures, as written: the `Any?` half arrives stripped to a bare reference with its `?` on the NRT byte,
+# and printing it as `System.Object` would name a declaration that is not in the file.
 two declarations of 'f' erase to one CLR signature
+Coll
 f(T?)
+f(Any?)
 both become 'f(object)'

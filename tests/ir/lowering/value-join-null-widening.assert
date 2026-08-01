@@ -1,0 +1,68 @@
+# A value-position join one branch leaves `null` (#86 §3). The join carries its type, and a branch whose result is a
+# bare `null` literal assigns NOTHING — the temp keeps its default — so a bare `int32` join would answer that branch
+# with `0` and not with a null. Widened to `Nullable<int32>`, the default IS `HasValue=false`.
+#
+# No Kotlin source in the corpus reaches the arming shape today: the frontend keeps the `?` on the join type wherever
+# it can, and the whole stdlib lowers byte-identically with the widening in place. The shape is nonetheless real — a
+# substituted generic or a spliced inline body resolves the join to a bare `Int` with the `?` on the enclosing return
+# — so this document is the witness, exactly as the reject-* documents are for the refusals.
++"name":"dotkt$tryval0","type":{"t":"nullable","of":{"t":"fqn","name":"System.Int32"}}
+-"name":"dotkt$tryval0","type":{"t":"fqn","name":"System.Int32"}
+
+# THE AXIS THAT BROKE, and the reason the fact is stamped by the producer rather than recognized from shape here: an
+# ordinary user local of the same bare value type, declared beside a `try` in the same value block, carrying no fact
+# and an initializer of its own. Retyping it to `Nullable<int32>` over an `int32` init is an AccessViolationException,
+# or a silently wrong answer when the `try` assigns it. The var IDENTITY is what separates the two, and only the
+# frontend has it.
++"name":"userLocal","type":{"t":"fqn","name":"System.Int32"}
+-"name":"userLocal","type":{"t":"nullable"
+
+# The other two DISCRIMINATIONS, without which the first assertion would also pass a pass that widened every join. A
+# join whose branches all yield values keeps its bare value type; a REFERENCE join keeps its bare reference type,
+# because a reference slot holds a null already and `Nullable<string>` is not a CLR type at all.
++"name":"dotkt$tryval1","type":{"t":"fqn","name":"System.Int32"}
++"name":"dotkt$tryval2","type":{"t":"fqn","name":"System.String"}
+
+# The SAME fact on the `if`/`when` join, which the same pass answers — the two halves of one decision, where the cond
+# half used to live in kotc and ask a hardcoded primitive list instead of the struct-ness oracle.
++"k":"cond","type":{"t":"nullable","of":{"t":"fqn","name":"System.Int32"}}
+
+# NESTED JOINS, and why the fact has to be COMPOSITIONAL in the producer. `if (a) (if (b) v else null) else w` shows
+# the outer join a `cond` for its `then` and never a null constant, so a leaf-only test arms the inner alone — and an
+# inner `Nullable<int32>` then flows into a bare `int32` join. kotc propagates its own verdict upward through join
+# chains, which is what makes both of these carry the fact; this document pins that BOTH widen, since a consumer that
+# only widened the innermost would produce exactly the broken pair.
+#
+# ONE assertion spans BOTH, deliberately: an assertion naming only the inner `cond` is satisfied by the broken pair it
+# is meant to exclude. This one runs from the OUTER join's own `type` (`cond` on `a`) through the inner join's
+# (`cond` on `b`), so widening only the innermost — the exact regression — cannot match it.
++"k":"cond","type":{"t":"nullable","of":{"t":"fqn","name":"System.Int32"}},"cond":{"k":"local","name":"a"},"then":{"k":"cond","type":{"t":"nullable","of":{"t":"fqn","name":"System.Int32"}},"cond":{"k":"local","name":"b"}
+
+# AND THE CHAIN SURVIVES A WRAPPER, which is the shape the nested assertion above does NOT cover. kotc rarely hands an
+# enclosing join the inner `cond` bare: a `when (subject)` whose subject needs a temp, or any block in value position,
+# comes back as a `valueBlock` whose statements are side effects and whose `result` IS the join's value. That wrapper
+# carries the join's own type, so it is a THIRD slot on the same chain, and it is the reason kotc stamps every
+# `valueBlock` it mints whose result yields null — without that stamp the OUTER join never learns there is a `null`
+# below it at all. A consumer that widened only the nodes it recognizes as joins would leave
+# `Nullable<int32>` <- `int32` <- `Nullable<int32>`, a chain no store can go through. One assertion runs the whole
+# chain — outer `cond` (on `a`), the `valueBlock`, the inner `cond` (on `subj`) — for the same reason the nested one
+# does, and the negative pins that no `valueBlock` is left holding the bare value type.
++"k":"cond","type":{"t":"nullable","of":{"t":"fqn","name":"System.Int32"}},"cond":{"k":"local","name":"a"},"then":{"k":"valueBlock","type":{"t":"nullable","of":{"t":"fqn","name":"System.Int32"}},"stmts":[{"k":"var","name":"subj","type":{"t":"fqn","name":"System.Boolean"},"init":{"k":"local","name":"b"}}],"result":{"k":"cond","type":{"t":"nullable","of":{"t":"fqn","name":"System.Int32"}},"cond":{"k":"local","name":"subj"}
+-"k":"valueBlock","type":{"t":"fqn","name":"System.Int32"}
+
+# A non-primitive VALUE type takes the same path: the oracle is asked about the FQN, so a BCL struct join widens for
+# the same reason `Int` does, where the hardcoded primitive list this replaced covered neither it nor `value class`.
++"name":"System.DateTime"}}
+-"type":{"t":"fqn","name":"System.DateTime"},"cond"
+
+# AND THE ORACLE IS ASKED ABOUT THE FQN *WHATEVER ITS ARGUMENTS*. `System.DateTime` above is unconstructed, so it is
+# also what the superseded `Args: null` oracle answered — it pins the struct axis but not the argument-independence.
+# A CONSTRUCTED struct join is the witness for that half: `Nullable<ArraySegment<string>>` is as legal a slot as
+# `Nullable<int32>`, and an oracle that declines on the presence of `args` consumes the fact and leaves the join bare
+# — the same defect this family already had at the array-element oracle site (#86 D2). Both halves are asserted: the
+# join carries the widened CONSTRUCTED type, and no `cond` is left holding the bare one.
++"k":"cond","type":{"t":"nullable","of":{"t":"fqn","name":"System.ArraySegment","args":[{"t":"fqn","name":"System.String"}]}},"cond":{"k":"local","name":"a"},"then":{"k":"local","name":"s"}
+-"k":"cond","type":{"t":"fqn","name":"System.ArraySegment"
+
+# The fact is a producer-to-consumer hint and is CONSUMED: no CIR node may still carry it.
+-"joinNullBranch"

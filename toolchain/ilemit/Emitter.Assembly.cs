@@ -596,6 +596,70 @@ sealed partial class Emitter
                 }
             }
         }
+
+        // A bir2cir-resolved MethodImpl against a BASE-CLASS slot (`clrBaseImpls`, #86 D3). The interface twin of this
+        // instruction (`clrInterfaceImpls`) is consumed in the interface wiring above; a base-CLASS slot has no such
+        // loop because a class override normally binds by name+signature alone. An erasure bridge does NOT: it carries
+        // a synthesized name so it cannot shadow the declaration it forwards to, so the slot it fills must be named.
+        // Mechanical consumption only — the decision and the exact slot signature are already CIR facts.
+        foreach (var (_, ti) in _types)
+        {
+            if (ti.IsInterface || ti.Def.ValueKind != JsonValueKind.Object
+                || !ti.Def.TryGetProperty("methods", out var baseImplMethods)) continue;
+            _curTypeParams = EffectiveTps(ti);
+            foreach (var m in baseImplMethods.EnumerateArray())
+            {
+                if (!m.TryGetProperty("clrBaseImpls", out var impls) || impls.ValueKind != JsonValueKind.Array
+                    || !m.TryGetProperty("name", out var bridgeName)
+                    || !ti.Methods.TryGetValue(bridgeName.GetString(), out var bridge)) continue;
+                foreach (var impl in impls.EnumerateArray())
+                {
+                    if (!impl.TryGetProperty("owner", out var ownerNode) || ReadFqn(ownerNode) is not { } ownerFqn
+                        || !impl.TryGetProperty("member", out var memberNode)
+                        || !impl.TryGetProperty("params", out var ps)) continue;
+                    var (open, constructed) = ParseOwnerT(ownerFqn);
+                    // A RESOLVED DESCRIPTOR THIS LAYER CANNOT BIND IS AN EARLIER-LAYER DROP, and dropping it here
+                    // would leave the base slot unimplemented — a TypeLoadException at run time with nothing pointing
+                    // back at the producer. bir2cir states `clrBaseImpls` only against a base class of THIS assembly,
+                    // so both misses below are diagnosable producer bugs, not shapes a program can reach.
+                    if (!_types.TryGetValue(open, out var baseTi))
+                        throw new InvalidOperationException(
+                            $"ilemit: {ti.TB.Name}.{bridgeName.GetString()}: clrBaseImpls names '{open}', which is not "
+                            + "emitted in this assembly — bir2cir resolved a base-class MethodImpl against a type that is not here");
+                    // THE DESCRIPTOR IS THE CONSTRUCTED SLOT; THE BUILDER IS KEYED BY THE DECLARATION. `Base<T>`'s
+                    // `take(T, T?)` is emitted once, keyed `(gp:T, object)`, while the descriptor for `Base<Int>`
+                    // states `(int32, object)` — so the constructed signature never finds it directly, and matching on
+                    // it would refuse a program whose only sin is a generic base with a non-erased parameter. Find the
+                    // DECLARATION whose own parameters, substituted at this base's type arguments, ARE the descriptor,
+                    // then re-anchor its builder onto the constructed base — the same two steps the emitted-interface
+                    // wiring takes (`subSig` there, `TypeBuilder.GetMethod` here).
+                    var member = memberNode.GetString();
+                    var slotSig = SigKey(member, DeclaredMethodArity(m),
+                        ps.EnumerateArray().Select(DotKt.Bir.TypeNode.Read));
+                    MethodBuilder slot = null;
+                    if (baseTi.Def.TryGetProperty("methods", out var baseDecls))
+                        foreach (var bm in baseDecls.EnumerateArray())
+                        {
+                            if (!bm.TryGetProperty("name", out var bn) || bn.GetString() != member) continue;
+                            if (!bm.TryGetProperty("params", out var bps)) continue;
+                            var declared = SigKey(member, DeclaredMethodArity(bm),
+                                bps.EnumerateArray().Select(p => DotKt.Bir.TypeNode.Read(p.GetProperty("type"))));
+                            var substituted = SigKey(member, DeclaredMethodArity(bm),
+                                bps.EnumerateArray()
+                                    .Select(p => SubstTv(DotKt.Bir.TypeNode.Read(p.GetProperty("type")), ownerFqn.Args)));
+                            if (substituted != slotSig) continue;
+                            if (baseTi.MethodsBySig.TryGetValue(declared, out var found)) { slot = found; break; }
+                        }
+                    if (slot == null)
+                        throw new InvalidOperationException(
+                            $"ilemit: {ti.TB.Name}.{bridgeName.GetString()}: clrBaseImpls names {open}.{slotSig}, "
+                            + "which that type declares no member for at any instantiation — bir2cir resolved a base-class "
+                            + "MethodImpl against a missing slot");
+                    ti.TB.DefineMethodOverride(bridge,
+                        constructed != null ? TypeBuilder.GetMethod(constructed, slot) : (MethodInfo)slot);
+                }
+            }
+        }
         _curTypeParams = null;
 
         // Pass 4: emit all bodies (every ctor/method signature already exists). Each body emit is GUARDED (#84 Phase 1):

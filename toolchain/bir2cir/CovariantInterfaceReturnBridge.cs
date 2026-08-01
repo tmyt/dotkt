@@ -92,6 +92,12 @@ static class CovariantInterfaceReturnBridge
                 if (implementationRet0 == null) continue;
                 var implementationRet = SubstOwnerTvs(implementationRet0, ClassOwnArgs(cls));
                 if (implementationRet == slotRet) continue;
+                // A return slot that diverges because the base declaration was OBJECT-ERASED (#86 D3) is
+                // KotlinOverrideSlotBridge's, not this pass's. Both bridging it states the slot's signature twice on
+                // one class, and the emitter binds whichever it matches first; and only that pass's bridge forwards
+                // virtually, which is what a further-derived override needs. This pass keeps the Kotlin covariance it
+                // was written for.
+                if (KotlinOverrideSlotBridge.IsErasureDivergence(slotRet, implementationRet)) continue;
 
                 var key = name + "(" + string.Join(",", slotParams.Select(TypeKey)) + ")->" + TypeKey(slotRet);
                 if (!bridges.TryGetValue(key, out var bridge))

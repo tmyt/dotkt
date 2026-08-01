@@ -62,15 +62,18 @@ declare -A RT_XFAIL=(
 	# MATERIALIZES a fresh, correctly-typed list rather than wrapping. So the fix is an element-converting adapter
 	# on the lazy path, stdlib-side — not a declaration any consumer can re-derive.
 	[roundtrip-nullable-vt-generic-seq-mapnotnull]="#86: NOT the cross-module carrier read (measured) — the defect is same-module, inside the stdlib's lazy path. Sequence.mapNotNull builds TransformingSequence<T, object> (its (T) -> R? transform erases R? to object) and hands it to filterNotNull, whose body unchecked-casts a lazily-wrapped object-elemented sequence to Sequence<T>; on the CLR that IS a reified IEnumerable<T>, so at T=Int the wrapper does not implement IEnumerable<int32> and the terminal toList's GetEnumerator is not found — System.EntryPointNotFoundException. The eager Iterable.mapNotNull twin is green because it materializes a fresh typed list instead of wrapping. Needs an element-converting adapter on the lazy sequence path, stdlib-side."
-	# D3, the half the erasure alone cannot close, and the carrier read does not close it either — measured. An
-	# override narrowing a base `T?` slot now fills the base's erased `object` slot, so dispatch through the
-	# INTERFACE works and the type loads (that entry is pruned). Called through its OWN declared type it still does
-	# not: the re-imported Kotlin surface is truthfully `accept(x: Int?)` and the physical slot is `accept(object)`,
-	# so there is no member of the resolved descriptor to bind AT ALL — the consumer aborts before any argument
-	# conversion could apply, which is exactly why re-deriving the argument cannot reach it. What is missing is a
-	# second, typed ENTRY POINT: the `.override` bridge of #86 D3, emitting `object accept(object)` beside the
-	# narrowed body.
-	[roundtrip-nullable-vt-generic-override-direct]="#86 D3: a narrowed override called through its OWN declared type does not bind — the CLR slot is accept(object) (it must be, or the interface method is unimplemented) while the re-imported Kotlin surface is accept(x: Int?), and the consumer's emit aborts with 'no referenced method matches the resolved descriptor IntSink.accept(nullable:System.Int32)'; the same override reached through the BASE slot passes, as does the reference instantiation. Measured against the cross-module carrier read: it does NOT prune this — the abort is a missing MEMBER, not a mistyped argument, so there is nothing for an argument derivation to fix. Pruned by the override-slot-bridge step of #86 D3."
+	# PRUNED by the OVERRIDE-SLOT BRIDGE (#86 D3): the narrowed override called through its OWN declared type. The
+	# override now keeps its own physical `accept(Nullable<int32>)`, so the re-imported surface and the assembly name
+	# the same member, and the base's erased `accept(object)` slot is filled by a private forwarding bridge. Both
+	# entry points are live: the section above reaches it through the INTERFACE and this one through its own type.
+	# The bridge's SCOPE, measured rather than left as prose (#86 D3). The supertype graph the bridge walks is the
+	# CURRENT compilation's, so a class whose base interface or base class is declared in a REFERENCED assembly gets
+	# no bridge at all and the base's erased slot goes unfilled. It is the same cross-module reader gap that keeps
+	# every other referenced-declaration derivation out, and it predates the bridge — the erase-in-place design this
+	# replaced had it too — but nothing measured it, so nothing stopped the rule being stated unconditionally.
+	# Closing it needs the base slot's pre-erasure declaration read off the referenced assembly through
+	# ReferenceMetadataIndex, which is the same reader D1 built for the argument axis.
+	[roundtrip-nullable-vt-generic-override-crossmodule-base]="#86 D3: an override whose base interface is declared in a REFERENCED assembly gets no bridge — KotlinOverrideSlotBridge walks the CURRENT compilation's supertype graph, so the base's erased accept(object) slot goes unfilled and the type fails to LOAD (System.TypeLoadException: Method 'accept' in type 'XIntSink' does not have an implementation). Pre-existing: the erase-in-place design this replaced had the same gap, and its same-module twin above is green. Needs the base slot's pre-erasure declaration read off the referenced assembly (ReferenceMetadataIndex), the same reader D1 built for the argument axis."
 	# The COST of `Array<X?>` = `object[]` (#86 D2), and a REGRESSION against the representation that preceded it —
 	# listed rather than hidden, because it is the shape that says D2 is not finishable on its own. `Int?` now has two
 	# physical forms by POSITION: `object` as an array element (D2, forced — `object[]` and `Nullable<int32>[]` are
@@ -104,7 +107,7 @@ declare -A RT_XFAIL=(
 # would be a name-only XFAIL again.
 declare -A RT_XFAIL_SHAPE=(
 	[roundtrip-nullable-vt-generic-seq-mapnotnull]='System.EntryPointNotFoundException'
-	[roundtrip-nullable-vt-generic-override-direct]='no referenced method matches the resolved descriptor'
+	[roundtrip-nullable-vt-generic-override-crossmodule-base]='does not have an implementation'
 	[roundtrip-nullable-vt-generic-array-to-collection]='System.EntryPointNotFoundException'
 	[roundtrip-nullable-vt-generic-collection-to-array]='System.InvalidCastException'
 )
@@ -904,16 +907,16 @@ fun main() {
 }
 EOF
 
-# The same override reached through its OWN declared type rather than the base slot. The two are different
-# observables and the erasure makes them diverge: the CLR slot is `accept(object)` (it has to be, or the interface
-# method goes unimplemented and the type never loads), while the re-imported Kotlin surface is the override's own
-# `accept(x: Int?)` — which is truthful, and is what a consumer type-checks against. Nothing then converts the
-# consumer's `Nullable<int32>` argument to the physical `object` slot, because doing so needs the REFERENCED
-# declaration. Its sibling above, and the reference-instantiation control below, both pass.
-ng_app "$NO" NoLib roundtrip-nullable-vt-generic-override-direct 'none' \
+# The same override reached through its OWN declared type rather than the base slot. It is a SEPARATE observable
+# from its sibling above, and the one that says which declaration the erasure moved: the interface slot has to be
+# `accept(object)` or the method goes unimplemented and the type never loads, while a consumer type-checks against
+# the re-imported `accept(x: Int?)`. Both are live only when the override KEEPS its own physical signature and a
+# private bridge fills the erased slot — move the declaration instead and this section resolves a member that does
+# not exist, however the argument is derived.
+ng_app "$NO" NoLib roundtrip-nullable-vt-generic-override-direct 'none/3' \
 	'cross-module: the same narrowed override called through its OWN type, not the base slot (#86 D3)' <<'EOF'
 fun main() {
-    println(IntSink().accept(null))        // none  the DECLARED type, so the typed entry point
+    println(IntSink().accept(null) + "/" + IntSink().accept(3))   // none/3  the DECLARED type, null and a value
 }
 EOF
 
@@ -928,6 +931,89 @@ ng_app "$NOR" NorLib roundtrip-nullable-vt-generic-override-reference 'none' \
 fun main() {
     val s: Sink<String> = TextSink()
     println(s.accept(null))                // none
+}
+EOF
+
+# The same narrowing over a base CLASS rather than an interface, and its own two entry points. A class slot is
+# wired by a DIFFERENT piece of CLR metadata than an interface slot — a MethodImpl against the constructed base
+# instead of against the constructed interface — so an override bridge that only covered interfaces would leave
+# this one a new overload, and the abstract slot unimplemented.
+NOC="$ROOT/build/roundtrip-nullable-vt-generic-override-class-group"
+ng_lib "$NOC" NocLib <<'EOF'
+abstract class Holder<T> { abstract fun take(x: T?): String }   // an abstract base-CLASS slot: Nullable(Tv) -> object
+class IntHolder : Holder<Int>() { override fun take(x: Int?): String = x?.toString() ?: "none" }
+EOF
+
+ng_app "$NOC" NocLib roundtrip-nullable-vt-generic-override-class 'none/5' \
+	'cross-module: an override narrowing a base CLASS T? slot, through the base slot and its own type (#86 D3)' <<'EOF'
+fun main() {
+    val h: Holder<Int> = IntHolder()
+    println(h.take(null) + "/" + IntHolder().take(5))   // none/5  the base slot, then the DECLARED type
+}
+EOF
+
+# The same narrowing on a `T?` RETURN, three levels deep. The return axis is where TWO bridge synthesizers can see
+# the divergence — the covariant-return one and this erasure's — and only the erasure's forwards virtually, so
+# `SubSrc`'s override is reachable through the erased interface slot exactly when one bridge owns it and it is that
+# one. Cross-module because a consumer binds the re-imported surface rather than the emitted member it wraps.
+NOS="$ROOT/build/roundtrip-nullable-vt-generic-override-ret-group"
+ng_lib "$NOS" NosLib <<'EOF'
+interface Src<T> { fun get(): T?; val v: T? }        // a T? RETURN slot, method and property
+open class BaseSrc : Src<Int> { override fun get(): Int? = 4; override val v: Int? = 40 }
+class SubSrc : BaseSrc() { override fun get(): Int? = 9; override val v: Int? get() = 90 }
+EOF
+
+ng_app "$NOS" NosLib roundtrip-nullable-vt-generic-override-ret '9/90/4/40' \
+	'cross-module: a narrowed T? RETURN dispatched through the erased base slot, three levels deep (#86 D3)' <<'EOF'
+fun main() {
+    val s: Src<Int> = SubSrc()
+    val b: Src<Int> = BaseSrc()
+    println("" + s.get() + "/" + s.v + "/" + b.get() + "/" + b.v)   // 9/90/4/40
+}
+EOF
+
+# The same return slot with the DERIVATION in the consumer, which is the only place the virtual-forward property is
+# observable. Derived in the SAME module self-heals: it gets a bridge of its own, and the most-derived MethodImpl wins
+# whichever way the library's bridge forwards. Across the boundary `SubSrc` gets NO bridge — it is the referenced-base
+# gap below, and it is exactly why this shape is the discriminating one — so dispatch falls back to the LIBRARY's
+# MethodImpl, and the override is only reached because that bridge forwards VIRTUALLY. Bridged non-virtually (which is
+# what the covariant-return synthesizer does, and what it did to this slot before the two passes were made exclusive),
+# this prints 9/4/9: only the middle call — the one that enters through the erased INTERFACE slot, and so through the
+# library's bridge — is answered with the library's 4. The two own-typed calls never touch the bridge and reach the
+# override either way, which is why the interface-typed receiver is the one value in the triple that discriminates.
+NOV="$ROOT/build/roundtrip-nullable-vt-generic-override-virtual-group"
+ng_lib "$NOV" NovLib <<'EOF'
+interface Src<T> { fun get(): T? }
+open class IntSrc : Src<Int> { override fun get(): Int? = 4 }
+EOF
+
+ng_app "$NOV" NovLib roundtrip-nullable-vt-generic-override-virtual-forward '9/9/9' \
+	'cross-module: a consumer-side override reached through the LIBRARY bridge, which must forward virtually (#86 D3)' <<'EOF'
+class SubSrc : IntSrc() { override fun get(): Int? = 9 }
+fun main() {
+    val s: Src<Int> = SubSrc()
+    val b: IntSrc = SubSrc()
+    println("" + SubSrc().get() + "/" + s.get() + "/" + b.get())   // 9/9/9
+}
+EOF
+
+# ----- CROSS-MODULE: a base declared in a REFERENCED assembly (#86 D3, documented red) ------------------
+# The supertype graph the bridge walks is the CURRENT compilation's, so a class whose base interface lives in a
+# REFERENCED DotKt assembly gets no bridge and the erased slot goes unfilled. This is the same cross-module reader
+# gap that keeps the other referenced-declaration derivations out, and it predates the bridge — but nothing measured
+# it, and both the pass comment and docs/dotkt-semantics.md now scope their claim to same-module supertypes because
+# of this section. The IMPLEMENTER lives in the consumer, so the interface is genuinely across the boundary from it.
+NOX="$ROOT/build/roundtrip-nullable-vt-generic-override-xbase-group"
+ng_lib "$NOX" NoxLib <<'EOF'
+interface XSink<T> { fun accept(x: T?): String }     // the base slot, in its OWN assembly
+EOF
+
+ng_app "$NOX" NoxLib roundtrip-nullable-vt-generic-override-crossmodule-base 'none/3' \
+	'cross-module: an override whose base interface lives in a REFERENCED assembly (#86 D3)' <<'EOF'
+class XIntSink : XSink<Int> { override fun accept(x: Int?): String = x?.toString() ?: "none" }
+fun main() {
+    val s: XSink<Int> = XIntSink()
+    println(s.accept(null) + "/" + XIntSink().accept(3))   // none/3
 }
 EOF
 
