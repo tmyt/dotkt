@@ -38,6 +38,18 @@
 # (`cond` on `b`), so widening only the innermost — the exact regression — cannot match it.
 +"k":"cond","type":{"t":"nullable","of":{"t":"fqn","name":"System.Int32"}},"cond":{"k":"local","name":"a"},"then":{"k":"cond","type":{"t":"nullable","of":{"t":"fqn","name":"System.Int32"}},"cond":{"k":"local","name":"b"}
 
+# AND THE CHAIN SURVIVES A WRAPPER, which is the shape the nested assertion above does NOT cover. kotc rarely hands an
+# enclosing join the inner `cond` bare: a `when (subject)` whose subject needs a temp, or any block in value position,
+# comes back as a `valueBlock` whose statements are side effects and whose `result` IS the join's value. That wrapper
+# carries the join's own type, so it is a THIRD slot on the same chain, and it is the reason kotc stamps every
+# `valueBlock` it mints whose result yields null — without that stamp the OUTER join never learns there is a `null`
+# below it at all. A consumer that widened only the nodes it recognizes as joins would leave
+# `Nullable<int32>` <- `int32` <- `Nullable<int32>`, a chain no store can go through. One assertion runs the whole
+# chain — outer `cond` (on `a`), the `valueBlock`, the inner `cond` (on `subj`) — for the same reason the nested one
+# does, and the negative pins that no `valueBlock` is left holding the bare value type.
++"k":"cond","type":{"t":"nullable","of":{"t":"fqn","name":"System.Int32"}},"cond":{"k":"local","name":"a"},"then":{"k":"valueBlock","type":{"t":"nullable","of":{"t":"fqn","name":"System.Int32"}},"stmts":[{"k":"var","name":"subj","type":{"t":"fqn","name":"System.Boolean"},"init":{"k":"local","name":"b"}}],"result":{"k":"cond","type":{"t":"nullable","of":{"t":"fqn","name":"System.Int32"}},"cond":{"k":"local","name":"subj"}
+-"k":"valueBlock","type":{"t":"fqn","name":"System.Int32"}
+
 # A non-primitive VALUE type takes the same path: the oracle is asked about the FQN, so a BCL struct join widens for
 # the same reason `Int` does, where the hardcoded primitive list this replaced covered neither it nor `value class`.
 +"name":"System.DateTime"}}

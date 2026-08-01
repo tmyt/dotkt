@@ -963,7 +963,11 @@ internal fun BirEmitter.call(call: IrCall): String {
 		val nvLoc = """{"k":"local","name":${str(nv)}}"""
 		val throwNpe = throwExpr(newExc("kotlin.NullPointerException", null))
 		if (velem != null) {
-			return """{"k":"valueBlock","stmts":[{"k":"var","name":${str(nv)},"type":${TypeNode.Nullable(velem).toJson()},"init":${expr(arg)}}],"result":{"k":"cond","cond":{"k":"nullableHasValue","elem":${velem.toJson()},"e":$nvLoc},"then":{"k":"nullableValue","elem":${velem.toJson()},"e":$nvLoc},"else":$throwNpe}}"""
+			return valueBlockJson(
+				type = null,
+				stmts = """{"k":"var","name":${str(nv)},"type":${TypeNode.Nullable(velem).toJson()},"init":${expr(arg)}}""",
+				result = """{"k":"cond","cond":{"k":"nullableHasValue","elem":${velem.toJson()},"e":$nvLoc},"then":{"k":"nullableValue","elem":${velem.toJson()},"e":$nvLoc},"else":$throwNpe}""",
+			)
 		}
 		// reference (or objEq-testable: generic `T?`) operand: bind once, `(t != null) ? t : throw` (value in
 		// `then`, mirroring the value-type path above and bir2cir's PreconditionLowering reference shape). objEq
@@ -972,7 +976,11 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// ARE value types on the CLR (`Nullable<uint>`), so `nullableElem` includes them via `isPrimitiveOrUnsigned`;
 		// a bare pass-through would leave a `Nullable<uint>` STRUCT at the use site, the #56 struct-consumer issue.)
 		val nullConst = """{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}"""
-		return """{"k":"valueBlock","stmts":[{"k":"var","name":${str(nv)},"type":${birType(arg.type).toJson()},"init":${expr(arg)}}],"result":{"k":"cond","cond":{"k":"unaryOp","op":"!","e":{"k":"objEq","lhs":$nvLoc,"rhs":$nullConst}},"then":$nvLoc,"else":$throwNpe}}"""
+		return valueBlockJson(
+			type = null,
+			stmts = """{"k":"var","name":${str(nv)},"type":${birType(arg.type).toJson()},"init":${expr(arg)}}""",
+			result = """{"k":"cond","cond":{"k":"unaryOp","op":"!","e":{"k":"objEq","lhs":$nvLoc,"rhs":$nullConst}},"then":$nvLoc,"else":$throwNpe}""",
+		)
 	}
 
 	// Value-position primitive `rangeTo`/`rangeUntil` (`a..b` / `a..<b`) is NOT lowered here. kotc emits the

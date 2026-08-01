@@ -475,6 +475,112 @@
       ]
     },
     {
+      "name": "joinWrappedInValueBlockWidens",
+      "static": true,
+      "vis": "public",
+      "params": [
+        {
+          "name": "a",
+          "type": {
+            "t": "fqn",
+            "name": "kotlin.Boolean"
+          }
+        },
+        {
+          "name": "b",
+          "type": {
+            "t": "fqn",
+            "name": "kotlin.Boolean"
+          }
+        }
+      ],
+      "ret": {
+        "t": "nullable",
+        "of": {
+          "t": "fqn",
+          "name": "kotlin.Int"
+        }
+      },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "cond",
+            "joinNullBranch": true,
+            "type": {
+              "t": "fqn",
+              "name": "kotlin.Int"
+            },
+            "cond": {
+              "k": "local",
+              "name": "a"
+            },
+            "then": {
+              "k": "valueBlock",
+              "joinNullBranch": true,
+              "type": {
+                "t": "fqn",
+                "name": "kotlin.Int"
+              },
+              "stmts": [
+                {
+                  "k": "var",
+                  "name": "subj",
+                  "type": {
+                    "t": "fqn",
+                    "name": "kotlin.Boolean"
+                  },
+                  "init": {
+                    "k": "local",
+                    "name": "b"
+                  }
+                }
+              ],
+              "result": {
+                "k": "cond",
+                "joinNullBranch": true,
+                "type": {
+                  "t": "fqn",
+                  "name": "kotlin.Int"
+                },
+                "cond": {
+                  "k": "local",
+                  "name": "subj"
+                },
+                "then": {
+                  "k": "const",
+                  "type": {
+                    "t": "fqn",
+                    "name": "kotlin.Int"
+                  },
+                  "value": 1
+                },
+                "else": {
+                  "k": "const",
+                  "type": {
+                    "t": "nullable",
+                    "of": {
+                      "t": "fqn",
+                      "name": "kotlin.Nothing"
+                    }
+                  },
+                  "value": null
+                }
+              }
+            },
+            "else": {
+              "k": "const",
+              "type": {
+                "t": "fqn",
+                "name": "kotlin.Int"
+              },
+              "value": 2
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "structJoinYieldsNull",
       "static": true,
       "vis": "public",
