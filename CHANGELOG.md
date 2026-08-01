@@ -127,6 +127,18 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir (area:bir2cir): the uninhabitable-slot crossing is refused at the IMPLEMENTING position too, on any
+  provenance (#86).** A call is not the only way to meet a slot no Kotlin expression inhabits: a Kotlin class can
+  DERIVE from a .NET type that declares one. `class C : ITake` for a C# `interface ITake { string Take(List<int?>
+  xs); }` compiled clean and died at load with "Signature of the body and declaration in a method implementation do
+  not match" — the abstract base twin with "does not have an implementation". The carrier machinery that repairs an
+  erased slot reads DotKt metadata, so a PLAIN BCL or third-party supertype has nothing for it to read and that
+  whole provenance fell through. bir2cir now asks the REFLECTED declaration, which every referenced assembly has,
+  and refuses at compile time naming the deriving type, the supertype and the slot. Filling the slot from the
+  reflected signature would not have worked: the Kotlin body still reads its argument as Kotlin's `List<object>`, so
+  the mismatch would move out of load time and into the body.
+
+
 - **bir2cir (area:bir2cir): a supertype edge's erased argument is CARRIED, closing a Kotlin source break (#86).**
   `class E : Sink<Int?>` erases its edge to `Sink<object>`, and a supertype is the one erased position with no
   declaration slot to hang a per-slot carrier on — so a separately compiled consumer re-imported `E : Sink<Any?>`

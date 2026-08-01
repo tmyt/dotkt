@@ -75,6 +75,13 @@ declare -A RT_XFAIL=(
 	# referenced member, a different subject from filling the slot, and pre-existing: arity has never been part of
 	# that selection. Closing it means carrying the call's generic arity into the referenced-member lookup, the same
 	# key ilemit's own overload table already uses.
+	# PINNED, NOT FIXED — three reachable failures that no gate saw. Two were entirely silent; the third existed
+	# only as a prose comment in an NUnit fixture saying "NOT asserted", which is exactly what a machine-readable
+	# fail-set replaces: prose cannot flip to FIXED and nothing tells you when the cause closes. Each entry names
+	# its cause and the condition that closes it, and each has a control beside it fixing what the variable is not.
+	[roundtrip-nullable-vt-generic-suspend-override-narrowed]="#86 D3 PR5-era, ALREADY ON MAIN and undocumented until now: a SUSPEND override narrowed to a value instantiation (accept(x: T?) at T=Int) dies with System.TypeLoadException 'Signature of the body and declaration in a method implementation do not match'. PASS ORDER, not the narrowing: the override-slot bridge is built against the PRE-lowering shape, then SuspendColdLowering removes that method and replaces it with the state-machine form, leaving the MethodImpl descriptor naming a member that no longer exists. The non-suspend twin of the same narrowing is green, and the non-nullable suspend control beside this one runs N:1. Closes when the bridge is built AFTER the suspend lowering, or re-pointed at the replacement member."
+	[roundtrip-nullable-vt-generic-objectish-constraint-value]="#86: a generic constrained by Sink<Int?> emits a constrained call whose argument is never widened to the constraint's SUBSTITUTED form, and the CLR rejects the body with System.InvalidProgramException. MEASURED, against the expectation that any objectish constraint does this: the Sink<Any?> twin beside it RUNS (A:a), so the variable is the nullable-VALUE argument specifically and not objectish-ness in general — Sink<Any?> is objectish too and is fine. Closes when the constrained call widens its argument to Subst(Erase(constraint)); the passing Any? section beside it is the control that keeps the claim honest."
+	[roundtrip-nullable-vt-generic-comparable-typed-dispatch]="#86 PRE-EXISTING, and previously recorded ONLY as prose in tests/basic/fixtures/NullableTests.kt saying 'NOT asserted' — the rule violation this entry fixes. Dispatch through a Comparable<Int?>-TYPED reference dies with System.EntryPointNotFoundException: Comparable<X> at an objectish X collapses onto the NON-generic System.IComparable in the type's supertype list, while a value slot of that type keeps IComparable<object>, so the call resolves a member the receiver does not have. Measured identically on Comparable<Any?>, objectish long before #86. Closes when the collapse and the slot agree on one physical interface for an objectish argument."
 	[roundtrip-nullable-vt-generic-referenced-arity-dispatch]="#86 D3: a call on a REFERENCED-interface receiver selects between two same-name, same-parameter-vector members by name and parameters alone, ignoring method generic arity, so a.put<String>(2) runs the arity-0 body and prints a0:2. The SLOTS are correct — the type loads and both arities dispatch correctly through the class's own declared type — so this is call-site overload resolution on a referenced member, not slot filling. Needs the call's generic arity carried into the referenced-member lookup."
 	[roundtrip-nullable-vt-generic-open-slot-callable-ref]="#86: a ::fn / expr::member reference bound into an OPEN (T?) -> R slot reads the boxed reference's bits as a Nullable<int32> and yields a garbage value. The slot is Func<object, string> at every instantiation and the referenced member's parameter is the author's own Nullable<int32>, which a use of it may not move; a lambda into the same slot is correct. PRE-EXISTING (the open slot demanded object before this erasure too). Needs a forwarder synthesized at the reference — static for ::fn, a capture class for expr::member — the same piece the concrete delegate parameter is scoped out for."
 	[roundtrip-nullable-vt-generic-seq-mapnotnull]="#86: NOT the cross-module carrier read (measured) — the defect is same-module, inside the stdlib's lazy path. Sequence.mapNotNull builds TransformingSequence<T, object> (its (T) -> R? transform erases R? to object) and hands it to filterNotNull, whose body unchecked-casts a lazily-wrapped object-elemented sequence to Sequence<T>; on the CLR that IS a reified IEnumerable<T>, so at T=Int the wrapper does not implement IEnumerable<int32> and the terminal toList's GetEnumerator is not found — System.EntryPointNotFoundException. The eager Iterable.mapNotNull twin is green because it materializes a fresh typed list instead of wrapping. Needs an element-converting adapter on the lazy sequence path, stdlib-side."
@@ -114,6 +121,11 @@ declare -A RT_XFAIL_SHAPE=(
 	# The wrong value is a pointer and differs every run, so the app prints a VERDICT and the shape is that verdict.
 	[roundtrip-nullable-vt-generic-open-slot-callable-ref]='wrong'
 	[roundtrip-nullable-vt-generic-referenced-arity-dispatch]='a0:2'
+	# The PINNED entries. Each shape is the CLR's own exception name, which is what distinguishes these three from
+	# one another and from any unrelated break that would otherwise satisfy a name-only entry.
+	[roundtrip-nullable-vt-generic-suspend-override-narrowed]='System.TypeLoadException'
+	[roundtrip-nullable-vt-generic-objectish-constraint-value]='System.InvalidProgramException'
+	[roundtrip-nullable-vt-generic-comparable-typed-dispatch]='System.EntryPointNotFoundException'
 )
 
 # A listed name with no documented shape is the hole this map exists to close, so it is rejected here rather
@@ -1032,6 +1044,136 @@ class C : RArity<Int> {
 fun main() {
     val a: RArity<Int> = C()
     println(a.put<String>(2))                       // a1:2
+}
+EOF
+
+# ---- PINNED, NOT FIXED: three reachable failures that were silent or recorded only as PROSE ------------------
+# Each is a real program that a user can write and that fails at run time, and each was invisible to every gate.
+# A fail-set is machine-readable or it is not a fail-set: a comment saying "not asserted" cannot flip to FIXED, and
+# nothing tells you when the cause closes. Every one below has an RT_XFAIL entry naming its cause and its closing
+# condition, and a control beside it fixing what the variable is NOT.
+
+# THE SUSPEND OVERRIDE AT A VALUE INSTANTIATION. PR5-era and already on main, undocumented until now. The
+# override-slot bridge is built against the PRE-lowering shape; SuspendColdLowering then removes that method and
+# replaces it with the state-machine form, leaving the MethodImpl descriptor naming a member that no longer exists.
+# The non-suspend twin of the same narrowing is green (the sections above), and so is the control here, so neither
+# the narrowing nor `suspend` alone is the variable — it is the two passes' ORDER.
+ng_local roundtrip-nullable-vt-generic-suspend-override-narrowed 'S:1' \
+	'PINNED: a SUSPEND override narrowed to a value instantiation (accept(x: T?) at T=Int) (#86 D3)' <<'EOF'
+@file:Suppress("UNCHECKED_CAST")
+import System.Threading.Monitor
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.coroutines.startCoroutine
+
+fun <T> blockOn(block: suspend () -> T): T {
+    val sink = BlockOnSink()
+    block.startCoroutine(sink)
+    Monitor.Enter(sink)
+    try { while (!sink.done) Monitor.Wait(sink) } finally { Monitor.Exit(sink) }
+    sink.exception?.let { throw it }
+    return sink.value as T
+}
+private class BlockOnSink : Continuation<Any?> {
+    var done: Boolean = false
+    var value: Any? = null
+    var exception: Throwable? = null
+    override val context: CoroutineContext get() = EmptyCoroutineContext
+    override fun resumeWith(result: Result<Any?>) {
+        Monitor.Enter(this)
+        try { value = result.getOrNull(); exception = result.exceptionOrNull(); done = true; Monitor.Pulse(this) }
+        finally { Monitor.Exit(this) }
+    }
+}
+
+interface SSink<T> { suspend fun accept(x: T?): String }
+class SImpl : SSink<Int> { override suspend fun accept(x: Int?): String = "S:" + (x?.toString() ?: "none") }
+
+fun main() {
+    val s: SSink<Int> = SImpl()
+    println(blockOn { s.accept(1) })       // WANT S:1 — TypeLoadException: the descriptor names a removed member
+}
+EOF
+
+ng_local roundtrip-nullable-vt-generic-suspend-override-control 'N:1' \
+	'control: the same SUSPEND override at a NON-nullable slot, which runs (#86 D3)' <<'EOF'
+@file:Suppress("UNCHECKED_CAST")
+import System.Threading.Monitor
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.coroutines.startCoroutine
+
+fun <T> blockOn(block: suspend () -> T): T {
+    val sink = BlockOnSink()
+    block.startCoroutine(sink)
+    Monitor.Enter(sink)
+    try { while (!sink.done) Monitor.Wait(sink) } finally { Monitor.Exit(sink) }
+    sink.exception?.let { throw it }
+    return sink.value as T
+}
+private class BlockOnSink : Continuation<Any?> {
+    var done: Boolean = false
+    var value: Any? = null
+    var exception: Throwable? = null
+    override val context: CoroutineContext get() = EmptyCoroutineContext
+    override fun resumeWith(result: Result<Any?>) {
+        Monitor.Enter(this)
+        try { value = result.getOrNull(); exception = result.exceptionOrNull(); done = true; Monitor.Pulse(this) }
+        finally { Monitor.Exit(this) }
+    }
+}
+
+interface NSink<T> { suspend fun accept(x: T): String }
+class NImpl : NSink<Int> { override suspend fun accept(x: Int): String = "N:" + x.toString() }
+
+fun main() {
+    val s: NSink<Int> = NImpl()
+    println(blockOn { s.accept(1) })       // N:1 — no narrowing, so the descriptor still names a live member
+}
+EOF
+
+# A CONSTRAINT AT A NULLABLE-VALUE ARGUMENT. `fun <T : Sink<Int?>> use(t: T)` emits a constrained call whose
+# argument is never widened to the constraint's SUBSTITUTED form, and the CLR rejects the body outright.
+#
+# The `Sink<Any?>` twin was expected to fail identically — which would have made this a pre-existing defect of any
+# objectish constraint, nothing to do with this work. IT RUNS. So the variable is the nullable-VALUE argument
+# specifically, `Sink<Any?>` being just as objectish and just as fine, and the control stays here as a PASSING
+# section precisely because that is the fact it establishes.
+ng_local roundtrip-nullable-vt-generic-objectish-constraint-value 'I:1' \
+	'PINNED: a generic constrained by Sink<Int?> — the constrained call is never widened (#86)' <<'EOF'
+interface Sink<T> { fun accept(x: T): String }
+class SI : Sink<Int?> { override fun accept(x: Int?): String = "I:" + (x?.toString() ?: "none") }
+fun <T : Sink<Int?>> useBound(t: T): String = t.accept(1)
+fun main() {
+    println(useBound(SI()))                // WANT I:1 — InvalidProgramException
+}
+EOF
+
+ng_local roundtrip-nullable-vt-generic-objectish-constraint-any 'A:a' \
+	'control: the SAME shape at Sink<Any?>, which RUNS — so objectish-ness is not the variable' <<'EOF'
+interface Sink<T> { fun accept(x: T): String }
+class SA : Sink<Any?> { override fun accept(x: Any?): String = "A:" + (x?.toString() ?: "none") }
+fun <T : Sink<Any?>> useBound(t: T): String = t.accept("a")
+fun main() {
+    println(useBound(SA()))                // A:a — runs, though Sink<Any?> is objectish too
+}
+EOF
+
+# `Comparable<X>` AT AN OBJECTISH `X`, DISPATCHED THROUGH A TYPED REFERENCE. The type's SUPERTYPE list carries the
+# non-generic `System.IComparable` (the collapse), while a value slot of that type keeps `IComparable<object>` — so
+# the call resolves a member the receiver does not have. This was recorded only as a prose comment in the NUnit
+# fixture saying "NOT asserted", which is precisely the thing a fail-set exists to replace: prose cannot flip to
+# FIXED. Pre-existing at `Comparable<Any?>`; #86 only lets `Comparable<Int?>` reach the same hole.
+ng_local roundtrip-nullable-vt-generic-comparable-typed-dispatch '3' \
+	'PINNED: dispatch through a Comparable<Int?>-TYPED reference (supertype collapses, slot does not) (#86)' <<'EOF'
+class Ver(val n: Int) : Comparable<Int?> {
+    override fun compareTo(other: Int?): Int = n - (other ?: 0)
+}
+fun main() {
+    val c: Comparable<Int?> = Ver(5)
+    println(c.compareTo(2))                // WANT 3 — EntryPointNotFoundException
 }
 EOF
 

@@ -561,12 +561,11 @@ class NullableTests {
         assertEquals(5, ngCmp(5).compareTo(null))           // 5    …and its null case
         assertEquals("7", NgLocalSink().accept(7))          // 7    the same-module control
         assertEquals("none", NgLocalSink().accept(null))    // none
-        // NOT asserted: dispatch through a `Comparable<Int?>`-TYPED reference (`val c: Comparable<Int?> = ngCmp(9)`).
-        // That is a different, PRE-EXISTING defect and not this rule's: `Comparable<X>` at an objectish `X` collapses
-        // to the non-generic `System.IComparable` as a SUPERTYPE while a value slot of that type keeps
-        // `IComparable<object>`, so the call resolves a member the receiver does not have
-        // (System.EntryPointNotFoundException). Measured on `Comparable<Any?>`, which has always been objectish and
-        // fails identically — carrier-argument erasure only makes `Comparable<Int?>` reach the same hole.
+        // Dispatch through a `Comparable<Int?>`-TYPED reference is a different, PRE-EXISTING defect and not this
+        // rule's, and it is MEASURED rather than described: `roundtrip-nullable-vt-generic-comparable-typed-dispatch`
+        // in tests/roundtrip/scenarios/run.sh drives it and its RT_XFAIL entry carries the cause and the closing
+        // condition. It used to live here as a paragraph saying "NOT asserted", which is what a fail-set exists to
+        // replace — prose cannot flip to FIXED, and nothing tells you when the cause closes.
     }
 
     @TestAttribute

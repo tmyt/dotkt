@@ -321,7 +321,7 @@ static partial class ClrMemberResolution
     // skip `kotlin.*`, so a stdlib-owner clr* node (`kotlin.collections.Iterator.next()`, kept by IteratorConsumer-
     // Normalization for the rt-stdlib link) resolves its declared member sig here too. RESPECTS generic arity: a generic
     // owner (args present) binds the arity-suffixed def (`TaskCompletionSource`1`), never a same-named NON-generic sibling.
-    static Type ResolveOwnerType(TypeNode.Fqn ownerFqn)
+    internal static Type ResolveOwnerType(TypeNode.Fqn ownerFqn)
     {
         // A NESTED-generic reflection name already carries backtick arity + `+` separators (`Outer`1+Nested`, the
         // ConfigureAwait awaiter) — resolve it VERBATIM; BareOwnerFqn/StripGenericArity would truncate at the first
@@ -730,7 +730,7 @@ static partial class ClrMemberResolution
     // A resolved OPEN-def member's param Type -> its declared-param TypeNode in the CLR-lowered vocabulary (BCL FullName
     // spellings, matching S1's lowered memberSig). A class/method generic param -> a positional tv; a delegate keeps its
     // concrete Fqn (unlike TypeNodeOf, which drops delegates) so ilemit can link the exact slot.
-    static TypeNode MemberSigOf(Type t)
+    internal static TypeNode MemberSigOf(Type t)
     {
         t = AliasResolve(t);   // a ref.dll @ClrTypeAlias param -> its BCL twin, so ilemit's MapType links the rt-stdlib slot
         if (t.IsByRef) return new TypeNode.ByRef(MemberSigOf(t.GetElementType()));

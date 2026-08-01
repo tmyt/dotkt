@@ -102,6 +102,15 @@ The payload is the same opaque TypeNode encoding every other carrier uses, so no
 maps a type parameter's index to its pre-erasure upper bound, which erases for the same reason and is lost the same
 way. It is recorded only when the erasure actually moved one of those positions, so an ordinary type carries nothing.
 
+WHAT IT DOES NOT COVER, measured rather than assumed: **#29's collection-identity collapse at a supertype
+position**. `class B : Box<List<String>>` emits `Box<IList<string>>` and a consumer still cannot assign `B()` to a
+`Box<List<String>>` — the identical source break, one transform over. The carrier does not fire because it is
+recorded only where `NullableGenericErasure.Erase` moves the node, and the collection collapse is a different
+rewrite that `Erase` does not implement; `[KotlinCollectionIdentity]` records the same four declaration slots and no
+type-level one, exactly as the nullable-value carrier did before this. The CHANNEL generalizes — the payload is an
+opaque TypeNode object and a second producer could stamp into it — but nothing stamps it today, so the break is
+real and open.
+
 `dll2klib` restores the edges by HEAD, not by position, and that is load-bearing: the projected supertype list is not
 a transcription of the metadata's interface list — it drops the non-generic shadows, collapses the `IComparable`
 bridge and synthesizes `kotlin.Throwable`/`kotlin.Any` edges — so an index would line up with nothing. Replacing an

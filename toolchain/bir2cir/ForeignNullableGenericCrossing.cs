@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
@@ -41,8 +42,94 @@ static class ForeignNullableGenericCrossing
 {
     public static void Check(JsonNode root, string file)
     {
+        CheckImplementedSlots(root, file);
         Walk(root, file);
     }
+
+    // THE SAME CROSSING AT THE IMPLEMENTING POSITION. A call is not the only way to meet an uninhabitable slot: a
+    // Kotlin class can DERIVE from a .NET type that declares one — `class C : ITake` for a C# `interface ITake {
+    // string Take(List<int?> xs); }` — and there the crossing is in the slot the class must fill, not in anything it
+    // calls. Nothing above sees it, because no node resolves against a member; the class compiled clean and died at
+    // load with "Signature of the body and declaration in a method implementation do not match", or, for the
+    // abstract base twin, "does not have an implementation".
+    //
+    // FILLING THE SLOT FROM THE REFLECTED DECLARATION IS NOT A FIX, though the reflected signature is right there to
+    // copy. A method emitted with the declaration's own `List<Nullable<int32>>` parameter would still have a Kotlin
+    // BODY, and that body reads its parameter as the `List<object>` Kotlin says it is — the identical pair of
+    // unrelated invariant reified generics the call-side refusal exists to prevent, except silent rather than
+    // load-time. There is no Kotlin expression that inhabits the parameter type, so the body cannot legitimately use
+    // its own argument: the override has no valid CIL lowering, and the author is owed the message rather than a
+    // TypeLoadException with our type's name on it.
+    //
+    // ASKED OF EVERY PROVENANCE. The carrier machinery that repairs erased slots reads DotKt metadata and so covers
+    // only DotKt-authored supertypes; a plain BCL or third-party interface has none, which is exactly the column
+    // that fell through. This asks the REFLECTED declaration, which every referenced assembly has.
+    static void CheckImplementedSlots(JsonNode root, string file)
+    {
+        if (root is not JsonObject o || o["types"] is not JsonArray types) return;
+        foreach (var t in types) if (t is JsonObject to) CheckTypeSlots(to, file);
+    }
+
+    static void CheckTypeSlots(JsonObject to, string file)
+    {
+        if (to["types"] is JsonArray nested)
+            foreach (var n in nested) if (n is JsonObject nto) CheckTypeSlots(nto, file);
+
+        var supers = new List<JsonNode>();
+        if (to["base"] is JsonNode b) supers.Add(b);
+        if (to["interfaces"] is JsonArray ifs) supers.AddRange(ifs.Where(i => i != null));
+
+        // The names+arities this type declares, for the CONCRETE-slot case: overriding a non-abstract virtual slot
+        // whose signature crosses is the same dead end, but only when the type actually overrides it.
+        var declared = new HashSet<string>(StringComparer.Ordinal);
+        if (to["methods"] is JsonArray ms)
+            foreach (var m in ms.OfType<JsonObject>())
+                if (Str(m["name"]) is string mn)
+                    declared.Add(mn + "/" + ((m["params"] as JsonArray)?.Count ?? 0));
+
+        foreach (var sup in supers)
+        {
+            if (TypeJson.Read(sup) is not TypeNode.Fqn supFqn) continue;
+            var open = ClrMemberResolution.ResolveOwnerType(supFqn);
+            if (open == null) continue;   // a LOCAL supertype: emitted here, and erased consistently with its users
+            MethodInfo[] slots;
+            try
+            {
+                slots = open.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            }
+            catch (NotSupportedException) { continue; }
+            foreach (var slot in slots)
+            {
+                if (!slot.IsVirtual || slot.IsSpecialName) continue;
+                // An ABSTRACT slot must be filled by this type, so its crossing is unavoidable; a CONCRETE virtual
+                // one is only a problem where the type actually overrides it.
+                if (!slot.IsAbstract && !declared.Contains(slot.Name + "/" + slot.GetParameters().Length)) continue;
+                var ps = slot.GetParameters();
+                for (var i = 0; i < ps.Length; i++)
+                    if (NullableGenericErasure.ErasureWouldMove(ClrMemberResolution.MemberSigOf(ps[i].ParameterType)))
+                        throw RefuseSlot(file, Str(to["name"]) ?? "<type>", supFqn.Name, slot.Name, "parameter " + i,
+                            ClrMemberResolution.MemberSigOf(ps[i].ParameterType));
+                if (slot.ReturnType != typeof(void)
+                    && NullableGenericErasure.ErasureWouldMove(ClrMemberResolution.MemberSigOf(slot.ReturnType)))
+                    throw RefuseSlot(file, Str(to["name"]) ?? "<type>", supFqn.Name, slot.Name, "return",
+                        ClrMemberResolution.MemberSigOf(slot.ReturnType));
+            }
+        }
+    }
+
+    static InvalidOperationException RefuseSlot(string file, string type, string owner, string member, string slot,
+        TypeNode t)
+        => new(
+            $"bir2cir: {file}: '{type}' derives from '{owner}', whose member '{member}' declares '{Render(t)}' at its "
+            + $"{slot} — a slot NO Kotlin expression inhabits. A nullable value type inside a generic argument, an "
+            + "array element or a delegate return is System.Object in Kotlin (#86), so the Kotlin method filling "
+            + "this slot would receive a 'List<object>' where the declaration says 'List<Nullable<Int32>>' — "
+            + "unrelated invariant reified generics that no conversion relates. Emitting the declaration's own "
+            + "signature would not help: the Kotlin body still reads the argument as the Kotlin type, so the "
+            + "mismatch would move from load time into the body. Change the .NET surface (a slot whose argument is "
+            + "object-typed, or whose element is not a nullable value type), or implement this interface on the "
+            + ".NET side.");
+
 
     static void Walk(JsonNode node, string file)
     {
