@@ -2404,7 +2404,7 @@ internal sealed class AssemblyScanner
         var result = exact is null
             ? physical
             : signatures.FromTypeNode(carrierName == "KotlinNullableGenericAttribute"
-                ? StripOuterNullability(exact)
+                ? StripOuterNullability(exact, signatures)
                 : exact);
         if (_attrs.Has(slot, MetadataAttributes.DotKtNs + "KotlinExtensionFunctionTypeAttribute"))
             result = signatures.AsExtensionFunction(result);
@@ -2440,8 +2440,13 @@ internal sealed class AssemblyScanner
         return result;
     }
 
-    private static TypeNode StripOuterNullability(TypeNode type) => type switch {
-        TypeNode.Nullable n => n.Of,
+    // The outer `?` of a `[KotlinNullableGeneric]` carrier normally rides the slot's NRT byte, so it is stripped here
+    // and re-applied from that byte. A VALUE inner cannot use that channel at all: an NRT byte array describes
+    // REFERENCE nodes only, and `Int` contributes none, so a stripped `Int?` comes back as a non-null `Int`. Where the
+    // byte cannot carry it, the carrier keeps it — an erasure bridge's `object` slot over a declared `Int?` is exactly
+    // that shape.
+    private static TypeNode StripOuterNullability(TypeNode type, SignatureDecoder signatures) => type switch {
+        TypeNode.Nullable n when signatures.ConsumesOuterNullability(n.Of) => n.Of,
         TypeNode.Oblivious o => o.Of,
         _ => type,
     };
@@ -3145,6 +3150,14 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         });
         return result;
     }
+
+    // The same question asked of a carrier's TypeNode, before it becomes a KType: can this type's `?` ride an NRT
+    // byte? A type variable and every reference type can; the primitives cannot, because the byte walk skips them.
+    public bool ConsumesOuterNullability(TypeNode type) => type switch
+    {
+        TypeNode.Fqn { Args: null } f => ConsumesNullability(Named(NormalizeKotlinName(f.Name))),
+        _ => true,
+    };
 
     private bool ConsumesNullability(KType type)
     {

@@ -1,0 +1,44 @@
+{
+  "fileClass": "RejectOverloadCollisionKt",
+  "hasMain": false,
+  "fields": [],
+  "methods": [],
+  "refTypes": [],
+  "types": [
+    {
+      "name": "Coll",
+      "kind": "class",
+      "typeParams": ["T"],
+      "base": null,
+      "interfaces": [],
+      "fields": [],
+      "ctors": [{ "params": [], "baseArgs": null, "thisArgs": null, "vis": "public", "body": [] }],
+      "methods": [
+        {
+          "name": "f",
+          "static": false,
+          "override": false,
+          "virtual": false,
+          "vis": "public",
+          "params": [{ "name": "x", "type": { "t": "nullable", "of": { "t": "tv", "scope": "type", "i": 0 } } }],
+          "ret": { "t": "fqn", "name": "kotlin.String" },
+          "body": [{ "k": "return", "value": { "k": "const", "type": { "t": "fqn", "name": "kotlin.String" }, "value": "tv" } }],
+          "attrs": []
+        },
+        {
+          "name": "f",
+          "static": false,
+          "override": false,
+          "virtual": false,
+          "vis": "public",
+          "params": [{ "name": "x", "type": { "t": "nullable", "of": { "t": "fqn", "name": "kotlin.Any" } } }],
+          "ret": { "t": "fqn", "name": "kotlin.String" },
+          "body": [{ "k": "return", "value": { "k": "const", "type": { "t": "fqn", "name": "kotlin.String" }, "value": "any" } }],
+          "attrs": []
+        }
+      ],
+      "properties": [],
+      "attrs": []
+    }
+  ]
+}

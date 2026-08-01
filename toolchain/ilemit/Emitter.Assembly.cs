@@ -596,6 +596,37 @@ sealed partial class Emitter
                 }
             }
         }
+
+        // A bir2cir-resolved MethodImpl against a BASE-CLASS slot (`clrBaseImpls`, #86 D3). The interface twin of this
+        // instruction (`clrInterfaceImpls`) is consumed in the interface wiring above; a base-CLASS slot has no such
+        // loop because a class override normally binds by name+signature alone. An erasure bridge does NOT: it carries
+        // a synthesized name so it cannot shadow the declaration it forwards to, so the slot it fills must be named.
+        // Mechanical consumption only — the decision and the exact slot signature are already CIR facts.
+        foreach (var (_, ti) in _types)
+        {
+            if (ti.IsInterface || ti.Def.ValueKind != JsonValueKind.Object
+                || !ti.Def.TryGetProperty("methods", out var baseImplMethods)) continue;
+            _curTypeParams = EffectiveTps(ti);
+            foreach (var m in baseImplMethods.EnumerateArray())
+            {
+                if (!m.TryGetProperty("clrBaseImpls", out var impls) || impls.ValueKind != JsonValueKind.Array
+                    || !m.TryGetProperty("name", out var bridgeName)
+                    || !ti.Methods.TryGetValue(bridgeName.GetString(), out var bridge)) continue;
+                foreach (var impl in impls.EnumerateArray())
+                {
+                    if (!impl.TryGetProperty("owner", out var ownerNode) || ReadFqn(ownerNode) is not { } ownerFqn
+                        || !impl.TryGetProperty("member", out var memberNode)
+                        || !impl.TryGetProperty("params", out var ps)) continue;
+                    var (open, constructed) = ParseOwnerT(ownerFqn);
+                    if (!_types.TryGetValue(open, out var baseTi)) continue;
+                    var slotSig = SigKey(memberNode.GetString(), DeclaredMethodArity(m),
+                        ps.EnumerateArray().Select(DotKt.Bir.TypeNode.Read));
+                    if (!baseTi.MethodsBySig.TryGetValue(slotSig, out var slot)) continue;
+                    ti.TB.DefineMethodOverride(bridge,
+                        constructed != null ? TypeBuilder.GetMethod(constructed, slot) : (MethodInfo)slot);
+                }
+            }
+        }
         _curTypeParams = null;
 
         // Pass 4: emit all bodies (every ctor/method signature already exists). Each body emit is GUARDED (#84 Phase 1):

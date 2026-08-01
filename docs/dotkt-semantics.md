@@ -1598,9 +1598,38 @@ unaffected (its slot is retyped from the value); a declared return, field or par
 every type-argument position, making `List<Int?>` a `List<object>` — and that is not settled; the shape is carried as
 `roundtrip-nullable-vt-generic-array-to-collection` in `tests/roundtrip/scenarios/run.sh`.
 
-One shape is incomplete rather than non-uniform: an override that narrows a base `T?` slot fills the base's erased
-slot correctly and dispatches, but calling it through its **own** declared type does not bind cross-module — that
-entry point needs the `.override` bridge of sub-decision D3 of #86.
+### An override that narrows a `T?` slot keeps its own signature and gets a bridge
+
+`class IntSink : Sink<Int>` overriding `Sink<T>.accept(x: T?)` writes `override fun accept(x: Int?)`. The CLR slot it
+must fill is the base's erased `accept(object)` — the erasure belongs to the *declaration*, not to the type argument —
+but the override's own declaration is `Int?`, which erases to `Nullable<int32>` like any other concrete `Int?`. Both
+are true at once, so both are emitted:
+
+> **The override keeps `accept(Nullable<int32>)`, and a compiler-generated private bridge with the base slot's exact
+> signature (`accept(object)`) carries the MethodImpl and forwards to it.** One bridge fills every slot of that shape
+> the supertype graph declares — the constructed interface, its own base interfaces, the base-class chain.
+
+So the type's Kotlin surface and its physical members agree, and both entry points work: through the base slot, and
+through the override's own declared type — including from a separately compiled consumer, which type-checks against
+the re-imported `accept(x: Int?)` and finds a member of exactly that signature. The bridge is private, so it is not
+part of the Kotlin surface and cannot be called directly; a public one would re-import as a second `accept(x: Any?)`
+overload and make `IntSink().accept("s")` compile.
+
+The one position where the declaration still moves is a `T?` **nested** in a constructed generic: a base `Box<T?>`
+erases to `Box<object>`, and `Box<object>` and `Box<Nullable<int32>>` are unrelated invariant reified generics that no
+cast converts, so there is no forwarding body to write and the override's own `Box<Int?>` becomes `Box<object>`. Its
+Kotlin type rides `[KotlinNullableGeneric]`, so the surface still reads `Box<Int?>`.
+
+### Two declarations that erase to one signature are REFUSED, never renamed
+
+`fun f(x: T?)` and `fun f(x: Any?)` on the same owner are different Kotlin types and Kotlin's own resolution tells
+them apart, but both emit `f(object)`: one CLR signature, one of the two unreachable, and whichever the emitter binds
+answers every call. That is a program with no valid CIL lowering, so it is **refused**, naming both source signatures
+and the signature they collapse onto. It is never resolved by silently renaming one of them.
+
+Method **generic arity is part of the signature** (ECMA-335 I.8.6.1.6), so the neighbouring pair does *not* collide and
+keeps compiling: `fun <T> f(x: T?)` beside `fun f(x: Any?)` is two slots, and Kotlin reaches the generic one through
+an explicit type argument (`f<Int>(3)`) and the non-generic one otherwise.
 
 ## 10. Round-trip fidelity
 

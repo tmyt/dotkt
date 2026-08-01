@@ -81,7 +81,8 @@ static class NullableGenericOverloadCollision
     // `System.Object` — and a signature key that told those apart would miss exactly the collision it is looking for.
     static string ErasedVector(JsonObject mo)
         => string.Join(", ", (mo["params"] as JsonArray)?.OfType<JsonObject>()
-            .Select(p => TypeJson.Read(p["type"]) is TypeNode t ? Normalize(Render(t)) : "?") ?? Enumerable.Empty<string>());
+            .Select(p => TypeJson.Read(p["type"]) is TypeNode t ? Normalize(Render(t, NoTps, source: false)) : "?")
+            ?? Enumerable.Empty<string>());
 
     static string Normalize(string rendered) => rendered
         .Replace("System.Object", "object", StringComparison.Ordinal);
@@ -89,22 +90,38 @@ static class NullableGenericOverloadCollision
     // The pre-erasure parameter vector as a name-free STRUCTURAL key: the differential the refusal turns on.
     static string SourceKey(JsonObject mo)
         => string.Join(", ", (mo["params"] as JsonArray)?.OfType<JsonObject>()
-            .Select(p => SourceType(p, (new List<string>(), new List<string>()))) ?? Enumerable.Empty<string>());
+            .Select(p => SourceType(p, NoTps, nrt: false)) ?? Enumerable.Empty<string>());
 
     // The parameter vector as WRITTEN, recovered from the pre-erasure record wherever the erasure kept one.
     static string SourceVector(JsonObject mo, List<string> ownerTps)
     {
         var tps = Scopes(ownerTps, TypeParamNames(mo));
         return string.Join(", ", (mo["params"] as JsonArray)?.OfType<JsonObject>()
-            .Select(p => SourceType(p, tps)) ?? Enumerable.Empty<string>());
+            .Select(p => SourceType(p, tps, nrt: true)) ?? Enumerable.Empty<string>());
     }
 
-    static string SourceType(JsonObject p, (List<string> type, List<string> method) tps)
+    // One parameter as WRITTEN. Two channels reconstruct it, because the erasure that caused the collision is not the
+    // only thing that flattened these types on the way here: a `T?` kept its pre-erasure node on the
+    // `[KotlinNullableGeneric]` carrier, while an `Any?` was stripped to a bare reference whose `?` rides the NRT byte
+    // alone. Reading only the first would print the second as `System.Object` and name a declaration the author never
+    // wrote — in the one message whose whole job is to identify which of two declarations to change.
+    //
+    // `nrt` is what keeps that reconstruction OUT of the differential. A reference `?` was never a CLR distinction:
+    // `fun <T> contentDeepEquals(a: Array<T>, b: Array<T>)` and its `Array<T>?` sibling have emitted as one signature
+    // since long before this erasure existed, and the refusal only concerns pairs THIS erasure collapsed. Restoring
+    // the byte for the KEY would read them as distinct-before and refuse a pair the stdlib itself declares.
+    static string SourceType(JsonObject p, (List<string> type, List<string> method) tps, bool nrt)
     {
         var pre = (p["nullableGeneric"] as JsonValue)?.GetValue<string>();
-        var t = pre != null ? TypeJson.Read(JsonNode.Parse(pre)) : TypeJson.Read(p["type"]);
-        return t is TypeNode tn ? Render(tn, tps) : "?";
+        if (pre != null) return TypeJson.Read(JsonNode.Parse(pre)) is TypeNode c ? Render(c, tps, source: true) : "?";
+        if (TypeJson.Read(p["type"]) is not TypeNode t) return "?";
+        if (nrt && t is not TypeNode.Nullable && NrtNullable(p["nullableFlags"])) t = new TypeNode.Nullable(t);
+        return Render(t, tps, source: true);
     }
+
+    // The declaration's own NRT byte at the OUTER position: 2 is `?`, 1 is not-null, 0 oblivious.
+    static bool NrtNullable(JsonNode flags) =>
+        flags is JsonArray a && a.Count > 0 && a[0] is JsonValue v && v.TryGetValue<int>(out var b) && b == 2;
 
     static (List<string> type, List<string> method) Scopes(List<string> owner, List<string> method) => (owner, method);
 
@@ -123,20 +140,27 @@ static class NullableGenericOverloadCollision
                + "(" + SourceVector(mo, ownerTps) + ")";
     }
 
-    static string Render(TypeNode t) => Render(t, (new List<string>(), new List<string>()));
+    static readonly (List<string> type, List<string> method) NoTps = (new List<string>(), new List<string>());
 
     // Renders a type as the AUTHOR would recognize it, so the refusal names declarations rather than node shapes: a
     // type variable resolves to its declared name from the owner's or the method's list.
-    static string Render(TypeNode t, (List<string> type, List<string> method) tps) => t switch
+    //
+    // `source` picks which of the two vocabularies the message needs. The two SOURCE signatures are Kotlin, so a
+    // reference slot that arrived stripped is printed back as `Any` rather than as the `System.Object` it lowered to;
+    // the one signature they COLLIDE on is the emitted CLR one, and printing that as `Any` would name a type the
+    // assembly does not contain.
+    static string Render(TypeNode t, (List<string> type, List<string> method) tps, bool source) => t switch
     {
-        TypeNode.Nullable n => Render(n.Of, tps) + "?",
-        TypeNode.Oblivious o => Render(o.Of, tps) + "!",
-        TypeNode.Array a => "Array<" + Render(a.Elem, tps) + ">",
-        TypeNode.ByRef b => "ref " + Render(b.Of, tps),
+        TypeNode.Nullable n => Render(n.Of, tps, source) + "?",
+        TypeNode.Oblivious o => Render(o.Of, tps, source) + "!",
+        TypeNode.Array a => "Array<" + Render(a.Elem, tps, source) + ">",
+        TypeNode.ByRef b => "ref " + Render(b.Of, tps, source),
         TypeNode.Tv tv => TvName(tv, tps),
-        TypeNode.Fqn { Args: { } args } f => f.Name + "<" + string.Join(", ", args.Select(a => Render(a, tps))) + ">",
+        TypeNode.Fqn { Args: { } args } f => f.Name + "<" + string.Join(", ", args.Select(a => Render(a, tps, source))) + ">",
+        TypeNode.Fqn { Name: "object" or "System.Object" } when source => "Any",
         TypeNode.Fqn f => f.Name,
-        TypeNode.Fn fn => "(" + string.Join(", ", fn.Params.Select(pp => Render(pp, tps))) + ") -> " + Render(fn.Ret, tps),
+        TypeNode.Fn fn => "(" + string.Join(", ", fn.Params.Select(pp => Render(pp, tps, source))) + ") -> "
+                          + Render(fn.Ret, tps, source),
         _ => t.ToString(),
     };
 

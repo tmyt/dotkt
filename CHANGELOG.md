@@ -127,6 +127,60 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir/ilemit (area:bir2cir): an override that narrows a base `T?` slot now keeps its own signature, and a
+  bridge fills the slot (#86 D3).** `class IntSink : Sink<Int>` overriding `Sink<T>.accept(x: T?)` has to satisfy the
+  base's erased `accept(object)` — the erasure belongs to the declaration, not to the type argument — while its own
+  declaration is `Int?`, which erases to `Nullable<int32>` like any other concrete `Int?`. Both were true and only one
+  was emitted: the override's signature was rewritten to the base slot, so the type loaded and dispatched through the
+  interface, but its Kotlin surface and its physical members permanently disagreed. A separately compiled consumer
+  type-checks against the re-imported `accept(x: Int?)` and then aborts with *no referenced method matches the
+  resolved descriptor `IntSink.accept(nullable:System.Int32)`* — a missing MEMBER, which no amount of argument
+  re-derivation can reach — and a C# consumer saw a parameter the declaration never named.
+  The override now keeps `accept(Nullable<int32>)` and a compiler-generated PRIVATE bridge with the slot's exact
+  signature carries the MethodImpl and forwards to it across the `object` seam, virtually, so a further-derived
+  override is still what runs. One bridge fills every slot of that shape the supertype graph declares — the
+  constructed interface, its own base interfaces (including a synthesized `G$dotkt_star` existential view), and the
+  base-CLASS chain, which is wired by different CLR metadata and had no path at all before. Private is what keeps it
+  off the Kotlin surface: dll2klib projects public and protected members only, so the re-imported type carries the one
+  declaration the author wrote, where a public bridge would appear as a second `accept(x: Any?)` overload and make
+  `IntSink().accept("s")` compile. The one position that still moves the declaration is a `T?` NESTED in a constructed
+  generic (`Box<T?>` overridden as `Box<Int?>`), where `Box<object>` and `Box<Nullable<int32>>` are unrelated
+  invariant reified generics and no forwarding body exists; its Kotlin type rides `[KotlinNullableGeneric]`, so the
+  surface survives the move. A difference this erasure did NOT create — a covariantly narrowed return over an
+  otherwise-exact signature — is left to the pass that owns it.
+  Two carrier facts had to become true for the private bridge to be genuinely invisible, and both were latent holes.
+  dll2klib deliberately re-surfaces a private MethodImpl body under the interface member's name — a class that
+  satisfies a slot only privately would otherwise re-import still carrying the abstract obligation — and it
+  de-duplicates that against the class's public functions by signature, so the bridge now carries its slots' Kotlin
+  types and de-duplicates away instead of appearing as a second `accept(x: Any)` overload. And a
+  `[KotlinNullableGeneric]` carrier whose outer `?` sits over a VALUE type now keeps that `?` in the carrier rather
+  than delegating it to the slot's NRT byte: an NRT byte array describes reference nodes only, so a stripped `Int?`
+  came back as a non-null `Int` and the re-imported member did not exist. Pins: the cross-module round-trip sections for both
+  entry points at an interface and at a base class, and `tests/basic` fixtures for the same at both, one level
+  deeper, and at a reference instantiation — the failure mode is a `TypeLoadException` at type LOAD, which ilverify
+  does not see.
+
+- **bir2cir (area:bir2cir): the overload-collision refusal names both declarations as the author wrote them
+  (#86 §5.3).** The refusal for two declarations that erase to one CLR signature printed the half whose `?` rides the
+  NRT byte rather than the `[KotlinNullableGeneric]` carrier as `System.Object` — naming a declaration that is not in
+  the file, in the one message whose whole job is to say which of two declarations to change. It reads the byte back
+  now and prints `Any?`; the DIFFERENTIAL that decides whether to refuse at all deliberately does not, because a
+  reference `?` was never a CLR distinction and restoring it there would refuse pairs like the stdlib's own
+  `contentDeepEquals(Array<T>, …)` / `contentDeepEquals(Array<T>?, …)`, which have emitted as one signature since
+  long before this erasure existed. Pinned in both directions: a `tests/ir/lowering` refusal document holding the
+  colliding pair, and a `tests/basic` fixture for the neighbouring pair that differs in method GENERIC ARITY and so
+  stays two reachable slots.
+
+- **kotc/bir2cir (area:kotc): the value-position `try` join no longer decides a CLR slot in kotc (#86 §3).** A
+  `try`/`catch` join the frontend resolved to a bare VALUE type while one branch still yields a literal `null` had its
+  temp widened to `Nullable<V>` by the BIR emitter, reasoning in-comment about `HasValue=false` and "a bare `int`
+  slot" — a physical-representation decision two layers above where representation is decided. kotc now states the
+  join's Kotlin type and nothing more; bir2cir's `TryValueJoinWidening` makes the call off the emitted shape, and asks
+  the struct-ness oracle instead of the hardcoded primitive/unsigned list, so a `value class` or a BCL struct join is
+  covered by the same rule. The whole stdlib (reference + runtime) lowers byte-identically across the move; the shape
+  itself has no natural instance in the corpus, so it is pinned by a `tests/ir/lowering` document with both
+  discriminations — an all-values join and a REFERENCE join must keep their bare types.
+
 - **bir2cir/stdlib (area:bir2cir): `Array<X?>` is `object[]` — the last two representations of the nullable-generic
   array are gone (#86 D2).** One Kotlin type constructor had three physical forms: a concrete `Array<Int?>` was a
   `Nullable<int32>[]`, an open `Array<T?>` was an `object[]`, and the `arrayOfNulls<T>(n) … as Array<T>` reify-back

@@ -1,0 +1,144 @@
+{
+  "fileClass": "TryValueJoinKt",
+  "hasMain": false,
+  "fields": [],
+  "types": [],
+  "refTypes": [],
+  "methods": [
+    {
+      "name": "joinYieldsNull",
+      "static": true,
+      "vis": "public",
+      "params": [],
+      "ret": { "t": "nullable", "of": { "t": "fqn", "name": "kotlin.Int" } },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "valueBlock",
+            "stmts": [
+              { "k": "var", "name": "dotkt$tryval0", "type": { "t": "fqn", "name": "kotlin.Int" } },
+              {
+                "k": "try",
+                "type": { "t": "fqn", "name": "kotlin.Unit" },
+                "body": [
+                  {
+                    "k": "setLocal",
+                    "name": "dotkt$tryval0",
+                    "value": { "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 1 }
+                  }
+                ],
+                "catches": [
+                  {
+                    "excType": { "t": "fqn", "name": "kotlin.NumberFormatException" },
+                    "var": "e0",
+                    "body": [
+                      {
+                        "k": "exprStmt",
+                        "expr": {
+                          "k": "const",
+                          "type": { "t": "nullable", "of": { "t": "fqn", "name": "kotlin.Nothing" } },
+                          "value": null
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "result": { "k": "local", "name": "dotkt$tryval0" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "joinYieldsValues",
+      "static": true,
+      "vis": "public",
+      "params": [],
+      "ret": { "t": "fqn", "name": "kotlin.Int" },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "valueBlock",
+            "stmts": [
+              { "k": "var", "name": "dotkt$tryval1", "type": { "t": "fqn", "name": "kotlin.Int" } },
+              {
+                "k": "try",
+                "type": { "t": "fqn", "name": "kotlin.Unit" },
+                "body": [
+                  {
+                    "k": "setLocal",
+                    "name": "dotkt$tryval1",
+                    "value": { "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 2 }
+                  }
+                ],
+                "catches": [
+                  {
+                    "excType": { "t": "fqn", "name": "kotlin.NumberFormatException" },
+                    "var": "e1",
+                    "body": [
+                      {
+                        "k": "setLocal",
+                        "name": "dotkt$tryval1",
+                        "value": { "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 3 }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "result": { "k": "local", "name": "dotkt$tryval1" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "joinYieldsNullAtReference",
+      "static": true,
+      "vis": "public",
+      "params": [],
+      "ret": { "t": "nullable", "of": { "t": "fqn", "name": "kotlin.String" } },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "valueBlock",
+            "stmts": [
+              { "k": "var", "name": "dotkt$tryval2", "type": { "t": "fqn", "name": "kotlin.String" } },
+              {
+                "k": "try",
+                "type": { "t": "fqn", "name": "kotlin.Unit" },
+                "body": [
+                  {
+                    "k": "setLocal",
+                    "name": "dotkt$tryval2",
+                    "value": { "k": "const", "type": { "t": "fqn", "name": "kotlin.String" }, "value": "a" }
+                  }
+                ],
+                "catches": [
+                  {
+                    "excType": { "t": "fqn", "name": "kotlin.NumberFormatException" },
+                    "var": "e2",
+                    "body": [
+                      {
+                        "k": "exprStmt",
+                        "expr": {
+                          "k": "const",
+                          "type": { "t": "nullable", "of": { "t": "fqn", "name": "kotlin.Nothing" } },
+                          "value": null
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "result": { "k": "local", "name": "dotkt$tryval2" }
+          }
+        }
+      ]
+    }
+  ]
+}

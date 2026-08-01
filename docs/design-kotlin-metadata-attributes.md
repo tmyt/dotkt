@@ -88,6 +88,11 @@ At each, the erased `Nullable(Tv)` may be the slot's **head** (`x: T?`) or **nes
 - That byte cannot come from the ordinary decl-position NRT walk, which runs **after** the erasure and would walk
   `object` — whose non-null default emits no override at all. It is computed from the **pre-erasure** type by the
   recorder, and rides `DeclNullableFlags`' never-overwrite contract.
+- **A VALUE head is the one case the byte cannot carry at all**, and there the carrier keeps its own outer `?`. An
+  NRT byte array describes reference nodes only — `Int` contributes none — so `Int?` stripped to `Int` plus a
+  `[Nullable(2)]` byte restores as a non-null `Int`. The reader therefore strips the outer nullability only when the
+  inner can consume a byte (a type variable or a reference type). The slot that has this shape is the #86 D3 override
+  bridge: a physical `object` over a declared, concrete `Int?`.
 
 Dropping either channel is invisible to every runtime-shaped gate: the producer is unchanged and only a separately
 compiled Kotlin **consumer** fails, at compile time, with a type mismatch against the degraded slot.
