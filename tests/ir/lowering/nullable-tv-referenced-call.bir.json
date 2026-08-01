@@ -1,0 +1,31 @@
+{
+  "fileClass": "NullableTvReferencedProbeKt",
+  "hasMain": false,
+  "fields": [],
+  "refTypes": [],
+  "types": [],
+  "methods": [
+    {
+      "name": "probe",
+      "params": [
+        { "name": "p", "type": { "t": "fqn", "name": "kotlin.Pair", "args": [{ "t": "fqn", "name": "object" }, { "t": "fqn", "name": "kotlin.String" }] } }
+      ],
+      "ret": { "t": "fqn", "name": "kotlin.Unit" },
+      "body": [
+        {
+          "k": "var",
+          "name": "first",
+          "type": { "t": "nullable", "of": { "t": "fqn", "name": "kotlin.Int" } },
+          "init": {
+            "k": "callInstance",
+            "ownerType": { "t": "fqn", "name": "kotlin.Pair", "args": [{ "t": "nullable", "of": { "t": "fqn", "name": "kotlin.Int" } }, { "t": "fqn", "name": "kotlin.String" }] },
+            "method": "get_first",
+            "ret": { "t": "nullable", "of": { "t": "fqn", "name": "kotlin.Int" } },
+            "recv": { "k": "local", "name": "p" },
+            "args": []
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -15,6 +15,10 @@ sealed partial class ReferenceMetadataIndex
     const string KotlinFunctionAttr = "DotKt.Runtime.CompilerServices.KotlinFunctionAttribute";
     const string KotlinInlineAttr = "DotKt.Runtime.CompilerServices.KotlinInlineAttribute";
     const string KotlinTypeAttr = "DotKt.Runtime.CompilerServices.KotlinTypeAttribute";
+    // The #86/#147 positional carrier: the PRE-erasure Kotlin TypeNode of a declaration slot whose `Nullable(Tv)`
+    // NullableGenericErasure object-erased. Read per member slot (return parameter and each value parameter) so a
+    // CONSUMING module can re-derive `Subst(Erase(decl))` at a use of that slot instead of guessing from the call.
+    const string KotlinNullableGenericAttr = "DotKt.Runtime.CompilerServices.KotlinNullableGenericAttribute";
     const string DotKtAssemblyMarkerAttr = "System.Reflection.AssemblyMetadataAttribute";
     const string DotKtAssemblyMarkerKey = "DotKt.Compiler";
     const string DotKtAssemblyMarkerValue = "metadata-v1";
@@ -56,6 +60,9 @@ sealed partial class ReferenceMetadataIndex
     readonly HashSet<string> _helperTypes = new(StringComparer.Ordinal);             // emitted "dotkt$ClrH_*"
     readonly HashSet<string> _restrictsSuspension = new(StringComparer.Ordinal);     // @RestrictsSuspension owners
     readonly Dictionary<string, List<MemberBinding>> _membersByOwner = new(StringComparer.Ordinal);
+    // ownerFqn -> declared parameter count -> the ctor declarations of that arity (#86 D1). A list, because a
+    // same-arity overload set must be REFUSED rather than resolved by arity alone.
+    readonly Dictionary<string, Dictionary<int, List<CtorBinding>>> _ctorsByOwner = new(StringComparer.Ordinal);
     // Reference-owner hierarchy in BIR's dotted Kotlin vocabulary.  Calls retain their Kotlin
     // receiver owner in BIR; inherited CLR MemberRefs are selected later by bir2cir, so that pass
     // needs the same constructed base/interface graph for referenced types as it has for local CIR
@@ -170,6 +177,13 @@ sealed partial class ReferenceMetadataIndex
                 if (!_membersByOwner.TryGetValue(m.Owner, out var list))
                     _membersByOwner[m.Owner] = list = new List<MemberBinding>();
                 list.Add(m);
+            }
+            foreach (var c in asm.DotKt.CtorBindings)
+            {
+                if (!_ctorsByOwner.TryGetValue(c.Owner, out var byArity))
+                    _ctorsByOwner[c.Owner] = byArity = new Dictionary<int, List<CtorBinding>>();
+                if (!byArity.TryGetValue(c.ParamCount, out var ctors)) byArity[c.ParamCount] = ctors = new List<CtorBinding>();
+                ctors.Add(c);
             }
             foreach (var kv in asm.DotKt.TypeShapes) _referenceTypeShapes.TryAdd(kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.TopLevelIntrinsics) _topLevelIntrinsics.TryAdd(kv.Key, kv.Value);
@@ -1125,6 +1139,280 @@ sealed partial class ReferenceMetadataIndex
     static bool IsObjectType(TypeNode type) =>
         type is TypeNode.Fqn f && f.Name is "System.Object" or "object" or "kotlin.Any";
 
+    // #86 D1 — the PRE-erasure declaration of a referenced member's slots: its return and its parameter vector, as the
+    // consuming module needs them to type a USE as `Subst(Erase(declaredKotlinType(slot)), typeArgs)`.
+    //
+    // Two sources, in order, per slot:
+    //   * the `[KotlinNullableGeneric]` carrier — the exact pre-erasure Kotlin TypeNode NullableGenericErasure recorded
+    //     on that slot, present iff this slot is one the erasure rewrote;
+    //   * otherwise the PHYSICAL declaration (`ParamTypeNodes`/`ReturnTypeNode`), which IS `Erase(declared)` by
+    //     construction — the producer emitted it through the same erasure — with generic parameters retained as `Tv`,
+    //     so substituting the call's owner/method arguments into it yields the same answer. This second source is
+    //     admitted ONLY where the physical node still carries a `Tv`, i.e. where the call site's type arguments are
+    //     what completes it (`Iterator<E>.next(): !0`, `List<E>.get(i): !0`, `Slot<T>.get_value(): !0`). A Tv-FREE
+    //     physical slot is refused, because the one thing it could contribute is a bare `System.Object` — and an
+    //     `object` with no carrier beside it is indistinguishable from a declared `Any`. Deriving a use as `object`
+    //     from every `Any`-returning referenced member is not the erasure family, it is all of it.
+    // Either way the caller applies `Erase` then `Subst`; `Erase` is the identity on an already-erased node.
+    //
+    // A call names the owner it is DISPATCHED on, which is not always the owner that DECLARES the member
+    // (`List<E>.iterator()` is declared on `Iterable<E>`), so the search walks the reference type's base and
+    // interfaces. Each hop rewrites the supertype's own type parameters into the derived type's space using the
+    // declared supertype arguments, so the result stays a declaration the CALLER substitutes with the call's owner
+    // arguments — the contract does not change with the distance travelled.
+    //
+    // REFUSAL DISCIPLINE, identical to TryUncheckedGenericCastReturn: name + static-ness + parameter count + method
+    // generic arity is all a call site gives us, so a same-shape overload SET is refused outright rather than resolved
+    // to whichever sibling was enumerated first — deriving the wrong member's slot types manufactures exactly the
+    // mismatch the consuming pass exists to remove.
+    // `paramsRefused[i]` marks a parameter whose carrier the reader DELIBERATELY would not state. It is not the same
+    // fact as `declaredParams[i] == null`, which also covers "the producer stated nothing here", and the consumer
+    // must treat them differently: an absent declaration falls back to the call's own descriptor, while a REFUSED one
+    // must not — the descriptor is that same erasure written in the call's substituted vocabulary, so falling back to
+    // it applies exactly the derivation the refusal exists to prevent.
+    //
+    // The RETURN needs no such flag: a return the reader will not state simply leaves the call site's stamped result
+    // standing, which is the pre-reader behaviour and has no fallback to bypass.
+    public bool TryNullableGenericSlot(string ownerFqn, string name, bool isStatic, int argCount, int methodArity,
+        out TypeNode declaredRet, out TypeNode[] declaredParams, out bool[] paramsRefused)
+    {
+        declaredRet = null;
+        declaredParams = null;
+        paramsRefused = null;
+        if (ownerFqn == null || name == null) return false;
+        var path = new HashSet<string>(StringComparer.Ordinal) { BareOwnerFqn(ownerFqn) };
+        if (FindDeclaredSlot(ownerFqn, name, isStatic, argCount, methodArity, path, out var ret, out var ps)
+            != SlotLookup.Declared)
+            return false;
+        declaredRet = ret.Node;
+        declaredParams = ps.Select(p => p.Node).ToArray();
+        paramsRefused = ps.Select(p => p.Refused).ToArray();
+        // Declared, but with nothing this reader may state about it — the caller has no use for that. A REFUSAL is
+        // something to state, though: it is what stops the caller reaching for the descriptor instead.
+        return declaredRet != null || ps.Any(p => p.Node != null || p.Refused);
+    }
+
+    SlotLookup FindDeclaredSlot(string ownerFqn, string name, bool isStatic, int argCount, int methodArity,
+        HashSet<string> path, out SlotFact declaredRet, out SlotFact[] declaredParams)
+    {
+        declaredRet = default;
+        declaredParams = null;
+        var bare = BareOwnerFqn(ownerFqn);
+        if (TryMembersByBirOwner(bare, out var list))
+        {
+            var shapeMatches = list.Where(m =>
+                    m.Name == name
+                    && m.IsStatic == isStatic
+                    && m.ParamCount == argCount
+                    && m.MethodArity == methodArity
+                    && m.ParamTypeNodes != null
+                    && m.ParamTypeNodes.Length == argCount)
+                .ToArray();
+            // Declared HERE, ambiguously: refuse outright rather than walking upward, where an unrelated base member
+            // of the same shape would look like an answer to a call this type's own overload set already owns.
+            if (shapeMatches.Length > 1) return SlotLookup.Refused;
+            if (shapeMatches.Length == 1)
+            {
+                var member = shapeMatches[0];
+                declaredRet = DeclaredSlot(member.NullableGenericRet, member.ReturnTypeNode);
+                declaredParams = new SlotFact[argCount];
+                for (var i = 0; i < argCount; i++)
+                    declaredParams[i] = DeclaredSlot(member.NullableGenericParams?[i], member.ParamTypeNodes[i]);
+                // DECLARED HERE TERMINATES THE SEARCH, facts or no facts. A concrete member that shadows or
+                // implements an inherited namesake IS the declaration the call binds to; continuing upward because
+                // this one happens to carry no erasure fact would hand the call the BASE's carrier and rewrite a
+                // descriptor the derived member never had.
+                return SlotLookup.Declared;
+            }
+        }
+        if (!_referenceTypeShapes.TryGetValue(DottedFqn(bare), out var shape)) return SlotLookup.NotDeclared;
+        // Reflection reports the interface set TRANSITIVELY, so one hop reaches every interface declaration; the base
+        // chain is walked one link at a time. Every supertype that answers is collected and they must AGREE — an
+        // inherited member the call cannot distinguish is not a declaration this pass may act on.
+        SlotFact foundRet = default;
+        SlotFact[] foundParams = null;
+        var answers = 0;
+        foreach (var super in Supertypes(shape))
+        {
+            // The guard is PATH-LOCAL and keyed on the TYPE DEFINITION. Repeating a definition on ONE path is cyclic
+            // metadata and the only thing worth stopping; repeating it on a SIBLING path is not, so the key is dropped
+            // on the way out and `I<int>` / `I<string>` are both visited and then compared rather than the answer
+            // being whichever the reflection interface order reached first. Because a definition can appear at most
+            // once per path, the walk terminates on its own — a base chain is as deep as the program declares it, and
+            // an arbitrary hop limit would silently drop a carrier declared past the limit AND let a shallower
+            // same-shape interface answer win instead of triggering the disagreement refusal.
+            var key = BareOwnerFqn(super.Name);
+            if (!path.Add(key)) continue;
+            var found = FindDeclaredSlot(super.Name, name, isStatic, argCount, methodArity, path,
+                out var sret, out var sps);
+            path.Remove(key);
+            if (found == SlotLookup.Refused) return SlotLookup.Refused;
+            if (found != SlotLookup.Declared) continue;
+            var mret = MapThroughSupertype(sret, super.Args);
+            var mps = sps.Select(p => MapThroughSupertype(p, super.Args)).ToArray();
+            if (answers++ == 0) { foundRet = mret; foundParams = mps; continue; }
+            if (!SameSlots(foundRet, foundParams, mret, mps)) return SlotLookup.Refused;
+        }
+        if (answers == 0) return SlotLookup.NotDeclared;
+        declaredRet = foundRet;
+        declaredParams = foundParams;
+        return SlotLookup.Declared;
+    }
+
+    static IEnumerable<TypeNode.Fqn> Supertypes(ReferenceTypeShape shape)
+    {
+        if (shape.Base != null) yield return shape.Base;
+        foreach (var i in shape.Interfaces ?? Array.Empty<TypeNode.Fqn>()) yield return i;
+    }
+
+    // A refusal survives the hop unchanged: which supertype declared the slot has no bearing on whether the reader
+    // may state it.
+    static SlotFact MapThroughSupertype(SlotFact f, TypeNode[] superArgs)
+        => new(MapThroughSupertype(f.Node, superArgs), f.Refused);
+
+    // Rewrite a declaration expressed in a SUPERTYPE's type-parameter space into the derived type's, using the
+    // supertype arguments the derived type declared (`List<E> : Iterable<E>` maps `Iterable`'s `!0` to `List`'s `!0`;
+    // `IntSlots : Slots<Int>` maps it to `Int`). Method-scope parameters belong to the member and are left alone.
+    static TypeNode MapThroughSupertype(TypeNode t, TypeNode[] superArgs) => t switch
+    {
+        null => null,
+        TypeNode.Tv { Scope: "type" } tv => superArgs != null && tv.I >= 0 && tv.I < superArgs.Length ? superArgs[tv.I] : t,
+        TypeNode.Fqn { Args: { } args } f => new TypeNode.Fqn(f.Name, args.Select(a => MapThroughSupertype(a, superArgs)).ToArray()),
+        TypeNode.Array a => new TypeNode.Array(MapThroughSupertype(a.Elem, superArgs)),
+        TypeNode.Nullable n => new TypeNode.Nullable(MapThroughSupertype(n.Of, superArgs)),
+        TypeNode.Oblivious o => new TypeNode.Oblivious(MapThroughSupertype(o.Of, superArgs)),
+        TypeNode.ByRef b => new TypeNode.ByRef(MapThroughSupertype(b.Of, superArgs)),
+        TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, MapThroughSupertype(fn.Ret, superArgs),
+            fn.Params.Select(p => MapThroughSupertype(p, superArgs)).ToArray(),
+            MapThroughSupertype(fn.Recv, superArgs), fn.Clr,
+            fn.Ctx?.Select(c => MapThroughSupertype(c, superArgs)).ToArray()),
+        _ => t,
+    };
+
+    // Two supertypes agree only if they agree on the REFUSAL too: one that may be stated and one that may not are
+    // different answers, and taking either would be a guess.
+    static bool SameSlots(SlotFact aRet, SlotFact[] aps, SlotFact bRet, SlotFact[] bps)
+    {
+        if (!SameSlot(aRet, bRet)) return false;
+        if (aps.Length != bps.Length) return false;
+        for (var i = 0; i < aps.Length; i++)
+            if (!SameSlot(aps[i], bps[i])) return false;
+        return true;
+    }
+
+    static bool SameSlot(SlotFact a, SlotFact b)
+    {
+        if (a.Refused != b.Refused) return false;
+        if ((a.Node == null) != (b.Node == null)) return false;
+        return a.Node == null || a.Node.Equals(b.Node);
+    }
+
+    // The same for a CONSTRUCTOR, keyed by owner + declared parameter count (a ctor has no name). A same-arity overload
+    // set is refused for the same reason a same-shape method set is.
+    public bool TryNullableGenericCtorSlot(string ownerFqn, int argCount, out TypeNode[] declaredParams,
+        out bool[] paramsRefused)
+    {
+        declaredParams = null;
+        paramsRefused = null;
+        if (ownerFqn == null) return false;
+        var bare = BareOwnerFqn(ownerFqn);
+        if (!_ctorsByOwner.TryGetValue(bare, out var byArity))
+        {
+            var matches = _ctorsByOwner.Where(kv => DottedFqn(kv.Key) == bare).Take(2).ToList();
+            if (matches.Count != 1) return false;
+            byArity = matches[0].Value;
+        }
+        if (!byArity.TryGetValue(argCount, out var ctors) || ctors.Count != 1) return false;
+        var ctor = ctors[0];
+        if (ctor.ParamTypeNodes == null || ctor.ParamTypeNodes.Length != argCount) return false;
+        var facts = new SlotFact[argCount];
+        for (var i = 0; i < argCount; i++)
+            facts[i] = DeclaredSlot(ctor.NullableGenericParams?[i], ctor.ParamTypeNodes[i]);
+        declaredParams = facts.Select(f => f.Node).ToArray();
+        paramsRefused = facts.Select(f => f.Refused).ToArray();
+        return facts.Any(f => f.Node != null || f.Refused);
+    }
+
+    // ONE slot's declaration. THREE outcomes, which is why this is not a `carrier ?? physical` chain and why the
+    // result is not a plain TypeNode:
+    //   * a carrier the reader may state — the exact pre-erasure Kotlin type, and the best answer there is;
+    //   * a carrier it must NOT state — then a REFUSAL, which is a fact of its own and travels as one. The physical
+    //     declaration is not a substitute for it: that is the same erasure spelled WITHOUT the evidence that it was
+    //     one (`Pair<Array<T?>, U>` is physically `Pair<object[], !1>`, still `Tv`-bearing, so it passes the
+    //     open-physical test), and neither is the call's own descriptor, which is that erasure again in the call's
+    //     substituted vocabulary. A refusal that degrades to "no information" is not a refusal;
+    //   * no carrier at all — the physical declaration, while it is still open, and no refusal.
+    static SlotFact DeclaredSlot(TypeNode carrier, TypeNode physical)
+        => carrier == null ? new SlotFact(OpenPhysical(physical), false)
+            : Serviceable(carrier) is TypeNode ok ? new SlotFact(ok, false)
+            : new SlotFact(null, true);
+
+    // A carrier is served unless its erasure lands at an ARRAY ELEMENT. `Array<X?>` is the one position where the
+    // erasure has not yet been made uniform (#86 D2): the producing assembly's slot says `object[]` while the value it
+    // actually hands back is a `Nullable<V>[]` — `Array<T>.copyOf(newSize)` allocates one reflectively, and the two are
+    // unrelated CLR types (ECMA-335 I.8.7.1: array compatibility needs reference-compatible elements). Deriving a use
+    // from a declaration the producer does not implement turns a formal ilverify finding into a real access violation,
+    // so the reader refuses the slot until `Array<X?>` IS canonically `object[]`, and starts serving it when it is.
+    static TypeNode Serviceable(TypeNode carrier) => carrier != null && !ErasesUnderArray(carrier) ? carrier : null;
+
+    static bool ErasesUnderArray(TypeNode t) => t switch
+    {
+        TypeNode.Array a => ContainsNullableTv(a.Elem) || ErasesUnderArray(a.Elem),
+        TypeNode.Fqn { Args: { } args } => args.Any(ErasesUnderArray),
+        TypeNode.Nullable n => ErasesUnderArray(n.Of),
+        TypeNode.Oblivious o => ErasesUnderArray(o.Of),
+        TypeNode.ByRef b => ErasesUnderArray(b.Of),
+        TypeNode.Fn fn => ErasesUnderArray(fn.Ret) || fn.Params.Any(ErasesUnderArray)
+                          || (fn.Recv != null && ErasesUnderArray(fn.Recv)),
+        _ => false,
+    };
+
+    static bool ContainsNullableTv(TypeNode t) => t switch
+    {
+        TypeNode.Nullable { Of: TypeNode.Tv } => true,
+        TypeNode.Nullable n => ContainsNullableTv(n.Of),
+        TypeNode.Oblivious o => ContainsNullableTv(o.Of),
+        TypeNode.Fqn { Args: { } args } => args.Any(ContainsNullableTv),
+        TypeNode.Array a => ContainsNullableTv(a.Elem),
+        TypeNode.ByRef b => ContainsNullableTv(b.Of),
+        TypeNode.Fn fn => ContainsNullableTv(fn.Ret) || fn.Params.Any(ContainsNullableTv)
+                          || (fn.Recv != null && ContainsNullableTv(fn.Recv)),
+        _ => false,
+    };
+
+    // The physical declaration of a slot, admitted only while it still says something the call site's type arguments
+    // complete — see the refusal reasoning on TryNullableGenericSlot.
+    static TypeNode OpenPhysical(TypeNode t) => t != null && ContainsTv(t) ? Canonical(t) : null;
+
+    static bool ContainsTv(TypeNode t) => t switch
+    {
+        TypeNode.Tv => true,
+        TypeNode.Fqn { Args: { } args } => args.Any(ContainsTv),
+        TypeNode.Array a => ContainsTv(a.Elem),
+        TypeNode.Nullable n => ContainsTv(n.Of),
+        TypeNode.Oblivious o => ContainsTv(o.Of),
+        TypeNode.ByRef b => ContainsTv(b.Of),
+        TypeNode.Fn fn => ContainsTv(fn.Ret) || fn.Params.Any(ContainsTv) || (fn.Recv != null && ContainsTv(fn.Recv)),
+        _ => false,
+    };
+
+    // The physical declaration is spelled in whichever vocabulary its producer emitted — a DotKt LIBRARY dll names
+    // `System.Object`, the reference stdlib names the Kotlin `object` the erasure writes. The consuming pass works in
+    // BIR (Kotlin) vocabulary, where the erased slot is the bare `object`, so that one name is normalized here.
+    // Nothing else is translated: a physical name that stays CLR-spelled simply fails the consumer's
+    // object-erasure gate and produces no rewrite, which is the fail-closed outcome.
+    static TypeNode Canonical(TypeNode t) => t switch
+    {
+        null => null,
+        TypeNode.Fqn { Name: "System.Object", Args: null } => new TypeNode.Fqn("object"),
+        TypeNode.Fqn { Args: { } args } f => new TypeNode.Fqn(f.Name, args.Select(Canonical).ToArray()),
+        TypeNode.Array a => new TypeNode.Array(Canonical(a.Elem)),
+        TypeNode.Nullable n => new TypeNode.Nullable(Canonical(n.Of)),
+        TypeNode.Oblivious o => new TypeNode.Oblivious(Canonical(o.Of)),
+        TypeNode.ByRef b => new TypeNode.ByRef(Canonical(b.Of)),
+        _ => t,
+    };
+
     // The declared RETURN type of a top-level fun (a `callStatic owner=null`), resolved via its file-class owner then the
     // member's return type. `recvKey` = the call's first sig-param bare owner (disambiguates overloads across file-classes);
     // `argCount` = the sig's total param count (receiver + args), matching the ref.dll static's ParamCount. null if unresolved.
@@ -1437,7 +1725,15 @@ sealed partial class ReferenceMetadataIndex
                             method.GetGenericArguments().Length,
                             method.GetParameters().Select(p => DeclarationTypeNode(p.ParameterType)).ToArray(),
                             method.IsVirtual,
-                            dotKtAuthored ? KotlinTypeOf(method.ReturnParameter.GetCustomAttributesData(), method.DeclaringType?.Assembly) : null));
+                            dotKtAuthored ? KotlinTypeOf(method.ReturnParameter.GetCustomAttributesData(), method.DeclaringType?.Assembly) : null,
+                            // #86 D1 — the positional pre-erasure carrier, per slot. Only a DotKt-authored assembly can
+                            // carry it, and only the erasure records it, so a slot without one is simply absent here and
+                            // the consumer falls back to the physical declaration (which IS `Erase(decl)` by construction).
+                            dotKtAuthored ? CarrierTypeOf(method.ReturnParameter.GetCustomAttributesData(), method.DeclaringType?.Assembly, KotlinNullableGenericAttr) : null,
+                            dotKtAuthored
+                                ? method.GetParameters().Select(p => CarrierTypeOf(p.GetCustomAttributesData(), method.DeclaringType?.Assembly, KotlinNullableGenericAttr)).ToArray()
+                                : null,
+                            DeclarationTypeNode(method.ReturnType)));
                         // [KotlinInline] raw-BIR carrier (#71/#75 S1): decode the versioned carrier now (the codec is
                         // BirCarrier, shared) and key it owner|name|pc|ga so InlineSplice can splice this external inline
                         // fn's body at a cross-module call site. A malformed / pre-S1-shaped payload is swallowed (no
@@ -1548,6 +1844,16 @@ sealed partial class ReferenceMetadataIndex
                     {
                         if (CallableDefaultsOf(ctor) is Dictionary<int, string> cdefaults)
                             AddKotlinDefaults(metadata, ownerFqn, CtorKeyName, ctor.GetParameters(), cdefaults);
+                        // #86 D1 — a `new`'s arguments fill the constructor's declaration slots, so the ctor's shape is
+                        // indexed exactly as a method's is. `Cell<T>(x: T?)` erases to `.ctor(object)` and its carrier
+                        // holds the pre-erasure `T?`.
+                        metadata.CtorBindings.Add(new CtorBinding(
+                            ownerFqn,
+                            ctor.GetParameters().Length,
+                            ctor.GetParameters().Select(p => DeclarationTypeNode(p.ParameterType)).ToArray(),
+                            dotKtAuthored
+                                ? ctor.GetParameters().Select(p => CarrierTypeOf(p.GetCustomAttributesData(), ctor.DeclaringType?.Assembly, KotlinNullableGenericAttr)).ToArray()
+                                : null));
                     }
                 }
                 catch (Exception ex)
@@ -1600,18 +1906,23 @@ sealed partial class ReferenceMetadataIndex
     static bool HasAttribute(IList<CustomAttributeData> attrs, string fullName) =>
         attrs.Any(a => a.AttributeType.FullName == fullName);
 
-    // Decode a compiler-owned round-trip [KotlinType] carrier.  Full-name equality is insufficient: a foreign
+    // Decode a compiler-owned round-trip [KotlinType] carrier.
+    static TypeNode KotlinTypeOf(IList<CustomAttributeData> attrs, Assembly declaringAssembly) =>
+        CarrierTypeOf(attrs, declaringAssembly, KotlinTypeAttr);
+
+    // Decode a compiler-owned round-trip TypeNode carrier (`[KotlinType]`, `[KotlinNullableGeneric]` — both ride the
+    // same `(version, bytes)` BirCarrier envelope).  Full-name equality is insufficient: a foreign
     // assembly may define a lookalike.  The containing assembly has already passed the DotKt marker + generated
     // carrier test; additionally require this embedded attribute type to come from that assembly and itself carry
     // [CompilerGenerated], matching dll2klib's provenance rule.
-    static TypeNode KotlinTypeOf(IList<CustomAttributeData> attrs, Assembly declaringAssembly)
+    static TypeNode CarrierTypeOf(IList<CustomAttributeData> attrs, Assembly declaringAssembly, string attrFullName)
     {
         if (declaringAssembly == null) return null;
         foreach (var cad in attrs)
         {
             try
             {
-                if (cad.AttributeType.FullName != KotlinTypeAttr
+                if (cad.AttributeType.FullName != attrFullName
                     || cad.AttributeType.Assembly != declaringAssembly
                     || !HasAttribute(cad.AttributeType.GetCustomAttributesData(), CompilerGeneratedAttr)
                     || cad.ConstructorArguments.Count != 2
@@ -2154,6 +2465,7 @@ sealed class ReferenceDotKtMetadata
     // lambda whose RECEIVER is such a scope (e.g. SequenceScope) gets the RestrictedSuspendLambda SM base (bundle-6 P5).
     public readonly HashSet<string> RestrictsSuspensionTypes = new(StringComparer.Ordinal);
     public readonly List<MemberBinding> MemberBindings = new();                           // per-member @ClrIntrinsic + shape
+    public readonly List<CtorBinding> CtorBindings = new();                               // per-ctor declaration shape (#86 D1)
     public readonly Dictionary<string, ReferenceTypeShape> TypeShapes = new(StringComparer.Ordinal);
     // [KotlinInline] raw-BIR payloads (#71/#75): "owner|name|pc|ga" -> the candidate decoded carrier JSONs (one per overload).
     public readonly Dictionary<string, List<string>> InlinePayloads = new(StringComparer.Ordinal);
@@ -2207,4 +2519,27 @@ sealed class ReferenceDotKtMetadata
 // NO consumer reads it yet — bundle 6 wires it.
 sealed record ReferenceTypeShape(int TypeParamCount, string Kind, TypeNode.Fqn Base, TypeNode.Fqn[] Interfaces);
 
-sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, string[] ParamTypes = null, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, string ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null);
+// The outcome of looking for one member at one owner (#86 D1). `NotDeclared` is the ONLY one that lets the search
+// continue to the supertypes: a member declared at this level is the declaration the call binds to whether or not it
+// carries erasure facts, and `Refused` is a decision — an overload set or a disagreeing diamond — that no other level
+// may overturn.
+enum SlotLookup { NotDeclared, Declared, Refused }
+
+// ONE declaration slot as the reader may report it (#86 D1). `Refused` is not `Node == null`: the first says the
+// reader saw a carrier and decided it must not be stated, the second says the producer stated nothing. Only the
+// second may fall back to anything.
+readonly record struct SlotFact(TypeNode Node, bool Refused);
+
+// `ReturnType` is the best-effort STATIC-RESULT projection (TypeNodeOf): it drops a generic parameter, because its
+// consumers want a usable concrete identity or nothing. `ReturnTypeNode` is the DECLARATION projection
+// (DeclarationTypeNode), the same one `ParamTypeNodes` uses, which keeps generic parameters as `Tv` — a declaration
+// the caller substitutes. The two are not interchangeable: `Iterable<E>.iterator()` is `Iterator` in the first and
+// `Iterator<!0>` in the second, and only the second says what the call site's type argument completes.
+sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, string[] ParamTypes = null, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, string ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null);
+
+// A referenced CONSTRUCTOR's declaration shape. A `new` is a call whose declaration is the owner's constructor, so the
+// nullable-generic realign types its arguments exactly as it types a method call's — and a ctor has no name of its own,
+// so the key is owner + declared parameter count. `ParamTypeNodes` is the physical CLR signature with generic
+// parameters retained; `NullableGenericParams[i]` is the pre-erasure `[KotlinNullableGeneric]` carrier of that slot
+// when it has one.
+sealed record CtorBinding(string Owner, int ParamCount, TypeNode[] ParamTypeNodes, TypeNode[] NullableGenericParams);

@@ -465,7 +465,7 @@ sealed class Pipeline
             // setField, arraySet, return, and the `if/else` value join. Each rewrite is gated to the exact
             // object-erasure boundary (IsObjectErasureOf), and a value is only ever converted across a bare `object`
             // seam, which is the only one the CLR can express. BEFORE BirTypeLowering.
-            NullableTvErasureCallRealign.Apply(bir.Root, nullableTvDeclRets, isValueFqn);
+            NullableTvErasureCallRealign.Apply(bir.Root, nullableTvDeclRets, isValueFqn, refs);
             // UNCHECKED OBJECT->Tv RETURN ERASURE: the non-null-T sibling of nullable-generic return erasure.  A JVM
             // `Any? as T` physically returns Object; spelling the CLR return as reified T would insert `unbox.any T`
             // inside the callee and throw even when a null result is stored but never consumed.  Emit object physically,
@@ -565,6 +565,13 @@ sealed class Pipeline
             // referenced top-level call to its real file-class owner; bind the trusted physical-Object/logical-T
             // metadata boundary to an explicit CIR return conversion before `sty` is consumed by type lowering.
             if (!_options.RefBuild) UncheckedGenericCastReturnErasure.ApplyReferenced(substituted, refs);
+            // Cross-module half of the nullable-Tv use realignment (#86 D1). The pass above already re-derived every use
+            // whose callee it could name; a REFERENCED top-level fun reaches it as `callStatic owner=null` — kotc has no
+            // file class for it — and only MemberCallSubstitution has now attributed it to the owner the reference index
+            // is keyed by. Same formula, same code, run once more so those calls' returns and arguments are derived from
+            // the producing assembly's declaration too. Idempotent on everything the earlier run already corrected.
+            if (!_options.RefBuild)
+                NullableTvErasureCallRealign.ApplyReferenced(substituted, nullableTvDeclRets, isValueFqn, refs);
             // Gap A — the for-loop iterator protocol over a referenced collection: re-point the desugared `<iterator>`
             // var + its synthetic hasNext/next owner at the REAL referenced kotlin.collections.Iterator<E> (app build
             // only; the stdlib self-build emits Iterator itself, so it is left synthetic there).

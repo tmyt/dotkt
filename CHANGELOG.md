@@ -173,6 +173,60 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   would reject code that emits exactly as it did before. Generic arity stays part of the key, so
   `fun <T> f(x: T?)` beside `fun f(x: Any?)` is still two slots (ECMA-335 I.8.6.1.6).
 
+- **bir2cir (area:bir2cir): a use of an erased slot is derived from the REFERENCED declaration too, not only from a
+  same-compilation one (#86 D1).** `[KotlinNullableGeneric]` had one reader — `dll2klib`, restoring the Kotlin
+  *surface* a consumer compiles against — and restoring the surface is only half of consuming it. A consumer that
+  re-imports `fun <T> unwrapSlot(slot: Slot<T?>): T?` writes `unwrapSlot(Slot<Int?>(5))` and builds a
+  `Slot<Nullable<int32>>`, while the producer's slot is physically `Slot<object>`: unrelated invariant reified
+  generics that no cast reconciles, so the callee read the argument at the wrong shape and the program **corrupted
+  memory** in `CastHelpers.Unbox_Nullable` — with the identical code carrying `null` instead of a value entirely
+  green, which is why a bundled test made this look like a param-vs-property problem rather than a present-vs-absent
+  one. bir2cir now reads the same carrier off the referenced assembly and types the use as
+  `Subst(Erase(declared), typeArgs)` — the identical formula it already applied to a local declaration — so the
+  construction is *built* as `Slot<object>` rather than built wrongly and converted afterwards. The reader takes the
+  carrier first, then the producer's physical signature but only while it still carries a generic parameter (a
+  `Tv`-free physical slot could only contribute a bare `object`, which without a carrier beside it is a declared
+  `Any`), walks base and interfaces because a call names the owner it is DISPATCHED on and not the one that DECLARES
+  the member, and refuses a same-shape overload set outright rather than picking a sibling.
+  That real declaration **replaces a hardcoded member table**: `DeriveKnownReceiverReturn` and its
+  collection/iterator owner name sets — eight collection FQNs, four iterator FQNs, and three special-cased member
+  names — are deleted, and `Iterable<E>.iterator()`, `Iterator<E>.next()` and `List<E>.get(i)` on a receiver that
+  came through the erasure are now derived from what the stdlib actually declares, along with every other referenced
+  generic member the table never listed.
+  One position is deliberately **not** served: an `Array<X?>` slot, because the producer does not implement its own
+  declaration there — `Array<T>.copyOf(newSize)` declares `Array<T?>` (physically `object[]`) and reflectively
+  allocates a `Nullable<V>[]` — so deriving a use from it turns today's formal ilverify finding into a real access
+  violation. The refusal deletes itself when `Array<X?>` becomes canonically `object[]` (#86 D2).
+  And one call SHAPE is deliberately out: a call that states its result only in the frontend `sty` stamp and carries
+  no `ret` — which is how a cross-module generic factory arrives, so `holderOf<String>(3)`'s erased `Vault<object>`
+  return still meets the restored `Vault<string>` slot as a formal-only ilverify finding. Deriving from `sty` closes
+  that one and was tried; it then reaches the same call's function-type ARGUMENT, whose delegate the consumer cannot
+  yet build at the erased shape, turning one formal finding into two `DelegateCtor` ones. It lands with the
+  parameter half of the func-slot erasure, not before it.
+  Measured and NOT deleted: the `forEach` re-narrow trio. Its second half narrows the loop variable back to the
+  PRE-erasure element type, which the blanket sweep has already consumed by the time any use axis runs — a missing
+  TYPE, not a missing declaration, so no reader can supply it. Deleting it reproduced the `filterNotNullTo`
+  `InvalidProgramException` at a value element, and its comment now says that instead of pointing at the table.
+  Four refusal-discipline holes closed on review, each one a place where a refusal was stated and then not honoured.
+  A refused carrier no longer falls back to the physical declaration — that fallback is the same erasure spelled
+  *without* the evidence that it was one, so a `Pair<Array<T?>, U>` slot (physically `Pair<object[], !1>`, still
+  generic-parameter-bearing) served precisely the `object[]` derivation the array refusal exists to prevent. A member
+  DECLARED at a level now terminates the search whether or not it carries erasure facts, so a concrete member that
+  shadows an inherited namesake can no longer be handed the base's carrier. The supertype cycle guard is path-local
+  and keyed on the CONSTRUCTED supertype, so `I<int>` and `I<string>` are both visited and compared instead of the
+  answer depending on reflection interface order. And a `.NET`-bound call's argument is converted to the CLOSED slot:
+  `memberSig` states the callee's parameters OPEN and stays that way for member matching, so
+  `Enumerable.Repeat<Int?>` was casting an erased argument to whatever `!!0` lowered to in the CALLER — an
+  `InvalidProgramException` before the method printed anything, now covered by a fixture.
+  Whether a call is `.NET`-bound is now read off its KIND rather than off which descriptor key holds its parameter
+  vector. A GENERIC .NET call carries `memberSig` from the moment it is bound; a NON-GENERIC one carries `argTypes`
+  until member resolution stamps `memberSig`, which happens long after this narrowing is decided — so every
+  non-generic .NET call was taking the Kotlin fallback, whose widening screen drops reference slots. An erased
+  `object` therefore reached a `string` parameter with no `castclass`: `Path.GetExtension(…)`,
+  `StringBuilder.Append(…)` and `StringBuilder(…)` all ran (both sides are references) while the emitted method
+  failed verification with `[found ref 'object'][expected ref 'string']`. All three shapes are fixtures now, in the
+  suite whose ILVerify lane is what catches a fault a RUN assertion cannot see.
+
 - **bir2cir (area:bir2cir): a `vararg xs: T?` pack is built at the erased element type (#86).** The packed array and
   its elements are ONE decision: the pack fills an `Array<T?>` slot erased to `object[]`, and built as
   `Nullable<int32>[]` it cannot be converted afterwards — the `newarr` and the `stelem` filling it disagreed and

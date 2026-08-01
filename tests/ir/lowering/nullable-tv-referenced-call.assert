@@ -1,0 +1,20 @@
+# THE CONSUMER HALF of the erasure invariant (#86 D1), machine-readable. A use of a slot whose declaration lives in
+# a REFERENCED assembly is typed `Subst(Erase(declaredKotlinType(slot)), typeArgs)` — read off the producing
+# assembly's `[KotlinNullableGeneric]` carrier / physical signature — and never `Erase(Subst(...))`, which would
+# substitute away the very type variable that says the position was erased. No Kotlin source in the corpus can
+# witness it in isolation: it needs a call whose RECEIVER already came through the erasure while the callee's
+# declaration is only readable across the module boundary.
+#
+# The document calls `kotlin.Pair<A, B>.first` — declared `A`, emitted `!0` — on a receiver that came through the
+# erasure as `Pair<object, String>`, while the call site (which kotc emitted with `A` already substituted) says the
+# result is `Int?`. The reference index answers with the real declaration, so the corrected owner is kept and the
+# result is `Subst(!0, [object, String])` = `object`.
++"ownerType":{"t":"fqn","name":"kotlin.Pair","args":[{"t":"fqn","name":"object"},{"t":"fqn","name":"System.String"}]}
++"method":"get_first","ret":{"t":"fqn","name":"object"}
+# The value still reaches its declared `Int?` slot, and it reaches it through an explicit narrowing — ilemit's
+# `unbox.any` — rather than as a silently mistyped stack slot.
++"k":"cast","type":{"t":"nullable","of":{"t":"fqn","name":"System.Int32"}}
+# The defect this document exists to catch: keeping the call site's SUBSTITUTED return. That is what the call said
+# before the referenced declaration was consulted, and it is not what the producer's member returns — at a value
+# instantiation the two are unrelated CLR types and the mismatch is a memory-corrupting unbox, not a mistype.
+-"method":"get_first","ret":{"t":"nullable"

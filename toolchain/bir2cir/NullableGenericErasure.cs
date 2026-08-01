@@ -198,14 +198,19 @@ static class NullableGenericErasure
         if (o["methods"] is JsonArray msArrays)
             foreach (var m in msArrays)
                 if (m is JsonObject mo) CollapseReifiedArrayVars(mo);
-        // FOREACH-OVER-NULLABLE-GENERIC-SOURCE erasure, and NOT YET DELETABLE (#86). The loop variable of a
-        // `forEachInline` over an object-erased `Iterable<T?>` source is a slot like any other, so the uniform rule
-        // covers the ERASURE half. Its second half cannot move to the use axis yet: the loop var has to be RE-NARROWED
-        // where it flows into a value-typed consumer, and the narrowing target is the PRE-erasure element type, which
-        // exists only here — the blanket sweep below consumes it, and by the time the use axis runs both the slot and
-        // the element token read `object`. The consumer is a REFERENCED collection member whose declared parameter is
-        // not readable either. It dies with `DeriveKnownReceiverReturn` and the collection/iterator owner tables, in
-        // the cross-module carrier-read step, and for the same reason.
+        // FOREACH-OVER-NULLABLE-GENERIC-SOURCE erasure, and NOT deletable — RE-MEASURED against the cross-module
+        // carrier read (#86 D1), which did subsume the hardcoded receiver-return table beside it but does NOT subsume
+        // this. Deleting it breaks `filterNotNullTo` at a value element with an InvalidProgramException inside the
+        // stdlib's own body, exactly as it did before the reader existed.
+        //
+        // The reason is a MISSING TYPE, not a missing declaration. The loop variable of a `forEachInline` over an
+        // object-erased `Iterable<T?>` source is a slot like any other, so the uniform rule covers the ERASURE half;
+        // the other half is a RE-NARROWING where that variable flows into a value-typed consumer, and its target is
+        // the PRE-erasure element type. That type exists only HERE — the blanket sweep below consumes it, and by the
+        // time the use axis runs, the slot and the element token both read `object`, so there is nothing left for the
+        // use axis to narrow BACK to. Reading the callee's declaration cannot supply it either: the callee's parameter
+        // is `Subst(Erase(decl))`, which is the erased form by construction. Erasing the loop element and re-narrowing
+        // it at its consumers is therefore one atomic decision, and it stays in the pass that still holds both halves.
         EraseForEachOverNullableGpSource(o);
         // Nested types (a generic class' member methods / fields) carry their own declaration lists.
         if (o["types"] is JsonArray types)
