@@ -47,7 +47,12 @@ static class ValueJoinNullWidening
                 if (Bool(o[Fact]))
                 {
                     o.Remove(Fact);   // a producer->consumer hint, never emitted as CIR
-                    if (TypeJson.Read(o["type"]) is TypeNode.Fqn { Args: null } t && isValue(t.Name) && !IsVoidish(t.Name))
+                    // ASK THE ORACLE ABOUT THE FQN, WHATEVER ITS ARGUMENTS. A CONSTRUCTED struct is a struct —
+                    // `KeyValuePair<String, Int>` holds a null no better than `Int` does — and `Nullable<V>` is as
+                    // legal over it as over a primitive (BirTypeLowering builds exactly that). Requiring `Args: null`
+                    // here consumed the fact and left the join a bare struct, which is the same defect this family
+                    // already had at the array-element oracle site (#86 D2).
+                    if (TypeJson.Read(o["type"]) is TypeNode.Fqn t && isValue(t.Name) && !IsVoidish(t.Name))
                         o["type"] = TypeJson.Write(new TypeNode.Nullable(t));
                 }
                 foreach (var c in children) Walk(c, isValue);

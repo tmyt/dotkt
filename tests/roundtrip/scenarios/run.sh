@@ -972,6 +972,29 @@ fun main() {
 }
 EOF
 
+# The same return slot with the DERIVATION in the consumer, which is the only place the virtual-forward property is
+# observable. Derived in the SAME module self-heals: it gets a bridge of its own, and the most-derived MethodImpl wins
+# whichever way the library's bridge forwards. Across the boundary `SubSrc` gets NO bridge — it is the referenced-base
+# gap below, and it is exactly why this shape is the discriminating one — so dispatch falls back to the LIBRARY's
+# MethodImpl, and the override is only reached because that bridge forwards VIRTUALLY. Bridged non-virtually (which is
+# what the covariant-return synthesizer does, and what it did to this slot before the two passes were made exclusive),
+# every one of these calls answers with the library's 4.
+NOV="$ROOT/build/roundtrip-nullable-vt-generic-override-virtual-group"
+ng_lib "$NOV" NovLib <<'EOF'
+interface Src<T> { fun get(): T? }
+open class IntSrc : Src<Int> { override fun get(): Int? = 4 }
+EOF
+
+ng_app "$NOV" NovLib roundtrip-nullable-vt-generic-override-virtual-forward '9/9/9' \
+	'cross-module: a consumer-side override reached through the LIBRARY bridge, which must forward virtually (#86 D3)' <<'EOF'
+class SubSrc : IntSrc() { override fun get(): Int? = 9 }
+fun main() {
+    val s: Src<Int> = SubSrc()
+    val b: IntSrc = SubSrc()
+    println("" + SubSrc().get() + "/" + s.get() + "/" + b.get())   // 9/9/9
+}
+EOF
+
 # ----- CROSS-MODULE: a base declared in a REFERENCED assembly (#86 D3, documented red) ------------------
 # The supertype graph the bridge walks is the CURRENT compilation's, so a class whose base interface lives in a
 # REFERENCED DotKt assembly gets no bridge and the erased slot goes unfilled. This is the same cross-module reader

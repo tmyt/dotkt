@@ -27,5 +27,17 @@
 # half used to live in kotc and ask a hardcoded primitive list instead of the struct-ness oracle.
 +"k":"cond","type":{"t":"nullable","of":{"t":"fqn","name":"System.Int32"}}
 
+# NESTED JOINS, and why the fact has to be COMPOSITIONAL in the producer. `if (a) (if (b) v else null) else w` shows
+# the outer join a `cond` for its `then` and never a null constant, so a leaf-only test arms the inner alone — and an
+# inner `Nullable<int32>` then flows into a bare `int32` join. kotc propagates its own verdict upward through join
+# chains, which is what makes both of these carry the fact; this document pins that BOTH widen, since a consumer that
+# only widened the innermost would produce exactly the broken pair.
++"then":{"k":"cond","type":{"t":"nullable","of":{"t":"fqn","name":"System.Int32"}}
+
+# A non-primitive VALUE type takes the same path: the oracle is asked about the FQN, so a BCL struct join widens for
+# the same reason `Int` does, where the hardcoded primitive list this replaced covered neither it nor `value class`.
++"name":"System.DateTime"}}
+-"type":{"t":"fqn","name":"System.DateTime"},"cond"
+
 # The fact is a producer-to-consumer hint and is CONSUMED: no CIR node may still carry it.
 -"joinNullBranch"

@@ -116,6 +116,17 @@ class NgSubSrc : NgBaseSrc() {
 // it is a separate observable — an abstract slot left unfilled is a TypeLoadException at type LOAD, which no
 // verification pass reports and only running the code can catch.
 abstract class NgHolder<T> { abstract fun take(x: T?): String }
+// The MIXED generic base slot: one parameter the erasure moves and one it does not. The bridge's descriptor states
+// the CONSTRUCTED slot `(int32, object)` while the base method is emitted once, keyed by its DECLARATION `(T, object)`
+// — so binding the MethodImpl has to go through the declaration and re-anchor onto the constructed base, exactly as
+// the interface wiring does. Matching the constructed signature against the builder key instead refused this program.
+abstract class NgMixed<T> { abstract fun take(x: T, narrowed: T?): String }
+open class NgIntMixed : NgMixed<Int>() {
+    override fun take(x: Int, narrowed: Int?): String = "" + x + "/" + narrowed
+}
+class NgIntMixedSub : NgIntMixed() {
+    override fun take(x: Int, narrowed: Int?): String = "sub:" + super.take(x, narrowed)
+}
 open class NgIntHolder : NgHolder<Int>() { override fun take(x: Int?): String = x?.toString() ?: "none" }
 // A THIRD level: the bridge in `NgIntHolder` forwards VIRTUALLY, so an override of the typed body one level down is
 // what runs when the call comes through the erased base slot.
@@ -288,6 +299,12 @@ class NullableTests {
         val sub: NgHolder<Int> = NgIntHolderSub()
         assertEquals("sub:9", sub.take(9))                    // sub:9  through the base slot, dispatched one deeper
         assertEquals("sub:none", NgIntHolderSub().take(null)) // sub:none
+        // A generic base whose slot mixes a moved and an unmoved parameter, through the base slot and one deeper.
+        val m: NgMixed<Int> = NgIntMixed()
+        assertEquals("1/null", m.take(1, null))               // 1/null  the constructed (int32, object) slot
+        assertEquals("2/3", NgIntMixed().take(2, 3))          // 2/3     its own declared type
+        val ms: NgMixed<Int> = NgIntMixedSub()
+        assertEquals("sub:4/null", ms.take(4, null))          // sub:4/null
     }
 
     // #86 D3 — a `T?` RETURN slot, where TWO bridge synthesizers can see the divergence. Both emitting leaves the
