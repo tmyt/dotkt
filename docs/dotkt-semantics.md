@@ -1661,6 +1661,12 @@ are true at once, so both are emitted:
 > signature (`accept(object)`) carries the MethodImpl and forwards to it.** One bridge fills every slot of that shape
 > the supertype graph declares — the constructed interface, its own base interfaces, the base-class chain.
 
+That graph is the **compilation's own**. A class whose base interface or base class is declared in a *referenced*
+DotKt assembly gets no bridge, so the base's erased slot stays unfilled and the type fails to load — the same
+cross-module reader gap that the argument axis needed `[KotlinNullableGeneric]` to close, and one this design
+inherited rather than introduced. It is carried as `roundtrip-nullable-vt-generic-override-crossmodule-base` in
+`tests/roundtrip/scenarios/run.sh`; everything below describes same-module supertypes.
+
 So the type's Kotlin surface and its physical members agree, and both entry points work: through the base slot, and
 through the override's own declared type — including from a separately compiled consumer, which type-checks against
 the re-imported `accept(x: Int?)` and finds a member of exactly that signature. The bridge is private, so it is not

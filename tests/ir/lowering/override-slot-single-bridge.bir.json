@@ -1,0 +1,63 @@
+{
+  "fileClass": "OverrideSlotBridgeKt",
+  "hasMain": false,
+  "fields": [],
+  "methods": [],
+  "refTypes": [],
+  "types": [
+    {
+      "name": "Src",
+      "kind": "interface",
+      "typeParams": ["T"],
+      "base": null,
+      "interfaces": [],
+      "fields": [],
+      "ctors": [],
+      "methods": [
+        {
+          "name": "get",
+          "static": false,
+          "override": false,
+          "virtual": true,
+          "params": [],
+          "ret": { "t": "nullable", "of": { "t": "tv", "scope": "type", "i": 0 } },
+          "body": [],
+          "attrs": []
+        }
+      ],
+      "properties": [],
+      "attrs": []
+    },
+    {
+      "name": "IntSrc",
+      "kind": "class",
+      "base": null,
+      "interfaces": [{ "t": "fqn", "name": "Src", "args": [{ "t": "fqn", "name": "kotlin.Int" }] }],
+      "fields": [],
+      "ctors": [{ "params": [], "baseArgs": null, "thisArgs": null, "vis": "public", "body": [] }],
+      "methods": [
+        {
+          "name": "get",
+          "static": false,
+          "override": false,
+          "virtual": true,
+          "vis": "public",
+          "params": [],
+          "ret": { "t": "nullable", "of": { "t": "fqn", "name": "kotlin.Int" } },
+          "overrides": [
+            { "owner": { "t": "fqn", "name": "Src" }, "member": "get", "kind": "method", "arity": 0 }
+          ],
+          "body": [
+            {
+              "k": "return",
+              "value": { "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 4 }
+            }
+          ],
+          "attrs": []
+        }
+      ],
+      "properties": [],
+      "attrs": []
+    }
+  ]
+}

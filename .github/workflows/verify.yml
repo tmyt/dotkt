@@ -30,7 +30,9 @@ jobs:
   # ---- the canonical functional gate set (Linux) --------------------------------------------------
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 60, not 30: the canonical gate set has outgrown a 2-core hosted runner's 30-minute box —
+    # the #86 stack's suite growth pushed verify-core past it (job cancelled at exactly 30:00).
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 

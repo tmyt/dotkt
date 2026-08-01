@@ -41,6 +41,15 @@ using DotKt.Bir;
 // slot uses (the `[KotlinNullableGeneric]` carrier and the slot's NRT byte), so the surface survives even though the
 // physical type had to move. The split is exactly the CLR's: a bare `object` seam is one instruction in each
 // direction, and a difference under a constructed generic is not expressible at all.
+//
+// KNOWN LIMITATION — A BASE DECLARED IN A REFERENCED ASSEMBLY. The supertype graph walked here is the CURRENT
+// COMPILATION's, so a class whose base interface or base class lives in a referenced DotKt assembly is not indexed:
+// its narrowed override gets no bridge, the base's erased slot goes unfilled, and the type fails to LOAD. This is the
+// same cross-module reader gap that keeps the other referenced-declaration derivations out, it predates the bridge
+// (the erase-in-place design this replaced had it too), and closing it needs the base slot's pre-erasure declaration
+// read off the referenced assembly through `ReferenceMetadataIndex`. Until then every claim below — and in
+// `docs/dotkt-semantics.md` §9c-bis — is a statement about SAME-MODULE supertypes, and
+// `roundtrip-nullable-vt-generic-override-crossmodule-base` is the documented red that measures it.
 static class KotlinOverrideSlotBridge
 {
     public sealed class Def
@@ -116,6 +125,12 @@ static class KotlinOverrideSlotBridge
         var bridges = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
         var ordinal = 0;
 
+        // EVERY `continue` BELOW MEANS "THIS SUPERTYPE OR SLOT IS NOT ONE THIS ERASURE DIVERGED", never "give up on a
+        // slot that needs filling". A supertype absent from `defs` is declared in a referenced assembly (the known
+        // limitation above, which no local decision can repair); an arity that does not match its spec, or a slot
+        // whose types do not read, is a declaration this pass has no opinion about and leaves exactly as the other
+        // passes found it. The one judgement call is `Implementer` returning null on an ambiguous overload set, and
+        // it is documented there.
         foreach (var (spec, supIsInterface) in ReachableSupertypes(cls, defs))
         {
             if (!defs.TryGetValue(spec.Name, out var sup)) continue;
@@ -213,6 +228,15 @@ static class KotlinOverrideSlotBridge
             return LowersToObject(declared) ? Fit.Same : Fit.Bridge;
         return ErasureAligned(slot, declared) ? Fit.Rewrite : Fit.Foreign;
     }
+
+    // WHICH PASS OWNS A DIVERGENT SLOT. `CovariantInterfaceReturnBridge` bridges a return the override narrowed, and
+    // it runs first; this erasure narrows returns too, so without a boundary both fire on one slot and emit two
+    // private bridges with the SAME signature and the SAME MethodImpl descriptor — and the emitter, taking the first
+    // match, silently picks between them. The boundary is the divergence itself: a difference this erasure created
+    // belongs to this pass, whose bridge forwards VIRTUALLY (so a further-derived override is what runs) where the
+    // covariant one deliberately does not.
+    public static bool IsErasureDivergence(TypeNode slot, TypeNode declared) =>
+        slot != null && declared != null && !slot.Equals(declared) && ErasureAligned(slot, declared);
 
     // True iff `slot` is `declared` with a bare `object` at some positions and nothing else changed — i.e. the two
     // differ ONLY where the base declaration was object-erased. Every other divergence, at any depth, says the slot

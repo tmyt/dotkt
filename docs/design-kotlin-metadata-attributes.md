@@ -108,8 +108,9 @@ At each carried slot, the erasure may be at the slot's **head** (`x: T?`) or **n
 - **A VALUE head is the one case the byte cannot carry at all**, and there the carrier keeps its own outer `?`. An
   NRT byte array describes reference nodes only — `Int` contributes none — so `Int?` stripped to `Int` plus a
   `[Nullable(2)]` byte restores as a non-null `Int`. The reader therefore strips the outer nullability only when the
-  inner can consume a byte (a type variable or a reference type). The slot that has this shape is the #86 D3 override
-  bridge: a physical `object` over a declared, concrete `Int?`.
+  inner is one the byte walk emits a byte for: everything except the Kotlin primitives (`Boolean`/`Char`/the sized
+  integers and floats, signed and unsigned) and `Unit`. The slot that has this shape is the #86 D3 override bridge: a
+  physical `object` over a declared, concrete `Int?`.
 
 Dropping either channel is invisible to every runtime-shaped gate: the producer is unchanged and only a separately
 compiled Kotlin **consumer** fails, at compile time, with a type mismatch against the degraded slot.

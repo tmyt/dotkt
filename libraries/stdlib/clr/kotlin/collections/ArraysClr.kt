@@ -18,7 +18,7 @@ package kotlin.collections
 // for a reified element (see its declaration for why neither `arrayOfNulls<T>(0)` nor the array constructor can).
 // Written directly (not via emptyArray()) to avoid a nested cross-module inline hop.
 public actual inline fun <reified T> Array<out T>?.orEmpty(): Array<out T> =
-    this ?: (dotktNewTypedArray(T::class, 0) as Array<out T>)
+    this ?: (dotktNewTypedArray(T::class as DotktType, 0) as Array<out T>)
 
 /**
  * Returns a *typed* array containing all the elements of this collection.
@@ -57,7 +57,7 @@ public actual inline fun <reified T> Collection<T>.toTypedArray(): Array<T> {
     // because `arrayOfNulls` returns `Array<T?>` = `object[]` (#86 D2) and `object[]` is not castable to `int32[]`.
     // Each element narrows out of the boxed staging array as it is written.
     val objs = dotktCollectionElements<T>(this)
-    val result = dotktNewTypedArray(T::class, objs.size) as Array<T>
+    val result = dotktNewTypedArray(T::class as DotktType, objs.size) as Array<T>
     var i = 0
     while (i < objs.size) {
         result[i] = objs[i] as T

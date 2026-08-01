@@ -73,11 +73,12 @@ static partial class NullableTvErasureCallRealign
         // revisited it — so the emitted `g<object>` carried a first argument reconciled against an instantiation that
         // no longer existed. One pass to settle, then one pass that derives everything from a fixed answer.
         //
-        // A CONSTRUCTION still naming its OWN element is skipped: it is built here, so it states nothing the
+        // An ARRAY construction still naming its OWN element is skipped: it is built here, so it states nothing the
         // instantiation must match — the main loop types it against the parameter instead, which is the ordering its
-        // `new`/pack retyping depends on. A construction whose element is already the bare `object` is the opposite
-        // case and is NOT skipped: that is an `arrayOf<Int?>(…)` the factory has already canonicalized, a real
-        // `Array<X?>` value, and it settles the instantiation exactly as a variable holding one would.
+        // `new`/pack retyping depends on. An array construction whose element is already the bare `object` is the
+        // opposite case and is NOT skipped: that is an `arrayOf<Int?>(…)` the factory has already canonicalized, a real
+        // `Array<X?>` value, and it settles the instantiation exactly as a variable holding one would. An OBJECT
+        // construction is skipped outright — see [BuildsItsOwnElement] for why that conservative skip is correct here.
         // Everything else is evaluated here and again below; every rewrite on that path is guarded by
         // `IsObjectErasureOf` or an idempotence check, so the second visit finds its own work already done.
         if (haveDecl && methodArgs != null)
@@ -519,11 +520,23 @@ static partial class NullableTvErasureCallRealign
 
     static bool IsBareObject(TypeNode t) => t is TypeNode.Fqn { Name: "object", Args: null };
 
-    // A construction whose element type is its OWN choice rather than a fact about the callee: an array built at this
-    // call site and still naming a concrete element. `f<Int?>(1, null)` packs a `Nullable<int32>[]` that agrees with
-    // whatever `!!0[]` is instantiated at, so it must not be read as evidence of an instantiation. Once its element is
-    // the bare `object` it has stopped being a free choice — the array factory canonicalized it (#86 D2) and it is a
-    // real `Array<X?>` value like any other.
+    // The arguments the type-argument settle takes NO evidence from — each because the MAIN loop still has to retype
+    // it, and would be reconciling a construction against a stale instantiation had this pass evaluated it first.
+    // Two node families match:
+    //   * an ARRAY construction (`newArray`/`newArrayInit`/`newArraySized`) that does not already state the bare
+    //     `object` element. It is built at this call site, so its element is its OWN choice rather than a fact about
+    //     the callee: `f<Int?>(1, null)` packs a `Nullable<int32>[]` that agrees with whatever `!!0[]` is instantiated
+    //     at. Once the element IS the bare `object` that freedom is gone — the array factory canonicalized it
+    //     (#86 D2) and it is a real `Array<X?>` value like any other — so that one form is deliberately not matched.
+    //     (An array node with no `elem` slot at all reads as "not the bare object" and matches, like the rest.)
+    //   * a `new` — the Kotlin OBJECT-construction kind, and only that kind. A `.NET` `newClr`, a `newList`,
+    //     `newClosure`, `newDelegate` and the rest are separate kinds and never match here. A `new` carries no `elem`
+    //     slot, so the element test cannot narrow it and every `new` matches; that is the RIGHT answer rather than
+    //     merely the safe one, because the main loop retypes a `new`'s own instantiation to the slot's BEFORE
+    //     evaluating it, which is the ordering its constructor arguments depend on. Nothing in this pass reads an
+    //     instantiation off a constructed object, so skipping one here loses no evidence.
+    // Both cases are provisional in the way the whole pre-pass is: the general type-argument rule replaces this
+    // predicate outright rather than growing another arm on it.
     static bool BuildsItsOwnElement(JsonObject arg)
         => Str(arg["k"]) is "new" or "newArray" or "newArrayInit" or "newArraySized"
            && !IsBareObject(TypeJson.Read(arg["elem"]));
