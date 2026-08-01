@@ -533,6 +533,84 @@
           }
         }
       ]
+    },
+    {
+      "name": "constructedStructJoinYieldsNull",
+      "static": true,
+      "vis": "public",
+      "params": [
+        {
+          "name": "a",
+          "type": {
+            "t": "fqn",
+            "name": "kotlin.Boolean"
+          }
+        },
+        {
+          "name": "s",
+          "type": {
+            "t": "fqn",
+            "name": "System.ArraySegment",
+            "args": [
+              {
+                "t": "fqn",
+                "name": "kotlin.String"
+              }
+            ]
+          }
+        }
+      ],
+      "ret": {
+        "t": "nullable",
+        "of": {
+          "t": "fqn",
+          "name": "System.ArraySegment",
+          "args": [
+            {
+              "t": "fqn",
+              "name": "kotlin.String"
+            }
+          ]
+        }
+      },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "cond",
+            "joinNullBranch": true,
+            "type": {
+              "t": "fqn",
+              "name": "System.ArraySegment",
+              "args": [
+                {
+                  "t": "fqn",
+                  "name": "kotlin.String"
+                }
+              ]
+            },
+            "cond": {
+              "k": "local",
+              "name": "a"
+            },
+            "then": {
+              "k": "local",
+              "name": "s"
+            },
+            "else": {
+              "k": "const",
+              "type": {
+                "t": "nullable",
+                "of": {
+                  "t": "fqn",
+                  "name": "kotlin.Nothing"
+                }
+              },
+              "value": null
+            }
+          }
+        }
+      ]
     }
   ]
 }
