@@ -67,6 +67,13 @@ static class ForeignNullableGenericCrossing
     // on `IBase`) and one reached only through a Kotlin interface declared in a sibling FILE are both reached. Only
     // a walk over every root at once can do the second, which is why this half does not run per file the way the
     // call-side sweep below does.
+    //
+    // AND IT CONSUMES THE RECORD IT ASKS. The pre-erasure Kotlin type of an erased declaration slot is a
+    // pass-to-pass fact: RoundtripMetadata mints it into `[KotlinNullableGeneric]` in a ref/app build, and in the
+    // runtime build — which mints nothing — it is still on the slot when this runs, because this is its last
+    // reader. Either way `nullableGeneric`/`nullableGenericRet` must not reach CIR, so this drops them, exactly
+    // as the call-side sweep below drops `memberRet`. That is also why bir2cir writes no CIR file until this has
+    // run: a file serialized inside the lowering loop would freeze the record of every file but the last.
     public static void CheckImplementedSlots(IReadOnlyList<(JsonNode Root, string File)> roots,
         ReferenceMetadataIndex refs)
     {
@@ -75,6 +82,22 @@ static class ForeignNullableGenericCrossing
             if (root is JsonObject o && o["types"] is JsonArray types)
                 foreach (var t in types.OfType<JsonObject>())
                     CheckTypeSlots(t, defs, refs, file);
+        foreach (var (root, _) in roots) DropSlotRecords(root);
+    }
+
+    static void DropSlotRecords(JsonNode node)
+    {
+        switch (node)
+        {
+            case JsonObject obj:
+                obj.Remove("nullableGeneric");
+                obj.Remove("nullableGenericRet");
+                foreach (var kv in obj) if (kv.Value != null) DropSlotRecords(kv.Value);
+                break;
+            case JsonArray arr:
+                foreach (var it in arr) if (it != null) DropSlotRecords(it);
+                break;
+        }
     }
 
     static void CheckTypeSlots(JsonObject to, IReadOnlyDictionary<string, SupertypeGraph.Def> defs,
@@ -130,7 +153,7 @@ static class ForeignNullableGenericCrossing
             // it — and "overrides it" is decided by the signature the override would physically state, not by the
             // member's name and parameter count, which cannot tell `Take(List<int?>)` from an unrelated
             // `Take(string)` sibling the author actually wrote.
-            if (!((mustFillAbstract && !slot.Implemented) || Declares(to, slot))) continue;
+            if (!((mustFillAbstract && !slot.Implemented) || Declares(to, slot, refs))) continue;
             throw RefuseSlot(file, Str(to["name"]) ?? "<type>", slot.Owner, slot.Name, crossing.Value.Where,
                 crossing.Value.Type);
         }
@@ -236,8 +259,8 @@ static class ForeignNullableGenericCrossing
     // Kotlin declaration filling it physically states. `NullableGenericErasure.ErasedLoweredSlot` is that image, and
     // it is the identity at every position the erasure leaves alone, so an untouched parameter still has to match
     // exactly and a sibling overload of the same name and arity is not mistaken for this one. Where the image
-    // coincides with a slot some sibling states OUTRIGHT, that sibling has the stronger claim and this returns
-    // false — see the claim set built by the caller.
+    // coincides with a slot some sibling states OUTRIGHT, the two are told apart by the erasure's own record —
+    // see below.
     //
     // A BODY, and not merely a declaration: Kotlin re-declares an inherited abstract member on the deriving
     // interface as a fake override, so `interface KI : ITake` carries a `Take` of its own. That states the slot
@@ -245,23 +268,34 @@ static class ForeignNullableGenericCrossing
     // and carries no `abstract` flag on it, while a body the author wrote has at least its own return, so even an
     // `override fun Put(xs: List<Int?>) {}` (which IS unfillable, and is refused) has a statement in it.
     //
-    // The RETURN is deliberately not compared: Kotlin lets an override narrow it, and a narrowed return is a
-    // different pass's business (`CovariantInterfaceReturnBridge`). Name, method generic arity and the whole
-    // parameter vector identify the CLR slot on their own.
+    // The RETURN is deliberately not compared, and it needs no record either. Kotlin lets an override narrow it,
+    // and a narrowed return is a different pass's business (`CovariantInterfaceReturnBridge`); name, method
+    // generic arity and the whole parameter vector identify the CLR slot on their own. The parameter comparison
+    // below has a second job the return has no counterpart for — telling this slot's body from a sibling that
+    // states the same physical signature — and a RETURN-position crossing cannot pose that question at all: two
+    // members with one name, one arity and one parameter vector differing only in return type are two CLR slots
+    // but ONE Kotlin declaration, which the frontend rejects ("return type is not a subtype of the return type of
+    // the overridden member"). So no accepted program reaches here with a return whose owner is in doubt, and
+    // asking the record about it could only drop a refusal that is owed.
     //
     // WHICH SOURCE SLOT A BODY BELONGS TO IS NOT A PHYSICAL QUESTION, and asking it physically is how a sibling
     // came to answer for the crossing. The image of `Take(List<int?>)` is `Take(List<object>)`, which a sibling may
     // declare FOR REAL — and then two different Kotlin overrides, `Take(xs: List<Int?>)` and
     // `Take(ys: List<Any?>)`, state that one physical signature. Only the first is the crossing's; the second fills
     // the sibling and owes it nothing. The two are told apart by the fact this erasure itself recorded on the
-    // declaration: at a position it MOVED, the parameter carries the pre-erasure Kotlin type on
-    // `[KotlinNullableGeneric]`, and at a position it did not touch there is nothing to carry. So a body is this
-    // slot's only when it carries that fact at every position where this slot crosses.
+    // declaration: at a position it MOVED, the parameter carries the PRE-ERASURE Kotlin type on
+    // `[KotlinNullableGeneric]`. So a body is this slot's only where, at every PARAMETER this slot crosses at, it
+    // records the type THIS slot states (the return cannot pose the question — see above).
+    //
+    // AND THE RECORD IS READ, NOT COUNTED. Presence alone is the same conflation one level in: `List<Boolean?>` is
+    // recorded exactly as `List<Int?>` is and erases to the same `List<object>`, so a body that legitimately fills a
+    // DotKt supertype's `Take(List<Boolean?>)` would answer for the foreign `Take(List<int?>)` slot it never
+    // mentions — refusing a program that has a perfectly good lowering.
     //
     // Deciding it by "some other slot already states that signature" instead let ANY body of that shape off, which
     // is the silent miscompile the refusal exists to prevent: the CLR binds the emitted body to the `object` slot
     // and a call through `Take(List<int?>)` runs the BASE implementation.
-    static bool Declares(JsonObject to, Slot slot)
+    static bool Declares(JsonObject to, Slot slot, ReferenceMetadataIndex refs)
     {
         if (to["methods"] is not JsonArray methods) return false;
         var want = slot.Params.Select(p => Norm(NullableGenericErasure.ErasedLoweredSlot(p))).ToArray();
@@ -277,24 +311,114 @@ static class ForeignNullableGenericCrossing
             {
                 var po = ps[i] as JsonObject;
                 ok = TypeJson.Read(po?["type"]) is TypeNode t && Norm(t) == want[i]
-                     && (!moved[i] || CarriesPreErasureType(po));
+                     && (!moved[i] || StatesSlot(po, slot.Params[i], refs));
             }
             if (ok) return true;
         }
         return false;
     }
 
-    // Did this erasure move this declaration slot? It says so itself, on the round-trip channel it writes for
-    // exactly that purpose — the raw `nullableGeneric` stash while it is still a key, and the
+    // Does this declaration slot record THIS crossing's pre-erasure type? The erasure says what it moved on the
+    // round-trip channel it writes for exactly that purpose — the raw stash while it is still a key, and the
     // `[KotlinNullableGeneric]` attribute once RoundtripMetadata has minted it. Both are read because this check
-    // runs after the minting in a ref/app build and the stash is what a build that mints nothing would leave.
-    static bool CarriesPreErasureType(JsonObject decl) =>
-        decl != null
-        && (decl["nullableGeneric"] != null
-            || (decl["attrs"] is JsonArray attrs
-                && attrs.OfType<JsonObject>().Any(a => TypeJson.Read(a["attr"]) is TypeNode.Fqn f
-                                                       && f.Name.EndsWith(".KotlinNullableGenericAttribute",
-                                                           StringComparison.Ordinal))));
+    // runs after the minting in a ref/app build, while the runtime build mints nothing and reaches here with the
+    // stash still on the slot (`CheckImplementedSlots` is what consumes it).
+    static bool StatesSlot(JsonObject decl, TypeNode slotType, ReferenceMetadataIndex refs)
+        => decl != null && PreErasureTypeOf(decl) is TypeNode pre
+           && SameSlot(pre, slotType, argument: false, refs.Aliases);
+
+    // The recorded pre-erasure type of a declaration slot, from whichever of the two forms of the one record this
+    // build has reached: the stash, or the attribute this compilation minted from it. The attribute is matched by
+    // its exact FQN — the one RoundtripMetadata stamps — rather than by how the name ends, so no other assembly's
+    // similarly-named attribute can answer for it.
+    static TypeNode PreErasureTypeOf(JsonObject decl)
+    {
+        if ((decl["nullableGeneric"] as JsonValue)?.TryGetValue<string>(out var stash) == true)
+            return TypeNode.Parse(stash);
+        if (decl["attrs"] is not JsonArray attrs) return null;
+        foreach (var a in attrs.OfType<JsonObject>())
+            if (TypeJson.Read(a["attr"]) is TypeNode.Fqn { Args: null } f
+                && f.Name == RoundtripMetadata.AKNullableGen
+                && a["args"] is JsonArray args && args.Count >= 2
+                && Str((args[0] as JsonObject)?["value"]) is string version
+                && Str((args[1] as JsonObject)?["bytes"]) is string payload)
+                return TypeJson.Read(BirCarrier.DecodeBody(version, Convert.FromBase64String(payload)));
+        return null;
+    }
+
+    // Is the recorded pre-erasure type the one this foreign slot states? ONLY THE MOVED POSITIONS ARE COMPARED,
+    // because they are the only ones with anything left to say: every position the erasure left alone survived
+    // physically and was matched exactly by the caller, so re-asking about it can only add ways to disagree.
+    //
+    // The record states the KOTLIN type the author wrote (`List<Int?>`) and the foreign declaration the CLR one
+    // (`List<Nullable<int32>>`). At a moved position the two name the same type through the stdlib's own
+    // `@ClrTypeAlias` — `kotlin.Int` IS `System.Int32` — which is the same map every other Kotlin-to-CLR name
+    // decision in this layer reads, so no second correspondence is invented here. Everywhere else the walk only
+    // needs the two SHAPES to correspond, and where they do not it asks whether anything below moved at all: if
+    // nothing did, there was nothing there to tell one slot from another.
+    //
+    // Positions are read off `NullableGenericErasure.Erase`: an Fqn's arguments, an array's element and a
+    // delegate's RETURN are arguments; a byref referent, a nullable's inner and a delegate's PARAMETERS are slots.
+    static bool SameSlot(TypeNode carrier, TypeNode slot, bool argument, IReadOnlyDictionary<string, string> aliases)
+    {
+        carrier = Bare(carrier);
+        slot = Bare(slot);
+        // THE MOVED POSITION — the one the physical comparison could not see, and so the one that must agree.
+        if (argument && slot is TypeNode.Nullable sn)
+            return carrier is TypeNode.Nullable cn && PreKey(cn.Of, aliases) == PreKey(sn.Of, aliases);
+        switch (carrier, slot)
+        {
+            case (TypeNode.Fqn { Args: { } ca }, TypeNode.Fqn { Args: { } sa }) when ca.Length == sa.Length:
+                for (var i = 0; i < ca.Length; i++) if (!SameSlot(ca[i], sa[i], true, aliases)) return false;
+                return true;
+            case (TypeNode.Array c, TypeNode.Array s):
+                return SameSlot(c.Elem, s.Elem, true, aliases);
+            case (TypeNode.ByRef c, TypeNode.ByRef s):
+                return SameSlot(c.Of, s.Of, false, aliases);
+            case (TypeNode.Nullable c, TypeNode.Nullable s):
+                return SameSlot(c.Of, s.Of, false, aliases);
+            case (TypeNode.Fn c, TypeNode.Fn s) when FnSlots(c).Length == FnSlots(s).Length:
+                if (!SameSlot(c.Ret, s.Ret, true, aliases)) return false;
+                TypeNode[] cs = FnSlots(c), ss = FnSlots(s);
+                for (var i = 0; i < cs.Length; i++) if (!SameSlot(cs[i], ss[i], false, aliases)) return false;
+                return true;
+            default:
+                return !(argument
+                    ? NullableGenericErasure.ErasureWouldMoveArgument(slot)
+                    : NullableGenericErasure.ErasureWouldMove(slot));
+        }
+    }
+
+    // An NRT-OBLIVIOUS wrapper is an annotation on a type rather than a position in it.
+    static TypeNode Bare(TypeNode t) => t is TypeNode.Oblivious o ? Bare(o.Of) : t;
+
+    // A function type's SLOT positions, in the order the delegate states them: the contexts lead, then the
+    // receiver, then the declared parameters — which is what `[KotlinContextFunctionType]`/
+    // `[KotlinExtensionFunctionType]` say about the physical delegate. `Erase` treats all three alike, so a walk
+    // that compared only `Params` desynchronized against a foreign `Func<…>` the moment either was present.
+    static TypeNode[] FnSlots(TypeNode.Fn fn)
+    {
+        var slots = new List<TypeNode>();
+        if (fn.Ctx != null) slots.AddRange(fn.Ctx);
+        if (fn.Recv != null) slots.Add(fn.Recv);
+        slots.AddRange(fn.Params);
+        return slots.ToArray();
+    }
+
+    // One spelling for a PRE-ERASURE name, so a Kotlin record and a CLR declaration compare: the @ClrTypeAlias
+    // index on top of the same top-type normalization the physical comparison uses.
+    static string PreKey(TypeNode t, IReadOnlyDictionary<string, string> aliases) => Norm(Alias(t, aliases));
+
+    static TypeNode Alias(TypeNode t, IReadOnlyDictionary<string, string> aliases) => t switch
+    {
+        TypeNode.Oblivious o => Alias(o.Of, aliases),
+        TypeNode.Fqn f => new TypeNode.Fqn(aliases.TryGetValue(f.Name, out var bcl) ? bcl : f.Name,
+            f.Args?.Select(a => Alias(a, aliases)).ToArray()),
+        TypeNode.Array a => new TypeNode.Array(Alias(a.Elem, aliases)),
+        TypeNode.Nullable n => new TypeNode.Nullable(Alias(n.Of, aliases)),
+        TypeNode.ByRef b => new TypeNode.ByRef(Alias(b.Of, aliases)),
+        _ => t,
+    };
 
     // One spelling per CLR type, so a reflected declaration and a lowered Kotlin one compare. They agree everywhere
     // except the top type, which reflection names `System.Object` and the lowering names `object`, and the NRT

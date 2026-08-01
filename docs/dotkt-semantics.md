@@ -1681,10 +1681,23 @@ sibling slot may state it outright: with a real `Take(List<object>)` beside the 
 `override fun Take(xs: List<Int?>)` and `override fun Take(ys: List<Any?>)` emit the SAME CLR member. The first is
 the crossing's and is refused; the second fills the sibling and is accepted. They are told apart by the fact this
 erasure recorded on the declaration — at a position it moved, the parameter carries its pre-erasure Kotlin type on
-`[KotlinNullableGeneric]`, and at an untouched position there is nothing to carry. Letting the sibling's existence
-discharge the crossing instead accepted both, and the CLR then bound the emitted body to the `object` slot while a
-call through `Take(List<int?>)` ran the base implementation: a silently wrong answer, which is the outcome this
-refusal exists to prevent.
+`[KotlinNullableGeneric]`. Letting the sibling's existence discharge the crossing instead accepted both, and the CLR
+then bound the emitted body to the `object` slot while a call through `Take(List<int?>)` ran the base
+implementation: a silently wrong answer, which is the outcome this refusal exists to prevent.
+
+That record is READ and not counted, because its PRESENCE says only that the erasure moved this parameter. The
+sibling slot need not be on the same supertype and its argument need not be a reference: `List<Boolean?>` records
+its pre-erasure type exactly as `List<Int?>` does and erases to the same `List<object>`, so a Kotlin class filling a
+DotKt supertype's `Take(List<Boolean?>)` beside a foreign `Take(List<int?>)` is ACCEPTED — the record says
+`List<Boolean?>` and the crossing slot says `List<int?>`, and they are two slots. The comparison is made at exactly
+the positions the erasure moved, and it reads the Kotlin name and the CLR one as the same type through the stdlib's
+own `@ClrTypeAlias` (`kotlin.Int` IS `System.Int32`).
+
+The consequence a Kotlin author can see is where a DotKt supertype's slot states the crossing's type EXACTLY —
+`interface KSink { fun Take(xs: List<Int?>): String }` beside a foreign `Take(List<int?>)`. That body states both
+slots and is REFUSED, even though filling only the Kotlin one would have a valid lowering. The type it wrote is the
+uninhabitable one, so there is nothing in the source to choose with; naming a different element type for the Kotlin
+slot separates the two.
 
 ### Delegates: the target's slots follow the delegate's, and a CONCRETE parameter is the one exception
 

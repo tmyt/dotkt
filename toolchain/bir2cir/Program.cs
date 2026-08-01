@@ -966,11 +966,6 @@ sealed class Pipeline
             // this refusal is about has not been read yet.
             ForeignNullableGenericCrossing.Check(lowered, outputName);
             loweredRoots.Add((lowered, outputName));
-            // A file whose ENTIRE content was @ClrTypeAlias types (e.g. Primitives.kt, Comparable.kt) is now empty after
-            // AliasHelperHoist dropped them — emit no CIR file for it (an empty file-class would be a pointless empty
-            // static type in the assembly). Skips only when types AND methods AND fields are all empty; never in ref.
-            if (!_options.RefBuild && IsEmptyCir(lowered)) continue;
-            files.Add(new CirFile(outputName, lowered.ToJsonString(JsonOptions.Indented)));
         }
 
         // The IMPLEMENTING-POSITION half of the same refusal: a .NET supertype declaring a slot no Kotlin body can
@@ -979,6 +974,19 @@ sealed class Pipeline
         // at the first Kotlin interface declared next door. Nothing has been written yet, so a refusal here is as
         // clean as one inside the loop.
         ForeignNullableGenericCrossing.CheckImplementedSlots(loweredRoots, refs);
+
+        // SERIALIZATION IS THE LAST THING, and not the tail of the loop above. The check that just ran asks each
+        // Kotlin body which slot it fills, and the answer is a pass-to-pass record on the declaration that must not
+        // reach CIR — so the check consumes it, and it can only do that once every file has been lowered and read.
+        // Writing a file's JSON inside the loop froze that record into the CIR of every file but the last.
+        foreach (var (lowered, outputName) in loweredRoots)
+        {
+            // A file whose ENTIRE content was @ClrTypeAlias types (e.g. Primitives.kt, Comparable.kt) is now empty after
+            // AliasHelperHoist dropped them — emit no CIR file for it (an empty file-class would be a pointless empty
+            // static type in the assembly). Skips only when types AND methods AND fields are all empty; never in ref.
+            if (!_options.RefBuild && IsEmptyCir(lowered)) continue;
+            files.Add(new CirFile(outputName, lowered.ToJsonString(JsonOptions.Indented)));
+        }
 
         // #71 S2: emit the embedded round-trip attribute-class defs ONCE per assembly, as a dedicated synthetic CIR
         // file (glob-sorted first via the `000-` prefix so its TypeDefs precede the user types, minimizing dump churn).

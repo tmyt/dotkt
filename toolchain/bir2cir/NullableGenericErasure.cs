@@ -75,8 +75,9 @@ static class NullableGenericErasure
         // rewrites — a `Nullable(Tv)` at the HEAD (`fun <T> f(x: T?)`, `T?` returns, `T?` fields/properties), and any
         // possibly-value `X?` in a reified ARGUMENT (`List<Int?>`, `Holder<T?>`, `Array<Int?>`, `(Int?) -> R`) — for
         // method and constructor params, returns, fields, and properties. The erasure turns that position into
-        // `object`, which dll2klib cannot infer back. Keep the pre-erasure TypeNode opaque until RoundtripMetadata
-        // stamps [KotlinNullableGeneric] on that exact CLR declaration slot.
+        // `object`, which dll2klib cannot infer back. Keep the pre-erasure TypeNode opaque until it is CONSUMED —
+        // a ref/app build mints it into [KotlinNullableGeneric] on that exact CLR declaration slot, and the
+        // runtime build, which mints nothing, carries it to ForeignNullableGenericCrossing instead.
         RecordNullableGenericSlots(o, isValue);
         RecordSuspendFnShapes(o);
         ApplyRec(o, isValue);
@@ -91,7 +92,8 @@ static class NullableGenericErasure
     // Record the PRE-erasure TypeNode on every declaration slot carrying a `Nullable(Tv)`, at the head or nested.
     // Return slots use the `nullableGenericRet` hand-off; params/fields/properties use `nullableGeneric` on the slot
     // itself. These are opaque JSON STRINGS (not structured type slots), so ReferenceNullableStrip / BirTypeLowering
-    // leave them untouched until RoundtripMetadata carrier-encodes them.
+    // leave them untouched until their reader takes them — RoundtripMetadata's carrier-encoding in a ref/app build,
+    // and ForeignNullableGenericCrossing's slot-ownership question in every build.
     static void RecordNullableGenericSlots(JsonObject o, Func<string, bool> isValue)
     {
         if (o["methods"] is JsonArray methods)
@@ -575,6 +577,12 @@ static class NullableGenericErasure
     // `Int?` is, and it crosses without any adaptation at all. That includes a `Nullable<!!0>` on a `T : struct` .NET
     // generic, which a Kotlin `T?` inhabits at every instantiation.
     internal static bool ErasureWouldMove(TypeNode lowered) => AtSlot(lowered);
+
+    // The same question asked of an ARGUMENT rather than a slot, for a reader that has descended INTO a declaration
+    // and has to keep saying which position it is standing in. The rule is positional, so a walk that carries the
+    // position needs both arms of it; asking `ErasureWouldMove` of an argument would answer about the wrong one — a
+    // concrete `V?` moves here and not there.
+    internal static bool ErasureWouldMoveArgument(TypeNode lowered) => AtArgument(lowered);
 
     // THE IMAGE THAT `ErasureWouldMove` ANSWERS ABOUT: what a Kotlin declaration filling this LOWERED foreign slot
     // physically states. `List<Nullable<int32>>` -> `List<object>`, and a slot the erasure does not move is returned

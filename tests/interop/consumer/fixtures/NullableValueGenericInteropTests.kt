@@ -22,6 +22,7 @@ import NvGen.NotObligedBase
 import NvGen.ImageSibling
 import NvGen.NetFillsIt
 import NvGen.OverloadBase
+import NvGen.ValueImageBase
 import System.Collections.Generic.List as NetList
 
 // THE OTHER HALF OF THE IMPLEMENTING-POSITION REFUSAL: what an author may still write next to an uninhabitable
@@ -53,6 +54,19 @@ class KotlinBelowNetImplementation : NetFillsIt()
 // sibling. `Take(List<int?>)` images to `Take(List<object>)`, which `ImageSibling` also really declares.
 class KotlinImageSiblingOverride : ImageSibling() {
     override fun Take(ys: NetList<Any?>): String = "kt-o"
+}
+
+// AND THE IMAGE MAY BE A SLOT OF A DIFFERENT SUPERTYPE ENTIRELY. `List<Boolean?>` erases to the same `List<object>`
+// as the foreign `Take(List<int?>)`, and — unlike the `List<Any?>` sibling above — it is a possibly-VALUE argument,
+// so the erasure records its pre-erasure type just as it records the crossing's. A refusal that read only whether
+// SOME record was there could not tell one from the other and refused this class for a slot it never mentions. The
+// record says `List<Boolean?>`, the foreign slot says `List<int?>`, and they are two slots.
+interface KotlinBoolListSink {
+    fun Take(zs: NetList<Boolean?>): String
+}
+
+class KotlinValueImageSibling : ValueImageBase(), KotlinBoolListSink {
+    override fun Take(zs: NetList<Boolean?>): String = "kt-bool"
 }
 
 class NullableValueGenericInteropTests {
@@ -98,5 +112,14 @@ class NullableValueGenericInteropTests {
         assertEquals("filled", KotlinBelowNetImplementation().Describe())   // filled
         val o: ImageSibling = KotlinImageSiblingOverride()
         assertEquals("kt-o", o.Take(NetList<Any?>()))   // kt-o   through the List<object> slot the sibling declares
+    }
+
+    // The body whose ERASED IMAGE coincides with a foreign crossing slot while it fills a DotKt one. It compiles,
+    // the type LOADS, and the call dispatches through the Kotlin interface's slot — the foreign `Take(List<int?>)`
+    // keeps its own .NET body and was never this type's to fill.
+    @TestAttribute
+    fun aBodyRecordedForAnotherSlotIsNotTheForeignSlotsImplementation() {
+        val k: KotlinBoolListSink = KotlinValueImageSibling()
+        assertEquals("kt-bool", k.Take(NetList<Boolean?>()))   // kt-bool   through the DotKt interface's own slot
     }
 }

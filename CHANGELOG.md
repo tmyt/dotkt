@@ -166,6 +166,25 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   the CLR then bound it to the `object` slot while a call through `Take(List<int?>)` ran the base implementation —
   a silently wrong answer, which is the outcome this refusal exists to prevent.
 
+  That record is READ, not counted. `List<Boolean?>` records its pre-erasure type exactly as `List<Int?>` does and
+  erases to the same `List<object>`, so a body that legitimately fills a DotKt supertype's `Take(List<Boolean?>)`
+  answered for a foreign `Take(List<int?>)` slot it never mentions — the same conflation one level in, refusing a
+  program with a perfectly good lowering. The record is decoded and compared against the type the crossing slot
+  states, at exactly the positions the erasure moved: every other position survived physically and is already
+  matched exactly, and at a moved position the Kotlin name and the CLR one are read as the same type through the
+  stdlib's own `@ClrTypeAlias` (`kotlin.Int` IS `System.Int32`) rather than through a second correspondence
+  invented here. The minted attribute is matched by its exact `DotKt.Runtime.CompilerServices` FQN, so no
+  similarly-named attribute from another assembly can answer for it. Only PARAMETERS are asked: a return-position
+  crossing cannot pose the question, because two members differing only in return type are two CLR slots but one
+  Kotlin declaration, which the frontend rejects outright.
+
+  And the record now REACHES that reader in the runtime stdlib build, which mints no attribute and dropped the raw
+  stash before the check — so the whole concrete-override arm of the refusal was blind there and its safety rested
+  on the runtime corpus happening to contain no such supertype. The stash is consumed by its last reader instead —
+  the crossing check itself, exactly as that check already consumes `memberRet` — which is why bir2cir now writes
+  no CIR file until every file has been lowered and checked. (Measured: 176 slot records reach the check in that
+  build, against none before.)
+
 
 - **bir2cir (area:bir2cir): a supertype edge's erased argument is CARRIED, closing a Kotlin source break (#86).**
   `class E : Sink<Int?>` erases its edge to `Sink<object>`, and a supertype is the one erased position with no

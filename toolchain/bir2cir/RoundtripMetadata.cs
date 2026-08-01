@@ -45,7 +45,10 @@ static class RoundtripMetadata
     const string AKCtxParam     = Ns + "KotlinContextParameterAttribute";
     const string AKCtxFnType    = Ns + "KotlinContextFunctionTypeAttribute";
     const string AKNothing      = Ns + "KotlinNothingAttribute";
-    const string AKNullableGen  = Ns + "KotlinNullableGenericAttribute";
+    // The pre-erasure declaration-slot carrier. `internal` because it has a second reader in this assembly:
+    // ForeignNullableGenericCrossing decides which slot a body fills by reading the record back off the minted
+    // attribute, and matching it by an exactly-named FQN is what keeps that read off any other attribute.
+    internal const string AKNullableGen  = Ns + "KotlinNullableGenericAttribute";
     const string AKCollIdentity = Ns + "KotlinCollectionIdentityAttribute";
     const string AKType         = Ns + "KotlinTypeAttribute";
     const string AKSupertypes   = Ns + "KotlinSupertypesAttribute";
@@ -306,6 +309,12 @@ static class RoundtripMetadata
             foreach (var t in types) if (t is JsonObject to) StripRuntimeAttrs(to);
     }
 
+    // The nullable-generic slot record (`nullableGeneric`/`nullableGenericRet`) is deliberately NOT dropped here,
+    // though this build mints nothing from it. It has a second reader that runs after every file is lowered —
+    // ForeignNullableGenericCrossing decides which slot a Kotlin body fills by the pre-erasure type the erasure
+    // recorded — and dropping it here left that reader with nothing to read in the runtime build, so the whole
+    // concrete-override arm of the refusal was blind there. The record is consumed by that reader instead, in every
+    // build, and so still reaches no CIR.
     static void StripDecls(JsonNode arr, bool hasParams = false)
     {
         if (arr is not JsonArray a) return;
@@ -313,8 +322,6 @@ static class RoundtripMetadata
         {
             po.Remove("kotlinType");
             po.Remove("retKotlinType");
-            po.Remove("nullableGeneric");
-            po.Remove("nullableGenericRet");
             StripAttrs(po, "attrs");
             StripAttrs(po, "retAttrs");
             if (hasParams) StripDecls(po["params"]);

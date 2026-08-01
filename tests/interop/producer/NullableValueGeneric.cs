@@ -10,11 +10,13 @@
 //   * a `Func<int?, string>` parameter — a delegate PARAMETER keeps its concrete `Nullable<int32>` in the erasure,
 //     so the Kotlin lambda bound into it declares the same slot.
 //
-// And three shapes that DO declare an uninhabitable slot, kept here rather than only in tests/compile-fail because
+// And the shapes that DO declare an uninhabitable slot, kept here rather than only in tests/compile-fail because
 // what has to be shown about them is what a Kotlin author may still legally write ALONGSIDE one: deriving without
-// being obliged to fill it, overriding a different member of the same overload set, and calling the sibling of a
-// generic overload set whose other member crosses. Each of those is a program with a valid lowering, and a refusal
-// that answered "does this type inherit such a slot" rather than "must THIS type fill THAT slot" rejected all three.
+// being obliged to fill it, overriding a different member of the same overload set, calling the sibling of a
+// generic overload set whose other member crosses, deriving below a .NET type that already fills it, and writing a
+// body whose ERASED IMAGE coincides with the crossing while it fills a slot of its own. Each of those is a program
+// with a valid lowering, and a refusal that answered "does this type inherit such a slot" rather than "must THIS
+// type fill THAT slot" rejected them all.
 using System;
 using System.Collections.Generic;
 
@@ -75,5 +77,15 @@ namespace NvGen
         public virtual string Take(List<int?> xs) => "net-q";
 
         public virtual string Take(List<object> ys) => "net-o";
+    }
+
+    // A CONCRETE crossing slot with no sibling at all — and the case that says the erasure's record must be READ and
+    // not merely counted. `List<int?>` and `List<bool?>` image to the same `List<object>`, and BOTH record their
+    // pre-erasure Kotlin type, so a Kotlin body filling a DotKt supertype's `Take(List<Boolean?>)` carries a record
+    // exactly as the crossing's own override would. Presence answered for this slot and refused that program; only
+    // the recorded type tells the two apart. Nothing obliges a deriving type to fill this one — it has its own body.
+    public class ValueImageBase
+    {
+        public virtual string Take(List<int?> xs) => "net-int";
     }
 }
