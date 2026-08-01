@@ -121,16 +121,6 @@ static class ForeignNullableGenericCrossing
             }
         }
 
-        // A DECLARATION FILLS AT MOST ONE SLOT, and a slot it fills EXACTLY has the stronger claim. The erased image
-        // of `Take(List<int?>)` is `Take(List<object>)`, which is an ordinary .NET signature a sibling may declare
-        // for real — and then the author's `override fun Take(ys: List<Any?>)` fills THAT one and owes the crossing
-        // nothing. So every declaration a non-crossing group states outright is spoken for before the erased-image
-        // question is asked.
-        var claimed = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var slot in groups.Values)
-            if (Crossing(slot) == null)
-                claimed.Add(DeclarationKey(slot.Name, slot.Arity, slot.Params.Select(Norm)));
-
         foreach (var slot in groups.Values)
         {
             var crossing = Crossing(slot);
@@ -140,14 +130,11 @@ static class ForeignNullableGenericCrossing
             // it — and "overrides it" is decided by the signature the override would physically state, not by the
             // member's name and parameter count, which cannot tell `Take(List<int?>)` from an unrelated
             // `Take(string)` sibling the author actually wrote.
-            if (!((mustFillAbstract && !slot.Implemented) || Declares(to, slot, claimed))) continue;
+            if (!((mustFillAbstract && !slot.Implemented) || Declares(to, slot))) continue;
             throw RefuseSlot(file, Str(to["name"]) ?? "<type>", slot.Owner, slot.Name, crossing.Value.Where,
                 crossing.Value.Type);
         }
     }
-
-    static string DeclarationKey(string name, int arity, IEnumerable<string> paramKeys) =>
-        name + "`" + arity + "(" + string.Join(",", paramKeys) + ")";
 
     sealed class Slot
     {
@@ -261,11 +248,24 @@ static class ForeignNullableGenericCrossing
     // The RETURN is deliberately not compared: Kotlin lets an override narrow it, and a narrowed return is a
     // different pass's business (`CovariantInterfaceReturnBridge`). Name, method generic arity and the whole
     // parameter vector identify the CLR slot on their own.
-    static bool Declares(JsonObject to, Slot slot, HashSet<string> claimedExactly)
+    //
+    // WHICH SOURCE SLOT A BODY BELONGS TO IS NOT A PHYSICAL QUESTION, and asking it physically is how a sibling
+    // came to answer for the crossing. The image of `Take(List<int?>)` is `Take(List<object>)`, which a sibling may
+    // declare FOR REAL — and then two different Kotlin overrides, `Take(xs: List<Int?>)` and
+    // `Take(ys: List<Any?>)`, state that one physical signature. Only the first is the crossing's; the second fills
+    // the sibling and owes it nothing. The two are told apart by the fact this erasure itself recorded on the
+    // declaration: at a position it MOVED, the parameter carries the pre-erasure Kotlin type on
+    // `[KotlinNullableGeneric]`, and at a position it did not touch there is nothing to carry. So a body is this
+    // slot's only when it carries that fact at every position where this slot crosses.
+    //
+    // Deciding it by "some other slot already states that signature" instead let ANY body of that shape off, which
+    // is the silent miscompile the refusal exists to prevent: the CLR binds the emitted body to the `object` slot
+    // and a call through `Take(List<int?>)` runs the BASE implementation.
+    static bool Declares(JsonObject to, Slot slot)
     {
         if (to["methods"] is not JsonArray methods) return false;
         var want = slot.Params.Select(p => Norm(NullableGenericErasure.ErasedLoweredSlot(p))).ToArray();
-        if (claimedExactly.Contains(DeclarationKey(slot.Name, slot.Arity, want))) return false;
+        var moved = slot.Params.Select(NullableGenericErasure.ErasureWouldMove).ToArray();
         foreach (var m in methods.OfType<JsonObject>())
         {
             if (Bool(m["static"]) || Bool(m["abstract"]) || Str(m["name"]) != slot.Name) continue;
@@ -274,11 +274,27 @@ static class ForeignNullableGenericCrossing
             if (m["params"] is not JsonArray ps || ps.Count != want.Length) continue;
             var ok = true;
             for (var i = 0; i < ps.Count && ok; i++)
-                ok = TypeJson.Read((ps[i] as JsonObject)?["type"]) is TypeNode t && Norm(t) == want[i];
+            {
+                var po = ps[i] as JsonObject;
+                ok = TypeJson.Read(po?["type"]) is TypeNode t && Norm(t) == want[i]
+                     && (!moved[i] || CarriesPreErasureType(po));
+            }
             if (ok) return true;
         }
         return false;
     }
+
+    // Did this erasure move this declaration slot? It says so itself, on the round-trip channel it writes for
+    // exactly that purpose — the raw `nullableGeneric` stash while it is still a key, and the
+    // `[KotlinNullableGeneric]` attribute once RoundtripMetadata has minted it. Both are read because this check
+    // runs after the minting in a ref/app build and the stash is what a build that mints nothing would leave.
+    static bool CarriesPreErasureType(JsonObject decl) =>
+        decl != null
+        && (decl["nullableGeneric"] != null
+            || (decl["attrs"] is JsonArray attrs
+                && attrs.OfType<JsonObject>().Any(a => TypeJson.Read(a["attr"]) is TypeNode.Fqn f
+                                                       && f.Name.EndsWith(".KotlinNullableGenericAttribute",
+                                                           StringComparison.Ordinal))));
 
     // One spelling per CLR type, so a reflected declaration and a lowered Kotlin one compare. They agree everywhere
     // except the top type, which reflection names `System.Object` and the lowering names `object`, and the NRT

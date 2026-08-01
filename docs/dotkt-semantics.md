@@ -1674,9 +1674,17 @@ discharged by a body, so:
   name is qualified with the interface it fills.
 - a CONCRETE virtual is refused only where this type actually overrides it, decided by the signature the override
   would physically state — the erased image of the slot — and not by the member's name and parameter count. So with
-  a .NET `Take(List<int?>)` beside a `Take(string)`, overriding the `String` one is an ordinary program. Where that
-  image is a signature a sibling slot states outright — a real `Take(List<object>)` beside the `List<int?>` one —
-  the sibling has the stronger claim and the override belongs to it.
+  a .NET `Take(List<int?>)` beside a `Take(string)`, overriding the `String` one is an ordinary program.
+
+WHICH SOURCE SLOT A BODY BELONGS TO IS NOT A PHYSICAL QUESTION. That image is an ordinary .NET signature, and a
+sibling slot may state it outright: with a real `Take(List<object>)` beside the `List<int?>` one, the Kotlin
+`override fun Take(xs: List<Int?>)` and `override fun Take(ys: List<Any?>)` emit the SAME CLR member. The first is
+the crossing's and is refused; the second fills the sibling and is accepted. They are told apart by the fact this
+erasure recorded on the declaration — at a position it moved, the parameter carries its pre-erasure Kotlin type on
+`[KotlinNullableGeneric]`, and at an untouched position there is nothing to carry. Letting the sibling's existence
+discharge the crossing instead accepted both, and the CLR then bound the emitted body to the `object` slot while a
+call through `Take(List<int?>)` ran the base implementation: a silently wrong answer, which is the outcome this
+refusal exists to prevent.
 
 ### Delegates: the target's slots follow the delegate's, and a CONCRETE parameter is the one exception
 

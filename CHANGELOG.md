@@ -157,9 +157,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   Two things that image has to be asked carefully. It is compared in the frame the deriving type CONSTRUCTS the
   supertype in: reflection hands back `GBase<T>.Put(!0, List<int?>)` while a `class C : GBase<String>()` states
   `Put(String, List<object>)`, so an open comparison disagreed at the type variable and let the uninhabitable
-  override through. And the image is itself an ordinary .NET signature, so where a sibling slot states it OUTRIGHT —
-  a real `Take(List<object>)` beside the `List<int?>` one — that sibling has the stronger claim and the override
-  belongs to it.
+  override through. And the image is itself an ordinary .NET signature that a sibling slot may state OUTRIGHT — a
+  real `Take(List<object>)` beside the `List<int?>` one — so `override fun Take(xs: List<Int?>)` and
+  `override fun Take(ys: List<Any?>)` emit ONE CLR member and only the second legitimately fills a slot. Which
+  source slot a body belongs to is answered by the fact this erasure recorded on the declaration (its pre-erasure
+  Kotlin type on `[KotlinNullableGeneric]`, present at exactly the positions the erasure moved), not by whether some
+  other slot happens to state the same physical signature: deciding it that way let ANY body of that shape off, and
+  the CLR then bound it to the `object` slot while a call through `Take(List<int?>)` ran the base implementation —
+  a silently wrong answer, which is the outcome this refusal exists to prevent.
 
 
 - **bir2cir (area:bir2cir): a supertype edge's erased argument is CARRIED, closing a Kotlin source break (#86).**
