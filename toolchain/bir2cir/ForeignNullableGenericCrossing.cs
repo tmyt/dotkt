@@ -92,8 +92,14 @@ static class ForeignNullableGenericCrossing
 
     // One reified argument: either it IS the `Nullable<V>` Kotlin cannot put there, or it contains one deeper down.
     // By this point the tree is lowered, so a `Nullable` node is always a real `System.Nullable<V>` over a value
-    // type — BirTypeLowering strips every reference `?` before it gets here.
-    static bool InArgument(TypeNode t) => t is TypeNode.Nullable || NestedValueNullable(t);
+    // type — BirTypeLowering strips every reference `?` before it gets here. An NRT-OBLIVIOUS wrapper is a pure
+    // annotation and is looked through, so a `[MaybeNull] List<int?>` is the same crossing as a plain one.
+    static bool InArgument(TypeNode t) => t switch
+    {
+        TypeNode.Nullable => true,
+        TypeNode.Oblivious o => InArgument(o.Of),
+        _ => NestedValueNullable(t),
+    };
 
     static string Render(TypeNode t) => t switch
     {

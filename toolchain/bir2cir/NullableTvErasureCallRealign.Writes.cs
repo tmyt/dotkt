@@ -131,12 +131,13 @@ static partial class NullableTvErasureCallRealign
             // delegate types, and the one the call accepts is the callee's. The construction is ours to type, so it
             // is BUILT at the slot's shape rather than built wrong and cast (no cast joins two delegate
             // instantiations); DelegateTargetSlotAlignment then makes the lifted target's own slots follow.
-            // Only a construction whose TARGET this compilation owns: a `newDelegate`'s lifted static and a
-            // `newClosure`'s synthetic `invoke` both follow the retyped `funcType` (DelegateTargetSlotAlignment). A
-            // `newBoundDelegate` points at a real declared member whose signature is not ours to move, so retyping
-            // its delegate would state a shape no target can fill.
+            // Only a construction whose TARGET the compiler synthesized: a lifted `newDelegate` and a `newClosure`'s
+            // synthetic `invoke` both follow the retyped `funcType` (DelegateTargetSlotAlignment). A delegate over a
+            // DECLARED member — `expr::member`, or a `::fn` whose `newDelegate` carries the overload `sig` kotc
+            // writes only for that form — points at a signature that is not ours to move, so retyping its delegate
+            // would state a shape no target can fill and turn a formal mismatch into an invalid program.
             if (target is TypeNode.Fn && args[i] is JsonObject dl
-                && Str(dl["k"]) is "newDelegate" or "newClosure"
+                && Str(dl["k"]) is "newDelegate" or "newClosure" && dl["sig"] is not JsonArray
                 && TypeJson.Read(dl["funcType"]) is TypeNode.Fn dft
                 && !dft.Equals(target) && IsObjectErasureOf(target, dft))
                 dl["funcType"] = TypeJson.Write(target);
@@ -322,8 +323,19 @@ static partial class NullableTvErasureCallRealign
             declParams = fn.DelegateParams.Length == args.Count ? fn.DelegateParams
                 : fn.Params.Length == args.Count ? fn.Params
                 : null;
-        if (declParams != null) RealignArgs(obj, declParams, null, null, null, ctx);
-        else EvalChildrenOf(obj, "args", ctx);
+        if (declParams == null) { EvalChildrenOf(obj, "args", ctx); return fn?.Ret; }
+        var flowed = RealignArgs(obj, declParams, null, null, null, ctx);
+        // A DELEGATE PARAMETER KEEPS ITS DECLARED `Nullable<V>` (see NullableGenericErasure's header), so an
+        // invocation is also the one call shape whose argument may need the ordinary VALUE-nullable wrap rather than
+        // the object seam: `f(3)` on a `(Int?) -> R` pushes an `int32` where a `Nullable<int32>` is required, which
+        // is not a stack-type imprecision but an invalid program. A direct call gets this from kotc, which knows the
+        // callee's declaration; a delegate invocation has only the `funcType`, and it is read here.
+        if (flowed != null && obj["args"] is JsonArray args2)
+            for (var i = 0; i < args2.Count && i < declParams.Length; i++)
+                if (declParams[i] is TypeNode.Nullable { Of: TypeNode.Fqn ev } && _isValue(ev.Name)
+                    && flowed[i] is TypeNode.Fqn av && av.Name == ev.Name
+                    && args2[i] is JsonObject a2)
+                    args2[i] = new JsonObject { ["k"] = "nullableWrap", ["elem"] = TypeJson.Write(ev), ["e"] = a2.DeepClone() };
         return fn?.Ret;
     }
 

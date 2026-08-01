@@ -18,8 +18,16 @@ using DotKt.Bir;
 // over an `__lambda0(Nullable<int32>)` is rejected outright (ilverify DelegateCtor "Unrecognized arguments"; at run
 // time an InvalidProgramException before the first instruction executes).
 //
-// So a target slot FOLLOWS the delegate slot it fills wherever the funcType component is the bare `object` the
-// erasure produced. Which target slots that reaches differs by position, because delegate compatibility is not
+// A target slot FOLLOWS the delegate slot it fills wherever the funcType component is the bare `object` the erasure
+// produced.
+//
+// A `::fn` reference reaches this pass too, and moves with the same rule — it names a declaration the author wrote,
+// so this is the one place a declared signature is decided by a USE. That is inherited behaviour, not a new choice:
+// the pass this one replaces did exactly the same on the RETURN, and the alternative is worse, because a
+// `Func<…, object>` over a target returning `Nullable<int32>` reads the struct's bits as a reference at run time.
+// Closing it properly means synthesizing a forwarder at the reference instead of moving the referenced declaration,
+// which is the same missing piece the delegate PARAMETER is scoped out for (see NullableGenericErasure's header);
+// the two land together. Which target slots that reaches differs by position, because delegate compatibility is not
 // symmetric: a PARAMETER is contravariant and only `object` is assignable from `object`, so every non-`object`
 // parameter follows; a RETURN is covariant and a reference already reaches `object`, so only a value / `Nullable<V>`
 // / type-variable return follows. Rewriting a reference RETURN is what broke the concrete-delegate ctor in #189

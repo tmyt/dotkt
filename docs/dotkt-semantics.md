@@ -1514,6 +1514,10 @@ representation is therefore decided by POSITION, not by whether a type variable 
 > is `System.Object`. References keep their normal CLR representation. The original Kotlin type is preserved in
 > `[KotlinNullableGeneric]` metadata.**
 
+One position does not yet obey it: a delegate PARAMETER keeps a concrete `V?` (`(Int?) -> String` is
+`Func<Nullable<int32>, string>`), because a delegate's target may be a member the author declared and moving that
+member's own slot is not the compiler's to do. The exception, its cost and what closes it are recorded below.
+
 `X` "may be a value type" means **any** type variable, or a concrete value type (a constructed `KeyValuePair<K,V>`
 counts, exactly as `Int` does). Concretely:
 
@@ -1524,7 +1528,8 @@ counts, exactly as `Int` does). Concretely:
 | `List<Int?>` / `MutableList<Int?>` | `IReadOnlyList<object>` / `IList<object>` |
 | `Map<String, Int?>`, `Pair<Int?, String>`, `Box<Int?>` | `IDictionary<string, object>`, `Pair<object, string>`, `Box<object>` |
 | `Array<Int?>` | `object[]` |
-| `(Int?) -> String`, `(Int) -> Int?` | `Func<object, string>`, `Func<int32, object>` |
+| `(Int) -> Int?` | `Func<int32, object>` |
+| `(Int?) -> String` | `Func<Nullable<int32>, string>` — a delegate PARAMETER is the one exception, below |
 | `f<Int?>(…)`, `Comparable<Int?>` | instantiated at `object`, `IComparable<object>` |
 | `List<String?>`, `Array<String?>`, `(String?) -> R` | `IReadOnlyList<string>`, `string[]`, `Func<string, R>` |
 
@@ -1586,10 +1591,10 @@ untouched.
 
 What this is observable as, beyond the boxing already listed above:
 
-- **A .NET `int?[]` re-imports as `Array<Int?>`, which is `object[]`** — so the inbound direction is no more usable
-  than the outbound one, and a `Nullable<int32>[]` coming from C# has to be converted at the boundary rather than
-  passed. It was not usable before either (it collapsed to `IntArray`, dropping the element's `?`), so this is the
-  same gap named honestly rather than a new one.
+- **A .NET `int?[]` has no Kotlin counterpart, and calling the member that declares it is REFUSED** — the same
+  crossing as any other foreign `G<int?>` (below). It was not usable before either (it collapsed to `IntArray`,
+  dropping the element's `?`), so this is the same gap named honestly rather than a new one — but it now fails with
+  a message instead of with a wrong array.
 - **`Array<Int?>` surfaces to C# as `object[]`, not `int?[]`.** A C# caller passes and receives `object[]`, and each
   element is a boxed `int` or a null.
 - **Elements box on the way in and unbox on the way out.** `a[0] = 5` boxes; `a[0]` reads the box back. This is the
@@ -1626,14 +1631,24 @@ has. So calling such a member is refused at compile time, naming the member and 
 mis-typed. A **direct** `Nullable<V>` parameter or return is untouched — a Kotlin scalar `Int?` IS a
 `System.Nullable<int32>` and crosses exactly.
 
-### Delegates: the lifted lambda's own slots follow the delegate's
+### Delegates: the target's slots follow the delegate's, and a CONCRETE parameter is the one exception
 
-A delegate's parameters and return are reified arguments, so `(Int?) -> String` is `Func<object, string>`. The lifted
-method bound into it declares ordinary slots, where a direct `Int?` is a `Nullable<int32>` and a `String?` is a
-`string` — and ECMA-335 II.14.6 admits neither pair, since a delegate parameter is contravariant (only `object` is
-assignable from `object`) and its return covariant. So a lifted target's slot follows the delegate's `object`: every
-parameter, and a value / `Nullable<V>` / type-variable return. A REFERENCE return stays as declared, because it
-already reaches `object`.
+A delegate's return is a reified argument, so `(Int) -> Int?` is `Func<int32, object>` and `(T?) -> String` is
+`Func<object, string>` at every instantiation. The method bound into it declares ordinary slots, where a direct `Int?`
+is a `Nullable<int32>` and a `String?` is a `string` — and ECMA-335 II.14.6 admits neither pair, since a delegate
+parameter is contravariant (only `object` is assignable from `object`) and its return covariant. So the target's slot
+follows the delegate's `object`: every parameter it states as `object`, and a value / `Nullable<V>` / type-variable
+return. A REFERENCE return stays as declared, because it already reaches `object`.
+
+**A CONCRETE `V?` delegate PARAMETER keeps its `Nullable<V>`**, so `(Int?) -> String` is
+`Func<Nullable<int32>, string>` — a deliberate, recorded exception to the rule above rather than an oversight. The
+reason is that a delegate's target may be a member the author DECLARED — `::handle`, `expr::member` — whose slots are
+its Kotlin surface. Erasing the parameter leaves exactly two options and both are wrong: move `fun handle(x: Int?)`
+to `handle(object)`, which rewrites a public signature by a USE of it, or leave the target and emit a
+`Func<object, string>` no target can fill, which reads a struct's bits as a reference at run time. Closing it means
+synthesizing a FORWARDER at the reference — a static one for `::fn`, a capture class for `expr::member` — after which
+the parameter joins the rule with the rest. (The RETURN moves a referenced declaration for the same reason and is
+carried as inherited behaviour: the value it protects is real, and the same forwarder closes it.)
 
 ### An override that narrows a `T?` slot keeps its own signature and gets a bridge
 

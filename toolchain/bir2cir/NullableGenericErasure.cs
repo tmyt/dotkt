@@ -12,12 +12,20 @@ using DotKt.Bir;
 //     `Nullable(Tv)` erases here, because `Nullable<T>` is not even expressible for an unconstrained `T` and a bare
 //     `!T` slot collapses a null to `default(T)`.
 //   * An ARGUMENT to a CLR-REIFIED CONSTRUCTION — a generic type's type argument, a generic method's type argument,
-//     an array element, a delegate's parameter/return/receiver — is `System.Object` whenever the Kotlin type there is
-//     `X?` for a possibly-value `X`: an open `Tv` (some instantiation is a struct) or a value `Fqn` (this one is).
+//     an array element, a delegate's return — is `System.Object` whenever the Kotlin type there is `X?` for a
+//     possibly-value `X`: an open `Tv` (some instantiation is a struct) or a value `Fqn` (this one is).
 //     So `List<Int?>` is `IReadOnlyList<object>`, `Box<Int?>` is `Box<object>`, `f<Int?>()` instantiates at `object`,
-//     `Comparable<Int?>` is `Comparable<object>`, `Array<Int?>` is `object[]` and `(Int?) -> String` is
-//     `Func<object, string>`. References keep their normal CLR representation: `List<String?>` is
+//     `Comparable<Int?>` is `Comparable<object>`, `Array<Int?>` is `object[]` and `(Int) -> Int?` is
+//     `Func<int32, object>`. References keep their normal CLR representation: `List<String?>` is
 //     `IReadOnlyList<string>` and `Array<String?>` is `string[]`, the `?` riding the NRT byte.
+//
+// A DELEGATE PARAMETER IS THE ONE ARGUMENT POSITION THAT KEEPS THE DECLARED FORM for a CONCRETE `V?`, so
+// `(Int?) -> String` is `Func<Nullable<int32>, string>` while `(T?) -> String` is `Func<object, string>` at every
+// instantiation. That is not the general rule and is recorded as such in `docs/dotkt-semantics.md` §9c-bis: a
+// delegate's target may be a member the AUTHOR declared (`::handle`, `expr::member`), whose slots are its Kotlin
+// surface and are not this pass's to move, and ECMA-335 II.14.6 admits no `Func<object, …>` over a target declaring
+// `Nullable<int32>`. Closing it needs a synthesized FORWARDER at those two reference forms — a static one for
+// `::fn`, a capture class for `expr::member` — after which the parameter joins the rule with the rest.
 //
 // WHY THE TWO POSITIONS DIFFER. The Kotlin type system's contract for an unconstrained `T?` is a runtime null for
 // EVERY `T` — more than a reified CLR generic argument expresses — so a generic position has to box; `object` is the
@@ -32,9 +40,10 @@ using DotKt.Bir;
 // instantiation and still erases, because the rule is uniform rather than bound-consulting: one physical form per
 // declaration, decided without resolving where each bound leads.
 //
-// A FOREIGN declaration is authoritative and is NOT re-erased: a `memberSig` states what a .NET member really
-// declares, so a genuine `List<int?>` parameter keeps its `Nullable<int32>` argument. Kotlin's canonical `G<object>`
-// does not inhabit it, and that crossing is REFUSED by ForeignNullableGenericCrossing rather than silently adapted.
+// A declaration BOUND ELSEWHERE is authoritative and is NOT re-erased: a `memberSig`, and the `argTypes` a `clr*`
+// node carries under another name, state what a .NET member really declares, so a genuine `List<int?>` parameter
+// keeps its `Nullable<int32>` argument. Kotlin's canonical `G<object>` does not inhabit it, and that crossing is
+// REFUSED by ForeignNullableGenericCrossing rather than silently adapted.
 //
 // The pre-erasure Kotlin TypeNode rides `[KotlinNullableGeneric]` so the Kotlin surface survives the trip; the
 // user-visible consequences are recorded in `docs/dotkt-semantics.md` §9c-bis.
@@ -52,9 +61,11 @@ static class NullableGenericErasure
         // An argument to a reified construction — a type argument, an array element, a delegate component. A
         // possibly-value `X?` is `System.Object` here.
         Argument,
-        // A resolved .NET declaration (`memberSig`). Only the inexpressible open `Nullable(Tv)` is rewritten; what a
-        // CLR member actually declares is never restated.
-        Foreign,
+        // A declaration BOUND ELSEWHERE, whose slots this pass does not get to move: a resolved .NET member's
+        // `memberSig`, and the `funcType` of a delegate over a member that is already declared. Only the
+        // inexpressible open `Nullable(Tv)` is rewritten; a concrete `V?` the target really declares is never
+        // restated, because moving the delegate without moving the target is what leaves the two incompatible.
+        Bound,
     }
 
     public static void Apply(JsonNode root, Func<string, bool> isValue)
@@ -208,11 +219,14 @@ static class NullableGenericErasure
         TypeNode.Fqn { Args: { } args } => args.Any(a => ErasedArgument(a, isValue)),
         TypeNode.Array a => ErasedArgument(a.Elem, isValue),
         TypeNode.ByRef b => HasRestorableNullableTv(b.Of, isValue),
+        TypeNode.Oblivious o => HasRestorableNullableTv(o.Of, isValue),
+        // A delegate's RETURN is an argument position; its PARAMETERS keep the declared form, so they need a carrier
+        // only where a slot would — for the open `Nullable(Tv)` no CLR slot expresses.
         TypeNode.Fn { Suspend: false } fn =>
             ErasedArgument(fn.Ret, isValue)
-            || fn.Params.Any(p => ErasedArgument(p, isValue))
-            || (fn.Recv != null && ErasedArgument(fn.Recv, isValue)),
-        _ => false,   // suspend Fn / bare Fqn / Tv / Oblivious: no restorable nested Nullable(Tv)
+            || fn.Params.Any(p => HasRestorableNullableTv(p, isValue))
+            || (fn.Recv != null && HasRestorableNullableTv(fn.Recv, isValue)),
+        _ => false,   // suspend Fn / bare Fqn / Tv: nothing the erasure rewrites
     };
 
     // One reified ARGUMENT the erasure rewrites: either it is itself the possibly-value `X?` that becomes `object`,
@@ -359,7 +373,8 @@ static class NullableGenericErasure
     // arguments of a reified instantiation, so `listOf<Int?>` instantiates at `object` FROM THE START rather than
     // being built at `Nullable<int32>` and reconciled afterwards (two unrelated invariant generics no cast joins).
     //
-    // A `memberSig` is a RESOLVED .NET declaration and is never restated in Kotlin's vocabulary — see EraseForeign.
+    // A `memberSig` and the `argTypes` a `clr*` node carries under another name both state a declaration made
+    // ELSEWHERE, and are never restated in Kotlin's vocabulary — see EraseBound.
     //
     // An `elem` is the one type slot the recursion cannot classify from its own shape: it is an ELEMENT written
     // without its container, so the node KIND says which container it belongs to. An array's or a collection
@@ -371,7 +386,8 @@ static class NullableGenericErasure
         {
             case JsonObject obj:
                 var retSlotErased = false;
-                var elemPos = ArgumentElemKinds.Contains(Str(obj["k"])) ? Pos.Argument : Pos.Slot;
+                var k = Str(obj["k"]);
+                var elemPos = ArgumentElemKinds.Contains(k) ? Pos.Argument : Pos.Slot;
                 foreach (var key in obj.Select(kv => kv.Key).ToList())
                 {
                     var child = obj[key];
@@ -380,7 +396,11 @@ static class NullableGenericErasure
                     {
                         "elem" => elemPos,
                         "typeArgs" => Pos.Argument,
-                        "memberSig" => Pos.Foreign,
+                        // `memberSig` is always a resolved .NET declaration; `argTypes` is the SAME vector under
+                        // another name once a call is `clr*`-bound (NetInteropBinding writes the callee's declared
+                        // signature there), while on a Kotlin `new` it is the caller's own substituted view.
+                        "memberSig" => Pos.Bound,
+                        "argTypes" when IsClrBoundKind(k) => Pos.Bound,
                         _ => pos,
                     };
                     if (TypeJson.Read(child) is TypeNode tn)
@@ -413,11 +433,23 @@ static class NullableGenericErasure
     // A vararg pack (`newArray`) is one of them BECAUSE the call it is built for now instantiates at `object` too:
     // `f<Int?>(1, null)` canonicalizes its `typeArgs` above, so the callee's `!!0[]` parameter IS an `object[]` and a
     // pack that kept `Nullable<int32>` elements would be the one array the call cannot accept.
+    //
+    // A COLLECTION construction's element (`newList`/`newSet`, and `newMap`'s `keyType`/`valType`) is a reified
+    // argument too and is absent for one reason: MemberCallSubstitution BUILDS those nodes long after this sweep,
+    // from the call's own `typeArgs` — which this sweep has already canonicalized — so they arrive at `object`
+    // rather than being erased into it. Adding them here would be listing a kind this pass never sees.
     static readonly HashSet<string> ArgumentElemKinds = new(StringComparer.Ordinal)
     {
         "newArray", "newArraySized", "newArrayInit", "arrayGet", "arraySet", "forArray",
         "forEachInline", "forIn", "spreadConcat",
     };
+
+    // The call kinds bound to a .NET member, whose argument descriptor is that member's declaration rather than the
+    // caller's view of it. Mirrors NullableTvErasureCallRealign.IsClrBoundKind, which reads the same fact off the
+    // same key; the two are the same statement about one node.
+    static bool IsClrBoundKind(string k) =>
+        k is "clrStatic" or "clrInstance" or "clrGenericStatic" or "clrGenericInstance" or "newClr"
+          or "clrPropGet" or "clrPropSet";
 
     static string Str(JsonNode n) => (n as JsonValue)?.TryGetValue<string>(out var s) == true ? s : null;
 
@@ -434,9 +466,9 @@ static class NullableGenericErasure
     // `IReadOnlyList<string>` and `Array<String?>` stays `string[]` (the `?` rides the NRT byte).
     internal static TypeNode EraseArgument(TypeNode t, Func<string, bool> isValue) => Erase(t, Pos.Argument, isValue);
 
-    // A resolved .NET declaration. Only the open `Nullable(Tv)` — which no CLR slot can hold for an unconstrained
-    // type variable — is rewritten; a concrete `Nullable<V>` the member really declares stands.
-    internal static TypeNode EraseForeign(TypeNode t, Func<string, bool> isValue) => Erase(t, Pos.Foreign, isValue);
+    // A declaration bound elsewhere. Only the open `Nullable(Tv)` — which no CLR slot can hold for an unconstrained
+    // type variable — is rewritten; a concrete `Nullable<V>` the target really declares stands.
+    internal static TypeNode EraseBound(TypeNode t, Func<string, bool> isValue) => Erase(t, Pos.Bound, isValue);
 
     // THE ONE RULE. `Nullable(Tv)` is `object` wherever it sits, because no CLR slot expresses it; a concrete
     // possibly-value `V?` is `object` in an ARGUMENT position and `Nullable<V>` in a slot. Everything else recurses,
@@ -446,20 +478,25 @@ static class NullableGenericErasure
     {
         if (t is TypeNode.Nullable { Of: TypeNode.Tv }) return new TypeNode.Fqn("object");
         if (pos == Pos.Argument && IsNullableMaybeValue(t, isValue)) return new TypeNode.Fqn("object");
-        // A FOREIGN subtree stays foreign all the way down: a `List<int?>` parameter's argument is what the member
+        // A BOUND subtree stays bound all the way down: a `List<int?>` parameter's argument is what the target
         // declares, not a position this compiler gets to canonicalize.
-        var inner = pos == Pos.Foreign ? Pos.Foreign : Pos.Argument;
-        var slot = pos == Pos.Foreign ? Pos.Foreign : Pos.Slot;
+        var inner = pos == Pos.Bound ? Pos.Bound : Pos.Argument;
+        var slot = pos == Pos.Bound ? Pos.Bound : Pos.Slot;
         return t switch
         {
             TypeNode.Nullable n => new TypeNode.Nullable(Erase(n.Of, slot, isValue)),
+            // An NRT-OBLIVIOUS `T!` is a pure nullability ANNOTATION, not a container — BirTypeLowering lowers
+            // straight through it and propagates the position with it — so its inner keeps THIS node's position.
+            TypeNode.Oblivious o => new TypeNode.Oblivious(Erase(o.Of, pos, isValue)),
             TypeNode.Fqn { Args: null } f => f,
             TypeNode.Fqn f => new TypeNode.Fqn(f.Name, f.Args.Select(a => Erase(a, inner, isValue)).ToArray()),
             TypeNode.Array a => new TypeNode.Array(Erase(a.Elem, inner, isValue)),
             TypeNode.ByRef b => new TypeNode.ByRef(Erase(b.Of, slot, isValue)),
+            // A delegate's RETURN follows the argument rule; its PARAMETERS keep the declared form. See the header:
+            // the two differ only because a callable reference to a DECLARED member has no forwarder yet.
             TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, Erase(fn.Ret, inner, isValue),
-                fn.Params.Select(p => Erase(p, inner, isValue)).ToArray(),
-                fn.Recv == null ? null : Erase(fn.Recv, inner, isValue)),
+                fn.Params.Select(p => Erase(p, slot, isValue)).ToArray(),
+                fn.Recv == null ? null : Erase(fn.Recv, slot, isValue)),
             _ => t,
         };
     }

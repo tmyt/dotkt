@@ -152,6 +152,18 @@ fun ngNestedCount(xss: List<List<Int?>>): Int {
 fun ngApplyQ(x: Int?, f: (Int?) -> String): String = f(x)
 fun ngApplyQRef(x: String?, f: (String?) -> String): String = f(x)
 fun ngApplyToQ(x: Int, f: (Int) -> Int?): Int? = f(x)
+// The targets of a CALLABLE REFERENCE into a `(Int?) -> String` slot. Their declared `Int?` parameter is the Kotlin
+// surface an author wrote and a C# caller binds, so it must survive being referenced: erased to `object` it would be
+// a public signature rewritten by a USE of it, with no carrier to restore it.
+fun ngHandleQ(x: Int?): String = x?.toString() ?: "none"
+class NgRefOwner { fun member(x: Int?): String = "m" + (x?.toString() ?: "none") }
+// A `Iterable<T?>` slot at a value instantiation: the one slot an `Enumerable.Cast<object>` conversion inhabits, and
+// the position where Kotlin's covariance over a value element has no CLR counterpart.
+fun <T> ngCountIterable(xs: Iterable<T?>): Int {
+    var n = 0
+    for (x in xs) if (x != null) n++
+    return n
+}
 // A generic METHOD whose instantiation is itself `Int?`: it must be emitted at `object` from the start, because
 // `List<object>` is the only argument its `IReadOnlyList<!!0>` parameter accepts.
 fun <T> ngFirstOr(xs: List<T>, d: T): T {
@@ -399,13 +411,31 @@ class NullableTests {
         val nested: List<List<Int?>> = listOf(listOf(1, null), listOf(null))
         assertEquals(3, ngNestedCount(nested))                    // 3
 
-        // DELEGATES. A `(Int?) -> String` is a `Func<object, string>` and a `(Int) -> Int?` is a
-        // `Func<int32, object>`, so the lifted lambda's own slot must be `object` too or there is no delegate.
+        // DELEGATES. A `(Int) -> Int?` is a `Func<int32, object>`, so the lifted lambda's own RETURN must be
+        // `object` too or there is no delegate; a `(Int?) -> String` keeps its `Func<Nullable<int32>, string>`
+        // (§9c-bis's one recorded exception), so an argument handed to it takes the value-nullable wrap a direct
+        // call has always had rather than pushing a bare `int32` into the slot.
         assertEquals("5", ngApplyQ(5) { it?.toString() ?: "none" })      // 5
         assertEquals("none", ngApplyQ(null) { it?.toString() ?: "none" })// none
         assertEquals(4, ngApplyToQ(2) { it * 2 })                        // 4   nullable RETURN component
         assertNull(ngApplyToQ(0) { null })                              // null
         assertEquals("s", ngApplyQRef("s") { it ?: "none" })            // s   reference control
+        // A CALLABLE REFERENCE to a DECLARED member fills the same delegate slot, and its target's signature is the
+        // author's, not a slot the erasure may move: `ngHandleQ` stays `handle(Nullable<int32>)` and the reference
+        // still invokes correctly through a `(Int?) -> String` local. Both forms — the static `::fn` and the bound
+        // `expr::member` — because they emit different delegate nodes.
+        val viaRef: (Int?) -> String = ::ngHandleQ
+        assertEquals("3", viaRef(3))                                     // 3
+        assertEquals("none", viaRef(null))                               // none
+        val viaBound: (Int?) -> String = NgRefOwner()::member
+        assertEquals("m4", viaBound(4))                                  // m4
+        assertEquals("mnone", viaBound(null))                            // mnone
+        // KOTLIN COVARIANCE OVER A VALUE ELEMENT: `List<Int>` IS an `Iterable<Int?>`, while an
+        // `IReadOnlyList<int32>` is not the `IEnumerable<object>` that slot erases to. The conversion is the
+        // callee's to receive, and without it the iteration finds no `GetEnumerator` at all.
+        assertEquals(3, ngCountIterable(listOf(1, 2, 3)))                // 3   non-nullable value element
+        assertEquals(2, ngCountIterable(listOf<Int?>(1, null, 3)))       // 2   the nullable twin, already object
+        assertEquals(2, ngCountIterable(listOf("a", "b")))               // 2   reference control
 
         // A generic METHOD instantiated at `Int?` must be instantiated at `object` from the start.
         assertEquals(2, ngFirstOr(listOf<Int?>(null, 2), 9) ?: 0)  // 2

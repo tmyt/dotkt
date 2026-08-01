@@ -146,18 +146,29 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   invariant reified generic — and the pre-erasure Kotlin type rides the same `[KotlinNullableGeneric]` carrier every
   other erased slot does, now including concrete arguments, so a separately compiled consumer restores `List<Int?>`
   and types its own use as `Subst(Erase(declared))`.
-  A DELEGATE's lifted target follows the delegate slot it fills, in the direction ECMA-335 II.14.6 requires of each
-  position: every parameter (contravariant — only `object` is assignable from `object`, so a `(T?) -> String` at
-  `T = String` moves too), and a value/`Nullable`/type-variable return (covariant — a reference return already
-  reaches `object` and stays, which is the #189 rule). A `(Int?) -> String` lambda used to emit a `Func<object,
-  string>` over an `__lambda(Nullable<int32>)`, which is not a delegate at all: `InvalidProgramException` before the
+  A DELEGATE's target follows the delegate slot it fills, in the direction ECMA-335 II.14.6 requires of each
+  position: every parameter the slot states as `object` (contravariant — only `object` is assignable from `object`,
+  so a `(T?) -> String` at `T = String` moves too), and a value/`Nullable`/type-variable return (covariant — a
+  reference return already reaches `object` and stays, which is the #189 rule). A delegate INVOCATION is now an
+  argument position like any other, so `f(3)` on a `(Int?) -> R` gets the value-nullable wrap a direct call has
+  always had instead of pushing an `int32` into a `Nullable<int32>` slot — an `InvalidProgramException` before the
   first instruction.
+  ONE POSITION IS SCOPED OUT and recorded as such in `docs/dotkt-semantics.md` §9c-bis: a delegate PARAMETER keeps a
+  CONCRETE `V?`, so `(Int?) -> String` stays a `Func<Nullable<int32>, string>`. A delegate's target may be a member
+  the author DECLARED (`::handle`, `expr::member`), and erasing the parameter leaves only two wrong answers — rewrite
+  that member's public signature by a use of it, or emit a delegate no target can fill and read a struct's bits as a
+  reference at run time. Closing it means synthesizing a forwarder at the reference, which is the same missing piece
+  the RETURN's inherited move needs; the two land together.
   Prunes both pinned roundtrip sections (`-array-to-collection`, `-collection-to-array`) and five ilverify entries:
   the three value-element base-view findings (`copyOfGrowsWithNullTailAtValueElements`, `boxedGenericValues`,
   `arrayOfNulls`), the cross-module `nullableGenericMembersRoundTrip` delegate findings, and #324's
   `nullableGenericCollectionArgKeysOnTheReceiver`. The `Enumerable.Cast<object>` receiver conversion that entry
-  tracked is DELETED with its pass: a Kotlin `List<Int?>` is now an `IReadOnlyList<object>`, which already IS an
-  `IEnumerable<object>`, so the wrap had nothing left to convert. What remains is the REFERENCE half of the same
+  tracked no longer fires for a nullable element — a Kotlin `List<Int?>` is now an `IReadOnlyList<object>`, which
+  already IS an `IEnumerable<object>` — and is narrowed to the shape that still needs it: Kotlin covariance over a
+  NON-nullable value element (`List<Int>` IS an `Iterable<Int?>`, and an `IReadOnlyList<int32>` is not an
+  `IEnumerable<object>`), judged PER POSITION against a slot the wrap can actually fill, which is
+  `kotlin.collections.Iterable<T?>` and nothing else. Filling a `List<T?>` slot with it was #324. What remains is the
+  REFERENCE half of the same
   question — an open `Array<T?>`/`List<T?>` is `object[]`/`IReadOnlyList<object>` T-independently while a concrete
   `Array<String?>` keeps `string[]` — carried as the one surviving `ArrayTests::copyOfGrowsWithNullTail` entry.
 
@@ -395,8 +406,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   carrier still excludes suspend function types for the reason it always did — there is no physical delegate for it
   to align with — so this makes the one carrier truthful rather than adding a second.
 
-- **bir2cir (area:bir2cir): the hand-written special cases the uniform erasure subsumes are DELETED, and the one
-  that survives is narrowed to a real oracle (#86).** Each was the erasure formula applied by hand at one node kind,
+- **bir2cir (area:bir2cir): the hand-written special cases the uniform erasure subsumes are DELETED (#86).** Each
+  was the erasure formula applied by hand at one node kind,
   and each existed because the formula was not applied everywhere — so with the rule uniform they say nothing the
   rule does not. Gone: the property-accessor retype (a `get_x` return and a `set_x` parameter are declaration slots
   of the same declared type, erased on their own, so row and accessors are coherent by construction) with its
@@ -404,17 +415,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   init-gated body-local retype with all three of its idiom gates — the gates existed to tell a genuine accumulator
   from a synthesized safe-call temp, a distinction that stops mattering once BOTH are erased and both re-narrow at
   their typed uses; and the return-value retype, subsumed by `return` becoming a use position like any other.
-  `ValueTypeNullableCollectionArg` stays, because a value-element collection genuinely is not covariantly the
-  `IEnumerable<object>` an erased `Iterable<T?>` receiver names — but its hardcoded primitive list becomes the
-  struct-ness oracle (a `value class`, a projected .NET struct and a local enum are value elements for the same CLR
-  reason as `Int`), and it stops reading its element off `typeArgs[0]`, which is the DESTINATION type parameter and
-  never a value for a two-parameter `filterNotNullTo`; it now reads the type variable that actually sits under the
-  **receiver's** nullable element, and it consults the receiver alone. Both halves matter, and they are the same
-  mistake in opposite directions: accumulating the predicates across every parameter let an unrelated `Box<T?>`
-  argument wrap an ordinary `Iterable<String>` receiver, while reading `typeArgs[0]` asked about the wrong type
-  variable. That closes `List<Int?>.filterNotNullTo` at a value element, and **#324** —
-  `countG(nullBoxes(7), 2)`, where the wrap fired on a user generic's `List<A?>` parameter and the `Cast<object>`
-  result did not inhabit the parameter slot — now returns 3 rather than throwing. Both are pinned as fixtures.
+  The `Enumerable.Cast<object>` receiver conversion for a value-element collection is retired by the
+  carrier-argument erasure above, which makes a `List<Int?>` an `IReadOnlyList<object>` — already an
+  `IEnumerable<object>` — so there is nothing left for it to convert. `List<Int?>.filterNotNullTo` at a value
+  element and **#324**'s `countG(nullBoxes(7), 2)` are pinned as fixtures and both run green without it.
 
 - **bir2cir (area:bir2cir): an override of an object-erased `T?` slot is now an override, not a new overload
   (#86 D3).** `class TextSink : Sink<String> { override fun accept(x: String?) }` writes a CONCRETE type, so no
@@ -453,11 +457,6 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   call's dynamic-dispatch channel (ilemit falls back to reflection on its presence), so on a node already bound to
   a concrete CLR slot it would be a dispatch instruction rather than a type fact, and `sty` carries the same
   instantiated type without it.
-  The sibling audit found one more node in the same class, synthesized rather than reshaped:
-  `ValueTypeNullableCollectionArg` wraps a value-element collection argument in
-  `System.Linq.Enumerable.Cast<object>` and left the wrap unstamped. That one RETYPES the operand, so it is
-  stamped with what the wrap itself produces (`IEnumerable<object>`) rather than with the wrapped node's stamp —
-  which would be a lie, not merely an imprecision, exactly as at the `NullableTvErasureCallRealign` restamp sites.
   CIR is unchanged across the whole gated corpus and on the measured non-suspend control (byte-identical): `sty` is
   bir2cir-internal and stripped before CIR, and the `ret` carries only add a slot where the reshaped node had none.
   One shape is a deliberate, semantically-neutral exception rather than a no-op — `CharSeqStringLowering` reads

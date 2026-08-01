@@ -416,6 +416,14 @@ sealed class Pipeline
             // NetInteropBinding carries (the callee's declared param TypeNodes) — BirTypeLowering lowers it and ilemit
             // exact-matches it. The retired ShapeSynthesis pass (lossy `shapes` string derived off the @ClrTypeAlias
             // index) is DELETED; ilemit no longer re-resolves the overload by name/arity/shape-string.
+            // KOTLIN COVARIANCE OVER A VALUE ELEMENT at an object-erased `Iterable<T?>` slot: `List<Int>` IS an
+            // `Iterable<Int?>` in Kotlin, while an `IReadOnlyList<int32>` is not an `IEnumerable<object>` on the CLR
+            // (a reified argument is invariant for a value type), so the callee's `GetEnumerator` is not found. Wrap
+            // that argument in `Enumerable.Cast<object>`, which boxes each element into a real object-enumerable.
+            // Only an `Iterable<T?>` slot, per position — that is the one slot the wrap's own `IEnumerable<object>`
+            // inhabits. Runs FIRST, before the erasure sweeps the slot's `Nullable(Tv)` to `object` (this pass keys
+            // on it); self-gates to concrete value instantiations, so it is a no-op in the rt-stdlib self-build.
+            if (!_options.RefBuild) ValueElementIterableCoercion.Apply(bir.Root, isValueFqn);
             // ARRAY-ELEMENT CANONICALIZATION (#86 D2): an `Array<X?>` with a possibly-value `X` is `object[]`, so an
             // array CREATION filling such a slot allocates `object[]` too. kotc writes the source's own element there
             // (`arrayOf(1,2,3)` into an `Array<Int?>` says `kotlin.Int`), which is not a `Nullable(...)` the erasure
@@ -876,12 +884,6 @@ sealed class Pipeline
             // the reference-nullable strip, so nothing earlier sees the two meet. Refuses loudly, naming both source
             // signatures — a silent wrong binding is the one outcome a program with no valid lowering must not get.
             NullableGenericOverloadCollision.Check(lowered, outputName);
-            // The other side of the same erasure: a .NET member may DECLARE a `List<int?>`, which no Kotlin type
-            // inhabits once `X?` in a reified argument is `System.Object`. Unrelated invariant reified generics have
-            // no conversion between them and an adapter would change the argument's identity, so the crossing is
-            // refused here rather than silently mis-typed. Checked on the lowered tree, where `memberSig`/`ret` are
-            // the final CLR signature.
-            ForeignNullableGenericCrossing.Check(lowered, outputName);
             // A mutable/spilled collection value can lower to IList<T> while a Kotlin read-only call slot lowers to
             // IReadOnlyList<T>. These are sibling CLR interfaces, so make the conversion an explicit CIR cast after
             // substituting method type args. ilemit then emits the stated cast instead of inferring a stack seam.
@@ -947,6 +949,13 @@ sealed class Pipeline
             // the fully-lowered tree — so owner/argTypes speak the CLR vocabulary the MLC resolves; unconditional so
             // RefBodySquash's `newClr NotImplementedException` is stamped too (its owner resolves off the BCL compile-refs).
             ClrMemberResolution.Apply(lowered, refs, localBasicEnums);
+            // The other side of the erasure: a .NET member may DECLARE a `List<int?>`, which no Kotlin type inhabits
+            // once `X?` in a reified argument is `System.Object`. Unrelated invariant reified generics have no
+            // conversion between them and an adapter would change the argument's identity, so the crossing is
+            // refused rather than silently mis-typed. Checked HERE, immediately after the resolution that stamps
+            // `memberSig`: before it, most `clr*` nodes still carry the caller's `argTypes` and the .NET declaration
+            // this refusal is about has not been read yet.
+            ForeignNullableGenericCrossing.Check(lowered, outputName);
             // A file whose ENTIRE content was @ClrTypeAlias types (e.g. Primitives.kt, Comparable.kt) is now empty after
             // AliasHelperHoist dropped them — emit no CIR file for it (an empty file-class would be a pointless empty
             // static type in the assembly). Skips only when types AND methods AND fields are all empty; never in ref.
