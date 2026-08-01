@@ -2388,6 +2388,14 @@ internal sealed class AssemblyScanner
     // `kotlin.Throwable`/`kotlin.Any` edges — so an index would line up with nothing. Replacing an entry whose class
     // name and argument count the carrier also names keeps every one of those decisions and moves only the
     // arguments, which is all that was erased.
+    //
+    // A TYPE-PARAMETER BOUND is the same fact one level down and rides the same carrier's `bounds`. `class Box<T :
+    // Sink<Int?>>` constrains T to a physical `Sink<object>`, so a consumer that re-derived the bound from the CLR
+    // constraint would either weaken it to `Sink<Any?>` or, as it did, publish no bound at all and let
+    // `Box<BadSink>` compile and then fail to LOAD. Restored here, the frontend rejects the bad argument where the
+    // author wrote it. Keyed by parameter INDEX — a type's own parameter list IS a transcription of the metadata's,
+    // unlike its supertype list — and matched by head within the parameter, so a bound the CLR constraint already
+    // supplied is replaced rather than duplicated.
     private void RestoreErasedSupertypes(TypeDefinitionHandle handle, Class result, SignatureDecoder signatures,
         NameTable names)
     {
@@ -2400,6 +2408,7 @@ internal sealed class AssemblyScanner
             ifs.ValueKind == System.Text.Json.JsonValueKind.Array)
             foreach (var i in ifs.EnumerateArray())
                 if (TypeNode.Read(i) is { } n) pre.Add(signatures.FromTypeNode(n));
+        RestoreErasedBounds(doc, result, signatures, names);
         if (pre.Count == 0) return;
         for (var i = 0; i < result.Supertype.Count; i++)
         {
@@ -2410,6 +2419,34 @@ internal sealed class AssemblyScanner
                                                 && names.ClassName(p.ClassName) == curName
                                                 && p.Argument.Count == cur.Argument.Count);
             if (match is not null) result.Supertype[i] = match;
+        }
+    }
+
+    private static void RestoreErasedBounds(System.Text.Json.JsonDocument doc, Class result,
+        SignatureDecoder signatures, NameTable names)
+    {
+        if (!doc.RootElement.TryGetProperty("bounds", out var bounds) ||
+            bounds.ValueKind != System.Text.Json.JsonValueKind.Object) return;
+        foreach (var entry in bounds.EnumerateObject())
+        {
+            if (!int.TryParse(entry.Name, out var index) || entry.Value.ValueKind != System.Text.Json.JsonValueKind.Array)
+                continue;
+            var parameter = result.TypeParameter.FirstOrDefault(p => p.Id == index);
+            if (parameter is null) continue;
+            foreach (var boundElement in entry.Value.EnumerateArray())
+            {
+                if (TypeNode.Read(boundElement) is not { } node) continue;
+                var bound = signatures.FromTypeNode(node);
+                var at = -1;
+                if (bound.HasClassName)
+                    for (var i = 0; i < parameter.UpperBound.Count && at < 0; i++)
+                        if (parameter.UpperBound[i].HasClassName
+                            && names.ClassName(parameter.UpperBound[i].ClassName) == names.ClassName(bound.ClassName)
+                            && parameter.UpperBound[i].Argument.Count == bound.Argument.Count)
+                            at = i;
+                if (at >= 0) parameter.UpperBound[at] = bound;
+                else parameter.UpperBound.Add(bound);
+            }
         }
     }
 

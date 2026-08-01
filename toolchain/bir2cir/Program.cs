@@ -812,6 +812,10 @@ sealed class Pipeline
 
         // PHASE 2 — per-file type lowering onwards.
         var files = new List<CirFile>();
+        // The fully-lowered roots, kept so the implementing-position half of the crossing refusal can be asked of the
+        // WHOLE compilation at once: a Kotlin interface declared in one file may be the only path from a class in
+        // another to the .NET declaration whose slot it cannot fill.
+        var loweredRoots = new List<(JsonNode Root, string File)>();
         foreach (var (substituted, outputName) in staged)
         {
             // §11 CONTINUATION-ERASURE (bundle-6 bug #5 ROOT): make the coroutine ABI monomorphic on
@@ -961,12 +965,20 @@ sealed class Pipeline
             // `memberSig`: before it, most `clr*` nodes still carry the caller's `argTypes` and the .NET declaration
             // this refusal is about has not been read yet.
             ForeignNullableGenericCrossing.Check(lowered, outputName);
+            loweredRoots.Add((lowered, outputName));
             // A file whose ENTIRE content was @ClrTypeAlias types (e.g. Primitives.kt, Comparable.kt) is now empty after
             // AliasHelperHoist dropped them — emit no CIR file for it (an empty file-class would be a pointless empty
             // static type in the assembly). Skips only when types AND methods AND fields are all empty; never in ref.
             if (!_options.RefBuild && IsEmptyCir(lowered)) continue;
             files.Add(new CirFile(outputName, lowered.ToJsonString(JsonOptions.Indented)));
         }
+
+        // The IMPLEMENTING-POSITION half of the same refusal: a .NET supertype declaring a slot no Kotlin body can
+        // fill. It is asked of every lowered root together, because the supertype graph that reaches such a slot runs
+        // through this compilation's own declarations as freely as through referenced ones, and a per-file view stops
+        // at the first Kotlin interface declared next door. Nothing has been written yet, so a refusal here is as
+        // clean as one inside the loop.
+        ForeignNullableGenericCrossing.CheckImplementedSlots(loweredRoots, refs);
 
         // #71 S2: emit the embedded round-trip attribute-class defs ONCE per assembly, as a dedicated synthetic CIR
         // file (glob-sorted first via the `000-` prefix so its TypeDefs precede the user types, minimizing dump churn).

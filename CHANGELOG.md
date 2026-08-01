@@ -135,8 +135,22 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   erased slot reads DotKt metadata, so a PLAIN BCL or third-party supertype has nothing for it to read and that
   whole provenance fell through. bir2cir now asks the REFLECTED declaration, which every referenced assembly has,
   and refuses at compile time naming the deriving type, the supertype and the slot. Filling the slot from the
-  reflected signature would not have worked: the Kotlin body still reads its argument as Kotlin's `List<object>`, so
-  the mismatch would move out of load time and into the body.
+  reflected signature would not have worked: no Kotlin type states that position, so the body could not name the
+  value it is handed and the mismatch would move out of load time and into the body.
+
+  The slot is looked for over the WHOLE supertype graph and includes accessors. Reflection does not hand a derived
+  interface its base's members, so `class C : IDerived` where the slot is on `IBase` still reached the load-time
+  failure; and a C# `List<int?> Items { get; }` is a `get_Items` marked SpecialName, so a Kotlin property override
+  emitted the mismatched slot and died at load too. The walk is `SupertypeGraph`, shared with the override-slot
+  bridge rather than copied — two copies of it are what said opposite things about a delegate parameter before —
+  and it crosses provenances, so a .NET slot reached only through a Kotlin interface declared here is reached.
+
+  And it fires only where THIS type is obliged to fill THAT slot. Refusing every inherited crossing rejected
+  programs with a perfectly good lowering: a Kotlin `interface KI : ITake` and an `abstract class KA : BTake()` are
+  not instantiable and emit no body, and an abstract slot some .NET type in the chain already implements is nobody's
+  obligation. A concrete virtual is now refused only where this type actually overrides it, matched against the
+  signature the override would physically state — the slot's erased image — rather than by name and parameter count,
+  which refused a Kotlin `override fun Take(s: String)` for an unrelated `Take(List<int?>)` sibling.
 
 
 - **bir2cir (area:bir2cir): a supertype edge's erased argument is CARRIED, closing a Kotlin source break (#86).**
@@ -144,11 +158,24 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   declaration slot to hang a per-slot carrier on — so a separately compiled consumer re-imported `E : Sink<Any?>`
   and `val s: Sink<Int?> = E()` stopped compiling. Member carriers cannot repair it: every member's own slot is
   already exact, and what was lost is the identity of the EDGE. Internal shapes are free to break; Kotlin source
-  compatibility is not, so the pre-erasure edges (and type-parameter bounds, which erase the same way) now ride a
-  type-level `[KotlinSupertypes]` carrier in the same opaque TypeNode encoding every other carrier uses. `dll2klib`
-  restores them by HEAD rather than by position, because the projected supertype list is not a transcription of the
-  metadata's — it drops non-generic shadows, collapses the `IComparable` bridge and synthesizes
-  `kotlin.Throwable`/`kotlin.Any` edges — so only the arguments move and every one of those decisions is kept.
+  compatibility is not, so the pre-erasure edges (and the type's own type-parameter bounds, which erase the same
+  way) now ride a type-level `[KotlinSupertypes]` carrier in the same opaque TypeNode encoding every other carrier
+  uses. `dll2klib` restores the edges by HEAD rather than by position, because the projected supertype list is not a
+  transcription of the metadata's — it drops non-generic shadows, collapses the `IComparable` bridge and synthesizes
+  `kotlin.Throwable`/`kotlin.Any` edges — so only the arguments move and every one of those decisions is kept. Only
+  the edges the erasure actually MOVED are carried, so an untouched one is not rebuilt from the carrier and keeps
+  whatever the projection decided about it.
+
+  The `bounds` member is now produced and consumed, where it was a documented payload with neither. The producer
+  looked for a singular `bound` key on a type parameter, and kotc writes `constraints` (a list — Kotlin allows
+  several upper bounds), so nothing was ever recorded; and `RestoreErasedSupertypes` read only `base` and
+  `interfaces`. So `class Box<T : Sink<Int?>>` re-imported with NO bound at all: `Box<BadSink>` compiled and then
+  died at LOAD with the CLR's wording, on a line the author never wrote. Both ends are wired, and the bad type
+  argument is now refused by the frontend against the Kotlin bound the author declared. Two limits, both measured
+  and recorded in `docs/design-kotlin-metadata-attributes.md`: a METHOD's type-parameter bounds are not on this
+  carrier (it is type-level), and a class bound the erasure never moved is still lost, because a CLASS type
+  parameter's CLR constraint is not projected at all — a gap older than this erasure, which the non-erasing
+  reference control fails on identically.
 
 - **bir2cir (area:bir2cir): every node resolved against a .NET member states that member's declared type, and the
   build now asserts it (#86).** Two families were silently outside the crossing refusal: a GENERIC .NET method,
@@ -158,6 +185,25 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `void` is written explicitly so an omission and a void member are distinguishable, and a CHOKEPOINT after
   resolution refuses a node carrying a resolved parameter vector — or a kind only resolution produces — without a
   declared return. The next omission of that shape fails the compiler instead of a review.
+
+  Unknown is no longer spelled as a genuine `void`. A generic method the resolver could not narrow by name, generic
+  arity and parameter count was stamped `void` — which satisfied the chokepoint, since a stamp WAS made, while
+  telling the refusal there was no declared return to object to. A C# `List<int?> Make<T>(int)` beside a
+  `string Make<T>(string)` therefore passed both, and emission — which links by the exact `memberSig` the frontend
+  resolved — picked the right overload and handed back a `List<Nullable<int32>>` consumed as a `List<object>`. The
+  return is now resolved THROUGH that same `memberSig`, by the unique-match discipline every other member here uses,
+  and a descriptor matching none or several is a hard error rather than a value to invent. The sibling overload
+  still binds and runs.
+
+- **bir2cir (area:bir2cir): a `::fn` moves the declaration it NAMES, not every declaration of that name (#86).** A
+  callable reference bound into a slot the erasure object-stated moves the target's own slot to match — the one
+  place a declared signature is decided by a use — and the demand was keyed on the target's NAME, so every same-name
+  sibling moved with it. `::handle` naming an `Int?` overload silently retyped an unrelated
+  `fun handle(x: CharSequence)`, and a generic one produced `ilemit: method …Kt.handle not found`: an emit abort on
+  frontend-accepted source, or a PUBLIC Kotlin signature changed by a use that never mentions it, with no
+  round-trip carrier to say what it used to be. The demand is now keyed by the frontend-resolved signature the
+  reference resolved to, which BIR already carries on the node; a compiler-minted lifted target, whose name is
+  unique by construction, still matches by name alone.
 
 - **bir2cir/ilemit (area:bir2cir): the referenced override arm relates the marker to the supertype, and one body per
   slot (#86 D3).** The marker's owner established only that the supertype was external; the lookup then ran against

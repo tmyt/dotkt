@@ -16,6 +16,30 @@ import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.Companion.IsNull as assertNull
 import NvGen.Api
+import NvGen.GenFac
+import NvGen.INotObliged
+import NvGen.NotObligedBase
+import NvGen.OverloadBase
+
+// THE OTHER HALF OF THE IMPLEMENTING-POSITION REFUSAL: what an author may still write next to an uninhabitable
+// slot. These three declarations ARE the assertion — a refusal keyed on "does this type inherit such a slot"
+// rejected all three at compile time, and a rejected program has no test to run. They compile here, so the
+// obligation is decided per type and per slot.
+//
+// An INTERFACE and an ABSTRACT class inherit the obligation without discharging it: neither is instantiable and
+// neither emits a body, so there is no position for the slot's uninhabitable parameter to appear in. Kotlin
+// re-declares the inherited member on the deriving interface as a fake override, which states the slot again and
+// still fills nothing.
+interface KotlinInterfaceOverForeignSlot : INotObliged
+
+abstract class KotlinAbstractOverForeignSlot : NotObligedBase()
+
+// And a CONCRETE class may override a DIFFERENT member of the same overload set. `Take(List<int?>)` and
+// `Take(string)` share a name and a parameter count, so a refusal that matched on those two facts refused this
+// class for a member it never mentions. The crossing overload keeps its .NET body.
+class KotlinOverloadSibling : OverloadBase() {
+    override fun Take(s: String): String = "kt:" + s
+}
 
 class NullableValueGenericInteropTests {
     @TestAttribute
@@ -33,5 +57,22 @@ class NullableValueGenericInteropTests {
         assertEquals("5", Api.Describe(5) { v -> v?.toString() ?: "none" })       // 5
         assertEquals("none", Api.Describe(null) { v -> v?.toString() ?: "none" }) // none
         assertEquals("4|none", Api.DescribeTwice(4) { v -> v?.toString() ?: "none" })  // 4|none
+    }
+
+    // The overload sibling RUNS, and it dispatches through the CLR slot it overrides — so the class did not merely
+    // compile, it LOADED, with its one slot filled and the crossing one left to the .NET body. (Calling that other
+    // overload from Kotlin is the call-side crossing and is refused; it is pinned in tests/compile-fail.)
+    @TestAttribute
+    fun overridingTheSiblingOfACrossingOverloadRuns() {
+        val o: OverloadBase = KotlinOverloadSibling()
+        assertEquals("kt:a", o.Take("a"))               // kt:a   the Kotlin override, through the base slot
+        assertEquals("net:b", OverloadBase().Take("b")) // net:b  the base's own body, untouched
+    }
+
+    // A GENERIC overload set whose OTHER member returns an uninhabitable slot. The declared return is resolved
+    // through this call's own `memberSig`, so the crossing one is refused (tests/compile-fail) and this one is not.
+    @TestAttribute
+    fun siblingOfACrossingGenericOverloadStillBinds() {
+        assertEquals("gen:a", GenFac.Pick<Int>("a"))    // gen:a
     }
 }

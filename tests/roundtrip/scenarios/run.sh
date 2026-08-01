@@ -83,7 +83,12 @@ declare -A RT_XFAIL=(
 	[roundtrip-nullable-vt-generic-objectish-constraint-value]="#86: a generic constrained by Sink<Int?> emits a constrained call whose argument is never widened to the constraint's SUBSTITUTED form, and the CLR rejects the body with System.InvalidProgramException. MEASURED, against the expectation that any objectish constraint does this: the Sink<Any?> twin beside it RUNS (A:a), so the variable is the nullable-VALUE argument specifically and not objectish-ness in general — Sink<Any?> is objectish too and is fine. Closes when the constrained call widens its argument to Subst(Erase(constraint)); the passing Any? section beside it is the control that keeps the claim honest."
 	[roundtrip-nullable-vt-generic-comparable-typed-dispatch]="#86 PRE-EXISTING, and previously recorded ONLY as prose in tests/basic/fixtures/NullableTests.kt saying 'NOT asserted' — the rule violation this entry fixes. Dispatch through a Comparable<Int?>-TYPED reference dies with System.EntryPointNotFoundException: Comparable<X> at an objectish X collapses onto the NON-generic System.IComparable in the type's supertype list, while a value slot of that type keeps IComparable<object>, so the call resolves a member the receiver does not have. Measured identically on Comparable<Any?>, objectish long before #86. Closes when the collapse and the slot agree on one physical interface for an objectish argument."
 	[roundtrip-nullable-vt-generic-referenced-arity-dispatch]="#86 D3: a call on a REFERENCED-interface receiver selects between two same-name, same-parameter-vector members by name and parameters alone, ignoring method generic arity, so a.put<String>(2) runs the arity-0 body and prints a0:2. The SLOTS are correct — the type loads and both arities dispatch correctly through the class's own declared type — so this is call-site overload resolution on a referenced member, not slot filling. Needs the call's generic arity carried into the referenced-member lookup."
-	[roundtrip-nullable-vt-generic-open-slot-callable-ref]="#86: a ::fn / expr::member reference bound into an OPEN (T?) -> R slot reads the boxed reference's bits as a Nullable<int32> and yields a garbage value. The slot is Func<object, string> at every instantiation and the referenced member's parameter is the author's own Nullable<int32>, which a use of it may not move; a lambda into the same slot is correct. PRE-EXISTING (the open slot demanded object before this erasure too). Needs a forwarder synthesized at the reference — static for ::fn, a capture class for expr::member — the same piece the concrete delegate parameter is scoped out for."
+	[roundtrip-nullable-vt-generic-open-slot-callable-ref]="#86: a NON-GENERIC ::fn / expr::member reference bound into an OPEN (T?) -> R slot reads the boxed reference's bits as a Nullable<int32> and yields a garbage value. The slot is Func<object, string> at every instantiation and the referenced member's parameter is the author's own Nullable<int32>, which a use of it may not move; a lambda into the same slot is correct. PRE-EXISTING (the open slot demanded object before this erasure too). Needs a forwarder synthesized at the reference — static for ::fn, a capture class for expr::member — the same piece the concrete delegate parameter is scoped out for. A GENERIC target fails EARLIER and for another reason entirely; that is roundtrip-generic-target-callable-ref, not this."
+	# NOT #86, and listed beside it only because it is the same syntax: a GENERIC ::fn has no typeArgs on its
+	# newDelegate, so ilemit ldftn's the open generic-method DEFINITION and the CLR refuses to execute it. The
+	# NON-NULLABLE twin in the same section fails identically, which is what proves the nullability axis is not
+	# involved — and what keeps this cause out of the entry above, where a forwarder at the reference is the fix.
+	[roundtrip-generic-target-callable-ref]="PRE-EXISTING and NOT #86: a ::fn naming a GENERIC function, bound into a generic function-type slot, is emitted as a ldftn of the open generic-method definition (the newDelegate carries no typeArgs for ilemit to MakeGenericMethod with), so the CLR refuses it with 'not fully instantiated' before any argument is converted. Measured identically on the non-nullable twin (T instead of T?), so no nullable-generic erasure is involved. Closes when the reference carries the instantiation its call site resolved."
 	[roundtrip-nullable-vt-generic-seq-mapnotnull]="#86: NOT the cross-module carrier read (measured) — the defect is same-module, inside the stdlib's lazy path. Sequence.mapNotNull builds TransformingSequence<T, object> (its (T) -> R? transform erases R? to object) and hands it to filterNotNull, whose body unchecked-casts a lazily-wrapped object-elemented sequence to Sequence<T>; on the CLR that IS a reified IEnumerable<T>, so at T=Int the wrapper does not implement IEnumerable<int32> and the terminal toList's GetEnumerator is not found — System.EntryPointNotFoundException. The eager Iterable.mapNotNull twin is green because it materializes a fresh typed list instead of wrapping. Needs an element-converting adapter on the lazy sequence path, stdlib-side."
 	# PRUNED by the OVERRIDE-SLOT BRIDGE (#86 D3): the narrowed override called through its OWN declared type. The
 	# override now keeps its own physical `accept(Nullable<int32>)`, so the re-imported surface and the assembly name
@@ -120,6 +125,7 @@ declare -A RT_XFAIL_SHAPE=(
 	[roundtrip-nullable-vt-generic-seq-mapnotnull]='System.EntryPointNotFoundException'
 	# The wrong value is a pointer and differs every run, so the app prints a VERDICT and the shape is that verdict.
 	[roundtrip-nullable-vt-generic-open-slot-callable-ref]='wrong'
+	[roundtrip-generic-target-callable-ref]='not fully instantiated'
 	[roundtrip-nullable-vt-generic-referenced-arity-dispatch]='a0:2'
 	# The PINNED entries. Each shape is the CLR's own exception name, which is what distinguishes these three from
 	# one another and from any unrelated break that would otherwise satisfy a name-only entry.
@@ -716,6 +722,24 @@ ng_app() {
 	check_output "$name" "$expected" "$out" "$descr"
 }
 
+# ng_reject <workdir> <libasm> <name> <want-substring> <descr>   (Kotlin consumer source on stdin)
+# The twin of ng_app for an observable that is a REFUSAL. A restored declaration can be too WEAK as easily as too
+# strong, and only source the frontend must turn away shows the difference: a bound that came back missing accepts
+# an argument it should not, and the program then dies at LOAD with the CLR's wording instead of at the line the
+# author wrote. The verdict is the compiler's own diagnostic, so it is the compile output that is compared here —
+# an accepted consumer fails the section by producing no such text.
+ng_reject() {
+	local d="$1" asm="$2" name="$3" want="$4" descr="$5"
+	local a="$d/$name"; rm -rf "$a"; mkdir -p "$a/app" "$a/bir"
+	cat > "$a/app/app.kt"
+	local out ok=0
+	out="$("$LAUNCHER" "$a/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$d/$asm.klib" -d "$a/bir" 2>&1 || true)"
+	evidence_add "$out"
+	[[ "$out" == *"$want"* ]] && ok=1
+	section_result "$name" "$ok" "$descr" \
+		"$(printf -- '--- the diagnostic must contain ---\n%s\n--- compiler output ---\n%s' "$want" "$out")"
+}
+
 # ----- SAME-MODULE: the representation, with no boundary and no metadata in play (#86) ------------------
 ng_local roundtrip-nullable-vt-generic-local-param '7' \
 	'same-module: a null through a top-level T? PARAM at T=Int (#86)' <<'EOF'
@@ -771,6 +795,24 @@ fun main() {
     val viaStatic = invokeNullable<Int>(3, ::handleQ)          // "3" — reads a boxed reference as a struct instead
     val viaBound = invokeNullable<Int>(4, Owner()::member)     // "4" — same, through a bound member reference
     println((if (viaStatic == "3") "ok" else "wrong") + "/" + (if (viaBound == "4") "ok" else "wrong"))
+}
+EOF
+
+# THE SAME SYNTAX, A DIFFERENT FAULT, AND NOT THIS ONE'S. A `::fn` naming a GENERIC function never reaches the
+# argument conversion the entry above is about: the reference carries no instantiation, so ilemit `ldftn`s the open
+# generic-method DEFINITION and the CLR refuses to execute it. Driven with the NON-NULLABLE twin beside it, because
+# that is what proves the nullable-generic erasure is not involved — both fail identically. It is pinned rather than
+# left to prose so it flips to FIXED on its own, and pinned SEPARATELY so neither entry's stated cause has to cover
+# a failure it does not describe.
+ng_local roundtrip-generic-target-callable-ref '4/4' \
+	'PINNED (NOT #86): a GENERIC ::fn bound into a generic function-type slot, nullable and non-nullable alike' <<'EOF'
+fun <T> handleG(x: T?): String = x?.toString() ?: "none"
+fun <T> handleP(x: T): String = x?.toString() ?: "none"
+fun <T> invokeNullable(v: T?, block: (T?) -> String): String = block(v)
+fun <T> invokePlain(v: T, block: (T) -> String): String = block(v)
+fun main() {
+    // The non-nullable twin runs FIRST: it is the control, and it fails the same way.
+    println(invokePlain<Int>(4, ::handleP) + "/" + invokeNullable<Int>(4, ::handleG))
 }
 EOF
 
@@ -1195,6 +1237,60 @@ ng_app "$RSUP2" Rsup2Lib roundtrip-nullable-vt-generic-supertype-edge 'E:5/E:non
 fun main() {
     val s: ESink<Int?> = EImpl()                  // the assignment the erased edge makes impossible
     println(s.accept(5) + "/" + s.accept(null))   // E:5/E:none  and dispatch through that edge
+}
+EOF
+
+# A TYPE-PARAMETER BOUND IS THE SAME FACT ONE LEVEL DOWN (#86). `class BReg<T : BSink<Int?>>` constrains T to a
+# physical `BSink<object>`, and the `bounds` member of the type-level carrier is what states the Kotlin bound the
+# author declared. It was a documented payload nothing produced and nothing read: the producer looked for a singular
+# `bound` key kotc does not emit, and the consumer never applied one — so the re-imported class published NO bound
+# at all, `BReg(BBad())` compiled, and the program died at LOAD with the CLR's wording on a line the author never
+# wrote. Both directions are needed, because a missing bound and a physical one fail on opposite arguments: the good
+# argument must be ACCEPTED (a bound weakened to the physical `BSink<Any?>` would turn it away) and the bad one
+# REFUSED (no bound at all lets it through).
+RBND="$ROOT/build/roundtrip-nullable-vt-generic-bound-edge-group"
+ng_lib "$RBND" RbndLib <<'EOF'
+interface BSink<T> { fun accept(x: T): String }
+class BReg<T : BSink<Int?>>(val t: T) {           // the erased bound: physically BSink<object>
+    val tag: String = "reg"
+}
+EOF
+
+ng_app "$RBND" RbndLib roundtrip-nullable-vt-generic-bound-edge-accept 'reg' \
+	'cross-module: a good type argument satisfies a restored bound (BSink<Int?>) (#86)' <<'EOF'
+class BGood : BSink<Int?> { override fun accept(x: Int?): String = "g:" + (x?.toString() ?: "none") }
+fun main() {
+    println(BReg(BGood()).tag)                    // reg  the bound admits exactly what the author declared
+}
+EOF
+
+ng_reject "$RBND" RbndLib roundtrip-nullable-vt-generic-bound-edge-reject 'BSink<Int?>' \
+	'cross-module: a bad type argument is refused by the restored bound, at the line that wrote it (#86)' <<'EOF'
+class BBad : BSink<String> { override fun accept(x: String): String = "b:" + x }
+fun main() {
+    println(BReg(BBad()).tag)                     // must not compile: BBad is not a BSink<Int?>
+}
+EOF
+
+# A DELEGATE TARGET IS ONE DECLARATION, NOT EVERY DECLARATION OF THAT NAME (#86). A `::fn` bound into a slot the
+# erasure object-stated moves the target's own slot to match — the one place a declared signature is decided by a
+# USE — and keying that demand on the target's NAME moved every same-name sibling with it. Here `::make` names the
+# `Int?` overload; the `String` one has nothing to do with it, and its return silently became `object` with no
+# round-trip carrier. Same-module the realigned call sites hide it; only a separately compiled consumer, which
+# re-derives the surface from the assembly, can see that a PUBLIC signature moved.
+RDTS="$ROOT/build/roundtrip-nullable-vt-generic-delegate-target-group"
+ng_lib "$RDTS" RdtsLib <<'EOF'
+fun make(x: Int): Int? = if (x > 0) x else null    // the ::make target: its Int? RETURN follows the erased slot
+fun make(x: String): Int = x.length                // an unrelated sibling that must keep its own Int return
+fun <T> use(f: (Int) -> T?): String = f(1)?.toString() ?: "none"
+fun boundUse(): String = use<Int>(::make)
+EOF
+
+ng_app "$RDTS" RdtsLib roundtrip-nullable-vt-generic-delegate-target-sibling '1/4' \
+	'cross-module: a ::fn moves ONLY the declaration it names, not its same-name sibling (#86)' <<'EOF'
+fun main() {
+    val n: Int = make("abcd")                     // compiles only while the sibling still returns Int
+    println(boundUse() + "/" + n.toString())      // 1/4
 }
 EOF
 

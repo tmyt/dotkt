@@ -99,8 +99,19 @@ TYPE-LEVEL carrier:
 | `[KotlinSupertypes(version, bytes)]` | the type's `attrs` | `{base?, interfaces?, bounds?}` of pre-erasure TypeNodes |
 
 The payload is the same opaque TypeNode encoding every other carrier uses, so no new format is introduced; `bounds`
-maps a type parameter's index to its pre-erasure upper bound, which erases for the same reason and is lost the same
-way. It is recorded only when the erasure actually moved one of those positions, so an ordinary type carries nothing.
+maps a TYPE parameter's index to the pre-erasure list of that parameter's upper bounds, which erase for the same
+reason and are lost the same way. Each member is recorded only where the erasure actually moved that position — an
+edge it did not touch is not on the carrier, so the consumer's own projection decisions for it stand — and an
+ordinary type carries nothing at all. dll2klib reads all three back (`RestoreErasedSupertypes`): the two supertype
+members replace a projected edge by head, `bounds` is applied to the type parameter at that index.
+
+Two boundaries of `bounds`, both measured. A METHOD's type-parameter bounds are not on it — this carrier is
+type-level and giving a member one is a channel that does not exist — so a `fun <T : Sink<Int?>> f()` still
+re-imports its bound as the physical `Sink<object>`. And a bound the erasure never moved is not restored by it
+either: dll2klib does not project a CLASS type parameter's CLR constraint at all (only method and property ones,
+`AddMethodTypeParameters`), so a `class Box<T : Sink<String>>` re-imports with no bound whatever this carrier does.
+That gap is older than the erasure and independent of it — the reference control fails identically — and closing it
+means deciding what a CLR `struct`/`ValueType` constraint means as a Kotlin bound, which is its own subject.
 
 WHAT IT DOES NOT COVER, measured rather than assumed: **#29's collection-identity collapse at a supertype
 position**. `class B : Box<List<String>>` emits `Box<IList<string>>` and a consumer still cannot assign `B()` to a

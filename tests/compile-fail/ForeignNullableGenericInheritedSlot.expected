@@ -1,0 +1,3 @@
+# Named at the DERIVING type and at the type that DECLARES the slot — one hop up from the one the author wrote.
+'CInherited' derives from 'plainnet.IBase'
+a slot NO Kotlin expression inhabits

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using Def = SupertypeGraph.Def;
 
 // ERASURE PROPAGATES FROM THE OVERRIDDEN SLOT, NOT FROM SYNTAX (#86 D3).
 //
@@ -32,7 +33,8 @@ using DotKt.Bir;
 // ONE BRIDGE, ONE METHODIMPL PER SLOT IT FILLS. A slot is reached through the whole supertype graph — the constructed
 // interface, its own base interfaces (including the synthesized `G$dotkt_star` existential view), and the base-class
 // chain — and every one of those declares its own CLR slot even when the signatures coincide. The bridges are keyed by
-// signature so the several slots share one body, and each contributes its own resolved MethodImpl descriptor.
+// signature so the several slots share one body, and each contributes its own resolved MethodImpl descriptor. The walk
+// itself is `SupertypeGraph`, shared with the crossing refusal that asks the same graph a different question.
 //
 // NESTED POSITIONS CANNOT BE BRIDGED, and are the one case where the declaration still moves. A base `Box<T?>` erases
 // to `Box<object>`, and `Box<object>` and `Box<Nullable<int32>>` are unrelated invariant reified generics that no cast
@@ -61,17 +63,6 @@ using DotKt.Bir;
 // unfilled slot does.
 static class KotlinOverrideSlotBridge
 {
-    public sealed class Def
-    {
-        public string Name;
-        public string Kind;
-        public int Arity;
-        public TypeNode.Fqn Base;
-        public TypeNode.Fqn[] Interfaces = Array.Empty<TypeNode.Fqn>();
-        public JsonObject Node;
-        public JsonArray Methods;
-    }
-
     // THE TWO HALVES RUN AT DIFFERENT POINTS, because their inputs are valid at different points.
     //
     // The DECLARATION MOVE (a nested position no cast reaches) must land before the erasure sweep and the use-side
@@ -95,37 +86,9 @@ static class KotlinOverrideSlotBridge
     static void ApplyAll(IEnumerable<JsonNode> roots, Func<string, bool> isValue, ReferenceMetadataIndex refs,
         bool emitBridges)
     {
-        var defs = Collect(roots);
+        var defs = SupertypeGraph.Collect(roots);
         foreach (var cls in defs.Values.Where(d => d.Kind == "class").ToList())
             ApplyClass(cls, defs, isValue, refs, emitBridges);
-    }
-
-    static Dictionary<string, Def> Collect(IEnumerable<JsonNode> roots)
-    {
-        var result = new Dictionary<string, Def>(StringComparer.Ordinal);
-        foreach (var root in roots) CollectFrom(root, result);
-        return result;
-    }
-
-    static void CollectFrom(JsonNode node, Dictionary<string, Def> result)
-    {
-        if (node is not JsonObject obj || obj["types"] is not JsonArray types) return;
-        foreach (var type in types.OfType<JsonObject>())
-        {
-            if (Str(type["name"]) is not string name) continue;
-            result[name] = new Def
-            {
-                Name = name,
-                Kind = Str(type["kind"]),
-                Arity = (type["typeParams"] as JsonArray)?.Count ?? 0,
-                Base = TypeJson.Read(type["base"]) as TypeNode.Fqn,
-                Interfaces = (type["interfaces"] as JsonArray)?.Select(TypeJson.Read)
-                    .OfType<TypeNode.Fqn>().ToArray() ?? Array.Empty<TypeNode.Fqn>(),
-                Node = type,
-                Methods = type["methods"] as JsonArray ?? new JsonArray(),
-            };
-            CollectFrom(type, result);
-        }
     }
 
     static void ApplyClass(Def cls, IReadOnlyDictionary<string, Def> defs, Func<string, bool> isValue,
@@ -157,11 +120,11 @@ static class KotlinOverrideSlotBridge
             {
                 var declT = TypeJson.Read((declParams[i] as JsonObject)?["type"]);
                 if (declT == null) { fit = null; break; }
-                fit[i] = Classify(slotParams[i], SubstOwnerTvs(declT, ownArgs));
+                fit[i] = Classify(slotParams[i], SupertypeGraph.SubstOwnerTvs(declT, ownArgs));
             }
             // A parameter difference this erasure did not create belongs to whatever pass did create it.
             if (fit == null || fit.Contains(Fit.Foreign)) return;
-            var retFit = Classify(slotRet, SubstOwnerTvs(declRet, ownArgs));
+            var retFit = Classify(slotRet, SupertypeGraph.SubstOwnerTvs(declRet, ownArgs));
             if (retFit == Fit.Foreign)
             {
                 // A COVARIANT return over an otherwise-exact signature is CovariantInterfaceReturnBridge's, and
@@ -198,8 +161,8 @@ static class KotlinOverrideSlotBridge
             // forwards to as well, the two slots get one bridge each, while the sharing that IS correct — one body
             // reached through several supertypes of the same shape — still collapses to one.
             var body = string.Join(",", (impl["params"] as JsonArray ?? new JsonArray())
-                .OfType<JsonObject>().Select(pn => TypeJson.Read(pn["type"]) is TypeNode t ? TypeKey(t) : "?"));
-            var key = name + "`" + arity + "(" + string.Join(",", slotParams.Select(TypeKey)) + ")->" + TypeKey(slotRet)
+                .OfType<JsonObject>().Select(pn => TypeJson.Read(pn["type"]) is TypeNode t ? SupertypeGraph.TypeKey(t) : "?"));
+            var key = name + "`" + arity + "(" + string.Join(",", slotParams.Select(SupertypeGraph.TypeKey)) + ")->" + SupertypeGraph.TypeKey(slotRet)
                       + "{" + Str(impl["name"]) + "(" + body + ")}";
             if (!bridges.TryGetValue(key, out var bridge))
             {
@@ -214,7 +177,7 @@ static class KotlinOverrideSlotBridge
                 .Add(ImplDescriptor(spec, descriptorMember, arity, slotParams, slotRet));
         }
 
-        foreach (var (spec, supIsInterface) in ReachableSupertypes(cls, defs, refs))
+        foreach (var (spec, supIsInterface) in SupertypeGraph.Reachable(cls, defs, refs))
         {
             if (!defs.TryGetValue(spec.Name, out var sup))
             {
@@ -223,7 +186,7 @@ static class KotlinOverrideSlotBridge
                 FillFromReference(cls, defs, spec, supIsInterface, methods, ownArgs, isValue, refs, Fill);
                 continue;
             }
-            var supArgs = EffectiveArgs(spec, sup.Arity);
+            var supArgs = SupertypeGraph.EffectiveArgs(spec, sup.Arity);
             if (supArgs == null) continue;
 
             foreach (var slot in sup.Methods.OfType<JsonObject>().ToList())
@@ -236,11 +199,11 @@ static class KotlinOverrideSlotBridge
                 // this reads the same slot before the sweep has run and after.
                 var slotParams = slotParamNodes.OfType<JsonObject>()
                     .Select(p => TypeJson.Read(p["type"]))
-                    .Select(t => t == null ? null : SubstOwnerTvs(NullableGenericErasure.EraseNullableTv(t, isValue), supArgs))
+                    .Select(t => t == null ? null : SupertypeGraph.SubstOwnerTvs(NullableGenericErasure.EraseNullableTv(t, isValue), supArgs))
                     .ToArray();
                 var slotRet0 = TypeJson.Read(slot["ret"]);
                 if (slotParams.Any(p => p == null) || slotRet0 == null) continue;
-                var slotRet = SubstOwnerTvs(NullableGenericErasure.EraseNullableTv(slotRet0, isValue), supArgs);
+                var slotRet = SupertypeGraph.SubstOwnerTvs(NullableGenericErasure.EraseNullableTv(slotRet0, isValue), supArgs);
 
                 if (Implementer(cls, defs, methods, spec.Name, name, methodArity, slotParams, ownArgs) is not JsonObject impl)
                     continue;
@@ -287,7 +250,7 @@ static class KotlinOverrideSlotBridge
                 // wires both slots to whichever body the first marker named. "Not declared here" establishes only
                 // externality; reachability from the spec is what makes this marker THIS spec's business.
                 if (TypeJson.OwnerName(o["owner"]) is not string owner || defs.ContainsKey(owner)) continue;
-                if (!Reaches(spec.Name, owner, defs, refs)) continue;
+                if (!SupertypeGraph.Reaches(spec.Name, owner, defs, refs)) continue;
                 if (Str(o["member"]) is not string member) continue;
                 // A PROPERTY marker names the Kotlin property (`v`, kind `getter`/`setter`) while the CLR slot is the
                 // ACCESSOR (`get_v`/`set_v`) — the same translation DeclarationRename makes for the declaration.
@@ -306,15 +269,15 @@ static class KotlinOverrideSlotBridge
                 // signature is the derivation its silence exists to prevent — so the member is left alone.
                 if (slotParams0.Any(t => t == null)) continue;
                 var slotParams = slotParams0
-                    .Select(t => SubstOwnerTvs(NullableGenericErasure.EraseNullableTv(t, isValue), supArgs))
+                    .Select(t => SupertypeGraph.SubstOwnerTvs(NullableGenericErasure.EraseNullableTv(t, isValue), supArgs))
                     .ToArray();
                 // A null RETURN fact is the opposite: the reader states a return only while it still says something a
                 // call site completes (a carrier, or a physical type still holding a type variable), so `null` means
                 // the slot's return is not one the erasure moved and the override's own return already IS it.
                 // `compareTo(T): Int` is exactly that — the parameter is the whole divergence.
                 var slotRet = slotRet0 == null
-                    ? SubstOwnerTvs(TypeJson.Read(impl["ret"]), ownArgs)
-                    : SubstOwnerTvs(NullableGenericErasure.EraseNullableTv(slotRet0, isValue), supArgs);
+                    ? SupertypeGraph.SubstOwnerTvs(TypeJson.Read(impl["ret"]), ownArgs)
+                    : SupertypeGraph.SubstOwnerTvs(NullableGenericErasure.EraseNullableTv(slotRet0, isValue), supArgs);
                 if (slotRet == null) continue;
                 // The CLR slot's own NAME. A referenced Kotlin interface that is `@ClrTypeAlias`'d onto a BCL one
                 // fills a differently-named member (`compareTo` -> `CompareTo`), and the MethodImpl has to name the
@@ -417,7 +380,7 @@ static class KotlinOverrideSlotBridge
             for (var i = 0; i < ps.Count && ok; i++)
             {
                 var t = TypeJson.Read((ps[i] as JsonObject)?["type"]);
-                ok = t != null && ErasureAligned(slotParams[i], SubstOwnerTvs(t, ownArgs));
+                ok = t != null && ErasureAligned(slotParams[i], SupertypeGraph.SubstOwnerTvs(t, ownArgs));
             }
             if (!ok) continue;
             if (found != null) return null;   // ambiguous overload set: never guess which declaration owns the slot
@@ -609,89 +572,9 @@ static class KotlinOverrideSlotBridge
         };
     }
 
-    // Every supertype this class reaches, as a CONSTRUCTED spec in the class's own type-parameter frame: the
-    // interface graph (transitively, so a base interface's redeclared slot is reached) and the base-class chain.
-    static IEnumerable<(TypeNode.Fqn spec, bool isInterface)> ReachableSupertypes(Def cls,
-        IReadOnlyDictionary<string, Def> defs, ReferenceMetadataIndex refs)
-    {
-        var queue = new Queue<(TypeNode.Fqn, bool)>();
-        foreach (var i in cls.Interfaces) queue.Enqueue((i, true));
-        if (cls.Base != null) queue.Enqueue((cls.Base, false));
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        while (queue.Count > 0)
-        {
-            var (spec, isInterface) = queue.Dequeue();
-            if (!seen.Add(TypeKey(spec))) continue;
-            yield return (spec, isInterface);
-            if (defs.TryGetValue(spec.Name, out var def))
-            {
-                var args = EffectiveArgs(spec, def.Arity);
-                if (args == null) continue;
-                foreach (var parent in def.Interfaces) queue.Enqueue(((TypeNode.Fqn)SubstOwnerTvs(parent, args), true));
-                if (def.Base != null) queue.Enqueue(((TypeNode.Fqn)SubstOwnerTvs(def.Base, args), false));
-                continue;
-            }
-            // A REFERENCED supertype's own graph continues the walk, so a slot DECLARED one level up is reached as a
-            // spec of its own. That matters because a MethodImpl names the type that declares the slot: a class
-            // implementing `Derived<Int>` fills `Sink<Int>`'s `accept`, and a directive naming `Derived` is looked up
-            // under a spec the emitter never asks about.
-            if (refs == null) continue;
-            var refArgs = spec.Args ?? Array.Empty<TypeNode>();
-            foreach (var (parent, parentIsInterface) in refs.ReferencedSupertypes(spec.Name))
-                if (SubstOwnerTvs(parent, refArgs) is TypeNode.Fqn constructed)
-                    queue.Enqueue((constructed, parentIsInterface));
-        }
-    }
-
-    // Is `owner` `from` itself, or one of its supertypes — through this compilation's declarations and through the
-    // referenced graph alike? The bridge asks it to tie an override marker to the supertype spec it may answer for.
-    // Bounded by a visited set, so cyclic or repeated metadata terminates.
-    static bool Reaches(string from, string owner, IReadOnlyDictionary<string, Def> defs, ReferenceMetadataIndex refs)
-    {
-        var queue = new Queue<string>();
-        queue.Enqueue(from);
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        while (queue.Count > 0)
-        {
-            var n = queue.Dequeue();
-            if (!seen.Add(n)) continue;
-            if (n == owner) return true;
-            if (defs.TryGetValue(n, out var d))
-            {
-                foreach (var i in d.Interfaces) queue.Enqueue(i.Name);
-                if (d.Base != null) queue.Enqueue(d.Base.Name);
-                continue;
-            }
-            if (refs == null) continue;
-            foreach (var (parent, _) in refs.ReferencedSupertypes(n)) queue.Enqueue(parent.Name);
-        }
-        return false;
-    }
-
     static TypeNode[] ClassOwnArgs(Def def) =>
         Enumerable.Range(0, def.Arity).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray();
 
-    static TypeNode[] EffectiveArgs(TypeNode.Fqn spec, int arity)
-    {
-        if (arity == 0) return Array.Empty<TypeNode>();
-        return spec.Args is { } args && args.Length == arity ? args : null;
-    }
-
-    static TypeNode SubstOwnerTvs(TypeNode type, TypeNode[] args) => type switch
-    {
-        TypeNode.Tv { Scope: "type" } tv when tv.I >= 0 && tv.I < args.Length => args[tv.I],
-        TypeNode.Fqn f when f.Args is not null => new TypeNode.Fqn(f.Name, f.Args.Select(a => SubstOwnerTvs(a, args)).ToArray()),
-        TypeNode.Nullable n => new TypeNode.Nullable(SubstOwnerTvs(n.Of, args)),
-        TypeNode.Oblivious o => new TypeNode.Oblivious(SubstOwnerTvs(o.Of, args)),
-        TypeNode.Array a => new TypeNode.Array(SubstOwnerTvs(a.Elem, args)),
-        TypeNode.ByRef r => new TypeNode.ByRef(SubstOwnerTvs(r.Of, args)),
-        TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, SubstOwnerTvs(fn.Ret, args),
-            fn.Params.Select(p => SubstOwnerTvs(p, args)).ToArray(),
-            fn.Recv == null ? null : SubstOwnerTvs(fn.Recv, args)),
-        _ => type,
-    };
-
-    static string TypeKey(TypeNode t) => TypeJson.Write(t).ToJsonString();
     static string SafeName(string name) => new(name.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
     static bool Bool(JsonNode n) => n is JsonValue v && v.TryGetValue<bool>(out var b) && b;
     static string Str(JsonNode n) => n is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;

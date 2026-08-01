@@ -266,24 +266,47 @@ static partial class ClrMemberResolution
     // reached that refusal with no declared return at all and its caller-view `ret` — already erased to Kotlin's
     // `List<object>` — said nothing.
     //
-    // A member this cannot pin down UNIQUELY is stamped `void` rather than guessed at: an unknown declaration is not
-    // a licence to invent one, and the chokepoint's question is whether a stamp was MADE, not whether it was
-    // informative.
+    // UNKNOWN IS NOT SPELLED `void`. Stamping a fake `void` for an overload set this could not narrow satisfied the
+    // chokepoint — a stamp WAS made — while telling the crossing refusal there was no declared return to object to,
+    // so a C# `List<int?> Make<T>(int)` beside a `string Make<T>(string)` passed both and its
+    // `List<Nullable<int32>>` was consumed as a `List<object>`. The node already carries the FIR-resolved
+    // `memberSig`, which is the exact descriptor ilemit LINKS the overload by, so the return is resolved through it
+    // by the same unique-match discipline every other member here uses. A descriptor that still matches none or
+    // several is a hard error, not a value to invent: ilemit would fail on the identical descriptor one stage later,
+    // and a diagnostic naming the member beats a silently wrong result type.
     static void ResolveGenericCallRet(JsonObject node, bool instance)
     {
         if (node.ContainsKey(MemberRetKey)) return;
         var name = (node["method"] as JsonValue)?.GetValue<string>();
-        var open = ReadOwnerNode(node["type"]) is TypeNode.Fqn ownerFqn ? ResolveOwnerType(ownerFqn) : null;
-        if (open == null || name == null) { StampMemberRet(node, typeof(void)); return; }
+        var ownerFqn = ReadOwnerNode(node["type"]) as TypeNode.Fqn;
+        var open = ownerFqn != null ? ResolveOwnerType(ownerFqn) : null;
+        if (open == null || name == null)
+            throw new InvalidOperationException(
+                $"bir2cir: a generic .NET call to '{name ?? "?"}' names owner "
+                + $"'{(ownerFqn == null ? "<none>" : TypeNode.ToJson(ownerFqn))}', which does not "
+                + "resolve to a .NET type — so the member's declared return cannot be established (#86). ilemit "
+                + "resolves the same owner to emit the call, so this is a dropped owner, not a member to guess at.");
         var flags = BindingFlags.Public | (instance ? BindingFlags.Instance : BindingFlags.Static);
         var arity = (node["typeArgs"] as JsonArray)?.Count ?? 0;
         var argCount = (node["args"] as JsonArray)?.Count ?? 0;
-        var cands = open.GetMethods(flags)
+        // The candidate set ilemit builds for the very same node, interface fallback included: a class may satisfy
+        // the Kotlin-surfaced member through a private explicit MethodImpl body, whose public name lives only on the
+        // implemented interface.
+        List<MethodInfo> Candidates(Type owner) => owner.GetMethods(flags)
             .Where(m => m.Name == name && m.IsGenericMethodDefinition
                         && m.GetGenericArguments().Length == arity
                         && m.GetParameters().Length == argCount)
             .ToList();
-        StampMemberRet(node, cands.Count == 1 ? cands[0].ReturnType : typeof(void));
+        var cands = Candidates(open);
+        if (cands.Count == 0 && instance)
+            cands = SafeInterfaces(open).SelectMany(Candidates)
+                .GroupBy(m => (m.Module, m.MetadataToken)).Select(g => g.First()).ToList();
+        if (cands.Count == 1) { StampMemberRet(node, cands[0].ReturnType); return; }
+        var sig = (node["memberSig"] as JsonArray)?.Select(TypeJson.Read).ToList();
+        var desc = $"clrGeneric{(instance ? "Instance" : "Static")} owner={TypeNode.ToJson(ownerFqn)} .{name}"
+                   + $"<{arity}>({(sig == null ? "?" : DescArgs(sig))})";
+        if (sig == null || sig.Count != argCount || sig.Any(t => t == null)) throw NoMatch(desc, cands);
+        StampMemberRet(node, PickUnique(cands, m => m.GetParameters(), sig, ownerFqn.Args, desc).ReturnType);
     }
 
     // ---- bound .NET method-reference (newBoundClrDelegate) --------------------------------------

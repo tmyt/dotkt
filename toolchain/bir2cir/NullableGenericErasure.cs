@@ -128,8 +128,10 @@ static class NullableGenericErasure
     // may not spend, so the pre-erasure edge travels with the type.
     //
     // The payload is the same opaque TypeNode form every other carrier uses — a `{base, interfaces, bounds}` object
-    // of pre-erasure nodes — so no new encoding is introduced; `bounds` carries each type parameter's own upper
-    // bounds, which erase for exactly the same reason and are lost the same way.
+    // of pre-erasure nodes — so no new encoding is introduced; `bounds` carries the upper bounds of THIS TYPE's own
+    // type parameters, keyed by parameter index, which erase for exactly the same reason and are lost the same way.
+    // A METHOD's type-parameter bounds are not on it: the carrier is type-level, and giving them one is a per-member
+    // channel this does not have. dll2klib reads all three back (`RestoreErasedSupertypes`).
     internal const string SupertypesPre = "nullableGenericSupertypesPre";
 
     static void RecordSupertypes(JsonObject to, Func<string, bool> isValue)
@@ -141,20 +143,32 @@ static class NullableGenericErasure
             pre["base"] = to["base"].DeepClone();
             moved = true;
         }
-        if (to["interfaces"] is JsonArray ifs
-            && ifs.Any(i => TypeJson.Read(i) is TypeNode t && !Erase(t, Pos.Slot, isValue).Equals(t)))
+        // ONLY THE EDGES THAT MOVED. Cloning the WHOLE interface list because one entry moved put the untouched
+        // entries on the carrier too, and the consumer's head match then rebuilt each of them from this node —
+        // discarding what its own projection had decided about an edge the erasure never touched (a dropped
+        // non-generic shadow, the collapsed `IComparable` bridge). The carrier states a correction, so it carries
+        // only what it corrects.
+        if (to["interfaces"] is JsonArray ifs)
         {
-            pre["interfaces"] = ifs.DeepClone();
-            moved = true;
+            var movedIfs = new JsonArray();
+            foreach (var i in ifs)
+                if (TypeJson.Read(i) is TypeNode t && !Erase(t, Pos.Slot, isValue).Equals(t))
+                    movedIfs.Add(i.DeepClone());
+            if (movedIfs.Count > 0) { pre["interfaces"] = movedIfs; moved = true; }
         }
+        // A BOUND IS A LIST, AND ITS KEY IS `constraints`. kotc writes a bounded type parameter as
+        // `{"name":"T","constraints":[…]}` — Kotlin allows several upper bounds on one parameter — and a singular
+        // `bound` key it never emits recorded nothing at all, so `bounds` was a documented member of this payload
+        // that no producer ever filled. A parameter with ANY moving constraint carries its WHOLE list, because the
+        // consumer restores the declared bound rather than patching one argument of it.
         if (to["typeParams"] is JsonArray tps)
         {
             var bounds = new JsonObject();
             for (var i = 0; i < tps.Count; i++)
             {
-                if (tps[i] is not JsonObject tp || tp["bound"] is not JsonNode bn) continue;
-                if (TypeJson.Read(bn) is not TypeNode bt || Erase(bt, Pos.Slot, isValue).Equals(bt)) continue;
-                bounds[i.ToString()] = bn.DeepClone();
+                if (tps[i] is not JsonObject tp || tp["constraints"] is not JsonArray cs || cs.Count == 0) continue;
+                if (!cs.Any(c => TypeJson.Read(c) is TypeNode bt && !Erase(bt, Pos.Slot, isValue).Equals(bt))) continue;
+                bounds[i.ToString()] = cs.DeepClone();
             }
             if (bounds.Count > 0) { pre["bounds"] = bounds; moved = true; }
         }
@@ -557,6 +571,18 @@ static class NullableGenericErasure
     // `Int?` is, and it crosses without any adaptation at all. That includes a `Nullable<!!0>` on a `T : struct` .NET
     // generic, which a Kotlin `T?` inhabits at every instantiation.
     internal static bool ErasureWouldMove(TypeNode lowered) => AtSlot(lowered);
+
+    // THE IMAGE THAT `ErasureWouldMove` ANSWERS ABOUT: what a Kotlin declaration filling this LOWERED foreign slot
+    // physically states. `List<Nullable<int32>>` -> `List<object>`, and a slot the erasure does not move is returned
+    // unchanged — so comparing a Kotlin declaration against this image asks "is THIS the member that fills THAT
+    // slot?" exactly, rather than by name and parameter count, which cannot tell a crossing overload from its
+    // untouched sibling.
+    //
+    // The oracle is a constant `true` and not the build's struct-ness predicate, for the same reason `AtArgument`
+    // needs none: on a LOWERED foreign declaration every surviving `Nullable` is already a real `System.Nullable<V>`
+    // over a value type, so asking whether its inner may be a value has one answer. Sharing `Erase` rather than
+    // walking the positions again is what keeps the image and the question the same statement.
+    internal static TypeNode ErasedLoweredSlot(TypeNode lowered) => Erase(lowered, Pos.Slot, _ => true);
 
     // `Erase` at Pos.Slot: the head is not moved; an Fqn's arguments, an array's element and a delegate's RETURN are
     // arguments; a byref referent, a nullable's inner and a delegate's PARAMETERS are slots.

@@ -50,8 +50,17 @@ static class DelegateTargetSlotAlignment
         _isValue = isValue ?? (_ => false);
         if (root is not JsonObject o) return false;
         // Target identity -> which of its slots the delegate states as `object`. A `newDelegate` names a lifted
-        // static by `method`; a `newClosure` names its synthetic class by `closureType` and its body is always that
-        // class's `invoke`.
+        // static by `method` AND, where the target is a declaration the AUTHOR wrote, by the frontend-resolved `sig`
+        // that selected it out of its overload set; a `newClosure` names its synthetic class by `closureType` and
+        // its body is always that class's `invoke`.
+        //
+        // THE NAME ALONE IS NOT AN IDENTITY, and keying on it moved every same-name declaration in the file. A
+        // `::handle` bound into a `(T?) -> String` slot rewrote the parameter of an unrelated
+        // `fun handle(x: CharSequence)` to `object` — a PUBLIC Kotlin signature changed by a use that has nothing to
+        // do with it, with no round-trip carrier, and then `ilemit: method …Kt.handle not found` at the ordinary
+        // call to it. `sig` is the same frontend fact every overload-bearing node in BIR carries, it has been
+        // through the same erasure sweep as the declarations by the time this pass runs, and it lays out
+        // `[ext receiver?] + contexts + regulars` exactly as `params` does — so the two compare directly.
         var statics = new Dictionary<string, Demand>(StringComparer.Ordinal);
         var closures = new Dictionary<string, Demand>(StringComparer.Ordinal);
         Collect(o, statics, closures);
@@ -86,7 +95,7 @@ static class DelegateTargetSlotAlignment
                     && TypeJson.Read(obj["funcType"]) is TypeNode.Fn { Suspend: false } fn)
                 {
                     var key = k == "newDelegate"
-                        ? Str(obj["method"])
+                        ? (Str(obj["method"]) is string method ? method + "|" + SigKey(obj["sig"]) : null)
                         : (TypeJson.Read(obj["closureType"]) as TypeNode.Fqn)?.Name;
                     if (key != null) Demanded(k == "newDelegate" ? statics : closures, key, fn);
                 }
@@ -123,13 +132,31 @@ static class DelegateTargetSlotAlignment
             }
     }
 
-    static void AlignMethods(JsonNode methods, Dictionary<string, Demand> byName)
+    // A declaration is the target when its NAME and its own parameter vector are the ones the construction named.
+    // The wildcard arm is for a target with no `sig`: kotc omits it only for a target it MINTED — a lifted
+    // `__lambdaN`/`__mrefN` — whose name is unique in the file by construction, so there is no overload to confuse
+    // it with and nothing for a parameter vector to disambiguate.
+    static void AlignMethods(JsonNode methods, Dictionary<string, Demand> byTarget)
     {
         if (methods is not JsonArray a) return;
         foreach (var m in a)
-            if (m is JsonObject mo && Str(mo["name"]) is string n && byName.TryGetValue(n, out var d))
-                Align(mo, d);
+        {
+            if (m is not JsonObject mo || Str(mo["name"]) is not string n) continue;
+            var own = string.Join(",", (mo["params"] as JsonArray ?? new JsonArray())
+                .Select(p => TypeJson.Read((p as JsonObject)?["type"]) is TypeNode t
+                    ? TypeJson.Write(t).ToJsonString() : "?"));
+            if (byTarget.TryGetValue(n + "|" + own, out var d)) Align(mo, d);
+            else if (byTarget.TryGetValue(n + "|" + AnySig, out var wild)) Align(mo, wild);
+        }
     }
+
+    const string AnySig = "*";
+
+    // The construction's frontend-resolved target signature, in the same spelling `AlignMethods` reads a
+    // declaration's own parameters in.
+    static string SigKey(JsonNode sig) => sig is not JsonArray a
+        ? AnySig
+        : string.Join(",", a.Select(s => TypeJson.Read(s) is TypeNode t ? TypeJson.Write(t).ToJsonString() : "?"));
 
     // THE TWO POSITIONS TAKE OPPOSITE RULES, because delegate compatibility is not symmetric (ECMA-335 II.14.6):
     //

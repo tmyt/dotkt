@@ -1557,10 +1557,15 @@ generic.
 
 The Kotlin surface survives on three channels, which a re-consuming DotKt reader recombines:
 `[KotlinNullableGeneric]` carries the pre-erasure type node of a declaration SLOT, the ordinary `[Nullable(2)]` NRT
-byte carries the outer `?`, and `[KotlinSupertypes]` carries the type's pre-erasure supertype EDGES and
-type-parameter bounds — the one erased position with no slot to hang a per-slot carrier on. Without that third one a
-consumer re-imports `class E : Sink<Int?>` as `Sink<Any?>` and `val s: Sink<Int?> = E()` stops compiling, which is a
-Kotlin source break rather than an internal one.
+byte carries the outer `?`, and `[KotlinSupertypes]` carries the type's pre-erasure supertype EDGES and the upper
+bounds of the type's OWN type parameters — the erased positions with no slot to hang a per-slot carrier on. Without
+that third one a consumer re-imports `class E : Sink<Int?>` as `Sink<Any?>` and `val s: Sink<Int?> = E()` stops
+compiling, and `class Box<T : Sink<Int?>>` re-imports with no bound at all, so `Box<BadSink>` compiles and then
+fails to LOAD with the CLR's wording instead of being turned away at the line that wrote it. Both are Kotlin source
+breaks rather than internal ones. A METHOD's type-parameter bound is not on that carrier (it is type-level) and
+re-imports as the physical `Sink<object>`; and a class bound the erasure never moved is not restored at all, because
+a CLASS type parameter's CLR constraint is not projected in the first place — a gap older than this erasure, which
+the non-erasing reference control fails on identically.
 
 **Restoring the surface is only half of consuming it.** A consumer that re-imports `unwrapSlot(slot: Slot<T?>)` writes
 `unwrapSlot(Slot<Int?>(5))`, and `Slot<Nullable<int32>>` is not the `Slot<object>` the producer's slot actually is —
@@ -1646,6 +1651,29 @@ Kotlin scalar `Int?` IS a `System.Nullable<int32>` — and so is a delegate PARA
 by the exception below: a `Func<int?, string>` parameter is inhabited by an ordinary Kotlin lambda and must keep
 crossing. A refusal that read a delegate parameter as an argument position rejected exactly that.
 
+**The same crossing at the IMPLEMENTING position is refused too.** A Kotlin type can meet the slot by DERIVING from
+a .NET type that declares one — `class C : ITake` for a C# `interface ITake { string Take(List<int?> xs); }` — and
+there the crossing is in the slot the type must fill rather than in anything it calls. Emitting the declaration's
+own signature would not help: no Kotlin type states that position, so the body could not name the value it is
+handed, and the mismatch would move out of load time and into the body. The claim is exactly that narrow — a body
+whose parameter type no Kotlin expression inhabits is not expressible here, not that no CIL exists — and it is why
+the refusal names the deriving type, the supertype that declares the slot, and the member.
+
+**It fires only where THIS type is obliged to fill THAT slot**, which is a question about the type and not about
+what it inherits. The slot is looked for over the whole supertype graph, transitively and across provenances (a
+.NET interface reached through another .NET interface, or through a Kotlin one declared here), and accessors count
+— a `List<int?> Items { get; }` is a `get_Items` slot like any other. But an obligation is only discharged by a
+body, so:
+
+- a Kotlin `interface KI : ITake` and an `abstract class KA : BTake()` are ACCEPTED. Neither is instantiable and
+  neither emits a body; Kotlin re-declares the inherited member on them as a fake override, which states the slot
+  again and fills nothing. Their concrete subclasses are refused instead, wherever they are declared.
+- an abstract slot that some .NET type in the chain already implements is nobody's obligation, so a Kotlin class
+  below that implementation is ACCEPTED.
+- a CONCRETE virtual is refused only where this type actually overrides it, decided by the signature the override
+  would physically state — the erased image of the slot — and not by the member's name and parameter count. So with
+  a .NET `Take(List<int?>)` beside a `Take(string)`, overriding the `String` one is an ordinary program.
+
 ### Delegates: the target's slots follow the delegate's, and a CONCRETE parameter is the one exception
 
 A delegate's return is a reified argument, so `(Int) -> Int?` is `Func<int32, object>` and `(T?) -> String` is
@@ -1661,6 +1689,11 @@ reason is that a delegate's target may be a member the author DECLARED — `::ha
 its Kotlin surface. Erasing the parameter leaves exactly two options and both are wrong: move `fun handle(x: Int?)`
 to `handle(object)`, which rewrites a public signature by a USE of it, or leave the target and emit a
 `Func<object, string>` no target can fill, which reads a struct's bits as a reference at run time.
+
+Where a target slot does move, it moves for **the one declaration the reference names** — identified by the
+frontend-resolved signature the reference resolved to, not by the target's name. A same-name sibling is a different
+declaration and keeps its own slots; moving it too changed a public Kotlin signature that the use never mentioned,
+with no round-trip carrier to state what it used to be.
 
 **The carve-out does not remove that hazard; it removes it from the CONCRETE slot only.** An OPEN slot still demands
 `object` at every instantiation — `fun <T> invokeNullable(block: (T?) -> String)` is a `Func<object, string>` whatever

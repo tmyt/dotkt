@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text.Json.Nodes;
@@ -40,11 +41,7 @@ using DotKt.Bir;
 // mid-resolution and a Kotlin-vocabulary `Nullable(Tv)` would be read as a foreign declaration it is not.
 static class ForeignNullableGenericCrossing
 {
-    public static void Check(JsonNode root, string file)
-    {
-        CheckImplementedSlots(root, file);
-        Walk(root, file);
-    }
+    public static void Check(JsonNode root, string file) => Walk(root, file);
 
     // THE SAME CROSSING AT THE IMPLEMENTING POSITION. A call is not the only way to meet an uninhabitable slot: a
     // Kotlin class can DERIVE from a .NET type that declares one — `class C : ITake` for a C# `interface ITake {
@@ -57,65 +54,179 @@ static class ForeignNullableGenericCrossing
     // copy. A method emitted with the declaration's own `List<Nullable<int32>>` parameter would still have a Kotlin
     // BODY, and that body reads its parameter as the `List<object>` Kotlin says it is — the identical pair of
     // unrelated invariant reified generics the call-side refusal exists to prevent, except silent rather than
-    // load-time. There is no Kotlin expression that inhabits the parameter type, so the body cannot legitimately use
-    // its own argument: the override has no valid CIL lowering, and the author is owed the message rather than a
-    // TypeLoadException with our type's name on it.
+    // load-time. Our body model has no way to state a body whose parameter type no Kotlin expression inhabits: the
+    // author would be writing an override they cannot name their own argument in, so they are owed the message
+    // rather than a TypeLoadException with our type's name on it.
     //
     // ASKED OF EVERY PROVENANCE. The carrier machinery that repairs erased slots reads DotKt metadata and so covers
     // only DotKt-authored supertypes; a plain BCL or third-party interface has none, which is exactly the column
     // that fell through. This asks the REFLECTED declaration, which every referenced assembly has.
-    static void CheckImplementedSlots(JsonNode root, string file)
+    //
+    // OVER THE WHOLE GRAPH, AND OVER THE WHOLE COMPILATION. `SupertypeGraph` is the same walk the override-slot
+    // bridge uses, so a .NET interface reached only through another .NET interface (`class C : IDerived`, the slot
+    // on `IBase`) and one reached only through a Kotlin interface declared in a sibling FILE are both reached. Only
+    // a walk over every root at once can do the second, which is why this half does not run per file the way the
+    // call-side sweep below does.
+    public static void CheckImplementedSlots(IReadOnlyList<(JsonNode Root, string File)> roots,
+        ReferenceMetadataIndex refs)
     {
-        if (root is not JsonObject o || o["types"] is not JsonArray types) return;
-        foreach (var t in types) if (t is JsonObject to) CheckTypeSlots(to, file);
+        var defs = SupertypeGraph.Collect(roots.Select(r => r.Root));
+        foreach (var (root, file) in roots)
+            if (root is JsonObject o && o["types"] is JsonArray types)
+                foreach (var t in types.OfType<JsonObject>())
+                    CheckTypeSlots(t, defs, refs, file);
     }
 
-    static void CheckTypeSlots(JsonObject to, string file)
+    static void CheckTypeSlots(JsonObject to, IReadOnlyDictionary<string, SupertypeGraph.Def> defs,
+        ReferenceMetadataIndex refs, string file)
     {
         if (to["types"] is JsonArray nested)
-            foreach (var n in nested) if (n is JsonObject nto) CheckTypeSlots(nto, file);
+            foreach (var n in nested.OfType<JsonObject>()) CheckTypeSlots(n, defs, refs, file);
 
-        var supers = new List<JsonNode>();
-        if (to["base"] is JsonNode b) supers.Add(b);
-        if (to["interfaces"] is JsonArray ifs) supers.AddRange(ifs.Where(i => i != null));
+        if (Str(to["name"]) is not string typeName || !defs.TryGetValue(typeName, out var cls) || cls.Node != to)
+            return;
 
-        // The names+arities this type declares, for the CONCRETE-slot case: overriding a non-abstract virtual slot
-        // whose signature crosses is the same dead end, but only when the type actually overrides it.
-        var declared = new HashSet<string>(StringComparer.Ordinal);
-        if (to["methods"] is JsonArray ms)
-            foreach (var m in ms.OfType<JsonObject>())
-                if (Str(m["name"]) is string mn)
-                    declared.Add(mn + "/" + ((m["params"] as JsonArray)?.Count ?? 0));
+        // WHO IS OBLIGED TO FILL AN ABSTRACT SLOT. Only a type that must be instantiable: a Kotlin `interface KI :
+        // ITake` and an `abstract class KA : BTake()` inherit the obligation without discharging it, and refusing
+        // them refuses a program that has a perfectly good lowering — they emit no body at all. Their concrete
+        // subclasses are asked instead, and reach the same slot through this walk.
+        var mustFillAbstract = Str(to["kind"]) != "interface" && !Bool(to["abstract"]);
 
-        foreach (var sup in supers)
+        // THE SLOTS THIS TYPE INHERITS, grouped by CLR identity (name + declared parameter vector). A group is one
+        // slot seen from several supertypes, and its abstractness is the group's: `class B : A` overriding an
+        // abstract `A.M` contributes a CONCRETE `M` under the same key, so a Kotlin `class C : B()` inherits an
+        // obligation that is already discharged and must not be refused for it.
+        var groups = new Dictionary<string, Slot>(StringComparer.Ordinal);
+        foreach (var (spec, _) in SupertypeGraph.Reachable(cls, defs, refs))
         {
-            if (TypeJson.Read(sup) is not TypeNode.Fqn supFqn) continue;
-            var open = ClrMemberResolution.ResolveOwnerType(supFqn);
-            if (open == null) continue;   // a LOCAL supertype: emitted here, and erased consistently with its users
-            MethodInfo[] slots;
-            try
+            if (defs.ContainsKey(spec.Name)) continue;   // declared here: erased consistently with its users
+            foreach (var m in ReflectedSlots(spec))
             {
-                slots = open.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            }
-            catch (NotSupportedException) { continue; }
-            foreach (var slot in slots)
-            {
-                if (!slot.IsVirtual || slot.IsSpecialName) continue;
-                // An ABSTRACT slot must be filled by this type, so its crossing is unavoidable; a CONCRETE virtual
-                // one is only a problem where the type actually overrides it.
-                if (!slot.IsAbstract && !declared.Contains(slot.Name + "/" + slot.GetParameters().Length)) continue;
-                var ps = slot.GetParameters();
-                for (var i = 0; i < ps.Length; i++)
-                    if (NullableGenericErasure.ErasureWouldMove(ClrMemberResolution.MemberSigOf(ps[i].ParameterType)))
-                        throw RefuseSlot(file, Str(to["name"]) ?? "<type>", supFqn.Name, slot.Name, "parameter " + i,
-                            ClrMemberResolution.MemberSigOf(ps[i].ParameterType));
-                if (slot.ReturnType != typeof(void)
-                    && NullableGenericErasure.ErasureWouldMove(ClrMemberResolution.MemberSigOf(slot.ReturnType)))
-                    throw RefuseSlot(file, Str(to["name"]) ?? "<type>", supFqn.Name, slot.Name, "return",
-                        ClrMemberResolution.MemberSigOf(slot.ReturnType));
+                var key = m.Name + "(" + string.Join(",", m.Params.Select(SupertypeGraph.TypeKey)) + ")";
+                if (!groups.TryGetValue(key, out var slot))
+                    groups[key] = slot = new Slot { Name = m.Name, Owner = spec.Name, Params = m.Params, Ret = m.Ret };
+                if (m.Implemented) slot.Implemented = true;
             }
         }
+
+        foreach (var slot in groups.Values)
+        {
+            var crossing = Crossing(slot);
+            if (crossing == null) continue;
+            // OBLIGED, and not merely inheriting. An undischarged abstract slot must be filled by an instantiable
+            // type; a slot that already has an implementation is only this type's problem where this type OVERRIDES
+            // it — and "overrides it" is decided by the signature the override would physically state, not by the
+            // member's name and parameter count, which cannot tell `Take(List<int?>)` from an unrelated
+            // `Take(string)` sibling the author actually wrote.
+            if (!((mustFillAbstract && !slot.Implemented) || Declares(to, slot))) continue;
+            throw RefuseSlot(file, Str(to["name"]) ?? "<type>", slot.Owner, slot.Name, crossing.Value.Where,
+                crossing.Value.Type);
+        }
     }
+
+    sealed class Slot
+    {
+        public string Name;
+        public string Owner;
+        public TypeNode[] Params;
+        public TypeNode Ret;
+        public bool Implemented;
+    }
+
+    // The virtual slots a referenced type DECLARES, in this pass's vocabulary, read off its OPEN definition. Cached
+    // by name AND generic arity — which is what selects the definition, so a generic type and a same-named
+    // non-generic sibling are different entries — because the graph above is walked once per deriving type and a
+    // common supertype sits on very many of them; without the cache the stdlib build reflects the same BCL
+    // interface thousands of times.
+    //
+    // An ACCESSOR is a slot like any other — a C# `List<int?> Items { get; }` is a virtual `get_Items` carrying
+    // IsSpecialName, and skipping those left a Kotlin property override emitting the mismatched slot and dying at
+    // load exactly as a method override did.
+    static readonly Dictionary<string, Slot[]> ReflectedSlotCache = new(StringComparer.Ordinal);
+
+    static Slot[] ReflectedSlots(TypeNode.Fqn spec)
+    {
+        var cacheKey = spec.Name + "`" + (spec.Args?.Length ?? 0);
+        if (ReflectedSlotCache.TryGetValue(cacheKey, out var cached)) return cached;
+        var result = new List<Slot>();
+        var open = ClrMemberResolution.ResolveOwnerType(spec);
+        MethodInfo[] members = Array.Empty<MethodInfo>();
+        if (open != null)
+            try { members = open.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance); }
+            catch (NotSupportedException) { }
+        foreach (var m in members)
+        {
+            if (!m.IsVirtual) continue;
+            try
+            {
+                result.Add(new Slot
+                {
+                    Name = m.Name,
+                    Params = m.GetParameters().Select(p => ClrMemberResolution.MemberSigOf(p.ParameterType)).ToArray(),
+                    Ret = m.ReturnType == typeof(void) ? null : ClrMemberResolution.MemberSigOf(m.ReturnType),
+                    Implemented = !m.IsAbstract,
+                });
+            }
+            catch (Exception e) when (e is NotSupportedException or TypeLoadException or FileNotFoundException) { }
+        }
+        return ReflectedSlotCache[cacheKey] = result.ToArray();
+    }
+
+    // The first position of this slot the erasure moves, if any — the one the message names.
+    static (string Where, TypeNode Type)? Crossing(Slot slot)
+    {
+        for (var i = 0; i < slot.Params.Length; i++)
+            if (NullableGenericErasure.ErasureWouldMove(slot.Params[i]))
+                return ("parameter " + i, slot.Params[i]);
+        if (slot.Ret != null && NullableGenericErasure.ErasureWouldMove(slot.Ret)) return ("return", slot.Ret);
+        return null;
+    }
+
+    // Does this type declare a BODY that fills this slot? The declaration cannot equal the slot — the crossing
+    // position is precisely where it cannot — so it is compared against the slot's ERASED IMAGE, which is what a
+    // Kotlin declaration filling it physically states. `NullableGenericErasure.ErasedLoweredSlot` is that image, and
+    // it is the identity at every position the erasure leaves alone, so an untouched parameter still has to match
+    // exactly and a same-name sibling overload is not mistaken for this one.
+    //
+    // A BODY, and not merely a declaration: Kotlin re-declares an inherited abstract member on the deriving
+    // interface as a fake override, so `interface KI : ITake` carries an abstract `Take` of its own. That states the
+    // slot again, it does not fill it, and there is no body for the uninhabitable position to appear in.
+    //
+    // The RETURN is deliberately not compared: Kotlin lets an override narrow it, and a narrowed return is a
+    // different pass's business (`CovariantInterfaceReturnBridge`). Name and the whole parameter vector identify the
+    // CLR slot on their own.
+    static bool Declares(JsonObject to, Slot slot)
+    {
+        if (to["methods"] is not JsonArray methods) return false;
+        var want = slot.Params.Select(p => Norm(NullableGenericErasure.ErasedLoweredSlot(p))).ToArray();
+        foreach (var m in methods.OfType<JsonObject>())
+        {
+            if (Bool(m["static"]) || Bool(m["abstract"]) || Str(m["name"]) != slot.Name) continue;
+            if (m["body"] is not JsonArray body || body.Count == 0) continue;
+            if (m["params"] is not JsonArray ps || ps.Count != want.Length) continue;
+            var ok = true;
+            for (var i = 0; i < ps.Count && ok; i++)
+                ok = TypeJson.Read((ps[i] as JsonObject)?["type"]) is TypeNode t && Norm(t) == want[i];
+            if (ok) return true;
+        }
+        return false;
+    }
+
+    // One spelling per CLR type, so a reflected declaration and a lowered Kotlin one compare. They agree everywhere
+    // except the top type, which reflection names `System.Object` and the lowering names `object`, and the NRT
+    // OBLIVIOUS wrapper, which is an annotation on a type rather than a type.
+    static string Norm(TypeNode t) => SupertypeGraph.TypeKey(Canon(t));
+
+    static TypeNode Canon(TypeNode t) => t switch
+    {
+        TypeNode.Oblivious o => Canon(o.Of),
+        TypeNode.Fqn { Name: "System.Object", Args: null } => new TypeNode.Fqn("object"),
+        TypeNode.Fqn { Args: { } args } f => new TypeNode.Fqn(f.Name, args.Select(Canon).ToArray()),
+        TypeNode.Array a => new TypeNode.Array(Canon(a.Elem)),
+        TypeNode.Nullable n => new TypeNode.Nullable(Canon(n.Of)),
+        TypeNode.ByRef b => new TypeNode.ByRef(Canon(b.Of)),
+        _ => t,
+    };
 
     static InvalidOperationException RefuseSlot(string file, string type, string owner, string member, string slot,
         TypeNode t)
@@ -125,10 +236,10 @@ static class ForeignNullableGenericCrossing
             + "array element or a delegate return is System.Object in Kotlin (#86), so the Kotlin method filling "
             + "this slot would receive a 'List<object>' where the declaration says 'List<Nullable<Int32>>' — "
             + "unrelated invariant reified generics that no conversion relates. Emitting the declaration's own "
-            + "signature would not help: the Kotlin body still reads the argument as the Kotlin type, so the "
-            + "mismatch would move from load time into the body. Change the .NET surface (a slot whose argument is "
-            + "object-typed, or whose element is not a nullable value type), or implement this interface on the "
-            + ".NET side.");
+            + "signature would not help: no Kotlin type states that position, so the body could not name the value "
+            + "it is handed and the mismatch would move from load time into the body. Change the .NET surface "
+            + "(a slot whose argument is object-typed, or whose element is not a nullable value type), or implement "
+            + "this interface on the .NET side.");
 
 
     static void Walk(JsonNode node, string file)
@@ -202,4 +313,5 @@ static class ForeignNullableGenericCrossing
     };
 
     static string Str(JsonNode n) => (n as JsonValue)?.TryGetValue<string>(out var s) == true ? s : null;
+    static bool Bool(JsonNode n) => n is JsonValue v && v.TryGetValue<bool>(out var b) && b;
 }
