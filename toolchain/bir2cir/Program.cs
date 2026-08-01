@@ -950,6 +950,10 @@ sealed class Pipeline
             // the fully-lowered tree — so owner/argTypes speak the CLR vocabulary the MLC resolves; unconditional so
             // RefBodySquash's `newClr NotImplementedException` is stamped too (its owner resolves off the BCL compile-refs).
             ClrMemberResolution.Apply(lowered, refs, localBasicEnums);
+            // THE STAMPING CHOKEPOINT: every node resolved against a .NET member carries that member's declared
+            // return. Two omissions of exactly that shape — a generic method and a public field — each removed a
+            // whole family from the crossing refusal below without any gate noticing.
+            ClrMemberResolution.CheckStamped(lowered, outputName);
             // The other side of the erasure: a .NET member may DECLARE a `List<int?>`, which no Kotlin type inhabits
             // once `X?` in a reified argument is `System.Object`. Unrelated invariant reified generics have no
             // conversion between them and an adapter would change the argument's identity, so the crossing is

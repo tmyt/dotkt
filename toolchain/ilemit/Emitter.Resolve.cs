@@ -356,17 +356,29 @@ sealed partial class Emitter
         var owner = MapType(ownerFqn);
         if (owner == null) return null;
         var want = ps.EnumerateArray().Select(p => MapType(p)).ToArray();
+        // A REFERENCED GENERIC base instantiated at a LOCALLY EMITTED type argument — `class C : Base<LocalType>` —
+        // is a TypeBuilderInstantiation, whose `GetMethods()` throws. That is a perfectly ordinary shape, not an
+        // impossible one: the open definition is enumerated instead and each candidate re-anchored onto the
+        // instantiation, exactly as the referenced-INTERFACE path already does for the same reflection shape.
         MethodInfo[] all;
+        var reanchor = false;
         try { all = owner.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance); }
-        catch (NotSupportedException) { return null; }   // a TypeBuilderInstantiation is never a referenced base
+        catch (NotSupportedException)
+        {
+            all = owner.GetGenericTypeDefinition()
+                .GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            reanchor = true;
+        }
+        var args = reanchor ? owner.GetGenericArguments() : null;
         var cands = all.Where(m => m.Name == member
                                    && m.GetGenericArguments().Length == arity
                                    && m.GetParameters().Length == want.Length
-                                   && m.GetParameters().Zip(want, (p, w) => SlotParamMatches(p.ParameterType, w)).All(x => x))
+                                   && m.GetParameters()
+                                       .Select(p => reanchor ? SubstituteIfaceArgs(p.ParameterType, args) : p.ParameterType)
+                                       .Zip(want, SlotParamMatches).All(x => x))
             .ToList();
-        // Never guess: an ambiguous or absent slot is left unwired rather than mis-bound, and the type then fails to
-        // load with the CLR's own message naming the member.
-        return cands.Count == 1 ? cands[0] : null;
+        if (cands.Count != 1) return null;
+        return reanchor ? TypeBuilder.GetMethod(owner, cands[0]) : cands[0];
     }
 
     // A STATIC method declared on a GENERIC emitted class (a Kotlin companion fun of a generic class —

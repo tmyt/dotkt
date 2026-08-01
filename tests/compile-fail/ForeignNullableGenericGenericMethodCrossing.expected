@@ -1,0 +1,5 @@
+# The generic-method channel. Its parameter descriptor comes from the frontend, so nothing here resolved the member
+# and nothing stated its declared return; the refusal then had nothing to read and the call compiled.
+the .NET member 'fgn.Api.MakeG' declares
+at its return
+which NO Kotlin expression inhabits

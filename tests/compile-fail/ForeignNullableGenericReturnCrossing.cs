@@ -31,6 +31,14 @@ namespace fgn
         // REFUSED at a PROPERTY, which reaches the same stamp through the accessor.
         public List<int?> Items { get; } = new List<int?>();
 
+        // REFUSED at a GENERIC method's return. These nodes take their parameter descriptor from the frontend and
+        // never entered the resolution that establishes a declared return, so this family was unchecked entirely.
+        public List<int?> MakeG<T>() { var l = new List<int?>(); l.Add(1); return l; }
+
+        // REFUSED at a genuine public CLR FIELD, which is read through `ldfld` and so carries no parameter vector at
+        // all — its declared type is the only thing that states the crossing.
+        public List<int?> Storage = new List<int?>();
+
         // CONTROL: a direct `int?` IS a Kotlin `Int?`.
         public int OrElse(int? x, int d) => x ?? d;
 

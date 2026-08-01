@@ -111,7 +111,57 @@ static class NullableGenericErasure
         RecordNullableGenericDecls(o["fields"], isValue);
         RecordNullableGenericDecls(o["properties"], isValue);
         if (o["types"] is JsonArray types)
-            foreach (var t in types) if (t is JsonObject to) RecordNullableGenericSlots(to, isValue);
+            foreach (var t in types)
+                if (t is JsonObject to)
+                {
+                    RecordSupertypes(to, isValue);
+                    RecordNullableGenericSlots(to, isValue);
+                }
+    }
+
+    // The key the pre-erasure SUPERTYPE list is stashed under, for RoundtripMetadata's `[KotlinSupertypes]` carrier.
+    //
+    // A SUPERTYPE ARGUMENT IS KOTLIN SOURCE, NOT AN INTERNAL SHAPE. `class E : Sink<Int?>` erases its edge to
+    // `Sink<object>`, and a separately compiled consumer that re-imports `E` sees `Sink<Any?>` — so `val s:
+    // Sink<Int?> = E()` stops compiling. No member carrier can restore that: the members' own slots are exact, and
+    // what was lost is the identity of the EDGE. Kotlin source compatibility is the one thing an internal decision
+    // may not spend, so the pre-erasure edge travels with the type.
+    //
+    // The payload is the same opaque TypeNode form every other carrier uses — a `{base, interfaces, bounds}` object
+    // of pre-erasure nodes — so no new encoding is introduced; `bounds` carries each type parameter's own upper
+    // bounds, which erase for exactly the same reason and are lost the same way.
+    internal const string SupertypesPre = "nullableGenericSupertypesPre";
+
+    static void RecordSupertypes(JsonObject to, Func<string, bool> isValue)
+    {
+        var pre = new JsonObject();
+        var moved = false;
+        if (TypeJson.Read(to["base"]) is TypeNode b && !Erase(b, Pos.Slot, isValue).Equals(b))
+        {
+            pre["base"] = to["base"].DeepClone();
+            moved = true;
+        }
+        if (to["interfaces"] is JsonArray ifs
+            && ifs.Any(i => TypeJson.Read(i) is TypeNode t && !Erase(t, Pos.Slot, isValue).Equals(t)))
+        {
+            pre["interfaces"] = ifs.DeepClone();
+            moved = true;
+        }
+        if (to["typeParams"] is JsonArray tps)
+        {
+            var bounds = new JsonObject();
+            for (var i = 0; i < tps.Count; i++)
+            {
+                if (tps[i] is not JsonObject tp || tp["bound"] is not JsonNode bn) continue;
+                if (TypeJson.Read(bn) is not TypeNode bt || Erase(bt, Pos.Slot, isValue).Equals(bt)) continue;
+                bounds[i.ToString()] = bn.DeepClone();
+            }
+            if (bounds.Count > 0) { pre["bounds"] = bounds; moved = true; }
+        }
+        if (!moved) return;
+        to[SupertypesPre] = pre.ToJsonString();
+        if (to["types"] is JsonArray nested)
+            foreach (var n in nested) if (n is JsonObject nto) RecordSupertypes(nto, isValue);
     }
 
     // The keys the pre-erasure SUSPEND function shape is stashed under, for BirTypeLowering's suspend-fn carrier.

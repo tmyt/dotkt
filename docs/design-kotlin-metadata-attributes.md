@@ -85,15 +85,29 @@ carrier when it has an open `Nullable(Tv)` anywhere, or a possibly-value `X?` in
 and restores `List<Any?>`, a DIFFERENT Kotlin type a consumer's own `List<Int?>` cannot bind to. A direct `Int?`
 HEAD is deliberately not eligible: it keeps its `System.Nullable<int32>` and reads back without help.
 
-**SUPERTYPE EDGES AND GENERIC CONSTRAINTS ARE ERASED BUT NOT CARRIED**, and that is a decision rather than an
-omission. Every carrier is a per-SLOT attribute stamped on a declaration slot; a supertype edge and a
-generic-parameter constraint have no such slot in the emitter's model, so carrying them would mean a type-level list
-re-matched against a supertype set `dll2klib`'s projection already filters and rewrites (it drops non-generic
-shadows, collapses the `IComparable` bridge, and synthesizes `kotlin.Throwable`/`kotlin.Any` edges). The consequence
-is bounded and stated here: a re-imported `class E : Comparable<Int?>` presents as `Comparable<Any?>`, while every
-MEMBER reached through that edge keeps its own carrier — so the types a consumer passes and receives stay exact, and
-what degrades is only bound satisfaction (`fun <T : Comparable<Int?>>` will not accept `E` across a module boundary).
-Same-module compilation is unaffected: there is no restore step.
+### `[KotlinSupertypes]` — the edge a per-slot carrier cannot reach
+
+A SUPERTYPE ARGUMENT erases like any other reified argument, and it is the one erased position with no declaration
+slot to hang a carrier on. Left unrestored it is a **Kotlin SOURCE break**, not an internal one: a consumer that
+re-imports `class E : Sink<Int?>` sees `Sink<Any?>`, so `val s: Sink<Int?> = E()` no longer compiles. Member carriers
+cannot repair it — every member's own slot is already exact, and what was lost is the identity of the EDGE — and
+source compatibility is the one thing an internal representation decision may not spend. So the edges ride a
+TYPE-LEVEL carrier:
+
+| carrier | rides | payload |
+|---|---|---|
+| `[KotlinSupertypes(version, bytes)]` | the type's `attrs` | `{base?, interfaces?, bounds?}` of pre-erasure TypeNodes |
+
+The payload is the same opaque TypeNode encoding every other carrier uses, so no new format is introduced; `bounds`
+maps a type parameter's index to its pre-erasure upper bound, which erases for the same reason and is lost the same
+way. It is recorded only when the erasure actually moved one of those positions, so an ordinary type carries nothing.
+
+`dll2klib` restores the edges by HEAD, not by position, and that is load-bearing: the projected supertype list is not
+a transcription of the metadata's interface list — it drops the non-generic shadows, collapses the `IComparable`
+bridge and synthesizes `kotlin.Throwable`/`kotlin.Any` edges — so an index would line up with nothing. Replacing an
+entry whose class name and argument count the carrier also names keeps every one of those decisions and moves only
+the arguments, which is all that was erased. Witnessed cross-module by
+`roundtrip-nullable-vt-generic-supertype-edge`.
 
 At each carried slot, the erasure may be at the slot's **head** (`x: T?`) or **nested** (`Holder<T?>`, `List<Int?>`,
 `Array<T?>`, `(T) -> T?`, `Holder<T?>?`). The two need different amounts of help on the way back:

@@ -1035,6 +1035,80 @@ fun main() {
 }
 EOF
 
+# THE EDGE ITSELF IS KOTLIN SOURCE (#86). A supertype argument erases like any other reified argument, and unlike a
+# member slot there is no per-slot attribute to carry its Kotlin type — so a consumer re-imported `class E :
+# Sink<Int?>` as `Sink<Any?>` and `val s: Sink<Int?> = E()` stopped compiling. Members cannot restore it: their own
+# slots are exact, and what is lost is the identity of the EDGE. That is a Kotlin SOURCE break, which is the one
+# thing an internal representation decision may not spend, so the pre-erasure edges ride a type-level carrier.
+RSUP2="$ROOT/build/roundtrip-nullable-vt-generic-supertype-edge-group"
+ng_lib "$RSUP2" Rsup2Lib <<'EOF'
+interface ESink<T> { fun accept(x: T): String }
+class EImpl : ESink<Int?> {                       // the erased edge: physically ESink<object>
+    override fun accept(x: Int?): String = "E:" + (x?.toString() ?: "none")
+}
+EOF
+
+ng_app "$RSUP2" Rsup2Lib roundtrip-nullable-vt-generic-supertype-edge 'E:5/E:none' \
+	'cross-module: assigning through a supertype edge whose argument erased (ESink<Int?>) (#86)' <<'EOF'
+fun main() {
+    val s: ESink<Int?> = EImpl()                  // the assignment the erased edge makes impossible
+    println(s.accept(5) + "/" + s.accept(null))   // E:5/E:none  and dispatch through that edge
+}
+EOF
+
+# THE OVERRIDE MARKER MUST BE RELATED TO THE SPEC IT ANSWERS FOR, and a slot reached twice must be wired once.
+#   two     — two UNRELATED referenced supertypes exposing the same ERASED shape. Each marker may answer only for
+#             its own, and each slot needs its own bridge: one shared between them forwards both to the same body
+#             and casts a `string` into a `Nullable<int32>` at run time.
+#   diamond — one slot declared on a common base, reached through TWO referenced sub-interfaces. One MethodImpl per
+#             slot is all the CLR accepts.
+#   local   — a referenced generic BASE instantiated at a LOCALLY EMITTED type argument, which is the reflection
+#             shape whose `GetMethods()` throws; declining it leaves an abstract slot unimplemented.
+RSUP3="$ROOT/build/roundtrip-nullable-vt-generic-referenced-shape-group"
+ng_lib "$RSUP3" Rsup3Lib <<'EOF'
+interface RA<T> { fun accept(x: T?): String }
+interface RB<T> { fun accept(x: T?): String }
+interface RTop<T> { fun get(x: T?): String }
+interface RLeft<T> : RTop<T>
+interface RRight<T> : RTop<T>
+abstract class RGBase<T> { abstract fun hold(x: T?): String }
+EOF
+
+ng_app "$RSUP3" Rsup3Lib roundtrip-nullable-vt-generic-referenced-two-supertypes 'A:1/B:s' \
+	'cross-module: two UNRELATED referenced supertypes of the same erased shape, one body each (#86 D3)' <<'EOF'
+class Two : RA<Int>, RB<String> {
+    override fun accept(x: Int?): String = "A:" + (x?.toString() ?: "none")
+    override fun accept(x: String?): String = "B:" + (x ?: "none")
+}
+fun main() {
+    val t = Two()
+    val a: RA<Int> = t
+    val b: RB<String> = t
+    println(a.accept(1) + "/" + b.accept("s"))    // A:1/B:s  each slot reaches its OWN body
+}
+EOF
+
+ng_app "$RSUP3" Rsup3Lib roundtrip-nullable-vt-generic-referenced-diamond 'D:2' \
+	'cross-module: one referenced slot reached through TWO sub-interfaces, wired once (#86 D3)' <<'EOF'
+class Dia : RLeft<Int>, RRight<Int> {
+    override fun get(x: Int?): String = "D:" + (x?.toString() ?: "none")
+}
+fun main() {
+    val d: RTop<Int> = Dia()
+    println(d.get(2))                             // D:2
+}
+EOF
+
+ng_app "$RSUP3" Rsup3Lib roundtrip-nullable-vt-generic-referenced-base-local-arg 'H:3/H:none' \
+	'cross-module: a referenced generic BASE instantiated at a locally emitted type argument (#86 D3)' <<'EOF'
+class Local(val n: Int)
+class Held : RGBase<Local>() { override fun hold(x: Local?): String = "H:" + (x?.n?.toString() ?: "none") }
+fun main() {
+    val h: RGBase<Local> = Held()
+    println(h.hold(Local(3)) + "/" + h.hold(null))   // H:3/H:none
+}
+EOF
+
 NOC="$ROOT/build/roundtrip-nullable-vt-generic-override-class-group"
 ng_lib "$NOC" NocLib <<'EOF'
 abstract class Holder<T> { abstract fun take(x: T?): String }   // an abstract base-CLASS slot: Nullable(Tv) -> object

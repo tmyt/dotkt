@@ -1555,8 +1555,12 @@ supertype edge, generic constraint, and the signature a call is resolved by. A *
 from the start rather than instantiated wrongly and cast, because no cast joins two instantiations of one invariant
 generic.
 
-The Kotlin surface survives on two channels, which a re-consuming DotKt reader recombines: `[KotlinNullableGeneric]`
-carries the pre-erasure type node, and the ordinary `[Nullable(2)]` NRT byte carries the outer `?`.
+The Kotlin surface survives on three channels, which a re-consuming DotKt reader recombines:
+`[KotlinNullableGeneric]` carries the pre-erasure type node of a declaration SLOT, the ordinary `[Nullable(2)]` NRT
+byte carries the outer `?`, and `[KotlinSupertypes]` carries the type's pre-erasure supertype EDGES and
+type-parameter bounds — the one erased position with no slot to hang a per-slot carrier on. Without that third one a
+consumer re-imports `class E : Sink<Int?>` as `Sink<Any?>` and `val s: Sink<Int?> = E()` stops compiling, which is a
+Kotlin source break rather than an internal one.
 
 **Restoring the surface is only half of consuming it.** A consumer that re-imports `unwrapSlot(slot: Slot<T?>)` writes
 `unwrapSlot(Slot<Int?>(5))`, and `Slot<Nullable<int32>>` is not the `Slot<object>` the producer's slot actually is —

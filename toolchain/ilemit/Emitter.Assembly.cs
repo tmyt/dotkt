@@ -341,6 +341,11 @@ sealed partial class Emitter
                 // full handling. ECMA-335 II.12.2: the most-derived per-type MethodImpl wins over the DIM fallback.
                 var ifWork = new Queue<(DotKt.Bir.TypeNode.Fqn spec, bool viaBaseClass)>();
                 var ifSeen = new HashSet<string>();
+                // A referenced interface's BASE interfaces are enumerated per spec below, and a DIAMOND reaches the
+                // same base through two of them (`Dia : DL<Int>, DR<Int>`, both over `DTop<Int>`). One MethodImpl per
+                // slot is all the CLR accepts — a second is "overriding a method that has been overridden" — so the
+                // bases wired that way are deduplicated across the whole type.
+                var baseIfWired = new HashSet<Type>();
                 foreach (var i in ifs.EnumerateArray())
                     if (ReadFqn(i) is DotKt.Bir.TypeNode.Fqn iff) ifWork.Enqueue((iff, false));
                 // Interfaces inherited through the EMITTED base-class chain, type args substituted into THIS class's frame
@@ -414,6 +419,7 @@ sealed partial class Emitter
                         catch (NotSupportedException) { baseIfaces = Array.Empty<Type>(); }
                         foreach (var baseIface in baseIfaces)
                         {
+                            if (!baseIfWired.Add(baseIface)) continue;
                             MethodInfo[] baseMs;
                             try { baseMs = baseIface.GetMethods(); }
                             catch (NotSupportedException) { continue; }
@@ -656,9 +662,18 @@ sealed partial class Emitter
                     // emit; refusing it is not an option either, since the abstract slot would go unimplemented.
                     if (!_types.ContainsKey(open))
                     {
+                        // A RESOLVED MethodImpl THAT CANNOT BE LINKED IS AN EARLIER-LAYER DROP, and silence here is
+                        // the worst outcome available: an abstract base slot becomes a type-load failure with nothing
+                        // naming the producer, and a concrete virtual one keeps dispatching to the base body — the
+                        // override simply never runs. Same contract as the emitted-base miss below.
                         if (FindExternalBaseSlot(ownerFqn, memberNode.GetString(), DeclaredMethodArity(m), ps)
-                            is MethodInfo externalSlot)
-                            ti.TB.DefineMethodOverride(bridge, externalSlot);
+                            is not MethodInfo externalSlot)
+                            throw new InvalidOperationException(
+                                $"ilemit: {ti.TB.Name}.{bridgeName.GetString()}: clrBaseImpls names "
+                                + $"'{memberNode.GetString()}' on the referenced base '{open}', which does not resolve "
+                                + "to exactly one method of that signature — bir2cir resolved a base-class MethodImpl "
+                                + "this layer cannot link");
+                        ti.TB.DefineMethodOverride(bridge, externalSlot);
                         continue;
                     }
                     // A RESOLVED DESCRIPTOR THIS LAYER CANNOT BIND IS AN EARLIER-LAYER DROP, and dropping it here

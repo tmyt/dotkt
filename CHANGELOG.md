@@ -127,6 +127,42 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir (area:bir2cir): a supertype edge's erased argument is CARRIED, closing a Kotlin source break (#86).**
+  `class E : Sink<Int?>` erases its edge to `Sink<object>`, and a supertype is the one erased position with no
+  declaration slot to hang a per-slot carrier on — so a separately compiled consumer re-imported `E : Sink<Any?>`
+  and `val s: Sink<Int?> = E()` stopped compiling. Member carriers cannot repair it: every member's own slot is
+  already exact, and what was lost is the identity of the EDGE. Internal shapes are free to break; Kotlin source
+  compatibility is not, so the pre-erasure edges (and type-parameter bounds, which erase the same way) now ride a
+  type-level `[KotlinSupertypes]` carrier in the same opaque TypeNode encoding every other carrier uses. `dll2klib`
+  restores them by HEAD rather than by position, because the projected supertype list is not a transcription of the
+  metadata's — it drops non-generic shadows, collapses the `IComparable` bridge and synthesizes
+  `kotlin.Throwable`/`kotlin.Any` edges — so only the arguments move and every one of those decisions is kept.
+
+- **bir2cir (area:bir2cir): every node resolved against a .NET member states that member's declared type, and the
+  build now asserts it (#86).** Two families were silently outside the crossing refusal: a GENERIC .NET method,
+  whose parameter descriptor comes from the frontend so it never entered resolution at all, and a genuine public CLR
+  FIELD, which is read through `ldfld` and was marked `member: "field"` without its type ever being stated. Each read
+  as `List<object>` and left a `List<Nullable<Int32>>` on a stack typed as the unrelated Kotlin form. Both stamp now,
+  `void` is written explicitly so an omission and a void member are distinguishable, and a CHOKEPOINT after
+  resolution refuses a node carrying a resolved parameter vector — or a kind only resolution produces — without a
+  declared return. The next omission of that shape fails the compiler instead of a review.
+
+- **bir2cir/ilemit (area:bir2cir): the referenced override arm relates the marker to the supertype, and one body per
+  slot (#86 D3).** The marker's owner established only that the supertype was external; the lookup then ran against
+  EVERY reachable spec of the same erased shape, so `class Two : A<Int>, B<String>` — two `accept` overloads that
+  both erase to `accept(object)` — wired both slots to one bridge and cast a `string` into a `Nullable<int32>` at run
+  time. The marker's owner must now be reachable FROM the spec, and the bridge is keyed by the declaration it
+  forwards to as well as by the slot, so the sharing that is correct (one body reached through several supertypes of
+  one shape) still collapses to one while these two do not. A slot reached through two sub-interfaces is wired once,
+  which is all the CLR accepts.
+
+- **ilemit (area:ilemit): a referenced generic base at a locally emitted type argument is linked, not dropped
+  (#86 D3).** `class C : Base<LocalType>` produces a `TypeBuilderInstantiation`, whose `GetMethods()` throws; the
+  base path treated that as absence and continued silently — leaving an abstract slot to fail type-load later, or a
+  concrete virtual slot dispatching to the base body so the override never ran. It now enumerates the open
+  definition and re-anchors, exactly as the referenced-INTERFACE path already did for the same reflection shape, and
+  a resolved MethodImpl that still cannot be linked FAILS LOUD rather than vanishing.
+
 - **bir2cir (area:bir2cir): a foreign generic RETURN is refused like a foreign parameter (#86).** The crossing check
   read the node's own `ret`, which is the CALLER's Kotlin view and has already been erased as a Kotlin slot — so a
   C# `List<int?> Make()` or a `List<int?>` property read as returning `List<object>`, was not refused, and left a

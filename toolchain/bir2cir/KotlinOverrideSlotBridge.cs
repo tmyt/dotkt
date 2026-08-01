@@ -191,7 +191,16 @@ static class KotlinOverrideSlotBridge
             // implementation do not match"). The DESCRIPTOR carries it too, so the emitter matches on it rather than
             // taking the arity from whichever slot it is currently looking at.
             var arity = (impl["typeParams"] as JsonArray)?.Count ?? 0;
-            var key = name + "`" + arity + "(" + string.Join(",", slotParams.Select(TypeKey)) + ")->" + TypeKey(slotRet);
+            // THE BODY IS PART OF THE IDENTITY TOO. Two slots with the same ERASED signature can be filled by two
+            // DIFFERENT declarations — `class Two : A1<Int>, B1<String>` has two `accept` overloads that both erase
+            // to `accept(object)` — and one bridge shared between them forwards both slots to whichever body it was
+            // built for, casting a `string` into a `Nullable<int32>` at run time. Keyed by the declaration it
+            // forwards to as well, the two slots get one bridge each, while the sharing that IS correct — one body
+            // reached through several supertypes of the same shape — still collapses to one.
+            var body = string.Join(",", (impl["params"] as JsonArray ?? new JsonArray())
+                .OfType<JsonObject>().Select(pn => TypeJson.Read(pn["type"]) is TypeNode t ? TypeKey(t) : "?"));
+            var key = name + "`" + arity + "(" + string.Join(",", slotParams.Select(TypeKey)) + ")->" + TypeKey(slotRet)
+                      + "{" + Str(impl["name"]) + "(" + body + ")}";
             if (!bridges.TryGetValue(key, out var bridge))
             {
                 bridge = BuildBridge(cls, impl, slotParams, slotRet, $"dotkt$ovslot${SafeName(name)}${ordinal++}", isValue);
@@ -271,10 +280,14 @@ static class KotlinOverrideSlotBridge
                 // moment a referenced supertype inherits the member — `class C : Derived<Int>` where `accept` is
                 // declared on `Sink` — so requiring the marker's owner to EQUAL the spec skipped the slot entirely.
                 // The question is asked of the SPEC instead, and the reader walks the referenced supertype graph
-                // itself, mapping the declaration through each supertype's arguments into the spec's own frame. Any
-                // marker naming a supertype this compilation does not declare is a candidate; the reader answering
-                // is what makes it one.
+                // itself, mapping the declaration through each supertype's arguments into the spec's own frame.
+                //
+                // But the two must still be RELATED, or a marker for one supertype answers against an unrelated one
+                // that merely exposes the same erased shape — `class C : A<Int>, B<Int>` with `accept(T?)` on each
+                // wires both slots to whichever body the first marker named. "Not declared here" establishes only
+                // externality; reachability from the spec is what makes this marker THIS spec's business.
                 if (TypeJson.OwnerName(o["owner"]) is not string owner || defs.ContainsKey(owner)) continue;
+                if (!Reaches(spec.Name, owner, defs, refs)) continue;
                 if (Str(o["member"]) is not string member) continue;
                 // A PROPERTY marker names the Kotlin property (`v`, kind `getter`/`setter`) while the CLR slot is the
                 // ACCESSOR (`get_v`/`set_v`) — the same translation DeclarationRename makes for the declaration.
@@ -628,6 +641,31 @@ static class KotlinOverrideSlotBridge
                 if (SubstOwnerTvs(parent, refArgs) is TypeNode.Fqn constructed)
                     queue.Enqueue((constructed, parentIsInterface));
         }
+    }
+
+    // Is `owner` `from` itself, or one of its supertypes — through this compilation's declarations and through the
+    // referenced graph alike? The bridge asks it to tie an override marker to the supertype spec it may answer for.
+    // Bounded by a visited set, so cyclic or repeated metadata terminates.
+    static bool Reaches(string from, string owner, IReadOnlyDictionary<string, Def> defs, ReferenceMetadataIndex refs)
+    {
+        var queue = new Queue<string>();
+        queue.Enqueue(from);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        while (queue.Count > 0)
+        {
+            var n = queue.Dequeue();
+            if (!seen.Add(n)) continue;
+            if (n == owner) return true;
+            if (defs.TryGetValue(n, out var d))
+            {
+                foreach (var i in d.Interfaces) queue.Enqueue(i.Name);
+                if (d.Base != null) queue.Enqueue(d.Base.Name);
+                continue;
+            }
+            if (refs == null) continue;
+            foreach (var (parent, _) in refs.ReferencedSupertypes(n)) queue.Enqueue(parent.Name);
+        }
+        return false;
     }
 
     static TypeNode[] ClassOwnArgs(Def def) =>

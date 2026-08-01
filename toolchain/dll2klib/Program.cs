@@ -799,6 +799,7 @@ internal sealed class AssemblyScanner
             }
             if (result.Supertype.Count == 0)
                 result.Supertype.Add(new KType { ClassName = names.Class("kotlin.Any") });
+            RestoreErasedSupertypes(handle, result, signatures, names);
         }
         if (isKotlinSealed)
         {
@@ -2373,6 +2374,43 @@ internal sealed class AssemblyScanner
             context,
             flowContract: true,
             nullabilityOffset: suspend ? 1 : 0);
+    }
+
+    // RESTORE THE PRE-ERASURE SUPERTYPE EDGES (#86). A supertype argument is a reified argument and erases with the
+    // rest — `class E : Sink<Int?>` emits `Sink<object>` — and unlike a member slot the EDGE has no per-slot
+    // attribute to carry its Kotlin type. Left erased, a consumer re-imports `E : Sink<Any?>` and `val s:
+    // Sink<Int?> = E()` no longer compiles: a Kotlin SOURCE break, which is the one thing an internal
+    // representation decision may not spend. The producer therefore states the edges it erased on a type-level
+    // `[KotlinSupertypes]` carrier, and they are put back here.
+    //
+    // Matched by HEAD, not by position. The projection above is not a transcription of the metadata's interface
+    // list — it drops the non-generic shadows, collapses the `IComparable` bridge and synthesizes
+    // `kotlin.Throwable`/`kotlin.Any` edges — so an index would line up with nothing. Replacing an entry whose class
+    // name and argument count the carrier also names keeps every one of those decisions and moves only the
+    // arguments, which is all that was erased.
+    private void RestoreErasedSupertypes(TypeDefinitionHandle handle, Class result, SignatureDecoder signatures,
+        NameTable names)
+    {
+        using var doc = _attrs.CarrierDocument(handle, MetadataAttributes.DotKtNs + "KotlinSupertypesAttribute");
+        if (doc is null) return;
+        var pre = new List<KType>();
+        if (doc.RootElement.TryGetProperty("base", out var b) && TypeNode.Read(b) is { } bn)
+            pre.Add(signatures.FromTypeNode(bn));
+        if (doc.RootElement.TryGetProperty("interfaces", out var ifs) &&
+            ifs.ValueKind == System.Text.Json.JsonValueKind.Array)
+            foreach (var i in ifs.EnumerateArray())
+                if (TypeNode.Read(i) is { } n) pre.Add(signatures.FromTypeNode(n));
+        if (pre.Count == 0) return;
+        for (var i = 0; i < result.Supertype.Count; i++)
+        {
+            var cur = result.Supertype[i];
+            if (!cur.HasClassName) continue;
+            var curName = names.ClassName(cur.ClassName);
+            var match = pre.FirstOrDefault(p => p.HasClassName
+                                                && names.ClassName(p.ClassName) == curName
+                                                && p.Argument.Count == cur.Argument.Count);
+            if (match is not null) result.Supertype[i] = match;
+        }
     }
 
     private KType ProjectType(

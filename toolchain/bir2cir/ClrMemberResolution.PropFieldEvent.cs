@@ -49,7 +49,15 @@ static partial class ClrMemberResolution
             if (!isStatic) node["dispatch"] = Dispatch(acc, open, superCall);
             return;
         }
-        if (FindFieldMember(open, name, flags) != null) { node["member"] = "field"; return; }
+        // A genuine public CLR FIELD is a foreign declaration too — `public List<int?> Items` is the same crossing a
+        // parameter of that type is — so its declared type is stamped like any other. It reads through `ldfld`
+        // rather than an accessor, which is why it has no `memberSig` and why nothing else here states its type.
+        if (FindFieldMember(open, name, flags) is FieldInfo fld)
+        {
+            node["member"] = "field";
+            StampMemberRet(node, fld.FieldType);
+            return;
+        }
         throw new InvalidOperationException($"bir2cir: no readable/writable property, accessor method, or field '{name}' on .NET type '{open}' (clrProp{(write ? "Set" : "Get")} — #46 W1-S3)");
     }
 
@@ -205,10 +213,13 @@ static partial class ClrMemberResolution
             // when the member is absent outright, never merely because the narrow public probe above missed it.
             const BindingFlags Any = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance
                                      | BindingFlags.Static | BindingFlags.FlattenHierarchy;
-            if (FindFieldMember(open, name, Any) == null && FindAccessorMethod(open, (write ? "set_" : "get_") + name, write ? 1 : 0, Any) == null)
+            var direct = FindFieldMember(open, name, Any);
+            if (direct == null && FindAccessorMethod(open, (write ? "set_" : "get_") + name, write ? 1 : 0, Any) == null)
                 throw new InvalidOperationException(
                     $"bir2cir: '{ownerFqn.Name}.{name}' is neither a field nor a get_/set_ accessor on the referenced owner — "
                     + "a cross-assembly property's storage is reachable only through its accessors");
+            // A direct external FIELD read/write: its declared type is the foreign declaration this node stands for.
+            if (direct != null) StampMemberRet(node, direct.FieldType);
             return;
         }
         RetargetToBaseInterface(node, "ownerType", open, acc, ownerFqn);

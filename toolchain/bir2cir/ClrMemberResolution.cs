@@ -63,6 +63,12 @@ static partial class ClrMemberResolution
             case "clrStatic": ResolveCall(node, instance: false); break;
             case "clrInstance": ResolveCall(node, instance: true); break;
             case "newBoundClrDelegate": ResolveBoundClrDelegate(node); break;
+            // A GENERIC .NET method gets its `memberSig` from NetInteropBinding (kotc's FIR-resolved `shapeTypes`),
+            // so it never needed resolving here — and so its DECLARED RETURN was never established either, which is
+            // the one thing the crossing refusal reads. It is resolved for that fact alone: `memberSig` is left
+            // exactly as it arrived, because that open form is what the emitter matches the member by.
+            case "clrGenericStatic": ResolveGenericCallRet(node, instance: false); break;
+            case "clrGenericInstance": ResolveGenericCallRet(node, instance: true); break;
             case "clrPropGet": ResolveProp(node, write: false); break;
             case "clrPropSet": ResolveProp(node, write: true); break;
             case "clrEventAdd": ResolveEvent(node); break;
@@ -188,6 +194,9 @@ static partial class ClrMemberResolution
         var win = PickUnique(ctors, c => c.GetParameters(), argNodes, ownerFqn.Args,
             $"newClr owner={TypeNode.ToJson(ownerFqn)} ({DescArgs(argNodes)})");
         node["memberSig"] = MemberSig(win.GetParameters());
+        // A constructor has no declared return; its result is the node's own `type`. Stamped as `void` so the
+        // chokepoint can tell "no return" from "nobody stamped one".
+        StampMemberRet(node, typeof(void));
         node.Remove("argTypes");
     }
 
@@ -249,6 +258,32 @@ static partial class ClrMemberResolution
         node.Remove("argTypes");
         if (instance)
             node["dispatch"] = Dispatch(win, open, (node["super"] as JsonValue)?.GetValue<bool>() ?? false);
+    }
+
+    // THE DECLARED RETURN OF A GENERIC .NET METHOD. Everything else about these nodes was already resolved
+    // upstream, so this establishes one fact and touches nothing: the member's own return type, open (a method
+    // type-variable stays positional), for the crossing refusal to read. Without it a foreign `List<int?> Make<T>()`
+    // reached that refusal with no declared return at all and its caller-view `ret` — already erased to Kotlin's
+    // `List<object>` — said nothing.
+    //
+    // A member this cannot pin down UNIQUELY is stamped `void` rather than guessed at: an unknown declaration is not
+    // a licence to invent one, and the chokepoint's question is whether a stamp was MADE, not whether it was
+    // informative.
+    static void ResolveGenericCallRet(JsonObject node, bool instance)
+    {
+        if (node.ContainsKey(MemberRetKey)) return;
+        var name = (node["method"] as JsonValue)?.GetValue<string>();
+        var open = ReadOwnerNode(node["type"]) is TypeNode.Fqn ownerFqn ? ResolveOwnerType(ownerFqn) : null;
+        if (open == null || name == null) { StampMemberRet(node, typeof(void)); return; }
+        var flags = BindingFlags.Public | (instance ? BindingFlags.Instance : BindingFlags.Static);
+        var arity = (node["typeArgs"] as JsonArray)?.Count ?? 0;
+        var argCount = (node["args"] as JsonArray)?.Count ?? 0;
+        var cands = open.GetMethods(flags)
+            .Where(m => m.Name == name && m.IsGenericMethodDefinition
+                        && m.GetGenericArguments().Length == arity
+                        && m.GetParameters().Length == argCount)
+            .ToList();
+        StampMemberRet(node, cands.Count == 1 ? cands[0].ReturnType : typeof(void));
     }
 
     // ---- bound .NET method-reference (newBoundClrDelegate) --------------------------------------
@@ -675,11 +710,15 @@ static partial class ClrMemberResolution
     // the emitter that the emitter does not consume.
     internal const string MemberRetKey = "memberRet";
 
+    // ALWAYS stamped where a foreign declaration is established, INCLUDING for `void`. A missing stamp and a
+    // genuinely void member were otherwise the same observation, so nothing could tell an omission from a fact —
+    // and an omission is exactly what let a generic method's and a field's declared type go unchecked. With `void`
+    // written explicitly, `CheckForeignDeclStamped` below can assert the invariant mechanically.
     static void StampMemberRet(JsonObject node, Type declaredReturn)
-    {
-        if (declaredReturn == null || declaredReturn == typeof(void)) return;
-        node[MemberRetKey] = TypeJson.Write(MemberSigOf(declaredReturn));
-    }
+        => node[MemberRetKey] = TypeJson.Write(
+            declaredReturn == null || declaredReturn == typeof(void)
+                ? new TypeNode.Fqn("void")
+                : MemberSigOf(declaredReturn));
 
     static JsonArray MemberSig(ParameterInfo[] ps)
     {
@@ -750,4 +789,44 @@ static partial class ClrMemberResolution
         new($"bir2cir: no .NET member matches the resolved descriptor {desc} (ABI mismatch; {cands.Count} same-name/arity candidate(s): {string.Join("; ", cands.Select(c => c.ToString()))})");
     static InvalidOperationException Malformed<T>(string desc, List<T> hits) where T : MethodBase =>
         new($"bir2cir: resolved descriptor {desc} is AMBIGUOUS — {hits.Count} members match (malformed): {string.Join("; ", hits.Select(c => c.ToString()))}");
+
+    // THE CHOKEPOINT: a node this pass resolved against a .NET member CARRIES that member's declared return.
+    //
+    // Two omissions of exactly this shape shipped before it existed — a generic method, which never entered the
+    // switch, and a genuine public field, which returned early — and each one silently removed a whole family from
+    // the crossing refusal. Review caught them; the build did not. It does now.
+    //
+    // WHAT IT ASSERTS, precisely, so nobody reads more into it than it holds: every node carrying a resolved
+    // parameter vector (`memberSig`), and every node whose KIND only this pass produces, also carries `memberRet`.
+    // It cannot speak for a `field`/`setField` node, whose kind Kotlin uses too and whose owner may be local — those
+    // stamp in their own branches, and the assertion below covers them only once they carry a `memberSig`.
+    static readonly string[] ResolvedOnlyKinds =
+    {
+        "newClr", "clrStatic", "clrInstance", "clrGenericStatic", "clrGenericInstance", "newBoundClrDelegate",
+        "clrPropGet", "clrPropSet", "clrEventAdd", "clrEventRemove",
+    };
+
+    static void CheckForeignDeclStamped(JsonNode node, string file)
+    {
+        switch (node)
+        {
+            case JsonObject obj:
+            {
+                var k = (obj["k"] as JsonValue)?.TryGetValue<string>(out var ks) == true ? ks : null;
+                var resolved = obj["memberSig"] != null || (k != null && Array.IndexOf(ResolvedOnlyKinds, k) >= 0);
+                if (resolved && obj[MemberRetKey] == null)
+                    throw new InvalidOperationException(
+                        $"bir2cir: {file}: a '{k ?? "?"}' node resolved against a .NET member carries no declared "
+                        + "return (memberRet). Every site that establishes a foreign declaration must stamp one — "
+                        + "the crossing refusal reads it, and an unstamped node silently leaves its family unchecked.");
+                foreach (var kv in obj) if (kv.Value != null) CheckForeignDeclStamped(kv.Value, file);
+                break;
+            }
+            case JsonArray arr:
+                foreach (var it in arr) if (it != null) CheckForeignDeclStamped(it, file);
+                break;
+        }
+    }
+
+    public static void CheckStamped(JsonNode root, string file) => CheckForeignDeclStamped(root, file);
 }
