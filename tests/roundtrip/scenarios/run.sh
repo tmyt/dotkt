@@ -61,6 +61,14 @@ declare -A RT_XFAIL=(
 	# `IEnumerable<int32>` and the terminal's `GetEnumerator` is not found. The eager twin is green because it
 	# MATERIALIZES a fresh, correctly-typed list rather than wrapping. So the fix is an element-converting adapter
 	# on the lazy path, stdlib-side — not a declaration any consumer can re-derive.
+	# A callable REFERENCE into an OPEN `(T?) -> R` slot. The slot is a `Func<object, string>` at every instantiation
+	# — `Nullable(Tv)` has no CLR form — while the referenced member's own parameter is its author-written
+	# `Nullable<int32>`, which no USE of it may move. The delegate then reads the boxed reference's bits as a struct
+	# and produces a garbage number. PRE-EXISTING: the open slot demanded `object` before carrier-argument erasure
+	# too, and a LAMBDA into the same slot is fine because the compiler owns the lifted target. Closing it needs a
+	# FORWARDER synthesized at the reference — a static one for `::fn`, a capture class for `expr::member` — which is
+	# the same missing piece the concrete delegate parameter is scoped out for (docs/dotkt-semantics.md §9c-bis).
+	[roundtrip-nullable-vt-generic-open-slot-callable-ref]="#86: a ::fn / expr::member reference bound into an OPEN (T?) -> R slot reads the boxed reference's bits as a Nullable<int32> and yields a garbage value. The slot is Func<object, string> at every instantiation and the referenced member's parameter is the author's own Nullable<int32>, which a use of it may not move; a lambda into the same slot is correct. PRE-EXISTING (the open slot demanded object before this erasure too). Needs a forwarder synthesized at the reference — static for ::fn, a capture class for expr::member — the same piece the concrete delegate parameter is scoped out for."
 	[roundtrip-nullable-vt-generic-seq-mapnotnull]="#86: NOT the cross-module carrier read (measured) — the defect is same-module, inside the stdlib's lazy path. Sequence.mapNotNull builds TransformingSequence<T, object> (its (T) -> R? transform erases R? to object) and hands it to filterNotNull, whose body unchecked-casts a lazily-wrapped object-elemented sequence to Sequence<T>; on the CLR that IS a reified IEnumerable<T>, so at T=Int the wrapper does not implement IEnumerable<int32> and the terminal toList's GetEnumerator is not found — System.EntryPointNotFoundException. The eager Iterable.mapNotNull twin is green because it materializes a fresh typed list instead of wrapping. Needs an element-converting adapter on the lazy sequence path, stdlib-side."
 	# PRUNED by the OVERRIDE-SLOT BRIDGE (#86 D3): the narrowed override called through its OWN declared type. The
 	# override now keeps its own physical `accept(Nullable<int32>)`, so the re-imported surface and the assembly name
@@ -72,14 +80,12 @@ declare -A RT_XFAIL=(
 	# now `object` at EVERY reified-argument position, so `List<Int?>` is an `IReadOnlyList<object>` and an
 	# `Array<T>` extension instantiated at `object` hands its result to a slot that names the same type. Both
 	# directions run green and the controls beside them are unchanged.
-	# The bridge's SCOPE, measured rather than left as prose (#86 D3). The supertype graph the bridge walks is the
-	# CURRENT compilation's, so a class whose base interface or base class is declared in a REFERENCED assembly gets
-	# no bridge at all and the base's erased slot goes unfilled. It is the same cross-module reader gap that keeps
-	# every other referenced-declaration derivation out, and it predates the bridge — the erase-in-place design this
-	# replaced had it too — but nothing measured it, so nothing stopped the rule being stated unconditionally.
-	# Closing it needs the base slot's pre-erasure declaration read off the referenced assembly through
-	# ReferenceMetadataIndex, which is the same reader D1 built for the argument axis.
-	[roundtrip-nullable-vt-generic-override-crossmodule-base]="#86 D3: an override whose base interface is declared in a REFERENCED assembly gets no bridge — KotlinOverrideSlotBridge walks the CURRENT compilation's supertype graph, so the base's erased accept(object) slot goes unfilled and the type fails to LOAD (System.TypeLoadException: Method 'accept' in type 'XIntSink' does not have an implementation). Pre-existing: the erase-in-place design this replaced had the same gap, and its same-module twin above is green. Needs the base slot's pre-erasure declaration read off the referenced assembly (ReferenceMetadataIndex), the same reader D1 built for the argument axis."
+	#
+	# PRUNED by the bridge reading REFERENCED supertypes (#86 D3): the cross-module base. The bridge answers a
+	# supertype declared elsewhere through the same D1 carrier reader every other referenced-declaration derivation
+	# uses, walking implementer -> slot (the override's own `overrides` marker names the member) where the local arm
+	# walks slot -> implementer. That also closes the shape carrier-argument erasure newly needs: `Comparable<Int?>`
+	# collapses onto the non-generic `System.IComparable`, whose slot only a bridge can fill.
 	#
 	# PRUNED by the `Array<X?>`-is-`object[]` canonicalisation (#86 D2): both cross-module `Array<Int?>` sections,
 	# param and return. `Array<X?>` is now `object[]` at every position for a possibly-value `X`, the pre-erasure
@@ -97,7 +103,8 @@ declare -A RT_XFAIL=(
 # would be a name-only XFAIL again.
 declare -A RT_XFAIL_SHAPE=(
 	[roundtrip-nullable-vt-generic-seq-mapnotnull]='System.EntryPointNotFoundException'
-	[roundtrip-nullable-vt-generic-override-crossmodule-base]='does not have an implementation'
+	# The wrong value is a pointer and differs every run, so the app prints a VERDICT and the shape is that verdict.
+	[roundtrip-nullable-vt-generic-open-slot-callable-ref]='wrong'
 )
 
 # A listed name with no documented shape is the hole this map exists to close, so it is rejected here rather
@@ -719,6 +726,30 @@ ng_local roundtrip-nullable-vt-generic-collection-to-array '3/3' \
 fun main() {
     val p = arrayOfNulls<Int>(2).plus(listOf<Int?>(3))   // receiver element object, Collection element Nullable<int32>
     println("${p.size}/${p[2]}")           // 3/3
+}
+EOF
+
+# A CALLABLE REFERENCE into an OPEN `(T?) -> R` slot. The delegate parameter carve-out (#86, docs/dotkt-semantics.md
+# §9c-bis) keeps a CONCRETE `(Int?) -> String` at `Func<Nullable<int32>, string>`, so an ordinary lambda and an
+# ordinary reference both fit it. An OPEN slot cannot be kept: `(T?) -> String` is a `Func<object, string>` at every
+# instantiation, because `Nullable(Tv)` has no CLR form. A LAMBDA into it is fine — the compiler owns the lifted
+# target and moves it with the slot — but a REFERENCE names a member the AUTHOR declared, whose `Nullable<int32>`
+# parameter is its Kotlin surface and is not the compiler's to move. Bound to the slot anyway, the delegate reads the
+# boxed reference's bits as a struct and yields a garbage number: a wrong VALUE, not a diagnostic.
+#
+# Pre-existing and unchanged by carrier-argument erasure — the open slot demanded `object` before it too. It is
+# listed rather than left silent because §9c-bis now states the carve-out, and a reader could take the carve-out for
+# a fix. The app prints a VERDICT rather than the value: the wrong value is a pointer and differs every run, so only
+# "did it round-trip" is a stable observable.
+ng_local roundtrip-nullable-vt-generic-open-slot-callable-ref 'ok/ok' \
+	'same-module: a ::fn and an expr::member reference into an OPEN (T?) -> R slot at T=Int (#86)' <<'EOF'
+fun handleQ(x: Int?): String = x?.toString() ?: "none"
+class Owner { fun member(x: Int?): String = x?.toString() ?: "none" }
+fun <T> invokeNullable(v: T?, block: (T?) -> String): String = block(v)
+fun main() {
+    val viaStatic = invokeNullable<Int>(3, ::handleQ)          // "3" — reads a boxed reference as a struct instead
+    val viaBound = invokeNullable<Int>(4, Owner()::member)     // "4" — same, through a bound member reference
+    println((if (viaStatic == "3") "ok" else "wrong") + "/" + (if (viaBound == "4") "ok" else "wrong"))
 }
 EOF
 

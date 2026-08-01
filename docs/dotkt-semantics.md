@@ -1622,14 +1622,25 @@ xs.toList()` forces `T = object` at the receiver and hands back a `List<object>`
 ### A .NET `G<int?>` has no Kotlin counterpart, and the crossing is REFUSED
 
 The rule makes `object` the only argument Kotlin can put in a reified position for a nullable value type, so **no
-Kotlin type's physical form is `List<Nullable<int32>>`**. A .NET API may still declare one — `List<int?>`,
-`Dictionary<string, int?>`, `Func<int?, string>` — and a resolved foreign declaration is authoritative: the erasure
-never restates what a CLR member declares. The two do not meet, and neither can be bent to the other: `List<object>`
-and `List<Nullable<int32>>` are unrelated invariant reified generics with no conversion between them, and adapting by
+Kotlin expression's physical form is `List<Nullable<int32>>`**. A .NET API may still declare one — `List<int?>`,
+`Dictionary<string, int?>`, `int?[]` — and a resolved foreign declaration is authoritative: the erasure never
+restates what a CLR member declares. The two do not meet, and neither can be bent to the other: `List<object>` and
+`List<Nullable<int32>>` are unrelated invariant reified generics with no conversion between them, and adapting by
 copying would give the argument different identity and different mutation semantics than the Kotlin source says it
 has. So calling such a member is refused at compile time, naming the member and the slot, rather than silently
-mis-typed. A **direct** `Nullable<V>` parameter or return is untouched — a Kotlin scalar `Int?` IS a
-`System.Nullable<int32>` and crosses exactly.
+mis-typed.
+
+**Constructing the .NET type by hand is not a way round it**, and the refusal deliberately does not suggest one:
+`System.Collections.Generic.List<Int?>()` written in Kotlin erases its own argument the same way and produces a
+`List<object>`, so it reaches the identical wall. What does move is the .NET surface — an overload whose argument is
+object-typed, or whose element is not a nullable value type — or keeping the value on the .NET side of the boundary
+entirely. This is a real source break against a .NET API that declares such a member: `Api.CountPresent(NetList<Int?>())`
+compiled and ran before the erasure and is refused now, exactly as an `int?[]` parameter is.
+
+**Only a REIFIED-ARGUMENT position is a crossing.** A direct `Nullable<V>` parameter or return is untouched — a
+Kotlin scalar `Int?` IS a `System.Nullable<int32>` — and so is a delegate PARAMETER, which keeps its concrete `V?`
+by the exception below: a `Func<int?, string>` parameter is inhabited by an ordinary Kotlin lambda and must keep
+crossing. A refusal that read a delegate parameter as an argument position rejected exactly that.
 
 ### Delegates: the target's slots follow the delegate's, and a CONCRETE parameter is the one exception
 
@@ -1645,10 +1656,19 @@ return. A REFERENCE return stays as declared, because it already reaches `object
 reason is that a delegate's target may be a member the author DECLARED — `::handle`, `expr::member` — whose slots are
 its Kotlin surface. Erasing the parameter leaves exactly two options and both are wrong: move `fun handle(x: Int?)`
 to `handle(object)`, which rewrites a public signature by a USE of it, or leave the target and emit a
-`Func<object, string>` no target can fill, which reads a struct's bits as a reference at run time. Closing it means
-synthesizing a FORWARDER at the reference — a static one for `::fn`, a capture class for `expr::member` — after which
-the parameter joins the rule with the rest. (The RETURN moves a referenced declaration for the same reason and is
-carried as inherited behaviour: the value it protects is real, and the same forwarder closes it.)
+`Func<object, string>` no target can fill, which reads a struct's bits as a reference at run time.
+
+**The carve-out does not remove that hazard; it removes it from the CONCRETE slot only.** An OPEN slot still demands
+`object` at every instantiation — `fun <T> invokeNullable(block: (T?) -> String)` is a `Func<object, string>` whatever
+`T` is — so a callable REFERENCE passed into one (`invokeNullable<Int>(3, ::handleQ)`) still binds a target declaring
+`Nullable<int32>` to a slot demanding `object`, and reads the boxed reference's bits as a struct: a wrong value, not
+a diagnostic. That is pre-existing and unchanged here. A LAMBDA into the same slot is fine — the compiler owns the
+lifted target and moves it with the slot — so only the two reference forms are affected.
+
+Closing both means synthesizing a FORWARDER at the reference — a static one for `::fn`, a capture class for
+`expr::member` — after which the concrete parameter joins the rule with the rest. (The RETURN moves a referenced
+declaration for the same reason and is carried as inherited behaviour: the value it protects is real, and the same
+forwarder closes it.)
 
 ### An override that narrows a `T?` slot keeps its own signature and gets a bridge
 

@@ -42,14 +42,23 @@ using DotKt.Bir;
 // physical type had to move. The split is exactly the CLR's: a bare `object` seam is one instruction in each
 // direction, and a difference under a constructed generic is not expressible at all.
 //
-// KNOWN LIMITATION — A BASE DECLARED IN A REFERENCED ASSEMBLY. The supertype graph walked here is the CURRENT
-// COMPILATION's, so a class whose base interface or base class lives in a referenced DotKt assembly is not indexed:
-// its narrowed override gets no bridge, the base's erased slot goes unfilled, and the type fails to LOAD. This is the
-// same cross-module reader gap that keeps the other referenced-declaration derivations out, it predates the bridge
-// (the erase-in-place design this replaced had it too), and closing it needs the base slot's pre-erasure declaration
-// read off the referenced assembly through `ReferenceMetadataIndex`. Until then every claim below — and in
-// `docs/dotkt-semantics.md` §9c-bis — is a statement about SAME-MODULE supertypes, and
-// `roundtrip-nullable-vt-generic-override-crossmodule-base` is the documented red that measures it.
+// A BASE DECLARED IN A REFERENCED ASSEMBLY IS READ, NOT SKIPPED. The supertype graph of the current compilation
+// answers a same-module base; a base declared elsewhere — a referenced DotKt library, and the STDLIB, which is where
+// `kotlin.Comparable` lives — is answered by the same D1 carrier reader every other referenced-declaration
+// derivation uses (`ReferenceMetadataIndex.TryNullableGenericSlot`: the producing assembly's
+// `[KotlinNullableGeneric]` carrier where the erasure recorded one, its physical signature otherwise).
+//
+// The two arms ask the question from opposite ends, because that is what each side can answer. A LOCAL supertype
+// hands over its slot list, so the walk goes slot -> implementer. A REFERENCED supertype has no slot list here, but
+// every override that must fill one names its owner and member in its own `overrides` marker — so the walk goes
+// implementer -> slot, and asks the reader for exactly the member the author said they were overriding. Neither arm
+// guesses: a slot with no `overrides` claim and a claim with no readable declaration are both left alone.
+//
+// The DESCRIPTOR names the CLR slot, not the Kotlin member. A referenced interface may be `@ClrTypeAlias`'d onto a
+// BCL one whose member has a different name (`kotlin.Comparable.compareTo` fills `System.IComparable.CompareTo`), so
+// the descriptor's member is resolved through the same `@ClrIntrinsic` binding `DeclarationRename` reads for the
+// declaration itself. A MethodImpl naming a member the interface does not have fails type LOAD exactly as an
+// unfilled slot does.
 static class KotlinOverrideSlotBridge
 {
     public sealed class Def
@@ -76,18 +85,19 @@ static class KotlinOverrideSlotBridge
     // are copies of the erased ones — so the halves do not race.
     //
     // The declaration half, over every file at once (a base may be declared in another file of this compilation).
-    public static void PropagateErasedSlots(IEnumerable<JsonNode> roots, Func<string, bool> isValue) =>
-        ApplyAll(roots, isValue, emitBridges: false);
+    public static void PropagateErasedSlots(IEnumerable<JsonNode> roots, Func<string, bool> isValue,
+        ReferenceMetadataIndex refs) => ApplyAll(roots, isValue, refs, emitBridges: false);
 
     // The bridge half.
-    public static void ApplyAll(IEnumerable<JsonNode> roots, Func<string, bool> isValue) =>
-        ApplyAll(roots, isValue, emitBridges: true);
+    public static void ApplyAll(IEnumerable<JsonNode> roots, Func<string, bool> isValue, ReferenceMetadataIndex refs) =>
+        ApplyAll(roots, isValue, refs, emitBridges: true);
 
-    static void ApplyAll(IEnumerable<JsonNode> roots, Func<string, bool> isValue, bool emitBridges)
+    static void ApplyAll(IEnumerable<JsonNode> roots, Func<string, bool> isValue, ReferenceMetadataIndex refs,
+        bool emitBridges)
     {
         var defs = Collect(roots);
         foreach (var cls in defs.Values.Where(d => d.Kind == "class").ToList())
-            ApplyClass(cls, defs, isValue, emitBridges);
+            ApplyClass(cls, defs, isValue, refs, emitBridges);
     }
 
     static Dictionary<string, Def> Collect(IEnumerable<JsonNode> roots)
@@ -118,22 +128,84 @@ static class KotlinOverrideSlotBridge
         }
     }
 
-    static void ApplyClass(Def cls, IReadOnlyDictionary<string, Def> defs, Func<string, bool> isValue, bool emitBridges)
+    static void ApplyClass(Def cls, IReadOnlyDictionary<string, Def> defs, Func<string, bool> isValue,
+        ReferenceMetadataIndex refs, bool emitBridges)
     {
         if (cls.Node["methods"] is not JsonArray methods) return;
         var ownArgs = ClassOwnArgs(cls);
         var bridges = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
         var ordinal = 0;
 
-        // EVERY `continue` BELOW MEANS "THIS SUPERTYPE OR SLOT IS NOT ONE THIS ERASURE DIVERGED", never "give up on a
-        // slot that needs filling". A supertype absent from `defs` is declared in a referenced assembly (the known
-        // limitation above, which no local decision can repair); an arity that does not match its spec, or a slot
-        // whose types do not read, is a declaration this pass has no opinion about and leaves exactly as the other
-        // passes found it. The one judgement call is `Implementer` returning null on an ambiguous overload set, and
-        // it is documented there.
+        // EVERY EARLY EXIT BELOW MEANS "THIS SUPERTYPE OR SLOT IS NOT ONE THIS ERASURE DIVERGED", never "give up on a
+        // slot that needs filling". A supertype absent from `defs` is declared elsewhere and goes to the referenced
+        // arm rather than being dropped; an arity that does not match its spec, or a slot whose types do not read, is
+        // a declaration this pass has no opinion about and leaves exactly as the other passes found it. The one
+        // judgement call is `Implementer` returning null on an ambiguous overload set, and it is documented there.
+        //
+        // The shared tail of both arms: given a SLOT (its constructed owner, its name, its erased parameter vector and
+        // return) and the class declaration that claims to fill it, decide per position whether the declaration is
+        // already the slot, is one `object` seam away from it (bridge), or has to adopt it (rewrite).
+        void Fill(TypeNode.Fqn spec, bool supIsInterface, string name, string descriptorMember,
+            TypeNode[] slotParams, TypeNode slotRet, JsonObject impl)
+        {
+            var declParams = impl["params"] as JsonArray;
+            var declRet = TypeJson.Read(impl["ret"]);
+            if (declParams == null || declRet == null || declParams.Count != slotParams.Length) return;
+
+            var fit = new Fit[slotParams.Length];
+            for (var i = 0; i < slotParams.Length; i++)
+            {
+                var declT = TypeJson.Read((declParams[i] as JsonObject)?["type"]);
+                if (declT == null) { fit = null; break; }
+                fit[i] = Classify(slotParams[i], SubstOwnerTvs(declT, ownArgs));
+            }
+            // A parameter difference this erasure did not create belongs to whatever pass did create it.
+            if (fit == null || fit.Contains(Fit.Foreign)) return;
+            var retFit = Classify(slotRet, SubstOwnerTvs(declRet, ownArgs));
+            if (retFit == Fit.Foreign)
+            {
+                // A COVARIANT return over an otherwise-exact signature is CovariantInterfaceReturnBridge's, and
+                // both passes emitting a bridge would declare the slot's signature twice. It only becomes this
+                // pass's when a parameter erased too — which is exactly when that pass, matching on an exact
+                // parameter vector, cannot fire — and then the one bridge states the whole slot and upcasts.
+                if (!fit.Any(f => f is Fit.Bridge or Fit.Rewrite)) return;
+                retFit = Fit.Bridge;
+            }
+
+            // A position no conversion reaches moves the DECLARATION onto the slot's shape — the only option the
+            // CLR leaves under a constructed generic — carrying its Kotlin surface on the round-trip channels.
+            for (var i = 0; i < slotParams.Length; i++)
+                if (fit[i] == Fit.Rewrite && declParams[i] is JsonObject po)
+                    Rewrite(po, "type", "nullableGeneric", "nullableFlags", slotParams[i], isValue);
+            if (retFit == Fit.Rewrite) Rewrite(impl, "ret", "nullableGenericRet", "retNullableFlags", slotRet, isValue);
+            if (!emitBridges || (!fit.Contains(Fit.Bridge) && retFit != Fit.Bridge)) return;
+
+            // The typed body is what the bridge dispatches to, so it must own a virtual slot of its own. Kotlin
+            // does not require `open` to satisfy an interface, and the exact-signature normalization that would
+            // otherwise mark it no longer matches — the signatures deliberately differ now.
+            impl["virtual"] = true;
+
+            var key = name + "(" + string.Join(",", slotParams.Select(TypeKey)) + ")->" + TypeKey(slotRet);
+            if (!bridges.TryGetValue(key, out var bridge))
+            {
+                bridge = BuildBridge(cls, impl, slotParams, slotRet, $"dotkt$ovslot${SafeName(name)}${ordinal++}", isValue);
+                bridges[key] = bridge;
+                methods.Add(bridge);
+            }
+            // Which METADATA wiring fills the slot: an interface slot is a MethodImpl against the constructed
+            // interface, a base-class slot a MethodImpl against the constructed base. ilemit consumes the
+            // resolved descriptor and resolves nothing itself.
+            ((JsonArray)bridge[supIsInterface ? "clrInterfaceImpls" : "clrBaseImpls"])
+                .Add(ImplDescriptor(spec, descriptorMember, slotParams, slotRet));
+        }
+
         foreach (var (spec, supIsInterface) in ReachableSupertypes(cls, defs))
         {
-            if (!defs.TryGetValue(spec.Name, out var sup)) continue;
+            if (!defs.TryGetValue(spec.Name, out var sup))
+            {
+                FillFromReference(cls, spec, supIsInterface, methods, ownArgs, isValue, refs, Fill);
+                continue;
+            }
             var supArgs = EffectiveArgs(spec, sup.Arity);
             if (supArgs == null) continue;
 
@@ -155,55 +227,66 @@ static class KotlinOverrideSlotBridge
 
                 if (Implementer(cls, defs, methods, spec.Name, name, methodArity, slotParams, ownArgs) is not JsonObject impl)
                     continue;
-                var declParams = impl["params"] as JsonArray;
-                var declRet = TypeJson.Read(impl["ret"]);
-                if (declParams == null || declRet == null || declParams.Count != slotParams.Length) continue;
+                Fill(spec, supIsInterface, name, name, slotParams, slotRet, impl);
+            }
+        }
+    }
 
-                var fit = new Fit[slotParams.Length];
-                for (var i = 0; i < slotParams.Length; i++)
-                {
-                    var declT = TypeJson.Read((declParams[i] as JsonObject)?["type"]);
-                    if (declT == null) { fit = null; break; }
-                    fit[i] = Classify(slotParams[i], SubstOwnerTvs(declT, ownArgs));
-                }
-                // A parameter difference this erasure did not create belongs to whatever pass did create it.
-                if (fit == null || fit.Contains(Fit.Foreign)) continue;
-                var retFit = Classify(slotRet, SubstOwnerTvs(declRet, ownArgs));
-                if (retFit == Fit.Foreign)
-                {
-                    // A COVARIANT return over an otherwise-exact signature is CovariantInterfaceReturnBridge's, and
-                    // both passes emitting a bridge would declare the slot's signature twice. It only becomes this
-                    // pass's when a parameter erased too — which is exactly when that pass, matching on an exact
-                    // parameter vector, cannot fire — and then the one bridge states the whole slot and upcasts.
-                    if (!fit.Any(f => f is Fit.Bridge or Fit.Rewrite)) continue;
-                    retFit = Fit.Bridge;
-                }
-
-                // A position no conversion reaches moves the DECLARATION onto the slot's shape — the only option the
-                // CLR leaves under a constructed generic — carrying its Kotlin surface on the round-trip channels.
-                for (var i = 0; i < slotParams.Length; i++)
-                    if (fit[i] == Fit.Rewrite && declParams[i] is JsonObject po)
-                        Rewrite(po, "type", "nullableGeneric", "nullableFlags", slotParams[i], isValue);
-                if (retFit == Fit.Rewrite) Rewrite(impl, "ret", "nullableGenericRet", "retNullableFlags", slotRet, isValue);
-                if (!emitBridges || (!fit.Contains(Fit.Bridge) && retFit != Fit.Bridge)) continue;
-
-                // The typed body is what the bridge dispatches to, so it must own a virtual slot of its own. Kotlin
-                // does not require `open` to satisfy an interface, and the exact-signature normalization that would
-                // otherwise mark it no longer matches — the signatures deliberately differ now.
-                impl["virtual"] = true;
-
-                var key = name + "(" + string.Join(",", slotParams.Select(TypeKey)) + ")->" + TypeKey(slotRet);
-                if (!bridges.TryGetValue(key, out var bridge))
-                {
-                    bridge = BuildBridge(cls, impl, slotParams, slotRet, $"dotkt$ovslot${SafeName(name)}${ordinal++}", isValue);
-                    bridges[key] = bridge;
-                    methods.Add(bridge);
-                }
-                // Which METADATA wiring fills the slot: an interface slot is a MethodImpl against the constructed
-                // interface, a base-class slot a MethodImpl against the constructed base. ilemit consumes the
-                // resolved descriptor and resolves nothing itself.
-                ((JsonArray)bridge[supIsInterface ? "clrInterfaceImpls" : "clrBaseImpls"])
-                    .Add(ImplDescriptor(spec, name, slotParams, slotRet));
+    // THE REFERENCED ARM, walked implementer -> slot. A referenced supertype hands over no slot list, so the class's
+    // own `overrides` markers are what name the members that must fill one: each says the OWNER the author wrote and
+    // the MEMBER on it. For every own method claiming this supertype, the D1 reader answers that member's pre-erasure
+    // declaration off the producing assembly, and the slot is then derived by the identical
+    // `Subst(Erase(declared), typeArgs)` formula the local arm uses.
+    //
+    // Every `return`/`continue` here means "this pass has no opinion about that slot", never "give up on one that
+    // needs filling": no reference index (a build with no references), a supertype whose arity the spec does not
+    // match, a member the reader refuses (an ambiguous same-shape overload set, which it will not guess at), or a
+    // parameter vector that does not read. A REFUSED position is respected exactly as it is on the argument axis —
+    // the reader saw the declaration and declined to state it, and inventing a slot from the physical signature is
+    // the derivation the refusal exists to prevent.
+    static void FillFromReference(Def cls, TypeNode.Fqn spec, bool supIsInterface, JsonArray methods,
+        TypeNode[] ownArgs, Func<string, bool> isValue, ReferenceMetadataIndex refs,
+        Action<TypeNode.Fqn, bool, string, string, TypeNode[], TypeNode, JsonObject> fill)
+    {
+        if (refs == null) return;
+        var supArgs = spec.Args ?? Array.Empty<TypeNode>();
+        foreach (var impl in methods.OfType<JsonObject>().ToList())
+        {
+            if (Bool(impl["static"]) || Str(impl["name"]) is not string ownName) continue;
+            if (Str(impl["vis"]) is not (null or "public" or "protected")) continue;
+            if (impl["params"] is not JsonArray ps) continue;
+            if (impl["overrides"] is not JsonArray overrides) continue;
+            var methodArity = (impl["typeParams"] as JsonArray)?.Count ?? 0;
+            foreach (var o in overrides.OfType<JsonObject>())
+            {
+                if (TypeJson.OwnerName(o["owner"]) is not string owner || owner != spec.Name) continue;
+                if (Str(o["member"]) is not string member) continue;
+                if (!refs.TryNullableGenericSlot(owner, member, isStatic: false, ps.Count, methodArity,
+                        out var slotRet0, out var slotParams0, out var refused))
+                    continue;
+                if (slotParams0 == null || slotParams0.Length != ps.Count) continue;
+                if (refused != null && refused.Any(r => r)) continue;
+                // A null PARAMETER fact is a slot this reader cannot state, and inventing one from the physical
+                // signature is the derivation its silence exists to prevent — so the member is left alone.
+                if (slotParams0.Any(t => t == null)) continue;
+                var slotParams = slotParams0
+                    .Select(t => SubstOwnerTvs(NullableGenericErasure.EraseNullableTv(t, isValue), supArgs))
+                    .ToArray();
+                // A null RETURN fact is the opposite: the reader states a return only while it still says something a
+                // call site completes (a carrier, or a physical type still holding a type variable), so `null` means
+                // the slot's return is not one the erasure moved and the override's own return already IS it.
+                // `compareTo(T): Int` is exactly that — the parameter is the whole divergence.
+                var slotRet = slotRet0 == null
+                    ? SubstOwnerTvs(TypeJson.Read(impl["ret"]), ownArgs)
+                    : SubstOwnerTvs(NullableGenericErasure.EraseNullableTv(slotRet0, isValue), supArgs);
+                if (slotRet == null) continue;
+                // The CLR slot's own NAME. A referenced Kotlin interface that is `@ClrTypeAlias`'d onto a BCL one
+                // fills a differently-named member (`compareTo` -> `CompareTo`), and the MethodImpl has to name the
+                // member the interface actually declares.
+                var descriptorMember = refs.TryMemberIntrinsicExact(owner, member, ps.Count, out var clrName)
+                    ? clrName : member;
+                fill(spec, supIsInterface, ownName, descriptorMember, slotParams, slotRet, impl);
+                break;
             }
         }
     }

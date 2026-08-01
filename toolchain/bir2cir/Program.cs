@@ -194,7 +194,7 @@ sealed class Pipeline
         // BEFORE the declaration snapshot below: a call reached through the DERIVED type is typed against that
         // declaration, so a snapshot taken first would type it against the slot the override no longer has. The
         // top-level `object` seam is bridged instead, beside the other bridge synthesizers.
-        KotlinOverrideSlotBridge.PropagateErasedSlots(birFiles.Select(f => f.Root), isValueFqn);
+        KotlinOverrideSlotBridge.PropagateErasedSlots(birFiles.Select(f => f.Root), isValueFqn, refs);
 
         // Snapshot every LOCAL generic type's declared member returns BEFORE the per-file DEF-side EraseNullableTv
         // (NullableGenericErasure runs inside the transform loop, mutating declarations in place). Feeds
@@ -663,7 +663,7 @@ sealed class Pipeline
         // forwarding bridge carrying a resolved MethodImpl instruction. Only a position no cast reaches (one under a
         // constructed generic) moves the declaration itself. Runs beside the other two bridge synthesizers and AFTER
         // the star-projection erasure, so the synthesized `G$dotkt_star` slots are in the supertype graph it walks.
-        KotlinOverrideSlotBridge.ApplyAll(staged.Select(s => s.Root).ToList(), isValueFqn);
+        KotlinOverrideSlotBridge.ApplyAll(staged.Select(s => s.Root).ToList(), isValueFqn, refs);
 
         // CONSTRUCTED MEMBER RESULT SUBSTITUTION (early): suspend lowering copies a call's result type into
         // state-machine fields/locals. Close every already-constructed receiver-relative return BEFORE that copy

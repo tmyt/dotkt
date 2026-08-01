@@ -234,6 +234,21 @@ class NgTextListSink : NgListSink<String>() {
     }
 }
 
+// ---- #86 : a generic supertype declared in ANOTHER assembly, implemented at `Int?` ---------------------------
+// `kotlin.Comparable` lives in the stdlib, so the slot this class must fill is a REFERENCED declaration. Its
+// argument erases (to `IComparable<object>`, collapsed to the non-generic `System.IComparable`) while the override's
+// own parameter stays `Nullable<int32>`, so the two only meet through a bridge — and building that bridge means
+// reading the supertype's declaration off the producing assembly.
+class ngCmp(val v: Int) : Comparable<Int?> {
+    override fun compareTo(other: Int?): Int = v - (other ?: 0)
+}
+
+// The SAME-MODULE control: the supertype is in this compilation, so the bridge reads it directly.
+interface NgSlotSink<T> { fun accept(x: T): String }
+class NgLocalSink : NgSlotSink<Int?> {
+    override fun accept(x: Int?): String = x?.toString() ?: "none"
+}
+
 // ---- #287 : `is` against a NULLABLE type operand ACCEPTS null -------------------------------------------------
 // `null is String?` / `null is Int?` are true in Kotlin, and the frontend RELIES on it: the else branch of
 // `when { x is T? -> … }` carries a smart-cast to a NON-null `x`, which is what makes `x.toString()` there resolve
@@ -528,6 +543,30 @@ class NullableTests {
         // `accept(IReadOnlyList<object>)` at every instantiation, and the override fills exactly that slot.
         assertEquals("2", NgIntListSink().accept(listOf(1, null, 3)))    // 2
         assertEquals("1", NgTextListSink().accept(listOf("a", null)))    // 1
+    }
+
+    // #86 — implementing a generic supertype at `Int?` when that supertype is declared in ANOTHER assembly.
+    //
+    // The supertype ARGUMENT is a reified argument and erases (`Comparable<Int?>` is an `IComparable<object>`, which
+    // the lowering then collapses onto the non-generic `System.IComparable`), while the override's own parameter is a
+    // DIRECT slot and correctly keeps its `Nullable<int32>`. Nothing then fills the base slot unless the bridge can
+    // read the supertype's declaration — and `kotlin.Comparable` is declared in the stdlib, not here. Unfilled, the
+    // type does not LOAD at all, which no verification pass reports and only running the code catches.
+    //
+    // The same-module control beside it is the shape that always worked: its supertype is in this compilation, so
+    // the bridge reads the declaration directly. Both must hold, because they take different paths to one rule.
+    @TestAttribute
+    fun erasedSupertypeArgumentFromAnotherAssembly() {
+        assertEquals(2, ngCmp(5).compareTo(3))              // 2    a REFERENCED generic supertype at Int?
+        assertEquals(5, ngCmp(5).compareTo(null))           // 5    …and its null case
+        assertEquals("7", NgLocalSink().accept(7))          // 7    the same-module control
+        assertEquals("none", NgLocalSink().accept(null))    // none
+        // NOT asserted: dispatch through a `Comparable<Int?>`-TYPED reference (`val c: Comparable<Int?> = ngCmp(9)`).
+        // That is a different, PRE-EXISTING defect and not this rule's: `Comparable<X>` at an objectish `X` collapses
+        // to the non-generic `System.IComparable` as a SUPERTYPE while a value slot of that type keeps
+        // `IComparable<object>`, so the call resolves a member the receiver does not have
+        // (System.EntryPointNotFoundException). Measured on `Comparable<Any?>`, which has always been objectish and
+        // fails identically — carrier-argument erasure only makes `Comparable<Int?>` reach the same hole.
     }
 
     @TestAttribute

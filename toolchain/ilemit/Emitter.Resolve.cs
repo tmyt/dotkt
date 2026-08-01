@@ -305,6 +305,37 @@ sealed partial class Emitter
         return null;
     }
 
+    // The same directive, consumed for a REFERENCED or BCL interface slot. The emitted-interface branch can match
+    // bir2cir's `clrInterfaceImpls` by sig TOKEN because both sides are CIR type nodes; here the slot is reflection
+    // `Type`s, so the bridge is matched by the identical structural parameter comparison the name-based lookup uses.
+    // Still consumption only: which member fills the slot, and with exactly which signature, is bir2cir's decision.
+    //
+    // Without this a bridge for a referenced supertype is emitted and then never wired: the name-based lookup below
+    // searches for a body CALLED like the slot, and a bridge is deliberately named nothing of the sort.
+    MethodBuilder FindExternalInterfaceBridge(TypeInfo ti, DotKt.Bir.TypeNode.Fqn ifaceSpec, string member, Type[] ips)
+    {
+        if (ti.Def.ValueKind != JsonValueKind.Object || !ti.Def.TryGetProperty("methods", out var methods)) return null;
+        var ifaceKey = SigCanon(ifaceSpec);
+        foreach (var method in methods.EnumerateArray())
+        {
+            if (!method.TryGetProperty("clrInterfaceImpls", out var impls)
+                || !method.TryGetProperty("name", out var nameNode)) continue;
+            foreach (var impl in impls.EnumerateArray())
+            {
+                if (!impl.TryGetProperty("owner", out var ownerNode)
+                    || ReadFqn(ownerNode) is not DotKt.Bir.TypeNode.Fqn owner
+                    || SigCanon(owner) != ifaceKey
+                    || !impl.TryGetProperty("member", out var memberNode)
+                    || memberNode.GetString() != member) continue;
+                if (!ti.Methods.TryGetValue(nameNode.GetString(), out var bridge)) continue;
+                if (_mparams.TryGetValue(bridge, out var bps) && bps.Length == ips.Length
+                    && bps.Zip(ips, SlotParamMatches).All(x => x))
+                    return bridge;
+            }
+        }
+        return null;
+    }
+
     // A STATIC method declared on a GENERIC emitted class (a Kotlin companion fun of a generic class —
     // `Result<T>`'s `fun <T> success(value: T)` emitted as a static generic method on `Result`1`) resolved via a
     // bare owner spec is an open MethodBuilder. Emitting a call with that open-typedef parent from ANOTHER class

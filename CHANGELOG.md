@@ -127,6 +127,43 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir/ilemit (area:bir2cir): the override-slot bridge reads a supertype declared in ANOTHER assembly (#86
+  D3).** The bridge walked only the current compilation's supertype graph, so a class implementing a generic
+  supertype from a referenced assembly — the STDLIB included — got no bridge and the base's erased slot went
+  unfilled: the type failed to LOAD, which no verification pass reports and only running the code catches. Carrier-
+  argument erasure made that reachable from ordinary source: `class Cmp : Comparable<Int?>` erases the supertype
+  ARGUMENT (to `IComparable<object>`, which the lowering collapses onto the non-generic `System.IComparable`) while
+  the override's own parameter is a DIRECT slot and correctly keeps its `Nullable<int32>`, so nothing filled
+  `CompareTo(object)` — `System.TypeLoadException` on the first use.
+  A referenced supertype is now answered by the same D1 carrier reader every other referenced-declaration derivation
+  uses. The two arms ask from opposite ends, because that is what each side can answer: a LOCAL supertype hands over
+  its slot list, so the walk goes slot -> implementer; a REFERENCED one does not, but every override that must fill
+  a slot names its owner and member in its own `overrides` marker, so the walk goes implementer -> slot and asks the
+  reader for exactly the member the author said they were overriding. The MethodImpl names the CLR slot rather than
+  the Kotlin member (`kotlin.Comparable.compareTo` fills `System.IComparable.CompareTo`), resolved through the same
+  `@ClrIntrinsic` binding the declaration rename reads. ilemit consumes that directive on a REFERENCED interface
+  too: its external-interface wiring searched for a body NAMED like the slot, and a bridge is deliberately named
+  nothing of the sort, so the bridge was emitted and then never wired.
+  Prunes `roundtrip-nullable-vt-generic-override-crossmodule-base`, the red PR5 documented for exactly this gap.
+
+- **bir2cir (area:bir2cir): the foreign-crossing refusal stops rejecting `Func<int?, string>` (#86).** The refusal
+  that guards a .NET declaration Kotlin cannot inhabit carried its own copy of the position walk, and the copy
+  disagreed with `Erase`: it called a delegate PARAMETER an argument, where the erasure calls it a slot. A .NET
+  `Use(Func<int?, string> cb)` — a signature an ordinary Kotlin lambda fills exactly — was therefore refused, which
+  is a compiler abort on accepted IR. The walk now lives beside `Erase` as `ErasureWouldMove`, its arms readable
+  against `Erase`'s position for position; `IsClrBoundKind`'s three copies (which were NOT the same predicate — two
+  listed the property accessors, one did not, and every comment claimed agreement) collapse into `ClrBoundNode`,
+  which states the CALL/ACCESS split once. Both halves of the boundary gained a live witness, because neither kind
+  of test can see the other: a compile-fail case pins the message for the genuinely uninhabitable `List<int?>`
+  against a real C# surface (the lane learned to build a `.cs` companion — a refusal ABOUT a foreign declaration has
+  no Kotlin-only witness), and an interop battery RUNS the shapes that are inhabited.
+
+- **bir2cir (area:bir2cir): the crossing refusal stops offering a remedy that does not exist (#86).** It suggested
+  building the .NET collection explicitly and passing it; `System.Collections.Generic.List<Int?>()` written in
+  Kotlin erases its own argument the same way and produces a `List<object>`, so that route ends where it started.
+  The message now names what does move — a different .NET surface, or keeping the value on the .NET side — and the
+  source break is recorded in `docs/dotkt-semantics.md` §9c-bis beside the `int?[]` one.
+
 - **bir2cir (area:bir2cir): `X?` in a reified argument is `System.Object` in every position, closing the split a
   concrete `Array<Int?>` left open (#86).** `Nullable(Tv)` was `object` everywhere while a CONCRETE `Int?` kept its
   `Nullable<int32>` in a type argument, so one Kotlin type had two physical forms by POSITION: `Array<Int?>` was an
@@ -430,10 +467,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   init-gated body-local retype with all three of its idiom gates — the gates existed to tell a genuine accumulator
   from a synthesized safe-call temp, a distinction that stops mattering once BOTH are erased and both re-narrow at
   their typed uses; and the return-value retype, subsumed by `return` becoming a use position like any other.
-  The `Enumerable.Cast<object>` receiver conversion for a value-element collection is retired by the
-  carrier-argument erasure above, which makes a `List<Int?>` an `IReadOnlyList<object>` — already an
-  `IEnumerable<object>` — so there is nothing left for it to convert. `List<Int?>.filterNotNullTo` at a value
-  element and **#324**'s `countG(nullBoxes(7), 2)` are pinned as fixtures and both run green without it.
+  The `Enumerable.Cast<object>` receiver conversion is NARROWED rather than retired — see the carrier-argument
+  erasure entry above for what it still converts and which slot it may fill. `List<Int?>.filterNotNullTo` at a value
+  element and **#324**'s `countG(nullBoxes(7), 2)` are pinned as fixtures and both run green.
 
 - **bir2cir (area:bir2cir): an override of an object-erased `T?` slot is now an override, not a new overload
   (#86 D3).** `class TextSink : Sink<String> { override fun accept(x: String?) }` writes a CONCRETE type, so no
@@ -472,6 +508,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   call's dynamic-dispatch channel (ilemit falls back to reflection on its presence), so on a node already bound to
   a concrete CLR slot it would be a dispatch instruction rather than a type fact, and `sty` carries the same
   instantiated type without it.
+  The sibling audit found one more node in the same class, synthesized rather than reshaped: the value-element
+  collection conversion wraps its argument in `System.Linq.Enumerable.Cast<object>` and left the wrap unstamped.
+  That one RETYPES the operand, so it is stamped with what the wrap itself produces (`IEnumerable<object>`) rather
+  than with the wrapped node's stamp — which would be a lie, not merely an imprecision, exactly as at the
+  `NullableTvErasureCallRealign` restamp sites. (The pass was later narrowed and renamed to
+  `ValueElementIterableCoercion`; the stamp and its reason are unchanged.)
   CIR is unchanged across the whole gated corpus and on the measured non-suspend control (byte-identical): `sty` is
   bir2cir-internal and stripped before CIR, and the `ret` carries only add a slot where the reshaped node had none.
   One shape is a deliberate, semantically-neutral exception rather than a no-op — `CharSeqStringLowering` reads

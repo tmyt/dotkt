@@ -414,6 +414,14 @@ sealed partial class Emitter
                                 ? SubstituteIfaceArgs(p.ParameterType, itype.GetGenericArguments())
                                 : p.ParameterType).ToArray();
                             var methodArity = im.GetGenericArguments().Length;
+                            // A bir2cir-resolved MethodImpl comes first: it names the slot and the member that fills
+                            // it, so there is nothing to disambiguate. The name-based search below cannot find such a
+                            // bridge — it is deliberately not named after the slot.
+                            if (FindExternalInterfaceBridge(ti, specFqn, im.Name, ips) is MethodBuilder directiveBridge)
+                            {
+                                ti.TB.DefineMethodOverride(directiveBridge, reanchor ? TypeBuilder.GetMethod(itype, im) : im);
+                                continue;
+                            }
                             var cands = ti.MethodsBySig
                                 .Where(kv => kv.Key.Name == im.Name && kv.Key.GenericArity == methodArity)
                                 .Select(kv => kv.Value)
