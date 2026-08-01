@@ -125,6 +125,21 @@ static partial class NullableTvErasureCallRealign
                 && TypeJson.Read(ar["elem"]) is TypeNode se
                 && !se.Equals(ta.Elem) && IsObjectErasureOf(ta.Elem, se))
                 ar["elem"] = TypeJson.Write(ta.Elem);
+            // And the same rule for a DELEGATE construction. `fun <T> invokeNullable(block: (T?) -> String)` declares
+            // a physical `Func<object, string>` whatever `T` is, while kotc states the construction's `funcType` from
+            // the SUBSTITUTED Kotlin type — `(String?) -> String`, a `Func<string, string>`. Those are two different
+            // delegate types, and the one the call accepts is the callee's. The construction is ours to type, so it
+            // is BUILT at the slot's shape rather than built wrong and cast (no cast joins two delegate
+            // instantiations); DelegateTargetSlotAlignment then makes the lifted target's own slots follow.
+            // Only a construction whose TARGET this compilation owns: a `newDelegate`'s lifted static and a
+            // `newClosure`'s synthetic `invoke` both follow the retyped `funcType` (DelegateTargetSlotAlignment). A
+            // `newBoundDelegate` points at a real declared member whose signature is not ours to move, so retyping
+            // its delegate would state a shape no target can fill.
+            if (target is TypeNode.Fn && args[i] is JsonObject dl
+                && Str(dl["k"]) is "newDelegate" or "newClosure"
+                && TypeJson.Read(dl["funcType"]) is TypeNode.Fn dft
+                && !dft.Equals(target) && IsObjectErasureOf(target, dft))
+                dl["funcType"] = TypeJson.Write(target);
             argTypes[i] = args[i] != null ? Eval(args[i], ctx) : null;
             if (target != null)
             {
@@ -279,6 +294,37 @@ static partial class NullableTvErasureCallRealign
             if (kv.Value != null && kv.Key is not ("elem" or "elems" or "size" or "k" or "sty"))
                 Eval(kv.Value, ctx);
         return elem == null ? null : new TypeNode.Array(elem);
+    }
+
+    // A DELEGATE INVOCATION. Its callee is the function type in `funcType`, which the declaration axis has already
+    // erased, so its components ARE the physical slots: each argument is reconciled against the one it fills and the
+    // result is the erased return. A `T.() -> R` states its receiver as the delegate's first parameter, so the
+    // vector is chosen by whichever of the two spellings matches the argument count — never by guessing.
+    //
+    // Nothing is substituted into those components: a `funcType` is already closed at the invocation site (there is
+    // no separate owner/method instantiation for a delegate), and `Subst` with no bindings leaves a concrete slot
+    // alone while declining an open one, which is the right refusal.
+    static TypeNode EvalDelegateInvoke(JsonObject obj, Ctx ctx)
+    {
+        var recvType = obj["recv"] != null ? Eval(obj["recv"], ctx) : null;
+        var fn = TypeJson.Read(obj["funcType"]) as TypeNode.Fn;
+        // The invoked delegate is whatever actually FLOWS into the receiver. A local holding an object-erased
+        // `Func<object, string>` is dispatched through that type's `Invoke`, not through the `Func<string, string>`
+        // the frontend stamped from the pre-erasure Kotlin type — the two are unrelated constructed delegates and
+        // the emitted `callvirt` would name a method the value does not have.
+        if (recvType is TypeNode.Fn rfn && fn != null && !rfn.Equals(fn) && IsObjectErasureOf(rfn, fn))
+        {
+            obj["funcType"] = TypeJson.Write(rfn);
+            fn = rfn;
+        }
+        TypeNode[] declParams = null;
+        if (fn is { Suspend: false } && obj["args"] is JsonArray args)
+            declParams = fn.DelegateParams.Length == args.Count ? fn.DelegateParams
+                : fn.Params.Length == args.Count ? fn.Params
+                : null;
+        if (declParams != null) RealignArgs(obj, declParams, null, null, null, ctx);
+        else EvalChildrenOf(obj, "args", ctx);
+        return fn?.Ret;
     }
 
     // An inline iteration binds a loop VARIABLE, whose type is the node's `elem`. Registering it makes the body's

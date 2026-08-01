@@ -361,12 +361,12 @@ static partial class NullableTvErasureCallRealign
             case string ck when IsClrBoundKind(ck):
                 return EvalClrCall(obj, ctx);
             case "delegateInvoke":
-                // The value a `(…) -> R` invocation produces is the function type's RETURN, which the erasure has
-                // already rewritten in the `funcType` slot. Without this the node reports no type at all and every
-                // consumer of a lambda result falls outside the realignment.
-                if (obj["recv"] != null) Eval(obj["recv"], ctx);
-                EvalChildrenOf(obj, "args", ctx);
-                return TypeJson.Read(obj["funcType"]) is TypeNode.Fn dfn ? dfn.Ret : null;
+                // A `(…) -> R` invocation is a call whose DECLARATION is the function type itself: the erasure has
+                // already given `funcType` its physical components, so each argument fills the slot named there and
+                // the value produced is that type's RETURN. Without the return the node reports no type at all and
+                // every consumer of a lambda result falls outside the realignment; without the arguments an `Int`
+                // handed to an object-erased `(Int?) -> R` parameter reaches the delegate unboxed.
+                return EvalDelegateInvoke(obj, ctx);
             case "field":
                 return EvalField(obj, ctx);
             case "setLocal":
@@ -516,8 +516,6 @@ static partial class NullableTvErasureCallRealign
         var methodArgs = (obj["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray();
         var decl = LookupDecl(owner.Name, method, (obj["args"] as JsonArray)?.Count ?? 0,
             methodArgs?.Length ?? 0, isStatic: false, idx);
-        // Before anything is derived FROM the type arguments, give them their physical form (#86 D2).
-        CanonicalizeArrayTypeArgs(obj, decl, methodArgs);
         // THE ARGUMENT AXIS: each parameter slot is `Subst(Erase(declared param))` exactly as the return is; with no
         // declaration the call's own descriptor stands in (see RealignArgs).
         RealignArgs(obj, decl?.Params, decl?.ParamsRefused, owner.Args, methodArgs, ctx);
@@ -550,8 +548,6 @@ static partial class NullableTvErasureCallRealign
             else
                 ctx.Idx.TopLevel.TryGetValue(method + "|" + argCount, out decl);
         }
-        // Before anything is derived FROM the type arguments, give them their physical form (#86 D2).
-        CanonicalizeArrayTypeArgs(obj, decl, methodArgs);
         RealignArgs(obj, decl?.Params, decl?.ParamsRefused, ownerArgs, methodArgs, ctx);
         if (decl?.Ret == null) return stampedRet;   // no declaration, or an ambiguous same-name/same-arity overload set
         var erasedRet = NullableGenericErasure.EraseNullableTv(decl.Ret, _isValue);
@@ -657,54 +653,6 @@ static partial class NullableTvErasureCallRealign
                out var ret, out var ps, out var refused)
             ? new DeclSig { Ret = ret, Params = ps, ParamsRefused = refused }
             : null;
-
-    // D2'S TYPE-ARGUMENT HALF, at the RESULT. A callee that hands back a bare `Array<T>` produces a physical `!!T[]`,
-    // and the caller's slot for it is `Array<Int?>` = `object[]` when `T` binds to a nullable value type — so the only
-    // instantiation whose result the caller can hold is `T = object`. `arrayOf<Int?>(1, null)` is the shape: its own
-    // vararg pack is built here and states nothing, but what it RETURNS has to be the array the slot names.
-    //
-    // This is NOT the rejected call-site type-argument collapse: the argument is not weakened because the callee is
-    // generic, it is weakened because ONE physical slot — an array element — has a single representation and the
-    // instantiation has to name it. A type argument that never reaches an array is untouched, so `listOf<Int?>` keeps
-    // its `List<Nullable<int32>>`. The PARAMETER side is settled by what actually flows (UnifyMethodArgs), which needs
-    // no guess about whether the array already exists.
-    //
-    // Only a BARE type variable DIRECTLY under an `Array` constrains its argument. `Array<T?>` is `object[]` whatever
-    // `T` is, so it says nothing about `T`; and `Array<List<T>>` is `List<!!T>[]`, whose element genuinely stays
-    // `List<Nullable<int32>>` — forcing `object` there would name an array the caller does not hold.
-    static void CanonicalizeArrayTypeArgs(JsonObject obj, DeclSig decl, TypeNode[] methodArgs)
-    {
-        if (decl == null || methodArgs == null || obj["typeArgs"] is not JsonArray typeArgs) return;
-        for (var i = 0; i < methodArgs.Length && i < typeArgs.Count; i++)
-        {
-            if (!NullableGenericErasure.IsNullableMaybeValue(methodArgs[i], _isValue)) continue;
-            if (!MentionsArrayOf(decl.Ret, i)) continue;
-            methodArgs[i] = new TypeNode.Fqn("object");
-            typeArgs[i] = TypeJson.Fqn("object");
-        }
-    }
-
-    static bool MentionsArrayOf(TypeNode t, int i) => t switch
-    {
-        null => false,
-        TypeNode.Array a => IsDirectElement(a.Elem, i) || MentionsArrayOf(a.Elem, i),
-        TypeNode.Fqn { Args: { } args } => args.Any(x => MentionsArrayOf(x, i)),
-        TypeNode.Nullable n => MentionsArrayOf(n.Of, i),
-        TypeNode.Oblivious o => MentionsArrayOf(o.Of, i),
-        TypeNode.ByRef b => MentionsArrayOf(b.Of, i),
-        TypeNode.Fn fn => MentionsArrayOf(fn.Ret, i) || fn.Params.Any(p => MentionsArrayOf(p, i))
-                          || (fn.Recv != null && MentionsArrayOf(fn.Recv, i)),
-        _ => false,
-    };
-
-    // The element of an `Array<…>`, unwrapping further array nesting: `Array<Array<T>>` constrains `T` exactly as
-    // `Array<T>` does, because `!!T[][]` is an `object[][]` only at `T = object`.
-    static bool IsDirectElement(TypeNode elem, int i) => elem switch
-    {
-        TypeNode.Tv { Scope: "method" } tv => tv.I == i,
-        TypeNode.Array a => IsDirectElement(a.Elem, i),
-        _ => false,
-    };
 
     // Substitute class-scope `tv{type,i}` with `typeArgs[i]` and method-scope `tv{method,i}` with `methodArgs[i]`,
     // recursively. Returns null when a needed binding is unavailable (caller skips the rewrite).

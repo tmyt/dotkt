@@ -416,13 +416,6 @@ sealed class Pipeline
             // NetInteropBinding carries (the callee's declared param TypeNodes) — BirTypeLowering lowers it and ilemit
             // exact-matches it. The retired ShapeSynthesis pass (lossy `shapes` string derived off the @ClrTypeAlias
             // index) is DELETED; ilemit no longer re-resolves the overload by name/arity/shape-string.
-            // VALUE-TYPE NULLABLE-COLLECTION receiver boxing (bundle-6 BUG-1 Part A): a value-type-element collection
-            // (`List<Int?>`) passed to a nullable-generic collection extension (`Iterable<T?>.filterNotNull()`) is NOT
-            // covariantly `IEnumerable<object>` on the CLR — wrap the receiver in `Enumerable.Cast<object>` so it boxes
-            // into a real object-enumerable. Runs FIRST, before NullableGenericErasure sweeps the `nullable:gp:`
-            // receiver token to `object` (this pass keys on that token). Self-gates to concrete value instantiations
-            // (an open `gp:T` arg is not a value type) so it is a no-op in the rt-stdlib self-build.
-            if (!_options.RefBuild) ValueTypeNullableCollectionArg.Apply(bir.Root, isValueFqn);
             // ARRAY-ELEMENT CANONICALIZATION (#86 D2): an `Array<X?>` with a possibly-value `X` is `object[]`, so an
             // array CREATION filling such a slot allocates `object[]` too. kotc writes the source's own element there
             // (`arrayOf(1,2,3)` into an `Array<Int?>` says `kotlin.Int`), which is not a `Nullable(...)` the erasure
@@ -478,24 +471,25 @@ sealed class Pipeline
             // object-erasure boundary (IsObjectErasureOf), and a value is only ever converted across a bare `object`
             // seam, which is the only one the CLR can express. BEFORE BirTypeLowering.
             NullableTvErasureCallRealign.Apply(bir.Root, nullableTvDeclRets, isValueFqn, refs);
+            // DELEGATE-TARGET slot alignment (ALL builds — the declaration half neither axis above can reach on its
+            // own): a delegate's parameters and return are reified ARGUMENTS, so `(Int?) -> String` is
+            // `Func<object, string>` and `(T?) -> String` is `Func<object, string>` at every instantiation; the
+            // LIFTED method bound into that delegate declares ordinary slots, where a direct `Int?` is a
+            // `Nullable<int32>` and a `String?` is a `string`. ECMA-335 II.14.6 admits neither pair, so the target's
+            // slot follows the delegate's `object` — every parameter (contravariant: only `object` is assignable
+            // from `object`) and a value/`Nullable`/type-variable return (covariant: a reference already reaches
+            // `object`, and rewriting it is what broke #189). Runs AFTER the use axis, which is what corrects a
+            // construction's own `funcType` to the slot it fills; the re-run below then types the newly-`object`
+            // lambda slots' BODIES — narrowing each read and boxing each `return` — and happens only when a slot
+            // actually moved.
+            if (DelegateTargetSlotAlignment.Apply(bir.Root, isValueFqn))
+                NullableTvErasureCallRealign.Apply(bir.Root, nullableTvDeclRets, isValueFqn, refs);
             // UNCHECKED OBJECT->Tv RETURN ERASURE: the non-null-T sibling of nullable-generic return erasure.  A JVM
             // `Any? as T` physically returns Object; spelling the CLR return as reified T would insert `unbox.any T`
             // inside the callee and throw even when a null result is stored but never consumed.  Emit object physically,
             // preserve T in round-trip metadata, and keep a directly initialized Tv local object-typed until its actual
             // typed use.  All matching is structural and this pass fully states the CIR types ilemit emits 1:1.
             UncheckedGenericCastReturnErasure.Apply(bir.Root, uncheckedGenericCastRets);
-            // FUNC-SLOT nullable-return erasure (ALL builds — the transform-side twin of the pass above): a function
-            // TYPE whose RETURN is a nullable (`(T) -> R?`) over a VALUE (`R = Int`) or open-generic (`R = T`) inner
-            // has NO faithful null-carrying CLR delegate return other than `object` (a `Nullable<int>`/`Nullable<T>`
-            // can't ride `Func`'s `out TResult` covariance while keeping null), so it is erased to `Func<…, object>`.
-            // Rewrites every such funcType (param slots, newDelegate/delegateInvoke funcTypes), erases the backing
-            // lambda methods' returns to object, and repairs the local dataflow (see the class). A REFERENCE inner
-            // (`R = String` — `Func<string?>`, or a `Comparable<*>?` selector) is NOT erased: a reference already
-            // carries null, and erasing the lifted lambda's return to `object` would break the concrete-delegate ctor
-            // (`object` is not assignable-TO the `Func<string>` slot's `string` return → ilverify DelegateCtor, #189 —
-            // and the boxgen/sort `object`-where-`IComparable`-expected findings); ReferenceNullableStrip drops its
-            // nullable wrapper to the plain reference downstream. Gated by isValueFqn.
-            NullableFuncReturnErasure.Apply(bir.Root, isValueFqn);
             // VARIANCE -> INVARIANCE type-arg REALIGNMENT (il-bymap): kotc approximates a use-site `in`/`out` variance
             // projection to `kotlin.Any` (JVM-erased, harmless), so a call into an INVARIANT @ClrTypeAlias collection
             // generic (`getOrImplicitDefault<K,V>` on a `Map<String,V>` receiver) carries a `K = Any` typeArg while the
@@ -882,6 +876,12 @@ sealed class Pipeline
             // the reference-nullable strip, so nothing earlier sees the two meet. Refuses loudly, naming both source
             // signatures — a silent wrong binding is the one outcome a program with no valid lowering must not get.
             NullableGenericOverloadCollision.Check(lowered, outputName);
+            // The other side of the same erasure: a .NET member may DECLARE a `List<int?>`, which no Kotlin type
+            // inhabits once `X?` in a reified argument is `System.Object`. Unrelated invariant reified generics have
+            // no conversion between them and an adapter would change the argument's identity, so the crossing is
+            // refused here rather than silently mis-typed. Checked on the lowered tree, where `memberSig`/`ret` are
+            // the final CLR signature.
+            ForeignNullableGenericCrossing.Check(lowered, outputName);
             // A mutable/spilled collection value can lower to IList<T> while a Kotlin read-only call slot lowers to
             // IReadOnlyList<T>. These are sibling CLR interfaces, so make the conversion an explicit CIR cast after
             // substituting method type args. ilemit then emits the stated cast instead of inferring a stack seam.

@@ -67,8 +67,9 @@ classification.
 
 ### `[KotlinNullableGeneric]` — which slots carry it, and why it needs the NRT byte too
 
-`bir2cir` erases `Nullable(Tv)` to `object` at **every** slot (`docs/dotkt-semantics.md` §9c-bis), and records the
-pre-erasure type node on the same slot. The position set is therefore the full declaration surface, not a subset:
+`bir2cir` erases a possibly-value `X?` to `object` in every reified ARGUMENT and an open `Nullable(Tv)` everywhere
+(carrier-argument erasure, `docs/dotkt-semantics.md` §9c-bis), and records the pre-erasure type node on the same
+slot. The position set is therefore the full declaration surface, not a subset:
 
 | slot | carrier rides |
 |---|---|
@@ -78,8 +79,24 @@ pre-erasure type node on the same slot. The position set is therefore the full d
 | field | the field's `attrs` |
 | property | the property's `attrs` |
 
-At each, the erased `Nullable(Tv)` may be the slot's **head** (`x: T?`) or **nested** (`Holder<T?>`, `Array<T?>`,
-`(T) -> T?`, `Holder<T?>?`). The two need different amounts of help on the way back:
+ELIGIBILITY is the erasure's own rule, so it covers a CONCRETE argument as well as an open one: a slot needs the
+carrier when it has an open `Nullable(Tv)` anywhere, or a possibly-value `X?` in a reified argument — `List<Int?>`,
+`Box<Int?>`, `Array<Int?>`, `(Int?) -> R`, `List<List<Int?>>`. Without it a reader sees only the `object` argument
+and restores `List<Any?>`, a DIFFERENT Kotlin type a consumer's own `List<Int?>` cannot bind to. A direct `Int?`
+HEAD is deliberately not eligible: it keeps its `System.Nullable<int32>` and reads back without help.
+
+**SUPERTYPE EDGES AND GENERIC CONSTRAINTS ARE ERASED BUT NOT CARRIED**, and that is a decision rather than an
+omission. Every carrier is a per-SLOT attribute stamped on a declaration slot; a supertype edge and a
+generic-parameter constraint have no such slot in the emitter's model, so carrying them would mean a type-level list
+re-matched against a supertype set `dll2klib`'s projection already filters and rewrites (it drops non-generic
+shadows, collapses the `IComparable` bridge, and synthesizes `kotlin.Throwable`/`kotlin.Any` edges). The consequence
+is bounded and stated here: a re-imported `class E : Comparable<Int?>` presents as `Comparable<Any?>`, while every
+MEMBER reached through that edge keeps its own carrier — so the types a consumer passes and receives stay exact, and
+what degrades is only bound satisfaction (`fun <T : Comparable<Int?>>` will not accept `E` across a module boundary).
+Same-module compilation is unaffected: there is no restore step.
+
+At each carried slot, the erasure may be at the slot's **head** (`x: T?`) or **nested** (`Holder<T?>`, `List<Int?>`,
+`Array<T?>`, `(T) -> T?`, `Holder<T?>?`). The two need different amounts of help on the way back:
 
 - A reader **strips the carrier's outer nullability** before use — the carrier owns the inner tree, and the slot's own
   `[Nullable]` byte owns the outer `?`, exactly as it does for `[KotlinSuspendFunctionType]`. So a nested erasure

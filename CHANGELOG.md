@@ -127,6 +127,57 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir (area:bir2cir): `X?` in a reified argument is `System.Object` in every position, closing the split a
+  concrete `Array<Int?>` left open (#86).** `Nullable(Tv)` was `object` everywhere while a CONCRETE `Int?` kept its
+  `Nullable<int32>` in a type argument, so one Kotlin type had two physical forms by POSITION: `Array<Int?>` was an
+  `object[]` (D2) but `List<Int?>` was an `IReadOnlyList<Nullable<int32>>`, and a generic carrying an element across
+  that boundary could satisfy one end or the other and not both. `fun f(xs: Array<Int?>): List<Int?> = xs.toList()`
+  had to instantiate at `object` — no other instantiation's `!!0[]` parameter accepts an `object[]` — and then
+  returned a `List<object>` into a slot the emitter resolved as `IReadOnlyCollection<Nullable<int32>>`, which threw
+  `EntryPointNotFoundException` at the first member call; the same split reached from the array side
+  (`Array<Int?>.plus(Collection<Int?>)`) threw `InvalidCastException`.
+  The erasure is now POSITIONAL and uniform: a direct concrete `V?` slot keeps `System.Nullable<V>`, and a
+  possibly-value `X?` used as an ARRAY ELEMENT or as an actual argument to a CLR-reified construction — type,
+  method, or delegate — is `System.Object`. `List<Int?>` is an `IReadOnlyList<object>`, `MutableList<Int?>` an
+  `IList<object>`, `Box<Int?>` a `Box<object>`, `Comparable<Int?>` an `IComparable<object>`, `f<Int?>(…)`
+  instantiates at `object`, and `(Int?) -> String` is a `Func<object, string>`; `List<String?>` and `Array<String?>`
+  are unchanged, because a reference `?` is not a physical difference on the CLR. Generics are INSTANTIATED at the
+  erased argument from the start rather than built wrongly and cast — no cast joins two instantiations of one
+  invariant reified generic — and the pre-erasure Kotlin type rides the same `[KotlinNullableGeneric]` carrier every
+  other erased slot does, now including concrete arguments, so a separately compiled consumer restores `List<Int?>`
+  and types its own use as `Subst(Erase(declared))`.
+  A DELEGATE's lifted target follows the delegate slot it fills, in the direction ECMA-335 II.14.6 requires of each
+  position: every parameter (contravariant — only `object` is assignable from `object`, so a `(T?) -> String` at
+  `T = String` moves too), and a value/`Nullable`/type-variable return (covariant — a reference return already
+  reaches `object` and stays, which is the #189 rule). A `(Int?) -> String` lambda used to emit a `Func<object,
+  string>` over an `__lambda(Nullable<int32>)`, which is not a delegate at all: `InvalidProgramException` before the
+  first instruction.
+  Prunes both pinned roundtrip sections (`-array-to-collection`, `-collection-to-array`) and five ilverify entries:
+  the three value-element base-view findings (`copyOfGrowsWithNullTailAtValueElements`, `boxedGenericValues`,
+  `arrayOfNulls`), the cross-module `nullableGenericMembersRoundTrip` delegate findings, and #324's
+  `nullableGenericCollectionArgKeysOnTheReceiver`. The `Enumerable.Cast<object>` receiver conversion that entry
+  tracked is DELETED with its pass: a Kotlin `List<Int?>` is now an `IReadOnlyList<object>`, which already IS an
+  `IEnumerable<object>`, so the wrap had nothing left to convert. What remains is the REFERENCE half of the same
+  question — an open `Array<T?>`/`List<T?>` is `object[]`/`IReadOnlyList<object>` T-independently while a concrete
+  `Array<String?>` keeps `string[]` — carried as the one surviving `ArrayTests::copyOfGrowsWithNullTail` entry.
+
+- **bir2cir (area:bir2cir): a .NET member declaring `G<int?>` is REFUSED at the crossing, not silently mis-typed
+  (#86).** With `X?` in a reified argument physically `System.Object`, no Kotlin type's form is
+  `List<Nullable<int32>>` — but a .NET API may declare one, and a resolved foreign declaration is authoritative
+  (the erasure never restates what a CLR member declares). `List<object>` and `List<Nullable<int32>>` are unrelated
+  invariant reified generics with no conversion between them, and adapting by copying would change the argument's
+  identity and mutation semantics, so the call is refused with the member, the slot and both shapes named. A DIRECT
+  `Nullable<V>` parameter or return is untouched — a Kotlin scalar `Int?` IS a `System.Nullable<int32>`.
+
+- **bir2cir (area:bir2cir): the erasure's overload-collision refusal now covers CONSTRUCTORS and nested arguments
+  (#86 §5.3).** `f(List<Int?>)` beside `f(List<Boolean?>)`, and `Bag(List<Int?>)` beside `Bag(List<Long?>)`, are
+  distinct Kotlin declarations and one CLR signature each — whichever the emitter binds wins every call and the
+  other is unreachable. Both are now refused, naming both source signatures as written (recovered from the
+  pre-erasure carrier) and the one signature they collapse onto. SUPERTYPE EDGES and GENERIC CONSTRAINTS are
+  deliberately NOT checked: two edges can only collapse if they are two instantiations of one head, which the Kotlin
+  frontend already rejects, so a backend check there would be unreachable code pretending to be a safety net —
+  pinned as `tests/compile-fail/NullableGenericInterfaceCollision.kt`.
+
 - **bir2cir/ilemit (area:bir2cir): an override that narrows a base `T?` slot now keeps its own signature, and a
   bridge fills the slot (#86 D3).** `class IntSink : Sink<Int>` overriding `Sink<T>.accept(x: T?)` has to satisfy the
   base's erased `accept(object)` — the erasure belongs to the declaration, not to the type argument — while its own

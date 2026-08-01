@@ -635,11 +635,11 @@ static class MemberCallSubstitution
         return null;
     }
 
-    // The physical element of an array whose Kotlin element type is `elem` (#86 D2, owned by NullableGenericErasure).
-    // The factories above build arrays AFTER the declaration-axis erasure has run, so they apply the rule themselves
-    // rather than inheriting it from a sweep that has already gone by.
+    // The physical element of an array whose Kotlin element type is `elem` (#86, owned by NullableGenericErasure): an
+    // array element is a reified ARGUMENT. The factories above build arrays AFTER the declaration-axis erasure has
+    // run, so they apply the rule themselves rather than inheriting it from a sweep that has already gone by.
     static TypeNode CanonicalArrayElem(TypeNode elem)
-        => elem == null ? null : NullableGenericErasure.EraseArrayElem(elem, _isValue);
+        => elem == null ? null : NullableGenericErasure.EraseArgument(elem, _isValue);
 
     // An INLINE Pair construction's two operands (key, value), or null if `el` is not one. Two shapes: a `new
     // kotlin.Pair(k,v)` literal, or a `callStatic .to(k,v)` — the `a to b` idiom whose stdlib body is `Pair(this,

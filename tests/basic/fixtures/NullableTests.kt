@@ -116,6 +116,67 @@ fun <A> ngCountPresent(l: List<A?>, extra: Int): Int {
     return n + extra
 }
 
+// ---- #86 : carrier-argument erasure at every reified-argument position ----------------------------------------
+// Each of these declares a CONCRETE nullable value type in one argument position, which is where the physical form
+// moves: `List<Int?>` is an `IReadOnlyList<object>`, `Box<Int?>` a `Box<object>`, `(Int?) -> R` a
+// `Func<object, R>`. Their `String?` twins are the controls — a reference `?` is not a physical difference on the
+// CLR and keeps the element type, so a C# caller of the reference form still sees `string`.
+fun ngSize(xs: List<Int?>): Int = xs.size
+fun ngJoin(xs: List<Int?>): String {
+    var s = ""
+    for (x in xs) {
+        if (s != "") s += ","
+        s += x?.toString() ?: "null"
+    }
+    return s
+}
+fun ngSizeRef(xs: List<String?>): Int = xs.size
+fun ngMutate(xs: MutableList<Int?>): Int {
+    xs.add(7)                       // a write THROUGH the erased element slot: the value boxes into it
+    xs.removeAt(1)                  // …and a structural mutation the caller must observe
+    xs.add(null)
+    var n = 0
+    for (x in xs) if (x != null) n++
+    return n
+}
+fun ngMapSize(m: Map<String, Int?>): Int = m.size
+fun ngPairSecond(p: Pair<Int?, String>): String = p.second
+class NgCarrier<T>(val v: T)
+fun ngCarrierValue(c: NgCarrier<Int?>): Int? = c.v
+fun ngNestedCount(xss: List<List<Int?>>): Int {
+    var n = 0
+    for (xs in xss) n += xs.size
+    return n
+}
+// A delegate PARAMETER component, a delegate RETURN component, and the reference control for each.
+fun ngApplyQ(x: Int?, f: (Int?) -> String): String = f(x)
+fun ngApplyQRef(x: String?, f: (String?) -> String): String = f(x)
+fun ngApplyToQ(x: Int, f: (Int) -> Int?): Int? = f(x)
+// A generic METHOD whose instantiation is itself `Int?`: it must be emitted at `object` from the start, because
+// `List<object>` is the only argument its `IReadOnlyList<!!0>` parameter accepts.
+fun <T> ngFirstOr(xs: List<T>, d: T): T {
+    for (x in xs) if (x != null) return x
+    return d
+}
+// An OVERRIDE at `T = Int` whose parameter is a nullable-generic COLLECTION. The base's slot is
+// `accept(IReadOnlyList<object>)` T-independently, so the override's own parameter is that same physical slot and
+// nothing needs bridging; the reference instantiation beside it proves the shape is not value-specific.
+abstract class NgListSink<T> { abstract fun accept(xs: List<T?>): String }
+class NgIntListSink : NgListSink<Int>() {
+    override fun accept(xs: List<Int?>): String {
+        var n = 0
+        for (x in xs) if (x != null) n++
+        return n.toString()
+    }
+}
+class NgTextListSink : NgListSink<String>() {
+    override fun accept(xs: List<String?>): String {
+        var n = 0
+        for (x in xs) if (x != null) n++
+        return n.toString()
+    }
+}
+
 // ---- #287 : `is` against a NULLABLE type operand ACCEPTS null -------------------------------------------------
 // `null is String?` / `null is Int?` are true in Kotlin, and the frontend RELIES on it: the else branch of
 // `when { x is T? -> … }` carries a smart-cast to a NON-null `x`, which is what makes `x.toString()` there resolve
@@ -297,6 +358,63 @@ class NullableTests {
         assertEquals("1,3,5", dest.joinToString(","))            // 1,3,5  a two-type-parameter receiver conversion
         val bs: List<Boolean?> = listOf(true, null, false)
         assertEquals("True,False", bs.filterNotNull().joinToString(","))   // CLR-native Boolean stringification (§5)
+    }
+
+    // #86 — CARRIER-ARGUMENT ERASURE at every reified-argument position, driven at a VALUE instantiation where the
+    // physical form actually moves. `X?` for a possibly-value `X` is `System.Object` inside a generic type argument,
+    // a generic method's type argument, an array element and a delegate component alike, so `List<Int?>` is an
+    // `IReadOnlyList<object>` and `Box<Int?>` is a `Box<object>`. Each of these drives a DIFFERENT emitted shape:
+    // a member dispatch on the erased instantiation, a mutation through it, a construction that must be built at
+    // `object` rather than converted afterwards, and a delegate whose lifted target has to declare the same slot.
+    // The `String?` twins are the controls: a reference `?` is not a physical difference and must NOT move.
+    @TestAttribute
+    fun carrierArgumentErasureAcrossPositions() {
+        // Read-only and mutable collections, constructed at the erased instantiation from the start.
+        val ints: List<Int?> = listOf(1, null, 3)
+        assertEquals(3, ngSize(ints))                             // 3
+        assertEquals("1,null,3", ngJoin(ints))                    // the null element survives its erased slot
+        val muts: MutableList<Int?> = mutableListOf(1, null)
+        muts.add(4)
+        muts.add(null)
+        assertEquals(3, ngMutate(muts))                           // 3   mutation THROUGH the erased slot
+        assertEquals("1,4,null,7,null", ngJoin(muts))             // the callee's writes and removal are the caller's
+        val strs: List<String?> = listOf("a", null)               // reference control: still IReadOnlyList<string>
+        assertEquals(2, ngSizeRef(strs))                          // 2
+
+        // A map VALUE and a pair COMPONENT are ordinary type arguments.
+        val m: Map<String, Int?> = mapOf("a" to 1, "b" to null)
+        assertEquals(2, ngMapSize(m))                             // 2
+        assertNull(m["b"])                                        // null survives the erased value slot
+        assertEquals(1, m["a"])                                   // 1
+        val p: Pair<Int?, String> = Pair(null, "x")
+        assertEquals("x", ngPairSecond(p))                        // x
+        assertNull(p.first)                                       // null
+
+        // A USER generic class, constructed at `object` and read back through a value-typed consumer.
+        assertEquals(7, ngCarrierValue(NgCarrier<Int?>(7)))       // 7
+        assertNull(NgCarrier<Int?>(null).v)                       // null
+        assertEquals("s", NgCarrier<String?>("s").v)              // s   reference control
+
+        // NESTED arguments: `List<List<Int?>>` erases only the inner element.
+        val nested: List<List<Int?>> = listOf(listOf(1, null), listOf(null))
+        assertEquals(3, ngNestedCount(nested))                    // 3
+
+        // DELEGATES. A `(Int?) -> String` is a `Func<object, string>` and a `(Int) -> Int?` is a
+        // `Func<int32, object>`, so the lifted lambda's own slot must be `object` too or there is no delegate.
+        assertEquals("5", ngApplyQ(5) { it?.toString() ?: "none" })      // 5
+        assertEquals("none", ngApplyQ(null) { it?.toString() ?: "none" })// none
+        assertEquals(4, ngApplyToQ(2) { it * 2 })                        // 4   nullable RETURN component
+        assertNull(ngApplyToQ(0) { null })                              // null
+        assertEquals("s", ngApplyQRef("s") { it ?: "none" })            // s   reference control
+
+        // A generic METHOD instantiated at `Int?` must be instantiated at `object` from the start.
+        assertEquals(2, ngFirstOr(listOf<Int?>(null, 2), 9) ?: 0)  // 2
+        assertEquals(9, ngFirstOr(listOf<Int?>(null, null), 9))    // 9
+
+        // An OVERRIDE whose parameter is a nullable-generic COLLECTION: the base slot is
+        // `accept(IReadOnlyList<object>)` at every instantiation, and the override fills exactly that slot.
+        assertEquals("2", NgIntListSink().accept(listOf(1, null, 3)))    // 2
+        assertEquals("1", NgTextListSink().accept(listOf("a", null)))    // 1
     }
 
     @TestAttribute

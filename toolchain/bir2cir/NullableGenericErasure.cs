@@ -4,45 +4,76 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// THE ERASURE INVARIANT (#86). For any declaration slot `s`, `physical(s) = Erase(declaredKotlinType(s))`, where
-// `Erase` maps `Nullable(Tv)` to `System.Object` recursively, at EVERY position: method return, method param,
-// constructor param, field, property, body local, generic type-argument, array element, function-type return and
-// parameter, and call signature alike. `object` is the
-// only uniform CLR storage that carries a real null for BOTH a reference and a value instantiation of an unconstrained
-// `T`, and the CLR's own `Nullable<V>` boxing collapse makes it the spec-defined boxed form (`box` of an empty
-// `Nullable<V>` IS a null reference; `unbox.any Nullable<V>` accepts null). The pre-erasure Kotlin TypeNode rides
-// `[KotlinNullableGeneric]` so the Kotlin surface survives the trip.
+// THE ERASURE INVARIANT (#86): CARRIER-ARGUMENT ERASURE. For any declaration slot `s`,
+// `physical(s) = Erase(declaredKotlinType(s))`, and `Erase` is POSITIONAL — one rule, read off where the type sits:
 //
-// THE ARRAY ELEMENT IS ERASED ONE STEP FURTHER (#86 D2), and it is the only position where the erasure is not
-// transparent: `object[]` and `Nullable<int32>[]` are UNRELATED CLR types — array compatibility requires
-// reference-compatible elements (ECMA-335 I.8.7.1) — so an open `Array<T?>` erased to `object[]` and a concrete
-// `Array<Int?>` left as `Nullable<int32>[]` could never meet. `Array<X?>` is therefore canonically `object[]`
-// whenever `X` MAY be a value type: an open `Tv` (some instantiation is a struct) or a value `Fqn` (this one is).
-// `Array<String?>` keeps `string[]`, `Array<Int>` keeps `int32[]`, and `IntArray` is untouched. The user-visible
-// consequences are recorded in `docs/dotkt-semantics.md` §9c-bis.
+//   * A DIRECT slot keeps the CLR-native form. A concrete `V?` is `System.Nullable<V>` at a method return, a method
+//     or constructor parameter, a field, a property, a body local and a `ref` referent alike. Only the open
+//     `Nullable(Tv)` erases here, because `Nullable<T>` is not even expressible for an unconstrained `T` and a bare
+//     `!T` slot collapses a null to `default(T)`.
+//   * An ARGUMENT to a CLR-REIFIED CONSTRUCTION — a generic type's type argument, a generic method's type argument,
+//     an array element, a delegate's parameter/return/receiver — is `System.Object` whenever the Kotlin type there is
+//     `X?` for a possibly-value `X`: an open `Tv` (some instantiation is a struct) or a value `Fqn` (this one is).
+//     So `List<Int?>` is `IReadOnlyList<object>`, `Box<Int?>` is `Box<object>`, `f<Int?>()` instantiates at `object`,
+//     `Comparable<Int?>` is `Comparable<object>`, `Array<Int?>` is `object[]` and `(Int?) -> String` is
+//     `Func<object, string>`. References keep their normal CLR representation: `List<String?>` is
+//     `IReadOnlyList<string>` and `Array<String?>` is `string[]`, the `?` riding the NRT byte.
+//
+// WHY THE TWO POSITIONS DIFFER. The Kotlin type system's contract for an unconstrained `T?` is a runtime null for
+// EVERY `T` — more than a reified CLR generic argument expresses — so a generic position has to box; `object` is the
+// only uniform CLR storage that carries a real null for both a reference and a value instantiation, and the CLR's own `Nullable<V>` boxing
+// collapse makes it the spec-defined boxed form (`box` of an empty `Nullable<V>` IS a null reference; `unbox.any
+// Nullable<V>` accepts null). A reified construction is INVARIANT, so an open `G<T?>` erased to `G<object>` and a
+// concrete `G<Int?>` left as `G<Nullable<int32>>` could never meet — the same unrelated pair array compatibility
+// forbids for elements (ECMA-335 I.8.7.1). A SCALAR slot has no such meeting to arrange: nothing is reified over it,
+// so it keeps the CLR-native `Nullable<V>`, which is what a C# caller expects to see and what interop is written in.
+//
+// EVERY type variable qualifies, whatever its bound. `fun <T : CharSequence> f(xs: List<T?>)` has no value
+// instantiation and still erases, because the rule is uniform rather than bound-consulting: one physical form per
+// declaration, decided without resolving where each bound leads.
+//
+// A FOREIGN declaration is authoritative and is NOT re-erased: a `memberSig` states what a .NET member really
+// declares, so a genuine `List<int?>` parameter keeps its `Nullable<int32>` argument. Kotlin's canonical `G<object>`
+// does not inhabit it, and that crossing is REFUSED by ForeignNullableGenericCrossing rather than silently adapted.
+//
+// The pre-erasure Kotlin TypeNode rides `[KotlinNullableGeneric]` so the Kotlin surface survives the trip; the
+// user-visible consequences are recorded in `docs/dotkt-semantics.md` §9c-bis.
 //
 // USES of a slot are typed `Subst(Erase(declaredKotlinType(s)), typeArgs)` and NEVER `Erase(Subst(...))` — that is
 // NullableTvErasureCallRealign's job, on both the read and the write axis. This pass owns only the declaration axis.
 // Runs in every build so ref.dll, rt.dll, and the app's view of their signatures agree.
 static class NullableGenericErasure
 {
+    // WHERE a type sits, which is the whole of the erasure rule.
+    internal enum Pos
+    {
+        // A direct CLR slot: a concrete `V?` stays `System.Nullable<V>`.
+        Slot,
+        // An argument to a reified construction — a type argument, an array element, a delegate component. A
+        // possibly-value `X?` is `System.Object` here.
+        Argument,
+        // A resolved .NET declaration (`memberSig`). Only the inexpressible open `Nullable(Tv)` is rewritten; what a
+        // CLR member actually declares is never restated.
+        Foreign,
+    }
+
     public static void Apply(JsonNode root, Func<string, bool> isValue)
     {
         if (root is not JsonObject o) return;
-        // #18/#147/#86 ROUND-TRIP RECORD (runs BEFORE the erasure below): capture each declaration slot whose type
-        // carries a `Nullable(Tv)` anywhere — at the HEAD (`fun <T> f(x: T?)`, `T?` returns, `T?` fields/properties)
-        // or NESTED in a constructed generic / array / byref / function type (`Holder<T?>` / `(T?)->R`) — for method
-        // and constructor params, returns, fields, and properties. The erasure turns that slot into `object`, which
-        // dll2klib cannot infer back. Keep the pre-erasure TypeNode opaque until RoundtripMetadata stamps
-        // [KotlinNullableGeneric] on that exact CLR declaration slot.
+        // #18/#147/#86 ROUND-TRIP RECORD (runs BEFORE the erasure below): capture each declaration slot the erasure
+        // rewrites — a `Nullable(Tv)` at the HEAD (`fun <T> f(x: T?)`, `T?` returns, `T?` fields/properties), and any
+        // possibly-value `X?` in a reified ARGUMENT (`List<Int?>`, `Holder<T?>`, `Array<Int?>`, `(Int?) -> R`) — for
+        // method and constructor params, returns, fields, and properties. The erasure turns that position into
+        // `object`, which dll2klib cannot infer back. Keep the pre-erasure TypeNode opaque until RoundtripMetadata
+        // stamps [KotlinNullableGeneric] on that exact CLR declaration slot.
         RecordNullableGenericSlots(o, isValue);
         RecordSuspendFnShapes(o);
         ApplyRec(o, isValue);
-        // The blanket type-slot sweep: every REMAINING `Nullable(Tv)` anywhere in the tree — nested in a constructed
-        // generic's argument list, an array element, a byref referent, a function type's return or parameter, a
-        // standalone param/field/local slot, a call `sig` element — becomes `object`. `Nullable(Tv)` lowers to
-        // `Nullable<T>`, which is not even expressible for an unconstrained (reference-allowed) `T`, so ilemit must
-        // NEVER see one; this sweep is what makes that true, function-type returns included.
+        // The blanket type-slot sweep: every REMAINING position the rule rewrites, anywhere in the tree — a
+        // `Nullable(Tv)` in a standalone param/field/local slot or a call `sig` element, and a possibly-value `X?`
+        // nested in a constructed generic's argument list, an array element, a function type's return or parameter,
+        // or a call's own `typeArgs`. `Nullable(Tv)` lowers to `Nullable<T>`, which is not even expressible for an
+        // unconstrained (reference-allowed) `T`, so ilemit must NEVER see one; this sweep is what makes that true.
         EraseNullableGpAllStrings(o, isValue);
     }
 
@@ -161,9 +192,12 @@ static class NullableGenericErasure
 
     // True iff `t` carries a position the erasure rewrites and dll2klib cannot infer back. Two of them:
     //   * a `Nullable(Tv)` anywhere reachable through a CLR-representable declaration shape; and
-    //   * an ARRAY whose element is a nullable POSSIBLY-VALUE type (#86 D2) — `Array<Int?>` physically `object[]`.
-    //     Without the carrier a re-consuming reader sees only `object[]` and restores `Array<Any?>`, which is a
-    //     DIFFERENT Kotlin type: a consumer passing its own `Array<Int?>` would then fail to type-check.
+    //   * a REIFIED ARGUMENT that is a nullable POSSIBLY-VALUE type — `List<Int?>` physically `IReadOnlyList<object>`,
+    //     `Box<Int?>` physically `Box<object>`, `Array<Int?>` physically `object[]`. Without the carrier a
+    //     re-consuming reader sees only the `object` argument and restores `List<Any?>`, which is a DIFFERENT Kotlin
+    //     type: a consumer passing its own `List<Int?>` would then fail to type-check.
+    // The HEAD is deliberately not one of them: a direct `Int?` slot keeps its `Nullable<int32>` and needs no carrier
+    // to be read back.
     // A non-suspend `Fn` is a real delegate in CIR, so dll2klib can walk its Invoke signature in parallel with the
     // recorded Kotlin fn node. A suspend fn is excluded: BirTypeLowering erases the whole value to object and its
     // distinct suspend-fn carrier owns restoration, so there is no physical delegate shape for this carrier to align with.
@@ -171,15 +205,20 @@ static class NullableGenericErasure
     {
         TypeNode.Nullable { Of: TypeNode.Tv } => true,
         TypeNode.Nullable n => HasRestorableNullableTv(n.Of, isValue),
-        TypeNode.Fqn { Args: { } args } => args.Any(a => HasRestorableNullableTv(a, isValue)),
-        TypeNode.Array a => IsNullableMaybeValue(a.Elem, isValue) || HasRestorableNullableTv(a.Elem, isValue),
+        TypeNode.Fqn { Args: { } args } => args.Any(a => ErasedArgument(a, isValue)),
+        TypeNode.Array a => ErasedArgument(a.Elem, isValue),
         TypeNode.ByRef b => HasRestorableNullableTv(b.Of, isValue),
         TypeNode.Fn { Suspend: false } fn =>
-            HasRestorableNullableTv(fn.Ret, isValue)
-            || fn.Params.Any(p => HasRestorableNullableTv(p, isValue))
-            || (fn.Recv != null && HasRestorableNullableTv(fn.Recv, isValue)),
+            ErasedArgument(fn.Ret, isValue)
+            || fn.Params.Any(p => ErasedArgument(p, isValue))
+            || (fn.Recv != null && ErasedArgument(fn.Recv, isValue)),
         _ => false,   // suspend Fn / bare Fqn / Tv / Oblivious: no restorable nested Nullable(Tv)
     };
+
+    // One reified ARGUMENT the erasure rewrites: either it is itself the possibly-value `X?` that becomes `object`,
+    // or it contains one deeper down (`List<List<Int?>>`).
+    static bool ErasedArgument(TypeNode t, Func<string, bool> isValue)
+        => IsNullableMaybeValue(t, isValue) || HasRestorableNullableTv(t, isValue);
 
     static void ApplyRec(JsonObject o, Func<string, bool> isValue)
     {
@@ -308,39 +347,49 @@ static class NullableGenericErasure
                 fo["type"] = TypeJson.Fqn("object");
     }
 
-    // Blanket type-slot sweep applying EraseNullableTv to every structured Type in the tree — a `Nullable(Tv)` (a
-    // value-type-nullable type variable `T?`) erases to `object` wherever it sits, with NO positional exception: a
-    // declaration param, a constructor param, a body-local `var` slot, a clrg-nested type-arg, a field, an array
-    // element, a call `sig` element. That uniformity IS the invariant (#86): one position kept back is a second
-    // physical representation of one Kotlin type, and the two never meet at a value instantiation.
+    // Blanket type-slot sweep applying `Erase` to every structured Type in the tree, each at ITS OWN position: an
+    // open `Nullable(Tv)` erases wherever it sits, and a concrete possibly-value `X?` erases in every reified
+    // ARGUMENT — a type argument, an array element, a delegate component. That uniformity IS the invariant (#86):
+    // one argument position kept back is a second physical representation of one Kotlin type, and two instantiations
+    // of an invariant reified generic never meet.
     //
-    // A call's `sig` is a STRUCTURED TypeNode array (#37 m3b), so its `Nullable(Tv)` elements erase for free through
-    // the same recursion — DEF and CALL sigs stay in agreement structurally, no sig-string special case needed.
+    // A call's `sig`/`argTypes` is a STRUCTURED TypeNode array (#37 m3b) of the callee's PARAMETER SLOTS, so its
+    // elements erase at the slot position through the same recursion — DEF and CALL sigs stay in agreement
+    // structurally, no sig-string special case needed. A `typeArgs` vector is the opposite: those entries ARE the
+    // arguments of a reified instantiation, so `listOf<Int?>` instantiates at `object` FROM THE START rather than
+    // being built at `Nullable<int32>` and reconciled afterwards (two unrelated invariant generics no cast joins).
     //
-    // An ARRAY NODE's `elem` is the one type slot the recursion cannot classify from its own shape: it is an array
-    // ELEMENT written without the enclosing `Array`, so `Nullable(Int)` there means `Nullable<int32>[]` and must obey
-    // D2's element rule rather than the ordinary one. The node kind says which `elem` those are — a `newList`/`newSet`/
-    // `forEachInline` `elem` is a COLLECTION element (`List<Int?>` really is `List<Nullable<int32>>`) and is left alone.
-    static void EraseNullableGpAllStrings(JsonNode node, Func<string, bool> isValue)
+    // A `memberSig` is a RESOLVED .NET declaration and is never restated in Kotlin's vocabulary — see EraseForeign.
+    //
+    // An `elem` is the one type slot the recursion cannot classify from its own shape: it is an ELEMENT written
+    // without its container, so the node KIND says which container it belongs to. An array's or a collection
+    // iteration's element is a reified argument; a `nullableValue`/`byrefLoad` `elem` names the `V` of a
+    // `Nullable<V>` or a `ref` referent, which are slots.
+    static void EraseNullableGpAllStrings(JsonNode node, Func<string, bool> isValue, Pos pos = Pos.Slot)
     {
         switch (node)
         {
             case JsonObject obj:
                 var retSlotErased = false;
-                var arrayNode = ArrayElemKinds.Contains(Str(obj["k"]));
+                var elemPos = ArgumentElemKinds.Contains(Str(obj["k"])) ? Pos.Argument : Pos.Slot;
                 foreach (var key in obj.Select(kv => kv.Key).ToList())
                 {
                     var child = obj[key];
                     if (child == null) continue;
+                    var keyPos = key switch
+                    {
+                        "elem" => elemPos,
+                        "typeArgs" => Pos.Argument,
+                        "memberSig" => Pos.Foreign,
+                        _ => pos,
+                    };
                     if (TypeJson.Read(child) is TypeNode tn)
                     {
-                        var erased = arrayNode && key == "elem"
-                            ? EraseArrayElem(tn, isValue)
-                            : EraseNullableTv(tn, isValue);
+                        var erased = Erase(tn, keyPos, isValue);
                         if ((key == "ret" || key == "dynRet") && !erased.Equals(tn)) retSlotErased = true;
                         obj[key] = TypeJson.Write(erased);
                     }
-                    else EraseNullableGpAllStrings(child, isValue);
+                    else EraseNullableGpAllStrings(child, isValue, keyPos);
                 }
                 if (retSlotErased) DropStaleSty(obj);
                 break;
@@ -349,57 +398,71 @@ static class NullableGenericErasure
                 {
                     var child = arr[i];
                     if (child == null) continue;
-                    if (TypeJson.Read(child) is TypeNode tn) arr[i] = TypeJson.Write(EraseNullableTv(tn, isValue));
-                    else EraseNullableGpAllStrings(child, isValue);
+                    if (TypeJson.Read(child) is TypeNode tn) arr[i] = TypeJson.Write(Erase(tn, pos, isValue));
+                    else EraseNullableGpAllStrings(child, isValue, pos);
                 }
                 break;
         }
     }
 
-    // The node kinds whose `elem` is an ARRAY element — an allocation's `newarr` token, a `ldelem`/`stelem` token, and
-    // the element a `for (x in arr)` binds. All of them must name the same type as the array they operate on.
+    // The node kinds whose `elem` is a REIFIED ARGUMENT — an array allocation's `newarr` token, a `ldelem`/`stelem`
+    // token, the element a `for (x in arr)` binds, the element an inline iteration over a collection yields, and a
+    // vararg pack's element. All of them must name the same type as the array or collection they operate on, and that
+    // container's own argument is `object` for a possibly-value `X?`.
     //
-    // `newArray` is NOT one of them, and the exclusion is the rule rather than an exception: at this point in the
-    // pipeline a `newArray` is a kotc VARARG PACK, an array built for one call and named by that call's own
-    // instantiation (`f<Int?>(1, null)` packs a `!!0[]` at `T = Nullable<int32>`), not a value that has to inhabit a
-    // declared `Array<X?>` slot. The pack follows the callee — RealignArgs retypes it against the parameter — while
-    // canonicalizing it here would state `object[]` where the callee's `!!0[]` is not one. The `newArray` that IS a
-    // real `Array<X?>` value comes from the `arrayOf` FACTORY, which MemberCallSubstitution builds later and
-    // canonicalizes itself.
-    static readonly HashSet<string> ArrayElemKinds = new(StringComparer.Ordinal)
+    // A vararg pack (`newArray`) is one of them BECAUSE the call it is built for now instantiates at `object` too:
+    // `f<Int?>(1, null)` canonicalizes its `typeArgs` above, so the callee's `!!0[]` parameter IS an `object[]` and a
+    // pack that kept `Nullable<int32>` elements would be the one array the call cannot accept.
+    static readonly HashSet<string> ArgumentElemKinds = new(StringComparer.Ordinal)
     {
-        "newArraySized", "newArrayInit", "arrayGet", "arraySet", "forArray",
+        "newArray", "newArraySized", "newArrayInit", "arrayGet", "arraySet", "forArray",
+        "forEachInline", "forIn", "spreadConcat",
     };
 
     static string Str(JsonNode n) => (n as JsonValue)?.TryGetValue<string>(out var s) == true ? s : null;
 
-    // `Erase`: replace every `Nullable(Tv)` (a value-type-nullable type variable) with `object`, recursively and at
-    // every position. A function type's RETURN obeys the same rule as its params and receiver — `Fn.Ret` had a verbatim
-    // carve-out that handed a top-level `T?` return to NullableFuncReturnErasure, which is one Kotlin type constructor
-    // with two owners and, before #142 narrowed it, produced a `newDelegate.funcType.ret` inconsistent with the lifted
-    // lambda's own signature (ilverify DelegateCtor "Unrecognized arguments"). NullableFuncReturnErasure keeps only its
-    // CONCRETE-value-inner half (`(T) -> Int?`), a different family that this rule does not reach.
-    //
-    // The ARRAY ELEMENT is the one position that erases FURTHER than the general rule (#86 D2) — see the file header.
-    internal static TypeNode EraseNullableTv(TypeNode t, Func<string, bool> isValue) => t switch
-    {
-        TypeNode.Nullable { Of: TypeNode.Tv } => new TypeNode.Fqn("object"),
-        TypeNode.Nullable n => new TypeNode.Nullable(EraseNullableTv(n.Of, isValue)),
-        TypeNode.Fqn { Args: null } f => f,
-        TypeNode.Fqn f => new TypeNode.Fqn(f.Name, f.Args.Select(a => EraseNullableTv(a, isValue)).ToArray()),
-        TypeNode.Array a => new TypeNode.Array(EraseArrayElem(a.Elem, isValue)),
-        TypeNode.ByRef b => new TypeNode.ByRef(EraseNullableTv(b.Of, isValue)),
-        TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, EraseNullableTv(fn.Ret, isValue),
-            fn.Params.Select(p => EraseNullableTv(p, isValue)).ToArray(),
-            fn.Recv == null ? null : EraseNullableTv(fn.Recv, isValue)),
-        _ => t,
-    };
+    // `Erase` at a DIRECT SLOT — a method return, a parameter, a field, a property, a local, a `ref` referent. The
+    // concrete `V?` keeps its CLR-native `System.Nullable<V>`; only the open `Nullable(Tv)`, which is inexpressible,
+    // becomes `object`. Whatever the slot CONTAINS is erased at its own position, so a `List<Int?>` parameter still
+    // becomes an `IReadOnlyList<object>`.
+    internal static TypeNode EraseNullableTv(TypeNode t, Func<string, bool> isValue) => Erase(t, Pos.Slot, isValue);
 
-    // `Erase` at an ARRAY ELEMENT (#86 D2). A nullable POSSIBLY-VALUE element is `object`, so `Array<T?>`,
-    // `Array<Int?>` and `Array<Boolean?>` are all `object[]` and meet each other. Anything else erases normally:
-    // `Array<String?>` stays `string[]` (the `?` rides the NRT byte), `Array<Int>` stays `int32[]`.
-    internal static TypeNode EraseArrayElem(TypeNode elem, Func<string, bool> isValue)
-        => IsNullableMaybeValue(elem, isValue) ? new TypeNode.Fqn("object") : EraseNullableTv(elem, isValue);
+    // `Erase` at an ARGUMENT to a reified construction — a generic type argument, a generic method type argument, an
+    // array element, a delegate component. A nullable POSSIBLY-VALUE type is `object` here, so `List<T?>`,
+    // `List<Int?>` and `List<Boolean?>` all become `IReadOnlyList<object>` and meet each other, and `Array<T?>`,
+    // `Array<Int?>` and `Array<Boolean?>` are all `object[]`. Anything else erases normally: `List<String?>` stays
+    // `IReadOnlyList<string>` and `Array<String?>` stays `string[]` (the `?` rides the NRT byte).
+    internal static TypeNode EraseArgument(TypeNode t, Func<string, bool> isValue) => Erase(t, Pos.Argument, isValue);
+
+    // A resolved .NET declaration. Only the open `Nullable(Tv)` — which no CLR slot can hold for an unconstrained
+    // type variable — is rewritten; a concrete `Nullable<V>` the member really declares stands.
+    internal static TypeNode EraseForeign(TypeNode t, Func<string, bool> isValue) => Erase(t, Pos.Foreign, isValue);
+
+    // THE ONE RULE. `Nullable(Tv)` is `object` wherever it sits, because no CLR slot expresses it; a concrete
+    // possibly-value `V?` is `object` in an ARGUMENT position and `Nullable<V>` in a slot. Everything else recurses,
+    // with each child visited at ITS position: an Fqn's arguments, an array's element and a delegate's
+    // parameters/return/receiver are arguments; a `ref` referent and a nullable's inner are slots.
+    internal static TypeNode Erase(TypeNode t, Pos pos, Func<string, bool> isValue)
+    {
+        if (t is TypeNode.Nullable { Of: TypeNode.Tv }) return new TypeNode.Fqn("object");
+        if (pos == Pos.Argument && IsNullableMaybeValue(t, isValue)) return new TypeNode.Fqn("object");
+        // A FOREIGN subtree stays foreign all the way down: a `List<int?>` parameter's argument is what the member
+        // declares, not a position this compiler gets to canonicalize.
+        var inner = pos == Pos.Foreign ? Pos.Foreign : Pos.Argument;
+        var slot = pos == Pos.Foreign ? Pos.Foreign : Pos.Slot;
+        return t switch
+        {
+            TypeNode.Nullable n => new TypeNode.Nullable(Erase(n.Of, slot, isValue)),
+            TypeNode.Fqn { Args: null } f => f,
+            TypeNode.Fqn f => new TypeNode.Fqn(f.Name, f.Args.Select(a => Erase(a, inner, isValue)).ToArray()),
+            TypeNode.Array a => new TypeNode.Array(Erase(a.Elem, inner, isValue)),
+            TypeNode.ByRef b => new TypeNode.ByRef(Erase(b.Of, slot, isValue)),
+            TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, Erase(fn.Ret, inner, isValue),
+                fn.Params.Select(p => Erase(p, inner, isValue)).ToArray(),
+                fn.Recv == null ? null : Erase(fn.Recv, inner, isValue)),
+            _ => t,
+        };
+    }
 
     // `X?` where `X` may be a value type: an open type variable, or a concrete value FQN. A reference `X` is excluded —
     // its `?` is not a physical difference on the CLR.

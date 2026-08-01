@@ -24,41 +24,19 @@ set -euo pipefail
 # one of these substrings to be tolerated. Keys are narrow fixture/method or emitted-type identifiers so they only mask
 # the documented shape.
 declare -A ILVERIFY_XFAIL=(
-	# #86 (migrated ktproj-genq): a re-imported generic factory `holderOf(): Vault<T?>` whose bir2cir
-	# NullableGenericErasure object-erases the nested Nullable(Tv) to `Vault<object>`; the [KotlinNullableGeneric]
-	# round-trip restores `Vault<String?>` at the frontend, so the call's erased `Vault<object>` return meets the
-	# consumer's restored `Vault<string>` slot — StackUnexpected. Runtime-SAFE (object/string are reference-compatible;
-	# the erased Vault holds the string; the value-assert RUN lane is green). Same object-erasure formal-only family.
-	["GenericMetadataRoundtripTests::nullableGenericMembersRoundTrip()"]="#86 nullable-generic object-erasure: holderOf's erased Vault<object> return vs the restored Vault<string> slot — runtime-safe (RUN green)"
-	# ONE CAUSE, three methods. `Array<Int?>.toList()` yields an `IReadOnlyList<object>` — `copyOf` hands back the
-	# `object[]` its `Array<T?>` return erases to, and the `toList` over it is instantiated at `object` — while the
-	# consumer's slot is an `IReadOnlyCollection<!!0>`. The consumer's own type argument is NOT inferred from it,
-	# because the type-argument unification pairs a declared and a flowed constructed type only when they are the same
-	# DEFINITION, and those two heads are not. Pairing them by ARGUMENT POSITION would close these findings, and did,
-	# until it was measured against `class Fixed<U> : Base<Int?>`: a `Fixed<object>` arriving at a `Base<T>` parameter
-	# zips `T` to `object` although the argument is a `Base<Nullable<int32>>` and never was a `Base<object>` — which
-	# resolves a member the emitted call does not have. Position-pairing is sound only within one definition; across
-	# heads it needs the supertype walk to project the flowed type onto the declared head first. All three fixtures RUN
-	# green: only object-level members are dispatched on the result.
+	# The LAST remaining position split of #86, and a REFERENCE one: `Array<T?>` erases to `object[]`
+	# T-INDEPENDENTLY, while a concrete `Array<String?>` keeps its `string[]` because a reference `?` is not a physical
+	# difference on the CLR (carrier-argument erasure moves possibly-VALUE arguments only). So
+	# `arrayOf("x","y").copyOf(3)` hands back the `object[]` the open declaration promises, and its `toList()` yields an
+	# `IReadOnlyList<object>` where the consumer's own slot is an `IReadOnlyCollection<string>`. Runtime-safe twice
+	# over: `object` and `string` are reference-compatible, and the array `copyOf` built really IS a `string[]` (it
+	# reflects on the receiver's element type), so the values are the declared ones; the RUN lane is green.
 	#
-	# Keyed per method because the baseline is keyed per method, and each of these three fires for exactly this shape.
-	# `copyOfGrowsWithNullTail` was SPLIT to get here: while both element kinds shared one method, its single entry
-	# absorbed whichever shapes appeared under that name, and the REFERENCE-element one below was not visible at all.
-	["ArrayTests::copyOfGrowsWithNullTailAtValueElements()"]='#86 D2: an Array<V?> at a VALUE element instantiates Array<T>.toList() at T=object, so its IReadOnlyList<object> meets an IReadOnlyCollection<Nullable<V>> slot — fires at V = Int, Long, Double and Char alike; runtime-safe (RUN green); the consumer type argument is not inferred across DIFFERENT generic heads, which needs a base-view projection to be sound'
-	["ArrayTests::boxedGenericValues()"]='#86 D2: an Array<Int?> instantiates Array<T>.toList() at T=object, so its IReadOnlyList<object> meets an IReadOnlyCollection<Nullable<int32>> slot — runtime-safe (RUN green); the consumer type argument is not inferred across DIFFERENT generic heads, which needs a base-view projection to be sound'
-	["ArrayTests::arrayOfNulls()"]='#86 D2: an Array<Int?> instantiates Array<T>.toList() at T=object, so its IReadOnlyList<object> meets an IReadOnlyCollection<Nullable<int32>> slot — runtime-safe (RUN green); the consumer type argument is not inferred across DIFFERENT generic heads, which needs a base-view projection to be sound'
-	# The REFERENCE-element half of the same remainder, and a DIFFERENT observed shape: `Array<T?>` erases to `object[]`
-	# T-INDEPENDENTLY, so `arrayOf("x","y").copyOf(3)` is an `object[]` too and its `toList()` meets a
-	# `Collection<string>` rather than a `Collection<Nullable<int32>>`. Runtime-safe for a second reason as well as the
-	# shared one: the array copyOf built really IS a `string[]` (it reflects on the receiver's element type), so the
-	# values are the declared ones. Same closing condition as the three above.
-	["ArrayTests::copyOfGrowsWithNullTail()"]='#86 D2: copyOf returns the object[] its Array<T?> erases to T-independently, so at a REFERENCE element its toList() yields an IReadOnlyList<object> where the slot is an IReadOnlyCollection<string> — runtime-safe (the array really is a string[]; RUN green); same base-view projection remainder as the value-element entries above'
-	# #324: the value-element collection receiver conversion produces an `IEnumerable<object>` (all
-	# `Enumerable.Cast<object>` can produce), which does not FORMALLY inhabit a `List<T?>` slot's
-	# `IReadOnlyList<object>`. The conversion is now keyed correctly — on the receiver's own nullable element, not on
-	# `typeArgs[0]` — so it no longer fires where it does not belong, and every assertion in the fixture RUNS green.
-	# What is left is the interface-compatibility half named in #324: a wrapper that satisfies the list slot.
-	["NullableTests::nullableGenericCollectionArgKeysOnTheReceiver()"]="#324 nullable value-element collection receiver: Enumerable.Cast<object> yields IEnumerable<object> where a List<T?> slot formally wants IReadOnlyList<object> — runtime-safe (RUN green)"
+	# Closing it means deciding the REFERENCE half of the same question the value half settled: whether `X?` in a
+	# reified argument is `object` for a reference `X` too — which would make `List<String?>` an `IReadOnlyList<object>`
+	# and cost every C# consumer the element type — or whether an open `Array<T?>`/`List<T?>` should instead keep the
+	# type variable and box only at the value instantiations. Both are ABI decisions, neither is this fix's.
+	["ArrayTests::copyOfGrowsWithNullTail()"]='#86: an open Array<T?> is object[] T-independently while a concrete Array<String?> keeps string[], so copyOf().toList() yields an IReadOnlyList<object> where the slot is an IReadOnlyCollection<string> — runtime-safe (the array really is a string[]; RUN green); closing it needs the REFERENCE half of the carrier-argument decision'
 	# localloc is intentionally unverifiable ECMA-335 IL. The runtime test validates the resulting Span writes/reads.
 	["StackBufferTests::stackAllocationAndSpanInterop()"]="by design: stackalloc emits localloc, which ILVerify must report as unverifiable; runtime assertions are green"
 	["ByRefParameterTests::byrefOfAStackSlotEvaluatesItsIndexOnce()"]="by design: the same stackalloc/localloc unverifiability as its StackBufferTests sibling — this case takes the ADDRESS of a stack slot, so the pointer arithmetic is equally formal-only; runtime assertions are green"

@@ -66,22 +66,12 @@ declare -A RT_XFAIL=(
 	# override now keeps its own physical `accept(Nullable<int32>)`, so the re-imported surface and the assembly name
 	# the same member, and the base's erased `accept(object)` slot is filled by a private forwarding bridge. Both
 	# entry points are live: the section above reaches it through the INTERFACE and this one through its own type.
-	# The COST of `Array<X?>` = `object[]` (#86 D2), and a REGRESSION against the representation that preceded it —
-	# listed rather than hidden, because it is the shape that says D2 is not finishable on its own. `Int?` now has two
-	# physical forms by POSITION: `object` as an array element (D2, forced — `object[]` and `Nullable<int32>[]` are
-	# unrelated CLR types), and `Nullable<int32>` as an ordinary type argument (`List<Int?>`, unchanged and widely
-	# relied on). A generic that carries the element ACROSS that boundary can satisfy one or the other and not both:
-	# `Array<T>.toList()` over an `Array<Int?>` must be instantiated at `object` — no other instantiation's `!!0[]`
-	# parameter accepts an `object[]` — so it hands back a `List<object>` where the declared `List<Int?>` slot is an
-	# `IReadOnlyCollection<Nullable<int32>>`, and the first member call on it does not resolve.
-	# Reconciling the two needs a DECISION this step does not own: whether `X?` for a possibly-value `X` is `object` at
-	# every TYPE-ARGUMENT position too (making `List<Int?>` a `List<object>`), or whether the concrete `Array<Int?>`
-	# keeps a representation of its own after all. Local `val`s are unaffected (their slot is retyped from the value);
-	# it is a declared RETURN / field / parameter of a constructed generic over `Int?` that has nowhere to move.
-	[roundtrip-nullable-vt-generic-array-to-collection]="#86 D2: an Array<Int?> is object[], so an Array<T> stdlib extension over it instantiates at T=object and returns a List<object> — where the declared List<Int?> slot is IReadOnlyCollection<Nullable<int32>>, and the first member call on the result throws System.EntryPointNotFoundException. A REGRESSION against the pre-D2 representation (Array<Int?> was Nullable<int32>[], so T bound to Nullable<int32> and both ends agreed). Blocked on the type-argument half of the decision: either X? is object at every type-argument position (List<Int?> becomes List<object>) or the concrete Array<Int?> keeps its own representation."
-	# The same split reached from the other side, and a separate observable: here the generic's RESULT is the array, so
-	# the instantiation that suits the `Collection<T>` argument is the one that does not suit the result.
-	[roundtrip-nullable-vt-generic-collection-to-array]="#86 D2: Array<Int?>.plus(Collection<Int?>) binds one T to an argument whose element is Nullable<int32> and a result whose element must be object; the body's 'as Array<T>' then castclasses the object[] it built from the object[] receiver to Nullable<int32>[] — System.InvalidCastException. Same REGRESSION and same blocker as its array-to-collection sibling above."
+	#
+	# PRUNED by CARRIER-ARGUMENT ERASURE (#86): the array-to-collection and collection-to-array sections, which were
+	# the two observables of the POSITION split `Array<X?>` = `object[]` left open. `X?` for a possibly-value `X` is
+	# now `object` at EVERY reified-argument position, so `List<Int?>` is an `IReadOnlyList<object>` and an
+	# `Array<T>` extension instantiated at `object` hands its result to a slot that names the same type. Both
+	# directions run green and the controls beside them are unchanged.
 	#
 	# PRUNED by the `Array<X?>`-is-`object[]` canonicalisation (#86 D2): both cross-module `Array<Int?>` sections,
 	# param and return. `Array<X?>` is now `object[]` at every position for a possibly-value `X`, the pre-erasure
@@ -99,8 +89,6 @@ declare -A RT_XFAIL=(
 # would be a name-only XFAIL again.
 declare -A RT_XFAIL_SHAPE=(
 	[roundtrip-nullable-vt-generic-seq-mapnotnull]='System.EntryPointNotFoundException'
-	[roundtrip-nullable-vt-generic-array-to-collection]='System.EntryPointNotFoundException'
-	[roundtrip-nullable-vt-generic-collection-to-array]='System.InvalidCastException'
 )
 
 # A listed name with no documented shape is the hole this map exists to close, so it is rejected here rather

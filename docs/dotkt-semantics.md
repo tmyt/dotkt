@@ -1500,24 +1500,55 @@ Consequences:
   8-bit storage; on the CLR the two arrays are already the same bytes). Mutations through one view are visible through
   the other. The scalar `UByte.toByte()` / `Byte.toUByte()` remain bit-reinterprets of a single 8-bit value as before.
 
-## 9c-bis. A nullable GENERIC `T?` is `System.Object` at every position (#86)
+## 9c-bis. CARRIER-ARGUMENT ERASURE: `X?` is `System.Object` in every reified argument (#86)
 
 `Int?` is `System.Nullable<int32>` and `String?` is a bare `string` plus an NRT byte (§9). Neither shape can express
 `T?` for an **unconstrained** type variable: `Nullable<T>` requires `T : struct`, and a bare `!T` slot collapses a
 null to `default(T)` — at `T = Int` a `null` written through it reads back as `0`, and `ldnull` into an `int32` slot
-does not even pass JIT verification. So a `T?` on an unconstrained `T` has exactly one CLR representation:
+does not even pass JIT verification. And a CLR reified generic is **invariant**, so if an open `G<T?>` is `G<object>`
+while a concrete `G<Int?>` is `G<Nullable<int32>>`, the two are unrelated types that can never meet. The
+representation is therefore decided by POSITION, not by whether a type variable is still open:
 
-> **For any declaration slot `s`, `physical(s) = Erase(declaredKotlinType(s))`, where `Erase` maps `T?` (a nullable
-> unconstrained type variable) to `System.Object`, recursively and at every position.** Method return, method
-> parameter, constructor parameter, field, property, body local, generic type-argument, array element, function-type
-> parameter and return, and the signature a call is resolved by — no exceptions. A **use** of `s` is typed
-> `Subst(Erase(declared), typeArgs)` and never `Erase(Subst(...))`.
+> **A direct concrete `V?` slot remains `System.Nullable<V>`. When `X?` is used as an ARRAY ELEMENT or as an ACTUAL
+> ARGUMENT to a CLR-reified construction — type, method, or delegate — and `X` may be a value type, its physical form
+> is `System.Object`. References keep their normal CLR representation. The original Kotlin type is preserved in
+> `[KotlinNullableGeneric]` metadata.**
 
-`object` is not an approximation here, it is the CLR's own boxed form of a nullable value: boxing an empty
-`Nullable<V>` produces a genuine null reference, and `unbox.any Nullable<V>` accepts a null back into an empty one, so
-the two interconvert in one verifier-clean instruction and **null stays distinct from `0`**. Only `T?`-generic
-positions box — a bare `T` stays monomorphized and unboxed, `List<Int>` keeps `int32` storage, and a concrete `Int?`
-stays a stack `Nullable<int32>`. Kotlin/Native, free to monomorphize, made the same choice.
+`X` "may be a value type" means **any** type variable, or a concrete value type (a constructed `KeyValuePair<K,V>`
+counts, exactly as `Int` does). Concretely:
+
+| Kotlin | CLR |
+|---|---|
+| `fun f(x: Int?)`, `fun f(): Int?`, `val x: Int?` | `Nullable<int32>` — the direct slot is unchanged |
+| `fun <T> f(x: T?)` | `object` — no CLR slot expresses an unconstrained `T?` |
+| `List<Int?>` / `MutableList<Int?>` | `IReadOnlyList<object>` / `IList<object>` |
+| `Map<String, Int?>`, `Pair<Int?, String>`, `Box<Int?>` | `IDictionary<string, object>`, `Pair<object, string>`, `Box<object>` |
+| `Array<Int?>` | `object[]` |
+| `(Int?) -> String`, `(Int) -> Int?` | `Func<object, string>`, `Func<int32, object>` |
+| `f<Int?>(…)`, `Comparable<Int?>` | instantiated at `object`, `IComparable<object>` |
+| `List<String?>`, `Array<String?>`, `(String?) -> R` | `IReadOnlyList<string>`, `string[]`, `Func<string, R>` |
+
+**Why the two positions differ.** The Kotlin type system's contract for an unconstrained `T?` is a runtime null for
+every `T`, which is more than a reified CLR argument expresses — so a generic position has to box. A scalar slot has
+no such meeting to arrange: nothing is reified over it, so it keeps the CLR-native `Nullable<V>`, which is what a C#
+caller expects to see and what interop is written in. `object` is not an approximation for the boxed case, it is the
+CLR's own boxed form of a nullable value: boxing an empty `Nullable<V>` produces a genuine null reference, and
+`unbox.any Nullable<V>` accepts a null back into an empty one, so the two interconvert in one verifier-clean
+instruction and **null stays distinct from `0`**. A bare `T` stays monomorphized and unboxed and `List<Int>` keeps
+`int32` storage — only the `?` moves anything.
+
+Every type variable qualifies, whatever its bound: `fun <T : CharSequence> f(xs: List<T?>)` erases too, although no
+instantiation of it can be a struct. That is uniformity chosen deliberately over consulting the bound — one physical
+form per declaration, decided without resolving where each bound leads. The alternative is a slot whose
+representation depends on a bound the reader has to chase, and two `List<T?>` declarations that cannot meet because
+one is bounded and one is not.
+
+The formula holds recursively and everywhere the slot's type is written — method return, method parameter,
+constructor parameter, field, property, body local, nested type argument, array element, delegate component,
+supertype edge, generic constraint, and the signature a call is resolved by. A **use** of a slot `s` is typed
+`Subst(Erase(declared), typeArgs)` and never `Erase(Subst(...))`; a generic is INSTANTIATED at the erased argument
+from the start rather than instantiated wrongly and cast, because no cast joins two instantiations of one invariant
+generic.
 
 The Kotlin surface survives on two channels, which a re-consuming DotKt reader recombines: `[KotlinNullableGeneric]`
 carries the pre-erasure type node, and the ordinary `[Nullable(2)]` NRT byte carries the outer `?`.
@@ -1546,22 +1577,12 @@ What this is observable as:
 - **A C# consumer sees `object`.** `fun <T> firstOr(x: T?, d: T): T` surfaces as
   `static T firstOr<T>(object x, T d)`, so a C# caller passes `null` or a boxed value rather than a `T?`.
 
-### `Array<X?>` is `object[]` — the one erasure that is not transparent
+### `Array<X?>` is `object[]` — where the erasure is most visible
 
-An array element is the single position where the erasure is *observable in the type*, because `object[]` and
-`Nullable<int32>[]` are **unrelated** CLR types: array compatibility requires reference-compatible elements
-(ECMA-335 I.8.7.1), and no cast converts one to the other. There is therefore one representation and it is the erased
-one:
-
-> **`Array<X?>` is `System.Object[]` whenever `X` may be a value type** — **any** type variable, or a concrete value
-> type (a constructed `KeyValuePair<K,V>` counts, exactly as `Int` does). `Array<String?>` keeps `string[]`,
-> `Array<Int>` keeps `int32[]`, and `IntArray` is untouched.
-
-Every type variable qualifies, whatever its bound: `fun <T : CharSequence> f(xs: Array<T?>)` erases too, although no
-instantiation of it can be a struct. That is uniformity chosen deliberately over consulting the bound — one physical
-form per declaration, decided without resolving where each bound leads — and it costs a bounded array that boxes for
-nothing. The alternative is a slot whose representation depends on a bound the reader has to chase, and two
-`Array<T?>` declarations that cannot meet because one is bounded and one is not.
+An array element is the position where the erasure is hardest to miss, because `object[]` and `Nullable<int32>[]` are
+**unrelated** CLR types: array compatibility requires reference-compatible elements (ECMA-335 I.8.7.1), and no cast
+converts one to the other. `Array<String?>` keeps `string[]`, `Array<Int>` keeps `int32[]`, and `IntArray` is
+untouched.
 
 What this is observable as, beyond the boxing already listed above:
 
@@ -1576,12 +1597,11 @@ What this is observable as, beyond the boxing already listed above:
 - **`is Array<Int?>` loses precision.** Every `Array<X?>` at a possibly-value `X` has the same runtime type, so a
   runtime test cannot tell `Array<Int?>` from `Array<Boolean?>` — the semantic element comes from the DotKt metadata,
   as it does for every other erased slot.
-- **A generic instantiated *through* such an array is instantiated at `object`.** `arrayOfNulls<Int>(3).copyOf(4)`
-  binds `T = Int?`, whose array is the `object[]` the receiver already is, so the callee is instantiated at `object`
-  rather than at `Nullable<int32>` — the only instantiation whose `T[]` parameter that receiver inhabits. The result
-  follows: an `Array<T>` extension over an `Array<Int?>` yields `List<object>`, not `List<Nullable<int32>>`. The type
-  argument of a generic that does **not** reach an array is unaffected: `listOf<Int?>(null, 2)` is still a
-  `List<Nullable<int32>>`.
+- **A generic instantiated at a nullable value type is instantiated at `object`.** `listOf<Int?>(null, 2)` and
+  `arrayOfNulls<Int>(3).copyOf(4)` alike bind their type argument to `object` — for the array because that is the
+  only instantiation whose `T[]` parameter the receiver inhabits, and for the collection because that is what
+  `List<Int?>` is. The two agree by construction, which is what lets an `Array<T>` extension over an `Array<Int?>`
+  hand its `List<object>` result to a declared `List<Int?>` slot.
 - **`copyOf(newSize)` decides at runtime.** Its generic body has no `T : struct` constraint and no reified `T`, so it
   reads the receiver's own element type: a value element allocates `object[]`, a reference element allocates
   `elem[]`. Both inhabit the erased `object[]` the declaration states — the reference one by array covariance.
@@ -1589,14 +1609,31 @@ What this is observable as, beyond the boxing already listed above:
   is `object[]`, and `object[]` is not castable to `int32[]`. Allocate the real thing instead: the array constructor
   `Array(n) { … }` for a concrete element, or `System.Array.CreateInstance(T::class, n)` for a reified one.
 
-`Int?` therefore has **two physical forms by position** — `object` as an array element, `Nullable<int32>` as an
-ordinary type argument — and a generic that carries the element from one into the other can satisfy only one of them.
-`fun f(xs: Array<Int?>): List<Int?> = xs.toList()` is the shape: the receiver forces `T = object`, so the result is a
-`List<object>` where the declared `List<Int?>` slot is an `IReadOnlyCollection<Nullable<int32>>`. A local `val` is
-unaffected (its slot is retyped from the value); a declared return, field or parameter of a constructed generic over
-`Int?` has nowhere to move. Closing it needs the type-argument half of the same decision — whether `X?` is `object` at
-every type-argument position, making `List<Int?>` a `List<object>` — and that is not settled; the shape is carried as
-`roundtrip-nullable-vt-generic-array-to-collection` in `tests/roundtrip/scenarios/run.sh`.
+An array element is therefore not a special case but the most visible instance of the general rule, and a generic
+that carries an element from an array into a collection stays consistent: `fun f(xs: Array<Int?>): List<Int?> =
+xs.toList()` forces `T = object` at the receiver and hands back a `List<object>`, which is exactly what the declared
+`List<Int?>` slot is.
+
+### A .NET `G<int?>` has no Kotlin counterpart, and the crossing is REFUSED
+
+The rule makes `object` the only argument Kotlin can put in a reified position for a nullable value type, so **no
+Kotlin type's physical form is `List<Nullable<int32>>`**. A .NET API may still declare one — `List<int?>`,
+`Dictionary<string, int?>`, `Func<int?, string>` — and a resolved foreign declaration is authoritative: the erasure
+never restates what a CLR member declares. The two do not meet, and neither can be bent to the other: `List<object>`
+and `List<Nullable<int32>>` are unrelated invariant reified generics with no conversion between them, and adapting by
+copying would give the argument different identity and different mutation semantics than the Kotlin source says it
+has. So calling such a member is refused at compile time, naming the member and the slot, rather than silently
+mis-typed. A **direct** `Nullable<V>` parameter or return is untouched — a Kotlin scalar `Int?` IS a
+`System.Nullable<int32>` and crosses exactly.
+
+### Delegates: the lifted lambda's own slots follow the delegate's
+
+A delegate's parameters and return are reified arguments, so `(Int?) -> String` is `Func<object, string>`. The lifted
+method bound into it declares ordinary slots, where a direct `Int?` is a `Nullable<int32>` and a `String?` is a
+`string` — and ECMA-335 II.14.6 admits neither pair, since a delegate parameter is contravariant (only `object` is
+assignable from `object`) and its return covariant. So a lifted target's slot follows the delegate's `object`: every
+parameter, and a value / `Nullable<V>` / type-variable return. A REFERENCE return stays as declared, because it
+already reaches `object`.
 
 ### An override that narrows a `T?` slot keeps its own signature and gets a bridge
 

@@ -51,6 +51,17 @@ import genarr.joinPresent
 import genarr.firstPresent
 import genarr.firstTwo
 import genarr.crate
+import gencoll.Bin
+import gencoll.appendPresent
+import gencoll.binValue
+import gencoll.boxedInts
+import gencoll.describe
+import gencoll.lookup
+import gencoll.nestedCount
+import gencoll.newBin
+import gencoll.sumPresent as gcSumPresent
+import gencoll.joinPresent as gcJoinPresent
+import gencoll.firstPresent as gcFirstPresent
 import listparam.takesList
 import listparam.takesMutable
 import listparam.takesMap
@@ -217,6 +228,51 @@ class GenericMetadataRoundtripTests {
         ClassicAssert.AreEqual(4, c.payload[0])           // 4
         ClassicAssert.IsNull(c.payload[1])                // null
         ClassicAssert.AreEqual("tag", c.tag)              // tag
+    }
+
+    // #86 — the same boundary for the rest of the reified-argument positions, at a VALUE argument. The producing
+    // assembly emits `IReadOnlyList<object>` / `Bin<object>` / `Func<object, string>` and states the pre-erasure
+    // `List<Int?>` / `Bin<Int?>` / `(Int?) -> String` on its carrier; this consumer re-derives BOTH independently, so
+    // a disagreement between them is what the case measures — a re-imported surface the consumer's own `List<Int?>`
+    // cannot bind to, or a slot it binds to and then reads at the wrong element type. `List<String?>` is the
+    // control: a reference argument keeps its element type and must not move.
+    @TestAttribute
+    fun nullableValueCollectionsRoundTrip() {
+        val xs = boxedInts(4)                             // List<Int?> RETURN
+        ClassicAssert.AreEqual(3, xs.size)                // 3
+        ClassicAssert.AreEqual(4, xs[0])                  // 4
+        ClassicAssert.IsNull(xs[1])                       // null   the absent element survives the boundary
+        ClassicAssert.AreEqual(8, xs[2])                  // 8
+        ClassicAssert.AreEqual(12, gcSumPresent(xs))      // 12  the library's own list back through a PARAM
+        ClassicAssert.AreEqual(5, gcSumPresent(listOf<Int?>(5, null)))   // 5   a list the CONSUMER builds
+        ClassicAssert.AreEqual(0, gcSumPresent(listOf<Int?>(null, null)))// 0   all-null
+        ClassicAssert.AreEqual("a,b", gcJoinPresent(listOf("a", null, "b")))  // a,b (reference control)
+
+        // A MUTABLE collection: the callee's writes have to reach the caller's own list, which only holds if both
+        // sides name one physical element slot.
+        val muts: MutableList<Int?> = mutableListOf(1, null)
+        ClassicAssert.AreEqual(2, appendPresent(muts, 6))  // 2   1 and 6 present
+        ClassicAssert.AreEqual(4, muts.size)               // 4   the appends are the caller's
+        ClassicAssert.AreEqual(6, muts[2])                 // 6
+        ClassicAssert.IsNull(muts[3])                      // null
+
+        // A map VALUE, a USER generic in each direction, and a NESTED argument.
+        val m: Map<String, Int?> = mapOf("a" to 1, "b" to null)
+        ClassicAssert.AreEqual(1, lookup(m, "a"))          // 1
+        ClassicAssert.IsNull(lookup(m, "b"))               // null
+        ClassicAssert.AreEqual(7, binValue(Bin<Int?>(7)))  // 7   a Bin the CONSUMER builds
+        ClassicAssert.IsNull(binValue(Bin<Int?>(null)))    // null
+        val b: Bin<Int?> = newBin(3)                       // …and one the library builds
+        ClassicAssert.AreEqual(3, b.item)                  // 3
+        ClassicAssert.AreEqual(3, nestedCount(listOf(listOf(1, null), listOf<Int?>(null))))   // 3
+
+        // A DELEGATE component: the lifted lambda must declare the slot the re-imported `Func<object, string>` names.
+        ClassicAssert.AreEqual("5", describe(5) { v -> v?.toString() ?: "none" })      // 5
+        ClassicAssert.AreEqual("none", describe(null) { v -> v?.toString() ?: "none" })// none
+
+        // The OPEN `List<T?>` slot, at the value instantiation and at the reference one.
+        ClassicAssert.AreEqual(7, gcFirstPresent(listOf<Int?>(null, 7)))       // 7
+        ClassicAssert.AreEqual("x", gcFirstPresent(listOf<String?>(null, "x")))// x
     }
 
     // ktproj-listparam (#27): kotlin.collections.* params surface as BCL ifaces in the dll; dll2klib reverse-maps
