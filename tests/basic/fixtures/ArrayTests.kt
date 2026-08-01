@@ -34,6 +34,24 @@ import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.Companion.IsNull as assertNull
 
+// ---- #86 D2 : the OPEN forms of `Array<T?>` / `Array<T>`, exercised at a VALUE instantiation ---------------------
+// `Array<T?>` is the erased slot itself; `Array<T>` at `T = Int?` is the same physical array reached through a BARE
+// type parameter, which is what forces the instantiation to name the element's one representation.
+fun <T> arrPresentCount(xs: Array<T?>): Int {
+    var n = 0
+    for (x in xs) if (x != null) n = n + 1
+    return n
+}
+
+fun <T> arrLengthOf(xs: Array<T>): Int = xs.size
+
+// #86 D2 — ONE type variable at two positions, the array one LAST. What flows into `xs` forces the callee to be
+// instantiated at `object`; `x` is a plain `T` slot of that same variable, and it is reconciled against whatever the
+// instantiation settles on. Deriving positions in argument order made the answer depend on that order — `x` was
+// converted and its descriptor rewritten before `xs` moved `T` — so the pair is pinned in both orders here.
+fun <T> arrPairFirst(x: T, xs: Array<T>): Int = xs.size
+fun <T> arrPairLast(xs: Array<T>, x: T): Int = xs.size
+
 // ---- il-genarrlam : Array(size){ mk<T?>(null) } inside a generic class (nested Nullable(Tv) erasure) ------------
 class ArrRef<X>(val v: X)
 fun <X> arrMk(x: X): ArrRef<X> = ArrRef(x)
@@ -67,19 +85,32 @@ class ArrayTests {
     @TestAttribute
     fun copyOfGrowsWithNullTail() {
         val ints = arrayOf(1, 2, 3)
-        assertEquals("[1, 2, 3, null, null]", ints.copyOf(5).toList().toString())
-        assertEquals("[1, 2]", ints.copyOf(2).toList().toString())
-        assertEquals("[1, 2, 3]", ints.copyOf(3).toList().toString())
         val grown = ints.copyOf(5)
         assertEquals(1, grown[0])
         assertNull(grown[4])
         var sum = 0
         for (i in 0 until 3) sum += grown[i]!!
         assertEquals(6, sum)
+        assertEquals("[x, y, null]", arrayOf("x", "y").copyOf(3).toList().toString())   // reference element
+    }
+
+    // SPLIT OUT of copyOfGrowsWithNullTail so one ILVERIFY_XFAIL entry describes one cause. The baseline is keyed by
+    // METHOD NAME, so leaving these here let the sibling entry — whose reason is about the REFERENCE element — silently
+    // absorb a different shape at the VALUE element, and the baseline stopped saying which was which.
+    //
+    // These chains carry the value-element remainder of #86 D2: `copyOf` hands back the `object[]` its `Array<T?>`
+    // return erases to, `toList()` over it is instantiated at `object`, and the resulting `IReadOnlyList<object>` meets
+    // an `IReadOnlyCollection<Nullable<int32>>` slot. Runtime-safe — only object-level members are dispatched on the
+    // list — and closed by the same base-view projection as `boxedGenericValues` / `arrayOfNulls`.
+    @TestAttribute
+    fun copyOfGrowsWithNullTailAtValueElements() {
+        val ints = arrayOf(1, 2, 3)
+        assertEquals("[1, 2, 3, null, null]", ints.copyOf(5).toList().toString())
+        assertEquals("[1, 2]", ints.copyOf(2).toList().toString())
+        assertEquals("[1, 2, 3]", ints.copyOf(3).toList().toString())
         assertEquals("[1, 2, null]", arrayOf(1L, 2L).copyOf(3).toList().toString())
         assertEquals("[2.5, 3.5, null]", arrayOf(2.5, 3.5).copyOf(3).toList().toString())
         assertEquals("[a, b, null]", arrayOf('a', 'b').copyOf(3).toList().toString())
-        assertEquals("[x, y, null]", arrayOf("x", "y").copyOf(3).toList().toString())
         val nullable = arrayOfNulls<Int>(2)
         nullable[0] = 7
         assertEquals("[7, null, null]", nullable.copyOf(3).toList().toString())
@@ -183,6 +214,99 @@ class ArrayTests {
         val s = arrayOf("a", "b")
         assertEquals("[a, b, c]", s.plus("c").toList().toString())           // [a, b, c]
         assertEquals("[a, b, d]", s.plusElement("d").toList().toString())    // [a, b, d]
+    }
+
+    // #86 D2 — `Array<X?>` is `object[]` whenever X may be a value type, so the THREE representations that used to
+    // coexist for one Kotlin type constructor are one. Every chain below was served by a representation that no
+    // longer exists — the `arrayOfNulls<T>(n) … as Array<T>` reify-back that kept a bare `!T[]`, and the concrete
+    // `Nullable<int32>[]` — so each is a value-instantiation guard that the single representation carries them all.
+    // The reference instantiation is asserted beside every one: `Array<String?>` keeps its `string[]`, which is the
+    // half of D2 that did NOT move, and it is what makes the value axis the subject rather than the array API.
+    @TestAttribute
+    fun nullableValueArrayIsUniform() {
+        // The array FACTORIES: an explicitly nullable element, and the inferred one.
+        val explicit = arrayOfNulls<Int>(3)
+        explicit[0] = 4
+        explicit[2] = 8
+        assertEquals(3, explicit.size)                                       // 3
+        assertEquals(4, explicit[0])                                         // 4
+        assertNull(explicit[1])                                              // null
+        assertEquals(8, explicit[2])                                         // 8
+        val inferred = arrayOf(1, null, 3)
+        assertEquals(1, inferred[0])                                         // 1
+        assertNull(inferred[1])                                              // null
+        val literal: Array<Int?> = arrayOf(5, null)
+        assertEquals(5, literal[0])                                          // 5
+        assertNull(literal[1])                                               // null
+        val sized = Array<Int?>(2) { if (it == 0) 7 else null }
+        assertEquals(7, sized[0])                                            // 7
+        assertNull(sized[1])                                                 // null
+        val bools = arrayOfNulls<Boolean>(2)
+        bools[1] = true
+        assertNull(bools[0])                                                 // null
+        assertEquals(true, bools[1])                                         // True
+
+        // ITERATION over one: the ldelem token and the loop variable are the same erased element.
+        var sum = 0
+        var nulls = 0
+        for (x in explicit) if (x != null) sum = sum + x else nulls = nulls + 1
+        assertEquals(12, sum)                                                // 12
+        assertEquals(1, nulls)                                               // 1
+
+        // The same array through a generic `Array<T?>` parameter — the OPEN form of the very same slot.
+        assertEquals(2, arrPresentCount(explicit))                           // 2
+        assertEquals(1, arrPresentCount(arrayOf("a", null)))                 // 1  (reference control)
+
+        // A concrete `Array<Int?>` through a generic `Array<T>` parameter: T binds to `Int?`, whose array is the
+        // `object[]` the caller holds, so the callee has to be instantiated at the type that names it.
+        assertEquals(3, arrLengthOf(explicit))                               // 3
+        assertEquals(2, arrLengthOf(arrayOf("a", null)))                     // 2  (reference control)
+
+        // ONE type variable bound at a scalar AND an array position, in both argument orders: the instantiation the
+        // array forces has to be the one the scalar is reconciled against, whichever is seen first.
+        val v: Int? = 5
+        assertEquals(3, arrPairFirst(v, explicit))                           // 3
+        assertEquals(3, arrPairLast(explicit, v))                            // 3
+        assertEquals(2, arrPairFirst("a", arrayOf("x", null)))               // 2  (reference control)
+
+        // The REFERENCE instantiation keeps its typed array end to end.
+        val refs = arrayOfNulls<String>(2)
+        refs[0] = "hi"
+        assertEquals("hi", refs[0])                                          // hi
+        assertNull(refs[1])                                                  // null
+        assertEquals("[hi, null]", refs.toList().toString())                 // [hi, null]
+    }
+
+    // #86 D2 — the `Array<T>` FACTORIES whose bodies the reify-back representation existed for. Each one has to hand
+    // back a genuine `T[]` at a value instantiation now that `arrayOfNulls<T>(n)` is honestly an `object[]`: an
+    // `object[]` returned where `Array<Int>` is declared is not merely imprecise, it fails the very next element read.
+    @TestAttribute
+    fun typedArrayFactoriesAtValueElements() {
+        assertEquals(0, emptyArray<Int>().size)                              // 0
+        assertEquals(0, emptyArray<String>().size)                           // 0  (reference control)
+        val grown = arrayOf(1, 2, 3).plus(4)
+        assertEquals(4, grown.size)                                          // 4
+        assertEquals(4, grown[3])                                            // 4
+        assertEquals(10, grown.sum())                                        // 10 (read back AS Int, not as a box)
+        assertEquals("[1, 2, 3, 9]", arrayOf(1, 2, 3).plusElement(9).toList().toString())   // [1, 2, 3, 9]
+        assertEquals("[1, 2, 3, 4]", arrayOf(1, 2).plus(arrayOf(3, 4)).toList().toString()) // [1, 2, 3, 4]
+        assertEquals("[1, 2, 3, 4]", arrayOf(1, 2).plus(listOf(3, 4)).toList().toString())  // [1, 2, 3, 4]
+        val typed = listOf(1, 2, 3).toTypedArray()
+        assertEquals(3, typed.size)                                          // 3
+        assertEquals(6, typed.sum())                                         // 6
+        assertEquals("[a, b, c]", arrayOf("a", "b").plus("c").toList().toString())          // [a, b, c] (reference)
+
+        // The collection-terminal `toArray` paths, which run through `arrayOfNulls(reference, size)` and
+        // `terminateCollectionToArray` rather than through a Kotlin array factory.
+        val deque = ArrayDeque<Int>()
+        deque.addLast(1)
+        deque.addLast(2)
+        deque.addFirst(0)
+        assertEquals("[0, 1, 2]", deque.toTypedArray().toList().toString())  // [0, 1, 2]
+        assertEquals(3, deque.toTypedArray().sum())                          // 3
+        // The RingBuffer-backed windowing terminal (its buffer is filled and snapshotted per window).
+        assertEquals("[[1, 2], [2, 3], [3, 4]]", listOf(1, 2, 3, 4).windowed(2).toString())  // [[1, 2], [2, 3], [3, 4]]
+        assertEquals("[[1, 2], [3, 4]]", listOf(1, 2, 3, 4).chunked(2).toString())           // [[1, 2], [3, 4]]
     }
 
     // #86 — `toTypedArray` joins plus/plusElement as an `Array<T>` factory that allocates through the

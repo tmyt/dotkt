@@ -30,9 +30,29 @@ declare -A ILVERIFY_XFAIL=(
 	# consumer's restored `Vault<string>` slot — StackUnexpected. Runtime-SAFE (object/string are reference-compatible;
 	# the erased Vault holds the string; the value-assert RUN lane is green). Same object-erasure formal-only family.
 	["GenericMetadataRoundtripTests::nullableGenericMembersRoundTrip()"]="#86 nullable-generic object-erasure: holderOf's erased Vault<object> return vs the restored Vault<string> slot — runtime-safe (RUN green)"
-	# #86: copyOf on a value-element array returns Array<T?>, represented as object[] while the formal callsite
-	# expects Nullable<Int>[]; all prefix/tail value assertions run green. Dies with the Array<X?>-is-object[] step.
-	["ArrayTests::copyOfGrowsWithNullTail()"]="#86 nullable value-array object erasure: copyOf returns object[] where Nullable<Int>[] is formally expected — runtime-safe (RUN green)"
+	# ONE CAUSE, three methods. `Array<Int?>.toList()` yields an `IReadOnlyList<object>` — `copyOf` hands back the
+	# `object[]` its `Array<T?>` return erases to, and the `toList` over it is instantiated at `object` — while the
+	# consumer's slot is an `IReadOnlyCollection<!!0>`. The consumer's own type argument is NOT inferred from it,
+	# because the type-argument unification pairs a declared and a flowed constructed type only when they are the same
+	# DEFINITION, and those two heads are not. Pairing them by ARGUMENT POSITION would close these findings, and did,
+	# until it was measured against `class Fixed<U> : Base<Int?>`: a `Fixed<object>` arriving at a `Base<T>` parameter
+	# zips `T` to `object` although the argument is a `Base<Nullable<int32>>` and never was a `Base<object>` — which
+	# resolves a member the emitted call does not have. Position-pairing is sound only within one definition; across
+	# heads it needs the supertype walk to project the flowed type onto the declared head first. All three fixtures RUN
+	# green: only object-level members are dispatched on the result.
+	#
+	# Keyed per method because the baseline is keyed per method, and each of these three fires for exactly this shape.
+	# `copyOfGrowsWithNullTail` was SPLIT to get here: while both element kinds shared one method, its single entry
+	# absorbed whichever shapes appeared under that name, and the REFERENCE-element one below was not visible at all.
+	["ArrayTests::copyOfGrowsWithNullTailAtValueElements()"]='#86 D2: an Array<V?> at a VALUE element instantiates Array<T>.toList() at T=object, so its IReadOnlyList<object> meets an IReadOnlyCollection<Nullable<V>> slot — fires at V = Int, Long, Double and Char alike; runtime-safe (RUN green); the consumer type argument is not inferred across DIFFERENT generic heads, which needs a base-view projection to be sound'
+	["ArrayTests::boxedGenericValues()"]='#86 D2: an Array<Int?> instantiates Array<T>.toList() at T=object, so its IReadOnlyList<object> meets an IReadOnlyCollection<Nullable<int32>> slot — runtime-safe (RUN green); the consumer type argument is not inferred across DIFFERENT generic heads, which needs a base-view projection to be sound'
+	["ArrayTests::arrayOfNulls()"]='#86 D2: an Array<Int?> instantiates Array<T>.toList() at T=object, so its IReadOnlyList<object> meets an IReadOnlyCollection<Nullable<int32>> slot — runtime-safe (RUN green); the consumer type argument is not inferred across DIFFERENT generic heads, which needs a base-view projection to be sound'
+	# The REFERENCE-element half of the same remainder, and a DIFFERENT observed shape: `Array<T?>` erases to `object[]`
+	# T-INDEPENDENTLY, so `arrayOf("x","y").copyOf(3)` is an `object[]` too and its `toList()` meets a
+	# `Collection<string>` rather than a `Collection<Nullable<int32>>`. Runtime-safe for a second reason as well as the
+	# shared one: the array copyOf built really IS a `string[]` (it reflects on the receiver's element type), so the
+	# values are the declared ones. Same closing condition as the three above.
+	["ArrayTests::copyOfGrowsWithNullTail()"]='#86 D2: copyOf returns the object[] its Array<T?> erases to T-independently, so at a REFERENCE element its toList() yields an IReadOnlyList<object> where the slot is an IReadOnlyCollection<string> — runtime-safe (the array really is a string[]; RUN green); same base-view projection remainder as the value-element entries above'
 	# #324: the value-element collection receiver conversion produces an `IEnumerable<object>` (all
 	# `Enumerable.Cast<object>` can produce), which does not FORMALLY inhabit a `List<T?>` slot's
 	# `IReadOnlyList<object>`. The conversion is now keyed correctly — on the receiver's own nullable element, not on

@@ -65,6 +65,11 @@ static class ReferenceNullableStrip
         _ => t,
     };
 
+    // A CONSTRUCTED name is a struct if the oracle says so: `ArraySegment<String>?` is a `Nullable<ArraySegment<String>>`
+    // and keeps its wrapper exactly as `Int?` does. Matching only the argument-LESS shape stripped it to the bare
+    // struct, so a `null` element read out of an `Array<ArraySegment<String>?>` was unboxed as a NON-nullable struct —
+    // a NullReferenceException, or silently no null at all. The oracle answers false for a constructed REFERENCE
+    // generic (`List<String>?`), which is what keeps that side stripping as before.
     static bool IsValueInner(TypeNode of, Func<string, bool> isValue) =>
-        of is TypeNode.Fqn { Args: null } f && isValue(f.Name);
+        of is TypeNode.Fqn f && isValue(f.Name);
 }

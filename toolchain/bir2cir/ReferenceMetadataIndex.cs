@@ -1333,52 +1333,20 @@ sealed partial class ReferenceMetadataIndex
         return facts.Any(f => f.Node != null || f.Refused);
     }
 
-    // ONE slot's declaration. THREE outcomes, which is why this is not a `carrier ?? physical` chain and why the
-    // result is not a plain TypeNode:
-    //   * a carrier the reader may state — the exact pre-erasure Kotlin type, and the best answer there is;
-    //   * a carrier it must NOT state — then a REFUSAL, which is a fact of its own and travels as one. The physical
-    //     declaration is not a substitute for it: that is the same erasure spelled WITHOUT the evidence that it was
-    //     one (`Pair<Array<T?>, U>` is physically `Pair<object[], !1>`, still `Tv`-bearing, so it passes the
-    //     open-physical test), and neither is the call's own descriptor, which is that erasure again in the call's
-    //     substituted vocabulary. A refusal that degrades to "no information" is not a refusal;
-    //   * no carrier at all — the physical declaration, while it is still open, and no refusal.
+    // ONE slot's declaration. Still a SlotFact rather than a bare TypeNode, because a REFUSAL is a fact of its own and
+    // has to travel as one: the physical declaration is not a substitute for a refused carrier — that is the same
+    // erasure spelled WITHOUT the evidence that it was one — and neither is the call's own descriptor, which is that
+    // erasure again in the call's substituted vocabulary. A refusal that degrades to "no information" is not a refusal.
+    //   * a carrier — the exact pre-erasure Kotlin type, and the best answer there is;
+    //   * no carrier at all — the physical declaration, while it is still open.
+    //
+    // The one carrier this reader used to refuse was an `Array<X?>`, because the erasure was not uniform at an array
+    // element: the producing assembly's slot said `object[]` while the value it handed back was a `Nullable<V>[]`, and
+    // those are unrelated CLR types (ECMA-335 I.8.7.1). #86 D2 canonicalizes `Array<X?>` to `object[]` at every
+    // position, so the carrier's `Erase` and the producer's physical slot now AGREE and the slot is served like any
+    // other. Nothing produces a per-parameter refusal today; the channel is what would carry the next one.
     static SlotFact DeclaredSlot(TypeNode carrier, TypeNode physical)
-        => carrier == null ? new SlotFact(OpenPhysical(physical), false)
-            : Serviceable(carrier) is TypeNode ok ? new SlotFact(ok, false)
-            : new SlotFact(null, true);
-
-    // A carrier is served unless its erasure lands at an ARRAY ELEMENT. `Array<X?>` is the one position where the
-    // erasure has not yet been made uniform (#86 D2): the producing assembly's slot says `object[]` while the value it
-    // actually hands back is a `Nullable<V>[]` — `Array<T>.copyOf(newSize)` allocates one reflectively, and the two are
-    // unrelated CLR types (ECMA-335 I.8.7.1: array compatibility needs reference-compatible elements). Deriving a use
-    // from a declaration the producer does not implement turns a formal ilverify finding into a real access violation,
-    // so the reader refuses the slot until `Array<X?>` IS canonically `object[]`, and starts serving it when it is.
-    static TypeNode Serviceable(TypeNode carrier) => carrier != null && !ErasesUnderArray(carrier) ? carrier : null;
-
-    static bool ErasesUnderArray(TypeNode t) => t switch
-    {
-        TypeNode.Array a => ContainsNullableTv(a.Elem) || ErasesUnderArray(a.Elem),
-        TypeNode.Fqn { Args: { } args } => args.Any(ErasesUnderArray),
-        TypeNode.Nullable n => ErasesUnderArray(n.Of),
-        TypeNode.Oblivious o => ErasesUnderArray(o.Of),
-        TypeNode.ByRef b => ErasesUnderArray(b.Of),
-        TypeNode.Fn fn => ErasesUnderArray(fn.Ret) || fn.Params.Any(ErasesUnderArray)
-                          || (fn.Recv != null && ErasesUnderArray(fn.Recv)),
-        _ => false,
-    };
-
-    static bool ContainsNullableTv(TypeNode t) => t switch
-    {
-        TypeNode.Nullable { Of: TypeNode.Tv } => true,
-        TypeNode.Nullable n => ContainsNullableTv(n.Of),
-        TypeNode.Oblivious o => ContainsNullableTv(o.Of),
-        TypeNode.Fqn { Args: { } args } => args.Any(ContainsNullableTv),
-        TypeNode.Array a => ContainsNullableTv(a.Elem),
-        TypeNode.ByRef b => ContainsNullableTv(b.Of),
-        TypeNode.Fn fn => ContainsNullableTv(fn.Ret) || fn.Params.Any(ContainsNullableTv)
-                          || (fn.Recv != null && ContainsNullableTv(fn.Recv)),
-        _ => false,
-    };
+        => new(carrier ?? OpenPhysical(physical), false);
 
     // The physical declaration of a slot, admitted only while it still says something the call site's type arguments
     // complete — see the refusal reasoning on TryNullableGenericSlot.

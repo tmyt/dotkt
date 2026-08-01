@@ -14,9 +14,11 @@ package kotlin.collections
  * Returns the array if it's not `null`, or an empty array otherwise.
  * @sample samples.collections.Arrays.Usage.arrayOrEmpty
  */
-// `arrayOfNulls<T>(0)` lowers to `newarr !T` (kotc newArraySized) — a zero-length T[] IS an Array<out T>.
+// A zero-length `T[]` IS an `Array<out T>`, and `dotktNewTypedArray` is the one allocation that produces a genuine one
+// for a reified element (see its declaration for why neither `arrayOfNulls<T>(0)` nor the array constructor can).
 // Written directly (not via emptyArray()) to avoid a nested cross-module inline hop.
-public actual inline fun <reified T> Array<out T>?.orEmpty(): Array<out T> = this ?: (arrayOfNulls<T>(0) as Array<out T>)
+public actual inline fun <reified T> Array<out T>?.orEmpty(): Array<out T> =
+    this ?: (dotktNewTypedArray(T::class as DotktType, 0) as Array<out T>)
 
 /**
  * Returns a *typed* array containing all the elements of this collection.
@@ -47,24 +49,34 @@ internal fun <T> dotktCollectionElements(seq: Iterable<T>): Array<Any?> {
 
 @Suppress("UNCHECKED_CAST")
 public actual inline fun <reified T> Collection<T>.toTypedArray(): Array<T> {
-    // The reified function touches ONLY arrayOfNulls<T> (newarr) + the concrete Array<Any?> (Length/index) -- the
-    // collection iteration is delegated to the non-reified dotktCollectionElements so no generic-interface ref is
-    // emitted in this reified-inline body (which would be a malformed "EntryPointNotFound" ref).
+    // The reified function touches ONLY the allocation + the concrete Array<Any?> (Length/index) -- the collection
+    // iteration is delegated to the non-reified dotktCollectionElements so no generic-interface ref is emitted in this
+    // reified-inline body (which would be a malformed "EntryPointNotFound" ref).
+    //
+    // `dotktNewTypedArray` allocates the genuine `T[]` this function promises; `arrayOfNulls<T>(n) as Array<T>` cannot,
+    // because `arrayOfNulls` returns `Array<T?>` = `object[]` (#86 D2) and `object[]` is not castable to `int32[]`.
+    // Each element narrows out of the boxed staging array as it is written.
     val objs = dotktCollectionElements<T>(this)
-    val result = arrayOfNulls<T>(objs.size)
+    val result = dotktNewTypedArray(T::class as DotktType, objs.size) as Array<T>
     var i = 0
     while (i < objs.size) {
         result[i] = objs[i] as T
         i = i + 1
     }
-    return result as Array<T>
+    return result
 }
 
 /** Internal unsafe construction of array based on reference array type */
-// The JVM re-allocates via `reference`'s RUNTIME component type (java.lang.reflect.Array.newInstance). On the CLR
-// generics are reified, so the STATIC instantiation `newarr !T` already carries the exact element type — `reference`
-// is unused. TYPE_PARAMETER_AS_REIFIED is suppressed deliberately: kotc lowers `arrayOfNulls<T>(size)` for a
-// non-reified T to the same generic `newarr !T` (see MEMORY clr-all-type-args-reified); the JVM erasure hazard the
-// diagnostic guards against does not exist here.
-@Suppress("TYPE_PARAMETER_AS_REIFIED", "UNUSED_PARAMETER")
-internal actual fun <T> arrayOfNulls(reference: Array<T>, size: Int): Array<T> = arrayOfNulls<T>(size) as Array<T>
+// The declared `Array<T>` is a `!T[]` whose slots this helper's callers overwrite, so it needs a ZERO-FILLED genuine
+// `T[]` — which no Kotlin expression names: the array constructor demands an element the caller has none of, and
+// `arrayOfNulls<T>(size)` honestly returns `Array<T?>` = `object[]` (#86 D2), unrelated to `int32[]`. So it is built
+// the way the JVM builds it, from `reference`'s RUNTIME array type — which on the CLR is exactly the reified `T[]`.
+// `CreateInstanceFromArrayType` zero-fills, so the result already reads back as `default(T)`/null in every slot.
+@kotlin.clr.ClrIntrinsic("GetType")                                     // object.GetType() -> the receiver's runtime array Type
+private fun Any.arrClrGetType(): Any = TODO("clr binding should be implemented")
+
+@kotlin.clr.ClrIntrinsic("System.Array.CreateInstanceFromArrayType")    // (Type arrayType, int length) -> Array; receiver(arrayType) -> arg0
+private fun Any.arrClrCreateArrayLike(length: Int): Any = TODO("clr binding should be implemented")
+
+internal actual fun <T> arrayOfNulls(reference: Array<T>, size: Int): Array<T> =
+    (reference as Any).arrClrGetType().arrClrCreateArrayLike(size) as Array<T>

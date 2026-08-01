@@ -127,6 +127,51 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir/stdlib (area:bir2cir): `Array<X?>` is `object[]` — the last two representations of the nullable-generic
+  array are gone (#86 D2).** One Kotlin type constructor had three physical forms: a concrete `Array<Int?>` was a
+  `Nullable<int32>[]`, an open `Array<T?>` was an `object[]`, and the `arrayOfNulls<T>(n) … as Array<T>` reify-back
+  chain kept a bare `!T[]` end to end. `object[]` and `Nullable<int32>[]` are **unrelated** CLR types — array
+  compatibility requires reference-compatible elements (ECMA-335 I.8.7.1) — so no two of them could ever meet, which
+  is why the same array behaved differently depending on which one produced it: a generic `Array<T?>` parameter at
+  `T=Int` segfaulted the process, a cross-module `Array<Int?>` param re-imported as `IntArray` (the consumer would
+  not compile), and a cross-module `Array<Int?>` return was indexed as an `int32[]` so its LAYOUT WORDS came back as
+  elements — `4/null/8` read as `3/1/4/0`, with no diagnostic and no exception.
+  `Erase` now maps an array element that is `X?` for a possibly-value `X` — ANY type variable, or a value FQN
+  including a CONSTRUCTED one like `KeyValuePair<K,V>` or `ArraySegment<T>` — to
+  `object`, at declaration slots, at `newarr`/`ldelem`/`stelem` tokens and at the element a `for (x in arr)` binds
+  alike; the pre-erasure `Array<Int?>` rides the same `[KotlinNullableGeneric]` carrier every other erased slot does,
+  so the Kotlin surface survives the round trip; and the carrier reader, which refused an `Array<X?>` slot precisely
+  because the two forms disagreed, now serves it. `Array<String?>` still keeps its `string[]` and `Array<Int>` its
+  `int32[]` — a reference element is not part of this — and `IntArray` is untouched.
+  A generic reached THROUGH such an array is instantiated at `object`, because that is the only instantiation whose
+  `T[]` parameter an `object[]` inhabits: `arrayOfNulls<Int>(3).copyOf(4)` binds `T = Int?` and calls `copyOf<object>`.
+  This is not the call-site type-argument collapse #86 rejects — a type argument that never reaches an array is
+  untouched, so `listOf<Int?>(null, 2)` is still a `List<Nullable<int32>>`.
+  The reify-back representation is deleted rather than adjusted, and with it the stdlib bodies that depended on it:
+  `emptyArray`/`orEmpty`/`toTypedArray` allocate the genuine `T[]` they promise through `Array.CreateInstance` off
+  the reified `T::class`; `plus`/`plusElement` allocate from the RECEIVER's own runtime array type, as `copyOfRange`
+  already did; `arrayOfNulls(reference, size)` does the same off its reference array; and `copyOf(newSize)` decides
+  at runtime — `object[]` for a value element, `elem[]` for a reference one — so a consumer at `T=String` still gets
+  the real `string[]` its `Array<String?>` slot names. The user-visible consequences are recorded in
+  `docs/dotkt-semantics.md` §9c-bis: `Array<Int?>` surfaces to C# as `object[]` rather than `int?[]`, its elements
+  box, and `is Array<Int?>` loses precision.
+  **One shape regresses and is listed rather than hidden**, because it is what says D2 cannot be finished on its own:
+  `Int?` now has two physical forms by POSITION — `object` as an array element, `Nullable<int32>` as an ordinary type
+  argument — so a generic carrying the element across that boundary can satisfy one end or the other, not both.
+  `fun f(xs: Array<Int?>): List<Int?> = xs.toList()` instantiates at `object` (nothing else accepts an `object[]`) and
+  hands back a `List<object>` where the declared slot is an `IReadOnlyCollection<Nullable<int32>>`. It is driven
+  same-module as `roundtrip-nullable-vt-generic-array-to-collection` and blocked on the type-argument half of the
+  decision: either `X?` is `object` at every type-argument position (`List<Int?>` becomes `List<object>`), or the
+  concrete `Array<Int?>` keeps a representation of its own after all.
+  The prune #86 predicted for `ArrayTests::copyOfGrowsWithNullTail` **happened** — the
+  `object[]`-vs-`Nullable<int32>[]` cause it named is gone — but the method is not verifier-clean, so reading the
+  issue's checklist against the code needs care. What remains there is a DIFFERENT, formal-only shape, shared with
+  `boxedGenericValues` and `arrayOfNulls`: `Array<Int?>.toList()` yields an `IReadOnlyList<object>` whose consumer slot
+  is an `IReadOnlyCollection<Nullable<int32>>`, because a consumer's type argument is not inferred across two
+  different generic heads. Three `ILVERIFY_XFAIL` entries carry it, one per method, and the value-element assertions
+  were SPLIT out of `copyOfGrowsWithNullTail` into `copyOfGrowsWithNullTailAtValueElements` so that no entry absorbs a
+  cause its reason does not describe — the baseline is keyed by method name, so a mixed method hides the difference.
+  All three RUN green. The cross-module `Array<Int?>` entries and the whole packaged-SDK baseline did prune.
 - **bir2cir (area:bir2cir): a nullable generic `T?` now has ONE physical CLR representation — `System.Object` — at
   every position (#86).** `Nullable<T>` is inexpressible for an unconstrained `T` and a bare `!T` slot collapses a
   null to `default(T)`, so a `T?` slot has exactly one sound CLR form; the backend nevertheless kept two, erasing

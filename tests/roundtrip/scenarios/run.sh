@@ -71,16 +71,29 @@ declare -A RT_XFAIL=(
 	# second, typed ENTRY POINT: the `.override` bridge of #86 D3, emitting `object accept(object)` beside the
 	# narrowed body.
 	[roundtrip-nullable-vt-generic-override-direct]="#86 D3: a narrowed override called through its OWN declared type does not bind — the CLR slot is accept(object) (it must be, or the interface method is unimplemented) while the re-imported Kotlin surface is accept(x: Int?), and the consumer's emit aborts with 'no referenced method matches the resolved descriptor IntSink.accept(nullable:System.Int32)'; the same override reached through the BASE slot passes, as does the reference instantiation. Measured against the cross-module carrier read: it does NOT prune this — the abort is a missing MEMBER, not a mistyped argument, so there is nothing for an argument derivation to fix. Pruned by the override-slot-bridge step of #86 D3."
-	# D2 — `Array<X?>` has no single representation: a CONCRETE Array<Int?> is Nullable<int32>[] while the
-	# erased/open form is object[], and the two are unrelated CLR types (ECMA-335 I.8.7.1 — array
-	# compatibility requires reference-compatible elements). Measured, the re-imported slot is not even an
-	# array of a nullable element. Pruned by the Array<X?>-is-object[] canonicalisation step.
-	[roundtrip-nullable-vt-generic-array-param]="#86 D2: a cross-module Array<Int?> PARAM re-imports as IntArray, so the consumer fails to compile: argument type mismatch: actual type is 'Array<Int?>', but 'IntArray' was expected — pruned by the Array<X?>-is-object[] canonicalisation step of #86"
-	# The RETURN position fails differently from the param position, and far worse: the consumer COMPILES and
-	# RUNS and prints garbage. The element re-imports as a NON-NULL Int, so the consumer indexes a
-	# Nullable<int32>[] as an int32[] and reads the LAYOUT WORDS as elements. No diagnostic, no exception —
-	# which is why this entry pins the observed OUTPUT as its shape.
-	[roundtrip-nullable-vt-generic-array-ret]="#86 D2: a cross-module Array<Int?> RETURN re-imports with a NON-NULL Int element, so the consumer indexes a Nullable<int32>[] as an int32[] and reads the layout words as elements — an array of 4/null/8 reports 3/1/4/0 (hasValue, value, then the null element's zeroed flag) with no diagnostic and no exception; pruned by the Array<X?>-is-object[] canonicalisation step of #86"
+	# The COST of `Array<X?>` = `object[]` (#86 D2), and a REGRESSION against the representation that preceded it —
+	# listed rather than hidden, because it is the shape that says D2 is not finishable on its own. `Int?` now has two
+	# physical forms by POSITION: `object` as an array element (D2, forced — `object[]` and `Nullable<int32>[]` are
+	# unrelated CLR types), and `Nullable<int32>` as an ordinary type argument (`List<Int?>`, unchanged and widely
+	# relied on). A generic that carries the element ACROSS that boundary can satisfy one or the other and not both:
+	# `Array<T>.toList()` over an `Array<Int?>` must be instantiated at `object` — no other instantiation's `!!0[]`
+	# parameter accepts an `object[]` — so it hands back a `List<object>` where the declared `List<Int?>` slot is an
+	# `IReadOnlyCollection<Nullable<int32>>`, and the first member call on it does not resolve.
+	# Reconciling the two needs a DECISION this step does not own: whether `X?` for a possibly-value `X` is `object` at
+	# every TYPE-ARGUMENT position too (making `List<Int?>` a `List<object>`), or whether the concrete `Array<Int?>`
+	# keeps a representation of its own after all. Local `val`s are unaffected (their slot is retyped from the value);
+	# it is a declared RETURN / field / parameter of a constructed generic over `Int?` that has nowhere to move.
+	[roundtrip-nullable-vt-generic-array-to-collection]="#86 D2: an Array<Int?> is object[], so an Array<T> stdlib extension over it instantiates at T=object and returns a List<object> — where the declared List<Int?> slot is IReadOnlyCollection<Nullable<int32>>, and the first member call on the result throws System.EntryPointNotFoundException. A REGRESSION against the pre-D2 representation (Array<Int?> was Nullable<int32>[], so T bound to Nullable<int32> and both ends agreed). Blocked on the type-argument half of the decision: either X? is object at every type-argument position (List<Int?> becomes List<object>) or the concrete Array<Int?> keeps its own representation."
+	# The same split reached from the other side, and a separate observable: here the generic's RESULT is the array, so
+	# the instantiation that suits the `Collection<T>` argument is the one that does not suit the result.
+	[roundtrip-nullable-vt-generic-collection-to-array]="#86 D2: Array<Int?>.plus(Collection<Int?>) binds one T to an argument whose element is Nullable<int32> and a result whose element must be object; the body's 'as Array<T>' then castclasses the object[] it built from the object[] receiver to Nullable<int32>[] — System.InvalidCastException. Same REGRESSION and same blocker as its array-to-collection sibling above."
+	#
+	# PRUNED by the `Array<X?>`-is-`object[]` canonicalisation (#86 D2): both cross-module `Array<Int?>` sections,
+	# param and return. `Array<X?>` is now `object[]` at every position for a possibly-value `X`, the pre-erasure
+	# `Array<Int?>` rides the same `[KotlinNullableGeneric]` carrier every other erased slot does, and the reader
+	# serves it — so the consumer's own `Array<Int?>` compiles against the re-imported slot and the null element
+	# survives the boundary. Their `Array<String?>` control stays as the control it was: a reference element keeps
+	# its `string[]`, which is the half of D2 that did NOT move.
 )
 
 # The documented failure SHAPE of each RT_XFAIL entry: a substring the section's EVIDENCE (every compiler /
@@ -92,9 +105,8 @@ declare -A RT_XFAIL=(
 declare -A RT_XFAIL_SHAPE=(
 	[roundtrip-nullable-vt-generic-seq-mapnotnull]='System.EntryPointNotFoundException'
 	[roundtrip-nullable-vt-generic-override-direct]='no referenced method matches the resolved descriptor'
-	[roundtrip-nullable-vt-generic-array-param]="but 'IntArray' was expected"
-	# No diagnostic and no exception: this one fails by printing a WRONG VALUE, so the shape is the value.
-	[roundtrip-nullable-vt-generic-array-ret]='(stdout) 3/1/4/0'
+	[roundtrip-nullable-vt-generic-array-to-collection]='System.EntryPointNotFoundException'
+	[roundtrip-nullable-vt-generic-collection-to-array]='System.InvalidCastException'
 )
 
 # A listed name with no documented shape is the hole this map exists to close, so it is rejected here rather
@@ -691,6 +703,31 @@ ng_local roundtrip-nullable-vt-generic-local-param '7' \
 fun <T> pickOr(x: T?, d: T): T = x ?: d
 fun main() {
     println(pickOr<Int>(null, 7))          // 7   null through a top-level T? param at T=Int
+}
+EOF
+
+# The COST of `Array<X?>` = `object[]` (#86 D2), and the one shape it is not paid in silently. `Int?` now has TWO
+# physical forms depending on POSITION — `object` as an array element, `Nullable<int32>` as an ordinary type argument —
+# so a generic that carries the element from one into the other cannot produce both. Driven same-module: no boundary,
+# no metadata, so this is the representation itself and not a carrier defect.
+ng_local roundtrip-nullable-vt-generic-array-to-collection '3/1' \
+	'same-module: an Array<Int?> element carried into a List<Int?> by a generic Array<T> extension (#86 D2)' <<'EOF'
+fun toL(xs: Array<Int?>): List<Int?> = xs.toList()   // T binds to Int?: object[] receiver, List<Nullable<int32>> result
+fun main() {
+    val a = arrayOfNulls<Int>(3)
+    a[0] = 1
+    val l = toL(a)
+    println("${l.size}/${l[0]}")           // 3/1
+}
+EOF
+
+# The same split in the OTHER direction: a `Collection<Int?>` (whose element IS `Nullable<int32>`) handed to a generic
+# whose RESULT is an `Array<T>` (whose element must be `object`). One `T`, two required answers.
+ng_local roundtrip-nullable-vt-generic-collection-to-array '3/3' \
+	'same-module: a List<Int?> element carried into an Array<Int?> by a generic Array<T> extension (#86 D2)' <<'EOF'
+fun main() {
+    val p = arrayOfNulls<Int>(2).plus(listOf<Int?>(3))   // receiver element object, Collection element Nullable<int32>
+    println("${p.size}/${p[2]}")           // 3/3
 }
 EOF
 

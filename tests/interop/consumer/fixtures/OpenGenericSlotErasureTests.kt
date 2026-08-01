@@ -26,8 +26,22 @@ import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import System.Linq.Enumerable
 import System.IO.Path
 import System.Text.StringBuilder as IntropOgNetStringBuilder
+import System.ArraySegment
+import System.TimeSpan
 
 fun <T> intropOgBoxOf(x: T?): T? = x
+
+// #86 D2 — the struct-ness ORACLE decides whether `Array<X?>` is `object[]`, and a CONSTRUCTED BCL struct is a struct.
+// Only a .NET-referencing lane can witness it: no Kotlin stdlib type reaches this arm, so a same-assembly fixture
+// cannot tell "classified as a reference" from "correctly typed". Classifying only the argument-LESS name left
+// `Array<ArraySegment<String>?>` a `Nullable<ArraySegment<String>>[]` while the open `Array<T?>` it is passed to was
+// `object[]` — the unrelated pair D2 exists to delete — and the process SEGFAULTED on the first element read, with no
+// exception and no diagnostic.
+fun <T> intropOgPresentCount(xs: Array<T?>): Int {
+    var n = 0
+    for (x in xs) if (x != null) n = n + 1
+    return n
+}
 
 class OpenGenericSlotErasureTests {
     // The erased argument at a VALUE instantiation: `Enumerable.Repeat<Int?>(<object>, 3)`.
@@ -74,5 +88,24 @@ class OpenGenericSlotErasureTests {
     @TestAttribute
     fun erasedReferenceIntoNonGenericConstructorSlot() {
         assertEquals("cd", IntropOgNetStringBuilder(intropOgBoxOf<String>("cd")).ToString())
+    }
+
+    // #86 D2 — an `Array<X?>` whose element is a CONSTRUCTED BCL struct meets the open `Array<T?>` slot. The two
+    // controls beside it are what make the constructed arm the subject: an argument-LESS struct classified correctly
+    // even before, and a constructed REFERENCE must NOT erase — it keeps its typed array.
+    @TestAttribute
+    fun constructedValueElementArrayIsObjectArray() {
+        val segs = arrayOfNulls<ArraySegment<String>>(2)
+        segs[0] = ArraySegment<String>(arrayOf("a", "b"))
+        assertEquals(2, segs.size)                             // 2
+        assertEquals(1, intropOgPresentCount(segs))            // 1   the constructed struct element, through Array<T?>
+
+        val spans = arrayOfNulls<TimeSpan>(2)                  // argument-less struct control
+        spans[0] = TimeSpan(0, 0, 5)
+        assertEquals(1, intropOgPresentCount(spans))           // 1
+
+        val lists = arrayOfNulls<List<String>>(2)              // constructed REFERENCE control: stays a typed array
+        lists[0] = listOf("x")
+        assertEquals(1, intropOgPresentCount(lists))           // 1
     }
 }

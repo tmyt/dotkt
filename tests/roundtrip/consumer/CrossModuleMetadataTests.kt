@@ -45,6 +45,12 @@ import genq.SlotDerived
 import genq.holderOf
 import genq.invokeNullable
 import genq.unwrapSlot
+import genarr.boxedTriple
+import genarr.sumPresent
+import genarr.joinPresent
+import genarr.firstPresent
+import genarr.firstTwo
+import genarr.crate
 import listparam.takesList
 import listparam.takesMutable
 import listparam.takesMap
@@ -171,6 +177,46 @@ class GenericMetadataRoundtripTests {
         // propagated from SlotConsumer<T> and remain callable through the concrete derived type after re-import.
         val derived = SlotDerived<String>()
         ClassicAssert.AreEqual("bridge", derived.accept(Slot<String?>("bridge")))
+    }
+
+    // #86 D2: `Array<X?>` across the module boundary at a VALUE element. The producing assembly emits `object[]` and
+    // states the pre-erasure `Array<Int?>` on its carrier; this consumer re-derives BOTH independently, so a
+    // disagreement between them is what the case measures — a re-imported surface the consumer's own `Array<Int?>`
+    // cannot bind to, or a slot it binds to and then indexes as the wrong array. The `Array<String?>` control keeps
+    // its `string[]`: a reference element is not part of D2 and must not move.
+    @TestAttribute
+    fun nullableValueArraysRoundTrip() {
+        val a = boxedTriple(4)                            // Array<Int?> RETURN
+        ClassicAssert.AreEqual(3, a.size)                 // 3
+        ClassicAssert.AreEqual(4, a[0])                   // 4
+        ClassicAssert.IsNull(a[1])                        // null   the absent element survives the boundary
+        ClassicAssert.AreEqual(8, a[2])                   // 8
+        ClassicAssert.AreEqual(12, sumPresent(a))         // 12  the library's own array back through a PARAM
+        val built = arrayOfNulls<Int>(2)                  // an Array<Int?> the CONSUMER builds
+        built[0] = 5
+        ClassicAssert.AreEqual(5, sumPresent(built))      // 5
+        ClassicAssert.AreEqual(0, sumPresent(arrayOfNulls<Int>(2)))          // 0   all-null
+        ClassicAssert.AreEqual("a,b", joinPresent(arrayOf("a", null, "b")))  // a,b (reference control)
+
+        // The OPEN `Array<T?>` slot, at the value instantiation and at the reference one.
+        ClassicAssert.AreEqual(7, firstPresent(arrayOf<Int?>(null, 7)))      // 7
+        ClassicAssert.AreEqual("x", firstPresent(arrayOf<String?>(null, "x")))  // x
+        val fresh: Array<Int?> = firstTwo(a)              // an Array<T?> allocated on the far side
+        ClassicAssert.AreEqual(2, fresh.size)             // 2
+        ClassicAssert.AreEqual(4, fresh[0])               // 4
+        ClassicAssert.IsNull(fresh[1])                    // null
+        fresh[1] = 9
+        ClassicAssert.AreEqual(9, fresh[1])               // 9
+        val freshRefs: Array<String?> = firstTwo(arrayOf<String?>("p", null, "q"))
+        ClassicAssert.AreEqual("p", freshRefs[0])         // p   (reference control: still a string[])
+        ClassicAssert.IsNull(freshRefs[1])                // null
+
+        // The array NESTED in another generic — the carrier whose erasure lands under an array under a type argument.
+        val c = crate(a, "tag")
+        ClassicAssert.AreEqual(3, c.payload.size)         // 3
+        ClassicAssert.AreEqual(4, c.payload[0])           // 4
+        ClassicAssert.IsNull(c.payload[1])                // null
+        ClassicAssert.AreEqual("tag", c.tag)              // tag
     }
 
     // ktproj-listparam (#27): kotlin.collections.* params surface as BCL ifaces in the dll; dll2klib reverse-maps

@@ -594,22 +594,20 @@ public actual inline fun BooleanArray.copyOf(newSize: Int): BooleanArray = Boole
 @kotlin.internal.InlineOnly
 public actual inline fun CharArray.copyOf(newSize: Int): CharArray = CharArray(newSize) { if (it < this.size) this[it] else '\u0000' }
 
-// copyOf(newSize) HONESTLY returns `Array<T?>` (extra slots are null). For a value-type T the canonical runtime
-// representation of `Array<T?>` is `Nullable<T>[]` (#113). This GENERIC body cannot allocate `Nullable<!T>[]`
-// statically (there is no `T : struct` constraint), and a plain `arrayOfNulls<T>(newSize)` here collapses to a bare
-// `newarr !T` (an `int[]`) — bir2cir's ReferenceNullableStrip strips `Nullable(Tv)` on an OPEN type-variable, which is
-// LOAD-BEARING for the plus/toTypedArray reify-back siblings but WRONG for this `Array<T?>`-returning site (#124): the
-// `int[]` corrupts on a `Nullable<int>` read and fails the consumer's `as Array<T?>` cast. Unlike plus/copyOfRange,
-// copyOf(newSize) is the only generic-body `arrayOfNulls<T>` site whose result escapes as `Array<T?>`, so it must build
-// the result by RUNTIME reflection on the receiver's element type — the value-type sibling of the no-arg copyOf
-// (Array.Clone) and copyOfRange (#117): allocate `Nullable<elem>[]` for a value-type elem (else `elem[]`) and
-// per-element SetValue the prefix. CLR nullable boxing lifts a boxed T into a `Nullable<T>` slot; `Array.Copy` does NOT
-// lift. The null tail is free — CreateInstance zero-fills (HasValue=false / null ref). Exact for Int/Long/Double/Char
-// AND reference T, no per-element-type special-casing.
+// copyOf(newSize) HONESTLY returns `Array<T?>` (extra slots are null), and `Array<X?>` is `object[]` exactly when `X`
+// may be a value type (#86 D2) — a REFERENCE element keeps its typed array, so `Array<String?>` is a `string[]`. This
+// generic body cannot spell either statically (there is no `T : struct` constraint and no reified `T`), so it decides
+// the same way at RUNTIME, off the receiver's own element type: a value element allocates `object[]`, a reference
+// element allocates `elem[]`. Both inhabit the erased `object[]` the declaration states — `string[]` by reference-array
+// covariance — while a consumer at `T = String` gets the real `string[]` its `Array<String?>` slot names.
+//
+// The prefix is copied through `System.Array.SetValue`, which BOXES a value element into an object slot; `Array.Copy`
+// would not (it refuses an `int32[]` -> `object[]` element conversion). The null tail is free — CreateInstance
+// zero-fills, and a zeroed `object` slot IS a null. Exact for Int/Long/Double/Char AND reference T, with no
+// per-element-type special-casing.
 @kotlin.clr.ClrTypeAlias("System.Type")
 private interface DotktType {
     @kotlin.clr.ClrIntrinsic("GetElementType") fun getElementType(): DotktType
-    @kotlin.clr.ClrIntrinsic("MakeGenericType") fun makeGenericType(typeArguments: Array<DotktType>): DotktType
     @kotlin.clr.ClrProperty(kotlin.clr.READ, "IsValueType") fun isValueType(): Boolean
 }
 
@@ -621,23 +619,18 @@ private interface DotktArray {
 @kotlin.clr.ClrIntrinsic("GetType")                            // object.GetType() -> the receiver's runtime array Type (e.g. int[])
 private fun Any.dotktRuntimeType(): DotktType = TODO("clr binding should be implemented")
 
-@kotlin.clr.ClrIntrinsic("System.Type.GetType")                // static Type.GetType(string) — resolves the open `System.Nullable`1` from CoreLib
+@kotlin.clr.ClrIntrinsic("System.Type.GetType")                // static Type.GetType(string) — resolves System.Object from CoreLib
 private fun dotktTypeNamed(name: String): DotktType = TODO("clr binding should be implemented")
 
-@kotlin.clr.ClrIntrinsic("System.Nullable.GetUnderlyingType")  // static; non-null iff `t` is already a `Nullable<X>` (avoid a Nullable<Nullable<X>> double-wrap)
-private fun dotktNullableUnderlying(t: DotktType): DotktType? = TODO("clr binding should be implemented")
-
-// DECLARES `Array<T?>` so the reflectively-allocated array flows to `result`/`return` with NO `as`-cast node: the
-// blanket `Array(Nullable(Tv))` erasure would rewrite a cast target to `object[]`, and a value-type `Nullable<int>[]`
-// is NOT castclass-able to `object[]` (struct-element arrays are not covariant) — an InvalidCast on the fixed path.
+// DECLARES `Array<T?>` so the reflectively-allocated array flows to `result`/`return` with NO `as`-cast node: a cast
+// target would be rewritten to the erased `object[]`, and a `string[]` reaching it as a castclass rather than as the
+// covariant assignment it is would be an unnecessary check on the reference path.
 @kotlin.clr.ClrIntrinsic("System.Array.CreateInstance")        // static Array.CreateInstance(Type, int) -> Array
 private fun <T> dotktNewArrayOfType(elementType: DotktType, length: Int): Array<T?> = TODO("clr binding should be implemented")
 
 public actual fun <T> Array<T>.copyOf(newSize: Int): Array<T?> {
     val elem = (this as Any).dotktRuntimeType().getElementType()
-    val outElem = if (dotktNullableUnderlying(elem) != null) elem                                    // receiver already `Nullable<X>[]`
-                  else if (elem.isValueType()) dotktTypeNamed("System.Nullable`1").makeGenericType(arrayOf(elem))
-                  else elem
+    val outElem = if (elem.isValueType()) dotktTypeNamed("System.Object") else elem
     val result: Array<T?> = dotktNewArrayOfType(outElem, newSize)
     val limit = if (newSize < this.size) newSize else this.size
     for (i in 0 until limit) (result as DotktArray).setValue(this[i], i)
@@ -761,11 +754,18 @@ public actual fun CharArray.fill(element: Char, fromIndex: Int = 0, toIndex: Int
     for (i in fromIndex until toIndex) this[i] = element
 }
 
+// `plus` returns a NON-null `Array<T>`, a genuine `!T[]`, so it allocates the way `copyOfRange` does: from the
+// RECEIVER's own runtime array type, which preserves the exact element type at every instantiation. The
+// `arrayOfNulls<T>(n) … as Array<T>` shape these bodies used to carry cannot serve any more — `arrayOfNulls` honestly
+// returns `Array<T?>` = `object[]` (#86 D2) and `object[]` is not castable to `int32[]` — and the Kotlin array
+// constructor is refused for a bare type-parameter element (kotc leaves `Array<T>(n){…}` unlowered). The same
+// reasoning applies to every generic `plus` overload below.
 public actual operator fun <T> Array<T>.plus(element: T): Array<T> {
-    val result = arrayOfNulls<T>(this.size + 1)
-    for (i in this.indices) result[i] = this[i]
+    @Suppress("UNCHECKED_CAST")
+    val result = (this as Any).nativeGetType().nativeCreateArrayLike(this.size + 1) as Array<T>
+    this.nativeArrayCopy(0, result, 0, this.size)
     result[this.size] = element
-    return result as Array<T>
+    return result
 }
 
 public actual operator fun ByteArray.plus(element: Byte): ByteArray = ByteArray(this.size + 1) { if (it < this.size) this[it] else element }
@@ -784,15 +784,16 @@ public actual operator fun BooleanArray.plus(element: Boolean): BooleanArray = B
 
 public actual operator fun CharArray.plus(element: Char): CharArray = CharArray(this.size + 1) { if (it < this.size) this[it] else element }
 
+@Suppress("UNCHECKED_CAST")
 public actual operator fun <T> Array<T>.plus(elements: Collection<T>): Array<T> {
-    val result = arrayOfNulls<T>(this.size + elements.size)
-    for (i in this.indices) result[i] = this[i]
+    val result = (this as Any).nativeGetType().nativeCreateArrayLike(this.size + elements.size) as Array<T>
+    this.nativeArrayCopy(0, result, 0, this.size)
     var index = this.size
     for (e in elements) {
         result[index] = e
         index++
     }
-    return result as Array<T>
+    return result
 }
 
 public actual operator fun ByteArray.plus(elements: Collection<Byte>): ByteArray {
@@ -883,11 +884,12 @@ public actual operator fun CharArray.plus(elements: Collection<Char>): CharArray
     return result
 }
 
+@Suppress("UNCHECKED_CAST")
 public actual operator fun <T> Array<T>.plus(elements: Array<out T>): Array<T> {
-    val result = arrayOfNulls<T>(this.size + elements.size)
-    for (i in this.indices) result[i] = this[i]
+    val result = (this as Any).nativeGetType().nativeCreateArrayLike(this.size + elements.size) as Array<T>
+    this.nativeArrayCopy(0, result, 0, this.size)
     for (i in elements.indices) result[this.size + i] = elements[i]
-    return result as Array<T>
+    return result
 }
 
 public actual operator fun ByteArray.plus(elements: ByteArray): ByteArray {

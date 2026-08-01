@@ -391,9 +391,14 @@ static partial class NullableTvErasureCallRealign
                 return EvalNewArray(obj, ctx);
             case "forEachInline":
                 // A loop VARIABLE is a slot, and this node states its type in `elem`. Binding it is what lets a value
-                // consumer inside the loop body be reconciled at all. (`forArray` carries no `elem` — its loop var is
-                // the array's element and needs no separate statement — so it stays on the default walk.)
+                // consumer inside the loop body be reconciled at all.
                 return EvalForEach(obj, ctx);
+            case "forArray":
+                // `for (x in arr)` states BOTH the `ldelem` token and the loop variable's slot in one `elem`, so it is
+                // the read axis at an array element exactly as `arrayGet` is — and it must be re-derived from the array
+                // that actually flows. An `Array<Int?>` param is `object[]` (#86 D2) while the stamp taken before the
+                // erasure still says `Nullable<int32>`; leaving it emits `ldelem Nullable<int32>` over an `object[]`.
+                return EvalForArray(obj, ctx);
             case "nullableHasValue":
             case "nullableValue":
                 // Both read a structural `Nullable<V>` — `HasValue` and `Value`. An erased slot hands them an
@@ -445,28 +450,15 @@ static partial class NullableTvErasureCallRealign
         var name = Str(obj["name"]);
         var declType = TypeJson.Read(obj["type"]);
         if (name == null) return;
-        // A #120 reify-back local is a deliberate, chain-consistent `!T[]`: its allocation, its element tokens and its
-        // trailing `as Array<T>` were collapsed together. Re-deriving its slot from `arrayOfNulls`' declared
-        // `Array<T?>` would widen it to `object[]` over a `newarr !T` — the value-type miscompile that collapse exists
-        // to prevent (`arrayOf(1,2,3).plus(4)` printing random ints).
-        if (NullableGenericErasure.ReifiedArrayVars.Contains(obj))
-        {
-            env[name] = declType;
-            return;
-        }
         if (declType != null && initType != null && !initType.Equals(declType) && IsObjectErasureOf(initType, declType))
         {
-            if (initType is TypeNode.Fqn { Name: "object", Args: null })
+            // A DIFFERENCE THE CLR CAN CONVERT keeps the declared slot and wraps the init: the whole value erased to a
+            // TOP-LEVEL `object` (`val x: Int? = r.v`), reconciled by `unbox.any` for a value declared type and
+            // `castclass` for a reference one. Anything else is retyped below.
+            if (obj["init"] is JsonObject initNode
+                && CastForTarget(initNode, initType, declType) is JsonNode wrappedInit)
             {
-                // The whole value erased to a TOP-LEVEL `object` (e.g. `val x: Int? = r.v`). Keep the
-                // declared slot and wrap the init in a `cast`->declared so ilemit's unbox.any reconciles the
-                // boxed value / genuine null back to Nullable<V> (or castclass for a reference declared type).
-                obj["init"] = new JsonObject
-                {
-                    ["k"] = "cast",
-                    ["type"] = TypeJson.Write(declType),
-                    ["e"] = obj["init"].DeepClone(),
-                };
+                obj["init"] = wrappedInit;
                 env[name] = declType;
             }
             else
@@ -524,13 +516,16 @@ static partial class NullableTvErasureCallRealign
         var methodArgs = (obj["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray();
         var decl = LookupDecl(owner.Name, method, (obj["args"] as JsonArray)?.Count ?? 0,
             methodArgs?.Length ?? 0, isStatic: false, idx);
+        // Before anything is derived FROM the type arguments, give them their physical form (#86 D2).
+        CanonicalizeArrayTypeArgs(obj, decl, methodArgs);
         // THE ARGUMENT AXIS: each parameter slot is `Subst(Erase(declared param))` exactly as the return is; with no
         // declaration the call's own descriptor stands in (see RealignArgs).
         RealignArgs(obj, decl?.Params, decl?.ParamsRefused, owner.Args, methodArgs, ctx);
         if (decl?.Ret == null) return stampedRet;   // no declaration, or an ambiguous same-name/same-arity overload set
 
-        var derived = Subst(NullableGenericErasure.EraseNullableTv(decl.Ret), owner.Args, methodArgs);
-        return ApplyDerivedRet(obj, derived, stampedRet);
+        var erasedRet = NullableGenericErasure.EraseNullableTv(decl.Ret, _isValue);
+        var derived = Subst(erasedRet, owner.Args, methodArgs);
+        return ApplyDerivedRet(obj, derived, stampedRet, !erasedRet.Equals(decl.Ret));
     }
 
     static TypeNode EvalCallStatic(JsonObject obj, Ctx ctx)
@@ -555,10 +550,13 @@ static partial class NullableTvErasureCallRealign
             else
                 ctx.Idx.TopLevel.TryGetValue(method + "|" + argCount, out decl);
         }
+        // Before anything is derived FROM the type arguments, give them their physical form (#86 D2).
+        CanonicalizeArrayTypeArgs(obj, decl, methodArgs);
         RealignArgs(obj, decl?.Params, decl?.ParamsRefused, ownerArgs, methodArgs, ctx);
         if (decl?.Ret == null) return stampedRet;   // no declaration, or an ambiguous same-name/same-arity overload set
-        var derived = Subst(NullableGenericErasure.EraseNullableTv(decl.Ret), ownerArgs, methodArgs);
-        return ApplyDerivedRet(obj, derived, stampedRet);
+        var erasedRet = NullableGenericErasure.EraseNullableTv(decl.Ret, _isValue);
+        var derived = Subst(erasedRet, ownerArgs, methodArgs);
+        return ApplyDerivedRet(obj, derived, stampedRet, !erasedRet.Equals(decl.Ret));
     }
 
     // What the CALL SITE says its result is: the explicit `ret`/`dynRet` it carries.
@@ -583,11 +581,22 @@ static partial class NullableTvErasureCallRealign
     // that is what stops ilemit re-inferring the member's return from a call whose surrounding slots have moved, and
     // it is the same shape UncheckedGenericCastReturnErasure.ApplyReferenced uses at this boundary. `sty` moves with
     // it, per spec §2.7 — a stamp is a claim about the value produced, never a note about the node it used to be.
-    static TypeNode ApplyDerivedRet(JsonObject obj, TypeNode derived, TypeNode stampedRet)
+    // A call with NO result stamp at all is still in the axis when the DECLARATION itself was erased — `firstTwo(xs):
+    // Array<T?>` states `object[]` whatever `T` is, and a caller binding it to an `Array<String?>` slot (`string[]`)
+    // has nothing to reconcile against unless the call says what it produces. Only that case writes a `ret` where
+    // none stood: `erasureApplied` is false wherever `Erase` left the declared return alone, so an ordinary generic
+    // call keeps stating nothing and ilemit keeps inferring it from the member exactly as before.
+    static TypeNode ApplyDerivedRet(JsonObject obj, TypeNode derived, TypeNode stampedRet, bool erasureApplied)
     {
-        if (derived == null || stampedRet == null
-            || derived.Equals(stampedRet) || !IsObjectErasureOf(derived, stampedRet))
-            return stampedRet;
+        if (derived == null) return stampedRet;
+        if (stampedRet == null)
+        {
+            if (!erasureApplied) return null;
+            obj["ret"] = TypeJson.Write(derived);
+            RestampSty(obj, derived);
+            return derived;
+        }
+        if (derived.Equals(stampedRet) || !IsObjectErasureOf(derived, stampedRet)) return stampedRet;
         obj["ret"] = TypeJson.Write(derived);
         if (obj["dynRet"] != null) obj["dynRet"] = TypeJson.Write(derived);
         RestampSty(obj, derived);
@@ -648,6 +657,54 @@ static partial class NullableTvErasureCallRealign
                out var ret, out var ps, out var refused)
             ? new DeclSig { Ret = ret, Params = ps, ParamsRefused = refused }
             : null;
+
+    // D2'S TYPE-ARGUMENT HALF, at the RESULT. A callee that hands back a bare `Array<T>` produces a physical `!!T[]`,
+    // and the caller's slot for it is `Array<Int?>` = `object[]` when `T` binds to a nullable value type — so the only
+    // instantiation whose result the caller can hold is `T = object`. `arrayOf<Int?>(1, null)` is the shape: its own
+    // vararg pack is built here and states nothing, but what it RETURNS has to be the array the slot names.
+    //
+    // This is NOT the rejected call-site type-argument collapse: the argument is not weakened because the callee is
+    // generic, it is weakened because ONE physical slot — an array element — has a single representation and the
+    // instantiation has to name it. A type argument that never reaches an array is untouched, so `listOf<Int?>` keeps
+    // its `List<Nullable<int32>>`. The PARAMETER side is settled by what actually flows (UnifyMethodArgs), which needs
+    // no guess about whether the array already exists.
+    //
+    // Only a BARE type variable DIRECTLY under an `Array` constrains its argument. `Array<T?>` is `object[]` whatever
+    // `T` is, so it says nothing about `T`; and `Array<List<T>>` is `List<!!T>[]`, whose element genuinely stays
+    // `List<Nullable<int32>>` — forcing `object` there would name an array the caller does not hold.
+    static void CanonicalizeArrayTypeArgs(JsonObject obj, DeclSig decl, TypeNode[] methodArgs)
+    {
+        if (decl == null || methodArgs == null || obj["typeArgs"] is not JsonArray typeArgs) return;
+        for (var i = 0; i < methodArgs.Length && i < typeArgs.Count; i++)
+        {
+            if (!NullableGenericErasure.IsNullableMaybeValue(methodArgs[i], _isValue)) continue;
+            if (!MentionsArrayOf(decl.Ret, i)) continue;
+            methodArgs[i] = new TypeNode.Fqn("object");
+            typeArgs[i] = TypeJson.Fqn("object");
+        }
+    }
+
+    static bool MentionsArrayOf(TypeNode t, int i) => t switch
+    {
+        null => false,
+        TypeNode.Array a => IsDirectElement(a.Elem, i) || MentionsArrayOf(a.Elem, i),
+        TypeNode.Fqn { Args: { } args } => args.Any(x => MentionsArrayOf(x, i)),
+        TypeNode.Nullable n => MentionsArrayOf(n.Of, i),
+        TypeNode.Oblivious o => MentionsArrayOf(o.Of, i),
+        TypeNode.ByRef b => MentionsArrayOf(b.Of, i),
+        TypeNode.Fn fn => MentionsArrayOf(fn.Ret, i) || fn.Params.Any(p => MentionsArrayOf(p, i))
+                          || (fn.Recv != null && MentionsArrayOf(fn.Recv, i)),
+        _ => false,
+    };
+
+    // The element of an `Array<…>`, unwrapping further array nesting: `Array<Array<T>>` constrains `T` exactly as
+    // `Array<T>` does, because `!!T[][]` is an `object[][]` only at `T = object`.
+    static bool IsDirectElement(TypeNode elem, int i) => elem switch
+    {
+        TypeNode.Tv { Scope: "method" } tv => tv.I == i,
+        TypeNode.Array a => IsDirectElement(a.Elem, i),
+        _ => false,
+    };
 
     // Substitute class-scope `tv{type,i}` with `typeArgs[i]` and method-scope `tv{method,i}` with `methodArgs[i]`,
     // recursively. Returns null when a needed binding is unavailable (caller skips the rewrite).

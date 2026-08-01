@@ -53,14 +53,12 @@ done
 # "FIXED — remove it" WITHOUT reddening the gate; any name NOT listed that fails prints NEW-FAIL and reddens.
 # Computed by lib.sh xfail_diff at the bottom.
 declare -A XFAIL_PKG=(
-	# #86, both halves of case_csharp_consumer. Their assertions are written against the POST-erasure ABI — the ABI
-	# break is the sanctioned decision in #86 — so they are red until it lands, and they are the reason the case
-	# exists: no other gate sees the physical signature, because every other one re-imports the library as Kotlin.
-	# The uniform-erasure core step landed: the top-level T? param, ctor param and return are `System.Object` with a
-	# carrier, and a C# caller passes `null` through all three. What is left in BOTH halves is `Array<X?>` alone —
-	# the one position where the two representations are unrelated CLR types rather than convertible ones.
-	[nullable-generic-shape]='#86 D2: Array<Int?> is still Nullable<int32>[] where the erased/open form is object[], and the two are unrelated CLR types (ECMA-335 I.8.7.1); pruned by the Array<X?>-is-object[] step of #86'
-	[csharp-consumer]='#86 D2: a C# consumer cannot bind an Array<Int?> to object[] in either direction (the null-at-T=int calls through firstOr/NBox now compile and run); pruned by the Array<X?>-is-object[] step of #86'
+	# EMPTY. Both halves of case_csharp_consumer were listed here for #86: their assertions are written against the
+	# POST-erasure ABI — the ABI break is the sanctioned decision in #86 — so they stayed red until it landed, and
+	# they are the reason the case exists (no other gate sees the physical signature; every other one re-imports the
+	# library as Kotlin). The uniform-erasure core made the top-level `T?` param, ctor param and return
+	# `System.Object` with a carrier; `Array<X?>`-is-`object[]` (D2) closed the last two slots, so a C# caller now
+	# binds `object[]` in both directions and every probe matches.
 )
 
 # The two XFAIL-listed verdicts above are per-case booleans, so on their own they only say "it did not work" —
@@ -72,20 +70,16 @@ declare -A XFAIL_PKG=(
 #
 # Sorted, one per line, with paths and the trailing [project] suffix stripped — a diagnostic's identity here is
 # its line, code and message, not where the scratch workspace happened to be.
-CS_EXPECTED_DIAGNOSTICS="$(LC_ALL=C sort -u <<'EOF'
-line 16: error CS0029: Cannot implicitly convert type 'int?[]' to 'object[]'
-line 17: error CS1503: Argument 1: cannot convert from 'object[]' to 'int?[]'
-line 18: error CS1503: Argument 1: cannot convert from 'object[]' to 'int?[]'
-EOF
-)"
+# EMPTY, like its NG_SHAPE_EXPECTED sibling: the three `int?[]` / `object[]` conversion errors it used to pin were
+# the C# consumer's view of `Array<Int?>` before #86 D2 made it `object[]`, and the case now builds and runs. The
+# drift check below is reached only while the case is FAILING, so an empty set means it has nothing left to guard.
+CS_EXPECTED_DIAGNOSTICS=""
 
-# The refcheck --shape mismatches the erasure has not yet fixed. `System.Int32`'s assembly qualification inside
-# Nullable`1[[…]] carries a runtime version, so it is collapsed before comparison; nothing else is normalized.
-NG_SHAPE_EXPECTED="$(LC_ALL=C sort <<'EOF'
-refcheck: nglib.NgArrays.boxedPair slot ret is [System.Nullable`1[[System.Int32]][]] carrier=0; expected [System.Object[]] carrier=any
-refcheck: nglib.NgArrays.sumPresent slot p0 is [System.Nullable`1[[System.Int32]][]] carrier=0; expected [System.Object[]] carrier=any
-EOF
-)"
+# The refcheck --shape mismatches the erasure has not yet fixed — EMPTY now that every probed slot is its
+# declaration's erasure. The drift check below only runs while mismatches exist, so an empty set means the verdict
+# passes and there is nothing left for it to guard. `System.Int32`'s assembly qualification inside Nullable`1[[…]]
+# carries a runtime version, so it is collapsed before comparison; nothing else is normalized.
+NG_SHAPE_EXPECTED=""
 
 # The package version the pack stamps (single-sourced in DotKt.Versions.props). The Sdk="DotKt.Sdk/$VER"
 # reference, the second library's PackageReference, and the MPP global.json all pin THIS version, so a
