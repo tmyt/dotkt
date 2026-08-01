@@ -12,7 +12,7 @@
 +"name":"get","static":false,"override":false,"virtual":true,"vis":"public","params":[],"ret":{"t":"nullable","of":{"t":"fqn","name":"System.Int32"}}
 +"name":"dotkt$ovslot$get$0"
 +"vis":"private","params":[],"ret":{"t":"fqn","name":"object"}
-+"clrInterfaceImpls":[{"owner":{"t":"fqn","name":"Src","args":[{"t":"fqn","name":"System.Int32"}]},"member":"get","params":[],"ret":{"t":"fqn","name":"object"}}]
++"clrInterfaceImpls":[{"owner":{"t":"fqn","name":"Src","args":[{"t":"fqn","name":"System.Int32"}]},"member":"get","arity":0,"params":[],"ret":{"t":"fqn","name":"object"}}]
 
 # And the covariant-return pass does NOT also bridge it.
 -dotkt$covar$get$
