@@ -296,6 +296,10 @@ sealed partial class Emitter
                     || !impl.TryGetProperty("member", out var memberNode)
                     || memberNode.GetString() != member
                     || !impl.TryGetProperty("params", out var ps)) continue;
+                // ARITY comes from the DESCRIPTOR, not from the slot being matched. Taking it from the slot made a
+                // directive for `put(T?)` answer for `<U> put(T?)` as well — one bridge wired to two CLR slots,
+                // which the CLR rejects outright.
+                if (DescribedArity(impl) != slotSig.GenericArity) continue;
                 var describedSig = SigKey(member, slotSig.GenericArity,
                     ps.EnumerateArray().Select(p => DotKt.Bir.TypeNode.Read(p)));
                 if (describedSig != slotSig) continue;
@@ -312,21 +316,24 @@ sealed partial class Emitter
     //
     // Without this a bridge for a referenced supertype is emitted and then never wired: the name-based lookup below
     // searches for a body CALLED like the slot, and a bridge is deliberately named nothing of the sort.
-    MethodBuilder FindExternalInterfaceBridge(TypeInfo ti, DotKt.Bir.TypeNode.Fqn ifaceSpec, string member, Type[] ips)
+    MethodBuilder FindExternalInterfaceBridge(TypeInfo ti, Type ifaceType, string member,
+        int methodArity, Type[] ips)
     {
         if (ti.Def.ValueKind != JsonValueKind.Object || !ti.Def.TryGetProperty("methods", out var methods)) return null;
-        var ifaceKey = SigCanon(ifaceSpec);
         foreach (var method in methods.EnumerateArray())
         {
             if (!method.TryGetProperty("clrInterfaceImpls", out var impls)
                 || !method.TryGetProperty("name", out var nameNode)) continue;
             foreach (var impl in impls.EnumerateArray())
             {
+                // The owner is compared as a RESOLVED TYPE, not as a spec string: a slot reached through a referenced
+                // interface's own base is enumerated by reflection and has no spec to canonicalize against.
                 if (!impl.TryGetProperty("owner", out var ownerNode)
                     || ReadFqn(ownerNode) is not DotKt.Bir.TypeNode.Fqn owner
-                    || SigCanon(owner) != ifaceKey
+                    || MapType(owner) != ifaceType
                     || !impl.TryGetProperty("member", out var memberNode)
                     || memberNode.GetString() != member) continue;
+                if (DescribedArity(impl) != methodArity) continue;
                 if (!ti.Methods.TryGetValue(nameNode.GetString(), out var bridge)) continue;
                 if (_mparams.TryGetValue(bridge, out var bps) && bps.Length == ips.Length
                     && bps.Zip(ips, SlotParamMatches).All(x => x))
@@ -334,6 +341,32 @@ sealed partial class Emitter
             }
         }
         return null;
+    }
+
+    // The METHOD GENERIC ARITY a MethodImpl descriptor states. Part of the CLI signature (ECMA-335 I.8.6.1.6), so
+    // part of the identity a directive is matched by; absent on an older descriptor, which then means arity 0.
+    static int DescribedArity(JsonElement impl) =>
+        impl.TryGetProperty("arity", out var a) && a.ValueKind == JsonValueKind.Number ? a.GetInt32() : 0;
+
+    // The base-class slot a `clrBaseImpls` descriptor names when its owner lives in a REFERENCED assembly. The
+    // owner is a real reflection Type, so the slot is a real MethodInfo: match by name, method generic arity and the
+    // descriptor's own (already-constructed) parameter vector. Resolution only — the descriptor decided the slot.
+    MethodInfo FindExternalBaseSlot(DotKt.Bir.TypeNode.Fqn ownerFqn, string member, int arity, JsonElement ps)
+    {
+        var owner = MapType(ownerFqn);
+        if (owner == null) return null;
+        var want = ps.EnumerateArray().Select(p => MapType(p)).ToArray();
+        MethodInfo[] all;
+        try { all = owner.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance); }
+        catch (NotSupportedException) { return null; }   // a TypeBuilderInstantiation is never a referenced base
+        var cands = all.Where(m => m.Name == member
+                                   && m.GetGenericArguments().Length == arity
+                                   && m.GetParameters().Length == want.Length
+                                   && m.GetParameters().Zip(want, (p, w) => SlotParamMatches(p.ParameterType, w)).All(x => x))
+            .ToList();
+        // Never guess: an ambiguous or absent slot is left unwired rather than mis-bound, and the type then fails to
+        // load with the CLR's own message naming the member.
+        return cands.Count == 1 ? cands[0] : null;
     }
 
     // A STATIC method declared on a GENERIC emitted class (a Kotlin companion fun of a generic class —

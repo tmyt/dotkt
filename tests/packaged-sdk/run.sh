@@ -509,7 +509,7 @@ EOF
 			"nglib.NgArrays|sumPresent|p0|System.Object[]|any" \
 			'nglib.NgLists|boxedList|ret|System.Collections.Generic.IReadOnlyList`1[System.Object]|1' \
 			'nglib.NgLists|sumPresent|p0|System.Collections.Generic.IReadOnlyList`1[System.Object]|1' \
-			'nglib.NgLists|joinPresent|p0|System.Collections.Generic.IReadOnlyList`1[System.String]|0' 
+			'nglib.NgLists|joinPresent|p0|System.Collections.Generic.IReadOnlyList`1[System.String]|0'
 		do
 			IFS='|' read -r pOwner pMember pSlot pType pCarrier <<<"$probe"
 			if ! dotnet "$REFCHECK/bin/refcheck.dll" --shape "$libdll" "$pOwner" "$pMember" "$pSlot" "$pType" "$pCarrier" \

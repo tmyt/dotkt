@@ -1,0 +1,7 @@
+# The RETURN channel, which is not the parameter one. The node's own `ret` is the caller's KOTLIN view and is erased
+# as a Kotlin slot, so it reads `List<object>` and says nothing; the refusal has to read what the MEMBER declares,
+# stamped beside its parameter vector. Without that stamp this case COMPILES and leaves a List<Nullable<Int32>> on a
+# stack typed as Kotlin's List<object> — a wrong program with no diagnostic at all.
+the .NET member 'fgn.Api.Make' declares
+at its return
+which NO Kotlin expression inhabits

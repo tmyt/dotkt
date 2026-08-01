@@ -401,6 +401,29 @@ sealed partial class Emitter
                         MethodInfo[] ifaceMs; bool reanchor;
                         try { ifaceMs = itype.GetMethods(); reanchor = false; }
                         catch (NotSupportedException) { ifaceMs = itype.GetGenericTypeDefinition().GetMethods(); reanchor = true; }
+                        // A REFERENCED interface's own BASE interfaces declare slots this class must fill too, and
+                        // reflection's `GetMethods()` on an interface does not include them — so `class C :
+                        // Derived<Int>` never saw `Sink`'s `accept` at all. They are wired from the RESOLVED
+                        // directive only: bir2cir enumerated the same graph and named the declaring interface, so
+                        // there is nothing to infer here, and a slot it made no decision about is left exactly as
+                        // the implicit name/signature match already leaves it.
+                        // A TypeBuilderInstantiation answers neither question (both throw), and it is never a
+                        // referenced interface — the guard is the same one the method enumeration above carries.
+                        Type[] baseIfaces;
+                        try { baseIfaces = itype.GetInterfaces(); }
+                        catch (NotSupportedException) { baseIfaces = Array.Empty<Type>(); }
+                        foreach (var baseIface in baseIfaces)
+                        {
+                            MethodInfo[] baseMs;
+                            try { baseMs = baseIface.GetMethods(); }
+                            catch (NotSupportedException) { continue; }
+                            foreach (var bim in baseMs)
+                                if (FindExternalInterfaceBridge(ti, baseIface, bim.Name,
+                                        bim.GetGenericArguments().Length,
+                                        bim.GetParameters().Select(p => p.ParameterType).ToArray())
+                                    is MethodBuilder baseBridge)
+                                    ti.TB.DefineMethodOverride(baseBridge, bim);
+                        }
                         foreach (var im in ifaceMs)
                         {
                             if (im.Name == "GetEnumerator") continue;   // handled by the reverse bridge above
@@ -417,7 +440,7 @@ sealed partial class Emitter
                             // A bir2cir-resolved MethodImpl comes first: it names the slot and the member that fills
                             // it, so there is nothing to disambiguate. The name-based search below cannot find such a
                             // bridge — it is deliberately not named after the slot.
-                            if (FindExternalInterfaceBridge(ti, specFqn, im.Name, ips) is MethodBuilder directiveBridge)
+                            if (FindExternalInterfaceBridge(ti, itype, im.Name, methodArity, ips) is MethodBuilder directiveBridge)
                             {
                                 ti.TB.DefineMethodOverride(directiveBridge, reanchor ? TypeBuilder.GetMethod(itype, im) : im);
                                 continue;
@@ -626,10 +649,21 @@ sealed partial class Emitter
                         || !impl.TryGetProperty("member", out var memberNode)
                         || !impl.TryGetProperty("params", out var ps)) continue;
                     var (open, constructed) = ParseOwnerT(ownerFqn);
+                    // A base class declared in a REFERENCED assembly is resolved through reflection, exactly as the
+                    // referenced-INTERFACE wiring resolves its slot: the descriptor states the constructed owner, the
+                    // member and the parameter vector, and there is a real MethodInfo to point the MethodImpl at.
+                    // A `class C : Base<Int>()` over a referenced generic base reaches this and used to abort the
+                    // emit; refusing it is not an option either, since the abstract slot would go unimplemented.
+                    if (!_types.ContainsKey(open))
+                    {
+                        if (FindExternalBaseSlot(ownerFqn, memberNode.GetString(), DeclaredMethodArity(m), ps)
+                            is MethodInfo externalSlot)
+                            ti.TB.DefineMethodOverride(bridge, externalSlot);
+                        continue;
+                    }
                     // A RESOLVED DESCRIPTOR THIS LAYER CANNOT BIND IS AN EARLIER-LAYER DROP, and dropping it here
                     // would leave the base slot unimplemented — a TypeLoadException at run time with nothing pointing
-                    // back at the producer. bir2cir states `clrBaseImpls` only against a base class of THIS assembly,
-                    // so both misses below are diagnosable producer bugs, not shapes a program can reach.
+                    // back at the producer.
                     if (!_types.TryGetValue(open, out var baseTi))
                         throw new InvalidOperationException(
                             $"ilemit: {ti.TB.Name}.{bridgeName.GetString()}: clrBaseImpls names '{open}', which is not "

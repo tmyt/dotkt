@@ -8,19 +8,30 @@
 //
 // The three used to spell it themselves, with comments claiming they agreed. They did not: two included the property
 // accessors and one did not, and nothing said which was right. The split below keeps that difference EXPLICIT — a
-// CALL has an argument vector, a property/field ACCESS has only a type — so a caller picks the set its question is
-// about rather than the set it happened to copy.
+// CALL has an argument vector, a member ACCESS has only a type — so a caller picks the set its question is about
+// rather than the set it happened to copy.
+//
+// THE SETS ARE READ OFF `ClrMemberResolution.Resolve`'s SWITCH, which is the one place a .NET declaration is
+// actually stamped onto a node. Deriving them from "the kinds three passes happened to list" is what left
+// `newBoundClrDelegate` and the event accessors out: their descriptors were then re-erased in Kotlin's vocabulary
+// and the member no longer resolved. A kind added to that switch belongs here in the same change.
 static class ClrBoundNode
 {
     // A CALL bound to a .NET member: it carries an argument descriptor (`memberSig`, or `argTypes` before
-    // ClrMemberResolution stamps one) as well as a result.
+    // ClrMemberResolution stamps one) as well as a result. `newBoundClrDelegate` is one — `netObj::method` resolves
+    // its target's declared parameter vector exactly as a call does.
     public static bool IsCall(string k) =>
-        k is "clrStatic" or "clrInstance" or "clrGenericStatic" or "clrGenericInstance" or "newClr";
+        k is "clrStatic" or "clrInstance" or "clrGenericStatic" or "clrGenericInstance" or "newClr"
+          or "newBoundClrDelegate";
 
-    // A .NET property or field ACCESS. It names a member and a type, and has no argument vector at all — which is
-    // why the argument axis does not list these and the crossing refusal does.
-    public static bool IsMemberAccess(string k) => k is "clrPropGet" or "clrPropSet";
+    // A .NET member ACCESS: a property/field read or write, or an event add/remove. Each names a member and a type
+    // and carries the ACCESSOR's declared signature, which is why the argument axis does not list these and the
+    // crossing refusal does.
+    public static bool IsMemberAccess(string k) =>
+        k is "clrPropGet" or "clrPropSet" or "clrEventAdd" or "clrEventRemove";
 
-    // Any node whose types are a .NET declaration.
+    // Any node whose types are a .NET declaration BY KIND. A `field`/`setField` is not one: those kinds are Kotlin's
+    // too, and only an EXTERNAL accessor-backed one is resolved — which is why the crossing refusal keys on the
+    // stamped declaration itself (`memberSig`/`memberRet`) rather than on this set alone.
     public static bool IsAny(string k) => IsCall(k) || IsMemberAccess(k);
 }

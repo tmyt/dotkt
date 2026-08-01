@@ -68,6 +68,14 @@ declare -A RT_XFAIL=(
 	# too, and a LAMBDA into the same slot is fine because the compiler owns the lifted target. Closing it needs a
 	# FORWARDER synthesized at the reference — a static one for `::fn`, a capture class for `expr::member` — which is
 	# the same missing piece the concrete delegate parameter is scoped out for (docs/dotkt-semantics.md §9c-bis).
+	# Two same-name members of one referenced interface differing ONLY in method generic arity: `put(T?)` and
+	# `<U> put(T?)`. The SLOTS are right — arity is part of the bridge identity and of the MethodImpl descriptor, so
+	# the type loads and a call through the class's own type picks correctly — but a call on the INTERFACE receiver
+	# binds by name and parameter vector alone and runs the arity-0 body. That is call-site overload resolution on a
+	# referenced member, a different subject from filling the slot, and pre-existing: arity has never been part of
+	# that selection. Closing it means carrying the call's generic arity into the referenced-member lookup, the same
+	# key ilemit's own overload table already uses.
+	[roundtrip-nullable-vt-generic-referenced-arity-dispatch]="#86 D3: a call on a REFERENCED-interface receiver selects between two same-name, same-parameter-vector members by name and parameters alone, ignoring method generic arity, so a.put<String>(2) runs the arity-0 body and prints a0:2. The SLOTS are correct — the type loads and both arities dispatch correctly through the class's own declared type — so this is call-site overload resolution on a referenced member, not slot filling. Needs the call's generic arity carried into the referenced-member lookup."
 	[roundtrip-nullable-vt-generic-open-slot-callable-ref]="#86: a ::fn / expr::member reference bound into an OPEN (T?) -> R slot reads the boxed reference's bits as a Nullable<int32> and yields a garbage value. The slot is Func<object, string> at every instantiation and the referenced member's parameter is the author's own Nullable<int32>, which a use of it may not move; a lambda into the same slot is correct. PRE-EXISTING (the open slot demanded object before this erasure too). Needs a forwarder synthesized at the reference — static for ::fn, a capture class for expr::member — the same piece the concrete delegate parameter is scoped out for."
 	[roundtrip-nullable-vt-generic-seq-mapnotnull]="#86: NOT the cross-module carrier read (measured) — the defect is same-module, inside the stdlib's lazy path. Sequence.mapNotNull builds TransformingSequence<T, object> (its (T) -> R? transform erases R? to object) and hands it to filterNotNull, whose body unchecked-casts a lazily-wrapped object-elemented sequence to Sequence<T>; on the CLR that IS a reified IEnumerable<T>, so at T=Int the wrapper does not implement IEnumerable<int32> and the terminal toList's GetEnumerator is not found — System.EntryPointNotFoundException. The eager Iterable.mapNotNull twin is green because it materializes a fresh typed list instead of wrapping. Needs an element-converting adapter on the lazy sequence path, stdlib-side."
 	# PRUNED by the OVERRIDE-SLOT BRIDGE (#86 D3): the narrowed override called through its OWN declared type. The
@@ -105,6 +113,7 @@ declare -A RT_XFAIL_SHAPE=(
 	[roundtrip-nullable-vt-generic-seq-mapnotnull]='System.EntryPointNotFoundException'
 	# The wrong value is a pointer and differs every run, so the app prints a VERDICT and the shape is that verdict.
 	[roundtrip-nullable-vt-generic-open-slot-callable-ref]='wrong'
+	[roundtrip-nullable-vt-generic-referenced-arity-dispatch]='a0:2'
 )
 
 # A listed name with no documented shape is the hole this map exists to close, so it is rejected here rather
@@ -957,6 +966,75 @@ EOF
 # wired by a DIFFERENT piece of CLR metadata than an interface slot — a MethodImpl against the constructed base
 # instead of against the constructed interface — so an override bridge that only covered interfaces would leave
 # this one a new overload, and the abstract slot unimplemented.
+# THE REFERENCED-SUPERTYPE ARM, on the three shapes the DIRECT-METHOD case does not reach. Each is a slot the
+# consumer must fill and cannot see: the declaration lives in another assembly, so the bridge has to read it there.
+#   inherited — the slot is declared on `RSink` while the consumer names `RDerived`, so the reachable spec and the
+#               declaring owner differ, and a MethodImpl must name the DECLARING one.
+#   base      — the supertype is an abstract CLASS, wired as a base-class MethodImpl against a type this assembly
+#               does not emit; the emitter used to abort on exactly that descriptor.
+#   arity     — one name, two generic arities, one erased parameter vector. Two CLR slots, so two bridges: sharing
+#               one is a signature the CLR rejects outright.
+RSUP="$ROOT/build/roundtrip-nullable-vt-generic-referenced-supertype-group"
+ng_lib "$RSUP" RsupLib <<'EOF'
+interface RSink<T> { fun accept(x: T?): String }
+interface RDerived<T> : RSink<T>                       // the slot is declared one level UP
+abstract class RBase<T> { abstract fun take(x: T?): String }
+interface RArity<T> {                                  // one name, two generic arities
+    fun put(x: T?): String
+    fun <U> put(x: T?): String
+}
+EOF
+
+ng_app "$RSUP" RsupLib roundtrip-nullable-vt-generic-referenced-inherited-slot '7/none' \
+	'cross-module: a slot declared on a referenced interface the consumer reaches through its SUBinterface (#86 D3)' <<'EOF'
+class C : RDerived<Int> { override fun accept(x: Int?): String = x?.toString() ?: "none" }
+fun main() {
+    val s: RSink<Int> = C()
+    println(C().accept(7) + "/" + s.accept(null))   // 7/none  its own type, then the declaring interface's slot
+}
+EOF
+
+ng_app "$RSUP" RsupLib roundtrip-nullable-vt-generic-referenced-base-class '8/none' \
+	'cross-module: an override narrowing a referenced abstract BASE CLASS T? slot (#86 D3)' <<'EOF'
+class C : RBase<Int>() { override fun take(x: Int?): String = x?.toString() ?: "none" }
+fun main() {
+    val b: RBase<Int> = C()
+    println(C().take(8) + "/" + b.take(null))       // 8/none  its own type, then the base slot
+}
+EOF
+
+ng_app "$RSUP" RsupLib roundtrip-nullable-vt-generic-referenced-arity 'a0:1/a1:2/a0:1' \
+	'cross-module: two generic arities of one name over one erased parameter vector (#86 D3)' <<'EOF'
+class C : RArity<Int> {
+    override fun put(x: Int?): String = "a0:" + (x?.toString() ?: "none")
+    override fun <U> put(x: Int?): String = "a1:" + (x?.toString() ?: "none")
+}
+fun main() {
+    val c = C()
+    val a: RArity<Int> = c
+    // Two CLR slots, so two bridges: one shared between them is a MethodImpl the CLR rejects, and the type does not
+    // load at all. Both arities through the class's own type, then the arity-0 slot through the interface.
+    println(c.put(1) + "/" + c.put<String>(2) + "/" + a.put(1))   // a0:1/a1:2/a0:1
+}
+EOF
+
+# The remaining half, and a DIFFERENT subject: selecting between those two slots at a CALL on a referenced-interface
+# receiver. The bridging is right — the type loads and the class-typed calls above pick correctly — but a call
+# through the interface binds by name and parameter vector and ignores the method's generic arity, so the arity-1
+# call runs the arity-0 body. That is call-site overload resolution, not slot filling, and it is where the fix for
+# it belongs.
+ng_app "$RSUP" RsupLib roundtrip-nullable-vt-generic-referenced-arity-dispatch 'a1:2' \
+	'cross-module: selecting the GENERIC arity of a same-vector overload through a referenced interface (#86 D3)' <<'EOF'
+class C : RArity<Int> {
+    override fun put(x: Int?): String = "a0:" + (x?.toString() ?: "none")
+    override fun <U> put(x: Int?): String = "a1:" + (x?.toString() ?: "none")
+}
+fun main() {
+    val a: RArity<Int> = C()
+    println(a.put<String>(2))                       // a1:2
+}
+EOF
+
 NOC="$ROOT/build/roundtrip-nullable-vt-generic-override-class-group"
 ng_lib "$NOC" NocLib <<'EOF'
 abstract class Holder<T> { abstract fun take(x: T?): String }   // an abstract base-CLASS slot: Nullable(Tv) -> object

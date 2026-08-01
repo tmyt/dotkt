@@ -400,7 +400,7 @@ static class NullableGenericErasure
                         // another name once a call is `clr*`-bound (NetInteropBinding writes the callee's declared
                         // signature there), while on a Kotlin `new` it is the caller's own substituted view.
                         "memberSig" => Pos.Bound,
-                        "argTypes" when ClrBoundNode.IsCall(k) => Pos.Bound,
+                        "argTypes" when ClrBoundNode.IsAny(k) => Pos.Bound,
                         _ => pos,
                     };
                     if (TypeJson.Read(child) is TypeNode tn)

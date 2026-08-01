@@ -127,6 +127,38 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir (area:bir2cir): a foreign generic RETURN is refused like a foreign parameter (#86).** The crossing check
+  read the node's own `ret`, which is the CALLER's Kotlin view and has already been erased as a Kotlin slot — so a
+  C# `List<int?> Make()` or a `List<int?>` property read as returning `List<object>`, was not refused, and left a
+  `List<Nullable<Int32>>` on a stack typed as the unrelated Kotlin form (ilverify StackUnexpected; no diagnostic).
+  Resolution now stamps the FOREIGN declared return beside `memberSig`, which is the same channel the parameters
+  already had, and the refusal reads that. It is a pass-to-pass fact the check strips, so no new key reaches CIR.
+
+- **bir2cir (area:bir2cir): the crossing refusal sees every node a .NET declaration is stamped on (#86).** The kind
+  set was assembled from the passes that happened to ask, and omitted `newBoundClrDelegate`, the event accessors and
+  accessor-backed external fields — so `netObj::Use` where the target takes `List<int?>` built a delegate whose
+  parameter was Kotlin's `List<object>`, and the descriptor was re-erased in Kotlin's vocabulary until the member no
+  longer resolved at all. The sets in `ClrBoundNode` are now read off `ClrMemberResolution`'s own switch, and the
+  refusal keys on the STAMPED declaration (`memberSig`/`memberRet`) rather than on a kind list, so it cannot drift
+  from where the stamping happens.
+
+- **bir2cir/ilemit (area:bir2cir): the referenced-supertype bridge covers accessors, inherited slots, base classes
+  and generic arity (#86 D3).** The first cut answered exactly one shape — an ordinary method declared directly on
+  the referenced interface — and each sibling failed its own way:
+  a PROPERTY marker names the Kotlin property (`v`, kind `getter`) while the slot is `get_v`;
+  a slot declared one level UP (`class C : Derived<Int>` where `accept` is on `Sink`) was skipped, because the arm
+  required the override's marker to name the reachable spec, and the MethodImpl has to name the DECLARING interface;
+  a referenced abstract BASE CLASS produced a `clrBaseImpls` descriptor the emitter refused outright, aborting the
+  emit;
+  and two members differing only in method generic ARITY shared one bridge, which the CLR rejects
+  (*Signature of the body and declaration in a method implementation do not match*).
+  The walk now continues through the REFERENCED supertype graph, so each declaring owner is reached as a spec of its
+  own; accessor markers are translated the way the declaration rename translates them; arity is part of both the
+  bridge identity and the descriptor; and a base class declared elsewhere is wired by resolving the real slot
+  through reflection, exactly as the referenced-INTERFACE path already does. ilemit additionally wires a referenced
+  interface's own BASE interfaces from the resolved directive — reflection's `GetMethods()` on an interface does not
+  include them, so those slots were never even visited.
+
 - **bir2cir/ilemit (area:bir2cir): the override-slot bridge reads a supertype declared in ANOTHER assembly (#86
   D3).** The bridge walked only the current compilation's supertype graph, so a class implementing a generic
   supertype from a referenced assembly — the STDLIB included — got no bridge and the base's erased slot went

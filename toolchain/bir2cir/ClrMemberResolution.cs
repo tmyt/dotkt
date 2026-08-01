@@ -245,6 +245,7 @@ static partial class ClrMemberResolution
             return;
         }
         node["memberSig"] = MemberSig(win.GetParameters());
+        StampMemberRet(node, win.ReturnType);
         node.Remove("argTypes");
         if (instance)
             node["dispatch"] = Dispatch(win, open, (node["super"] as JsonValue)?.GetValue<bool>() ?? false);
@@ -275,6 +276,7 @@ static partial class ClrMemberResolution
         var win = PickUnique(cands, m => m.GetParameters(), argNodes, ownerFqn.Args,
             $"newBoundClrDelegate owner={TypeNode.ToJson(ownerFqn)} .{name}({DescArgs(argNodes)})");
         node["memberSig"] = MemberSig(win.GetParameters());
+        StampMemberRet(node, win.ReturnType);
         node.Remove("argTypes");
     }
 
@@ -660,6 +662,24 @@ static partial class ClrMemberResolution
     }
 
     // ---- memberSig (winning member params -> lowered TypeNode array) ---------------------------
+
+
+    // THE FOREIGN DECLARED RETURN, stamped beside `memberSig` for the crossing refusal to read (#86).
+    //
+    // A node's own `ret` is the CALLER's Kotlin view of the result and is erased as a Kotlin slot — correctly, since
+    // it is what the value's Kotlin type is. What no key stated is what the MEMBER declares, so a C# `List<int?>
+    // Make()` was seen as returning Kotlin's `List<object>`, was not refused, and left a `List<Nullable<int32>>` on a
+    // stack typed as the unrelated Kotlin form. `memberSig` is that channel for parameters; this is its return twin.
+    //
+    // A pass-to-pass fact, NOT a CIR key: ForeignNullableGenericCrossing reads it and strips it, so nothing reaches
+    // the emitter that the emitter does not consume.
+    internal const string MemberRetKey = "memberRet";
+
+    static void StampMemberRet(JsonObject node, Type declaredReturn)
+    {
+        if (declaredReturn == null || declaredReturn == typeof(void)) return;
+        node[MemberRetKey] = TypeJson.Write(MemberSigOf(declaredReturn));
+    }
 
     static JsonArray MemberSig(ParameterInfo[] ps)
     {

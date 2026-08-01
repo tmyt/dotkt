@@ -24,6 +24,11 @@ using DotKt.Bir;
 // a `Nullable<V>` inside a reified argument, which the BCL surface almost never does — and a DIRECT `Nullable<V>`
 // parameter or return is untouched, because a Kotlin scalar `Int?` IS a `System.Nullable<int32>` and crosses exactly.
 //
+// WHICH NODES ARE ASKED is the presence of a stamped .NET declaration (`memberSig`/`memberRet`), not a list of node
+// kinds: those keys exist on exactly the nodes ClrMemberResolution resolved, so the trigger cannot drift from the
+// stamping. That reaches a bound method reference, an event accessor and an accessor-backed external field — each of
+// which carries a declaration and none of which a kind list assembled by hand had included.
+//
 // WHICH POSITIONS COUNT is not decided here. `NullableGenericErasure.ErasureWouldMove` answers it, beside the `Erase`
 // it has to agree with position for position: a delegate PARAMETER keeps a concrete `V?` in that rule, so a foreign
 // `Func<int?, string>` parameter is inhabited exactly and is NOT a crossing, while a delegate RETURN, a type argument
@@ -44,9 +49,14 @@ static class ForeignNullableGenericCrossing
         switch (node)
         {
             case JsonObject obj:
-                // A property/field ACCESS counts as well as a call: its `ret` is the member's declared type, and a
-                // `Dictionary<string, int?>` property is the same crossing as a parameter of that type.
-                if (ClrBoundNode.IsAny(Str(obj["k"]))) CheckCall(obj, file);
+                // THE STAMPED DECLARATION IS THE TRIGGER, not a list of node kinds. `memberSig`/`memberRet` exist on
+                // exactly the nodes ClrMemberResolution resolved against a .NET member — including an accessor-backed
+                // external `field`, whose KIND is Kotlin's too — so keying on them is keyed on the fact itself and
+                // cannot drift from where the stamping happens.
+                if (obj["memberSig"] != null || obj[ClrMemberResolution.MemberRetKey] != null) CheckCall(obj, file);
+                // `memberRet` is a pass-to-pass fact and must not reach CIR: the emitter consumes `memberSig` and
+                // knows nothing of this one.
+                obj.Remove(ClrMemberResolution.MemberRetKey);
                 foreach (var kv in obj) if (kv.Value != null) Walk(kv.Value, file);
                 break;
             case JsonArray arr:
@@ -60,12 +70,19 @@ static class ForeignNullableGenericCrossing
     {
         // A call names its member in `method`; a property/field access names it in `name`; a `newClr` names none.
         var member = Str(call["method"]) ?? Str(call["name"]) ?? ".ctor";
-        var owner = TypeJson.Read(call["type"]) is TypeNode.Fqn f ? f.Name : "<unknown>";
+        // The owner key differs by node: a call and a property access name it in `type`, a bound method reference in
+        // `clrType`, an accessor-backed field in `ownerType`. The message must name the member the author wrote.
+        var owner = (TypeJson.Read(call["type"]) ?? TypeJson.Read(call["clrType"]) ?? TypeJson.Read(call["ownerType"]))
+            is TypeNode.Fqn f ? f.Name : "<unknown>";
         if (call["memberSig"] is JsonArray sig)
             for (var i = 0; i < sig.Count; i++)
                 if (TypeJson.Read(sig[i]) is TypeNode p && NullableGenericErasure.ErasureWouldMove(p))
                     throw Refuse(file, owner, member, "parameter " + i, p);
-        if (TypeJson.Read(call["ret"]) is TypeNode ret && NullableGenericErasure.ErasureWouldMove(ret))
+        // The RETURN is read off the stamped FOREIGN declaration, never off the node's own `ret`: that one is the
+        // caller's Kotlin view and has already been erased as a Kotlin slot, so it says `List<object>` for a member
+        // declaring `List<int?>` and the crossing would be invisible.
+        if (TypeJson.Read(call[ClrMemberResolution.MemberRetKey]) is TypeNode ret
+            && NullableGenericErasure.ErasureWouldMove(ret))
             throw Refuse(file, owner, member, "return", ret);
     }
 

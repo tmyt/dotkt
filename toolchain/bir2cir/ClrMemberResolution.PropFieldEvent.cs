@@ -45,6 +45,7 @@ static partial class ClrMemberResolution
             node["member"] = "accessor";
             node["accessor"] = acc.Name;
             node["memberSig"] = MemberSig(acc.GetParameters());
+            StampMemberRet(node, acc.ReturnType);
             if (!isStatic) node["dispatch"] = Dispatch(acc, open, superCall);
             return;
         }
@@ -159,6 +160,7 @@ static partial class ClrMemberResolution
         RetargetToBaseInterface(node, "type", open, acc, ownerFqn);
         node["accessor"] = acc.Name;
         node["memberSig"] = MemberSig(acc.GetParameters());
+        StampMemberRet(node, acc.ReturnType);
         if (!isStatic) node["dispatch"] = Dispatch(acc, open, superCall: false);
     }
 
@@ -213,6 +215,7 @@ static partial class ClrMemberResolution
         node["member"] = "accessor";
         node["accessor"] = acc.Name;
         node["memberSig"] = MemberSig(acc.GetParameters());
+        StampMemberRet(node, acc.ReturnType);
         node["dispatch"] = Dispatch(acc, open, superCall: false);
     }
 }

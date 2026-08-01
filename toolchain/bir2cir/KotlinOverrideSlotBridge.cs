@@ -185,7 +185,13 @@ static class KotlinOverrideSlotBridge
             // otherwise mark it no longer matches — the signatures deliberately differ now.
             impl["virtual"] = true;
 
-            var key = name + "(" + string.Join(",", slotParams.Select(TypeKey)) + ")->" + TypeKey(slotRet);
+            // ARITY IS PART OF THE IDENTITY (ECMA-335 I.8.6.1.6), so it is part of the key. `put(T?)` and
+            // `<U> put(T?)` erase to one parameter vector and are two CLR slots; one bridge shared between them is
+            // wired to both, and the CLR rejects the pair ("Signature of the body and declaration in a method
+            // implementation do not match"). The DESCRIPTOR carries it too, so the emitter matches on it rather than
+            // taking the arity from whichever slot it is currently looking at.
+            var arity = (impl["typeParams"] as JsonArray)?.Count ?? 0;
+            var key = name + "`" + arity + "(" + string.Join(",", slotParams.Select(TypeKey)) + ")->" + TypeKey(slotRet);
             if (!bridges.TryGetValue(key, out var bridge))
             {
                 bridge = BuildBridge(cls, impl, slotParams, slotRet, $"dotkt$ovslot${SafeName(name)}${ordinal++}", isValue);
@@ -196,14 +202,16 @@ static class KotlinOverrideSlotBridge
             // interface, a base-class slot a MethodImpl against the constructed base. ilemit consumes the
             // resolved descriptor and resolves nothing itself.
             ((JsonArray)bridge[supIsInterface ? "clrInterfaceImpls" : "clrBaseImpls"])
-                .Add(ImplDescriptor(spec, descriptorMember, slotParams, slotRet));
+                .Add(ImplDescriptor(spec, descriptorMember, arity, slotParams, slotRet));
         }
 
-        foreach (var (spec, supIsInterface) in ReachableSupertypes(cls, defs))
+        foreach (var (spec, supIsInterface) in ReachableSupertypes(cls, defs, refs))
         {
             if (!defs.TryGetValue(spec.Name, out var sup))
             {
-                FillFromReference(cls, spec, supIsInterface, methods, ownArgs, isValue, refs, Fill);
+                // A referenced BASE CLASS reaches the same arm; only its wiring differs (a MethodImpl against the
+                // constructed base rather than the interface), and the emitter resolves that base externally.
+                FillFromReference(cls, defs, spec, supIsInterface, methods, ownArgs, isValue, refs, Fill);
                 continue;
             }
             var supArgs = EffectiveArgs(spec, sup.Arity);
@@ -244,9 +252,9 @@ static class KotlinOverrideSlotBridge
     // parameter vector that does not read. A REFUSED position is respected exactly as it is on the argument axis —
     // the reader saw the declaration and declined to state it, and inventing a slot from the physical signature is
     // the derivation the refusal exists to prevent.
-    static void FillFromReference(Def cls, TypeNode.Fqn spec, bool supIsInterface, JsonArray methods,
-        TypeNode[] ownArgs, Func<string, bool> isValue, ReferenceMetadataIndex refs,
-        Action<TypeNode.Fqn, bool, string, string, TypeNode[], TypeNode, JsonObject> fill)
+    static void FillFromReference(Def cls, IReadOnlyDictionary<string, Def> defs, TypeNode.Fqn spec,
+        bool supIsInterface, JsonArray methods, TypeNode[] ownArgs, Func<string, bool> isValue,
+        ReferenceMetadataIndex refs, Action<TypeNode.Fqn, bool, string, string, TypeNode[], TypeNode, JsonObject> fill)
     {
         if (refs == null) return;
         var supArgs = spec.Args ?? Array.Empty<TypeNode>();
@@ -259,9 +267,24 @@ static class KotlinOverrideSlotBridge
             var methodArity = (impl["typeParams"] as JsonArray)?.Count ?? 0;
             foreach (var o in overrides.OfType<JsonObject>())
             {
-                if (TypeJson.OwnerName(o["owner"]) is not string owner || owner != spec.Name) continue;
+                // THE MARKER SAYS WHAT WAS OVERRIDDEN; THE SPEC SAYS WHERE THE SLOT IS REACHED. Those differ the
+                // moment a referenced supertype inherits the member — `class C : Derived<Int>` where `accept` is
+                // declared on `Sink` — so requiring the marker's owner to EQUAL the spec skipped the slot entirely.
+                // The question is asked of the SPEC instead, and the reader walks the referenced supertype graph
+                // itself, mapping the declaration through each supertype's arguments into the spec's own frame. Any
+                // marker naming a supertype this compilation does not declare is a candidate; the reader answering
+                // is what makes it one.
+                if (TypeJson.OwnerName(o["owner"]) is not string owner || defs.ContainsKey(owner)) continue;
                 if (Str(o["member"]) is not string member) continue;
-                if (!refs.TryNullableGenericSlot(owner, member, isStatic: false, ps.Count, methodArity,
+                // A PROPERTY marker names the Kotlin property (`v`, kind `getter`/`setter`) while the CLR slot is the
+                // ACCESSOR (`get_v`/`set_v`) — the same translation DeclarationRename makes for the declaration.
+                var slotMember = Str(o["kind"]) switch
+                {
+                    "getter" => "get_" + member,
+                    "setter" => "set_" + member,
+                    _ => member,
+                };
+                if (!refs.TryNullableGenericSlot(spec.Name, slotMember, isStatic: false, ps.Count, methodArity,
                         out var slotRet0, out var slotParams0, out var refused))
                     continue;
                 if (slotParams0 == null || slotParams0.Length != ps.Count) continue;
@@ -283,8 +306,8 @@ static class KotlinOverrideSlotBridge
                 // The CLR slot's own NAME. A referenced Kotlin interface that is `@ClrTypeAlias`'d onto a BCL one
                 // fills a differently-named member (`compareTo` -> `CompareTo`), and the MethodImpl has to name the
                 // member the interface actually declares.
-                var descriptorMember = refs.TryMemberIntrinsicExact(owner, member, ps.Count, out var clrName)
-                    ? clrName : member;
+                var descriptorMember = refs.TryMemberIntrinsicExact(spec.Name, slotMember, ps.Count, out var clrName)
+                    ? clrName : slotMember;
                 fill(spec, supIsInterface, ownName, descriptorMember, slotParams, slotRet, impl);
                 break;
             }
@@ -557,7 +580,7 @@ static class KotlinOverrideSlotBridge
         if (!decl.ContainsKey(flagsKey) && NullableFlags.Compute(shape, isValue) is JsonArray f) decl[flagsKey] = f;
     }
 
-    static JsonObject ImplDescriptor(TypeNode.Fqn spec, string member, TypeNode[] slotParams, TypeNode slotRet)
+    static JsonObject ImplDescriptor(TypeNode.Fqn spec, string member, int arity, TypeNode[] slotParams, TypeNode slotRet)
     {
         var ps = new JsonArray();
         foreach (var p in slotParams) ps.Add(TypeJson.Write(p));
@@ -565,6 +588,9 @@ static class KotlinOverrideSlotBridge
         {
             ["owner"] = TypeJson.Write(spec),
             ["member"] = member,
+            // The slot's METHOD GENERIC ARITY. Without it the emitter takes the arity from whichever slot it is
+            // matching, so a directive for the arity-0 member also answers for the arity-1 one.
+            ["arity"] = arity,
             ["params"] = ps,
             ["ret"] = TypeJson.Write(slotRet),
         };
@@ -572,7 +598,8 @@ static class KotlinOverrideSlotBridge
 
     // Every supertype this class reaches, as a CONSTRUCTED spec in the class's own type-parameter frame: the
     // interface graph (transitively, so a base interface's redeclared slot is reached) and the base-class chain.
-    static IEnumerable<(TypeNode.Fqn spec, bool isInterface)> ReachableSupertypes(Def cls, IReadOnlyDictionary<string, Def> defs)
+    static IEnumerable<(TypeNode.Fqn spec, bool isInterface)> ReachableSupertypes(Def cls,
+        IReadOnlyDictionary<string, Def> defs, ReferenceMetadataIndex refs)
     {
         var queue = new Queue<(TypeNode.Fqn, bool)>();
         foreach (var i in cls.Interfaces) queue.Enqueue((i, true));
@@ -583,11 +610,23 @@ static class KotlinOverrideSlotBridge
             var (spec, isInterface) = queue.Dequeue();
             if (!seen.Add(TypeKey(spec))) continue;
             yield return (spec, isInterface);
-            if (!defs.TryGetValue(spec.Name, out var def)) continue;
-            var args = EffectiveArgs(spec, def.Arity);
-            if (args == null) continue;
-            foreach (var parent in def.Interfaces) queue.Enqueue(((TypeNode.Fqn)SubstOwnerTvs(parent, args), true));
-            if (def.Base != null) queue.Enqueue(((TypeNode.Fqn)SubstOwnerTvs(def.Base, args), false));
+            if (defs.TryGetValue(spec.Name, out var def))
+            {
+                var args = EffectiveArgs(spec, def.Arity);
+                if (args == null) continue;
+                foreach (var parent in def.Interfaces) queue.Enqueue(((TypeNode.Fqn)SubstOwnerTvs(parent, args), true));
+                if (def.Base != null) queue.Enqueue(((TypeNode.Fqn)SubstOwnerTvs(def.Base, args), false));
+                continue;
+            }
+            // A REFERENCED supertype's own graph continues the walk, so a slot DECLARED one level up is reached as a
+            // spec of its own. That matters because a MethodImpl names the type that declares the slot: a class
+            // implementing `Derived<Int>` fills `Sink<Int>`'s `accept`, and a directive naming `Derived` is looked up
+            // under a spec the emitter never asks about.
+            if (refs == null) continue;
+            var refArgs = spec.Args ?? Array.Empty<TypeNode>();
+            foreach (var (parent, parentIsInterface) in refs.ReferencedSupertypes(spec.Name))
+                if (SubstOwnerTvs(parent, refArgs) is TypeNode.Fqn constructed)
+                    queue.Enqueue((constructed, parentIsInterface));
         }
     }
 

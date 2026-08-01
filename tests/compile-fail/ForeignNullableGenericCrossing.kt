@@ -19,5 +19,5 @@ fun main() {
     println(api.Describe(3) { v -> v?.toString() ?: "none" })    // control: a delegate parameter keeps Nullable<int32>
     // Built explicitly on the .NET type, which is the remedy the refusal must NOT offer: this construction
     // erases its own argument to `List<object>` exactly as a Kotlin `List<Int?>` does, so it reaches the same wall.
-    println(api.CountPresent(NetList<Int?>()))                  // REFUSED: List<Nullable<Int32>>
+    println(api.CountPresent(NetList<Int?>()))                  // REFUSED: List<Nullable<Int32>> at a PARAMETER
 }
