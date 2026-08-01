@@ -172,10 +172,10 @@ static class NullableGenericErasure
             }
             if (bounds.Count > 0) { pre["bounds"] = bounds; moved = true; }
         }
-        if (!moved) return;
-        to[SupertypesPre] = pre.ToJsonString();
-        if (to["types"] is JsonArray nested)
-            foreach (var n in nested) if (n is JsonObject nto) RecordSupertypes(nto, isValue);
+        // Nested types are visited by `RecordNullableGenericSlots`, which calls this on each of them directly, so
+        // there is nothing to recurse into here — and recursing behind the `moved` gate reached them only when the
+        // OUTER type happened to carry an erased edge of its own.
+        if (moved) to[SupertypesPre] = pre.ToJsonString();
     }
 
     // The keys the pre-erasure SUSPEND function shape is stashed under, for BirTypeLowering's suspend-fn carrier.
@@ -550,10 +550,14 @@ static class NullableGenericErasure
             TypeNode.Array a => new TypeNode.Array(Erase(a.Elem, inner, isValue)),
             TypeNode.ByRef b => new TypeNode.ByRef(Erase(b.Of, slot, isValue)),
             // A delegate's RETURN follows the argument rule; its PARAMETERS keep the declared form. See the header:
-            // the two differ only because a callable reference to a DECLARED member has no forwarder yet.
+            // the two differ only because a callable reference to a DECLARED member has no forwarder yet. The
+            // NOMINAL family and the context parameters ride through untouched — an erasure states positions, and a
+            // rebuild that dropped them turned `Func<int, List<int?>>` into a family-less function type that no
+            // longer compared equal to the declaration it is the image of.
             TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, Erase(fn.Ret, inner, isValue),
                 fn.Params.Select(p => Erase(p, slot, isValue)).ToArray(),
-                fn.Recv == null ? null : Erase(fn.Recv, slot, isValue)),
+                fn.Recv == null ? null : Erase(fn.Recv, slot, isValue), fn.Clr,
+                fn.Ctx?.Select(c => Erase(c, slot, isValue)).ToArray()),
             _ => t,
         };
     }

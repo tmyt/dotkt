@@ -92,22 +92,44 @@ static class ForeignNullableGenericCrossing
         // subclasses are asked instead, and reach the same slot through this walk.
         var mustFillAbstract = Str(to["kind"]) != "interface" && !Bool(to["abstract"]);
 
-        // THE SLOTS THIS TYPE INHERITS, grouped by CLR identity (name + declared parameter vector). A group is one
-        // slot seen from several supertypes, and its abstractness is the group's: `class B : A` overriding an
-        // abstract `A.M` contributes a CONCRETE `M` under the same key, so a Kotlin `class C : B()` inherits an
-        // obligation that is already discharged and must not be refused for it.
+        // THE SLOTS THIS TYPE INHERITS, grouped by CLR identity — name, method generic ARITY (ECMA-335 I.8.6.1.6
+        // makes it part of the signature, so `M<T>(int)` and `M(int)` are two slots) and the declared parameter
+        // vector. A group is one slot seen from several supertypes, and its abstractness is the group's: `class B :
+        // A` overriding an abstract `A.M` contributes a CONCRETE `M` under the same key, so a Kotlin `class C : B()`
+        // inherits an obligation that is already discharged and must not be refused for it.
+        //
+        // IN THE SPEC'S OWN FRAME. The reflected declaration is the OPEN definition's — `Base<T>.Put(T, List<int?>)`
+        // — and the class that derives from `Base<String>` declares `Put(String, List<object>)`. Left open, the
+        // comparison below fails at the type-variable and the uninhabitable override goes through, so the spec's
+        // arguments are substituted in exactly as the override-slot bridge substitutes them.
         var groups = new Dictionary<string, Slot>(StringComparer.Ordinal);
         foreach (var (spec, _) in SupertypeGraph.Reachable(cls, defs, refs))
         {
             if (defs.ContainsKey(spec.Name)) continue;   // declared here: erased consistently with its users
+            var supArgs = spec.Args ?? Array.Empty<TypeNode>();
             foreach (var m in ReflectedSlots(spec))
             {
-                var key = m.Name + "(" + string.Join(",", m.Params.Select(SupertypeGraph.TypeKey)) + ")";
+                var ps = m.Params.Select(p => SupertypeGraph.SubstOwnerTvs(p, supArgs)).ToArray();
+                var ret = m.Ret == null ? null : SupertypeGraph.SubstOwnerTvs(m.Ret, supArgs);
+                var key = m.Name + "`" + m.Arity + "(" + string.Join(",", ps.Select(SupertypeGraph.TypeKey)) + ")";
                 if (!groups.TryGetValue(key, out var slot))
-                    groups[key] = slot = new Slot { Name = m.Name, Owner = spec.Name, Params = m.Params, Ret = m.Ret };
+                    groups[key] = slot = new Slot
+                    {
+                        Name = m.Name, Owner = m.Owner ?? spec.Name, Arity = m.Arity, Params = ps, Ret = ret,
+                    };
                 if (m.Implemented) slot.Implemented = true;
             }
         }
+
+        // A DECLARATION FILLS AT MOST ONE SLOT, and a slot it fills EXACTLY has the stronger claim. The erased image
+        // of `Take(List<int?>)` is `Take(List<object>)`, which is an ordinary .NET signature a sibling may declare
+        // for real — and then the author's `override fun Take(ys: List<Any?>)` fills THAT one and owes the crossing
+        // nothing. So every declaration a non-crossing group states outright is spoken for before the erased-image
+        // question is asked.
+        var claimed = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var slot in groups.Values)
+            if (Crossing(slot) == null)
+                claimed.Add(DeclarationKey(slot.Name, slot.Arity, slot.Params.Select(Norm)));
 
         foreach (var slot in groups.Values)
         {
@@ -118,16 +140,20 @@ static class ForeignNullableGenericCrossing
             // it — and "overrides it" is decided by the signature the override would physically state, not by the
             // member's name and parameter count, which cannot tell `Take(List<int?>)` from an unrelated
             // `Take(string)` sibling the author actually wrote.
-            if (!((mustFillAbstract && !slot.Implemented) || Declares(to, slot))) continue;
+            if (!((mustFillAbstract && !slot.Implemented) || Declares(to, slot, claimed))) continue;
             throw RefuseSlot(file, Str(to["name"]) ?? "<type>", slot.Owner, slot.Name, crossing.Value.Where,
                 crossing.Value.Type);
         }
     }
 
+    static string DeclarationKey(string name, int arity, IEnumerable<string> paramKeys) =>
+        name + "`" + arity + "(" + string.Join(",", paramKeys) + ")";
+
     sealed class Slot
     {
         public string Name;
         public string Owner;
+        public int Arity;
         public TypeNode[] Params;
         public TypeNode Ret;
         public bool Implemented;
@@ -139,9 +165,19 @@ static class ForeignNullableGenericCrossing
     // common supertype sits on very many of them; without the cache the stdlib build reflects the same BCL
     // interface thousands of times.
     //
-    // An ACCESSOR is a slot like any other — a C# `List<int?> Items { get; }` is a virtual `get_Items` carrying
-    // IsSpecialName, and skipping those left a Kotlin property override emitting the mismatched slot and dying at
-    // load exactly as a method override did.
+    // EVERY VIRTUAL MEMBER IS A SLOT, accessors included — a C# `List<int?> Items { get; }` is a virtual `get_Items`
+    // carrying IsSpecialName, and so are `add_E`/`remove_E` for an event and `get_Item` for an indexer. Skipping
+    // special names left a Kotlin property override emitting the mismatched slot and dying at load exactly as a
+    // method override did, and the same is true of the other two.
+    //
+    // AN EXPLICIT INTERFACE IMPLEMENTATION DISCHARGES ITS SLOT. Reflection names one
+    // `<Namespace>.<Interface>.<Member>`, so it lands under a key of its own and the interface's abstract member
+    // stayed marked unimplemented — which made a Kotlin class deriving from a .NET class that already implements the
+    // crossing interface owe a slot it does not. It is recorded under BOTH names: its own, and the member name the
+    // interface declares.
+    //
+    // The OWNER is the member's DECLARING type, not the supertype the walk happened to reach it through: reflection
+    // hands a class its inherited members too, and the message must name the type that states the slot.
     static readonly Dictionary<string, Slot[]> ReflectedSlotCache = new(StringComparer.Ordinal);
 
     static Slot[] ReflectedSlots(TypeNode.Fqn spec)
@@ -159,17 +195,43 @@ static class ForeignNullableGenericCrossing
             if (!m.IsVirtual) continue;
             try
             {
-                result.Add(new Slot
+                var slot = new Slot
                 {
                     Name = m.Name,
+                    Owner = DeclaringName(m) ?? spec.Name,
+                    Arity = m.IsGenericMethodDefinition ? m.GetGenericArguments().Length : 0,
                     Params = m.GetParameters().Select(p => ClrMemberResolution.MemberSigOf(p.ParameterType)).ToArray(),
                     Ret = m.ReturnType == typeof(void) ? null : ClrMemberResolution.MemberSigOf(m.ReturnType),
                     Implemented = !m.IsAbstract,
-                });
+                };
+                result.Add(slot);
+                // The interface member an explicit implementation fills. Its own name is qualified, so without this
+                // the interface's abstract declaration never meets the body that discharges it.
+                var dot = slot.Name.LastIndexOf('.');
+                if (!m.IsAbstract && dot > 0)
+                    result.Add(new Slot
+                    {
+                        Name = slot.Name[(dot + 1)..], Owner = slot.Owner, Arity = slot.Arity,
+                        Params = slot.Params, Ret = slot.Ret, Implemented = true,
+                    });
             }
             catch (Exception e) when (e is NotSupportedException or TypeLoadException or FileNotFoundException) { }
         }
         return ReflectedSlotCache[cacheKey] = result.ToArray();
+    }
+
+    static string DeclaringName(MethodInfo m)
+    {
+        try
+        {
+            return m.DeclaringType != null
+                   && ClrMemberResolution.MemberSigOf(m.DeclaringType) is TypeNode.Fqn f
+                ? f.Name : null;
+        }
+        catch (Exception e) when (e is NotSupportedException or TypeLoadException or FileNotFoundException)
+        {
+            return null;
+        }
     }
 
     // The first position of this slot the erasure moves, if any — the one the message names.
@@ -186,23 +248,29 @@ static class ForeignNullableGenericCrossing
     // position is precisely where it cannot — so it is compared against the slot's ERASED IMAGE, which is what a
     // Kotlin declaration filling it physically states. `NullableGenericErasure.ErasedLoweredSlot` is that image, and
     // it is the identity at every position the erasure leaves alone, so an untouched parameter still has to match
-    // exactly and a same-name sibling overload is not mistaken for this one.
+    // exactly and a sibling overload of the same name and arity is not mistaken for this one. Where the image
+    // coincides with a slot some sibling states OUTRIGHT, that sibling has the stronger claim and this returns
+    // false — see the claim set built by the caller.
     //
     // A BODY, and not merely a declaration: Kotlin re-declares an inherited abstract member on the deriving
-    // interface as a fake override, so `interface KI : ITake` carries an abstract `Take` of its own. That states the
-    // slot again, it does not fill it, and there is no body for the uninhabitable position to appear in.
+    // interface as a fake override, so `interface KI : ITake` carries a `Take` of its own. That states the slot
+    // again and fills nothing. It is told apart by the body being EMPTY — kotc emits `body: []` for a fake override
+    // and carries no `abstract` flag on it, while a body the author wrote has at least its own return, so even an
+    // `override fun Put(xs: List<Int?>) {}` (which IS unfillable, and is refused) has a statement in it.
     //
     // The RETURN is deliberately not compared: Kotlin lets an override narrow it, and a narrowed return is a
-    // different pass's business (`CovariantInterfaceReturnBridge`). Name and the whole parameter vector identify the
-    // CLR slot on their own.
-    static bool Declares(JsonObject to, Slot slot)
+    // different pass's business (`CovariantInterfaceReturnBridge`). Name, method generic arity and the whole
+    // parameter vector identify the CLR slot on their own.
+    static bool Declares(JsonObject to, Slot slot, HashSet<string> claimedExactly)
     {
         if (to["methods"] is not JsonArray methods) return false;
         var want = slot.Params.Select(p => Norm(NullableGenericErasure.ErasedLoweredSlot(p))).ToArray();
+        if (claimedExactly.Contains(DeclarationKey(slot.Name, slot.Arity, want))) return false;
         foreach (var m in methods.OfType<JsonObject>())
         {
             if (Bool(m["static"]) || Bool(m["abstract"]) || Str(m["name"]) != slot.Name) continue;
             if (m["body"] is not JsonArray body || body.Count == 0) continue;
+            if (((m["typeParams"] as JsonArray)?.Count ?? 0) != slot.Arity) continue;
             if (m["params"] is not JsonArray ps || ps.Count != want.Length) continue;
             var ok = true;
             for (var i = 0; i < ps.Count && ok; i++)

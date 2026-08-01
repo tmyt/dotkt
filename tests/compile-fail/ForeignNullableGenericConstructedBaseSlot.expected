@@ -1,0 +1,4 @@
+# Named at the DECLARING type — the generic base, not the constructed spelling the author wrote.
+'CConstructed' derives from 'plainnet.GBase'
+at its parameter 1
+a slot NO Kotlin expression inhabits

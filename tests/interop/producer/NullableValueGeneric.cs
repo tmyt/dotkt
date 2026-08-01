@@ -56,4 +56,24 @@ namespace NvGen
 
         public static string Pick<T>(string x) => "gen:" + x;
     }
+
+    // The .NET side ALREADY FILLS the crossing slot, and does so EXPLICITLY — whose CLR member name is qualified
+    // with the interface, so it lands under a name of its own and the interface's abstract member looked
+    // undischarged. A Kotlin class deriving from this owes nothing.
+    public class NetFillsIt : INotObliged
+    {
+        string INotObliged.Take(List<int?> xs) => "net-explicit";
+
+        public string Describe() => "filled";
+    }
+
+    // The erased image of a crossing slot is an ORDINARY .NET signature, and a sibling may declare it for real. Then
+    // a Kotlin `override fun Take(ys: List<Any?>)` fills THAT slot and owes the `List<int?>` one nothing — the two
+    // are different CLR slots that merely look alike after the erasure.
+    public class ImageSibling
+    {
+        public virtual string Take(List<int?> xs) => "net-q";
+
+        public virtual string Take(List<object> ys) => "net-o";
+    }
 }

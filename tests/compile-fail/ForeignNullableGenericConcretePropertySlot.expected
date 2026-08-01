@@ -1,0 +1,4 @@
+# The overridden getter, and only it — the sibling `Tag` is untouched.
+'CConcreteProp' derives from 'plainnet.PropBase'
+whose member 'get_Items' declares
+at its return

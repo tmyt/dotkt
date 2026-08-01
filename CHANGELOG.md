@@ -148,9 +148,18 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   And it fires only where THIS type is obliged to fill THAT slot. Refusing every inherited crossing rejected
   programs with a perfectly good lowering: a Kotlin `interface KI : ITake` and an `abstract class KA : BTake()` are
   not instantiable and emit no body, and an abstract slot some .NET type in the chain already implements is nobody's
-  obligation. A concrete virtual is now refused only where this type actually overrides it, matched against the
-  signature the override would physically state — the slot's erased image — rather than by name and parameter count,
-  which refused a Kotlin `override fun Take(s: String)` for an unrelated `Take(List<int?>)` sibling.
+  obligation — including where the implementation is an EXPLICIT one, whose CLR member name is qualified with the
+  interface and so looked like a different member entirely. A concrete virtual is now refused only where this type
+  actually overrides it, matched against the signature the override would physically state — the slot's erased image
+  — rather than by name and parameter count, which refused a Kotlin `override fun Take(s: String)` for an unrelated
+  `Take(List<int?>)` sibling.
+
+  Two things that image has to be asked carefully. It is compared in the frame the deriving type CONSTRUCTS the
+  supertype in: reflection hands back `GBase<T>.Put(!0, List<int?>)` while a `class C : GBase<String>()` states
+  `Put(String, List<object>)`, so an open comparison disagreed at the type variable and let the uninhabitable
+  override through. And the image is itself an ordinary .NET signature, so where a sibling slot states it OUTRIGHT —
+  a real `Take(List<object>)` beside the `List<int?>` one — that sibling has the stronger claim and the override
+  belongs to it.
 
 
 - **bir2cir (area:bir2cir): a supertype edge's erased argument is CARRIED, closing a Kotlin source break (#86).**
@@ -191,9 +200,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   telling the refusal there was no declared return to object to. A C# `List<int?> Make<T>(int)` beside a
   `string Make<T>(string)` therefore passed both, and emission — which links by the exact `memberSig` the frontend
   resolved — picked the right overload and handed back a `List<Nullable<int32>>` consumed as a `List<object>`. The
-  return is now resolved THROUGH that same `memberSig`, by the unique-match discipline every other member here uses,
-  and a descriptor matching none or several is a hard error rather than a value to invent. The sibling overload
-  still binds and runs.
+  return is now resolved THROUGH that same `memberSig`, by the unique-match discipline every other member here uses
+  — including ilemit's own fallback to the implemented interfaces, without which a `string Make<T>(string)` on the
+  class answered for the `I.Make<T>(int)` the emitter actually links. What remains genuinely unreadable is stamped
+  as unresolved rather than as a type: this pass reads the REFERENCE stdlib and ilemit the runtime one plus this
+  compilation's own emitted types, and a suspend cold entry synthesized here is in neither reference set, so
+  refusing those would be a backend abort on source the frontend accepted. The chokepoint accepts that stamp and
+  the refusal reads it as nothing to check, which is what actually happened.
 
 - **bir2cir (area:bir2cir): a `::fn` moves the declaration it NAMES, not every declaration of that name (#86).** A
   callable reference bound into a slot the erasure object-stated moves the target's own slot to match — the one
@@ -203,7 +216,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   frontend-accepted source, or a PUBLIC Kotlin signature changed by a use that never mentions it, with no
   round-trip carrier to say what it used to be. The demand is now keyed by the frontend-resolved signature the
   reference resolved to, which BIR already carries on the node; a compiler-minted lifted target, whose name is
-  unique by construction, still matches by name alone.
+  unique by construction, still matches by name alone. Method generic ARITY is part of the CLI signature and the
+  reference does not carry the target's, so a demand that still matches two declarations moves neither — the
+  malformed delegate that results fails loudly at emit, where moving both silently rewrote a public signature the
+  reference never mentions.
 
 - **bir2cir/ilemit (area:bir2cir): the referenced override arm relates the marker to the supertype, and one body per
   slot (#86 D3).** The marker's owner established only that the supertype was external; the lookup then ran against

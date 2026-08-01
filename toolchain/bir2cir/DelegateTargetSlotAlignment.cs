@@ -136,18 +136,30 @@ static class DelegateTargetSlotAlignment
     // The wildcard arm is for a target with no `sig`: kotc omits it only for a target it MINTED — a lifted
     // `__lambdaN`/`__mrefN` — whose name is unique in the file by construction, so there is no overload to confuse
     // it with and nothing for a parameter vector to disambiguate.
+    //
+    // AMBIGUOUS MEANS NONE. Method generic ARITY is part of the CLI signature (ECMA-335 I.8.6.1.6) and the reference
+    // does not carry the target's — `fun make(x: Any?)` and `fun <T> make(x: T?)` are two legal slots whose erased
+    // parameter vectors coincide (`NullableGenericOverloadCollision` deliberately lets that pair through for exactly
+    // that reason). A demand that cannot say which of them it named may not move either: moving both rewrites a
+    // public signature the reference never mentions, and the malformed delegate that results from moving neither
+    // fails loudly at emit instead.
     static void AlignMethods(JsonNode methods, Dictionary<string, Demand> byTarget)
     {
         if (methods is not JsonArray a) return;
+        var matched = new Dictionary<Demand, List<JsonObject>>();
         foreach (var m in a)
         {
             if (m is not JsonObject mo || Str(mo["name"]) is not string n) continue;
             var own = string.Join(",", (mo["params"] as JsonArray ?? new JsonArray())
                 .Select(p => TypeJson.Read((p as JsonObject)?["type"]) is TypeNode t
                     ? TypeJson.Write(t).ToJsonString() : "?"));
-            if (byTarget.TryGetValue(n + "|" + own, out var d)) Align(mo, d);
-            else if (byTarget.TryGetValue(n + "|" + AnySig, out var wild)) Align(mo, wild);
+            if (!byTarget.TryGetValue(n + "|" + own, out var d)
+                && !byTarget.TryGetValue(n + "|" + AnySig, out d)) continue;
+            if (!matched.TryGetValue(d, out var list)) matched[d] = list = new List<JsonObject>();
+            list.Add(mo);
         }
+        foreach (var (demand, hits) in matched)
+            if (hits.Count == 1) Align(hits[0], demand);
     }
 
     const string AnySig = "*";

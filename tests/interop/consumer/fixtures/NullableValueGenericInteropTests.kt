@@ -19,7 +19,10 @@ import NvGen.Api
 import NvGen.GenFac
 import NvGen.INotObliged
 import NvGen.NotObligedBase
+import NvGen.ImageSibling
+import NvGen.NetFillsIt
 import NvGen.OverloadBase
+import System.Collections.Generic.List as NetList
 
 // THE OTHER HALF OF THE IMPLEMENTING-POSITION REFUSAL: what an author may still write next to an uninhabitable
 // slot. These three declarations ARE the assertion — a refusal keyed on "does this type inherit such a slot"
@@ -39,6 +42,17 @@ abstract class KotlinAbstractOverForeignSlot : NotObligedBase()
 // class for a member it never mentions. The crossing overload keeps its .NET body.
 class KotlinOverloadSibling : OverloadBase() {
     override fun Take(s: String): String = "kt:" + s
+}
+
+// A .NET base that ALREADY fills the crossing slot discharges it for everything below, and it does so here through
+// an EXPLICIT implementation — whose CLR member name is qualified with the interface, so it is not the interface's
+// member name and the abstract declaration looked undischarged.
+class KotlinBelowNetImplementation : NetFillsIt()
+
+// And where the crossing slot's ERASED IMAGE is a signature a sibling states outright, the override belongs to the
+// sibling. `Take(List<int?>)` images to `Take(List<object>)`, which `ImageSibling` also really declares.
+class KotlinImageSiblingOverride : ImageSibling() {
+    override fun Take(ys: NetList<Any?>): String = "kt-o"
 }
 
 class NullableValueGenericInteropTests {
@@ -74,5 +88,15 @@ class NullableValueGenericInteropTests {
     @TestAttribute
     fun siblingOfACrossingGenericOverloadStillBinds() {
         assertEquals("gen:a", GenFac.Pick<Int>("a"))    // gen:a
+    }
+
+    // Both types LOAD and dispatch, which is what says the obligation was placed on the right member: a class below
+    // an explicit .NET implementation adds no slot of its own, and an override of the image-sibling reaches the CLR
+    // slot that sibling declares rather than shadowing it.
+    @TestAttribute
+    fun aDischargedSlotAndAnImageSiblingAreNotThisTypesObligation() {
+        assertEquals("filled", KotlinBelowNetImplementation().Describe())   // filled
+        val o: ImageSibling = KotlinImageSiblingOverride()
+        assertEquals("kt-o", o.Take(NetList<Any?>()))   // kt-o   through the List<object> slot the sibling declares
     }
 }

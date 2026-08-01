@@ -1661,18 +1661,22 @@ the refusal names the deriving type, the supertype that declares the slot, and t
 
 **It fires only where THIS type is obliged to fill THAT slot**, which is a question about the type and not about
 what it inherits. The slot is looked for over the whole supertype graph, transitively and across provenances (a
-.NET interface reached through another .NET interface, or through a Kotlin one declared here), and accessors count
-— a `List<int?> Items { get; }` is a `get_Items` slot like any other. But an obligation is only discharged by a
-body, so:
+.NET interface reached through another .NET interface, or through a Kotlin one declared here), in the frame the
+deriving type constructs it in (a `Base<String>`'s `Put(T, List<int?>)` is `Put(String, …)` here), and EVERY virtual
+member counts — a property's `get_Items`, an event's `add_E`, an indexer's `get_Item`. But an obligation is only
+discharged by a body, so:
 
 - a Kotlin `interface KI : ITake` and an `abstract class KA : BTake()` are ACCEPTED. Neither is instantiable and
   neither emits a body; Kotlin re-declares the inherited member on them as a fake override, which states the slot
   again and fills nothing. Their concrete subclasses are refused instead, wherever they are declared.
 - an abstract slot that some .NET type in the chain already implements is nobody's obligation, so a Kotlin class
-  below that implementation is ACCEPTED.
+  below that implementation is ACCEPTED — including where the implementation is an EXPLICIT one, whose CLR member
+  name is qualified with the interface it fills.
 - a CONCRETE virtual is refused only where this type actually overrides it, decided by the signature the override
   would physically state — the erased image of the slot — and not by the member's name and parameter count. So with
-  a .NET `Take(List<int?>)` beside a `Take(string)`, overriding the `String` one is an ordinary program.
+  a .NET `Take(List<int?>)` beside a `Take(string)`, overriding the `String` one is an ordinary program. Where that
+  image is a signature a sibling slot states outright — a real `Take(List<object>)` beside the `List<int?>` one —
+  the sibling has the stronger claim and the override belongs to it.
 
 ### Delegates: the target's slots follow the delegate's, and a CONCRETE parameter is the one exception
 

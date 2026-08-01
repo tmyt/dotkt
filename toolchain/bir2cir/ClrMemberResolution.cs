@@ -266,47 +266,70 @@ static partial class ClrMemberResolution
     // reached that refusal with no declared return at all and its caller-view `ret` — already erased to Kotlin's
     // `List<object>` — said nothing.
     //
-    // UNKNOWN IS NOT SPELLED `void`. Stamping a fake `void` for an overload set this could not narrow satisfied the
-    // chokepoint — a stamp WAS made — while telling the crossing refusal there was no declared return to object to,
-    // so a C# `List<int?> Make<T>(int)` beside a `string Make<T>(string)` passed both and its
-    // `List<Nullable<int32>>` was consumed as a `List<object>`. The node already carries the FIR-resolved
+    // UNKNOWN IS NOT SPELLED `void`, AND IT IS NOT AN ABORT EITHER. Stamping a fake `void` for an overload set this
+    // could not narrow satisfied the chokepoint — a stamp WAS made — while telling the crossing refusal there was no
+    // declared return to object to, so a C# `List<int?> Make<T>(int)` beside a `string Make<T>(string)` passed both
+    // and its `List<Nullable<int32>>` was consumed as a `List<object>`. The node already carries the FIR-resolved
     // `memberSig`, which is the exact descriptor ilemit LINKS the overload by, so the return is resolved through it
-    // by the same unique-match discipline every other member here uses. A descriptor that still matches none or
-    // several is a hard error, not a value to invent: ilemit would fail on the identical descriptor one stage later,
-    // and a diagnostic naming the member beats a silently wrong result type.
+    // by the same unique-match discipline every other member here uses — INCLUDING ilemit's fallback to the
+    // implemented interfaces, since a class may satisfy the Kotlin-surfaced member through a private explicit
+    // MethodImpl body whose public name lives only on the interface.
+    //
+    // What remains genuinely unreadable is stamped as such. This pass does NOT see what ilemit sees: it reads the
+    // REFERENCE stdlib and the compile references, ilemit the RUNTIME ones plus this compilation's own emitted
+    // types, and a suspend cold entry synthesized here (`<name>$dotkt_suspend<T>`) is not in the reference dll at
+    // all. Refusing those would be a backend abort on source the frontend accepted. `Unresolved` says exactly what
+    // happened — a declaration was looked for and not read — which the chokepoint accepts as a stamp and the
+    // crossing refusal reads as "nothing to check here", where a `void` claimed a fact that is not true.
     static void ResolveGenericCallRet(JsonObject node, bool instance)
     {
         if (node.ContainsKey(MemberRetKey)) return;
         var name = (node["method"] as JsonValue)?.GetValue<string>();
         var ownerFqn = ReadOwnerNode(node["type"]) as TypeNode.Fqn;
         var open = ownerFqn != null ? ResolveOwnerType(ownerFqn) : null;
-        if (open == null || name == null)
-            throw new InvalidOperationException(
-                $"bir2cir: a generic .NET call to '{name ?? "?"}' names owner "
-                + $"'{(ownerFqn == null ? "<none>" : TypeNode.ToJson(ownerFqn))}', which does not "
-                + "resolve to a .NET type — so the member's declared return cannot be established (#86). ilemit "
-                + "resolves the same owner to emit the call, so this is a dropped owner, not a member to guess at.");
+        if (open == null || name == null) { StampMemberRetUnresolved(node); return; }
         var flags = BindingFlags.Public | (instance ? BindingFlags.Instance : BindingFlags.Static);
         var arity = (node["typeArgs"] as JsonArray)?.Count ?? 0;
         var argCount = (node["args"] as JsonArray)?.Count ?? 0;
-        // The candidate set ilemit builds for the very same node, interface fallback included: a class may satisfy
-        // the Kotlin-surfaced member through a private explicit MethodImpl body, whose public name lives only on the
-        // implemented interface.
         List<MethodInfo> Candidates(Type owner) => owner.GetMethods(flags)
             .Where(m => m.Name == name && m.IsGenericMethodDefinition
                         && m.GetGenericArguments().Length == arity
                         && m.GetParameters().Length == argCount)
             .ToList();
         var cands = Candidates(open);
-        if (cands.Count == 0 && instance)
-            cands = SafeInterfaces(open).SelectMany(Candidates)
+        List<MethodInfo> InterfaceCandidates() => !instance
+            ? new List<MethodInfo>()
+            : SafeInterfaces(open).SelectMany(Candidates)
                 .GroupBy(m => (m.Module, m.MetadataToken)).Select(g => g.First()).ToList();
-        if (cands.Count == 1) { StampMemberRet(node, cands[0].ReturnType); return; }
         var sig = (node["memberSig"] as JsonArray)?.Select(TypeJson.Read).ToList();
-        var desc = $"clrGeneric{(instance ? "Instance" : "Static")} owner={TypeNode.ToJson(ownerFqn)} .{name}"
-                   + $"<{arity}>({(sig == null ? "?" : DescArgs(sig))})";
-        if (sig == null || sig.Count != argCount || sig.Any(t => t == null)) throw NoMatch(desc, cands);
-        StampMemberRet(node, PickUnique(cands, m => m.GetParameters(), sig, ownerFqn.Args, desc).ReturnType);
+        // THE DESCRIPTOR DECIDES, and it decides FIRST. Taking a lone same-name candidate without asking whether the
+        // descriptor selects it is how a `string Make<T>(string)` on the class answered for an `I.Make<T>(int)`
+        // reached through an interface — a return read off a member the emitter does not link.
+        if (sig != null && sig.Count == argCount && !sig.Any(t => t == null))
+        {
+            var win = TryPickUnique(cands, sig, ownerFqn.Args)
+                      ?? TryPickUnique(InterfaceCandidates(), sig, ownerFqn.Args);
+            if (win != null) StampMemberRet(node, win.ReturnType); else StampMemberRetUnresolved(node);
+            return;
+        }
+        // No usable descriptor: a UNIQUE candidate is still an answer, and nothing else is.
+        if (cands.Count == 0) cands = InterfaceCandidates();
+        if (cands.Count == 1) StampMemberRet(node, cands[0].ReturnType); else StampMemberRetUnresolved(node);
+    }
+
+    // `PickUnique`'s first two tiers without its diagnostics: the exact structural match, then the single applicable
+    // one. Null where the set is empty or leaves more than one standing — the caller has another set to ask before it
+    // may call that a hard error. The third tier (fewest `object` parameters) is deliberately absent: a DECLARED
+    // parameter vector either is the member's or is not, and there is nothing to be more-specific about.
+    static MethodInfo TryPickUnique(List<MethodInfo> cands, List<TypeNode> sig, TypeNode[] ownerArgs)
+    {
+        var scored = cands.Select(c => (c, m: Match(c.GetParameters(), sig, ownerArgs)))
+            .Where(x => x.m != MatchKind.No).ToList();
+        var exact = MostDerived(scored.Where(x => x.m == MatchKind.Exact).Select(x => x.c).ToList());
+        if (exact.Count == 1) return exact[0];
+        if (exact.Count > 1) return null;
+        var applicable = MostDerived(scored.Select(x => x.c).ToList());
+        return applicable.Count == 1 ? applicable[0] : null;
     }
 
     // ---- bound .NET method-reference (newBoundClrDelegate) --------------------------------------
@@ -742,6 +765,12 @@ static partial class ClrMemberResolution
             declaredReturn == null || declaredReturn == typeof(void)
                 ? new TypeNode.Fqn("void")
                 : MemberSigOf(declaredReturn));
+
+    // THE THIRD ANSWER, and it is not a type. A member whose declaration this pass could not read is stamped with a
+    // bare STRING rather than a TypeNode: the chokepoint sees that a stamp was made, and the crossing refusal — which
+    // reads a TypeNode or nothing — finds nothing to check, which is the truth. Writing `void` there claimed a fact,
+    // and aborting would refuse source the frontend accepted over a declaration only ilemit's reference set carries.
+    static void StampMemberRetUnresolved(JsonObject node) => node[MemberRetKey] = "unresolved";
 
     static JsonArray MemberSig(ParameterInfo[] ps)
     {
