@@ -5,6 +5,15 @@
 
 package kotlin
 
+/** The BCL `System.Type`, as the ELEMENT-TYPE TOKEN the array factory below takes. @ClrTypeAlias, so the interface is
+ *  not a type of its own: it IS `System.Type`, and a `::class` token already leaves exactly that on the stack — the
+ *  `as` at each call site is an identity cast the emitter drops. Naming the parameter this way keeps the call's
+ *  argument signature TRUTHFUL (`System.Type`, not `object`), which is what picks the `CreateInstance` overload.
+ *  (`libraries/stdlib/clr/generated/_ArraysClr.kt` keeps its own file-private, member-carrying twin of this alias.) */
+@kotlin.clr.ClrTypeAlias("System.Type")
+@PublishedApi
+internal interface DotktType
+
 /**
  * Returns an empty array of the specified type [T].
  */
@@ -16,7 +25,7 @@ package kotlin
 // zero-filled. Every reified `Array<T>` factory in the CLR stdlib allocates through this one helper.
 @PublishedApi
 @kotlin.clr.ClrIntrinsic("System.Array.CreateInstance")   // static Array.CreateInstance(Type, int) -> Array
-internal fun dotktNewTypedArray(elementType: Any, length: Int): Any = TODO("clr binding should be implemented")
+internal fun dotktNewTypedArray(elementType: DotktType, length: Int): Any = TODO("clr binding should be implemented")
 
 @Suppress("UNCHECKED_CAST")
-public actual inline fun <reified T> emptyArray(): Array<T> = dotktNewTypedArray(T::class, 0) as Array<T>
+public actual inline fun <reified T> emptyArray(): Array<T> = dotktNewTypedArray(T::class as DotktType, 0) as Array<T>
