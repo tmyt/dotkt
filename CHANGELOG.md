@@ -290,10 +290,20 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `int32` initializer. Measured: an `AccessViolationException`, and, for the plain swallow-and-null idiom
   (`try { n = s.length } catch { null }`), a silently wrong answer. Nothing in the BIR could separate the two — the
   temp's name is not stable across `InlineSplice` and the `try`'s own type is `Unit` either way.
+  The fact is COMPOSITIONAL, so it has to survive the emitter's own wrapping: a `when (subject)` needing a temp, or
+  any block in value position, hands the enclosing join a `valueBlock` rather than the `cond` or the `null` inside it,
+  and an enclosing join that cannot see through that wrapper never learns there is a `null` below it. Every
+  `valueBlock` the emitter mints now goes through one constructor that stamps the fact exactly when its `result`
+  yields null — a `valueBlock` is the one PASS-THROUGH wrapper, its statements being side effects and its result being
+  its value. Nothing else is transparent, and that is a rule rather than an omission: the widening only ever matters
+  at a VALUE join, where the branch's static type IS that value type, so every other wrapper produces a value of the
+  wrapped-to type instead of a null (`if (c) 1 else (null as Int)` throws `NullReferenceException`; `nullableValue` /
+  `safeCastValue` / `nullableWrap` yield a `Nullable<V>` struct; `isInstRef` can answer null but only at a reference
+  join, which never widens).
   The whole stdlib (reference + runtime) lowers byte-identically across the move; the arming shape has no natural
   instance in the corpus, so it is pinned by a `tests/ir/lowering` document whose discriminations now include the
-  axis that broke — a neighbouring user local of the same type must keep it — beside an all-values join and a
-  REFERENCE join, and by runtime fixtures for both measured miscompiles.
+  axis that broke — a neighbouring user local of the same type must keep it — beside an all-values join, a REFERENCE
+  join, and a join reached through the `valueBlock` wrapper, and by runtime fixtures for both measured miscompiles.
 
 - **bir2cir/stdlib (area:bir2cir): `Array<X?>` is `object[]` — the last two representations of the nullable-generic
   array are gone (#86 D2).** One Kotlin type constructor had three physical forms: a concrete `Array<Int?>` was a

@@ -997,7 +997,9 @@ EOF
 # gap below, and it is exactly why this shape is the discriminating one — so dispatch falls back to the LIBRARY's
 # MethodImpl, and the override is only reached because that bridge forwards VIRTUALLY. Bridged non-virtually (which is
 # what the covariant-return synthesizer does, and what it did to this slot before the two passes were made exclusive),
-# every one of these calls answers with the library's 4.
+# this prints 9/4/9: only the middle call — the one that enters through the erased INTERFACE slot, and so through the
+# library's bridge — is answered with the library's 4. The two own-typed calls never touch the bridge and reach the
+# override either way, which is why the interface-typed receiver is the one value in the triple that discriminates.
 NOV="$ROOT/build/roundtrip-nullable-vt-generic-override-virtual-group"
 ng_lib "$NOV" NovLib <<'EOF'
 interface Src<T> { fun get(): T? }
