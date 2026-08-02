@@ -9,10 +9,8 @@
 # outside the baseline is a NEW-FAIL and reddens the gate.
 #
 # --audit-baseline additionally reddens on a DEAD key: a baseline entry that matched no finding at all has
-# rotted into a mask for whatever finding lands on that method next. It is reported with scripts/lib.sh's
-# xfail_diff wording, `FIXED … remove it from the xfail list`, but DELIBERATELY NOT with its verdict — where a
-# FIXED line is green and merely advisory. A stale ilverify key is worse than a stale name in a fail-set,
-# because it is a live substring filter over future findings, so this lane stays red until the entry is pruned.
+# rotted into a mask for whatever finding lands on that method next. It is reported with scripts/lib.sh's strict
+# xfail_diff wording and verdict, `FIXED … remove it from the xfail list`, and stays red until the entry is pruned.
 # Opt-in because the audit is only meaningful over the COMPLETE emitted set: tests/packaged-sdk/run.sh verifies
 # a two-assembly subset, where an unmatched key means "not in this subset", not "fixed".
 # tests/run-nunit-tests.sh, which verifies every emitted suite assembly, passes it.
