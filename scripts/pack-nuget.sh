@@ -44,6 +44,12 @@ for sp in packaging/DotKt.Sdk/Sdk/Sdk.props packaging/DotKt.Sdk.Mpp/Sdk/Sdk.prop
 	sv="$(grep -oE "<DotKtVersion Condition[^>]*>[^<]+" "$ROOT/$sp" | sed 's/.*>//')"
 	[[ "$sv" == "$VERCORE" ]] || die "$sp DotKtVersion default ($sv) != release version core ($VERCORE) — bump it (else the SDK ships pulling a stale toolchain, GitHub #131)"
 done
+# The shipped Toolchain.props is copied verbatim, so its public Kotlin-version property cannot consume the
+# pack project's DotKt.Versions.props. Guard the duplicated literal exactly like the SDK's embedded package version.
+TC_PROPS="packaging/DotKt.Toolchain/build/DotKt.Toolchain.props"
+tc_kotlin_ver="$(grep -oE '<DotKtKotlinVersion Condition[^>]*>[^<]+' "$ROOT/$TC_PROPS" | sed 's/.*>//')"
+[[ "$tc_kotlin_ver" == "$KOTLINVER" ]] \
+	|| die "$TC_PROPS DotKtKotlinVersion default ($tc_kotlin_ver) != shared Kotlin version ($KOTLINVER) — bump both together"
 for sdk in DotKt.Sdk DotKt.Sdk.Mpp; do
 	gv="$(sed -n "s/^[[:space:]]*\"$sdk\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$ROOT/global.json")"
 	[[ "$gv" == "$VERCORE" ]] || die "global.json $sdk version ($gv) != release version core ($VERCORE) — bump it (else tests resolve a stale SDK)"

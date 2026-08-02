@@ -33,3 +33,15 @@ dotnet run
 
 Full documentation, the supported-feature matrix, and the "Kotlin on the CLR — what's different"
 guide live in the repository: <https://github.com/tmyt/dotkt>.
+
+## MSBuild integration contract
+
+Editor and analysis integrations can depend on the public `DotKtPrepareFrontendInputs` target. Once it completes:
+
+- `@(DotKtReferenceKlib)` contains every generated reference KLIB. Its item identity is the KLIB path and its
+  `SourceAssembly` metadata is the MSBuild-selected source DLL.
+- `@(DotKtFrontendKlib)` contains the complete Kotlin frontend classpath. `Role` is either `StandardLibrary` or
+  `Reference`.
+- `$(DotKtKotlinVersion)` identifies the embedded Kotlin toolchain.
+
+Names beginning with `_DotKt` and the layout below `$(DotKtToolchainDir)` remain private implementation details.
