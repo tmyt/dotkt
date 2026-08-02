@@ -51,6 +51,7 @@ import roundtrip.nrt.takeNonNull
 import roundtrip.nrt.retNullable
 import roundtrip.nrt.takeNullable
 import roundtrip.nrt.retNullableInt
+import roundtrip.nrt.dotKtParamsChoice
 import roundtrip.nrt.NullableCtorHolder
 import roundtrip.nrt.NullableValueCtor
 import roundtrip.memext.Box
@@ -315,6 +316,10 @@ class KotlinApiShapeRoundtripTests {
         ClassicAssert.AreEqual(5, takeNullable("hello"))           // 5   nullable param with a non-null arg
         ClassicAssert.AreEqual(-1, retNullableInt(false) ?: -1)    // -1  value Nullable<int> — the null (HasValue=false) branch
         ClassicAssert.AreEqual(1, retNullableInt(true) ?: -1)      // 1   value Nullable<int> — the value branch
+        ClassicAssert.AreEqual("params:0", dotKtParamsChoice("x")) // DotKt-origin family keeps Kotlin's vararg choice
+        val maybe: String? = "n"
+        ClassicAssert.AreEqual("fixed:n", dotKtParamsChoice(maybe))
+        ClassicAssert.AreEqual("params:1", dotKtParamsChoice("x", 1))
     }
 
     // #251: CONSTRUCTOR-parameter nullability. Every `null` below is the sharp signal — it compiles only if the

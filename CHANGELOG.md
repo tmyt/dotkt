@@ -7,6 +7,16 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- **NRT-only fixed/`params` overload inversions now resolve like C# without compiler or library special cases (#367).**
+  For a foreign CLR family whose fixed signature is exactly a `params` overload's physical prefix and whose Kotlin
+  views differ only by strict outer nullable-reference narrowing, `dll2klib` retains both declarations, lowers the
+  priority of the original nullable view, and adds a non-null metadata view of the fixed physical member. Stock Kotlin
+  resolution can then apply its non-vararg tie-break: `Console.WriteLine("{0}")` reaches `WriteLine(string?)` and
+  treats braces literally, while supplied or spread arguments still reach the formatting overload. Real nominal
+  differences such as `object?` versus `string`, platform and nested nullability, and DotKt-origin declarations are
+  excluded. Static, instance, virtual/override, constructor, generic, extension, nullable-argument, arbitrary
+  C#-producer, and Kotlin round-trip cases are covered by interop tests.
+
 - **Tests: #227 consolidates eleven redundant NUnit cases into their existing feature owners.** Numeric parsing,
   nullable string rendering, enum APIs, character ranges, preconditions, collection rendering, BCL imports, and
   configured-await shapes now have one authoritative test location each. Assertions that preserve a distinct CLR

@@ -1345,25 +1345,35 @@ actually used. Now the source declaration is authoritative and emits as a plain 
 ## 8g. A .NET `params` parameter is a Kotlin `vararg`, and it competes for overload resolution
 
 `dll2klib` projects `params T[]` as an ordinary Kotlin `vararg`, so the overload carrying it is one of the frontend's
-candidates like any other. That has a consequence C# does not share, because Kotlin's most-specific rule compares
-parameter types before it ever reaches its vararg tie-break:
+candidates like any other. Kotlin's most-specific rule compares parameter types before it reaches its non-vararg
+tie-break, while C# erases nullable-reference annotations for overload resolution. A literal call would therefore
+invert this NRT-only family if projected naively:
 
 ```kotlin
-Console.WriteLine("hello")        // -> WriteLine(format: String, vararg arg: Any?)
-Console.WriteLine(maybeNullable)  // -> WriteLine(value: String?)
+// CLR declarations:
+// WriteLine(string? value)
+// WriteLine(string format, params object?[] arg)
+
+Console.WriteLine("hello")        // -> fixed WriteLine(value), as in C#
+Console.WriteLine(maybeNullable)  // -> fixed WriteLine(value)
+Console.WriteLine("{0}", "x")   // -> params WriteLine(format, arg)
 ```
 
-`Console.WriteLine(string? value)` is NRT-annotated nullable, while the `params` overload's `format` is not. A
-**non-null** `String` argument therefore makes the two-parameter candidate strictly more specific (`String` is a
-subtype of `String?`, not the other way round), and it wins; a `String?` argument makes it inapplicable, so the
-single-parameter overload wins. C# picks `WriteLine(string?)` in both cases, because it prefers a non-expanded form
-outright.
+For a foreign CLR assembly, `dll2klib` recognizes this only when the fixed overload's complete physical parameter
+signature is exactly the `params` overload's physical prefix and the projected Kotlin prefix differs solely by a
+strict outer NRT narrowing (`T?` to the same `T`). It retains both declarations and adds a metadata-only non-null view
+of the **fixed physical member**. Its original nullable view remains present with Kotlin's standard low-priority
+annotation: it is still the only applicable view for a nullable actual, but does not create a three-way ambiguity in
+generic `T?`/`T` families when the non-null view applies. The ordinary Kotlin resolver then sees equally specific
+non-null prefix types and applies its normal non-vararg tie-break. Supplied or explicitly spread varargs still use the
+`params` member. No backend overload is reselected.
 
-The selected overload **formats** its first argument, so a brace in it is a format placeholder:
-`Console.WriteLine("{0}")` throws `FormatException`, and `Console.WriteLine("{{x}}")` prints `{x}`. Write
-`Console.WriteLine(value as Any?)`, or Kotlin's own `println`, to reach a non-formatting overload. This is ordinary
-Kotlin resolution over a faithful projection, not a compiler choice: suppressing the `params` overload would make the
-projection incomplete, and re-ranking candidates would make DotKt's resolution differ from Kotlin's.
+The physical-signature condition is load-bearing. Given `Some(object? value)` and
+`Some(string format, params object?[] args)`, `Some("")` selects the `params` overload in both C# and Kotlin because
+`object` versus `string` is a real nominal type difference, not erased NRT. No view is added. Platform types, nested
+generic nullability differences, widening conversions, and DotKt-produced assemblies are likewise outside this rule;
+the last exclusion preserves the original Kotlin overload semantics across a round trip. The rule is owner- and
+library-independent, so third-party assemblies receive the same treatment as the BCL without a member catalog.
 
 An **omitted** vararg is Kotlin's empty array, at every callee — same-module, cross-module, or a projected `params`
 member. `Path.Combine()` passes `new string[0]`, exactly as `f()` on `fun f(vararg xs: Int)` passes an empty

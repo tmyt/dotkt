@@ -10,8 +10,8 @@
 // emitter, which failed with its own diagnostic). Every method also asserts the SUPPLIED form of the same call so a
 // fix that swallowed real arguments would not pass.
 //
-// The .NET half of the same family (a projected `params` parameter, and the overload the frontend selects for
-// `Console.WriteLine("x")` because of one) lives in tests/interop/consumer/fixtures/BclConsoleWriteTests.kt.
+// The .NET half of the same family (a projected `params` parameter, including explicitly selecting Console's params
+// overload with a spread) lives in tests/interop/consumer/fixtures/BclConsoleWriteTests.kt.
 //
 // Top-level names are family-prefixed with `varargOmission` (one assembly = one namespace).
 import NUnit.Framework.TestAttribute
