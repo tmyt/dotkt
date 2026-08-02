@@ -97,11 +97,9 @@
     <DotKtCommon Include="common/**/*.kt" />
   </ItemGroup>
 
-  <!-- KLIB as an incremental input (#50): the frontend klib is an unpacked DIRECTORY (both the in-repo build and the
-       shipped tools/kotlin-stdlib-clr-frontend.klib), and MSBuild's Inputs timestamp check treats a directory path as
-       a MISSING file — which would force KotlinCompile to rebuild every single build. So key the input off a stable
-       FILE inside the klib (default/manifest, rewritten on every klib build) instead of the directory path; fall back
-       to the path itself should a future klib ship packed as one .klib file. Referenced as @(_DotKtStdlibInput) below. -->
+  <!-- KLIB as an incremental input (#50): current toolchains ship the frontend stdlib as one packed KLIB, so its path
+       is the input. Retain the manifest path for an unpacked development KLIB too: MSBuild's Inputs timestamp check
+       treats a directory path as missing and would otherwise force KotlinCompile to rebuild every time. -->
   <ItemGroup>
     <_DotKtStdlibInput Include="$(DotKtStdlib)/default/manifest" Condition="Exists('$(DotKtStdlib)/default/manifest')" />
     <_DotKtStdlibInput Include="$(DotKtStdlib)" Condition="!Exists('$(DotKtStdlib)/default/manifest') and Exists('$(DotKtStdlib)')" />
