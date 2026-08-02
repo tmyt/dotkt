@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.8 (2026-08-02)
+
 ### Added
 
 - **The nullable-generic family is now measured at VALUE instantiations, and the C#-visible ABI is measured at
@@ -124,6 +126,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `.kt` plus an `.expected` list of substrings the diagnostic must contain; the lane is green iff every failing
   case is listed in its (currently empty) `CF_XFAIL` baseline, and reports NEW-FAIL/FIXED like the other gates.
   It opens with the eight byref-like storage refusals below.
+
+### Removed
+
+- **facadegen (area:toolchain): remove the retired CLR-to-FIR injection tool.** The production frontend now
+  consumes one standard metadata-only KLIB per resolved CLR reference assembly through `dll2klib`, so the old
+  import-seeded JSON projection has no build, package, test, or developer entry point. The `facadegen` project,
+  `make facades`, and `scripts/gen-facades.sh` are deleted; `make toolchain` now builds only the shipping tools.
 
 ### Fixed
 
@@ -993,144 +1002,6 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   never boxed (`AccessViolationException`, process abort). The hoist now threads the lexical scope and derives
   the type the way every other spill site does.
 
-### Changed
-
-- **tests: an unexpected PASS now reddens every machine-readable XFAIL gate (#357).** Round-trip,
-  compile-fail and packaged-SDK used to print `FIXED — remove it from the xfail list` but still exit zero, so a
-  stale entry could outlive its defect indefinitely unless somebody noticed an advisory line in CI output.
-  `scripts/lib.sh` now records both NEW failures and FIXED entries, and the three lanes share the same clean
-  verdict: every actual failure must be listed, and every listed failure must still occur. The ILVerify complete-set
-  audit already enforced the same rule. A build-free self-test injects one XFAIL, one NEW failure and one FIXED
-  entry so deleting either half of the final verdict cannot look green.
-- **tests: an ilverify baseline entry that masks NOTHING now reddens the gate.** `ILVERIFY_XFAIL` in
-  `tests/run-ilverify.sh` only ever classified findings, so a key whose defect had been fixed stayed in the list
-  silently — and kept masking, ready to absorb whatever finding lands on that method next. (One had already
-  rotted that way: `GenericMetadataRoundtripTests::nestedGenericCollectionsRoundTrip()` never produced the
-  finding its key describes — the same commit that added the key wrote the fixture to omit the generic-member
-  read that would have surfaced the Root-V variance collapse, and says so in the fixture's own comment. It is
-  pruned here.) `tests/run-ilverify.sh --audit-baseline` reports
-  every unmatched key with `scripts/lib.sh`'s `xfail_diff` wording, `FIXED … remove it from the xfail list`, and
-  then exits non-zero. That strict verdict is now shared by every XFAIL lane; the ILVerify audit remains opt-in
-  because a partial assembly set cannot distinguish an unmatched key from a fixed finding. A
-  stale ilverify key is a live substring filter over future findings, not just a stale name in a fail-set, so
-  this lane stays red until the entry is pruned. `tests/run-nunit-tests.sh` passes the flag because it
-  verifies the COMPLETE emitted set; `tests/packaged-sdk/run.sh` verifies a two-assembly subset, where an
-  unmatched key means "not in this subset" and the audit would be a false red.
-- **tests: the surviving ilverify/round-trip baseline reasons name the issue that actually owns them.**
-  `ArrayTests::copyOfGrowsWithNullTail`, `GenericMetadataRoundtripTests::nullableGenericMembersRoundTrip` and the
-  `roundtrip-nullable-vt-generic` scenario cited #127, #18 and #109/#127 — all closed, and #18 unrelated. All
-  three are the one open nullable-generic representation design, #86. The two dead `tests/known-fail/` references
-  (`tests/README.md`, `scripts/gate.sh`'s routing table) are dropped; the directory does not exist.
-- **bir2cir (area:bir2cir): the three result-type stamps have ONE precedence — `sty`, then `ret`, then `dynRet` —
-  stated once in `bir-common/NodeType.cs`.** `sty` is the frontend's INSTANTIATED static type, stamped per call
-  site; `ret` is emitted only when the callee or its owner is GENERIC, which is exactly where it may name the
-  UNinstantiated declared type. Reading `ret` first therefore typed a generic-owner call by its declaration
-  instead of by its use, and four separate restatements of the order had accumulated — the core, an explicit
-  "deliberately not unified yet" override on `StaticType.Surface`'s call/field arm, the awaited-value read in
-  `EmitSuspensionPoint`, and `IsSuspendFunctionValue`'s own copy. The core is flipped and the other three are
-  gone: the call/field/`bindRef` family needs no arm at all now that `sty` wins everywhere, and the two suspend
-  readers ask the shared deriver. The order rests on an invariant now written into `docs/bir-cir-spec.md` §2.7
-  and cited at the flip site: **a pass that changes a node's result type rewrites or deletes its `sty`** — a
-  stale stamp on a retyped node is a bug in that pass, not a reason to demote the stamp. Byte-identical CIR
-  across the reference and runtime stdlib corpora (497 files) and across the test corpora.
-- **bir2cir (area:bir2cir): a slot whose type cannot be derived is a REFUSAL, not a `kotlin.Any` box.**
-  `kotlin.Any` in a declared slot is never neutral — it boxes a value type, it makes the read unverifiable
-  without an unbox, and it turns an earlier layer's dropped stamp into a runtime `InvalidCastException` far from
-  the cause. Four fallbacks are retired. The suspend lowering's conditional temporary is now typed from the
-  conditional's LIVE branch, which is what made every value-type `x?.suspendFoo()` crossing a suspension box and
-  unbox; `TryValueOperandHoist`'s spill type (formerly `GuessType`, carried as a KNOWN GAP) refuses instead of
-  boxing, since a null from the shared deriver there is a hole in the DERIVER; and the two method-return indexes
-  the stage-0 typer consults refuse a declaration carrying neither `suspendRet` nor `ret` — surveyed as
-  impossible by construction (0 of 7308 stdlib declarations, and every kotc method emitter writes `ret`
-  unconditionally). What remains is ABI rather than fallback (the cold entry's `Any?` return, `Continuation<Any>`,
-  `Result<Any?>`, the non-generic `IEnumerable` element, an undeclared catch filter), and the site-by-site triage
-  — LEGITIMATE-ABI / RETIRED / FOLLOW-UP with its precondition — is `docs/dotkt-semantics.md` §7b.
-  These refusals cannot fire on frontend-produced BIR, so `tests/ir/run-lowering.sh` gained a `reject-*` half
-  (synthetic BIR that bir2cir must refuse, with the wording pinned) to keep them from being silently defeated;
-  all four fixtures are calibrated — the previous binary accepted each one.
-- **bir2cir (area:bir2cir): `StaticType.Surface` is founded on the shared node-local deriver
-  (`bir-common/NodeType.cs`) instead of restating it.** The two derivations had drifted into disagreeing about
-  five kinds — the nullable wrap/unwrap slots, an untyped `cond`, `Nothing`, the `&&`/`||` result, and the two
-  spellings of an array type — and a kind classified one way for a spill slot and another way for an operand
-  classifier is exactly the drift the shared file exists to prevent. Each disagreement is now either fixed in
-  the core (so both consumers inherit it) or one named adapter (`ArrayAsFqn`: the core answers structurally,
-  this reader's classifiers are name-keyed). `Surface` keeps only the arms the core cannot answer — the ones
-  needing the enclosing lexical scope — and delegates the rest, including the whole call/field family once the
-  stamp precedence was unified (see the `sty`-first entry above).
-- **A call value NOTHING reads is now evaluated unless evaluating it is genuinely unobservable
-  (area:bir2cir, area:kotc; recorded as `docs/dotkt-semantics.md` §7a).** Kotlin evaluates a call's receiver and
-  every supplied argument whether the emitted CLR shape has a slot for the value or not; the backend was skipping
-  the evaluation for anything that *looked* like a pure load. Two of those are not: a **static-field** read (and an
-  **enum-value** read with it) runs the declaring type's initializer — which on this backend is where a top-level
-  property initializer and an `object`'s body live, so it can print, throw or mutate — and an **instance-field**
-  read dereferences, so it throws on a null receiver, which a platform type makes reachable (§9a). `IsDroppable`
-  (Q2 of the value questions) is narrowed to the loads whose evaluation genuinely cannot be detected: `const`,
-  `this`, `local`, `bindRef`, `default`, `classRef`. Anything else with no reader becomes a local nobody reads —
-  at most one local, and only at a call site that supplies a value the emitted shape cannot place. The
-  zero-reader case is now decided by that question ALONE: a `stable` binding used to vanish the same way through
-  the inline path without ever being asked whether its evaluation mattered ("may be read twice" was standing in
-  for "may be read zero times"). `KClassMemberBinding`'s `value::class` const-fold, which asks the same question
-  about the receiver it folds away, delegates to `IsDroppable` instead of restating a narrower ad-hoc set —
-  widening the fold to a `this`/plan-read receiver of a known-final builtin type, while explicitly rejecting a
-  `classRef` receiver: the DOUBLE class literal `(Int::class)::class` reflects the `KClass` VALUE, and a
-  `classRef`'s type slot names the type it REFERS to rather than the type it IS, so folding it would answer "Int"
-  for a receiver that is not an `Int`.
-  The one shape that relied on the old, too-generous answer is gone at the producer: a plain `companion object` is
-  flattened onto its enclosing class and a projected .NET static holder has no instance either, so **kotc no longer
-  mints a call-evaluation-plan binding for a receiver naming one** — at any receiver site, ordinary or inline. It
-  was a binding nothing could read, holding a read of an `INSTANCE` field this representation never emits (the
-  inline emitter already named it a "dangling token"), surviving only because the drop hid it; there was never a
-  value there to evaluate. A REAL `object` and a super-typed companion are the opposite case and keep their
-  binding: their `INSTANCE` exists and loading it runs the object's own body, so it is an observable evaluation
-  that Kotlin orders BEFORE every argument — without the binding, `O.f(side())` let `side()` run first.
-- **bir2cir (area:bir2cir): the by-reference argument's location pins ask their own question.**
-  `CallEvalLowering`'s `LocationHasPinWork`/`PinLocationOperands` shared Q2's implementation, but they decide
-  whether a node is a link of an addressable location's own path — pinning one into a local would take the address
-  of a COPY for a value type, so a callee writing through the `byref` would miss the real storage. That is storage
-  identity, not side effects; it is now `StaysInLocation`, next to the code that asks it, and the Q2 narrowing
-  above leaves it untouched.
-- **bir2cir (area:bir2cir): every "is this value pure / stable" predicate is now named after the question it
-  answers, and each question has exactly one home.** Five different questions were being asked under three
-  interchangeable-sounding names, which invited the assumption that a kind classified one way in one of them was
-  a bug in another. `bir-common/BindingStability.cs` becomes `ValueStability.cs` and heads the roster;
-  `IsStable` becomes `IsReReadable` (Q1 — may this value be read more than once, with other evaluation in
-  between) and `IsTriviallyPure` becomes `IsDroppable` (Q2 — is evaluating it unobservable, so a binding nothing
-  reads may be skipped); `TryValueOperandHoist`'s `PureKinds`/`IsPure` become `StackNeutralKinds`/`IsStackNeutral`
-  (Q4 — may it stay in its slot when a later sibling hoists out of the protected region); `CallEvalLowering`'s
-  `IsLvalueFormer` gains the question it answers (Q5). Naming Q3 — the suspend lowering's resume-stability set —
-  is what made it answerable, and the operand-plan entry above then RETIRED it outright, so the roster ships with
-  FOUR questions and no resume-stability predicate at all. The control-transfer kind set that the suspend
-  lowering stated twice — once inside its impure set, once inside `EscapesExpression` — is now one named constant
-  (and the impure set that was its other reader is gone with Q3). Two kind sets lost entries no producer mints at the point they are consulted: `TryValueOperandHoist`
-  (`param`, `constNull`, `null` — no producer anywhere) and `CallEvalLowering.EagerKinds` (`newList`, `newSet`,
-  `newMap`, `clrPropGet`, `clrPropSet` — minted by passes that run hundreds of lines after it). Pure refactor:
-  the emitted CIR corpus is byte-identical.
-
-### Removed
-
-- **facadegen (area:toolchain): remove the retired CLR-to-FIR injection tool.** The production frontend now
-  consumes one standard metadata-only KLIB per resolved CLR reference assembly through `dll2klib`, so the old
-  import-seeded JSON projection has no build, package, test, or developer entry point. The `facadegen` project,
-  `make facades`, and `scripts/gen-facades.sh` are deleted; `make toolchain` now builds only the shipping tools.
-
-### Changed
-
-- **kotc (area:kotc): one home per stability question in the BIR emitter.** `bindOnce` — the splice-once binder
-  behind a when-subject, a safe call and a range membership — carried a byte-identical inline copy of the
-  call-evaluation plan's `isStableValue` predicate, so the two could drift apart while both claimed to answer
-  "is this value free to be re-read and to move past another value". It now calls `isStableValue`, which is the
-  single implementation. `isStableAddress` is renamed `isStableLocation`, because it answers a DIFFERENT question
-  — whether an argument's *address* may be taken twice and moved, which holds for a mutable `var` too — and a
-  name that echoed the value predicate invited the immutability clause to be "restored" into it; its doc now
-  states the question and why that clause is deliberately absent. The `BirEmitterCallPlan` granularity note
-  pointed at a `BirEmitter.callNeedsPlan` that does not exist and never did; it now describes what really gates a
-  `callEval` — a plan scope installed around every call that costs nothing when empty, and, inside it, the
-  `planNeeded` tests of `filledArgs`/`filledExternalArgs` (§2.7 triggers (a)-(c)) together with the unconditional
-  binding a `callInline` performs (trigger (d)), which the old note did not mention at all. Behavior-preserving:
-  emitted BIR and CIR are byte-identical over the full stdlib corpus (ref + runtime, 1001 files) and a
-  198-source fixture sweep.
-
-### Fixed
 - **bir2cir (area:bir2cir): `x in a..b` now evaluates `a`, `b` and `x` exactly once each, in that order.** Range
   membership is `(a..b).contains(x)`: the range is constructed first, so BOTH bounds always run, left to right, and
   the subject is read after them. The short-circuit fast path (`x >= a && x <op> b`) put the upper-bound test inside
@@ -1544,6 +1415,134 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   instance is still refused at stamp time. Covered by `tests/basic/fixtures/DefaultArgumentTests.kt` (`defargsCtor`,
   `defargsCtorDelegation`, `defargsCtorEnclosingInstance`, `defargsSingleEval`, `defargsEvalOrder`) and by the round-trip
   lane's `nonConstDefaultArgs` (`tests/roundtrip/producer/Nonconst.kt` + `tests/roundtrip/consumer/`).
+
+### Changed
+
+- **tests: an unexpected PASS now reddens every machine-readable XFAIL gate (#357).** Round-trip,
+  compile-fail and packaged-SDK used to print `FIXED — remove it from the xfail list` but still exit zero, so a
+  stale entry could outlive its defect indefinitely unless somebody noticed an advisory line in CI output.
+  `scripts/lib.sh` now records both NEW failures and FIXED entries, and the three lanes share the same clean
+  verdict: every actual failure must be listed, and every listed failure must still occur. The ILVerify complete-set
+  audit already enforced the same rule. A build-free self-test injects one XFAIL, one NEW failure and one FIXED
+  entry so deleting either half of the final verdict cannot look green.
+- **tests: an ilverify baseline entry that masks NOTHING now reddens the gate.** `ILVERIFY_XFAIL` in
+  `tests/run-ilverify.sh` only ever classified findings, so a key whose defect had been fixed stayed in the list
+  silently — and kept masking, ready to absorb whatever finding lands on that method next. (One had already
+  rotted that way: `GenericMetadataRoundtripTests::nestedGenericCollectionsRoundTrip()` never produced the
+  finding its key describes — the same commit that added the key wrote the fixture to omit the generic-member
+  read that would have surfaced the Root-V variance collapse, and says so in the fixture's own comment. It is
+  pruned here.) `tests/run-ilverify.sh --audit-baseline` reports
+  every unmatched key with `scripts/lib.sh`'s `xfail_diff` wording, `FIXED … remove it from the xfail list`, and
+  then exits non-zero. That strict verdict is now shared by every XFAIL lane; the ILVerify audit remains opt-in
+  because a partial assembly set cannot distinguish an unmatched key from a fixed finding. A
+  stale ilverify key is a live substring filter over future findings, not just a stale name in a fail-set, so
+  this lane stays red until the entry is pruned. `tests/run-nunit-tests.sh` passes the flag because it
+  verifies the COMPLETE emitted set; `tests/packaged-sdk/run.sh` verifies a two-assembly subset, where an
+  unmatched key means "not in this subset" and the audit would be a false red.
+- **tests: the surviving ilverify/round-trip baseline reasons name the issue that actually owns them.**
+  `ArrayTests::copyOfGrowsWithNullTail`, `GenericMetadataRoundtripTests::nullableGenericMembersRoundTrip` and the
+  `roundtrip-nullable-vt-generic` scenario cited #127, #18 and #109/#127 — all closed, and #18 unrelated. All
+  three are the one open nullable-generic representation design, #86. The two dead `tests/known-fail/` references
+  (`tests/README.md`, `scripts/gate.sh`'s routing table) are dropped; the directory does not exist.
+- **bir2cir (area:bir2cir): the three result-type stamps have ONE precedence — `sty`, then `ret`, then `dynRet` —
+  stated once in `bir-common/NodeType.cs`.** `sty` is the frontend's INSTANTIATED static type, stamped per call
+  site; `ret` is emitted only when the callee or its owner is GENERIC, which is exactly where it may name the
+  UNinstantiated declared type. Reading `ret` first therefore typed a generic-owner call by its declaration
+  instead of by its use, and four separate restatements of the order had accumulated — the core, an explicit
+  "deliberately not unified yet" override on `StaticType.Surface`'s call/field arm, the awaited-value read in
+  `EmitSuspensionPoint`, and `IsSuspendFunctionValue`'s own copy. The core is flipped and the other three are
+  gone: the call/field/`bindRef` family needs no arm at all now that `sty` wins everywhere, and the two suspend
+  readers ask the shared deriver. The order rests on an invariant now written into `docs/bir-cir-spec.md` §2.7
+  and cited at the flip site: **a pass that changes a node's result type rewrites or deletes its `sty`** — a
+  stale stamp on a retyped node is a bug in that pass, not a reason to demote the stamp. Byte-identical CIR
+  across the reference and runtime stdlib corpora (497 files) and across the test corpora.
+- **bir2cir (area:bir2cir): a slot whose type cannot be derived is a REFUSAL, not a `kotlin.Any` box.**
+  `kotlin.Any` in a declared slot is never neutral — it boxes a value type, it makes the read unverifiable
+  without an unbox, and it turns an earlier layer's dropped stamp into a runtime `InvalidCastException` far from
+  the cause. Four fallbacks are retired. The suspend lowering's conditional temporary is now typed from the
+  conditional's LIVE branch, which is what made every value-type `x?.suspendFoo()` crossing a suspension box and
+  unbox; `TryValueOperandHoist`'s spill type (formerly `GuessType`, carried as a KNOWN GAP) refuses instead of
+  boxing, since a null from the shared deriver there is a hole in the DERIVER; and the two method-return indexes
+  the stage-0 typer consults refuse a declaration carrying neither `suspendRet` nor `ret` — surveyed as
+  impossible by construction (0 of 7308 stdlib declarations, and every kotc method emitter writes `ret`
+  unconditionally). What remains is ABI rather than fallback (the cold entry's `Any?` return, `Continuation<Any>`,
+  `Result<Any?>`, the non-generic `IEnumerable` element, an undeclared catch filter), and the site-by-site triage
+  — LEGITIMATE-ABI / RETIRED / FOLLOW-UP with its precondition — is `docs/dotkt-semantics.md` §7b.
+  These refusals cannot fire on frontend-produced BIR, so `tests/ir/run-lowering.sh` gained a `reject-*` half
+  (synthetic BIR that bir2cir must refuse, with the wording pinned) to keep them from being silently defeated;
+  all four fixtures are calibrated — the previous binary accepted each one.
+- **bir2cir (area:bir2cir): `StaticType.Surface` is founded on the shared node-local deriver
+  (`bir-common/NodeType.cs`) instead of restating it.** The two derivations had drifted into disagreeing about
+  five kinds — the nullable wrap/unwrap slots, an untyped `cond`, `Nothing`, the `&&`/`||` result, and the two
+  spellings of an array type — and a kind classified one way for a spill slot and another way for an operand
+  classifier is exactly the drift the shared file exists to prevent. Each disagreement is now either fixed in
+  the core (so both consumers inherit it) or one named adapter (`ArrayAsFqn`: the core answers structurally,
+  this reader's classifiers are name-keyed). `Surface` keeps only the arms the core cannot answer — the ones
+  needing the enclosing lexical scope — and delegates the rest, including the whole call/field family once the
+  stamp precedence was unified (see the `sty`-first entry above).
+- **A call value NOTHING reads is now evaluated unless evaluating it is genuinely unobservable
+  (area:bir2cir, area:kotc; recorded as `docs/dotkt-semantics.md` §7a).** Kotlin evaluates a call's receiver and
+  every supplied argument whether the emitted CLR shape has a slot for the value or not; the backend was skipping
+  the evaluation for anything that *looked* like a pure load. Two of those are not: a **static-field** read (and an
+  **enum-value** read with it) runs the declaring type's initializer — which on this backend is where a top-level
+  property initializer and an `object`'s body live, so it can print, throw or mutate — and an **instance-field**
+  read dereferences, so it throws on a null receiver, which a platform type makes reachable (§9a). `IsDroppable`
+  (Q2 of the value questions) is narrowed to the loads whose evaluation genuinely cannot be detected: `const`,
+  `this`, `local`, `bindRef`, `default`, `classRef`. Anything else with no reader becomes a local nobody reads —
+  at most one local, and only at a call site that supplies a value the emitted shape cannot place. The
+  zero-reader case is now decided by that question ALONE: a `stable` binding used to vanish the same way through
+  the inline path without ever being asked whether its evaluation mattered ("may be read twice" was standing in
+  for "may be read zero times"). `KClassMemberBinding`'s `value::class` const-fold, which asks the same question
+  about the receiver it folds away, delegates to `IsDroppable` instead of restating a narrower ad-hoc set —
+  widening the fold to a `this`/plan-read receiver of a known-final builtin type, while explicitly rejecting a
+  `classRef` receiver: the DOUBLE class literal `(Int::class)::class` reflects the `KClass` VALUE, and a
+  `classRef`'s type slot names the type it REFERS to rather than the type it IS, so folding it would answer "Int"
+  for a receiver that is not an `Int`.
+  The one shape that relied on the old, too-generous answer is gone at the producer: a plain `companion object` is
+  flattened onto its enclosing class and a projected .NET static holder has no instance either, so **kotc no longer
+  mints a call-evaluation-plan binding for a receiver naming one** — at any receiver site, ordinary or inline. It
+  was a binding nothing could read, holding a read of an `INSTANCE` field this representation never emits (the
+  inline emitter already named it a "dangling token"), surviving only because the drop hid it; there was never a
+  value there to evaluate. A REAL `object` and a super-typed companion are the opposite case and keep their
+  binding: their `INSTANCE` exists and loading it runs the object's own body, so it is an observable evaluation
+  that Kotlin orders BEFORE every argument — without the binding, `O.f(side())` let `side()` run first.
+- **bir2cir (area:bir2cir): the by-reference argument's location pins ask their own question.**
+  `CallEvalLowering`'s `LocationHasPinWork`/`PinLocationOperands` shared Q2's implementation, but they decide
+  whether a node is a link of an addressable location's own path — pinning one into a local would take the address
+  of a COPY for a value type, so a callee writing through the `byref` would miss the real storage. That is storage
+  identity, not side effects; it is now `StaysInLocation`, next to the code that asks it, and the Q2 narrowing
+  above leaves it untouched.
+- **bir2cir (area:bir2cir): every "is this value pure / stable" predicate is now named after the question it
+  answers, and each question has exactly one home.** Five different questions were being asked under three
+  interchangeable-sounding names, which invited the assumption that a kind classified one way in one of them was
+  a bug in another. `bir-common/BindingStability.cs` becomes `ValueStability.cs` and heads the roster;
+  `IsStable` becomes `IsReReadable` (Q1 — may this value be read more than once, with other evaluation in
+  between) and `IsTriviallyPure` becomes `IsDroppable` (Q2 — is evaluating it unobservable, so a binding nothing
+  reads may be skipped); `TryValueOperandHoist`'s `PureKinds`/`IsPure` become `StackNeutralKinds`/`IsStackNeutral`
+  (Q4 — may it stay in its slot when a later sibling hoists out of the protected region); `CallEvalLowering`'s
+  `IsLvalueFormer` gains the question it answers (Q5). Naming Q3 — the suspend lowering's resume-stability set —
+  is what made it answerable, and the operand-plan entry above then RETIRED it outright, so the roster ships with
+  FOUR questions and no resume-stability predicate at all. The control-transfer kind set that the suspend
+  lowering stated twice — once inside its impure set, once inside `EscapesExpression` — is now one named constant
+  (and the impure set that was its other reader is gone with Q3). Two kind sets lost entries no producer mints at the point they are consulted: `TryValueOperandHoist`
+  (`param`, `constNull`, `null` — no producer anywhere) and `CallEvalLowering.EagerKinds` (`newList`, `newSet`,
+  `newMap`, `clrPropGet`, `clrPropSet` — minted by passes that run hundreds of lines after it). Pure refactor:
+  the emitted CIR corpus is byte-identical.
+
+- **kotc (area:kotc): one home per stability question in the BIR emitter.** `bindOnce` — the splice-once binder
+  behind a when-subject, a safe call and a range membership — carried a byte-identical inline copy of the
+  call-evaluation plan's `isStableValue` predicate, so the two could drift apart while both claimed to answer
+  "is this value free to be re-read and to move past another value". It now calls `isStableValue`, which is the
+  single implementation. `isStableAddress` is renamed `isStableLocation`, because it answers a DIFFERENT question
+  — whether an argument's *address* may be taken twice and moved, which holds for a mutable `var` too — and a
+  name that echoed the value predicate invited the immutability clause to be "restored" into it; its doc now
+  states the question and why that clause is deliberately absent. The `BirEmitterCallPlan` granularity note
+  pointed at a `BirEmitter.callNeedsPlan` that does not exist and never did; it now describes what really gates a
+  `callEval` — a plan scope installed around every call that costs nothing when empty, and, inside it, the
+  `planNeeded` tests of `filledArgs`/`filledExternalArgs` (§2.7 triggers (a)-(c)) together with the unconditional
+  binding a `callInline` performs (trigger (d)), which the old note did not mention at all. Behavior-preserving:
+  emitted BIR and CIR are byte-identical over the full stdlib corpus (ref + runtime, 1001 files) and a
+  198-source fixture sweep.
 
 ## 0.9.7 (2026-07-22)
 

@@ -1,0 +1,102 @@
+# Publishing the five DotKt packages to the feed at dotkt.utatane.dev.
+#
+# Trigger: pushing an annotated `v*` tag — the tag IS the release record, so the workflow refuses to run on
+# a tag whose version does not match what the tree single-sources in packaging/DotKt.Versions.props. That
+# guard exists because the package version is NOT derived from the tag: every pack .csproj imports that
+# props file, so a tag that disagrees would publish a version nobody asked for under a name that says
+# otherwise (#131 is the same class of drift, one surface further in).
+#
+# workflow_dispatch is offered for a re-publish of a tag that is already pushed (a feed outage, a package
+# that failed to upload after its siblings) — dispatch it ON THE TAG. It never tags, and it refuses any ref
+# that is not a `v*` tag: dispatch can otherwise be pointed at a branch, and publishing an untagged tree is
+# exactly the accident a release workflow must not make easy.
+#
+# The gate is NOT re-run here. `verify` and `packaged-sdk` already ran on the commit as a pull request, and
+# the packaged-SDK job is precisely the one that restores and consumes these five nupkgs from a feed — so a
+# tag on a merged commit has been through the release gate by construction. Re-running it would double a
+# ~25-minute job for no new information.
+name: release
+
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: release          # holds NUGET_API_KEY (and an optional NUGET_FEED_URL override); also lets the push be gated on approval
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+
+      # The tree decides the version; the tag only says WHICH tree. So this runs for every trigger: a push of
+      # the tag, and a dispatch aimed at one. A ref that is not a `v*` tag is refused outright rather than
+      # published under whatever version the tree happens to carry.
+      - name: Check the ref is a v* tag, and the tag against packaging/DotKt.Versions.props
+        run: |
+          set -euo pipefail
+          case "$GITHUB_REF" in
+            refs/tags/v*) ;;
+            *) echo "::error::$GITHUB_REF is not a v* tag — release publishes only from a tag (dispatch it on the tag)"; exit 1 ;;
+          esac
+          prefix=$(grep -oE '<DotKtVersionPrefix>[^<]+' packaging/DotKt.Versions.props | sed 's/.*>//')
+          suffix=$(grep -oE '<DotKtVersionSuffix>[^<]*' packaging/DotKt.Versions.props | sed 's/.*>//')
+          core="$prefix"; [ -n "$suffix" ] && core="$prefix-$suffix"
+          tag="${GITHUB_REF_NAME#v}"
+          echo "tag=$tag  tree=$core"
+          [ "$tag" = "$core" ] || { echo "::error::tag $GITHUB_REF_NAME does not match the tree's version $core"; exit 1; }
+
+      # `make pack` builds the prerequisites (toolchain, the three stdlib artifacts) and then packs the five
+      # packages into build/nuget-feed, wiping it first. Its need_* checks are fingerprint-aware, so a klib or
+      # stdlib baked by an older toolchain is never shipped (#106).
+      - name: make pack (five packages into build/nuget-feed)
+        run: make pack
+
+      - name: Show what will be published
+        run: ls -1 build/nuget-feed
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nupkgs
+          path: build/nuget-feed/*.nupkg
+          if-no-files-found: error
+
+      # Standard NuGet protocol. --skip-duplicate makes a re-dispatch after a partial upload idempotent
+      # rather than failing on the packages that already landed.
+      - name: Push to the DotKt feed
+        env:
+          # The feed's service index; the publish endpoint comes from it, so this is the only URL to know.
+          # Overridable per environment (a staging feed) without touching the workflow.
+          FEED: ${{ vars.NUGET_FEED_URL || 'https://dotkt.utatane.dev/nuget/index.json' }}
+          KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          set -euo pipefail
+          [ -n "$KEY" ] || { echo "::error::NUGET_API_KEY is not set for the 'release' environment"; exit 1; }
+          echo "feed: $FEED"
+          shopt -s nullglob
+          pkgs=(build/nuget-feed/*.nupkg)
+          [ ${#pkgs[@]} -eq 5 ] || { echo "::error::expected 5 packages, found ${#pkgs[@]}"; exit 1; }
+          for p in "${pkgs[@]}"; do
+            echo "push $(basename "$p")"
+            dotnet nuget push "$p" --source "$FEED" --api-key "$KEY" --skip-duplicate
+          done
