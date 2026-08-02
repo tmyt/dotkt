@@ -23,7 +23,8 @@
 #   scripts/{lib,build-stdlib*,dotkt,  -> FULL   (shared build machinery — affects every stage)
 #     gen-*,pack-nuget}.sh
 #   toolchain/bir2cir/** | ilemit/**   -> stdlib EMIT (clean) + compiler tests +
-#                                          verify-schema + verify-sanity   (kotc unchanged: no installDist cost)
+#                                          verify-schema + verify-sanity + target-universe
+#                                          (kotc unchanged: no installDist cost)
 #   toolchain/bir-common/**            -> FULL   (TypeNode/IrSanity are <Compile Link/>-shared into every tool)
 #   toolchain/retarget/**              -> FULL   (a stdlib-bake input + BCL-repoint used by roundtrip/ktproj)
 #   toolchain/kotc/** | libraries/stdlib/**  -> FULL + clean stdlib rebuild
@@ -103,8 +104,8 @@ classify() { # <path>
 			NEED_FULL=1; reason "$p -> FULL (shared build machinery)" ;;
 		# ---- toolchain --------------------------------------------------------------------------
 		toolchain/bir2cir/*|toolchain/ilemit/*)
-			want compiler_tests; want schema; want sanity; CLEAN=1
-			reason "$p -> bir2cir/ilemit: clean stdlib emit + compiler tests + verify-schema + verify-sanity" ;;
+			want compiler_tests; want schema; want sanity; want targetuniverse; CLEAN=1
+			reason "$p -> bir2cir/ilemit: clean stdlib emit + compiler tests + verify-schema + verify-sanity + target-universe" ;;
 		toolchain/bir-common/*)
 			NEED_FULL=1; CLEAN=1; reason "$p -> FULL (bir-common is <Compile Link/>-shared into every tool)" ;;
 		toolchain/retarget/*)
@@ -123,6 +124,8 @@ classify() { # <path>
 			want compiler_tests; reason "$p -> categorized compiler tests" ;;
 		tests/special/wide-delegates/*)
 			want widedelegates; reason "$p -> wide-delegate structural test" ;;
+		tests/target-universe/*)
+			want targetuniverse; reason "$p -> host/target metadata-universe calibration" ;;
 		eng/KotlinClr.targets)
 			want msbuild; reason "$p -> in-repo MSBuild integration" ;;
 		# ---- anything else ----------------------------------------------------------------------
@@ -132,14 +135,14 @@ classify() { # <path>
 }
 
 # ---- suite targets --------------------------------------------------------------------------------
-declare -a RUN_ORDER=(compiler_tests schema sanity msbuild roundtrip widedelegates packagedsdk)
+declare -a RUN_ORDER=(compiler_tests schema sanity msbuild roundtrip widedelegates targetuniverse packagedsdk)
 declare -A SUITE_TARGET=(
 	[compiler_tests]=verify-tests [schema]=verify-schema [sanity]=verify-sanity
 	[msbuild]=verify-msbuild [roundtrip]=verify-roundtrip
-	[widedelegates]=verify-wide-delegates [packagedsdk]=verify-packaged-sdk
+	[widedelegates]=verify-wide-delegates [targetuniverse]=verify-target-universe [packagedsdk]=verify-packaged-sdk
 )
 
-FULL_SUITES=(compiler_tests schema sanity msbuild roundtrip widedelegates)
+FULL_SUITES=(compiler_tests schema sanity msbuild roundtrip widedelegates targetuniverse)
 
 # ---- compute the plan -----------------------------------------------------------------------------
 mapfile -t CHANGES < <(collect_changes)

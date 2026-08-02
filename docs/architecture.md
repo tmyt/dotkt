@@ -18,9 +18,14 @@ Kotlin source + stdlib frontend KLIB ------------> kotc -> BIR -> bir2cir -> CIR
 | `dll2klib` | One referenced CLR assembly plus the resolved reference catalog | ECMA-335 declaration metadata projected into Kotlin vocabulary as one metadata-only KLIB | CLR implementation bodies or downstream physical lowering |
 | `kotc` | Kotlin source, stdlib frontend KLIB, reference KLIBs | PSI/FIR/IR processing and BIR serialization | CLR physical representation or BCL policy |
 | `bir2cir` | BIR, stdlib reference assembly, referenced CLR assemblies | Kotlin-to-CLR type/call substitution, inline and suspend lowering, CIR production | Frontend symbol resolution |
-| `ilemit` | CIR and runtime references | Mechanical CIL emission through `System.Reflection.Emit` | Kotlin-language or stdlib-binding policy |
+| `ilemit` | CIR, exact target compile references, and temporary runtime references | Mechanical CIL emission through `System.Reflection.Emit`; target metadata encoding | Kotlin-language or stdlib-binding policy, target inference from its execution runtime |
 
 `toolchain/retarget` is a post-processing utility that rewrites emitted BCL references so ordinary .NET compilers can consume DotKt assemblies.
+
+The compiler execution runtime is not the emitted target. `ilemit` receives the same exact compile-reference set
+selected by MSBuild, keeps it in one target `MetadataLoadContext`, and treats it as the sole authority for contract
+identity. Runtime references are a separate, temporary implementation universe used by the pre-migration emitter.
+See [Target-reference emission universe](design-target-reference-emission.md).
 
 ## Standard-library artifacts
 

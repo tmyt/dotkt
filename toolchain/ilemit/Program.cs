@@ -1,6 +1,6 @@
 // ilemit — emit a runnable .NET assembly directly as CIL from Backend IR (BIR) JSON. No C#, no csc.
 //
-//   ilemit <output-dir> <assemblyName> [--runtime-refs a.dll;b.dll;...] [--target-rid <rid>] [--rid-graph-path <json>] <file1.cir.json>...
+//   ilemit <output-dir> <assemblyName> --compile-refs a.dll;b.dll;... [--runtime-refs a.dll;b.dll;...] [--target-rid <rid>] [--rid-graph-path <json>] <file1.cir.json>...
 //
 // All BIR files compile into ONE assembly (so multi-file Kotlin cross-references resolve).
 // D1.2 = M0 subset; D1.4 = user classes (fields, ctors, methods, inheritance, virtual/override).
@@ -16,7 +16,7 @@ static class IlEmit
 {
     static int Main(string[] args)
     {
-        if (args.Length < 3) { Console.Error.WriteLine("usage: ilemit <out-dir> <asmName> [--build-stdlib=metadata|runtime] [--runtime-refs <dll;dll;...>] [--target-rid <rid>] [--rid-graph-path <json>] <file.cir.json>..."); return 1; }
+        if (args.Length < 3) { Console.Error.WriteLine("usage: ilemit <out-dir> <asmName> --compile-refs <dll;dll;...> [--build-stdlib=metadata|runtime] [--runtime-refs <dll;dll;...>] [--target-rid <rid>] [--rid-graph-path <json>] <file.cir.json>..."); return 1; }
         var outDir = args[0];
         var asmName = args[1];
         Directory.CreateDirectory(outDir);
@@ -26,7 +26,9 @@ static class IlEmit
         // StdlibStub knob (either mode — stub un-emittable methods instead of aborting). Round-trip metadata is no longer
         // ilemit's concern (#71 S2: bir2cir generates it and skips it in the runtime build). Absent = an app build.
         var bir = new List<string>();
+        var compileRefs = new List<string>();
         var runtimeRefs = new List<string>();
+        var compileRefsSeen = false;
         var mode = Emitter.BuildStdlibMode.App;
         // #51: the RID being COMPILED FOR (MSBuild's $(RuntimeIdentifier)) + the SDK's RID fallback graph
         // ($(RuntimeIdentifierGraphPath)). Used ONLY to pick the right runtimes/<rid>/lib asset when the copy-local
@@ -36,7 +38,14 @@ static class IlEmit
         var rest = args.Skip(2).ToList();
         for (int i = 0; i < rest.Count; i++)
         {
-            if (rest[i] == "--runtime-refs" && i + 1 < rest.Count) runtimeRefs.AddRange(ManagedReferenceCatalog.Split(rest[++i]));
+            if (rest[i] == "--compile-refs" && i + 1 < rest.Count)
+            {
+                compileRefsSeen = true;
+                compileRefs.AddRange(ManagedReferenceCatalog.Split(rest[++i]));
+            }
+            else if (rest[i] == "--compile-refs") { Console.Error.WriteLine("ilemit: --compile-refs requires a semicolon-separated path list"); return 1; }
+            else if (rest[i] == "--runtime-refs" && i + 1 < rest.Count) runtimeRefs.AddRange(ManagedReferenceCatalog.Split(rest[++i]));
+            else if (rest[i] == "--runtime-refs") { Console.Error.WriteLine("ilemit: --runtime-refs requires a semicolon-separated path list"); return 1; }
             else if (rest[i] == "--target-rid" && i + 1 < rest.Count) targetRid = rest[++i];
             else if (rest[i] == "--rid-graph-path" && i + 1 < rest.Count) ridGraphPath = rest[++i];
             else if (rest[i] == "--ref") { Console.Error.WriteLine("ilemit: --ref was replaced by --runtime-refs"); return 1; }
@@ -44,15 +53,21 @@ static class IlEmit
             else if (rest[i] == "--build-stdlib=runtime") mode = Emitter.BuildStdlibMode.Runtime;
             else bir.Add(rest[i]);
         }
+        if (!compileRefsSeen)
+        {
+            Console.Error.WriteLine("ilemit: --compile-refs is required; target metadata must not be inferred from the compiler host runtime");
+            return 1;
+        }
         // #84 Phase 1: give ilemit a diagnostic boundary. On any failure, print a clean one-line
         // `ilemit: <Type>.<method>: <message>` naming the declaration being emitted (carried by CirEmitException,
         // thrown per-method in EmitAssembly) instead of a raw unhandled .NET stack trace. ILEMIT_TRACE keeps the
         // full stack for debugging (rethrow), matching the existing crash-localizer flag (Emitter.Trace).
         try
         {
+            using var target = new TargetReferenceUniverse(compileRefs);
             RuntimeReferences.Load(runtimeRefs, targetRid, ridGraphPath);
             var files = bir.Select(LoadInputDocument).ToList();
-            new Emitter(outDir, asmName, mode).EmitAssembly(MergeByFileClass(files));
+            new Emitter(outDir, asmName, target, mode).EmitAssembly(MergeByFileClass(files));
             return 0;
         }
         catch (Exception ex)
@@ -135,6 +150,9 @@ sealed partial class Emitter
 {
     readonly string _outDir;
     readonly string _asmName;
+    // #335: the exact compile-reference MetadataLoadContext is now an explicit emitter dependency. #335 does not
+    // consume its Type objects yet (output remains byte-for-byte on the host universe); #336 flips every path at once.
+    readonly TargetReferenceUniverse _target;
     // #71 S2: ALL round-trip metadata ([Kotlin*]/[KotlinInline]/NRT + the attr class defs) is now GENERATED by bir2cir
     // (RoundtripMetadata) as ordinary CIR attrs/type-decls and SKIPPED in the runtime build there — so ilemit's old
     // `_stripMetadata` gate is gone. bir2cir ALSO strips kotc's verbatim user annotations from the runtime CIR
@@ -212,9 +230,9 @@ sealed partial class Emitter
     // The stdlib self-build mode, from `--build-stdlib` (mirrors bir2cir's BuildStdlibMode; separate assembly).
     public enum BuildStdlibMode { App, Metadata, Runtime }
 
-    public Emitter(string outDir, string asmName, BuildStdlibMode mode = BuildStdlibMode.App)
+    public Emitter(string outDir, string asmName, TargetReferenceUniverse target, BuildStdlibMode mode = BuildStdlibMode.App)
     {
-        _outDir = outDir; _asmName = asmName;
+        _outDir = outDir; _asmName = asmName; _target = target;
         _stdlibStub = mode != BuildStdlibMode.App;           // either stdlib build stubs un-emittable methods
         _stdlibAssembly = mode != BuildStdlibMode.App;       // both the metadata and runtime twins are stdlib artifacts
     }

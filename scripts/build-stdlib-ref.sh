@@ -56,7 +56,7 @@ if (( do_emit )); then
 	dotnet "$BIR2CIR_DLL" "$CIR" --compile-refs "$FRAMEWORK_COMPILE_REFS" --build-stdlib=metadata "$BIR"/*.bir.json 2>"$OUT/bir2cir.err" || true
 	echo "CIR files: $(ls "$CIR"/*.cir.json 2>/dev/null | wc -l)"
 	info "ilemit(CIR) -> DotKt.Private.Stdlib.dll"
-	{ dotnet "$ILEMIT_DLL" "$DLL" DotKt.Private.Stdlib --runtime-refs "" --build-stdlib=metadata "$CIR"/*.cir.json 2>"$OUT/ilemit.err" || true; } | tail -2
+	{ dotnet "$ILEMIT_DLL" "$DLL" DotKt.Private.Stdlib --compile-refs "$FRAMEWORK_COMPILE_REFS" --runtime-refs "" --build-stdlib=metadata "$CIR"/*.cir.json 2>"$OUT/ilemit.err" || true; } | tail -2
 	grep -vE '^\s+at ' "$OUT/ilemit.err" | grep -iE 'exception|KeyNot|unresolved|no matching' | head -3 || true
 	[[ -f "$DLL/DotKt.Private.Stdlib.dll" ]] || die "DotKt.Private.Stdlib.dll was not emitted (see $OUT/ilemit.err)"
 	# Retarget: the emitted dll references the IMPLEMENTATION core (System.Private.CoreLib); repoint those refs at

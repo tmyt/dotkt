@@ -279,6 +279,11 @@ if [[ -z "$rid_msg" ]]; then
 	rid_cmd="$(grep -oE 'dotnet "[^"]*ilemit\.dll".*' "$rid/build.log" | head -1)" || true
 	[[ -n "$rid_cmd" ]] || rid_msg="could not recover the ilemit command line from the build log"
 fi
+if [[ -z "$rid_msg" ]]; then
+	compile_refs_arg="$(grep -oE -- '--compile-refs "[^"]+"' <<<"$rid_cmd" | head -1)" || true
+	[[ -n "$compile_refs_arg" ]] \
+		|| rid_msg="the ilemit invocation does not carry the non-empty MSBuild compile-reference universe"
+fi
 rid_replay() { # <log-name> <literal argument to replace (non-empty)> <replacement>; echoes the exit status
 	local from="$2" to="$3" pat cmd rc=0
 	# Bash replacement patterns are globs: escape metacharacters so Windows paths (with backslashes) match literally.

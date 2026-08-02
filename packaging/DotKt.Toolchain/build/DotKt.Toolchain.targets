@@ -219,7 +219,7 @@
        so a downstream C# ProjectReference stops rebuilding. DotKtResolveReferenceSets is a dependency so the
        @(_DotKtRuntimeReference) items exist when these Inputs are evaluated. -->
   <Target Name="DotKtIlEmit" AfterTargets="CoreCompile" DependsOnTargets="DotKtBir2Cir;DotKtResolveReferenceSets"
-          Inputs="$(DotKtCirOut)/.stamp;$(DotKtIlEmit);@(_DotKtRuntimeReference)"
+          Inputs="$(DotKtCirOut)/.stamp;$(DotKtIlEmit);@(_DotKtCompileReference);@(_DotKtRuntimeReference)"
           Outputs="$(IntermediateOutputPath)$(TargetName)$(TargetExt)">
     <ItemGroup>
       <_DotKtCir Include="$(DotKtCirOut)/*.cir.json" />
@@ -244,7 +244,7 @@
          is empty for a framework-dependent (no-RID) build → ilemit defaults to the host RID (correct). Both properties
          are set by Microsoft.NET.Sdk before this AfterTargets=CoreCompile target runs; $(RuntimeIdentifierGraphPath)
          names the SDK's portable graph (or, under UseRidGraph, the full one — same schema). -->
-    <Exec Command="dotnet &quot;$(DotKtIlEmit)&quot; &quot;$(IntermediateOutputPath.TrimEnd('/').TrimEnd('\'))&quot; &quot;$(TargetName)&quot; --runtime-refs &quot;$(_DotKtRuntimeReferences)&quot; --target-rid &quot;$(RuntimeIdentifier)&quot; --rid-graph-path &quot;$(RuntimeIdentifierGraphPath)&quot; @(_DotKtCir->'&quot;%(FullPath)&quot;', ' ')" />
+    <Exec Command="dotnet &quot;$(DotKtIlEmit)&quot; &quot;$(IntermediateOutputPath.TrimEnd('/').TrimEnd('\'))&quot; &quot;$(TargetName)&quot; --compile-refs &quot;$(_DotKtCompileReferences)&quot; --runtime-refs &quot;$(_DotKtRuntimeReferences)&quot; --target-rid &quot;$(RuntimeIdentifier)&quot; --rid-graph-path &quot;$(RuntimeIdentifierGraphPath)&quot; @(_DotKtCir->'&quot;%(FullPath)&quot;', ' ')" />
   </Target>
 
   <!-- REVERSE interop (R-1): repoint the emitted dll's BCL TypeRefs off the single System.Private.CoreLib onto the
