@@ -5,7 +5,7 @@ source "$(cd -- "$(dirname -- "$0")/../.." && pwd -P)/scripts/lib.sh"
 
 declare -A PROBE_XFAIL=(
 	[still-broken]='calibration: a listed failure that remains broken is tolerated'
-	[now-fixed]='calibration: a listed failure that passes must stale the baseline'
+	[now-fixed]='calibration: a listed failure that passes makes the baseline stale'
 )
 
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
