@@ -657,14 +657,6 @@ sealed class Pipeline
         // `clrInterfaceImpls` instruction; ilemit only consumes that instruction and does not infer covariance.
         CovariantInterfaceReturnBridge.ApplyAll(staged.Select(s => s.Root).ToList());
 
-        // KOTLIN ERASURE-NARROWED OVERRIDE -> EXACT CLR METHODIMPL (#86 D3): an override that narrows a base `T?` slot
-        // to a concrete `Int?`/`String?` keeps its own physical type — so its Kotlin surface and the assembly agree,
-        // here and for a separately compiled consumer — and the base's erased `object` slot is filled by a private
-        // forwarding bridge carrying a resolved MethodImpl instruction. Only a position no cast reaches (one under a
-        // constructed generic) moves the declaration itself. Runs beside the other two bridge synthesizers and AFTER
-        // the star-projection erasure, so the synthesized `G$dotkt_star` slots are in the supertype graph it walks.
-        KotlinOverrideSlotBridge.ApplyAll(staged.Select(s => s.Root).ToList(), isValueFqn, refs);
-
         // CONSTRUCTED MEMBER RESULT SUBSTITUTION (early): suspend lowering copies a call's result type into
         // state-machine fields/locals. Close every already-constructed receiver-relative return BEFORE that copy
         // happens (`Deferred<Int>.await(): type-TV0` -> `Int`), otherwise a non-generic SM permanently captures an
@@ -672,7 +664,7 @@ sealed class Pipeline
         // inherited declaring-owner binding; both passes are structural and idempotent.
         ConstructedMemberReturnSubstitution.ApplyAll(staged.Select(s => s.Root).ToList());
 
-        // NOTHING-VALUE TERMINATION, SECOND SWEEP (#197). The two bridge synthesizers above build a forwarding call
+        // NOTHING-VALUE TERMINATION, SECOND SWEEP (#197). The covariant bridge synthesizer above builds a forwarding call
         // out of the TARGET declaration's return type, so a covariant `override fun make(): Nothing` (legal — Nothing
         // is below every type, so it satisfies any slot) yields a FRESH `kotlin.Nothing`-stamped call inside a bridge
         // that did not exist when the per-file sweep ran. Its erased `object` then meets the slot's exact return at
@@ -684,9 +676,8 @@ sealed class Pipeline
         // position it already terminated is a `throwExpr`, whose operand it does not re-enter (see `Consumes`) — so
         // for a file with no late synthesis this changes nothing at all.
         //
-        // HERE and not later: this is the last point at which the type is still spelled `kotlin.Nothing` for a
-        // BODY-carrying declaration, and it is before the suspend transform, so a bridge inside a suspend-lowered
-        // class is terminated before that lowering reads it.
+        // HERE: the covariant bridge exists and is still input to suspend lowering. A later third sweep covers the
+        // erasure-narrowed bridges which deliberately wait for suspend declarations to reach their physical form.
         foreach (var stagedFile in staged) NothingValueTermination.Apply(stagedFile.Root);
 
         // PHASE 1.5 — SUSPEND COLD LOWERING (R1 classifier): rewrite EVERY declared `suspend fun` (top-level statics,
@@ -715,6 +706,19 @@ sealed class Pipeline
         // `suspend` lambda literal (exercised by cases/il-lam1, il-lam2); same (non-ref) gate as the cold lowering.
         if (!_options.RefBuild)
             SuspendLambdaLowering.ApplyAll(staged.Select(s => s.Root).ToList(), localTypeFqns, suspendCalleeRet, refs);
+
+        // KOTLIN ERASURE-NARROWED OVERRIDE -> FINAL CLR METHODIMPL (#344 / #86 D3). The declaration-move half ran
+        // early, but the bridge half must see the FINAL declarations: one logical suspend override becomes a public
+        // Task member AND a continuation cold entry, and each is a distinct CLR slot. SuspendColdLowering carries the
+        // source `overrides` proof onto both generated declarations (renaming it for the cold member), so this single
+        // rule emits one exact bridge/MethodImpl per physical obligation without teaching ilemit suspend semantics.
+        // Ref builds skip suspend lowering and normalize their logical declaration here; app and rt builds normalize
+        // the final Task/cold shapes. Star views already exist, and all types are still in the Kotlin vocabulary.
+        KotlinOverrideSlotBridge.ApplyAll(staged.Select(s => s.Root).ToList(), isValueFqn, refs);
+
+        // The late bridge above can synthesize a fresh forwarding call returning `kotlin.Nothing`, after the second
+        // sweep has run. The pass is idempotent; cover exactly that new body before type lowering erases the fact.
+        foreach (var stagedFile in staged) NothingValueTermination.Apply(stagedFile.Root);
 
         // A synthesized closure/SAM class holds each capture in an INSTANCE FIELD, which the CLR refuses for a
         // byref-like (`ref struct`) type. ClosureSynthesis recorded those refusals rather than throwing, because the
