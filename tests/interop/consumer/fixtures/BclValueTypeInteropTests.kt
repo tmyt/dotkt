@@ -1,4 +1,4 @@
-// CLR value-type / intrinsic interop battery (batch IntropD), resolved through reference KLIBs.
+// CLR value-type / intrinsic interop battery (feature fixture), resolved through reference KLIBs.
 //
 // Coverage preserved (old case -> method):
 //   il-vtboundref  -> boundRefOverStruct        #149 a bound callable-ref over a VALUE-TYPE (.NET struct, System.TimeSpan) receiver — the struct is BOXED before the delegate ctor (ilemit newBoundClrDelegate); covers non-virtual (ldftn) AND virtual (ldvirtftn) targets
@@ -8,7 +8,7 @@
 // CharacterAndCaseMappingTests.kt; only the unique `sb[0]='X'` StringBuilder indexer-set (@InlineOnly @ClrIntrinsic) is
 // migrated here.
 //
-// Top-level names are family-prefixed with `IntropD` (one assembly = one namespace).
+// Top-level names are family-prefixed with `BclValueType` (one assembly = one namespace).
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import System.TimeSpan

@@ -1,4 +1,4 @@
-// .NET event-consumption battery (batch IntropD), using events projected through reference KLIBs.
+// .NET event-consumption battery, using events projected through reference KLIBs.
 // Deterministic per-handler counters assert exact synchronous fire multiplicities.
 //
 // These CONSUME .NET events (`subscribe` on an ObservableCollection<T>); they are NOT ClrEventTests, which is about
@@ -10,8 +10,7 @@
 //   il-event      -> instanceEventSubscribeClose   .NET INSTANCE event ObservableCollection.CollectionChanged
 //   il-ifaceevent -> interfaceEventSubscribeClose  INTERFACE .NET event INotifyPropertyChanged.PropertyChanged via ObservableCollection's explicit impl
 //
-// Top-level names are family-prefixed with `IntropD` (one assembly = one namespace) to avoid clashing with sibling
-// batteries and the stdlib.
+// Helpers are private members of the feature-named fixture, so no top-level collision prefix is needed.
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue

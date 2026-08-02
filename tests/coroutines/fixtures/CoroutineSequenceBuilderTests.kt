@@ -1,4 +1,4 @@
-// CorB batch — the sequence-builder cold-core + external-generic-base coroutine-context family. The `sequence{}`
+// feature fixture — the sequence-builder cold-core + external-generic-base coroutine-context family. The `sequence{}`
 // builder shares the coroutine cold-core lowering (yield -> a suspension point), so it belongs in this lane; no
 // blockOn harness is needed (the enumerator drives directly). genbaseext exercises the external generic base
 // (`AbstractCoroutineContextKey`) SetParent/MakeGenericType emit path. Each former case's `main` + stdout-golden
@@ -13,7 +13,7 @@
 // star-projection metadata and bir2cir lowering now preserve this shape without a finding; the whole-assembly
 // ILVerify gate therefore carries no exception for it.
 //
-// Top-level names carry a per-case token (`gs`/`gbe`) under the shared `corB`/`CorB` prefix so they can't clash
+// Top-level names carry a per-case token (`gs`/`gbe`) under the shared `sequenceBuilder`/`SequenceBuilder` prefix so they can't clash
 // with sibling coroutine fixtures or the stdlib within this single assembly.
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
@@ -21,26 +21,26 @@ import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.AbstractCoroutineContextKey
 
 // ---- il-genseq -----------------------------------------------------------------------------------------------
-fun <T> corBGsWrap(x: T) = sequence { yield(x) }.toList()
+fun <T> sequenceBuilderGsWrap(x: T) = sequence { yield(x) }.toList()
 
 // ---- il-genbaseext -------------------------------------------------------------------------------------------
 // A NON-GENERIC object over an EXTERNAL (stdlib) generic base with CONCRETE type args — the kotlinx.coroutines
 // `CoroutineDispatcher.Key : AbstractCoroutineContextKey<ContinuationInterceptor, CoroutineDispatcher>` shape.
-abstract class CorBGbeBase : CoroutineContext.Element {
+abstract class SequenceBuilderGbeBase : CoroutineContext.Element {
     override val key: CoroutineContext.Key<*> get() = Key
-    companion object Key : CoroutineContext.Key<CorBGbeBase>
+    companion object Key : CoroutineContext.Key<SequenceBuilderGbeBase>
 }
 
-class CorBGbeDerived : CorBGbeBase()
+class SequenceBuilderGbeDerived : SequenceBuilderGbeBase()
 
 @OptIn(ExperimentalStdlibApi::class)
-object CorBGbeDerivedKey : AbstractCoroutineContextKey<CorBGbeBase, CorBGbeDerived>(CorBGbeBase, { it as? CorBGbeDerived })
+object SequenceBuilderGbeDerivedKey : AbstractCoroutineContextKey<SequenceBuilderGbeBase, SequenceBuilderGbeDerived>(SequenceBuilderGbeBase, { it as? SequenceBuilderGbeDerived })
 
 class CoroutineSequenceBuilderTests {
     @TestAttribute
     fun genericColdSequence() {
-        assertEquals("[5]", corBGsWrap(5).toString())     // [5]
-        assertEquals("[hi]", corBGsWrap("hi").toString()) // [hi]
+        assertEquals("[5]", sequenceBuilderGsWrap(5).toString())     // [5]
+        assertEquals("[hi]", sequenceBuilderGsWrap("hi").toString()) // [hi]
     }
 
     @TestAttribute
@@ -54,12 +54,12 @@ class CoroutineSequenceBuilderTests {
 
     @TestAttribute
     fun externalGenericBaseConcreteArgs() {
-        // The DECLARATION of CorBGbeDerivedKey (external generic base SetParent-resolved via MakeGenericType) is the
-        // coverage — the former main only printed "ok". Do NOT reference CorBGbeDerivedKey (forcing its .cctor hits a
+        // The DECLARATION of SequenceBuilderGbeDerivedKey (external generic base SetParent-resolved via MakeGenericType) is the
+        // coverage — the former main only printed "ok". Do NOT reference SequenceBuilderGbeDerivedKey (forcing its .cctor hits a
         // SEPARATE static-initialization path). Reading get_key on the derived instance resolves through the external
         // generic base to the companion Key and is required to remain ILVerify-clean.
-        val key = CorBGbeDerived().key
-        assertEquals(CorBGbeBase.Key, key)   // former golden: "ok"
+        val key = SequenceBuilderGbeDerived().key
+        assertEquals(SequenceBuilderGbeBase.Key, key)   // former golden: "ok"
     }
 
     @TestAttribute

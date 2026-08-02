@@ -1,4 +1,4 @@
-// Numeric / value-type / tuple battery (batch M5). Migrates the unsigned-arithmetic, value-class, tailrec, and
+// Numeric / value-type / tuple battery (feature fixture). Migrates the unsigned-arithmetic, value-class, tailrec, and
 // tuple family of cases/il-* onto the in-process NUnit suite. Each old case's `main` + stdout-golden diff becomes
 // one @TestAttribute method whose per-value assert is strictly stronger (typed) than the old text diff; every
 // asserted value is preserved 1:1 (see `// <expected>`). Unsigned prints are asserted via `.toString()` to match
@@ -12,28 +12,28 @@
 //   il-triple      -> triple_coverage          Triple ctor/componentN/destructure/full-arg copy/structural-eq/toString
 //   il-tryval      -> tryCatchValuePosition    #127 `try{value}catch{null}` in VALUE position -> Nullable<T> join (incl. toFloatOrNull/toDoubleOrNull)
 //
-// All top-level declarations introduced here are M5-prefixed (one assembly = one namespace).
+// All top-level declarations introduced here are NumericTuple-prefixed (one assembly = one namespace).
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
 
 // ---- il-valclass : @JvmInline value class passed/returned/method-bearing --------------------------------------------
-@JvmInline value class M5Money(val cents: Int) {
+@JvmInline value class NumericTupleMoney(val cents: Int) {
     fun dollars(): Int = cents / 100
 }
-fun m5fee(m: M5Money): Int = m.cents
+fun numericTuplefee(m: NumericTupleMoney): Int = m.cents
 
 // ---- il-tailrec : deep tailrec TCO'd to a back-jump loop (constant stack) ------------------------------------------
-tailrec fun m5sumTo(n: Int, acc: Long): Long = if (n == 0) acc else m5sumTo(n - 1, acc + n)
-tailrec fun m5countdown(n: Int): Int = if (n <= 0) 0 else m5countdown(n - 1)
-tailrec fun m5gcd(a: Long, b: Long): Long = when { b == 0L -> a; else -> m5gcd(b, a % b) }
-tailrec fun Int.m5countDownExt(acc: Int): Int = if (this <= 0) acc else (this - 1).m5countDownExt(acc + 1)
-class M5Adder(val step: Int) {
+tailrec fun numericTuplesumTo(n: Int, acc: Long): Long = if (n == 0) acc else numericTuplesumTo(n - 1, acc + n)
+tailrec fun numericTuplecountdown(n: Int): Int = if (n <= 0) 0 else numericTuplecountdown(n - 1)
+tailrec fun numericTuplegcd(a: Long, b: Long): Long = when { b == 0L -> a; else -> numericTuplegcd(b, a % b) }
+tailrec fun Int.numericTuplecountDownExt(acc: Int): Int = if (this <= 0) acc else (this - 1).numericTuplecountDownExt(acc + 1)
+class NumericTupleAdder(val step: Int) {
     tailrec fun run(n: Int, acc: Long): Long = if (n == 0) acc else run(n - 1, acc + step)
 }
 
 // ---- il-triple : Triple across a function boundary + full-arg copy -------------------------------------------------
-fun m5swapEnds(t: Triple<Int, String, Int>): Triple<Int, String, Int> = t.copy(t.third, t.second, t.first)
+fun numericTupleswapEnds(t: Triple<Int, String, Int>): Triple<Int, String, Int> = t.copy(t.third, t.second, t.first)
 
 class NumericAndTupleTests {
     @TestAttribute
@@ -62,19 +62,19 @@ class NumericAndTupleTests {
 
     @TestAttribute
     fun valueClassRepresentation() {
-        val m = M5Money(1250)
+        val m = NumericTupleMoney(1250)
         assertEquals(1250, m.cents)          // 1250
         assertEquals(12, m.dollars())        // 12
-        assertEquals(1250, m5fee(m))         // 1250 (passed as an argument)
+        assertEquals(1250, numericTuplefee(m))         // 1250 (passed as an argument)
     }
 
     @TestAttribute
     fun deepTCO() {
-        assertEquals(500000500000L, m5sumTo(1_000_000, 0L))       // 500000500000
-        assertEquals(0, m5countdown(1_000_000))                   // 0
-        assertEquals(2000000014L, m5gcd(6_000_000_042L, 4_000_000_028L)) // 2000000014
-        assertEquals(1000000, 1_000_000.m5countDownExt(0))        // 1000000
-        assertEquals(2000000L, M5Adder(2).run(1_000_000, 0L))     // 2000000
+        assertEquals(500000500000L, numericTuplesumTo(1_000_000, 0L))       // 500000500000
+        assertEquals(0, numericTuplecountdown(1_000_000))                   // 0
+        assertEquals(2000000014L, numericTuplegcd(6_000_000_042L, 4_000_000_028L)) // 2000000014
+        assertEquals(1000000, 1_000_000.numericTuplecountDownExt(0))        // 1000000
+        assertEquals(2000000L, NumericTupleAdder(2).run(1_000_000, 0L))     // 2000000
     }
 
     @TestAttribute
@@ -93,7 +93,7 @@ class NumericAndTupleTests {
         assertEquals("(1, TWO, 3)", u.toString()) // (1, TWO, 3)
         assertTrue(t == Triple(1, "two", 3)) // true (structural equality)
         assertEquals(false, u == t)          // false
-        assertEquals("(3, two, 1)", m5swapEnds(t).toString()) // (3, two, 1)
+        assertEquals("(3, two, 1)", numericTupleswapEnds(t).toString()) // (3, two, 1)
         val nested = Triple(listOf(1, 2), "x", mapOf("k" to 9))
         assertEquals("([1, 2], x, {k=9})", nested.toString())  // ([1, 2], x, {k=9})
     }

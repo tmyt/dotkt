@@ -1,4 +1,4 @@
-// Char / String-case battery (migration batch M1) — Char predicates & code-point casts, String->number parse, and
+// Char / String-case battery — Char predicates & code-point casts, String->number parse, and
 // CLR-native 1:1 case mapping. Migrates the char/text family of cases/il-* onto the in-process NUnit suite. Each old
 // case's `main` + stdout-golden diff becomes one @TestAttribute method whose per-value assert is strictly stronger
 // (typed Char/Int/Boolean/String) than the old text diff. Every value the old il_check asserted is preserved 1:1.
@@ -9,7 +9,7 @@
 //   il-caseinvariant-> caseMapping_oneToOne   #144 uppercase()/lowercase() = CLR-native 1:1 (ß stays ß, NOT SS);
 //                                             DELIBERATELY no Unicode one-to-many expansion (docs/dotkt-semantics §5g)
 //
-// Batch-M1 collision rule: no top-level declarations introduced (all bodies self-contained).
+// No top-level declarations are introduced; all bodies are self-contained.
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue

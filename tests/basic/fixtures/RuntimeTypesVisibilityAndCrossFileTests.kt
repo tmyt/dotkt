@@ -1,4 +1,4 @@
-// Language-core battery (batch M5): boxing/reassign, super-calls, star-projection casts, visibility, typealias,
+// Language-core battery (feature fixture): boxing/reassign, super-calls, star-projection casts, visibility, typealias,
 // and cross-file/cross-namespace dispatch + a cross-file top-level property. Migrates the core-language family of
 // cases/il-* onto the in-process NUnit suite. Each old case's `main` + stdout-golden diff becomes one @TestAttribute
 // method whose per-value assert is strictly stronger (typed) than the old text diff; every asserted value is
@@ -13,65 +13,65 @@
 //   il-xfaceimpl   -> crossFileIfaceDispatch          cross-file + namespaced interface impl/dispatch (declarations in CrossFileLanguageSupport.kt)
 //   il-xprop       -> crossFileTopLevelProp           mutable top-level property declared in a sibling file, read + written here
 //
-// All top-level declarations introduced here are M5-prefixed (one assembly = one namespace). The cross-file cases'
-// sibling declarations live in CrossFileLanguageSupport.kt (package m5p).
+// All top-level declarations introduced here are RuntimeTypes-prefixed (one assembly = one namespace). The cross-file cases'
+// sibling declarations live in CrossFileLanguageSupport.kt (package crossFileLanguage).
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
 import NUnit.Framework.Legacy.ClassicAssert.Companion.IsFalse as assertFalse
-import m5p.M5ImplC
-import m5p.m5cur
-import m5p.m5call
-import m5p.m5counter
-import m5p.m5bump
+import crossFileLanguage.CrossFileLanguageImplementation
+import crossFileLanguage.crossFileLanguageCurrent
+import crossFileLanguage.crossFileLanguageCall
+import crossFileLanguage.crossFileLanguageCounter
+import crossFileLanguage.crossFileLanguageBump
 
 // ---- il-setlocalbox : `Any` field reassigned from String to a boxed Int -------------------------------------------
-class M5Holder {
+class RuntimeTypesHolder {
     var v: Any = "s"
     fun put(n: Int) { v = n }
 }
 
 // ---- il-supercall : #14 super.X() from an override = a non-virtual call to the resolved base slot -----------------
-open class M5Base {
+open class RuntimeTypesBase {
     open fun greet() = "base"
     open fun twice(x: Int) = x * 2
     open val tag: String get() = "base-tag"
     open fun describe() = "Base"
 }
-class M5Derived : M5Base() {
+class RuntimeTypesDerived : RuntimeTypesBase() {
     override fun greet() = "derived+" + super.greet()
     override fun twice(x: Int) = super.twice(x) + 1
     override val tag: String get() = "derived[" + super.tag + "]"
     override fun describe() = "Derived<" + super.describe() + ">"
 }
-open class M5A { open fun name() = "A" }
-open class M5B : M5A() { override fun name() = super.name() + "B" }
-class M5C : M5B() { override fun name() = super.name() + "C" }
-open class M5Animal { override fun toString() = "animal" }
-class M5Dog : M5Animal() { override fun toString() = "dog>" + super.toString() }
-interface M5Greeter { fun hi(): String = "hi-default" }
-class M5Impl : M5Greeter { override fun hi() = "impl+" + super.hi() }
+open class RuntimeTypesA { open fun name() = "A" }
+open class RuntimeTypesB : RuntimeTypesA() { override fun name() = super.name() + "B" }
+class RuntimeTypesC : RuntimeTypesB() { override fun name() = super.name() + "C" }
+open class RuntimeTypesAnimal { override fun toString() = "animal" }
+class RuntimeTypesDog : RuntimeTypesAnimal() { override fun toString() = "dog>" + super.toString() }
+interface RuntimeTypesGreeter { fun hi(): String = "hi-default" }
+class RuntimeTypesImpl : RuntimeTypesGreeter { override fun hi() = "impl+" + super.hi() }
 
 // ---- il-vis : visibility modifiers -> CLR access flags ------------------------------------------------------------
-class M5Account(private val balance: Int) {
+class RuntimeTypesAccount(private val balance: Int) {
     private fun fee(): Int = 2
     fun net(): Int = balance - fee()
     internal fun tag(): String = "acct"
     protected open fun kind(): String = "base"
 }
-private fun m5secret(): Int = 99
+private fun runtimeTypessecret(): Int = 99
 
 // ---- il-typealias : aliases used across a function boundary -------------------------------------------------------
-typealias M5Names = List<String>
-typealias M5IntOp = (Int) -> Int
-typealias M5Pairs = Map<String, Int>
-class M5TaBox(val v: Int) { fun twice(): Int = v * 2 }
-typealias M5Container = M5TaBox
-fun m5join(ns: M5Names): String = ns.joinToString(",")
-fun m5makeNames(): M5Names = listOf("a", "b", "c")
-fun m5apply2(op: M5IntOp, x: Int): Int = op(op(x))
-fun m5unwrap(c: M5Container): Int = c.twice()
-fun m5lookup(p: M5Pairs, k: String): Int = p[k] ?: -1
+typealias RuntimeTypesNames = List<String>
+typealias RuntimeTypesIntOp = (Int) -> Int
+typealias RuntimeTypesPairs = Map<String, Int>
+class RuntimeTypesTaBox(val v: Int) { fun twice(): Int = v * 2 }
+typealias RuntimeTypesContainer = RuntimeTypesTaBox
+fun runtimeTypesjoin(ns: RuntimeTypesNames): String = ns.joinToString(",")
+fun runtimeTypesmakeNames(): RuntimeTypesNames = listOf("a", "b", "c")
+fun runtimeTypesapply2(op: RuntimeTypesIntOp, x: Int): Int = op(op(x))
+fun runtimeTypesunwrap(c: RuntimeTypesContainer): Int = c.twice()
+fun runtimeTypeslookup(p: RuntimeTypesPairs, k: String): Int = p[k] ?: -1
 
 class RuntimeTypeAndSuperDispatchTests {
     @TestAttribute
@@ -79,22 +79,22 @@ class RuntimeTypeAndSuperDispatchTests {
         var a: Any = "x"
         a = 42
         assertEquals(42, a)          // 42
-        val h = M5Holder()
+        val h = RuntimeTypesHolder()
         h.put(7)
         assertEquals(7, h.v)         // 7
     }
 
     @TestAttribute
     fun nonVirtual() {
-        val d = M5Derived()
+        val d = RuntimeTypesDerived()
         assertEquals("derived+base", d.greet())        // derived+base
         assertEquals(21, d.twice(10))                   // 21
         assertEquals("derived[base-tag]", d.tag)        // derived[base-tag]
         assertEquals("Derived<Base>", d.describe())     // Derived<Base>
-        assertEquals("ABC", M5C().name())               // ABC
-        assertEquals("dog>animal", M5Dog().toString())  // dog>animal
-        assertEquals("impl+hi-default", M5Impl().hi())  // impl+hi-default
-        val b: M5Base = M5Derived()
+        assertEquals("ABC", RuntimeTypesC().name())               // ABC
+        assertEquals("dog>animal", RuntimeTypesDog().toString())  // dog>animal
+        assertEquals("impl+hi-default", RuntimeTypesImpl().hi())  // impl+hi-default
+        val b: RuntimeTypesBase = RuntimeTypesDerived()
         assertEquals("derived+base", b.greet())         // derived+base (virtual dispatch non-regression)
         assertEquals(11, b.twice(5))                    // 11
     }
@@ -133,10 +133,10 @@ class StarProjectionAndVisibilityTests {
 
     @TestAttribute
     fun visibilityModifiers() {
-        val a = M5Account(100)
+        val a = RuntimeTypesAccount(100)
         assertEquals(98, a.net())        // 98
         assertEquals("acct", a.tag())    // acct
-        assertEquals(99, m5secret())     // 99
+        assertEquals(99, runtimeTypessecret())     // 99
     }
 
 }
@@ -144,15 +144,15 @@ class StarProjectionAndVisibilityTests {
 class TypeAliasTests {
     @TestAttribute
     fun acrossBoundary() {
-        val ns: M5Names = m5makeNames()
-        assertEquals("a,b,c", m5join(ns))       // a,b,c
+        val ns: RuntimeTypesNames = runtimeTypesmakeNames()
+        assertEquals("a,b,c", runtimeTypesjoin(ns))       // a,b,c
         assertEquals(3, ns.size)                 // 3
-        val inc: M5IntOp = { it + 1 }
-        assertEquals(12, m5apply2(inc, 10))      // 12
-        assertEquals(42, m5unwrap(M5Container(21))) // 42
-        val p: M5Pairs = mapOf("x" to 7, "y" to 9)
-        assertEquals(9, m5lookup(p, "y"))        // 9
-        assertEquals(-1, m5lookup(p, "z"))       // -1
+        val inc: RuntimeTypesIntOp = { it + 1 }
+        assertEquals(12, runtimeTypesapply2(inc, 10))      // 12
+        assertEquals(42, runtimeTypesunwrap(RuntimeTypesContainer(21))) // 42
+        val p: RuntimeTypesPairs = mapOf("x" to 7, "y" to 9)
+        assertEquals(9, runtimeTypeslookup(p, "y"))        // 9
+        assertEquals(-1, runtimeTypeslookup(p, "z"))       // -1
     }
 
 }
@@ -160,14 +160,14 @@ class TypeAliasTests {
 class CrossFileInterfaceAndPropertyTests {
     @TestAttribute
     fun crossFileIfaceDispatch() {
-        m5cur = M5ImplC()
-        assertEquals(1, m5call(1))               // 1 (dispatch reaches m5p.M5ImplC.go across file + namespace)
+        crossFileLanguageCurrent = CrossFileLanguageImplementation()
+        assertEquals(1, crossFileLanguageCall(1))               // 1 (dispatch reaches crossFileLanguage.CrossFileLanguageImplementation.go across file + namespace)
     }
 
     @TestAttribute
     fun crossFileTopLevelProp() {
-        m5counter = 0
-        m5bump(); m5bump(); m5counter = m5counter + 5
-        assertEquals(7, m5counter)               // 7
+        crossFileLanguageCounter = 0
+        crossFileLanguageBump(); crossFileLanguageBump(); crossFileLanguageCounter = crossFileLanguageCounter + 5
+        assertEquals(7, crossFileLanguageCounter)               // 7
     }
 }

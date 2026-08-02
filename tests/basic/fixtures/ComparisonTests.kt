@@ -1,4 +1,4 @@
-// Comparison battery (migration batch M1) — user Comparable/Comparator impls and ordinal String.compareTo. Migrates
+// Comparison battery (feature fixture) — user Comparable/Comparator impls and ordinal String.compareTo. Migrates
 // the comparison family of cases/il-* onto the in-process NUnit suite. Each old case's `main` + stdout-golden diff
 // becomes one @TestAttribute method whose per-value assert is strictly stronger (typed Int/Boolean) than the old text
 // diff. Every value the old il_check asserted is preserved 1:1 (see the `// <expected>` comments).
@@ -8,27 +8,27 @@
 //   il-comparator -> userComparator               class : Comparator<Int> -> CLR IComparer<T> (compare -> Compare)
 //   il-cmpord     -> stringCompareTo_ordinal       String.compareTo is ORDINAL (UTF-16 code unit), not culture-sensitive
 //
-// Batch-M1 collision rule: every top-level declaration is `M1`-prefixed (Ver -> M1Ver, IntCmp -> M1IntCmp).
+// Assembly-wide collision rule: every top-level declaration is `Comparison`-prefixed (Ver -> ComparisonVer, IntCmp -> ComparisonIntCmp).
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
 import NUnit.Framework.Legacy.ClassicAssert.Companion.IsFalse as assertFalse
 
 // ---- il-comparable : user class implementing Kotlin's Comparable<V> (self-referential generic) -----------------
-class M1Ver(val major: Int, val minor: Int) : Comparable<M1Ver> {
-    override fun compareTo(o: M1Ver): Int = if (major != o.major) major - o.major else minor - o.minor
+class ComparisonVer(val major: Int, val minor: Int) : Comparable<ComparisonVer> {
+    override fun compareTo(o: ComparisonVer): Int = if (major != o.major) major - o.major else minor - o.minor
     override fun toString(): String = "" + major + "." + minor
 }
 
 // ---- il-comparator : user class implementing Kotlin's Comparator<T> -> CLR IComparer<T> -----------------------
-class M1IntCmp : Comparator<Int> {
+class ComparisonIntCmp : Comparator<Int> {
     override fun compare(a: Int, b: Int): Int = a - b
 }
 
 class ComparisonTests {
     @TestAttribute
     fun selfGeneric() {
-        val a = M1Ver(1, 2); val b = M1Ver(1, 5); val c = M1Ver(2, 0)
+        val a = ComparisonVer(1, 2); val b = ComparisonVer(1, 5); val c = ComparisonVer(2, 0)
         assertTrue(a < b)                                       // a<b   (</> desugar to compareTo)
         assertTrue(c > b)                                       // c>b
         assertTrue(a <= a)                                      // a<=a
@@ -39,7 +39,7 @@ class ComparisonTests {
 
     @TestAttribute
     fun userComparator() {
-        val c = M1IntCmp()
+        val c = ComparisonIntCmp()
         assertEquals(-3, c.compare(2, 5))   // -3
         assertEquals(5, c.compare(9, 4))    // 5
         assertEquals(0, c.compare(3, 3))    // 0

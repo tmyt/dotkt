@@ -7,6 +7,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- **Tests: #227 replaces migration-batch identifiers with feature-oriented names.** The `M1`–`M5`/`MigM`,
+  `CorA`/`CorB`, and `IntropA`–`IntropD` families now use fixture-specific stems across the shared Basic,
+  Coroutines, and Interop assemblies. Analogous opaque stems in suspend operand/result/capture, open-generic-slot,
+  byref-order, and compile-fail fixtures are expanded as well. Cross-file support symbols, packages, reflection- or
+  string-sensitive expectations, diagnostic baselines, and comments move in the same sweep; discovery counts do
+  not change.
+
 - **Tests: #227 removes the superseded three-case task lifecycle fixture.** Its genuine asynchronous and completed
   `Task` await paths are both covered by `DynamicCaptureContextTests`, which additionally exercises generic and
   non-generic awaitables under runtime and constant capture policies. Its “finally once” check is covered by

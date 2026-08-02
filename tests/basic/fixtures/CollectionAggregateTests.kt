@@ -1,4 +1,4 @@
-// Stdlib-mapping battery (batch MigM, from cases/m-b1..m-b13 minus the m-b5 precondition sliver) — the sole
+// Stdlib-mapping battery (from cases/m-b1..m-b13 minus the m-b5 precondition sliver) — the sole
 // JVM-oracle-backed proof that Kotlin's collection / scope-function / kotlin.math / kotlin.text / bitwise stdlib
 // maps to the correct CLR behavior. Migrated onto the in-process NUnit suite; each old case's `main` + JVM golden
 // becomes one @TestAttribute method whose per-value assert is strictly stronger (typed) than the old stdout diff.

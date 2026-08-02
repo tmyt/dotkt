@@ -1,4 +1,4 @@
-// Collection / sequence-op battery (migration batch M1) — a concrete generic stdlib collection, chunked/filterNotNull,
+// Collection / sequence-op battery (feature fixture) — a concrete generic stdlib collection, chunked/filterNotNull,
 // CharSequence.windowed, and String.format. Migrates the collection-op family of cases/il-* onto the in-process NUnit
 // suite. Each old case's `main` + stdout-golden diff becomes one @TestAttribute method whose per-value assert is
 // strictly stronger (typed) than the old text diff. Every value the old il_check asserted is preserved 1:1.
@@ -13,19 +13,19 @@
 // nullableGenericIdiomsAtValueTypes is not migrated from a case: it is the #86 value-instantiation armor for the
 // mapNotNull(To)/filterNotNull(To)/chunked family (see the comment on the method).
 //
-// Batch-M1 collision rule: the sole top-level helper is `M1`-prefixed (il-arraydeque's `Holder` -> `M1DequeHolder`).
+// Assembly-wide collision rule: the sole top-level helper is `CollectionOperations`-prefixed (il-arraydeque's `Holder` -> `CollectionOperationsDequeHolder`).
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 
 // ---- il-arraydeque : a concrete generic stdlib collection as a FIELD/owner type ---------------------------------
-class M1DequeHolder {
+class CollectionOperationsDequeHolder {
     val q: ArrayDeque<String> = ArrayDeque()
 }
 
 class CollectionOperationsTests {
     @TestAttribute
     fun asFieldOwner() {
-        val h = M1DequeHolder()
+        val h = CollectionOperationsDequeHolder()
         val d = h.q
         d.addLast("a")
         d.addLast("b")

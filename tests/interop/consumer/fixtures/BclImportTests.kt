@@ -1,4 +1,4 @@
-// BCL-interop battery (pilot batch IntropA). These fixtures resolve real .NET types from the Interop
+// BCL-interop battery (feature fixture). These fixtures resolve real .NET types from the Interop
 // consumer's dll2klib-generated reference KLIBs.
 //
 // Coverage preserved (old case -> method):
@@ -7,7 +7,7 @@
 //   il-bclinject -> bclinject_genericFactoryCtorAndStatic  #143 generic value-factory ctor + reference-oblivious Value + static GetHashCode
 //   il-tlvalint  -> tlvalint_valueTypeObliviousValue        #8/#11 ThreadLocal<Int>.Value is a bare int32 (default 0), value/ref twin
 //
-// Top-level names are family-prefixed with `IntropA` (one assembly = one namespace) to avoid clashing with sibling
+// Top-level names are family-prefixed with `BclImport` (one assembly = one namespace) to avoid clashing with sibling
 // batteries and the stdlib.
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
@@ -19,7 +19,7 @@ import System.Threading.ThreadLocal             // il-bclinject / il-tlvalint
 import System.Runtime.CompilerServices.RuntimeHelpers  // il-bclinject
 
 // il-dualrep : the stdlib (kotlin.text) view of the SAME CLR type, in the same program.
-fun intropAUseKt(sb: kotlin.text.StringBuilder): String = sb.toString()
+fun bclImportUseKt(sb: kotlin.text.StringBuilder): String = sb.toString()
 
 class BclImportTests {
     // il-alias: `import System.Text.StringBuilder as SB` must inject the type AND bind the alias `SB`.
@@ -45,7 +45,7 @@ class BclImportTests {
         assertEquals("kt", s)                          // kt
         @Suppress("CAST_NEVER_SUCCEEDS")
         val kt = net as kotlin.text.StringBuilder      // escape hatch: both erase to System.Text.StringBuilder
-        assertEquals("net", intropAUseKt(kt))          // net
+        assertEquals("net", bclImportUseKt(kt))          // net
     }
 
     // il-bclinject: #143 generic value-factory ctor injects; reference-oblivious `Value` is null when unset; static

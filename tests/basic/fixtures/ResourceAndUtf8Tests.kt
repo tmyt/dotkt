@@ -1,4 +1,4 @@
-// Stdlib-binding battery (batch M5): `use {}` on AutoCloseable and UTF-8 throw-on-invalid. Migrates that family of
+// Stdlib-binding battery: `use {}` on AutoCloseable and UTF-8 throw-on-invalid. Migrates that family of
 // cases/il-* onto the in-process NUnit suite. Each old case's `main` + stdout-golden diff becomes one @TestAttribute
 // method; every asserted value is preserved 1:1 (see `// <expected>`). il-use's ORDERED side-effecting `close()`
 // prints (the actual subject: close runs in `finally`, before/around the block value) become a captured log list
@@ -8,14 +8,14 @@
 //   il-use      -> useCloseable        `use {}` -> try{block(it)}finally{close()}; block value returned; close runs on normal + throw paths
 //   il-utf8throw-> utf8ThrowOnInvalid  #143 decodeToString/encodeToByteArray honor throwOnInvalidSequence=true -> CharacterCodingException
 //
-// All top-level declarations introduced here are M5-prefixed (one assembly = one namespace).
+// All top-level declarations introduced here are ResourceUtf8-prefixed (one assembly = one namespace).
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
 import kotlin.text.CharacterCodingException
 
 // ---- il-use : close() ordering captured into a log (was ordered `println`s) --------------------------------------
-class M5Res(val tag: String, val log: MutableList<String>) : AutoCloseable {
+class ResourceUtf8Res(val tag: String, val log: MutableList<String>) : AutoCloseable {
     fun read(): Int = tag.length
     override fun close() { log.add("close " + tag) }
 }
@@ -24,12 +24,12 @@ class ResourceAndUtf8Tests {
     @TestAttribute
     fun useCloseable() {
         val log = mutableListOf<String>()
-        val n = M5Res("abcd", log).use { it.read() }   // block value returned; close runs in finally first
+        val n = ResourceUtf8Res("abcd", log).use { it.read() }   // block value returned; close runs in finally first
         assertEquals(4, n)                              // n=4
         assertEquals("close abcd", log[0])              // close abcd
         var caught = ""
         try {
-            M5Res("x", log).use { throw RuntimeException("boom") }   // close still runs on throw
+            ResourceUtf8Res("x", log).use { throw RuntimeException("boom") }   // close still runs on throw
         } catch (e: Exception) { caught = e.message ?: "" }
         assertEquals("close x", log[1])                 // close x
         assertEquals("boom", caught)                    // caught:boom

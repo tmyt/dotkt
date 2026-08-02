@@ -1,4 +1,4 @@
-// Lazy-sequence + sorting battery (batch M5). Migrates the Sequence/LINQ family of cases/il-* onto the in-process
+// Lazy-sequence + sorting battery. Migrates the Sequence/LINQ family of cases/il-* onto the in-process
 // NUnit suite. Each old case's `main` + stdout-golden diff becomes one @TestAttribute method whose per-value
 // assertEquals is strictly stronger (typed) than the old text diff; every asserted value is preserved 1:1
 // (see the `// <expected>` comments). These use `asSequence()` (a deferred .NET IEnumerable pass-through) and
@@ -12,8 +12,7 @@
 // valueAccumulatorSingle is not migrated from a case: it is the #86 value-instantiation armor for the
 // `T? = null` accumulator behind Sequence.single/singleOrNull (see the comment on the method).
 //
-// Method bodies are self-contained; there are no shared top-level declarations, so nothing here needs the M5 prefix
-// beyond the fixture class name.
+// Method bodies are self-contained; there are no shared top-level declarations.
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.Companion.IsNull as assertNull

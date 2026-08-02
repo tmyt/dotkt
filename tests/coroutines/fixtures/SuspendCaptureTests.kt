@@ -63,7 +63,7 @@ fun scapMk(k: Int): suspend () -> Int = { scapAddA(k, 5) }                     /
 // named by kotc, without reconstructing lexical shadowing from nested JSON.
 suspend fun scapShadowedFrameSlots(): String {
     val value = 1
-    val resumed = corBScrAsyncResume()
+    val resumed = suspendContextAsyncResume()
     val rendered = run {
         val value = "inner"
         value

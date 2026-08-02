@@ -1,4 +1,4 @@
-// Enum rich-API battery (batch MigM, from cases/m-a8) — the ONLY pure-Kotlin (JVM-oracle-backed) proof of the
+// Enum rich-API battery (feature fixture, from cases/m-a8) — the ONLY pure-Kotlin (JVM-oracle-backed) proof of the
 // full `enum class` reflective surface: name / ordinal / valueOf / values() / entries. Migrated onto the
 // in-process NUnit suite; each old case's `main` + JVM golden becomes one @TestAttribute method whose per-value
 // assert is strictly stronger (typed) than the old stdout diff; every asserted value preserved 1:1 (see
@@ -8,27 +8,27 @@
 // Coverage preserved (old case -> method):
 //   m-a8  -> enumRichApi   name / ordinal / valueOf("BLUE") / values() (ordered) / entries.size
 //
-// Top-level names are MigM-prefixed (one assembly = one namespace).
+// Top-level names are EnumApi-prefixed (one assembly = one namespace).
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 
-enum class MigMColor { RED, GREEN, BLUE }
+enum class EnumApiColor { RED, GREEN, BLUE }
 
 class EnumApiTests {
     @TestAttribute
     fun enumRichApi() {
-        val c = MigMColor.GREEN
+        val c = EnumApiColor.GREEN
         assertEquals("GREEN", c.name)               // GREEN
         assertEquals(1, c.ordinal)                  // 1
-        assertEquals(MigMColor.BLUE, MigMColor.valueOf("BLUE"))  // BLUE (valueOf)
+        assertEquals(EnumApiColor.BLUE, EnumApiColor.valueOf("BLUE"))  // BLUE (valueOf)
 
         val names = mutableListOf<String>()
-        for (x in MigMColor.values()) names.add(x.name)  // ordered values() loop
+        for (x in EnumApiColor.values()) names.add(x.name)  // ordered values() loop
         assertEquals(3, names.size)
         assertEquals("RED", names[0])               // RED
         assertEquals("GREEN", names[1])             // GREEN
         assertEquals("BLUE", names[2])              // BLUE
 
-        assertEquals(3, MigMColor.entries.size)     // 3 (entries)
+        assertEquals(3, EnumApiColor.entries.size)     // 3 (entries)
     }
 }

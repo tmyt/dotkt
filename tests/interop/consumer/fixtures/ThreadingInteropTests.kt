@@ -1,4 +1,4 @@
-// CLR synchronous-threading battery (batch IntropC). Exercises genuine cross-thread monitor hand-off with a
+// CLR synchronous-threading battery (feature fixture). Exercises genuine cross-thread monitor hand-off with a
 // blocking Thread.Join; these are plain synchronous tests, not coroutine cold-core tests.
 //
 // Coverage preserved (old case -> method):
@@ -11,7 +11,7 @@
 //                        Wait`/Exit; completer Enter/set/`done=true`/Pulse/Exit on the same monitor). `99` is only
 //                        observable after a genuine cross-thread hand-off, proving Wait blocks + Pulse wakes.
 //
-// Top-level names are family-prefixed with `IntropC` (one assembly = one namespace).
+// Top-level names are family-prefixed with `BclThreading` (one assembly = one namespace).
 @file:OptIn(ExperimentalAtomicApi::class)
 
 import NUnit.Framework.TestAttribute
@@ -24,7 +24,7 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
 // il-monitordrain: the shared monitor object — the waiter blocks on `while(!done) Wait`, the completer sets the value
 // and Pulses under the same monitor.
-class IntropCSink {
+class BclThreadingSink {
     var done = false
     var value = 0
 }
@@ -62,7 +62,7 @@ class ThreadingInteropTests {
     // il-monitordrain: the main thread BLOCKS in Wait until a worker thread, after a delay, sets the value and Pulses.
     @TestAttribute
     fun waitPulseCrossThreadDrain() {
-        val sink = IntropCSink()
+        val sink = BclThreadingSink()
         // A bare lambda `{ ... }` binds the .NET `Thread` ctor's preferred `ThreadStart` (`() -> Unit`) overload; the
         // Pareto-dominated `ParameterizedThreadStart` sibling is `@LowPriorityInOverloadResolution` (#19), so no arity pin.
         val worker = Thread({

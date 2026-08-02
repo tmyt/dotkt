@@ -1,4 +1,4 @@
-// .NET method-reference / super-call interop battery (batch IntropB). The Interop consumer resolves
+// .NET method-reference / super-call interop battery (feature fixture). The Interop consumer resolves
 // the .NET types through reference KLIBs.
 //
 // Coverage preserved (old case -> method):
@@ -7,7 +7,7 @@
 //
 // NB: il-mref's old runtime.cs was a no-op (the sample uses only BCL StringBuilder), so it is dropped here.
 //
-// Top-level names are family-prefixed with `IntropB` (one assembly = one namespace) to avoid clashing with
+// Top-level names are family-prefixed with `BclMethodReference` (one assembly = one namespace) to avoid clashing with
 // sibling batteries and the stdlib.
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
@@ -16,10 +16,10 @@ import System.Text.StringBuilder
 import System.Random
 
 // il-mref : a higher-order helper the unbound method ref flows through.
-fun <T> intropBMrefApply1(f: (StringBuilder) -> T, sb: StringBuilder): T = f(sb)
+fun <T> bclMethodReferenceMrefApply1(f: (StringBuilder) -> T, sb: StringBuilder): T = f(sb)
 
 // il-supernet : super.<m>() to a reference-KLIB-projected .NET base (System.Random) must be a non-virtual base-slot call.
-class IntropBSupernetSeededRandom(seed: Int) : Random(seed) {
+class BclMethodReferenceSupernetSeededRandom(seed: Int) : Random(seed) {
     override fun Next(): Int = super.Next() + 1000   // super -> System.Random::Next (non-virtual base slot)
 }
 
@@ -32,7 +32,7 @@ class BclMethodReferenceTests {
         sb.Append("hello world")
         val g: () -> String = sb::ToString                              // bound .NET method ref
         assertEquals("hello world", g())                               // hello world
-        val cleared = intropBMrefApply1(StringBuilder::Clear, sb)      // unbound .NET method ref
+        val cleared = bclMethodReferenceMrefApply1(StringBuilder::Clear, sb)      // unbound .NET method ref
         assertEquals(0, cleared.ToString().length)                     // 0
     }
 
@@ -40,8 +40,8 @@ class BclMethodReferenceTests {
     // THIS class's override, so no infinite recursion; the same seed stays deterministic across two instances.
     @TestAttribute
     fun superToNetBase() {
-        val r1 = IntropBSupernetSeededRandom(42)
-        val r2 = IntropBSupernetSeededRandom(42)
+        val r1 = BclMethodReferenceSupernetSeededRandom(42)
+        val r2 = BclMethodReferenceSupernetSeededRandom(42)
         val v1 = r1.Next()
         val v2 = r2.Next()
         assertTrue(v1 >= 1000)   // True  (super.Next() returned a non-negative base value + the 1000 offset)

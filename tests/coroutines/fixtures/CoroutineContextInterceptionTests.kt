@@ -1,4 +1,4 @@
-// CoroutineContext.Key star-projection + await-interceptor-precedence battery (CorA batch). These exercise the
+// CoroutineContext.Key star-projection + await-interceptor-precedence battery (feature fixture). These exercise the
 // `CoroutineContext.Key<E : Element>` self-ref-bounded key surface (bir2cir StarProjectionBoundLowering repoints the
 // `Key<*>` projection to `Key<Element>`) and the #7 await-point resume precedence (interceptor > SyncContext > inline).
 //
@@ -11,7 +11,7 @@
 //   il-cointercept    -> coIntercept_interceptorKeyProjection      (#12: ContinuationInterceptor key<*> projection)
 //   il-awaitintercept -> awaitIntercept_scenario{A,B,C}            (#7 Part B: interceptor-owned await resume + controls)
 //
-// Top-level names are family-prefixed (`CorACtxk`/`CorAIcept`/`CorAAwi`/`corAAwi`).
+// Top-level names are family-prefixed (`ContextInterceptionCtxk`/`ContextInterceptionIcept`/`ContextInterceptionAwi`/`contextInterceptionAwi`).
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import System.Threading.Tasks.Task1
@@ -25,35 +25,35 @@ import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.coroutines.startCoroutine
 
 // ---- il-coctxkey: subclassing AbstractCoroutineContextElement with a self-typed companion Key ----------------
-class CorACtxkElem : AbstractCoroutineContextElement(Key) {
-    companion object Key : CoroutineContext.Key<CorACtxkElem>
+class ContextInterceptionCtxkElem : AbstractCoroutineContextElement(Key) {
+    companion object Key : CoroutineContext.Key<ContextInterceptionCtxkElem>
 }
 
 // ---- il-cointercept: a ContinuationInterceptor impl exposing `key: Key<*>` -----------------------------------
-class CorAIceptInterceptor : ContinuationInterceptor {
+class ContextInterceptionIceptInterceptor : ContinuationInterceptor {
     override val key: CoroutineContext.Key<*> get() = ContinuationInterceptor
     override fun <T> interceptContinuation(continuation: Continuation<T>): Continuation<T> = continuation
 }
 
 // A plain intermediate interface reproduces kotlinx.coroutines' `Job : CoroutineContext.Element` shape. The frontend
-// materializes Element's inherited members on CorATransitiveElement as abstract slots; the class-side CLR MethodImpls
+// materializes Element's inherited members on ContextInterceptionTransitiveElement as abstract slots; the class-side CLR MethodImpls
 // therefore have to forward those distinct slots to Element's referenced stdlib DIMs.
-interface CorATransitiveElement : CoroutineContext.Element
+interface ContextInterceptionTransitiveElement : CoroutineContext.Element
 
-class CorATransitiveElementImpl : CorATransitiveElement {
-    companion object Key : CoroutineContext.Key<CorATransitiveElementImpl>
+class ContextInterceptionTransitiveElementImpl : ContextInterceptionTransitiveElement {
+    companion object Key : CoroutineContext.Key<ContextInterceptionTransitiveElementImpl>
     override val key: CoroutineContext.Key<*> get() = Key
 }
 
 // BIR intentionally keeps the LOCAL intermediate receiver owner; bir2cir must bind this generic
 // call to the nearest referenced declaration (Element, not the transitive CoroutineContext slot).
-fun <E : CoroutineContext.Element> corATransitiveGet(
-    delegate: CorATransitiveElement,
+fun <E : CoroutineContext.Element> contextInterceptionTransitiveGet(
+    delegate: ContextInterceptionTransitiveElement,
     key: CoroutineContext.Key<E>,
 ): E? = delegate[key]
 
 // ---- il-awaitintercept: an interceptor that COUNTS resumes routed through it (#7 Part B, harness inlined) -----
-class CorAAwiCountingInterceptor : ContinuationInterceptor {
+class ContextInterceptionAwiCountingInterceptor : ContinuationInterceptor {
     var resumes: Int = 0
 
     override val key: CoroutineContext.Key<*> get() = ContinuationInterceptor
@@ -74,7 +74,7 @@ class CorAAwiCountingInterceptor : ContinuationInterceptor {
 }
 
 // A terminal completion Continuation with a caller-supplied context that captures the coroutine outcome.
-class CorAAwiSink<T>(override val context: CoroutineContext) : Continuation<T> {
+class ContextInterceptionAwiSink<T>(override val context: CoroutineContext) : Continuation<T> {
     var done: Boolean = false
     var value: Any? = null
     var error: Throwable? = null
@@ -85,13 +85,13 @@ class CorAAwiSink<T>(override val context: CoroutineContext) : Continuation<T> {
     }
 }
 
-suspend fun corAAwiAwaitCapturing(tcs: TaskCompletionSource1<Int>): Int = tcs.Task.await()
-suspend fun corAAwiAwaitNoCapture(tcs: TaskCompletionSource1<Int>): Int = tcs.Task.await(captureContext = false)
+suspend fun contextInterceptionAwiAwaitCapturing(tcs: TaskCompletionSource1<Int>): Int = tcs.Task.await()
+suspend fun contextInterceptionAwiAwaitNoCapture(tcs: TaskCompletionSource1<Int>): Int = tcs.Task.await(captureContext = false)
 
 // Deterministic drain: the captureContext=false / no-SyncContext resume MAY land on the threadpool (async), so the
 // completion is not necessarily set synchronously by SetResult. Bounded-wait for the sink to complete (the analog of
 // blockOn's Monitor.Wait drain) so the assertion is race-free — the asserted values are unchanged.
-fun corAAwiDrain(sink: CorAAwiSink<Int>) {
+fun contextInterceptionAwiDrain(sink: ContextInterceptionAwiSink<Int>) {
     var tries = 0
     while (!sink.done && tries < 3000) { Thread.Sleep(1); tries += 1 }
 }
@@ -99,38 +99,38 @@ fun corAAwiDrain(sink: CorAAwiSink<Int>) {
 class CoroutineContextInterceptionTests {
     @TestAttribute
     fun abstractElementCompanionKey() {
-        val e = CorACtxkElem()
-        assertEquals(true, e.key === CorACtxkElem.Key)   // True
-        assertEquals(true, e[CorACtxkElem.Key] === e)    // True (get<E : Element>)
+        val e = ContextInterceptionCtxkElem()
+        assertEquals(true, e.key === ContextInterceptionCtxkElem.Key)   // True
+        assertEquals(true, e[ContextInterceptionCtxkElem.Key] === e)    // True (get<E : Element>)
     }
 
     @TestAttribute
     fun interceptorKeyProjection() {
-        val i = CorAIceptInterceptor()
+        val i = ContextInterceptionIceptInterceptor()
         assertEquals(true, i.key === ContinuationInterceptor)   // True
         assertEquals(true, (i as CoroutineContext)[ContinuationInterceptor] === i)
     }
 
     @TestAttribute
     fun transitiveReferencedElementDefaults() {
-        val e: CorATransitiveElement = CorATransitiveElementImpl()
-        assertEquals(true, e[CorATransitiveElementImpl.Key] === e)
+        val e: ContextInterceptionTransitiveElement = ContextInterceptionTransitiveElementImpl()
+        assertEquals(true, e[ContextInterceptionTransitiveElementImpl.Key] === e)
         assertEquals(e, e.fold<Any?>(null) { _, element -> element })
-        assertEquals(EmptyCoroutineContext, e.minusKey(CorATransitiveElementImpl.Key))
+        assertEquals(EmptyCoroutineContext, e.minusKey(ContextInterceptionTransitiveElementImpl.Key))
 
-        assertEquals(true, corATransitiveGet(e, CorATransitiveElementImpl.Key) === e)
+        assertEquals(true, contextInterceptionTransitiveGet(e, ContextInterceptionTransitiveElementImpl.Key) === e)
     }
 
     @TestAttribute
     fun interceptorPrecedence() {
-        val icept = CorAAwiCountingInterceptor()
-        val sink = CorAAwiSink<Int>(icept)
+        val icept = ContextInterceptionAwiCountingInterceptor()
+        val sink = ContextInterceptionAwiSink<Int>(icept)
         val tcs = TaskCompletionSource1<Int>()
-        val block: suspend () -> Int = { corAAwiAwaitCapturing(tcs) }
+        val block: suspend () -> Int = { contextInterceptionAwiAwaitCapturing(tcs) }
         block.startCoroutine(sink)   // runs to the await, which SUSPENDS (tcs not completed)
         icept.resumes = 0            // reset: isolate the await-point resume from the start resume
         tcs.SetResult(42)            // resume -> OnCompleted -> this.intercepted() -> wrapper (resumes++)
-        corAAwiDrain(sink)
+        contextInterceptionAwiDrain(sink)
         assertEquals(1, icept.resumes)   // A:resumes=1
         assertEquals(true, sink.done)    // done=True
         assertEquals(42, sink.value)     // value=42
@@ -138,24 +138,24 @@ class CoroutineContextInterceptionTests {
 
     @TestAttribute
     fun defaultCapturingPath() {
-        val sink = CorAAwiSink<Int>(EmptyCoroutineContext)
+        val sink = ContextInterceptionAwiSink<Int>(EmptyCoroutineContext)
         val tcs = TaskCompletionSource1<Int>()
-        val block: suspend () -> Int = { corAAwiAwaitCapturing(tcs) + 5 }
+        val block: suspend () -> Int = { contextInterceptionAwiAwaitCapturing(tcs) + 5 }
         block.startCoroutine(sink)
         tcs.SetResult(7)
-        corAAwiDrain(sink)
+        contextInterceptionAwiDrain(sink)
         assertEquals(true, sink.done)   // B:done=True
         assertEquals(12, sink.value)    // value=12
     }
 
     @TestAttribute
     fun configureAwaitFalsePath() {
-        val sink = CorAAwiSink<Int>(EmptyCoroutineContext)
+        val sink = ContextInterceptionAwiSink<Int>(EmptyCoroutineContext)
         val tcs = TaskCompletionSource1<Int>()
-        val block: suspend () -> Int = { corAAwiAwaitNoCapture(tcs) + 2 }
+        val block: suspend () -> Int = { contextInterceptionAwiAwaitNoCapture(tcs) + 2 }
         block.startCoroutine(sink)
         tcs.SetResult(9)
-        corAAwiDrain(sink)
+        contextInterceptionAwiDrain(sink)
         assertEquals(true, sink.done)   // C:done=True
         assertEquals(11, sink.value)    // value=11
     }

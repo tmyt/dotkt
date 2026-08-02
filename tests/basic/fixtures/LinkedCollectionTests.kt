@@ -1,4 +1,4 @@
-// Migrated il batch M3 — LinkedHash* insertion-order family. Each old case's `main` + stdout-golden diff becomes
+// LinkedHash* insertion-order family. Each old case's `main` + stdout-golden diff becomes
 // one @TestAttribute method whose per-value assertEquals/assertTrue/assertFalse is strictly stronger (typed) than
 // the old text diff. Every value the old il_check asserted is preserved 1:1 (see the `// <expected>` comments).
 //

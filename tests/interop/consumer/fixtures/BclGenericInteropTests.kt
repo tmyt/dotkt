@@ -1,4 +1,4 @@
-// Generic / enum BCL-interop battery (pilot batch IntropA). These fixtures import real .NET types through
+// Generic / enum BCL-interop battery (feature fixture). These fixtures import real .NET types through
 // the Interop consumer's reference KLIBs and cover generic types, methods, delegates, and enums.
 //
 // Coverage preserved (old case -> method):
@@ -7,7 +7,7 @@
 //   il-jsongeneric  -> jsongeneric_genericMethodInteropSibling  #44 generic .NET method whose sibling param is a reference-KLIB-projected interop type
 //   il-netenumbound -> netenumbound_boundEnumTypeParam           .NET enum bound to a Kotlin `<T : Enum<T>>` param + enumValues/enumValueOf
 //
-// Top-level names are family-prefixed with `IntropA` (one assembly = one namespace) to avoid clashing with sibling
+// Top-level names are family-prefixed with `BclGenericInterop` (one assembly = one namespace) to avoid clashing with sibling
 // batteries and the stdlib.
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
@@ -20,10 +20,10 @@ import System.Text.Json.JsonSerializerOptions   // il-jsongeneric
 import System.DayOfWeek                          // il-netenumbound
 
 // il-gendelegate : a same-assembly (TypeBuilder) USER type used as the delegate's generic arg.
-class IntropABox(val n: Int)
+class BclGenericInteropBox(val n: Int)
 
 // il-netenumbound : a Kotlin generic bounded by Enum<T>, applied to a .NET enum.
-fun <T : Enum<T>> intropANameOf(e: T): String = e.name
+fun <T : Enum<T>> bclGenericInteropNameOf(e: T): String = e.name
 
 class BclGenericInteropTests {
     // il-forin: for-in over a real .NET IEnumerable<T> (System.Collections.Generic.List<Int>) lowers to the
@@ -47,10 +47,10 @@ class BclGenericInteropTests {
     // position) and Action<Box> (input position); ilemit substitutes T -> Box on the open delegate definition.
     @TestAttribute
     fun lambdaToGenericDelegateCtor() {
-        val tl = ThreadLocal<IntropABox>({ IntropABox(42) })   // Func<T> — return-position type-var substitution
+        val tl = ThreadLocal<BclGenericInteropBox>({ BclGenericInteropBox(42) })   // Func<T> — return-position type-var substitution
         assertEquals(42, tl.Value.n)                            // 42
         var seen = 0
-        val pr = Progress<IntropABox>({ b: IntropABox -> seen = b.n })  // Action<T> — input-position substitution
+        val pr = Progress<BclGenericInteropBox>({ b: BclGenericInteropBox -> seen = b.n })  // Action<T> — input-position substitution
         assertTrue(pr != null)                                  // True
     }
 
@@ -69,7 +69,7 @@ class BclGenericInteropTests {
     @TestAttribute
     fun boundEnumTypeParam() {
         val d: DayOfWeek = DayOfWeek.Friday
-        assertEquals("Friday", intropANameOf(d))                    // Friday
+        assertEquals("Friday", bclGenericInteropNameOf(d))                    // Friday
         assertEquals(7, enumValues<DayOfWeek>().size)               // 7
         assertEquals(1, enumValueOf<DayOfWeek>("Monday").ordinal)   // 1
     }

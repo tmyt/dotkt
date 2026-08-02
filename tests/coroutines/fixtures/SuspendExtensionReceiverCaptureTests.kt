@@ -1,28 +1,28 @@
-// CorB batch — il-inlsuspendouter: the `__outer` receiver rebind (#75 BATCH B, 2B, the 52nd site). An EXTENSION
+// feature fixture — il-inlsuspendouter: the `__outer` receiver rebind (#75 BATCH B, 2B, the 52nd site). An EXTENSION
 // `inline fun T.op` whose body builds a SOURCE `newSuspendLambda` (the `blockOn { … }` arg) capturing `this@op` (the
 // enclosing extension receiver, kotc's `__outer`), rebound to the splice's `__self` temp by 2B. All top-level decls
-// carry the `iout` case token under the shared `corB`/`CorB` prefix so their simple names are UNIQUE across this
+// carry the `iout` case token under the shared `suspendExtensionReceiver`/`SuspendExtensionReceiver` prefix so their simple names are UNIQUE across this
 // assembly (bir2cir's cold-core suspend lowering keys top-level suspend funs by simple name). The former `main` +
 // golden -> one @TestAttribute method (values 1:1).
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import dotkt.support.blockOn
 
-suspend fun corBIoutAddA(a: Int, b: Int): Int = a + b
+suspend fun suspendExtensionReceiverIoutAddA(a: Int, b: Int): Int = a + b
 
-// extension inline fun; the payload's `blockOn { … }` lambda (a SOURCE newSuspendLambda) captures `this@corBIoutOp`
+// extension inline fun; the payload's `blockOn { … }` lambda (a SOURCE newSuspendLambda) captures `this@suspendExtensionReceiverIoutOp`
 // (= __outer, the extension receiver) alongside the crossinline suspend carrier `f`.
-inline fun <T> T.corBIoutOp(crossinline f: suspend (T) -> Int): Int = blockOn { f(this@corBIoutOp) }
+inline fun <T> T.suspendExtensionReceiverIoutOp(crossinline f: suspend (T) -> Int): Int = blockOn { f(this@suspendExtensionReceiverIoutOp) }
 
 // F1 — the inline fn spliced INSIDE a `suspend fun`, so the payload's __outer-capturing newSuspendLambda is walked by
 // SuspendColdLowering's cold transform (GAP 2), which must PRESERVE the 2B __outer capValues override.
-suspend fun corBIoutOpInSuspend(base: Int): Int = base.corBIoutOp { corBIoutAddA(it, 5) }
+suspend fun suspendExtensionReceiverIoutOpInSuspend(base: Int): Int = base.suspendExtensionReceiverIoutOp { suspendExtensionReceiverIoutAddA(it, 5) }
 
 class SuspendExtensionReceiverCaptureTests {
     @TestAttribute
     fun outerReceiverRebindInPayloadSuspendLambda() {
-        assertEquals(42, 20.corBIoutOp { corBIoutAddA(it, 22) })   // f(20) = addA(20, 22) = 42
-        assertEquals(7, 0.corBIoutOp { corBIoutAddA(it, 7) })      // f(0)  = addA(0, 7)   = 7
-        assertEquals(20, blockOn { corBIoutOpInSuspend(15) })      // op spliced in a SUSPEND caller: addA(15, 5) = 20
+        assertEquals(42, 20.suspendExtensionReceiverIoutOp { suspendExtensionReceiverIoutAddA(it, 22) })   // f(20) = addA(20, 22) = 42
+        assertEquals(7, 0.suspendExtensionReceiverIoutOp { suspendExtensionReceiverIoutAddA(it, 7) })      // f(0)  = addA(0, 7)   = 7
+        assertEquals(20, blockOn { suspendExtensionReceiverIoutOpInSuspend(15) })      // op spliced in a SUSPEND caller: addA(15, 5) = 20
     }
 }

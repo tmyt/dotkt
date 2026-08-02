@@ -1,4 +1,4 @@
-// .NET Task interop battery (batch IntropB) — migrates the SYNCHRONOUS (`.Result`/`.Wait()`, no suspend)
+// .NET Task interop battery — migrates the SYNCHRONOUS (`.Result`/`.Wait()`, no suspend)
 // cases/il-task* onto the in-process NUnit suite. These exercise the seam that lets Kotlin BUILD a Task<T>
 // from a .NET generic static factory and unwrap it synchronously — NOT the coroutine cold-core, so they
 // migrate normally (not frozen). The Interop consumer project's reference KLIBs expose the .NET Task
@@ -9,8 +9,7 @@
 //   il-taskgen  -> taskgen_genericStaticFactory   Task.FromResult<TResult>: the companion generic-static builder resolves FromResult(42) -> Task<Int>
 //   il-taskwhen -> taskwhen_nestedGenericCombinators  Task.WhenAny -> Task<Task<T>> (double-nested return) + Task.WhenAll(vararg Task<T>) -> Task<T[]>
 //
-// Top-level names are family-prefixed with `IntropB` (one assembly = one namespace) to avoid clashing with
-// sibling batteries and the stdlib.
+// The fixture introduces no shared top-level declarations.
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import System.Threading.Tasks.Task

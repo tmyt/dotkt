@@ -18,50 +18,50 @@
 // Shapes: both arms Nothing (the conditional itself produces nothing), a SUSPENDING Nothing callee, elvis, a block
 // arm ENDING in the call, a `when` WITH a subject (a different node path from the subject-less one the basic
 // battery covers), a value-typed (`Int`) merge, a whole expression body, a nested argument, a `try` arm, and a
-// companion-static producer. Top-level names carry the `corNv` prefix.
+// companion-static producer. Top-level names carry the `suspendNothing` prefix.
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import dotkt.support.blockOn
 
-suspend fun corNvRelay(x: Int): Int = x
-fun corNvFail(msg: String): Nothing = throw IllegalStateException(msg)
-suspend fun corNvSuspendFail(msg: String): Nothing = throw IllegalStateException(msg)
-class CorNvBoom { companion object { fun boom(): Nothing = throw IllegalStateException("boom") } }
+suspend fun suspendNothingRelay(x: Int): Int = x
+fun suspendNothingFail(msg: String): Nothing = throw IllegalStateException(msg)
+suspend fun suspendNothingSuspendFail(msg: String): Nothing = throw IllegalStateException(msg)
+class SuspendNothingBoom { companion object { fun boom(): Nothing = throw IllegalStateException("boom") } }
 
-val corNvLog = mutableListOf<String>()
+val suspendNothingLog = mutableListOf<String>()
 
-suspend fun corNvBothArms(n: Int): String {
-    val a = corNvRelay(n)
-    return if (a >= 0) corNvFail("a") else corNvFail("b")
+suspend fun suspendNothingBothArms(n: Int): String {
+    val a = suspendNothingRelay(n)
+    return if (a >= 0) suspendNothingFail("a") else suspendNothingFail("b")
 }
-suspend fun corNvSuspendingArm(n: Int): String {
-    val a = corNvRelay(n)
-    return if (a >= 0) "kept" else corNvSuspendFail("s")
+suspend fun suspendNothingSuspendingArm(n: Int): String {
+    val a = suspendNothingRelay(n)
+    return if (a >= 0) "kept" else suspendNothingSuspendFail("s")
 }
-suspend fun corNvElvis(s: String?): String {
-    val a = corNvRelay(1)
-    return if (a >= 0) (s ?: corNvFail("elvis")) else "x"
+suspend fun suspendNothingElvis(s: String?): String {
+    val a = suspendNothingRelay(1)
+    return if (a >= 0) (s ?: suspendNothingFail("elvis")) else "x"
 }
-suspend fun corNvBlockTail(n: Int): String {
-    val a = corNvRelay(n)
-    return if (a >= 0) "ok" else { corNvLog.add("side"); corNvFail("tail") }
+suspend fun suspendNothingBlockTail(n: Int): String {
+    val a = suspendNothingRelay(n)
+    return if (a >= 0) "ok" else { suspendNothingLog.add("side"); suspendNothingFail("tail") }
 }
-suspend fun corNvSubjectWhen(n: Int): String {
-    val a = corNvRelay(n)
-    return when (a) { 0 -> "zero"; 1 -> corNvFail("one"); 2 -> CorNvBoom.boom(); else -> "many" }
+suspend fun suspendNothingSubjectWhen(n: Int): String {
+    val a = suspendNothingRelay(n)
+    return when (a) { 0 -> "zero"; 1 -> suspendNothingFail("one"); 2 -> SuspendNothingBoom.boom(); else -> "many" }
 }
-suspend fun corNvValueSlot(n: Int): Int {
-    val a = corNvRelay(n)
-    return if (a >= 0) 7 else corNvFail("int")
+suspend fun suspendNothingValueSlot(n: Int): Int {
+    val a = suspendNothingRelay(n)
+    return if (a >= 0) 7 else suspendNothingFail("int")
 }
-suspend fun corNvWholeBody(n: Int): String { corNvRelay(n); return corNvFail("body") }
-suspend fun corNvNestedArgument(n: Int): String {
-    val a = corNvRelay(n)
-    return "p".plus(if (a >= 0) "q" else corNvFail("arg"))
+suspend fun suspendNothingWholeBody(n: Int): String { suspendNothingRelay(n); return suspendNothingFail("body") }
+suspend fun suspendNothingNestedArgument(n: Int): String {
+    val a = suspendNothingRelay(n)
+    return "p".plus(if (a >= 0) "q" else suspendNothingFail("arg"))
 }
-suspend fun corNvTryArm(n: Int): String {
-    val a = corNvRelay(n)
-    return try { if (a >= 0) "t" else corNvFail("try") } catch (e: IllegalStateException) { "caught" }
+suspend fun suspendNothingTryArm(n: Int): String {
+    val a = suspendNothingRelay(n)
+    return try { if (a >= 0) "t" else suspendNothingFail("try") } catch (e: IllegalStateException) { "caught" }
 }
 
 class SuspendNothingValueTests {
@@ -70,29 +70,29 @@ class SuspendNothingValueTests {
 
     @TestAttribute
     fun nothingReturningCallInSuspendValuePosition() {
-        corNvLog.clear()
+        suspendNothingLog.clear()
         // The surviving arms.
-        assertEquals("kept", blockOn { corNvSuspendingArm(1) })   // kept
-        assertEquals("e", blockOn { corNvElvis("e") })            // e
-        assertEquals("ok", blockOn { corNvBlockTail(1) })         // ok
-        assertEquals("zero", blockOn { corNvSubjectWhen(0) })     // zero   `when` WITH a subject
-        assertEquals("many", blockOn { corNvSubjectWhen(9) })     // many
-        assertEquals(7, blockOn { corNvValueSlot(1) })            // 7      value-typed merge
-        assertEquals("pq", blockOn { corNvNestedArgument(1) })    // pq     terminated arm nested in an argument
-        assertEquals("t", blockOn { corNvTryArm(1) })             // t
-        assertEquals(0, corNvLog.size)                            // the untaken block arm did not run
+        assertEquals("kept", blockOn { suspendNothingSuspendingArm(1) })   // kept
+        assertEquals("e", blockOn { suspendNothingElvis("e") })            // e
+        assertEquals("ok", blockOn { suspendNothingBlockTail(1) })         // ok
+        assertEquals("zero", blockOn { suspendNothingSubjectWhen(0) })     // zero   `when` WITH a subject
+        assertEquals("many", blockOn { suspendNothingSubjectWhen(9) })     // many
+        assertEquals(7, blockOn { suspendNothingValueSlot(1) })            // 7      value-typed merge
+        assertEquals("pq", blockOn { suspendNothingNestedArgument(1) })    // pq     terminated arm nested in an argument
+        assertEquals("t", blockOn { suspendNothingTryArm(1) })             // t
+        assertEquals(0, suspendNothingLog.size)                            // the untaken block arm did not run
         // The terminated arms: each still throws ITS OWN exception, out through the state machine.
-        assertEquals("a", thrown { blockOn { corNvBothArms(1) } })          // BOTH arms Nothing
-        assertEquals("b", thrown { blockOn { corNvBothArms(-1) } })
-        assertEquals("s", thrown { blockOn { corNvSuspendingArm(-1) } })    // the Nothing callee itself suspends
-        assertEquals("elvis", thrown { blockOn { corNvElvis(null) } })
-        assertEquals("tail", thrown { blockOn { corNvBlockTail(-1) } })
-        assertEquals(1, corNvLog.size)                            // ...and the taken block arm ran its statements
-        assertEquals("one", thrown { blockOn { corNvSubjectWhen(1) } })
-        assertEquals("boom", thrown { blockOn { corNvSubjectWhen(2) } })    // companion-static producer
-        assertEquals("int", thrown { blockOn { corNvValueSlot(-1) } })
-        assertEquals("body", thrown { blockOn { corNvWholeBody(1) } })
-        assertEquals("arg", thrown { blockOn { corNvNestedArgument(-1) } })
-        assertEquals("caught", blockOn { corNvTryArm(-1) })       // the arm throws INSIDE the try, so the catch wins
+        assertEquals("a", thrown { blockOn { suspendNothingBothArms(1) } })          // BOTH arms Nothing
+        assertEquals("b", thrown { blockOn { suspendNothingBothArms(-1) } })
+        assertEquals("s", thrown { blockOn { suspendNothingSuspendingArm(-1) } })    // the Nothing callee itself suspends
+        assertEquals("elvis", thrown { blockOn { suspendNothingElvis(null) } })
+        assertEquals("tail", thrown { blockOn { suspendNothingBlockTail(-1) } })
+        assertEquals(1, suspendNothingLog.size)                            // ...and the taken block arm ran its statements
+        assertEquals("one", thrown { blockOn { suspendNothingSubjectWhen(1) } })
+        assertEquals("boom", thrown { blockOn { suspendNothingSubjectWhen(2) } })    // companion-static producer
+        assertEquals("int", thrown { blockOn { suspendNothingValueSlot(-1) } })
+        assertEquals("body", thrown { blockOn { suspendNothingWholeBody(1) } })
+        assertEquals("arg", thrown { blockOn { suspendNothingNestedArgument(-1) } })
+        assertEquals("caught", blockOn { suspendNothingTryArm(-1) })       // the arm throws INSIDE the try, so the catch wins
     }
 }

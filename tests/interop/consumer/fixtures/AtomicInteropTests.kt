@@ -1,4 +1,4 @@
-// kotlin.concurrent.atomics CAS battery (batch IntropC) — migrates the pure-Kotlin il-atomics case. The genuinely-atomic
+// kotlin.concurrent.atomics CAS battery (feature fixture) — migrates the pure-Kotlin il-atomics case. The genuinely-atomic
 // ops route through the @ClrRefArgument Interlocked byref binding (bir2cir reads it from the ref.dll and passes the
 // backing field by managed pointer to System.Threading.Interlocked.*). This case is PLAIN Kotlin (no `import System.*`),
 // single-threaded so the result is deterministic. It COMPLEMENTS PropertyAndAtomicTests.atomicVolatile (store/load) by

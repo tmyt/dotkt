@@ -1,4 +1,4 @@
-// Generic .NET-type interop battery (batch IntropB). The Interop consumer's reference KLIBs expose
+// Generic .NET-type interop battery (feature fixture). The Interop consumer's reference KLIBs expose
 // System.Collections.ObjectModel.Collection and Runtime.CompilerServices helpers to the frontend.
 //
 // Coverage preserved (old case -> method):
@@ -6,7 +6,7 @@
 //   il-netgen2  -> netgen2_inheritGenericNetBase   inherit a GENERIC .NET base class (: Collection<Int>())
 //   il-netgen3  -> netgen3_genericMethodsAndIndexer generic .NET static methods (Unsafe.SizeOf<T>/IsReferenceOrContainsReferences<T>) + projected generic this[i] indexer
 //
-// Top-level names are family-prefixed with `IntropB` (one assembly = one namespace) to avoid clashing with
+// Top-level names are family-prefixed with `BclGenericType` (one assembly = one namespace) to avoid clashing with
 // sibling batteries and the stdlib.
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
@@ -17,7 +17,7 @@ import System.Runtime.CompilerServices.Unsafe
 import System.Runtime.CompilerServices.RuntimeHelpers
 
 // il-netgen2 : inherit a GENERIC .NET base class, façade-free.
-class IntropBNetGen2IntColl : Collection<Int>() {
+class BclGenericTypeNetGen2IntColl : Collection<Int>() {
     fun addAll(vararg xs: Int) { for (x in xs) Add(x) }
 }
 
@@ -37,7 +37,7 @@ class BclGenericTypeTests {
     // il-netgen2: inherit the generic .NET base class; the derived helper drives the inherited Add.
     @TestAttribute
     fun inheritGenericNetBase() {
-        val c = IntropBNetGen2IntColl()
+        val c = BclGenericTypeNetGen2IntColl()
         c.addAll(5, 7, 9)
         assertEquals(3, c.Count)        // 3
         assertTrue(c.Contains(7))       // True
