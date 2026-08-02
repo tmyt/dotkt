@@ -75,10 +75,10 @@ usage_error() { echo "$SCRIPT_NAME: $*" >&2; usage >&2; exit 2; }
 # ACTUAL fail names to xfail_diff, which prints one classification line per name:
 #   XFAIL     <prefix>:<name> (<reason>)    expected fail, still failing — does NOT redden the gate
 #   NEW-FAIL  <prefix>:<name>               fail NOT in the baseline — a regression
-#   FIXED     <prefix>:<name> — fixed; remove it from the xfail list   (green; prune the entry)
-# Every NEW-FAIL is appended to the global XFAIL_NEW array; the caller's final verdict is
-# exit 0 iff XFAIL_NEW is empty after all xfail_diff calls.
-declare -a XFAIL_NEW=()
+#   FIXED     <prefix>:<name> — fixed; remove it from the xfail list   (stale baseline; reddens the gate)
+# NEW-FAIL / FIXED names are appended to the global arrays below. A gate is clean only when BOTH are empty:
+# an expected failure that stopped failing is a baseline change which must prune its stale entry in the same PR.
+declare -a XFAIL_NEW=() XFAIL_FIXED=()
 xfail_diff() { # <prefix> <xfail-assoc-array-name> [actual-fail-name...]
 	local _pfx="$1"; local -n _xf="$2"; shift 2
 	local n
@@ -92,9 +92,11 @@ xfail_diff() { # <prefix> <xfail-assoc-array-name> [actual-fail-name...]
 	for n in $(printf '%s\n' "${!_xf[@]}" | sort); do
 		if [[ " ${*:-} " != *" $n "* ]]; then
 			echo "FIXED     $_pfx:$n — fixed; remove it from the xfail list"
+			XFAIL_FIXED+=("$_pfx:$n")
 		fi
 	done
 }
+xfail_gate_is_clean() { (( ${#XFAIL_NEW[@]} == 0 && ${#XFAIL_FIXED[@]} == 0 )); }
 
 # --- lazy builders (loud when they fire) -----------------------------------------------------------
 need_kotc() {

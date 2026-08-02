@@ -985,6 +985,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- **tests: an unexpected PASS now reddens every machine-readable XFAIL gate (#357).** Round-trip,
+  compile-fail and packaged-SDK used to print `FIXED — remove it from the xfail list` but still exit zero, so a
+  stale entry could outlive its defect indefinitely unless somebody noticed an advisory line in CI output.
+  `scripts/lib.sh` now records both NEW failures and FIXED entries, and the three lanes share the same clean
+  verdict: every actual failure must be listed, and every listed failure must still occur. The ILVerify complete-set
+  audit already enforced the same rule. A build-free self-test injects one XFAIL, one NEW failure and one FIXED
+  entry so deleting either half of the final verdict cannot look green.
 - **tests: an ilverify baseline entry that masks NOTHING now reddens the gate.** `ILVERIFY_XFAIL` in
   `tests/run-ilverify.sh` only ever classified findings, so a key whose defect had been fixed stayed in the list
   silently — and kept masking, ready to absorb whatever finding lands on that method next. (One had already
@@ -993,7 +1000,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   read that would have surfaced the Root-V variance collapse, and says so in the fixture's own comment. It is
   pruned here.) `tests/run-ilverify.sh --audit-baseline` reports
   every unmatched key with `scripts/lib.sh`'s `xfail_diff` wording, `FIXED … remove it from the xfail list`, and
-  then exits non-zero — deliberately stricter than `xfail_diff`, where a FIXED line is green and advisory. A
+  then exits non-zero. That strict verdict is now shared by every XFAIL lane; the ILVerify audit remains opt-in
+  because a partial assembly set cannot distinguish an unmatched key from a fixed finding. A
   stale ilverify key is a live substring filter over future findings, not just a stale name in a fail-set, so
   this lane stays red until the entry is pruned. `tests/run-nunit-tests.sh` passes the flag because it
   verifies the COMPLETE emitted set; `tests/packaged-sdk/run.sh` verifies a two-assembly subset, where an

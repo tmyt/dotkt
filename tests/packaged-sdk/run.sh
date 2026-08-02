@@ -31,7 +31,7 @@
 # instead of the machine-global store. Getting the toolchain BUILT is deliberately outside that boundary:
 # the refcheck tool below restores from the user's configured NuGet sources into ~/.nuget, and pack-nuget.sh
 # drives Gradle (~/.gradle, Maven Central) plus the toolchain's own NuGet restore. Green = every fail name is
-# in the XFAIL_PKG baseline below (exit 0); any name outside it prints NEW-FAIL, exit 1.
+# XFAIL_PKG-listed AND every listed name still fails; NEW-FAIL or stale FIXED names exit 1.
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SCRIPT_NAME=packaged-sdk-tests
 source "$ROOT/scripts/lib.sh"
@@ -39,7 +39,7 @@ source "$ROOT/scripts/lib.sh"
 usage() { cat <<EOF
 usage: $SCRIPT_NAME
 Packs the 5 nupkgs to build/nuget-feed and drives 7 packaged SDK/template scenarios from that feed only.
-Green (exit 0) = no fail name outside the XFAIL_PKG baseline declared in this script.
+Green (exit 0) = no fail name outside XFAIL_PKG and no stale entry inside it.
 EOF
 }
 while (( $# )); do
@@ -50,7 +50,7 @@ while (( $# )); do
 done
 
 # The authoritative XFAIL baseline (fail name -> reason). A listed name that starts passing prints
-# "FIXED — remove it" WITHOUT reddening the gate; any name NOT listed that fails prints NEW-FAIL and reddens.
+# "FIXED — remove it" and reddens as a stale baseline; any name NOT listed that fails prints NEW-FAIL and reddens.
 # Computed by lib.sh xfail_diff at the bottom.
 declare -A XFAIL_PKG=(
 	# EMPTY. Both halves of case_csharp_consumer were listed here for #86: their assertions are written against the
@@ -886,4 +886,11 @@ case_mpp_template
 
 echo "------------------------------------"
 xfail_diff pkgsdk XFAIL_PKG "${FAILS[@]}"
-if (( ${#XFAIL_NEW[@]} == 0 )); then echo "PACKAGED-SDK OK"; else echo "PACKAGED-SDK FAIL"; exit 1; fi
+if xfail_gate_is_clean; then
+	echo "PACKAGED-SDK OK"
+else
+	(( ${#XFAIL_NEW[@]} == 0 )) || echo "PACKAGED-SDK NEW-FAIL: ${XFAIL_NEW[*]}"
+	(( ${#XFAIL_FIXED[@]} == 0 )) || echo "PACKAGED-SDK STALE XFAIL: ${XFAIL_FIXED[*]}"
+	echo "PACKAGED-SDK FAIL"
+	exit 1
+fi

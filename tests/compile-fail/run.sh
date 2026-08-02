@@ -13,9 +13,9 @@
 #   <name>.cs         OPTIONAL — a .NET surface the case is refused against, compiled to a plain C# library and
 #                     passed as `--ref`. A refusal ABOUT a foreign declaration has no Kotlin-only witness.
 #
-# Green (exit 0) iff every case that fails is listed in CF_XFAIL below, with the same machine-readable
-# "one reason per known failure" discipline as the other gates — the baseline is EMPTY, and a new failure or a
-# newly-fixed XFAIL is reported as NEW-FAIL / FIXED rather than folded into a count.
+# Green (exit 0) iff every broken case is CF_XFAIL-listed and every listed case is still broken, with the same
+# machine-readable "one reason per known failure" discipline as the other gates — the baseline is EMPTY, and a
+# new failure or a newly-fixed XFAIL is reported as NEW-FAIL / FIXED and reddens rather than folding into a count.
 source "$(cd -- "$(dirname -- "$0")/../.." && pwd -P)/scripts/lib.sh"
 
 # Known-broken cases (substring key = the case name). EMPTY baseline: every case below must currently refuse
@@ -25,7 +25,7 @@ declare -A CF_XFAIL=()
 HERE="$ROOT/tests/compile-fail"
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 
-declare -a NEW_FAILS=() FIXED=()
+XFAIL_NEW=(); XFAIL_FIXED=()
 total=0
 
 for kt in "$HERE"/*.kt; do
@@ -35,7 +35,7 @@ for kt in "$HERE"/*.kt; do
 	(( ++total ))
 	if [[ ! -f "$exp" ]]; then
 		echo "FAIL  $name — no $name.expected beside the case"
-		NEW_FAILS+=("$name"); continue
+		XFAIL_NEW+=("$name"); continue
 	fi
 
 	# A case may name a .NET SURFACE it is refused against: `<name>.cs` beside it is compiled to a plain C#
@@ -56,7 +56,7 @@ CSPROJ
 		if ! (cd "$csdir" && dotnet build -c Release -o bin -v q --nologo >"$csdir/build.log" 2>&1); then
 			echo "FAIL  $name — the case's .NET surface ($name.cs) did not build"
 			sed 's/^/        /' "$csdir/build.log" | tail -20
-			NEW_FAILS+=("$name"); continue
+			XFAIL_NEW+=("$name"); continue
 		fi
 		refargs=(--ref "$csdir/bin/CompileFailRef.dll")
 	fi
@@ -79,7 +79,7 @@ CSPROJ
 	if [[ -z "$detail" ]]; then
 		if [[ -v CF_XFAIL[$name] ]]; then
 			echo "FIXED $name — now refuses as documented; remove it from the CF_XFAIL baseline"
-			FIXED+=("$name")
+			XFAIL_FIXED+=("$name")
 		else
 			echo "PASS  $name (exit $rc, diagnostic as documented)"
 		fi
@@ -90,7 +90,7 @@ CSPROJ
 		echo "----- compiler output -----"
 		echo "$out" | tail -20
 		echo "---------------------------"
-		NEW_FAILS+=("$name")
+		XFAIL_NEW+=("$name")
 	fi
 done
 
@@ -99,8 +99,9 @@ if (( total == 0 )); then
 	echo "compile-fail: no cases found in tests/compile-fail — the lane would pass vacuously"
 	exit 1
 fi
-if (( ${#NEW_FAILS[@]} )); then
-	echo "compile-fail: RED — ${#NEW_FAILS[@]} case(s) outside the CF_XFAIL baseline: ${NEW_FAILS[*]}"
+if ! xfail_gate_is_clean; then
+	(( ${#XFAIL_NEW[@]} == 0 )) || echo "compile-fail: RED — ${#XFAIL_NEW[@]} case(s) outside the CF_XFAIL baseline: ${XFAIL_NEW[*]}"
+	(( ${#XFAIL_FIXED[@]} == 0 )) || echo "compile-fail: RED — ${#XFAIL_FIXED[@]} stale CF_XFAIL entry/entries must be pruned: ${XFAIL_FIXED[*]}"
 	exit 1
 fi
-echo "compile-fail: GREEN ($total case(s)${FIXED[0]:+, ${#FIXED[@]} newly FIXED})"
+echo "compile-fail: GREEN ($total case(s), no stale CF_XFAIL entries)"

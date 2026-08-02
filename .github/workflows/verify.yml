@@ -17,7 +17,7 @@
 #
 # Green semantics: ILVerify / round-trip / packaged-SDK carry explicit XFAIL baselines
 # (ILVERIFY_XFAIL / RT_XFAIL / XFAIL_PKG in their test runners) — they exit 0 iff every fail is a
-# listed, reasoned expected-fail and exit 1 on any NEW fail name. A red run is a real regression.
+# listed, reasoned expected-fail and every listed entry still fails. NEW failures and stale FIXED entries are red.
 name: verify
 
 on:

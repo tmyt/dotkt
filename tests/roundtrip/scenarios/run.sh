@@ -6,8 +6,8 @@
 # the basis of consuming compiled Kotlin libraries as Kotlin. Inputs: inline heredoc samples
 # under build/roundtrip-*. EVERY section runs to completion regardless of earlier failures — results are
 # collected, and a crashing consumer app (SIGABRT from the deliberate suspend stub) is captured, never
-# allowed to take the gate down mid-script. Verdict: exit 0 iff every failing section is RT_XFAIL-listed;
-# an XFAIL section that starts passing prints "FIXED — remove it from the xfail list" and stays green.
+# allowed to take the gate down mid-script. Verdict: exit 0 iff every failing section is RT_XFAIL-listed AND
+# every listed section still fails; an unexpected pass is a stale baseline and reddens until it is pruned.
 # See docs/design-kotlin-metadata-attributes.md.
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 SCRIPT_NAME=roundtrip-scenarios
@@ -16,7 +16,7 @@ source "$ROOT/scripts/lib.sh"
 usage() { cat <<EOF
 usage: $SCRIPT_NAME
 Runs the Kotlin<->CLR round-trip gate (no flags). -h for this help.
-Green (exit 0) = no section failing outside the RT_XFAIL baseline in this script.
+Green (exit 0) = no section failing outside the RT_XFAIL baseline and no stale entry inside it.
 EOF
 }
 while (( $# )); do
@@ -176,9 +176,10 @@ evidence_reset() { RT_EVIDENCE=""; }
 evidence_add() { [[ -n "${1:-}" ]] && RT_EVIDENCE+="$1"$'\n'; return 0; }
 
 # ---- section result collection (no section may abort the script) -----------------------------------
-declare -a SUMMARY=() NEW_FAILS=()
+declare -a SUMMARY=()
+XFAIL_NEW=(); XFAIL_FIXED=()
 # section_result <name> <ok 0|1> <pass-descr> [fail-detail]
-# PASS / FAIL(+detail, reddens) / XFAIL(reason, green) / FIXED(xfail now passing, green).
+# PASS / FAIL(+detail, reddens) / XFAIL(reason, green) / FIXED(xfail now passing, reddens).
 # A listed entry that fails for a shape its RT_XFAIL_SHAPE does not describe is NOT absorbed: it reddens as
 # an XFAIL SHAPE MISMATCH, because the baseline's claim about that section has stopped being true.
 section_result() {
@@ -186,6 +187,7 @@ section_result() {
 	if (( ok )); then
 		if [[ -v RT_XFAIL[$name] ]]; then
 			line="FIXED $name — fixed; remove it from the RT_XFAIL baseline"
+			XFAIL_FIXED+=("$name")
 		else
 			line="PASS  $name ($descr)"
 		fi
@@ -195,14 +197,14 @@ section_result() {
 			line="FAIL  $name — XFAIL SHAPE MISMATCH: the documented failure no longer describes this section"
 			detail="$(printf -- '--- documented shape (RT_XFAIL_SHAPE) ---\n%s\n--- observed evidence ---\n%s\n--- stdout diff ---\n%s' \
 				"$shape" "$RT_EVIDENCE" "$detail")"
-			NEW_FAILS+=("$name")
+			XFAIL_NEW+=("$name")
 		else
 			line="XFAIL $name (${RT_XFAIL[$name]})"
 		fi
 	else
 		line="FAIL  $name"
 		detail="$(printf -- '%s\n--- evidence ---\n%s' "$detail" "$RT_EVIDENCE")"
-		NEW_FAILS+=("$name")
+		XFAIL_NEW+=("$name")
 	fi
 	echo "$line"
 	if [[ "$line" == FAIL* && -n "$detail" ]]; then printf '%s\n' "$detail"; fi
@@ -2107,8 +2109,9 @@ check_output roundtrip-comparable-meta "$cmexpected" "$cmactual" \
 # ---- verdict --------------------------------------------------------------------------------------
 echo "------------------------------------"
 printf '%s\n' "${SUMMARY[@]}"
-if (( ${#NEW_FAILS[@]} )); then
-	echo "ROUNDTRIP GATE RED — section(s) failing outside the RT_XFAIL baseline: ${NEW_FAILS[*]}"
+if ! xfail_gate_is_clean; then
+	(( ${#XFAIL_NEW[@]} == 0 )) || echo "ROUNDTRIP GATE RED — section(s) failing outside the RT_XFAIL baseline: ${XFAIL_NEW[*]}"
+	(( ${#XFAIL_FIXED[@]} == 0 )) || echo "ROUNDTRIP GATE RED — stale RT_XFAIL entry/entries must be pruned: ${XFAIL_FIXED[*]}"
 	exit 1
 fi
-echo "ROUNDTRIP GATE GREEN (every FAIL is RT_XFAIL-listed; a FIXED line above means prune the baseline)"
+echo "ROUNDTRIP GATE GREEN (every FAIL is RT_XFAIL-listed and every baseline entry still fails)"
