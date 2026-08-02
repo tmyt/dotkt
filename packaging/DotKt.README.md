@@ -42,7 +42,6 @@ Editor and analysis integrations can depend on the public `DotKtPrepareFrontendI
   `SourceAssembly` metadata is the MSBuild-selected source DLL.
 - `@(DotKtFrontendKlib)` contains the complete Kotlin frontend classpath. `Role` is either `StandardLibrary` or
   `Reference`.
-- `$(DotKtKotlinVersion)` identifies the embedded Kotlin toolchain and `$(DotKtKotlinStdlibJar)` points to its
-  matching JVM stdlib JAR.
+- `$(DotKtKotlinVersion)` identifies the embedded Kotlin toolchain.
 
 Names beginning with `_DotKt` and the layout below `$(DotKtToolchainDir)` remain private implementation details.

@@ -338,7 +338,6 @@ case_exe() {
     <Error Condition="'\$(_FrontendReferenceCount)' != '\$(_ReferenceKlibCount)'" Text="DotKtFrontendKlib Reference count drifted from DotKtReferenceKlib." />
     <Error Condition="'\$(_FrontendStdlibCount)' != '1'" Text="DotKtFrontendKlib must contain exactly one StandardLibrary item." />
     <Error Condition="'\$(DotKtKotlinVersion)' != '$KOTLIN_VER'" Text="DotKtKotlinVersion was '\$(DotKtKotlinVersion)', expected '$KOTLIN_VER'." />
-    <Error Condition="!Exists('\$(DotKtKotlinStdlibJar)')" Text="DotKtKotlinStdlibJar does not exist: \$(DotKtKotlinStdlibJar)" />
   </Target>
 </Project>
 EOF
