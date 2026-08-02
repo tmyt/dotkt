@@ -9,9 +9,11 @@
 // the same slot shifted with it.
 //
 // One case per arm that can fail on its own: the ANNOTATION (a value type must not become nullable), the SELECTION it
-// governs (the same-arity sibling must stay reachable), and the byte POSITION (a slot whose own `[Nullable]` array puts
-// a value type ahead of other nodes). `Span`/`ClrRef` — the byref and byref-like arms of the same walk — already have
-// owners in StackBufferTests and ByRefParameterTests.
+// governs (the same-arity sibling must stay reachable), and the byte the CONSTRUCTED value type still holds. The
+// remaining arm — a BARE value type ahead of another node in one slot, the shape whose later bytes shift — needs a
+// signature the BCL does not publish and is owned by NrtValueTypeBytePositionTests.kt against the C# NRT producer.
+// `Span`/`ClrRef` — the byref and byref-like arms of the same walk — already have owners in StackBufferTests and
+// ByRefParameterTests.
 //
 // Top-level names are family-prefixed with `bclValueArg` (one assembly = one namespace).
 import NUnit.Framework.TestAttribute
@@ -37,12 +39,12 @@ class BclValueTypeArgumentTests {
         assertEquals(0, ClrString.Compare("a", "A", true))
     }
 
-    // The byte POSITION arm, on a slot that really carries a multi-byte array: `Dictionary<K,V>(IEnumerable<
-    // KeyValuePair<K,V>>)` is `[Nullable(1,0,1,1)]` — IEnumerable(1), KeyValuePair(0, a CONSTRUCTED value type that
-    // DOES hold a byte), then K and V. Miscount the value type either way and `K`/`V` read the wrong bytes, so this
-    // fails where the two cases above still pass.
+    // The CONSTRUCTED value type keeps its byte: `Dictionary<K,V>(IEnumerable<KeyValuePair<K,V>>)` is
+    // `[Nullable(1,0,1,1)]` — IEnumerable(1), KeyValuePair(0, a constructed value type that DOES hold one), then K and
+    // V. Both the old walk and the new one count it, so this is a pin on the surviving half of the rule rather than a
+    // reproduction: drop the constructed type's byte and `K`/`V` read the wrong ones from here on.
     @TestAttribute
-    fun valueTypeNestedAheadOfOtherNodes() {
+    fun constructedValueTypeKeepsItsByte() {
         val source = Dictionary<String, String>()
         source.Add("k", "v")
         val copy = Dictionary<String, String>(source)

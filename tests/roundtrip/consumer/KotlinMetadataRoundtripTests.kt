@@ -51,6 +51,7 @@ import roundtrip.nrt.takeNonNull
 import roundtrip.nrt.retNullable
 import roundtrip.nrt.takeNullable
 import roundtrip.nrt.retNullableInt
+import roundtrip.nrt.UnitAheadHolder
 import roundtrip.nrt.NullableCtorHolder
 import roundtrip.nrt.NullableValueCtor
 import roundtrip.memext.Box
@@ -304,7 +305,8 @@ class KotlinApiShapeRoundtripTests {
     }
 
     // roundtrip-nrt (#48): tri-state nullability — non-null (byte 1) + nullable (byte 2) reference via
-    // compile-dependency, + value Nullable<int> structural.
+    // compile-dependency, + value Nullable<int> structural, + the byte POSITION when a `Unit` node stands ahead of a
+    // nullable one in the same slot (writer and reader must agree that `Unit` occupies none).
     @TestAttribute
     fun triStateNullability() {
         ClassicAssert.AreEqual(1, retNonNull().length)              // 1   NO ?. — compiles only if the return restored non-null
@@ -315,6 +317,12 @@ class KotlinApiShapeRoundtripTests {
         ClassicAssert.AreEqual(5, takeNullable("hello"))           // 5   nullable param with a non-null arg
         ClassicAssert.AreEqual(-1, retNullableInt(false) ?: -1)    // -1  value Nullable<int> — the null (HasValue=false) branch
         ClassicAssert.AreEqual(1, retNullableInt(true) ?: -1)      // 1   value Nullable<int> — the value branch
+        // A `Unit` node AHEAD of the nullable one in the SAME slot: `Unit` holds no byte in the flattened array, so
+        // writing one for it would shift the `String?` onto Unit's and re-import the pair as `Pair<Unit!, String>` —
+        // and then the `null` here would not compile.
+        val unitAhead: Pair<Unit, String?> = Pair(Unit, null)
+        ClassicAssert.AreEqual(-1, UnitAheadHolder().lengthOfSecond(unitAhead))       // -1  the second component really is nullable
+        ClassicAssert.AreEqual(3, UnitAheadHolder().lengthOfSecond(Pair(Unit, "abc"))) // 3   and carries a value
     }
 
     // #251: CONSTRUCTOR-parameter nullability. Every `null` below is the sharp signal — it compiles only if the

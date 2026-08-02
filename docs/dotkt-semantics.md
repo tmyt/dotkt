@@ -1400,6 +1400,13 @@ projects its enum parameter as `StringComparison`, and `Dictionary<int, string?>
 the `string`. Reading a value type's position as an annotation does not merely mis-annotate it — every later byte in the
 same slot shifts with it. `bir2cir` writes the same flattening from the other side (`NullableFlags`).
 
+**Deviation: `kotlin.Unit` occupies no byte in this flattening, at any depth.** On the CLR `Unit` is a class, so C#'s
+own rule would give it one; DotKt does not, because `Unit` is also the type ECMA `void` projects to and a reader cannot
+tell the two apart by name. Both ends implement the same rule — `dll2klib` seeds `kotlin.Unit` into the set of names
+that hold no byte, `bir2cir` skips it when it writes the array — so `Pair<Unit, String?>` is `[1, 2]` and its `?`
+survives the round trip. Two consequences: a C# consumer reading such a signature counts one position too few, and a
+`Unit?` in a projected signature carries no nullability of its own (it re-imports as `Unit`).
+
 `T!` is a flexible type `(T..T?)` (`ConeFlexibleType`): the consumer may use it as `T` or `T?` and the compiler
 enforces neither — exactly how Kotlin/JVM treats un-annotated Java. This avoids the unsound alternative of forcing a
 possibly-null .NET value into a Kotlin non-null type.

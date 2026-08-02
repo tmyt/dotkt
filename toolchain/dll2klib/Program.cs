@@ -2880,6 +2880,10 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         _arityNames = arityNames;
         _delegateCatalog = delegateCatalog;
         _restoreKotlinCollections = attrs.IsDotKtAssembly;
+        // The Kotlin primitives, plus `kotlin.Unit`: it is the name ECMA `void` decodes to, so it holds no NRT byte and
+        // takes no annotation — a rule bir2cir's writer implements from the other side ([NullableFlags]), which is what
+        // keeps the two ends counting the same positions. (csc would give the `Unit` CLASS a byte like any reference;
+        // this is a stated DotKt deviation, recorded in docs/dotkt-semantics.md § 9.)
         foreach (var name in new[] {
             "kotlin.Unit", "kotlin.Boolean", "kotlin.Char", "kotlin.Byte", "kotlin.UByte",
             "kotlin.Short", "kotlin.UShort", "kotlin.Int", "kotlin.UInt",
@@ -2895,9 +2899,15 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         }
     }
 
-    // Record `type`'s projected name as a value type. Called wherever a signature occurrence states
-    // `ELEMENT_TYPE_VALUETYPE`, AFTER any rename (`System.Span` -> `kotlin.clr.Span`), so the recorded key is the one
-    // the NRT walk will look up.
+    // Record `type`'s projected name as a value type when — and only when — the signature occurrence STATES
+    // `ELEMENT_TYPE_VALUETYPE`. Never on "not Class": SRM passes `SignatureTypeKind.Unknown` for a CUSTOM MODIFIER's
+    // type, and a modifier names a REFERENCE marker class (`InAttribute`, `IsExternalInit`, `CallConv*`) — recording
+    // one would make that name value-ish for every later occurrence, in an assembly-global name-keyed set.
+    private KType MarkValueTypeIfStated(byte rawTypeKind, KType type) =>
+        rawTypeKind == (byte)SignatureTypeKind.ValueType ? MarkValueType(type) : type;
+
+    // Record `type`'s projected name as a value type, AFTER any rename (`System.Span` -> `kotlin.clr.Span`), so the
+    // recorded key is the one the NRT walk will look up.
     private KType MarkValueType(KType type)
     {
         if (type.HasClassName && _names.ClassName(type.ClassName) is { } name) _valueTypeNames.Add(name);
@@ -2972,7 +2982,7 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
             return FromTypeNode(carrier);
         if (_delegateDefinitions.ContainsKey(name) && !def.GetGenericParameters().Any())
             return DecodeDelegate(handle);
-        return rawTypeKind == (byte)SignatureTypeKind.Class ? Platform(name) : MarkValueType(Named(name));
+        return rawTypeKind == (byte)SignatureTypeKind.Class ? Platform(name) : MarkValueTypeIfStated(rawTypeKind, Named(name));
     }
     public KType GetTypeFromReference(MetadataReader reader, TypeReferenceHandle handle, byte rawTypeKind)
     {
@@ -3006,7 +3016,7 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         return full switch {
             "System.String" => Platform("kotlin.String"),
             "System.Object" => Platform("kotlin.Any"),
-            _ => rawTypeKind == (byte)SignatureTypeKind.Class ? Platform(full) : MarkValueType(Named(full)),
+            _ => rawTypeKind == (byte)SignatureTypeKind.Class ? Platform(full) : MarkValueTypeIfStated(rawTypeKind, Named(full)),
         };
     }
     public KType GetTypeFromSpecification(MetadataReader reader, GenericContext genericContext, TypeSpecificationHandle handle, byte rawTypeKind) =>
@@ -3280,11 +3290,17 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     //     into the referent's `?` and surfaced the latter as `ClrRef<T>`.
     // Getting this wrong does not merely mis-annotate the node: every later byte in the same slot shifts.
     //
-    // NOT yet faithful, because the DECODER collapses these positions rather than projecting their shape: a pointer,
-    // a function pointer (whose referent/return/parameters each hold a byte) and a native `nint`/`nuint` all arrive as
-    // `kotlin.Any?` and are counted as one reference node; a `where T : struct` parameter holds a byte here and is
-    // annotated, where the emitting compiler writes 0. Each is a slot-local shift, never a cross-parameter one — the
-    // byte array is per declaration slot.
+    // The positions the DECODER collapses to `kotlin.Any?` are counted as one reference node each, which measures out
+    // differently per shape (all against csc, `<Nullable>enable</Nullable>`):
+    //   * a native `nint`/`nuint`/`IntPtr` holds NO byte (`Dictionary<nint, string?>` is `[1, 2]`,
+    //     `delegate*<nint, string?, void>` is `[0, 2]`) while one is consumed here — a SHIFT of every later byte;
+    //   * a function POINTER flattens its own node plus its return and parameters (`delegate*<string?, string?>` is
+    //     `[0, 2, 2]`) while one is consumed here — a SHIFT;
+    //   * an ordinary pointer holds exactly one byte (`delegate*<int*, string?, void>` is `[0, 0, 2]`), so the count
+    //     agrees and only the projected SHAPE is lost — and the node it lands on is already `kotlin.Any?`;
+    //   * a `where T : struct` parameter holds one byte valued 0 (`Dictionary<T, string?>` is `[1, 0, 2]`), which is
+    //     the byte a type parameter consumes here anyway: no shift, and the 0 reads back as a platform type.
+    // A shift is always slot-local, never cross-parameter — the byte array is per declaration slot.
     private bool ConsumesNullability(KType type)
     {
         if (type.HasTypeParameter) return true;

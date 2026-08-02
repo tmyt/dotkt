@@ -14,7 +14,9 @@ using DotKt.Bir;
 //
 // This is the promoted, oracle-keyed generalization of SuspendColdLowering's former private `WalkNullable` +
 // `ValueTypeFqns` (which only ever handled the Task<R> return). The value-ness decision is the struct-ness ORACLE
-// (ReferenceMetadataIndex.IsValueTypeFqn + local enum/struct types), not a hardcoded FQN set.
+// (ReferenceMetadataIndex.IsValueTypeFqn + local enum/struct types), not a hardcoded FQN set. `kotlin.Unit` is the one
+// name answered here rather than by the oracle — it is a CLASS on the CLR but the type ECMA `void` projects to, and
+// the reader answers both with one rule (see the [TypeNode.Fqn] arm).
 //
 // KNOWN DIVERGENCES from that reader, both older than the value-type rule above and both narrow:
 //   * a FUNCTION TYPE writes ONE byte here while the reader walks the delegate's type arguments, so
@@ -54,6 +56,12 @@ static class NullableFlags
                 // NRT-oblivious position (NullableAttribute = 0). kotc never emits this; dll2klib META round-trip only.
                 return Walk(o.Of, nullableHere: false, flags, isValue, obliviousHere: true);
             case TypeNode.Fqn f:
+                // `kotlin.Unit` holds NO byte and takes no annotation, wherever it stands. It is the type ECMA `void`
+                // projects to, and the reader answers `void` and `Unit` with one rule (dll2klib seeds `kotlin.Unit`
+                // into its value-name set), so writing a byte here would put every later byte in the slot one position
+                // off — `Pair<Unit, String?>` re-imported as `Pair<Unit!, String>`. It is a DotKt deviation from what
+                // csc would flatten for the `Unit` CLASS, and it is stated as one in docs/dotkt-semantics.md § 9.
+                if (f.Name == "kotlin.Unit") return false;
                 // A value type carries NO annotation — its one nullable form is the structural `Nullable<T>`. It still
                 // holds a byte POSITION when it is CONSTRUCTED, and its arguments are always walked, because that is
                 // how the flattening a .NET consumer reads back is shaped: `KeyValuePair<string?, int>` is `[0, 2]`,
