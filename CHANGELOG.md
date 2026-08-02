@@ -7,6 +7,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- **Tests: #227 removes the superseded three-case task lifecycle fixture.** Its genuine asynchronous and completed
+  `Task` await paths are both covered by `DynamicCaptureContextTests`, which additionally exercises generic and
+  non-generic awaitables under runtime and constant capture policies. Its “finally once” check is covered by
+  `SuspendTryLoweringTests.namedNestedTryResumesInKotlinOrder`, whose exact trace proves that a real suspension in
+  the protected body resumes before each nested `finally` runs exactly once. The coroutines discovery baseline is
+  reconciled from 162 to 159; no unique compiler path or assertion is removed.
+
 - **Tests: the #86 round-trip probes now share the compilation graph their semantics share (#227).** The shell
   lane still runs one process and records one verdict per observable, so a crashing XFAIL cannot hide a later
   result, but it no longer recompiles every tiny source program independently. Fifteen same-module probes compile
