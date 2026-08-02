@@ -89,6 +89,8 @@ VER_PREFIX="$(grep -oP '<DotKtVersionPrefix>\K[^<]+' "$ROOT/packaging/DotKt.Vers
 VER_SUFFIX="$(grep -oP '<DotKtVersionSuffix>\K[^<]*' "$ROOT/packaging/DotKt.Versions.props")"
 VER="$VER_PREFIX${VER_SUFFIX:+-$VER_SUFFIX}"
 [[ -n "$VER" ]] || die "could not read DotKtVersionPrefix from packaging/DotKt.Versions.props"
+KOTLIN_VER="$(grep -oP '<DotKtKotlinVersion>\K[^<]+' "$ROOT/packaging/DotKt.Versions.props")"
+[[ -n "$KOTLIN_VER" ]] || die "could not read DotKtKotlinVersion from packaging/DotKt.Versions.props"
 FEED="$ROOT/build/nuget-feed"
 
 # 1. Pack the 5 nupkgs FRESH from the current sources (rebuilds the tools + re-copies the shipped targets into
@@ -311,6 +313,33 @@ case_exe() {
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>disable</Nullable>
   </PropertyGroup>
+  <!-- Public toolchain-extension contract: depending on this target must produce the exact frontend input set
+       without reading private _DotKt* items or reconstructing package-internal paths. -->
+  <Target Name="AssertDotKtFrontendInputs"
+          BeforeTargets="KotlinCompile"
+          DependsOnTargets="DotKtPrepareFrontendInputs">
+    <ItemGroup>
+      <_MissingReferenceKlib Include="@(DotKtReferenceKlib)" Condition="!Exists('%(FullPath)')" />
+      <_ReferenceWithoutSource Include="@(DotKtReferenceKlib)"
+                               Condition="'%(SourceAssembly)' == '' or !Exists('%(SourceAssembly)')" />
+      <_FrontendStdlib Include="@(DotKtFrontendKlib)" Condition="'%(Role)' == 'StandardLibrary'" />
+      <_FrontendReference Include="@(DotKtFrontendKlib)" Condition="'%(Role)' == 'Reference'" />
+    </ItemGroup>
+    <PropertyGroup>
+      <_ReferenceKlibCount>@(DotKtReferenceKlib->Count())</_ReferenceKlibCount>
+      <_FrontendReferenceCount>@(_FrontendReference->Count())</_FrontendReferenceCount>
+      <_FrontendStdlibCount>@(_FrontendStdlib->Count())</_FrontendStdlibCount>
+    </PropertyGroup>
+    <Error Condition="'@(DotKtReferenceKlib)' == ''" Text="DotKtReferenceKlib was not published." />
+    <Error Condition="'@(_MissingReferenceKlib)' != ''" Text="DotKtReferenceKlib contains missing files: @(_MissingReferenceKlib)" />
+    <Error Condition="'@(_ReferenceWithoutSource)' != ''" Text="DotKtReferenceKlib lost SourceAssembly: @(_ReferenceWithoutSource)" />
+    <Error Condition="'@(_FrontendStdlib)' == ''" Text="DotKtFrontendKlib has no StandardLibrary item." />
+    <Error Condition="'@(_FrontendReference)' == ''" Text="DotKtFrontendKlib has no Reference items." />
+    <Error Condition="'\$(_FrontendReferenceCount)' != '\$(_ReferenceKlibCount)'" Text="DotKtFrontendKlib Reference count drifted from DotKtReferenceKlib." />
+    <Error Condition="'\$(_FrontendStdlibCount)' != '1'" Text="DotKtFrontendKlib must contain exactly one StandardLibrary item." />
+    <Error Condition="'\$(DotKtKotlinVersion)' != '$KOTLIN_VER'" Text="DotKtKotlinVersion was '\$(DotKtKotlinVersion)', expected '$KOTLIN_VER'." />
+    <Error Condition="!Exists('\$(DotKtKotlinStdlibJar)')" Text="DotKtKotlinStdlibJar does not exist: \$(DotKtKotlinStdlibJar)" />
+  </Target>
 </Project>
 EOF
 	cat > "$d/app.kt" <<'EOF'

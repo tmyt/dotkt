@@ -3,6 +3,10 @@
        so a JRE must be on PATH. -->
   <PropertyGroup>
     <DotKtToolchainDir>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../tools/'))</DotKtToolchainDir>
+    <!-- Public toolchain identity for editor/build integrations. Keep this value aligned with
+         DotKt.Versions.props; scripts/pack-nuget.sh rejects a drift before packaging. -->
+    <DotKtKotlinVersion Condition="'$(DotKtKotlinVersion)' == ''">2.4.0</DotKtKotlinVersion>
+    <DotKtKotlinStdlibJar Condition="'$(DotKtKotlinStdlibJar)' == ''">$(DotKtToolchainDir)kotc/lib/kotlin-stdlib-$(DotKtKotlinVersion).jar</DotKtKotlinStdlibJar>
     <!-- The Gradle `application` plugin installDist ships BOTH launchers side by side under kotc/bin/: the
          extension-less UNIX shell script `kotc` and the Windows batch `kotc.bat`. Select by OS so cmd.exe never
          has to lean on PATHEXT resolving a pathed extension-less command (fragile/shell-dependent — #135). $(OS) is
