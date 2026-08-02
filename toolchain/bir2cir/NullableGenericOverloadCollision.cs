@@ -6,23 +6,33 @@ using DotKt.Bir;
 
 // THE OVERLOAD COLLISION THE ERASURE CREATES (#86 §5.3).
 //
-// `Nullable(Tv)` erases to `System.Object`, so two Kotlin declarations that differ ONLY in a position the erasure
-// flattens become one CLR signature. On a generic owner:
+// A possibly-value `X?` is `System.Object` wherever it is a reified ARGUMENT, and `Nullable(Tv)` is `System.Object`
+// everywhere, so two Kotlin declarations that differ ONLY in a position the erasure flattens become one CLR
+// signature. On a generic owner, and on a plain one:
 //
-//     class C<T> { fun f(x: T?) ; fun f(x: Any?) }        // both emit `f(object)`
+//     class C<T> { fun f(x: T?) ; fun f(x: Any?) }             // both emit `f(object)`
+//     fun f(xs: List<Int?>) ; fun f(xs: List<Boolean?>)        // both emit `f(IReadOnlyList<object>)`
+//     class D(a: List<Int?>) { constructor(b: List<Long?>) }   // both emit `.ctor(IReadOnlyList<object>)`
 //
-// The frontend accepts that pair — `T?` and `Any?` are different Kotlin types — and Kotlin's own resolution picks
-// `f(T?)` for `c.f(3)` at `C<Int>`. Emitted, both members occupy one slot: whichever the emitter binds wins every
-// call, and the other is unreachable. That is a SILENT WRONG BINDING, not a diagnostic — measured, `c.f(3)` and
-// `c.f("s")` both ran the `Any?` body.
+// SUPERTYPE EDGES AND GENERIC CONSTRAINTS ARE NOT CHECKED, because the collision cannot arise there. Two edges can
+// only collapse onto one if they are two instantiations of the SAME head — different heads erase to different
+// heads — and Kotlin's own frontend rejects that outright ("type parameter 'T' … has inconsistent values",
+// "a supertype appears twice"; pinned in tests/compile-fail/NullableGenericInterfaceCollision.kt). A backend check
+// there would be unreachable code pretending to be a safety net.
+//
+// The frontend accepts each pair — the two Kotlin types are different — and Kotlin's own resolution picks between
+// them. Emitted, both occupy one slot: whichever the emitter binds wins every call, and the other is unreachable.
+// That is a SILENT WRONG BINDING, not a diagnostic — measured, `c.f(3)` and `c.f("s")` both ran the `Any?` body.
 //
 // A program with no valid CIL lowering owes its author an actionable message rather than a silently different
-// meaning, so this refuses and names BOTH source signatures. It is the same discipline as the other refusals: it
-// cannot fire on a program the erasure does not collapse, because the key it compares IS the emitted signature.
+// meaning, so this refuses and names BOTH source declarations. It is the same discipline as the other refusals: it
+// cannot fire on a program the erasure does not collapse, because the key it compares IS the emitted signature and
+// the refusal is DIFFERENTIAL — distinct before, identical after.
 //
 // GENERIC ARITY IS PART OF THE KEY. `fun <T> f(x: T?)` and `fun f(x: Any?)` do NOT collide — a method's generic
 // parameter count is part of the CLI signature (ECMA-335 I.8.6.1.6) and ilemit's own overload key already carries it.
-// Only a same-name, same-generic-arity, same-erased-parameter-vector pair is one slot.
+// Only a same-name, same-generic-arity, same-erased-parameter-vector pair is one slot. A constructor has no generic
+// arity of its own, so its key is the erased vector alone.
 static class NullableGenericOverloadCollision
 {
     // Runs AFTER the erasure, on each declaration container (a type or the file class), because the collision is a
@@ -40,7 +50,9 @@ static class NullableGenericOverloadCollision
         foreach (var t in a)
             if (t is JsonObject to)
             {
-                CheckContainer(to, Str(to["name"]) ?? "<type>", file);
+                var name = Str(to["name"]) ?? "<type>";
+                CheckContainer(to, name, file);
+                CheckCtors(to, name, file);
                 CheckTypes(to["types"], file);
             }
     }
@@ -73,6 +85,31 @@ static class NullableGenericOverloadCollision
                     + "called. Give one of them a different name or a different parameter count.");
             }
             seen[key] = mo;
+        }
+    }
+
+    // CONSTRUCTORS collide on the erased vector alone. `Cell(xs: List<Int?>)` and `Cell(ys: List<Long?>)` are two
+    // Kotlin constructors and one `.ctor(IReadOnlyList<object>)`; the emitter binds one of them for every `Cell(…)`.
+    static void CheckCtors(JsonObject to, string ownerName, string file)
+    {
+        if (to["ctors"] is not JsonArray ctors) return;
+        var ownerTps = TypeParamNames(to);
+        var seen = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+        foreach (var c in ctors)
+        {
+            if (c is not JsonObject co) continue;
+            var key = ErasedVector(co);
+            if (seen.TryGetValue(key, out var prior))
+            {
+                if (SourceKey(prior) == SourceKey(co)) continue;
+                throw new InvalidOperationException(
+                    $"bir2cir: {file}: {ownerName}: two constructors erase to one CLR signature. "
+                    + $"A nullable generic argument is emitted as System.Object (#86), so "
+                    + $"'{ownerName}({SourceVector(prior, ownerTps)})' and '{ownerName}({SourceVector(co, ownerTps)})' "
+                    + $"both become '.ctor({key})' and only one can be called. "
+                    + "Give one of them a different parameter count, or route it through a named factory function.");
+            }
+            seen[key] = co;
         }
     }
 

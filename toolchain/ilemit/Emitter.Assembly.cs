@@ -341,6 +341,11 @@ sealed partial class Emitter
                 // full handling. ECMA-335 II.12.2: the most-derived per-type MethodImpl wins over the DIM fallback.
                 var ifWork = new Queue<(DotKt.Bir.TypeNode.Fqn spec, bool viaBaseClass)>();
                 var ifSeen = new HashSet<string>();
+                // A referenced interface's BASE interfaces are enumerated per spec below, and a DIAMOND reaches the
+                // same base through two of them (`Dia : DL<Int>, DR<Int>`, both over `DTop<Int>`). One MethodImpl per
+                // slot is all the CLR accepts — a second is "overriding a method that has been overridden" — so the
+                // bases wired that way are deduplicated across the whole type.
+                var baseIfWired = new HashSet<Type>();
                 foreach (var i in ifs.EnumerateArray())
                     if (ReadFqn(i) is DotKt.Bir.TypeNode.Fqn iff) ifWork.Enqueue((iff, false));
                 // Interfaces inherited through the EMITTED base-class chain, type args substituted into THIS class's frame
@@ -401,6 +406,30 @@ sealed partial class Emitter
                         MethodInfo[] ifaceMs; bool reanchor;
                         try { ifaceMs = itype.GetMethods(); reanchor = false; }
                         catch (NotSupportedException) { ifaceMs = itype.GetGenericTypeDefinition().GetMethods(); reanchor = true; }
+                        // A REFERENCED interface's own BASE interfaces declare slots this class must fill too, and
+                        // reflection's `GetMethods()` on an interface does not include them — so `class C :
+                        // Derived<Int>` never saw `Sink`'s `accept` at all. They are wired from the RESOLVED
+                        // directive only: bir2cir enumerated the same graph and named the declaring interface, so
+                        // there is nothing to infer here, and a slot it made no decision about is left exactly as
+                        // the implicit name/signature match already leaves it.
+                        // A TypeBuilderInstantiation answers neither question (both throw), and it is never a
+                        // referenced interface — the guard is the same one the method enumeration above carries.
+                        Type[] baseIfaces;
+                        try { baseIfaces = itype.GetInterfaces(); }
+                        catch (NotSupportedException) { baseIfaces = Array.Empty<Type>(); }
+                        foreach (var baseIface in baseIfaces)
+                        {
+                            if (!baseIfWired.Add(baseIface)) continue;
+                            MethodInfo[] baseMs;
+                            try { baseMs = baseIface.GetMethods(); }
+                            catch (NotSupportedException) { continue; }
+                            foreach (var bim in baseMs)
+                                if (FindExternalInterfaceBridge(ti, baseIface, bim.Name,
+                                        bim.GetGenericArguments().Length,
+                                        bim.GetParameters().Select(p => p.ParameterType).ToArray())
+                                    is MethodBuilder baseBridge)
+                                    ti.TB.DefineMethodOverride(baseBridge, bim);
+                        }
                         foreach (var im in ifaceMs)
                         {
                             if (im.Name == "GetEnumerator") continue;   // handled by the reverse bridge above
@@ -414,6 +443,14 @@ sealed partial class Emitter
                                 ? SubstituteIfaceArgs(p.ParameterType, itype.GetGenericArguments())
                                 : p.ParameterType).ToArray();
                             var methodArity = im.GetGenericArguments().Length;
+                            // A bir2cir-resolved MethodImpl comes first: it names the slot and the member that fills
+                            // it, so there is nothing to disambiguate. The name-based search below cannot find such a
+                            // bridge — it is deliberately not named after the slot.
+                            if (FindExternalInterfaceBridge(ti, itype, im.Name, methodArity, ips) is MethodBuilder directiveBridge)
+                            {
+                                ti.TB.DefineMethodOverride(directiveBridge, reanchor ? TypeBuilder.GetMethod(itype, im) : im);
+                                continue;
+                            }
                             var cands = ti.MethodsBySig
                                 .Where(kv => kv.Key.Name == im.Name && kv.Key.GenericArity == methodArity)
                                 .Select(kv => kv.Value)
@@ -583,13 +620,46 @@ sealed partial class Emitter
                     var dim = cands[0];
                     var iret = reanchor ? SubstituteIfaceArgs(im.ReturnType, itype.GetGenericArguments()) : im.ReturnType;
                     var bridge = ti.TB.DefineMethod("dotkt$dimimpl$" + im.Name + "$" + (_covarBridge++),
-                        MethodAttributes.Private | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.NewSlot | MethodAttributes.HideBySig,
-                        iret, ips);
+                        MethodAttributes.Private | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.NewSlot | MethodAttributes.HideBySig);
+                    // A GENERIC slot's signature names the SLOT's own method type parameters, and the CLI encodes each
+                    // as `!!i` — a position in the method that STATES the signature. A bridge declaring none would
+                    // reference positions it does not have, and the MethodImpl is then a signature the CLR refuses
+                    // ("Signature of the body and declaration in a method implementation do not match"). So the bridge
+                    // declares its own at the same arity, mirrors the slot's variance/constraints, and the signature is
+                    // rewritten onto them. Same construction as the emitted-interface DIM forwarder below.
+                    var slotTps = im.GetGenericArguments();
+                    var bridgeTps = Array.Empty<Type>();
+                    if (methodArity > 0)
+                    {
+                        var names = slotTps.Select(a => a.Name).ToArray();
+                        var gps = bridge.DefineGenericParameters(names);
+                        var gmap = new Dictionary<string, GenericTypeParameterBuilder>();
+                        for (int gi = 0; gi < names.Length; gi++) gmap[names[gi]] = gps[gi];
+                        RecordMethodTps(bridge, gmap);
+                        bridgeTps = gps.Cast<Type>().ToArray();
+                        Type Rebase(Type t) => SubstituteMethodArgs(
+                            reanchor ? SubstituteIfaceArgs(t, itype.GetGenericArguments()) : t, slotTps, bridgeTps);
+                        for (int gi = 0; gi < slotTps.Length; gi++)
+                        {
+                            var gp = (GenericTypeParameterBuilder)bridgeTps[gi];
+                            gp.SetGenericParameterAttributes(slotTps[gi].GenericParameterAttributes);
+                            var cs = slotTps[gi].GetGenericParameterConstraints().Select(Rebase).ToArray();
+                            var baseC = cs.FirstOrDefault(c => !c.IsInterface);
+                            if (baseC != null) gp.SetBaseTypeConstraint(baseC);
+                            var ifaceC = cs.Where(c => c.IsInterface).ToArray();
+                            if (ifaceC.Length > 0) gp.SetInterfaceConstraints(ifaceC);
+                        }
+                        ips = ips.Select(t => SubstituteMethodArgs(t, slotTps, bridgeTps)).ToArray();
+                        iret = SubstituteMethodArgs(iret, slotTps, bridgeTps);
+                    }
+                    bridge.SetReturnType(iret);
+                    bridge.SetParameters(ips);
                     StampCompilerGenerated(bridge);   // #68: ilemit-authored generated member
                     var bil = bridge.GetILGenerator();
                     bil.Emit(OpCodes.Ldarg_0);
                     for (int i = 0; i < ips.Length; i++) bil.Emit(OpCodes.Ldarg, i + 1);
                     var dimCall = ti.IsGeneric ? TypeBuilder.GetMethod(ti.TB.MakeGenericType(ti.TB.GetGenericArguments()), dim) : (MethodInfo)dim;
+                    if (methodArity > 0) dimCall = dimCall.MakeGenericMethod(bridgeTps);
                     bil.Emit(OpCodes.Callvirt, dimCall);
                     bil.Emit(OpCodes.Ret);
                     ti.TB.DefineMethodOverride(bridge, reanchor ? TypeBuilder.GetMethod(itype, im) : im);
@@ -612,16 +682,42 @@ sealed partial class Emitter
                 if (!m.TryGetProperty("clrBaseImpls", out var impls) || impls.ValueKind != JsonValueKind.Array
                     || !m.TryGetProperty("name", out var bridgeName)
                     || !ti.Methods.TryGetValue(bridgeName.GetString(), out var bridge)) continue;
+                // A GENERIC slot's descriptor states its parameter vector in the BRIDGE's own vocabulary, so a
+                // method-scope `tv` in it names one of the bridge's own type parameters. With no method pool in scope
+                // `ResolveTv` falls back to the enclosing TYPE's parameters by position — `object` on a non-generic
+                // owner, an unrelated class parameter on a generic one — and the resolved vector then matches no
+                // member of the base at all.
+                _curMethodParams = _methodTypeParams.TryGetValue(bridge, out var bridgeTps) ? bridgeTps : null;
                 foreach (var impl in impls.EnumerateArray())
                 {
                     if (!impl.TryGetProperty("owner", out var ownerNode) || ReadFqn(ownerNode) is not { } ownerFqn
                         || !impl.TryGetProperty("member", out var memberNode)
                         || !impl.TryGetProperty("params", out var ps)) continue;
                     var (open, constructed) = ParseOwnerT(ownerFqn);
+                    // A base class declared in a REFERENCED assembly is resolved through reflection, exactly as the
+                    // referenced-INTERFACE wiring resolves its slot: the descriptor states the constructed owner, the
+                    // member and the parameter vector, and there is a real MethodInfo to point the MethodImpl at.
+                    // A `class C : Base<Int>()` over a referenced generic base reaches this and used to abort the
+                    // emit; refusing it is not an option either, since the abstract slot would go unimplemented.
+                    if (!_types.ContainsKey(open))
+                    {
+                        // A RESOLVED MethodImpl THAT CANNOT BE LINKED IS AN EARLIER-LAYER DROP, and silence here is
+                        // the worst outcome available: an abstract base slot becomes a type-load failure with nothing
+                        // naming the producer, and a concrete virtual one keeps dispatching to the base body — the
+                        // override simply never runs. Same contract as the emitted-base miss below.
+                        if (FindExternalBaseSlot(ownerFqn, memberNode.GetString(), DeclaredMethodArity(m), ps)
+                            is not MethodInfo externalSlot)
+                            throw new InvalidOperationException(
+                                $"ilemit: {ti.TB.Name}.{bridgeName.GetString()}: clrBaseImpls names "
+                                + $"'{memberNode.GetString()}' on the referenced base '{open}', which does not resolve "
+                                + "to exactly one method of that signature — bir2cir resolved a base-class MethodImpl "
+                                + "this layer cannot link");
+                        ti.TB.DefineMethodOverride(bridge, externalSlot);
+                        continue;
+                    }
                     // A RESOLVED DESCRIPTOR THIS LAYER CANNOT BIND IS AN EARLIER-LAYER DROP, and dropping it here
                     // would leave the base slot unimplemented — a TypeLoadException at run time with nothing pointing
-                    // back at the producer. bir2cir states `clrBaseImpls` only against a base class of THIS assembly,
-                    // so both misses below are diagnosable producer bugs, not shapes a program can reach.
+                    // back at the producer.
                     if (!_types.TryGetValue(open, out var baseTi))
                         throw new InvalidOperationException(
                             $"ilemit: {ti.TB.Name}.{bridgeName.GetString()}: clrBaseImpls names '{open}', which is not "
@@ -658,6 +754,7 @@ sealed partial class Emitter
                     ti.TB.DefineMethodOverride(bridge,
                         constructed != null ? TypeBuilder.GetMethod(constructed, slot) : (MethodInfo)slot);
                 }
+                _curMethodParams = null;
             }
         }
         _curTypeParams = null;
@@ -860,6 +957,18 @@ sealed partial class Emitter
     // Method-level generic params, keyed by MethodInfo, so call sites can MakeGenericMethod.
     readonly Dictionary<MethodBuilder, Dictionary<string, GenericTypeParameterBuilder>> _methodTypeParams = new();
 
+    // Every generic parameter belonging to an EMITTED METHOD, by identity. `GenericTypeParameterBuilder` reports
+    // neither `DeclaringMethod` nor `DeclaringType` — measured, and identically so for a TYPE's parameter — so
+    // nothing on the object itself says which scope it is in, and `!!i` vs `!i` is a signature difference. Every
+    // method that declares generic parameters records them here, through `RecordMethodTps`.
+    readonly HashSet<Type> _emittedMethodTps = new(ReferenceEqualityComparer.Instance);
+
+    void RecordMethodTps(MethodBuilder mb, Dictionary<string, GenericTypeParameterBuilder> map)
+    {
+        _methodTypeParams[mb] = map;
+        foreach (var g in map.Values) _emittedMethodTps.Add(g);
+    }
+
     // Body-phase occurrence counter for duplicate (name, method generic arity, params) defs — mirrors
     // DeclareMethod's $dupN mangling.
     readonly Dictionary<(TypeInfo, MethodSigKey), int> _bodyDupSeen = new();
@@ -931,7 +1040,7 @@ sealed partial class Emitter
             var gps = mb.DefineGenericParameters(genNames);
             var map = new Dictionary<string, GenericTypeParameterBuilder>();
             for (int gi = 0; gi < genNames.Length; gi++) map[genNames[gi]] = gps[gi];
-            _methodTypeParams[mb] = map;
+            RecordMethodTps(mb, map);
             _curMethodParams = map;
             ApplyConstraints(genTps.Value, map, false);   // `<T : Comparable<T>>` on the method (variance N/A on methods)
             ps = m.GetProperty("params").EnumerateArray().Select(p => MapType(p.GetProperty("type"))).ToArray();
@@ -1331,7 +1440,7 @@ sealed partial class Emitter
                 var gps = bridge.DefineGenericParameters(genNames);
                 var map = new Dictionary<string, GenericTypeParameterBuilder>();
                 for (int gi = 0; gi < genNames.Length; gi++) map[genNames[gi]] = gps[gi];
-                _methodTypeParams[bridge] = map;
+                RecordMethodTps(bridge, map);
                 var savedMp = _curMethodParams; _curMethodParams = map;
                 ApplyConstraints(genTps.Value, map, false);
                 try

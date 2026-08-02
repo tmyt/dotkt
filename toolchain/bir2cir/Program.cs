@@ -194,7 +194,7 @@ sealed class Pipeline
         // BEFORE the declaration snapshot below: a call reached through the DERIVED type is typed against that
         // declaration, so a snapshot taken first would type it against the slot the override no longer has. The
         // top-level `object` seam is bridged instead, beside the other bridge synthesizers.
-        KotlinOverrideSlotBridge.PropagateErasedSlots(birFiles.Select(f => f.Root), isValueFqn);
+        KotlinOverrideSlotBridge.PropagateErasedSlots(birFiles.Select(f => f.Root), isValueFqn, refs);
 
         // Snapshot every LOCAL generic type's declared member returns BEFORE the per-file DEF-side EraseNullableTv
         // (NullableGenericErasure runs inside the transform loop, mutating declarations in place). Feeds
@@ -424,13 +424,14 @@ sealed class Pipeline
             // NetInteropBinding carries (the callee's declared param TypeNodes) — BirTypeLowering lowers it and ilemit
             // exact-matches it. The retired ShapeSynthesis pass (lossy `shapes` string derived off the @ClrTypeAlias
             // index) is DELETED; ilemit no longer re-resolves the overload by name/arity/shape-string.
-            // VALUE-TYPE NULLABLE-COLLECTION receiver boxing (bundle-6 BUG-1 Part A): a value-type-element collection
-            // (`List<Int?>`) passed to a nullable-generic collection extension (`Iterable<T?>.filterNotNull()`) is NOT
-            // covariantly `IEnumerable<object>` on the CLR — wrap the receiver in `Enumerable.Cast<object>` so it boxes
-            // into a real object-enumerable. Runs FIRST, before NullableGenericErasure sweeps the `nullable:gp:`
-            // receiver token to `object` (this pass keys on that token). Self-gates to concrete value instantiations
-            // (an open `gp:T` arg is not a value type) so it is a no-op in the rt-stdlib self-build.
-            if (!_options.RefBuild) ValueTypeNullableCollectionArg.Apply(bir.Root, isValueFqn);
+            // KOTLIN COVARIANCE OVER A VALUE ELEMENT at an object-erased `Iterable<T?>` slot: `List<Int>` IS an
+            // `Iterable<Int?>` in Kotlin, while an `IReadOnlyList<int32>` is not an `IEnumerable<object>` on the CLR
+            // (a reified argument is invariant for a value type), so the callee's `GetEnumerator` is not found. Wrap
+            // that argument in `Enumerable.Cast<object>`, which boxes each element into a real object-enumerable.
+            // Only an `Iterable<T?>` slot, per position — that is the one slot the wrap's own `IEnumerable<object>`
+            // inhabits. Runs FIRST, before the erasure sweeps the slot's `Nullable(Tv)` to `object` (this pass keys
+            // on it); self-gates to concrete value instantiations, so it is a no-op in the rt-stdlib self-build.
+            if (!_options.RefBuild) ValueElementIterableCoercion.Apply(bir.Root, isValueFqn);
             // ARRAY-ELEMENT CANONICALIZATION (#86 D2): an `Array<X?>` with a possibly-value `X` is `object[]`, so an
             // array CREATION filling such a slot allocates `object[]` too. kotc writes the source's own element there
             // (`arrayOf(1,2,3)` into an `Array<Int?>` says `kotlin.Int`), which is not a `Nullable(...)` the erasure
@@ -479,24 +480,25 @@ sealed class Pipeline
             // object-erasure boundary (IsObjectErasureOf), and a value is only ever converted across a bare `object`
             // seam, which is the only one the CLR can express. BEFORE BirTypeLowering.
             NullableTvErasureCallRealign.Apply(bir.Root, nullableTvDeclRets, isValueFqn, refs);
+            // DELEGATE-TARGET slot alignment (ALL builds — the declaration half neither axis above can reach on its
+            // own): a delegate's parameters and return are reified ARGUMENTS, so `(Int?) -> String` is
+            // `Func<object, string>` and `(T?) -> String` is `Func<object, string>` at every instantiation; the
+            // LIFTED method bound into that delegate declares ordinary slots, where a direct `Int?` is a
+            // `Nullable<int32>` and a `String?` is a `string`. ECMA-335 II.14.6 admits neither pair, so the target's
+            // slot follows the delegate's `object` — every parameter (contravariant: only `object` is assignable
+            // from `object`) and a value/`Nullable`/type-variable return (covariant: a reference already reaches
+            // `object`, and rewriting it is what broke #189). Runs AFTER the use axis, which is what corrects a
+            // construction's own `funcType` to the slot it fills; the re-run below then types the newly-`object`
+            // lambda slots' BODIES — narrowing each read and boxing each `return` — and happens only when a slot
+            // actually moved.
+            if (DelegateTargetSlotAlignment.Apply(bir.Root, isValueFqn))
+                NullableTvErasureCallRealign.Apply(bir.Root, nullableTvDeclRets, isValueFqn, refs);
             // UNCHECKED OBJECT->Tv RETURN ERASURE: the non-null-T sibling of nullable-generic return erasure.  A JVM
             // `Any? as T` physically returns Object; spelling the CLR return as reified T would insert `unbox.any T`
             // inside the callee and throw even when a null result is stored but never consumed.  Emit object physically,
             // preserve T in round-trip metadata, and keep a directly initialized Tv local object-typed until its actual
             // typed use.  All matching is structural and this pass fully states the CIR types ilemit emits 1:1.
             UncheckedGenericCastReturnErasure.Apply(bir.Root, uncheckedGenericCastRets);
-            // FUNC-SLOT nullable-return erasure (ALL builds — the transform-side twin of the pass above): a function
-            // TYPE whose RETURN is a nullable (`(T) -> R?`) over a VALUE (`R = Int`) or open-generic (`R = T`) inner
-            // has NO faithful null-carrying CLR delegate return other than `object` (a `Nullable<int>`/`Nullable<T>`
-            // can't ride `Func`'s `out TResult` covariance while keeping null), so it is erased to `Func<…, object>`.
-            // Rewrites every such funcType (param slots, newDelegate/delegateInvoke funcTypes), erases the backing
-            // lambda methods' returns to object, and repairs the local dataflow (see the class). A REFERENCE inner
-            // (`R = String` — `Func<string?>`, or a `Comparable<*>?` selector) is NOT erased: a reference already
-            // carries null, and erasing the lifted lambda's return to `object` would break the concrete-delegate ctor
-            // (`object` is not assignable-TO the `Func<string>` slot's `string` return → ilverify DelegateCtor, #189 —
-            // and the boxgen/sort `object`-where-`IComparable`-expected findings); ReferenceNullableStrip drops its
-            // nullable wrapper to the plain reference downstream. Gated by isValueFqn.
-            NullableFuncReturnErasure.Apply(bir.Root, isValueFqn);
             // VARIANCE -> INVARIANCE type-arg REALIGNMENT (il-bymap): kotc approximates a use-site `in`/`out` variance
             // projection to `kotlin.Any` (JVM-erased, harmless), so a call into an INVARIANT @ClrTypeAlias collection
             // generic (`getOrImplicitDefault<K,V>` on a `Map<String,V>` receiver) carries a `K = Any` typeArg while the
@@ -661,7 +663,7 @@ sealed class Pipeline
         // forwarding bridge carrying a resolved MethodImpl instruction. Only a position no cast reaches (one under a
         // constructed generic) moves the declaration itself. Runs beside the other two bridge synthesizers and AFTER
         // the star-projection erasure, so the synthesized `G$dotkt_star` slots are in the supertype graph it walks.
-        KotlinOverrideSlotBridge.ApplyAll(staged.Select(s => s.Root).ToList(), isValueFqn);
+        KotlinOverrideSlotBridge.ApplyAll(staged.Select(s => s.Root).ToList(), isValueFqn, refs);
 
         // CONSTRUCTED MEMBER RESULT SUBSTITUTION (early): suspend lowering copies a call's result type into
         // state-machine fields/locals. Close every already-constructed receiver-relative return BEFORE that copy
@@ -810,6 +812,10 @@ sealed class Pipeline
 
         // PHASE 2 — per-file type lowering onwards.
         var files = new List<CirFile>();
+        // The fully-lowered roots, kept so the implementing-position half of the crossing refusal can be asked of the
+        // WHOLE compilation at once: a Kotlin interface declared in one file may be the only path from a class in
+        // another to the .NET declaration whose slot it cannot fill.
+        var loweredRoots = new List<(JsonNode Root, string File)>();
         foreach (var (substituted, outputName) in staged)
         {
             // §11 CONTINUATION-ERASURE (bundle-6 bug #5 ROOT): make the coroutine ABI monomorphic on
@@ -948,6 +954,33 @@ sealed class Pipeline
             // the fully-lowered tree — so owner/argTypes speak the CLR vocabulary the MLC resolves; unconditional so
             // RefBodySquash's `newClr NotImplementedException` is stamped too (its owner resolves off the BCL compile-refs).
             ClrMemberResolution.Apply(lowered, refs, localBasicEnums);
+            // THE STAMPING CHOKEPOINT: every node resolved against a .NET member carries that member's declared
+            // return. Two omissions of exactly that shape — a generic method and a public field — each removed a
+            // whole family from the crossing refusal below without any gate noticing.
+            ClrMemberResolution.CheckStamped(lowered, outputName);
+            // The other side of the erasure: a .NET member may DECLARE a `List<int?>`, which no Kotlin type inhabits
+            // once `X?` in a reified argument is `System.Object`. Unrelated invariant reified generics have no
+            // conversion between them and an adapter would change the argument's identity, so the crossing is
+            // refused rather than silently mis-typed. Checked HERE, immediately after the resolution that stamps
+            // `memberSig`: before it, most `clr*` nodes still carry the caller's `argTypes` and the .NET declaration
+            // this refusal is about has not been read yet.
+            ForeignNullableGenericCrossing.Check(lowered, outputName);
+            loweredRoots.Add((lowered, outputName));
+        }
+
+        // The IMPLEMENTING-POSITION half of the same refusal: a .NET supertype declaring a slot no Kotlin body can
+        // fill. It is asked of every lowered root together, because the supertype graph that reaches such a slot runs
+        // through this compilation's own declarations as freely as through referenced ones, and a per-file view stops
+        // at the first Kotlin interface declared next door. Nothing has been written yet, so a refusal here is as
+        // clean as one inside the loop.
+        ForeignNullableGenericCrossing.CheckImplementedSlots(loweredRoots, refs);
+
+        // SERIALIZATION IS THE LAST THING, and not the tail of the loop above. The check that just ran asks each
+        // Kotlin body which slot it fills, and the answer is a pass-to-pass record on the declaration that must not
+        // reach CIR — so the check consumes it, and it can only do that once every file has been lowered and read.
+        // Writing a file's JSON inside the loop froze that record into the CIR of every file but the last.
+        foreach (var (lowered, outputName) in loweredRoots)
+        {
             // A file whose ENTIRE content was @ClrTypeAlias types (e.g. Primitives.kt, Comparable.kt) is now empty after
             // AliasHelperHoist dropped them — emit no CIR file for it (an empty file-class would be a pointless empty
             // static type in the assembly). Skips only when types AND methods AND fields are all empty; never in ref.

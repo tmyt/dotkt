@@ -50,7 +50,7 @@
             "sty": {
               "t": "fqn",
               "name": "kotlin.collections.List",
-              "args": [{ "t": "nullable", "of": { "t": "fqn", "name": "kotlin.Int" } }]
+              "args": [{ "t": "fqn", "name": "kotlin.String" }]
             },
             "ret": {
               "t": "fqn",

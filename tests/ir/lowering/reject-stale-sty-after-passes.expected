@@ -1,2 +1,8 @@
+# The §2.7 chokepoint's witness: a call node whose frontend `sty` names one type while its own `ret` names
+# another, with NO pass in between that repairs either. The stamp is deliberately NOT an erasure-shaped
+# disagreement — it used to be `List<Int?>` against `List<Any>`, which carrier-argument erasure (#86) now
+# normalizes to `List<object>` on both sides, so the document stopped being stale and the witness stopped
+# witnessing. A stale stamp that no pass owns is what this fixture has to hold: the chokepoint exists for the
+# pass that has not been written yet, so its witness must not depend on any pass that has.
 carries a stale 'sty'
 erasedReadKeptItsFrontendStamp

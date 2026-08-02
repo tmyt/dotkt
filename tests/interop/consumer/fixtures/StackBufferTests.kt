@@ -38,5 +38,19 @@ class StackBufferTests {
             buffer[0] + buffer[1] + buffer[2]
         }
         assertEquals(21, filled)
+
+        // #86 — a NULLABLE VALUE element. `Span<T>` is a reified generic, so a `Span<Int?>` slot would erase its
+        // argument; the stack-buffer path never declares one. `stackBuffer` is inline, so what is emitted is a
+        // `localloc` plus a stack pointer whose element token is a SLOT position — the same position a `ref`
+        // referent holds in the rule — and `Nullable<int32>` is an unmanaged struct a `localloc` can hold. The
+        // token and the allocation therefore agree by construction, which is why the stack node kinds are
+        // deliberately absent from the argument-element set. Driven here so a later change that starts declaring a
+        // real `Span<T>` slot on this path cannot pass silently.
+        val nullableElem = stackBuffer<Int?, Int>(2) { buffer ->
+            buffer[0] = 5
+            buffer[1] = null
+            (buffer[0] ?: 0) + (buffer[1] ?: 100)
+        }
+        assertEquals(105, nullableElem)
     }
 }

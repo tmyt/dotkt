@@ -61,35 +61,51 @@ declare -A RT_XFAIL=(
 	# `IEnumerable<int32>` and the terminal's `GetEnumerator` is not found. The eager twin is green because it
 	# MATERIALIZES a fresh, correctly-typed list rather than wrapping. So the fix is an element-converting adapter
 	# on the lazy path, stdlib-side — not a declaration any consumer can re-derive.
+	# A callable REFERENCE into an OPEN `(T?) -> R` slot. The slot is a `Func<object, string>` at every instantiation
+	# — `Nullable(Tv)` has no CLR form — while the referenced member's own parameter is its author-written
+	# `Nullable<int32>`, which no USE of it may move. The delegate then reads the boxed reference's bits as a struct
+	# and produces a garbage number. PRE-EXISTING: the open slot demanded `object` before carrier-argument erasure
+	# too, and a LAMBDA into the same slot is fine because the compiler owns the lifted target. Closing it needs a
+	# FORWARDER synthesized at the reference — a static one for `::fn`, a capture class for `expr::member` — which is
+	# the same missing piece the concrete delegate parameter is scoped out for (docs/dotkt-semantics.md §9c-bis).
+	# Two same-name members of one referenced interface differing ONLY in method generic arity: `put(T?)` and
+	# `<U> put(T?)`. The SLOTS are right — arity is part of the bridge identity and of the MethodImpl descriptor, so
+	# the type loads and a call through the class's own type picks correctly — but a call on the INTERFACE receiver
+	# binds by name and parameter vector alone and runs the arity-0 body. That is call-site overload resolution on a
+	# referenced member, a different subject from filling the slot, and pre-existing: arity has never been part of
+	# that selection. Closing it means carrying the call's generic arity into the referenced-member lookup, the same
+	# key ilemit's own overload table already uses.
+	# PINNED, NOT FIXED — three reachable failures that no gate saw. Two were entirely silent; the third existed
+	# only as a prose comment in an NUnit fixture saying "NOT asserted", which is exactly what a machine-readable
+	# fail-set replaces: prose cannot flip to FIXED and nothing tells you when the cause closes. Each entry names
+	# its cause and the condition that closes it, and each has a control beside it fixing what the variable is not.
+	[roundtrip-nullable-vt-generic-suspend-override-narrowed]="#86 D3 PR5-era, ALREADY ON MAIN and undocumented until now: a SUSPEND override narrowed to a value instantiation (accept(x: T?) at T=Int) dies with System.TypeLoadException 'Signature of the body and declaration in a method implementation do not match'. PASS ORDER, not the narrowing: the override-slot bridge is built against the PRE-lowering shape, then SuspendColdLowering removes that method and replaces it with the state-machine form, leaving the MethodImpl descriptor naming a member that no longer exists. The non-suspend twin of the same narrowing is green, and the non-nullable suspend control beside this one runs N:1. Closes when the bridge is built AFTER the suspend lowering, or re-pointed at the replacement member."
+	[roundtrip-nullable-vt-generic-objectish-constraint-value]="#86: a generic constrained by Sink<Int?> emits a constrained call whose argument is never widened to the constraint's SUBSTITUTED form, and the CLR rejects the body with System.InvalidProgramException. MEASURED, against the expectation that any objectish constraint does this: the Sink<Any?> twin beside it RUNS (A:a), so the variable is the nullable-VALUE argument specifically and not objectish-ness in general — Sink<Any?> is objectish too and is fine. Closes when the constrained call widens its argument to Subst(Erase(constraint)); the passing Any? section beside it is the control that keeps the claim honest."
+	[roundtrip-nullable-vt-generic-comparable-typed-dispatch]="#86 PRE-EXISTING, and previously recorded ONLY as prose in tests/basic/fixtures/NullableTests.kt saying 'NOT asserted' — the rule violation this entry fixes. Dispatch through a Comparable<Int?>-TYPED reference dies with System.EntryPointNotFoundException: Comparable<X> at an objectish X collapses onto the NON-generic System.IComparable in the type's supertype list, while a value slot of that type keeps IComparable<object>, so the call resolves a member the receiver does not have. Measured identically on Comparable<Any?>, objectish long before #86. Closes when the collapse and the slot agree on one physical interface for an objectish argument."
+	[roundtrip-nullable-vt-generic-referenced-arity-dispatch]="#86 D3: a call on a REFERENCED-interface receiver selects between two same-name, same-parameter-vector members by name and parameters alone, ignoring method generic arity, so a.put<String>(2) runs the arity-0 body and prints a0:2. The SLOTS are correct — the type loads and both arities dispatch correctly through the class's own declared type — so this is call-site overload resolution on a referenced member, not slot filling. Needs the call's generic arity carried into the referenced-member lookup."
+	[roundtrip-nullable-vt-generic-open-slot-callable-ref]="#86: a NON-GENERIC ::fn / expr::member reference bound into an OPEN (T?) -> R slot reads the boxed reference's bits as a Nullable<int32> and yields a garbage value. The slot is Func<object, string> at every instantiation and the referenced member's parameter is the author's own Nullable<int32>, which a use of it may not move; a lambda into the same slot is correct. PRE-EXISTING (the open slot demanded object before this erasure too). Needs a forwarder synthesized at the reference — static for ::fn, a capture class for expr::member — the same piece the concrete delegate parameter is scoped out for. A GENERIC target fails EARLIER and for another reason entirely; that is roundtrip-generic-target-callable-ref, not this."
+	# NOT #86, and listed beside it only because it is the same syntax: a GENERIC ::fn has no typeArgs on its
+	# newDelegate, so ilemit ldftn's the open generic-method DEFINITION and the CLR refuses to execute it. The
+	# NON-NULLABLE twin in the same section fails identically, which is what proves the nullability axis is not
+	# involved — and what keeps this cause out of the entry above, where a forwarder at the reference is the fix.
+	[roundtrip-generic-target-callable-ref]="PRE-EXISTING and NOT #86: a ::fn naming a GENERIC function, bound into a generic function-type slot, is emitted as a ldftn of the open generic-method definition (the newDelegate carries no typeArgs for ilemit to MakeGenericMethod with), so the CLR refuses it with 'not fully instantiated' before any argument is converted. Measured identically on the non-nullable twin (T instead of T?), so no nullable-generic erasure is involved. Closes when the reference carries the instantiation its call site resolved."
 	[roundtrip-nullable-vt-generic-seq-mapnotnull]="#86: NOT the cross-module carrier read (measured) — the defect is same-module, inside the stdlib's lazy path. Sequence.mapNotNull builds TransformingSequence<T, object> (its (T) -> R? transform erases R? to object) and hands it to filterNotNull, whose body unchecked-casts a lazily-wrapped object-elemented sequence to Sequence<T>; on the CLR that IS a reified IEnumerable<T>, so at T=Int the wrapper does not implement IEnumerable<int32> and the terminal toList's GetEnumerator is not found — System.EntryPointNotFoundException. The eager Iterable.mapNotNull twin is green because it materializes a fresh typed list instead of wrapping. Needs an element-converting adapter on the lazy sequence path, stdlib-side."
 	# PRUNED by the OVERRIDE-SLOT BRIDGE (#86 D3): the narrowed override called through its OWN declared type. The
 	# override now keeps its own physical `accept(Nullable<int32>)`, so the re-imported surface and the assembly name
 	# the same member, and the base's erased `accept(object)` slot is filled by a private forwarding bridge. Both
 	# entry points are live: the section above reaches it through the INTERFACE and this one through its own type.
-	# The bridge's SCOPE, measured rather than left as prose (#86 D3). The supertype graph the bridge walks is the
-	# CURRENT compilation's, so a class whose base interface or base class is declared in a REFERENCED assembly gets
-	# no bridge at all and the base's erased slot goes unfilled. It is the same cross-module reader gap that keeps
-	# every other referenced-declaration derivation out, and it predates the bridge — the erase-in-place design this
-	# replaced had it too — but nothing measured it, so nothing stopped the rule being stated unconditionally.
-	# Closing it needs the base slot's pre-erasure declaration read off the referenced assembly through
-	# ReferenceMetadataIndex, which is the same reader D1 built for the argument axis.
-	[roundtrip-nullable-vt-generic-override-crossmodule-base]="#86 D3: an override whose base interface is declared in a REFERENCED assembly gets no bridge — KotlinOverrideSlotBridge walks the CURRENT compilation's supertype graph, so the base's erased accept(object) slot goes unfilled and the type fails to LOAD (System.TypeLoadException: Method 'accept' in type 'XIntSink' does not have an implementation). Pre-existing: the erase-in-place design this replaced had the same gap, and its same-module twin above is green. Needs the base slot's pre-erasure declaration read off the referenced assembly (ReferenceMetadataIndex), the same reader D1 built for the argument axis."
-	# The COST of `Array<X?>` = `object[]` (#86 D2), and a REGRESSION against the representation that preceded it —
-	# listed rather than hidden, because it is the shape that says D2 is not finishable on its own. `Int?` now has two
-	# physical forms by POSITION: `object` as an array element (D2, forced — `object[]` and `Nullable<int32>[]` are
-	# unrelated CLR types), and `Nullable<int32>` as an ordinary type argument (`List<Int?>`, unchanged and widely
-	# relied on). A generic that carries the element ACROSS that boundary can satisfy one or the other and not both:
-	# `Array<T>.toList()` over an `Array<Int?>` must be instantiated at `object` — no other instantiation's `!!0[]`
-	# parameter accepts an `object[]` — so it hands back a `List<object>` where the declared `List<Int?>` slot is an
-	# `IReadOnlyCollection<Nullable<int32>>`, and the first member call on it does not resolve.
-	# Reconciling the two needs a DECISION this step does not own: whether `X?` for a possibly-value `X` is `object` at
-	# every TYPE-ARGUMENT position too (making `List<Int?>` a `List<object>`), or whether the concrete `Array<Int?>`
-	# keeps a representation of its own after all. Local `val`s are unaffected (their slot is retyped from the value);
-	# it is a declared RETURN / field / parameter of a constructed generic over `Int?` that has nowhere to move.
-	[roundtrip-nullable-vt-generic-array-to-collection]="#86 D2: an Array<Int?> is object[], so an Array<T> stdlib extension over it instantiates at T=object and returns a List<object> — where the declared List<Int?> slot is IReadOnlyCollection<Nullable<int32>>, and the first member call on the result throws System.EntryPointNotFoundException. A REGRESSION against the pre-D2 representation (Array<Int?> was Nullable<int32>[], so T bound to Nullable<int32> and both ends agreed). Blocked on the type-argument half of the decision: either X? is object at every type-argument position (List<Int?> becomes List<object>) or the concrete Array<Int?> keeps its own representation."
-	# The same split reached from the other side, and a separate observable: here the generic's RESULT is the array, so
-	# the instantiation that suits the `Collection<T>` argument is the one that does not suit the result.
-	[roundtrip-nullable-vt-generic-collection-to-array]="#86 D2: Array<Int?>.plus(Collection<Int?>) binds one T to an argument whose element is Nullable<int32> and a result whose element must be object; the body's 'as Array<T>' then castclasses the object[] it built from the object[] receiver to Nullable<int32>[] — System.InvalidCastException. Same REGRESSION and same blocker as its array-to-collection sibling above."
+	#
+	# PRUNED by CARRIER-ARGUMENT ERASURE (#86): the array-to-collection and collection-to-array sections, which were
+	# the two observables of the POSITION split `Array<X?>` = `object[]` left open. `X?` for a possibly-value `X` is
+	# now `object` at EVERY reified-argument position, so `List<Int?>` is an `IReadOnlyList<object>` and an
+	# `Array<T>` extension instantiated at `object` hands its result to a slot that names the same type. Both
+	# directions run green and the controls beside them are unchanged.
+	#
+	# PRUNED by the bridge reading REFERENCED supertypes (#86 D3): the cross-module base. The bridge answers a
+	# supertype declared elsewhere through the same D1 carrier reader every other referenced-declaration derivation
+	# uses, walking implementer -> slot (the override's own `overrides` marker names the member) where the local arm
+	# walks slot -> implementer. That also closes the shape carrier-argument erasure newly needs: `Comparable<Int?>`
+	# collapses onto the non-generic `System.IComparable`, whose slot only a bridge can fill.
 	#
 	# PRUNED by the `Array<X?>`-is-`object[]` canonicalisation (#86 D2): both cross-module `Array<Int?>` sections,
 	# param and return. `Array<X?>` is now `object[]` at every position for a possibly-value `X`, the pre-erasure
@@ -107,9 +123,15 @@ declare -A RT_XFAIL=(
 # would be a name-only XFAIL again.
 declare -A RT_XFAIL_SHAPE=(
 	[roundtrip-nullable-vt-generic-seq-mapnotnull]='System.EntryPointNotFoundException'
-	[roundtrip-nullable-vt-generic-override-crossmodule-base]='does not have an implementation'
-	[roundtrip-nullable-vt-generic-array-to-collection]='System.EntryPointNotFoundException'
-	[roundtrip-nullable-vt-generic-collection-to-array]='System.InvalidCastException'
+	# The wrong value is a pointer and differs every run, so the app prints a VERDICT and the shape is that verdict.
+	[roundtrip-nullable-vt-generic-open-slot-callable-ref]='wrong'
+	[roundtrip-generic-target-callable-ref]='not fully instantiated'
+	[roundtrip-nullable-vt-generic-referenced-arity-dispatch]='a0:2'
+	# The PINNED entries. Each shape is the CLR's own exception name, which is what distinguishes these three from
+	# one another and from any unrelated break that would otherwise satisfy a name-only entry.
+	[roundtrip-nullable-vt-generic-suspend-override-narrowed]='System.TypeLoadException'
+	[roundtrip-nullable-vt-generic-objectish-constraint-value]='System.InvalidProgramException'
+	[roundtrip-nullable-vt-generic-comparable-typed-dispatch]='System.EntryPointNotFoundException'
 )
 
 # A listed name with no documented shape is the hole this map exists to close, so it is rejected here rather
@@ -700,6 +722,24 @@ ng_app() {
 	check_output "$name" "$expected" "$out" "$descr"
 }
 
+# ng_reject <workdir> <libasm> <name> <want-substring> <descr>   (Kotlin consumer source on stdin)
+# The twin of ng_app for an observable that is a REFUSAL. A restored declaration can be too WEAK as easily as too
+# strong, and only source the frontend must turn away shows the difference: a bound that came back missing accepts
+# an argument it should not, and the program then dies at LOAD with the CLR's wording instead of at the line the
+# author wrote. The verdict is the compiler's own diagnostic, so it is the compile output that is compared here —
+# an accepted consumer fails the section by producing no such text.
+ng_reject() {
+	local d="$1" asm="$2" name="$3" want="$4" descr="$5"
+	local a="$d/$name"; rm -rf "$a"; mkdir -p "$a/app" "$a/bir"
+	cat > "$a/app/app.kt"
+	local out ok=0
+	out="$("$LAUNCHER" "$a/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$d/$asm.klib" -d "$a/bir" 2>&1 || true)"
+	evidence_add "$out"
+	[[ "$out" == *"$want"* ]] && ok=1
+	section_result "$name" "$ok" "$descr" \
+		"$(printf -- '--- the diagnostic must contain ---\n%s\n--- compiler output ---\n%s' "$want" "$out")"
+}
+
 # ----- SAME-MODULE: the representation, with no boundary and no metadata in play (#86) ------------------
 ng_local roundtrip-nullable-vt-generic-local-param '7' \
 	'same-module: a null through a top-level T? PARAM at T=Int (#86)' <<'EOF'
@@ -731,6 +771,48 @@ ng_local roundtrip-nullable-vt-generic-collection-to-array '3/3' \
 fun main() {
     val p = arrayOfNulls<Int>(2).plus(listOf<Int?>(3))   // receiver element object, Collection element Nullable<int32>
     println("${p.size}/${p[2]}")           // 3/3
+}
+EOF
+
+# A CALLABLE REFERENCE into an OPEN `(T?) -> R` slot. The delegate parameter carve-out (#86, docs/dotkt-semantics.md
+# §9c-bis) keeps a CONCRETE `(Int?) -> String` at `Func<Nullable<int32>, string>`, so an ordinary lambda and an
+# ordinary reference both fit it. An OPEN slot cannot be kept: `(T?) -> String` is a `Func<object, string>` at every
+# instantiation, because `Nullable(Tv)` has no CLR form. A LAMBDA into it is fine — the compiler owns the lifted
+# target and moves it with the slot — but a REFERENCE names a member the AUTHOR declared, whose `Nullable<int32>`
+# parameter is its Kotlin surface and is not the compiler's to move. Bound to the slot anyway, the delegate reads the
+# boxed reference's bits as a struct and yields a garbage number: a wrong VALUE, not a diagnostic.
+#
+# Pre-existing and unchanged by carrier-argument erasure — the open slot demanded `object` before it too. It is
+# listed rather than left silent because §9c-bis now states the carve-out, and a reader could take the carve-out for
+# a fix. The app prints a VERDICT rather than the value: the wrong value is a pointer and differs every run, so only
+# "did it round-trip" is a stable observable.
+ng_local roundtrip-nullable-vt-generic-open-slot-callable-ref 'ok/ok' \
+	'same-module: a ::fn and an expr::member reference into an OPEN (T?) -> R slot at T=Int (#86)' <<'EOF'
+fun handleQ(x: Int?): String = x?.toString() ?: "none"
+class Owner { fun member(x: Int?): String = x?.toString() ?: "none" }
+fun <T> invokeNullable(v: T?, block: (T?) -> String): String = block(v)
+fun main() {
+    val viaStatic = invokeNullable<Int>(3, ::handleQ)          // "3" — reads a boxed reference as a struct instead
+    val viaBound = invokeNullable<Int>(4, Owner()::member)     // "4" — same, through a bound member reference
+    println((if (viaStatic == "3") "ok" else "wrong") + "/" + (if (viaBound == "4") "ok" else "wrong"))
+}
+EOF
+
+# THE SAME SYNTAX, A DIFFERENT FAULT, AND NOT THIS ONE'S. A `::fn` naming a GENERIC function never reaches the
+# argument conversion the entry above is about: the reference carries no instantiation, so ilemit `ldftn`s the open
+# generic-method DEFINITION and the CLR refuses to execute it. Driven with the NON-NULLABLE twin beside it, because
+# that is what proves the nullable-generic erasure is not involved — both fail identically. It is pinned rather than
+# left to prose so it flips to FIXED on its own, and pinned SEPARATELY so neither entry's stated cause has to cover
+# a failure it does not describe.
+ng_local roundtrip-generic-target-callable-ref '4/4' \
+	'PINNED (NOT #86): a GENERIC ::fn bound into a generic function-type slot, nullable and non-nullable alike' <<'EOF'
+fun <T> handleG(x: T?): String = x?.toString() ?: "none"
+fun <T> handleP(x: T): String = x?.toString() ?: "none"
+fun <T> invokeNullable(v: T?, block: (T?) -> String): String = block(v)
+fun <T> invokePlain(v: T, block: (T) -> String): String = block(v)
+fun main() {
+    // The non-nullable twin runs FIRST: it is the control, and it fails the same way.
+    println(invokePlain<Int>(4, ::handleP) + "/" + invokeNullable<Int>(4, ::handleG))
 }
 EOF
 
@@ -938,6 +1020,411 @@ EOF
 # wired by a DIFFERENT piece of CLR metadata than an interface slot — a MethodImpl against the constructed base
 # instead of against the constructed interface — so an override bridge that only covered interfaces would leave
 # this one a new overload, and the abstract slot unimplemented.
+# THE REFERENCED-SUPERTYPE ARM, on the three shapes the DIRECT-METHOD case does not reach. Each is a slot the
+# consumer must fill and cannot see: the declaration lives in another assembly, so the bridge has to read it there.
+#   inherited — the slot is declared on `RSink` while the consumer names `RDerived`, so the reachable spec and the
+#               declaring owner differ, and a MethodImpl must name the DECLARING one.
+#   base      — the supertype is an abstract CLASS, wired as a base-class MethodImpl against a type this assembly
+#               does not emit; the emitter used to abort on exactly that descriptor.
+#   arity     — one name, two generic arities, one erased parameter vector. Two CLR slots, so two bridges: sharing
+#               one is a signature the CLR rejects outright.
+RSUP="$ROOT/build/roundtrip-nullable-vt-generic-referenced-supertype-group"
+ng_lib "$RSUP" RsupLib <<'EOF'
+interface RSink<T> { fun accept(x: T?): String }
+interface RDerived<T> : RSink<T>                       // the slot is declared one level UP
+abstract class RBase<T> { abstract fun take(x: T?): String }
+interface RArity<T> {                                  // one name, two generic arities
+    fun put(x: T?): String
+    fun <U> put(x: T?): String
+}
+EOF
+
+ng_app "$RSUP" RsupLib roundtrip-nullable-vt-generic-referenced-inherited-slot '7/none' \
+	'cross-module: a slot declared on a referenced interface the consumer reaches through its SUBinterface (#86 D3)' <<'EOF'
+class C : RDerived<Int> { override fun accept(x: Int?): String = x?.toString() ?: "none" }
+fun main() {
+    val s: RSink<Int> = C()
+    println(C().accept(7) + "/" + s.accept(null))   // 7/none  its own type, then the declaring interface's slot
+}
+EOF
+
+ng_app "$RSUP" RsupLib roundtrip-nullable-vt-generic-referenced-base-class '8/none' \
+	'cross-module: an override narrowing a referenced abstract BASE CLASS T? slot (#86 D3)' <<'EOF'
+class C : RBase<Int>() { override fun take(x: Int?): String = x?.toString() ?: "none" }
+fun main() {
+    val b: RBase<Int> = C()
+    println(C().take(8) + "/" + b.take(null))       // 8/none  its own type, then the base slot
+}
+EOF
+
+ng_app "$RSUP" RsupLib roundtrip-nullable-vt-generic-referenced-arity 'a0:1/a1:2/a0:1' \
+	'cross-module: two generic arities of one name over one erased parameter vector (#86 D3)' <<'EOF'
+class C : RArity<Int> {
+    override fun put(x: Int?): String = "a0:" + (x?.toString() ?: "none")
+    override fun <U> put(x: Int?): String = "a1:" + (x?.toString() ?: "none")
+}
+fun main() {
+    val c = C()
+    val a: RArity<Int> = c
+    // Two CLR slots, so two bridges: one shared between them is a MethodImpl the CLR rejects, and the type does not
+    // load at all. Both arities through the class's own type, then the arity-0 slot through the interface.
+    println(c.put(1) + "/" + c.put<String>(2) + "/" + a.put(1))   // a0:1/a1:2/a0:1
+}
+EOF
+
+# The remaining half, and a DIFFERENT subject: selecting between those two slots at a CALL on a referenced-interface
+# receiver. The bridging is right — the type loads and the class-typed calls above pick correctly — but a call
+# through the interface binds by name and parameter vector and ignores the method's generic arity, so the arity-1
+# call runs the arity-0 body. That is call-site overload resolution, not slot filling, and it is where the fix for
+# it belongs.
+ng_app "$RSUP" RsupLib roundtrip-nullable-vt-generic-referenced-arity-dispatch 'a1:2' \
+	'cross-module: selecting the GENERIC arity of a same-vector overload through a referenced interface (#86 D3)' <<'EOF'
+class C : RArity<Int> {
+    override fun put(x: Int?): String = "a0:" + (x?.toString() ?: "none")
+    override fun <U> put(x: Int?): String = "a1:" + (x?.toString() ?: "none")
+}
+fun main() {
+    val a: RArity<Int> = C()
+    println(a.put<String>(2))                       // a1:2
+}
+EOF
+
+# ---- PINNED, NOT FIXED: three reachable failures that were silent or recorded only as PROSE ------------------
+# Each is a real program that a user can write and that fails at run time, and each was invisible to every gate.
+# A fail-set is machine-readable or it is not a fail-set: a comment saying "not asserted" cannot flip to FIXED, and
+# nothing tells you when the cause closes. Every one below has an RT_XFAIL entry naming its cause and its closing
+# condition, and a control beside it fixing what the variable is NOT.
+
+# THE SUSPEND OVERRIDE AT A VALUE INSTANTIATION. PR5-era and already on main, undocumented until now. The
+# override-slot bridge is built against the PRE-lowering shape; SuspendColdLowering then removes that method and
+# replaces it with the state-machine form, leaving the MethodImpl descriptor naming a member that no longer exists.
+# The non-suspend twin of the same narrowing is green (the sections above), and so is the control here, so neither
+# the narrowing nor `suspend` alone is the variable — it is the two passes' ORDER.
+ng_local roundtrip-nullable-vt-generic-suspend-override-narrowed 'S:1' \
+	'PINNED: a SUSPEND override narrowed to a value instantiation (accept(x: T?) at T=Int) (#86 D3)' <<'EOF'
+@file:Suppress("UNCHECKED_CAST")
+import System.Threading.Monitor
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.coroutines.startCoroutine
+
+fun <T> blockOn(block: suspend () -> T): T {
+    val sink = BlockOnSink()
+    block.startCoroutine(sink)
+    Monitor.Enter(sink)
+    try { while (!sink.done) Monitor.Wait(sink) } finally { Monitor.Exit(sink) }
+    sink.exception?.let { throw it }
+    return sink.value as T
+}
+private class BlockOnSink : Continuation<Any?> {
+    var done: Boolean = false
+    var value: Any? = null
+    var exception: Throwable? = null
+    override val context: CoroutineContext get() = EmptyCoroutineContext
+    override fun resumeWith(result: Result<Any?>) {
+        Monitor.Enter(this)
+        try { value = result.getOrNull(); exception = result.exceptionOrNull(); done = true; Monitor.Pulse(this) }
+        finally { Monitor.Exit(this) }
+    }
+}
+
+interface SSink<T> { suspend fun accept(x: T?): String }
+class SImpl : SSink<Int> { override suspend fun accept(x: Int?): String = "S:" + (x?.toString() ?: "none") }
+
+fun main() {
+    val s: SSink<Int> = SImpl()
+    println(blockOn { s.accept(1) })       // WANT S:1 — TypeLoadException: the descriptor names a removed member
+}
+EOF
+
+ng_local roundtrip-nullable-vt-generic-suspend-override-control 'N:1' \
+	'control: the same SUSPEND override at a NON-nullable slot, which runs (#86 D3)' <<'EOF'
+@file:Suppress("UNCHECKED_CAST")
+import System.Threading.Monitor
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.coroutines.startCoroutine
+
+fun <T> blockOn(block: suspend () -> T): T {
+    val sink = BlockOnSink()
+    block.startCoroutine(sink)
+    Monitor.Enter(sink)
+    try { while (!sink.done) Monitor.Wait(sink) } finally { Monitor.Exit(sink) }
+    sink.exception?.let { throw it }
+    return sink.value as T
+}
+private class BlockOnSink : Continuation<Any?> {
+    var done: Boolean = false
+    var value: Any? = null
+    var exception: Throwable? = null
+    override val context: CoroutineContext get() = EmptyCoroutineContext
+    override fun resumeWith(result: Result<Any?>) {
+        Monitor.Enter(this)
+        try { value = result.getOrNull(); exception = result.exceptionOrNull(); done = true; Monitor.Pulse(this) }
+        finally { Monitor.Exit(this) }
+    }
+}
+
+interface NSink<T> { suspend fun accept(x: T): String }
+class NImpl : NSink<Int> { override suspend fun accept(x: Int): String = "N:" + x.toString() }
+
+fun main() {
+    val s: NSink<Int> = NImpl()
+    println(blockOn { s.accept(1) })       // N:1 — no narrowing, so the descriptor still names a live member
+}
+EOF
+
+# A CONSTRAINT AT A NULLABLE-VALUE ARGUMENT. `fun <T : Sink<Int?>> use(t: T)` emits a constrained call whose
+# argument is never widened to the constraint's SUBSTITUTED form, and the CLR rejects the body outright.
+#
+# The `Sink<Any?>` twin was expected to fail identically — which would have made this a pre-existing defect of any
+# objectish constraint, nothing to do with this work. IT RUNS. So the variable is the nullable-VALUE argument
+# specifically, `Sink<Any?>` being just as objectish and just as fine, and the control stays here as a PASSING
+# section precisely because that is the fact it establishes.
+ng_local roundtrip-nullable-vt-generic-objectish-constraint-value 'I:1' \
+	'PINNED: a generic constrained by Sink<Int?> — the constrained call is never widened (#86)' <<'EOF'
+interface Sink<T> { fun accept(x: T): String }
+class SI : Sink<Int?> { override fun accept(x: Int?): String = "I:" + (x?.toString() ?: "none") }
+fun <T : Sink<Int?>> useBound(t: T): String = t.accept(1)
+fun main() {
+    println(useBound(SI()))                // WANT I:1 — InvalidProgramException
+}
+EOF
+
+ng_local roundtrip-nullable-vt-generic-objectish-constraint-any 'A:a' \
+	'control: the SAME shape at Sink<Any?>, which RUNS — so objectish-ness is not the variable' <<'EOF'
+interface Sink<T> { fun accept(x: T): String }
+class SA : Sink<Any?> { override fun accept(x: Any?): String = "A:" + (x?.toString() ?: "none") }
+fun <T : Sink<Any?>> useBound(t: T): String = t.accept("a")
+fun main() {
+    println(useBound(SA()))                // A:a — runs, though Sink<Any?> is objectish too
+}
+EOF
+
+# `Comparable<X>` AT AN OBJECTISH `X`, DISPATCHED THROUGH A TYPED REFERENCE. The type's SUPERTYPE list carries the
+# non-generic `System.IComparable` (the collapse), while a value slot of that type keeps `IComparable<object>` — so
+# the call resolves a member the receiver does not have. This was recorded only as a prose comment in the NUnit
+# fixture saying "NOT asserted", which is precisely the thing a fail-set exists to replace: prose cannot flip to
+# FIXED. Pre-existing at `Comparable<Any?>`; #86 only lets `Comparable<Int?>` reach the same hole.
+ng_local roundtrip-nullable-vt-generic-comparable-typed-dispatch '3' \
+	'PINNED: dispatch through a Comparable<Int?>-TYPED reference (supertype collapses, slot does not) (#86)' <<'EOF'
+class Ver(val n: Int) : Comparable<Int?> {
+    override fun compareTo(other: Int?): Int = n - (other ?: 0)
+}
+fun main() {
+    val c: Comparable<Int?> = Ver(5)
+    println(c.compareTo(2))                // WANT 3 — EntryPointNotFoundException
+}
+EOF
+
+# THE EDGE ITSELF IS KOTLIN SOURCE (#86). A supertype argument erases like any other reified argument, and unlike a
+# member slot there is no per-slot attribute to carry its Kotlin type — so a consumer re-imported `class E :
+# Sink<Int?>` as `Sink<Any?>` and `val s: Sink<Int?> = E()` stopped compiling. Members cannot restore it: their own
+# slots are exact, and what is lost is the identity of the EDGE. That is a Kotlin SOURCE break, which is the one
+# thing an internal representation decision may not spend, so the pre-erasure edges ride a type-level carrier.
+RSUP2="$ROOT/build/roundtrip-nullable-vt-generic-supertype-edge-group"
+ng_lib "$RSUP2" Rsup2Lib <<'EOF'
+interface ESink<T> { fun accept(x: T): String }
+class EImpl : ESink<Int?> {                       // the erased edge: physically ESink<object>
+    override fun accept(x: Int?): String = "E:" + (x?.toString() ?: "none")
+}
+EOF
+
+ng_app "$RSUP2" Rsup2Lib roundtrip-nullable-vt-generic-supertype-edge 'E:5/E:none' \
+	'cross-module: assigning through a supertype edge whose argument erased (ESink<Int?>) (#86)' <<'EOF'
+fun main() {
+    val s: ESink<Int?> = EImpl()                  // the assignment the erased edge makes impossible
+    println(s.accept(5) + "/" + s.accept(null))   // E:5/E:none  and dispatch through that edge
+}
+EOF
+
+# A TYPE-PARAMETER BOUND IS THE SAME FACT ONE LEVEL DOWN (#86). `class BReg<T : BSink<Int?>>` constrains T to a
+# physical `BSink<object>`, and the `bounds` member of the type-level carrier is what states the Kotlin bound the
+# author declared. It was a documented payload nothing produced and nothing read: the producer looked for a singular
+# `bound` key kotc does not emit, and the consumer never applied one — so the re-imported class published NO bound
+# at all, `BReg(BBad())` compiled, and the program died at LOAD with the CLR's wording on a line the author never
+# wrote. Both directions are needed, because a missing bound and a physical one fail on opposite arguments: the good
+# argument must be ACCEPTED (a bound weakened to the physical `BSink<Any?>` would turn it away) and the bad one
+# REFUSED (no bound at all lets it through).
+RBND="$ROOT/build/roundtrip-nullable-vt-generic-bound-edge-group"
+ng_lib "$RBND" RbndLib <<'EOF'
+interface BSink<T> { fun accept(x: T): String }
+class BReg<T : BSink<Int?>>(val t: T) {           // the erased bound: physically BSink<object>
+    val tag: String = "reg"
+}
+EOF
+
+ng_app "$RBND" RbndLib roundtrip-nullable-vt-generic-bound-edge-accept 'reg' \
+	'cross-module: a good type argument satisfies a restored bound (BSink<Int?>) (#86)' <<'EOF'
+class BGood : BSink<Int?> { override fun accept(x: Int?): String = "g:" + (x?.toString() ?: "none") }
+fun main() {
+    println(BReg(BGood()).tag)                    // reg  the bound admits exactly what the author declared
+}
+EOF
+
+ng_reject "$RBND" RbndLib roundtrip-nullable-vt-generic-bound-edge-reject 'BSink<Int?>' \
+	'cross-module: a bad type argument is refused by the restored bound, at the line that wrote it (#86)' <<'EOF'
+class BBad : BSink<String> { override fun accept(x: String): String = "b:" + x }
+fun main() {
+    println(BReg(BBad()).tag)                     // must not compile: BBad is not a BSink<Int?>
+}
+EOF
+
+# A DELEGATE TARGET IS ONE DECLARATION, NOT EVERY DECLARATION OF THAT NAME (#86). A `::fn` bound into a slot the
+# erasure object-stated moves the target's own slot to match — the one place a declared signature is decided by a
+# USE — and keying that demand on the target's NAME moved every same-name sibling with it. Here `::make` names the
+# `Int?` overload; the `String` one has nothing to do with it, and its return silently became `object` with no
+# round-trip carrier. Same-module the realigned call sites hide it; only a separately compiled consumer, which
+# re-derives the surface from the assembly, can see that a PUBLIC signature moved.
+RDTS="$ROOT/build/roundtrip-nullable-vt-generic-delegate-target-group"
+ng_lib "$RDTS" RdtsLib <<'EOF'
+fun make(x: Int): Int? = if (x > 0) x else null    // the ::make target: its Int? RETURN follows the erased slot
+fun make(x: String): Int = x.length                // an unrelated sibling that must keep its own Int return
+fun <T> use(f: (Int) -> T?): String = f(1)?.toString() ?: "none"
+fun boundUse(): String = use<Int>(::make)
+EOF
+
+ng_app "$RDTS" RdtsLib roundtrip-nullable-vt-generic-delegate-target-sibling '1/4' \
+	'cross-module: a ::fn moves ONLY the declaration it names, not its same-name sibling (#86)' <<'EOF'
+fun main() {
+    val n: Int = make("abcd")                     // compiles only while the sibling still returns Int
+    println(boundUse() + "/" + n.toString())      // 1/4
+}
+EOF
+
+# THE OVERRIDE MARKER MUST BE RELATED TO THE SPEC IT ANSWERS FOR, and a slot reached twice must be wired once.
+#   two     — two UNRELATED referenced supertypes exposing the same ERASED shape. Each marker may answer only for
+#             its own, and each slot needs its own bridge: one shared between them forwards both to the same body
+#             and casts a `string` into a `Nullable<int32>` at run time.
+#   diamond — one slot declared on a common base, reached through TWO referenced sub-interfaces. One MethodImpl per
+#             slot is all the CLR accepts.
+#   local   — a referenced generic BASE instantiated at a LOCALLY EMITTED type argument, which is the reflection
+#             shape whose `GetMethods()` throws; declining it leaves an abstract slot unimplemented.
+#   generic — the same LOCALLY-EMITTED-argument shape where the slot is itself a GENERIC METHOD. Re-anchoring a slot
+#             onto its instantiation substitutes the OWNER's type arguments positionally, and a METHOD's own type
+#             parameters number from zero in their own scope — so they were rewritten with the owner's arguments,
+#             which mis-matches the slot when the counts happen to line up and indexes past the end when they do not.
+#             Three supertype shapes reach it — an INTERFACE slot re-anchored for the name/signature wiring, the same
+#             slot DEFAULTED by an emitted sub-interface (whose forwarding bridge must declare the type parameters its
+#             signature names), and a base-CLASS slot resolved from the erasure bridge's own descriptor — and each
+#             declares TWO method type parameters over a ONE-argument owner so the out-of-range half is exercised,
+#             not only the mis-match.
+#             The interface arm's slot is deliberately NOT erased. An ERASED slot on a referenced INTERFACE at a
+#             locally emitted argument does not load at ALL, at any method arity — measured on the arity-0 shape too,
+#             so it is neither this fault nor #86's — and a `T?` here would report that older gap instead of this one.
+#             The base-class arm keeps its `T?`, because the descriptor it resolves exists only where the erasure
+#             diverged.
+RSUP3="$ROOT/build/roundtrip-nullable-vt-generic-referenced-shape-group"
+ng_lib "$RSUP3" Rsup3Lib <<'EOF'
+interface RA<T> { fun accept(x: T?): String }
+interface RB<T> { fun accept(x: T?): String }
+interface RTop<T> { fun get(x: T?): String }
+interface RLeft<T> : RTop<T>
+interface RRight<T> : RTop<T>
+abstract class RGBase<T> { abstract fun hold(x: T?): String }
+interface RGPlain<T> { fun take(x: T): String }                         // the arity-0 control for the arm below
+interface RGSink<T> { fun <U, V> put(x: T, u: U, v: V): String }        // 1 owner arg, 2 METHOD type params
+abstract class RGMBase<T> { abstract fun <U, V> keep(x: T?, u: U, v: V): String }
+EOF
+
+# Every implementer below RENAMES the slot's method type parameters. A method type parameter has no name identity
+# across two declarations — the CLI encodes it as `!!i` and the author picks the spelling — so an implementation that
+# reused `U, V` would let a name comparison stand in for the position and prove nothing about arbitrary source.
+
+ng_app "$RSUP3" Rsup3Lib roundtrip-nullable-vt-generic-referenced-two-supertypes 'A:1/B:s' \
+	'cross-module: two UNRELATED referenced supertypes of the same erased shape, one body each (#86 D3)' <<'EOF'
+class Two : RA<Int>, RB<String> {
+    override fun accept(x: Int?): String = "A:" + (x?.toString() ?: "none")
+    override fun accept(x: String?): String = "B:" + (x ?: "none")
+}
+fun main() {
+    val t = Two()
+    val a: RA<Int> = t
+    val b: RB<String> = t
+    println(a.accept(1) + "/" + b.accept("s"))    // A:1/B:s  each slot reaches its OWN body
+}
+EOF
+
+ng_app "$RSUP3" Rsup3Lib roundtrip-nullable-vt-generic-referenced-diamond 'D:2' \
+	'cross-module: one referenced slot reached through TWO sub-interfaces, wired once (#86 D3)' <<'EOF'
+class Dia : RLeft<Int>, RRight<Int> {
+    override fun get(x: Int?): String = "D:" + (x?.toString() ?: "none")
+}
+fun main() {
+    val d: RTop<Int> = Dia()
+    println(d.get(2))                             // D:2
+}
+EOF
+
+ng_app "$RSUP3" Rsup3Lib roundtrip-nullable-vt-generic-referenced-base-local-arg 'H:3/H:none' \
+	'cross-module: a referenced generic BASE instantiated at a locally emitted type argument (#86 D3)' <<'EOF'
+class Local(val n: Int)
+class Held : RGBase<Local>() { override fun hold(x: Local?): String = "H:" + (x?.n?.toString() ?: "none") }
+fun main() {
+    val h: RGBase<Local> = Held()
+    println(h.hold(Local(3)) + "/" + h.hold(null))   // H:3/H:none
+}
+EOF
+
+# The same locally-emitted-argument shape with a GENERIC slot, once per supertype kind. The interface arm is wired by
+# enumerating the open definition and re-anchoring each slot; the base-class arm resolves the slot the erasure bridge's
+# descriptor names. `U` and `V` belong to the METHOD, so nothing in the owner's one-element argument list is theirs.
+# The arity-0 control beside it is what says the variable is the METHOD's type parameters and not the locally emitted
+# argument: the identical owner, the identical instantiation, one slot with no type parameters of its own.
+ng_app "$RSUP3" Rsup3Lib roundtrip-nullable-vt-generic-referenced-plain-slot-local-arg 'T:4' \
+	'cross-module control: a NON-generic slot on the same referenced interface at a locally emitted argument (#86 D3)' <<'EOF'
+class Local(val n: Int)
+class GP : RGPlain<Local> { override fun take(x: Local): String = "T:" + x.n }
+fun main() {
+    val p: RGPlain<Local> = GP()
+    println(p.take(Local(4)))                     // T:4
+}
+EOF
+
+ng_app "$RSUP3" Rsup3Lib roundtrip-nullable-vt-generic-referenced-generic-slot-local-arg 'P:5:u:1/P:7:q:2' \
+	'cross-module: a GENERIC slot on a referenced interface instantiated at a locally emitted type argument (#86 D3)' <<'EOF'
+class Local(val n: Int)
+class GS : RGSink<Local> {
+    override fun <X, Y> put(x: Local, u: X, v: Y): String = "P:" + x.n + ":" + u + ":" + v
+}
+fun main() {
+    val s: RGSink<Local> = GS()
+    println(s.put(Local(5), "u", 1) + "/" + GS().put<String, Int>(Local(7), "q", 2))   // P:5:u:1/P:7:q:2
+}
+EOF
+
+# The same referenced generic slot filled by a DEFAULT on an emitted SUB-interface rather than by a class. The bridge
+# that carries the methodimpl is synthesized here rather than by the erasure, and a generic slot's signature names
+# `!!0`/`!!1` — so the bridge has to DECLARE the type parameters it names, or the methodimpl is a signature the CLR
+# rejects and no implementer of the sub-interface loads.
+ng_app "$RSUP3" Rsup3Lib roundtrip-nullable-vt-generic-referenced-generic-dim-local-arg 'D:8:u:1' \
+	'cross-module: an emitted interface DEFAULTS a referenced generic slot at a locally emitted argument (#86 D3)' <<'EOF'
+class Local(val n: Int)
+interface KD : RGSink<Local> {
+    override fun <X, Y> put(x: Local, u: X, v: Y): String = "D:" + x.n + ":" + u + ":" + v
+}
+class KImpl : KD
+fun main() {
+    val s: RGSink<Local> = KImpl()
+    println(s.put(Local(8), "u", 1))              // D:8:u:1
+}
+EOF
+
+ng_app "$RSUP3" Rsup3Lib roundtrip-nullable-vt-generic-referenced-generic-base-local-arg 'K:6:u:1/K:none:q:2' \
+	'cross-module: a GENERIC slot on a referenced abstract BASE at a locally emitted type argument (#86 D3)' <<'EOF'
+class Local(val n: Int)
+class GK : RGMBase<Local>() {
+    override fun <X, Y> keep(x: Local?, u: X, v: Y): String =
+        "K:" + (x?.n?.toString() ?: "none") + ":" + u + ":" + v
+}
+fun main() {
+    val k: RGMBase<Local> = GK()
+    println(k.keep(Local(6), "u", 1) + "/" + GK().keep<String, Int>(null, "q", 2))   // K:6:u:1/K:none:q:2
+}
+EOF
+
 NOC="$ROOT/build/roundtrip-nullable-vt-generic-override-class-group"
 ng_lib "$NOC" NocLib <<'EOF'
 abstract class Holder<T> { abstract fun take(x: T?): String }   // an abstract base-CLASS slot: Nullable(Tv) -> object

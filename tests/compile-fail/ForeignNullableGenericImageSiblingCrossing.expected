@@ -1,0 +1,5 @@
+# The CROSSING slot is the one named, not the sibling whose signature the override happens to share.
+'CImageSibling' derives from 'plainnet.ImageSiblingBase'
+System.Collections.Generic.List<System.Nullable<System.Int32>>
+at its parameter 0
+a slot NO Kotlin expression inhabits

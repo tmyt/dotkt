@@ -126,6 +126,22 @@ static partial class NullableTvErasureCallRealign
                 && TypeJson.Read(ar["elem"]) is TypeNode se
                 && !se.Equals(ta.Elem) && IsObjectErasureOf(ta.Elem, se))
                 ar["elem"] = TypeJson.Write(ta.Elem);
+            // And the same rule for a DELEGATE construction. `fun <T> invokeNullable(block: (T?) -> String)` declares
+            // a physical `Func<object, string>` whatever `T` is, while kotc states the construction's `funcType` from
+            // the SUBSTITUTED Kotlin type — `(String?) -> String`, a `Func<string, string>`. Those are two different
+            // delegate types, and the one the call accepts is the callee's. The construction is ours to type, so it
+            // is BUILT at the slot's shape rather than built wrong and cast (no cast joins two delegate
+            // instantiations); DelegateTargetSlotAlignment then makes the lifted target's own slots follow.
+            // Only a construction whose TARGET the compiler synthesized: a lifted `newDelegate` and a `newClosure`'s
+            // synthetic `invoke` both follow the retyped `funcType` (DelegateTargetSlotAlignment). A delegate over a
+            // DECLARED member — `expr::member`, or a `::fn` whose `newDelegate` carries the overload `sig` kotc
+            // writes only for that form — points at a signature that is not ours to move, so retyping its delegate
+            // would state a shape no target can fill and turn a formal mismatch into an invalid program.
+            if (target is TypeNode.Fn && args[i] is JsonObject dl
+                && Str(dl["k"]) is "newDelegate" or "newClosure" && dl["sig"] is not JsonArray
+                && TypeJson.Read(dl["funcType"]) is TypeNode.Fn dft
+                && !dft.Equals(target) && IsObjectErasureOf(target, dft))
+                dl["funcType"] = TypeJson.Write(target);
             argTypes[i] = args[i] != null ? Eval(args[i], ctx) : null;
             if (target != null)
             {
@@ -224,12 +240,11 @@ static partial class NullableTvErasureCallRealign
         }
     }
 
-    // The call kinds NetInteropBinding (and MemberCallSubstitution, for a constructor) produces once a call is BOUND to
-    // a .NET member. Being one of these is what makes the node's argument descriptor a .NET declaration rather than the
-    // caller's own Kotlin view — the single statement of that fact, read both by the walk that routes these nodes to
-    // EvalClrCall and by the argument realignment that decides how far to trust their descriptor.
-    static bool IsClrBoundKind(string k) =>
-        k is "clrStatic" or "clrInstance" or "clrGenericStatic" or "clrGenericInstance" or "newClr";
+    // Being a .NET-bound CALL is what makes the node's argument descriptor a .NET declaration rather than the caller's
+    // own Kotlin view — read both by the walk that routes these nodes to EvalClrCall and by the argument realignment
+    // that decides how far to trust their descriptor. The property/field accessors are deliberately NOT here: they
+    // carry no argument vector, and this axis is about arguments (ClrBoundNode states the split once).
+    static bool IsClrBoundKind(string k) => ClrBoundNode.IsCall(k);
 
     // A call NetInteropBinding has already BOUND to a .NET member. Only the WRITE axis applies to it: the callee is
     // .NET, so its declared parameter types (`memberSig`) ARE the declaration and there is nothing Kotlin to
@@ -280,6 +295,48 @@ static partial class NullableTvErasureCallRealign
             if (kv.Value != null && kv.Key is not ("elem" or "elems" or "size" or "k" or "sty"))
                 Eval(kv.Value, ctx);
         return elem == null ? null : new TypeNode.Array(elem);
+    }
+
+    // A DELEGATE INVOCATION. Its callee is the function type in `funcType`, which the declaration axis has already
+    // erased, so its components ARE the physical slots: each argument is reconciled against the one it fills and the
+    // result is the erased return. A `T.() -> R` states its receiver as the delegate's first parameter, so the
+    // vector is chosen by whichever of the two spellings matches the argument count — never by guessing.
+    //
+    // Nothing is substituted into those components: a `funcType` is already closed at the invocation site (there is
+    // no separate owner/method instantiation for a delegate), and `Subst` with no bindings leaves a concrete slot
+    // alone while declining an open one, which is the right refusal.
+    static TypeNode EvalDelegateInvoke(JsonObject obj, Ctx ctx)
+    {
+        var recvType = obj["recv"] != null ? Eval(obj["recv"], ctx) : null;
+        var fn = TypeJson.Read(obj["funcType"]) as TypeNode.Fn;
+        // The invoked delegate is whatever actually FLOWS into the receiver. A local holding an object-erased
+        // `Func<object, string>` is dispatched through that type's `Invoke`, not through the `Func<string, string>`
+        // the frontend stamped from the pre-erasure Kotlin type — the two are unrelated constructed delegates and
+        // the emitted `callvirt` would name a method the value does not have.
+        if (recvType is TypeNode.Fn rfn && fn != null && !rfn.Equals(fn) && IsObjectErasureOf(rfn, fn))
+        {
+            obj["funcType"] = TypeJson.Write(rfn);
+            fn = rfn;
+        }
+        TypeNode[] declParams = null;
+        if (fn is { Suspend: false } && obj["args"] is JsonArray args)
+            declParams = fn.DelegateParams.Length == args.Count ? fn.DelegateParams
+                : fn.Params.Length == args.Count ? fn.Params
+                : null;
+        if (declParams == null) { EvalChildrenOf(obj, "args", ctx); return fn?.Ret; }
+        var flowed = RealignArgs(obj, declParams, null, null, null, ctx);
+        // A DELEGATE PARAMETER KEEPS ITS DECLARED `Nullable<V>` (see NullableGenericErasure's header), so an
+        // invocation is also the one call shape whose argument may need the ordinary VALUE-nullable wrap rather than
+        // the object seam: `f(3)` on a `(Int?) -> R` pushes an `int32` where a `Nullable<int32>` is required, which
+        // is not a stack-type imprecision but an invalid program. A direct call gets this from kotc, which knows the
+        // callee's declaration; a delegate invocation has only the `funcType`, and it is read here.
+        if (flowed != null && obj["args"] is JsonArray args2)
+            for (var i = 0; i < args2.Count && i < declParams.Length; i++)
+                if (declParams[i] is TypeNode.Nullable { Of: TypeNode.Fqn ev } && _isValue(ev.Name)
+                    && flowed[i] is TypeNode.Fqn av && av.Name == ev.Name
+                    && args2[i] is JsonObject a2)
+                    args2[i] = new JsonObject { ["k"] = "nullableWrap", ["elem"] = TypeJson.Write(ev), ["e"] = a2.DeepClone() };
+        return fn?.Ret;
     }
 
     // An inline iteration binds a loop VARIABLE, whose type is the node's `elem`. Registering it makes the body's

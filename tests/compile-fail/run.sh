@@ -10,6 +10,8 @@
 # Layout — one case per `<name>.kt` with a companion `<name>.expected`:
 #   <name>.kt         the source, compiled standalone by scripts/dotkt.sh (the same pipeline the .ktproj lane drives)
 #   <name>.expected   substrings the combined stdout+stderr must ALL contain; blank lines and `#` lines are comments
+#   <name>.cs         OPTIONAL — a .NET surface the case is refused against, compiled to a plain C# library and
+#                     passed as `--ref`. A refusal ABOUT a foreign declaration has no Kotlin-only witness.
 #
 # Green (exit 0) iff every case that fails is listed in CF_XFAIL below, with the same machine-readable
 # "one reason per known failure" discipline as the other gates — the baseline is EMPTY, and a new failure or a
@@ -36,7 +38,30 @@ for kt in "$HERE"/*.kt; do
 		NEW_FAILS+=("$name"); continue
 	fi
 
-	out="$(bash "$ROOT/scripts/dotkt.sh" "$kt" -d "$work/$name" 2>&1)" && rc=0 || rc=$?
+	# A case may name a .NET SURFACE it is refused against: `<name>.cs` beside it is compiled to a plain C#
+	# library and passed as a reference. Some refusals are ABOUT a foreign declaration — a .NET member whose
+	# signature no Kotlin expression inhabits — so there is no Kotlin-only source that can witness them, and a
+	# refusal with no witness is a claim rather than a behaviour. The project is generated here rather than checked
+	# in: the case owns one .cs file and nothing else.
+	declare -a refargs=()
+	cs="$HERE/$name.cs"
+	if [[ -f "$cs" ]]; then
+		csdir="$work/$name.ref"; mkdir -p "$csdir"
+		cp "$cs" "$csdir/"
+		cat > "$csdir/ref.csproj" <<'CSPROJ'
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework><Nullable>disable</Nullable><ImplicitUsings>disable</ImplicitUsings><AssemblyName>CompileFailRef</AssemblyName></PropertyGroup>
+</Project>
+CSPROJ
+		if ! (cd "$csdir" && dotnet build -c Release -o bin -v q --nologo >"$csdir/build.log" 2>&1); then
+			echo "FAIL  $name — the case's .NET surface ($name.cs) did not build"
+			sed 's/^/        /' "$csdir/build.log" | tail -20
+			NEW_FAILS+=("$name"); continue
+		fi
+		refargs=(--ref "$csdir/bin/CompileFailRef.dll")
+	fi
+
+	out="$(bash "$ROOT/scripts/dotkt.sh" ${refargs[@]+"${refargs[@]}"} "$kt" -d "$work/$name" 2>&1)" && rc=0 || rc=$?
 
 	detail=""
 	if (( rc == 0 )); then

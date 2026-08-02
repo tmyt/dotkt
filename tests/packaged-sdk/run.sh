@@ -211,6 +211,13 @@ using System; using System.Linq; using System.Reflection;
 // `System.Object` and its pre-erasure Kotlin shape travels in the carrier attribute. That is one assertion a
 // behavioral case cannot make — a slot can be physically wrong and still run when nothing crosses it.
 class P {
+    // The slot type as a STABLE display name: a constructed generic's arguments are rendered recursively rather
+    // than through `FullName`, whose per-argument assembly qualification carries a runtime version and would make
+    // every expectation drift with the SDK. An open type parameter has no FullName at all; its Name is `T`.
+    static string Render(Type t) =>
+        t.IsArray ? Render(t.GetElementType()) + "[]"
+        : t.IsGenericType ? t.GetGenericTypeDefinition().FullName + "[" + string.Join(",", t.GetGenericArguments().Select(Render)) + "]"
+        : (t.FullName ?? t.Name);
     static int Main(string[] a) {
         var shape = a.Length > 0 && a[0] == "--shape";
         if (shape) a = a.Skip(1).ToArray();
@@ -250,7 +257,7 @@ class P {
             if (pi >= ps.Length) { Console.Error.WriteLine($"refcheck: {a[1]}.{a[2]} has {ps.Length} parameter(s), no {a[3]}"); return 1; }
             slotType = ps[pi].ParameterType; attrs = ps[pi].GetCustomAttributesData();
         } else { Console.Error.WriteLine($"refcheck: unknown slot '{a[3]}' (expected `ret` or `pN`)"); return 1; }
-        var actual = slotType.FullName ?? slotType.Name;   // an open type parameter has no FullName; its Name is `T`
+        var actual = Render(slotType);
         var carrier = attrs.Any(x => x.AttributeType.FullName == "DotKt.Runtime.CompilerServices.KotlinNullableGenericAttribute");
         var ok = actual == a[4] && (a[5] == "any" || carrier == (a[5] == "1"));
         if (!ok) Console.Error.WriteLine($"refcheck: {a[1]}.{a[2]} slot {a[3]} is [{actual}] carrier={(carrier ? 1 : 0)}; expected [{a[4]}] carrier={a[5]}");
@@ -441,6 +448,20 @@ class NBox<T>(val value: T?) {                    // T? CTOR PARAM + backing fie
     fun orElse(d: T): T = value ?: d
 }
 
+class NgLists {
+    fun boxedList(n: Int): List<Int?> = listOf(n, null, n * 2)   // List<Int?> RETURN
+    fun sumPresent(xs: List<Int?>): Int {                        // List<Int?> PARAM
+        var s = 0
+        for (x in xs) if (x != null) s += x
+        return s
+    }
+    fun joinPresent(xs: List<String?>): String {                 // the REFERENCE control: still IReadOnlyList<string>
+        var s = ""
+        for (x in xs) if (x != null) s = if (s == "") x else s + "," + x
+        return s
+    }
+}
+
 class NgArrays {
     fun boxedPair(n: Int): Array<Int?> {          // Array<Int?> RETURN
         val a = arrayOfNulls<Int>(3)
@@ -485,7 +506,10 @@ EOF
 			"nglib.ApiKt|pick|ret|System.Object|1" \
 			'nglib.NBox`1|.ctor|p0|System.Object|1' \
 			"nglib.NgArrays|boxedPair|ret|System.Object[]|any" \
-			"nglib.NgArrays|sumPresent|p0|System.Object[]|any"
+			"nglib.NgArrays|sumPresent|p0|System.Object[]|any" \
+			'nglib.NgLists|boxedList|ret|System.Collections.Generic.IReadOnlyList`1[System.Object]|1' \
+			'nglib.NgLists|sumPresent|p0|System.Collections.Generic.IReadOnlyList`1[System.Object]|1' \
+			'nglib.NgLists|joinPresent|p0|System.Collections.Generic.IReadOnlyList`1[System.String]|0'
 		do
 			IFS='|' read -r pOwner pMember pSlot pType pCarrier <<<"$probe"
 			if ! dotnet "$REFCHECK/bin/refcheck.dll" --shape "$libdll" "$pOwner" "$pMember" "$pSlot" "$pType" "$pCarrier" \
@@ -539,18 +563,25 @@ class Program {
         object present = ApiKt.pick<int>(5, true);
         int boxNull = new NBox<int>(null).orElse(9);
         int boxValue = new NBox<int>(4).orElse(9);
+        var lists = new NgLists();
+        // A `List<Int?>` is an `IReadOnlyList<object>`: a C# caller can hand it a list holding a null at T=int,
+        // which no `IReadOnlyList<int>` slot admits. The `List<String?>` control still binds as `string`.
+        System.Collections.Generic.IReadOnlyList<object> boxedList = lists.boxedList(4);
+        int listSum = lists.sumPresent(new object[] { 1, null, 5 });
+        string joined = lists.joinPresent(new string[] { "a", null, "b" });
         var arrays = new NgArrays();
         object[] boxed = arrays.boxedPair(4);
         int sum = arrays.sumPresent(boxed);
         int noneSum = arrays.sumPresent(new object[] { null, null });
-        Console.WriteLine("{0} {1} {2} {3} {4} {5} {6} {7} {8} {9}",
+        Console.WriteLine("{0} {1} {2} {3} {4} {5} {6} {7} {8} {9} {10} {11} {12}",
             viaNull, viaValue, absent == null ? "null" : absent.ToString(), present,
-            boxNull, boxValue, boxed.Length, boxed[1] == null ? "null" : "set", sum, noneSum);
+            boxNull, boxValue, boxed.Length, boxed[1] == null ? "null" : "set", sum, noneSum,
+            boxedList.Count, listSum, joined);
         return 0;
     }
 }
 EOF
-	local expected="7 3 null 5 9 4 3 null 12 0" actual rc=0
+	local expected="7 3 null 5 9 4 3 null 12 0 3 6 a,b" actual rc=0
 	actual="$(run_project "$app" "$app/run.err")" || rc=$?
 	if (( rc == 0 )) && [[ "$actual" == "$expected" ]]; then pass csharp-consumer; return; fi
 

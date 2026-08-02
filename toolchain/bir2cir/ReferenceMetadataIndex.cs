@@ -1192,6 +1192,19 @@ sealed partial class ReferenceMetadataIndex
         return declaredRet != null || ps.Any(p => p.Node != null || p.Refused);
     }
 
+    // The DIRECT supertypes of a referenced type, as constructed specs in that type's OWN type-parameter frame, plus
+    // whether each is an interface. The override-slot bridge walks these so a class implementing `Derived<Int>` — where
+    // the slot is declared on `Derived`'s own base `Sink` — reaches `Sink<Int>` as a spec of its own: a MethodImpl must
+    // name the interface that DECLARES the slot, and the emitter looks the directive up under exactly that spec.
+    // Empty for a type this index does not know, which is a supertype no bridge decision may be made about.
+    public IEnumerable<(TypeNode.Fqn spec, bool isInterface)> ReferencedSupertypes(string ownerFqn)
+    {
+        if (ownerFqn == null || !_referenceTypeShapes.TryGetValue(DottedFqn(BareOwnerFqn(ownerFqn)), out var shape))
+            yield break;
+        foreach (var i in shape.Interfaces ?? Array.Empty<TypeNode.Fqn>()) yield return (i, true);
+        if (shape.Base != null) yield return (shape.Base, false);
+    }
+
     SlotLookup FindDeclaredSlot(string ownerFqn, string name, bool isStatic, int argCount, int methodArity,
         HashSet<string> path, out SlotFact declaredRet, out SlotFact[] declaredParams)
     {

@@ -1,0 +1,11 @@
+# THE BOUNDARY OF THE COLLISION REFUSAL, from the side the BACKEND does not have to hold.
+#
+# `Comparer<Int?>` and `Comparer<Long?>` are one `Comparer<object>` after carrier-argument erasure, and a type
+# cannot implement one CLR interface twice — so this looks like the supertype twin of the method/constructor
+# collision. It is not, because the Kotlin FRONTEND already refuses it: two instantiations of one head are
+# inconsistent type arguments, whatever the arguments are. Two DIFFERENT heads cannot erase onto one head, so the
+# supertype collision is unreachable and bir2cir deliberately carries no check for it (a backend check there would
+# be unreachable code pretending to be a safety net). This case pins that boundary: if the frontend ever started
+# accepting the pair, this file would compile and the gate would say so.
+type parameter 'T' of 'interface Comparer<T> : Any' has inconsistent values
+a supertype appears twice

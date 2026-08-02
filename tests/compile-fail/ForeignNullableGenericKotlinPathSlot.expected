@@ -1,0 +1,3 @@
+# The CLASS is named, not the Kotlin interface it goes through — that one discharges nothing and stays legal.
+'CThroughKotlin' derives from 'plainnet.ITakeThrough'
+a slot NO Kotlin expression inhabits

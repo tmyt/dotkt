@@ -1,0 +1,155 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.Json.Nodes;
+using DotKt.Bir;
+
+// ONE TRANSITIVE SUPERTYPE WALK, SHARED BY EVERY PASS THAT ASKS "WHAT DOES THIS TYPE INHERIT?".
+//
+// Two passes need the same graph and would answer differently if each walked its own. `KotlinOverrideSlotBridge`
+// walks it to find the slots an erased override must fill; `ForeignNullableGenericCrossing` walks it to find the
+// slots a .NET supertype declares that no Kotlin body can fill. A second copy of the walk is not a duplication of
+// convenience — the first round of this work had one, it saw only DIRECT supertypes, and a class deriving from a
+// .NET interface that merely EXTENDED the declaring one compiled clean and died at load. So the walk lives here
+// once, and a pass that needs it asks rather than reimplements.
+//
+// The graph spans BOTH provenances, because a chain crosses freely between them: a Kotlin `interface KI : ITake`
+// declared in this compilation is a hop on the way to a .NET declaration, and a referenced `IDerived : IBase` is a
+// hop on the way to another referenced one. A LOCAL type answers from its own BIR declaration; a REFERENCED one
+// answers from `ReferenceMetadataIndex.ReferencedSupertypes`, which reads the reflected shape (`GetInterfaces()`,
+// already transitive, plus the direct base) of the producing assembly.
+//
+// Every supertype is yielded as a CONSTRUCTED spec in the STARTING type's own type-parameter frame: each hop
+// substitutes the declared supertype arguments, so `class C : Derived<Int>` where `Derived<T> : Sink<T>` reaches
+// `Sink<Int>` and not `Sink<T>`. A MethodImpl names the type that DECLARES the slot, so that framing is what makes
+// the descriptor resolvable; a pass that only needs the NAME simply ignores the arguments.
+static class SupertypeGraph
+{
+    // A type DECLARED IN THIS COMPILATION, indexed by its BIR name. `Node`/`Methods` are the live JSON, so a pass
+    // that rewrites a declaration rewrites the tree.
+    public sealed class Def
+    {
+        public string Name;
+        public string Kind;
+        public int Arity;
+        public TypeNode.Fqn Base;
+        public TypeNode.Fqn[] Interfaces = Array.Empty<TypeNode.Fqn>();
+        public JsonObject Node;
+        public JsonArray Methods;
+    }
+
+    // Every type declared across the given roots, nested types included. Later roots win on a name collision, which
+    // cannot happen in a well-formed compilation and is not a decision this walk gets to make.
+    public static Dictionary<string, Def> Collect(IEnumerable<JsonNode> roots)
+    {
+        var result = new Dictionary<string, Def>(StringComparer.Ordinal);
+        foreach (var root in roots) CollectFrom(root, result);
+        return result;
+    }
+
+    static void CollectFrom(JsonNode node, Dictionary<string, Def> result)
+    {
+        if (node is not JsonObject obj || obj["types"] is not JsonArray types) return;
+        foreach (var type in types.OfType<JsonObject>())
+        {
+            if (Str(type["name"]) is not string name) continue;
+            result[name] = new Def
+            {
+                Name = name,
+                Kind = Str(type["kind"]),
+                Arity = (type["typeParams"] as JsonArray)?.Count ?? 0,
+                Base = TypeJson.Read(type["base"]) as TypeNode.Fqn,
+                Interfaces = (type["interfaces"] as JsonArray)?.Select(TypeJson.Read)
+                    .OfType<TypeNode.Fqn>().ToArray() ?? Array.Empty<TypeNode.Fqn>(),
+                Node = type,
+                Methods = type["methods"] as JsonArray ?? new JsonArray(),
+            };
+            CollectFrom(type, result);
+        }
+    }
+
+    // Every supertype this type reaches, as a CONSTRUCTED spec in its own type-parameter frame: the interface graph
+    // (transitively, so a base interface's redeclared slot is reached) and the base-class chain. Bounded by a visited
+    // set keyed on the constructed spec, so cyclic or repeated metadata terminates.
+    public static IEnumerable<(TypeNode.Fqn spec, bool isInterface)> Reachable(Def cls,
+        IReadOnlyDictionary<string, Def> defs, ReferenceMetadataIndex refs)
+    {
+        var queue = new Queue<(TypeNode.Fqn, bool)>();
+        foreach (var i in cls.Interfaces) queue.Enqueue((i, true));
+        if (cls.Base != null) queue.Enqueue((cls.Base, false));
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        while (queue.Count > 0)
+        {
+            var (spec, isInterface) = queue.Dequeue();
+            if (!seen.Add(TypeKey(spec))) continue;
+            yield return (spec, isInterface);
+            if (defs.TryGetValue(spec.Name, out var def))
+            {
+                var args = EffectiveArgs(spec, def.Arity);
+                if (args == null) continue;
+                foreach (var parent in def.Interfaces) queue.Enqueue(((TypeNode.Fqn)SubstOwnerTvs(parent, args), true));
+                if (def.Base != null) queue.Enqueue(((TypeNode.Fqn)SubstOwnerTvs(def.Base, args), false));
+                continue;
+            }
+            // A REFERENCED supertype's own graph continues the walk, so a slot DECLARED one level up is reached as a
+            // spec of its own. That matters twice: a MethodImpl names the type that declares the slot, so a directive
+            // naming the intermediate type is looked up under a spec the emitter never asks about; and a .NET
+            // interface that merely EXTENDS the declaring one hands over none of its base's members to reflection.
+            if (refs == null) continue;
+            var refArgs = spec.Args ?? Array.Empty<TypeNode>();
+            foreach (var (parent, parentIsInterface) in refs.ReferencedSupertypes(spec.Name))
+                if (SubstOwnerTvs(parent, refArgs) is TypeNode.Fqn constructed)
+                    queue.Enqueue((constructed, parentIsInterface));
+        }
+    }
+
+    // Is `owner` `from` itself, or one of its supertypes — through this compilation's declarations and through the
+    // referenced graph alike? The bridge asks it to tie an override marker to the supertype spec it may answer for.
+    // Bounded by a visited set, so cyclic or repeated metadata terminates.
+    public static bool Reaches(string from, string owner, IReadOnlyDictionary<string, Def> defs,
+        ReferenceMetadataIndex refs)
+    {
+        var queue = new Queue<string>();
+        queue.Enqueue(from);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        while (queue.Count > 0)
+        {
+            var n = queue.Dequeue();
+            if (!seen.Add(n)) continue;
+            if (n == owner) return true;
+            if (defs.TryGetValue(n, out var d))
+            {
+                foreach (var i in d.Interfaces) queue.Enqueue(i.Name);
+                if (d.Base != null) queue.Enqueue(d.Base.Name);
+                continue;
+            }
+            if (refs == null) continue;
+            foreach (var (parent, _) in refs.ReferencedSupertypes(n)) queue.Enqueue(parent.Name);
+        }
+        return false;
+    }
+
+    public static TypeNode[] EffectiveArgs(TypeNode.Fqn spec, int arity)
+    {
+        if (arity == 0) return Array.Empty<TypeNode>();
+        return spec.Args is { } args && args.Length == arity ? args : null;
+    }
+
+    public static TypeNode SubstOwnerTvs(TypeNode type, TypeNode[] args) => type switch
+    {
+        TypeNode.Tv { Scope: "type" } tv when tv.I >= 0 && tv.I < args.Length => args[tv.I],
+        TypeNode.Fqn f when f.Args is not null => new TypeNode.Fqn(f.Name, f.Args.Select(a => SubstOwnerTvs(a, args)).ToArray()),
+        TypeNode.Nullable n => new TypeNode.Nullable(SubstOwnerTvs(n.Of, args)),
+        TypeNode.Oblivious o => new TypeNode.Oblivious(SubstOwnerTvs(o.Of, args)),
+        TypeNode.Array a => new TypeNode.Array(SubstOwnerTvs(a.Elem, args)),
+        TypeNode.ByRef r => new TypeNode.ByRef(SubstOwnerTvs(r.Of, args)),
+        TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, SubstOwnerTvs(fn.Ret, args),
+            fn.Params.Select(p => SubstOwnerTvs(p, args)).ToArray(),
+            fn.Recv == null ? null : SubstOwnerTvs(fn.Recv, args)),
+        _ => type,
+    };
+
+    public static string TypeKey(TypeNode t) => TypeJson.Write(t).ToJsonString();
+
+    static string Str(JsonNode n) => n is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
+}

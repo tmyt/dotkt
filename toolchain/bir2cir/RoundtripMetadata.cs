@@ -45,9 +45,13 @@ static class RoundtripMetadata
     const string AKCtxParam     = Ns + "KotlinContextParameterAttribute";
     const string AKCtxFnType    = Ns + "KotlinContextFunctionTypeAttribute";
     const string AKNothing      = Ns + "KotlinNothingAttribute";
-    const string AKNullableGen  = Ns + "KotlinNullableGenericAttribute";
+    // The pre-erasure declaration-slot carrier. `internal` because it has a second reader in this assembly:
+    // ForeignNullableGenericCrossing decides which slot a body fills by reading the record back off the minted
+    // attribute, and matching it by an exactly-named FQN is what keeps that read off any other attribute.
+    internal const string AKNullableGen  = Ns + "KotlinNullableGenericAttribute";
     const string AKCollIdentity = Ns + "KotlinCollectionIdentityAttribute";
     const string AKType         = Ns + "KotlinTypeAttribute";
+    const string AKSupertypes   = Ns + "KotlinSupertypesAttribute";
     const string ANullable      = ClrNs + "NullableAttribute";
     const string ANullableCtx   = ClrNs + "NullableContextAttribute";
 
@@ -85,6 +89,16 @@ static class RoundtripMetadata
         // [KotlinType(version, bytes)] — a compiler-synthesized CLR type whose Kotlin surface is a different TypeNode.
         // FBoundStarProjectionErasure uses this on its non-generic existential interface so a downstream reader restores
         // the original G<*> projection rather than exposing the CLR implementation type or degrading it to Any?.
+        // [KotlinSupertypes(version, bytes)] (#86) — the type's PRE-ERASURE supertype edges and type-parameter
+        // bounds. A supertype argument erases like any other reified argument, and unlike a member slot there is no
+        // per-slot attribute to hang the Kotlin type on: the edge itself is what a consumer binds to when it writes
+        // `val s: Sink<Int?> = E()`. Same opaque TypeNode payload as every other carrier.
+        if ((to[NullableGenericErasure.SupertypesPre] as JsonValue)?.GetValue<string>() is string sup)
+        {
+            Append(to, Marker(AKSupertypes, StringArg(BirCarrier.JsonV1),
+                BytesArg(Convert.ToBase64String(BirCarrier.EncodeBody(BirCarrier.JsonV1, JsonNode.Parse(sup))))));
+            to.Remove(NullableGenericErasure.SupertypesPre);
+        }
         if ((to["kotlinType"] as JsonValue)?.GetValue<string>() is string kt)
         {
             Append(to, KotlinTypeAttr(kt));
@@ -285,6 +299,7 @@ static class RoundtripMetadata
         // The runtime build deliberately emits no round-trip attribute, but must still discard the temporary fact.
         o.Remove("kotlinType");
         o.Remove("retKotlinType");
+        o.Remove(NullableGenericErasure.SupertypesPre);
         StripAttrs(o, "attrs");
         StripDecls(o["methods"], hasParams: true);
         StripDecls(o["fields"]);
@@ -294,6 +309,12 @@ static class RoundtripMetadata
             foreach (var t in types) if (t is JsonObject to) StripRuntimeAttrs(to);
     }
 
+    // The nullable-generic slot record (`nullableGeneric`/`nullableGenericRet`) is deliberately NOT dropped here,
+    // though this build mints nothing from it. It has a second reader that runs after every file is lowered —
+    // ForeignNullableGenericCrossing decides which slot a Kotlin body fills by the pre-erasure type the erasure
+    // recorded — and dropping it here left that reader with nothing to read in the runtime build, so the whole
+    // concrete-override arm of the refusal was blind there. The record is consumed by that reader instead, in every
+    // build, and so still reaches no CIR.
     static void StripDecls(JsonNode arr, bool hasParams = false)
     {
         if (arr is not JsonArray a) return;
@@ -301,8 +322,6 @@ static class RoundtripMetadata
         {
             po.Remove("kotlinType");
             po.Remove("retKotlinType");
-            po.Remove("nullableGeneric");
-            po.Remove("nullableGenericRet");
             StripAttrs(po, "attrs");
             StripAttrs(po, "retAttrs");
             if (hasParams) StripDecls(po["params"]);
@@ -456,6 +475,7 @@ static class RoundtripMetadata
             AttrClass(AKNullableGen, Ctor(Param("System.String"), Param(ByteArrayType()))),  // #18/#147 — pre-erasure `Holder<T?>` declaration slot
             AttrClass(AKCollIdentity, Ctor(Param("System.String"), Param(ByteArrayType()))), // #29 — carrier of a pre-collapse `Box<List<T>>` collection identity
             AttrClass(AKType, Ctor(Param("System.String"), Param(ByteArrayType()))),         // compiler-synthesized CLR type -> original Kotlin TypeNode
+            AttrClass(AKSupertypes, Ctor(Param("System.String"), Param(ByteArrayType()))),   // #86 — pre-erasure supertype edges + type-parameter bounds
             // NullableAttribute — csc's DUAL ctor: (byte) FIRST, (byte[]) SECOND (declaration order preserved so the
             // MethodDef rows and BuildCab's arity fallback stay deterministic).
             AttrClass(ANullable, Ctor(Param("System.Byte")), Ctor(Param(ByteArrayType()))),

@@ -1,0 +1,9 @@
+# The refusal must name the OWNER and BOTH source constructor signatures as WRITTEN, plus the one CLR signature
+# they collapse onto — a message that only said "duplicate .ctor" would not tell the author which to change.
+# The written vectors are recovered from the pre-erasure carrier the declaration axis records for each slot, which
+# is why they print with their `?` intact rather than as the `object` they collapsed to.
+two constructors erase to one CLR signature
+Bag
+kotlin.collections.List<kotlin.Int?>
+kotlin.collections.List<kotlin.Long?>
+both become '.ctor(System.Collections.Generic.IReadOnlyList<object>)'

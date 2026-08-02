@@ -161,6 +161,94 @@ fun <A> ngCountPresent(l: List<A?>, extra: Int): Int {
     return n + extra
 }
 
+// ---- #86 : carrier-argument erasure at every reified-argument position ----------------------------------------
+// Each of these declares a CONCRETE nullable value type in one argument position, which is where the physical form
+// moves: `List<Int?>` is an `IReadOnlyList<object>`, `Box<Int?>` a `Box<object>`, `(Int?) -> R` a
+// `Func<object, R>`. Their `String?` twins are the controls — a reference `?` is not a physical difference on the
+// CLR and keeps the element type, so a C# caller of the reference form still sees `string`.
+fun ngSize(xs: List<Int?>): Int = xs.size
+fun ngJoin(xs: List<Int?>): String {
+    var s = ""
+    for (x in xs) {
+        if (s != "") s += ","
+        s += x?.toString() ?: "null"
+    }
+    return s
+}
+fun ngSizeRef(xs: List<String?>): Int = xs.size
+fun ngMutate(xs: MutableList<Int?>): Int {
+    xs.add(7)                       // a write THROUGH the erased element slot: the value boxes into it
+    xs.removeAt(1)                  // …and a structural mutation the caller must observe
+    xs.add(null)
+    var n = 0
+    for (x in xs) if (x != null) n++
+    return n
+}
+fun ngMapSize(m: Map<String, Int?>): Int = m.size
+fun ngPairSecond(p: Pair<Int?, String>): String = p.second
+class NgCarrier<T>(val v: T)
+fun ngCarrierValue(c: NgCarrier<Int?>): Int? = c.v
+fun ngNestedCount(xss: List<List<Int?>>): Int {
+    var n = 0
+    for (xs in xss) n += xs.size
+    return n
+}
+// A delegate PARAMETER component, a delegate RETURN component, and the reference control for each.
+fun ngApplyQ(x: Int?, f: (Int?) -> String): String = f(x)
+fun ngApplyQRef(x: String?, f: (String?) -> String): String = f(x)
+fun ngApplyToQ(x: Int, f: (Int) -> Int?): Int? = f(x)
+// The targets of a CALLABLE REFERENCE into a `(Int?) -> String` slot. Their declared `Int?` parameter is the Kotlin
+// surface an author wrote and a C# caller binds, so it must survive being referenced: erased to `object` it would be
+// a public signature rewritten by a USE of it, with no carrier to restore it.
+fun ngHandleQ(x: Int?): String = x?.toString() ?: "none"
+class NgRefOwner { fun member(x: Int?): String = "m" + (x?.toString() ?: "none") }
+// A `Iterable<T?>` slot at a value instantiation: the one slot an `Enumerable.Cast<object>` conversion inhabits, and
+// the position where Kotlin's covariance over a value element has no CLR counterpart.
+fun <T> ngCountIterable(xs: Iterable<T?>): Int {
+    var n = 0
+    for (x in xs) if (x != null) n++
+    return n
+}
+// A generic METHOD whose instantiation is itself `Int?`: it must be emitted at `object` from the start, because
+// `List<object>` is the only argument its `IReadOnlyList<!!0>` parameter accepts.
+fun <T> ngFirstOr(xs: List<T>, d: T): T {
+    for (x in xs) if (x != null) return x
+    return d
+}
+// An OVERRIDE at `T = Int` whose parameter is a nullable-generic COLLECTION. The base's slot is
+// `accept(IReadOnlyList<object>)` T-independently, so the override's own parameter is that same physical slot and
+// nothing needs bridging; the reference instantiation beside it proves the shape is not value-specific.
+abstract class NgListSink<T> { abstract fun accept(xs: List<T?>): String }
+class NgIntListSink : NgListSink<Int>() {
+    override fun accept(xs: List<Int?>): String {
+        var n = 0
+        for (x in xs) if (x != null) n++
+        return n.toString()
+    }
+}
+class NgTextListSink : NgListSink<String>() {
+    override fun accept(xs: List<String?>): String {
+        var n = 0
+        for (x in xs) if (x != null) n++
+        return n.toString()
+    }
+}
+
+// ---- #86 : a generic supertype declared in ANOTHER assembly, implemented at `Int?` ---------------------------
+// `kotlin.Comparable` lives in the stdlib, so the slot this class must fill is a REFERENCED declaration. Its
+// argument erases (to `IComparable<object>`, collapsed to the non-generic `System.IComparable`) while the override's
+// own parameter stays `Nullable<int32>`, so the two only meet through a bridge — and building that bridge means
+// reading the supertype's declaration off the producing assembly.
+class ngCmp(val v: Int) : Comparable<Int?> {
+    override fun compareTo(other: Int?): Int = v - (other ?: 0)
+}
+
+// The SAME-MODULE control: the supertype is in this compilation, so the bridge reads it directly.
+interface NgSlotSink<T> { fun accept(x: T): String }
+class NgLocalSink : NgSlotSink<Int?> {
+    override fun accept(x: Int?): String = x?.toString() ?: "none"
+}
+
 // ---- #287 : `is` against a NULLABLE type operand ACCEPTS null -------------------------------------------------
 // `null is String?` / `null is Int?` are true in Kotlin, and the frontend RELIES on it: the else branch of
 // `when { x is T? -> … }` carries a smart-cast to a NON-null `x`, which is what makes `x.toString()` there resolve
@@ -380,6 +468,104 @@ class NullableTests {
         assertEquals("1,3,5", dest.joinToString(","))            // 1,3,5  a two-type-parameter receiver conversion
         val bs: List<Boolean?> = listOf(true, null, false)
         assertEquals("True,False", bs.filterNotNull().joinToString(","))   // CLR-native Boolean stringification (§5)
+    }
+
+    // #86 — CARRIER-ARGUMENT ERASURE at every reified-argument position, driven at a VALUE instantiation where the
+    // physical form actually moves. `X?` for a possibly-value `X` is `System.Object` inside a generic type argument,
+    // a generic method's type argument, an array element and a delegate component alike, so `List<Int?>` is an
+    // `IReadOnlyList<object>` and `Box<Int?>` is a `Box<object>`. Each of these drives a DIFFERENT emitted shape:
+    // a member dispatch on the erased instantiation, a mutation through it, a construction that must be built at
+    // `object` rather than converted afterwards, and a delegate whose lifted target has to declare the same slot.
+    // The `String?` twins are the controls: a reference `?` is not a physical difference and must NOT move.
+    @TestAttribute
+    fun carrierArgumentErasureAcrossPositions() {
+        // Read-only and mutable collections, constructed at the erased instantiation from the start.
+        val ints: List<Int?> = listOf(1, null, 3)
+        assertEquals(3, ngSize(ints))                             // 3
+        assertEquals("1,null,3", ngJoin(ints))                    // the null element survives its erased slot
+        val muts: MutableList<Int?> = mutableListOf(1, null)
+        muts.add(4)
+        muts.add(null)
+        assertEquals(3, ngMutate(muts))                           // 3   mutation THROUGH the erased slot
+        assertEquals("1,4,null,7,null", ngJoin(muts))             // the callee's writes and removal are the caller's
+        val strs: List<String?> = listOf("a", null)               // reference control: still IReadOnlyList<string>
+        assertEquals(2, ngSizeRef(strs))                          // 2
+
+        // A map VALUE and a pair COMPONENT are ordinary type arguments.
+        val m: Map<String, Int?> = mapOf("a" to 1, "b" to null)
+        assertEquals(2, ngMapSize(m))                             // 2
+        assertNull(m["b"])                                        // null survives the erased value slot
+        assertEquals(1, m["a"])                                   // 1
+        val p: Pair<Int?, String> = Pair(null, "x")
+        assertEquals("x", ngPairSecond(p))                        // x
+        assertNull(p.first)                                       // null
+
+        // A USER generic class, constructed at `object` and read back through a value-typed consumer.
+        assertEquals(7, ngCarrierValue(NgCarrier<Int?>(7)))       // 7
+        assertNull(NgCarrier<Int?>(null).v)                       // null
+        assertEquals("s", NgCarrier<String?>("s").v)              // s   reference control
+
+        // NESTED arguments: `List<List<Int?>>` erases only the inner element.
+        val nested: List<List<Int?>> = listOf(listOf(1, null), listOf(null))
+        assertEquals(3, ngNestedCount(nested))                    // 3
+
+        // DELEGATES. A `(Int) -> Int?` is a `Func<int32, object>`, so the lifted lambda's own RETURN must be
+        // `object` too or there is no delegate; a `(Int?) -> String` keeps its `Func<Nullable<int32>, string>`
+        // (§9c-bis's one recorded exception), so an argument handed to it takes the value-nullable wrap a direct
+        // call has always had rather than pushing a bare `int32` into the slot.
+        assertEquals("5", ngApplyQ(5) { it?.toString() ?: "none" })      // 5
+        assertEquals("none", ngApplyQ(null) { it?.toString() ?: "none" })// none
+        assertEquals(4, ngApplyToQ(2) { it * 2 })                        // 4   nullable RETURN component
+        assertNull(ngApplyToQ(0) { null })                              // null
+        assertEquals("s", ngApplyQRef("s") { it ?: "none" })            // s   reference control
+        // A CALLABLE REFERENCE to a DECLARED member fills the same delegate slot, and its target's signature is the
+        // author's, not a slot the erasure may move: `ngHandleQ` stays `handle(Nullable<int32>)` and the reference
+        // still invokes correctly through a `(Int?) -> String` local. Both forms — the static `::fn` and the bound
+        // `expr::member` — because they emit different delegate nodes.
+        val viaRef: (Int?) -> String = ::ngHandleQ
+        assertEquals("3", viaRef(3))                                     // 3
+        assertEquals("none", viaRef(null))                               // none
+        val viaBound: (Int?) -> String = NgRefOwner()::member
+        assertEquals("m4", viaBound(4))                                  // m4
+        assertEquals("mnone", viaBound(null))                            // mnone
+        // KOTLIN COVARIANCE OVER A VALUE ELEMENT: `List<Int>` IS an `Iterable<Int?>`, while an
+        // `IReadOnlyList<int32>` is not the `IEnumerable<object>` that slot erases to. The conversion is the
+        // callee's to receive, and without it the iteration finds no `GetEnumerator` at all.
+        assertEquals(3, ngCountIterable(listOf(1, 2, 3)))                // 3   non-nullable value element
+        assertEquals(2, ngCountIterable(listOf<Int?>(1, null, 3)))       // 2   the nullable twin, already object
+        assertEquals(2, ngCountIterable(listOf("a", "b")))               // 2   reference control
+
+        // A generic METHOD instantiated at `Int?` must be instantiated at `object` from the start.
+        assertEquals(2, ngFirstOr(listOf<Int?>(null, 2), 9) ?: 0)  // 2
+        assertEquals(9, ngFirstOr(listOf<Int?>(null, null), 9))    // 9
+
+        // An OVERRIDE whose parameter is a nullable-generic COLLECTION: the base slot is
+        // `accept(IReadOnlyList<object>)` at every instantiation, and the override fills exactly that slot.
+        assertEquals("2", NgIntListSink().accept(listOf(1, null, 3)))    // 2
+        assertEquals("1", NgTextListSink().accept(listOf("a", null)))    // 1
+    }
+
+    // #86 — implementing a generic supertype at `Int?` when that supertype is declared in ANOTHER assembly.
+    //
+    // The supertype ARGUMENT is a reified argument and erases (`Comparable<Int?>` is an `IComparable<object>`, which
+    // the lowering then collapses onto the non-generic `System.IComparable`), while the override's own parameter is a
+    // DIRECT slot and correctly keeps its `Nullable<int32>`. Nothing then fills the base slot unless the bridge can
+    // read the supertype's declaration — and `kotlin.Comparable` is declared in the stdlib, not here. Unfilled, the
+    // type does not LOAD at all, which no verification pass reports and only running the code catches.
+    //
+    // The same-module control beside it is the shape that always worked: its supertype is in this compilation, so
+    // the bridge reads the declaration directly. Both must hold, because they take different paths to one rule.
+    @TestAttribute
+    fun erasedSupertypeArgumentFromAnotherAssembly() {
+        assertEquals(2, ngCmp(5).compareTo(3))              // 2    a REFERENCED generic supertype at Int?
+        assertEquals(5, ngCmp(5).compareTo(null))           // 5    …and its null case
+        assertEquals("7", NgLocalSink().accept(7))          // 7    the same-module control
+        assertEquals("none", NgLocalSink().accept(null))    // none
+        // Dispatch through a `Comparable<Int?>`-TYPED reference is a different, PRE-EXISTING defect and not this
+        // rule's, and it is MEASURED rather than described: `roundtrip-nullable-vt-generic-comparable-typed-dispatch`
+        // in tests/roundtrip/scenarios/run.sh drives it and its RT_XFAIL entry carries the cause and the closing
+        // condition. It used to live here as a paragraph saying "NOT asserted", which is what a fail-set exists to
+        // replace — prose cannot flip to FIXED, and nothing tells you when the cause closes.
     }
 
     @TestAttribute

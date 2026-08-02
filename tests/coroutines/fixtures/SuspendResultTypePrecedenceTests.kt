@@ -121,22 +121,35 @@ suspend fun corRtValueThroughSafeCall(h: CorRtHolder?): Int = h?.f?.invoke(5) ?:
 //   (b) the erased call IS the suspension, so the awaited state-machine field is declared from it.
 fun <T> corRtNullBoxes(x: T): List<T?> = listOf(x, null)
 
-// The consumer's parameter is `List<Any?>`, whose CLR slot is the same `IReadOnlyList<object>` the erased return
-// produces, so the argument position agrees with the value by construction and this fixture pins result TYPING and
-// nothing else. One neighbouring subject is deliberately kept out: a parameter written as the substituted
-// `List<Int?>` would hit the erasure family's documented STORE/pass-side gap (reconciling an erased value with a
-// directly-written target). A GENERIC consumer (`fun <A> f(l: List<A?>, extra: Int)`) is a second one, and one this
-// fixture must not be read as covering: bir2cir wraps its collection argument in `Enumerable.Cast<object>` and the
-// wrap's `IEnumerable<object>` result does not inhabit the consumer's `IReadOnlyList<object>` parameter, which
-// faults at run with NO suspension anywhere in the program. Section 7 covers the STAMP half of that composition
-// (which is #304, and is fixed) on shapes whose non-suspend twin is sound.
+// Three consumers, one per way the erased value can be RECEIVED, because carrier-argument erasure (#86) gives all
+// three the same physical parameter: `List<Any?>`, the directly-written substituted `List<Int?>` and a generic
+// `List<A?>` are each an `IReadOnlyList<object>`. The last two were deliberately kept out while `List<Int?>` was an
+// `IReadOnlyList<Nullable<int32>>` — the erased value did not inhabit either slot, and the generic one additionally
+// went through an `Enumerable.Cast<object>` wrap whose `IEnumerable<object>` result inhabited neither. Both are in
+// now, and each is driven through BOTH suspension compositions below.
 fun corRtCountNulls(l: List<Any?>, extra: Int): Int {
     var n = 0
     for (v in l) if (v == null) n++
     return n + extra
 }
 
+fun corRtCountNullsTyped(l: List<Int?>, extra: Int): Int {
+    var n = 0
+    for (v in l) if (v == null) n++
+    return n + extra
+}
+
+fun <A> corRtCountNullsGeneric(l: List<A?>, extra: Int): Int {
+    var n = 0
+    for (v in l) if (v == null) n++
+    return n + extra
+}
+
 suspend fun corRtErasedLeftOfSuspension(): Int = corRtCountNulls(corRtNullBoxes(7), corRtTick(0))
+
+suspend fun corRtErasedLeftOfSuspensionTyped(): Int = corRtCountNullsTyped(corRtNullBoxes(7), corRtTick(0))
+
+suspend fun corRtErasedLeftOfSuspensionGeneric(): Int = corRtCountNullsGeneric(corRtNullBoxes(7), corRtTick(0))
 
 suspend fun <T> corRtNullBoxesSuspend(x: T): List<T?> {
     corRtTick(0)
@@ -148,6 +161,13 @@ suspend fun corRtErasedAwaited(): Int {
     var n = 0
     for (v in l) if (v == null) n++
     return n
+}
+
+// The awaited value carried across the suspension as a DECLARED `List<Int?>` local, then handed to each consumer:
+// the state-machine field, the local's slot and the parameter are one physical type or none of them are.
+suspend fun corRtErasedAwaitedTyped(): Int {
+    val l: List<Int?> = corRtNullBoxesSuspend(7)
+    return corRtCountNullsTyped(l, corRtTick(0)) + corRtCountNullsGeneric(l, 0)
 }
 
 // ---- 6. the suspend `fun interface` SAM shim's result type ----------------------------------------------------
@@ -274,6 +294,16 @@ class SuspendResultTypePrecedenceTests {
     @TestAttribute
     fun erasedNullableGenericReturnIsTheSuspension() {
         assertEquals(1, blockOn { corRtErasedAwaited() })            // 1 null in [7, null]
+    }
+
+    // #86 — the same two compositions received at a DIRECTLY-WRITTEN `List<Int?>` and at a GENERIC `List<A?>`.
+    // Carrier-argument erasure makes all three consumer slots one `IReadOnlyList<object>`, so an erased value now
+    // inhabits each of them; before it, neither of these compiled to a program that ran.
+    @TestAttribute
+    fun erasedNullableGenericReachesATypedAndAGenericConsumer() {
+        assertEquals(2, blockOn { corRtErasedLeftOfSuspensionTyped() })    // 1 null in [7, null] + tick(0) = 1
+        assertEquals(2, blockOn { corRtErasedLeftOfSuspensionGeneric() })  // same, through List<A?>
+        assertEquals(3, blockOn { corRtErasedAwaitedTyped() })             // (1 + 1) + 1 across the suspension
     }
 
     @TestAttribute

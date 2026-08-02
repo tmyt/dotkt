@@ -67,8 +67,9 @@ classification.
 
 ### `[KotlinNullableGeneric]` — which slots carry it, and why it needs the NRT byte too
 
-`bir2cir` erases `Nullable(Tv)` to `object` at **every** slot (`docs/dotkt-semantics.md` §9c-bis), and records the
-pre-erasure type node on the same slot. The position set is therefore the full declaration surface, not a subset:
+`bir2cir` erases a possibly-value `X?` to `object` in every reified ARGUMENT and an open `Nullable(Tv)` everywhere
+(carrier-argument erasure, `docs/dotkt-semantics.md` §9c-bis), and records the pre-erasure type node on the same
+slot. The position set is therefore the full declaration surface, not a subset:
 
 | slot | carrier rides |
 |---|---|
@@ -78,8 +79,58 @@ pre-erasure type node on the same slot. The position set is therefore the full d
 | field | the field's `attrs` |
 | property | the property's `attrs` |
 
-At each, the erased `Nullable(Tv)` may be the slot's **head** (`x: T?`) or **nested** (`Holder<T?>`, `Array<T?>`,
-`(T) -> T?`, `Holder<T?>?`). The two need different amounts of help on the way back:
+ELIGIBILITY is the erasure's own rule, so it covers a CONCRETE argument as well as an open one: a slot needs the
+carrier when it has an open `Nullable(Tv)` anywhere, or a possibly-value `X?` in a reified argument — `List<Int?>`,
+`Box<Int?>`, `Array<Int?>`, `(Int?) -> R`, `List<List<Int?>>`. Without it a reader sees only the `object` argument
+and restores `List<Any?>`, a DIFFERENT Kotlin type a consumer's own `List<Int?>` cannot bind to. A direct `Int?`
+HEAD is deliberately not eligible: it keeps its `System.Nullable<int32>` and reads back without help.
+
+### `[KotlinSupertypes]` — the edge a per-slot carrier cannot reach
+
+A SUPERTYPE ARGUMENT erases like any other reified argument, and it is the one erased position with no declaration
+slot to hang a carrier on. Left unrestored it is a **Kotlin SOURCE break**, not an internal one: a consumer that
+re-imports `class E : Sink<Int?>` sees `Sink<Any?>`, so `val s: Sink<Int?> = E()` no longer compiles. Member carriers
+cannot repair it — every member's own slot is already exact, and what was lost is the identity of the EDGE — and
+source compatibility is the one thing an internal representation decision may not spend. So the edges ride a
+TYPE-LEVEL carrier:
+
+| carrier | rides | payload |
+|---|---|---|
+| `[KotlinSupertypes(version, bytes)]` | the type's `attrs` | `{base?, interfaces?, bounds?}` of pre-erasure TypeNodes |
+
+The payload is the same opaque TypeNode encoding every other carrier uses, so no new format is introduced; `bounds`
+maps a TYPE parameter's index to the pre-erasure list of that parameter's upper bounds, which erase for the same
+reason and are lost the same way. Each member is recorded only where the erasure actually moved that position — an
+edge it did not touch is not on the carrier, so the consumer's own projection decisions for it stand — and an
+ordinary type carries nothing at all. dll2klib reads all three back (`RestoreErasedSupertypes`): the two supertype
+members replace a projected edge by head, `bounds` is applied to the type parameter at that index.
+
+Two boundaries of `bounds`, both measured. A METHOD's type-parameter bounds are not on it — this carrier is
+type-level and giving a member one is a channel that does not exist — so a `fun <T : Sink<Int?>> f()` still
+re-imports its bound as the physical `Sink<object>`. And a bound the erasure never moved is not restored by it
+either: dll2klib does not project a CLASS type parameter's CLR constraint at all (only method and property ones,
+`AddMethodTypeParameters`), so a `class Box<T : Sink<String>>` re-imports with no bound whatever this carrier does.
+That gap is older than the erasure and independent of it — the reference control fails identically — and closing it
+means deciding what a CLR `struct`/`ValueType` constraint means as a Kotlin bound, which is its own subject.
+
+WHAT IT DOES NOT COVER, measured rather than assumed: **#29's collection-identity collapse at a supertype
+position**. `class B : Box<List<String>>` emits `Box<IList<string>>` and a consumer still cannot assign `B()` to a
+`Box<List<String>>` — the identical source break, one transform over. The carrier does not fire because it is
+recorded only where `NullableGenericErasure.Erase` moves the node, and the collection collapse is a different
+rewrite that `Erase` does not implement; `[KotlinCollectionIdentity]` records the same four declaration slots and no
+type-level one, exactly as the nullable-value carrier did before this. The CHANNEL generalizes — the payload is an
+opaque TypeNode object and a second producer could stamp into it — but nothing stamps it today, so the break is
+real and open.
+
+`dll2klib` restores the edges by HEAD, not by position, and that is load-bearing: the projected supertype list is not
+a transcription of the metadata's interface list — it drops the non-generic shadows, collapses the `IComparable`
+bridge and synthesizes `kotlin.Throwable`/`kotlin.Any` edges — so an index would line up with nothing. Replacing an
+entry whose class name and argument count the carrier also names keeps every one of those decisions and moves only
+the arguments, which is all that was erased. Witnessed cross-module by
+`roundtrip-nullable-vt-generic-supertype-edge`.
+
+At each carried slot, the erasure may be at the slot's **head** (`x: T?`) or **nested** (`Holder<T?>`, `List<Int?>`,
+`Array<T?>`, `(T) -> T?`, `Holder<T?>?`). The two need different amounts of help on the way back:
 
 - A reader **strips the carrier's outer nullability** before use — the carrier owns the inner tree, and the slot's own
   `[Nullable]` byte owns the outer `?`, exactly as it does for `[KotlinSuspendFunctionType]`. So a nested erasure

@@ -1,0 +1,4 @@
+# The slot is the ACCESSOR, and the message names it as such.
+'CAccessor' derives from 'plainnet.IProp'
+whose member 'get_Items' declares
+a slot NO Kotlin expression inhabits

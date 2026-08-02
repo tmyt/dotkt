@@ -213,13 +213,27 @@ sealed partial class Emitter
             ? TypeBuilder.GetMethod(constructed, constructed.GetGenericTypeDefinition().GetMethod(name))
             : constructed.GetMethod(name);
 
-    // Substitute an open interface's own generic parameters (positionally = `typeArgs`) throughout a base-interface
-    // reference as declared on that open def — including CONSTRUCTED args (`ICollection<KeyValuePair<K,V>>` with
-    // K:=string,V:=int -> `ICollection<KeyValuePair<string,int>>`). Every generic parameter appearing in such a
-    // reference is declared by the open type, so GenericParameterPosition indexes `typeArgs` directly.
+    // Substitute an open TYPE's own generic parameters (positionally = `typeArgs`) throughout a member reference as
+    // declared on that open def — including CONSTRUCTED args (`ICollection<KeyValuePair<K,V>>` with
+    // K:=string,V:=int -> `ICollection<KeyValuePair<string,int>>`). Re-anchoring is onto the OWNER's instantiation and
+    // nothing else, so only an owner-declared parameter is a position in `typeArgs`.
+    // A METHOD's own type parameters are `IsGenericParameter` too (`DeclaringMethod != null`) and number from zero in
+    // their OWN scope, so substituting them positionally would rewrite `<U, V> put(x: T, u: U, v: V)`'s `U` with the
+    // owner's first type argument and index past the end at `V`. They are already correct against the method being
+    // matched — the method is still open there — so they are returned unchanged.
+    // An ELEMENT-wrapped position (`T[]`, `T&`, `T*`, and their nesting) is neither a generic parameter nor a generic
+    // type, so it used to fall through as the OPEN `T[]` — a signature the instantiation never has. It is rebuilt
+    // structurally here, exactly as `SubstituteMethodArgs` does on the method axis.
     static Type SubstituteIfaceArgs(Type t, Type[] typeArgs)
     {
-        if (t.IsGenericParameter) return typeArgs[t.GenericParameterPosition];
+        if (t.IsGenericParameter) return t.DeclaringMethod == null ? typeArgs[t.GenericParameterPosition] : t;
+        if (t.HasElementType)
+        {
+            var e = SubstituteIfaceArgs(t.GetElementType(), typeArgs);
+            if (ReferenceEquals(e, t.GetElementType())) return t;
+            return t.IsArray ? (t.GetArrayRank() == 1 ? e.MakeArrayType() : e.MakeArrayType(t.GetArrayRank()))
+                : t.IsByRef ? e.MakeByRefType() : t.IsPointer ? e.MakePointerType() : t;
+        }
         if (!t.IsGenericType) return t;
         var args = t.GetGenericArguments().Select(a => SubstituteIfaceArgs(a, typeArgs)).ToArray();
         return t.GetGenericTypeDefinition().MakeGenericType(args);
@@ -273,9 +287,21 @@ sealed partial class Emitter
     // instantiations of the same shape compare by name (TypeBuilderInstantiation instances are not reference-equal
     // even for identical shapes). Deliberately shallow — the caller only disambiguates same-name OVERLOADS, whose
     // param lists differ at the top level (CompareTo(Ver) vs CompareTo(object)).
-    static bool SlotParamMatches(Type body, Type iface) =>
+    // A METHOD's own type parameter is the one thing here with NO name identity across two declarations: the CLI
+    // encodes it as `!!i` (ECMA-335 II.23.2.12) and an override may rename it — `<X, Y> keep(x, u, v)` fills
+    // `<U, V> keep(...)`, same slot, different spelling. So two method-scoped parameters are the same position when
+    // their indices agree, and the name comparison is never asked about them.
+    bool SlotParamMatches(Type body, Type iface) =>
         ReferenceEquals(body, iface) || body == iface
+        || (IsMethodScoped(body) && IsMethodScoped(iface)
+            && body.GenericParameterPosition == iface.GenericParameterPosition)
         || (body.Name == iface.Name && (body.Namespace ?? "") == (iface.Namespace ?? ""));
+
+    // Whose scope a generic parameter belongs to. A REFLECTED declaration answers directly; an EMITTED
+    // `GenericTypeParameterBuilder` reports neither a declaring method nor a declaring type (measured — both are null
+    // for a type's parameter AND for a method's), so `_emittedMethodTps` is the only thing that can tell them apart.
+    bool IsMethodScoped(Type t) =>
+        t.IsGenericParameter && (t.DeclaringMethod != null || _emittedMethodTps.Contains(t));
 
     // Consume bir2cir's resolved `clrInterfaceImpls` directive. Matching is structural against the already-substituted
     // interface spec and parameter signature; no assignability, hierarchy, or covariance decision occurs here.
@@ -296,6 +322,10 @@ sealed partial class Emitter
                     || !impl.TryGetProperty("member", out var memberNode)
                     || memberNode.GetString() != member
                     || !impl.TryGetProperty("params", out var ps)) continue;
+                // ARITY comes from the DESCRIPTOR, not from the slot being matched. Taking it from the slot made a
+                // directive for `put(T?)` answer for `<U> put(T?)` as well — one bridge wired to two CLR slots,
+                // which the CLR rejects outright.
+                if (DescribedArity(impl) != slotSig.GenericArity) continue;
                 var describedSig = SigKey(member, slotSig.GenericArity,
                     ps.EnumerateArray().Select(p => DotKt.Bir.TypeNode.Read(p)));
                 if (describedSig != slotSig) continue;
@@ -303,6 +333,78 @@ sealed partial class Emitter
             }
         }
         return null;
+    }
+
+    // The same directive, consumed for a REFERENCED or BCL interface slot. The emitted-interface branch can match
+    // bir2cir's `clrInterfaceImpls` by sig TOKEN because both sides are CIR type nodes; here the slot is reflection
+    // `Type`s, so the bridge is matched by the identical structural parameter comparison the name-based lookup uses.
+    // Still consumption only: which member fills the slot, and with exactly which signature, is bir2cir's decision.
+    //
+    // Without this a bridge for a referenced supertype is emitted and then never wired: the name-based lookup below
+    // searches for a body CALLED like the slot, and a bridge is deliberately named nothing of the sort.
+    MethodBuilder FindExternalInterfaceBridge(TypeInfo ti, Type ifaceType, string member,
+        int methodArity, Type[] ips)
+    {
+        if (ti.Def.ValueKind != JsonValueKind.Object || !ti.Def.TryGetProperty("methods", out var methods)) return null;
+        foreach (var method in methods.EnumerateArray())
+        {
+            if (!method.TryGetProperty("clrInterfaceImpls", out var impls)
+                || !method.TryGetProperty("name", out var nameNode)) continue;
+            foreach (var impl in impls.EnumerateArray())
+            {
+                // The owner is compared as a RESOLVED TYPE, not as a spec string: a slot reached through a referenced
+                // interface's own base is enumerated by reflection and has no spec to canonicalize against.
+                if (!impl.TryGetProperty("owner", out var ownerNode)
+                    || ReadFqn(ownerNode) is not DotKt.Bir.TypeNode.Fqn owner
+                    || MapType(owner) != ifaceType
+                    || !impl.TryGetProperty("member", out var memberNode)
+                    || memberNode.GetString() != member) continue;
+                if (DescribedArity(impl) != methodArity) continue;
+                if (!ti.Methods.TryGetValue(nameNode.GetString(), out var bridge)) continue;
+                if (_mparams.TryGetValue(bridge, out var bps) && bps.Length == ips.Length
+                    && bps.Zip(ips, SlotParamMatches).All(x => x))
+                    return bridge;
+            }
+        }
+        return null;
+    }
+
+    // The METHOD GENERIC ARITY a MethodImpl descriptor states. Part of the CLI signature (ECMA-335 I.8.6.1.6), so
+    // part of the identity a directive is matched by; absent on an older descriptor, which then means arity 0.
+    static int DescribedArity(JsonElement impl) =>
+        impl.TryGetProperty("arity", out var a) && a.ValueKind == JsonValueKind.Number ? a.GetInt32() : 0;
+
+    // The base-class slot a `clrBaseImpls` descriptor names when its owner lives in a REFERENCED assembly. The
+    // owner is a real reflection Type, so the slot is a real MethodInfo: match by name, method generic arity and the
+    // descriptor's own (already-constructed) parameter vector. Resolution only — the descriptor decided the slot.
+    MethodInfo FindExternalBaseSlot(DotKt.Bir.TypeNode.Fqn ownerFqn, string member, int arity, JsonElement ps)
+    {
+        var owner = MapType(ownerFqn);
+        if (owner == null) return null;
+        var want = ps.EnumerateArray().Select(p => MapType(p)).ToArray();
+        // A REFERENCED GENERIC base instantiated at a LOCALLY EMITTED type argument — `class C : Base<LocalType>` —
+        // is a TypeBuilderInstantiation, whose `GetMethods()` throws. That is a perfectly ordinary shape, not an
+        // impossible one: the open definition is enumerated instead and each candidate re-anchored onto the
+        // instantiation, exactly as the referenced-INTERFACE path already does for the same reflection shape.
+        MethodInfo[] all;
+        var reanchor = false;
+        try { all = owner.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance); }
+        catch (NotSupportedException)
+        {
+            all = owner.GetGenericTypeDefinition()
+                .GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            reanchor = true;
+        }
+        var args = reanchor ? owner.GetGenericArguments() : null;
+        var cands = all.Where(m => m.Name == member
+                                   && m.GetGenericArguments().Length == arity
+                                   && m.GetParameters().Length == want.Length
+                                   && m.GetParameters()
+                                       .Select(p => reanchor ? SubstituteIfaceArgs(p.ParameterType, args) : p.ParameterType)
+                                       .Zip(want, SlotParamMatches).All(x => x))
+            .ToList();
+        if (cands.Count != 1) return null;
+        return reanchor ? TypeBuilder.GetMethod(owner, cands[0]) : cands[0];
     }
 
     // A STATIC method declared on a GENERIC emitted class (a Kotlin companion fun of a generic class —

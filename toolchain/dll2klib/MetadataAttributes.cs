@@ -50,6 +50,24 @@ internal sealed class MetadataAttributes
     public int? Int32(EntityHandle owner, string name) =>
         Find(owner, name)?.Int32Value;
 
+    // A carrier whose payload is a JSON OBJECT rather than a single TypeNode — `[KotlinSupertypes]`, whose body is
+    // `{base?, interfaces?, bounds?}` of pre-erasure nodes. Same envelope and same opaque encoding as every other
+    // carrier; only the shape inside differs, which is why it is decoded here rather than through `CarrierType`.
+    public System.Text.Json.JsonDocument? CarrierDocument(EntityHandle owner, string name)
+    {
+        var attr = Find(owner, name);
+        if (attr?.StringValue is not { } version || attr.BytesValue is not { } bytes) return null;
+        try
+        {
+            var body = BirCarrier.DecodeBody(version, bytes);
+            return System.Text.Json.JsonDocument.Parse(body.ToJsonString(), DotKt.Bir.BirJson.DocOptions);
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidDataException($"malformed [{name}] carrier: {ex.Message}", ex);
+        }
+    }
+
     public TypeNode? CarrierType(EntityHandle owner, string name)
     {
         var attr = Find(owner, name);
