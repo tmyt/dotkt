@@ -7,7 +7,9 @@
 # otherwise (#131 is the same class of drift, one surface further in).
 #
 # workflow_dispatch is offered for a re-publish of a tag that is already pushed (a feed outage, a package
-# that failed to upload after its siblings). It packs from the ref you dispatch on; it does not tag.
+# that failed to upload after its siblings) — dispatch it ON THE TAG. It never tags, and it refuses any ref
+# that is not a `v*` tag: dispatch can otherwise be pointed at a branch, and publishing an untagged tree is
+# exactly the accident a release workflow must not make easy.
 #
 # The gate is NOT re-run here. `verify` and `packaged-sdk` already ran on the commit as a pull request, and
 # the packaged-SDK job is precisely the one that restores and consumes these five nupkgs from a feed — so a
@@ -47,11 +49,16 @@ jobs:
             ~/.gradle/wrapper
           key: gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
 
-      # The tree decides the version; the tag only says which tree. Disagreement is a release-stopping error.
-      - name: Check the tag against packaging/DotKt.Versions.props
-        if: github.event_name == 'push'
+      # The tree decides the version; the tag only says WHICH tree. So this runs for every trigger: a push of
+      # the tag, and a dispatch aimed at one. A ref that is not a `v*` tag is refused outright rather than
+      # published under whatever version the tree happens to carry.
+      - name: Check the ref is a v* tag, and the tag against packaging/DotKt.Versions.props
         run: |
           set -euo pipefail
+          case "$GITHUB_REF" in
+            refs/tags/v*) ;;
+            *) echo "::error::$GITHUB_REF is not a v* tag — release publishes only from a tag (dispatch it on the tag)"; exit 1 ;;
+          esac
           prefix=$(grep -oE '<DotKtVersionPrefix>[^<]+' packaging/DotKt.Versions.props | sed 's/.*>//')
           suffix=$(grep -oE '<DotKtVersionSuffix>[^<]*' packaging/DotKt.Versions.props | sed 's/.*>//')
           core="$prefix"; [ -n "$suffix" ] && core="$prefix-$suffix"
