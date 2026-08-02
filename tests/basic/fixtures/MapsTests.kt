@@ -16,7 +16,6 @@
 //   il-mapgen    -> mapgen_concreteGen   concrete generic HashMap/ArrayList/LinkedHashMap rule-3 + getOrDefault
 //   il-mapmerge  -> mapmerge_merge       MutableMap.merge (insert / remap / null-removes), JVM-oracle
 //   il-mapof1    -> mapof1_singlePair    mapOf single-pair overload (since-1.9) + mutable parity
-//   il-maptostr  -> maptostr_toString    Map operand prints Kotlin-style {a=1, b=2}, not the raw Dictionary`2
 //   il-mapvalues -> mapvalues_mapValues  groupBy().mapValues{} + direct size/containsKey on a groupBy result (#29)
 //
 // nullableGenericMapIdiomsAtValueTypes is not migrated from a case: it is the #86 value-instantiation armor for
@@ -212,16 +211,6 @@ class MapsTests {
         assertEquals(1, m["a"])                         // 1
         assertEquals(2, mapOf("x" to 1, "y" to 2).size) // 2 (vararg still works)
         assertEquals(1, mutableMapOf("k" to 7).size)    // 1 (mutable parity)
-    }
-
-    @TestAttribute
-    fun collectionStringRendering() {
-        // A Map operand prints Kotlin-style {a=1, b=2}, NOT the raw .NET Dictionary`2[...].
-        assertEquals("{a=1, b=2}", mapOf("a" to 1, "b" to 2).toString())   // {a=1, b=2}
-        val mm = mutableMapOf<String, Int>()
-        mm["x"] = 9
-        assertEquals("{x=9}", mm.toString())            // {x=9}
-        assertEquals("[1, 2, 3]", listOf(1, 2, 3).toString())              // [1, 2, 3]
     }
 
     @TestAttribute

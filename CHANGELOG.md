@@ -7,6 +7,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- **Tests: #227 consolidates eleven redundant NUnit cases into their existing feature owners.** Numeric parsing,
+  nullable string rendering, enum APIs, character ranges, preconditions, collection rendering, BCL imports, and
+  configured-await shapes now have one authoritative test location each. Assertions that preserve a distinct CLR
+  shape—mutable-map rendering, enum `entries`, raw `Math.Max`, fluent `Append(Int)`, and non-generic
+  `ConfigureAwait(false)`—move into those survivor methods before the duplicate methods and four single-test
+  fixtures are removed. The reviewed discovery baseline moves from 710 to 699 without removing a unique compiler
+  path.
+
 - **Tests: #227 finishes replacing opaque fixture collision tokens with feature names.** Remaining shorthand in
   captured-variable, lambda, language-core, default-argument, non-constant-default, and coroutine fixtures now
   states the behavior it isolates; the round-trip default-argument package is likewise named

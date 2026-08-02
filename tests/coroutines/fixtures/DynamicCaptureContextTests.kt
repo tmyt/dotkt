@@ -24,6 +24,9 @@
 // `.await()` inside a GENERIC suspend fun is separately broken (open-generic delegate binding, GitHub #303), so
 // every function here is non-generic — the same exclusion SuspendOperandOrderTests.kt carries.
 //
+// Consolidated coverage: il-cfgawait (non-generic configured awaiter, synchronous constant-false path) and
+// il-cfgawaitgen (generic ConfiguredTaskAwaitable`1 backtick arity) are represented by constantShapes below.
+//
 // Top-level names are family-prefixed (`dynamicCapture`) — the cold-core lowering keys top-level suspend funs by simple name.
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
@@ -53,6 +56,12 @@ suspend fun dynamicCaptureAwaitUnit(task: Task, capture: Boolean): Int {
 
 // A constant `false` — the same arm as the dynamic one now, reaching it as the expression `false`.
 suspend fun dynamicCaptureAwaitConstFalse(task: Task1<Int>): Int = task.await(captureContext = false)
+
+// The non-generic configured awaiter has a void GetResult; keep that physical shape in the same constant battery.
+suspend fun dynamicCaptureAwaitUnitConstFalse(task: Task): Int {
+    task.await(captureContext = false)
+    return 5
+}
 
 // The two fast-path shapes, kept HERE as well so the arm they take still executes correctly.
 suspend fun dynamicCaptureAwaitOmitted(task: Task1<Int>): Int = task.await()
@@ -191,6 +200,7 @@ class DynamicCaptureContextTests {
     // The constant shapes keep working, and the constant `false` now shares the dynamic arm.
     @TestAttribute
     fun constantShapes() {
+        assertEquals(5, blockOn { dynamicCaptureAwaitUnitConstFalse(Task.CompletedTask) })
         assertEquals(11, blockOn { dynamicCaptureAwaitConstFalse(dynamicCaptureCompleted(11)) })
         assertEquals(12, blockOn { dynamicCaptureAwaitOmitted(dynamicCaptureCompleted(12)) })
         assertEquals(13, blockOn { dynamicCaptureAwaitConstTrue(dynamicCaptureCompleted(13)) })
