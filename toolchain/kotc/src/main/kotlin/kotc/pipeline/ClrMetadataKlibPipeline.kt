@@ -5,14 +5,15 @@ package kotc.pipeline
 import org.jetbrains.kotlin.builtins.DefaultBuiltIns
 import org.jetbrains.kotlin.cli.common.diagnosticsCollector
 import org.jetbrains.kotlin.cli.common.metadataDestinationDirectory
-import org.jetbrains.kotlin.cli.metadata.buildKotlinMetadataLibrary
 import org.jetbrains.kotlin.cli.pipeline.CheckCompilationErrors
 import org.jetbrains.kotlin.cli.pipeline.PerformanceNotifications
 import org.jetbrains.kotlin.cli.pipeline.PipelineArtifact
 import org.jetbrains.kotlin.cli.pipeline.PipelinePhase
 import org.jetbrains.kotlin.cli.pipeline.metadata.MetadataFrontendPipelineArtifact
 import org.jetbrains.kotlin.cli.pipeline.metadata.MetadataSerializationArtifact
+import org.jetbrains.kotlin.config.CommonConfigurationKeys
 import org.jetbrains.kotlin.config.CompilerConfiguration
+import org.jetbrains.kotlin.config.KotlinCompilerVersion
 import org.jetbrains.kotlin.config.languageVersionSettings
 import org.jetbrains.kotlin.fir.backend.Fir2IrConfiguration
 import org.jetbrains.kotlin.fir.backend.Fir2IrExtensions
@@ -23,9 +24,15 @@ import org.jetbrains.kotlin.fir.pipeline.Fir2KlibMetadataSerializer
 import org.jetbrains.kotlin.fir.pipeline.convertToIrAndActualize
 import org.jetbrains.kotlin.ir.backend.js.lower.serialization.ir.JsManglerIr
 import org.jetbrains.kotlin.ir.types.IrTypeSystemContextImpl
+import org.jetbrains.kotlin.library.KlibFormat
+import org.jetbrains.kotlin.library.KotlinAbiVersion
+import org.jetbrains.kotlin.library.KotlinLibraryVersioning
 import org.jetbrains.kotlin.library.SerializedMetadata
+import org.jetbrains.kotlin.library.impl.BuiltInsPlatform
 import org.jetbrains.kotlin.library.metadata.KlibMetadataHeaderFlags
 import org.jetbrains.kotlin.library.metadata.KlibMetadataProtoBuf
+import org.jetbrains.kotlin.library.writer.KlibWriter
+import org.jetbrains.kotlin.library.writer.includeMetadata
 import org.jetbrains.kotlin.util.klibMetadataVersionOrDefault
 
 /**
@@ -124,7 +131,24 @@ object ClrMetadataKlibSerializerPhase : PipelinePhase<ClrMetadataKlibFir2IrArtif
 
 		val module = header.build().toByteArray()
 		val serializedMetadata = SerializedMetadata(module, fragmentParts, fragmentNames, metadataVersion.toArray())
-		buildKotlinMetadataLibrary(configuration, serializedMetadata, destDir)
+		val versions = KotlinLibraryVersioning(
+			abiVersion = KotlinAbiVersion.CURRENT,
+			compilerVersion = KotlinCompilerVersion.getVersion(),
+			metadataVersion = metadataVersion,
+		)
+		KlibWriter {
+			// The frontend stdlib ships inside DotKt.Toolchain. Keep it as one standard packed KLIB
+			// instead of making NuGet materialize every metadata fragment as a separate small file.
+			// Upstream's writer sorts entries and clears their timestamps, so identical metadata also
+			// produces byte-identical archives.
+			format(KlibFormat.ZipArchive)
+			manifest {
+				moduleName(configuration[CommonConfigurationKeys.MODULE_NAME]!!)
+				versions(versions)
+				platformAndTargets(BuiltInsPlatform.COMMON)
+			}
+			includeMetadata(serializedMetadata)
+		}.writeTo(destDir.absolutePath)
 
 		return MetadataSerializationArtifact(outputInfo = null, configuration, destDir.canonicalPath)
 	}

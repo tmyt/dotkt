@@ -62,6 +62,23 @@ for a in "${artifacts[@]}"; do
 	stamp_times+=("$(stat -c '%y' "$a.toolstamp")")
 done
 
+# The frontend KLIB is intentionally one standard ZIP archive. A directory here would make NuGet restore create
+# hundreds of tiny metadata files again; a malformed archive could pass the existence/fingerprint checks above but
+# would fail only later when kotc tried to resolve the stdlib.
+[[ -f "$FE_KLIB" ]] || die "frontend stdlib KLIB is not a packed file: $FE_KLIB"
+unzip -tqq "$FE_KLIB" || die "frontend stdlib KLIB is not a valid ZIP archive"
+unzip -Z1 "$FE_KLIB" | grep -qx 'default/manifest' ||
+	die "packed frontend stdlib KLIB has no default/manifest"
+
+# Guard the actual shipping shape, not just the build artifact. The nupkg must contain exactly one frontend-KLIB
+# entry and no tools/kotlin-stdlib-clr-frontend.klib/** tree for NuGet to expand into small files.
+mapfile -t toolchain_packages < <(find "$ROOT/build/nuget-feed" -maxdepth 1 -type f -name 'DotKt.Toolchain.*.nupkg')
+[[ ${#toolchain_packages[@]} -eq 1 ]] ||
+	die "expected exactly one DotKt.Toolchain nupkg, found ${#toolchain_packages[@]}"
+mapfile -t shipped_klib_entries < <(unzip -Z1 "${toolchain_packages[0]}" | grep '^tools/kotlin-stdlib-clr-frontend\.klib' || true)
+[[ ${#shipped_klib_entries[@]} -eq 1 && "${shipped_klib_entries[0]}" == 'tools/kotlin-stdlib-clr-frontend.klib' ]] ||
+	die "DotKt.Toolchain must ship the frontend stdlib as one packed KLIB (found: ${shipped_klib_entries[*]:-none})"
+
 log="$work/second-pack.log"
 if ! bash "$ROOT/scripts/pack-nuget.sh" >"$log" 2>&1; then
 	tail -80 "$log" >&2

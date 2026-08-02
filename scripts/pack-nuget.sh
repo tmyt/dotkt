@@ -103,7 +103,7 @@ need_stdlib_rt
 info "assemble DotKt.Toolchain/tools"
 TC="$ROOT/packaging/DotKt.Toolchain/tools"; rm -rf "$TC"; mkdir -p "$TC"
 cp -r "$ROOT/toolchain/kotc/build/install/kotc" "$TC/kotc"
-cp -r "$FE_KLIB" "$TC/kotlin-stdlib-clr-frontend.klib"
+cp "$FE_KLIB" "$TC/kotlin-stdlib-clr-frontend.klib"
 cp -r "$ROOT/build/ilemit-bin"    "$TC/ilemit"
 cp -r "$ROOT/build/bir2cir-bin"   "$TC/bir2cir"
 cp -r "$ROOT/build/dll2klib-bin"  "$TC/dll2klib"

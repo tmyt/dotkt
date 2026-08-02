@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the CLR frontend stdlib KLIB used by kotc's common/metadata frontend.
+# Build the packed CLR frontend stdlib KLIB used by kotc's common/metadata frontend.
 # This replaces the old JVM frontend JAR path: kotc now resolves kotlin.* from
 # a metadata KLIB and runs FIR2IR explicitly on the common side.
 source "$(dirname "$0")/lib.sh"
@@ -53,5 +53,5 @@ DOTKT_BUILD_KLIB=1 "$KOTC" \
 	-d "$KLIB" 2>"$OUT/kotc.err" || true
 grep ': error:' "$OUT/kotc.err" | sed -E 's/^.*: error: //' | sort | uniq -c | sort -rn | head -10 || true
 
-[[ -e "$KLIB" ]] || die "expected KLIB at $KLIB (see $OUT/kotc.err)"
+[[ -f "$KLIB" ]] || die "expected packed KLIB at $KLIB (see $OUT/kotc.err)"
 info "frontend klib: $KLIB ($(du -sh "$KLIB" | awk '{print $1}'))"
