@@ -57,6 +57,15 @@ declare -A EXPECTED_DISCOVERED=(
 	["tests/interop/consumer"]=121
 )
 
+# Validate the baseline map before doing any expensive work. A new/renamed suite without a reviewed count is a
+# harness configuration error, not an observed count change.
+for proj in "${PROJECTS[@]}"; do
+	if [[ ! -v EXPECTED_DISCOVERED[$proj] ]]; then
+		echo "run-nunit-tests: HARNESS ERROR — no EXPECTED_DISCOVERED baseline for $proj"
+		exit 1
+	fi
+done
+
 # Extra DotKt-emitted assemblies (beyond the .ktproj-named one) to ALSO run ilverify over, per consumer project.
 # Space-separated list per project. The round-trip consumer's two <ProjectReference>s copy BOTH producer dlls into
 # its bin (the single-platform RoundtripProducer + the MPP RoundtripProducerMpp); verify all (§5 order).

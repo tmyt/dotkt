@@ -16,13 +16,13 @@ inline fun <T> T.suspendExtensionReceiverOuterCaptureOperation(crossinline f: su
 
 // F1 — the inline fn spliced INSIDE a `suspend fun`, so the payload's __outer-capturing newSuspendLambda is walked by
 // SuspendColdLowering's cold transform (GAP 2), which must PRESERVE the 2B __outer capValues override.
-suspend fun suspendExtensionReceiverOuterCaptureOperationerationInSuspend(base: Int): Int = base.suspendExtensionReceiverOuterCaptureOperation { suspendExtensionReceiverOuterCaptureAdd(it, 5) }
+suspend fun suspendExtensionReceiverOuterCaptureOperationInSuspend(base: Int): Int = base.suspendExtensionReceiverOuterCaptureOperation { suspendExtensionReceiverOuterCaptureAdd(it, 5) }
 
 class SuspendExtensionReceiverCaptureTests {
     @TestAttribute
     fun outerReceiverRebindInPayloadSuspendLambda() {
         assertEquals(42, 20.suspendExtensionReceiverOuterCaptureOperation { suspendExtensionReceiverOuterCaptureAdd(it, 22) })   // f(20) = add(20, 22) = 42
         assertEquals(7, 0.suspendExtensionReceiverOuterCaptureOperation { suspendExtensionReceiverOuterCaptureAdd(it, 7) })      // f(0)  = add(0, 7)   = 7
-        assertEquals(20, blockOn { suspendExtensionReceiverOuterCaptureOperationerationInSuspend(15) })      // op spliced in a SUSPEND caller: add(15, 5) = 20
+        assertEquals(20, blockOn { suspendExtensionReceiverOuterCaptureOperationInSuspend(15) })      // op spliced in a SUSPEND caller: add(15, 5) = 20
     }
 }

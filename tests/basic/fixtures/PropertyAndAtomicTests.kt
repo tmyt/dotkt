@@ -30,11 +30,11 @@ class PropertyAtomicStore(var backing: Int) {
 class PropertyAtomicReadOnlyStore(val s: String) {
     operator fun getValue(thisRef: Any?, prop: KProperty<*>): String = s
 }
-var propertyAtomicdelegCounter by PropertyAtomicStore(0)
-val propertyAtomicdelegLabel by PropertyAtomicReadOnlyStore("init")
+var propertyAtomicDelegCounter by PropertyAtomicStore(0)
+val propertyAtomicDelegLabel by PropertyAtomicReadOnlyStore("init")
 
 // ---- il-toplateinit : top-level `lateinit var` of a reference type ------------------------------------------------
-lateinit var propertyAtomiclateS: String
+lateinit var propertyAtomicLateS: String
 
 // ---- il-volatile : @Volatile value/reference instance fields + a top-level volatile static -----------------------
 class PropertyAtomicCounter {
@@ -42,25 +42,25 @@ class PropertyAtomicCounter {
     @Volatile var label: String? = null
     fun bump() { value = value + 1 }
 }
-@Volatile var propertyAtomicglobalFlag: Boolean = false
+@Volatile var propertyAtomicGlobalFlag: Boolean = false
 
 class PropertyAndAtomicTests {
     @TestAttribute
     fun topLevelDelegatedProp() {
-        assertEquals(0, propertyAtomicdelegCounter)      // 0 (getValue)
-        propertyAtomicdelegCounter = 42
-        assertEquals(42, propertyAtomicdelegCounter)     // 42 (setValue then getValue)
-        assertEquals("init", propertyAtomicdelegLabel)   // init (read-only getValue)
+        assertEquals(0, propertyAtomicDelegCounter)      // 0 (getValue)
+        propertyAtomicDelegCounter = 42
+        assertEquals(42, propertyAtomicDelegCounter)     // 42 (setValue then getValue)
+        assertEquals("init", propertyAtomicDelegLabel)   // init (read-only getValue)
     }
 
     @TestAttribute
     fun topLevelLateinit() {
         var threw = false
-        try { propertyAtomiclateS.length } catch (e: Exception) { threw = true }
+        try { propertyAtomicLateS.length } catch (e: Exception) { threw = true }
         assertTrue(threw)                    // caught: uninitialized
-        propertyAtomiclateS = "hello"
-        assertEquals("hello", propertyAtomiclateS)       // hello
-        assertEquals(5, propertyAtomiclateS.length)      // 5
+        propertyAtomicLateS = "hello"
+        assertEquals("hello", propertyAtomicLateS)       // hello
+        assertEquals(5, propertyAtomicLateS.length)      // 5
     }
 
     @TestAttribute
@@ -73,8 +73,8 @@ class PropertyAndAtomicTests {
         assertEquals(42, c.value)            // 42
         c.label = "ready"
         assertEquals("ready", c.label)       // ready
-        propertyAtomicglobalFlag = true
-        assertTrue(propertyAtomicglobalFlag)             // True
+        propertyAtomicGlobalFlag = true
+        assertTrue(propertyAtomicGlobalFlag)             // True
     }
 
     @TestAttribute

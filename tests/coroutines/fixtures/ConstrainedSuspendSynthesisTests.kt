@@ -9,13 +9,13 @@ import kotlin.coroutines.suspendCoroutine
 // constructs a generic SAM which captures C and calls MutableCollection<T>.add through the captured field.
 // The SM must own the moved T/C variables and their C : MutableCollection<T> constraint; callee-relative `sig`
 // variables inside the moved body remain method-scoped.
-fun interface ConstrainedSuspendConstrainedSink<T> {
+fun interface ConstrainedSuspendSink<T> {
     suspend fun emit(value: T)
 }
 
 suspend fun <T, C : MutableCollection<T>> constrainedSuspendCollectInto(value: T, destination: C): C {
     suspendCoroutine<Unit> { continuation -> continuation.resume(Unit) }
-    val sink = ConstrainedSuspendConstrainedSink<T> { item -> destination.add(item) }
+    val sink = ConstrainedSuspendSink<T> { item -> destination.add(item) }
     sink.emit(value)
     return destination
 }
