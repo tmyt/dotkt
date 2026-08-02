@@ -1,4 +1,4 @@
-// CorB batch — il-flowtransform: the cold-SM NESTED-closure capture family (rc6 #75 holistic, the kotlinx.coroutines
+// feature fixture — il-flowtransform: the cold-SM NESTED-closure capture family (rc6 #75 holistic, the kotlinx.coroutines
 // `flow{}` port blocker). A self-contained mini cold Flow reproducing the EXACT `unsafeFlow`/`unsafeTransform`/`filter`
 // shapes (E1-E7). It is isolated in a dedicated package because this fixture deliberately exercises a deep chain of
 // same-module inline carriers and suspend state machines. The parameter below uses a non-original name to guard against
@@ -11,51 +11,51 @@ import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import dotkt.support.blockOn
 
-fun interface CorBFtFlowCollector<T> {
+fun interface FlowTransformationFlowCollector<T> {
     suspend fun emit(value: T)
 }
 
-interface CorBFtFlow<T> {
-    suspend fun collect(collector: CorBFtFlowCollector<T>)
+interface FlowTransformationFlow<T> {
+    suspend fun collect(collector: FlowTransformationFlowCollector<T>)
 }
 
-inline fun <T> corBFtUnsafeFlow(crossinline block: suspend CorBFtFlowCollector<T>.() -> Unit): CorBFtFlow<T> =
-    object : CorBFtFlow<T> {
-        override suspend fun collect(collector: CorBFtFlowCollector<T>) { collector.block() }
+inline fun <T> flowTransformationUnsafeFlow(crossinline block: suspend FlowTransformationFlowCollector<T>.() -> Unit): FlowTransformationFlow<T> =
+    object : FlowTransformationFlow<T> {
+        override suspend fun collect(collector: FlowTransformationFlowCollector<T>) { collector.block() }
     }
 
-suspend inline fun <T> CorBFtFlow<T>.corBFtCollect(crossinline action: suspend (T) -> Unit): Unit =
-    collect(CorBFtFlowCollector { value -> action(value) })
+suspend inline fun <T> FlowTransformationFlow<T>.flowTransformationCollect(crossinline action: suspend (T) -> Unit): Unit =
+    collect(FlowTransformationFlowCollector { value -> action(value) })
 
-inline fun <T, R> CorBFtFlow<T>.corBFtUnsafeTransform(
-    crossinline transform: suspend CorBFtFlowCollector<R>.(T) -> Unit
-): CorBFtFlow<R> = corBFtUnsafeFlow { corBFtCollect { value -> transform(value) } }
+inline fun <T, R> FlowTransformationFlow<T>.flowTransformationUnsafeTransform(
+    crossinline transform: suspend FlowTransformationFlowCollector<R>.(T) -> Unit
+): FlowTransformationFlow<R> = flowTransformationUnsafeFlow { flowTransformationCollect { value -> transform(value) } }
 
-inline fun <T, R> CorBFtFlow<T>.corBFtTransform(
-    crossinline transform: suspend CorBFtFlowCollector<R>.(T) -> Unit
-): CorBFtFlow<R> = corBFtUnsafeTransform(transform)
+inline fun <T, R> FlowTransformationFlow<T>.flowTransformationTransform(
+    crossinline transform: suspend FlowTransformationFlowCollector<R>.(T) -> Unit
+): FlowTransformationFlow<R> = flowTransformationUnsafeTransform(transform)
 
-inline fun <T> CorBFtFlow<T>.corBFtFilter(crossinline predicate: suspend (T) -> Boolean): CorBFtFlow<T> = corBFtTransform { value ->
+inline fun <T> FlowTransformationFlow<T>.flowTransformationFilter(crossinline predicate: suspend (T) -> Boolean): FlowTransformationFlow<T> = flowTransformationTransform { value ->
     if (predicate(value)) emit(value)
 }
 
-inline fun <T, R> CorBFtFlow<T>.corBFtMap(crossinline mapper: suspend (T) -> R): CorBFtFlow<R> = corBFtTransform { value ->
+inline fun <T, R> FlowTransformationFlow<T>.flowTransformationMap(crossinline mapper: suspend (T) -> R): FlowTransformationFlow<R> = flowTransformationTransform { value ->
     emit(mapper(value))
 }
 
-class CorBFtDivisor(private val by: Int) {
+class FlowTransformationDivisor(private val by: Int) {
     fun accepts(value: Int): Boolean = value % by == 0
 }
 
-fun CorBFtFlow<Int>.corBFtFilterDivisibleBy(box: CorBFtDivisor): CorBFtFlow<Int> = corBFtFilter { box.accepts(it) }
+fun FlowTransformationFlow<Int>.flowTransformationFilterDivisibleBy(box: FlowTransformationDivisor): FlowTransformationFlow<Int> = flowTransformationFilter { box.accepts(it) }
 
-fun corBFtFlowOf(a: Int, b: Int, c: Int, d: Int, e: Int, f: Int): CorBFtFlow<Int> = corBFtUnsafeFlow {
+fun flowTransformationFlowOf(a: Int, b: Int, c: Int, d: Int, e: Int, f: Int): FlowTransformationFlow<Int> = flowTransformationUnsafeFlow {
     emit(a); emit(b); emit(c); emit(d); emit(e); emit(f)
 }
 
-suspend fun corBFtCollectSum(flow: CorBFtFlow<Int>): Int {
+suspend fun flowTransformationCollectSum(flow: FlowTransformationFlow<Int>): Int {
     val items = ArrayList<Int>()
-    flow.corBFtCollect { items.add(it) }
+    flow.flowTransformationCollect { items.add(it) }
     var sum = 0
     for (x in items) sum += x
     return sum
@@ -64,9 +64,9 @@ suspend fun corBFtCollectSum(flow: CorBFtFlow<Int>): Int {
 class FlowTransformationTests {
     @TestAttribute
     fun nestedCrossinlineCaptureChain() {
-        val base = corBFtFlowOf(1, 2, 3, 4, 5, 6)
-        assertEquals(12, blockOn { corBFtCollectSum(base.corBFtFilter { it % 2 == 0 }) })                    // 2+4+6 = 12
-        assertEquals(210, blockOn { corBFtCollectSum(base.corBFtMap { it * 10 }) })                         // 210
-        assertEquals(9, blockOn { corBFtCollectSum(base.corBFtFilterDivisibleBy(CorBFtDivisor(3))) })        // 3+6 = 9
+        val base = flowTransformationFlowOf(1, 2, 3, 4, 5, 6)
+        assertEquals(12, blockOn { flowTransformationCollectSum(base.flowTransformationFilter { it % 2 == 0 }) })                    // 2+4+6 = 12
+        assertEquals(210, blockOn { flowTransformationCollectSum(base.flowTransformationMap { it * 10 }) })                         // 210
+        assertEquals(9, blockOn { flowTransformationCollectSum(base.flowTransformationFilterDivisibleBy(FlowTransformationDivisor(3))) })        // 3+6 = 9
     }
 }

@@ -1,6 +1,6 @@
 // #86 D1 — an object-ERASED value handed to an OPEN .NET generic parameter slot.
 //
-// A `T?` on an unconstrained `T` is `System.Object`, so `intropOgBoxOf<Int>(7)` produces a bare `object`. When that
+// A `T?` on an unconstrained `T` is `System.Object`, so `openGenericSlotBoxOf<Int>(7)` produces a bare `object`. When that
 // value flows into a .NET generic member, the slot it fills is stated OPEN: `Enumerable.Repeat<T>`'s first parameter
 // is `!!0` in the call's `memberSig`, and it stays `!!0` because that open form is what the emitter matches the
 // member by. The conversion into it must therefore be typed by the CLOSED slot — the call's own type argument,
@@ -20,16 +20,16 @@
 // emitted method did not verify — `[found ref 'object'][expected ref 'string']` — so the RUN assertion alone would
 // not have caught it; the suite's ILVerify lane is what makes them a witness.
 //
-// Top-level names are family-prefixed with `IntropOg` (one assembly = one namespace).
+// Top-level names are family-prefixed with `OpenGenericSlot` (one assembly = one namespace).
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import System.Linq.Enumerable
 import System.IO.Path
-import System.Text.StringBuilder as IntropOgNetStringBuilder
+import System.Text.StringBuilder as OpenGenericSlotNetStringBuilder
 import System.ArraySegment
 import System.TimeSpan
 
-fun <T> intropOgBoxOf(x: T?): T? = x
+fun <T> openGenericSlotBoxOf(x: T?): T? = x
 
 // #86 D2 — the struct-ness ORACLE decides whether `Array<X?>` is `object[]`, and a CONSTRUCTED BCL struct is a struct.
 // Only a .NET-referencing lane can witness it: no Kotlin stdlib type reaches this arm, so a same-assembly fixture
@@ -37,7 +37,7 @@ fun <T> intropOgBoxOf(x: T?): T? = x
 // `Array<ArraySegment<String>?>` a `Nullable<ArraySegment<String>>[]` while the open `Array<T?>` it is passed to was
 // `object[]` — the unrelated pair D2 exists to delete — and the process SEGFAULTED on the first element read, with no
 // exception and no diagnostic.
-fun <T> intropOgPresentCount(xs: Array<T?>): Int {
+fun <T> openGenericSlotPresentCount(xs: Array<T?>): Int {
     var n = 0
     for (x in xs) if (x != null) n = n + 1
     return n
@@ -48,7 +48,7 @@ class OpenGenericSlotErasureTests {
     @TestAttribute
     fun erasedValueIntoOpenGenericSlot() {
         var sum = 0
-        for (v in Enumerable.Repeat(intropOgBoxOf<Int>(7), 3)) if (v != null) sum = sum + v
+        for (v in Enumerable.Repeat(openGenericSlotBoxOf<Int>(7), 3)) if (v != null) sum = sum + v
         assertEquals(21, sum)                                  // 21   three boxed 7s narrowed back
     }
 
@@ -57,7 +57,7 @@ class OpenGenericSlotErasureTests {
     fun erasedNullIntoOpenGenericSlot() {
         var present = 0
         var absent = 0
-        for (v in Enumerable.Repeat(intropOgBoxOf<Int>(null), 2)) if (v == null) absent = absent + 1 else present = present + 1
+        for (v in Enumerable.Repeat(openGenericSlotBoxOf<Int>(null), 2)) if (v == null) absent = absent + 1 else present = present + 1
         assertEquals(0, present)                               // 0
         assertEquals(2, absent)                                // 2
     }
@@ -66,28 +66,28 @@ class OpenGenericSlotErasureTests {
     @TestAttribute
     fun erasedReferenceIntoOpenGenericSlot() {
         var joined = ""
-        for (v in Enumerable.Repeat(intropOgBoxOf<String>("a"), 2)) joined = joined + (v ?: "-")
+        for (v in Enumerable.Repeat(openGenericSlotBoxOf<String>("a"), 2)) joined = joined + (v ?: "-")
         assertEquals("aa", joined)                             // aa
     }
 
     // A NON-GENERIC .NET static whose slot is a reference: `Path.GetExtension(string?)`.
     @TestAttribute
     fun erasedReferenceIntoNonGenericStaticSlot() {
-        assertEquals(".txt", Path.GetExtension(intropOgBoxOf<String>("report.txt")))
+        assertEquals(".txt", Path.GetExtension(openGenericSlotBoxOf<String>("report.txt")))
     }
 
     // The instance form of the same slot: `StringBuilder.Append(string?)`.
     @TestAttribute
     fun erasedReferenceIntoNonGenericInstanceSlot() {
-        val sb = IntropOgNetStringBuilder()
-        sb.Append(intropOgBoxOf<String>("ab"))
+        val sb = OpenGenericSlotNetStringBuilder()
+        sb.Append(openGenericSlotBoxOf<String>("ab"))
         assertEquals("ab", sb.ToString())
     }
 
     // And the CONSTRUCTOR form — a `newClr` slot is a declaration slot like any other.
     @TestAttribute
     fun erasedReferenceIntoNonGenericConstructorSlot() {
-        assertEquals("cd", IntropOgNetStringBuilder(intropOgBoxOf<String>("cd")).ToString())
+        assertEquals("cd", OpenGenericSlotNetStringBuilder(openGenericSlotBoxOf<String>("cd")).ToString())
     }
 
     // #86 D2 — an `Array<X?>` whose element is a CONSTRUCTED BCL struct meets the open `Array<T?>` slot. The two
@@ -98,14 +98,14 @@ class OpenGenericSlotErasureTests {
         val segs = arrayOfNulls<ArraySegment<String>>(2)
         segs[0] = ArraySegment<String>(arrayOf("a", "b"))
         assertEquals(2, segs.size)                             // 2
-        assertEquals(1, intropOgPresentCount(segs))            // 1   the constructed struct element, through Array<T?>
+        assertEquals(1, openGenericSlotPresentCount(segs))            // 1   the constructed struct element, through Array<T?>
 
         val spans = arrayOfNulls<TimeSpan>(2)                  // argument-less struct control
         spans[0] = TimeSpan(0, 0, 5)
-        assertEquals(1, intropOgPresentCount(spans))           // 1
+        assertEquals(1, openGenericSlotPresentCount(spans))           // 1
 
         val lists = arrayOfNulls<List<String>>(2)              // constructed REFERENCE control: stays a typed array
         lists[0] = listOf("x")
-        assertEquals(1, intropOgPresentCount(lists))           // 1
+        assertEquals(1, openGenericSlotPresentCount(lists))           // 1
     }
 }

@@ -1,13 +1,15 @@
-// BCL-interop battery (pilot batch IntropA). These fixtures resolve real .NET types from the Interop
+// BCL-interop battery (feature fixture). These fixtures resolve real .NET types from the Interop
 // consumer's dll2klib-generated reference KLIBs.
 //
 // Coverage preserved (old case -> method):
 //   il-alias     -> alias_aliasedImport        `import X as Y` resolves the projected type and binds the alias
 //   il-dualrep   -> dualrep_twoViewsOneClass    System.Text.StringBuilder (raw) vs kotlin.text.StringBuilder coexist; cast crosses
+//   m-i1         -> twoViewsOneClass             raw StringBuilder fluent Append(String/Int), ToString, and Length
+//   ktproj-import-> genericFactoryCtorAndStatic  façade-free System.Math import and static Max call
 //   il-bclinject -> bclinject_genericFactoryCtorAndStatic  #143 generic value-factory ctor + reference-oblivious Value + static GetHashCode
 //   il-tlvalint  -> tlvalint_valueTypeObliviousValue        #8/#11 ThreadLocal<Int>.Value is a bare int32 (default 0), value/ref twin
 //
-// Top-level names are family-prefixed with `IntropA` (one assembly = one namespace) to avoid clashing with sibling
+// Top-level names are family-prefixed with `BclImport` (one assembly = one namespace) to avoid clashing with sibling
 // batteries and the stdlib.
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
@@ -17,9 +19,10 @@ import System.Text.StringBuilder as SB          // il-alias — aliased .NET imp
 import System.Text.StringBuilder                // il-dualrep — the raw .NET view (bare `StringBuilder` in this file)
 import System.Threading.ThreadLocal             // il-bclinject / il-tlvalint
 import System.Runtime.CompilerServices.RuntimeHelpers  // il-bclinject
+import System.Math                         // ktproj-import — façade-free raw BCL static type
 
 // il-dualrep : the stdlib (kotlin.text) view of the SAME CLR type, in the same program.
-fun intropAUseKt(sb: kotlin.text.StringBuilder): String = sb.toString()
+fun bclImportUseKt(sb: kotlin.text.StringBuilder): String = sb.toString()
 
 class BclImportTests {
     // il-alias: `import System.Text.StringBuilder as SB` must inject the type AND bind the alias `SB`.
@@ -38,20 +41,21 @@ class BclImportTests {
     @TestAttribute
     fun twoViewsOneClass() {
         val net = StringBuilder()                      // the imported .NET view
-        net.Append("net")
-        assertEquals("net", net.ToString())            // net
-        assertEquals(3, net.Length)                    // 3
+        net.Append("net").Append(42)                  // fluent chain over String + Int
+        assertEquals("net42", net.ToString())          // net42
+        assertEquals(5, net.Length)                    // 5
         val s = buildString { append("kt") }           // the stdlib view: buildString over kotlin.text.StringBuilder
         assertEquals("kt", s)                          // kt
         @Suppress("CAST_NEVER_SUCCEEDS")
         val kt = net as kotlin.text.StringBuilder      // escape hatch: both erase to System.Text.StringBuilder
-        assertEquals("net", intropAUseKt(kt))          // net
+        assertEquals("net42", bclImportUseKt(kt))      // net42
     }
 
     // il-bclinject: #143 generic value-factory ctor injects; reference-oblivious `Value` is null when unset; static
     // RuntimeHelpers.GetHashCode injects.
     @TestAttribute
     fun genericFactoryCtorAndStatic() {
+        assertEquals(40, Math.Max(40, 2))              // static call on an imported raw BCL type
         val tf = ThreadLocal<String>({ "hi" })         // generic value-factory ctor
         assertEquals("hi", tf.Value)                   // hi
         val te = ThreadLocal<String>()

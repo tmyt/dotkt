@@ -1,4 +1,4 @@
-// Migrated il batch M3 — core-language family. Each old case's `main` + stdout-golden diff becomes one
+// Migrated IL fixture — core-language family. Each old case's `main` + stdout-golden diff becomes one
 // @TestAttribute method whose per-value assertEquals/assertTrue is strictly stronger (typed) than the old text
 // diff. Every value the old il_check asserted is preserved 1:1 (see the `// <expected>` comments). Ordered
 // side-effecting `println`s (the destructuring-forEach) become captured list state asserted directly — the
@@ -13,34 +13,34 @@
 //   il-localclass -> localClassLifting     function-local classes (captures, local data class, loop-declared local class)
 //   il-loopjump   -> loopBreakContinue     E-0.5 break/continue/labeled-break inside CFG-lowered while loops
 //
-// All top-level declarations are M3-prefixed (one project = one namespace, shared with sibling batteries + stdlib).
+// All top-level declarations are DispatchCapture-prefixed (one project = one namespace, shared with sibling batteries + stdlib).
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
 
 // ---- il-iface : interface method dispatch -----------------------------------------------------------------------
-interface M3Greeter { fun greet(): String }
-class M3English : M3Greeter { override fun greet(): String = "Hello" }
-class M3Japanese : M3Greeter { override fun greet(): String = "Konnichiwa" }
-fun m3Shout(g: M3Greeter): String = g.greet()
+interface DispatchCaptureGreeter { fun greet(): String }
+class DispatchCaptureEnglish : DispatchCaptureGreeter { override fun greet(): String = "Hello" }
+class DispatchCaptureJapanese : DispatchCaptureGreeter { override fun greet(): String = "Konnichiwa" }
+fun dispatchCaptureShout(g: DispatchCaptureGreeter): String = g.greet()
 
 // ---- il-infloopret : #141 value-returning infinite loop (shared counter drives both returns) --------------------
-private var m3InfN = 0
-fun m3NextInt(): Int {
+private var dispatchCaptureInfN = 0
+fun dispatchCaptureNextInt(): Int {
     while (true) {
-        m3InfN++
-        if (m3InfN >= 3) return m3InfN * 10
+        dispatchCaptureInfN++
+        if (dispatchCaptureInfN >= 3) return dispatchCaptureInfN * 10
     }
 }
-fun m3FirstEven(): String {
+fun dispatchCaptureFirstEven(): String {
     while (true) {
-        m3InfN++
-        if (m3InfN % 2 == 0) return "ok$m3InfN"
+        dispatchCaptureInfN++
+        if (dispatchCaptureInfN % 2 == 0) return "ok$dispatchCaptureInfN"
     }
 }
 
 // ---- il-inner : inner class captures the enclosing instance -----------------------------------------------------
-class M3Outer(val base: Int) {
+class DispatchCaptureOuter(val base: Int) {
     private val tag = "T"
     inner class Counter(val step: Int) {
         var n = 0
@@ -51,32 +51,32 @@ class M3Outer(val base: Int) {
 }
 
 // ---- il-langfeat : anon fun / infix / tailrec / try-finally / abstract virtual dispatch -------------------------
-val m3Add = fun(a: Int, b: Int): Int = a + b
-infix fun Int.m3Pow(e: Int): Int { var r = 1; var i = 0; while (i < e) { r *= this; i++ }; return r }
-tailrec fun m3Fact(n: Int, acc: Int): Int = if (n <= 1) acc else m3Fact(n - 1, acc * n)
-fun m3WithFinally(): String { var log = ""; try { log += "t" } finally { log += "f" }; return log }
-abstract class M3Shape(val name: String) {
+val dispatchCaptureAdd = fun(a: Int, b: Int): Int = a + b
+infix fun Int.dispatchCapturePow(e: Int): Int { var r = 1; var i = 0; while (i < e) { r *= this; i++ }; return r }
+tailrec fun dispatchCaptureFact(n: Int, acc: Int): Int = if (n <= 1) acc else dispatchCaptureFact(n - 1, acc * n)
+fun dispatchCaptureWithFinally(): String { var log = ""; try { log += "t" } finally { log += "f" }; return log }
+abstract class DispatchCaptureShape(val name: String) {
     abstract fun area(): Int
     fun describe(): String = "$name=${area()}"
 }
-class M3Sq(val s: Int) : M3Shape("sq") { override fun area(): Int = s * s }
-class M3Circle(val r: Int) : M3Shape("circle") { override fun area(): Int = 3 * r * r }
+class DispatchCaptureSq(val s: Int) : DispatchCaptureShape("sq") { override fun area(): Int = s * s }
+class DispatchCaptureCircle(val r: Int) : DispatchCaptureShape("circle") { override fun area(): Int = 3 * r * r }
 
 // ---- il-langtail : `field` accessor / return-as-expression / lateinit read / smart-cast -------------------------
-class M3LtCounter {
+class DispatchCaptureLtCounter {
     var n: Int = 0
         get() = field
         set(v) { field = v + 1 }
 }
-class M3LtBox { lateinit var s: String }
-fun m3Pick(x: Any): String = when (x) {
+class DispatchCaptureLtBox { lateinit var s: String }
+fun dispatchCapturePick(x: Any): String = when (x) {
     is Int -> "int:" + (x + 1)
     is String -> "str:" + x.length
     else -> "other"
 }
-fun m3Classify(x: Any): String =
+fun dispatchCaptureClassify(x: Any): String =
     if (x is Int && x > 10) "big:" + (x - 10) else "small"
-fun m3FirstPositive(a: Int, b: Int): Int {
+fun dispatchCaptureFirstPositive(a: Int, b: Int): Int {
     val x = if (a > 0) a else return b
     return x * 100
 }
@@ -84,15 +84,15 @@ fun m3FirstPositive(a: Int, b: Int): Int {
 class InterfaceAndLoopReturnTests {
     @TestAttribute
     fun interfaceDispatch() {
-        assertEquals("Hello", m3Shout(M3English()))          // Hello
-        assertEquals("Konnichiwa", m3Shout(M3Japanese()))    // Konnichiwa
+        assertEquals("Hello", dispatchCaptureShout(DispatchCaptureEnglish()))          // Hello
+        assertEquals("Konnichiwa", dispatchCaptureShout(DispatchCaptureJapanese()))    // Konnichiwa
     }
 
     @TestAttribute
     fun infiniteLoopReturn() {
-        m3InfN = 0
-        assertEquals(30, m3NextInt())      // 30  (n reaches 3 -> 3*10)
-        assertEquals("ok4", m3FirstEven()) // ok4 (continues from n=3 -> n=4, even)
+        dispatchCaptureInfN = 0
+        assertEquals(30, dispatchCaptureNextInt())      // 30  (n reaches 3 -> 3*10)
+        assertEquals("ok4", dispatchCaptureFirstEven()) // ok4 (continues from n=3 -> n=4, even)
     }
 
 }
@@ -100,12 +100,12 @@ class InterfaceAndLoopReturnTests {
 class NestedAndLocalClassTests {
     @TestAttribute
     fun innerClassCapture() {
-        val o = M3Outer(100)
+        val o = DispatchCaptureOuter(100)
         val c = o.newCounter(10)
         assertEquals(110, c.tick())        // 110
         assertEquals(120, c.tick())        // 120
         assertEquals("T2", c.label())      // T2
-        assertEquals(5, M3Outer(0).Counter(5).tick())  // 5 (inner built off an Outer receiver)
+        assertEquals(5, DispatchCaptureOuter(0).Counter(5).tick())  // 5 (inner built off an Outer receiver)
     }
 
 }
@@ -113,13 +113,13 @@ class NestedAndLocalClassTests {
 class LanguageFeatureTests {
     @TestAttribute
     fun languageFeatureSweep() {
-        assertEquals(7, m3Add(3, 4))                        // 7
-        assertEquals(1024, 2 m3Pow 10)                      // 1024
-        assertEquals(120, m3Fact(5, 1))                     // 120
-        assertEquals("tf", m3WithFinally())                 // tf
-        val sh: M3Shape = M3Circle(2)                       // base-typed -> virtual dispatch
+        assertEquals(7, dispatchCaptureAdd(3, 4))                        // 7
+        assertEquals(1024, 2 dispatchCapturePow 10)                      // 1024
+        assertEquals(120, dispatchCaptureFact(5, 1))                     // 120
+        assertEquals("tf", dispatchCaptureWithFinally())                 // tf
+        val sh: DispatchCaptureShape = DispatchCaptureCircle(2)                       // base-typed -> virtual dispatch
         assertEquals("circle=12", sh.describe())            // circle=12
-        assertEquals("sq=25", M3Sq(5).describe())           // sq=25
+        assertEquals("sq=25", DispatchCaptureSq(5).describe())           // sq=25
         val log = mutableListOf<String>()
         listOf(1 to "a", 2 to "b").forEach { (n, s) -> log.add("$n$s") }  // destructuring lambda param
         assertEquals("1a,2b", log.joinToString(","))        // 1a, 2b
@@ -127,16 +127,16 @@ class LanguageFeatureTests {
 
     @TestAttribute
     fun longTailFeatures() {
-        val c = M3LtCounter(); c.n = 5
+        val c = DispatchCaptureLtCounter(); c.n = 5
         assertEquals(6, c.n)                       // 6 (setter +1, getter via field)
-        val box = M3LtBox(); box.s = "hi"
+        val box = DispatchCaptureLtBox(); box.s = "hi"
         assertEquals("hi", box.s)                  // hi (lateinit)
-        assertEquals("int:42", m3Pick(41))         // int:42
-        assertEquals("str:3", m3Pick("abc"))       // str:3
-        assertEquals("big:5", m3Classify(15))      // big:5
-        assertEquals("small", m3Classify(3))       // small
-        assertEquals(700, m3FirstPositive(7, 9))   // 700
-        assertEquals(9, m3FirstPositive(-1, 9))    // 9 (return as expr)
+        assertEquals("int:42", dispatchCapturePick(41))         // int:42
+        assertEquals("str:3", dispatchCapturePick("abc"))       // str:3
+        assertEquals("big:5", dispatchCaptureClassify(15))      // big:5
+        assertEquals("small", dispatchCaptureClassify(3))       // small
+        assertEquals(700, dispatchCaptureFirstPositive(7, 9))   // 700
+        assertEquals(9, dispatchCaptureFirstPositive(-1, 9))    // 9 (return as expr)
     }
 
 }

@@ -1,4 +1,4 @@
-// CLR-interop interface-implementation battery (batch IntropC): a Kotlin class implements a .NET interface
+// CLR-interop interface-implementation battery (feature fixture): a Kotlin class implements a .NET interface
 // projected through a reference KLIB, rather than merely extending a base class.
 //
 // Coverage preserved (old case -> method):
@@ -17,7 +17,7 @@
 //                                                                   member `IComparable1<T>`; implementing it uses the VERBATIM
 //                                                                   .NET member `CompareTo(other: Ver?)`, not the Kotlin operator.
 //
-// Top-level names are family-prefixed with `IntropC` (one assembly = one namespace) to avoid clashing with sibling
+// Top-level names are family-prefixed with `BclInterfaceImplementation` (one assembly = one namespace) to avoid clashing with sibling
 // batteries and the stdlib.
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
@@ -30,24 +30,24 @@ import System.Collections.Generic.List
 
 // il-clrifaceimpl: implement System.Collections.Generic.IComparer<T> (a reference-KLIB-projected .NET generic interface). The
 // projected Compare surfaces its unconstrained T params as nullable (`String?`), so the override matches that signature.
-class IntropCLenCmp : IComparer<String> {
+class BclInterfaceImplementationLenCmp : IComparer<String> {
     override fun Compare(x: String?, y: String?): Int = (x ?: "").length - (y ?: "").length
 }
 
 // il-clrifaceimplvt: the value-type variant — IComparer<Int> (Compare on a Nullable<int32>-lowered override) and
 // IEquatable<Int> (Equals). Both need the ValueTypeIfaceSlotBridge to bind the bare-int32 constructed slot.
-class IntropCIntCmp : IComparer<Int> {
+class BclInterfaceImplementationIntCmp : IComparer<Int> {
     override fun Compare(x: Int?, y: Int?): Int = (x ?: 0) - (y ?: 0)
 }
 
-class IntropCBox(val v: Int) : IEquatable<Int> {
+class BclInterfaceImplementationBox(val v: Int) : IEquatable<Int> {
     override fun Equals(other: Int?): Boolean = v == (other ?: 0)
 }
 
 // il-icmparity: implement the GENERIC arm of the arity-clash family. dll2klib renamed `System.IComparable`1` to
 // `IComparable1`; the override uses the verbatim .NET member `CompareTo(other: Ver?)`.
-class IntropCVer(val n: Int) : IComparable1<IntropCVer> {
-    override fun CompareTo(other: IntropCVer?): Int = n - (other?.n ?: 0)
+class BclInterfaceImplementationVer(val n: Int) : IComparable1<BclInterfaceImplementationVer> {
+    override fun CompareTo(other: BclInterfaceImplementationVer?): Int = n - (other?.n ?: 0)
 }
 
 class BclInterfaceImplementationTests {
@@ -55,9 +55,9 @@ class BclInterfaceImplementationTests {
     // (List<T>.Sort(IComparer<T>)) all dispatch into the override.
     @TestAttribute
     fun referenceTypeIfaceImpl() {
-        val c = IntropCLenCmp()
+        val c = BclInterfaceImplementationLenCmp()
         assertEquals(1, c.Compare("ab", "z"))            // 1   direct call on the implementing class
-        val i: IComparer<String> = IntropCLenCmp()       // upcast to the projected .NET interface type
+        val i: IComparer<String> = BclInterfaceImplementationLenCmp()       // upcast to the projected .NET interface type
         assertEquals(-3, i.Compare("z", "abcd"))         // -3  dispatched through the interface slot
 
         // The BCL itself dispatches into our override: List<T>.Sort(IComparer<T>).
@@ -71,12 +71,12 @@ class BclInterfaceImplementationTests {
     // upcast, and a BCL List<Int>.Sort consumer all dispatch into the bare-value override.
     @TestAttribute
     fun valueTypeIfaceSlotBridge() {
-        val c = IntropCIntCmp()
+        val c = BclInterfaceImplementationIntCmp()
         assertEquals(2, c.Compare(3, 1))                 // 2    direct call on the implementing class
-        val i: IComparer<Int> = IntropCIntCmp()          // upcast to the projected .NET interface type
+        val i: IComparer<Int> = BclInterfaceImplementationIntCmp()          // upcast to the projected .NET interface type
         assertEquals(-2, i.Compare(1, 3))                // -2   dispatched through the value-type interface slot
 
-        val b = IntropCBox(5)
+        val b = BclInterfaceImplementationBox(5)
         assertTrue(b.Equals(5))                          // true
         val ie: IEquatable<Int> = b                      // upcast to IEquatable<Int>
         assertFalse(ie.Equals(2))                        // false
@@ -92,8 +92,8 @@ class BclInterfaceImplementationTests {
     // surface; direct call + upcast-to-interface dispatch.
     @TestAttribute
     fun arityClashInterfaceFamily() {
-        assertEquals(-2, IntropCVer(3).CompareTo(IntropCVer(5)))   // -2
-        val c: IComparable1<IntropCVer> = IntropCVer(10)
-        assertEquals(6, c.CompareTo(IntropCVer(4)))                // 6
+        assertEquals(-2, BclInterfaceImplementationVer(3).CompareTo(BclInterfaceImplementationVer(5)))   // -2
+        val c: IComparable1<BclInterfaceImplementationVer> = BclInterfaceImplementationVer(10)
+        assertEquals(6, c.CompareTo(BclInterfaceImplementationVer(4)))                // 6
     }
 }

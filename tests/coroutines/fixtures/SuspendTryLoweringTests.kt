@@ -6,9 +6,9 @@ import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import System.Threading.Tasks.Task
 import dotkt.support.blockOn
 
-var corBUnsTrace = ""
+var suspendTryTrace = ""
 
-fun corBUnsOutcome(block: suspend () -> Unit): String =
+fun suspendTryOutcome(block: suspend () -> Unit): String =
     try {
         blockOn(block)
         "ok"
@@ -18,204 +18,204 @@ fun corBUnsOutcome(block: suspend () -> Unit): String =
         "ise:${e.message}"
     }
 
-suspend fun corBUnsFinallyNamed(failBody: Boolean, replaceInFinally: Boolean) {
+suspend fun suspendTryFinallyNamed(failBody: Boolean, replaceInFinally: Boolean) {
     try {
-        corBUnsTrace += "body;"
+        suspendTryTrace += "body;"
         if (failBody) throw IllegalStateException("body")
     } finally {
-        corBUnsTrace += "finally-before;"
+        suspendTryTrace += "finally-before;"
         Task.Delay(1).await()
-        corBUnsTrace += "finally-after;"
+        suspendTryTrace += "finally-after;"
         if (replaceInFinally) throw IllegalArgumentException("finally")
     }
 }
 
-fun corBUnsFinallyLambda(failBody: Boolean, replaceInFinally: Boolean): suspend () -> Unit = {
+fun suspendTryFinallyLambda(failBody: Boolean, replaceInFinally: Boolean): suspend () -> Unit = {
     try {
-        corBUnsTrace += "body;"
+        suspendTryTrace += "body;"
         if (failBody) throw IllegalStateException("body")
     } finally {
-        corBUnsTrace += "finally-before;"
+        suspendTryTrace += "finally-before;"
         Task.Delay(1).await()
-        corBUnsTrace += "finally-after;"
+        suspendTryTrace += "finally-after;"
         if (replaceInFinally) throw IllegalArgumentException("finally")
     }
 }
 
-suspend fun corBUnsCatchWithFinallyNamed(failAfterCatch: Boolean) {
+suspend fun suspendTryCatchWithFinallyNamed(failAfterCatch: Boolean) {
     try {
-        corBUnsTrace += "try;"
+        suspendTryTrace += "try;"
         throw IllegalStateException("boom")
     } catch (e: IllegalStateException) {
-        corBUnsTrace += "catch-before;"
+        suspendTryTrace += "catch-before;"
         Task.Delay(1).await()
-        corBUnsTrace += "catch-after;"
+        suspendTryTrace += "catch-after;"
         if (failAfterCatch) throw IllegalArgumentException("catch")
     } finally {
-        corBUnsTrace += "finally;"
+        suspendTryTrace += "finally;"
     }
 }
 
-fun corBUnsCatchWithFinallyLambda(failAfterCatch: Boolean): suspend () -> Unit = {
+fun suspendTryCatchWithFinallyLambda(failAfterCatch: Boolean): suspend () -> Unit = {
     try {
-        corBUnsTrace += "try;"
+        suspendTryTrace += "try;"
         throw IllegalStateException("boom")
     } catch (e: IllegalStateException) {
-        corBUnsTrace += "catch-before;"
+        suspendTryTrace += "catch-before;"
         Task.Delay(1).await()
-        corBUnsTrace += "catch-after;"
+        suspendTryTrace += "catch-after;"
         if (failAfterCatch) throw IllegalArgumentException("catch")
     } finally {
-        corBUnsTrace += "finally;"
+        suspendTryTrace += "finally;"
     }
 }
 
-suspend fun corBUnsNestedTryNamed(failInner: Boolean) {
+suspend fun suspendTryNestedTryNamed(failInner: Boolean) {
     try {
-        corBUnsTrace += "outer-before;"
+        suspendTryTrace += "outer-before;"
         try {
-            corBUnsTrace += "inner-before;"
+            suspendTryTrace += "inner-before;"
             Task.Delay(1).await()
             if (failInner) throw IllegalStateException("inner")
-            corBUnsTrace += "inner-after;"
+            suspendTryTrace += "inner-after;"
         } catch (e: IllegalStateException) {
-            corBUnsTrace += "inner-catch;"
+            suspendTryTrace += "inner-catch;"
             throw e
         } finally {
-            corBUnsTrace += "inner-finally;"
+            suspendTryTrace += "inner-finally;"
         }
-        corBUnsTrace += "outer-after;"
+        suspendTryTrace += "outer-after;"
     } catch (e: IllegalStateException) {
-        corBUnsTrace += "outer-catch;"
+        suspendTryTrace += "outer-catch;"
     } finally {
-        corBUnsTrace += "outer-finally;"
+        suspendTryTrace += "outer-finally;"
     }
 }
 
-fun corBUnsNestedTryLambda(failInner: Boolean): suspend () -> Unit = {
+fun suspendTryNestedTryLambda(failInner: Boolean): suspend () -> Unit = {
     try {
-        corBUnsTrace += "outer-before;"
+        suspendTryTrace += "outer-before;"
         try {
-            corBUnsTrace += "inner-before;"
+            suspendTryTrace += "inner-before;"
             Task.Delay(1).await()
             if (failInner) throw IllegalStateException("inner")
-            corBUnsTrace += "inner-after;"
+            suspendTryTrace += "inner-after;"
         } catch (e: IllegalStateException) {
-            corBUnsTrace += "inner-catch;"
+            suspendTryTrace += "inner-catch;"
             throw e
         } finally {
-            corBUnsTrace += "inner-finally;"
+            suspendTryTrace += "inner-finally;"
         }
-        corBUnsTrace += "outer-after;"
+        suspendTryTrace += "outer-after;"
     } catch (e: IllegalStateException) {
-        corBUnsTrace += "outer-catch;"
+        suspendTryTrace += "outer-catch;"
     } finally {
-        corBUnsTrace += "outer-finally;"
+        suspendTryTrace += "outer-finally;"
     }
 }
 
 class SuspendTryLoweringTests {
     @TestAttribute
     fun namedFinallyResumesInKotlinOrder() {
-        corBUnsTrace = ""
-        blockOn { corBUnsFinallyNamed(false, false) }
-        assertEquals("body;finally-before;finally-after;", corBUnsTrace)
+        suspendTryTrace = ""
+        blockOn { suspendTryFinallyNamed(false, false) }
+        assertEquals("body;finally-before;finally-after;", suspendTryTrace)
     }
 
     @TestAttribute
     fun namedCatchWithFinallyResumesInKotlinOrder() {
-        corBUnsTrace = ""
-        assertEquals("ok", corBUnsOutcome { corBUnsCatchWithFinallyNamed(false) })
-        assertEquals("try;catch-before;catch-after;finally;", corBUnsTrace)
+        suspendTryTrace = ""
+        assertEquals("ok", suspendTryOutcome { suspendTryCatchWithFinallyNamed(false) })
+        assertEquals("try;catch-before;catch-after;finally;", suspendTryTrace)
     }
 
     @TestAttribute
     fun namedNestedTryResumesInKotlinOrder() {
-        corBUnsTrace = ""
-        assertEquals("ok", corBUnsOutcome { corBUnsNestedTryNamed(false) })
+        suspendTryTrace = ""
+        assertEquals("ok", suspendTryOutcome { suspendTryNestedTryNamed(false) })
         assertEquals(
             "outer-before;inner-before;inner-after;inner-finally;outer-after;outer-finally;",
-            corBUnsTrace,
+            suspendTryTrace,
         )
     }
 
     @TestAttribute
     fun lambdaFinallyResumesInKotlinOrder() {
-        corBUnsTrace = ""
-        assertEquals("ok", corBUnsOutcome(corBUnsFinallyLambda(false, false)))
-        assertEquals("body;finally-before;finally-after;", corBUnsTrace)
+        suspendTryTrace = ""
+        assertEquals("ok", suspendTryOutcome(suspendTryFinallyLambda(false, false)))
+        assertEquals("body;finally-before;finally-after;", suspendTryTrace)
     }
 
     @TestAttribute
     fun lambdaCatchWithFinallyResumesInKotlinOrder() {
-        corBUnsTrace = ""
-        assertEquals("ok", corBUnsOutcome(corBUnsCatchWithFinallyLambda(false)))
-        assertEquals("try;catch-before;catch-after;finally;", corBUnsTrace)
+        suspendTryTrace = ""
+        assertEquals("ok", suspendTryOutcome(suspendTryCatchWithFinallyLambda(false)))
+        assertEquals("try;catch-before;catch-after;finally;", suspendTryTrace)
     }
 
     @TestAttribute
     fun lambdaNestedTryResumesInKotlinOrder() {
-        corBUnsTrace = ""
-        assertEquals("ok", corBUnsOutcome(corBUnsNestedTryLambda(false)))
+        suspendTryTrace = ""
+        assertEquals("ok", suspendTryOutcome(suspendTryNestedTryLambda(false)))
         assertEquals(
             "outer-before;inner-before;inner-after;inner-finally;outer-after;outer-finally;",
-            corBUnsTrace,
+            suspendTryTrace,
         )
     }
 
     @TestAttribute
     fun namedFinallyPreservesAndReplacesExceptions() {
-        corBUnsTrace = ""
-        assertEquals("ise:body", corBUnsOutcome { corBUnsFinallyNamed(true, false) })
-        assertEquals("body;finally-before;finally-after;", corBUnsTrace)
+        suspendTryTrace = ""
+        assertEquals("ise:body", suspendTryOutcome { suspendTryFinallyNamed(true, false) })
+        assertEquals("body;finally-before;finally-after;", suspendTryTrace)
 
-        corBUnsTrace = ""
-        assertEquals("iae:finally", corBUnsOutcome { corBUnsFinallyNamed(true, true) })
-        assertEquals("body;finally-before;finally-after;", corBUnsTrace)
+        suspendTryTrace = ""
+        assertEquals("iae:finally", suspendTryOutcome { suspendTryFinallyNamed(true, true) })
+        assertEquals("body;finally-before;finally-after;", suspendTryTrace)
     }
 
     @TestAttribute
     fun namedCatchFailureStillRunsFinallyOnce() {
-        corBUnsTrace = ""
-        assertEquals("iae:catch", corBUnsOutcome { corBUnsCatchWithFinallyNamed(true) })
-        assertEquals("try;catch-before;catch-after;finally;", corBUnsTrace)
+        suspendTryTrace = ""
+        assertEquals("iae:catch", suspendTryOutcome { suspendTryCatchWithFinallyNamed(true) })
+        assertEquals("try;catch-before;catch-after;finally;", suspendTryTrace)
     }
 
     @TestAttribute
     fun namedNestedTryRoutesExceptionInKotlinOrder() {
-        corBUnsTrace = ""
-        assertEquals("ok", corBUnsOutcome { corBUnsNestedTryNamed(true) })
+        suspendTryTrace = ""
+        assertEquals("ok", suspendTryOutcome { suspendTryNestedTryNamed(true) })
         assertEquals(
             "outer-before;inner-before;inner-catch;inner-finally;outer-catch;outer-finally;",
-            corBUnsTrace,
+            suspendTryTrace,
         )
     }
 
     @TestAttribute
     fun lambdaFinallyPreservesAndReplacesExceptions() {
-        corBUnsTrace = ""
-        assertEquals("ise:body", corBUnsOutcome(corBUnsFinallyLambda(true, false)))
-        assertEquals("body;finally-before;finally-after;", corBUnsTrace)
+        suspendTryTrace = ""
+        assertEquals("ise:body", suspendTryOutcome(suspendTryFinallyLambda(true, false)))
+        assertEquals("body;finally-before;finally-after;", suspendTryTrace)
 
-        corBUnsTrace = ""
-        assertEquals("iae:finally", corBUnsOutcome(corBUnsFinallyLambda(true, true)))
-        assertEquals("body;finally-before;finally-after;", corBUnsTrace)
+        suspendTryTrace = ""
+        assertEquals("iae:finally", suspendTryOutcome(suspendTryFinallyLambda(true, true)))
+        assertEquals("body;finally-before;finally-after;", suspendTryTrace)
     }
 
     @TestAttribute
     fun lambdaCatchFailureStillRunsFinallyOnce() {
-        corBUnsTrace = ""
-        assertEquals("iae:catch", corBUnsOutcome(corBUnsCatchWithFinallyLambda(true)))
-        assertEquals("try;catch-before;catch-after;finally;", corBUnsTrace)
+        suspendTryTrace = ""
+        assertEquals("iae:catch", suspendTryOutcome(suspendTryCatchWithFinallyLambda(true)))
+        assertEquals("try;catch-before;catch-after;finally;", suspendTryTrace)
     }
 
     @TestAttribute
     fun lambdaNestedTryRoutesExceptionInKotlinOrder() {
-        corBUnsTrace = ""
-        assertEquals("ok", corBUnsOutcome(corBUnsNestedTryLambda(true)))
+        suspendTryTrace = ""
+        assertEquals("ok", suspendTryOutcome(suspendTryNestedTryLambda(true)))
         assertEquals(
             "outer-before;inner-before;inner-catch;inner-finally;outer-catch;outer-finally;",
-            corBUnsTrace,
+            suspendTryTrace,
         )
     }
 }

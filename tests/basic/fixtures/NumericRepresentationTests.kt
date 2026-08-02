@@ -1,4 +1,4 @@
-// Numeric narrow-type battery (migration batch M1) — Byte/Short (signed) args/fields/consts and the widened-return
+// Numeric narrow-type battery (feature fixture) — Byte/Short (signed) args/fields/consts and the widened-return
 // arithmetic of narrow operators. Migrates the narrow-numeric family of cases/il-* onto the in-process NUnit suite.
 // Each old case's `main` + stdout-golden diff becomes one @TestAttribute method whose per-value assert is strictly
 // stronger (typed Int/UInt/ULong) than the old text diff. Every value the old il_check asserted is preserved 1:1.
@@ -8,29 +8,29 @@
 //   il-bytewiden -> narrowArithmeticWidens #93/#71 Byte/Short arith -> Int, UByte/UShort arith -> UInt; inc/dec wrap to
 //                                          the receiver's own narrow type; explicit .toUByte()/…/.toULong() conv arms
 //
-// Batch-M1 collision rule: top-level helpers are `M1`-prefixed (takeByte -> m1TakeByte, Holder -> M1ByteHolder).
+// Assembly-wide collision rule: top-level helpers are `NumericRepresentation`-prefixed (takeByte -> numericRepresentationTakeByte, Holder -> NumericRepresentationByteHolder).
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 
 // ---- il-bytearg : Byte/Short parameters, fields ----------------------------------------------------------------
-fun m1TakeByte(b: Byte): Int = b.toInt()
-fun m1TakeShort(s: Short): Int = s.toInt()
-class M1ByteHolder(val b: Byte, val s: Short)
+fun numericRepresentationTakeByte(b: Byte): Int = b.toInt()
+fun numericRepresentationTakeShort(s: Short): Int = s.toInt()
+class NumericRepresentationByteHolder(val b: Byte, val s: Short)
 
 class NumericRepresentationTests {
     @TestAttribute
     fun byteShortArgs() {
         val i = 5
-        assertEquals(5, m1TakeByte(i.toByte()))   // 5   (Int->Byte conv arg)
-        assertEquals(3, m1TakeByte(3))            // 3   (Byte const arg)
+        assertEquals(5, numericRepresentationTakeByte(i.toByte()))   // 5   (Int->Byte conv arg)
+        assertEquals(3, numericRepresentationTakeByte(3))            // 3   (Byte const arg)
         val bv: Byte = 7
-        assertEquals(7, m1TakeByte(bv))           // 7   (Byte local arg)
-        assertEquals(9, m1TakeShort(9))           // 9   (Short const arg)
-        val h = M1ByteHolder(4, 100)
+        assertEquals(7, numericRepresentationTakeByte(bv))           // 7   (Byte local arg)
+        assertEquals(9, numericRepresentationTakeShort(9))           // 9   (Short const arg)
+        val h = NumericRepresentationByteHolder(4, 100)
         assertEquals(4, h.b.toInt())              // 4   (Byte field)
         assertEquals(100, h.s.toInt())            // 100 (Short field)
         val neg: Byte = -2                        // signed range
-        assertEquals(-2, m1TakeByte(neg))         // -2
+        assertEquals(-2, numericRepresentationTakeByte(neg))         // -2
     }
 
     @TestAttribute

@@ -1,10 +1,8 @@
 // Nullable / null-safety battery — migrates the nullable-reference / nullable-value / safe-call / elvis / `!!` /
-// not-null-assertion / nullable-primitive family of cases/il-* onto the in-process NUnit suite. Each old case's
-// `main` + stdout-golden diff becomes one @TestAttribute method whose per-value assertEquals/assertNull is strictly
-// stronger than the old string diff (a wrong non-null can't alias to the literal "null"). Every value the old
-// il_check asserted is preserved 1:1 (see the `// <expected>` comments). Exception cases (`!!` on null) become the
-// proven try/catch-sentinel pattern (the catch clause pins the EXACT exception type; StringsTests uses the same
-// shape for NumberFormatException). The side-effecting `println` in the try/finally probe is captured into a log
+// not-null-assertion / nullable-primitive family of cases/il-* onto the in-process NUnit suite. Old stdout-golden
+// cases are grouped by compiler shape into typed assertEquals/assertNull methods. Exception cases (`!!` on null)
+// become the proven try/catch-sentinel pattern (the catch clause pins the EXACT exception type; StringsTests uses
+// the same shape for NumberFormatException). The side-effecting `println` in the try/finally probe is captured into a log
 // list and asserted in order.
 //
 // EXCLUDED from this family (matched the grep prefix but the real subject is FLOAT / IEEE behavior, not nullability
@@ -22,7 +20,6 @@
 //                               nullbang_referenceEagerThrow    #115 reference `!!` throws NPE EAGERLY (stored/discarded)
 //   il-nullcollarg           -> nullcollarg_nullableInner       #100-H3 nullable-inner collection type-arg collapses V
 //   il-nullcs                -> nullcs_stringIntoCharSequence    #156 nullable String into a CharSequence?-receiver slot
-//   il-printlnnull           -> printlnnull_nullRendersString   println/print of null renders the string "null"
 //   il-reqnn                 -> reqnn_requireCheckNotNull        requireNotNull / checkNotNull (reference + value)
 //   il-safecallnv            -> safecallnv_safeCallNullableValue A5 `a?.member` value-type result; receiver once, unwrap
 //   il-trynullable           -> trynullable_returnThroughFinally nullable Int? return through try/finally; finally runs
@@ -748,15 +745,6 @@ class NullableTests {
         assertEquals("V:hi", if (v.isNullOrEmpty()) "V:empty" else "V:$v")      // V:hi     adapter wrap, non-empty
         val e: String? = ""
         assertEquals("E:empty", if (e.isNullOrEmpty()) "E:empty" else "E:$e")   // E:empty  adapter, length 0
-    }
-
-    @TestAttribute
-    fun nullRendersString() {
-        assertEquals("null", (null as Any?).toString())  // null    println(null) renders "null"
-        val a: Int? = null
-        assertEquals("null5x", a.toString() + 5.toString() + "x") // null5x  print(a)+print(5)+println("x")
-        val s: String? = null
-        assertEquals("null", s.toString())               // null    println(s) on a null String? renders "null"
     }
 
     @TestAttribute

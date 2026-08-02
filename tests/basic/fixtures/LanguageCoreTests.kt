@@ -21,125 +21,126 @@
 //   il-smartcast      -> smartCast_safeCast              `as?` safe cast — value type (-> T?) and reference type (-> isinst)
 //   il-scope          -> scopeFunctions_inlined          let/run/with/also/apply -> inlined value-blocks (no delegate)
 //
-// Top-level names are unique within this single battery assembly (one project = one namespace) and family-prefixed
-// (`Obj`/`Ce`/`Ic`/`Op`/`Um`/`Ur`/`ri`/`ws`/`sc`) to avoid clashing with sibling batteries and stdlib.
+// Top-level names use feature stems (`ObjectFeature`, `CompanionExtension`, `InterfaceCompanion`,
+// `OperatorOverload`, `UniversalMember`, `UserRange`, `rangeMembership`, `whenSubject`, and `smartCast`) so they
+// remain readable and assembly-unique.
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
 import NUnit.Framework.Legacy.ClassicAssert.Companion.IsFalse as assertFalse
 
 // ---- il-object : `object` singleton as shared mutable state; member access routes as instance access -------------
-object ObjCounter { var n = 0; fun inc() { n = n + 1 } }
-interface ObjState
-object ObjActive : ObjState
-object ObjInactive : ObjState
-fun objIsActive(value: Any?): Boolean = value is ObjActive
+object ObjectFeatureCounter { var n = 0; fun inc() { n = n + 1 } }
+interface ObjectFeatureState
+object ObjectFeatureActive : ObjectFeatureState
+object ObjectFeatureInactive : ObjectFeatureState
+fun objectFeatureIsActive(value: Any?): Boolean = value is ObjectFeatureActive
 
 // ---- il-objexpr : anonymous `object : Iface` implementing interface members -------------------------------------
-interface ObjGreeter { fun greet(): String }
-fun objMake(): ObjGreeter = object : ObjGreeter { override fun greet(): String = "hello from anon" }
-interface ObjOp { fun apply(x: Int): Int }
-fun objAdder(): ObjOp = object : ObjOp { override fun apply(x: Int): Int = x + 100 }
+interface ObjectFeatureGreeter { fun greet(): String }
+fun objectFeatureMake(): ObjectFeatureGreeter = object : ObjectFeatureGreeter { override fun greet(): String = "hello from anon" }
+interface ObjectFeatureOp { fun apply(x: Int): Int }
+fun objectFeatureAdder(): ObjectFeatureOp = object : ObjectFeatureOp { override fun apply(x: Int): Int = x + 100 }
 
 // ---- il-companionext : #177 extension fun in a companion -> static method whose first param is the ext receiver ---
-class CeC {
+class CompanionExtensionC {
     companion object {
         fun String.f(): Int = length + 1
         fun String.g(delta: Int): Int = length + delta
         fun Int.tripled(): Int = this * 3
     }
-    // The companion extensions are only in scope inside a member of CeC; exercise the receiver-prepend across shapes.
+    // The companion extensions are only in scope inside a member of CompanionExtensionC; exercise the receiver-prepend across shapes.
     fun computeF(): Int = "abcd".f()
     fun computeG(): Int = "abcd".g(10)
     fun computeT(): Int = 7.tripled()
 }
 
 // ---- il-ifacecompanion : #83 an interface's PLAIN companion flattens to the interface's own statics --------------
-interface IcSharingStarted {
+interface InterfaceCompanionSharingStarted {
     fun tag(): Int
     companion object {
-        val Eagerly: IcSharingStarted = IcStartedEagerly()
-        val Lazily: IcSharingStarted = IcStartedLazily()
+        val Eagerly: InterfaceCompanionSharingStarted = InterfaceCompanionStartedEagerly()
+        val Lazily: InterfaceCompanionSharingStarted = InterfaceCompanionStartedLazily()
         const val VERSION: Int = 3
-        fun describe(s: IcSharingStarted): Int = s.tag() + VERSION
+        fun describe(s: InterfaceCompanionSharingStarted): Int = s.tag() + VERSION
     }
 }
-class IcStartedEagerly : IcSharingStarted { override fun tag() = 1 }
-class IcStartedLazily : IcSharingStarted { override fun tag() = 2 }
+class InterfaceCompanionStartedEagerly : InterfaceCompanionSharingStarted { override fun tag() = 1 }
+class InterfaceCompanionStartedLazily : InterfaceCompanionSharingStarted { override fun tag() = 2 }
 // Named companion (`Factory`): non-const `val` initialized by a call + a `const val`. Non-interface path non-regression.
-class IcChannel {
+class InterfaceCompanionChannel {
     companion object Factory {
         const val UNLIMITED: Int = 2147483647
-        val CHANNEL_DEFAULT_CAPACITY: Int = icComputeCap()
+        val CHANNEL_DEFAULT_CAPACITY: Int = interfaceCompanionComputeCap()
     }
 }
-fun icComputeCap(): Int = 64
+fun interfaceCompanionComputeCap(): Int = 64
 
 // ---- il-op : user-defined operator overloading ------------------------------------------------------------------
-class OpVec(val x: Int, val y: Int) {
-    operator fun plus(o: OpVec) = OpVec(x + o.x, y + o.y)
-    operator fun minus(o: OpVec) = OpVec(x - o.x, y - o.y)
-    operator fun times(k: Int) = OpVec(x * k, y * k)
-    operator fun unaryMinus() = OpVec(-x, -y)
+class OperatorOverloadVec(val x: Int, val y: Int) {
+    operator fun plus(o: OperatorOverloadVec) = OperatorOverloadVec(x + o.x, y + o.y)
+    operator fun minus(o: OperatorOverloadVec) = OperatorOverloadVec(x - o.x, y - o.y)
+    operator fun times(k: Int) = OperatorOverloadVec(x * k, y * k)
+    operator fun unaryMinus() = OperatorOverloadVec(-x, -y)
     operator fun get(i: Int): Int = if (i == 0) x else y
-    operator fun compareTo(o: OpVec): Int = (x * x + y * y) - (o.x * o.x + o.y * o.y)
+    operator fun compareTo(o: OperatorOverloadVec): Int = (x * x + y * y) - (o.x * o.x + o.y * o.y)
     operator fun contains(v: Int): Boolean = v == x || v == y
     operator fun invoke(): Int = x + y
     override fun toString(): String = "($x, $y)"
 }
-class OpBox(var v: Int) {
+class OperatorOverloadBox(var v: Int) {
     operator fun get(i: Int): Int = v + i
     operator fun set(i: Int, value: Int) { v = value + i }
 }
 
 // ---- il-usermember : #96 declared vs inherited (kotlin.Any) hashCode/equals/toString dispatch -------------------
-class UmPoint(val x: Int, val y: Int) {
+class UniversalMemberPoint(val x: Int, val y: Int) {
     override fun hashCode(): Int = x * 31 + y
-    override fun equals(other: Any?): Boolean = other is UmPoint && other.x == x && other.y == y
+    override fun equals(other: Any?): Boolean = other is UniversalMemberPoint && other.x == x && other.y == y
     override fun toString(): String = "($x, $y)"
 }
-class UmPlain(val n: Int)                                        // no overrides -> inherits all three from kotlin.Any
-open class UmBase(val id: Int) { override fun toString(): String = "Base($id)" }
-class UmDerived(id: Int) : UmBase(id)                            // reaches base toString; hashCode falls to Object slot
-interface UmNamed { fun label(): String }
-class UmWithName(val s: String) : UmNamed {
+class UniversalMemberPlain(val n: Int)                                        // no overrides -> inherits all three from kotlin.Any
+open class UniversalMemberBase(val id: Int) { override fun toString(): String = "Base($id)" }
+class UniversalMemberDerived(id: Int) : UniversalMemberBase(id)                            // reaches base toString; hashCode falls to Object slot
+interface UniversalMemberNamed { fun label(): String }
+class UniversalMemberWithName(val s: String) : UniversalMemberNamed {
     override fun label(): String = s
     override fun toString(): String = "WithName($s)"
 }
-class UmNoName : UmNamed { override fun label(): String = "x" }  // non-overriding: inherited Object.ToString -> type name
+class UniversalMemberNoName : UniversalMemberNamed { override fun label(): String = "x" }  // non-overriding: inherited Object.ToString -> type name
 
 // ---- il-userrange : #73 `x in a..b` on a USER rangeTo/contains dispatches the real contains() -------------------
-val urLog = mutableListOf<String>()
-class UrVersion(val major: Int, val minor: Int) {
-    operator fun rangeTo(other: UrVersion) = UrVersionRange(this, other)
+val userRangeLog = mutableListOf<String>()
+class UserRangeVersion(val major: Int, val minor: Int) {
+    operator fun rangeTo(other: UserRangeVersion) = UserRangeVersionRange(this, other)
     fun code(): Int = major * 100 + minor
 }
-class UrVersionRange(val start: UrVersion, val end: UrVersion) {
-    operator fun contains(v: UrVersion): Boolean {
-        urLog.add("user contains")                              // was: println("user contains") — proves the real method runs
+class UserRangeVersionRange(val start: UserRangeVersion, val end: UserRangeVersion) {
+    operator fun contains(v: UserRangeVersion): Boolean {
+        userRangeLog.add("user contains")                              // was: println("user contains") — proves the real method runs
         return v.code() in start.code()..end.code()             // primitive range-membership fast path inside the user method
     }
 }
 
 // ---- il-rangein : #73 primitive range membership; side-effecting subject must be evaluated EXACTLY ONCE ----------
-var riC = 0
-fun riH(): Int { riC++; return 5 }
-fun riHl(): Long { riC++; return 5L }
-fun riHc(): Char { riC++; return 'e' }
+var rangeMembershipC = 0
+fun rangeMembershipH(): Int { rangeMembershipC++; return 5 }
+fun rangeMembershipHl(): Long { rangeMembershipC++; return 5L }
+fun rangeMembershipHc(): Char { rangeMembershipC++; return 'e' }
 
 // ...and range membership is `(lo..hi).contains(x)`, so EVALUATION ORDER is part of the meaning: the range is built
 // first, which runs BOTH bounds unconditionally, left to right, and only then the subject. The short-circuit fast
 // path (`x >= lo && x <op> hi`) would otherwise skip `hi` whenever the subject sits below `lo`, and would read a
 // mutable subject before a bound had assigned it. Each function tags the log with the ROLE it plays.
-val riLog = mutableListOf<String>()
-fun riLo(): Int { riLog.add("lo"); return 1 }
-fun riHi(): Int { riLog.add("hi"); return 10 }
-fun riSubj(): Int { riLog.add("x"); return 5 }
-fun riLoL(): Long { riLog.add("lo"); return 1L }
-fun riHiL(): Long { riLog.add("hi"); return 10L }
-fun riLoC(): Char { riLog.add("lo"); return 'a' }
-fun riHiC(): Char { riLog.add("hi"); return 'z' }
-private fun riTrace(): String = riLog.joinToString(",")
+val rangeMembershipLog = mutableListOf<String>()
+fun rangeMembershipLo(): Int { rangeMembershipLog.add("lo"); return 1 }
+fun rangeMembershipHi(): Int { rangeMembershipLog.add("hi"); return 10 }
+fun rangeMembershipSubj(): Int { rangeMembershipLog.add("x"); return 5 }
+fun rangeMembershipLoL(): Long { rangeMembershipLog.add("lo"); return 1L }
+fun rangeMembershipHiL(): Long { rangeMembershipLog.add("hi"); return 10L }
+fun rangeMembershipLoC(): Char { rangeMembershipLog.add("lo"); return 'a' }
+fun rangeMembershipHiC(): Char { rangeMembershipLog.add("hi"); return 'z' }
+private fun rangeMembershipTrace(): String = rangeMembershipLog.joinToString(",")
 
 /**
  * One row of the evaluation-order matrix: clear the log, evaluate ONE membership expression, and assert in a
@@ -150,39 +151,39 @@ private fun riTrace(): String = riLog.joinToString(",")
  * a `var` subject must stay a PLAIN local, which passing it through a lambda would turn into a ref cell.
  */
 private fun checkRangeForm(form: String, expect: Boolean, trace: String, membership: () -> Boolean) {
-    riLog.clear()
+    rangeMembershipLog.clear()
     val answer = membership()
-    assertEquals("$form -> $expect, evaluated $trace", "$form -> $answer, evaluated ${riTrace()}")
+    assertEquals("$form -> $expect, evaluated $trace", "$form -> $answer, evaluated ${rangeMembershipTrace()}")
 }
 
 // ---- il-whensubj : A5 `when (subject)` in expression position evaluates its subject exactly ONCE ----------------
-var wsN = 0
-fun wsF(): Int { wsN++; return 2 }
+var whenSubjectN = 0
+fun whenSubjectF(): Int { whenSubjectN++; return 2 }
 
 // ---- il-smartcast : `as?` safe cast — value type (-> T?) and reference type (-> isinst) --------------------------
-fun scDescribe(x: Any): String { val n = x as? Int; return if (n != null) "int:$n" else "other" }
-fun scAsStr(x: Any): String { val s = x as? String; return s ?: "none" }
+fun smartCastDescribe(x: Any): String { val n = x as? Int; return if (n != null) "int:$n" else "other" }
+fun smartCastAsStr(x: Any): String { val s = x as? String; return s ?: "none" }
 
 class LanguageCoreTests {
     @TestAttribute
     fun singleton() {
-        ObjCounter.n = 0
-        ObjCounter.inc(); ObjCounter.inc(); ObjCounter.inc()
-        assertEquals(3, ObjCounter.n)  // 3
-        assertTrue(objIsActive(ObjActive))
-        assertFalse(objIsActive(ObjInactive))
-        assertFalse(objIsActive("not an object singleton"))
+        ObjectFeatureCounter.n = 0
+        ObjectFeatureCounter.inc(); ObjectFeatureCounter.inc(); ObjectFeatureCounter.inc()
+        assertEquals(3, ObjectFeatureCounter.n)  // 3
+        assertTrue(objectFeatureIsActive(ObjectFeatureActive))
+        assertFalse(objectFeatureIsActive(ObjectFeatureInactive))
+        assertFalse(objectFeatureIsActive("not an object singleton"))
     }
 
     @TestAttribute
     fun anonymous() {
-        assertEquals("hello from anon", objMake().greet())  // hello from anon
-        assertEquals(105, objAdder().apply(5))              // 105
+        assertEquals("hello from anon", objectFeatureMake().greet())  // hello from anon
+        assertEquals(105, objectFeatureAdder().apply(5))              // 105
     }
 
     @TestAttribute
     fun receiverPrepend() {
-        val c = CeC()
+        val c = CompanionExtensionC()
         assertEquals(5, c.computeF())   // 5
         assertEquals(14, c.computeG())  // 14
         assertEquals(21, c.computeT())  // 21
@@ -190,18 +191,18 @@ class LanguageCoreTests {
 
     @TestAttribute
     fun statics() {
-        assertEquals(1, IcSharingStarted.Eagerly.tag())                       // 1
-        assertEquals(2, IcSharingStarted.Lazily.tag())                        // 2
-        assertEquals(3, IcSharingStarted.VERSION)                             // 3
-        assertEquals(4, IcSharingStarted.describe(IcSharingStarted.Eagerly))  // 4
-        assertEquals(64, IcChannel.CHANNEL_DEFAULT_CAPACITY)                  // 64
-        assertEquals(2147483647, IcChannel.UNLIMITED)                         // 2147483647
+        assertEquals(1, InterfaceCompanionSharingStarted.Eagerly.tag())                       // 1
+        assertEquals(2, InterfaceCompanionSharingStarted.Lazily.tag())                        // 2
+        assertEquals(3, InterfaceCompanionSharingStarted.VERSION)                             // 3
+        assertEquals(4, InterfaceCompanionSharingStarted.describe(InterfaceCompanionSharingStarted.Eagerly))  // 4
+        assertEquals(64, InterfaceCompanionChannel.CHANNEL_DEFAULT_CAPACITY)                  // 64
+        assertEquals(2147483647, InterfaceCompanionChannel.UNLIMITED)                         // 2147483647
     }
 
     @TestAttribute
     fun userDefined() {
-        val a = OpVec(3, 4)
-        val b = OpVec(1, 2)
+        val a = OperatorOverloadVec(3, 4)
+        val b = OperatorOverloadVec(1, 2)
         assertEquals("(4, 6)", (a + b).toString())    // (4, 6)
         assertEquals("(2, 2)", (a - b).toString())    // (2, 2)
         assertEquals("(6, 8)", (a * 2).toString())    // (6, 8)
@@ -213,7 +214,7 @@ class LanguageCoreTests {
         assertFalse(2 in a)                           // False
         assertTrue(3 in a)                            // True
         assertEquals(7, a())                          // 7
-        val box = OpBox(0)
+        val box = OperatorOverloadBox(0)
         box[5] = 10
         assertEquals(15, box[0])                      // 15
     }
@@ -235,29 +236,29 @@ class LanguageCoreTests {
 
     @TestAttribute
     fun universalMethods() {
-        val a = UmPoint(1, 2)
-        val b = UmPoint(1, 2)
-        val c = UmPoint(3, 4)
+        val a = UniversalMemberPoint(1, 2)
+        val b = UniversalMemberPoint(1, 2)
+        val c = UniversalMemberPoint(3, 4)
         assertEquals(33, a.hashCode())           // 33   (declared: 1*31+2)
         assertTrue(a.equals(b))                  // True (declared structural)
         assertFalse(a.equals(c))                 // False
         assertTrue(a == b)                       // True (== routes through declared equals)
         assertEquals("(1, 2)", a.toString())     // (1, 2)
         assertEquals("(1, 2)", a.toString())     // (1, 2)  (was println(a) via println(Any?))
-        val p = UmPlain(7)
-        val q = UmPlain(7)
+        val p = UniversalMemberPlain(7)
+        val q = UniversalMemberPlain(7)
         assertTrue(p.hashCode() == p.hashCode()) // True  (stable inherited identity hash — no dead-end)
         assertFalse(p.equals(q))                 // False (inherited reference identity)
         assertTrue(p.equals(p))                  // True
         assertTrue(p == p)                       // True
-        val d = UmDerived(9)
+        val d = UniversalMemberDerived(9)
         assertEquals("Base(9)", d.toString())    // Base(9)  (inherited declared toString)
         assertTrue(d.hashCode() == d.hashCode()) // True     (inherited Object.GetHashCode, stable)
         assertEquals("Base(9)", d.toString())    // Base(9)  (was println(d))
-        val n1: UmNamed = UmWithName("hi")       // interface-typed receiver, overriding impl
-        val n2: UmNamed = UmNoName()             // interface-typed receiver, non-overriding impl
+        val n1: UniversalMemberNamed = UniversalMemberWithName("hi")       // interface-typed receiver, overriding impl
+        val n2: UniversalMemberNamed = UniversalMemberNoName()             // interface-typed receiver, non-overriding impl
         assertEquals("WithName(hi)", n1.toString())    // WithName(hi)
-        assertTrue(n2.toString() == "UmNoName")        // True (inherited Object.ToString -> runtime type name)
+        assertTrue(n2.toString() == "UniversalMemberNoName")        // True (inherited Object.ToString -> runtime type name)
         assertTrue(n1.hashCode() == n1.hashCode())     // True
         assertTrue(n1.equals(n1))                      // True
         val hc: () -> Int = p::hashCode          // bound method reference to an inherited universal method
@@ -266,28 +267,28 @@ class LanguageCoreTests {
 
     @TestAttribute
     fun userContains() {
-        urLog.clear()
-        val lo = UrVersion(1, 0)
-        val hi = UrVersion(2, 5)
-        assertTrue(UrVersion(1, 5) in lo..hi)   // user contains -> True
-        assertFalse(UrVersion(3, 0) in lo..hi)  // user contains -> False
-        assertEquals("user contains|user contains", urLog.joinToString("|"))  // real contains() ran exactly twice
+        userRangeLog.clear()
+        val lo = UserRangeVersion(1, 0)
+        val hi = UserRangeVersion(2, 5)
+        assertTrue(UserRangeVersion(1, 5) in lo..hi)   // user contains -> True
+        assertFalse(UserRangeVersion(3, 0) in lo..hi)  // user contains -> False
+        assertEquals("user contains|user contains", userRangeLog.joinToString("|"))  // real contains() ran exactly twice
     }
 
     @TestAttribute
     fun primitiveMembership() {
-        riC = 0
-        assertTrue(riH() in 1..10)       // True
-        assertEquals(1, riC)             // 1 — not 2 (single evaluation)
-        assertFalse(riH() in 1 until 5)  // False (5 excluded)
-        assertEquals(2, riC)             // 2
+        rangeMembershipC = 0
+        assertTrue(rangeMembershipH() in 1..10)       // True
+        assertEquals(1, rangeMembershipC)             // 1 — not 2 (single evaluation)
+        assertFalse(rangeMembershipH() in 1 until 5)  // False (5 excluded)
+        assertEquals(2, rangeMembershipC)             // 2
         val i = 7                        // local subject over CONST bounds
         assertTrue(i in 1..10)           // True
-        assertFalse(riH() in 1..<5)      // rangeUntil (..<): 5 in 1..4 -> False
-        assertFalse(riH() !in 1..10)     // !in: 5 !in 1..10 -> False
-        assertTrue(riHl() in 1L..10L)    // LongRange, side-effecting subject -> Long temp: True
-        assertTrue(riHc() in 'a'..'z')   // CharRange, side-effecting subject -> Char temp: True
-        assertEquals(6, riC)             // 6
+        assertFalse(rangeMembershipH() in 1..<5)      // rangeUntil (..<): 5 in 1..4 -> False
+        assertFalse(rangeMembershipH() !in 1..10)     // !in: 5 !in 1..10 -> False
+        assertTrue(rangeMembershipHl() in 1L..10L)    // LongRange, side-effecting subject -> Long temp: True
+        assertTrue(rangeMembershipHc() in 'a'..'z')   // CharRange, side-effecting subject -> Char temp: True
+        assertEquals(6, rangeMembershipC)             // 6
         val r = 3..8                     // variable-held range: NOT the inline-construction fast path
         assertTrue(5 in r)               // real IntRange.contains binding: True
         // Every operand is re-readable, so nothing needs binding — the emitted shape is the bare comparison pair
@@ -299,16 +300,16 @@ class LanguageCoreTests {
     /** Both bounds build the range, so both run — even when the subject makes the comparison short-circuit. */
     @TestAttribute
     fun rangeIn_bothBoundsAlwaysEvaluated() {
-        checkRangeForm("subject below lo", expect = false, trace = "lo,hi") { 0 in riLo()..riHi() }
-        checkRangeForm("subject above hi", expect = false, trace = "lo,hi") { 99 in riLo()..riHi() }
-        checkRangeForm("side-effecting subject", expect = true, trace = "lo,hi,x") { riSubj() in riLo()..riHi() }
-        checkRangeForm("!in", expect = true, trace = "lo,hi") { 0 !in riLo()..riHi() }
-        checkRangeForm("until extension", expect = false, trace = "lo,hi") { 0 in riLo() until riHi() }
-        checkRangeForm("..< rangeUntil", expect = false, trace = "lo,hi") { 0 in riLo()..<riHi() }
-        checkRangeForm("LongRange", expect = false, trace = "lo,hi") { 0L in riLoL()..riHiL() }
-        checkRangeForm("CharRange", expect = false, trace = "lo,hi") { 'A' in riLoC()..riHiC() }
+        checkRangeForm("subject below lo", expect = false, trace = "lo,hi") { 0 in rangeMembershipLo()..rangeMembershipHi() }
+        checkRangeForm("subject above hi", expect = false, trace = "lo,hi") { 99 in rangeMembershipLo()..rangeMembershipHi() }
+        checkRangeForm("side-effecting subject", expect = true, trace = "lo,hi,x") { rangeMembershipSubj() in rangeMembershipLo()..rangeMembershipHi() }
+        checkRangeForm("!in", expect = true, trace = "lo,hi") { 0 !in rangeMembershipLo()..rangeMembershipHi() }
+        checkRangeForm("until extension", expect = false, trace = "lo,hi") { 0 in rangeMembershipLo() until rangeMembershipHi() }
+        checkRangeForm("..< rangeUntil", expect = false, trace = "lo,hi") { 0 in rangeMembershipLo()..<rangeMembershipHi() }
+        checkRangeForm("LongRange", expect = false, trace = "lo,hi") { 0L in rangeMembershipLoL()..rangeMembershipHiL() }
+        checkRangeForm("CharRange", expect = false, trace = "lo,hi") { 'A' in rangeMembershipLoC()..rangeMembershipHiC() }
         // `downTo` builds an IntProgression, not a *Range, so the real contains() runs — same bound order.
-        checkRangeForm("downTo IntProgression", expect = false, trace = "hi,lo") { 0 in riHi() downTo riLo() }
+        checkRangeForm("downTo IntProgression", expect = false, trace = "hi,lo") { 0 in rangeMembershipHi() downTo rangeMembershipLo() }
     }
 
     /** A mutable subject is read AFTER the bounds, so a bound that assigns it is visible to the comparison. */
@@ -333,21 +334,21 @@ class LanguageCoreTests {
 
     @TestAttribute
     fun singleEval() {
-        wsN = 0
-        val r = when (wsF()) {
+        whenSubjectN = 0
+        val r = when (whenSubjectF()) {
             1 -> "a"
             2 -> "b"
             else -> "c"
         }
         assertEquals("b", r)   // b
-        assertEquals(1, wsN)   // 1 — not once per branch test
-        val s = when (wsF()) {  // else-hit: still exactly one evaluation
+        assertEquals(1, whenSubjectN)   // 1 — not once per branch test
+        val s = when (whenSubjectF()) {  // else-hit: still exactly one evaluation
             0 -> "x"
             9 -> "y"
             else -> "z"
         }
         assertEquals("z", s)   // z
-        assertEquals(2, wsN)   // 2
+        assertEquals(2, whenSubjectN)   // 2
         val i = 7              // stable subject (immutable local): the direct-splice fast path
         val t = when (i) {
             7 -> "seven"
@@ -358,10 +359,10 @@ class LanguageCoreTests {
 
     @TestAttribute
     fun safeCast() {
-        assertEquals("int:42", scDescribe(42))   // int:42
-        assertEquals("other", scDescribe("hi"))  // other
-        assertEquals("yo", scAsStr("yo"))        // yo
-        assertEquals("none", scAsStr(7))         // none
+        assertEquals("int:42", smartCastDescribe(42))   // int:42
+        assertEquals("other", smartCastDescribe("hi"))  // other
+        assertEquals("yo", smartCastAsStr("yo"))        // yo
+        assertEquals("none", smartCastAsStr(7))         // none
     }
 
     @TestAttribute

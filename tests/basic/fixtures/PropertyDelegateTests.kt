@@ -1,4 +1,4 @@
-// Migrated il batch M3 — delegated-property / lateinit-ref / reflect family. Each old case's `main` +
+// Migrated IL fixture — delegated-property / lateinit-ref / reflect family. Each old case's `main` +
 // stdout-golden diff becomes one @TestAttribute method whose per-value assertEquals/assertTrue/assertFalse is
 // strictly stronger (typed) than the old text diff. Every value the old il_check asserted is preserved 1:1 (see
 // the `// <expected>` comments). The lazy case's side-effecting `println("computing...")` (whose subject was
@@ -11,7 +11,7 @@
 //   il-lateinitrefpriv-> lateinitPrivateRef   #155 `this::name` over a PRIVATE lateinit -> lifted PropRef reads/writes the private field cross-class
 //   il-kstar          -> kTypeProjectionStar  #82 KTypeProjection.STAR computed companion prop routes to get_STAR (star-projection toString)
 //
-// All top-level declarations are M3-prefixed (one project = one namespace, shared with sibling batteries + stdlib).
+// All top-level declarations are PropertyDelegate-prefixed (one project = one namespace, shared with sibling batteries + stdlib).
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
@@ -20,23 +20,23 @@ import kotlin.reflect.KProperty
 import kotlin.reflect.KTypeProjection
 
 // ---- il-lazy : member `by lazy` (the "computing..." side effect captured into a log to prove single-eval) -------
-val m3LazyLog = mutableListOf<String>()
-class M3LazyConfig(val base: Int) {
-    val expensive: String by lazy { m3LazyLog.add("computing..."); "VALUE" }
+val propertyDelegateLazyLog = mutableListOf<String>()
+class PropertyDelegateLazyConfig(val base: Int) {
+    val expensive: String by lazy { propertyDelegateLazyLog.add("computing..."); "VALUE" }
     val doubled: Int by lazy { base * 2 }   // captures `this` (base) -> closure
 }
 
 // ---- il-localdeleg : a duck-typed local-property delegate (getValue uppercases, setValue stores) ----------------
-class M3UpperDelegate(private var v: String) {
+class PropertyDelegateUpperDelegate(private var v: String) {
     operator fun getValue(thisRef: Any?, property: KProperty<*>): String = v.uppercase()
     operator fun setValue(thisRef: Any?, property: KProperty<*>, value: String) { v = value }
 }
 
 // ---- il-lateinitref : callable reference to a PUBLIC lateinit var --------------------------------------------
-class M3LirBox { lateinit var name: String }
+class PropertyDelegateLirBox { lateinit var name: String }
 
 // ---- il-lateinitrefpriv : #155 `this::name` over a PRIVATE lateinit ------------------------------------------
-class M3LirpBox {
+class PropertyDelegateLirpBox {
     private lateinit var name: String
     fun makeRef(): kotlin.reflect.KMutableProperty0<String> {
         name = "init"
@@ -47,12 +47,12 @@ class M3LirpBox {
 class PropertyDelegateTests {
     @TestAttribute
     fun lazyDelegate() {
-        m3LazyLog.clear()
-        val c = M3LazyConfig(21)
-        assertTrue(m3LazyLog.isEmpty())        // "before": the lazy initializer has NOT run at construction
+        propertyDelegateLazyLog.clear()
+        val c = PropertyDelegateLazyConfig(21)
+        assertTrue(propertyDelegateLazyLog.isEmpty())        // "before": the lazy initializer has NOT run at construction
         assertEquals("VALUE", c.expensive)     // VALUE (initializer runs, logs "computing...")
         assertEquals("VALUE", c.expensive)     // VALUE (memoized)
-        assertEquals(1, m3LazyLog.size)        // computing... printed exactly once (single evaluation)
+        assertEquals(1, propertyDelegateLazyLog.size)        // computing... printed exactly once (single evaluation)
         assertEquals(42, c.doubled)            // 42
         assertEquals(42, c.doubled)            // 42
 
@@ -98,7 +98,7 @@ class PropertyDelegateTests {
         assertEquals(42, lazyVal)              // 42
         assertEquals(42, lazyVal)              // 42
 
-        var upper: String by M3UpperDelegate("hi")
+        var upper: String by PropertyDelegateUpperDelegate("hi")
         assertEquals("HI", upper)              // HI
         upper = "world"
         assertEquals("WORLD", upper)           // WORLD
@@ -106,7 +106,7 @@ class PropertyDelegateTests {
 
     @TestAttribute
     fun lateinitCallableRef() {
-        val b = M3LirBox()
+        val b = PropertyDelegateLirBox()
         b.name = "hello"
         val ref = b::name                      // bound KMutableProperty0 over a lateinit backing field
         assertEquals("hello", ref.get())       // hello
@@ -114,8 +114,8 @@ class PropertyDelegateTests {
         assertEquals("world", b.name)          // world
         assertEquals("world", ref.get())       // world
 
-        val uref = M3LirBox::name              // unbound KMutableProperty1
-        val b2 = M3LirBox()
+        val uref = PropertyDelegateLirBox::name              // unbound KMutableProperty1
+        val b2 = PropertyDelegateLirBox()
         uref.set(b2, "unbound")
         assertEquals("unbound", uref.get(b2))  // unbound
         assertEquals("name", uref.name)        // name (KProperty.name)
@@ -123,7 +123,7 @@ class PropertyDelegateTests {
 
     @TestAttribute
     fun lateinitPrivateRef() {
-        val b = M3LirpBox()
+        val b = PropertyDelegateLirpBox()
         val ref = b.makeRef()
         assertEquals("init", ref.get())        // init (lateinitGet through the lifted PropRef class)
         ref.set("changed")                     // setFieldExpr through the lifted PropRef class

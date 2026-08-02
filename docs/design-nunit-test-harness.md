@@ -25,9 +25,13 @@ The compiler regression suite is organized as subject-oriented NUnit projects. T
 2. Assert values and exceptions directly with NUnit; do not encode behavior as stdout snapshots when a typed assertion can express it.
 3. Keep tests near the subsystem they exercise. Cross-module and CLR-producer cases belong in Interop or Roundtrip, not Basic.
 4. Use an external shell scenario only when the behavior inherently depends on a separate build, restore, process, filesystem state, or generated package.
+   Multiple verdicts in one external scenario must share the smallest valid compilation graph; isolate runtime
+   processes when crashes need separate attribution, not compiler invocations.
 5. Every regression keeps a permanent focused assertion after its issue is fixed.
 6. Test projects consume the locally built DotKt packages through `tests/nuget.config`; they must not silently fall back to a published SDK.
 7. Shared infrastructure belongs under `tests/support/`; fixture-specific helpers stay with their fixture.
+8. Each suite's discovered-test count is reviewed in `tests/run-nunit-tests.sh`. Additions and removals update that
+   baseline in the same change so growth, consolidation, and accidental loss remain visible during review.
 
 ## Adding a regression
 

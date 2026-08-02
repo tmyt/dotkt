@@ -20,7 +20,7 @@ class OutRefAcc {
 
 // AN ADDRESS SLOT'S EVALUATION ORDER, at a call that also fills a default a later default reads. The fill is shared,
 // so it becomes a local ahead of the call; the address is not a value and cannot join it, so what has to be pinned at
-// the address's own position is the value its LOCATION is computed from (`brOrderMk()`), leaving `<local>.n` in the
+// the address's own position is the value its LOCATION is computed from (`byRefOrderMk()`), leaving `<local>.n` in the
 // slot. Kotlin's order is `m` then `d`; pinning after the fill's local would emit `d` then `m`.
 //
 // COMPILED, DELIBERATELY NOT RUN. A Kotlin function declaring a `ClrRef<T>` PARAMETER is separately broken — it
@@ -28,36 +28,36 @@ class OutRefAcc {
 // these would assert that unrelated defect rather than this order. What they do buy: kotc emits the plan, bir2cir
 // lowers it, ilemit emits it and ILVerify checks the result. Turn each into a `@TestAttribute` asserting the log
 // noted beside it once the `ClrRef`-parameter defect is fixed; they guard both from then on.
-private class BrOrderHolder(var n: Int)
-private var brOrderLog = ""
-private fun brOrderMk(): BrOrderHolder { brOrderLog += "m"; return BrOrderHolder(1) }
-private fun brOrderD(): Int { brOrderLog += "d"; return 3 }
-private fun brOrderP(): Int { brOrderLog += "p"; return 2 }
-private fun brOrderIdx(): Int { brOrderLog += "i"; return 0 }
-private fun brOrderTake(r: ClrRef<Int>, a: Int = brOrderD(), b: Int = a * 10): Int = a + b
-private fun brOrderTakeP(p: Int, r: ClrRef<Int>, a: Int = brOrderD(), b: Int = a * 10): Int = p + a + b
+private class ByRefOrderHolder(var n: Int)
+private var byRefOrderLog = ""
+private fun byRefOrderMk(): ByRefOrderHolder { byRefOrderLog += "m"; return ByRefOrderHolder(1) }
+private fun byRefOrderD(): Int { byRefOrderLog += "d"; return 3 }
+private fun byRefOrderP(): Int { byRefOrderLog += "p"; return 2 }
+private fun byRefOrderIdx(): Int { byRefOrderLog += "i"; return 0 }
+private fun byRefOrderTake(r: ClrRef<Int>, a: Int = byRefOrderD(), b: Int = a * 10): Int = a + b
+private fun byRefOrderTakeP(p: Int, r: ClrRef<Int>, a: Int = byRefOrderD(), b: Int = a * 10): Int = p + a + b
 // "md" — the address's operand is pinned, then the shared fill.
-private fun brOrderCall(): Int = brOrderTake(byref(brOrderMk().n))
+private fun byRefOrderCall(): Int = byRefOrderTake(byref(byRefOrderMk().n))
 // "pmd" — a supplied value sits BEFORE the address in Kotlin's order, and the shared fill's local sits after both.
 // This is the one that discriminates: collecting the address pins into their own list and emitting that list ahead of
 // the materialised locals gives "mpd".
-private fun brOrderCallP(): Int = brOrderTakeP(brOrderP(), byref(brOrderMk().n))
+private fun byRefOrderCallP(): Int = byRefOrderTakeP(byRefOrderP(), byref(byRefOrderMk().n))
 // "id" — the impure operand is an INDEX, not a receiver. A walk that only knew about `recv` pinned nothing here and
 // left `idx()` to run at the slot, i.e. after the fill's local.
-private fun brOrderCallIndexed(arr: IntArray): Int = brOrderTake(byref(arr[brOrderIdx()]))
+private fun byRefOrderCallIndexed(arr: IntArray): Int = byRefOrderTake(byref(arr[byRefOrderIdx()]))
 // "pmd" — the fill is NOT shared by another default, so it needs no local of its own; the only reason anything moves
 // is ORDER. Its slot sits ahead of both supplied ones while Kotlin evaluates it last, and the address contributes a
 // pre-call pin. That makes the ordering rule one about pre-call WORK rather than about materialisation: a binding that
 // emits any pre-call statement forces every earlier non-stable binding to emit one too, or the earlier value is left
 // inline in the call and runs after it.
-private fun brOrderTakeUnshared(a: Int = brOrderD(), p: Int, r: ClrRef<Int>): Int = p + a
-private fun brOrderCallUnshared(): Int =
-    brOrderTakeUnshared(p = brOrderP(), r = byref(brOrderMk().n))
+private fun byRefOrderTakeUnshared(a: Int = byRefOrderD(), p: Int, r: ClrRef<Int>): Int = p + a
+private fun byRefOrderCallUnshared(): Int =
+    byRefOrderTakeUnshared(p = byRefOrderP(), r = byref(byRefOrderMk().n))
 // The pinned operand is an `arrayGet`, which carries neither `sty` nor `type` at the kotc boundary — it is typed from
 // its `elem`. An untyped pin is not a lesser local, it is unverifiable IL.
-private class BrOrderCell(var n: Int)
-private fun brOrderCells(): Array<BrOrderCell> { brOrderLog += "c"; return arrayOf(BrOrderCell(1)) }
-private fun brOrderCallElem(): Int = brOrderTake(byref(brOrderCells()[0].n))
+private class ByRefOrderCell(var n: Int)
+private fun byRefOrderCells(): Array<ByRefOrderCell> { byRefOrderLog += "c"; return arrayOf(ByRefOrderCell(1)) }
+private fun byRefOrderCallElem(): Int = byRefOrderTake(byref(byRefOrderCells()[0].n))
 // A location whose ROOT is a CALL is not an lvalue former: pinning its operands would still leave the invocation
 // running at the slot, once but after the fill's local. The whole location moves to its own plan position instead, and
 // WHICH local it moves into is decided by the location's own DECLARED type, never by its node shape — storing a `T`
@@ -65,19 +65,19 @@ private fun brOrderCallElem(): Int = brOrderTake(byref(brOrderCells()[0].n))
 //
 // "md" — an ORDINARY call: a plain `Int` local at the plan position, and the slot takes THAT local's address, which is
 // what taking the address of an rvalue means.
-private fun brOrderPlain(): Int { brOrderLog += "m"; return 1 }
-private fun brOrderCallRvalue(): Int = brOrderTake(byref(brOrderPlain()))
+private fun byRefOrderPlain(): Int { byRefOrderLog += "m"; return 1 }
+private fun byRefOrderCallRvalue(): Int = byRefOrderTake(byref(byRefOrderPlain()))
 // "id" — a .NET ref-RETURNING member takes the SAME path, because the Kotlin surface erases its ref-ness: `Slot`
 // reads back as `fun Slot(i: Int): Int`, which is also why `val v = c.Slot(1)` is documented as a value copy. So this
 // argument is the address of a copy. The live-ref form is the delegate one (`var x by byref(c.Slot(1))`), which is
 // typed `ClrRef<Int>` and keeps the pointer — see `byrefDelegateForwardedToARefParameter`.
-private fun brOrderCallRefReturn(c: Calc): Int = brOrderTake(byref(c.Slot(brOrderIdx())))
+private fun byRefOrderCallRefReturn(c: Calc): Int = byRefOrderTake(byref(c.Slot(byRefOrderIdx())))
 
 // A singleton's properties, so `byref(BrHold.a)` names a STATIC storage location rather than an instance field.
 object BrHold { var a = 1; var b = 2 }
 // The location's impure operand is an INLINE-SPLICED block, which carries no type stamp of its own — its type is its
 // result's. An untyped pin would abort the build on source the frontend accepted.
-private fun brOrderCallSplicedOperand(): Int = brOrderTake(byref(run { brOrderMk() }.n))
+private fun byRefOrderCallSplicedOperand(): Int = byRefOrderTake(byref(run { byRefOrderMk() }.n))
 
 class ByRefParameterTests {
     // A `var x by byref(...)` delegate read passed ON to a `ref` parameter. The read is a `byrefLoad` — the pointee —

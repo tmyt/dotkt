@@ -26,7 +26,7 @@
 //   4. A SUSPEND FUNCTIONAL VALUE reached through a `?.` chain — the receiver's suspend-`fn` type is recognized
 //      through the same shared deriver rather than through a private restatement of the stamp order.
 //
-// Top-level names are family-prefixed (`corRt`) — the cold-core lowering keys top-level suspend funs by simple
+// Top-level names are family-prefixed (`suspendResultType`) — the cold-core lowering keys top-level suspend funs by simple
 // name, so they must be unique across this assembly.
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
@@ -40,36 +40,36 @@ import dotkt.support.blockOn
 
 // A real suspension on every path — a defect that only shows once the outer call genuinely returns
 // COROUTINE_SUSPENDED is invisible without one.
-suspend fun corRtTick(n: Int): Int {
+suspend fun suspendResultTypeTick(n: Int): Int {
     Task.Delay(1).await()
     return n + 1
 }
 
 // ---- 1. a safe call whose result slot used to be kotlin.Any ---------------------------------------------------
-class CorRtBox(val n: Int)
+class SuspendResultTypeBox(val n: Int)
 
-suspend fun CorRtBox.corRtNext(): Int = corRtTick(n)
+suspend fun SuspendResultTypeBox.suspendResultTypeNext(): Int = suspendResultTypeTick(n)
 
-// `b?.corRtNext()` — a `cond` with no type stamp, carrying a VALUE type (`Int?`) across a suspension.
-suspend fun corRtSafeInt(b: CorRtBox?): Int? = b?.corRtNext()
+// `b?.suspendResultTypeNext()` — a `cond` with no type stamp, carrying a VALUE type (`Int?`) across a suspension.
+suspend fun suspendResultTypeSafeInt(b: SuspendResultTypeBox?): Int? = b?.suspendResultTypeNext()
 
 // The same through an elvis, so the conditional's value is CONSUMED as a bare Int rather than stored.
-suspend fun corRtSafeOrElse(b: CorRtBox?): Int = b?.corRtNext() ?: -7
+suspend fun suspendResultTypeSafeOrElse(b: SuspendResultTypeBox?): Int = b?.suspendResultTypeNext() ?: -7
 
 // A reference-typed result, for the sibling arm of the same desugar.
-suspend fun CorRtBox.corRtName(): String {
+suspend fun SuspendResultTypeBox.suspendResultTypeName(): String {
     Task.Delay(1).await()
     return "box" + n
 }
 
-suspend fun corRtSafeString(b: CorRtBox?): String? = b?.corRtName()
+suspend fun suspendResultTypeSafeString(b: SuspendResultTypeBox?): String? = b?.suspendResultTypeName()
 
 // ---- 2. the same shape inside another call's operand list -----------------------------------------------------
-fun corRtSum(a: Int, b: Int): Int = a + b
+fun suspendResultTypeSum(a: Int, b: Int): Int = a + b
 
 // The safe call's value is bound by the enclosing node's evaluation plan and materialised ahead of the second
 // operand's suspension, so its slot is typed by the plan rather than by the conditional's own temporary.
-suspend fun corRtSafeInOperands(b: CorRtBox?): Int = corRtSum(b?.corRtNext() ?: 0, corRtTick(100))
+suspend fun suspendResultTypeSafeInOperands(b: SuspendResultTypeBox?): Int = suspendResultTypeSum(b?.suspendResultTypeNext() ?: 0, suspendResultTypeTick(100))
 
 // ---- 3. a generic-owner suspend call: `sty` and `ret` disagree ------------------------------------------------
 //
@@ -79,32 +79,32 @@ suspend fun corRtSafeInOperands(b: CorRtBox?): Int = corRtSum(b?.corRtNext() ?: 
 // "the method itself or the containing type is not fully instantiated". That gap is INDEPENDENT of result typing —
 // it reproduces identically with the previous bir2cir — and no existing fixture reached it; typing a generic call's
 // resumed value is what this section is for, so it uses the shape that isolates it.
-class CorRtCell<T>(val value: T) {
+class SuspendResultTypeCell<T>(val value: T) {
     // The declared return is the type parameter `T`; the call site below resolves it to `Int`, so the call node
     // carries `ret` = `T` and `sty` = `Int`.
     suspend fun unwrap(): T {
-        corRtTick(0)
+        suspendResultTypeTick(0)
         return value
     }
 }
 
-suspend fun corRtGenericOwner(): Int {
-    val cell = CorRtCell(41)
+suspend fun suspendResultTypeGenericOwner(): Int {
+    val cell = SuspendResultTypeCell(41)
     return cell.unwrap() + 1
 }
 
 // A generic suspend FUNCTION (rather than a generic owner), whose `ret` names its own type parameter.
-suspend fun <T> corRtIdentity(v: T): T {
-    corRtTick(0)
+suspend fun <T> suspendResultTypeIdentity(v: T): T {
+    suspendResultTypeTick(0)
     return v
 }
 
-suspend fun corRtGenericCallee(): Int = corRtIdentity(20) + corRtIdentity(22)
+suspend fun suspendResultTypeGenericCallee(): Int = suspendResultTypeIdentity(20) + suspendResultTypeIdentity(22)
 
 // ---- 4. a suspend functional value behind a `?.` --------------------------------------------------------------
-class CorRtHolder(val f: suspend (Int) -> Int)
+class SuspendResultTypeHolder(val f: suspend (Int) -> Int)
 
-suspend fun corRtValueThroughSafeCall(h: CorRtHolder?): Int = h?.f?.invoke(5) ?: -1
+suspend fun suspendResultTypeValueThroughSafeCall(h: SuspendResultTypeHolder?): Int = h?.f?.invoke(5) ?: -1
 
 // ---- 5. an object-ERASED nullable-generic return crossing a suspension ----------------------------------------
 //
@@ -119,7 +119,7 @@ suspend fun corRtValueThroughSafeCall(h: CorRtHolder?): Int = h?.f?.invoke(5) ?:
 //   (a) the erased call is an operand evaluated LEFT of a suspending one, so stage 0 declares the plan's spill
 //       local from the stamp;
 //   (b) the erased call IS the suspension, so the awaited state-machine field is declared from it.
-fun <T> corRtNullBoxes(x: T): List<T?> = listOf(x, null)
+fun <T> suspendResultTypeNullBoxes(x: T): List<T?> = listOf(x, null)
 
 // Three consumers, one per way the erased value can be RECEIVED, because carrier-argument erasure (#86) gives all
 // three the same physical parameter: `List<Any?>`, the directly-written substituted `List<Int?>` and a generic
@@ -127,37 +127,37 @@ fun <T> corRtNullBoxes(x: T): List<T?> = listOf(x, null)
 // `IReadOnlyList<Nullable<int32>>` — the erased value did not inhabit either slot, and the generic one additionally
 // went through an `Enumerable.Cast<object>` wrap whose `IEnumerable<object>` result inhabited neither. Both are in
 // now, and each is driven through BOTH suspension compositions below.
-fun corRtCountNulls(l: List<Any?>, extra: Int): Int {
+fun suspendResultTypeCountNulls(l: List<Any?>, extra: Int): Int {
     var n = 0
     for (v in l) if (v == null) n++
     return n + extra
 }
 
-fun corRtCountNullsTyped(l: List<Int?>, extra: Int): Int {
+fun suspendResultTypeCountNullsTyped(l: List<Int?>, extra: Int): Int {
     var n = 0
     for (v in l) if (v == null) n++
     return n + extra
 }
 
-fun <A> corRtCountNullsGeneric(l: List<A?>, extra: Int): Int {
+fun <A> suspendResultTypeCountNullsGeneric(l: List<A?>, extra: Int): Int {
     var n = 0
     for (v in l) if (v == null) n++
     return n + extra
 }
 
-suspend fun corRtErasedLeftOfSuspension(): Int = corRtCountNulls(corRtNullBoxes(7), corRtTick(0))
+suspend fun suspendResultTypeErasedLeftOfSuspension(): Int = suspendResultTypeCountNulls(suspendResultTypeNullBoxes(7), suspendResultTypeTick(0))
 
-suspend fun corRtErasedLeftOfSuspensionTyped(): Int = corRtCountNullsTyped(corRtNullBoxes(7), corRtTick(0))
+suspend fun suspendResultTypeErasedLeftOfSuspensionTyped(): Int = suspendResultTypeCountNullsTyped(suspendResultTypeNullBoxes(7), suspendResultTypeTick(0))
 
-suspend fun corRtErasedLeftOfSuspensionGeneric(): Int = corRtCountNullsGeneric(corRtNullBoxes(7), corRtTick(0))
+suspend fun suspendResultTypeErasedLeftOfSuspensionGeneric(): Int = suspendResultTypeCountNullsGeneric(suspendResultTypeNullBoxes(7), suspendResultTypeTick(0))
 
-suspend fun <T> corRtNullBoxesSuspend(x: T): List<T?> {
-    corRtTick(0)
+suspend fun <T> suspendResultTypeNullBoxesSuspend(x: T): List<T?> {
+    suspendResultTypeTick(0)
     return listOf(x, null)
 }
 
-suspend fun corRtErasedAwaited(): Int {
-    val l = corRtNullBoxesSuspend(7)
+suspend fun suspendResultTypeErasedAwaited(): Int {
+    val l = suspendResultTypeNullBoxesSuspend(7)
     var n = 0
     for (v in l) if (v == null) n++
     return n
@@ -165,9 +165,9 @@ suspend fun corRtErasedAwaited(): Int {
 
 // The awaited value carried across the suspension as a DECLARED `List<Int?>` local, then handed to each consumer:
 // the state-machine field, the local's slot and the parameter are one physical type or none of them are.
-suspend fun corRtErasedAwaitedTyped(): Int {
-    val l: List<Int?> = corRtNullBoxesSuspend(7)
-    return corRtCountNullsTyped(l, corRtTick(0)) + corRtCountNullsGeneric(l, 0)
+suspend fun suspendResultTypeErasedAwaitedTyped(): Int {
+    val l: List<Int?> = suspendResultTypeNullBoxesSuspend(7)
+    return suspendResultTypeCountNullsTyped(l, suspendResultTypeTick(0)) + suspendResultTypeCountNullsGeneric(l, 0)
 }
 
 // ---- 6. the suspend `fun interface` SAM shim's result type ----------------------------------------------------
@@ -178,17 +178,17 @@ suspend fun corRtErasedAwaitedTyped(): Int {
 // type is least likely to survive by accident: a GENERIC interface with a NON-Unit result (so the slot is a type
 // parameter's instantiation rather than `Unit`), and a suspend member with an EXTENSION receiver (so the shim's
 // parameter list is shifted by the receiver).
-fun interface CorRtSuspendMapper<T, R> {
+fun interface SuspendResultTypeSuspendMapper<T, R> {
     suspend fun map(v: T): R
 }
 
-fun interface CorRtSuspendOnInt {
+fun interface SuspendResultTypeSuspendOnInt {
     suspend fun Int.transform(): Int
 }
 
-suspend fun <T, R> corRtApplyMapper(v: T, m: CorRtSuspendMapper<T, R>): R = m.map(v)
+suspend fun <T, R> suspendResultTypeApplyMapper(v: T, m: SuspendResultTypeSuspendMapper<T, R>): R = m.map(v)
 
-suspend fun corRtApplyOnInt(v: Int, f: CorRtSuspendOnInt): Int = with(f) { v.transform() }
+suspend fun suspendResultTypeApplyOnInt(v: Int, f: SuspendResultTypeSuspendOnInt): Int = with(f) { v.transform() }
 
 // ---- 7. a `.NET`-bound operand's stamp surviving the `clr*` reshape (#304) -------------------------------------
 //
@@ -223,77 +223,77 @@ suspend fun corRtApplyOnInt(v: Int, f: CorRtSuspendOnInt): Int = with(f) { v.tra
 // The consumers take the operand's OWN type, so the reshaped node is the operand ITSELF: a conversion around it
 // (`v.X.toInt()`) would be a `conv`, which the deriver types from its own `to` slot whatever its operand is, and the
 // composition would no longer reach the drop at all.
-fun corRtJoinF(a: Float, b: Int): String = "" + a.toInt() + "," + b
-fun corRtJoinI(a: Int, b: Int): String = "" + a + "," + b
-fun corRtJoinB(a: StringBuilder, b: Int): String = "" + a.Length + "," + b
+fun suspendResultTypeJoinF(a: Float, b: Int): String = "" + a.toInt() + "," + b
+fun suspendResultTypeJoinI(a: Int, b: Int): String = "" + a + "," + b
+fun suspendResultTypeJoinB(a: StringBuilder, b: Int): String = "" + a.Length + "," + b
 
-suspend fun corRtNetInstanceField(): String {
+suspend fun suspendResultTypeNetInstanceField(): String {
     val v = Vector3(4.0f, 2.0f, 3.0f)
-    return corRtJoinF(v.X, corRtTick(1))
+    return suspendResultTypeJoinF(v.X, suspendResultTypeTick(1))
 }
 
-fun corRtNetInstanceFieldPlain(): String {
+fun suspendResultTypeNetInstanceFieldPlain(): String {
     val v = Vector3(4.0f, 2.0f, 3.0f)
-    return corRtJoinF(v.X, 2)
+    return suspendResultTypeJoinF(v.X, 2)
 }
 
-suspend fun corRtNetStaticCall(): String = corRtJoinI(Math.Max(7, 1), corRtTick(1))
+suspend fun suspendResultTypeNetStaticCall(): String = suspendResultTypeJoinI(Math.Max(7, 1), suspendResultTypeTick(1))
 
-fun corRtNetStaticCallPlain(): String = corRtJoinI(Math.Max(7, 1), 2)
+fun suspendResultTypeNetStaticCallPlain(): String = suspendResultTypeJoinI(Math.Max(7, 1), 2)
 
-suspend fun corRtNetGenericCall(): String = corRtJoinB(Activator.CreateInstance<StringBuilder>(), corRtTick(1))
+suspend fun suspendResultTypeNetGenericCall(): String = suspendResultTypeJoinB(Activator.CreateInstance<StringBuilder>(), suspendResultTypeTick(1))
 
-fun corRtNetGenericCallPlain(): String = corRtJoinB(Activator.CreateInstance<StringBuilder>(), 2)
+fun suspendResultTypeNetGenericCallPlain(): String = suspendResultTypeJoinB(Activator.CreateInstance<StringBuilder>(), 2)
 
 class SuspendResultTypePrecedenceTests {
     @TestAttribute
     fun safeCallValueTypeResultIsNotBoxed() {
-        assertEquals(8, blockOn { corRtSafeInt(CorRtBox(7)) })
-        assertNull(blockOn { corRtSafeInt(null) })
+        assertEquals(8, blockOn { suspendResultTypeSafeInt(SuspendResultTypeBox(7)) })
+        assertNull(blockOn { suspendResultTypeSafeInt(null) })
     }
 
     @TestAttribute
     fun safeCallThroughElvis() {
-        assertEquals(4, blockOn { corRtSafeOrElse(CorRtBox(3)) })
-        assertEquals(-7, blockOn { corRtSafeOrElse(null) })
+        assertEquals(4, blockOn { suspendResultTypeSafeOrElse(SuspendResultTypeBox(3)) })
+        assertEquals(-7, blockOn { suspendResultTypeSafeOrElse(null) })
     }
 
     @TestAttribute
     fun safeCallReferenceTypeResult() {
-        assertEquals("box5", blockOn { corRtSafeString(CorRtBox(5)) })
-        assertNull(blockOn { corRtSafeString(null) })
+        assertEquals("box5", blockOn { suspendResultTypeSafeString(SuspendResultTypeBox(5)) })
+        assertNull(blockOn { suspendResultTypeSafeString(null) })
     }
 
     @TestAttribute
     fun safeCallInsideOperandList() {
-        assertEquals(104, blockOn { corRtSafeInOperands(CorRtBox(2)) })   // (2+1) + (100+1)
-        assertEquals(101, blockOn { corRtSafeInOperands(null) })          //     0 + (100+1)
+        assertEquals(104, blockOn { suspendResultTypeSafeInOperands(SuspendResultTypeBox(2)) })   // (2+1) + (100+1)
+        assertEquals(101, blockOn { suspendResultTypeSafeInOperands(null) })          //     0 + (100+1)
     }
 
     @TestAttribute
     fun genericOwnerCallResumesInstantiatedType() {
-        assertEquals(42, blockOn { corRtGenericOwner() })
+        assertEquals(42, blockOn { suspendResultTypeGenericOwner() })
     }
 
     @TestAttribute
     fun genericCalleeResumesInstantiatedType() {
-        assertEquals(42, blockOn { corRtGenericCallee() })
+        assertEquals(42, blockOn { suspendResultTypeGenericCallee() })
     }
 
     @TestAttribute
     fun suspendFunctionValueBehindSafeCall() {
-        assertEquals(6, blockOn { corRtValueThroughSafeCall(CorRtHolder { v -> corRtTick(v) }) })
-        assertEquals(-1, blockOn { corRtValueThroughSafeCall(null) })
+        assertEquals(6, blockOn { suspendResultTypeValueThroughSafeCall(SuspendResultTypeHolder { v -> suspendResultTypeTick(v) }) })
+        assertEquals(-1, blockOn { suspendResultTypeValueThroughSafeCall(null) })
     }
 
     @TestAttribute
     fun erasedNullableGenericReturnLeftOfSuspension() {
-        assertEquals(2, blockOn { corRtErasedLeftOfSuspension() })   // 1 null in [7, null] + tick(0) = 1
+        assertEquals(2, blockOn { suspendResultTypeErasedLeftOfSuspension() })   // 1 null in [7, null] + tick(0) = 1
     }
 
     @TestAttribute
     fun erasedNullableGenericReturnIsTheSuspension() {
-        assertEquals(1, blockOn { corRtErasedAwaited() })            // 1 null in [7, null]
+        assertEquals(1, blockOn { suspendResultTypeErasedAwaited() })            // 1 null in [7, null]
     }
 
     // #86 — the same two compositions received at a DIRECTLY-WRITTEN `List<Int?>` and at a GENERIC `List<A?>`.
@@ -301,20 +301,20 @@ class SuspendResultTypePrecedenceTests {
     // inhabits each of them; before it, neither of these compiled to a program that ran.
     @TestAttribute
     fun erasedNullableGenericReachesATypedAndAGenericConsumer() {
-        assertEquals(2, blockOn { corRtErasedLeftOfSuspensionTyped() })    // 1 null in [7, null] + tick(0) = 1
-        assertEquals(2, blockOn { corRtErasedLeftOfSuspensionGeneric() })  // same, through List<A?>
-        assertEquals(3, blockOn { corRtErasedAwaitedTyped() })             // (1 + 1) + 1 across the suspension
+        assertEquals(2, blockOn { suspendResultTypeErasedLeftOfSuspensionTyped() })    // 1 null in [7, null] + tick(0) = 1
+        assertEquals(2, blockOn { suspendResultTypeErasedLeftOfSuspensionGeneric() })  // same, through List<A?>
+        assertEquals(3, blockOn { suspendResultTypeErasedAwaitedTyped() })             // (1 + 1) + 1 across the suspension
     }
 
     @TestAttribute
     fun suspendFunInterfaceGenericNonUnitResult() {
-        assertEquals(15, blockOn { corRtApplyMapper(7) { v -> corRtTick(v) + 7 } })
-        assertEquals("v8", blockOn { corRtApplyMapper(7) { v -> "v" + corRtTick(v) } })
+        assertEquals(15, blockOn { suspendResultTypeApplyMapper(7) { v -> suspendResultTypeTick(v) + 7 } })
+        assertEquals("v8", blockOn { suspendResultTypeApplyMapper(7) { v -> "v" + suspendResultTypeTick(v) } })
     }
 
     @TestAttribute
     fun suspendFunInterfaceExtensionReceiver() {
-        assertEquals(11, blockOn { corRtApplyOnInt(10) { corRtTick(this) } })
+        assertEquals(11, blockOn { suspendResultTypeApplyOnInt(10) { suspendResultTypeTick(this) } })
     }
 
     // ---- 7 ----
@@ -322,19 +322,19 @@ class SuspendResultTypePrecedenceTests {
     // with it the reshaped operand had no static type and bir2cir refused the compilation outright (#304).
     @TestAttribute
     fun netInstanceFieldLeftOfSuspension() {
-        assertEquals("4,2", corRtNetInstanceFieldPlain())
-        assertEquals("4,2", blockOn { corRtNetInstanceField() })
+        assertEquals("4,2", suspendResultTypeNetInstanceFieldPlain())
+        assertEquals("4,2", blockOn { suspendResultTypeNetInstanceField() })
     }
 
     @TestAttribute
     fun netStaticCallLeftOfSuspension() {
-        assertEquals("7,2", corRtNetStaticCallPlain())
-        assertEquals("7,2", blockOn { corRtNetStaticCall() })
+        assertEquals("7,2", suspendResultTypeNetStaticCallPlain())
+        assertEquals("7,2", blockOn { suspendResultTypeNetStaticCall() })
     }
 
     @TestAttribute
     fun netGenericCallLeftOfSuspension() {
-        assertEquals("0,2", corRtNetGenericCallPlain())
-        assertEquals("0,2", blockOn { corRtNetGenericCall() })
+        assertEquals("0,2", suspendResultTypeNetGenericCallPlain())
+        assertEquals("0,2", blockOn { suspendResultTypeNetGenericCall() })
     }
 }

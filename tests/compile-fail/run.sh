@@ -10,8 +10,10 @@
 # Layout — one case per `<name>.kt` with a companion `<name>.expected`:
 #   <name>.kt         the source, compiled standalone by scripts/dotkt.sh (the same pipeline the .ktproj lane drives)
 #   <name>.expected   substrings the combined stdout+stderr must ALL contain; blank lines and `#` lines are comments
-#   <name>.cs         OPTIONAL — a .NET surface the case is refused against, compiled to a plain C# library and
-#                     passed as `--ref`. A refusal ABOUT a foreign declaration has no Kotlin-only witness.
+#   <name>.cs         OPTIONAL — a .NET surface the case is refused against. All such surfaces are content-deduped,
+#                     compiled into one plain C# library, and passed as `--ref`; a refusal ABOUT a foreign
+#                     declaration has no Kotlin-only witness.
+#   <name>.csref      OPTIONAL — the basename of another case's identical `.cs` fixture; use instead of copying it.
 #
 # Green (exit 0) iff every broken case is CF_XFAIL-listed and every listed case is still broken, with the same
 # machine-readable "one reason per known failure" discipline as the other gates — the baseline is EMPTY, and a
@@ -28,6 +30,35 @@ work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 XFAIL_NEW=(); XFAIL_FIXED=()
 total=0
 
+# The foreign-surface cases used to build one tiny C# project per Kotlin verdict, including six byte-identical
+# copies of just two fixtures. They are independent Kotlin verdicts, but they share one CLR reference graph. Build
+# that graph once, content-deduping repeated sources so identical namespace/type declarations do not collide.
+shared_ref=""
+declare -a unique_cs=()
+for cs in "$HERE"/*.cs; do
+	[[ -e "$cs" ]] || continue
+	duplicate=0
+	for existing in "${unique_cs[@]}"; do
+		if cmp -s "$cs" "$existing"; then duplicate=1; break; fi
+	done
+	(( duplicate == 1 )) || unique_cs+=("$cs")
+done
+if (( ${#unique_cs[@]} )); then
+	csdir="$work/shared.ref"; mkdir -p "$csdir"
+	for cs in "${unique_cs[@]}"; do cp "$cs" "$csdir/"; done
+	cat > "$csdir/ref.csproj" <<'CSPROJ'
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework><Nullable>disable</Nullable><ImplicitUsings>disable</ImplicitUsings><AssemblyName>CompileFailRef</AssemblyName></PropertyGroup>
+</Project>
+CSPROJ
+	if ! (cd "$csdir" && dotnet build -c Release -o bin -v q --nologo >"$csdir/build.log" 2>&1); then
+		echo "compile-fail: shared .NET fixture assembly did not build"
+		sed 's/^/        /' "$csdir/build.log" | tail -20
+		exit 1
+	fi
+	shared_ref="$csdir/bin/CompileFailRef.dll"
+fi
+
 for kt in "$HERE"/*.kt; do
 	[[ -e "$kt" ]] || continue
 	name="$(basename "$kt" .kt)"
@@ -38,27 +69,26 @@ for kt in "$HERE"/*.kt; do
 		XFAIL_NEW+=("$name"); continue
 	fi
 
-	# A case may name a .NET SURFACE it is refused against: `<name>.cs` beside it is compiled to a plain C#
-	# library and passed as a reference. Some refusals are ABOUT a foreign declaration — a .NET member whose
-	# signature no Kotlin expression inhabits — so there is no Kotlin-only source that can witness them, and a
-	# refusal with no witness is a claim rather than a behaviour. The project is generated here rather than checked
-	# in: the case owns one .cs file and nothing else.
+	# A case may name a .NET SURFACE it is refused against. Some refusals are ABOUT a foreign declaration — a .NET
+	# member whose signature no Kotlin expression inhabits — so there is no Kotlin-only source that can witness it.
+	# All companion sources were compiled into the shared reference above; the case still owns its exact witness.
 	declare -a refargs=()
 	cs="$HERE/$name.cs"
-	if [[ -f "$cs" ]]; then
-		csdir="$work/$name.ref"; mkdir -p "$csdir"
-		cp "$cs" "$csdir/"
-		cat > "$csdir/ref.csproj" <<'CSPROJ'
-<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup><TargetFramework>net10.0</TargetFramework><Nullable>disable</Nullable><ImplicitUsings>disable</ImplicitUsings><AssemblyName>CompileFailRef</AssemblyName></PropertyGroup>
-</Project>
-CSPROJ
-		if ! (cd "$csdir" && dotnet build -c Release -o bin -v q --nologo >"$csdir/build.log" 2>&1); then
-			echo "FAIL  $name — the case's .NET surface ($name.cs) did not build"
-			sed 's/^/        /' "$csdir/build.log" | tail -20
+	csref="$HERE/$name.csref"
+	if [[ -f "$csref" ]]; then
+		if [[ -f "$cs" ]]; then
+			echo "FAIL  $name — has both $name.cs and $name.csref"
 			XFAIL_NEW+=("$name"); continue
 		fi
-		refargs=(--ref "$csdir/bin/CompileFailRef.dll")
+		IFS= read -r shared_name < "$csref" || shared_name=""
+		if [[ -z "$shared_name" || "$shared_name" == */* || "$shared_name" != *.cs || ! -f "$HERE/$shared_name" ]]; then
+			echo "FAIL  $name — invalid shared fixture in $name.csref: $shared_name"
+			XFAIL_NEW+=("$name"); continue
+		fi
+		cs="$HERE/$shared_name"
+	fi
+	if [[ -f "$cs" ]]; then
+		refargs=(--ref "$shared_ref")
 	fi
 
 	out="$(bash "$ROOT/scripts/dotkt.sh" ${refargs[@]+"${refargs[@]}"} "$kt" -d "$work/$name" 2>&1)" && rc=0 || rc=$?

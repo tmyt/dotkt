@@ -5,6 +5,52 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Changed
+
+- **Tests: #227 consolidates eleven redundant NUnit cases into their existing feature owners.** Numeric parsing,
+  nullable string rendering, enum APIs, character ranges, preconditions, collection rendering, BCL imports, and
+  configured-await shapes now have one authoritative test location each. Assertions that preserve a distinct CLR
+  shape—mutable-map rendering, enum `entries`, raw `Math.Max`, fluent `Append(Int)`, and non-generic
+  `ConfigureAwait(false)`—move into those survivor methods before the duplicate methods and four single-test
+  fixtures are removed. The reviewed discovery baseline moves from 710 to 699 without removing a unique compiler
+  path.
+
+- **Tests: #227 finishes replacing opaque fixture collision tokens with feature names.** Remaining shorthand in
+  captured-variable, lambda, language-core, default-argument, non-constant-default, and coroutine fixtures now
+  states the behavior it isolates; the round-trip default-argument package is likewise named
+  `roundtrip.defaultarguments`. Secondary coroutine case tokens are expanded as well, so names distinguish
+  conditional/loop control flow, generic/non-generic await, receiver capture, evaluation order, dispatch, and
+  suspend-function-value shapes without requiring the retired shell-case map. Cross-file references and
+  name-sensitive assertions move with their declarations; discovery counts are unchanged.
+
+- **Tests: #227 replaces migration-batch identifiers with feature-oriented names.** The `M1`–`M5`/`MigM`,
+  `CorA`/`CorB`, and `IntropA`–`IntropD` families now use fixture-specific stems across the shared Basic,
+  Coroutines, and Interop assemblies. Analogous opaque stems in suspend operand/result/capture, open-generic-slot,
+  byref-order, and compile-fail fixtures are expanded as well. Cross-file support symbols, packages, reflection- or
+  string-sensitive expectations, diagnostic baselines, and comments move in the same sweep; discovery counts do
+  not change.
+
+- **Tests: #227 removes the superseded three-case task lifecycle fixture.** Its genuine asynchronous and completed
+  `Task` await paths are both covered by `DynamicCaptureContextTests`, which additionally exercises generic and
+  non-generic awaitables under runtime and constant capture policies. Its “finally once” check is covered by
+  `SuspendTryLoweringTests.namedNestedTryResumesInKotlinOrder`, whose exact trace proves that a real suspension in
+  the protected body resumes before each nested `finally` runs exactly once. The coroutines discovery baseline is
+  reconciled from 162 to 159; no unique compiler path or assertion is removed.
+
+- **Tests: the #86 round-trip probes now share the compilation graph their semantics share (#227).** The shell
+  lane still runs one process and records one verdict per observable, so a crashing XFAIL cannot hide a later
+  result, but it no longer recompiles every tiny source program independently. Fifteen same-module probes compile
+  into one dispatched assembly; sixteen cross-module producer groups and thirty-four consumers compile into one
+  producer/consumer pair; the one expected compile rejection remains isolated. This reduces the #86 block from
+  66 Kotlin compiler starts to 4, and from 65 bir2cir/ilemit pairs to 3, without weakening per-case XFAIL shape
+  matching. The NUnit test guidance now makes the governing rule explicit: isolate runtime processes for failure
+  attribution, not compiler invocations. The five NUnit suites also pin their reviewed v0.9.8 discovery baseline
+  (713 tests total), so future additions and removals must reconcile their count in the same review instead of
+  silently growing or shrinking the gate. Compile-fail's thirteen companion C# fixture mappings now share nine
+  source files and are assembled once instead of copying fixtures and rebuilding thirteen one-file projects; the
+  Kotlin refusal verdicts remain isolated because a compiler error may stop before later sources reach their
+  owning phase.
+
 ## 0.9.8 (2026-08-02)
 
 ### Added

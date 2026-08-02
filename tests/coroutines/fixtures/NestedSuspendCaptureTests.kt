@@ -1,8 +1,8 @@
-// CorB batch — il-suspendnestedcapture: a `suspend inline fun` with a `crossinline` block whose body NESTS a lambda
+// feature fixture — il-suspendnestedcapture: a `suspend inline fun` with a `crossinline` block whose body NESTS a lambda
 // capturing an enclosing binding (the `suspendCancellableCoroutine { cont -> cont.invokeOnCancellation { … } }` shape).
-// All top-level decls carry the `snc` case token under the shared `corB`/`CorB` prefix so their simple names are
+// All top-level declarations use the descriptive `nestedCapture`/`NestedCapture` stem so their simple names are
 // UNIQUE across this assembly (bir2cir's cold-core suspend lowering keys top-level suspend funs by simple name; note
-// this case's `corBSncMySuspend` must not clash with il-inlmatsetcap's `corBImscMySuspend`). Driven by the shared
+// this case's `nestedCaptureSuspend` must not clash with il-inlmatsetcap's `materializedCaptureSuspend`). Driven by the shared
 // `dotkt.support.blockOn` harness; the former `main` + golden -> one @TestAttribute method (values 1:1).
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
@@ -12,44 +12,44 @@ import kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn
 import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
 import dotkt.support.blockOn
 
-suspend inline fun <T> corBSncMySuspend(crossinline block: (Continuation<T>) -> Unit): T =
+suspend inline fun <T> nestedCaptureSuspend(crossinline block: (Continuation<T>) -> Unit): T =
     suspendCoroutineUninterceptedOrReturn { uCont -> block(uCont); COROUTINE_SUSPENDED }
 
-fun corBSncRegister(action: () -> Unit) { action() }
+fun nestedCaptureRegister(action: () -> Unit) { action() }
 
-suspend fun corBSncCap0(): Int = corBSncMySuspend { cont -> corBSncRegister { cont.resume(5) } }
-suspend fun corBSncCap1(h: Int): Int = corBSncMySuspend { cont -> corBSncRegister { cont.resume(h + 1) } }
-suspend fun <T> corBSncCapG(v: T): T = corBSncMySuspend { cont ->
+suspend fun nestedCaptureConstant(): Int = nestedCaptureSuspend { cont -> nestedCaptureRegister { cont.resume(5) } }
+suspend fun nestedCaptureParameter(h: Int): Int = nestedCaptureSuspend { cont -> nestedCaptureRegister { cont.resume(h + 1) } }
+suspend fun <T> nestedCaptureGeneric(v: T): T = nestedCaptureSuspend { cont ->
     val local = v
-    corBSncRegister { cont.resume(local) }
+    nestedCaptureRegister { cont.resume(local) }
 }
-suspend fun corBSncCapFE(): Int = corBSncMySuspend { cont ->
-    arrayOf(7).forEach { corBSncRegister { cont.resume(it) } }
+suspend fun nestedCaptureArrayForEach(): Int = nestedCaptureSuspend { cont ->
+    arrayOf(7).forEach { nestedCaptureRegister { cont.resume(it) } }
 }
-suspend fun corBSncCapMap(): Int = corBSncMySuspend { cont ->
-    arrayOf(50).map { corBSncRegister { cont.resume(it) }; it }
+suspend fun nestedCaptureMap(): Int = nestedCaptureSuspend { cont ->
+    arrayOf(50).map { nestedCaptureRegister { cont.resume(it) }; it }
 }
-suspend fun corBSncCapFEI(): Int = corBSncMySuspend { cont ->
-    arrayOf(100).forEachIndexed { idx, v -> corBSncRegister { cont.resume(idx + v) } }
+suspend fun nestedCaptureForEachIndexed(): Int = nestedCaptureSuspend { cont ->
+    arrayOf(100).forEachIndexed { idx, v -> nestedCaptureRegister { cont.resume(idx + v) } }
 }
-suspend fun corBSncCapList(): Int = corBSncMySuspend { cont ->
-    listOf(70).forEach { corBSncRegister { cont.resume(it) } }
+suspend fun nestedCaptureListForEach(): Int = nestedCaptureSuspend { cont ->
+    listOf(70).forEach { nestedCaptureRegister { cont.resume(it) } }
 }
-suspend fun corBSncCapTry(): Int = corBSncMySuspend { cont ->
-    try { throw RuntimeException("80") } catch (e: RuntimeException) { corBSncRegister { cont.resume(e.message!!.toInt()) } }
+suspend fun nestedCaptureCatch(): Int = nestedCaptureSuspend { cont ->
+    try { throw RuntimeException("80") } catch (e: RuntimeException) { nestedCaptureRegister { cont.resume(e.message!!.toInt()) } }
 }
 
 class NestedSuspendCaptureTests {
     @TestAttribute
     fun nestedClosureInCarrier() {
-        assertEquals(5, blockOn { corBSncCap0() })          // 5
-        assertEquals(42, blockOn { corBSncCap1(41) })       // 42
-        assertEquals("hi", blockOn { corBSncCapG("hi") })   // hi
-        assertEquals(7, blockOn { corBSncCapG(7) })         // 7
-        assertEquals(7, blockOn { corBSncCapFE() })         // 7
-        assertEquals(50, blockOn { corBSncCapMap() })       // 50
-        assertEquals(100, blockOn { corBSncCapFEI() })      // 100
-        assertEquals(70, blockOn { corBSncCapList() })      // 70
-        assertEquals(80, blockOn { corBSncCapTry() })       // 80
+        assertEquals(5, blockOn { nestedCaptureConstant() })          // 5
+        assertEquals(42, blockOn { nestedCaptureParameter(41) })       // 42
+        assertEquals("hi", blockOn { nestedCaptureGeneric("hi") })   // hi
+        assertEquals(7, blockOn { nestedCaptureGeneric(7) })         // 7
+        assertEquals(7, blockOn { nestedCaptureArrayForEach() })         // 7
+        assertEquals(50, blockOn { nestedCaptureMap() })       // 50
+        assertEquals(100, blockOn { nestedCaptureForEachIndexed() })      // 100
+        assertEquals(70, blockOn { nestedCaptureListForEach() })      // 70
+        assertEquals(80, blockOn { nestedCaptureCatch() })       // 80
     }
 }

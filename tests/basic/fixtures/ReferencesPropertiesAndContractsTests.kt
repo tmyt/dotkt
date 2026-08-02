@@ -1,4 +1,4 @@
-// Migrated batch M4 — pure-language core battery. Migrates the pure-Kotlin, same-module family of cases/il-* onto the
+// Migrated fixture — pure-language core battery. Migrates the pure-Kotlin, same-module family of cases/il-* onto the
 // in-process NUnit suite: nested classes, callable/property references, contracts, operator overloads, tuples,
 // preconditions, custom accessors, ref-cell capture, reified type params, non-local return through inline repeat, and
 // property delegation. Each old case's `main` + stdout-golden diff becomes one @TestAttribute method whose per-value
@@ -25,7 +25,7 @@
 //   il-repeatnlr        -> repeatnlr_nonLocalReturn           #75 non-local return + return@repeat + nested repeat
 //   il-rwp              -> rwp_readWriteDelegate               `by` ReadWriteProperty delegation trace
 //
-// COLLISION: this is one assembly / one namespace, so EVERY top-level declaration introduced here is prefixed `M4`
+// COLLISION: this is one assembly / one namespace, so EVERY top-level declaration introduced here is prefixed `ReferenceProperty`
 // with a per-case tag (Mref/Nst/Nnc/Ov/Op/Pref/Props/Rc/Rf/Rpt/Rwp) to avoid clashing with sibling batteries + stdlib.
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
@@ -37,7 +37,7 @@ import kotlin.properties.ReadWriteProperty
 import kotlin.reflect.KProperty
 
 // ---- il-mrefpriv : #155 bound ref to a PRIVATE method captured in a lifted closure over `this` -------------------
-class M4MrefBox {
+class ReferencePropertyMrefBox {
     private fun secret(): String = "secret"
     fun deferred(): () -> String {
         val make: () -> (() -> String) = { this::secret }   // this::secret lives in a lifted closure over `this`
@@ -46,7 +46,7 @@ class M4MrefBox {
 }
 
 // ---- il-nested : nested (non-inner) user classes, flattened to top-level synthetic types --------------------------
-class M4NstOuter(val tag: String) {
+class ReferencePropertyNstOuter(val tag: String) {
     class Node(val v: Int) {
         fun describe(): String = "node($v)"
         class Leaf(val w: Int) { fun show(): String = "leaf $w" }
@@ -55,85 +55,85 @@ class M4NstOuter(val tag: String) {
 }
 
 // ---- il-nncontract : #6 non-null CONTRACTS on the public surface (param preconditions + return postconditions) ----
-val m4NncLog = mutableListOf<String>()
+val referencePropertyNncLog = mutableListOf<String>()
 
 @Suppress("UNCHECKED_CAST")
-fun <T> m4NncForceNull(): T = null as T   // launder a null into a non-null reference slot (unchecked cast)
+fun <T> referencePropertyNncForceNull(): T = null as T   // launder a null into a non-null reference slot (unchecked cast)
 
-fun m4NncGreet(s: String): Int = s.length            // public top-level fun: param precondition
+fun referencePropertyNncGreet(s: String): Int = s.length            // public top-level fun: param precondition
 
-class M4NncBox(val name: String) {                    // public ctor: param precondition
+class ReferencePropertyNncBox(val name: String) {                    // public ctor: param precondition
     fun tag(x: String): String = x + name             // public member fun: param precondition
-    val leakyProp: String get() = m4NncForceNull()    // public getter: return postcondition
-    fun leakM(): String = m4NncForceNull()            // public member fun: return postcondition
+    val leakyProp: String get() = referencePropertyNncForceNull()    // public getter: return postcondition
+    fun leakM(): String = referencePropertyNncForceNull()            // public member fun: return postcondition
 }
 
-fun m4NncLeak(): String = m4NncForceNull()            // public top-level fun: return postcondition
+fun referencePropertyNncLeak(): String = referencePropertyNncForceNull()            // public top-level fun: return postcondition
 
-fun m4NncLeakExpr(): String {                         // expression-position return needs the same postcondition
-    val unreachable: String = if (false) "ok" else return m4NncForceNull()
+fun referencePropertyNncLeakExpr(): String {                         // expression-position return needs the same postcondition
+    val unreachable: String = if (false) "ok" else return referencePropertyNncForceNull()
     return unreachable
 }
 
-fun m4NncLeakInTry(): String {                        // return POSTCONDITION wrap evaluated INSIDE a try region
-    try { return m4NncForceNull() } finally { m4NncLog.add("fin") }  // NPE thrown in-try -> finally runs, then propagates
+fun referencePropertyNncLeakInTry(): String {                        // return POSTCONDITION wrap evaluated INSIDE a try region
+    try { return referencePropertyNncForceNull() } finally { referencePropertyNncLog.add("fin") }  // NPE thrown in-try -> finally runs, then propagates
 }
 
 // ---- il-overload : overloaded user functions resolve by name + parameter signature -------------------------------
-fun m4OvRender(s: String): String = "S:" + s
-fun m4OvRender(f: () -> String): String = "F:" + f()
-fun m4OvRender(n: Int): String = "I:" + n
-class M4OvBox {
+fun referencePropertyOvRender(s: String): String = "S:" + s
+fun referencePropertyOvRender(f: () -> String): String = "F:" + f()
+fun referencePropertyOvRender(n: Int): String = "I:" + n
+class ReferencePropertyOvBox {
     fun put(s: String): String = "bs:" + s
     fun put(f: () -> String): String = "bf:" + f()
 }
 // #86 Phase 0: CLR method identity includes METHOD generic arity. These have the same name and physical `object`
 // parameter vector but are distinct declarations (`arity=0` vs `arity=1`); ilemit must neither `$dup`-mangle the
 // generic sibling nor route its body/call through the non-generic MethodBuilder.
-fun m4OvByMethodArity(x: Any?): String = "plain"
-fun <T> m4OvByMethodArity(x: Any?): String = "generic"
+fun referencePropertyOvByMethodArity(x: Any?): String = "plain"
+fun <T> referencePropertyOvByMethodArity(x: Any?): String = "generic"
 
 // ---- il-overrideprop : `override val` accessor fills the base/interface abstract slot ----------------------------
-interface M4OpHasCtx { val ctx: Int }
-abstract class M4OpBase(override val ctx: Int) : M4OpHasCtx { abstract fun run(): Int }
-class M4OpImpl(ctx: Int) : M4OpBase(ctx) { override fun run(): Int = ctx * 2 }
-abstract class M4OpAbstractHolder { abstract val value: Int }
-class M4OpHolder(override val value: Int) : M4OpAbstractHolder()
+interface ReferencePropertyOpHasCtx { val ctx: Int }
+abstract class ReferencePropertyOpBase(override val ctx: Int) : ReferencePropertyOpHasCtx { abstract fun run(): Int }
+class ReferencePropertyOpImpl(ctx: Int) : ReferencePropertyOpBase(ctx) { override fun run(): Int = ctx * 2 }
+abstract class ReferencePropertyOpAbstractHolder { abstract val value: Int }
+class ReferencePropertyOpHolder(override val value: Int) : ReferencePropertyOpAbstractHolder()
 
 // ---- il-propref : #70 ::prop callable references lower to a real KProperty0/KMutableProperty1 --------------------
-var m4PrefX: Int = 1
-class M4PrefObj(var p: Int)
-fun m4PrefReadK(kp: KProperty0<Int>): Int = kp.get()
-class M4PrefBox<T>(val value: T)
-fun <T> m4PrefRefOf(b: M4PrefBox<T>): KProperty0<T> = b::value   // generic context: vType is a `tv`
-class M4PrefPayload(val tag: String)
-class M4PrefHolder(var pay: M4PrefPayload)                       // vType is an app-declared TypeBuilder class
+var referencePropertyPrefX: Int = 1
+class ReferencePropertyPrefObj(var p: Int)
+fun referencePropertyPrefReadK(kp: KProperty0<Int>): Int = kp.get()
+class ReferencePropertyPrefBox<T>(val value: T)
+fun <T> referencePropertyPrefRefOf(b: ReferencePropertyPrefBox<T>): KProperty0<T> = b::value   // generic context: vType is a `tv`
+class ReferencePropertyPrefPayload(val tag: String)
+class ReferencePropertyPrefHolder(var pay: ReferencePropertyPrefPayload)                       // vType is an app-declared TypeBuilder class
 
 // ---- il-props : custom property accessors (get()/set() with `field`) + lateinit semantics -----------------------
-class M4PropsBox(v: Int) {
+class ReferencePropertyPropsBox(v: Int) {
     var x: Int = v
         get() = field * 2
         set(value) { field = value + 1 }
     val doubled: Int get() = x + x          // computed property (no backing field)
 }
-class M4PropsSvc { lateinit var name: String }
+class ReferencePropertyPropsSvc { lateinit var name: String }
 
 // ---- il-refcell-nullable : #36 captured var of a value-type nullable -> Nullable<T> heap ref-cell ---------------
-inline fun m4RcRun2(b: () -> Unit) { b() }
+inline fun referencePropertyRcRun2(b: () -> Unit) { b() }
 
 // ---- il-reified : reified type params via targeted inline expansion ---------------------------------------------
-inline fun <reified T> m4RfTypeName(): String = T::class.simpleName ?: "?"
-inline fun <reified T> m4RfIsA(x: Any): Boolean = x is T
-inline fun <reified T> m4RfAsT(x: Any): String = (x as? T)?.toString() ?: "no"
+inline fun <reified T> referencePropertyRfTypeName(): String = T::class.simpleName ?: "?"
+inline fun <reified T> referencePropertyRfIsA(x: Any): Boolean = x is T
+inline fun <reified T> referencePropertyRfAsT(x: Any): String = (x as? T)?.toString() ?: "no"
 
 // ---- il-repeatnlr : #75 NON-LOCAL return + return@repeat through inline repeat ----------------------------------
-fun m4RptFirstIndexHitting(target: Int): Int {
+fun referencePropertyRptFirstIndexHitting(target: Int): Int {
     repeat(10) { i ->
-        if (i == target) return i        // NON-LOCAL return from m4RptFirstIndexHitting
+        if (i == target) return i        // NON-LOCAL return from referencePropertyRptFirstIndexHitting
     }
     return -1
 }
-fun m4RptSumSkippingOdd(n: Int): Int {
+fun referencePropertyRptSumSkippingOdd(n: Int): Int {
     var s = 0
     repeat(n) { i ->
         if (i % 2 == 1) return@repeat    // labeled return = continue to next iteration
@@ -143,24 +143,24 @@ fun m4RptSumSkippingOdd(n: Int): Int {
 }
 
 // ---- il-rwp : `by` ReadWriteProperty delegation trace (println side-effects captured into a log) ---------------
-val m4RwpLog = mutableListOf<String>()
-class M4RwpTrace(var v: Int) : ReadWriteProperty<Any?, Int> {
+val referencePropertyRwpLog = mutableListOf<String>()
+class ReferencePropertyRwpTrace(var v: Int) : ReadWriteProperty<Any?, Int> {
     override fun getValue(thisRef: Any?, property: KProperty<*>): Int {
-        m4RwpLog.add("get " + property.name)
+        referencePropertyRwpLog.add("get " + property.name)
         return v
     }
     override fun setValue(thisRef: Any?, property: KProperty<*>, value: Int) {
-        m4RwpLog.add("set " + property.name + " = " + value)
+        referencePropertyRwpLog.add("set " + property.name + " = " + value)
         v = value
     }
 }
-class M4RwpBox { var n: Int by M4RwpTrace(0) }
+class ReferencePropertyRwpBox { var n: Int by ReferencePropertyRwpTrace(0) }
 
 class PrivateCallableReferenceTests {
     // il-mrefpriv (#155): a bound ref to a PRIVATE method captured in a lifted closure over `this`.
     @TestAttribute
     fun privateBoundRefInClosure() {
-        val b = M4MrefBox()
+        val b = ReferencePropertyMrefBox()
         assertEquals("secret", b.deferred()())   // secret
     }
 
@@ -170,11 +170,11 @@ class PrivateCallableReferenceTests {
 class NestedTypeAndLambdaTests {
     @TestAttribute
     fun flattenedTypes() {
-        assertEquals("outer:root", M4NstOuter("root").label())   // outer:root
-        val n = M4NstOuter.Node(7)
+        assertEquals("outer:root", ReferencePropertyNstOuter("root").label())   // outer:root
+        val n = ReferencePropertyNstOuter.Node(7)
         assertEquals("node(7)", n.describe())                    // node(7)
         assertEquals(14, n.v * 2)                                // 14
-        assertEquals("leaf 3", M4NstOuter.Node.Leaf(3).show())   // leaf 3
+        assertEquals("leaf 3", ReferencePropertyNstOuter.Node.Leaf(3).show())   // leaf 3
     }
 
     // il-nestlam: list of captured-i lambdas, each invoked.
@@ -190,33 +190,33 @@ class NestedTypeAndLambdaTests {
 class NullContractTests {
     @TestAttribute
     fun nonNullContracts() {
-        m4NncLog.clear()
+        referencePropertyNncLog.clear()
         // normal non-null calls are unaffected
-        assertEquals(2, m4NncGreet("hi"))            // 2
-        assertEquals("tb", M4NncBox("b").tag("t"))   // tb
+        assertEquals(2, referencePropertyNncGreet("hi"))            // 2
+        assertEquals("tb", ReferencePropertyNncBox("b").tag("t"))   // tb
 
         // PRECONDITIONS: a null across the boundary -> fail-fast NullPointerException at each entry
-        val nullStr: String = m4NncForceNull()
-        var npeParam = false; try { m4NncGreet(nullStr) } catch (e: NullPointerException) { npeParam = true }
+        val nullStr: String = referencePropertyNncForceNull()
+        var npeParam = false; try { referencePropertyNncGreet(nullStr) } catch (e: NullPointerException) { npeParam = true }
         assertTrue(npeParam)                          // npe-param
-        var npeCtor = false; try { M4NncBox(nullStr) } catch (e: NullPointerException) { npeCtor = true }
+        var npeCtor = false; try { ReferencePropertyNncBox(nullStr) } catch (e: NullPointerException) { npeCtor = true }
         assertTrue(npeCtor)                           // npe-ctor
-        var npeMember = false; try { M4NncBox("b").tag(nullStr) } catch (e: NullPointerException) { npeMember = true }
+        var npeMember = false; try { ReferencePropertyNncBox("b").tag(nullStr) } catch (e: NullPointerException) { npeMember = true }
         assertTrue(npeMember)                         // npe-member
 
         // POSTCONDITIONS: a null leaking OUT of a non-null return -> NullPointerException at the return
-        var npeRet = false; try { m4NncLeak() } catch (e: NullPointerException) { npeRet = true }
+        var npeRet = false; try { referencePropertyNncLeak() } catch (e: NullPointerException) { npeRet = true }
         assertTrue(npeRet)                            // npe-ret
-        var npeRetExpr = false; try { m4NncLeakExpr() } catch (e: NullPointerException) { npeRetExpr = true }
+        var npeRetExpr = false; try { referencePropertyNncLeakExpr() } catch (e: NullPointerException) { npeRetExpr = true }
         assertTrue(npeRetExpr)                        // npe-retexpr
-        var npeRetM = false; try { M4NncBox("b").leakM() } catch (e: NullPointerException) { npeRetM = true }
+        var npeRetM = false; try { ReferencePropertyNncBox("b").leakM() } catch (e: NullPointerException) { npeRetM = true }
         assertTrue(npeRetM)                           // npe-retm
-        var npeGetter = false; try { M4NncBox("b").leakyProp } catch (e: NullPointerException) { npeGetter = true }
+        var npeGetter = false; try { ReferencePropertyNncBox("b").leakyProp } catch (e: NullPointerException) { npeGetter = true }
         assertTrue(npeGetter)                         // npe-getter
-        var npeTrRet = false; try { m4NncLeakInTry() } catch (e: NullPointerException) { npeTrRet = true }
+        var npeTrRet = false; try { referencePropertyNncLeakInTry() } catch (e: NullPointerException) { npeTrRet = true }
         assertTrue(npeTrRet)                          // npe-trret
         // finally ran FIRST ("fin"), then the postcondition NPE propagated
-        assertEquals("fin", m4NncLog.joinToString("|"))  // fin
+        assertEquals("fin", referencePropertyNncLog.joinToString("|"))  // fin
     }
 
     // il-overload: overloaded funs resolve by name + parameter signature (not name alone).
@@ -225,23 +225,23 @@ class NullContractTests {
 class OverloadPropertyAndTupleTests {
     @TestAttribute
     fun byParamSignature() {
-        assertEquals("S:x", m4OvRender("x"))     // S:x
-        assertEquals("F:y", m4OvRender { "y" })  // F:y
-        assertEquals("I:7", m4OvRender(7))       // I:7
-        val b = M4OvBox()
+        assertEquals("S:x", referencePropertyOvRender("x"))     // S:x
+        assertEquals("F:y", referencePropertyOvRender { "y" })  // F:y
+        assertEquals("I:7", referencePropertyOvRender(7))       // I:7
+        val b = ReferencePropertyOvBox()
         assertEquals("bs:p", b.put("p"))         // bs:p
         assertEquals("bf:q", b.put { "q" })      // bf:q
-        assertEquals("plain", m4OvByMethodArity(null))
-        assertEquals("generic", m4OvByMethodArity<Int>(null))
+        assertEquals("plain", referencePropertyOvByMethodArity(null))
+        assertEquals("generic", referencePropertyOvByMethodArity<Int>(null))
     }
 
     // il-overrideprop: `override val` accessor fills the base/interface abstract slot (not a fresh NewSlot).
     @TestAttribute
     fun slotFill() {
-        val h: M4OpHasCtx = M4OpImpl(21)
+        val h: ReferencePropertyOpHasCtx = ReferencePropertyOpImpl(21)
         assertEquals(21, h.ctx)                  // 21
-        assertEquals(42, (h as M4OpBase).run())  // 42
-        val a: M4OpAbstractHolder = M4OpHolder(7)
+        assertEquals(42, (h as ReferencePropertyOpBase).run())  // 42
+        val a: ReferencePropertyOpAbstractHolder = ReferencePropertyOpHolder(7)
         assertEquals(7, a.value)                 // 7
     }
 
@@ -294,23 +294,23 @@ class OverloadPropertyAndTupleTests {
 class PropertyReferenceAndAccessorTests {
     @TestAttribute
     fun callableReferences() {
-        m4PrefX = 1
-        assertEquals("m4PrefX", ::m4PrefX.name)   // property-ref .name = the declared name (was `x`; renamed by the M4 collision rule)
-        assertEquals(1, ::m4PrefX.get())    // 1
-        m4PrefX = 2
-        ::m4PrefX.set(99)
-        assertEquals(99, m4PrefX)           // 99
-        assertEquals(99, (::m4PrefX)())     // 99
+        referencePropertyPrefX = 1
+        assertEquals("referencePropertyPrefX", ::referencePropertyPrefX.name)   // property-ref .name = the declared name (was `x`; renamed for assembly-wide collision freedom)
+        assertEquals(1, ::referencePropertyPrefX.get())    // 1
+        referencePropertyPrefX = 2
+        ::referencePropertyPrefX.set(99)
+        assertEquals(99, referencePropertyPrefX)           // 99
+        assertEquals(99, (::referencePropertyPrefX)())     // 99
 
-        val obj = M4PrefObj(7)
+        val obj = ReferencePropertyPrefObj(7)
         assertEquals(7, obj::p.get())               // 7
-        assertEquals(7, M4PrefObj::p.get(obj))      // 7
-        assertEquals(99, m4PrefReadK(::m4PrefX))    // 99
+        assertEquals(7, ReferencePropertyPrefObj::p.get(obj))      // 7
+        assertEquals(99, referencePropertyPrefReadK(::referencePropertyPrefX))    // 99
 
-        assertEquals("g", m4PrefRefOf(M4PrefBox("g")).get())   // g  — generic-lift `tv` vType
-        val hp: KMutableProperty1<M4PrefHolder, M4PrefPayload> = M4PrefHolder::pay
-        val h = M4PrefHolder(M4PrefPayload("t1"))
-        hp.set(h, M4PrefPayload("t2"))
+        assertEquals("g", referencePropertyPrefRefOf(ReferencePropertyPrefBox("g")).get())   // g  — generic-lift `tv` vType
+        val hp: KMutableProperty1<ReferencePropertyPrefHolder, ReferencePropertyPrefPayload> = ReferencePropertyPrefHolder::pay
+        val h = ReferencePropertyPrefHolder(ReferencePropertyPrefPayload("t1"))
+        hp.set(h, ReferencePropertyPrefPayload("t2"))
         assertEquals("t2", hp.get(h).tag)   // t2 — app-class vType, unbound mutable ref
         assertEquals("pay", hp.name)        // pay
     }
@@ -318,13 +318,13 @@ class PropertyReferenceAndAccessorTests {
     // il-props: custom get()/set() accessors with the `field` backing identifier + lateinit semantics.
     @TestAttribute
     fun customAccessorsLateinit() {
-        val b = M4PropsBox(10)
+        val b = ReferencePropertyPropsBox(10)
         assertEquals(20, b.x)          // field 10, get *2 = 20
         b.x = 3                        // set: field = 3+1 = 4
         assertEquals(8, b.x)           // get: 4*2 = 8
         assertEquals(16, b.doubled)    // x + x = 16
 
-        val s = M4PropsSvc()
+        val s = ReferencePropertyPropsSvc()
         var notInit = false
         try { s.name } catch (e: Exception) { notInit = true }   // lateinit access throws
         assertTrue(notInit)            // not initialized
@@ -364,7 +364,7 @@ class CapturedVariableCellTests {
     fun nullableValueTypeCell() {
         // INLINE closure: captured-and-mutated `var Int?` with a smart-cast READ (q -> bare Int) AND a WRITE.
         var q: Int? = 5
-        m4RcRun2 {
+        referencePropertyRcRun2 {
             if (q != null) {
                 val x: Int = q            // smart-cast READ into a bare-Int slot -> Nullable<int>.Value
                 assertEquals(5, x)        // 5
@@ -395,21 +395,21 @@ class CapturedVariableCellTests {
 class ReifiedAndNonLocalReturnTests {
     @TestAttribute
     fun typeParams() {
-        assertEquals("String", m4RfTypeName<String>())  // String
-        assertEquals("Int32", m4RfTypeName<Int>())      // Int32  (CLR simpleName of Int)
-        assertTrue(m4RfIsA<String>("hi"))               // True
-        assertFalse(m4RfIsA<Int>("hi"))                 // False
-        assertTrue(m4RfIsA<Int>(42))                    // True
-        assertEquals("yo", m4RfAsT<String>("yo"))       // yo
-        assertEquals("no", m4RfAsT<String>(7))          // no
+        assertEquals("String", referencePropertyRfTypeName<String>())  // String
+        assertEquals("Int32", referencePropertyRfTypeName<Int>())      // Int32  (CLR simpleName of Int)
+        assertTrue(referencePropertyRfIsA<String>("hi"))               // True
+        assertFalse(referencePropertyRfIsA<Int>("hi"))                 // False
+        assertTrue(referencePropertyRfIsA<Int>(42))                    // True
+        assertEquals("yo", referencePropertyRfAsT<String>("yo"))       // yo
+        assertEquals("no", referencePropertyRfAsT<String>(7))          // no
     }
 
     // il-repeatnlr (#75): NON-LOCAL return + return@repeat + nested repeat + scope-fn-in-repeat through inline repeat.
     @TestAttribute
     fun nonLocalReturn() {
-        assertEquals(3, m4RptFirstIndexHitting(3))    // 3   (non-local return out of the loop)
-        assertEquals(-1, m4RptFirstIndexHitting(99))  // -1  (loop completes, falls through)
-        assertEquals(6, m4RptSumSkippingOdd(6))       // 6   (0 + 2 + 4, odd indices skipped via return@repeat)
+        assertEquals(3, referencePropertyRptFirstIndexHitting(3))    // 3   (non-local return out of the loop)
+        assertEquals(-1, referencePropertyRptFirstIndexHitting(99))  // -1  (loop completes, falls through)
+        assertEquals(6, referencePropertyRptSumSkippingOdd(6))       // 6   (0 + 2 + 4, odd indices skipped via return@repeat)
         var acc = 0
         repeat(4) { acc += it }                       // capture + implicit `it`
         assertEquals(6, acc)                          // 6   (0 + 1 + 2 + 3)
@@ -431,11 +431,11 @@ class ReifiedAndNonLocalReturnTests {
 class ReadWritePropertyDelegateTests {
     @TestAttribute
     fun readWriteDelegate() {
-        m4RwpLog.clear()
-        val b = M4RwpBox()
+        referencePropertyRwpLog.clear()
+        val b = ReferencePropertyRwpBox()
         b.n = 5
         assertEquals(5, b.n)   // the read returns 5
         // ordered delegate side-effects: setValue("set n = 5") then getValue("get n")
-        assertEquals("set n = 5|get n", m4RwpLog.joinToString("|"))  // set n = 5 ; get n
+        assertEquals("set n = 5|get n", referencePropertyRwpLog.joinToString("|"))  // set n = 5 ; get n
     }
 }

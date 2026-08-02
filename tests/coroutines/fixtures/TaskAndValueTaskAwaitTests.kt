@@ -1,4 +1,4 @@
-// CorB batch — the .NET Task family + generalized-awaitable (GetAwaiter) reverse-bridge cases that need only BCL
+// feature fixture — the .NET Task family + generalized-awaitable (GetAwaiter) reverse-bridge cases that need only BCL
 // types (no C# runtime.cs companion). taskfam pins the same-name .NET arity family (`Task` + `Task<T>`); valueawait
 // proves the `await` generalization for a NON-Task BCL awaitable (`ValueTask<T>`). Each former case's `main` +
 // stdout-golden becomes one @TestAttribute method preserving every value 1:1 (`// <expected>`).
@@ -11,7 +11,7 @@
 // here; a co-compiled C# awaitable can't be referenced from the coroutines ktproj, so it is flagged for the
 // tests/interop C#-producer lane.)
 //
-// Top-level names carry a per-case token (`va`) under the shared `corB`/`CorB` prefix; taskfam has no top-level
+// Top-level names use the descriptive `taskAwaitValueTask`/`TaskAwaitValueTask` stem; taskfam has no top-level
 // decls (its body is inline in the method).
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
@@ -22,7 +22,7 @@ import System.Threading.Tasks.ValueTask1
 import dotkt.support.blockOn
 
 // ---- il-valueawait -------------------------------------------------------------------------------------------
-suspend fun corBVaVtAwait(): Int {
+suspend fun taskAwaitValueTaskAwait(): Int {
     val vt = ValueTask1<Int>(41)   // a synchronously-completed ValueTask<Int>
     return vt.await() + 1          // 42 — ValueTaskAwaiter<Int> fast path (IsCompleted true)
 }
@@ -43,6 +43,6 @@ class TaskAndValueTaskAwaitTests {
 
     @TestAttribute
     fun valueTaskAwaiterFastPath() {
-        assertEquals(42, blockOn { corBVaVtAwait() })   // 42
+        assertEquals(42, blockOn { taskAwaitValueTaskAwait() })   // 42
     }
 }

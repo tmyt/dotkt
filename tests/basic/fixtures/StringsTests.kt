@@ -1,9 +1,7 @@
 // Strings/text battery — migrates the String/Char/CharSequence/stringify/number-parse family of cases/il-*
-// onto the in-process NUnit suite. Each old case's `main` + stdout-golden diff becomes one @TestAttribute method
-// whose per-value assertEquals/assertTrue/assertFalse/assertNull is strictly stronger (typed, fails the exact
-// broken contract) and self-documenting. Every value the old il_check asserted is preserved 1:1 (see the
-// `// <expected>` comments). Side-effecting/ordered `println`s (split loops) are captured into a log list and
-// asserted in order.
+// onto the in-process NUnit suite. Related old cases are consolidated by compiler shape into typed
+// assertEquals/assertTrue/assertFalse/assertNull methods. Side-effecting/ordered `println`s (split loops) are
+// captured into a log list and asserted in order.
 //
 // EXCLUDED from this family (matched the `str` grep prefix but the real subject is elsewhere — kept in the
 // bash lane):
@@ -20,16 +18,16 @@
 //   il-charseqs      -> charseqs_stringLowering      CharSequence lowers to System.String (no user impl)
 //   il-charseqx      -> charseqx_stdlibExt           cross-assembly stdlib CharSequence-ext (hasSurrogatePairAt)
 //   il-charseqxfile  -> charseqxfile_crossFile       #149-1 cross-file String receiver (decls in StringCrossFileSupport.kt)
-//   il-colstr        -> colstr_collectionStringify   collection/Map prints Kotlin-style in every stringify context
+//   il-colstr / il-maptostr -> collectionStringify   collection/Map prints Kotlin-style in every stringify context
 //   il-digittoint    -> digittoint_digitToInt        Char.digitToInt/digitToIntOrNull (Int? return)
 //   il-interpnull    -> interpnull_nullInterpolation null interpolated/concatenated operand renders "null"
 //   il-nestedstr     -> nestedstr_nestedStringify    nested collection/map stringification recurses
-//   il-ntostr        -> ntostr_boxedToString         value-type-nullable/value arg boxed into a referenced object param
-//   il-nulltostr     -> nulltostr_nullSafeToString   x.toString() on nullable receiver -> "null" when null
+//   il-ntostr / il-printlnnull -> boxedToString       value-type-nullable/value arg boxed into a referenced object param
+//   il-nulltostr / il-printlnnull -> nullSafeToString x.toString() on nullable receiver -> "null" when null
 //   il-radix         -> radix_toStringRadix          Int/Long.toString(radix) sign + arbitrary base
 //   il-str           -> str_stringOps                uppercase/lowercase/trim/substring/startsWith/contains
 //   il-strhash       -> strhash_hashCodeContract     String/Double/Float hashCode CLR-native (behavior, not pinned)
-//   il-strnum        -> strnum_numberParsing         toInt/toLong/toByte/toDouble/toFloat + NumberFormatException
+//   il-strnum / il-cp -> numberParsing               toInt/toLong/toByte/toDouble/toFloat + NumberFormatException
 //   il-strops        -> strops_stringOps             trim(vararg)/padStart/padEnd/replace pure-Kotlin bodies
 //   il-subseq        -> subseq_subSequence           CharSequence.subSequence -> Substring; start evaluated once
 //   il-substr        -> substr_substring             String.substring exclusive-end 2-arg conversion
@@ -224,12 +222,14 @@ class StringsTests {
     fun collectionStringify() {
         val m = mapOf("a" to 1, "b" to 2)
         val l = listOf(1, 2, 3)
+        val mm = mutableMapOf("x" to 9)
         assertEquals("m={a=1, b=2}", "m=$m")           // string template, Map
         assertEquals("l=[1, 2, 3]", "l=$l")            // string template, List
         assertEquals("x={a=1, b=2}", "x=" + m)         // string `+` concat, Map
         assertEquals("[1, 2, 3]", "" + l)              // string `+` concat, List
         assertEquals("[1, 2, 3]", l.toString())        // explicit toString(), List
         assertEquals("{a=1, b=2}", m.toString())       // explicit toString(), Map
+        assertEquals("{x=9}", mm.toString())           // explicit toString(), MutableMap
     }
 
     @TestAttribute

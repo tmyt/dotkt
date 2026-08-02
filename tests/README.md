@@ -14,6 +14,10 @@ backend batch that happened to create them:
 Fixture files and classes use feature names. Historical migration batches such as `MigratedM2`, `CorA`, and the
 old undifferentiated `il` suite are not categories.
 
+External-process fixtures follow the same subject grouping. Multiple verdicts must share the smallest valid
+compilation graph; use separate runtime processes when crashes need independent attribution rather than compiling
+one program per assertion.
+
 `run-nunit-tests.sh` builds all categorized projects against the locally packed SDK, runs `dotnet test`, and then
 runs `run-ilverify.sh` once for every DotKt-emitted assembly. A project build failure, test failure, discovery
 failure (including a zero-test TRX), or ILVerify finding outside the narrow baseline fails the gate. Builds are

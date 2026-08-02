@@ -41,11 +41,11 @@ import roundtrip.cprop.topProp
 import roundtrip.cprop.topVar
 import roundtrip.cprop.topGetVar
 import roundtrip.cprop.Host
-import roundtrip.defargs.greet
-import roundtrip.defargs.box
-import roundtrip.defargs.flags
-import roundtrip.defargs.kinds
-import roundtrip.defargs.Pt
+import roundtrip.defaultarguments.greet
+import roundtrip.defaultarguments.box
+import roundtrip.defaultarguments.flags
+import roundtrip.defaultarguments.kinds
+import roundtrip.defaultarguments.Pt
 import roundtrip.nrt.retNonNull
 import roundtrip.nrt.takeNonNull
 import roundtrip.nrt.retNullable
@@ -75,34 +75,34 @@ import roundtrip.gie.Cell
 import roundtrip.gie.update
 import roundtrip.dotfile.commonOnly
 import roundtrip.dotfile.Box as DfBox
-import roundtrip.nc.Panel as NcPanel
-import roundtrip.nc.column as ncColumn
+import roundtrip.nc.Panel as NonConstantDefaultPanel
+import roundtrip.nc.column as nonConstantDefaultColumn
 import roundtrip.nc.run2
-import roundtrip.nc.tagged as ncTagged
-import roundtrip.nc.Rect as NcRect
-import roundtrip.nc.Tri as NcTri
-import roundtrip.nc.Bag as NcBag
-import roundtrip.nc.Pair2 as NcPair2
-import roundtrip.nc.suffixed as ncSuffixed
-import roundtrip.nc.ov as ncOv
-import roundtrip.nc.Panel2 as NcPanel2
-import roundtrip.nc.note as ncNote
-import roundtrip.nc.Seeded as NcSeeded
-import roundtrip.nc.seeds as ncSeeds
-import roundtrip.nc.SeededOrder as NcSeededOrder
-import roundtrip.nc.seedOrder as ncSeedOrder
-import roundtrip.nc.seedMarkP as ncSeedMarkP
-import roundtrip.nc.uf as ncUf
-import roundtrip.nc.Marker as NcMarker
-import roundtrip.nc.scaled as ncScaled
-import roundtrip.nc.tri3 as ncTri3
-import roundtrip.nc.order3 as ncOrder3
-import roundtrip.nc.chain as ncChain
-import roundtrip.nc.genDefaults as ncGenDefaults
-import roundtrip.nc.genPairDefaults as ncGenPairDefaults
-import roundtrip.nc.genMutable as ncGenMutable
-import roundtrip.nc.bumps as ncBumps
-import roundtrip.nc.MemberDefaults as NcMemberDefaults
+import roundtrip.nc.tagged as nonConstantDefaultTagged
+import roundtrip.nc.Rect as NonConstantDefaultRect
+import roundtrip.nc.Tri as NonConstantDefaultTri
+import roundtrip.nc.Bag as NonConstantDefaultBag
+import roundtrip.nc.Pair2 as NonConstantDefaultPair2
+import roundtrip.nc.suffixed as nonConstantDefaultSuffixed
+import roundtrip.nc.ov as nonConstantDefaultOv
+import roundtrip.nc.Panel2 as NonConstantDefaultPanel2
+import roundtrip.nc.note as nonConstantDefaultNote
+import roundtrip.nc.Seeded as NonConstantDefaultSeeded
+import roundtrip.nc.seeds as nonConstantDefaultSeeds
+import roundtrip.nc.SeededOrder as NonConstantDefaultSeededOrder
+import roundtrip.nc.seedOrder as nonConstantDefaultSeedOrder
+import roundtrip.nc.seedMarkP as nonConstantDefaultSeedMarkP
+import roundtrip.nc.uf as nonConstantDefaultUf
+import roundtrip.nc.Marker as NonConstantDefaultMarker
+import roundtrip.nc.scaled as nonConstantDefaultScaled
+import roundtrip.nc.tri3 as nonConstantDefaultTri3
+import roundtrip.nc.order3 as nonConstantDefaultOrder3
+import roundtrip.nc.chain as nonConstantDefaultChain
+import roundtrip.nc.genDefaults as nonConstantDefaultGenDefaults
+import roundtrip.nc.genPairDefaults as nonConstantDefaultGenPairDefaults
+import roundtrip.nc.genMutable as nonConstantDefaultGenMutable
+import roundtrip.nc.bumps as nonConstantDefaultBumps
+import roundtrip.nc.MemberDefaults as NonConstantDefaultMemberDefaults
 import roundtrip.cmp.Ver
 import roundtrip.ubyte.ub
 import roundtrip.ubyte.uba
@@ -494,51 +494,51 @@ class PackageAndInlineRoundtripTests {
     // simple-expr) filled cross-module.
     @TestAttribute
     fun nonConstDefaultArgs() {
-        ClassicAssert.AreEqual(2, ncColumn(build = { add("hi") }))                     // 2   configure defaults to {} (empty receiver lambda)
-        ClassicAssert.AreEqual(3, ncColumn(configure = { add("ab") }, build = { add("c") })) // 3  both provided (no fill)
+        ClassicAssert.AreEqual(2, nonConstantDefaultColumn(build = { add("hi") }))                     // 2   configure defaults to {} (empty receiver lambda)
+        ClassicAssert.AreEqual(3, nonConstantDefaultColumn(configure = { add("ab") }, build = { add("c") })) // 3  both provided (no fill)
         ClassicAssert.AreEqual("ok", run2(body = { }))                                 // ok  pre defaults to {} (empty plain lambda)
-        ClassicAssert.AreEqual("z=0", ncTagged("z"))                                   // z=0 items defaults to emptyList()
+        ClassicAssert.AreEqual("z=0", nonConstantDefaultTagged("z"))                                   // z=0 items defaults to emptyList()
         // #235: the CONSTRUCTOR half — a ctor's non-constant default is carried and filled at the omitting `new`.
-        ClassicAssert.AreEqual(18, NcRect(3).area)                                      // 18  h defaults to w * 2 = 6
-        ClassicAssert.AreEqual("r", NcRect(3).tag)                                      // r   a later Tier-1 const still fills
-        ClassicAssert.AreEqual(12, NcRect(3, 4).area)                                   // 12  h provided, no fill
-        ClassicAssert.AreEqual("z", NcRect(3, tag = "z").tag)                           // z   omit the MIDDLE default, name a later arg
-        ClassicAssert.AreEqual(6, NcRect(3, tag = "z").h)                               // 6   the omitted middle still filled from w
-        ClassicAssert.AreEqual(203, NcTri(2).c)                                         // 203 chain: b = a + 1 = 3, c = a * 100 + b
-        ClassicAssert.AreEqual(210, NcTri(2, 10).c)                                     // 210 b provided, c still filled
-        ClassicAssert.AreEqual(7, NcTri(2, 10, 7).c)                                    // 7   nothing omitted
-        ClassicAssert.AreEqual(1, NcBag().size)                                         // 1   items = emptyList(), n = 1
-        ClassicAssert.AreEqual(5, NcBag(n = 5).size)                                    // 5   omit a leading non-const default
+        ClassicAssert.AreEqual(18, NonConstantDefaultRect(3).area)                                      // 18  h defaults to w * 2 = 6
+        ClassicAssert.AreEqual("r", NonConstantDefaultRect(3).tag)                                      // r   a later Tier-1 const still fills
+        ClassicAssert.AreEqual(12, NonConstantDefaultRect(3, 4).area)                                   // 12  h provided, no fill
+        ClassicAssert.AreEqual("z", NonConstantDefaultRect(3, tag = "z").tag)                           // z   omit the MIDDLE default, name a later arg
+        ClassicAssert.AreEqual(6, NonConstantDefaultRect(3, tag = "z").h)                               // 6   the omitted middle still filled from w
+        ClassicAssert.AreEqual(203, NonConstantDefaultTri(2).c)                                         // 203 chain: b = a + 1 = 3, c = a * 100 + b
+        ClassicAssert.AreEqual(210, NonConstantDefaultTri(2, 10).c)                                     // 210 b provided, c still filled
+        ClassicAssert.AreEqual(7, NonConstantDefaultTri(2, 10, 7).c)                                    // 7   nothing omitted
+        ClassicAssert.AreEqual(1, NonConstantDefaultBag().size)                                         // 1   items = emptyList(), n = 1
+        ClassicAssert.AreEqual(5, NonConstantDefaultBag(n = 5).size)                                    // 5   omit a leading non-const default
         // The argument the default reads is the CONSUMER's own instance read, so the spliced default contains a `this`
         // that belongs to the CALLER. Only a `this` in the CARRIER means "the callee read its receiver".
-        ClassicAssert.AreEqual(32, NcCtorDefaultHost(4).rectArea())                     // 32  w = 4, h = w * 2 = 8
-        ClassicAssert.AreEqual(405, NcCtorDefaultHost(4).triC())                        // 405 b = a + 1 = 5, c = a * 100 + b
+        ClassicAssert.AreEqual(32, NonConstantDefaultCtorDefaultHost(4).rectArea())                     // 32  w = 4, h = w * 2 = 8
+        ClassicAssert.AreEqual(405, NonConstantDefaultCtorDefaultHost(4).triC())                        // 405 b = a + 1 = 5, c = a * 100 + b
         // Same-arity ctor OVERLOADS: the splice key carries the declared parameter vector, so each resolves its own.
-        ClassicAssert.AreEqual("2!", NcPair2("hi").label)                               // 2!  the (String,String) ctor fills upper, delegates this(2)
-        ClassicAssert.AreEqual("7!", NcPair2(7).label)                                  // 7!  the (Int,String) ctor fills label
+        ClassicAssert.AreEqual("2!", NonConstantDefaultPair2("hi").label)                               // 2!  the (String,String) ctor fills upper, delegates this(2)
+        ClassicAssert.AreEqual("7!", NonConstantDefaultPair2(7).label)                                  // 7!  the (Int,String) ctor fills label
         // Same-arity FUNCTION overloads carrying different defaults: keyed by the declared parameter vector, so each
         // call site gets ITS own default instead of whichever declaration the metadata scan reached first.
-        ClassicAssert.AreEqual("3/6", ncOv(3))                                          // 3/6  the Int overload: b = a * 2
-        ClassicAssert.AreEqual("x/x!", ncOv("x"))                                       // x/x! the String overload: b = a + "!"
+        ClassicAssert.AreEqual("3/6", nonConstantDefaultOv(3))                                          // 3/6  the Int overload: b = a * 2
+        ClassicAssert.AreEqual("x/x!", nonConstantDefaultOv("x"))                                       // x/x! the String overload: b = a + "!"
         // Same NAME and same emitted ARITY (an extension's receiver rides as a leading `__self` parameter), differing in
         // a CLASS position — the pair that broke this lane under a name+arity-only carrier key. Its non-extension half
-        // is `ncTagged("z")` in the block above.
-        ClassicAssert.AreEqual("q/q", "q".ncTagged())                                   // q/q  t = this
+        // is `nonConstantDefaultTagged("z")` in the block above.
+        ClassicAssert.AreEqual("q/q", "q".nonConstantDefaultTagged())                                   // q/q  t = this
         // Same arity again, differing in a NULLABLE REFERENCE position (`String?` lowers to a plain `System.String`).
-        ClassicAssert.AreEqual("m/-", ncNote("m"))                                      // m/-  tag defaults to null
-        ClassicAssert.AreEqual("5/7", ncNote(5))                                        // 5/7  the Int overload's own default
+        ClassicAssert.AreEqual("m/-", nonConstantDefaultNote("m"))                                      // m/-  tag defaults to null
+        ClassicAssert.AreEqual("5/7", nonConstantDefaultNote(5))                                        // 5/7  the Int overload's own default
         // An UNSIGNED parameter beside a class-typed sibling: two spellings of one type must fold to one key.
-        ClassicAssert.AreEqual("u7/1", ncUf(7u))                                        // u7/1 the UInt overload's own default
-        ClassicAssert.AreEqual("mx/2", ncUf(NcMarker("x")))                             // mx/2 the class overload's own default
+        ClassicAssert.AreEqual("u7/1", nonConstantDefaultUf(7u))                                        // u7/1 the UInt overload's own default
+        ClassicAssert.AreEqual("mx/2", nonConstantDefaultUf(NonConstantDefaultMarker("x")))                             // mx/2 the class overload's own default
         // A `: super(…)` omitting a cross-module base's non-constant default: a delegation is a call site too.
-        ClassicAssert.AreEqual(18, NcSuperSub(3).area)                                  // 18   h = w * 2 = 6
+        ClassicAssert.AreEqual(18, NonConstantDefaultSuperSub(3).area)                                  // 18   h = w * 2 = 6
     }
 
     // #34/#42: the cross-module carrier distinguishes dispatch, extension and enclosing receivers, and carries
     // closure/SAM/suspend-lambda construction facts instead of poisoning those default shapes.
     @TestAttribute
     fun receiverAwareDefaultCarriers() {
-        val m = NcMemberDefaults(3)
+        val m = NonConstantDefaultMemberDefaults(3)
         ClassicAssert.AreEqual(22003, m.scale(2, c = 3))                                // middle omission + later arg
         ClassicAssert.AreEqual(106, m.viaDispatch(1))                                  // dispatch receiver
         ClassicAssert.AreEqual(5, m.viaCapture(2))                                     // capturing lambda: a + k
@@ -555,52 +555,52 @@ class PackageAndInlineRoundtripTests {
     // call's other values. Each `calls`/`log` assertion is the load-bearing one — the values pass either way.
     @TestAttribute
     fun nonConstDefaultArgsEvaluateOnce() {
-        val a = NcEvalCounter()
-        ClassicAssert.AreEqual("h/h", a.s().ncSuffixed())                               // h/h  the EXTENSION RECEIVER a `= this` default reads
+        val a = NonConstantDefaultEvalCounter()
+        ClassicAssert.AreEqual("h/h", a.s().nonConstantDefaultSuffixed())                               // h/h  the EXTENSION RECEIVER a `= this` default reads
         ClassicAssert.AreEqual(1, a.calls)                                              // 1    once, not once per splice
 
-        val b = NcEvalCounter()
-        ClassicAssert.AreEqual(44, ncScaled(b.n()))                                     // 44   a = 4, b = a * 10
+        val b = NonConstantDefaultEvalCounter()
+        ClassicAssert.AreEqual(44, nonConstantDefaultScaled(b.n()))                                     // 44   a = 4, b = a * 10
         ClassicAssert.AreEqual(1, b.calls)
 
-        val c = NcEvalCounter()
-        ClassicAssert.AreEqual(405, ncTri3(c.n()))                                      // 405  a read by BOTH b's and c's defaults
+        val c = NonConstantDefaultEvalCounter()
+        ClassicAssert.AreEqual(405, nonConstantDefaultTri3(c.n()))                                      // 405  a read by BOTH b's and c's defaults
         ClassicAssert.AreEqual(1, c.calls)                                              // 1    (was 4 — once per spliced read)
 
-        val d = NcEvalCounter()
-        ClassicAssert.AreEqual("1/2/20", ncOrder3(d.a(), d.b()))                        // r = q * 10
+        val d = NonConstantDefaultEvalCounter()
+        ClassicAssert.AreEqual("1/2/20", nonConstantDefaultOrder3(d.a(), d.b()))                        // r = q * 10
         ClassicAssert.AreEqual("ab", d.log)                                             // ab   p before q, and q ONCE (was "abb")
 
-        val e = NcEvalCounter()
-        ClassicAssert.AreEqual(32, NcRect(e.n()).area)                                  // 32   a ctor argument the default reads
+        val e = NonConstantDefaultEvalCounter()
+        ClassicAssert.AreEqual(32, NonConstantDefaultRect(e.n()).area)                                  // 32   a ctor argument the default reads
         ClassicAssert.AreEqual(1, e.calls)
 
         // A side-effecting DEFAULT that a later default reads: filled once, then read from the temp.
-        val before = ncBumps
-        ClassicAssert.AreEqual(3030, ncChain(1))                                        // b = bump() = 3, c = b * 10 = 30
-        ClassicAssert.AreEqual(1, ncBumps - before)                                     // 1    bump() ran once (was 2)
+        val before = nonConstantDefaultBumps
+        ClassicAssert.AreEqual(3030, nonConstantDefaultChain(1))                                        // b = bump() = 3, c = b * 10 = 30
+        ClassicAssert.AreEqual(1, nonConstantDefaultBumps - before)                                     // 1    bump() ran once (was 2)
         // The same shape at a `: super(…)`, where the args ride the constructor DECLARATION.
-        val seedsBefore = ncSeeds
-        val sub = NcSeededSub()
+        val seedsBefore = nonConstantDefaultSeeds
+        val sub = NonConstantDefaultSeededSub()
         ClassicAssert.AreEqual(3, sub.a)                                                // 3    a = seed()
         ClassicAssert.AreEqual(30, sub.b)                                               // 30   b = a * 10, reading the binding
-        ClassicAssert.AreEqual(1, ncSeeds - seedsBefore)                                // 1    seed() ran once
+        ClassicAssert.AreEqual(1, nonConstantDefaultSeeds - seedsBefore)                                // 1    seed() ran once
         // ORDER at that same delegation: the value the `: super(…)` SUPPLIES runs before the base's defaults. The args
         // ride the constructor declaration, so the plan lowers to `preStmts` emitted ahead of the base call.
-        val ordered = NcSeededOrderSub()
+        val ordered = NonConstantDefaultSeededOrderSub()
         ClassicAssert.AreEqual(2, ordered.p)                                            // 2    the supplied argument
         ClassicAssert.AreEqual(3, ordered.a)                                            // 3    a = seedMarkD()
         ClassicAssert.AreEqual(30, ordered.b)                                           // 30   b = a * 10
-        ClassicAssert.AreEqual("pd", ncSeedOrder)                                       // pd   supplied first, then the default
+        ClassicAssert.AreEqual("pd", nonConstantDefaultSeedOrder)                                       // pd   supplied first, then the default
 
         // A GENERIC callee's non-constant default, filled in a NON-GENERIC consumer. The carrier is the default as the
         // CALLEE wrote it, so its type parameter rides it as a positional type variable and the splice has to close
         // that frame against THIS call site. Left open it erased to `Any`: the values were right and the program ran,
         // but the object built for the slot had the wrong runtime type — and the IL did not verify.
-        ClassicAssert.AreEqual(0, ncGenDefaults<String>())                              // 0    both defaults filled
-        ClassicAssert.AreEqual(1, ncGenPairDefaults<String>())                          // 1    ...through a nested type arg
+        ClassicAssert.AreEqual(0, nonConstantDefaultGenDefaults<String>())                              // 0    both defaults filled
+        ClassicAssert.AreEqual(1, nonConstantDefaultGenPairDefaults<String>())                          // 1    ...through a nested type arg
         // Observable at RUNTIME, not only in the metadata: the constructed list's own element type.
-        val gm = ncGenMutable<String>()
+        val gm = nonConstantDefaultGenMutable<String>()
         gm.add("s")
         ClassicAssert.AreEqual("s", gm[0])
         ClassicAssert.IsTrue(elementTypeName(gm).contains("String"))                     // was System.Object
@@ -617,22 +617,22 @@ class PackageAndInlineRoundtripTests {
 
 // #235: omits a cross-module ctor's non-constant default while passing an argument that reads THIS instance — the
 // filled default therefore embeds the consumer's own `this`, which must not be mistaken for the callee reading a receiver.
-class NcCtorDefaultHost(val n: Int) {
-    fun rectArea(): Int = NcRect(n).area
-    fun triC(): Int = NcTri(this.n).c
+class NonConstantDefaultCtorDefaultHost(val n: Int) {
+    fun rectArea(): Int = NonConstantDefaultRect(n).area
+    fun triC(): Int = NonConstantDefaultTri(this.n).c
 }
 
 // #235: counts how often a side-effecting value the cross-module carrier SPLICES actually runs. Kotlin evaluates a
 // receiver and each argument once; before the splice bound them to a temp, each spliced read re-ran the expression
 // (a value read by two defaults ran four times, and `order3(a(), b())` logged "abb").
-// #235: omits the cross-module base's non-constant default at its `: super(…)`, and (NcSeededSub) omits BOTH of a
+// #235: omits the cross-module base's non-constant default at its `: super(…)`, and (NonConstantDefaultSeededSub) omits BOTH of a
 // base's defaults where the first is side-effecting and the second reads it.
-class NcSuperSub(w: Int) : NcPanel2(w)
-class NcSeededSub : NcSeeded()
+class NonConstantDefaultSuperSub(w: Int) : NonConstantDefaultPanel2(w)
+class NonConstantDefaultSeededSub : NonConstantDefaultSeeded()
 // ...and one whose `: super(…)` SUPPLIES a side-effecting value ahead of the base's own filled defaults.
-class NcSeededOrderSub : NcSeededOrder(ncSeedMarkP())
+class NonConstantDefaultSeededOrderSub : NonConstantDefaultSeededOrder(nonConstantDefaultSeedMarkP())
 
-class NcEvalCounter {
+class NonConstantDefaultEvalCounter {
     var calls = 0
     fun s(): String { calls++; return "h" }
     fun n(): Int { calls++; return 4 }

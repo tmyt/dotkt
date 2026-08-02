@@ -12,38 +12,38 @@
 //     callee's closed return type, and an untyped spill is a hard error naming the lowering that dropped it.
 //
 // The relays complete synchronously — the reorder/re-evaluation faults these lock are observable purely through the
-// interleaved side effects, exactly as in SuspendEvaluationOrderTests. Top-level names carry the `corIep` prefix.
+// interleaved side effects, exactly as in SuspendEvaluationOrderTests. Top-level names carry the `inlineSuspendPlan` prefix.
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import dotkt.support.blockOn
 
-val corIepLog = mutableListOf<String>()
+val inlineSuspendPlanLog = mutableListOf<String>()
 
-fun corIepT(tag: String): Int { corIepLog.add(tag); return tag.length }
-suspend fun corIepRelay(tag: String): Int { corIepLog.add(tag); return tag.length }
+fun inlineSuspendPlanT(tag: String): Int { inlineSuspendPlanLog.add(tag); return tag.length }
+suspend fun inlineSuspendPlanRelay(tag: String): Int { inlineSuspendPlanLog.add(tag); return tag.length }
 
-private fun corIepTrace(): String = corIepLog.joinToString(",")
+private fun inlineSuspendPlanTrace(): String = inlineSuspendPlanLog.joinToString(",")
 
 // ---- a bound value read AFTER a suspension inside the spliced body -------------------------------------------
-inline fun corIepAround(x: Int, block: () -> Int): Int = block() + x + x
+inline fun inlineSuspendPlanAround(x: Int, block: () -> Int): Int = block() + x + x
 
 // ---- a filled default, on a call whose lambda suspends --------------------------------------------------------
-inline fun corIepWithDefault(a: Int = corIepT("A"), b: Int, block: (Int) -> Int): Int = block(a) + b
+inline fun inlineSuspendPlanWithDefault(a: Int = inlineSuspendPlanT("A"), b: Int, block: (Int) -> Int): Int = block(a) + b
 
 // ---- a spliced inline call as the LEFT operand of a suspending one -------------------------------------------
-fun corIepPair(a: Int, b: Int): String = "$a/$b"
-fun corIepJoin(a: String, b: Int): String = "$a|$b"
+fun inlineSuspendPlanPair(a: Int, b: Int): String = "$a/$b"
+fun inlineSuspendPlanJoin(a: String, b: Int): String = "$a|$b"
 
-suspend fun corIepSplicedLeftOfSuspend(x: Int): String =
-    corIepPair(x.let { it + 1 }, corIepRelay("S"))
+suspend fun inlineSuspendPlanSplicedLeftOfSuspend(x: Int): String =
+    inlineSuspendPlanPair(x.let { it + 1 }, inlineSuspendPlanRelay("S"))
 
 // The same shape with a REFERENCE result, so the two halves of the type stamp (value type / reference type) are
 // both exercised through the spill.
-suspend fun corIepSplicedLeftOfSuspendRef(x: Int): String =
-    corIepJoin(x.let { "v$it" }, corIepRelay("S"))
+suspend fun inlineSuspendPlanSplicedLeftOfSuspendRef(x: Int): String =
+    inlineSuspendPlanJoin(x.let { "v$it" }, inlineSuspendPlanRelay("S"))
 
 // ---- a generic inline call whose bound value lives across the suspension ---------------------------------------
-inline fun <T> corIepHold(v: T, block: () -> Unit): T { block(); return v }
+inline fun <T> inlineSuspendPlanHold(v: T, block: () -> Unit): T { block(); return v }
 
 // ---- a TERMINAL operand left of a suspending one ---------------------------------------------------------------
 // An operand that never completes — an expression-position `throw`/`return`, a `Nothing`-returning call, or the
@@ -51,152 +51,152 @@ inline fun <T> corIepHold(v: T, block: () -> Unit): T { block(); return v }
 // and NOTHING to its right, including the suspension. It is therefore not a value to spill across a resume; it IS
 // the expression's value. (`run { … }` supplies no value, so it carries no plan and its splice is an untyped block —
 // which is how the spill came to ask for a type that no longer existed and refuse.)
-suspend fun corIepTerminalThrow(): Int =
-    corIepSum(run<Int> { corIepLog.add("T"); throw IllegalStateException("boom") }, corIepRelay("S"))
+suspend fun inlineSuspendPlanTerminalThrow(): Int =
+    inlineSuspendPlanSum(run<Int> { inlineSuspendPlanLog.add("T"); throw IllegalStateException("boom") }, inlineSuspendPlanRelay("S"))
 
-suspend fun corIepTerminalReturn(): Int {
-    return corIepSum(run<Int> { corIepLog.add("R"); return -7 }, corIepRelay("S"))
+suspend fun inlineSuspendPlanTerminalReturn(): Int {
+    return inlineSuspendPlanSum(run<Int> { inlineSuspendPlanLog.add("R"); return -7 }, inlineSuspendPlanRelay("S"))
 }
 
-fun corIepNever(): Nothing { corIepLog.add("N"); throw IllegalArgumentException("nope") }
-suspend fun corIepTerminalNothingCall(): Int = corIepSum(corIepNever(), corIepRelay("S"))
+fun inlineSuspendPlanNever(): Nothing { inlineSuspendPlanLog.add("N"); throw IllegalArgumentException("nope") }
+suspend fun inlineSuspendPlanTerminalNothingCall(): Int = inlineSuspendPlanSum(inlineSuspendPlanNever(), inlineSuspendPlanRelay("S"))
 
 // …and the mirror: a terminal operand to the RIGHT of the suspension, where the suspension DOES run first.
-suspend fun corIepTerminalAfterSuspend(): Int =
-    corIepSum(corIepRelay("S"), run<Int> { corIepLog.add("T"); throw IllegalStateException("late") })
+suspend fun inlineSuspendPlanTerminalAfterSuspend(): Int =
+    inlineSuspendPlanSum(inlineSuspendPlanRelay("S"), run<Int> { inlineSuspendPlanLog.add("T"); throw IllegalStateException("late") })
 
 // A `Nothing`-typed LOCAL is never live across anything — its initializer is what does not complete — so the
 // storage question never arises for it. This pins that, since the local read is an operand like any other.
-suspend fun corIepNothingLocal(): Int {
-    val x = run<Int> { corIepLog.add("X"); throw IllegalStateException("local") }
-    return corIepSum(x, corIepRelay("S"))
+suspend fun inlineSuspendPlanNothingLocal(): Int {
+    val x = run<Int> { inlineSuspendPlanLog.add("X"); throw IllegalStateException("local") }
+    return inlineSuspendPlanSum(x, inlineSuspendPlanRelay("S"))
 }
 
-fun corIepSum(a: Int, b: Int): Int = a + b
+fun inlineSuspendPlanSum(a: Int, b: Int): Int = a + b
 
 // …and the same operand in the argument list of a SUSPENDING call, where the machinery it interacts with is the
 // suspension point itself rather than the evaluation-order spill. With no suspension to its RIGHT nothing has to be
 // elided, so these lower exactly as they always did: everything to its left evaluates — a suspension there completes
 // and resumes normally — then the operand leaves, and the call it was an argument to never runs.
-suspend fun corIepSuspSum(a: Int, b: Int): Int { corIepLog.add("O"); return a + b }
-suspend fun corIepSuspOne(a: Int): Int { corIepLog.add("O"); return a }
+suspend fun inlineSuspendPlanSuspSum(a: Int, b: Int): Int { inlineSuspendPlanLog.add("O"); return a + b }
+suspend fun inlineSuspendPlanSuspOne(a: Int): Int { inlineSuspendPlanLog.add("O"); return a }
 
-suspend fun corIepSuspTerminalOnly(): Int =
-    corIepSuspOne(run<Int> { corIepLog.add("T"); throw IllegalStateException("one") })
+suspend fun inlineSuspendPlanSuspTerminalOnly(): Int =
+    inlineSuspendPlanSuspOne(run<Int> { inlineSuspendPlanLog.add("T"); throw IllegalStateException("one") })
 
-suspend fun corIepSuspAfterSuspension(): Int =
-    corIepSuspSum(corIepRelay("S"), run<Int> { corIepLog.add("T"); throw IllegalStateException("two") })
+suspend fun inlineSuspendPlanSuspAfterSuspension(): Int =
+    inlineSuspendPlanSuspSum(inlineSuspendPlanRelay("S"), run<Int> { inlineSuspendPlanLog.add("T"); throw IllegalStateException("two") })
 
 // The suspend-function-VALUE forms of both: a different cold-call builder, the same rule.
-val corIepFnOne: suspend (Int) -> Int = { a -> corIepLog.add("V"); a }
-val corIepFnTwo: suspend (Int, Int) -> Int = { a, b -> corIepLog.add("V"); a + b }
+val inlineSuspendPlanFnOne: suspend (Int) -> Int = { a -> inlineSuspendPlanLog.add("V"); a }
+val inlineSuspendPlanFnTwo: suspend (Int, Int) -> Int = { a, b -> inlineSuspendPlanLog.add("V"); a + b }
 
-suspend fun corIepFnValueTerminalOnly(): Int =
-    corIepFnOne(run<Int> { corIepLog.add("T"); throw IllegalStateException("fnOne") })
+suspend fun inlineSuspendPlanFnValueTerminalOnly(): Int =
+    inlineSuspendPlanFnOne(run<Int> { inlineSuspendPlanLog.add("T"); throw IllegalStateException("fnOne") })
 
-suspend fun corIepFnValueAfterSuspension(): Int =
-    corIepFnTwo(corIepRelay("S"), run<Int> { corIepLog.add("T"); throw IllegalStateException("fnTwo") })
+suspend fun inlineSuspendPlanFnValueAfterSuspension(): Int =
+    inlineSuspendPlanFnTwo(inlineSuspendPlanRelay("S"), run<Int> { inlineSuspendPlanLog.add("T"); throw IllegalStateException("fnTwo") })
 
-private inline fun corIepThrown(block: () -> Unit): String =
+private inline fun inlineSuspendPlanThrown(block: () -> Unit): String =
     try { block(); "no-throw" } catch (e: Throwable) { e.message ?: "?" }
 
 class InlineEvaluationPlanSuspendTests {
     /** The bound value is evaluated once, before the body, and survives a suspension the body performs. */
     @TestAttribute
     fun boundValueSurvivesASuspensionInTheBody() {
-        corIepLog.clear()
-        val v = blockOn { corIepAround(corIepT("xyz")) { corIepRelay("R") } }
+        inlineSuspendPlanLog.clear()
+        val v = blockOn { inlineSuspendPlanAround(inlineSuspendPlanT("xyz")) { inlineSuspendPlanRelay("R") } }
         assertEquals(7, v)                        // R=1 + 3 + 3
-        assertEquals("xyz,R", corIepTrace())      // the argument once, before the body
+        assertEquals("xyz,R", inlineSuspendPlanTrace())      // the argument once, before the body
     }
 
     /** A filled default still follows every supplied value when the call suspends. */
     @TestAttribute
     fun filledDefaultFollowsSuppliedValueUnderSuspension() {
-        corIepLog.clear()
-        val v = blockOn { corIepWithDefault(b = corIepT("BB")) { it + corIepRelay("R") } }
+        inlineSuspendPlanLog.clear()
+        val v = blockOn { inlineSuspendPlanWithDefault(b = inlineSuspendPlanT("BB")) { it + inlineSuspendPlanRelay("R") } }
         assertEquals(4, v)                        // block(1) = 1+1 = 2, + 2
-        assertEquals("BB,A,R", corIepTrace())
+        assertEquals("BB,A,R", inlineSuspendPlanTrace())
     }
 
     /** A spliced inline call to the LEFT of a suspending operand is spilled into a TYPED slot. */
     @TestAttribute
     fun splicedInlineCallSpilledLeftOfASuspension() {
-        corIepLog.clear()
-        assertEquals("4/1", blockOn { corIepSplicedLeftOfSuspend(3) })
-        assertEquals("S", corIepTrace())
+        inlineSuspendPlanLog.clear()
+        assertEquals("4/1", blockOn { inlineSuspendPlanSplicedLeftOfSuspend(3) })
+        assertEquals("S", inlineSuspendPlanTrace())
 
-        corIepLog.clear()
-        assertEquals("v3|1", blockOn { corIepSplicedLeftOfSuspendRef(3) })
-        assertEquals("S", corIepTrace())
+        inlineSuspendPlanLog.clear()
+        assertEquals("v3|1", blockOn { inlineSuspendPlanSplicedLeftOfSuspendRef(3) })
+        assertEquals("S", inlineSuspendPlanTrace())
     }
 
     /** A generic inline fn's bound value, held across a suspension the body performs. */
     @TestAttribute
     fun genericBoundValueHeldAcrossASuspension() {
-        corIepLog.clear()
-        assertEquals(3, blockOn { corIepHold(corIepT("abc")) { corIepRelay("R") } })
-        assertEquals("abc,R", corIepTrace())
+        inlineSuspendPlanLog.clear()
+        assertEquals(3, blockOn { inlineSuspendPlanHold(inlineSuspendPlanT("abc")) { inlineSuspendPlanRelay("R") } })
+        assertEquals("abc,R", inlineSuspendPlanTrace())
 
-        corIepLog.clear()
-        assertEquals("kept", blockOn { corIepHold("kept") { corIepRelay("R") } })
-        assertEquals("R", corIepTrace())
+        inlineSuspendPlanLog.clear()
+        assertEquals("kept", blockOn { inlineSuspendPlanHold("kept") { inlineSuspendPlanRelay("R") } })
+        assertEquals("R", inlineSuspendPlanTrace())
     }
 
     /** An operand that never completes, left of a suspending one: it runs, and the suspension never does. */
     @TestAttribute
     fun terminalOperandLeftOfASuspension() {
-        corIepLog.clear()
-        assertEquals("boom", corIepThrown { blockOn { corIepTerminalThrow() } })
-        assertEquals("T", corIepTrace())              // the suspending operand was never reached
+        inlineSuspendPlanLog.clear()
+        assertEquals("boom", inlineSuspendPlanThrown { blockOn { inlineSuspendPlanTerminalThrow() } })
+        assertEquals("T", inlineSuspendPlanTrace())              // the suspending operand was never reached
 
-        corIepLog.clear()
-        assertEquals(-7, blockOn { corIepTerminalReturn() })
-        assertEquals("R", corIepTrace())
+        inlineSuspendPlanLog.clear()
+        assertEquals(-7, blockOn { inlineSuspendPlanTerminalReturn() })
+        assertEquals("R", inlineSuspendPlanTrace())
 
-        corIepLog.clear()
-        assertEquals("nope", corIepThrown { blockOn { corIepTerminalNothingCall() } })
-        assertEquals("N", corIepTrace())
+        inlineSuspendPlanLog.clear()
+        assertEquals("nope", inlineSuspendPlanThrown { blockOn { inlineSuspendPlanTerminalNothingCall() } })
+        assertEquals("N", inlineSuspendPlanTrace())
     }
 
     /** …and one to its RIGHT: the suspension runs first, then the operand leaves. */
     @TestAttribute
     fun terminalOperandRightOfASuspension() {
-        corIepLog.clear()
-        assertEquals("late", corIepThrown { blockOn { corIepTerminalAfterSuspend() } })
-        assertEquals("S,T", corIepTrace())
+        inlineSuspendPlanLog.clear()
+        assertEquals("late", inlineSuspendPlanThrown { blockOn { inlineSuspendPlanTerminalAfterSuspend() } })
+        assertEquals("S,T", inlineSuspendPlanTrace())
     }
 
     /** A `Nothing`-typed local: its initializer is what does not complete, so nothing is ever stored. */
     @TestAttribute
     fun nothingTypedLocalIsNeverStored() {
-        corIepLog.clear()
-        assertEquals("local", corIepThrown { blockOn { corIepNothingLocal() } })
-        assertEquals("X", corIepTrace())
+        inlineSuspendPlanLog.clear()
+        assertEquals("local", inlineSuspendPlanThrown { blockOn { inlineSuspendPlanNothingLocal() } })
+        assertEquals("X", inlineSuspendPlanTrace())
     }
 
     /** A terminal operand in a SUSPENDING call's own argument list, with no suspension to its right: the operand
      *  leaves and the call never runs — through both the named-callee and the suspend-function-value builder. */
     @TestAttribute
     fun terminalOperandInASuspendingCallsArguments() {
-        corIepLog.clear()
-        assertEquals("one", corIepThrown { blockOn { corIepSuspTerminalOnly() } })
-        assertEquals("T", corIepTrace())              // the suspending callee was never entered
+        inlineSuspendPlanLog.clear()
+        assertEquals("one", inlineSuspendPlanThrown { blockOn { inlineSuspendPlanSuspTerminalOnly() } })
+        assertEquals("T", inlineSuspendPlanTrace())              // the suspending callee was never entered
 
-        corIepLog.clear()
-        assertEquals("fnOne", corIepThrown { blockOn { corIepFnValueTerminalOnly() } })
-        assertEquals("T", corIepTrace())
+        inlineSuspendPlanLog.clear()
+        assertEquals("fnOne", inlineSuspendPlanThrown { blockOn { inlineSuspendPlanFnValueTerminalOnly() } })
+        assertEquals("T", inlineSuspendPlanTrace())
     }
 
     /** …and with a suspension to its LEFT: that one completes and resumes, then the operand leaves. */
     @TestAttribute
     fun terminalOperandAfterASuspendingArgument() {
-        corIepLog.clear()
-        assertEquals("two", corIepThrown { blockOn { corIepSuspAfterSuspension() } })
-        assertEquals("S,T", corIepTrace())
+        inlineSuspendPlanLog.clear()
+        assertEquals("two", inlineSuspendPlanThrown { blockOn { inlineSuspendPlanSuspAfterSuspension() } })
+        assertEquals("S,T", inlineSuspendPlanTrace())
 
-        corIepLog.clear()
-        assertEquals("fnTwo", corIepThrown { blockOn { corIepFnValueAfterSuspension() } })
-        assertEquals("S,T", corIepTrace())
+        inlineSuspendPlanLog.clear()
+        assertEquals("fnTwo", inlineSuspendPlanThrown { blockOn { inlineSuspendPlanFnValueAfterSuspension() } })
+        assertEquals("S,T", inlineSuspendPlanTrace())
     }
 }

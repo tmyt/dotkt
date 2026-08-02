@@ -221,16 +221,17 @@ check_output() {
 	evidence_add "(stdout) $3"
 	section_result "$1" "$ok" "$4" "$(printf -- '--- expected ---\n%s\n--- actual ---\n%s' "$2" "$3")"
 }
-# run_app <outvar> <dll> — capture stdout of a possibly-crashing app. The suspend-stub abort exits 134
+# run_app <outvar> <dll> [args...] — capture stdout of a possibly-crashing app. The suspend-stub abort exits 134
 # (SIGABRT) INSIDE the command substitution; naked `x="$(...)"` would kill the whole gate under set -e,
 # so the assignment runs as an `if` condition (errexit-exempt) and the crash is folded into the output.
 # stderr is NOT discarded: it is the only place the exception type appears, and that type is what an
 # RT_XFAIL_SHAPE matches. The section VERDICT is still stdout-only, so nothing about it changes here.
 run_app() {
 	local -n _out="$1"
-	local err rc=0
+	local dll="$2" err rc=0
+	shift 2
 	err="$(mktemp)"
-	if _out="$(dotnet "$2" 2>"$err")"; then :; else
+	if _out="$(dotnet "$dll" "$@" 2>"$err")"; then :; else
 		rc=$?
 		_out+="${_out:+$'\n'}(app crashed: exit $rc)"
 	fi
@@ -670,74 +671,150 @@ run_app nvactual "$NV/appil/NvApp.dll"
 check_output roundtrip-nullable-vt-generic "$nvexpected" "$nvactual" "cross-module nullable VALUE-TYPE generic (T? method param + ctor param) instantiated at T=Int (#109/#86)"
 
 # ===== #86 nullable-generic VALUE axis ===============================================================
-# One app per OBSERVABLE. A section's verdict is a single stdout comparison, so an app driving several faulty
-# shapes reports one result and the FIRST fault hides the rest — a `main` that dies of InvalidProgramException
-# never reaches the TypeLoadException line. Bundling would therefore let one entry keep claiming three causes
-# long after two were fixed. Each section below has exactly one thing that can fail, and each RT_XFAIL entry
-# pins the shape (exception type / diagnostic) its evidence must contain.
+# One PROCESS per observable, but not one COMPILATION per observable. A section's verdict is a single stdout
+# comparison, so a process driving several faulty shapes lets the first crash hide the rest. The sources below are
+# therefore compiled into two batched assemblies (same-module, and cross-module producer+consumer), while the
+# dispatcher starts one fresh process per section. XFAIL evidence and pruning stay independent without paying the
+# Kotlin frontend + bir2cir + ilemit startup cost for every tiny program.
 #
 # The GREEN control sections are load-bearing, not decoration: they run the identical shape at a REFERENCE
 # instantiation (and, for the override axis, at a NON-nullable slot) through the identical pipeline. They are
 # what makes "the value axis is the subject" a measurement rather than a claim — if the whole family broke,
 # they would redden as NEW-FAILs rather than being absorbed by a sibling's XFAIL.
 
-# ng_local <name> <expected-stdout> <descr>   (Kotlin source on stdin)
-# A SAME-MODULE case: one compilation, no library, no metadata round trip — the control that separates a
-# CARRIER defect (a shape lost across the module boundary) from a REPRESENTATION defect (a shape that never
-# worked). Without it a reader of the cross-module sections cannot tell the two apart.
-ng_local() {
-	local name="$1" expected="$2" descr="$3"
-	local d="$ROOT/build/$name"; rm -rf "$d"; mkdir -p "$d/app" "$d/bir" "$d/il"
-	cat > "$d/app/app.kt"
-	compile_kt "$d/app" "$d/bir" "$CP"
-	emit_il "$d/il" NgApp "$d/bir"/*.bir.json
-	local out; run_app out "$d/il/NgApp.dll"
-	check_output "$name" "$expected" "$out" "$descr"
+# Put a stdin Kotlin file in a private package. `@file:` annotations must stay before `package`, so this cannot be
+# a blind prefix. Package isolation lets many formerly standalone programs coexist in one compilation.
+write_batched_source() { # <out> <package> [wildcard-import]
+	local out="$1" pkg="$2" import_pkg="${3:-}" line inserted=0
+	: > "$out"
+	while IFS= read -r line; do
+		if (( ! inserted )) && [[ "$line" == @file:* ]]; then
+			printf '%s\n' "$line" >> "$out"
+			continue
+		fi
+		if (( ! inserted )); then
+			printf 'package %s\n' "$pkg" >> "$out"
+			[[ -n "$import_pkg" ]] && printf 'import %s.*\n' "$import_pkg" >> "$out"
+			inserted=1
+		fi
+		printf '%s\n' "$line" >> "$out"
+	done
 }
 
+NG_LOCAL="$ROOT/build/roundtrip-nullable-generic-local-batch"
+rm -rf "$NG_LOCAL"; mkdir -p "$NG_LOCAL/src" "$NG_LOCAL/bir" "$NG_LOCAL/il"
+declare -a NG_LOCAL_NAMES=()
+declare -A NG_LOCAL_EXPECTED=() NG_LOCAL_DESCR=() NG_LOCAL_PACKAGE=()
+
+# ng_local <name> <expected-stdout> <descr>   (Kotlin source on stdin)
+# Queue a SAME-MODULE case. ng_local_flush compiles all cases together, then invokes each package's main in its own
+# process so a crash still belongs to exactly one section.
+ng_local() {
+	local name="$1" expected="$2" descr="$3" id="${1//-/_}" pkg="roundtrip.nglocal.${1//-/_}"
+	write_batched_source "$NG_LOCAL/src/$id.kt" "$pkg"
+	NG_LOCAL_NAMES+=("$name")
+	NG_LOCAL_EXPECTED[$name]="$expected"
+	NG_LOCAL_DESCR[$name]="$descr"
+	NG_LOCAL_PACKAGE[$name]="$pkg"
+}
+
+ng_local_flush() {
+	local dispatch="$NG_LOCAL/src/zz_dispatcher.kt" batch_evidence name out
+	{
+		printf 'fun main(args: Array<String>) {\n    when (args[0]) {\n'
+		for name in "${NG_LOCAL_NAMES[@]}"; do
+			printf '        "%s" -> %s.main()\n' "$name" "${NG_LOCAL_PACKAGE[$name]}"
+		done
+		printf '        else -> throw IllegalArgumentException(args[0])\n    }\n}\n'
+	} > "$dispatch"
+	evidence_reset
+	compile_kt "$NG_LOCAL/src" "$NG_LOCAL/bir" "$CP"
+	emit_il "$NG_LOCAL/il" NgLocalBatch "$NG_LOCAL/bir"/*.bir.json
+	batch_evidence="$RT_EVIDENCE"
+	for name in "${NG_LOCAL_NAMES[@]}"; do
+		RT_EVIDENCE="$batch_evidence"
+		run_app out "$NG_LOCAL/il/NgLocalBatch.dll" "$name"
+		check_output "$name" "${NG_LOCAL_EXPECTED[$name]}" "$out" "${NG_LOCAL_DESCR[$name]}"
+	done
+}
+
+NG_CROSS="$ROOT/build/roundtrip-nullable-generic-cross-batch"
+rm -rf "$NG_CROSS"; mkdir -p "$NG_CROSS/producer" "$NG_CROSS/producer-bir" "$NG_CROSS/producer-il" \
+	"$NG_CROSS/consumer" "$NG_CROSS/consumer-bir" "$NG_CROSS/consumer-il" "$NG_CROSS/reject"
+declare -a NG_APP_NAMES=() NG_REJECT_NAMES=()
+declare -A NG_LIB_PACKAGE=() NG_APP_EXPECTED=() NG_APP_DESCR=() NG_APP_PACKAGE=()
+declare -A NG_REJECT_WANT=() NG_REJECT_DESCR=()
+
 # ng_lib <workdir> <asm>   (Kotlin library source on stdin)
-# Builds one section-GROUP's library: compile, emit, retarget, project to a reference KLIB. Sections in a
-# group share it deliberately — the library is not the subject, one consumer's use of one slot is.
+# Queue one package in the shared producer. Package boundaries retain each original group's name isolation while
+# replacing the many tiny producer assemblies with one real cross-module producer.
 ng_lib() {
-	local d="$1" asm="$2"; rm -rf "$d"; mkdir -p "$d/lib" "$d/libbir" "$d/libil"
-	cat > "$d/lib/lib.kt"
-	compile_kt "$d/lib" "$d/libbir" "$CP"
-	emit_il "$d/libil" "$asm" "$d/libbir"/*.bir.json
-	dotnet "$RETARGET_DLL" "$d/libil/$asm.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
-	project_reference_klib "$d/libil/$asm.dll" "$d/$asm.klib"
+	local d="$1" asm="$2" id="${2//-/_}" pkg="roundtrip.nglib.${2//-/_}"
+	write_batched_source "$NG_CROSS/producer/$id.kt" "$pkg"
+	NG_LIB_PACKAGE[$d]="$pkg"
 }
 
 # ng_app <workdir> <libasm> <name> <expected-stdout> <descr>   (Kotlin consumer source on stdin)
-# One CONSUMER per observable against a group's library. A consumer that fails to COMPILE, or whose emit
-# aborts, produces no assembly and the section fails on empty stdout — which is exactly why the diagnostics
-# are kept as evidence: the RT_XFAIL_SHAPE is matched against them, not against the empty output.
+# Queue one consumer entry point. All consumers are compiled and emitted together but executed separately.
 ng_app() {
 	local d="$1" asm="$2" name="$3" expected="$4" descr="$5"
-	local a="$d/$name"; rm -rf "$a"; mkdir -p "$a/app" "$a/bir" "$a/il"
-	cat > "$a/app/app.kt"
-	compile_kt "$a/app" "$a/bir" "$CP$KLIB_CP_SEP$d/$asm.klib"
-	emit_il "$a/il" NgApp --ref "$d/libil/$asm.dll" "$a/bir"/*.bir.json
-	cp "$d/libil/$asm.dll" "$a/il/" 2>/dev/null || true
-	local out; run_app out "$a/il/NgApp.dll"
-	check_output "$name" "$expected" "$out" "$descr"
+	local id="${3//-/_}" pkg="roundtrip.ngapp.${3//-/_}" lib_pkg="${NG_LIB_PACKAGE[$d]}"
+	write_batched_source "$NG_CROSS/consumer/$id.kt" "$pkg" "$lib_pkg"
+	NG_APP_NAMES+=("$name")
+	NG_APP_EXPECTED[$name]="$expected"
+	NG_APP_DESCR[$name]="$descr"
+	NG_APP_PACKAGE[$name]="$pkg"
 }
 
 # ng_reject <workdir> <libasm> <name> <want-substring> <descr>   (Kotlin consumer source on stdin)
-# The twin of ng_app for an observable that is a REFUSAL. A restored declaration can be too WEAK as easily as too
-# strong, and only source the frontend must turn away shows the difference: a bound that came back missing accepts
-# an argument it should not, and the program then dies at LOAD with the CLR's wording instead of at the line the
-# author wrote. The verdict is the compiler's own diagnostic, so it is the compile output that is compared here —
-# an accepted consumer fails the section by producing no such text.
+# Negative compilations remain separate because their expected frontend failure must not abort the positive batch.
 ng_reject() {
 	local d="$1" asm="$2" name="$3" want="$4" descr="$5"
-	local a="$d/$name"; rm -rf "$a"; mkdir -p "$a/app" "$a/bir"
-	cat > "$a/app/app.kt"
-	local out ok=0
-	out="$("$LAUNCHER" "$a/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$d/$asm.klib" -d "$a/bir" 2>&1 || true)"
-	evidence_add "$out"
-	[[ "$out" == *"$want"* ]] && ok=1
-	section_result "$name" "$ok" "$descr" \
-		"$(printf -- '--- the diagnostic must contain ---\n%s\n--- compiler output ---\n%s' "$want" "$out")"
+	local id="${3//-/_}" pkg="roundtrip.ngreject.${3//-/_}" lib_pkg="${NG_LIB_PACKAGE[$d]}"
+	write_batched_source "$NG_CROSS/reject/$id.kt" "$pkg" "$lib_pkg"
+	NG_REJECT_NAMES+=("$name")
+	NG_REJECT_WANT[$name]="$want"
+	NG_REJECT_DESCR[$name]="$descr"
+}
+
+ng_cross_flush() {
+	local lib="$NG_CROSS/producer-il/NgBatchLib.dll" klib="$NG_CROSS/NgBatchLib.klib"
+	local dispatch="$NG_CROSS/consumer/zz_dispatcher.kt" producer_evidence batch_evidence name id out ok
+	evidence_reset
+	compile_kt "$NG_CROSS/producer" "$NG_CROSS/producer-bir" "$CP"
+	emit_il "$NG_CROSS/producer-il" NgBatchLib "$NG_CROSS/producer-bir"/*.bir.json
+	dotnet "$RETARGET_DLL" "$lib" --compile-refs "$REFS" >/dev/null 2>&1 || true
+	project_reference_klib "$lib" "$klib"
+	producer_evidence="$RT_EVIDENCE"
+
+	{
+		printf 'fun main(args: Array<String>) {\n    when (args[0]) {\n'
+		for name in "${NG_APP_NAMES[@]}"; do
+			printf '        "%s" -> %s.main()\n' "$name" "${NG_APP_PACKAGE[$name]}"
+		done
+		printf '        else -> throw IllegalArgumentException(args[0])\n    }\n}\n'
+	} > "$dispatch"
+	RT_EVIDENCE="$producer_evidence"
+	compile_kt "$NG_CROSS/consumer" "$NG_CROSS/consumer-bir" "$CP$KLIB_CP_SEP$klib"
+	emit_il "$NG_CROSS/consumer-il" NgBatchApp --ref "$lib" "$NG_CROSS/consumer-bir"/*.bir.json
+	cp "$lib" "$NG_CROSS/consumer-il/" 2>/dev/null || true
+	batch_evidence="$RT_EVIDENCE"
+	for name in "${NG_APP_NAMES[@]}"; do
+		RT_EVIDENCE="$batch_evidence"
+		run_app out "$NG_CROSS/consumer-il/NgBatchApp.dll" "$name"
+		check_output "$name" "${NG_APP_EXPECTED[$name]}" "$out" "${NG_APP_DESCR[$name]}"
+	done
+
+	for name in "${NG_REJECT_NAMES[@]}"; do
+		id="${name//-/_}"; out=""; ok=0
+		RT_EVIDENCE="$producer_evidence"
+		out="$("$LAUNCHER" "$NG_CROSS/reject/$id.kt" -no-stdlib -classpath "$CP$KLIB_CP_SEP$klib" \
+			-d "$NG_CROSS/reject/$id-bir" 2>&1 || true)"
+		evidence_add "$out"
+		[[ "$out" == *"${NG_REJECT_WANT[$name]}"* ]] && ok=1
+		section_result "$name" "$ok" "${NG_REJECT_DESCR[$name]}" \
+			"$(printf -- '--- the diagnostic must contain ---\n%s\n--- compiler output ---\n%s' "${NG_REJECT_WANT[$name]}" "$out")"
+	done
 }
 
 # ----- SAME-MODULE: the representation, with no boundary and no metadata in play (#86) ------------------
@@ -1617,6 +1694,11 @@ fun main() {
     println(unwrapSlot(Slot<String?>("param")))       // param
 }
 EOF
+
+# Compile the queued #86 probes now that all source fragments are known. Each verdict still gets a fresh runtime
+# process; only the expensive compiler pipeline startup is shared.
+ng_local_flush
+ng_cross_flush
 
 # ----- HIGHER-ORDER generics: a function-type parameter whose ARG/RETURN is a generic user type (`(Box<U>)->Box<V>`) -----
 # The metadata type grammar is a recursive structured type-node tree (an `fn` node's `ret`/`params` are themselves type

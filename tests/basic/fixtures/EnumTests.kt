@@ -1,9 +1,7 @@
 // Enum battery — migrates the Kotlin `enum class` family of cases/il-* onto the in-process NUnit suite.
-// Each old case's `main` + stdout-golden diff becomes one @TestAttribute method whose per-value
-// assertEquals/assertTrue/assertFalse is strictly stronger (typed, fails the exact broken contract) and
-// self-documenting. Every value the old il_check asserted is preserved 1:1 (see the `// <expected>`
-// comments). Ordered side-effecting `println`s (values()/enumValues loops) are captured into a log list
-// and asserted in order.
+// Related old cases are consolidated by enum compiler shape into typed assertEquals/assertTrue/assertFalse
+// methods. Ordered side-effecting `println`s (values()/enumValues loops) are captured into a log list and
+// asserted in order.
 //
 // EXCLUDED from this family (matched the enum grep but the real subject is .NET interop, not Kotlin
 // `enum class` behavior — kept in the bash lane):
@@ -16,6 +14,7 @@
 //   il-enum       -> enum_whenOverEnum          basic enum + `when` over enum -> String
 //   il-enumbody   -> enumbody_perEntryBody       per-entry bodies overriding an abstract member (values/valueOf/name)
 //   il-enumintr   -> enumintr_enumValuesValueOf  reified enumValues<T>/enumValueOf<T> (index/.size/ordinal/loop) + reified-inline callee
+//   m-a8          -> enumValuesValueOf            enum entries collection size (other enum API assertions are covered here/ctorAndMethod)
 //   il-enumrich   -> enumrich_ctorAndMethod      rich enum (ctor param + instance method) singleton lowering (mass/heavy/name/ordinal/valueOf/values/==)
 //   il-enumtostr  -> enumtostr_inheritedMembers  basic enum inherits ToString/Equals/GetHashCode from System.Enum (toString/println/concat/==/equals/compareTo); decl in sibling EnumCrossFileSupport.kt
 //
@@ -78,6 +77,7 @@ class EnumTests {
         for (c in enumValues<EnumIntrColor>()) log.add(c.toString())           // RED / GREEN / BLUE
         assertEquals("RED|GREEN|BLUE", log.joinToString("|"))
         assertEquals(EnumIntrColor.BLUE, enumPick<EnumIntrColor>(2))            // BLUE (reified-inline callee)
+        assertEquals(3, EnumIntrColor.entries.size)                              // 3 (entries collection)
     }
 
     @TestAttribute

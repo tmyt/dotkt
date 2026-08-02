@@ -7,10 +7,10 @@
 #
 #   TASK 1 (local SDK): resolves DotKt.Sdk from the local feed, not a published nuget — so the suite tests the
 #     compiler in THIS working tree. Requires `make pack` (build/nuget-feed) first.
-#   TASK 2 (verdict = dotnet test $? + nonzero discovery + ilverify): the gate reddens iff a project fails to
-#     build, `dotnet test` returns non-zero, the TRX is missing or reports zero discovered tests, or ILVerify finds
-#     an issue. There is no hand-maintained exact-count manifest, but zero is explicitly rejected: VSTest can exit
-#     zero after matching an empty test assembly when an incremental build has gone stale.
+#   TASK 2 (verdict = dotnet test $? + exact discovery + ilverify): the gate reddens iff a project fails to
+#     build, `dotnet test` returns non-zero, the TRX discovery count differs from the reviewed baseline, or ILVerify
+#     finds an issue. Exact counts make test additions and removals visible in the same review as their rationale;
+#     they also catch VSTest exiting zero after matching an empty or stale test assembly.
 #
 # Order (design §5): recreate DotKt.* in the isolated cache -> non-incremental build -> dotnet test --no-build ->
 # ilverify. The non-incremental build is load-bearing after repacking the SDK at the same version: otherwise MSBuild
@@ -23,8 +23,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FEED="$ROOT/build/nuget-feed"
 CACHE="$ROOT/build/test-package-cache"
 
-# --- the suite projects to build / test / ilverify. Verdict is per-project `dotnet test` $? + ilverify;
-#     there is no hand-maintained discovered-count manifest (see TASK 2). --------------------------------------
+# --- the suite projects to build / test / ilverify. Verdict is per-project `dotnet test` $? + exact discovery
+#     count + ilverify (see TASK 2). ---------------------------------------------------------------------------
 PROJECTS=(
 	"tests/basic"
 	# Coroutine / suspend lane (docs/design-nunit-test-harness.md §4 "coroutine (+ the one shared harness)"): its
@@ -46,6 +46,25 @@ PROJECTS=(
 	# consumer, which imports the built C# dll through its generated reference KLIB (`import <Ns>.<Type>`).
 	"tests/interop/consumer"
 )
+
+# Reviewed on the v0.9.8 main baseline at the start of #227. Updating a suite requires updating this number in
+# the same change, making otherwise-silent test proliferation or accidental deletion an explicit review event.
+declare -A EXPECTED_DISCOVERED=(
+	["tests/basic"]=373
+	["tests/coroutines"]=157
+	["tests/roundtrip/consumer"]=45
+	["tests/roundtrip/bidirectional/consumer"]=3
+	["tests/interop/consumer"]=121
+)
+
+# Validate the baseline map before doing any expensive work. A new/renamed suite without a reviewed count is a
+# harness configuration error, not an observed count change.
+for proj in "${PROJECTS[@]}"; do
+	if [[ ! -v EXPECTED_DISCOVERED[$proj] ]]; then
+		echo "run-nunit-tests: HARNESS ERROR — no EXPECTED_DISCOVERED baseline for $proj"
+		exit 1
+	fi
+done
 
 # Extra DotKt-emitted assemblies (beyond the .ktproj-named one) to ALSO run ilverify over, per consumer project.
 # Space-separated list per project. The round-trip consumer's two <ProjectReference>s copy BOTH producer dlls into
@@ -107,9 +126,9 @@ for proj in "${PROJECTS[@]}"; do
 		done
 	fi
 
-	# Run the tests. HONOR dotnet test's EXIT STATUS as the verdict: it returns non-zero on ANY test failure,
-	# a discovery/adapter error, or a host crash — so $? is authoritative (no hand-maintained discovered-count).
-	# A TRX is still emitted for the informational discovered= line and the no-TRX host-crash guard.
+	# Run the tests. HONOR dotnet test's EXIT STATUS as the behavioral verdict, then reconcile the TRX discovery
+	# count with EXPECTED_DISCOVERED. A count change is not inherently wrong, but it must be reviewed and recorded
+	# rather than silently expanding or shrinking the suite.
 	trxdir="$dir/TestResults"; rm -rf "$trxdir"
 	if dotnet test "$dir" --no-build --logger "trx;LogFileName=results.trx" -v q --nologo \
 		>"$ROOT/build/nunit-$name.test.log" 2>&1; then test_ok=1; else test_ok=0; fi
@@ -118,10 +137,11 @@ for proj in "${PROJECTS[@]}"; do
 		echo "  DISCOVERY FAIL — no TRX produced (0 tests / host crash); see build/nunit-$name.test.log"; rc=1; continue
 	fi
 	total="$(grep -oE 'total="[0-9]+"' "$trx" | grep -oE '[0-9]+' | head -1)"; total="${total:-0}"
-	if (( test_ok == 1 && total > 0 )); then
+	expected_total="${EXPECTED_DISCOVERED[$proj]}"
+	if (( test_ok == 1 && total == expected_total )); then
 		echo "  discovered=$total  OK — dotnet test green"
 	elif (( test_ok == 1 )); then
-		echo "  DISCOVERY FAIL — TRX reports 0 tests; see build/nunit-$name.test.log"; rc=1
+		echo "  DISCOVERY COUNT CHANGED — expected=$expected_total observed=$total; review the additions/removals and update EXPECTED_DISCOVERED"; rc=1
 	else
 		echo "  discovered=$total  TEST FAIL — dotnet test returned non-zero; see build/nunit-$name.test.log"; rc=1
 	fi
