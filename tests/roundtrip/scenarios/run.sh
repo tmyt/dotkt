@@ -1302,6 +1302,20 @@ EOF
 #             slot is all the CLR accepts.
 #   local   — a referenced generic BASE instantiated at a LOCALLY EMITTED type argument, which is the reflection
 #             shape whose `GetMethods()` throws; declining it leaves an abstract slot unimplemented.
+#   generic — the same LOCALLY-EMITTED-argument shape where the slot is itself a GENERIC METHOD. Re-anchoring a slot
+#             onto its instantiation substitutes the OWNER's type arguments positionally, and a METHOD's own type
+#             parameters number from zero in their own scope — so they were rewritten with the owner's arguments,
+#             which mis-matches the slot when the counts happen to line up and indexes past the end when they do not.
+#             Three supertype shapes reach it — an INTERFACE slot re-anchored for the name/signature wiring, the same
+#             slot DEFAULTED by an emitted sub-interface (whose forwarding bridge must declare the type parameters its
+#             signature names), and a base-CLASS slot resolved from the erasure bridge's own descriptor — and each
+#             declares TWO method type parameters over a ONE-argument owner so the out-of-range half is exercised,
+#             not only the mis-match.
+#             The interface arm's slot is deliberately NOT erased. An ERASED slot on a referenced INTERFACE at a
+#             locally emitted argument does not load at ALL, at any method arity — measured on the arity-0 shape too,
+#             so it is neither this fault nor #86's — and a `T?` here would report that older gap instead of this one.
+#             The base-class arm keeps its `T?`, because the descriptor it resolves exists only where the erasure
+#             diverged.
 RSUP3="$ROOT/build/roundtrip-nullable-vt-generic-referenced-shape-group"
 ng_lib "$RSUP3" Rsup3Lib <<'EOF'
 interface RA<T> { fun accept(x: T?): String }
@@ -1310,7 +1324,14 @@ interface RTop<T> { fun get(x: T?): String }
 interface RLeft<T> : RTop<T>
 interface RRight<T> : RTop<T>
 abstract class RGBase<T> { abstract fun hold(x: T?): String }
+interface RGPlain<T> { fun take(x: T): String }                         // the arity-0 control for the arm below
+interface RGSink<T> { fun <U, V> put(x: T, u: U, v: V): String }        // 1 owner arg, 2 METHOD type params
+abstract class RGMBase<T> { abstract fun <U, V> keep(x: T?, u: U, v: V): String }
 EOF
+
+# Every implementer below RENAMES the slot's method type parameters. A method type parameter has no name identity
+# across two declarations — the CLI encodes it as `!!i` and the author picks the spelling — so an implementation that
+# reused `U, V` would let a name comparison stand in for the position and prove nothing about arbitrary source.
 
 ng_app "$RSUP3" Rsup3Lib roundtrip-nullable-vt-generic-referenced-two-supertypes 'A:1/B:s' \
 	'cross-module: two UNRELATED referenced supertypes of the same erased shape, one body each (#86 D3)' <<'EOF'
@@ -1344,6 +1365,63 @@ class Held : RGBase<Local>() { override fun hold(x: Local?): String = "H:" + (x?
 fun main() {
     val h: RGBase<Local> = Held()
     println(h.hold(Local(3)) + "/" + h.hold(null))   // H:3/H:none
+}
+EOF
+
+# The same locally-emitted-argument shape with a GENERIC slot, once per supertype kind. The interface arm is wired by
+# enumerating the open definition and re-anchoring each slot; the base-class arm resolves the slot the erasure bridge's
+# descriptor names. `U` and `V` belong to the METHOD, so nothing in the owner's one-element argument list is theirs.
+# The arity-0 control beside it is what says the variable is the METHOD's type parameters and not the locally emitted
+# argument: the identical owner, the identical instantiation, one slot with no type parameters of its own.
+ng_app "$RSUP3" Rsup3Lib roundtrip-nullable-vt-generic-referenced-plain-slot-local-arg 'T:4' \
+	'cross-module control: a NON-generic slot on the same referenced interface at a locally emitted argument (#86 D3)' <<'EOF'
+class Local(val n: Int)
+class GP : RGPlain<Local> { override fun take(x: Local): String = "T:" + x.n }
+fun main() {
+    val p: RGPlain<Local> = GP()
+    println(p.take(Local(4)))                     // T:4
+}
+EOF
+
+ng_app "$RSUP3" Rsup3Lib roundtrip-nullable-vt-generic-referenced-generic-slot-local-arg 'P:5:u:1/P:7:q:2' \
+	'cross-module: a GENERIC slot on a referenced interface instantiated at a locally emitted type argument (#86 D3)' <<'EOF'
+class Local(val n: Int)
+class GS : RGSink<Local> {
+    override fun <X, Y> put(x: Local, u: X, v: Y): String = "P:" + x.n + ":" + u + ":" + v
+}
+fun main() {
+    val s: RGSink<Local> = GS()
+    println(s.put(Local(5), "u", 1) + "/" + GS().put<String, Int>(Local(7), "q", 2))   // P:5:u:1/P:7:q:2
+}
+EOF
+
+# The same referenced generic slot filled by a DEFAULT on an emitted SUB-interface rather than by a class. The bridge
+# that carries the methodimpl is synthesized here rather than by the erasure, and a generic slot's signature names
+# `!!0`/`!!1` — so the bridge has to DECLARE the type parameters it names, or the methodimpl is a signature the CLR
+# rejects and no implementer of the sub-interface loads.
+ng_app "$RSUP3" Rsup3Lib roundtrip-nullable-vt-generic-referenced-generic-dim-local-arg 'D:8:u:1' \
+	'cross-module: an emitted interface DEFAULTS a referenced generic slot at a locally emitted argument (#86 D3)' <<'EOF'
+class Local(val n: Int)
+interface KD : RGSink<Local> {
+    override fun <X, Y> put(x: Local, u: X, v: Y): String = "D:" + x.n + ":" + u + ":" + v
+}
+class KImpl : KD
+fun main() {
+    val s: RGSink<Local> = KImpl()
+    println(s.put(Local(8), "u", 1))              // D:8:u:1
+}
+EOF
+
+ng_app "$RSUP3" Rsup3Lib roundtrip-nullable-vt-generic-referenced-generic-base-local-arg 'K:6:u:1/K:none:q:2' \
+	'cross-module: a GENERIC slot on a referenced abstract BASE at a locally emitted type argument (#86 D3)' <<'EOF'
+class Local(val n: Int)
+class GK : RGMBase<Local>() {
+    override fun <X, Y> keep(x: Local?, u: X, v: Y): String =
+        "K:" + (x?.n?.toString() ?: "none") + ":" + u + ":" + v
+}
+fun main() {
+    val k: RGMBase<Local> = GK()
+    println(k.keep(Local(6), "u", 1) + "/" + GK().keep<String, Int>(null, "q", 2))   // K:6:u:1/K:none:q:2
 }
 EOF
 

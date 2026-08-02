@@ -77,7 +77,7 @@ sealed partial class Emitter
                     var gps = bridge.DefineGenericParameters(genNames);
                     var map = new Dictionary<string, GenericTypeParameterBuilder>();
                     for (int gi = 0; gi < genNames.Length; gi++) map[genNames[gi]] = gps[gi];
-                    _methodTypeParams[bridge] = map;
+                    RecordMethodTps(bridge, map);
                     var savedMp = _curMethodParams; _curMethodParams = map;
                     ApplyConstraints(genTps.Value, map, false);
                     try

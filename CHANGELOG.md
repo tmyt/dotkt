@@ -127,6 +127,41 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **ilemit (area:ilemit): a GENERIC slot on a referenced supertype is wired at a locally emitted type argument
+  (#86).** A referenced generic supertype instantiated at a locally emitted type argument
+  (`class C : RSink<Local>`) is a `TypeBuilderInstantiation` whose members cannot be reflected, so ilemit
+  enumerates the OPEN definition and re-anchors each slot's signature onto the instantiation. That re-anchoring
+  substituted every generic parameter positionally against the OWNER's type arguments — but a method's own type
+  parameters are generic parameters too, numbered from zero in their own scope, so `interface RSink<T> { fun <U, V>
+  put(x: T, u: U, v: V): String }` had `U` rewritten to the owner's first argument and `V` indexed past the end of
+  a one-element list, and the emit died with `ilemit: Index was outside the bounds of the array`. Only
+  OWNER-declared parameters are positions in the owner's argument list now; a method type parameter is left as
+  declared, which is what the method being matched still states.
+
+  Three further things had to be true before such a slot was actually filled, each independently measured. The
+  base-CLASS arm resolves its slot from the erasure bridge's own `clrBaseImpls` descriptor, which states the
+  parameter vector in the BRIDGE's vocabulary — so a method-scope type variable in it is one of the bridge's own
+  type parameters. That pool was not in scope while the descriptor was resolved, so the resolver fell back to the
+  enclosing TYPE's parameters by position and produced `object` on a non-generic owner; the vector then matched no
+  member of the base and the emit refused outright with "does not resolve to exactly one method of that signature".
+  A slot DEFAULTED by an emitted sub-interface got a forwarding bridge whose signature named `!!0`/`!!1` while the
+  bridge itself declared no type parameters — a methodimpl the CLR rejects, so no implementer of that sub-interface
+  loaded; the bridge now declares them and mirrors the slot's variance and constraints. And the parameter vectors
+  were compared by NAME, which a method type parameter does not have across two declarations: `override fun <X, Y>
+  keep(...)` filling `<U, V> keep(...)` is the same slot spelled differently. Method-scoped parameters now compare
+  by position, which is what the CLI signature encodes; since a `GenericTypeParameterBuilder` reports neither a
+  declaring method nor a declaring type — identically so for a type's parameter and a method's — the emitter keeps
+  its own registry of which emitted parameters belong to a method.
+
+  Element-wrapped positions were rebuilt in the same substitution while it was being corrected: `T[]`, `T&` and
+  `T*` are neither generic parameters nor generic types, so they used to survive re-anchoring in their OPEN form —
+  a signature the instantiation never has.
+
+  Every implementer in the four new `tests/roundtrip/scenarios` witnesses RENAMES the slot's type parameters, so a
+  name comparison cannot stand in for the position; each declares two method type parameters over a one-argument
+  owner so the out-of-range half is exercised and not only the mis-match; and a non-generic slot on the same owner
+  at the same instantiation is the control that says the method's type parameters are the variable.
+
 - **bir2cir (area:bir2cir): the uninhabitable-slot crossing is refused at the IMPLEMENTING position too, on any
   provenance (#86).** A call is not the only way to meet a slot no Kotlin expression inhabits: a Kotlin class can
   DERIVE from a .NET type that declares one. `class C : ITake` for a C# `interface ITake { string Take(List<int?>

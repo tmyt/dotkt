@@ -213,13 +213,27 @@ sealed partial class Emitter
             ? TypeBuilder.GetMethod(constructed, constructed.GetGenericTypeDefinition().GetMethod(name))
             : constructed.GetMethod(name);
 
-    // Substitute an open interface's own generic parameters (positionally = `typeArgs`) throughout a base-interface
-    // reference as declared on that open def — including CONSTRUCTED args (`ICollection<KeyValuePair<K,V>>` with
-    // K:=string,V:=int -> `ICollection<KeyValuePair<string,int>>`). Every generic parameter appearing in such a
-    // reference is declared by the open type, so GenericParameterPosition indexes `typeArgs` directly.
+    // Substitute an open TYPE's own generic parameters (positionally = `typeArgs`) throughout a member reference as
+    // declared on that open def — including CONSTRUCTED args (`ICollection<KeyValuePair<K,V>>` with
+    // K:=string,V:=int -> `ICollection<KeyValuePair<string,int>>`). Re-anchoring is onto the OWNER's instantiation and
+    // nothing else, so only an owner-declared parameter is a position in `typeArgs`.
+    // A METHOD's own type parameters are `IsGenericParameter` too (`DeclaringMethod != null`) and number from zero in
+    // their OWN scope, so substituting them positionally would rewrite `<U, V> put(x: T, u: U, v: V)`'s `U` with the
+    // owner's first type argument and index past the end at `V`. They are already correct against the method being
+    // matched — the method is still open there — so they are returned unchanged.
+    // An ELEMENT-wrapped position (`T[]`, `T&`, `T*`, and their nesting) is neither a generic parameter nor a generic
+    // type, so it used to fall through as the OPEN `T[]` — a signature the instantiation never has. It is rebuilt
+    // structurally here, exactly as `SubstituteMethodArgs` does on the method axis.
     static Type SubstituteIfaceArgs(Type t, Type[] typeArgs)
     {
-        if (t.IsGenericParameter) return typeArgs[t.GenericParameterPosition];
+        if (t.IsGenericParameter) return t.DeclaringMethod == null ? typeArgs[t.GenericParameterPosition] : t;
+        if (t.HasElementType)
+        {
+            var e = SubstituteIfaceArgs(t.GetElementType(), typeArgs);
+            if (ReferenceEquals(e, t.GetElementType())) return t;
+            return t.IsArray ? (t.GetArrayRank() == 1 ? e.MakeArrayType() : e.MakeArrayType(t.GetArrayRank()))
+                : t.IsByRef ? e.MakeByRefType() : t.IsPointer ? e.MakePointerType() : t;
+        }
         if (!t.IsGenericType) return t;
         var args = t.GetGenericArguments().Select(a => SubstituteIfaceArgs(a, typeArgs)).ToArray();
         return t.GetGenericTypeDefinition().MakeGenericType(args);
@@ -273,9 +287,21 @@ sealed partial class Emitter
     // instantiations of the same shape compare by name (TypeBuilderInstantiation instances are not reference-equal
     // even for identical shapes). Deliberately shallow — the caller only disambiguates same-name OVERLOADS, whose
     // param lists differ at the top level (CompareTo(Ver) vs CompareTo(object)).
-    static bool SlotParamMatches(Type body, Type iface) =>
+    // A METHOD's own type parameter is the one thing here with NO name identity across two declarations: the CLI
+    // encodes it as `!!i` (ECMA-335 II.23.2.12) and an override may rename it — `<X, Y> keep(x, u, v)` fills
+    // `<U, V> keep(...)`, same slot, different spelling. So two method-scoped parameters are the same position when
+    // their indices agree, and the name comparison is never asked about them.
+    bool SlotParamMatches(Type body, Type iface) =>
         ReferenceEquals(body, iface) || body == iface
+        || (IsMethodScoped(body) && IsMethodScoped(iface)
+            && body.GenericParameterPosition == iface.GenericParameterPosition)
         || (body.Name == iface.Name && (body.Namespace ?? "") == (iface.Namespace ?? ""));
+
+    // Whose scope a generic parameter belongs to. A REFLECTED declaration answers directly; an EMITTED
+    // `GenericTypeParameterBuilder` reports neither a declaring method nor a declaring type (measured — both are null
+    // for a type's parameter AND for a method's), so `_emittedMethodTps` is the only thing that can tell them apart.
+    bool IsMethodScoped(Type t) =>
+        t.IsGenericParameter && (t.DeclaringMethod != null || _emittedMethodTps.Contains(t));
 
     // Consume bir2cir's resolved `clrInterfaceImpls` directive. Matching is structural against the already-substituted
     // interface spec and parameter signature; no assignability, hierarchy, or covariance decision occurs here.
