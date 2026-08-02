@@ -5,6 +5,22 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Changed
+
+- **Tests: the #86 round-trip probes now share the compilation graph their semantics share (#227).** The shell
+  lane still runs one process and records one verdict per observable, so a crashing XFAIL cannot hide a later
+  result, but it no longer recompiles every tiny source program independently. Fifteen same-module probes compile
+  into one dispatched assembly; sixteen cross-module producer groups and thirty-four consumers compile into one
+  producer/consumer pair; the one expected compile rejection remains isolated. This reduces the #86 block from
+  66 Kotlin compiler starts to 4, and from 65 bir2cir/ilemit pairs to 3, without weakening per-case XFAIL shape
+  matching. The NUnit test guidance now makes the governing rule explicit: isolate runtime processes for failure
+  attribution, not compiler invocations. The five NUnit suites also pin their reviewed v0.9.8 discovery baseline
+  (713 tests total), so future additions and removals must reconcile their count in the same review instead of
+  silently growing or shrinking the gate. Compile-fail's thirteen companion C# fixture mappings now share nine
+  source files and are assembled once instead of copying fixtures and rebuilding thirteen one-file projects; the
+  Kotlin refusal verdicts remain isolated because a compiler error may stop before later sources reach their
+  owning phase.
+
 ## 0.9.8 (2026-08-02)
 
 ### Added
