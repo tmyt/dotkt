@@ -234,6 +234,9 @@ internal fun BirEmitter.filledArgs(
 	vals.forEachIndexed { idx, pair ->
 		if (provided[idx] != null) return@forEachIndexed
 		val p = pair.second
+		// An omitted VARARG is filled first: it has no default expression to reach the branch below (Kotlin forbids one),
+		// so leaving it to the default fill dropped the slot entirely — see [omittedVararg].
+		omittedVararg(call, callee, p)?.let { slots[idx] = it; filledByParam[p] = it; return@forEachIndexed }
 		val def = p.defaultValue?.expression ?: return@forEachIndexed
 		// THE TYPE-FRAME SCOPE ([withDefaultTypeScope]), around EVERY rendering of this default AND the type its
 		// binding is declared with — not only the branch that reads the callee's own values. A default's EXPRESSION may
@@ -535,6 +538,9 @@ internal fun BirEmitter.filledExternalArgs(call: org.jetbrains.kotlin.ir.express
 	// PHASE 2 — the omitted defaults, in declaration order.
 	vals.forEachIndexed { valIdx, (i, p) ->
 		if (i < call.arguments.size && call.arguments[i] != null) return@forEachIndexed
+		// An omitted VARARG first, for the reason [omittedVararg] states: it carries no default expression, so the
+		// branch below would drop its slot and leave the emitted call one argument short of its own declaration.
+		omittedVararg(call, callee, p)?.let { slots[valIdx] = it; return@forEachIndexed }
 		val def = p.defaultValue?.expression ?: return@forEachIndexed
 		// The same unconditional type-frame scope as [filledArgs], covering the binding TYPE as well as the rendering.
 		var stableFill = false
@@ -552,6 +558,31 @@ internal fun BirEmitter.filledExternalArgs(call: org.jetbrains.kotlin.ir.express
 	}
 	slots.forEach { if (it != null) out.add(it) }
 	return out
+}
+
+/** The value an OMITTED `vararg` parameter supplies: Kotlin's EMPTY ARRAY of the vararg's element type — the same
+ *  `newArray` an explicitly empty vararg renders as (see the [IrVararg] arm of `expr`). Null for any other parameter.
+ *
+ *  A vararg is omissible without being optional: Kotlin forbids it a default expression, so it reaches neither
+ *  half of the default fill, and every argument-vector builder that keys omissions on `defaultValue` dropped the
+ *  slot outright. What then left the emitter was a call whose argument vector was SHORTER than the declaration it
+ *  named — `f()` on `fun f(vararg xs: Int)`, and equally `Console.WriteLine("x")` on the projected .NET
+ *  `params object?[]` overload the frontend selects for it. ilemit refuses that call, correctly: an argument vector
+ *  is the one thing it may not reconstruct.
+ *
+ *  Rendered in the parameter's own slot rather than through the call's evaluation plan: an empty array allocation
+ *  reads nothing and is observable only through its own identity, so its position in the evaluation order carries
+ *  no meaning. The element type is rendered inside the callee's TYPE FRAME — `fun <T> f(vararg xs: T)` called
+ *  `f<String>()` must fill `Array<String>`, not the callee's open `T`. */
+internal fun BirEmitter.omittedVararg(
+	call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression,
+	callee: org.jetbrains.kotlin.ir.declarations.IrFunction,
+	p: IrValueParameter,
+): String? {
+	val element = p.varargElementType ?: return null
+	return withDefaultTypeScope(call, callee) {
+		"""{"k":"newArray","elem":${birType(element).toJson()},"elems":[]}"""
+	}
 }
 
 /** True if `expr` reads any of `locals` — detects a default-arg expression that references the callee's own

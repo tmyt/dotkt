@@ -1342,6 +1342,33 @@ actually used. Now the source declaration is authoritative and emits as a plain 
 - **MPP residual.** The shadow query sees only the current module's source, so a **common-module** source declaration
   does not suppress a platform dependency declaration of the same identity.
 
+## 8g. A .NET `params` parameter is a Kotlin `vararg`, and it competes for overload resolution
+
+`dll2klib` projects `params T[]` as an ordinary Kotlin `vararg`, so the overload carrying it is one of the frontend's
+candidates like any other. That has a consequence C# does not share, because Kotlin's most-specific rule compares
+parameter types before it ever reaches its vararg tie-break:
+
+```kotlin
+Console.WriteLine("hello")        // -> WriteLine(format: String, vararg arg: Any?)
+Console.WriteLine(maybeNullable)  // -> WriteLine(value: String?)
+```
+
+`Console.WriteLine(string? value)` is NRT-annotated nullable, while the `params` overload's `format` is not. A
+**non-null** `String` argument therefore makes the two-parameter candidate strictly more specific (`String` is a
+subtype of `String?`, not the other way round), and it wins; a `String?` argument makes it inapplicable, so the
+single-parameter overload wins. C# picks `WriteLine(string?)` in both cases, because it prefers a non-expanded form
+outright.
+
+The selected overload **formats** its first argument, so a brace in it is a format placeholder:
+`Console.WriteLine("{0}")` throws `FormatException`, and `Console.WriteLine("{{x}}")` prints `{x}`. Write
+`Console.WriteLine(value as Any?)`, or Kotlin's own `println`, to reach a non-formatting overload. This is ordinary
+Kotlin resolution over a faithful projection, not a compiler choice: suppressing the `params` overload would make the
+projection incomplete, and re-ranking candidates would make DotKt's resolution differ from Kotlin's.
+
+An **omitted** vararg is Kotlin's empty array, at every callee — same-module, cross-module, or a projected `params`
+member. `Path.Combine()` passes `new string[0]`, exactly as `f()` on `fun f(vararg xs: Int)` passes an empty
+`IntArray`.
+
 ## 9. Reference-type nullability ⇔ .NET NRT; un-annotated .NET types are PLATFORM types
 
 A Kotlin value-type `X?` is the structural `System.Nullable<X>` (§ value types). The **not-null assertion**
@@ -1363,6 +1390,15 @@ Reading the other direction, consuming **any** .NET assembly:
 | `[Nullable(2)]` / nullable context | `T?` |
 | `[Nullable(1)]` / non-null context | `T` |
 | **none** (assembly never opted into NRT) | `T!` — a **platform type** |
+
+A **value type never takes an annotation from this metadata**, whatever the declaration's `[NullableContext]` says: its
+one nullable form is the structural `System.Nullable<T>`, which the signature already states. The byte array is a
+pre-order flattening of the type tree, and value-ness decides POSITIONS in it as well as annotations — a bare struct,
+enum or primitive holds no byte at all, a CONSTRUCTED generic value type holds one (always `0`), and `System.Nullable<T>`
+and byrefs are transparent. So `String.Compare(string?, string?, StringComparison)` under `[NullableContext(2)]`
+projects its enum parameter as `StringComparison`, and `Dictionary<int, string?>`'s `[Nullable(1,2)]` puts the `2` on
+the `string`. Reading a value type's position as an annotation does not merely mis-annotate it — every later byte in the
+same slot shifts with it. `bir2cir` writes the same flattening from the other side (`NullableFlags`).
 
 `T!` is a flexible type `(T..T?)` (`ConeFlexibleType`): the consumer may use it as `T` or `T?` and the compiler
 enforces neither — exactly how Kotlin/JVM treats un-annotated Java. This avoids the unsound alternative of forcing a

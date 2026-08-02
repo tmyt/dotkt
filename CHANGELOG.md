@@ -182,6 +182,34 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **kotc: an OMITTED `vararg` argument is now the empty array it always denoted.** A vararg is omissible without
+  being optional — Kotlin forbids it a default expression — so every argument-vector builder that keyed omissions
+  on `defaultValue` dropped the slot outright and emitted a call one argument shorter than the declaration it
+  named. `f()` on `fun f(vararg xs: Int)` was refused at CIL emission ("CIR argument count mismatch"), the inline
+  splice failed loud on the same slot ("missing (non-defaulted) arg"), and the shape reached ordinary .NET interop
+  through `params`: `Console.WriteLine("x")` selects `WriteLine(format, vararg arg)` because a non-null `String` is
+  strictly more specific than the `String?` of `WriteLine(value)`, so the canonical console call did not compile.
+  All three emitters that key an omission on `defaultValue` — same-module, reference-KLIB, and inline — now fill the
+  slot with `newArray` of the vararg's element type, rendered in the callee's type frame so `f<String>()` fills
+  `Array<String>`. (An annotation's argument vector was never affected: the frontend materializes an explicit empty
+  vararg there, so `@A()` on `annotation class A(vararg val xs: String)` already emitted one.) Regressed when
+  reference KLIBs replaced facade injection, which never projected the `params` overloads at all.
+  `docs/dotkt-semantics.md` §8g records the resolution and its formatting consequence.
+
+- **dll2klib: a .NET value type no longer takes an NRT annotation, or the wrong byte position.** The
+  `NullableAttribute`/`NullableContextAttribute` walk treated every named type outside a hardcoded Kotlin-primitive
+  list as a reference position, so a struct or enum both consumed a byte the emitting compiler never wrote and
+  inherited the declaration's context annotation. `String.Compare(string?, string?, StringComparison)` carries
+  `[NullableContext(2)]`, so its enum parameter projected as `StringComparison?`; the descriptor the frontend then
+  resolved named a member that does not exist and bir2cir refused the call. The same misalignment shifted every
+  later byte in a slot, so `Dictionary<int, string?>`-shaped signatures lost or moved their `?`. The walk now asks
+  the ECMA signature's own `ELEMENT_TYPE_VALUETYPE`/`ELEMENT_TYPE_CLASS` kind: a bare value type holds no byte, a
+  constructed generic value type holds one that is always `0`, `System.Nullable<T>` and byrefs are transparent, and
+  a value type is never annotated. `bir2cir`'s `NullableFlags` writes the same flattening from the other side, so an
+  oblivious wrapper now delegates to the same walk instead of re-deciding it (`T!` over an array or a byref stopped
+  descending into the node it wrapped). Positions the decoder still collapses — a pointer, a function pointer, a
+  native `nint`, a `where T : struct` parameter — remain approximate and are named as such at the predicate.
+
 - **bir2cir: a suspend override narrowed to a value instantiation now fills both final CLR slots (#344).**
   `override suspend fun accept(x: Int?)` against `Sink<T>.accept(T?)` used to receive one private MethodImpl
   bridge while the declaration was still in its logical Kotlin shape. Suspend lowering then deleted that target
