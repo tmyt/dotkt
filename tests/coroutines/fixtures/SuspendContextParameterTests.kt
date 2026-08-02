@@ -5,44 +5,44 @@
 // verify. The genuinely-suspending case additionally pins the context value ACROSS a suspension point (it is
 // spilled into the SM like any other parameter, not re-read from a scope that no longer exists).
 //
-// Driven by the shared `dotkt.support.blockOn` harness; top-level names are family-prefixed (`sctx`).
+// Driven by the shared `dotkt.support.blockOn` harness; top-level names use the `suspendContextParameter` stem.
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import System.Threading.Tasks.Task
 import dotkt.support.blockOn
 
-class SctxScale(val factor: Int)
+class SuspendContextParameterScale(val factor: Int)
 
-context(s: SctxScale)
-suspend fun sctxScaled(a: Int): Int = a * s.factor
+context(s: SuspendContextParameterScale)
+suspend fun suspendContextParameterScaled(a: Int): Int = a * s.factor
 
 // The context parameter is read AFTER a real suspension point, so it must survive the state-machine spill.
-context(s: SctxScale)
-suspend fun sctxAcrossSuspension(a: Int): Int {
+context(s: SuspendContextParameterScale)
+suspend fun suspendContextParameterAcrossSuspension(a: Int): Int {
     Task.Delay(1).await()
     return a * s.factor
 }
 
 // A suspend context function calling another one: the callee's context argument comes from the caller's own
 // context parameter, inside a state machine.
-context(s: SctxScale)
-suspend fun sctxChained(a: Int): Int = sctxScaled(a) + s.factor
+context(s: SuspendContextParameterScale)
+suspend fun suspendContextParameterChained(a: Int): Int = suspendContextParameterScaled(a) + s.factor
 
-class SctxHolder(val base: Int) {
-    context(s: SctxScale)
+class SuspendContextParameterHolder(val base: Int) {
+    context(s: SuspendContextParameterScale)
     suspend fun combine(a: Int): Int = base + a * s.factor
 }
 
 class SuspendContextParameterTests {
     @TestAttribute
     fun suspendContextParameters() {
-        assertEquals(50, blockOn { with(SctxScale(10)) { sctxScaled(5) } })          // 50
-        assertEquals(60, blockOn { with(SctxScale(10)) { sctxChained(5) } })         // 60  50 + s.factor
-        assertEquals(70, blockOn { with(SctxScale(10)) { SctxHolder(20).combine(5) } }) // 70  a suspend MEMBER
+        assertEquals(50, blockOn { with(SuspendContextParameterScale(10)) { suspendContextParameterScaled(5) } })          // 50
+        assertEquals(60, blockOn { with(SuspendContextParameterScale(10)) { suspendContextParameterChained(5) } })         // 60  50 + s.factor
+        assertEquals(70, blockOn { with(SuspendContextParameterScale(10)) { SuspendContextParameterHolder(20).combine(5) } }) // 70  a suspend MEMBER
     }
 
     @TestAttribute
     fun suspendContextParameterSurvivesSuspension() {
-        assertEquals(50, blockOn { with(SctxScale(10)) { sctxAcrossSuspension(5) } })   // 50
+        assertEquals(50, blockOn { with(SuspendContextParameterScale(10)) { suspendContextParameterAcrossSuspension(5) } })   // 50
     }
 }

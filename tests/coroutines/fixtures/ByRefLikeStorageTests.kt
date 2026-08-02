@@ -9,7 +9,7 @@
 // it, because on every path from the suspension to a read there is a fresh definition first. Its twin with the
 // value carried ACROSS the back edge is the compile-fail case SuspendLoopCarriedByRefLike.kt.
 //
-// All top-level decls carry the `brl` case token under the shared `byRefStorage`/`ByRefStorage` prefix so their simple names are
+// All top-level declarations use the `byRefStorage`/`ByRefStorage` feature stem so their simple names are
 // unique across this assembly (the cold-core lowering keys top-level suspend funs by simple name).
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
@@ -77,7 +77,7 @@ suspend fun byRefStorageIntrinsicBlock(): Int {
     return suspendCoroutine { c -> c.resume(s.Length) }
 }
 
-class ByRefStorageByRefLikeStorageTests {
+class ByRefLikeStorageTests {
     @TestAttribute
     fun byRefLikeLocalScopedToALoopIterationStaysALocal() {
         // 3 iterations x (Span length 3 + tick(i) = i + 1) = 9 + (1 + 2 + 3) = 15

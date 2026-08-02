@@ -13,7 +13,7 @@
 // Every assertion here is a value, not a shape: each returns a number that is only reachable when the local
 // survived. Under a source-order-only analysis they return 2 / 3 / 2 / 2 / 0 / 0 instead.
 //
-// All top-level decls carry the `brd` case token under the shared `suspendLocal`/`SuspendLocal` prefix so their simple names are
+// All top-level declarations use the descriptive `suspendLocal`/`SuspendLocal` stem so their simple names are
 // unique across this assembly (the cold-core lowering keys top-level suspend funs by simple name).
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
@@ -103,7 +103,7 @@ suspend fun suspendLocalSamCapture(): Int {
     return suspendLocalUse(SuspendLocalHandler { it * k }, suspendLocalTick(1))
 }
 
-class SuspendLocalSuspendLocalDemotionTests {
+class SuspendLocalDemotionTests {
     @TestAttribute
     fun operandsDeferredPastAResumeKeepTheirValue() {
         assertEquals(702, blockOn { suspendLocalSiblingArg() })        // 7 * 100 + tick(1)

@@ -7,6 +7,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- **Tests: #227 finishes replacing opaque fixture collision tokens with feature names.** Remaining shorthand in
+  captured-variable, lambda, language-core, default-argument, non-constant-default, and coroutine fixtures now
+  states the behavior it isolates; the round-trip default-argument package is likewise named
+  `roundtrip.defaultarguments`. Secondary coroutine case tokens are expanded as well, so names distinguish
+  conditional/loop control flow, generic/non-generic await, receiver capture, evaluation order, dispatch, and
+  suspend-function-value shapes without requiring the retired shell-case map. Cross-file references and
+  name-sensitive assertions move with their declarations; discovery counts are unchanged.
+
 - **Tests: #227 replaces migration-batch identifiers with feature-oriented names.** The `M1`–`M5`/`MigM`,
   `CorA`/`CorB`, and `IntropA`–`IntropD` families now use fixture-specific stems across the shared Basic,
   Coroutines, and Interop assemblies. Analogous opaque stems in suspend operand/result/capture, open-generic-slot,

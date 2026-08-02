@@ -10,7 +10,7 @@
 //   il-corestrict  -> coRestrict_userRestrictsSuspensionScope     (a hand-authored @RestrictsSuspension receiver)
 //   il-comaindrain -> coMainDrain_genuinelySuspendingMainBlocks   (BUG 4: real Task.Delay await, threadpool resume)
 //
-// Top-level names are family-prefixed (`suspendMemberInst`/`suspendMemberSup`/`suspendMemberVirt`/`suspendMemberRes`/`suspendMemberDrain`).
+// Top-level names are family-prefixed (`suspendMemberInstance`/`suspendMemberInherited`/`suspendMemberGeneric`/`suspendMemberRestricted`/`suspendMemberDrain`).
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import System.Threading.Tasks.Task
@@ -22,60 +22,60 @@ import kotlin.coroutines.startCoroutine
 import dotkt.support.blockOn
 
 // ---- il-coldinst: instance suspend members + member/cross-file suspend calls ---------------------------------
-class SuspendMemberInstCounter(var n: Int) {
+class SuspendMemberInstanceCounter(var n: Int) {
     suspend fun bump(): Int { n += 1; return n }           // instance member, no suspension -> direct instance cold entry
 }
-class SuspendMemberInstSvc(val base: Int) {
+class SuspendMemberInstanceService(val base: Int) {
     suspend fun helper(): Int { return base }
     suspend fun chain(): Int { val h = helper(); return h + this.helper() }   // $this field + spilled local
 }
-class SuspendMemberInstBox<T>(val v: T) {
+class SuspendMemberInstanceBox<T>(val v: T) {
     suspend fun get(): T = v                                // instance + generic class (member cold entry over T)
 }
-suspend fun suspendMemberInstTopUse(): Int { val c = SuspendMemberInstCounter(100); return c.bump() }  // top-level -> member call
-suspend fun suspendMemberInstCrossFileVal(): Int = 7               // was a SECOND source file (same-assembly cross-file rewrite)
+suspend fun suspendMemberInstanceTopUse(): Int { val c = SuspendMemberInstanceCounter(100); return c.bump() }  // top-level -> member call
+suspend fun suspendMemberInstanceCrossFileValue(): Int = 7               // was a SECOND source file (same-assembly cross-file rewrite)
 
 // ---- il-coldsuper: a suspend member declared on a SUPERtype, called via a subclass receiver ------------------
-suspend fun suspendMemberSupEcho(x: Int): Int = x
-abstract class SuspendMemberSupBase {
-    suspend fun awaitInternal(): Int { return suspendMemberSupEcho(10) }        // declared on the BASE
+suspend fun suspendMemberInheritedEcho(x: Int): Int = x
+abstract class SuspendMemberInheritedBase {
+    suspend fun awaitInternal(): Int { return suspendMemberInheritedEcho(10) }        // declared on the BASE
 }
-class SuspendMemberSupDerived : SuspendMemberSupBase() {
+class SuspendMemberInheritedDerived : SuspendMemberInheritedBase() {
     suspend fun await(): Int { return awaitInternal() + 1 }            // member declared on Base
 }
-interface SuspendMemberSupSource {
+interface SuspendMemberInheritedSource {
     suspend fun receiveOrNull(): Int                                   // declared on the super-INTERFACE
 }
-open class SuspendMemberSupChannelBase : SuspendMemberSupSource {
-    override suspend fun receiveOrNull(): Int = suspendMemberSupEcho(41)
+open class SuspendMemberInheritedChannelBase : SuspendMemberInheritedSource {
+    override suspend fun receiveOrNull(): Int = suspendMemberInheritedEcho(41)
 }
-class SuspendMemberSupChannelImpl : SuspendMemberSupChannelBase() {
+class SuspendMemberInheritedChannelImpl : SuspendMemberInheritedChannelBase() {
     suspend fun consume(): Int = receiveOrNull() + 1                   // decl on ChannelBase/Source
 }
-suspend fun suspendMemberSupPing(n: Int): Int { if (n <= 0) return 0; return 1 + suspendMemberSupPong(n - 1) }  // mutual recursion
-suspend fun suspendMemberSupPong(n: Int): Int { if (n <= 0) return 0; return 1 + suspendMemberSupPing(n - 1) }
+suspend fun suspendMemberInheritedPing(n: Int): Int { if (n <= 0) return 0; return 1 + suspendMemberInheritedPong(n - 1) }  // mutual recursion
+suspend fun suspendMemberInheritedPong(n: Int): Int { if (n <= 0) return 0; return 1 + suspendMemberInheritedPing(n - 1) }
 
 // ---- il-coldvirt: a suspending instance member of a GENERIC class (P5 A1b) -----------------------------------
-suspend fun <T> suspendMemberVirtEcho(x: T): T = x
-class SuspendMemberVirtBox<T>(val v: T) {
-    suspend fun getTwice(): T { val a = suspendMemberVirtEcho(v); return a }    // member SM generic over the class's T
+suspend fun <T> suspendMemberGenericEcho(x: T): T = x
+class SuspendMemberGenericBox<T>(val v: T) {
+    suspend fun getTwice(): T { val a = suspendMemberGenericEcho(v); return a }    // member SM generic over the class's T
 }
 
 // ---- il-corestrict: a USER-DEFINED @RestrictsSuspension receiver, driven by receiver-form startCoroutine ------
 @RestrictsSuspension
-class SuspendMemberResCollector<T> {
+class SuspendMemberRestrictedCollector<T> {
     val items = ArrayList<T>()
     suspend fun add(value: T) { items.add(value) }                     // sync-completion direct cold-entry path
     suspend fun addAll(values: List<T>) { for (v in values) add(v) }   // control-flow across a suspend call
 }
-private class SuspendMemberResDone : Continuation<Unit> {
+private class SuspendMemberRestrictedDone : Continuation<Unit> {
     var err: Throwable? = null
     override val context: CoroutineContext get() = EmptyCoroutineContext
     override fun resumeWith(result: Result<Unit>) { err = result.exceptionOrNull() }
 }
-fun <T> suspendMemberResCollect(block: suspend SuspendMemberResCollector<T>.() -> Unit): List<T> {
-    val c = SuspendMemberResCollector<T>()
-    val d = SuspendMemberResDone()
+fun <T> suspendMemberRestrictedCollect(block: suspend SuspendMemberRestrictedCollector<T>.() -> Unit): List<T> {
+    val c = SuspendMemberRestrictedCollector<T>()
+    val d = SuspendMemberRestrictedDone()
     block.startCoroutine(c, d)   // receiver-form startCoroutine drives the restricted scope
     d.err?.let { throw it }
     return c.items
@@ -90,42 +90,42 @@ suspend fun suspendMemberDrainCompute(): Int {
 class SuspendMemberTests {
     @TestAttribute
     fun instanceAndCrossFileSuspendCalls() {
-        val c = SuspendMemberInstCounter(10)
+        val c = SuspendMemberInstanceCounter(10)
         assertEquals(11, blockOn { c.bump() })            // 11
         assertEquals(12, blockOn { c.bump() })            // 12
-        val s = SuspendMemberInstSvc(5)
+        val s = SuspendMemberInstanceService(5)
         assertEquals(10, blockOn { s.chain() })           // 5 + 5 = 10
-        val b = SuspendMemberInstBox(42)
+        val b = SuspendMemberInstanceBox(42)
         assertEquals(42, blockOn { b.get() })             // 42
-        val bs = SuspendMemberInstBox("hi")
+        val bs = SuspendMemberInstanceBox("hi")
         assertEquals("hi", blockOn { bs.get() })          // hi
-        assertEquals(101, blockOn { suspendMemberInstTopUse() })   // 101
-        assertEquals(7, blockOn { suspendMemberInstCrossFileVal() })// 7
+        assertEquals(101, blockOn { suspendMemberInstanceTopUse() })   // 101
+        assertEquals(7, blockOn { suspendMemberInstanceCrossFileValue() })// 7
     }
 
     @TestAttribute
     fun inheritedSuspendMemberDispatch() {
-        assertEquals(11, blockOn { SuspendMemberSupDerived().await() })         // 11
-        assertEquals(42, blockOn { SuspendMemberSupChannelImpl().consume() })   // 42
-        assertEquals(5, blockOn { suspendMemberSupPing(5) })                    // 5
+        assertEquals(11, blockOn { SuspendMemberInheritedDerived().await() })         // 11
+        assertEquals(42, blockOn { SuspendMemberInheritedChannelImpl().consume() })   // 42
+        assertEquals(5, blockOn { suspendMemberInheritedPing(5) })                    // 5
     }
 
     @TestAttribute
     fun genericClassInstanceMember() {
-        assertEquals(42, blockOn { SuspendMemberVirtBox(42).getTwice() })       // T = Int (value type)
-        assertEquals("hi", blockOn { SuspendMemberVirtBox("hi").getTwice() })   // T = String (reference type)
+        assertEquals(42, blockOn { SuspendMemberGenericBox(42).getTwice() })       // T = Int (value type)
+        assertEquals("hi", blockOn { SuspendMemberGenericBox("hi").getTwice() })   // T = String (reference type)
     }
 
     @TestAttribute
     fun userRestrictsSuspensionScope() {
-        val xs = suspendMemberResCollect<Int> {
+        val xs = suspendMemberRestrictedCollect<Int> {
             add(1)
             add(2)
             addAll(listOf(3, 4, 5))
         }
         assertEquals("1,2,3,4,5", xs.joinToString(","))   // 1,2,3,4,5
         assertEquals(5, xs.size)                           // 5
-        val ss = suspendMemberResCollect<String> {
+        val ss = suspendMemberRestrictedCollect<String> {
             add("a")
             add("b")
         }

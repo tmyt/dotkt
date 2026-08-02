@@ -11,51 +11,51 @@ import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import dotkt.support.blockOn
 
-fun interface FlowTransformationFtFlowCollector<T> {
+fun interface FlowTransformationFlowCollector<T> {
     suspend fun emit(value: T)
 }
 
-interface FlowTransformationFtFlow<T> {
-    suspend fun collect(collector: FlowTransformationFtFlowCollector<T>)
+interface FlowTransformationFlow<T> {
+    suspend fun collect(collector: FlowTransformationFlowCollector<T>)
 }
 
-inline fun <T> flowTransformationFtUnsafeFlow(crossinline block: suspend FlowTransformationFtFlowCollector<T>.() -> Unit): FlowTransformationFtFlow<T> =
-    object : FlowTransformationFtFlow<T> {
-        override suspend fun collect(collector: FlowTransformationFtFlowCollector<T>) { collector.block() }
+inline fun <T> flowTransformationUnsafeFlow(crossinline block: suspend FlowTransformationFlowCollector<T>.() -> Unit): FlowTransformationFlow<T> =
+    object : FlowTransformationFlow<T> {
+        override suspend fun collect(collector: FlowTransformationFlowCollector<T>) { collector.block() }
     }
 
-suspend inline fun <T> FlowTransformationFtFlow<T>.flowTransformationFtCollect(crossinline action: suspend (T) -> Unit): Unit =
-    collect(FlowTransformationFtFlowCollector { value -> action(value) })
+suspend inline fun <T> FlowTransformationFlow<T>.flowTransformationCollect(crossinline action: suspend (T) -> Unit): Unit =
+    collect(FlowTransformationFlowCollector { value -> action(value) })
 
-inline fun <T, R> FlowTransformationFtFlow<T>.flowTransformationFtUnsafeTransform(
-    crossinline transform: suspend FlowTransformationFtFlowCollector<R>.(T) -> Unit
-): FlowTransformationFtFlow<R> = flowTransformationFtUnsafeFlow { flowTransformationFtCollect { value -> transform(value) } }
+inline fun <T, R> FlowTransformationFlow<T>.flowTransformationUnsafeTransform(
+    crossinline transform: suspend FlowTransformationFlowCollector<R>.(T) -> Unit
+): FlowTransformationFlow<R> = flowTransformationUnsafeFlow { flowTransformationCollect { value -> transform(value) } }
 
-inline fun <T, R> FlowTransformationFtFlow<T>.flowTransformationFtTransform(
-    crossinline transform: suspend FlowTransformationFtFlowCollector<R>.(T) -> Unit
-): FlowTransformationFtFlow<R> = flowTransformationFtUnsafeTransform(transform)
+inline fun <T, R> FlowTransformationFlow<T>.flowTransformationTransform(
+    crossinline transform: suspend FlowTransformationFlowCollector<R>.(T) -> Unit
+): FlowTransformationFlow<R> = flowTransformationUnsafeTransform(transform)
 
-inline fun <T> FlowTransformationFtFlow<T>.flowTransformationFtFilter(crossinline predicate: suspend (T) -> Boolean): FlowTransformationFtFlow<T> = flowTransformationFtTransform { value ->
+inline fun <T> FlowTransformationFlow<T>.flowTransformationFilter(crossinline predicate: suspend (T) -> Boolean): FlowTransformationFlow<T> = flowTransformationTransform { value ->
     if (predicate(value)) emit(value)
 }
 
-inline fun <T, R> FlowTransformationFtFlow<T>.flowTransformationFtMap(crossinline mapper: suspend (T) -> R): FlowTransformationFtFlow<R> = flowTransformationFtTransform { value ->
+inline fun <T, R> FlowTransformationFlow<T>.flowTransformationMap(crossinline mapper: suspend (T) -> R): FlowTransformationFlow<R> = flowTransformationTransform { value ->
     emit(mapper(value))
 }
 
-class FlowTransformationFtDivisor(private val by: Int) {
+class FlowTransformationDivisor(private val by: Int) {
     fun accepts(value: Int): Boolean = value % by == 0
 }
 
-fun FlowTransformationFtFlow<Int>.flowTransformationFtFilterDivisibleBy(box: FlowTransformationFtDivisor): FlowTransformationFtFlow<Int> = flowTransformationFtFilter { box.accepts(it) }
+fun FlowTransformationFlow<Int>.flowTransformationFilterDivisibleBy(box: FlowTransformationDivisor): FlowTransformationFlow<Int> = flowTransformationFilter { box.accepts(it) }
 
-fun flowTransformationFtFlowOf(a: Int, b: Int, c: Int, d: Int, e: Int, f: Int): FlowTransformationFtFlow<Int> = flowTransformationFtUnsafeFlow {
+fun flowTransformationFlowOf(a: Int, b: Int, c: Int, d: Int, e: Int, f: Int): FlowTransformationFlow<Int> = flowTransformationUnsafeFlow {
     emit(a); emit(b); emit(c); emit(d); emit(e); emit(f)
 }
 
-suspend fun flowTransformationFtCollectSum(flow: FlowTransformationFtFlow<Int>): Int {
+suspend fun flowTransformationCollectSum(flow: FlowTransformationFlow<Int>): Int {
     val items = ArrayList<Int>()
-    flow.flowTransformationFtCollect { items.add(it) }
+    flow.flowTransformationCollect { items.add(it) }
     var sum = 0
     for (x in items) sum += x
     return sum
@@ -64,9 +64,9 @@ suspend fun flowTransformationFtCollectSum(flow: FlowTransformationFtFlow<Int>):
 class FlowTransformationTests {
     @TestAttribute
     fun nestedCrossinlineCaptureChain() {
-        val base = flowTransformationFtFlowOf(1, 2, 3, 4, 5, 6)
-        assertEquals(12, blockOn { flowTransformationFtCollectSum(base.flowTransformationFtFilter { it % 2 == 0 }) })                    // 2+4+6 = 12
-        assertEquals(210, blockOn { flowTransformationFtCollectSum(base.flowTransformationFtMap { it * 10 }) })                         // 210
-        assertEquals(9, blockOn { flowTransformationFtCollectSum(base.flowTransformationFtFilterDivisibleBy(FlowTransformationFtDivisor(3))) })        // 3+6 = 9
+        val base = flowTransformationFlowOf(1, 2, 3, 4, 5, 6)
+        assertEquals(12, blockOn { flowTransformationCollectSum(base.flowTransformationFilter { it % 2 == 0 }) })                    // 2+4+6 = 12
+        assertEquals(210, blockOn { flowTransformationCollectSum(base.flowTransformationMap { it * 10 }) })                         // 210
+        assertEquals(9, blockOn { flowTransformationCollectSum(base.flowTransformationFilterDivisibleBy(FlowTransformationDivisor(3))) })        // 3+6 = 9
     }
 }

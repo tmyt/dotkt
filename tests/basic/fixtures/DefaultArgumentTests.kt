@@ -4,9 +4,9 @@
 // (see the `// <expected>` comments). Top-level declarations are `DefaultArg`-prefixed (one assembly = one namespace).
 //
 // Coverage preserved (old case -> method):
-//   il-defargs  -> defaultArg_defargs   C3: cross+same-module default args; an omitted middle default must not shift a
+//   il-defaultArguments  -> defaultArg_defargs   C3: cross+same-module default args; an omitted middle default must not shift a
 //                                later provided arg's slot (joinToString / substringAfter `= this` / copy(field=))
-//   il-defargs2 -> defaultArg_defargs2  same-module default referencing ANOTHER value param (`b = a*10`, `c = a+b`)
+//   il-defaultArguments2 -> defaultArg_defargs2  same-module default referencing ANOTHER value param (`b = a*10`, `c = a+b`)
 //
 // The data class was `P`; renamed `DefaultArgP` for collision-freedom, so its toString reads `DefaultArgP(...)` — the class name is
 // incidental to the subject (default-arg slot correctness), which is unchanged.
@@ -260,7 +260,7 @@ class DefaultArgGenDerived<X, Y>(y: Y) : DefaultArgGenBase<Y>(y) { fun probe(): 
 //   NOT here, and not a type-frame question: a GENERIC inner class reading its outer instance
 // (`class O<T>(val v: T) { inner class In(val x: T = v) }`) NullReferenceExceptions — its `__outer` capture is null,
 // identically at `3fedd238` and with no default argument involved. Its non-generic twin is covered by
-// `defargsEnclosingReadAtAMemberExtension`.
+// `defaultArgumentsEnclosingReadAtAMemberExtension`.
 class DefaultArgFrameOwnerProp<T>(val v: T) { fun one(a: T = v): String = "$a" }
 class DefaultArgFrameOwnerCall<T>(val v: T) { fun tag(): String = "t$v"; fun one(a: String = tag()): String = a }
 class DefaultArgFrameOwnerCtor<T>(val v: T, val w: T = v, val x: T = w)
@@ -429,7 +429,7 @@ object DefaultArgSolo {
 
 class DefaultArgumentTests {
     @TestAttribute
-    fun defargs() {
+    fun defaultArguments() {
         val xs = listOf(1, 2, 3)
         assertEquals("x1-x2-x3", xs.joinToString("-") { "x$it" })                          // x1-x2-x3
         assertEquals("1, 2, 3", xs.joinToString())                                         // 1, 2, 3
@@ -447,7 +447,7 @@ class DefaultArgumentTests {
     }
 
     @TestAttribute
-    fun defargs2() {
+    fun defaultArguments2() {
         assertEquals(55, defaultArgF(5))        // 55
         assertEquals(7, defaultArgF(5, 2))      // 7
         assertEquals(12, defaultArgG(3))        // 12
@@ -460,7 +460,7 @@ class DefaultArgumentTests {
     // #235: a constructor default that reads an earlier constructor parameter is filled at the omitting `new`,
     // exactly as the function-path defaults above are — one default-filling pass serves both.
     @TestAttribute
-    fun defargsCtor() {
+    fun defaultArgumentsCtor() {
         assertEquals(6, DefaultArgRect(3).h)                                    // w * 2
         assertEquals(5, DefaultArgRect(3, 5).h)                                 // provided, not defaulted
         assertEquals("DefaultArgDRect(w=2, h=6, tag=d)", DefaultArgDRect(2).toString())
@@ -480,7 +480,7 @@ class DefaultArgumentTests {
 
     // #235: the constructor call sites that used to bypass default filling entirely — a delegation and an enum entry.
     @TestAttribute
-    fun defargsCtorDelegation() {
+    fun defaultArgumentsCtorDelegation() {
         assertEquals(3, DefaultArgDel().a)                                      // `: this(3)`
         assertEquals(6, DefaultArgDel().b)                                      // omitted there: a * 2
         assertEquals(12, DefaultArgDel(4, 12).b)                                // the primary ctor still takes both
@@ -497,7 +497,7 @@ class DefaultArgumentTests {
 
     // #235: a constructor default reading the enclosing instance, and one reading a parameter a closure captured.
     @TestAttribute
-    fun defargsCtorEnclosingInstance() {
+    fun defaultArgumentsCtorEnclosingInstance() {
         assertEquals(20, DefaultArgEncl(5).DefaultArgEIn().x)                           // k * 4, k from the enclosing instance
         assertEquals(1, DefaultArgEncl(5).DefaultArgEIn(1).x)                           // provided
         assertEquals(2, DefaultArgDeep(1).DefaultArgDMid().DefaultArgDIn().x)                   // q + 1, two levels up (via `__outer`)
@@ -517,7 +517,7 @@ class DefaultArgumentTests {
     // #235: a value a filled default SPLICES is evaluated exactly once — Kotlin evaluates a receiver and each
     // argument once, and the splice must not re-run it per reading default.
     @TestAttribute
-    fun defargsSingleEval() {
+    fun defaultArgumentsSingleEval() {
         val a = DefaultArgEvalOnce()
         assertEquals(44, defaultArgSideF(a.next()))                             // 4 + 40
         assertEquals(1, a.calls)                                        // the argument ran ONCE, not once per splice
@@ -565,7 +565,7 @@ class DefaultArgumentTests {
 
     // #235: binding a value for single evaluation must not REORDER the call's other values.
     @TestAttribute
-    fun defargsEvalOrder() {
+    fun defaultArgumentsEvalOrder() {
         val l = DefaultArgLog()
         assertEquals(10220, defaultArgOrder(l.a(), l.b()))                      // p=1, q=2, r=q*10=20
         assertEquals("ab", l.s)                                         // q is bound; p must still run FIRST
@@ -582,7 +582,7 @@ class DefaultArgumentTests {
     // `calls`/`s` assertion is the load-bearing one — the copied VALUES were already right, the receiver just ran
     // repeatedly. The pre-fix counts are noted per case.
     @TestAttribute
-    fun defargsCrossModuleCopySingleEval() {
+    fun defaultArgumentsCrossModuleCopySingleEval() {
         val a = DefaultArgCopyLog()
         assertEquals("(1, 9)", a.pair().copy(second = 9).toString())     // (1, 9)
         assertEquals(1, a.calls)                                        // 1  was 2 (one omitted field + the call)
@@ -616,7 +616,7 @@ class DefaultArgumentTests {
     // A FILLED default bound for single evaluation must not move AHEAD of the values the call SUPPLIES: Kotlin
     // evaluates the receiver, then each argument, and only then the callee's defaults.
     @TestAttribute
-    fun defargsFilledDefaultOrder() {
+    fun defaultArgumentsFilledDefaultOrder() {
         DefaultArgFillLog.s = ""
         assertEquals(3030, defaultArgFillHost().f())                            // a = mk() = 3, b = a * 10 = 30
         assertEquals("Hd", DefaultArgFillLog.s)                                 // Hd   receiver first (was "dH")
@@ -639,7 +639,7 @@ class DefaultArgumentTests {
 
     // The same single-evaluation rule at an EXTENSION call site, whose default-filling pass used to run twice.
     @TestAttribute
-    fun defargsSingleEvalExtensionCall() {
+    fun defaultArgumentsSingleEvalExtensionCall() {
         val a = DefaultArgExtSource()
         assertEquals(3030, a.defaultArgExtChain())                              // a = bump() = 3, b = a * 10 = 30
         assertEquals(1, a.calls)                                        // 1  was 2 (the fill ran once per rendering)
@@ -656,7 +656,7 @@ class DefaultArgumentTests {
     // receiver's binding (so one evaluation, however many defaults read it), and the fill is a default-phase binding,
     // which the order rule keeps behind every supplied value.
     @TestAttribute
-    fun defargsEnclosingReadAtAMemberExtension() {
+    fun defaultArgumentsEnclosingReadAtAMemberExtension() {
         DefaultArgEncLog.s = ""
         assertEquals(7070, DefaultArgEncOuter(7).inner().goEncOnly())           // a = mark() = 7, b = 70
         assertEquals("ISK", DefaultArgEncLog.s)                                 // ISK  inner, extension receiver, then the default (was "ISKK")
@@ -668,7 +668,7 @@ class DefaultArgumentTests {
 
     // #235: single evaluation at the two call sites that ride a DECLARATION rather than an expression.
     @TestAttribute
-    fun defargsSingleEvalDelegationAndEnum() {
+    fun defaultArgumentsSingleEvalDelegationAndEnum() {
         DefaultArgDelCounter.calls = 0
         val d = DefaultArgDelOnce("")
         assertEquals(4, d.p)                                            // `: this(next())`
@@ -709,7 +709,7 @@ class DefaultArgumentTests {
     // A fill sitting in a slot BEFORE the slot the call supplies: the emitted argument array's order is NOT Kotlin's,
     // so the call needs an evaluation plan even though no value is read twice.
     @TestAttribute
-    fun defargsFillBeforeASuppliedSlot() {
+    fun defaultArgumentsFillBeforeASuppliedSlot() {
         DefaultArgSlotOrderLog.s = ""
         assertEquals(3007, defaultArgSlotOrder(c = DefaultArgSlotOrderLog.p()))         // a = 3, c = 7
         assertEquals("pd", DefaultArgSlotOrderLog.s)                            // pd   the argument, then the default (was "dp")
@@ -728,7 +728,7 @@ class DefaultArgumentTests {
     // A generic base's chained constructor defaults, bound in a derived class whose type-parameter frame differs. The
     // bound local must be typed in the frame it LIVES in; the base's `T` names a different slot there.
     @TestAttribute
-    fun defargsGenericBaseDelegationChain() {
+    fun defaultArgumentsGenericBaseDelegationChain() {
         assertEquals("7/7/7", DefaultArgGenDerived<String, Int>(7).probe())     // 7/7/7  (was InvalidProgramException)
         assertEquals("k/k/k", DefaultArgGenDerived<Int, String>("k").probe())   // k/k/k
     }
@@ -736,7 +736,7 @@ class DefaultArgumentTests {
     // Splicing a default into a caller closes EVERY open type variable it mentions, across everything a default may
     // read. Each of the first four was an InvalidProgramException at load; the last two are controls.
     @TestAttribute
-    fun defargsCloseCalleeTypeFrame() {
+    fun defaultArgumentsCloseCalleeTypeFrame() {
         assertEquals("7", DefaultArgFrameOwnerProp(7).one())                    // the receiver's property
         assertEquals("s", DefaultArgFrameOwnerProp("s").one())                  // ...at a second instantiation
         assertEquals("t7", DefaultArgFrameOwnerCall(7).one())                   // a member CALL on the receiver
@@ -771,7 +771,7 @@ class DefaultArgumentTests {
     // kind-directed binding: WAS-NRE threw a NullReferenceException (the default read a dispatch-owner member off
     // the extension receiver's VALUE), CONTROL passed already and must keep passing.
     @TestAttribute
-    fun defargsReceiverKind() {
+    fun defaultArgumentsReceiverKind() {
         val h = DefaultArgRecvKind(10)
         assertEquals(30, h.run())                                       // WAS-NRE  3 * dispatch k=10
         assertEquals(30, h.runInline())                                 // WAS-NRE  lambda-less `inline`: ordinary path
@@ -784,7 +784,7 @@ class DefaultArgumentTests {
 
     /** §7a — an `object`/companion qualifier at a call site that carries an evaluation plan. */
     @TestAttribute
-    fun defargsObjectQualifierIsNotAPlanValue() {
+    fun defaultArgumentsObjectQualifierIsNotAPlanValue() {
         // FLATTENED companion: the emitted static call has no receiver slot at all.
         assertEquals(206, DefaultArgFlat.make())                                // width=2, height=2*3
         assertEquals(515, DefaultArgFlat.make(5))                               // height still filled from the supplied width
@@ -800,7 +800,7 @@ class DefaultArgumentTests {
 
     /** §7a — a REAL object's qualifier is an observable evaluation, and Kotlin runs it before the arguments. */
     @TestAttribute
-    fun defargsRealObjectQualifierIsEvaluatedBeforeTheArguments() {
+    fun defaultArgumentsRealObjectQualifierIsEvaluatedBeforeTheArguments() {
         defaultArgOrdLog.setLength(0)
         assertEquals(12, DefaultArgOrd.take(defaultArgMark("A")))       // a=1 ("A".length), b=2
         // "AO" would mean the object was initialized only when the call finally touched it — after the argument's

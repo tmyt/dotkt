@@ -11,7 +11,7 @@
 // here; a co-compiled C# awaitable can't be referenced from the coroutines ktproj, so it is flagged for the
 // tests/interop C#-producer lane.)
 //
-// Top-level names carry a per-case token (`va`) under the shared `taskAwait`/`TaskAwait` prefix; taskfam has no top-level
+// Top-level names use the descriptive `taskAwaitValueTask`/`TaskAwaitValueTask` stem; taskfam has no top-level
 // decls (its body is inline in the method).
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
@@ -22,7 +22,7 @@ import System.Threading.Tasks.ValueTask1
 import dotkt.support.blockOn
 
 // ---- il-valueawait -------------------------------------------------------------------------------------------
-suspend fun taskAwaitVaVtAwait(): Int {
+suspend fun taskAwaitValueTaskAwait(): Int {
     val vt = ValueTask1<Int>(41)   // a synchronously-completed ValueTask<Int>
     return vt.await() + 1          // 42 — ValueTaskAwaiter<Int> fast path (IsCompleted true)
 }
@@ -43,6 +43,6 @@ class TaskAndValueTaskAwaitTests {
 
     @TestAttribute
     fun valueTaskAwaiterFastPath() {
-        assertEquals(42, blockOn { taskAwaitVaVtAwait() })   // 42
+        assertEquals(42, blockOn { taskAwaitValueTaskAwait() })   // 42
     }
 }

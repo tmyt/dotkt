@@ -11,13 +11,13 @@
 //   il-counit    -> counit_unitReturningSuspendTaskBridge
 //                   a PUBLIC Unit-returning suspend fun -> a NON-generic public `Task` bridge (coroutine-abi.md
 //                   §1: `suspend fun f(): Unit` maps to `Task`, not `Task<Unit>`). greet stays Unit-returning
-//                   (the bridge point); its former println side effect is captured into `cuLog` and asserted.
-//   regression   -> cuList
+//                   (the bridge point); its former println side effect is captured into `unitContinuationLog` and asserted.
+//   regression   -> unitContinuationList
 //                   compiling a generic List<T>-returning public suspend declaration synthesizes one coherent
 //                   readonly CLR result slot across Task<T>, TCS<T>, RootContinuation<T>, and TrySetResult(T).
 //
-// Top-level names are family-prefixed (`sco`/`cu`) so they can't clash with sibling coroutine fixtures or the
-// stdlib within this single assembly.
+// Top-level names use the descriptive `synchronousContinuation` and `unitContinuation` stems so they remain
+// readable and cannot clash with sibling coroutine fixtures or the stdlib.
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import kotlin.coroutines.suspendCoroutine
@@ -26,34 +26,34 @@ import kotlin.coroutines.resumeWithException
 import dotkt.support.blockOn
 
 // il-suspendco: a synchronous resume — the block resumes immediately with 42 (never actually suspends).
-suspend fun scoSc(): Int = suspendCoroutine { it.resume(42) }
+suspend fun synchronousContinuationResume(): Int = suspendCoroutine { it.resume(42) }
 
 // il-suspendco: a synchronous resumeWithException — getOrThrow() rethrows the failure at the (sync) point.
-suspend fun scoScThrow(): Int = suspendCoroutine { it.resumeWithException(IllegalStateException("boom")) }
+suspend fun synchronousContinuationResumeWithException(): Int = suspendCoroutine { it.resumeWithException(IllegalStateException("boom")) }
 
-// il-counit: a PUBLIC Unit-returning suspend fun -> a non-generic `Task` bridge. `cuStep` completes
-// synchronously, so `cuGreet` genuinely suspends then resumes on the sync path, exercising the full
-// state-machine + Unit Task-bridge emit. The former println("hello 42") is captured into cuLog.
-suspend fun cuStep(): Int = 21
-var cuLog: String = ""
-suspend fun cuGreet(): Unit {
-    val x = cuStep()
-    cuLog = "hello " + (x * 2)
+// il-counit: a PUBLIC Unit-returning suspend fun -> a non-generic `Task` bridge. `unitContinuationStep` completes
+// synchronously, so `unitContinuationGreet` genuinely suspends then resumes on the sync path, exercising the full
+// state-machine + Unit Task-bridge emit. The former println("hello 42") is captured into unitContinuationLog.
+suspend fun unitContinuationStep(): Int = 21
+var unitContinuationLog: String = ""
+suspend fun unitContinuationGreet(): Unit {
+    val x = unitContinuationStep()
+    unitContinuationLog = "hello " + (x * 2)
 }
 
-suspend fun <T> cuList(value: T): List<T> = listOf(value)
+suspend fun <T> unitContinuationList(value: T): List<T> = listOf(value)
 
 class ContinuationBridgeTests {
     @TestAttribute
     fun syncResume() {
-        assertEquals(42, blockOn { scoSc() })   // 42
+        assertEquals(42, blockOn { synchronousContinuationResume() })   // 42
     }
 
     @TestAttribute
     fun syncResumeWithException() {
         var msg: String? = null
         try {
-            blockOn { scoScThrow() }
+            blockOn { synchronousContinuationResumeWithException() }
         } catch (e: IllegalStateException) {
             msg = e.message
         }
@@ -62,8 +62,8 @@ class ContinuationBridgeTests {
 
     @TestAttribute
     fun unitReturningSuspendTaskBridge() {
-        cuLog = ""
-        blockOn { cuGreet() }
-        assertEquals("hello 42", cuLog)          // former golden: "hello 42" (then main printed "done")
+        unitContinuationLog = ""
+        blockOn { unitContinuationGreet() }
+        assertEquals("hello 42", unitContinuationLog)          // former golden: "hello 42" (then main printed "done")
     }
 }

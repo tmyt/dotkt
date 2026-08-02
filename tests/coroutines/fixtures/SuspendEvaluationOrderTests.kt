@@ -9,18 +9,18 @@
 //   il-cofieldorder -> coFieldOrder_rawFieldReadBeforeSuspend(N4: a raw @ClrField read left of a mutating suspend)
 //   il-coarrayorder -> coArrayOrder_arrayElemReadBeforeSuspend(N4-sibling: an arrayGet left of a mutating suspend)
 //
-// The interleaved-order case captures side effects into `suspendEvaluationEoLog` (asserted positionally, strictly stronger than
-// the old stdout order-diff). Top-level names are family-prefixed (`suspendEvaluationEo`/`suspendEvaluationFo`/`suspendEvaluationAo`).
+// The interleaved-order case captures side effects into `suspendEvaluationSideEffectLog` (asserted positionally, strictly stronger than
+// the old stdout order-diff). Top-level names are family-prefixed (`suspendEvaluationSideEffect`/`suspendEvaluationFieldOrder`/`suspendEvaluationArrayOrder`).
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import dotkt.support.blockOn
 
 // ---- il-coevalorder: `side() + g()` must evaluate the left side effect BEFORE g() runs ----------------------
-val suspendEvaluationEoLog = mutableListOf<String>()
-fun suspendEvaluationEoSide(): Int { suspendEvaluationEoLog.add("L"); return 1 }
-suspend fun suspendEvaluationEoG(): Int { suspendEvaluationEoLog.add("G"); return 2 }
-suspend fun suspendEvaluationEoF(): Int {
-    val r = suspendEvaluationEoSide() + suspendEvaluationEoG()   // strict left-to-right: L then G, sum = 3
+val suspendEvaluationSideEffectLog = mutableListOf<String>()
+fun suspendEvaluationSideEffectSide(): Int { suspendEvaluationSideEffectLog.add("L"); return 1 }
+suspend fun suspendEvaluationSideEffectG(): Int { suspendEvaluationSideEffectLog.add("G"); return 2 }
+suspend fun suspendEvaluationSideEffectF(): Int {
+    val r = suspendEvaluationSideEffectSide() + suspendEvaluationSideEffectG()   // strict left-to-right: L then G, sum = 3
     return r
 }
 
@@ -29,19 +29,19 @@ suspend fun suspendEvaluationEoF(): Int {
 // CLR field (a raw `field` read, no getter) — exactly the shape the N4 fix targets. It is the only ClrField in this
 // assembly, so there is no collision. (This is the standalone annotation the old cases/il-cofieldorder declared.)
 annotation class ClrField
-suspend fun suspendEvaluationFoRelay(): Int = 5             // a suspend call that completes synchronously
-class SuspendEvaluationFoBox {
+suspend fun suspendEvaluationFieldOrderRelay(): Int = 5             // a suspend call that completes synchronously
+class SuspendEvaluationFieldOrderBox {
     @ClrField var x: Int = 10                  // plain CLR field -> a raw `field` read (no property getter)
-    suspend fun bump(): Int { x = 100; return suspendEvaluationFoRelay() }   // MUTATES x, then suspends
+    suspend fun bump(): Int { x = 100; return suspendEvaluationFieldOrderRelay() }   // MUTATES x, then suspends
     suspend fun compute(): Int = x + bump()    // x read LEFT of the suspending bump() -> must be 10, not 100
 }
 
 // ---- il-coarrayorder: an arrayGet left of a mutating suspend must read the PRE-mutation element ---------------
-suspend fun suspendEvaluationAoRelay(): Int = 5
-suspend fun suspendEvaluationAoBump(a: IntArray): Int { a[0] = 100; return suspendEvaluationAoRelay() }   // MUTATES a[0], then suspends
-suspend fun suspendEvaluationAoCompute(): Int {
+suspend fun suspendEvaluationArrayOrderRelay(): Int = 5
+suspend fun suspendEvaluationArrayOrderBump(a: IntArray): Int { a[0] = 100; return suspendEvaluationArrayOrderRelay() }   // MUTATES a[0], then suspends
+suspend fun suspendEvaluationArrayOrderCompute(): Int {
     val a = intArrayOf(10, 20, 30)
-    return a[0] + suspendEvaluationAoBump(a)                // a[0] read LEFT of the suspending bump(a) -> must be 10, not 100
+    return a[0] + suspendEvaluationArrayOrderBump(a)                // a[0] read LEFT of the suspending bump(a) -> must be 10, not 100
 }
 
 // ---- a cross-module data-class `copy` whose omitted fields are reconstructed from a SUSPENDING receiver -------
@@ -50,11 +50,11 @@ suspend fun suspendEvaluationAoCompute(): Int {
 // argument suspends, that temp lives across the suspension, so the reconstructed read must also be stamped with the
 // INSTANTIATED field type (an open positional type variable is unresolvable in the state machine's own frame:
 // bir2cir spilled it into an SM field of that type and the first resume threw InvalidProgramException).
-val suspendEvaluationCpLog = mutableListOf<String>()
-suspend fun suspendEvaluationCpTriple(): Triple<Int, Int, Int> { suspendEvaluationCpLog.add("T"); return Triple(1, 2, 3) }
-suspend fun suspendEvaluationCpArg(): Int { suspendEvaluationCpLog.add("A"); return 9 }
-suspend fun suspendEvaluationCpOmitOnly(): String = suspendEvaluationCpTriple().copy(second = 9).toString()
-suspend fun suspendEvaluationCpSuspendingArg(): String = suspendEvaluationCpTriple().copy(second = suspendEvaluationCpArg()).toString()
+val suspendEvaluationCopyReceiverLog = mutableListOf<String>()
+suspend fun suspendEvaluationCopyReceiverTriple(): Triple<Int, Int, Int> { suspendEvaluationCopyReceiverLog.add("T"); return Triple(1, 2, 3) }
+suspend fun suspendEvaluationCopyReceiverArg(): Int { suspendEvaluationCopyReceiverLog.add("A"); return 9 }
+suspend fun suspendEvaluationCopyReceiverOmitOnly(): String = suspendEvaluationCopyReceiverTriple().copy(second = 9).toString()
+suspend fun suspendEvaluationCopyReceiverSuspendingArg(): String = suspendEvaluationCopyReceiverTriple().copy(second = suspendEvaluationCopyReceiverArg()).toString()
 
 // ---- an operand whose DESUGAR carries no type stamp, spilled left of a suspension ---------------------------
 // `h(x!!, susp())`: kotc lowers `x!!` to `{ var __nn = x; if (__nn != null) __nn else throw NPE }` — a valueBlock
@@ -65,102 +65,102 @@ suspend fun suspendEvaluationCpSuspendingArg(): String = suspendEvaluationCpTrip
 // REJECTED at compile time — an abort on frontend-accepted source. Four desugars reach the same stamp-less shape
 // and each answers through a different slot: the reference `!!` (the block's `var`), the value-type `!!` and the
 // elvis (`nullableValue.elem`), and a bare-receiver safe call (a raw `cond` whose live arm is a `nullableWrap`).
-val suspendEvaluationUtLog = mutableListOf<String>()
-suspend fun suspendEvaluationUtSusp(): Int { suspendEvaluationUtLog.add("S"); return 2 }
-fun suspendEvaluationUtHs(a: String, b: Int): String = "$a/$b"
-fun suspendEvaluationUtHi(a: Int, b: Int): String = "$a/$b"
-fun suspendEvaluationUtHq(a: Int?, b: Int): String = "$a/$b"
+val suspendEvaluationUntypedOperandLog = mutableListOf<String>()
+suspend fun suspendEvaluationUntypedOperandSusp(): Int { suspendEvaluationUntypedOperandLog.add("S"); return 2 }
+fun suspendEvaluationUntypedOperandHs(a: String, b: Int): String = "$a/$b"
+fun suspendEvaluationUntypedOperandHi(a: Int, b: Int): String = "$a/$b"
+fun suspendEvaluationUntypedOperandHq(a: Int?, b: Int): String = "$a/$b"
 
-class SuspendEvaluationUtBox(val name: String?) { fun size(): Int = 7 }
+class SuspendEvaluationUntypedOperandBox(val name: String?) { fun size(): Int = 7 }
 
-fun suspendEvaluationUtSideRef(): String? { suspendEvaluationUtLog.add("L"); return "v" }
-fun suspendEvaluationUtSideVal(): Int? { suspendEvaluationUtLog.add("L"); return 7 }
-fun suspendEvaluationUtSideBox(): SuspendEvaluationUtBox { suspendEvaluationUtLog.add("L"); return SuspendEvaluationUtBox("n") }
+fun suspendEvaluationUntypedOperandSideRef(): String? { suspendEvaluationUntypedOperandLog.add("L"); return "v" }
+fun suspendEvaluationUntypedOperandSideVal(): Int? { suspendEvaluationUntypedOperandLog.add("L"); return 7 }
+fun suspendEvaluationUntypedOperandSideBox(): SuspendEvaluationUntypedOperandBox { suspendEvaluationUntypedOperandLog.add("L"); return SuspendEvaluationUntypedOperandBox("n") }
 
-suspend fun suspendEvaluationUtRefBang(): String = suspendEvaluationUtHs(suspendEvaluationUtSideRef()!!, suspendEvaluationUtSusp())
-suspend fun suspendEvaluationUtValueBang(): String = suspendEvaluationUtHi(suspendEvaluationUtSideVal()!!, suspendEvaluationUtSusp())
-suspend fun suspendEvaluationUtFieldBang(): String = suspendEvaluationUtHs(suspendEvaluationUtSideBox().name!!, suspendEvaluationUtSusp())
-suspend fun suspendEvaluationUtElvis(): String = suspendEvaluationUtHi(suspendEvaluationUtSideVal() ?: 0, suspendEvaluationUtSusp())
-suspend fun suspendEvaluationUtSafeCall(b: SuspendEvaluationUtBox?): String = suspendEvaluationUtHq(b?.size(), suspendEvaluationUtSusp())
+suspend fun suspendEvaluationUntypedOperandRefBang(): String = suspendEvaluationUntypedOperandHs(suspendEvaluationUntypedOperandSideRef()!!, suspendEvaluationUntypedOperandSusp())
+suspend fun suspendEvaluationUntypedOperandValueBang(): String = suspendEvaluationUntypedOperandHi(suspendEvaluationUntypedOperandSideVal()!!, suspendEvaluationUntypedOperandSusp())
+suspend fun suspendEvaluationUntypedOperandFieldBang(): String = suspendEvaluationUntypedOperandHs(suspendEvaluationUntypedOperandSideBox().name!!, suspendEvaluationUntypedOperandSusp())
+suspend fun suspendEvaluationUntypedOperandElvis(): String = suspendEvaluationUntypedOperandHi(suspendEvaluationUntypedOperandSideVal() ?: 0, suspendEvaluationUntypedOperandSusp())
+suspend fun suspendEvaluationUntypedOperandSafeCall(b: SuspendEvaluationUntypedOperandBox?): String = suspendEvaluationUntypedOperandHq(b?.size(), suspendEvaluationUntypedOperandSusp())
 
 class SuspendEvaluationOrderTests {
     @TestAttribute
     fun sideEffectBeforeSuspend() {
-        suspendEvaluationEoLog.clear()
-        val v = blockOn { suspendEvaluationEoF() }
+        suspendEvaluationSideEffectLog.clear()
+        val v = blockOn { suspendEvaluationSideEffectF() }
         assertEquals(3, v)                  // 3
-        assertEquals(2, suspendEvaluationEoLog.size)
-        assertEquals("L", suspendEvaluationEoLog[0])     // former golden line 1
-        assertEquals("G", suspendEvaluationEoLog[1])     // former golden line 2
+        assertEquals(2, suspendEvaluationSideEffectLog.size)
+        assertEquals("L", suspendEvaluationSideEffectLog[0])     // former golden line 1
+        assertEquals("G", suspendEvaluationSideEffectLog[1])     // former golden line 2
     }
 
     @TestAttribute
     fun rawFieldReadBeforeSuspend() {
-        val b = SuspendEvaluationFoBox()
+        val b = SuspendEvaluationFieldOrderBox()
         assertEquals(15, blockOn { b.compute() })   // 10 + 5 = 15 (a miscompile prints 105)
         assertEquals(100, b.x)                       // bump() did run and mutate the field
     }
 
     @TestAttribute
     fun arrayElemReadBeforeSuspend() {
-        assertEquals(15, blockOn { suspendEvaluationAoCompute() })   // 10 + 5 = 15 (a miscompile prints 105)
+        assertEquals(15, blockOn { suspendEvaluationArrayOrderCompute() })   // 10 + 5 = 15 (a miscompile prints 105)
     }
 
     // A cross-module data-class `copy` with an omitted field, on a SUSPENDING receiver.
     @TestAttribute
     fun crossModuleCopyReceiverSuspends() {
-        suspendEvaluationCpLog.clear()
-        assertEquals("(1, 9, 3)", blockOn { suspendEvaluationCpOmitOnly() })
-        assertEquals(1, suspendEvaluationCpLog.size)                 // the suspending receiver ran ONCE (was 3)
-        assertEquals("T", suspendEvaluationCpLog[0])
+        suspendEvaluationCopyReceiverLog.clear()
+        assertEquals("(1, 9, 3)", blockOn { suspendEvaluationCopyReceiverOmitOnly() })
+        assertEquals(1, suspendEvaluationCopyReceiverLog.size)                 // the suspending receiver ran ONCE (was 3)
+        assertEquals("T", suspendEvaluationCopyReceiverLog[0])
 
         // The provided argument suspends too, so the receiver temp must survive that suspension.
-        suspendEvaluationCpLog.clear()
-        assertEquals("(1, 9, 3)", blockOn { suspendEvaluationCpSuspendingArg() })
-        assertEquals(2, suspendEvaluationCpLog.size)
-        assertEquals("T", suspendEvaluationCpLog[0])                 // receiver first
-        assertEquals("A", suspendEvaluationCpLog[1])                 // then the argument (was "T","T","A","T")
+        suspendEvaluationCopyReceiverLog.clear()
+        assertEquals("(1, 9, 3)", blockOn { suspendEvaluationCopyReceiverSuspendingArg() })
+        assertEquals(2, suspendEvaluationCopyReceiverLog.size)
+        assertEquals("T", suspendEvaluationCopyReceiverLog[0])                 // receiver first
+        assertEquals("A", suspendEvaluationCopyReceiverLog[1])                 // then the argument (was "T","T","A","T")
     }
 
     // Each of these was a COMPILE ABORT ("the operand ... carries no static type") before the desugars' own type
     // slots were read; the assertions additionally pin the left-to-right order the spill exists to preserve.
     @TestAttribute
     fun notNullAssertedReferenceBeforeSuspension() {
-        suspendEvaluationUtLog.clear()
-        assertEquals("v/2", blockOn { suspendEvaluationUtRefBang() })
-        assertEquals(2, suspendEvaluationUtLog.size)
-        assertEquals("L", suspendEvaluationUtLog[0])                 // the `!!` operand ran BEFORE the suspending argument
-        assertEquals("S", suspendEvaluationUtLog[1])
+        suspendEvaluationUntypedOperandLog.clear()
+        assertEquals("v/2", blockOn { suspendEvaluationUntypedOperandRefBang() })
+        assertEquals(2, suspendEvaluationUntypedOperandLog.size)
+        assertEquals("L", suspendEvaluationUntypedOperandLog[0])                 // the `!!` operand ran BEFORE the suspending argument
+        assertEquals("S", suspendEvaluationUntypedOperandLog[1])
     }
 
     @TestAttribute
     fun notNullAssertedValueTypeBeforeSuspension() {
-        suspendEvaluationUtLog.clear()
-        assertEquals("7/2", blockOn { suspendEvaluationUtValueBang() })   // `Nullable<Int>.Value`, not a boxed slot
-        assertEquals(2, suspendEvaluationUtLog.size)
-        assertEquals("L", suspendEvaluationUtLog[0])
+        suspendEvaluationUntypedOperandLog.clear()
+        assertEquals("7/2", blockOn { suspendEvaluationUntypedOperandValueBang() })   // `Nullable<Int>.Value`, not a boxed slot
+        assertEquals(2, suspendEvaluationUntypedOperandLog.size)
+        assertEquals("L", suspendEvaluationUntypedOperandLog[0])
     }
 
     @TestAttribute
     fun notNullAssertedFieldReadBeforeSuspension() {
-        suspendEvaluationUtLog.clear()
-        assertEquals("n/2", blockOn { suspendEvaluationUtFieldBang() })
-        assertEquals(2, suspendEvaluationUtLog.size)
-        assertEquals("L", suspendEvaluationUtLog[0])
+        suspendEvaluationUntypedOperandLog.clear()
+        assertEquals("n/2", blockOn { suspendEvaluationUntypedOperandFieldBang() })
+        assertEquals(2, suspendEvaluationUntypedOperandLog.size)
+        assertEquals("L", suspendEvaluationUntypedOperandLog[0])
     }
 
     @TestAttribute
     fun elvisOperandBeforeSuspension() {
-        suspendEvaluationUtLog.clear()
-        assertEquals("7/2", blockOn { suspendEvaluationUtElvis() })
-        assertEquals(2, suspendEvaluationUtLog.size)
-        assertEquals("L", suspendEvaluationUtLog[0])
+        suspendEvaluationUntypedOperandLog.clear()
+        assertEquals("7/2", blockOn { suspendEvaluationUntypedOperandElvis() })
+        assertEquals(2, suspendEvaluationUntypedOperandLog.size)
+        assertEquals("L", suspendEvaluationUntypedOperandLog[0])
     }
 
     @TestAttribute
     fun safeCallOperandBeforeSuspension() {
         // A bare-local receiver, so the safe call is a RAW `cond` with no `type` stamp at all.
-        assertEquals("7/2", blockOn { suspendEvaluationUtSafeCall(SuspendEvaluationUtBox("q")) })
-        assertEquals("null/2", blockOn { suspendEvaluationUtSafeCall(null) })
+        assertEquals("7/2", blockOn { suspendEvaluationUntypedOperandSafeCall(SuspendEvaluationUntypedOperandBox("q")) })
+        assertEquals("null/2", blockOn { suspendEvaluationUntypedOperandSafeCall(null) })
     }
 }

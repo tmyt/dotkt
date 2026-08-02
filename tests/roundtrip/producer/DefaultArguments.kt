@@ -3,7 +3,7 @@
 // so the consumer can omit it ANYWHERE: trailing, NAMED-MIDDLE (skip a middle default, provide a later one —
 // which @JvmOverloads positional overloads could NOT express), or reordered named. Constructors too (ilemit
 // emits ctor parameter NAMES). String defaults with spaces + a nullable `= null` default survive.
-package roundtrip.defargs
+package roundtrip.defaultarguments
 
 fun greet(name: String, greeting: String = "Hi", punct: String = "!"): String = "$greeting, $name$punct"
 fun box(a: Int, b: Int = 2, c: Int = 3): Int = a * 100 + b * 10 + c
