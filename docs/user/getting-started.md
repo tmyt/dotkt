@@ -29,10 +29,10 @@ DotKt ships as four NuGet packages:
 | `DotKt.Templates` | `dotnet new` project templates |
 
 Install the templates once. **Pin the version** for reproducible builds — DotKt is pre-1.0; the feed's
-current release is `0.9.7`, and pinning keeps a project on a known toolchain across feed updates:
+current release is `0.9.8`, and pinning keeps a project on a known toolchain across feed updates:
 
 ```bash
-dotnet new install DotKt.Templates::0.9.7
+dotnet new install DotKt.Templates::0.9.8
 ```
 
 (Check `packaging/DotKt.Versions.props` in the repo for the current shipping version if this page
@@ -50,7 +50,7 @@ dotnet run
 That template is just two files. The project file:
 
 ```xml
-<Project Sdk="DotKt.Sdk/0.9.7">
+<Project Sdk="DotKt.Sdk/0.9.8">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
