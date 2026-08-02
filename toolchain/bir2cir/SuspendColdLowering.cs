@@ -1183,6 +1183,9 @@ static partial class SuspendColdLowering
         readonly List<JsonObject> _params;       // original params (extension: leading __self)
         readonly List<string> _typeParams;       // generic type-param names ([] when non-generic)
         readonly JsonArray _methodTypeParamDecls; // original names + constraints for emitted bridge/cold signatures
+        // Kotlin override ownership is the proof used by the late CLR slot normalizer. Suspend lowering replaces one
+        // logical declaration with TWO physical declarations, so both retain that proof under their final names.
+        readonly JsonArray _overrideMarkers;
         readonly HashSet<string> _fields = new(StringComparer.Ordinal);
         readonly List<(string name, TypeNode type)> _fieldDecls = new();
         // Declared type of every `{k:var}` of this body, INCLUDING the ones the storage gate leaves as MoveNext
@@ -1244,6 +1247,7 @@ static partial class SuspendColdLowering
             _params = (m["params"] as JsonArray)?.OfType<JsonObject>().ToList() ?? new List<JsonObject>();
             _typeParams = ReadTypeParamNames(m["typeParams"]);
             _methodTypeParamDecls = (m["typeParams"] as JsonArray)?.DeepClone() as JsonArray ?? new JsonArray();
+            _overrideMarkers = (m["overrides"] as JsonArray)?.DeepClone() as JsonArray ?? new JsonArray();
             // The SM is generic over the ENCLOSING class's type params (an instance member on a generic class) PLUS
             // the member's own — its fields / `$this` / label reference them (type-scope tv by flattened position).
             _smAllTps = new List<string>(_ownerTypeParams);
@@ -1329,6 +1333,7 @@ static partial class SuspendColdLowering
             _params = lambdaParams ?? new List<JsonObject>();
             _typeParams = typeParams ?? new List<string>();
             _methodTypeParamDecls = new JsonArray(_typeParams.Select(n => (JsonNode)JsonValue.Create(n)).ToArray());
+            _overrideMarkers = new JsonArray();
             _smAllTps = _typeParams;   // a lambda SM has no enclosing-class type params
             _smTypeInst = _typeParams.Count == 0 ? new TypeNode.Fqn(_smType) : new TypeNode.Fqn(_smType, TypeTvs(_typeParams.Count));
             // #125 — lambda SMs share the named-fun segmentability classifier. A refused lambda still gets a valid
@@ -3489,7 +3494,19 @@ static partial class SuspendColdLowering
             };
             if (_typeParams.Count > 0)
                 method["typeParams"] = _methodTypeParamDecls.DeepClone();
+            CarryOverrideMarkers(method, _coldName);
             return method;
+        }
+
+        // The public Task member keeps the source member name. The cold member is a second physical slot and its
+        // marker names that slot (f$dotkt_suspend, including an overload suffix), not the logical f; otherwise the
+        // late slot walk correctly refuses to guess which generated declaration owns the obligation.
+        void CarryOverrideMarkers(JsonObject method, string member)
+        {
+            if (_overrideMarkers.Count == 0) return;
+            var markers = (JsonArray)_overrideMarkers.DeepClone();
+            foreach (var marker in markers.OfType<JsonObject>()) marker["member"] = member;
+            method["overrides"] = markers;
         }
 
         // R1 — the call-time-throw cold entry for a concrete-but-NOT-segmentable member (design §11 v1 policy). An
@@ -3543,6 +3560,7 @@ static partial class SuspendColdLowering
             };
             if (_typeParams.Count > 0)
                 method["typeParams"] = _methodTypeParamDecls.DeepClone();
+            CarryOverrideMarkers(method, _coldName);
             return method;
         }
 
@@ -3706,6 +3724,7 @@ static partial class SuspendColdLowering
                 };
                 if (_typeParams.Count > 0)
                     am["typeParams"] = _methodTypeParamDecls.DeepClone();
+                CarryOverrideMarkers(am, _name);
                 if (TaskReturnNullableFlags() is JsonArray arnf) am["retNullableFlags"] = arnf;
                 if (_resultNullableGeneric != null) am["nullableGenericRet"] = _resultNullableGeneric;
                 // #151 — a `suspend fun f(): Nothing` bridge (Task<Nothing>): carry the pre-erasure Nothing fact so
@@ -3801,6 +3820,7 @@ static partial class SuspendColdLowering
             };
             if (_typeParams.Count > 0)
                 method["typeParams"] = _methodTypeParamDecls.DeepClone();
+            CarryOverrideMarkers(method, _name);
             // BUG 2 (nested return nullability): a `suspend fun f(): String?`'s bridge return `Task<string?>` needs the
             // inner `?` — the scalar retNullable can't express a nullability that rides an INNER type arg. Emit the
             // flattened NullableAttribute byte walk (RoundtripMetadata folds it into the return's `retAttrs` for ilemit

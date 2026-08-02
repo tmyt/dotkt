@@ -75,11 +75,10 @@ declare -A RT_XFAIL=(
 	# referenced member, a different subject from filling the slot, and pre-existing: arity has never been part of
 	# that selection. Closing it means carrying the call's generic arity into the referenced-member lookup, the same
 	# key ilemit's own overload table already uses.
-	# PINNED, NOT FIXED — three reachable failures that no gate saw. Two were entirely silent; the third existed
+	# PINNED, NOT FIXED — two remaining reachable failures that no gate saw. One was entirely silent; the other existed
 	# only as a prose comment in an NUnit fixture saying "NOT asserted", which is exactly what a machine-readable
 	# fail-set replaces: prose cannot flip to FIXED and nothing tells you when the cause closes. Each entry names
 	# its cause and the condition that closes it, and each has a control beside it fixing what the variable is not.
-	[roundtrip-nullable-vt-generic-suspend-override-narrowed]="#86 D3 PR5-era, ALREADY ON MAIN and undocumented until now: a SUSPEND override narrowed to a value instantiation (accept(x: T?) at T=Int) dies with System.TypeLoadException 'Signature of the body and declaration in a method implementation do not match'. PASS ORDER, not the narrowing: the override-slot bridge is built against the PRE-lowering shape, then SuspendColdLowering removes that method and replaces it with the state-machine form, leaving the MethodImpl descriptor naming a member that no longer exists. The non-suspend twin of the same narrowing is green, and the non-nullable suspend control beside this one runs N:1. Closes when the bridge is built AFTER the suspend lowering, or re-pointed at the replacement member."
 	[roundtrip-nullable-vt-generic-objectish-constraint-value]="#86: a generic constrained by Sink<Int?> emits a constrained call whose argument is never widened to the constraint's SUBSTITUTED form, and the CLR rejects the body with System.InvalidProgramException. MEASURED, against the expectation that any objectish constraint does this: the Sink<Any?> twin beside it RUNS (A:a), so the variable is the nullable-VALUE argument specifically and not objectish-ness in general — Sink<Any?> is objectish too and is fine. Closes when the constrained call widens its argument to Subst(Erase(constraint)); the passing Any? section beside it is the control that keeps the claim honest."
 	[roundtrip-nullable-vt-generic-comparable-typed-dispatch]="#86 PRE-EXISTING, and previously recorded ONLY as prose in tests/basic/fixtures/NullableTests.kt saying 'NOT asserted' — the rule violation this entry fixes. Dispatch through a Comparable<Int?>-TYPED reference dies with System.EntryPointNotFoundException: Comparable<X> at an objectish X collapses onto the NON-generic System.IComparable in the type's supertype list, while a value slot of that type keeps IComparable<object>, so the call resolves a member the receiver does not have. Measured identically on Comparable<Any?>, objectish long before #86. Closes when the collapse and the slot agree on one physical interface for an objectish argument."
 	[roundtrip-nullable-vt-generic-referenced-arity-dispatch]="#86 D3: a call on a REFERENCED-interface receiver selects between two same-name, same-parameter-vector members by name and parameters alone, ignoring method generic arity, so a.put<String>(2) runs the arity-0 body and prints a0:2. The SLOTS are correct — the type loads and both arities dispatch correctly through the class's own declared type — so this is call-site overload resolution on a referenced member, not slot filling. Needs the call's generic arity carried into the referenced-member lookup."
@@ -129,7 +128,6 @@ declare -A RT_XFAIL_SHAPE=(
 	[roundtrip-nullable-vt-generic-referenced-arity-dispatch]='a0:2'
 	# The PINNED entries. Each shape is the CLR's own exception name, which is what distinguishes these three from
 	# one another and from any unrelated break that would otherwise satisfy a name-only entry.
-	[roundtrip-nullable-vt-generic-suspend-override-narrowed]='System.TypeLoadException'
 	[roundtrip-nullable-vt-generic-objectish-constraint-value]='System.InvalidProgramException'
 	[roundtrip-nullable-vt-generic-comparable-typed-dispatch]='System.EntryPointNotFoundException'
 )
@@ -1091,19 +1089,17 @@ fun main() {
 }
 EOF
 
-# ---- PINNED, NOT FIXED: three reachable failures that were silent or recorded only as PROSE ------------------
-# Each is a real program that a user can write and that fails at run time, and each was invisible to every gate.
-# A fail-set is machine-readable or it is not a fail-set: a comment saying "not asserted" cannot flip to FIXED, and
-# nothing tells you when the cause closes. Every one below has an RT_XFAIL entry naming its cause and its closing
-# condition, and a control beside it fixing what the variable is NOT.
+# ---- PINNED failures and their now-green controls ----------------------------------------------------------
+# These are real programs that were invisible to every gate. The first is the now-green regression for #344; the
+# remaining failures stay RT_XFAIL-listed with a cause, closing condition and a control fixing the variable.
 
-# THE SUSPEND OVERRIDE AT A VALUE INSTANTIATION. PR5-era and already on main, undocumented until now. The
-# override-slot bridge is built against the PRE-lowering shape; SuspendColdLowering then removes that method and
-# replaces it with the state-machine form, leaving the MethodImpl descriptor naming a member that no longer exists.
-# The non-suspend twin of the same narrowing is green (the sections above), and so is the control here, so neither
-# the narrowing nor `suspend` alone is the variable — it is the two passes' ORDER.
-ng_local roundtrip-nullable-vt-generic-suspend-override-narrowed 'S:1' \
-	'PINNED: a SUSPEND override narrowed to a value instantiation (accept(x: T?) at T=Int) (#86 D3)' <<'EOF'
+# PRUNED by final-shape override-slot bridging (#344): suspend lowering replaces one logical declaration with TWO
+# CLR obligations — the public Task member and the continuation cold entry. Both generated declarations retain the
+# source override proof under their final names, and the late slot pass emits an exact bridge/MethodImpl for each.
+# Drive non-null + null through the interface and the author's own concrete signature so both physical entries stay
+# live and the object -> Nullable<Int> seam is checked in both directions.
+ng_local roundtrip-nullable-vt-generic-suspend-override-narrowed 'S:1/S:none/S:2' \
+	'a SUSPEND override narrowed to a value instantiation fills its final Task + cold slots (#344 / #86 D3)' <<'EOF'
 @file:Suppress("UNCHECKED_CAST")
 import System.Threading.Monitor
 import kotlin.coroutines.Continuation
@@ -1136,7 +1132,10 @@ class SImpl : SSink<Int> { override suspend fun accept(x: Int?): String = "S:" +
 
 fun main() {
     val s: SSink<Int> = SImpl()
-    println(blockOn { s.accept(1) })       // WANT S:1 — TypeLoadException: the descriptor names a removed member
+    val present = blockOn { s.accept(1) }
+    val absent = blockOn { s.accept(null) }
+    val own = blockOn { SImpl().accept(2) }
+    println(present + "/" + absent + "/" + own)
 }
 EOF
 

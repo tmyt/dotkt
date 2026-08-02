@@ -127,6 +127,16 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **bir2cir: a suspend override narrowed to a value instantiation now fills both final CLR slots (#344).**
+  `override suspend fun accept(x: Int?)` against `Sink<T>.accept(T?)` used to receive one private MethodImpl
+  bridge while the declaration was still in its logical Kotlin shape. Suspend lowering then deleted that target
+  and replaced it with a public `Task<String> accept(Nullable<Int>)` plus a continuation cold entry, leaving the
+  old `accept(object): String` descriptor behind; the CLR rejected the implementing type at load. Suspend lowering
+  now carries the source override ownership onto both generated declarations under their final names, and the
+  erasure-slot bridge pass runs after that expansion. It emits one exact bridge for the public Task obligation and
+  one for the cold obligation, while ilemit continues to consume resolved MethodImpl descriptors one-to-one.
+  The round-trip fixture drives present/null values through the interface and the concrete signature, and its stale
+  RT_XFAIL entry is removed.
 - **ilemit (area:ilemit): a GENERIC slot on a referenced supertype is wired at a locally emitted type argument
   (#86).** A referenced generic supertype instantiated at a locally emitted type argument
   (`class C : RSink<Local>`) is a `TypeBuilderInstantiation` whose members cannot be reflected, so ilemit
