@@ -12,8 +12,8 @@ var raw = Read(args[0]);
 RequirePrimitiveSignature(raw);
 RequireEnumShape(raw, "TargetEnum");
 RequireGenericBaseShape(raw, "TargetList`1");
-RequireNoLocalType(raw, "NullableAttribute");
-RequireNoLocalType(raw, "NullableContextAttribute");
+RequireNoLocalType(raw, "System.Runtime.CompilerServices.NullableAttribute");
+RequireNoLocalType(raw, "System.Runtime.CompilerServices.NullableContextAttribute");
 RequireScope(raw, "System.Object", "System.Runtime");
 RequireScope(raw, "System.Collections.Generic.List`1", "System.Collections");
 RequireScope(raw, "System.Func`2", "System.Runtime");
@@ -58,7 +58,7 @@ static Snapshot Read(string path)
     foreach (var handle in md.TypeDefinitions)
     {
         var type = md.GetTypeDefinition(handle);
-        var name = md.GetString(type.Name);
+        var name = FullTypeName(md, type.Namespace, type.Name);
         types[name] = new TypeShape(
             type.GetMethods().Select(h => md.GetString(md.GetMethodDefinition(h).Name)).ToArray(),
             type.BaseType.Kind,
@@ -101,6 +101,11 @@ static string? TypeName(MetadataReader md, EntityHandle handle)
         default:
             return null;
     }
+    return FullTypeName(md, ns, name);
+}
+
+static string FullTypeName(MetadataReader md, StringHandle ns, StringHandle name)
+{
     var prefix = md.GetString(ns);
     return prefix.Length == 0 ? md.GetString(name) : prefix + "." + md.GetString(name);
 }
