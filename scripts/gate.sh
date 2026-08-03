@@ -79,7 +79,7 @@ collect_changes() {
 }
 
 # ---- selection state ------------------------------------------------------------------------------
-declare -A WANT=()          # suite -> 1 (compiler_tests schema sanity msbuild widedelegates packagedsdk)
+declare -A WANT=()          # suite -> 1 (compiler_tests schema sanity msbuild targetuniverse packagedsdk)
 declare -a REASONS=()       # human-readable "path -> decision" lines
 CLEAN=0                     # force a clean stdlib rebuild
 NEED_FULL=0                 # an unmatched/broad path forces the complete set
@@ -118,8 +118,6 @@ classify() { # <path>
 		tests/packaged-sdk/*) want packagedsdk; reason "$p -> packaged SDK tests" ;;
 		tests/basic/*|tests/coroutines/*|tests/interop/*|tests/roundtrip/*|tests/support/*|tests/run-nunit-tests.sh|tests/run-ilverify.sh)
 			want compiler_tests; reason "$p -> categorized compiler tests" ;;
-		tests/special/wide-delegates/*)
-			want widedelegates; reason "$p -> wide-delegate structural test" ;;
 		tests/target-universe/*)
 			want targetuniverse; reason "$p -> host/target metadata-universe calibration" ;;
 		eng/KotlinClr.targets)
@@ -131,14 +129,14 @@ classify() { # <path>
 }
 
 # ---- suite targets --------------------------------------------------------------------------------
-declare -a RUN_ORDER=(compiler_tests schema sanity msbuild widedelegates targetuniverse packagedsdk)
+declare -a RUN_ORDER=(compiler_tests schema sanity msbuild targetuniverse packagedsdk)
 declare -A SUITE_TARGET=(
 	[compiler_tests]=verify-tests [schema]=verify-schema [sanity]=verify-sanity
 	[msbuild]=verify-msbuild
-	[widedelegates]=verify-wide-delegates [targetuniverse]=verify-target-universe [packagedsdk]=verify-packaged-sdk
+	[targetuniverse]=verify-target-universe [packagedsdk]=verify-packaged-sdk
 )
 
-FULL_SUITES=(compiler_tests schema sanity msbuild widedelegates targetuniverse)
+FULL_SUITES=(compiler_tests schema sanity msbuild targetuniverse)
 
 # ---- compute the plan -----------------------------------------------------------------------------
 mapfile -t CHANGES < <(collect_changes)

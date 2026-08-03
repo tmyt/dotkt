@@ -44,6 +44,16 @@ CONTRACTS_IMPL="$ROOT/tests/special/dll2klib-e2e/reference/bin/Release/net10.0/P
 PROBE_KLIB="$OUT/klib/Probe.klib"
 CONTRACTS_KLIB="$OUT/klib/Probe.Contracts.klib"
 
+# The two-path form is an internal worker protocol. Without the batch parent's complete resolved catalog it cannot
+# identify external delegate TypeRefs and must fail rather than silently project them as ordinary nominal classes.
+direct_out="$OUT/direct-Probe.klib"
+if direct_error="$(dotnet "$OUT/tools/dll2klib.dll" "$PROBE_REF" "$direct_out" 2>&1)"; then
+	die "standalone direct worker invocation unexpectedly succeeded without a resolved delegate catalog"
+fi
+grep -q "direct worker mode requires the batch-provided resolved delegate catalog" <<<"$direct_error" \
+	|| die "standalone direct worker rejection did not explain the required batch reference set"
+[[ ! -e "$direct_out" ]] || die "rejected standalone direct worker invocation still wrote a KLIB"
+
 # Both stdlib CLR twins carry a semantic library-kind marker. A human asking for a direct projection gets an
 # actionable warning and no duplicate KLIB; the response-file/MSBuild reference-set path ignores the same inputs
 # silently because the authoritative frontend stdlib KLIB is already on kotc's classpath.

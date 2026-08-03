@@ -31,6 +31,15 @@ internal static class Program
                         "use the frontend standard-library KLIB instead");
                     return 0;
                 }
+                // This two-path form is the batch launcher's worker protocol. A correct projection of an external
+                // delegate TypeRef needs the complete resolved assembly universe; one input DLL cannot establish the
+                // referenced TypeDef's identity or Invoke shape on its own. Refuse a human standalone invocation
+                // instead of silently projecting such a delegate as an ordinary nominal class. The batch parent sets
+                // both catalogs on every worker below.
+                if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(DelegateCatalogEnvironment)))
+                    throw new InvalidOperationException(
+                        "direct worker mode requires the batch-provided resolved delegate catalog; " +
+                        "use 'dll2klib --out <directory> @<references.rsp>' with the complete reference set");
                 Convert(input, Path.GetFullPath(args[1]));
                 return 0;
             }
@@ -70,13 +79,17 @@ internal static class Program
         }
         if (outputDirectory is null || responseFile is null) return Usage();
 
-        var inputs = File.ReadLines(responseFile)
+        var resolvedInputs = File.ReadLines(responseFile)
             .Select(x => x.Trim())
             .Where(x => x.Length != 0)
             .Select(Path.GetFullPath)
             .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var inputs = resolvedInputs
             // Response-file mode is the MSBuild/reference-set contract. The authoritative stdlib declaration surface
-            // is already supplied as the frontend KLIB, so silently route marked CLR stdlib twins out of this set.
+            // is already supplied as the frontend KLIB, so marked CLR stdlib twins produce no projected KLIB.
+            // They remain in `resolvedInputs`: referenced delegate TypeRefs are decoded from their actual TypeDefs,
+            // exactly like delegates in any other reference assembly.
             .Where(input => !IsStandardLibrary(input))
             .ToArray();
         var work = inputs.Select(input => (
@@ -89,7 +102,7 @@ internal static class Program
         // same tiny naming catalog (Task + Task`1 -> Task / Task1; a singleton
         // List`1 remains List).
         var arityClashes = DiscoverArityClashes(inputs);
-        var delegateCatalog = DelegateReferenceCatalog.Discover(inputs);
+        var delegateCatalog = DelegateReferenceCatalog.Discover(resolvedInputs);
         var delegateCatalogJson = delegateCatalog.Serialize();
         var collisions = work.GroupBy(x => x.Output, StringComparer.OrdinalIgnoreCase)
             .Where(x => x.Select(y => y.Input).Distinct(StringComparer.Ordinal).Skip(1).Any())
@@ -199,7 +212,7 @@ internal static class Program
     {
         Console.Error.WriteLine(
             "usage:\n" +
-            "  dll2klib <reference.dll> <output.klib>\n" +
+            "  dll2klib <reference.dll> <output.klib>  (internal batch worker)\n" +
             "  dll2klib --out <directory> [--jobs <N>] @<references.rsp>\n" +
             "  --jobs 0 starts one worker per stale reference");
         return 2;

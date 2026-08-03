@@ -42,6 +42,10 @@
                            Condition="'@(ReferencePathWithRefAssemblies)' == '' and '%(Extension)' == '.dll' and '%(Filename)' != 'DotKt.Private.Stdlib' and '%(Filename)' != 'DotKt.Stdlib'">
         <KlibPath>$(DotKtReferenceKlibDir)/%(Filename).klib</KlibPath>
       </_DotKtKlibReference>
+      <!-- The stdlib twins are never projected (the frontend KLIB is authoritative), but dll2klib still needs their
+           CLR TypeDefs in its resolved universe to decode any delegate TypeRef by assembly identity and Invoke shape. -->
+      <_DotKtDelegateCatalogReference Include="@(_DotKtCompileReference)"
+                                      Condition="'%(Extension)' == '.dll' and ('%(Filename)' == 'DotKt.Private.Stdlib' or '%(Filename)' == 'DotKt.Stdlib')" />
       <_DotKtFrontendMetadataInput Include="@(_DotKtKlibReference->'%(KlibPath)')" />
     </ItemGroup>
     <PropertyGroup>
@@ -51,7 +55,7 @@
            @(_DotKtKlibReference) to only the stale input/output pairs. dll2klib still needs the COMPLETE resolved
            universe to derive one consistent arity/delegate catalog for both stale and cached KLIBs. Capture it in
            properties here, before target batching narrows the item list. -->
-      <_DotKtAllKlibReferences>@(_DotKtKlibReference->'%(FullPath)', ';')</_DotKtAllKlibReferences>
+      <_DotKtAllKlibReferences>@(_DotKtKlibReference->'%(FullPath)', ';');@(_DotKtDelegateCatalogReference->'%(FullPath)', ';')</_DotKtAllKlibReferences>
       <_DotKtAllKlibReferenceCount>@(_DotKtKlibReference->Count())</_DotKtAllKlibReferenceCount>
     </PropertyGroup>
   </Target>
@@ -73,7 +77,7 @@
        does not regenerate the whole set when this aggregate MSBuild target runs. No shared cache participates. -->
   <Target Name="DotKtGenerateReferenceKlibs"
           DependsOnTargets="DotKtWriteReferenceKlibRsp"
-          Inputs="@(_DotKtKlibReference);$(DotKtDll2Klib);$(DotKtReferenceKlibRsp)"
+          Inputs="@(_DotKtKlibReference);@(_DotKtDelegateCatalogReference);$(DotKtDll2Klib);$(DotKtReferenceKlibRsp)"
           Outputs="@(_DotKtKlibReference->'%(KlibPath)')">
     <Message Importance="high" Text="DotKt: projecting $(_DotKtAllKlibReferenceCount) reference assembly/assemblies -> KLIB (jobs=$(DotKtDll2KlibJobs))" />
     <Exec Command="dotnet &quot;$(DotKtDll2Klib)&quot; --out &quot;$(DotKtReferenceKlibDir)&quot; --jobs &quot;$(DotKtDll2KlibJobs)&quot; @&quot;$(DotKtReferenceKlibRsp)&quot;" />
