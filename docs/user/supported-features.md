@@ -47,6 +47,6 @@ Status legend: ✅ works today (exercised by the test gates) · 🚧 in progress
 | Consume the output from C# (`ProjectReference`, NRT, `Task<T>`) | ✅ |
 | Re-consume a DotKt dll **as Kotlin** through a reference KLIB | ✅ ([projection limits](../dotkt-semantics.md#10-round-trip-fidelity)) |
 
-Gates backing this table: `tests/run-nunit-tests.sh` (compile → NUnit assertions → `ilverify`),
-`tests/msbuild/run.sh` (stateful MSBuild), and `tests/roundtrip/scenarios/run.sh` (irreducible
-consume-as-Kotlin scenarios). `make verify` runs the complete set.
+Gates backing this table: `tests/run-nunit-tests.sh` (compile → NUnit assertions → `ilverify`, including
+ProjectReference consume-as-Kotlin coverage) and `tests/msbuild/run.sh` (stateful MSBuild). `make verify` runs the
+complete set.

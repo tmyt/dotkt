@@ -1,6 +1,6 @@
 # Consuming a DotKt assembly AS KOTLIN — metadata attributes
 
-**Status: v1 implemented & verified (2026-06-24).** `tests/roundtrip/scenarios/run.sh`.
+**Status: v1 implemented & verified (2026-06-24).** `tests/roundtrip/consumer`.
 
 ## Goal
 

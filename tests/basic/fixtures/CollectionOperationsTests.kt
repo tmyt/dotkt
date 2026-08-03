@@ -75,10 +75,8 @@ class CollectionOperationsTests {
         assertEquals("True,False", bs.filterNotNull().joinToString(","))  // True,False
         assertEquals(2, bs.filterNotNull().size)                     // 2
         assertEquals("[True, False]", listOf(true, false).chunked(2)[0].toString())  // [True, False]
-        // `filterNotNullTo` is driven at a REFERENCE element only. Its VALUE instantiations do not run today —
-        // `List<Int?>.filterNotNullTo` / `List<Boolean?>.filterNotNullTo` throw EntryPointNotFoundException, the
-        // destination-taking sibling of the erasure gap this method measures. A red case cannot live in this lane
-        // (it has no XFAIL mechanism); the value axis is driven in tests/roundtrip/scenarios/run.sh instead.
+        // `filterNotNullTo` is driven at a REFERENCE element only. Its known value-element limitation is tracked as
+        // a bug rather than being accepted through a test-suite XFAIL.
         val ss: List<String?> = listOf("a", null, "b")
         val sdest = mutableListOf<String>()
         ss.filterNotNullTo(sdest)

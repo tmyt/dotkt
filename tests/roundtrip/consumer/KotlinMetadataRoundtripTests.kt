@@ -30,10 +30,8 @@
 //   crossModuleNothingBranchMerge <- roundtrip-nothing       (#135/#197) companion-static + top-level `fun f(): Nothing`
 //                                                             in a value merge; the merge is now well-typed IL, which
 //                                                             is what let this section leave the stdout-only shell lane
-// STAYED in the shell lane (tests/roundtrip/scenarios/run.sh):
-//   roundtrip-generic-hof / roundtrip-receiver-lambda — now formally clean after low-arity delegate ABI unification;
-//                               pending only mechanical migration to this in-process lane.
-// (roundtrip-comparable-meta stays in shell as a full reference-KLIB round-trip.)
+// Higher-order generic and receiver-function cases live in RoundtripSurfaceTests and use this same
+// ProjectReference graph.
 @file:OptIn(kotlin.ExperimentalUnsignedTypes::class)
 import roundtrip.palette.Color
 import kotlinx.roundtrip.palette.StartMode
@@ -392,8 +390,8 @@ class KotlinApiShapeRoundtripTests {
     //       String rather than widening to Any? — if it widened, this file would not COMPILE;
     //   (b) the merge is well-typed IL. Nothing erases to a CLR `object` return, and letting that reach the merge
     //       put an `object` where a `string` belongs (ilverify StackUnexpected) though the arm always throws, so
-    //       the RUN was green. That formal-only gap is exactly what kept this case in the shell lane, which
-    //       asserts stdout and never ilverifies; bir2cir now terminates the Nothing arm, so it runs HERE.
+    //       the RUN was green. bir2cir now terminates the Nothing arm, so this typed NUnit assertion and the suite's
+    //       ILVerify pass own the complete contract together.
     @TestAttribute
     fun crossModuleNothingBranchMerge() {
         ClassicAssert.AreEqual("kept", pickNothing(1))           // kept   the section's golden stdout value

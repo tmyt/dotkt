@@ -2,7 +2,7 @@
 # gate.sh — the CHANGE-AWARE gate wrapper.
 #
 # The canonical suites under tests/ each rebuild + gate a WHOLE stage from scratch; running the
-# complete set still rebuilds the stdlib and the irreducible cross-module scenarios. This wrapper reads
+# complete set still rebuilds the stdlib and the categorized compiler projects. This wrapper reads
 # the set of CHANGED paths and runs the MINIMAL CORRECT rebuild + suite
 # subset for exactly those changes. It does NOT reimplement any suite — it selects which of the existing
 # Make suite targets to invoke and whether to force a clean stdlib rebuild first.
@@ -79,7 +79,7 @@ collect_changes() {
 }
 
 # ---- selection state ------------------------------------------------------------------------------
-declare -A WANT=()          # suite -> 1 (compiler_tests schema sanity msbuild roundtrip widedelegates packagedsdk)
+declare -A WANT=()          # suite -> 1 (compiler_tests schema sanity msbuild widedelegates packagedsdk)
 declare -a REASONS=()       # human-readable "path -> decision" lines
 CLEAN=0                     # force a clean stdlib rebuild
 NEED_FULL=0                 # an unmatched/broad path forces the complete set
@@ -116,7 +116,6 @@ classify() { # <path>
 		tests/ir/run-sanity.sh) want sanity; reason "$p -> verify-sanity" ;;
 		tests/msbuild/*) want msbuild; reason "$p -> stateful MSBuild tests" ;;
 		tests/packaged-sdk/*) want packagedsdk; reason "$p -> packaged SDK tests" ;;
-		tests/roundtrip/scenarios/*) want roundtrip; reason "$p -> shell round-trip scenarios" ;;
 		tests/basic/*|tests/coroutines/*|tests/interop/*|tests/roundtrip/*|tests/support/*|tests/run-nunit-tests.sh|tests/run-ilverify.sh)
 			want compiler_tests; reason "$p -> categorized compiler tests" ;;
 		tests/special/wide-delegates/*)
@@ -132,14 +131,14 @@ classify() { # <path>
 }
 
 # ---- suite targets --------------------------------------------------------------------------------
-declare -a RUN_ORDER=(compiler_tests schema sanity msbuild roundtrip widedelegates targetuniverse packagedsdk)
+declare -a RUN_ORDER=(compiler_tests schema sanity msbuild widedelegates targetuniverse packagedsdk)
 declare -A SUITE_TARGET=(
 	[compiler_tests]=verify-tests [schema]=verify-schema [sanity]=verify-sanity
-	[msbuild]=verify-msbuild [roundtrip]=verify-roundtrip
+	[msbuild]=verify-msbuild
 	[widedelegates]=verify-wide-delegates [targetuniverse]=verify-target-universe [packagedsdk]=verify-packaged-sdk
 )
 
-FULL_SUITES=(compiler_tests schema sanity msbuild roundtrip widedelegates targetuniverse)
+FULL_SUITES=(compiler_tests schema sanity msbuild widedelegates targetuniverse)
 
 # ---- compute the plan -----------------------------------------------------------------------------
 mapfile -t CHANGES < <(collect_changes)

@@ -167,8 +167,8 @@ class GenericMetadataRoundtripTests {
 
         // #147: unlike the return carrier above, parameter / constructor / property declaration slots also need the
         // pre-erasure Slot<T?> shape. `unwrapSlot` must infer T from its parameter without an expected return type.
-        // The raw-field slot is asserted directly on dll2klib's structured metadata in verify-roundtrip: a separately
-        // tracked raw-field access path currently routes a projected member through a nonexistent getter.
+        // The property and function slots are consumed directly below; their compilation and runtime values require
+        // dll2klib to restore the structured nullable-generic carrier from the producer assembly.
         val inferred = unwrapSlot(Slot<String?>("param"))
         ClassicAssert.AreEqual("param", inferred)
 

@@ -31,11 +31,8 @@ PROJECTS=(
 	# OWN suite project (subject-split: basic · interop · coroutines · roundtrip) for the cold-core state-machine
 	# family. tests/support/coroutines provides the shared dotkt.support.blockOn drive imported by the fixtures.
 	"tests/coroutines"
-	# ProjectReference round-trip consolidation lane (docs/design-nunit-test-harness.md §3; playbook §3): a producer
-	# DotKt LIBRARY (tests/roundtrip/producer) consumed via <ProjectReference> as its BUILT dll (dll2klib re-import,
-	# NOT source) by this NUnit consumer. (generic-hof and receiver-lambda are green after low-arity delegate ABI
-	# unification but have not yet been migrated; roundtrip-nothing moved here once #197 made its value merge
-	# well-typed IL, which is what a lane that ilverifies requires.)
+	# ProjectReference round-trip lane (docs/design-nunit-test-harness.md §3; playbook §3): a producer DotKt library
+	# is consumed via <ProjectReference> as its BUILT dll (dll2klib re-import, NOT source) by this NUnit consumer.
 	"tests/roundtrip/consumer"
 	# Bidirectional ProjectReference: Kotlin consumes C#, then a C# NUnit project consumes the emitted Kotlin library
 	# at compile time. This also supersedes the former reflection-only reverse-interop case.
@@ -52,7 +49,7 @@ PROJECTS=(
 declare -A EXPECTED_DISCOVERED=(
 	["tests/basic"]=379
 	["tests/coroutines"]=159
-	["tests/roundtrip/consumer"]=53
+	["tests/roundtrip/consumer"]=62
 	["tests/roundtrip/bidirectional/consumer"]=3
 	["tests/interop/consumer"]=129
 )
