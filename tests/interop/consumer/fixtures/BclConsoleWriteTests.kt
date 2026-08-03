@@ -1,11 +1,9 @@
 // `System.Console.WriteLine` called explicitly, and with it the .NET half of the omitted-`vararg` fill.
 //
-// Every reference assembly is projected COMPLETELY, so `Console.WriteLine`'s `params object?[]?` overload is one of the
-// frontend's candidates. For a NON-NULL `String` argument Kotlin picks it over `WriteLine(value: String?)`: `String` is
-// a strict subtype of `String?`, which makes the two-parameter candidate the more specific one, and the vararg
-// tie-break never applies. That is ordinary Kotlin resolution over a faithful projection, so the backend's job is to
-// fill the omitted vararg with Kotlin's empty array — which is exactly what it failed to do, refusing the call at CIL
-// emission with an argument-count mismatch. `Console.WriteLine("x")` is therefore this family's canonical shape.
+// Every reference assembly is projected completely, including `Console.WriteLine(format, params object?[]?)`. #367
+// also gives the fixed `WriteLine(string? value)` a metadata-only `String` view when the competing params prefix has
+// the same CLR type and differs only by NRT. Stock Kotlin resolution can then apply its non-vararg tiebreak, matching
+// C# without hiding either physical declaration. Explicit supplied/spread params calls remain available.
 //
 // The Kotlin-language half of the omitted-vararg family lives in tests/basic/fixtures/VarargOmissionTests.kt.
 //
@@ -32,25 +30,26 @@ private fun bclConsoleCapture(body: () -> Unit): String {
 }
 
 class BclConsoleWriteTests {
-    // The reported shape (fill in a TRAILING slot), the supplied form of the same overload, and the two controls that
-    // prove the fill did not over-fire: a zero-parameter overload must gain no argument, and a `String?` argument must
-    // still reach the non-vararg `WriteLine(value)` — the resolution split the whole diagnosis rests on.
+    // Non-null and nullable Strings both reach the fixed physical overload; supplied and explicit-empty params calls
+    // still reach the formatting overload. A zero-parameter overload must gain no argument.
     @TestAttribute
-    fun writeLineSelectsAndFillsTheParamsOverload() {
+    fun writeLineMatchesCSharpForTheNrtOnlyOverloadFamily() {
         val nl = Environment.NewLine
         assertEquals("hello$nl", bclConsoleCapture { Console.WriteLine("hello") })
         assertEquals("a-b$nl", bclConsoleCapture { Console.WriteLine("{0}-{1}", "a", "b") })
+        assertEquals("{literal}$nl", bclConsoleCapture {
+            Console.WriteLine("{{literal}}", *emptyArray<Any?>())
+        })
         assertEquals(nl, bclConsoleCapture { Console.WriteLine() })
         val maybe: String? = "n"
         assertEquals("n$nl", bclConsoleCapture { Console.WriteLine(maybe) })
     }
 
-    // The user-visible consequence of that resolution (docs/dotkt-semantics.md §8g): the selected overload FORMATS its
-    // first argument, so a doubled brace is an escape. Fails if resolution ever moves to `WriteLine(String?)`, which
-    // the assertions above would not notice.
+    // The fixed overload treats braces literally. This used to throw FormatException when Kotlin selected the empty
+    // expanded params form; the exact observable is stronger than merely checking identical text such as "hello".
     @TestAttribute
-    fun theSelectedOverloadFormatsItsArgument() {
-        assertEquals("{literal}" + Environment.NewLine, bclConsoleCapture { Console.WriteLine("{{literal}}") })
+    fun theFixedOverloadDoesNotInterpretAFormatString() {
+        assertEquals("{0}" + Environment.NewLine, bclConsoleCapture { Console.WriteLine("{0}") })
     }
 
     // A projected `params` member whose variadic parameter is the ONLY one, so the fill lands in slot 0 rather than a

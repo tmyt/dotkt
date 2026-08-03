@@ -11,6 +11,12 @@ fun retNullable(flag: Boolean): String? = if (flag) "y" else null  // T? (nullab
 fun takeNullable(s: String?): Int = s?.length ?: -1                // T? (nullable param — the sharp signal)
 fun retNullableInt(flag: Boolean): Int? = if (flag) 1 else null    // value T? = System.Nullable<int> (structural)
 
+// #367 control: this is a Kotlin declaration family, not a foreign CLR family. Its original overload semantics must
+// survive dll2klib re-import unchanged: a non-null String selects the more-specific vararg overload, while String?
+// selects the fixed overload. The foreign-CLR NRT bridge must never be added to a DotKt-produced assembly.
+fun dotKtParamsChoice(value: String?): String = "fixed:" + (value ?: "<null>")
+fun dotKtParamsChoice(format: String, vararg args: Any?): String = "params:" + args.size
+
 // #251 — CONSTRUCTOR parameters carry the same NRT byte as method parameters: a PRIMARY and a SECONDARY ctor param
 // here, a CLR nested type's ctor param in tests/roundtrip/bidirectional (a nested Kotlin class is not surfaced to a
 // Kotlin consumer by dll2klib, so only the C# lane can name it).

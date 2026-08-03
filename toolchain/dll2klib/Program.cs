@@ -565,6 +565,16 @@ internal sealed class ArityNames
 
 internal sealed class AssemblyScanner
 {
+    private sealed record ProjectedFunction(
+        MethodDefinitionHandle Handle,
+        Function Declaration,
+        ImmutableArray<string> PhysicalParameters);
+
+    private sealed record ProjectedConstructor(
+        MethodDefinitionHandle Handle,
+        Constructor Declaration,
+        ImmutableArray<string> PhysicalParameters);
+
     private readonly MetadataReader _md;
     private readonly MetadataAttributes _attrs;
     private readonly ArityNames _arityNames;
@@ -818,6 +828,8 @@ internal sealed class AssemblyScanner
             }
         }
 
+        var projectedFunctions = new List<ProjectedFunction>();
+        var projectedConstructors = new List<ProjectedConstructor>();
         foreach (var methodHandle in def.GetMethods())
         {
             var method = _md.GetMethodDefinition(methodHandle);
@@ -828,10 +840,15 @@ internal sealed class AssemblyScanner
             var sig = method.DecodeSignature(signatures, context);
             if (name == ".ctor")
             {
-                result.Constructor.Add(new Constructor {
+                var constructor = new Constructor {
                     Flags = Flags.Visibility(method.Attributes),
                     ValueParameter = { Parameters(methodHandle, method, sig.ParameterTypes, names, signatures, context) },
-                });
+                };
+                result.Constructor.Add(constructor);
+                projectedConstructors.Add(new ProjectedConstructor(
+                    methodHandle,
+                    constructor,
+                    PhysicalParameterKeys(method, context)));
             }
             else if ((method.Attributes & MethodAttributes.SpecialName) == 0 && !name.StartsWith('<'))
             {
@@ -855,7 +872,16 @@ internal sealed class AssemblyScanner
                 PromoteReceiver(methodHandle, method, function);
                 AddMethodTypeParameters(method, function, names, signatures, context);
                 result.Function.Add(function);
+                projectedFunctions.Add(new ProjectedFunction(
+                    methodHandle,
+                    function,
+                    PhysicalParameterKeys(method, context)));
             }
+        }
+        if (!_attrs.IsDotKtAssembly)
+        {
+            AddNrtParamsOverloadBridges(projectedConstructors, result.Constructor, names);
+            AddNrtParamsOverloadBridges(projectedFunctions, result.Function, names);
         }
         AddMemberAwaitBridges(handle, def, result, names, signatures, typeContext);
         foreach (var methodHandle in def.GetMethods())
@@ -1652,6 +1678,179 @@ internal sealed class AssemblyScanner
         return false;
     }
 
+    // A foreign CLR overload family can differ in Kotlin ONLY because NRT annotations become real Kotlin
+    // nullability. C# erases those annotations while ranking overloads, so
+    //
+    //   M(string? value)                         (N: fixed arity)
+    //   M(string format, params object?[] args)  (V: expanded form)
+    //
+    // picks N in C# but V in Kotlin: String is strictly more specific than String?, before Kotlin reaches its
+    // non-vararg tiebreak. Preserve BOTH real declarations and add a metadata-only, narrowed VIEW of N with V's
+    // fixed-prefix Kotlin types. Stock Kotlin resolution then sees equally-specific String parameters and chooses the
+    // fixed-arity view. The original nullable view is marked with Kotlin's standard low-priority annotation: it is
+    // still the only applicable declaration for a nullable actual, while removing a three-way ambiguity for generic
+    // T?/T families when the non-null view applies. The view still names N physically: NRT is absent from the CLR
+    // signature, and the raw physical prefix equality below proves there is no Object-vs-String or
+    // collapsed-delegate-type substitution hiding here.
+    //
+    // This is intentionally a CLOSED outer-nullability rule. It never widens a parameter, never looks through nested
+    // variance/platform types, and never applies to a DotKt assembly (whose original Kotlin overload semantics must
+    // round-trip unchanged). See #367.
+    private void AddNrtParamsOverloadBridges(
+        IReadOnlyList<ProjectedFunction> methods,
+        Google.Protobuf.Collections.RepeatedField<Function> declarations,
+        NameTable names)
+    {
+        var existing = declarations.Select(FunctionSurfaceKey).ToHashSet(StringComparer.Ordinal);
+        foreach (var family in methods.GroupBy(x => {
+            var method = _md.GetMethodDefinition(x.Handle);
+            return (
+                Name: _md.GetString(method.Name),
+                Static: (method.Attributes & MethodAttributes.Static) != 0,
+                GenericArity: method.GetGenericParameters().Count);
+        }))
+        {
+            var variadics = family.Where(x => IsParamsFunction(x.Declaration)).ToList();
+            var fixedArity = family.Where(x => x.Declaration.ValueParameter.All(p => p.VarargElementType is null)).ToList();
+            foreach (var variadic in variadics)
+            foreach (var fixedMethod in fixedArity)
+            {
+                if (!PhysicalPrefixMatches(fixedMethod.PhysicalParameters, variadic.PhysicalParameters)) continue;
+                var fixedTypes = FunctionParameterTypes(fixedMethod.Declaration);
+                var variadicTypes = FunctionParameterTypes(variadic.Declaration);
+                if (fixedTypes.Count != variadicTypes.Count - 1 ||
+                    !IsStrictOuterNullabilityNarrowing(fixedTypes, variadicTypes))
+                    continue;
+
+                var bridge = fixedMethod.Declaration.Clone();
+                ReplaceFunctionParameterTypes(bridge, variadicTypes.Take(fixedTypes.Count));
+                var key = FunctionSurfaceKey(bridge);
+                if (!existing.Add(key)) continue;
+                declarations.Add(bridge);
+                AddLowPriorityAnnotation(fixedMethod.Declaration.FunctionAnnotation, names);
+            }
+        }
+    }
+
+    private static void AddNrtParamsOverloadBridges(
+        IReadOnlyList<ProjectedConstructor> constructors,
+        Google.Protobuf.Collections.RepeatedField<Constructor> declarations,
+        NameTable names)
+    {
+        var existing = declarations.Select(ConstructorSurfaceKey).ToHashSet(StringComparer.Ordinal);
+        var variadics = constructors.Where(x => IsParamsConstructor(x.Declaration)).ToList();
+        var fixedArity = constructors.Where(x => x.Declaration.ValueParameter.All(p => p.VarargElementType is null)).ToList();
+        foreach (var variadic in variadics)
+        foreach (var fixedConstructor in fixedArity)
+        {
+            if (!PhysicalPrefixMatches(fixedConstructor.PhysicalParameters, variadic.PhysicalParameters)) continue;
+            var fixedTypes = fixedConstructor.Declaration.ValueParameter.Select(p => p.Type).ToList();
+            var variadicTypes = variadic.Declaration.ValueParameter.Select(p => p.Type).ToList();
+            if (fixedTypes.Count != variadicTypes.Count - 1 ||
+                !IsStrictOuterNullabilityNarrowing(fixedTypes, variadicTypes))
+                continue;
+
+            var bridge = fixedConstructor.Declaration.Clone();
+            for (var i = 0; i < fixedTypes.Count; i++)
+                bridge.ValueParameter[i].Type = variadicTypes[i].Clone();
+            var key = ConstructorSurfaceKey(bridge);
+            if (!existing.Add(key)) continue;
+            declarations.Add(bridge);
+            AddLowPriorityAnnotation(fixedConstructor.Declaration.ConstructorAnnotation, names);
+        }
+    }
+
+    private static void AddLowPriorityAnnotation(
+        Google.Protobuf.Collections.RepeatedField<Annotation> annotations,
+        NameTable names)
+    {
+        if (annotations.Any(a =>
+            names.ClassName(a.Id) == "kotlin.internal.LowPriorityInOverloadResolution"))
+            return;
+        annotations.Add(new Annotation {
+            Id = names.Class("kotlin.internal.LowPriorityInOverloadResolution"),
+        });
+    }
+
+    private ImmutableArray<string> PhysicalParameterKeys(MethodDefinition method, GenericContext context) =>
+        method.DecodeSignature(RawSignatureTypeProvider.Instance, context).ParameterTypes;
+
+    private static bool PhysicalPrefixMatches(
+        ImmutableArray<string> fixedParameters,
+        ImmutableArray<string> variadicParameters) =>
+        fixedParameters.Length == variadicParameters.Length - 1 &&
+        fixedParameters.SequenceEqual(variadicParameters.Take(fixedParameters.Length), StringComparer.Ordinal);
+
+    private static bool IsParamsFunction(Function function) =>
+        function.ValueParameter.Count > 0 &&
+        function.ValueParameter[^1].VarargElementType is not null &&
+        function.ValueParameter.Take(function.ValueParameter.Count - 1).All(p => p.VarargElementType is null);
+
+    private static bool IsParamsConstructor(Constructor constructor) =>
+        constructor.ValueParameter.Count > 0 &&
+        constructor.ValueParameter[^1].VarargElementType is not null &&
+        constructor.ValueParameter.Take(constructor.ValueParameter.Count - 1).All(p => p.VarargElementType is null);
+
+    private static List<KType> FunctionParameterTypes(Function function)
+    {
+        var result = new List<KType>();
+        if (function.ReceiverType is { } receiver) result.Add(receiver);
+        result.AddRange(function.ContextParameter.Select(p => p.Type));
+        result.AddRange(function.ValueParameter.Select(p => p.Type));
+        return result;
+    }
+
+    private static void ReplaceFunctionParameterTypes(Function function, IEnumerable<KType> replacements)
+    {
+        using var replacement = replacements.GetEnumerator();
+        KType Next()
+        {
+            if (!replacement.MoveNext()) throw new InvalidOperationException("NRT params bridge type-vector mismatch");
+            return replacement.Current.Clone();
+        }
+        if (function.ReceiverType is not null) function.ReceiverType = Next();
+        foreach (var parameter in function.ContextParameter) parameter.Type = Next();
+        foreach (var parameter in function.ValueParameter) parameter.Type = Next();
+        if (replacement.MoveNext()) throw new InvalidOperationException("NRT params bridge type-vector mismatch");
+    }
+
+    private static bool IsStrictOuterNullabilityNarrowing(
+        IReadOnlyList<KType> wider,
+        IReadOnlyList<KType> narrower)
+    {
+        if (wider.Count > narrower.Count) return false;
+        var strict = false;
+        for (var i = 0; i < wider.Count; i++)
+        {
+            if (wider[i].Equals(narrower[i])) continue;
+            if (!IsOuterNullabilityNarrowing(wider[i], narrower[i])) return false;
+            strict = true;
+        }
+        return strict;
+    }
+
+    private static bool IsOuterNullabilityNarrowing(KType wider, KType narrower)
+    {
+        // A flexible/platform T! is already considered at both bounds by Kotlin. Replacing an explicit T? with one,
+        // or treating its upper bound as a strict NRT contract, would lose information rather than repair an inversion.
+        if (!wider.Nullable || narrower.Nullable ||
+            wider.FlexibleUpperBound is not null || narrower.FlexibleUpperBound is not null ||
+            wider.HasFlexibleTypeCapabilitiesId || narrower.HasFlexibleTypeCapabilitiesId)
+            return false;
+        var core = wider.Clone();
+        core.Nullable = false;
+        return core.Equals(narrower);
+    }
+
+    private static string FunctionSurfaceKey(Function function) =>
+        $"{function.Name}|{function.Flags & (1 << 18)}|{function.TypeParameter.Count}|" +
+        string.Join(";", FunctionParameterTypes(function).Select(TypeSurfaceKey));
+
+    private static string ConstructorSurfaceKey(Constructor constructor) =>
+        string.Join(";", constructor.ValueParameter.Select(p => TypeSurfaceKey(p.Type)));
+
+    private static string TypeSurfaceKey(KType type) => Convert.ToBase64String(type.ToByteArray());
+
     // Delegate overload families whose parameter types differ only by
     // function shape are inherently ambiguous for a bare Kotlin lambda.
     // Preserve every overload and express preference with Kotlin's standard
@@ -1785,6 +1984,7 @@ internal sealed class AssemblyScanner
         NameTable names,
         SignatureDecoder signatures)
     {
+        var projectedFunctions = new List<ProjectedFunction>();
         foreach (var methodHandle in def.GetMethods())
         {
             var method = _md.GetMethodDefinition(methodHandle);
@@ -1818,6 +2018,10 @@ internal sealed class AssemblyScanner
             function.FunctionAnnotation.Add(ClrExternalAnnotation(names, MetadataTypeName(owner)));
             function.Flags |= 1;
             package.Function.Add(function);
+            projectedFunctions.Add(new ProjectedFunction(
+                methodHandle,
+                function,
+                PhysicalParameterKeys(method, context)));
             var isGetAwaiter = _md.GetString(method.Name) == "GetAwaiter";
             KType? awaitResult = null;
             var hasAwaitResult = isGetAwaiter &&
@@ -1852,6 +2056,8 @@ internal sealed class AssemblyScanner
                         signatures);
             }
         }
+        if (!_attrs.IsDotKtAssembly)
+            AddNrtParamsOverloadBridges(projectedFunctions, package.Function, names);
     }
 
     private void ReadNestedClasses(
@@ -2847,6 +3053,73 @@ internal sealed record GenericContext(
     TypeDefinitionHandle Type,
     MethodDefinitionHandle Method,
     IReadOnlyDictionary<GenericParameterHandle, int> TypeParameterIds);
+
+// A lossless-enough identity decoder for comparing two parameter TYPE signatures inside one CLR owner. The ordinary
+// SignatureDecoder deliberately projects distinct CLR types into shared Kotlin vocabulary (two delegate classes with
+// the same Invoke shape, for example), so its KType output cannot prove that an NRT bridge still targets the same
+// physical member. This decoder retains CLR names, class/value kind, generic positions, arrays, pointers, byrefs,
+// function pointers, and custom modifiers. A false negative merely omits a bridge; a false positive could retarget a
+// call, so the comparison is intentionally strict.
+internal sealed class RawSignatureTypeProvider : ISignatureTypeProvider<string, GenericContext>
+{
+    public static RawSignatureTypeProvider Instance { get; } = new();
+
+    public string GetArrayType(string elementType, ArrayShape shape) =>
+        $"array[{shape.Rank};{string.Join(",", shape.Sizes)};{string.Join(",", shape.LowerBounds)}]<{elementType}>";
+    public string GetByReferenceType(string elementType) => $"byref<{elementType}>";
+    public string GetFunctionPointerType(MethodSignature<string> signature) =>
+        $"fnptr[{signature.Header.RawValue};{signature.GenericParameterCount};{signature.RequiredParameterCount}]" +
+        $"({string.Join(",", signature.ParameterTypes)})->{signature.ReturnType}";
+    public string GetGenericInstantiation(string genericType, ImmutableArray<string> typeArguments) =>
+        $"{genericType}<{string.Join(",", typeArguments)}>";
+    public string GetGenericMethodParameter(GenericContext genericContext, int index) => $"!!{index}";
+    public string GetGenericTypeParameter(GenericContext genericContext, int index) => $"!{index}";
+    public string GetModifiedType(string modifier, string unmodifiedType, bool isRequired) =>
+        $"{(isRequired ? "modreq" : "modopt")}<{modifier}>({unmodifiedType})";
+    public string GetPinnedType(string elementType) => $"pinned<{elementType}>";
+    public string GetPointerType(string elementType) => $"ptr<{elementType}>";
+    public string GetPrimitiveType(PrimitiveTypeCode typeCode) => $"primitive:{(int)typeCode}";
+    public string GetSZArrayType(string elementType) => $"szarray<{elementType}>";
+    public string GetTypeFromDefinition(MetadataReader reader, TypeDefinitionHandle handle, byte rawTypeKind) =>
+        $"{rawTypeKind}:def:{DefinitionName(reader, handle)}";
+    public string GetTypeFromReference(MetadataReader reader, TypeReferenceHandle handle, byte rawTypeKind) =>
+        $"{rawTypeKind}:ref:{ReferenceName(reader, handle)}";
+    public string GetTypeFromSpecification(
+        MetadataReader reader,
+        GenericContext genericContext,
+        TypeSpecificationHandle handle,
+        byte rawTypeKind) =>
+        $"{rawTypeKind}:spec:{reader.GetTypeSpecification(handle).DecodeSignature(this, genericContext)}";
+
+    private static string DefinitionName(MetadataReader reader, TypeDefinitionHandle handle)
+    {
+        var definition = reader.GetTypeDefinition(handle);
+        var simple = reader.GetString(definition.Name);
+        var parent = definition.GetDeclaringType();
+        if (!parent.IsNil) return DefinitionName(reader, parent) + "+" + simple;
+        var ns = reader.GetString(definition.Namespace);
+        return string.IsNullOrEmpty(ns) ? simple : ns + "." + simple;
+    }
+
+    private static string ReferenceName(MetadataReader reader, TypeReferenceHandle handle)
+    {
+        var reference = reader.GetTypeReference(handle);
+        var simple = reader.GetString(reference.Name);
+        if (reference.ResolutionScope.Kind == HandleKind.TypeReference)
+            return ReferenceName(reader, (TypeReferenceHandle)reference.ResolutionScope) + "+" + simple;
+        var ns = reader.GetString(reference.Namespace);
+        var name = string.IsNullOrEmpty(ns) ? simple : ns + "." + simple;
+        var scope = reference.ResolutionScope.Kind switch {
+            HandleKind.AssemblyReference =>
+                "asm:" + reader.GetString(reader.GetAssemblyReference((AssemblyReferenceHandle)reference.ResolutionScope).Name),
+            HandleKind.ModuleReference =>
+                "module:" + reader.GetString(reader.GetModuleReference((ModuleReferenceHandle)reference.ResolutionScope).Name),
+            HandleKind.ModuleDefinition => "module:self",
+            _ => reference.ResolutionScope.Kind.ToString(),
+        };
+        return scope + ":" + name;
+    }
+}
 
 internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericContext>
 {

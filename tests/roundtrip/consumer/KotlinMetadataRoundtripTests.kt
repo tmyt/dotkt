@@ -51,6 +51,7 @@ import roundtrip.nrt.takeNonNull
 import roundtrip.nrt.retNullable
 import roundtrip.nrt.takeNullable
 import roundtrip.nrt.retNullableInt
+import roundtrip.nrt.dotKtParamsChoice
 import roundtrip.nrt.UnitAheadHolder
 import roundtrip.nrt.NullableCtorHolder
 import roundtrip.nrt.NullableValueCtor
@@ -318,6 +319,10 @@ class KotlinApiShapeRoundtripTests {
         ClassicAssert.AreEqual(5, takeNullable("hello"))           // 5   nullable param with a non-null arg
         ClassicAssert.AreEqual(-1, retNullableInt(false) ?: -1)    // -1  value Nullable<int> — the null (HasValue=false) branch
         ClassicAssert.AreEqual(1, retNullableInt(true) ?: -1)      // 1   value Nullable<int> — the value branch
+        ClassicAssert.AreEqual("params:0", dotKtParamsChoice("x")) // DotKt-origin family keeps Kotlin's vararg choice
+        val maybe: String? = "n"
+        ClassicAssert.AreEqual("fixed:n", dotKtParamsChoice(maybe))
+        ClassicAssert.AreEqual("params:1", dotKtParamsChoice("x", 1))
         // A `Unit` node AHEAD of the nullable one in the SAME slot: `Unit` holds no byte in the flattened array, so
         // writing one for it would shift the `String?` onto Unit's and re-import the pair as `Pair<Unit!, String>` —
         // and then the `null` here would not compile.
