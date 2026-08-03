@@ -9,6 +9,7 @@ import org.jetbrains.kotlin.ir.declarations.IrDeclarationWithVisibility
 import org.jetbrains.kotlin.ir.declarations.IrAnonymousInitializer
 import org.jetbrains.kotlin.ir.declarations.IrClass
 import org.jetbrains.kotlin.ir.declarations.IrConstructor
+import org.jetbrains.kotlin.ir.declarations.IrDeclarationOrigin
 import org.jetbrains.kotlin.ir.declarations.IrFile
 import org.jetbrains.kotlin.ir.declarations.IrParameterKind
 import org.jetbrains.kotlin.ir.declarations.IrProperty
@@ -744,6 +745,32 @@ internal fun BirEmitter.call(call: IrCall): String {
 	// named `stackBuffer` is not mistaken for the intrinsic.
 	if (callee.fqNameWhenAvailable?.asString() == "kotlin.clr.stackBuffer")
 		return emitStackBuffer(call)
+	// #186: a class-DELEGATED ClrEvent<T> property on a Kotlin receiver is still an event handle. Include a fake override
+	// inherited by a subclass, but do not capture every local ClrEvent property: field-like `by clrEvent()` and future
+	// local implementations have their own provider semantics rather than a delegated-interface receiver.
+	fun hasDelegatedEventOrigin(p: IrProperty, seen: MutableSet<IrProperty> = HashSet()): Boolean {
+		if (!seen.add(p)) return false
+		return p.origin == IrDeclarationOrigin.DELEGATED_MEMBER ||
+			p.overriddenSymbols.any { hasDelegatedEventOrigin(it.owner, seen) }
+	}
+	val localEventProp = callee.correspondingPropertySymbol?.owner
+	val localEventOwner = localEventProp?.parent as? IrClass
+	if (localEventProp != null && callee === localEventProp.getter
+		&& callee.returnType.classFqName?.asString() == "kotlin.clr.ClrEvent"
+		&& hasDelegatedEventOrigin(localEventProp)
+		&& localEventOwner != null && !isExternalNetType(localEventOwner)) {
+		if (!clrEventReceiverOk) {
+			hadError = true
+			messageCollector?.report(CompilerMessageSeverity.ERROR,
+				"a .NET event ('${localEventProp.name.asString()}') is not a first-class value: it may only be used with " +
+					"'.subscribe(handler)', not be read/assigned",
+				locationOf(call))
+			return """{"k":"unsupportedExpr","of":"clr-event-read-outside-subscription: ${localEventProp.name.asString()}"}"""
+		}
+		val eventRecv = dispatchReceiver(call)
+		if (eventRecv != null)
+			return """{"k":"clrEventGet","type":${birType(eventRecv.type).toJson()},"name":${str(localEventProp.name.asString())},"static":false,"recv":${expr(eventRecv)}${overridesJson(callee)}}"""
+	}
 	// A .NET event subscription `w.Changed.subscribe(h)` resolves (normal Kotlin resolution) to a member of the
 	// compiler-owned `kotlin.clr.ClrEvent<T>` fiction (the surfaced form of a .NET event member).
 	// kotc emits the PLAIN Kotlin call identity: a

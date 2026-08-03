@@ -43,6 +43,7 @@ import org.jetbrains.kotlin.ir.expressions.IrDoWhileLoop
 import org.jetbrains.kotlin.ir.expressions.IrVararg
 import org.jetbrains.kotlin.ir.expressions.IrSpreadElement
 import org.jetbrains.kotlin.ir.expressions.IrPropertyReference
+import org.jetbrains.kotlin.ir.expressions.IrReturn
 import org.jetbrains.kotlin.ir.expressions.IrFunctionReference
 import org.jetbrains.kotlin.ir.expressions.IrGetClass
 import org.jetbrains.kotlin.ir.declarations.IrLocalDelegatedProperty
@@ -544,6 +545,42 @@ internal fun BirEmitter.synthClrEvents(klass: IrClass): Pair<List<String>, List<
 	return backings to methods
 }
 
+/** #186 — a CLR interface event reached through Kotlin class delegation (`class A : B by c`) is represented in IR as
+ *  a DELEGATED_MEMBER `ClrEvent<T>` property whose getter forwards to the synthesized `$$delegate_N` field. A CLR event
+ *  is not a real Kotlin getter, so emit add_/remove_ declaration shells plus a pure BIR forwarding directive instead.
+ *  The directive carries only facts already present in Kotlin IR; bir2cir resolves the CLR delegate/accessors. */
+internal fun BirEmitter.synthClrEventForwarders(klass: IrClass): Pair<List<String>, List<String>> {
+	val forwards = ArrayList<String>()
+	val methods = ArrayList<String>()
+	val unit = fqnJson("kotlin.Unit")
+	for (p in klass.declarations.filterIsInstance<IrProperty>()) {
+		if (p.origin != IrDeclarationOrigin.DELEGATED_MEMBER || !isClrEventProperty(p)) continue
+		val getter = p.getter ?: continue
+		val ret = (getter.body as? IrBlockBody)?.statements?.singleOrNull() as? IrReturn ?: continue
+		val targetCall = ret.value as? IrCall ?: continue
+		val target = dispatchReceiver(targetCall) ?: continue
+		val handlerArg = (getter.returnType as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection
+		val handlerType = handlerArg?.type ?: continue
+		val name = p.name.asString()
+		val handlerJson = birType(handlerType).toJson()
+		val overriddenOwners = p.overriddenSymbols.mapNotNull {
+			(it.owner.parent as? IrClass)?.fqNameWhenAvailable?.asString()
+		}
+		fun overridesFor(kind: String) = if (overriddenOwners.isEmpty()) "" else
+			""","overrides":[${overriddenOwners.joinToString(",") { owner ->
+				"""{"owner":${fqnJson(owner)},"member":${str(name)},"kind":${str(kind)},"arity":1}"""
+			}}]"""
+		fun accessor(kind: String) =
+			"""{"name":${str("${kind}_$name")},"static":false,"override":false,"virtual":true,"abstract":false,"objectOverride":false,"vis":"public","params":[{"name":"value","type":$handlerJson}],"ret":$unit,"body":[{"k":"clrEventAccessor","kind":${str(kind)},"event":${str(name)}}]${overridesFor("event-$kind")}}"""
+
+		forwards.add(
+			"""{"name":${str(name)},"ownerType":${birType(target.type).toJson()},"recv":${expr(target)}}""")
+		methods.add(accessor("add"))
+		methods.add(accessor("remove"))
+	}
+	return forwards to methods
+}
+
 /** STEP-1 (kotc->bir2cir clrName migration) — a PURE-KOTLIN override marker for an emitted member: the transitive
  *  closure of interface/base members it overrides, each as {owner FQN, Kotlin member name, kind, arity}. NO CLR
  *  knowledge (no @ClrIntrinsic read, no BCL name). bir2cir (Step 2) consumes this + the ref.dll @ClrIntrinsic to
@@ -781,6 +818,8 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 	checkUnimplementedClrEvents(klass)
 	// `override val E by clrEvent()` synthesis (§4.2): the field-like event impl (backing directive + add_/remove_/raise_).
 	val (clrEventBackings, clrEventMethods) = synthClrEvents(klass)
+	// `class A : B by c` over a CLR event synthesizes forwarding add_/remove_ accessors (no backing field, no raise).
+	val (clrEventForwarders, clrEventForwardMethods) = synthClrEventForwarders(klass)
 	val instFields = klass.declarations.filterIsInstance<IrProperty>().mapNotNull { p ->
 		// A `by clrEvent()` property's `<E>$delegate` backing field (of the un-emittable `kotlin.clr.ClrEvent<T>` type) is
 		// REPLACED by the synthesized backing delegate field (bir2cir stamps `<E>$delegate : D`); never emit the fiction.
@@ -881,7 +920,7 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 		val setName = if (emitsSet(p)) str("set_" + p.name.asString()) else "null"
 		"""{"name":${str(p.name.asString())},"type":${birType(p.getter!!.returnType).toJson()},"get":${str(getName)},"set":$setName${overridesJson(p.getter!!)}}"""
 	}
-	val methods = (instMethods + statMethods + companionAccessors + userAccessors + clrEventMethods).joinToString(",")
+	val methods = (instMethods + statMethods + companionAccessors + userAccessors + clrEventMethods + clrEventForwardMethods).joinToString(",")
 	// A .NET base class (`: System.Exception(...)`, incl. a generic `: Collection<Int>()`) -> a `clr:`/`clrg:`
 	// type spec (via birType) that ilemit resolves by reflection; a Kotlin-user base emits its bare FQN identity
 	// carrying its ACTUAL constructed type arguments.
@@ -957,7 +996,9 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 	// `clrEvents` (§4.2): per-event backing directives for the `by clrEvent()` synthesis — bir2cir's ClrEventImplBinding
 	// turns each into a real `<E>$delegate : D` field + a type-level `clrEventDecl` (the `.event` metadata record).
 	val clrEventsJson = if (clrEventBackings.isEmpty()) "" else ""","clrEvents":[${clrEventBackings.joinToString(",")}]"""
-	val result = """{"name":${str(typeName(klass))},"kind":"class","abstract":$isAbstract,"vis":${str(vis)}$nestedIn$sealedFlag$tpJson$generatedFlag,"base":$baseJson,"interfaces":[$ifaces],"fields":[$fields],"ctors":[$ctors],"methods":[$methods],"properties":[$propsList]$clrEventsJson,"attrs":[${attrsJson(klass.annotations)}]${posJson(klass)}}"""
+	val clrEventForwardersJson = if (clrEventForwarders.isEmpty()) "" else
+		""","clrEventForwarders":[${clrEventForwarders.joinToString(",")}]"""
+	val result = """{"name":${str(typeName(klass))},"kind":"class","abstract":$isAbstract,"vis":${str(vis)}$nestedIn$sealedFlag$tpJson$generatedFlag,"base":$baseJson,"interfaces":[$ifaces],"fields":[$fields],"ctors":[$ctors],"methods":[$methods],"properties":[$propsList]$clrEventsJson$clrEventForwardersJson,"attrs":[${attrsJson(klass.annotations)}]${posJson(klass)}}"""
 	// Restore the captured-param remap installed at the top.
 	savedCaptureSubst.forEach { (tp, prev) -> if (prev != null) typeArgSubst[tp] = prev else typeArgSubst.remove(tp) }
 	return result

@@ -1,19 +1,16 @@
 # CLR event model for Kotlin — consume / implement / raise (MVVM, `INotifyPropertyChanged`)
 
-Status: design note (2026-07-20), **ABI-locked, user-approved (2026-07-20), implementation in
-progress**. **Initial implementation (0.9.7)** closes #187 (Kotlin class implementing a CLR interface
-event) + #113 (EmitClrEvent hardening) — the MVVM spine (declare / implement / raise). **Deferred to
-0.9.8** (user-directed 2026-07-20, "fiddlier than the rest"): #186 (class-delegation event
-forwarding) + the folded #174 (delegation-forwarder return covariance) — §4.4 / S4, a follow-on that
-reuses the S1/S2 synthesis machinery once the spine lands.
+Status: design note (2026-07-20), **ABI-locked, user-approved (2026-07-20), implemented**. The
+initial implementation closed #187 (Kotlin class implementing a CLR interface event) + #113
+(EmitClrEvent hardening) — the MVVM spine (declare / implement / raise). The §4.4 / S4 follow-up
+implements #186 class-delegation event forwarding for 0.9.9. The related general delegation-return
+work in #174 was handled separately.
 
-This note completes the `.NET event` story. Today DotKt can **consume** a CLR event
-(`c.CollectionChanged.subscribe(h)`) but cannot **provide** one from Kotlin: a Kotlin class that names a
-CLR interface carrying an event (`class KC : IB`, `class ViewModelBase : INotifyPropertyChanged`)
-compiles with no diagnostic and emits an invalid type (missing `add_E`/`remove_E` → `TypeLoadException`
-/ ilverify `InterfaceMethodNotImplemented`). That gap is the last thing between Kotlin-on-CLR and
-first-class .NET data binding (WPF / WinUI / Avalonia MVVM). This note locks the full model so a
-Kotlin class can **implement** and **raise** a CLR event, realizing the user's target API:
+This note completes the `.NET event` story. DotKt can **consume**, **implement**, **raise**, and
+**class-delegate** CLR events. The implementation prevents a Kotlin class that names a CLR event
+interface from silently emitting an invalid type (missing `add_E`/`remove_E` → `TypeLoadException` /
+ilverify `InterfaceMethodNotImplemented`) and provides the event shape needed by .NET data binding
+(WPF / WinUI / Avalonia MVVM):
 
 ```kotlin
 class ViewModelBase : INotifyPropertyChanged {
@@ -195,12 +192,12 @@ and a plain `ClrEvent.subscribe` call; bir2cir's `ClrEventSubscriptionBinding` e
 once, emits `clrEventAdd`,
 then constructs the stdlib `EventSubscription<T>` with a synthesized remove callback that captures the receiver.
 ilemit's `EmitClrEvent` links the ref.dll accessor and emits
-the delegate-wrap + `callvirt add_E`. **One kotc widening** (for #186 use-site): produce `clrEventGet`
-whenever the accessed member is a `ClrEvent<T>` property, **regardless of whether the receiver is a
-.NET type or a Kotlin type that implements a .NET-event interface** (`BirEmitterCalls.kt:870`). Today
-it only fires for a direct .NET member; a `ClrEvent` member reached through a Kotlin implementer never
-becomes `clrEventGet` and the fiction leaks. bir2cir then binds the accessor on the *receiver's* type
-(the synthesized forwarder in §4.4, or the interface slot).
+the delegate-wrap + `callvirt add_E`. For a #186 use site, kotc produces `clrEventGet` whenever the
+accessed member is a `ClrEvent<T>` property, **regardless of whether the receiver is a .NET type or a
+Kotlin type that implements a .NET-event interface**. bir2cir resolves a delegating Kotlin receiver
+through the module-wide forwarder relation from §4.4, then binds the accessor to the delegated CLR
+interface slot. The wrapper remains the receiver, so CLR interface dispatch enters its synthesized
+forwarder.
 
 ### 4.2 IMPLEMENT — `override val E by clrEvent()` (field-like event)
 
@@ -255,19 +252,18 @@ relation; ilemit emits pure CLR codegen):
 
 ### 4.4 DELEGATION — `class A : B by c` (#186)
 
-A third IMPLEMENT flavor: forwarding, not field-like. kotc's class-delegation forwarder currently
-**skips** the `ClrEvent<T>` member (`A.methods=["Ping"]`, no `add_E1`). Fix: for a delegated CLR
-interface event, synthesize `add_<E>`/`remove_<E>` **forwarder** accessors whose bodies are
-`clrEventAdd`/`clrEventRemove` on the delegate field `$$delegate_0` (`c`) — reusing the **consume**
-lowering (§4.1). No backing field, no `raise_` (you raise on `c`). At the use site, `a.E.subscribe(h)` on the
-Kotlin delegating class goes through the widened `clrEventGet` (§4.1) → `add_<E>` on `A`; closing its token calls
-`remove_<E>` on `A`. Both forward to `c`. This is the same synthesis machinery as §4.2 with forwarding bodies.
+A third IMPLEMENT flavor: forwarding, not field-like. For a delegated CLR interface event, kotc
+synthesizes `add_<E>`/`remove_<E>` declaration shells plus a `clrEventForwarders` fact containing the
+frontend-resolved delegated receiver expression and overridden event slot. bir2cir resolves that slot's
+concrete delegate type, writes forwarding `clrEventAdd`/`clrEventRemove` bodies against `$$delegate_0`
+(`c`), and emits the event metadata. No backing event field and no `raise_` are synthesized (the event
+is raised by `c`). At the use site, `a.E.subscribe(h)` goes through the widened `clrEventGet` (§4.1);
+CLR interface dispatch calls `add_<E>` on `A`, and closing the token calls `remove_<E>` on `A`. Both
+forward the **same concrete delegate instance** to `c`. The declaration/use relation is collected
+module-wide, so the delegating class and subscription may live in different Kotlin source files.
 
-> #174 (delegation forwarder narrows `MutableList.iterator()` return to the read-only `Iterator`) is
-> the same forwarder-synthesis site. Fold its fix in here: the delegation forwarder must carry the
-> **overridden slot's** declared return type (the `Mutable*` iterator), not the delegate expression's
-> read-only static type. The event forwarders and the covariant-return fix land in one bir2cir/kotc
-> forwarder pass.
+> #174 touched the same general class-delegation synthesis area, but its return-covariance correction
+> was completed separately and is not part of the event-forwarding implementation.
 
 ---
 
@@ -429,15 +425,14 @@ synthesis flavors, then hardening.
 | **S1** | kotc | Recognize `by clrEvent()`; synthesize the backing field + `add_/remove_/raise_` decls with tagged bodies + `overrides` closure (§4.2). Widen `clrEventGet` to any `ClrEvent<T>` member read (§4.1). Emit `clrEventRaise` for `handle.invoke(...)` (§4.3). | #187 |
 | **S2** | bir2cir | New `ClrEventImplBinding.cs`: resolve interface event → `EventHandlerType` + slot names off ref.dll; expand tagged accessor bodies → `clrEventAccessorImpl` CIR (CAS for field-like, forward for delegation); emit type-level `clrEventDecl`; bind `clrEventRaise` → `raise_<E>` call with the "no raise on consumed event" guard (§4.2/§4.3/§6). | #187 |
 | **S3** | ilemit | `EmitClrEventAccessorImpl` (CAS loop §1 for add/remove, `field?.Invoke` for raise) + `MethodImpl` wiring to the interface slots + `.event` metadata from `clrEventDecl`. | #187 |
-| **S4** *(deferred → 0.9.8)* | kotc + bir2cir | Class-delegation forwarder: synthesize forwarding `add_/remove_` for a delegated CLR interface event (§4.4); use-site `a.E.subscribe(h)` via widened `clrEventGet`. Carry the overridden slot's `Mutable*` return type in the forwarder (fold #174). **Not in the initial 0.9.7 implementation** (user-directed 2026-07-20) — a follow-on reusing S1/S2's synthesis machinery. | #186, #174 (0.9.8) |
+| **S4** *(implemented for 0.9.9)* | kotc + bir2cir | Class-delegation forwarder: synthesize forwarding `add_/remove_` for a delegated CLR interface event (§4.4); use-site `a.E.subscribe(h)` via widened `clrEventGet`; preserve exact delegate identity across add/remove. | #186 |
 | **S5** | ilemit | Route **all** event emit (consume, implement, raise, `.event`) through the guarded `LinkClrMethod`/`RequireDispatch`/null-checked `GetEvent` family; legible `ilemit:` breadcrumb on a missing/value-type/constructed-generic event owner instead of an opaque NRE. | #113 |
 | **S6** | tests + docs | Add `ClrEventTests.kt` (§7); record the raise deviation in `docs/dotkt-semantics.md` §8d; run the focused NUnit fixture and full gate. | — |
 
 Sequencing notes: **S0–S3 are the #187 spine** and must land together (a half-landed abstract marker
 without synthesis would red the gate on every existing interface-event consumer). **The initial 0.9.7
-implementation = S0–S3 + S5 + S6** (spine + #113 hardening + tests). **S4 is deferred to 0.9.8**
-(user-directed) — it depends only on S1's widened `clrEventGet` + S2's forwarder-body expansion, so it
-drops in cleanly once the spine lands. **S5** is independent hardening and can land any time after S3
+implementation = S0–S3 + S5 + S6** (spine + #113 hardening + tests). **S4 followed in 0.9.9**,
+reusing S1's widened `clrEventGet` and the S2 event-binding machinery. **S5** is independent hardening and can land any time after S3
 introduces the new emit sites. **S6** is the final gate + doc pass. Keep each new
 concern in its own file (bir2cir `ClrEventImplBinding.cs`; ilemit `EmitClrEventAccessorImpl` in the
 `Emitter.ClrInterop.cs` part) per the one-concern-per-file rule.
