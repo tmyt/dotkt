@@ -286,8 +286,10 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 			// just (__name, __ordinal) so the subclass ctor is uniform regardless of user params.
 			val sub = "<>${name}_${ent.name.asString()}"
 			val (superArgs, superBindings) = enumSuperArgs(cc)
-			subDefs.add(enumEntrySubclass(sub, name, cc, superArgs, superBindings))
-			fields.add("""{"name":${str(ent.name.asString())},"type":${fqnJson(name)},"static":true,"init":{"k":"new","type":${fqnJson(sub)},"args":[${nameOrd(i, ent).joinToString(",")}]}}""")
+			subDefs.add(enumEntrySubclass(
+				sub, name, cc, superArgs, superBindings,
+				userParams.map { birType(it.type).toJson() }))
+			fields.add("""{"name":${str(ent.name.asString())},"type":${fqnJson(name)},"static":true,"init":{"k":"new","type":${fqnJson(sub)},"argTypes":[${fqnJson("kotlin.String")},${fqnJson("kotlin.Int")}],"args":[${nameOrd(i, ent).joinToString(",")}]}}""")
 		} else {
 			val ecc = (ent.initializerExpression as? IrExpressionBody)?.expression as? IrEnumConstructorCall
 			// An entry's `NAME(args)` is an omitting call site too (`R(1)` on `enum class Col(val rgb: Int, val
@@ -297,7 +299,9 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 			val (entryPlan, entryArgs) = ecc?.let { c -> withCallPlan(c) { filledArgs(c) } }
 				?: (null to emptyList<String>())
 			val newArgs = (nameOrd(i, ent) + entryArgs).joinToString(",")
-			val newEntry = """{"k":"new","type":${fqnJson(name)},"args":[$newArgs]}"""
+			val entrySig = (listOf(fqnJson("kotlin.String"), fqnJson("kotlin.Int")) +
+				userParams.map { birType(it.type).toJson() }).joinToString(",")
+			val newEntry = """{"k":"new","type":${fqnJson(name)},"argTypes":[$entrySig],"args":[$newArgs]}"""
 			val init = entryPlan?.wrap(newEntry, fqnJson(name)) ?: newEntry
 			fields.add("""{"name":${str(ent.name.asString())},"type":${fqnJson(name)},"static":true,"init":$init}""")
 		}
@@ -343,13 +347,15 @@ internal fun BirEmitter.enumSuperArgs(cc: IrClass): Pair<List<String>, String?> 
 /** A per-entry enum body `NAME(args) { override fun … }` -> a subclass `<>Enum_NAME : Enum` whose ctor takes only
  *  (__name, __ordinal) and forwards them plus the baked-in `args` to the base ctor; carries the overriding methods. */
 internal fun BirEmitter.enumEntrySubclass(subName: String, baseName: String, cc: IrClass,
-		userArgs: List<String>, delegationBindings: String?): String {
+		userArgs: List<String>, delegationBindings: String?, baseParamTypes: List<String>): String {
 	val overrides = cc.declarations.filterIsInstance<IrSimpleFunction>()
 		.filter { it.body != null && it.correspondingPropertySymbol == null }
 		.joinToString(",") { method(it, static = false) }
 	val baseArgs = (listOf("""{"k":"local","name":"__name"}""", """{"k":"local","name":"__ordinal"}""") + userArgs).joinToString(",")
+	val delegationSig = (listOf(fqnJson("kotlin.String"), fqnJson("kotlin.Int")) +
+		baseParamTypes).joinToString(",")
 	val bindings = delegationBindings?.let { ""","delegationBindings":$it""" } ?: ""
-	val subCtor = """{"params":[{"name":"__name","type":${fqnJson("kotlin.String")}},{"name":"__ordinal","type":${fqnJson("kotlin.Int")}}],"baseArgs":[$baseArgs],"thisArgs":null$bindings,"vis":"public","body":[]}"""
+	val subCtor = """{"params":[{"name":"__name","type":${fqnJson("kotlin.String")}},{"name":"__ordinal","type":${fqnJson("kotlin.Int")}}],"baseArgs":[$baseArgs],"thisArgs":null,"delegationSig":[$delegationSig]$bindings,"vis":"public","body":[]}"""
 	return """{"name":${str(subName)},"kind":"class","abstract":false,"vis":"public","base":${fqnJson(baseName)},"interfaces":[],"fields":[],"ctors":[$subCtor],"methods":[$overrides]}"""
 }
 
@@ -816,7 +822,7 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 	// `object` singleton: a static `INSTANCE` field initialized to `new Foo()` (run in the .cctor) — same shape
 	// as an enum entry. `IrGetObjectValue` loads it; member access then routes as normal instance access.
 	val instanceField = if (isObject)
-		listOf("""{"name":"INSTANCE","type":${fqnJson(typeName(klass))},"static":true,"init":{"k":"new","type":${fqnJson(typeName(klass))},"args":[]}}""")
+		listOf("""{"name":"INSTANCE","type":${fqnJson(typeName(klass))},"static":true,"init":{"k":"new","type":${fqnJson(typeName(klass))},"argTypes":[],"args":[]}}""")
 	else emptyList()
 	val fields = (instFields + synthFields + statFields + capFields + instanceField).joinToString(",")
 	val ctors = klass.declarations.filterIsInstance<IrConstructor>().joinToString(",") { ctor(klass, it, captures) }
@@ -1054,12 +1060,30 @@ internal fun BirEmitter.ctor(klass: IrClass, ctor: IrConstructor, captures: List
 	}
 	val baseJson = baseArgs?.let { "[$it]" } ?: "null"
 	val thisJson = thisArgs?.let { "[$it]" } ?: "null"
+	// Constructor delegation carries the frontend-selected declaration signature just like an ordinary call's `sig`.
+	// The target emitter may LINK this exact identity, but must not choose among same-arity CLR constructors from the
+	// reflection enumeration order. Include every physical leading slot authored here: captures forwarded to a lifted
+	// local target, or the enclosing-instance receiver of an inner target.
+	val hiddenDelegationSig = when {
+		delegating == null -> emptyList()
+		isThisDelegate && !klass.isInner -> captures.map { (decl, _) -> str(captureFieldType(decl)) }
+		!isThisDelegate -> delegateClass?.let { localClassCaptures[it] }.orEmpty()
+			.map { str(captureFieldType(it)) }
+		else -> emptyList()
+	}
+	val delegationSig = delegating?.let { d ->
+		val enclosing = listOfNotNull(dispatchReceiver(d)?.let { birType(it.type).toJson() })
+		val declared = d.symbol.owner.parameters.filter { it.kind == IrParameterKind.Regular }
+			.map { birType(it.type).toJson() }
+		(hiddenDelegationSig + enclosing + declared).joinToString(",")
+	}
+		?.let { ""","delegationSig":[$it]""" } ?: ""
 	// #6 non-null parameter PRECONDITIONS at entry. They land AFTER the base/`this` ctor delegation (baseArgs/thisArgs
 	// ride a separate field), so a null user param dereferenced by a base-ctor arg NREs before this friendly NPE — an
 	// accepted ordering deviation from JVM's before-super() insertion (docs/dotkt-semantics.md).
 	val ctorBody = (preconditionChecks(ctor) + stmts).joinToString(",")
 	val bindingsJson = delegationBindings?.let { ""","delegationBindings":$it""" } ?: ""
-	return """{"params":[$params],"baseArgs":$baseJson,"thisArgs":$thisJson$bindingsJson,"vis":${str(visOf(ctor))},"body":[$ctorBody]}"""
+	return """{"params":[$params],"baseArgs":$baseJson,"thisArgs":$thisJson$delegationSig$bindingsJson,"vis":${str(visOf(ctor))},"body":[$ctorBody]}"""
 }
 
 internal fun BirEmitter.method(fn: IrSimpleFunction, static: Boolean): String {
@@ -1485,14 +1509,15 @@ internal fun BirEmitter.paramsJsonList(params: List<org.jetbrains.kotlin.ir.decl
 	return result
 }
 
-/** A `,"sig":[<TypeNode>,...]` field carried on a call so ilemit resolves the right OVERLOAD by name+signature.
- *  Emit it ALWAYS: for a non-overloaded callee it's harmless (ilemit's `MethodsBySig` lookup hits the sole method,
- *  or falls back to the name), and emitting unconditionally avoids any overload-detection edge case. The signature
+/** A `,"sig":[<TypeNode>,...]` field carrying the frontend-resolved declaration's parameter vector into BIR.
+ *  Emit it ALWAYS: for a non-overloaded callee it is still the exact declaration identity, and emitting
+ *  unconditionally avoids any overload-detection edge case. bir2cir projects this fact into the physical CIR member
+ *  descriptor; ilemit only links that descriptor. The signature
  *  MATCHES how `method()` lays out the def's `params` — the [isValueParameter] physical sequence `[ext receiver?] +
  *  contexts + regulars`, each `birType` — the #37 m3b type-path structuring: sig is a STRUCTURED TypeNode array (the same
- *  `birType(...).toJson()` path every other type slot uses), NOT a legacy comma-string; bir2cir/ilemit derive the overload
- *  key from the TypeNodes. Omitting the context parameters here made the key one arity short of the declaration it was
- *  meant to select, so ilemit fell back to name-only resolution and emitted a short arg list (invalid IL). */
+ *  `birType(...).toJson()` path every other type slot uses), NOT a legacy comma-string. Omitting the context parameters
+ *  here used to make the descriptor one arity short and let the old emitter's name fallback emit a short argument list
+ *  (invalid IL); the resolved-CIR contract now rejects such an incomplete identity. */
 internal fun BirEmitter.overloadSigField(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String {
 	val ext = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }?.let { birType(it.type) }
 	val vals = fn.parameters.filter { isValueParameter(it) }.map { birType(it.type) }

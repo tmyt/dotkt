@@ -381,8 +381,9 @@ internal fun BirEmitter.blockExpr(block: IrBlock): String {
 			val liftedCaps = liftedCaptureArgs(anon)
 			// Capture values are evaluated in the OUTER context (this frame's captureSubst restored above).
 			val capArgs = captured.joinToString(",") { capValueExpr(it) }
+			val capArgTypes = capPairs.joinToString(",") { (decl, _) -> str(captureFieldType(decl)) }
 			val newType = if (liftedCaps.isEmpty()) TypeNode.Fqn(cname) else TypeNode.Fqn(cname, liftedCaps)
-			return """{"k":"new","type":${newType.toJson()},"args":[$capArgs]}"""
+			return """{"k":"new","type":${newType.toJson()},"argTypes":[$capArgTypes],"args":[$capArgs]}"""
 		}
 	}
 	// `when (subject)` lowers to `{ val tmp = subject; WHEN }` in expression position. The subject is bound

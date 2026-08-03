@@ -195,10 +195,16 @@ private fun BirEmitter.suspendLambda(node: IrFunctionExpression): String? {
 	// Enclosing generic type params referenced by the SM (captures/params/return/body operands) -> open SM
 	// instantiation. BARE names: bir2cir prepends `gp:`.
 	val freeTps = freeTypeParams(captures.map { it.type } + fn.parameters.map { it.type } + listOf(fn.returnType) + bodyTypeOperands(fn))
+		.sortedWith(compareBy<IrTypeParameter>(
+			{ if (tvOf(it).scope == "type") 0 else 1 },
+			{ tvOf(it).i },
+		))
 	// The SM's own generic-parameter NAME declarations (the enclosing free type params the state machine is
 	// generic over) — a type-param DECLARATION list (bir2cir names the SM's params + instantiates `!i`), NOT a
 	// type-USAGE slot, so it rides as the `typeParams` name shorthand (§2.5), consistent with the other lambda paths.
 	val typeParamsBare = freeTps.joinToString(",") { str(it.name.asString()) }
+	val typeArgsJson = if (freeTps.isEmpty()) "" else
+		""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
 	val extensionReceiver = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
 	// (B) body shadow: emit the SM body with each captured decl bound to its DESCRIPTOR name `{k:local,name:D}` in
 	// `captureSubst` by declaration identity, so the body names the capture EXACTLY as the descriptor declares it (the
@@ -230,7 +236,7 @@ private fun BirEmitter.suspendLambda(node: IrFunctionExpression): String? {
 		else selfSubst.remove(extensionReceiver)
 	}
 	shadowCap.forEach { (d, prev) -> if (prev != null) captureSubst[d] = prev else captureSubst.remove(d) }
-	return """{"k":"newSuspendLambda","arity":${ownParams.size},"captures":[$capturesJson]$capValuesJson,"params":[$paramsJson],"suspendRet":${str(resultType)},"typeParams":[$typeParamsBare],"body":[$body],"funcType":${funcTypeOf(fn).toJson()}}"""
+	return """{"k":"newSuspendLambda","arity":${ownParams.size},"captures":[$capturesJson]$capValuesJson,"params":[$paramsJson],"suspendRet":${str(resultType)},"typeParams":[$typeParamsBare]$typeArgsJson,"body":[$body],"funcType":${funcTypeOf(fn).toJson()}}"""
 }
 
 /** SHADOW the lambda's own regular params in `valSubst` while emitting its body: an enclosing lambda carrier
@@ -403,8 +409,10 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 				val ctorArgs = (capPairs.map { (_, fname) ->
 					"""{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":${str(fname)}}"""
 				} + ps.map { """{"k":"local","name":${str(it.name.asString())}}""" }).joinToString(",")
+				val ctorArgTypes = (capPairs.map { (decl, _) -> str(captureFieldType(decl)) } +
+					ps.map { birType(it.type).toJson() }).joinToString(",")
 				val retT = birType(ctor.returnType)
-				val newE = """{"k":"new","type":${ownerSpec(klass, ctor.returnType).toJson()},"args":[$ctorArgs]}"""
+				val newE = """{"k":"new","type":${ownerSpec(klass, ctor.returnType).toJson()},"argTypes":[$ctorArgTypes],"args":[$ctorArgs]}"""
 				val freeTps = freeTypeParams(
 					captures.map { it.type } + ps.map { it.type } + listOf(ctor.returnType))
 				val synthClass = """{"name":${str(cname)},"fields":[$fields],"params":[${lambdaParamsJson(ps)}],"ret":${str(retT)},"body":[{"k":"return","value":$newE}]${typeParamsJson(freeTps)}}"""
@@ -416,8 +424,9 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			val lname = "__ctorref${lambdaCounter++}"
 			val psJson = ps.joinToString(",") { """{"name":${str(it.name.asString())},"type":${birType(it.type).toJson()}}""" }
 			val argsJson = ps.joinToString(",") { """{"k":"local","name":${str(it.name.asString())}}""" }
+			val argTypesJson = ps.joinToString(",") { birType(it.type).toJson() }
 			val retT = birType(ctor.returnType)
-			val newE = """{"k":"new","type":${ownerSpec(klass, ctor.returnType).toJson()},"args":[$argsJson]}"""
+			val newE = """{"k":"new","type":${ownerSpec(klass, ctor.returnType).toJson()},"argTypes":[$argTypesJson],"args":[$argsJson]}"""
 			val freeTps = freeTypeParams(ps.map { it.type } + listOf(ctor.returnType))
 			val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
 			liftedMethods.add("""{"name":${str(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${str(retT)},"body":[{"k":"return","value":$newE}]}""")
@@ -489,7 +498,9 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 		val callArgs = (capPairs.map { (_, fname) ->
 			"""{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":${str(fname)}}"""
 		} + ownVps.map { """{"k":"local","name":${str(it.name.asString())}}""" }).joinToString(",")
-		val callE = """{"k":"callStatic","owner":null,"method":${str(lname)},"args":[$callArgs]$typeArgs${localCalleeOwnerTag()}}"""
+		val callSig = (capPairs.map { (decl, _) -> captureFieldType(decl).toJson() } +
+			ownVps.map { birType(it.type).toJson() }).joinToString(",")
+		val callE = """{"k":"callStatic","owner":null,"method":${str(lname)},"sig":[$callSig],"args":[$callArgs]$typeArgs${localCalleeOwnerTag()}}"""
 		val retT = birType(fn.returnType)
 		val invokeBody = if (fn.returnType.isUnit()) """{"k":"exprStmt","expr":$callE}"""
 			else """{"k":"return","value":$callE}"""
@@ -497,8 +508,41 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 		val capExprs = caps.joinToString(",") { capValueExpr(it) }
 		return """{"k":"newClosure","closureType":${fqnJson(cname)},"captures":[$capExprs],"method":"invoke","funcType":${funcTypeOf(fn).toJson()}$typeArgs,"synthClass":$synthClass}"""
 	}
-	if (dispatchIdx < 0 && !hasExt)
-		return """{"k":"newDelegate","method":${str(fn.name.asString())}${overloadSigField(fn)},"funcType":${funcTypeOf(fn).toJson()}${calleeOwnerTag(fn)}}"""
+	if (dispatchIdx < 0 && !hasExt) {
+		// A generic top-level callable reference has already been instantiated by FIR at this use site. Preserve those
+		// type arguments just like an ordinary call and an extension reference do; the declared `sig` alone selects the
+		// generic definition but cannot close it for ldftn (`::handle<T>` otherwise reaches ilemit as an open method).
+		val refTps = fn.typeParameters
+		val refTaArgs = refTps.indices.map { node.typeArguments.getOrNull(it) }
+		val refTa = if (refTps.isEmpty() || refTaArgs.any { it == null }) "" else
+			""","typeArgs":[${refTaArgs.joinToString(",") { birType(it!!).toJson() }}]"""
+		val refFuncType = birType(node.type) as? TypeNode.Fn
+			?: return unsupported(node, "this top-level function reference",
+				"its FIR-resolved use-site type was not a function type")
+		if (refTps.isNotEmpty() && refTa.isNotEmpty()) {
+			// A MethodSpec is a valid call operand, but a generic method definition is not a closed ldftn target on
+			// every CLR. Materialize the ordinary Kotlin adapter the reference denotes: a non-generic delegate target
+			// (or one generic only over its enclosing free parameters) whose body makes the explicit generic call.
+			val valueParams = regularParams(fn)
+			if (valueParams.size != refFuncType.params.size)
+				return unsupported(node, "this generic top-level function reference",
+					"its use-site function arity does not match the resolved declaration")
+			val lname = "__fnref${lambdaCounter++}"
+			val paramsJson = valueParams.zip(refFuncType.params).joinToString(",") { (p, t) ->
+				"""{"name":${str(p.name.asString())},"type":${t.toJson()}}"""
+			}
+			val argsJson = valueParams.joinToString(",") { """{"k":"local","name":${str(it.name.asString())}}""" }
+			val call = """{"k":"callStatic","owner":null,"method":${str(fn.name.asString())}${overloadSigField(fn)}$refTa,"args":[$argsJson],"ret":${refFuncType.ret.toJson()}${calleeOwnerTag(fn)}}"""
+			val body = if (fn.returnType.isUnit()) """{"k":"exprStmt","expr":$call}"""
+				else """{"k":"return","value":$call}"""
+			val freeTps = freeTypeParams(listOf(node.type))
+			val adapterTypeArgs = if (freeTps.isEmpty()) "" else
+				""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
+			liftedMethods.add("""{"name":${str(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$paramsJson],"ret":${refFuncType.ret.toJson()},"body":[$body]}""")
+			return """{"k":"newDelegate","method":${str(lname)},"funcType":${refFuncType.toJson()}$adapterTypeArgs${localCalleeOwnerTag()}}"""
+		}
+		return """{"k":"newDelegate","method":${str(fn.name.asString())}${overloadSigField(fn)},"funcType":${refFuncType.toJson()}$refTa${calleeOwnerTag(fn)}}"""
+	}
 	// `Type::extFn` — an EXTENSION-function reference (G8). The delegate's target is a lifted static forwarder whose
 	// BODY is the faithful extension CALL — the SAME shape a DIRECT call to this callee would emit (`owner:null` for a
 	// stdlib/this-module ext, `ownerType:fileClass` for a referenced-assembly facade ext), NOT a bare `ldftn` of the
@@ -721,8 +765,14 @@ internal fun BirEmitter.suspendFunctionRef(node: IrFunctionReference, fn: IrSimp
 	// The SM must be generic over any enclosing type params in the reference's signature (reified CLR generics); bare
 	// names (bir2cir prepends `gp:`), consistent with suspendLambda().
 	val freeTps = freeTypeParams(fn.parameters.map { it.type } + listOf(fn.returnType))
+		.sortedWith(compareBy<IrTypeParameter>(
+			{ if (tvOf(it).scope == "type") 0 else 1 },
+			{ tvOf(it).i },
+		))
 	val typeParamsBare = freeTps.joinToString(",") { str(it.name.asString()) }
-	return """{"k":"newSuspendLambda","arity":${physicalParamTypes.size},"captures":[$captures]$capValuesJson,"params":[$paramsJson],"suspendRet":${ret.toJson()},"typeParams":[$typeParamsBare],"body":[$body],"funcType":${fnType.toJson()}}"""
+	val typeArgsJson = if (freeTps.isEmpty()) "" else
+		""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
+	return """{"k":"newSuspendLambda","arity":${physicalParamTypes.size},"captures":[$captures]$capValuesJson,"params":[$paramsJson],"suspendRet":${ret.toJson()},"typeParams":[$typeParamsBare]$typeArgsJson,"body":[$body],"funcType":${fnType.toJson()}}"""
 }
 
 /**
@@ -866,7 +916,7 @@ internal fun BirEmitter.adapterRef(node: IrFunctionReference, fn: IrSimpleFuncti
  * `propertyRef` lift below) is always correct for it. Replaces the retired `dotkt$KPropertyImpl` synthetic.
  */
 internal fun BirEmitter.kPropertyStub(name: String): String =
-	"""{"k":"new","type":${TypeNode.Fqn("kotlin.reflect.ClrPropertyStub", listOf(OBJ)).toJson()},"args":[{"k":"const","type":${fqnJson("kotlin.String")},"value":${str(name)}}]}"""
+	"""{"k":"new","type":${TypeNode.Fqn("kotlin.reflect.ClrPropertyStub", listOf(OBJ)).toJson()},"argTypes":[${fqnJson("kotlin.String")}],"args":[{"k":"const","type":${fqnJson("kotlin.String")},"value":${str(name)}}]}"""
 
 /**
  * A genuine callable reference to a property (`::x`, `obj::p`, `Type::p`) -> a lifted class implementing the
@@ -1007,7 +1057,7 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 		val virtual = fn.modality != Modality.FINAL || fn.overriddenSymbols.isNotEmpty()
 		val args = listOfNotNull(extraArg).joinToString(",")
 		val method = str((if (isSetter) "set_" else "get_") + name)
-		return """{"k":"callInstance","ownerType":${memberOwner.toJson()},"virtual":$virtual,"recv":${recvExprIn()},"method":$method,"args":[$args]}"""
+		return """{"k":"callInstance","ownerType":${memberOwner.toJson()},"virtual":$virtual,"recv":${recvExprIn()},"method":$method${overloadSigField(fn)},"args":[$args]}"""
 	}
 	// A field-backed member property (`lateinit var`/`@ClrField`) reads/writes its backing field directly — the SAME
 	// `lateinitGet`/`field`/`setFieldExpr` shapes the ordinary member-access path emits — over the lift's receiver
@@ -1074,11 +1124,15 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 
 	val freeTps = freeTypeParams(listOf(node.type) + listOfNotNull(capturedRecv?.type))
 	val methods = listOfNotNull(getMethod, invokeMethod, setMethod).joinToString(",")
-	liftedTypes.add("""{"name":${str(cname)},"kind":"class","generated":true${typeParamsJson(freeTps)},"base":${stubBase.toJson()},"interfaces":[${ifaceSpec.toJson()}],"fields":[$fields],"ctors":[{"params":[$ctorParams],"baseArgs":[$stubBaseArg],"body":[$ctorBody]}],"methods":[$methods]}""")
+	// The lifted constructor delegates to ClrPropertyStub(String). Keep that Kotlin declaration identity beside
+	// the arguments so bir2cir, which owns the CLR representation, can resolve and stamp the exact target ctor.
+	val stubDelegationSig = """[{"t":"fqn","name":"kotlin.String"}]"""
+	liftedTypes.add("""{"name":${str(cname)},"kind":"class","generated":true${typeParamsJson(freeTps)},"base":${stubBase.toJson()},"interfaces":[${ifaceSpec.toJson()}],"fields":[$fields],"ctors":[{"params":[$ctorParams],"baseArgs":[$stubBaseArg],"delegationSig":$stubDelegationSig,"body":[$ctorBody]}],"methods":[$methods]}""")
 
 	val classType = if (freeTps.isEmpty()) TypeNode.Fqn(cname) else TypeNode.Fqn(cname, freeTps.map { tvOf(it) })
 	val ctorArgs = if (bound) expr(capturedRecv!!) else ""
-	return """{"k":"new","type":${classType.toJson()},"args":[$ctorArgs]}"""
+	val ctorSig = if (bound) recvFieldType!!.toJson() else ""
+	return """{"k":"new","type":${classType.toJson()},"argTypes":[$ctorSig],"args":[$ctorArgs]}"""
 }
 
 /** Free value references in a lambda / local-fun body (referenced but not declared inside) = its captured vars. */

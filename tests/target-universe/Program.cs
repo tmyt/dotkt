@@ -11,11 +11,13 @@ var raw = Read(args[0]);
 var repaired = Read(args[1]);
 
 RequirePrimitiveSignature(raw);
-RequireScope(raw, "System.Object", "System.Private.CoreLib");
-RequireScope(raw, "System.Collections.Generic.List`1", "System.Private.CoreLib");
-RequireScope(raw, "System.Func`2", "System.Private.CoreLib");
-RequireScope(raw, "System.IDisposable", "System.Private.CoreLib");
-RequireScope(raw, "System.Reflection.AssemblyMetadataAttribute", "System.Private.CoreLib");
+RequireEnumShape(raw, "TargetEnum");
+RequireGenericBaseShape(raw, "TargetList`1");
+RequireScope(raw, "System.Object", "System.Runtime");
+RequireScope(raw, "System.Collections.Generic.List`1", "System.Collections");
+RequireScope(raw, "System.Func`2", "System.Runtime");
+RequireScope(raw, "System.IDisposable", "System.Runtime");
+RequireScope(raw, "System.Reflection.AssemblyMetadataAttribute", "System.Runtime");
 
 RequireScope(repaired, "System.Object", "System.Runtime");
 RequireScope(repaired, "System.Collections.Generic.List`1", "System.Collections");
@@ -23,10 +25,10 @@ RequireScope(repaired, "System.Func`2", "System.Runtime");
 RequireScope(repaired, "System.IDisposable", "System.Runtime");
 RequireScope(repaired, "System.Reflection.AssemblyMetadataAttribute", "System.Runtime");
 
-if (File.ReadAllBytes(args[0]).AsSpan().SequenceEqual(File.ReadAllBytes(args[1])))
-    throw new InvalidOperationException("retarget made no change to the calibrated host-scoped raw output");
+RejectScope(raw, "System.Private.CoreLib");
+RejectScope(repaired, "System.Private.CoreLib");
 
-Console.WriteLine("PASS  target-universe baseline: raw host scopes -> target contract scopes " +
+Console.WriteLine("PASS  target-universe emission: raw and oracle scopes are target contracts " +
                   "(primitive, generic, delegate, attribute, inheritance/interface, external signature)");
 return 0;
 
@@ -52,7 +54,19 @@ static Snapshot Read(string path)
         var method = md.GetMethodDefinition(handle);
         methods[md.GetString(method.Name)] = md.GetBlobBytes(method.Signature);
     }
-    return new Snapshot(scopes, methods);
+    var types = new Dictionary<string, TypeShape>(StringComparer.Ordinal);
+    foreach (var handle in md.TypeDefinitions)
+    {
+        var type = md.GetTypeDefinition(handle);
+        var name = md.GetString(type.Name);
+        types[name] = new TypeShape(
+            type.GetMethods().Select(h => md.GetString(md.GetMethodDefinition(h).Name)).ToArray(),
+            type.BaseType.Kind,
+            type.BaseType.Kind == HandleKind.TypeSpecification
+                ? md.GetBlobBytes(md.GetTypeSpecification((TypeSpecificationHandle)type.BaseType).Signature)
+                : Array.Empty<byte>());
+    }
+    return new Snapshot(scopes, methods, types);
 }
 
 static string ScopeName(MetadataReader md, EntityHandle scope) => scope.Kind switch
@@ -73,6 +87,18 @@ static void RequireScope(Snapshot snapshot, string type, string expected)
             (actual == null ? "<missing>" : string.Join(", ", actual.OrderBy(x => x, StringComparer.Ordinal))));
 }
 
+static void RejectScope(Snapshot snapshot, string rejected)
+{
+    var offenders = snapshot.TypeScopes
+        .Where(pair => pair.Value.Contains(rejected))
+        .Select(pair => pair.Key)
+        .OrderBy(x => x, StringComparer.Ordinal)
+        .ToArray();
+    if (offenders.Length != 0)
+        throw new InvalidOperationException(
+            $"unexpected {rejected} TypeRef scope: {string.Join(", ", offenders)}");
+}
+
 static void RequirePrimitiveSignature(Snapshot snapshot)
 {
     // primitive(Int)->Int is a non-generic static signature: calling convention, param-count, return I4, param I4.
@@ -82,6 +108,31 @@ static void RequirePrimitiveSignature(Snapshot snapshot)
         throw new InvalidOperationException("primitive(Int): Int does not carry two ELEMENT_TYPE_I4 signature slots");
 }
 
+static void RequireEnumShape(Snapshot snapshot, string name)
+{
+    if (!snapshot.Types.TryGetValue(name, out var type))
+        throw new InvalidOperationException($"enum {name} is missing");
+    if (type.Methods.Length != 0)
+        throw new InvalidOperationException($"enum {name} carries illegal methods: {string.Join(", ", type.Methods)}");
+}
+
+static void RequireGenericBaseShape(Snapshot snapshot, string name)
+{
+    if (!snapshot.Types.TryGetValue(name, out var type))
+        throw new InvalidOperationException($"generic derived type {name} is missing");
+    // GENERICINST CLASS <TypeRef> 1 VAR 0. The compressed TypeDefOrRef token is intentionally opaque here.
+    if (type.BaseKind != HandleKind.TypeSpecification || type.BaseSignature.Length < 6
+        || type.BaseSignature[0] != (byte)SignatureTypeCode.GenericTypeInstance
+        || type.BaseSignature[^2] != (byte)SignatureTypeCode.GenericTypeParameter
+        || type.BaseSignature[^1] != 0)
+        throw new InvalidOperationException(
+            $"generic derived type {name} does not retain its target TypeSpec<T> base: " +
+            Convert.ToHexString(type.BaseSignature));
+}
+
 sealed record Snapshot(
     Dictionary<string, HashSet<string>> TypeScopes,
-    Dictionary<string, byte[]> MethodSignatures);
+    Dictionary<string, byte[]> MethodSignatures,
+    Dictionary<string, TypeShape> Types);
+
+sealed record TypeShape(string[] Methods, HandleKind BaseKind, byte[] BaseSignature);

@@ -12,7 +12,7 @@ sealed partial class Emitter
     void EmitCtorBody(TypeInfo ti, ConstructorBuilder cb, JsonElement c)
     {
         _ctxType = ti.TB?.Name; _ctxMethod = ".ctor"; _ctxNode = null; _ctxPos = PosOf(c);   // #84 breadcrumb + #112 P2 source pos
-        _methodRetType = typeof(void);
+        _methodRetType = Bcl("System.Void");
         _curTypeParams = EffectiveTps(ti); _curMethodParams = null;
         BeginMethod(cb.GetILGenerator(), c, isStatic: false);
         // Exactly the trees this method EMITS: `preStmts` runs before the delegation and may carry CFG labels of its
@@ -36,44 +36,33 @@ sealed partial class Emitter
         {
             // `constructor(...) : this(...)` -> delegate to a sibling ctor (it runs field inits / base call).
             foreach (var a in ta.EnumerateArray()) EmitExpr(a);
-            ConstructorInfo sibling = SelectCtor(ti, ta.GetArrayLength());
+            ConstructorInfo sibling = LinkLocalCtor(ti, c);
             // Inside a GENERIC type, the sibling ctor must be referenced through the SELF-instantiation
             // `C`1<!T>` (the type over its OWN generic params), NOT the open definition `C`1` — a bare
             // `call C`1::.ctor` is "not fully instantiated" at JIT. Mirrors the base-ctor anchoring below
             // (the `: base(...)` branches ~lines 918-920 / 894-898); do not "simplify" this away.
             if (ti.TB is TypeBuilder stb && stb.IsGenericTypeDefinition)
-                sibling = TypeBuilder.GetConstructor(stb.MakeGenericType(stb.GetGenericArguments()), (ConstructorBuilder)sibling);
-            _il.Emit(OpCodes.Call, sibling);
+                sibling = AnchorConstructor(ConstructedType(stb, stb.GetGenericArguments()), (ConstructorBuilder)sibling);
+            EmitConstructor(_il, OpCodes.Call, sibling);
         }
         else if (ti.ClrBase != null)
         {
             // `: base(...)` on a .NET base -> the matching base constructor (resolved by reflection). A constructed
             // generic base (`Collection<int>`) needs the static helper to map the open ctor onto the instantiation.
             var ba = c.TryGetProperty("baseArgs", out var b) && b.ValueKind == JsonValueKind.Array ? b : default;
-            int argc = ba.ValueKind == JsonValueKind.Array ? ba.GetArrayLength() : 0;
-            const BindingFlags ctorFlags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
-            ConstructorInfo ctor;
-            // A generic base instantiated with a TypeBuilder/generic-param arg needs the static helper; a base
-            // that is non-generic or instantiated over concrete types is a real RuntimeType -> direct reflection.
-            if (ti.ClrBase.IsGenericType && ti.ClrBase.GetGenericArguments().Any(a => a is TypeBuilder || a.IsGenericParameter))
-            {
-                var open = ti.ClrBase.GetGenericTypeDefinition();
-                var openCtor = open.GetConstructors(ctorFlags).FirstOrDefault(x => x.GetParameters().Length == argc) ?? open.GetConstructor(Type.EmptyTypes);
-                ctor = TypeBuilder.GetConstructor(ti.ClrBase, openCtor);
-            }
-            else
-            {
-                ctor = ti.ClrBase.GetConstructors(ctorFlags).FirstOrDefault(x => x.GetParameters().Length == argc) ?? ti.ClrBase.GetConstructor(Type.EmptyTypes);
-            }
-            if (ba.ValueKind == JsonValueKind.Array) EmitArgs(ba, ctor.GetParameters());
-            _il.Emit(OpCodes.Call, ctor);
+            // bir2cir has already resolved the Kotlin delegation onto its physical CLR constructor and carried the
+            // declaration as baseMemberSig. Reuse the same exact-link path as newClr; this layer does not form or rank
+            // a constructor candidate set from the argument expressions.
+            var ctor = LinkClrCtor(ti.ClrBase, c, out var reanchorBaseCtor, "baseMemberSig", includeNonPublic: true);
+            if (reanchorBaseCtor) ctor = AnchorConstructor(ti.ClrBase, ctor);
+            if (ba.ValueKind == JsonValueKind.Array) EmitArgs(ba, ParametersOf(ctor));
+            EmitConstructor(_il, OpCodes.Call, ctor);
         }
         else if (ti.BaseName != null && _types.ContainsKey(ti.BaseName) && c.TryGetProperty("baseArgs", out var ba2) && ba2.ValueKind == JsonValueKind.Array)
         {
-            // `: base(...)` -> the Kotlin-user base class's ctor whose param count matches (a base with
-            // secondary ctors — e.g. ContinuationImpl(completion) vs (completion, _context) — must bind the
-            // right overload, not always the primary; mirrors the ClrBase (arg-count) + thisArgs (SelectCtor) paths).
-            ConstructorInfo bctor = SelectCtor(_types[ti.BaseName], ba2.GetArrayLength());
+            // bir2cir carries the frontend-selected local declaration signature. Link that exact declaration; choosing
+            // a same-arity base constructor here would make ilemit an overload-resolution authority.
+            ConstructorInfo bctor = LinkLocalCtor(_types[ti.BaseName], c);
             // A generic base instantiated over THIS type's own type params (`class D<T> : Base<T>()`) has its
             // parent set to the CONSTRUCTED base `Base<!T>` (ti.TB.BaseType); the base-ctor operand must be scoped
             // to that constructed type, not the open definition `Base<>` — a bare `call Base``1::.ctor` is "not
@@ -81,46 +70,28 @@ sealed partial class Emitter
             // base via the static helper (mirrors newClosure's TypeBuilder.GetConstructor over MakeGenericType).
             var baseType = ti.TB.BaseType;
             if (baseType != null && baseType.IsGenericType && !baseType.IsGenericTypeDefinition)
-                bctor = TypeBuilder.GetConstructor(baseType, bctor);
+                bctor = AnchorConstructor(baseType, bctor);
             foreach (var a in ba2.EnumerateArray()) EmitExpr(a);
-            _il.Emit(OpCodes.Call, bctor);
+            EmitConstructor(_il, OpCodes.Call, bctor);
         }
         else
         {
-            _il.Emit(OpCodes.Call, typeof(object).GetConstructor(Type.EmptyTypes));
+            EmitConstructor(_il, OpCodes.Call, Bcl("System.Object").GetConstructor(Type.EmptyTypes));
         }
         foreach (var s in c.GetProperty("body").EnumerateArray()) EmitStmt(s);
         _il.Emit(OpCodes.Ret);
     }
 
-    // Pick the ctor (primary or secondary) whose parameter count matches the delegating/`new` arg count.
-    ConstructorBuilder SelectCtor(TypeInfo ti, int argCount, JsonElement newNode = default)
+    // bir2cir resolved this same-emission-unit call to a declaration index. This is a direct token lookup: ilemit does
+    // not compare argument shapes, enumerate candidates, or choose an overload.
+    ConstructorBuilder LinkLocalCtor(TypeInfo ti, JsonElement node)
     {
-        // Arity is the fallback, but SEVERAL ctors can share an arg count (LinkedHashSet has `(Int)` AND
-        // `(Collection<E>)`, both 1-arg) — a plain count pick routes `new LinkedHashSet(coll)` to the `(Int)` ctor
-        // (ilverify StackUnexpected [found IReadOnlyCollection][expected Int32] -> runtime InvalidProgram). Refine to an
-        // EXACT param-signature match against the `new` node's declared `argTypes` (the resolved ctor's own param types,
-        // rendered with the same SigCanon encoding as the def side) when present; keep the first same-arity ctor as fallback.
-        string[] want = null;
-        if (newNode.ValueKind == JsonValueKind.Object
-            && newNode.TryGetProperty("argTypes", out var at) && at.ValueKind == JsonValueKind.Array
-            && at.GetArrayLength() == argCount)
-            // A `new` node may carry PLACEHOLDER argTypes for untyped closure-capture args (`{}` — a state-machine
-            // `create`), which TypeNode.Read cannot read; abandon the signature match (arity fallback) then.
-            try { want = at.EnumerateArray().Select(x => SigCanon(DotKt.Bir.TypeNode.Read(x))).ToArray(); } catch { want = null; }
-        ConstructorBuilder firstArity = null;
-        for (int i = 0; i < ti.Ctors.Count; i++)
-        {
-            var ps = ti.CtorDefs[i].GetProperty("params");
-            if (ps.GetArrayLength() != argCount) continue;
-            firstArity ??= ti.Ctors[i];
-            if (want == null) break;   // no sig info -> the first same-arity ctor (legacy behavior)
-            int j = 0; bool exact = true;
-            foreach (var p in ps.EnumerateArray())
-                if (SigCanon(DotKt.Bir.TypeNode.Read(p.GetProperty("type"))) != want[j++]) { exact = false; break; }
-            if (exact) return ti.Ctors[i];
-        }
-        return firstArity ?? ti.Ctor;
+        if (!node.TryGetProperty("localCtorIndex", out var indexNode) || indexNode.ValueKind != JsonValueKind.Number)
+            throw new InvalidOperationException($"ilemit: local constructor {ti.TB.FullName} is missing `localCtorIndex`; bir2cir must resolve the declaration");
+        var index = indexNode.GetInt32();
+        if ((uint)index >= (uint)ti.Ctors.Count)
+            throw new InvalidOperationException($"ilemit: local constructor index {index} is outside {ti.TB.FullName}'s {ti.Ctors.Count} declarations");
+        return ti.Ctors[index];
     }
 
     void EmitMethodBody(TypeInfo ti, JsonElement m)
@@ -144,7 +115,8 @@ sealed partial class Emitter
         // Pick THIS def's own MethodBuilder by signature (overloads share `mname`; the name-keyed map holds only the
         // last, so emitting by name alone routes a body into the wrong overload — the WinUI `text(String)` /
         // `text(()->String)` bug).
-        var mb = ti.MethodsBySig.TryGetValue(SigKey(mname, m), out var bm) ? bm : ti.Methods[mname];
+        if (!ti.MethodsBySig.TryGetValue(SigKey(mname, m), out var mb))
+            throw new InvalidOperationException($"ilemit: method body {ti.TB.FullName}.{mname} has no exact declared signature match");
         // Abstract-slot body invariant (#92): a MethodBuilder DECLARED Abstract has NO IL body — GetILGenerator would
         // throw "Method body should not exist". Trust the DECLARED attribute (mb.IsAbstract, the single source of
         // truth), NOT the CIR `abstract` flag: a def that DEFEATS the declare/body pairing (an abstract slot that still
@@ -204,9 +176,9 @@ sealed partial class Emitter
     void EmitTrailingRet()
     {
         var rt = _methodRetType;
-        if (rt != typeof(void))
+        if (rt != Bcl("System.Void"))
         {
-            if (rt.IsValueType || rt.IsGenericParameter)
+            if (IsValueType(rt) || rt.IsGenericParameter)
             { var loc = _il.DeclareLocal(rt); _il.Emit(OpCodes.Ldloca, loc); _il.Emit(OpCodes.Initobj, rt); _il.Emit(OpCodes.Ldloc, loc); }
             else _il.Emit(OpCodes.Ldnull);
         }
@@ -354,19 +326,19 @@ sealed partial class Emitter
     // Enumerate an IEnumerable<elemT> `src`, binding each element to a fresh local passed to `body`.
     void EmitForEachOf(JsonElement src, Type elemT, Action<LocalBuilder> body)
     {
-        var ienumT = typeof(System.Collections.Generic.IEnumerable<>).MakeGenericType(elemT);
-        var ienumrT = typeof(System.Collections.Generic.IEnumerator<>).MakeGenericType(elemT);
+        var ienumT = ConstructedType(Bcl("System.Collections.Generic.IEnumerable`1"), elemT);
+        var ienumrT = ConstructedType(Bcl("System.Collections.Generic.IEnumerator`1"), elemT);
         EmitExpr(src);
-        _il.Emit(OpCodes.Callvirt, ienumT.GetMethod("GetEnumerator"));
+        EmitMethod(_il, OpCodes.Callvirt, ienumT.GetMethod("GetEnumerator"));
         var en = _il.DeclareLocal(ienumrT); _il.Emit(OpCodes.Stloc, en);
         var x = _il.DeclareLocal(elemT);
         var start = _il.DefineLabel(); var end = _il.DefineLabel();
         _il.MarkLabel(start);
         _il.Emit(OpCodes.Ldloc, en);
-        _il.Emit(OpCodes.Callvirt, typeof(System.Collections.IEnumerator).GetMethod("MoveNext"));
+        EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Collections.IEnumerator").GetMethod("MoveNext"));
         _il.Emit(OpCodes.Brfalse, end);
         _il.Emit(OpCodes.Ldloc, en);
-        _il.Emit(OpCodes.Callvirt, ienumrT.GetMethod("get_Current"));
+        EmitMethod(_il, OpCodes.Callvirt, ienumrT.GetMethod("get_Current"));
         _il.Emit(OpCodes.Stloc, x);
         body(x);
         _il.Emit(OpCodes.Br, start);
@@ -384,20 +356,20 @@ sealed partial class Emitter
     {
         if (target == null) { EmitExpr(value); return; }
         var got = EmitNullableCoerced(value, target);
-        if (got != null && NeedsBoxToRef(got) && !target.IsValueType && !target.IsGenericParameter)
+        if (got != null && NeedsBoxToRef(got) && !IsValueType(target) && !target.IsGenericParameter)
             _il.Emit(OpCodes.Box, got);
         // A reference `object` (an ERASED value — e.g. a coroutine SM `create(object value, …)`'s receiver stored into
         // its concrete `SequenceScope<T>`/captured-field slot) stored into a NARROWER reference target needs a downcast;
         // a raw stfld of `object` into a typed field is unverifiable (ilverify StackUnexpected [found object][expected
         // ref 'T']). Scoped to a genuinely-erased `object` source and a concrete reference target (value/gp targets took
         // the box/nullable paths above; a same-type or widening store needs nothing).
-        else if (got == typeof(object) && target != typeof(object) && !target.IsValueType && !target.IsGenericParameter)
+        else if (got == Bcl("System.Object") && target != Bcl("System.Object") && !IsValueType(target) && !target.IsGenericParameter)
             _il.Emit(OpCodes.Castclass, target);
         // The value-type / generic-param twin: an erased `object` stored into a VALUE (Int32) or generic-param (`T`)
         // slot needs the universal `unbox.any` (a coroutine SM `.ctor(object value, …)` capturing a value/`T` field —
         // ilverify [found object][expected Int32]/[expected value 'T']). unbox.any unboxes a value type and resolves a
         // generic param; castclass would JIT-crash a value instantiation.
-        else if (got == typeof(object) && (target.IsValueType || target.IsGenericParameter))
+        else if (got == Bcl("System.Object") && (IsValueType(target) || target.IsGenericParameter))
             _il.Emit(OpCodes.Unbox_Any, target);
         // A collapsed-variance collection-interface VALUE stored into its SIBLING local/field slot (same T, either
         // direction): the same arg-position variance-collapse reconciliation as EmitArg, one store-site over — a
@@ -413,7 +385,7 @@ sealed partial class Emitter
     // (EmitStoreCoerced then emits the RHS as-is, the pre-helper behavior for that path).
     static Type SetterValueType(MethodInfo setter)
     {
-        try { var ps = setter.GetParameters(); return ps.Length > 0 ? ps[^1].ParameterType : null; }
+        try { var ps = ParametersOf(setter); return ps.Length > 0 ? ps[^1].ParameterType : null; }
         catch (NotSupportedException) { return null; }
     }
 
@@ -438,18 +410,18 @@ sealed partial class Emitter
         if (br < 0) return (spec, null);
         var open = spec.Substring(0, br);
         var args = SplitTopLevel(spec.Substring(br + 1, spec.Length - br - 2)).Select(MapType).ToArray();
-        if (_types.TryGetValue(open, out var ti)) return (open, ti.TB.MakeGenericType(args));
+        if (_types.TryGetValue(open, out var ti)) return (open, ConstructedType(ti.TB, args));
         // Owner not emitted in THIS assembly -> a REFERENCED generic type (e.g. `kotlin.Result[int]` from
         // DotKt.Stdlib.dll): construct it by reflection so ResolveMethod/ResolveField can reflect against the
         // instantiation (its members carry substituted signatures).
-        return (open, ResolveType(open + "`" + args.Length).MakeGenericType(args));
+        return (open, ConstructedType(ResolveType(open + "`" + args.Length), args));
     }
 
     // The constructed type's GetX helpers return members whose declared types are still the OPEN params (`!0`);
     // substitute a type-level param by position to its concrete arg so callers box value types correctly.
     // A value type OR a generic parameter must be boxed to become an `object` — a generic param's runtime type is
     // unknown (could be a value type), and `box !!0` is legal/correct for both value and reference instantiations.
-    static bool NeedsBoxToRef(Type t) => t != null && (t.IsValueType || t.IsGenericParameter);
+    static bool NeedsBoxToRef(Type t) => t != null && (IsValueType(t) || t.IsGenericParameter);
 
     // Array element STORE. ECMA-335 requires the SPECIALIZED opcode (stelem.i2/i4/…) for a BCL PRIMITIVE
     // element type; the generic token form `stelem <T>` is UNVERIFIABLE for primitives (ilverify:
@@ -459,14 +431,14 @@ sealed partial class Emitter
     void EmitStelem(Type elem)
     {
         if (elem.IsGenericParameter) { _il.Emit(OpCodes.Stelem, elem); return; }
-        if (!elem.IsValueType) { _il.Emit(OpCodes.Stelem_Ref); return; }
-        if (elem == typeof(bool) || elem == typeof(sbyte) || elem == typeof(byte)) _il.Emit(OpCodes.Stelem_I1);
-        else if (elem == typeof(char) || elem == typeof(short) || elem == typeof(ushort)) _il.Emit(OpCodes.Stelem_I2);
-        else if (elem == typeof(int) || elem == typeof(uint)) _il.Emit(OpCodes.Stelem_I4);
-        else if (elem == typeof(long) || elem == typeof(ulong)) _il.Emit(OpCodes.Stelem_I8);
-        else if (elem == typeof(float)) _il.Emit(OpCodes.Stelem_R4);
-        else if (elem == typeof(double)) _il.Emit(OpCodes.Stelem_R8);
-        else if (elem == typeof(IntPtr) || elem == typeof(UIntPtr)) _il.Emit(OpCodes.Stelem_I);
+        if (!IsValueType(elem)) { _il.Emit(OpCodes.Stelem_Ref); return; }
+        if (elem == Bcl("System.Boolean") || elem == Bcl("System.SByte") || elem == Bcl("System.Byte")) _il.Emit(OpCodes.Stelem_I1);
+        else if (elem == Bcl("System.Char") || elem == Bcl("System.Int16") || elem == Bcl("System.UInt16")) _il.Emit(OpCodes.Stelem_I2);
+        else if (elem == Bcl("System.Int32") || elem == Bcl("System.UInt32")) _il.Emit(OpCodes.Stelem_I4);
+        else if (elem == Bcl("System.Int64") || elem == Bcl("System.UInt64")) _il.Emit(OpCodes.Stelem_I8);
+        else if (elem == Bcl("System.Single")) _il.Emit(OpCodes.Stelem_R4);
+        else if (elem == Bcl("System.Double")) _il.Emit(OpCodes.Stelem_R8);
+        else if (elem == Bcl("System.IntPtr") || elem == Bcl("System.UIntPtr")) _il.Emit(OpCodes.Stelem_I);
         else _il.Emit(OpCodes.Stelem, elem); // user struct / enum / Nullable<> -> token form (verifiable)
     }
 
@@ -476,17 +448,17 @@ sealed partial class Emitter
     void EmitLdelem(Type elem)
     {
         if (elem.IsGenericParameter) { _il.Emit(OpCodes.Ldelem, elem); return; }
-        if (!elem.IsValueType) { _il.Emit(OpCodes.Ldelem_Ref); return; }
-        if (elem == typeof(bool) || elem == typeof(byte)) _il.Emit(OpCodes.Ldelem_U1);
-        else if (elem == typeof(sbyte)) _il.Emit(OpCodes.Ldelem_I1);
-        else if (elem == typeof(char) || elem == typeof(ushort)) _il.Emit(OpCodes.Ldelem_U2);
-        else if (elem == typeof(short)) _il.Emit(OpCodes.Ldelem_I2);
-        else if (elem == typeof(int)) _il.Emit(OpCodes.Ldelem_I4);
-        else if (elem == typeof(uint)) _il.Emit(OpCodes.Ldelem_U4);
-        else if (elem == typeof(long) || elem == typeof(ulong)) _il.Emit(OpCodes.Ldelem_I8);
-        else if (elem == typeof(float)) _il.Emit(OpCodes.Ldelem_R4);
-        else if (elem == typeof(double)) _il.Emit(OpCodes.Ldelem_R8);
-        else if (elem == typeof(IntPtr) || elem == typeof(UIntPtr)) _il.Emit(OpCodes.Ldelem_I);
+        if (!IsValueType(elem)) { _il.Emit(OpCodes.Ldelem_Ref); return; }
+        if (elem == Bcl("System.Boolean") || elem == Bcl("System.Byte")) _il.Emit(OpCodes.Ldelem_U1);
+        else if (elem == Bcl("System.SByte")) _il.Emit(OpCodes.Ldelem_I1);
+        else if (elem == Bcl("System.Char") || elem == Bcl("System.UInt16")) _il.Emit(OpCodes.Ldelem_U2);
+        else if (elem == Bcl("System.Int16")) _il.Emit(OpCodes.Ldelem_I2);
+        else if (elem == Bcl("System.Int32")) _il.Emit(OpCodes.Ldelem_I4);
+        else if (elem == Bcl("System.UInt32")) _il.Emit(OpCodes.Ldelem_U4);
+        else if (elem == Bcl("System.Int64") || elem == Bcl("System.UInt64")) _il.Emit(OpCodes.Ldelem_I8);
+        else if (elem == Bcl("System.Single")) _il.Emit(OpCodes.Ldelem_R4);
+        else if (elem == Bcl("System.Double")) _il.Emit(OpCodes.Ldelem_R8);
+        else if (elem == Bcl("System.IntPtr") || elem == Bcl("System.UIntPtr")) _il.Emit(OpCodes.Ldelem_I);
         else _il.Emit(OpCodes.Ldelem, elem); // user struct / enum / Nullable<> -> token form (verifiable)
     }
 
@@ -499,7 +471,7 @@ sealed partial class Emitter
     {
         var il = mb.GetILGenerator();
         il.Emit(OpCodes.Ldstr, "DOTKT-STDLIB stub: " + feature + " not yet supported by the .NET backend");
-        il.Emit(OpCodes.Newobj, typeof(NotSupportedException).GetConstructor(new[] { typeof(string) }));
+        EmitConstructor(il, OpCodes.Newobj, Bcl("System.NotSupportedException").GetConstructor(new[] { Bcl("System.String") }));
         il.Emit(OpCodes.Throw);
     }
 
@@ -512,7 +484,7 @@ sealed partial class Emitter
         if (pt != null) RequireArgCount(i, pt.Length, mb?.ToString() ?? "typed call");
         else if (mb != null)
         {
-            try { RequireArgCount(i, mb.GetParameters().Length, mb.ToString()); }
+            try { RequireArgCount(i, ParametersOf(mb).Length, mb.ToString()); }
             catch (NotSupportedException) { }
         }
     }
@@ -556,7 +528,7 @@ sealed partial class Emitter
         // discarded `blockOn { …Unit… }`). When the RESOLVED method's actual return (`fallback`, computed by
         // ApplyTypeArgs from the reified type args) is a real non-void type, keep it so the caller pops/uses it. A
         // genuinely void method reports fallback==void here, so this only rescues the generic-Unit-erasure mismatch.
-        if (declared == typeof(void) && fallback != null && fallback != typeof(void)) return fallback;
+        if (declared == Bcl("System.Void") && fallback != null && fallback != Bcl("System.Void")) return fallback;
         return declared;
     }
 
@@ -567,12 +539,12 @@ sealed partial class Emitter
     // (an internal nullable->nullable hand-off) there is nothing to do. A non-object actual return is untouched.
     Type CoerceReturn(JsonElement e, Type actual)
     {
-        if (actual == typeof(object) && e.TryGetProperty("ret", out var r))
+        if (actual == Bcl("System.Object") && e.TryGetProperty("ret", out var r))
         {
             var want = MapType(r);
-            if (want != null && want != typeof(object))
+            if (want != null && want != Bcl("System.Object"))
             {
-                if (want.IsValueType || want.IsGenericParameter) { _il.Emit(OpCodes.Unbox_Any, want); return want; }
+                if (IsValueType(want) || want.IsGenericParameter) { _il.Emit(OpCodes.Unbox_Any, want); return want; }
                 _il.Emit(OpCodes.Castclass, want); return want;
             }
         }
@@ -594,11 +566,11 @@ sealed partial class Emitter
     MethodInfo InterfaceMethodOn(Type iface, string name, DotKt.Bir.TypeNode[] sig = null, int methodArity = 0)
     {
         if (iface.IsGenericType && (IsTbInstantiation(iface) || iface.GetGenericArguments().Any(a => a.IsGenericParameter || a is TypeBuilder)))
-            return TypeBuilder.GetMethod(iface, NamedMethodOn(iface.GetGenericTypeDefinition(), name, sig, methodArity));
+            return AnchorMethod(iface, NamedMethodOn(iface.GetGenericTypeDefinition(), name, sig, methodArity));
         try { return NamedMethodOn(iface, name, sig, methodArity); }
         catch (NotSupportedException) when (iface.IsGenericType)
         {
-            return TypeBuilder.GetMethod(iface, NamedMethodOn(iface.GetGenericTypeDefinition(), name, sig, methodArity));
+            return AnchorMethod(iface, NamedMethodOn(iface.GetGenericTypeDefinition(), name, sig, methodArity));
         }
     }
 
@@ -611,16 +583,17 @@ sealed partial class Emitter
     // is a drop upstream, and the message says so instead of guessing an overload.
     MethodInfo NamedMethodOn(Type owner, string name, DotKt.Bir.TypeNode[] sig, int methodArity)
     {
+        if (sig == null)
+            throw new InvalidOperationException($"ilemit: interface call {owner}.{name} is missing its resolved `sig` descriptor");
         var byName = owner.GetMethods().Where(m => m.Name == name).ToList();
         var candidates = byName
             .Where(m => (methodArity == 0 ? !m.IsGenericMethodDefinition
                     : m.IsGenericMethodDefinition && m.GetGenericArguments().Length == methodArity)
-                && (sig == null || m.GetParameters().Length == sig.Length))
+                && m.GetParameters().Length == sig.Length)
             .ToList();
-        if (candidates.Count > 1 && sig != null)
-            candidates = candidates
-                .Where(m => m.GetParameters().Select((p, i) => Matches(sig[i], p.ParameterType)).All(ok => ok))
-                .ToList();
+        candidates = candidates
+            .Where(m => m.GetParameters().Select((p, i) => Matches(sig[i], p.ParameterType)).All(ok => ok))
+            .ToList();
         if (candidates.Count == 1) return candidates[0];
         throw new NotSupportedException(
             $"cannot select '{owner}.{name}' for the call's descriptor "
@@ -669,10 +642,10 @@ sealed partial class Emitter
                 // the private cross-assembly field. Only a genuine direct-field node takes the Ldflda fast path here.
                 if (e.TryGetProperty("member", out var fam) && fam.ValueKind == JsonValueKind.String && fam.GetString() == "accessor") break;
                 EmitExpr(e.GetProperty("recv"));
-                _il.Emit(OpCodes.Ldflda, ResolveField(ParseOwnerSlot(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out _));
+                EmitField(_il, OpCodes.Ldflda, ResolveField(ParseOwnerSlot(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out _));
                 return;
             case "staticField":
-                _il.Emit(OpCodes.Ldsflda, ResolveField(ParseOwnerSlot(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out _));
+                EmitField(_il, OpCodes.Ldsflda, ResolveField(ParseOwnerSlot(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out _));
                 return;
             case "arrayGet":
                 EmitExpr(e.GetProperty("array"));
@@ -705,7 +678,7 @@ sealed partial class Emitter
     {
         // The index first and once, into a temp both halves read. (Order is unchanged: index, then len, then ptr.)
         EmitExpr(e.GetProperty("index"));
-        var idx = _il.DeclareLocal(typeof(int));
+        var idx = _il.DeclareLocal(Bcl("System.Int32"));
         _il.Emit(OpCodes.Stloc, idx);
 
         // Throw IndexOutOfRangeException unless 0 <= index < len (unsigned compare catches negatives too).
@@ -714,7 +687,7 @@ sealed partial class Emitter
         var ok = _il.DefineLabel();
         _il.Emit(OpCodes.Blt_Un, ok);
         _il.Emit(OpCodes.Ldstr, "StackBuffer index out of bounds");
-        _il.Emit(OpCodes.Newobj, typeof(IndexOutOfRangeException).GetConstructor(new[] { typeof(string) }));
+        EmitConstructor(_il, OpCodes.Newobj, Bcl("System.IndexOutOfRangeException").GetConstructor(new[] { Bcl("System.String") }));
         _il.Emit(OpCodes.Throw);
         _il.MarkLabel(ok);
 
@@ -762,7 +735,7 @@ sealed partial class Emitter
         // emitted) IS rewrappable — DelegateCtor/InvokeOf bridge it via TypeBuilder.GetX — so it must rewrap, else the
         // self-built `KFunc` mismatches the callee's BCL `Func` (ilverify StackUnexpected — the S4a `use { it.read() }`).
         // A concrete `want` (e.g. MapsKt.mapValues's KFunc over referenced Map.Entry/int) also still rewraps.
-        if (IsDelegateType(want) && want != typeof(System.Delegate) && want != typeof(System.MulticastDelegate)
+        if (IsDelegateType(want) && want != Bcl("System.Delegate") && want != Bcl("System.MulticastDelegate")
             && !IsTypeBuilderBackedGeneric(want) && !ContainsGenericParameter(want)
             && a.TryGetProperty("k", out var dk) && (dk.GetString() == "newDelegate" || dk.GetString() == "newClosure"))
         {
@@ -774,7 +747,7 @@ sealed partial class Emitter
         if (got == null) return;
         // Box a value/generic-param arg passed to a reference param — but NOT when the param is itself a generic
         // param (passing `T` to a `T` slot flows the value as-is at the instantiation).
-        if (NeedsBoxToRef(got) && !want.IsValueType && !want.IsGenericParameter)
+        if (NeedsBoxToRef(got) && !IsValueType(want) && !want.IsGenericParameter)
             _il.Emit(OpCodes.Box, got);
         // A collapsed-variance collection-interface VALUE flowing into its SIBLING arg SLOT (same element T, either
         // direction): the two sibling interfaces do NOT derive from each other in the BCL type lattice, so the raw flow
@@ -806,7 +779,7 @@ sealed partial class Emitter
     // (List<T>/HashSet<T>/T[]) implements every mutable face — a foreign value implementing ONLY the readonly Kotlin
     // face flowing into a collapsed mutable slot would throw InvalidCastException at the seam (fail-loud, and it is
     // bir2cir's collapse decision, not ilemit's — tracked interop follow-up, out of scope here).
-    static bool IsCollectionViewSeam(Type got, Type want)
+    bool IsCollectionViewSeam(Type got, Type want)
     {
         if (got == null || want == null) return false;
         if (!got.IsGenericType || got.IsGenericTypeDefinition) return false;
@@ -816,14 +789,14 @@ sealed partial class Emitter
         if (ga.Length != 1 || wa.Length != 1 || ga[0] != wa[0]) return false;
         var gd = got.GetGenericTypeDefinition();
         var wd = want.GetGenericTypeDefinition();
-        if (wd == typeof(System.Collections.Generic.IReadOnlyList<>))
-            return gd == typeof(System.Collections.Generic.IList<>);
-        if (wd == typeof(System.Collections.Generic.IReadOnlyCollection<>))
-            return gd == typeof(System.Collections.Generic.IList<>) || gd == typeof(System.Collections.Generic.ICollection<>);
-        if (wd == typeof(System.Collections.Generic.IList<>))
-            return gd == typeof(System.Collections.Generic.IReadOnlyList<>);
-        if (wd == typeof(System.Collections.Generic.ICollection<>))
-            return gd == typeof(System.Collections.Generic.IReadOnlyList<>) || gd == typeof(System.Collections.Generic.IReadOnlyCollection<>);
+        if (wd == Bcl("System.Collections.Generic.IReadOnlyList`1"))
+            return gd == Bcl("System.Collections.Generic.IList`1");
+        if (wd == Bcl("System.Collections.Generic.IReadOnlyCollection`1"))
+            return gd == Bcl("System.Collections.Generic.IList`1") || gd == Bcl("System.Collections.Generic.ICollection`1");
+        if (wd == Bcl("System.Collections.Generic.IList`1"))
+            return gd == Bcl("System.Collections.Generic.IReadOnlyList`1");
+        if (wd == Bcl("System.Collections.Generic.ICollection`1"))
+            return gd == Bcl("System.Collections.Generic.IReadOnlyList`1") || gd == Bcl("System.Collections.Generic.IReadOnlyCollection`1");
         return false;
     }
 
@@ -838,27 +811,27 @@ sealed partial class Emitter
     void EmitReturnCoerced(Type got)
     {
         if (got == null) return;
-        if (_methodRetType.IsGenericType && _methodRetType.GetGenericTypeDefinition() == typeof(Nullable<>)
+        if (_methodRetType.IsGenericType && _methodRetType.GetGenericTypeDefinition() == Bcl("System.Nullable`1")
             && _methodRetType.GetGenericArguments()[0] == got)
-            _il.Emit(OpCodes.Newobj, _methodRetType.GetConstructor(new[] { got }));
+            EmitConstructor(_il, OpCodes.Newobj, _methodRetType.GetConstructor(new[] { got }));
         // A value type / `gp:T` returned where the method declares ANY reference type must BOX (C2: the
         // `compareBy { it }` selector lambda returns `it: Int` declared `kotlin.Comparable[object]` = System.IComparable
         // — the boxed Int IS an IComparable). `box` alone yields the tracked type `O`; when the return is a NON-object
         // reference (an interface / concrete ref type) add `castclass <ret>` so the boxed value verifies as that slot
         // (mirrors the `cast` emitter's box+castclass). Previously only `== object` boxed, so a value flowing into a
         // non-object reference return (`IComparable`) landed unboxed -> a value reinterpreted as a reference -> NRE.
-        else if (NeedsBoxToRef(got) && !_methodRetType.IsValueType && !_methodRetType.IsGenericParameter)
+        else if (NeedsBoxToRef(got) && !IsValueType(_methodRetType) && !_methodRetType.IsGenericParameter)
         {
             _il.Emit(OpCodes.Box, got);
-            if (_methodRetType != typeof(object)) _il.Emit(OpCodes.Castclass, _methodRetType);
+            if (_methodRetType != Bcl("System.Object")) _il.Emit(OpCodes.Castclass, _methodRetType);
         }
         // A REFERENCE value (`object` — e.g. an erased generic stdlib return like `clrMapGet<K,V>:object`) returned where
         // the method declares a VALUE type or a generic PARAMETER (`V`) needs the universal cast `unbox.any <ret>` (NOT
         // castclass — `castclass !!V` JIT-crashes value-type instantiations). Without it the reference sits where a value
         // is expected -> ilverify StackUnexpected (found ref 'object', expected value 'V'). Only when it isn't already
         // the exact return type.
-        else if (got != _methodRetType && !got.IsValueType && !got.IsGenericParameter
-                 && (_methodRetType.IsValueType || _methodRetType.IsGenericParameter))
+        else if (got != _methodRetType && !IsValueType(got) && !got.IsGenericParameter
+                 && (IsValueType(_methodRetType) || _methodRetType.IsGenericParameter))
             _il.Emit(OpCodes.Unbox_Any, _methodRetType);
         // The method-return-statement twin of EmitArg/EmitStoreCoerced/CoerceReturn: a collapsed-variance collection
         // interface VALUE returned where the method declares its SIBLING (same T), distinct from CoerceReturn (which
@@ -880,7 +853,7 @@ sealed partial class Emitter
         // / Nullable<> / gp: arg still BOXES into an `object`/reference param — mirrors EmitArgsTyped and the typeArgs
         // referenced path. Without this the `pt==null` branch emitted the arg raw (no box) -> InvalidProgram for e.g.
         // `toString(object)` of an `Int?` (`box Nullable<int>` yields the boxed underlying value, or null).
-        var ps = pt == null ? mb.GetParameters() : null;
+        var ps = pt == null ? ParametersOf(mb) : null;
         int i = 0;
         foreach (var a in args.EnumerateArray())
         {

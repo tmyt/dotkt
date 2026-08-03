@@ -127,8 +127,14 @@ static class InheritedMemberOwnerBinding
         // physical return type and makes an immediately-narrow consumer unverifiable. Prefer the real declaration on
         // the current owner. A local fake override is not emitted as a slot, so it deliberately falls through to the
         // hierarchy search.
-        if (DeclaresExact(types.GetValueOrDefault(owner.Name), method, methodArity, sig, owner.Args)
-            || refs.DeclaresExactInstanceMember(owner.Name, method, methodArity, sig))
+        var ownDeclarationSig = ExactDeclarationSignature(
+            types.GetValueOrDefault(owner.Name), method, methodArity, sig, owner.Args);
+        if (ownDeclarationSig != null)
+        {
+            call["sig"] = ownDeclarationSig;
+            return;
+        }
+        if (refs.DeclaresExactInstanceMember(owner.Name, method, methodArity, sig))
             return;
 
         var hierarchy = ReachableTypes(owner, types, refs).ToList();
@@ -160,6 +166,9 @@ static class InheritedMemberOwnerBinding
                 .Select(c => c.Type).Distinct().ToList();
             if (direct.Count != 1) return;
             call["ownerType"] = TypeJson.Write(direct[0]);
+            if (ExactDeclarationSignature(types.GetValueOrDefault(direct[0].Name), method, methodArity,
+                    sig, direct[0].Args) is { } directDeclarationSig)
+                call["sig"] = directDeclarationSig;
             if (IsInterface(direct[0].Name, types, refs)) call["virtual"] = true;
             if (kind == "newBoundDelegate") call["calleeOwner"] = TypeJson.Write(direct[0]);
             return;
@@ -171,6 +180,9 @@ static class InheritedMemberOwnerBinding
             .Select(c => c.Type).Distinct().ToList();
         if (nearest.Count != 1) return;
         call["ownerType"] = TypeJson.Write(nearest[0]);
+        if (ExactDeclarationSignature(types.GetValueOrDefault(nearest[0].Name), method, methodArity,
+                sig, nearest[0].Args) is { } nearestDeclarationSig)
+            call["sig"] = nearestDeclarationSig;
         if (IsInterface(nearest[0].Name, types, refs)) call["virtual"] = true;
         if (kind == "newBoundDelegate") call["calleeOwner"] = TypeJson.Write(nearest[0]);
     }
@@ -219,12 +231,16 @@ static class InheritedMemberOwnerBinding
     }
 
     static bool DeclaresExact(TypeDef def, string name, int methodArity, TypeNode[] callSig, TypeNode[] ownerArgs)
-    {
-        if (def?.Methods == null) return false;
-        ownerArgs ??= def.TypeParamCount == 0 ? Array.Empty<TypeNode>() : null;
-        if (ownerArgs == null || ownerArgs.Length != def.TypeParamCount) return false;
+        => ExactDeclarationSignature(def, name, methodArity, callSig, ownerArgs) != null;
 
-        var matches = 0;
+    static JsonArray ExactDeclarationSignature(TypeDef def, string name, int methodArity,
+        TypeNode[] callSig, TypeNode[] ownerArgs)
+    {
+        if (def?.Methods == null) return null;
+        ownerArgs ??= def.TypeParamCount == 0 ? Array.Empty<TypeNode>() : null;
+        if (ownerArgs == null || ownerArgs.Length != def.TypeParamCount) return null;
+
+        var matches = new List<JsonObject>();
         foreach (var method in def.Methods.OfType<JsonObject>())
         {
             if (Str(method["name"]) != name) continue;
@@ -235,19 +251,59 @@ static class InheritedMemberOwnerBinding
             for (var i = 0; i < ps.Count; i++)
             {
                 var declared = ps[i] is JsonObject p ? TypeJson.Read(p["type"]) : null;
-                // `sig` is a declaration-signature descriptor, not an expression type: its type/method Tv indices
-                // remain relative to the callee declaration even when ownerType is constructed.  Substituting those
-                // Tvs here would compare an actual call-site type with a formal signature and reject the very inherited
-                // generic call we need to bind.  The hierarchy args are used only to construct the MemberRef owner.
-                if (declared == null || declared != callSig[i])
+                // kotc preserves the formal descriptor where FIR exposes it, but some inherited call sites carry the
+                // same declaration after owner substitution (`Base<T>.m(T)` reached through `Derived : Base<Leaf>`
+                // arrives as `m(Leaf)`). Both are exact descriptions of one declaration; accept only raw identity or
+                // the hierarchy-derived owner substitution, never expression assignability.
+                var substituted = declared == null ? null : SubstOwnerTvs(declared, ownerArgs);
+                if (declared == null || (declared != callSig[i]
+                    && substituted != callSig[i]
+                    // An override of `Base<T>.m(List<T?>)` may itself be declared as `m(List<String?>)`, while the
+                    // CLR slot is rewritten to the base declaration's uniform `IReadOnlyList<object>`. The call still
+                    // carries the Kotlin declaration descriptor (`IReadOnlyList<string>`). This is one declaration
+                    // precisely when the emitted vector is its NESTED object-erasure image; a bare `object` is not
+                    // accepted here because that would turn ordinary argument assignability into member selection.
+                    && !IsNestedObjectErasureOf(declared, callSig[i])
+                    && !IsNestedObjectErasureOf(substituted, callSig[i])))
                 {
                     exact = false;
                     break;
                 }
             }
-            if (exact) matches++;
+            if (exact) matches.Add(method);
         }
-        return matches == 1;
+        if (matches.Count != 1) return null;
+        return new JsonArray(((JsonArray)matches[0]["params"]).OfType<JsonObject>()
+            .Select(p => TypeJson.Write(TypeJson.Read(p["type"]))).ToArray());
+    }
+
+    static bool IsNestedObjectErasureOf(TypeNode candidate, TypeNode source)
+    {
+        if (candidate == null || source == null || candidate.Equals(source)) return candidate != null;
+        return (candidate, source) switch
+        {
+            (TypeNode.Fqn { Args: { } ca } cf, TypeNode.Fqn { Args: { } sa } sf)
+                when cf.Name == sf.Name && ca.Length == sa.Length
+                => ca.Zip(sa, IsObjectErasureOf).All(x => x),
+            (TypeNode.Array c, TypeNode.Array s) => IsObjectErasureOf(c.Elem, s.Elem),
+            (TypeNode.Nullable c, TypeNode.Nullable s) => IsObjectErasureOf(c.Of, s.Of),
+            (TypeNode.Oblivious c, TypeNode.Oblivious s) => IsObjectErasureOf(c.Of, s.Of),
+            (TypeNode.ByRef c, TypeNode.ByRef s) => IsObjectErasureOf(c.Of, s.Of),
+            (TypeNode.Fn c, TypeNode.Fn s)
+                when c.Params.Length == s.Params.Length && c.Suspend == s.Suspend
+                     && (c.Recv == null) == (s.Recv == null)
+                => IsObjectErasureOf(c.Ret, s.Ret)
+                   && c.Params.Zip(s.Params, IsObjectErasureOf).All(x => x)
+                   && (c.Recv == null || IsObjectErasureOf(c.Recv, s.Recv)),
+            _ => false,
+        };
+    }
+
+    static bool IsObjectErasureOf(TypeNode candidate, TypeNode source)
+    {
+        if (candidate.Equals(source)) return true;
+        if (candidate is TypeNode.Fqn { Name: "object", Args: null }) return true;
+        return IsNestedObjectErasureOf(candidate, source);
     }
 
     static bool DeclaresVirtual(TypeDef def, string name, int methodArity, TypeNode[] callSig, int paramCount)

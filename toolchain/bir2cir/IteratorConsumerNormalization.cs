@@ -85,10 +85,13 @@ static class IteratorConsumerNormalization
                                 ["k"] = "callStatic",
                                 ["owner"] = TypeJson.Fqn("kotlin.collections.ClrMapDefaultsKt"),
                                 ["method"] = "clrMapMutableEntries",
+                                ["sig"] = new JsonArray { TypeJson.Fqn("kotlin.Any") },
                                 ["args"] = new JsonArray { recv0.DeepClone() },
                                 ["typeArgs"] = new JsonArray { TypeJson.Write(ek), TypeJson.Write(ev) },
                             },
                         },
+                        ["sig"] = new JsonArray { TypeJson.Write(new TypeNode.Fqn("kotlin.collections.ClrEnumerable",
+                            new TypeNode[] { new TypeNode.Tv("method", 0) })) },
                         ["typeArgs"] = new JsonArray { TypeJson.Write(elem2) },
                     };
                     obj["type"] = IterType(elem2);
@@ -162,4 +165,3 @@ static class IteratorConsumerNormalization
         return null;
     }
 }
-

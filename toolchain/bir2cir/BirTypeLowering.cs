@@ -99,7 +99,7 @@ static class BirTypeLowering
     static readonly HashSet<string> TypeKeys = new(StringComparer.Ordinal)
     {
         // signature positions (the original TypeProperties set)
-        "type", "ownerType", "calleeOwner", "ret", "suspendRet", "base", "interfaces", "argTypes",
+        "type", "ownerType", "calleeOwner", "ret", "suspendRet", "base", "interfaces", "argTypes", "delegationSig",
         // expression / statement type positions
         "dynRet", "funcType", "typeArgs", "constraints", "recvType", "iface", "excType",
         "keyType", "valType", "iterType", "accessOwner", "elem", "to", "owner",

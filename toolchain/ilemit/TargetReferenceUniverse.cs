@@ -1,25 +1,30 @@
 using System.Reflection;
 using DotKt.Toolchain;
 
-// The exact target metadata universe selected by the build.  This is deliberately separate from
-// RuntimeReferences: the latter loads implementation assemblies so current Reflection.Emit paths can execute,
-// whereas this context contains the contract/reference assemblies whose identities must eventually be written to
-// output metadata.  #335 establishes and validates the boundary without changing emission; #336 switches every
-// emitted type/member to this universe atomically.
+// The exact target metadata universe selected by the build. Compile references are the sole source of available
+// types and members. Runtime references only disambiguate multiple genuine compile-time definitions by naming the
+// implementation assembly MSBuild selected for deployment; they never add a type to this universe.
 sealed class TargetReferenceUniverse : IDisposable
 {
     readonly MetadataLoadContext _context;
     readonly Assembly[] _assemblies;
     readonly HashSet<Assembly> _assemblySet;
+    readonly HashSet<string> _runtimeAssemblyIdentities;
     readonly Dictionary<string, Type> _types = new(StringComparer.Ordinal);
 
     public Assembly CoreAssembly => _context.CoreAssembly;
     public IReadOnlyList<Assembly> Assemblies => _assemblies;
     public IReadOnlyList<string> ReferencePaths { get; }
 
-    public TargetReferenceUniverse(IEnumerable<string> paths)
+    public TargetReferenceUniverse(IEnumerable<string> paths, IEnumerable<string> runtimePaths = null,
+        string targetRid = null, string ridGraphPath = null)
     {
         var catalog = ManagedReferenceCatalog.Create(paths, "ilemit target");
+        var runtimeCatalog = ManagedReferenceCatalog.Create(runtimePaths, "ilemit runtime", runtimeSelection: true,
+            targetRid: targetRid, ridGraphPath: ridGraphPath);
+        _runtimeAssemblyIdentities = runtimeCatalog.Entries
+            .Select(e => e.Identity.FullName!)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         _context = catalog.CreateMetadataLoadContext();
         ReferencePaths = catalog.Paths.ToArray();
         _assemblies = catalog.Paths.Select(LoadExact).ToArray();
@@ -79,10 +84,24 @@ sealed class TargetReferenceUniverse : IDisposable
                 $"target type '{fullName}' is absent from the exact compile reference set");
         }
         if (matches.Count > 1)
+        {
+            // A compile surface may intentionally contain a metadata-only contract twin and its copy-local runtime
+            // implementation under distinct assembly identities. CIR carries the resolved CLR type FQN, not a
+            // deployment choice. If exactly one definer is the implementation assembly selected by MSBuild, use it.
+            // This is a disambiguator over compile definitions, never a runtime lookup/fallback.
+            var implementations = matches
+                .Where(t => _runtimeAssemblyIdentities.Contains(t.Assembly.GetName().FullName!))
+                .ToList();
+            if (implementations.Count == 1)
+            {
+                _types[fullName] = implementations[0];
+                return implementations[0];
+            }
             throw new InvalidOperationException(
                 $"target type '{fullName}' is defined by multiple compile references: " +
                 string.Join(", ", matches.Select(t => t.Assembly.GetName().FullName)
                     .OrderBy(x => x, StringComparer.Ordinal)));
+        }
         _types[fullName] = matches[0];
         return matches[0];
     }

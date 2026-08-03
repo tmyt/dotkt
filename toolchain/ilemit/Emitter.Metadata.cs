@@ -1,17 +1,22 @@
 // AUTO-SPLIT from Program.cs — part of the `Emitter` partial class (see Program.cs for the overview).
+#nullable enable annotations
 using System.Reflection;
 using System.Reflection.Emit;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
+using System.Text;
 using System.Text.Json;
 
-// The BIR `attr`-node -> CustomAttributeBuilder path (BuildCab/TryCab/ConstArgValue) + parameter metadata. #71 S2:
+// The BIR `attr`-node -> ECMA-335 custom-attribute blob path (BuildAttribute/TryAttribute/ConstArgValue) + parameter
+// metadata. #71 S2:
 // ilemit no longer GENERATES any Kotlin round-trip metadata — bir2cir (RoundtripMetadata) emits every [Kotlin*]/
 // [Nullable]/[NullableContext] as an ordinary CIR `attrs` entry (and the attr-class DEFS as ordinary type decls);
-// ilemit only STAMPS them dumbly through the generic BuildCab path below. No Kotlin-semantic decision remains here.
+// ilemit only STAMPS them dumbly through the generic BuildAttribute path below. No Kotlin-semantic decision remains.
 sealed partial class Emitter
 {
+    sealed record EncodedAttribute(ConstructorInfo Constructor, byte[] Blob);
+
     // Fields carrying `@kotlin.concurrent.Volatile` (kotc emits `"volatile":true`). Emitted with a REQUIRED
     // `modreq(System.Runtime.CompilerServices.IsVolatile)` custom modifier — EXACTLY how C# encodes a `volatile`
     // field — so the JIT treats every access as volatile; the `volatile.` IL prefix is additionally emitted before
@@ -22,7 +27,7 @@ sealed partial class Emitter
     // access sites can emit the matching `volatile.` prefix.
     FieldBuilder DefineVolatileField(TypeBuilder tb, string name, Type type, FieldAttributes attrs)
     {
-        var fb = tb.DefineField(name, type, new[] { typeof(System.Runtime.CompilerServices.IsVolatile) }, null, attrs);
+        var fb = tb.DefineField(name, type, new[] { Bcl("System.Runtime.CompilerServices.IsVolatile") }, null, attrs);
         _volatileFields.Add(fb);
         return fb;
     }
@@ -39,23 +44,20 @@ sealed partial class Emitter
 
     // Returns null when the CLR custom-attribute encoder cannot represent this annotation's shape (so the caller
     // skips it). kotc emits EVERY annotation verbatim (it is just metadata to the frontend); the CLR layer decides
-    // what is encodable. Some Kotlin annotations have a constructor-parameter type that Reflection.Emit's
-    // CustomAttributeBuilder rejects at validation — e.g. a generic-instantiation parameter, where
-    // TypeBuilderInstantiation.IsSubclassOf throws NotSupportedException. Such an attribute carries no CLR-attribute
-    // semantics we could preserve anyway, so we skip it with a diagnostic rather than abort the whole emit.
-    CustomAttributeBuilder BuildCab(JsonElement a)
+    // what is encodable. The blob is encoded here instead of through CustomAttributeBuilder: CAB validates target-MLC
+    // parameter Types against host-runtime argument Types, which would reintroduce the mixed-universe bug #336 removes.
+    EncodedAttribute? BuildAttribute(JsonElement a)
     {
         var attr = SlotName(a.GetProperty("attr"));   // `attr` is a structured `{t:fqn}` identity node (#48)
         var args = a.GetProperty("args").EnumerateArray().Select(ConstArgValue).ToArray();
         if (a.TryGetProperty("attrExternal", out var extF) && extF.GetBoolean())
         {
-            // An EXTERNAL .NET attribute (#54/#48): its type lives in a referenced assembly, not this one — bind its
-            // real constructor (resolved by the declared arg types, falling back to arity) and apply it with the args.
+            // An EXTERNAL .NET attribute (#54/#48): its type lives in a referenced assembly, not this one. The carried
+            // declared parameter vector must identify its constructor exactly; an ABI miss is not repaired by arity.
             var at = ClrRef(attr);
             var argTypes = a.GetProperty("argTypes").EnumerateArray().Select(s => ClrRef(s)).ToArray();
-            var nctor = at.GetConstructor(argTypes)
-                        ?? at.GetConstructors().FirstOrDefault(c => c.GetParameters().Length == args.Length);
-            return TryCab(nctor, args, attr);
+            var nctor = at.GetConstructor(argTypes);
+            return TryAttribute(nctor, argTypes, args, attr);
         }
         // The attribute type must be emitted in THIS assembly (present in _types). A stdlib-only annotation that the app
         // merely APPLIES — e.g. `@kotlin.OptIn(ExperimentalAtomicApi::class)` opting into an experimental stdlib API — is
@@ -68,38 +70,32 @@ sealed partial class Emitter
         }
         var ti = _types[attr];
         // Ensure the attribute type's ctors are defined even if this stamp runs before pass 3 reaches that type
-        // (a `@KotlinDefault` on an earlier type's parameter), then pick the ctor whose parameter count matches the
-        // applied argument count (an annotation may have >1 ctor). Only a genuinely ctor-less type mints a default one.
+        // (a `@KotlinDefault` on an earlier type's parameter), then link the exact carried declaration signature.
         EnsureCtorsDefined(ti);
-        // Ctor pick: arity match is the fallback (every current single-overload attr), refined to an EXACT runtime-type
-        // match when several overloads share the arg count. This disambiguates the csc DUAL-ctor NullableAttribute —
-        // (byte) vs (byte[]) both take 1 arg, so a plain count pick would route a byte[] arg to the (byte) ctor and
-        // CustomAttributeBuilder would throw -> TryCab SILENTLY drops the stamp (a byte-equivalence trap). A null arg
-        // skips the type check (falls back to arity).
-        ConstructorInfo ctor = null;
+        var declaredArgTypes = a.GetProperty("argTypes").EnumerateArray()
+            .Select(t => SigCanon(DotKt.Bir.TypeNode.Read(t))).ToArray();
+        var hits = new List<(ConstructorInfo ctor, Type[] parameterTypes)>();
         for (int i = 0; i < ti.Ctors.Count; i++)
         {
             var ps = ti.CtorDefs[i].GetProperty("params");
-            if (ps.GetArrayLength() != args.Length) continue;
-            ctor ??= ti.Ctors[i];
-            int j = 0; bool exact = true;
-            foreach (var p in ps.EnumerateArray())
-            {
-                if (args[j] != null && MapType(p.GetProperty("type")) != args[j].GetType()) { exact = false; break; }
-                j++;
-            }
-            if (exact) { ctor = ti.Ctors[i]; break; }
+            if (ps.GetArrayLength() != declaredArgTypes.Length) continue;
+            var parameterNodes = ps.EnumerateArray().Select(p => p.GetProperty("type")).ToArray();
+            if (!parameterNodes.Select(t => SigCanon(DotKt.Bir.TypeNode.Read(t))).SequenceEqual(declaredArgTypes)) continue;
+            hits.Add((ti.Ctors[i], parameterNodes.Select(MapType).ToArray()));
         }
-        ctor ??= ti.Ctors.Count > 0 ? ti.Ctors[0] : ti.TB.DefineDefaultConstructor(MethodAttributes.Public);
-        return TryCab(ctor, args, attr);
+        if (hits.Count == 0)
+            return TryAttribute(null, Array.Empty<Type>(), args, attr); // existing policy: an unencodable source annotation is skipped
+        if (hits.Count > 1)
+            throw new InvalidOperationException($"ilemit: attribute constructor descriptor {attr}{a.GetProperty("argTypes").GetRawText()} links {hits.Count} local declarations");
+        return TryAttribute(hits[0].ctor, hits[0].parameterTypes, args, attr);
     }
 
     // Stamp each CIR `attrs` entry of a field/property/return-parameter decl onto its builder — the SAME generic
-    // BuildCab path the type/method/param sites use. Skips an attr whose type is neither `attrExternal`-flagged nor
-    // emitted in this assembly (BuildCab would KeyNotFound) — the CLR layer decides what is encodable. bir2cir (RoundtripMetadata)
+    // BuildAttribute path the type/method/param sites use. Skips an attr whose type is neither `attrExternal`-flagged nor
+    // emitted in this assembly (BuildAttribute would KeyNotFound) — the CLR layer decides what is encodable. bir2cir (RoundtripMetadata)
     // folds the round-trip metadata ([KotlinReadOnly]/[KotlinSuspendFunctionType]/[Nullable]/…) into these arrays;
     // ilemit only STAMPS. `set` is FieldBuilder/PropertyBuilder/ParameterBuilder.SetCustomAttribute.
-    void StampMemberAttrs(Action<CustomAttributeBuilder> set, JsonElement decl)
+    void StampMemberAttrs(Action<ConstructorInfo, byte[]> set, JsonElement decl)
     {
         if (!decl.TryGetProperty("attrs", out var attrs) || attrs.ValueKind != JsonValueKind.Array) return;
         foreach (var a in attrs.EnumerateArray())
@@ -107,18 +103,104 @@ sealed partial class Emitter
             var an = SlotName(a.GetProperty("attr"));   // structured `{t:fqn}` identity node (#48)
             var anExternal = a.TryGetProperty("attrExternal", out var anExt) && anExt.GetBoolean();
             if (!anExternal && !_types.ContainsKey(an)) continue;
-            var cab = BuildCab(a); if (cab != null) set(cab);
+            var encoded = BuildAttribute(a); if (encoded != null) set(encoded.Constructor, encoded.Blob);
         }
     }
 
-    CustomAttributeBuilder TryCab(ConstructorInfo ctor, object[] args, string attr)
+    EncodedAttribute? TryAttribute(ConstructorInfo? ctor, Type[] parameterTypes, object[] args, string attr)
     {
-        try { return new CustomAttributeBuilder(ctor, args); }
+        try
+        {
+            if (ctor == null) throw new ArgumentException("attribute constructor was not found");
+            if (parameterTypes.Length != args.Length) throw new ArgumentException("attribute argument count does not match constructor");
+            return new EncodedAttribute(ctor, EncodeAttributeBlob(parameterTypes, args));
+        }
         catch (Exception ex) when (ex is NotSupportedException || ex is ArgumentException)
         {
             Console.Error.WriteLine($"ilemit: skipping un-encodable custom attribute [{attr}]: {ex.GetType().Name}: {ex.Message}");
             return null;
         }
+    }
+
+    void SetAttribute(Action<ConstructorInfo, byte[]> set, ConstructorInfo ctor, Type[] parameterTypes, params object[] args)
+        => set(ctor, EncodeAttributeBlob(parameterTypes, args));
+
+    // II.23.3: prolog, fixed arguments in constructor order, then zero named arguments. Parameter Types come from the
+    // same target universe as the constructor; only their ECMA element kind is inspected, never their host identity.
+    static byte[] EncodeAttributeBlob(Type[] parameterTypes, object[] args)
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
+        writer.Write((ushort)1);
+        for (var i = 0; i < args.Length; i++) WriteAttributeValue(writer, parameterTypes[i], args[i]);
+        writer.Write((ushort)0);
+        writer.Flush();
+        return stream.ToArray();
+    }
+
+    static void WriteAttributeValue(BinaryWriter writer, Type type, object value)
+    {
+        if (type.IsEnum)
+        {
+            WriteAttributeValue(writer, type.GetEnumUnderlyingType(), value);
+            return;
+        }
+        if (type.IsArray)
+        {
+            if (value == null) { writer.Write(-1); return; }
+            if (value is not Array values) throw new ArgumentException($"custom attribute value is not an array for {type}");
+            writer.Write(values.Length);
+            foreach (var item in values) WriteAttributeValue(writer, type.GetElementType(), item);
+            return;
+        }
+
+        switch (type.FullName)
+        {
+            case "System.Boolean": writer.Write(Convert.ToBoolean(value)); return;
+            case "System.Char": writer.Write(Convert.ToUInt16(value)); return;
+            case "System.SByte": writer.Write(Convert.ToSByte(value)); return;
+            case "System.Byte": writer.Write(Convert.ToByte(value)); return;
+            case "System.Int16": writer.Write(Convert.ToInt16(value)); return;
+            case "System.UInt16": writer.Write(Convert.ToUInt16(value)); return;
+            case "System.Int32": writer.Write(Convert.ToInt32(value)); return;
+            case "System.UInt32": writer.Write(Convert.ToUInt32(value)); return;
+            case "System.Int64": writer.Write(Convert.ToInt64(value)); return;
+            case "System.UInt64": writer.Write(Convert.ToUInt64(value)); return;
+            case "System.Single": writer.Write(Convert.ToSingle(value)); return;
+            case "System.Double": writer.Write(Convert.ToDouble(value)); return;
+            case "System.String": WriteSerString(writer, (string)value); return;
+            case "System.Type":
+                WriteSerString(writer, value is Type t ? t.AssemblyQualifiedName : (string)value);
+                return;
+            default:
+                throw new NotSupportedException($"custom attribute fixed argument type '{type}' is not supported");
+        }
+    }
+
+    static void WriteSerString(BinaryWriter writer, string value)
+    {
+        if (value == null) { writer.Write((byte)0xff); return; }
+        var bytes = Encoding.UTF8.GetBytes(value);
+        WriteCompressedUInt(writer, (uint)bytes.Length);
+        writer.Write(bytes);
+    }
+
+    static void WriteCompressedUInt(BinaryWriter writer, uint value)
+    {
+        if (value <= 0x7f) writer.Write((byte)value);
+        else if (value <= 0x3fff)
+        {
+            writer.Write((byte)((value >> 8) | 0x80));
+            writer.Write((byte)value);
+        }
+        else if (value <= 0x1fffffff)
+        {
+            writer.Write((byte)((value >> 24) | 0xc0));
+            writer.Write((byte)(value >> 16));
+            writer.Write((byte)(value >> 8));
+            writer.Write((byte)value);
+        }
+        else throw new ArgumentException("custom attribute string is too long");
     }
 
     static object ConstArgValue(JsonElement e)
@@ -170,7 +252,7 @@ sealed partial class Emitter
             var name = (p.TryGetProperty("name", out var nn) ? nn.GetString() : null) ?? "";
             bool vararg = ModFlag(p, "vararg");
             bool hasDefault = p.TryGetProperty("default", out var dflt);
-            // PARAMETER-level custom attributes — the generic BuildCab path. bir2cir (RoundtripMetadata) folds the
+            // PARAMETER-level custom attributes — the generic BuildAttribute path. bir2cir (RoundtripMetadata) folds the
             // round-trip metadata into this array too ([Nullable] for a nullable-reference param, [KotlinSuspendFunctionType]
             // for a suspend fn-type param), so the parameter builder must be forced whenever attrs are present even if the
             // param otherwise carries no name/vararg/default. ilemit only STAMPS — no Kotlin-semantic decision here.
@@ -181,10 +263,11 @@ sealed partial class Emitter
             var attrs = hasDefault ? ParameterAttributes.Optional | ParameterAttributes.HasDefault : ParameterAttributes.None;
             var pb = defineParam(i, attrs, name.Length > 0 ? name : null);
             // `vararg xs: T` -> [ParamArray] so the .NET signature is a params array (a C# OR Kotlin consumer can spread).
-            if (vararg) pb.SetCustomAttribute(new CustomAttributeBuilder(typeof(ParamArrayAttribute).GetConstructor(Type.EmptyTypes), new object[0]));
+            if (vararg) SetAttribute(pb.SetCustomAttribute,
+                Bcl("System.ParamArrayAttribute").GetConstructor(Type.EmptyTypes), Array.Empty<Type>());
             if (hasDefault) { try { pb.SetConstant(ConstArgValue(dflt)); } catch { } }
             // Apply each param attribute whose type this assembly can encode (an in-assembly emitted type, or an
-            // `attrExternal`-flagged referenced type); an attr referencing a type not in `_types` is skipped (BuildCab
+            // `attrExternal`-flagged referenced type); an attr referencing a type not in `_types` is skipped (BuildAttribute
             // would KeyNotFound) — the same "the CLR layer decides what is encodable" policy the method-level path uses.
             if (hasAttrs)
                 foreach (var a in pattrs.EnumerateArray())
@@ -192,7 +275,7 @@ sealed partial class Emitter
                     var an = SlotName(a.GetProperty("attr"));   // structured `{t:fqn}` identity node (#48)
                     var anExternal = a.TryGetProperty("attrExternal", out var anExt) && anExt.GetBoolean();
                     if (!anExternal && !_types.ContainsKey(an)) continue;
-                    var cab = BuildCab(a); if (cab != null) pb.SetCustomAttribute(cab);
+                    var encoded = BuildAttribute(a); if (encoded != null) pb.SetCustomAttribute(encoded.Constructor, encoded.Blob);
                 }
             i++;
         }

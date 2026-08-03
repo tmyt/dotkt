@@ -43,8 +43,8 @@ actual="$(dotnet "$probe_dir/TargetUniverseProbe.dll")"
 
 dotnet "$RETARGET_DLL" "$raw" --out "$repaired" \
     --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_RT_DLL")" -v >"$OUT/retarget.log"
-grep -Eq 'repointed [1-9][0-9]* TypeRef\(s\)' "$OUT/retarget.log" \
-    || die "retarget did not report a calibrated metadata change"
+grep -qF 'no System.Private.CoreLib ref — already clean' "$OUT/retarget.log" \
+    || die "retarget oracle changed raw target-scoped metadata"
 
 dotnet run --project "$ROOT/tests/target-universe/MetadataProbe.csproj" -c Release -- \
     "$raw" "$repaired"

@@ -52,7 +52,7 @@ sealed partial class Emitter
         // via a constructed receiver). Anchor it onto the constructed base instantiation (`Base<!T>` / `Base<String>`),
         // mirroring ResolveMethod's inherited-method path. Self-references reach here as `def.MakeGenericType(def's own
         // GenericTypeParameterBuilders)` (never the bare def), so the own-field anchoring and base-walk are both valid.
-        try { return TypeBuilder.GetField(constructed, fb); }
+        try { return AnchorField(constructed, fb); }
         catch (ArgumentException) { return AnchorInheritedFieldOnBase(constructed, fb, out fieldType) ?? fb; }
     }
 
@@ -70,7 +70,7 @@ sealed partial class Emitter
         for (var bt = constructed.BaseType; bt != null; bt = bt.BaseType)
             if (bt.IsGenericType && !bt.IsGenericTypeDefinition && ReferenceEquals(bt.GetGenericTypeDefinition(), targetDef))
             {
-                try { var anchored = TypeBuilder.GetField(bt, fb); fieldType = Subst(fb.FieldType, bt.GetGenericArguments()); return anchored; }
+                try { var anchored = AnchorField(bt, fb); fieldType = Subst(fb.FieldType, bt.GetGenericArguments()); return anchored; }
                 catch (ArgumentException) { return null; }
             }
         return null;
@@ -99,17 +99,10 @@ sealed partial class Emitter
         // (TypeBuilder) arg stays on the TypeBuilder.GetMethod path below (reflection GetMethods throws on such a type).
         if (constructed != null && !_types.ContainsKey(open) && !IsTbInstantiation(constructed))
         {
-            var argc = sig?.Length ?? -1;
-            // Prefer a SIG-DRIVEN pick: a referenced constructed-generic owner can carry same-name/same-arity overloads
-            // that differ only in a PARAM's generic-type owner (SequenceScope<T>.yieldAll$dotkt_suspend over
-            // Iterator<T> vs IEnumerable<T> vs Sequence<T>) — arity alone binds an arbitrary one -> BadImageFormat.
-            // FindReflectedMethodBySig matches the declared-callee `sig` nodes (structurally for open `Tv` args) to
-            // disambiguate; fall back to the arity pick when no sig is carried (or it can't uniquely resolve).
-            // A miss must be a LEGIBLE error (and lets callInstance's dynRet fallback catch it) — an unchecked
-            // deref here was an opaque NRE.
+            if (sig == null)
+                throw new InvalidOperationException($"ilemit: referenced call {constructed}.{name} is missing its resolved `sig` descriptor");
             var rrm = FindReflectedMethodBySig(constructed, name, sig, methodArity)
-                ?? FindReflectedMethod(constructed, name, argc)
-                ?? throw new NotSupportedException($"method {name} not found on referenced type {constructed}");
+                ?? throw new InvalidOperationException($"ilemit: referenced method descriptor {constructed}.{SigKey(name, methodArity, sig)} does not link exactly");
             retType = rrm.ReturnType;
             return rrm;
         }
@@ -140,7 +133,7 @@ sealed partial class Emitter
             // TypeBuilder.GetMethod requires `mb` declared on `constructed`'s OWN generic def. An INHERITED self-call
             // (mb on a generic base, `class D<T> : Base<T>` — `this.show()`) throws; anchor it onto the CONSTRUCTED
             // base instantiation (`Base<!T>`), not the open def (`Base``1::m` is "not fully instantiated").
-            try { return TypeBuilder.GetMethod(constructed, mb); }
+            try { return AnchorMethod(constructed, mb); }
             catch (ArgumentException) { return AnchorInheritedOnBase(constructed, mb, out retType) ?? mb; }
         }
         retType = Subst(mb.ReturnType, constructed.GetGenericArguments());
@@ -148,7 +141,7 @@ sealed partial class Emitter
         // own generic def — `D<int> : Base<int>`.get_x, or AbstractMutableCollection<E>'s inherited iterator()) throws the
         // same "method must be declared on the generic type definition" as the self case -> anchor onto the constructed
         // base instantiation (`Base<int>`); only fall back to the open MethodBuilder when no such base exists (interface).
-        try { return TypeBuilder.GetMethod(constructed, mb); }
+        try { return AnchorMethod(constructed, mb); }
         catch (ArgumentException) { return AnchorInheritedOnBase(constructed, mb, out retType) ?? mb; }
     }
 
@@ -165,7 +158,7 @@ sealed partial class Emitter
         for (var bt = constructed.BaseType; bt != null; bt = bt.BaseType)
             if (bt.IsGenericType && !bt.IsGenericTypeDefinition && ReferenceEquals(bt.GetGenericTypeDefinition(), targetDef))
             {
-                try { var anchored = TypeBuilder.GetMethod(bt, mb); retType = Subst(mb.ReturnType, bt.GetGenericArguments()); return anchored; }
+                try { var anchored = AnchorMethod(bt, mb); retType = Subst(mb.ReturnType, bt.GetGenericArguments()); return anchored; }
                 catch (ArgumentException) { return null; }
             }
         return null;
@@ -205,13 +198,16 @@ sealed partial class Emitter
 
     static ConstructorInfo GenericCtor(Type constructed, params Type[] argTypes) =>
         IsTbInstantiation(constructed)
-            ? TypeBuilder.GetConstructor(constructed, constructed.GetGenericTypeDefinition().GetConstructor(argTypes))
+            ? AnchorConstructor(constructed, constructed.GetGenericTypeDefinition().GetConstructor(argTypes))
             : constructed.GetConstructor(argTypes);
 
     static MethodInfo GenericMethod(Type constructed, string name) =>
         IsTbInstantiation(constructed)
-            ? TypeBuilder.GetMethod(constructed, constructed.GetGenericTypeDefinition().GetMethod(name))
-            : constructed.GetMethod(name);
+            ? AnchorMethod(constructed, constructed.GetGenericTypeDefinition().GetMethod(name))
+            // Runtime 10.0.10's PAB asks the returned ParameterInfo graph for modifier-aware Types. MLC's raw
+            // RoModifiedType deliberately leaves several structural reflection APIs unsupported, so route the
+            // already-selected member through the same signature adapter used for TypeSpec anchoring.
+            : PersistableMethod(constructed.GetMethod(name));
 
     // Substitute an open TYPE's own generic parameters (positionally = `typeArgs`) throughout a member reference as
     // declared on that open def — including CONSTRUCTED args (`ICollection<KeyValuePair<K,V>>` with
@@ -236,7 +232,7 @@ sealed partial class Emitter
         }
         if (!t.IsGenericType) return t;
         var args = t.GetGenericArguments().Select(a => SubstituteIfaceArgs(a, typeArgs)).ToArray();
-        return t.GetGenericTypeDefinition().MakeGenericType(args);
+        return ConstructedType(t.GetGenericTypeDefinition(), args);
     }
 
     // Recursively replace the generic-parameter references in `from` (a method's OPEN type params) with the concrete
@@ -259,7 +255,7 @@ sealed partial class Emitter
         var ga = t.GetGenericArguments();
         if (ga.Length == 0) return t;
         var subd = ga.Select(a => SubstituteMethodArgs(a, from, to)).ToArray();
-        return subd.SequenceEqual(ga) ? t : t.GetGenericTypeDefinition().MakeGenericType(subd);
+        return subd.SequenceEqual(ga) ? t : ConstructedType(t.GetGenericTypeDefinition(), subd);
     }
 
     // Structural substitution for the combined owner-type + method-type parameter map used while materializing a
@@ -279,7 +275,7 @@ sealed partial class Emitter
         var args = t.GetGenericArguments();
         if (args.Length == 0) return t;
         var subst = args.Select(a => SubstituteTypeMap(a, map)).ToArray();
-        return subst.SequenceEqual(args) ? t : t.GetGenericTypeDefinition().MakeGenericType(subst);
+        return subst.SequenceEqual(args) ? t : ConstructedType(t.GetGenericTypeDefinition(), subst);
     }
 
     // Overload disambiguation for interface-slot wiring: does a body method's declared param type satisfy the
@@ -404,7 +400,7 @@ sealed partial class Emitter
                                        .Zip(want, SlotParamMatches).All(x => x))
             .ToList();
         if (cands.Count != 1) return null;
-        return reanchor ? TypeBuilder.GetMethod(owner, cands[0]) : cands[0];
+        return reanchor ? AnchorMethod(owner, cands[0]) : cands[0];
     }
 
     // A STATIC method declared on a GENERIC emitted class (a Kotlin companion fun of a generic class —
@@ -423,8 +419,8 @@ sealed partial class Emitter
         if (m is MethodBuilder mb)
         {
             if (mb.DeclaringType is not TypeBuilder tb || !tb.IsGenericTypeDefinition) return m;
-            var constructed = tb.MakeGenericType(tb.GetGenericArguments().Select(_ => (Type)typeof(object)).ToArray());
-            var anchored = TypeBuilder.GetMethod(constructed, mb);
+            var constructed = ConstructedType(tb, tb.GetGenericArguments().Select(_ => (Type)Bcl("System.Object")).ToArray());
+            var anchored = AnchorMethod(constructed, mb);
             // Keep the param-type record visible through the anchored identity (call-site boxing decisions).
             if (_mparams.TryGetValue(mb, out var ps)) _mparams[anchored] = ps;
             return anchored;
@@ -439,7 +435,7 @@ sealed partial class Emitter
         // (module, metadata token): a method on a constructed RuntimeType instantiation shares its definition's token.
         // ApplyTypeArgs then MakeGenericMethod's the anchored method with the call's own type args.
         if (m.DeclaringType is not { IsGenericTypeDefinition: true } odt) return m;
-        var con = odt.MakeGenericType(odt.GetGenericArguments().Select(_ => (Type)typeof(object)).ToArray());
+        var con = ConstructedType(odt, odt.GetGenericArguments().Select(_ => (Type)Bcl("System.Object")).ToArray());
         return con.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.DeclaredOnly)
                   .Single(x => x.Module == m.Module && x.MetadataToken == m.MetadataToken);
     }
@@ -491,7 +487,7 @@ sealed partial class Emitter
                     retType = SubstituteTypeMap(openMb.ReturnType, sub);
                     paramTypes = _mparams.TryGetValue(openMb, out var ops)
                         ? ops.Select(x => SubstituteTypeMap(x, sub)).ToArray() : ps;
-                    return m.MakeGenericMethod(targs);
+                    return ConstructedMethod(m, targs);
                 }
             }
             retType = sub.TryGetValue(m.ReturnType, out var r) ? r : m.ReturnType;
@@ -504,7 +500,7 @@ sealed partial class Emitter
             // IsGenericMethodDefinition unreliably pre-bake, so this guards only reflected referenced methods.)
             if ((m is not MethodBuilder && !m.IsGenericMethodDefinition)
                 || m.GetGenericArguments().Length != targs.Length) { retType = m.ReturnType; paramTypes = ps; return m; }
-            var inst = m.MakeGenericMethod(targs);
+            var inst = ConstructedMethod(m, targs);
             // A pure-reflection generic method (an EXTERNAL rt-stdlib static, e.g. `Result`1<object>::success<T>`
             // anchored by AnchorOpenGenericOwnerStatic) carries no `_mparams`/`_methodTypeParams` record, so `sub` is
             // empty and `ps` is null — read the concrete signature straight off the instantiation instead, so the
@@ -578,12 +574,12 @@ sealed partial class Emitter
     // (ECMA-335 I.8.6.1.6). Return type is deliberately absent. `m` is a method DEF, whose arity comes from typeParams;
     // a call's arity comes from its resolved typeArgs. Param types are STRUCTURED Type nodes rendered to the canonical
     // internal hash spelling below. No type travels as a string on the wire (#48).
-    static MethodSigKey SigKey(string name, JsonElement methodDef) =>
+    MethodSigKey SigKey(string name, JsonElement methodDef) =>
         SigKey(name, DeclaredMethodArity(methodDef),
             methodDef.GetProperty("params").EnumerateArray()
                 .Select(p => DotKt.Bir.TypeNode.Read(p.GetProperty("type"))));
 
-    static MethodSigKey SigKey(string name, int methodArity, IEnumerable<DotKt.Bir.TypeNode> sig) =>
+    MethodSigKey SigKey(string name, int methodArity, IEnumerable<DotKt.Bir.TypeNode> sig) =>
         new(name, methodArity, string.Join("|", sig.Select(SigCanon)));
 
     static int DeclaredMethodArity(JsonElement methodDef) =>
@@ -607,15 +603,28 @@ sealed partial class Emitter
     // The CANONICAL overload-key encoding of a Type node (a type variable collapses to a single wildcard, so def-side
     // and call-side keys agree wherever the shape matches). An internal dictionary-hash spelling — never parsed back and
     // never on the wire; the structural `Matches` (not this string) does the actual type comparison against reflection.
-    static string SigCanon(DotKt.Bir.TypeNode t) => t switch
+    string SigCanon(DotKt.Bir.TypeNode t) => t switch
     {
-        DotKt.Bir.TypeNode.Fqn f => f.Args == null ? f.Name : f.Name + "[" + string.Join(",", f.Args.Select(SigCanon)) + "]",
+        DotKt.Bir.TypeNode.Fqn f => f.Args == null ? SigFqn(f.Name) : SigFqn(f.Name) + "[" + string.Join(",", f.Args.Select(SigCanon)) + "]",
         DotKt.Bir.TypeNode.Tv => "gp:T",
         DotKt.Bir.TypeNode.Fn fn => (fn.Suspend ? "sfunc:" : "func:") + SigCanon(fn.Ret) + ":" + string.Join(",", fn.DelegateParams.Select(SigCanon)),
-        DotKt.Bir.TypeNode.Nullable n => "nullable:" + SigCanon(n.Of),
+        // Reference nullability is metadata-only and not part of ECMA-335 member identity. Value nullability is the
+        // physical `System.Nullable<T>` type and therefore must remain in the key: `Compare(Int?, Int?)` and the
+        // synthesized `Compare(Int, Int)` interface bridge are real overloads, not duplicate declarations.
+        DotKt.Bir.TypeNode.Nullable n => IsValueType(MapType(n.Of))
+            ? "nullable[" + SigCanon(n.Of) + "]"
+            : SigCanon(n.Of),
+        DotKt.Bir.TypeNode.Oblivious o => SigCanon(o.Of),
         DotKt.Bir.TypeNode.Array a => "array:" + SigCanon(a.Elem),
         DotKt.Bir.TypeNode.ByRef b => "byref:" + SigCanon(b.Of),
         _ => "object",
+    };
+
+    static string SigFqn(string name) => name switch
+    {
+        "object" or "kotlin.Any" => "System.Object",
+        "string" or "kotlin.String" => "System.String",
+        _ => name,
     };
 
     // Substitute a type-scope type variable `Tv{type,i}` -> `args[i]` (the interface's instantiation), recursively.
@@ -637,26 +646,10 @@ sealed partial class Emitter
         _ => t,
     };
 
-    // On an exact-sig MISS for a call that targets a GENERIC method: the call carries the INSTANTIATED arg types
-    // (`array:object,object`) while the method is registered under its generic sig (`array:gp:T,gp:T`), so the exact
-    // lookup fails and the name-only fallback returns the wrong (often primitive) overload. Prefer the UNIQUE overload
-    // of the call's exact method-generic arity — arity zero never enters this fallback. Null if there are zero or
-    // several matching overloads (keep the existing fallback).
-    MethodBuilder UniqueGenericOverload(TypeInfo ti, string name, int methodArity)
-    {
-        if (methodArity == 0) return null;
-        MethodBuilder cand = null;
-        foreach (var kv in ti.MethodsBySig)
-            if (kv.Key.Name == name && kv.Key.GenericArity == methodArity)
-            {
-                if (cand != null) return null;   // ambiguous: more than one generic overload
-                cand = kv.Value;
-            }
-        return cand;
-    }
-
     MethodInfo FindMethod(string typeName, string name, DotKt.Bir.TypeNode[] sig = null, int methodArity = 0)
     {
+        if (sig == null)
+            throw new InvalidOperationException($"ilemit: method call {typeName}.{name} is missing its resolved `sig` descriptor");
         // (#139 site-2) the unsigned->signed native-array owner alias is retired: bir2cir MemberCallSubstitution now
         // rewrites an unsigned-array owner (callInstance/callStatic/newBoundDelegate) to its signed-array FQN, so
         // `typeName` is already the emitted method-holder — ilemit no longer re-resolves the Kotlin<->CLR array
@@ -683,15 +676,11 @@ sealed partial class Emitter
                     Type refIf = null;
                     try { refIf = MapType(iF); } catch { }
                     if (refIf == null) continue;
-                    var reflected = sig != null
-                        ? FindReflectedMethodBySig(refIf, name, sig, methodArity)
-                        : FindReflectedMethod(refIf, name);
+                    var reflected = FindReflectedMethodBySig(refIf, name, sig, methodArity);
                     if (reflected != null) return reflected;
                     continue;
                 }
                 if (sig != null && iti.MethodsBySig.TryGetValue(SigKey(name, methodArity, sig), out var ms)) return ms;
-                if (sig != null && UniqueGenericOverload(iti, name, methodArity) is { } igm) return igm;
-                if (iti.Methods.TryGetValue(name, out var m)) return m;
                 var inherited = FindInInterfaces(iti);
                 if (inherited != null) return inherited;
             }
@@ -726,7 +715,6 @@ sealed partial class Emitter
             // `maxOrNull<T>(IEnumerable<T>)` beside `maxOrNull(IEnumerable<Double>)`. A carried `sig` is the resolved
             // descriptor: consume it exactly and fail loud on a miss instead of re-resolving by arity. Only descriptor-
             // free legacy calls may use the name/arity lookup.
-            var extArgc = sig?.Length ?? -1;
             if (sig != null)
             {
                 if (FindReflectedMethodBySig(ext, name, sig, methodArity) is { } linked)
@@ -742,7 +730,7 @@ sealed partial class Emitter
                     $"(ABI mismatch; {candidates.Length} same-name/parameter-count candidate(s): " +
                     $"{string.Join("; ", candidates.Select(m => m.ToString()))})");
             }
-            return FindReflectedMethod(ext, name, extArgc);
+            throw new InvalidOperationException($"ilemit: referenced call {typeName}.{name} is missing its resolved `sig` descriptor");
         }
         // Walk this type's own members, then its EMITTED base/interface chain. If the base is NOT emitted here (an
         // external .NET base, e.g. an emitted class extending a BCL type), fall through to a reflected lookup on the
@@ -750,16 +738,12 @@ sealed partial class Emitter
         for (var ti = _types[typeName]; ti != null; ti = ti.BaseName != null && _types.ContainsKey(BareTypeKey(ti.BaseName)) ? _types[BareTypeKey(ti.BaseName)] : null)
         {
             if (sig != null && ti.MethodsBySig.TryGetValue(SigKey(name, methodArity, sig), out var ms)) return ms;
-            if (sig != null && UniqueGenericOverload(ti, name, methodArity) is { } gm) return gm;
             // NAME-ONLY is the last resort, and only where it cannot pick the wrong member: this type declares a
             // single member by that name, or the node carries no descriptor at all. With a carried `sig` that missed
             // both keyed lookups AND a real overload set here, the name-keyed map (last-wins) would hand back some
             // other overload than the one bir2cir resolved — silently. Keep walking the base/interface chain instead;
             // an exhausted walk is reported as an unresolved method, which is diagnosable. The referenced-owner
             // branch above already refuses on the same grounds.
-            if (ti.Methods.TryGetValue(name, out var m)
-                && (sig == null || !ti.MethodNameCounts.TryGetValue(name, out var overloads) || overloads <= 1))
-                return m;
             var im = FindInInterfaces(ti);
             if (im != null) return im;
             // A REFERENCED (.NET) interface the emitted type implements (MutableList -> System...IList): reflect the
@@ -772,12 +756,12 @@ sealed partial class Emitter
                         if (refIf == null) continue;
                         // A constructed generic over an EMITTED param arg (IList<!0>) can't GetMethods() — reflect the
                         // OPEN definition's method, re-anchor it onto the constructed interface.
-                        try { if (FindReflectedMethod(refIf, name) is { } rrm) return rrm; }
+                        try { if (sig != null && FindReflectedMethodBySig(refIf, name, sig, methodArity) is { } rrm) return rrm; }
                         catch (NotSupportedException)
                         {
                             if (refIf.IsConstructedGenericType
-                                && FindReflectedMethod(refIf.GetGenericTypeDefinition(), name) is { } om)
-                                return TypeBuilder.GetMethod(refIf, om);
+                                && sig != null && FindReflectedMethodBySig(refIf.GetGenericTypeDefinition(), name, sig, methodArity) is { } om)
+                                return AnchorMethod(refIf, om);
                         }
                     }
             // Base is an EXTERNAL (non-emitted) type -> inherited member must come from reflection on it. `ti.ClrBase`
@@ -786,41 +770,10 @@ sealed partial class Emitter
             {
                 Type extBase = ti.ClrBase;
                 if (extBase == null) { try { extBase = ClrRef(ti.BaseName); } catch (NotSupportedException) { } }
-                if (extBase != null) { var rm = FindReflectedMethod(extBase, name); if (rm != null) return rm; }
+                if (extBase != null && sig != null) { var rm = FindReflectedMethodBySig(extBase, name, sig, methodArity); if (rm != null) return rm; }
             }
         }
         throw new NotSupportedException($"method {typeName}.{name} not found");
-    }
-
-    // Resolve a method by name on an already-RESOLVED (referenced .NET / baked) type, walking the standard CLR member
-    // lookup: the type's own members + its base CLASS chain (reflection's `GetMethod` already includes inherited base
-    // members for a class). Then the implemented-interface chain: `GetMethod`/`GetMethods` surface only a type's OWN
-    // slots (an interface's own methods, a class's own+inherited-class methods) — NOT the interface methods a type
-    // implements, whose class-side impl is a private explicit override (e.g. `dotkt$dimfwd$`) invisible by name — so
-    // fall back to the transitively-implemented interfaces for BOTH a class and an interface receiver (`GetInterfaces`
-    // returns the full flattened set for either). This is what lets an emitted class's inherited GENERIC interface
-    // method (`AbstractCoroutineContextElement`'s `get<E>`) resolve at a `callInstance` call site. Pure CLR resolution;
-    // no Kotlin/BCL name mapping. Null if absent.
-    static MethodInfo FindReflectedMethod(Type t, string name, int argCount = -1)
-    {
-        var bf = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance;
-        // Arity-disambiguated lookup FIRST when the caller knows the parameter count: a referenced file-class can carry
-        // overloads of the same name (e.g. _CollectionsKt.first(List<T>) vs first(Iterable<T>, predicate)); the
-        // unconstrained GetMethod(name) below throws Ambiguous and an arbitrary pick mis-counts the stack.
-        MethodInfo ByArity(Type ty) =>
-            argCount < 0 ? null : ty.GetMethods(bf).FirstOrDefault(mm => mm.Name == name && mm.GetParameters().Length == argCount);
-        if (ByArity(t) is { } am) return am;
-        try { var m = t.GetMethod(name, bf); if (m != null) return m; }
-        catch (AmbiguousMatchException) { var m = t.GetMethods(bf).FirstOrDefault(mm => mm.Name == name); if (m != null) return m; }
-        // Implemented-interface fallback (last resort — the type's own surface is exhausted above): find an interface
-        // method the type binds but implements via a name-invisible private explicit override.
-        foreach (var bi in t.GetInterfaces())
-        {
-            if (ByArity(bi) is { } bam) return bam;
-            try { var m = bi.GetMethod(name, bf); if (m != null) return m; }
-            catch (AmbiguousMatchException) { var m = bi.GetMethods(bf).FirstOrDefault(mm => mm.Name == name); if (m != null) return m; }
-        }
-        return null;
     }
 
     // STRUCTURAL match for a sig type node MapType could not resolve (an OPEN node carrying a type variable from the
@@ -836,7 +789,7 @@ sealed partial class Emitter
             case DotKt.Bir.TypeNode.Array a:
                 return p.IsArray && Matches(a.Elem, p.GetElementType());
             case DotKt.Bir.TypeNode.Nullable n:
-                return Matches(n.Of, p.IsGenericType && p.GetGenericTypeDefinition() == typeof(Nullable<>) ? p.GetGenericArguments()[0] : p);
+                return Matches(n.Of, p.IsGenericType && p.GetGenericTypeDefinition() == Bcl("System.Nullable`1") ? p.GetGenericArguments()[0] : p);
             case DotKt.Bir.TypeNode.Oblivious ob:
                 return Matches(ob.Of, p);   // a pure nullability annotation — the inner keeps this node's position
             // A type variable: the candidate must be a generic-parameter slot (`gp:T`). When the owner is a CONSTRUCTED
@@ -1047,19 +1000,19 @@ sealed partial class Emitter
         IsGenericInst(t) && t.GetGenericTypeDefinition() is TypeBuilder;
 
     // Is `t` a delegate type? A TypeBuilderInstantiation of a BAKED generic delegate (`Func<Res,int>`, Res a user
-    // TypeBuilder) reports `typeof(Delegate).IsAssignableFrom` UNRELIABLY (its base chain is not resolvable pre-bake),
+    // TypeBuilder) reports `Bcl("System.Delegate").IsAssignableFrom` UNRELIABLY (its base chain is not resolvable pre-bake),
     // so fall back to testing its baked generic DEFINITION (`System.Func`2`). A synthetic (TypeBuilder-def) delegate
     // stays on the direct assignability check (its own MulticastDelegate base is set at DefineType).
-    static bool IsDelegateType(Type t)
+    bool IsDelegateType(Type t)
     {
-        if (typeof(System.Delegate).IsAssignableFrom(t)) return true;
+        if (Bcl("System.Delegate").IsAssignableFrom(t)) return true;
         // Guard HasElementType/IsGenericParameter BEFORE probing generics: an array/byref/pointer (a Reflection.Emit
         // SymbolType) or a generic-param `want` (a) is never a delegate and (b) throws NotSupportedException on
         // GetGenericArguments (the base-Type default) — the same traversal quirk ContainsTypeBuilder guards. The old
         // direct-assignability-first guard never hit this because it short-circuited on non-delegates.
         if (t.HasElementType || t.IsGenericParameter) return false;
         return IsGenericInst(t) && t.GetGenericTypeDefinition() is { } def && def is not TypeBuilder
-            && typeof(System.Delegate).IsAssignableFrom(def);
+            && Bcl("System.Delegate").IsAssignableFrom(def);
     }
 
     // A subset of ContainsTypeBuilder: only an OPEN generic PARAMETER (`!T`), NOT a concrete TypeBuilder CLASS arg.
@@ -1088,43 +1041,30 @@ sealed partial class Emitter
     // #68: stamp the STANDARD [System.Runtime.CompilerServices.CompilerGenerated] on a compiler-generated type — the
     // generated signal read from the `generated:true` BIR flag (and applied to ilemit's OWN synthetics too), so dll2klib
     // skips generated types by attribute rather than by `dotkt$` name-sniffing.
-    internal static void StampCompilerGenerated(TypeBuilder tb) =>
-        tb.SetCustomAttribute(new CustomAttributeBuilder(
-            typeof(System.Runtime.CompilerServices.CompilerGeneratedAttribute).GetConstructor(Type.EmptyTypes), new object[0]));
+    internal void StampCompilerGenerated(TypeBuilder tb) =>
+        SetAttribute(tb.SetCustomAttribute,
+            Bcl("System.Runtime.CompilerServices.CompilerGeneratedAttribute").GetConstructor(Type.EmptyTypes), Array.Empty<Type>());
 
     // #68: same stamp for an ilemit-authored generated METHOD (the covar/dim* variance-bridge synthetics, the reverse-
     // enumerator adapter's own methods) — one consistent `dotkt$` + [CompilerGenerated] marking for every synthetic member.
-    internal static void StampCompilerGenerated(MethodBuilder mb) =>
-        mb.SetCustomAttribute(new CustomAttributeBuilder(
-            typeof(System.Runtime.CompilerServices.CompilerGeneratedAttribute).GetConstructor(Type.EmptyTypes), new object[0]));
+    internal void StampCompilerGenerated(MethodBuilder mb) =>
+        SetAttribute(mb.SetCustomAttribute,
+            Bcl("System.Runtime.CompilerServices.CompilerGeneratedAttribute").GetConstructor(Type.EmptyTypes), Array.Empty<Type>());
 
-    // True when `name` is already defined by an exact --runtime-refs assembly. The module under
-    // construction is a PersistedAssemblyBuilder (not a loaded AppDomain assembly), so it never self-matches.
-    static bool ResolvesExternally(string name) =>
-        RuntimeReferences.Assemblies.Any(a => { try { return a.GetType(name) != null; } catch { return false; } });
+    // True when `name` is defined by the exact target compile-reference universe. The module under construction is a
+    // PersistedAssemblyBuilder and never self-matches. No runtime/TPA fallback participates in metadata identity.
+    bool ResolvesExternally(string name)
+    {
+        try { _target.ResolveType(name); return true; }
+        catch (NotSupportedException) { return false; }
+    }
 
-    static readonly Dictionary<string, Type> _typeCache = new();
+    readonly Dictionary<string, Type> _typeCache = new();
 
-    static Type ResolveType(string name)
+    Type ResolveType(string name)
     {
         if (_typeCache.TryGetValue(name, out var c)) return c;
-        // Precedence: (1) the app's resolved runtime catalog is AUTHORITATIVE — it wins even over a TPA-named
-        // assembly so an app that pins a version emits against it; (2) ilemit's host core (CoreLib/mscorlib types);
-        // (3) a TPA fallback for framework/inbox types the app does not copy-local (System.Text.Json, System.Net.Http,
-        // System.Text.RegularExpressions, System.Console, …).  No hardcoded per-assembly probe list — (3) scans TPA.
-        var t = RuntimeReferences.ResolveType(name)
-            ?? Type.GetType(name)
-            ?? RuntimeReferences.ResolveFromHostFramework(name);
-        // A dotted FQN may denote a NESTED type: CLR metadata separates nesting with '+' (Outer+Inner) while the
-        // producer's spec is dotted (`kotlin.time.Clock.System` -> `kotlin.time.Clock+System`). Probe by replacing
-        // the LAST '.' with '+' and re-resolving; the recursion (via TryResolveType) walks deeper nesting levels
-        // (a.b.C.D -> a.b.C+D -> a.b+C+D). Pure CLR name resolution — no source-language knowledge.
-        if (t == null)
-        {
-            var dot = name.LastIndexOf('.');
-            if (dot > 0) t = TryResolveType(name[..dot] + "+" + name[(dot + 1)..]);
-        }
-        if (t == null) throw new NotSupportedException("cannot resolve .NET type " + name);
+        var t = _target.ResolveType(name);
         _typeCache[name] = t;
         return t;
     }
@@ -1144,6 +1084,8 @@ sealed partial class Emitter
                 $"ilemit: clrGeneric* call to {type?.FullName}.{name}<{typeArgs.Length}> is missing its `memberSig` descriptor " +
                 "(bir2cir must carry the FIR-resolved parameter signature — W1-S1 #46)");
         var declParams = sigEl.EnumerateArray().Select(DotKt.Bir.TypeNode.Read).ToArray();
+        var declaredOwner = ResolvedOwnerIdentity(e, "memberOwner",
+            $"generic call to {type?.FullName}.{name}<{typeArgs.Length}>");
         // A generic INSTANCE method reflected off a CONSTRUCTED receiver (`Box<Int>`) has its enclosing-type type-vars
         // already SUBSTITUTED on each candidate param (`Func<Int32,R>`), while memberSig carries the OPEN `tv(type,i)`.
         // Resolve a type-scope tv against the constructed owner's type args so the two line up.
@@ -1164,27 +1106,10 @@ sealed partial class Emitter
                 .All(x => x);
         }
         var cands = Candidates(type);
-        var hits = MostDerivedMethods(cands.Where(MatchesCandidate).ToList());
-        // A class may satisfy the Kotlin-surfaced method through a private explicit MethodImpl body. Its physical CLR
-        // name is qualified, so the public surface name exists only on the implemented interface. As with non-generic
-        // LinkClrMethod, consult interface slots only after the class's own members miss; memberSig still identifies
-        // the unique overload and ilemit performs no semantic selection.
-        if (hits.Count == 0 && instance)
-        {
-            var interfaceCandidates = SafeInterfaces(type)
-                .SelectMany(Candidates)
-                .GroupBy(m => (m.Module, m.MetadataToken))
-                .Select(g => g.First())
-                .ToList();
-            var interfaceHits = MostDerivedMethods(interfaceCandidates.Where(MatchesCandidate).ToList());
-            if (interfaceHits.Count == 1) return interfaceHits[0].MakeGenericMethod(typeArgs);
-            if (interfaceHits.Count > 1)
-                throw new InvalidOperationException(
-                    $"ilemit: resolved generic descriptor {type?.FullName}.{name}<{typeArgs.Length}>{sigEl} is " +
-                    $"AMBIGUOUS across implemented interfaces — {interfaceHits.Count} methods match " +
-                    $"(malformed memberSig): {string.Join("; ", interfaceHits.Select(m => m.ToString()))}");
-        }
-        if (hits.Count == 1) return hits[0].MakeGenericMethod(typeArgs);
+        if (instance) cands.AddRange(SafeInterfaces(type).SelectMany(Candidates));
+        cands = cands.GroupBy(m => (m.Module, m.MetadataToken)).Select(g => g.First()).ToList();
+        var hits = cands.Where(m => DeclaringTypeIdentity(m) == declaredOwner && MatchesCandidate(m)).ToList();
+        if (hits.Count == 1) return ConstructedMethod(hits[0], typeArgs);
         var desc = $"{type?.FullName}.{name}<{typeArgs.Length}>{sigEl}";
         if (hits.Count == 0)
             throw new InvalidOperationException(
@@ -1237,7 +1162,7 @@ sealed partial class Emitter
             case DotKt.Bir.TypeNode.ByRef b:
                 return p.IsByRef && GenericParamMatches(b.Of, p.GetElementType(), ownerArgs);
             case DotKt.Bir.TypeNode.Nullable n:
-                return p.IsGenericType && p.GetGenericTypeDefinition() == typeof(Nullable<>)
+                return p.IsGenericType && p.GetGenericTypeDefinition() == Bcl("System.Nullable`1")
                        && GenericParamMatches(n.Of, p.GetGenericArguments()[0], ownerArgs);
             case DotKt.Bir.TypeNode.Oblivious o:
                 return GenericParamMatches(o.Of, p, ownerArgs);

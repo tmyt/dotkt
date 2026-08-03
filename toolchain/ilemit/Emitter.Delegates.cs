@@ -23,7 +23,7 @@ sealed partial class Emitter
         if (!_types.TryGetValue(CompilerServicesNs + "KotlinFunctionAttribute", out var ti)) return;
         EnsureCtorsDefined(ti);
         if (ti.Ctors.Count == 0) return;
-        tb.SetCustomAttribute(new CustomAttributeBuilder(ti.Ctors[0], new object[] { 0 }));
+        SetAttribute(tb.SetCustomAttribute, ti.Ctors[0], new[] { Bcl("System.Int32") }, 0);
     }
 
     // --- Unit-return delegate adapters (task #75 S4a) ---
@@ -49,9 +49,9 @@ sealed partial class Emitter
         if (_unitAdapterTB != null) return _unitAdapterTB;
         _unitAdapterTB = _mod.DefineType(CompilerServicesNs + "UnitDelegateAdapters",
             TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.Abstract | TypeAttributes.Class,
-            typeof(object));
-        _unitAdapterTB.SetCustomAttribute(new CustomAttributeBuilder(
-            typeof(System.Runtime.CompilerServices.CompilerGeneratedAttribute).GetConstructor(Type.EmptyTypes), new object[0]));
+            Bcl("System.Object"));
+        SetAttribute(_unitAdapterTB.SetCustomAttribute,
+            Bcl("System.Runtime.CompilerServices.CompilerGeneratedAttribute").GetConstructor(Type.EmptyTypes), Array.Empty<Type>());
         return _unitAdapterTB;
     }
 
@@ -60,9 +60,9 @@ sealed partial class Emitter
         if (_delegateInvokeAdapterTB != null) return _delegateInvokeAdapterTB;
         _delegateInvokeAdapterTB = _mod.DefineType(CompilerServicesNs + "DelegateInvokeAdapters",
             TypeAttributes.NotPublic | TypeAttributes.Sealed | TypeAttributes.Abstract | TypeAttributes.Class,
-            typeof(object));
-        _delegateInvokeAdapterTB.SetCustomAttribute(new CustomAttributeBuilder(
-            typeof(System.Runtime.CompilerServices.CompilerGeneratedAttribute).GetConstructor(Type.EmptyTypes), new object[0]));
+            Bcl("System.Object"));
+        SetAttribute(_delegateInvokeAdapterTB.SetCustomAttribute,
+            Bcl("System.Runtime.CompilerServices.CompilerGeneratedAttribute").GetConstructor(Type.EmptyTypes), Array.Empty<Type>());
         return _delegateInvokeAdapterTB;
     }
 
@@ -96,13 +96,13 @@ sealed partial class Emitter
                 MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.HideBySig);
             var gps = mb.DefineGenericParameters(Enumerable.Range(1, actual.Length)
                 .Select(i => returnsValue && i == actual.Length ? "TResult" : "T" + i).ToArray());
-            var delegateType = def.MakeGenericType(gps);
+            var delegateType = ConstructedType(def, gps);
             var invokeParams = returnsValue ? gps.Take(gps.Length - 1).Cast<Type>().ToArray() : gps.Cast<Type>().ToArray();
-            mb.SetReturnType(returnsValue ? gps[^1] : typeof(void));
+            mb.SetReturnType(returnsValue ? gps[^1] : Bcl("System.Void"));
             mb.SetParameters(new[] { delegateType }.Concat(invokeParams).ToArray());
             var il = mb.GetILGenerator();
             for (int i = 0; i <= invokeParams.Length; i++) il.Emit(OpCodes.Ldarg, i);
-            il.Emit(OpCodes.Callvirt, TypeBuilder.GetMethod(delegateType, def.GetMethod("Invoke")));
+            EmitMethod(il, OpCodes.Callvirt, AnchorMethod(delegateType, def.GetMethod("Invoke")));
             il.Emit(OpCodes.Ret);
             _delegateInvokeAdapters[key] = mb;
         }
@@ -111,8 +111,8 @@ sealed partial class Emitter
 
     void EmitDelegateInvoke(ILGenerator il, Type ft)
     {
-        if (NeedsDelegateInvokeAdapter(ft)) il.Emit(OpCodes.Call, DelegateInvokeAdapter(ft));
-        else il.Emit(OpCodes.Callvirt, InvokeOf(ft));
+        if (NeedsDelegateInvokeAdapter(ft)) EmitMethod(il, OpCodes.Call, DelegateInvokeAdapter(ft));
+        else EmitMethod(il, OpCodes.Callvirt, InvokeOf(ft));
     }
 
     // The same PersistedAssemblyBuilder limitation applies to the delegate `.ctor`: it cannot map
@@ -137,14 +137,14 @@ sealed partial class Emitter
                 MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.HideBySig);
             var gps = mb.DefineGenericParameters(Enumerable.Range(1, actual.Length)
                 .Select(i => returnsValue && i == actual.Length ? "TResult" : "T" + i).ToArray());
-            var delegateType = def.MakeGenericType(gps);
+            var delegateType = ConstructedType(def, gps);
             mb.SetReturnType(delegateType);
-            mb.SetParameters(typeof(object), typeof(IntPtr));
+            mb.SetParameters(Bcl("System.Object"), Bcl("System.IntPtr"));
             var il = mb.GetILGenerator();
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldarg_1);
-            il.Emit(OpCodes.Newobj, TypeBuilder.GetConstructor(delegateType,
-                def.GetConstructor(new[] { typeof(object), typeof(IntPtr) })));
+            EmitConstructor(il, OpCodes.Newobj, AnchorConstructor(delegateType,
+                def.GetConstructor(new[] { Bcl("System.Object"), Bcl("System.IntPtr") })));
             il.Emit(OpCodes.Ret);
             _delegateCtorAdapters[key] = mb;
         }
@@ -153,8 +153,8 @@ sealed partial class Emitter
 
     void EmitDelegateCtor(ILGenerator il, Type ft)
     {
-        if (NeedsDelegateInvokeAdapter(ft)) il.Emit(OpCodes.Call, DelegateCtorAdapter(ft));
-        else il.Emit(OpCodes.Newobj, DelegateCtor(ft));
+        if (NeedsDelegateInvokeAdapter(ft)) EmitMethod(il, OpCodes.Call, DelegateCtorAdapter(ft));
+        else EmitConstructor(il, OpCodes.Newobj, DelegateCtor(ft));
     }
 
     // `static Unit A(<voidDelegate> d, <params>) { d.Invoke(<params>); return Unit.INSTANCE; }` — the void delegate `ft`
@@ -176,7 +176,7 @@ sealed partial class Emitter
         var il = mb.GetILGenerator();
         for (int i = 0; i < pTypes.Length; i++) il.Emit(OpCodes.Ldarg, i);
         EmitDelegateInvoke(il, ft);
-        il.Emit(OpCodes.Ldsfld, instF);
+        EmitField(il, OpCodes.Ldsfld, instF);
         il.Emit(OpCodes.Ret);
         return mb;
     }
@@ -189,16 +189,16 @@ sealed partial class Emitter
 
     ConstructorInfo DelegateCtor(Type ft)
     {
-        var sig = new[] { typeof(object), typeof(IntPtr) };
+        var sig = new[] { Bcl("System.Object"), Bcl("System.IntPtr") };
         // #150: key the synthetic-delegate ctor fast-path on IsGenericInst (GetGenericArguments-based), SYMMETRIC with
         // InvokeOf/ContainsTypeBuilder. `IsGenericType` is UNRELIABLE for a TypeBuilderInstantiation across Reflection.Emit
         // versions (see IsGenericInst) — was `ft.IsGenericType`, which only fires because this SDK happens to report True;
         // a version reporting False would skip this branch and hit `ft.GetConstructor(sig)` on the un-baked builder
         // instantiation -> NotSupportedException. GetGenericArguments().Length is always populated, so this is robust.
         if (IsGenericInst(ft) && ft.GetGenericTypeDefinition() is TypeBuilder dtb && _syntheticDelegateCtors.TryGetValue(dtb, out var dctor))
-            return TypeBuilder.GetConstructor(ft, dctor);
+            return AnchorConstructor(ft, dctor);
         return (IsGenericInst(ft) && (ContainsTypeBuilder(ft) || IsTypeBuilderBackedGeneric(ft)))
-            ? TypeBuilder.GetConstructor(ft, ft.GetGenericTypeDefinition().GetConstructor(sig))
+            ? AnchorConstructor(ft, ft.GetGenericTypeDefinition().GetConstructor(sig))
             : ft.GetConstructor(sig);
     }
 
@@ -212,9 +212,9 @@ sealed partial class Emitter
     MethodInfo InvokeOf(Type ft)
     {
         if (IsGenericInst(ft) && ft.GetGenericTypeDefinition() is TypeBuilder dtb && _syntheticDelegateInvokes.TryGetValue(dtb, out var invoke))
-            return TypeBuilder.GetMethod(ft, invoke);
+            return AnchorMethod(ft, invoke);
         if (IsGenericInst(ft) && (ContainsTypeBuilder(ft) || IsTypeBuilderBackedGeneric(ft)))
-            return TypeBuilder.GetMethod(ft, ft.GetGenericTypeDefinition().GetMethod("Invoke"));
+            return AnchorMethod(ft, ft.GetGenericTypeDefinition().GetMethod("Invoke"));
         return ft.GetMethod("Invoke");
     }
 
@@ -227,7 +227,7 @@ sealed partial class Emitter
     // param would come back open, but that only feeds the Unit-adapter trigger, where it is rightly not `kotlin.Unit`.
     Type InvokeRetOf(Type ft)
     {
-        if (!IsGenericInst(ft)) return ft.GetMethod("Invoke")?.ReturnType ?? typeof(void);
+        if (!IsGenericInst(ft)) return ft.GetMethod("Invoke")?.ReturnType ?? Bcl("System.Void");
         var r = ft.GetGenericTypeDefinition().GetMethod("Invoke").ReturnType;
         return r.IsGenericParameter && r.GenericParameterPosition < ft.GetGenericArguments().Length
             ? ft.GetGenericArguments()[r.GenericParameterPosition] : r;
@@ -246,10 +246,10 @@ sealed partial class Emitter
             : throw new NotSupportedException("funcType is not a structured fn node");
 
     Type SyntheticFuncType(Type[] args, Type ret) =>
-        SyntheticDelegateType("KFunc", args.Append(ret).ToArray(), returnsValue: true).MakeGenericType(args.Append(ret).ToArray());
+        ConstructedType(SyntheticDelegateType("KFunc", args.Append(ret).ToArray(), returnsValue: true), args.Append(ret).ToArray());
 
     Type SyntheticActionType(Type[] args) =>
-        SyntheticDelegateType("KAction", args, returnsValue: false).MakeGenericType(args);
+        ConstructedType(SyntheticDelegateType("KAction", args, returnsValue: false), args);
 
     TypeBuilder SyntheticDelegateType(string baseName, Type[] genericArgs, bool returnsValue)
     {
@@ -260,20 +260,20 @@ sealed partial class Emitter
 
         var tb = _mod.DefineType(metadataName,
             TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.Class,
-            typeof(MulticastDelegate));
-        tb.SetCustomAttribute(new CustomAttributeBuilder(
-            typeof(System.Runtime.CompilerServices.CompilerGeneratedAttribute).GetConstructor(Type.EmptyTypes), new object[0]));
+            Bcl("System.MulticastDelegate"));
+        SetAttribute(tb.SetCustomAttribute,
+            Bcl("System.Runtime.CompilerServices.CompilerGeneratedAttribute").GetConstructor(Type.EmptyTypes), Array.Empty<Type>());
         StampKotlinFunctionZero(tb);
 
         var names = Enumerable.Range(1, arity).Select(i => i == arity && returnsValue ? "TResult" : "T" + i).ToArray();
         var gps = tb.DefineGenericParameters(names);
         var invokeParams = returnsValue ? gps.Take(arity - 1).Cast<Type>().ToArray() : gps.Cast<Type>().ToArray();
-        var invokeRet = returnsValue ? (Type)gps[^1] : typeof(void);
+        var invokeRet = returnsValue ? (Type)gps[^1] : Bcl("System.Void");
 
         var ctor = tb.DefineConstructor(
             MethodAttributes.Public | MethodAttributes.HideBySig | MethodAttributes.RTSpecialName | MethodAttributes.SpecialName,
             CallingConventions.Standard,
-            new[] { typeof(object), typeof(IntPtr) });
+            new[] { Bcl("System.Object"), Bcl("System.IntPtr") });
         ctor.SetImplementationFlags(MethodImplAttributes.Runtime | MethodImplAttributes.Managed);
 
         var invoke = tb.DefineMethod(

@@ -102,7 +102,7 @@ static class PreconditionLowering
         switch (method)
         {
             case "TODO":
-                repl = ThrowExpr(NewExc("kotlin.NotImplementedError", "An operation is not implemented."));
+                repl = ThrowExpr(NewExc("kotlin.NotImplementedError", "An operation is not implemented.", nullableMessage: false));
                 break;
             case "error":
                 if (args == null || args.Count < 1) return;
@@ -171,11 +171,11 @@ static class PreconditionLowering
     static JsonObject Nullable(JsonNode of) => new() { ["t"] = "nullable", ["of"] = of };
 
     // `new <ExcType>(<msg>)` via the (String) ctor; or the no-arg ctor when msg is null.
-    static JsonObject NewExc(string type, string msg) => new()
+    static JsonObject NewExc(string type, string msg, bool nullableMessage = true) => new()
     {
         ["k"] = "new",
         ["type"] = TypeJson.Fqn(type),
-        ["argTypes"] = new JsonArray { TypeJson.Fqn("kotlin.String") },
+        ["argTypes"] = new JsonArray { nullableMessage ? Nullable(TypeJson.Fqn("kotlin.String")) : TypeJson.Fqn("kotlin.String") },
         ["args"] = new JsonArray { new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.String"), ["value"] = msg } },
     };
 
@@ -184,7 +184,7 @@ static class PreconditionLowering
     {
         ["k"] = "new",
         ["type"] = TypeJson.Fqn(type),
-        ["argTypes"] = new JsonArray { TypeJson.Fqn("kotlin.String") },
+        ["argTypes"] = new JsonArray { Nullable(TypeJson.Fqn("kotlin.String")) },
         ["args"] = new JsonArray { msgExpr },
     };
 

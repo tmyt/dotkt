@@ -7,7 +7,7 @@ interchanged merely because two `System.Type` objects have the same `FullName`.
 |---|---|---|
 | compiler host | the runtime executing `ilemit` | runs Reflection.Emit and the tool itself; owns no output identity |
 | target compile references | MSBuild `@(ReferencePath)` or the direct driver's targeting-pack set | sole authority for contract type/member availability and metadata identity |
-| target runtime references | MSBuild `@(ReferenceCopyLocalPaths)` | temporary implementation assemblies used by the pre-#336 emitter for executable member bodies and RID asset selection |
+| target runtime references | MSBuild `@(ReferenceCopyLocalPaths)` | disambiguates contract/runtime twins already present in the compile set; also owns RID asset selection |
 
 `bir2cir` already resolves Kotlin meaning against the target compile references and serializes resolved CLR
 identities into CIR. `ilemit` must encode those identities, not re-select a same-named host member. The compiler may
@@ -60,8 +60,23 @@ copy. Its metadata assertions cover:
 - external base/interface identities; and
 - external types in public member signatures.
 
-At the #335 baseline the raw TypeRefs are scoped through host `System.Private.CoreLib`; the repaired copy uses target
-contracts such as `System.Runtime` and `System.Collections`, and the files differ. #336 flips the expected raw side:
-raw output must already carry the target scopes and `retarget` must report no metadata changes. #337 may delete the
+At the #335 baseline the raw TypeRefs were scoped through host `System.Private.CoreLib`; the repaired copy used target
+contracts such as `System.Runtime` and `System.Collections`. #336 now emits every external type/member from the target
+context. A target generic definition combined with an emit-time type parameter is represented by the CLR's
+`Type.MakeGenericSignatureType` adapter and mechanically re-anchored member wrappers; no overload selection occurs.
+Raw output already carries target scopes and `retarget` reports no metadata changes. #337 may delete the
 oracle only after that invariant is covered by ordinary SDK, reverse-interop, ILVerify, stdlib, coroutine, and
 round-trip gates.
+
+## Transitional CIR member identity
+
+#336 carries the resolved declaring type and declared parameter signature separately as `memberOwner` and
+`memberSig` (with constructor/override equivalents). These arrays are signature components, not candidate sets:
+`ilemit` may enumerate target metadata only to find the single declaration matching the complete carried identity,
+and must fail on zero or multiple matches. It may not choose by name, arity, assignability, inheritance preference,
+or reflection order.
+
+This flat representation is transitional. #370 will replace the related fields with one scalar `memberRef` containing
+all ECMA identity facts required for direct encoding, including declaring owner, name, generic arity, calling
+convention, return and parameter signatures, and custom modifiers. The scalar migration is required before 1.0.0;
+it is intentionally not coupled to the atomic target-universe switch in #336.

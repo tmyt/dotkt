@@ -9,6 +9,15 @@ using System.Text.Json;
 // Type-spec mapping: BIR type tokens/TypeNode -> System.Type (MapType, ClrRef, generic construction).
 sealed partial class Emitter
 {
+    // A target-MLC generic definition cannot materialize a runtime Reflection.Emit generic parameter through its
+    // MakeGenericType implementation. The CLR signature is nevertheless valid; MakeGenericSignatureType is the
+    // framework-provided representation for exactly that cross-reflection signature shape. A locally emitted open
+    // TypeBuilder must keep its own TypeBuilderInstantiation so TypeBuilder.GetMethod/GetConstructor continue to work.
+    static Type ConstructedType(Type definition, params Type[] arguments) =>
+        definition is not TypeBuilder && arguments.Any(ContainsTypeBuilder)
+            ? Type.MakeGenericSignatureType(definition, arguments)
+            : definition.MakeGenericType(arguments);
+
     // The bare NAME a type slot carries (a bir2cir CLR shorthand `int`/`void`/… Fqn, or a legacy string token), for a
     // name-keyed opcode switch (const/conv). null for a non-Fqn structured node.
     static string SlotName(JsonElement e) =>
@@ -52,7 +61,7 @@ sealed partial class Emitter
 
     // A generic TYPE ARGUMENT of `System.Void` is illegal in .NET; Kotlin `Unit`/`Nothing` map to `void` for a return
     // position but as a type arg (`Continuation<Unit>`, `Map<K, Unit>`, …) they must be a real type -> `object`.
-    Type MapArg(string t) { var r = MapType(t); return r == typeof(void) ? typeof(object) : r; }
+    Type MapArg(string t) { var r = MapType(t); return r == Bcl("System.Void") ? Bcl("System.Object") : r; }
 
     Type GenericType(string spec)
     {
@@ -64,7 +73,7 @@ sealed partial class Emitter
         // System.Collections.IComparer) still carries the Kotlin type args in the spec, but the BCL target has no `N
         // arity. If `open`N` doesn't exist, fall back to the non-generic type (drop the args).
         var openGen = TryResolveType(open + "`" + args.Length);
-        return openGen != null ? openGen.MakeGenericType(args) : ResolveType(open);
+        return openGen != null ? ConstructedType(openGen, args) : ResolveType(open);
     }
 
     static List<string> SplitTopLevel(string s)
@@ -86,7 +95,7 @@ sealed partial class Emitter
     Type MapType(JsonElement e) =>
         e.ValueKind == JsonValueKind.String ? MapType(e.GetString())
         : e.ValueKind == JsonValueKind.Object ? MapType(DotKt.Bir.TypeNode.Read(e))
-        : typeof(object);
+        : Bcl("System.Object");
 
     Type MapType(DotKt.Bir.TypeNode t) => t switch
     {
@@ -97,7 +106,7 @@ sealed partial class Emitter
         DotKt.Bir.TypeNode.Tv tv => ResolveTv(tv),
         DotKt.Bir.TypeNode.Fqn { Args: null } f => MapType(f.Name),   // reuse the shorthand / bare-FQN resolver
         DotKt.Bir.TypeNode.Fqn f => ConstructGeneric(f.Name, f.Args),
-        _ => typeof(object),
+        _ => Bcl("System.Object"),
     };
 
     // #37/#48: nullability realizes value-vs-reference HERE (MapType resolves the inner type, so it's the natural
@@ -109,21 +118,21 @@ sealed partial class Emitter
     Type MapNullable(DotKt.Bir.TypeNode.Nullable n)
     {
         var inner = MapType(n.Of);
-        return inner.IsValueType ? typeof(Nullable<>).MakeGenericType(inner) : inner;
+        return IsValueType(inner) ? ConstructedType(Bcl("System.Nullable`1"), inner) : inner;
     }
 
     // A constructed generic from a structured Fqn(name, args): an emitted open type -> MakeGenericType, else a
     // referenced .NET generic by arity-suffixed FQN. (A void type-arg -> object, illegal as a .NET type arg.)
     Type ConstructGeneric(string name, DotKt.Bir.TypeNode[] args)
     {
-        var mapped = args.Select(a => { var r = MapType(a); return r == typeof(void) ? typeof(object) : r; }).ToArray();
-        if (_types.TryGetValue(name, out var oti)) return oti.AsType.MakeGenericType(mapped);
+        var mapped = args.Select(a => { var r = MapType(a); return r == Bcl("System.Void") ? Bcl("System.Object") : r; }).ToArray();
+        if (_types.TryGetValue(name, out var oti)) return ConstructedType(oti.AsType, mapped);
         // A NESTED generic whose arity backtick rides an OUTER type already carries a backtick in `name` (e.g. the #3
         // generic ConfigureAwait(false) awaiter `System...ConfiguredTaskAwaitable`1+ConfiguredTaskAwaiter` — arity `1 is
         // on the OUTER ConfiguredTaskAwaitable, the nested awaiter has none). Appending a SECOND arity suffix here yields
         // `...ConfiguredTaskAwaiter`1`, which ResolveType can't find — the name is already arity-complete, use it verbatim.
         var open = name.Contains('`') ? ResolveType(name) : ResolveType(name + "`" + mapped.Length);
-        return open.MakeGenericType(mapped);
+        return ConstructedType(open, mapped);
     }
 
     // A `tv` (scope + flattened index) -> the CLR generic-parameter builder: scope "method" -> the method's own params
@@ -145,7 +154,7 @@ sealed partial class Emitter
         // the CLR view is the monomorphic ERASURE `Iterator<object>` (the same object erasure bir2cir applies to a
         // nullable-generic / Continuation). Falling to object keeps the metadata emittable; the object is used
         // monomorphically at runtime.
-        return typeof(object);
+        return Bcl("System.Object");
     }
 
     // Structured CIR function type -> the exact CLR delegate family selected by bir2cir.
@@ -166,14 +175,14 @@ sealed partial class Emitter
     {
         return clr switch
         {
-            "System.Action" when ret == typeof(void) && args.Length == 0 => typeof(Action),
-            "System.Action" when ret == typeof(void) && args.Length <= 16 =>
-                ResolveType("System.Action`" + args.Length).MakeGenericType(args),
-            "System.Func" when ret != typeof(void) && args.Length <= 16 =>
-                ResolveType("System.Func`" + (args.Length + 1)).MakeGenericType(args.Append(ret).ToArray()),
-            "DotKt.Runtime.CompilerServices.KAction" when ret == typeof(void) && args.Length > 16 =>
+            "System.Action" when ret == Bcl("System.Void") && args.Length == 0 => Bcl("System.Action"),
+            "System.Action" when ret == Bcl("System.Void") && args.Length <= 16 =>
+                ConstructedType(ResolveType("System.Action`" + args.Length), args),
+            "System.Func" when ret != Bcl("System.Void") && args.Length <= 16 =>
+                ConstructedType(ResolveType("System.Func`" + (args.Length + 1)), args.Append(ret).ToArray()),
+            "DotKt.Runtime.CompilerServices.KAction" when ret == Bcl("System.Void") && args.Length > 16 =>
                 SyntheticActionType(args),
-            "DotKt.Runtime.CompilerServices.KFunc" when ret != typeof(void) && args.Length > 16 =>
+            "DotKt.Runtime.CompilerServices.KFunc" when ret != Bcl("System.Void") && args.Length > 16 =>
                 SyntheticFuncType(args, ret),
             _ => throw new NotSupportedException(
                 $"invalid CIR delegate family `{clr}` for arity {args.Length}, return {ret}")
@@ -197,16 +206,16 @@ sealed partial class Emitter
     // compiler-internal identity in the `dotkt$` synthetic namespace (#48), NOT a Kotlin/CLR type.
     Type MapType(string t)
     {
-        if (t == "dotkt$stackptr") return typeof(byte).MakePointerType();   // a localloc'd stack buffer pointer (unverifiable)
+        if (t == "dotkt$stackptr") return Bcl("System.Byte").MakePointerType();   // a localloc'd stack buffer pointer (unverifiable)
         return t switch
         {
-            "void" => typeof(void), "int" => typeof(int), "long" => typeof(long),
-            "double" => typeof(double), "float" => typeof(float), "bool" => typeof(bool),
-            "char" => typeof(char), "string" => typeof(string),
-            "uint" => typeof(uint), "ulong" => typeof(ulong), "byte" => typeof(byte), "ushort" => typeof(ushort),
+            "void" => Bcl("System.Void"), "int" => Bcl("System.Int32"), "long" => Bcl("System.Int64"),
+            "double" => Bcl("System.Double"), "float" => Bcl("System.Single"), "bool" => Bcl("System.Boolean"),
+            "char" => Bcl("System.Char"), "string" => Bcl("System.String"),
+            "uint" => Bcl("System.UInt32"), "ulong" => Bcl("System.UInt64"), "byte" => Bcl("System.Byte"), "ushort" => Bcl("System.UInt16"),
             // .NET-aligned 8-bit tokens (#54): token "sbyte" is SIGNED (kotlin.Byte, -128..127); token "byte" is
             // UNSIGNED (kotlin.UByte, System.Byte, 0..255) — matching int/short/long naming.
-            "short" => typeof(short), "sbyte" => typeof(sbyte),
+            "short" => Bcl("System.Int16"), "sbyte" => Bcl("System.SByte"),
             // A bare FQN identity (kotc's pure-FQN output — NO `@`/`clr:` marker): ilemit DERIVES where the type lives.
             // An in-assembly emitted type (`_types`, incl. the constructed `Name[args]` form) wins FIRST, else a
             // referenced .NET type by reflection (`System.X`), else fall back to object (the pre-existing default for an
@@ -222,7 +231,7 @@ sealed partial class Emitter
             _ => TryMapEmittedType(t) ?? ((t != null && t.Contains('[')) ? GenericType(t)
                  : (t != null && t.Contains('.')) ? ResolveType(t)
                  : (t != null && ResolvesExternally(t)) ? ResolveType(t)
-                 : typeof(object)),
+                 : Bcl("System.Object")),
         };
     }
 
@@ -238,7 +247,7 @@ sealed partial class Emitter
         var open = spec.Substring(0, br);
         if (!_types.TryGetValue(open, out var oti)) return null;
         var args = SplitTopLevel(spec.Substring(br + 1, spec.Length - br - 2)).Select(MapArg).ToArray();
-        return oti.AsType.MakeGenericType(args);
+        return ConstructedType(oti.AsType, args);
     }
 
 }

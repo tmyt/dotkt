@@ -47,7 +47,7 @@ sealed partial class Emitter
                 {
                     var stype = ClrRef(s.GetProperty("ownerType"));
                     var setter = LinkClrMethod(stype, s.GetProperty("accessor").GetString(), s, instance: true);
-                    if (stype.IsValueType) EmitAddr(s.GetProperty("recv")); else EmitExpr(s.GetProperty("recv"));
+                    if (IsValueType(stype)) EmitAddr(s.GetProperty("recv")); else EmitExpr(s.GetProperty("recv"));
                     EmitStoreCoerced(s.GetProperty("value"), SetterValueType(setter));
                     EmitClrDispatch(setter, RequireDispatch(s, stype, "setField"), stype);
                     break;
@@ -59,11 +59,11 @@ sealed partial class Emitter
                 // rejects as a bad image. `ParseOwnerSlot` preserves the instantiation, exactly as the field READ and
                 // `Ldflda` paths already do (Emitter.Expressions/Bodies).
                 var sfld = ResolveField(ParseOwnerSlot(s.GetProperty("ownerType")), fnm, out var sft);
-                if (ClrRef(s.GetProperty("ownerType")).IsValueType) EmitAddr(s.GetProperty("recv"));
+                if (IsValueType(ClrRef(s.GetProperty("ownerType")))) EmitAddr(s.GetProperty("recv"));
                 else EmitExpr(s.GetProperty("recv"));
                 EmitStoreCoerced(s.GetProperty("value"), sft);
                 MaybeVolatile(sfld);
-                _il.Emit(OpCodes.Stfld, sfld);
+                EmitField(_il, OpCodes.Stfld, sfld);
                 break;
             }
             case "return":
@@ -102,7 +102,7 @@ sealed partial class Emitter
                 var bodyArr = s.GetProperty("body");
                 var catchesArr = s.GetProperty("catches");
                 bool hasRet = StmtsHaveReturn(bodyArr) || catchesArr.EnumerateArray().Any(c => StmtsHaveReturn(c.GetProperty("body")));
-                LocalBuilder result = (_methodRetType != typeof(void) && hasRet) ? _il.DeclareLocal(_methodRetType) : null;
+                LocalBuilder result = (_methodRetType != Bcl("System.Void") && hasRet) ? _il.DeclareLocal(_methodRetType) : null;
                 Label retLabel = _il.DefineLabel();
                 // The CFG labels declared inside this region: a `goto` targeting a label NOT in this set exits the
                 // protected region and MUST emit `leave`, not `br` (see the `goto` case).
@@ -170,7 +170,7 @@ sealed partial class Emitter
             case "exprStmt":
             {
                 var t = EmitExpr(s.GetProperty("expr"));
-                if (t != typeof(void)) _il.Emit(OpCodes.Pop);
+                if (t != Bcl("System.Void")) _il.Emit(OpCodes.Pop);
                 break;
             }
             case "while":
@@ -204,7 +204,7 @@ sealed partial class Emitter
             }
             case "for":
             {
-                var local = _il.DeclareLocal(typeof(int));
+                var local = _il.DeclareLocal(Bcl("System.Int32"));
                 _locals[s.GetProperty("var").GetString()] = local;
                 EmitExpr(s.GetProperty("from")); _il.Emit(OpCodes.Stloc, local);
                 var start = _il.DefineLabel(); var cont = _il.DefineLabel(); var end = _il.DefineLabel();
@@ -245,7 +245,7 @@ sealed partial class Emitter
                 // for (x in arr): evaluate arr once, index 0..Length, bind loop var = arr[i] each iteration.
                 var arrT = EmitExpr(s.GetProperty("array"));
                 var arr = _il.DeclareLocal(arrT); _il.Emit(OpCodes.Stloc, arr);
-                var idx = _il.DeclareLocal(typeof(int));
+                var idx = _il.DeclareLocal(Bcl("System.Int32"));
                 _il.Emit(OpCodes.Ldc_I4_0); _il.Emit(OpCodes.Stloc, idx);
                 var elem = MapType(s.GetProperty("elem"));
                 var lv = _il.DeclareLocal(elem);
@@ -274,11 +274,11 @@ sealed partial class Emitter
                 var accessOwner = SlotName(s.GetProperty("accessOwner"));
                 if (!_types.TryGetValue(accessOwner, out var prog))
                     throw new NotSupportedException($"forRange: {accessOwner} not emitted in this assembly");
-                var i = _il.DeclareLocal(typeof(int)); _locals[s.GetProperty("var").GetString()] = i;
-                var last = _il.DeclareLocal(typeof(int)); var step = _il.DeclareLocal(typeof(int));
-                _il.Emit(OpCodes.Ldloc, rngLocal); _il.Emit(OpCodes.Callvirt, prog.Methods[s.GetProperty("firstM").GetString()]); _il.Emit(OpCodes.Stloc, i);
-                _il.Emit(OpCodes.Ldloc, rngLocal); _il.Emit(OpCodes.Callvirt, prog.Methods[s.GetProperty("lastM").GetString()]); _il.Emit(OpCodes.Stloc, last);
-                _il.Emit(OpCodes.Ldloc, rngLocal); _il.Emit(OpCodes.Callvirt, prog.Methods[s.GetProperty("stepM").GetString()]); _il.Emit(OpCodes.Stloc, step);
+                var i = _il.DeclareLocal(Bcl("System.Int32")); _locals[s.GetProperty("var").GetString()] = i;
+                var last = _il.DeclareLocal(Bcl("System.Int32")); var step = _il.DeclareLocal(Bcl("System.Int32"));
+                _il.Emit(OpCodes.Ldloc, rngLocal); EmitMethod(_il, OpCodes.Callvirt, prog.Methods[s.GetProperty("firstM").GetString()]); _il.Emit(OpCodes.Stloc, i);
+                _il.Emit(OpCodes.Ldloc, rngLocal); EmitMethod(_il, OpCodes.Callvirt, prog.Methods[s.GetProperty("lastM").GetString()]); _il.Emit(OpCodes.Stloc, last);
+                _il.Emit(OpCodes.Ldloc, rngLocal); EmitMethod(_il, OpCodes.Callvirt, prog.Methods[s.GetProperty("stepM").GetString()]); _il.Emit(OpCodes.Stloc, step);
                 var start = _il.DefineLabel(); var cont = _il.DefineLabel(); var end = _il.DefineLabel();
                 var neg = _il.DefineLabel(); var bodyL = _il.DefineLabel();
                 _loops.Add((LoopLabel(s), cont, end));

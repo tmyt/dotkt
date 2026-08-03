@@ -1371,6 +1371,7 @@ static class MemberCallSubstitution
             ["k"] = "callStatic",
             ["owner"] = TypeJson.Fqn(helperOwner),
             ["method"] = helperMethod,
+            ["sig"] = CollectionHelperSig(helperOwner, helperMethod),
             ["args"] = hargs,
             ["typeArgs"] = new JsonArray { TypeJson.Write(elem) },
         };
@@ -1389,6 +1390,7 @@ static class MemberCallSubstitution
             ["k"] = "callStatic",
             ["owner"] = TypeJson.Fqn("kotlin.collections.ClrMapDefaultsKt"),
             ["method"] = helperMethod,
+            ["sig"] = MapHelperSig(helperMethod),
             ["args"] = hargs,
             ["typeArgs"] = new JsonArray { TypeJson.Write(k), TypeJson.Write(v) },
         };
@@ -1398,6 +1400,55 @@ static class MemberCallSubstitution
         // Map- and MutableMap-typed receivers). `retType` lets ilemit box/convert the concrete instantiation.
         if (RetToken(node) is JsonNode ret && !IsTvType(ret)) call["ret"] = ret;
         return call;
+    }
+
+    static JsonArray CollectionHelperSig(string owner, string method)
+    {
+        var tv = new TypeNode.Tv("method", 0);
+        TypeNode Gen(string name) => new TypeNode.Fqn(name, new TypeNode[] { tv });
+        var ps = (owner, method) switch
+        {
+            ("kotlin.collections.ClrIteratorBridgeKt", "iteratorOverEnumerable") => new[] { Gen("kotlin.collections.ClrEnumerable") },
+            (_, "clrCollAdd") => new TypeNode[] { Gen("kotlin.collections.MutableCollection"), tv },
+            (_, "clrCollAddAll") => new TypeNode[] { Gen("kotlin.collections.MutableCollection"), Gen("kotlin.collections.Collection") },
+            (_, "clrCollContains") => new TypeNode[] { Gen("kotlin.collections.Collection"), tv },
+            (_, "clrCollContainsAll") => new TypeNode[] { Gen("kotlin.collections.Collection"), Gen("kotlin.collections.Collection") },
+            (_, "clrCollIsEmpty") => new[] { Gen("kotlin.collections.Collection") },
+            (_, "clrListSet") => new TypeNode[] { Gen("kotlin.collections.MutableList"), new TypeNode.Fqn("kotlin.Int"), tv },
+            (_, "clrListRemoveAt") => new TypeNode[] { Gen("kotlin.collections.MutableList"), new TypeNode.Fqn("kotlin.Int") },
+            (_, "clrMutableListIterator") => new[] { Gen("kotlin.collections.MutableList") },
+            (_, "clrMutableListListIterator") => new TypeNode[] { Gen("kotlin.collections.MutableList"), new TypeNode.Fqn("kotlin.Int") },
+            (_, "clrListIndexOf" or "clrListLastIndexOf") => new TypeNode[] { Gen("kotlin.collections.List"), tv },
+            (_, "clrListListIterator") => new TypeNode[] { Gen("kotlin.collections.List"), new TypeNode.Fqn("kotlin.Int") },
+            (_, "clrListSubList") => new TypeNode[] { Gen("kotlin.collections.List"), new TypeNode.Fqn("kotlin.Int"), new TypeNode.Fqn("kotlin.Int") },
+            _ => throw new InvalidOperationException($"bir2cir: no authored descriptor for collection helper {owner}.{method}"),
+        };
+        return new JsonArray(ps.Select(TypeJson.Write).ToArray());
+    }
+
+    static JsonArray MapHelperSig(string method)
+    {
+        TypeNode any = new TypeNode.Fqn("kotlin.Any");
+        TypeNode k = new TypeNode.Tv("method", 0);
+        TypeNode v = new TypeNode.Tv("method", 1);
+        TypeNode[] ps = method switch
+        {
+            "clrMapIsEmpty" or "clrMapSize" or "clrMapKeys" or "clrMapValues" or "clrMapEntries"
+                or "clrMapMutableEntries" => new[] { any },
+            "clrMapGet" or "clrMapContainsKey" or "clrMapRemove" => new[] { any, k },
+            "clrMapContainsValue" => new[] { any, v },
+            "clrMapPut" or "clrMapGetOrDefault" or "clrMapRemoveKV" or "clrMapPutIfAbsent" or "clrMapReplace"
+                => new[] { any, k, v },
+            "clrMapMerge" => new TypeNode[]
+            {
+                any, k, v,
+                new TypeNode.Fn(false, new TypeNode.Fqn("object"), new[] { v, v }, null, "System.Func"),
+            },
+            "clrMapPutAll" => new[] { any, any },
+            "clrMapReplaceKVV" => new[] { any, k, v, v },
+            _ => throw new InvalidOperationException($"bir2cir: no authored descriptor for map helper {method}"),
+        };
+        return new JsonArray(ps.Select(TypeJson.Write).ToArray());
     }
 
     // The first TWO top-level type arguments of a map owner token (`kotlin.collections.Map[gp:K,gp:V]`); `object` when

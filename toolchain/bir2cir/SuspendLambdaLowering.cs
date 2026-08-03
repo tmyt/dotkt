@@ -185,6 +185,7 @@ static class SuspendLambdaLowering
         var resultType = TypeJson.Read(node["suspendRet"]);
         var funcType = TypeJson.Read(node["funcType"]) as TypeNode.Fn;
         var typeArgs = ReadStrings(node["typeParams"]);
+        var ctorTypeArgs = node["typeArgs"] as JsonArray;
         var smName = ctx + "_lambda" + (++counter[0]) + "$sm";
 
         // Restricted suspension is a property of the Kotlin EXTENSION RECEIVER, not of an arbitrary parameter.
@@ -206,7 +207,6 @@ static class SuspendLambdaLowering
         // construction channel, distinct from `typeParams` (the SM's own name declarations). Instantiate the open SM
         // with THOSE originals. When absent (kotc's own source-lambda emission), fall back to the positional
         // `smName<tv{type,0..N-1}>` — keeping source-lambda output BYTE-IDENTICAL.
-        var ctorTypeArgs = node["typeArgs"] as JsonArray;
         TypeNode smInst;
         if (typeArgs.Count == 0)
             smInst = new TypeNode.Fqn(smName);
@@ -238,13 +238,39 @@ static class SuspendLambdaLowering
                     ? (outerSelf ? new JsonObject { ["k"] = "local", ["name"] = "__self" }
                                  : new JsonObject { ["k"] = "this" })
                     : new JsonObject { ["k"] = "local", ["name"] = n });
-            argTypes.Add(TypeJson.Write(t));
+            // BuildLambdaSm moves the enclosing method's generic parameters onto the synthesized SM type. Its ctor
+            // therefore declares capture slots with those variables in TYPE scope. InlineSplice has already flattened
+            // both enclosing method and owner variables into the SM's single dense index space; preserve that index
+            // while changing only the lexical scope, then view the declaration through this construction's type args.
+            // Adding an owner-count offset here would rebase that already-flattened index a second time (`M` -> `E`).
+            var ctorParam = RebindMethodTvsToSm(t);
+            if (smInst is TypeNode.Fqn { Args: { } smArgs })
+                ctorParam = SupertypeGraph.SubstOwnerTvs(ctorParam, smArgs);
+            argTypes.Add(TypeJson.Write(ctorParam));
         }
         args.Add(new JsonObject { ["k"] = "const", ["type"] = ContAny(), ["value"] = null });
         argTypes.Add(ContAny());
 
         return new JsonObject { ["k"] = "new", ["type"] = TypeJson.Write(smInst), ["argTypes"] = argTypes, ["args"] = args };
     }
+
+    static TypeNode RebindMethodTvsToSm(TypeNode type) => type switch
+    {
+        TypeNode.Tv { Scope: "method" } tv => new TypeNode.Tv("type", tv.I),
+        TypeNode.Nullable n => new TypeNode.Nullable(RebindMethodTvsToSm(n.Of)),
+        TypeNode.Oblivious o => new TypeNode.Oblivious(RebindMethodTvsToSm(o.Of)),
+        TypeNode.Fqn { Args: { } args } f => new TypeNode.Fqn(f.Name,
+            args.Select(RebindMethodTvsToSm).ToArray()),
+        TypeNode.Array a => new TypeNode.Array(RebindMethodTvsToSm(a.Elem)),
+        TypeNode.ByRef b => new TypeNode.ByRef(RebindMethodTvsToSm(b.Of)),
+        TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend,
+            RebindMethodTvsToSm(fn.Ret),
+            fn.Params.Select(RebindMethodTvsToSm).ToArray(),
+            fn.Recv == null ? null : RebindMethodTvsToSm(fn.Recv),
+            fn.Clr,
+            fn.Ctx?.Select(RebindMethodTvsToSm).ToArray()),
+        _ => type,
+    };
 
     static int IntOf(JsonNode n) => n is JsonValue v && v.TryGetValue<int>(out var i) ? i : 0;
 

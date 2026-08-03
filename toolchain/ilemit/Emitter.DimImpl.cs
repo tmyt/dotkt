@@ -82,7 +82,7 @@ sealed partial class Emitter
                     ApplyConstraints(genTps.Value, map, false);
                     try
                     {
-                        ifaceRet = bmDef.TryGetProperty("ret", out var rt) ? MapType(SubstTv(DotKt.Bir.TypeNode.Read(rt), specArgs)) : typeof(void);
+                        ifaceRet = bmDef.TryGetProperty("ret", out var rt) ? MapType(SubstTv(DotKt.Bir.TypeNode.Read(rt), specArgs)) : Bcl("System.Void");
                         paramTypes = bmDef.GetProperty("params").EnumerateArray().Select(p => MapType(SubstTv(DotKt.Bir.TypeNode.Read(p.GetProperty("type")), specArgs))).ToArray();
                     }
                     catch (Exception ex)
@@ -94,30 +94,30 @@ sealed partial class Emitter
                     bridge.SetReturnType(ifaceRet);
                     bridge.SetParameters(paramTypes);
                     _curMethodParams = savedMp;
-                    dimCall = dim.MakeGenericMethod(gps.Cast<Type>().ToArray());
+                    dimCall = ConstructedMethod(dim, gps.Cast<Type>().ToArray());
                 }
                 else
                 {
                     // Non-generic arm: resolve the signature BEFORE defining the bridge (a MapType failure is a clean skip).
                     try
                     {
-                        ifaceRet = bmDef.TryGetProperty("ret", out var rt) ? MapType(SubstTv(DotKt.Bir.TypeNode.Read(rt), specArgs)) : typeof(void);
+                        ifaceRet = bmDef.TryGetProperty("ret", out var rt) ? MapType(SubstTv(DotKt.Bir.TypeNode.Read(rt), specArgs)) : Bcl("System.Void");
                         paramTypes = bmDef.GetProperty("params").EnumerateArray().Select(p => MapType(SubstTv(DotKt.Bir.TypeNode.Read(p.GetProperty("type")), specArgs))).ToArray();
                     }
                     catch { continue; }
                     bridge = ti.TB.DefineMethod("dotkt$dimimpl$" + name + "$" + (_covarBridge++),
                         MethodAttributes.Private | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.NewSlot | MethodAttributes.HideBySig,
                         ifaceRet, paramTypes);
-                    dimCall = ti.IsGeneric ? TypeBuilder.GetMethod(ti.TB.MakeGenericType(ti.TB.GetGenericArguments()), dim) : (MethodInfo)dim;
+                    dimCall = ti.IsGeneric ? AnchorMethod(ConstructedType(ti.TB, ti.TB.GetGenericArguments()), dim) : (MethodInfo)dim;
                 }
                 StampCompilerGenerated(bridge);   // #68: ilemit-authored generated member
                 var il = bridge.GetILGenerator();
                 il.Emit(OpCodes.Ldarg_0);
                 for (int i = 0; i < paramTypes.Length; i++) il.Emit(OpCodes.Ldarg, i + 1);
-                il.Emit(OpCodes.Callvirt, dimCall);   // `this`'s most-specific DIM (a class override still wins); base slot != this slot, so no recursion
+                EmitMethod(il, OpCodes.Callvirt, dimCall);   // `this`'s most-specific DIM (a class override still wins); base slot != this slot, so no recursion
                 il.Emit(OpCodes.Ret);
-                var declSlot = constructed != null ? TypeBuilder.GetMethod(constructed, baseSlot) : (MethodInfo)baseSlot;
-                ti.TB.DefineMethodOverride(bridge, declSlot);
+                var declSlot = constructed != null ? AnchorMethod(constructed, baseSlot) : (MethodInfo)baseSlot;
+                WireMethodOverride(ti.TB, bridge, declSlot);
             }
         }
     }

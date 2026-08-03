@@ -564,7 +564,7 @@ sealed class Pipeline
             // rewrites the accessor bodies to CIR `clrEventAccessorImpl` directives + inserts the `<E>$delegate : D` field +
             // a type-level `clrEventDecl`. It also binds `clrEventRaise` to a `raise_<E>` call. App/rt only (no .NET events
             // in the ref/rt stdlib self-build).
-            if (!_options.RefBuild) hoisted = ClrEventImplBinding.Apply(hoisted, refs);
+            if (!_options.RefBuild) hoisted = ClrEventImplBinding.BindImplementations(hoisted, refs);
             // KCLASS MEMBER BINDING: kotc emits `T::class.simpleName`/`.qualifiedName` as the PLAIN Kotlin property read
             // `callInstance(kotlin.reflect.KClass.get_simpleName/get_qualifiedName, recv = <a System.Type value>)`. This
             // pass owns the Kotlin<->CLR NAME reversal (#138): where the receiver's Kotlin type is statically known — an
@@ -638,6 +638,11 @@ sealed class Pipeline
             if (!_options.RefBuild) TryValueOperandHoist.Apply(substituted);
             staged.Add((substituted, outputName));
         }
+
+        // Event raises can target a Kotlin-declared event in a sibling source file. Every implementation now has its
+        // concrete delegate-derived raise_<E> declaration, so bind all call sites to that exact module-wide signature.
+        if (!_options.RefBuild)
+            ClrEventImplBinding.BindRaisesAll(staged.Select(s => s.Root), refs);
 
         // F-BOUND STAR PROJECTION: CLR has no legal/reified `Node<*>` TypeSpec for `Node<N : Node<N>>`.
         // Materialize a deterministic non-generic existential view in bir2cir and make every closed Node<N> implement
@@ -808,6 +813,19 @@ sealed class Pipeline
         // last in the structural phase, so every synthesized body exists and owner tokens are still Kotlin FQNs.
         BackingFieldRename.ApplyAll(staged.Select(s => s.Root).ToList());
 
+        // Normalize every local call/delegate descriptor before the module-wide local member binding below. Generic
+        // delegate targets may carry a closed function shape while their declaration remains open; bir2cir owns the
+        // declaration lookup and records that open signature explicitly for one-to-one emission.
+        foreach (var stagedFile in staged)
+            ClrMemberResolution.EnsurePlainCallDescriptors(stagedFile.Root);
+        ClrMemberResolution.ResolveLocalDelegateTargets(staged.Select(s => s.Root));
+
+        // Suspend/state-machine and bridge synthesis above can add classes after the initial source-declaration
+        // inventory was collected. The final CLR-member stamping pass must see the complete emission-unit set so a
+        // local `new` is never mistaken for a referenced type and reflected against the compile universe.
+        var emittedLocalTypes = AnySlotRebind.CollectLocalTypes(staged.Select(s => s.Root))
+            .Keys.ToHashSet(StringComparer.Ordinal);
+
         // STAR-PROJECTION BOUND index (#2): the in-assembly generic type-param BOUNDS (`interface Key<E : Element>`
         // -> {Key: [Element]}), collected across ALL staged roots (a `Key<*>` use may live in a sibling file from Key's
         // declaration). Feeds StarProjectionBoundLowering so a `Key<object>` (kotc's star-projection erasure) is
@@ -846,6 +864,7 @@ sealed class Pipeline
             // distinguishes shapes that share one CLR erasure (`T?` vs object, function-return `T?` vs object).
             // The selected declaration then follows the ordinary nullable/alias/type transform into physical CIR.
             // App-only: stdlib metadata/runtime builds own their kotlin.* facades in this assembly.
+            ClrMemberResolution.EnsurePlainCallDescriptors(substituted);
             if (attributeTopLevelOwner) ClrMemberResolution.ResolveReferencedStaticCalls(substituted, refs);
             // DECL-position NRT byte collection (#37/#48): stamp `nullableFlags`/`retNullableFlags` from the SEMANTIC
             // `{t:nullable}` reference wrappers BEFORE BirTypeLowering strips them to bare types. Runs in ALL builds so
@@ -893,6 +912,19 @@ sealed class Pipeline
             // the reference-nullable strip, so nothing earlier sees the two meet. Refuses loudly, naming both source
             // signatures — a silent wrong binding is the one outcome a program with no valid lowering must not get.
             NullableGenericOverloadCollision.Check(lowered, outputName);
+            loweredRoots.Add((lowered, outputName));
+        }
+
+        // SAME-UNIT CONSTRUCTOR BINDING: resolve `new`, `this(...)`, and local `super(...)` to declaration indices
+        // while every source file is visible together. This deliberately follows physical type lowering and its
+        // collision refusal: an invalid pair of Kotlin constructors that erases to one CLR signature must receive the
+        // existing actionable collision diagnostic, rather than being intercepted as an ambiguous local lookup.
+        // ilemit receives only the winning declaration index and never selects by name/arity/assignability.
+        ClrMemberResolution.ResolveLocalConstructors(loweredRoots.Select(s => s.Root));
+
+        // PHASE 3 — passes that consume the physically lowered, module-wide constructor binding.
+        foreach (var (lowered, outputName) in loweredRoots)
+        {
             // A mutable/spilled collection value can lower to IList<T> while a Kotlin read-only call slot lowers to
             // IReadOnlyList<T>. These are sibling CLR interfaces, so make the conversion an explicit CIR cast after
             // substituting method type args. ilemit then emits the stated cast instead of inferring a stack seam.
@@ -957,7 +989,8 @@ sealed class Pipeline
             // lossy `argTypes`. ilemit becomes a pure linker (exact structural match, hard-fail on 0/multi). Runs LAST — on
             // the fully-lowered tree — so owner/argTypes speak the CLR vocabulary the MLC resolves; unconditional so
             // RefBodySquash's `newClr NotImplementedException` is stamped too (its owner resolves off the BCL compile-refs).
-            ClrMemberResolution.Apply(lowered, refs, localBasicEnums);
+            ClrMemberResolution.EnsurePlainCallDescriptors(lowered);
+            ClrMemberResolution.Apply(lowered, refs, localBasicEnums, emittedLocalTypes);
             // THE STAMPING CHOKEPOINT: every node resolved against a .NET member carries that member's declared
             // return. Two omissions of exactly that shape — a generic method and a public field — each removed a
             // whole family from the crossing refusal below without any gate noticing.
@@ -969,7 +1002,6 @@ sealed class Pipeline
             // `memberSig`: before it, most `clr*` nodes still carry the caller's `argTypes` and the .NET declaration
             // this refusal is about has not been read yet.
             ForeignNullableGenericCrossing.Check(lowered, outputName);
-            loweredRoots.Add((lowered, outputName));
         }
 
         // The IMPLEMENTING-POSITION half of the same refusal: a .NET supertype declaring a slot no Kotlin body can
@@ -1029,7 +1061,7 @@ sealed class Pipeline
     static bool IsEmptyCir(JsonNode root)
     {
         if (root is not JsonObject o) return false;
-        static bool Empty(JsonNode? n) => n is not JsonArray a || a.Count == 0;
+        static bool Empty(JsonNode n) => n is not JsonArray a || a.Count == 0;
         return Empty(o["types"]) && Empty(o["methods"]) && Empty(o["fields"]);
     }
 

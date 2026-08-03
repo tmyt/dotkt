@@ -26,14 +26,37 @@ using DotKt.Bir;
 // with the §6 guard: raise is legal ONLY for a Kotlin-DECLARED event (one that has a synthesized `raise_<E>`).
 static class ClrEventImplBinding
 {
-    public static JsonNode Apply(JsonNode root, ReferenceMetadataIndex refs)
+    public static JsonNode BindImplementations(JsonNode root, ReferenceMetadataIndex refs)
     {
         if (root is JsonObject obj && obj["types"] is JsonArray types)
             foreach (var t in types.OfType<JsonObject>())
                 BindType(t, refs);
-        // RAISE call sites live anywhere in the tree (method bodies) — bind them after the impls exist.
-        BindRaises(root, refs);
         return root;
+    }
+
+    // Raise sites and their declaring event may live in different source files. Resolve them only after every local
+    // event implementation has its final synthesized raise_<E> declaration, then copy that declaration's exact
+    // parameter vector onto the call. ilemit links this descriptor; it never selects a local member by name/arity.
+    public static void BindRaisesAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
+    {
+        var rootList = roots.ToList();
+        var signatures = new Dictionary<(string Owner, string Method), JsonArray>();
+        foreach (var root in rootList.OfType<JsonObject>())
+            if (root["types"] is JsonArray types)
+                foreach (var type in types.OfType<JsonObject>())
+                {
+                    var owner = Str(type["name"]);
+                    if (owner == null || type["methods"] is not JsonArray methods) continue;
+                    foreach (var method in methods.OfType<JsonObject>())
+                    {
+                        var name = Str(method["name"]);
+                        if (name == null || !name.StartsWith("raise_", StringComparison.Ordinal)
+                            || method["params"] is not JsonArray parameters) continue;
+                        signatures[(owner, name)] = new JsonArray(parameters.OfType<JsonObject>()
+                            .Select(p => p["type"]?.DeepClone()).ToArray());
+                    }
+                }
+        foreach (var root in rootList) BindRaises(root, refs, signatures);
     }
 
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
@@ -183,12 +206,13 @@ static class ClrEventImplBinding
     // `callInstance raise_<E>` on the receiver's static type — the type that declares the synthesized `raise_<E>`. §6
     // GUARD: raise is legal ONLY for a Kotlin-declared event; a `clrEventRaise` whose owner is a CONSUMED foreign .NET
     // event (no synthesized raise_) is caught in ilemit as a missing method — but here we keep the shape honest.
-    static void BindRaises(JsonNode node, ReferenceMetadataIndex refs)
+    static void BindRaises(JsonNode node, ReferenceMetadataIndex refs,
+        IReadOnlyDictionary<(string Owner, string Method), JsonArray> signatures)
     {
         if (node is JsonObject obj)
         {
             foreach (var kv in obj.ToList())
-                if (kv.Value != null) BindRaises(kv.Value, refs);
+                if (kv.Value != null) BindRaises(kv.Value, refs, signatures);
             if (Str(obj["k"]) == "clrEventRaise")
             {
                 var owner = obj["type"]?.DeepClone();
@@ -201,6 +225,11 @@ static class ClrEventImplBinding
                         $"bir2cir: cannot raise the .NET event '{Str(obj["event"])}' on '{ownerName}' — you can only raise an "
                         + "event you DECLARE in Kotlin (`override val E by clrEvent()`), not a consumed foreign .NET event (§6/#187)");
                 var raiseName = "raise_" + Str(obj["event"]);
+                var localOwner = TypeJson.OwnerName(owner)
+                    ?? throw new InvalidOperationException($"bir2cir: event raise '{raiseName}' has no owner type");
+                if (!signatures.TryGetValue((localOwner, raiseName), out var signature))
+                    throw new InvalidOperationException(
+                        $"bir2cir: event raise '{localOwner}.{raiseName}' has no synthesized local declaration");
                 var recv = obj["recv"]?.DeepClone();
                 var args = obj["args"] as JsonArray ?? new JsonArray();
                 // Replace the node's contents in place with a plain instance call to raise_<E>.
@@ -208,12 +237,13 @@ static class ClrEventImplBinding
                 obj["k"] = "callInstance";
                 obj["ownerType"] = owner;
                 obj["method"] = raiseName;
+                obj["sig"] = signature.DeepClone();
                 obj["virtual"] = true;
                 obj["recv"] = recv;
                 obj["args"] = args;
             }
         }
         else if (node is JsonArray arr)
-            foreach (var it in arr) if (it != null) BindRaises(it, refs);
+            foreach (var it in arr) if (it != null) BindRaises(it, refs, signatures);
     }
 }
