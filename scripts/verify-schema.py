@@ -15,7 +15,7 @@
 # The carrier (§0) — [KotlinInline]/[KotlinSuspendFunctionType] ride as CLR attributes on the
 # emitted assembly, not as document nodes; their version is guarded loudly at decode time by
 # bir-common BirCarrier.DecodeBody (an unknown version throws NotSupportedException) and is
-# exercised end-to-end by verify-roundtrip. This document validator scopes to document nodes;
+# exercised end-to-end by the ProjectReference roundtrip NUnit suite. This document validator scopes to document nodes;
 # the decoded carrier BODY is itself a node/type that also appears inline in the emitting
 # method's body (validated here). See spec §7.
 import json, sys, glob, os

@@ -106,7 +106,6 @@ Or focused suites directly:
 ```bash
 ./tests/run-nunit-tests.sh                         # categorized NUnit suites + ILVerify
 ./tests/msbuild/run.sh                             # stateful MSBuild behavior
-./tests/roundtrip/scenarios/run.sh                 # irreducible consume-as-Kotlin scenarios
 ./scripts/dotkt.sh --run path/Foo.kt   # one-shot compile + run (-h for options)
 ```
 
