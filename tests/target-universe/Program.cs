@@ -66,9 +66,10 @@ static string ScopeName(MetadataReader md, EntityHandle scope) => scope.Kind swi
 
 static void RequireScope(Snapshot snapshot, string type, string expected)
 {
-    if (!snapshot.TypeScopes.TryGetValue(type, out var actual) || !actual.Contains(expected))
+    if (!snapshot.TypeScopes.TryGetValue(type, out var actual)
+        || actual.Count != 1 || !actual.Contains(expected))
         throw new InvalidOperationException(
-            $"TypeRef {type} is not scoped to {expected}; actual: " +
+            $"TypeRef {type} is not scoped exclusively to {expected}; actual: " +
             (actual == null ? "<missing>" : string.Join(", ", actual.OrderBy(x => x, StringComparer.Ordinal))));
 }
 

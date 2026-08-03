@@ -52,7 +52,12 @@ sealed class TargetReferenceUniverse : IDisposable
         {
             Type type;
             try { type = assembly.GetType(fullName, throwOnError: false, ignoreCase: false); }
-            catch { continue; }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException(
+                    $"ilemit target: could not resolve type '{fullName}' from compile reference " +
+                    $"'{assembly.GetName().FullName}': {ex.GetType().Name}: {ex.Message}", ex);
+            }
             if (type != null && matches.All(candidate => candidate.Assembly != type.Assembly)) matches.Add(type);
         }
         if (matches.Count == 0)
@@ -62,7 +67,12 @@ sealed class TargetReferenceUniverse : IDisposable
             var dot = fullName.LastIndexOf('.');
             if (dot > 0)
             {
-                try { return ResolveType(fullName[..dot] + "+" + fullName[(dot + 1)..]); }
+                try
+                {
+                    var type = ResolveType(fullName[..dot] + "+" + fullName[(dot + 1)..]);
+                    _types[fullName] = type;
+                    return type;
+                }
                 catch (NotSupportedException) { }
             }
             throw new NotSupportedException(
