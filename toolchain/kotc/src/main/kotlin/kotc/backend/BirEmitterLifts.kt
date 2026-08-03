@@ -602,7 +602,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			val argsJson = regs.joinToString(",") { """{"k":"local","name":${str(it.name.asString())}}""" }
 			val retVoid = fn.returnType.isUnit()
 			val retT = birType(fn.returnType)
-			val callE = """{"k":"callStatic","ownerType":${str(clrOwner)},"method":${str(member)},"argTypes":[$argTypes],"ret":${birType(fn.returnType).toJson()},"args":[$argsJson]$anySlotTag}"""
+			val callE = """{"k":"callStatic","ownerType":${fqnJson(clrOwner)},"method":${str(member)},"argTypes":[$argTypes],"ret":${birType(fn.returnType).toJson()},"args":[$argsJson]$anySlotTag}"""
 			val body = if (retVoid) """{"k":"exprStmt","expr":$callE}""" else """{"k":"return","value":$callE}"""
 			val freeTps = freeTypeParams(regs.map { it.type } + listOf(fn.returnType))
 			val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
