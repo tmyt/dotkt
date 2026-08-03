@@ -146,8 +146,19 @@ public fun clrStarRemoveAt(c: Any, index: Int): Any? {
     return old
 }
 
-/** `MutableCollection.clear()` on an erased receiver. */
-public fun clrStarClear(c: Any): Unit = (c as ClrRawList).rawClear()
+/**
+ * `MutableCollection.clear()` on an erased receiver. `Clear()` exists on the non-generic `IList` and `IDictionary`
+ * but NOT on the non-generic `ICollection`, and a `HashSet<T>` carries neither of the first two — its `Clear` lives
+ * only on the generic `ICollection<T>`, which an abandoned element type cannot name. Refuse THAT case by name
+ * rather than letting the cast surface as an opaque InvalidCastException: it is the one erased mutation the CLR
+ * gives no erased slot for, and it needs a distinct set identity (docs/dotkt-semantics.md §2) to close.
+ */
+public fun clrStarClear(c: Any): Unit {
+    if (c is ClrRawList) return c.rawClear()
+    if (c is ClrRawDictionary) return c.rawClear()
+    throw UnsupportedOperationException(
+        "clear() on a star-projected collection whose runtime type carries no non-generic Clear slot")
+}
 
 /** Kotlin-style `[a, b, c]` for an erased collection (the star twin of clrCollToString). */
 public fun clrStarToString(c: Any): String = clrElemToString(c)

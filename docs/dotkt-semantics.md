@@ -101,8 +101,15 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
     at `object` that the value does not inhabit either. Read-only `List`/`Collection`/`Iterable`/`Sequence`
     receivers and `Array` parameters get a **boxing materialization** at the call (`clrStarToList` /
     `clrStarToArray`); enumeration into a `Sequence` stays lazy (`Enumerable.Cast<object>`). The snapshot is
-    observationally identical for a read-only receiver — the mutable aliases and `Map` are deliberately NOT
-    converted, so a projection meeting a mutable generic parameter keeps today's behavior.
+    observationally identical for a read-only receiver EXCEPT for REFERENCE IDENTITY: `f(l)` inside such a call
+    receives a copy, so `x === l` inside the callee is false and a later mutation of the original is not seen by
+    the value the callee kept. The mutable aliases and `Map` are deliberately NOT converted, so a projection
+    meeting a mutable generic parameter keeps today's behavior (it still faults for a value element) rather than
+    silently swallowing a write.
+  - `MutableSet<*>.clear()` throws `UnsupportedOperationException` by name: `Clear()` exists on the non-generic
+    `IList` and `IDictionary` but not on the non-generic `ICollection`, and a `HashSet<T>` carries neither — its
+    `Clear` lives only on the generic `ICollection<T>`, which an abandoned element type cannot name. It closes with
+    the same distinct set identity the `is Set<*>` answer below needs.
   - **`List<Any?>` / `List<Any>` / `List<out Any?>` still lower to `IReadOnlyList<object>` and still fault for a
     value element.** For a covariant parameter these ARE the star projection in Kotlin, so the rule condemns them
     too — but deciding it needs the DECLARATION-SITE VARIANCE of a `@ClrTypeAlias`'d type, which is present in no
