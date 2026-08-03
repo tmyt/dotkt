@@ -25,6 +25,7 @@ import roundtrip.receiverfunctions.applyPanel
 import roundtrip.receiverfunctions.column
 import roundtrip.receiverfunctions.defaultPanel
 import roundtrip.suspendvalues.BlockHolder
+import roundtrip.suspendvalues.invokeWideSuspend23
 import roundtrip.suspendvalues.makeBlock
 import roundtrip.suspendvalues.storedBlock
 import roundtrip.suspendnothing.fail as suspendFail
@@ -88,6 +89,9 @@ class RoundtripSurfaceTests {
         ClassicAssert.AreEqual(42, runCrossModuleSuspend(makeBlock()))
         ClassicAssert.AreEqual(30, runCrossModuleSuspend(storedBlock))
         ClassicAssert.AreEqual(107, runCrossModuleSuspend(BlockHolder().block))
+        ClassicAssert.AreEqual(24, runCrossModuleSuspend {
+            invokeWideSuspend23 { p1, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, p23 -> p1 + p23 }
+        })
     }
 
     @TestAttribute

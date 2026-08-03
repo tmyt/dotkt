@@ -1024,6 +1024,20 @@ sealed class Pipeline
             files.Add(new CirFile(outputName, lowered.ToJsonString(JsonOptions.Indented)));
         }
 
+        // #220: both stdlib twins define the canonical wide-delegate family. This is a physical CLR declaration,
+        // authored directly as CIR after all source-semantic passes have completed; it is not a Kotlin source type
+        // and must not be fed back through those passes. The fixed synthetic file also makes the ownership visible in
+        // captured CIR instead of letting ilemit manufacture an undeclared ABI from a build-mode switch.
+        if (_options.StdlibMode != BuildStdlibMode.App)
+        {
+            if (files.Any(f => f.OutputName == CanonicalDelegateSynthesis.OutputName))
+                throw new InvalidOperationException(
+                    $"bir2cir: reserved synthetic CIR name '{CanonicalDelegateSynthesis.OutputName}' collides with an input file");
+            files.Insert(0, new CirFile(
+                CanonicalDelegateSynthesis.OutputName,
+                CanonicalDelegateSynthesis.SynthDefsFile().ToJsonString(JsonOptions.Indented)));
+        }
+
         // #71 S2: emit the embedded round-trip attribute-class defs ONCE per assembly, as a dedicated synthetic CIR
         // file (glob-sorted first via the `000-` prefix so its TypeDefs precede the user types, minimizing dump churn).
         // ilemit defines them like any type (no EnsureKotlinAttrs). Ref + app only — the runtime build stamps nothing.

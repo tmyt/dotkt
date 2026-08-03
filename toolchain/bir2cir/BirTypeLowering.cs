@@ -305,8 +305,7 @@ static class BirTypeLowering
                 // so its arity costs nothing. MEASURED, not assumed — across the whole stdlib build every suspend fn
                 // that does reach the delegate path (LowerFuncTypeValued) has arity 1, the sequence/iterator receiver
                 // lambda whose arity the stdlib's own signature fixes; an app's suspend lambda is replaced by its
-                // state machine before this pass runs. Coverage:
-                // tests/coroutines/fixtures/WideSuspendFunctionTypeTests.kt.
+                // state machine before this pass runs. Coverage: roundtrip's cross-module invokeWideSuspend23.
                 return fn.Suspend ? ObjectType : LowerFnDelegate(fn, refBuild, force);
             case TypeNode.Nullable n:
             {
@@ -351,8 +350,9 @@ static class BirTypeLowering
     // It bounds DELEGATES, so it bounds non-suspend function types only. A `suspend` function type is erased to an
     // object carrier before it could arrive here (LowerType's Fn case) and has NO arity limit: 23 suspend parameters
     // compile, emit and run exactly as 2 do, same-module and across a module boundary.
-    const int MaxDelegateArity = 22;
-    const int MaxBclDelegateArity = 16;
+    internal const int CanonicalDelegateMinArity = 17;
+    internal const int CanonicalDelegateMaxArity = 22;
+    const int MaxBclDelegateArity = CanonicalDelegateMinArity - 1;
 
     // A function type kept as a DELEGATE (a `funcType` slot, or a plain fn in a type slot): lower ret (a Unit
     // ret -> void, Action vs Func) + params + receiver; the suspend flag is folded to false (the delegate shape
@@ -368,11 +368,11 @@ static class BirTypeLowering
         var ps = fn.Params.Select(p => LowerType(p, refBuild, force, typeArg: false)).ToArray();
         var recv = fn.Recv == null ? null : LowerType(fn.Recv, refBuild, force, typeArg: false);
         int arity = ps.Length + (recv == null ? 0 : 1);
-        if (arity > MaxDelegateArity)
+        if (arity > CanonicalDelegateMaxArity)
             throw new InvalidOperationException(
                 $"bir2cir: {_file}: a function type of {arity} parameters has no CLR delegate. System.Func/Action "
                 + $"carry arities 0..{MaxBclDelegateArity} and the DotKt stdlib defines KFunc/KAction for "
-                + $"{MaxBclDelegateArity + 1}..{MaxDelegateArity}; the family cannot go further because each arity "
+                + $"{CanonicalDelegateMinArity}..{CanonicalDelegateMaxArity}; the family cannot go further because each arity "
                 + "is a distinct pre-baked type in the stdlib and Kotlin's function types are unbounded. A receiver "
                 + "counts toward the arity. Group the parameters into a class, or pass them as a collection.");
         bool returnsVoid = ret is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" };

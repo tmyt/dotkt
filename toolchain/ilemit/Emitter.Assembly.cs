@@ -87,6 +87,25 @@ sealed partial class Emitter
                     // only skips when the type ACTUALLY resolves externally, so a --no-stdlib build (or the stdlib's own
                     // ref/rt build, which passes ilemit no --ref) still emits the canonical copy locally.
                     if (CanonicalSynthetics.Contains(name) && ResolvesExternally(name)) continue;
+                    if (kind == "delegate")
+                    {
+                        // A CIR delegate declaration already carries its exact metadata name (including `arity),
+                        // generic parameters/variance, Invoke parameters and return. Realize that CLR shape directly;
+                        // no family/range/name decision is made in this layer.
+                        var delegateTb = _mod.DefineType(name,
+                            TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.Class,
+                            Bcl("System.MulticastDelegate"));
+                        if (generated) StampCompilerGenerated(delegateTb);
+                        var dti = new TypeInfo { TB = delegateTb, Def = t, IsDelegate = true };
+                        if (t.TryGetProperty("typeParams", out var dtps) && dtps.GetArrayLength() > 0)
+                        {
+                            var names = TpNames(dtps);
+                            var gps = delegateTb.DefineGenericParameters(names);
+                            for (var gi = 0; gi < names.Length; gi++) dti.TypeParams[names[gi]] = gps[gi];
+                        }
+                        _types[name] = dti;
+                        continue;
+                    }
                     if (kind == "enum")
                     {
                         // A real .NET enum: each entry is a literal field of the int-backed enum.
@@ -167,11 +186,6 @@ sealed partial class Emitter
                 }
         }
 
-        // #220: the stdlib twins carry the canonical wide-delegate family (KAction`17..22 / KFunc`18..23) for the
-        // whole platform. Emitted here — after pass 1, so the [KotlinFunction] carrier class is already in `_types`
-        // — and unconditionally, so both twins expose the identical set regardless of what the stdlib sources use.
-        if (_stdlibAssembly) DefineCanonicalDelegates();
-
         // Bake enums up front: their literals are fully defined in pass 1, and baking now gives a real metadata
         // token usable in other types' IL (box/castclass/ldtoken) — an un-baked EnumBuilder token breaks the PE.
         foreach (var ti in _types.Values)
@@ -184,7 +198,8 @@ sealed partial class Emitter
             T($"pass2 parent/iface: {ti.TB?.Name}");
             _curTypeParams = EffectiveTps(ti);
             // Bounds may reference any type (now all defined) and the type's own params (now in _curTypeParams).
-            if (ti.IsGeneric && ti.Def.TryGetProperty("typeParams", out var tps2)) ApplyConstraints(tps2, ti.TypeParams, ti.IsInterface, ti.Def);
+            if (ti.IsGeneric && ti.Def.TryGetProperty("typeParams", out var tps2))
+                ApplyConstraints(tps2, ti.TypeParams, ti.IsInterface || ti.IsDelegate, ti.Def);
             if (ti.BaseName != null)
             {
                 // A `.NET` base (`clr:System.Exception` / `clrg:...[..]`) is resolved by reflection; a Kotlin-user
@@ -266,6 +281,11 @@ sealed partial class Emitter
             if (ti.IsEnum) continue;   // enums are fully defined (literals) in pass 1
             T($"pass3 signatures: {ti.TB?.Name}");
             _curTypeParams = EffectiveTps(ti);   // so `gp:T` in field/ctor/method signatures resolves
+            if (ti.IsDelegate)
+            {
+                DefineDelegateMembers(ti);
+                continue;
+            }
             if (ti.IsFileClass)
             {
                 // Top-level `val`/`var` -> static fields of the file class.
@@ -807,9 +827,10 @@ sealed partial class Emitter
         // a throw is re-tagged with the declaration being emitted (via CurrentDecl) so one bad method names itself in a
         // clean `ilemit: <Type>.<method>: <message>` line, and the rest are unaffected. Byte-identical on success.
         foreach (var ti in _types.Values)
-            for (int ci = 0; ci < ti.Ctors.Count; ci++) { T($"pass4 ctor body: {ti.TB?.Name}#{ci}"); var cb = ti.Ctors[ci]; var cd = ti.CtorDefs[ci]; GuardBody(() => EmitCtorBody(ti, cb, cd)); }
+            if (!ti.IsDelegate)
+                for (int ci = 0; ci < ti.Ctors.Count; ci++) { T($"pass4 ctor body: {ti.TB?.Name}#{ci}"); var cb = ti.Ctors[ci]; var cd = ti.CtorDefs[ci]; GuardBody(() => EmitCtorBody(ti, cb, cd)); }
         foreach (var ti in _types.Values)
-            if (!ti.IsEnum)
+            if (!ti.IsEnum && !ti.IsDelegate)
                 foreach (var m in ti.Def.GetProperty("methods").EnumerateArray())
                 {
                     // Interfaces: emit an IL body ONLY for default methods (those that carry one); abstract slots have none.
@@ -903,9 +924,6 @@ sealed partial class Emitter
         foreach (var ti in Ordered()) { if (!ti.IsEnum) { T($"pass6 createType: {ti.TB?.Name}"); ti.TB.CreateType(); } }
         // The reverse-bridge adapter references the (now-baked) Kotlin Iterator type, so bake it after the user types.
         if (_enumAdapterTB != null && !_enumAdapterTB.IsCreated()) _enumAdapterTB.CreateType();
-        foreach (var tb in _canonicalDelegates.Values)
-            if (!tb.IsCreated())
-                tb.CreateType();
         // The Unit-return delegate adapters forward to a void delegate type `ft` (a BCL Action or a canonical
         // KAction), so bake them AFTER the canonical delegates whose signatures they may reference.
         if (_unitAdapterTB != null && !_unitAdapterTB.IsCreated()) _unitAdapterTB.CreateType();

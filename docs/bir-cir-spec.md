@@ -66,6 +66,10 @@ Notes:
   `DotKt.Runtime.CompilerServices.KAction`/`KFunc`. Arity includes an extension receiver.
   Every `fn` reaching ilemit MUST carry this field; ilemit realizes that exact nominal delegate type
   and never chooses a family from TypeBuilder state or assembly names.
+  The stdlib builds also receive CIR-only `kind:"delegate"` type declarations for the selected wide family.
+  Such a declaration carries its exact arity-qualified CLR metadata name, type parameters and variance, `params`,
+  and `ret`; ilemit maps that physical declaration to the conventional `MulticastDelegate` `.ctor`/`Invoke`
+  metadata without choosing any Kotlin ABI fact. kotc never emits this declaration kind.
   **STATUS (#49): the `funcType` slot is FOLDED.** The delegate-view function type on
   `newClosure`/`newDelegate`/`newSam`/`newSuspendLambda`/`newBoundDelegate`/`delegateInvoke` was the LAST
   string-typed type slot (`func:<ret>:<args>` / `sfunc:<ret>:<args>`); kotc now emits it as the structured

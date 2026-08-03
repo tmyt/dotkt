@@ -1345,12 +1345,13 @@ public signature: `fun f(g: (…17 Ints…) -> Int)` names
 the same Reflection type in the producer and in every consumer. Each is declared **variant exactly as its BCL
 sibling** — `KFunc<in T1, …, out TResult>` / `KAction<in T1, …>` — because a Kotlin function type is contravariant
 in its parameters and covariant in its result, so `(Any, …) -> String` is assignable to a `(String, …) -> Any` slot
-at every arity. All twelve carry `[CompilerGenerated]`; the reference twin additionally carries `[KotlinFunction(0)]`,
-which the runtime twin does not, because the runtime stdlib build emits no DotKt round-trip attribute classes at
-all. `dll2klib` restores a referencing signature to `kotlin.Function17`… by that ABI-fixed NAME (as it does for
-`System.Func`/`Action`) — the stdlib itself is never projected to a KLIB, so there is no definition to decode.
-The family exists only there, and no emitted assembly declares it, so the name a referencing signature is matched
-against is the ordinary projected one.
+at every arity. All twelve carry `[CompilerGenerated]`. bir2cir authors those physical declarations in CIR for
+both stdlib builds; ilemit does not synthesize the family out of band. `dll2klib` restores a referencing signature
+by resolving the TypeRef against the stdlib TypeDef and decoding the delegate's actual `Invoke` signature, through
+the same assembly-identity-aware catalog used for arbitrary external delegates. The stdlib still produces no
+projected KLIB of its own; keeping it in the reference catalog is distinct from projecting its Kotlin surface.
+The family deliberately needs no `[KotlinFunction]` marker: that attribute describes Kotlin declarations, whereas
+delegate restoration is the general structural TypeDef/`Invoke` rule and works identically for any CLR delegate.
 
 An assembly that names a 17..22 function type therefore needs the stdlib in its compile reference set, which every
 ordinary build has.
@@ -1371,8 +1372,8 @@ runs exactly as a two-parameter one does, same-module and across a module bounda
 assumed: across
 the entire stdlib build, every suspend function type that reaches the delegate path at all has arity **1** (the
 `sequence {}` / `iterator {}` receiver lambda, whose arity the stdlib's own signature fixes), and an application's
-own suspend lambda is replaced by its state machine before type lowering runs. Coverage:
-`tests/coroutines/fixtures/WideSuspendFunctionTypeTests.kt`.
+own suspend lambda is replaced by its state machine before type lowering runs. Cross-module coverage is the
+23-parameter `invokeWideSuspend23` case in `tests/roundtrip/{producer,consumer}`.
 
 Two positions of a suspend function type do not survive a module boundary — a **return** and one **nested in a
 generic** (`List<suspend (…) -> R>`) are not restored by the consumer's frontend. That is a property of the carrier,
