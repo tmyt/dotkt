@@ -114,7 +114,7 @@ bug; the only legitimate throw is an assert that cannot fire on valid IR.
 - Use Codex for design and investigation, and tell subagents to use it too:
   `codex exec -s read-only --skip-git-repo-check "<question>" </dev/null`. The `</dev/null` is required or it
   hangs. If it goes silent it may be stuck on an interactive update prompt — ask me.
-- Before reporting done or opening a PR, complete the independent local review contract in `AGENTS.md`:
+- Before reporting done or treating a PR as ready, complete the independent local review contract in `AGENTS.md`:
   separate fresh Claude and Codex processes, both read-only and given the exact diff or commit range. Give
   them the task, applicable invariants, and the honest remainder — known limitations, open questions and weak
   points — but none of the implementation conversation or reasoning that would turn an independent read into
@@ -134,10 +134,15 @@ Not a single `gradle build` — a multi-stage native pipeline. Don't guess these
 | Compile and run one file | `./scripts/dotkt.sh --run path/to/Foo.kt` |
 | The CLR stdlib: frontend KLIB, then reference dll, then runtime dll | `make stdlib` |
 
+Validation cadence is part of the review contract in `AGENTS.md`: iterate with the narrowest focused check,
+review the stable focused-green diff, then run the canonical full gate once. If that gate fails, iterate on its
+failing stage; if the fix changes the reviewed artifact, repeat focused validation and independent review before
+rerunning the whole gate. A draft PR may expose honest work in progress, but it must state which reviews or
+checks remain and cannot be treated as ready for handoff.
+
 The truthful fail-sets are machine-readable, never prose: `ILVERIFY_XFAIL` in `tests/run-ilverify.sh`,
-`RT_XFAIL` in `tests/roundtrip/scenarios/run.sh`, `XFAIL_PKG` in `tests/packaged-sdk/run.sh`. A gate exits 0
-iff every actual failure is listed, and reports what is new or newly fixed. Read that diff; don't copy counts
-into docs.
+`XFAIL_PKG` in `tests/packaged-sdk/run.sh`. A gate exits 0 iff every actual failure is listed, and reports what
+is new or newly fixed. Read that diff; don't copy counts into docs.
 
 Two traps worth knowing: the toolchain binaries are only checked for existence, so after changing
 bir2cir/ilemit/dll2klib you need `rm -rf build/*-bin` (plus `build/clr-stdlib*` for stdlib-affecting work)

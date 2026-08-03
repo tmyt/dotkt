@@ -40,7 +40,7 @@ tool_src    = $(shell find toolchain/$(1) toolchain/bir-common -name '*.cs' -o -
 # ==================================================================================================
 .PHONY: all toolchain kotc $(TOOLS) stdlib stdlib-klib stdlib-ref stdlib-rt pack \
         verify verify-core verify-tests verify-schema verify-sanity verify-lowering verify-msbuild verify-packaged-sdk \
-        verify-wide-delegates verify-target-universe verify-xfail-policy \
+        verify-target-universe verify-xfail-policy \
         dev dll2klib-e2e clean clean-tools clean-stdlib clean-pack help
 
 all: pack ## one-shot: toolchain -> stdlib -> the 5 NuGet packages in build/nuget-feed
@@ -104,7 +104,7 @@ verify: verify-core verify-packaged-sdk ## run ALL gates (the canonical set + th
 # The canonical gate set EXCEPT the packaged-SDK gate. CI runs verify-core in the main job and
 # verify-packaged-sdk as a DISTINCT release-blocking job (GitHub #160), so the split lives here — not
 # copied into the workflow YAML. `make verify` still runs the complete set (verify-core + packaged-sdk).
-verify-core: verify-tests verify-schema verify-sanity verify-lowering verify-msbuild verify-wide-delegates verify-target-universe verify-xfail-policy ## every gate except the packaged-SDK release gate
+verify-core: verify-tests verify-schema verify-sanity verify-lowering verify-msbuild verify-target-universe verify-xfail-policy ## every gate except the packaged-SDK release gate
 
 verify-tests: pack ## canonical compiler behavior gate (categorized NUnit suites + ILVerify + the negative compile lane)
 	bash tests/run-nunit-tests.sh
@@ -124,9 +124,6 @@ verify-msbuild: ## stateful MSBuild integration (same obj/ across source mutatio
 
 verify-packaged-sdk: ## packaged nupkg-resolution + cross-module async coroutine gate
 	bash tests/packaged-sdk/run.sh
-
-verify-wide-delegates: ## >16-arg function types (KFunc/KAction synthesis)
-	bash tests/special/wide-delegates/run.sh
 
 verify-target-universe: ## host-vs-target metadata scope calibration for the #335-#337 migration
 	bash tests/target-universe/run.sh

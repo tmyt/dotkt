@@ -95,6 +95,7 @@ static class IlEmit
     {
         var byFc = new Dictionary<string, System.Text.Json.Nodes.JsonObject>();
         var order = new List<string>();
+        var synthetic = 0;
         foreach (var d in docs)
         {
             var node = System.Text.Json.Nodes.JsonNode.Parse(d.RootElement.GetRawText(), documentOptions: DotKt.Bir.BirJson.DocOptions).AsObject();
@@ -110,7 +111,15 @@ static class IlEmit
                     }
                 if (node["hasMain"]?.GetValue<bool>() == true) acc["hasMain"] = true;
             }
-            else { byFc[fc] = node; order.Add(fc); }
+            else
+            {
+                // A synthetic CIR file intentionally has no file class. Multiple such files are independent physical
+                // declaration containers (round-trip attribute defs, canonical delegate defs); merging them by the
+                // empty string would overwrite all but the last. Give each an internal-only unique bucket key.
+                var key = fc.Length == 0 ? "\0synthetic-" + synthetic++ : fc;
+                byFc[key] = node;
+                order.Add(key);
+            }
         }
         _mergedDocs.Clear();
         var result = new List<JsonElement>();

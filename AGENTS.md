@@ -22,11 +22,15 @@ another layer.
 
 # Implementation Review
 
-After implementing and locally validating a change with the applicable project
-checks (`make verify` for behavior-affecting changes), complete independent
-local reviews from both Claude and Codex in separate processes when their CLIs
-are available. Do not consider the change ready for handoff or a pull request
-until both reviews have completed and their findings have been validated.
+During implementation, use the narrowest focused checks that exercise the
+changed behavior. Once those checks pass and the diff is stable enough to
+review, complete independent local reviews from both Claude and Codex in
+separate processes when their CLIs are available. Do not consider the change
+ready for handoff or ready-for-review until both reviews have completed and
+their findings have been validated and every required final gate is green on
+the final diff. A draft pull request may be opened earlier when its outstanding
+review and validation status is stated explicitly in the pull request
+description.
 
 - Run the reviewers read-only; they must not edit the worktree. Explicitly name
   the artifact each reviewer must inspect: the full staged and unstaged diff
@@ -43,7 +47,17 @@ until both reviews have completed and their findings have been validated.
   reviewers to reject weak or speculative hypotheses explicitly.
 - Independently validate every finding before changing the implementation; do
   not apply reviewer suggestions blindly.
-- After addressing material findings, rerun the relevant validation and repeat
-  independent review when the resulting change is substantial.
+- After addressing material findings, rerun the focused checks and repeat
+  independent review when the resulting change is substantial. Run the
+  canonical full gate (`make verify` for behavior-affecting changes) once the
+  reviewed diff is stable, rather than after each implementation or review
+  iteration.
+- If the full gate fails, reproduce and iterate with the failing stage or
+  focused check before running the full gate again. If the fix changes the
+  reviewed artifact, return to the focused-green review step before the next
+  full run. A green full-gate result must be repeated only when a subsequent
+  code, build, or packaging change can invalidate it; review-only discussion
+  and documentation/comment-only edits to files not executed or consumed by
+  the build or gates do not require another full run.
 - If either reviewer cannot be run, report that explicitly rather than silently
   skipping it.
