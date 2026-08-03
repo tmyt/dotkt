@@ -3711,20 +3711,29 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         _ => null,
     };
 
+    // #220 — the canonical wide function-type family. `DotKt.Runtime.CompilerServices.KFunc`N` / `KAction`N` carry
+    // Kotlin arities 17..22 (above System.Func/Action's 16-parameter ceiling); they are DEFINED once, in the stdlib,
+    // which is deliberately never projected to a KLIB. So a referencing signature is restored from the ABI-fixed
+    // NAME here — exactly as System.Func/Action are — rather than by decoding a delegate definition this projector
+    // can see. A per-assembly 23+ shape is not canonical and still routes through _delegateDefinitions.
+    private const string CanonicalFunc = "DotKt.Runtime.CompilerServices.KFunc";
+    private const string CanonicalAction = "DotKt.Runtime.CompilerServices.KAction";
+
     private bool IsKnownDelegate(string name) =>
         name.StartsWith("System.Func", StringComparison.Ordinal) ||
         name.StartsWith("System.Action", StringComparison.Ordinal) ||
         name.StartsWith("System.EventHandler", StringComparison.Ordinal) ||
+        name == CanonicalFunc || name == CanonicalAction ||
         _delegateDefinitions.ContainsKey(name);
 
     private KType ConstructDelegate(string name, ImmutableArray<KType> typeArguments)
     {
-        if (name.StartsWith("System.Func", StringComparison.Ordinal))
+        if (name.StartsWith("System.Func", StringComparison.Ordinal) || name == CanonicalFunc)
         {
             if (typeArguments.Length == 0) return Any(nullable: true);
             return Function(typeArguments[..^1], typeArguments[^1]);
         }
-        if (name.StartsWith("System.Action", StringComparison.Ordinal))
+        if (name.StartsWith("System.Action", StringComparison.Ordinal) || name == CanonicalAction)
             return Function(typeArguments, Named("kotlin.Unit"));
         if (name.StartsWith("System.EventHandler", StringComparison.Ordinal))
         {

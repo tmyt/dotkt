@@ -167,6 +167,11 @@ sealed partial class Emitter
                 }
         }
 
+        // #220: the stdlib twins carry the canonical wide-delegate family (KAction`17..22 / KFunc`18..23) for the
+        // whole platform. Emitted here — after pass 1, so the [KotlinFunction] carrier class is already in `_types`
+        // — and unconditionally, so both twins expose the identical set regardless of what the stdlib sources use.
+        if (_stdlibAssembly) DefineCanonicalDelegates();
+
         // Bake enums up front: their literals are fully defined in pass 1, and baking now gives a real metadata
         // token usable in other types' IL (box/castclass/ldtoken) — an un-baked EnumBuilder token breaks the PE.
         foreach (var ti in _types.Values)

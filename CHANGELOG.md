@@ -7,6 +7,26 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- **Function types of 17..22 parameters are now a real cross-assembly ABI (#220).** `System.Func`/`Action` stop at 16
+  value parameters, and the wider shapes used to be minted per assembly, so one declared `(…17 Ints…) -> Int` was a
+  different nominal type in every module that mentioned it. The six pairs `DotKt.Runtime.CompilerServices.KAction`17`
+  …`KAction`22` / `KFunc`18`…`KFunc`23` (Kotlin arities 17 through 22, the frontend's `BuiltInFunctionArity.BIG_ARITY`
+  being 23) are now emitted unconditionally into BOTH stdlib twins with identical signatures, and every other assembly
+  references them and defines nothing. A wide function type is therefore legal wherever a narrow one is: in a
+  parameter, in a return (which previously emitted an unverifiable `callvirt` through the consumer's own copy), and
+  nested in a generic such as `List<(…) -> R>` (which previously aborted the emit with "no referenced method matches
+  the resolved descriptor"). A single producer declaring two wide arities no longer breaks KLIB re-import through
+  dll2klib's arity-clash rename, since producers declare no delegate to clash. `dll2klib` restores the canonical
+  family to `kotlin.FunctionN` from its ABI-fixed name, as it already did for `System.Func`/`Action`.
+
+  With one definition to link against, ilemit no longer chooses between a local and a referenced delegate: the
+  on-demand synthesis path for this range, the `EmitArg` rewrap exemption for TypeBuilder-backed delegates, and the
+  structural cross-assembly leniency in signature matching are gone, and ordinary Reflection identity decides.
+  Arity 23 and above keeps today's per-assembly behaviour pending a variadic big-arity ABI; the two cells that
+  leaves broken (return position unverifiable, nested-in-a-generic uncompilable) are now listed with their closing
+  condition in `tests/special/wide-delegates/run.sh` instead of being silent. The ABI is recorded in
+  `docs/dotkt-semantics.md` §8e-bis.
+
 - **NRT-only fixed/`params` overload inversions now resolve like C# without compiler or library special cases (#367).**
   For a foreign CLR family whose fixed signature is exactly a `params` overload's physical prefix and whose Kotlin
   views differ only by strict outer nullable-reference narrowing, `dll2klib` retains both declarations, lowers the

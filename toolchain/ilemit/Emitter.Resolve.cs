@@ -874,13 +874,10 @@ sealed partial class Emitter
     // return, `IEnumerable[Double]` vs `[Tv]`) stays discriminating instead of collapsing onto the loose shape.
     bool Matches(DotKt.Bir.TypeNode t, Type p)
     {
-        // A CIR function type already carries bir2cir's exact nominal delegate
-        // family (`System.Func`/`Action` or module-local `KFunc`/`KAction`).
-        // Compare that descriptor structurally: a referenced assembly's KFunc
-        // and the equivalent local synthetic TypeBuilder are intentionally
-        // different Reflection Type identities but the same declared ABI.
-        if (t is DotKt.Bir.TypeNode.Fn)
-            return MatchesOpen(t, p);
+        // The ONE nominal difference ilemit still tolerates in a delegate: a function type above the canonical wide
+        // range names a delegate every assembly mints for itself, so this caller's MapType result can never be
+        // Reflection-identical to the callee's parameter. See IsDeferredWideFn.
+        if (IsDeferredWideFn(t)) return MatchesOpen(t, p);
         // A node mentioning a type variable is inherently OPEN — compare by SHAPE (MapType would resolve a `Tv` to a
         // placeholder that never ReferenceEquals the candidate's actual generic parameter, wrongly rejecting the right
         // overload). A suspend fn likewise routes to the structural path (-> false). Only a fully-concrete node uses MapType.
@@ -891,6 +888,18 @@ sealed partial class Emitter
         }
         return MatchesOpen(t, p);
     }
+
+    // #220 — a function type whose Kotlin arity is ABOVE the canonical wide range (KAction`17..22 / KFunc`18..23 are
+    // defined once, in the stdlib; 23+ awaits the variadic big-arity ABI). Each assembly still mints its own
+    // definition for those, so producer and consumer hold different Reflection types for one declared shape and only
+    // a STRUCTURAL comparison can bind the call. That tolerance is the whole reason arity >= 23 is not a valid public
+    // ABI — it is scoped to exactly the deferred range and disappears with it, never applying to a canonical arity.
+    // Only the OUTERMOST node is checked: a deferred wide fn NESTED in a generic (`List<(…23 args…)->R>`) is a
+    // concrete node whose MapType result differs nominally, and that call is rejected — the known-broken cell.
+    static bool IsDeferredWideFn(DotKt.Bir.TypeNode t) =>
+        t is DotKt.Bir.TypeNode.Fn { Suspend: false } fn
+        && fn.Clr is "DotKt.Runtime.CompilerServices.KFunc" or "DotKt.Runtime.CompilerServices.KAction"
+        && fn.DelegateParams.Length > CanonicalDelegateMaxArity;
 
     // True iff the node carries a type variable or a suspend function type anywhere — the "open, compare structurally"
     // predicate (the structured successor of the old `tok.Contains("gp:")` test, plus the suspend-fn exclusion).
@@ -1142,8 +1151,8 @@ sealed partial class Emitter
     // `{t:tv,scope:type,i}` matches whatever those args substituted into the candidate's param at that position.
     bool GenericParamMatches(DotKt.Bir.TypeNode node, Type p, Type[] ownerArgs)
     {
-        // A function-type node matches structurally within the exact CIR-selected nominal delegate family.
-        if (node is DotKt.Bir.TypeNode.Fn fnNode) return GenericDelegateMatches(fnNode, p, ownerArgs);
+        // The deferred wide range has no shared delegate identity to compare — see IsDeferredWideFn.
+        if (IsDeferredWideFn(node)) return GenericDelegateMatches((DotKt.Bir.TypeNode.Fn)node, p, ownerArgs);
         if (!ContainsTv(node))
         {
             try { return MapType(node) == p; } catch { return false; }
@@ -1189,9 +1198,11 @@ sealed partial class Emitter
         try { return ResolveType(name.Contains('`') ? name : name + "`" + arity); } catch { return null; }
     }
 
-    // A function-type declared param against the candidate's delegate param. CIR carries the exact nominal family;
-    // matching a same-shaped KFunc against System.Func would reintroduce the cross-assembly ABI ambiguity that bir2cir
-    // is responsible for eliminating.
+    // A type-variable-bearing function-type declared param against the candidate's delegate param — the shape path,
+    // reached only from the switch above (a fully-concrete function type resolves through MapType and requires exact
+    // Reflection identity, since #220 gave every wide arity in the canonical range a single stdlib definition). CIR
+    // carries the exact nominal family; matching a same-shaped KFunc against System.Func would reintroduce the ABI
+    // ambiguity bir2cir is responsible for eliminating.
     bool GenericDelegateMatches(DotKt.Bir.TypeNode.Fn fn, Type p, Type[] ownerArgs)
     {
         var dp = fn.DelegateParams;

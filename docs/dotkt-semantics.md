@@ -1322,6 +1322,36 @@ resolves. (Previously such a delegate collapsed to a bare `Any?`, and the overri
   equally-preferred delegates tie and neither is deprioritized. Coverage:
   `tests/interop/consumer/fixtures/ThreadingInteropTests.kt` and `DelegateOverloadTests.kt`.
 
+## 8e-bis. A function type is a delegate: `System.Func`/`Action` to arity 16, the stdlib's canonical `KFunc`/`KAction` for 17..22 (#220)
+
+Every non-suspend Kotlin function type is one CLR delegate type, chosen by ARITY. An extension or context receiver
+occupies a delegate slot, so it counts toward that arity; a `suspend` function type is not a delegate at all (§4).
+
+| Kotlin arity | CLR delegate | Defined by |
+|---|---|---|
+| 0..16, returns `Unit` | `System.Action` / `System.Action\`N` | the BCL |
+| 0..16, returns a value | `System.Func\`N+1` | the BCL |
+| 17..22, returns `Unit` | `DotKt.Runtime.CompilerServices.KAction\`17` … `KAction\`22` | **the DotKt stdlib** |
+| 17..22, returns a value | `DotKt.Runtime.CompilerServices.KFunc\`18` … `KFunc\`23` (the return type is the last type argument) | **the DotKt stdlib** |
+| 23 and above | `KAction\`23+` / `KFunc\`24+` | **each assembly, for itself — deferred** |
+
+`System.Func`/`Action` stop at 16 value parameters, and the frontend's `BuiltInFunctionArity.BIG_ARITY` is 23, so
+17..22 is exactly the band that needs a DotKt type. Those six pairs are emitted **unconditionally into both stdlib
+twins** (`DotKt.Private.Stdlib.dll` and `DotKt.Stdlib.dll`, with identical signatures) whether or not the stdlib
+sources use them — the definition exists because the ABI says so. Every other assembly REFERENCES them and defines
+nothing, which is what makes a wide function type legal in a public signature: `fun f(g: (…17 Ints…) -> Int)` names
+the same Reflection type in the producer and in every consumer. They are marked `[CompilerGenerated]` and
+`[KotlinFunction(0)]`, and `dll2klib` restores a referencing signature to `kotlin.Function17`… by that ABI-fixed
+NAME (as it does for `System.Func`/`Action`) — the stdlib itself is never projected to a KLIB.
+
+**Arity 23 and above is deferred to a future variadic big-arity ABI and is NOT a valid cross-assembly signature.**
+There is no shared definition, so each assembly mints its own and the two sides of a module boundary hold different
+nominal types for one declared shape. Consequences, all real today: a value in *parameter* position still binds
+(ilemit falls back to a structural signature match, the one place it tolerates a nominal delegate difference); a
+value in *return* position produces IL that runs but does not formally verify; and one *nested in a generic*
+(`List<(…23 args…) -> R>`) fails to compile at the call site. The two broken cells are listed with their closing
+condition in `tests/special/wide-delegates/run.sh`'s `WIDE_XFAIL`. Within a single assembly every arity works.
+
 ## 8f. A SOURCE declaration wins over a reference-KLIB-projected copy of the same identity (#15)
 
 If the SAME top-level type or function is BOTH declared in the compiled Kotlin **source** AND present in a
@@ -1838,7 +1868,8 @@ function shapes, inline payloads, collection identity, and Kotlin nullability.
 Current deliberate limits are:
 
 - pointer and function-pointer types project as `Any?`;
-- high-arity function/delegate ABI is tracked by issue #220;
+- function types of Kotlin arity 23 and above have no shared delegate definition, so they are not a valid
+  cross-assembly signature (§8e-bis); arities 0..22 round-trip exactly;
 - arbitrary CLR custom-attribute applications are not reproduced as Kotlin annotation applications;
 - explicit Kotlin companion-object reconstruction is not part of CLR static projection;
 - SOURCE-retained annotations and compile-time-only facts such as contracts are not present in CLR metadata; and
@@ -1863,6 +1894,9 @@ Current deliberate limits are:
 - A `Span`/`ref struct` value is fine inside a `suspend fun` — until it has to survive a suspension, or be captured by a (non-inline) lambda; both are compile-time errors, mirroring C# CS4007/CS4012/CS8352. §4d.
 - A `CharSequence` parameter surfaces to C# as `string`; a `StringBuilder` passed as `CharSequence` is **snapshotted** by an implicit `.toString()` — no live view. §5b.
 - A Kotlin `Map` surfaces to C# as a *mutable* `IDictionary<K,V>`; `keys`/`values`/`entries` are snapshots. §5c.
+- A function type of 17..22 parameters is not `System.Func`/`Action` (they stop at 16) but the stdlib's canonical
+  `KFunc`/`KAction` — one definition for the whole platform. 23 and above has no shared definition and is not a valid
+  cross-assembly signature. An extension receiver counts toward the arity. §8e-bis.
 - A `value class` is a real (reference) class on the CLR — never erased, never a struct. §5f.
 - A value a call supplies that the emitted CLR shape has no slot for is still evaluated (a static-field read runs a type initializer; a field read can throw) — only a literal/local/`this`-class load is dropped. §7a.
 - A value-type `x?.suspendFoo()` across a suspension is no longer boxed: the conditional's slot is typed from its live branch, and a slot the backend cannot type is a compile-time refusal rather than a `kotlin.Any` box. §7b.
