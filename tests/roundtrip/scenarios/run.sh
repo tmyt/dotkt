@@ -305,11 +305,12 @@ emit_il() {
 	# the RUNTIME stdlib (DotKt.Stdlib) in its `[kotlin.clr.*]` round-trip metadata, but bir2cir's ManagedReferenceCatalog
 	# ALIASES that reference to the ref twin (same type shapes) — so the runtime stdlib is NOT on --compile-refs here.
 	local compile_refs; compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL" "$(refset_join "${usrrefs[@]}")")"
+	local emit_compile_refs; emit_compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_RT_DLL" "$(refset_join "${usrrefs[@]}")")"
 	# Both stages tolerate failure, but their diagnostics are KEPT as section evidence: an emit that aborts
 	# (`ilemit: … cannot resolve .NET type X`) produces no assembly, and the section then fails on empty
 	# stdout — indistinguishable from a crash unless the abort message survives.
 	evidence_add "$(dotnet "$BIR2CIR_DLL" "$cir" --compile-refs "$compile_refs" "${birs[@]}" 2>&1 || true)"
-	evidence_add "$(dotnet "$ILEMIT_DLL" "$out" "$asm" --runtime-refs "$(refset_join "${refs[@]}")" "$cir"/*.cir.json 2>&1 || true)"
+	evidence_add "$(dotnet "$ILEMIT_DLL" "$out" "$asm" --compile-refs "$emit_compile_refs" --runtime-refs "$(refset_join "${refs[@]}")" "$cir"/*.cir.json 2>&1 || true)"
 	[[ -f "$STDLIB_RT_DLL" ]] && cp "$STDLIB_RT_DLL" "$out/" 2>/dev/null || true
 }
 
@@ -1993,7 +1994,9 @@ run_app vdactual1 "$VD/appil/AnimalApp.dll"
 # ilemit (which still resolves the owner off its own --ref). This is the exact #139 crash path, now correct via `virtual`.
 cir2="$VD/appil2.cir"; rm -rf "$cir2"; mkdir -p "$cir2"
 dotnet "$BIR2CIR_DLL" "$cir2" --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL")" "$VD/appbir"/*.bir.json >/dev/null 2>&1 || true
-dotnet "$ILEMIT_DLL" "$VD/appil2" AnimalApp --runtime-refs "$(refset_join "$STDLIB_RT_DLL" "$VD/libil/AnimalLib.dll")" "$cir2"/*.cir.json >/dev/null 2>&1 || true
+dotnet "$ILEMIT_DLL" "$VD/appil2" AnimalApp \
+	--compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_RT_DLL" "$VD/libil/AnimalLib.dll")" \
+	--runtime-refs "$(refset_join "$STDLIB_RT_DLL" "$VD/libil/AnimalLib.dll")" "$cir2"/*.cir.json >/dev/null 2>&1 || true
 [[ -f "$STDLIB_RT_DLL" ]] && cp "$STDLIB_RT_DLL" "$VD/appil2/" 2>/dev/null || true
 cp "$VD/libil/AnimalLib.dll" "$VD/appil2/" 2>/dev/null || true
 run_app vdactual2 "$VD/appil2/AnimalApp.dll"

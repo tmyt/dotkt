@@ -24,6 +24,14 @@
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1
+SCRIPT_NAME=verify-sanity
+source "$ROOT/scripts/lib.sh"
+need_dotnet_reference_sets
+# This harness intentionally executes rejecting fixtures and captures their non-zero status below. lib.sh enables
+# fail-fast for normal build drivers; restore this script's original capture-oriented shell mode after using its
+# authoritative targeting-pack discovery helper.
+set +e
+set +o pipefail
 PY="${PYTHON:-python3}"
 ILEMIT="build/ilemit-bin/ilemit.dll"
 SELF_OUT="build/ir-selftest-out"
@@ -70,7 +78,7 @@ for f in tests/ir/selftest/reject-*.cir.json; do
     echo "  SELFTEST ok    $(basename "$f") (verify-sanity.py refused as documented)"
   fi
   if [ -f "$ILEMIT" ]; then
-    iout="$(dotnet "$ILEMIT" "$SELF_OUT" IrSelftest --runtime-refs "" "$f" 2>&1)"; irc=$?
+    iout="$(dotnet "$ILEMIT" "$SELF_OUT" IrSelftest --compile-refs "$FRAMEWORK_COMPILE_REFS" --runtime-refs "" "$f" 2>&1)"; irc=$?
     if [ $irc -eq 0 ]; then
       echo "  SELFTEST FAIL  $(basename "$f"): ilemit ACCEPTED a document it must refuse"; self_rc=1
     elif ! printf '%s' "$iout" | grep -qF -- "$want"; then
@@ -92,7 +100,7 @@ for f in tests/ir/selftest/accept-*.cir.json; do
     "$PY" scripts/verify-sanity.py "$f" 2>&1 | sed 's/^/                 /'
   fi
   if [ -f "$ILEMIT" ]; then
-    iout="$(dotnet "$ILEMIT" "$SELF_OUT" IrSelftest --runtime-refs "" "$f" 2>&1)"
+    iout="$(dotnet "$ILEMIT" "$SELF_OUT" IrSelftest --compile-refs "$FRAMEWORK_COMPILE_REFS" --runtime-refs "" "$f" 2>&1)"
     if printf '%s' "$iout" | grep -qF -- ": sanity: "; then
       echo "  SELFTEST FAIL  $(basename "$f"): ilemit raised a sanity violation on a well-formed document"; self_rc=1
       printf '%s\n' "$iout" | sed 's/^/                 /'

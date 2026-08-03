@@ -37,7 +37,9 @@ need_dotnet_reference_sets
 	|| die "kotc failed on tests/special/wide-delegates"
 dotnet "$BIR2CIR_DLL" "$OUT/cir" --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL")" "$OUT/bir"/*.bir.json >/dev/null 2>&1 \
 	|| die "bir2cir failed"
-dotnet "$ILEMIT_DLL" "$OUT/il" Wide --runtime-refs "$STDLIB_RT_DLL" "$OUT/cir"/*.cir.json >/dev/null 2>&1 \
+dotnet "$ILEMIT_DLL" "$OUT/il" Wide \
+	--compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_RT_DLL")" \
+	--runtime-refs "$STDLIB_RT_DLL" "$OUT/cir"/*.cir.json >/dev/null 2>&1 \
 	|| die "ilemit failed"
 cp "$STDLIB_RT_DLL" "$OUT/il/"
 
@@ -100,6 +102,7 @@ dotnet "$BIR2CIR_DLL" "$OUT/consumer-cir" \
 	--compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL" "$OUT/il/Wide.dll")" \
 	"$OUT/consumer-bir"/*.bir.json >/dev/null 2>&1 || die "consumer bir2cir failed"
 dotnet "$ILEMIT_DLL" "$OUT/consumer-il" WideConsumer \
+	--compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_RT_DLL" "$OUT/il/Wide.dll")" \
 	--runtime-refs "$(refset_join "$STDLIB_RT_DLL" "$OUT/il/Wide.dll")" \
 	"$OUT/consumer-cir"/*.cir.json >/dev/null 2>&1 || die "consumer ilemit failed"
 cp "$STDLIB_RT_DLL" "$OUT/il/Wide.dll" "$OUT/consumer-il/"

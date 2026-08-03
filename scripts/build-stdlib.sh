@@ -62,7 +62,7 @@ if (( do_emit )); then
 	dotnet "$BIR2CIR_DLL" "$REF_CIR" --compile-refs "$FRAMEWORK_COMPILE_REFS" --build-stdlib=metadata "$BIR"/*.bir.json 2>"$REF_OUT/bir2cir.err" || true
 	echo "REF CIR files: $(ls "$REF_CIR"/*.cir.json 2>/dev/null | wc -l)"
 	info "REF: ilemit -> DotKt.Private.Stdlib.dll"
-	{ dotnet "$ILEMIT_DLL" "$REF_DLL" DotKt.Private.Stdlib --runtime-refs "" --build-stdlib=metadata "$REF_CIR"/*.cir.json 2>"$REF_OUT/ilemit.err" || true; } | tail -2
+	{ dotnet "$ILEMIT_DLL" "$REF_DLL" DotKt.Private.Stdlib --compile-refs "$FRAMEWORK_COMPILE_REFS" --runtime-refs "" --build-stdlib=metadata "$REF_CIR"/*.cir.json 2>"$REF_OUT/ilemit.err" || true; } | tail -2
 	grep -vE '^\s+at ' "$REF_OUT/ilemit.err" | grep -iE 'exception|KeyNot|unresolved|no matching' | head -3 || true
 	[[ -f "$REF_DLL/DotKt.Private.Stdlib.dll" ]] || die "DotKt.Private.Stdlib.dll was not emitted (see $REF_OUT/ilemit.err)"
 	need_tool retarget
@@ -79,7 +79,7 @@ if (( do_emit )); then
 	{ dotnet "$BIR2CIR_DLL" "$RT_CIR" --compile-refs "$rt_compile_refs" --build-stdlib=runtime "$BIR"/*.bir.json 2>"$RT_OUT/bir2cir.err" || true; } | tail -1
 	echo "RT CIR files: $(ls "$RT_CIR"/*.cir.json 2>/dev/null | wc -l)"
 	info "RT: ilemit (substitute) -> DotKt.Stdlib.dll"
-	{ dotnet "$ILEMIT_DLL" "$RT_DLL" DotKt.Stdlib --runtime-refs "" --build-stdlib=runtime "$RT_CIR"/*.cir.json 2>"$RT_OUT/ilemit.err" || true; } | tail -2
+	{ dotnet "$ILEMIT_DLL" "$RT_DLL" DotKt.Stdlib --compile-refs "$FRAMEWORK_COMPILE_REFS" --runtime-refs "" --build-stdlib=runtime "$RT_CIR"/*.cir.json 2>"$RT_OUT/ilemit.err" || true; } | tail -2
 	grep -vE '^\s+at ' "$RT_OUT/ilemit.err" | grep -iE 'exception|error|unresolved|no matching|not found|cannot' | head -3 || true
 	[[ -f "$RT_DLL/DotKt.Stdlib.dll" ]] || die "DotKt.Stdlib.dll was not emitted (see $RT_OUT/ilemit.err)"
 	info "RT: retarget (so ordinary CLR tooling can consume the runtime assembly)"

@@ -80,10 +80,12 @@ extra_refset="$(refset_join "${extra_refs[@]}")"
 bir_compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$extra_refset")"
 runtime_refs="$extra_refset"
 retarget_compile_refs="$bir_compile_refs"
+emit_compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$extra_refset")"
 if (( use_stdlib )); then
 	bir_compile_refs="$(refset_join "$bir_compile_refs" "$STDLIB_REF_DLL")"
 	runtime_refs="$(refset_join "$runtime_refs" "$STDLIB_RT_DLL")"
 	retarget_compile_refs="$(refset_join "$retarget_compile_refs" "$STDLIB_RT_DLL")"
+	emit_compile_refs="$(refset_join "$emit_compile_refs" "$STDLIB_RT_DLL")"
 fi
 
 # 1. Project every resolved CLR reference to one standard KLIB. DotKt.Stdlib is deliberately represented by
@@ -112,7 +114,7 @@ dotnet "$BIR2CIR_DLL" "$cir" --compile-refs "$bir_compile_refs" "$bir"/*.bir.jso
 #    --target-rid (#51): when cross-targeting, pick the target runtime's runtimes/<rid>/lib copy-local asset instead of
 #    the build host's; empty (the default) makes ilemit fall back to the host RID. The SDK RID graph is auto-discovered.
 info "emitting $out_name.dll" >&2
-dotnet "$ILEMIT_DLL" "$out_dir" "$out_name" --runtime-refs "$runtime_refs" --target-rid "$target_rid" "$cir"/*.cir.json
+dotnet "$ILEMIT_DLL" "$out_dir" "$out_name" --compile-refs "$emit_compile_refs" --runtime-refs "$runtime_refs" --target-rid "$target_rid" "$cir"/*.cir.json
 
 # 5. optional retarget (for compile-time C# <Reference>).
 (( do_retarget )) && dotnet "$RETARGET_DLL" "$out_dir/$out_name.dll" --compile-refs "$retarget_compile_refs" >/dev/null
